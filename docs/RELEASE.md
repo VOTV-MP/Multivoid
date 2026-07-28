@@ -39,6 +39,14 @@ consumes numbers.
    `config-selftest: DONE fail=0` — mp.py's smoke verdict machine-asserts this
    line whenever the env gate is set (a config/catalog regression fails the
    smoke itself, exit 8).
+   **Named requirement (arc D2, 2026-07-28):** the same smoke's log carries
+   `repertoire selftest: PASS` AND `font selftest: PASS` on every peer. The font
+   one asserts the PHENOMENON — a known emoji glyph is flagged `Colored` and its
+   atlas box holds non-greyscale texels — because "the donor resource loaded"
+   goes GREEN on a build compiled without `ImGuiFreeTypeBuilderFlags_LoadColor`,
+   which bakes every emoji INVISIBLE rather than missing. A release that shipped
+   that would look fine to every other check. Both lines are printed at boot, so
+   this costs a grep.
    **Trip-wires (2026-07-26):** run `tools/release/tripwires.ps1` and paste its
    output into the handoff. ADVISORY — a FIRED wire re-opens the UE4SS-switch
    DECISION per `docs/VERSION_MIGRATION.md` §11 (the decision ledger), it never

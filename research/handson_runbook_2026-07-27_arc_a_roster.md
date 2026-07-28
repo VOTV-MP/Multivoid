@@ -1,15 +1,16 @@
 # Hands-on runbook — arc A roster + v131 player list + v132 names (2026-07-27, extended 2026-07-28)
 
-**Deployed:** `multivoid-0.9.0n-132.dll`, sha256 begins `a028d853c92b7f29`
-(re-deployed 2026-07-28 evening -- the earlier `BC0285ADAECBCB12` is SUPERSEDED and blanks any
-nickname over 23 UTF-8 bytes; do not test that one),
+**Deployed:** `multivoid-0.9.0n-132.dll`, sha256 begins **`b29ea37474bff646`**
+(2026-07-28 night. Two earlier builds are SUPERSEDED and must not be tested: `BC0285ADAECBCB12`
+blanks any nickname over 23 UTF-8 bytes, and `a028d853c92b7f29` predates arc D2 entirely),
 **proto 132** (RELAUNCH BOTH PEERS; an older peer is refused at the join gate by design, with a feed
-line saying so). All four installs have it. HEAD `9ae83454`.
+line saying so). All four installs have it. HEAD **`ed6bdbbc`**.
 
-**SUPERSEDED-IN-PLACE TWICE.** Written for arc A at proto 130; extended 2026-07-28 for v131 (the
-player-list rework) and again for v132 (arc B host-canonical names + arc D1 the UTF-8 codec). Three
-generations of work stacked here and **no human has touched any of it** — every claim in all three is
-autonomous evidence. The two KNOWN-BAD items the original told you not to report are FIXED; judge them.
+**SUPERSEDED-IN-PLACE THREE TIMES.** Written for arc A at proto 130; extended 2026-07-28 for v131
+(the player-list rework), for v132 (arc B host-canonical names + arc D1 the UTF-8 codec), and again
+the same night for **arc D2** (uniqueness that survives to the pixel + the emoji donor — see the
+final section). FOUR generations of work stacked here and **no human has touched any of it** — every
+claim in all four is autonomous evidence. The two KNOWN-BAD items the original told you not to report are FIXED; judge them.
 
 **NEW in v132 — see the dedicated section at the end of this file before you start.**
 
@@ -210,3 +211,73 @@ Cyrillic works.
 `utf8-codec selftest 17/17` or a drill photographing `Пельмень` (8 characters) describes the FIRST
 D1 cut, whose evidence was overstated — the shot is the TAB board and the name is under the byte
 cliff. Current bytes print `27/27` and the drill name is `Пельменьмень`.
+
+---
+
+# NEW in arc D2 (2026-07-28 night, `5947d391`..`ed6bdbbc`) — read before you start
+
+Everything below is drilled cross-peer on **both** RHIs and photographed, and **none of it is
+hands-on**. Boards from the autonomous runs are in `research/nickarb_shots/`.
+
+## What changed that you can see
+
+- **Single emoji render in colour** in the player list, the chat feed and the floating nameplate.
+  The donor is Twemoji Mozilla (+689 KB in the DLL).
+- **An absent character now draws `U+FFFD` (the replacement box), not `'?'`.** Before this, a name in
+  a script we do not bake looked like `????????` — indistinguishable from a name that really contains
+  question marks.
+- **CJK / Hangul / Thai names still render as those boxes, ON PURPOSE.** They are *unique*, though:
+  two Chinese names that draw identically now COLLIDE and one takes a numeric suffix. A LONE such
+  peer keeps a bare name; the digit only appears when two coexist. See the product question below.
+- **JetBrains Mono stopped missing four Cyrillic letters** (U+0400/040D/0450/045D) — the other
+  families are cross-merged in behind whichever one you pick.
+- **The atlas re-bake got 4-6x more expensive** (58-80 ms, was ~16) and a windowed drag-resize now
+  debounces instead of re-baking at every step. This is the one item a picture cannot carry.
+
+## Checks — 1 to 4 have instruments, 5 needs your hands, 6 needs your judgement
+
+**1. The emoji, in colour, in the world.** Re-run
+`python tools/mp.py smoke4 --duration 60 --scoreboard --nicks "<emoji>Pelmentor,张伟,李明,Anna中"`
+and look at `research/nickarb_shots/*.png`. Expect: row 1 shows a COLOURED grinning face before
+`Pelmentor`; rows 2 and 3 read as two boxes and two-boxes-plus-`2`; row 4 reads `Anna` plus one box.
+**Report if any emoji is a hollow outline, a black-and-white glyph, or invisible** — invisible in
+particular is the failure mode the boot selftest exists to catch, so also check the log for
+`font selftest: PASS (6/6)`.
+
+**2. The same on DX12.** `VOTVCOOP_RHI=dx12 python tools/mp.py smoke4 --duration 60 --scoreboard ...`
+— the overlay has a separate render half per RHI. Log should say `imgui_overlay: DX12 bring-up OK`.
+
+**3. The mixed-script lobby.** `python tools/mp.py smoke_i18n` — four peers (en/ru/zh/ja), each
+TYPING a message in its own script. **Known incomplete:** the Japanese peer's message does not send
+(the scenario's readiness gate, not the product — design §9f). Everything else passes. A `/qf` on
+this scenario's design is owed and is the next session's first job.
+
+**4. Cyrillic did not regress.** Any of the above with `Пельмень` — it must render on the board AND
+on the floating plate, unchanged from v132.
+
+**5. THE DRAG-RESIZE — hands only, and it is the whole reason this item exists.** Run a peer
+**windowed**, grab a corner and drag the window slowly through a large height change, then jiggle the
+edge back and forth. Watch for a stutter or a freeze. Before the fix, every 180 px of height crossed
+fired a full 58-80 ms atlas re-bake **on the render thread inside Present** — so the GAME froze, not
+just the overlay — and an edge parked exactly on a boundary re-baked every single frame. It is now
+gated on the size holding still for 12 frames plus a widened dead zone. **Report any hitch you can
+feel**; grep the log for `fonts: atlas baked in` and tell me how many lines a full drag produced (one
+or two is the intent; fifteen means the debounce did not take).
+
+**6. PRODUCT QUESTION — is "unique but unreadable" the right answer for CJK?** Two Chinese players
+currently see each other as `▯▯` and `▯▯2`. They are distinguishable, which is what you asked for
+("просто чтобы у всех был уникальный Nameplate"), but neither can read the other's name. The
+alternative was measured and rejected: eagerly baking a common-hanzi set costs **16-64 MB of atlas
+per re-bake** (against 4-16 MB today), and no hanzi set covers a whole name anyway — Chinese given
+names deliberately favour uncommon characters. **If you want CJK legible, say so and the answer is
+demand-driven baking or an ImGui 1.92 upgrade — mechanism first, donor second (design §9d.2's named
+flip condition). Do not let anyone "just add the font".**
+
+## What is NOT in this build, deliberately
+
+- Homoglyphs: `Anna` vs `Аnnа` (Cyrillic А) still render alike and get no suffix. Pre-existing, and
+  you accepted it as D-e on 2026-07-27.
+- A twenty-emoji name overflows the player-list Player column and is clipped by the Mic column.
+  Pre-existing fixed-width layout, newly visible because names can finally be that wide.
+- `tools/text/nick_gate.ps1` is not wired into CI (adding it edits `build-core.yml`, which owes the
+  fingerprint re-commit ritual — a scheduling call).

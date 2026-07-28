@@ -496,6 +496,15 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   EFFECT that requires the state you need (another peer receiving this peer's pose stream ⇒ a live
   simulating pawn), preferably logged by a DIFFERENT component than the one you are waiting on. Also:
   size a hold in FRAMES not milliseconds — 600 ms was ~2 frames on a peer at 4.2 FPS.
+  **SECOND INSTANCE 2026-07-28, now with a NAMED mechanism:** `smoke_i18n` gated its chat typing on the
+  peer's own `Joined X's game` line; client 3 logged it at 22:13:28 and still would not accept a
+  keystroke ~16 s later, while demonstrably RECEIVING the other peers' messages. `CaptureActive()`
+  (`ui/imgui_overlay.cpp:136`) counts `LoadingOpen()`, so the loading cover OWNS INPUT and swallows the
+  `T` bind whole — a marker can be true about the SESSION and false about the INPUT PATH at the same
+  instant. Same run, same shape: `VOTVCOOP_SCOREBOARD_OPEN=1` also lands in `CaptureActive()` via
+  `ScoreOpen() && LocalIsHost()`, so **a fixture that opens a UI surface for a screenshot disabled the
+  bind the test was about.** Sharpened rule: gate on an effect ON THE PATH YOU ARE ABOUT TO USE — if
+  you are about to type, require the artifact (`chat: sent`) and FAIL rather than retry silently.
   *Look FIRST:* `tools/net/roster_shot.ps1` preconditions; `coop/dev/menu_proceed.cpp` for why OMEGA
   cannot be clicked. `memory/lesson_readiness_announcements_precede_visible_state.md`
 
@@ -636,10 +645,14 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   `roster: client installed cross-peer identity slot=(\d+)`, which had been deleted by the formatter),
   and two runs were spent de-braiding a product failure that did not exist. Probe: `%ls` of `"Пел"` →
   `n=-1`; via `_create_locale(LC_ALL, ".UTF-8")` + `_snprintf_l` → `n=17` and correct UTF-8. Fixed with
-  `_vsnprintf_s_l` + a private locale — **never `setlocale`**, since we are injected and LC_CTYPE is
-  shared CRT state the game reads — plus a floor that logs the format string when args fail. *Look
-  FIRST:* when a log-driven verdict says a subsystem did nothing, prove the LINE can be written before
-  believing it; a negative log grep is evidence only if a positive was possible.
+  `_vsnprintf_l` + a private `_create_locale(LC_CTYPE, ".UTF-8")` — **never `setlocale`**, since we are
+  injected and LC_CTYPE is shared CRT state the game reads — plus a floor that logs the format string
+  when args fail. **Both halves of that call were wrong on the first try and both were caught by audit,
+  same day:** `LC_ALL` drags `LC_NUMERIC`, so every `%f` in the log became `1,50` on a ru-RU machine
+  (301 call sites, and mp.py parses those numbers); and the `_s` variant `__fastfail`s on a malformed
+  specifier, PAST SEH — see the two rows in section 8. *Look FIRST:* when a log-driven verdict says a
+  subsystem did nothing, prove the LINE can be written before believing it; a negative log grep is
+  evidence only if a positive was possible.
   `memory/lesson_a_log_line_can_vanish_because_of_its_arguments.md`
 
 ### 1b. Standing working agreements (previously indexed NOWHERE)
@@ -738,7 +751,11 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   UTF-8 nickname codec was derived from scratch for three `/qf` rounds before a grep found the CHAT lane
   had shipped it on 2026-07-04 (`chat_sync.cpp` `SanitizeUtf8`/`NickUtf8` with surrogate handling/
   `TrimAndCap` with character-boundary back-off), with TWO copies already in the tree. Grep the sibling
-  lanes that carry the same payload kind before designing.
+  lanes that carry the same payload kind before designing. **Ending, 2026-07-28 (`6e1156da`): the two
+  copies were STILL COMPILED four days after `coop/text/utf8_codec` was promoted, and had DIVERGED —
+  both emitted CESU-8 for an unpaired surrogate where the owner drops it, so ill-formed UTF-8 could
+  reach the chat wire. Worse, the codec header ASSERTED they had been absorbed. Promoting an owner is
+  half the job; the other half is deleting the copies and making the header's claim true.**
   `memory/lesson_reuse_proven_author_not_raw_reimpl.md`
 - **A join reconcile that DESTROYS local actors needs a quiescence gate + caps.** `memory/feedback_join_reconcile_sweep_safety.md`
 - **An op applied BEFORE the state it reads is ready recurs** — gate/defer (snapshot-before-state-ready). `memory/feedback_snapshot_before_state_ready.md`
@@ -1747,6 +1764,31 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   `ue_wrap/devices/laptop.cpp FreeFStringSlot`. `memory/lesson_fstring_pin_doctrine_fresh_buffers_only.md`
 
 ## 8. Build / deploy / git hygiene
+
+- **A CRT `_s` "safe" variant can be the DANGEROUS one inside an injected DLL.** Measured 2026-07-28:
+  `_vsnprintf_s_l` routes a malformed conversion specifier (`%q`) to the CRT invalid-parameter handler,
+  which raises `__fastfail` — the probe **terminated, exit 127**, where plain `_snprintf_l` printed
+  `bad q here` and carried on. `__fastfail` is not an SEH exception, so `RenderFrameGuarded`'s `__try`
+  and every per-callback wrapper in this mod are structurally unable to contain it, and a logging typo
+  could kill a player's game. Compounding: no `_set_invalid_parameter_handler` exists in the tree, and
+  `log.h`'s `Write` has no `_Printf_format_string_` SAL annotation, so MSVC never checks a format
+  string against its arguments. Note the shape — **the compiler's own C4996 tells you to make this
+  change.** *Look FIRST:* read any `_s` variant as "what does it do INSTEAD of the bad thing?" — if the
+  answer is `__fastfail`/`abort`, it converts a local defect into a crash of a process we do not own.
+  Suppress C4996 at the call site with the reason.
+  `memory/lesson_a_safer_crt_variant_can_be_the_dangerous_one.md`
+
+- **`LC_ALL` is not "the UTF-8 one" — a locale is wider than the conversion you wanted.** Measured
+  2026-07-28: `_create_locale(LC_ALL, ".UTF-8")` was reached for to fix `%ls` and also moved
+  `LC_NUMERIC`, so on this ru-RU machine every `%f` in the log became `1,50` — 301 `UE_LOG*` sites
+  carry a float and `mp.py`/`coverage.py`/`roster_shot.ps1` parse those numbers, so two testers on
+  different Windows languages would produce logs that no longer diff. `".UTF-8"` names only a CODE
+  PAGE; language/country come from the OS user default for every category `LC_ALL` covers.
+  **`LC_CTYPE` alone fixes `%ls` identically** (measured `n=9` both ways) and leaves numerics at `"C"`.
+  Two independent audit agents flagged it, neither asked about locales — after the change had already
+  passed a build, four selftests and a 4-peer smoke. *Look FIRST:* name the narrowest locale CATEGORY
+  that does the job, and diff a REAL artifact before/after rather than only the case you were fixing.
+  `memory/lesson_a_locale_is_wider_than_the_conversion_you_wanted.md`
 
 - **Deletable platform objects (git tags, GitHub releases) cannot hold an append-only invariant** — a
   yanked tag silently frees its "consumed" build number for different bytes; record consumption in an
