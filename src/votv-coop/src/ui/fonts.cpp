@@ -165,8 +165,10 @@ const ImWchar* Repertoire() {
 //     letters that the other three families all carry, invisible to every drill
 //     because the drills ran on Fixedsys and Roboto. A backstop costs zero DLL
 //     bytes and closes it for every family at once.
-//   - Six of the seven faces have no U+FFFD, so an absent codepoint fell back to
-//     '?' -- indistinguishable from a name that really contains one.
+// (The fallback glyph is NOT one of them, and that is worth stating because the
+// design claimed it was: all seven faces carry U+FFFD, but no glyph RANGE ever
+// asked for it, so nothing baked it and the fallback fell through to '?'. That is
+// fixed by the repertoire table above containing U+FFFD, not by this merge.)
 //
 // ORDER IS THE POLICY. imgui_freetype.cpp:515 refuses to overwrite a glyph an
 // earlier source already provided, so the chosen family wins wherever it HAS the
@@ -334,7 +336,13 @@ void Load() {
         // a windowed drag crosses several. An offline probe is not that path (it
         // never uploads a texture), so Build() is called HERE, timed, and logged:
         // the number in a real session's log is the only honest version of it.
-        // The backend's own lazy Build() then becomes a no-op (IsBuilt latches).
+        // The backend does NOT then build again -- and not for the reason it looks
+        // like: ImFontAtlas::Build() has no IsBuilt() early-out, it rebuilds
+        // unconditionally. What saves us is that the backends call
+        // GetTexDataAsRGBA32 (imgui_impl_dx11.cpp:330 / dx12.cpp:310), which
+        // early-outs on `if (!TexPixelsRGBA32)` -- and the freetype builder has
+        // already allocated that directly because LoadColor is on. Right
+        // conclusion, so do not "simplify" by removing the GetTexData path.
         {
             LARGE_INTEGER f{}, a{}, b{};
             ::QueryPerformanceFrequency(&f);

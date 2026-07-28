@@ -317,11 +317,17 @@ void AdoptCanonicalNickname(const std::wstring& canonical) {
     // the original. See [[lesson-a-placeholder-must-never-become-an-identity]]:
     // the last time a derived string was allowed to become the stored identity,
     // a joiner learned "Player" and wrote it over its real name forever.
+    // The predicate must match what FoldKey ACTUALLY does, not what the
+    // repertoire says. U+FFFD is IN the repertoire (it is the fallback glyph and
+    // must be baked), so a name containing a literal one is "drawable" here while
+    // its fold key is pure sentinel -- it would collide with any CJK name, take a
+    // suffix, and PERSIST it. Same test, both sides.
     bool repertoireSuspect = false;
     for (size_t i = 0; i < asked.size() && !repertoireSuspect; ) {
         uint32_t cp = 0;
         i += coop::text::DecodeCodepoint(asked, i, &cp);
-        if (!coop::text::InRepertoire(cp)) repertoireSuspect = true;
+        if (!coop::text::InRepertoire(cp) || cp == coop::nickname_arbiter::kAbsentSentinel)
+            repertoireSuspect = true;
     }
     if (repertoireSuspect) {
         UE_LOGI("nick: host renamed us '%ls' -> '%ls' (display only -- the request "

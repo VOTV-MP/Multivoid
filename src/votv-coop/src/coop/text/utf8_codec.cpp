@@ -22,7 +22,12 @@ std::string ToUtf8(const std::wstring& w) {
         uint32_t cp = 0;
         i += DecodeCodepoint(w, i, &cp);
         if (cp >= 0xD800 && cp <= 0xDFFF) continue;  // unpaired surrogate -- not a character
-        if (cp < 0x20) continue;
+        // C0 goes, TAB stays -- the same line SanitizeUtf8 draws. Absorbing
+        // chat_feed's encoder made this the difference between the two, and
+        // the feed's behaviour is the right one: a nickname cannot contain a
+        // TAB (SanitizeNickname denies everything below 0x20), so keeping it
+        // costs the name path nothing and preserves the chat path exactly.
+        if (cp < 0x20 && cp != 0x09) continue;
         if (cp < 0x80) {
             s.push_back(static_cast<char>(cp));
         } else if (cp < 0x800) {

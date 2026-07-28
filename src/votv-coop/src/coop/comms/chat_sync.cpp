@@ -2,6 +2,8 @@
 
 #include "coop/comms/chat_sync.h"
 
+#include "coop/text/utf8_codec.h"
+
 #include "coop/comms/chat_bubbles.h"
 #include "coop/comms/chat_feed.h"
 #include "coop/net/protocol.h"
@@ -37,35 +39,6 @@ std::string SanitizeUtf8(const char* p, size_t n) {
     return out;
 }
 
-// UTF-8-encode the wide nickname (mirrors chat_feed's encoder for the nick prefix;
-// the feed stores UTF-8 whole-line).
-std::string NickUtf8(const std::wstring& w) {
-    std::string s;
-    for (size_t i = 0; i < w.size(); ++i) {
-        uint32_t cp = w[i];
-        if (cp >= 0xD800 && cp <= 0xDBFF && i + 1 < w.size() &&
-            w[i + 1] >= 0xDC00 && w[i + 1] <= 0xDFFF) {
-            cp = 0x10000 + ((cp - 0xD800) << 10) + (w[i + 1] - 0xDC00);
-            ++i;
-        }
-        if (cp < 0x20) continue;
-        if (cp < 0x80) s.push_back(static_cast<char>(cp));
-        else if (cp < 0x800) {
-            s.push_back(static_cast<char>(0xC0 | (cp >> 6)));
-            s.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-        } else if (cp < 0x10000) {
-            s.push_back(static_cast<char>(0xE0 | (cp >> 12)));
-            s.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
-            s.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-        } else {
-            s.push_back(static_cast<char>(0xF0 | (cp >> 18)));
-            s.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
-            s.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
-            s.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-        }
-    }
-    return s;
-}
 
 // Trim leading/trailing whitespace + cap to the payload text size WITHOUT splitting
 // a UTF-8 multibyte sequence (a mid-char cut would ship a malformed tail byte).
@@ -125,7 +98,7 @@ void QueueSend(const std::string& utf8Text) {
         uint8_t localSlot = coop::players::Registry::Get().LocalPeerId();
         if (s->role() == coop::net::Role::Host || localSlot == coop::players::kPeerIdUnknown)
             localSlot = 0;
-        const std::string nick = NickUtf8(coop::player_handshake::LocalNickname());
+        const std::string nick = coop::text::ToUtf8(coop::player_handshake::LocalNickname());
         const std::string msg = SanitizeUtf8(text.data(), text.size());
         const std::string line = nick + ": " + msg;
         coop::chat_feed::PushChat(line, static_cast<uint8_t>(nick.size() > 255 ? 255 : nick.size()),
@@ -142,7 +115,7 @@ void OnReliable(const coop::net::ChatMessagePayload& payload, uint8_t senderPeer
     uint8_t n = payload.len;
     if (n == 0) return;
     if (n > sizeof(payload.text)) n = sizeof(payload.text);
-    const std::string nick = NickUtf8(coop::player_handshake::NicknameForSlot(senderPeerSlot));
+    const std::string nick = coop::text::ToUtf8(coop::player_handshake::NicknameForSlot(senderPeerSlot));
     const std::string msg = SanitizeUtf8(payload.text, n);
     const std::string line = nick + ": " + msg;
     coop::chat_feed::PushChat(line, static_cast<uint8_t>(nick.size() > 255 ? 255 : nick.size()),

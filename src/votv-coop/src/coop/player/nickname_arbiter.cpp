@@ -94,7 +94,6 @@ std::wstring FoldKey(const std::wstring& name) {
     // one level down -- a name containing a LITERAL U+FFFD renders exactly like
     // an out-of-repertoire one, so the two must fold to the same key. Here the
     // key is not a stand-in for the pixels; it IS the pixels.
-    constexpr wchar_t kAbsent = 0xFFFD;
     std::wstring key;
     key.reserve(name.size());
     for (size_t i = 0; i < name.size(); ) {
@@ -102,10 +101,15 @@ std::wstring FoldKey(const std::wstring& name) {
         const size_t units = coop::text::DecodeCodepoint(name, i, &cp);
         const wchar_t* at = name.data() + i;
         i += units;
-        if (!coop::text::InRepertoire(cp)) { key.push_back(kAbsent); continue; }
+        if (!coop::text::InRepertoire(cp)) { key.push_back(kAbsentSentinel); continue; }
         const uint32_t folded = FoldCase(cp);
-        if (folded == cp) key.append(at, units);
-        else              key.push_back(static_cast<wchar_t>(folded));  // cased => BMP
+        // The `<= 0xFFFF` half is a guard, not a doubt: every FoldCase branch that
+        // can change a codepoint is gated on c <= 0xA69B, so an astral input always
+        // falls through unchanged. It exists so that ADDING a cased astral script
+        // later (Deseret folds U+10400 -> U+10428) cannot silently halve the key
+        // element with no compiler and no test saying anything.
+        if (folded != cp && folded <= 0xFFFF) key.push_back(static_cast<wchar_t>(folded));
+        else                                  key.append(at, units);
     }
     return key;
 }

@@ -29,8 +29,17 @@ namespace {
 // _create_locale + the _l formatter keep this to OUR call. setlocale() would be
 // the two-line version and is wrong here: we are injected into someone else's
 // process, and LC_CTYPE is shared CRT state the game also reads.
+//
+// LC_CTYPE, **NOT** LC_ALL -- one token, and the audits caught it independently.
+// ".UTF-8" leaves the language/country to the OS user default, and LC_ALL drags
+// LC_NUMERIC along with it: on a ru-RU machine every `%f` in the log turned into
+// `1,50`. Measured side by side -- plain `1.50`, LC_ALL `1,50`, LC_CTYPE `1.50`,
+// and LC_CTYPE converts `%ls` exactly as well (`n=9` for a Cyrillic+CJK+emoji
+// string, against `n=-1` plain). 301 log call sites carry a float and mp.py
+// parses numbers out of them, so LC_ALL would have made every peer's log
+// machine-dependent to fix a character-conversion bug.
 _locale_t Utf8Locale() {
-    static _locale_t loc = ::_create_locale(LC_ALL, ".UTF-8");
+    static _locale_t loc = ::_create_locale(LC_CTYPE, ".UTF-8");
     return loc;
 }
 
@@ -149,27 +158,54 @@ void Write(Level level, const char* fmt, ...) {
     // Format the message body ONCE into a local buffer so we can write it to the file AND
     // hand it to the sink (the console) without re-running printf. Truncates at 1 KB.
     char msg[1024];
+    // Not `= {}`: that memsets a kilobyte on every log line. One byte is all the
+    // failure paths below need, and without it `msg[0]` and the strlen scan read
+    // uninitialized stack whenever the formatter returns without writing.
+    msg[0] = '\0';
     va_list args;
     va_start(args, fmt);
     int wrote = -1;
-    if (_locale_t loc = Utf8Locale())
-        wrote = ::_vsnprintf_s_l(msg, sizeof(msg), _TRUNCATE, fmt, loc, args);
-    else
+    if (_locale_t loc = Utf8Locale()) {
+        // The NON-SECURE _l variant, deliberately. `_vsnprintf_s_l` routes a
+        // malformed conversion specifier to the CRT invalid-parameter handler,
+        // which raises __fastfail -- measured: a `%q` typo terminated the probe
+        // process outright, and __fastfail bypasses SEH, so RenderFrameGuarded's
+        // __try and every per-callback wrapper in the mod are useless against it.
+        // A logging typo must never be able to kill the game. The non-secure
+        // variant printed `bad q here` and carried on, which is what
+        // std::vsnprintf did before this change. It does not NUL-terminate on
+        // truncation, so we reserve the last byte and terminate ourselves.
+#pragma warning(suppress : 4996)  // "_vsnprintf_s_l is safer" -- see above: it is
+        wrote = ::_vsnprintf_l(msg, sizeof(msg) - 1, fmt, loc, args);  // not, it FASTFAILS
+    } else {
         wrote = std::vsnprintf(msg, sizeof(msg), fmt, args);
+    }
+    msg[sizeof(msg) - 1] = '\0';
     va_end(args);
-    // A LINE MUST NEVER DISAPPEAR BECAUSE OF ITS ARGUMENTS. Any remaining
-    // conversion failure (an unpaired surrogate is the only one left) empties the
-    // buffer, and an empty message is indistinguishable from a bug that never
-    // logged. Fall back to the format string: it names the site, which is the
-    // half worth keeping.
+    // A LINE MUST NEVER DISAPPEAR BECAUSE OF ITS ARGUMENTS. A conversion failure
+    // can leave the buffer empty, and an empty message is indistinguishable from
+    // a bug that never logged. Fall back to the format string: it names the site,
+    // which is the half worth keeping.
     if (wrote < 0 && msg[0] == '\0') {
         std::snprintf(msg, sizeof(msg), "%s [args unformattable]", fmt);
     } else if (wrote < 0) {
-        // _TRUNCATE cut mid-sequence: back off to a UTF-8 character boundary so
-        // the log file stays decodable by every reader downstream.
+        // Truncated (or stopped mid-string). Drop a trailing UTF-8 sequence ONLY
+        // if it is INCOMPLETE -- the obvious "walk back past continuations, then
+        // drop the lead" loses a whole valid character every time, and truncation
+        // is the common case for exactly the long name/roster lines this arc
+        // exists to serve.
         size_t n = std::strlen(msg);
-        while (n > 0 && (static_cast<unsigned char>(msg[n - 1]) & 0xC0) == 0x80) --n;
-        if (n > 0 && (static_cast<unsigned char>(msg[n - 1]) & 0x80) != 0) --n;
+        size_t lead = n;
+        while (lead > 0 && (static_cast<unsigned char>(msg[lead - 1]) & 0xC0) == 0x80) --lead;
+        if (lead > 0) {
+            const unsigned char c = static_cast<unsigned char>(msg[lead - 1]);
+            const size_t need = (c < 0x80)          ? 1
+                              : ((c & 0xE0) == 0xC0) ? 2
+                              : ((c & 0xF0) == 0xE0) ? 3
+                              : ((c & 0xF8) == 0xF0) ? 4
+                                                     : 1;   // stray continuation
+            if (n - (lead - 1) < need) n = lead - 1;
+        }
         msg[n] = '\0';
     }
 

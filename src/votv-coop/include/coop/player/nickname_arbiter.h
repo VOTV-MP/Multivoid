@@ -54,6 +54,14 @@
 
 namespace coop::nickname_arbiter {
 
+// What every un-drawable codepoint folds to. PUBLIC because a second site has to
+// agree with it: the persist split in AdoptCanonicalNickname asks "did my request
+// contain anything that folds to the sentinel?", and U+FFFD is IN the repertoire
+// (it must be baked -- it is the fallback glyph) yet folds to itself, so a
+// repertoire test alone would answer NO for a name whose key is pure sentinel.
+// It is U+FFFD precisely because that is what those codepoints DRAW as.
+inline constexpr wchar_t kAbsentSentinel = 0xFFFD;
+
 // The collision key. Two display names collide iff their keys are equal --
 // which now means "iff they could look the same", not merely "iff they are the
 // same string".

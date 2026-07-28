@@ -56,13 +56,25 @@ DEFAULT_IGNORABLE = [
     (0xE0000, 0xE0FFF),
 ]
 
-# The seven faces fonts.rc embeds, in the order font_resource_ids.h declares them.
-FACES = [
-    "Roboto-Regular.ttf", "Roboto-Bold.ttf",
-    "JetBrainsMono-Regular.ttf", "JetBrainsMono-Bold.ttf",
-    "CascadiaCode-Regular.ttf", "CascadiaCode-Bold.ttf",
-    "FSEX300.ttf",
-]
+# Private Use. Subtracted for a different reason than the ignorables: a PUA
+# codepoint HAS a picture, but only in the one font that assigned it, so it means
+# nothing to anybody else and it is not a character anyone can type deliberately.
+# Twemoji ships U+E50A (its own logo glyph), which arrived in the repertoire via
+# the donor's cmap -- silently making a vendor logo a legal, non-sentinelled,
+# uniqueness-bearing character in a player's name. Caught by audit, not by design.
+PRIVATE_USE = [(0xE000, 0xF8FF), (0xF0000, 0xFFFFD), (0x100000, 0x10FFFD)]
+
+# The seven faces fonts.rc embeds -- but the coverage question is asked PER
+# WEIGHT, because that is what an atlas actually holds. ui/fonts.cpp merges, for
+# each baked face, the four families AT ONE WEIGHT (chosen + 3 backstops); a
+# codepoint present only in the Bold faces is in no Regular atlas and vice versa.
+# Unioning all seven would assert the constant against a set the atlas never has.
+FACE_SETS = {
+    "regular": ["Roboto-Regular.ttf", "JetBrainsMono-Regular.ttf",
+                "CascadiaCode-Regular.ttf", "FSEX300.ttf"],
+    "bold":    ["Roboto-Bold.ttf", "JetBrainsMono-Bold.ttf",
+                "CascadiaCode-Bold.ttf", "FSEX300.ttf"],   # Fixedsys has one weight
+}
 
 # ImFontAtlas::GetGlyphRangesCyrillic (imgui_draw.cpp:3525-3536) -- the set the
 # mod has baked since b100. Kept as the BASE ask so the repertoire can only grow.
@@ -134,26 +146,32 @@ def main():
         if t not in kept:
             sys.exit(f"FAIL: the subset dropped {t} -- the emoji would bake as outlines")
 
-    # --- 2. the embedded faces' union --------------------------------------
-    union = set()
-    for fn in FACES:
-        p = os.path.join(ASSETS, fn)
-        if not os.path.isfile(p):
-            sys.exit(f"FAIL: missing embedded face {p}")
-        union |= set(TTFont(p, lazy=True).getBestCmap().keys())
-    print(f"faces  : {len(FACES)} embedded, union {len(union):,} codepoints")
-
+    # --- 2. the embedded faces, PER WEIGHT ----------------------------------
     base_ask = set()
     for a, b in BASE_RANGES:
         base_ask |= set(range(a, b + 1))
+
+    union = set()
+    for weight, faces in FACE_SETS.items():
+        w_union = set()
+        for fn in faces:
+            fp = os.path.join(ASSETS, fn)
+            if not os.path.isfile(fp):
+                sys.exit(f"FAIL: missing embedded face {fp}")
+            w_union |= set(TTFont(fp, lazy=True).getBestCmap().keys())
+        gap = base_ask - w_union
+        print(f"faces  : {weight:<8} {len(faces)} faces, union {len(w_union):,} cp, "
+              f"base gap {sorted(hex(c) for c in gap)}")
+        if gap != EXPECTED_BASE_GAP:
+            sys.exit(f"FAIL: the {weight} base coverage gap moved -- expected "
+                     f"{sorted(hex(c) for c in EXPECTED_BASE_GAP)}, got "
+                     f"{sorted(hex(c) for c in gap)}. Re-derive before shipping: this "
+                     f"set decides which names render, and therefore which names fold. "
+                     f"Both weights must satisfy it -- an atlas only ever merges one.")
+        union = w_union if not union else (union & w_union)
     gap = base_ask - union
-    print(f"base   : ask {len(base_ask)}, covered {len(base_ask - gap)}, "
+    print(f"base   : ask {len(base_ask)}, covered by BOTH weights {len(base_ask - gap)}, "
           f"gap {sorted(hex(c) for c in gap)}")
-    if gap != EXPECTED_BASE_GAP:
-        sys.exit(f"FAIL: base coverage gap moved -- expected "
-                 f"{sorted(hex(c) for c in EXPECTED_BASE_GAP)}, got "
-                 f"{sorted(hex(c) for c in gap)}. Re-derive before shipping: this "
-                 f"set decides which names render, and therefore which names fold.")
 
     # --- 3. the repertoire = what a peer can actually SEE --------------------
     #
@@ -170,12 +188,19 @@ def main():
     ignorable = set()
     for a, b in DEFAULT_IGNORABLE:
         ignorable |= set(range(a, b + 1))
-    rep = ((base_ask - gap) | kept_cmap) - ignorable
+    private = set()
+    for a, b in PRIVATE_USE:
+        private |= set(range(a, b + 1))
+    drawable = (base_ask - gap) | kept_cmap
+    rep = drawable - ignorable - private
     ranges = to_ranges(rep)
-    dropped = sorted(((base_ask - gap) | kept_cmap) & ignorable)
+    dropped = sorted(drawable & ignorable)
+    dropped_pua = sorted(drawable & private)
     print(f"repert.: {len(rep):,} codepoints in {len(ranges)} ranges "
           f"(max U+{max(rep):04X}); dropped {len(dropped)} ignorable "
-          f"({', '.join('U+%04X' % c for c in dropped[:4])}...)")
+          f"({', '.join('U+%04X' % c for c in dropped[:4])}...) + "
+          f"{len(dropped_pua)} private-use "
+          f"({', '.join('U+%04X' % c for c in dropped_pua)})")
 
     head = [
         "// coop/text/{name} -- GENERATED by tools/text/build_repertoire.py.",
@@ -192,7 +217,7 @@ def main():
         f"// Base ask = ImGui's Cyrillic ranges minus "
         f"{', '.join('U+%04X' % c for c in sorted(gap))} (no embedded face has it).",
         f"// Donor = {SUBSET_NAME}, {len(kept_cmap)} codepoints.",
-        f"// Default_Ignorable subtracted: {len(dropped)} codepoints.",
+        f"// Default_Ignorable subtracted: {len(dropped)}; private-use: {len(dropped_pua)}.",
         "",
     ] + [f"    {{ 0x{a:05X}, 0x{b:05X} }}," for a, b in ranges]
 

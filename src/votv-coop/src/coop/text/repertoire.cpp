@@ -77,6 +77,11 @@ bool RunRepertoireSelftest() {
        "and nothing else in the range list asks for it");
     ok(!InRepertoire(0xFE0F) && !InRepertoire(0xE007F),
        "ignorables are OUT of the bake (they cost index tables and draw nothing)");
+    // Private use arrived through the donor's cmap: Twemoji assigns U+E50A to its
+    // own logo. A PUA codepoint means whatever ONE font says it means, so it can
+    // never be a shared, uniqueness-bearing character in somebody's name.
+    ok(!InRepertoire(0xE50A) && !InRepertoire(0xF8FF),
+       "private-use is OUT (a vendor logo is not a character)");
 
     // The denylist row. U+034F is the measured hole: advance 0 in Fixedsys AND
     // Roboto, accepted mid-name, distinct fold key, zero pixels.

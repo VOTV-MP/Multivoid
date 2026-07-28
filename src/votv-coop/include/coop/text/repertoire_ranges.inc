@@ -6,10 +6,10 @@
 // point: coop::text::InRepertoire folds against it and ui::fonts::Load
 // bakes it, so what a name folds by is exactly what a name renders as.
 //
-// 2047 codepoints, 157 ranges, max U+1FAF6.
+// 2046 codepoints, 156 ranges, max U+1FAF6.
 // Base ask = ImGui's Cyrillic ranges minus U+A69E (no embedded face has it).
 // Donor = TwemojiMozilla-Subset.ttf, 1418 codepoints.
-// Default_Ignorable subtracted: 13 codepoints.
+// Default_Ignorable subtracted: 13; private-use: 1.
 
     { 0x00020, 0x000AC },
     { 0x000AE, 0x000FF },
@@ -103,7 +103,6 @@
     { 0x03299, 0x03299 },
     { 0x0A640, 0x0A69D },
     { 0x0A69F, 0x0A69F },
-    { 0x0E50A, 0x0E50A },
     { 0x0FFFD, 0x0FFFD },
     { 0x1F004, 0x1F004 },
     { 0x1F0CF, 0x1F0CF },
