@@ -1109,6 +1109,13 @@ ImGui 1.91.5 versus 0.25 MB on 1.92. ~~The open product boundary is unchanged: w
 
 ## 9d. ARC D2 — DECISION OF RECORD (15-round `/qf`, 2026-07-28)
 
+> **SUPERSEDED IN PART — BUILT 2026-07-28, commit `5947d391`. Read §9e for the as-built.** Three
+> claims below are measured FALSE and are corrected there: the donor's size (688,744 B, not 905,404
+> — and it carries MORE codepoints), the assertion that cross-merging supplies U+FFFD (all seven
+> faces always had it; nothing ever ASKED the atlas for it), and the sentinel codepoint (it must be
+> U+FFFD itself, or a literal U+FFFD re-opens the defect one level down). The decision and its
+> reasoning stand; the mechanism details do not.
+
 **STATUS: DESIGN, converged. Not built, not drilled, not hands-on.** The user delegated the open
 product boundary verbatim — *"Arc d2 can't be answered by me, run qf session for the best decision"* —
 and mid-pass relaxed the byte constraint — *"if it's unavoidable to not save mbs then it's ok."*
@@ -1285,3 +1292,114 @@ frame, per surface (nameplate, board, chat).**
 Plus: **time the live F1 rebuild across a windowed drag-resize, before and after.** It is the largest
 accepted cost and has only ever been measured offline — an offline `Build()` is not the live path,
 which also uploads a texture.
+
+---
+
+## 9e. ARC D2 — AS-BUILT (2026-07-28, commit `5947d391`)
+
+**STATUS: BUILT, drilled on both RHIs, NOT hands-on.** DLL `241fddcf95ad6f09` x4, proto **132
+unchanged** (nothing on the wire moved — the persist split is a local predicate). Every claim below
+is from a real log line or a captured frame of this build; where the design was WRONG, the
+correction is named rather than quietly folded in.
+
+### 9e.1 What shipped, against what §9d said
+
+| §9d said | shipped | delta |
+|---|---|---|
+| donor 905,404 B, +5.5% DLL | **688,744 B**, +4.2% (16.5 -> 17.2 MB) | §9d priced the range-filtered subset WITH layout tables. The build keeps the **whole cmap** (1,418 cp — the range list silently dropped U+2B50, U+231A, U+25B6, the same unanswerable "which are common" shape the pass killed for hanzi) and drops GSUB/GPOS instead. No shaping happens here, so the ligatures were dead weight: **more coverage for 217 KB less.** |
+| the constant = Latin-1 + Cyrillic + emoji | + **U+FFFD**, MINUS **Default_Ignorable** | Both corrections are measured, below. |
+| cross-merge "gives every family U+FFFD" | **FALSE** | See 9e.2. |
+| eager bake ~28.4 ms (offline, x1.0) | **58-80 ms live** | Logged by `fonts.cpp` on every rebuild now (`fonts: atlas baked in %.1f ms`). The offline probe never uploaded a texture; the live path is ~2x it. |
+
+Everything else landed as designed: `FoldKey` in codepoints with a sentinel, `Candidate` on
+`CapCodepoints`, the Default_Ignorable denylist row, the persist split, `IMGUI_USE_WCHAR32` as a
+`PUBLIC` define, the phenomenon-asserting boot selftest, and `nick_gate` re-keyed onto the subject.
+
+### 9e.2 Three corrections the instruments forced
+
+**(a) The fallback glyph was never baked, and the cross-merge does not fix that.** §9d item 6 claimed
+cross-merging "gives every family U+FFFD, retiring the 6-of-7-fall-to-'?' problem". Measured: **all
+seven faces already carry U+FFFD in their cmap.** The reason it fell to `'?'` is that no glyph range
+ever ASKED for it — `GetGlyphRangesCyrillic()` stops at U+A69F — and `ImFont::BuildLookupTable`
+(`imgui_draw.cpp:3700`) picks the fallback from `{ U+FFFD, '?', ' ' }` among **baked** glyphs. The
+fix is one range, not a merge. The boot font selftest caught it on its first run, against a design
+that asserted the opposite mechanism.
+
+**(b) The sentinel therefore had to become U+FFFD.** With U+FFFD baked, a name containing a literal
+one renders exactly like an out-of-repertoire codepoint. A U+FFFF sentinel would have left those two
+with different keys and identical pixels — the whole defect, one level down. `FoldKey`'s sentinel is
+now the character the pixels actually show, and the selftest asserts
+`FoldKey(L"\xFFFD") == FoldKey(L"\x4E2D")`.
+
+**(c) Default_Ignorable is SUBTRACTED from the repertoire, not only denied in names.** Twemoji's cmap
+carries ten TAG characters at U+E0062-U+E007F (the subdivision-flag letters, uncomposable here).
+Baking them moves the largest baked codepoint from U+1FAF6 to U+E007F, and
+`ImFont::GrowIndex(max_codepoint + 1)` (`imgui_draw.cpp:3669`) sizes `IndexLookup` + `IndexAdvanceX`
+to it at 8 bytes an entry: **1.04 MB -> 7.34 MB per face**, i.e. 3.1 -> 22.0 MB on the default config
+and 5.2 -> 36.7 MB on the worst. Nineteen megabytes for ten codepoints that can only ever draw as the
+fallback box. Accepted consequence: a Default_Ignorable character in CHAT (a pasted VS16, say) draws
+as the replacement box rather than nothing — arguably the honest rendering, since an invisible
+character becoming visible is security-positive. Baking Twemoji's own U+FE0F is not the alternative
+it looks like: its advance is a **full em** (512/512), so it would draw a full-width hole instead.
+
+### 9e.3 The defect the drill exposed, older than this arc
+
+`ue_wrap::log::Write` formatted with `std::vsnprintf`. `%ls` converts wide->narrow through the **C
+locale**, which can encode nothing above U+007F; the call returns -1 and MSVC leaves the buffer
+**empty**, so the line degenerated to a bare `[21:04:18] [INFO ] `. Measured with a standalone probe:
+`%ls` of "Пел" -> `n=-1`; with `_create_locale(LC_ALL, ".UTF-8")` + `_snprintf_l` -> `n=17` and
+correct UTF-8. **Every log line naming a Cyrillic, CJK or emoji peer had been vanishing since the
+first Cyrillic nickname** — including `nickname_arbiter: slot N asked ... -> assigned ...`, the
+decision line for the entire naming arc, and `roster: client installed cross-peer identity`, which
+the smoke's `xpeer_identity` counter greps. The first D2 gate run therefore looked like a **relay
+failure**; it was the evidence that was missing, not the behaviour.
+
+Fixed at the one place text becomes bytes for the log: `_vsnprintf_s_l` with a private UTF-8
+`_locale_t`. Deliberately **not** `setlocale` — we are injected into someone else's process and
+LC_CTYPE is shared CRT state the game also reads. Plus a floor: a line may never disappear because of
+its arguments, so a residual conversion failure now logs the format string itself.
+
+### 9e.4 The gate — every input, with its evidence
+
+Run as three 4-peer LAN drills with per-peer names (`mp.py smoke4 --nicks`, a flag added for this;
+`--nick-all` cannot express different names per peer). Boards captured to `research/nickarb_shots/`.
+
+| gate input | result | evidence |
+|---|---|---|
+| a name with an astral emoji | **PASS** | the emoji name draws its colour glyph in the player list, the join feed and the nameplate. `font selftest: PASS (6/6) -- 156 colour texels in one emoji`. |
+| **two** peers, distinct all-CJK names | **PASS** | `slot 1 asked 'ZHANG-WEI' -> assigned 'ZHANG-WEI'`; `slot 2 asked 'LI-MING' -> assigned 'LI-MING2'`. Two names with no codepoint in common collided. Photographed: the rows read as two boxes, and two boxes plus `2`. |
+| **one** peer, all-CJK name | **PASS** | Same run, slot 1: sentinel, **no digit**. |
+| a name mixing in- and out-of-repertoire | **PASS** | `Anna` + one hanzi -> no suffix; renders `Anna` + one box. The fold sentinels only the hanzi. |
+| a CGJ (U+034F) inside a name, beside its clean twin | **PASS** | Slot 1 asked the CGJ form, the arbiter logged `asked 'Anna'` (codepoints `0x41 0x6e 0x6e 0x61` — stripped); slot 2 then asked `Anna` and got **`Anna2`**. The collision IS the proof. |
+| a 20-codepoint name whose surrogate pair straddles the cap | **PASS** | Two peers asking twenty emoji: the second was assigned **nineteen emoji + `2`** — a whole codepoint displaced, the pair intact, and it round-tripped through UTF-8 in the log. Also asserted deterministically by the arbiter selftest. |
+| **DX12** | **PASS** | `imgui_overlay: DX12 bring-up OK` on host + client, `font selftest: PASS (6/6)` on that build, and a captured DX12 frame showing twenty colour emoji plus a Cyrillic name. |
+| live rebuild timing | **INSTRUMENTED, not drag-tested** | `fonts: atlas baked in 58.1/59.3/70.2/80.3 ms (1024x2048 RGBA32)`. The interactive drag-resize storm is still only reachable by hand — a hands-on item. |
+
+The persist split, verified separately: `nick: host renamed us ... (display only ... NOT persisted)`
+and the peer's `multivoid.ini` `net.nick` untouched.
+
+Selftests, all four peers, every run: `nickname-arbiter 24/24`, `utf8-codec 27/27`,
+`repertoire 10/10`, `font 6/6`, `link-classify 15/15`.
+
+### 9e.4a Instrument note — the smoke's relay row is duration-sensitive
+
+Across eight `smoke4` runs on these bytes: 5 PASS, 3 FAIL, and **every** failure was the same row —
+the last-joining client's puppet not yet spawned on the two earlier clients — at durations <= 55 s.
+The 60 s run passes. It is pose-arrival latency under a 4-peer load on this machine, not a
+regression: the same build passed three consecutive 45 s runs, and the failures reproduce with plain
+ASCII nicknames. Prefer `--duration 60` for a clean verdict.
+
+### 9e.5 Residuals, named
+
+- **`player_handshake.cpp` is 820 LOC**, over the 800 soft cap (788 before this change). Flagged with
+  an extraction proposal per the modular rule: the nick half — `g_localNick` / `g_requestedNick`,
+  `SanitizeNickname`, `SetLocalNickname`, `AdoptCanonicalNickname` — is a distinct subsystem and
+  belongs in `player_handshake_nick.cpp`, matching the existing `_roster` / `_version` / `_prefs`
+  family.
+- **`nick_gate.ps1` is still not wired into CI.** Adding it edits `build-core.yml`, which owes the
+  fingerprint re-commit ritual (`[[lesson-build-core-edit-requires-fingerprint-recommit]]`) — a
+  scheduling decision, deliberately not taken mid-session.
+- A twenty-emoji name **overflows the player-list Player column** and is clipped by the Mic column.
+  Pre-existing fixed-width layout; visible now because names can finally be that wide.
+- Everything §9d.5 already named still stands: CJK / Hangul / Greek / Latin-Ext render as the
+  sentinel; homoglyphs remain out of scope; the 2.94-4.90 MB index-table cost is paid.

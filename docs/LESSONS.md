@@ -626,6 +626,22 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   a CLAIM; derive it from the dedup key and assert the probe reaches it (`faces == expected`).
   `memory/lesson_derive_a_probes_worst_case_from_the_dedup_key.md`
 
+- **A log line can VANISH because of its arguments — and then every log-driven gate lies "broken".**
+  Measured 2026-07-28: `%ls` in `std::vsnprintf` converts wide→narrow through the C locale, which
+  encodes nothing above U+007F; the call returns −1 and MSVC leaves the buffer **empty**, so
+  `ue_wrap::log::Write` emitted a bare `[21:04:18] [INFO ] ` with no message. Every line naming a
+  Cyrillic, CJK or emoji peer had been vanishing whole since the first Cyrillic nickname — including
+  `nickname_arbiter: slot N asked … -> assigned …`, the decision line of the entire naming arc. The
+  first arc-D2 gate run therefore reported a **RELAY GAP** (`mp.py` greps
+  `roster: client installed cross-peer identity slot=(\d+)`, which had been deleted by the formatter),
+  and two runs were spent de-braiding a product failure that did not exist. Probe: `%ls` of `"Пел"` →
+  `n=-1`; via `_create_locale(LC_ALL, ".UTF-8")` + `_snprintf_l` → `n=17` and correct UTF-8. Fixed with
+  `_vsnprintf_s_l` + a private locale — **never `setlocale`**, since we are injected and LC_CTYPE is
+  shared CRT state the game reads — plus a floor that logs the format string when args fail. *Look
+  FIRST:* when a log-driven verdict says a subsystem did nothing, prove the LINE can be written before
+  believing it; a negative log grep is evidence only if a positive was possible.
+  `memory/lesson_a_log_line_can_vanish_because_of_its_arguments.md`
+
 ### 1b. Standing working agreements (previously indexed NOWHERE)
 
 Measured 2026-07-27 by a full pairing sweep of `memory/` against this file: **all 194 `lesson_*`
@@ -1644,11 +1660,40 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 - **NEVER strip geometry from a shipped model on geometric heuristics** (need visual proof). `memory/lesson_never_strip_shipped_geometry_without_visual_proof.md`
 - **VOTV's own fonts:** `FSEX300` = Fixedsys Excelsior (font_terminal, pixel); `ShareTechMono` = font_ui
   (subtitles, Latin-only subset). `memory/reference_votv_fonts.md`
-- **"Unsupported text just shows boxes" is FALSE twice.** ImGui returns ONE `FallbackGlyph` for EVERY
+- **"Unsupported text just shows boxes" is FALSE.** ImGui returns ONE `FallbackGlyph` for EVERY
   absent codepoint (`imgui_draw.cpp:3699-3712`, chosen from `{U+FFFD,'?',' '}`), so two DIFFERENT
-  unrenderable strings render IDENTICALLY; and a cmap sweep of our seven embedded TTFs found U+FFFD in
-  `FSEX300` ONLY, so the other six fall through to `'?'` — the ASCII-squash look. *Look FIRST* before
+  unrenderable strings render IDENTICALLY. **CORRECTED 2026-07-28:** this row also claimed a cmap
+  sweep found U+FFFD in `FSEX300` ONLY — that is FALSE, **all seven faces carry it** in their (3,1)
+  subtable (the original sweep must have read Roboto's MacRoman table, where it is genuinely absent).
+  The fallback really was `'?'`, for a different reason: no glyph RANGE ever asked the atlas for
+  U+FFFD, and the builder bakes only what a range names. See the next row. *Look FIRST* before
   designing any graceful-degradation behaviour: `memory/lesson_imgui_missing_glyphs_collapse_to_one_fallback.md`
+
+- **Presence in a FONT is not presence in an ATLAS — a fallback glyph must be ASKED FOR.** Measured
+  2026-07-28: all seven embedded faces have U+FFFD, `ImFont::BuildLookupTable` (`imgui_draw.cpp:3700`)
+  picks the fallback from `{U+FFFD,'?',' '}` among **baked** glyphs, and
+  `GetGlyphRangesCyrillic()` (`:3525`) stops at U+A69F — so nothing ever requested it and the fallback
+  fell to `'?'`. The arc-D2 design had asserted that cross-merging the families would supply it;
+  merging cannot add a codepoint no range names. **The fix is one range entry.** Corollary that bit
+  immediately: once U+FFFD is baked it is a normal character a name may contain, so the nickname fold's
+  sentinel had to BECOME U+FFFD — a U+FFFF sentinel would leave `"中"` and `"�"` with different keys
+  and identical pixels, the same defect one level down. *Look FIRST:* for any "the font supports X"
+  claim about a rendered surface, check the RANGE passed to `AddFont*`, not the cmap — only their
+  intersection renders; and assert a design's claimed SIDE EFFECTS directly, because a side effect
+  nobody asked the code for is the claim no reviewer checks.
+  `memory/lesson_a_fallback_glyph_must_be_asked_for.md`
+
+- **In an ImGui atlas the bill is the MAXIMUM codepoint, not the COUNT.**
+  `ImFont::GrowIndex(max_codepoint + 1)` (`imgui_draw.cpp:3669`) allocates `IndexAdvanceX` +
+  `IndexLookup` as dense arrays indexed by codepoint — 8 bytes an entry under `IMGUI_USE_WCHAR32`,
+  **per deduped face**. Twemoji's cmap ends at U+E007F with ten TAG characters (subdivision-flag
+  spelling, uncomposable without shaping); baking them moved the max from U+1FAF6 and the tables from
+  **1.04 MB to 7.34 MB per face** — 22.0 MB instead of 3.1 MB on the default config, 36.7 vs 5.2 on the
+  worst. Nineteen megabytes for ten codepoints that can only draw as the fallback box. The whole
+  Unicode `Default_Ignorable_Code_Point` set is now subtracted from the baked repertoire. *Look FIRST:*
+  print `max(cmap)` as well as `len(cmap)` before merging any donor, and for any
+  dense-array-indexed-by-key structure ask whether the cost follows the key's RANGE or its COUNT.
+  `memory/lesson_the_highest_baked_codepoint_prices_the_whole_atlas.md`
 - **Astral text (emoji, CJK ext) is gated by a vendored DEFINE, not by fonts.** `imconfig.h:65` keeps
   `IMGUI_USE_WCHAR32` commented → `ImWchar` 16-bit, `IM_UNICODE_CODEPOINT_MAX 0xFFFF` (`imgui.h:2515`),
   a glyph range cannot express U+1F300, and `imgui.cpp:1512` DROPS the reassembled astral codepoint on
