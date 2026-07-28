@@ -31,6 +31,14 @@ namespace coop::text {
 // display policy also fits here, whatever script it is written in.
 inline constexpr size_t kNickMaxBytes = 20 * 4;
 
+// The width a fixed `char[]` needs to hold ANY name the display policy admits,
+// plus the NUL. Every plain-data snapshot row and every persisted record that
+// carries a nickname declares its buffer with THIS, never a literal -- a literal
+// is a second owner of the cap, and the two drift silently (measured: five
+// buffers sat at 24 bytes while the policy said 20 codepoints, i.e. ASCII-only
+// arithmetic that nothing re-derived when D1 widened the alphabet).
+inline constexpr size_t kNickBufBytes = kNickMaxBytes + 1;
+
 // UTF-16 (Windows wchar_t) -> UTF-8. Surrogate-pair aware, so astral codepoints
 // survive; C0 control codepoints are dropped. This is the promoted body of
 // chat_sync::NickUtf8, in production since 2026-07-04.
@@ -64,6 +72,32 @@ std::wstring CapCodepoints(const std::wstring& w, size_t maxChars);
 
 // Count codepoints, pairing surrogates. What "20 characters" means to a human.
 size_t CountCodepoints(const std::wstring& w);
+
+// THE ONE EGRESS. Encode `w` into a fixed byte buffer, truncating on a CODEPOINT
+// boundary and always NUL-terminating. Every `char nick[]` in a snapshot row or a
+// persisted record is filled through here.
+//
+// WHY IT EXISTS -- measured 2026-07-28, and it had SHIPPED: a bare
+// WideCharToMultiByte into a buffer that is one byte too small does not truncate.
+// It returns 0 and sets ERROR_INSUFFICIENT_BUFFER, so a caller that writes
+// out[ret] = '\0' stores the EMPTY string and the name VANISHES. v132 blanked the
+// TAB row at 12 Cyrillic / 8 hanzi / 6 emoji characters, and the drills missed it
+// because every drill name was short enough to fit. Truncating a long name is a
+// display compromise; blanking it destroys the identity the arbiter just assigned
+// and (since arc B persists) writes that loss to multivoid.ini.
+//
+// The other half of the same defect was the opposite reflex -- three sites
+// open-coded `c < 128 ? c : '?'`, which does not blank but SQUASHES, so a
+// Cyrillic name rendered as '????????' on the floating nameplate. Both are the
+// same missing owner: encoding had a decoder (entry) and no encoder (egress).
+void CopyUtf8ToBuffer(char* dst, size_t dstSize, const std::wstring& w);
+
+// Array overload: the size comes from the type, so a caller cannot pass a stale
+// length. Prefer this at every call site.
+template <size_t N>
+inline void CopyUtf8ToBuffer(char (&dst)[N], const std::wstring& w) {
+    CopyUtf8ToBuffer(dst, N, w);
+}
 
 // Machine-asserted at boot beside the link-classify and nickname-arbiter
 // selftests: round-trips across scripts, the strict decoder's refusal of

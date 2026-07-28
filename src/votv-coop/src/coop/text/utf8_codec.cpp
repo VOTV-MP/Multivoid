@@ -6,6 +6,7 @@
 
 #include <windows.h>
 
+#include <cstring>
 #include <string>
 
 namespace coop::text {
@@ -119,6 +120,19 @@ size_t CountCodepoints(const std::wstring& w) {
     return chars;
 }
 
+void CopyUtf8ToBuffer(char* dst, size_t dstSize, const std::wstring& w) {
+    if (!dst || dstSize == 0) return;
+    dst[0] = '\0';
+    if (w.empty()) return;
+    // ToUtf8 drops C0 and unpaired surrogates; CapUtf8Bytes backs off to a
+    // character boundary rather than splitting a sequence. Deliberately NOT
+    // WideCharToMultiByte: its too-small-buffer contract is "return 0", which is
+    // indistinguishable from "the name is empty" at the call site.
+    const std::string s = CapUtf8Bytes(ToUtf8(w), dstSize - 1);
+    std::memcpy(dst, s.data(), s.size());
+    dst[s.size()] = '\0';
+}
+
 bool RunUtf8CodecSelftest() {
     int pass = 0, total = 0;
     auto ok = [&](bool cond, const char* what) {
@@ -188,6 +202,48 @@ bool RunUtf8CodecSelftest() {
         ok(s == "ab\tc", "denylist strips C0, keeps TAB");
         const std::string cyr = ToUtf8(L"П");
         ok(SanitizeUtf8(cyr.data(), cyr.size()) == cyr, "denylist keeps non-ASCII");
+    }
+
+    // THE EGRESS, and specifically the cliff that shipped in v132. The old code
+    // called WideCharToMultiByte with a 23-byte cap; at 12 Cyrillic characters
+    // (24 bytes) it returned 0 and the row went BLANK. These cases assert the two
+    // properties the bare API does not give us: a too-long name TRUNCATES rather
+    // than vanishing, and it truncates on a character boundary.
+    {
+        char narrowBuf[8] = {};
+        // 12 Cyrillic characters = 24 bytes, the exact v132 cliff, into a buffer
+        // far smaller still. Must be non-empty and well-formed.
+        CopyUtf8ToBuffer(narrowBuf, L"Пельменьмень");
+        std::wstring sink;
+        ok(narrowBuf[0] != '\0', "egress truncates instead of blanking (the v132 cliff)");
+        ok(std::strlen(narrowBuf) <= 7, "egress respects the buffer bound");
+        ok(FromUtf8Strict(narrowBuf, std::strlen(narrowBuf), &sink),
+           "egress output is well-formed after truncation");
+        ok(std::strlen(narrowBuf) % 2 == 0, "egress cut on a 2-byte-char boundary, not mid-sequence");
+
+        // A name that FITS must survive byte-identically -- truncation is only for
+        // the overflow case, and a 4-byte astral character must not be halved.
+        char full[coop::text::kNickBufBytes] = {};
+        CopyUtf8ToBuffer(full, L"Пельмень2");
+        ok(std::string(full) == ToUtf8(L"Пельмень2"), "egress is lossless when the name fits");
+        char tiny[5] = {};
+        CopyUtf8ToBuffer(tiny, L"\xD83D\xDE00\xD83D\xDE00");  // 2 astral chars, 8 bytes
+        ok(std::strlen(tiny) == 4, "egress keeps a whole 4-byte character or none");
+        ok(FromUtf8Strict(tiny, std::strlen(tiny), &sink), "astral truncation stays well-formed");
+
+        // A buffer too small for even one character yields empty, not garbage.
+        char nothing[2] = {};
+        CopyUtf8ToBuffer(nothing, L"П");
+        ok(nothing[0] == '\0', "egress emits empty when not one character fits");
+
+        // The declared buffer width must actually admit the declared policy: 20
+        // codepoints of the widest script. If someone lowers kNickBufBytes below
+        // the cap, this fails here rather than silently in a snapshot row.
+        ok(coop::text::kNickBufBytes > coop::text::kNickMaxBytes,
+           "kNickBufBytes leaves room for the NUL");
+        char widest[coop::text::kNickBufBytes] = {};
+        CopyUtf8ToBuffer(widest, std::wstring(20, L'中'));  // 20 hanzi = 60 bytes
+        ok(std::strlen(widest) == 60, "a full-length CJK name fits the declared buffer");
     }
 
     UE_LOGI("utf8-codec selftest: %s (%d/%d)", pass == total ? "PASS" : "FAIL", pass, total);
