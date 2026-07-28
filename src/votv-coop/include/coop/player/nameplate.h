@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include "coop/net/link_kind.h"
 #include "coop/player/players_registry.h"  // kMaxPeers
 
 namespace coop::net { class Session; }
@@ -34,7 +35,12 @@ struct Plate {
                              // renders GRAY (minecraft nametag shape; user 2026-07-04)
     bool  flash = false;     // hurt-flash red (read from RemotePlayer::IsHurtFlashing)
     int   healthPct = 100;   // 0..100 streamed-vitals health (display-only)
-    int   ping = -1;         // RTT ms (-1 = unmeasured -> no suffix; 0 = sub-ms LAN -> "<1ms")
+    int   ping = -1;         // RTT to the SESSION in ms (0 = sub-ms LAN -> "<1ms")
+    // v131: carried so the plate does not have to INFER "no number to show"
+    // from ping == -1. The host has no link to the session, and a plate has only
+    // suffix/no-suffix -- no room for the scoreboard's "n/a". Passing the kind
+    // makes that structural instead of an agreement between two files.
+    coop::net::LinkKind linkKind = coop::net::LinkKind::Unknown;
     uint8_t voiceIcon = 0;   // v66: coop::voice_chat::VoiceIcon badge right of the plate (0 = none)
     uint32_t colorRGB = 0;   // v103 (12f): packed custom nick color (coop::nick_color; 0 = white)
     float bubbleAlpha = 0.f; // 12g: overhead chat bubble fade (0 = none; rides the plate anchor)

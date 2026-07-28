@@ -54,9 +54,9 @@ void DrawNameplate(ImDrawList* dl, const coop::nameplate::Plate& p) {
     // to the session to report -- see roster_ledger::RefreshLinkFacts). The
     // number itself is formatted by the one shared renderer.
     char line[64];
-    if (p.ping >= 0) {
+    if (p.linkKind != coop::net::LinkKind::Local && p.ping >= 0) {
         char pb[16];
-        ui::link_format::FormatPing(p.ping, coop::net::LinkKind::Unknown, pb, sizeof(pb));
+        ui::link_format::FormatPing(p.ping, p.linkKind, pb, sizeof(pb));
         std::snprintf(line, sizeof(line), "%s (%s)", p.nick, pb);
     } else {
         std::snprintf(line, sizeof(line), "%s", p.nick);

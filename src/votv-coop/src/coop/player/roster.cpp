@@ -66,6 +66,10 @@ void Refresh() {
         // this one row is synthesised from the local request and carries no ID.
         // "One derivation" holds WITHIN a session.
         snap.rows[0].playerNo = kNoPlayerNo;
+        // Out of session there is no link to measure and never will be, which is
+        // the "n/a" case -- NOT the "--" one, which means a sample has not landed
+        // yet and implies it still might.
+        snap.rows[0].linkKind = coop::net::LinkKind::Local;
         NarrowNick(coop::player_handshake::LocalNickname(), snap.rows[0].nick);
         {
             std::lock_guard<std::mutex> lk(g_mutex);

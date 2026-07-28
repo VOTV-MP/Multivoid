@@ -351,16 +351,19 @@ public:
     uint64_t packetsSent() const { return net_stats::PacketsSent(); }
     uint64_t packetsRecv() const { return net_stats::PacketsRecv(); }
     // Per-slot RTT in ms (the GNS link ping to peer `slot`), or -1 if that slot has
-    // no live connection / not yet sampled. Sampled ~1 Hz on the net thread. The
-    // nameplate + scoreboard show this PER PEER (event_feed fans it to each puppet;
-    // roster reads it per row). 0 is a real value on LAN (sub-millisecond RTT).
+    // no live connection / not yet sampled. Sampled ~1 Hz on the net thread. 0 is a
+    // real value on LAN (sub-millisecond RTT).
+    //
+    // ONE CONSUMER, and keep it that way (v131): roster_ledger::RefreshLinkFacts,
+    // which publishes the value on RosterRow so every board reads the HOST's
+    // measurement. Both previous readers are gone -- the nameplate's per-tick
+    // fan-out through RemotePlayer::SetPing and roster::Refresh's per-row read --
+    // because a client owns only peerConns_[0] and so could only ever measure its
+    // link to the host, which is a different question from "how is this player
+    // connected to the session". A new caller here is a second derivation.
     int rttMsForSlot(int slot) const {
         return (slot >= 0 && slot < kMaxPeers) ? rttMsBySlot_[slot].load() : -1;
     }
-    // The session's transport topology (LanDirect listen vs P2P/ICE). Display
-    // surfaces (the tilde scoreboard's connection column) read it for the
-    // local-host "how am I hosting" label.
-    Topology topology() const { return cfg_.topology; }
     // How `peerSlot`'s LIVE connection carries that player's traffic, MEASURED
     // from the connection itself: the GNS relay flag and the remote address.
     // Never derived from cfg_.topology -- that is how the connection was

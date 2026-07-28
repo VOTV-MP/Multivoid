@@ -500,37 +500,65 @@ static bool IsPrivateAddress(const SteamNetworkingIPAddr& addr) {
 
 // The classifier proper, split out from the connection fetch so it can be
 // exercised over synthetic addresses (see RunLinkClassifySelftest).
+//
+// ORDER IS LOAD-BEARING, and the middle case is the one an audit caught: GNS
+// documents m_addrRemote as "Might be all 0's if we don't know it, or if this is
+// N/A" (steamnetworkingtypes.h) -- true on paths that are not plain direct UDP.
+// An address test alone would then read a same-LAN ICE peer as `Direct`, which
+// is a claim ("public, no relay") the connection never supported. So when the
+// address is absent we answer from GNS's OWN flags, and if those say nothing we
+// answer `Unknown` -- the whole point of this lane is that nobody prints a value
+// nobody measured, and that applies to us too.
 static LinkKind ClassifyLink(int infoFlags, const SteamNetworkingIPAddr& addr) {
     // Relay FIRST: a relayed path's remote address is the RELAY's, so an address
     // test there would describe the wrong hop.
     if (infoFlags & k_nSteamNetworkConnectionInfoFlags_Relayed) return LinkKind::Relayed;
+    // Loopback buffers are same-process by definition -- as local as it gets.
+    if (infoFlags & k_nSteamNetworkConnectionInfoFlags_LoopbackBuffers) return LinkKind::Lan;
+    if (addr.IsIPv6AllZeros()) {
+        // No address to classify. GNS's `Fast` bit means "internal/localhost, or
+        // the peer is on the same LAN" -- its own hedged best judgement, which is
+        // still a measurement where we have none. Absent that: Unknown.
+        return (infoFlags & k_nSteamNetworkConnectionInfoFlags_Fast) ? LinkKind::Lan
+                                                                     : LinkKind::Unknown;
+    }
     return IsPrivateAddress(addr) ? LinkKind::Lan : LinkKind::Direct;
 }
 
 bool RunLinkClassifySelftest() {
-    struct Case { const char* what; const char* ip; uint16 port; int flags; LinkKind want; };
+    // No port column: ClassifyLink never reads m_port, so a port field would be
+    // the one column of this table with no discriminating power.
+    struct Case { const char* what; const char* ip; int flags; LinkKind want; };
     // Known POSITIVES and known NEGATIVES. The negatives are what stop a
     // classifier that answers one value for everything from passing.
     static const Case kCases[] = {
-        {"loopback v4",        "127.0.0.1",       7777, 0, LinkKind::Lan},
-        {"rfc1918 10/8",       "10.0.0.5",        7777, 0, LinkKind::Lan},
-        {"rfc1918 172.16/12",  "172.16.4.9",      7777, 0, LinkKind::Lan},
-        {"rfc1918 192.168/16", "192.168.1.50",    7777, 0, LinkKind::Lan},
-        {"link-local",         "169.254.7.7",     7777, 0, LinkKind::Lan},
+        {"loopback v4",        "127.0.0.1", 0, LinkKind::Lan},
+        {"rfc1918 10/8",       "10.0.0.5", 0, LinkKind::Lan},
+        {"rfc1918 172.16/12",  "172.16.4.9", 0, LinkKind::Lan},
+        {"rfc1918 192.168/16", "192.168.1.50", 0, LinkKind::Lan},
+        {"link-local",         "169.254.7.7", 0, LinkKind::Lan},
         // NEGATIVES: 172.32 is OUTSIDE 172.16/12 and 11.x is outside 10/8 --
         // both are the classic off-by-a-mask mistakes, and both must read Direct.
-        {"public 8.8.8.8",     "8.8.8.8",         7777, 0, LinkKind::Direct},
-        {"public 172.32.0.1",  "172.32.0.1",      7777, 0, LinkKind::Direct},
-        {"public 11.0.0.1",    "11.0.0.1",        7777, 0, LinkKind::Direct},
+        {"public 8.8.8.8",     "8.8.8.8", 0, LinkKind::Direct},
+        {"public 172.32.0.1",  "172.32.0.1", 0, LinkKind::Direct},
+        {"public 11.0.0.1",    "11.0.0.1", 0, LinkKind::Direct},
         // A real IPv6 peer: GetIPv4() returns 0 there, which must NOT be read as
         // 0.0.0.0-and-therefore-private.
-        {"public v6",          "2606:4700::1111", 7777, 0, LinkKind::Direct},
-        {"v6 loopback",        "::1",             7777, 0, LinkKind::Lan},
+        {"public v6",          "2606:4700::1111", 0, LinkKind::Direct},
+        {"v6 loopback",        "::1", 0, LinkKind::Lan},
         // The relay flag WINS over any address, including a private one.
-        {"relayed public",     "8.8.8.8",         7777,
+        {"relayed public",     "8.8.8.8",
              k_nSteamNetworkConnectionInfoFlags_Relayed, LinkKind::Relayed},
-        {"relayed private",    "192.168.1.50",    7777,
+        {"relayed private",    "192.168.1.50",
              k_nSteamNetworkConnectionInfoFlags_Relayed, LinkKind::Relayed},
+        // NO ADDRESS -- GNS leaves m_addrRemote all-zero on paths that are not
+        // plain direct UDP. Answering `Direct` there would assert "public, no
+        // relay" from nothing; these three pin the fallback ladder.
+        {"no addr, no flags",  "::",              0, LinkKind::Unknown},
+        {"no addr, Fast",      "::",
+             k_nSteamNetworkConnectionInfoFlags_Fast, LinkKind::Lan},
+        {"loopback buffers",   "::",
+             k_nSteamNetworkConnectionInfoFlags_LoopbackBuffers, LinkKind::Lan},
     };
     int pass = 0, total = 0;
     for (const Case& c : kCases) {
@@ -542,7 +570,6 @@ bool RunLinkClassifySelftest() {
                     c.ip, c.what);
             continue;
         }
-        addr.m_port = c.port;
         const LinkKind got = ClassifyLink(c.flags, addr);
         if (got == c.want) { ++pass; continue; }
         UE_LOGW("link-classify selftest: '%s' (%s flags=0x%x) -> %d, expected %d",

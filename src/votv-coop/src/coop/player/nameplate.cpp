@@ -165,6 +165,7 @@ void Update() {
         // real one. Same defect as the scoreboard's, one surface over. The host
         // measures every link and publishes it, so every plate now agrees.
         pl.ping = coop::roster_ledger::Get(slot).pingMs;
+        pl.linkKind = coop::roster_ledger::Get(slot).linkKind;
         pl.voiceIcon = static_cast<uint8_t>(coop::voice_chat::IconForSlot(slot));  // v66 badge
         pl.colorRGB = coop::nick_color::PackedForSlot(slot);  // v103 (12f): custom nick color
         pl.bubbleAlpha = coop::chat_bubbles::BubbleForSlot(slot, pl.bubble);  // 12g overhead bubble

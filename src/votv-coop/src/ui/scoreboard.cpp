@@ -150,7 +150,7 @@ void Render() {
                 const coop::roster::Row& r = s.rows[i];
                 const char* nick = r.nick[0] ? r.nick : (r.isLocal ? "Player" : "Remote player");
                 // v103 (12f): a custom nick color (synced pref) overrides the role
-                // color -- role stays readable via the Link column's "LAN/P2P HOST".
+                // color -- role stays readable via the HOST tag beside the name.
                 // The local row resolves through the local pref directly (our own
                 // slot never receives its color over the wire).
                 const uint32_t custom = r.isLocal ? coop::nick_color::LocalPacked()
