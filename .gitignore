@@ -226,3 +226,15 @@ id_ed25519
 
 # user-approved site screenshots staging (user 2026-07-26): never commit
 ignore_folder/
+
+# ---- EXTRACTED GAME ART -- copyrighted, not ours to redistribute ------------------------------
+# 864 KB of icons extracted from the VOTV cooked assets (kerfur skins). This repo is PUBLIC and the
+# mod ships WITHOUT any original game file (principle 1), so shipping the art in the repo would be
+# the same violation by a different route.
+#
+# WHY A RULE AND NOT A HABIT (2026-07-28): this folder was named "NEVER committed" only in prose --
+# docs/OPUS_48_DISCIPLINE.md:66 and the memory index -- and appeared in NO .gitignore, i.e. it sat
+# untracked-but-NOT-IGNORED, one `git add -A` from a public commit. That is exactly the shape the
+# 2026-07-24 key-material block above was written about; the lesson had been recorded and not
+# applied one section down. A prose rule nothing enforces is not a rule.
+kerfur skins icons/

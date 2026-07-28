@@ -3,7 +3,12 @@
 #
 # Lives in tools/ rather than a scratchpad because a scratchpad is per-session
 # and this instrument is the only thing that exercises the arc's central claim.
-# It drives tools/mp.py (tracked, but its local edits are never committed).
+# It drives tools/mp.py, which is TRACKED but whose edits have not been committed
+# since 2026-07-02. That is not a policy: the "never committed" line this comment used
+# to assert was written by Claude in docs/OPUS_48_DISCIPLINE.md's own authoring commit
+# (1e3c81f5, 2026-07-06), enforced by no .gitignore, and no user ever said it. See that
+# doc's PROVENANCE CORRECTION. Consequence for THIS drill: it is not runnable from a
+# clean clone either, because its producer is not committed.
 #
 # smoke4 only ever ADDS peers. Arc A's whole claim is about the other direction:
 # a peer LEAVING must (a) fire one ledger row transition on the host, (b) reach

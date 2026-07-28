@@ -655,6 +655,21 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   evidence only if a positive was possible.
   `memory/lesson_a_log_line_can_vanish_because_of_its_arguments.md`
 
+- **An assertion you have never watched go RED is decoration, not evidence.** `mp.py`'s `_i18n_checks`
+  carries five fail-closed checks and has **no injection harness anywhere** — every one has only ever run
+  against a HEAD where both defects it was written for were already fixed. Two of them are worse than
+  unproven, they **cannot fire**: `_EMPTY_LINE` hunts a blank-bodied log line that `log.cpp:189`'s
+  `[args unformattable]` fallback made impossible, and `_read_log_strict`'s docstring still claims it
+  catches a mid-sequence cut that `log.cpp:192-209` now repairs before writing. Neither could ever have
+  caught the defect that motivated the instrument (`'?'` is well-formed ASCII; a blanked name is an
+  absence). `nick_gate.ps1` had been injection-proven two days earlier by the same hand — the discipline
+  existed and was not carried across. *Look FIRST:* write the must-FAIL fixture in the SAME commit as the
+  check; when you fix a product defect, grep for the assertions that were watching for it, because a fix
+  can silently retire its own detector; and remember fixtures prove the CHECKER while only a
+  defect-carrying build proves the PIPELINE — so land a detector on a live defect and watch it fail
+  BEFORE fixing, since live defects are the only free positive controls you will get.
+  `memory/lesson_an_instrument_never_shown_failing_passes_by_construction.md`
+
 ### 1b. Standing working agreements (previously indexed NOWHERE)
 
 Measured 2026-07-27 by a full pairing sweep of `memory/` against this file: **all 194 `lesson_*`
@@ -2177,6 +2192,22 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   *from whom* before redacting. Also: "not a secret" and "fine to publish" are different judgements —
   casual discoverability is a real axis; say which one you are buying. `docs/security/TRACKER.md` **A11**,
   `b2c4b3ef`. *Look FIRST:* `memory/lesson_public_hostname_is_not_a_public_origin_ip.md`
+
+- **A rule an agent wrote comes back cited as the user's rule — check provenance before obeying it.**
+  "`tools/mp.py` is NEVER committed" was quoted as policy by `MEMORY.md`, by `tools/net/departure_drill.ps1`'s
+  header and by my own `/qf` brief. Measured: the sentence entered `docs/OPUS_48_DISCIPLINE.md` in that
+  doc's **own authoring commit** `1e3c81f5`, **author Claude, 2026-07-06**; no user utterance created it;
+  `git check-ignore` matches nothing; and mp.py had been committed **8 times** (2026-06-15 .. `c1403fd7`)
+  before the rule existed. The cost: `HEAD:tools/mp.py` is 2,532 lines with **zero** `selftest`, while
+  `docs/RELEASE.md` step 0 names two machine assertions produced only by an uncommitted working tree —
+  **the release gate has not been runnable from a clean clone since 2026-07-02**, and every session read
+  the ritual as intact. It survived because it was *plausible* and because it shared a sentence with
+  `"kerfur skins icons/"`, which has a REAL justification (copyrighted art) — the true half lent
+  credibility to the invented half. *Look FIRST:* run `git log -S"<the sentence>"` before obeying a rule
+  that constrains the repo; a prose rule nothing enforces is not a rule (put it in `.gitignore`/CI with
+  the why, or label it a preference); tag "the user's rule" in a `/qf` brief as the provenance CLAIM it
+  is; and fix a false attribution IMMEDIATELY — that is factual and yours — while the ruling on the
+  rule's content stays the user's. `memory/lesson_an_agent_authored_rule_becomes_a_user_rule.md`
 
 ## 9. Security (threat model, trust boundaries, peer identity)
 

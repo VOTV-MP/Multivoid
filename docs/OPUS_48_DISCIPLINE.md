@@ -63,9 +63,25 @@ These are mechanical — obeying them requires no intelligence, only discipline:
 - Per-tick code: nothing that allocates or walks GUObjectArray in the steady state;
   latch on identity, re-check on a slow throttle if state can mutate in place.
 - ini [dev] for flags; never bats/env. No AskUserQuestion UI — plain text. No emojis
-  in files. Never git add -A (explicit paths; tools/mp.py + "kerfur skins icons/" are
-  NEVER committed). Commit autonomously at verified checkpoints; ask before push
-  unless the user's standing directive covers it.
+  in files. Never git add -A (explicit paths). Commit autonomously at verified
+  checkpoints; ask before push unless the user's standing directive covers it.
+
+  **PROVENANCE CORRECTION (2026-07-28).** This line used to read "…explicit paths;
+  tools/mp.py + \"kerfur skins icons/\" are NEVER committed", and every later session
+  — the memory index, `tools/net/departure_drill.ps1`'s header, and a `/qf` brief —
+  cited that as a USER rule. **It is not.** `git log` puts the sentence in this doc's
+  own authoring commit `1e3c81f5`, authored by Claude on 2026-07-06; no user utterance
+  created it, and `tools/mp.py` had been committed eight times (2026-06-15 .. `c1403fd7`
+  2026-07-02) before it was written. Neither path was in any `.gitignore`, so nothing
+  enforced it. What it cost: `HEAD:tools/mp.py` is 2,532 lines with **zero** occurrences
+  of `selftest`, while `docs/RELEASE.md` step 0 names two machine assertions that live
+  only in an uncommitted working tree — **the release ritual's runtime gate is not
+  runnable from a clean clone.** `kerfur skins icons/` now has a real `.gitignore` rule
+  with a written why (extracted game art, public repo). **`tools/mp.py`'s status is an
+  OPEN QUESTION for the user**, not a rule — see the nickname design §9g.7.
+  The general lesson, already paid for one section down in `.gitignore`: a prose rule
+  that nothing enforces is not a rule, and an agent-authored line that later sessions
+  attribute to the user is worse than no line at all.
 
 ## 4. The handoff checklist is not optional
 
