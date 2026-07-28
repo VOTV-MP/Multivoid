@@ -53,8 +53,14 @@ constexpr int kRoleCount = int(sizeof(kRoles) / sizeof(kRoles[0]));
 // config_registry::kFontRoleDefaultFamily -- menu/chat/toast = Fixedsys(3),
 // net/nameplate = Roboto(1).
 const int kDefaultFamilyForRole[kRoleCount] = { 3, 3, 1, 1, 3 };
-// The worst resident set a user can select: every role a different family.
-const int kWorstFamilyForRole[kRoleCount]   = { 0, 1, 2, 3, 0 };
+// The worst resident set a user can select. CORRECTED 2026-07-28 (/qf D2 R1 Q4):
+// the previous row {0,1,2,3,0} produced FOUR faces, and the gate doc recorded
+// four as the ceiling. It is FIVE. Menu/Net/Nameplate/Toast are all (px 16,
+// regular), so four distinct families across them = four distinct faces; Chat is
+// (px 18, BOLD), whose dedup key can never equal any of them whatever family it
+// picks. So the ceiling is 4 + 1. The old row wasted one of the four families by
+// giving Toast Menu's, and paid for it by understating every worst-case cell.
+const int kWorstFamilyForRole[kRoleCount]   = { 0, 0, 1, 2, 3 };
 
 std::string g_assetDir;   // our four embedded families
 std::string g_donorDir;   // downloaded OFL/CC donors
@@ -218,6 +224,320 @@ void ColorRasterCheck() {
     }
 }
 
+// ---- the DEMAND question (/qf D2 R1 C10) -------------------------------------
+//
+// Every cell above bakes the WHOLE 3,349-codepoint CN-common set, and that is
+// where 16 MB / 139 ms comes from. Nobody needs the whole set: a name is <= 20
+// codepoints and a chat backlog is bounded. This bakes today's repertoire plus
+// exactly N distinct hanzi -- the shape a demand-driven accumulator would
+// actually produce on the PINNED 1.91.5 -- so the arm-A cost can be priced
+// against what users generate rather than against the dictionary.
+Result BakeDemand(int nHanzi, int nEmoji, float scale, const int* roleFamily) {
+    ImFontAtlas atlas;
+    std::vector<Face> faces;
+    for (int r = 0; r < kRoleCount; ++r) {
+        const int   fam = roleFamily[r];
+        const float px  = kRoles[r].basePx * scale;
+        const int   pxq = int(px * 4.f + 0.5f);
+        bool seen = false;
+        for (const Face& f : faces)
+            if (f.fam == fam && f.pxq == pxq && f.bold == kRoles[r].bold) { seen = true; break; }
+        if (!seen) faces.push_back({ fam, pxq, kRoles[r].bold });
+    }
+
+    // An explicit [cp,cp] pair per demanded codepoint -- exactly what
+    // ImFontGlyphRangesBuilder::BuildRanges emits for a scattered set. Hanzi are
+    // walked from the start of URO so the set is real, distinct codepoints.
+    std::vector<ImWchar> hz, em;
+    for (int i = 0; i < nHanzi; ++i) {
+        const ImWchar cp = ImWchar(0x4E00 + i * 7);   // spread, not a contiguous run
+        hz.push_back(cp); hz.push_back(cp);
+    }
+    hz.push_back(0);
+    for (int i = 0; i < nEmoji; ++i) {
+#ifdef IMGUI_USE_WCHAR32
+        const ImWchar cp = ImWchar(0x1F600 + i);
+#else
+        const ImWchar cp = ImWchar(0x2600 + i);
+#endif
+        em.push_back(cp); em.push_back(cp);
+    }
+    em.push_back(0);
+
+    const ImWchar* cyr = atlas.GetGlyphRangesCyrillic();
+    for (const Face& f : faces) {
+        const float px = float(f.pxq) / 4.f;
+        const FamilyDesc& fd = kFamilies[f.fam];
+        AddSource(&atlas, g_assetDir + (f.bold ? fd.bold : fd.regular), px, false, cyr, false);
+        if (nHanzi > 0)
+            AddSource(&atlas, g_donorDir + "NotoSansSC-Regular.ttf", px, true, hz.data(), false);
+        if (nEmoji > 0)
+            AddSource(&atlas, g_donorDir + "Twemoji.Mozilla.ttf", px, true, em.data(), true);
+    }
+
+    Result res;
+    res.faces = int(faces.size());
+    const auto t0 = std::chrono::steady_clock::now();
+    res.built = atlas.Build();
+    const auto t1 = std::chrono::steady_clock::now();
+    res.ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    if (!res.built) return res;
+    res.texW = atlas.TexWidth; res.texH = atlas.TexHeight;
+    res.rgba = (atlas.TexPixelsRGBA32 != nullptr);
+    res.texBytes = size_t(atlas.TexWidth) * size_t(atlas.TexHeight) * 4u;
+    for (ImFont* f : atlas.Fonts) {
+        res.glyphs += f->Glyphs.Size;
+        res.indexBytes += size_t(f->IndexAdvanceX.Size) * sizeof(float)
+                        + size_t(f->IndexLookup.Size)   * sizeof(ImWchar);
+        for (const ImFontGlyph& g : f->Glyphs)
+            if (int(g.Codepoint) > res.maxCp) res.maxCp = int(g.Codepoint);
+    }
+    return res;
+}
+
+// ---- the CROSS-MERGE question (/qf D2 R3 RF-C, R4 Q1/Q3) ---------------------
+//
+// Today every role bakes ONE face over GetGlyphRangesCyrillic() -- Latin-1 +
+// Cyrillic, a few hundred codepoints. RF-C proposes merging the OTHER embedded
+// faces in behind the user's chosen one so the guaranteed repertoire is the
+// UNION of what we already ship (8,148 cp by cmap) rather than the intersection
+// (717). "Zero added DLL bytes" was true and irrelevant: this measures the ATLAS
+// cost, which is the claim that matters -- and whether Build() still succeeds
+// when the demand accumulator converges on the WHOLE union.
+Result BakeCrossMerge(bool crossMerge, bool fullUnionRange, float scale,
+                      const int* roleFamily) {
+    ImFontAtlas atlas;
+    std::vector<Face> faces;
+    for (int r = 0; r < kRoleCount; ++r) {
+        const int   fam = roleFamily[r];
+        const float px  = kRoles[r].basePx * scale;
+        const int   pxq = int(px * 4.f + 0.5f);
+        bool seen = false;
+        for (const Face& f : faces)
+            if (f.fam == fam && f.pxq == pxq && f.bold == kRoles[r].bold) { seen = true; break; }
+        if (!seen) faces.push_back({ fam, pxq, kRoles[r].bold });
+    }
+
+    // BMP-wide so every codepoint any embedded face HAS is actually baked -- the
+    // converged ceiling of the accumulator, not a sample of it.
+    static const ImWchar kAll[] = { 0x0020, 0xFFFD, 0 };
+    const ImWchar* cyr = atlas.GetGlyphRangesCyrillic();
+    const ImWchar* rng = fullUnionRange ? kAll : cyr;
+
+    const int kFamilyCount = int(sizeof(kFamilies) / sizeof(kFamilies[0]));
+    for (const Face& f : faces) {
+        const float px = float(f.pxq) / 4.f;
+        AddSource(&atlas, g_assetDir + (f.bold ? kFamilies[f.fam].bold : kFamilies[f.fam].regular),
+                  px, false, rng, false);
+        if (crossMerge)
+            for (int o = 0; o < kFamilyCount; ++o) {
+                if (o == f.fam) continue;
+                AddSource(&atlas, g_assetDir + (f.bold ? kFamilies[o].bold : kFamilies[o].regular),
+                          px, true, rng, false);
+            }
+    }
+
+    Result res;
+    res.faces = int(faces.size());
+    const auto t0 = std::chrono::steady_clock::now();
+    res.built = atlas.Build();
+    const auto t1 = std::chrono::steady_clock::now();
+    res.ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    if (!res.built) return res;
+    res.texW = atlas.TexWidth; res.texH = atlas.TexHeight;
+    res.rgba = (atlas.TexPixelsRGBA32 != nullptr);
+    res.texBytes = size_t(atlas.TexWidth) * size_t(atlas.TexHeight) * 4u;
+    for (ImFont* f : atlas.Fonts) {
+        res.glyphs += f->Glyphs.Size;
+        res.indexBytes += size_t(f->IndexAdvanceX.Size) * sizeof(float)
+                        + size_t(f->IndexLookup.Size)   * sizeof(ImWchar);
+        for (const ImFontGlyph& g : f->Glyphs)
+            if (int(g.Codepoint) > res.maxCp) res.maxCp = int(g.Codepoint);
+    }
+    return res;
+}
+
+void CrossRow(const char* cfgName, bool cross, bool full, float scale, const int* fam) {
+    const Result r = BakeCrossMerge(cross, full, scale, fam);
+    char what[48];
+    std::snprintf(what, sizeof(what), "%s/%s", cross ? "cross" : "single",
+                  full ? "union-rng" : "today-rng");
+    std::printf("%-8s %-16s x%.2f  faces=%d  ", cfgName, what, scale, r.faces);
+    if (!r.built) { std::printf("BUILD FAILED (atlas did not fit)\n"); return; }
+    std::printf("tex=%5dx%-5d %8.2f MB  glyphs=%-6d maxCp=U+%05X  idx=%7.2f MB  %7.1f ms  %s\n",
+                r.texW, r.texH, double(r.texBytes) / (1024.0 * 1024.0),
+                r.glyphs, r.maxCp, double(r.indexBytes) / (1024.0 * 1024.0),
+                r.ms, r.rgba ? "RGBA32" : "Alpha8");
+}
+
+// ---- the OS-AS-DONOR question (/qf D2 R5 RF-E, R6 Q4) ------------------------
+//
+// The subsetted donors are ~1 MB files. A real system face is 2-29 MB and a
+// .ttc collection at that. Does merging one behave like a subset once the RANGE
+// is demand-sized, or does the file size / cmap ceiling leak into the atlas and
+// the index tables? Measured, not reasoned: this is the bill RF-E's "zero DLL
+// bytes" is being priced against.
+Result BakeOsDonor(int nHanzi, int nEmoji, float scale, const int* roleFamily) {
+    ImFontAtlas atlas;
+    std::vector<Face> faces;
+    for (int r = 0; r < kRoleCount; ++r) {
+        const int   fam = roleFamily[r];
+        const float px  = kRoles[r].basePx * scale;
+        const int   pxq = int(px * 4.f + 0.5f);
+        bool seen = false;
+        for (const Face& f : faces)
+            if (f.fam == fam && f.pxq == pxq && f.bold == kRoles[r].bold) { seen = true; break; }
+        if (!seen) faces.push_back({ fam, pxq, kRoles[r].bold });
+    }
+
+    std::vector<ImWchar> hz, em;
+    for (int i = 0; i < nHanzi; ++i) { const ImWchar c = ImWchar(0x4E00 + i * 7); hz.push_back(c); hz.push_back(c); }
+    hz.push_back(0);
+    for (int i = 0; i < nEmoji; ++i) {
+#ifdef IMGUI_USE_WCHAR32
+        const ImWchar c = ImWchar(0x1F600 + i);
+#else
+        const ImWchar c = ImWchar(0x2600 + i);
+#endif
+        em.push_back(c); em.push_back(c);
+    }
+    em.push_back(0);
+
+    const ImWchar* cyr = atlas.GetGlyphRangesCyrillic();
+    for (const Face& f : faces) {
+        const float px = float(f.pxq) / 4.f;
+        AddSource(&atlas, g_assetDir + (f.bold ? kFamilies[f.fam].bold : kFamilies[f.fam].regular),
+                  px, false, cyr, false);
+        // The OS faces, merged straight off %WINDIR%\Fonts -- no subsetting, no
+        // shipping, exactly what fonts.cpp:214-217 already does for Tahoma.
+        if (nHanzi > 0) {
+            ImFontConfig cfg; cfg.MergeMode = true; cfg.GlyphRanges = hz.data(); cfg.FontNo = 0;
+            if (!atlas.AddFontFromFileTTF("C:\\Windows\\Fonts\\simsun.ttc", px, &cfg, hz.data()))
+                std::printf("  !! simsun.ttc did not load\n");
+        }
+        if (nEmoji > 0) {
+            ImFontConfig cfg; cfg.MergeMode = true; cfg.GlyphRanges = em.data();
+            cfg.FontBuilderFlags |= ImGuiFreeTypeBuilderFlags_LoadColor;
+            if (!atlas.AddFontFromFileTTF("C:\\Windows\\Fonts\\seguiemj.ttf", px, &cfg, em.data()))
+                std::printf("  !! seguiemj.ttf did not load\n");
+        }
+    }
+
+    Result res;
+    res.faces = int(faces.size());
+    const auto t0 = std::chrono::steady_clock::now();
+    res.built = atlas.Build();
+    const auto t1 = std::chrono::steady_clock::now();
+    res.ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    if (!res.built) return res;
+    res.texW = atlas.TexWidth; res.texH = atlas.TexHeight;
+    res.rgba = (atlas.TexPixelsRGBA32 != nullptr);
+    res.texBytes = size_t(atlas.TexWidth) * size_t(atlas.TexHeight) * 4u;
+    for (ImFont* f : atlas.Fonts) {
+        res.glyphs += f->Glyphs.Size;
+        res.indexBytes += size_t(f->IndexAdvanceX.Size) * sizeof(float)
+                        + size_t(f->IndexLookup.Size)   * sizeof(ImWchar);
+        for (const ImFontGlyph& g : f->Glyphs)
+            if (int(g.Codepoint) > res.maxCp) res.maxCp = int(g.Codepoint);
+    }
+    return res;
+}
+
+void OsRow(const char* cfgName, int nHanzi, int nEmoji, float scale, const int* fam) {
+    const Result r = BakeOsDonor(nHanzi, nEmoji, scale, fam);
+    char what[48];
+    std::snprintf(what, sizeof(what), "OS +%dhz +%dem", nHanzi, nEmoji);
+    std::printf("%-8s %-16s x%.2f  faces=%d  ", cfgName, what, scale, r.faces);
+    if (!r.built) { std::printf("BUILD FAILED (atlas did not fit)\n"); return; }
+    std::printf("tex=%5dx%-5d %8.2f MB  glyphs=%-6d maxCp=U+%05X  idx=%7.2f MB  %7.1f ms  %s\n",
+                r.texW, r.texH, double(r.texBytes) / (1024.0 * 1024.0),
+                r.glyphs, r.maxCp, double(r.indexBytes) / (1024.0 * 1024.0),
+                r.ms, r.rgba ? "RGBA32" : "Alpha8");
+}
+
+// Same as BakeDemand but with an explicit BASE range, so a range WIDENING can be
+// priced against the allocation the emoji tier already bought (/qf D2 R11 Q4).
+Result BakeWide(const ImWchar* baseRange, int nEmoji, float scale, const int* roleFamily) {
+    ImFontAtlas atlas;
+    std::vector<Face> faces;
+    for (int r = 0; r < kRoleCount; ++r) {
+        const int   fam = roleFamily[r];
+        const float px  = kRoles[r].basePx * scale;
+        const int   pxq = int(px * 4.f + 0.5f);
+        bool seen = false;
+        for (const Face& f : faces)
+            if (f.fam == fam && f.pxq == pxq && f.bold == kRoles[r].bold) { seen = true; break; }
+        if (!seen) faces.push_back({ fam, pxq, kRoles[r].bold });
+    }
+    std::vector<ImWchar> em;
+    for (int i = 0; i < nEmoji; ++i) {
+#ifdef IMGUI_USE_WCHAR32
+        const ImWchar c = ImWchar(0x1F300 + i);
+#else
+        const ImWchar c = ImWchar(0x2600 + i);
+#endif
+        em.push_back(c); em.push_back(c);
+    }
+    em.push_back(0);
+
+    const int kFamilyCount = int(sizeof(kFamilies) / sizeof(kFamilies[0]));
+    for (const Face& f : faces) {
+        const float px = float(f.pxq) / 4.f;
+        AddSource(&atlas, g_assetDir + (f.bold ? kFamilies[f.fam].bold : kFamilies[f.fam].regular),
+                  px, false, baseRange, false);
+        for (int o = 0; o < kFamilyCount; ++o) {
+            if (o == f.fam) continue;
+            AddSource(&atlas, g_assetDir + (f.bold ? kFamilies[o].bold : kFamilies[o].regular),
+                      px, true, baseRange, false);
+        }
+        if (nEmoji > 0)
+            AddSource(&atlas, g_donorDir + "Twemoji.Mozilla.ttf", px, true, em.data(), true);
+    }
+
+    Result res;
+    res.faces = int(faces.size());
+    const auto t0 = std::chrono::steady_clock::now();
+    res.built = atlas.Build();
+    const auto t1 = std::chrono::steady_clock::now();
+    res.ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    if (!res.built) return res;
+    res.texW = atlas.TexWidth; res.texH = atlas.TexHeight;
+    res.rgba = (atlas.TexPixelsRGBA32 != nullptr);
+    res.texBytes = size_t(atlas.TexWidth) * size_t(atlas.TexHeight) * 4u;
+    for (ImFont* f : atlas.Fonts) {
+        res.glyphs += f->Glyphs.Size;
+        res.indexBytes += size_t(f->IndexAdvanceX.Size) * sizeof(float)
+                        + size_t(f->IndexLookup.Size)   * sizeof(ImWchar);
+        for (const ImFontGlyph& g : f->Glyphs)
+            if (int(g.Codepoint) > res.maxCp) res.maxCp = int(g.Codepoint);
+    }
+    return res;
+}
+
+void WideRow(const char* cfgName, const ImWchar* base, int nEmoji, float scale, const int* fam) {
+    const Result r = BakeWide(base, nEmoji, scale, fam);
+    char what[48];
+    std::snprintf(what, sizeof(what), "WIDE +%dem", nEmoji);
+    std::printf("%-8s %-16s x%.2f  faces=%d  ", cfgName, what, scale, r.faces);
+    if (!r.built) { std::printf("BUILD FAILED (atlas did not fit)\n"); return; }
+    std::printf("tex=%5dx%-5d %8.2f MB  glyphs=%-6d maxCp=U+%05X  idx=%7.2f MB  %7.1f ms  %s\n",
+                r.texW, r.texH, double(r.texBytes) / (1024.0 * 1024.0),
+                r.glyphs, r.maxCp, double(r.indexBytes) / (1024.0 * 1024.0),
+                r.ms, r.rgba ? "RGBA32" : "Alpha8");
+}
+
+void DemandRow(const char* cfgName, int nHanzi, int nEmoji, float scale, const int* fam) {
+    const Result r = BakeDemand(nHanzi, nEmoji, scale, fam);
+    char what[48];
+    std::snprintf(what, sizeof(what), "today +%dhz +%dem", nHanzi, nEmoji);
+    std::printf("%-8s %-16s x%.2f  faces=%d  ", cfgName, what, scale, r.faces);
+    if (!r.built) { std::printf("BUILD FAILED (atlas did not fit)\n"); return; }
+    std::printf("tex=%5dx%-5d %8.2f MB  glyphs=%-6d maxCp=U+%05X  idx=%7.2f MB  %7.1f ms  %s\n",
+                r.texW, r.texH, double(r.texBytes) / (1024.0 * 1024.0),
+                r.glyphs, r.maxCp, double(r.indexBytes) / (1024.0 * 1024.0),
+                r.ms, r.rgba ? "RGBA32" : "Alpha8");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -242,6 +562,88 @@ int main(int argc, char** argv) {
         for (float scale : { 1.0f, 1.5f, 2.0f })
             for (int t = 0; t < T_COUNT; ++t)
                 Row(name, Tier(t), scale, fam);
+        std::printf("\n");
+    }
+
+    std::printf("=== CROSS-MERGE (RF-C): what the guaranteed-repertoire construction costs ===\n");
+    for (int cfg = 0; cfg < 2; ++cfg) {
+        const int* fam = cfg == 0 ? kDefaultFamilyForRole : kWorstFamilyForRole;
+        const char* name = cfg == 0 ? "default" : "worst";
+        for (float scale : { 1.0f, 2.0f }) {
+            CrossRow(name, false, false, scale, fam);   // control: what SHIPS today
+            CrossRow(name, true,  false, scale, fam);   // cross-merge, today's range
+            CrossRow(name, false, true,  scale, fam);   // single face, whole BMP
+            CrossRow(name, true,  true,  scale, fam);   // the converged ceiling
+        }
+        std::printf("\n");
+    }
+
+    // (/qf D2 R11 Q4): the atlas is power-of-two QUANTIZED, so a range widening
+    // can be FREE if it fits inside an allocation already bought. Greek and
+    // Latin-Ext are in the embedded cmaps (C11) and cost zero DLL bytes -- do
+    // they fit inside the emoji tier's texture, or do they buy another doubling?
+    std::printf("=== R11 Q4: does Greek + Latin-Ext fit inside the emoji allocation? ===\n");
+    {
+        // today's range, + Greek/LatExt, + both, each with the emoji donor.
+        static const ImWchar kWide[] = {
+            0x0020, 0x00FF,   // Latin-1 (what GetGlyphRangesCyrillic covers)
+            0x0100, 0x024F,   // Latin Extended-A + B
+            0x0370, 0x03FF,   // Greek
+            0x0400, 0x052F,   // Cyrillic + Supplement
+            0x2000, 0x206F,   // General punctuation
+            0,
+        };
+        for (int cfg = 0; cfg < 2; ++cfg) {
+            const int* fam = cfg == 0 ? kDefaultFamilyForRole : kWorstFamilyForRole;
+            const char* name = cfg == 0 ? "default" : "worst";
+            for (float scale : { 1.0f, 2.0f }) {
+                DemandRow(name, 0, 1356, scale, fam);            // the decision's tier
+                WideRow(name, kWide, 1356, scale, fam);          // + Greek/LatExt/punct
+            }
+            std::printf("\n");
+        }
+    }
+
+    // The v8 pillar (/qf D2 R9 Q1): CJK is out, so the ONLY eager bake that
+    // matters is today's repertoire + the emoji donor, cross-merged, at the
+    // WORST face count and the WORST scale. Every earlier +em row also carried
+    // hanzi, so none of them priced this configuration.
+    std::printf("=== v8 EAGER BAKE: today + emoji only, cross-merged, LoadColor ON ===\n");
+    for (int cfg = 0; cfg < 2; ++cfg) {
+        const int* fam = cfg == 0 ? kDefaultFamilyForRole : kWorstFamilyForRole;
+        const char* name = cfg == 0 ? "default" : "worst";
+        for (float scale : { 1.0f, 1.5f, 2.0f }) {
+            DemandRow(name, 0,    0, scale, fam);      // control: what ships today
+            DemandRow(name, 0,  200, scale, fam);      // a realistic emoji working set
+            DemandRow(name, 0, 1356, scale, fam);      // the WHOLE Twemoji donor, eager
+        }
+        std::printf("\n");
+    }
+
+    std::printf("=== OS-AS-DONOR (RF-E): merging the real system faces, unsubsetted ===\n");
+    for (int cfg = 0; cfg < 2; ++cfg) {
+        const int* fam = cfg == 0 ? kDefaultFamilyForRole : kWorstFamilyForRole;
+        const char* name = cfg == 0 ? "default" : "worst";
+        for (float scale : { 1.0f, 2.0f }) {
+            OsRow(name, 4,   0,  scale, fam);
+            OsRow(name, 20,  0,  scale, fam);
+            OsRow(name, 60,  8,  scale, fam);
+            OsRow(name, 200, 40, scale, fam);
+        }
+        std::printf("\n");
+    }
+
+    std::printf("=== DEMAND tiers -- what an accumulator actually bakes (1.91.5) ===\n");
+    for (int cfg = 0; cfg < 2; ++cfg) {
+        const int* fam = cfg == 0 ? kDefaultFamilyForRole : kWorstFamilyForRole;
+        const char* name = cfg == 0 ? "default" : "worst";
+        for (float scale : { 1.0f, 2.0f }) {
+            DemandRow(name, 0,   0,  scale, fam);   // control: today, no donor
+            DemandRow(name, 4,   0,  scale, fam);   // one short CJK name
+            DemandRow(name, 20,  0,  scale, fam);   // four CJK names / a chat line
+            DemandRow(name, 60,  8,  scale, fam);   // a busy 4-peer session
+            DemandRow(name, 200, 40, scale, fam);   // a long CJK chat backlog
+        }
         std::printf("\n");
     }
     ImGui::DestroyContext();

@@ -14,6 +14,22 @@ imgui+freetype harness that never touches the shipping build tree (`atlas_probe.
 
 ---
 
+> **TWO LATER CORRECTIONS (2026-07-28, the arc-D2 `/qf`). Read them before using any number here.**
+>
+> 1. **Every WORST-CASE cell in this document is understated.** The probe's `kWorstFamilyForRole` was
+>    `{0,1,2,3,0}`, which gave Toast the same family as Menu and produced **four** faces; this document
+>    then recorded four as the ceiling. The true ceiling is **five** — Menu/Net/Nameplate/Toast are all
+>    (16 px, regular) so four distinct families give four faces, and Chat is (18 px, **BOLD**) whose
+>    dedup key can never equal any of them. Re-measured at five faces, worst-case `+CN+JP+emoji` at
+>    x2.0 is **128 MB / 727 ms**, not 64 MB / 416 ms — **2x the VRAM and 1.75x the time.** The probe's
+>    table is fixed; the default-configuration cells are unaffected.
+> 2. **The question this document was measuring for has been dissolved.** §M5's "which hanzi set counts
+>    as common" was answered here as a defined list, but the premise behind the question — that the set
+>    decides which NAMES are accepted — is false against HEAD. The decision of record is
+>    `votv-nickname-arbitration-roster-id-DESIGN-2026-07-27.md` **§9d**, which embeds the emoji donor
+>    only and moves the uniqueness guarantee into `FoldKey`. §9d.3 carries the newer measurements
+>    (eager-emoji isolation, cross-merge cost, zero-advance census, the OS-face merge).
+
 ## Verdict first
 
 > **SUPERSEDED THE SAME DAY — the verdict below is WRONG; the measurements under it are not.**

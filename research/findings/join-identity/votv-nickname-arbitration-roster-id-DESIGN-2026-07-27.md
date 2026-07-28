@@ -1095,8 +1095,193 @@ centred and the annotation hangs off its right edge (`eb0bcdf5`; measured 0.0 px
 
 ### 9c.5 What arc D2 still owes
 
+> **SUPERSEDED 2026-07-28 by §9d.** This section framed arc D2 as "embed the donors, once the hanzi
+> set is chosen". A 15-round `/qf` found that framing rests on a premise the shipped code contradicts.
+> The measurements it cites still stand; its open question does not. Read §9d.
+
 CJK and emoji render as the fallback glyph until the donors are embedded. Everything needed is measured
 (`votv-arc-d-gate-measurements-2026-07-28.md`): donor names, licences, subset bytes, the required
 `LoadColor` flag, the merge-order hazard, and the fact that the atlas cost is 16-64 MB on the pinned
-ImGui 1.91.5 versus 0.25 MB on 1.92. The open product boundary is unchanged: which hanzi set counts as
-"common" decides which NAMES are accepted (D-d).
+ImGui 1.91.5 versus 0.25 MB on 1.92. ~~The open product boundary is unchanged: which hanzi set counts as
+"common" decides which NAMES are accepted (D-d).~~
+
+---
+
+## 9d. ARC D2 — DECISION OF RECORD (15-round `/qf`, 2026-07-28)
+
+**STATUS: DESIGN, converged. Not built, not drilled, not hands-on.** The user delegated the open
+product boundary verbatim — *"Arc d2 can't be answered by me, run qf session for the best decision"* —
+and mid-pass relaxed the byte constraint — *"if it's unavoidable to not save mbs then it's ok."*
+Thread log: `<scratchpad>/qf_thread.md`, rounds 1-15.
+
+### 9d.1 D-d was malformed, and the pass dissolved it rather than answering it
+
+D-d asked *"which hanzi set counts as common"*, on the stated premise that the answer **decides which
+NAMES are accepted**. Both halves are false against HEAD:
+
+- **Acceptance is already universal.** `SanitizeNickname` (`player_handshake.cpp:212-222`) is a
+  DENYLIST — C0/DEL, U+200B-200F, U+202A-202E, U+2066-2069, U+FEFF, plus leading combining marks.
+  **Every hanzi and every emoji is already accepted, joins, arbitrates and rides the wire.** Making a
+  font repertoire the acceptance predicate would NARROW shipped behaviour and re-introduce the
+  allowlist D1's own comment says cannot survive a widening alphabet.
+- **Coverage was never the acceptance predicate.** It only ever decided rendering.
+
+**What D-d was really asking (round 1, the critic's find) is: where does arc B's uniqueness guarantee
+survive to the PIXEL?** ImGui substitutes ONE `FallbackGlyph` for EVERY absent codepoint, so 张伟 and
+李明 are two distinct, non-colliding, **suffix-free** names that draw as the same nameplate. The
+originating ask — *"просто чтобы у всех был уникальный Nameplate"* — is **false on screen** for exactly
+the population arc D2 exists to serve, and no amount of donor bytes can close that for every script.
+
+**The answer is therefore not a hanzi set. It is to move the uniqueness guarantee out of the pixels
+and into the arbiter, where it becomes font-independent.**
+
+### 9d.2 The decision
+
+**Embed ONE thing: the single-codepoint emoji donor** (Twemoji Mozilla v0.7.0, **905,404 B**,
+MIT + CC-BY 4.0, COLR v0 + CPAL). **DLL 16.5 → ~17.4 MB, +5.5%.** No CJK, no Hangul.
+
+1. **Acceptance stays the shipped denylist**, plus one row: Unicode's **`Default_Ignorable_Code_Point`**
+   set. Measured hole: **U+034F (CGJ) has advance 0 in Fixedsys AND Roboto** — the two default
+   families — and is accepted mid-name because `player_handshake.cpp:236`'s combining check is guarded
+   by `if (out.empty() && ...)`. So `Ann͏a` carries a distinct fold key and zero pixels. The
+   existing U+200B-200F row exists for this reason and is incomplete; the property is the
+   invariant-shaped version of it. (Measured non-holes: U+00A0 and U+00AD carry real advance in all
+   four families — 80/507/600/1200 — so they change pixels rather than hide; U+2060/U+FE0F/U+180E are
+   absent everywhere and fold to a *visible* sentinel.)
+2. **`FoldKey` folds in CODEPOINTS** — decode surrogate pairs first — mapping every codepoint outside
+   the constant to **one sentinel**, so visually-identical names collide and take the numeric suffix
+   arc B already ships. Folding per `wchar_t` would give an astral codepoint two sentinels and a BMP
+   one, so 𠀀 and 中 would render alike and **not** collide: RF-A returns.
+   **PERSIST-SPLIT** (`[[lesson-a-placeholder-must-never-become-an-identity]]`): a suffix earned by a
+   *repertoire* collision is a rendering artifact and must never reach the store. The receiving client
+   decides locally — *did MY requested name contain an out-of-constant codepoint?* No → any suffix was
+   a genuine string clash → persist the **assigned** name (the user's 2026-07-28 decision). Yes →
+   repertoire-suspect → persist the **requested** name. **No wire kind, no `kProtocolVersion` bump.**
+   This is also what makes widening the constant in a later build rename nobody.
+3. **`Candidate`'s cap truncates in CODEPOINTS.** `nickname_arbiter.cpp:37`'s `stem.substr(0, keep)`
+   can split a surrogate pair **today** — emoji are already accepted. `ToUtf8` then drops the lone
+   surrogate (measured; it is hand-rolled for exactly that), so the ini never holds ill-formed UTF-8
+   and **no migration is owed** — but the arbiter judges uniqueness on the string *with* it while
+   egress emits *without*, so two names differing only there are judged distinct and render alike.
+   `SanitizeNickname` already uses `coop::text::CapCodepoints`; the arbiter is the **sole** remaining
+   unit-truncation and the helper it needs exists.
+4. **`tools/text/nick_gate.ps1` must key on the operation's SUBJECT.** `:55`'s pattern requires the
+   receiver variable to be named `nick*`, so the arbiter's `stem.substr` is invisible: the gate is
+   **green and blind**. This is `[[lesson-a-gate-on-one-verb-reads-as-a-gate-on-the-path]]` landing a
+   second time, one layer up — the first version keyed on the verb, this one on a naming convention.
+5. **The constant IS the eagerly-baked set** — Latin-1 + Cyrillic, cross-merged across the seven
+   embedded faces, plus all single-codepoint emoji. One definition, so there is no gap between what
+   folds and what renders. **This holds on the PRIMARY path only:** `fonts.cpp:208-236`'s two fallbacks
+   bake no embedded family. They still attempt the donor merge, and the contract is binary — *the
+   constant holds iff our RCDATA loaded* — which is what the boot selftest tests. `FoldKey` stays
+   compile-time fixed on every path, so peers agree on names even where the atlas is short.
+6. **Cross-merge the seven embedded faces** — chosen family FIRST, the others as backstops, donor last
+   (first-source-wins, `imgui_freetype.cpp:515`, so the chosen look is preserved wherever it has the
+   glyph). Fixes a defect LIVE at HEAD: **JetBrains Mono lacks U+0400/040D/0450/045D**, four Cyrillic
+   letters the other three families carry, which D1's Fixedsys+Roboto drills never hit. Also gives
+   every family **U+FFFD**, retiring the "6 of 7 fall to `'?'`" problem.
+7. **EAGER bake.** No accumulator, no anchor, no admission predicate, no rate policy, no new thread
+   seam. See §9d.4 for why demand was designed, deleted, restored, killed and finally dropped.
+8. **Boot FONT SELFTEST asserts the PHENOMENON, not the precondition**
+   (`[[lesson-an-instrument-blind-to-the-phenomenon-always-passes]]`): for a known emoji codepoint,
+   `FindGlyph` returns a glyph with `Colored == true` and the atlas holds non-greyscale texels in its
+   box — `atlas_probe`'s `ColorRasterCheck` ported verbatim. Asserting "the donor loaded" goes GREEN on
+   the `LoadColor=0` build, which bakes the emoji **invisible** rather than missing. `ERROR` log + a
+   visible F1 line; **not** a join gate.
+9. **`IMGUI_USE_WCHAR32`** as a **PUBLIC compile definition on the `imgui` target** — `third_party/imgui`
+   is a git submodule pinned at v1.91.5, so `imconfig.h` cannot be edited; `IMGUI_ENABLE_FREETYPE`
+   (`CMakeLists.txt:106`) is the precedent, and ODR is safe because `votv-coop` is its only consumer.
+   Required, not optional: **1,232 of Twemoji's 1,418 codepoints are astral**, so a BMP-only build has
+   no U+1F600. **`LoadColor` on the atlas** — without it the donor bakes invisible glyphs.
+
+**OUT, and unique regardless: CJK, Hangul, Greek, Latin-Extended, Thai.** Those names render as the
+sentinel glyph — a lone such peer keeps a bare name, and only when two coexist does one take a digit.
+
+**NAMED FLIP CONDITION.** The only thing that should reverse this is a decision to embed CJK, and then
+the order is **mechanism first, donor second** — the demand plumbing, or ImGui 1.92's dynamic atlas
+*plus* the `SrvDescriptorAllocFn`/`FreeFn` migration (`imgui_impl_dx12.cpp:984` silently strips
+`RendererHasTextures` on the legacy DX12 init we call). Never the donor alone.
+
+### 9d.3 The measurements that decided it
+
+All run on this machine 2026-07-28 with `tools/probes/atlas_probe` (extended this pass) and fontTools.
+
+| what | measured |
+|---|---|
+| eager emoji, cross-merged, `LoadColor` on | **4.00 MB / 28.4 ms** (default x1.0) · 16.00 MB / 50.1 ms (default x2.0) · 16.00 MB / 87.4 ms (worst x2.0) |
+| what ships today | 1.00 MB / 5.4 ms .. 4.00 MB / 16.1 ms |
+| **+ CJK eagerly** | **16.00 MB / 148 ms** (default) .. **64.00 MB / 304 ms** (worst) — the reason CJK cannot be eager |
+| + Greek/Latin-Ext | 4.00 → **8.00 MB** (default x1.0); 16.00 → **32.00 MB** (worst x2.0) — does not fit free |
+| demand bake (for the record) | +20 hanzi **1.00 MB / 6.2 ms**; +200 hz +40 em 2.00 MB / 13.6 ms |
+| COLR raster | `LoadColor=0` → visible **0**, Alpha8, **0** non-grey texels · `LoadColor=1` → visible 3, `Colored`=3, RGBA32, **2600** non-grey texels |
+| colour tint | `imgui_draw.cpp:4215` `glyph_col = glyph->Colored ? col_untinted : col` — colour glyphs draw untinted |
+| index tables | a **single** astral emoji costs **2.94 MB** (default) / **4.90 MB** (worst) permanent host RAM via `GrowIndex(max_codepoint+1)`; per-PRESENCE, not per-count, and the merged cmap ceiling does not leak |
+| embedded cmaps | intersection of the 4 families **717 cp**; union of all 7 faces **8,148 cp** (Cyrillic 256/256, Latin Ext-A/B complete, Greek 135/144, **U+FFFD present**) |
+| donor bytes | Twemoji 905,404 / 1,356 cp · CN+JP union 1,583,628 / 4,813 cp · **Hangul 5,108,140 / 11,522 cp (3.2x the whole CJK set)** |
+| zero-advance census | **U+034F adv 0 in Fixedsys + Roboto**; U+00A0/U+00AD adv 80/507/600/1200; U+2060/U+FE0F/U+180E absent from all four |
+| an unsubsetted 18 MB system `.ttc` | costs **exactly** what a 1 MB subset costs — file size does not leak into the atlas; `FontDataOwnedByAtlas` frees the buffer after `Build()` |
+| **probe correction** | the committed probe's worst-case family table produced **4** faces; the true ceiling is **5** (Menu/Net/Nameplate/Toast are all 16px-regular, Chat is 18px-BOLD and can never dedup). Every worst-case cell in `votv-arc-d-gate-measurements-2026-07-28.md` was understated **2x in VRAM, 1.75x in time**. |
+
+### 9d.4 What was designed and then deleted (so it is not re-derived)
+
+- **A per-codepoint escape** (`<U+9F8D>`) — killed on LAYOUT: 20 codepoints become ~160 characters,
+  `hud.cpp:97` clamps the plate to scale 0.20, and `scoreboard.cpp:62-64` is a fixed 540 px window
+  whose own comment records two widenings *because nicks truncated*. Distinctness merely moved from
+  the glyph to the layout.
+- **OS-as-donor** (`seguiemj` + `simsun`/`malgun` off `%WINDIR%\Fonts`) — retracted. It made three
+  design points mutually exclusive (either the constant gates admission and the lookup is dead code,
+  or admission runs past it and "structurally bounded" evaporates), it rested on **n=1** with an
+  indeterminate positive control (`seguiemj`/`malgun`/`msgothic` carry base-image dates; `simsun`/
+  `msyh` do not), and a hardcoded filename list is a site list (per-user faces live in
+  `%LOCALAPPDATA%\Microsoft\Windows\Fonts`; FOD faces need not be under `%WINDIR%`). The
+  invariant-shaped version would be DirectWrite's `IDWriteFontFallback::MapCharacters`.
+- **Demand baking** — designed, deleted, restored, killed, restored, and finally dropped. It was
+  justified only by CJK's 16-64 MB; **CJK was rejected on NEED, and every later round re-argued
+  MECHANISM**, so letting it back in on affordability was smuggling. Its anchors all failed: a
+  `FindGlyph` hook is unimplementable (non-virtual, pinned submodule, and RULE 3 forbids forking it);
+  a derived range over "the displayable stores" is a site list with **per-keystroke** members
+  (`server_browser.cpp:118`, `chat_input.cpp:109`, `admin_panel.cpp:226`, `host_save_picker.cpp:178`,
+  master lobby rows); and a set that never shrinks converges on the eager cost anyway, making the
+  saving a deferral bought with a lifecycle. **If CJK is ever embedded, this section is the starting
+  point, not a warning against it.**
+- **The kana-only tier** (194 KB) — a Japanese name is normally kanji+kana, so it renders *half* the
+  name. And the same argument reaches the CN+JP union: 4,813 codepoints against a 20,992-codepoint
+  block, with Chinese given names deliberately favouring uncommon characters. **No tier guarantees a
+  whole name**; every tier buys a probability of legibility per MB, and that curve cannot be measured
+  from this repo.
+- **A rate bound on rebuilds** — deleted as a RULE-1 crutch and it stayed deleted: with an eager bake
+  there is nothing to rate-limit, and `ConsumeRebuild()` is polled once per frame anyway.
+
+### 9d.5 Accepted residuals (named, not solved)
+
+- CJK / Hangul / Greek / Latin-Extended / Thai names are **unique** but render as the sentinel glyph.
+- Two peers requesting the **identical** out-of-constant name both persist the request; one is
+  re-suffixed each session, loser by slot order — stable within a session, possibly swapping between.
+- 2.94-4.90 MB of permanent host RAM, and a drag-resize rebuild of 28.4-87.4 ms instead of
+  5.4-16.1 ms (`scale.cpp:53` `NoteViewport` re-bakes on each quantized-sixth crossing, and its own
+  comment concedes a windowed drag crosses several) — the price of the emoji the user asked for.
+- `Anna` vs `Аnnа` (Cyrillic А) renders alike, is NFC-unequal, gets no suffix — pre-existing and
+  user-accepted (D-e). Homoglyphs are a different class from zero-advance characters: the latter are
+  closed by 9d.2 item 1, the former still await UTS #39 skeletons or peer certificates.
+- `nickname_arbiter.h:32-37`'s *"nothing persists across it ... cosmetic and self-healing"* is FALSE
+  (`player_handshake.cpp:290` persists) and must be corrected in the same commit.
+
+### 9d.6 The gate — INPUTS, not cases
+
+`[[lesson-a-drill-that-stays-under-the-threshold-proves-the-wrong-half]]`: naming cases is how
+`Пельмень` came in at 16 bytes under a 23-byte cliff and proved the half that was not broken. Each
+input below is chosen to CROSS a threshold, not approach it. **One real DX11 frame and one real DX12
+frame, per surface (nameplate, board, chat).**
+
+| input | what it can falsify |
+|---|---|
+| a name containing an **astral** emoji (U+1F600) | the only claim never to reach a frame — that colour glyphs draw in-game on both RHIs |
+| **two** peers with distinct all-CJK names | RF-A itself: do they collide, does one take a digit |
+| **one** peer with an all-CJK name | the common case — sentinel, **no** digit |
+| a 20-codepoint name whose **surrogate pair straddles the cap** | the `Candidate` truncation defect, before and after |
+| a name mixing in- and out-of-constant codepoints | that the fold sentinels only the out-of-constant part |
+| `Ann͏a` beside `Anna` | the zero-advance hole (9d.2 item 1) |
+
+Plus: **time the live F1 rebuild across a windowed drag-resize, before and after.** It is the largest
+accepted cost and has only ever been measured offline — an offline `Build()` is not the live path,
+which also uploads a texture.
