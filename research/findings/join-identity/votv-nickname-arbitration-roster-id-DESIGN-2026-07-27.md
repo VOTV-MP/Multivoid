@@ -1391,11 +1391,9 @@ ASCII nicknames. Prefer `--duration 60` for a clean verdict.
 
 ### 9e.5 Residuals, named
 
-- **`player_handshake.cpp` is 820 LOC**, over the 800 soft cap (788 before this change). Flagged with
-  an extraction proposal per the modular rule: the nick half — `g_localNick` / `g_requestedNick`,
-  `SanitizeNickname`, `SetLocalNickname`, `AdoptCanonicalNickname` — is a distinct subsystem and
-  belongs in `player_handshake_nick.cpp`, matching the existing `_roster` / `_version` / `_prefs`
-  family.
+- ~~`player_handshake.cpp` is 820 LOC~~ **CLOSED** the same day (`8834d29b`): the nick half is now
+  `player_handshake_nick.cpp` (253), leaving 620. Equivalence measured by a code-line multiset diff
+  — exactly two changed lines, both the intended accessor substitution.
 - **`nick_gate.ps1` is still not wired into CI.** Adding it edits `build-core.yml`, which owes the
   fingerprint re-commit ritual (`[[lesson-build-core-edit-requires-fingerprint-recommit]]`) — a
   scheduling decision, deliberately not taken mid-session.
@@ -1403,3 +1401,95 @@ ASCII nicknames. Prefer `--duration 60` for a clean verdict.
   Pre-existing fixed-width layout; visible now because names can finally be that wide.
 - Everything §9d.5 already named still stands: CJK / Hangul / Greek / Latin-Ext render as the
   sentinel; homoglyphs remain out of scope; the 2.94-4.90 MB index-table cost is paid.
+
+---
+
+## 9f. THE MIXED-SCRIPT SMOKE — built, 3/4 proven, `/qf` OWED (2026-07-28)
+
+**USER REQUEST, verbatim:** *"Need a smoke test like when players with jap cn eng cyrrilic connect
+and play. To catch issues."* Then, on seeing the first results: *"Probably need a qf session on
+smoke test design to close the nickname saga."* **So this section is a HANDOFF, not a claim of
+completeness — the design pass is owed and has not run.**
+
+### 9f.1 Why a name-only drill was never enough
+
+Two defects this session were on lanes a name drill cannot reach, and both fired only for
+non-ASCII peers: the log formatter deleted whole lines (§9e.3), and — the day before — the egress
+encoder blanked names past a byte cliff. A lobby is not "four names in a roster"; it is
+**keyboard → ImGui InputText → UTF-8 buffer → wire → every other peer's feed → disk**, and every
+one of those is a place where text has died in this codebase.
+
+### 9f.2 What was built
+
+`tools/mp.py smoke_i18n` — one word, no half-configured mode. Four peers, one script each, plus an
+astral emoji so the typed-input path is exercised rather than assumed:
+
+| peer | name | typed message |
+|---|---|---|
+| host | `Pelmentor` | `hello everyone 😀` |
+| client 1 | `Пельмень` | `привет всем` |
+| client 2 | `张伟明` | `你好世界` |
+| client 3 | `さくら田中` | `こんにちは世界` |
+
+Names and messages are DIFFERENT strings deliberately: a name rides the Join/RosterRow lane, a
+message rides the chat lane, and the log is a third lane neither would have shown.
+
+Messages are typed with **`PostMessage(WM_CHAR)` per UTF-16 code unit** into the real chat bar
+opened with the real `T` bind — so an emoji arrives as a surrogate PAIR and ImGui has to reassemble
+it, which only works because `IMGUI_USE_WCHAR32` is on. Boards are opened with the real `VK_OEM_3`
+bind at capture time. (`ui/imgui_overlay.cpp:578`'s comment — *"the smoke can't hold/press the tilde
+key"* — is FALSE, and this is the second time that assumption has cost something;
+`[[feedback-show-screens]]` already ruled on it.)
+
+Assertions, all fail-closed, all on ARTIFACTS rather than on "it didn't crash":
+- every peer's log contains every OTHER peer's name **and** message, byte-for-byte;
+- the host logged one arbitration decision per client (its ABSENCE is what §9e.3's defect looked
+  like);
+- **no log line formatted to nothing** (`[HH:MM:SS] [INFO ]` with an empty body) and no
+  `[args unformattable]` — the exact shape of the vanished-line defect;
+- **every log file decodes as STRICT UTF-8** — the cheapest total check on every text lane at once:
+  a CESU-8 pair, a cut mid-sequence, an ANSI narrow all land here. `errors='replace'` would hide
+  every one;
+- no `selftest: FAIL` on any peer.
+
+### 9f.3 Where it actually stands — measured, not assumed
+
+**Proven end-to-end, cross-peer:** Latin, Cyrillic and Chinese names AND messages; **the astral
+emoji typed through the keyboard path and received by another peer**
+(`feed: push via=chat slot=0 ... text="Pelmentor: hello everyone 😀"` on client 3). All four names
+round-tripped to all four peers. Zero vanished lines, all logs strictly well-formed UTF-8, all
+selftests green.
+
+**NOT proven:** the Japanese peer's *message*. Client 3 never logged `chat: sent` — its typing did
+not take, while it demonstrably RECEIVED the other three at 22:13:42. Its name arrived everywhere,
+so this is the SCENARIO's readiness gate, not the product.
+
+Two scenario defects were already found and fixed by running it (8 failures → 3):
+1. **The forced scoreboard swallowed the host's `T`.** `VOTVCOOP_SCOREBOARD_OPEN=1` sets
+   `g_scoreboardForced`, and `CaptureActive()` counts `ScoreOpen() && LocalIsHost()`
+   (`imgui_overlay.cpp:136`) — so the host could never open chat. Retired in favour of pressing the
+   real key at capture time.
+2. **Typing began before the peers were in-world.** `LoadingOpen()` is also `CaptureActive()`, so
+   `T` was swallowed. Now gated on each peer's own `Joined X's game` feed line.
+
+**The residual is exactly `[[lesson-readiness-announcements-precede-visible-state]]`:** client 3
+logged `Joined` at 22:13:28 and still did not accept typing ~16 s later. A log marker fires before
+the loading cover comes down. **This is the first question for the `/qf`** — the gate must key on an
+EFFECT (the peer's own chat bar visibly opened, or its first rendered frame of the world), not on an
+announcement.
+
+### 9f.4 What the `/qf` has to decide (the brief, pre-written)
+
+- **The readiness gate.** What observable says "this peer will accept a keystroke"? Candidates: a
+  new log line when `chat_input::Open()` succeeds; polling until `chat: sent` appears and retrying;
+  gating on the peer having spawned every other puppet.
+- **Retry vs one-shot.** A typed message that silently does not send is exactly the failure mode
+  this instrument exists to catch — so a retry must not MASK it. Probably: retry, but FAIL if the
+  first attempt was lost.
+- **Scope.** Is "connect and play" satisfied by chat, or does it need an interaction (a grab, a
+  drop) with a mixed-script peer? The user said *"connect and play"*.
+- **Where it runs.** Standing scenario the release ritual invokes, or a hand-run drill? Today it is
+  hand-run and lives in `tools/mp.py`, which is never-committed.
+- **What else only shows up multi-script.** The player-list Player column already clips a
+  twenty-emoji name (§9e.5); a CJK name is wider per codepoint than Latin. Nameplate width, chat
+  wrap and the ban modal are all untested against wide scripts.
