@@ -22,6 +22,7 @@
 #include "coop/config/config_review.h"      // RunBootSweep (T10 settings check, arc 2)
 #include "coop/session/player_handshake.h"  // SetLocalGuid (v73 per-player inventory identity)
 #include "coop/player/local_body.h"         // SetInitialSkin (v93 skins: ini player_skin=)
+#include "coop/text/utf8_codec.h"
 #include "coop/session/session_manager.h"
 #include "coop/player/nameplate.h"
 #include "coop/player/nick_color.h"
@@ -114,13 +115,18 @@ DWORD WINAPI TimelineThread(LPVOID param) {
     // Seed the local nickname from config (env VOTVCOOP_NET_NICK / ini net.nick /
     // the registry my-name default)
     // so the server browser shows the current name; the user can overwrite it there, and the
-    // browser value wins at StartCoopSession. ASCII narrow (explicit, non-ASCII -> '?').
+    // browser value wins at StartCoopSession.
     {
-        const std::wstring wn = cfg::ReadNickname();
-        std::string nn;
-        nn.reserve(wn.size());
-        for (wchar_t c : wn) nn.push_back(c < 128 ? static_cast<char>(c) : '?');
-        coop::session_manager::SetNickname(nn);
+        // ARC D: session_manager holds UTF-8 -- the server browser's InputText
+        // writes UTF-8 into it, so the boot seed must encode, not narrow.
+        //
+        // This loop used to replace every non-ASCII character with '?', and it is
+        // the site the widen census MISSED: the census was of WIDENS, and this is
+        // a NARROW, so grepping the concept found six sites and never this one.
+        // Its effect was total and silent -- a Cyrillic name read correctly from
+        // the ini became "????????" here, before the sanitizer or the wire ever
+        // saw it, and every downstream fix looked like it had not worked.
+        coop::session_manager::SetNickname(coop::text::ToUtf8(cfg::ReadNickname()));
     }
     // v73 per-player inventory: seed the durable identity GUID (ini player_guid=, generated
     // + persisted on first launch). Rides our Join so the host keys our inventory file.

@@ -4,6 +4,7 @@
 
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"  // kMaxPeers
+#include "coop/text/utf8_codec.h"
 #include "coop/session/player_handshake.h"
 #include "coop/config/config.h"                // ModuleDir -- the file lives next to the DLL
 #include "ue_wrap/core/log.h"
@@ -134,11 +135,15 @@ void TouchOnJoin(coop::net::Session& session, int peerSlot) {
         UE_LOGI("seen_players: slot %d joined without a GUID -- not registered", peerSlot);
         return;
     }
-    // Narrow the (already-sanitized, ASCII) nick.
-    const std::wstring& wnick = coop::player_handshake::NicknameForSlot(peerSlot);
-    std::string nick;
-    nick.reserve(wnick.size());
-    for (wchar_t c : wnick) nick.push_back((c >= 32 && c < 127) ? static_cast<char>(c) : '?');
+    // ARC D: ENCODE the nick, do not narrow it. The comment this replaces said
+    // "already-sanitized, ASCII" -- true when the sanitizer was an ASCII allowlist,
+    // false the moment it became a denylist, and a false comment about an invariant
+    // is worse than none. The `|`-delimited registry format is byte-transparent to
+    // UTF-8 (CleanField touches only '|', '\n', '\r'), so the FORMAT was always
+    // fine; it was this narrow that turned a Russian player into "????????" in the
+    // admin list.
+    const std::string nick = coop::text::ToUtf8(
+        coop::player_handshake::NicknameForSlot(peerSlot));
 
     char ip[64] = {};
     session.GetPeerAddress(peerSlot, ip, sizeof(ip));

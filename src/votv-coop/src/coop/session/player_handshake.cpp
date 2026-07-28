@@ -6,6 +6,7 @@
 
 #include "coop/config/config.h"           // arc B: persist a host-assigned name
 #include "coop/config/config_registry.h"  // T7: the my-name default constant
+#include "coop/text/utf8_codec.h"
 #include "coop/session/session_manager.h"
 #include "coop/moderation/seen_players.h"
 
@@ -151,22 +152,28 @@ size_t ParseNickColorField(const uint8_t* p, size_t remaining, int slot) {
     return 4;
 }
 
+// ARC D / RULE 2: the encoder existed THREE times (here, chat_sync::NickUtf8,
+// chat_feed::ToUtf8). These are thin adapters over the ONE owner in coop/text --
+// kept only because the wire code speaks vector<uint8_t>.
 std::vector<uint8_t> ToUtf8(const std::wstring& w) {
-    if (w.empty()) return {};
-    const int n = ::WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()),
-                                        nullptr, 0, nullptr, nullptr);
-    std::vector<uint8_t> out(n > 0 ? n : 0);
-    if (n > 0)
-        ::WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()),
-                              reinterpret_cast<char*>(out.data()), n, nullptr, nullptr);
-    return out;
+    const std::string s = coop::text::ToUtf8(w);
+    return std::vector<uint8_t>(s.begin(), s.end());
 }
 
+// STRICT on the way in. These bytes came from a PEER, so an ill-formed field is
+// refused WHOLE rather than repaired: a repair invents a name nobody chose, and
+// MultiByteToWideChar without MB_ERR_INVALID_CHARS silently substitutes U+FFFD.
+// Until arc D the ASCII allowlist was the only thing destroying ill-formed bytes,
+// so removing it without this would have made bad input merely ugly. An empty
+// return reads as "no name" and the caller's placeholder takes over.
 std::wstring FromUtf8(const uint8_t* p, int len) {
     if (len <= 0) return {};
-    const int n = ::MultiByteToWideChar(CP_UTF8, 0, reinterpret_cast<const char*>(p), len, nullptr, 0);
-    std::wstring out(n > 0 ? n : 0, L'\0');
-    if (n > 0) ::MultiByteToWideChar(CP_UTF8, 0, reinterpret_cast<const char*>(p), len, out.data(), n);
+    std::wstring out;
+    if (!coop::text::FromUtf8Strict(reinterpret_cast<const char*>(p),
+                                    static_cast<size_t>(len), &out)) {
+        UE_LOGW("handshake: refused an ill-formed UTF-8 text field (%d bytes)", len);
+        return {};
+    }
     return out;
 }
 
@@ -203,26 +210,36 @@ std::wstring FromUtf8(const uint8_t* p, int len) {
 // boundary fix, profanity moderation is a separate moderation feature
 // pending Phase 6+ (per the VT adoption findings ranked shortlist).
 std::wstring SanitizeNickname(const std::wstring& raw) {
-    constexpr size_t kMaxNickLen = kNickMaxChars;  // ONE owner, player_handshake.h
+    // ARC D: a DENYLIST. See the note above -- an allowlist cannot survive a
+    // widening alphabet, because the script we forgot fails silently.
+    auto denied = [](wchar_t c) {
+        if (c < 0x20 || c == 0x7F) return true;       // C0 controls + DEL
+        if (c >= 0x200B && c <= 0x200F) return true;  // zero-width + LRM/RLM
+        if (c >= 0x202A && c <= 0x202E) return true;  // bidi embeddings/overrides
+        if (c >= 0x2066 && c <= 0x2069) return true;  // bidi isolates
+        if (c == 0xFEFF) return true;                 // BOM / zero-width no-break
+        return false;
+    };
+    auto combining = [](wchar_t c) { return c >= 0x0300 && c <= 0x036F; };
+
     std::wstring out;
     out.reserve(raw.size());
     bool lastWasSpace = true;  // primes the leading-space trim
     for (wchar_t c : raw) {
-        const bool isAlnum = (c >= L'0' && c <= L'9') ||
-                             (c >= L'A' && c <= L'Z') ||
-                             (c >= L'a' && c <= L'z');
-        const bool isSafePunct = (c == L'-' || c == L'_' || c == L'.');
-        const bool isSpace = (c == L' ');
-        if (isAlnum || isSafePunct) {
-            out.push_back(c);
-            lastWasSpace = false;
-        } else if (isSpace && !lastWasSpace) {
-            out.push_back(L' ');
-            lastWasSpace = true;
+        if (denied(c)) continue;
+        if (c == L' ') {
+            if (!lastWasSpace) { out.push_back(L' '); lastWasSpace = true; }
+            continue;
         }
-        // else: strip silently (control chars, unicode, punctuation, etc.)
-        if (out.size() >= kMaxNickLen) break;
+        // A combining mark with nothing to combine with stacks onto whatever the
+        // UI drew before the name.
+        if (out.empty() && combining(c)) continue;
+        out.push_back(c);
+        lastWasSpace = false;
     }
+    // Cap in CODEPOINTS, never in wchar_t units: the old cap could cut an astral
+    // character in half and leave an unpaired surrogate on the wire.
+    out = coop::text::CapCodepoints(out, kNickMaxChars);
     // Trim trailing space.
     while (!out.empty() && (out.back() == L' ' || out.back() == L'-'))
         out.pop_back();
@@ -336,8 +353,12 @@ void MaybeSendJoinToSlot(net::Session& session, int slot,
         std::memcpy(joinPayload.data(), &selfEidWire, 4);
         // Ask for what the human typed, never for a suffix the host handed us last
 // time -- otherwise a reconnect would ratchet Pelmentor2 -> Pelmentor3.
-        std::vector<uint8_t> nickUtf8 = ToUtf8(g_requestedNick);
-        if (nickUtf8.size() > 200) nickUtf8.resize(200);
+        // Cap on a CHARACTER boundary. A raw resize() here manufactures exactly
+        // the ill-formed tail the receive boundary above refuses -- i.e. OUR OWN
+        // name would reach the host as the placeholder.
+        const std::string nickStr = coop::text::CapUtf8Bytes(
+            coop::text::ToUtf8(g_requestedNick), coop::text::kNickMaxBytes);
+        std::vector<uint8_t> nickUtf8(nickStr.begin(), nickStr.end());
         UE_LOGI("handshake: Join to slot %d asks for '%ls' (%zu bytes)",
                 slot, g_requestedNick.c_str(), nickUtf8.size());
         joinPayload.push_back(static_cast<uint8_t>(nickUtf8.size()));

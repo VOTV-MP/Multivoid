@@ -5,6 +5,8 @@
 #include "coop/config/config.h"
 
 #include "config_internal.h"
+#include "coop/session/player_handshake.h"  // kNickMaxChars (ONE owner)
+#include "coop/text/utf8_codec.h"
 #include "coop/config/config_registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -40,9 +42,22 @@ std::wstring ModuleDir() {
 }
 
 std::string ReadEnv(const char* name) {
-    char buf[256] = {};
-    const DWORD n = ::GetEnvironmentVariableA(name, buf, sizeof(buf));
-    return (n > 0 && n < sizeof(buf)) ? std::string(buf) : std::string();
+    // ARC D: read the environment WIDE and re-encode to UTF-8. Windows keeps the
+    // environment block as UTF-16; GetEnvironmentVariableA converts it down to the
+    // process ANSI codepage, so a Cyrillic VOTVCOOP_NET_NICK arrived here as cp1251
+    // bytes -- not UTF-8, not well-formed UTF-8 either -- and every layer above,
+    // which correctly assumes UTF-8, then produced a row of U+FFFD. Measured
+    // 2026-07-28: the drill's names rendered as the placeholder while the ini path
+    // beside it was already correct, which is a confusing way to find this.
+    //
+    // The rest of the config stack speaks UTF-8 (the ini is UTF-8, the browser
+    // writes UTF-8), so this is the ONE place the boundary belongs.
+    wchar_t wbuf[256] = {};
+    const DWORD n = ::GetEnvironmentVariableW(
+        std::wstring(name, name + std::strlen(name)).c_str(), wbuf,
+        static_cast<DWORD>(std::size(wbuf)));
+    if (n == 0 || n >= std::size(wbuf)) return {};
+    return coop::text::ToUtf8(std::wstring(wbuf, wbuf + n));
 }
 
 std::string ReadScenario() {
@@ -503,10 +518,20 @@ std::wstring ReadNickname() {
     // T7 (ini rework): the MY-NAME default is the registry row's (env rides the
     // row's VOTVCOOP_NET_NICK; never a per-site literal -- design F19/T2-migrate).
     std::string nick = ResolveString(config_registry::rows::net_nick);
-    // Config reaches the wire: the Join payload's nicklen is uint8 (F14), so
-    // the nick caps at 255 bytes here at the resolve -- never mid-send.
-    if (nick.size() > 255) nick.resize(255);
-    return std::wstring(nick.begin(), nick.end());
+    // ARC D: the ini holds UTF-8. This used to be
+    //     std::wstring(nick.begin(), nick.end())
+    // which widens ONE BYTE AT A TIME -- a Latin-1 widen. A UTF-8 name arrived at
+    // SanitizeNickname as N mojibake wchars and was stripped whole, which is the
+    // MEASURED root of "Cyrillic nicknames do not work". Lossy is right here and
+    // only here: the file is ours, not a stranger's.
+    //
+    // The cap is in BYTES because the wire's nicklen is uint8 (F14) and in
+    // CHARACTERS because that is the display policy -- two different questions,
+    // so two different bounds, applied on boundaries a raw resize() would split.
+    nick = coop::text::CapUtf8Bytes(std::move(nick), coop::text::kNickMaxBytes);
+    return coop::text::CapCodepoints(
+        coop::text::FromUtf8Lossy(nick.data(), nick.size()),
+        coop::player_handshake::kNickMaxChars);
 }
 
 // MINT GATE (arc 2, T6/F43): both computed identities mint-and-persist ONLY

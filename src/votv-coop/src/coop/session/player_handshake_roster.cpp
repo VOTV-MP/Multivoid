@@ -43,6 +43,7 @@
 #include "coop/player/nick_color.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
+#include "coop/text/utf8_codec.h"
 #include "coop/player/roster_ledger.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
@@ -90,8 +91,12 @@ std::vector<uint8_t> BuildRosterRowPayload(uint8_t slot, uint16_t playerNo, uint
     std::memcpy(out.data() + 3, &eid, 4);
     out[7] = static_cast<uint8_t>(linkKind);
     std::memcpy(out.data() + 8, &pingMs, 2);
-    std::vector<uint8_t> nickUtf8 = ToUtf8(nick);
-    if (nickUtf8.size() > 200) nickUtf8.resize(200);
+    // ARC D: cap on a CHARACTER boundary -- a raw resize() would ship the
+    // ill-formed tail the receiver's strict decoder refuses whole, so the host's
+    // own roster row would arrive as a placeholder.
+    const std::string nickStr = coop::text::CapUtf8Bytes(
+        coop::text::ToUtf8(nick), coop::text::kNickMaxBytes);
+    std::vector<uint8_t> nickUtf8(nickStr.begin(), nickStr.end());
     out.push_back(static_cast<uint8_t>(nickUtf8.size()));
     out.insert(out.end(), nickUtf8.begin(), nickUtf8.end());
     const uint8_t skinLen = static_cast<uint8_t>(skin.size() > 48 ? 48 : skin.size());

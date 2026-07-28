@@ -390,6 +390,7 @@ add_library(votv-coop SHARED
     src/coop/world/weather_rain.cpp
     src/coop/world/weather_redsky.cpp
     src/coop/config/config.cpp
+    src/coop/text/utf8_codec.cpp
     src/coop/config/config_example.cpp
     src/coop/config/config_ini_write.cpp
     src/coop/config/config_registry.cpp
@@ -649,7 +650,12 @@ if (MSVC)
     # command line (harmless D9025 "overriding /EHsc with /EHa"; /EHa wins).
     # PRIVATE -> third-party GNS/minhook stay /EHsc (per-TU codegen flag,
     # mixing in one image is supported).
-    target_compile_options(votv-coop PRIVATE /W4 /permissive- /EHa)
+    # /utf-8: source AND execution charset are UTF-8. Without it MSVC decodes a
+    # non-ASCII source literal with the SYSTEM codepage, so `L"中文"` written
+    # literally compiles to a different string on a Russian machine than on an
+    # English one -- caught by the arc-D codec selftest, which counted 3 codepoints
+    # in a 2-character literal. Silent, machine-dependent, and now impossible.
+    target_compile_options(votv-coop PRIVATE /W4 /permissive- /EHa /utf-8)
     # /MAP emits votv-coop.map (symbol -> RVA) so a faulting IP captured by the
     # game_thread Pump firewall (absorbed-fault localization) maps to a function
     # name by grep via tools/maprva.py -- no IDA needed. The .map lands in

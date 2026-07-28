@@ -31,6 +31,7 @@
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
 #include "coop/session/player_handshake.h"
+#include "coop/text/utf8_codec.h"
 #include "coop/session/session_manager.h"
 #include "coop/session/shutdown.h"
 #include "coop/session/subsystems.h"
@@ -377,11 +378,13 @@ bool StartCoopSession(const coop::net::Config& netCfg) {
     // Nickname source of truth = session_manager (seeded from config at boot, overwritten
     // by the server browser). Apply it here so a browser-set name wins over the config default.
     {
+        // ARC D: session_manager holds UTF-8 (it is seeded from the ini and
+        // overwritten by the server browser's InputText, which emits UTF-8). The
+        // per-BYTE widen this replaces was the second half of the measured root
+        // -- it turned every non-ASCII name into mojibake before the sanitizer
+        // ever saw it.
         const std::string n = coop::session_manager::Nickname();
-        std::wstring wn;
-        wn.reserve(n.size());
-        for (char c : n) wn.push_back(static_cast<wchar_t>(static_cast<unsigned char>(c)));
-        coop::event_feed::SetLocalNickname(wn);
+        coop::event_feed::SetLocalNickname(coop::text::FromUtf8Lossy(n.data(), n.size()));
     }
     coop::event_feed::OnSessionStart();
     // Reset net_pump edge-detector state so a Stop()/Start() cycle on the same process

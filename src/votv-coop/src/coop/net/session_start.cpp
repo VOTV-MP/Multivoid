@@ -15,6 +15,7 @@
 #include "coop/net/session.h"
 
 #include "coop/player/nickname_arbiter.h"
+#include "coop/text/utf8_codec.h"
 
 #include "ice_config.h"          // co-located: ICE STUN/TURN config (P2P)
 #include "signaling_client.h"    // co-located: P2P signaling transport
@@ -149,6 +150,12 @@ bool Session::Start(const Config& cfg) {
     // cost nothing to assert here.
     static const bool kNickArbiterOk = coop::nickname_arbiter::RunNicknameArbiterSelftest();
     (void)kNickArbiterOk;
+
+    // ARC D, same reason: the codec's interesting cases are an ill-formed byte
+    // sequence a peer would have to send deliberately, and caps landing mid-
+    // character -- neither is stageable from a LAN drill, both are one memcmp here.
+    static const bool kCodecOk = coop::text::RunUtf8CodecSelftest();
+    (void)kCodecOk;
 
     g_session.store(this, std::memory_order_release);
     SteamNetworkingUtils()->SetGlobalCallback_SteamNetConnectionStatusChanged(
