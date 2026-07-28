@@ -59,9 +59,12 @@ void Render() {
     // Top-centre, pinned. Pivot (0.5, 0) keeps it centred regardless of width.
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.14f),
                             ImGuiCond_Always, ImVec2(0.5f, 0.0f));  // upper-centre, below the top HUD
-    // 460 wide (was 300 -- truncated nicks + "LAN HOST" clipped, user round-1
-    // screenshot 2026-06-12); auto height.
-    ImGui::SetNextWindowSize(ImVec2(S(460.0f), 0.0f), ImGuiCond_Always);
+    // 540 wide, auto height. 300 -> 460 in 2026-06-12 (truncated nicks + a clipped
+    // "LAN HOST"); 460 -> 540 in 2026-07-28 once the columns got HEADERS -- at 460
+    // the labels had less room than the values under them, so "Mic" bled into
+    // "Link" and the whole strip read as one run of words (user: "текст над
+    // колонками уходит на сразу несколько колонок").
+    ImGui::SetNextWindowSize(ImVec2(S(540.0f), 0.0f), ImGuiCond_Always);
 
     // Clean translucent panel: padded, rounded, borderless, dark bg so it reads over
     // any scene. Own header (no OS-style title bar).
@@ -118,20 +121,23 @@ void Render() {
         // room so the rows are not one block of text.
         ImGui::PushStyleColor(ImGuiCol_TableRowBgAlt, ImVec4(1.0f, 1.0f, 1.0f, 0.10f));
         ImGui::PushStyleColor(ImGuiCol_TableBorderLight, ImVec4(1.0f, 1.0f, 1.0f, 0.28f));
-        ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(S(4.0f), S(5.0f)));
+        // Roomier cells (was 4x5): with a header row above them the table needed
+        // vertical air, and the horizontal pad is what keeps each label off its
+        // neighbour's column edge.
+        ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(S(8.0f), S(7.0f)));
         if (ImGui::BeginTable("##roster", voiceOn ? 5 : 4, tflags)) {
             ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch);
             // Voice state icon (v66; the user's mute-icon-on-playerlist ask).
             // Click = self: toggle mute; remote: per-player volume popup.
-            if (voiceOn) ImGui::TableSetupColumn("Mic", ImGuiTableColumnFlags_WidthFixed, S(26.0f));
+            if (voiceOn) ImGui::TableSetupColumn("Mic", ImGuiTableColumnFlags_WidthFixed, S(40.0f));
             // Connection (v131): how THIS PLAYER reaches the session -- "LAN" /
             // "DIRECT" / "RELAY", or "n/a" on the host row, whose traffic never
             // crosses a socket. Host-measured and host-published, so every board
             // shows the same value for the same player. It used to be derived
             // per viewer, which put transport on some rows and routing ("VIA
             // HOST") on others, in one column, side by side.
-            ImGui::TableSetupColumn("Link", ImGuiTableColumnFlags_WidthFixed, S(72.0f));
-            ImGui::TableSetupColumn("Ping", ImGuiTableColumnFlags_WidthFixed, S(50.0f));
+            ImGui::TableSetupColumn("Link", ImGuiTableColumnFlags_WidthFixed, S(84.0f));
+            ImGui::TableSetupColumn("Ping", ImGuiTableColumnFlags_WidthFixed, S(66.0f));
             // ID (arc A): the occupant's session number, host-issued and never
             // reused within a session. It is NOT the slot -- slots recycle, so a
             // slot number names a seat, not a person -- and it is deliberately
@@ -141,11 +147,37 @@ void Render() {
             // FAR RIGHT (user 2026-07-27). It led the row at first, which put the
             // least-scanned field where the eye lands and pushed the NAME -- the
             // thing anyone actually looks for -- off the left edge.
-            ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, S(34.0f));
+            ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, S(44.0f));
             // The columns had NEVER been named (user 2026-07-27: "the rows are
-            // not even named properly") -- TableSetupColumn only declares them;
-            // without this call the labels are never drawn.
-            ImGui::TableHeadersRow();
+            // not even named properly"). TableSetupColumn only DECLARES a name;
+            // something has to draw it.
+            //
+            // Hand-drawn rather than ImGui::TableHeadersRow(), because that helper
+            // left-aligns EVERY label: "Ping" and "ID" then sat on the left of the
+            // right-aligned numbers underneath, so no label was clearly over its own
+            // value (user 2026-07-28: "нечетко над своей областью/колонкой"). Each
+            // header here takes the SAME alignment as the data below it, so a
+            // label and its column read as one unit. TableNextRow's Headers flag
+            // still paints the header background; we only replace the text.
+            {
+                const ImVec4 hdrCol(0.62f, 0.71f, 0.82f, 1.0f);
+                int hc = 0;
+                auto headerCell = [&](const char* label, bool rightAlign) {
+                    ImGui::TableSetColumnIndex(hc++);
+                    if (rightAlign) {
+                        const float tw = ImGui::CalcTextSize(label).x;
+                        const float cw = ImGui::GetContentRegionAvail().x;
+                        if (cw > tw) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (cw - tw));
+                    }
+                    ImGui::TextColored(hdrCol, "%s", label);
+                };
+                ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
+                headerCell("Player", false);
+                if (voiceOn) headerCell("Mic", false);
+                headerCell("Link", false);
+                headerCell("Ping", true);
+                headerCell("ID", true);
+            }
             for (int i = 0; i < s.count; ++i) {
                 const coop::roster::Row& r = s.rows[i];
                 const char* nick = r.nick[0] ? r.nick : (r.isLocal ? "Player" : "Remote player");
