@@ -1,9 +1,13 @@
 # Hands-on runbook — arc A, the roster ledger (2026-07-27)
 
-**Deployed:** `multivoid-0.9.0n-130.dll`, sha256 `51ec0c60cc698e681873ccc63757f4d06f0870b3736a29ce1dad4f858ed87cb9`,
-**proto 130** (wire changed — RELAUNCH BOTH PEERS; a b128/proto-129 peer is refused at the join gate
-by design, with a feed line saying so).
-All four installs have it. HEAD `63a488a7`+.
+**Deployed:** `multivoid-0.9.0n-131.dll`, sha256 begins `ab51b7fc072ad3be`,
+**proto 131** (wire changed — RELAUNCH BOTH PEERS; an older peer is refused at the join gate by
+design, with a feed line saying so).
+All four installs have it. HEAD `1fc74b0c`.
+
+**SUPERSEDED-IN-PLACE 2026-07-28.** This runbook was written for arc A at proto 130. The two
+KNOWN-BAD items it told you not to report are both **FIXED** in v131, so the checks below now cover
+arc A *and* the v131 player-list rework — which no human has touched either.
 
 **Why this runbook exists.** Arc A is fully drilled and audited and **no human has touched it**.
 Four autonomous drills passed, but every one of them tests what I thought to test.
@@ -49,12 +53,16 @@ them; re-run it any time.
   right-aligned (user 2026-07-27); #1 is the host and #2/#3/#4 the clients in join order.
 - **Watch for:** a client showing only two rows (the old bug), a blank or `Remote player` name where
   a real nickname should be, an ID that repeats, or the host drawing #2.
-- **KNOWN-BAD, already diagnosed, fix queued (design item 7):** peer-to-peer rows on a CLIENT read
-  `VIA HOST  --`. That column fuses TWO axes (the peer's transport vs MY route to them) and a client
-  structurally cannot measure another client's transport. The fix is the host PUBLISHING each
-  occupant's link + ping on `RosterRow` (wire change, protocol bump). Do not re-report it.
-- **KNOWN-BAD, fix queued:** the table draws no header row at all (`TableHeadersRow()` is never
-  called), so the columns are unlabelled.
+- **FIXED in v131 — please JUDGE these rather than skip them.** Both former KNOWN-BADs are gone:
+  - The `Link`/`Ping` columns are now host-measured and host-published, so **every board shows the
+    same value for the same player**. `VIA HOST` no longer exists. On an all-LAN session every
+    client row should read `LAN` / `<1ms`, **including your own row**, and the HOST row should read
+    `n/a` / `n/a` with a gold `HOST` tag beside the name. Anything asymmetric here is a real report.
+  - The table has a header row, and each label takes the SAME alignment as its values (`Ping` and
+    `ID` right-aligned over their numbers). Watch for a label that still reads as belonging to the
+    column beside it.
+  - World NAMEPLATES: other players carry `(<1ms)`; the HOST's plate carries no suffix (there is no
+    RTT to the session to report). If the host's plate shows a ping, that is a regression.
 
 ## 2. A third peer leaves (the client-side half that never worked) — AUTOMATED
 

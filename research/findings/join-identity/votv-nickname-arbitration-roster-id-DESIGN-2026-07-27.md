@@ -366,14 +366,59 @@ generation.**
    >
    > The fix is therefore ONE change, not four: drive `DisconnectSlot` from the ledger ROW
    > TRANSITION (which compares values, not edges) instead of from the `IsSlotReady` edge. That is
-   > the invariant rather than a site list. It is NOT BUILT: it expands the firing set on clients to
-   > ~18 subsystem bodies that have never executed there, and T5 already requires each to be READ
-   > rather than assumed benign. That read + a smoke is the remaining arc-A work.
+   > the invariant rather than a site list.
+
+   **AS-BUILT 2026-07-27 (`b196f595` + `13470f10`) — this item's "NOT BUILT" stood stale until the
+   2026-07-28 sweep.** `net_pump.cpp:290` registers `OnSlotReplaced_TearDownWorld` and
+   `player_handshake.cpp:368` registers `OnSlotReplaced_TearDownPerson`; `subsystems::DisconnectSlot`
+   is composed at `net_pump.cpp:258-273` with the T5 read recorded in comment. The ~20 bodies WERE
+   read before the change (zero unsafe: the host-authoritative ones self-gate on `Role::Host`, six
+   ARE the client leak fix, none sends from a client), and the departure + replacement drills both
+   PASS on host and on both surviving clients. Evidence: `[[project-arc-a-roster-ledger-2026-07-27]]`.
 7. Cosmetic follow-through: after (2) a client renders `ping`/`link` for slots 1-3 for the first
    time; they land on `rttMsForSlot() == -1` beside "VIA HOST" and need a deliberate presentation.
 
    **2026-07-27, ON THE FIRST SCREENSHOT: this is NOT cosmetic. It is a fused-axis defect, and the
-   fix is a wire change. NOT BUILT — user directive: "fix per rule 1 in next session".**
+   fix is a wire change.**
+
+   > ### AS-BUILT 2026-07-28 — v131, proto 130 → 131 (`890b7fae` + `2a12fc5d` + `1fc74b0c`)
+   >
+   > Built after a 15-round `/qf` design pass and a 2-round decisions pass. Every claim below the
+   > line is preserved as it was WRITTEN, because two of them turned out to be **wrong**, and the
+   > way they were wrong is the durable part:
+   >
+   > **CORRECTION 1 — "WHY THE CLIENT CANNOT SIMPLY DO BETTER" is FALSE as stated.**
+   > `session_status.cpp:491-494` bailed on `if (hConn == 0) return false;` **above** the
+   > `cfg_.topology == LanDirect` branch that returns `"LAN"` — and that branch needs no connection
+   > at all. An ownership guard sitting above a config-derived answer is what made a shared fact look
+   > role-exclusive; a client could always have printed `LAN` correctly. The publish rule still fires,
+   > but for the **PING**, which is per-connection in every topology and which no client can ever
+   > derive for another client. See `[[lesson-verify-role-exclusivity-before-publishing]]`.
+   >
+   > **CORRECTION 2 — the host row does NOT keep `LAN HOST`.** That was role wearing transport's
+   > clothes: the same fusion one layer down. Role moved to a `HOST` tag beside the NAME; the host's
+   > Link and Ping cells read `n/a` (nothing to measure — their traffic never crosses a socket),
+   > distinct from `--` (no sample yet).
+   >
+   > **What shipped:** `RosterRow` gains `[u8 linkKind][i16 pingMs]` in the **FIXED PREFIX** after
+   > `eid` — not the tail, because the tail's offset arithmetic lives inside `if (applyDeclared)`,
+   > which is skipped for exactly the host row and the receiver's own row, i.e. the two rows this fix
+   > exists for. `roster_ledger::RefreshLinkFacts` fills rows 0..3 **immediately before each send**
+   > (never on a clock of its own). Every kind is measured FROM THE CONNECTION — the GNS `Relayed`
+   > flag and the remote address — never from `cfg_.topology`, which used to label a port-forwarded
+   > WAN peer `LAN`; when GNS leaves the address all-zero the classifier falls back to its
+   > `LoopbackBuffers`/`Fast` bits and answers `Unknown` rather than asserting `Direct`.
+   > `roster::Refresh` has **zero role branching**. RULE 2 deletions: `"VIA HOST"`, the forced
+   > `ping = -1`, `RemotePlayer::SetPing`/`GetPing`/`pingMs_`, the per-tick `event_feed` RTT fan-out,
+   > the `strstr` over a display string, `LinkLabelForSlot`, `Session::topology()`. `ui/link_format`
+   > is the one renderer for scoreboard + admin panel + nameplate (three hand-copied cascades before).
+   >
+   > **Evidence:** all four boards + nameplates photographed on the shipped bytes
+   > (`research/roster_shots/`, `research/plate_shots/client1_1.png` — peer plates carry `(<1ms)`,
+   > the host plate is bare, exactly inverted from 07-27); `link-classify selftest PASS (15/15)` on
+   > every peer, machine-asserting `Direct`/`Relayed`, which **no LAN drill can reach**; `ledger:`
+   > flat at 4 lines per peer over 4 minutes; smoke4 PASS ×2; two audits, 0 CRITICAL, folded.
+   > **NOT hands-on.** Full record: `[[project-v131-player-list-one-question-2026-07-28]]`.
 
    What the user saw on a 4-peer LAN session where every peer is on 127.0.0.1:
 

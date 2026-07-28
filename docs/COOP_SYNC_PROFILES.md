@@ -622,7 +622,7 @@ The foundational join system: slot assignment, identity announce, cross-peer rel
 | 3 | cross-peer identity relay | W | HO | ARB | `player_handshake::BroadcastPlayerJoinedFromHost` (host relays validated) | seed (host tells joiner every mirrored client) |
 | 4 | client world-ready barrier | W | log | CA | `event_feed` `ClientWorldReady` (`[PILE-1C] slot N world-ready`) | THIS is the load-quiescence barrier |
 | 5 | version gate (b122 Paper pair) | W | log | ARB | `player_handshake_version::ValidateJoinVersionOrRefuse` (equality, 3-layer drills) | refused joiner = connected-never-Joined |
-| 6 | roster / scoreboard snapshot | U | code | PP | `roster::Refresh` (each board renders what it truthfully knows) | none (derived view) |
+| 6 | roster / scoreboard snapshot | V | photo+drill | PP | `roster::Refresh` reads the LEDGER only — **zero role branching** (v131). Presence, identity AND the connection facts are host-published | `RosterRow` (reliable, repair pulse) — the pre-v131 "each board renders what it truthfully knows" was exactly the defect: one column answered transport on some rows and MY ROUTE on others |
 | 7 | local Player Element identity | U | code | PO | `players_registry::EnsurePlayerElement_` (own eid in exclusive band) | seed (band set before alloc) |
 | 8 | joined-the-game feed line | U | code | ∅ | `player_handshake::AnnounceJoinerOnce` | replay (re-announces on reconnect) |
 

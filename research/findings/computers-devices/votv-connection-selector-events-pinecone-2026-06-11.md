@@ -48,7 +48,10 @@ CLIENT (DLL, deployed 4 folders):
   from server browser" checkbox; plain-English hints; NO port-check button this round.
 - SCOREBOARD (scoreboard.cpp): host-only "Show in server browser" checkbox ->
   session_manager::SetListed (THE place relay hosts hide once friends are in) +
-  the new "Link" column (connection type per row: LAN HOST/P2P HOST on own row;
+  **[SUPERSEDED 2026-07-28 by v131 — kept as the 06-11 record.** The column no longer works this way: it is now
+  host-measured and host-published, `LAN`/`DIRECT`/`RELAY`/`n/a`, identical on every board. See
+  `docs/MULTIPLAYER_UI.md`.]
+  the then-new "Link" column (connection type per row: LAN HOST/P2P HOST on own row;
   LAN/P2P/P2P RELAY for owned links; VIA HOST for peer clients -- the GNS
   connection description names the active ICE path).
 SMOKE: master_smoke green; LAN smoke PASS (0 errors). HANDS-ON PENDING: the direct-
