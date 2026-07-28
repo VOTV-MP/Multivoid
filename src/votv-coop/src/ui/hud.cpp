@@ -6,6 +6,7 @@
 #include "coop/dev/object_overlay.h"
 #include "coop/dev/ragdoll_bone_overlay.h"
 #include "coop/player/nameplate.h"
+#include "coop/text/utf8_codec.h"
 #include "coop/player/nick_color.h"
 #include "coop/voice/voice_chat.h"
 #include "ui/fonts.h"
@@ -53,13 +54,22 @@ void DrawNameplate(ImDrawList* dl, const coop::nameplate::Plate& p) {
     // yet" and the HOST (whose row publishes -1 precisely because there is no RTT
     // to the session to report -- see roster_ledger::RefreshLinkFacts). The
     // number itself is formatted by the one shared renderer.
-    char line[64];
+    //
+    // THE NAME AND THE PING ARE DRAWN AS TWO PIECES, not one composed string
+    // (user 2026-07-28, from a drill screenshot: "никнейм не идеально прилегает
+    // своим центром к полоске hp, а выперает слева"). Centring `"<nick> (<ping>)"`
+    // as a unit puts the NICK's centre half the ping-suffix's width to the LEFT of
+    // the bar's centre -- and because the suffix's width depends on the ping's
+    // digits, the name would also SLIDE sideways as latency changed. The identity
+    // is what the plate is for, so the identity is what gets centred; the ping
+    // hangs off its right edge as an annotation.
+    char nickTxt[coop::text::kNickBufBytes];
+    std::snprintf(nickTxt, sizeof(nickTxt), "%s", p.nick);
+    char pingTxt[20] = {};
     if (p.linkKind != coop::net::LinkKind::Local && p.ping >= 0) {
         char pb[16];
         ui::link_format::FormatPing(p.ping, p.linkKind, pb, sizeof(pb));
-        std::snprintf(line, sizeof(line), "%s (%s)", p.nick, pb);
-    } else {
-        std::snprintf(line, sizeof(line), "%s", p.nick);
+        std::snprintf(pingTxt, sizeof(pingTxt), " (%s)", pb);
     }
 
     // Occlusion (minecraft nametag shape; user 2026-07-05 refining 07-04): a peer
@@ -92,7 +102,10 @@ void DrawNameplate(ImDrawList* dl, const coop::nameplate::Plate& p) {
 
     ImFont* font = ui::fonts::FontFor(ui::fonts::Role::Nameplate);  // per-role font (F1 > Interface)
     if (!font) font = ImGui::GetFont();
-    const ImVec2 sz = font->CalcTextSizeA(px, FLT_MAX, 0.f, line);
+    // Measured SEPARATELY so the anchor can centre the nick alone (above).
+    const ImVec2 sz     = font->CalcTextSizeA(px, FLT_MAX, 0.f, nickTxt);
+    const ImVec2 pingSz = pingTxt[0] ? font->CalcTextSizeA(px, FLT_MAX, 0.f, pingTxt)
+                                     : ImVec2(0.f, 0.f);
 
     // 12g overhead chat bubble rows -- split BEFORE the on-screen clamp so the
     // clamp can reserve the bubble's height (audit 2026-07-05: an unclamped
@@ -121,8 +134,13 @@ void DrawNameplate(ImDrawList* dl, const coop::nameplate::Plate& p) {
     // past a screen edge still shows the label at the edge instead of vanishing.
     const ImGuiIO& io = ImGui::GetIO();
     const float m = S(6.f);
-    const float halfW = std::max(sz.x, barW) * 0.5f;
-    const float ax = std::clamp(p.x, m + halfW, io.DisplaySize.x - m - halfW);
+    // The plate is no longer symmetric about the anchor: the nick is centred, so
+    // the ping annotation adds width on the RIGHT only. Clamping with one halfW
+    // would let the ping run off the right edge (or waste margin on the left).
+    const float extL = std::max(sz.x, barW) * 0.5f;
+    const float extR = std::max(sz.x * 0.5f + pingSz.x, barW * 0.5f);
+    const float loX = m + extL, hiX = io.DisplaySize.x - m - extR;
+    const float ax = (loX <= hiX) ? std::clamp(p.x, loX, hiX) : p.x;
     const float ay = std::clamp(p.y, m + sz.y + gap + bubbleH, io.DisplaySize.y - m - barH - barGap);
     const ImVec2 textPos(ax - sz.x * 0.5f, ay - sz.y - gap);
     const ImVec2 bp(ax - barW * 0.5f, ay - barGap);
@@ -134,9 +152,16 @@ void DrawNameplate(ImDrawList* dl, const coop::nameplate::Plate& p) {
     // + the health bar's own outline.
     const float padX = S(6.f) * s, padY = S(3.f) * s;
     const ImVec2 boxMin(std::min(textPos.x, bp.x) - padX, textPos.y - padY);
-    const ImVec2 boxMax(std::max(textPos.x + sz.x, bp.x + barW) + padX, bp.y + barH + padY);
+    const ImVec2 boxMax(std::max(textPos.x + sz.x + pingSz.x, bp.x + barW) + padX,
+                        bp.y + barH + padY);
 
-    TextOutlined(dl, font, px, textPos, textCol, outline, line);
+    TextOutlined(dl, font, px, textPos, textCol, outline, nickTxt);
+    // The annotation hangs off the nick's right edge; it deliberately takes no
+    // part in the centring, so a ping gaining a digit moves only itself.
+    if (pingTxt[0]) {
+        TextOutlined(dl, font, px, ImVec2(textPos.x + sz.x, textPos.y),
+                     textCol, outline, pingTxt);
+    }
 
     // 12g overhead chat bubble (MTA/SAMP shape): the peer's last chat message,
     // word-wrapped + centered ABOVE the nick, its own hold/fade (chat_bubbles)
