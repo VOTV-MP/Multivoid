@@ -174,8 +174,21 @@ log (15 `Push` sites mix typed chat with the local player's own UI narration —
 color: applied", "Connecting to X's game..."), and the host's set is the host's own VIEW, subject to
 its own TTL, overflow and `Reset`. So the answer is a **host-owned canonical log** with the local feed
 as a view of it, delivered on `ConnectReplayForSlot` / `QueueConnectBroadcastForSlot` (this table's
-existing shape), refused PER LINE never whole-blob. Design of record + the 21-round `/qf`:
-`research/findings/join-identity/votv-chat-history-DESIGN-2026-07-29.md`. **DESIGN, not built.**
+existing shape), refused PER LINE never whole-blob. Design of record + BOTH `/qf` passes (21 + 17
+rounds, neither converged): `research/findings/join-identity/votv-chat-history-DESIGN-2026-07-29.md`
+— **read its §10 first; §§1-8 are pass 1 and pass 2 reverses one of them.** **DESIGN, not built as of
+HEAD `bafa8e42`.**
+
+**The lane's late-join answer is now SPECIFIED (pass 2, §12c), not just decided.** Three parts of it
+are load-bearing and were each measured rather than assumed: (a) **`ChatLine` goes INTO
+`IsPreWorldSendableKind`** — the pre-world gate is a SILENT DROP (`session.cpp:144/209`,
+`session_relay.cpp:87`), so a client typing during its own load window watches its line VANISH; the
+exact precedent is `session_lanes.h:253-265`, which admitted `SkinChange` for this class after audit
+2026-07-02 HIGH. (b) **A row applied before my own world-ready lands RETAINED**, or it fades behind a
+loading screen and the seed then skips it as already-applied. (c) **Dedup is a contiguous applied
+RANGE `[lo, hi]`, never a high-watermark** — a seed delivers OLDER rows, so `seq > highestApplied`
+would discard the entire seed with no error anywhere. Any future lane whose seed can interleave with
+live traffic inherits (c).
 
 ### 3.5 Phases
 

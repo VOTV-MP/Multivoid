@@ -85,7 +85,7 @@ BUILT. Evidence `HO`=hands-on · `log` · `ST`=selftest/e2e · `code` · `inf` �
 | **Lamp posts** (§6) | not-synced | 1 | 1W | code | ∅ | none (by design) |
 | **World-events** | replay lanes | 3 | 3U | code | HA | replay / snapshot |
 | **Chat** | line relay | 4 | 3W · 1U | HO | CA/HA/PP | **none — and that is now a GAP, not a design** (2026-07-29) |
-| ↳ *chat HISTORY* (facet added 2026-07-29) | retention + reveal + late-join seed | — | U/code | — | (host, once built) | **UNANSWERED — principle 8 row owed** |
+| ↳ *chat HISTORY* (facet added 2026-07-29) | retention + reveal + late-join seed | — | U/code | — | (host, once built) | **DESIGNED, not built** — `votv-chat-history-DESIGN-2026-07-29.md` §12c; the principle-8 row is now specified (seed on `ConnectReplayForSlot`, pre-world-sendable, contiguous-range dedup) |
 | **Peer-action feed** | derived render | 2 | 1W · 1U | HO | ∅/PP | none |
 | **Voice** | frame stream | 3 | 2W · 1U | HO | PO | replay (state) |
 | **Save-transfer / join** | blob + snapshot | 8 | 6W · 2U | HO | HA | this IS the join |
@@ -580,8 +580,8 @@ NOT SYNCED: `special`/`ariralPrank` RNG (replayed None); verdict 0/-1 rows (crea
 ### Chat — `coop/comms/chat_sync`, `chat_feed`, `chat_bubbles`
 | # | facet | V | E | Auth | cite | mid-join |
 |---|---|---|---|---|---|---|
-| 1 | text line | W | HO | CA | `chat_sync::OnReliable` (identity = transport slot) | none (TTL-ephemeral, no backlog) |
-| 2 | nickname prefix / color | W | HO | HA | `chat_sync::OnReliable` (from handshake roster) | own handshake replay |
+| 1 | text line | W | HO | CA | `chat_sync::OnReliable` (identity = transport slot) | none (TTL-ephemeral, no backlog) — **DESIGNED to become a seed, and CA→HA: the design makes chat host-AUTHORED, not host-relayed, because the relay fires on the NET thread before any game-thread order exists (`session.cpp:459-481`)** |
+| 2 | nickname prefix / color | W | HO | HA | `chat_sync::OnReliable` (from handshake roster) | own handshake replay — **DESIGNED to be FROZEN at birth (USER 2026-07-29 "old chat history is essentially a frozen history"), which retires this facet's dependence on the live roster and deletes `chat_feed::Line::slot`** |
 | 3 | overhead speech bubble | W | HO | PP | `chat_bubbles::OnChatLine` | none (expires in place) |
 
 NOT SYNCED: chat history/scrollback (fading HUD); own line never received back (local echo only).

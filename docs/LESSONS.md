@@ -720,6 +720,52 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   BEFORE fixing, since live defects are the only free positive controls you will get.
   `memory/lesson_an_instrument_never_shown_failing_passes_by_construction.md`
 
+- **One name covering TWO quantities reads as a coherent design and is not — FIVE times in one pass,
+  caught by the critic every time and by the primary never (2026-07-29, chat-history `/qf` pass 2).**
+  `seq` (local entry identity vs the host's wire order), `alpha` (the store's TTL curve vs the drawn
+  composition), `eviction` (live→retained vs retained→gone), "the build gate" (a pinned ImGui frame vs
+  a 60 Hz republish), `slot` (display identity vs world-entity handle). The `alpha` one would have
+  shipped a feature that **never drew at all** — a retained row's store alpha is 0 by definition and
+  the layout predicate `alpha >= threshold` read it. A conflation does not read like an error, it
+  reads like concision: every sentence is true of *one* referent, so proof-reading passes, and the
+  contradiction only shows when two sentences are held side by side — which a self-written brief
+  cannot do. *Look FIRST:* grep your own draft for its load-bearing nouns and count referents before
+  the brief goes out; **suspect any word that spans a LAYER BOUNDARY** (all five did: store↔render,
+  local↔wire, store↔viewport, identity↔world, design↔measurement); and treat a name introduced *by a
+  fix* as the next suspect — three of the five arrived attached to corrections, which is when a design
+  is least suspected. As a critic, "which of the two does X read?" costs nothing and found five real
+  defects in one pass. `memory/lesson_one_name_for_two_quantities.md`
+
+- **A reframe silently invalidates every earlier answer that CITED what it changed — twice in one
+  pass, despite the `/qf` skill already carrying a RE-AUDIT instruction for exactly this
+  (2026-07-29).** (a) Round 1 proved "the seed strictly precedes every live line, so no dedup is
+  needed"; round 2 then put `ChatLine` into `IsPreWorldSendableKind` to close a principle-8 hole and
+  destroyed that premise — un-re-derived until round 11, by which point pre-world rows sorted NEWER
+  than the seed **and** `lineSeq > highestApplied` would have discarded the ENTIRE seed with no error
+  anywhere. (b) Round 2 WITHDREW "the host composes the name once" because under host-**relay**
+  (`session_relay.cpp:95-99` copies verbatim) the host provably could not; the design later became
+  host-**authored** and the withdrawal rode forward un-re-tested until round 13, leaving two peers
+  with **permanently different names for one message**. *Look FIRST:* when you change a GATE, LANE,
+  AUTHORITY or THREAD, grep your own prior answers for the thing you changed **by name, not by
+  memory**; keep **withdrawals** on the same re-test list as claims ("was that rejected on a ground
+  that still holds?"); and know that **a fix which closes a hole is the highest-risk reframe**,
+  because it does not feel like a premise change.
+  `memory/lesson_a_reframe_invalidates_answers_that_cite_it.md`
+
+- **A reclassification that leaves the OBSERVABLE unchanged is a relabel, not a dissolution
+  (2026-07-29).** A row vanishing at full opacity when the reveal block hit its height budget was
+  "dissolved" by reclassifying it from a store exit to a **viewport** event and using
+  `ImDrawList::PushClipRect` (real: `imgui.h:3071`) so the oldest row would "slide up and out". It had
+  every signature of a good dissolution — simpler mechanism, deleted state, a real in-tree primitive.
+  One round later: **`hud.cpp:369` recomputes `y = anchorBottomY - totalH` every frame**, so a new
+  line jumps the block one `rowH` in ONE frame. Nothing slides; the clip turned an instant vanish into
+  an instant clip. The true answer was that smooth motion needs cross-frame state AND was out of scope
+  (Minecraft, the user's own reference, does not animate chat scroll). *Look FIRST:* after any
+  reclassification, **state the observable before and after in one sentence each — if they are the
+  same sentence, you relabelled the defect**; and grep for the motion verb (*slides/eases/scrolls*)
+  and confirm something actually interpolates the position, because a per-frame recomputation from
+  current state cannot animate. `memory/lesson_a_reclassification_is_not_a_dissolution.md`
+
 ### 1b. Standing working agreements (previously indexed NOWHERE)
 
 Measured 2026-07-27 by a full pairing sweep of `memory/` against this file: **all 194 `lesson_*`
