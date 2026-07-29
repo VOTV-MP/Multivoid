@@ -33,6 +33,39 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 1. How to work (process / working agreements)
 
+- **"BUILT, drilled, green" is a statement about the DRILLS, not about the code.** 2026-07-29: chat
+  history shipped with two purpose-written drills PASSing 4/4, both shown RED under injection, zero
+  probe warnings, a measured frame rate — and a `/qf` phase IMPLEMENTATION pass over the REAL DIFF found
+  **twelve defects in four rounds**, one certain to fire in the first 30 seconds of a hands-on. **Not one
+  of the twelve would have turned either drill red.** Two earlier `/qf` passes over the design BRIEF (21
+  and 17 rounds) found none of them either. A brief is the primary's own prose about its own plan and can
+  be argued with forever; code can only be measured — and drills written FROM a design, by its author,
+  inherit its blind spots by construction. **Look FIRST: run the implementation pass over the diff before
+  a human sees the feature, and never report a drill verdict as the feature's status — state what it
+  asserts AND what it therefore cannot see.** An `--inject` control proves ONE BIT (this detector is not
+  blind to this one defect), never coverage.
+  `memory/lesson_built_and_drilled_is_not_the_same_as_correct.md`
+- **A harness WORKAROUND silently deletes the path it works around.** 2026-07-29: `mp.py`'s `_type_chat`
+  closes chat with Enter-on-empty, commented "NOT Escape — Escape raises the pause menu and suppresses
+  the HUD pass". Correct reasoning; it also removed the user's OWN specified close path ("close like
+  minecraft" = ESC) from all coverage, where three stacked defects were later found by hand. The
+  instrument was never blind — it was ROUTED, and a routed instrument reports nothing about the road it
+  did not take. Worse, the path was avoided *because the product behaves differently there*, which is
+  exactly the condition that deserves a test. **Look FIRST: grep your own harness comments for "not X",
+  "rather than", "avoid" — each is a coverage debt written in the imperative; print the drill's coverage
+  BOUNDARY next to its verdict.** Fifth member of the instrument-blindness family: it can see, and it
+  went around. `memory/lesson_a_harness_workaround_removes_a_path_from_coverage.md`
+- **ONE capacity expressed in THREE places will disagree.** 2026-07-29, `chat_feed`: `CapRetained` allows
+  `kMaxRetained*2` = 200 while a reader is paged back, `Republish` publishes at most `kMaxRetained` = 100
+  from the FRONT, and `Snapshot::lines` is sized `kMaxLines+kMaxRetained` = 106 and cannot hold 200 at
+  all — so rows 101+ are storable, unpublishable and invisible, and a live row overflowing into that zone
+  **disappears off the screen**. Each site is locally right (memory / per-tick copy cost / fixed
+  allocation) and two spell the constant identically, so a grep makes them look consistent. **Look FIRST:
+  a conditional multiplier on a capacity (`x * (frozen ? 2 : 1)`) is a SECOND capacity wearing the
+  first's name — when you raise a ceiling, read every site that bounds the same set by DIRECTION (stores
+  / copies / publishes / allocates). And suspending ONE exit from a set does not suspend the others.**
+  Capacity-shaped instance of `[[lesson-one-name-for-two-quantities]]`.
+  `memory/lesson_one_capacity_expressed_in_three_places_will_disagree.md`
 - **An instrument's assertion WINDOW must not be movable by the thing it measures.** 2026-07-29
   building chat history: the drill's window was bounded by a log marker emitted at the END of the draw
   function, BELOW an early return taken when there was nothing to draw. On the INJECTED run (history
@@ -1010,6 +1043,13 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   hole did not exist — and applying the fix would have MANUFACTURED one by letting live rows land in
   front of the join seed. *Look FIRST: before "fixing" a silent drop, confirm which SIDE the gate
   guards; a gate named for a STAGE ("pre-world") rarely says which DIRECTION it faces.*
+  **THIRD INSTANCE 2026-07-29, the census of a FUNCTION'S OTHER WRITES:** `chat_input.cpp:62` carries a
+  comment that IS a census — "Open/Close are reached from THREE threads … so the store is told through
+  `SetChatOpen`, which writes atomics only" — every word true, while the very next lines of `Open()` and
+  `Close()` also write `g_buf[0]` and `g_histPos`, both declared **render-thread only** at `:22`/`:29-32`,
+  from the WndProc, while `InputTextWithHint` may be mid-frame. The census asked "what do these tell the
+  STORE?" and never "what ELSE do these WRITE?". *Look FIRST: a census scoped to one DESTINATION reads as
+  a census of the function — enumerate every write target, not every caller.*
   `memory/lesson_census_the_direction_not_only_the_operation.md`
 
 ## 3. Sync architecture (owners, routers, lifecycle)
@@ -1465,6 +1505,20 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 
 ## 4. Dispatch, hooks & input seams
 
+- **A "keep the frame alive" predicate is worthless if a gate ONE LEVEL UP can still veto the draw.**
+  2026-07-29: `hud::IsActive()` (`hud.cpp:304-309`) carries a `RevealActive()` clause added SPECIFICALLY
+  so the chat history's 220 ms fade keeps getting frames — and `imgui_overlay.cpp:359` gates
+  `hud::Render()` on `!PauseMenuOpen()` above it. ESC closes the chat AND opens the native pause menu on
+  the same keydown (`:214` falls through deliberately), so `chat_view::Draw()` is not called at all: the
+  fade draws ZERO frames, the pin release living inside `Draw()` never runs so `SetRetentionFrozen(true)`
+  stays latched for the whole pause, and the ramp's own variables freeze mid-transition (resuming either
+  flashes at full alpha minutes later or kills the NEXT open's fade-in via `Ramp`'s `target ==
+  g_revealTo` early branch). Both gates are individually correct and neither mentions the other. **Look
+  FIRST: when you add a predicate whose job is "keep rendering me", walk UP to the render call site and
+  ask who else can decide not to call it. And never put a latch release, timer, or cross-module publish
+  inside a draw function — release it where the CLOSE happens.** A function that may or may not be called
+  is a fine renderer and a terrible state machine.
+  `memory/lesson_a_render_gate_one_level_up_defeats_a_keep_alive_clause.md`
 - **A net-delta array-diff POLL is the wrong tool for a DISCRETE user event** — it (a) LAGS the
   mirror by up to the poll interval and (b) SILENTLY DROPS any change that returns to the baseline
   within one window (fast spam nets to zero → never sent). Measured 2026-07-21 take-4: `desk_input`

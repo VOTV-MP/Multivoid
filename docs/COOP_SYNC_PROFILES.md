@@ -85,7 +85,7 @@ BUILT. Evidence `HO`=hands-on · `log` · `ST`=selftest/e2e · `code` · `inf` �
 | **Lamp posts** (§6) | not-synced | 1 | 1W | code | ∅ | none (by design) |
 | **World-events** | replay lanes | 3 | 3U | code | HA | replay / snapshot |
 | **Chat** | line relay | 4 | 3W · 1U | HO | CA/HA/PP | **none — and that is now a GAP, not a design** (2026-07-29) |
-| ↳ *chat HISTORY* (facet added 2026-07-29) | retention + reveal + late-join seed | W | HO | HA | `chat_log` + `chat_feed` retained tier + `ui::chat_view` | **BUILT 2026-07-29** (`8eea0af6`+`3729097e`, proto 133, drills `mp.py chathistory` + `chatseed` both PASS with must-FAIL injections shown RED; NOT hands-on) — seed on `ConnectReplayForSlot`, seeded rows land RETAINED, contiguous-range dedup, per-slot seed gate. `ChatLine` is NOT pre-world-sendable (design §18.1 reverses that) |
+| ↳ *chat HISTORY* (facet added 2026-07-29) | retention + reveal + late-join seed | W | HO | HA | `chat_log` + `chat_feed` retained tier + `ui::chat_view` | **BUILT AND DEFECTIVE 2026-07-29** (`8eea0af6`+`3729097e`, proto 133; NOT hands-on). The drills (`mp.py chathistory` + `chatseed`) both PASS with must-FAIL injections shown RED, and **that verdict covers two axes, not the feature**: a `/qf` IMPLEMENTATION pass over the diff found **12 defects, NONE of which turns either drill red** (design SS19). #5 -- the ESC close path, which is the user's own spec -- is certain to fire in the first 30 s of a hands-on. **DO NOT hand off until SS19+SS21 are done.** — seed on `ConnectReplayForSlot`, seeded rows land RETAINED, contiguous-range dedup, per-slot seed gate. `ChatLine` is NOT pre-world-sendable (design §18.1 reverses that) |
 | **Peer-action feed** | derived render | 2 | 1W · 1U | HO | ∅/PP | none |
 | **Voice** | frame stream | 3 | 2W · 1U | HO | PO | replay (state) |
 | **Save-transfer / join** | blob + snapshot | 8 | 6W · 2U | HO | HA | this IS the join |
@@ -584,7 +584,7 @@ NOT SYNCED: `special`/`ariralPrank` RNG (replayed None); verdict 0/-1 rows (crea
 | 2 | nickname prefix / color | W | HO | HA | `ChatSpeaker`=120 carries nick + custom colour; receiver resolves the palette at apply | **FROZEN at birth** (USER 2026-07-29 "old chat history is essentially a frozen history") — the nick travels WITH the row rather than being looked up, because a lookup answers who is in that slot NOW and slots recycle. `chat_feed::Line::slot` is DELETED (RULE 2) |
 | 3 | overhead speech bubble | W | HO | PP | `chat_bubbles::OnChatLine` | none (expires in place) |
 
-NOT SYNCED: nothing outstanding on this system. (Was: "chat history/scrollback; own line never received back" — both resolved 2026-07-29. A client's own line IS now received back, as the host's authored row; there is no optimistic local echo, so it costs one round trip. PgUp/PgDn scrollback is local-only and needs no wire.)
+NOT SYNCED: nothing outstanding on the WIRE. **OPEN (not a sync gap -- correctness): the 12 implementation defects in design SS19, plus the USER REFRAME of 2026-07-29 (SS20) making the host's record own EVERY history line including the event-feed lines -- which moves the wire to proto 134 and DISSOLVES two of the 12.** (Was: "chat history/scrollback; own line never received back" — both resolved 2026-07-29. A client's own line IS now received back, as the host's authored row; there is no optimistic local echo, so it costs one round trip. PgUp/PgDn scrollback is local-only and needs no wire.)
 
 ### Peer-action feed — `coop/comms/peer_action_feed`
 | # | facet | V | E | Auth | cite | mid-join |

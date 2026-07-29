@@ -165,7 +165,10 @@ through the normal state lanes (SkySignalCatch identity + DishArm + the detector
 [AS-BUILT v115b de31889e]**.
 
 **chat = SEED. BUILT 2026-07-29 (`8eea0af6` local half + `3729097e` wire half, proto 133, NOT
-hands-on).** A joiner receives the lobby's chat record on `ConnectReplayForSlot`, ONE reliable message
+hands-on) -- AND DEFECTIVE.** A `/qf` IMPLEMENTATION pass over the diff (2026-07-29 late) found
+**12 defects**, and the USER then reframed the feature (all history, event-feed lines included ->
+proto 134). The late-join ANSWER below is correct and unchanged; the CODE implementing it is not
+finished. See the design doc SS19-SS21 before touching or trusting this row. A joiner receives the lobby's chat record on `ConnectReplayForSlot`, ONE reliable message
 per line (never a blob -- that would be the fourth "one packet kills a joining client" row in
 `docs/security/TRACKER.md`). Seeded rows land **RETAINED**, not live, so arriving does not replay a
 conversation you were not in across your screen: the feed is clear, and the history is there when you
