@@ -1342,8 +1342,17 @@ def cmd_smoke4(args) -> None:
 
 
 def _log_count(log_path: Path, needle: str) -> int:
+    # encoding="utf-8" IS THE ASSERTION. The mod writes its log as UTF-8; without
+    # this, read_text() uses the process default (cp1251 on a RU Windows box), so
+    # every non-ASCII needle is compared against mojibake and can NEVER match.
+    # Measured 2026-07-29: smoke_i18n reported 6 FAILs -- "HOST: never saw
+    # 'привет всем'" -- against a log that contained every line byte-intact and a
+    # chat lane that was working end-to-end on all four scripts. The instrument
+    # failed the feature. Every other _read_text call in this file already passes
+    # the encoding; this one was the single escapee, and it is the one the i18n
+    # verdict is built on. [[lesson-an-instrument-blind-to-the-phenomenon-always-passes]]
     try:
-        return log_path.read_text(errors="replace").count(needle)
+        return log_path.read_text(encoding="utf-8", errors="replace").count(needle)
     except OSError:
         return 0
 
