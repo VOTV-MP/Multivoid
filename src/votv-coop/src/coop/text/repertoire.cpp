@@ -70,6 +70,17 @@ bool RunRepertoireSelftest() {
     // asked for, and the emoji the donor exists for), two OUT (the script whose
     // absence is the whole reason the fold changed, and an invisible character).
     ok(InRepertoire(U'A') && InRepertoire(0x043F), "Latin and Cyrillic are in");
+    // Latin Extended-A/B + Greek (2026-07-29). Free: the embedded faces already
+    // carried these, the bake just never asked. U+0141 L-stroke, U+015E S-cedilla,
+    // U+0393 capital gamma -- Michal / Gunes / Giorgos spelled properly.
+    ok(InRepertoire(0x0141) && InRepertoire(0x015E) && InRepertoire(0x0393),
+       "Latin Extended-A/B and Greek are in");
+    // U+03A2 sits inside the Greek block and is PERMANENTLY UNASSIGNED in Unicode,
+    // so no font can carry it and the generator's gate lists it as an expected gap.
+    // It must therefore be OUT: asking the atlas for a codepoint nothing can draw is
+    // how a hole becomes a box on someone's screen.
+    ok(!InRepertoire(0x03A2),
+       "an unassigned Greek codepoint stays OUT (the block has holes; fonts do not)");
     ok(InRepertoire(0x1F600), "an astral emoji is in (donor + WCHAR32)");
     ok(!InRepertoire(0x4E2D), "hanzi is OUT -- it folds to the sentinel");
     ok(InRepertoire(0xFFFD),

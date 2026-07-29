@@ -80,6 +80,22 @@ FACE_SETS = {
 # mod has baked since b100. Kept as the BASE ask so the repertoire can only grow.
 BASE_RANGES = [
     (0x0020, 0x00FF), (0x0400, 0x052F), (0x2DE0, 0x2DFF), (0xA640, 0xA69F),
+    # Latin Extended-A/B and Greek. MEASURED FREE 2026-07-29 (s7, the
+    # bake-everything probe): our own embedded faces already CARRY these glyphs --
+    # Latin Ext-A/B complete, Greek 135/144 -- so asking for them costs a
+    # byte-identical texture at every scale in the default config, +1,787 glyphs and
+    # about +7 ms of bake. Nothing is downloaded and nothing is shipped; the atlas
+    # simply stops refusing to draw what the fonts already contain.
+    #
+    # This is `Michal / Simon / Gunes / Stefan / Giorgos` spelled properly instead of
+    # as replacement boxes. It is deliberately SEPARATE from the CJK question, which
+    # is not free (64-256 MB of atlas) and is answered by on-demand OS fonts.
+    #
+    # Widening the repertoire moves the FOLD TABLE and the ATLAS together -- one
+    # generator, by construction -- so a name that used to collapse into U+FFFD now
+    # folds as itself. That is the intended direction: fewer names collide because
+    # more names are legible.
+    (0x0100, 0x017F), (0x0180, 0x024F), (0x0370, 0x03FF),
     # U+FFFD REPLACEMENT CHARACTER, and it has to be asked for EXPLICITLY.
     # ImFont::BuildLookupTable (imgui_draw.cpp:3700) picks the fallback glyph
     # from { U+FFFD, '?', ' ' } -- in that order, from what is BAKED. All seven
@@ -97,7 +113,17 @@ BASE_RANGES = [
 # BASE_RANGES except exactly one, U+A69E (CYRILLIC SMALL LETTER IOTIFIED A). If a
 # future donor/family swap changes that, this script FAILS rather than silently
 # shrinking what players can be uniquely named in.
-EXPECTED_BASE_GAP = {0xA69E}
+EXPECTED_BASE_GAP = {
+    0xA69E,  # CYRILLIC SMALL LETTER IOTIFIED A -- a real hole in our faces.
+    # The nine below are NOT holes in our faces. Every one is a PERMANENTLY
+    # UNASSIGNED Unicode codepoint inside the Greek and Coptic block, so no font can
+    # cover them and nothing can ever be named with them. MEASURED 2026-07-29 by the
+    # gate below on the regular weight; s7's "Greek 135/144" figure was this and only
+    # this -- 144 codepoints in the block minus these 9 reserved slots = 135 assigned,
+    # ALL of which our embedded faces carry. Recorded explicitly so a later reader
+    # does not go looking for a font that "fixes" them.
+    0x0378, 0x0379, 0x0380, 0x0381, 0x0382, 0x0383, 0x038B, 0x038D, 0x03A2,
+}
 
 
 def to_ranges(cps):
