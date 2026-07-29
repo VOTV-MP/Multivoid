@@ -1,13 +1,15 @@
-# Chat history — design of record + AS-BUILT (three `/qf` passes, 21 + 17 + 4 rounds, NONE converged)
+# Chat history — design of record + AS-BUILT (four `/qf` passes, 21 + 17 + 4 + 14 rounds, NONE converged)
 
 **Status: BUILT AND DEFECTIVE, 2026-07-29. NOT hands-on. DO NOT hand this to the user as-is.**
 Local half `8eea0af6`, wire half `3729097e`. DLL `multivoid-0.9.0n-133.dll`
 `b54cad7d9f1a01a8951509ca58cfc1d4`, proto **132 -> 133**.
 
-**READ §19 FIRST** — the IMPLEMENTATION `/qf` pass (2026-07-29 late, 4 rounds) found **twelve
-defects in the shipped code**, one of them (§19 #5, the ESC close path) certain to fire in the
-first thirty seconds of any hands-on. §20 then records the USER'S REFRAME of 2026-07-29 which
-DISSOLVES two of the twelve and changes the wire (proto 134).
+**READ §22 FIRST, THEN §19.** §22 is the pass-4 DESIGN pass on the user's reframe (2026-07-29 late,
+14 rounds, NOT converged) and it **SUPERSEDES §20 and §21**: the reframe is about what history
+CONTAINS, not about who authors it, so the record-only shape replaces the host-authorship shape §20
+recorded, `Keep` SURVIVES rather than being deleted, defect #13 is RETRACTED, and **defect #8
+RETURNS**. §19 is the IMPLEMENTATION pass's twelve defects in the shipped code, still the list to fix
+— but read its #3 / #8 / #13 rows against §22.1, which corrects three of them.
 
 **§18 (AS-BUILT) is the record of what BUILDING changed** — three of §12's claims are corrected
 there by measurement. Read it second. Then §10.
@@ -492,6 +494,17 @@ the briefs produced. **Round 4 was as productive as round 1, so this pass ALSO d
 
 ### The twelve, ranked by what a human hits
 
+> **STATUS AFTER PASS 4 (§22) — three rows have moved, verified against the code 2026-07-29:**
+> **#5 DISSOLVES** (the user chose Minecraft-shaped ESC, so the keydown is consumed and the pause menu
+> never opens — no render-gate fix needed), **but its fix promotes #7 from rare to routine, so #7 ships
+> in the same commit.** **#3 STAYS dissolved** (a product decision, independent of mechanism).
+> **#8 RETURNS** — it dissolved only because §20's authorship design made every retained row a wire
+> row; under the record-only shape local rows still retire locally. Root fix found by the doc sweep,
+> not by the 14 rounds: `Retire` (`chat_feed.cpp:261`, plain `push_back`) must use the same **sorted
+> insert** `Store::Seed` already does (`:228-236`). **#13 (added during pass 4, then RETRACTED)** — the
+> busy-deny retiring into the LOCAL retained tier is correct behaviour; it was only wrong under
+> authorship, which would have broadcast it. Everything else stands.
+
 | # | defect | evidence | severity |
 |---|---|---|---|
 | 5 | **THE ESC PATH — the user's own "close like minecraft".** `imgui_overlay.cpp:214` closes chat on ESC and FALLS THROUGH so the native pause menu opens; `:359` gates `hud::Render()` (hence `chat_view::Draw`) on `!PauseMenuOpen()`. So `Draw` stops running entirely: (a) the 220 ms fade draws ZERO frames — the `RevealActive()` clause added to `hud::IsActive()` at `hud.cpp:304-309` exists precisely to keep that fade alive and is defeated one level up; (b) `SetPinned(false)` (`chat_view.cpp:127`) never runs, so `SetRetentionFrozen(true)` stays latched for the whole pause; (c) `g_revealValue`/`g_revealTo` freeze at 1.0 — either `Draw` resumes and flashes the live feed to full alpha for 220 ms minutes later, or `IsActive()` stays false and the NEXT open takes `Ramp`'s `target == g_revealTo` branch with a huge elapsed and has **no fade-in at all**. Exactly one fires; both are visible. | code | **CRITICAL** |
@@ -529,6 +542,13 @@ the briefs produced. **Round 4 was as productive as round 1, so this pass ALSO d
   neither. Principle 8 holds here without new work.
 
 ## 20. USER REFRAME (2026-07-29) — the lobby record owns EVERY history line
+
+> **SUPERSEDED BY §22 (pass 4, 2026-07-29 late).** The user's words are quoted correctly here; the
+> ARCHITECTURE this section derives from them is wrong. It reads the reframe as *"the host AUTHORS
+> every history line"* when the sentence is about what history CONTAINS. Pass 4's round 1 replaced it
+> with the RECORD-ONLY shape, on an impossibility argument: a sentence describing the death of a LINK
+> cannot travel over that link. **Everything below is kept only so the abandoned reasoning is not
+> re-derived — see §22.1 for the withdrawal table.**
 
 **Verbatim:** *"Playes should get all history, including player messages and chat event feed
 messages. When i hands on this, I want it to be 100 percent built properly."*
@@ -609,12 +629,241 @@ own departure**. The belief is that the flee/teardown path already suppresses th
 (`net_pump.cpp:185-215` neutralizes the edge detectors; `g_suppressLeaveLines`). **VERIFY, do not
 assume** — this inversion is exactly what creates that class of hole.
 
-## 21. NEXT (supersedes section 17)
+## 21. NEXT (supersedes section 17) — **DONE / SUPERSEDED BY §23**
 
-1. **The Announce census** (section 20) — read-only, gates everything.
-2. **Finish the design pass on the reframe** with the census in hand. It has had ONE round and
-   changed shape twice in it; that is not a converged design.
-3. **Build as two arcs:** the record generalization (proto 134), then the eleven remaining
-   section-19 fixes with **#5 (ESC) FIRST** — it is the one certain to fire in the first thirty
-   seconds of a hands-on.
+1. **The Announce census** — **DONE 2026-07-29** (§22.2). It is **6 sites, not 7**: five qualified
+   `peer_action_feed::Announce` + one `AnnounceDirect`. It also had to be re-run over all 19
+   `chat_feed::Push*` sites, because it had enumerated the wrong set — see §22.2.
+2. **Finish the design pass on the reframe** — **RAN, 14 rounds, DID NOT CONVERGE** (§22). Round 1
+   reframed it away from authorship entirely.
+3. Build as two arcs — **NOT STARTED, and blocked**: see §23's four residuals. #5 (ESC) now
+   **DISSOLVES** under the user's Minecraft-shaped decision rather than needing a fix.
 4. Only then hands-on. The user's bar, verbatim: *"100 percent built properly."*
+
+---
+
+# PASS 4 (2026-07-29 late) — the DESIGN pass on the reframe, 14 rounds, NOT converged
+
+**Status: DESIGNED, NOT BUILT. Every one of the 14 rounds was material, so this pass did NOT converge
+either — the fourth in a row. NOTHING was written to `src/` this session.**
+
+**§20 and §21 below are SUPERSEDED by this section. Read §22 before acting on either.**
+
+## 22. What pass 4 changed, and why §20 was wrong
+
+§20 recorded the user's reframe as *"the host AUTHORS every history line"*. Round 1 established that
+the user's sentence — *"Playes should get all history, including player messages and chat event feed
+messages"* — is about what history **CONTAINS**, not about who authors it. The primary had turned a
+statement about content into a statement about authority.
+
+The decisive argument against authorship is an impossibility, not a preference: **a sentence describing
+the death of a LINK cannot travel over that link.** `"X left the game"` on a timeout, and `"the host
+left"` at all, are unauthorable by the host. `event_feed.cpp:78`'s `roster_ledger` `SlotReplaced`
+subscriber is the load-bearing LOCAL author, and §20's design deleted it.
+
+**The corrected shape: RECORD-ONLY.** The live path does not change on any peer. The host additionally
+appends the same sentences to `chat_log`, so the JOIN SEED carries them.
+
+### 22.1 What that invalidated from §20 (all WITHDRAWN)
+
+| §20 claim | status after pass 4 |
+|---|---|
+| "the host authors every History line" is the invariant | **WITHDRAWN** — record-only |
+| delete the client mirrors at `prefs.cpp:133`, `signal_catch_sync.cpp:372` | **WITHDRAWN** — they are the local authors; a third census class (MIRROR) exists for them |
+| the `Keep` enum is DELETED (RULE 2) | **WITHDRAWN** — `Keep` SURVIVES; it is what keeps a private notice out of the record |
+| #13 (busy-deny forced into History by `PushAction`) is a defect | **RETRACTED** — a private notice in one's OWN view is correct; it was only wrong because authorship would have broadcast it |
+| #3 (a joiner should not get events it missed) dissolves | **STANDS dissolved** — the user's product decision, independent of mechanism |
+| #8 (`retained_` not monotone) dissolves | **RETURNS — see §22.5.** It dissolved only because authorship made every retained row a wire row |
+| the host's-own-skin authorship gap | **shrinks to ONE hole** (see the table in §22.3) |
+| both slot-0 exclusions move into the author | **WITHDRAWN** |
+| proto 133 -> 134 | **SURVIVES** — a seeded event row is a composed sentence with a nick prefix, not `nick + ": " + text` |
+
+## 22.2 The census, re-run under the NEW question — and it needed a THIRD class
+
+The 8-surface census in §21 enumerated **`Keep::History` PRODUCERS**. The reframe asks a different
+question — *"which host-observed shared events belong in the record"* — so it was re-run over all 19
+`chat_feed::Push*` sites. Two classes were not enough; `signal_catch_sync.cpp:372` fell out of a list it
+had already been placed in, because it is neither.
+
+- **RECORD** (the host `Append`s here): chat `chat_sync.cpp:113` · joined `player_handshake.cpp:513` ·
+  left `event_feed.cpp:78` · turned-away `player_handshake_version.cpp:97` · skin `prefs.cpp:111` ·
+  email `email_sync.cpp:393` (actor) + `:504` (host receiver) · catch `signal_catch_sync.cpp:269`
+  (actor) + `:363` (host receiver) · sleep outcomes `sleep_sync.cpp:75` / `:93`.
+- **MIRROR** (a local render of an ADMITTED event on a non-authoring peer; must NOT `Append`, and must
+  NOT be deleted): `signal_catch_sync.cpp:372`, `prefs.cpp:133`.
+- **PRIVATE** (never in the record): `device_occupancy.cpp:90` busy-deny · `sleep_sync.cpp:43` progress ·
+  `player_handshake.cpp:474` / `:477` / `:532` · `local_body.cpp:85` · `nick_color.cpp:93` ·
+  `nameplate.cpp:203` · both `[1c-test]` dev probes.
+
+**MEASURED:** exactly **5** qualified `peer_action_feed::Announce` call sites (`email_sync:393/504`,
+`signal_catch_sync:269/363/372`) and **1** `AnnounceDirect` (`device_occupancy:90`). The standing memory
+line *"ценз 7 сайтов `Announce` — НЕ СДЕЛАН"* is now DONE, and the count is **6 sites, not 7**.
+
+The admit/refuse line falls exactly on that existing function boundary — `Announce` (shared) vs
+`AnnounceDirect` (private). For those five the distinction can be enforced by the type system. For the
+other eight, which call `chat_feed::Push` directly, it cannot — see §22.4.
+
+## 22.3 The host-as-actor table — a generalized rule reduced to ONE fix
+
+Round 6 found that `AnnounceLocalSkin` (`prefs.cpp:64-82`) **SENDS but never pushes**, so the host's own
+skin change produces only the Transient `"Skin: X"` at `local_body.cpp:85`; the History sentence is
+composed ON THE CLIENTS at `:133`. The generalization "every receiver-composed surface has no composer
+for the host's own acts" was then falsified by building the table:
+
+| surface | host-as-ACTOR | host-as-RECEIVER |
+|---|---|---|
+| chat | OK — `AuthorAndBroadcast` (host authors all) | OK |
+| joined | n/a — host never joins (slot 0 excluded at `:510`) | OK `:513` |
+| left | n/a — host is never the leaver in its own record (`:72`) | OK `:78` |
+| turned-away | n/a | OK `:97`, host-only by construction (`:116`) |
+| **skin** | **HOLE** — `AnnounceLocalSkin` sends, never pushes | OK `prefs.cpp:111` |
+| email delete | OK `email_sync.cpp:393` — actor-local, fires on the host too | OK `:504` |
+| catch | OK `signal_catch_sync.cpp:269` — actor-local | OK `:363` |
+| sleep outcomes | OK `:75`/`:93` run on both (`:74`'s `IsHost` gate covers only the accelerate) | OK |
+
+**Exactly one hole.** The structural answer is to make it not a hole CLASS: **the host processes its own
+act through the SAME handler a client's act takes** (applies its own field payload locally as if
+received), so there is one compose point rather than an actor/receiver pair to keep in sync.
+
+## 22.4 The retreat: "privacy is structural" does not survive, and the project already knew why
+
+Round 13 killed the pass's central claim. A `SharedWorldEvent` whose constructor is private to an
+admitted-site friend list is `Keep` wearing a type's clothes — and `chat_feed.h:13-18` already records
+the measurement that settles it: a data predicate for this classification **was tried and got 12 of 15
+wrong, failing on exactly the lines that matter** (`"Connecting to <host>'s game..."` names a peer while
+being purely this player's own status).
+
+So the classification is **irreducibly a per-site declaration**. What is achievable splits in two:
+
+- the **5 `peer_action_feed` sites** — enforceable, because `Announce`/`AnnounceDirect` already ARE two
+  functions;
+- the **8 direct-`Push` sites** — the declaration stays the `Keep` parameter, and the invariant-shaped
+  part is **the gate**: `chatlog_gate.ps1` censusing by OPERATION KIND (who calls `Append`, who
+  constructs the event), so the declaration is mandatory, visible, and MECHANICALLY CENSUSABLE. That
+  third property is what today's design lacks; it is not a replacement for the first two.
+
+**`Keep` and admission are TWO AXES, not one** — `Keep` answers *"retained in my local tier?"*, admission
+answers *"in the lobby's record?"*, and MIRROR is retained-yet-never-recorded, which cannot exist if they
+are one quantity. They need distinct names in the code.
+
+## 22.5 DEFECT #8 RETURNS — and the /documentize verification found the root
+
+`Store::Seed` (`chat_feed.cpp:228-236`) does a **sorted insert**. `Retire` (`:254-266`) does a plain
+**`retained_.push_back`**. Under §20's authorship design every retained row was a wire row, so the two
+could not disagree — which is why #8 was recorded as dissolved. Under RECORD-ONLY, local rows still
+retire locally, so a locally-authored History row (keyed at base 0 before any wire row has applied, since
+`g_wireBase` only rises from an arriving `lineSeq`) retires with `push_back` **behind seeded rows whose
+keys are larger** — the retained deque is non-monotone.
+
+This also falsifies rounds 12-13's answer that "the anchor search is safe because the retained region is
+monotone by construction": that is true only of a region built by `Seed`. A **mixed** region is not.
+
+**Root fix: `Retire` uses the same sorted insert `Seed` does.** One insertion discipline, region monotone
+by construction, anchor search safe. Found by the doc sweep's code verification, not by the 14 rounds.
+
+## 22.6 The rest of the design, as it stands (DESIGN, not built)
+
+- **EVENT ROWS = their own `ReliableKind`**, seed-only, host->client: `text[220] + nickLen + flags +
+  nickArgb` = **226 <= kMaxReliablePayload 228** (measured: `256 - 20 - 8`). No `speakerId`, no
+  `lineSeq` — `OnChatLine` drops `lineSeq == 0` (`:296-298`) AND an unbound `speakerId` (`:291-294`), so
+  an event row survives NEITHER guard and amending either reopens the chat path. Registered per
+  `[[feedback-reliablekind-router-checklist]]`, OUT of `IsClientRelayableReliableKind`, and it **MUST**
+  share `Lane::Normal` with `ChatLine` — ordering is per-LANE, not per-kind.
+- **THE CHAT PATH DOES NOT CHANGE.** `ChatLinePayload` gains nothing. MEASURED: `g_buf[204]`
+  (`chat_input.cpp:22`) is 203 B + NUL matching `ChatMessagePayload.text`, so `SendLine`'s
+  `memcpy(min(size, 203))` never truncates a submitted message today — composing `nick + ": " + msg`
+  (up to 285 B) into that row would have cut mid-codepoint and then been **refused whole** by
+  `WellFormed` (`:303-307`).
+- **THE WIRE CARRIES FIELDS; ONLY THE HOST COMPOSES SENTENCES.** A client authoring canonical record
+  content would re-open W11 (chat was the one attacker-controlled string and had no decode until
+  `84e0a4e3`) one level deeper.
+- **`Append` IS BEFORE THE TOGGLE**: compose -> `Append` if host (UNCONDITIONAL) -> push locally IF
+  `Enabled()`. Otherwise a host running `ui.chat.peer_actions=0` silently deletes rows from the CANONICAL
+  record for every peer. Decision 3 stays a RENDER preference, which is what the user answered.
+- **TWO FLAG BITS**: `action` = render the predicate yellow (today's `Line::action`); `peerAction` =
+  subject to the toggle. Using `action` as the filter would start hiding the busy-deny, which
+  deliberately BYPASSES the toggle as functional UX.
+- **`ord` IS NOT ON THE WIRE.** The lane is ordered, so the seed's sequence rides the transport; each
+  seeded chat row raises `g_wireBase` as it applies, so an event row arriving between chat rows N and
+  N+1 keys at base N.
+- **CAPACITY.** `200 / 100 / 106` are ONE FAMILY from `kMaxRetained = 100`; `CapRetained`'s 2x is
+  deliberate PAGING HEADROOM the user's own scroll rule depends on. **A JOINER IS NOT PAGED BACK**, so
+  its ceiling is the unfrozen 100 — **the publisher's ceiling must equal the holder's UNPAGED ceiling**,
+  and `chat_log.cpp:33`'s trim to `kMaxRetained` is therefore already correct and does not change. THREE
+  sites must move together off `kMaxRetained` x a NAMED `kRetentionFreezeFactor` + `static_assert`: the
+  HELD ceiling (`CapRetained`), the PUBLISH bound (`Republish`'s `break` at `:328`), and the ARRAY size
+  (`Snapshot::lines`, 106 -> 206). Fixing two of three re-creates the invisible zone.
+- **SEED IDEMPOTENCE**: `QueueConnectBroadcastForSlot` returns early when `g_seeded[slot]` is already
+  true. MEASURED: `g_seeded[]` is a LIVE-SEND gate, not a latch (set at `:344` BEFORE the empty-record
+  early return, cleared at `:396`); the recycle-without-absence case is ALREADY SAFE because
+  `chat_sync::OnSlotDisconnected` runs from `subsystems::DisconnectSlot` (`subsystems.cpp:363`), driven
+  by `net_pump.cpp:279` `OnSlotReplaced_TearDownWorld` — the ledger ROW TRANSITION that "fires on a
+  REPLACEMENT as well as a departure, and ... fires ON A CLIENT". The seed/live window is covered by THE
+  LANE, not the flag.
+- **#14 AND the per-peer divergence are ONE defect**: `ApplyDeleteByHash` fills the topic FROM THE LOCAL
+  ROW, so the deferred case (`email_sync.cpp:506-509`) has no topic to compose from. One fix: carry the
+  sender AND the topic on the tombstone.
+- **TRUNCATION**: `CapUtf8Bytes` ONCE, in the seam; the event kind's send ASSERTS rather than
+  `memcpy`-truncating (a silent cut emits a row `WellFormed` rejects whole). Fifth instance of the
+  raw-truncation class on this path — it earns a gate row.
+
+## 22.7 ARC 2 — the decisions and the defect fixes
+
+- **Decision 1 (Minecraft-shaped ESC) makes defect #5 DISSOLVE rather than need a render-gate fix**:
+  `imgui_overlay.cpp:214` consumes the ESC keydown. MEASURED that this suppresses the game — the
+  `CaptureActive()` swallow at `:242-249` returns before `CallWindowProcW` and demonstrably works
+  (typing in chat does not move the player).
+- **PROVENANCE, MEASURED**: `imgui_overlay.cpp:210-213` claimed the fall-through was *"the user-requested
+  'ESC = chat gone, user lands in the menu' behavior"*. `git log -S"user lands in the menu"` returns
+  exactly ONE commit — `f32ed1b0`, a 250+-file backlog flush of sessions 11-16 — whose message records no
+  such request. **The comment is AGENT-AUTHORED and asserts user provenance git cannot corroborate.**
+  Second instance of `[[lesson-an-agent-authored-rule-becomes-a-user-rule]]`. The user was then actually
+  asked, and chose Minecraft-shaped.
+- **ORDERING CONSTRAINT**: #5's fix PROMOTES #7 from rare to routine — ESC becomes the primary close
+  path, and `Close()` writes `g_buf[0]` and `g_histPos` (render-thread-only at `chat_input.cpp:22`,
+  `:29-32`) from the WndProc while `InputTextWithHint` may be mid-frame on that buffer. **#7 ships in the
+  SAME commit as #5.**
+- **Retention release becomes a STORE invariant**: `chat_feed::Tick()` (game thread, always runs) clears
+  the freeze when `!RevealActive()`. Today `chat_view.cpp:127`'s `SetPinned(false)` runs only inside
+  `Draw()` and `imgui_overlay.cpp:359` gates the whole HUD pass on `!PauseMenuOpen()`, so the freeze leaks
+  **PERMANENTLY on every route into the pause menu** — not only within the 220 ms fade.
+- Remaining §19 defects: **#2, #4, #6, #8 (returned, §22.5), #9, #10, #11**.
+
+## 22.8 The drill — state reads, not pixels
+
+The user's acceptance scenario, literally: 10 messages -> settle 10 s -> screenshot host + client ->
+third client joins -> screenshot (clear) -> **T** -> screenshot (history) -> **ESC** to close -> assert
+the fade drew and the pin released.
+
+**NO PIXEL ASSERTIONS.** A screenshot only beats a state read when the failure lives in the draw, and
+#5's failure ("the fade draws zero frames") is observable as *"`Draw()` was not called"* — a
+**draw-invocation counter as the FIRST statement inside `chat_view::Draw()`**, which sits BELOW
+`imgui_overlay.cpp:359`'s gate so #5 turns it RED. The distinction from the s10 marker that its own
+injection deleted: **the assertion is a POSITIVE** ("advanced >= 1 during the fade window") on an
+instrument that can only UNDER-report, so a stopped instrument is RED, not green. That asymmetry goes in
+the drill's comment so nobody "improves" it into a no-change check. Screenshots are captured as EVIDENCE
+FOR THE USER, explicitly not the gate, and the verdict says so.
+
+**It presses ESC, not Enter-on-empty** — the `_type_chat` detour that deleted that path from coverage is
+exactly what let three defects accumulate on it
+(`[[lesson-a-harness-workaround-removes-a-path-from-coverage]]`).
+
+## 23. NEXT (supersedes §21)
+
+The pass hit its 15-round cap with round 14 still material. **It has NOT converged and no code may be
+written on the strength of it alone.** Four residuals, in order:
+
+1. **`kMaxRetained` for a TWO-PRODUCER store.** 100 was chosen for a chat-only store from the user's
+   Minecraft reference; nobody re-derived it once 13 event sites Append into the same bounded record.
+   Needs a real 4-peer log measurement of the event:chat row ratio — **unmeasurable without a run**, so
+   fold it into the first build's instrumentation rather than block on it.
+2. **Turned-away** (`player_handshake_version.cpp:97`) is the ONLY admitted surface with no client-side
+   author, so a later joiner would see it and a peer who was present would not — a present peer's history
+   would be a strict SUBSET of a joiner's, against "all history". It must gain a live broadcast (the host
+   sends the FIELDS, clients render locally, like every other admitted surface) or lose admission. The
+   invariant this yields: **a surface is admissible only if every present peer already learns of it
+   live.**
+3. **`Keep` vs admission need distinct names** before any code, or the conflation recurs.
+4. **Build order** across the two arcs (which commit carries the proto bump), and whether `IsSlotReady`
+   can be false for a live send AFTER `g_seeded[slot]` is set — that row would be dropped with no
+   re-seed.

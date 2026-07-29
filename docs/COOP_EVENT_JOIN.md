@@ -204,8 +204,11 @@ would have discarded the ENTIRE seed, silently. It stays a range even though (b)
 set grow only upward, and a GAP now logs loudly -- that log is the tripwire if (b) is ever changed
 back. **Any future lane whose seed can interleave with live traffic inherits (d).**
 
-Design of record + BOTH `/qf` passes (21 + 17 rounds, neither converged) + the AS-BUILT corrections:
-`research/findings/join-identity/votv-chat-history-DESIGN-2026-07-29.md` -- **read its SS18 first.**
+Design of record + ALL FOUR `/qf` passes (21 + 17 + 4 + 14 rounds, **none converged**) + the AS-BUILT
+corrections: `research/findings/join-identity/votv-chat-history-DESIGN-2026-07-29.md` -- **read SS22
+first** (pass 4; it supersedes SS20/SS21 and moves the record to a RECORD-ONLY shape), then SS19's
+twelve defects, then SS18. The lane's late-join answer (SEED) is unchanged by all of it; what changed is
+WHICH lines the seed carries and who composes them.
 Drills: `mp.py chathistory` (local) and `mp.py chatseed` (the joiner), each with a must-FAIL injection.
 
 ### 3.5 Phases

@@ -64,8 +64,64 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   a conditional multiplier on a capacity (`x * (frozen ? 2 : 1)`) is a SECOND capacity wearing the
   first's name — when you raise a ceiling, read every site that bounds the same set by DIRECTION (stores
   / copies / publishes / allocates). And suspending ONE exit from a set does not suspend the others.**
-  Capacity-shaped instance of `[[lesson-one-name-for-two-quantities]]`.
+  Capacity-shaped instance of `[[lesson-one-name-for-two-quantities]]`. **SECOND INSTANCE 2026-07-29,
+  the same pass failing its own lesson: the fix's own direction-grep listed `Republish` under "copies"
+  and never opened ITS bound (`chat_feed.cpp:328`), so raising `Snapshot::lines` alone would have
+  re-created the identical invisible zone — THREE sites move together. And a capacity can disagree
+  ACROSS A PEER BOUNDARY, which no single-process grep finds: the record's cap is the PUBLISHER's
+  ceiling, the joiner's `CapRetained` is the HOLDER's, and a joiner is NOT paged back — so the
+  publisher's ceiling must equal the holder's UNPAGED ceiling or the seed is evicted on arrival.**
   `memory/lesson_one_capacity_expressed_in_three_places_will_disagree.md`
+- **A requirement about CONTENT is not a requirement about AUTHORITY.** 2026-07-29: the user wrote
+  "players should get all history, including chat event feed messages" — a statement about what history
+  CONTAINS. The design written from it opened "the lobby record OWNS every history line" and derived a
+  host-authorship architecture: the `Keep` enum deleted, two client mirrors deleted, both slot-0
+  exclusions moved, two defects dissolved, one new defect found, proto bumped. The next pass's round 1
+  asked which of those the ASK needs: **only the proto bump.** Everything else was manufactured by the
+  authority reading — which was also WRONG, on an impossibility. The trap is that the authority reading
+  is the more engineering-shaped one (it names an owner, an invariant, a seam) and it GENERATES WORK,
+  which feels like progress. **Look FIRST: name the axis a user statement constrains — WHAT (content) /
+  WHO (authority) / WHEN (ordering) / HOW MUCH (capacity) — and write it down before designing. The
+  tell for this error: a one-sentence clarification that produces deletions and an authority migration;
+  a clarification normally SHRINKS the design.**
+  `memory/lesson_a_reframe_about_content_read_as_a_claim_about_authority.md`
+- **An event that narrates a LINK's death cannot be authored across that link.** 2026-07-29: the
+  host-authorship design above would have had the host author `"X left the game"` — on a TIMEOUT, over
+  the link whose failure the sentence describes — and `"the host left"`, which is unauthorable by
+  definition. `event_feed.cpp:78`'s `roster_ledger` `SlotReplaced` subscriber is the load-bearing LOCAL
+  author and the design deleted it; `FleeToMainMenu` (`net_pump.cpp:216`) already calls
+  `SuppressPeerLeaveEdges()` because `Stop()` would otherwise narrate "Host left" into the main menu.
+  It looks fine in the happy path — only the timeout, the crash and the host's own departure break, and
+  those are the cases the line exists FOR. **Look FIRST: before moving authorship of any message, ask
+  what the message is ABOUT. If the subject is the transport, the session, presence, or the authority
+  itself, the author must be LOCAL on every peer — the fact is observable everywhere and deliverable
+  nowhere. A local author for a presence event is the design, not redundancy to consolidate; and an
+  existing SUPPRESSION is evidence the path is load-bearing.**
+  `memory/lesson_a_link_death_sentence_cannot_ride_the_link.md`
+- **A required PARAMETER can be the ANSWER to the question you are about to re-ask.** 2026-07-29: six
+  `/qf` rounds went into a private-constructor type to replace `chat_feed`'s `Keep` parameter, on the
+  (normally correct) smell that a per-site classification argument is a habit rather than an invariant.
+  `chat_feed.h:13-18` had already recorded the experiment that settles it: a data predicate WAS tried
+  and **"got 12 of 15 wrong, failing on exactly the lines that matter"**. The parameter is a measured
+  conclusion, and a private ctor whose friend list is the admitted sites is that parameter in a type's
+  clothes. The primary had even QUOTED that line earlier in the same pass, for a different purpose.
+  **Look FIRST: grep a parameter's declaration for a comment explaining WHY it is a parameter before
+  replacing it. Then ask which of three properties is actually missing — mandatory / visible /
+  CENSUSABLE. A required parameter already gives the first two; most "make it a type" designs are
+  really after the third, which a gate delivers without touching the type.**
+  `memory/lesson_a_parameter_may_exist_because_a_predicate_was_already_tried.md`
+- **A seed-only record can give a JOINER more history than someone who was present.** 2026-07-29: the
+  chat record admitted `"<nick> was turned away: <reason>"`, which is HOST-ONLY
+  (`player_handshake_version.cpp:116` gates on `role()==Host`; the refused client gets a popup). Present
+  clients never see it — but a peer joining an hour later would receive it in the seed, making the
+  newcomer's history a strict SUPERSET of the history of someone who was there the whole time. The
+  census asked "is this a shared-world fact the host observes?", which turned-away passes; it never
+  asked **who else already knows**, which is a property of DELIVERY, not of the fact. Invisible from
+  either side alone — only holding a present client's view next to a joiner's exposes it, and no drill
+  compares two peers' histories to each other. **Look FIRST: for any join-delivered record, census the
+  DELIVERY per row — which peers learn of this LIVE? A `role() == Host` guard on a push site is the
+  tell. Admissibility rule: a surface belongs in a seeded record only if every present peer already
+  learns of it live.** `memory/lesson_a_seed_only_record_gives_the_joiner_more_than_the_present.md`
 - **An instrument's assertion WINDOW must not be movable by the thing it measures.** 2026-07-29
   building chat history: the drill's window was bounded by a log marker emitted at the END of the draw
   function, BELOW an early return taken when there was nothing to draw. On the INJECTED run (history
@@ -2438,7 +2494,15 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   that constrains the repo; a prose rule nothing enforces is not a rule (put it in `.gitignore`/CI with
   the why, or label it a preference); tag "the user's rule" in a `/qf` brief as the provenance CLAIM it
   is; and fix a false attribution IMMEDIATELY — that is factual and yours — while the ruling on the
-  rule's content stays the user's. `memory/lesson_an_agent_authored_rule_becomes_a_user_rule.md`
+  rule's content stays the user's. **SECOND INSTANCE 2026-07-29, and this one constrained BEHAVIOUR:**
+  `imgui_overlay.cpp:210-213` claims ESC-falls-through-to-the-pause-menu is *"the user-requested 'ESC =
+  chat gone, user lands in the menu' behavior"*, and it was about to outrank the user's own *"close like
+  minecraft"* in a live design decision. `git log -S"user lands in the menu"` returns ONE commit —
+  `f32ed1b0`, a 250+-file backlog flush of sessions 11-16 — whose message records no such request.
+  Asked in plain text, the user chose Minecraft-shaped, which made a CRITICAL defect **dissolve** rather
+  than need a workaround. **The check is now two instances and one command: any comment saying "the user
+  requested" that is about to DECIDE something gets `git log -S` first.**
+  `memory/lesson_an_agent_authored_rule_becomes_a_user_rule.md`
 
 ## 9. Security (threat model, trust boundaries, peer identity)
 
