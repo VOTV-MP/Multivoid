@@ -4,7 +4,23 @@
 will actually cost"* — after asking, of the arc-D2 outcome, *"so we're not supporting any glyphs at
 all?"*
 
-**Status: MEASURED, nothing built.** Instrument: `tools/probes/atlas_probe` (dev-only, RULE-2 exempt),
+> **STATUS UPDATE 2026-07-29 late — §3a IS NOW SHIPPED (`9b4286f1`).** `+LatExt+Greek` went into
+> `BASE_RANGES` and regenerated; repertoire **157 -> 161 ranges, 2,517 codepoints**, max baked codepoint
+> UNCHANGED at U+1FAF6 (so the index tables cannot move — that is what prices them). Verified in a real
+> 4-peer run, not inferred: `repertoire selftest: PASS (13/13)`, `font selftest: PASS (6/6)`, atlas
+> 2048x2048 RGBA32 baked in 76-95 ms, `smoke_i18n` PASS. **§3a's stronger "identical texture bytes"
+> claim was NOT re-measured** in-game and remains this doc's offline-probe result.
+>
+> **One correction §3a needs: "Greek 135/144" is NOT a coverage shortfall.** The generator's
+> `EXPECTED_BASE_GAP` gate failed the change and named the nine missing codepoints — U+0378, U+0379,
+> U+0380-0383, U+038B, U+038D, U+03A2 — and **every one is PERMANENTLY UNASSIGNED in Unicode**. No font
+> can carry them. Our faces cover **every assigned Greek character**; 144 block slots minus 9 reserved
+> = 135. See `[[lesson-a-coverage-gap-can-be-the-character-sets-own-hole]]`.
+>
+> §3b (full CJK) is UNCHANGED and still unbuilt — it is answered by on-demand OS fonts, which still
+> owes a `/qf` (rebuild FREQUENCY is the open problem: ImGui 1.91.5 has no partial atlas update).
+
+**Status: MEASURED; §3a SHIPPED 2026-07-29, the rest unbuilt.** Instrument: `tools/probes/atlas_probe` (dev-only, RULE-2 exempt),
 extended this session with four new tiers and rebuilt with `-DWCHAR32=ON` so `ImWchar` is 32-bit
 exactly as the shipping DLL compiles it. Raw output: `scratchpad/atlas_all.txt`.
 

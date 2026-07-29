@@ -1,15 +1,19 @@
-# Chat history — design of record + AS-BUILT (four `/qf` passes, 21 + 17 + 4 + 14 rounds, NONE converged)
+# Chat history — design of record + AS-BUILT (five `/qf` passes, 21 + 17 + 4 + 14 + 19 rounds, NONE converged)
 
-**Status: BUILT AND DEFECTIVE, 2026-07-29. NOT hands-on. DO NOT hand this to the user as-is.**
-Local half `8eea0af6`, wire half `3729097e`. DLL `multivoid-0.9.0n-133.dll`
-`b54cad7d9f1a01a8951509ca58cfc1d4`, proto **132 -> 133**.
+**Status 2026-07-29 late: ARC 1a BUILT AND DRILLED (`293692d7`); arcs 1b + 2 DESIGNED, NOT BUILT.
+NOT hands-on.** Local half `8eea0af6`, wire half `3729097e`, arc 1a `293692d7`. Proto **133**
+(unchanged by arc 1a — it touches no wire). DLL after arc 1a + the glyph widening:
+`ECAC9C3A6A427BEADDD8B51814B325F8`.
 
-**READ §22 FIRST, THEN §19.** §22 is the pass-4 DESIGN pass on the user's reframe (2026-07-29 late,
-14 rounds, NOT converged) and it **SUPERSEDES §20 and §21**: the reframe is about what history
-CONTAINS, not about who authors it, so the record-only shape replaces the host-authorship shape §20
-recorded, `Keep` SURVIVES rather than being deleted, defect #13 is RETRACTED, and **defect #8
-RETURNS**. §19 is the IMPLEMENTATION pass's twelve defects in the shipped code, still the list to fix
-— but read its #3 / #8 / #13 rows against §22.1, which corrects three of them.
+**READ §24 FIRST.** §24 is the pass-5 record (19 rounds, every one material, still not converged) and
+it **SUPERSEDES §22 and §23** on the central question. The user said *"just follow what minecraft or
+mta does"*, the vendored source was opened, and **round 1 of pass 4 — the argument the whole
+RECORD-ONLY architecture rested on — turned out to be FALSE.** MTA broadcasts quit lines including on
+timeout. The shape is now **host decides the EVENT and broadcasts it; each peer composes the SENTENCE
+locally from one shared function.**
+
+**§19's twelve defects: five are now FIXED in code** (#1, #4, #8, #10, #11 — `293692d7`), and the
+table below carries per-row status. #3 stays dissolved (a product decision) and #13 stays retracted.
 
 **§18 (AS-BUILT) is the record of what BUILDING changed** — three of §12's claims are corrected
 there by measurement. Read it second. Then §10.
@@ -494,6 +498,18 @@ the briefs produced. **Round 4 was as productive as round 1, so this pass ALSO d
 
 ### The twelve, ranked by what a human hits
 
+> **STATUS AFTER ARC 1a (`293692d7`), verified against the code 2026-07-29 — FIVE ROWS ARE FIXED:**
+> **#1 FIXED** (one BASE + one NAMED `kRetentionFreezeFactor`, all derived + `static_assert`ed; the
+> reader's-window mechanism deleted; and a FIFTH site was found during the fix — `chat_view.cpp`'s
+> hand-sized `kRowCap = 512`, which would have stopped paging at ~128 of 206 entries).
+> **#4 FIXED** (the GAP branch no longer widens across the hole; a range cannot express a gap, so it
+> stops pretending and turns dedup off for the session — duplicates are visible and recoverable,
+> swallowed rows are neither). **#8 FIXED** (`Seed` and `Retire` now share one `InsertRetained`).
+> **#10 FIXED** (wrap memo on `(gen, wrapW, px)`; the alpha filter handled exactly rather than folded
+> into the key — see the lesson on filters that are load-bearing for indices).
+> **#11 FIXED** (the fused `nt == 0 || nt > first` break split; an empty entry `continue`s).
+> REMAINING: **#2+#6, #5+#7, #9, #12** — all in arc 2, none touching the wire.
+>
 > **STATUS AFTER PASS 4 (§22) — three rows have moved, verified against the code 2026-07-29:**
 > **#5 DISSOLVES** (the user chose Minecraft-shaped ESC, so the keydown is consumed and the pause menu
 > never opens — no render-gate fix needed), **but its fix promotes #7 from rare to routine, so #7 ships
@@ -867,3 +883,121 @@ written on the strength of it alone.** Four residuals, in order:
 4. **Build order** across the two arcs (which commit carries the proto bump), and whether `IsSlotReady`
    can be false for a live send AFTER `g_seeded[slot]` is set — that row would be dropped with no
    re-seed.
+
+---
+
+## 24. PASS 5 (2026-07-29 late) — the user sent the design to MTA, and MTA falsified pass 4's founding argument
+
+**19 rounds, every one material, NOT converged. SUPERSEDES §22 and §23 on the central question.**
+Arc 1a was then BUILT from it (`293692d7`) and drilled; arcs 1b + 2 are designed and unbuilt.
+
+### 24.1 The reframe
+
+The pass opened on §23's four residuals. It closed all four, then the user answered the two product
+questions with *"The questions im not sure - just follow what minecraft or mta does."* That sent the
+design to the vendored source, and what it found there **falsified round 1 of pass 4** — the argument
+the entire RECORD-ONLY architecture was built on.
+
+MEASURED in `reference/mtasa-blue/`, opened not grepped:
+
+| what | where | fact |
+|---|---|---|
+| JOIN | `Server/.../CGame.cpp:1423-1426` | `CPlayerListPacket` + `SetShowInChat(true)` + `BroadcastOnlyJoined(..., &Player)` — everyone **except the joiner** |
+| the joiner's own roster | `CGame.cpp:1438` | `SetShowInChat(false)`, and `CPlayerListPacket.cpp:87` writes that bit **on the wire** — a per-row NARRATE bit riding WITH the data it governs |
+| QUIT | `CGame.cpp:1581-1586` | broadcast to all joined **except the parting one**, **INCLUDING on `QUIT_TIMEOUT`** |
+| the sentence | `Client/.../CClientGame.cpp:3393-3415` | composed **client-side** from a reason enum. No server ever holds the text |
+| refusals | `CGame.cpp:1411` | `CLogger::LogPrintf` — **console only**, never player chat |
+
+**So: the host DECIDES the event and BROADCASTS it; each peer COMPOSES the sentence locally.**
+
+Pass 4 round 1 had argued *"a sentence describing the death of a LINK cannot travel over that link"*.
+It rides everyone **else's** live links, and only the host can observe a timeout at all. The error was
+conflating *"the departing peer cannot be told"* (true, nobody needs it) with *"the host cannot author
+it"* (false). Residue: `"the host left"` alone, which is a PRIVATE notice and never was a record row.
+Full correction in `[[lesson-a-link-death-sentence-cannot-ride-the-link]]`.
+
+### 24.2 What the user's two answers settled
+
+- **Capacity** — *"How much history i want - idk, i guess same like minecraft"* → **N = 100, ONE MIXED
+  RING**, resolved the SUBSTITUTIVE way (event lines displace chat lines, as Minecraft's single buffer
+  does). Note this settles the DISPLAY axis only; the host RECORD's eviction bound is a separate axis
+  the user's answer does not speak to (Minecraft has no record), and it is still mine to justify.
+- **Refused joins** — MTA console-logs them and never chats them, which independently matches the
+  verdict pass 5 round 2 reached: turned-away **loses admission** and stays a host-local private
+  notice. It is the ONLY one of the nine RECORD surfaces with no client-side author.
+
+### 24.3 The corrected design (DESIGN — arc 1b, NOT BUILT)
+
+- **Narration rides an EXPLICIT host-authored notice, never a side-effect of a state change.** That is
+  the architectural root; it is why MTA can exclude the joiner and we currently cannot. Join and leave
+  gain that notice; `AnnounceJoinerOnce`'s spawn-seam trigger and `OnSlotReplaced_LeaveLine` stop
+  narrating. Skin already has the right shape (host validates + relays, peers compose).
+- **`SuppressPeerLeaveEdges()` RETIRES** (RULE 2) into one author-side host guard; the local leave
+  author `event_feed.cpp:69-82` is deleted **in the same commit** — two authors of one fact is the
+  trigger.
+- **The live notice and the seeded row are THE SAME ROW**, carrying `(kind, slot, frozen nick bytes,
+  custom-or-0, reason)`, delivered at different times, composed by **one function** on both paths.
+  Byte-identity is then true by construction rather than something to measure.
+- **Freeze the IDENTITY, compose the TEMPLATE.** A pure `(kind, slot)` tuple composed at apply time
+  resolves nick + colour TODAY, and slots RECYCLE — that would silently reverse the user's own
+  *"old chat history is essentially a frozen history"* (`chat_feed.h:90-93`). But do NOT bake a
+  resolved `nickArgb` either: `ApplyRow` carries custom-or-0 and the receiver resolves via
+  `chat_nick_color::ForSlot` (deterministic on SLOT), so baking would create a SECOND owner of that axis.
+- **No measured precedent covers the SEED at all.** MTA composes at apply time safely because the
+  player still exists then; it never backfills. The history transfer is our deliberate divergence — the
+  user's explicit feature request, not a shape question.
+- Event rows: own `ReliableKind`, seed-only, `lineSeq = 0` (reserved at `chat_log.h:20`), an **anchor**
+  for seeded rows only (the live path needs none — the host's broadcast order IS every peer's apply
+  order), OFF `IsPreWorldSendableKind` and asserted, **gated on `g_seeded[to]` exactly as chat is**,
+  with its own apply function (`ApplyRow` keys `WireKey(lineSeq)` UNCONDITIONALLY —
+  `chat_feed.cpp:399` — so a seeded event at `lineSeq=0` would sort before the entire history).
+- Seed idempotence at BOTH ends: host early-returns on `g_seeded`, receiver carries a one-bit
+  already-seeded latch, **both logging on reject**. `chat_feed::Reset` runs at session start AND
+  teardown, so the latch cannot strand.
+- **Seed the joiner BEFORE appending its own join row**, or it opens T and reads its own arrival.
+- `Scope{Record, Private}` — TWO classes, not three (`Mirror` dissolved: `Record` means *"belongs to
+  the record; Append iff host"*, and the two client-only branches are structurally unreachable on the
+  host). Plus a **DIRECTION column** (host-only / client-only / both) — 4th census-the-direction.
+- **The census is 18 direct `Push` sites, not 19** (an earlier count included a COMMENT), and §22.2
+  CONFLATED two layers: `email_sync`, `signal_catch_sync` and `device_occupancy` are `Announce` sites
+  funnelling through the SINGLE `Push` at `peer_action_feed.cpp:62`. **23 declaration points** = 17
+  direct + 6 Announce.
+- `chatlog_gate.ps1` is a census **TRIPWIRE**, not enforcement: it can check the literal and the
+  `Record => History` implication, but the admissibility condition is a claim about nine call paths and
+  no gate can see it.
+
+### 24.4 The claim, at the strength it actually holds
+
+Three statements, because the single equality does not survive:
+
+1. the record = the last N Record rows;
+2. **the seed DELIVERS ALL OF IT** — the assertable cross-peer property, and the user's actual ask;
+3. each peer's view = the last N of its OWN merged stream, whose Record subsequence is a suffix of the
+   record.
+
+Cross-peer set equality is NOT a gate: a view holds Record + Private at N while the record holds
+Record-only at N. **Keys are per-peer and not comparable across peers** (`g_tiebreak`,
+`chat_feed.cpp:136`) — the diffable object is the ordered sequence of Record-row TEXTS.
+
+### 24.5 A defect PASS 5 FOUND THAT IS LIVE IN TODAY'S BUILD
+
+`SetJoinAnnounced` is called from exactly ONE place — inside `AnnounceJoinerOnce` itself
+(`player_handshake.cpp:511-512`) — so **nothing pre-seeds the latch**. A joiner spawns puppets for
+every already-present peer, each spawn reaches `AnnouncePeerSpawned` -> `AnnounceJoinerOnce`, and each
+pushes *"Alice joined the game"* locally as `Keep::History`. **A joiner is today told that people who
+were already there just arrived.** The record would then make it a visible duplicate. MTA's fix is the
+per-row narrate bit; ours is the same shape.
+
+### 24.6 NEXT
+
+- **Arc 1b** (wire, proto 133 -> 134): the host notice + narrate bit, the shared compose function, the
+  seed, `Scope` + DIRECTION at 23 points, the gate, `AnnounceLocalSkin`'s missing host-side site,
+  sleep `:75`/`:93` Transient -> History, turned-away NOT admitted.
+- **Arc 2** (local, no wire): #5 + #7 in ONE commit (#5's fix promotes #7), freeze-release moved onto
+  `chat_input::Close()`, #2+#6, #12; #11 already fixed in 1a; #9 is an instrument note.
+- **Stage 0 groundwork, honestly scoped** (pass 5 R19 shrank it): the harness **cannot emit an event
+  row at all** — every retained row in a 31,341-line log is `_type_chat` output — so a real mp.py third
+  peer must join+leave mid-run. Plus the join-window History row count (unmeasured), and the live-wart
+  regression witness for §24.5, which is RED on today's build **by sight**.
+- **Unverified, mine not the user's:** whether a routine join/skin burst evicts the ten messages the
+  user's own acceptance drill requires the joiner to see.

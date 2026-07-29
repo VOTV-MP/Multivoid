@@ -71,7 +71,45 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   ACROSS A PEER BOUNDARY, which no single-process grep finds: the record's cap is the PUBLISHER's
   ceiling, the joiner's `CapRetained` is the HOLDER's, and a joiner is NOT paged back — so the
   publisher's ceiling must equal the holder's UNPAGED ceiling or the seed is evicted on arrival.**
+  **THIRD INSTANCE + FIXED 2026-07-29 (`293692d7`): building the fix took the count from three sites to
+  FIVE. The fifth was `chat_view.cpp`'s hand-sized `kRowCap = 512` — a bound on the SAME quantity
+  spelled in a DIFFERENT UNIT (wrapped rows, not lines) in another file at another layer, so no grep
+  for `kMaxRetained` could ever reach it; at 206 entries it stopped the build loop after ~128 and
+  paging could never reach the oldest history. So the name-grep is necessary and NOT sufficient — also
+  walk the data store → publish → layout → draw and check each hop's own bound. Now one BASE
+  (`kMaxRetained`) + one NAMED allowance (`kRetentionFreezeFactor`, `chat_feed.h:55`), everything
+  derived and `static_assert`ed (`chat_feed.h:64`), and the reader's-window mechanism DELETED rather
+  than fixed.**
   `memory/lesson_one_capacity_expressed_in_three_places_will_disagree.md`
+- **A font-coverage gap can be UNICODE's hole, not the font's.** 2026-07-29: adding Greek to
+  `build_repertoire.py`'s `BASE_RANGES` made the `EXPECTED_BASE_GAP` gate FAIL with nine "missing"
+  codepoints — `U+0378, 0379, 0380-0383, 038B, 038D, 03A2`. **All nine are permanently UNASSIGNED in
+  Unicode**, so no font can carry them and the embedded faces were in fact complete over every assigned
+  Greek character; the earlier "Greek 135/144" figure was exactly this arithmetic (144 block slots − 9
+  reserved) and reads like a 94% shortfall when it is 100%. A block is written `(0x0370, 0x03FF)` like a
+  dense range, so a set-difference against a cmap returns real holes and reserved slots mixed and
+  indistinguishable — the same output carried one TRUE hole (`U+A69E`, a Cyrillic letter we really lack)
+  formatted identically. The false positives push toward the expensive wrong fix (hunt a fifth donor,
+  ship more bytes, narrow the range). **Look FIRST: `unicodedata.name(chr(cp))` raising `ValueError` is
+  the one-line assigned/unassigned test — run it before treating a gap as a font deficiency, record the
+  unassigned ones in the expectation set WITH the reason, and never ask an atlas for a codepoint nothing
+  can draw (it bakes nothing and renders as the fallback box).**
+  `memory/lesson_a_coverage_gap_can_be_the_character_sets_own_hole.md`
+- **A per-frame filter inside a loop you MEMOIZE may be structural, not cosmetic.** 2026-07-29
+  (`293692d7`, defect #10): `chat_view`'s word-wrap loop carried
+  `if (drawnAlpha(i) < kAlphaFloor) continue;`. Alpha changes every frame, so keying the memo on it
+  defeats the memo — and dropping it looks free, because a fully transparent row draws nothing. But the
+  emitted rows feed a fixed array that the ENTIRE paging computation indexes (`bottom`, `shown`,
+  `floorBottom`, page size, the pin-anchor search): a filtered row does not merely draw nothing, it does
+  not OCCUPY A LINE, so letting it through leaves a visible GAP where a faded message was, everything
+  below shifted. Memoisation forces you to enumerate a loop's true inputs and the pressure runs one way
+  — toward shrinking the key — so a term gets reclassified as noise exactly when it is load-bearing.
+  **Look FIRST: ask what CONSUMES the loop's output, not what the output looks like; if anything
+  downstream indexes or counts by emission order, every filter is part of the contract. And when a
+  per-frame term blocks a memo, do not delete it — find the condition under which it CANNOT fire
+  (here `reveal >= kAlphaFloor` makes filtering impossible, so the memo applies exactly where the cost
+  is and the small filtered case just rebuilds).**
+  `memory/lesson_a_filter_inside_a_loop_you_memoize_may_be_load_bearing_for_indices.md`
 - **A requirement about CONTENT is not a requirement about AUTHORITY.** 2026-07-29: the user wrote
   "players should get all history, including chat event feed messages" — a statement about what history
   CONTAINS. The design written from it opened "the lobby record OWNS every history line" and derived a
@@ -85,19 +123,22 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   tell for this error: a one-sentence clarification that produces deletions and an authority migration;
   a clarification normally SHRINKS the design.**
   `memory/lesson_a_reframe_about_content_read_as_a_claim_about_authority.md`
-- **An event that narrates a LINK's death cannot be authored across that link.** 2026-07-29: the
-  host-authorship design above would have had the host author `"X left the game"` — on a TIMEOUT, over
-  the link whose failure the sentence describes — and `"the host left"`, which is unauthorable by
-  definition. `event_feed.cpp:78`'s `roster_ledger` `SlotReplaced` subscriber is the load-bearing LOCAL
-  author and the design deleted it; `FleeToMainMenu` (`net_pump.cpp:216`) already calls
-  `SuppressPeerLeaveEdges()` because `Stop()` would otherwise narrate "Host left" into the main menu.
-  It looks fine in the happy path — only the timeout, the crash and the host's own departure break, and
-  those are the cases the line exists FOR. **Look FIRST: before moving authorship of any message, ask
-  what the message is ABOUT. If the subject is the transport, the session, presence, or the authority
-  itself, the author must be LOCAL on every peer — the fact is observable everywhere and deliverable
-  nowhere. A local author for a presence event is the design, not redundancy to consolidate; and an
-  existing SUPPRESSION is evidence the path is load-bearing.**
-  `memory/lesson_a_link_death_sentence_cannot_ride_the_link.md`
+- **~~An event that narrates a LINK's death cannot be authored across that link.~~ FALSIFIED BY
+  MEASUREMENT 2026-07-29 — the surviving lesson is the OPPOSITE one.** The original claim: the host
+  cannot author `"X left the game"` on a TIMEOUT, "over the link whose failure the sentence describes".
+  A whole architecture (RECORD-ONLY) was built on it. Then the user said *"just follow what minecraft or
+  mta does"*, and the vendored source settles it: **`CGame.cpp:1581-1586` broadcasts `CPlayerQuitPacket`
+  to all joined peers EXCEPT the parting one, INCLUDING on `QUIT_TIMEOUT`** — and the client composes
+  the sentence locally from a reason enum (`CClientGame.cpp:3393-3415`). The sentence never needed the
+  DEAD link; it rides everyone ELSE's live links, and only the host can see the timeout at all. The
+  error was conflating **"the departing peer cannot be told"** (true, and nobody needs it) with
+  **"the host cannot author it"** (false, and MTA has shipped the opposite for 15+ years). The residue
+  of the original claim governs exactly one line — `"the host left"` — which is a PRIVATE local notice
+  and was never part of the lobby's record. **Look FIRST: an impossibility argument about a message and
+  a link must name WHICH RECIPIENTS the link serves. "Cannot be delivered to X" is not "cannot be
+  authored"; check the other N-1 recipients before deriving an architecture from it — and check the
+  prior art before deriving one at all.**
+  `memory/lesson_a_link_death_sentence_cannot_ride_the_link.md` (updated with the falsification)
 - **A required PARAMETER can be the ANSWER to the question you are about to re-ask.** 2026-07-29: six
   `/qf` rounds went into a private-constructor type to replace `chat_feed`'s `Keep` parameter, on the
   (normally correct) smell that a per-site classification argument is a habit rather than an invariant.
@@ -875,6 +916,21 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   same sentence, you relabelled the defect**; and grep for the motion verb (*slides/eases/scrolls*)
   and confirm something actually interpolates the position, because a per-frame recomputation from
   current state cannot animate. `memory/lesson_a_reclassification_is_not_a_dissolution.md`
+- **Re-anchor on the ORIGINATING ask, not the thread you are currently in (USER CORRECTION
+  2026-07-29).** The user, mid-build: *"We started the chat saga when I wanted it to support glyphs,
+  remember?"* The arc was glyphs → "glyphs in chat too" → a look at chat → "there's no history" → chat
+  history, and that last branch consumed **five `/qf` passes, 75 rounds** (21+17+4+14+19), two full
+  architectures and a build — while the ORIGINATING request had a free, measured, **explicitly ungated**
+  deliverable sitting in its own NEXT list (`+LatExt+Greek`: zero bytes, +7 ms, +1,787 glyphs). It
+  shipped in one commit in twenty minutes once actually looked at. **`/qf`'s ANSWERS-THE-ACTUAL-ASK
+  angle did not catch this and structurally cannot**: it holds the design against the CURRENT thread's
+  ask, and every round was well-aimed at chat history. Nothing ever asks *"what was the request that
+  spawned THIS request?"* A sub-thread inherits full legitimacy from its parent and then competes with
+  it for the entire budget, and because each round is individually correct the drift is invisible from
+  inside. **Look FIRST: when a request spawns a sub-request, write down the parent and treat its NEXT
+  list as LIVE WORK — read it before opening another design pass, and prefer an ungated+measured+small
+  item over an interrogated+large one. Depth on a sub-thread is not progress on the parent.**
+  `memory/feedback_reanchor_on_the_originating_ask_not_the_current_thread.md`
 
 ### 1b. Standing working agreements (previously indexed NOWHERE)
 
