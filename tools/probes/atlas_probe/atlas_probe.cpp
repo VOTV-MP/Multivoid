@@ -40,6 +40,7 @@ const FamilyDesc kFamilies[] = {
     { "Cascadia Code",   "CascadiaCode-Regular.ttf",  "CascadiaCode-Bold.ttf"  },
     { "Fixedsys (VOTV)", "FSEX300.ttf",               "FSEX300.ttf"            },
 };
+const int kFamilyCount = int(sizeof(kFamilies) / sizeof(kFamilies[0]));
 // Same order as ui::fonts::Role.
 const RoleDesc kRoles[] = {
     { "Menu",      kUiPx,        false },
@@ -72,11 +73,39 @@ enum Tier {
     T_CNJP,        // + ImGui Japanese too (Noto Sans JP merged)
     T_CN_EMOJI,    // T_CN + single-codepoint COLR emoji (Twemoji Mozilla)
     T_CNJP_EMOJI,  // T_CNJP + emoji
+    // ---- 2026-07-29, USER: "lets bake all, including hieroglyphs to see how
+    // much it will actually cost". The tiers above answer "what did arc D2
+    // consider"; these answer "what does EVERYTHING cost", measured.
+    T_SHIP,        // what b132 ACTUALLY ships: Latin-1 + Cyrillic + emoji
+    T_LATEXT,      // + Latin Ext-A/B + Greek -- ZERO donor bytes, our own faces have them
+    T_FULLCJK,     // + the WHOLE CJK Unified block 4E00..9FFF (20,992 cp), not ImGui's "common"
+    T_EVERYTHING,  // + kana + Hangul syllables + Thai. The ceiling.
     T_COUNT
 };
 const char* kTierName[T_COUNT] = {
     "today (Latin+Cyrillic)", "+CN common", "+CN+JP", "+CN +emoji", "+CN+JP +emoji",
+    "SHIPPING b132", "+LatExt+Greek", "+FULL CJK", "EVERYTHING",
 };
+
+// Latin-1 + Latin Ext-A/B + Greek + Cyrillic, from our OWN embedded faces --
+// the gate doc measured their union as carrying "Latin Ext-A/B complete,
+// Greek 135/144", so this tier costs NO new donor bytes at all.
+const ImWchar kBaseWideRanges[] = {
+    0x0020, 0x00FF,   // Basic Latin + Latin-1 Supplement (ships today)
+    0x0100, 0x017F,   // Latin Extended-A   -- Polish, Czech, Turkish, Romanian...
+    0x0180, 0x024F,   // Latin Extended-B
+    0x0370, 0x03FF,   // Greek and Coptic
+    0x0400, 0x052F,   // Cyrillic + Supplement (ships today)
+    0x2DE0, 0x2DFF, 0xA640, 0xA69F,   // Cyrillic Extended-A/B (ships today)
+    0xFFFD, 0xFFFD,   // the fallback glyph -- must be baked (arc D2 lesson)
+    0,
+};
+// The WHOLE unified block, not a "common" subset: the arc-D2 finding was that
+// no common-hanzi tier guarantees a whole name, so the honest ceiling is all of it.
+const ImWchar kFullCjkRanges[]  = { 0x4E00, 0x9FFF, 0, };
+const ImWchar kKanaRanges[]     = { 0x3040, 0x30FF, 0x31F0, 0x31FF, 0, };
+const ImWchar kHangulRanges[]   = { 0x1100, 0x11FF, 0xAC00, 0xD7A3, 0, };
+const ImWchar kThaiRanges[]     = { 0x0E00, 0x0E7F, 0, };
 
 // Single-codepoint emoji ranges. Absent codepoints cost nothing: the freetype
 // builder skips glyphs the donor's cmap does not have (imgui_freetype.cpp:512+).
@@ -130,7 +159,32 @@ Result Bake(Tier tier, float scale, const int* roleFamily) {
     for (const Face& f : faces) {
         const float px = float(f.pxq) / 4.f;
         const FamilyDesc& fd = kFamilies[f.fam];
-        AddSource(&atlas, g_assetDir + (f.bold ? fd.bold : fd.regular), px, false, cyr, false);
+        const bool wideBase = (tier == T_LATEXT || tier == T_FULLCJK || tier == T_EVERYTHING);
+        AddSource(&atlas, g_assetDir + (f.bold ? fd.bold : fd.regular), px, false,
+                  wideBase ? kBaseWideRanges : cyr, false);
+        // Cross-merge the other three families behind the chosen one, exactly as
+        // ui/fonts.cpp MergeBackstops does -- otherwise a face that lacks Greek
+        // (JetBrains) makes this tier look cheaper than it actually ships.
+        if (wideBase)
+            for (int o = 0; o < kFamilyCount; ++o) {
+                if (o == f.fam) continue;
+                AddSource(&atlas, g_assetDir + (f.bold ? kFamilies[o].bold : kFamilies[o].regular),
+                          px, true, kBaseWideRanges, false);
+            }
+        // Scripts with no glyphs in ANY embedded face -- these need a donor.
+        if (tier == T_FULLCJK || tier == T_EVERYTHING)
+            AddSource(&atlas, g_donorDir + "NotoSansSC-Regular.ttf", px, true,
+                      kFullCjkRanges, false);
+        if (tier == T_EVERYTHING) {
+            AddSource(&atlas, g_donorDir + "NotoSansJP-Regular.ttf", px, true, kKanaRanges, false);
+            // Hangul: MEASUREMENT-ONLY donor. malgun.ttf is a Windows system font and is
+            // NOT redistributable -- shipping would need Noto Sans KR (OFL). This row is
+            // measuring the ATLAS, which follows glyph COUNT and pixel size, not foundry.
+            AddSource(&atlas, "C:\\Windows\\Fonts\\malgun.ttf", px, true, kHangulRanges, false);
+            AddSource(&atlas, g_donorDir + "NotoSansJP-Regular.ttf", px, true, kThaiRanges, false);
+        }
+        if (tier == T_SHIP || tier == T_LATEXT || tier == T_FULLCJK || tier == T_EVERYTHING)
+            AddSource(&atlas, g_donorDir + "Twemoji.Mozilla.ttf", px, true, kEmojiRanges, true);
         if (tier == T_CN || tier == T_CNJP || tier == T_CN_EMOJI || tier == T_CNJP_EMOJI)
             AddSource(&atlas, g_donorDir + "NotoSansSC-Regular.ttf", px, true,
                       atlas.GetGlyphRangesChineseSimplifiedCommon(), false);
@@ -324,7 +378,6 @@ Result BakeCrossMerge(bool crossMerge, bool fullUnionRange, float scale,
     const ImWchar* cyr = atlas.GetGlyphRangesCyrillic();
     const ImWchar* rng = fullUnionRange ? kAll : cyr;
 
-    const int kFamilyCount = int(sizeof(kFamilies) / sizeof(kFamilies[0]));
     for (const Face& f : faces) {
         const float px = float(f.pxq) / 4.f;
         AddSource(&atlas, g_assetDir + (f.bold ? kFamilies[f.fam].bold : kFamilies[f.fam].regular),
@@ -480,7 +533,6 @@ Result BakeWide(const ImWchar* baseRange, int nEmoji, float scale, const int* ro
     }
     em.push_back(0);
 
-    const int kFamilyCount = int(sizeof(kFamilies) / sizeof(kFamilies[0]));
     for (const Face& f : faces) {
         const float px = float(f.pxq) / 4.f;
         AddSource(&atlas, g_assetDir + (f.bold ? kFamilies[f.fam].bold : kFamilies[f.fam].regular),
