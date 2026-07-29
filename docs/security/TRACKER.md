@@ -67,6 +67,7 @@ hands-on) · **VERIFIED** (hands-on or matching live log — say which) · **DIS
 | **W8** | **Inbound append lanes ignore their own caps.** The floppybox 15-entry cap is a `UE_LOGW` that does not reject; laptop buffer `appendTail` has no cap | `[A]` `floppybox_sync.cpp:398-403`; `laptop_buffer_sync.cpp:313-316` | Any peer → unbounded engine-array growth | `PLAN_02` §4 | **OPEN** |
 | **W9** | **Unbounded wire-keyed side maps.** `g_lidPending[p.eid]` inserts exactly when the eid does NOT resolve (the garbage case); `g_tombs` grows per unmatched delete | `[A]` `laptop_sync.cpp:508`; `meadow_db_sync.cpp:744` | Any peer → nuisance growth (TTL-bounded) | `PLAN_02` §4 | **OPEN** |
 | **W10** | **Reliable inbox cap is global, not per-peer** (`kReliableInboxCap = 8192`) | `[A]` `session.cpp:433` | One flooding peer → **starves every other peer's events** | `PLAN_02` §4 | **OPEN** |
+| **W11** | **Chat had no decode boundary.** `OnReliable` control-stripped `payload.text` and pushed it to TWO render surfaces (feed + overhead bubbles) with no UTF-8 validation, on the ONE attacker-controlled string in the process. `utf8_codec.h:18-21` states the opposite contract in its own header ("the receive boundary decodes STRICTLY and rejects a whole ill-formed field"); chat was the surface that never honoured it. Arc D1's claim to own text encoding was false here — `chat_sync.cpp` carried a byte-identical copy of `SanitizeUtf8` and a second copy of `CapUtf8Bytes` while including the owner (RULE 2) | `[V]` verified 2026-07-29 by injection: `VOTVCOOP_CHAT_CORRUPT_WIRE=1` appends a lone continuation byte to the WIRE copy only, and a 4-peer drill produced 12 refusals + 4 intact local echoes — the gate had never been shown FIRING before this | Any peer → ill-formed bytes rendered on every other peer's screen; blast radius grows with the planned chat-history retention (indefinite, not 11 s) | fixed at the boundary; duplicates retired | **BUILT** (smoke PASS x2 + injection drill; not hands-on) |
 | **A7** | **Lobby-list flooding evicts real lobbies.** At the 1000 global cap, `evict_if_full` drops the stalest *real* lobby. 8 per /64 x 125 /64s — trivial with a routed /48 | `[A]` `master.rs:45-46,308-324,350-352` | Anyone → **pushes real lobbies out of the list** | `PLAN_04` §5 | **OPEN** |
 
 ---
@@ -114,7 +115,10 @@ Recorded so a future pass does not spend effort here. All `[A]`.
 - **Voice.** Min-len, `routeSlot` range, `copyLen` clamp, `opusLen` vs cap and body, ring index modulo.
 - **Relay.** Rejects oversize before the fixed-buffer memcpy; only whitelisted kinds forward, verbatim.
 - **All wire strings.** Every one clamps length; NUL-less fields copy into an oversized zeroed local.
-  No `strlen` on a wire array anywhere.
+  No `strlen` on a wire array anywhere. **Corrected 2026-07-29: length-clamped is not well-formed.**
+  This bullet was read as "wire strings are validated" and chat rode that reading for months with no
+  UTF-8 decode at all (**W11**). A length check and a well-formedness check are different questions;
+  when auditing a new string lane, answer both explicitly.
 - **Filesystem paths.** GUID validated to 32 hex chars twice; skin names allow-listed to
   `[0-9a-zA-Z_-]`; save slot filename is PID-derived. **No peer string reaches a path.**
 - **Format strings.** Zero non-literal `UE_LOG*`/printf format arguments repo-wide.
