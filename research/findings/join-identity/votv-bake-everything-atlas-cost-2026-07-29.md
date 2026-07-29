@@ -115,3 +115,73 @@ and the emoji donor at `U+1FAF6` already set it. Adding all of CJK moves the max
   and this section is now the price list.
 - The `16-64 MB` figure in §9d should be read as **the cost of ImGui's "common" subset**, not of CJK.
   The whole-block cost is 64-256 MB.
+
+---
+
+## 6. "Does MTA also freeze and have a 256 MB atlas?" — measured: NO, and the reason IS option B
+
+**USER QUESTION 2026-07-29.** Answered from the vendored source
+(`reference/mtasa-blue/vendor/cegui-0.4.0-custom/src/CEGUIFont.cpp`), per the standing
+follow-MTA-architecture rule.
+
+**MTA never downloads a font, and never bakes a whole block.** The
+`CResourceFileDownloadManager` path is for maps/models/scripts
+(`RESOURCE_FILE_TYPE_MAP/SCRIPT/CLIENT_FILE`) — glyphs do not travel that way at all. What MTA
+does instead, in its custom CEGUI 0.4.0 fork, is **on-demand page-granular glyph caching**:
+
+| mechanism | file:line | what it does |
+|---|---|---|
+| on-demand insert | `CEGUIFont.cpp:753, :827` | `refreshStringForGlyphs(text)` runs on **every** `getTextExtent` and `drawText` — the cache grows from the text actually drawn |
+| ASCII is free | `:1511` | `if (ulGlyph < 128) return NULL;` — the Latin core is always resident, never re-examined |
+| **page** granularity | `:1489` `addGlyphPageInfo` | glyphs group into pages via `GlyphToGlyphPageId`; pages are added and freed independently, never the whole block |
+| **fallback chain** | `:1519-1521` | if the face lacks the glyph, `FontManager::getSubstituteFont()->insertGlyphToCache(...)` — a substitute font supplies it |
+| **LRU eviction** | `:1505`, `:1527` | every touch stamps `pInfo->uiLastUsedTime = d_uiLastPulseTime` |
+| pages really are freed | `:1595-1605` | `bWaitingToBeDeleted` -> `freeGlyphPage(...)` + `d_GlyphPageInfoMap.erase(...)` |
+| rebuild at a quiet point | `onClearRenderList()` | *"Called when the renderer has no cached images from this font, so will speed up rebuilding"* — not inside a draw |
+
+So MTA pays neither cost: no 11.7 MB of donor bytes (it uses fonts already present), and no 64-256 MB
+atlas (it only ever rasterises what was drawn, and gives the pages back).
+
+### 6a. This retires the objection that killed demand baking in arc D2
+
+§9d.4 rejected demand baking partly because *"a set that never shrinks converges on the eager cost
+anyway, making the saving a deferral bought with a lifecycle."* **MTA's set shrinks** — that is
+exactly what `uiLastUsedTime` + `bWaitingToBeDeleted` + `freeGlyphPage` are for, and it has held at
+multi-thousand-peer scale for 15+ years. The objection was correct about a cache with no eviction; it
+was not an argument against caching.
+
+### 6b. Why we do NOT need CEGUI's page machinery
+
+MTA needs pages because its text is arbitrary — chat, Lua-drawn UI, any string a server sends. **Ours
+is names.** The demand set is the roster: <=4 peers x 20 codepoints = **<=80 codepoints**, changing only
+on join / leave / rename, sourced from the arc-A ledger that already owns per-slot identity.
+
+At that size a **whole-atlas rebuild is cheap enough to need no page granularity at all** — measured in
+this same probe run (`OS +Nhz`, real system faces merged, only the demanded glyphs rasterised):
+
+```
+OS +4hz  +0em  x1.00   1.00 MB   1,609 glyphs    5.7 ms
+OS +20hz +0em  x1.00   1.00 MB   1,657 glyphs    5.9 ms
+OS +60hz +8em  x1.00   1.00 MB   1,801 glyphs    7.8 ms
+OS +200hz+40em x2.00   8.00 MB   2,317 glyphs   16.2 ms
+```
+
+So the design is MTA's **shape** (on-demand, OS-supplied, evicting) with MTA's **granularity dropped**
+as unnecessary — which is the documented way to diverge: cite the file, state the reason. ImGui 1.91.5
+has no dynamic atlas (that is what 1.92 added, and RF3 keeps us pinned), so a page cache is not
+available to us anyway; a bounded full rebuild is, and at 6-16 ms it is under today's 55-105 ms boot
+bake.
+
+### 6c. What the shape implies for the build
+
+- The **fallback chain** is MTA's `getSubstituteFont()`. Ours is `IDWriteFontFallback::MapCharacters` —
+  an invariant ("which font draws this codepoint?") rather than a hardcoded filename list, which the
+  gate doc already named as the correct form. **DirectWrite is not linked today**; the precondition is
+  obtaining a file path or stream to hand FreeType.
+- The **trigger** is a roster change, not a keystroke — so the per-keystroke site-list objection in
+  §9d.4 does not apply either.
+- **Eviction** falls out for free: rebuild the demand set FROM the live roster each time, so a departed
+  peer's script leaves with them. No timestamps, no LRU, no lifecycle to get wrong.
+- `FoldKey` must keep folding on the **compile-time** repertoire, NOT on what happens to be baked —
+  otherwise uniqueness becomes machine-dependent and two peers disagree about whether two names
+  collide. This is the arc-D2 guarantee and it is the one thing this change must not touch.
