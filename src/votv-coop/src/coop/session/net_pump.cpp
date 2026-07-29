@@ -14,6 +14,7 @@
 
 #include "coop/comms/chat_feed.h"    // Reset() on the leave-world flee (session UI dies with the session)
 #include "coop/comms/chat_bubbles.h" // ResetSlots() on flee -- overhead bubbles are session UI too
+#include "coop/comms/chat_sync.h"   // Reset() -- the lobby's chat record dies with the session too
 #include "coop/player/nameplate.h"   // ResetSlots() on flee -- HasAny() keeps hud::IsActive() alive in the menu
 #include "ui/chat_input.h"           // Close() on flee -- an OPEN chat box must not survive into the menu
 #include "ui/voice_panel.h"          // Close() on flee -- don't leave the voice panel open across the transition
@@ -198,6 +199,7 @@ void FleeToMainMenu(coop::net::Session& session, const char* why, bool travel = 
     // hud::IsActive() keys on chat_feed::HasAny() || nameplate::HasAny() || ... so a
     // stale nameplate alone re-activates the whole HUD in the menu.
     coop::chat_feed::Reset();
+    coop::chat_sync::Reset();  // the record + the applied range die with the session
     coop::chat_bubbles::ResetSlots();
     coop::nameplate::ResetSlots();
     ui::chat_input::Close();

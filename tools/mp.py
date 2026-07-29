@@ -2955,6 +2955,187 @@ def cmd_chathistory(args) -> None:
     sys.exit(0 if not failures else 2)
 
 
+def cmd_chatseed(args) -> None:
+    """D-W: the WIRE half of chat history (3 peers) -- the joiner's half.
+
+    Host and client 1 hold a conversation. Then client 2 joins, and WHILE IT IS STILL
+    LOADING the other two keep talking. That window is the whole point: it is where a
+    seed and a live stream can interleave, and where a dedup rule that was a
+    high-watermark instead of a range would have discarded the entire history in
+    silence.
+
+    Asserted from client 2's own log:
+      W1 it applied a non-empty seed                    (the record reaches a joiner)
+      W2 the applied lineSeqs are STRICTLY ASCENDING and CONTIGUOUS
+                                                        (no hole, no duplicate, no
+                                                         reordering -- the half a
+                                                         screenshot cannot show)
+      W3 the two lines said DURING its load window are present, and are the NEWEST
+                                                        (principle 8: a joiner arriving
+                                                         mid-conversation is not a
+                                                         supported-later case)
+      W4 the seeded rows landed RETAINED, so its live feed on arrival is clear
+                                                        (the user's step 4)
+
+    MUST-FAIL control: --inject sets VOTVCOOP_CHAT_SEED_SUPPRESS=1 on the host, which
+    opens the joiner for live traffic but never sends it the history. W1 must go RED.
+    """
+    shots_dir = Path(__file__).resolve().parent.parent / "research" / "chat_shots"
+    shots_dir.mkdir(parents=True, exist_ok=True)
+    if kill_all() > 0:
+        log("note: pre-existing VotV instances killed before chatseed")
+    deploy_all()
+
+    host_env = {"VOTVCOOP_VOICE_ENABLED": "0"}
+    if getattr(args, "inject", False):
+        host_env["VOTVCOOP_CHAT_SEED_SUPPRESS"] = "1"
+        log("*** INJECTION ARMED: VOTVCOOP_CHAT_SEED_SUPPRESS=1 on the HOST -- W1 MUST go RED ***")
+
+    log("--- HOST LAUNCH (chat-seed D-W) ---")
+    host_pid = launch_peer("host", args.port, "Host", peer=None,
+                           res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
+                           memory_limit_gb=args.memory_limit_gb, extra_env=host_env)
+    host_log = HOST_DIR / "multivoid.log"
+    bound = False
+    for i in range(args.boot_timeout):
+        time.sleep(1)
+        if host_owns_udp(host_pid, args.port):
+            log(f"host bound UDP {args.port} after {i+1}s"); bound = True; break
+        if not any(p["PID"] == host_pid for p in list_votv()):
+            log("HOST DIED before binding UDP"); tail_log(host_log, 30, "HOST"); sys.exit(1)
+    if not bound:
+        log(f"FAIL: host did not bind UDP within {args.boot_timeout}s")
+        tail_log(host_log, 30, "HOST"); kill_all(); sys.exit(1)
+
+    log("--- CLIENT 1 LAUNCH ---")
+    c1_pid = launch_peer("client", args.port, "Client", peer="127.0.0.1",
+                         res_x=1280, res_y=720, peer_slot=1, monitor=2, tile_index=0,
+                         memory_limit_gb=args.memory_limit_gb,
+                         extra_env={"VOTVCOOP_VOICE_ENABLED": "0"})
+    c1_log = CLIENT_DIR / "multivoid.log"
+    if not _wait_for_log(c1_log, "Joined ", args.client_boot_timeout, "CLIENT1"):
+        log("FAIL: client 1 never reached the world"); kill_all(); sys.exit(1)
+    time.sleep(4)
+
+    early = [f"before you arrived {n:02d}" for n in range(1, args.messages + 1)]
+    log(f"--- {len(early)} messages BEFORE the joiner exists ---")
+    for n, m in enumerate(early):
+        pid, lbl = (host_pid, "HOST") if (n % 2 == 0) else (c1_pid, "CLIENT1")
+        log(f"  {lbl}: {m!r}")
+        _type_chat(pid, m, lbl)
+        time.sleep(1.0)
+
+    # Client 2 joins. The two lines below are said while it is STILL LOADING -- the
+    # window where a seed and a live stream can interleave.
+    log("--- CLIENT 2 LAUNCH (the joiner) ---")
+    c2_pid = launch_peer("client", args.port, "Client2", peer="127.0.0.1",
+                         res_x=1280, res_y=720, peer_slot=2, monitor=2, tile_index=1,
+                         memory_limit_gb=args.memory_limit_gb,
+                         extra_env={"VOTVCOOP_VOICE_ENABLED": "0"})
+    c2_log = CLIENT2_DIR / "multivoid.log"
+    window_msgs = ["said while you were loading A", "said while you were loading B"]
+    time.sleep(args.window_delay)
+    log(f"--- {len(window_msgs)} messages DURING the joiner's load window ---")
+    _type_chat(host_pid, window_msgs[0], "HOST")
+    time.sleep(1.0)
+    _type_chat(c1_pid, window_msgs[1], "CLIENT1")
+
+    if not _wait_for_log(c2_log, "Joined ", args.client_boot_timeout, "CLIENT2"):
+        log("FAIL: client 2 never reached the world"); tail_log(c2_log, 30, "CLIENT2")
+        kill_all(); sys.exit(1)
+    time.sleep(6)   # let the seed land and the join lines settle
+
+    _capture_window(c2_pid, shots_dir / "joiner_on_arrival.png")
+    log("--- CLIENT 2 opens chat ---")
+    _type_chat(c2_pid, "", "CLIENT2", submit=False)
+    time.sleep(2.0)
+    _capture_window(c2_pid, shots_dir / "joiner_history.png")
+    time.sleep(args.hold)
+    _press_vk(c2_pid, 0x0D, "CLIENT2")   # Enter on the empty field closes
+    time.sleep(2.0)
+
+    tail_log(c2_log, 20, "CLIENT2")
+    c2text, c2err = _read_log_strict(c2_log)
+    log("--- KILLING ---")
+    kill_all()
+
+    log("--- CHAT-SEED (D-W) VERDICT ---")
+    failures: list[str] = []
+    notes: list[str] = []
+    if c2err:
+        failures.append(f"client2 log is not strict UTF-8: {c2err}")
+
+    applied = re.findall(r"chat: applied line (\d+) seeded=([01]) \"([^\"]*)\"", c2text)
+    rows = [(int(a), sd == "1", t) for a, sd, t in applied]
+    seqs = [r[0] for r in rows]
+    texts = [r[2] for r in rows]
+    seeded = [r for r in rows if r[1]]
+    live = [r for r in rows if not r[1]]
+    log(f"  client2 applied {len(seeded)} seeded + {len(live)} live row(s)")
+
+    if not seeded:
+        failures.append("W1: client2 applied NO seeded history -- the joiner arrived to "
+                        "an empty lobby record")
+    elif len(seeded) < args.messages:
+        failures.append(f"W1: client2 applied only {len(seeded)} seeded row(s), "
+                        f"expected >= {args.messages}")
+    else:
+        notes.append(f"W1: {len(seeded)} history line(s) reached the joiner")
+
+    if len(seqs) < 2:
+        failures.append("W2: too few applied rows to check ordering")
+    else:
+        bad = [(seqs[i], seqs[i + 1]) for i in range(len(seqs) - 1)
+               if seqs[i + 1] != seqs[i] + 1]
+        if bad:
+            failures.append(f"W2: applied lineSeqs are not contiguous+ascending -- "
+                            f"{len(bad)} break(s), first {bad[0][0]} -> {bad[0][1]}")
+        else:
+            notes.append(f"W2: lineSeqs {seqs[0]}..{seqs[-1]} applied contiguous and "
+                         f"strictly ascending")
+
+    missing = [m for m in window_msgs if not any(m in t for t in texts)]
+    if missing:
+        failures.append(f"W3: {missing} never reached the joiner -- said during its load "
+                        f"window and lost (principle 8)")
+    else:
+        tail = texts[-len(window_msgs):]
+        if not all(any(m in t for t in tail) for m in window_msgs):
+            failures.append(f"W3: the load-window lines arrived but are NOT the newest -- "
+                            f"tail is {tail}")
+        else:
+            notes.append("W3: both load-window lines arrived, and as the newest rows")
+
+    opens = [ln for ln in c2text.splitlines() if "chat_view: reveal open" in ln]
+    if not opens:
+        failures.append("W4: client2 never logged a reveal -- chat did not open")
+    else:
+        log(f"  {opens[-1].strip()}")
+        m = re.search(r"history=(\d+) live=(\d+)", opens[-1])
+        hist, liveN = (int(m.group(1)), int(m.group(2))) if m else (-1, -1)
+        if hist < args.messages:
+            failures.append(f"W4: the joiner's reveal showed history={hist}, expected "
+                            f">= {args.messages}")
+        else:
+            notes.append(f"W4: the joiner's reveal showed {hist} retained line(s) "
+                         f"({liveN} live) -- seeded rows landed RETAINED, so its feed "
+                         f"on arrival was clear of them")
+
+    for n in notes:
+        log(f"  OK  {n}")
+    for f in failures:
+        log(f"  FAIL {f}")
+    log(f"shots -> {shots_dir}")
+    if getattr(args, "inject", False):
+        if failures:
+            log("INJECTED RUN: RED as required -- the drill can see the defect it tests for")
+            sys.exit(0)
+        log("INJECTED RUN: GREEN -- the drill is BLIND; it would pass on a broken build")
+        sys.exit(2)
+    log("VERDICT: " + ("PASS" if not failures else f"FAIL ({len(failures)})"))
+    sys.exit(0 if not failures else 2)
+
+
 def cmd_puppetshot(args) -> None:
     """2-PEER PROPER nameplate shot. Launches host + client with
     VOTVCOOP_RUN_PUPPET_FRAME=1 so the HOST stands back + aims at the STANDING client
@@ -3368,6 +3549,22 @@ def main() -> None:
     p_chathist.add_argument("--memory-limit-gb", type=float, default=12.0, help="per-process commit cap in GB (0 = disabled)")
     for flag, kw in host_res: p_chathist.add_argument(flag, **kw)
     p_chathist.set_defaults(func=cmd_chathistory)
+
+    p_chatseed = sub.add_parser("chatseed",
+                                help="3-PEER D-W drill: a joiner is SEEDED with the lobby's chat record, "
+                                     "in order, including lines said during its own load window")
+    p_chatseed.add_argument("--boot-timeout", type=int, default=90, help="seconds to wait for host UDP bind")
+    p_chatseed.add_argument("--client-boot-timeout", type=int, default=150, help="seconds for a client to reach the world")
+    p_chatseed.add_argument("--messages", type=int, default=12,
+                            help="messages exchanged BEFORE the joiner exists")
+    p_chatseed.add_argument("--window-delay", type=int, default=25,
+                            help="seconds after the joiner launches before the load-window lines are said")
+    p_chatseed.add_argument("--hold", type=int, default=8, help="seconds to hold the joiner's reveal open")
+    p_chatseed.add_argument("--inject", action="store_true",
+                            help="MUST-FAIL control: VOTVCOOP_CHAT_SEED_SUPPRESS=1 on the host; the run must go RED")
+    p_chatseed.add_argument("--memory-limit-gb", type=float, default=12.0, help="per-process commit cap in GB (0 = disabled)")
+    for flag, kw in host_res: p_chatseed.add_argument(flag, **kw)
+    p_chatseed.set_defaults(func=cmd_chatseed)
 
     p_puppetshot = sub.add_parser("puppetshot",
                                   help="2-PEER PROPER nameplate shot: host frames the STANDING client puppet (no ragdoll) + captures the ImGui 'Client' nameplate over it")

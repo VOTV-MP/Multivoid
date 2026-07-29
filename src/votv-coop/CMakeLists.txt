@@ -301,6 +301,7 @@ add_library(votv-coop SHARED
     src/coop/player/nickname_arbiter.cpp
     src/coop/player/hand_item.cpp
     src/coop/comms/chat_feed.cpp
+    src/coop/comms/chat_log.cpp
     src/coop/comms/chat_bubbles.cpp
     src/coop/comms/peer_action_feed.cpp
     src/coop/dispatch/event_feed.cpp

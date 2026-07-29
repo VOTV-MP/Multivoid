@@ -215,7 +215,14 @@ inline bool IsClientRelayableReliableKind(ReliableKind k) {
     case ReliableKind::OwnerEntityPose:
     case ReliableKind::OwnerEntityDestroy:
     case ReliableKind::InventoryPickup:   // v58: the inventory-collect blip is PEER-SYMMETRIC -- relay a client's collect so every peer hears it
-    case ReliableKind::ChatMessage:       // v60: T-chat is PEER-SYMMETRIC -- relay a client's line so every peer reads it
+    // ChatMessage is NOT relayable (v133, 2026-07-29): chat is HOST-AUTHORED now. A
+    // client's line reaches the host as an INTENT; the host commits it to the lobby's
+    // record with a lineSeq and broadcasts an authored ChatLine to everyone, the origin
+    // included. It could not stay relayed: the relay fires on the NET thread at receive
+    // time, before the game thread where a lineSeq could be assigned even exists, so at
+    // relay time the order does not yet exist. Keeping both paths would be two
+    // implementations of one concept compiled together (RULE 2) -- and the relayed copy
+    // would arrive with no position in the order, i.e. unsortable against the history.
     // EmailAppend is NOT relayable (2026-07-10, audit MEDIUM): emails are HOST-AUTHORED
     // since e5718fc6 (email_sync gates the append send on role()==Host; clients author
     // ZERO). A client EmailAppend reaching the host is a protocol violation --

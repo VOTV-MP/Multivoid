@@ -214,10 +214,10 @@ bool HandleWorldEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::ChatMessage: {
-        // v60 (2026-06-11): a peer's T-chat line. PEER-SYMMETRIC + host-relayed.
-        // Identity comes from the TRANSPORT slot (a peer cannot speak as someone
-        // else); the payload is text only, sanitized to printable ASCII in
-        // chat_sync before display.
+        // v133: a client's chat INTENT, client->host only. Identity comes from the
+        // TRANSPORT slot -- a peer cannot speak as someone else -- and the payload is
+        // text only, decoded STRICTLY at the boundary in chat_sync before it can enter
+        // the lobby's record or reach a screen.
         if (msg.payloadLen < sizeof(net::ChatMessagePayload)) {
             UE_LOGW("event_feed: ChatMessage payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::ChatMessagePayload));
@@ -231,6 +231,38 @@ bool HandleWorldEvent(net::Session& session,
         net::ChatMessagePayload cp{};
         std::memcpy(&cp, msg.payload, sizeof(cp));
         coop::chat_sync::OnReliable(cp, static_cast<uint8_t>(msg.senderPeerSlot));
+        break;
+    }
+    case net::ReliableKind::ChatSpeaker: {
+        // v133: WHO the ChatLine that follows is from. Host->client; it always
+        // immediately precedes its line on the same ordered lane.
+        if (msg.payloadLen < sizeof(net::ChatSpeakerPayload)) {
+            UE_LOGW("event_feed: ChatSpeaker payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::ChatSpeakerPayload));
+            break;
+        }
+        net::ChatSpeakerPayload sp{};
+        std::memcpy(&sp, msg.payload, sizeof(sp));
+        coop::chat_sync::OnChatSpeaker(sp);
+        break;
+    }
+    case net::ReliableKind::ChatLine: {
+        // v133: the host's AUTHORED chat row, carrying the lineSeq that IS the order.
+        if (msg.payloadLen < sizeof(net::ChatLinePayload)) {
+            UE_LOGW("event_feed: ChatLine payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::ChatLinePayload));
+            break;
+        }
+        if (msg.senderPeerSlot != 0) {
+            // Only the host authors. A client claiming to is a protocol violation, and
+            // accepting it would let any peer write the lobby's permanent record.
+            UE_LOGW("event_feed: ChatLine from senderPeerSlot=%d -- only the host "
+                    "authors chat; dropping", msg.senderPeerSlot);
+            break;
+        }
+        net::ChatLinePayload lp{};
+        std::memcpy(&lp, msg.payload, sizeof(lp));
+        coop::chat_sync::OnChatLine(lp);
         break;
     }
     case net::ReliableKind::TimeSync: {

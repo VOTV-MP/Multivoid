@@ -332,6 +332,11 @@ void ConnectReplayForSlot(int slot) {
     // event_cue late-join answer (join-during-event Phase 2): re-send live already-broadcast
     // cosmetic cue emitters (starRain...) ToSlot -- a mid-shower joiner replays the emitter.
     coop::event_cue_sync::QueueConnectBroadcastForSlot(slot);
+    // chat lane late-join answer (COOP_EVENT_JOIN.md 3.4): the lobby's chat RECORD,
+    // oldest first, one reliable message per line. It lands RETAINED on the joiner --
+    // arriving in a lobby must not replay a conversation you were not in across your
+    // screen; it is there when you press T, and only then.
+    coop::chat_sync::QueueConnectBroadcastForSlot(slot);
 }
 
 void ClientConnectEdge(coop::net::Session& session) {
@@ -353,6 +358,9 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     session.MarkSlotWorldReady(slot, false);
     if (slot >= 0 && slot < static_cast<int>(coop::players::kMaxPeers))
         g_joinPlaced[slot] = false;  // rejoin re-places the joiner at the host
+    // Shut the chat lane's per-slot seed gate: the NEXT occupant's applied range starts
+    // empty, so it must get its seed before it hears a single live line.
+    coop::chat_sync::OnSlotDisconnected(slot);
     // Per-slot subsystem cleanup. Only subsystems with actual per-slot
     // state get a call here. prop_lifecycle / npc_sync / weather_sync
     // hold GLOBAL state that DisconnectAll handles correctly on full

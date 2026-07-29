@@ -13,6 +13,7 @@
 #include "coop/world/balance_sync.h"
 #include "coop/comms/chat_bubbles.h"
 #include "coop/comms/chat_feed.h"
+#include "coop/comms/chat_sync.h"
 #include "coop/config/config.h"  // IsIniKeyTrue -- v86 Path 1c JOIN-WINDOW CLOSED hands-on cue gate
 #include "coop/interactables/interactable_sync.h"
 #include "ui/join_curtain.h"  // instant-world SEAM 1: the short curtain (Show at SnapshotBegin / dismiss at Complete)
@@ -120,6 +121,9 @@ void OnSessionStart() {
     coop::player_handshake::Reset();
     coop::seen_players::OnSessionStart();  // clear stale online marks (same discipline)
     coop::chat_feed::Reset();  // drop any prior session's lingering event lines
+    coop::chat_sync::Reset();  // ...and the lobby's chat RECORD with it: a stop-and-
+                               // re-host in one process would otherwise seed lobby B's
+                               // joiner with lobby A's conversation
     coop::chat_bubbles::ResetSlots();  // 12g: no prior session's overhead bubbles either
 }
 

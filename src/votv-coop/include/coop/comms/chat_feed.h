@@ -120,10 +120,18 @@ struct Snapshot {
 // The wstring is UTF-8-encoded on the way in (Cyrillic nicks survive).
 void Push(const std::wstring& line, Keep keep);
 
-// Append a CHAT line: utf8Line starts with the sender's nick; nickByteLen is that
-// prefix's byte length and nickArgb the colour it is drawn in, resolved by the
-// caller at compose time (coop::chat_nick_color::ForSlot). Always History. Game thread.
-void PushChat(const std::string& utf8Line, uint8_t nickByteLen, uint32_t nickArgb);
+// Append a WIRE-authored chat line -- the host committed it at `lineSeq`, which is
+// the total order every peer sorts by. utf8Line starts with the speaker's nick;
+// nickByteLen is that prefix's byte length and nickArgb the colour it is drawn in,
+// resolved by the RECEIVER at apply time (coop::chat_nick_color::ForSlot).
+//
+// `seeded` rows are a joiner's history: they land RETAINED, never live, so arriving
+// in a lobby does not replay a conversation you were not in across somebody's screen.
+// Applying a row also advances the local sort base, so a locally-authored line pushed
+// afterwards sorts after it rather than in front of the whole history.
+// Always History. Game thread.
+void PushWireChat(const std::string& utf8Line, uint8_t nickByteLen, uint32_t nickArgb,
+                  uint32_t lineSeq, bool seeded);
 
 // Append a peer-ACTION line (same shape as PushChat, action flag set): the HUD
 // draws the post-nick predicate in the action color instead of the chat body

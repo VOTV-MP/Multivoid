@@ -705,7 +705,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // + replays them in ConnectReplayForSlot. mainPlayer.holding_actor with an Aprop_C no
 // longer feeds the PropSpawn/PropPose path (the trash clump/pile carry -- the
 // non-Aprop_C holding_actor case -- stays on its lane untouched).
-inline constexpr uint16_t kProtocolVersion = 132; // v132 (2026-07-28, ARC B -- the HOST is the canonical namer: a Join's nick is ARBITRATED before it enters the ledger, and the assignment reaches the named peer on its own RosterRow (whose nick already sat in the FIXED PREFIX above the applyDeclared gate for exactly this). The row FORMAT is unchanged -- what changed is who authors the value and that the named peer KEEPS it: per the user's 2026-07-28 decision the assigned name is written back to multivoid.ini, so the next session asks to be called Pelmentor2 and keeps it unless someone else already is. The bump is the release rule + the Paper-pair build number, not a parse change). Prior: v131 (2026-07-28: RosterRow FIXED PREFIX widened -- +[u8 linkKind][i16 pingMs] after eid, so the HOST publishes how every player is connected to the SESSION and every board renders the same value for the same player. Retires the per-viewer derivation that answered transport on some rows and ROUTE ("VIA HOST") on others, in one column, side by side; retires the client-side rttMsForSlot fan-out to nameplates, which could only ever measure the host link. The fields sit in the FIXED PREFIX because the tail's offset arithmetic lives inside the applyDeclared block, which is skipped for exactly the host row and the receiver's own row). Prior: v130 (2026-07-27, arc A: PlayerJoined WIDENED + renamed RosterRow -- +uint16 playerNo, admits slot 0 and the receiver's own slot, playerNo 0 = slot empty. The roster ledger is now the single presence authority; a client's TAB used to list only itself and the host). Prior: v129 (2026-07-26, consume b128: DX12 overlay renderer + Graphics API indicator + Tidy-up fix + the release notes/install pipeline); v128 (consume b127, the WHOLE ini workstream -- arc 3 const Row& ratchet + arc 4 T8 catalog); v127 (consume b126, arcs 1+2); v126 (consume b125, drill-matrix, retracted); v125 (2026-07-22, R11b container extraction):
+inline constexpr uint16_t kProtocolVersion = 133; // v133 (2026-07-29, CHAT HISTORY -- +ChatLine=119 +ChatSpeaker=120, and ChatMessage=48 becomes client->host ONLY (out of IsClientRelayableReliableKind, RULE 2). Chat inverts from host-RELAYED to host-AUTHORED: the lobby now has a chat RECORD with a host-assigned lineSeq that IS the total order every peer sorts by, and a joiner is SEEDED from it. The relay could not carry this -- it fires on the NET thread at receive time, before the game thread where a lineSeq could be assigned even exists, so at relay time the order does not yet exist. A parse change AND a release, so the Paper-pair build number moves with it). Prior: v132 (2026-07-28, ARC B -- the HOST is the canonical namer: a Join's nick is ARBITRATED before it enters the ledger, and the assignment reaches the named peer on its own RosterRow (whose nick already sat in the FIXED PREFIX above the applyDeclared gate for exactly this). The row FORMAT is unchanged -- what changed is who authors the value and that the named peer KEEPS it: per the user's 2026-07-28 decision the assigned name is written back to multivoid.ini, so the next session asks to be called Pelmentor2 and keeps it unless someone else already is. The bump is the release rule + the Paper-pair build number, not a parse change). Prior: v131 (2026-07-28: RosterRow FIXED PREFIX widened -- +[u8 linkKind][i16 pingMs] after eid, so the HOST publishes how every player is connected to the SESSION and every board renders the same value for the same player. Retires the per-viewer derivation that answered transport on some rows and ROUTE ("VIA HOST") on others, in one column, side by side; retires the client-side rttMsForSlot fan-out to nameplates, which could only ever measure the host link. The fields sit in the FIXED PREFIX because the tail's offset arithmetic lives inside the applyDeclared block, which is skipped for exactly the host row and the receiver's own row). Prior: v130 (2026-07-27, arc A: PlayerJoined WIDENED + renamed RosterRow -- +uint16 playerNo, admits slot 0 and the receiver's own slot, playerNo 0 = slot empty. The roster ledger is now the single presence authority; a client's TAB used to list only itself and the host). Prior: v129 (2026-07-26, consume b128: DX12 overlay renderer + Graphics API indicator + Tidy-up fix + the release notes/install pipeline); v128 (consume b127, the WHOLE ini workstream -- arc 3 const Row& ratchet + arc 4 T8 catalog); v127 (consume b126, arcs 1+2); v126 (consume b125, drill-matrix, retracted); v125 (2026-07-22, R11b container extraction):
                                                   // ContainerContents becomes BIDIRECTIONAL and its
                                                   // blob gains a baseHash. A client now AUTHORS the
                                                   // world container it mutated (presser-authored
@@ -2625,6 +2625,34 @@ enum class ReliableKind : uint8_t {
                        //     meaningless on the receiver) -- it arrives empty, not broken;
                        //     the transitive walk is increment 2. Never refanned.
                        //     Lane::Normal.
+    ChatLine = 119,    // v133 (chat_sync): ONE host-AUTHORED chat line, carrying the
+                       //     host-assigned lineSeq that IS the total order every peer
+                       //     sorts by. Chat inverted from host-RELAYED to host-AUTHORED
+                       //     for exactly this: the relay fires on the NET thread at
+                       //     receive time, before the game thread where a lineSeq could
+                       //     be assigned even exists, so at relay time the order does
+                       //     not yet exist. ChatMessage=48 is therefore now client->host
+                       //     ONLY and is OUT of IsClientRelayableReliableKind (RULE 2 --
+                       //     no parallel relay path). The host commits, then broadcasts
+                       //     this to every ready client INCLUDING the origin, which is
+                       //     also what MTA does (CConsoleCommands.cpp:404-406 broadcasts
+                       //     a player's own line back with no exclude argument).
+                       //     flags bit0 = the row is part of a JOIN SEED and lands
+                       //     RETAINED, never live -- arriving must not replay a
+                       //     conversation you were not in across your screen.
+                       //     Always preceded by ChatSpeaker. Module: coop/comms/chat_sync.
+    ChatSpeaker = 120, // v133 (chat_sync): WHO the ChatLine that follows is from --
+                       //     nick, custom colour, slot. Sent UNCONDITIONALLY before
+                       //     every live line (the seed burst dedupes within the burst).
+                       //     Two reasons it is a separate message rather than fields on
+                       //     ChatLine: a composed line is up to 285 bytes against a
+                       //     228-byte datagram, so one packet cannot carry both; and a
+                       //     remembered "last binding I sent you" would silently strand
+                       //     a joiner who never saw the earlier one. Chat is human-rate,
+                       //     so ~90 B per message buys statelessness -- no per-recipient
+                       //     set, no versioning, no delivery bookkeeping. speakerId is a
+                       //     PER-BURST index: no minting policy, no eviction policy,
+                       //     nothing to bound.
     // Slots 21/22 (HeldClumpGrab/Release) RETIRED 2026-06-03 (v26, RULE 2): the v25
     // hand-attach model for the trash clump was the wrong shape (VOTV carries the
     // clump via the physics grab, floating in front, like the mannequin -- not
@@ -4404,6 +4432,44 @@ struct ChatMessagePayload {
 static_assert(sizeof(ChatMessagePayload) == 204, "ChatMessagePayload must be 204 bytes");
 static_assert(sizeof(ChatMessagePayload) <= 256 - 20 - 8,
               "ChatMessagePayload must fit in one reliable datagram");
+
+// ChatSpeakerPayload -- WHO the ChatLine that immediately follows is from
+// (ChatSpeaker=120, v133). HOST->client only.
+//
+// The nick is carried rather than looked up, because a lookup answers a DIFFERENT
+// question: NicknameForSlot(slot) is who is in that slot NOW, and history is about
+// who said it THEN. Slots recycle, so after one departure a resident rendering a
+// seeded row from its own roster and a joiner rendering the host's frozen copy would
+// hold permanently different names for the same message.
+//
+// nickArgb is the speaker's CUSTOM colour or 0 for none -- the RECEIVER resolves the
+// fallback. Sending a resolved colour instead would freeze a render-side palette onto
+// the wire, and sending nothing would lose the pick.
+struct ChatSpeakerPayload {
+    uint16_t speakerId;   // per-burst index; the following ChatLine names it
+    uint8_t  slot;        // world-entity handle -- drives the overhead bubble ONLY
+    uint8_t  nickLen;     // bytes used in nick[]
+    uint32_t nickArgb;    // the speaker's CUSTOM colour, 0 = none (receiver resolves)
+    char     nick[80];    // UTF-8, NOT NUL-terminated (coop::text::kNickMaxBytes)
+};
+static_assert(sizeof(ChatSpeakerPayload) == 88, "ChatSpeakerPayload must be 88 bytes");
+static_assert(sizeof(ChatSpeakerPayload) <= 256 - 20 - 8,
+              "ChatSpeakerPayload must fit in one reliable datagram");
+
+// ChatLinePayload -- one host-AUTHORED chat line (ChatLine=119, v133). HOST->client
+// only; see the enum entry for why chat inverted from relayed to authored.
+struct ChatLinePayload {
+    uint32_t lineSeq;     // host-monotone; THE total order (0 is never a real line)
+    uint16_t speakerId;   // names the ChatSpeaker that preceded this row
+    uint8_t  flags;       // bit0 = part of a JOIN SEED -> lands retained, never live
+    uint8_t  len;         // bytes used in text[]
+    char     text[203];   // the message, UTF-8
+};
+static_assert(sizeof(ChatLinePayload) == 211, "ChatLinePayload must be 211 bytes");
+static_assert(sizeof(ChatLinePayload) <= 256 - 20 - 8,
+              "ChatLinePayload must fit in one reliable datagram");
+
+inline constexpr uint8_t kChatLineFlagSeed = 0x01;
 
 // TurbineStatePayload -- one wind turbine's driver state (TurbineState=49, v61).
 // HOST->client ~1 Hz per turbine. The six floats are the turbine BP's spring/

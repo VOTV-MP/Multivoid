@@ -126,12 +126,18 @@ void SetText(Entry& e, const std::string& utf8) {
     e.text = coop::text::CapUtf8Bytes(utf8, sizeof(Line{}.text) - 1);
 }
 
-// The total order (chat_feed.h). The low 32 bits are the local tiebreak; the high 32
-// are the newest applied HOST line number, which is 0 until the wire half lands --
-// so today's keys are 1, 2, 3... and a wire-authored key will sort correctly against
-// them without any of these values changing meaning.
-uint64_t g_tiebreak = 0;
-uint64_t NextKey() { return ++g_tiebreak; }
+// The total order (chat_feed.h). ONE key, two producers. A wire row sits at
+// (its host lineSeq, 0). A locally-authored row -- a join line, a peer action, this
+// peer's own notices -- sits at (the newest host line applied so far, ++tiebreak), so
+// it lands immediately after the last thing that was actually said and before the next.
+// Without that base, "Connecting to <host>'s game..." would sort in front of a joiner's
+// entire seeded history, because a local counter starting at 1 is below every lineSeq.
+uint32_t g_wireBase = 0;
+uint32_t g_tiebreak = 0;
+uint64_t NextKey() {
+    return (static_cast<uint64_t>(g_wireBase) << 32) | ++g_tiebreak;
+}
+uint64_t WireKey(uint32_t lineSeq) { return static_cast<uint64_t>(lineSeq) << 32; }
 
 // DEV INJECTION -- the must-FAIL control for the retained tier. A feature that has
 // only ever been shown WORKING passes by construction; with this set, Retire drops
@@ -215,6 +221,18 @@ public:
         ProbeOnPush(via, e, live_.size() + 1);
         live_.push_back(std::move(e));
         while (live_.size() > static_cast<size_t>(kMaxLines)) Retire(via, NowMs());
+    }
+
+    // Seed a row DIRECTLY into the retained tier, bypassing live -- the join seed. The
+    // sorted insert is the general form; the seed arrives oldest-first so in practice
+    // every one of them appends at the back.
+    void Seed(Entry&& e) {
+        const uint64_t k = e.key;
+        auto at = retained_.end();
+        while (at != retained_.begin() && (at - 1)->key > k) --at;
+        retained_.insert(at, std::move(e));
+        retainedDirty_ = true;
+        CapRetained();
     }
 
     // Expire everything past its (suspended) TTL. Ages are monotone across the deque
@@ -373,18 +391,26 @@ void Push(const std::wstring& line, Keep keep) {
     Republish(now);
 }
 
-void PushChat(const std::string& utf8Line, uint8_t nickByteLen, uint32_t nickArgb) {
+void PushWireChat(const std::string& utf8Line, uint8_t nickByteLen, uint32_t nickArgb,
+                  uint32_t lineSeq, bool seeded) {
     const uint64_t now = NowMs();
     AdvanceSuspension(now);
     Entry e;
     SetText(e, utf8Line);
-    e.key = NextKey();
+    e.key = WireKey(lineSeq);
     e.bornMs = now;
     e.bornSuspendedMs = g_suspendedMs;
     e.nickLen  = (nickByteLen <= e.text.size()) ? nickByteLen : 0;
     e.nickArgb = nickArgb;
     e.keep     = Keep::History;
-    g_store.Birth(std::move(e), "chat");
+    // The base advances for BOTH tiers: a seeded row is still the newest thing this
+    // peer knows was said, so a local notice pushed after the seed must sort after it.
+    if (lineSeq > g_wireBase) g_wireBase = lineSeq;
+    if (seeded) {
+        g_store.Seed(std::move(e));
+    } else {
+        g_store.Birth(std::move(e), "chat");
+    }
     Republish(now);
 }
 
@@ -478,6 +504,7 @@ void Reset() {
     g_lastAdvanceMs = 0;
     g_revealLatched = false;
     g_tiebreak = 0;
+    g_wireBase = 0;
     {
         std::lock_guard<std::mutex> lk(g_mu);
         g_pub.count = 0;
