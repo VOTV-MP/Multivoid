@@ -37,7 +37,10 @@ void PushCounterLine(uint8_t count, uint8_t total) {
     wchar_t buf[64];
     ::swprintf(buf, 64, L"%u/%u players sleeping", static_cast<unsigned>(count),
                static_cast<unsigned>(total));
-    coop::chat_feed::Push(buf);
+    // All three sleep lines are Transient: they are a live STATUS readout of an
+    // in-progress ritual ("2/3 players sleeping"), meaningless once it is over --
+    // reading them back hours later would be noise, not history.
+    coop::chat_feed::Push(buf, coop::chat_feed::Keep::Transient);
 }
 
 void ApplyDreamProbPolicy(coop::net::Session* s) {
@@ -69,7 +72,8 @@ void ApplyAccelerateLocal(coop::net::Session* s, bool on) {
                 UE_LOGI("sleep_sync: camera -> sleepCam (the timelapse view)");
         }
         if (!IsHost(s)) coop::time_sync::SetSleepAccelerate(true);
-        coop::chat_feed::Push(L"Everyone is asleep -- the night passes...");
+        coop::chat_feed::Push(L"Everyone is asleep -- the night passes...",
+                              coop::chat_feed::Keep::Transient);
         UE_LOGI("sleep_sync: ACCELERATE (local dilation -> %s)",
                 SLP::IsSleeping() ? "20" : "1 (not in bed)");
     } else {
@@ -87,7 +91,8 @@ void ApplyEndLocal(coop::net::Session* s, bool natural) {
     if (SLP::IsSleeping()) SLP::CallWakeup();
     if (natural) SLP::WriteSleepNeed(100.f);
     coop::chat_feed::Push(natural ? L"Good morning -- everyone is rested."
-                                  : L"Sleep interrupted -- everyone wakes up.");
+                                  : L"Sleep interrupted -- everyone wakes up.",
+                          coop::chat_feed::Keep::Transient);
     UE_LOGI("sleep_sync: END (natural=%d)", natural ? 1 : 0);
 }
 

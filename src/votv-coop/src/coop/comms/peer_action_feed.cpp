@@ -3,6 +3,7 @@
 #include "coop/comms/peer_action_feed.h"
 
 #include "coop/comms/chat_feed.h"
+#include "coop/comms/chat_nick_color.h"
 #include "coop/player/players_registry.h"
 #include "coop/session/player_handshake.h"
 
@@ -60,7 +61,7 @@ void AnnounceDirect(uint8_t slot, const std::wstring& action) {
     const uint8_t colorSlot = slot < coop::players::kMaxPeers ? slot : 0;
     coop::chat_feed::PushAction(line,
                                 static_cast<uint8_t>(nick.size() > 255 ? 255 : nick.size()),
-                                colorSlot);
+                                coop::chat_nick_color::ForSlot(colorSlot));
 }
 
 void Announce(uint8_t slot, const std::wstring& action) {

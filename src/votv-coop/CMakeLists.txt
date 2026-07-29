@@ -552,6 +552,7 @@ add_library(votv-coop SHARED
     src/ui/hud.cpp
     src/ui/net_stats_panel.cpp
     src/ui/chat_input.cpp
+    src/ui/chat_view.cpp
     src/ui/fonts.cpp
     src/ui/scale.cpp
     resources/fonts.rc

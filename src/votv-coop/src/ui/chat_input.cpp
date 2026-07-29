@@ -2,6 +2,7 @@
 
 #include "ui/chat_input.h"
 
+#include "coop/comms/chat_feed.h"
 #include "coop/comms/chat_sync.h"
 #include "ui/fonts.h"
 #include "ui/scale.h"
@@ -57,17 +58,24 @@ int HistoryCallback(ImGuiInputTextCallbackData* data) {
 
 bool IsOpen() { return g_open.load(std::memory_order_relaxed); }
 
+// Open/Close are reached from THREE threads -- the WndProc T and ESC edges, the
+// render-thread Enter-submit, and the render-thread SEH unlatch -- so the store is
+// told through SetChatOpen, which writes atomics only and never the line deques.
+// That flag is what suspends the TTL clock (a reader must not watch the history
+// expire under them) and what makes the store publish the retained tier at all.
 void Open() {
     g_buf[0] = '\0';
     g_focusPending = true;
     g_histPos = -1;
     g_open.store(true, std::memory_order_relaxed);
+    coop::chat_feed::SetChatOpen(true);
 }
 
 void Close() {
     g_open.store(false, std::memory_order_relaxed);
     g_buf[0] = '\0';
     g_histPos = -1;
+    coop::chat_feed::SetChatOpen(false);
 }
 
 void Render() {

@@ -441,7 +441,8 @@ void OnRequest(int peerSlot) {
     static const bool s_pileProbe =
         coop::config::ResolveFlag(::coop::config_registry::rows::pile_delta_probe);
     if (s_pileProbe)
-        coop::chat_feed::Push(L"[1c-test] JOIN-WINDOW OPEN -- joiner loading; move/drop test piles NOW (close at 'JOIN-WINDOW CLOSED')");
+        coop::chat_feed::Push(L"[1c-test] JOIN-WINDOW OPEN -- joiner loading; move/drop test piles NOW (close at 'JOIN-WINDOW CLOSED')",
+                              coop::chat_feed::Keep::Transient);
 
     // ROOT-CAUSE FIX (2026-06-15): serialize the host's world LIVE, right now, into
     // a throwaway scratch slot -- instead of shipping the stale on-disk .sav. An

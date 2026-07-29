@@ -199,8 +199,10 @@ void RequestLocalVisible(bool visible) {
                 visible ? "VISIBLE" : "HIDDEN");
         if (coop::net::Session* s = g_session.load(std::memory_order_acquire))
             coop::player_handshake::AnnounceLocalNameplate(*s, visible);
+        // Transient: this player's own UI confirmation, not the lobby's record.
         coop::chat_feed::Push(visible ? L"Nameplate: shown to other players"
-                                      : L"Nameplate: hidden from other players");
+                                      : L"Nameplate: hidden from other players",
+                              coop::chat_feed::Keep::Transient);
     });
 }
 

@@ -107,8 +107,10 @@ bool HandleSkinChange(net::Session& session,
             return true;
         }
         StoreSkinForSlot(describedSlot, name);
+        // History: something a PEER did, the same family as a peer-action line.
         coop::chat_feed::Push(NicknameForSlot(describedSlot) + L" changed skin to " +
-                              std::wstring(name.begin(), name.end()));
+                              std::wstring(name.begin(), name.end()),
+                              coop::chat_feed::Keep::History);
         // Rebroadcast to every other ready client (originator excluded).
         const std::vector<uint8_t> p = BuildSkinChangePayload(describedSlot, name);
         for (int x = 1; x < net::kMaxPeers; ++x) {
@@ -129,7 +131,8 @@ bool HandleSkinChange(net::Session& session,
     if (describedSlot == coop::players::Registry::Get().LocalPeerId()) return true;  // our own echo
     StoreSkinForSlot(describedSlot, name);
     coop::chat_feed::Push(NicknameForSlot(describedSlot) + L" changed skin to " +
-                          std::wstring(name.begin(), name.end()));
+                          std::wstring(name.begin(), name.end()),
+                          coop::chat_feed::Keep::History);
     return true;
 }
 

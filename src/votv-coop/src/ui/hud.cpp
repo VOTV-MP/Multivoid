@@ -9,6 +9,7 @@
 #include "coop/text/utf8_codec.h"
 #include "coop/player/nick_color.h"
 #include "coop/voice/voice_chat.h"
+#include "ui/chat_view.h"
 #include "ui/fonts.h"
 #include "ui/link_format.h"
 #include "ui/scale.h"
@@ -297,123 +298,15 @@ void DrawObjectOverlay() {
     }
 }
 
-void DrawChat() {
-    coop::chat_feed::Snapshot cs;
-    coop::chat_feed::GetSnapshot(cs);
-    if (cs.count <= 0) return;
-
-    const ImGuiIO& io = ImGui::GetIO();
-    const float pad = S(14.f);
-    // Anchor the feed's BOTTOM-LEFT at the left edge, raised to ~mid-screen (user
-    // 2026-06-08). Lines grow UPWARD (newest at the bottom, oldest at the top).
-    //
-    // 2026-07-09: drawn DIRECTLY to a draw list -- NOT an ImGui window. The old
-    // AlwaysAutoResize + bottom-pivot window flickered the expiring (top) line a
-    // couple frames before it vanished: on the frame a line expired and the window
-    // resized, the pivot-derived position AND the window clip-rect lagged the
-    // content by one frame, so the top row was clipped/jumped, then corrected. The
-    // published fade alpha was proven monotone (the feed ALPHA-JUMP probe never
-    // fired), so the blink was pure window-layout lag. Drawing bottom-anchored to a
-    // draw list -- like the nameplates + object overlay already do -- removes the
-    // window entirely: no resize, no pivot, no clip lag, no flicker.
-    constexpr float kBottomFrac = 0.5f;  // 0.5 = vertical middle; raise toward 0 / lower toward 1
-    const float anchorBottomY = io.DisplaySize.y * kBottomFrac;
-
-    // 2026-07-04 chat-imgui-samp: bold chat font (Cyrillic-capable), per-slot colored
-    // nick prefix, 4-way outline (reads over any scene), word-wrap at a fixed width.
-    ImFont* font = ui::fonts::FontFor(ui::fonts::Role::Chat);
-    if (!font) font = ImGui::GetFont();
-    // PxFor(Chat) = the px the chat font was BAKED at (scaled): drawing at exactly that
-    // size renders the crisp 1:1 rasterization, no bitmap resample.
-    const float px = font ? ui::fonts::PxFor(ui::fonts::Role::Chat) : ImGui::GetFontSize();
-    const float wrapW = std::min(io.DisplaySize.x * 0.42f, S(640.f));
-    const float rowH = px + S(2.f);
-    const float o = std::max(1.f, S(1.f));  // outline offset (see TextOutlined)
-
-    // Per-slot nick palette (8 entries, wraps). Matches the scoreboard's hue family:
-    // distinct, readable on dark AND bright scenes at full alpha.
-    static constexpr ImU32 kSlotCols[] = {
-        IM_COL32(255, 179,  64, 255),  // 0 host: amber
-        IM_COL32(110, 205, 255, 255),  // 1 sky
-        IM_COL32(150, 255, 150, 255),  // 2 mint
-        IM_COL32(255, 130, 160, 255),  // 3 rose
-        IM_COL32(200, 150, 255, 255),  // 4 lilac
-        IM_COL32(255, 240, 120, 255),  // 5 lemon
-        IM_COL32(120, 235, 220, 255),  // 6 teal
-        IM_COL32(255, 160, 110, 255),  // 7 coral
-    };
-
-    // Visual-row iterator: invokes fn(rowStart, rowEnd) once per wrapped row of `text`.
-    // The SAME split feeds the height pass and the draw pass so they never disagree.
-    auto forEachRow = [&](const char* text, auto&& fn) {
-        const char* s   = text;
-        const char* end = text + std::strlen(text);
-        while (s < end) {
-            const char* rowEnd = font->CalcWordWrapPositionA(px / font->FontSize, s, end, wrapW);
-            if (rowEnd == s) rowEnd = s + 1;  // never stall on a single overlong glyph
-            fn(s, rowEnd);
-            s = rowEnd;
-            while (s < end && *s == ' ') ++s;  // swallow the wrap-point space
-        }
-    };
-
-    // Pass 1: total wrapped height (bounded -- kMaxLines=6 lines), to place the block.
-    float totalH = 0.f;
-    for (int i = 0; i < cs.count; ++i)
-        forEachRow(cs.lines[i].text, [&](const char*, const char*) { totalH += rowH; });
-
-    // BACKGROUND draw list: over the scene, under real windows (menus/scoreboard) --
-    // the same layer the nameplates use. Drawn after DrawNameplates() so chat wins if
-    // they ever overlap.
-    ImDrawList* dl = ImGui::GetBackgroundDrawList();
-    float y = anchorBottomY - totalH;  // top of the whole block; newest row ends at the anchor
-
-    // Pass 2: draw oldest -> newest, top -> down.
-    for (int i = 0; i < cs.count; ++i) {
-        const auto& l = cs.lines[i];
-        const float a = std::clamp(l.alpha, 0.f, 1.f);
-        const ImU32 outline = IM_COL32(0, 0, 0, static_cast<int>(a * 200.f));
-        // Peer-action lines ("<nick> deleted an email: X") draw their predicate in
-        // yellow (user 2026-07-11) so world-state actions read apart from typed chat.
-        const ImU32 body    = l.action
-            ? IM_COL32(255, 214,  80, static_cast<int>(a * 245.f))
-            : IM_COL32(236, 236, 236, static_cast<int>(a * 245.f));
-        ImU32 nickCol = body;
-        if (l.nickLen > 0) {
-            // v103 (12f): a peer's custom nick color overrides the per-slot palette.
-            const uint32_t custom = coop::nick_color::PackedForSlot(l.slot);
-            const ImU32 c = coop::nick_color::IsCustom(custom)
-                ? IM_COL32(coop::nick_color::R(custom), coop::nick_color::G(custom),
-                           coop::nick_color::B(custom), 255)
-                : kSlotCols[l.slot % (sizeof(kSlotCols) / sizeof(kSlotCols[0]))];
-            nickCol = (c & 0x00FFFFFFu) | (static_cast<ImU32>(a * 255.f) << 24);
-        }
-        const char* nickEnd = l.text + ((l.nickLen && l.nickLen < std::strlen(l.text))
-                                        ? l.nickLen : 0);
-        forEachRow(l.text, [&](const char* rowStart, const char* rowEnd) {
-            float x = pad;
-            const char* seg = rowStart;
-            // Split the row at the nick boundary when it falls inside this row.
-            while (seg < rowEnd) {
-                const char* segEnd = (seg < nickEnd && nickEnd < rowEnd) ? nickEnd : rowEnd;
-                const ImU32 col = (seg < nickEnd) ? nickCol : body;
-                dl->AddText(font, px, ImVec2(x - o, y), outline, seg, segEnd);
-                dl->AddText(font, px, ImVec2(x + o, y), outline, seg, segEnd);
-                dl->AddText(font, px, ImVec2(x, y - o), outline, seg, segEnd);
-                dl->AddText(font, px, ImVec2(x, y + o), outline, seg, segEnd);
-                dl->AddText(font, px, ImVec2(x, y), col, seg, segEnd);
-                x += font->CalcTextSizeA(px, FLT_MAX, 0.f, seg, segEnd).x;
-                seg = segEnd;
-            }
-            y += rowH;
-        });
-    }
-}
-
 }  // namespace
 
 bool IsActive() {
+    // chat_feed::HasAny() is LIVE lines only. RevealActive() is the other half: while
+    // the T-history is on screen -- including the fade-out after a close -- the frame
+    // must keep being built even if every live line has already expired, or the fade
+    // draws zero frames and the block vanishes instead of dimming.
     return coop::nameplate::HasAny() || coop::chat_feed::HasAny() ||
+           coop::chat_feed::RevealActive() ||
            coop::dev::object_overlay::IsEnabled() ||
            coop::dev::ragdoll_bone_overlay::IsEnabled() ||
            coop::voice_chat::Enabled();  // v66: the local mic indicator works pre-join too
@@ -485,7 +378,7 @@ void Render() {
     DrawObjectOverlay();   // first: debug labels sit UNDER the player nameplates
     DrawRagdollBones();    // skeleton lines under the nameplates too
     DrawNameplates();
-    DrawChat();
+    ui::chat_view::Draw();  // the feed + the T-activated history reveal (ui/chat_view.h)
     DrawLocalVoiceIcon();
 }
 

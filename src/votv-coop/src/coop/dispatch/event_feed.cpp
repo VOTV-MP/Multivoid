@@ -76,7 +76,8 @@ void OnSlotReplaced_LeaveLine(int slot, const coop::roster_ledger::Row& outgoing
     if (!g_suppressLeaveLines) {
         coop::chat_feed::Push(
             (outgoing.nick.empty() ? std::wstring(L"Remote player") : outgoing.nick) +
-            L" left the game");
+            L" left the game",
+            coop::chat_feed::Keep::History);  // a departure is part of the lobby's record
     }
     coop::seen_players::OnSlotDisconnected(slot);  // stamp last-seen (host registry)
     // HostAuth doors: release any door this departing peer held open (a door
@@ -219,7 +220,8 @@ void Update(net::Session& session, void* localPlayer) {
                 static const bool s_pileProbe =
                     coop::config::ResolveFlag(::coop::config_registry::rows::pile_delta_probe);
                 if (s_pileProbe)
-                    coop::chat_feed::Push(L"[1c-test] JOIN-WINDOW CLOSED -- joiner world-ready; drops from here are post-load (not in-window)");
+                    coop::chat_feed::Push(L"[1c-test] JOIN-WINDOW CLOSED -- joiner world-ready; drops from here are post-load (not in-window)",
+                                          coop::chat_feed::Keep::Transient);
                 session.MarkSlotWorldReady(msg.senderPeerSlot, true);
                 coop::subsystems::ConnectReplayForSlot(msg.senderPeerSlot);
                 // Join-line reverse-order cover (2026-07-03): the "<nick> joined the game" line now

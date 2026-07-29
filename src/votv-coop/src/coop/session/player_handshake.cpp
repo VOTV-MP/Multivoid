@@ -465,10 +465,17 @@ bool HandleJoinMessage(net::Session& session,
     // the "<nick> joined the game" line fires later from net_pump when the peer's PUPPET actually
     // spawns (AnnouncePeerSpawned). On the CLIENT the Join arrives FROM the host, so phrase it from
     // the receiver's POV ("Connecting to <host>'s game", not "<host> is connecting").
+    //
+    // Both are Transient. The client's line is purely this player's OWN status. The
+    // host's is PROGRESS toward a join, not the join: "<nick> joined the game" is the
+    // event, and it fires below once the puppet appears. History keeps the event, not
+    // the approach to it -- otherwise every join costs two history lines.
     if (session.role() == net::Role::Client) {
-        coop::chat_feed::Push(L"Connecting to " + nick + L"'s game...");
+        coop::chat_feed::Push(L"Connecting to " + nick + L"'s game...",
+                              coop::chat_feed::Keep::Transient);
     } else {
-        coop::chat_feed::Push(nick + L" is connecting to the game...");
+        coop::chat_feed::Push(nick + L" is connecting to the game...",
+                              coop::chat_feed::Keep::Transient);
     }
     // PR-FOUNDATION Tier 2 T2-1 (host-relay): if WE are the host, this Join
     // came from a client. Run the MTA InitialDataStream two-way cross-peer
@@ -503,7 +510,8 @@ void AnnounceJoinerOnce(int slot) {
     if (slot < 1 || slot >= net::kMaxPeers) return;  // slot 0 = host self; never "joins"
     if (coop::roster_ledger::Get(slot).joinAnnounced) return;
     coop::roster_ledger::SetJoinAnnounced(slot, true);
-    coop::chat_feed::Push(NicknameForSlot(static_cast<uint8_t>(slot)) + L" joined the game");
+    coop::chat_feed::Push(NicknameForSlot(static_cast<uint8_t>(slot)) + L" joined the game",
+                          coop::chat_feed::Keep::History);
     UE_LOGI("player_handshake: slot %d joined the game (announced at puppet appearance)", slot);
 }
 
@@ -520,7 +528,9 @@ void AnnouncePeerSpawned(net::Role role, int slot) {
     if (role == net::Role::Client && slot == 0) {
         // Self-join line: own loading screen still covers the world at the spawn
         // moment, so an immediate line looks premature (user 2026-06-21) -- keep +5 s.
-        coop::chat_feed::PushDelayed(L"Joined " + NicknameForSlot(0) + L"'s game", 5000);
+        // Transient: this player's own arrival notice, not part of the lobby's record.
+        coop::chat_feed::PushDelayed(L"Joined " + NicknameForSlot(0) + L"'s game", 5000,
+                                     coop::chat_feed::Keep::Transient);
         return;
     }
     AnnounceJoinerOnce(slot);

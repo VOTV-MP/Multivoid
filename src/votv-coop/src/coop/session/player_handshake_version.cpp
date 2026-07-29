@@ -93,7 +93,9 @@ void PushRefuseFeedLineDeduped(const std::wstring& nick, const std::string& reas
     g_lastRefuseFeedKey = key;
     g_lastRefuseFeedMs = now;
     const std::wstring wreason(reason.begin(), reason.end());  // ASCII by construction
-    coop::chat_feed::Push(nick + L" was turned away: " + wreason);
+    // History: a refused join is an EVENT in this lobby, not a passing notice.
+    coop::chat_feed::Push(nick + L" was turned away: " + wreason,
+                          coop::chat_feed::Keep::History);
 }
 
 }  // namespace

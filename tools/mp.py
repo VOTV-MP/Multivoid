@@ -1403,8 +1403,33 @@ def _peer_hwnd(pid: int):
     return found[0] if found else None
 
 
-def _type_chat(pid: int, text: str, label: str) -> bool:
+def _press_vk(pid: int, vk: int, label: str = "") -> bool:
+    """One down+up of a virtual key into a peer's window."""
+    import ctypes
+    u32 = ctypes.WinDLL("user32", use_last_error=True)
+    WM_KEYDOWN, WM_KEYUP = 0x0100, 0x0101
+    hwnd = _peer_hwnd(pid)
+    if not hwnd:
+        if label:
+            log(f"  {label}: no window for pid {pid} -- cannot press vk 0x{vk:02X}")
+        return False
+    u32.PostMessageW(hwnd, WM_KEYDOWN, vk, 0)
+    u32.PostMessageW(hwnd, WM_KEYUP, vk, 0)
+    return True
+
+
+def _type_chat(pid: int, text: str, label: str, submit: bool = True) -> bool:
     """Open the chat bar with T, type `text`, press Enter -- as real messages.
+
+    submit=False stops BEFORE Enter, leaving the bar open with the text in it.
+    That is the only way to drive the chat-history reveal from a fixture: the
+    reveal is gated on the surface being OPEN, and every other path through this
+    function closes it. `text` may be empty to just hold the bar open.
+
+    To CLOSE a bar held this way, press Enter on an empty field (chat_input.cpp
+    closes on submit either way) -- NOT Escape, which also falls through to the
+    game and raises the pause menu, and the pause menu suppresses the whole HUD
+    pass, so the reveal's own close marker would never be written.
 
     WM_CHAR carries UTF-16 code units, so an astral character arrives as a
     surrogate PAIR and ImGui reassembles it (AddInputCharacterUTF16). That path
@@ -1431,6 +1456,8 @@ def _type_chat(pid: int, text: str, label: str) -> bool:
         u32.PostMessageW(hwnd, WM_CHAR, units[k] | (units[k + 1] << 8), 0)
         time.sleep(0.01)
     time.sleep(0.4)
+    if not submit:
+        return True
     u32.PostMessageW(hwnd, WM_KEYDOWN, VK_RETURN, 0)
     u32.PostMessageW(hwnd, WM_KEYUP, VK_RETURN, 0)
     time.sleep(0.6)
@@ -2727,6 +2754,207 @@ def cmd_scoreshot(args) -> None:
     sys.exit(0 if captured else 2)
 
 
+def cmd_chathistory(args) -> None:
+    """D-L: the LOCAL half of chat history (2 peers).
+
+    Ten messages are typed through the real chat bar, then the run WAITS for every
+    one of them to leave the live set -- which is the point: what is on screen after
+    that is nothing, and what the T-reveal then shows is the RETAINED tier. The host
+    holds chat open while the client keeps talking, so the two halves of the user's
+    rule are exercised together: history appears, and new messages still arrive and
+    move the view while it is up.
+
+    Three things are asserted from the host's own log, and each one is a defect this
+    design nearly shipped:
+      H1 the reveal reports a non-empty history        (the tier exists at all)
+      H2 nothing expires between the open and close markers  (the suspended TTL)
+      H3 the client's mid-read message reaches the feed AFTER the reveal opened
+         and is not retired inside the window          (the underflow that popped
+                                                        every new message one tick
+                                                        after it arrived)
+      H4 PgUp pins the view and PgDn releases it       (only meaningful when the
+                                                        history OVERFLOWS one
+                                                        viewport -- see --messages)
+
+    MUST-FAIL control: rerun with --inject, which sets VOTVCOOP_CHAT_NO_RETAIN=1 on
+    the host so Retire destroys instead of retaining. H1 must go RED. A drill that
+    has only ever been shown passing passes by construction.
+
+    voice.enabled is forced OFF on both peers: hud::IsActive() ends in
+    voice_chat::Enabled(), whose registry default is TRUE, so with voice on the
+    overlay frame is unconditionally alive and the gate under test is unreachable.
+    """
+    shots_dir = Path(__file__).resolve().parent.parent / "research" / "chat_shots"
+    shots_dir.mkdir(parents=True, exist_ok=True)
+    if kill_all() > 0:
+        log("note: pre-existing VotV instances killed before chathistory")
+    deploy_all()
+
+    host_env = {"VOTVCOOP_VOICE_ENABLED": "0"}
+    if getattr(args, "inject", False):
+        host_env["VOTVCOOP_CHAT_NO_RETAIN"] = "1"
+        log("*** INJECTION ARMED: VOTVCOOP_CHAT_NO_RETAIN=1 on the HOST -- H1 MUST go RED ***")
+
+    log("--- HOST LAUNCH (chat-history D-L) ---")
+    host_pid = launch_peer("host", args.port, "Host", peer=None,
+                           res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
+                           memory_limit_gb=args.memory_limit_gb, extra_env=host_env)
+    host_log = HOST_DIR / "multivoid.log"
+    bound = False
+    for i in range(args.boot_timeout):
+        time.sleep(1)
+        if host_owns_udp(host_pid, args.port):
+            log(f"host bound UDP {args.port} after {i+1}s"); bound = True; break
+        if not any(p["PID"] == host_pid for p in list_votv()):
+            log("HOST DIED before binding UDP"); tail_log(host_log, 30, "HOST"); sys.exit(1)
+    if not bound:
+        log(f"FAIL: host did not bind UDP within {args.boot_timeout}s")
+        tail_log(host_log, 30, "HOST"); kill_all(); sys.exit(1)
+
+    log("--- CLIENT LAUNCH ---")
+    client_pid = launch_peer("client", args.port, "Client", peer="127.0.0.1",
+                             res_x=1280, res_y=720, monitor=2, tile_index=0,
+                             memory_limit_gb=args.memory_limit_gb,
+                             extra_env={"VOTVCOOP_VOICE_ENABLED": "0"})
+    client_log = CLIENT_DIR / "multivoid.log"
+    # Gate on being IN-WORLD, not on having connected: `T` is swallowed while any
+    # interactive surface owns input and the loading screen is one of them.
+    if not _wait_for_log(client_log, "Joined ", args.client_boot_timeout, "CLIENT"):
+        log("FAIL: client never reached the world"); tail_log(client_log, 30, "CLIENT")
+        kill_all(); sys.exit(1)
+    time.sleep(4)
+
+    # --- N messages, alternating peers. The default is deliberately MORE than one
+    # viewport of rows: at the drill's window size the reveal fits ~18, and with only
+    # a dozen lines PgUp correctly does nothing -- which is indistinguishable from a
+    # broken pager. H4 needs the history to overflow the viewport to mean anything.
+    msgs = [f"line {n:02d} from {'host' if n % 2 else 'client'}"
+            for n in range(1, args.messages + 1)]
+    log(f"--- TYPING {len(msgs)} messages (alternating peers) ---")
+    for n, m in enumerate(msgs):
+        pid, lbl = (host_pid, "HOST") if (n % 2 == 0) else (client_pid, "CLIENT")
+        log(f"  {lbl}: {m!r}")
+        _type_chat(pid, m, lbl)
+        time.sleep(1.0)
+
+    # Settle: every live line must age out of the live set, so what the reveal shows
+    # afterwards can only have come from the retained tier. The TTL is 11 s.
+    log(f"--- SETTLING {args.settle}s (live lines must all expire) ---")
+    time.sleep(args.settle)
+    _capture_window(host_pid, shots_dir / "host_settled.png")
+    _capture_window(client_pid, shots_dir / "client_settled.png")
+
+    # --- open and HOLD the host's chat.
+    log("--- HOST opens chat and HOLDS it ---")
+    _type_chat(host_pid, "", "HOST", submit=False)
+    time.sleep(1.5)                       # the 220 ms ramp, with margin
+    _capture_window(host_pid, shots_dir / "host_history.png")
+
+    # While the host READS, the client keeps talking. This is the user's rule: new
+    # messages ALWAYS arrive and move the view.
+    live_msg = "arrived while you were reading"
+    log(f"--- CLIENT sends {live_msg!r} while the host reads ---")
+    _type_chat(client_pid, live_msg, "CLIENT")
+    time.sleep(2.0)
+    _capture_window(host_pid, shots_dir / "host_history_live.png")
+
+    log("--- HOST pages back (PgUp) then forward (PgDn) ---")
+    VK_PRIOR, VK_NEXT = 0x21, 0x22
+    _press_vk(host_pid, VK_PRIOR, "HOST"); time.sleep(0.8)
+    _capture_window(host_pid, shots_dir / "host_paged_back.png")
+    _press_vk(host_pid, VK_NEXT, "HOST"); time.sleep(0.8)
+
+    # Hold well past the TTL: if the clock were still running, every retained row's
+    # live sibling would have expired inside this window and H2 would catch it.
+    log(f"--- HOLDING the reveal for {args.hold}s (TTL is 11 s) ---")
+    time.sleep(args.hold)
+    _capture_window(host_pid, shots_dir / "host_history_held.png")
+
+    # Close with Enter on the empty field -- see _type_chat's note on why not Escape.
+    log("--- HOST closes chat (Enter on an empty field) ---")
+    _press_vk(host_pid, 0x0D, "HOST")
+    time.sleep(2.0)
+    _capture_window(host_pid, shots_dir / "host_after_close.png")
+
+    tail_log(host_log, 25, "HOST")
+    htext, herr = _read_log_strict(host_log)
+    log("--- KILLING ---")
+    kill_all()
+
+    # --- verdict.
+    log("--- CHAT-HISTORY (D-L) VERDICT ---")
+    failures: list[str] = []
+    notes: list[str] = []
+    if herr:
+        failures.append(f"host log is not strict UTF-8: {herr}")
+
+    opens = [ln for ln in htext.splitlines() if "chat_view: reveal open" in ln]
+    closes = [ln for ln in htext.splitlines() if "chat_view: reveal closed" in ln]
+    if not opens:
+        failures.append("H1: the host never logged a reveal -- chat never opened, or "
+                        "the overlay frame was not being built")
+    else:
+        log(f"  {opens[-1].strip()}")
+        m = re.search(r"history=(\d+) live=(\d+)", opens[-1])
+        hist = int(m.group(1)) if m else -1
+        if hist < args.min_history:
+            failures.append(f"H1: reveal showed history={hist}, expected >= "
+                            f"{args.min_history} retained lines")
+        else:
+            notes.append(f"H1: {hist} retained history lines were revealed")
+
+    if not closes:
+        failures.append("H2: no reveal-close marker -- the assertion window has no end")
+    elif opens:
+        lines = htext.splitlines()
+        oi = max(i for i, ln in enumerate(lines) if "chat_view: reveal open" in ln)
+        ci = max(i for i, ln in enumerate(lines) if "chat_view: reveal closed" in ln)
+        log(f"  {closes[-1].strip()}")
+        if ci < oi:
+            failures.append("H2: the close marker precedes the open marker")
+        else:
+            window = lines[oi + 1:ci]
+            expired = [ln for ln in window if "feed: retire" in ln and "via=expire" in ln]
+            if expired:
+                failures.append(f"H2: {len(expired)} line(s) EXPIRED while the reveal was "
+                                f"up -- the TTL clock is not suspended. First: "
+                                f"{expired[0].strip()}")
+            else:
+                notes.append(f"H2: nothing expired across the {len(window)} log line(s) "
+                             f"the reveal was up for")
+            got = [ln for ln in window if "feed: push via=chat" in ln and live_msg in ln]
+            if not got:
+                failures.append(f"H3: {live_msg!r} never reached the host's feed while "
+                                f"the reveal was up -- new messages do not arrive")
+            else:
+                notes.append("H3: the mid-read message arrived and stayed")
+            pinned = [ln for ln in window if "chat_view: PINNED" in ln]
+            follow = [ln for ln in window if "chat_view: FOLLOW" in ln]
+            if not pinned:
+                failures.append("H4: PgUp did not pin the view -- either the pager is "
+                                "dead, or the history did not overflow the viewport "
+                                "(raise --messages)")
+            elif not follow:
+                failures.append("H4: PgDn never returned the view to FOLLOW -- a reader "
+                                "who pages forward would stay stuck in history")
+            else:
+                notes.append("H4: PgUp pinned the view and PgDn released it")
+
+    for n in notes:
+        log(f"  OK  {n}")
+    for f in failures:
+        log(f"  FAIL {f}")
+    log(f"shots -> {shots_dir}")
+    if getattr(args, "inject", False):
+        if failures:
+            log("INJECTED RUN: RED as required -- the drill can see the defect it tests for")
+            sys.exit(0)
+        log("INJECTED RUN: GREEN -- the drill is BLIND; it would pass on a broken build")
+        sys.exit(2)
+    log("VERDICT: " + ("PASS" if not failures else f"FAIL ({len(failures)})"))
+    sys.exit(0 if not failures else 2)
+
+
 def cmd_puppetshot(args) -> None:
     """2-PEER PROPER nameplate shot. Launches host + client with
     VOTVCOOP_RUN_PUPPET_FRAME=1 so the HOST stands back + aims at the STANDING client
@@ -3120,6 +3348,26 @@ def main() -> None:
                              help="per-process commit cap in GB (0 = disabled)")
     for flag, kw in host_res: p_scoreshot.add_argument(flag, **kw)
     p_scoreshot.set_defaults(func=cmd_scoreshot)
+
+    p_chathist = sub.add_parser("chathistory",
+                                help="2-PEER D-L drill: chat history retains, the T-reveal shows it, "
+                                     "the TTL stops while you read, and new messages still arrive")
+    p_chathist.add_argument("--boot-timeout", type=int, default=90, help="seconds to wait for host UDP bind")
+    p_chathist.add_argument("--client-boot-timeout", type=int, default=120, help="seconds for the client to reach the world")
+    p_chathist.add_argument("--messages", type=int, default=24,
+                            help="how many messages to type; must exceed one viewport of rows "
+                                 "(~18 at the drill's window size) or H4 cannot mean anything")
+    p_chathist.add_argument("--settle", type=int, default=16,
+                            help="seconds to let every live line expire before opening chat (TTL is 11 s)")
+    p_chathist.add_argument("--hold", type=int, default=16,
+                            help="seconds to hold the reveal open (must exceed the TTL to prove suspension)")
+    p_chathist.add_argument("--min-history", type=int, default=6,
+                            help="minimum retained lines the reveal must report")
+    p_chathist.add_argument("--inject", action="store_true",
+                            help="MUST-FAIL control: VOTVCOOP_CHAT_NO_RETAIN=1 on the host; the run must go RED")
+    p_chathist.add_argument("--memory-limit-gb", type=float, default=12.0, help="per-process commit cap in GB (0 = disabled)")
+    for flag, kw in host_res: p_chathist.add_argument(flag, **kw)
+    p_chathist.set_defaults(func=cmd_chathistory)
 
     p_puppetshot = sub.add_parser("puppetshot",
                                   help="2-PEER PROPER nameplate shot: host frames the STANDING client puppet (no ragdoll) + captures the ImGui 'Client' nameplate over it")

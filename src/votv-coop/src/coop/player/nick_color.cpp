@@ -89,8 +89,10 @@ void RequestLocal(uint32_t packed) {
                 IsCustom(packed) ? "CUSTOM" : "DEFAULT");
         if (coop::net::Session* s = g_session.load(std::memory_order_acquire))
             coop::player_handshake::AnnounceLocalNickColor(*s, packed);
+        // Transient: this player's own UI confirmation, not the lobby's record.
         coop::chat_feed::Push(IsCustom(packed) ? L"Nickname color: applied (synced to other players)"
-                                               : L"Nickname color: reset to default");
+                                               : L"Nickname color: reset to default",
+                              coop::chat_feed::Keep::Transient);
     });
 }
 

@@ -80,7 +80,10 @@ void RequestSkin(const std::string& name) {
         UE_LOGI("local_body: skin -> '%s' (persisted; applying to local body + announcing)", name.c_str());
         if (coop::net::Session* s = g_session.load(std::memory_order_acquire))
             coop::player_handshake::AnnounceLocalSkin(*s, name);
-        coop::chat_feed::Push(L"Skin: " + std::wstring(name.begin(), name.end()));
+        // Transient: this player's own UI confirmation. The line other peers see about
+        // this change ("<nick> changed skin to X", player_handshake_prefs) IS History.
+        coop::chat_feed::Push(L"Skin: " + std::wstring(name.begin(), name.end()),
+                              coop::chat_feed::Keep::Transient);
     });
 }
 
