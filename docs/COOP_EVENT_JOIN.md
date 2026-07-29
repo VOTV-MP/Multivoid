@@ -164,31 +164,46 @@ poll absorbs pre-connect edges -- the audit CRIT-1 hole); the ping's OUTCOME rea
 through the normal state lanes (SkySignalCatch identity + DishArm + the detector's DeskSimPose)
 [AS-BUILT v115b de31889e]**.
 
-**chat = NO ROW EXISTS. This lane has never stated its late-join answer** (added to this table
-2026-07-29 as a GAP, not as an answer — principle 8 says a lane is not DONE until its row exists, and
-this one predates the rule). AS-IS: a joiner sees nothing that was said before it arrived, and that is
-not a written semantic, just what falls out of `chat_feed` being local and cleared at
-`event_feed.cpp:121`. **USER DECISION 2026-07-29: the answer will be SEED** — the late joiner receives
-the lobby's history. That requires something that does not exist yet: `chat_feed` is a FEED, not a chat
-log (15 `Push` sites mix typed chat with the local player's own UI narration — "Skin: X", "Nickname
-color: applied", "Connecting to X's game..."), and the host's set is the host's own VIEW, subject to
-its own TTL, overflow and `Reset`. So the answer is a **host-owned canonical log** with the local feed
-as a view of it, delivered on `ConnectReplayForSlot` / `QueueConnectBroadcastForSlot` (this table's
-existing shape), refused PER LINE never whole-blob. Design of record + BOTH `/qf` passes (21 + 17
-rounds, neither converged): `research/findings/join-identity/votv-chat-history-DESIGN-2026-07-29.md`
-— **read its §10 first; §§1-8 are pass 1 and pass 2 reverses one of them.** **DESIGN, not built as of
-HEAD `bafa8e42`.**
+**chat = SEED. BUILT 2026-07-29 (`8eea0af6` local half + `3729097e` wire half, proto 133, NOT
+hands-on).** A joiner receives the lobby's chat record on `ConnectReplayForSlot`, ONE reliable message
+per line (never a blob -- that would be the fourth "one packet kills a joining client" row in
+`docs/security/TRACKER.md`). Seeded rows land **RETAINED**, not live, so arriving does not replay a
+conversation you were not in across your screen: the feed is clear, and the history is there when you
+press T.
 
-**The lane's late-join answer is now SPECIFIED (pass 2, §12c), not just decided.** Three parts of it
-are load-bearing and were each measured rather than assumed: (a) **`ChatLine` goes INTO
-`IsPreWorldSendableKind`** — the pre-world gate is a SILENT DROP (`session.cpp:144/209`,
-`session_relay.cpp:87`), so a client typing during its own load window watches its line VANISH; the
-exact precedent is `session_lanes.h:253-265`, which admitted `SkinChange` for this class after audit
-2026-07-02 HIGH. (b) **A row applied before my own world-ready lands RETAINED**, or it fades behind a
-loading screen and the seed then skips it as already-applied. (c) **Dedup is a contiguous applied
-RANGE `[lo, hi]`, never a high-watermark** — a seed delivers OLDER rows, so `seq > highestApplied`
-would discard the entire seed with no error anywhere. Any future lane whose seed can interleave with
-live traffic inherits (c).
+The row could not be filled without first CREATING the thing it seeds from. `chat_feed` is a FEED, not
+a chat log -- 15 `Push` sites mix typed chat with the local player's own UI narration ("Skin: X",
+"Nickname color: applied", "Connecting to X's game...") -- and any one peer's set is that peer's own
+VIEW, subject to its own TTL, overflow and `Reset`. So the lane now has a host-owned RECORD
+(`coop/comms/chat_log.h`) and chat inverted from host-RELAYED to host-**AUTHORED**.
+
+Four parts of this are load-bearing and each was MEASURED rather than assumed:
+
+(a) **The authority inversion is forced by threading, not preferred.** `session.cpp:459-481` -- the
+relay fires on the NET thread at receive time, before the reliable inbox drains on the game thread.
+There is no point on the relay path where a `lineSeq` exists to stamp, so commit-and-broadcast must be
+ONE act at ONE authority on ONE thread. `ChatMessage` is now client->host only and is OUT of
+`IsClientRelayableReliableKind` (RULE 2).
+
+(b) **`ChatLine` is deliberately NOT in `IsPreWorldSendableKind`** -- this REVERSES the pass-2 design;
+see the design doc SS18.1. Nothing typed pre-world is lost: a client's send toward slot 0 is never
+gated (`ClientConnectEdge` marks it ready immediately), so the line reaches the host, is committed,
+and returns in that client's own seed. Making it pre-world-sendable would instead land the seed UNDER
+rows the client had already applied.
+
+(c) **Live traffic to a slot starts when its SEED is sent**, held by a per-slot gate in `chat_sync`.
+`IsSlotReady` is TRANSPORT-level (`session.h:397` reads `peerLanesConfigured_`), not world-ready --
+gating on it would let the two streams interleave. The gate reopens in `DisconnectSlot` so a recycled
+slot is re-seeded before it hears anything.
+
+(d) **Dedup is a contiguous applied RANGE `[lo, hi]`, never a high-watermark.** `lineSeq > highest`
+would have discarded the ENTIRE seed, silently. It stays a range even though (b)+(c) make the applied
+set grow only upward, and a GAP now logs loudly -- that log is the tripwire if (b) is ever changed
+back. **Any future lane whose seed can interleave with live traffic inherits (d).**
+
+Design of record + BOTH `/qf` passes (21 + 17 rounds, neither converged) + the AS-BUILT corrections:
+`research/findings/join-identity/votv-chat-history-DESIGN-2026-07-29.md` -- **read its SS18 first.**
+Drills: `mp.py chathistory` (local) and `mp.py chatseed` (the joiner), each with a must-FAIL injection.
 
 ### 3.5 Phases
 

@@ -85,7 +85,7 @@ BUILT. Evidence `HO`=hands-on · `log` · `ST`=selftest/e2e · `code` · `inf` �
 | **Lamp posts** (§6) | not-synced | 1 | 1W | code | ∅ | none (by design) |
 | **World-events** | replay lanes | 3 | 3U | code | HA | replay / snapshot |
 | **Chat** | line relay | 4 | 3W · 1U | HO | CA/HA/PP | **none — and that is now a GAP, not a design** (2026-07-29) |
-| ↳ *chat HISTORY* (facet added 2026-07-29) | retention + reveal + late-join seed | — | U/code | — | (host, once built) | **DESIGNED, not built** — `votv-chat-history-DESIGN-2026-07-29.md` §12c; the principle-8 row is now specified (seed on `ConnectReplayForSlot`, pre-world-sendable, contiguous-range dedup) |
+| ↳ *chat HISTORY* (facet added 2026-07-29) | retention + reveal + late-join seed | W | HO | HA | `chat_log` + `chat_feed` retained tier + `ui::chat_view` | **BUILT 2026-07-29** (`8eea0af6`+`3729097e`, proto 133, drills `mp.py chathistory` + `chatseed` both PASS with must-FAIL injections shown RED; NOT hands-on) — seed on `ConnectReplayForSlot`, seeded rows land RETAINED, contiguous-range dedup, per-slot seed gate. `ChatLine` is NOT pre-world-sendable (design §18.1 reverses that) |
 | **Peer-action feed** | derived render | 2 | 1W · 1U | HO | ∅/PP | none |
 | **Voice** | frame stream | 3 | 2W · 1U | HO | PO | replay (state) |
 | **Save-transfer / join** | blob + snapshot | 8 | 6W · 2U | HO | HA | this IS the join |
@@ -580,11 +580,11 @@ NOT SYNCED: `special`/`ariralPrank` RNG (replayed None); verdict 0/-1 rows (crea
 ### Chat — `coop/comms/chat_sync`, `chat_feed`, `chat_bubbles`
 | # | facet | V | E | Auth | cite | mid-join |
 |---|---|---|---|---|---|---|
-| 1 | text line | W | HO | CA | `chat_sync::OnReliable` (identity = transport slot) | none (TTL-ephemeral, no backlog) — **DESIGNED to become a seed, and CA→HA: the design makes chat host-AUTHORED, not host-relayed, because the relay fires on the NET thread before any game-thread order exists (`session.cpp:459-481`)** |
-| 2 | nickname prefix / color | W | HO | HA | `chat_sync::OnReliable` (from handshake roster) | own handshake replay — **DESIGNED to be FROZEN at birth (USER 2026-07-29 "old chat history is essentially a frozen history"), which retires this facet's dependence on the live roster and deletes `chat_feed::Line::slot`** |
+| 1 | text line | W | HO | **HA** | `chat_sync::AuthorAndBroadcast` (identity = transport slot; `ChatLine`=119) | **SEED** (`chat_sync::QueueConnectBroadcastForSlot`) — **CA→HA as of 2026-07-29**: chat is host-AUTHORED, not host-relayed, because the relay fires on the NET thread before any game-thread order exists (`session.cpp:459-481`). `ChatMessage`=48 is now a client→host INTENT and left the relay whitelist (RULE 2) |
+| 2 | nickname prefix / color | W | HO | HA | `ChatSpeaker`=120 carries nick + custom colour; receiver resolves the palette at apply | **FROZEN at birth** (USER 2026-07-29 "old chat history is essentially a frozen history") — the nick travels WITH the row rather than being looked up, because a lookup answers who is in that slot NOW and slots recycle. `chat_feed::Line::slot` is DELETED (RULE 2) |
 | 3 | overhead speech bubble | W | HO | PP | `chat_bubbles::OnChatLine` | none (expires in place) |
 
-NOT SYNCED: chat history/scrollback (fading HUD); own line never received back (local echo only).
+NOT SYNCED: nothing outstanding on this system. (Was: "chat history/scrollback; own line never received back" — both resolved 2026-07-29. A client's own line IS now received back, as the host's authored row; there is no optimistic local echo, so it costs one round trip. PgUp/PgDn scrollback is local-only and needs no wire.)
 
 ### Peer-action feed — `coop/comms/peer_action_feed`
 | # | facet | V | E | Auth | cite | mid-join |

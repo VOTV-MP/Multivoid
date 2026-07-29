@@ -1,9 +1,12 @@
-# Chat history — design of record (two `/qf` passes, 21 + 17 rounds, NEITHER converged, NOT built)
+# Chat history — design of record + AS-BUILT (two `/qf` passes, 21 + 17 rounds, NEITHER converged)
 
-**Status: DESIGN. Nothing built as of HEAD `bafa8e42`.** DLL `1180972ccefc365803756cef68681fe0`,
-proto **132 unchanged**.
+**Status: BUILT, 2026-07-29. NOT hands-on.** Local half `8eea0af6`, wire half `3729097e`.
+DLL `multivoid-0.9.0n-133.dll` `b54cad7d9f1a01a8951509ca58cfc1d4`, proto **132 -> 133**.
 
-**READ §10 FIRST.** Pass 2 (2026-07-29 evening, 17 rounds) is the current design; it supersedes the
+**READ §18 (AS-BUILT) FIRST** — it records what building CHANGED about this design, and
+three of §12's claims are corrected there by measurement. Then §10.
+
+**§10 onward is the pass-2 design as written BEFORE the build.** Pass 2 (2026-07-29 evening, 17 rounds) is the current design; it supersedes the
 open half of pass 1 and REVERSES one of pass 1's conclusions on the user's instruction. §§1-9 below
 are pass 1 and are kept because their *deleted* work is what stops the next session re-deriving it —
 but where §§1-9 and §10 disagree, **§10 wins**.
@@ -370,3 +373,91 @@ the design became host-*authored*, which took until R13. See
 (§14). The user's own drill goes green only when both are in.
 
 Nothing is built. Three product forks are closed (§11); two residuals are open (§15).
+
+
+---
+
+## 18. AS-BUILT (2026-07-29) — what building changed
+
+Two shipments, as planned. Both drills exist, both went green, both were shown RED under
+injection. **Neither has been seen by a human.**
+
+| | local half | wire half |
+|---|---|---|
+| commit | `8eea0af6` | `3729097e` |
+| drill | `mp.py chathistory` | `mp.py chatseed` |
+| injection | `VOTVCOOP_CHAT_NO_RETAIN=1` | `VOTVCOOP_CHAT_SEED_SUPPRESS=1` |
+| clean | PASS 4/4 | PASS 4/4 |
+| injected | RED on H1+H4 | RED on W1-W4 |
+
+### 18.1 Three design claims CORRECTED by measurement
+
+1. **W7 is REVERSED. `ChatLine` is deliberately NOT in `IsPreWorldSendableKind`.** W7
+   put it there to stop a client's own line vanishing in its load window, and that
+   reasoning was sound about a hole that does not exist: the pre-world gate is the
+   HOST's send gate toward a joining slot, and a client's send toward slot 0 is never
+   gated (`ClientConnectEdge` marks slot 0 ready immediately). Nothing a client types
+   pre-world is lost — it reaches the host, is committed, and comes back in that
+   client's own seed. Keeping ChatLine pre-world-sendable would instead have created
+   the very interleave R11 warned about, because the seed would then land UNDER rows the
+   client already applied. The dedup is still a contiguous RANGE, and a gap now LOGS —
+   that log is the tripwire if this premise is ever changed back.
+2. **`IsSlotReady` is TRANSPORT-level, not world-ready** (`session.h:397` — it reads
+   `peerLanesConfigured_`; the world gate is `IsSlotWorldReady`). The design's broadcast
+   loop would have sent live rows to a connected-but-unseeded slot. AS-BUILT the host
+   holds its own **per-slot seed gate**: a slot receives live rows only after its seed
+   has been sent, the gate is set before the empty-record early return (or an empty
+   lobby's first conversation never starts), and it is cleared in `DisconnectSlot` so a
+   recycled slot is re-seeded before it hears anything.
+3. **W3's 212 bytes is 211.** `protocol.h` is inside `#pragma pack(push,1)`, so
+   `ChatLinePayload` has no trailing padding. `ChatSpeakerPayload` is 88 as designed.
+
+### 18.2 What the injected runs caught (both in the LOCAL half, both fixed)
+
+- **The reveal marker sat below an early return.** With nothing to draw, `Draw()`
+  returned before reaching it, so the marker did not fire until the next message
+  arrived — and that message then fell OUTSIDE the window it was supposed to be inside.
+  Moved above the early return and reduced to store facts.
+  `[[lesson-an-instrument-whose-window-moves-with-what-it-measures]]`.
+- **The pin was committed inside the key handler.** With fewer rows than the viewport
+  holds, PgUp's overshoot clamps straight back to the newest line, so the pin was set
+  and immediately cleared — and both edges were announced, so the drill read a
+  never-moved view as a successful page. AS-BUILT the key press states an INTENT and the
+  pin is decided once, after the clamps.
+
+Both were found because the injection was run, not because the clean run was read. A
+control that only ever runs green is a control that has never been tested.
+
+### 18.3 Fixed in passing (pre-existing, found by self-audit)
+
+The composer cut a 285-byte composed line to 256 with a raw `resize()` — on a BYTE,
+splitting a multi-byte sequence onto the exact surface `84e0a4e3` hardened. It now cuts
+on a character (`coop::text::CapUtf8Bytes`), once, at birth. The header comment claiming
+the buffer was sized to fit (§"STILL FALSE IN CODE") is gone; so are the `bornMs`-is-
+identity claims, the probe having been re-keyed onto the sort key.
+
+### 18.4 Stale claims inside the pass-1/pass-2 sections (superseded, kept for the record)
+
+Read §18 first; where the passes disagree with it, §18 wins. Three specific claims below are now FALSE
+and are named here so a grep does not resurrect them:
+
+- **§6 "D0b: `_type_chat` can never leave chat open, so D1-D3 cannot run today"** — no longer true.
+  `mp.py:1421` `_type_chat(..., submit=False)` stops before Enter; both drills use it.
+- **§3 S8 "TWO consumers" / §12b S8 "THREE consumers" of `RevealActive()`** — as built there are two
+  CALL SITES and one is internal: `hud::IsActive()` (`hud.cpp:309`) and the store's own
+  snapshot+suspension path. The render gate consumes it transitively through `hud::IsActive()`, which
+  was already in the gate; no third call site was needed.
+- **§4 / §12c W7 "`ChatLine` goes INTO `IsPreWorldSendableKind`"** — REVERSED, see §18.1.
+
+### 18.5 Residuals
+
+- **NOT hands-on.** Everything above is a fixture pressing real keys.
+- **The "+1 clipped row"** survives as designed and reads correctly in the D-L shots
+  (`research/chat_shots/`), but its visible height is `budget mod rowH` and can be near
+  zero at some resolutions. §13.1's "one line either way" still applies.
+- **The reveal block's height** was cut by a third on the user's note the same day
+  ("the history box is too high") — `kRevealHeightFrac = 2/3` in `chat_view.cpp`.
+- **The cap path is not drilled.** A >255-byte composed line is covered by
+  `CapUtf8Bytes`' own selftest, not by D-L or D-W.
+- **Both injections are env-only**, policed by nothing mechanical beyond having been
+  shown RED.

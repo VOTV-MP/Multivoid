@@ -33,6 +33,27 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 1. How to work (process / working agreements)
 
+- **An instrument's assertion WINDOW must not be movable by the thing it measures.** 2026-07-29
+  building chat history: the drill's window was bounded by a log marker emitted at the END of the draw
+  function, BELOW an early return taken when there was nothing to draw. On the INJECTED run (history
+  emptied) the marker did not fire until the next message arrived — so that message landed OUTSIDE the
+  window it was supposed to be inside and an unrelated assertion went red for the wrong reason. The
+  clean run could never expose it: with content present, marker and surface state agree exactly. **Look
+  FIRST: ask literally "can the bug I am testing for delete this marker?" — put window markers on the
+  LIFECYCLE state, above every content-dependent return; and read the injected run's failures one by
+  one, naming which the injection should legitimately break.** This is the fourth instrument-blindness
+  family: it can SEE the phenomenon and still frame it out.
+  `memory/lesson_an_instruments_window_must_not_move_with_what_it_measures.md`
+- **A state change a later clamp undoes has still fired its SIDE EFFECTS.** 2026-07-29: PgUp set the
+  chat scroll to PINNED inside the key handler; a clamp two statements later moved the view back and
+  un-pinned it. Net state: unchanged, correctly. But the setter LOGS an edge and freezes the store's
+  retention, so a view that never moved announced a successful page-back and the drill believed it.
+  Set-then-correct is idiomatic and harmless for a plain variable, and unsafe the instant the setter is
+  a function. **Look FIRST: before writing `X = v` early and correcting below, OPEN the setter — if it
+  is not an assignment, compute an intent and commit ONCE after every clamp. If you are testing the
+  same condition on both sides of a clamp, the order is wrong.**
+  `memory/lesson_a_speculative_state_change_still_fires_its_side_effects.md`
+
 - **Converging a QUALITATIVE STATUS TAXONOMY: the test is "new VALUE vs new AXIS", never "a control
   that changes nothing" — and a converged FORM is not verified DATA.** Building the per-system sync
   profiles (2026-07-23, 11 `/qf` rounds), every control moved the status model (verdict×evidence /
@@ -982,9 +1003,38 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   wrong". *Look FIRST:* census both directions AND every Win32 `...A`/`...W` pair on the path; and when a
   correct fix changes nothing, log the value at the seam you are about to trust instead of reading
   further. Third instance of `lesson_census_the_operation_kind_not_only_the_sites`, which it sharpens.
+  **SECOND INSTANCE 2026-07-29, a GATE rather than a conversion, and it survived a 17-round `/qf`:** a
+  chat design put `ChatLine` into `IsPreWorldSendableKind` to stop a client's own line vanishing in its
+  load window. That gate is the HOST's send gate toward a JOINING SLOT; a client's send toward slot 0 is
+  never gated (`ClientConnectEdge` marks it ready immediately, and says so in its own comment), so the
+  hole did not exist — and applying the fix would have MANUFACTURED one by letting live rows land in
+  front of the join seed. *Look FIRST: before "fixing" a silent drop, confirm which SIDE the gate
+  guards; a gate named for a STAGE ("pre-world") rarely says which DIRECTION it faces.*
   `memory/lesson_census_the_direction_not_only_the_operation.md`
 
 ## 3. Sync architecture (owners, routers, lifecycle)
+
+- **When two readiness predicates differ only by a QUALIFIER, the bare one is the WEAKER claim.**
+  MEASURED 2026-07-29: `Session::IsSlotReady()` returns `peerLanesConfigured_` (`session.h:397-400`) —
+  "GNS lanes are up" — while `IsSlotWorldReady()` returns `slotWorldReady_` (`session.h:305-308`). The
+  bare name reads as the general/stronger case and is the opposite: an EARLIER stage a peer satisfies
+  ~30-60 s before it has a world. A chat-history design gated a join-seeded broadcast on `IsSlotReady`,
+  which would have shipped live rows to a slot before its seed and put the seed UNDERNEATH rows already
+  applied — the exact interleave the dedup range exists to prevent, reachable only if someone talks
+  during another peer's load window. **Look FIRST: for any predicate gating a JOIN-TIME lane, open it
+  and read the FIELD, not the name — the stages here are transport-up → lanes-configured →
+  save-transferred → world-ready → replay-sent. And when a lane needs "have I done X for this slot",
+  give it its OWN gate rather than borrowing a session predicate that merely correlates today.**
+  `memory/lesson_a_readiness_predicate_may_name_a_stage_it_does_not_measure.md`
+- **A JOIN SEED needs a CONTIGUOUS applied RANGE, never a high-watermark — and the seed must not
+  interleave with live traffic.** 2026-07-29 (chat history, AS-BUILT): a seed delivers rows OLDER than
+  anything the receiver holds, so `seq > highest` discards the ENTIRE seed, silently. Two halves make
+  the range work: the host holds a **per-slot seed gate** (live rows to a slot start only once its seed
+  is sent, reopened on slot turnover), and `ChatLine` is deliberately kept OUT of
+  `IsPreWorldSendableKind` — together they make the applied set one interval that only grows upward. A
+  GAP is logged loudly as the tripwire if either premise changes. **Any future lane whose seed can
+  interleave with live traffic inherits this shape** (`docs/COOP_EVENT_JOIN.md` §3.4 chat row).
+  `research/findings/join-identity/votv-chat-history-DESIGN-2026-07-29.md` §18
 
 - **The player inventory is TWO stores, and our lane polls the wrong-shaped one** (2026-07-24, bytecode +
   runtime). LIVE = `UpropInventory_C` → `saveSlot.GObjStack[propInventory.Index]` (what play mutates; the
