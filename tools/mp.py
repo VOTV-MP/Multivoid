@@ -5,11 +5,11 @@ redirected stdio (cmd.exe + powershell child + ps1 deploy script + VotV
 detached spawn -> tail caller never sees output until VotV exits).
 
 Subcommands:
-  host        deploy + launch HOST peer (Game_0.9.0n/)
-  client      deploy + launch CLIENT #1 peer (Game_0.9.0n_copy/)
-  client2     deploy + launch CLIENT #2 peer (Game_0.9.0n_copy2/) -- 2026-05-28
+  host        deploy + launch HOST peer (Game_0.9.0n_HOST/)
+  client      deploy + launch CLIENT #1 peer (Game_0.9.0n_CLIENT_1/)
+  client2     deploy + launch CLIENT #2 peer (Game_0.9.0n_CLIENT_2/) -- 2026-05-28
               added for 3-peer LAN tests of the GNS multi-peer wire layer.
-  client3     deploy + launch CLIENT #3 peer (Game_0.9.0n_dev/) -- 2026-05-30
+  client3     deploy + launch CLIENT #3 peer (Game_0.9.0n_CLIENT_3/) -- 2026-05-30
               the 4th game folder; completes a 4-peer (host + 3 client) set.
   smoke       autonomous 2-peer LAN smoke (non-regression quick-check)
   smoke4      autonomous 4-PEER LAN smoke (Tier 8) -- host + 3 clients, staggered
@@ -46,10 +46,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 WIN64_REL = "WindowsNoEditor/VotV/Binaries/Win64"
-HOST_DIR = ROOT / "Game_0.9.0n" / WIN64_REL
-CLIENT_DIR = ROOT / "Game_0.9.0n_copy" / WIN64_REL
-CLIENT2_DIR = ROOT / "Game_0.9.0n_copy2" / WIN64_REL  # 2026-05-28 PR-4.2+: 2nd client for 3-peer testing
-DEV_DIR = ROOT / "Game_0.9.0n_dev" / WIN64_REL
+HOST_DIR = ROOT / "Game_0.9.0n_HOST" / WIN64_REL
+CLIENT_DIR = ROOT / "Game_0.9.0n_CLIENT_1" / WIN64_REL
+CLIENT2_DIR = ROOT / "Game_0.9.0n_CLIENT_2" / WIN64_REL  # 2026-05-28 PR-4.2+: 2nd client for 3-peer testing
+DEV_DIR = ROOT / "Game_0.9.0n_CLIENT_3" / WIN64_REL
 DEPLOY_ALL = ROOT / "tools" / "deploy-all.ps1"
 VOTV_EXE = "VotV-Win64-Shipping.exe"
 DEFAULT_PORT = 47621
@@ -368,10 +368,10 @@ def launch_peer(role: str, port: int, nick: str, peer: str | None,
                 set_scenario: str | None = "play",
                 extra_env: dict | None = None) -> int:
     # role is the WIRE role (host / client). peer_slot is which CLIENT folder
-    # to launch from when role==client: 1 -> Game_0.9.0n_copy, 2 ->
-    # Game_0.9.0n_copy2, 3 -> Game_0.9.0n_dev. Host always uses Game_0.9.0n.
+    # to launch from when role==client: 1 -> Game_0.9.0n_CLIENT_1, 2 ->
+    # Game_0.9.0n_CLIENT_2, 3 -> Game_0.9.0n_CLIENT_3. Host always uses Game_0.9.0n_HOST.
     # NOTE: the _dev folder additionally carries UE4SS (dwmapi.dll proxy slot),
-    # but our standalone xinput1_3.dll + votv-coop.dll are byte-identical to the
+    # but our standalone xinput1_3.dll + multivoid payload are byte-identical to the
     # other copies (deploy-all.ps1), so as a 4th peer its coop behaviour matches.
     if role == "host":
         game_dir = HOST_DIR
@@ -416,7 +416,7 @@ def launch_peer(role: str, port: int, nick: str, peer: str | None,
         (game_dir / "scenario.txt").unlink()
     except FileNotFoundError:
         pass
-    log_file = game_dir / "votv-coop.log"
+    log_file = game_dir / "multivoid.log"
     if log_file.exists():
         try:
             log_file.unlink()
@@ -438,10 +438,10 @@ def launch_peer(role: str, port: int, nick: str, peer: str | None,
     env["VOTVCOOP_NET_NICK"] = nick
     # Test-infra world selection (2026-06-09, user request): the HOST always loads save 's_1234';
     # every CLIENT always boots a FRESH New Game and NEVER loads a save. These are env overrides the
-    # harness honors over votv-coop.ini (see BootStorySaveBlocking). Keeps every run deterministic:
+    # harness honors over multivoid.ini (see BootStorySaveBlocking). Keeps every run deterministic:
     # one fixed host world streamed onto blank clients (the ephemeral-client baseline).
     if role == "host":
-        env["VOTVCOOP_SAVE"] = "s_1234"
+        env["VOTVCOOP_SAVE"] = "s_test_screens2"
     else:
         env["VOTVCOOP_FRESH"] = "1"
     if trigger_file:
@@ -460,10 +460,20 @@ def launch_peer(role: str, port: int, nick: str, peer: str | None,
         _shown = {k: ("***" if any(s in k.upper() for s in _sens) else v)
                   for k, v in extra_env.items()}
         log("  extra_env: " + ", ".join(f"{k}={v}" for k, v in _shown.items()))
+    # VOTVCOOP_RHI=dx12 appends UE4's -dx12 switch. The overlay has a separate
+    # render half per RHI (ui/overlay_backend_dx12.cpp), and "the emoji draw" is a
+    # claim about a real frame -- so it has to be made on BOTH backends or it is a
+    # claim about one of them.
+    _argv = [str(exe), "-windowed",
+             f"-ResX={res_x}", f"-ResY={res_y}",
+             f"-WinX={win_x}", f"-WinY={win_y}"]
+    _rhi = os.environ.get("VOTVCOOP_RHI", "").lower()
+    if _rhi in ("dx12", "d3d12"):
+        _argv.append("-dx12")
+    elif _rhi in ("dx11", "d3d11"):
+        _argv.append("-dx11")
     proc = subprocess.Popen(
-        [str(exe), "-windowed",
-         f"-ResX={res_x}", f"-ResY={res_y}",
-         f"-WinX={win_x}", f"-WinY={win_y}"],
+        _argv,
         cwd=str(game_dir),
         env=env,
         stdin=subprocess.DEVNULL,
@@ -542,7 +552,7 @@ def tail_log(path: Path, n: int, label: str) -> None:
 # The 2-peer smoke's liveness-only PASS masked the slow-load flake (a client
 # stuck in the menu at 45s still counted as "alive") and could never prove the
 # Tier 2 host-relay actually moved cross-peer data. These markers are parsed
-# straight out of each peer's votv-coop.log; the exact strings are the UE_LOGI
+# straight out of each peer's multivoid.log; the exact strings are the UE_LOGI
 # calls in src/votv-coop/src/coop/{net/session_status,net/session,net_pump}.cpp
 # and player_handshake.cpp -- keep them in sync if those log lines change.
 import re  # noqa: E402  (kept local to the verdict feature)
@@ -560,9 +570,9 @@ _MARK = {
     "puppet_slot":     re.compile(r"first remote pose on slot (\d+) -> auto-spawning puppet"),
     "puppet_fail":     re.compile(r"slot (\d+) puppet spawn failed"),
     # client: received a relayed PlayerJoined identity for another peer.
-    "xpeer_identity":  re.compile(r"client installed cross-peer identity slot=(\d+)"),
+    "xpeer_identity":  re.compile(r"roster: client installed cross-peer identity slot=(\d+)"),
     # host: it fanned a PlayerJoined out to the other clients.
-    "host_relayed_pj": re.compile(r"host relayed PlayerJoined cross-peer identity"),
+    "host_relayed_pj": re.compile(r"roster: host asserted the full roster to joiner"),
     # host: the per-slot connect edge fired (snapshot + flashlight + peer-state replay).
     "connect_edge":    re.compile(r"peer slot (\d+) connect edge -- replaying"),
     "epoch_latched":   re.compile(r"latched senderEpoch=0x[0-9a-fA-F]+ for peer slot (\d+)"),
@@ -572,7 +582,7 @@ _MARK = {
 
 
 def parse_log_markers(path: Path) -> dict:
-    """Extract Tier-2 cross-peer verdict markers from one peer's votv-coop.log.
+    """Extract Tier-2 cross-peer verdict markers from one peer's multivoid.log.
 
     Returns a dict; missing/unreadable log -> {'present': False}. Sets of slots
     are returned for the multi-valued markers so the verdict can reason about
@@ -614,12 +624,12 @@ def parse_log_markers(path: Path) -> dict:
 
 def wait_for_client_connect(game_dir: Path, timeout: int, label: str,
                             pid: int) -> int | None:
-    """Poll a client's votv-coop.log until it logs 'host assigned us peer slot
+    """Poll a client's multivoid.log until it logs 'host assigned us peer slot
     N' (== reached connected). Returns the assigned slot, or None on timeout /
     process death. Staggering launches behind this both spreads the boot-RSS
     peaks and gives deterministic slot ordering (client1->1, client2->2, ...),
     which is what makes the cross-peer verdict legible."""
-    log_path = game_dir / "votv-coop.log"
+    log_path = game_dir / "multivoid.log"
     for i in range(timeout):
         time.sleep(1)
         if not any(p["PID"] == pid for p in list_votv()):
@@ -707,11 +717,11 @@ def cmd_smoke(args) -> None:
         # also check if host died
         if not any(p["PID"] == host_pid for p in list_votv()):
             log(f"HOST DIED before binding UDP (PID {host_pid} gone)")
-            tail_log(HOST_DIR / "votv-coop.log", 30, "HOST")
+            tail_log(HOST_DIR / "multivoid.log", 30, "HOST")
             sys.exit(1)
     if not bound:
         log(f"FAIL: host did NOT bind UDP within {args.boot_timeout}s")
-        tail_log(HOST_DIR / "votv-coop.log", 30, "HOST")
+        tail_log(HOST_DIR / "multivoid.log", 30, "HOST")
         kill_all()
         sys.exit(1)
 
@@ -770,7 +780,7 @@ def cmd_smoke(args) -> None:
     # seconds; once the marker appears, run one more fixed steady-state stretch
     # so the verdict still covers post-join stability, not just the join.
     if not kill_reason and len(last_peers) == 2:
-        client_log = CLIENT_DIR / "votv-coop.log"
+        client_log = CLIENT_DIR / "multivoid.log"
         if 0 not in parse_log_markers(client_log)["puppet_slots"]:
             log(f"--- JOIN GRACE: host puppet not up at budget end; extending up to {args.join_grace}s ---")
             g0 = time.time()
@@ -795,8 +805,8 @@ def cmd_smoke(args) -> None:
     for p in last_peers:
         log(f"  PID={p['PID']} RSS={p['RSS_MB']}MB title='{p['Title']}'")
 
-    tail_log(HOST_DIR / "votv-coop.log", 30, "HOST")
-    tail_log(CLIENT_DIR / "votv-coop.log", 30, "CLIENT")
+    tail_log(HOST_DIR / "multivoid.log", 30, "HOST")
+    tail_log(CLIENT_DIR / "multivoid.log", 30, "CLIENT")
 
     log("--- KILLING ---")
     kill_all()
@@ -813,7 +823,7 @@ def cmd_smoke(args) -> None:
     # stuck in the menu (alive but state != connected) and the old verdict
     # PASSed it. Require the client log to prove it reached the connected
     # handshake AND saw the host's puppet (slot 0).
-    cmk = parse_log_markers(CLIENT_DIR / "votv-coop.log")
+    cmk = parse_log_markers(CLIENT_DIR / "multivoid.log")
     if cmk["assigned_slot"] is None:
         log("FAIL: client never reached connected (no 'host assigned us peer slot' "
             "in its log -- slow-load/handshake stall; re-run with a longer --duration)")
@@ -825,6 +835,21 @@ def cmd_smoke(args) -> None:
     if cmk["malformed_drops"] > 0:
         log(f"FAIL: client logged {cmk['malformed_drops']} malformed (senderEpoch=0) drop(s)")
         sys.exit(6)
+    # Machine assertion for the config-selftest runs (ini arc 4, release ritual
+    # step 0): when the selftest env gate is on, the host log MUST carry the
+    # green completion line -- a generator/lexer regression fails THIS verdict,
+    # not a human's memory of grepping.
+    if os.environ.get("VOTVCOOP_RUN_CONFIG_SELFTEST") == "1":
+        try:
+            host_text = (HOST_DIR / "multivoid.log").read_text(encoding="utf-8",
+                                                               errors="replace")
+        except OSError:
+            host_text = ""
+        if "config-selftest: DONE fail=0" not in host_text:
+            log("FAIL: VOTVCOOP_RUN_CONFIG_SELFTEST=1 but the host log has no "
+                "'config-selftest: DONE fail=0' (selftest failed or never ran)")
+            sys.exit(8)
+        log("config-selftest: DONE fail=0 confirmed in the host log")
     log(f"PASS: both peers stable, client connected (slot {cmk['assigned_slot']}), "
         f"host puppet spawned, no RAM breach"
         + (f", {cmk['stale_drops']} benign stale-gen drop(s)" if cmk["stale_drops"] else ""))
@@ -880,7 +905,7 @@ def _steady_fps(fps: list) -> tuple:
 
 
 def parse_phys_signals() -> dict:
-    cl, hl = _read_text(CLIENT_DIR / "votv-coop.log"), _read_text(HOST_DIR / "votv-coop.log")
+    cl, hl = _read_text(CLIENT_DIR / "multivoid.log"), _read_text(HOST_DIR / "multivoid.log")
     cgame, hgame = _read_text(_game_log(CLIENT_DIR)), _read_text(_game_log(HOST_DIR))
     cfps = [int(m.group(1)) for m in _PHYS["frames"].finditer(cl)]
     hfps = [int(m.group(1)) for m in _PHYS["frames"].finditer(hl)]
@@ -928,7 +953,7 @@ def cmd_smoke_phystele(args) -> None:
         if host_owns_udp(host_pid, args.port):
             log(f"host bound after {i+1}s"); bound = True; break
         if not any(p["PID"] == host_pid for p in list_votv()):
-            log("HOST DIED before binding UDP"); tail_log(HOST_DIR / "votv-coop.log", 30, "HOST"); sys.exit(1)
+            log("HOST DIED before binding UDP"); tail_log(HOST_DIR / "multivoid.log", 30, "HOST"); sys.exit(1)
     if not bound:
         log(f"FAIL: host did not bind UDP within {args.boot_timeout}s"); kill_all(); sys.exit(1)
 
@@ -941,11 +966,11 @@ def cmd_smoke_phystele(args) -> None:
     # marker, then a settle window for the dying elements to drain.
     log(f"waiting up to {args.boot_timeout}s for host PLAY READY...")
     for i in range(args.boot_timeout):
-        if "==== PLAY READY ====" in _read_text(HOST_DIR / "votv-coop.log"):
+        if "==== PLAY READY ====" in _read_text(HOST_DIR / "multivoid.log"):
             log(f"host PLAY READY after {i}s"); break
         time.sleep(1)
         if not any(p["PID"] == host_pid for p in list_votv()):
-            log("HOST DIED before PLAY READY"); tail_log(HOST_DIR / "votv-coop.log", 30, "HOST"); sys.exit(1)
+            log("HOST DIED before PLAY READY"); tail_log(HOST_DIR / "multivoid.log", 30, "HOST"); sys.exit(1)
     log(f"host-settle {args.host_settle}s (let the boot-world's dying prop elements drain before connect)...")
     time.sleep(args.host_settle)
 
@@ -977,8 +1002,8 @@ def cmd_smoke_phystele(args) -> None:
     host_rss   = next((p["RSS_MB"] for p in last_peers if p["PID"] == host_pid), 0.0)
     client_rss = next((p["RSS_MB"] for p in last_peers if p["PID"] == client_pid), 0.0)
     rss_ratio  = (client_rss / host_rss) if host_rss else 0.0
-    tail_log(HOST_DIR / "votv-coop.log", 12, "HOST")
-    tail_log(CLIENT_DIR / "votv-coop.log", 12, "CLIENT")
+    tail_log(HOST_DIR / "multivoid.log", 12, "HOST")
+    tail_log(CLIENT_DIR / "multivoid.log", 12, "CLIENT")
     sig = parse_phys_signals()
     log("--- KILLING ---"); kill_all()
 
@@ -1070,8 +1095,27 @@ def cmd_smoke4(args) -> None:
     set_dev_ue4ss(False)
     atexit.register(set_dev_ue4ss, True)
 
+    # ARC B drill: --nick-all makes every peer ASK for the same name, which is the
+    # only way to exercise the arbiter end-to-end; --scoreboard opens the TAB list
+    # so the assignment is PHOTOGRAPHABLE (an autonomous run cannot hold TAB).
+    # Only the plain smoke4 --scoreboard forces the board from boot. smoke_i18n
+    # presses the real key at capture time instead (see above).
+    if getattr(args, "scoreboard", False) and not getattr(args, "chat", None):
+        os.environ["VOTVCOOP_SCOREBOARD_OPEN"] = "1"
+
+    # ARC D2: per-peer names. Split ONCE here so an index error is a launch-time
+    # failure rather than a silently short list that renames a peer mid-drill.
+    per_nick = [n for n in (getattr(args, "nicks", None) or "").split(",") if n != ""]
+    def nick_for(i: int, fallback: str) -> str:
+        if per_nick:
+            if i >= len(per_nick):
+                log(f"FAIL: --nicks has {len(per_nick)} names, peer index {i} needs one")
+                sys.exit(1)
+            return per_nick[i]
+        return getattr(args, "nick_all", None) or fallback
+
     log("--- HOST LAUNCH ---")
-    host_pid = launch_peer("host", args.port, "Host",
+    host_pid = launch_peer("host", args.port, nick_for(0, "Host"),
                            peer=None, res_x=args.res_x, res_y=args.res_y,
                            monitor=1, center=True,
                            memory_limit_gb=args.memory_limit_gb)
@@ -1085,11 +1129,11 @@ def cmd_smoke4(args) -> None:
             break
         if not any(p["PID"] == host_pid for p in list_votv()):
             log(f"HOST DIED before binding UDP (PID {host_pid} gone)")
-            tail_log(HOST_DIR / "votv-coop.log", 30, "HOST")
+            tail_log(HOST_DIR / "multivoid.log", 30, "HOST")
             sys.exit(1)
     if not bound:
         log(f"FAIL: host did NOT bind UDP within {args.boot_timeout}s")
-        tail_log(HOST_DIR / "votv-coop.log", 30, "HOST")
+        tail_log(HOST_DIR / "multivoid.log", 30, "HOST")
         kill_all()
         sys.exit(1)
 
@@ -1104,13 +1148,38 @@ def cmd_smoke4(args) -> None:
     assigned: dict[int, int | None] = {}
     for slot_arg, game_dir, label in client_specs:
         log(f"--- {label} LAUNCH (peer_slot folder {slot_arg}) ---")
-        pid = launch_peer("client", args.port, label.capitalize(),
+        pid = launch_peer("client", args.port, nick_for(slot_arg, label.capitalize()),
                           peer="127.0.0.1", res_x=1280, res_y=720,
                           peer_slot=slot_arg, monitor=2, tile_index=slot_arg - 1,
                           memory_limit_gb=args.memory_limit_gb)
         client_pids[slot_arg] = pid
         assigned[slot_arg] = wait_for_client_connect(
             game_dir, args.client_boot_timeout, label, pid)
+
+    # i18n: every peer SAYS something in its own script, typed through the real
+    # keyboard path. Done before the monitoring window so the messages have the
+    # whole window to reach every other peer's feed and disk.
+    chat_msgs = [m for m in (getattr(args, "chat", None) or "").split("|") if m != ""]
+    if chat_msgs:
+        log("--- i18n CHAT (typed via WM_CHAR into the real chat bar) ---")
+        peers_for_chat = [(0, HOST_DIR, host_pid, "HOST")] + [
+            (sa, gd, client_pids[sa], lbl) for sa, gd, lbl in client_specs]
+        # GATE ON BEING IN-WORLD, not on having connected. `T` is swallowed while
+        # any interactive surface owns input, and the LOADING SCREEN is one of
+        # them (imgui_overlay.cpp CaptureActive) -- the first run of this
+        # scenario typed into a peer that was still loading and lost the message
+        # silently. The peer's own "Joined X's game" feed line is the first thing
+        # it prints from inside the world.
+        for _idx, gd, _pid, lbl in peers_for_chat[1:]:
+            _wait_for_log(gd / "multivoid.log", "Joined ", 60, lbl)
+        time.sleep(4)   # let the last loading cover actually come down
+        for idx, _gd, pid, lbl in peers_for_chat:
+            if idx >= len(chat_msgs):
+                continue
+            log(f"  {lbl}: typing {chat_msgs[idx]!r}")
+            _type_chat(pid, chat_msgs[idx], lbl)
+            time.sleep(1.5)
+        time.sleep(4)
 
     log(f"--- MONITORING for {args.duration}s (sample every {args.sample_interval}s, "
         f"RAM kill arms after {args.settle_grace}s) ---")
@@ -1132,20 +1201,45 @@ def cmd_smoke4(args) -> None:
             kill_reason = f"peer RSS={max_rss}MB > kill threshold {args.ram_kill_mb}MB (post-settle)"
             break
 
+    # ARC B: photograph every board BEFORE the kill -- the arbitration is a
+    # DISPLAY fact and a log line is not the thing the user sees.
+    if getattr(args, "scoreboard", False):
+        shots_dir = Path(__file__).resolve().parent.parent / "research" / "nickarb_shots"
+        shots_dir.mkdir(parents=True, exist_ok=True)
+        # Press the REAL scoreboard key (VK_OEM_3, the tilde-position key) rather
+        # than relying on VOTVCOOP_SCOREBOARD_OPEN. Two reasons: the forced board
+        # counts as an interactive surface on the HOST and swallows the chat bind,
+        # and pressing the actual bind tests the actual bind. The host TOGGLES on
+        # keydown; a client HOLDS, so its key must stay down across the capture.
+        _press_scoreboard(host_pid, hold=False)
+        for slot_arg, _gd, _lbl in client_specs:
+            _press_scoreboard(client_pids[slot_arg], hold=True)
+        time.sleep(1.0)
+        _capture_window(host_pid, shots_dir / "host.png")
+        for slot_arg, game_dir, label in client_specs:
+            _capture_window(client_pids[slot_arg], shots_dir / f"client{slot_arg}.png")
+        log(f"arc B: four boards captured -> {shots_dir}")
+        for slot_arg, game_dir, label in [(0, HOST_DIR, "HOST")] + client_specs:
+            ini = game_dir / "multivoid.ini"
+            if ini.exists():
+                for line in ini.read_text(encoding="utf-8", errors="replace").splitlines():
+                    if line.strip().lower().startswith("net.nick"):
+                        log(f"arc B ini {label}: {line.strip()}")
+
     log("--- FINAL STATE ---")
     log(f"peers alive at end: {len(last_peers)}")
     for p in last_peers:
         log(f"  PID={p['PID']} RSS={p['RSS_MB']}MB title='{p['Title']}'")
 
     # Tail all four logs.
-    tail_log(HOST_DIR / "votv-coop.log", 20, "HOST")
+    tail_log(HOST_DIR / "multivoid.log", 20, "HOST")
     for slot_arg, game_dir, label in client_specs:
-        tail_log(game_dir / "votv-coop.log", 20, label)
+        tail_log(game_dir / "multivoid.log", 20, label)
 
     # Parse all four logs for the verdict (after kill is fine -- logs are flushed
     # on each write; parse BEFORE kill to be safe against a crash-on-exit wipe).
-    host_mk = parse_log_markers(HOST_DIR / "votv-coop.log")
-    client_mks = {slot: parse_log_markers(gd / "votv-coop.log")
+    host_mk = parse_log_markers(HOST_DIR / "multivoid.log")
+    client_mks = {slot: parse_log_markers(gd / "multivoid.log")
                   for slot, gd, _ in client_specs}
 
     log("--- KILLING ---")
@@ -1159,6 +1253,32 @@ def cmd_smoke4(args) -> None:
 
     if kill_reason:
         failures.append(kill_reason)
+
+    # --- i18n assertions (--assert-i18n). Every peer must be able to SEE every
+    # other peer's name and message, byte-for-byte, and no lane may have emitted
+    # ill-formed or empty text on the way. This is the half a relay verdict
+    # cannot reach: the relay can be perfect while the NAMES arrive blanked.
+    if getattr(args, "assert_i18n", False):
+        want_names = [n for n in (getattr(args, "nicks", None) or "").split(",") if n != ""]
+        want_msgs = [m for m in (getattr(args, "chat", None) or "").split("|") if m != ""]
+        all_peers = [(0, HOST_DIR, "HOST")] + list(client_specs)
+        for idx, gd, lbl in all_peers:
+            # A peer must carry every OTHER peer's name and message; its own name
+            # is excluded because the host may legitimately have renamed it.
+            must = ([n for j, n in enumerate(want_names) if j != idx] +
+                    [m for j, m in enumerate(want_msgs) if j != idx])
+            failures.extend(_i18n_checks(lbl, gd / "multivoid.log", must))
+        # The host is the only peer that logs an arbitration decision, and that
+        # line is the one the C-locale defect deleted. Its ABSENCE is the finding.
+        htext, _ = _read_log_strict(HOST_DIR / "multivoid.log")
+        decided = htext.count("nickname_arbiter: slot ")
+        if decided < len(client_specs):
+            failures.append(f"host: only {decided} arbitration decision line(s) for "
+                            f"{len(client_specs)} clients -- either the arbiter did not "
+                            f"run or the log line was destroyed by its own arguments")
+        else:
+            notes.append(f"i18n: {decided} arbitration decisions logged, all names "
+                         f"round-tripped to every peer")
 
     if len(last_peers) != num_clients + 1:
         failures.append(f"expected {num_clients + 1} peers alive at end, got {len(last_peers)}")
@@ -1238,6 +1358,135 @@ def _wait_for_log(log_path: Path, needle: str, timeout: int, label: str) -> bool
     return False
 
 
+
+# ---------------------------------------------------------------------------
+# i18n SCENARIO SUPPORT (2026-07-28, user request: "a smoke test like when
+# players with jap cn eng cyrillic connect and play, to catch issues").
+#
+# Names alone were never the whole lane. Today's session found a defect on the
+# LOG path and one on the EGRESS path that no name-only drill could see, and
+# both only fired for non-ASCII peers. So this drives the full chain a real
+# mixed-script lobby exercises -- keyboard -> ImGui InputText -> UTF-8 buffer ->
+# wire -> the other peers' feed -> disk -- and then asserts on the ARTIFACTS
+# rather than on "it didn't crash".
+# ---------------------------------------------------------------------------
+
+def _peer_hwnd(pid: int):
+    """Top-level visible window owned by `pid` (the game's render window)."""
+    import ctypes
+    from ctypes import wintypes
+    u32 = ctypes.WinDLL("user32", use_last_error=True)
+    found = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def cb(hwnd, _lp):
+        owner = wintypes.DWORD()
+        u32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        if owner.value != pid or not u32.IsWindowVisible(hwnd):
+            return True
+        n = u32.GetWindowTextLengthW(hwnd)
+        if n > 0:
+            found.append(hwnd)
+            return False
+        return True
+
+    u32.EnumWindows(cb, 0)
+    return found[0] if found else None
+
+
+def _type_chat(pid: int, text: str, label: str) -> bool:
+    """Open the chat bar with T, type `text`, press Enter -- as real messages.
+
+    WM_CHAR carries UTF-16 code units, so an astral character arrives as a
+    surrogate PAIR and ImGui reassembles it (AddInputCharacterUTF16). That path
+    only works because IMGUI_USE_WCHAR32 is on -- before arc D2 the reassembled
+    codepoint was DISCARDED (imgui.cpp:1512), i.e. an emoji could not be typed
+    at all. Driving it from here is what keeps that true.
+    """
+    import ctypes
+    u32 = ctypes.WinDLL("user32", use_last_error=True)
+    WM_KEYDOWN, WM_KEYUP, WM_CHAR = 0x0100, 0x0101, 0x0102
+    VK_RETURN = 0x0D
+    hwnd = _peer_hwnd(pid)
+    if not hwnd:
+        log(f"  {label}: no window for pid {pid} -- cannot type")
+        return False
+    u32.PostMessageW(hwnd, WM_KEYDOWN, ord('T'), 0)
+    u32.PostMessageW(hwnd, WM_KEYUP, ord('T'), 0)
+    time.sleep(0.8)                       # let the bar open + take focus
+    # One WM_CHAR per UTF-16 CODE UNIT -- an astral character is therefore two
+    # messages, a high surrogate then a low one, which is exactly what a real
+    # keyboard/IME delivers and what ImGui has to reassemble.
+    units = text.encode("utf-16-le")
+    for k in range(0, len(units), 2):
+        u32.PostMessageW(hwnd, WM_CHAR, units[k] | (units[k + 1] << 8), 0)
+        time.sleep(0.01)
+    time.sleep(0.4)
+    u32.PostMessageW(hwnd, WM_KEYDOWN, VK_RETURN, 0)
+    u32.PostMessageW(hwnd, WM_KEYUP, VK_RETURN, 0)
+    time.sleep(0.6)
+    return True
+
+
+def _press_scoreboard(pid: int, hold: bool) -> None:
+    """VK_OEM_3 (the key left of 1) opens the player list -- toggle on the host,
+    hold-to-show on a client (imgui_overlay.cpp:174-186)."""
+    import ctypes
+    u32 = ctypes.WinDLL("user32", use_last_error=True)
+    WM_KEYDOWN, WM_KEYUP, VK_OEM_3 = 0x0100, 0x0101, 0xC0
+    hwnd = _peer_hwnd(pid)
+    if not hwnd:
+        return
+    u32.PostMessageW(hwnd, WM_KEYDOWN, VK_OEM_3, 0)
+    if not hold:
+        u32.PostMessageW(hwnd, WM_KEYUP, VK_OEM_3, 0)
+
+
+def _read_log_strict(path: Path):
+    """(text, utf8_error) -- the log MUST decode as strict UTF-8.
+
+    This is the cheapest total check on every text lane at once: a CESU-8 pair
+    from a hand-rolled encoder, a byte cut mid-sequence, an ANSI narrow, all land
+    here as a decode error. errors='replace' would hide every one of them.
+    """
+    raw = path.read_bytes() if path.exists() else b""
+    try:
+        return raw.decode("utf-8"), None
+    except UnicodeDecodeError as e:
+        return raw.decode("utf-8", errors="replace"), f"{e.reason} at byte {e.start}"
+
+
+_EMPTY_LINE = re.compile(r"^\[\d\d:\d\d:\d\d\] \[\w+\s*\]\s*$")
+
+
+def _i18n_checks(label: str, path: Path, must_contain: list[str]) -> list[str]:
+    """Every assertion one peer's log can answer. Returns failure strings."""
+    fails = []
+    text, err = _read_log_strict(path)
+    if err:
+        fails.append(f"{label}: log is NOT well-formed UTF-8 ({err}) -- a text lane "
+                     f"emitted ill-formed bytes")
+    # A line that formatted to nothing. This is the exact shape of the 2026-07-28
+    # logger defect: %ls + the C locale returned -1 and left the buffer empty, so
+    # every line naming a non-ASCII peer became a bare timestamp.
+    blank = [ln for ln in text.splitlines() if _EMPTY_LINE.match(ln)]
+    if blank:
+        fails.append(f"{label}: {len(blank)} log line(s) formatted to NOTHING "
+                     f"(first: {blank[0]!r}) -- an argument killed the message")
+    if "[args unformattable]" in text:
+        fails.append(f"{label}: the formatter fell back to the format string -- "
+                     f"an argument could not be converted")
+    for st in ("selftest: FAIL",):
+        if st in text:
+            bad = [ln for ln in text.splitlines() if st in ln]
+            fails.append(f"{label}: {len(bad)} selftest FAILURE(s): {bad[0][:120]}")
+    for needle in must_contain:
+        if needle not in text:
+            fails.append(f"{label}: never saw {needle!r} -- it was blanked, squashed "
+                         f"or truncated somewhere on the way")
+    return fails
+
+
 def _capture_window(pid: int, out_path: Path) -> bool:
     ps = Path(__file__).resolve().parent / "capture_window.ps1"
     try:
@@ -1253,6 +1502,33 @@ def _capture_window(pid: int, out_path: Path) -> bool:
     except Exception as e:  # noqa: BLE001 (best-effort capture)
         log(f"  capture EXC for PID {pid}: {e}")
         return False
+
+
+# The four scripts, one peer each, plus an astral emoji so the typed-input path
+# (WM_CHAR surrogate pair -> AddInputCharacterUTF16 -> IMGUI_USE_WCHAR32) is
+# exercised rather than assumed. Names and messages are DIFFERENT strings on
+# purpose: a name travels the Join/RosterRow lane, a message travels the chat
+# lane, and this session found a defect on a third lane (the log) that neither
+# would have shown on its own.
+I18N_NICKS = ["Pelmentor", "Пельмень",
+              "张伟明", "さくら田中"]
+I18N_CHAT = ["hello everyone 😀",
+             "привет всем",
+             "你好世界",
+             "こんにちは世界"]
+
+
+def cmd_smoke_i18n(args) -> None:
+    """The mixed-script lobby, as one word."""
+    args.nicks = ",".join(I18N_NICKS)
+    args.chat = "|".join(I18N_CHAT)
+    args.assert_i18n = True
+    # NOT the VOTVCOOP_SCOREBOARD_OPEN env: a forced board is an interactive
+    # surface on the host and swallows `T`, so the host could never chat. The
+    # capture phase presses the real key instead (and thereby tests it).
+    args.scoreboard = True
+    log("--- i18n LOBBY: " + " / ".join(I18N_NICKS) + " ---")
+    cmd_smoke4(args)
 
 
 def cmd_npctest(args) -> None:
@@ -1294,7 +1570,7 @@ def cmd_npctest(args) -> None:
             break
         if not any(p["PID"] == host_pid for p in list_votv()):
             log("HOST DIED before binding UDP")
-            tail_log(HOST_DIR / "votv-coop.log", 30, "HOST")
+            tail_log(HOST_DIR / "multivoid.log", 30, "HOST")
             sys.exit(1)
     if not bound:
         log("FAIL: host did not bind UDP")
@@ -1317,7 +1593,7 @@ def cmd_npctest(args) -> None:
     # "installed interceptor" line fires only once the gameplay world is up + all
     # 12 NPC classes resolved -- i.e. DevSpawnNpcInFront's refs are ready). This
     # is deterministic regardless of peer count (works for solo + 4-peer).
-    host_log = HOST_DIR / "votv-coop.log"
+    host_log = HOST_DIR / "multivoid.log"
     _wait_for_log(host_log, "npc-suppress: installed interceptor", args.install_timeout, "HOST")
     log(f"--- settling {args.settle}s, then firing spawn trigger ---")
     time.sleep(args.settle)
@@ -1346,8 +1622,8 @@ def cmd_npctest(args) -> None:
     tail_log(host_log, 14, "HOST")
     client_mirror: dict[str, int] = {}
     for slot_arg, game_dir, label in used_clients:
-        client_mirror[label] = _log_count(game_dir / "votv-coop.log", "materialized mirror")
-        tail_log(game_dir / "votv-coop.log", 8, label)
+        client_mirror[label] = _log_count(game_dir / "multivoid.log", "materialized mirror")
+        tail_log(game_dir / "multivoid.log", 8, label)
 
     log("--- KILLING ---")
     kill_all()
@@ -1413,7 +1689,7 @@ def cmd_kerfurtoggle(args) -> None:
         if host_owns_udp(host_pid, args.port):
             log(f"host bound UDP after {i+1}s"); bound = True; break
         if not any(p["PID"] == host_pid for p in list_votv()):
-            log("HOST DIED before binding UDP"); tail_log(HOST_DIR / "votv-coop.log", 30, "HOST"); sys.exit(1)
+            log("HOST DIED before binding UDP"); tail_log(HOST_DIR / "multivoid.log", 30, "HOST"); sys.exit(1)
     if not bound:
         log("FAIL: host did not bind UDP"); kill_all(); sys.exit(1)
 
@@ -1426,8 +1702,8 @@ def cmd_kerfurtoggle(args) -> None:
     if slot is None:
         log("FAIL: client never connected"); kill_all(); sys.exit(1)
 
-    host_log = HOST_DIR / "votv-coop.log"
-    client_log = CLIENT_DIR / "votv-coop.log"
+    host_log = HOST_DIR / "multivoid.log"
+    client_log = CLIENT_DIR / "multivoid.log"
     _wait_for_log(host_log, "npc-suppress: installed interceptor", args.install_timeout, "HOST")
     # The client poll is gated on load-tail quiescence -- it will not detect a toggle until
     # the join reconcile settles. Wait for it so a later 'no detection' is a real failure.
@@ -1552,8 +1828,8 @@ def cmd_joinchurn(args) -> None:
     bounded destroy-sweeps + no-local-match flood; the kerfur mirrored with no flip-flop loop."""
     shots_dir = ROOT / "research" / "joinchurn_shots"
     shots_dir.mkdir(parents=True, exist_ok=True)
-    host_log = HOST_DIR / "votv-coop.log"
-    client_log = CLIENT_DIR / "votv-coop.log"
+    host_log = HOST_DIR / "multivoid.log"
+    client_log = CLIENT_DIR / "multivoid.log"
     spawn_trigger = str(HOST_DIR / "spawn_npc.trigger")
     for t in (spawn_trigger,):
         try:
@@ -1723,7 +1999,7 @@ def cmd_spawnmenutest(args) -> None:
                            res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
                            memory_limit_gb=args.memory_limit_gb,
                            extra_env={"VOTVCOOP_SPAWNMENU_TRIGGER": trigger})
-    host_log = HOST_DIR / "votv-coop.log"
+    host_log = HOST_DIR / "multivoid.log"
     log(f"waiting up to {args.boot_timeout}s for host PLAY READY...")
     ready = False
     for i in range(args.boot_timeout):
@@ -1796,7 +2072,7 @@ def cmd_ragdollshot(args) -> None:
         if host_owns_udp(host_pid, args.port):
             log(f"host bound UDP {args.port} after {i+1}s"); bound = True; break
         if not any(p["PID"] == host_pid for p in list_votv()):
-            log("HOST DIED before binding UDP"); tail_log(HOST_DIR / "votv-coop.log", 30, "HOST"); sys.exit(1)
+            log("HOST DIED before binding UDP"); tail_log(HOST_DIR / "multivoid.log", 30, "HOST"); sys.exit(1)
     if not bound:
         log("FAIL: host did not bind UDP"); kill_all(); sys.exit(1)
 
@@ -1806,7 +2082,7 @@ def cmd_ragdollshot(args) -> None:
                              tile_index=0, memory_limit_gb=args.memory_limit_gb)
     wait_for_client_connect(CLIENT_DIR, args.client_boot_timeout, "CLIENT", client_pid)
 
-    host_log = HOST_DIR / "votv-coop.log"
+    host_log = HOST_DIR / "multivoid.log"
     shots: list[Path] = []
     # BEFORE shot: the host frames the STANDING puppet (before the ragdoll fires).
     if _wait_for_log(host_log, "BEFORE-SHOT READY", args.ragdoll_timeout, "HOST"):
@@ -1872,7 +2148,7 @@ def cmd_ragdollspawn(args) -> None:
                            res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
                            memory_limit_gb=args.memory_limit_gb)
 
-    host_log = HOST_DIR / "votv-coop.log"
+    host_log = HOST_DIR / "multivoid.log"
     shots: list[Path] = []
 
     # REAL body shot FIRST -- ground truth from VOTV's own ragdollMode (the probe
@@ -1935,7 +2211,7 @@ def cmd_menutravel(args) -> None:
                            res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
                            memory_limit_gb=args.memory_limit_gb)
 
-    host_log = HOST_DIR / "votv-coop.log"
+    host_log = HOST_DIR / "multivoid.log"
     shot: Path | None = None
     t0 = time.time()
     seen_pause = False
@@ -2014,7 +2290,7 @@ def cmd_clumpvis(args) -> None:
                            res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
                            memory_limit_gb=args.memory_limit_gb)
 
-    host_log = HOST_DIR / "votv-coop.log"
+    host_log = HOST_DIR / "multivoid.log"
     if _wait_for_log(host_log, "CLUMPVIS READY", args.probe_timeout, "HOST"):
         time.sleep(2)
         p = shots_dir / "host_clumpvis.png"
@@ -2025,6 +2301,251 @@ def cmd_clumpvis(args) -> None:
     # Surface the decisive 'bare clump ... HAS A MESH / EMPTY' line.
     time.sleep(2)
     tail_log(host_log, 12, "HOST")
+    log("--- KILLING ---")
+    kill_all()
+    sys.exit(0)
+
+
+def cmd_navprobe(args) -> None:
+    """SOLO Phase-0 HALT probe for the autonomous bot-director. Launches ONE host with
+    VOTVCOOP_RUN_NAV_PROBE=1 (no client). The probe measures Gate A (FindPathToLocation-
+    Synchronously returns a traversable path over the baked NavMesh) + Gate B (a reflected
+    AddMovementInput -- resolved on the Pawn declaring class -- moves the possessed body),
+    then logs 'nav_probe: VERDICT ... -> rung{0,1,2}'. Nothing of the director is built
+    until this runs. No screenshot -- the verdict is entirely in the log tail."""
+    if kill_all() > 0:
+        log("note: pre-existing VotV instances killed before navprobe")
+    deploy_all()
+
+    os.environ["VOTVCOOP_RUN_NAV_PROBE"] = "1"
+
+    log("--- HOST LAUNCH (solo nav HALT probe -- director Phase-0) ---")
+    host_pid = launch_peer("host", args.port, "Host", peer=None,
+                           res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
+                           memory_limit_gb=args.memory_limit_gb)
+
+    host_log = HOST_DIR / "multivoid.log"
+    if _wait_for_log(host_log, "nav_probe: VERDICT", args.probe_timeout, "HOST"):
+        log("nav_probe VERDICT reached -- surfacing the gate lines:")
+    else:
+        log("WARN: never saw 'nav_probe: VERDICT' -- check the host log tail below")
+    time.sleep(2)
+    tail_log(host_log, 30, "HOST")
+    log("--- KILLING ---")
+    kill_all()
+    sys.exit(0)
+
+
+def _race_last_field(log_path, needle: str, field: str):
+    """Return int value of `field=N` from the LAST line containing `needle` in log_path, or None."""
+    try:
+        txt = log_path.read_text(errors="ignore")
+    except Exception:
+        return None
+    hit = None
+    for line in txt.splitlines():
+        if needle in line:
+            hit = line
+    if hit is None:
+        return None
+    m = re.search(re.escape(field) + r"=(-?\d+)", hit)
+    return int(m.group(1)) if m else None
+
+
+def cmd_ctakerace(args) -> None:
+    """Director Phase-2 the two-peer CONTAINER concurrent-take RACE. Launches host + client, both
+    running the race scenario; both walk to the SAME container (deterministic shared world-pos target)
+    and take the SAME item at an orchestrator GO barrier (a future-timestamp sentinel file -> sub-ms
+    simultaneity on one box). Each peer counts X locally after; THIS orchestrator SUMS across peers:
+    sum 1 = correct (one owner), 2 = DUP (R11b refusal-dup CONFIRMED), 0 = X VANISHED (loss bug),
+    >2 = worse. Mode 'control' (only host takes) must sum to 1 BEFORE 'race' is trusted (else sum==1 on
+    a race can't tell 'correct' from 'client-walk blind')."""
+    mode = getattr(args, "mode", "control")
+    if kill_all() > 0:
+        log("note: pre-existing VotV instances killed before ctakerace")
+    deploy_all()
+
+    go_file = Path(os.environ.get("TEMP") or os.environ.get("TMP") or str(ROOT)) / "multivoid_race_go.txt"
+    try: go_file.unlink()
+    except Exception: pass
+
+    taker = getattr(args, "taker", "host")
+    os.environ["VOTVCOOP_RUN_CTAKE_RACE"] = "1"
+    os.environ["VOTVCOOP_RACE_MODE"] = mode
+    os.environ["VOTVCOOP_RACE_TAKER"] = taker
+    os.environ["VOTVCOOP_RACE_GO_FILE"] = str(go_file)
+    log(f"--- CTAKE RACE (mode={mode}{', taker='+taker if mode=='control' else ''}) GO sentinel={go_file} ---")
+
+    log("--- HOST LAUNCH (race, role=host) ---")
+    host_pid = launch_peer("host", args.port, "Host", peer=None, res_x=args.res_x, res_y=args.res_y,
+                           monitor=1, center=True, memory_limit_gb=args.memory_limit_gb,
+                           extra_env={"VOTVCOOP_RACE_ROLE": "host"})
+    bound = False
+    for i in range(args.boot_timeout):
+        time.sleep(1)
+        if host_owns_udp(host_pid, args.port): bound = True; break
+    if not bound:
+        log("FAIL: host did not bind UDP"); tail_log(HOST_DIR / "multivoid.log", 30, "HOST"); kill_all(); sys.exit(1)
+
+    log("--- CLIENT LAUNCH (race, role=client) ---")
+    launch_peer("client", args.port, "Client", peer="127.0.0.1", res_x=1280, res_y=720,
+                monitor=2, tile_index=0, memory_limit_gb=args.memory_limit_gb,
+                extra_env={"VOTVCOOP_RACE_ROLE": "client"})
+
+    host_log = HOST_DIR / "multivoid.log"
+    client_log = CLIENT_DIR / "multivoid.log"
+    ARRIVED = "director/ctake-race: ARRIVED"
+    RESULT = "director/ctake-race: RESULT"
+
+    # Wait for BOTH peers to log ARRIVED, then drop the GO sentinel (a future timestamp ~1.5s out).
+    log(f"waiting up to {args.probe_timeout}s for BOTH peers to ARRIVE...")
+    both = False
+    for _ in range(args.probe_timeout):
+        time.sleep(1)
+        h = host_log.exists() and ARRIVED in host_log.read_text(errors="ignore")
+        c = client_log.exists() and ARRIVED in client_log.read_text(errors="ignore")
+        if h and c: both = True; break
+    if not both:
+        log("FAIL: both peers did not ARRIVE (world/join/walk). Tails:")
+        tail_log(host_log, 25, "HOST"); tail_log(client_log, 25, "CLIENT"); kill_all(); sys.exit(1)
+
+    # Validate BOTH peers picked the SAME save-key (the by-construction shared target). A divergence
+    # means the key is not actually stable cross-peer (or the per-peer feasibility filter split them).
+    def _last_str(log_path, needle, field):
+        try: txt = log_path.read_text(errors="ignore")
+        except Exception: return None
+        hit = None
+        for ln in txt.splitlines():
+            if needle in ln: hit = ln
+        if hit is None: return None
+        m = re.search(re.escape(field) + r"=(\S+)", hit)
+        return m.group(1) if m else None
+    hk = _last_str(host_log, ARRIVED, "key")
+    ck = _last_str(client_log, ARRIVED, "key")
+    if hk != ck:
+        log(f"!! SHARED-TARGET MISMATCH: host key={hk} != client key={ck} -- the peers did NOT pick the "
+            f"same container; the race would be meaningless. ABORT.")
+        tail_log(host_log, 15, "HOST"); tail_log(client_log, 15, "CLIENT"); kill_all(); sys.exit(1)
+    log(f"shared-target key MATCH on both peers: {hk}")
+
+    go_ms = int(time.time() * 1000) + 1500   # GO instant ~1.5s in the future (both busy-wait to it)
+    go_file.write_text(str(go_ms))
+    log(f"both ARRIVED -- GO sentinel written (fire at Unix-ms {go_ms}, ~1.5s out)")
+
+    # Wait for BOTH peers' RESULT, then SUM localCountAfter across peers.
+    log("waiting for BOTH peers' RESULT...")
+    hc = cc = None
+    for _ in range(90):
+        time.sleep(1)
+        hc = _race_last_field(host_log, RESULT, "localCountAfter")
+        cc = _race_last_field(client_log, RESULT, "localCountAfter")
+        if hc is not None and cc is not None: break
+    log("--- RESULT lines ---")
+    for lg, lab in ((host_log, "HOST"), (client_log, "CLIENT")):
+        try:
+            for line in lg.read_text(errors="ignore").splitlines():
+                if "director/ctake-race:" in line and ("RESULT" in line or "SHARED target" in line or "DUP-VERIFIER" in line):
+                    log(f"  {lab}: {line.strip()[-200:]}")
+        except Exception: pass
+
+    if hc is None or cc is None:
+        log(f"INCONCLUSIVE: missing RESULT (host={hc} client={cc})")
+    else:
+        total = hc + cc
+        verdict = {0: "VANISHED (X lost -- loss bug, NOT ok)", 1: "CORRECT (exactly one owner)",
+                   2: "DUP (R11b refusal-dup CONFIRMED)"}.get(total, "WORSE (>2 -- serious)")
+        log(f"=== CTAKE RACE ({mode}) SUM: host={hc} + client={cc} = {total} -> {verdict} ===")
+        if mode == "control" and total != 1:
+            log("!! CONTROL FAILED: solo sum must be 1 -- the summation instrument is NOT race-ready "
+                "(client-walk blind / double-count). FIX before trusting a real race.")
+        elif mode == "control":
+            log("CONTROL PASS: solo sum == 1 -- the cross-peer summation is validated; the race is trustable.")
+
+    # PROJECTION WATCH (2026-07-24): does saveObjects refresh saveSlot.inventoryData on a peer whose
+    # world-save is BLOCKED at SaveGameToSlot? The scenario samples inv/eq/hold every 20s x20 (~6.3 min)
+    # so the window spans at least one autosave. Peers must stay ALIVE for it -- hence the hold.
+    # HOST arm = the known-positive (its saves are not blocked); the CLIENT arm is interpretable ONLY
+    # if the HOST arm's contentHash CHANGES. Absence-of-a-log-line was rejected as the instrument:
+    # it fuses "never refreshed" with "refreshed but this record does not go there".
+    hold = int(getattr(args, "hold_seconds", 0) or 0)
+    if hold > 0:
+        log(f"--- PROJECTION WATCH: holding peers {hold}s for the inventoryData sampling ---")
+        deadline = time.time() + hold
+        while time.time() < deadline:
+            time.sleep(10)
+            done_h = "director/projwatch: role=host DONE" in host_log.read_text(errors="ignore")
+            done_c = "director/projwatch: role=client DONE" in client_log.read_text(errors="ignore")
+            if done_h and done_c:
+                log("both peers finished the projection watch"); break
+        for lg, lab in ((host_log, "HOST"), (client_log, "CLIENT")):
+            try:
+                rows = [l.strip() for l in lg.read_text(errors="ignore").splitlines()
+                        if "director/projwatch:" in l or "save_block: BLOCKED" in l]
+            except Exception:
+                rows = []
+            log(f"--- {lab} projwatch ({len(rows)} lines) ---")
+            for r in rows: log(f"  {lab}: {r[-190:]}")
+
+    log("--- KILLING ---"); kill_all(); sys.exit(0)
+
+
+def cmd_ctakeprobe(args) -> None:
+    """SOLO director Phase-2 HALT gate: the CONTAINER-TAKE input probe. Launches ONE host with
+    VOTVCOOP_RUN_CTAKE_PROBE=1 (no client). The bot walks to a placed non-empty world container
+    and drives the FAITHFUL human take chain (openContainer -> slot pressButton -> em_take),
+    MEASURING whether the take executed (the container's GObjStack item count decremented);
+    extract(0) is a NON-FAITHFUL diagnostic fallback. Verdict ('director/ctake: VERDICT
+    DRIVABLE-FAITHFUL / DRIVABLE-EFFECT-SEAM-ONLY / NOT-DRIVABLE') is in the log tail -- it decides
+    whether the container concurrent-take race is buildable. PRECONDITION: the fresh save must have
+    an item inside a world container within ~60m of spawn."""
+    if kill_all() > 0:
+        log("note: pre-existing VotV instances killed before ctakeprobe")
+    deploy_all()
+
+    os.environ["VOTVCOOP_RUN_CTAKE_PROBE"] = "1"
+
+    log("--- HOST LAUNCH (solo container-take input probe -- director Phase-2) ---")
+    host_pid = launch_peer("host", args.port, "Host", peer=None,
+                           res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
+                           memory_limit_gb=args.memory_limit_gb)
+
+    host_log = HOST_DIR / "multivoid.log"
+    if _wait_for_log(host_log, "director/ctake: VERDICT", args.probe_timeout, "HOST"):
+        log("ctake VERDICT reached -- surfacing the ladder lines:")
+    else:
+        log("WARN: never saw 'director/ctake: VERDICT' -- check the host log tail below")
+    time.sleep(2)
+    tail_log(host_log, 40, "HOST")
+    log("--- KILLING ---")
+    kill_all()
+    sys.exit(0)
+
+
+def cmd_walkgrab(args) -> None:
+    """SOLO Phase-1 flagship of the autonomous bot-director: a WALKED GRAB. Launches ONE
+    host with VOTVCOOP_RUN_WALKGRAB_TEST=1 (no client). The host bot picks the nearest
+    chipPile, WALKS to it over the baked NavMesh (FindPath + per-tick AddMovementInput
+    steering + a thin PathExecutor), SETTLES, then runs the proven InpActEvt_use grab.
+    Proves the director spine end to end; the verdict ('walkgrab: VERDICT WALK=.. GRAB=..')
+    is in the log tail. Cross-peer convert/mirror = a 2-peer smoke (separate step)."""
+    if kill_all() > 0:
+        log("note: pre-existing VotV instances killed before walkgrab")
+    deploy_all()
+
+    os.environ["VOTVCOOP_RUN_DIRECTOR_WALKGRAB"] = "1"
+
+    log("--- HOST LAUNCH (solo bot-director walked grab -- the brain) ---")
+    host_pid = launch_peer("host", args.port, "Host", peer=None,
+                           res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
+                           memory_limit_gb=args.memory_limit_gb)
+
+    host_log = HOST_DIR / "multivoid.log"
+    if _wait_for_log(host_log, "director: VERDICT", args.probe_timeout, "HOST"):
+        log("director VERDICT reached -- surfacing the brain/walk/grab lines:")
+    else:
+        log("WARN: never saw 'director: VERDICT' -- check the host log tail below")
+    time.sleep(2)
+    tail_log(host_log, 30, "HOST")
     log("--- KILLING ---")
     kill_all()
     sys.exit(0)
@@ -2054,7 +2575,7 @@ def cmd_fogprobe(args) -> None:
                            res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
                            memory_limit_gb=args.memory_limit_gb)
 
-    host_log = HOST_DIR / "votv-coop.log"
+    host_log = HOST_DIR / "multivoid.log"
     shots: list[Path] = []
 
     # FOGGY shot -- fog forced on (rolling + super).
@@ -2113,7 +2634,7 @@ def cmd_menushot(args) -> None:
     host_pid = launch_peer("host", args.port, "Host", peer=None,
                            res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
                            memory_limit_gb=args.memory_limit_gb)
-    host_log = HOST_DIR / "votv-coop.log"
+    host_log = HOST_DIR / "multivoid.log"
     shot = None
     if _wait_for_log(host_log, "imgui_overlay: DX11 bring-up OK", args.probe_timeout, "HOST"):
         time.sleep(3)  # let a few menu frames render
@@ -2153,7 +2674,7 @@ def cmd_scoreshot(args) -> None:
     host_pid = launch_peer("host", args.port, "Host", peer=None,
                            res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
                            memory_limit_gb=args.memory_limit_gb)
-    host_log = HOST_DIR / "votv-coop.log"
+    host_log = HOST_DIR / "multivoid.log"
     log(f"waiting up to {args.boot_timeout}s for host to bind UDP {args.port}...")
     bound = False
     for i in range(args.boot_timeout):
@@ -2170,7 +2691,7 @@ def cmd_scoreshot(args) -> None:
     client_pid = launch_peer("client", args.port, "Client", peer="127.0.0.1",
                              res_x=1280, res_y=720, monitor=2, tile_index=0,
                              memory_limit_gb=args.memory_limit_gb)
-    client_log = CLIENT_DIR / "votv-coop.log"
+    client_log = CLIENT_DIR / "multivoid.log"
 
     log(f"waiting up to {args.probe_timeout}s for the client to connect...")
     connected = False
@@ -2213,7 +2734,7 @@ def cmd_puppetshot(args) -> None:
     host_pid = launch_peer("host", args.port, "Host", peer=None,
                            res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
                            memory_limit_gb=args.memory_limit_gb)
-    host_log = HOST_DIR / "votv-coop.log"
+    host_log = HOST_DIR / "multivoid.log"
     log(f"waiting up to {args.boot_timeout}s for host to bind UDP {args.port}...")
     bound = False
     for i in range(args.boot_timeout):
@@ -2226,7 +2747,7 @@ def cmd_puppetshot(args) -> None:
         log("FAIL: host did not bind UDP"); kill_all(); sys.exit(1)
 
     log("--- CLIENT LAUNCH ---")
-    client_pid = launch_peer("client", args.port, "Client", peer="127.0.0.1",
+    client_pid = launch_peer("client", args.port, getattr(args, "nick", None) or "Client", peer="127.0.0.1",
                              res_x=1280, res_y=720, peer_slot=1, monitor=2,
                              tile_index=0, memory_limit_gb=args.memory_limit_gb)
     wait_for_client_connect(CLIENT_DIR, args.client_boot_timeout, "CLIENT", client_pid)
@@ -2368,10 +2889,43 @@ def main() -> None:
                                "real runaway guard)")
     p_smoke4.add_argument("--ram-kill-mb", type=int, default=12000,
                           help="post-settle hard kill threshold per peer")
+    p_smoke4.add_argument("--nick-all", default=None,
+                          help="give EVERY peer this nickname (arc B arbitration drill)")
+    p_smoke4.add_argument("--chat", default=None,
+                          help="PIPE-separated per-peer chat lines host|c1|c2|c3, typed "
+                               "through the real chat bar via WM_CHAR")
+    p_smoke4.add_argument("--assert-i18n", action="store_true",
+                          help="assert every peer saw every OTHER peer's name and message "
+                               "verbatim, that no log line formatted to nothing, and that "
+                               "every log is strictly well-formed UTF-8")
+    p_smoke4.add_argument("--nicks", default=None,
+                          help="comma-separated PER-PEER nicknames host,c1,c2,c3 (arc D2 "
+                               "repertoire drill -- the gate needs DIFFERENT names per peer, "
+                               "which --nick-all cannot express)")
+    p_smoke4.add_argument("--scoreboard", action="store_true",
+                          help="open the TAB player list for the capture")
     p_smoke4.add_argument("--memory-limit-gb", type=float, default=12.0,
                           help="per-process commit cap in GB (0 = disabled)")
     for flag, kw in host_res: p_smoke4.add_argument(flag, **kw)
     p_smoke4.set_defaults(func=cmd_smoke4)
+
+    # The standing MIXED-SCRIPT lobby (user 2026-07-28). English, Cyrillic,
+    # Chinese and Japanese peers connect, are arbitrated, and TALK -- then every
+    # artifact is asserted. Defaults are the whole scenario, so it is one word to
+    # run and there is no way to run it half-configured.
+    p_i18n = sub.add_parser("smoke_i18n",
+                            help="4-peer MIXED-SCRIPT lobby (en/ru/zh/ja + emoji): connect, "
+                                 "arbitrate, chat, and assert every name and message survived")
+    p_i18n.add_argument("--duration", type=int, default=60)
+    p_i18n.add_argument("--sample-interval", type=int, default=5)
+    p_i18n.add_argument("--boot-timeout", type=int, default=40)
+    p_i18n.add_argument("--client-boot-timeout", type=int, default=75)
+    p_i18n.add_argument("--settle-grace", type=int, default=25)
+    p_i18n.add_argument("--ram-kill-mb", type=int, default=12000)
+    p_i18n.add_argument("--memory-limit-gb", type=float, default=12.0)
+    p_i18n.add_argument("--nick-all", default=None, help=argparse.SUPPRESS)
+    for flag, kw in host_res: p_i18n.add_argument(flag, **kw)
+    p_i18n.set_defaults(func=cmd_smoke_i18n)
 
     p_npc = sub.add_parser("npctest",
                            help="spawn a kerfurOmega NPC on the host + verify it mirrors to all clients (+ screenshots)")
@@ -2484,6 +3038,49 @@ def main() -> None:
     for flag, kw in host_res: p_clumpvis.add_argument(flag, **kw)
     p_clumpvis.set_defaults(func=cmd_clumpvis)
 
+    p_navprobe = sub.add_parser("navprobe",
+                                help="SOLO Phase-0 HALT probe (bot-director): does FindPath return a path (Gate A) + does reflected AddMovementInput move the body (Gate B)")
+    p_navprobe.add_argument("--probe-timeout", type=int, default=180,
+                            help="seconds to wait for 'nav_probe: VERDICT' (covers boot into gameplay + the ~4s gate-B sweep)")
+    p_navprobe.add_argument("--memory-limit-gb", type=float, default=12.0,
+                            help="per-process commit cap in GB (0 = disabled)")
+    for flag, kw in host_res: p_navprobe.add_argument(flag, **kw)
+    p_navprobe.set_defaults(func=cmd_navprobe)
+
+    p_ctakeprobe = sub.add_parser("ctakeprobe",
+                                  help="SOLO Phase-2 HALT gate (bot-director): walk to a placed non-empty container + drive the faithful take chain (openContainer->pressButton->em_take), measure if the take executed")
+    p_ctakeprobe.add_argument("--probe-timeout", type=int, default=240,
+                              help="seconds to wait for 'director/ctake: VERDICT' (boot + settle + walk + the take ladder)")
+    p_ctakeprobe.add_argument("--memory-limit-gb", type=float, default=12.0,
+                              help="per-process commit cap in GB (0 = disabled)")
+    for flag, kw in host_res: p_ctakeprobe.add_argument(flag, **kw)
+    p_ctakeprobe.set_defaults(func=cmd_ctakeprobe)
+
+    p_ctakerace = sub.add_parser("ctakerace",
+                                 help="Director Phase-2 two-peer CONTAINER concurrent-take RACE (barrier + per-peer count sum: 1=correct/2=dup/0=vanished). --mode control runs the sum's positive control first")
+    p_ctakerace.add_argument("--mode", choices=["control", "race"], default="control",
+                             help="control = only one peer takes (solo sum MUST be 1); race = both take")
+    p_ctakerace.add_argument("--taker", choices=["host", "client"], default="host",
+                             help="control mode: which SINGLE peer takes. Run BOTH (host + client) so the summation is proven to see X in EITHER peer's personal store")
+    p_ctakerace.add_argument("--boot-timeout", type=int, default=90, help="seconds for the host to bind UDP")
+    p_ctakerace.add_argument("--probe-timeout", type=int, default=240, help="seconds to wait for BOTH peers to ARRIVE")
+    p_ctakerace.add_argument("--memory-limit-gb", type=float, default=12.0, help="per-process commit cap (0=off)")
+    p_ctakerace.add_argument("--hold-seconds", type=int, default=0,
+                             help="after RESULT, keep both peers alive this long so the scenario's PROJECTION WATCH "
+                                  "can sample saveSlot.inventoryData across an autosave (needs ~420; HOST arm is the "
+                                  "known-positive, CLIENT arm is only interpretable if the HOST hash changes)")
+    for flag, kw in host_res: p_ctakerace.add_argument(flag, **kw)
+    p_ctakerace.set_defaults(func=cmd_ctakerace)
+
+    p_walkgrab = sub.add_parser("walkgrab",
+                                help="SOLO Phase-1 flagship (bot-director): the host bot WALKS to a chipPile over the NavMesh then runs the proven grab")
+    p_walkgrab.add_argument("--probe-timeout", type=int, default=240,
+                            help="seconds to wait for 'walkgrab: VERDICT' (boot + settle + the ~12s walk)")
+    p_walkgrab.add_argument("--memory-limit-gb", type=float, default=12.0,
+                            help="per-process commit cap in GB (0 = disabled)")
+    for flag, kw in host_res: p_walkgrab.add_argument(flag, **kw)
+    p_walkgrab.set_defaults(func=cmd_walkgrab)
+
     p_fogprobe = sub.add_parser("fogprobe",
                                 help="SOLO SP probe: force fog on, sample density/target/actors, run the RE'd clear sequence -- gates the host-authoritative weather fix")
     p_fogprobe.add_argument("--probe-timeout", type=int, default=150,
@@ -2517,6 +3114,7 @@ def main() -> None:
 
     p_puppetshot = sub.add_parser("puppetshot",
                                   help="2-PEER PROPER nameplate shot: host frames the STANDING client puppet (no ragdoll) + captures the ImGui 'Client' nameplate over it")
+    p_puppetshot.add_argument("--nick", default=None, help="client nickname to render on the plate")
     p_puppetshot.add_argument("--boot-timeout", type=int, default=40, help="seconds to wait for host UDP bind")
     p_puppetshot.add_argument("--client-boot-timeout", type=int, default=75, help="seconds for the client to connect")
     p_puppetshot.add_argument("--frame-timeout", type=int, default=70, help="seconds to wait for PUPPET-FRAME READY")
