@@ -217,7 +217,43 @@ At ImGui 1.91.5 there is no partial atlas update: any new glyph means a full `Bu
 thread inside `Present`. That is the freeze this whole investigation exists to avoid, now potentially
 per keystroke.
 
-### 7a. The open questions this hands the `/qf`
+### 7a. SUPERSEDED 2026-07-29 — the `/qf` ran, and it killed this design in two rounds
+
+**The five questions below were never reached.** The pass converged by MEASUREMENT instead:
+`mp.py smoke_i18n` (3 peers, real `WM_CHAR` typing into the real chat bar) proved the chat lane
+**already** carries Cyrillic, an astral emoji, hanzi and kana end-to-end, byte-intact, to every peer:
+
+```
+HOST | feed: push via=chat slot=0 text="Pelmentor: hello everyone <emoji>"
+HOST | feed: push via=chat slot=1 text="Пельмень: привет всем"
+HOST | feed: push via=chat slot=2 text="张伟明: 你好世界"
+C1/C2 | (all three, identical)
+```
+
+So «I actually want glyphs supported in chat too» widened the **SURFACE**, not the **REPERTOIRE** — and
+the surface was already covered. What is missing is CJK in the repertoire, which is the NEED question
+arc D2 settled and which no utterance reopened.
+
+The OS-font fallback layer is **DEAD on five counts**, three of them measured in round 1:
+1. **Cost understated ~10x.** `ui/fonts.cpp:301` `Load()` opens with `io.Fonts->Clear()` — there is no
+   incremental path, so one new codepoint re-bakes everything. The real per-message freeze is
+   **58-173 ms**, not the 16.2 ms quoted here. The `OS +Nhz` rows in §6b bake against
+   `GetGlyphRangesCyrillic()` only (`atlas_probe.cpp:459-463`) — no emoji donor, no `MergeBackstops`
+   cross-merge — i.e. a 2,317-glyph baseline, not the shipping 5,710/8,911.
+2. **Need never established** (see above).
+3. **It is a remote amplifier.** Chat text is peer-controlled and never consults `InRepertoire`
+   (only two call sites, both nickname). `GrowIndex(maxCp+1)` prices index tables by the MAXIMUM
+   codepoint at 8 B/entry **per deduped face**, so one U+10FFFF sizes them to ~8 MB x 5 faces plus a
+   58-173 ms rebuild, repeatable per message.
+4. DirectWrite is still not linked, and `MapCharacters` yields an `IDWriteFont`, not a file.
+5. `+LatExt+Greek` — the one survivor — is independent of all of it.
+
+**What survives from this document:** §1-§5 (the bake measurement) and §6 (the MTA font architecture)
+are durable and unaffected. Only §7's proposal is dead.
+
+Full record: `votv-chat-history-qf-thread-2026-07-29.md` rounds 1-2.
+
+<details><summary>The five questions as originally written (never used)</summary>
 
 1. **Debounce shape.** MTA rebuilds at `onClearRenderList()` — *"when the renderer has no cached images
    from this font"*, i.e. a renderer-quiet point, never mid-draw. What is our equivalent seam, and is
@@ -235,3 +271,5 @@ per keystroke.
 5. **`FoldKey` must still fold on the COMPILE-TIME repertoire**, untouched by any of this — otherwise
    uniqueness becomes machine-dependent. Restated because chat support makes the baked set dynamic and
    the fold set must visibly NOT follow it.
+
+</details>

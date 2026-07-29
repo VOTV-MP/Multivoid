@@ -164,6 +164,19 @@ poll absorbs pre-connect edges -- the audit CRIT-1 hole); the ping's OUTCOME rea
 through the normal state lanes (SkySignalCatch identity + DishArm + the detector's DeskSimPose)
 [AS-BUILT v115b de31889e]**.
 
+**chat = NO ROW EXISTS. This lane has never stated its late-join answer** (added to this table
+2026-07-29 as a GAP, not as an answer — principle 8 says a lane is not DONE until its row exists, and
+this one predates the rule). AS-IS: a joiner sees nothing that was said before it arrived, and that is
+not a written semantic, just what falls out of `chat_feed` being local and cleared at
+`event_feed.cpp:121`. **USER DECISION 2026-07-29: the answer will be SEED** — the late joiner receives
+the lobby's history. That requires something that does not exist yet: `chat_feed` is a FEED, not a chat
+log (15 `Push` sites mix typed chat with the local player's own UI narration — "Skin: X", "Nickname
+color: applied", "Connecting to X's game..."), and the host's set is the host's own VIEW, subject to
+its own TTL, overflow and `Reset`. So the answer is a **host-owned canonical log** with the local feed
+as a view of it, delivered on `ConnectReplayForSlot` / `QueueConnectBroadcastForSlot` (this table's
+existing shape), refused PER LINE never whole-blob. Design of record + the 21-round `/qf`:
+`research/findings/join-identity/votv-chat-history-DESIGN-2026-07-29.md`. **DESIGN, not built.**
+
 ### 3.5 Phases
 
 - **Phase 0 (probe, read-only): AS-BUILT 2026-07-04** — `coop/world/event_active_sync.{h,cpp}`:

@@ -624,7 +624,39 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   (b) the axis you are now arguing. Different words = you cannot converge, only smuggle. State the
   original ground in the next brief so the critic can test it. And **disclose the oscillation in the
   write-up** — the record of what was deleted and why is what stops the next session re-deriving all
-  four positions. `memory/lesson_oscillation_means_the_axis_is_not_what_decided_it.md`
+  four positions. **SECOND OCCURRENCE 2026-07-29, and the stop signal was missed by FOUR reversals:** a
+  chat-history `/qf` argued "where a retained line's nick colour is captured, and from which live table"
+  across rounds 13-18, and *every round's fix replaced the previous one* (bake-at-push -> bake-at-
+  retirement -> push-inversion -> palette merge -> neutral colour -> user says "no visual distinction").
+  Six rounds, four reversals, **net diff ZERO**. Two sharpenings: (a) **every round being individually
+  correct is not progress** — only the reversal COUNT is evidence; (b) **if four engineering fixes have
+  failed on one axis, ask whether the question was ever engineering's to answer** — round 17's
+  "dissolution" was a look-and-feel call, and it collapsed in one message once it went to the user.
+  `memory/lesson_oscillation_means_the_axis_is_not_what_decided_it.md`
+- **A red verdict can be the INSTRUMENT's defect, not the feature's.** Measured 2026-07-29:
+  `smoke_i18n` reported six failures of the form "HOST: never saw 'привет всем' -- it was blanked,
+  squashed or truncated somewhere on the way", against a log holding every line byte-intact and a chat
+  lane working end-to-end on four scripts. Root: `tools/mp.py:1345` `_log_count` called
+  `read_text(errors="replace")` with **no `encoding=`**, so a RU Windows box decoded the UTF-8 log as
+  cp1251 and every non-ASCII needle compared against mojibake (0 hits -> 2/9 after the fix, `781245b1`).
+  Every other `read_text` in that file passed the encoding; this was the single escapee, and the one the
+  whole i18n verdict rests on. *Look FIRST:* the blind-instrument lesson trains suspicion of GREEN —
+  **red is unaudited**, and here the failure text plausibly named a defect class the project HAD shipped
+  the day before. Reproduce the assertion against the raw artifact with an explicit encoding before
+  believing it; and in a file where most call sites pass an option, grep for the ones that don't.
+  `memory/lesson_an_instrument_can_fail_the_feature_it_tests.md`
+- **A drill on ONE TERM OF AN `||` is blind unless every other term is false — and a config DEFAULT
+  decides that.** Measured 2026-07-29: a design narrowed `chat_feed::HasAny()` to fix an overlay-frame
+  leak and specified four drills; all four would have PASSED on a broken build, because `hud.cpp:415-419`
+  `IsActive()` is a disjunction whose last term is `voice_chat::Enabled()`, and
+  `config_registry_rows.inc:113` defaults `voice.enabled` to **true** (every smoke log shows voice
+  starting on every peer). The term under test was unreachable; the defect would have shipped, visible
+  only to a player who turns voice off. *Look FIRST:* when the change under test is one term of an OR
+  (or one guard in a chain), **enumerate the other terms and find each one's DEFAULT before writing the
+  drill** — "every other term false" is a precondition and belongs in the drill spec. Grep the config
+  registry for the default, not the code for the flag. And ask who chose the drill's environment: if the
+  answer is "whatever the harness does", you are testing the default configuration, which is exactly
+  where the bug hides. `memory/lesson_an_environment_default_can_mask_the_thing_under_test.md`
 - **Derive a probe's WORST CASE from the dedup key, never from a hand-written row.** Measured
   2026-07-28: `atlas_probe`'s `kWorstFamilyForRole = {0,1,2,3,0}` reads as "every role a different
   family" but hands Toast the same family as Menu, producing **4** faces where the ceiling is **5**
@@ -849,6 +881,37 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   payloads) while the gated destroy seam made its orphans PERMANENT (audit CRITICAL). *Look FIRST:*
   `ue_wrap::engine::IsChildActor` (six consult surfaces, `c93617be`); any NEW prop enumeration must
   consult it. `memory/lesson_child_actors_excluded_from_world_object_universe.md`
+- **A module's "I am the ONE owner" is an INTENT; the callers are the fact.** Measured 2026-07-29:
+  `coop/text/utf8_codec.h:1` opens *"ARC D1: the ONE owner of text encoding"* and `:18-21` states the
+  receive boundary *"decodes STRICTLY and rejects a whole ill-formed field"* — and both sentences had
+  been copied forward into `CLAUDE.md` and `COOP_SYNC_MAP.md:83` as settled architecture. Against HEAD:
+  `chat_sync.cpp:32` defined its **own** byte-identical `SanitizeUtf8`, `:45` re-implemented
+  `CapUtf8Bytes`, and `:114-124` `OnReliable` did **no decode at all**, pushing raw wire bytes to TWO
+  render surfaces — in a file whose line 5 includes the owner. The claim held on the NICK path and was
+  false on **chat, the one attacker-controlled string in the process** (`docs/security/TRACKER.md`
+  **W11**, fixed `84e0a4e3`). *Look FIRST:* a sole-ownership claim is a hypothesis about the CALLERS —
+  `grep -rn "<FunctionName>" src/` for definitions outside the owner, and check that each includer
+  actually CALLS it. **An anonymous-namespace function with the same name as a public one is a silent
+  override** — no warning, no link error. And a doc quoting another doc inherits nothing: three files
+  agreeing is one measurement copied twice. Corollary from the same dig: **"validated" is not one
+  property** — the tracker's own "every wire string clamps length" was accurate and was read as "wire
+  strings are validated"; length-clamped is not well-formed.
+  `memory/lesson_a_sole_ownership_claim_is_a_claim.md`
+- **Before replicating a store, census what is IN it — and ask whether it is a RECORD or a VIEW.**
+  Measured 2026-07-29: a 21-round `/qf` designed "seed the late joiner with the host's chat history" for
+  eighteen rounds before anyone ran `grep -rn "chat_feed::Push("`. It returns **15 sites**, including the
+  local player's own first-person UI notices — `nick_color.cpp:92` *"Nickname color: applied"*,
+  `local_body.cpp:83` *"Skin: X"*, `player_handshake.cpp:469` *"Connecting to X's game..."* — plus two
+  `[1c-test]` debug lines, with **no field distinguishing them from typed chat**. Seeding the host's
+  retained set would have shipped the host's own UI confirmations to a joiner as "the lobby's history".
+  And the host's set is the host's **VIEW**, bounded by its own cap, TTL and `Reset` — so the lobby's
+  history **did not exist anywhere** and has to be CREATED (a host-owned canonical log, local feed
+  demoted to a view of it; the MTA shape). *Look FIRST:* the store's NAME is the trap — run the census on
+  its WRITE API before designing replication, and ask "is this a record or a view?" A store with a cap,
+  a TTL or a reset that exists for DISPLAY reasons is a view, and replicating a view propagates one
+  peer's rendering policy as shared truth. A single write API with several semantic kinds inside it is a
+  DEFERRED discriminator decision, and the bill arrives the first time something wants a subset.
+  `memory/lesson_census_what_is_in_a_store_before_replicating_it.md`
 - **Identity-critical log lines carry cls+key+loc (USER RULE)** — a class histogram alone makes
   per-entity RCA impossible; cold paths only, never at the POST-native destroy seam (PendingKill),
   throttle mass arms. `memory/feedback_identity_logs_carry_key_and_loc.md`

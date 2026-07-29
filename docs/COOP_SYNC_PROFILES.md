@@ -84,7 +84,8 @@ BUILT. Evidence `HO`=hands-on · `log` · `ST`=selftest/e2e · `code` · `inf` �
 | **Weather** (§5) | field-state | 5 | 1W · 1B · 3U | log | HA | snapshot |
 | **Lamp posts** (§6) | not-synced | 1 | 1W | code | ∅ | none (by design) |
 | **World-events** | replay lanes | 3 | 3U | code | HA | replay / snapshot |
-| **Chat** | line relay | 3 | 3W | HO | CA/HA/PP | none (ephemeral) |
+| **Chat** | line relay | 4 | 3W · 1U | HO | CA/HA/PP | **none — and that is now a GAP, not a design** (2026-07-29) |
+| ↳ *chat HISTORY* (facet added 2026-07-29) | retention + reveal + late-join seed | — | U/code | — | (host, once built) | **UNANSWERED — principle 8 row owed** |
 | **Peer-action feed** | derived render | 2 | 1W · 1U | HO | ∅/PP | none |
 | **Voice** | frame stream | 3 | 2W · 1U | HO | PO | replay (state) |
 | **Save-transfer / join** | blob + snapshot | 8 | 6W · 2U | HO | HA | this IS the join |
