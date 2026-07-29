@@ -185,3 +185,53 @@ bake.
 - `FoldKey` must keep folding on the **compile-time** repertoire, NOT on what happens to be baked —
   otherwise uniqueness becomes machine-dependent and two peers disagree about whether two names
   collide. This is the arc-D2 guarantee and it is the one thing this change must not touch.
+
+---
+
+## 7. USER 2026-07-29: *"I actually want glyphs supported in chat too"* — what that changes
+
+**It changes the hard part.** §6b argued we could drop MTA's page granularity because the demand set
+was names — bounded, event-driven, ≤4 x 20 codepoints. **Chat is not that.** Chat is arbitrary text
+arriving from other peers and typed locally, which is precisely the case §9d.4 called *"a site list
+with per-keystroke members"* and precisely the case MTA built its page cache and LRU eviction FOR.
+
+So this requirement moves the design **toward** MTA, not away from it. Measured shape of the new
+demand set:
+
+| source | bound | self-expiring? |
+|---|---|---|
+| roster names | ≤4 peers x 20 cp | yes — rebuild from the live ledger |
+| chat feed | **`kMaxLines = 6`** (`chat_feed.h:21`), `g_lines` is a capped `std::deque` that drops from the front and expires by age | **yes** |
+| local input buffer | `char g_buf[204]` (`chat_input.cpp:21`, matches `ChatMessagePayload.text` + NUL) | yes — cleared on send/ESC |
+
+**The set stays bounded and eviction still falls out of "rebuild from live state"** — no LRU
+timestamps, no page lifecycle. That part of §6b survives.
+
+**What does NOT survive is the rebuild-frequency argument.** With names only, a rebuild happened on
+join/leave/rename — rare, and 5.7-16.2 ms. With chat:
+
+- every **incoming** message can carry codepoints not yet baked -> a rebuild per message;
+- every **keystroke** in the input bar can, while composing CJK -> a rebuild per keystroke.
+
+At ImGui 1.91.5 there is no partial atlas update: any new glyph means a full `Build()` on the render
+thread inside `Present`. That is the freeze this whole investigation exists to avoid, now potentially
+per keystroke.
+
+### 7a. The open questions this hands the `/qf`
+
+1. **Debounce shape.** MTA rebuilds at `onClearRenderList()` — *"when the renderer has no cached images
+   from this font"*, i.e. a renderer-quiet point, never mid-draw. What is our equivalent seam, and is
+   accumulate-then-rebuild-once-settled (the `kViewportSettleFrames = 12` pattern already shipped in
+   `ui/scale.cpp`) sufficient, or does a composing IME defeat a frame-count debounce?
+2. **What renders while a glyph is pending.** Between "message arrived" and "atlas rebuilt", the text
+   must draw as *something*. U+FFFD is the honest placeholder and is already baked — but a line that
+   flips from boxes to glyphs a beat later is a visible artefact that needs a deliberate answer.
+3. **Does the input bar bake at all?** A composing user is the worst case and the least valuable — the
+   local player already knows what they typed. Deferring the bake until **send** would remove the
+   per-keystroke case entirely, at the cost of the local echo showing boxes while composing.
+4. **Whether the ceiling still holds.** Six feed lines x 203 bytes is ~1,200 bytes of potential CJK =
+   at most ~400 distinct codepoints live. The probe measured `OS +200hz +40em @x2.0` at 8.00 MB /
+   16.2 ms; ~400 needs its own row before anything is built.
+5. **`FoldKey` must still fold on the COMPILE-TIME repertoire**, untouched by any of this — otherwise
+   uniqueness becomes machine-dependent. Restated because chat support makes the baked set dynamic and
+   the fold set must visibly NOT follow it.

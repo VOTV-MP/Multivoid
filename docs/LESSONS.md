@@ -655,6 +655,24 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   evidence only if a positive was possible.
   `memory/lesson_a_log_line_can_vanish_because_of_its_arguments.md`
 
+- **Search prior art by the PROBLEM, not by the mechanism you assumed — and a grep whose hits you don't
+  open did not happen.** Asked to ship fonts *"as MTA does"*, I grepped MTA for `download|transfer|
+  resource|http`, found `CResourceFileDownloadManager`, and put it to the user as **"the MTA option"** in
+  a decision fork. MTA does not ship fonts that way at all: `CEGUIFont.cpp:753/:827` rasterises glyphs
+  **on demand** on every `getTextExtent`/`drawText`, with page granularity (`:1489`), a substitute-font
+  fallback (`:1519`), an LRU stamp (`:1505`) and pages that are genuinely freed (`:1595`); and
+  `CGraphics.cpp:1488/:1549` hands the font FILE to Windows (`AddFontResourceEx(path, FR_PRIVATE, 0)` +
+  `D3DXCreateFont(..., DEFAULT_CHARSET, ...)`). Both mean *the OS owns glyph supply*; the downloader
+  carries `RESOURCE_FILE_TYPE_MAP/SCRIPT/CLIENT_FILE`. **The aggravating detail: the correct grep ran in
+  the same message and returned `CGraphics.cpp` + `CLuaGUIDefs.cpp` — I followed the download hits and
+  never opened the font hits.** A successful search for the thing you expected feels exactly like
+  confirmation; nothing errors, nothing comes back empty. The standing MTA rule was satisfied in letter
+  (I grepped, I cited real files) and broken in spirit. *Look FIRST:* key the search on the problem noun
+  ("how does MTA get a glyph on screen"), open the file that does YOUR job before citing the precedent
+  in a fork you hand someone else, and treat an un-opened hit as a search that did not happen. Checking
+  properly also **retired an arc-D2 objection** — "a cache that never shrinks" — because MTA's shrinks.
+  `memory/lesson_search_prior_art_by_problem_not_by_assumed_mechanism.md`
+
 - **An assertion you have never watched go RED is decoration, not evidence.** `mp.py`'s `_i18n_checks`
   carries five fail-closed checks and has **no injection harness anywhere** — every one has only ever run
   against a HEAD where both defects it was written for were already fixed. Two of them are worse than

@@ -1251,6 +1251,22 @@ All run on this machine 2026-07-28 with `tools/probes/atlas_probe` (extended thi
   master lobby rows); and a set that never shrinks converges on the eager cost anyway, making the
   saving a deferral bought with a lifecycle. **If CJK is ever embedded, this section is the starting
   point, not a warning against it.**
+
+  > **SUPERSEDED IN PART, 2026-07-29 — two of the three anchors fall, measured.**
+  > (a) *"a set that never shrinks converges on the eager cost anyway"* is **false as a general
+  > claim**: MTA's equivalent cache shrinks, and has at multi-thousand-peer scale for 15+ years —
+  > `cegui-0.4.0-custom/src/CEGUIFont.cpp:1505` LRU stamp, `:1595` `bWaitingToBeDeleted` →
+  > `freeGlyphPage`, `:1489` page granularity. That objection was correct about a cache with **no
+  > eviction**; it was never an argument against caching.
+  > (b) *"a per-keystroke site list"* does not apply to a **name** set: the demand set for nicknames
+  > is the roster — ≤4 peers × 20 codepoints, changing on join/leave/rename, sourced from the arc-A
+  > ledger. That is bounded and event-driven, not per-keystroke.
+  > (c) The `FindGlyph`-hook anchor **still stands** (non-virtual, submodule pinned at 1.91.5, RULE 3
+  > forbids forking) — and is now moot, because at ≤80 codepoints a bounded whole-atlas rebuild is
+  > cheaper than the page machinery it would have needed (measured 5.7–16.2 ms).
+  > Also: the `16-64 MB` this bullet is built on measured ImGui's **"ChineseSimplifiedCommon"**
+  > subset, not CJK. The whole-block cost is **64–256 MB**.
+  > Full measurement + the MTA read: `votv-bake-everything-atlas-cost-2026-07-29.md` §3, §6.
 - **The kana-only tier** (194 KB) — a Japanese name is normally kanji+kana, so it renders *half* the
   name. And the same argument reaches the CN+JP union: 4,813 codepoints against a 20,992-codepoint
   block, with Chinese given names deliberately favouring uncommon characters. **No tier guarantees a
