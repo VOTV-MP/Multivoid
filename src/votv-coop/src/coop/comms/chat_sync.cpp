@@ -39,6 +39,11 @@ bool     g_haveRange = false;
 uint32_t g_rangeLo = 0;
 uint32_t g_rangeHi = 0;
 
+// Set once a GAP proves the applied set is NOT one interval, after which the range can
+// no longer describe the truth and dedup is abandoned rather than allowed to lie. See
+// OnChatLine. Cleared by the same Reset() as the range itself.
+bool     g_rangeBroken = false;
+
 // ---- the speaker binding table (client).
 //
 // A ChatSpeaker always immediately precedes its ChatLine on the same ordered lane, so
@@ -307,16 +312,26 @@ void OnChatLine(const coop::net::ChatLinePayload& payload) {
     }
 
     const uint32_t seq = payload.lineSeq;
-    if (g_haveRange && seq >= g_rangeLo && seq <= g_rangeHi) return;  // already applied
-    if (g_haveRange && seq != g_rangeHi + 1 && seq != g_rangeLo - 1) {
-        // A GAP. This cannot happen while ChatLine is absent from
-        // IsPreWorldSendableKind: everything said before this peer's world-ready is
-        // covered by the seed, and everything after arrives strictly in sequence, so
-        // the applied set is one interval that only ever grows. If this ever logs, that
-        // premise changed and the dedup needs a real interval SET rather than a range
-        // -- extending across the gap here would silently swallow the rows inside it.
-        UE_LOGW("chat: applied-range GAP -- line %u against [%u,%u]. The pre-world gate "
-                "must have changed; the dedup range can no longer express this",
+    if (g_haveRange && !g_rangeBroken && seq >= g_rangeLo && seq <= g_rangeHi)
+        return;  // already applied
+    if (g_haveRange && !g_rangeBroken && seq != g_rangeHi + 1 && seq != g_rangeLo - 1) {
+        // A GAP -- and this branch used to PERFORM the corruption its own comment warned
+        // about. It logged, fell through, and then widened [lo,hi] ACROSS the gap, so
+        // every row inside it was thereafter rejected as "already applied" and could
+        // never arrive. A joiner could silently lose almost its whole history and the
+        // only trace was one WARN nobody reads.
+        //
+        // The premise is still that this cannot happen: ChatLine stays off
+        // IsPreWorldSendableKind, the seed is gated + idempotent, and chat seqs in the
+        // record ARE consecutive (only chat Appends mint a seq, and eviction is from the
+        // front, so it never removes from the middle of the surviving run). This is the
+        // behaviour WHEN THAT PREMISE BREAKS, and the choice is deliberate: a range
+        // cannot express a hole, so we stop pretending it can and fall back to applying
+        // everything. Duplicates are VISIBLE and recoverable; swallowed rows are neither.
+        g_rangeBroken = true;
+        UE_LOGE("chat: applied-range GAP -- line %u against [%u,%u]. A contiguous range "
+                "cannot express this, so dedup is now OFF for this session: later rows "
+                "may repeat, but none will be silently dropped",
                 seq, g_rangeLo, g_rangeHi);
     }
 
@@ -401,6 +416,7 @@ void Reset() {
     for (bool& b : g_seeded) b = false;
     g_haveRange = false;
     g_rangeLo = g_rangeHi = 0;
+    g_rangeBroken = false;
     for (Speaker& sp : g_speakers) { sp.valid = false; sp.nick.clear(); }
 }
 

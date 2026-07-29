@@ -224,14 +224,9 @@ public:
     }
 
     // Seed a row DIRECTLY into the retained tier, bypassing live -- the join seed. The
-    // sorted insert is the general form; the seed arrives oldest-first so in practice
-    // every one of them appends at the back.
+    // seed arrives oldest-first so in practice every one of them appends at the back.
     void Seed(Entry&& e) {
-        const uint64_t k = e.key;
-        auto at = retained_.end();
-        while (at != retained_.begin() && (at - 1)->key > k) --at;
-        retained_.insert(at, std::move(e));
-        retainedDirty_ = true;
+        InsertRetained(std::move(e));
         CapRetained();
     }
 
@@ -258,8 +253,7 @@ private:
                 keep ? "-> history" : "(destroyed)",
                 static_cast<double>(EffectiveAgeMs(f, now)) / 1000.0, f.text.c_str());
         if (keep) {
-            retained_.push_back(std::move(f));
-            retainedDirty_ = true;
+            InsertRetained(std::move(f));
         } else {
             NoteDestroyed(f.text, now);
         }
@@ -267,12 +261,32 @@ private:
         CapRetained();
     }
 
+    // THE ONE INSERTION DISCIPLINE for the retained tier (2026-07-29). Both entrances --
+    // the join seed and live retirement -- come through here, because a deque built by
+    // two different rules is not ordered by either.
+    //
+    // This used to be a sorted insert in Seed and a plain push_back in Retire. Under the
+    // shipped design every retained row happened to be a wire row, so the two could not
+    // disagree; they disagree the moment a LOCALLY-authored History row retires after a
+    // seed has applied. AnnounceJoinerOnce is exactly that row: it fires at puppet spawn
+    // and RACES the seed, so with g_wireBase still 0 it keys at (0<<32)|n while seeded
+    // rows key at >= 1<<32, and a push_back would append it BEHIND all of them. That
+    // makes chat_feed.h's documented "ascending by key" FALSE, and chat_view's pin
+    // anchor search (`key >= g_anchorKey`) relies on it.
+    void InsertRetained(Entry&& e) {
+        const uint64_t k = e.key;
+        auto at = retained_.end();
+        while (at != retained_.begin() && (at - 1)->key > k) --at;
+        retained_.insert(at, std::move(e));
+        retainedDirty_ = true;
+    }
+
     void CapRetained() {
         // Paging back through history freezes eviction, or the rows you are reading
         // vanish as new ones arrive. A hard ceiling at 2x still wins: an unbounded
         // store is not a scroll feature.
         const bool frozen = g_retentionFrozen.load(std::memory_order_relaxed);
-        const size_t cap = static_cast<size_t>(kMaxRetained) * (frozen ? 2u : 1u);
+        const size_t cap = static_cast<size_t>(frozen ? kMaxHeldLines : kMaxRetained);
         while (retained_.size() > cap) {
             if (frozen) {
                 UE_LOGW("feed: retained ceiling hit while paged back (%zu > %zu) -- "
@@ -324,8 +338,16 @@ void Republish(uint64_t now) {
     if (reveal != g_pubRevealing || g_store.retainedDirty()) {
         g_pubRetained = 0;
         if (reveal) {
+            // Publish the WHOLE held tier. This used to stop at kMaxRetained while the
+            // store was allowed to hold kMaxRetained * kRetentionFreezeFactor, and the
+            // walk starts at the FRONT (oldest) -- so a reader paged back past the base
+            // ceiling had the rows that arrived DURING the freeze, the newest ones,
+            // silently outside the published window. The array is now sized to the same
+            // derived ceiling, so the bound below can never truncate; it is a guard, not
+            // a policy, and the live rows below always fit because
+            // kMaxSnapshotLines == kMaxLines + kMaxHeldLines.
             for (const Entry& e : g_store.retained()) {
-                if (g_pubRetained >= kMaxRetained) break;
+                if (g_pubRetained >= kMaxHeldLines) break;
                 FillLine(g_pub.lines[g_pubRetained++], e, 0.f);
             }
         }

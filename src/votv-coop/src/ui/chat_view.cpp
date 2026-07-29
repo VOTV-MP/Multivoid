@@ -101,8 +101,15 @@ void SetPinned(bool pinned) {
     }
 }
 
-constexpr int kRowCap      = 512;  // ~106 entries * up to 4 wrapped rows, with headroom
-constexpr int kEntryRowCap = 16;
+constexpr int kEntryRowCap = 16;   // most a single entry may wrap into
+
+// DERIVED, not chosen (2026-07-29). This was a hand-written 512 with the comment
+// "~106 entries * up to 4 wrapped rows, with headroom" -- a FIFTH expression of the
+// retained capacity, and the one nobody counted. Once the store can publish
+// kMaxSnapshotLines = 206 entries, a 512 ceiling stops the build loop after ~128 of
+// them, so paging back could never reach the oldest history: the rows exist, are
+// published, and are unreachable. The bound now moves with the store by construction.
+constexpr int kRowCap = coop::chat_feed::kMaxSnapshotLines * kEntryRowCap;
 
 struct Row {
     int         line = 0;   // index into the snapshot
@@ -110,6 +117,25 @@ struct Row {
     const char* b = nullptr;
     const char* e = nullptr;
 };
+
+// ---- the wrap memo (defect #10).
+//
+// forEachRow runs strlen + CalcWordWrapPositionA over EVERY published entry EVERY
+// frame, to draw the ~18 rows that fit on screen. The full set is genuinely needed --
+// PgUp pages through it -- so the fix is not a smaller bound but not recomputing an
+// answer that did not change. The wrap depends on exactly three things: WHICH rows are
+// published (the snapshot's gen), the wrap width, and the font pixel size.
+//
+// Holding `const char*` into the snapshot across frames is safe because the snapshot is
+// the function-local static below and is only refilled when its gen changes -- the same
+// gen this memo keys on, so a refill always invalidates the pointers that came from it.
+// Render thread only, like everything else in this file.
+Row  g_rows[kRowCap];
+int  g_rowsFirst = kRowCap;   // rows live in [g_rowsFirst, kRowCap)
+uint32_t g_rowsGen   = 0xFFFFFFFFu;
+float    g_rowsWrapW = -1.f;
+float    g_rowsPx    = -1.f;
+bool     g_rowsValid = false;
 
 }  // namespace
 
@@ -198,22 +224,50 @@ void Draw() {
 
     // Build the visible rows NEWEST-first into the back of a fixed array, so running
     // out of room drops the OLDEST history rather than the messages just sent.
-    Row rows[kRowCap];
-    int first = kRowCap;
-    for (int i = s.count - 1; i >= 0 && first > 0; --i) {
-        if (drawnAlpha(i) < kAlphaFloor) continue;
-        Row tmp[kEntryRowCap];
-        int nt = 0;
-        forEachRow(s.lines[i].text, [&](const char* b, const char* e) {
-            if (nt < kEntryRowCap) { tmp[nt] = Row{i, nt, b, e}; ++nt; }
-        });
-        if (nt == 0 || nt > first) break;  // whole entries only; oldest drops off
-        first -= nt;
-        std::memcpy(&rows[first], tmp, sizeof(Row) * static_cast<size_t>(nt));
+    //
+    // MEMOIZED on (gen, wrapW, px) -- see g_rows above. The alpha floor is deliberately
+    // NOT part of the key: alpha changes every frame as lines fade, but a row dropping
+    // below the floor does not change where any OTHER row wraps, and the draw pass
+    // re-reads alpha per row anyway. Keying on it would defeat the memo entirely while
+    // buying nothing.
+    // WHEN the memo applies. drawnAlpha floors every entry at `reveal`, so once the
+    // reveal is at or above the visible floor NO entry can be filtered out and the row
+    // set depends only on the memo key. Below that -- chat closed, live rows fading --
+    // the filter DOES bite, and it must: a row that is skipped stops occupying a line,
+    // and letting it through would draw transparent and leave a hole in the stack. That
+    // case is bounded at kMaxLines entries (Republish only publishes the retained tier
+    // while revealing), which is the cost this loop has always paid, so it simply
+    // rebuilds. Exact, rather than a filter signature folded into the key.
+    const bool memoizable = reveal >= kAlphaFloor;
+    if (!memoizable || !g_rowsValid || g_rowsGen != s.gen ||
+        g_rowsWrapW != wrapW || g_rowsPx != px) {
+        int first = kRowCap;
+        for (int i = s.count - 1; i >= 0 && first > 0; --i) {
+            if (!memoizable && drawnAlpha(i) < kAlphaFloor) continue;
+            Row tmp[kEntryRowCap];
+            int nt = 0;
+            forEachRow(s.lines[i].text, [&](const char* b, const char* e) {
+                if (nt < kEntryRowCap) { tmp[nt] = Row{i, nt, b, e}; ++nt; }
+            });
+            // `continue`, NOT `break` (defect #11): an entry that produced no rows means
+            // an empty text, and stopping there would silently drop every OLDER row
+            // behind it. Only running out of room is a reason to stop.
+            if (nt == 0) continue;
+            if (nt > first) break;  // whole entries only; oldest drops off
+            first -= nt;
+            std::memcpy(&g_rows[first], tmp, sizeof(Row) * static_cast<size_t>(nt));
+        }
+        g_rowsFirst = first;
+        g_rowsGen   = s.gen;
+        g_rowsWrapW = wrapW;
+        g_rowsPx    = px;
+        // Only a build that COULD be reused is worth marking valid; an alpha-filtered
+        // one is specific to this frame's fade state.
+        g_rowsValid = memoizable;
     }
-    const int nRows = kRowCap - first;
+    const int nRows = kRowCap - g_rowsFirst;
     if (nRows <= 0) return;
-    const Row* row = &rows[first];
+    const Row* row = &g_rows[g_rowsFirst];
 
     // ---- where the bottom of the view sits, in ROWS.
     int bottom = nRows - 1;

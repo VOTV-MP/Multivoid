@@ -44,7 +44,27 @@ inline constexpr int kMaxLines = 6;
 // cap -- 1.2 %. Chosen by product reference, bounded by measurement; not derived.
 inline constexpr int kMaxRetained = 100;
 
-inline constexpr int kMaxSnapshotLines = kMaxLines + kMaxRetained;
+// Paging back through history FREEZES eviction, or the rows being read vanish as new
+// ones arrive -- so the held tier may legitimately exceed kMaxRetained while pinned.
+// This is the ONE name for that allowance. It is not a spare knob: deleting it deletes
+// paging, and every quantity below is DERIVED from it so the four ceilings that used to
+// be written out separately cannot drift apart again (2026-07-29; the three-places
+// lesson had already fired twice on this file -- the publish walk stopped at
+// kMaxRetained while the store held twice that, so with a reader paged back the NEWEST
+// rows were the ones outside the published window).
+inline constexpr int kRetentionFreezeFactor = 2;
+
+// The most rows the retained tier can hold at once (pinned).
+inline constexpr int kMaxHeldLines = kMaxRetained * kRetentionFreezeFactor;
+
+// The publish array must physically hold everything the store can contain, or a row
+// that exists is a row nobody can see. This is the invariant that used to be false.
+inline constexpr int kMaxSnapshotLines = kMaxLines + kMaxHeldLines;
+
+static_assert(kMaxSnapshotLines >= kMaxLines + kMaxHeldLines,
+              "the snapshot must hold every live row plus the whole held tier");
+static_assert(kRetentionFreezeFactor >= 1,
+              "a freeze factor below 1 would evict the rows the reader is paged back over");
 
 // How long the reveal takes to ramp in/out. Shared by the store (which publishes
 // the retained tier for exactly this long after a close) and ui::chat_view (which
