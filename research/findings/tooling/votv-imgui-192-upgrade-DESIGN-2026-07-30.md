@@ -461,14 +461,14 @@ one arc away, not in this one.
 
 ## 7. THE FLIP — design of record (implementation `/qf`, 9 rounds, 2026-07-30)
 
-**Status: DESIGN. Nothing here is built.** Supersedes §4's C2b bullet. The pass ran **11 rounds / 44
-questions** and **twenty-four of the primary's claims were measured false**, including one where a
-*correct* recorded number was wrongly "corrected". **Still no "that holds" verdict** — rounds 10 and
-11 each returned four material questions and **all eight landed**: round 10 overturned this section's
-framing of what it delivers, round 11 **inverted the exclude-set choice** (§7.3), re-keyed the
-selftest (§7.2 item 6) and found the primary instrument blind to the failure it was paired with
-(§7.4). Rounds 5, 8, 10 and 11 each reversed something structural — the tail of a pass is not
-decoration here, and two consecutive four-for-four rounds is not the shape of a converged design.
+**Status: DESIGN. Nothing here is built.** Supersedes §4's C2b bullet. The pass ran **12 rounds / 48
+questions** and **twenty-eight of the primary's claims were measured false**. **Still no "that holds"
+verdict** — rounds 10, 11 and 12 were each **four-for-four**: round 10 overturned this section's
+framing of what it delivers, round 11 **inverted the exclude-set choice** (§7.3) and found the primary
+instrument blind to the failure it was paired with (§7.4), and round 12 found that **the exclude set
+as specified was a silent no-op** (§7.2 item 3) and that the invariant needed a **second table at a
+different layer** (§7.3a, item 9). Rounds 5, 8, 10, 11 and 12 each reversed something structural —
+three consecutive four-for-four rounds is not the shape of a converged design.
 
 Only one thing from this pass is committed: `683f8214`, the two stale imgui citations in
 `fonts.cpp` (comment-only, measured, independent of the flip).
@@ -542,9 +542,23 @@ hits `IM_ASSERT(!atlas->Locked)` — **stripped under NDEBUG** — and returns N
    `g_roleFont[]`, so both bring-up early returns (`imgui_overlay.cpp:299`, `:305`) are safe with or
    without `Load` having run, and `MaybeRescale` (`:330`) already exercises Load-after-InitRenderer on
    every scale change.
-3. **ONE frozen table, `no-ink ∪ DEFAULT_IGNORABLE ∪ PUA` = 32 ranges / 64 values, driving BOTH the
-   fold table and `ImFontConfig::GlyphExcludeRanges`** (round 11 inverted this from `no-ink ∪ PUA`;
-   see §7.3 — the shorter set re-admits U+034F and U+FE0F and reddens `repertoire.cpp:89`).
+3. **ONE frozen table, `no-ink ∪ DEFAULT_IGNORABLE ∪ PUA` = 32 ranges / 64 values, STARTING AT
+   U+0001, driving BOTH the fold table and `ImFontConfig::GlyphExcludeRanges`** (round 11 inverted
+   this from `no-ink ∪ PUA`; see §7.3 — the shorter set re-admits U+034F and U+FE0F and reddens
+   `repertoire.cpp:89`).
+
+   **THE U+0001 CLAMP IS NOT COSMETIC — without it the entire exclude set is a silent no-op**
+   (round 12, and it would have shipped). `GlyphExcludeRanges` is a **zero-terminated** `ImWchar`
+   array: `ImFontAtlasBuildAcceptCodepointForSource` walks `for (; exclude_list[0] != 0;
+   exclude_list += 2)` (`imgui_draw.cpp:4539-4542`) and the sizing loop at `:3111-3113` counts the
+   same way. `no-ink` begins at `Cc` = **U+0000**, so the first emitted value is `0`, the walk
+   terminates at index 0, **every codepoint is accepted, and nothing is ever excluded.** Both
+   `IM_ASSERT`s at `:3114-3115` would have passed (size 0 is even and ≤ 64) *and* are stripped under
+   NDEBUG — `[[lesson-an-upstream-assert-your-build-strips-is-not-a-guard]]` firing inside the same
+   session that recorded it. U+0000 is not hypothetical: it is in the cmap of **FSEX300, Roboto-
+   Regular and Roboto-Bold** (measured). It also cannot legitimately be requested — ImGui text is
+   NUL-terminated — so clamping the table's first range to U+0001 costs nothing. The generator gets
+   a hard `sys.exit` if the first emitted value is 0, because nothing downstream can see this.
    Post-flip `GlyphRanges` is dead input, so "fold == render"
    stops being true by construction; `GlyphExcludeRanges` restores it, measured to gate the
    **on-demand** path at `imgui_draw.cpp:4593` via `ImFontAtlasBuildAcceptCodepointForSource`
@@ -606,7 +620,19 @@ hits `IM_ASSERT(!atlas->Locked)` — **stripped under NDEBUG** — and returns N
    `ImGui_ImplDX12_UpdateTexture(tex)` **timed** per texture, then null `draw_data->Textures` so the
    backend does not repeat the work. Yields per-upload ms / box dims / bytes / geometry, and it is
    exactly the seam our own servicing would later replace.
-9. **RULE 2: delete the dead inclusion path in the same commit** (round 10). The ranges reach ImGui as
+9. **A SECOND generated table — the name DENY set — because the uniqueness invariant belongs to
+   NAMES, not to the atlas** (round 12; see §7.3a for the census). The widened render set admits
+   **523 zero-advance codepoints in 48 ranges** that our faces draw, 307 of them `Mn` combining
+   marks. Those are not invisible — they compose: post-flip `"A" + U+0301` draws as `Á` while folding
+   to a different key, which is arc D2's defect arriving from a direction the category-based exclude
+   set cannot see. **Do not solve it in `GlyphExcludeRanges`**: chat is not uniqueness-bearing, and
+   deleting 307 marks from the atlas would degrade the user's actual ask to protect a property only
+   names need. Instead the same generator emits `coop::text::IsZeroAdvance()` from the **hmtx**
+   census, and the existing name denylist `denied()` (`player_handshake_nick.cpp:121`) tests it
+   beside `IsDefaultIgnorable`. A name then cannot contain one, so uniqueness holds by construction
+   at the receive boundary, and chat draws every mark. One generator, three consumers (fold, exclude,
+   deny); a new font changes all three together or fails the build.
+10. **RULE 2: delete the dead inclusion path in the same commit** (round 10). The ranges reach ImGui as
    the `glyph_ranges` **parameter** of `AddFontFromMemoryTTF` (`fonts.cpp:133`), which ImGui stores
    into `ImFontConfig::GlyphRanges` — so it is passed on every add, through `AddFromResource` and
    `MergeBackstops`. Once it is measured-dead input, leaving it is precisely the live-looking knob
@@ -614,8 +640,8 @@ hits `IM_ASSERT(!atlas->Locked)` — **stripped under NDEBUG** — and returns N
    parameter goes from both functions, and `Repertoire()`'s ImWchar-array conversion goes with it
    (verify no other caller at build time). **The repertoire TABLE stays** — it is the fold authority
    and now also the source of the exclude set; only its *inclusion* form dies.
-10. Proto unchanged. `overlay_backend_dx12.cpp` 735 of 800; this commit adds ~20 lines there.
-   `fonts.cpp` 545 of 800, and item 9 removes lines from it.
+11. Proto unchanged. `overlay_backend_dx12.cpp` 735 of 800; this commit adds ~20 lines there.
+   `fonts.cpp` 545 of 800, and item 10 removes lines from it.
 
 ### 7.3 The table, measured (`scratchpad/fold_vs_render.py`, the generator's own tables)
 
@@ -675,6 +701,40 @@ is `[[lesson-a-generated-constant-must-not-depend-on-the-toolchains-data-version
 The generator gets a `sys.exit` if the exclude table exceeds 32 ranges, because :3115's assert cannot
 fire in our build.
 
+### 7.3a The census the categories could not do (round 12, measured with fontTools `hmtx`/`glyf`)
+
+Rounds 2-11 argued about **Unicode categories**. Arc D2's invariant is about **pixels**, and the two
+are not the same set. A read-only census of every cmap entry in the shipped faces, by advance width
+and outline emptiness:
+
+```
+codepoints in faces                                    8,148
+ZERO-ADVANCE + empty outline  (INVISIBLE, class a)         2   U+034F, U+FEFF
+ZERO-ADVANCE + has outline    (COMPOSING,  class b)       511   Mn 307 | Co 192 | Me 5 | Cf 4 | Po 3
+zero-advance across faces+donor                          523   in 48 ranges
+  of those NOT already in no-ink u IGN u PUA             322   in 34 ranges
+```
+
+Two conclusions, and they go to **different layers**:
+
+- **Class (a) vindicates round 11 exactly.** The invisible-glyph class is precisely two codepoints,
+  and both are inside `no-ink ∪ DEFAULT_IGNORABLE`. The category-based exclude set is the right
+  instrument for what it covers. (U+FE0F does not appear here because it is the *donor's*, not the
+  faces'.)
+- **Class (b) is a hole no category set can close.** 307 combining marks draw real ink at zero
+  advance, so post-flip `"A" + U+0301` is pixel-indistinguishable from `Á` while folding to a
+  different key. Today they are safe only because `BASE_RANGES` jumps 0x024F → 0x0370 and they fold
+  to the sentinel; the widening removes that accident. **Adding them to `GlyphExcludeRanges` would
+  take the table to 64 ranges / 128 values and delete 307 marks from chat** — degrading the user's
+  actual ask to protect a property only *names* need. So it is fixed at the name layer instead
+  (§7.2 item 9), and the exclude table stays at 32 ranges.
+
+Worth recording because it nearly went the other way: the `size <= 64` limit is **advisory, not a
+correctness bound** — `AcceptCodepointForSource` is a linear scan and upstream's own comment says
+*"assume … a SMALL ARRAY (e.g. <10 entries)"* — so exceeding it would have cost O(ranges) per
+first-sight codepoint per source, not a break. The reason not to is that it is the wrong layer, not
+that it is forbidden.
+
 **"Renders no ink" has TWO owners with two vocabularies, and that is CORRECT — but undocumented**
 (round 11). The nick denylist `denied()` (`player_handshake_nick.cpp:121`) tests
 `coop::text::IsDefaultIgnorable`; the exclude/fold table tests `no-ink`. They must not be merged,
@@ -717,6 +777,15 @@ Mono does):
 | U+00AD | **all seven faces** | a missed field on any config at all |
 | U+E0B0 | JetBrains Mono only | the backstop-merge path |
 | U+E0067 | **donor only** | the donor config — and it is the TAG class whose baking blows index tables 1.04 → 7.34 MB per face |
+
+**It DETECTS; it does not PREVENT — say so rather than implying a guard** (round 12). Today
+`GlyphRanges` makes an OS-fallback superset *structurally impossible*: a source can only be asked for
+what was listed. Item 3 replaces that with a subtract-only mechanism, so the flip **introduces** the
+break §7.2 item 7 answers with a WARN. In Release the invariant logs loudly and the §7.7 gate reads
+it; it cannot refuse the source, because the alternative to a superset font is **no font at all**.
+That path runs only when every embedded RCDATA family failed to load, and the residue is
+fold-collide/render-distinct — two names that fold alike but look different, so the arbiter renames
+one needlessly. Annoying, bounded, and not the uniqueness direction that matters.
 
 **Regime assertion first**: `Fonts->RendererHasTextures == true`. Under an eager boot every one of the
 above is green-by-construction — `[[lesson-an-instrument-never-shown-failing-passes-by-construction]]`
