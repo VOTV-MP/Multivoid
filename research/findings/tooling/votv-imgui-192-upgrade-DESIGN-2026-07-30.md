@@ -461,8 +461,8 @@ one arc away, not in this one.
 
 ## 7. THE FLIP — design of record (implementation `/qf`, 9 rounds, 2026-07-30)
 
-**Status: DESIGN. Nothing here is built.** Supersedes §4's C2b bullet. The pass ran **20 rounds / 76
-questions** and **fifty-three of the primary's claims were measured false**. Round 20 found that the
+**Status: DESIGN. Nothing here is built.** Supersedes §4's C2b bullet. The pass ran **21 rounds / 79
+questions** and **fifty-six of the primary's claims were measured false**. were measured false**. Round 20 found that the
 receive-boundary ledger **delays rather than bounds** — it saturates, after which a full-repertoire
 snapshot passes with zero novelty — which **un-defers the FreeType metrics pass into a precondition
 of commit 1**, and that round 14's "stop baking" rule would have made the emoji colour check
@@ -722,7 +722,22 @@ cannot ship admitting the marks without it.
    `[[lesson-an-instrument-never-shown-failing-passes-by-construction]]` arriving by the front door.
    It therefore bakes **one known in-repertoire emoji, deliberately, once per build**, documented as
    the one intentional bake — one glyph of pack area, not the set-sized cost round 14 was right to
-   fear. A pending flag set by `Load()` is per-*Load*: it sees boot,
+   fear.
+
+   **Two consequences of making the selftest CONDITIONAL, both round 21, both must land with it.**
+   **(a) The memo must be cleared when the atlas is recreated.** `TexNextUniqueID` is reset to 1 in
+   `ImFontAtlas::ImFontAtlas()` (`imgui_draw.cpp:2677`) and `imgui.h:3567` scopes `UniqueID` as
+   "[DEBUG] … Unique **per atlas**" — so after `OnContextDestroyed` (`fonts.cpp:541`) and a context
+   recreate, the counter restarts and a remembered `1` matches the NEW atlas's first texture,
+   silently skipping the only COLR instrument. The memo is cleared in `OnContextDestroyed`, which is
+   already the hook for exactly this class, and in `Load()`.
+   **(b) The smoke assertion must go POSITIVE.** `tools/mp.py:1539` asserts by *negative* grep
+   (`"selftest: FAIL" not in log`), which is sound only while the selftest runs unconditionally at
+   boot. Once execution is conditional, "passed" and "never ran" are the same log. The file already
+   carries the positive form at `mp.py:848` (`"config-selftest: DONE fail=0" not in host_text` →
+   fail), so the selftest emits a positive DONE line with its counts and mp.py asserts **that**.
+   `[[lesson-an-instrument-never-shown-failing-passes-by-construction]]` has a sibling: an instrument
+   whose *absence* is indistinguishable from its success. A pending flag set by `Load()` is per-*Load*: it sees boot,
    rescale and the F1 family switch, and is **structurally blind to every build
    `ImFontAtlasTextureMakeSpace` triggers** (`imgui_draw.cpp:4239`) — which is precisely where a
    growing atlas does its interesting work. That is the same `static bool done` shape s15 removed,
@@ -1110,11 +1125,31 @@ Both belong in `docs/security/TRACKER.md`, with **different severity and differe
   *every live role size at once* and is not a quantity any single surface can demand. Three
   conclusions, all now measured rather than argued:
 
+  **Round 21 corrected the discharge's own arithmetic — the margin is 1.17x, not 3x.** The atlas is
+  **shared across every live size** and its GC is pressure-only, so the resident quantity is the SUM
+  over the sizes that can carry remote text, not one slice. Re-measured with the donor's
+  empty-outline glyphs priced at px² each:
+
+  ```
+  px 18.00 (chat feed)                1,448,794 px2 = 0.345x of 2048^2
+  px 16.00 (scoreboard / nick)        1,184,780 px2 = 0.282x
+  px 14.08 (overhead bubble, 0.88x)     956,319 px2 = 0.228x
+  feed + bubble                       2,405,113 px2 = 0.573x
+  + scoreboard, all three FULL        3,589,892 px2 = 0.856x  <- pathological worst case
+  ```
+
+  Oversampling does **not** apply and does not double it: `ImFontAtlasBuildGetOversampleFactors` is
+  `(Only used by stb_truetype builder)` (`imgui_draw.cpp:3505`) and `fonts.cpp:387` already records
+  that the FreeType builder ignores `OversampleH/V` and hints instead.
+
   - **`TexMax` stays 2048**, on evidence instead of on the withdrawn round-7 derivation.
-  - **The permanent box is NOT remotely reachable at one size** — it needs roughly 3x more demand than
-    the entire repertoire rendered at chat px.
+  - **The permanent box is not remotely reachable**, but the headroom is **17 %**, not 200 %. That is
+    a fit, not a comfortable one — which is exactly why §7.4's pack-failure detector is load-bearing
+    rather than diagnostic, and why the "~3x margin" this section claimed one revision ago is
+    withdrawn.
   - **No frame-side bound is needed, and none is built.** Round 20's frame policeman is not merely
-    deferred, it is unnecessary; the capacity already covers the worst case a peer can author.
+    deferred, it is unnecessary; the capacity covers the worst case a peer can author, with the
+    detector as the tripwire if this arithmetic is wrong again.
 
   The receive-boundary novelty cap **stays**, with its purpose corrected: it bounds the CPU cost of
   rasterising thousands of first-sight glyphs inside one frame — a stutter — and no longer claims to
