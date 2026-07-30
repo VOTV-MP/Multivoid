@@ -1,9 +1,10 @@
 # ImGui 1.91.5 -> 1.92.9: the measured migration, and the plan the `/qf` left standing
 
-**Status: MEASURED (compile + link, by a reverted spike). NOTHING BUILT, NOTHING COMMITTED.**
-HEAD at write time `a0a9bb70`; submodule still pinned `v1.91.5` (`f401021d5`); tree clean.
-Logs: `build/imgui1929_pricing.log` (pre-port errors), `build/imgui1929_pricing2.log` (clean link).
-Snapshot used: `build/imgui1929/` (a 1.92.9 checkout with `.git` stripped).
+**Status: MEASURED (compile + link, by a reverted spike) + §3.2 RUN. The UPGRADE ITSELF IS STILL
+UNBUILT** — submodule remains pinned `v1.91.5` (`f401021d5`). Shipped from this plan so far: **P0
+only** (`af234c08`), plus the arm-L instrument (`fcae169e`).
+Logs: `build/imgui1929_pricing.log` (pre-port errors), `build/imgui1929_pricing2.log` (clean link),
+`build/imgui192_armL.log` (the §3.2 run). Snapshot: `build/imgui1929/` (a 1.92.9 checkout).
 
 **Why this document exists.** The glyph thread (see §1) converged on a single root: CJK is
 unaffordable in ImGui 1.91.5 *whatever the glyph source and whatever the bake trigger*, because
@@ -118,10 +119,15 @@ face cmap carries — 8,148 codepoints today against the 2,517 we fold. Arc D2's
 ("one generator mints both what FOLDS and what BAKES, so they cannot drift") is not *violated* by the
 upgrade; it is **dissolved**, because the bake side stops being a set.
 
-**And on-demand baking is NOT gated on the flag.** `ImFontBaked_BuildLoadGlyph`
+**And on-demand baking is NOT gated on the flag** — `ImFontBaked_BuildLoadGlyph`
 (`imgui_draw.cpp:4562-4571`) checks only `atlas->Locked` and `ImFontFlags_NoLoadGlyphs`; the
-per-source accept test uses `GlyphExcludeRanges`, never `GlyphRanges`. So a codepoint outside the
-preload bakes on demand **even in the legacy regime** — which is why §3.2 exists.
+per-source accept test uses `GlyphExcludeRanges`, never `GlyphRanges`.
+
+**CORRECTED 2026-07-30 by the §3.2 run: right about the flag, wrong about the consequence.**
+`UpdateFontsNewFrame` (`imgui.cpp:9089-9094`) turns the missing flag INTO `atlas->Locked = true`,
+and `UpdateFontsEndFrame` (`imgui.cpp:6173-6175`) clears it. So `Locked` *is* the flag, one
+indirection away, and the legacy regime does not demand-bake while drawing. What it does NOT cover
+is the gap between `EndFrame` and the next `NewFrame` — see §3.2.
 
 ### 2.6 Other measured bounds
 
@@ -174,14 +180,39 @@ Because DX11's init sets `RendererHasTextures` unconditionally and DX12's legacy
 RHI, and the commit would not be bisectable. The plan's C1 therefore clears the flag explicitly on
 DX11 as a named transitional gate, retired in C2.
 
-### 3.2 The "behaviour-identical" claim for a straight port is NOT established
+### 3.2 RUN AND ANSWERED (2026-07-30) — drawing is identical; our own selftest is the break
 
-Under 1.91.5 a codepoint absent from the atlas drew as `FallbackGlyph` and nothing else happened.
-Under 1.92-legacy it **bakes** (§2.5), which grows the atlas while a legacy backend uploads only once
-via `GetTexDataAsRGBA32`. Whether that yields a correct draw, a stale texture, or a broken one is
-**not decidable by reading** — `PreloadedAllGlyphsRanges` and the `IM_ASSERT_USER_ERROR` pair at
-`imgui_draw.cpp:2814-2817` clearly anticipate the situation but do not state the outcome.
-**This is the first thing the next session must RUN.**
+The open question was whether a straight port draws, stalls or breaks when a codepoint outside the
+preload arrives. **Measured** by `tools/probes/atlas_probe/atlas_probe_192.cpp` arm L (commit
+`fcae169e`, log `build/imgui192_armL.log`), on the REAL atlas — same three deduped faces, same
+per-role px, same generated repertoire, same shipped donor as `ui::fonts::Load`:
+
+| | measured |
+|---|---|
+| `atlas->Locked` inside every legacy frame | **1** |
+| 7 out-of-repertoire codepoints drawn (em dash, ellipsis, both curly quotes, ruble, numero, arrow) | **not baked** — glyph total stays 7,557 |
+| `TexIsBuilt` after drawing them | **1** (unchanged) |
+| texels diverging from the single upload | **0** |
+| witness UVs moved (`A`, U+0410, U+FFFD, U+1F600) | **0** |
+| ImGui errors raised | **none** |
+
+**So a straight port IS behaviour-identical for drawing: the character renders `FallbackGlyph`,
+exactly as 1.91.5 did.** That also makes C1's DX11 flag-clear measured-safe rather than merely
+plausible.
+
+**The one real break is ours, and it is a C1 blocker.** `Locked` holds only `NewFrame..EndFrame`.
+Outside a frame it is 0, and there `FindGlyphNoFallback` **bakes**: measured `glyphs 7557 -> 7558`
+and **`TexIsBuilt` 1 -> 0**, after which every subsequent legacy frame raises the
+`imgui_draw.cpp:2815` user error — permanently, because nothing re-uploads.
+`ui/fonts.cpp:265,285,287` is exactly that call, issued from `Load()`, which `imgui_overlay.cpp:295`
+runs before `ImGui_ImplWin32_Init` with no frame in scope at all — and its RED case is deliberately
+an ABSENT codepoint. Under 1.91.5 the same query was a pure read. **The plan's "relabel the
+selftest" bullet therefore moves from cosmetic to blocking**, and the fix is not a relabel: the
+selftest must stop asking the atlas a question that mutates it.
+
+The first version of this arm inspected after `Render()`, in the unlocked gap, and reported "the
+glyph bakes on demand" — it had measured its own instrument.
+`[[lesson-querying-a-lazy-cache-populates-it]]`, now with a victim.
 
 ### 3.3 33 shipped invisible, uniqueness-bearing codepoints
 
@@ -224,12 +255,19 @@ number**, and it is its own commit with its own attribution, independent of the 
 Six `/qf` rounds, every one of which corrected something. Ordering is load-bearing.
 
 - **P0 — `g_pending` loses its fixed size.** §3.4. Live latent defect, own commit, own attribution.
-  Not an upgrade precondition.
+  Not an upgrade precondition. **DONE 2026-07-30, `af234c08`** — `std::vector` of live entries,
+  compacted per frame; the overflow branch + `g_pendingCount` retired (RULE 2). Links clean, NOT
+  verified at runtime (DX12-only path; a default LAN smoke launches DX11).
 - **C1 — pin -> `v1.92.9` + the 3-file port + explicitly clear `RendererHasTextures` on DX11**
   (named transitional, retired in C2), so one build has ONE repertoire regardless of RHI. **The
-  behaviour-identity claim must be MEASURED, not asserted** (§3.2); the DX11 gate stands or falls on
-  that run. Also verify the pre-`NewFrame` ordering — `BringUp` calls `fonts::Load()` before
-  `ImGui_ImplWin32_Init` (`imgui_overlay.cpp:295`).
+  behaviour-identity claim is now MEASURED** (§3.2): the legacy regime locks the atlas, so drawing is
+  identical and the DX11 clear is safe. **But C1 no longer ships without the selftest fix** — the
+  boot selftest queries the atlas with no frame in scope, which BAKES and flips `TexIsBuilt`, turning
+  every later frame into an ImGui user error. Also verify the pre-`NewFrame` ordering — `BringUp`
+  calls `fonts::Load()` before `ImGui_ImplWin32_Init` (`imgui_overlay.cpp:295`); that ordering is
+  precisely why the selftest sits in the unlocked gap. Fold in the two one-liners from §5b
+  (`CmdListsCount` -> `CmdLists.Size`; `AddFontDefaultBitmap()` + `IMGUI_DISABLE_DEFAULT_FONT_VECTOR`,
+  worth 14,562 B).
 - **C2 — DX12 `InitInfo` + our alloc/free callbacks + ONE unified free list** (the hard-coded
   "slot 0 = ImGui font" reservation retires), ImGui's `Free` routed through `QueuePendingRelease`,
   flag ON for both RHIs, **TOGETHER WITH** the regenerated fold table (+4,772; `BASE_RANGES` retires
@@ -276,16 +314,59 @@ logged fold != render divergence.
 
 ---
 
+## 5b. What the v1.92.9 release page adds (checked against the 1.92.9 source, 2026-07-30)
+
+Four entries land on our code; none was visible in the port diff.
+
+- **`ImFontAtlas::Clear()`/`ClearFonts()` documented as "unlikely to be useful nowadays"**, plus
+  improved recovery for `ClearFonts()` called *during rendering* (`imgui.h:3745`, `:3586`).
+  `fonts.cpp:301` opens `Load()` with `io.Fonts->Clear()`, and `Load()` is re-entrant on every
+  scale/family change — i.e. exactly the mid-render case upstream patched *recovery* for. This is
+  upstream corroboration for **C3**, which retires that idiom.
+- **`ImGuiItemFlags_LiveEditOnInputScalar` now defaults OFF** (`imgui.h:1259-1262`, changelog
+  `imgui.cpp:398-402`). We have three `InputInt`s — `dev_menu.cpp:100/103/106`, the day/hour/minute
+  clock setters. Before: typing "12" in the hour field wrote 1 then 12. After: 12 on validation.
+  For a world-clock setter that is a fix, but **it is a silent UI behaviour change a compile cannot
+  see**. `InputText` (the nickname + host fields) is unaffected.
+- **`IMGUI_DISABLE_DEFAULT_FONT_VECTOR` is a free DLL-size lever**, worth **14,562 compressed bytes**
+  (`imgui_draw.cpp:6560` — a fifth of the port's +71 KB). 1.92 embeds a second, VECTOR default font
+  beside ProggyClean (9,583 B, `:6371`). `AddFontDefault` is now a size heuristic
+  (`imgui_draw.cpp:3180-3186`: vector when expected size >= 15, else bitmap), and our last-resort
+  `fonts.cpp:394` sits at 13 -> bitmap, so today the vector font is dead weight. **Conditional:** if
+  C3 sets `style.FontSizeBase` >= 15 the heuristic flips. Make it unconditional by calling
+  `AddFontDefaultBitmap()` explicitly, which is upstream's own advice at `:3178`.
+- **`ImDrawData::CmdListsCount` obsoleted** — used in OUR code at `overlay_backend_dx12.cpp:413` (a
+  log line). Compiles, so it is §2.3-class RULE-2 baggage; one-line fix, `-> CmdLists.Size`.
+
+Two lower-risk watch items: `CalcTextSize()` width rounding was refined to avoid 1-px differences,
+and we word-wrap chat through `CalcWordWrapPositionA` — so pre-upgrade chat-layout screenshots are
+not pixel-comparable. And destroying a context now asserts the atlas has no remaining references
+(`imgui.cpp:4539`), a new assert on the device-reset path we exercise.
+
 ## 6. Still unmeasured, knowingly
 
-All runtime behaviour. Specifically: §3.2's legacy-regime on-demand bake outcome; whether
-`ImGuiFreeTypeBuilderFlags_LoadColor` still yields COLOURED emoji under per-size baking; which
-texture FORMAT 1.92 picks (our emoji need RGBA32, not Alpha8); whether
+All remaining runtime behaviour. §3.2 is now RUN (see above), and two more items closed with it:
+
+- **`LoadColor` DOES still paint under per-size baking** — measured `UseColors=1`, `Colored=3`,
+  **2,600 non-greyscale texels**; without the flag `emoji-visible=0`, confirming `fonts.cpp:186`'s
+  comment still holds in 1.92.
+- **Which format 1.92 picks: RGBA32**, driven by `UseColors` when a colour source is present. And
+  **`TexDesiredFormat = ImTextureFormat_Alpha8` is a TRAP**: measured `Colored=3` but
+  **`non-greyscale=0`** at 0.06 MB vs 0.25 MB. It buys 4x memory by silently greying every emoji.
+  **Do not set it.**
+
+Still open: whether
 `ImGui_ImplDX12_UpdateTexture` contends with our own `CreateTexture` upload (own command list +
 fence, `overlay_backend_dx12.cpp:505-525`); the per-size bake cost when five roles at different px
-each demand their own `ImFontBaked`; and `g_pending`'s steady state once ImGui is a second producer.
+each demand their own `ImFontBaked`; and `g_pending`'s steady state once ImGui is a second producer
+(the cap is gone as of `af234c08` — §3.4 — so the question is now the rate, not the ceiling).
 **The ported selftest was compiled and linked, never run** — which texture a glyph's UV addresses
 after a repack, with two textures live, is exactly the sort of thing not to infer.
+
+Also unmeasured and now REQUIRED by §3.2: the replacement selftest. Its RED case must stay
+discriminating (a codepoint no face carries) without asking the live atlas — `build_repertoire.py`
+already knows every face's cmap at generate time, so the honest question is a cmap fact, not an
+atlas one.
 
 **What this upgrade delivers: no CJK and no OS fonts.** It is the precondition. The prior session's
 own dynamic-atlas probe (`votv-arc-d-gate-measurements-2026-07-28.md` M2) priced 3,000 drawn hanzi at
