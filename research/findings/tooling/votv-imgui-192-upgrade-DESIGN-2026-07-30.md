@@ -461,8 +461,10 @@ one arc away, not in this one.
 
 ## 7. THE FLIP — design of record (implementation `/qf`, 9 rounds, 2026-07-30)
 
-**Status: DESIGN. Nothing here is built.** Supersedes §4's C2b bullet. The pass ran **18 rounds / 71
-questions** and **forty-eight of the primary's claims were measured false**. **No "that holds"
+**Status: DESIGN. Nothing here is built.** Supersedes §4's C2b bullet. The pass ran **19 rounds / 73
+questions** and **fifty of the primary's claims were measured false**. Round 19 corrected round 18's
+own answer: the novelty ledger cannot be ImGui's `IndexLookup` — wrong thread, and erased by the very
+pressure it bounds — so the receive boundary keeps its own monotone set (§7.5). **No "that holds"
 verdict was ever given** — rounds 10 through 18 landed **every question asked**. Round 18 measured
 that the nameplate's continuous size ramp does NOT mint a baked per frame (`IM_ROUND`), corrected
 this section's "resident = last two frames" wording to the pressure-triggered truth, and moved the
@@ -1032,9 +1034,22 @@ Both belong in `docs/security/TRACKER.md`, with **different severity and differe
 
   So: **cap the NOVELTY a remote peer can introduce, where the text enters.** `coop/text/utf8_codec`
   is already the single owner of decoding at the receive boundary (arc D1), so it is where a
-  per-peer, per-interval budget of **never-before-seen codepoints** belongs — measured with §7.4's
-  pure `IndexLookup` sentinel read, refusing or truncating the offending field exactly as the strict
-  decode already refuses ill-formed input. Every surface that later draws the string is then bounded
+  per-peer, per-interval budget of **never-before-seen codepoints** belongs, refusing or truncating
+  the offending field exactly as the strict decode already refuses ill-formed input.
+
+  **The ledger is OURS, not ImGui's — round 19, and it corrects round 18's own answer.** Round 18 said
+  to measure novelty with §7.4's pure `IndexLookup` sentinel read. That is wrong twice over. **(a)
+  Thread:** the receive boundary runs on the GAME thread (`net_pump.cpp` → `event_feed::Update`)
+  while `IndexLookup` is render-thread state that `ClearOutputData()` reallocates from inside the very
+  `MakeSpace` item 4 rests on — a cross-thread read of a vector another thread reallocates, in a
+  subsystem whose neighbours already state the game-thread-only invariant. §7.4's "public and pure"
+  finding was about the RENDER side, and extending it here was an over-reach. **(b) Semantics:** a
+  pressure-triggered discard **erases "already seen"**, so an `IndexLookup`-backed budget would forget
+  precisely under the pressure it exists to bound, and a cooperative peer's next message would be
+  refused after an unrelated repack. So the boundary keeps **its own monotone set** of accepted
+  codepoints — a bitset over the repertoire, owned by `utf8_codec`, touched only on the game thread,
+  with no ImGui dependency at all. It is also the more honest measurement: what bounds rasterisation
+  work is what the *boundary* has admitted, not what happens to be resident in the atlas this frame. Every surface that later draws the string is then bounded
   **by construction**, because the string cannot carry unbounded novelty. One owner instead of three,
   no deferral, no freeze, no soft cap, and no per-frame work on a draw path at all. The budget is a
   `config_registry` row so it is tunable without a rebuild.
