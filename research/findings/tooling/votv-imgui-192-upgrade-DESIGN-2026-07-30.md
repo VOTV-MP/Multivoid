@@ -461,10 +461,71 @@ one arc away, not in this one.
 
 ## 7. THE FLIP — design of record (implementation `/qf`, 9 rounds, 2026-07-30)
 
-> ### COMMIT 1 IS BUILT (2026-07-30). Smoke-measured on both RHIs; NOT hands-on.
+> ### BOTH COMMITS ARE BUILT (2026-07-30). Smoke-measured; NOT hands-on.
 >
-> The design below is the plan; this box is what shipped and how it differs. **Commit 2
-> (NFC on the fold key) is still DESIGN** — the combining marks stay excluded.
+> The design below is the plan; this box is what shipped and how it differs.
+>
+> ### COMMIT 2 SHIPPED WITHOUT NFC, AND ITS PREMISE WAS MEASURED FALSE (`244b1320`)
+>
+> **Read this before believing anything §7.1a or the round-12-15 material says about
+> commit 2.** The design specified canonical composition on the fold key — 814 pairs plus
+> canonical combining classes — to stop `"A"+U+0301` from drawing identically to `Á` while
+> folding to a different key. That justification was never measured. It is false.
+>
+> Rendered through FreeType with no shaping (which is what ImGui does — `FT_DISABLE_HARFBUZZ`,
+> `CMakeLists.txt:81`), across all seven shipped faces: **a base+mark pair is pixel-identical
+> to its precomposed form in 1 of ~3,560 face-pair combinations.** There is no GPOS anchor, so
+> the mark draws at its own left-side-bearing and the two are visibly different. The NFC
+> machinery would have collided things that do not look alike, in order to prevent a collision
+> that does not occur. **Dropped, not deferred.**
+>
+> The design's arithmetic was also wrong: **844 is the RAW two-part decomposition count**, and
+> 30 of those are `Composition_Exclusion` (all Hebrew presentation forms, U+FB2E–U+FB4B), so
+> only **814** compose. "41 marks that ever compose / 296 that never do" measure as **35 / 302**.
+>
+> **What commit 2 actually is: admit the marks.** That turned out to be a user-visible
+> deliverable the design had written off — measured, commit 1 excluded all 337, which cost
+> THAANA 11/11 (Dhivehi is written *entirely* in Mn, so it was unwritable), TAMIL 12/12,
+> THAI 16/26, ARABIC 17/33, HEBREW 8/10, in the build whose §7.0 advertises Hebrew, Thai and
+> Arabic. **335 admitted** (U+034F and U+FE0F stay out as `Default_Ignorable`), repertoire
+> **7,258 → 7,593**, exclude **67/134 → 32/64** — exactly ImGui's advisory cap.
+>
+> **Two gates, because subtracting a class from one gate is how a gate stops firing unnoticed.**
+> The zero-advance residue gate keeps its constant `{055B,055C,055E}` and now subtracts the
+> marks, so it still catches the next NON-mark zero-advance codepoint (without the subtraction
+> its residue goes 3 → 322 and the only remedy is widening the constant its own text forbids).
+> A **new ink gate** asserts every admitted mark has outline contours in every face claiming
+> it — the old gate reads hmtx ADVANCE and never ink, so it could never have caught the real
+> threat: a mark that draws *nothing* is an invisible character in a nickname, i.e. U+034F one
+> level down, inside the class being admitted. Contour-based, measured to agree exactly with
+> rasterising for ink, so no new dependency. `build_repertoire_drill.py` is **6 gates, all RED,
+> baseline GREEN**.
+>
+> **RULE 2 in the same commit:** `SanitizeNickname`'s literal `c >= 0x0300 && c <= 0x036F` is
+> deleted for a generated `mark_ranges.inc` + `coop::text::IsCombiningMark` (335 codepoints).
+> The literal was correct while Latin was the only bakeable mark block and silently wrong the
+> moment five more scripts' marks drew — it would have policed Latin diacritics and let the
+> rest stack onto the UI. And the persist hole that opens with it: `repertoireSuspect` reads
+> the *already-sanitized* store, so a name our own rules edited scans clean and its suffix
+> reaches `multivoid.ini` permanently; `SetLocalNickname` now records whether sanitization
+> changed the request, at the one moment the raw string exists.
+>
+> **What the pixel measurement found instead — FILED, NOT BUILT:** rasterising every codepoint
+> of the fold set in every face and grouping identical bitmaps finds **476 pixel-identical
+> codepoint pairs at 13 px** (390 at 20 px), only **23** of them canonical singletons. The rest
+> are homoglyphs — `A`≡`Α`≡`А`, `C`≡`С`, `3`≡`З`, `-`≡`‐`≡`−`, `:`≡`։`. **That set is
+> PRE-EXISTING in shipped b133**, not introduced by either commit, and folding it is a product
+> trade (a legitimately Cyrillic name would take a suffix it did not earn). Fact base and the
+> open questions: `votv-homoglyph-fold-FACTS-2026-07-30.md`. It gets its own arc.
+>
+> Evidence: repertoire selftest **PASS 26/26** (453 fold ranges, 32 exclude ranges), font
+> selftest **12/12**, nickname-arbiter **24/24**, zero `atlas watch:` lines, plain smoke PASS,
+> 4-peer `smoke_i18n` PASS. The i18n lobby now carries a **Thaana nick and a pointed-Hebrew
+> message** — it previously had no combining mark in any of its six strings, and its Japanese
+> entries exercised the same sentinel path as its Chinese ones, so nothing in it could have
+> noticed this feature. One defect the smoke caught: the first draft asserted U+05B4 HEBREW
+> POINT HIRIQ, which **no shipped face carries** — chosen from memory of "Hebrew niqqud"
+> instead of read off the generated table.
 >
 > **Measured, all reproducing the design's figures exactly:** exclude set **67 ranges /
 > 134 values**, fold set **7,258** (+4,741 over 2,517), first emitted exclude value

@@ -1202,6 +1202,28 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   as the tell; and read "my mutant passed" as a finding about the HARNESS, never as a reason to
   strengthen the mutant. `memory/lesson_a_checks_name_decides_its_blast_radius.md`
 
+- **A standard's equivalence is not your renderer's equivalence — measure the pixels, not the
+  spec (2026-07-30, commit 2 of the ImGui flip).** A 22-round design specified 814 NFC
+  composition pairs + canonical combining classes on the fold key, justified by one sentence:
+  *"`A`+U+0301 is pixel-indistinguishable from `Á`"*. That is a claim about rendering, and it was
+  never rendered. Measured through FreeType with no shaping — what ImGui actually does,
+  `FT_DISABLE_HARFBUZZ` is on — the pair matches its precomposed form in **1 of ~3,560 face-pair
+  combinations**, because without a GPOS anchor the mark sits at its own left-side bearing. The
+  machinery would have collided things that do not look alike to prevent a collision that does
+  not occur. Two more inversions in the same hour: 844 was the RAW decomposition count (30 are
+  `Composition_Exclusion`, so 814 compose; "41/296 marks" are really 35/302 — nobody had run
+  `normalize()`); and rasterising the WHOLE fold set found **476 pixel-identical pairs, only 23
+  canonical** — the real collisions are homoglyphs Unicode has no equivalence for
+  (`A`≡`Α`≡`А`, `C`≡`С`, `3`≡`З`), already shipping. Note the near-miss: after NFC died, "just
+  fold the 31 canonical singletons" was proposed AND approved, and it closes 23 of 476 — a site
+  list inside the real invariant that survives review precisely because it is standard-derived.
+  *Look FIRST:* when a justification is a sentence about what the user SEES, render it (20 lines
+  of PIL) before building the table; measure through YOUR pipeline's config, not the library's
+  defaults — with HarfBuzz on, the same design would have been right; census the whole space
+  (hash every glyph bitmap, group by hash) before folding a subset of it; and before building on
+  NFC/NFKC/confusables/collation, state which property of YOUR system it proxies and check the
+  proxy holds. `memory/lesson_a_standards_equivalence_is_not_your_renderers.md`
+
 - **A negative control proves the POLICY is right — not that anything APPLIES it (2026-07-30,
   `ui/atlas_watch.cpp`, the §7.4 probes).** Three probes were specified to catch "a missed
   `GlyphExcludeRanges` on a *specific* config". Written exactly as specified —

@@ -18,6 +18,14 @@ without any special scenario:
   are the ones this user types daily. They were fallback boxes in b132 and every build before it.
 - **Whole scripts the shipped faces always carried and the atlas simply never asked for**: Hebrew
   (`שלום`), Thai (`ไทย`), Arabic (`العربية`), Greek (`Ω`), all of Latin Extended.
+- **COMBINING MARKS NOW DRAW (commit 2, `244b1320`).** Five scripts were shipping as base
+  letters with boxes where their marks belong: **Thaana** (11 of 11 marks were excluded, and
+  Dhivehi is written *entirely* in them — it was unwritable), **Tamil** (12 of 12 vowel signs),
+  **Thai** (16 of 26 tone marks), **Arabic** (17 of 33 harakat), **Hebrew** (8 of 10 points).
+  Type `ދިވެހި` or `שָׁלוֹם` and check the marks are there rather than boxes.
+  Note they are **not GPOS-anchored** — ImGui does no shaping, so a mark sits at its own
+  left-side bearing rather than centred over its base. Measured and accepted; it is why the
+  designed NFC fold was dropped (a decomposed pair is visibly *not* its precomposed form).
 - **CJK and Hangul are STILL boxes**, and correctly so — no embedded face or the emoji donor
   contains them. That needs C3 (a font source), not this commit. If hanzi renders, something is
   wrong: the font selftest's RED case exists to catch exactly that.
