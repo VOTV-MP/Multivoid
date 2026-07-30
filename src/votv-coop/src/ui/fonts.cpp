@@ -170,10 +170,26 @@ const ImWchar* Repertoire() {
 // asked for it, so nothing baked it and the fallback fell through to '?'. That is
 // fixed by the repertoire table above containing U+FFFD, not by this merge.)
 //
-// ORDER IS THE POLICY. imgui_freetype.cpp:515 refuses to overwrite a glyph an
-// earlier source already provided, so the chosen family wins wherever it HAS the
-// glyph and the backstops only fill holes. The donor goes last for the same
-// reason: a family that draws its own dingbat keeps drawing it.
+// ORDER IS THE POLICY: the chosen family wins wherever it HAS the glyph and the
+// backstops only fill holes. The donor goes last for the same reason -- a family
+// that draws its own dingbat keeps drawing it.
+//
+// RE-POINTED 2026-07-30. This used to credit imgui_freetype.cpp:515 ("refuses to
+// overwrite a glyph an earlier source already provided"). That was the 1.91.5
+// eager-builder mechanism and it is GONE: :515 in 1.92.9 is FreeType render-mode
+// selection. The policy still holds, by a different site --
+// ImFontBaked_BuildLoadGlyph (imgui_draw.cpp:4590-4602) walks font->Sources in
+// order and RETURNS on the first source that produces the glyph, and the legacy
+// eager preload routes through the same function. Same outcome, and the 88
+// codepoints both the faces and the donor carry (digits, '#', '*', ZWJ, TM, the
+// arrows) are decided there in both regimes -- measured, so a uniform
+// GlyphExcludeRanges cannot change a winner.
+//
+// The general trap, worth stating because this file has now been caught twice
+// (see also the retired GetTexDataAsRGBA32 note below): a comment citing a LINE
+// NUMBER in a vendored dependency is silently invalidated by a submodule bump.
+// Nothing in the build complains, and the stale citation reads exactly as
+// authoritative as a live one.
 void MergeBackstops(int chosenFamily, bool bold, float px, const ImWchar* ranges) {
     ImFontConfig merge;
     merge.MergeMode = true;
@@ -396,13 +412,27 @@ void Load() {
         // a windowed drag crosses several. An offline probe is not that path (it
         // never uploads a texture), so Build() is called HERE, timed, and logged:
         // the number in a real session's log is the only honest version of it.
-        // The backend does NOT then build again -- and not for the reason it looks
-        // like: ImFontAtlas::Build() has no IsBuilt() early-out, it rebuilds
-        // unconditionally. What saves us is that the backends call
-        // GetTexDataAsRGBA32 (imgui_impl_dx11.cpp:330 / dx12.cpp:310), which
-        // early-outs on `if (!TexPixelsRGBA32)` -- and the freetype builder has
-        // already allocated that directly because LoadColor is on. Right
-        // conclusion, so do not "simplify" by removing the GetTexData path.
+        // The backend does NOT then build again -- and not for the reason this
+        // comment used to give. It claimed the backends call GetTexDataAsRGBA32
+        // (citing imgui_impl_dx11.cpp:330 / dx12.cpp:310) which early-outs on
+        // `if (!TexPixelsRGBA32)`, and it closed by telling the reader not to
+        // "simplify" by removing that path. MEASURED 2026-07-30: neither the
+        // symbol nor the TexPixelsRGBA32 field exists anywhere in the 1.92.9
+        // DX11/DX12 backends. The conclusion survives by a different mechanism --
+        // Build() sets atlas->TexIsBuilt, and the rebuild branch in
+        // ImFontAtlasUpdateNewFrame (imgui_draw.cpp:2807-2811) sits under
+        // `if (atlas->RendererHasTextures)`, which is false while the capability
+        // flag is cleared.
+        //
+        // Two further facts about the block below, both measured, both to be
+        // acted on when the flag flips: ImFontAtlas::Build() is an OBSOLETE shim
+        // (imgui_draw.cpp:3060-3065, inside `#ifndef
+        // IMGUI_DISABLE_OBSOLETE_FUNCTIONS`, which we do not define) that is just
+        // `ImFontAtlasBuildMain(this); return true;` -- so "FAILED TO BAKE" is
+        // already unreachable, `built` cannot be false. And once the atlas is
+        // dynamic there is no single bake to time at all: the honest numbers
+        // become the geometry logged on change plus the per-frame Glyphs.Size
+        // delta, because the cost is spread across the frames that draw new text.
         {
             LARGE_INTEGER f{}, a{}, b{};
             ::QueryPerformanceFrequency(&f);
