@@ -461,8 +461,18 @@ one arc away, not in this one.
 
 ## 7. THE FLIP — design of record (implementation `/qf`, 9 rounds, 2026-07-30)
 
-**Status: DESIGN. Nothing here is built.** Supersedes §4's C2b bullet. The pass ran **21 rounds / 79
-questions** and **fifty-six of the primary's claims were measured false**. were measured false**. Round 20 found that the
+**Status: DESIGN, CONVERGED at round 22. Nothing here is built yet.** Supersedes §4's C2b bullet. The pass ran **22 rounds / 79
+questions** and **fifty-six of the primary's claims were measured false**. **Round 22 returned
+"that holds"** — the first and only convergence verdict of the pass — after checking the four
+sharpest ship-broken candidates against the 1.92.9 source and finding each dissolved: the 134-value
+exclude list is 'd at  so it is a longer scan and not an overflow;
+ () and FreeType's 
+() are both live, so the presence check and the detector predicate are not
+permanently false; the upload probe lives in , so nulling
+ cannot starve DX11's catch-up at ; and the render
+frame runs every Present, so the in-frame selftest's positive DONE line is reachable for mp.py. Its
+one residue — a stale  above 32 ranges that would have failed the build on commit 1's own
+67-range table — is fixed in §7.3. were measured false**. Round 20 found that the
 receive-boundary ledger **delays rather than bounds** — it saturates, after which a full-repertoire
 snapshot passes with zero novelty — which **un-defers the FreeType metrics pass into a precondition
 of commit 1**, and that round 14's "stop baking" rule would have made the emoji colour check
@@ -869,11 +879,17 @@ The script had already printed the finding — *"in DEFAULT_IGNORABLE ∩ candid
 and three rounds read past it. `[[lesson-an-instrument-blind-to-the-phenomenon-always-passes]]` does
 not cover this one: the instrument saw it and the reader did not.
 
-So the union it is, sitting exactly on the cap. That is acceptable **because our own generator is the
-enforcement**, not ImGui's stripped assert: `sys.exit` above 32 ranges fails the build loudly, which
-is strictly stronger than `IM_ASSERT` in a Release DLL. The residual is that a future Unicode version
-adding a `Cf`/`Zs`/ignorable range breaks the build — the correct failure, and the trigger to drop
-the ignorable members no shipped font carries (today that would take it back to 30/60).
+So the union it is. **Its 32/64 is COMMIT 2's figure** — commit 1 adds the combining marks and runs
+at **67 ranges / 134 values** (§7.1a), which deliberately exceeds ImGui's advisory limit.
+
+**The generator therefore does NOT cap the range count** (round 22 caught the contradiction: an
+earlier draft of this section specified a `sys.exit` above 32 ranges, which would have failed the
+build on commit 1's own table). §7.3a measured why exceeding is safe — `AcceptCodepointForSource` is a
+linear scan and `ImMemdup` copies `size + 1`, so a longer list is slower, not unsound. What the
+generator DOES hard-fail on is the thing nothing downstream can see: **a leading zero in the
+`GlyphExcludeRanges` emission**, plus the assertion that the two emissions differ by exactly
+`{U+0000}`. The range count is **logged**, so a future Unicode version widening `Cf`/`Zs` shows up as
+a number that moved rather than as a build break.
 
 The 19 MB index hazard stays covered either way: the U+E0000 TAG characters are `Cf`, hence inside
 no-ink. And U+0020 is **already carved out of `no-ink`** by the generator, so the space character
@@ -884,8 +900,8 @@ called it wrong; round 6 measured that the objection was to its *derivation* (ca
 at generate time) and not to the *set*. The fix is **freezing no-ink as literal ranges** with its
 Unicode version documented — `Cf` and `Zs` gain members between versions exactly as `Cn` does, which
 is `[[lesson-a-generated-constant-must-not-depend-on-the-toolchains-data-version]]` a second time.
-The generator gets a `sys.exit` if the exclude table exceeds 32 ranges, because :3115's assert cannot
-fire in our build.
+The generator logs the emitted range count rather than capping it (see above) and hard-fails only on
+a leading zero, because that is the failure :3114's stripped assert cannot catch.
 
 ### 7.3a The census the categories could not do (round 12, measured with fontTools `hmtx`/`glyf`)
 
@@ -913,7 +929,7 @@ Two conclusions, and they go to **different layers**:
   to the sentinel; the widening removes that accident. **Adding them to `GlyphExcludeRanges` would
   take the table to 64 ranges / 128 values and delete 307 marks from chat** — degrading the user's
   actual ask to protect a property only *names* need. So it is fixed at the name layer instead
-  (§7.2 item 9), and the exclude table stays at 32 ranges.
+  (§7.2 item 9) — in COMMIT 2, where the exclude table returns to 32 ranges.
 
 Worth recording because it nearly went the other way: the `size <= 64` limit is **advisory, not a
 correctness bound** — `AcceptCodepointForSource` is a linear scan and upstream's own comment says
