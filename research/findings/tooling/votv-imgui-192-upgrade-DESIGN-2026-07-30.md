@@ -268,13 +268,25 @@ Six `/qf` rounds, every one of which corrected something. Ordering is load-beari
   precisely why the selftest sits in the unlocked gap. Fold in the two one-liners from §5b
   (`CmdListsCount` -> `CmdLists.Size`; `AddFontDefaultBitmap()` + `IMGUI_DISABLE_DEFAULT_FONT_VECTOR`,
   worth 14,562 B).
-- **C2 — DX12 `InitInfo` + our alloc/free callbacks + ONE unified free list** (the hard-coded
-  "slot 0 = ImGui font" reservation retires), ImGui's `Free` routed through `QueuePendingRelease`,
-  flag ON for both RHIs, **TOGETHER WITH** the regenerated fold table (+4,772; `BASE_RANGES` retires
-  per RULE 2; the no-ink subtraction closing §3.3; the `Default_Ignorable` justification rewritten)
-  **and** the provenance assertion of §5. Merged deliberately: in the flag-off regime the atlas
-  preloads the fold table, so **fold == render at every commit boundary and the eager +4,772 bake
-  cost never exists in any commit.**
+- **C2 — SPLIT IN TWO once the DX12 half was measured.** The design's reason for merging was that
+  the *fold table* must land with the *flag flip*, so fold == render at every commit boundary. That
+  constraint binds C2b only; the descriptor plumbing changes no repertoire and is separately
+  verifiable, so keeping them together would have made one unbisectable commit for no benefit.
+  - **C2a — DX12 `InitInfo` + our alloc/free callbacks + ONE unified free list.** DONE 2026-07-30.
+    The hard-coded "slot 0 = ImGui font" reservation retires: it could only ever describe ONE ImGui
+    texture and 1.92 keeps two alive across a repack. `TexSlot` gained an explicit
+    `Owner {Free, Ours, Imgui, Pending}` because the old (res, gpuPtr) encoding had no room for
+    "occupied by a resource we must never release". ImGui's `Free` is fence-deferred through
+    `QueuePendingRelease` like ours. Index 0 stays non-allocatable: it is both the existing "no slot"
+    sentinel and the descriptor `SrvAlloc` hands out if the pool is exhausted, since ImGui's callback
+    has no failure channel and will write an SRV to whatever it is given. Flag still OFF.
+  - **C2b — flag ON for both RHIs** (the DX11 clear retires), **our own bounded texture servicing**
+    via `ImDrawData::Textures = nullptr` (see §6 — ImGui's own path has an INFINITE wait), **TOGETHER
+    WITH** the regenerated fold table (+4,772; `BASE_RANGES` retires per RULE 2; the no-ink
+    subtraction closing §3.3; the `Default_Ignorable` justification rewritten) **and** the provenance
+    assertion of §5. Merged deliberately: in the flag-off regime the atlas preloads the fold table,
+    so **fold == render at every commit boundary and the eager +4,772 bake cost never exists in any
+    commit.**
 - **C3 — the per-size mechanism swap.** `PushFont(font, px)` / `style.FontSizeBase` REPLACING the
   scale-change `Clear()`+rebake. **This is not a deletion.** Our roles bake via
   `AddFontFromMemoryTTF(..., px, ...)` and the UI pushes fonts, never sizes, so removing the rebake
@@ -355,9 +367,26 @@ All remaining runtime behaviour. §3.2 is now RUN (see above), and two more item
   **`non-greyscale=0`** at 0.06 MB vs 0.25 MB. It buys 4x memory by silently greying every emoji.
   **Do not set it.**
 
-Still open: whether
-`ImGui_ImplDX12_UpdateTexture` contends with our own `CreateTexture` upload (own command list +
-fence, `overlay_backend_dx12.cpp:505-525`); the per-size bake cost when five roles at different px
+**The `UpdateTexture` question is answered, and the answer is not contention.**
+`ImGui_ImplDX12_UpdateTexture` ends in `WaitForSingleObject(bd->FenceEvent, INFINITE)`
+(`imgui_impl_dx12.cpp` ~:565) — an **unbounded** GPU wait on the calling thread, which is our render
+thread. This codebase bounds every wait it owns at `kFenceWaitMs = 2000` and takes the
+device-removed path on timeout, precisely so a TDR disables the overlay instead of hanging VOTV. And
+with the dynamic atlas ON, `UpdateTexture` runs whenever a glyph is demand-baked — i.e. eventually
+**on arbitrary remote text**. That is the on-demand thread's count-3 "remote amplifier" reappearing
+one layer down: not atlas cost, but an unbounded wait a peer's chat message can trigger.
+
+The answer is not to accept it: `imgui_impl_dx12.h:75` documents `ImDrawData::Textures = nullptr`
+for exactly this ("if you need to precisely control the timing of texture updates"), and we already
+own a bounded, fence-gated uploader. **One upload mechanism with one bound, not two with different
+failure modes.** This is now part of C2b, not an open question.
+
+A related measured fact that shaped C2a: the legacy `ImGui_ImplDX12_Init` **created its own command
+queue** (`imgui_impl_dx12.cpp:973`, `commandQueueOwned = true`). Passing `InitInfo.CommandQueue =
+g_queue` would therefore have been a behaviour change — moving ImGui's uploads *and* that infinite
+wait onto the game's presenting queue. C2a keeps a dedicated queue for parity.
+
+Still open: the per-size bake cost when five roles at different px
 each demand their own `ImFontBaked`; and `g_pending`'s steady state once ImGui is a second producer
 (the cap is gone as of `af234c08` — §3.4 — so the question is now the rate, not the ceiling).
 **The ported selftest was compiled and linked, never run** — which texture a glyph's UV addresses

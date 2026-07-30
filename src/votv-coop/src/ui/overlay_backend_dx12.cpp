@@ -33,7 +33,7 @@ namespace ui::overlay_backend::dx12 {
 namespace {
 
 constexpr UINT kMaxBackBuffers   = 8;
-constexpr UINT kTextureSlots     = 256;   // SRV heap: slot 0 = ImGui font, 1..N = UI textures
+constexpr UINT kTextureSlots     = 256;   // SRV heap: index 0 reserved (see g_tex), 1..N allocatable
 constexpr DWORD kFenceWaitMs     = 2000;  // the house bound (see the design doc)
 
 ID3D12CommandQueue* g_queue = nullptr;     // the CONFIRMED presenting queue (AddRef'd)
@@ -68,12 +68,41 @@ bool g_disabled = false;    // device-removed: stop drawing for the rest of the 
 bool g_firstFrameLogged = false;
 ID3D12Device* g_device = nullptr;  // borrowed from dx12_capture (it owns the ref)
 
-// SRV slots + the resources behind them (slot 0 is the font, owned by ImGui).
+// SRV slots. ONE POOL, shared by our preview textures and by ImGui's own
+// atlas textures -- the hard-coded "slot 0 = the ImGui font" reservation is
+// gone. It could only ever describe ONE ImGui texture, and 1.92's atlas keeps up
+// to two alive at a time (ImFontAtlasTextureAdd creates the new one before the
+// old is destroyed, imgui_draw.cpp:4085-4113), so a privileged single slot is
+// not a thing the new backend can be given. ImGui now asks for descriptors
+// through SrvAlloc/SrvFree below, out of the same free list as everything else.
+//
+// Index 0 is deliberately NOT allocatable: it stays the "no slot" sentinel that
+// QueuePendingRelease uses for staging buffers, AND it is the descriptor handed
+// out if the pool is ever exhausted -- see SrvAlloc. Allocatable range is
+// 1..kTextureSlots either way, so no capacity is lost.
 struct TexSlot {
-    ID3D12Resource* res = nullptr;
+    // Owner is explicit rather than inferred from (res, gpuPtr). It used to be:
+    // both clear = free, res set = live, res clear + gpuPtr set = awaiting a
+    // fence. That encoding has no room for a fourth state, and ImGui-owned slots
+    // are exactly that -- occupied, but with a resource WE must never release.
+    enum class Owner : uint8_t { Free, Ours, Imgui, Pending };
+    ID3D12Resource* res = nullptr;   // OUR resources only; ImGui owns its own
     UINT64 gpuPtr = 0;
+    Owner  owner = Owner::Free;
 };
 TexSlot g_tex[kTextureSlots + 1];
+
+// ImGui's DX12 texture uploads run on their own queue, as they did before: the
+// legacy ImGui_ImplDX12_Init we are replacing called CreateCommandQueue itself
+// (imgui_impl_dx12.cpp:973) and set commandQueueOwned. Handing it g_queue -- the
+// game's PRESENTING queue -- would newly serialize its uploads behind the game's
+// frame work, and ImGui_ImplDX12_UpdateTexture ends in
+// WaitForSingleObject(..., INFINITE) (imgui_impl_dx12.cpp:~565), which is not a
+// wait this codebase permits anywhere else (kFenceWaitMs bounds every one of
+// ours). Keeping it on a separate queue preserves today's behaviour exactly;
+// removing the unbounded wait needs ImDrawData::Textures = nullptr and our own
+// servicing, which belongs with the flag flip, not here.
+ID3D12CommandQueue* g_imguiTexQueue = nullptr;
 
 // Deferred release: a resource may still be read by a submitted list, so it is
 // freed only once the fence passes its recorded value. Slots recycle then too.
@@ -103,7 +132,34 @@ std::vector<Pending> g_pending;   // live entries only; compacted as fences pass
 
 void QueuePendingRelease(ID3D12Resource* res, UINT slot, UINT64 fenceValue) {
     if (!res && !slot) return;
+    if (slot && slot <= kTextureSlots) g_tex[slot].owner = TexSlot::Owner::Pending;
     g_pending.push_back(Pending{ res, slot, fenceValue });
+}
+
+// Descriptor arithmetic for a slot. One place, so our textures and ImGui's
+// cannot disagree about where a slot lives.
+UINT SrvStride() {
+    return g_device ? g_device->GetDescriptorHandleIncrementSize(
+                          D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV) : 0;
+}
+D3D12_CPU_DESCRIPTOR_HANDLE SlotCpu(UINT slot) {
+    D3D12_CPU_DESCRIPTOR_HANDLE h = g_srvHeap->GetCPUDescriptorHandleForHeapStart();
+    h.ptr += static_cast<SIZE_T>(SrvStride()) * slot;
+    return h;
+}
+D3D12_GPU_DESCRIPTOR_HANDLE SlotGpu(UINT slot) {
+    D3D12_GPU_DESCRIPTOR_HANDLE h = g_srvHeap->GetGPUDescriptorHandleForHeapStart();
+    h.ptr += static_cast<UINT64>(SrvStride()) * slot;
+    return h;
+}
+
+// 0 = pool exhausted. A slot is reusable only once ProcessPendingReleases has
+// cleared it, never while it is Pending -- recycling a descriptor under an
+// in-flight draw is correctness audit C-1 (2026-07-26).
+UINT AllocSlot() {
+    for (UINT i = 1; i <= kTextureSlots; ++i)
+        if (g_tex[i].owner == TexSlot::Owner::Free) return i;
+    return 0;
 }
 
 void ProcessPendingReleases() {
@@ -114,12 +170,108 @@ void ProcessPendingReleases() {
         const Pending p = g_pending[i];   // by value: the compaction writes behind i
         if (p.fenceValue > done) { g_pending[keep++] = p; continue; }
         if (p.res) p.res->Release();
-        // Only clear a slot that is still the one we deferred (its res is null
-        // and its gpuPtr is the pending marker) -- never stomp a live entry.
-        if (p.slot && p.slot <= kTextureSlots && !g_tex[p.slot].res)
+        // Only clear a slot still marked Pending -- never stomp a live entry that
+        // was reallocated in the meantime.
+        if (p.slot && p.slot <= kTextureSlots &&
+            g_tex[p.slot].owner == TexSlot::Owner::Pending)
             g_tex[p.slot] = TexSlot{};
     }
     g_pending.resize(keep);
+}
+
+// ImGui's descriptor allocator. Called from ImGui_ImplDX12_UpdateTexture on
+// WantCreate, and its Free counterpart on destroy.
+void SrvAlloc(ImGui_ImplDX12_InitInfo*, D3D12_CPU_DESCRIPTOR_HANDLE* outCpu,
+              D3D12_GPU_DESCRIPTOR_HANDLE* outGpu) {
+    const UINT slot = AllocSlot();
+    if (!slot) {
+        // ImGui's callback signature has no failure channel, and it WILL write an
+        // SRV to whatever we return. Index 0 exists for exactly this: a real
+        // descriptor inside our own heap, so an exhausted pool aliases a texture
+        // (visibly wrong) instead of scribbling outside the heap (a GPU fault).
+        UE_LOGE("imgui_overlay: dx12 SRV pool exhausted (%u slots) -- ImGui texture "
+                "aliases the reserve descriptor; some UI image will draw wrong",
+                kTextureSlots);
+        *outCpu = SlotCpu(0);
+        *outGpu = SlotGpu(0);
+        return;
+    }
+    g_tex[slot].owner  = TexSlot::Owner::Imgui;
+    g_tex[slot].res    = nullptr;      // ImGui owns the resource, we own the slot
+    g_tex[slot].gpuPtr = SlotGpu(slot).ptr;
+    *outCpu = SlotCpu(slot);
+    *outGpu = SlotGpu(slot);
+}
+
+void SrvFree(ImGui_ImplDX12_InitInfo*, D3D12_CPU_DESCRIPTOR_HANDLE,
+             D3D12_GPU_DESCRIPTOR_HANDLE gpu) {
+    for (UINT i = 1; i <= kTextureSlots; ++i)
+        if (g_tex[i].owner == TexSlot::Owner::Imgui && g_tex[i].gpuPtr == gpu.ptr) {
+            // Fence-deferred like ours: the descriptor may still be referenced by
+            // a submitted draw. res = nullptr because the resource is ImGui's.
+            QueuePendingRelease(nullptr, i, g_lastSignaled);
+            return;
+        }
+}
+
+// ONE place that builds the InitInfo, because InitRenderer and the desc-change
+// re-init must agree exactly. Replaces the legacy 6-argument
+// ImGui_ImplDX12_Init, whose whole contract was "here is ONE descriptor for the
+// font" -- it cannot describe 1.92's atlas, which keeps up to two textures alive
+// across a repack, and it is also what STRIPPED
+// ImGuiBackendFlags_RendererHasTextures (imgui_impl_dx12.cpp:987), i.e. what
+// forced DX12 to a different drawable repertoire than DX11.
+bool InitImguiBackend() {
+    // Its own queue, exactly as the legacy path had: that overload called
+    // CreateCommandQueue itself (imgui_impl_dx12.cpp:973). Handing it g_queue
+    // would newly serialize ImGui's texture uploads behind the game's frame work
+    // AND put ImGui_ImplDX12_UpdateTexture's WaitForSingleObject(..., INFINITE)
+    // on the presenting queue. Keeping the queue separate preserves today's
+    // behaviour byte for byte; the unbounded wait itself is only reachable once
+    // the dynamic atlas is on, and removing it needs ImDrawData::Textures =
+    // nullptr plus our own bounded servicing -- that belongs with the flag flip.
+    if (!g_imguiTexQueue) {
+        D3D12_COMMAND_QUEUE_DESC qd{};
+        qd.Type     = D3D12_COMMAND_LIST_TYPE_DIRECT;
+        qd.Flags    = D3D12_COMMAND_QUEUE_FLAG_NONE;
+        qd.NodeMask = 1;
+        if (FAILED(g_device->CreateCommandQueue(&qd, IID_PPV_ARGS(&g_imguiTexQueue))) ||
+            !g_imguiTexQueue) {
+            UE_LOGE("imgui_overlay: dx12 could not create the ImGui texture-upload queue");
+            return false;
+        }
+    }
+    ImGui_ImplDX12_InitInfo info{};
+    info.Device               = g_device;
+    info.CommandQueue         = g_imguiTexQueue;
+    info.NumFramesInFlight    = static_cast<int>(g_bufferCount);
+    info.RTVFormat            = g_rtvFormat;
+    info.SrvDescriptorHeap    = g_srvHeap;
+    info.SrvDescriptorAllocFn = &SrvAlloc;
+    info.SrvDescriptorFreeFn  = &SrvFree;
+    if (!ImGui_ImplDX12_Init(&info)) return false;
+    // TRANSITIONAL, RETIRED WITH THE DX11 CLEAR BY THE SAME COMMIT. Only the
+    // LEGACY overload stripped ImGuiBackendFlags_RendererHasTextures
+    // (imgui_impl_dx12.cpp:987); InitInfo leaves it set, because the whole point
+    // of the struct is that the backend CAN support multiple textures. So moving
+    // to InitInfo silently switches the dynamic atlas ON -- CAUGHT by a DX12 smoke
+    // (2026-07-30): the second Load() produced a 512x128 atlas in 0.0 ms, the
+    // signature of a LAZY atlas that preloaded nothing, against DX11's
+    // 1024x2048 in 72.7 ms.
+    //
+    // That is exactly the defect the DX11 clear exists to prevent, arriving from
+    // the other side: one build, two drawable repertoires, chosen by the player's
+    // RHI. Two peers in one lobby would agree about who collided (the fold is a
+    // build constant) and disagree about what the names LOOK like. The atlas
+    // turns on for both RHIs at once, with the fold table that matches it, or for
+    // neither.
+    //
+    // Note the font selftest cannot catch this for us: its baked lookups are
+    // guarded to in-repertoire codepoints, and under a lazy atlas asking for one
+    // simply bakes it, so it passes 8/8 either way. It measures whether a glyph
+    // CAN be drawn, never whether the atlas was preloaded.
+    ImGui::GetIO().BackendFlags &= ~ImGuiBackendFlags_RendererHasTextures;
+    return true;
 }
 
 void NoteDeviceRemoved(const char* where) {
@@ -213,6 +365,10 @@ void ReleaseRendererState() {
     if (g_srvHeap) { g_srvHeap->Release(); g_srvHeap = nullptr; }
     if (g_fence) { g_fence->Release(); g_fence = nullptr; }
     if (g_fenceEvent) { ::CloseHandle(g_fenceEvent); g_fenceEvent = nullptr; }
+    // Released AFTER ImGui_ImplDX12_Shutdown has run (Shutdown() calls it before
+    // us), so the backend is done submitting on it. The legacy path owned this
+    // queue itself and released it in its own Shutdown; now we own it, so we must.
+    if (g_imguiTexQueue) { g_imguiTexQueue->Release(); g_imguiTexQueue = nullptr; }
 }
 
 // The backend's PSO bakes the RTV format and the frames-in-flight count at
@@ -226,9 +382,7 @@ void ReinitBackendIfDescChanged(UINT oldCount, DXGI_FORMAT oldFormat) {
             static_cast<int>(oldFormat), static_cast<int>(g_rtvFormat));
     WaitGpuIdle("desc-change");
     ImGui_ImplDX12_Shutdown();
-    if (!ImGui_ImplDX12_Init(g_device, static_cast<int>(g_bufferCount), g_rtvFormat, g_srvHeap,
-                             g_srvHeap->GetCPUDescriptorHandleForHeapStart(),
-                             g_srvHeap->GetGPUDescriptorHandleForHeapStart())) {
+    if (!InitImguiBackend()) {
         UE_LOGE("imgui_overlay: dx12 re-init after a desc change FAILED -- overlay disabled");
         g_disabled = true;
     }
@@ -310,9 +464,7 @@ bool InitRenderer(IDXGISwapChain* sc) {
         ReleaseRendererState();
         return false;
     }
-    if (!ImGui_ImplDX12_Init(g_device, static_cast<int>(g_bufferCount), g_rtvFormat, g_srvHeap,
-                             g_srvHeap->GetCPUDescriptorHandleForHeapStart(),
-                             g_srvHeap->GetGPUDescriptorHandleForHeapStart())) {
+    if (!InitImguiBackend()) {
         UE_LOGE("imgui_overlay: ImGui_ImplDX12_Init failed");
         ReleaseRendererState();
         return false;
@@ -441,13 +593,12 @@ void* CreateTextureFromImageFile(const wchar_t* path, int* outW, int* outH) {
     unsigned w = 0, h = 0;
     if (!detail::DecodeImageFileBgra(path, px, w, h)) return nullptr;
 
-    UINT slot = 0;
-    // A slot whose release is still PENDING keeps its gpuPtr: handing it out
-    // again would overwrite a shader-visible SRV descriptor under an in-flight
-    // draw and then get wiped by ProcessPendingReleases (correctness audit
-    // C-1, 2026-07-26). Free == both fields clear.
-    for (UINT i = 1; i <= kTextureSlots; ++i)
-        if (!g_tex[i].res && !g_tex[i].gpuPtr) { slot = i; break; }
+    // A slot whose release is still PENDING must not be handed out again: that
+    // would overwrite a shader-visible SRV descriptor under an in-flight draw and
+    // then get wiped by ProcessPendingReleases (correctness audit C-1,
+    // 2026-07-26). AllocSlot answers Free only, and it is now the SAME free list
+    // ImGui draws from.
+    const UINT slot = AllocSlot();
     if (!slot) {
         UE_LOGW("imgui_overlay: dx12 preview slots exhausted (%u) -- this image renders blank",
                 kTextureSlots);
@@ -530,12 +681,8 @@ void* CreateTextureFromImageFile(const wchar_t* path, int* outW, int* outH) {
     g_queue->Signal(g_fence, g_uploadFence);
     QueuePendingRelease(upload, 0, g_uploadFence);  // staging dies once the copy is done
 
-    const UINT srvSize =
-        g_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-    D3D12_CPU_DESCRIPTOR_HANDLE cpu = g_srvHeap->GetCPUDescriptorHandleForHeapStart();
-    D3D12_GPU_DESCRIPTOR_HANDLE gpu = g_srvHeap->GetGPUDescriptorHandleForHeapStart();
-    cpu.ptr += static_cast<SIZE_T>(srvSize) * slot;
-    gpu.ptr += static_cast<UINT64>(srvSize) * slot;
+    const D3D12_CPU_DESCRIPTOR_HANDLE cpu = SlotCpu(slot);
+    const D3D12_GPU_DESCRIPTOR_HANDLE gpu = SlotGpu(slot);
     D3D12_SHADER_RESOURCE_VIEW_DESC srvd{};
     srvd.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
     srvd.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
@@ -543,8 +690,9 @@ void* CreateTextureFromImageFile(const wchar_t* path, int* outW, int* outH) {
     srvd.Texture2D.MipLevels = 1;
     g_device->CreateShaderResourceView(tex, &srvd, cpu);
 
-    g_tex[slot].res = tex;
+    g_tex[slot].res    = tex;
     g_tex[slot].gpuPtr = gpu.ptr;
+    g_tex[slot].owner  = TexSlot::Owner::Ours;
     if (outW) *outW = static_cast<int>(w);
     if (outH) *outH = static_cast<int>(h);
     return reinterpret_cast<void*>(static_cast<uintptr_t>(gpu.ptr));
@@ -554,7 +702,7 @@ void DestroyTexture(void* id) {
     if (!id) return;
     const UINT64 ptr = static_cast<UINT64>(reinterpret_cast<uintptr_t>(id));
     for (UINT i = 1; i <= kTextureSlots; ++i)
-        if (g_tex[i].res && g_tex[i].gpuPtr == ptr) {
+        if (g_tex[i].owner == TexSlot::Owner::Ours && g_tex[i].gpuPtr == ptr) {
             // The GPU may still be reading it this frame: release + recycle the
             // slot only once the current work has passed the fence.
             QueuePendingRelease(g_tex[i].res, i, g_lastSignaled);
@@ -571,8 +719,12 @@ void Shutdown(bool rendererWasLive) {
         if (p.res) p.res->Release();
     g_pending.clear();
     g_pending.shrink_to_fit();   // Shutdown is not a hot path; give the pages back
-    for (UINT i = 1; i <= kTextureSlots; ++i)
-        if (g_tex[i].res) { g_tex[i].res->Release(); g_tex[i] = TexSlot{}; }
+    // OURS only: an Imgui-owned slot's resource belongs to the backend, which
+    // releases it in ImGui_ImplDX12_Shutdown just below.
+    for (UINT i = 1; i <= kTextureSlots; ++i) {
+        if (g_tex[i].owner == TexSlot::Owner::Ours && g_tex[i].res) g_tex[i].res->Release();
+        g_tex[i] = TexSlot{};
+    }
     if (rendererWasLive && g_live) ImGui_ImplDX12_Shutdown();
     g_live = false;
     ReleaseRendererState();
