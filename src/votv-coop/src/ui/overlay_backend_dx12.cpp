@@ -82,38 +82,44 @@ struct Pending {
     UINT slot = 0;          // 0 = nothing to recycle (staging buffers)
     UINT64 fenceValue = 0;
 };
-Pending g_pending[64];
-int g_pendingCount = 0;   // non-empty entries in g_pending (skips the per-frame walk)
+
+// THIS QUEUE HAS NO FIXED SIZE, ON PURPOSE. It used to be Pending[64], justified
+// by a comment ("never seen: 64 entries vs a ~10-preview UI") that priced the
+// wrong producer: a texture SLOT is bounded by kTextureSlots, but every
+// CreateTexture also queues its STAGING buffer with slot = 0, and staging
+// entries are not bounded by slot count at all -- N creates inside one fence
+// window are N entries whatever N is. So the same set was bounded twice, in two
+// different units, in two places, and the overflow path Release()d immediately
+// while the GPU could still be reading: a live latent use-after-free whose own
+// comment named the risk. [[lesson-one-capacity-expressed-in-three-places-will-disagree]]
+//
+// Picking a bigger number would restate the bug. Removing the bound deletes it:
+// the only remaining bound is how many resources one fence window can produce,
+// which is exactly the quantity the queue is FOR. Growth is self-limiting --
+// ProcessPendingReleases compacts every frame, and a fence that stops advancing
+// stops production too (the WaitFence in CreateTexture takes the device-removed
+// path and returns nullptr before anything is queued).
+std::vector<Pending> g_pending;   // live entries only; compacted as fences pass
 
 void QueuePendingRelease(ID3D12Resource* res, UINT slot, UINT64 fenceValue) {
     if (!res && !slot) return;
-    for (auto& p : g_pending)
-        if (!p.res && !p.slot) {
-            p.res = res; p.slot = slot; p.fenceValue = fenceValue;
-            ++g_pendingCount;
-            return;
-        }
-    // Table full (never seen: 64 entries vs a ~10-preview UI). Release now --
-    // and say so, because a silent immediate release is a use-after-free risk.
-    UE_LOGW("imgui_overlay: dx12 deferred-release table full -- releasing %p immediately",
-            static_cast<void*>(res));
-    if (res) res->Release();
-    if (slot && slot <= kTextureSlots && !g_tex[slot].res) g_tex[slot] = TexSlot{};
+    g_pending.push_back(Pending{ res, slot, fenceValue });
 }
 
 void ProcessPendingReleases() {
-    if (!g_fence || g_pendingCount == 0) return;  // the common per-frame case
+    if (!g_fence || g_pending.empty()) return;  // the common per-frame case
     const UINT64 done = g_fence->GetCompletedValue();
-    for (auto& p : g_pending) {
-        if ((!p.res && !p.slot) || p.fenceValue > done) continue;
+    size_t keep = 0;
+    for (size_t i = 0; i < g_pending.size(); ++i) {
+        const Pending p = g_pending[i];   // by value: the compaction writes behind i
+        if (p.fenceValue > done) { g_pending[keep++] = p; continue; }
         if (p.res) p.res->Release();
         // Only clear a slot that is still the one we deferred (its res is null
         // and its gpuPtr is the pending marker) -- never stomp a live entry.
         if (p.slot && p.slot <= kTextureSlots && !g_tex[p.slot].res)
             g_tex[p.slot] = TexSlot{};
-        p = Pending{};
-        --g_pendingCount;
     }
+    g_pending.resize(keep);
 }
 
 void NoteDeviceRemoved(const char* where) {
@@ -561,11 +567,10 @@ void Shutdown(bool rendererWasLive) {
     dx12_capture::Shutdown();  // disarm the capture hooks + drop its device ref
     if (!g_live && !g_device) return;
     WaitGpuIdle("shutdown");
-    for (auto& p : g_pending) {
+    for (const Pending& p : g_pending)
         if (p.res) p.res->Release();
-        p = Pending{};
-    }
-    g_pendingCount = 0;
+    g_pending.clear();
+    g_pending.shrink_to_fit();   // Shutdown is not a hot path; give the pages back
     for (UINT i = 1; i <= kTextureSlots; ++i)
         if (g_tex[i].res) { g_tex[i].res->Release(); g_tex[i] = TexSlot{}; }
     if (rendererWasLive && g_live) ImGui_ImplDX12_Shutdown();
