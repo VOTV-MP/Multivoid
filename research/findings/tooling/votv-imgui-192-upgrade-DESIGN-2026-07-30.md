@@ -461,50 +461,40 @@ one arc away, not in this one.
 
 ## 7. THE FLIP — design of record (implementation `/qf`, 9 rounds, 2026-07-30)
 
-**Status: DESIGN, CONVERGED at round 22. Nothing here is built yet.** Supersedes §4's C2b bullet. The pass ran **22 rounds / 79
-questions** and **fifty-six of the primary's claims were measured false**. **Round 22 returned
-"that holds"** — the first and only convergence verdict of the pass — after checking the four
+**Status: DESIGN, CONVERGED at round 22. Nothing here is built yet.** Supersedes §4's C2b bullet.
+
+The implementation `/qf` ran **22 rounds / 79 questions**, and **fifty-six of the primary's claims were
+measured false**. **Round 22 returned the pass's first and only "that holds"**, after checking the four
 sharpest ship-broken candidates against the 1.92.9 source and finding each dissolved: the 134-value
-exclude list is 'd at  so it is a longer scan and not an overflow;
- () and FreeType's 
-() are both live, so the presence check and the detector predicate are not
-permanently false; the upload probe lives in , so nulling
- cannot starve DX11's catch-up at ; and the render
-frame runs every Present, so the in-frame selftest's positive DONE line is reachable for mp.py. Its
-one residue — a stale  above 32 ranges that would have failed the build on commit 1's own
-67-range table — is fixed in §7.3. were measured false**. Round 20 found that the
-receive-boundary ledger **delays rather than bounds** — it saturates, after which a full-repertoire
-snapshot passes with zero novelty — which **un-defers the FreeType metrics pass into a precondition
-of commit 1**, and that round 14's "stop baking" rule would have made the emoji colour check
-permanently green-by-skip. **The precondition round 20 raised was then DISCHARGED by measurement in
-the same session** (§7.5): the whole commit-1 fold set at chat px packs into **0.22x of a 2048²
-atlas**, the long-carried 12.8 Mpx figure is **false**, TexMax stays 2048 on evidence, and **no
-frame-side bound is built**. Round 19 corrected round 18's
-own answer: the novelty ledger cannot be ImGui's `IndexLookup` — wrong thread, and erased by the very
-pressure it bounds — so the receive boundary keeps its own monotone set (§7.5). **No "that holds"
-verdict was ever given** — rounds 10 through 18 landed **every question asked**. Round 18 measured
-that the nameplate's continuous size ramp does NOT mint a baked per frame (`IM_ROUND`), corrected
-this section's "resident = last two frames" wording to the pressure-triggered truth, and moved the
-W11 bound off the chat draw loop — which was **one of three surfaces** that rasterise remote text —
-onto the receive boundary, deleting three pieces of machinery with it. Round 16 split the work into **TWO commits** (§7.1a): round 10 overturned this section's
-framing of what it delivers, round 11 **inverted the exclude-set choice** (§7.3) and found the primary
-instrument blind to the failure it was paired with (§7.4), round 12 found that **the exclude set
-as specified was a silent no-op** (§7.2 item 3) and that the invariant needed a **second table at a
-different layer** (§7.3a, item 9), and round 13 found that the clamp fixing the no-op **would have
-admitted U+0000 to the repertoire**, that item 9 **violates a live selftest** which stays green
-because it tests the wrong set, and that widening flips a **persistence** decision (§7.3b). Rounds 5,
-8, and 10 through 14 each reversed something structural. Round 14 measured that **round 13's own
-answer described a mechanism the code does not have**, and round 15 **DISSOLVED item 9 entirely** —
-the deny table it had spent three rounds refining would have made Thai, Tamil, Thaana, Arabic and
-Hebrew unwritable as names in the same commit that advertises those scripts, and NFC on the fold key
-solves the actual defect without denying anything. Round 15 also caught §7.2 item 4 **contradicting
-§7.5** about whether a remote peer can exceed the atlas. Round 16 measured that the diff had grown past
-`OPUS_48_DISCIPLINE.md`'s "~3 subsystems, STOP" and split it on the axis boundary, and **dissolved**
-the migration unknown with one grep: `FoldKey` has exactly TWO non-selftest call sites
-(`nickname_arbiter.cpp:124,:127`), both transient comparisons, and **no call site persists a key** —
-the ini stores the NAME — so changing what a key IS has no effect on stored data. Seven consecutive
-rounds landing every question, with the pass correcting its own corrections, is not the shape of a
-converged design.
+exclude list is `ImMemdup`'d at `size + 1`, so exceeding the advisory 64 is a longer linear scan and
+not an overflow; `ImFont::IsGlyphInFont` (`imgui_draw.cpp:5391`) and FreeType's
+`FontSrcContainsGlyph` (`imgui_freetype.cpp:573`) are both live, so neither the presence check nor
+the detector predicate is permanently false; the upload probe lives in `overlay_backend_dx12.cpp`, so
+nulling `draw_data->Textures` cannot starve DX11's own catch-up at `imgui_impl_dx11.cpp:181`; and the
+render frame runs every Present, so the in-frame selftest's positive DONE line is reachable for
+`mp.py`. Its one residue — a stale generator `sys.exit` above 32 ranges, which would have failed the
+build on commit 1's own 67-range table — is fixed in §7.3.
+
+**What the tail of the pass cost, in order, because none of it was decoration.** Rounds 5, 8 and 10
+through 21 each reversed something structural, and the pass corrected its own corrections four times:
+
+| round | what it reversed |
+|---|---|
+| 5 | our own DX12 servicing preceded its own profile — order inverted to flip-first |
+| 8 | the separate "measure later" step dissolved into the commit |
+| 10 | "ships zero new visible glyphs" was FALSE; the pack-capacity argument was missing |
+| 11 | the exclude set **inverted** to the ignorable-union; the superset invariant is blind to pack failure |
+| 12 | the exclude set as specified was a **silent no-op** (`no-ink` starts at U+0000) |
+| 13 | the clamp fixing it would have admitted U+0000 to the repertoire; item 9 violated a live selftest |
+| 14 | round 13's fix described a mechanism the code does not have; `Glyphs.Size` is not monotonic |
+| 15 | item 9 **DISSOLVED** — the deny table would have made Thai/Tamil/Thaana/Arabic/Hebrew unwritable |
+| 16 | the diff had outgrown one commit — **split into two** (§7.1a); the migration unknown died to one grep |
+| 17 | §7.2 item 3 still carried commit 2's range count; the W11 cap could freeze the chat feed |
+| 18 | the W11 cap guarded **one of three** surfaces — moved to the receive boundary |
+| 19 | the novelty ledger cannot be ImGui's `IndexLookup` — wrong thread, erased by its own pressure |
+| 20 | the ledger **delays rather than bounds** — the metrics pass became a precondition |
+| 21 | the discharged margin was 3x overstated — the atlas is shared across sizes (0.856x, not 0.22x) |
+
 
 Only one thing from this pass is committed: `683f8214`, the two stale imgui citations in
 `fonts.cpp` (comment-only, measured, independent of the flip).
