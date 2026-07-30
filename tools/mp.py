@@ -1173,11 +1173,35 @@ def cmd_smoke4(args) -> None:
         for _idx, gd, _pid, lbl in peers_for_chat[1:]:
             _wait_for_log(gd / "multivoid.log", "Joined ", 60, lbl)
         time.sleep(4)   # let the last loading cover actually come down
-        for idx, _gd, pid, lbl in peers_for_chat:
+        # VERIFY THE SEND, DO NOT ASSUME IT. "Joined " + a flat sleep is not a
+        # readiness signal: `T` is swallowed while any interactive surface owns
+        # input, and a peer that joined late is still settling when the flat 4s
+        # expires -- so the keystrokes go nowhere and the message is lost
+        # SILENTLY. Measured 2026-07-30: two consecutive runs of this scenario on
+        # identical bytes gave FAIL(6) then PASS, differing only in how long the
+        # last client took to join (35s vs 21s), and the 6 "never saw X" rows
+        # sent a session hunting a font regression that did not exist.
+        #
+        # The sender renders its own line too, so its own log is the receipt.
+        # Wait for it and retype if it is not there: a lost keystroke becomes a
+        # retry instead of a verdict. [[lesson-an-instrument-can-fail-the-feature-it-tests]]
+        for idx, gd, pid, lbl in peers_for_chat:
             if idx >= len(chat_msgs):
                 continue
-            log(f"  {lbl}: typing {chat_msgs[idx]!r}")
-            _type_chat(pid, chat_msgs[idx], lbl)
+            msg = chat_msgs[idx]
+            log(f"  {lbl}: typing {msg!r}")
+            for attempt in range(1, 4):
+                _type_chat(pid, msg, lbl)
+                if _log_count(gd / "multivoid.log", msg) > 0:
+                    if attempt > 1:
+                        log(f"  {lbl}: landed on attempt {attempt}")
+                    break
+                log(f"  {lbl}: not in its OWN log after attempt {attempt} -- "
+                    f"the bar never took the keystrokes; retyping")
+                time.sleep(2)
+            else:
+                log(f"  {lbl}: FAILED to submit its own chat line after 3 attempts -- "
+                    f"the verdict below is about the INSTRUMENT, not the lane")
             time.sleep(1.5)
         time.sleep(4)
 
