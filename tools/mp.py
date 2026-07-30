@@ -1611,12 +1611,21 @@ def _capture_window(pid: int, out_path: Path) -> bool:
 # purpose: a name travels the Join/RosterRow lane, a message travels the chat
 # lane, and this session found a defect on a third lane (the log) that neither
 # would have shown on its own.
+#
+# ONE OF THE FOUR IS A COMBINING-MARK SCRIPT (2026-07-30, commit 2). Until that
+# commit every mark was excluded from the atlas, so Thaana -- which is written
+# ENTIRELY in Mn -- could not be drawn at all, and Thai, Arabic, Hebrew and Tamil
+# drew their base letters with boxes where the marks belong. Nothing in this set
+# would have noticed: Japanese and Chinese exercise the SAME sentinel path as each
+# other, so the second of them bought no coverage, and none of the six strings
+# contained a mark. The Thaana nick and the pointed-Hebrew message are here so the
+# feature has an end-to-end assertion instead of a claim.
 I18N_NICKS = ["Pelmentor", "Пельмень",
-              "张伟明", "さくら田中"]
+              "张伟明", "ދިވެހި"]
 I18N_CHAT = ["hello everyone 😀",
              "привет всем",
              "你好世界",
-             "こんにちは世界"]
+             "שָׁלוֹם עולם"]
 
 
 def cmd_smoke_i18n(args) -> None:

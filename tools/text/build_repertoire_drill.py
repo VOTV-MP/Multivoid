@@ -61,6 +61,28 @@ DRILLS = [
       ('only_reg = per_weight["regular"] - per_weight["bold"]',
        'only_reg = (per_weight["regular"] - per_weight["bold"]) | {0x4E00}')],
      "no longer cover the same codepoints"),
+    # COMMIT 2 (2026-07-30). Admitting the combining marks needed the zero-advance
+    # gate to stop seeing them -- otherwise its residue goes 3 -> 322 and the only
+    # way to quiet it is to widen the constant its own message forbids widening.
+    # Subtracting a whole class from a gate is exactly how a gate stops firing
+    # without anyone noticing, so the class gets its OWN gate and its own drill.
+    ("ink",
+     # U+034F COMBINING GRAPHEME JOINER is the arc-D2 defect itself: zero advance,
+     # NO CONTOURS, invisible mid-name. It stays out because it is
+     # Default_Ignorable, not because it is a mark -- so dropping it from that
+     # table admits it, and the ink gate is the only thing left that can object.
+     [("(0x00AD, 0x00AD), (0x034F, 0x034F), (0x061C, 0x061C), (0x115F, 0x1160),",
+       "(0x00AD, 0x00AD), (0x061C, 0x061C), (0x115F, 0x1160),")],
+     "have no outline in a face that claims them"),
+    ("zero-adv-still-live",
+     # The residue gate now subtracts the marks. Prove it did NOT go blind to
+     # everything else: U+055B is a non-mark, and un-adjudicating it must still
+     # fire. Same anchor as "zero-adv" above, kept as a separate row because the
+     # two now assert different things -- that one proved the gate existed, this
+     # one proves the commit-2 subtraction left it able to fire.
+     [("EXPECTED_ZERO_ADVANCE = {0x055B, 0x055C, 0x055E}",
+       "EXPECTED_ZERO_ADVANCE = set()")],
+     "zero-advance residue moved"),
 ]
 
 

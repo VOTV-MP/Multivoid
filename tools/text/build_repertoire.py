@@ -457,20 +457,56 @@ def main():
 
     render = faces_union | kept_cmap
     marks_in_render = marks & render
-    exclude = no_ink | ignorable | private | marks_in_render
+    # COMMIT 2 (2026-07-30): the marks are NO LONGER excluded.
+    #
+    # Commit 1 excluded them to preserve exactly the pre-flip behaviour, on the
+    # design's claim that admitting them would let "A" + U+0301 draw
+    # pixel-identically to U+00C1 while folding to a different key. That claim was
+    # MEASURED FALSE before this change landed: rendered through FreeType with no
+    # shaping (which is what ImGui does -- FT_DISABLE_HARFBUZZ, CMakeLists.txt:81),
+    # a base+mark pair is pixel-identical to its precomposed form in exactly
+    # 1 of ~3,560 face-pair combinations. There is no GPOS anchor, so the mark
+    # draws at its own left-side-bearing and the two are visibly different.
+    #
+    # So the NFC machinery the design specified (814 composition pairs + canonical
+    # combining classes) would have collided things that do not look alike, to
+    # prevent a collision that does not occur. It was dropped, not deferred.
+    #
+    # WHAT EXCLUDING THEM COST, and it is the reason this is a user-visible
+    # commit rather than an invariant-preserving one: the marks are how five
+    # scripts are actually written. Measured in the shipped faces --
+    #   THAANA  11 of 11 -- Dhivehi is written ENTIRELY in Mn, so it was unwritable
+    #   TAMIL   12 of 12 vowel signs
+    #   THAI    16 of 26 tone marks
+    #   ARABIC  17 of 33 harakat
+    #   HEBREW   8 of 10 points
+    # were excluded, in the build whose release note advertises Hebrew, Thai and
+    # Arabic. The base letters drew; the marks were fallback boxes.
+    #
+    # TWO MARKS STAY OUT, and not by a mark rule: U+034F (COMBINING GRAPHEME
+    # JOINER) and U+FE0F (VARIATION SELECTOR-16) are Default_Ignorable, so
+    # `ignorable` still holds them. That is exactly right -- U+034F is the arc-D2
+    # defect (advance 0, NO CONTOURS, invisible mid-name) and the ink gate below
+    # exists to prove nothing else in the class is like it. 337 - 2 = 335 admitted,
+    # which is precisely the repertoire's growth.
+    exclude = no_ink | ignorable | private
     rep = render - exclude
     ranges = to_ranges(rep)
+    admitted_marks = marks_in_render - exclude
 
     exc_ranges = to_ranges(exclude)
     print(f"render : {len(render):,} codepoints (faces {len(faces_union):,} + donor "
           f"{len(kept_cmap):,}), max U+{max(render):04X}")
     print(f"exclude: {len(exc_ranges)} ranges / {len(exc_ranges) * 2} values "
           f"(no-ink {len(no_ink):,} + ignorable {len(ignorable):,} + private "
-          f"{len(private):,} + marks-in-render {len(marks_in_render)})")
+          f"{len(private):,}; combining marks are ADMITTED as of commit 2)")
     print(f"repert.: {len(rep):,} codepoints in {len(ranges)} ranges "
           f"(max U+{max(rep):04X}); removed from render: "
           f"{len(render & ignorable)} ignorable, {len(render & private)} private-use, "
-          f"{len(render & no_ink)} no-ink, {len(marks_in_render)} combining marks")
+          f"{len(render & no_ink)} no-ink")
+    print(f"marks  : {len(marks_in_render)} in render, {len(admitted_marks)} ADMITTED "
+          f"(held back by Default_Ignorable: "
+          f"{', '.join('U+%04X' % c for c in sorted(marks_in_render & exclude)) or 'none'})")
 
     # --- 3a. THE ZERO-ADVANCE CENSUS -- the tripwire the categories cannot be --
     #
@@ -489,9 +525,25 @@ def main():
         for cp, gname in f.getBestCmap().items():
             if gname in metrics and metrics[gname][0] == 0:
                 zero_advance.add(cp)
-    residue = zero_advance - exclude
+    # THE MARKS ARE SUBTRACTED HERE, AND THAT WOULD GUT THE GATE ON ITS OWN.
+    #
+    # Before commit 2 the marks were inside `exclude`, so this residue was 3. They
+    # are admitted now, and leaving them in would make the residue 322 -- the gate
+    # would fire on every run and the only way to quiet it is to widen the constant,
+    # which its own message forbids. Subtracting the class keeps the gate's original
+    # power exactly: it still catches the next NON-mark codepoint a font update
+    # gives zero advance, which is the case a human has to adjudicate because
+    # whether it can collide depends on what else the repertoire draws.
+    #
+    # But subtraction alone would blind it to a zero-advance mark that is also
+    # BLANK, and that is the dangerous shape -- an invisible character inside a
+    # nickname, which is U+034F one level down, inside the very class being
+    # admitted. This gate could never have caught it anyway: it tests hmtx ADVANCE
+    # and never ink. So the ink gate below covers the class this one now skips.
+    residue = zero_advance - exclude - marks_in_render
     print(f"zero-adv: {len(zero_advance)} in render, {len(residue)} NOT excluded "
-          f"({', '.join('U+%04X' % c for c in sorted(residue))})")
+          f"({', '.join('U+%04X' % c for c in sorted(residue))}) "
+          f"[{len(admitted_marks)} admitted marks are covered by the ink gate instead]")
     if residue != EXPECTED_ZERO_ADVANCE:
         sys.exit(f"FAIL: the zero-advance residue moved -- expected "
                  f"{sorted('U+%04X' % c for c in EXPECTED_ZERO_ADVANCE)}, got "
@@ -502,6 +554,50 @@ def main():
                  f"hand -- admit it (and record why nothing else draws like it) or "
                  f"add it to the exclude set. Do not widen this constant to make "
                  f"the build pass.")
+
+    # --- 3b. THE INK GATE -- what admitting the marks actually needs proved ---
+    #
+    # The threat a combining mark carries is NOT that it draws at zero advance --
+    # that is what a mark IS, and a name with one is visibly different from a name
+    # without it (measured: base+mark matches its precomposed form in 1 of ~3,560
+    # face-pair combinations, so they do not collide). The threat is a mark that
+    # draws NOTHING: an invisible, zero-width character that can sit inside a
+    # nickname, survive to the wire, and give two identical-looking names two
+    # different fold keys. That is exactly the U+034F defect arc D2 closed, and
+    # admitting 335 more marks is precisely the move that could re-open it.
+    #
+    # So: every ADMITTED mark must have outline contours in every face that claims
+    # it. numberOfContours == 0 is a glyph with no outline at all -- measured to
+    # agree exactly with rasterising the mark and testing the bitmap for ink (both
+    # find U+034F in FSEX300, Roboto-Regular and Roboto-Bold, and nothing else), so
+    # this needs no rasteriser and no new dependency.
+    #
+    # It is a hard fail rather than a warning because the failure is SILENT
+    # downstream: nothing at runtime can distinguish "this mark drew nothing"
+    # from "this mark drew correctly over its base".
+    blank_marks = {}
+    for fn in sorted(set(sum(FACE_SETS.values(), []))):
+        fp = os.path.join(ASSETS, fn)
+        f = TTFont(fp, lazy=True)
+        if "glyf" not in f:
+            continue          # CFF outlines: no contour count to read
+        glyf, bc = f["glyf"], f.getBestCmap()
+        for cp in sorted(admitted_marks & set(bc)):
+            if glyf[bc[cp]].numberOfContours == 0:
+                blank_marks.setdefault(cp, []).append(fn)
+    print(f"ink gate: {len(admitted_marks)} admitted marks checked for outlines, "
+          f"{len(blank_marks)} blank")
+    if blank_marks:
+        detail = "; ".join(f"U+{cp:04X} in {', '.join(fs)}"
+                           for cp, fs in sorted(blank_marks.items()))
+        sys.exit(f"FAIL: {len(blank_marks)} ADMITTED combining mark(s) have no "
+                 f"outline in a face that claims them -- {detail}. A mark that "
+                 f"draws nothing at zero advance is an INVISIBLE character inside "
+                 f"a nickname: two names that look identical get different fold "
+                 f"keys and the arbiter never disambiguates them. That is the "
+                 f"U+034F defect (closed by arc D2) arriving one level down, "
+                 f"inside the class this commit admits. Add it to the exclude set "
+                 f"-- do NOT admit an invisible codepoint.")
 
     # --- 4. the two emissions ------------------------------------------------
     #
@@ -552,7 +648,10 @@ def main():
         f"{len(kept_cmap)} ({SUBSET_NAME}).",
         f"// Excluded from it: {len(render & no_ink)} no-ink, "
         f"{len(render & ignorable)} Default_Ignorable, {len(render & private)} "
-        f"private-use, {len(marks_in_render)} combining marks.",
+        f"private-use.",
+        f"// Combining marks are IN: {len(admitted_marks)} of {len(marks_in_render)} "
+        f"admitted (commit 2), which is how Thaana, Tamil, Thai, Arabic and Hebrew",
+        "// are actually written. The rest are held out by Default_Ignorable.",
         f"// Base-ask coverage gap (no embedded face has it): "
         f"{', '.join('U+%04X' % c for c in sorted(gap))}.",
         "",
@@ -590,6 +689,29 @@ def main():
         "",
     ] + [f"    {{ 0x{a:05X}, 0x{b:05X} }}," for a, b in ign_ranges]
 
+    mark_ranges = to_ranges(admitted_marks)
+    mark_lines = [h.format(name="mark_ranges.inc") for h in head] + [
+        "//",
+        "// The combining marks this build can DRAW (General_Category Mn/Me/Mc,",
+        "// intersected with the render set, minus anything the exclude set still",
+        "// holds). Its ONE consumer is the leading-mark rule in SanitizeNickname:",
+        "// a mark at position 0 has no base to sit on, so it stacks onto whatever",
+        "// the UI drew before the name.",
+        "//",
+        "// IT EXISTS BECAUSE THE RULE USED TO CARRY ITS OWN LITERAL. That literal",
+        "// was `c >= 0x0300 && c <= 0x036F` -- one block, written when no other",
+        "// mark could bake. Commit 2 admits Thaana, Tamil, Thai, Arabic and Hebrew",
+        "// marks, every one of which draws, so the hand-written range would have",
+        "// policed Latin diacritics and silently let the other five scripts stack",
+        "// onto the UI. One concept, one place (RULE 2).",
+        "//",
+        "// Only ADMITTED marks are listed: an excluded one folds to the sentinel",
+        "// and cannot draw, so it has nothing to stack with.",
+        "//",
+        f"// {len(admitted_marks)} codepoints, {len(mark_ranges)} ranges.",
+        "",
+    ] + [f"    {{ 0x{a:05X}, 0x{b:05X} }}," for a, b in mark_ranges]
+
     if args.dry_run:
         print("\n(dry run -- nothing written)")
         return
@@ -598,7 +720,8 @@ def main():
         f.write(donor_bytes)
     for name, lines in (("repertoire_ranges.inc", rep_lines),
                         ("exclude_ranges.inc", exc_lines),
-                        ("ignorable_ranges.inc", ign_lines)):
+                        ("ignorable_ranges.inc", ign_lines),
+                        ("mark_ranges.inc", mark_lines)):
         with open(os.path.join(GEN, name), "w", encoding="utf-8", newline="\n") as f:
             f.write("\n".join(lines) + "\n")
         print(f"wrote {os.path.join(GEN, name)}")

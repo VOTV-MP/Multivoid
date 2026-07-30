@@ -20,10 +20,14 @@ constexpr CodepointRange kIgnorable[] = {
 constexpr CodepointRange kExclude[] = {
 #include "coop/text/exclude_ranges.inc"
 };
+constexpr CodepointRange kMarks[] = {
+#include "coop/text/mark_ranges.inc"
+};
 
 constexpr size_t kRepertoireCount = sizeof(kRepertoire) / sizeof(kRepertoire[0]);
 constexpr size_t kIgnorableCount  = sizeof(kIgnorable) / sizeof(kIgnorable[0]);
 constexpr size_t kExcludeCount    = sizeof(kExclude) / sizeof(kExclude[0]);
+constexpr size_t kMarkCount       = sizeof(kMarks) / sizeof(kMarks[0]);
 
 // The one property nothing downstream can detect: ImGui walks the exclude list
 // as a zero-terminated ImWchar array, so a table beginning at U+0000 excludes
@@ -52,6 +56,8 @@ bool InRepertoire(uint32_t cp) { return Contains(kRepertoire, kRepertoireCount, 
 bool IsDefaultIgnorable(uint32_t cp) { return Contains(kIgnorable, kIgnorableCount, cp); }
 
 bool InExcludeSet(uint32_t cp) { return Contains(kExclude, kExcludeCount, cp); }
+
+bool IsCombiningMark(uint32_t cp) { return Contains(kMarks, kMarkCount, cp); }
 
 const CodepointRange* RepertoireRanges(size_t* outCount) {
     if (outCount) *outCount = kRepertoireCount;
@@ -131,9 +137,33 @@ bool RunRepertoireSelftest() {
     //   in repertoire        -- a face has it and we bake it
     //   in the exclude set   -- a face has it and we REFUSE to bake it
     //   in neither           -- no face has it at all
-    ok(InExcludeSet(0x0301) && !InRepertoire(0x0301),
-       "a combining mark is excluded (commit 1 keeps today's behaviour; NFC admits "
-       "it in commit 2)");
+    // COMMIT 2 INVERTED THIS ROW. It used to assert the opposite -- that a
+    // combining mark is EXCLUDED -- with a comment promising NFC would admit it.
+    // NFC was dropped (its premise, "A"+U+0301 is pixel-identical to U+00C1, was
+    // measured false in 3,559 of 3,560 face-pair combinations), and the marks were
+    // admitted on their own merit: they are how Thaana, Tamil, Thai, Arabic and
+    // Hebrew are written. Excluding them made Dhivehi unwritable, since the script
+    // is composed ENTIRELY of Mn.
+    ok(InRepertoire(0x0301) && !InExcludeSet(0x0301),
+       "a combining mark is IN the repertoire (commit 2 admits all 335 drawable ones)");
+    // Each of these is READ OFF the generated table, not recalled: the first
+    // draft of this row used U+05B4 HEBREW POINT HIRIQ, which no shipped face
+    // carries at all, and the smoke caught it. The Hebrew points we actually have
+    // are U+05B7-05BA, U+05BC, U+05C1-05C2 and U+05C7.
+    ok(InRepertoire(0x07A6) && InRepertoire(0x0BBE) && InRepertoire(0x0E48) &&
+       InRepertoire(0x064B) && InRepertoire(0x05B7),
+       "the Thaana, Tamil, Thai, Arabic and Hebrew marks draw -- five scripts that "
+       "were partly boxes while only their base letters baked");
+    // The two that stay out, and NOT by a mark rule -- both are Default_Ignorable.
+    // U+034F is the arc-D2 defect itself (advance 0, no contours, invisible
+    // mid-name); admitting 335 of its neighbours is exactly the move that could
+    // have re-opened it, which is why the generator's ink gate exists.
+    ok(!InRepertoire(0x034F) && InExcludeSet(0x034F),
+       "U+034F stays OUT: it is a mark, but it is Default_Ignorable and draws nothing");
+    ok(IsCombiningMark(0x0301) && IsCombiningMark(0x07A6) && !IsCombiningMark(0x034F),
+       "the generated mark table lists the DRAWABLE marks and omits U+034F");
+    ok(!IsCombiningMark(U'A') && !IsCombiningMark(0x05D0),
+       "a base letter is not a mark (the leading-mark rule must not eat real text)");
     ok(InExcludeSet(0xFE0F) && InExcludeSet(0x200B) && InExcludeSet(0xE007F),
        "the ignorables and the TAG block are excluded (they cost index tables and "
        "draw nothing)");

@@ -43,6 +43,11 @@ std::wstring g_localNick = coop::config_registry::MyNameDefaultW();
 // DISPLAY, which the host may rename for uniqueness (arc B). Two stores, one
 // author each: the human owns the request, the host owns the display.
 std::wstring g_requestedNick = g_localNick;
+// Whether SanitizeNickname CHANGED the last request we set. See SetLocalNickname:
+// the raw string is never stored, so this bit is the only surviving evidence that
+// our own rules edited what the human asked for. AdoptCanonicalNickname needs it
+// to decide whether a host-assigned suffix is safe to persist.
+bool g_requestWasAltered = false;
 
 }  // namespace
 
@@ -120,8 +125,14 @@ std::wstring SanitizeNickname(const std::wstring& raw) {
         if (c >= 0xD800 && c <= 0xDFFF) return true;     // unpaired surrogate
         return coop::text::IsDefaultIgnorable(c);
     };
-    auto combining = [](uint32_t c) { return c >= 0x0300 && c <= 0x036F; };
-
+    // RULE 2, commit 2 (2026-07-30): the literal `c >= 0x0300 && c <= 0x036F`
+    // that used to sit here is GONE. It was correct while the Latin block was the
+    // only mark range that could bake -- and it became silently wrong the moment
+    // the marks were admitted, because Thaana, Tamil, Thai, Arabic and Hebrew
+    // marks all draw now and none of them is in 0x0300-0x036F. A hand-written
+    // range beside a generated table is two owners of one fact, and the hand
+    // written one loses without a symptom: the rule below would have policed
+    // Latin diacritics and let the other five scripts stack onto the UI.
     std::wstring out;
     out.reserve(raw.size());
     bool lastWasSpace = true;  // primes the leading-space trim
@@ -139,8 +150,9 @@ std::wstring SanitizeNickname(const std::wstring& raw) {
             continue;
         }
         // A combining mark with nothing to combine with stacks onto whatever the
-        // UI drew before the name.
-        if (out.empty() && combining(c)) continue;
+        // UI drew before the name. Only position 0 -- a mark in the MIDDLE of a
+        // name is legitimate text in five scripts and passes untouched.
+        if (out.empty() && coop::text::IsCombiningMark(c)) continue;
         out.append(at, units);
         lastWasSpace = false;
     }
@@ -172,6 +184,16 @@ void SetLocalNickname(const std::wstring& nick) {
     // host rename us without the next session re-asking for the suffix.
     g_requestedNick = SanitizeNickname(nick);
     g_localNick = g_requestedNick;
+    // DID OUR OWN RULES ALTER THE REQUEST? Recorded HERE because this is the only
+    // moment the raw string exists -- the store above is already sanitized, so
+    // every later reader is structurally blind to whatever was removed. That
+    // blindness is not hypothetical: the repertoire scan in
+    // AdoptCanonicalNickname reads this same sanitized store, so a name that lost
+    // a leading mark scans perfectly clean.
+    //
+    // A second store holding the raw string would need its own sanitization at
+    // every other use, so what is kept is the one BIT that the decision needs.
+    g_requestWasAltered = (g_requestedNick != nick);
 }
 
 void AdoptCanonicalNickname(const std::wstring& canonical) {
@@ -222,11 +244,22 @@ void AdoptCanonicalNickname(const std::wstring& canonical) {
         if (!coop::text::InRepertoire(cp) || cp == coop::nickname_arbiter::kAbsentSentinel)
             repertoireSuspect = true;
     }
-    if (repertoireSuspect) {
-        UE_LOGI("nick: host renamed us '%ls' -> '%ls' (display only -- the request "
-                "contains characters this build cannot draw, so the suffix is a "
-                "rendering artifact and is NOT persisted)",
-                asked.c_str(), canonical.c_str());
+    // ...AND THE OTHER WAY OUR OWN RULES CAN EARN A SUFFIX (commit 2). The scan
+    // above asks "does the request contain something we cannot DRAW". It cannot
+    // ask "did we EDIT the request", because it reads the already-sanitized store
+    // -- so a name that lost a leading combining mark, or an ignorable, or a
+    // control character scans perfectly clean, takes the branch below, and writes
+    // a suffix into multivoid.ini that the human never asked for and cannot see
+    // the cause of. Same class as the repertoire case: a local artefact, not a
+    // fact about the human, so it displays but does not persist.
+    // [[lesson-a-placeholder-must-never-become-an-identity]]
+    if (repertoireSuspect || g_requestWasAltered) {
+        UE_LOGI("nick: host renamed us '%ls' -> '%ls' (display only -- %s, so the "
+                "suffix is a local artefact and is NOT persisted)",
+                asked.c_str(), canonical.c_str(),
+                repertoireSuspect ? "the request contains characters this build "
+                                    "cannot draw"
+                                  : "our own sanitizer altered the request");
         return;
     }
 

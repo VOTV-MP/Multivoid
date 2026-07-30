@@ -85,6 +85,22 @@ const CodepointRange* ExcludeRanges(size_t* outCount);
 // SanitizeNickname's combining-mark check only fires while the output is empty.
 bool IsDefaultIgnorable(uint32_t cp);
 
+// Is `cp` a combining mark this build can DRAW (Mn/Me/Mc, in the render set, and
+// not held out by the exclude set)? 335 codepoints as of commit 2.
+//
+// ONE CONSUMER, and it is the reason this is generated rather than written down:
+// SanitizeNickname drops a mark at position 0, because a mark with no base sits
+// on whatever the UI drew before the name. That rule used to carry its own
+// literal, `c >= 0x0300 && c <= 0x036F` -- correct when the Latin block was the
+// only mark range that could bake, and silently wrong the moment commit 2
+// admitted the Thaana, Tamil, Thai, Arabic and Hebrew marks, every one of which
+// draws. A hand-written range and a generated table are two owners of one fact.
+//
+// It is deliberately NOT `!InRepertoire`-shaped and not a denylist: a mark in the
+// MIDDLE of a name is legitimate text in five scripts and must pass untouched.
+// Only position 0 is a rendering problem.
+bool IsCombiningMark(uint32_t cp);
+
 // The repertoire as ranges, for the atlas builder. Sorted, non-overlapping.
 const CodepointRange* RepertoireRanges(size_t* outCount);
 
