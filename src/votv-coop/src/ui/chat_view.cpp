@@ -207,7 +207,7 @@ void Draw() {
         const char* p   = text;
         const char* end = text + std::strlen(text);
         while (p < end) {
-            const char* rowEnd = font->CalcWordWrapPositionA(px / font->FontSize, p, end, wrapW);
+            const char* rowEnd = font->CalcWordWrapPositionA(px / font->LegacySize, p, end, wrapW);
             if (rowEnd == p) rowEnd = p + 1;  // never stall on a single overlong glyph
             fn(p, rowEnd);
             p = rowEnd;

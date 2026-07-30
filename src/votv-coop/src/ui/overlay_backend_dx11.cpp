@@ -77,6 +77,25 @@ bool InitRenderer(IDXGISwapChain* sc) {
         UE_LOGE("imgui_overlay: ImGui_ImplDX11_Init failed");
         return false;
     }
+    // TRANSITIONAL, RETIRED BY THE DX12 InitInfo COMMIT. 1.92's DX11 backend
+    // declares ImGuiBackendFlags_RendererHasTextures unconditionally
+    // (imgui_impl_dx11.cpp:632) while DX12's legacy init STRIPS it
+    // (imgui_impl_dx12.cpp:987: "with 1 SRV descriptor we cannot support
+    // multiple textures"). Left alone, ONE build would ship TWO drawable
+    // repertoires chosen by the player's RHI -- the dynamic atlas draws whatever
+    // the face cmaps carry (~8,148 codepoints) while the preload path draws the
+    // repertoire table's 2,517 -- so the font selftest's verdict, the nickname
+    // fold and every screenshot would mean different things on different
+    // machines, and this commit would not be bisectable.
+    //
+    // Clearing it here holds BOTH RHIs in the legacy regime, which is MEASURED
+    // equivalent to 1.91.5: atlas->Locked is set for the whole frame
+    // (imgui.cpp:9089-9094), so an out-of-repertoire codepoint is not baked and
+    // draws FallbackGlyph exactly as before -- 0 texels diverged from the single
+    // upload, 0 glyph UVs moved, TexIsBuilt held (probe arm L, 2026-07-30).
+    // Once DX12 runs on ImGui_ImplDX12_InitInfo with our own descriptor
+    // allocator, this line goes and the flag stays on for both.
+    ImGui::GetIO().BackendFlags &= ~ImGuiBackendFlags_RendererHasTextures;
     g_live = true;
     CreateRTV(sc);
     return true;

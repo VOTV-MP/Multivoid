@@ -110,11 +110,19 @@ target_include_directories(imgui PUBLIC ${IMGUI_DIR} ${IMGUI_DIR}/backends)
 # imgui.cpp:1512 discards the codepoint AddInputCharacterUTF16 reassembles from a
 # surrogate pair -- an emoji could be neither baked nor typed.
 #
-# It rides HERE and not in imconfig.h because third_party/imgui is a git
-# submodule pinned at v1.91.5 (.gitmodules): editing the header is a dirty
-# submodule no fresh clone reproduces. IMGUI_ENABLE_FREETYPE below is the same
+# IMGUI_DISABLE_DEFAULT_FONT_VECTOR drops the SECOND default font 1.92 embeds
+# beside ProggyClean -- 14,562 bytes of compressed font data
+# (imgui_draw.cpp:6560). Safe because ui/fonts.cpp's last-resort path names
+# AddFontDefaultBitmap() explicitly rather than letting AddFontDefault's
+# size heuristic (imgui_draw.cpp:3180-3186) choose the vector one.
+#
+# They ride HERE and not in imconfig.h because third_party/imgui is a git
+# submodule (the superproject gitlink pins it; v1.92.9 as of 2026-07-30):
+# editing the header is a dirty submodule no fresh clone reproduces.
+# IMGUI_ENABLE_FREETYPE below is the same
 # pattern, and ODR is safe because votv-coop is this target's only consumer.
-target_compile_definitions(imgui PUBLIC IMGUI_ENABLE_FREETYPE IMGUI_USE_WCHAR32)
+target_compile_definitions(imgui PUBLIC IMGUI_ENABLE_FREETYPE IMGUI_USE_WCHAR32
+    IMGUI_DISABLE_DEFAULT_FONT_VECTOR)
 target_link_libraries(imgui PUBLIC freetype)
 
 # --- GameNetworkingSockets (BSD-3, vendored as git submodule, pinned v1.5.1) ---

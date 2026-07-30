@@ -416,7 +416,7 @@ void RenderDrawData(IDXGISwapChain* sc) {
         g_firstFrameLogged = true;
         const ImDrawData* dd = ImGui::GetDrawData();
         UE_LOGI("imgui_overlay: dx12 first frame rendered (%d vertices, %d draw list(s), "
-                "backbuffer %u)", dd ? dd->TotalVtxCount : -1, dd ? dd->CmdListsCount : -1, idx);
+                "backbuffer %u)", dd ? dd->TotalVtxCount : -1, dd ? dd->CmdLists.Size : -1, idx);
         ue_wrap::log::Flush();
     }
 }

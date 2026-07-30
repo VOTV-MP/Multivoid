@@ -122,7 +122,7 @@ void DrawNameplate(ImDrawList* dl, const coop::nameplate::Plate& p) {
         const char* sPtr = p.bubble;
         const char* bEnd = p.bubble + std::strlen(p.bubble);
         while (sPtr < bEnd && nRows < kMaxRows) {
-            const char* rowEnd = font->CalcWordWrapPositionA(bpx / font->FontSize, sPtr, bEnd, wrapW);
+            const char* rowEnd = font->CalcWordWrapPositionA(bpx / font->LegacySize, sPtr, bEnd, wrapW);
             if (rowEnd == sPtr) rowEnd = sPtr + 1;  // never stall on a single overlong glyph
             rows[nRows++] = {sPtr, rowEnd};
             sPtr = rowEnd;
