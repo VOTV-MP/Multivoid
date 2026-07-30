@@ -33,6 +33,18 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 1. How to work (process / working agreements)
 
+- **RUN THE `/qf` LOOP TO CONVERGENCE — do not hand it back every round (USER, 2026-07-30).** Verbatim,
+  after a third consecutive hand-back: *"Why are you always stopping running qf, run qf."* The loop's
+  terminal state is the critic's **"that holds"**, not "the primary has something to report"; handing
+  back makes the user the scheduler for a process with its own stopping condition. Measured on the pass
+  that prompted it: rounds 1-11 ran one at a time with a hand-back each; rounds **12-22 ran back to
+  back and EVERY ONE landed a material finding**, three of which would have shipped broken — an exclude
+  set that was a silent no-op, a deny table that would have made Thai/Tamil/Thaana unwritable, and a
+  security bound guarding one of three surfaces. Convergence came at round 22. **Look FIRST: stop only
+  on "that holds", on a question only the user can answer, or on a finding that changes the ask —
+  never on "the findings are getting narrower" (rounds 17-21 all looked narrow and all landed).**
+  `memory/feedback_run_the_qf_loop_to_convergence.md`
+
 - **A pass can measure every MECHANISM and never measure the DELIVERABLE.** 2026-07-30: nine `/qf`
   rounds on the ImGui atlas flip measured the init-time sampling instant, the 64-value exclude cap, a
   per-rescale leak, an unbounded fence wait, which face carries U+E0B0, three asserts `NDEBUG` strips —
