@@ -461,17 +461,19 @@ one arc away, not in this one.
 
 ## 7. THE FLIP — design of record (implementation `/qf`, 9 rounds, 2026-07-30)
 
-**Status: DESIGN. Nothing here is built.** Supersedes §4's C2b bullet. The pass ran **13 rounds / 52
-questions** and **thirty-two of the primary's claims were measured false**. **Still no "that holds"
-verdict** — rounds 10, 11, 12 and 13 were each **four-for-four**: round 10 overturned this section's
+**Status: DESIGN. Nothing here is built.** Supersedes §4's C2b bullet. The pass ran **14 rounds / 56
+questions** and **thirty-six of the primary's claims were measured false**. **Still no "that holds"
+verdict** — rounds 10 through 14 were each **four-for-four**: round 10 overturned this section's
 framing of what it delivers, round 11 **inverted the exclude-set choice** (§7.3) and found the primary
 instrument blind to the failure it was paired with (§7.4), round 12 found that **the exclude set
 as specified was a silent no-op** (§7.2 item 3) and that the invariant needed a **second table at a
 different layer** (§7.3a, item 9), and round 13 found that the clamp fixing the no-op **would have
 admitted U+0000 to the repertoire**, that item 9 **violates a live selftest** which stays green
 because it tests the wrong set, and that widening flips a **persistence** decision (§7.3b). Rounds 5,
-8, 10, 11, 12 and 13 each reversed something structural — four consecutive four-for-four rounds is
-not the shape of a converged design.
+8, and 10 through 14 each reversed something structural. Round 14 measured that **round 13's own
+answer described a mechanism the code does not have** (§7.2 item 9) — five consecutive
+four-for-four rounds, with the pass now correcting its own corrections, is not the shape of a
+converged design.
 
 Only one thing from this pass is committed: `683f8214`, the two stale imgui citations in
 `fonts.cpp` (comment-only, measured, independent of the flip).
@@ -612,7 +614,17 @@ hits `IM_ASSERT(!atlas->Locked)` — **stripped under NDEBUG** — and returns N
    `atlas->TexData->Width/Height` logged on change, cost from the per-frame `Glyphs.Size` delta + ms.
    There is no single bake to time post-flip, so a boot number would be a fiction.
 6. **Selftest becomes PER-BUILD, in-frame — keyed on `atlas->TexData->UniqueID`, NOT on a `Load()`
-   flag** (round 11 caught the latch). A pending flag set by `Load()` is per-*Load*: it sees boot,
+   flag** (round 11 caught the latch), **and it must stop BAKING** (round 14). Two things the regime
+   change does to it, both already written down and neither acted on: its presence checks become
+   **green by construction** — `overlay_backend_dx12.cpp:269-272` records it verbatim, *"under a lazy
+   atlas asking for one simply bakes it, so it passes 8/8 either way"* — and its colour-texel check
+   **rasterises an emoji**, so firing it on every `MakeSpace`-triggered rebuild adds pack area at
+   precisely the moment the atlas is out of room. `[[lesson-an-instrument-can-fail-the-feature-it-tests]]`,
+   third instance. So: presence is asserted with `ImFont::IsGlyphInFont` (pure cmap, never bakes),
+   the RED case U+4E00 keeps its meaning unchanged, and the colour check reads
+   `IndexLookup`/`Glyphs` for a glyph **already** baked and is SKIPPED for that build otherwise —
+   never forced. Any check whose post-flip meaning is "asking for it baked it" is DELETED rather than
+   kept as a green line (RULE 2). A pending flag set by `Load()` is per-*Load*: it sees boot,
    rescale and the F1 family switch, and is **structurally blind to every build
    `ImFontAtlasTextureMakeSpace` triggers** (`imgui_draw.cpp:4239`) — which is precisely where a
    growing atlas does its interesting work. That is the same `static bool done` shape s15 removed,
@@ -649,11 +661,27 @@ hits `IM_ASSERT(!atlas->Locked)` — **stripped under NDEBUG** — and returns N
    category table does not cover**, so the three `Po` outliers it measured must be adjudicated by a
    human rather than silently dropped. Measured table, measured tripwire.
 
-   **Two consequences on the PERSISTED store, both required, neither optional** (round 13):
-   - `SanitizeNickname` stripping a mark must NOT rewrite a stored name. It routes into the existing
-     `repertoireSuspect` lane (`player_handshake_nick.cpp:~218`): **display the sanitized form, keep
-     requesting the original, persist nothing.** That mechanism exists precisely for this and is
-     already tested; `[[lesson-a-placeholder-must-never-become-an-identity]]` is what it is for.
+   **RULE 2: this DELETES an existing narrower rule.** `SanitizeNickname` already owns a combining
+   vocabulary — the literal lambda `combining = [](c){ return c >= 0x0300 && c <= 0x036F; }`
+   (`player_handshake_nick.cpp:123`) — and its header at `:87` already names "combining diacritics"
+   as a handled threat. That lambda goes in this commit. It is both narrower (one block of the
+   generated table's `Mn`) and weaker: it fires **only while `out` is empty** (`:143`), which is the
+   measured hole `repertoire.h:50-60` documents. One concept, one place, or the build ships a
+   112-codepoint literal disagreeing with a generated table.
+
+   **Two consequences on the PERSISTED store, both required, neither optional** (rounds 13-14):
+   - `SanitizeNickname` stripping a mark must NOT let the resulting name become the persisted
+     identity. **Round 14 measured that round 13's answer described a mechanism the code does not
+     have**: `SetLocalNickname` stores `g_requestedNick = SanitizeNickname(nick)` (`:173`), so the
+     original is never kept anywhere, and the `repertoireSuspect` scan at `:218-224` reads that
+     already-sanitized store — it is **structurally blind to every codepoint `denied()` removed**, so
+     a mark-stripped name scans clean, takes the `:233-237` branch and becomes the stored identity.
+     That is exactly `[[lesson-a-placeholder-must-never-become-an-identity]]`, in the function whose
+     comment cites it. The fix is at the one function that owns the transformation: `SanitizeNickname`
+     reports **whether it changed anything**, and that flag feeds `repertoireSuspect` beside the
+     out-of-repertoire test — "our own rules altered the request" is as much a local artefact as
+     "our fonts cannot draw it". Not a second store: a raw string kept beside the sanitized one would
+     need its own sanitization at every other use.
    - The generator prints a **diff of the deny table** against the committed one, and a growth is a
      release-checklist review item, because growth retroactively narrows what stored names are legal.
 10. **RULE 2: delete the dead inclusion path in the same commit** (round 10). The ranges reach ImGui as
@@ -814,6 +842,15 @@ the `Glyphs.Size` delta — is **structurally blind to the pack failure it was p
 project's own instrument-blindness family one more time. The pack-failure detector therefore takes
 its own O(1) trigger: an edge on `builder->RectsDiscardedSurface` or on `TexData->UniqueID` (both
 change exactly when `MakeSpace` has been forced to act), and only then does it scan.
+
+**`Glyphs.Size` is NOT MONOTONIC — a high-water mark is the wrong shape** (round 14).
+`ImFontAtlasBuildDiscardBakes` reaches `ImFontAtlasBakedDiscard` → `ImFontBaked::ClearOutputData()`,
+which does `Glyphs.clear()` (`imgui_draw.cpp:5204-5212`), and it is driven from inside the very
+`MakeSpace` item 4 rests on (`:4244`, unused 2 frames) plus `:4306` (unused 1). So a same-font,
+same-size baked restarts at zero, and a remembered high-water mark would **skip every re-baked glyph
+below it** — silently, forever. The instrument therefore stores `(baked, lastSize)` per baked and
+**treats any DECREASE as a reset**, re-walking from zero. Pool entries are reused for other
+font/size pairs, which the same decrease rule covers.
 
 **Primary — the superset invariant.** `ImFontBaked::Glyphs` is **public** (`imgui.h:3891`) beside
 `IndexLookup` (`:3890`), so: **on any `Glyphs.Size` change, walk the newly baked glyphs and assert
