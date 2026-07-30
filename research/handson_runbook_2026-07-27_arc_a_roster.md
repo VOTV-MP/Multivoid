@@ -275,7 +275,8 @@ flip condition). Do not let anyone "just add the font".**
 
 ## What is NOT in this build, deliberately
 
-- Homoglyphs: `Anna` vs `Аnnа` (Cyrillic А) still render alike and get no suffix. Pre-existing, and
+- Homoglyphs: `Anna` vs `Аnnа` (Cyrillic А) render alike and get no suffix. **DELIBERATE as of
+  2026-07-30 -- the user declined the fold outright ("is normal").** Pre-existing, and
   you accepted it as D-e on 2026-07-27.
 - A twenty-emoji name overflows the player-list Player column and is clipped by the Mic column.
   Pre-existing fixed-width layout, newly visible because names can finally be that wide.

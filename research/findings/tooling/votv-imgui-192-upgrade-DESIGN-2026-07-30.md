@@ -15,7 +15,7 @@ Submodule pinned **`v1.92.9`** (`01380c579`) since `b33aae30`. Shipped from this
 | the flip's owed §7.4 negative controls | `5e729b5c` | **BUILT.** 3 probes + a per-source exclude-field census; selftest 8 -> 12 rows |
 | **the FLIP, commit 2** | `244b1320` | **BUILT — but NOT as designed: NFC DROPPED, premise measured false.** 335 combining marks admitted instead; see the §7 AS-BUILT box |
 | **C3** (a CJK font source) | — | **NOT BUILT.** §4; cannot precede the flip (§7.1). The only thing that makes hanzi draw |
-| the homoglyph fold | — | **NOT BUILT, no design pass yet.** 476 pixel-identical pairs, PRE-EXISTING in b133 — `votv-homoglyph-fold-FACTS-2026-07-30.md` |
+| the homoglyph fold | — | **BUILT then DECLINED by the user 2026-07-30** ("Alex (latin) and Аlex (cyrillic) is normal"). Reverted whole; a closed product decision, not a backlog item. |
 
 **The capability flag is now SET on both RHIs** — both `BackendFlags &= ~ImGuiBackendFlags_RendererHasTextures`
 clears were deleted in `0d84cc5a`, so the atlas is on-demand and the build has ONE drawable repertoire
@@ -520,7 +520,8 @@ one arc away, not in this one.
 > are homoglyphs — `A`≡`Α`≡`А`, `C`≡`С`, `3`≡`З`, `-`≡`‐`≡`−`, `:`≡`։`. **That set is
 > PRE-EXISTING in shipped b133**, not introduced by either commit, and folding it is a product
 > trade (a legitimately Cyrillic name would take a suffix it did not earn). Fact base and the
-> open questions: `votv-homoglyph-fold-FACTS-2026-07-30.md`. It gets its own arc.
+> open questions: `votv-homoglyph-fold-FACTS-2026-07-30.md`. **It got its own arc, and the user
+> DECLINED it (2026-07-30): mixed-script lookalike names are wanted, not a defect.**
 >
 > Evidence: repertoire selftest **PASS 26/26** (453 fold ranges, 32 exclude ranges), font
 > selftest **12/12**, nickname-arbiter **24/24**, zero `atlas watch:` lines, plain smoke PASS,

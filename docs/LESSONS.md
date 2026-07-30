@@ -33,6 +33,29 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 1. How to work (process / working agreements)
 
+- **A DECLINED PRODUCT QUESTION DOES NOT GO AWAY — it just gets answered after you build it
+  (2026-07-30).** The `/qf` critic asked in **round 1** and again in **round 2** whether the homoglyph
+  fold was a product choice for the user. I declined both times, citing "never ask when the
+  least-crutches option is obvious", and ran 13 more rounds. The design converged — 444 measured pairs,
+  both drills RED, a four-peer lobby proving it end to end — and the user's answer was *"I don't care
+  if Alex and Аlex play together"* / *"Alex (latin) and Аlex (cyrillic) is normal"*. Built and reverted
+  the same session. The autonomy rule covers **HOW** to build, never **WHETHER the user wants the
+  outcome**. **Look FIRST: before a design pass, answer "whose complaint is this?" — if the answer is
+  "mine", spend one sentence in text and keep working while it sits. A critic naming something
+  product-feel TWICE is a stop condition, not a point to concede rhetorically and route around; and
+  "I'll surface it prominently in the handoff" is not handing the fork back, because by then the user
+  is being asked to approve or discard something that already exists.**
+  → [[feedback-a-declined-product-question-does-not-go-away]]
+
+- **A USER REQUIREMENT NEVER OUTRANKS RULE 1 (USER RULE, 2026-07-30).** Verbatim: *"If one of my
+  requirements blocks a per rule 1 better solution, then drop that requirement."* A stated preference —
+  a budget, a scope wish, a "lets not do X" — is an INPUT to the design, not an axiom of it. The moment
+  you write *"X would be the right fix, but the user said not to"*, that requirement is a candidate for
+  dropping; building the second-best thing around it is the same failure as a suppressive filter.
+  **Look FIRST: drop it, build the proper fix, and NAME the dropped requirement in the handoff —
+  silently overriding a stated preference is the worse failure. Covers requirements about HOW; does NOT
+  cover a product decision about WHAT the user wants.** → [[feedback-drop-my-requirement-if-it-blocks-rule-1]]
+
 - **RUN THE `/qf` LOOP TO CONVERGENCE — do not hand it back every round (USER, 2026-07-30).** Verbatim,
   after a third consecutive hand-back: *"Why are you always stopping running qf, run qf."* The loop's
   terminal state is the critic's **"that holds"**, not "the primary has something to report"; handing
@@ -1220,7 +1243,8 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   not occur. Two more inversions in the same hour: 844 was the RAW decomposition count (30 are
   `Composition_Exclusion`, so 814 compose; "41/296 marks" are really 35/302 — nobody had run
   `normalize()`); and rasterising the WHOLE fold set found **476 pixel-identical pairs, only 23
-  canonical** — the real collisions are homoglyphs Unicode has no equivalence for
+  canonical** — the real collisions are homoglyphs Unicode has no equivalence for **The arc that followed was BUILT and then DECLINED by the user (2026-07-30): mixed-script lookalike names are wanted, not a defect. The measurement stands; do not re-open it as a bug.**
+ 
   (`A`≡`Α`≡`А`, `C`≡`С`, `3`≡`З`), already shipping. Note the near-miss: after NFC died, "just
   fold the 31 canonical singletons" was proposed AND approved, and it closes 23 of 476 — a site
   list inside the real invariant that survives review precisely because it is standard-derived.
@@ -1381,6 +1405,40 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 `feedback_check_mta_and_document` · `feedback_ida_rename_and_save` · `feedback_no_ue4ss_dependency` +
 `feedback_prefer_cpp_probes_over_ue4ss` · `feedback_code_with_agents_and_security` · `feedback_never_winxy_zero_multimonitor`
 (black screen + runaway RAM).
+
+
+- **A HASH ANSWERS THE QUESTION YOU ENCODED, NOT THE ONE YOU ASKED (2026-07-30).** To answer "do
+  these two codepoints DRAW the same", the instrument hashed each glyph as `(contours, ADVANCE)`.
+  Advance is not ink — it positions the NEXT glyph — and including it split ten pairs that an
+  independent bitmap census found identical at **59 of 59** sizes (`C`≡`Ⅽ`, `Κ`≡`K`, `ѕ`≡`ꜱ`…).
+  Dropping it: 382 → 419 pairs. The extra field looked like RIGOUR ("same shape AND same metrics"),
+  which is why it survived review. **Look FIRST: enumerate the hash's fields and strike each against
+  the question's WORDING; and when a cheap noisy instrument keeps finding what your rigorous one
+  misses, suspect the rigorous one — noise adds findings at random, systematic misses do not.**
+  → [[lesson-a-hash-answers-the-question-you-encoded-not-the-one-you-asked]]
+
+- **A CRITERION CHOSEN FOR STABILITY MAY NOT ANSWER THE DEFECT — try inverting the QUANTIFIER
+  (2026-07-30).** A census of "codepoints identical at SOME sampled size" grew **774 → 963** as the
+  grid went from 6 points to 59: an answer that moves when you sample harder is a site list, not an
+  invariant. The cure was not sampling harder but flipping ∃ to ∀ — "identical at EVERY sampled
+  size" is an intersection, so a denser grid can only SHRINK it. **Look FIRST: when a sampled
+  measurement will not converge, invert the quantifier before widening the sample; and state which
+  DIRECTION the residual runs — "over-folded, safe direction" was half a characterisation while the
+  same table was under-folding by a set nobody had counted.**
+  → [[lesson-a-criterion-chosen-for-stability-may-not-answer-the-defect]]
+
+- **A TABLE DESCRIBING ANOTHER SUBSYSTEM'S EXTENT ROTS WHEN THAT SUBSYSTEM GROWS (2026-07-30).**
+  `FoldCase` case-folded ASCII, Latin-1 and Cyrillic, and its comment called those "exactly the
+  cased scripts the repertoire draws". TRUE when written. Two later widenings (Latin-Ext/Greek, then
+  the flip's +4,741 codepoints) never touched the function, so nothing compiled differently and no
+  test spoke — and **649 of 890 cased-and-drawable codepoints silently folded to THEMSELVES**. None
+  folded WRONG: incomplete, never incorrect, which is why it was invisible (a missing fold just
+  leaves two names undeduplicated, and a lobby with no collision looks like a healthy one).
+  **Look FIRST: grep for comments of the shape "exactly the X that Y" — any constant whose
+  justification quantifies over a set owned ELSEWHERE needs a CENSUS, not a sentence. And the cure
+  is TWO mechanisms: freeze the data (reproducible) AND census it live (the claim); freezing alone
+  reproduces the defect with better provenance.**
+  → [[lesson-a-table-describing-another-subsystems-extent-rots-when-that-subsystem-grows]]
 
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
 

@@ -30,7 +30,11 @@
 // payload all derive from (see player_handshake::AdoptCanonicalNickname).
 //
 // ALPHABET (arc D2, built 2026-07-28). FoldKey folds in CODEPOINTS, case-folds
-// the cased scripts the overlay can draw (ASCII, Latin-1, Cyrillic), and maps
+// via coop::text::CaseFold -- a GENERATED table, since 2026-07-30; the hand-
+// written one covered ASCII, Latin-1 and Cyrillic while claiming to cover
+// "exactly the cased scripts the repertoire draws", and was 73% self-folding
+// by the time anyone counted (Greek 146, Armenian 38, Georgian 38, Latin-Ext
+// 374). It maps
 // every codepoint OUTSIDE coop::text::InRepertoire to one sentinel -- because
 // ImGui draws every absent codepoint as the SAME fallback glyph, so two names
 // with no codepoint in common can be two distinct keys and one identical

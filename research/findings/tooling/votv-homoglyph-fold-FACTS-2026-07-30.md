@@ -1,9 +1,19 @@
 # Homoglyph collisions in the shipped fold set — measured fact base, 2026-07-30
 
-**Status: MEASURED, NOT BUILT.** This is a fact base for an arc that has no design pass yet.
-It was found while building commit 2 of the ImGui flip and deliberately kept out of it.
+**Status: MEASURED. THE ARC WAS BUILT AND THEN DECLINED — see the banner below.**
 
-**The defect is LIVE in shipped b133.** It is not introduced by any pending work.
+> **DECLINED BY THE USER, 2026-07-30** — verbatim: *"I don't care if Alex and Аlex play together and their nicknames look identical"*, *"Alex (latin) and Аlex (cyrillic А + latin lex) is normal"*. Built across a 13-round `/qf`, then reverted whole. It is a CLOSED product decision, not a backlog item — do not re-open it as a defect.
+>
+> The MEASUREMENTS in this file remain true and are kept for that reason; two of them were
+> corrected during the build and are marked inline. What is dead is the conclusion that this
+> is a defect worth fixing. `Alex`/`Аlex` sharing a nameplate is WANTED behaviour.
+>
+> Corrections made while building: (a) "the count is size-dependent" is FALSE — Roboto measures
+> 221 pairs at 6px, 211 at 16, 199 at 20, 205 at 32 and **314 at 64**; fonts duplicate outlines
+> across scripts and small-size HINTING splits them. (b) `3`≡`З` is not FSEX300-specific in the
+> way the note implies — FSEX300 draws both with the SAME OUTLINE.
+>
+> Why the arc happened at all: `[[feedback-a-declined-product-question-does-not-go-away]]`.
 
 ## The measurement
 
