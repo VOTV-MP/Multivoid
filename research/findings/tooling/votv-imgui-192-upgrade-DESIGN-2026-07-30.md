@@ -461,14 +461,17 @@ one arc away, not in this one.
 
 ## 7. THE FLIP — design of record (implementation `/qf`, 9 rounds, 2026-07-30)
 
-**Status: DESIGN. Nothing here is built.** Supersedes §4's C2b bullet. The pass ran **12 rounds / 48
-questions** and **twenty-eight of the primary's claims were measured false**. **Still no "that holds"
-verdict** — rounds 10, 11 and 12 were each **four-for-four**: round 10 overturned this section's
+**Status: DESIGN. Nothing here is built.** Supersedes §4's C2b bullet. The pass ran **13 rounds / 52
+questions** and **thirty-two of the primary's claims were measured false**. **Still no "that holds"
+verdict** — rounds 10, 11, 12 and 13 were each **four-for-four**: round 10 overturned this section's
 framing of what it delivers, round 11 **inverted the exclude-set choice** (§7.3) and found the primary
-instrument blind to the failure it was paired with (§7.4), and round 12 found that **the exclude set
+instrument blind to the failure it was paired with (§7.4), round 12 found that **the exclude set
 as specified was a silent no-op** (§7.2 item 3) and that the invariant needed a **second table at a
-different layer** (§7.3a, item 9). Rounds 5, 8, 10, 11 and 12 each reversed something structural —
-three consecutive four-for-four rounds is not the shape of a converged design.
+different layer** (§7.3a, item 9), and round 13 found that the clamp fixing the no-op **would have
+admitted U+0000 to the repertoire**, that item 9 **violates a live selftest** which stays green
+because it tests the wrong set, and that widening flips a **persistence** decision (§7.3b). Rounds 5,
+8, 10, 11, 12 and 13 each reversed something structural — four consecutive four-for-four rounds is
+not the shape of a converged design.
 
 Only one thing from this pass is committed: `683f8214`, the two stale imgui citations in
 `fonts.cpp` (comment-only, measured, independent of the flip).
@@ -559,6 +562,13 @@ hits `IM_ASSERT(!atlas->Locked)` — **stripped under NDEBUG** — and returns N
    Regular and Roboto-Bold** (measured). It also cannot legitimately be requested — ImGui text is
    NUL-terminated — so clamping the table's first range to U+0001 costs nothing. The generator gets
    a hard `sys.exit` if the first emitted value is 0, because nothing downstream can see this.
+
+   **The clamp applies to the `GlyphExcludeRanges` EMISSION ONLY — not to the fold table** (round
+   13). The fold set is defined as `render − exclude`, so dropping U+0000 from the *shared* set would
+   ADMIT U+0000 to the repertoire (it is in the FSEX300 and Roboto cmaps), make `InRepertoire(0)`
+   true and let NUL fold to itself. So "ONE table" is honestly **one source set with two emissions
+   that differ by exactly one codepoint**, and the generator asserts the difference *is* exactly
+   `{U+0000}` rather than leaving it to a reader to notice.
    Post-flip `GlyphRanges` is dead input, so "fold == render"
    stops being true by construction; `GlyphExcludeRanges` restores it, measured to gate the
    **on-demand** path at `imgui_draw.cpp:4593` via `ImFontAtlasBuildAcceptCodepointForSource`
@@ -627,11 +637,25 @@ hits `IM_ASSERT(!atlas->Locked)` — **stripped under NDEBUG** — and returns N
    to a different key, which is arc D2's defect arriving from a direction the category-based exclude
    set cannot see. **Do not solve it in `GlyphExcludeRanges`**: chat is not uniqueness-bearing, and
    deleting 307 marks from the atlas would degrade the user's actual ask to protect a property only
-   names need. Instead the same generator emits `coop::text::IsZeroAdvance()` from the **hmtx**
-   census, and the existing name denylist `denied()` (`player_handshake_nick.cpp:121`) tests it
-   beside `IsDefaultIgnorable`. A name then cannot contain one, so uniqueness holds by construction
-   at the receive boundary, and chat draws every mark. One generator, three consumers (fold, exclude,
-   deny); a new font changes all three together or fails the build.
+   names need. So the name denylist `denied()` (`player_handshake_nick.cpp:121`) gains the combining
+   class beside `IsDefaultIgnorable`, and chat draws every mark.
+
+   **The table is CATEGORY-derived (`Mn ∪ Me ∪ Mc`), NOT advance-derived, and the hmtx census is its
+   GATE** (round 13). A table generated from font *binaries* would let a face revision retroactively
+   change which persisted names are legal — an unacceptable coupling for a stored identity, and a
+   strictly worse version of the one `InRepertoire` already has. A general category is stable across
+   face revisions and is the right vocabulary for "may this appear in a name". The census does not
+   disappear: the generator runs it and **hard-fails if it finds a zero-advance codepoint the
+   category table does not cover**, so the three `Po` outliers it measured must be adjudicated by a
+   human rather than silently dropped. Measured table, measured tripwire.
+
+   **Two consequences on the PERSISTED store, both required, neither optional** (round 13):
+   - `SanitizeNickname` stripping a mark must NOT rewrite a stored name. It routes into the existing
+     `repertoireSuspect` lane (`player_handshake_nick.cpp:~218`): **display the sanitized form, keep
+     requesting the original, persist nothing.** That mechanism exists precisely for this and is
+     already tested; `[[lesson-a-placeholder-must-never-become-an-identity]]` is what it is for.
+   - The generator prints a **diff of the deny table** against the committed one, and a growth is a
+     release-checklist review item, because growth retroactively narrows what stored names are legal.
 10. **RULE 2: delete the dead inclusion path in the same commit** (round 10). The ranges reach ImGui as
    the `glyph_ranges` **parameter** of `AddFontFromMemoryTTF` (`fonts.cpp:133`), which ImGui stores
    into `ImFontConfig::GlyphRanges` — so it is passed on every add, through `AddFromResource` and
@@ -750,6 +774,35 @@ The field is set on **two** `ImFontConfig` objects, covering all eight of our ad
 `AddFromResource` (`:224`) + the OS fallbacks (`:438`, `:446`); `merge` (`:178`) → the three
 backstops (`:182`); `donor` (`:187`) **inherits by copy**; `AddFromResource` does `cfg = baseCfg`
 (`:130`). Not ours: `AddFontDefaultBitmap()` (`:465`), whose cmap is the 7×13 ASCII bitmap.
+
+### 7.3b Two live consumers of `InRepertoire` that are NOT renderers (round 13)
+
+Widening the repertoire changes behaviour in two places that never draw anything, and both must be
+named in the commit rather than discovered.
+
+**The persistence gate flips, and that is the point.** `player_handshake_nick.cpp:~218` refuses to
+PERSIST a host-assigned suffix when the request holds any out-of-repertoire codepoint, on the written
+rationale that the suffix is then an artefact of *our font set* — *"a later build that embeds more
+scripts would stop producing it… the user would be Zhang2 forever, in an install that can draw 张伟
+perfectly well."* **The flip IS that later build.** So em-dash, Hebrew, Thai, Arabic and mark-bearing
+names move from *suffix-not-persisted* to *suffix-persisted* — which is exactly what that comment
+asked for, because once the glyphs draw, a clash is a genuine clash and not a rendering artefact. It
+also *reduces* suffixing overall, since fewer names collapse onto the sentinel. Wanted; unlisted
+until now.
+
+**The disjointness selftest becomes wrong, and must be rewritten in this commit — not left green.**
+`repertoire.cpp:104-113` asserts *"Nothing the atlas bakes may also be denied in a name"* and tests
+`repertoire ∩ IsDefaultIgnorable = ∅`. Item 9 deliberately denies **307 codepoints the atlas does
+bake**, so it violates the stated rule while the selftest **stays GREEN because it only tests
+`kIgnorable`** — a green-by-construction pass in the exact family the project already records. The
+rule was written when the two sets coincided and it conflates *"not baked"* with *"illegal in a
+name"*. Restated, the real invariants are:
+
+- **fold set == bake set** — the D2 invariant, and the only one that must hold exactly;
+- **`IsDefaultIgnorable ∩ repertoire = ∅`** — an ignorable is neither drawn nor legal (keep, unchanged);
+- **`deny ⊃ combining ⊂ repertoire` is INTENTIONAL** — a name may not contain everything the UI can
+  draw, and the selftest must assert that positively (the marks ARE baked and ARE denied), so the
+  overlap is a checked decision instead of an unchecked one.
 
 ### 7.4 The instruments
 
