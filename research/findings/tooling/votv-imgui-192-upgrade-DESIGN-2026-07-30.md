@@ -520,6 +520,17 @@ one arc away, not in this one.
 > the other side:** at 64×64 the packer failed after ~3,400 px, and the counters
 > (`packed`/`discarded`) appeared in the transition log exactly as §7.4 requires.
 >
+> **ONE SPECIFIED THING WAS NOT BUILT, and it is named here rather than left to be
+> discovered: §7.4's three-row NEGATIVE-CONTROL probe table** (U+00AD carried by all
+> seven faces / U+E0B0 by JetBrains Mono only / U+E0067 by the donor only), whose job is
+> to catch a missed `GlyphExcludeRanges` on a *specific* config rather than on any of
+> them. What shipped is the superset invariant, which catches the same failure only once
+> an offending codepoint is actually DRAWN. That is weaker in principle and was shown to
+> work in practice — the `NO_EXCLUDE` drill produced a real offender within seconds —
+> but "a config nobody's text exercises" is a hole the probe table would close and the
+> invariant does not. Cheap to add (three `IsGlyphInFont && InExcludeSet` assertions in
+> the per-build selftest, all cmap-pure, none of them baking); it is owed.
+>
 > Residuals, unchanged: **not hands-on**; commit 2 (NFC) not built; the DX12 upload
 > probe's first real numbers are 1.29 / 1.92 / 3.96 ms per upload with dirty boxes
 > 346×33 → 95×10 → 12×13 — note the 3.96 ms was the SMALLEST box, so the cost is the
