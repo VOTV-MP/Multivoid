@@ -461,8 +461,12 @@ one arc away, not in this one.
 
 ## 7. THE FLIP — design of record (implementation `/qf`, 9 rounds, 2026-07-30)
 
-**Status: DESIGN. Nothing here is built.** Supersedes §4's C2b bullet. The pass ran **19 rounds / 73
-questions** and **fifty of the primary's claims were measured false**. Round 19 corrected round 18's
+**Status: DESIGN. Nothing here is built.** Supersedes §4's C2b bullet. The pass ran **20 rounds / 76
+questions** and **fifty-three of the primary's claims were measured false**. Round 20 found that the
+receive-boundary ledger **delays rather than bounds** — it saturates, after which a full-repertoire
+snapshot passes with zero novelty — which **un-defers the FreeType metrics pass into a precondition
+of commit 1**, and that round 14's "stop baking" rule would have made the emoji colour check
+permanently green-by-skip. Round 19 corrected round 18's
 own answer: the novelty ledger cannot be ImGui's `IndexLookup` — wrong thread, and erased by the very
 pressure it bounds — so the receive boundary keeps its own monotone set (§7.5). **No "that holds"
 verdict was ever given** — rounds 10 through 18 landed **every question asked**. Round 18 measured
@@ -695,17 +699,27 @@ cannot ship admitting the marks without it.
    §7.1 rejected. The runbook's expected-lines section is rewritten in this commit too, since "two
    bake+selftest pairs per peer" stops being the signature.
 6. **Selftest becomes PER-BUILD, in-frame — keyed on `atlas->TexData->UniqueID`, NOT on a `Load()`
-   flag** (round 11 caught the latch), **and it must stop BAKING** (round 14). Two things the regime
+   flag** (round 11 caught the latch), **and it must stop baking EXCEPT for exactly one deliberate
+   glyph** (round 14, corrected by round 20). Two things the regime
    change does to it, both already written down and neither acted on: its presence checks become
    **green by construction** — `overlay_backend_dx12.cpp:269-272` records it verbatim, *"under a lazy
    atlas asking for one simply bakes it, so it passes 8/8 either way"* — and its colour-texel check
    **rasterises an emoji**, so firing it on every `MakeSpace`-triggered rebuild adds pack area at
    precisely the moment the atlas is out of room. `[[lesson-an-instrument-can-fail-the-feature-it-tests]]`,
-   third instance. So: presence is asserted with `ImFont::IsGlyphInFont` (pure cmap, never bakes),
-   the RED case U+4E00 keeps its meaning unchanged, and the colour check reads
-   `IndexLookup`/`Glyphs` for a glyph **already** baked and is SKIPPED for that build otherwise —
-   never forced. Any check whose post-flip meaning is "asking for it baked it" is DELETED rather than
-   kept as a green line (RULE 2). A pending flag set by `Load()` is per-*Load*: it sees boot,
+   third instance. So: presence is asserted with `ImFont::IsGlyphInFont` (pure cmap, never bakes) and
+   the RED case U+4E00 keeps its meaning unchanged. Any check whose post-flip meaning is "asking for
+   it baked it" is DELETED rather than kept as a green line (RULE 2).
+
+   **But the colour check must FORCE its one bake — round 14's "read an already-baked glyph or skip"
+   was wrong, and round 20 caught it.** Post-item-5 nothing preloads, so on a normal boot **nothing
+   has drawn U+1F600 before the selftest runs**: a skip rule makes the single instrument that proves
+   COLR and `LoadColor` actually produced colour pixels **permanently green-by-skip**. That instrument
+   is the 689 KB donor's whole justification and half of the user's literal ask, so losing it inside
+   the commit that advertises emoji is
+   `[[lesson-an-instrument-never-shown-failing-passes-by-construction]]` arriving by the front door.
+   It therefore bakes **one known in-repertoire emoji, deliberately, once per build**, documented as
+   the one intentional bake — one glyph of pack area, not the set-sized cost round 14 was right to
+   fear. A pending flag set by `Load()` is per-*Load*: it sees boot,
    rescale and the F1 family switch, and is **structurally blind to every build
    `ImFontAtlasTextureMakeSpace` triggers** (`imgui_draw.cpp:4239`) — which is precisely where a
    growing atlas does its interesting work. That is the same `static bool done` shape s15 removed,
@@ -1053,6 +1067,29 @@ Both belong in `docs/security/TRACKER.md`, with **different severity and differe
   **by construction**, because the string cannot carry unbounded novelty. One owner instead of three,
   no deferral, no freeze, no soft cap, and no per-frame work on a draw path at all. The budget is a
   `config_registry` row so it is tunable without a rebuild.
+
+  **THE LEDGER DELAYS; IT DOES NOT BOUND — round 20, and it is the finding that un-defers the metrics
+  pass.** The novelty budget limits how fast the repertoire can be *reached*. But §7.2 item 4(a)'s
+  permanent box depends on **distinct codepoints demanded in ONE frame**, not on first sights — and
+  the monotone set **saturates**: a patient peer reaches all 7,258 inside its per-interval budget, and
+  a long-lived multilingual server gets there for free. After that, one `kMaxSnapshotLines` 206 ×
+  `text[256]` snapshot carrying the whole repertoire passes the cap with **zero novelty**, leaving
+  only §7.4's detector — which this design says explicitly does not prevent.
+
+  So the quantity that must be bounded lives on the **frame**, and the honest position is that **the
+  primary does not yet have the measurement that decides how to bound it.** The 12.8 Mpx figure is the
+  whole repertoire across ALL live sizes, scaled from the eager bake; a hostile snapshot demands it at
+  ONE size, which may or may not fit 2048²'s 4.19 Mpx. That is exactly what the FreeType metrics pass
+  answers, it is **no longer deferrable to C3**, and round 15's claim that it "cannot run read-only
+  today" was too quick — `tools/probes/atlas_probe` already bakes a real face set and reports
+  geometry, so extending it to bake the commit-1 fold set at the chat px and report packed surface is
+  an available measurement, not a new harness.
+
+  **It becomes a PRECONDITION of commit 1**, because two decisions ride on it: whether `TexMax` is
+  2048 or 4096 (4096 = 16.7 Mpx, which would hold the full repertoire and **eliminate the class**, at
+  67 MB per texture and 134 MB across a repack), and whether any frame-side bound is needed at all.
+  Raising the ceiling so the demand always fits is a root fix; a frame policeman is a second mechanism
+  guarding what capacity should have made unreachable.
 
 - **The unbounded upload wait** — `WaitForSingleObject(…, INFINITE)` per upload on the render thread.
   **DX12 only**; DX11's `UpdateSubresource` has no fence and no wait. **Round 11 added the other half:
