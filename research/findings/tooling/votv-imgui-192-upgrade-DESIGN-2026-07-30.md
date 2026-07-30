@@ -461,9 +461,10 @@ one arc away, not in this one.
 
 ## 7. THE FLIP — design of record (implementation `/qf`, 9 rounds, 2026-07-30)
 
-**Status: DESIGN. Nothing here is built.** Supersedes §4's C2b bullet. The pass ran **15 rounds / 59
-questions** and **thirty-nine of the primary's claims were measured false**. **Still no "that holds"
-verdict** — rounds 10 through 15 landed **every question asked**: round 10 overturned this section's
+**Status: DESIGN. Nothing here is built.** Supersedes §4's C2b bullet. The pass ran **16 rounds / 63
+questions** and **forty-two of the primary's claims were measured false**. **Still no "that holds"
+verdict** — rounds 10 through 16 landed **every question asked**, and round 16 split the work into
+**TWO commits** (§7.1a): round 10 overturned this section's
 framing of what it delivers, round 11 **inverted the exclude-set choice** (§7.3) and found the primary
 instrument blind to the failure it was paired with (§7.4), round 12 found that **the exclude set
 as specified was a silent no-op** (§7.2 item 3) and that the invariant needed a **second table at a
@@ -475,8 +476,13 @@ answer described a mechanism the code does not have**, and round 15 **DISSOLVED 
 the deny table it had spent three rounds refining would have made Thai, Tamil, Thaana, Arabic and
 Hebrew unwritable as names in the same commit that advertises those scripts, and NFC on the fold key
 solves the actual defect without denying anything. Round 15 also caught §7.2 item 4 **contradicting
-§7.5** about whether a remote peer can exceed the atlas. Six consecutive rounds landing every
-question, with the pass correcting its own corrections, is not the shape of a converged design.
+§7.5** about whether a remote peer can exceed the atlas. Round 16 measured that the diff had grown past
+`OPUS_48_DISCIPLINE.md`'s "~3 subsystems, STOP" and split it on the axis boundary, and **dissolved**
+the migration unknown with one grep: `FoldKey` has exactly TWO non-selftest call sites
+(`nickname_arbiter.cpp:124,:127`), both transient comparisons, and **no call site persists a key** —
+the ini stores the NAME — so changing what a key IS has no effect on stored data. Seven consecutive
+rounds landing every question, with the pass correcting its own corrections, is not the shape of a
+converged design.
 
 Only one thing from this pass is committed: `683f8214`, the two stale imgui citations in
 `fonts.cpp` (comment-only, measured, independent of the flip).
@@ -527,7 +533,29 @@ see it is how the first data point comes from a build you cannot read.
 hits `IM_ASSERT(!atlas->Locked)` — **stripped under NDEBUG** — and returns NULL, so
 `PushFont(font, px)` at an unbaked size gets a null baked.
 
-### 7.2 The flip commit
+### 7.1a IT IS TWO COMMITS, NOT ONE (round 16)
+
+By round 15 the diff spanned `fonts.cpp` + `imgui_overlay.cpp` + both backends + the generator +
+`repertoire` + `nickname_arbiter` + `player_handshake_nick` + the chat render path + a CI gate —
+against `OPUS_48_DISCIPLINE.md`'s "~3 subsystems, STOP". The split is not cosmetic, because the two
+halves are **different axes** and each is independently correct:
+
+| | commit 1 — THE FLIP | commit 2 — NFC |
+|---|---|---|
+| axis | the atlas regime | the fold algorithm |
+| exclude table | `no-ink ∪ IGN ∪ PUA ∪ (Mn∪Me∪Mc ∩ render)` — **67 ranges / 134 values** | drops the marks — back to **32 / 64** |
+| fold set | **7,258** (+4,741) | **7,593** (+335 more) |
+| touches | fonts / overlay / backends / generator / repertoire | arbiter / repertoire / generator |
+
+**Commit 1 excluding the 337 marks is not a crutch — it is today's behaviour, preserved.** Marks are
+already unbaked and already fold to the sentinel, so commit 1 regresses nothing and widens everything
+else; commit 2 then admits them *and* makes them safe in the same change. The invariant `fold == bake`
+holds exactly at **both** boundaries, which is the property that makes the split legal rather than a
+staged half-measure. Ordering is forced, not chosen: NFC's whole justification ("`"A"+U+0301` is
+pixel-indistinguishable from `Á`") is only TRUE post-flip, so it cannot precede the flip; and the flip
+cannot ship admitting the marks without it.
+
+### 7.2 The flip commit (commit 1)
 
 1. **Delete both clears** (`overlay_backend_dx11.cpp:98`, `overlay_backend_dx12.cpp:273`). ONE AXIS:
    a per-RHI split is a two-regime binary whose drawable behaviour depends on the player's GPU API —
@@ -940,10 +968,27 @@ Both belong in `docs/security/TRACKER.md`, with **different severity and differe
   whole repertoire is bakeable from it, so a few hundred bytes of diverse UTF-8 forces thousands of
   FreeType rasterisations plus repacks **on every receiving peer**. **RHI-independent.** Existing caps
   (`kMaxSnapshotLines` 206 × `text[256]`) bound one frame, not a stream of fresh messages. Nothing in
-  ImGui bounds per-frame rasterisation (measured by absence). Mitigation is now implementable at our
-  layer via §7.4's pure predicate — count first-sight codepoints per frame, defer the rest of a row
-  past a threshold — but is **not built** in the flip commit. The number rides the `Glyphs.Size` delta
-  (O(1)); a text scan would be O(text) on the hot path, the pattern the audit rule exists to catch.
+  ImGui bounds per-frame rasterisation (measured by absence).
+
+  **IT SHIPS IN COMMIT 1. This row previously ended "but is not built in the flip commit" while §7.2
+  item 4 said the opposite** — `[[lesson-a-correction-in-a-new-subsection-leaves-the-headline-stale]]`
+  firing inside the document that recorded it, hours later. The flip is what makes the amplification
+  reachable, so it cannot land without the bound. **Specified, because one sentence was not a
+  specification** (round 16):
+  - **PREDICTIVE, not reactive.** Riding the `Glyphs.Size` delta reads *after* the rasterisations it
+    is meant to bound, so it cannot stop the FIRST hostile frame — the only frame that matters. The
+    count is taken **before drawing a row**, with §7.4's pure `IndexLookup` sentinel read (O(1) per
+    codepoint, never bakes).
+  - **Not new complexity order.** ImGui's own renderer already walks every byte of every drawn string,
+    so an O(1) lookup per codepoint on rows already being walked is proportional, not an added scan.
+    That is the distinction the audit rule cares about.
+  - **Budget: 64 first-sight codepoints per frame**, from the measured eager bake (~72-87 ms for
+    2,517 across 7 faces ⇒ ~1 ms at 64) — a `config_registry` row, so it is tunable without a rebuild
+    and appears in the generated ini catalog.
+  - **Deferral is at ROW boundaries, never mid-row**, so no row ever renders half-drawn: a row whose
+    first-sight count would exceed the remaining budget renders on the NEXT frame. Human chat fills in
+    imperceptibly; only an adversary is throttled, and the throttle is what stops the pack exhaustion
+    §7.2 item 4 makes remotely reachable.
 - **The unbounded upload wait** — `WaitForSingleObject(…, INFINITE)` per upload on the render thread.
   **DX12 only**; DX11's `UpdateSubresource` has no fence and no wait. **Round 11 added the other half:
   what waits can be arbitrarily LARGE, because the dirty region accumulates across unserviced
