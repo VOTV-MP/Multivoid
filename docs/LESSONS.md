@@ -1177,7 +1177,49 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   must-FAIL control ran against fixtures (a log with the line passes, one without goes RED) — which is
   FIXTURE-level plus green live runs, **not** a defect-carrying build, and it executes only under
   `--assert-i18n` (`smoke_i18n` / `smoke4`), not the default `smoke`.
+  **CLOSED 2026-07-30, and the closing is its own lesson: the sentence above NAMED the hole and the
+  hole shipped anyway.** A defect-carrying build (font selftest mutated to fail 2 of 12 rows) was
+  smoked, and the default `smoke` printed **PASS** with `fail=2` and two `[ERROR]` rows in both peer
+  logs. The assertion now runs from `cmd_smoke` too, over both peer logs, and the same mutant then
+  failed with all four findings. *Look FIRST:* a documented gap is not a mitigated one — when a
+  sweep writes "…but only under X", that clause is a WORK ITEM, not a caveat, and the next reader
+  will treat it as coverage.
   `memory/lesson_an_instrument_never_shown_failing_passes_by_construction.md`
+
+- **A check's NAME decides where it gets called, so a scenario-shaped name is a coverage decision
+  (2026-07-30, `tools/mp.py`).** Four assertions — strict UTF-8, no line formatting to nothing, no
+  `selftest: FAIL`, and the positive `font selftest: DONE fail=0` — were correct, complete, and
+  called from exactly **one** scenario, because the function was named `_i18n_checks`. Nothing in the
+  body is about mixed scripts. A build with two deliberately-failing selftest rows and `fail=2` in
+  BOTH peer logs printed `PASS` from the plain smoke; renamed `_peer_log_health` and called from
+  `cmd_smoke`, the same run failed with all four findings. This is the family's fourth dimension and
+  the strangest: the detector had **no defect** — every earlier instance was a check that missed
+  something, this one was simply never asked. The name answers "when do I call this?" before anyone
+  reads the body, and answers it wrongly and confidently; a scenario-named helper is *born* accurate
+  and rots in the same commit that generalises its body. *Look FIRST:* name a check after the
+  PROPERTY it asserts, never the scenario that motivated it; when a doc says "the tool asserts X",
+  write WHERE; grep a new assertion's own call sites and treat "one call site for a general property"
+  as the tell; and read "my mutant passed" as a finding about the HARNESS, never as a reason to
+  strengthen the mutant. `memory/lesson_a_checks_name_decides_its_blast_radius.md`
+
+- **A negative control proves the POLICY is right — not that anything APPLIES it (2026-07-30,
+  `ui/atlas_watch.cpp`, the §7.4 probes).** Three probes were specified to catch "a missed
+  `GlyphExcludeRanges` on a *specific* config". Written exactly as specified —
+  `IsGlyphInFont(cp) && InExcludeSet(cp)`, cmap-pure — they are correct, they go RED under mutation,
+  and **they cannot catch that failure**: `InExcludeSet` reads our table, so it answers "does the
+  policy forbid this codepoint", never "did this `ImFontConfig` receive the policy". Measured: under
+  `dev.atlas_no_exclude_drill` (field removed from every config, table untouched) all three stayed
+  green (`fail=1`, not `fail=4`). The failure needed a fourth check — a per-source census over
+  `atlas->Sources` comparing each config's list by CONTENT — which fired **4 seconds before** the
+  superset invariant that was supposed to be the backstop, because the invariant must wait for
+  something to be DRAWN and "a config nobody's text exercises" never triggers it. Two shape traps
+  came with it: ImGui `ImMemdup`s the list (`imgui_draw.cpp:3116`) so pointer identity is false by
+  construction, and comparing against the accessor rather than the generated table would pass
+  `NULL == NULL` under the very drill it detects. Survived a 22-round `/qf` because a specified
+  *mechanism* stops attracting the question "does that mechanism observe the stated failure?".
+  *Look FIRST:* for every check say which of the two it asserts — THE RULE IS RIGHT vs THE RULE IS
+  APPLIED HERE — and test a policy check by removing the WIRING, not by corrupting the TABLE.
+  `memory/lesson_a_negative_control_proves_the_policy_not_the_wiring.md`
 
 - **One name covering TWO quantities reads as a coherent design and is not — FIVE times in one pass,
   caught by the critic every time and by the primary never (2026-07-29, chat-history `/qf` pass 2).**

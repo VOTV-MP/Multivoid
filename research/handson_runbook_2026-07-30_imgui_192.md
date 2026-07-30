@@ -37,13 +37,18 @@ Expect instead:
 repertoire selftest: PASS (22/22) -- 441 fold ranges, 67 exclude ranges
 novelty ledger selftest: PASS (6/6) -- budget 512 per 10000 ms per peer
 fonts: atlas geometry 512x128 RGBA32 (texid=1, packed 8618 px, discarded 0 px, 1 bakeds) -- lazy atlas...
-font selftest: DONE fail=0 (8/8) -- atlas 512x128 RGBA32 texid=1, 348 colour texels in one emoji ...
+font selftest: DONE fail=0 (12/12) -- atlas 512x128 RGBA32 texid=1, 348 colour texels in one emoji ...
 ```
 
-- **`font selftest: DONE fail=0`** — a POSITIVE line, and `tools/mp.py` now asserts its presence. The
-  old negative grep (`"selftest: FAIL" not in log`) was sound only while the selftest ran
-  unconditionally at boot; it is conditional now (a texture-id edge), so silence would have read as
-  success.
+- **`font selftest: DONE fail=0 (12/12)`** — a POSITIVE line, and `tools/mp.py` asserts its presence
+  **on every smoke** (not only `smoke_i18n`, which was the case until 2026-07-30 and let a build with
+  `fail=2` print PASS). The old negative grep (`"selftest: FAIL" not in log`) was sound only while the
+  selftest ran unconditionally at boot; it is conditional now (a texture-id edge), so silence would
+  have read as success.
+- **12 rows, not 8.** Four landed 2026-07-30: three negative controls (U+00AD / U+E0B0 / U+E0067 —
+  each carried by a different subset of faces, each excluded) plus a per-source census asserting every
+  `ImFontConfig` actually received the generated exclude table. The census is the one that catches a
+  config nobody's text exercises, without waiting for a draw.
 - **The atlas STARTS SMALL and GROWS.** `512x128` at boot is correct, not a defect — it holds only
   what has actually been drawn. Earlier runbooks expected `2048x2048`; that was the eager regime.
   The geometry line reappears whenever it changes.

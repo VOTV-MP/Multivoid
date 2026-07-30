@@ -520,16 +520,51 @@ one arc away, not in this one.
 > the other side:** at 64×64 the packer failed after ~3,400 px, and the counters
 > (`packed`/`discarded`) appeared in the transition log exactly as §7.4 requires.
 >
-> **ONE SPECIFIED THING WAS NOT BUILT, and it is named here rather than left to be
-> discovered: §7.4's three-row NEGATIVE-CONTROL probe table** (U+00AD carried by all
-> seven faces / U+E0B0 by JetBrains Mono only / U+E0067 by the donor only), whose job is
-> to catch a missed `GlyphExcludeRanges` on a *specific* config rather than on any of
-> them. What shipped is the superset invariant, which catches the same failure only once
-> an offending codepoint is actually DRAWN. That is weaker in principle and was shown to
-> work in practice — the `NO_EXCLUDE` drill produced a real offender within seconds —
-> but "a config nobody's text exercises" is a hole the probe table would close and the
-> invariant does not. Cheap to add (three `IsGlyphInFont && InExcludeSet` assertions in
-> the per-build selftest, all cmap-pure, none of them baking); it is owed.
+> **THE ONE SPECIFIED THING THAT WAS NOT BUILT IS NOW BUILT (2026-07-30, same day):
+> §7.4's three-row NEGATIVE-CONTROL probe table**, plus a fourth check the probes turned
+> out to need. The selftest is now **12 rows, `fail=0` on every peer**.
+>
+> The probe table went in as specified, and the census rows were **measured against the
+> shipped .ttf cmaps rather than carried from the design**: U+00AD in all seven embedded
+> faces and NOT the donor, U+E0B0 in JetBrains Mono only (both weights), U+E0067 in the
+> donor only. Each row asserts the CONJUNCTION `IsGlyphInFont(cp) && InExcludeSet(cp)`,
+> and both halves earn their place — a face must still CARRY the codepoint or the probe
+> is vacuous and passes while proving nothing. That conjunction is well-formed only
+> because `ImFont::IsGlyphInFont` (`imgui_draw.cpp:5391`) walks the sources' cmaps and
+> does **not** consult `GlyphExcludeRanges`; had it consulted it, one half would make the
+> other unreachable.
+>
+> **What building it exposed: the three probes cannot actually catch the failure they are
+> named for.** A probe asserts that the TABLE forbids a codepoint. Whether a given
+> `ImFontConfig` ever RECEIVED the table is a different fact, and it is the one §7.4
+> describes ("a missed `GlyphExcludeRanges` on a *specific* config"). So a fourth check
+> shipped beside them: a per-source census walking `atlas->Sources` and comparing each
+> config's list against `coop::text::ExcludeRanges` by CONTENT. Two measurements forced
+> that shape — ImGui `ImMemdup`s the list into its own allocation (`imgui_draw.cpp:3116`),
+> so pointer identity is false for every source by construction; and it must compare
+> against the generated table directly rather than against `ui::fonts::ExcludeList()`,
+> which returns `nullptr` under `dev.atlas_no_exclude_drill` and would make the check pass
+> `NULL == NULL` in exactly the state it exists to detect.
+>
+> **Shown RED before being trusted, all four:** a mutate control (probe 1 → U+0041,
+> carried but not excluded; probe 3 → U+4E00, not carried at all) produced
+> `fail=2 (10/12)` with the untouched U+E0B0 row still green, so each half of the
+> conjunction is separately detectable. The census went RED under the `NO_EXCLUDE` drill
+> with `15 of 15 source(s) lack the generated exclude table, first index 0` — **at 16:55:11,
+> four seconds before the superset invariant fired at 16:55:15.** That gap is the entire
+> argument for the census: it sees the missing field without waiting for anything to be
+> drawn. Clean runs then gave `fail=0 (12/12)` on host + three clients, two builds each,
+> zero `atlas watch:` lines.
+>
+> **And a gate defect the mutate control found, which had nothing to do with fonts.** The
+> mutant's first smoke printed **PASS** with `fail=2` and two ERROR rows in both peer logs.
+> The log-health checks — strict UTF-8, blank-formatted lines, any `selftest: FAIL`, and
+> the positive `font selftest: DONE fail=0` line — were all correct and all wired to
+> `smoke_i18n` alone, under the name `_i18n_checks`. Nothing in them is about mixed
+> scripts. Renamed `_peer_log_health` and called from `cmd_smoke` over both peer logs
+> (exit 9); re-running the mutant then failed with all four findings. This is why the
+> earlier as-built line "`tools/mp.py` asserts its presence" was true and still
+> insufficient — it asserted it in one scenario out of many.
 >
 > Residuals, unchanged: **not hands-on**; commit 2 (NFC) not built; the DX12 upload
 > probe's first real numbers are 1.29 / 1.92 / 3.96 ms per upload with dirty boxes
