@@ -461,9 +461,9 @@ one arc away, not in this one.
 
 ## 7. THE FLIP — design of record (implementation `/qf`, 9 rounds, 2026-07-30)
 
-**Status: DESIGN. Nothing here is built.** Supersedes §4's C2b bullet. The pass ran **14 rounds / 56
-questions** and **thirty-six of the primary's claims were measured false**. **Still no "that holds"
-verdict** — rounds 10 through 14 were each **four-for-four**: round 10 overturned this section's
+**Status: DESIGN. Nothing here is built.** Supersedes §4's C2b bullet. The pass ran **15 rounds / 59
+questions** and **thirty-nine of the primary's claims were measured false**. **Still no "that holds"
+verdict** — rounds 10 through 15 landed **every question asked**: round 10 overturned this section's
 framing of what it delivers, round 11 **inverted the exclude-set choice** (§7.3) and found the primary
 instrument blind to the failure it was paired with (§7.4), round 12 found that **the exclude set
 as specified was a silent no-op** (§7.2 item 3) and that the invariant needed a **second table at a
@@ -471,9 +471,12 @@ different layer** (§7.3a, item 9), and round 13 found that the clamp fixing the
 admitted U+0000 to the repertoire**, that item 9 **violates a live selftest** which stays green
 because it tests the wrong set, and that widening flips a **persistence** decision (§7.3b). Rounds 5,
 8, and 10 through 14 each reversed something structural. Round 14 measured that **round 13's own
-answer described a mechanism the code does not have** (§7.2 item 9) — five consecutive
-four-for-four rounds, with the pass now correcting its own corrections, is not the shape of a
-converged design.
+answer described a mechanism the code does not have**, and round 15 **DISSOLVED item 9 entirely** —
+the deny table it had spent three rounds refining would have made Thai, Tamil, Thaana, Arabic and
+Hebrew unwritable as names in the same commit that advertises those scripts, and NFC on the fold key
+solves the actual defect without denying anything. Round 15 also caught §7.2 item 4 **contradicting
+§7.5** about whether a remote peer can exceed the atlas. Six consecutive rounds landing every
+question, with the pass correcting its own corrections, is not the shape of a converged design.
 
 Only one thing from this pass is committed: `683f8214`, the two stale imgui citations in
 `fonts.cpp` (comment-only, measured, independent of the flip).
@@ -600,9 +603,21 @@ hits `IM_ASSERT(!atlas->Locked)` — **stripped under NDEBUG** — and returns N
    state alone. **(b) `TexList` holds old AND new across a repack** (`:4097-4107`), so peak is two
    textures: 2048² RGBA32 = 16.8 MB each → **33.6 MB peak**, where 4096 would be **134 MB**.
 
-   A FreeType metrics pass pricing the full post-flip surface **cannot run read-only today** (the bake
-   is FreeType-through-ImGui and needs the probe harness). It is **owed at C3**, where a CJK source
-   actually widens the demand set — not here, where nothing can demand more than today's.
+   **"Nothing can demand more than today's" is FALSE against a REMOTE PEER, and round 15 caught this
+   section contradicting §7.5.** One chat snapshot is `kMaxSnapshotLines` 206 × `text[256]`, all of it
+   attacker-chosen, so a single frame can demand *thousands* of distinct first-sight codepoints
+   against today's 2,517 eager set — and `fold_vs_render.py` prices the full post-flip repertoire at
+   **~12.8 Mpx against 2048²'s 4.19 Mpx**. When every demanded baked is in use *this* frame,
+   `DiscardBakes(2)` can free nothing, the four `PackAddRect` attempts exhaust, and item 4(a)'s
+   permanent box is reachable **remotely, on demand**. So the deferral above is only true of a
+   cooperative peer.
+
+   Two things follow, and neither is optional. **The W11 per-frame first-sight cap ships IN this
+   commit**, not as a tracked row — the flip is what makes the amplification reachable, so it cannot
+   land without it (§7.5). And the **pack-failure detector is load-bearing, not diagnostic.** The
+   FreeType metrics pass still cannot run read-only (the bake is FreeType-through-ImGui and needs the
+   probe harness), and it stays owed at C3 — but it is no longer the only thing standing between a
+   remote peer and a permanent box.
 5. **Retire both `ImFontAtlas::Build()` calls** — `RunFontRepertoireSelftest`'s `IsBuilt()` guard and
    the timed block near the end of `Load()` (`fonts.cpp:299`, `:440` at HEAD; this section shipped
    citing `:283`/`:410`, which `683f8214` invalidated **the same day it added the lesson that a
@@ -652,14 +667,35 @@ hits `IM_ASSERT(!atlas->Locked)` — **stripped under NDEBUG** — and returns N
    names need. So the name denylist `denied()` (`player_handshake_nick.cpp:121`) gains the combining
    class beside `IsDefaultIgnorable`, and chat draws every mark.
 
-   **The table is CATEGORY-derived (`Mn ∪ Me ∪ Mc`), NOT advance-derived, and the hmtx census is its
-   GATE** (round 13). A table generated from font *binaries* would let a face revision retroactively
-   change which persisted names are legal — an unacceptable coupling for a stored identity, and a
-   strictly worse version of the one `InRepertoire` already has. A general category is stable across
-   face revisions and is the right vocabulary for "may this appear in a name". The census does not
-   disappear: the generator runs it and **hard-fails if it finds a zero-advance codepoint the
-   category table does not cover**, so the three `Po` outliers it measured must be adjudicated by a
-   human rather than silently dropped. Measured table, measured tripwire.
+   **DISSOLVED BY ROUND 15 — DO NOT BUILD A DENY TABLE. The fix is NFC on the fold key.** The
+   paragraph above (and rounds 12-14's refinement of it) chose to deny `Mn ∪ Me ∪ Mc`. Measured, that
+   set is **337 codepoints in our faces**, and it is not what the design thought it was:
+
+   ```
+   marks in faces (Mn/Me/Mc)                     337
+     generic COMBINING 259 | ARABIC 19 | THAI 16 | TAMIL 14 | THAANA 11 | NKO 9 | HEBREW 8
+   canonical (base, mark) -> precomposed, ALL THREE in the faces        844 pairs
+     distinct marks that ever compose                                    41
+     marks that NEVER compose (correctly distinct under NFC)             296
+   ```
+
+   Denying that set would make **Thai, Tamil, Thaana, Arabic and Hebrew structurally unwritable as
+   names in the very commit whose §7.0 advertises those scripts** — Tamil needs `Mc` vowel signs and
+   Thaana is written *entirely* in `Mn`. And it aims at the wrong target: the defect is that
+   `"A"+U+0301` folds differently from `Á`, which is **exactly what canonical composition collapses**,
+   while leaving the 296 non-composing marks distinct — correctly, because they *draw* distinct and
+   no other string renders like them. Deleting 337 legal codepoints from user input to protect an
+   invariant normalization solves is the RULE-1 crutch shape.
+
+   So: **`FoldKey` composes before folding.** The same generator emits the 844-pair composition table
+   and the canonical-combining-class values for the 337 marks (both restricted to the render set, both
+   frozen with their Unicode version); `FoldKey` sorts by ccc and composes left-to-right with the
+   blocking rule. ~10 KB of static table and ~60 lines. **Nothing is denied**, and the existing
+   leading-mark rule at `:143` STAYS — round 14's RULE-2 deletion of it is withdrawn, because a mark
+   with nothing to compose with still stacks onto whatever the UI drew before the name, which is a
+   rendering problem and not a folding one. The hmtx census keeps its job as the generator's
+   **tripwire**: a zero-advance codepoint that neither composes nor is excluded must be adjudicated
+   by a human, not silently admitted.
 
    **RULE 2: this DELETES an existing narrower rule.** `SanitizeNickname` already owns a combining
    vocabulary — the literal lambda `combining = [](c){ return c >= 0x0300 && c <= 0x036F; }`
