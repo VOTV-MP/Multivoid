@@ -466,7 +466,10 @@ questions** and **fifty-three of the primary's claims were measured false**. Rou
 receive-boundary ledger **delays rather than bounds** — it saturates, after which a full-repertoire
 snapshot passes with zero novelty — which **un-defers the FreeType metrics pass into a precondition
 of commit 1**, and that round 14's "stop baking" rule would have made the emoji colour check
-permanently green-by-skip. Round 19 corrected round 18's
+permanently green-by-skip. **The precondition round 20 raised was then DISCHARGED by measurement in
+the same session** (§7.5): the whole commit-1 fold set at chat px packs into **0.22x of a 2048²
+atlas**, the long-carried 12.8 Mpx figure is **false**, TexMax stays 2048 on evidence, and **no
+frame-side bound is built**. Round 19 corrected round 18's
 own answer: the novelty ledger cannot be ImGui's `IndexLookup` — wrong thread, and erased by the very
 pressure it bounds — so the receive boundary keeps its own monotone set (§7.5). **No "that holds"
 verdict was ever given** — rounds 10 through 18 landed **every question asked**. Round 18 measured
@@ -1086,10 +1089,37 @@ Both belong in `docs/security/TRACKER.md`, with **different severity and differe
   an available measurement, not a new harness.
 
   **It becomes a PRECONDITION of commit 1**, because two decisions ride on it: whether `TexMax` is
-  2048 or 4096 (4096 = 16.7 Mpx, which would hold the full repertoire and **eliminate the class**, at
-  67 MB per texture and 134 MB across a repack), and whether any frame-side bound is needed at all.
-  Raising the ceiling so the demand always fits is a root fix; a frame policeman is a second mechanism
-  guarding what capacity should have made unreachable.
+  2048 or 4096, and whether any frame-side bound is needed at all.
+
+  **PRECONDITION DISCHARGED — MEASURED, and it falsifies the 12.8 Mpx figure this design has carried
+  since round 7.** The measurement did not need the probe harness after all: glyph bounding boxes come
+  straight out of the font binaries, so the packed surface of the **entire commit-1 fold set at one
+  size** is a read-only fontTools computation (first face in source order wins, `TexGlyphPadding` 1
+  on each edge):
+
+  ```
+  commit-1 fold set            7,258 cp   (5,937 with outline ink)
+  at chat px 18   ~920,000 px2   = 0.22x of 2048^2   (0.05x of 4096^2)
+  at nick px 22 ~1,296,000 px2   = 0.31x of 2048^2   (0.08x of 4096^2)
+  + the donor's COLR emoji, whose base outlines are empty and so are NOT in the
+    numbers above: ~1,418 glyphs at roughly px^2 each = +0.6 Mpx at 18 px
+  => a hostile snapshot demanding the WHOLE repertoire at chat size ~= 0.36x of 2048^2
+  ```
+
+  So **the 12.8 Mpx number was wrong** — it came from scaling today's eager bake by 3.05x, which sums
+  *every live role size at once* and is not a quantity any single surface can demand. Three
+  conclusions, all now measured rather than argued:
+
+  - **`TexMax` stays 2048**, on evidence instead of on the withdrawn round-7 derivation.
+  - **The permanent box is NOT remotely reachable at one size** — it needs roughly 3x more demand than
+    the entire repertoire rendered at chat px.
+  - **No frame-side bound is needed, and none is built.** Round 20's frame policeman is not merely
+    deferred, it is unnecessary; the capacity already covers the worst case a peer can author.
+
+  The receive-boundary novelty cap **stays**, with its purpose corrected: it bounds the CPU cost of
+  rasterising thousands of first-sight glyphs inside one frame — a stutter — and no longer claims to
+  be what prevents pack exhaustion. §7.4's detector remains as the tripwire for the case this
+  arithmetic did not foresee.
 
 - **The unbounded upload wait** — `WaitForSingleObject(…, INFINITE)` per upload on the render thread.
   **DX12 only**; DX11's `UpdateSubresource` has no fence and no wait. **Round 11 added the other half:
