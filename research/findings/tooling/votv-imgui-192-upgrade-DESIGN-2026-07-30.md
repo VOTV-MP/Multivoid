@@ -461,12 +461,14 @@ one arc away, not in this one.
 
 ## 7. THE FLIP — design of record (implementation `/qf`, 9 rounds, 2026-07-30)
 
-**Status: DESIGN. Nothing here is built.** Supersedes §4's C2b bullet. The pass ran **10 rounds / 40
-questions** and **twenty of the primary's claims were measured false**, including one where a
-*correct* recorded number was wrongly "corrected". **Still no "that holds" verdict** — round 10 (run
-2026-07-30 after the critic became reachable again) returned four material questions and **all four
-landed**, one of them on this section's own framing. Rounds 5, 8 and 10 each reversed something
-structural, so the tail of a pass is not decoration here.
+**Status: DESIGN. Nothing here is built.** Supersedes §4's C2b bullet. The pass ran **11 rounds / 44
+questions** and **twenty-four of the primary's claims were measured false**, including one where a
+*correct* recorded number was wrongly "corrected". **Still no "that holds" verdict** — rounds 10 and
+11 each returned four material questions and **all eight landed**: round 10 overturned this section's
+framing of what it delivers, round 11 **inverted the exclude-set choice** (§7.3), re-keyed the
+selftest (§7.2 item 6) and found the primary instrument blind to the failure it was paired with
+(§7.4). Rounds 5, 8, 10 and 11 each reversed something structural — the tail of a pass is not
+decoration here, and two consecutive four-for-four rounds is not the shape of a converged design.
 
 Only one thing from this pass is committed: `683f8214`, the two stale imgui citations in
 `fonts.cpp` (comment-only, measured, independent of the flip).
@@ -540,8 +542,10 @@ hits `IM_ASSERT(!atlas->Locked)` — **stripped under NDEBUG** — and returns N
    `g_roleFont[]`, so both bring-up early returns (`imgui_overlay.cpp:299`, `:305`) are safe with or
    without `Load` having run, and `MaybeRescale` (`:330`) already exercises Load-after-InitRenderer on
    every scale change.
-3. **ONE frozen table, `no-ink ∪ PUA` = 28 ranges / 56 values, driving BOTH the fold table and
-   `ImFontConfig::GlyphExcludeRanges`.** Post-flip `GlyphRanges` is dead input, so "fold == render"
+3. **ONE frozen table, `no-ink ∪ DEFAULT_IGNORABLE ∪ PUA` = 32 ranges / 64 values, driving BOTH the
+   fold table and `ImFontConfig::GlyphExcludeRanges`** (round 11 inverted this from `no-ink ∪ PUA`;
+   see §7.3 — the shorter set re-admits U+034F and U+FE0F and reddens `repertoire.cpp:89`).
+   Post-flip `GlyphRanges` is dead input, so "fold == render"
    stops being true by construction; `GlyphExcludeRanges` restores it, measured to gate the
    **on-demand** path at `imgui_draw.cpp:4593` via `ImFontAtlasBuildAcceptCodepointForSource`
    (`:4537-4544`). Same list on every source, so no codepoint can be excluded from one face and baked
@@ -583,11 +587,16 @@ hits `IM_ASSERT(!atlas->Locked)` — **stripped under NDEBUG** — and returns N
    false so `:2818` can never fire, and the numbers come from where they now exist: geometry from
    `atlas->TexData->Width/Height` logged on change, cost from the per-frame `Glyphs.Size` delta + ms.
    There is no single bake to time post-flip, so a boot number would be a fiction.
-6. **Selftest becomes PER-BUILD, in-frame.** `Load()` sets a pending flag; the frame loop consumes it
-   after `NewFrame()`. **Not** a first-frame one-shot — that re-introduces the exact `static bool done`
-   latch s15 removed, observing boot and never the F1 font switch. Running in-frame **dissolves** C1's
-   "refuse to ask" guard rather than inverting it, and removes the last out-of-frame atlas query in
-   the codebase — the whole §3.2 defect.
+6. **Selftest becomes PER-BUILD, in-frame — keyed on `atlas->TexData->UniqueID`, NOT on a `Load()`
+   flag** (round 11 caught the latch). A pending flag set by `Load()` is per-*Load*: it sees boot,
+   rescale and the F1 family switch, and is **structurally blind to every build
+   `ImFontAtlasTextureMakeSpace` triggers** (`imgui_draw.cpp:4239`) — which is precisely where a
+   growing atlas does its interesting work. That is the same `static bool done` shape s15 removed,
+   moved one level up. Measured seam: every repack allocates a fresh `ImTextureData` with
+   `new_tex->UniqueID = atlas->TexNextUniqueID++` (`:4105`), so a remembered UniqueID catches boot,
+   rescale, family switch **and** every grow/repack, in one O(1) comparison per frame. Running
+   in-frame **dissolves** C1's "refuse to ask" guard rather than inverting it, and removes the last
+   out-of-frame atlas query in the codebase — the whole §3.2 defect.
 7. **The OS-fallback WARN** (`fonts.cpp:449`) gains the sentence that uniqueness is not guaranteed
    there. Its comment reasons about the atlas coming out **short**; post-flip the failure **inverts**
    to a machine-dependent **superset** (Segoe UI carries Hebrew/Thai/Arabic), so two legible
@@ -618,17 +627,45 @@ POST-FLIP render, no exclude  9,478 cp -> MISMATCH 1,797 cp render-but-fold-to-U
 POST-FLIP render, w/ exclude  7,595 cp -> MISMATCH 0 cp, BOTH directions
 ```
 
-Exclude-set options, all measured against ImGui's **64-VALUE** cap (`imgui_draw.cpp:3115`):
+**That last cell is TAUTOLOGICAL and must not be read as a check** (round 11). The script defines the
+post-flip fold set *as* `render − exclude`, so "MISMATCH 0" is true of any exclude set whatsoever. It
+says the two tables are generated from one expression; it says nothing about whether that expression
+is the right one.
+
+Exclude-set options, all measured against ImGui's **64-VALUE** cap (`imgui_draw.cpp:3114`,
+`size <= 64` — **inclusive**, so 32 ranges is legal):
 
 | set | ranges / values | fold set |
 |---|---|---|
 | `DEFAULT_IGNORABLE ∪ PUA` | 20 / 40 | 7,681 (+5,164) |
-| **`no-ink ∪ PUA`** | **28 / 56** | **7,595 (+5,078)** |
-| `no-ink ∪ DEFAULT_IGNORABLE ∪ PUA` | **32 / 64 — exactly the cap** | 7,593 |
+| `no-ink ∪ PUA` | 28 / 56 | 7,595 (+5,078) — **re-admits two closed defects** |
+| **`no-ink ∪ DEFAULT_IGNORABLE ∪ PUA`** | **32 / 64 — exactly the cap** | **7,593 (CHOSEN, round 11)** |
 
-Chosen: **`no-ink ∪ PUA`**, four ranges of margin. The union sits precisely on a limit whose
-`IM_ASSERT` our Release build strips — the wrong place to sit. The 19 MB index hazard stays covered
-because the U+E0000 TAG characters are `Cf`, hence inside no-ink.
+**Round 11 inverted this choice.** `no-ink` is `Cc/Cf/Cs/Zl/Zp/Zs` minus U+0020, so it is blind to
+every `Mn`/`Lo` ignorable — and measured, the `DEFAULT_IGNORABLE`-but-not-`no-ink` codepoints that any
+shipped face actually carries are **exactly two: U+034F COMBINING GRAPHEME JOINER and U+FE0F
+VARIATION SELECTOR-16.** Both are already-closed defects:
+
+- **U+034F is the measured hole arc D2 closed**, documented at `repertoire.h:50-60` — advance 0 in
+  Fixedsys *and* Roboto, accepted mid-name, distinct fold key, zero pixels. `no-ink ∪ PUA` bakes it
+  and folds it as itself, which re-opens that exact defect through the flip commit.
+- **`repertoire.cpp:89` asserts `!InRepertoire(0xFE0F)`.** With `no-ink ∪ PUA` the fold set *is*
+  `render − exclude`, so U+FE0F enters it and **that selftest goes RED the day this lands** — while
+  §7.2 listed no change to that file.
+
+The script had already printed the finding — *"in DEFAULT_IGNORABLE ∩ candidate but NOT no-ink: 2"* —
+and three rounds read past it. `[[lesson-an-instrument-blind-to-the-phenomenon-always-passes]]` does
+not cover this one: the instrument saw it and the reader did not.
+
+So the union it is, sitting exactly on the cap. That is acceptable **because our own generator is the
+enforcement**, not ImGui's stripped assert: `sys.exit` above 32 ranges fails the build loudly, which
+is strictly stronger than `IM_ASSERT` in a Release DLL. The residual is that a future Unicode version
+adding a `Cf`/`Zs`/ignorable range breaks the build — the correct failure, and the trigger to drop
+the ignorable members no shipped font carries (today that would take it back to 30/60).
+
+The 19 MB index hazard stays covered either way: the U+E0000 TAG characters are `Cf`, hence inside
+no-ink. And U+0020 is **already carved out of `no-ink`** by the generator, so the space character
+keeps rendering — the reason the arithmetic here is 7,595 and not 7,594.
 
 **`+5,078` is the correct number and `docs/LESSONS.md` already records it.** Round 2 of this pass
 called it wrong; round 6 measured that the objection was to its *derivation* (calling `unicodedata`
@@ -638,12 +675,32 @@ is `[[lesson-a-generated-constant-must-not-depend-on-the-toolchains-data-version
 The generator gets a `sys.exit` if the exclude table exceeds 32 ranges, because :3115's assert cannot
 fire in our build.
 
+**"Renders no ink" has TWO owners with two vocabularies, and that is CORRECT — but undocumented**
+(round 11). The nick denylist `denied()` (`player_handshake_nick.cpp:121`) tests
+`coop::text::IsDefaultIgnorable`; the exclude/fold table tests `no-ink`. They must not be merged,
+because **U+0020 is `Zs`** — inside no-ink by category, and a legal character inside a name — which is
+exactly why the generator carves the space out of no-ink by hand, and why `repertoire.cpp:102`
+asserts `!IsDefaultIgnorable(U' ') && !IsDefaultIgnorable(0x00A0)`. The seam has a consequence worth
+stating: a `Zs` that is *not* the space (U+00A0 NBSP) is accepted by the denylist and, post-flip, is
+**excluded from the bake**, so it renders the fallback U+FFFD and folds to the sentinel. That is an
+improvement — today it bakes as a blank and gives a name invisible extra length — but it is a
+behaviour change nobody asked for, and it belongs in the commit message.
+
 The field is set on **two** `ImFontConfig` objects, covering all eight of our adds: `cfg` (`:370`) →
 `AddFromResource` (`:224`) + the OS fallbacks (`:438`, `:446`); `merge` (`:178`) → the three
 backstops (`:182`); `donor` (`:187`) **inherits by copy**; `AddFromResource` does `cfg = baseCfg`
 (`:130`). Not ours: `AddFontDefaultBitmap()` (`:465`), whose cmap is the 7×13 ASCII bitmap.
 
 ### 7.4 The instruments
+
+**The two instruments need DIFFERENT triggers, and round 11 measured why.** A pack failure **does not
+change `Glyphs.Size`**: `ImFontBaked_BuildLoadGlyph` falls out of its source loop to the tail at
+`imgui_draw.cpp:4626-4629`, writes `IndexLookup[cp] = IM_FONTGLYPH_INDEX_NOT_FOUND` and returns NULL
+**without ever calling `ImFontAtlasBakedAddFontGlyph`**. So the superset invariant below — driven by
+the `Glyphs.Size` delta — is **structurally blind to the pack failure it was paired with**, the
+project's own instrument-blindness family one more time. The pack-failure detector therefore takes
+its own O(1) trigger: an edge on `builder->RectsDiscardedSurface` or on `TexData->UniqueID` (both
+change exactly when `MakeSpace` has been forced to act), and only then does it scan.
 
 **Primary — the superset invariant.** `ImFontBaked::Glyphs` is **public** (`imgui.h:3891`) beside
 `IndexLookup` (`:3890`), so: **on any `Glyphs.Size` change, walk the newly baked glyphs and assert
@@ -693,7 +750,17 @@ Both belong in `docs/security/TRACKER.md`, with **different severity and differe
   past a threshold — but is **not built** in the flip commit. The number rides the `Glyphs.Size` delta
   (O(1)); a text scan would be O(text) on the hot path, the pattern the audit rule exists to catch.
 - **The unbounded upload wait** — `WaitForSingleObject(…, INFINITE)` per upload on the render thread.
-  **DX12 only**; DX11's `UpdateSubresource` has no fence and no wait.
+  **DX12 only**; DX11's `UpdateSubresource` has no fence and no wait. **Round 11 added the other half:
+  what waits can be arbitrarily LARGE, because the dirty region accumulates across unserviced
+  frames.** `ImGui::Render()` runs unconditionally (`imgui_overlay.cpp:400`) while DX12's servicing
+  sits behind `RenderDrawData`'s six-condition early-out (`overlay_backend_dx12.cpp:527`), `!allocator`
+  (`:530`) and a `WaitFence` failure (`:531`) — so a facade Disable, a swapchain rebind or a pending
+  queue re-confirmation opens an **unbounded** window in which glyphs keep baking and `UpdateRect`
+  keeps growing. Measured safe in itself: `imgui_draw.cpp:2792` tolerates a texture sitting in
+  `WantCreate` indefinitely, the CPU pixels are not freed, and in DX12 servicing and drawing are the
+  *same* call, so no frame can draw a texture it did not service. Today's static atlas cannot
+  accumulate at all; post-flip it can, and the first serviced frame pays for the whole window at once.
+  Item 8's probe must therefore log the accumulated box, not only the per-upload time.
 
 Calling the first an engineering deferral was wrong: it is a tracked row with a known fix.
 
