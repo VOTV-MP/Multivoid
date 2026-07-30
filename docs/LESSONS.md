@@ -33,6 +33,22 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 1. How to work (process / working agreements)
 
+- **A pass can measure every MECHANISM and never measure the DELIVERABLE.** 2026-07-30: nine `/qf`
+  rounds on the ImGui atlas flip measured the init-time sampling instant, the 64-value exclude cap, a
+  per-rescale leak, an unbounded fence wait, which face carries U+E0B0, three asserts `NDEBUG` strips —
+  and corrected sixteen false claims. **Not one round asked what appears on screen that did not
+  before.** The design's own summary said the commit "ships zero new visible glyphs"; round 10 refused
+  the premise and two greps settled it — today's fold table is 2,517 codepoints and the em dash, both
+  curly-quote pairs, the ellipsis and the ruble sign are **outside** it, while the shipped faces union
+  to 9,478 and carry all four (plus Hebrew/Thai/Arabic). The flip turns **+5,078 codepoints from
+  fallback box into glyph for zero new DLL bytes** — the user's actual ask — and was about to be built
+  describing itself as delivering nothing. It survived because it was **true of the previous build**
+  (s15 deliberately clears the flag) and rode into the section about the commit that deletes that
+  clear, and because it was **pessimistic**: every review reflex here is tuned to catch optimism, so an
+  understatement passes unchallenged. **Look FIRST: state the deliverable in the user's own units and
+  measure it like any other claim; re-derive any sentence copied across a build boundary; give a
+  pessimistic status claim the same evidence bar as an optimistic one.**
+  `memory/lesson_a_pass_can_measure_the_mechanism_and_never_the_deliverable.md`
 - **"BUILT, drilled, green" is a statement about the DRILLS, not about the code.** 2026-07-29: chat
   history shipped with two purpose-written drills PASSing 4/4, both shown RED under injection, zero
   probe warnings, a measured frame rate — and a `/qf` phase IMPLEMENTATION pass over the REAL DIFF found

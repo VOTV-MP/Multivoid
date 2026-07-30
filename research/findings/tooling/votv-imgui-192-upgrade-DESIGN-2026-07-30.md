@@ -11,7 +11,7 @@ Submodule pinned **`v1.92.9`** (`01380c579`) since `b33aae30`. Shipped from this
 | i18n smoke self-verifies each send | `c142d077` | fixed a coin-flip verdict |
 | **C2a** DX12 `InitInfo` + unified pool | `780a93af` | DX12 smoke before/after |
 | both stale imgui citations re-pointed | `683f8214` | comment-only; build clean |
-| **the FLIP** (was C2b) | — | **NOT BUILT — design of record is §7**, and round 10 of its `/qf` is OWED |
+| **the FLIP** (was C2b) | — | **NOT BUILT — design of record is §7** (10 `/qf` rounds, still no "that holds") |
 | **C3** | — | **NOT BUILT.** §4; cannot precede the flip (§7.1) |
 
 **The capability flag is deliberately CLEARED ON BOTH RHIs**
@@ -38,7 +38,7 @@ migration is largely already built — see §2.4.
 ## 1. The originating ask, and what the 8-round design `/qf` settled
 
 > Two `/qf` passes are recorded in this document and they are not the same pass. This section's
-> **8-round DESIGN pass** produced the P0/C1/C2a/C2b/C3 sequencing of §4. A separate **9-round
+> **8-round DESIGN pass** produced the P0/C1/C2a/C2b/C3 sequencing of §4. A separate **10-round
 > IMPLEMENTATION pass** (§7) then rewrote C2b and reversed its ordering; §7 wins wherever they
 > disagree.
 
@@ -335,7 +335,7 @@ Six `/qf` rounds, every one of which corrected something. Ordering is load-beari
     `QueuePendingRelease` like ours. Index 0 stays non-allocatable: it is both the existing "no slot"
     sentinel and the descriptor `SrvAlloc` hands out if the pool is exhausted, since ImGui's callback
     has no failure channel and will write an SRV to whatever it is given. Flag still OFF.
-  - **C2b — SUPERSEDED BY §7.** This bullet's design was rewritten by a 9-round implementation `/qf`
+  - **C2b — SUPERSEDED BY §7.** This bullet's design was rewritten by a 10-round implementation `/qf`
     (2026-07-30). Three of its own load-bearing claims were measured false: that the servicing must
     precede the flip, that the extraction was needed at all, and that "fold == render at every commit
     boundary" holds post-flip. Read **§7**, not this bullet. Retained here only so the superseded
@@ -461,15 +461,41 @@ one arc away, not in this one.
 
 ## 7. THE FLIP — design of record (implementation `/qf`, 9 rounds, 2026-07-30)
 
-**Status: DESIGN. Nothing here is built.** Supersedes §4's C2b bullet. The pass ran 9 rounds / 36
-questions and **sixteen of the primary's claims were measured false**, including one where a
-*correct* recorded number was wrongly "corrected". **Round 10 is OWED** — the critic became
-unreachable (four consecutive API 529s), so this design has **no "that holds" verdict**. Do not treat
-it as converged: rounds 5 and 8 each reversed something structural, so the tail of a pass is not
-decoration here. Resume at round 10 before building.
+**Status: DESIGN. Nothing here is built.** Supersedes §4's C2b bullet. The pass ran **10 rounds / 40
+questions** and **twenty of the primary's claims were measured false**, including one where a
+*correct* recorded number was wrongly "corrected". **Still no "that holds" verdict** — round 10 (run
+2026-07-30 after the critic became reachable again) returned four material questions and **all four
+landed**, one of them on this section's own framing. Rounds 5, 8 and 10 each reversed something
+structural, so the tail of a pass is not decoration here.
 
 Only one thing from this pass is committed: `683f8214`, the two stale imgui citations in
 `fonts.cpp` (comment-only, measured, independent of the flip).
+
+### 7.0 What a player sees the day this ships (measured, round 10)
+
+The framing this section shipped with — *"the flip delivers zero new visible glyphs; CJK needs C3"* —
+was **FALSE**, and it was false in the direction that undersells the user's own ask. It was true of
+**s15's build**, which deliberately clears the flag, and it rode unexamined into the section that
+describes deleting that clear.
+
+Measured at HEAD, two ways:
+
+```
+repertoire_ranges.inc          161 ranges / 2,517 cp   <- what is baked, and folded, TODAY
+  U+2014 em dash    in-fold=False        U+2026 ellipsis   in-fold=False
+  U+2019 / U+201C   in-fold=False        U+20BD ruble sign in-fold=False
+face cmaps (fontTools, assets/fonts/*)   UNION 9,478      [FSEX300 alone 5,992]
+  em dash / curly quotes / ellipsis / ruble ....... present
+  hebrew U+05D0 | thai U+0E01 | arabic U+0627 ..... present
+  CJK U+4E00 | hangul U+AC00 ...................... ABSENT from every face
+```
+
+So the flip converts **+5,078 codepoints from fallback box into glyph, out of fonts already inside
+the DLL, for zero new bytes** — the em dash, both curly-quote pairs, the ellipsis and the ruble sign
+this user types daily, plus entire scripts (Hebrew, Thai, Arabic) the shipped faces already carry.
+**CJK and Hangul remain boxes**, and only because no face contains them: that is the honest scope of
+what C3 adds, and it is a *source* problem, not a flip problem. This commit is the first in the whole
+saga that deletes boxes the user can point at.
 
 ### 7.1 The order, and why it inverted
 
@@ -497,15 +523,23 @@ hits `IM_ASSERT(!atlas->Locked)` — **stripped under NDEBUG** — and returns N
    a per-RHI split is a two-regime binary whose drawable behaviour depends on the player's GPU API —
    the defect C2a's accidental DX12 flip already demonstrated. DX12's extra risk rides §7.7's gate,
    not a split flip.
-2. **Reorder `ui::fonts::Load()` to AFTER `overlay_backend::InitRenderer`.** Measured necessity, and
-   the single find that saves the flip: the flag is set at `imgui_impl_dx12.cpp:931` *inside*
-   `InitRenderer` (`imgui_overlay.cpp:303`), **eight lines after** `Load()` at `:295`, and
-   `ImFontAtlasBuildMain` samples it off the context **at that instant**
-   (`imgui_draw.cpp:3497-3499`). Without the reorder the flip changes **nothing at boot** — the eager
-   preload still runs and `GlyphRanges` stays load-bearing exactly where it was declared dead.
-   Upstream names this bug at `imgui_draw.cpp:2818` ("Called ImFontAtlas::Build() before
-   ImGuiBackendFlags_RendererHasTextures got set!"). The reorder makes boot match the ordering
-   `MaybeRescale` already exercises on every scale change.
+2. **Reorder `ui::fonts::Load()` to AFTER `overlay_backend::InitRenderer`** — an **invariant, not a
+   necessity**, and round 10 demoted it. The R4 finding is real: the flag is set at
+   `imgui_impl_dx12.cpp:931` *inside* `InitRenderer` (`imgui_overlay.cpp:303`), **eight lines after**
+   `Load()` at `:295`, and `ImFontAtlasBuildMain` samples it off the context **at that instant**
+   (`imgui_draw.cpp:3497-3499`); upstream names the bug at `imgui_draw.cpp:2818`. **But item 5 kills
+   the same bug by a different route, and both are in this commit**, so the old claim here — *"the
+   single find that saves the flip"* — is FALSE as written and is retracted. Measured: exactly two
+   `Fonts->Build()` sites exist in the whole tree, both in `fonts.cpp`; `AddFontDefaultBitmap` tail-
+   calls `AddFontFromMemoryCompressedTTF` and does not build; nothing else in `Load` touches the atlas
+   beyond `Clear` and the adds. With items 5 + 6 landed, **`Load` reaches `ImFontAtlasBuildMain` not
+   at all** and the first build is `ImFontAtlasUpdateNewFrame` inside the first `NewFrame()`, which is
+   unconditionally after `InitRenderer`. The reorder is kept anyway because it is the *invariant* that
+   makes the R4 bug unreachable rather than a site-list that a future glyph-touching line in `Load`
+   silently re-opens. Blast radius measured: `OnContextDestroyed` (`fonts.cpp:541-543`) only nulls
+   `g_roleFont[]`, so both bring-up early returns (`imgui_overlay.cpp:299`, `:305`) are safe with or
+   without `Load` having run, and `MaybeRescale` (`:330`) already exercises Load-after-InitRenderer on
+   every scale change.
 3. **ONE frozen table, `no-ink ∪ PUA` = 28 ranges / 56 values, driving BOTH the fold table and
    `ImFontConfig::GlyphExcludeRanges`.** Post-flip `GlyphRanges` is dead input, so "fold == render"
    stops being true by construction; `GlyphExcludeRanges` restores it, measured to gate the
@@ -517,7 +551,32 @@ hits `IM_ASSERT(!atlas->Locked)` — **stripped under NDEBUG** — and returns N
    `UpdateRect` **bounding box** (`:455-458`), so 4096 raises the worst upload to 67 MB behind an
    unmeasured INFINITE wait. 2048 is today's measured geometry, so the commit cannot regress the
    per-upload **ceiling** — it does regress **frequency**, and conflating the two was an error.
-5. **Retire both `ImFontAtlas::Build()` calls** (`fonts.cpp:283`, `:410`) — an obsolete shim
+
+   **The pack-capacity half of the argument, measured in round 10** (it was missing, and the number
+   survives it). `ImFontAtlasPackAddRect` (`imgui_draw.cpp:4457`) retries **four times**, calling
+   `ImFontAtlasTextureMakeSpace` between attempts; MakeSpace (`:4239`) runs
+   `ImFontAtlasBuildDiscardBakes(atlas, 2)` — **every baked unused for 2 frames is discarded** — then
+   repacks in place if discarded ≥ 20 % of packed, else grows (`:4225`, doubling height-then-width,
+   clamped to TexMax). **The atlas is therefore not cumulative**: the resident set is what has been
+   *drawn in the last two frames*, so the 7,595 reachable codepoints can never all be live, and
+   post-flip resident pressure is **strictly below today's**, where all 2,517 are baked for every live
+   size unconditionally. That is why 2048 need not hold the whole repertoire.
+
+   Two consequences that ARE new. **(a) Pack failure is not transient**: at `:4818` `return false`
+   writes NOT_FOUND into that baked's `IndexLookup`, and a baked drawn every frame is never discarded,
+   so a *continuously displayed* glyph that lost the pack race stays a box for that baked's lifetime —
+   this saga's own symptom, arriving through the clamp this commit chooses. §7.4's detector is the
+   guard, and it must log `RectsPackedSurface`/`RectsDiscardedSurface` **at the transition**, not the
+   state alone. **(b) `TexList` holds old AND new across a repack** (`:4097-4107`), so peak is two
+   textures: 2048² RGBA32 = 16.8 MB each → **33.6 MB peak**, where 4096 would be **134 MB**.
+
+   A FreeType metrics pass pricing the full post-flip surface **cannot run read-only today** (the bake
+   is FreeType-through-ImGui and needs the probe harness). It is **owed at C3**, where a CJK source
+   actually widens the demand set — not here, where nothing can demand more than today's.
+5. **Retire both `ImFontAtlas::Build()` calls** — `RunFontRepertoireSelftest`'s `IsBuilt()` guard and
+   the timed block near the end of `Load()` (`fonts.cpp:299`, `:440` at HEAD; this section shipped
+   citing `:283`/`:410`, which `683f8214` invalidated **the same day it added the lesson that a
+   citation rots silently** — cite the symbol, keep the line as a hint) — an obsolete shim
    (`imgui_draw.cpp:3060-3065`, inside `#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS`, which we do not
    define) that is just `ImFontAtlasBuildMain(this); return true;`. Post-retire the atlas builds
    lazily at `imgui_draw.cpp:2807-2811` with the flag already set, `PreloadedAllGlyphsRanges` stays
@@ -538,8 +597,16 @@ hits `IM_ASSERT(!atlas->Locked)` — **stripped under NDEBUG** — and returns N
    `ImGui_ImplDX12_UpdateTexture(tex)` **timed** per texture, then null `draw_data->Textures` so the
    backend does not repeat the work. Yields per-upload ms / box dims / bytes / geometry, and it is
    exactly the seam our own servicing would later replace.
-9. Proto unchanged. `overlay_backend_dx12.cpp` 735 of 800; this commit adds ~20 lines there.
-   `fonts.cpp` 545 of 800.
+9. **RULE 2: delete the dead inclusion path in the same commit** (round 10). The ranges reach ImGui as
+   the `glyph_ranges` **parameter** of `AddFontFromMemoryTTF` (`fonts.cpp:133`), which ImGui stores
+   into `ImFontConfig::GlyphRanges` — so it is passed on every add, through `AddFromResource` and
+   `MergeBackstops`. Once it is measured-dead input, leaving it is precisely the live-looking knob
+   RULE 2 forbids: the next editor widens it and believes they changed what renders. So the `ranges`
+   parameter goes from both functions, and `Repertoire()`'s ImWchar-array conversion goes with it
+   (verify no other caller at build time). **The repertoire TABLE stays** — it is the fold authority
+   and now also the source of the exclude set; only its *inclusion* form dies.
+10. Proto unchanged. `overlay_backend_dx12.cpp` 735 of 800; this commit adds ~20 lines there.
+   `fonts.cpp` 545 of 800, and item 9 removes lines from it.
 
 ### 7.3 The table, measured (`scratchpad/fold_vs_render.py`, the generator's own tables)
 
@@ -649,8 +716,15 @@ Destroyed→WantCreate rewrite is skipped because `WantDestroyNextFrame` is true
 `ImTextureDataUpdateNewFrame` hits `if (Status == Destroyed)` (`imgui_draw.cpp:2873`), the guarding
 `IM_ASSERT` is **stripped**, `remove_from_list = true`, `IM_DELETE` + erase — while our resource and
 our slot stay allocated and **unreachable**. One resource + one of 256 slots per scale or F1 font
-change. It does not exist today because ImGui owns that resource. The clamp rises to 4096 here, not
-before. RULE 2 also retires `g_imguiTexQueue`, `Owner::Imgui` and the exhaustion reserve branch:
+change. It does not exist today because ImGui owns that resource.
+
+**The clamp does NOT belong to this section** (round 10 corrected the coupling). An earlier draft said
+"the clamp rises to 4096 here" — inside the *servicing* section, which ties the atlas ceiling to who
+performs the upload. Wrong axis: the clamp is a function of the **repertoire's width**, so it rises
+(if at all) at **C3**, when a source that widens the demand set lands, gated on §7.4's pack-failure
+detector and the metrics pass owed there. Whether we or upstream drives the copy is unrelated.
+
+RULE 2 also retires `g_imguiTexQueue`, `Owner::Imgui` and the exhaustion reserve branch:
 `bd->pCommandQueue` has exactly **one** use site (`imgui_impl_dx12.cpp:555`, inside `UpdateTexture`),
 the path being disabled. `SrvAlloc`/`SrvFree` survive as **fail-loud tripwires** because `Init` deep-
 copies the `InitInfo` and a future path reaching `UpdateTexture` would call through null.
