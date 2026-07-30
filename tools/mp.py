@@ -1581,6 +1581,15 @@ def _peer_log_health(label: str, path: Path, must_contain: list[str] | None = No
         fails.append(f"{label}: no 'font selftest: DONE fail=0' line -- the per-build font "
                      f"selftest either failed or NEVER RAN (it is conditional on an atlas "
                      f"texture-id edge; silence is not a pass)")
+    # THE CASE TABLE, same argument as the font selftest above and a sharper one:
+    # it is GENERATED, and a generated fold table that arrives empty folds
+    # nothing -- which produces a lobby where no two names collided, exactly what
+    # a healthy lobby produces. There is no failure symptom to grep for, so the
+    # positive line is the evidence, and it is demanded on EVERY smoke.
+    if "case-fold selftest: PASS" not in text:
+        fails.append(f"{label}: no 'case-fold selftest: PASS' line -- the generated "
+                     f"case table either failed its rows or never ran; an empty "
+                     f"fold table is silent by construction")
     for needle in must_contain:
         if needle not in text:
             fails.append(f"{label}: never saw {needle!r} -- it was blanked, squashed "

@@ -4,6 +4,7 @@
 
 #include "coop/player/roster_ledger.h"
 #include "coop/session/player_handshake.h"
+#include "coop/text/case_fold.h"
 #include "coop/text/repertoire.h"
 #include "coop/text/utf8_codec.h"
 #include "ue_wrap/core/hot_path_guard.h"
@@ -47,26 +48,6 @@ std::wstring Candidate(const std::wstring& stem, int n) {
     return coop::text::CapCodepoints(stem, keep) + suffix;
 }
 
-// Simple case folding over exactly the cased scripts the repertoire draws --
-// ASCII, Latin-1 and Cyrillic. Deliberately a table and not LCMapStringW: this
-// is an AUTHORITY function, and an authority whose answer comes from the OS is
-// an authority that can differ between two machines running the same build.
-uint32_t FoldCase(uint32_t c) {
-    if (c >= L'A' && c <= L'Z')                     return c + 32;
-    if (c >= 0x00C0 && c <= 0x00DE && c != 0x00D7)  return c + 32;   // Latin-1 caps
-    if (c >= 0x0400 && c <= 0x040F)                 return c + 80;   // Ё, Ђ, ...
-    if (c >= 0x0410 && c <= 0x042F)                 return c + 32;   // А-Я
-    if (c == 0x04C0)                                return 0x04CF;   // palochka
-    // The supplement/extended blocks are laid out as adjacent capital/small
-    // pairs; only the parity of where a run starts differs.
-    if ((c >= 0x0460 && c <= 0x0481) || (c >= 0x048A && c <= 0x04BF) ||
-        (c >= 0x04D0 && c <= 0x052F) || (c >= 0xA640 && c <= 0xA66D) ||
-        (c >= 0xA680 && c <= 0xA69B))
-        return c | 1u;                                                // even -> odd
-    if (c >= 0x04C1 && c <= 0x04CD)                 return c + (c & 1u);  // odd -> even
-    return c;
-}
-
 }  // namespace
 
 std::wstring FoldKey(const std::wstring& name) {
@@ -102,14 +83,30 @@ std::wstring FoldKey(const std::wstring& name) {
         const wchar_t* at = name.data() + i;
         i += units;
         if (!coop::text::InRepertoire(cp)) { key.push_back(kAbsentSentinel); continue; }
-        const uint32_t folded = FoldCase(cp);
-        // The `<= 0xFFFF` half is a guard, not a doubt: every FoldCase branch that
-        // can change a codepoint is gated on c <= 0xA69B, so an astral input always
-        // falls through unchanged. It exists so that ADDING a cased astral script
-        // later (Deseret folds U+10400 -> U+10428) cannot silently halve the key
-        // element with no compiler and no test saying anything.
-        if (folded != cp && folded <= 0xFFFF) key.push_back(static_cast<wchar_t>(folded));
-        else                                  key.append(at, units);
+        // (3) THE CASE TABLE IS GENERATED (2026-07-30). It used to be written by
+        //     hand here, covering ASCII, Latin-1 and Cyrillic, with a comment
+        //     calling those "exactly the cased scripts the repertoire draws" --
+        //     true when written, and falsified by two later widenings that never
+        //     touched this function. 649 of 890 cased-and-drawable codepoints
+        //     folded to THEMSELVES, so `Ωμέγα` and `ωμέγα` did not collide.
+        //     coop::text::CaseFold is minted from the same generator run as the
+        //     repertoire itself, which is what stops the two drifting again.
+        const uint32_t folded = coop::text::CaseFold(cp);
+        // ASTRAL FOLDS ARE REAL NOW, so this is no longer a dead guard. The old
+        // hand table could not change anything above U+A69B; the generated one
+        // covers Deseret (U+10400 -> U+10428) and Adlam, and truncating those to
+        // one wchar_t would corrupt the key with nothing to say so.
+        if (folded != cp) {
+            if (folded <= 0xFFFF) {
+                key.push_back(static_cast<wchar_t>(folded));
+            } else {
+                const uint32_t v = folded - 0x10000;
+                key.push_back(static_cast<wchar_t>(0xD800 + (v >> 10)));
+                key.push_back(static_cast<wchar_t>(0xDC00 + (v & 0x3FF)));
+            }
+        } else {
+            key.append(at, units);
+        }
     }
     return key;
 }
@@ -259,6 +256,12 @@ bool RunNicknameArbiterSelftest() {
     check(AssignAgainst(L"\x41F\x415\x41B\x42C\x41C\x415\x41D\x42C",
                         {L"\x43F\x435\x43B\x44C\x43C\x435\x43D\x44C"}),
           L"\x41F\x415\x41B\x42C\x41C\x415\x41D\x42C\x32", "Cyrillic case folds");
+    // ...and the scripts the HAND-WRITTEN table silently did not fold. Greek was
+    // 146 of the 649 cased-and-drawable codepoints that folded to THEMSELVES, so
+    // this pair did not collide in b133 even though the case-insensitive
+    // guarantee has been shipped since arc B.
+    check(AssignAgainst(L"\x3A9\x3BC\x3AD\x3B3\x3B1", {L"\x3C9\x3BC\x3AD\x3B3\x3B1"}),
+          L"\x3A9\x3BC\x3AD\x3B3\x3B1\x32", "GREEK case folds (the stale-table gap)");
     // An astral codepoint is ONE key element, not two. Folding units gave 𠀀 two
     // sentinels and 中 one, so a pair like this would not have collided.
     ++total;

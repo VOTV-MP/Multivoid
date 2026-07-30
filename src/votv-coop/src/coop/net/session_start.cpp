@@ -15,6 +15,7 @@
 #include "coop/net/session.h"
 
 #include "coop/player/nickname_arbiter.h"
+#include "coop/text/case_fold.h"
 #include "coop/text/repertoire.h"
 #include "coop/text/novelty_ledger.h"
 #include "coop/text/utf8_codec.h"
@@ -166,6 +167,13 @@ bool Session::Start(const Config& cfg) {
     // "the constant compiled" and "the constant says what we think".
     static const bool kRepertoireOk = coop::text::RunRepertoireSelftest();
     (void)kRepertoireOk;
+
+    // ...and the case table beside it, generated in the same run and asserted for
+    // the same reason. Its rows are POSITIVE: a generated table that arrives
+    // EMPTY folds nothing, and "no two names collided" is also what a healthy
+    // lobby looks like, so there is no negative symptom to grep for.
+    static const bool kCaseFoldOk = coop::text::RunCaseFoldSelftest();
+    (void)kCaseFoldOk;
 
     // The receive-boundary novelty cap (W11). Its interesting case is a peer
     // sending a deliberately diverse alphabet, which no LAN drill stages -- and
