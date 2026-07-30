@@ -145,7 +145,35 @@ is the gap between `EndFrame` and the next `NewFrame` — see §3.2.
   HAND-WRITTEN `BASE_RANGES`, while the generator already computes and prints `w_union` = 9,478
   codepoints across the 8 faces, of which `base_ask` reaches only 1,127.
 
-### 2.7 The free widening this exposes (measured, unbuilt)
+#### 2.7a The widened table, computed for real (2026-07-30) — and a hazard §2.7 would have shipped
+
+§2.7's `+4,772` was an estimate off a "no-pixel categories" subtraction that was never spelled out.
+Computed against the actual cmaps:
+
+| quantity | measured |
+|---|---|
+| both-weight intersection | **8,148** (`regular ^ bold` = 0, as §2.6 said) |
+| candidate = both-weight ∪ donor | **9,478** |
+| no-ink, `Cc/Cf/Cs/Zl/Zp/Zs` minus `U+0020` | **105** |
+| private-use in the candidate set | **1,778** |
+| **new repertoire** | **7,595 cp, max U+1FBF9** → **+5,078**, not +4,772 |
+
+The no-ink set derived from Unicode *general category* contains **all 33 codepoints of §3.3**
+(`U+0080..U+009F` plus `U+00A0`) without naming any of them — an invariant, not a block list, which is
+the form this repo already learned to prefer. `U+0020` is the sole `Zs` kept: every other space
+character is a confusable **of** it, and space itself legitimately changes layout.
+
+**THE HAZARD.** The obvious wider filter also subtracts `Cn` (unassigned) — and **412 codepoints in
+the candidate set are `Cn` according to the generator machine's Python** (3.11 ships Unicode 14.0.0;
+`U+1CC21`, the `U+1CD00` block and others were assigned in Unicode 16). Those are real glyphs our
+fonts really draw. Subtracting them would (a) fold a visibly-distinct name to the sentinel, and worse
+(b) make **the fold table a function of the generator's Python version** — so two builds cut from the
+same commit on different machines would disagree about which names collide. That is precisely the
+machine-dependence arc D2 exists to prevent, arriving through the toolchain instead of through the
+font. **`Cn` is NOT subtracted**, and the regeneration gate must assert the resulting count and max
+codepoint so a Unicode-table change fails the build instead of silently re-cutting the table.
+
+## 2.7 The free widening this exposes (measured, unbuilt)
 
 Asking for what both weights can actually draw, minus the no-pixel categories, adds **4,772
 codepoints** with **zero donor bytes**; max codepoint moves `U+1FAF6 -> U+1FBF9` (+259 index entries,
@@ -280,13 +308,27 @@ Six `/qf` rounds, every one of which corrected something. Ordering is load-beari
     `QueuePendingRelease` like ours. Index 0 stays non-allocatable: it is both the existing "no slot"
     sentinel and the descriptor `SrvAlloc` hands out if the pool is exhausted, since ImGui's callback
     has no failure channel and will write an SRV to whatever it is given. Flag still OFF.
-  - **C2b — flag ON for both RHIs** (the DX11 clear retires), **our own bounded texture servicing**
-    via `ImDrawData::Textures = nullptr` (see §6 — ImGui's own path has an INFINITE wait), **TOGETHER
-    WITH** the regenerated fold table (+4,772; `BASE_RANGES` retires per RULE 2; the no-ink
-    subtraction closing §3.3; the `Default_Ignorable` justification rewritten) **and** the provenance
-    assertion of §5. Merged deliberately: in the flag-off regime the atlas preloads the fold table,
-    so **fold == render at every commit boundary and the eager +4,772 bake cost never exists in any
-    commit.**
+  - **C2b — flag ON for both RHIs** (BOTH clears retire), **our own bounded texture servicing** via
+    `ImDrawData::Textures = nullptr` (see §6 — ImGui's own path has an INFINITE wait), **TOGETHER
+    WITH** the regenerated fold table (**+5,078** per §2.7a; `BASE_RANGES` retires per RULE 2; the
+    no-ink subtraction closing §3.3; the `Default_Ignorable` justification rewritten) **and** the
+    provenance assertion of §5. Merged deliberately: in the flag-off regime the atlas preloads the
+    fold table, so **fold == render at every commit boundary and the eager bake cost never exists in
+    any commit.**
+
+    Three things measured 2026-07-30 that shape the work:
+    1. **The servicing is DX12-only.** DX11 uploads through `UpdateSubresource` with no fence and no
+       wait; only DX12's path blocks. So the new code is one backend's, not both.
+    2. **It needs an extraction first.** The servicing wants `g_device`, `g_srvHeap`, the slot pool,
+       the bounded uploader and `QueuePendingRelease`, all currently in
+       `overlay_backend_dx12.cpp`'s anonymous namespace — and that file is at **735 LOC**, so ~150
+       more breaches the 800 soft cap. Per the modular rule: extract the pool + uploader to a shared
+       internal header in its own commit, then add the servicing as its own TU.
+    3. **The no-ink table has two consumers, and subtraction alone does not close §3.3.** Folding
+       `U+00A0`×20 to the sentinel makes it collide with other NBSP names but NOT with `U+0020`×20,
+       which is pixel-identical and folds to itself. The repertoire subtraction fixes the fold; the
+       *display* needs `denied()`. One generated no-ink table, two consumers — exactly the shape
+       `player_handshake_nick.cpp:110-117` already documents for `Default_Ignorable`.
 - **C3 — the per-size mechanism swap.** `PushFont(font, px)` / `style.FontSizeBase` REPLACING the
   scale-change `Clear()`+rebake. **This is not a deletion.** Our roles bake via
   `AddFontFromMemoryTTF(..., px, ...)` and the UI pushes fonts, never sizes, so removing the rebake
