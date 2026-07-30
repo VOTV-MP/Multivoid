@@ -77,25 +77,18 @@ bool InitRenderer(IDXGISwapChain* sc) {
         UE_LOGE("imgui_overlay: ImGui_ImplDX11_Init failed");
         return false;
     }
-    // TRANSITIONAL, RETIRED BY THE DX12 InitInfo COMMIT. 1.92's DX11 backend
-    // declares ImGuiBackendFlags_RendererHasTextures unconditionally
-    // (imgui_impl_dx11.cpp:632) while DX12's legacy init STRIPS it
-    // (imgui_impl_dx12.cpp:987: "with 1 SRV descriptor we cannot support
-    // multiple textures"). Left alone, ONE build would ship TWO drawable
-    // repertoires chosen by the player's RHI -- the dynamic atlas draws whatever
-    // the face cmaps carry (~8,148 codepoints) while the preload path draws the
-    // repertoire table's 2,517 -- so the font selftest's verdict, the nickname
-    // fold and every screenshot would mean different things on different
-    // machines, and this commit would not be bisectable.
+    // THE FLAG STAYS ON (2026-07-30, the flip). This is where the transitional
+    // `BackendFlags &= ~ImGuiBackendFlags_RendererHasTextures` used to sit, and
+    // it is gone rather than conditional (RULE 2). It existed for one build's
+    // worth of time, to stop DX11's dynamic atlas and DX12's legacy-stripped one
+    // shipping TWO drawable repertoires from ONE binary, chosen by the player's
+    // GPU API. C2a put DX12 on ImGui_ImplDX12_InitInfo with our own descriptor
+    // allocator, so both RHIs can service textures and the flag is on for both --
+    // one regime, one repertoire, whatever the RHI.
     //
-    // Clearing it here holds BOTH RHIs in the legacy regime, which is MEASURED
-    // equivalent to 1.91.5: atlas->Locked is set for the whole frame
-    // (imgui.cpp:9089-9094), so an out-of-repertoire codepoint is not baked and
-    // draws FallbackGlyph exactly as before -- 0 texels diverged from the single
-    // upload, 0 glyph UVs moved, TexIsBuilt held (probe arm L, 2026-07-30).
-    // Once DX12 runs on ImGui_ImplDX12_InitInfo with our own descriptor
-    // allocator, this line goes and the flag stays on for both.
-    ImGui::GetIO().BackendFlags &= ~ImGuiBackendFlags_RendererHasTextures;
+    // ONE AXIS, deliberately: a per-RHI flip would re-create the exact defect the
+    // clear was written to prevent, and a DX12-only risk is answered by the CI
+    // census in tools/text/atlas_regime_gate.ps1, not by splitting the flag.
     g_live = true;
     CreateRTV(sc);
     return true;

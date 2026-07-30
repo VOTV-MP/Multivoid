@@ -1540,6 +1540,18 @@ def _i18n_checks(label: str, path: Path, must_contain: list[str]) -> list[str]:
         if st in text:
             bad = [ln for ln in text.splitlines() if st in ln]
             fails.append(f"{label}: {len(bad)} selftest FAILURE(s): {bad[0][:120]}")
+    # THE FONT SELFTEST IS ASSERTED POSITIVELY, and the negative grep above is no
+    # longer enough for it. Until 2026-07-30 that selftest ran unconditionally in
+    # ui::fonts::Load(), so "no FAIL line" implied "it ran and passed". The ImGui
+    # flip made it CONDITIONAL -- it fires on an atlas texture-id edge, once per
+    # BUILD -- and at that moment "passed" and "never ran" produce the identical
+    # log. An instrument whose absence is indistinguishable from its success is
+    # not an instrument. This is the same shape the config selftest already uses
+    # (see 'config-selftest: DONE fail=0' below).
+    if "font selftest: DONE fail=0" not in text:
+        fails.append(f"{label}: no 'font selftest: DONE fail=0' line -- the per-build font "
+                     f"selftest either failed or NEVER RAN (it is conditional on an atlas "
+                     f"texture-id edge; silence is not a pass)")
     for needle in must_contain:
         if needle not in text:
             fails.append(f"{label}: never saw {needle!r} -- it was blanked, squashed "

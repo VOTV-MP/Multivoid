@@ -46,8 +46,34 @@ struct CodepointRange {
 };
 
 // Can this build draw `cp`? The predicate FoldKey folds against and the atlas
-// bakes. Binary search over ~156 ranges.
+// bakes. Binary search over ~441 ranges.
 bool InRepertoire(uint32_t cp);
+
+// The COMPLEMENT, within the render set -- every codepoint some embedded face or
+// the donor carries that we refuse to bake.
+//
+// IT EXISTS BECAUSE THE ATLAS BECAME LAZY (ImGui 1.92, 2026-07-30). The eager
+// builder took an INCLUSION list, so `fold == bake` held by construction: the
+// same generated table was both. 1.92 bakes a codepoint the first time something
+// draws it and ignores ImFontConfig::GlyphRanges entirely, so the only surviving
+// lever is subtractive -- ImFontConfig::GlyphExcludeRanges, consulted by
+// ImFontAtlasBuildAcceptCodepointForSource on the on-demand path. The same
+// generator emits both tables from one source set in one run, so the invariant
+// still holds; it is just maintained from the other side.
+//
+// InExcludeSet is NOT `!InRepertoire`. The repertoire is what we can draw; the
+// exclude set is what we refuse to draw. A codepoint no font carries at all --
+// U+4E00, say -- is outside BOTH. The distinction is load-bearing for the
+// pack-failure detector in ui/fonts.cpp: "the font has it, we did not forbid it,
+// and it still failed to bake" is a real defect, while "the font has it and we
+// forbade it" is this table working.
+bool InExcludeSet(uint32_t cp);
+
+// The exclude set as ranges, for the atlas builder. Sorted, non-overlapping, and
+// GUARANTEED NOT TO BEGIN AT U+0000 -- ImGui reads the list it is converted into
+// as zero-terminated, so a leading zero would silently make it a no-op and every
+// codepoint would bake. The generator hard-fails rather than emit one.
+const CodepointRange* ExcludeRanges(size_t* outCount);
 
 // Unicode 15.1 Default_Ignorable_Code_Point. Characters DEFINED to have no
 // visible rendering: soft hyphen, the variation selectors, the bidi controls,

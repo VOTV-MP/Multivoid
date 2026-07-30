@@ -120,34 +120,40 @@ const void* ResourceTtf(int id, int* outSize) {
     return p;
 }
 
-ImFont* AddFromResource(int id, float px, const ImFontConfig& baseCfg, const ImWchar* ranges) {
-    int sz = 0;
-    const void* data = ResourceTtf(id, &sz);
-    if (!data) return nullptr;
-    // The resource lives in the mapped DLL image for the process lifetime, so the
-    // atlas must NOT take ownership (it would FREE a resource pointer on rebuild --
-    // and Load() rebuilds on every scale/family change).
-    ImFontConfig cfg = baseCfg;
-    cfg.FontDataOwnedByAtlas = false;
-    return ImGui::GetIO().Fonts->AddFontFromMemoryTTF(
-        const_cast<void*>(data), sz, px, &cfg, ranges);
-}
-
-// The repertoire (coop/text/repertoire.h) in ImGui's range form. THE SAME TABLE
-// the nickname arbiter folds against -- that is the whole construction: a name
-// is unique on screen because what we BAKE and what we FOLD are one generated
-// constant rather than two lists that drift.
+// The EXCLUDE set (coop/text/repertoire.h) in ImGui's range form -- the exact
+// complement, within what our faces carry, of the table the nickname arbiter
+// folds against. One generator emits both, so what we refuse to BAKE and what we
+// fold to the sentinel cannot drift.
 //
-// ImWchar must be 32-bit here: 1,232 of the donor's 1,418 codepoints live above
-// the BMP, so on a 16-bit build the ranges could not even express U+1F600 and
-// the emoji half of the repertoire would silently not exist.
+// SUBTRACTIVE, BECAUSE 1.92 LEFT US NOTHING ELSE. The eager builder took an
+// inclusion list and `fold == bake` held by construction. The lazy atlas ignores
+// ImFontConfig::GlyphRanges entirely and bakes whatever gets drawn, so the only
+// lever is ImFontConfig::GlyphExcludeRanges, consulted per source by
+// ImFontAtlasBuildAcceptCodepointForSource on the on-demand path.
+//
+// THE LIST IS ZERO-TERMINATED, so it may not begin with U+0000 -- ImGui's walk
+// would stop at index 0 and exclude nothing at all, with no symptom anywhere:
+// its own size asserts would pass (0 is even and <= 64) and NDEBUG strips them.
+// The generator hard-fails rather than emit one, coop/text/repertoire.cpp
+// static_asserts it, and the loop below would still be correct if both failed.
+//
+// ImWchar must be 32-bit: the exclude set reaches U+10FFFD (private use) and the
+// repertoire reaches U+1FBF9, so on a 16-bit build neither table could even be
+// expressed and the emoji half of the repertoire would silently not exist.
 static_assert(sizeof(ImWchar) == 4,
-              "IMGUI_USE_WCHAR32 must be on: the emoji repertoire is astral");
-const ImWchar* Repertoire() {
+              "IMGUI_USE_WCHAR32 must be on: the exclude set is astral");
+const ImWchar* ExcludeList() {
+    // DRILL ONLY (dev.atlas_no_exclude_drill). Returning nullptr lets every source
+    // bake its entire cmap, which is precisely the superset the invariant in
+    // ui/atlas_watch.cpp exists to catch -- so this is how that detector is shown
+    // RED without a source edit. It breaks name folding while set, which is why
+    // it is a dev row with no UI and an explicit warning in its catalog text.
+    if (coop::config::ResolveFlag(coop::config_registry::rows::atlas_no_exclude_drill))
+        return nullptr;
     static std::vector<ImWchar> v;
     if (v.empty()) {
         size_t n = 0;
-        const coop::text::CodepointRange* r = coop::text::RepertoireRanges(&n);
+        const coop::text::CodepointRange* r = coop::text::ExcludeRanges(&n);
         v.reserve(n * 2 + 1);
         for (size_t i = 0; i < n; ++i) {
             v.push_back(static_cast<ImWchar>(r[i].begin));
@@ -156,6 +162,26 @@ const ImWchar* Repertoire() {
         v.push_back(0);
     }
     return v.data();
+}
+
+// EVERY add goes through this funnel or AddFromFile below, and the exclude list
+// is applied HERE rather than at each ImFontConfig declaration. The field lives
+// on the config, and we build four of them (cfg / merge / donor / the OS
+// fallbacks), so setting it at the declarations is a site list -- a fifth config
+// added later silently bakes the whole cmap and the superset invariant in
+// ui/atlas_watch.cpp is what would notice, after the fact. Two funnels, no list.
+ImFont* AddFromResource(int id, float px, const ImFontConfig& baseCfg) {
+    int sz = 0;
+    const void* data = ResourceTtf(id, &sz);
+    if (!data) return nullptr;
+    // The resource lives in the mapped DLL image for the process lifetime, so the
+    // atlas must NOT take ownership (it would FREE a resource pointer on rebuild --
+    // and Load() rebuilds on every scale/family change).
+    ImFontConfig cfg = baseCfg;
+    cfg.FontDataOwnedByAtlas = false;
+    cfg.GlyphExcludeRanges = ExcludeList();
+    return ImGui::GetIO().Fonts->AddFontFromMemoryTTF(
+        const_cast<void*>(data), sz, px, &cfg, nullptr);
 }
 
 // Merge the OTHER embedded families, then the colour donor, into the face just
@@ -192,12 +218,12 @@ const ImWchar* Repertoire() {
 // NUMBER in a vendored dependency is silently invalidated by a submodule bump.
 // Nothing in the build complains, and the stale citation reads exactly as
 // authoritative as a live one.
-void MergeBackstops(int chosenFamily, bool bold, float px, const ImWchar* ranges) {
+void MergeBackstops(int chosenFamily, bool bold, float px) {
     ImFontConfig merge;
     merge.MergeMode = true;
     for (int o = 0; o < kFamilyCount; ++o) {
         if (o == chosenFamily) continue;
-        AddFromResource(bold ? kFamilies[o].boldId : kFamilies[o].regularId, px, merge, ranges);
+        AddFromResource(bold ? kFamilies[o].boldId : kFamilies[o].regularId, px, merge);
     }
     // ImGuiFreeTypeBuilderFlags_LoadColor is not optional: without it the COLR
     // layers are skipped and every emoji bakes with visible=0 -- INVISIBLE, not
@@ -208,21 +234,22 @@ void MergeBackstops(int chosenFamily, bool bold, float px, const ImWchar* ranges
     // UseColors=1, Colored=3, 2600 non-greyscale texels; without it
     // emoji-visible=0, exactly as this comment claimed on 1.91.5.
     donor.FontLoaderFlags |= ImGuiFreeTypeLoaderFlags_LoadColor;
-    AddFromResource(IDR_FONT_EMOJI_DONOR, px, donor, ranges);
+    AddFromResource(IDR_FONT_EMOJI_DONOR, px, donor);
 }
 
-ImFont* AddFromFile(const std::string& path, float px, const ImFontConfig& cfg,
-                    const ImWchar* ranges) {
+ImFont* AddFromFile(const std::string& path, float px, const ImFontConfig& baseCfg) {
     const DWORD attrs = ::GetFileAttributesA(path.c_str());
     if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY)) return nullptr;
-    return ImGui::GetIO().Fonts->AddFontFromFileTTF(path.c_str(), px, &cfg, ranges);
+    ImFontConfig cfg = baseCfg;
+    cfg.GlyphExcludeRanges = ExcludeList();
+    return ImGui::GetIO().Fonts->AddFontFromFileTTF(path.c_str(), px, &cfg, nullptr);
 }
 
 // Bake all roles from the embedded families, deduping identical (family, px, weight)
 // so the common single-family config adds only ONE regular + ONE bold atlas entry.
 // Returns true if at least one role's resource baked. Menu (role 0) is baked first
 // -> its font is ImGui's default.
-bool BakeEmbeddedRoles(float s, const ImFontConfig& cfg, const ImWchar* ranges) {
+bool BakeEmbeddedRoles(float s, const ImFontConfig& cfg) {
     struct Baked { int fam; int pxi; bool bold; ImFont* font; };
     Baked cache[kRoleCount];
     int nCache = 0;
@@ -239,9 +266,9 @@ bool BakeEmbeddedRoles(float s, const ImFontConfig& cfg, const ImWchar* ranges) 
             }
         if (!font) {
             const FamilyDesc& fam = kFamilies[fi];
-            font = AddFromResource(rd.bold ? fam.boldId : fam.regularId, px, cfg, ranges);
+            font = AddFromResource(rd.bold ? fam.boldId : fam.regularId, px, cfg);
             if (font) {
-                MergeBackstops(fi, rd.bold, px, ranges);
+                MergeBackstops(fi, rd.bold, px);
                 any = true;
                 cache[nCache++] = { fi, pxi, rd.bold, font };
             }
@@ -250,124 +277,6 @@ bool BakeEmbeddedRoles(float s, const ImFontConfig& cfg, const ImWchar* ranges) 
         g_rolePx[r]   = px;
     }
     return any;
-}
-
-// ASSERT THE PHENOMENON, NOT THE PRECONDITION. "Did the donor resource load?"
-// goes GREEN on a build compiled without ImGuiFreeTypeBuilderFlags_LoadColor,
-// where every COLR glyph bakes with Visible == 0 -- invisible, not missing, so
-// the atlas is full of emoji nobody can see and every check passes. What is
-// actually claimed is that a coloured emoji reached the texture, so that is what
-// is measured: the glyph carries Colored, and its box in the atlas contains
-// texels whose channels are not all equal (a greyscale mask cannot).
-// [[lesson-an-instrument-blind-to-the-phenomenon-always-passes]]
-//
-// Logged, never a gate. A player whose atlas came out short should still be able
-// to join and see everyone; the FOLD is on a build constant either way, so the
-// names stay consistent across peers regardless of what baked here.
-//
-// SPLIT ON WHAT THE QUESTION ACTUALLY IS (2026-07-30, ImGui 1.92). Under 1.91.5
-// every claim here could be answered by one lookup, because the atlas was a
-// fixed set. 1.92's atlas is lazy, and asking it about an ABSENT codepoint
-// BAKES one (imgui_draw.cpp:5361-5373 sets LoadNoFallback then calls
-// ImFontBaked_BuildLoadGlyph) -- measured 2026-07-30: out of frame that also
-// flips ImFontAtlas::TexIsBuilt to false, after which a legacy backend, which
-// uploads exactly once, makes every later frame raise the
-// imgui_draw.cpp:2815 user error forever. This function runs from Load(), which
-// imgui_overlay.cpp calls BEFORE ImGui_ImplWin32_Init -- so there is no frame in
-// scope and atlas->Locked is 0. An instrument that corrupts the thing it
-// measures is worse than no instrument. [[lesson-querying-a-lazy-cache-populates-it]]
-//
-// So the two kinds of claim are answered by two different APIs:
-//   - "can this build DRAW this codepoint" is a cmap fact -> ImFont::IsGlyphInFont
-//     (imgui_draw.cpp:5391, a pure walk of Sources; it never touches the atlas).
-//     Regime-independent, and it is what lets the RED case below exist at all.
-//   - "did a COLOURED emoji reach the texture" is genuinely about rasterised
-//     pixels, so it must read a baked glyph. Every such query goes through
-//     BakedGlyph(), which refuses any codepoint outside the repertoire -- i.e.
-//     outside what Load() preloaded -- because those are exactly the queries
-//     that would bake. The invariant lives in one place instead of in a comment
-//     a future edit can walk past.
-//
-// ASSERT THE PHENOMENON, NOT THE PRECONDITION. "Did the donor resource load?"
-// goes GREEN on a build compiled without the LoadColor flag, where every COLR
-// glyph bakes with Visible == 0 -- invisible, not missing, so the atlas is full
-// of emoji nobody can see and every check passes. What is actually claimed is
-// that a coloured emoji reached the texture, so that is what is measured: the
-// glyph carries Colored, and its box in the atlas contains texels whose channels
-// are not all equal (a greyscale mask cannot).
-// [[lesson-an-instrument-blind-to-the-phenomenon-always-passes]]
-void RunFontRepertoireSelftest() {
-    ImFontAtlas* atlas = ImGui::GetIO().Fonts;
-    if (!atlas->IsBuilt() && !atlas->Build()) {
-        UE_LOGE("font selftest: FAIL -- the atlas did not build");
-        return;
-    }
-    ImFont* f = g_roleFont[static_cast<int>(Role::Nameplate)];
-    if (!f) { UE_LOGE("font selftest: FAIL -- no nameplate face"); return; }
-
-    int pass = 0, total = 0;
-    auto ok = [&](bool cond, const char* what) {
-        ++total;
-        if (cond) ++pass;
-        else UE_LOGE("font selftest: FAIL -- %s", what);
-    };
-
-    // The ONLY baked-glyph lookup in this function, and it may not be asked
-    // about a codepoint the atlas was not told to preload.
-    const float px = g_rolePx[static_cast<int>(Role::Nameplate)];
-    ImFontBaked* baked = f->GetFontBaked(px);
-    auto bakedGlyph = [&](uint32_t cp) -> const ImFontGlyph* {
-        if (!coop::text::InRepertoire(cp)) {
-            UE_LOGE("font selftest: BUG -- U+%04X is outside the repertoire; asking the "
-                    "atlas for it would BAKE it and poison a legacy upload", cp);
-            return nullptr;
-        }
-        return baked ? baked->FindGlyphNoFallback(static_cast<ImWchar>(cp)) : nullptr;
-    };
-
-    ok(f->IsGlyphInFont(0x1F600), "the donor supplies U+1F600 (grinning face)");
-    const ImFontGlyph* emoji = bakedGlyph(0x1F600);
-    ok(emoji != nullptr, "U+1F600 is baked at the nameplate size");
-    ok(emoji && emoji->Colored, "U+1F600 is flagged Colored (COLR layers loaded)");
-    ok(emoji && emoji->Visible, "U+1F600 has pixels (LoadColor is on)");
-
-    int nonGrey = 0;
-    ImTextureData* tex = atlas->TexData;
-    if (emoji && tex && tex->Pixels && tex->Format == ImTextureFormat_RGBA32) {
-        const int w = tex->Width, h = tex->Height;
-        const int x0 = int(emoji->U0 * w), x1 = int(emoji->U1 * w);
-        const int y0 = int(emoji->V0 * h), y1 = int(emoji->V1 * h);
-        const unsigned* px32 = reinterpret_cast<const unsigned*>(tex->Pixels);
-        for (int y = y0; y < y1; ++y)
-            for (int x = x0; x < x1; ++x) {
-                const unsigned p = px32[y * w + x];
-                const unsigned r = p & 0xFF, g = (p >> 8) & 0xFF, b = (p >> 16) & 0xFF;
-                if (r != g || g != b) ++nonGrey;
-            }
-    }
-    ok(nonGrey > 0, "U+1F600's atlas box holds non-greyscale texels (it is COLOURED)");
-
-    // The cross-merge's own two claims, each a defect that shipped in b132.
-    ok(f->IsGlyphInFont(0x0400),
-       "U+0400 is present (JetBrains Mono lacks it; a backstop must supply it)");
-    ok(f->IsGlyphInFont(0xFFFD),
-       "U+FFFD is present (six of seven faces lack it; absent text fell to '?')");
-
-    // THE RED CASE, newly possible because IsGlyphInFont does not bake. Without
-    // one, an always-true instrument is indistinguishable from a working one
-    // ([[lesson-an-instrument-never-shown-failing-passes-by-construction]]).
-    // U+4E00 is the first CJK ideograph and no embedded face or donor carries
-    // it -- if this ever goes green, the repertoire table and the fold are
-    // describing a different build than the one that shipped.
-    ok(!f->IsGlyphInFont(0x4E00),
-       "U+4E00 is ABSENT (the instrument can still say no)");
-
-    UE_LOGI("font selftest: %s (%d/%d) -- atlas %dx%d %s, %d colour texels in one emoji "
-            "(asking about an absent codepoint would MUTATE this atlas; none of the "
-            "baked lookups above can)",
-            pass == total ? "PASS" : "FAIL", pass, total,
-            tex ? tex->Width : 0, tex ? tex->Height : 0,
-            (tex && tex->Format == ImTextureFormat_RGBA32) ? "RGBA32" : "Alpha8", nonGrey);
 }
 
 }  // namespace
@@ -385,17 +294,60 @@ void Load() {
     // io.FontGlobalScale (that stretches the 1x bitmap and blurs).
     const float s = ui::scale::Ui();
 
+    // THE ATLAS CEILING, SET EXPLICITLY. ImGui defaults TexMaxWidth/Height to
+    // 8192 and the lazy atlas grows into whatever it is allowed (doubling height
+    // then width, ImFontAtlasTextureGrow). Two reasons this is 2048 and not the
+    // default, both measured:
+    //
+    //   UPLOAD -- the DX12 backend uploads the dirty UpdateRect BOUNDING BOX and
+    //   its staging buffer only ever GROWS (ImGui_ImplDX12_UpdateTexture), behind
+    //   a WaitForSingleObject(.., INFINITE) that nothing has yet timed. At 4096
+    //   the worst single upload is 67 MB; at 2048 it is 16.8 MB, which is exactly
+    //   today's geometry, so this commit cannot regress the per-upload ceiling.
+    //   (It does raise upload FREQUENCY -- the atlas now grows during play rather
+    //   than once at boot -- and that is what the probe in the DX12 backend and
+    //   the geometry line in ui/atlas_watch.cpp exist to measure.)
+    //
+    //   PEAK -- ImFontAtlas keeps the old AND new texture across a repack, so
+    //   peak is two: 2048^2 RGBA32 = 16.8 MB each, 33.6 MB. At 4096 it is 134 MB.
+    //
+    // CAPACITY IS NOT THE BINDING CONSTRAINT, and the arithmetic is worth keeping
+    // because it was wrong twice. The pathological demand is every surface that
+    // draws remote-authored text asking for the WHOLE repertoire at once: chat
+    // feed (18 px) + overhead bubble (14.08 px) + scoreboard (16 px), summed
+    // because ONE atlas is shared across sizes and its GC is pressure-triggered
+    // rather than periodic. Measured from the font binaries' own bounding boxes:
+    // 3,589,892 px2 against 2048^2's 4,194,304 -- 0.856x. It fits, with 17 %
+    // headroom rather than the "3x margin" an earlier revision of this reasoning
+    // claimed by pricing a single size. That is why the pack-failure detector in
+    // ui/atlas_watch.cpp is load-bearing and not diagnostic.
+    io.Fonts->TexMaxWidth  = 2048;
+    io.Fonts->TexMaxHeight = 2048;
+    // DRILL ONLY (dev.atlas_texmax_drill, 0 = off). 256 starves the packer, which
+    // is how ui/atlas_watch.cpp's pack-failure detector is shown RED -- the one
+    // instrument standing between a remote peer and a permanently-boxed glyph.
+    if (const long drill =
+            coop::config::ResolveInt(coop::config_registry::rows::atlas_texmax_drill)) {
+        io.Fonts->TexMaxWidth = io.Fonts->TexMaxHeight = static_cast<int>(drill);
+        // TexMin defaults to 512, so a ceiling below it would be incoherent and the
+        // packer would never reach the starved state the drill is for.
+        if (io.Fonts->TexMinWidth > io.Fonts->TexMaxWidth)
+            io.Fonts->TexMinWidth = io.Fonts->TexMinHeight = io.Fonts->TexMaxWidth;
+        UE_LOGW("fonts: ATLAS DRILL -- TexMax forced to %ld (dev.atlas_texmax_drill). Glyphs "
+                "WILL fail to pack; that is the point.", drill);
+    }
+
     ImFontConfig cfg;
     // No OversampleH/V: the freetype builder ignores it and hints properly.
-    // The REPERTOIRE, not GetGlyphRangesCyrillic(): Latin-1 + Cyrillic still,
-    // plus every single-codepoint emoji, and minus the codepoints no embedded
-    // face can draw. Passing a superset costs nothing -- the freetype builder
-    // skips a codepoint whose face has no glyph for it.
-    const ImWchar* ranges = Repertoire();
+    // What each source may bake is decided SUBTRACTIVELY now -- AddFromResource
+    // and AddFromFile put the generated exclude list on every config. The old
+    // `ranges` inclusion parameter is gone: ImGui 1.92 ignores
+    // ImFontConfig::GlyphRanges on the on-demand path, so it was a live-looking
+    // knob that no longer decided anything (RULE 2).
 
     // PRIMARY: the per-role families embedded in the DLL as RCDATA (RULE 3, no
     // loose files). Menu is baked first -> ImGui default.
-    if (BakeEmbeddedRoles(s, cfg, ranges)) {
+    if (BakeEmbeddedRoles(s, cfg)) {
         // Any role whose resource somehow failed reuses the default (first baked).
         ImFont* def = g_roleFont[static_cast<int>(Role::Menu)];
         if (!def) for (int r = 0; r < kRoleCount; ++r) if (g_roleFont[r]) { def = g_roleFont[r]; break; }
@@ -408,51 +360,30 @@ void Load() {
                 kFamilies[static_cast<int>(g_roleFamily[3])].label,
                 kFamilies[static_cast<int>(g_roleFamily[4])].label,
                 g_rolePx[0], g_rolePx[1], s);
-        // THE ACCEPTED COST, MEASURED WHERE IT IS PAID. Adding the donor took the
-        // offline bake from ~5-16 ms to ~28-87 ms, and ui::scale::NoteViewport
-        // re-bakes on every quantized-sixth crossing -- its own comment concedes
-        // a windowed drag crosses several. An offline probe is not that path (it
-        // never uploads a texture), so Build() is called HERE, timed, and logged:
-        // the number in a real session's log is the only honest version of it.
-        // The backend does NOT then build again -- and not for the reason this
-        // comment used to give. It claimed the backends call GetTexDataAsRGBA32
-        // (citing imgui_impl_dx11.cpp:330 / dx12.cpp:310) which early-outs on
-        // `if (!TexPixelsRGBA32)`, and it closed by telling the reader not to
-        // "simplify" by removing that path. MEASURED 2026-07-30: neither the
-        // symbol nor the TexPixelsRGBA32 field exists anywhere in the 1.92.9
-        // DX11/DX12 backends. The conclusion survives by a different mechanism --
-        // Build() sets atlas->TexIsBuilt, and the rebuild branch in
-        // ImFontAtlasUpdateNewFrame (imgui_draw.cpp:2807-2811) sits under
-        // `if (atlas->RendererHasTextures)`, which is false while the capability
-        // flag is cleared.
+        // NOTHING IS BAKED HERE ANY MORE, AND THERE IS NO NUMBER TO PRINT. This
+        // used to call ImFontAtlas::Build() inside a QueryPerformanceCounter pair
+        // and log "atlas baked in %.1f ms (%dx%d)". Both halves retired with the
+        // flip (RULE 2 -- retired, not kept behind a condition):
         //
-        // Two further facts about the block below, both measured, both to be
-        // acted on when the flag flips: ImFontAtlas::Build() is an OBSOLETE shim
-        // (imgui_draw.cpp:3060-3065, inside `#ifndef
-        // IMGUI_DISABLE_OBSOLETE_FUNCTIONS`, which we do not define) that is just
-        // `ImFontAtlasBuildMain(this); return true;` -- so "FAILED TO BAKE" is
-        // already unreachable, `built` cannot be false. And once the atlas is
-        // dynamic there is no single bake to time at all: the honest numbers
-        // become the geometry logged on change plus the per-frame Glyphs.Size
-        // delta, because the cost is spread across the frames that draw new text.
-        {
-            LARGE_INTEGER f{}, a{}, b{};
-            ::QueryPerformanceFrequency(&f);
-            ::QueryPerformanceCounter(&a);
-            const bool built = io.Fonts->Build();
-            ::QueryPerformanceCounter(&b);
-            const double ms = f.QuadPart ? (double(b.QuadPart - a.QuadPart) * 1000.0 /
-                                            double(f.QuadPart)) : 0.0;
-            const ImTextureData* tex = io.Fonts->TexData;
-            UE_LOGI("fonts: atlas %s in %.1f ms (%dx%d %s)", built ? "baked" : "FAILED TO BAKE",
-                    ms, tex ? tex->Width : 0, tex ? tex->Height : 0,
-                    (tex && tex->Format == ImTextureFormat_RGBA32) ? "RGBA32" : "Alpha8");
-        }
-        // Runs on EVERY bake, not once per process. The old `static bool done`
-        // latch described only the BOOT atlas, and Load() is re-entrant: every
-        // scale or family change produces a new atlas that nothing then checked.
-        // RULE 2 -- the latch is gone rather than kept alongside.
-        RunFontRepertoireSelftest();
+        //   Build() is an OBSOLETE shim (imgui_draw.cpp, inside `#ifndef
+        //   IMGUI_DISABLE_OBSOLETE_FUNCTIONS`) that just calls
+        //   ImFontAtlasBuildMain and returns true, so its bool was already
+        //   unreachable. Worse, calling it HERE samples the capability flag from
+        //   the context at that instant -- and Load() runs before the renderer
+        //   backend sets the flag, which is precisely how an eager build gets
+        //   locked in under a dynamic regime. The first build is now
+        //   ImFontAtlasUpdateNewFrame inside the first NewFrame(), which is
+        //   unconditionally after InitRenderer.
+        //
+        //   The ms figure has no meaning under a lazy atlas: rasterisation is
+        //   spread across the frames that draw new text, so a single boot number
+        //   would be a fiction. The honest replacements ship in the same commit,
+        //   in ui/atlas_watch.cpp -- geometry logged when it CHANGES, plus the
+        //   per-frame glyph delta when a frame rasterises a lot at once.
+        //
+        // The selftest moved there too, for the same reason: it now fires on a
+        // texture-id edge, so it sees boot, rescale, the F1 family switch AND
+        // every grow -- where a call from here would only ever see Load().
         return;
     }
 
@@ -467,23 +398,37 @@ void Load() {
         { win + "segoeui.ttf", "Segoe UI (system)" },
     };
     for (const Cand& c : cands) {
-        ImFont* menu = AddFromFile(c.reg, kUiPx * s, cfg, ranges);
+        ImFont* menu = AddFromFile(c.reg, kUiPx * s, cfg);
         if (!menu) continue;
         // The donor still merges here -- it is RCDATA in the same DLL, so the
         // only way this path runs with no emoji is a resource table that lost
         // one entry and not the others. What the fold does NOT do is follow:
         // FoldKey stays on the compile-time table whatever baked, so peers agree
         // about names even on a machine whose atlas came out short.
-        MergeBackstops(-1, false, kUiPx * s, ranges);
-        ImFont* chat = AddFromFile(c.reg, kChatPx * s, cfg, ranges);
-        if (chat) MergeBackstops(-1, false, kChatPx * s, ranges);
+        MergeBackstops(-1, false, kUiPx * s);
+        ImFont* chat = AddFromFile(c.reg, kChatPx * s, cfg);
+        if (chat) MergeBackstops(-1, false, kChatPx * s);
         g_roleFont[static_cast<int>(Role::Menu)]      = menu; g_rolePx[0] = kUiPx * s;
         g_roleFont[static_cast<int>(Role::Chat)]      = chat ? chat : menu; g_rolePx[1] = (chat ? kChatPx : kUiPx) * s;
         g_roleFont[static_cast<int>(Role::Net)]       = menu; g_rolePx[2] = kUiPx * s;
         g_roleFont[static_cast<int>(Role::Nameplate)] = menu; g_rolePx[3] = kNameplatePx * s;
         g_roleFont[static_cast<int>(Role::Toast)]     = menu; g_rolePx[4] = kUiPx * s;
-        UE_LOGW("fonts: embedded families unavailable -- overlay font = %s (all roles; scale %.2f)",
-                c.tag, s);
+        // THE FAILURE MODE HERE INVERTED WITH THE FLIP, so the warning says both
+        // halves now. It used to be that a system face came out SHORT of the
+        // repertoire and some names drew as boxes. Under the lazy atlas the
+        // exclude list is subtractive, so a system face is asked for whatever it
+        // HAS -- and Segoe UI carries Hebrew, Thai and Arabic that our embedded
+        // families do not. The atlas therefore comes out a SUPERSET, while
+        // FoldKey still maps those codepoints to the sentinel: two legible
+        // non-Latin names can both fold to U+FFFD and the arbiter will suffix one
+        // of them for a collision the player cannot see. Uniqueness is not
+        // guaranteed on this path. It is detected, never prevented -- the
+        // alternative to a superset font is no font at all -- so
+        // ui/atlas_watch.cpp's superset invariant logs each offender.
+        UE_LOGW("fonts: embedded families unavailable -- overlay font = %s (all roles; scale "
+                "%.2f). Name uniqueness is NOT guaranteed on this path: a system face may "
+                "draw scripts the fold table sentinels, so two legible names can collide "
+                "invisibly.", c.tag, s);
         return;
     }
 

@@ -101,6 +101,20 @@ jobs:
           pwsh -File tools/net/peerconn_gate.ps1
           exit $LASTEXITCODE
 
+      - name: Atlas regime gate (the ImGui lazy atlas is on, watched, and bounded)
+        # Same family: positive census, fail-closed on an empty or unexpected one,
+        # with -Drill's injected must-fire controls run first so a green is
+        # evidence rather than silence. Guards the four properties of the
+        # 2026-07-30 flip that no compile can see -- both RHIs in ONE regime, the
+        # watch still asserting it, TexMax pinned off ImGui's 8192 default, and an
+        # exclude table that cannot be a zero-terminated no-op.
+        shell: pwsh
+        run: |
+          pwsh -File tools/text/atlas_regime_gate.ps1 -Drill -Quiet
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -File tools/text/atlas_regime_gate.ps1
+          exit $LASTEXITCODE
+
       - name: Read vcpkg pin (builtin-baseline from vcpkg.json)
         id: baseline
         shell: pwsh

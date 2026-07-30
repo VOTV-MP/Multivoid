@@ -16,6 +16,7 @@
 
 #include "coop/player/nickname_arbiter.h"
 #include "coop/text/repertoire.h"
+#include "coop/text/novelty_ledger.h"
 #include "coop/text/utf8_codec.h"
 
 #include "ice_config.h"          // co-located: ICE STUN/TURN config (P2P)
@@ -165,6 +166,13 @@ bool Session::Start(const Config& cfg) {
     // "the constant compiled" and "the constant says what we think".
     static const bool kRepertoireOk = coop::text::RunRepertoireSelftest();
     (void)kRepertoireOk;
+
+    // The receive-boundary novelty cap (W11). Its interesting case is a peer
+    // sending a deliberately diverse alphabet, which no LAN drill stages -- and
+    // its own first draft passed by construction for every budget above 32, so
+    // it is asserted here rather than trusted.
+    static const bool kNoveltyOk = coop::text::RunNoveltyLedgerSelftest();
+    (void)kNoveltyOk;
 
     g_session.store(this, std::memory_order_release);
     SteamNetworkingUtils()->SetGlobalCallback_SteamNetConnectionStatusChanged(

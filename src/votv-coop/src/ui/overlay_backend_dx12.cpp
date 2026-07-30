@@ -250,27 +250,21 @@ bool InitImguiBackend() {
     info.SrvDescriptorAllocFn = &SrvAlloc;
     info.SrvDescriptorFreeFn  = &SrvFree;
     if (!ImGui_ImplDX12_Init(&info)) return false;
-    // TRANSITIONAL, RETIRED WITH THE DX11 CLEAR BY THE SAME COMMIT. Only the
-    // LEGACY overload stripped ImGuiBackendFlags_RendererHasTextures
-    // (imgui_impl_dx12.cpp:987); InitInfo leaves it set, because the whole point
-    // of the struct is that the backend CAN support multiple textures. So moving
-    // to InitInfo silently switches the dynamic atlas ON -- CAUGHT by a DX12 smoke
-    // (2026-07-30): the second Load() produced a 512x128 atlas in 0.0 ms, the
-    // signature of a LAZY atlas that preloaded nothing, against DX11's
-    // 1024x2048 in 72.7 ms.
+    // THE FLAG STAYS ON (2026-07-30, the flip), and this is where the
+    // transitional clear used to be. ImGui_ImplDX12_Init(InitInfo) leaves
+    // ImGuiBackendFlags_RendererHasTextures set -- the whole point of the struct
+    // is that the backend CAN service multiple textures -- and now that it does,
+    // that is the regime we want. The clear is deleted, not conditioned (RULE 2);
+    // it only ever existed to keep DX12 and DX11 in the SAME regime for one
+    // build, because one binary with two drawable repertoires chosen by the
+    // player's GPU API means two peers agree about who collided (the fold is a
+    // build constant) while disagreeing about what the names look like.
     //
-    // That is exactly the defect the DX11 clear exists to prevent, arriving from
-    // the other side: one build, two drawable repertoires, chosen by the player's
-    // RHI. Two peers in one lobby would agree about who collided (the fold is a
-    // build constant) and disagree about what the names LOOK like. The atlas
-    // turns on for both RHIs at once, with the fold table that matches it, or for
-    // neither.
-    //
-    // Note the font selftest cannot catch this for us: its baked lookups are
-    // guarded to in-repertoire codepoints, and under a lazy atlas asking for one
-    // simply bakes it, so it passes 8/8 either way. It measures whether a glyph
-    // CAN be drawn, never whether the atlas was preloaded.
-    ImGui::GetIO().BackendFlags &= ~ImGuiBackendFlags_RendererHasTextures;
+    // The DX12-specific risk this leaves is upload cost, not correctness: the
+    // atlas now grows during play instead of once at boot, and every growth goes
+    // through ImGui_ImplDX12_UpdateTexture's INFINITE fence wait. That is what
+    // the probe below measures, and it is why TexMaxWidth/Height is pinned at
+    // 2048 in ui/fonts.cpp.
     return true;
 }
 
@@ -523,6 +517,68 @@ void EnsureTarget(IDXGISwapChain* sc) {
     }
 }
 
+// THE UPLOAD PROBE, and it measures a path that ALREADY RUNS -- it is not new
+// work introduced by the flip.
+//
+// ImGui assigns draw_data->Textures unconditionally (imgui.cpp, in Render) and
+// ImGui_ImplDX12_RenderDrawData services that list ungated by the capability
+// flag, so upstream's upload path has been executing at boot and twice per
+// rescale in every build since the 1.92 upgrade, and had never been timed. What
+// the flip changes is FREQUENCY: the atlas now grows and repacks during play.
+//
+// Two properties make it worth a permanent probe rather than a one-off:
+//
+//   THE WAIT IS UNBOUNDED. ImGui_ImplDX12_UpdateTexture ends in a
+//   WaitForSingleObject(.., INFINITE) on the render thread. DX11's
+//   UpdateSubresource has no fence and no wait, so this is a DX12-only exposure.
+//
+//   THE BOX ACCUMULATES. ImGui::Render() runs unconditionally while THIS
+//   function early-outs on six conditions above (facade disabled, swapchain
+//   rebind, queue re-confirmation in flight). During such a window glyphs keep
+//   baking and the texture's dirty UpdateRect keeps growing, and the first
+//   serviced frame pays for the whole window at once. So the probe logs the
+//   accumulated box, not only the elapsed time.
+//
+// It then NULLS draw_data->Textures so the backend does not repeat the work --
+// the servicing has happened, and this is exactly the seam our own servicing
+// would replace if the numbers ever demand one. Nulling here is DX12-only and
+// cannot starve DX11: that backend reads the same field from its own frame.
+void ServiceTexturesTimed(ImDrawData* dd) {
+    if (!dd || !dd->Textures) return;
+    static double s_lastLog = 0.0;
+    static double s_worstMs = 0.0;
+    LARGE_INTEGER freq{}, a{}, b{};
+    ::QueryPerformanceFrequency(&freq);
+    int serviced = 0, boxW = 0, boxH = 0;
+    double totalMs = 0.0;
+    for (ImTextureData* tex : *dd->Textures) {
+        if (!tex || tex->Status == ImTextureStatus_OK) continue;
+        const ImTextureRect& r = tex->UpdateRect;
+        ::QueryPerformanceCounter(&a);
+        ImGui_ImplDX12_UpdateTexture(tex);
+        ::QueryPerformanceCounter(&b);
+        const double ms = freq.QuadPart
+            ? (double(b.QuadPart - a.QuadPart) * 1000.0 / double(freq.QuadPart)) : 0.0;
+        totalMs += ms;
+        ++serviced;
+        if (r.w > boxW) boxW = r.w;
+        if (r.h > boxH) boxH = r.h;
+    }
+    dd->Textures = nullptr;   // serviced above; do not let the backend redo it
+    if (serviced == 0) return;
+    // Log the first upload of a run, then only a new worst case, then a heartbeat
+    // -- enough to price the path without a per-frame line.
+    const double now = ImGui::GetTime();
+    const bool worse = totalMs > s_worstMs + 0.5;
+    if (worse) s_worstMs = totalMs;
+    if (worse || s_lastLog == 0.0 || now - s_lastLog > 60.0) {
+        s_lastLog = now;
+        UE_LOGI("imgui_overlay: dx12 texture upload -- %d texture(s), %.2f ms total, dirty "
+                "box up to %dx%d (INFINITE fence wait; worst so far %.2f ms)",
+                serviced, totalMs, boxW, boxH, s_worstMs);
+    }
+}
+
 void RenderDrawData(IDXGISwapChain* sc) {
     if (!g_live || g_disabled || !g_rtvHeap || !g_sc3 || !g_queue || sc != g_boundSc) return;
     FrameContext& fc = g_frames[g_frameIndex % g_bufferCount];
@@ -551,7 +607,9 @@ void RenderDrawData(IDXGISwapChain* sc) {
     g_list->OMSetRenderTargets(1, &g_rtvHandles[idx], FALSE, nullptr);
     ID3D12DescriptorHeap* heaps[] = {g_srvHeap};
     g_list->SetDescriptorHeaps(1, heaps);
-    ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), g_list);
+    ImDrawData* dd = ImGui::GetDrawData();
+    ServiceTexturesTimed(dd);
+    ImGui_ImplDX12_RenderDrawData(dd, g_list);
 
     barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
     barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
@@ -566,7 +624,6 @@ void RenderDrawData(IDXGISwapChain* sc) {
 
     if (!g_firstFrameLogged) {
         g_firstFrameLogged = true;
-        const ImDrawData* dd = ImGui::GetDrawData();
         UE_LOGI("imgui_overlay: dx12 first frame rendered (%d vertices, %d draw list(s), "
                 "backbuffer %u)", dd ? dd->TotalVtxCount : -1, dd ? dd->CmdLists.Size : -1, idx);
         ue_wrap::log::Flush();

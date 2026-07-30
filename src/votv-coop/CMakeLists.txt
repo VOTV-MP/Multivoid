@@ -564,7 +564,9 @@ add_library(votv-coop SHARED
     src/ui/net_stats_panel.cpp
     src/ui/chat_input.cpp
     src/ui/chat_view.cpp
+    src/coop/text/novelty_ledger.cpp
     src/ui/fonts.cpp
+    src/ui/atlas_watch.cpp
     src/ui/scale.cpp
     resources/fonts.rc
     src/coop/player/roster.cpp

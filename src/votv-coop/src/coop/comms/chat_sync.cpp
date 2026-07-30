@@ -2,6 +2,7 @@
 
 #include "coop/comms/chat_sync.h"
 
+#include "coop/text/novelty_ledger.h"
 #include "coop/text/utf8_codec.h"
 
 #include "coop/comms/chat_bubbles.h"
@@ -94,9 +95,22 @@ std::string TrimAndCap(const std::string& in) {
 // repair: a repaired chat line is a sentence nobody typed. The whole message is
 // dropped and the refusal is logged, so a drill can see it and a real defect in
 // someone's sender is attributable rather than silent.
-bool WellFormed(const char* p, size_t n) {
-    std::wstring ignored;
-    return coop::text::FromUtf8Strict(p, n, &ignored);
+// TWO ADMISSION QUESTIONS, ONE FUNNEL. Well-formedness is the first; the second
+// arrived with the ImGui 1.92 flip, which made every codepoint in the repertoire
+// rasterisable on demand from exactly this string. A few hundred bytes of
+// deliberately diverse UTF-8 forces thousands of FreeType rasterisations on every
+// receiving peer inside one frame (docs/security TRACKER W11), so the novelty
+// ledger caps how fast a peer may widen the alphabet. Same refusal shape: the
+// whole field is dropped, never repaired or partially admitted.
+//
+// It lives HERE, at the boundary, and not in a draw loop: three surfaces
+// rasterise remote-authored text (the feed rows, the overhead bubble through
+// CalcTextSizeA, the scoreboard's nicks), so a draw-time cap would be a site list
+// that misses two of them.
+bool Admissible(uint8_t authorSlot, const char* p, size_t n) {
+    std::wstring decoded;
+    if (!coop::text::FromUtf8Strict(p, n, &decoded)) return false;
+    return coop::text::AdmitRemoteText(authorSlot, decoded);
 }
 
 bool IsHost() {
@@ -259,12 +273,12 @@ void OnReliable(const coop::net::ChatMessagePayload& payload, uint8_t senderPeer
     if (n > sizeof(payload.text)) n = sizeof(payload.text);
     // Decode BEFORE anything renders it or enters it into the lobby's permanent
     // record. A field that is not well-formed UTF-8 is refused whole -- see
-    // WellFormed() above for why repairing is not an option. This gate matters MORE
+    // Admissible() above for why repairing is not an option. This gate matters MORE
     // under host authoring than it did under the relay: an ill-formed line committed
     // here would be re-emitted to every future joiner, for the life of the lobby.
-    if (!WellFormed(payload.text, n)) {
-        UE_LOGW("chat: refused an ill-formed message from slot %u (%u byte(s)) -- "
-                "not well-formed UTF-8", static_cast<unsigned>(senderPeerSlot),
+    if (!Admissible(senderPeerSlot, payload.text, n)) {
+        UE_LOGW("chat: refused a message from slot %u (%u byte(s)) -- ill-formed UTF-8 "
+                "or past the novelty budget", static_cast<unsigned>(senderPeerSlot),
                 static_cast<unsigned>(n));
         return;
     }
@@ -280,8 +294,8 @@ void OnChatSpeaker(const coop::net::ChatSpeakerPayload& payload) {
     }
     uint8_t n = payload.nickLen;
     if (n > sizeof(payload.nick)) n = sizeof(payload.nick);
-    if (!WellFormed(payload.nick, n)) {
-        UE_LOGW("chat: refused an ill-formed speaker nick (%u byte(s))",
+    if (!Admissible(payload.slot, payload.nick, n)) {
+        UE_LOGW("chat: refused a speaker nick (%u byte(s)) -- ill-formed or past budget",
                 static_cast<unsigned>(n));
         return;
     }
@@ -305,8 +319,8 @@ void OnChatLine(const coop::net::ChatLinePayload& payload) {
     uint8_t n = payload.len;
     if (n == 0) return;
     if (n > sizeof(payload.text)) n = sizeof(payload.text);
-    if (!WellFormed(payload.text, n)) {
-        UE_LOGW("chat: refused an ill-formed authored line %u (%u byte(s))",
+    if (!Admissible(g_speakers[payload.speakerId].slot, payload.text, n)) {
+        UE_LOGW("chat: refused authored line %u (%u byte(s)) -- ill-formed or past budget",
                 payload.lineSeq, static_cast<unsigned>(n));
         return;
     }

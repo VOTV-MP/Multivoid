@@ -461,7 +461,71 @@ one arc away, not in this one.
 
 ## 7. THE FLIP — design of record (implementation `/qf`, 9 rounds, 2026-07-30)
 
-**Status: DESIGN, CONVERGED at round 22. Nothing here is built yet.** Supersedes §4's C2b bullet.
+> ### COMMIT 1 IS BUILT (2026-07-30). Smoke-measured on both RHIs; NOT hands-on.
+>
+> The design below is the plan; this box is what shipped and how it differs. **Commit 2
+> (NFC on the fold key) is still DESIGN** — the combining marks stay excluded.
+>
+> **Measured, all reproducing the design's figures exactly:** exclude set **67 ranges /
+> 134 values**, fold set **7,258** (+4,741 over 2,517), first emitted exclude value
+> **U+0001**, zero-advance residue exactly `{U+055B, U+055C, U+055E}`.
+>
+> **Both detectors were shown RED, then GREEN** — that is the part that counts:
+>
+> | instrument | RED under | GREEN |
+> |---|---|---|
+> | superset invariant | `VOTVCOOP_ATLAS_NO_EXCLUDE=1` → real rasterised U+0009 reported | 0 lines, 4 peers |
+> | pack-failure detector | `VOTVCOOP_ATLAS_TEXMAX=64` + i18n load → host 7 cp (first U+002F), client 79 cp | 0 lines, 4 peers |
+> | generator's 4 hard-fails | `tools/text/build_repertoire_drill.py` → 4/4 RED, baseline GREEN | — |
+> | `atlas_regime_gate.ps1` | `-Drill` → 5/5 RED, baseline GREEN | in CI |
+>
+> **Runs:** DX11 smoke PASS ×2, DX12 smoke PASS, 4-peer `smoke_i18n` PASS, 4-peer
+> `smoke4` PASS with nicks `Ёж—цена₽ / Shalom-שלום / ไทย-Thai / Grusse…Ω` — the em dash,
+> ruble, ellipsis, Thai and Greek that §7.0 says stop being boxes now round-trip the
+> wire, the roster and the feed with **zero** atlas-watch lines on any peer.
+> **Both RHIs produced byte-identical geometry** (`512x128 RGBA32`, texid 1 then 2, 348
+> then 156 colour texels) — the one-regime property the flip exists for.
+>
+> **THREE THINGS THE DESIGN GOT WRONG, all caught by building it:**
+>
+> 1. **ImGui SYNTHESISES the TAB glyph and no exclude list can stop it.**
+>    `ImFontAtlasBuildSetupFontBakedBlanks` copies the space glyph's advance and calls
+>    `ImFontAtlasBakedAddFontGlyph` with `src == NULL`, bypassing
+>    `AcceptCodepointForSource` entirely. The superset invariant's very first run
+>    reported U+0009 on a tree where TAB is excluded by category. The fix is structural,
+>    not an exemption: a synthesised glyph has `PackId == Invalid` because nothing was
+>    packed, and this invariant is about PIXELS — so it asks about RASTERISED glyphs.
+>    (U+0009 *is* in the FSEX300 and Roboto cmaps, which is why the no-exclude drill then
+>    produced it as a genuine offender — the two cases are distinguishable and both were
+>    observed.)
+> 2. **The gate read its own explanatory comment as code, and the design doc's prose
+>    satisfied its own escape hatch.** `atlas_regime_gate.ps1`'s first run reported
+>    `clears=1` on a tree with none (the comment explaining the deletion quotes the
+>    deleted line) *and* passed anyway, because an unanchored match on
+>    `MEASURED-UPLOAD-VERDICT:` is satisfied by §7.7 mentioning the token in a sentence.
+>    Comments are stripped before classification; the escape is anchored and dated.
+> 3. **§7.2 item 11 under-estimated the DX12 diff by 3x** — "~20 lines" was 57, taking
+>    `overlay_backend_dx12.cpp` from 735 to **792 of 800**. Under cap, so not a
+>    violation, but 8 lines of headroom. **Extraction proposal:** `ServiceTexturesTimed`
+>    is self-contained and conceptually distinct from drawing (measuring uploads vs
+>    issuing draws) — it belongs in `ui/overlay_backend_dx12_upload.cpp` before anything
+>    else lands in that TU.
+>
+> **Two things built that the design did not specify**, both because a drill needed them:
+> the dev rows `atlas_texmax_drill` and `atlas_no_exclude_drill`. A drill that requires a
+> source edit and a rebuild is one nobody re-runs after the next refactor; these make
+> both detectors provable from a launch, forever. Diagnostics, so RULE 2 exempts them.
+>
+> **The novelty cap's `TexMax` drill also measured the design's own capacity claim from
+> the other side:** at 64×64 the packer failed after ~3,400 px, and the counters
+> (`packed`/`discarded`) appeared in the transition log exactly as §7.4 requires.
+>
+> Residuals, unchanged: **not hands-on**; commit 2 (NFC) not built; the DX12 upload
+> probe's first real numbers are 1.29 / 1.92 / 3.96 ms per upload with dirty boxes
+> 346×33 → 95×10 → 12×13 — note the 3.96 ms was the SMALLEST box, so the cost is the
+> fence wait and not the copy, which is the §7.6 input that was missing.
+
+**Status of the text below: DESIGN, CONVERGED at round 22.** Supersedes §4's C2b bullet.
 
 The implementation `/qf` ran **22 rounds / 79 questions**, and **fifty-six of the primary's claims were
 measured false**. **Round 22 returned the pass's first and only "that holds"**, after checking the four

@@ -45,6 +45,7 @@
 #include "ui/hud.h"
 #include "ui/net_stats_panel.h"
 #include "ui/chat_input.h"
+#include "ui/atlas_watch.h"
 #include "ui/fonts.h"
 #include "ui/scale.h"
 #include "ui/voice_panel.h"
@@ -289,23 +290,41 @@ bool BringUp(IDXGISwapChain* sc) {
         ImGui::StyleColorsDark();
         st.ScaleAllSizes(ui::scale::Ui());
     }
-    // Overlay fonts (embedded family w/ Cyrillic, freetype-rasterized at the
-    // scaled px; ui::fonts). Must precede the first NewFrame -- the DX11
-    // backend bakes the atlas lazily on frame 1.
-    ui::fonts::Load();
-
     if (!ImGui_ImplWin32_Init(desc.OutputWindow)) {
         UE_LOGE("imgui_overlay: ImGui_ImplWin32_Init failed");
-        if (ctxCreated) { ImGui::DestroyContext(); ui::fonts::OnContextDestroyed(); }
+        if (ctxCreated) { ImGui::DestroyContext(); ui::fonts::OnContextDestroyed();
+                          ui::atlas_watch::OnContextDestroyed(); }
         overlay_backend::AbandonCapture();
         return false;
     }
     if (!overlay_backend::InitRenderer(sc)) {
         ImGui_ImplWin32_Shutdown();
-        if (ctxCreated) { ImGui::DestroyContext(); ui::fonts::OnContextDestroyed(); }
+        if (ctxCreated) { ImGui::DestroyContext(); ui::fonts::OnContextDestroyed();
+                          ui::atlas_watch::OnContextDestroyed(); }
         overlay_backend::AbandonCapture();
         return false;
     }
+
+    // FONTS AFTER THE RENDERER, and the order is an INVARIANT rather than a
+    // necessity (2026-07-30, the ImGui 1.92 flip).
+    //
+    // ImGuiBackendFlags_RendererHasTextures is set INSIDE InitRenderer, and
+    // ImFontAtlasBuildMain samples it off the context at the instant it runs --
+    // so a Load() that reached a build while the flag was still clear would lock
+    // in an EAGER atlas under a dynamic regime, which upstream names as a bug in
+    // its own source. Load() no longer builds anything (both ImFontAtlas::Build()
+    // calls retired in the same commit; the first build is now
+    // ImFontAtlasUpdateNewFrame inside the first NewFrame), so today the hazard
+    // is unreachable by a second route as well.
+    //
+    // It is ordered this way anyway, deliberately: "nothing in Load touches the
+    // atlas" is a property of Load's current body, and the next glyph-touching
+    // line added there would silently re-open the bug. This order makes it
+    // impossible instead of merely absent. MaybeRescale already exercises
+    // Load-after-InitRenderer on every scale change, and both bring-up early
+    // returns above are safe with or without Load having run
+    // (fonts::OnContextDestroyed only nulls the role pointers).
+    ui::fonts::Load();
 
     g_hwnd = desc.OutputWindow;
     g_origWndProc = reinterpret_cast<WNDPROC>(
@@ -348,6 +367,16 @@ void RenderFrameGuarded(IDXGISwapChain* sc) {
         // the host scoreboard). The passive client scoreboard shows no cursor.
         ImGui::GetIO().MouseDrawCursor = CaptureActive();
         ImGui::NewFrame();
+
+        // The atlas is LAZY now, so nothing about it is settled at boot: it grows,
+        // repacks and discards bakes while the game runs. This is the one call
+        // site that watches it -- the superset invariant, the pack-failure
+        // detector and the per-build selftest, each on its own trigger. It must
+        // be INSIDE the frame (the selftest bakes one emoji on purpose, and an
+        // out-of-frame atlas query is what poisoned TexIsBuilt in b132), and it
+        // runs at the START so it measures what the previous frame's drawing and
+        // this frame's UpdateNewFrame actually did.
+        ui::atlas_watch::OnFrame();
 
         // Always-on PASSIVE coop HUD (screen-projected nameplates + the chat/event
         // feed). Drawn FIRST so the interactive surfaces below sit ON TOP of it. It

@@ -69,6 +69,21 @@ CFG_ENUM(net_ice, "net.ice", "net", "", "all|relay|disable|default", "VOTVCOOP_N
     "ICE candidate policy for p2p sessions. Unset/all = every path; relay = force the TURN "
     "relay; disable/default = engine defaults.")
 
+// The receive-boundary novelty cap (coop/text/novelty_ledger.h). Since the ImGui
+// 1.92 flip every codepoint in the repertoire is rasterisable on demand from chat
+// text, which is the one attacker-controlled string in the process -- so a few
+// hundred bytes of diverse UTF-8 can force thousands of FreeType rasterisations
+// on every receiving peer, inside one frame. These bound the BURST, not the total
+// (the ledger is monotone by design); pack exhaustion is answered by capacity, in
+// ui/fonts.cpp's TexMax reasoning. Filed under [net] because what they police is
+// an INBOUND PEER FIELD -- the refusal happens beside the strict UTF-8 decode,
+// not at any draw call.
+CFG_INT(net_novelty_budget, "net.novelty_budget", "net", 512, 0, 100000, nullptr,
+    "Never-before-seen codepoints one peer may introduce per window (0 = no cap). "
+    "A text field that would exceed it is refused whole.")
+CFG_INT(net_novelty_window_ms, "net.novelty_window_ms", "net", 10000, 100, 3600000, nullptr,
+    "Length of the novelty budget window, in milliseconds.")
+
 // ---- [player] ---------------------------------------------------------------
 CFG_IDENTITY(player_guid, "player_guid", "player",
     "Durable per-install player identity (32 hex chars), minted automatically on first "
@@ -277,3 +292,19 @@ CFG_FLAG(force_kerfur_unmap, "force_kerfur_unmap", "dev", false, nullptr,
     "Test driver: force kerfur identity unmap paths.")
 CFG_FLAG(force_save_churn, "force_save_churn", "dev", false, nullptr,
     "Test driver: force save churn (identity stress).")
+
+// THE TWO ATLAS DRILL KNOBS. ui/atlas_watch.cpp ships two silent-degradation
+// detectors, and a detector nobody has watched go RED is decoration
+// ([[lesson-an-instrument-never-shown-failing-passes-by-construction]]). Each of
+// these forces the exact condition one detector exists to catch, so the drill is
+// a launch away instead of a source edit plus a rebuild -- which is the
+// difference between a drill that gets re-run after the next refactor and one
+// that does not. Both default to OFF and neither is reachable from any UI.
+CFG_INT(atlas_texmax_drill, "atlas_texmax_drill", "dev", 0, 0, 8192,
+    "VOTVCOOP_ATLAS_TEXMAX",
+    "Override the font atlas size ceiling (0 = the shipped 2048). Set 256 to starve "
+    "the packer and prove the pack-failure detector fires.")
+CFG_FLAG(atlas_no_exclude_drill, "atlas_no_exclude_drill", "dev", false,
+    "VOTVCOOP_ATLAS_NO_EXCLUDE",
+    "Drop GlyphExcludeRanges from every font source, so the faces bake their whole "
+    "cmaps. Proves the superset invariant fires. Breaks name folding -- drill only.")
