@@ -51,13 +51,20 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   Nobody printed its **contents** until round 15: censused against the shipped faces it is **337
   codepoints — THAI 16, TAMIL 14, THAANA 11, ARABIC 19, HEBREW 8** — and Tamil needs `Mc` vowel signs
   while Thaana is written *entirely* in `Mn`, so the table would have made those scripts **unwritable
-  as names in the very commit whose headline advertises them**. It was also aimed wrong: measured, 844
-  canonical `(base, mark) -> precomposed` pairs exist with all three in our faces, involving only 41
-  marks, while 296 never compose and are correctly distinct — so **NFC on the fold key dissolves the
-  defect and denies nothing**. A property-defined table reads as principled, so review interrogates its
-  derivation and never its membership. **Look FIRST: print the members intersected with the domain you
-  actually ship; ask what the table forbids a legitimate user from doing; when the defect is "two
-  spellings look identical", reach for NORMALIZATION before prohibition; and treat a review that keeps
+  as names in the very commit whose headline advertises them**. A property-defined table reads as
+  principled, so review interrogates its derivation and never its membership.
+  **VINDICATED AND PARTLY CORRECTED 2026-07-30 (`244b1320`).** The core holds and then some: the marks
+  were ADMITTED, and five scripts stopped rendering as base letters with boxes where their marks belong.
+  But this row's own remedy clause was wrong, and its numbers were wrong. Measured: **844 is the RAW
+  two-part decomposition count** (30 are `Composition_Exclusion`, so 814 compose); "41 marks that ever
+  compose / 296 that never" are really **35 / 302**; and **NFC was DROPPED, not built** — its premise
+  (`"A"+U+0301` is pixel-indistinguishable from `Á`) is false in our renderer, 1 of ~3,560 face-pair
+  combinations, because ImGui does no shaping and there is no GPOS anchor. So "reach for NORMALIZATION
+  before prohibition" is the wrong generalisation from a right instinct: the correct move was neither
+  denying nor normalising, but **measuring whether the defect exists here at all** — it did not. See
+  `memory/lesson_a_standards_equivalence_is_not_your_renderers.md`.
+  **Look FIRST: print the members intersected with the domain you
+  actually ship; ask what the table forbids a legitimate user from doing; and treat a review that keeps
   refining HOW to build a thing as a signal nobody asked WHETHER it should exist.**
   `memory/lesson_a_protective_table_can_outlaw_what_it_protects.md`
 - **A library can SYNTHESISE the very thing your filter governs, on a path the filter does not sit

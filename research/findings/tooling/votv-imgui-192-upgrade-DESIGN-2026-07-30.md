@@ -11,12 +11,16 @@ Submodule pinned **`v1.92.9`** (`01380c579`) since `b33aae30`. Shipped from this
 | i18n smoke self-verifies each send | `c142d077` | fixed a coin-flip verdict |
 | **C2a** DX12 `InitInfo` + unified pool | `780a93af` | DX12 smoke before/after |
 | both stale imgui citations re-pointed | `683f8214` | comment-only; build clean |
-| **the FLIP** (was C2b) | — | **NOT BUILT — design of record is §7** (10 `/qf` rounds, still no "that holds") |
-| **C3** | — | **NOT BUILT.** §4; cannot precede the flip (§7.1) |
+| **the FLIP, commit 1** (was C2b) | `0d84cc5a` | **BUILT.** Lazy atlas on both RHIs; +4,741 codepoints stop being boxes for zero new DLL bytes |
+| the flip's owed §7.4 negative controls | `5e729b5c` | **BUILT.** 3 probes + a per-source exclude-field census; selftest 8 -> 12 rows |
+| **the FLIP, commit 2** | `244b1320` | **BUILT — but NOT as designed: NFC DROPPED, premise measured false.** 335 combining marks admitted instead; see the §7 AS-BUILT box |
+| **C3** (a CJK font source) | — | **NOT BUILT.** §4; cannot precede the flip (§7.1). The only thing that makes hanzi draw |
+| the homoglyph fold | — | **NOT BUILT, no design pass yet.** 476 pixel-identical pairs, PRE-EXISTING in b133 — `votv-homoglyph-fold-FACTS-2026-07-30.md` |
 
-**The capability flag is deliberately CLEARED ON BOTH RHIs**
-(`overlay_backend_dx11.cpp:98`, `overlay_backend_dx12.cpp:273`), so this build has ONE drawable
-repertoire and **delivers no new glyphs yet**. That is the point of the sequencing, not an oversight.
+**The capability flag is now SET on both RHIs** — both `BackendFlags &= ~ImGuiBackendFlags_RendererHasTextures`
+clears were deleted in `0d84cc5a`, so the atlas is on-demand and the build has ONE drawable repertoire
+across DX11 and DX12 (measured: byte-identical geometry on both). The line that used to stand here —
+"delivers no new glyphs yet" — described the pre-flip sequencing and is retired.
 
 Logs: `build/imgui1929_pricing{,2}.log` (the reverted spike), `build/imgui192_armL.log` (§3.2),
 `build/baseline_i18n_1915.log` (the 1.91.5 control), `build/c1_i18n_1929{,_run2}.log`,
