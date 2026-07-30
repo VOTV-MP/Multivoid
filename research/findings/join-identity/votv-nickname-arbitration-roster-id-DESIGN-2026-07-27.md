@@ -1196,7 +1196,9 @@ MIT + CC-BY 4.0, COLR v0 + CPAL). **DLL 16.5 → ~17.4 MB, +5.5%.** No CJK, no H
    the `LoadColor=0` build, which bakes the emoji **invisible** rather than missing. `ERROR` log + a
    visible F1 line; **not** a join gate.
 9. **`IMGUI_USE_WCHAR32`** as a **PUBLIC compile definition on the `imgui` target** — `third_party/imgui`
-   is a git submodule pinned at v1.91.5, so `imconfig.h` cannot be edited; `IMGUI_ENABLE_FREETYPE`
+   is a git submodule (pinned v1.91.5 when this was written; **v1.92.9 since 2026-07-30, `b33aae30`** —
+   the mechanism is unchanged and a third define, `IMGUI_DISABLE_DEFAULT_FONT_VECTOR`, now rides the
+   same line), so `imconfig.h` cannot be edited; `IMGUI_ENABLE_FREETYPE`
    (`CMakeLists.txt:106`) is the precedent, and ODR is safe because `votv-coop` is its only consumer.
    Required, not optional: **1,232 of Twemoji's 1,418 codepoints are astral**, so a BMP-only build has
    no U+1F600. **`LoadColor` on the atlas** — without it the donor bakes invisible glyphs.
@@ -1264,6 +1266,9 @@ All run on this machine 2026-07-28 with `tools/probes/atlas_probe` (extended thi
   > (c) The `FindGlyph`-hook anchor **still stands** (non-virtual, submodule pinned at 1.91.5, RULE 3
   > forbids forking) — and is now moot, because at ≤80 codepoints a bounded whole-atlas rebuild is
   > cheaper than the page machinery it would have needed (measured 5.7–16.2 ms).
+  > **DOUBLY moot as of 2026-07-30 (`b33aae30`): the submodule is v1.92.9, `FindGlyphNoFallback` moved
+  > onto `ImFontBaked`, and it now BAKES on a miss rather than reading — so a hook on it would be a hook
+  > on a mutator. 1.92 supplies the page machinery natively; nothing needs to be hooked.**
   > Also: the `16-64 MB` this bullet is built on measured ImGui's **"ChineseSimplifiedCommon"**
   > subset, not CJK. The whole-block cost is **64–256 MB**.
   > Full measurement + the MTA read: `votv-bake-everything-atlas-cost-2026-07-29.md` §3, §6.

@@ -741,9 +741,15 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   fold). The on-demand path doesn't consult it at all — `ImFontBaked_BuildLoadGlyph` (`:4562-4571`) gates
   only on `Locked`/`NoLoadGlyphs` and uses `GlyphExcludeRanges`, a **different field**. So a naming
   invariant is not violated but **DISSOLVED**, and a prior 9-row classified diff had filed this as
-  *"ranges unnecessary — 1 site — and this is the win, not a cost"*. Corollary measured the same day:
-  because on-demand baking is NOT gated on the flag, a "mechanical port" keeping the old init is **not
-  behaviour-identical** either. *Look FIRST:* grep the new version for **who READS each field you set**,
+  *"ranges unnecessary — 1 site — and this is the win, not a cost"*. **CORRECTED 2026-07-30 by
+  measurement:** the same-day corollary here claimed that because on-demand baking is not gated on the
+  flag, a mechanical port keeping the old init is *"not behaviour-identical"*. **It is.**
+  `UpdateFontsNewFrame` (`imgui.cpp:9089-9094`) turns the missing flag INTO `atlas->Locked`, which IS
+  `BuildLoadGlyph`'s first test — so inside a legacy frame nothing bakes and drawing matches 1.91.5
+  exactly (probe arm L: 7 out-of-repertoire codepoints unbaked, 0 texels diverged, `TexIsBuilt` held).
+  The regime is a TIME WINDOW, and only code outside a frame escapes it —
+  `[[lesson-a-capability-flag-may-be-a-per-frame-lock]]`. *Look FIRST:* grep the new version for **who
+  READS each field you set**,
   not whether the field still exists; if the only reader sits behind a capability guard you now have two
   behaviours in one build. `memory/lesson_an_upgrade_can_demote_your_input_to_a_hint.md`
 
@@ -755,7 +761,7 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   fact `build_repertoire.py` already knows at generate time — and the instrument now **mutates its own
   subject** (four glyphs baked) before later assertions read atlas bytes. It does not become
   pass-by-construction (a codepoint no face carries still returns NULL, so `U+4E00` stays a valid RED) but
-  its verdict must be **relabelled or it lies about what it proves**. *Look FIRST:* before founding an
+  its verdict must be **relabelled or it lies about what it proves**. **RESOLVED 2026-07-30 (`b33aae30`), and the damage was bigger than a label:** the bake also flips `TexIsBuilt` to false, and a legacy backend uploads once, so from that one query EVERY later frame raises the `imgui_draw.cpp:2815` user error permanently. The fix was NOT a relabel — the assertions were split by what they actually ask: *"can this build DRAW X"* -> `ImFont::IsGlyphInFont` (`imgui_draw.cpp:5391`, a pure cmap walk, which is what finally made a RED case possible: `U+4E00` must be ABSENT), and *"did a COLOURED emoji reach the texture"* -> a baked lookup behind a helper that REFUSES any codepoint outside the repertoire. *Look FIRST:* before founding an
   assertion on an accessor into any lazily-populated store, open the accessor body and check for a
   build/insert on the miss path. Sibling: `[[lesson-a-fallback-glyph-must-be-asked-for]]` — presence in the
   FONT is not presence in the ATLAS, and now asking about the atlas changes it.
@@ -775,6 +781,50 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   **build again with the obsolete layer OFF** — only the second build shows the true migration surface.
   Every surviving shim call is RULE-2 baggage with its own line in the plan.
   `memory/lesson_a_clean_upgrade_build_may_be_riding_obsolete_shims.md`
+
+- **A capability flag can be implemented as a per-frame LOCK, so "the regime" has a TIME WINDOW.**
+  MEASURED 2026-07-30 (ImGui 1.92.9): `ImFontBaked_BuildLoadGlyph` (`imgui_draw.cpp:4562-4571`) gates on
+  `atlas->Locked`, never on `ImGuiBackendFlags_RendererHasTextures` — which reads as "the dynamic atlas is
+  ungated". But `UpdateFontsNewFrame` (`imgui.cpp:9089-9094`) does
+  `if (flag == 0) atlas->Locked = true`, and `UpdateFontsEndFrame` (`:6173-6175`) clears it. So the flag
+  IS the gate, one indirection away, **for the duration of a frame only.** Inside a legacy frame nothing
+  bakes (7 out-of-repertoire codepoints unbaked, 0 texels diverged, `TexIsBuilt` held); **outside** one,
+  a single `FindGlyphNoFallback` bakes AND flips `TexIsBuilt` to 0, after which every later frame raises
+  the `imgui_draw.cpp:2815` user error forever, because a legacy backend uploads once. The victim is real:
+  `ui/fonts.cpp`'s boot selftest runs from `Load()`, before `ImGui_ImplWin32_Init`, always outside a frame.
+  A probe that inspected AFTER `Render()` "confirmed" the wrong answer — it measured its own instrument.
+  *Look FIRST:* ask **when** a regime holds, not just whether; grep for who WRITES the derived state, not
+  only who reads the flag; and take a probe's observation **inside the same window** as the behaviour it
+  claims to describe. `memory/lesson_a_capability_flag_may_be_a_per_frame_lock.md`
+
+- **A legacy wrapper is not a translation shim — read what it does AFTER the forward call.** MEASURED
+  2026-07-30: `ImGui_ImplDX12_Init(device, frames, fmt, heap, cpu, gpu)` looks like an adapter onto the
+  `InitInfo` overload, but its body (`imgui_impl_dx12.cpp:961-987`) also **creates its own command queue**
+  (`:973`, `commandQueueOwned = true`) and **strips `RendererHasTextures`** (`:987`). So migrating to
+  `InitInfo` silently ENABLED the dynamic atlas for DX12 only — one build, two drawable repertoires chosen
+  by the player's RHI, where two peers would agree who collided and disagree what the names LOOK like. It
+  was caught by a **runtime artifact**, not by reading: the second `Load()` logged
+  `atlas baked in 0.0 ms (512x128)` against DX11's `1024x2048 in 72.7 ms` — a capability turning on makes
+  a SMALLER, FASTER artifact, which reads like an improvement. The font selftest could not catch it (its
+  lookups are guarded to in-repertoire codepoints, and a lazy atlas just bakes those). *Look FIRST:* open
+  the legacy overload's body and read past the forward call; treat every parameter it SYNTHESISED as a
+  decision you now own, not a blank to fill with the nearest handle.
+  `memory/lesson_a_legacy_wrapper_does_more_than_translate.md`
+
+- **A generated build constant must not be derived from data the TOOLCHAIN supplies.** MEASURED
+  2026-07-30: widening the nickname fold table needs "subtract codepoints that render no ink", and the
+  principled source is Unicode general category. But `Cn` (unassigned) covers **412 codepoints in our own
+  fonts' cmaps** according to the generator machine's Python (3.11 ships Unicode **14.0.0**; `U+1CC21` and
+  the `U+1CD00` block were assigned in Unicode 16). Subtracting them would fold visibly-distinct names to
+  the sentinel AND make the fold table **a function of the generator's Python version** — two builds cut
+  from one commit on two machines disagreeing about which player names collide, which is exactly the
+  machine-dependence arc D2 exists to prevent, arriving through the toolchain instead of the font. `Cn` is
+  NOT subtracted; the narrow set (`Cc/Cf/Cs/Zl/Zp/Zs` minus `U+0020`) is 105 codepoints and contains all
+  33 of the shipped no-ink defect without naming one. Found only because the number was **computed instead
+  of estimated** (+5,078, not the design's unrecorded +4,772 guess). *Look FIRST:* for every input to a
+  generated constant ask "is this a property of the artifact, or of the tool reading it?", and assert the
+  result's count/max so a data-table bump fails the build.
+  `memory/lesson_a_generated_constant_must_not_depend_on_the_toolchains_data_version.md`
 
 - **A drill whose inputs stay UNDER the threshold proves the half that was never broken.** MEASURED
   2026-07-28: arc D1 shipped "Cyrillic nicknames work", photographed with `Пельмень` — 8 characters,
@@ -845,7 +895,7 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   **red is unaudited**, and here the failure text plausibly named a defect class the project HAD shipped
   the day before. Reproduce the assertion against the raw artifact with an explicit encoding before
   believing it; and in a file where most call sites pass an option, grep for the ones that don't.
-  `memory/lesson_an_instrument_can_fail_the_feature_it_tests.md`
+  **SECOND INSTANCE 2026-07-30, different root (fixed `c142d077`):** the same scenario failed the same six rows on BYTE-IDENTICAL DLLs — run 1 `FAIL (6)`, run 2 `PASS`, differing only in how long the last client took to join (35 s vs 21 s). The messages were never SENT: `T` is swallowed while any interactive surface owns input, and the gate was a `"Joined "` log line plus a flat 4 s sleep. It cost a detour hunting a font regression from the ImGui port that had landed minutes earlier. *Fix, and the generalisable part:* an instrument that INJECTS a stimulus must confirm the stimulus ARRIVED before judging the response — the sender renders its own chat line, so its own log is a receipt; wait for it and retype. A readiness gate plus a fixed sleep is a guess with a timestamp, and it fails in the direction that looks like a product bug. `memory/lesson_an_instrument_can_fail_the_feature_it_tests.md`
 - **A drill on ONE TERM OF AN `||` is blind unless every other term is false — and a config DEFAULT
   decides that.** Measured 2026-07-29: a design narrowed `chat_feed::HasAny()` to fix an overlay-frame
   leak and specified four drills; all four would have PASSED on a broken build, because `hud.cpp:415-419`

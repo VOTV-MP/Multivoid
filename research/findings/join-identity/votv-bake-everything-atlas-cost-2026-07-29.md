@@ -266,6 +266,15 @@ At ImGui 1.91.5 there is no partial atlas update: any new glyph means a full `Bu
 thread inside `Present`. That is the freeze this whole investigation exists to avoid, now potentially
 per keystroke.
 
+> **THE PRECONDITION IS NOW SHIPPED (2026-07-30, `b33aae30` + `780a93af`).** The submodule is
+> **v1.92.9**, whose `ImFont`/`ImFontBaked` split IS the partial update this paragraph says does not
+> exist. The capability flag is still deliberately **OFF on both RHIs**, so the behaviour described
+> above is still what a player gets today — but the reason is now a one-line gate, not the library.
+> Flipping it is `votv-imgui-192-upgrade-DESIGN-2026-07-30.md` §4 C2b, and the same document records
+> the objection that survives the upgrade: `ImGui_ImplDX12_UpdateTexture` ends in an **unbounded**
+> `WaitForSingleObject(..., INFINITE)`, so "a rebuild per incoming message" becomes "an unbounded GPU
+> wait a peer's message can trigger" until our own bounded servicing replaces it.
+
 ### 7a. SUPERSEDED 2026-07-29 — the `/qf` ran, and it killed this design in two rounds
 
 **The five questions below were never reached.** The pass converged by MEASUREMENT instead:

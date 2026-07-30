@@ -58,7 +58,9 @@ add_library(minhook STATIC
 )
 target_include_directories(minhook PUBLIC ${MINHOOK_DIR}/include)
 
-# Dear ImGui (MIT, vendored as git submodule, pinned v1.91.5) -- OUR OWN copy for
+# Dear ImGui (MIT, vendored as git submodule, pinned v1.92.9 since 2026-07-30 --
+# 1.92's ImFont/ImFontBaked split IS the dynamic atlas; see
+# research/findings/tooling/votv-imgui-192-upgrade-DESIGN-2026-07-30.md) -- OUR OWN copy for
 # the in-game dev menu + (future) main-menu MP server browser. NEVER UE4SS's ImGui
 # (RULE 3, no UE4SS at runtime). Compiled into our own static target so it picks up
 # the same static-CRT as the mod (like minhook). Backends: DX11 + DX12 (we

@@ -66,7 +66,12 @@ the dev which directx he's using".
   fast-machine race is possible in principle).
 - `imgui_impl_dx12.cpp` is already vendored + compiled (CMakeLists:93). ImGui 1.91.5,
   legacy Init API (device, num_frames_in_flight, rtv_format, srv_heap, font cpu/gpu
-  handles). ImTextureID = D3D12_GPU_DESCRIPTOR_HANDLE (u64; fits the existing void*
+  handles). **SUPERSEDED 2026-07-30 (`780a93af`): the submodule is v1.92.9 and this TU
+  now inits through `ImGui_ImplDX12_InitInfo` with our own `SrvDescriptorAllocFn`/
+  `FreeFn` over a UNIFIED slot pool — the "slot 0 = the font" reservation described
+  below is retired, because 1.92 keeps up to two atlas textures alive across a repack.
+  See `votv-imgui-192-upgrade-DESIGN-2026-07-30.md` §4 C2a.**
+  ImTextureID = D3D12_GPU_DESCRIPTOR_HANDLE (u64; fits the existing void*
   cast in skins_panel). The vendored backend stores the provided SRV heap (:725) and
   creates ONLY the font SRV into the given cpu handle (:443) — slots beyond the font
   are wholly caller-managed (measured).

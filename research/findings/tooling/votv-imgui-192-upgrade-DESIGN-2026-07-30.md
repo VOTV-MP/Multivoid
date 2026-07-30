@@ -1,10 +1,24 @@
 # ImGui 1.91.5 -> 1.92.9: the measured migration, and the plan the `/qf` left standing
 
-**Status: MEASURED (compile + link, by a reverted spike) + §3.2 RUN. The UPGRADE ITSELF IS STILL
-UNBUILT** — submodule remains pinned `v1.91.5` (`f401021d5`). Shipped from this plan so far: **P0
-only** (`af234c08`), plus the arm-L instrument (`fcae169e`).
-Logs: `build/imgui1929_pricing.log` (pre-port errors), `build/imgui1929_pricing2.log` (clean link),
-`build/imgui192_armL.log` (the §3.2 run). Snapshot: `build/imgui1929/` (a 1.92.9 checkout).
+**Status: THE UPGRADE IS BUILT AND SMOKE-MEASURED ON BOTH RHIs. NOT hands-on.**
+Submodule pinned **`v1.92.9`** (`01380c579`) since `b33aae30`. Shipped from this plan:
+
+| step | commit | state |
+|---|---|---|
+| arm-L instrument (§3.2) | `fcae169e` | run; log `build/imgui192_armL.log` |
+| **P0** `g_pending` unbounded | `af234c08` | links clean; DX12-only path, unexercised by a DX11 smoke |
+| **C1** pin + port + selftest rebuild | `b33aae30` | baseline-vs-C1 i18n smoke, DX11 **and** DX12 |
+| i18n smoke self-verifies each send | `c142d077` | fixed a coin-flip verdict |
+| **C2a** DX12 `InitInfo` + unified pool | `780a93af` | DX12 smoke before/after |
+| **C2b**, **C3** | — | **NOT BUILT.** §4 |
+
+**The capability flag is deliberately CLEARED ON BOTH RHIs**
+(`overlay_backend_dx11.cpp:98`, `overlay_backend_dx12.cpp:273`), so this build has ONE drawable
+repertoire and **delivers no new glyphs yet**. That is the point of the sequencing, not an oversight.
+
+Logs: `build/imgui1929_pricing{,2}.log` (the reverted spike), `build/imgui192_armL.log` (§3.2),
+`build/baseline_i18n_1915.log` (the 1.91.5 control), `build/c1_i18n_1929{,_run2}.log`,
+`build/c2a_dx12_smoke{,2}.log`. Snapshot: `build/imgui1929/`.
 
 **Why this document exists.** The glyph thread (see §1) converged on a single root: CJK is
 unaffordable in ImGui 1.91.5 *whatever the glyph source and whatever the bake trigger*, because
@@ -278,7 +292,7 @@ number**, and it is its own commit with its own attribution, independent of the 
 
 ---
 
-## 4. The plan (DESIGN; nothing built)
+## 4. The plan (P0 + C1 + C2a AS-BUILT; C2b + C3 still DESIGN)
 
 Six `/qf` rounds, every one of which corrected something. Ordering is load-bearing.
 

@@ -121,7 +121,8 @@ Measured index-table cost across the resident set (from `atlas_probe`, default f
 | + CN + emoji | U+1FAF6 | 1.12 MB (astral dropped) | **2.97 MB** |
 
 **Mechanism (structural, and the design did not have it):** `third_party/imgui` is a **git
-submodule** pinned at v1.91.5 (`.gitmodules`). `imconfig.h` therefore **cannot** be edited —
+submodule** — pinned at v1.91.5 when this was measured, **v1.92.9 since 2026-07-30 (`b33aae30`)**;
+the mechanism below is version-independent and unchanged. `imconfig.h` therefore **cannot** be edited —
 the edit would be a dirty submodule no fresh clone reproduces. The define must ride a compile
 definition on the `imgui` target, exactly as `IMGUI_ENABLE_FREETYPE` already does
 (`src/votv-coop/CMakeLists.txt:100`). ODR is safe because `votv-coop` is the **only** target
