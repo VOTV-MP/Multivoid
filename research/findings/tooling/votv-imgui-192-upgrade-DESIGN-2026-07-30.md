@@ -468,7 +468,8 @@ measured false**. **Round 22 returned the pass's first and only "that holds"**, 
 sharpest ship-broken candidates against the 1.92.9 source and finding each dissolved: the 134-value
 exclude list is `ImMemdup`'d at `size + 1`, so exceeding the advisory 64 is a longer linear scan and
 not an overflow; `ImFont::IsGlyphInFont` (`imgui_draw.cpp:5391`) and FreeType's
-`FontSrcContainsGlyph` (`imgui_freetype.cpp:573`) are both live, so neither the presence check nor
+`FontSrcContainsGlyph` (`misc/freetype/imgui_freetype.cpp:573` — note the subdirectory; the bare
+filename does not resolve from the imgui root) are both live, so neither the presence check nor
 the detector predicate is permanently false; the upload probe lives in `overlay_backend_dx12.cpp`, so
 nulling `draw_data->Textures` cannot starve DX11's own catch-up at `imgui_impl_dx11.cpp:181`; and the
 render frame runs every Present, so the in-frame selftest's positive DONE line is reachable for
@@ -1224,7 +1225,10 @@ predicate becomes a labelled line in `judge.ps1` (the refuse-to-publish predicat
 `tools/mp.py:1539`'s `selftest: FAIL` stays the smoke layer; it needs installs and is not a
 clean-clone gate.
 
-Noted, not folded in: **`nick_gate.ps1` is still not in CI.**
+Noted, not folded in: **`nick_gate.ps1` is still not in CI — re-verified 2026-07-30**, and the
+evidence is positive rather than a memory: `.github/workflows/build-core.yml` runs
+`tools/config/registry_gate.ps1` (`:91`) and `tools/net/peerconn_gate.ps1` (`:101`) and **no
+`nick_gate` line exists in any workflow**.
 
 ---
 

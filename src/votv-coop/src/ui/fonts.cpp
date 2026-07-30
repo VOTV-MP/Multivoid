@@ -174,10 +174,12 @@ const ImWchar* Repertoire() {
 // backstops only fill holes. The donor goes last for the same reason -- a family
 // that draws its own dingbat keeps drawing it.
 //
-// RE-POINTED 2026-07-30. This used to credit imgui_freetype.cpp:515 ("refuses to
-// overwrite a glyph an earlier source already provided"). That was the 1.91.5
-// eager-builder mechanism and it is GONE: :515 in 1.92.9 is FreeType render-mode
-// selection. The policy still holds, by a different site --
+// RE-POINTED 2026-07-30. This used to credit misc/freetype/imgui_freetype.cpp:515
+// ("refuses to overwrite a glyph an earlier source already provided"). That was
+// the 1.91.5 eager-builder mechanism and it is GONE: :515 in 1.92.9 is FreeType
+// render-mode selection. (The bare filename never resolved either -- that file
+// lives under misc/freetype/, not at the imgui root.) The policy still holds, by
+// a different site --
 // ImFontBaked_BuildLoadGlyph (imgui_draw.cpp:4590-4602) walks font->Sources in
 // order and RETURNS on the first source that produces the glyph, and the legacy
 // eager preload routes through the same function. Same outcome, and the 88

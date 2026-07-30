@@ -3,9 +3,11 @@
 **Status: SMOKE-MEASURED on both RHIs, NOT hands-on.** No human has looked at a frame drawn by this
 build. Everything below is what a hands-on pass should confirm or falsify.
 
-- HEAD at write time: `246b50f3` + this docs commit. **Commits since are DOCS ONLY** (`1b95b71d`,
-  `683f8214`, `7230408a`, + this sweep) — **the artifact under test is unchanged**, so everything below
-  still applies verbatim. The FLIP is designed but **not built**; see that design's §7.
+- HEAD at write time: `246b50f3` + this docs commit. **Everything committed since is DOCUMENTATION**
+  (verified 2026-07-30 by `git diff --stat 47df4219..HEAD`: only `docs/LESSONS.md` and the upgrade
+  design doc) — **the artifact under test is unchanged**, so everything below still applies verbatim.
+  The FLIP is **designed and CONVERGED (22-round `/qf`, "that holds") but NOT BUILT**, and it is now
+  **two commits**; read that design's §7, starting at §7.1a.
 - Artifact: `multivoid-0.9.0n-133.dll`, **17,424,896 B** (baseline 1.91.5 was 17,366,016 → **+58,880**).
 - **Protocol unchanged (133).** No wire-format change in this work, so no version gate moves.
 - Submodule `third_party/imgui` = **v1.92.9** (`01380c579`).
@@ -66,8 +68,13 @@ goes through the shared descriptor pool alongside ImGui's atlas.
 - **P0 (`af234c08`)** — the `g_pending` unbounded queue is a **DX12-only** path; a default smoke launches
   DX11, so it has never executed. Exercising it wants many preview textures created and destroyed inside
   one fence window (open/close the skins panel repeatedly on DX12).
-- **The `ImGui_ImplDX12_UpdateTexture` INFINITE wait** is unreachable while the flag is off. It becomes
-  reachable in C2b, which is why C2b replaces it.
+- **The `ImGui_ImplDX12_UpdateTexture` INFINITE wait** — this bullet was **FALSE in both halves, and
+  the `/qf` measured it so (round 5, 2026-07-30).** It is *not* unreachable while the flag is off:
+  `imgui.cpp:5973` assigns `draw_data->Textures` **unconditionally** and both backends service it
+  **ungated by the flag** (`imgui_impl_dx12.cpp:236`, `imgui_impl_dx11.cpp:181`), so upstream's upload
+  path — INFINITE wait included — **already runs in the build under test**, at boot and twice per
+  rescale, and has never been timed. Nor does anything "replace" it: the flip commit adds a ~15-line
+  **timed probe** at that seam, and our own servicing is deferred behind what the probe measures.
 - **The three `dev_menu.cpp` clock `InputInt`s** (`:100/103/106`) changed behaviour with no code edit:
   1.92.9 defaults `ImGuiItemFlags_LiveEditOnInputScalar` OFF, so typing "12" now applies 12 on
   validation instead of writing 1 then 12 on the way. Worth a deliberate look — it is an improvement for a

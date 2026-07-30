@@ -45,6 +45,61 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   never on "the findings are getting narrower" (rounds 17-21 all looked narrow and all landed).**
   `memory/feedback_run_the_qf_loop_to_convergence.md`
 
+- **A protective table defined by a PROPERTY can outlaw the thing it protects.** 2026-07-30: three
+  `/qf` rounds refined a name-DENY table defined as `Mn ∪ Me ∪ Mc` (to stop `"A"+U+0301` folding
+  differently from `Á`), arguing about its derivation, its font-independence and its migration effect.
+  Nobody printed its **contents** until round 15: censused against the shipped faces it is **337
+  codepoints — THAI 16, TAMIL 14, THAANA 11, ARABIC 19, HEBREW 8** — and Tamil needs `Mc` vowel signs
+  while Thaana is written *entirely* in `Mn`, so the table would have made those scripts **unwritable
+  as names in the very commit whose headline advertises them**. It was also aimed wrong: measured, 844
+  canonical `(base, mark) -> precomposed` pairs exist with all three in our faces, involving only 41
+  marks, while 296 never compose and are correctly distinct — so **NFC on the fold key dissolves the
+  defect and denies nothing**. A property-defined table reads as principled, so review interrogates its
+  derivation and never its membership. **Look FIRST: print the members intersected with the domain you
+  actually ship; ask what the table forbids a legitimate user from doing; when the defect is "two
+  spellings look identical", reach for NORMALIZATION before prohibition; and treat a review that keeps
+  refining HOW to build a thing as a signal nobody asked WHETHER it should exist.**
+  `memory/lesson_a_protective_table_can_outlaw_what_it_protects.md`
+- **A sentinel-terminated list cannot contain its sentinel — and zero is a legal codepoint.**
+  2026-07-30: a designed, reviewed and ten-rounds-argued `GlyphExcludeRanges` table would have excluded
+  **nothing**. The array is zero-terminated (`imgui_draw.cpp:4539-4542` and the sizer at `:3111-3113`
+  both walk `while (p[0] != 0)`), and the table began at `no-ink`'s first member, `Cc` = **U+0000** —
+  which `fontTools` confirms is in the cmap of FSEX300 and both Robotos. The walk ends at index 0,
+  every codepoint is accepted, and the fold-set == render-set invariant breaks for ~1,800 codepoints.
+  **Nothing would have complained:** `IM_ASSERT((size & 1) == 0)` passes (0 is even), `IM_ASSERT(size
+  <= 64)` passes (0 is small), and `NDEBUG` strips both anyway. Ten rounds interrogated the table's
+  membership; none interrogated its encoding. **Look FIRST: when a dependency takes a
+  sentinel-terminated list, ask whether the sentinel is a LEGAL MEMBER of the value domain (for
+  codepoints, offsets, indices and IDs it usually is); check the FIRST element specifically, because a
+  sentinel at index 0 makes the feature vanish rather than half-work; and put the guard in the
+  generator you own, since that is the failure nothing downstream can observe.**
+  `memory/lesson_a_sentinel_terminated_list_cannot_contain_its_sentinel.md`
+- **A bound placed at a render site is a site list — bound the data where it ENTERS.** 2026-07-30: a
+  per-frame cap on attacker-driven glyph rasterisation was specified inside the chat FEED draw loop.
+  Censused, remote text reaches the rasteriser through at least **three** surfaces — the feed, the
+  overhead bubble (`hud.cpp:184`, whose `CalcTextSizeA` **bakes on a miss** before any budget could be
+  consulted) and the scoreboard (`scoreboard.cpp:249`) — so the cap guarded one door of three, and the
+  two it missed are the ones an attacker would use. Moving it to the receive boundary (`utf8_codec`,
+  already the single owner of decoding) bounded every surface **by construction** and **deleted** the
+  soft cap, the row-deferral rule and the forward-progress guarantee. The trap: the hazard was
+  *discovered* in the chat feed, so the fix was designed there — and **machinery accreting around a
+  mechanism is evidence it is at the wrong layer, not evidence it is maturing.** *Look FIRST:* census
+  every reader of the attacker-controlled value before bounding its effect; prefer the ingestion
+  boundary; and note the follow-on — a boundary-side ledger needs its own thread and lifetime rules
+  (ours had to be a game-thread monotone set, not a read of the render thread's `IndexLookup`).
+  `memory/lesson_a_bound_at_the_render_site_is_a_site_list.md`
+- **A shared cache is priced by the SUM over live configurations, not by one slice.** 2026-07-30: an
+  atlas-capacity discharge priced the glyph set at ONE font size and reported a 3x margin. The atlas is
+  one texture shared across every live size, and its GC is **pressure-triggered** — `DiscardBakes` has
+  exactly two call sites, `MakeSpace` (`imgui_draw.cpp:4244`) and `TextureCompact` (`:4306`) — so the
+  resident set is everything drawn since the last pressure event. Re-measured as the sum over the sizes
+  that can carry remote text: 0.345x + 0.282x + 0.228x = **0.856x of the ceiling, a 17% margin, not
+  200%**. The same session had already retired a 12.8 Mpx figure that erred the *other* way by summing
+  sizes no single surface can demand. **Look FIRST: ask "resident set = data x WHAT?" and enumerate the
+  second axis (sizes, DPI scales, LODs, formats, per-peer variants); find the eviction TRIGGER before
+  trusting a bound, because "unused for N frames" can be pressure-only; and report the margin, since
+  17% and 200% imply different amounts of instrumentation.**
+  `memory/lesson_a_shared_cache_is_priced_by_the_sum_over_live_configurations.md`
 - **A pass can measure every MECHANISM and never measure the DELIVERABLE.** 2026-07-30: nine `/qf`
   rounds on the ImGui atlas flip measured the init-time sampling instant, the 64-value exclude cap, a
   per-rescale leak, an unbounded fence wait, which face carries U+E0B0, three asserts `NDEBUG` strips —
@@ -1067,6 +1122,15 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   can silently retire its own detector; and remember fixtures prove the CHECKER while only a
   defect-carrying build proves the PIPELINE — so land a detector on a live defect and watch it fail
   BEFORE fixing, since live defects are the only free positive controls you will get.
+  **THIRD FAMILY MEMBER (2026-07-30): an instrument whose ABSENCE is indistinguishable from its
+  SUCCESS.** `tools/mp.py:1539` asserts the font selftest by *negative* grep (`("selftest: FAIL",)`),
+  which is sound only while the selftest runs unconditionally at boot; the ImGui flip makes it fire on
+  an `atlas->TexData->UniqueID` edge, and at that moment "passed" and "never ran" are the identical
+  log. The same file already carries the right shape 700 lines earlier — `mp.py:848` asserts the
+  POSITIVE line `"config-selftest: DONE fail=0"`. The negative form is not wrong when written; it rots
+  the instant the instrument becomes conditional, and nothing in the diff that makes it conditional
+  touches the assertion. *Look FIRST:* assert a positive success line carrying its counts, and when a
+  change makes an instrument conditional, grep for who asserts on it.
   `memory/lesson_an_instrument_never_shown_failing_passes_by_construction.md`
 
 - **One name covering TWO quantities reads as a coherent design and is not — FIVE times in one pass,
