@@ -793,9 +793,79 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   the `imgui_draw.cpp:2815` user error forever, because a legacy backend uploads once. The victim is real:
   `ui/fonts.cpp`'s boot selftest runs from `Load()`, before `ImGui_ImplWin32_Init`, always outside a frame.
   A probe that inspected AFTER `Render()` "confirmed" the wrong answer — it measured its own instrument.
-  *Look FIRST:* ask **when** a regime holds, not just whether; grep for who WRITES the derived state, not
-  only who reads the flag; and take a probe's observation **inside the same window** as the behaviour it
-  claims to describe. `memory/lesson_a_capability_flag_may_be_a_per_frame_lock.md`
+  **SECOND MECHANISM, same flag, measured 2026-07-30 in the implementation `/qf`: it is also SAMPLED at
+  an INSTANT during init.** `ImFontAtlasBuildUpdateRendererHasTexturesFromContext`
+  (`imgui_draw.cpp:2760-2772`, called from `ImFontAtlasBuildMain` at `:3497`) copies the flag off the
+  context at build time and decides the legacy preload from the copy — and `ui::fonts::Load()`
+  (`imgui_overlay.cpp:295`) runs **eight lines before** the backend sets it inside `InitRenderer`
+  (`imgui_impl_dx12.cpp:931` via `:303`). So deleting the clears would have flipped every LATER build and
+  left the **boot** atlas eagerly preloaded, with `GlyphRanges` still load-bearing exactly where it had
+  been declared dead. Upstream names it by hand at `imgui_draw.cpp:2818`. Fix = an ORDERING change, and
+  it makes boot match a path already exercised every session (`MaybeRescale` calls `Load()` with the
+  backend live). *Look FIRST:* ask **when** a regime holds, not just whether; grep for who WRITES the
+  derived state, not only who reads the flag; **ask at what INSTANT the flag is sampled** — setting it
+  after something has already copied it is indistinguishable, at the setting site, from setting it in
+  time; and take a probe's observation **inside the same window** as the behaviour it claims to
+  describe. `memory/lesson_a_capability_flag_may_be_a_per_frame_lock.md`
+
+- **The subsystem you are about to build may ALREADY BE RUNNING.** MEASURED 2026-07-30: four `/qf` rounds
+  designed a ~200 LOC DX12 texture-servicing subsystem to replace `ImGui_ImplDX12_UpdateTexture`, whose
+  every upload ends in `WaitForSingleObject(..., INFINITE)` (`imgui_impl_dx12.cpp:564-565`) on our render
+  thread where every wait we own is bounded at 2000 ms. Round 5 measured that
+  `imgui.cpp:5973` assigns `draw_data->Textures` **unconditionally** and both backends service that list
+  **ungated by the capability flag** (`imgui_impl_dx12.cpp:236`, `imgui_impl_dx11.cpp:181`) — so the path
+  "we were going to replace" already executes at boot and twice per rescale on a 16 MB upload, in the
+  shipped build, **and had never been timed**. Every justification was a property of the POST-flip
+  regime, so the subsystem was justified only by what the flip enables; and the leak it had to fix was
+  one **it introduced itself** by taking ownership of a resource ImGui frees correctly. The flag gates
+  the capability's QUALITY (incremental updates), not its INVOCATION. *Look FIRST:* before designing a
+  replacement, grep the incumbent's call sites and ask what actually gates them — not what the flag's
+  NAME implies — and if its cost is unmeasured, ship a 15-line timed wrapper at the same seam instead:
+  it produces the number AND occupies exactly the seam the replacement would.
+  `memory/lesson_the_subsystem_you_are_about_to_build_may_already_be_running.md`
+
+- **An upstream assert your build STRIPS is not a guard.** MEASURED 2026-07-30: our Release build defines
+  `NDEBUG`, so every ImGui `IM_ASSERT` compiles away — and THREE invariants the flip design leaned on
+  exist *only* as asserts: the `GlyphExcludeRanges` 64-element cap (`imgui_draw.cpp:3115`), the atlas
+  pack-failure check (`:4818`, whose `return false` degrades to **the fallback box** — symptom-identical
+  to the bug the whole glyph saga exists to remove), and *"backend set Destroyed but did not clear
+  TexID"* (`:2875`, the one that let a per-rescale resource+descriptor leak through a design that had
+  already passed several rounds). All three fail SILENTLY. *Look FIRST:* grep how a dependency's
+  invariant is ENFORCED, not whether it is stated; move the check to a layer you control (a generator
+  `sys.exit` for offline data, a CI source gate for structure, our own predicate at runtime); for a
+  silent-degradation invariant build a DETECTOR and prove it distinguishes the failure from the ordinary
+  state that looks the same; and never sit exactly on a stripped limit (the semantically-widest exclusion
+  set landed on precisely 32 of 32 permitted ranges — the set with four ranges of margin was chosen for
+  that reason alone). `memory/lesson_an_upstream_assert_your_build_strips_is_not_a_guard.md`
+
+- **A comment citing a DEPENDENCY's line number rots silently, and the confident ones rot worst.**
+  MEASURED 2026-07-30 (`683f8214`): `ui/fonts.cpp` carried TWO such comments and the `v1.91.5 -> v1.92.9`
+  bump invalidated both. `:175` credited *"imgui_freetype.cpp:515 refuses to overwrite a glyph an earlier
+  source already provided"* for the merge-order policy — `:515` is now FreeType render-mode selection and
+  the refusal is gone, though the POLICY survives at `ImFontBaked_BuildLoadGlyph`
+  (`imgui_draw.cpp:4590-4602`), so the conclusion was right and all its evidence was dead. `:400` cited
+  `GetTexDataAsRGBA32` + `TexPixelsRGBA32`, **neither of which appears anywhere in the 1.92.9 DX11/DX12
+  backends**, and closed with *"do not 'simplify' by removing the GetTexData path"* — a stale comment
+  that **forbids**, costing the next reader the dig plus the confidence to act. Same file, same bump:
+  `built ? ... : "FAILED TO BAKE"` is unreachable because `Build()` returns true unconditionally. *Look
+  FIRST:* after any submodule bump, grep your own tree for citations INTO the dependency and re-verify
+  each; cite the SYMBOL and let the line number be a convenience; state the OUTCOME you rely on
+  separately from the MECHANISM you observed; and never close a comment by telling the reader not to
+  change the thing — if it is load-bearing make it a test, a gate or a `static_assert`.
+  `memory/lesson_a_comment_citing_a_dependency_line_number_rots_silently.md`
+
+- **A correction in a NEW SUBSECTION leaves the headline stale — and the headline is what gets quoted.**
+  MEASURED 2026-07-30: a design doc's §2.7 led with *"+4,772 codepoints"* while §2.7a **immediately
+  below**, titled *"computed for real"*, said **+5,078**. Both stood one screen apart for a session, and
+  the stale figure had already propagated to a second doc (`votv-nickname-arbitration-...-2026-07-27.md`
+  :1293) **citing §2.7** — the correction was invisible to whoever copied it. `+4,772` reproduces under
+  **none** of five set-algebra formulations the generator's own tables can build, so it was never a
+  measurement: an unlabelled ESTIMATE that a real computation replaced without deleting. A third value
+  (+5,164) is also legitimate under a different subtraction, so each number now has to carry its
+  CONSTRUCTION. The append-only instinct is right for reasoning and wrong for values. *Look FIRST:* edit
+  the ORIGINAL sentence and put the correction note inside the same section; `grep` the tree for the
+  figure you just retired before finishing; and label estimate-vs-measurement at the moment of writing.
+  `memory/lesson_a_correction_in_a_new_subsection_leaves_the_headline_stale.md`
 
 - **A legacy wrapper is not a translation shim — read what it does AFTER the forward call.** MEASURED
   2026-07-30: `ImGui_ImplDX12_Init(device, frames, fmt, heap, cpu, gpu)` looks like an adapter onto the

@@ -3,7 +3,9 @@
 **Status: SMOKE-MEASURED on both RHIs, NOT hands-on.** No human has looked at a frame drawn by this
 build. Everything below is what a hands-on pass should confirm or falsify.
 
-- HEAD at write time: `246b50f3` + this docs commit. **17-18 commits unpushed.**
+- HEAD at write time: `246b50f3` + this docs commit. **Commits since are DOCS ONLY** (`1b95b71d`,
+  `683f8214`, `7230408a`, + this sweep) — **the artifact under test is unchanged**, so everything below
+  still applies verbatim. The FLIP is designed but **not built**; see that design's §7.
 - Artifact: `multivoid-0.9.0n-133.dll`, **17,424,896 B** (baseline 1.91.5 was 17,366,016 → **+58,880**).
 - **Protocol unchanged (133).** No wire-format change in this work, so no version gate moves.
 - Submodule `third_party/imgui` = **v1.92.9** (`01380c579`).
