@@ -1290,10 +1290,13 @@ All run on this machine 2026-07-28 with `tools/probes/atlas_probe` (extended thi
   and no embedded face carries them, so that half is unchanged. Two further measurements from
   2026-07-30: **"Greek 135/144" was never a coverage shortfall** — the nine absent codepoints are
   permanently unassigned in Unicode
-  (`[[lesson-a-coverage-gap-can-be-the-character-sets-own-hole]]`) — and **a further 4,772 codepoints
+  (`[[lesson-a-coverage-gap-can-be-the-character-sets-own-hole]]`) — and **a further +5,078 codepoints
   our faces already draw are still unasked** (Vietnamese, polytonic Greek, Arabic, Armenian, Georgian,
   Hebrew, punctuation, currency), priced at zero donor bytes in
-  `research/findings/tooling/votv-imgui-192-upgrade-DESIGN-2026-07-30.md` §2.7.
+  `research/findings/tooling/votv-imgui-192-upgrade-DESIGN-2026-07-30.md` **§7.3** (the authoritative
+  table; this line said 4,772, an estimate superseded by the computed figure — the fold set goes
+  `2,517 -> 7,595`). **That widening is now bound to the dynamic-atlas FLIP**, because post-flip
+  `GlyphRanges` is dead input and only `GlyphExcludeRanges` keeps what FOLDS equal to what RENDERS.
 - **NEW RESIDUAL, measured 2026-07-30 — 33 shipped invisible, uniqueness-bearing codepoints.**
   `repertoire_ranges.inc` ships `{0x00020,0x000AC},{0x000AE,0x0024F}`, carving out only `U+00AD`, so
   `U+0080-U+009F` and `U+00A0` are IN the repertoire: a name of twenty non-breaking spaces folds to
