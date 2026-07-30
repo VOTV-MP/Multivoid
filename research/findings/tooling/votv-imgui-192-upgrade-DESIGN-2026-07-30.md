@@ -461,10 +461,11 @@ one arc away, not in this one.
 
 ## 7. THE FLIP — design of record (implementation `/qf`, 9 rounds, 2026-07-30)
 
-**Status: DESIGN. Nothing here is built.** Supersedes §4's C2b bullet. The pass ran **16 rounds / 63
-questions** and **forty-two of the primary's claims were measured false**. **Still no "that holds"
-verdict** — rounds 10 through 16 landed **every question asked**, and round 16 split the work into
-**TWO commits** (§7.1a): round 10 overturned this section's
+**Status: DESIGN. Nothing here is built.** Supersedes §4's C2b bullet. The pass ran **17 rounds / 67
+questions** and **forty-six of the primary's claims were measured false**. **No "that holds" verdict
+was ever given** — rounds 10 through 17 landed **every question asked**, though round 17's four were
+all narrow enough to fix in place: a stale range count in §7.2 item 3, a chat-feed freeze, an
+undrilled detector and a deleted log line. Round 16 split the work into **TWO commits** (§7.1a): round 10 overturned this section's
 framing of what it delivers, round 11 **inverted the exclude-set choice** (§7.3) and found the primary
 instrument blind to the failure it was paired with (§7.4), round 12 found that **the exclude set
 as specified was a silent no-op** (§7.2 item 3) and that the invariant needed a **second table at a
@@ -578,10 +579,18 @@ cannot ship admitting the marks without it.
    `g_roleFont[]`, so both bring-up early returns (`imgui_overlay.cpp:299`, `:305`) are safe with or
    without `Load` having run, and `MaybeRescale` (`:330`) already exercises Load-after-InitRenderer on
    every scale change.
-3. **ONE frozen table, `no-ink ∪ DEFAULT_IGNORABLE ∪ PUA` = 32 ranges / 64 values, STARTING AT
-   U+0001, driving BOTH the fold table and `ImFontConfig::GlyphExcludeRanges`** (round 11 inverted
-   this from `no-ink ∪ PUA`; see §7.3 — the shorter set re-admits U+034F and U+FE0F and reddens
-   `repertoire.cpp:89`).
+3. **ONE frozen table — for COMMIT 1 it is `no-ink ∪ DEFAULT_IGNORABLE ∪ PUA ∪ (Mn∪Me∪Mc ∩ render)`
+   = 67 ranges / 134 values, fold set 7,258** — STARTING AT U+0001, driving BOTH the fold table and
+   `ImFontConfig::GlyphExcludeRanges` (round 11 inverted the base set from `no-ink ∪ PUA`; see §7.3 —
+   the shorter set re-admits U+034F and U+FE0F and reddens `repertoire.cpp:89`).
+
+   **THE 32 / 64 FIGURE IS COMMIT 2's, NOT COMMIT 1's** — this item said 32/64 for a round after
+   §7.1a split the work, which is the **third** firing of
+   `[[lesson-a-correction-in-a-new-subsection-leaves-the-headline-stale]]` in this one document.
+   Building from the stale number would make the 337 marks bakeable while `FoldKey` still has no NFC,
+   so `"A"+U+0301` would render as `Á` and fold differently — precisely the defect commit 2 exists to
+   prevent, shipped by the commit that must not contain it. The marks leave the table in **commit 2**,
+   in the same change that adds composition, and never before.
 
    **THE U+0001 CLAMP IS NOT COSMETIC — without it the entire exclude set is a silent no-op**
    (round 12, and it would have shipped). `GlyphExcludeRanges` is a **zero-terminated** `ImWchar`
@@ -656,6 +665,14 @@ cannot ship admitting the marks without it.
    false so `:2818` can never fire, and the numbers come from where they now exist: geometry from
    `atlas->TexData->Width/Height` logged on change, cost from the per-frame `Glyphs.Size` delta + ms.
    There is no single bake to time post-flip, so a boot number would be a fiction.
+
+   **The replacement log ships in the SAME commit, or the atlas becomes unmeasurable** (round 17).
+   The block being deleted (`fonts.cpp:437-447`) carries the only atlas-geometry number anything has:
+   the `fonts: atlas baked in %.1f ms (%dx%d %s)` line that the hands-on runbook, every smoke read and
+   §7.7's gate all key on. Retiring it without the on-change geometry line in the same diff ships a
+   build whose atlas nobody can see — the exact shape of shipping a regime before its instrument that
+   §7.1 rejected. The runbook's expected-lines section is rewritten in this commit too, since "two
+   bake+selftest pairs per peer" stops being the signature.
 6. **Selftest becomes PER-BUILD, in-frame — keyed on `atlas->TexData->UniqueID`, NOT on a `Load()`
    flag** (round 11 caught the latch), **and it must stop BAKING** (round 14). Two things the regime
    change does to it, both already written down and neither acted on: its presence checks become
@@ -945,6 +962,14 @@ one needlessly. Annoying, bounded, and not the uniqueness direction that matters
 above is green-by-construction — `[[lesson-an-instrument-never-shown-failing-passes-by-construction]]`
 one level up, at the *precondition* rather than the assertion.
 
+**The pack-failure detector MUST BE SHOWN RED BEFORE IT COUNTS** (round 17), or it ships as another
+instrument that passes by construction — this project's most-repeated lesson, and the one that makes
+a silent-degradation detector worthless. The drill is cheap because `TexMax` is already becoming an
+explicit value (item 4): force it to 256 through the `config_registry` row, render enough text to
+exhaust it, and require the log to show a `RectsDiscardedSurface` edge followed by a `0xFFFE`
+NOT_FOUND on a codepoint that `IsGlyphInFont` says exists and the exclude set does not contain. Green
+without that drill run is not evidence.
+
 **The pack-failure detector.** Excluded / genuinely-absent / pack-failed all write the same
 `IM_FONTGLYPH_INDEX_NOT_FOUND` (`imgui_draw.cpp:4626-4629`), so the predicate must **subtract the
 exclude set**: `IsGlyphInFont(cp) && !InExcludeSet(cp) && IndexLookup[cp] == NOT_FOUND`. Three states
@@ -989,6 +1014,13 @@ Both belong in `docs/security/TRACKER.md`, with **different severity and differe
     first-sight count would exceed the remaining budget renders on the NEXT frame. Human chat fills in
     imperceptibly; only an adversary is throttled, and the throttle is what stops the pack exhaustion
     §7.2 item 4 makes remotely reachable.
+  - **FORWARD PROGRESS IS GUARANTEED — the budget is a soft cap** (round 17). "Defer any row over the
+    remaining budget" **permanently freezes the feed** on a row whose OWN first-sight count exceeds
+    the whole 64, which one `text[256]` line of mixed CJK and emoji reaches trivially — and because
+    rows must render in order, that one attacker-authored line blocks every row behind it forever.
+    So: **always render at least one pending row per frame, whatever it costs.** The worst case is
+    then one row's codepoints (≤ ~85 for a 256-byte line) instead of 206 rows' worth, the feed always
+    drains, and the throttle keeps its purpose: bounding the RATE, not gating individual rows.
 - **The unbounded upload wait** — `WaitForSingleObject(…, INFINITE)` per upload on the render thread.
   **DX12 only**; DX11's `UpdateSubresource` has no fence and no wait. **Round 11 added the other half:
   what waits can be arbitrarily LARGE, because the dirty region accumulates across unserviced
