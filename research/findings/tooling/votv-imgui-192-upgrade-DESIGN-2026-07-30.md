@@ -461,11 +461,13 @@ one arc away, not in this one.
 
 ## 7. THE FLIP — design of record (implementation `/qf`, 9 rounds, 2026-07-30)
 
-**Status: DESIGN. Nothing here is built.** Supersedes §4's C2b bullet. The pass ran **17 rounds / 67
-questions** and **forty-six of the primary's claims were measured false**. **No "that holds" verdict
-was ever given** — rounds 10 through 17 landed **every question asked**, though round 17's four were
-all narrow enough to fix in place: a stale range count in §7.2 item 3, a chat-feed freeze, an
-undrilled detector and a deleted log line. Round 16 split the work into **TWO commits** (§7.1a): round 10 overturned this section's
+**Status: DESIGN. Nothing here is built.** Supersedes §4's C2b bullet. The pass ran **18 rounds / 71
+questions** and **forty-eight of the primary's claims were measured false**. **No "that holds"
+verdict was ever given** — rounds 10 through 18 landed **every question asked**. Round 18 measured
+that the nameplate's continuous size ramp does NOT mint a baked per frame (`IM_ROUND`), corrected
+this section's "resident = last two frames" wording to the pressure-triggered truth, and moved the
+W11 bound off the chat draw loop — which was **one of three surfaces** that rasterise remote text —
+onto the receive boundary, deleting three pieces of machinery with it. Round 16 split the work into **TWO commits** (§7.1a): round 10 overturned this section's
 framing of what it delivers, round 11 **inverted the exclude-set choice** (§7.3) and found the primary
 instrument blind to the failure it was paired with (§7.4), round 12 found that **the exclude set
 as specified was a silent no-op** (§7.2 item 3) and that the invariant needed a **second table at a
@@ -627,10 +629,26 @@ cannot ship admitting the marks without it.
    `ImFontAtlasTextureMakeSpace` between attempts; MakeSpace (`:4239`) runs
    `ImFontAtlasBuildDiscardBakes(atlas, 2)` — **every baked unused for 2 frames is discarded** — then
    repacks in place if discarded ≥ 20 % of packed, else grows (`:4225`, doubling height-then-width,
-   clamped to TexMax). **The atlas is therefore not cumulative**: the resident set is what has been
-   *drawn in the last two frames*, so the 7,595 reachable codepoints can never all be live, and
-   post-flip resident pressure is **strictly below today's**, where all 2,517 are baked for every live
-   size unconditionally. That is why 2048 need not hold the whole repertoire.
+   clamped to TexMax).
+
+   **Corrected wording (round 18): the GC is PRESSURE-TRIGGERED, not periodic.**
+   `ImFontAtlasBuildDiscardBakes` has exactly two call sites — `MakeSpace` (`:4244`) and
+   `TextureCompact` (`:4306`, which upstream says you should not call manually) — so there is no
+   per-frame baked GC and the resident set is **everything drawn since the last pressure event**, not
+   "the last two frames". The conclusion survives, because the discard fires exactly when the pack
+   *needs* the room, but the earlier phrasing overstated it.
+
+   **And the size axis is BOUNDED, measured.** `hud.cpp:98-99` computes a nameplate size from a
+   continuous distance scale (`px = S(kNickPx) * clamp(p.scale, 0.20, 1)`, with `bpx = px * 0.88` for
+   the chat bubble), which post-flip could in principle mint a fresh `ImFontBaked` **per frame** as a
+   player walks. It does not: `ImFont::GetFontBaked` rounds through
+   `ImGui::GetRoundedFontSize` (`imgui_draw.cpp:5435`), which is `IM_ROUND(size)`
+   (`imgui_internal.h:3394`), so the continuous ramp collapses onto **integer pixel sizes** — on the
+   order of 17 for the nick and 15 for the bubble — and `LastBaked` short-circuits the unchanged case
+   at `:5439`. Bakeds are bounded by that count per face, not by frames; walking re-rasterises only
+   when an integer boundary is crossed. This is what item 8's probe and the on-change geometry log
+   will show for real, and it is the first thing to look at if a hands-on reports a stutter while
+   moving.
 
    Two consequences that ARE new. **(a) Pack failure is not transient**: at `:4818` `return false`
    writes NOT_FOUND into that baked's `IndexLookup`, and a baked drawn every frame is never discarded,
@@ -649,9 +667,10 @@ cannot ship admitting the marks without it.
    permanent box is reachable **remotely, on demand**. So the deferral above is only true of a
    cooperative peer.
 
-   Two things follow, and neither is optional. **The W11 per-frame first-sight cap ships IN this
-   commit**, not as a tracked row — the flip is what makes the amplification reachable, so it cannot
-   land without it (§7.5). And the **pack-failure detector is load-bearing, not diagnostic.** The
+   Two things follow, and neither is optional. **The W11 novelty cap ships IN this commit**, not as a
+   tracked row — the flip is what makes the amplification reachable, so it cannot land without it. It
+   lives at the RECEIVE boundary in `utf8_codec`, not in any draw loop; §7.5 has the measurement that
+   moved it there (the chat feed is one of three surfaces that rasterise remote text). And the **pack-failure detector is load-bearing, not diagnostic.** The
    FreeType metrics pass still cannot run read-only (the bake is FreeType-through-ImGui and needs the
    probe harness), and it stays owed at C3 — but it is no longer the only thing standing between a
    remote peer and a permanent box.
@@ -995,32 +1014,31 @@ Both belong in `docs/security/TRACKER.md`, with **different severity and differe
   (`kMaxSnapshotLines` 206 × `text[256]`) bound one frame, not a stream of fresh messages. Nothing in
   ImGui bounds per-frame rasterisation (measured by absence).
 
-  **IT SHIPS IN COMMIT 1. This row previously ended "but is not built in the flip commit" while §7.2
-  item 4 said the opposite** — `[[lesson-a-correction-in-a-new-subsection-leaves-the-headline-stale]]`
-  firing inside the document that recorded it, hours later. The flip is what makes the amplification
-  reachable, so it cannot land without the bound. **Specified, because one sentence was not a
-  specification** (round 16):
-  - **PREDICTIVE, not reactive.** Riding the `Glyphs.Size` delta reads *after* the rasterisations it
-    is meant to bound, so it cannot stop the FIRST hostile frame — the only frame that matters. The
-    count is taken **before drawing a row**, with §7.4's pure `IndexLookup` sentinel read (O(1) per
-    codepoint, never bakes).
-  - **Not new complexity order.** ImGui's own renderer already walks every byte of every drawn string,
-    so an O(1) lookup per codepoint on rows already being walked is proportional, not an added scan.
-    That is the distinction the audit rule cares about.
-  - **Budget: 64 first-sight codepoints per frame**, from the measured eager bake (~72-87 ms for
-    2,517 across 7 faces ⇒ ~1 ms at 64) — a `config_registry` row, so it is tunable without a rebuild
-    and appears in the generated ini catalog.
-  - **Deferral is at ROW boundaries, never mid-row**, so no row ever renders half-drawn: a row whose
-    first-sight count would exceed the remaining budget renders on the NEXT frame. Human chat fills in
-    imperceptibly; only an adversary is throttled, and the throttle is what stops the pack exhaustion
-    §7.2 item 4 makes remotely reachable.
-  - **FORWARD PROGRESS IS GUARANTEED — the budget is a soft cap** (round 17). "Defer any row over the
-    remaining budget" **permanently freezes the feed** on a row whose OWN first-sight count exceeds
-    the whole 64, which one `text[256]` line of mixed CJK and emoji reaches trivially — and because
-    rows must render in order, that one attacker-authored line blocks every row behind it forever.
-    So: **always render at least one pending row per frame, whatever it costs.** The worst case is
-    then one row's codepoints (≤ ~85 for a 256-byte line) instead of 206 rows' worth, the feed always
-    drains, and the throttle keeps its purpose: bounding the RATE, not gating individual rows.
+  **IT SHIPS IN COMMIT 1, AND ROUND 18 MOVED IT TO THE RIGHT LAYER.** This row previously ended
+  "but is not built in the flip commit" while §7.2 item 4 said the opposite —
+  `[[lesson-a-correction-in-a-new-subsection-leaves-the-headline-stale]]` firing inside the document
+  that recorded it. The flip is what makes the amplification reachable, so it cannot land without the
+  bound.
+
+  **The bound is at the RECEIVE boundary, not in a draw loop.** Rounds 15-17 specified a per-frame
+  render cap that counted first-sight codepoints before drawing a chat row and deferred rows past a
+  budget. Round 18 measured that **the chat feed is one of at least three surfaces that rasterise
+  remote-authored text**: the feed rows, the overhead chat bubble (`hud.cpp:184`, through
+  `CalcTextSizeA`, which bakes on a miss before any budget could be consulted), and the scoreboard's
+  remote nicks. A cap in one draw loop is a **site list**, and the other two sites are the ones an
+  attacker would use. It also needed a soft-cap escape hatch, a row-deferral rule and a
+  forward-progress guarantee — three pieces of machinery that exist only because the bound was in the
+  wrong place.
+
+  So: **cap the NOVELTY a remote peer can introduce, where the text enters.** `coop/text/utf8_codec`
+  is already the single owner of decoding at the receive boundary (arc D1), so it is where a
+  per-peer, per-interval budget of **never-before-seen codepoints** belongs — measured with §7.4's
+  pure `IndexLookup` sentinel read, refusing or truncating the offending field exactly as the strict
+  decode already refuses ill-formed input. Every surface that later draws the string is then bounded
+  **by construction**, because the string cannot carry unbounded novelty. One owner instead of three,
+  no deferral, no freeze, no soft cap, and no per-frame work on a draw path at all. The budget is a
+  `config_registry` row so it is tunable without a rebuild.
+
 - **The unbounded upload wait** — `WaitForSingleObject(…, INFINITE)` per upload on the render thread.
   **DX12 only**; DX11's `UpdateSubresource` has no fence and no wait. **Round 11 added the other half:
   what waits can be arbitrarily LARGE, because the dirty region accumulates across unserviced
