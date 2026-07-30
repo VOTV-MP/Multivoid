@@ -1001,3 +1001,10 @@ per-row narrate bit; ours is the same shape.
   regression witness for §24.5, which is RED on today's build **by sight**.
 - **Unverified, mine not the user's:** whether a routine join/skin burst evicts the ten messages the
   user's own acceptance drill requires the joiner to see.
+
+> **RENAMED 2026-07-30 (`0d84cc5a`): `WellFormed` is now `Admissible(authorSlot, p, n)`.**
+> It still does the strict UTF-8 decode first and refuses the whole field on failure — that
+> contract is unchanged — and it now also consults the receive-boundary novelty ledger
+> (`coop/text/novelty_ledger`, security TRACKER **W12**), because the ImGui flip made every
+> codepoint in the repertoire rasterisable on demand from this exact string. Two admission
+> questions, one funnel, same refusal shape.

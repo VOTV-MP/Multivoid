@@ -261,7 +261,7 @@ edge back and forth. Watch for a stutter or a freeze. Before the fix, every 180 
 fired a full 58-80 ms atlas re-bake **on the render thread inside Present** — so the GAME froze, not
 just the overlay — and an edge parked exactly on a boundary re-baked every single frame. It is now
 gated on the size holding still for 12 frames plus a widened dead zone. **Report any hitch you can
-feel**; grep the log for `fonts: atlas baked in` and tell me how many lines a full drag produced (one
+feel**; grep the log for `fonts: atlas baked in` *(RETIRED 2026-07-30 by the ImGui flip `0d84cc5a` -- there is no boot bake any more. On b133+ the equivalent is `fonts: atlas geometry WxH ...`, which logs ON CHANGE, so a full drag produces one line per distinct geometry rather than one per rebake.)* and tell me how many lines a full drag produced (one
 or two is the intent; fifteen means the debounce did not take).
 
 **6. PRODUCT QUESTION — is "unique but unreadable" the right answer for CJK?** Two Chinese players

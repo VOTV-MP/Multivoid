@@ -4,6 +4,17 @@
 will actually cost"* — after asking, of the arc-D2 outcome, *"so we're not supporting any glyphs at
 all?"*
 
+> **SUPERSEDED 2026-07-30 BY THE IMGUI 1.92 FLIP (`0d84cc5a`).** Every number in this document
+> prices an EAGER atlas, and the shipped build no longer has one. Specifically: the repertoire is
+> now **441 ranges / 7,258 codepoints** (not 161 / 2,517); there is **no boot bake to time**, so
+> "2048x2048 baked in 76-95 ms" has no successor line -- the atlas starts at 512x128 and grows, and
+> the honest instruments are geometry-on-change plus the per-frame glyph delta in
+> `ui/atlas_watch.cpp`; and the eager price table below is the cost of a regime we do not run.
+> **What survives and is still the answer:** CJK is absent from every shipped face, so it stays a
+> fallback box until a font SOURCE is added (C3) -- that was always a source problem, and the flip
+> did not change it. Read
+> `research/findings/tooling/votv-imgui-192-upgrade-DESIGN-2026-07-30.md` §7 first.
+
 > **STATUS UPDATE 2026-07-29 late — §3a IS NOW SHIPPED (`9b4286f1`).** `+LatExt+Greek` went into
 > `BASE_RANGES` and regenerated; repertoire **157 -> 161 ranges, 2,517 codepoints**, max baked codepoint
 > UNCHANGED at U+1FAF6 (so the index tables cannot move — that is what prices them). Verified in a real

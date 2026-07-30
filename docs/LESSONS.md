@@ -135,8 +135,9 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   before.** The design's own summary said the commit "ships zero new visible glyphs"; round 10 refused
   the premise and two greps settled it — today's fold table is 2,517 codepoints and the em dash, both
   curly-quote pairs, the ellipsis and the ruble sign are **outside** it, while the shipped faces union
-  to 9,478 and carry all four (plus Hebrew/Thai/Arabic). The flip turns **+5,078 codepoints from
-  fallback box into glyph for zero new DLL bytes** — the user's actual ask — and was about to be built
+  to 9,478 and carry all four (plus Hebrew/Thai/Arabic). The flip turns **+4,741 codepoints from
+  fallback box into glyph for zero new DLL bytes** (this row said +5,078 until the build corrected it
+  on 2026-07-30: that figure priced an exclude set round 11 later rejected; shipped is 7,258 - 2,517) — the user's actual ask — and was about to be built
   describing itself as delivering nothing. It survived because it was **true of the previous build**
   (s15 deliberately clears the flag) and rode into the section about the commit that deletes that
   clear, and because it was **pessimistic**: every review reflex here is tuned to catch optimism, so an
@@ -840,6 +841,10 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   (`grep RendererHasTextures src/` = zero). *Look FIRST:* when an upgrade's VALUE rests on a capability
   flag, grep the vendored backend for `&= ~<FLAG>` before believing any benefit number, and ship a boot
   assertion that the flag survived on EVERY backend.
+  **UPDATED 2026-07-30: this row's recommendation is now BUILT** — `ui/atlas_watch.cpp` asserts the
+  regime every frame and `tools/text/atlas_regime_gate.ps1` censuses it in CI, so do not re-propose
+  it. Also stale in the fact base: `grep RendererHasTextures src/` no longer returns zero (the flag
+  is READ by the watch and CLEARED nowhere, which is the point).
   `memory/lesson_a_capability_can_be_silently_stripped_not_asserted.md`
 
 - **An upgrade can demote your INPUT to a hint, with a clean compile.** MEASURED 2026-07-30 against ImGui
@@ -876,6 +881,11 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   assertion on an accessor into any lazily-populated store, open the accessor body and check for a
   build/insert on the miss path. Sibling: `[[lesson-a-fallback-glyph-must-be-asked-for]]` — presence in the
   FONT is not presence in the ATLAS, and now asking about the atlas changes it.
+  **UPDATED 2026-07-30 (`0d84cc5a`): the cited code MOVED.** The selftest is no longer in
+  `ui/fonts.cpp` — it lives in `ui/atlas_watch.cpp`, runs IN-FRAME, and the "refuse any codepoint
+  outside the repertoire" helper is RETIRED (post-flip it would have made the only COLR instrument
+  green-by-skip). It now bakes one emoji deliberately; every presence check is cmap-only
+  (`IsGlyphInFont`). The lesson's core — querying a lazy cache POPULATES it — is unchanged.
   `memory/lesson_querying_a_lazy_cache_populates_it.md`
 
 - **A clean build after a major dependency bump may be riding OBSOLETE SHIMS.** MEASURED 2026-07-30:
@@ -917,7 +927,10 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   derived state, not only who reads the flag; **ask at what INSTANT the flag is sampled** — setting it
   after something has already copied it is indistinguishable, at the setting site, from setting it in
   time; and take a probe's observation **inside the same window** as the behaviour it claims to
-  describe. `memory/lesson_a_capability_flag_may_be_a_per_frame_lock.md`
+  describe. **UPDATED 2026-07-30: our build no longer runs the locked regime** — both clears are
+  deleted (`0d84cc5a`), so `atlas->Locked` stays false and glyphs bake during the frame. The
+  out-of-frame victim this row names (`fonts.cpp`'s boot selftest) no longer exists.
+  `memory/lesson_a_capability_flag_may_be_a_per_frame_lock.md`
 
 - **The subsystem you are about to build may ALREADY BE RUNNING.** MEASURED 2026-07-30: four `/qf` rounds
   designed a ~200 LOC DX12 texture-servicing subsystem to replace `ImGui_ImplDX12_UpdateTexture`, whose
@@ -1159,6 +1172,11 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   the instant the instrument becomes conditional, and nothing in the diff that makes it conditional
   touches the assertion. *Look FIRST:* assert a positive success line carrying its counts, and when a
   change makes an instrument conditional, grep for who asserts on it.
+  **FIXED 2026-07-30 (`0d84cc5a`), in the shape this row recommends:** the selftest emits
+  `font selftest: DONE fail=0 (8/8) -- ...` and `tools/mp.py` asserts that line's PRESENCE. Its
+  must-FAIL control ran against fixtures (a log with the line passes, one without goes RED) — which is
+  FIXTURE-level plus green live runs, **not** a defect-carrying build, and it executes only under
+  `--assert-i18n` (`smoke_i18n` / `smoke4`), not the default `smoke`.
   `memory/lesson_an_instrument_never_shown_failing_passes_by_construction.md`
 
 - **One name covering TWO quantities reads as a coherent design and is not — FIVE times in one pass,

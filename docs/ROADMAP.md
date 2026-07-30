@@ -301,7 +301,7 @@ LAN (two-machine + same-box-two-instance both confirmed).
        -> `HostWithSave`), direct-IP Connect, the master-lobby server list
        + double-click join, and nickname editing. Backends in
        `coop/session_manager.cpp` (HostWithSave / JoinLobby / ConnectDirect).
-       Wired at `harness.cpp:1104`; rendered at `imgui_overlay.cpp:356`.
+       Wired via `engine::InjectCanvasButton` (`ue_wrap/engine/engine_widget.cpp`); rendered from `imgui_overlay.cpp`'s `RenderFrameGuarded` (`ui::dev_menu::Render`). *(Line citations corrected 2026-07-30: `harness.cpp` moved to `src/harness/` and was split in s27, and `:356` now points at `MaybeRescale`'s tail. Cite the SYMBOL -- see docs/LESSONS.md, "a comment citing a dependency line number rots silently".)*
        Matches `docs/MULTIPLAYER_UI.md` (marked BUILT 2026-06-20). The browser
        panel itself renders in ImGui (in-process overlay), not pure UMG. The
        `mp_host_game.bat` / `mp_client_connect.bat` launchers remain only as
@@ -453,7 +453,7 @@ Each item below is a feature increment series. Cross-referenced in
        opening an ImGui server browser (`ui/server_browser.cpp`) with Host
        Game (save picker), direct-IP Connect, master-lobby list + double-click
        join, and nickname editing; backends in `coop/session_manager.cpp`.
-       Wired at `harness.cpp:1104`, rendered at `imgui_overlay.cpp:356`.
+       Wired via `engine::InjectCanvasButton` (`ue_wrap/engine/engine_widget.cpp`); rendered from `imgui_overlay.cpp`'s `RenderFrameGuarded` (`ui::server_browser::Render`). *(Line citations corrected 2026-07-30 -- both were dead; cite the SYMBOL.)*
        Shipped 43e2a843 (2026-06-05). See the "Multiplayer menu — SHIPPED"
        section above. The .bat launchers remain a dev/test convenience only.
 - ☑ v66 Voice chat — proximity positional (SetListener + SVC REDUCED-mode

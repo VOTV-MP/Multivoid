@@ -177,7 +177,7 @@ Computed against the actual cmaps:
 | candidate = both-weight ∪ donor | **9,478** |
 | no-ink, `Cc/Cf/Cs/Zl/Zp/Zs` minus `U+0020` | **105** |
 | private-use in the candidate set | **1,778** |
-| **new repertoire** | **7,595 cp, max U+1FBF9** → **+5,078**, not +4,772 |
+| **new repertoire** | **7,595 cp, max U+1FBF9** → **+5,078**, not +4,772 (SUPERSEDED — see §7.0: this prices the exclude set round 11 rejected; shipped is 7,258 / +4,741) |
 
 The no-ink set derived from Unicode *general category* contains **all 33 codepoints of §3.3**
 (`U+0080..U+009F` plus `U+00A0`) without naming any of them — an invariant, not a block list, which is
@@ -594,7 +594,14 @@ face cmaps (fontTools, assets/fonts/*)   UNION 9,478      [FSEX300 alone 5,992]
   CJK U+4E00 | hangul U+AC00 ...................... ABSENT from every face
 ```
 
-So the flip converts **+5,078 codepoints from fallback box into glyph, out of fonts already inside
+**FIGURE CORRECTED 2026-07-30 BY THE BUILD: it is +4,741, not +5,078** — and the way it went stale
+is this document's own most-repeated lesson firing a FOURTH time. `+5,078` was measured for the
+`no-ink u PUA` exclude set that **round 11 REJECTED** (it re-admits U+034F and U+FE0F); the chosen
+union yields 7,593, i.e. `+5,076`, and the two-commit split (§7.1a) puts **+4,741 in commit 1** with
+the remaining +335 arriving with NFC in commit 2. Measured, not derived:
+`7,258 - 2,517 = 4,741` and `7,593 - 2,517 = 5,076`.
+
+So the flip converts **+4,741 codepoints from fallback box into glyph, out of fonts already inside
 the DLL, for zero new bytes** — the em dash, both curly-quote pairs, the ellipsis and the ruble sign
 this user types daily, plus entire scripts (Hebrew, Thai, Arabic) the shipped faces already carry.
 **CJK and Hangul remain boxes**, and only because no face contains them: that is the honest scope of
@@ -961,7 +968,11 @@ The 19 MB index hazard stays covered either way: the U+E0000 TAG characters are 
 no-ink. And U+0020 is **already carved out of `no-ink`** by the generator, so the space character
 keeps rendering — the reason the arithmetic here is 7,595 and not 7,594.
 
-**`+5,078` is the correct number and `docs/LESSONS.md` already records it.** Round 2 of this pass
+**`+5,078` IS THE REJECTED SET'S NUMBER — superseded 2026-07-30 by the build.** It prices
+`no-ink u PUA` (7,595), which round 11 threw out one section below this one. The chosen union gives
+**7,593 = +5,076**, and commit 1 ships **7,258 = +4,741** because it also excludes the marks. The
+paragraph below is kept because its POINT — freeze the category tables as literals rather than
+calling `unicodedata` at generate time — is what actually shipped. Round 2 of this pass
 called it wrong; round 6 measured that the objection was to its *derivation* (calling `unicodedata`
 at generate time) and not to the *set*. The fix is **freezing no-ink as literal ranges** with its
 Unicode version documented — `Cf` and `Zs` gain members between versions exactly as `Cn` does, which

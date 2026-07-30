@@ -1176,7 +1176,7 @@ MIT + CC-BY 4.0, COLR v0 + CPAL). **DLL 16.5 → ~17.4 MB, +5.5%.** No CJK, no H
    receiver variable to be named `nick*`, so the arbiter's `stem.substr` is invisible: the gate is
    **green and blind**. This is `[[lesson-a-gate-on-one-verb-reads-as-a-gate-on-the-path]]` landing a
    second time, one layer up — the first version keyed on the verb, this one on a naming convention.
-5. **The constant IS the eagerly-baked set** — Latin-1 + Cyrillic, cross-merged across the seven
+5. **The constant IS the eagerly-baked set** *(SUPERSEDED 2026-07-30 by the ImGui 1.92 flip, commit `0d84cc5a`: the atlas is LAZY, `ImFontConfig::GlyphRanges` is dead input, and the invariant is now maintained SUBTRACTIVELY -- one generator emits the fold table AND its complement as `GlyphExcludeRanges`, differing by exactly {U+0000}. The PROPERTY is unchanged and still load-bearing; only the mechanism inverted. :1299 below already said so -- this headline did not, which is why it is stamped here.)* — Latin-1 + Cyrillic, cross-merged across the seven
    embedded faces, plus all single-codepoint emoji. One definition, so there is no gap between what
    folds and what renders. **This holds on the PRIMARY path only:** `fonts.cpp:208-236`'s two fallbacks
    bake no embedded family. They still attempt the donor merge, and the contract is binary — *the
