@@ -60,6 +60,34 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   spellings look identical", reach for NORMALIZATION before prohibition; and treat a review that keeps
   refining HOW to build a thing as a signal nobody asked WHETHER it should exist.**
   `memory/lesson_a_protective_table_can_outlaw_what_it_protects.md`
+- **A library can SYNTHESISE the very thing your filter governs, on a path the filter does not sit
+  on.** 2026-07-30, the first live run of the new superset invariant: our `GlyphExcludeRanges` table
+  excludes U+0009 (TAB is `Cc`, hence `no-ink`), four independent checks agreed, and the atlas baked
+  it anyway on every peer. `ImFontAtlasBuildSetupFontBakedBlanks` **synthesises** the tab glyph from
+  the space glyph's advance and calls `ImFontAtlasBakedAddFontGlyph` with **`src == NULL`**, so it
+  never reaches `ImFontAtlasBuildAcceptCodepointForSource` and no exclude list on any config can
+  suppress it. The four checks were all correct — they were checks about the TABLE, and the table was
+  never consulted. **Look FIRST: a filter is a property of the paths that CONSULT it, so grep the
+  dependency for every caller of its add/produce primitive and see which ones route through the
+  predicate; when one bypasses, ask what the invariant is FOR rather than which value to exempt — a
+  codepoint exemption would have blinded the instrument to the next synthesised glyph, whereas
+  "was it RASTERISED" (`PackId != Invalid`) is self-maintaining, and it also distinguishes this from
+  the case where the SAME codepoint is a genuine offender (U+0009 is in the FSEX300 and Roboto cmaps,
+  and reappeared as a real one under the no-exclude drill).**
+  `memory/lesson_a_library_can_synthesise_the_thing_your_filter_governs.md`
+- **A text-scanning gate reads prose as code — including the prose that documents the gate.**
+  2026-07-30, `tools/text/atlas_regime_gate.ps1`'s first run, two independent failures that CANCELLED
+  OUT in the log: it reported `clears=1` on a tree with zero flag clears (the comment explaining the
+  deletion quotes the deleted line verbatim, and a regex cannot tell code from documentation — the
+  better the deletion is explained, the more likely the gate fails on it), and then printed **PASS**
+  anyway, because its escape hatch matched `MEASURED-UPLOAD-VERDICT:` **unanchored** and the design
+  doc's own sentence *describing that escape hatch* satisfied it. **An escape specified in prose is
+  satisfied by its own specification.** Only the injected `-Drill` control found either. **Look
+  FIRST: strip comments before classifying source text (two regexes, and it fixes both directions —
+  a clear hidden in `#if 0` was equally invisible); anchor any escape token and require a payload
+  (`(?m)^TOKEN:\s*\d{4}-\d{2}-\d{2}`), so writing the exception is a dated act and not an accident
+  of phrasing; and read a drill's GREEN lines as failures.**
+  `memory/lesson_a_text_scanning_gate_reads_prose_as_code.md`
 - **A sentinel-terminated list cannot contain its sentinel — and zero is a legal codepoint.**
   2026-07-30: a designed, reviewed and ten-rounds-argued `GlyphExcludeRanges` table would have excluded
   **nothing**. The array is zero-terminated (`imgui_draw.cpp:4539-4542` and the sizer at `:3111-3113`
