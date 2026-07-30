@@ -57,6 +57,12 @@ state** — each file is a snapshot from its date.
 | `votv-ue4ss-coexistence-FACTS-2026-07-26.md` | FACT BASE (22 agents, 3 rounds): can UE4SS + UE4SS mods coexist with an installed Multivoid. No proxy-filename collision on any current channel; one ProcessEvent double-detour surface (UE4SS 3.0.1 cohort, eager+unconditional; today's experimental is lazy); Lua Func-wipe falsified; the dominant risk is semantic (adopt+amplify / fight / silent-drift lane classes). Named runtime probes remain. |
 | `votv-ue4ss-switch-decision-QF-WIP-2026-07-26.md` | **DECIDED F1 (26 rounds, converged + user re-confirmed same day).** Should the substrate move onto UE4SS's C++ API? Measured: 2,404 replaceable LOC (1.6%), 5 repair commits in 1,282 (2 of which a framework absorbs); UEPseudo is Epic-linkage-gated (NOT "un-buildable" — corrected same day): the structural leg is that a public repo cannot vendor or depend on it. §3+§5 remain the fact base; the living record + trip-wires + ledger = `docs/VERSION_MIGRATION.md` §11. |
 
+**`tooling/` — 2026-07-30 addition:**
+
+| Doc | What it is |
+|---|---|
+| `votv-imgui-192-upgrade-DESIGN-2026-07-30.md` | **MEASURED (compile + link), NOTHING BUILT.** The ImGui 1.91.5 -> 1.92.9 migration: the port is **3 files / +18-14 and it LINKS** (+71 KB DLL; logs `build/imgui1929_pricing{,2}.log`; spike reverted, submodule still pinned). Answers the glyph thread's root — **CJK is unaffordable on 1.91.5 whatever the SOURCE and whatever the TRIGGER**, because there is no dynamic atlas, and the five recorded objections collapse to that one root. Measures: `GlyphRanges` is **dead input** once `RendererHasTextures` is on (so arc D2's fold==bake construction is **dissolved**, not violated); `FindGlyphNoFallback` moved to `ImFontBaked` and **BAKES on miss**; the legacy DX12 init strips the capability flag while DX11 sets it, so a straight port ships **two drawable repertoires in one build**; RF3's "structural DX12 precondition" is largely already built. Holds the 4-commit plan, three live defects (33 shipped invisible uniqueness-bearing codepoints; `g_pending[64]` use-after-free; the per-RHI split), the free +4,772-codepoint widening, and the fold's dated EXPIRY. Supersedes RF3's framing in `../join-identity/votv-arc-d-gate-measurements-2026-07-28.md` and corrects three rows of its M2 diff. |
+
 Grep tip: filenames were NOT renamed — a bare-filename citation (code comments cite findings by name)
 still resolves via `Glob research/findings/**/<name>.md`.
 

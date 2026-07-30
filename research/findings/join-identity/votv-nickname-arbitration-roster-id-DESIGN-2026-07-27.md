@@ -1277,7 +1277,27 @@ All run on this machine 2026-07-28 with `tools/probes/atlas_probe` (extended thi
 
 ### 9d.5 Accepted residuals (named, not solved)
 
-- CJK / Hangul / Greek / Latin-Extended / Thai names are **unique** but render as the sentinel glyph.
+- ~~CJK / Hangul / Greek / Latin-Extended / Thai names are **unique** but render as the sentinel
+  glyph.~~ **PARTLY CLOSED 2026-07-29 (`9b4286f1`): Greek and Latin Extended-A/B now RENDER** — the
+  faces already carried them and nothing ever asked the atlas (repertoire 157 -> 161 ranges / 2,517
+  codepoints, max codepoint unchanged, verified by `repertoire selftest PASS 13/13` + `font selftest
+  PASS 6/6` + `smoke_i18n` in a real 4-peer run). **CJK / Hangul / Thai still render as the sentinel**,
+  and no embedded face carries them, so that half is unchanged. Two further measurements from
+  2026-07-30: **"Greek 135/144" was never a coverage shortfall** — the nine absent codepoints are
+  permanently unassigned in Unicode
+  (`[[lesson-a-coverage-gap-can-be-the-character-sets-own-hole]]`) — and **a further 4,772 codepoints
+  our faces already draw are still unasked** (Vietnamese, polytonic Greek, Arabic, Armenian, Georgian,
+  Hebrew, punctuation, currency), priced at zero donor bytes in
+  `research/findings/tooling/votv-imgui-192-upgrade-DESIGN-2026-07-30.md` §2.7.
+- **NEW RESIDUAL, measured 2026-07-30 — 33 shipped invisible, uniqueness-bearing codepoints.**
+  `repertoire_ranges.inc` ships `{0x00020,0x000AC},{0x000AE,0x0024F}`, carving out only `U+00AD`, so
+  `U+0080-U+009F` and `U+00A0` are IN the repertoire: a name of twenty non-breaking spaces folds to
+  itself, counts as unique, and shows nothing. This is the `U+034F` defect of `repertoire.h:57` from a
+  direction this design never checked, and `IsDefaultIgnorable` structurally cannot see it (`Cc`/`Zs`
+  is a different Unicode property). `player_handshake_nick.cpp:119` already blocks `c < 0x20 || c ==
+  0x7F`, so the nickname-path count is 33. Fixing it needs BOTH halves — the repertoire subtraction to
+  make such names collide, and `denied()` to strip them from the DISPLAY, since `AssignAgainst` returns
+  the original string plus a suffix. Plan: upgrade doc §3.3.
 - Two peers requesting the **identical** out-of-constant name both persist the request; one is
   re-suffixed each session, loser by slot order — stable within a session, possibly swapping between.
 - 2.94-4.90 MB of permanent host RAM, and a drag-resize rebuild of 28.4-87.4 ms instead of
@@ -1415,8 +1435,20 @@ ASCII nicknames. Prefer `--duration 60` for a clean verdict.
   scheduling decision, deliberately not taken mid-session.
 - A twenty-emoji name **overflows the player-list Player column** and is clipped by the Mic column.
   Pre-existing fixed-width layout; visible now because names can finally be that wide.
-- Everything §9d.5 already named still stands: CJK / Hangul / Greek / Latin-Ext render as the
+- Everything §9d.5 already named still stands **except the Greek / Latin-Ext half, which SHIPPED
+  2026-07-29 (`9b4286f1`) — see the struck row in §9d.5**: CJK / Hangul / Thai still render as the
   sentinel; homoglyphs remain out of scope; the 2.94-4.90 MB index-table cost is paid.
+- **THE FOLD HAS AN EXPIRY, and it is now dated (2026-07-30).** Arc D2's guarantee rests on *"the
+  sentinel must BE the character the pixels show"*, which holds only while coverage is a compile-time
+  constant. Measured: `ImFontConfig::GlyphRanges` is `*LEGACY*` in ImGui 1.92 and read ONLY when
+  `RendererHasTextures == false` (`imgui_draw.cpp:3498-3499`), so **the moment the mod moves to a
+  dynamic atlas the bake side stops being a set** and this construction is dissolved, not violated. The
+  inversion that follows: under OS-supplied fonts two visibly DIFFERENT CJK names would fold to one
+  sentinel and one would take a numeric suffix. **The fold must then move off coverage onto a
+  machine-independent normalisation and the sentinel mechanism retires.** Two candidate resolutions and
+  the machine trip-wire that must fail the build the day an `OsSupplied` font source is registered are
+  in `research/findings/tooling/votv-imgui-192-upgrade-DESIGN-2026-07-30.md` §5. Recorded here rather
+  than in a commit message because a definition the next arc must redefine needs a design home.
 
 ---
 

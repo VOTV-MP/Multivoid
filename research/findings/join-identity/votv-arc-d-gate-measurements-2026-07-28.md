@@ -49,6 +49,27 @@ imgui+freetype harness that never touches the shipping build tree (`atlas_probe.
 > Left in place rather than deleted because the reasoning is the useful part: a benefit that rests
 > on a capability flag must be measured in a configuration the product can actually reach.
 > See `[[lesson-a-capability-can-be-silently-stripped-not-asserted]]`.
+>
+> **RF3's "OPTIMISATION with its own precondition" FRAMING IS SUPERSEDED 2026-07-30 — the upgrade was
+> actually attempted and MEASURED.** Decision of record:
+> `research/findings/tooling/votv-imgui-192-upgrade-DESIGN-2026-07-30.md`. Three corrections to what
+> is written above and in M2:
+>   1. **The "structural" DX12 precondition is largely already built.** `ImGui_ImplDX12_InitInfo`
+>      wants `SrvDescriptorAllocFn`/`FreeFn` over an app-owned heap, and we have owned exactly that
+>      since the July UI-texture work: a 256-slot SRV heap (`overlay_backend_dx12.cpp:36`, `:258`),
+>      per-slot handle math (`:527-538`), fence-gated slot recycling (`:88-113`, `:547-558`). What is
+>      missing is wrapping it in two callback signatures.
+>   2. **The whole port is 3 files, +18/-14, and it LINKS** (400 TUs compiled; DLL +71 KB / +0.41 %;
+>      logs `build/imgui1929_pricing{,2}.log`, spike reverted). Measured against **v1.92.9**.
+>   3. **The capability-strip citation moved**: it is `imgui_impl_dx12.cpp:987` at v1.92.9 (was `:984`
+>      at v1.92.8), and `:894` additionally asserts *"Only 1 simultaneous texture allowed with legacy
+>      ImGui_ImplDX12_Init() signature!"*. The FINDING stands unchanged and is still the reason a clean
+>      compile is not a working upgrade.
+>
+> The 1.92 upgrade is now on the CJK critical path rather than beside it: the 8-round `/qf` of
+> 2026-07-29/30 measured that CJK is unaffordable on 1.91.5 **whatever the glyph source and whatever
+> the bake trigger**, because there is no dynamic atlas. M2's own on-demand table below (3,000 drawn
+> hanzi = 8 MB / 82 ms at x1.0, against the eager path's 64-256 MB) is the size of that prize.
 
 **~~The fork in §9b.7 item 1 — (A) bake the repertoire on 1.91.5 vs (B) upgrade to 1.92 — is
 decided by measurement, not by judgement: (B).~~** (Struck 2026-07-28; see the box above.)
@@ -157,6 +178,30 @@ and keeps an RGBA32 copy regardless (`imgui_draw.cpp:2501-2523`). The GPU textur
 ---
 
 ## M2 — the 1.92 classified diff
+
+> **CORRECTED 2026-07-30 BY AN ACTUAL BUILD against v1.92.9** (`build/imgui1929_pricing.log`). The
+> table below was derived from the CHANGELOG plus a call-site grep; three of its rows did not survive
+> compiling. Full record: `research/findings/tooling/votv-imgui-192-upgrade-DESIGN-2026-07-30.md` §2.2.
+>
+> - **Row #7 is WRONG.** *"`GetTexDataAsRGBA32` / `Build` / `SetTexID` / `IsBuilt` obsoleted — **zero**
+>   sites in our code — free"* — in fact **`ImFontAtlas::TexPixelsRGBA32` / `TexWidth` / `TexHeight`
+>   are REMOVED FIELDS** and we reference them at **10 places** in `fonts.cpp` (the font selftest plus
+>   two log lines); `fonts.cpp:350` also calls `io.Fonts->Build()` explicitly. This was the single
+>   largest cluster of real errors.
+> - **Rows #1, #3, #4 are NOT compile breaks — they are RULE-2 baggage.** 1.92.9 keeps obsolete shims:
+>   `imgui.h:4133` `inline void PushFont(ImFont* font)` forwards to `PushFont(font, font->LegacySize)`,
+>   and `CalcWordWrapPositionA` (`imgui.h:3968`) / `SetWindowFontScale` both survive. Our single-arg
+>   sites therefore compiled silently. They still need migrating, as baggage rather than as errors.
+> - **Row #2's site list is STALE** (line numbers moved and the file set changed): the real sites at
+>   v1.92.9 are `fonts.cpp:395`, `hud.cpp:125`, `chat_view.cpp:210` — `chat_view.cpp` did not exist
+>   when this table was written.
+> - **A break this table does not list at all:** `ImFont::FindGlyphNoFallback` MOVED to `ImFontBaked`
+>   (reached via `font->GetFontBaked(px)`), and it now **BAKES on miss** — which changes what the font
+>   selftest can assert. Row #6's "and this is the *win*, not a cost" understates it: `GlyphRanges` is
+>   dead input once the flag is on, which dissolves arc D2's fold==bake construction.
+>
+> Row #9 (DX12 descriptor allocation) stands as the structural item, but see the Verdict box above —
+> the allocator is largely already built.
 
 Priced against **our call sites**, not by line count — the error named in
 `[[lesson-price-a-dependency-by-repair-history-not-by-line-count]]`. Diff is

@@ -715,7 +715,12 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   value by hand, constructing it the way the code numbers rather than the way it reads.
   `memory/lesson_a_selftest_expectation_can_be_the_bug.md`
 - **A capability can be silently STRIPPED where you expected an assert — and no compiler control can see
-  it.** Measured 2026-07-28 pricing ImGui 1.92: `imgui_impl_dx12.cpp:984` does
+  it.** *(Re-verified 2026-07-30 against **v1.92.9**: the strip is now `imgui_impl_dx12.cpp:**987**`, and
+  `:894` additionally asserts "Only 1 simultaneous texture allowed with legacy ImGui_ImplDX12_Init()
+  signature!". The finding is unchanged and was the decisive fact of the upgrade measurement — but note
+  what it does NOT say: it is DX12-only, so a straight port ships **DX11 WITH the dynamic atlas and DX12
+  without it**, i.e. one build with two drawable repertoires selected by the player's RHI.)*
+  Measured 2026-07-28 pricing ImGui 1.92: `imgui_impl_dx12.cpp:984` (v1.92.8 line) does
   `io.BackendFlags &= ~ImGuiBackendFlags_RendererHasTextures` when the legacy `Init` signature is used. It
   does not assert; it degrades. The upgrade would have paid its whole cost (a submodule bump, a semantic
   sweep of four kept redirects) for none of its benefit — 16-64 MB and a 139-416 ms atlas rebuild instead
@@ -725,6 +730,51 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   flag, grep the vendored backend for `&= ~<FLAG>` before believing any benefit number, and ship a boot
   assertion that the flag survived on EVERY backend.
   `memory/lesson_a_capability_can_be_silently_stripped_not_asserted.md`
+
+- **An upgrade can demote your INPUT to a hint, with a clean compile.** MEASURED 2026-07-30 against ImGui
+  **1.92.9**: `ImFontConfig::GlyphRanges` — the array we pass on every font add, and on which arc D2's
+  whole *"one generator mints both what FOLDS and what BAKES, so they cannot drift"* construction rests —
+  is still a public field, still accepted, still warning-free, and **read in exactly ONE function**
+  (`ImFontAtlasBuildLegacyPreloadAllGlyphRanges`, `imgui_draw.cpp:3540`) called only under
+  `if (atlas->RendererHasTextures == false)` (`:3498-3499`). With the dynamic atlas on it bounds
+  **nothing**: the atlas draws whatever the face cmap carries (8,148 cp for our faces vs the 2,517 we
+  fold). The on-demand path doesn't consult it at all — `ImFontBaked_BuildLoadGlyph` (`:4562-4571`) gates
+  only on `Locked`/`NoLoadGlyphs` and uses `GlyphExcludeRanges`, a **different field**. So a naming
+  invariant is not violated but **DISSOLVED**, and a prior 9-row classified diff had filed this as
+  *"ranges unnecessary — 1 site — and this is the win, not a cost"*. Corollary measured the same day:
+  because on-demand baking is NOT gated on the flag, a "mechanical port" keeping the old init is **not
+  behaviour-identical** either. *Look FIRST:* grep the new version for **who READS each field you set**,
+  not whether the field still exists; if the only reader sits behind a capability guard you now have two
+  behaviours in one build. `memory/lesson_an_upgrade_can_demote_your_input_to_a_hint.md`
+
+- **Querying a lazy cache POPULATES it — so the question you asked is not the one answered.** MEASURED
+  2026-07-30: `ImFontBaked::FindGlyphNoFallback` (`imgui_draw.cpp:5361-5373`) sets `LoadNoFallback = true`
+  and **calls `ImFontBaked_BuildLoadGlyph`**. The `NoFallback` in the name governs failure behaviour, not
+  mutation. Under 1.91.5 the same call is a pure read of an eagerly-built atlas, so `ui/fonts.cpp`'s boot
+  selftest means *"the eager bake included X"*; under 1.92 it means *"this face CAN produce X"* — a cmap
+  fact `build_repertoire.py` already knows at generate time — and the instrument now **mutates its own
+  subject** (four glyphs baked) before later assertions read atlas bytes. It does not become
+  pass-by-construction (a codepoint no face carries still returns NULL, so `U+4E00` stays a valid RED) but
+  its verdict must be **relabelled or it lies about what it proves**. *Look FIRST:* before founding an
+  assertion on an accessor into any lazily-populated store, open the accessor body and check for a
+  build/insert on the miss path. Sibling: `[[lesson-a-fallback-glyph-must-be-asked-for]]` — presence in the
+  FONT is not presence in the ATLAS, and now asking about the atlas changes it.
+  `memory/lesson_querying_a_lazy_cache_populates_it.md`
+
+- **A clean build after a major dependency bump may be riding OBSOLETE SHIMS.** MEASURED 2026-07-30:
+  building the whole mod against ImGui 1.92.9 gave errors in only 3 UI files — and three call sites a
+  prior classified diff had listed as breaks produced **no error at all**, because `imgui.h:4133` keeps
+  `inline void PushFont(ImFont*)` (plus `CalcWordWrapPositionA` at `:3968` and `SetWindowFontScale`) inside
+  `#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS` — even though the same header says the single-arg version was
+  *"REMOVED"*. The same diff's *"`GetTexDataAsRGBA32`/`Build`/`IsBuilt` obsoleted — **zero** sites — free"*
+  row was **wrong in the other direction**: 10 references to removed *fields* (`TexPixelsRGBA32`/`TexWidth`/
+  `TexHeight`) plus an explicit `io.Fonts->Build()`. A changelog + call-site grep mis-prices in BOTH
+  directions (shims absorb rows; a removed FIELD never appears in a list of removed FUNCTIONS), and its
+  line numbers rot (a cited file didn't exist yet). *Look FIRST:* **don't price a bump from the changelog —
+  build it** as a throwaway spike (snapshot beside the pin, `-D<DEP>_DIR`, keep the log, revert), then
+  **build again with the obsolete layer OFF** — only the second build shows the true migration surface.
+  Every surviving shim call is RULE-2 baggage with its own line in the plan.
+  `memory/lesson_a_clean_upgrade_build_may_be_riding_obsolete_shims.md`
 
 - **A drill whose inputs stay UNDER the threshold proves the half that was never broken.** MEASURED
   2026-07-28: arc D1 shipped "Cyrillic nicknames work", photographed with `Пельмень` — 8 characters,
@@ -931,6 +981,37 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   list as LIVE WORK — read it before opening another design pass, and prefer an ungated+measured+small
   item over an interrogated+large one. Depth on a sub-thread is not progress on the parent.**
   `memory/feedback_reanchor_on_the_originating_ask_not_the_current_thread.md`
+- **Five objections that share one root are ONE objection and a list.** A design was carried forward for
+  two sessions as *"DEAD on five counts, three of them measured"*. Taken apart (2026-07-30): count 4 was
+  **false** against the very prior art it cited (MTA hands a FILE to the OS via `AddFontResourceEx` +
+  `D3DXCreateFont`; `MapCharacters` is a discovery API MTA never touches), count 2 was a **product
+  question**, count 1 a **survivable cost**, count 6 an **invariant to preserve** — and count 3, the only
+  real kill, was a **CONSEQUENCE** of the missing dynamic atlas, not an independent fact. A numbered list
+  reads as cumulative evidence and nothing in its shape prompts you to ask whether the items are
+  independent. *Look FIRST:* classify each count (kill / cost / constraint / product question / false)
+  before counting it; then ask of every surviving kill *"cause or consequence?"* — **if prior art runs the
+  same mechanism safely at scale, the difference between them and you IS the root.**
+  `memory/lesson_several_objections_may_share_one_root.md`
+- **Decompose a rejected mechanism into AXES before telling the user their choice is dead.** The user chose
+  *«lets not ship them in dll, lets ship them as mta does»* — OS fonts, on demand. A later `/qf` killed
+  "on demand" and the verdict was carried as *the user's mechanism is dead*. It contains **two orthogonal
+  axes**: SOURCING (DLL donor vs the player's fonts — what the user actually chose) and TRIGGERING (eager
+  vs on-first-sight — the only axis the objection touched). Six rounds argued mechanism against a decision
+  already made, while the half the user cared about went unexamined. *Look FIRST:* write the chosen
+  mechanism as a conjunction of axes, attach every objection to ONE named axis, and report per axis
+  ("the sourcing half stands; the triggering half fails, because…") — never "your mechanism is dead". If
+  the surviving axes still don't solve it, say so **with the reason it is mechanism-independent**.
+  `memory/feedback_decompose_a_rejected_mechanism_into_axes.md`
+- **A cost number must carry its REGIME, or it will be quoted in the wrong one.** Three fusions in ONE
+  `/qf` pass, each after conceding the previous: eager-bake numbers quoted as the price of *demand* bake
+  (demand ships **zero** DLL bytes — the trade is not freeze SIZE but **who holds the lever**, local-rare
+  vs remote-unbounded); an in-game 58-80 ms measurement glued to an offline 173 ms probe cell as one
+  "58-173 ms" range; and a LEGAL price (`+FULL CJK`, 4096x16384) fused with an ILLEGAL one (`EVERYTHING`
+  @worst@x2.0, 4096x32768 — no font texture at all), which reads as "there is no YES branch" when there
+  is. The mechanism: regimes live in the surrounding prose while numbers travel alone. *Look FIRST:* put
+  the regime **in the label** (`+FULL CJK eager @default x1.0: 64 MB / 810 ms`); never merge an in-game
+  number with a probe number into one interval; re-derive from the source table, never from your own
+  previous summary. `memory/lesson_a_cost_number_must_carry_its_regime.md`
 
 ### 1b. Standing working agreements (previously indexed NOWHERE)
 

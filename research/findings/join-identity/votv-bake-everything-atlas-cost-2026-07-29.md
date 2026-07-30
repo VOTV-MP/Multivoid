@@ -17,8 +17,27 @@ all?"*
 > can carry them. Our faces cover **every assigned Greek character**; 144 block slots minus 9 reserved
 > = 135. See `[[lesson-a-coverage-gap-can-be-the-character-sets-own-hole]]`.
 >
-> §3b (full CJK) is UNCHANGED and still unbuilt — it is answered by on-demand OS fonts, which still
-> owes a `/qf` (rebuild FREQUENCY is the open problem: ImGui 1.91.5 has no partial atlas update).
+> ~~§3b (full CJK) is UNCHANGED and still unbuilt — it is answered by on-demand OS fonts, which still
+> owes a `/qf` (rebuild FREQUENCY is the open problem: ImGui 1.91.5 has no partial atlas update).~~
+> **STALE THE DAY IT WAS WRITTEN, corrected 2026-07-30.** That `/qf` had ALREADY run — §7a below,
+> added in `bafa8e42`, records it killing the design. This box was written from a memory file instead
+> of from the document it sits on top of; the same false-status failure the sweep exists to prevent,
+> committed inside the sweep.
+>
+> **The 8-round `/qf` of 2026-07-29/30 then settled §3b properly, and its answer is ONE ROOT, not five
+> objections:** CJK is unaffordable in ImGui 1.91.5 **whatever the glyph source and whatever the bake
+> trigger**, because 1.91.5 has no dynamic atlas. §7a's counts 1 and 6 are downgraded (a survivable
+> cost; an invariant to preserve, not an impossibility), count 4 does not survive substituting MTA's
+> real mechanism, and **only count 3 kills — because it is a CONSEQUENCE of the missing dynamic atlas,
+> not an independent fact.** MTA absorbs arbitrary remote text only because CEGUI rasterises per PAGE
+> and evicts (`CEGUIFont.cpp:1510-1527`): one remote codepoint costs it a page, ours costs a whole
+> atlas. Decision of record + the measured 1.92 migration:
+> `research/findings/tooling/votv-imgui-192-upgrade-DESIGN-2026-07-30.md`.
+>
+> **Also corrected: §7a conflates SOURCING with TRIGGERING.** "Don't ship them in the dll" (the user's
+> words) is about sourcing; count 3 kills triggering. Eager-from-OS-fonts has zero DLL bytes and no
+> remote lever — it just does not rescue CJK, because the atlas and bake costs below are properties of
+> baking 20,992 glyphs into a STATIC atlas regardless of where the outlines came from.
 
 **Status: MEASURED; §3a SHIPPED 2026-07-29, the rest unbuilt.** Instrument: `tools/probes/atlas_probe` (dev-only, RULE-2 exempt),
 extended this session with four new tiers and rebuilt with `-DWCHAR32=ON` so `ImWchar` is 32-bit
@@ -129,6 +148,20 @@ and the emoji donor at `U+1FAF6` already set it. Adding all of CJK moves the max
   8-16x the texture, a multi-second freeze per rebake, and a configuration that exceeds the D3D texture
   limit outright. §9d.4's *"if CJK is ever embedded, this section is the starting point"* still holds —
   and this section is now the price list.
+  > **UN-FUSE THESE TWO PRICES (correction 2026-07-30).** The bullet above welds `+FULL CJK` to
+  > `EVERYTHING` and reads as one verdict; §2/§3b/§3c actually price two different things:
+  > **`+FULL CJK` alone is LEGAL at every config** (64-256 MB atlas, **+6.96 MB** DLL, 810-3,192 ms
+  > bake; it lands on 4096x16384 = exactly the D3D cap, with zero headroom but not over it). **Only
+  > `EVERYTHING` at worst-config x2.0 is ILLEGAL** (4096x32768 -> `CreateTexture2D` fails -> no font
+  > texture at all). So a purchasable YES branch for hieroglyphs does exist, and its real price is the
+  > **0.8-3.2 s render-thread freeze on every atlas rebake** (window drag, UI-scale slider, family
+  > switch) plus 7 MB of DLL — not the 11.7 MB illegal row.
+  > **A second fusion to avoid:** these are EAGER numbers. The demand mechanism ships **zero** DLL
+  > bytes and its per-rebake cost is today's real rebake (in-game measured 58-80 ms; 173 ms is an
+  > offline worst-config probe cell, and gluing those two into one "58-173 ms" range was itself an
+  > error made three times in one `/qf`). The trade is not freeze SIZE, it is **who holds the lever**:
+  > eager = a big stall on a rare LOCAL trigger; demand = a smaller stall on an unbounded REMOTE one.
+  > Never quote a bake number without saying which regime it belongs to.
 - The `16-64 MB` figure in §9d should be read as **the cost of ImGui's "common" subset**, not of CJK.
   The whole-block cost is 64-256 MB.
 
