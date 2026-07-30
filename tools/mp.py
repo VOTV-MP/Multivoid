@@ -850,6 +850,20 @@ def cmd_smoke(args) -> None:
                 "'config-selftest: DONE fail=0' (selftest failed or never ran)")
             sys.exit(8)
         log("config-selftest: DONE fail=0 confirmed in the host log")
+    # LOG HEALTH, ON EVERY SMOKE -- not just the i18n one. These checks (strict
+    # UTF-8, a line that formatted to nothing, any 'selftest: FAIL', and the
+    # POSITIVE 'font selftest: DONE fail=0') were written for smoke_i18n and
+    # wired only there, so the plain smoke could not see a font selftest fail at
+    # all. Measured 2026-07-30: a build with two deliberately-failing selftest
+    # rows and 'fail=2' in both peer logs printed PASS from this very function.
+    health: list[str] = []
+    for lbl, d in (("HOST", HOST_DIR), ("CLIENT", CLIENT_DIR)):
+        health += _peer_log_health(lbl, d / "multivoid.log")
+    if health:
+        log(f"FAIL: {len(health)} log-health issue(s):")
+        for h in health:
+            log(f"  - {h}")
+        sys.exit(9)
     log(f"PASS: both peers stable, client connected (slot {cmk['assigned_slot']}), "
         f"host puppet spawned, no RAM breach"
         + (f", {cmk['stale_drops']} benign stale-gen drop(s)" if cmk["stale_drops"] else ""))
@@ -1291,7 +1305,7 @@ def cmd_smoke4(args) -> None:
             # is excluded because the host may legitimately have renamed it.
             must = ([n for j, n in enumerate(want_names) if j != idx] +
                     [m for j, m in enumerate(want_msgs) if j != idx])
-            failures.extend(_i18n_checks(lbl, gd / "multivoid.log", must))
+            failures.extend(_peer_log_health(lbl, gd / "multivoid.log", must))
         # The host is the only peer that logs an arbitration decision, and that
         # line is the one the C-locale defect deleted. Its ABSENCE is the finding.
         htext, _ = _read_log_strict(HOST_DIR / "multivoid.log")
@@ -1519,8 +1533,23 @@ def _read_log_strict(path: Path):
 _EMPTY_LINE = re.compile(r"^\[\d\d:\d\d:\d\d\] \[\w+\s*\]\s*$")
 
 
-def _i18n_checks(label: str, path: Path, must_contain: list[str]) -> list[str]:
-    """Every assertion one peer's log can answer. Returns failure strings."""
+def _peer_log_health(label: str, path: Path, must_contain: list[str] | None = None) -> list[str]:
+    """Every assertion one peer's log can answer. Returns failure strings.
+
+    NOT i18n-SPECIFIC, and the name it used to carry (`_i18n_checks`) was the
+    whole defect. Nothing in here is about mixed scripts: strict-UTF-8 decoding,
+    a line that formatted to nothing, a selftest FAIL, the positive font-selftest
+    line -- those are health questions about ANY peer log. But it was only ever
+    called from smoke_i18n, so the plain `smoke` verdict never asked them, and on
+    2026-07-30 a deliberately-mutated font selftest logged two ERROR rows and
+    `fail=2` while the smoke printed PASS. The check existed, was correct, and
+    was wired to one scenario -- [[lesson-a-gate-on-one-verb-reads-as-a-gate-on-
+    the-path]] in its purest form.
+
+    `must_contain` stays optional because only the i18n run has specific strings
+    it demands survive the wire; every other caller wants the health half.
+    """
+    must_contain = must_contain or []
     fails = []
     text, err = _read_log_strict(path)
     if err:

@@ -159,6 +159,84 @@ void RunSelftest(ImFontAtlas* atlas, ImTextureData* tex) {
     // the fonts that shipped are describing different builds.
     ok(!f->IsGlyphInFont(0x4E00), "U+4E00 is ABSENT (the instrument can still say no)");
 
+    // THE NEGATIVE CONTROLS -- the exclude mechanism asserted from the CONFIG
+    // end, which the superset invariant cannot reach.
+    //
+    // That invariant only fires once something DRAWS an offending codepoint, so a
+    // config nobody's text exercises is a hole in it. The two configs least
+    // likely to be exercised are exactly the two no drill types into: the
+    // backstop merges and the emoji donor.
+    //
+    // Census-derived and MEASURED 2026-07-30 against the shipped .ttf cmaps
+    // (tools/text/build_repertoire.py reads the same files), not assumed:
+    //   U+00AD  SOFT HYPHEN   all seven embedded faces, NOT the donor
+    //   U+E0B0  Powerline     JetBrains Mono only -- reaches via MergeBackstops
+    //   U+E0067 TAG LATIN g   the donor only -- and the TAG class is the one
+    //                         whose index tables cost 1.04 -> 7.34 MB per face
+    //                         if it ever bakes
+    //
+    // EACH ROW IS A CONJUNCTION AND BOTH HALVES EARN THEIR PLACE. A face must
+    // still CARRY the codepoint or the probe is vacuous -- it would pass on a
+    // build where the font that supplied it was dropped, proving nothing while
+    // looking green. And the table must still FORBID it. IsGlyphInFont walks the
+    // sources' cmaps (imgui_draw.cpp:5391) and does NOT consult
+    // GlyphExcludeRanges, so the conjunction is well-formed rather than
+    // self-cancelling -- measured, because if it did consult it, one half would
+    // make the other unreachable.
+    static const struct { uint32_t cp; const char* what; } kNegative[] = {
+        {0x00AD,  "U+00AD is carried (all 7 faces) and EXCLUDED"},
+        {0xE0B0,  "U+E0B0 is carried (JetBrains Mono) and EXCLUDED -- the backstop path"},
+        {0xE0067, "U+E0067 is carried (the donor) and EXCLUDED -- the TAG class"},
+    };
+    for (const auto& p : kNegative)
+        ok(f->IsGlyphInFont(static_cast<ImWchar>(p.cp)) && coop::text::InExcludeSet(p.cp),
+           p.what);
+
+    // ...and the FIELD ITSELF, per config, which is the failure the three probes
+    // are NAMED for and still cannot see. A probe can only say "the TABLE forbids
+    // this"; whether a given ImFontConfig ever RECEIVED the table is a different
+    // fact. ui/fonts.cpp sets it in two funnels precisely so it cannot be a site
+    // list, and this is the runtime half of that argument -- a fifth config added
+    // later is caught here, at boot, instead of by the invariant after something
+    // draws the wrong thing.
+    //
+    // CONTENT, NOT POINTER: ImGui ImMemdups the list into its own allocation
+    // (imgui_draw.cpp:3116), so identity against ui::fonts::ExcludeList() is
+    // false for every source by construction.
+    //
+    // AND IT COMPARES AGAINST coop::text::ExcludeRanges DIRECTLY, not against
+    // ui::fonts::ExcludeList(), which returns nullptr under the
+    // dev.atlas_no_exclude_drill row. Comparing against that would make this
+    // check pass (NULL == NULL) in exactly the state it exists to detect --
+    // [[lesson-an-instrument-never-shown-failing-passes-by-construction]] through
+    // the back door of a drill knob.
+    size_t nRanges = 0;
+    const coop::text::CodepointRange* ranges = coop::text::ExcludeRanges(&nRanges);
+    int badSources = 0, firstBad = -1;
+    for (int s = 0; s < atlas->Sources.Size; ++s) {
+        const ImWchar* list = atlas->Sources[s].GlyphExcludeRanges;
+        bool good = (list != nullptr);
+        if (good) {
+            // Length first, walking the list's OWN terminator, so a short list is
+            // never read past its end. Unambiguous because no value in the table
+            // can be zero: the static_assert in coop/text/repertoire.cpp forbids
+            // a leading U+0000 and every `end` is >= its `begin`.
+            size_t len = 0;
+            while (list[len] != 0) ++len;
+            good = (len == nRanges * 2);
+            for (size_t i = 0; good && i < nRanges; ++i)
+                good = list[i * 2] == static_cast<ImWchar>(ranges[i].begin) &&
+                       list[i * 2 + 1] == static_cast<ImWchar>(ranges[i].end);
+        }
+        if (!good && ++badSources == 1) firstBad = s;
+    }
+    ok(badSources == 0, "every ImFontConfig carries the generated exclude table");
+    if (badSources > 0)
+        UE_LOGE("font selftest:   %d of %d source(s) lack the generated exclude table, first "
+                "index %d -- that config bakes its WHOLE cmap, and the fold table sentinels "
+                "every codepoint of it, so two legible names can collapse to one key.",
+                badSources, atlas->Sources.Size, firstBad);
+
     // THE ONE DELIBERATE BAKE.
     const float px = ui::fonts::PxFor(ui::fonts::Role::Nameplate);
     ImFontBaked* baked = f->GetFontBaked(px);
@@ -196,7 +274,6 @@ void RunSelftest(ImFontAtlas* atlas, ImTextureData* tex) {
             tex ? tex->Width : 0, tex ? tex->Height : 0,
             (tex && tex->Format == ImTextureFormat_RGBA32) ? "RGBA32" : "Alpha8",
             tex ? tex->UniqueID : 0, nonGrey);
-    (void)atlas;
 }
 
 }  // namespace
