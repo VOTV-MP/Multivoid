@@ -2137,6 +2137,27 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 
 ## 4. Dispatch, hooks & input seams
 
+- **The SAME distinction can be needed in BOTH directions, two terms apart — and the second
+  direction is the one nobody asks about.** MEASURED 2026-07-31, GitHub issue #5. The fix existed
+  because VotV delivers typed keys to its in-world screens through `WidgetInteraction` on a
+  **VIRTUAL Slate user**, which `UWidget::HasKeyboardFocus()` (user 0) is structurally blind to —
+  the virtual user had to become VISIBLE. The SAME commit then added `HasFocusedDescendants()` to
+  the 1 Hz backstop, and that accessor is **ALL-USERS**: the permanently-resident screen widget
+  (`ui_consolesAtlas_C`) keeps virtual-user focus forever because nothing clears it, so the scan
+  latched `scan=1` and every text-consumable hotkey died for the session. The user reported it
+  within the hour. IDA settles it — `HasFocusedDescendants` exec `0x1427130e0` takes **no user
+  argument at all**; `HasUserFocusedDescendants` exec `0x1427132e0` steps the PlayerController and
+  resolves PC -> LocalPlayer -> `ControllerId` -> Slate user index. The `User` variant is not a
+  stricter version, it is the only one that can EXPRESS the question. **Look FIRST: when a fix
+  turns on WHO/WHICH-ONE (which user / peer / thread / slot), audit every OTHER accessor in the
+  same change for that axis — an accessor that takes no argument for the axis cannot answer about
+  it, and "all-users" reads as a safe superset when for an EXCLUDING predicate it is the defect.
+  Prefer a term re-derived from a value the game itself clears (`activeInterface`) over one that
+  reads residual focus on an object that never leaves memory.**
+  Full: `[[lesson-the-same-distinction-can-be-needed-in-both-directions]]`; fact base
+  `research/findings/tooling/votv-input-ownership-FACTS-2026-07-31.md` §4b; commits `361b6fe2`
+  (fix) and `6090706d` (correction).
+
 - **Swallowing `WM_KEYDOWN` does NOT stop `WM_CHAR` — and `WM_CHAR` is layout-translated.**
   MEASURED 2026-07-31 inside our own `WndProcDetour`: `TranslateMessage` synthesises the char from
   the keydown in the PUMP, before `DispatchMessage` ever reaches your window procedure, so returning
