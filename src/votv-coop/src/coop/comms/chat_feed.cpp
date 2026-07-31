@@ -192,13 +192,39 @@ void ProbeOnPush(const char* via, const Entry& e, size_t linesNow) {
     }
 }
 
-float FadeAlpha(uint64_t ageMs) {
-    if (ageMs >= kTtlMs) return 0.f;
+// TWO CLOCKS, because the two ramps answer different questions (2026-07-31).
+//
+// The fade-OUT asks "how long has the player had to READ this", so it must run on the
+// SUSPENDED clock -- that suspension is the whole reason a reader can page back through
+// history without watching it expire under them.
+//
+// The fade-IN asks "has this line just APPEARED on screen", which is a fact about the
+// screen and therefore about WALL time. Running it on the suspended clock was the chat
+// flicker the user reported ("it tries to append the new line and then it removes the
+// new line and then appends again"): send a message with the reveal up, and the line is
+// born while the reveal is still closing, so its effective age is pinned at 0 and
+// `FadeAlpha(0) == 0`. It is visible only because the view floors alpha at the reveal.
+// Then -- because kFadeInMs and kRevealMs are BOTH 220 -- the reveal reaches 0 in the
+// same frame the age clock finally starts, both terms are zero at once, and the row
+// drops out. It then fades back in over an entrance it had already played. A line that
+// has been on screen for 220 ms has not just arrived, and saying so is a lie about the
+// screen.
+//
+// MTA has no arrival ramp at all and ages purely on wall time
+// (`reference/mtasa-blue/Client/core/CChat.cpp:335-336`,
+// `ulTime - m_Lines[uiLine].GetCreationTime()`); we keep the ramp because it is a
+// deliberate 2026-07-04 user-facing choice, but it runs on MTA's clock.
+float ComposeAlpha(uint64_t wallAgeMs, uint64_t effAgeMs) {
+    if (effAgeMs >= kTtlMs) return 0.f;
     float a = 1.f;
-    if (ageMs < kFadeInMs)  // arrival ramp (ease-out: fast start, soft settle)
-        a = static_cast<float>(ageMs) / static_cast<float>(kFadeInMs);
-    if (ageMs > kTtlMs - kFadeMs)
-        a = static_cast<float>(kTtlMs - ageMs) / static_cast<float>(kFadeMs);
+    if (wallAgeMs < kFadeInMs)  // arrival ramp -- WALL time, see above
+        a = static_cast<float>(wallAgeMs) / static_cast<float>(kFadeInMs);
+    if (effAgeMs > kTtlMs - kFadeMs) {
+        // min(), not assignment: a line cannot be entering and expiring at once, but
+        // if the constants ever overlap the dimmer of the two is the honest answer.
+        const float out = static_cast<float>(kTtlMs - effAgeMs) / static_cast<float>(kFadeMs);
+        if (out < a) a = out;
+    }
     return a;
 }
 
@@ -361,7 +387,8 @@ void Republish(uint64_t now) {
     for (const Entry& e : g_store.live()) {
         if (n >= kMaxSnapshotLines) break;
         const uint64_t age = EffectiveAgeMs(e, now);
-        const float a = FadeAlpha(age);
+        const uint64_t wallAge = (now > e.bornMs) ? (now - e.bornMs) : 0;
+        const float a = ComposeAlpha(wallAge, age);
         FillLine(g_pub.lines[n], e, a);
         // The SAME entry rising in alpha while it sits in its fade-out TAIL is
         // impossible by this store's math (the only legitimate rise is the arrival

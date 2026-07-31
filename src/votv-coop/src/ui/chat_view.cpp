@@ -26,10 +26,11 @@ using ui::scale::S;
 // places the input bar just under this same line.
 constexpr float kBottomFrac = 0.5f;
 
-// A row is drawn once its composed alpha clears this. It is a MEMBERSHIP predicate,
-// not a consequence of the alpha: an invisible row must not occupy height, or a
-// history block that has faded to nothing would still push the live lines up the
-// screen.
+// A row's INK is drawn once its composed alpha clears this. It is NOT a membership
+// predicate and must never become one again (2026-07-31): it used to decide whether
+// a row occupied a line, which conflated "not visible yet" with "no longer exists"
+// and made a just-sent message drop out of the layout for a frame. Membership is the
+// TIER (see the row-build below); this is only about ink.
 constexpr float kAlphaFloor = 1.f / 255.f;
 
 // ---- the reveal ramp.
@@ -123,8 +124,10 @@ struct Row {
 // forEachRow runs strlen + CalcWordWrapPositionA over EVERY published entry EVERY
 // frame, to draw the ~18 rows that fit on screen. The full set is genuinely needed --
 // PgUp pages through it -- so the fix is not a smaller bound but not recomputing an
-// answer that did not change. The wrap depends on exactly three things: WHICH rows are
-// published (the snapshot's gen), the wrap width, and the font pixel size.
+// answer that did not change. The wrap depends on exactly four things: WHICH rows are
+// published (the snapshot's gen), the wrap width, the font pixel size, and the FACE --
+// a family swap from the F1 menu at the SAME px changes glyph advances without moving
+// any other key term.
 //
 // Holding `const char*` into the snapshot across frames is safe because the snapshot is
 // the function-local static below and is only refilled when its gen changes -- the same
@@ -132,10 +135,12 @@ struct Row {
 // Render thread only, like everything else in this file.
 Row  g_rows[kRowCap];
 int  g_rowsFirst = kRowCap;   // rows live in [g_rowsFirst, kRowCap)
-uint32_t g_rowsGen   = 0xFFFFFFFFu;
-float    g_rowsWrapW = -1.f;
-float    g_rowsPx    = -1.f;
-bool     g_rowsValid = false;
+uint32_t g_rowsGen     = 0xFFFFFFFFu;
+float    g_rowsWrapW   = -1.f;
+float    g_rowsPx      = -1.f;
+void*    g_rowsFont    = nullptr;  // the FACE: a swap at the same px changes advances
+bool     g_rowsHistory = false;  // was the history tier in the layout for this build
+bool     g_rowsValid   = false;
 
 }  // namespace
 
@@ -225,25 +230,37 @@ void Draw() {
     // Build the visible rows NEWEST-first into the back of a fixed array, so running
     // out of room drops the OLDEST history rather than the messages just sent.
     //
-    // MEMOIZED on (gen, wrapW, px) -- see g_rows above. The alpha floor is deliberately
+    // MEMOIZED on (gen, wrapW, px, face, showHistory) -- see g_rows above. The alpha floor is deliberately
     // NOT part of the key: alpha changes every frame as lines fade, but a row dropping
     // below the floor does not change where any OTHER row wraps, and the draw pass
     // re-reads alpha per row anyway. Keying on it would defeat the memo entirely while
     // buying nothing.
-    // WHEN the memo applies. drawnAlpha floors every entry at `reveal`, so once the
-    // reveal is at or above the visible floor NO entry can be filtered out and the row
-    // set depends only on the memo key. Below that -- chat closed, live rows fading --
-    // the filter DOES bite, and it must: a row that is skipped stops occupying a line,
-    // and letting it through would draw transparent and leave a hole in the stack. That
-    // case is bounded at kMaxLines entries (Republish only publishes the retained tier
-    // while revealing), which is the cost this loop has always paid, so it simply
-    // rebuilds. Exact, rather than a filter signature folded into the key.
-    const bool memoizable = reveal >= kAlphaFloor;
-    if (!memoizable || !g_rowsValid || g_rowsGen != s.gen ||
-        g_rowsWrapW != wrapW || g_rowsPx != px) {
+    // MEMBERSHIP IS THE TIER, NOT THE ALPHA (2026-07-31).
+    //
+    // This loop used to drop any entry whose composed alpha rounded below 1/255, and
+    // call that a membership predicate. It is not one: it conflates "not visible YET"
+    // with "no longer exists". A line you had just sent was momentarily at alpha 0 --
+    // its arrival ramp and the closing reveal hit zero in the same frame -- so it was
+    // dropped from the LAYOUT, every row below jumped, and it then faded back in. That
+    // is the second half of the flicker the user reported; the first half (the ramp
+    // running on the wrong clock) is fixed in chat_feed's ComposeAlpha.
+    //
+    // What actually decides whether a row occupies a line is which TIER it is in. Live
+    // rows always do -- they leave the layout when the STORE retires them, which is the
+    // one authority on a line's existence. History rows do only while the reveal is
+    // showing them, which is what keeps a faded-out history block from pushing the live
+    // lines out of the viewport (the real concern the alpha filter was standing in for).
+    //
+    // MTA is the same shape: `Client/core/CChat.cpp:342-359` gates only the DRAW on
+    // `fLineAlpha > 0.f` and advances `vecPosition.fY` OUTSIDE that test, so a line
+    // never loses its place by being briefly transparent.
+    const bool showHistory = reveal > 0.f;
+    const int  firstLive   = s.count - s.liveCount;
+    if (!g_rowsValid || g_rowsGen != s.gen || g_rowsWrapW != wrapW ||
+        g_rowsPx != px || g_rowsFont != font || g_rowsHistory != showHistory) {
         int first = kRowCap;
         for (int i = s.count - 1; i >= 0 && first > 0; --i) {
-            if (!memoizable && drawnAlpha(i) < kAlphaFloor) continue;
+            if (i < firstLive && !showHistory) continue;  // history, not being shown
             Row tmp[kEntryRowCap];
             int nt = 0;
             forEachRow(s.lines[i].text, [&](const char* b, const char* e) {
@@ -258,12 +275,14 @@ void Draw() {
             std::memcpy(&g_rows[first], tmp, sizeof(Row) * static_cast<size_t>(nt));
         }
         g_rowsFirst = first;
-        g_rowsGen   = s.gen;
-        g_rowsWrapW = wrapW;
-        g_rowsPx    = px;
-        // Only a build that COULD be reused is worth marking valid; an alpha-filtered
-        // one is specific to this frame's fade state.
-        g_rowsValid = memoizable;
+        g_rowsGen     = s.gen;
+        g_rowsWrapW   = wrapW;
+        g_rowsPx      = px;
+        g_rowsFont    = font;
+        g_rowsHistory = showHistory;
+        // Every build is reusable now: the row set depends only on the memo key, with
+        // no per-frame alpha term left to invalidate it.
+        g_rowsValid = true;
     }
     const int nRows = kRowCap - g_rowsFirst;
     if (nRows <= 0) return;
@@ -335,6 +354,10 @@ void Draw() {
     for (int r = top; r <= bottom; ++r) {
         const auto& l = s.lines[row[r].line];
         const float a = drawnAlpha(row[r].line);
+        // Skip the INK, never the slot -- `y` advances at the bottom of this loop
+        // whatever happens here (MTA CChat.cpp:342/357). A row that is momentarily
+        // transparent keeps its place, so nothing below it jumps.
+        if (a < kAlphaFloor) { y += rowH; continue; }
         const ImU32 outline = IM_COL32(0, 0, 0, static_cast<int>(a * 200.f));
         // Peer-action lines ("<nick> deleted an email: X") draw their predicate in
         // yellow (user 2026-07-11) so world-state actions read apart from typed chat.
