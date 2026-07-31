@@ -16,7 +16,11 @@ namespace R = ue_wrap::reflection;
 namespace coop::input::input_owner {
 namespace {
 
-// Published by TickGameThread, read from the WndProc + poller threads. One independent
+// Published by TickGameThread, read from the WndProc. (This said "the WndProc + poller
+// threads" until 2026-07-31; MEASURED FALSE -- all five MayTakeKey() call sites are in
+// WndProcDetour and nothing else reads GameOwnsText(). The pollers still use
+// ui::input_focus::IsOverlayCapturingText. Moving them onto this arbiter is the RULE-2
+// debt named below; until it lands, the atomic has exactly one consumer.) One independent
 // bool each; relaxed is right (see the header's staleness note).
 std::atomic<bool> g_gameOwnsText{false};
 std::atomic<bool> g_overlayOwnsText{false};

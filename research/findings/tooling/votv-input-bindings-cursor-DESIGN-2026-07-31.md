@@ -1,8 +1,11 @@
 # Input bindings + cursor ownership — DESIGN OF RECORD (2026-07-31)
 
-**Status: DESIGN, converged over a 20-round `/qf` pass. NOT built.** Fact base:
-`votv-input-ownership-FACTS-2026-07-31.md` (read it first; §7 is under re-measurement, see
-STEP 0 below). Thread transcript: `<scratchpad>/qf_thread.md`.
+**Status: the CURSOR half is BUILT (`b8c34198`); the KEY-BINDING half is DESIGN, NOT built.**
+Converged over a 20-round `/qf` pass. **Read the STEP-3 box before the STEP-3 text — the cursor
+root the pass carried for 20 rounds was WRONG, and the measurement that replaced it is recorded
+in place.** Fact base:
+`votv-input-ownership-FACTS-2026-07-31.md` (read it first; its §7 was REWRITTEN 2026-07-31
+after measurement replaced the root). Thread transcript: `<scratchpad>/qf_thread.md`.
 
 ## 0. The ask, in the user's words
 
@@ -66,6 +69,26 @@ was the round-1 reframe; the design had been built on it for ten rounds of prior
 
 ## 3. STEP 0 — measurements, on the CURRENT tree, gated behind nothing
 
+> **RESULTS BOX (2026-07-31 evening) — three of these RAN. Read this before the list.**
+> * **G3 PASSED.** `gate3: WndProcDetour thread=22964 isGameThread=1 definitelyOff=0`
+>   (`overlay_diag::NoteWndProcThread`, always-on, latches only on a definitive answer).
+>   **The WndProc IS the game thread**, so §5's synchronous-focus simplification is unlocked and
+>   G3b/G2/D11 are the only remaining thread questions. NOT yet consumed by any code.
+> * **C1 RAN and found the cursor root — which was NOT the one this document carried.**
+>   `ScaleAllSizes` truncates `MouseCursorScale` to 0 at any UI factor < 1. Fixed in `b8c34198`;
+>   see the STEP-3 box. The probe now prints `cursor_terms:` with every input to the visibility
+>   predicate (`box`, `vp`, `curScale`, `fbScale`, `GetCursorInfo` flags), which is what exposed it.
+> * **`mainPlayer`'s `AnyKey` MEASURED** (bytecode, `research/bp_reflection/mainPlayer.json`
+>   ubergraph): it BROADCASTs `anyKeyEvent`, calls `intComs_anyKey`, and forwards the key into
+>   `WidgetInteraction.PressKey/ReleaseKey/PressPointerKey/ReleasePointerKey`. **It is a TRANSPORT,
+>   not a bind** — it relays every key into the in-world 3D-widget typing path. So excluding it
+>   from `gameBinds(vk)` is right (a universal relay treated as a bind leaves no key free), but it
+>   opens a NEW question the census never asked: **a widget fed by `PressKey` INJECTION rather than
+>   by Slate focus may be invisible to the `HasKeyboardFocus` predicate.** That is exactly the
+>   *"might be other game systems"* the user hedged about.
+> * **G0 / G0b / C0 have NOT run.**
+
+
 `CaptureActive()` is *also* the cursor path's only gate (`SetCursorPosDetour`, `MouseDrawCursor`,
 the `SetCursor(nullptr)`, and `CursorFrame`'s own argument), so commit B would move the cursor
 arc's ground truth **and its instrument's own input** before it is read. Measure first.
@@ -77,10 +100,21 @@ arc's ground truth **and its instrument's own input** before it is read. Measure
 - **G3b — re-entrancy.** `HasKeyboardFocus` is a ProcessEvent dispatch and the WndProc also fires
   from modal move/resize loops and `WM_KILLFOCUS`. Drag/resize, alt-tab repeatedly, sustained run.
   Fallback is graceful: the tick-side O(1) refresh still removes the 1 Hz component.
-- **G0 — type `sv.request` into VOTV's console and see it EXECUTE.** The acceptance test for the
-  already-shipped `f03c04f0` **and for issue #5 itself**. Our own key trace is corroboration, not
-  the verdict (a KEYDOWN that passes can still be followed by a CHAR eaten one gate down).
-  M1 only ever measured `textbox_search` inside `ui_playerInventory_C`.
+- **G0 — type `sv.request` into VOTV's IN-GAME SAT SERVER CONSOLE and see it EXECUTE.**
+  **CORRECTED 2026-07-31 by the user: there are TWO consoles and this pass conflated them.**
+  * `UInputSettings.ConsoleKeys` (`Tilde` by default, **`F10`** on this dev box because the player
+    rebound it) opens **UE4's DEVELOPER console**. Real, and it matters for the key-collision
+    work in §5 — but it is NOT the reporter's console.
+  * The reporter's console is the **in-world SAT terminal**: `Uui_console_C`, driven by
+    `panel_SATconsole`. **No key opens it** — the player walks up and presses `E`. It types
+    through Slate keyboard focus on its `UEditableTextBox` @0x0268, and `sv.request` is confirmed
+    in its `enterCommand` handler (FACTS §4).
+  Consequence for the gate: it is NOT a `PostMessage` keystroke sequence — it needs in-world
+  navigation to the terminal, which is why the user's own hands-on is the cheap path here
+  (stand at the console, press `T`, report whether a `t` types or our chat opens).
+  Our key trace is corroboration, not the verdict (a KEYDOWN that passes can still be followed by
+  a CHAR eaten one gate down). **M1 only ever measured `textbox_search` inside
+  `ui_playerInventory_C` — a different widget from the one that was broken.**
 - **G0b — close the console, press `T` immediately;** chat must open.
 - **C0 — reproduce the USER's cursor sequence.** Pointer onto the Multiplayer button with the real
   `SetCursorPos` **before** capture (setup, not the input under test), click, observe. Per
@@ -113,10 +147,12 @@ BROKEN at `imgui_overlay.cpp:216-221`, and a principle-8 violation (chat unreach
 - **B must be behaviour-preserving for the cursor path** — the *owns-cursor* term must be exactly
   today's `CaptureActive()` at all four cursor sites, proven with the body-diff + mutate recipe, or
   C1 re-runs.
-- Fix three stale `docs/LESSONS.md:794-798` citations (two of them in shipped code) — that range is
-  the roster-screenshot lesson; the CaptureActive one is ~800-814. **Cite by title, not by line.**
-- Delete the false comment at `imgui_overlay.cpp:196` (*"Tilde is free in VOTV"* — the cooked
-  default is `ConsoleKeys=Tilde`).
+- ~~Fix three stale `docs/LESSONS.md:794-798` citations~~ **DONE 2026-07-31 in the documentize
+  commit, not deferred to this one** — `input_owner.h`, `imgui_overlay.cpp` and the FACTS doc now
+  cite by TITLE. That range is the roster-screenshot lesson; the CaptureActive one is ~800-814.
+- ~~Delete the false comment (*"Tilde is free in VOTV"*)~~ **DONE 2026-07-31 in the documentize
+  commit** — replaced with the measurement (the cooked default IS `ConsoleKeys=Tilde`, so a
+  fresh-install player loses the developer console to our scoreboard).
 
 **Not in commit B:** a `WM_CHAR` latch on the last keydown's verdict. It was designed and dropped —
 walking the measured trace, the CHAR path behaved correctly, and for a key taken without opening a
@@ -194,7 +230,31 @@ surfaces, the rebind-capture panel) owns its keys by the same rule.
 measured loss (`CHAR 0x435 SWALLOWED by CaptureActive`) lives entirely on the message side, which
 no bitset or registry reaches.
 
-## 6. STEP 3 — COMMIT A (cursor), shaped by C0/C1
+## 6. STEP 3 — COMMIT A (cursor) — **BUILT 2026-07-31, `b8c34198`**
+
+> **AS-BUILT BOX. The plan text below this box is SUPERSEDED in its premise** and is kept only
+> because the reasoning that produced it is what the next cursor question will want.
+>
+> **What shipped is NOT the ownership invariant this section designed.** C1 measured the real
+> root: `ImGuiStyle::ScaleAllSizes` runs `ImTrunc` over `MouseCursorScale`, which is a unitless
+> MULTIPLIER, not a pixel size — `ImTrunc(1.0 * 0.833) == 0`, and `RenderMouseCursor` then draws a
+> ZERO-AREA quad. `RebuildScaledStyle()` (imgui_overlay.cpp) is now the one owner of
+> reset-then-scale and floors the cursor scale at 1. Guarded loudly, and the guard was SHOWN RED
+> by `VOTVCOOP_CURSOR_SCALE_DRILL=1` before being trusted. **VERIFIED by the user's own hands-on**
+> ("cursor is invisible" on the drill, "cursor was visible" on the fix) at the same 0.833 factor.
+>
+> **The ownership half shipped too, but for the OTHER symptom** the user reported mid-session
+> (*"closed the multiplayer screen, went into ESC, the cursor was acting weird and not respecting
+> my mouse movements"*): `ui/overlay_cursor.cpp`, the MTA `CLocalGUI::Draw` transition
+> (restore-on-enter / store-and-recentre-on-exit). **This half is BUILT + smoke-clean but NOT
+> hands-on confirmed.** Note it CONTRADICTS C-D5 below, which said "on release, do nothing" — MTA's
+> own comment on the exit write is *"to prevent the game from reacting to its movement"*.
+>
+> **What was NOT built and is no longer wanted:** the per-frame visibility invariant + re-seed
+> (C-D1). The pointer is fine whenever the window is foreground, which is the only state a player
+> is in; the frozen-pointer runs were the instrument not being foreground.
+
+### Original plan text (superseded premise; kept for its reasoning)
 
 **Ownership model:** while captured the **overlay** owns the pointer position; otherwise the game
 does. The existing ~120 Hz suppression **is** how ownership transfers — it is not a compensation,

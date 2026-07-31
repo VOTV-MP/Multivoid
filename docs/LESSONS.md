@@ -1457,6 +1457,41 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   reproduces the defect with better provenance.**
   → [[lesson-a-table-describing-another-subsystems-extent-rots-when-that-subsystem-grows]]
 
+- **A CONVERGED DESIGN PASS CAN REST ON AN UNMEASURED ROOT.** 2026-07-31: a 20-round `/qf`
+  converged on a cursor-OWNERSHIP design (per-frame invariant, seed target, shadow rollout, three
+  gates). The FIRST measurement run after it ended found a completely different root — a truncated
+  multiplier — and every ownership construct dissolved. The warning was inside the transcript three
+  rounds running: R16 *"the stated root explains the PROBE's run, not the USER's symptom"*, R17 the
+  stated mechanism recomputed to the OPPOSITE verdict, R16 again `mm=1` meaning the mouse may never
+  have entered the window. The pass answered each by designing better GATES around the premise
+  instead of going and measuring it — "measure before building" had quietly become "keep designing
+  until it is time to measure". Convergence means the critic stopped finding problems **with the
+  design**; a fresh critic reads the brief the primary wrote, so a wrong-but-coherent root makes
+  every question land on the superstructure and every answer genuinely improve it. *Look FIRST:* the
+  moment a round says the root is not established, STOP DESIGNING AND MEASURE — and ask "which of
+  my rounds survive if the root flips?" If the answer is *none*, the pass is on credit. (This does
+  NOT repeal [run `/qf` to convergence] — run it, but not on an unmeasured root. The same 20 rounds
+  paid for themselves on the KEY-BINDING half, whose facts WERE measured as it went.)
+  `memory/lesson_a_converged_design_pass_can_rest_on_an_unmeasured_root.md`
+
+- **ONE DOMAIN WORD CAN NAME TWO DIFFERENT SUBSYSTEMS — and the collision happens in the PLANNING
+  layer, where nobody is measuring.** 2026-07-31, caught by the USER in one sentence: *"What do you
+  mean VOTV console on F10? By console initially i meant in game server console."* VOTV has TWO
+  consoles that share nothing — UE4's **developer** console (opened by a KEY,
+  `UInputSettings.ConsoleKeys`, `Tilde` cooked / **`F10`** on this box because the player rebound
+  it) and the **in-world SAT server terminal** (`Uui_console_C` / `panel_SATconsole`, **no key** —
+  walk up and press `E`, types through Slate focus on its `UEditableTextBox` @0x0268). Issue #5's
+  `sv.request` is the SECOND. The fact base had them separated correctly; a GATE was nevertheless
+  planned as "press F10 and type", which would have tested a surface no affected player ever opens.
+  Both measurements were RIGHT — they were merged by a NOUN, in prose, and then survived 20 rounds
+  of interrogation because every question about "the console" got a coherent answer about one of
+  them. *Look FIRST:* when a domain word appears in two measurements taken for different reasons,
+  write both definitions side by side before either enters a plan; the user's own vocabulary is the
+  arbiter (*"server consoles"*, plural, was in the first message); and **a test whose SHAPE is
+  suspiciously easy is a warning** — convenience selected the wrong subject here, the same pull as
+  [search prior art by problem, not by assumed mechanism].
+  `memory/lesson_one_domain_word_can_name_two_different_subsystems.md`
+
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
 
 - **Row field vs per-slot state: does it describe the PERSON or the LINK?** The arc-A design put the
@@ -2373,6 +2408,21 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   `[[lesson-findfunction-does-not-walk-the-superclass-chain]]` (containers are a class family; the
   verbs live on the base `prop_container_C`). `memory/lesson_umg_click_handler_gated_on_hover_state.md`
 
+- **A CATCH-ALL KEY HANDLER IS A TRANSPORT, NOT A BIND.** Measured 2026-07-31 from `mainPlayer`'s
+  ubergraph: the `AnyKey` input events BROADCAST `anyKeyEvent`, call `intComs_anyKey`, and forward
+  the key into `WidgetInteraction.PressKey/ReleaseKey/PressPointerKey/ReleasePointerKey` — i.e.
+  `AnyKey` is the transport by which typing reaches **in-world 3D widgets**, and it consumes
+  nothing. Both obvious readings are wrong for the same reason: treat it as binding everything and
+  no key is ever free (the feature becomes impossible); dismiss it as noise and you lose the only
+  path keys take to those widgets. The consequence that matters: a widget fed by **injection**
+  rather than by Slate focus may be **invisible to a `HasKeyboardFocus` predicate** — exactly the
+  *"might be other game systems"* the user hedged about. *Look FIRST:* classify a handler by what it
+  DOES with the input (consumes / relays / observes), never by how much of it it sees; decode
+  before excluding. Decode path: `research/bp_reflection/<asset>.json` + `kdec.py`; the
+  `InpActEvt_*` stubs only set a temp and jump, so grep the decoded ubergraph for that temp — and
+  note the JSON carries **no statement offsets**, so `range=` filtering silently passes everything.
+  `memory/lesson_a_catch_all_handler_is_a_transport_not_a_bind.md`
+
 ## 5. Engine / UE4 facts
 
 - **An accessor on a WRAPPER answers about the wrapper, not the thing you meant.** MEASURED
@@ -2539,6 +2589,21 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   "None" -> string round-trips asymmetrically fail). Express NAME_None with the EMPTY string. Cost a
   3-smoke dig (v120 selftest). LOOK FIRST: signal_dynamic.cpp WriteFNameField.
   `memory/lesson_none_string_trips_fname_intern_check.md`
+
+- **SCALING A MULTIPLIER IS NOT SCALING A SIZE — and truncating one below 1 DELETES it.** Measured
+  2026-07-31, and it is the whole root of the "no cursor showing" bug the user reported 07-27:
+  `ImGuiStyle::ScaleAllSizes` ends with `MouseCursorScale = ImTrunc(MouseCursorScale * f)`
+  (`imgui.cpp:1649`). Every OTHER field it touches is a **pixel size**, where round-toward-zero is
+  sensible; `MouseCursorScale` is a unitless **multiplier** consumed as `pos + size * scale`
+  (`imgui.cpp:4131`). Our `ui::scale::Ui()` measured **0.833**, so `ImTrunc(0.833) == 0` and the
+  cursor became a **zero-area quad** — with the OS cursor hidden by our own `WM_SETCURSOR` handler,
+  that is NO cursor. Present since **v1.91.5**, not a 1.92 regression. It reads as *intermittent*
+  only because the factor tracks client size (harmless at >= 1.0). Every health signal stayed GREEN
+  throughout (`MouseDrawCursor=1 texOk=1 atlasFlags=0`) because nothing is broken — the geometry is
+  multiplied by zero. *Look FIRST:* the LAST lines of any bulk "scale everything" helper, where the
+  fields that do not fit its unit assumption cluster; and when something is "sometimes" broken,
+  find the axis it varies along and PRINT it beside the symptom (`curScale=0.000 uiScale=0.833`
+  ended this in one line). `memory/lesson_scaling_a_multiplier_is_not_scaling_a_size.md`
 
 ## 6. Assets, models, geometry
 

@@ -8,6 +8,17 @@ The trigger is **GitHub issue #5, "Unable to sv.request"** (filed by a real play
 plus the user's own 2026-07-27 report *"clicking multiplayer shows multiplayer pop up but no
 CURSOR showing"* (reproduced 2026-07-28, root NOT found until today).
 
+> **STATUS BOX, updated 2026-07-31 evening.** Two halves, very different states:
+> * **The CURSOR bug is FIXED** (`b8c34198`) and **§7 of this document was WRONG** until that
+>   commit — the root is `ScaleAllSizes` truncating `MouseCursorScale` to 0, not cursor
+>   ownership. §7 is rewritten; do not read any older copy of it.
+> * **The KEY-BINDING half is DESIGNED, NOT BUILT.** Design of record:
+>   `votv-input-bindings-cursor-DESIGN-2026-07-31.md` (20-round `/qf`).
+> * **Issue #5's acceptance test has NEVER RUN.** §8/M1 measured `textbox_search` inside
+>   `ui_playerInventory_C`. The reporter's surface is the **in-game SAT server console**
+>   (`ui_console` / `panel_SATconsole`) — a different widget, never measured. Whether the
+>   shipped `f03c04f0` closed his problem is UNVERIFIED.
+
 Everything below is `measured` unless tagged otherwise. Sources: the CXXHeaderDump
 (`Game_0.9.0n_HOST/.../CXXHeaderDump/`, 2645 classes), the BP bytecode dumps
 (`research/bp_reflection/`), the cooked paks, and a live instrumented run
@@ -144,53 +155,108 @@ Caveats that matter for the design:
   `inferred`; `save_main` is not among the dumped assets.)
 - `GetAllActionMappings` does not exist anywhere in the pak (0 hits over 8.17 GB).
 
-## 7. The cursor bug — ROOT MEASURED, and the 2026-07-28 candidate list was aimed one level too low
+## 7. The cursor bug — ROOT FOUND 2026-07-31, and it is NOT what this section said
 
-Instrument: `tools/cursor_probe.py` launches one peer with `VOTVCOOP_BROWSER_OPEN=1
-VOTVCOOP_CURSOR_PROBE=1`, asserts the game window is foreground, moves the OS cursor into the
-client area and jiggles it, then reads a per-2s line logged **immediately before
-`ImGui::Render()`** — i.e. exactly the state `imgui.cpp:6229-6230` is about to read.
-
-The drawing machinery is **healthy in every run**:
-`draw=1` (MouseDrawCursor), `cursor=0` (Arrow), `texOk=1`, `atlasFlags=0x0`, `curSize=(12,19)`,
-`viewports=1`, `fg == hwnd == WindowFromPoint(cursor)`.
-
-The failing term is `io.MousePos`, and the reason is that **the OS cursor does not move**:
+**SUPERSEDED IN FULL.** Everything this section previously concluded — "the root is cursor
+OWNERSHIP, not cursor drawing", "the OS pointer does not move", "the arrow drew off-viewport" —
+is RETRACTED by measurement. The real root, fixed in commit `b8c34198`:
 
 ```
-run 3 (cursor frozen)  osScreen=(0,24)    osClient=(0,0)     imguiPos=(0,0)      overlaps=0
-                       clip=(0,24)-(853,664)   msgs mm=1 ncmm=0 raw=0 setcur=0
-                       scpCalls=903 -> 1142 -> 1382 -> 1623 -> 1864 -> 2104 -> 2344
-                       scpLast=(427,344)
-run 4 (cursor moving)  osScreen=(445,370) osClient=(445,346) imguiPos=(445,346)  overlaps=1
-                       msgs mm=20 -> 34 -> 48    writeTest wrote=1 want=(426,344) after=(426,344)
+imgui.cpp:1649  ImGuiStyle::ScaleAllSizes():  MouseCursorScale = ImTrunc(MouseCursorScale * f);
+imgui_overlay                                 st.ScaleAllSizes(ui::scale::Ui());   f = 0.833
+                                              ImTrunc(1.0f * 0.833f) == 0.0f
+imgui.cpp:4131  RenderMouseCursor():          AddImage(tex, pos, pos + size * scale, ...)
+                                              scale == 0  ->  a ZERO-AREA quad. Nothing drawn.
 ```
 
-Two facts do the work:
+Every other style field is a **pixel size**, where truncating toward zero is correct.
+`MouseCursorScale` is a unitless **multiplier**, and truncating a multiplier below 1 to 0 deletes
+the thing it scales. Present since **v1.91.5** (`git log -S"MouseCursorScale = ImTrunc"` ->
+`f401021d5 Version 1.91.5`), so NOT a regression from the 1.92.9 upgrade. With the OS cursor
+hidden by our own `WM_SETCURSOR` handler (measured: `cursorInfo showing=0 hCursor=NULL`), a
+zero-size software cursor means **no cursor at all** — the user's exact words, *"clicking
+multiplayer shows multiplayer pop up but no CURSOR showing"*.
 
-1. **VOTV calls `SetCursorPos` ~120 times per second**, always at the window centre
-   (`scpLast=(427,344)`; `scpCalls` climbs ~240 per 2 s sample). Every one of those is
-   **no-oped** by `SetCursorPosDetour` (`imgui_overlay.cpp:143-146`) while a surface is up.
-2. With the game's writes suppressed and no writes of our own, the OS cursor simply **stays
-   where it was left** — in run 3 that was client `(0,0)`, the very corner. `mm=1`,
-   `setcur=0`: a stationary cursor generates no mouse messages, so ImGui's Win32 backend has
-   nothing to update `io.MousePos` from, and the software cursor is drawn at the corner
-   (`overlaps=0` for the 12x19 arrow at `(0,-24)`), i.e. **invisible**.
+It reads as intermittent only because the factor tracks client size: at `Ui() >= 1.0` the
+truncation is harmless, below 1.0 the cursor vanishes.
 
-When the cursor *does* move — the probe's own `g_origSetCursorPos` write test (`wrote=1`,
-`after == want`) and the external jiggle — every term goes right at once and `overlaps=1`.
+**Evidence — RED then GREEN at the SAME factor, plus a real hands-on:**
 
-**So the root is cursor OWNERSHIP, not cursor drawing.** The overlay suppresses the game's
-cursor writes but never takes ownership of a pointer of its own, so where the pointer ends up
-is whatever the game happened to leave behind at the moment capture began. That non-determinism
-is exactly the reported symptom (sometimes a cursor, usually not).
+```
+drill (VOTVCOOP_CURSOR_SCALE_DRILL=1):
+  [ERROR] MouseCursorScale=0.000 at uiScale=0.833          user, live: "cursor is invisible"
+fixed:
+  style rebuilt (uiScale=1.250, MouseCursorScale=1.000)    <- built-in control: benign at >=1.0
+  style rebuilt (uiScale=0.833, MouseCursorScale=1.000)    user, live: "cursor was visible"
+  19 probe samples, curScale=1.000 throughout
+```
 
-**Retracted:** the 2026-07-28 doc's remaining candidate list (`io.MousePos` never valid because
-the backend HWND is wrong / `MouseDrawCursor` clobbered / DPI-scaled out of the client rect).
-`bd->hWnd == GetForegroundWindow() == g_hwnd` in every sample, `MouseDrawCursor=1` at the read
-site, and `win=(-8,-7)-(861,672)` / `cliOrg=(0,24)` / `cliSz=853x640` agree with the viewport
-`(0,0)-(853,640)`. Candidate (1) was directionally right — `MousePos` is indeed the failing
-term — but its stated mechanism was wrong.
+`VOTVCOOP_CURSOR_SCALE_DRILL=1` exists so the guard can be SHOWN failing — a guard never
+observed failing passes by construction.
+
+### Why the earlier conclusion was wrong — three separate errors, all mine
+
+1. **The probe runs were not foreground.** The lines this section quoted as "the pointer is
+   frozen" read `posValid=0`, `imguiPos=(-3.4e38,-3.4e38)` and **`fg != hwnd`**. ImGui's Win32
+   backend only updates `io.MousePos` while the window is foreground, so `MousePos` was
+   `-FLT_MAX` and `overlaps=0` followed mechanically. That is `docs/LESSONS.md`'s "AN INSTRUMENT
+   BLIND TO THE PHENOMENON ALWAYS REPORTS NOT PRESENT" — written 2026-07-28 while chasing this
+   very bug, and then walked into by the instrument built to chase it. Once `fg == hwnd`:
+   `posValid=1`, `overlaps=1`, and the pointer tracks the mouse normally.
+2. **"The arrow drew off-viewport" was an arithmetic error.** `imgui_draw.cpp:2650` (pinned
+   v1.92.9) gives `ImGuiMouseCursor_Arrow` an offset of `(0,0)`; the write-up used `(0,24)`,
+   mixing screen and client coordinates. With the real offset the four `ImRect::Overlaps`
+   inequalities all pass.
+3. **`osScreen=(0,24)` was read as a `ClipCursor` clamp signature.** It is equally the CLIENT
+   ORIGIN (`cliOrg=(0,24)` on that run) — one sample cannot separate the two, and no run ever
+   followed the user's actual sequence.
+
+### What DOES survive from the original investigation
+
+- VOTV calls `SetCursorPos` **~120x/s** at the window centre and every one is no-oped by
+  `SetCursorPosDetour` while a surface is up — **including with no world** (the probe runs at the
+  main-menu server browser).
+- **M5, 123 samples: the camera does NOT spin.** `ControlRotation` yaw held `-61.13` under ~118
+  suppressed recentres/second. If mouselook were `SetCursorPos(centre)` -> `GetCursorPos()` ->
+  delta, a parked pointer under suppressed writes would give a constant non-zero delta and the
+  camera would drift. It does not — so mouselook rides `WM_MOUSEMOVE`/raw input (both swallowed),
+  the ~120 Hz write is a viewport **lock**, and **our own write cannot inject camera motion**.
+  This is what licenses the transition in §7b.
+- The M2 negative control (the freeze reproduces with the probe's own write removed) was
+  methodologically right; it just controlled for the wrong hypothesis.
+
+## 7b. The SECOND cursor symptom — ownership transition, adopted from MTA
+
+Reported by the user mid-session 2026-07-31, after the scale fix was live: *"when I closed the
+multiplayer screen and went into ESC the cursor was acting weird and not respecting my mouse
+movements."* Different symptom, different root, also shipped in `b8c34198`.
+
+MTA's `CLocalGUI::Draw` (`reference/mtasa-blue/Client/core/CGUI.cpp:800-848`) runs a per-frame
+transition we were running only the middle of:
+
+```
+ENTER GUI mode:  SetCursorPos(m_StoredMousePosition);   // restore where the player left it
+                 DisableSetCursorPos();                  // then suppress the game
+LEAVE GUI mode:  GetCursorPos(&p); m_StoredMousePosition = p;
+                 SetCursorPos(width/2, height/2);        // MTA's own comment:
+                 EnableSetCursorPos();                   //   "to prevent the game from
+                 pGUI->ClearSystemKeys();                //    reacting to its movement"
+```
+
+The **exit recentre** is what answers the report: leaving the pointer parked means the game
+resumes mouselook with the whole accumulated offset. Our design had explicitly said *"on release,
+do nothing — the game self-heals"*, which MTA's comment contradicts by name.
+
+`ui/overlay_cursor.cpp` is that transition, with two divergences commented at their sites: the
+enter-restore is gated on a validity latch (MTA restores from a zeroed `POINT`, which would park
+the first surface's cursor in the screen corner — the exact artefact two probe runs mistook for a
+root cause), and the exit recentres the **client rect** rather than the screen, because this game
+runs windowed. The restore is write-then-verify, because `SetCursorPos` is silently clamped by
+whatever `ClipCursor` rect is live and we do not own that rect.
+
+**Status: BUILT + smoke PASS + the user's own hands-on for the SCALE half. The TRANSITION half
+(§7b) is BUILT and smoke-clean but has NOT been hands-on-confirmed** — the user's ESC report is
+what it was written against, and nobody has re-run that sequence since.
 
 ## 8. THE INSTRUMENTED RUN (M1-M5), 2026-07-31 -- what it settled
 
@@ -254,7 +320,9 @@ Two further findings from the same lines:
   release (the deliberate release-feeding rule at `:231`), so VOTV's `lockmouse` sees a release
   with no press.
 - TAB pressed while our menu was open logged `SWALLOWED by CaptureActive` -- a live demonstration
-  of `LESSONS.md:794-798` (our non-text surfaces eat the game's keys).
+  of the `LESSONS.md` lesson "A readiness ANNOUNCEMENT is not evidence of the VISIBLE state it
+  precedes" (our non-text surfaces eat the game's keys). Cited by TITLE: `:794-798` is a
+  DIFFERENT lesson (the roster screenshot one).
 
 ### M5 -- does the camera spin? NO.
 

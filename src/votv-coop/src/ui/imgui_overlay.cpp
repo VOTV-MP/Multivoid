@@ -247,11 +247,18 @@ LRESULT CALLBACK WndProcDetour(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
     //
     // Moved off TAB on 2026-06-03 (user req): VOTV binds TAB to the player
     // inventory -- a core, constantly-used action -- and our unconditional TAB
-    // swallow took that key away. Tilde is free in VOTV (at most UE4's dev console,
-    // which we have no reason to surface; the F1 menu is our dev surface), so taking
-    // it costs nothing. VK_OEM_3 is the physical tilde-position key on every layout
+    // swallow took that key away. VK_OEM_3 is the physical tilde-position key on every layout
     // (the Russian layout puts Ё there -- still the same scancode), so this is the
     // key left of "1" / above TAB regardless of the user's keyboard language.
+    //
+    // THIS KEY IS NOT FREE, and the comment here claimed it was until 2026-07-31 ("Tilde
+    // is free in VOTV (at most UE4's dev console, which we have no reason to surface)").
+    // MEASURED against the cooked DefaultInput.ini: `ConsoleKeys=Tilde` + `ConsoleKeys=Ñ`
+    // -- on a FRESH install this key opens UE4's developer console, and we swallow it
+    // unconditionally. (On this dev box the player has rebound it, so the live
+    // %LOCALAPPDATA% Input.ini reads `ConsoleKeys=F10` and tilde really is free HERE --
+    // which is exactly why a shipped default may not be checked against one machine.)
+    // The default moves to F3 in the bind commit; see the DESIGN doc §5.
     if (msg == WM_KEYDOWN && wParam == VK_OEM_3 &&
         (ScoreOpen() || coop::input::input_owner::MayTakeKey())) {
         if (ui::scoreboard::LocalIsHost()) {
@@ -267,7 +274,10 @@ LRESULT CALLBACK WndProcDetour(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
         if (!ui::scoreboard::LocalIsHost()) g_scoreboard.store(false, std::memory_order_relaxed);
         return 0;
     }
-    // STILL BROKEN, and deliberately not fixed here (docs/LESSONS.md:794-798): the
+    // STILL BROKEN, and deliberately not fixed here (docs/LESSONS.md, "A readiness
+    // ANNOUNCEMENT is not evidence of the VISIBLE state it precedes" -- cited by TITLE
+    // because this said `:794-798` until 2026-07-31 and that range is a DIFFERENT
+    // lesson): the
     // leading !CaptureActive() means LoadingOpen() and ScoreOpen() -- surfaces that own
     // input but own NO TEXT -- still swallow T whole, so chat is unreachable during a
     // join. The arbiter added below makes that expressible (it is the OverlayNonText

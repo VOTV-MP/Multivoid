@@ -1,17 +1,37 @@
 # MULTIPLAYER popup shows, no cursor — REPRODUCED, and the filed hypothesis is FALSE
 
-> **SUPERSEDED 2026-07-31 — the ROOT IS FOUND. Read
-> `research/findings/tooling/votv-input-ownership-FACTS-2026-07-31.md` §7 + §8 instead.**
-> Root: cursor OWNERSHIP, not drawing. VOTV calls `SetCursorPos` ~118x/s at the window
-> centre and our `SetCursorPosDetour` no-ops every one while a surface is up, so the OS
-> pointer sits wherever the game last left it — in the failing run the client corner,
-> where a 12x19 arrow is invisible. Every ImGui drawing term is healthy.
+> **SUPERSEDED TWICE. The ROOT IS FOUND AND FIXED (`b8c34198`, 2026-07-31) — and it is neither
+> this document's hypothesis NOR the "cursor ownership" one that briefly replaced it.**
 >
-> **All three "where to look next" candidates below are FALSIFIED by measurement:**
-> (1) `bd->hWnd == GetForegroundWindow() == g_hwnd` in every sample; (2) `MouseDrawCursor`
-> reads 1 at the render site; (3) no DPI mismatch inside the process (`phys == osScreen`).
-> The separate "PowerShell says (426,344), the game says (0,24)" anomaly was an ARTEFACT —
-> the game process is `dpiAware=0` and PowerShell is not, so the two were never comparable.
+> ```
+> imgui.cpp:1649  ImGuiStyle::ScaleAllSizes():  MouseCursorScale = ImTrunc(MouseCursorScale * f);
+>                                               f = ui::scale::Ui() = 0.833 -> ImTrunc == 0
+> imgui.cpp:4131  RenderMouseCursor():          AddImage(tex, pos, pos + size * 0, ...)
+>                                               -> a ZERO-AREA quad. Nothing is drawn.
+> ```
+>
+> Every other style field is a PIXEL SIZE; `MouseCursorScale` is a unitless MULTIPLIER, and
+> truncating a multiplier below 1 to 0 deletes what it scales. Present since imgui **v1.91.5**.
+> With the OS cursor hidden by our own `WM_SETCURSOR` handler, that is NO cursor at all.
+> It looks intermittent only because the factor tracks client size (harmless at >= 1.0).
+>
+> Read `votv-input-ownership-FACTS-2026-07-31.md` **§7 (rewritten)** for the full account.
+>
+> **FALSIFIED by measurement — this doc's three candidates:** (1) `bd->hWnd ==
+> GetForegroundWindow() == g_hwnd` in every foreground sample; (2) `MouseDrawCursor` reads 1 at the
+> render site; (3) no DPI mismatch inside the process (`phys == osScreen`). The "PowerShell says
+> (426,344), the game says (0,24)" anomaly was an ARTEFACT — the game process is `dpiAware=0` and
+> PowerShell is not, so the two were never comparable.
+>
+> **ALSO FALSIFIED — the intermediate "cursor ownership" root** (2026-07-31 morning): the probe runs
+> that showed a frozen pointer read `posValid=0`, `imguiPos=(-3.4e38,..)` and **`fg != hwnd`** — the
+> window was NOT FOREGROUND, so ImGui never updated `MousePos`. That is this repo's own lesson "AN
+> INSTRUMENT BLIND TO THE PHENOMENON ALWAYS REPORTS NOT PRESENT", walked into by the instrument
+> written to chase this bug. Once foreground, the pointer tracks normally.
+>
+> A separate, REAL ownership defect does exist and shipped in the same commit — the cursor fighting
+> the mouse after a surface CLOSES (`ui/overlay_cursor.cpp`, MTA's exit-recentre). Different
+> symptom, different root; do not merge them again.
 > Still NOT FIXED; the fix is designed in the FACTS doc and did not ship 2026-07-31.
 > Kept for its instrument design (the focus control) and its falsified-hypothesis record.
 

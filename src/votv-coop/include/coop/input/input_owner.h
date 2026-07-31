@@ -17,17 +17,33 @@
 // own typed text" and "are we the foreground window" are three axes that are true and
 // false independently -- TAB opens a game interface while our chat is open; the loading
 // cover owns input while owning no text; alt-tab happens with anything up. Fusing them
-// into one value is the defect docs/LESSONS.md:794-798 already records, where
-// CaptureActive() silently counted LoadingOpen() and made a marker that was true about
-// the SESSION and false about the INPUT PATH. Each consumer reads the term it means.
+// into one value is the defect docs/LESSONS.md records under "A readiness ANNOUNCEMENT is
+// not evidence of the VISIBLE state it precedes" (second instance), where CaptureActive()
+// silently counted LoadingOpen() and made a marker that was true about the SESSION and
+// false about the INPUT PATH. Each consumer reads the term it means. (Cited by TITLE, not
+// by line: this comment said `LESSONS.md:794-798` until 2026-07-31, which is the
+// roster-SCREENSHOT lesson -- a different finding entirely. See
+// `[[lesson-a-comment-citing-a-dependency-line-number-rots-silently]]`.)
 //
 // STALENESS IS PER TERM, AND SO IS THE FAIL DIRECTION:
 //   - OverlayOwnsText / IsForeground are OUR OWN state, read synchronously in-process.
 //     Zero staleness. A consumer may fail CLOSED on them.
 //   - GameOwnsText is republished by a game-thread tick and read as a relaxed atomic, so
-//     it can be up to one tick stale. Consumers MUST fail OPEN on it: when it is unknown
-//     or stale we do NOT take the key. A stale predicate then costs at most a hotkey;
-//     it can never cost a character, and costing a character is the entire bug.
+//     it can be stale. Consumers MUST fail OPEN on it: when it is unknown or stale we do
+//     NOT take the key, so a stale predicate costs a hotkey rather than a character.
+//
+//     CORRECTED 2026-07-31 -- this block used to claim a stale predicate "can never cost
+//     a character". MEASURED, that is false in BOTH directions:
+//       false->true is bounded by the FAST tick (~100 ms), so a player who focuses a game
+//         field and types inside that window DOES lose the character;
+//       true->false is bounded by the FULL scan (~1 s), because TickGameThread's
+//         `!doFullScan` branch deliberately never stores false -- so every mod hotkey is
+//         dead for up to a second after a game field loses focus.
+//     Both windows are removable and neither is removed yet: `gate3` measured that
+//     WndProcDetour RUNS ON THE GAME THREAD (`overlay_diag::NoteWndProcThread`, logged
+//     `isGameThread=1`), so the WndProc can evaluate this predicate SYNCHRONOUSLY at the
+//     keydown instead of reading a polled republish. That is designed, not built --
+//     research/findings/tooling/votv-input-bindings-cursor-DESIGN-2026-07-31.md §5.
 //
 // WHAT `GameOwnsText` IS, AND WHY IT IS NOT THE OBVIOUS THING (measured 2026-07-31):
 // the per-FIELD predicate does not exist. `UWidget::HasKeyboardFocus()` on a live,
