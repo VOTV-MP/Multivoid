@@ -27,7 +27,12 @@
 //      the host (toggle tilde, cursor, clickable -- the action board). "Capture"
 //      (cursor + input swallow + SetCursorPos no-op) follows whichever interactive
 //      surface is up (the menu always; the scoreboard only for the host).
-// DX12 is detected (GetDevice for ID3D11Device fails) and logged but not yet drawn.
+//   5. Both RHIs DRAW: the DX11/DX12 halves live behind ui/overlay_backend.h. (This
+//      line said "DX12 is detected ... but not yet drawn" until 2026-07-31; the DX12
+//      backend shipped 2026-07-26 and the comment never moved.)
+// The two DIAGNOSTIC instruments this file used to carry -- the per-key-message trace
+// and the cursor probe -- are in ui/overlay_diag.cpp; they are instruments ABOUT the
+// overlay, not part of it, and they had pushed this file past the 800-LOC cap.
 
 #include "ui/imgui_overlay.h"
 
@@ -46,6 +51,7 @@
 #include "ui/net_stats_panel.h"
 #include "ui/chat_input.h"
 #include "ui/atlas_watch.h"
+#include "ui/overlay_diag.h"
 #include "ui/fonts.h"
 #include "ui/scale.h"
 #include "ui/voice_panel.h"
@@ -71,7 +77,6 @@
 #include <cstdint>
 
 #include "imgui.h"
-#include "imgui_internal.h"  // cursor probe: ImFontAtlasGetMouseCursorTexData (diagnostic only)
 #include "backends/imgui_impl_win32.h"
 
 // ImGui's Win32 backend message handler (defined in imgui_impl_win32.cpp).
@@ -144,48 +149,24 @@ inline bool CaptureActive() {
 
 // While an interactive surface owns input, swallow UE4's per-tick cursor recenter
 // so the single real OS cursor tracks the mouse instead of snapping to the center.
-std::atomic<unsigned> g_cntSetCursorPos{0};
-std::atomic<int> g_lastSetX{-1}, g_lastSetY{-1};
-
 BOOL WINAPI SetCursorPosDetour(int x, int y) {
-    g_cntSetCursorPos.fetch_add(1, std::memory_order_relaxed);
-    g_lastSetX.store(x, std::memory_order_relaxed);
-    g_lastSetY.store(y, std::memory_order_relaxed);
+    ui::overlay_diag::NoteSetCursorPos(x, y);
     if (CaptureActive()) return TRUE;
     return g_origSetCursorPos(x, y);
 }
 
-// Cursor-probe message counters (VOTVCOOP_CURSOR_PROBE=1 reads them; always cheap).
-std::atomic<unsigned> g_cntMouseMove{0}, g_cntInput{0}, g_cntSetCursor{0}, g_cntNcMouseMove{0};
-
-// M4: TranslateMessage queues WM_CHAR from a WM_KEYDOWN BEFORE DispatchMessage ever
-// reaches this detour, so swallowing the keydown cannot stop the char existing. This
-// records, for every key message, what arrived and what we did with it -- so "which
-// message does the reporter actually lose" stops being inferred from the keydown gate.
-void ProbeKeyMsg(UINT msg, WPARAM wParam, const char* verdict) {
+// The gate state the key trace reports. These predicates are file-local, so the
+// instrument is handed their values rather than reaching for them -- but only once the
+// probe is armed, which it never is in a normal run. Reading them unconditionally would
+// put three predicate evaluations on every key message to feed a line nobody prints.
+inline void ProbeKeyMsg(UINT msg, WPARAM wParam, const char* verdict) {
     if (!coop::dev::input_focus_probe::IsArmed()) return;
-    // The swallow switch below shares ONE body across the mouse and key cases, so this
-    // is reached for WM_MOUSEMOVE as well; run 1 logged a single "?" line from exactly
-    // that. Only key messages are the subject here.
-    if (msg != WM_KEYDOWN && msg != WM_KEYUP && msg != WM_CHAR &&
-        msg != WM_SYSKEYDOWN && msg != WM_SYSKEYUP) return;
-    const char* kind = msg == WM_KEYDOWN ? "KEYDOWN" : msg == WM_KEYUP ? "KEYUP"
-                     : msg == WM_CHAR ? "CHAR" : msg == WM_SYSKEYDOWN ? "SYSKEYDOWN"
-                     : "SYSKEYUP";
-    UE_LOGI("key_probe: %s wParam=0x%02X ('%c') -> %s  [capture=%d chat=%d pause=%d]",
-            kind, (unsigned)wParam,
-            (wParam >= 32 && wParam < 127) ? (char)wParam : '.', verdict,
-            (int)CaptureActive(), (int)ChatOpen(), (int)PauseMenuOpen());
+    ui::overlay_diag::NoteKeyMsg(msg, wParam, verdict,
+                                 {CaptureActive(), ChatOpen(), PauseMenuOpen()});
 }
 
 LRESULT CALLBACK WndProcDetour(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    switch (msg) {
-        case WM_MOUSEMOVE:   g_cntMouseMove.fetch_add(1, std::memory_order_relaxed); break;
-        case WM_INPUT:       g_cntInput.fetch_add(1, std::memory_order_relaxed); break;
-        case WM_SETCURSOR:   g_cntSetCursor.fetch_add(1, std::memory_order_relaxed); break;
-        case WM_NCMOUSEMOVE: g_cntNcMouseMove.fetch_add(1, std::memory_order_relaxed); break;
-        default: break;
-    }
+    ui::overlay_diag::NoteWndProcMsg(msg);
     // Losing focus (Alt-Tab) must drop the scoreboard: a background window never
     // receives the tilde WM_KEYUP, so the client hold-to-peek would stick open (and a
     // host's interactive board would keep input captured). Fall through to the game.
@@ -416,108 +397,6 @@ void MaybeRescale() {
             rc.right - rc.left, rc.bottom - rc.top);
 }
 
-// DIAGNOSTIC (VOTVCOOP_CURSOR_PROBE=1): the "no cursor over the server browser" bug,
-// reproduced 2026-07-28 but never rooted. Called at the END of the frame, immediately
-// before ImGui::Render() -- i.e. reading exactly the state Render() itself will read at
-// imgui.cpp:6229-6230. One line per ~2s while a capturing surface is up; it names every
-// term of that guard and of RenderMouseCursor's own early-outs, so ONE run discriminates
-// all three candidates in the REPRO doc (MousePos never valid / MouseDrawCursor clobbered
-// / drawn outside the viewport rect) plus the atlas-side one it did not list
-// (ImFontAtlasGetMouseCursorTexData returning false).
-void CursorProbe() {
-    static int sArmed = -1;
-    if (sArmed == -1) {
-        char v[8]{};
-        sArmed = (::GetEnvironmentVariableA("VOTVCOOP_CURSOR_PROBE", v, sizeof(v)) > 0 &&
-                  v[0] == '1') ? 1 : 0;
-    }
-    if (!sArmed || !CaptureActive()) return;
-    static double sNext = 0.0;
-    ImGuiContext& g = *ImGui::GetCurrentContext();
-    if (g.Time < sNext) return;
-    sNext = g.Time + 2.0;
-
-    ImGuiIO& io = ImGui::GetIO();
-    ImVec2 off{}, size{}, uv[4]{};
-    const bool texOk = ImFontAtlasGetMouseCursorTexData(g.DrawListSharedData.FontAtlas,
-                                                        g.MouseCursor, &off, &size, &uv[0], &uv[2]);
-    const ImRect vp = g.Viewports[0]->GetMainRect();
-    const float sc = g.Style.MouseCursorScale;
-    const ImVec2 pos(io.MousePos.x - off.x, io.MousePos.y - off.y);
-    const ImRect box(pos, ImVec2(pos.x + (size.x + 2) * sc, pos.y + (size.y + 2) * sc));
-    const bool overlaps = vp.Overlaps(box);
-    POINT osp{}; const BOOL gcpOk = ::GetCursorPos(&osp);
-    POINT phys{}; ::GetPhysicalCursorPos(&phys);
-    POINT cli = osp; ::ScreenToClient(g_hwnd, &cli);
-    RECT clip{}; ::GetClipCursor(&clip);
-    // RIDEV_NOLEGACY on the mouse page suppresses WM_MOUSEMOVE app-wide -- the one
-    // mechanism that explains "cursor over our foreground window, zero mouse messages".
-    UINT rawCount = 0;
-    char ridDump[192]{}; int ridLen = 0;
-    if (::GetRegisteredRawInputDevices(nullptr, &rawCount, sizeof(RAWINPUTDEVICE)) == (UINT)-1 &&
-        rawCount > 0 && rawCount < 32) {
-        RAWINPUTDEVICE rid[32]{};
-        if (::GetRegisteredRawInputDevices(rid, &rawCount, sizeof(RAWINPUTDEVICE)) != (UINT)-1)
-            for (UINT i = 0; i < rawCount && ridLen < 150; ++i) {
-                ridLen += _snprintf_s(ridDump + ridLen, sizeof(ridDump) - ridLen, _TRUNCATE,
-                                      "[%u/%u f=0x%X hw=%p]", rid[i].usUsagePage, rid[i].usUsage,
-                                      (unsigned)rid[i].dwFlags, (void*)rid[i].hwndTarget);
-            }
-    }
-    // Is the clip rect the game keeps re-applying actually OUR client rect? A cursor
-    // pinned at the clip corner is the signature of a clamp against a mismatched rect.
-    RECT wr{}, cr{}; ::GetWindowRect(g_hwnd, &wr); ::GetClientRect(g_hwnd, &cr);
-    POINT cOrg{cr.left, cr.top}; ::ClientToScreen(g_hwnd, &cOrg);
-    // NEGATIVE CONTROL (M2): the earlier revision wrote the client centre through the
-    // ORIGINAL SetCursorPos here and then read it back. That write is exactly the input
-    // whose ABSENCE is the hypothesis -- with it in place the probe could not tell a
-    // frozen pointer from a moving one, so it is gone. VOTVCOOP_CURSOR_PROBE_WRITE=1
-    // puts it back for the positive control (a run that shows the pointer IS movable).
-    static int sWriteTest = -1;
-    if (sWriteTest == -1) {
-        char w[8]{};
-        sWriteTest = (::GetEnvironmentVariableA("VOTVCOOP_CURSOR_PROBE_WRITE", w, sizeof(w)) > 0 &&
-                      w[0] == '1') ? 1 : 0;
-    }
-    POINT want{cOrg.x + (cr.right - cr.left) / 2, cOrg.y + (cr.bottom - cr.top) / 2};
-    BOOL wrote = FALSE;
-    DWORD writeErr = 0;
-    if (sWriteTest && g_origSetCursorPos) {
-        ::SetLastError(0);
-        wrote = g_origSetCursorPos(want.x, want.y);
-        writeErr = ::GetLastError();
-    }
-    POINT after{}; ::GetCursorPos(&after);
-    // M3: the unexplained cross-process disagreement (PowerShell GetCursorInfo=(426,344)
-    // vs this process GetCursorPos=(0,24)) has DPI virtualisation as its only cheap
-    // candidate. Report this process's awareness so the comparison is decidable.
-    const DPI_AWARENESS_CONTEXT dpiCtx = ::GetThreadDpiAwarenessContext();
-    const DPI_AWARENESS dpiAware = ::GetAwarenessFromDpiAwarenessContext(dpiCtx);
-    UE_LOGI("cursor_probe: draw=%d cursor=%d posValid=%d imguiPos=(%.1f,%.1f) osScreen=(%ld,%ld) "
-            "osClient=(%ld,%ld) clip=(%ld,%ld)-(%ld,%ld) capture=%p vp=(%.0f,%.0f)-(%.0f,%.0f) "
-            "overlaps=%d texOk=%d curSize=(%.0f,%.0f) curOff=(%.0f,%.0f) atlasFlags=0x%X "
-            "gcpOk=%d phys=(%ld,%ld) win=(%ld,%ld)-(%ld,%ld) cliOrg=(%ld,%ld) cliSz=%ldx%ld "
-            "writeTest armed=%d wrote=%d err=%lu want=(%ld,%ld) after=(%ld,%ld) dpiAware=%d rid=%u%s "
-            "scpCalls=%u scpLast=(%d,%d) msgs mm=%u ncmm=%u raw=%u setcur=%u fg=%p hwnd=%p",
-            (int)io.MouseDrawCursor, (int)g.MouseCursor, (int)ImGui::IsMousePosValid(),
-            io.MousePos.x, io.MousePos.y, osp.x, osp.y, cli.x, cli.y,
-            clip.left, clip.top, clip.right, clip.bottom, (void*)::GetCapture(),
-            vp.Min.x, vp.Min.y, vp.Max.x, vp.Max.y,
-            (int)overlaps, (int)texOk, size.x, size.y, off.x, off.y,
-            (unsigned)io.Fonts->Flags,
-            (int)gcpOk, phys.x, phys.y, wr.left, wr.top, wr.right, wr.bottom,
-            cOrg.x, cOrg.y, cr.right - cr.left, cr.bottom - cr.top,
-            sWriteTest, (int)wrote, writeErr, want.x, want.y, after.x, after.y,
-            (int)dpiAware, rawCount, ridDump,
-            g_cntSetCursorPos.load(std::memory_order_relaxed),
-            g_lastSetX.load(std::memory_order_relaxed), g_lastSetY.load(std::memory_order_relaxed),
-            g_cntMouseMove.load(std::memory_order_relaxed),
-            g_cntNcMouseMove.load(std::memory_order_relaxed),
-            g_cntInput.load(std::memory_order_relaxed),
-            g_cntSetCursor.load(std::memory_order_relaxed),
-            (void*)::GetForegroundWindow(), (void*)g_hwnd);
-}
-
 // SEH-guarded per-frame ImGui pass (render thread). A fault here must NOT take down
 // the game's render thread -- swallow it and leave the menu hidden.
 void RenderFrameGuarded(IDXGISwapChain* sc) {
@@ -589,7 +468,7 @@ void RenderFrameGuarded(IDXGISwapChain* sc) {
         ui::input_focus::SetOverlayCapturingText(overlayText);
         coop::input::input_owner::PublishOverlayOwnsText(overlayText);
 
-        CursorProbe();
+        ui::overlay_diag::CursorFrame(g_hwnd, CaptureActive(), g_origSetCursorPos);
         ImGui::Render();
         overlay_backend::RenderDrawData(sc);
     } __except (EXCEPTION_EXECUTE_HANDLER) {

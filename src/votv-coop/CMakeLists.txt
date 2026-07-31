@@ -545,6 +545,7 @@ add_library(votv-coop SHARED
     src/coop/dev/object_overlay.cpp
     src/coop/dev/ragdoll_bone_overlay.cpp
     src/ui/imgui_overlay.cpp
+    src/ui/overlay_diag.cpp
     src/ui/overlay_backend.cpp
     src/ui/overlay_backend_dx11.cpp
     src/ui/overlay_backend_dx12.cpp
