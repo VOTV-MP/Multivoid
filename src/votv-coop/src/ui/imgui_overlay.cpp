@@ -55,6 +55,7 @@
 #include "ui/overlay_cursor.h"
 #include "ui/fonts.h"
 #include "ui/scale.h"
+#include "ui/style.h"
 #include "ui/voice_panel.h"
 #include "coop/comms/chat_sync.h"
 #include "ui/input_focus.h"  // SetOverlayCapturingText -- the hotkey-poller text-capture gate
@@ -166,58 +167,6 @@ inline void ProbeKeyMsg(UINT msg, WPARAM wParam, const char* verdict) {
                                  {CaptureActive(), ChatOpen(), PauseMenuOpen()});
 }
 
-// Re-derive the whole style from defaults at the current UI factor. ONE owner, because
-// `ScaleAllSizes` is cumulative/lossy (always reset-then-scale, never scale-again) AND
-// because of the correction below -- two call sites each remembering to re-fix a field
-// is how the cursor bug survived.
-//
-// THE CURSOR BUG (user 2026-07-27: "clicking multiplayer shows multiplayer pop up but no
-// CURSOR showing"), MEASURED 2026-07-31:
-//
-//   imgui.cpp:1649  ScaleAllSizes():  MouseCursorScale = ImTrunc(MouseCursorScale * f);
-//   f = ui::scale::Ui() = 0.833 here  ->  ImTrunc(0.833f) == 0.0f
-//   imgui.cpp:4131  RenderMouseCursor(): AddImage(tex, pos, pos + size * scale, ...)
-//                                        scale == 0  ->  a ZERO-AREA quad, nothing drawn.
-//
-// Every other style field is a PIXEL SIZE, where truncating toward zero is right.
-// `MouseCursorScale` is a unitless MULTIPLIER, and truncating a multiplier below 1 to 0
-// deletes the thing it scales. Upstream applies the same `ImTrunc` to both (present since
-// v1.91.5 -- `git log -S"MouseCursorScale = ImTrunc"`; NOT a 1.92 regression). The live
-// probe printed `curScale=0.000 uiScale=0.833` and `cursorInfo showing=0 hCursor=NULL` --
-// with the OS cursor hidden by our WM_SETCURSOR handler, a zero-size software cursor
-// means NO cursor at all. It reads as intermittent only because the factor tracks client
-// size: at >= 1.0 the truncation is harmless, below 1.0 the cursor vanishes.
-//
-// So the cursor never scales BELOW 1: a cursor smaller than its authored 12x19 is not
-// worth having, and 0 is not a size.
-void RebuildScaledStyle() {
-    ImGuiStyle& st = ImGui::GetStyle();
-    st = ImGuiStyle();
-    ImGui::StyleColorsDark();
-    const float f = ui::scale::Ui();
-    st.ScaleAllSizes(f);
-    // ImTrunc-then-floor-at-1, written without imgui_internal.h (ImTrunc(x) == (float)(int)x
-    // for the positive factors this ever sees). VOTVCOOP_CURSOR_SCALE_DRILL=1 skips the
-    // correction so the guard below can be SHOWN RED -- a guard never observed failing
-    // passes by construction.
-    static int sDrill = -1;
-    if (sDrill == -1) {
-        char v[8]{};
-        sDrill = (::GetEnvironmentVariableA("VOTVCOOP_CURSOR_SCALE_DRILL", v, sizeof(v)) > 0 &&
-                  v[0] == '1') ? 1 : 0;
-    }
-    if (!sDrill) st.MouseCursorScale = (f < 1.0f) ? 1.0f : static_cast<float>(static_cast<int>(f));
-
-    // The guard. A zero here means no cursor is drawn at all and nothing else complains --
-    // the exact silence that let this ship. Loud, every rebuild, not once.
-    if (!(st.MouseCursorScale >= 1.0f))
-        UE_LOGE("imgui_overlay: MouseCursorScale=%.3f at uiScale=%.3f -- the software cursor "
-                "will draw a ZERO-AREA quad and be invisible", st.MouseCursorScale, f);
-    else
-        UE_LOGI("imgui_overlay: style rebuilt (uiScale=%.3f, MouseCursorScale=%.3f)",
-                f, st.MouseCursorScale);
-}
-
 LRESULT CALLBACK WndProcDetour(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     ui::overlay_diag::NoteWndProcMsg(msg);
     ui::overlay_diag::NoteWndProcThread();
@@ -236,7 +185,7 @@ LRESULT CALLBACK WndProcDetour(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
     // counter here only risks drift across the non-F1 visibility paths (env-open, the
     // SEH render-fault reset, SetVisible) -- state, not a counter, drives the cursor.
     if (msg == WM_KEYDOWN && wParam == VK_F1 &&
-        (MenuOpen() || coop::input::input_owner::MayTakeKey())) {
+        (MenuOpen() || coop::input::input_owner::MayTakeKey(VK_F1))) {
         g_visible.store(!g_visible.load(std::memory_order_relaxed), std::memory_order_relaxed);
         return 0;
     }
@@ -260,7 +209,7 @@ LRESULT CALLBACK WndProcDetour(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
     // which is exactly why a shipped default may not be checked against one machine.)
     // The default moves to F3 in the bind commit; see the DESIGN doc §5.
     if (msg == WM_KEYDOWN && wParam == VK_OEM_3 &&
-        (ScoreOpen() || coop::input::input_owner::MayTakeKey())) {
+        (ScoreOpen() || coop::input::input_owner::MayTakeKey(VK_OEM_3))) {
         if (ui::scoreboard::LocalIsHost()) {
             if ((lParam & (1 << 30)) == 0)  // ignore auto-repeat while held
                 g_scoreboard.store(!g_scoreboard.load(std::memory_order_relaxed), std::memory_order_relaxed);
@@ -270,7 +219,7 @@ LRESULT CALLBACK WndProcDetour(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
         return 0;
     }
     if (msg == WM_KEYUP && wParam == VK_OEM_3 &&
-        (ScoreOpen() || coop::input::input_owner::MayTakeKey())) {
+        (ScoreOpen() || coop::input::input_owner::MayTakeKey(VK_OEM_3))) {
         if (!ui::scoreboard::LocalIsHost()) g_scoreboard.store(false, std::memory_order_relaxed);
         return 0;
     }
@@ -289,7 +238,7 @@ LRESULT CALLBACK WndProcDetour(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
     // into the browser's name field must not pop the chat). Swallow the press
     // so the game never acts on T and the input bar doesn't start with a "t".
     if (msg == WM_KEYDOWN && wParam == 'T' && !CaptureActive() && !PauseMenuOpen() &&
-        coop::input::input_owner::MayTakeKey() && coop::chat_sync::SessionActive()) {
+        coop::input::input_owner::MayTakeKey('T') && coop::chat_sync::SessionActive()) {
         ProbeKeyMsg(msg, wParam, "SWALLOWED by the T-chat hotkey");
         ui::chat_input::Open();
         return 0;
@@ -303,7 +252,7 @@ LRESULT CALLBACK WndProcDetour(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
     // so the close path cannot eat a typed letter.
     if (msg == WM_KEYDOWN && wParam == 'V' && (lParam & (1 << 30)) == 0) {
         if (VoiceOpen()) { ui::voice_panel::Close(); return 0; }
-        if (!CaptureActive() && coop::input::input_owner::MayTakeKey() &&
+        if (!CaptureActive() && coop::input::input_owner::MayTakeKey('V') &&
             coop::voice_chat::Enabled()) {
             ui::voice_panel::Toggle();
             return 0;
@@ -386,10 +335,10 @@ bool BringUp(IDXGISwapChain* sc) {
         ui::scale::NoteViewport(static_cast<float>(rc.right - rc.left),
                                 static_cast<float>(rc.bottom - rc.top));
     ui::scale::ConsumeRebuild();  // the initial bake right here applies it
-    // Reset-then-scale, exactly like MaybeRescale: ScaleAllSizes is cumulative,
+    // Reset-then-scale, exactly like ui::style::MaybeRescale: ScaleAllSizes is cumulative,
     // and a SEH-swallowed half-bring-up can re-enter here with an already-scaled
     // style on the leaked context (audit WARN-2) -- scaling again would compound.
-    RebuildScaledStyle();
+    ui::style::Rebuild();
     if (!ImGui_ImplWin32_Init(desc.OutputWindow)) {
         UE_LOGE("imgui_overlay: ImGui_ImplWin32_Init failed");
         if (ctxCreated) { ImGui::DestroyContext(); ui::fonts::OnContextDestroyed();
@@ -420,7 +369,7 @@ bool BringUp(IDXGISwapChain* sc) {
     // It is ordered this way anyway, deliberately: "nothing in Load touches the
     // atlas" is a property of Load's current body, and the next glyph-touching
     // line added there would silently re-open the bug. This order makes it
-    // impossible instead of merely absent. MaybeRescale already exercises
+    // impossible instead of merely absent. ui::style::MaybeRescale already exercises
     // Load-after-InitRenderer on every scale change, and both bring-up early
     // returns above are safe with or without Load having run
     // (fonts::OnContextDestroyed only nulls the role pointers).
@@ -434,30 +383,12 @@ bool BringUp(IDXGISwapChain* sc) {
     return true;
 }
 
-// Per-frame (render thread, BEFORE NewFrame): follow the game window's client
-// size. On a quantized scale change (or an F1 font-family switch) re-bake the
-// atlas at the new real pixel size, drop the backend's device objects (the
-// next NewFrame lazily re-creates them, re-uploading the font texture), and
-// re-derive the style from defaults at the new factor (ScaleAllSizes is
-// cumulative/lossy -- always reset-then-scale, never scale-again).
-void MaybeRescale() {
-    RECT rc{};
-    if (g_hwnd && ::GetClientRect(g_hwnd, &rc))
-        ui::scale::NoteViewport(static_cast<float>(rc.right - rc.left),
-                                static_cast<float>(rc.bottom - rc.top));
-    if (!ui::scale::ConsumeRebuild()) return;
-    ui::fonts::Load();  // clears + re-bakes the atlas at the new px/family
-    overlay_backend::InvalidateDeviceObjects();
-    RebuildScaledStyle();
-    UE_LOGI("imgui_overlay: UI re-scaled (factor %.2f, client %ldx%ld)", ui::scale::Ui(),
-            rc.right - rc.left, rc.bottom - rc.top);
-}
 
 // SEH-guarded per-frame ImGui pass (render thread). A fault here must NOT take down
 // the game's render thread -- swallow it and leave the menu hidden.
 void RenderFrameGuarded(IDXGISwapChain* sc) {
     __try {
-        MaybeRescale();
+        ui::style::MaybeRescale(g_hwnd);
         overlay_backend::NewFrame();
         ImGui_ImplWin32_NewFrame();  // sets io.MousePos from the real OS cursor (WM_MOUSEMOVE / GetCursorPos)
         // Draw the ImGui software cursor only for interactive surfaces (F1 menu, or

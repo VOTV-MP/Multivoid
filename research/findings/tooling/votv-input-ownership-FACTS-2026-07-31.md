@@ -14,10 +14,14 @@ CURSOR showing"* (reproduced 2026-07-28, root NOT found until today).
 >   ownership. §7 is rewritten; do not read any older copy of it.
 > * **The KEY-BINDING half is DESIGNED, NOT BUILT.** Design of record:
 >   `votv-input-bindings-cursor-DESIGN-2026-07-31.md` (20-round `/qf`).
-> * **Issue #5's acceptance test has NEVER RUN.** §8/M1 measured `textbox_search` inside
->   `ui_playerInventory_C`. The reporter's surface is the **in-game SAT server console**
->   (`ui_console` / `panel_SATconsole`) — a different widget, never measured. Whether the
->   shipped `f03c04f0` closed his problem is UNVERIFIED.
+> * **GATE 0 RAN (2026-07-31, the user, at the SAT console) and `f03c04f0` FAILED it.** Their
+>   words: *"I'm in the IN-GAME server console - I type sv.request - upon hitting V - voice
+>   settings imgui window pops up, then I press V again to close it, same with T."*
+>   **The root is now MEASURED and it is not what §8/M1 implied — see §4b, which supersedes
+>   the "so the thing we must detect is Slate keyboard focus" conclusion at the end of §4.**
+>   The game consumes a typed key iff `IsValid(mainPlayer.activeInterface)`, and delivers it
+>   through a **virtual user**, so *every* user-0 focus accessor is structurally blind to the
+>   in-world screens. Fixed by deleting the focus term, not by adding accessors.
 
 Everything below is `measured` unless tagged otherwise. Sources: the CXXHeaderDump
 (`Game_0.9.0n_HOST/.../CXXHeaderDump/`, 2645 classes), the BP bytecode dumps
@@ -101,9 +105,45 @@ they are `ui_console` and `ui_notebook`. **A per-surface filter would be a 26-ro
 `Uui_notebook_C` is the same shape — Slate focus on `UMultiLineEditableText`, `OnKeyDown`
 handles only Escape. It never calls `SetFocus`, so the player must click into it.
 
-**Consequence: the thing we must detect is Slate keyboard focus, not a game flag** -- but see
-§8/M1: measurement then showed that per-FIELD Slate focus is NOT readable through UMG reflection,
-and the implementable predicate is "a game USER WIDGET owns keyboard focus".
+~~**Consequence: the thing we must detect is Slate keyboard focus, not a game flag**~~ -- **THIS
+CONCLUSION IS WRONG AND WAS THE BUG. SUPERSEDED BY §4b (2026-07-31 evening).** It is right about
+how the *characters* reach the text box and wrong about what *we* can observe, because it never
+asked which Slate USER holds that focus.
+
+## 4b. What actually decides it: the game's own guard, and a virtual user
+
+Decoded from `mainPlayer`'s ubergraph (`research/bp_reflection`, `kdec.py`) -- the block that runs
+for every key, at the `AnyKey` entry points:
+
+```
+CallFunc_IsValid_ReturnValue_99 = IsValid(activeInterface)
+POP_FLOW_IF_NOT(CallFunc_IsValid_ReturnValue_99)        <-- the guard
+WidgetInteraction.SetFocus(activeInterface)
+WidgetInteraction.PressPointerKey[virt](key)
+CallFunc_PressKey_ReturnValue = WidgetInteraction.PressKey[virt](key, false)
+```
+
+Three facts follow, and together they are the whole answer to issue #5:
+
+1. **The game consumes a typed key IFF `IsValid(mainPlayer.activeInterface)`.** One pointer read,
+   on a field we already resolve. It is the game's own guard, not our model of one.
+2. **Delivery is through a VIRTUAL USER.** `UWidgetInteractionComponent` carries its own
+   `VirtualUserIndex` (`UMG.hpp:2031`). `UWidget::HasKeyboardFocus()` asks about **user 0**, so it
+   is structurally blind to this path -- and the in-world screens (SAT console, laptop, arcade, TV,
+   radar, portable PC) are UMG hosted in a `UWidgetComponent` and driven exactly this way.
+   `panel_SATconsole` itself owns no `UWidgetComponent` (`panel_SATconsole.hpp:7-16`: its `Widget`
+   is a bare `Uui_console_C*`); the screens are rendered by `ticker_widgetRender` /
+   `analogDScreenTest`, which do.
+3. **Why §8/M1 looked like it worked.** M1 measured `ui_playerInventory_C`, and
+   `setActiveInterface` *also* calls `SetInputMode_GameAndUIEx(PC, activeInterface)`, which focuses
+   the same widget for **user 0**. So the one surface that was measured is the one surface where
+   the wrong predicate answers correctly. Two delivery paths; only one was ever modelled.
+
+A *second*, independent defect lives in the same accessor and is worth keeping straight from the
+above: `HasKeyboardFocus()` is an **exact-widget** test, so even on the user-0 path it reads true
+only while focus sits on the user widget itself, and goes **false the moment a field inside it is
+clicked** -- i.e. it fails exactly when typing is happening. That is why the 1 Hz backstop scan now
+ORs `HasFocusedDescendants()`. It is real, and it is *not* what issue #5 was.
 
 ## 5. The single game-side "a UI owns input" state — and we already resolve it
 

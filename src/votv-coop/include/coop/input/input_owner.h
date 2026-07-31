@@ -32,30 +32,44 @@
 //     it can be stale. Consumers MUST fail OPEN on it: when it is unknown or stale we do
 //     NOT take the key, so a stale predicate costs a hotkey rather than a character.
 //
-//     CORRECTED 2026-07-31 -- this block used to claim a stale predicate "can never cost
-//     a character". MEASURED, that is false in BOTH directions:
-//       false->true is bounded by the FAST tick (~100 ms), so a player who focuses a game
-//         field and types inside that window DOES lose the character;
-//       true->false is bounded by the FULL scan (~1 s), because TickGameThread's
-//         `!doFullScan` branch deliberately never stores false -- so every mod hotkey is
-//         dead for up to a second after a game field loses focus.
-//     Both windows are removable and neither is removed yet: `gate3` measured that
-//     WndProcDetour RUNS ON THE GAME THREAD (`overlay_diag::NoteWndProcThread`, logged
-//     `isGameThread=1`), so the WndProc can evaluate this predicate SYNCHRONOUSLY at the
-//     keydown instead of reading a polled republish. That is designed, not built --
-//     research/findings/tooling/votv-input-bindings-cursor-DESIGN-2026-07-31.md §5.
+//     BOTH STALENESS WINDOWS ARE NOW CLOSED for the dominant term (2026-07-31). They
+//     were real: false->true bounded by the FAST tick (~100 ms) cost a CHARACTER, and
+//     true->false bounded by the FULL scan (~1 s) left every hotkey dead for up to a
+//     second, because TickGameThread's `!doFullScan` branch deliberately never stores
+//     false. `MayTakeKey` now evaluates the interface term SYNCHRONOUSLY when it is
+//     called on the game thread -- which every WndProc hotkey edge is (`gate3`:
+//     `overlay_diag::NoteWndProcThread` logged `isGameThread=1`). Only the 1 Hz
+//     GUObjectArray scan for the interface-less menu surfaces is still polled, and its
+//     staleness can cost a hotkey, never a character.
 //
-// WHAT `GameOwnsText` IS, AND WHY IT IS NOT THE OBVIOUS THING (measured 2026-07-31):
-// the per-FIELD predicate does not exist. `UWidget::HasKeyboardFocus()` on a live,
-// on-screen `UEditableTextBox` reads FALSE even right after calling the engine's own
-// `SetKeyboardFocus()` on it, because UMG tests the cached `SObjectWidget` wrapper rather
-// than the inner `SEditableTextBox`. The same call on the OWNING USER WIDGET reads TRUE.
-// So the implementable invariant is "a game UUserWidget holds keyboard focus", which
-// covers all 26 surfaces and any VOTV adds later. `mainPlayer.activeInterface` is checked
-// FIRST as a fast path (one pointer read, and in the common case the scan exits after a
-// single UFunction call), but it is NOT the gate: a paper census found 8 of the 26 text
-// surfaces with no interface-driving owner, including save-slot renaming and the settings
-// search.
+// WHAT `GameOwnsText` IS -- TWO TERMS, BECAUSE VOTV HAS TWO WAYS TO DELIVER A CHARACTER.
+// This is the whole finding, and it is why the first shipped attempt (f03c04f0) did not
+// close issue #5. Corrected 2026-07-31 after the user ran GATE 0 at the SAT console and
+// V/T still fired.
+//
+//   1. `mainPlayer.activeInterface` is valid -- THE DOMINANT TERM, and it is the GAME'S
+//      OWN GUARD, not our approximation of one. Measured in mainPlayer's ubergraph: the
+//      block that handles every key does `IsValid(activeInterface)` and, if so,
+//      `WidgetInteraction.SetFocus(activeInterface)` then `WidgetInteraction.PressKey`.
+//      So the game consumes a typed key IFF that field is valid -- and it delivers it
+//      through a VIRTUAL USER, because the in-world screens (SAT console, laptop, arcade,
+//      TV, radar, portable PC) are UMG inside a `UWidgetComponent` driven by mainPlayer's
+//      `UWidgetInteractionComponent`.
+//
+//   2. A game `UUserWidget` holds USER-0 Slate focus, itself or via a descendant -- the
+//      1 Hz backstop for the 8 of 26 census surfaces with no interface-driving owner
+//      (save-slot rename, settings search).
+//
+// WHY THE OBVIOUS PREDICATE CANNOT WORK, and why it looked like it did:
+// `UWidget::HasKeyboardFocus()` asks about USER 0. It is structurally blind to term 1's
+// virtual user, so it answers FALSE at every in-world screen -- the reporter's exact
+// surface. It answered TRUE for the player inventory only because `setActiveInterface`
+// ALSO calls `SetInputMode_GameAndUIEx`, which focuses the same widget for user 0. One
+// measurement, one surface, two delivery paths, and only one of them modelled.
+// (`HasKeyboardFocus` is additionally an EXACT-widget test, so even on the user-0 path it
+// goes false the moment focus moves into a field -- hence the `HasFocusedDescendants` OR
+// in term 2. That was the *previous* theory of this bug; it is real, but it is not what
+// issue #5 was.)
 
 #pragma once
 
@@ -100,10 +114,20 @@ bool OverlayOwnsText();
 // arc opened and owes.
 bool IsForeground();
 
-// The composite every hotkey wants: may this key be taken away from the game?
+// The composite every hotkey wants: may THIS key be taken away from the game?
 // False whenever the game owns typed text, whenever we are not foreground, or whenever
 // the answer is not yet known. Fails OPEN toward the game by construction.
-bool MayTakeKey();
+//
+// `vk` is the Windows virtual-key code, and it is a REQUIRED argument rather than a
+// convenience: "the game owns typed text" is not a property of the moment alone, it is
+// a property of the moment AND the key. With an interface open the game forwards
+// EVERY key into the focused widget -- but a widget does something with a letter and
+// nothing whatsoever with F1. Answering per-moment would have made every mod hotkey
+// dead inside every game interface, which is a regression nobody asked for; answering
+// per-key keeps F-keys usable at the SAT console while `T`, `V` and tilde correctly
+// go to the game. It is also what makes the rebind escape hatch actually work: a
+// player who moves chat to F2 can then type at the console AND chat.
+bool MayTakeKey(unsigned vk);
 
 // Diagnostics for the log line / F1 panel; never a control-flow input.
 const char* LastGameOwnerName();
