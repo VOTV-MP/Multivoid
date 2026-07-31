@@ -52,6 +52,7 @@
 #include "ui/chat_input.h"
 #include "ui/atlas_watch.h"
 #include "ui/overlay_diag.h"
+#include "ui/overlay_cursor.h"
 #include "ui/fonts.h"
 #include "ui/scale.h"
 #include "ui/voice_panel.h"
@@ -165,8 +166,61 @@ inline void ProbeKeyMsg(UINT msg, WPARAM wParam, const char* verdict) {
                                  {CaptureActive(), ChatOpen(), PauseMenuOpen()});
 }
 
+// Re-derive the whole style from defaults at the current UI factor. ONE owner, because
+// `ScaleAllSizes` is cumulative/lossy (always reset-then-scale, never scale-again) AND
+// because of the correction below -- two call sites each remembering to re-fix a field
+// is how the cursor bug survived.
+//
+// THE CURSOR BUG (user 2026-07-27: "clicking multiplayer shows multiplayer pop up but no
+// CURSOR showing"), MEASURED 2026-07-31:
+//
+//   imgui.cpp:1649  ScaleAllSizes():  MouseCursorScale = ImTrunc(MouseCursorScale * f);
+//   f = ui::scale::Ui() = 0.833 here  ->  ImTrunc(0.833f) == 0.0f
+//   imgui.cpp:4131  RenderMouseCursor(): AddImage(tex, pos, pos + size * scale, ...)
+//                                        scale == 0  ->  a ZERO-AREA quad, nothing drawn.
+//
+// Every other style field is a PIXEL SIZE, where truncating toward zero is right.
+// `MouseCursorScale` is a unitless MULTIPLIER, and truncating a multiplier below 1 to 0
+// deletes the thing it scales. Upstream applies the same `ImTrunc` to both (present since
+// v1.91.5 -- `git log -S"MouseCursorScale = ImTrunc"`; NOT a 1.92 regression). The live
+// probe printed `curScale=0.000 uiScale=0.833` and `cursorInfo showing=0 hCursor=NULL` --
+// with the OS cursor hidden by our WM_SETCURSOR handler, a zero-size software cursor
+// means NO cursor at all. It reads as intermittent only because the factor tracks client
+// size: at >= 1.0 the truncation is harmless, below 1.0 the cursor vanishes.
+//
+// So the cursor never scales BELOW 1: a cursor smaller than its authored 12x19 is not
+// worth having, and 0 is not a size.
+void RebuildScaledStyle() {
+    ImGuiStyle& st = ImGui::GetStyle();
+    st = ImGuiStyle();
+    ImGui::StyleColorsDark();
+    const float f = ui::scale::Ui();
+    st.ScaleAllSizes(f);
+    // ImTrunc-then-floor-at-1, written without imgui_internal.h (ImTrunc(x) == (float)(int)x
+    // for the positive factors this ever sees). VOTVCOOP_CURSOR_SCALE_DRILL=1 skips the
+    // correction so the guard below can be SHOWN RED -- a guard never observed failing
+    // passes by construction.
+    static int sDrill = -1;
+    if (sDrill == -1) {
+        char v[8]{};
+        sDrill = (::GetEnvironmentVariableA("VOTVCOOP_CURSOR_SCALE_DRILL", v, sizeof(v)) > 0 &&
+                  v[0] == '1') ? 1 : 0;
+    }
+    if (!sDrill) st.MouseCursorScale = (f < 1.0f) ? 1.0f : static_cast<float>(static_cast<int>(f));
+
+    // The guard. A zero here means no cursor is drawn at all and nothing else complains --
+    // the exact silence that let this ship. Loud, every rebuild, not once.
+    if (!(st.MouseCursorScale >= 1.0f))
+        UE_LOGE("imgui_overlay: MouseCursorScale=%.3f at uiScale=%.3f -- the software cursor "
+                "will draw a ZERO-AREA quad and be invisible", st.MouseCursorScale, f);
+    else
+        UE_LOGI("imgui_overlay: style rebuilt (uiScale=%.3f, MouseCursorScale=%.3f)",
+                f, st.MouseCursorScale);
+}
+
 LRESULT CALLBACK WndProcDetour(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     ui::overlay_diag::NoteWndProcMsg(msg);
+    ui::overlay_diag::NoteWndProcThread();
     // Losing focus (Alt-Tab) must drop the scoreboard: a background window never
     // receives the tilde WM_KEYUP, so the client hold-to-peek would stick open (and a
     // host's interactive board would keep input captured). Fall through to the game.
@@ -325,12 +379,7 @@ bool BringUp(IDXGISwapChain* sc) {
     // Reset-then-scale, exactly like MaybeRescale: ScaleAllSizes is cumulative,
     // and a SEH-swallowed half-bring-up can re-enter here with an already-scaled
     // style on the leaked context (audit WARN-2) -- scaling again would compound.
-    {
-        ImGuiStyle& st = ImGui::GetStyle();
-        st = ImGuiStyle();
-        ImGui::StyleColorsDark();
-        st.ScaleAllSizes(ui::scale::Ui());
-    }
+    RebuildScaledStyle();
     if (!ImGui_ImplWin32_Init(desc.OutputWindow)) {
         UE_LOGE("imgui_overlay: ImGui_ImplWin32_Init failed");
         if (ctxCreated) { ImGui::DestroyContext(); ui::fonts::OnContextDestroyed();
@@ -389,10 +438,7 @@ void MaybeRescale() {
     if (!ui::scale::ConsumeRebuild()) return;
     ui::fonts::Load();  // clears + re-bakes the atlas at the new px/family
     overlay_backend::InvalidateDeviceObjects();
-    ImGuiStyle& st = ImGui::GetStyle();
-    st = ImGuiStyle();
-    ImGui::StyleColorsDark();
-    st.ScaleAllSizes(ui::scale::Ui());
+    RebuildScaledStyle();
     UE_LOGI("imgui_overlay: UI re-scaled (factor %.2f, client %ldx%ld)", ui::scale::Ui(),
             rc.right - rc.left, rc.bottom - rc.top);
 }
@@ -468,6 +514,9 @@ void RenderFrameGuarded(IDXGISwapChain* sc) {
         ui::input_focus::SetOverlayCapturingText(overlayText);
         coop::input::input_owner::PublishOverlayOwnsText(overlayText);
 
+        // Cursor OWNERSHIP transition (MTA CLocalGUI::Draw shape) -- before the probe,
+        // so the probe observes the state the frame will actually draw with.
+        ui::overlay_cursor::FrameTransition(g_hwnd, CaptureActive(), g_origSetCursorPos);
         ui::overlay_diag::CursorFrame(g_hwnd, CaptureActive(), g_origSetCursorPos);
         ImGui::Render();
         overlay_backend::RenderDrawData(sc);

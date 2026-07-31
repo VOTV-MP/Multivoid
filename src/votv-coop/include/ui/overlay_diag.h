@@ -44,6 +44,21 @@ namespace ui::overlay_diag {
 // and only a count can tell them apart.
 void NoteWndProcMsg(UINT msg);
 
+// ---- GATE 3: which thread is the WndProc? -------------------------------------
+//
+// Called from `WndProcDetour` on every message; logs ONCE. The answer decides an
+// architecture, not a detail: if the WndProc runs on the GAME thread, a hotkey can ask
+// "does the game own typed text" SYNCHRONOUSLY at the keydown -- exactly, with no
+// staleness -- instead of reading a value republished by a polled tick. Windows delivers
+// messages to the thread that CREATED the window and UE4 creates its window on the game
+// thread, so it probably does; but that is an inference, and the whole design of
+// research/findings/tooling/votv-input-bindings-cursor-DESIGN-2026-07-31.md turns on it.
+//
+// Always on (one atomic exchange per message, one log line per process) because the
+// answer is worth more than the byte it costs, and a probe you have to remember to arm
+// is a probe that is off when the question comes up.
+void NoteWndProcThread();
+
 // The SetCursorPos detour, on EVERY call -- including the ones we no-op. The game
 // recentres the pointer ~118x/s while playing; the count and the last coordinates are
 // how the cursor line shows that the writes kept coming and the pointer still did not

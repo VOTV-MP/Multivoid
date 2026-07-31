@@ -7,6 +7,8 @@
 #include "ui/overlay_diag.h"
 
 #include "coop/dev/input_focus_probe.h"
+#include "ui/scale.h"
+#include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 
 #include <atomic>
@@ -38,6 +40,22 @@ void NoteWndProcMsg(UINT msg) {
         case WM_NCMOUSEMOVE: g_cntNcMouseMove.fetch_add(1, std::memory_order_relaxed); break;
         default: break;
     }
+}
+
+void NoteWndProcThread() {
+    static std::atomic<bool> sLogged{false};
+    if (sLogged.load(std::memory_order_relaxed)) return;
+    // `IsGameThread()` is false BOTH on a genuine worker AND before the ProcessEvent
+    // detour has ever run (the id is 0 then), and the first window messages arrive during
+    // bring-up. Latching on that would record "not the game thread" for a reason that has
+    // nothing to do with the question. So wait for a DEFINITIVE answer -- one of the two
+    // predicates true -- and only then latch. Until then this costs one relaxed load.
+    const bool yes = ue_wrap::game_thread::IsGameThread();
+    const bool no  = ue_wrap::game_thread::IsDefinitelyOffGameThread();
+    if (!yes && !no) return;  // id not known yet; ask again on the next message
+    sLogged.store(true, std::memory_order_relaxed);
+    UE_LOGI("gate3: WndProcDetour thread=%lu isGameThread=%d definitelyOff=%d",
+            ::GetCurrentThreadId(), (int)yes, (int)no);
 }
 
 void NoteSetCursorPos(int x, int y) {
@@ -138,6 +156,31 @@ void CursorFrame(HWND hwnd, bool captureActive, SetCursorPosFn origSetCursorPos)
     // decidable rather than being re-filed as an anomaly.
     const DPI_AWARENESS_CONTEXT dpiCtx = ::GetThreadDpiAwarenessContext();
     const DPI_AWARENESS dpiAware = ::GetAwarenessFromDpiAwarenessContext(dpiCtx);
+    // C1 (2026-07-31): the terms the 2026-07-31 §7 write-up reasoned about WITHOUT ever
+    // printing them. `overlaps=0` was recorded alongside numbers that, recomputed against
+    // the pinned v1.92.9 `FONT_ATLAS_DEFAULT_TEX_CURSOR_DATA` (Arrow offset is (0,0)),
+    // say it should have been 1 -- so at least one input to that conclusion was wrong and
+    // the raw line no longer exists. Print every input to the predicate, not the verdict:
+    // `[[lesson-an-instrument-must-report-its-inputs-not-only-its-verdict]]`. FramebufferScale
+    // and MouseCursorScale in particular appeared in NONE of the original arithmetic, and
+    // this build runs a 0.83 UI scale.
+    // GetCursorInfo, not a screenshot: `flags` separates HIDDEN from RE-CENTRED, which a
+    // photo cannot, and no capture path in this repo composites an OS cursor at all
+    // (docs/LESSONS.md, "AN INSTRUMENT BLIND TO THE PHENOMENON ALWAYS REPORTS NOT PRESENT").
+    CURSORINFO ci{}; ci.cbSize = sizeof(ci);
+    const BOOL ciOk = ::GetCursorInfo(&ci);
+    UE_LOGI("cursor_terms: box=(%.1f,%.1f)-(%.1f,%.1f) vp=(%.1f,%.1f)-(%.1f,%.1f) "
+            "curScale=%.3f fbScale=(%.3f,%.3f) dispSize=(%.1f,%.1f) uiScale=%.3f "
+            "cursorInfo ok=%d flags=0x%X showing=%d at=(%ld,%ld) hCursor=%p "
+            "overlapsTerms=[%d %d %d %d]",
+            box.Min.x, box.Min.y, box.Max.x, box.Max.y,
+            vp.Min.x, vp.Min.y, vp.Max.x, vp.Max.y,
+            sc, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y,
+            io.DisplaySize.x, io.DisplaySize.y, ui::scale::Ui(),
+            (int)ciOk, (unsigned)ci.flags, (int)((ci.flags & CURSOR_SHOWING) != 0),
+            ci.ptScreenPos.x, ci.ptScreenPos.y, (void*)ci.hCursor,
+            (int)(vp.Min.x < box.Max.x), (int)(vp.Min.y < box.Max.y),
+            (int)(vp.Max.x > box.Min.x), (int)(vp.Max.y > box.Min.y));
     UE_LOGI("cursor_probe: draw=%d cursor=%d posValid=%d imguiPos=(%.1f,%.1f) osScreen=(%ld,%ld) "
             "osClient=(%ld,%ld) clip=(%ld,%ld)-(%ld,%ld) capture=%p vp=(%.0f,%.0f)-(%.0f,%.0f) "
             "overlaps=%d texOk=%d curSize=(%.0f,%.0f) curOff=(%.0f,%.0f) atlasFlags=0x%X "
