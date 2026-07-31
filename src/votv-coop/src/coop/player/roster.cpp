@@ -102,8 +102,13 @@ void Refresh() {
         // routing on others, side by side (user: "It should be all the same, no
         // special treatment"). The local row is NOT special-cased -- your own
         // ping is a real host-measured number and belongs on your own row.
-        r.ping = led.pingMs;
-        r.linkKind = led.linkKind;
+        // DisplayLink, not the raw row: row 0 (the host) carries Local/-1 because the
+        // host has no link to itself, and every client board rendered that as "n/a".
+        // The host<->client RTT is one link the host already published on the viewer's
+        // OWN row, so that is what row 0 shows here. See roster_ledger.h.
+        const auto link = coop::roster_ledger::DisplayLink(slot);
+        r.ping = link.pingMs;
+        r.linkKind = link.kind;
         // The display fallback lives in the ledger (ONE copy); the local row
         // still resolves through LocalNickname because our own name is ours
         // before any row exists.

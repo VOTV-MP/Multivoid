@@ -155,8 +155,12 @@ void Update() {
         // plate got -1 and rendered NO ms at all while the host's plate showed a
         // real one. Same defect as the scoreboard's, one surface over. The host
         // measures every link and publishes it, so every plate now agrees.
-        pl.ping = coop::roster_ledger::Get(slot).pingMs;
-        pl.linkKind = coop::roster_ledger::Get(slot).linkKind;
+        // DisplayLink, not Get(): row 0 is the host, whose own row carries Local/-1
+        // because the host cannot measure a link to itself -- so a client read the
+        // host's plate as a bare name with no ms. See roster_ledger.h.
+        const auto link = coop::roster_ledger::DisplayLink(slot);
+        pl.ping = link.pingMs;
+        pl.linkKind = link.kind;
         pl.voiceIcon = static_cast<uint8_t>(coop::voice_chat::IconForSlot(slot));  // v66 badge
         pl.colorRGB = coop::nick_color::PackedForSlot(slot);  // v103 (12f): custom nick color
         pl.bubbleAlpha = coop::chat_bubbles::BubbleForSlot(slot, pl.bubble);  // 12g overhead bubble

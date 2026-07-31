@@ -51,19 +51,23 @@ void TextOutlined(ImDrawList* dl, ImFont* font, float size, ImVec2 pos,
 void DrawNameplate(ImDrawList* dl, const coop::nameplate::Plate& p) {
     // A plate has only ONE parenthetical slot, so it cannot say "not applicable"
     // the way the scoreboard's cell can -- it can only show a number or nothing.
-    // A ping < 0 therefore renders as a bare name, which covers both "not sampled
-    // yet" and the HOST (whose row publishes -1 precisely because there is no RTT
-    // to the session to report -- see roster_ledger::RefreshLinkFacts). The
-    // number itself is formatted by the one shared renderer.
+    // A ping < 0 therefore renders as a bare name, which now means only "not sampled
+    // yet". It used to ALSO mean the host, whose own row publishes -1 because there is
+    // no RTT to itself to report -- but a client no longer reads that row: it reads its
+    // own, via roster_ledger::DisplayLink, because host<->client is one link with one
+    // RTT (user 2026-07-31: "client should see a Host <X> too"). Host-side, the host's
+    // own row is still Local/-1, and you never see your own plate anyway. The number
+    // itself is formatted by the one shared renderer.
     //
-    // THE NAME AND THE PING ARE DRAWN AS TWO PIECES, not one composed string
-    // (user 2026-07-28, from a drill screenshot: "никнейм не идеально прилегает
-    // своим центром к полоске hp, а выперает слева"). Centring `"<nick> (<ping>)"`
-    // as a unit puts the NICK's centre half the ping-suffix's width to the LEFT of
-    // the bar's centre -- and because the suffix's width depends on the ping's
-    // digits, the name would also SLIDE sideways as latency changed. The identity
-    // is what the plate is for, so the identity is what gets centred; the ping
-    // hangs off its right edge as an annotation.
+    // The name and the ping are still drawn as two pieces (they carry one colour
+    // each), but they are CENTRED AS ONE UNIT -- see the anchor block below, which
+    // records the 2026-07-31 user decision that supersedes the 2026-07-28 one.
+    // Kept for the record, because it is the cost the user accepted: centring
+    // `"<nick> (<ping>)"` as a unit means the NICK's centre sits half the suffix's
+    // width left of the bar's centre, and the name slides sideways as latency gains
+    // or loses a digit. 2026-07-28 that was the complaint ("никнейм не идеально
+    // прилегает своим центром к полоске hp, а выперает слева"); 2026-07-31, shown
+    // the result, the user asked for the whole label centred instead.
     char nickTxt[coop::text::kNickBufBytes];
     std::snprintf(nickTxt, sizeof(nickTxt), "%s", p.nick);
     char pingTxt[20] = {};
@@ -103,7 +107,8 @@ void DrawNameplate(ImDrawList* dl, const coop::nameplate::Plate& p) {
 
     ImFont* font = ui::fonts::FontFor(ui::fonts::Role::Nameplate);  // per-role font (F1 > Interface)
     if (!font) font = ImGui::GetFont();
-    // Measured SEPARATELY so the anchor can centre the nick alone (above).
+    // Measured SEPARATELY because they carry one colour each and are drawn as two
+    // calls -- NOT because the anchor centres the nick alone; it no longer does.
     const ImVec2 sz     = font->CalcTextSizeA(px, FLT_MAX, 0.f, nickTxt);
     const ImVec2 pingSz = pingTxt[0] ? font->CalcTextSizeA(px, FLT_MAX, 0.f, pingTxt)
                                      : ImVec2(0.f, 0.f);
@@ -135,15 +140,25 @@ void DrawNameplate(ImDrawList* dl, const coop::nameplate::Plate& p) {
     // past a screen edge still shows the label at the edge instead of vanishing.
     const ImGuiIO& io = ImGui::GetIO();
     const float m = S(6.f);
-    // The plate is no longer symmetric about the anchor: the nick is centred, so
-    // the ping annotation adds width on the RIGHT only. Clamping with one halfW
-    // would let the ping run off the right edge (or waste margin on the left).
-    const float extL = std::max(sz.x, barW) * 0.5f;
-    const float extR = std::max(sz.x * 0.5f + pingSz.x, barW * 0.5f);
-    const float loX = m + extL, hiX = io.DisplaySize.x - m - extR;
+    // The WHOLE label is centred on the bar -- nick AND ping as one unit, so the
+    // plate is symmetric about the anchor again.
+    //
+    // USER DECISION 2026-07-31, and it SUPERSEDES the 2026-07-28 one recorded above.
+    // Shown the live plate, the user reported "Client <1ms> is not centered on the
+    // health bar" and, asked to choose between centring the whole string, moving the
+    // ping to its own line, or dropping it, answered "1. Center all actually". The
+    // known cost is the one 2026-07-04 objected to: the nick shifts a few pixels when
+    // the ping gains or loses a digit. That is accepted, not overlooked -- do not
+    // "fix" it back to nick-only centring without asking.
+    //
+    // Same shape as MTA, which draws the whole nametag string with DT_CENTER on the
+    // X the health bar is centred on (Client/mods/deathmatch/logic/CNametags.cpp:281).
+    const float labelW = sz.x + pingSz.x;
+    const float ext = std::max(labelW, barW) * 0.5f;
+    const float loX = m + ext, hiX = io.DisplaySize.x - m - ext;
     const float ax = (loX <= hiX) ? std::clamp(p.x, loX, hiX) : p.x;
     const float ay = std::clamp(p.y, m + sz.y + gap + bubbleH, io.DisplaySize.y - m - barH - barGap);
-    const ImVec2 textPos(ax - sz.x * 0.5f, ay - sz.y - gap);
+    const ImVec2 textPos(ax - labelW * 0.5f, ay - sz.y - gap);
     const ImVec2 bp(ax - barW * 0.5f, ay - barGap);
 
     // Plate extents (nick + bar union), kept for the voice-badge anchor below. The
@@ -157,8 +172,9 @@ void DrawNameplate(ImDrawList* dl, const coop::nameplate::Plate& p) {
                         bp.y + barH + padY);
 
     TextOutlined(dl, font, px, textPos, textCol, outline, nickTxt);
-    // The annotation hangs off the nick's right edge; it deliberately takes no
-    // part in the centring, so a ping gaining a digit moves only itself.
+    // The annotation still hangs off the nick's right edge -- but the pair is now
+    // centred as one unit (see the anchor above), so this is a layout continuation,
+    // not an exemption from the centring.
     if (pingTxt[0]) {
         TextOutlined(dl, font, px, ImVec2(textPos.x + sz.x, textPos.y),
                      textCol, outline, pingTxt);

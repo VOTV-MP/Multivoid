@@ -84,6 +84,30 @@ struct Row {
 // callers may read fields unconditionally. Game thread.
 const Row& Get(int slot);
 
+struct LinkFacts {
+    coop::net::LinkKind kind = coop::net::LinkKind::Unknown;
+    int16_t             pingMs = -1;
+};
+
+// The connection facts to DISPLAY for `slot`, from THIS viewer's seat. Every board
+// must go through here rather than reading Row::linkKind / Row::pingMs directly,
+// or row 0 renders "n/a" on a client -- which is what the nameplate AND the
+// scoreboard both did until 2026-07-31 (user: "Host nameplate ... doesn't show
+// <ms> - let it show something, client should see a Host <X> too").
+//
+// WHY ROW 0 IS SPECIAL, AND WHY THIS IS NOT A SECOND DERIVATION. RefreshLinkFacts
+// is host-only and fills row 0 with Local/-1, honestly: the host's own traffic
+// never crosses a socket, so there is no RTT for it to measure. But the thing a
+// CLIENT wants on the host's plate is the host<->client link, and that is ONE link
+// with ONE RTT which the host has already measured and already published -- on the
+// VIEWER'S OWN ROW. So a client reads its own row's facts for row 0: the same
+// number, authored by the same authority, no new wire field, and nothing
+// synthesised. (Deriving it locally from `Session::rttMsForSlot(0)` would give the
+// same value and would be the second derivation session.h:357-364 forbids.)
+// On the host, row 0 is the host itself and stays Local/"n/a" -- correct, and you
+// never see your own nameplate anyway. Game thread.
+LinkFacts DisplayLink(int slot);
+
 // The name to DISPLAY for `slot`, fallback already applied -- an empty nick
 // yields the placeholder rather than a blank label. This is the one place the
 // fallback lives; callers must not re-invent it (six sites used to, and they

@@ -3,6 +3,7 @@
 #include "coop/player/roster_ledger.h"
 
 #include "coop/net/session.h"
+#include "coop/player/players_registry.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
 
@@ -221,6 +222,19 @@ void SetJoinAnnounced(int slot, bool announced) {
     UE_ASSERT_GAME_THREAD("g_rows (roster_ledger::SetJoinAnnounced)");
     if (!ValidSlot(slot) || !g_rows[slot].occupied()) return;
     g_rows[slot].joinAnnounced = announced;
+}
+
+LinkFacts DisplayLink(int slot) {
+    UE_ASSERT_GAME_THREAD("g_rows (roster_ledger::DisplayLink)");
+    // LocalPeerId is 0 on the host and 1..3 on a client (0xFF until assigned, which
+    // is out of range and so falls through to the row's own facts).
+    const int localSlot = static_cast<int>(coop::players::Registry::Get().LocalPeerId());
+    if (slot == 0 && localSlot > 0 && localSlot < kMaxSlots) {
+        const Row& own = Get(localSlot);
+        if (own.occupied() && own.pingMs >= 0) return {own.linkKind, own.pingMs};
+    }
+    const Row& r = Get(slot);
+    return {r.linkKind, r.pingMs};
 }
 
 void SetLinkFacts(int slot, coop::net::LinkKind kind, int16_t pingMs) {
