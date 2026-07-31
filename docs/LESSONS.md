@@ -33,6 +33,23 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 1. How to work (process / working agreements)
 
+- **An instrument must report its INPUTS, not only its verdict.** 2026-07-31: one probe printed
+  `PREDICATE DEAD` on four consecutive runs for four UNRELATED reasons — it targeted a class default
+  object; then a widget-tree template (filtering only the immediate outer removed 3 of 400, because a
+  template's immediate outer is a `UWidgetTree` exactly like a live instance's); then an off-screen
+  widget where `SetKeyboardFocus` is a no-op; and only then the right one, where the verdict became a
+  real finding. Separately a key probe fired on `WM_MOUSEMOVE` (the swallow `switch` shares one body
+  across mouse and key cases), and a control-matrix run was invalidated wholesale because a
+  PowerShell helper stole foreground, VOTV auto-paused, and `pause=1` answered every question first.
+  **Every one was caught by a field the probe printed about ITSELF** — what it targeted, how many
+  candidates survived each filter, which message kind it saw, and the ambient state
+  (`[capture=1 chat=0 pause=1]`). **Look FIRST: `focused=0` is exactly what a CORRECT probe prints on
+  an idle game, so a verdict-only instrument makes "my selection logic is broken" and "the feature
+  does not work" byte-identical — and confirmation bias picks the second. Print the subject and the
+  population (`instances=327 focused=0`), assert the precondition inside the run, and treat every
+  helper that touches global UI state as a confound.**
+  Full: `[[lesson-an-instrument-must-report-its-inputs-not-only-its-verdict]]`.
+
 - **A DECLINED PRODUCT QUESTION DOES NOT GO AWAY — it just gets answered after you build it
   (2026-07-30).** The `/qf` critic asked in **round 1** and again in **round 2** whether the homoglyph
   fold was a product choice for the user. I declined both times, citing "never ask when the
@@ -2085,6 +2102,21 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 
 ## 4. Dispatch, hooks & input seams
 
+- **Swallowing `WM_KEYDOWN` does NOT stop `WM_CHAR` — and `WM_CHAR` is layout-translated.**
+  MEASURED 2026-07-31 inside our own `WndProcDetour`: `TranslateMessage` synthesises the char from
+  the keydown in the PUMP, before `DispatchMessage` ever reaches your window procedure, so returning
+  0 from the keydown cannot un-create the character. One physical `T` logged
+  `KEYDOWN -> SWALLOWED by the T-chat hotkey [capture=0]`, then `CHAR 0x435 -> SWALLOWED by
+  CaptureActive [capture=1]` — eaten by a DIFFERENT gate that the keydown handler had itself
+  switched on by opening chat. And `0x435` is U+0435, Cyrillic `е`: the char carries the
+  LAYOUT-translated character while the hotkey matches the VK, so **on a RU layout the key that
+  opens chat is the key that types `е`** (same shape as VOTV binding `ConsoleKeys=Tilde` AND
+  `ConsoleKeys=ё` to the `VK_OEM_3` we swallow). **Look FIRST: instrument the whole sequence for one
+  press — KEYDOWN/KEYUP/CHAR/SYSKEY* with the gate state beside each — because message N+1 is often
+  decided by a flag message N set. To stop a character, handle the CHAR message.**
+  Full: `[[lesson-swallowing-wm-keydown-does-not-stop-wm-char]]`; fact base
+  `research/findings/tooling/votv-input-ownership-FACTS-2026-07-31.md` §8/M4; commit `f03c04f0`.
+
 - **A "keep the frame alive" predicate is worthless if a gate ONE LEVEL UP can still veto the draw.**
   2026-07-29: `hud::IsActive()` (`hud.cpp:304-309`) carries a `RevealActive()` clause added SPECIFICALLY
   so the chat history's 220 ms fade keeps getting frames — and `imgui_overlay.cpp:359` gates
@@ -2342,6 +2374,22 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   verbs live on the base `prop_container_C`). `memory/lesson_umg_click_handler_gated_on_hover_state.md`
 
 ## 5. Engine / UE4 facts
+
+- **An accessor on a WRAPPER answers about the wrapper, not the thing you meant.** MEASURED
+  2026-07-31: `UWidget::HasKeyboardFocus()` on a live, on-screen `UEditableTextBox` reads **false**
+  even immediately after calling the engine's own `SetKeyboardFocus()` on that very widget —
+  `target{kb=0 desc=0 anyUser=0} iface{kb=1 desc=0 anyUser=1}`. UMG never hands Slate your
+  `UEditableTextBox`; it wraps it in an `SObjectWidget` around the real `SEditableTextBox`, and the
+  accessor tests the cached WRAPPER exactly. The owning `UUserWidget` reports focus correctly. An
+  entire arc (the "is a game text field focused" predicate for GitHub issue #5) had been designed on
+  the per-field version across 10 `/qf` rounds; the shipped invariant became "a game `UUserWidget`
+  holds keyboard focus". **Look FIRST: round-trip any reflected accessor before designing on it —
+  set the state through the engine's own API and read it straight back. When the engine WRAPS the
+  object you hold (UMG `UWidget`->Slate `SWidget`, component->scene proxy, actor->physics body),
+  assume the accessor answers about the wrapper until measured. And a predicate that can only ever
+  be wrong in the `false` direction needs a positive control on purpose** — a healthy build and a
+  dead predicate otherwise produce identical logs.
+  Full: `[[lesson-an-accessor-on-a-wrapper-answers-about-the-wrapper]]`; commit `f03c04f0`.
 
 - **`R::FindFunction` does NOT walk the superclass chain** — it matches `OuterOf(fn) == owningClass`
   EXACTLY (`ue_wrap/core/reflection.cpp:427`; no chain-walking variant exists anywhere in

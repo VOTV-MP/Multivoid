@@ -1,6 +1,21 @@
 # MULTIPLAYER popup shows, no cursor — REPRODUCED, and the filed hypothesis is FALSE
 
-**Status: REPRODUCED autonomously 2026-07-28. Root NOT yet found. Not fixed.**
+> **SUPERSEDED 2026-07-31 — the ROOT IS FOUND. Read
+> `research/findings/tooling/votv-input-ownership-FACTS-2026-07-31.md` §7 + §8 instead.**
+> Root: cursor OWNERSHIP, not drawing. VOTV calls `SetCursorPos` ~118x/s at the window
+> centre and our `SetCursorPosDetour` no-ops every one while a surface is up, so the OS
+> pointer sits wherever the game last left it — in the failing run the client corner,
+> where a 12x19 arrow is invisible. Every ImGui drawing term is healthy.
+>
+> **All three "where to look next" candidates below are FALSIFIED by measurement:**
+> (1) `bd->hWnd == GetForegroundWindow() == g_hwnd` in every sample; (2) `MouseDrawCursor`
+> reads 1 at the render site; (3) no DPI mismatch inside the process (`phys == osScreen`).
+> The separate "PowerShell says (426,344), the game says (0,24)" anomaly was an ARTEFACT —
+> the game process is `dpiAware=0` and PowerShell is not, so the two were never comparable.
+> Still NOT FIXED; the fix is designed in the FACTS doc and did not ship 2026-07-31.
+> Kept for its instrument design (the focus control) and its falsified-hypothesis record.
+
+**Status: REPRODUCED autonomously 2026-07-28. Root FOUND 2026-07-31 (see the box above). Not fixed.**
 Reported by the user 2026-07-27: *"clicking multiplayer shows multiplayer pop up but no CURSOR showing"*.
 
 ## What the previously-filed hypothesis said, and why it is wrong

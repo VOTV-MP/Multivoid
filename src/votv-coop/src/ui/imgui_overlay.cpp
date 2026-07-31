@@ -232,6 +232,13 @@ LRESULT CALLBACK WndProcDetour(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
         if (!ui::scoreboard::LocalIsHost()) g_scoreboard.store(false, std::memory_order_relaxed);
         return 0;
     }
+    // STILL BROKEN, and deliberately not fixed here (docs/LESSONS.md:794-798): the
+    // leading !CaptureActive() means LoadingOpen() and ScoreOpen() -- surfaces that own
+    // input but own NO TEXT -- still swallow T whole, so chat is unreachable during a
+    // join. The arbiter added below makes that expressible (it is the OverlayNonText
+    // case) but does NOT yet cure it; curing it means splitting CaptureActive by
+    // whether the surface takes typed text, which is its own change.
+    //
     // T -> open the chat input (v60, user req): only mid-session (chat is
     // meaningless solo) and only when no other surface owns input (typing 't'
     // into the browser's name field must not pop the chat). Swallow the press

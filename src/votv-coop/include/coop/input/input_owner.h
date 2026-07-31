@@ -67,10 +67,21 @@ void PublishOverlayOwnsText(bool owns);
 bool GameOwnsText();
 
 // One of OUR ImGui text fields has focus. Our own state; exact.
+//
+// AS-BUILT, 2026-07-31: PUBLISHED BUT NOT YET READ -- zero consumers. It exists because
+// the arbiter's contract is the three terms together and the AXIS-2 (rebindable keys)
+// work consumes it; until then it is write-only, and that is a smell recorded rather
+// than hidden. If AXIS 2 does not land, this accessor goes (RULE 2).
 bool OverlayOwnsText();
 
-// The foreground window belongs to this process. Folded in here so the six global
-// GetAsyncKeyState pollers stop each carrying their own copy of the gate.
+// The foreground window belongs to this process.
+//
+// AS-BUILT, 2026-07-31: this DUPLICATES `ui::input_focus::IsOurWindowForeground()`, which
+// still has 14 live call sites across freecam / spawn_menu_unlock / voice_capture /
+// voice_chat / multiplayer_menu. The collapse of those into this arbiter is DESIGNED and
+// NOT DONE. Do not read the design intent as the state of the tree -- two answers to
+// "who owns the keyboard" exist side by side right now, which is the RULE-2 debt this
+// arc opened and owes.
 bool IsForeground();
 
 // The composite every hotkey wants: may this key be taken away from the game?
