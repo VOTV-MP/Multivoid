@@ -10,6 +10,7 @@
 #include <string>
 
 #include "coop/player/players_registry.h"
+#include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -50,7 +51,14 @@ void* g_lastOwner = nullptr;
 
 void* g_clsUserWidget = nullptr;
 void* g_fnHasKeyboardFocus = nullptr;
-void* g_fnHasFocusedDescendants = nullptr;
+void* g_fnHasUserFocusedDescendants = nullptr;
+// The local PlayerController, resolved ONCE per full scan (it costs a UFunction call).
+// Null means we cannot ask the descendant question at all -- and we then do not claim
+// ownership, rather than falling back to an all-users test.
+void* g_pcForScan = nullptr;
+// Which accessor concluded the scan's YES. Diagnostics, but the kind that turns a
+// repeat of this bug into one grep instead of one more hands-on round.
+const char* g_scanTerm = "-";
 int32_t g_activeInterfaceOff = -2;
 bool g_resolved = false;
 
@@ -60,11 +68,13 @@ void ResolveOnce() {
     g_clsUserWidget = R::FindClass(L"UserWidget");
     void* widgetCls = R::FindClass(L"Widget");
     if (widgetCls) {
-        g_fnHasKeyboardFocus     = R::FindFunction(widgetCls, L"HasKeyboardFocus");
-        g_fnHasFocusedDescendants = R::FindFunction(widgetCls, L"HasFocusedDescendants");
+        g_fnHasKeyboardFocus = R::FindFunction(widgetCls, L"HasKeyboardFocus");
+        g_fnHasUserFocusedDescendants =
+            R::FindFunction(widgetCls, L"HasUserFocusedDescendants");
     }
-    UE_LOGI("input_owner: resolve UserWidget=%p HasKeyboardFocus=%p HasFocusedDescendants=%p",
-            g_clsUserWidget, g_fnHasKeyboardFocus, g_fnHasFocusedDescendants);
+    UE_LOGI("input_owner: resolve UserWidget=%p HasKeyboardFocus=%p "
+            "HasUserFocusedDescendants=%p",
+            g_clsUserWidget, g_fnHasKeyboardFocus, g_fnHasUserFocusedDescendants);
 }
 
 // ---- THE game-side answer, read from THE GAME'S OWN GUARD ----
@@ -180,20 +190,37 @@ bool CallBoolNoArgs(void* widget, void* fn) {
     return ret;
 }
 
-// User-0 Slate focus, on the widget itself OR on anything inside it.
+// USER-0 Slate focus, on the widget itself OR on anything inside it.
 //
-// BOTH terms are required and neither is redundant. `HasKeyboardFocus` is an
-// EXACT-widget test, so it answers true only while focus sits on the user widget
-// itself -- which is what `SetInputMode_GameAndUIEx` leaves behind when a menu
-// opens and nothing has been clicked yet. The moment the player clicks into a
-// field (save-slot rename, the settings search), focus moves to a DESCENDANT and
-// the exact test goes false -- i.e. it fails in precisely the case where typing
-// is actually happening. Only used for the interface-less surfaces now; the
-// in-world screens are answered by InterfaceOwnsTextLive() below, which does not
-// go through Slate focus at all.
+// BOTH terms are user-0-scoped, and that is the entire point. `HasKeyboardFocus` is an
+// EXACT-widget test, so it answers true only while focus sits on the user widget itself
+// -- which is what SetInputMode_GameAndUIEx leaves behind when a menu opens and nothing
+// has been clicked. The moment the player clicks into a field (save-slot rename, the
+// settings search) focus moves to a DESCENDANT and the exact test goes false, i.e. it
+// fails in precisely the case where typing is happening. Hence the second term.
+//
+// IT MUST BE THE `User` VARIANT. This first shipped as `HasFocusedDescendants()`, which
+// is ALL-USERS -- and the user REPORTED the consequence within the hour: after visiting
+// the SAT console once, T / V / tilde were dead forever. Measured from the edge log, on
+// both peers identically:
+//
+//   YES (owner=ui_console_C,       activeInterface=1 scan=0)   <- entering, correct
+//   YES (owner=ui_consolesAtlas_C, activeInterface=0 scan=1)   <- after leaving, LATCHED
+//
+// The in-world screens live in a UWidgetComponent whose UMG is focused by
+// WidgetInteraction's VIRTUAL user, and nothing ever clears that focus -- so an
+// all-users descendant test on the permanently-resident atlas widget is true forever.
+// That is the same virtual user the fix for issue #5 exists because of: it must be
+// INVISIBLE to this term and VISIBLE to the activeInterface term. Asking about the
+// local PlayerController's user is what separates them.
 bool OwnsUserZeroFocus(void* widget) {
-    return CallBoolNoArgs(widget, g_fnHasKeyboardFocus) ||
-           CallBoolNoArgs(widget, g_fnHasFocusedDescendants);
+    if (CallBoolNoArgs(widget, g_fnHasKeyboardFocus)) { g_scanTerm = "kbfocus"; return true; }
+    if (!g_fnHasUserFocusedDescendants || !g_pcForScan) return false;
+    // UFunction frame: { APlayerController* PlayerController; bool ReturnValue; }
+    struct Frame { void* pc; bool ret; } f{g_pcForScan, false};
+    if (!R::CallFunction(widget, g_fnHasUserFocusedDescendants, &f)) return false;
+    if (f.ret) g_scanTerm = "user0-descendant";
+    return f.ret;
 }
 
 // True when `cls` is UUserWidget or derives from it. The class chain is walked rather
@@ -240,8 +267,9 @@ void LogOwnerEdge() {
     const int state = (iface ? 2 : 0) | (scan ? 1 : 0);
     if (sLast == state) return;
     sLast = state;
-    UE_LOGI("input_owner: gameOwnsText -> %s (owner=%s, activeInterface=%d scan=%d)",
-            (iface || scan) ? "YES" : "no", g_ownerName, iface ? 1 : 0, scan ? 1 : 0);
+    UE_LOGI("input_owner: gameOwnsText -> %s (owner=%s, activeInterface=%d scan=%d via %s)",
+            (iface || scan) ? "YES" : "no", g_ownerName, iface ? 1 : 0, scan ? 1 : 0,
+            scan ? g_scanTerm : "-");
 }
 
 }  // namespace
@@ -293,6 +321,13 @@ void TickGameThread(bool doFullScan) {
     // the census found 8 of the 26 text surfaces with no interface-driving owner, so the
     // fast path alone would miss save-slot renaming and the settings search.
     bool owns = false;
+    g_scanTerm = "-";
+    // The local PlayerController scopes the descendant test to USER 0. One UFunction
+    // call per scan (1 Hz), not per widget.
+    {
+        void* lp = coop::players::Registry::Get().Local();
+        g_pcForScan = lp ? ue_wrap::engine::GetController(lp) : nullptr;
+    }
 
     // Ask LAST FRAME'S OWNER FIRST. Focus is sticky -- the overwhelmingly common case
     // is that whoever owned it a second ago still does -- and a hit here skips the
