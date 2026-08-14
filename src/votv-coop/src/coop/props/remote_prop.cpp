@@ -236,9 +236,10 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
     // Disable PhysX simulation so the per-packet SetActorLocation sticks (a clean
     // kinematic follow -- the clump uses the generic root toggle, NOT a fight-the-sim
     // crutch). The clump floats in front of the puppet exactly like the mannequin.
-    DriveTogglePhysics(prop, mesh, false);
+    const int32_t propIdx = R::InternalIndexOf(prop);   // live here; cache for IsLiveByIndex
+    DriveTogglePhysics(prop, propIdx, mesh, false);
     g_drives[slot].actor = prop;
-    g_drives[slot].actorIdx = R::InternalIndexOf(prop);
+    g_drives[slot].actorIdx = propIdx;
     g_drives[slot].mesh  = mesh;
     g_drives[slot].lastKey.assign(pose.key.data, pose.key.len);
     g_drives[slot].lastEid = pose.elementId;
@@ -271,14 +272,21 @@ void Tick(coop::net::Session& session) {
         return;
     }
     // Per-slot drive iteration. On HOST: scan slots 1..kMaxPeers-1 (each
-    // connected client can drive its own held prop independently). On
-    // CLIENT: scan slot 0 only (the host's puppet is the only prop-pose
-    // source from the client's POV).
+    // connected client can drive its own held prop independently; the host's
+    // own held prop is published locally by local_streams, never read back
+    // from the wire). On CLIENT: scan EVERY slot -- the host's own pose
+    // arrives stamped senderSlot=0, and since the host relay rewrites a
+    // relayed peer pose to its ORIGIN slot (session_relay.cpp), other
+    // clients' held props arrive stamped 1..kMaxPeers-1. A client's own slot
+    // is skipped (its pose is local, and the relay never echoes it back --
+    // the explicit self-guard matches puppet_drive).
     const bool isHost = (session.role() == coop::net::Role::Host);
     const int firstSlot = isHost ? 1 : 0;
-    const int lastSlot  = isHost ? static_cast<int>(coop::players::kMaxPeers) : 1;
+    const int lastSlot  = static_cast<int>(coop::players::kMaxPeers);
+    const uint8_t localSlot = coop::players::Registry::Get().LocalPeerId();
     const uint64_t nowMs = NowMs();
     for (int slot = firstSlot; slot < lastSlot; ++slot) {
+        if (!isHost && static_cast<uint8_t>(slot) == localSlot) continue;
         ActiveDrive& drive = g_drives[slot];
         coop::net::PropPoseSnapshot pose{};
         bool isNew = false;
@@ -374,6 +382,7 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
     // owner already disconnected). Sender-attribution is exact.
     void* propActor = nullptr;
     void* meshToActOn = nullptr;
+    int32_t propIdx = -1;   // cached GUObjectArray index (IsLiveByIndex across the branches below)
     int releasedSlot = -1;
     if (senderSlot >= 0 && senderSlot < static_cast<int>(coop::players::kMaxPeers)) {
         const ActiveDrive& d = g_drives[senderSlot];
@@ -399,17 +408,19 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
             // Release arrived without a matching drive cache entry --
             // resolve fresh from the live world (a keyed Aprop).
             propActor = prop;
+            propIdx   = R::InternalIndexOf(prop);
             meshToActOn = ue_wrap::prop::GetStaticMesh(prop);
         } else if (payload.elementId != 0) {
             // docs/piles/08: a keyless trash clump whose slot already moved on (E still a live clump
             // elsewhere) -- resolve by eid so its throw still applies to the right entity.
             if (void* prop2 = ResolveLiveActorByEid(payload.elementId)) {
                 propActor = prop2;
+                propIdx   = R::InternalIndexOf(prop2);
                 meshToActOn = ue_wrap::prop::GetStaticMesh(prop2);
             }
         }
     }
-    if (StickHoldsPhysicsOff(propActor)) {
+    if (StickHoldsPhysicsOff(propActor, propIdx)) {
         // v68: the prop got STUCK while this peer held it (PropStickState
         // landed before this release -- same reliable lane keeps the order).
         // The release must NOT re-enable physics / write velocity: the stuck

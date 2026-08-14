@@ -3,8 +3,8 @@
 //
 // A client-grabbed pile's clump is driven by the HOST (on the requester's puppet -- the puppet tick is
 // dead), so the host ORIGINATES a per-eid pose batch (MsgType::TrashCarryPose) that EVERY client renders
-// (the relay can't echo a pose to its origin; a client drives only slot 0, which the host's own carry
-// uses). This module drains that batch each game tick and drives the matching trash PROXY through the
+// (the relay can't echo a pose back to its origin -- the grabber itself would never see its own carried
+// clump through the per-slot PropPose relay). This module drains that batch each game tick and drives the matching trash PROXY through the
 // SAME fixed-delay snapshot interp the per-slot held-prop receiver uses (coop/active_drive.h), keyed by
 // eid -- so a client-grabbed clump carries + throws as smoothly as the host's own carry, and scales to N
 // simultaneous client grabs (one per peer). The drive ends at the ToPile convert (the carry latch closes

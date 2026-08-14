@@ -355,9 +355,12 @@ HEAD `29353191`; see the Increment-2 bullet below). A sync-time-context byte rej
     native cast on its own). E-press TOGGLES grab vs throw via the client carry-state.
     `[[lesson-proxy-never-lookatactor-use-camera-cone]]`
   - **Carry visibility = a NEW host-authoritative per-eid pose stream** (`MsgType::TrashCarryPose=34`,
-    `TrashClumpPoseSnapshot` 32B, the `StoreRemoteWorldActorBatch` pattern). A client only drives pose slot 0
-    + the relay never echoes to the origin, so the host-driven puppet-held clump's pose MUST be host-
-    originated; every client drives the proxy via a per-eid `ActiveDrive` interp (`coop/trash_clump_pose_stream`,
+    `TrashClumpPoseSnapshot` 32B, the `StoreRemoteWorldActorBatch` pattern). The relay never echoes to the
+    origin, so a client-held clump's pose cannot reach the GRABBER itself; the host-driven puppet-held clump's
+    pose MUST be host-originated so every client (the grabber included) renders the carry. (Since the 2026-08
+    cross-peer prop fix, `remote_prop::Tick` drives every non-local slot on clients too -- but the relay's
+    no-echo-to-origin property is what keeps the trash stream host-authored; both facts stand together.)
+    Every client drives the proxy via a per-eid `ActiveDrive` interp (`coop/trash_clump_pose_stream`,
     `coop/puppet_carry_drive::Tick` publishes carry + flight). Scales to N simultaneous client grabs.
   - **Throw** = `OnThrowIntent` releases the puppet grab (the re-pile gate reads not-held) + applies physics
     velocity along the puppet aim → the clump flies (flight stream) + self-re-piles via its own ground-hit

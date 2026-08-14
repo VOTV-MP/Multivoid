@@ -53,9 +53,10 @@ void TickApplyAndDrive(coop::net::Session& s) {
             AD::ActiveDrive& d = g_carryDrives[snap.eid];
             if (d.actor != proxy || d.lastEid != snap.eid) {   // first pose for this eid, or the proxy actor changed
                 AD::ResetDriveState(d);
-                d.actor   = proxy;
-                d.isProxy = true;            // host-authoritative follower: freeze on a gap, never drop to physics
-                d.lastEid = snap.eid;
+                d.actor    = proxy;
+                d.actorIdx = R::InternalIndexOf(proxy);  // rooted + live here; cache for IsLiveByIndex
+                d.isProxy  = true;            // host-authoritative follower: freeze on a gap, never drop to physics
+                d.lastEid  = snap.eid;
             }
             AD::BeginLerpToPose(d, ue_wrap::FVector{snap.x, snap.y, snap.z},
                                 ue_wrap::FRotator{snap.pitch, snap.yaw, snap.roll}, nowMs);
