@@ -80,6 +80,11 @@ void Install(coop::net::Session* session);
 // dirty-set drain. Near-free when the dirty set is empty (the steady state).
 void Tick();
 
+// v126 (profile #4): read-and-clear the container takeObj-in-flight latch (armed at the
+// vm_dispatch takeObj edge). prop_drop_intent::OnClientFinishSpawn consumes it to mark the
+// extracted item's FinishSpawn entry as a container-extraction birth. Game thread.
+bool TakeObjInFlight();
+
 // ContainerContents chunks.
 void OnContentsChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot);
 

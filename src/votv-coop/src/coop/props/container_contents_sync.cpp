@@ -36,8 +36,12 @@ using coop::element::LivePropActor;
 
 constexpr uint8_t kOpContents = 0;
 
-// One verb id: both watched verbs share one callback (mark-dirty), so they need no distinction.
-constexpr int kVerbDirty = 1;
+// Verb ids. addObject marks dirty; takeObj ALSO marks dirty AND arms the container-extraction
+// birth latch consumed by prop_drop_intent (a client-extracted item's world actor is admitted as
+// a host-authoritative drop intent -- the profile's #4). They need distinct ids so OnVerbEntry
+// can tell them apart.
+constexpr int kVerbDirty   = 1;   // addObject
+constexpr int kVerbTakeObj = 2;   // takeObj
 
 // The sweep is the drain of an edge-driven set, not a poll -- it does no work when nothing was
 // dispatched. 250 ms keeps a burst of addLoot/addObject calls (a loot roll fires addObject x4)
@@ -114,6 +118,14 @@ constexpr uint64_t kConflictWindowMs = 1500;
 // ever noticeable is an EMPIRICAL question, and this counter is how it gets answered. Do not
 // build a rollback until this number is non-trivial in real play.
 uint64_t g_conflictRejects = 0;
+
+// v126 (profile #4): container-takeObj-in-flight latch. Armed at the vm_dispatch takeObj ENTRY,
+// consumed (read-and-clear) by prop_drop_intent::OnClientFinishSpawn at the FinishSpawn enqueue
+// of the extracted item's actor -- the item spawns INSIDE the takeObj/getObject call, so the
+// latch is live exactly when the enqueue runs. Atomic + exchange so the consume is one-shot and
+// race-free (the parallel-anim note in this file's vm_dispatch consumers). A personal-inventory
+// take arms it too -- harmless, the drain's own gates (hand axis / live actor) filter those.
+std::atomic<bool> g_takeObjInFlight{false};
 
 // Inbound blobs for an eid not yet resolvable (birth skew / mid-activity join, principle 8).
 struct Parked { std::vector<uint8_t> blob; std::chrono::steady_clock::time_point at; };
@@ -370,8 +382,12 @@ uint64_t ContentHash(uint32_t eid, const std::vector<SR::SaveRecord>& recs) {
 
 // Returns false if the send was refused (caller arms the retry).
 //
-// v125: run by BOTH peers. On the host `toSlot < 0` fans out to everyone; on a client the same
+// v126: run by BOTH peers. On the host `toSlot < 0` fans out to everyone; on a client the same
 // call reaches the host alone (a client's only peer), which is exactly the author->arbiter edge.
+// (Forward: re-derive the SETTER-MANAGED volume/mass/names through the engine verbs -- defined
+// below, declared here because BroadcastContainer calls it.)
+void RederiveManagedState(void* owner, void* inv);
+
 bool BroadcastContainer(coop::net::Session* s, uint32_t eid, void* inv, int toSlot, bool force) {
     std::vector<SR::SaveRecord> recs;
     if (!ReadContents(inv, recs)) return true;  // nothing resolvable -- not a transport failure
@@ -406,6 +422,11 @@ bool BroadcastContainer(coop::net::Session* s, uint32_t eid, void* inv, int toSl
         // a join: the seed is targeted, so g_sentHash stayed empty, the CAS compared against 0, and
         // "authored from base N but the host published 0" fired for every container in the world.
         if (IsHost()) g_publishedHash[eid] = h;
+        // v126 (#6 residual): the AUTHOR of a mutation never re-derives its own currVol/Mass/names.
+        // The host excludes the author from the apply relay, and the native getObject/takeObj(FALSE)
+        // path does not call updateVolumesAndMass (only takeObj(TRUE) does) -- so the mutator's own
+        // displayed volume goes stale while every OTHER peer converges. Re-derive locally here.
+        RederiveManagedState(OwnerOf(inv), inv);
         UE_LOGI("container_contents: eid=%u shipped %zu records (%zu B)%s%s",
                 eid, recs.size(), blob.size(),
                 toSlot < 0 ? "" : " [targeted]",
@@ -719,6 +740,11 @@ void OnVerbEntry(const vm::Bracket& br) {
     // (vm_dispatch.h says exactly that). Without this gate the first non-propInventory ctx to
     // carry an addObject would poison the single offset cache for the whole session.
     if (!IsInventoryComponent(br.ctx)) return;
+    // v126 (profile #4): a takeObj on ANY inventory component arms the container-extraction latch.
+    // prop_drop_intent consumes it at the extracted item's FinishSpawn enqueue (the item spawns
+    // inside this same call) to admit the birth as a host-authoritative drop intent. addObject
+    // (kVerbDirty) must NOT arm it.
+    if (br.verbId == kVerbTakeObj) g_takeObjInFlight.store(true, std::memory_order_relaxed);
     void* owner = OwnerOf(br.ctx);
     if (!owner) return;
     const uint32_t eid =
@@ -754,6 +780,14 @@ void NoteJoinSnapshotBracket(bool open) {
     }
 }
 
+// v126 (profile #4): read-and-clear the container takeObj-in-flight latch. prop_drop_intent
+// consumes it at a FinishSpawn enqueue to mark the entry as a container-extraction birth (only
+// that birth is admitted as a host-authoritative drop intent -- the rest of the client-spawn
+// door stays closed). One-shot via exchange; game thread (also fires on a task-graph worker per
+// the parallel-anim note, hence atomic). Game thread.
+bool TakeObjInFlight() {
+    return g_takeObjInFlight.exchange(false, std::memory_order_relaxed);
+}
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
@@ -766,7 +800,7 @@ void Tick() {
     if (!g_verbsRegistered) {
         g_verbsRegistered =
             vm::RegisterVirtualVerb(L"addObject", kVerbDirty, &OnVerbEntry) &&
-            vm::RegisterVirtualVerb(L"takeObj",   kVerbDirty, &OnVerbEntry);
+            vm::RegisterVirtualVerb(L"takeObj",   kVerbTakeObj, &OnVerbEntry);
         if (!g_verbsRegistered)
             UE_LOGW("container_contents: verb registration FAILED -- the lane is inert");
     }

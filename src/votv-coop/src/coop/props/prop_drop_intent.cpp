@@ -7,7 +7,8 @@
 #include "coop/net/session.h"
 #include "coop/player/hand_item.h"          // LocalHandActor (place detect: exclude the hand display)
 #include "coop/props/prop_echo_suppress.h"  // PeekIncomingSpawn (exclude host-echo adopt spawns)
-#include "coop/props/prop_element_tracker.h"// GetPropElementIdForActor, ResolveLiveActorByKey
+#include "coop/props/prop_element_tracker.h"// GetPropElementIdForActor, ResolveLiveActorByKey   
+#include "coop/props/container_contents_sync.h"  // v126 (#4): TakeObjInFlight -- mark a container-extraction birth
 #include "coop/session/world_load_episode.h"  // InEpisode (quiet during the join loadObjects churn)
 #include "ue_wrap/core/call.h"                   // ParamFrame + Call (setKey on the host re-spawn)
 #include "ue_wrap/engine/engine.h"                 // BeginDeferredSpawn/FinishDeferredSpawn/SetActorScale3D
@@ -54,6 +55,11 @@ struct PendingPlace {
     void*   actor = nullptr;
     int32_t idx   = -1;
     int     tries = 0;   // net-pump ticks waited for the loadData Key restore
+    // v126 (container profile #4): true when this entry is the actor a CONTAINER takeObj just
+    // materialized (the takeObj-in-flight latch was live at enqueue). Admitted at drain as a
+    // host-authoritative drop intent -- the client-extracted item's world actor is invisible to
+    // the host otherwise (the freshBirth whitelist only covers reel/module/drive births).
+    bool    containerExtract = false;
 };
 std::vector<PendingPlace> g_pending;         // GT-only
 constexpr size_t kMaxPending  = 32;          // runaway backstop (a settled client rarely has >1 in flight)
@@ -136,7 +142,13 @@ void OnClientFinishSpawn(void* /*context*/, void* /*srcObj*/, void* result) {
         UE_LOGW("[PROP-DROP] client pending-place cap %zu hit -- dropping %p", kMaxPending, actor);
         return;
     }
-    g_pending.push_back(PendingPlace{actor, R::InternalIndexOf(actor), 0});
+    // v126 (container profile #4): was a container takeObj in flight when this actor spawned? The
+    // extracted item's actor materializes INSIDE the takeObj/getObject call, so the latch is live
+    // exactly here. Marks the entry as a container-extraction birth (admitted at drain).
+    const bool fromContainerExtract = coop::props::container_contents_sync::TakeObjInFlight();
+    g_pending.push_back(PendingPlace{actor, R::InternalIndexOf(actor), 0, fromContainerExtract});
+    if (fromContainerExtract)
+        UE_LOGI("[PROP-DROP] CLIENT enqueued container-EXTRACT birth actor=%p (v126 -- admitted at drain)", actor);
 }
 
 // HOST: spawn the authoritative Aprop by Key at the transform. Mirrors remote_prop_spawn's
@@ -293,7 +305,11 @@ void Tick(coop::net::Session* session) {
               ue_wrap::phys_mods::IsModuleClass(R::ClassOf(e.actor))) ||
              (ue_wrap::drive_chain::EnsureResolved() &&
               ue_wrap::drive_chain::IsDriveClass(R::ClassOf(e.actor))));
-        if (!parked && !freshBirth) continue;  // not a place of a picked-up prop, not a whitelisted birth
+        // v126 (container profile #4): a CONTAINER-EXTRACT birth is admitted too. The client's
+        // takeObj materializes the extracted item as a world actor; without this the freshBirth
+        // whitelist (reel/module/drive only) drops it at drain and the item never reaches the
+        // host's world. The host's dup-guard (ResolveLiveActorByKey) keeps the intent safe.
+        if (!parked && !freshBirth && !e.containerExtract) continue;  // not a place / not a whitelisted birth / not a container extract
         // Author the host-authoritative spawn intent (place OR reel-eject birth).
         coop::net::PropDropIntentPayload p{};
         const std::wstring cls = R::ClassNameOf(e.actor);
