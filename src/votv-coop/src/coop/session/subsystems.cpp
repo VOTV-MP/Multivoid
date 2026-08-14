@@ -104,6 +104,7 @@
 #include "coop/player/item_activate.h"
 #include "coop/player/player_damage.h"
 #include "coop/player/ko_respawn.h"
+#include "coop/player/skin_preview.h"
 #include "coop/net/session.h"
 #include "coop/creatures/npc_adoption.h"
 #include "coop/creatures/kerfur_prop_adoption.h"  // K-6
@@ -444,6 +445,7 @@ DisconnectStats DisconnectAll() {
     coop::owner_entity_sync::OnDisconnect();    // v108 destroy ALL owner-entity mirrors (our spawned actors must not linger into SP)
     coop::spawn_authority::OnDisconnect();      // T1 Inc-1: restore parked spawner ticks (loan repayment belt)
     coop::ko_respawn::OnDisconnect();           // 2026-08: clear KO state + respawn timer
+    coop::skin_preview::OnDisconnect();         // 2026-08: despawn the F1-skins mannequin
     coop::inventory_pickup_sync::OnDisconnect();
     coop::chat_sync::OnDisconnect();
     coop::turbine_sync::OnDisconnect();
@@ -531,6 +533,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     coop::dev::vitals_keepalive::Tick();     // [dev] long-exposure keepalive (single latched read when off)
     coop::spawn_authority::Tick();           // T1 Inc-1 t1 park driver (client-session gate; cheap when idle)
     coop::ko_respawn::Tick();                // 2026-08: KO-respawn timer + AddPlayerDamage interceptor lazy install
+    coop::skin_preview::Tick();              // 2026-08: F1-skins live mannequin preview (spawn/apply/position/hide)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:device_occupancy"}; coop::device_occupancy::Tick(); }    // v63 device occupancy: activeInterface edge poll + pending claim retry
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:console_state"}; coop::console_state_sync::Tick(); }  // v64 signal-catcher: host sky poll / client mirror sweep / desk + dish owner streams
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:signal_catch"}; coop::signal_catch_sync::Tick(); }   // v70/v113: catch/cleared detectors (1 Hz, L4 tuple signature; UNGATED v116)
