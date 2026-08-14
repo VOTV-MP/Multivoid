@@ -655,6 +655,17 @@ void TickClientReconcile() {
     // (The spawn-revalidation step it once sequenced is retired with the join barrier -- no wire
     // expression is provisional anymore; the remaining steps reconcile save-vs-wire STATE.)
     coop::element::quiescence_drain::RunReconcile();
+    // v126 (2026-08, duplicate-suitcase-on-2nd-join): a save-transfer join goes through TWO
+    // level loads (net_pump.cpp:332); a keyed prop RE-CREATED by the second load / GC churn
+    // reuses a freed GUObjectArray slot, so NumObjects stays flat and the steady-world re-seed
+    // (registry_reaper, `grew || periodic` high-water gate) never indexes it. That native is then
+    // invisible to this sweep's membership (row walk + key index) and survives as a duplicate --
+    // the joining client's starting suitcase x2. Refresh the key-index membership HERE, the one
+    // cold per-join point right before the sweep judges, so the re-created native is either
+    // keyed-churn RE-BIND-spared (its mirror row died) or doomed (unclaimed), leaving exactly one.
+    // On a client the passive census only re-INDEXES keyed props (no element mint, no broadcast --
+    // prop_element_tracker.cpp:361-364), so this is safe; cost is one GUObjectArray walk per join.
+    coop::prop_element_tracker::ReSeedKnownKeyedProps(nullptr);
     RunDivergenceSweep_(localPlayer);
     // Phase 1 step 1A probe: load tail has quiesced -> emit the keyless-spawn coverage verdict (read-only).
     coop::dev::spawn_order_probe::EmitVerdictAtQuiescence();
