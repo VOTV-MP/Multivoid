@@ -36,6 +36,7 @@
 #include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
 #include "coop/session/player_handshake.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/ko_respawn.h"      // 2026-08: KO-respawn death backstop (death.ko_respawn)
 #include "coop/player/roster_ledger.h"
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_snapshot.h"
@@ -709,6 +710,15 @@ void Tick(coop::net::Session& session) {
         if (!g_localDeathHandled && sessionLiveForDeath) {
             bool isRagdoll = false, dead = false;
             if (ue_wrap::engine::ReadMainPlayerRagdollState(g_netLocal.Raw(), isRagdoll, dead) && dead) {
+                // KO RESPAWN (death.ko_respawn, 2026-08): convert the death into a KO --
+                // the player stays in the world, lies ragdolled, respawns at the start.
+                // Does NOT latch g_localDeathHandled: the player must keep streaming after
+                // the respawn, and ko_respawn::Active() gates the re-entry while down.
+                if (coop::ko_respawn::HandleLocalDeath(session, g_netLocal.Raw())) {
+                    UE_LOGW("net: LOCAL PLAYER DIED -- KO RESPAWN handled it (staying in the "
+                            "world; respawn pending)");
+                    return;
+                }
                 g_localDeathHandled = true;
                 UE_LOGW("net: LOCAL PLAYER DIED -- tearing down coop state synchronously + fleeing "
                         "to the main menu (role=%s; permadeath-rejoinable)",

@@ -166,6 +166,22 @@ CFG_FLAG(voice_test_tone, "voice.test_tone", "voice", false, "VOTVCOOP_VOICE_TES
 CFG_FLAG(voice_loopback, "voice.loopback", "voice", false, "VOTVCOOP_VOICE_LOOPBACK",
     "Dev: play your own transmitted voice back locally.")
 
+// ---- [death] ----------------------------------------------------------------
+// KO RESPAWN (2026-08): instead of the stock permadeath (death -> kick to the main
+// menu -> rejoin), lethal damage knocks the player out (a faint/ragdoll) and, after
+// ko_ragdoll_seconds, respawns them with full vitals. Items are kept. The lethal hit
+// is intercepted at AddPlayerDamage; fall/fire/radiation deaths that bypass it are
+// caught by the net_pump death backstop and converted the same way.
+CFG_FLAG(ko_respawn, "death.ko_respawn", "death", true, "VOTVCOOP_KO_RESPAWN",
+    "Lethal damage knocks the player out instead of killing them (KO ragdoll, then a "
+    "respawn with full vitals). 0 = the stock permadeath flow (kick to the main menu).")
+CFG_INT(ko_ragdoll_seconds, "death.ko_ragdoll_seconds", "death", 5, 1, 30, "VOTVCOOP_KO_RAGDOLL_SECONDS",
+    "How long a KO'd player lies ragdolled before the respawn fires.")
+CFG_INT(ko_invulnerable_seconds, "death.ko_invulnerable_seconds", "death", 3, 0, 60, "VOTVCOOP_KO_INVULNERABLE_SECONDS",
+    "Damage immunity after a KO respawn (all damage is canceled during it).")
+CFG_FLAG(ko_spawn_at_start, "death.ko_spawn_at_start", "death", true, "VOTVCOOP_KO_SPAWN_AT_START",
+    "Respawn at the КПП start point. 0 = get up where the player fell.")
+
 // ---- [dev] ------------------------------------------------------------------
 // enabled: the master kill-switch -- ABSENT/garbage default TRUE (= granular
 // switches decide); only an explicit falsy forces dev features off.

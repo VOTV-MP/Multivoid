@@ -70,6 +70,7 @@ inline constexpr const char* kSectionOrder[] = {
     "player",  // durable identity: player_guid, player_skin, nameplate, nick_color
     "ui",      // fonts, scale, panels
     "voice",   // devices, gates, volumes
+    "death",   // KO-respawn: ko_respawn, ko_ragdoll_seconds, ko_invulnerable_seconds, ko_spawn_at_start
     "dev",     // dev/test flags -- deliberately last, out of casual sight
 };
 inline constexpr size_t kSectionCount = sizeof(kSectionOrder) / sizeof(kSectionOrder[0]);

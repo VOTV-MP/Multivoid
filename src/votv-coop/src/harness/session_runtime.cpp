@@ -32,6 +32,7 @@
 #include "coop/save/save_transfer.h"
 #include "coop/session/join_progress.h"
 #include "coop/session/net_pump.h"
+#include "coop/player/ko_respawn.h"  // 2026-08: KO-respawn session re-arm
 #include "coop/session/player_handshake.h"
 #include "coop/text/utf8_codec.h"
 #include "coop/session/session_manager.h"
@@ -401,6 +402,7 @@ bool StartCoopSession(const coop::net::Config& netCfg) {
     // doesn't carry stale "was connected" / "was holding prop" entries into the new
     // session (phantom disconnect edge / suppressed connect replay / stale prop key).
     coop::net_pump::OnSessionStart();
+    coop::ko_respawn::OnSessionStart();  // 2026-08: re-arm the KO-respawn config + timer
     coop::prop_lifecycle::SetSession(&g_session);
     coop::npc_sync::SetSession(&g_session);
     coop::prop_snapshot::SetSession(&g_session);

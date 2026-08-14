@@ -103,6 +103,7 @@
 #include "coop/props/grab_observer.h"
 #include "coop/player/item_activate.h"
 #include "coop/player/player_damage.h"
+#include "coop/player/ko_respawn.h"
 #include "coop/net/session.h"
 #include "coop/creatures/npc_adoption.h"
 #include "coop/creatures/kerfur_prop_adoption.h"  // K-6
@@ -139,6 +140,7 @@ void Install(coop::net::Session& session) {
     coop::piramid_sync::Install(&session);      // v97: piramid event choreography lane (hooks arm lazily on the first piramid element)
     coop::item_activate::Install(&session);  // Phase 5F flashlight
     coop::player_damage::Install(&session);  // vitals Inc3-WIRE damage relay (send + owner-apply)
+    coop::ko_respawn::Install(&session);    // 2026-08: lethal hit -> KO + respawn (death.ko_respawn; AddPlayerDamage interceptor)
     coop::weather_sync::Install(&session);   // Phase 5W weather
     coop::interactable_sync::Install(&session);  // Phase 5D doors + lights + container lids
     coop::keypad_sync::Install(&session);    // v33 password-keypad mirror (its own module)
@@ -441,6 +443,7 @@ DisconnectStats DisconnectAll() {
     coop::roach_sync::OnDisconnect();           // v108 drop snapshot assembly + tracked set + baselines (park restore = spawn_authority)
     coop::owner_entity_sync::OnDisconnect();    // v108 destroy ALL owner-entity mirrors (our spawned actors must not linger into SP)
     coop::spawn_authority::OnDisconnect();      // T1 Inc-1: restore parked spawner ticks (loan repayment belt)
+    coop::ko_respawn::OnDisconnect();           // 2026-08: clear KO state + respawn timer
     coop::inventory_pickup_sync::OnDisconnect();
     coop::chat_sync::OnDisconnect();
     coop::turbine_sync::OnDisconnect();
@@ -527,6 +530,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     coop::dev::drive_selftest::Tick();       // [dev] rack-lane e2e circles (single bool read when off; 5 s self-throttle)
     coop::dev::vitals_keepalive::Tick();     // [dev] long-exposure keepalive (single latched read when off)
     coop::spawn_authority::Tick();           // T1 Inc-1 t1 park driver (client-session gate; cheap when idle)
+    coop::ko_respawn::Tick();                // 2026-08: KO-respawn timer + AddPlayerDamage interceptor lazy install
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:device_occupancy"}; coop::device_occupancy::Tick(); }    // v63 device occupancy: activeInterface edge poll + pending claim retry
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:console_state"}; coop::console_state_sync::Tick(); }  // v64 signal-catcher: host sky poll / client mirror sweep / desk + dish owner streams
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:signal_catch"}; coop::signal_catch_sync::Tick(); }   // v70/v113: catch/cleared detectors (1 Hz, L4 tuple signature; UNGATED v116)

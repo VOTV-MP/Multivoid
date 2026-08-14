@@ -372,6 +372,7 @@ add_library(votv-coop SHARED
     src/coop/props/grab_observer.cpp
     src/coop/player/item_activate.cpp
     src/coop/player/player_damage.cpp
+    src/coop/player/ko_respawn.cpp
     src/coop/player/flashlight_click_sound.cpp
     src/coop/props/prop_sound.cpp
     src/coop/items/inventory_pickup_sync.cpp
