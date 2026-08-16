@@ -4,7 +4,6 @@
 
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile_names.h"
-
 #include <cstdint>
 #include <cwctype>
 
@@ -13,7 +12,6 @@ namespace {
 
 namespace P = ue_wrap::profile;
 namespace R = ue_wrap::reflection;
-
 // enum_gamemode ordinals -> friendly names. VOTV strips enum display names in
 // the cook, but the ordinal->mode map is EMPIRICALLY verified in the save-picker
 // RE (research/findings/saves/votv-save-picker-create-new-RE-2026-06-06.md, the
@@ -29,7 +27,6 @@ const char* GameModeName(int ord) {
         default: return nullptr;  // 2/3/unknown -> caller renders "#N"
     }
 }
-
 // Trim a GUID-mangled BP member name to its stable human prefix + light prettify:
 // "fallDamage_8_AEEA..." -> "Fall damage". The member name is unique within the
 // struct (BP enforces it), so the trimmed prefix is a unique key; prettify is
@@ -61,7 +58,53 @@ std::string PrettyLabel(const std::wstring& name) {
     return out;
 }
 
+// Compare a cooked Blueprint member name with its stable pre-GUID prefix.
+// Example: customContent_12_ABC... == L"customContent".
+bool StablePrefixEquals(const std::wstring& name, const wchar_t* expected) {
+    if (!expected || !*expected) return false;
+    size_t cut = name.size();
+    for (size_t i = 0; i + 1 < name.size(); ++i) {
+        if (name[i] == L'_' && std::iswdigit(name[i + 1])) { cut = i; break; }
+    }
+    const std::wstring want(expected);
+    return want.size() == cut && name.compare(0, cut, want) == 0;
+}
 }  // namespace
+
+bool SetLocalBool(const wchar_t* stablePrefix, bool value) {
+    if (!stablePrefix || !*stablePrefix) return false;
+
+    // Re-resolve fresh for the same lifetime-safety reason as ReadLocal().
+    void* gi = R::FindObjectByClass(P::name::GameInstanceClass);
+    if (!gi) return false;
+    void* giClass = R::ClassOf(gi);
+    if (!giClass) return false;
+
+    const int32_t grOff = R::FindPropertyOffset(giClass, L"gameRules");
+    void* structObj = R::PropertyInnerStruct(giClass, L"gameRules");
+    if (grOff < 0 || !structObj) return false;
+    uint8_t* base = reinterpret_cast<uint8_t*>(gi) + grOff;
+
+    for (const R::StructFieldInfo& fi : R::EnumerateStructFields(structObj)) {
+        if (!StablePrefixEquals(fi.name, stablePrefix)) continue;
+
+        int32_t bOff = -1;
+        uint8_t bMask = 0;
+        if (!R::FindBoolProperty(structObj, fi.name.c_str(), bOff, bMask) ||
+            bOff < 0 || bMask == 0) {
+            return false;
+        }
+
+        if (value) {
+            base[bOff] = static_cast<uint8_t>(base[bOff] | bMask);
+        } else {
+            base[bOff] = static_cast<uint8_t>(base[bOff] &
+                                             static_cast<uint8_t>(~bMask));
+        }
+        return true;
+    }
+    return false;
+}
 
 bool ReadLocal(Snapshot& out) {
     out.valid = false;
@@ -75,12 +118,10 @@ bool ReadLocal(Snapshot& out) {
     if (!gi) return false;
     void* giClass = R::ClassOf(gi);
     if (!giClass) return false;
-
     const int32_t grOff = R::FindPropertyOffset(giClass, L"gameRules");
     void* structObj = R::PropertyInnerStruct(giClass, L"gameRules");
     if (grOff < 0 || !structObj) return false;
     uint8_t* base = reinterpret_cast<uint8_t*>(gi) + grOff;
-
     // gamemode (a GI member, NOT inside gameRules).
     const int32_t gmOff = R::FindPropertyOffset(giClass, L"GameMode");
     if (gmOff >= 0) {
@@ -89,7 +130,6 @@ bool ReadLocal(Snapshot& out) {
         if (nm) out.gamemodeName = nm;
         else    out.gamemodeName = "#" + std::to_string(out.gamemode);
     }
-
     // Enumerate the gameRules members by reflection and read each by type. The
     // struct is all bool + TEnumAsByte(1) + float(4) (no int32/FName), so:
     // FindBoolProperty -> Bool; else size==4 -> Float; else 1-byte -> Enum. A
@@ -98,7 +138,6 @@ bool ReadLocal(Snapshot& out) {
     for (const R::StructFieldInfo& fi : R::EnumerateStructFields(structObj)) {
         RuleField rf;
         rf.label = PrettyLabel(fi.name);
-
         int32_t bOff = -1;
         uint8_t bMask = 0;
         if (R::FindBoolProperty(structObj, fi.name.c_str(), bOff, bMask) && bOff >= 0) {
@@ -113,7 +152,6 @@ bool ReadLocal(Snapshot& out) {
         }
         out.fields.push_back(std::move(rf));
     }
-
     out.valid = !out.fields.empty();
     return out.valid;
 }

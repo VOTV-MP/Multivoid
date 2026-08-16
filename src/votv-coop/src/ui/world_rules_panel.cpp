@@ -7,7 +7,6 @@
 #include "ui/scale.h"
 
 #include "imgui.h"
-
 #include <mutex>
 
 namespace ui::world_rules_panel {
@@ -16,7 +15,6 @@ namespace {
 using ui::scale::S;
 namespace GR = ue_wrap::game_rules;
 namespace GT = ue_wrap::game_thread;
-
 // The reflected read (GR::ReadLocal) is game-thread only; the render runs on the
 // render thread. We snapshot once per (re)open onto the game thread and paint the
 // cached copy. The mutex only ever guards a cold, once-per-open struct copy -- it
@@ -25,7 +23,6 @@ std::mutex   g_mx;
 GR::Snapshot g_snap;             // guarded by g_mx
 bool         g_pending = false;  // a game-thread read is in flight (guarded)
 int          g_lastFrame = -1000;
-
 // Post a one-shot game-thread snapshot into g_snap (deduped while one is queued).
 void RequestSnapshot() {
     {
@@ -42,8 +39,25 @@ void RequestSnapshot() {
     });
 }
 
-}  // namespace
+// Runtime gameRules writes must run on the game thread. Re-read immediately so
+// the panel confirms what THIS process is actually using after the write.
+void RequestSetBool(const wchar_t* stablePrefix, bool value) {
+    {
+        std::lock_guard<std::mutex> lk(g_mx);
+        if (g_pending) return;
+        g_pending = true;
+    }
+    GT::Post([stablePrefix, value] {
+        GR::SetLocalBool(stablePrefix, value);
+        GR::Snapshot s;
+        GR::ReadLocal(s);
+        std::lock_guard<std::mutex> lk(g_mx);
+        g_snap = std::move(s);
+        g_pending = false;
+    });
+}
 
+}  // namespace
 void Render() {
     // (Re)open edge: Render() wasn't called last frame -> the tab was just
     // selected -> re-snapshot so the panel always shows current values on open
@@ -54,8 +68,7 @@ void Render() {
 
     if (ImGui::SmallButton("Refresh")) RequestSnapshot();
     ImGui::SameLine();
-    ImGui::TextDisabled("Read-only -- the world rules this peer is running under.");
-
+    ImGui::TextDisabled("Live rules for this peer (runtime overrides available below).");
     GR::Snapshot snap;
     bool pending = false;
     {
@@ -70,7 +83,6 @@ void Render() {
                                     : "World rules unavailable (still loading?).");
         return;
     }
-
     ImGui::Spacing();
     ImGui::Text("Gamemode:");
     ImGui::SameLine();
@@ -78,6 +90,15 @@ void Render() {
                        snap.gamemodeName.empty() ? "?" : snap.gamemodeName.c_str());
     ImGui::Separator();
 
+    if (ImGui::Button("Force Custom Content ON")) {
+        RequestSetBool(L"customContent", true);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Force Funny ON")) {
+        RequestSetBool(L"funnySetting", true);
+    }
+    ImGui::TextDisabled("Runtime-local: enable on each peer that needs the rule.");
+    ImGui::Spacing();
     if (ImGui::BeginTable("##world_rules", 2,
                           ImGuiTableFlags_RowBg | ImGuiTableFlags_PadOuterX |
                           ImGuiTableFlags_ScrollY,
@@ -105,5 +126,4 @@ void Render() {
         ImGui::EndTable();
     }
 }
-
 }  // namespace ui::world_rules_panel

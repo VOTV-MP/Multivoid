@@ -25,14 +25,12 @@
 // render. Game-thread only (UObject + FField reads); snapshot once (rules are
 // static post-world-load) and cache the result off-thread for the render.
 #pragma once
-
 #include <string>
 #include <vector>
 
 namespace ue_wrap::game_rules {
 
 enum class Kind { Bool, Enum, Float };
-
 // One rule, resolved + read. `label` is the trimmed, prettified member name
 // (e.g. "Fall damage"); `kind` picks which value member is meaningful.
 struct RuleField {
@@ -43,17 +41,21 @@ struct RuleField {
                                 //             display names in the cook)
     float       fval = 0.f;     // Kind::Float
 };
-
 struct Snapshot {
     bool                   valid = false;
     int                    gamemode = -1;   // mainGameInstance.GameMode ordinal
     std::string            gamemodeName;    // "Story"/"Sandbox"/... or "#N"
     std::vector<RuleField> fields;          // gameRules members, declaration order
 };
-
 // Snapshot the local peer's world rules into `out`. Returns false (out.valid
 // stays false) if the GameInstance / gameRules struct isn't resolvable yet
 // (still booting). Game-thread only.
 bool ReadLocal(Snapshot& out);
+
+// Write a boolean member of THIS peer's live mainGameInstance.gameRules by
+// its stable Blueprint prefix (e.g. L"customContent" or L"funnySetting").
+// Cooked BP GUID suffixes ("_<digit>_...") are ignored. Game-thread only.
+// Runtime-local: call on every peer that should have the rule enabled.
+bool SetLocalBool(const wchar_t* stablePrefix, bool value);
 
 }  // namespace ue_wrap::game_rules
