@@ -171,6 +171,27 @@ defaults.
   OWED in our reflection (`FindFunction` superclass walk, reflection.cpp:427 —
   the "free under their API" carrot is forfeited, so we pay it ourselves).
 
+## 3b. Dev tooling adoption (user question 2026-08-21: DebugMod)
+
+`acitulen/DebugMod` (github.com/Acitulen/DebugMod — README-only repo; the mod ships
+via Thunderstore as a LogicMods BP pak + a `Mods/Acitulen-DebugMod/` folder; targets
+0.9.0n) — **USE it as a dev instrument, do not rebuild it** (WP13 don't-reinvent;
+dev tooling is RULE-2-exempt).
+The ownership boundary: **single-world inspection/manipulation** (object locator,
+inspector, spawn menu, teleports, time control) = DebugMod's — install it beside
+Multivoid on a dev peer; **wire-aware debug** (anything that must act on BOTH peers
+or exercise the sync) = ours, as today (F8 scenarios, sv. console, autotest).
+Second use, and the sharper one: DebugMod is a ready-made **divergence-injection
+instrument** — mutate ONE peer's world through it (spawn/destroy/teleport/time) and
+watch our census/sweep/authority lanes react; that is the coexistence doc's
+adopt/amplify/fight/drift taxonomy made drivable on demand. Not a player-facing
+recommendation (a one-peer world mutator mid-session IS the semantic-conflict
+class); a dev-bench one.
+**Attribution rule (USER 2026-08-21): "keep for sure, also credit if taken
+something there"** — if any DebugMod function/technique is ever ported into our
+code, it gets source-comment attribution + a README credit row, exactly the
+RE-UE4SS discipline.
+
 ## 4. The watched couplings (tripwires, round-3 Q3)
 
 D-3 keeps exactly TWO couplings to upstream, both watched mechanically from
