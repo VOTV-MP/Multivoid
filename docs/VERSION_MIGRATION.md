@@ -415,3 +415,30 @@ version-matching (CppUserModBase.hpp:29), public-clone reproducibility lost for
 every contributor, dependence on a revocable third-party access grant, a
 2,404-LOC rewrite that still would not cover GNatives interception, DX12, or
 the recook-fragile game half.
+
+TRIPWIRE-DECISION human-door 2026-08-21: an UNLISTED door fired — the game's own
+developers publicly critiqued the substrate choice (SentientYeet; the door list
+named "a successor fork becomes the live line" but never "the game's devs reject
+the approach"). A 5-round /qf re-audit then broke this record's fact base twice:
+(1) the LOC premise — the real tracked count is 515,392 (`cat|wc -l`,
+parts-sum-checked 341,054 + 174,338; the 146,347 above came from the xargs-batch
+instrument `docs/LESSONS.md` already records), and (2) the F2 blocker's surviving
+leg ("public-clone reproducibility") was Claude-authored inside this record,
+never a user requirement — DROPPED per the drop-my-requirement rule. The terms
+leg (`RE-UE4SS/docs/contributing.md:131`, Epic licensing) kills F3 (vendoring)
+only. New facts from the pass: the public UE4SS C++ mod lane is thin (~8 repos,
+two query shapes, closed-source invisible); CI under F2 needs an Epic-linked
+token and fork PRs cannot build; the recook-fragile game half is ours under any
+substrate; `types.h` verified zero-re-plumb; the one behavioral seam is the
+game-thread pump under 3.0.1's eager PE detour (spike = HALT gate).
+**USER DECISION 2026-08-21: F2 TAKEN — the substrate moves onto the UE4SS C++
+API, pinned to stable v3.0.1. RULE 3 inverts; the standalone loader / AOB
+reflection / PE detour retire whole per RULE 2 when the migration ships. The
+double-Lua question resolves toward injecting the mod's API into UE4SS's own Lua
+states (measured available: `on_lua_start` + `LuaMadeSimple::register_function`)
+— ROADMAP phases 4-6 to be rewritten by the migration design.** Design of
+record: `research/findings/tooling/votv-ue4ss-f2-migration-DESIGN-2026-08-21.md`.
+Wire repurposing: wire-b now watches the PIN (a newer stable = an upgrade
+decision, not a switch trigger); wire-a now affects contributor convenience
+only. Both tripwires keep running until the migration ships, then retire with
+the record they guard.
