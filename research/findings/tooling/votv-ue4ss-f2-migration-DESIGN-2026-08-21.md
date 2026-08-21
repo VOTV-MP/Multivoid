@@ -377,11 +377,32 @@ the MULTIVOID_DEVBUILD marker in the bytes (machine), the boot-banner DEV BUILD
 line + version display "[DEV]" (human), the F1 label, and (pending the user's
 join-policy call) the lobby feed announce.
 
+**CLASS-CORPUS (USER 2026-08-21: "research folder also get fully offline from
+public repo, what else?" — census run):** `research/` (345 md) goes private
+IN-PLACE (its own git repo at the same disk path, public repo gitignores +
+`rm --cached` — the site/ pattern; ZERO reading-order pointers break).
+"What else", measured: **docs/security/ WHOLE** (13 files publishing the
+threat model + a tracker of OPEN findings — the map of our own unfixed holes;
+public repo keeps a one-paragraph SECURITY.md contact stub); the
+internal-design half of docs/ (**92 of 129 files**: COOP_* maps, methodology,
+events/items/signals/piles/upgrades/kerfur trees, VERSION_MIGRATION) — these
+MOVE (into the private corpus) with a pointer sweep, a real migration slice;
+the AI-process exhaust by name (docs/LESSONS.md, docs/OPUS_48_DISCIPLINE.md —
+tracked today, the literal "improper ai usage" surface; .claude/ and
+QUESTION_FORM_* and tools/workflows/ verified already untracked). STAYS
+public: README, BUILDING, INSTALL, RELEASE, the CI gates, FEASIBILITY/ROADMAP
+(fork-able). **HISTORY CAVEAT stated to the user:** tip-clean only — the
+public git history keeps everything ever committed unless a rewrite/fresh-repo
+cutover happens; lean NO rewrite; the D-3 migration is the one natural
+fresh-repo moment if the user ever wants maximum removal (fork f).
+
 **USER FORKS OPEN (the pass resumes on their answers):** (a) CLASS-EVIDENCE
 E1-vs-E2; (b) the mp.py/"tools" boundary (lean: ritual instruments stay
 public); (c) DEVBUILD-joins-official policy (lean: announce); (d) dev-private
 remote: private GH repo (lean) vs local-only; (e) CLASS-INFRA (master-server
-source + vps scripts: public transparency vs private attack surface).
+source + vps scripts: public transparency vs private attack surface);
+(f) history: tip-clean only (lean) vs fresh-repo cutover at the D-3 release;
+(g) ROADMAP/FEASIBILITY: public or corpus.
 
 ## 4. The watched couplings (tripwires, round-3 Q3)
 
