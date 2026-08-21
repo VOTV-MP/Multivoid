@@ -313,6 +313,76 @@ that stays public + env-gated.
    flags. The per-feature review inherits this default; deviations need their own
    row and reason.
 
+## 3d. WP-8 — THE HYGIENE SPLIT (USER 2026-08-21: "everything that is a
+debug/dev/testing/tools goes in dev private, we need the best hygiene and that
+requiers good qf sessions per rule 1" + "our builds with all that dev-private
+stuff will be flagged as private or something")
+
+**Widens WP-7 to the whole dev/test/tools surface. Round 1 run; the pass
+CONTINUES next sessions per the user's commission. The census (measured):**
+`harness/` = 34 files / 8,757 LOC and MIXED (session_runtime.cpp owns
+`g_session` — shipping lifecycle in a dev-named folder; dllmain includes harness
+headers); `coop/dev/` = 49 headers including an EXISTING half-DebugMod (freecam,
+spawn_npc, spawn_menu_unlock, set_clock, force_weather, event_force/trigger,
+add_points, restore_vitals, object_overlay/pos_hud ESP); shipping↔dev coupling
+runs BOTH directions (remote_player, roster_ledger, grab_observer,
+prop_lifecycle, engine_*, npc_* include dev/harness headers; `dev_gate.h`
+exists); `tools/` is a THREE-way mix (public-CI gates that structurally cannot
+move / ~30 probe+capture scripts / INFRA: the deployed Rust master's source,
+vps scripts).
+
+**The classification schema (by ROLE, never by folder name):**
+CLASS-SHIP (public) · CLASS-CI-GATE (public, structurally — CI executes it) ·
+CLASS-EVIDENCE (the tension class, fork below) · CLASS-DEVUI (private) ·
+CLASS-PROBE (private) · CLASS-DEVOPS (fork below) · CLASS-INFRA (separate fork,
+not dev/test).
+
+**Round-1 answers (critic a2ef5140):**
+1. **CLASS-EVIDENCE is a USER-SIGNED fork, conceded.** E2 (zero test code in
+   shipped bytes; official smoke reduces to shipping-code evidence + a full
+   smoke on a CI-built DEV TWIN) demotes a NAMED machine assertion
+   (`config-selftest: DONE fail=0` asserted on the SHIPPED bytes, mp.py:848,
+   RELEASE.md:35-43) to a structural argument — the exact demotion class the
+   b133/fingerprint discipline exists to catch. **LEAN: E1** — the env-gated
+   selftest/autotest instrumentation is NOT a debug feature (no UI, no cheat,
+   inert without env vars; it is the release ritual's own instrument) and stays
+   in official bytes; "everything" takes this one named carve-out. User signs
+   E1 or E2.
+2. **mp.py/lan-test/deploy: do NOT widen one sentence past its evidence,
+   conceded.** A private mp.py re-creates the exact defect the user's own
+   2026-07-29 decision fixed ("the release ritual's runtime gate is not
+   runnable from a clean clone") and kills outside-contributor testability —
+   the reviewability goal this whole workstream started from. **LEAN: the
+   release-ritual runtime instruments (mp.py, lan-test, deploy-all) + all
+   CI gates stay PUBLIC (role: release/contributor infrastructure); the ~30
+   diagnosis probes + captures go private.** User confirms the "tools"
+   boundary reading.
+3. **The seam is ONE registration surface, not N site hooks:** a single public
+   `dev_hooks` registry (named slots, null = no-op); dev-private registers
+   everything through ONE entry point at boot. Machine enforcement: during the
+   transition an include-boundary CI gate (the peerconn_gate/registry_gate
+   pattern) FAILS any public TU including dev/harness headers; POST-split the
+   headers do not exist in the public repo, so the compile error IS the gate;
+   ongoing, the release marker gate covers the bytes.
+4. **Sequencing: role promotions land FIRST** (session_runtime et al. out of
+   dev-named folders — the public tree becomes honest before anything moves),
+   then the D-3 spike, then the USER forks get signed, then the split migrates
+   in slices (probes first: zero coupling; DEVUI second; evidence class per the
+   signed fork), then D-3's WP-2/WP-4, then WP-7 GAP-BUILDs in dev-private.
+   Per-commit invariant: build + smoke green at every intermediate state; no
+   file is mid-flight in two workstreams at once.
+
+**The DEV-BUILD FLAG (user-confirmed):** dev builds are flagged everywhere —
+the MULTIVOID_DEVBUILD marker in the bytes (machine), the boot-banner DEV BUILD
+line + version display "[DEV]" (human), the F1 label, and (pending the user's
+join-policy call) the lobby feed announce.
+
+**USER FORKS OPEN (the pass resumes on their answers):** (a) CLASS-EVIDENCE
+E1-vs-E2; (b) the mp.py/"tools" boundary (lean: ritual instruments stay
+public); (c) DEVBUILD-joins-official policy (lean: announce); (d) dev-private
+remote: private GH repo (lean) vs local-only; (e) CLASS-INFRA (master-server
+source + vps scripts: public transparency vs private attack surface).
+
 ## 4. The watched couplings (tripwires, round-3 Q3)
 
 D-3 keeps exactly TWO couplings to upstream, both watched mechanically from
