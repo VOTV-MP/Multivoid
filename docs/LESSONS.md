@@ -2446,6 +2446,24 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 
 ## 5. Engine / UE4 facts
 
+- **2026-08-21 — "one binary across plugin-host versions" is decided by the VTABLE HISTORY, not the
+  API docs.** Measured on UE4SS v3.0.1 vs main-2026-05: `on_ui_init` INSERTED mid-vtable (+5
+  appended, one signature change) = full-API one-binary mis-dispatches by construction, while the C
+  loading contract (`GetProcAddress("start_mod")`, `Mods/<n>/dlls/main.dll`, `enabled.txt`) stayed
+  byte-stable 27 months. Safe cross-version shape = the C contract + a no-op stub vtable + an
+  object coupling censused EMPTY (all fire_* void, never deleted, no field reads); the one hole =
+  a future sret virtual (watch it, don't assume it). LOOK FIRST: diff the base-class virtual
+  declaration ORDER across the versions users actually hold; census what the host DOES with your
+  object. `memory/lesson_one_binary_across_plugin_hosts_is_decided_by_vtable_history.md`
+- **2026-08-21 — an ecosystem "standard" names a LANE; check which, and what is actually
+  installed.** "UE4SS is the modloader everything uses" was true for LUA and near-empty for C++
+  (~8 public repos, two query shapes); "the stable everyone has" was FALSE for VOTV — the
+  community pipeline AND its manual guides ship the shimloader bundle (UE4SS.dll PE 2026-02-03,
+  experimental-era), not the 1.99M-download v3.0.1. Flipped the pin, the spike order, and the Lua
+  plan in one day. LOOK FIRST: the community package index + PE-timestamp the bundled artifact +
+  read the community's own install guides; never infer the install base from upstream download
+  counts. `memory/lesson_an_ecosystem_standard_names_a_lane_check_which.md`
+
 - **An accessor on a WRAPPER answers about the wrapper, not the thing you meant.** MEASURED
   2026-07-31: `UWidget::HasKeyboardFocus()` on a live, on-screen `UEditableTextBox` reads **false**
   even immediately after calling the engine's own `SetKeyboardFocus()` on that very widget —
@@ -3297,6 +3315,18 @@ tracker.
   always run a **parts-sum check** (the pieces must add to the whole — that is what exposed it), and
   quote a file count next to the line count. LOOK FIRST: any size/LOC claim that leaves the repo.
   `memory/lesson_xargs_wc_tail_truncates_the_total.md`
+  **REOFFENDED 2026-08-21:** the same instrument produced 119,881 for a tree holding 515,392,
+  and the number went into a rebuttal of a public "500k loc" charge — the other side was RIGHT.
+  Caught by the /qf critic citing THIS row. Sharpened: the check belongs at NUMBER-FORMATION
+  time, not publish time.
+- **2026-08-21 — a blocker's PROVENANCE decides whether it is real.** The F1 UE4SS-switch record's
+  last surviving leg ("public-clone reproducibility") existed in exactly TWO files, both
+  Claude-authored 2026-07-26, never said by the user — defended for a month as the decision's
+  load-bearing reason, dropped in one /qf round, decision reversed the same day. SECOND instance of
+  the mp.py pattern (a Claude-authored rule later attributed to the user). LOOK FIRST: before
+  defending any requirement, `git log -S"<phrase>"` + grep CLAUDE.md + the user's own words; tag
+  constraints `USER:`/`derived:` at record-write time.
+  `memory/lesson_a_blockers_provenance_decides_if_it_is_real.md`
 - **2026-07-26 — unequal per-asset download counts are UPDATERS, not broken installs.** A release page
   showing payload 11 / loader 7 reads as "users install only half the mod" and argued for bundling both
   DLLs into one zip asset (changing the publish step's asset invariant + every install instruction).

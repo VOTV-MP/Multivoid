@@ -124,9 +124,13 @@ other ~95% (coop logic, per-class wrappers, UI, harness). The RULE 3 trade
   no game copy runs UE4SS (HOST's dwmapi is `.off`). No dual boot has ever been
   attempted with an overlay-era or vm_dispatch-era build.
 - **Read-only residuals** (workflow stopped before measuring): PLH follow-jmp
-  topology at pin fd2a88f0; today's-experimental UnregisterHook disasm; the PE-era
-  of the DLLs Thunderstore's shimloader (2026-02-03) and VotV_RichPresence
-  (2023-12-26, v3.0.0-era, likely eager) actually bundle.
+  topology at pin fd2a88f0; today's-experimental UnregisterHook disasm; ~~the PE-era
+  of the DLLs Thunderstore's shimloader (2026-02-03)~~ **MEASURED 2026-08-21: the
+  shimloader v1.1.7 zip bundles an UE4SS.dll with PE timestamp 2026-02-03 and the
+  `patternsleuth` marker = EXPERIMENTAL-era (lazy PE detour), NOT 3.0.1 — and even
+  the community's MANUAL install guides (DebugMod's) install the shimloader bundle
+  (fact base: votv-ue4ss-f2-migration-DESIGN-2026-08-21.md §1)**; VotV_RichPresence
+  (2023-12-26, v3.0.0-era, likely eager) still unmeasured.
 - **Runtime-gated probes (named)**: (a) dual-install smoke — rename HOST's
   `dwmapi.dll.off` -> `dwmapi.dll` (3.0.1) or `tools/install-ue4ss.ps1` on
   CLIENT_3 (experimental), one instance, read multivoid.log's pe_detour install

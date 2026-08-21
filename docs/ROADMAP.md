@@ -104,6 +104,13 @@ independent of it and may interleave.
    mode" as an explicit, portable layer — the thing phase 5 will port.
 4. **LuaJIT embedding** — vendor LuaJIT + bindings over the `ue_wrap`/`coop`
    APIs. The scripting SUBSTRATE only; nothing moves to Lua yet.
+   > **SUPERSEDED-IN-DESIGN 2026-08-21** (the UE4SS-arc decision): the
+   > vendored-LuaJIT-as-THE-modder-substrate plan dies; the modder-facing lean
+   > is the ENGINE-LEVEL BRIDGE (the VOTV ecosystem is BP/table-shaped), and
+   > server-distributed resources get a sandboxed runtime whose choice is an
+   > implementation detail. Phases 4-6 get rewritten when the arc ships. See
+   > `research/findings/tooling/votv-ue4ss-f2-migration-DESIGN-2026-08-21.md`
+   > (WP-5) — this text is kept un-rewritten until then per the arc parking.
 5. **Lua API** — the C++ core STAYS (transport, sync, identity,
    interpolation — MTA keeps its core native for a reason); the coop and
    sandbox mode RULES move to Lua as the first two reference resources.

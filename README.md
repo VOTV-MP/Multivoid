@@ -277,8 +277,11 @@ Three "no-compromise" rules govern day-to-day work:
 - **RULE 1** — No crutches, no quick fixes. Root cause every time.
 - **RULE 2** — No migration baggage. Old code goes when replaced.
 - **RULE 3** — Standalone mod. UE4SS is a dev tool only; not loaded at runtime.
-  ("Why not just build on UE4SS?" was measured and decided, with re-open
-  trip-wires: [docs/VERSION_MIGRATION.md §11](docs/VERSION_MIGRATION.md).)
+  (**DECISION REVERSED 2026-08-21** — Multivoid is migrating into the UE4SS mod
+  ecosystem as a normal UE4SS mod folder; the dated ledger entry with the full
+  reasoning is in [docs/VERSION_MIGRATION.md §11](docs/VERSION_MIGRATION.md).
+  The SHIPPING mod remains standalone exactly as described here until that
+  migration ships.)
 
 ---
 
