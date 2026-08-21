@@ -404,6 +404,16 @@ source + vps scripts: public transparency vs private attack surface);
 (f) history: tip-clean only (lean) vs fresh-repo cutover at the D-3 release;
 (g) ROADMAP/FEASIBILITY: public or corpus.
 
+**EXECUTION PARKED (USER 2026-08-21, verbatim: "don't touch the repo for now,
+we will apply those changes later, when we're done with UE4SS arc").** WP-7,
+WP-8, and CLASS-CORPUS are DESIGN OF RECORD only until the UE4SS arc (D-3
+spike -> swap -> lane re-home) ships. No repo mutations for the split before
+then — no rm --cached, no moves, no private-repo creation, no role promotions.
+Sequencing updates accordingly: the UE4SS arc runs to completion FIRST; the
+split (role promotions included) executes after, with the forks signed by then.
+Fork (f) note: if the user ever picks the fresh-repo cutover, the arc boundary
+is exactly the moment — one more reason the parking order is right.
+
 ## 4. The watched couplings (tripwires, round-3 Q3)
 
 D-3 keeps exactly TWO couplings to upstream, both watched mechanically from
