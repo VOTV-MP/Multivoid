@@ -9,20 +9,43 @@ Re-audit fact base: the 5-round /qf recorded in the session thread (scratchpad
 
 - **F2**: Multivoid becomes a UE4SS C++ mod. RULE 3 inverts. Standalone loader / AOB
   reflection / own PE detour retire whole (RULE 2) when this ships.
-- **PIN: UE4SS stable v3.0.1** (2024-02-14; the "Latest" 1.99M-download channel; the
-  EAGER-PE-detour channel). The spike proves against the **official shipped 3.0.1
-  binary**, not only our from-source build — ABI compat with what users actually
-  install is the point.
+- **The load-bearing API nouns are VERIFIED against the real v3.0.1 tag** (fetched
+  2026-08-21, public, not Epic-gated): `on_lua_start` (CppUserModBase.hpp:68/83),
+  `Unreal::Hook::RegisterProcessEventPreCallback` (LuaMod.cpp:3085),
+  `LuaMadeSimple::register_function` (LuaMadeSimple.hpp:530). The design does not
+  rest on main-branch drift.
+- **THE PIN IS A RE-OPENED 3-WAY FORK (design-round-1 reframe, 2026-08-21).**
+  Measured: Thunderstore's VOTV community (185 packages) contains **zero UE4SS
+  packages** — the pipeline is `Thunderstore-unreal_shimloader` (251k downloads,
+  v1.1.7), and the UE4SS.dll inside its zip has **PE timestamp 2026-02-03 with the
+  `patternsleuth` marker = an EXPERIMENTAL-era build, NOT 3.0.1**. So "pin the
+  stable everyone has" is false for the VOTV community's actual install base:
+  - **PIN-A** official stable v3.0.1 (manual-install cohort; frozen API; the eager
+    detour) — fights the shimloader cohort's ABI;
+  - **PIN-B** the shimloader's exact bundle (2026-02-03 experimental-era; matches
+    the community pipeline; moves at Thunderstore's cadence; need its exact source
+    commit — `[U]` whether the DLL carries a git hash);
+  - **PIN-C** we BUNDLE the UE4SS we build (Palworld-style framework-with-mod;
+    ABI guaranteed both halves; install-topology conflicts with an existing
+    shimloader-managed UE4SS need WP-4 analysis).
+  `[U]` does shimloader deliver C++ mods (`dlls/`) at all — decides whether the
+  Thunderstore channel can even carry us.
 - Identity: `ModIntendedSDKVersion` carries the UE4SS axis at INSTALL time; the
   Paper-pair (game target × build) wire gate is substrate-independent and unchanged.
-- `[U]` which exact UE4SS version VOTV's Thunderstore bundles carry (unzip one, read).
 
 ## 1. What stays vs what moves
 
 **STAYS (ours under any substrate):** all of `coop/`, GNS transport, voice/opus, the
 DX11+DX12 in-frame overlay + WndProc chain, `vm_dispatch` (GNatives — UE4SS core never
-writes entries, measured 2026-07-26), `sdk_profile*` + the 29 BP offsets + 235 content
-names (the recook-fragile half), config/ini registry, fonts/freetype.
+writes entries, measured 2026-07-26; **NEW 2026-08-21, user-pointed precedent:
+KismetDebuggerMod is a first-party C++ mod doing the same whole-table swap via
+UEPseudo's `<Unreal/Script.hpp>` — so UEPseudo EXPOSES the GNatives table to C++ mods
+(nullable resolve, its own "GNatives not found" branch). Our swap logic stays; our AOB
+resolve for the table MAY simplify to their export; and KismetDebugger becomes a
+same-loader NEIGHBOR swapper — the wholesale-restore stomp risk from the coexistence
+doc now lives inside one loader, load-order interplay to the spike**), `sdk_profile*`
++ the 29 BP offsets + 235 content names (the recook-fragile half), config/ini
+registry, fonts/freetype.
 
 **MOVES (public `ue_wrap/core` headers FROZEN; internals re-plumbed):**
 
@@ -58,18 +81,32 @@ WP-2; census of our surface done 2026-08-21 (see session thread).
 - **WP-3 hooks fork**: our Func patches vs their `RegisterHook` — by spike measurement.
 - **WP-4 distribution/release re-home** (40-file `multivoid-*` lane census, 2026-08-21):
   Mods-folder layout; dup/stale-install detection re-shape (`ModVersion` + boot banner
-  replace the filename scan + "MOD INSTALL PROBLEM" dialog); `deploy-all`/`mp.py`/
+  replace the filename scan + "MOD INSTALL PROBLEM" dialog); **successor-detects-
+  predecessor row (design-round-1, the identity-at-birth of the INSTALL): the UE4SS-side
+  mod at boot scans for the STANDALONE install beside the exe (`xinput1_3.dll` proxy +
+  `multivoid-*.dll` on disk AND `GetModuleHandle` live check) and hard-refuses with a
+  removal dialog — otherwise an upgrading user runs TWO Multivoids in one process,
+  each lane's detector blind to the other's filename shape**; `deploy-all`/`mp.py`/
   `lan-test` rewrite; CI builds UE4SS from source with an Epic-linked token (+ build
   cache; fork-PR story honestly limited); release lane + INSTALL.md (r2modman path +
   manual path); version identity gains the INSTALL-time UE4SS axis.
-- **WP-5 Lua unification ("the double lua thing")**: our C++ mod injects `multivoid.*`
-  into UE4SS's own Lua states (`on_lua_start` hands us every mod's
-  `LuaMadeSimple::Lua`; `register_function` measured present, LuaMadeSimple.hpp:513).
-  ROADMAP phases 4-6 REWRITTEN: the vendored-LuaJIT plan DIES; resources become
-  UE4SS-Lua-hosted with our net/sync/authority API injected; the dedicated server
-  (ghost-host) runs the same UE4SS+mod so ONE Lua API serves both sides. Sandboxing/
-  client-trust remains the phase-7 question, shape unchanged. UE4SS Lua surface: 53
-  documented global functions + 37 classes.
+- **WP-5 Lua unification ("the double lua thing") — REFINED design-round-1 (the
+  subtraction problem):** injection cannot SUBTRACT — anything running in UE4SS's own
+  states holds their full 53-global/37-class surface (RegisterHook, raw memory)
+  beside `multivoid.*`. So the boundary falls on DISTRIBUTION PROVENANCE:
+  (a) **user-installed local mods** get `multivoid.*` injected into UE4SS's own Lua
+  states (`on_lua_start` hands us every mod's `LuaMadeSimple::Lua`;
+  `register_function` verified on the v3.0.1 tag at :530) — same trust as any mod the
+  user chose to install; ONE modder-facing API story, the double-Lua dissolves here;
+  (b) **server-distributed resources (the MTA shape, phases 5-6) NEVER run in their
+  unrestricted states** — they run in a sandboxed state whose modder-visible API is
+  the SAME `multivoid.*` surface minus nothing they should not have; whether that
+  sandboxed runtime is their Lua in a restricted state or LuaJIT is an
+  IMPLEMENTATION detail of the resource-system design, invisible as an API.
+  ROADMAP phases 4-6 REWRITTEN accordingly: phase-4 "vendor LuaJIT as THE scripting
+  substrate" dies; the modder API = UE4SS Lua + `multivoid.*`; the dedicated server
+  (ghost-host) runs the same UE4SS+mod so one API serves both sides; sandboxing/
+  client-trust remains the phase-7 question, now with the boundary stated.
 - **WP-6 docs/repo**: RULE 3 rewrite; README/INSTALL/VERSION_MIGRATION sweeps;
   tripwires retire; **ACT-1** freetype/miniaudio → gitlinks (515k → ~174k tracked);
   **ACT-2** publish-split of `research/` (user decides details).
