@@ -192,6 +192,127 @@ something there"** — if any DebugMod function/technique is ever ported into ou
 code, it gets source-comment attribution + a README credit row, exactly the
 RE-UE4SS discipline.
 
+## 3c. WP-7 — the NATIVE DEBUG SUBSYSTEM (USER 2026-08-21: "We need the whole debug
+mod in our mod, but the debug things needs to be stopped from getting published on
+our github public repo and all debug features stripped from getting into the
+official mod releases")
+
+**The ask, decomposed:** (1) DebugMod's whole feature surface, implemented natively
+in Multivoid (multiplayer-correct, credited per the attribution rule); (2) the debug
+CODE never appears in the public repo; (3) official releases contain none of it —
+STRIPPED, not disabled.
+
+**The mechanism — one structure delivers both constraints:**
+- The debug subsystem lives in a **private sibling git repo mounted at
+  `src/votv-coop/dev-private/`** (the `site/` precedent: an internal git the public
+  repo never contains). A `.gitignore` row enforces it can never be committed to
+  the public repo (the project's ENFORCED never-commit pattern). Remote fork for
+  the user: private GitHub repo under the org (backed up; lean) vs local-only
+  (site/-pattern, max secrecy, bus-factor risk).
+- **CMake optional hook (the only public trace):**
+  `if(EXISTS .../dev-private/CMakeLists.txt)` → compile it in + define
+  `VOTVCOOP_DEVBUILD`. A public clone / the CI release lane does not HAVE the
+  directory, so **official releases are stripped BY CONSTRUCTION** — the release
+  builder structurally cannot include code it does not possess. No flag to forget.
+- Belt-and-suspenders (because b133 proved a local-build release exception can
+  happen): dev builds embed a `MULTIVOID_DEVBUILD` marker string + a boot-banner
+  "DEV BUILD" line + the F1 menu label; the **release judge gains a gate that
+  scans the candidate DLL for the marker and REFUSES if present** (drill: build
+  once with the dir present, assert the gate goes RED). RELEASE.md step 0 row.
+
+**THE STRIP LINE (measured, the subtle half):** the release ritual MACHINE-ASSERTS
+selftests on the SHIPPED bytes (`mp.py:848` requires `config-selftest: DONE fail=0`
+in the host log; RELEASE.md:38; b133's release evidence was exactly this). So:
+- **STRIPPED (private dir):** the interactive debug/cheat surface — the
+  DebugMod-class menu (spawn menu, teleports, god/timestop/fullbright, ESP,
+  object locator/inspector, function executor, event-runner UI, waypoint UI,
+  base-repair cheats).
+- **KEPT in official bytes (env-gated, inert, no UI):** the autonomous
+  verification instrumentation — config/font/repertoire selftests, the autotest
+  scenario machinery the smoke drives. It IS the release evidence chain; today's
+  shipped reality already has this shape.
+
+**Wire rule:** the private dir drives EXISTING lanes only (host-authoritative
+where a lane exists; host-only action otherwise). It structurally CANNOT add wire
+kinds — `protocol.h` lives in the public repo, so a dev build and an official
+build always share the proto and interoperate. A debug action that would desync
+without a lane is host-only until a public lane exists (per-feature review in the
+private repo's own tracker).
+
+**Scope — CENSUS-FIRST (reframed by the USER twice, 2026-08-21):** *"If our own
+debug features are worst compared to debugmod, then it goes away"* AND *"DebugMod
+can do a lot, and is probably not compatible with our own debug features, which
+some of them must go probably."* Both directions of RULE 2 govern: no worse twin
+survives on EITHER side. So WP-7 item 1 is not porting — it is the **three-way
+census table**: every DebugMod feature (the full README list: timestop, time/speed
+controls, reputation/points/drive-level cheats, immortality/satiety/stamina/
+flashlight, fullbright, infinite inventory, spectator + swap, lights/clean/repair/
+transformers/power, object locator/ESP/teleport/destroy/inspect, servers panel,
+signal panel, event panel incl. meta-paranoia monitor, waypoints, portable console,
+cross-level teleport, extended spawn with deferred spawn, property/function
+inspector-executor) × our existing equivalent (harness/autotest/sv. console/dev
+surfaces) × verdict: **OURS-DIES** (DebugMod better → ours deleted, feature served
+by DebugMod on the dev bench) / **GAP-BUILD** (multiplayer-correctness demands a
+wire-aware native version DebugMod structurally cannot be) / **KEEP-OURS**
+(instrument-class, the smoke needs it — not a UI feature at all). Only GAP-BUILD
+rows get built in the private dir; the smoke-instrument class stays public per the
+STRIP LINE.
+
+**COMPATIBILITY census (the user's "probably not compatible" — MEASURE, not
+assume):** DebugMod beside Multivoid has named interaction risks with our sync
+invariants, each a dev-bench measurement: its SPECTATOR toggles possession while
+`GetController() != nullptr` is our codebase-wide local-vs-puppet discriminator;
+its TIMESTOP/time-speed bends the clocks our interp/TTL lanes assume; its DESTROY
+meets our census/sweep/orphan handling; its M/Alt+B/N/T/V/L binds meet our
+input-owner key routing; its UMG menus meet our activeInterface term. Outcomes
+feed the same table (an incompatible DebugMod feature on a NETWORKED session is
+either the divergence-injection instrument working as intended, or a reason that
+row goes GAP-BUILD). Note: its GitHub README targets 0.9.0k while Thunderstore
+ships 0.9.0n-targeted — per-game-version drift is its normal too.
+
+Credit: DebugMod (github.com/Acitulen/DebugMod) in the private repo's README +
+source comments wherever a technique is ported; if any ported piece ever reaches
+public code, the credit moves with it. Existing scattered dev-only surfaces
+migrate into the private dir over time (RULE 2), EXCEPT anything the smoke needs —
+that stays public + env-gated.
+
+**WP-7 critic round (2026-08-21), the four sharpened edges:**
+1. **The local-release trap:** on the ONE machine that has `dev-private/`, every
+   in-tree build carries the marker → the judge refuses → a b133-class local
+   exception could never mint official bytes here. Sanctioned path WITHOUT
+   reintroducing a flag: **the local-exception lane builds from a CLEAN CLONE of
+   the public repo** (scratch dir; structurally lacks the private dir) — the
+   by-construction property is preserved because no override exists anywhere;
+   RELEASE.md's exception recovery gains that step. Daily dev builds are never
+   release candidates.
+2. **The marker gate's standing positive control:** the gate SELF-TESTS every run —
+   it embeds a control buffer carrying the marker in BOTH encodings (ASCII +
+   UTF-16) and must find it there BEFORE scanning the candidate; plus it asserts
+   the candidate path exists and parses as a PE (the b133 FINGERPRINT burn was
+   path drift — this gate refuses to pass on a missing artifact). The marker
+   itself is optimizer-proof by being LIVE CODE: it is the string the boot banner
+   prints. Fingerprint coupling: the judge-gate workflow edit lands together with
+   the already-owed fingerprint refresh (cacheless run 30610531855's artifact),
+   one motion.
+3. **DEVBUILD joins an official lobby — PRODUCT FORK, stated plainly:** the
+   Paper-pair (target, build) admits a dev build compiled from the same source.
+   Options: refuse / ANNOUNCE in the feed / silent. **Lean: ANNOUNCE** ("<nick>
+   joined with a DEV build" — one flag bit riding the existing handshake, proto
+   bump folds into the D-3 migration's own bump); refusing would break the daily
+   dev workflow (dev+dev lobbies) and silent hides information peers deserve.
+   HONEST FRAMING: this is dev HYGIENE, not anti-cheat — A3
+   (docs/security/TRACKER.md) means any modified client can already do worse; the
+   strip's purpose is that players are never SHIPPED a cheat menu and the code
+   stays private.
+4. **The wire rule's WRITTEN DEFAULT (not per-row discretion):** until the arbiter
+   (COOP_SYNCER_MODEL) lands — **world-mutating debug actions are HOST-ONLY;
+   self-state actions (own pawn: god/satiety/stamina/flashlight) are any-peer;
+   read-only surfaces (inspector/locator/ESP) are any-peer.** Client dev peers do
+   not get world writes even though A3 would technically relay them — dev tooling
+   must not normalize the unvalidated-client-write path the security tracker
+   flags. The per-feature review inherits this default; deviations need their own
+   row and reason.
+
 ## 4. The watched couplings (tripwires, round-3 Q3)
 
 D-3 keeps exactly TWO couplings to upstream, both watched mechanically from
