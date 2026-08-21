@@ -10,7 +10,9 @@
 # behind ue_wrap/ next.
 
 cmake_minimum_required(VERSION 3.20)
-project(votv_coop LANGUAGES CXX C)  # C for the MinHook sources (third_party/minhook)
+project(votv_coop LANGUAGES CXX C ASM_MASM)  # C for the MinHook sources (third_party/minhook);
+                                             # ASM_MASM for the UE4SS cppmod no-op vtable stubs
+                                             # (src/loader/cppmod_stubs.asm, D-3 spike 2026-08-21)
 
 # The VOTV game version this build targets -- ONE half of the mod's version
 # identity (the other half is kProtocolVersion, the build number; see
@@ -209,6 +211,9 @@ find_package(nlohmann_json CONFIG REQUIRED)
 
 add_library(votv-coop SHARED
     src/bootstrap/dllmain.cpp
+    src/bootstrap/boot.cpp
+    src/loader/cppmod_entry.cpp
+    src/loader/cppmod_stubs.asm
     src/ue_wrap/core/log.cpp
     src/ue_wrap/core/sig_scan.cpp
     src/ue_wrap/core/reflection.cpp

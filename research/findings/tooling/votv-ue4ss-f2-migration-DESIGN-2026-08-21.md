@@ -105,11 +105,18 @@ game-version-coupled and **UE4SS-version-independent**, which is exactly what ma
 
 **Duplicate/predecessor protection (round-3 Q4; `ModVersion` is unchecked by
 UE4SS, so OUR code owns this whole):**
-- **New-vs-new:** a named mutex (`Global\\MultivoidLoaded`) taken at `start_mod`;
-  a second instance (manual `Mods/` copy + an r2modman-profile copy both merged
-  in by shimloader, or two differently-named folders) sees
-  `ERROR_ALREADY_EXISTS`, pops OUR dialog naming both paths, refuses to
-  bootstrap.
+- **New-vs-new:** a named mutex taken by whichever lane boots first —
+  **CORRECTED at the spike impl audit (2026-08-21, round-1 delta D1): the scope
+  is per-PROCESS (`Local\\MultivoidLoaded_<pid>`), NOT the `Global\\` this
+  paragraph originally specified** — a machine-wide mutex would false-refuse
+  the project's own standard 2-4-game-processes-on-one-box LAN workflow (and
+  any player hosting two instances). The acquisition lives in
+  `bootstrap::StartOnce` so it guards BOOT regardless of entry lane, and the
+  per-module latch is checked FIRST so the benign UE4SS restart re-entry never
+  re-creates (and never mislabels) its own held name. A second same-process
+  instance sees `ERROR_ALREADY_EXISTS`, logs `REFUSE reason=duplicate-mutex`,
+  pops OUR dialog, refuses to bootstrap. Drilled: P2 (two concurrent
+  processes, zero cross-refusals) + the restart replay (probe, 2026-08-21).
 - **New-vs-old (the upgrader):** boot scan for the standalone install beside the
   exe — `xinput1_3.dll` proxy + `multivoid-*.dll` on disk AND a
   `GetModuleHandle` live check — hard-refuse with a removal dialog. (Old builds
@@ -124,6 +131,68 @@ shimloader profile is not ours to configure; the spike runs everything on
 defaults.
 
 ## 3. Work packages + HALT gates
+
+> **WP-1 AS-RUN (2026-08-21, same day): HALT GATE 1 PASSED — every cell.** The
+> shim is BUILT (`bootstrap/boot.{h,cpp}` + `loader/cppmod_entry.{h,cpp}` +
+> `loader/cppmod_stubs.asm`; dllmain thinned to the lane discriminator;
+> `multivoid-0.9.0n-134.dll` exports `start_mod`/`uninstall_mod`; import table
+> all-System32, PE-parsed). Preceded by a 10-round impl `/qf` (33 questions,
+> all closed by measurement; thread in the session `qf_thread.md`) and audited
+> (agent, function-by-function: PASS, 0 CRITICAL; F1/F2/F3/N3 folded).
+> **The load matrix, all on CLIENT_3, fresh installs from pinned zips:**
+> - **(b) official 3.0.1** (flat, EAGER PE era): started via enabled.txt at
+>   **113 ms** after process start (C++ mods start BEFORE their sig scan —
+>   measured, earlier than inferred); our AOB reflection + PE MinHook detour
+>   run LIVE under their eager detour (HEALTH PASS + GAME-THREAD LIVE) — the
+>   first live proof of the double-detour stack (2026-07-26 FACTS was
+>   source-only). Census `[1 2 3 5 8]` = the 10-slot vtable.
+> - **(c) experimental-latest** (ue4ss/ subdir, lazy PE): PASS, 120 ms, census
+>   `[1 2 3 4 6 8 13 15]` = the 16-slot vtable, `on_ui_init` (the inserted
+>   virtual) dispatched and absorbed. Slot indices follow **MSVC
+>   overload-grouping** (all `on_lua_*` overloads cluster at the first
+>   declaration, reversed) — both eras' censuses fit that rule exactly;
+>   today's main-HEAD header re-diffed IDENTICAL to 2026-05 (no drift).
+> - **(a) shimloader + `--mod-dir` profile** (THE cohort): PASS — our DLL
+>   physically in the profile, VFS-delivered, 110 ms, HEALTH PASS, LIVE. The
+>   bundle self-identifies "v3.0.1 Beta ... SHA e31aaaa6" = the exact rev the
+>   ABI census diffed (rolling-tag reality self-evidenced). **FINDING (WP-4):
+>   config/ini WRITES fail err=3 under the shimloader VFS** (CRT fopen to the
+>   same module-relative dir succeeds; the CreateFileW+MoveFileExW atomic-swap
+>   pattern fails) → multivoid.ini's home under mod-manager delivery moves to
+>   the published `SHIMLOADER_CFG_DIR`; root dig owned by WP-4.
+> - **UPGRADE COLLISIONS (both-installs):** under shimloader the question is
+>   MOOT — **shimloader itself PANICS on seeing `xinput1_3.dll`** (its
+>   anti-old-UE4SS guard hits our proxy by filename; `shimloader-log.txt`
+>   names the file with removal steps; the game does not come up). On plain
+>   UE4SS eras OUR surface works as designed: b2 (b133 incumbent) and a3 (new
+>   bytes both lanes) both show `REFUSE reason=predecessor-disk` naming the
+>   files + `reason=predecessor-live` from the kernel module list
+>   (VFS-independent) + the **"refuse dialog up"** log proof; the incumbent
+>   boots and stays the running mod (a3: `entry=proxy-dllmain` at 117 ms — the
+>   filename discriminator preserves the proxy lane byte-for-byte in behavior).
+> - **Probe drills (engine-less, replaying the measured call order):** full
+>   restart sequence with FreeLibrary BETWEEN (pin held, surviving-latch
+>   proof, ONE BootThread line, distinct ring dummies, idempotent double
+>   uninstall, DETACH final tally); refuse (nullptr + per-leg verdicts); P2
+>   two concurrent processes (per-PID mutex isolates — zero cross-refusals);
+>   dual (same-process second copy → `duplicate-mutex`, re-entry →
+>   `previously-refused`); RED drill (vt[200] → immediate first-hit WARN +
+>   census `[1:3 200:1]` — the wire-e runtime detector shown RED before its
+>   silence is trusted). Engine-less boot is bounded (60 s settle, FAIL-tagged
+>   health report, clean exit).
+> - **LAN smoke: PASS.** HOST via proxy lane + CLIENT_3 via UE4SS-3.0.1 lane
+>   (the harshest detour stack), byte-identical DLL both sides (SHA-gated
+>   pre-flight): full join completed — GNS up, `peer slot 1 CONNECTED`,
+>   nickname arbitrated, roster asserted, "SpikeUE4SS joined the game", both
+>   peers alive at end, RSS stable, zero host ERROR lines. Observed WARNs
+>   unrelated to the loader (novelty-ledger refusal at connect, flashlight
+>   connect-edge ordering, the known cursor ClipCursor note) — for a
+>   proxy-proxy baseline comparison next session.
+> - **Restart-All-Mods GUI click on a live game remains the one named
+>   hands-on residual** (the probe replays the identical measured call
+>   sequence; the GUI click adds only their button wiring).
+> Cell logs/manifests: session scratchpad `cppmod_cells/`; probe:
+> `cppmod_probe/`. CLIENT_3 restored to proxy-only after the matrix.
 
 - **WP-1 SPIKE = HALT GATE 1 (buildable TODAY — no Epic linkage, no UEPseudo,
   no CI change; the round-0 user prerequisite is OFF the critical path):**

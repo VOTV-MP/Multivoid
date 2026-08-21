@@ -1,140 +1,38 @@
-// multivoid standalone bootstrap.
+// multivoid bootstrap entry -- the LANE DISCRIMINATOR.
 //
-// Entry point for the STANDALONE mod DLL (RULE No.3 -- no UE4SS at runtime).
-// At this stage it only proves the loader + build pipeline: on load it
-// writes a marker file next to itself so we can confirm the DLL was mapped
-// into VotV-Win64-Shipping.exe without any UE4SS involvement. Reflection
-// (resolve GUObjectArray/GNames/ProcessEvent via AOB sigs) and hooking land
-// in later steps, behind ue_wrap/.
+// The mod DLL is loaded two ways (D-3 SLIM CONTRACT, spike 2026-08-21):
+//   - the standalone xinput proxy (src/loader/xinput_proxy.cpp) LoadLibrary's
+//     it under its versioned name multivoid-<game>-<build>.dll and expects it
+//     to boot itself -- the shipping path today, dying whole at WP-2;
+//   - UE4SS LoadLibrary's it as Mods/Multivoid/dlls/main.dll at mod-SCAN time
+//     (for every mod found, enabled or not) and starts ENABLED mods later via
+//     the exported start_mod() (src/loader/cppmod_entry.cpp).
+// The module's OWN FILENAME is the honest discriminator between the two: the
+// proxy/inject lane always maps us as multivoid-*.dll (that is the pattern it
+// scans), the UE4SS lane always as main.dll. Booting from DllMain iff the
+// proxy-era name matches keeps every existing flow (old proxy + new payload
+// included) while honoring UE4SS enablement -- a disabled mod folder is
+// LOADED but never STARTED, so it must not boot from DllMain.
 
+#include "bootstrap/boot.h"
 #include "coop/session/shutdown.h"
-#include "coop/net/protocol.h"  // kProtocolVersion -- the b<N> build rev in the banner
-#include "coop/version.h"
-#include "harness/harness.h"
-#include "ui/boot_warning_dialog.h"  // v122: the duplicate-DLL install popup
-#include "ue_wrap/core/game_thread.h"
-#include "ue_wrap/core/log.h"
-#include "ue_wrap/core/reflection.h"
+#include "loader/cppmod_entry.h"
 
 #include <windows.h>
 
-#include <cstdio>
-#include <ctime>
-#include <string>
-
 namespace {
 
-void WriteMarker() {
-    // Locate this DLL on disk so the marker lands next to it.
-    HMODULE self = nullptr;
-    ::GetModuleHandleExW(
-        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-        reinterpret_cast<LPCWSTR>(&WriteMarker), &self);
-
-    wchar_t dllPath[MAX_PATH] = {};
-    ::GetModuleFileNameW(self, dllPath, MAX_PATH);
-
-    // Replace the filename component with our marker name.
-    wchar_t* lastSep = nullptr;
-    for (wchar_t* p = dllPath; *p; ++p) {
-        if (*p == L'\\' || *p == L'/') lastSep = p;
+bool OwnNameIsProxyEra(HMODULE self) {
+    wchar_t path[MAX_PATH] = {};
+    ::GetModuleFileNameW(self, path, MAX_PATH);
+    const wchar_t* base = path;
+    for (const wchar_t* p = path; *p; ++p) {
+        if (*p == L'\\' || *p == L'/') base = p + 1;
     }
-    wchar_t markerPath[MAX_PATH] = {};
-    if (lastSep) {
-        const size_t dirLen = static_cast<size_t>(lastSep - dllPath) + 1;
-        wcsncpy_s(markerPath, dllPath, dirLen);
-    }
-    wcscat_s(markerPath, L"multivoid-loaded.txt");
-
-    FILE* f = nullptr;
-    if (_wfopen_s(&f, markerPath, L"a") == 0 && f) {
-        const std::time_t now = std::time(nullptr);
-        std::tm tm{};
-        localtime_s(&tm, &now);
-        char ts[32] = {};
-        std::strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", &tm);
-        std::fprintf(f, "[%s] multivoid standalone bootstrap loaded into PID %lu (no UE4SS)\n",
-                     ts, ::GetCurrentProcessId());
-        std::fclose(f);
-    }
-}
-
-DWORD WINAPI BootThread(LPVOID) {
-    WriteMarker();
-    // Standalone SDK health check (resolves GUObjectArray / FName::ToString /
-    // ProcessEvent via AOB, then functionally validates them). Logs a PASS/FAIL
-    // report to multivoid.log -- our own SDK access, no UE4SS.
-    ue_wrap::log::Init();
-    UE_LOGI("==== %s ====", coop::version::kDisplayLabel);
-    // The Paper-pair identity line: game target + build number (= kProtocolVersion).
-    UE_LOGI("boot: Multivoid %s b%u", coop::version::kGameTarget,
-            static_cast<unsigned>(coop::net::kProtocolVersion));
-    // Build triage line (v122): discriminates same-proto rebuilds in bug reports
-    // (banner-only -- never announced, never gated; the DLL hash stays the deploy
-    // truth). The exe identity beside kGameTarget makes an install-skew report
-    // (mod built for cook X running on exe Y) one-look diagnosable from the log.
-    UE_LOGI("boot: compiled %s %s", __DATE__, __TIME__);
-    {
-        char exePath[MAX_PATH] = {};
-        ::GetModuleFileNameA(nullptr, exePath, MAX_PATH);
-        WIN32_FILE_ATTRIBUTE_DATA fad{};
-        if (exePath[0] && ::GetFileAttributesExA(exePath, GetFileExInfoStandard, &fad)) {
-            const unsigned long long exeSize =
-                (static_cast<unsigned long long>(fad.nFileSizeHigh) << 32) | fad.nFileSizeLow;
-            UE_LOGI("boot: game exe '%s' size=%llu (mod targets VOTV %s)",
-                    exePath, exeSize, coop::version::kGameTarget);
-        }
-    }
-    // Duplicate-install detection (v122 multivoid rename): the xinput proxy scanned
-    // for multivoid-*.dll; if it found MORE than one version file (or a stale legacy
-    // votv-coop.dll), it loaded the highest build and left the leftovers in
-    // MULTIVOID_DUP_FILES. Surface that as an in-game popup (the user asked for a
-    // dialog, not a log line) + a WARN for the log-based triage.
-    {
-        char dup[1024] = {};
-        char loaded[256] = {};
-        const DWORD n = ::GetEnvironmentVariableA("MULTIVOID_DUP_FILES", dup, sizeof(dup));
-        ::GetEnvironmentVariableA("MULTIVOID_LOADED", loaded, sizeof(loaded));
-        if (n > 0 && n < sizeof(dup)) {
-            UE_LOGW("boot: MULTIPLE mod DLL versions found beside the exe -- loaded '%s', "
-                    "leftover(s): %s", loaded, dup);
-            std::string msg =
-                "Several versions of the multivoid mod DLL are installed next to the game.\n\n"
-                "Loaded (newest): " + std::string(loaded[0] ? loaded : "?") + "\n"
-                "Also found: " + std::string(dup) + "\n\n"
-                "Delete the other file(s) from VotV\\Binaries\\Win64 to avoid running "
-                "a mixed install.";
-            ui::boot_warning_dialog::Arm(msg);
-        }
-    }
-    ue_wrap::reflection::RunHealthCheck();
-
-    // Establish a game-thread execution context: hook ProcessEvent so we have a
-    // guaranteed game-thread callback to drive UFunction calls from (ProcessEvent
-    // must NOT be called from this boot thread). Then post a self-test task to
-    // prove it: the task runs on the game thread (a different thread than this
-    // one) and reads engine state safely from there.
-    const unsigned long bootTid = ::GetCurrentThreadId();
-    UE_LOGI("boot: BootThread tid=%lu", bootTid);
-    if (ue_wrap::game_thread::Install()) {
-        ue_wrap::game_thread::Post([bootTid] {
-            const unsigned long tid = ::GetCurrentThreadId();
-            const int32_t n = ue_wrap::reflection::NumObjects();
-            UE_LOGI("game-thread self-test: task ran on tid=%lu (boot tid=%lu, %s); "
-                    "NumObjects()=%d read from game thread",
-                    tid, bootTid, tid != bootTid ? "DIFFERENT thread -- OK" : "SAME -- WRONG",
-                    n);
-            UE_LOGI("==== GAME-THREAD CONTEXT: LIVE ====");
-        });
-        UE_LOGI("boot: game-thread dispatcher installed; self-test task posted");
-
-        // Autonomous test harness (ported from the UE4SS Lua coopTestHarness):
-        // skip the menus into gameplay, screenshot, report -- standalone.
-        harness::Start();
-    } else {
-        UE_LOGE("boot: failed to install game-thread dispatcher");
-    }
-    return 0;
+    const size_t len = ::wcslen(base);
+    // "multivoid-*.dll", case-insensitive (NTFS is case-preserving).
+    return len > 14 && _wcsnicmp(base, L"multivoid-", 10) == 0 &&
+           _wcsicmp(base + len - 4, L".dll") == 0;
 }
 
 }  // namespace
@@ -142,11 +40,17 @@ DWORD WINAPI BootThread(LPVOID) {
 BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         ::DisableThreadLibraryCalls(module);
-        // Do real work off the loader lock.
-        if (HANDLE t = ::CreateThread(nullptr, 0, BootThread, nullptr, 0, nullptr)) {
-            ::CloseHandle(t);
+        // Proxy/inject lane boots here; the UE4SS lane (main.dll) waits for
+        // start_mod(). StartOnce does real work off the loader lock (it only
+        // latches + CreateThreads).
+        if (OwnNameIsProxyEra(module)) {
+            bootstrap::StartOnce("proxy-dllmain");
         }
     } else if (reason == DLL_PROCESS_DETACH) {
+        // Final vtable-dispatch tally (one log line; no-op when the cppmod
+        // lane never ran). Before DoShutdown so the line lands even if the
+        // logger is torn down there someday.
+        loader::cppmod::FinalDump();
         // Last-resort cleanup if WM_CLOSE never reached us (engine quit
         // via console / fatal-error path). DoShutdown is idempotent --
         // if our wndproc already ran it, this is a no-op. CRITICAL: do
