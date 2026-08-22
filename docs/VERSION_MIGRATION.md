@@ -453,3 +453,23 @@ atomic-swap writes fail under the shimloader VFS (home moves to
 SHIMLOADER_CFG_DIR); shimloader panics on `xinput1_3.dll` by filename, so the
 r2modman upgrade-error surface is shimloader's own log, not our dialog. wire-d
 (the C loading contract) and wire-e (the safety premises) remain OWED at WP-6.
+
+2026-08-22 (assistant, execution note 2): **WP-2 PRE-CUT LANDED; the proxy
+DELETION is HELD on a measured blocker.** Landed: the ExeDir re-anchor
+(`1d153d98` — runtime artifacts anchor on the game exe dir via one
+`ue_wrap::paths::ExeDir()` owner), the start_mod boot-evidence flush
+(`a767e1e7`), the whole dev-tooling move to the UE4SS lane (`1f762fa2` —
+deploy-mod.ps1 replaces deploy-loader.ps1, install-ue4ss.ps1 owns per-copy
+substrate presence, mp.py gains a boot-lane assertion and retires
+set_dev_ue4ss), the ~139-row stale-prose census (`fe6ab1a7`) for WP-4/WP-6,
+and the conversion of all four dev installs to UE4SS 3.0.1 + the mod folder.
+Blocker: the pre-cut smoke crashed twice — an intermittent (~2/11 boots)
+EXCEPTION_ACCESS_VIOLATION with the faulting IP INSIDE our ProcessEvent
+MinHook trampoline (+0x14), one PCallStackHash across three crashes including
+a silent spike-evening one on pre-cut bytes; 0/8 mod-free control boots; the
+GuiConsole-settings bisect came back clean. Prime suspect: the ProcessEvent
+DOUBLE DETOUR with UE4SS's own eager PE hook — the exact 3.0.1-cohort surface
+§the coexistence doc named, which the spike's limited-sample "LIVE" check
+could not rate. The proxy stays in-tree until that race is root-caused and
+the pre-cut gate passes. Record: the WP-2 AS-RUN box in the design of record
+§3; session detail in memory `project-wp2-precut-and-trampoline-crash-2026-08-22`.

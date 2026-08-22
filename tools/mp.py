@@ -274,7 +274,8 @@ def deploy_all() -> None:
         sys.exit(1)
     # surface deploy summary lines (one per target)
     for line in r.stdout.splitlines():
-        if "===" in line or "deployed mod" in line or "[deploy-all]" in line:
+        if ("===" in line or "deployed mod" in line or "[deploy-all]" in line
+                or "client pak" in line):
             log(f"  deploy: {line.strip()}")
     log("deploy OK")
 

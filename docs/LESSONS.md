@@ -1501,6 +1501,14 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   (module lists, files created); a drill that NEEDS an INFO line to survive puts a Flush in the path
   under test or ends with WM_CLOSE. `memory/lesson_kill_teardown_discards_buffered_info_log_lines.md`
 
+- **2026-08-22 -- Python piped through the harness Git-Bash heredoc HALVES backslash runs even with
+  a QUOTED delimiter; any script containing `\` must go through the Write tool to a .py file.**
+  Hit 3x in one session (0-hit exact matches on C++ containing `L"\/"`, unicodeescape and
+  unterminated-literal SyntaxErrors) + once in the 08-21 spike; the identical bytes via a file ran
+  clean every time. LOOK FIRST: a heredoc script mysteriously not matching / erroring on a
+  backslash = rerun via a Write-tool file before debugging the script itself.
+  `memory/lesson_bash_heredoc_halves_backslashes_in_python.md`
+
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
 
 - **Row field vs per-slot state: does it describe the PERSON or the LINK?** The arc-A design put the
@@ -2672,6 +2680,16 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   before ever shipping a new file beside the exe.
   `memory/lesson_shimloader_owns_the_xinput_error_surface.md`
 
+- **2026-08-22 -- VOTV crash dumps live in %LOCALAPPDATA%\VotV\Saved\Crashes, and PCallStackHash
+  groups identical crashes across runs; a green drill can hide a crashed boot.** The WP-2 UE4SS-lane
+  boot flake was attributed by hash identity (3 crashes, one SILENT during the 08-21 spike evening)
+  plus a byte-exact match of the dump's faulting IP against our own logged `trampoline <base>` line
+  (fault = ProcessEvent trampoline +0x14). The install-dir `VotV/Saved/` does NOT exist -- mp.py's
+  `_game_log()` fatal-scan reads a path that never has data (open defect). LOOK FIRST: list the
+  Crashes dir by mtime and compare PCallStackHash BEFORE theorizing; decode with python
+  minidump+capstone (recipe in the lesson).
+  `memory/lesson_votv_crash_dumps_live_in_localappdata.md`
+
 ## 6. Assets, models, geometry
 
 - **Curating GAME assets = census EVERY asset** — games ship broken leftovers. `memory/lesson_game_asset_census_before_curation.md`
@@ -3207,6 +3225,14 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   than need a workaround. **The check is now two instances and one command: any comment saying "the user
   requested" that is about to DECIDE something gets `git log -S` first.**
   `memory/lesson_an_agent_authored_rule_becomes_a_user_rule.md`
+
+- **2026-08-22 -- PowerShell: FullName is RESOLVED-absolute, so a prefix built with an unresolved
+  `..` breaks every `Substring($prefix.Length+1)` rel-path.** install-ue4ss.ps1 truncated 9 chars
+  off every extracted rel-path (`Mods\ActorDumperMod` -> `rDumperMod` beside the exe, three
+  installs); files whose rel was exactly 9 chars landed correctly by accident, masking it. Fixed
+  `fd4a5b71` by `Resolve-Path` before the length math. LOOK FIRST: any `FullName.Substring`
+  rel-path computation -- confirm the base went through Resolve-Path.
+  `memory/lesson_powershell_unresolved_dotdot_breaks_substring_relpaths.md`
 
 ## 9. Security (threat model, trust boundaries, peer identity)
 

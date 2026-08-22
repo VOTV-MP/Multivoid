@@ -12,6 +12,14 @@ so those WPs get a checklist, not a hunt.
 `Win64\Mods\Multivoid\dlls\main.dll` + `enabled.txt`, started via the C-ABI `start_mod()`
 contract; loaders: UE4SS 3.0.1+ (manual) or unreal_shimloader (r2modman/Thunderstore). The
 xinput1_3.dll proxy + the drop-two-DLLs-beside-the-exe story are RETIRED (WP-2, this day).
+
+> **STATUS CORRECTION (same day, end of session):** WP-2's DELETION commit ("commit 3" —
+> xinput_proxy.cpp, the dllmain proxy lane, the dup-dialog chain, inject.ps1) is **HELD** on a
+> measured pre-cut blocker (an intermittent boot crash inside our ProcessEvent trampoline on the
+> UE4SS lane — see the WP-2 AS-RUN box in the F2 migration design doc). Rows below that say
+> "deleted/resolved at WP-2 commit 3" describe that commit's PLANNED effect; until it lands, the
+> proxy source, its CMake target, the dup-dialog chain, and inject.ps1 are all still in-tree.
+> The pre-cut commits (ExeDir re-anchor, tools re-point, install conversion) ARE landed.
 Runtime artifacts (log/ini/marker/banlist/players/report/screenshots) anchor on the EXE dir
 (commit `1d153d98`). The versioned `multivoid-<game>-<build>.dll` name survives ONLY as the
 build/release artifact identity until WP-4 re-homes distribution (mod-folder zip).

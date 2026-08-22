@@ -208,6 +208,41 @@ defaults.
   settings; then the standard LAN smoke on the spike bytes.
 - **WP-2 the swap:** delete `xinput_proxy.cpp` + the proxy deploy path (RULE 2);
   `cppmod_entry.cpp` in; predecessor detection + mutex; keep EVERYTHING else.
+
+  > **WP-2 AS-RUN (2026-08-22) — PRE-CUT DONE, PROXY DELETION HELD ON A MEASURED
+  > BLOCKER.** A 9-round `/qf` converged the cut into a pre-cut-first order (the
+  > proxy stays in the bytes until the new lane is proven). LANDED: commit
+  > `1d153d98` (ExeDir re-anchor — one `ue_wrap::paths::ExeDir()` owner dissolves
+  > `coop::config::ModuleDir()` + 3 private copies; every per-install artifact now
+  > anchors on the game exe dir, not the loader-dependent DLL dir); `a767e1e7`
+  > (flush `start_mod`'s started legs so the boot-lane line survives kill-teardown);
+  > `1f762fa2` (whole dev-tooling move to the UE4SS lane: `deploy-mod.ps1` replaces
+  > `deploy-loader.ps1`, `install-ue4ss.ps1` becomes the per-copy substrate owner
+  > with a presence-only invariant, `mp.py` retires `set_dev_ue4ss` and gains a
+  > `_lane_check` boot-lane assertion, all callers re-pointed); `fe6ab1a7` (the
+  > ~139-row stale-prose census for WP-4/WP-6, `votv-ue4ss-stale-loader-prose-
+  > CENSUS-2026-08-22.md`); + an installer staging-path fix. All four game copies
+  > converted to UE4SS 3.0.1 + `Mods/Multivoid/dlls/main.dll` (dual-lane bytes
+  > `3BF8052CDD26DC02`), `coopTestHarness : 1` preserved.
+  >
+  > **BLOCKER (why commit 3 = the deletion is HELD):** the pre-cut LAN smoke
+  > crashed twice — `EXCEPTION_ACCESS_VIOLATION` reading `-1`, `SecondsSinceStart=0`,
+  > identical `PCallStackHash 3E0EBD39`, faulting IP INSIDE our own ProcessEvent
+  > MinHook trampoline (game-log `trampoline ...0FC0`; fault `...0FD4` = +0x14).
+  > Intermittent (~2 in 11 modded UE4SS-lane boots this day: 2 crashes + 4 clean
+  > `PLAY-READY` bisect boots + smoke survivors); NOT the GuiConsole setting
+  > (0-vs-1 bisect 4/4 alive); **mod-free plain UE4SS+VOTV = 0 crashes in 8
+  > control boots** — the crash REQUIRES our mod, and a third same-hash crash
+  > from the spike evening (2026-08-21 22:44, pre-ExeDir bytes) exonerates this
+  > session's commits. The proxy lane ran 4 hands-on takes + dozens of smokes with the
+  > SAME trampoline-on-ProcessEvent and never produced this hash — the UE4SS lane
+  > surfaced it, exactly the coexistence doc's foreseen "PE double-detour surface"
+  > risk, which the WP-1 spike's limited-sample "LIVE" measurement missed. The
+  > proxy is intact in-tree (build/ still produces `xinput1_3.dll`); rollback of the
+  > dev workflow is available. NEXT: root-cause the ProcessEvent hook race (its own
+  > `/qf` + dig — the trampoline captured the REAL prologue, so it is not a naive
+  > double-inline-detour; likely a first-boot-load timing race or trampoline-pool
+  > adjacency), THEN commit 3.
 - **WP-4 distribution/release re-home** (40-file `multivoid-*` lane census,
   2026-08-21): artifact becomes a mod-folder zip (`Mods/Multivoid/...`);
   `deploy-all`/`mp.py`/`lan-test` re-point; release lane + `ledger_lint` +
