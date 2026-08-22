@@ -1,8 +1,10 @@
 # F2 migration — Multivoid as a UE4SS mod via the SLIM C-ABI CONTRACT (design of record)
 
-**Status: DESIGN, converged through 3 critic rounds 2026-08-21; the WP-1 spike is HALT
-GATE 1 before any build.** Decision trail: `docs/VERSION_MIGRATION.md` §11 ledger
-(2026-08-21 entries). Round transcripts: session `qf_thread.md`.
+**Status: DESIGN converged (3 critic rounds 2026-08-21) + WP-1 SPIKE RUN AND PASSED
+the same day (commit `cddb116c` — see the AS-RUN block opening §3; HALT gate 1 is
+CLEARED, the shim ships in-tree, the proxy lane still ships until WP-2).** Decision
+trail: `docs/VERSION_MIGRATION.md` §11 ledger (2026-08-21/22 entries). Round
+transcripts: session `qf_thread.md` (design pass + the 10-round spike impl pass).
 **This file was REWRITTEN WHOLE at design-round-3** — the round-0 full-API plan
 (re-plumb reflection onto UEPseudo, ride their PE callbacks, Epic linkage, CI token)
 is SUPERSEDED and appears only in §5 as the rejected fork. Do not implement anything

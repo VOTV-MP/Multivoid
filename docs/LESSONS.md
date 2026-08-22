@@ -1491,6 +1491,15 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   suspiciously easy is a warning** — convenience selected the wrong subject here, the same pull as
   [search prior art by problem, not by assumed mechanism].
   `memory/lesson_one_domain_word_can_name_two_different_subsystems.md`
+- **Kill-teardown discards buffered INFO log lines — an "empty" log is not "nothing ran".** 2026-08-21,
+  spike drill b2: `log.cpp Write()` flushes only WARN/ERROR (the 2026-05-27 fps decision), and every
+  autonomous teardown is `TerminateProcess` (mp.py `kill_all`, cell scripts) — the INFO tail dies in the
+  CRT buffer. b133 booted FULLY (its module sat in the kernel module list) while its log held one line,
+  the fflushed Init banner; it nearly read as "never booted". The spike-lane logs looked complete only
+  because the new code `Flush()`es at its own milestones. *Look FIRST:* after any killed process, trust
+  only lines at-or-before the last WARN/ERROR/explicit-Flush; corroborate "did X run" with kernel facts
+  (module lists, files created); a drill that NEEDS an INFO line to survive puts a Flush in the path
+  under test or ends with WM_CLOSE. `memory/lesson_kill_teardown_discards_buffered_info_log_lines.md`
 
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
 
@@ -2643,6 +2652,25 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   fields that do not fit its unit assumption cluster; and when something is "sometimes" broken,
   find the axis it varies along and PRINT it beside the symptom (`curScale=0.000 uiScale=0.833`
   ended this in one line). `memory/lesson_scaling_a_multiplier_is_not_scaling_a_size.md`
+- **MSVC vtable slots follow OVERLOAD GROUPING, not declaration order.** 2026-08-21, the D-3 spike's
+  per-slot dispatch counters: `CppUserModBase::on_dll_load` fired at slot 13 where declaration order
+  predicts 9, and the first suspicion (upstream ABI drift) was FALSE — today's header re-diffed
+  line-identical to 2026-05. The rule: MSVC clusters ALL overloads of one virtual name at the FIRST
+  declaration's position, in REVERSE declaration order (the 4 `on_lua_start` + 4 `on_lua_stop`
+  overloads occupy slots 5-12, pushing everything after). Both live eras' censuses fit exactly.
+  *Look FIRST:* before numbering any MSVC vtable, group overloads at first-declaration-reversed; a
+  census that misses decl order is not necessarily drift. Worked mapping: the F2 design doc §3 AS-RUN.
+  `memory/lesson_msvc_vtable_slots_follow_overload_grouping.md`
+- **Shimloader owns the xinput error surface — our upgrade dialog never runs under r2modman.**
+  2026-08-21, spike drill a2v2: `unreal_shimloader` Rust-panics BY DESIGN on ANY `xinput1_3.dll`
+  beside the exe (its anti-2023-UE4SS guard; hits our proxy by filename alone), writes
+  `shimloader-log.txt` naming the file with removal steps, and the game idles windowless — NOTHING
+  loads, not even our proxy's payload. Our `REFUSE reason=predecessor-*` dialog (live-drilled and
+  working on plain-UE4SS installs, cells b2/a3) is structurally unreachable there. *Look FIRST:*
+  "game won't start" from an r2modman user → read `Win64/shimloader-log.txt`; INSTALL.md's r2modman
+  upgrade language = delete the old standalone install FIRST; and check shimloader's guard strings
+  before ever shipping a new file beside the exe.
+  `memory/lesson_shimloader_owns_the_xinput_error_surface.md`
 
 ## 6. Assets, models, geometry
 

@@ -442,3 +442,14 @@ Wire repurposing: wire-b now watches the PIN (a newer stable = an upgrade
 decision, not a switch trigger); wire-a now affects contributor convenience
 only. Both tripwires keep running until the migration ships, then retire with
 the record they guard.
+
+2026-08-22 (assistant, execution note): **WP-1 spike RUN AND PASSED** (commit
+`cddb116c`, built 2026-08-21 evening) — the C-ABI shim boots the one binary on
+all three live UE4SS eras (3.0.1 / experimental / shimloader profile, ~110 ms
+start each), the PE double-detour stack ran LIVE under 3.0.1's eager detour,
+and a LAN smoke completed a full join with one peer per loader lane. Evidence:
+the AS-RUN block in the design of record §3. Two WP-4 findings: ini
+atomic-swap writes fail under the shimloader VFS (home moves to
+SHIMLOADER_CFG_DIR); shimloader panics on `xinput1_3.dll` by filename, so the
+r2modman upgrade-error surface is shimloader's own log, not our dialog. wire-d
+(the C loading contract) and wire-e (the safety premises) remain OWED at WP-6.

@@ -131,12 +131,17 @@ other ~95% (coop logic, per-class wrappers, UI, harness). The RULE 3 trade
   the community's MANUAL install guides (DebugMod's) install the shimloader bundle
   (fact base: votv-ue4ss-f2-migration-DESIGN-2026-08-21.md §1)**; VotV_RichPresence
   (2023-12-26, v3.0.0-era, likely eager) still unmeasured.
-- **Runtime-gated probes (named)**: (a) dual-install smoke — rename HOST's
-  `dwmapi.dll.off` -> `dwmapi.dll` (3.0.1) or `tools/install-ue4ss.ps1` on
-  CLIENT_3 (experimental), one instance, read multivoid.log's pe_detour install
-  line beside UE4SS.log, then a clean WM_CLOSE cycle for the teardown window;
-  (b) a 5-line Lua mod flipping one watched Symmetric field on one peer in a live
-  session — pins the amplification class end-to-end.
+- **Runtime-gated probes (named)**: (a) dual-install smoke — **RUN 2026-08-21/22
+  via the D-3 spike matrix (fresh pinned installs on CLIENT_3, superseding the
+  stale-remnant recipe this bullet originally described): our PE MinHook detour
+  + 3.0.1's EAGER detour ran stacked LIVE (`HEALTH: PASS` + game-thread pump
+  LIVE + a full LAN join on that peer) — §2's [M] double-detour tolerance is
+  now runtime-proven, not source-only. Evidence: the AS-RUN block in
+  `votv-ue4ss-f2-migration-DESIGN-2026-08-21.md` §3.** The clean-WM_CLOSE
+  teardown-window half was NOT exercised (spike cells kill hard); it rides
+  WP-2's own teardown work. (b) a 5-line Lua mod flipping one watched Symmetric
+  field on one peer in a live session — pins the amplification class end-to-end
+  (still un-run).
 
 Workflow artifacts: journal at the session's workflow dir (wf_09d3e2d4-b08);
 Thunderstore scanner + raw results in the session scratchpad (scan_ts.py,
