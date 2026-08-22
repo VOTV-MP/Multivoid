@@ -112,7 +112,23 @@ else:
     print("no exception stream")
 
 print("\nmodules of interest:")
+# Match on the FULL path, not just the basename: every UE4SS C++ mod is called
+# `main.dll`, and the interesting third-party injectors live in vendor folders
+# whose basename says nothing (A-Volute\...\NahimicOSD.dll).
+#
+# The graphics/injector keys were added 2026-08-23. The previous filter was
+# loader-shaped (main/ue4ss/shim/xinput/votv/dwmapi/crash) and therefore
+# SILENTLY HID the third-party present-chain hookers from a crash whose stack is
+# full of `dxgi.dll+0x18C0` (= IDXGISwapChain::Present). NahimicOSD.dll --
+# measured that same day to inline-hook IDXGISwapChain1::Present1 on this box --
+# was loaded in the 19:17 dump and no reader of this output could see it.
+# An instrument that cannot show the phenomenon always reports "nothing here".
+# See docs/OVERLAY_CAPTURE_COEXIST.md and tools/debug/present_hook_census.py.
+_KEYS = ("main.dll", "ue4ss", "shim", "xinput", "votv", "dwmapi", "crash",
+         "dxgi", "d3d11", "d3d12", "chrome_elf", "libcef", "rtss", "rivatuner",
+         "nahimic", "a-volute", "avolute", "obs", "overlay", "gameoverlay",
+         "discord", "sonic", "steelseries", "nvoglv", "amdih")
 for base, size, name in mods:
-    short = name.rsplit("\\", 1)[-1].lower()
-    if any(k in short for k in ("main.dll", "ue4ss", "shim", "xinput", "votv", "dwmapi", "crash")):
+    if any(k in name.lower() for k in _KEYS):
         print(f"  {name.rsplit(chr(92),1)[-1]}  base=0x{base:X} size=0x{size:X}")
+        print(f"      {name}")

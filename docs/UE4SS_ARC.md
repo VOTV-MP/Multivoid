@@ -192,6 +192,29 @@ UE4SS's.** (This corrects an earlier framing that called C "B's eventual retirem
   the naive scan is return-address-noisy — symbolization decides. Also note the real profile
   root is **`C:\r2modman\r2modmanPlus-local\...`** (not AppData) — recorded so the next deploy
   doesn't hunt for it.
+  **UPDATE 2026-08-23 — the Present-seam hypothesis is now much better supported, still not proven.**
+  Re-parsed the same dump plus a live census of a running game
+  (`tools/debug/present_hook_census.py`); four new measured facts:
+  1. The crashing thread's stack holds **`dxgi.dll+0x18C0` three times** — and `dxgi+0x18C0` is
+     exactly **`IDXGISwapChain::Present`** (RTSS's own resolved-offset cache, cross-checked live).
+     So the thread is unambiguously ON the Present chain, interleaved with our `main.dll` and
+     `chrome_elf.dll` frames.
+  2. **`NahimicOSD.dll` was LOADED in this dump** (`0x7FF8D8950000`, the A-Volute audio-driver
+     overlay) — and a live probe the next day measured it **inline-hooking
+     `IDXGISwapChain1::Present1`** at that same base. It is a third independent present-chain hooker
+     nobody had accounted for. It was invisible until now only because `parse_dump.py`'s module
+     filter was loader-shaped and did not match it (filter widened in the same commit).
+  3. `RTSSHooks64.dll` was loaded too, and **RTSS's `Profiles\Global` was written at 19:18:16 — 54
+     seconds AFTER the 19:17:22 crash**, which is consistent with RTSS having been ARMED at crash
+     time and the user turning detection off in reaction. (Circumstantial; the user has since
+     confirmed detection is now None, but not when it changed.)
+  4. So the 19:17 process plausibly had **four** parties on the Present chain: us + CEF + Nahimic
+     (+ RTSS). The exception is EXEC at address 0 — a call through a NULLed function pointer, which
+     is exactly what a clobbered hook-chain pointer looks like.
+  **Still a hypothesis:** WHO nulled the pointer is not proven, and symbolization remains the
+  decider. But the coexistence class is now measured rather than assumed, and the fix in
+  `OVERLAY_CAPTURE_COEXIST.md` removes OUR two patches from that chain.
+
   **CROSS-LINK (2026-08-22 night, NOT a merge of roots): `docs/OVERLAY_CAPTURE_COEXIST.md`** opened a
   separate arc on exactly this seam — our ImGui draws from an inline hook on
   `IDXGISwapChain::Present`, which is the function RTSS/OBS/CEF-class hookers also patch. That arc's

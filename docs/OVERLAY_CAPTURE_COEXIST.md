@@ -239,9 +239,17 @@ Every hooked DXGI entry was followed through its jmp chain to the owning module:
 - `[MEASURED]` **`NahimicOSD.dll` (the A-Volute/Nahimic audio-driver overlay that ships with many
   MSI/ASUS/Dell audio stacks) inline-hooks `IDXGISwapChain1::Present1`.** We never knew it was there.
   It is a well-known cause of crashes and overlay conflicts in games, and it is a **new suspect for the
-  open 19:17 exec-at-NULL crash in `docs/UE4SS_ARC.md`** (that dump was described as "a DXGI/CEF-shaped
-  thread"). **This is a LEAD, not a diagnosis** — it is recorded here so the next dump symbolization
-  starts with the right module list.
+  open 19:17 exec-at-NULL crash in `docs/UE4SS_ARC.md`**. **Checked the same day, and the lead got
+  stronger:** that dump's crashing stack carries **`dxgi.dll+0x18C0` — i.e. `IDXGISwapChain::Present`
+  itself — three times**, interleaved with our `main.dll` and `chrome_elf.dll` (CEF) frames; and
+  **`NahimicOSD.dll` was loaded in that dump** at the same base where the live probe measured its
+  `Present1` hook. `RTSSHooks64.dll` was loaded too, and RTSS's `Profiles\Global` was rewritten
+  **54 seconds after** the crash (19:18:16 vs 19:17:22) — consistent with RTSS having been armed then.
+  So that process plausibly had FOUR parties on the present chain, and the fault is an EXEC at address
+  0 = a call through a nulled function pointer. **Still a LEAD, not a diagnosis** — who nulled it is
+  unproven and symbolization decides — but the coexistence class is now measured, not assumed.
+  (`tools/debug/parse_dump.py`'s module filter was loader-shaped and hid Nahimic from every earlier
+  read of that dump; widened 2026-08-23.)
 - **Design consequence:** the present chain is *more* crowded than the 7-round /qf assumed (us + RTSS
   when armed + OBS when capturing + Nahimic). That strengthens the root fix rather than weakening it —
   every one of those lives on the DXGI entry points, and none on the engine-private functions we are
