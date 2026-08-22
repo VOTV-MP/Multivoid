@@ -191,6 +191,15 @@ UE4SS's.** (This corrects an earlier framing that called C "B's eventual retirem
   the naive scan is return-address-noisy — symbolization decides. Also note the real profile
   root is **`C:\r2modman\r2modmanPlus-local\...`** (not AppData) — recorded so the next deploy
   doesn't hunt for it.
+  **CROSS-LINK (2026-08-22 night, NOT a merge of roots): `docs/OVERLAY_CAPTURE_COEXIST.md`** opened a
+  separate arc on exactly this seam — our ImGui draws from an inline hook on
+  `IDXGISwapChain::Present`, which is the function RTSS/OBS/CEF-class hookers also patch. That arc's
+  converged fix RETIRES our `Present` + `ResizeBuffers` inline patches (drawing instead from
+  `FD3D11Viewport::PresentChecked`, upstream of the whole chain), which **reduces our footprint on
+  the exact chain this crash implicates** — so it can only help here. Do NOT fold the two: this dump
+  is unsymbolized and the coexistence arc is unbuilt; if the fix lands first, re-test this crash and
+  record whether it survives. Whoever symbolizes the dump should read that doc's §3/§4 first — the
+  hooker mechanics (who patches what, in what order) are already written up there.
 
 ### As-built (2026-08-22 — baseline REPRODUCED in the real modded env; compose VERIFIED same day, see Proof status)
 

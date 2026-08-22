@@ -4,6 +4,19 @@
 extraction), `4c325ea5` (texture-leak fix), `63693526` (capture gate),
 `e3a53fe1` (renderer + RHI indicator), `027a2110` (both audits folded).**
 
+> **SUPERSEDING ARC (2026-08-22) — read `docs/OVERLAY_CAPTURE_COEXIST.md` before changing where the
+> overlay DRAWS.** This doc's architecture hangs off our inline hook on `IDXGISwapChain::Present`.
+> That seam is the measured ROOT of two user-reported failures: the overlay is invisible when
+> RivaTuner/MSI-Afterburner is on (RTSS's hook-integrity control restores its own bytes and unlinks
+> ours), and OBS game-capture cannot see it (OBS copies the backbuffer at the top of its own Present
+> detour, before ours draws). The converged fix moves the draw to `FD3D11Viewport::PresentChecked` —
+> upstream of the whole external hook chain — and RETIRES the `Present` + `ResizeBuffers` inline
+> hooks (RULE 2). **The DX12 half of THIS doc is directly affected:** RTSS defends
+> `ExecuteCommandLists` too, so our persistent ECL hook is a second S1 surface and must become a
+> TRANSIENT discovery (hook, capture the queue, uninstall). Everything below remains accurate as the
+> description of what is BUILT today; the coexistence arc is what changes it, and its DX12 phase
+> reuses this doc's `-dx12` rig recipe and its 600/600 ECL finding.
+
 ## AS-BUILT (2026-07-26)
 
 **The user's ask is answered:** launching with `-dx12` brings the overlay up and

@@ -1,5 +1,17 @@
 // ui/imgui_overlay.cpp -- see ui/imgui_overlay.h.
 //
+// SEAM NOTICE (2026-08-22): the Present-hook architecture described below is the
+// measured ROOT of two user-reported failures -- the overlay is INVISIBLE when
+// RivaTuner/MSI-Afterburner is running (RTSS's hook-integrity control restores its
+// own bytes over ours and unlinks our detour), and OBS game-capture cannot see it
+// (OBS copies the backbuffer at the top of ITS Present detour, before ours draws).
+// The converged fix moves our draw UP to FD3D11Viewport::PresentChecked -- upstream
+// of the whole external inline-hook chain -- and retires the Present + ResizeBuffers
+// hooks whole (RULE 2). READ docs/OVERLAY_CAPTURE_COEXIST.md BEFORE changing anything
+// about where/how this file draws. Built so far: only the AOB + the log-only resolve
+// probe in Init() (verify-before-retire); the seam-move itself is NOT built yet, so
+// everything below is still live and still carries both defects.
+//
 // Standard "overlay over a game's DXGI swapchain" technique:
 //   1. Init(): make a throwaway DX11 device + swapchain on a hidden window ONLY to
 //      read the IDXGISwapChain vtable, then MinHook Present (vtable[8]) +
@@ -70,6 +82,8 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hook.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/sig_scan.h"     // FindPattern -- the FD3D11Viewport::PresentChecked seam probe
+#include "ue_wrap/core/sdk_profile.h"  // kSigD3D11ViewportPresentChecked (docs/OVERLAY_CAPTURE_COEXIST.md)
 
 #include <windows.h>
 #include <d3d11.h>  // the throwaway device/swapchain used ONLY to read the DXGI vtable
@@ -639,6 +653,26 @@ bool Init() {
         } else {
             UE_LOGW("imgui_overlay: could not hook SetCursorPos -- cursor may not track over the menu");
             g_setCursorPosTarget = nullptr;
+        }
+    }
+    // Overlay coexistence (docs/OVERLAY_CAPTURE_COEXIST.md), verify-before-retire:
+    // confirm the FD3D11Viewport::PresentChecked draw-seam resolves on THIS running
+    // exe BEFORE the seam-move retires the swapchain-Present + ResizeBuffers hooks.
+    // LOG-ONLY this build -- the working overlay is unchanged; the hook moves here
+    // next. Expected on the 0.9.0-n exe: image+0x16F4BA0.
+    {
+        const uintptr_t pc = ue_wrap::FindPattern(ue_wrap::profile::kSigD3D11ViewportPresentChecked);
+        if (pc) {
+            const uintptr_t base = reinterpret_cast<uintptr_t>(::GetModuleHandleW(nullptr));
+            UE_LOGI("imgui_overlay: FD3D11Viewport::PresentChecked draw-seam resolved @%p "
+                    "(image+0x%llX) -- coexistence seam candidate, log-only this build "
+                    "(docs/OVERLAY_CAPTURE_COEXIST.md)",
+                    reinterpret_cast<void*>(pc),
+                    static_cast<unsigned long long>(pc - base));
+        } else {
+            UE_LOGW("imgui_overlay: FD3D11Viewport::PresentChecked signature NOT found -- "
+                    "kSigD3D11ViewportPresentChecked stale for this build? (overlay coexistence "
+                    "seam-move blocked; docs/OVERLAY_CAPTURE_COEXIST.md)");
         }
     }
     // DX12 stage-1: the swapchain-creation timing probe (log-only; measures

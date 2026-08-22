@@ -25,6 +25,9 @@ Game_*/
 *.id1
 *.id2
 *.nam
+# generated output of tools/debug/ida_aob_derive.py -- regenerable; the SIGNATURE it
+# produces belongs in sdk_profile.h, the raw dump does not belong in the repo
+tools/debug/ida_aob_derive.txt
 *.til
 *.t01
 *.t02

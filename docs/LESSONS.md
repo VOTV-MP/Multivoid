@@ -851,6 +851,14 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   frame; for cursor-shaped questions prefer a state read (`GetCursorInfo` gives `flags` +
   `ptScreenPos`, which separates hidden from recentered — a photo cannot); and any focus-dependent
   measurement must `SetForegroundWindow` and ASSERT it took.
+  **SECOND INSTANCE, DIFFERENT AXIS (2026-08-22, the RTSS/OBS overlay arc):** the blind spot is not
+  always an omitted ELEMENT — it can be the wrong PIPELINE. The acceptance gate first proposed for
+  "OBS can't capture our overlay" was `capture_window.ps1`, i.e. `PrintWindow`/`BitBlt` = the
+  **DWM/GDI** path; OBS game-capture is an inline **Present-hook backbuffer copy**. The entire defect
+  is about WHERE in the Present chain our pixels land, so a DWM grab cannot adjudicate it — only real
+  OBS can. (The RTSS half of the same arc IS answerable by a window grab: "is the overlay in the
+  rendered frame at all".) *Look FIRST, additionally:* **if the claim is about WHERE IN A CHAIN
+  something happens, the instrument must live in that same chain.**
   `memory/lesson_an_instrument_blind_to_the_phenomenon_always_passes.md`
 
 - **VERIFY ROLE-EXCLUSIVITY BEFORE INVOKING THE PUBLISH RULE — read the accessor top to bottom.**
@@ -2158,6 +2166,26 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 
 ## 4. Dispatch, hooks & input seams
 
+- **An overlay that inline-hooks `IDXGISwapChain::Present` LOSES to RivaTuner and is INVISIBLE to OBS
+  game-capture — two user-reported defects, one root: we sit too far down the Present chain.**
+  2026-08-22. `[AUTH]` RTSS does not overwrite prologues like MinHook/Detours — it unwinds the jmp
+  chain, injects after the LAST jump (deliberately last), and runs **hook-integrity control that
+  restores its own bytes**, kicking a later inline hooker out of the chain; `[MEASURED]` on this box
+  RTSS resolves `Present`/`Present1`/`ResizeBuffers`/`ExecuteCommandLists` by DLL-relative offset —
+  exactly our functions. `[SRC]` obs-studio `dxgi-capture.cpp`: with `capture_overlay` FALSE (the
+  DEFAULT) OBS copies the backbuffer at the TOP of its own `hook_present`, i.e. BEFORE calling the
+  real Present — so a hook installed after OBS's (ours; OBS injects at capture start) draws too late
+  to be captured. The working precedents all draw UPSTREAM of the inline chain: MTA via a COM PROXY
+  device (`CProxyDirect3DDevice9::Present` -> GUI -> real Present, plus explicit RTSS-coexistence in
+  `CreateDeviceSecondCallCheck`), ReShade via a creation-time swapchain WRAPPER. A ReShade-style
+  wrapper is unavailable to us (measured 2026-07-26: our boot does NOT precede swapchain creation),
+  so the seam is caller-side: `FD3D11Viewport::PresentChecked`. **Look FIRST:
+  `docs/OVERLAY_CAPTURE_COEXIST.md` (sole live-tracked doc) before touching the overlay's present
+  hook, the DXGI hooks, or the present signatures. And treat "who ELSE patches this function?" as a
+  standing question for every inline hook — this is the SECOND instance of the class after the UE4SS
+  PolyHook/ProcessEvent collision.**
+  Full: `[[lesson-an-overlay-that-inline-hooks-present-loses-to-rtss-and-obs]]`.
+
 - **The SAME distinction can be needed in BOTH directions, two terms apart — and the second
   direction is the one nobody asks about.** MEASURED 2026-07-31, GitHub issue #5. The fix existed
   because VotV delivers typed keys to its in-world screens through `WidgetInteraction` on a
@@ -2527,6 +2555,34 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   `memory/lesson_realistic_votv_modded_stack.md`
 
 ## 5. Engine / UE4 facts
+
+- **2026-08-22 — WILDCARDING an AOB can DESTROY its uniqueness: measure occurrences AFTER masking,
+  never before.** Deriving `kSigD3D11ViewportPresentChecked`: the LITERAL first 24 bytes of
+  `sub_1416F4BA0` occurred exactly ONCE in the image — but the same window with the `/GS`
+  `mov rax,[rip+disp32]` displacement wildcarded (mandatory: that disp moves on EVERY rebuild)
+  matched **TWO** places, and stayed ambiguous at 32 bytes; it becomes unique only at 40 (shipped at
+  48 for margin). Masking removes information, and the bytes that individuate a short MSVC prologue
+  are frequently the very displacement you are about to wildcard — so "found a unique prologue, now
+  let me wildcard the volatile parts" is the WRONG order and fails SILENTLY (FindPattern just returns
+  whichever site comes first -> a hook on the wrong function, which will not look like a signature
+  bug at runtime). **Look FIRST: `tools/debug/ida_aob_derive.py sig 0x<ea>` — it prints occurrences
+  per window length with the mask ALREADY applied, names the first-unique length and emits a
+  margin'd signature; grow into register-move/struct-offset bytes, which survive rebuilds.**
+  Full: `[[lesson-wildcarding-an-aob-can-destroy-its-uniqueness]]`; `docs/VERSION_MIGRATION.md`
+  (this was the 6th signature).
+
+- **2026-08-22 — UE ships its own `__FILE__` paths into the SHIPPING exe, so an engine source-file
+  name is the fastest anchor into that subsystem's functions.** The VOTV shipping exe contains
+  `D:/Build/++UE4/Sync/Engine/Source/Runtime/Windows/D3D11RHI/Private/WindowsD3D11Viewport.cpp` (and
+  the D3D12/Vulkan twins) as UTF-16 literals, because UE's `VERIFYD3D11RESULT`-style macros pass
+  `__FILE__` — plus the failing EXPRESSION as a literal (`"SwapChain->GetFullscreenState(...)"`), which
+  names the function for you. Xref'ing one string produced the entire D3D11 viewport present cluster
+  in a single pass; symbols are stripped (`sub_XXXXXXXX`) but string literals are not debug info and
+  survive. **Decoy warning:** searching the DXGI HRESULTs (`0x887A0005/6/7`) finds the error-FORMATTING
+  helpers (`VerifyD3D11Result` family, `GetD3D11ErrorString`), one layer away from the present path —
+  good for confirming the neighborhood, useless for locating the seam. **Look FIRST:
+  `tools/debug/ida_aob_derive.py file <substring>`.**
+  Full: `[[lesson-ue-file-strings-anchor-engine-seams-in-shipping-builds]]`.
 
 - **2026-08-21 — "one binary across plugin-host versions" is decided by the VTABLE HISTORY, not the
   API docs.** Measured on UE4SS v3.0.1 vs main-2026-05: `on_ui_init` INSERTED mid-vtable (+5
@@ -3452,6 +3508,13 @@ tracker.
   inside the Present detour; retire a capture hook with Disable-without-Remove. LOOK FIRST:
   `src/votv-coop/src/ui/overlay_backend_dx12_capture.cpp` header +
   `research/findings/tooling/votv-imgui-dx12-overlay-DESIGN-2026-07-26.md`.
+  **UPDATED 2026-08-22: RTSS defends `ExecuteCommandLists` TOO** (measured: its `Profiles\Config`
+  resolves ECL alongside the DXGI Present entries), so a PERSISTENT ECL hook is a second surface for
+  the "RTSS unlinks the later inline hooker" defect -> it must become a TRANSIENT discovery (hook,
+  capture the queue, uninstall). Also note the VANTAGE trap: "no API gives the presenting queue" was
+  measured from OUTSIDE (from the swapchain); whether the queue is reachable from INSIDE the engine's
+  own `FD3D12Viewport` present is a DIFFERENT, still-UNMEASURED question — do not let the first fact
+  answer the second. `docs/OVERLAY_CAPTURE_COEXIST.md` §9 (Phase 2).
   `memory/lesson_d3d12_has_no_api_for_the_presenting_queue.md`
 - **2026-07-26 — a branch that only logs on FAILURE cannot be drilled.** The DX12 resize drill produced
   a correct-looking screenshot and ZERO log lines, because `ResizeBuffers` logged only its failure

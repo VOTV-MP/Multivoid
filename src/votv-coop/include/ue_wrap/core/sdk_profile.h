@@ -92,6 +92,29 @@ inline constexpr const char* kSigSaveGameToSlot =
     "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 40 48 8B DA 33 F6 "
     "48 8D 54 24 30 48 89 74 24 30 48 89 74 24 38 41 8B F8";
 
+// FD3D11Viewport::PresentChecked(int32 SyncInterval) -- the overlay's draw seam
+// (docs/OVERLAY_CAPTURE_COEXIST.md). It is the SINGLE, census-proven once-per-frame
+// choke point for the game viewport's swapchain present: both the normal path
+// (FD3D11Viewport::Present) and the DWM-vsync path (PresentWithVsyncDWM) funnel
+// through it, and it is the function that reads the swapchain at `this+0x70` and
+// calls IDXGISwapChain::Present at vtbl[8]. We hook HERE (not IDXGISwapChain::Present)
+// so our ImGui draw happens UPSTREAM of the external inline-hook chain (RTSS/OBS
+// hook the DXGI Present vtable, which is below this): RTSS's integrity-restore can't
+// unlink a private engine function it has no knowledge of, and OBS's default
+// game-capture (which copies the backbuffer before RealPresent) then sees our pixels.
+// Match == function address. Prologue proven UNIQUE (occ=1) with the /GS rip-relative
+// displacement wildcarded; the tail is stable register-moves + the struct read
+// `mov rcx,[rcx+0xB0]` (FD3D11Viewport::*(this+176)). IDA sub_1416F4BA0 in the
+// 0.9.0-n exe (image base 0x140000000 -> offset 0x16F4BA0). The swapchain member
+// offset kD3D11Viewport_SwapChain must be validated at runtime (QueryInterface
+// IID_IDXGISwapChain) -- it is an offset literal, not covered by this prologue AOB.
+inline constexpr const char* kSigD3D11ViewportPresentChecked =
+    "48 89 5C 24 18 55 56 57 48 81 EC B0 00 00 00 48 8B 05 ?? ?? ?? ?? 48 33 "
+    "C4 48 89 84 24 A0 00 00 00 33 F6 89 54 24 30 48 8B D9 40 B5 01 48 8B 89";
+// FD3D11Viewport::SwapChain (IDXGISwapChain*). RUNTIME-VALIDATED before use
+// (QueryInterface IID_IDXGISwapChain); a drift trips the overlay's fail-closed path.
+inline constexpr size_t kD3D11Viewport_SwapChain = 0x70;
+
 // ---- struct offsets (stable within UE4.27; re-check on an engine bump) ----
 namespace off {
 inline constexpr size_t UObject_InternalIndex = 0x0C;  // int32 -- slot in GUObjectArray (O(1) liveness check)

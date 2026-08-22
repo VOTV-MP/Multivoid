@@ -29,15 +29,20 @@ code across 734 files, so the ratio matters:
 
 | Kind of knowledge | Where | Count | Breaks when | How it is re-derived |
 |---|---|---|---|---|
-| **AOB signatures** | `include/ue_wrap/core/sdk_profile.h` | **5** (`kSigFNameToString`, `kSigGUObjectArray`, `kSigProcessEvent`, `kSigFMemoryRealloc`, `kSigSaveGameToSlot`) | ANY recompile of the exe — even a patch | Real RE work: UE4SS log for ground-truth addresses, then IDA to confirm the RVA and derive a unique AOB (workflow written in that file's header) |
+| **AOB signatures** | `include/ue_wrap/core/sdk_profile.h` | **6** (`kSigFNameToString`, `kSigGUObjectArray`, `kSigProcessEvent`, `kSigFMemoryRealloc`, `kSigSaveGameToSlot`, `kSigD3D11ViewportPresentChecked`) | ANY recompile of the exe — even a patch | Real RE work: UE4SS log for ground-truth addresses, then IDA to confirm the RVA and derive a unique AOB (workflow written in that file's header) |
 | **Engine struct offsets** | same file | **41** (`UObject_*`, `AActor_*`, `FUObjectArray_*`, `FMalloc*`, …) | Engine version bump (UE4.27 → something else). NOT by a game recook | Public UE4.27 layout / the SDK dump |
 | **Game (blueprint) offsets** | same file | **29** (`AmainPlayer_*`, `mainGamemode_*`, `mainGameInstance_*`, …) | A VOTV recook CAN move these — a blueprint gaining or losing a property shifts everything after it | Mechanically, from a fresh UE4SS CXX header dump (each constant's comment cites its `*.hpp:line`) — **no IDA needed** |
 | **Content names** | `include/ue_wrap/core/sdk_profile_names.h` | **235** constants (229 string names) | The game renames/removes a class, function, property, level or asset | Grep the fresh dump / the cooked assets |
 | **Everything else** | the whole tree | **1,141** name-driven reflection lookups (`FindObject/FindClass/FindFunction`, property-by-name) | Only if the NAME changes | Nothing — they resolve at runtime by name |
 
 Two consequences worth stating plainly:
-- The recook-fragile set is **5 signatures + 29 game offsets + whatever names
+- The recook-fragile set is **6 signatures + 29 game offsets + whatever names
   moved**. That is one file plus a name file — not a codebase-wide sweep.
+  (The 6th, `kSigD3D11ViewportPresentChecked`, was added 2026-08-22 for the overlay
+  coexistence seam — `docs/OVERLAY_CAPTURE_COEXIST.md`. It is the first signature whose
+  failure is USER-VISIBLE by design: it fails CLOSED, disabling the overlay with a native
+  MessageBox rather than degrading silently. It also carries one offset literal,
+  `kD3D11Viewport_SwapChain = 0x70`, runtime-validated by QueryInterface.)
 - The mod does NOT hardcode addresses into gameplay code. If a signature fails,
   the mod says so at boot instead of corrupting anything (see §3).
 
@@ -49,7 +54,8 @@ read after a game update, because it tells you the signatures are now suspect.
 
 | Symptom | Almost certainly | Where to look |
 |---|---|---|
-| Boot log: `[FAIL] GUObjectArray signature` / `FName::ToString` / `ProcessEvent` | The 5 AOBs, or 1-2 of them | `sdk_profile.h` §"AOB signatures"; §4 step 3 |
+| Boot log: `[FAIL] GUObjectArray signature` / `FName::ToString` / `ProcessEvent` | The 6 AOBs, or 1-2 of them | `sdk_profile.h` §"AOB signatures"; §4 step 3 |
+| The OVERLAY does not come up + a native "MOD" MessageBox at boot | `kSigD3D11ViewportPresentChecked` went stale (fail-CLOSED by design), or the `+0x70` swapchain offset drifted | `docs/OVERLAY_CAPTURE_COEXIST.md` §9; re-derive per §6b (the census + uniqueness method is written there) |
 | Signatures OK but `NumObjects()` tiny / `[FAIL] object array populated` | Engine struct offsets (an engine bump, not a recook) | `sdk_profile.h` §"struct offsets" |
 | Name round-trip or `FindClass(Actor/World)` fails | `sdk_profile_names.h`, or FName layout | health check output |
 | Everything resolves, but one system is dead / reads garbage | A **game blueprint offset** moved (the 29) or a name changed | `tools/sdk_diff.py` against the previous dump |
@@ -145,7 +151,7 @@ CMake, and (for signature work only) IDA.
 
 ## 6. Standing risks, stated honestly
 
-- **The 5 signatures are the real bill.** They need someone who can read a
+- **The 6 signatures are the real bill.** They need someone who can read a
   disassembler. Everything else in a migration is mechanical.
 - **A UE version bump (not just a recook) is a bigger event** — the 41 engine
   offsets move together and the reflection primitives may change shape. That has
@@ -168,7 +174,7 @@ accurate. Authorship is stated in the README's Credits section and on the site:
 one person directing, heavy AI use, fully public commit history.
 
 **Claim: "when the signatures break, owning it means re-deriving offsets from
-IDA."** Partly right, and the split matters: **5 AOB signatures** do need IDA
+IDA."** Partly right, and the split matters: **6 AOB signatures** do need IDA
 (and UE4SS for ground truth — step 1 of our own workflow). The **29 game
 blueprint offsets** come out of a fresh SDK dump mechanically, not out of IDA.
 The **41 engine offsets** do not move on a game recook at all. And 1,141
@@ -337,7 +343,7 @@ EULA-gated one.
 - *The overlay:* as measured 2026-07-26, UE4SS's GUI is its own OS window
   (D3D11/OpenGL swapchain, **no DX12 backend**, never hooks the game's Present);
   our in-game DX11+DX12 overlay stays ours under any fork.
-- *The recook work:* the game half (5 AOBs + 29 BP offsets + 235 content names +
+- *The recook work:* the game half (6 AOBs + 29 BP offsets + 235 content names +
   the 1,141 name-anchors) is ours under any substrate — it is the part that
   actually breaks (§1), and no framework covers it.
 
