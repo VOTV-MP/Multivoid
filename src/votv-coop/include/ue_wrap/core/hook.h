@@ -24,7 +24,17 @@ bool Init();
 // Create AND enable a hook on `target`. `detour` replaces it; `*original`
 // receives the trampoline (call it to invoke the un-hooked target). Returns
 // false on any MinHook error (logged). Both pointers must be non-null.
-bool Install(void* target, void* detour, void** original);
+//
+// `followJmpImmune` (WP-2, 2026-08-22): rewrite MinHook's x64 relay from the
+// classic indirect `FF 25 [rip+0] + abs64` form to a non-branching-led
+// `MOV RAX, imm64 ; JMP RAX` form BEFORE enabling. A co-resident inline-hook
+// engine that follows jmp chains (UE4SS ships PolyHook, whose x64Detour::hook()
+// runs followJmp) then STOPS on the MOV and cleanly in-place-hooks the relay
+// itself instead of resolving our indirect jmp onto the abs64 pointer slot and
+// clobbering it (the PROVEN WP-2 boot-crash root cause). Absolute-jump semantics
+// are identical; only the encoding followJmp keys on changes. Pass true ONLY for
+// a target another inline-hook engine also detours (ProcessEvent). Default false.
+bool Install(void* target, void* detour, void** original, bool followJmpImmune = false);
 
 // Disable + remove the hook on `target`. Returns true on success.
 bool Uninstall(void* target);

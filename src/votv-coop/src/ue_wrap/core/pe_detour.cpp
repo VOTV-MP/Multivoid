@@ -23,6 +23,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <string>
 
 namespace ue_wrap::game_thread {
@@ -528,15 +529,43 @@ void LogHookChainSnapshot(const char* when) {
     // followJmp overwrites when UE4SS hooks PE after us.
     UE_LOGI("pe_diag[%-9s] tramp   %p : %s", when, (void*)tramp,
             tramp ? HexBytes(tramp, 48).c_str() : "(null)");
-    // Read the relay target pointer (tramp+0x1A) and classify: does it still point at
-    // OUR detour (INTACT), or has it been clobbered (CORRUPT)?
+    // Classify the relay (WP-2 immune-relay aware). The relay lives inside the
+    // trampoline slot; scan for its form and verdict:
+    //   LEGACY FF25 00000000 <ptr>: ptr==&detour INTACT / else CORRUPT (the old
+    //     double-detour crash -- PolyHook clobbered our abs64 pointer).
+    //   IMMUNE  48 B8 <ptr> FF E0:  ptr==&detour => IMMUNE-INTACT (our mov-relay
+    //     survives; UE4SS has not in-place-hooked it this session).
+    //   Neither present but relay+0 carries a foreign jmp (FF25 with nonzero disp,
+    //     or E9): POLYHOOK-COMPOSED -- UE4SS cleanly hooked our relay, the fix
+    //     WORKING (the crash's absence, made visible).
     if (tramp) {
-        const uint64_t relayPtr = *reinterpret_cast<uint64_t*>(tramp + 0x1A);
-        const uint64_t wantDet  = reinterpret_cast<uint64_t>(det);
-        const bool intact = (relayPtr == wantDet);
-        UE_LOGW("pe_diag[%-9s] RELAY-PTR @tramp+0x1A = 0x%016llX want &detour=0x%016llX => %s",
-                when, (unsigned long long)relayPtr, (unsigned long long)wantDet,
-                intact ? "INTACT" : "CORRUPT(double-detour hit)");
+        const uint64_t wantDet = reinterpret_cast<uint64_t>(det);
+        const char* verdict = nullptr;
+        int foreignJmpOff = -1;
+        for (int off = 0; off + 14 <= 48; ++off) {
+            if (tramp[off] == 0xFF && tramp[off + 1] == 0x25 && tramp[off + 2] == 0 &&
+                tramp[off + 3] == 0 && tramp[off + 4] == 0 && tramp[off + 5] == 0) {
+                uint64_t p = 0; std::memcpy(&p, tramp + off + 6, 8);
+                verdict = (p == wantDet) ? "LEGACY-RELAY INTACT"
+                                         : "LEGACY-RELAY CORRUPT(double-detour hit)";
+                break;
+            }
+            if (tramp[off] == 0x48 && tramp[off + 1] == 0xB8 &&
+                tramp[off + 10] == 0xFF && tramp[off + 11] == 0xE0) {
+                uint64_t p = 0; std::memcpy(&p, tramp + off + 2, 8);
+                verdict = (p == wantDet) ? "IMMUNE-RELAY INTACT(UE4SS not armed on it)"
+                                         : "IMMUNE-RELAY PTR-MISMATCH";
+                break;
+            }
+            // a foreign inline-jmp somewhere in the relay area = PolyHook's patch
+            if (foreignJmpOff < 0 &&
+                ((tramp[off] == 0xFF && tramp[off + 1] == 0x25) || tramp[off] == 0xE9))
+                foreignJmpOff = off;
+        }
+        if (!verdict)
+            verdict = (foreignJmpOff >= 0) ? "POLYHOOK-COMPOSED(immune relay in-place hooked -- fix working)"
+                                           : "UNKNOWN(relay not located)";
+        UE_LOGW("pe_diag[%-9s] RELAY: %s", when, verdict);
     }
     // WHO-FIRST is decided by what our trampoline HOLDS, not by PE's byte: if the
     // trampoline holds the real PE prologue (40 55 56 57 41 54) we hooked FIRST (PE
@@ -568,10 +597,23 @@ bool Install() {
         return false;
     }
     if (!hook::Init()) return false;
+    // WP-2 (2026-08-22): PE is the ONE function UE4SS's PolyHook also detours, so
+    // its MinHook relay must be followJmp-immune (root-cause fix for the UE4SS-lane
+    // boot crash). Gated on VOTVCOOP_PE_IMMUNE_RELAY for the A/B proof run; once
+    // proven it becomes unconditional (the env gate is the proof scaffold, RULE-2
+    // diagnostic). Default OFF here so the same DLL reproduces the baseline crash.
+    bool immuneRelay = false;
+    {
+        char v[8] = {};
+        if (::GetEnvironmentVariableA("VOTVCOOP_PE_IMMUNE_RELAY", v, sizeof(v)) > 0 && v[0] == '1')
+            immuneRelay = true;
+    }
     if (!hook::Install(pe, reinterpret_cast<void*>(&ProcessEventDetour),
-                       reinterpret_cast<void**>(&g_originalPE))) {
+                       reinterpret_cast<void**>(&g_originalPE), immuneRelay)) {
         return false;
     }
+    if (immuneRelay)
+        UE_LOGW("game_thread: PE relay made followJmp-immune (VOTVCOOP_PE_IMMUNE_RELAY=1)");
     g_hookTarget = pe;
     g_installed = true;
     UE_LOGI("game_thread: ProcessEvent hooked; game-thread dispatcher live");
