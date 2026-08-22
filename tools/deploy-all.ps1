@@ -1,4 +1,4 @@
-# deploy-all.ps1 -- deploy the standalone loader to all four game copies.
+# deploy-all.ps1 -- deploy the Multivoid mod folder to all four game copies.
 #
 # 2026-05-25 (3-copy convention; see docs/RE_WORKFLOW.md):
 #   Game_0.9.0n_HOST/     -- HOST    (user's hands-on host play)
@@ -7,26 +7,22 @@
 # 2026-05-28 PR-4.2+ (4-copy convention -- 3-peer LAN multi-client tests):
 #   Game_0.9.0n_CLIENT_2/ -- CLIENT2 (second hands-on client for 3-peer test)
 #
-# Each gets the same xinput1_3.dll proxy + multivoid-<game>-<build>.dll payload
-# (the Paper-style versioned artifact, 2026-07-19). The dev
-# copy ADDITIONALLY has UE4SS installed via the dwmapi.dll alternate proxy
-# slot (UE4SS coexists with our standalone DLL there; the user-play copies
-# stay UE4SS-free per RULE 3).
+# WP-2 of the D-3 UE4SS migration (2026-08-22): every copy runs the UE4SS lane
+# -- the mod is Mods\Multivoid\dlls\main.dll + enabled.txt, deployed per copy
+# by tools/deploy-mod.ps1 (which also removes the retired xinput-proxy files).
+# The UE4SS substrate (dwmapi.dll + UE4SS.dll + settings) is a ONE-TIME per-copy
+# install owned by tools/install-ue4ss.ps1; this script never touches it.
 #
 # Each copy keeps its OWN Saved/ directory (logs, screenshots, save games)
-# so the autonomous LAN test in _dev/ cannot collide with the user's host
-# or client play state. See tools/lan-test.ps1 which now uses _dev/.
+# so the autonomous LAN test cannot collide with the user's host or client
+# play state.
 #
 # Usage:
-#   .\tools\deploy-all.ps1                 # deploy current build to all 3
-#   .\tools\deploy-all.ps1 -Standalone     # ALSO disable UE4SS in dev copy
-#                                            (renames dwmapi.dll, for a "what
-#                                            the user gets" simulation)
-#   .\tools\deploy-all.ps1 -Remove         # uninstall loader from all 3
+#   .\tools\deploy-all.ps1                 # deploy current build to all 4
+#   .\tools\deploy-all.ps1 -Remove         # remove the mod folder from all 4
 
 [CmdletBinding()]
 param(
-    [switch]$Standalone,
     [switch]$Remove
 )
 
@@ -41,7 +37,7 @@ $targets = @(
     @{Name="DEV"    ; Path=Join-Path $root "Game_0.9.0n_CLIENT_3\WindowsNoEditor\VotV\Binaries\Win64"}
 )
 
-$deployScript = Join-Path $PSScriptRoot "deploy-loader.ps1"
+$deployScript = Join-Path $PSScriptRoot "deploy-mod.ps1"
 
 # Custom client-puppet mesh pak (docs/COOP_CLIENT_MODEL.md). Shipped to EVERY
 # peer (client-side visual asset); UE4 auto-mounts any .pak under Content/Paks/
@@ -58,9 +54,6 @@ foreach ($t in $targets) {
     }
     Write-Host "[deploy-all] === $($t.Name) === $($t.Path)" -ForegroundColor Cyan
     $args = @{GameWin64=$t.Path; BuildDir=$buildDir}
-    # -Standalone applies to the dev copy only (it has UE4SS to disable);
-    # the user-play copies don't have UE4SS to begin with.
-    if ($Standalone -and $t.Name -eq "DEV") { $args.Standalone = $true }
     if ($Remove) { $args.Remove = $true }
     & $deployScript @args
 
@@ -80,7 +73,7 @@ foreach ($t in $targets) {
         if (Test-Path $pakDest) { Remove-Item $pakDest -Force; Write-Host "  removed client pak" -ForegroundColor DarkGray }
     } elseif (Test-Path $clientPak) {
         if (-not (Test-Path $pakDir)) { New-Item -ItemType Directory -Force -Path $pakDir | Out-Null }
-        # Idempotent (same pattern as deploy-loader's DLL copy): a RUNNING game
+        # Idempotent (same pattern as deploy-mod's DLL copy): a RUNNING game
         # holds its pak mapped, so Copy-Item throws IOException even when there is
         # nothing to update -- which aborted the whole deploy + the client launch
         # while the HOST was up (2026-07-02). Reads are share-allowed: hash-compare
@@ -88,7 +81,7 @@ foreach ($t in $targets) {
         # still fails loudly (correct -- a mapped pak cannot be hot-swapped).
         # Inline .NET SHA256 (NOT Get-FileHash): under mp.py's nested/degraded
         # PowerShell the Utility module fails to autoload and Get-FileHash aborts
-        # the whole deploy (same rationale as deploy-loader.ps1's helper).
+        # the whole deploy (same rationale as deploy-mod.ps1's helper).
         function Get-Sha256HexLocal($path) {
             $sha = [System.Security.Cryptography.SHA256]::Create()
             try { return [System.BitConverter]::ToString($sha.ComputeHash([System.IO.File]::ReadAllBytes($path))).Replace('-', '') }

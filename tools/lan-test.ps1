@@ -107,8 +107,8 @@ if (-not $NoBuild) {
     cmake --build (Join-Path $root "build\votv-coop") --config Release | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "build failed" }
 }
-Step "deploying standalone loader (UE4SS disabled)..."
-& (Join-Path $PSScriptRoot "deploy-loader.ps1") -Standalone | Out-Null
+Step "deploying the Multivoid mod folder (UE4SS lane)..."
+& (Join-Path $PSScriptRoot "deploy-mod.ps1") | Out-Null
 
 # Fresh logs so we only parse THIS run.
 Remove-Item $hostLog, $clientLog -ErrorAction SilentlyContinue

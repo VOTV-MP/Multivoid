@@ -274,7 +274,7 @@ def deploy_all() -> None:
         sys.exit(1)
     # surface deploy summary lines (one per target)
     for line in r.stdout.splitlines():
-        if "===" in line or "deployed loader" in line or "[deploy-all]" in line:
+        if "===" in line or "deployed mod" in line or "[deploy-all]" in line:
             log(f"  deploy: {line.strip()}")
     log("deploy OK")
 
@@ -370,9 +370,9 @@ def launch_peer(role: str, port: int, nick: str, peer: str | None,
     # role is the WIRE role (host / client). peer_slot is which CLIENT folder
     # to launch from when role==client: 1 -> Game_0.9.0n_CLIENT_1, 2 ->
     # Game_0.9.0n_CLIENT_2, 3 -> Game_0.9.0n_CLIENT_3. Host always uses Game_0.9.0n_HOST.
-    # NOTE: the _dev folder additionally carries UE4SS (dwmapi.dll proxy slot),
-    # but our standalone xinput1_3.dll + multivoid payload are byte-identical to the
-    # other copies (deploy-all.ps1), so as a 4th peer its coop behaviour matches.
+    # WP-2 (2026-08-22): every copy runs the UE4SS lane -- the mod is
+    # Mods\Multivoid\dlls\main.dll started via start_mod(); deploy-all.ps1
+    # ships byte-identical bytes to all four, so any copy is an equivalent peer.
     if role == "host":
         game_dir = HOST_DIR
     elif peer_slot == 3:
@@ -643,30 +643,6 @@ def wait_for_client_connect(game_dir: Path, timeout: int, label: str,
     return None
 
 
-def set_dev_ue4ss(enabled: bool) -> None:
-    """Toggle UE4SS in the _dev folder (CLIENT3's game copy) by parking its
-    dwmapi.dll proxy. The _dev copy is the ONLY one carrying UE4SS; loading it
-    as a 4th game instance crashes at DLL-load (confirmed 2026-05-30 -- the
-    dev peer died with only its log header written), and a 4-peer SHIPPING-
-    behaviour validation must be pure-standalone anyway (RULE 3). smoke4
-    disables UE4SS for the run and RESTORES it on exit so the user's dev RE
-    workflow is untouched. Idempotent; safe if dwmapi.dll is absent."""
-    active = DEV_DIR / "dwmapi.dll"
-    parked = DEV_DIR / "dwmapi.dll.smoke-off"
-    try:
-        if enabled:
-            if parked.exists() and not active.exists():
-                parked.rename(active)
-                log("  dev UE4SS: RESTORED (dwmapi.dll back in place)")
-        else:
-            if active.exists():
-                active.rename(parked)
-                log("  dev UE4SS: disabled for smoke (dwmapi.dll parked as .smoke-off)")
-    except OSError as e:
-        log(f"  dev UE4SS toggle (enabled={enabled}) FAILED: {e} "
-            f"(a _dev VotV may still hold the dll)")
-
-
 def cmd_client3(args) -> None:
     deploy_all()
     # Client #3: tile index 2. Launches from the _dev folder (the 4th game copy).
@@ -850,6 +826,16 @@ def cmd_smoke(args) -> None:
                 "'config-selftest: DONE fail=0' (selftest failed or never ran)")
             sys.exit(8)
         log("config-selftest: DONE fail=0 confirmed in the host log")
+    # WP-2 boot-lane assertion: both peers booted via UE4SS start_mod
+    # (entry=cppmod, no REFUSE, no retired-proxy line; MISSING log = FAIL).
+    lane: list[str] = []
+    for lbl, d in (("HOST", HOST_DIR), ("CLIENT", CLIENT_DIR)):
+        lane += _lane_check(lbl, d)
+    if lane:
+        log(f"FAIL: {len(lane)} boot-lane issue(s):")
+        for h in lane:
+            log(f"  - {h}")
+        sys.exit(10)
     # LOG HEALTH, ON EVERY SMOKE -- not just the i18n one. These checks (strict
     # UTF-8, a line that formatted to nothing, any 'selftest: FAIL', and the
     # POSITIVE 'font selftest: DONE fail=0') were written for smoke_i18n and
@@ -905,6 +891,26 @@ def _read_text(path: Path) -> str:
 def _game_log(win64_dir: Path) -> Path:
     # .../VotV/Binaries/Win64 -> .../VotV/Saved/Logs/VotV.log
     return win64_dir.parent.parent / "Saved" / "Logs" / "VotV.log"
+
+
+def _lane_check(label: str, win64_dir: Path) -> list[str]:
+    """WP-2 boot-lane assertion: the peer must have booted via the UE4SS
+    start_mod lane. launch_peer unlinks multivoid.log pre-spawn, so a MISSING
+    log means the loader never started the mod (never a stale-content pass);
+    the entry= line survives kill-teardown because start_mod's started legs
+    flush (lesson-kill-teardown-discards-buffered-info-log-lines)."""
+    lp = win64_dir / "multivoid.log"
+    if not lp.exists():
+        return [f"{label}: multivoid.log MISSING -- the loader never started the mod"]
+    txt = _read_text(lp)
+    probs: list[str] = []
+    if "entry=cppmod" not in txt:
+        probs.append(f"{label}: no 'entry=cppmod' boot line (wrong lane or boot failed)")
+    if "entry=proxy-dllmain" in txt:
+        probs.append(f"{label}: retired proxy-lane boot line present")
+    if "REFUSE" in txt:
+        probs.append(f"{label}: REFUSE line in log (dup/predecessor guard fired)")
+    return probs
 
 
 def _steady_fps(fps: list) -> tuple:
@@ -1102,13 +1108,6 @@ def cmd_smoke4(args) -> None:
 
     deploy_all()
 
-    # CLIENT3 launches from the _dev folder, the only copy carrying UE4SS.
-    # UE4SS as a 4th instance crashes at DLL-load; park it for the run and
-    # restore on exit. atexit fires on normal return AND on sys.exit() (the
-    # verdict path), so the dev folder is always left as we found it.
-    set_dev_ue4ss(False)
-    atexit.register(set_dev_ue4ss, True)
-
     # ARC B drill: --nick-all makes every peer ASK for the same name, which is the
     # only way to exercise the arbiter end-to-end; --scoreboard opens the TAB list
     # so the assignment is PHOTOGRAPHABLE (an autonomous run cannot hold TAB).
@@ -1291,6 +1290,11 @@ def cmd_smoke4(args) -> None:
 
     if kill_reason:
         failures.append(kill_reason)
+
+    # WP-2 boot-lane assertion, all four peers (CLIENT2's first-ever UE4SS
+    # boots ride this check too).
+    for lbl, d in [("HOST", HOST_DIR)] + [(lbl2, gd) for _s, gd, lbl2 in client_specs]:
+        failures.extend(_lane_check(lbl, d))
 
     # --- i18n assertions (--assert-i18n). Every peer must be able to SEE every
     # other peer's name and message, byte-for-byte, and no lane may have emitted
@@ -1671,9 +1675,6 @@ def cmd_npctest(args) -> None:
     deploy_all()
 
     peers = max(1, min(4, args.peers))
-    if peers >= 4:
-        set_dev_ue4ss(False)
-        atexit.register(set_dev_ue4ss, True)
 
     log("--- HOST LAUNCH (NPC spawn trigger armed) ---")
     host_pid = launch_peer("host", args.port, "Host", peer=None,

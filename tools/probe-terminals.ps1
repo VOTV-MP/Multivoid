@@ -3,21 +3,22 @@
   Hands-on UE4SS Lua probe of VOTV story-object terminals (Phase 5T Inc0).
 
 .DESCRIPTION
-  Disables the standalone coop proxy temporarily, deploys probe_terminals.lua v3,
+  Parks the Multivoid mod temporarily (renames Mods\Multivoid\enabled.txt --
+  a disabled UE4SS mod is LOADED but never STARTED), deploys probe_terminals.lua v3,
   sets the harness scenario to load s_may2026 + run the probe, clears the
   UE4SS log, and launches the dev game copy. The probe auto-fires its
   dangerous tests ONLY when the player is in active terminal-use state
   (mainPlayer.activeInterface != nil), so the user just needs to walk up
   to a terminal and press E.
 
-  Restore-proxy step is done by passing -Restore (after testing is done).
+  The restore step is done by passing -Restore (after testing is done).
 
 .EXAMPLE
   ./tools/probe-terminals.ps1
   # In game: walk to SAT computer + E, wait 5s, Escape. Done.
 
   ./tools/probe-terminals.ps1 -Restore
-  # After testing: re-enable standalone proxy.
+  # After testing: re-enable the Multivoid mod.
 #>
 [CmdletBinding()]
 param(
@@ -30,21 +31,22 @@ if (-not (Test-Path $dev)) { throw "Dev copy not found at $dev" }
 $dev = (Resolve-Path $dev).Path
 
 if ($Restore) {
-    $disabled = Join-Path $dev 'xinput1_3.dll.probe-disabled'
+    $disabled = Join-Path $dev 'Mods\Multivoid\enabled.txt.probe-disabled'
     if (Test-Path $disabled) {
-        Rename-Item $disabled 'xinput1_3.dll' -Force
-        Write-Host "standalone proxy RESTORED" -ForegroundColor Green
+        Rename-Item $disabled 'enabled.txt' -Force
+        Write-Host "Multivoid mod RE-ENABLED" -ForegroundColor Green
     } else {
         Write-Host "no .probe-disabled file found; nothing to restore" -ForegroundColor Yellow
     }
     exit 0
 }
 
-# 1) Disable standalone proxy temporarily
-$proxy = Join-Path $dev 'xinput1_3.dll'
-if (Test-Path $proxy) {
-    Rename-Item $proxy 'xinput1_3.dll.probe-disabled' -Force
-    Write-Host "standalone proxy disabled (will be restored with -Restore)" -ForegroundColor Cyan
+# 1) Park the Multivoid mod temporarily: without enabled.txt the UE4SS mod
+#    folder is LOADED but start_mod is never called (spike-measured semantics).
+$enabledTxt = Join-Path $dev 'Mods\Multivoid\enabled.txt'
+if (Test-Path $enabledTxt) {
+    Rename-Item $enabledTxt 'enabled.txt.probe-disabled' -Force
+    Write-Host "Multivoid mod parked (restore with -Restore)" -ForegroundColor Cyan
 }
 
 # 2) Deploy v3 probe (source -> dev copy)
