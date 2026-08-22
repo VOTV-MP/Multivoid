@@ -62,6 +62,10 @@ $asset   = "UE4SS_$Version.zip"
 $url     = "https://github.com/UE4SS-RE/RE-UE4SS/releases/download/$Version/$asset"
 $staging = Join-Path $PSScriptRoot '..\build\ue4ss-staging'
 New-Item -ItemType Directory -Force -Path $staging | Out-Null
+# Resolve NOW: $stage feeds a FullName.Substring($stage.Length+1) rel-path
+# computation below, and an unresolved '..' in the prefix shifts the cut
+# (measured 2026-08-22: every extracted rel lost its first 9 chars).
+$staging = (Resolve-Path $staging).Path
 $zip = Join-Path $staging $asset
 
 function Get-Zip {
