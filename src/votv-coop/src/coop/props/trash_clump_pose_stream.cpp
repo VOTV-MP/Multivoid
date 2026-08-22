@@ -71,7 +71,7 @@ void TickApplyAndDrive(coop::net::Session& s) {
     //    that did not route through ClearDriveForEid -- defensive; AdvanceLerp itself no-ops on a dead actor).
     for (auto it = g_carryDrives.begin(); it != g_carryDrives.end(); ) {
         AD::ActiveDrive& d = it->second;
-        if (!d.actor || !R::IsLive(d.actor)) { it = g_carryDrives.erase(it); continue; }
+        if (!d.LiveActor()) { it = g_carryDrives.erase(it); continue; }  // slot-validated (islive-zeroav row :74)
         AD::AdvanceLerp(d, nowMs);
         ++it;
     }
