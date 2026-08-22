@@ -473,6 +473,12 @@ def launch_peer(role: str, port: int, nick: str, peer: str | None,
         _argv.append("-dx12")
     elif _rhi in ("dx11", "d3d11"):
         _argv.append("-dx11")
+    # Crash forensics (diagnostic, 2026-08-22): UE4.27's in-process ReportCrash
+    # honors -fullcrashdump -> the UE4CC UE4Minidump.dmp becomes a FULL-memory
+    # dump (code pages + heap readable; multi-GB). Opt-in only -- set
+    # MP_FULLCRASHDUMP=1 in the wrapper that wants forensic dumps.
+    if os.environ.get("MP_FULLCRASHDUMP") == "1":
+        _argv.append("-fullcrashdump")
     proc = subprocess.Popen(
         _argv,
         cwd=str(game_dir),
@@ -909,8 +915,11 @@ def _lane_check(label: str, win64_dir: Path) -> list[str]:
         probs.append(f"{label}: no 'entry=cppmod' boot line (wrong lane or boot failed)")
     if "entry=proxy-dllmain" in txt:
         probs.append(f"{label}: retired proxy-lane boot line present")
-    if "REFUSE" in txt:
-        probs.append(f"{label}: REFUSE line in log (dup/predecessor guard fired)")
+    # Match the loader's actual refuse lines ("cppmod: REFUSE reason=...") -- a bare
+    # "REFUSE" substring false-positived on the novelty ledger's unrelated
+    # "REFUSED a text field" W11 line (caught 2026-08-22, smoke crash loop).
+    if "cppmod: REFUSE" in txt:
+        probs.append(f"{label}: cppmod REFUSE line in log (dup/predecessor guard fired)")
     return probs
 
 

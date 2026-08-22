@@ -226,23 +226,57 @@ defaults.
   > `3BF8052CDD26DC02`), `coopTestHarness : 1` preserved.
   >
   > **BLOCKER (why commit 3 = the deletion is HELD):** the pre-cut LAN smoke
-  > crashed twice — `EXCEPTION_ACCESS_VIOLATION` reading `-1`, `SecondsSinceStart=0`,
-  > identical `PCallStackHash 3E0EBD39`, faulting IP INSIDE our own ProcessEvent
-  > MinHook trampoline (game-log `trampoline ...0FC0`; fault `...0FD4` = +0x14).
-  > Intermittent (~2 in 11 modded UE4SS-lane boots this day: 2 crashes + 4 clean
-  > `PLAY-READY` bisect boots + smoke survivors); NOT the GuiConsole setting
-  > (0-vs-1 bisect 4/4 alive); **mod-free plain UE4SS+VOTV = 0 crashes in 8
-  > control boots** — the crash REQUIRES our mod, and a third same-hash crash
-  > from the spike evening (2026-08-21 22:44, pre-ExeDir bytes) exonerates this
-  > session's commits. The proxy lane ran 4 hands-on takes + dozens of smokes with the
-  > SAME trampoline-on-ProcessEvent and never produced this hash — the UE4SS lane
-  > surfaced it, exactly the coexistence doc's foreseen "PE double-detour surface"
-  > risk, which the WP-1 spike's limited-sample "LIVE" measurement missed. The
-  > proxy is intact in-tree (build/ still produces `xinput1_3.dll`); rollback of the
-  > dev workflow is available. NEXT: root-cause the ProcessEvent hook race (its own
-  > `/qf` + dig — the trampoline captured the REAL prologue, so it is not a naive
-  > double-inline-detour; likely a first-boot-load timing race or trampoline-pool
-  > adjacency), THEN commit 3.
+  > crashed — `EXCEPTION_ACCESS_VIOLATION` reading `-1`, identical
+  > `PCallStackHash 3E0EBD39`, faulting IP INSIDE our own ProcessEvent MinHook
+  > trampoline (`trampoline ...0FC0`; fault `...0FD4` = +0x14).
+  >
+  > **ROOT CAUSE — PROVEN 2026-08-22 (full `-fullcrashdump` UE4Minidump decode; the
+  > earlier "first-boot-load timing race / trampoline-pool adjacency" guesses are
+  > REFUTED).** It is a **ProcessEvent double-detour with UE4SS, corrupting via
+  > PolyHook's `followJmp`**:
+  > - We MinHook `UObject::ProcessEvent`: patch = `E9` → our MinHook **relay** at
+  >   trampoline+0x14; the relay is an indirect `ff 25 [rip+0]` + abs64
+  >   `&ProcessEventDetour` at trampoline+0x1A.
+  > - UE4SS 3.0.1 **also detours ProcessEvent** (its PE dispatcher = `UE4SS.dll
+  >   +0x554da0`, the sibling of ProcessInternal `+0x554eb0` / ProcessLocalScript
+  >   `+0x554f90`), installed **LAZILY** the first time anything calls
+  >   `Unreal::Hook::RegisterProcessEventPreCallback` (`LuaMod.cpp:3085`,
+  >   `UFunctionCallerWidget.cpp:183`) — NOT eager at init.
+  > - When UE4SS's PolyHook `x64Detour::hook()` runs AFTER our hook, its
+  >   `followJmp()` walks PE's prologue → follows our `E9` → our relay; because the
+  >   relay is an indirect `ff 25 [rip]`, PolyHook resolves `m_fnAddress` to the
+  >   relay's POINTER address (`trampoline+0x1A`, `x64Detour.cpp:341`) and writes
+  >   its own `ff 25 <disp>` target-patch THERE, **clobbering our relay's 8-byte
+  >   `&ProcessEventDetour`** with a thunk into PolyHook's VALLOC2 holder region
+  >   (`0x7ff75d…`).
+  > - Our relay then `jmp qword [rip]`s to a **non-canonical** address → `#GP`
+  >   (sets no CR2) → Windows reports it as `AV reading 0xffffffffffffffff`, RIP at
+  >   the relay. (RAX = PE addr; all symptoms match.)
+  >
+  > **The intermittency variable is NOT install order** (measured: **14/14 peer-boots
+  > are WE-FIRST**, our trampoline always holds the real PE prologue; relay INTACT at
+  > install + +10s on survivors). It is **whether UE4SS's LAZY PE hook arms this
+  > session** (solo: never, 0/15; 2-peer smoke: ~2/7 runs, both peers, always after
+  > us → crash). Impossible on the proxy lane (no PolyHook in-process — months clean).
+  > Evidence: dump `UE4CC-…BEADA55B`; `scratchpad/qf_wp2/dump_{full,pi,ue4ss_pe}.py`;
+  > `whofirst_results.txt`. FACTS doc §2 corrected to match.
+  >
+  > **FIX — OPEN, forked (2 `/qf` rounds; the critic killed candidate A):**
+  > (A) install-after-UE4SS = DEAD (we are always first; UE4SS's PE hook is lazy so
+  > "after it" is unreachable). (B) a followJmp-IMMUNE local hook form — make our PE
+  > patch chain so PolyHook's followJmp resolves to real code it can trampoline
+  > (e.g. a `mov rax,imm64; jmp rax` relay instead of MinHook's indirect `ff25[rip]`,
+  > so `followJmp` stops on the non-branching `mov` and PolyHook chains) — LOCAL,
+  > keeps the substrate, but touches MinHook's relay form; feasibility not yet
+  > measured. (C) RULE-1 ARCHITECTURAL / the deferred L-4 engine-bridge: stop running
+  > our own PE detour on the UE4SS lane, observe PE via UE4SS's own
+  > `Hook::RegisterProcessEvent{Pre,Post}Callback` — root-removes the double-detour
+  > but reverses the D-3 slim-contract (uses the C++ vtable ABI D-3 dropped) → a
+  > USER FORK, not a per-rule-1 "how". The proxy is intact in-tree (`build/` still
+  > makes `xinput1_3.dll`); rollback available. **NEXT: `/qf` candidate B to
+  > convergence (is a followJmp-immune MinHook relay form real?); if it holds, build
+  > it (transitional, with C as its written retirement per principle 4) → commit 3.
+  > If B does not hold, C goes to the user.**
 - **WP-4 distribution/release re-home** (40-file `multivoid-*` lane census,
   2026-08-21): artifact becomes a mod-folder zip (`Mods/Multivoid/...`);
   `deploy-all`/`mp.py`/`lan-test` re-point; release lane + `ledger_lint` +

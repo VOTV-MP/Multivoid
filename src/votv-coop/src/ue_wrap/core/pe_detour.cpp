@@ -22,6 +22,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <string>
 
 namespace ue_wrap::game_thread {
@@ -476,6 +477,86 @@ void SafeCallObserver(ProcessEventObserverFn cb, void* self, void* function, voi
 
 }  // namespace detail
 
+// ---- PE double-detour DIAGNOSTIC (probe; RULE 2 exempt) ------------------------
+// WP-2 2026-08-22: proves/refutes the followJmp-divert hypothesis for the boot
+// crash WITHOUT needing the ~20% crash. The divert is STRUCTURAL: if UE4SS's
+// PolyHook detours ProcessEvent AFTER our MinHook, its followJmp resolves our E9
+// and re-points its patch onto OUR DETOUR body -> our detour's prologue is
+// overwritten in place, observable on any NORMAL boot. Snapshots the whole hook
+// chain (PE prologue / our detour prologue / our trampoline) at install and again
+// ~10s later (past UE4SS init). Inert unless VOTVCOOP_PE_DIAG=1.
+namespace {
+
+bool PeDiagEnabled() {
+    char v[8] = {};
+    const DWORD n = ::GetEnvironmentVariableA("VOTVCOOP_PE_DIAG", v, sizeof(v));
+    return n > 0 && v[0] == '1';
+}
+
+std::string HexBytes(const void* p, size_t n) {
+    std::string s;
+    const auto* b = static_cast<const uint8_t*>(p);
+    char buf[4];
+    for (size_t i = 0; i < n; ++i) {
+        // Read defensively: the pages are code (present), but guard anyway.
+        std::snprintf(buf, sizeof(buf), "%02x ", b[i]);
+        s += buf;
+    }
+    return s;
+}
+
+// Classify the first byte of a prologue: is it an inline-detour jmp (someone
+// hooked it) or the real function body?
+const char* JmpKind(const uint8_t* p) {
+    if (p[0] == 0xE9) return "E9-rel32-jmp";
+    if (p[0] == 0xFF && p[1] == 0x25) return "FF25-riprel-jmp";
+    if (p[0] == 0xEB) return "EB-short-jmp";
+    if ((p[0] == 0x48 || p[0] == 0x49) && (p[1] == 0xB8 || p[1] == 0xBB)) return "mov-imm64+jmp";
+    return "not-a-jmp(real-body?)";
+}
+
+void LogHookChainSnapshot(const char* when) {
+    auto* pe    = reinterpret_cast<uint8_t*>(reflection::ProcessEventAddr());
+    auto* det   = reinterpret_cast<uint8_t*>(&ProcessEventDetour);
+    auto* tramp = reinterpret_cast<uint8_t*>(g_originalPE);
+    UE_LOGI("pe_diag[%-9s] PE      %p : %s | first=%s", when, (void*)pe,
+            pe ? HexBytes(pe, 16).c_str() : "(null)", pe ? JmpKind(pe) : "?");
+    UE_LOGI("pe_diag[%-9s] detour  %p : %s | first=%s", when, (void*)det,
+            det ? HexBytes(det, 16).c_str() : "(null)", det ? JmpKind(det) : "?");
+    // 48 bytes: covers the trampoline (0x14) + the MinHook relay opcode (0x14..0x19)
+    // + the relay's abs64 target pointer (0x1A..0x21) -- the exact 8 bytes PolyHook's
+    // followJmp overwrites when UE4SS hooks PE after us.
+    UE_LOGI("pe_diag[%-9s] tramp   %p : %s", when, (void*)tramp,
+            tramp ? HexBytes(tramp, 48).c_str() : "(null)");
+    // Read the relay target pointer (tramp+0x1A) and classify: does it still point at
+    // OUR detour (INTACT), or has it been clobbered (CORRUPT)?
+    if (tramp) {
+        const uint64_t relayPtr = *reinterpret_cast<uint64_t*>(tramp + 0x1A);
+        const uint64_t wantDet  = reinterpret_cast<uint64_t>(det);
+        const bool intact = (relayPtr == wantDet);
+        UE_LOGW("pe_diag[%-9s] RELAY-PTR @tramp+0x1A = 0x%016llX want &detour=0x%016llX => %s",
+                when, (unsigned long long)relayPtr, (unsigned long long)wantDet,
+                intact ? "INTACT" : "CORRUPT(double-detour hit)");
+    }
+    // WHO-FIRST is decided by what our trampoline HOLDS, not by PE's byte: if the
+    // trampoline holds the real PE prologue (40 55 56 57 41 54) we hooked FIRST (PE
+    // had real bytes); if it holds an ff25/e9 jmp, UE4SS hooked PE before us.
+    const bool weFirst = tramp && tramp[0]==0x40 && tramp[1]==0x55 && tramp[2]==0x56;
+    UE_LOGW("pe_diag[%-9s] WHO-FIRST: %s (trampoline holds %s)", when,
+            weFirst ? "WE-FIRST (PE had real bytes at our install)"
+                    : "UE4SS-FIRST (we relocated its jmp)",
+            tramp ? JmpKind(tramp) : "?");
+    ue_wrap::log::Flush();
+}
+
+DWORD WINAPI PeDiagDelayedThread(LPVOID) {
+    ::Sleep(10000);  // past UE4SS init() -> setup_unreal() -> PE detour + slot-2 dispatch
+    LogHookChainSnapshot("post-init");
+    return 0;
+}
+
+}  // namespace
+
 // ---- public API owned by this TU ----------------------------------------------
 
 bool Install() {
@@ -494,6 +575,12 @@ bool Install() {
     g_hookTarget = pe;
     g_installed = true;
     UE_LOGI("game_thread: ProcessEvent hooked; game-thread dispatcher live");
+    if (PeDiagEnabled()) {
+        LogHookChainSnapshot("install");
+        if (HANDLE t = ::CreateThread(nullptr, 0, PeDiagDelayedThread, nullptr, 0, nullptr)) {
+            ::CloseHandle(t);
+        }
+    }
     return true;
 }
 

@@ -18,6 +18,7 @@
 #include <windows.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <string>
 
@@ -162,6 +163,22 @@ DWORD WINAPI BootThread(LPVOID rawTag) {
     // one) and reads engine state safely from there.
     const unsigned long bootTid = ::GetCurrentThreadId();
     UE_LOGI("boot: BootThread tid=%lu", bootTid);
+    {
+        // DIAGNOSTIC AMPLIFIER (probe; RULE 2 exempt; WP-2 2026-08-22): delay the
+        // PE MinHook install so the patch lands while the game thread is deep in
+        // live ProcessEvent traffic. Used to force the ~20% boot AV into a
+        // deterministic repro (hypothesis: a thread mid-PE at patch time).
+        // Inert unless VOTVCOOP_PE_INSTALL_DELAY_MS is set.
+        char v[16] = {};
+        if (::GetEnvironmentVariableA("VOTVCOOP_PE_INSTALL_DELAY_MS", v, sizeof(v)) > 0) {
+            const unsigned long ms = ::strtoul(v, nullptr, 10);
+            if (ms > 0) {
+                UE_LOGW("boot: PE-install DELAY diagnostic armed: sleeping %lu ms before hook", ms);
+                ue_wrap::log::Flush();
+                ::Sleep(ms);
+            }
+        }
+    }
     if (ue_wrap::game_thread::Install()) {
         ue_wrap::game_thread::Post([bootTid] {
             const unsigned long tid = ::GetCurrentThreadId();

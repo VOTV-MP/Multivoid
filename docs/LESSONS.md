@@ -2461,6 +2461,22 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   note the JSON carries **no statement offsets**, so `range=` filtering silently passes everything.
   `memory/lesson_a_catch_all_handler_is_a_transport_not_a_bind.md`
 
+- **2026-08-22 — two inline hook engines on ONE function collide via PolyHook's `followJmp`; the
+  WP-2 UE4SS-lane boot crash was a ProcessEvent DOUBLE-DETOUR.** UE4SS 3.0.1 hooks
+  `UObject::ProcessEvent` too — LAZILY (first `Unreal::Hook::RegisterProcessEventPreCallback`; its PE
+  dispatcher `UE4SS.dll+0x554da0`, NOT printed in UE4SS.log like the two `<- Built-in` lines —
+  **absence of a log line ≠ absence of the hook**). When UE4SS's PolyHook `x64Detour::hook()` runs
+  AFTER our MinHook, its `followJmp` follows our `E9` into our MinHook RELAY, and because the relay is
+  an INDIRECT `ff25[rip]` it resolves `m_fnAddress` to the relay's POINTER slot (tramp+0x1A) and
+  writes its target-patch THERE, clobbering `&ProcessEventDetour` → a non-canonical `jmp` → `#GP` →
+  `AV read -1`. MEASURED: **install-order is NOT the variable — we are always-first (20/20 boots)**;
+  whether UE4SS's LAZY PE hook ARMS is (0/15 solo, ~2/10 two-peer runs). Impossible on the proxy lane
+  (no PolyHook in-process). LOOK FIRST: a crash RIP inside a MinHook trampoline on the UE4SS lane →
+  read the relay abs64 at `tramp+0x1A` in a `-fullcrashdump`; who-hooked-first = what OUR trampoline
+  HOLDS (real prologue `40 55 56 57 41 54` = us first). Fix OPEN + forked (A dead / B followJmp-immune
+  relay / C use UE4SS's Hook API = user fork).
+  `memory/lesson_two_inline_hook_engines_collide_via_followjmp.md`
+
 ## 5. Engine / UE4 facts
 
 - **2026-08-21 — "one binary across plugin-host versions" is decided by the VTABLE HISTORY, not the
@@ -2687,7 +2703,11 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   (fault = ProcessEvent trampoline +0x14). The install-dir `VotV/Saved/` does NOT exist -- mp.py's
   `_game_log()` fatal-scan reads a path that never has data (open defect). LOOK FIRST: list the
   Crashes dir by mtime and compare PCallStackHash BEFORE theorizing; decode with python
-  minidump+capstone (recipe in the lesson).
+  minidump+capstone (recipe in the lesson). **UPDATE 2026-08-22 pm:** the default dump is a TRIAGE
+  dump (no code/trampoline pages) — pass `-fullcrashdump` (mp.py `MP_FULLCRASHDUMP=1`) for a
+  FULL-memory dump; and `AV reading 0xffffffffffffffff` with RIP on a `jmp`/`call` is a
+  **non-canonical control transfer** (`#GP` sets no CR2 → address reported as -1), i.e. a corrupted
+  jump-target pointer, not a null deref.
   `memory/lesson_votv_crash_dumps_live_in_localappdata.md`
 
 ## 6. Assets, models, geometry

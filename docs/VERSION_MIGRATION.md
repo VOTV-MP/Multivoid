@@ -463,13 +463,20 @@ deploy-mod.ps1 replaces deploy-loader.ps1, install-ue4ss.ps1 owns per-copy
 substrate presence, mp.py gains a boot-lane assertion and retires
 set_dev_ue4ss), the ~139-row stale-prose census (`fe6ab1a7`) for WP-4/WP-6,
 and the conversion of all four dev installs to UE4SS 3.0.1 + the mod folder.
-Blocker: the pre-cut smoke crashed twice — an intermittent (~2/11 boots)
-EXCEPTION_ACCESS_VIOLATION with the faulting IP INSIDE our ProcessEvent
-MinHook trampoline (+0x14), one PCallStackHash across three crashes including
-a silent spike-evening one on pre-cut bytes; 0/8 mod-free control boots; the
-GuiConsole-settings bisect came back clean. Prime suspect: the ProcessEvent
-DOUBLE DETOUR with UE4SS's own eager PE hook — the exact 3.0.1-cohort surface
-§the coexistence doc named, which the spike's limited-sample "LIVE" check
-could not rate. The proxy stays in-tree until that race is root-caused and
-the pre-cut gate passes. Record: the WP-2 AS-RUN box in the design of record
-§3; session detail in memory `project-wp2-precut-and-trampoline-crash-2026-08-22`.
+Blocker ROOT-CAUSED 2026-08-22 (full `-fullcrashdump` decode): a **ProcessEvent
+double-detour with UE4SS, corrupting via PolyHook's `followJmp`**. We MinHook PE
+(E9 → an indirect `ff25[rip]` relay → our detour); UE4SS 3.0.1 hooks PE too, but
+**LAZILY** (first `RegisterProcessEventPreCallback`, its PE dispatcher
+`UE4SS.dll+0x554da0`); when its PolyHook `x64Detour::hook()` runs after us, its
+`followJmp` follows our E9 into our relay and — because the relay is indirect —
+patches the relay's POINTER slot, clobbering `&ProcessEventDetour` with a thunk to
+a non-canonical address → our relay `jmp [rip]` → `#GP` → the `AV read -1`. The
+variable is NOT install order (measured 14/14 boots WE-FIRST) but whether UE4SS's
+lazy PE hook arms (0/15 solo, ~2/7 two-peer runs). FIX is OPEN + forked: (A)
+install-after-UE4SS is DEAD (we are always first); (B) a followJmp-immune local
+relay form (LOCAL, keeps substrate, feasibility not yet measured); (C) observe PE
+via UE4SS's own Hook API = the deferred L-4 bridge + reverses the D-3 slim
+contract → a USER FORK. The proxy stays in-tree until the fix lands and the
+pre-cut gate passes. Record: WP-2 AS-RUN box in the design of record §3; FACTS doc
+§2 corrected; session detail in memory
+`project-wp2-precut-and-trampoline-crash-2026-08-22`.

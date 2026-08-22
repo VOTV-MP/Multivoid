@@ -25,13 +25,35 @@ overlap with (inventory only).
 
 ## 2. Hook level — ONE hard shared surface: ProcessEvent
 
-- **UE4SS 3.0.1 (dominant cohort): the PE double-detour is REAL.** 3.0.1 has NO PE
+> **UPDATE 2026-08-22 (full-crash-dump-measured): the PE double-detour is REAL and is
+> the WP-2 boot-crash root cause — but it is LAZY, not eager, and it corrupts via
+> PolyHook's followJmp.** Measured end-to-end from a `-fullcrashdump` UE4Minidump:
+> (1) UE4SS 3.0.1 hooks ProcessEvent LAZILY — the detour is installed the first time
+> anything calls `Unreal::Hook::RegisterProcessEventPreCallback` (`LuaMod.cpp:3085`,
+> `UFunctionCallerWidget.cpp:183`), NOT unconditionally at init; with only Multivoid
+> installed most boots never arm it (≈80% survive). The separately-logged
+> `ProcessInternal`/`ProcessLocalScriptFunction` `<- Built-in` hooks are a different
+> pair and are NOT the collision. (2) When it DOES arm AFTER our MinHook PE hook, PLH
+> `x64Detour::hook()` runs `followJmp()` over PE's prologue, follows OUR `E9` into our
+> MinHook relay, and — because the relay is an indirect `ff 25 [rip+0]` — resolves
+> `m_fnAddress` to the relay's POINTER address (trampoline+0x1A), then writes its own
+> `ff 25 <disp>` target-patch THERE, clobbering our relay's 8-byte `&ProcessEventDetour`
+> with a thunk into PLH's VALLOC2 holder region (0x7ff75d…). (3) Our relay then
+> `jmp qword [rip]`s to a non-canonical address → #GP (sets no CR2) → Windows reports
+> `EXCEPTION_ACCESS_VIOLATION reading 0xffffffffffffffff`, RIP at the relay. Intermittent
+> = the order race (our BootThread MinHook vs UE4SS's lazy PLH arm) under 2-peer load;
+> 0/15 solo boots, caught in the 2-peer smoke. So the ORIGINAL bullet's "PE double-detour
+> is REAL" was RIGHT; its "eager/unconditional/RVA 0x5400d2" mechanism is wrong (it is
+> lazy via the RegisterProcessEventPreCallback path). Evidence: dump
+> UE4CC-...BEADA55B, scratchpad qf_wp2/dump_*.py; the WP-2 fix is designed off THIS.
+
+- ~~**UE4SS 3.0.1 (dominant cohort): the PE double-detour is REAL.**~~ 3.0.1 has NO PE
   AOB — it resolves PE via Default__Object's vtable slot 68 (offset 0x220) and
   detours it EAGERLY and UNCONDITIONALLY at init (PLH x64Detour; call site
   RVA 0x5400d2 has no settings gate; the HookUObjectProcessEvent ini key does not
   exist in 3.0.1). Slot 68 resolves to the SAME address our AOB hits
   (exe+0x1465930, IDB-cross-checked n=1). It demonstrably initializes on this exe
-  (the on-disk ObjectDumps are post-init artifacts). [M]
+  (the on-disk ObjectDumps are post-init artifacts). [M→REFUTED 2026-08-22, see box]
 - **Today's experimental build: NO double-detour on a bare install.** Measured on
   the shipped 2026-07-26 bytes + exact-commit source (g6c26f038): Initialize no
   longer calls HookProcessEvent; the detour is lazy (DetourInstance on first PE
