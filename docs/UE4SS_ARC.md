@@ -54,8 +54,9 @@ proxy / dup-dialog retire WHOLE per RULE 2 — no standalone-and-UE4SS dual path
 |----|------|--------|
 | **WP-1** | Spike: prove the C-ABI shim boots the one binary as a UE4SS mod; measure the double-PE-detour survivability. | **AS-BUILT** — commit `cddb116c` (2026-08-21 eve). Matrix green ~110 ms; LAN join worked; double-detour "alive" on a SMALL sample (later found to crash ~2/10, see §3). WP-4 spike findings: ini err=3 under VFS; shimloader panics on `xinput1_3.dll`. |
 | **WP-2** | The loader cut: delete `xinput_proxy.cpp` + the proxy deploy path (RULE 2); `cppmod_entry.cpp` in; predecessor detection + mutex; keep EVERYTHING else. | **IN PROGRESS.** Pre-cut LANDED (§2). Fix (**B**, §4) is BUILT + default-ON and its compose is **VERIFIED** (2026-08-22 16:02 real-env byte decode + 16:25 DEV `POLYHOOK-COMPOSED` boot, §4 Proof status). The IsLive/VEH arc is BUILT (D1, 2026-08-22 night, §4 -- run B pending the user). Remaining before the proxy deletion: symbolize the 19:17 real-env EXEC-at-NULL dump (§4 residuals), B's teardown leak-at-death residual, then commit 3 itself. |
-| **WP-4** | Fix the stale install/update/uninstall prose + the site + installer for the UE4SS lane. | **PARKED** — census written (`votv-ue4ss-stale-loader-prose-CENSUS-2026-08-22.md`, ~139 rows); fix deferred until the arc ships. |
-| **WP-6** | Distribution re-home (the `multivoid-<game>-<build>.dll` filename + master + release flow onto the mod-folder shape). | **PARKED.** |
+| **WP-4** | Fix the stale install/update/uninstall prose + the site + installer for the UE4SS lane. | **PARKED, but now SPECIFIED** — census written (`votv-ue4ss-stale-loader-prose-CENSUS-2026-08-22.md`, ~139 rows); §7 measures the target shape and §7.3 fixes the sequencing (it must not flip before a UE4SS-lane build is released). |
+| **WP-6** | Distribution re-home (the `multivoid-<game>-<build>.dll` filename + master + release flow onto the mod-folder shape). | **PARKED, now SPECIFIED** — §7.2 + §7.4. |
+| **WP-9** | **Thunderstore publication** (USER 2026-08-23: "надо нам бы стать официальным модом и попасть в магазин thunderstore ... чтобы обычный юзер смог поставить нативно"). Ship Multivoid as a Thunderstore package so r2modman / Thunderstore Mod Manager installs it natively. | **NEW, SPECIFIED, NOT BUILT** — §7. The payload shape is ALREADY correct; what is missing is package metadata, a version mapping decision, and a publish step. |
 | **WP-7** | The native DEBUG subsystem (USER 2026-08-21: adopt UE4SS's debug tooling / DebugMod ideas). | **PARKED** — scoped in the design finding §3c. |
 | **WP-8** | The hygiene split (USER 2026-08-21: "everything that is a tool, not the mod" moves out). | **PARKED** — scoped in the design finding §3d. |
 | **L-4** | Engine access via UE4SS's own APIs (the "bridge"). | **DEFERRED**, and **permanently PARTIAL** — the ProcessEvent interception path stays ours forever (§4). |
@@ -325,7 +326,114 @@ permanent (`mp.py wirewindow` + `coop/dev/wire_census`). NOT hands-on — run B 
 3. Add B's teardown leak-at-death (§4 residual), drop the `VOTVCOOP_PE_IMMUNE_RELAY=0` diagnostic escape.
 4. **Commit 3** — the proxy deletion (RULE 2): `xinput_proxy.cpp` + the loader lane + dup-dialog +
    `inject.ps1` go, fully. Then WP-2 is DONE.
-5. Un-park WP-4 (stale prose + site + installer), then WP-6 (distribution), per the user's sequencing.
+5. **Release a UE4SS-lane build.** This is the gate §7.4 identifies: until a released build IS the
+   mod-folder shape, the player-facing install prose must keep describing the proxy.
+6. **WP-4 + WP-6 + WP-9 as ONE welded change** (§7.4): `docs/INSTALL.md` (both lanes, manager
+   first) + `README.md` + the site templates & built `public/` + `ledger_lib.ps1` anchors and
+   release-body block + `ledger_lint.ps1` checks + `publish.ps1` asset shape → and the Thunderstore
+   package published. **Blocked on the user's §7.3 `version_number` call** (recommendation: `0.0.<build>`).
+7. WP-7 (native debug subsystem) and WP-8 (hygiene split) stay parked.
+
+---
+
+## 7. How a VOTV player installs a mod NATIVELY — MEASURED 2026-08-23 (WP-4 / WP-6 / WP-9 input)
+
+Measured on this box from the real r2modman profile
+(`C:\r2modman\r2modmanPlus-local\VotV\profiles\Default`) and the vendored
+`reference/unreal-shimloader` + `reference/voidmod-extracted`. This replaces guesswork about
+"what the new install is" — the question WP-4 was parked without an answer to.
+
+### 7.1 The two install lanes
+
+1. **Mod manager (r2modman / Thunderstore Mod Manager) — this IS "natively, the way they do it".**
+   The manager downloads a Thunderstore zip and extracts it **whole** into
+   `<profile>\shimloader\mod\<Author>-<Name>\`. It then launches the game through
+   `unreal_shimloader`, which VFS-maps `--mod-dir` → `GAME\Binaries\Win64\Mods`,
+   `--pak-dir` → `Content\Paks\LogicMods`, `--cfg-dir` → `Config`
+   (`reference/unreal-shimloader/README.md:21-31`). Nothing is written into the game folder.
+2. **Manual UE4SS** — install UE4SS per the upstream guide, then drop
+   `GAME\VotV\Binaries\Win64\Mods\Multivoid\dlls\main.dll` + `enabled.txt`.
+   This is what `tools/deploy-mod.ps1` already does for our four dev installs.
+
+`docs/INSTALL.md` must document BOTH, with lane 1 first (it is what most players use).
+
+### 7.2 The package shape — measured from a real VOTV UE4SS C++ mod
+
+`acitulen-DebugMod` 5.0.3 (and `Moddy-CrashContext`, `Flyingcoyote-VoidFax`) unpack to:
+
+```
+<profile>\shimloader\mod\acitulen-DebugMod\
+    manifest.json
+    icon.png            (Thunderstore requires 256x256)
+    README.md
+    CHANGELOG.md        (optional)
+    enabled.txt         (empty file -- UE4SS's per-mod enable flag)
+    dlls\main.dll       (the mod binary; `dlls/main.dll` is UE4SS's FIXED contract)
+```
+
+`manifest.json`, measured verbatim:
+
+```json
+{
+    "name": "DebugMod",
+    "author": "Acitulen",
+    "version_number": "5.0.3",
+    "website_url": "https://github.com/Acitulen/DebugMod",
+    "description": "This mod adds a multifunctional console menu ...",
+    "dependencies": ["Thunderstore-unreal_shimloader-1.1.7"]
+}
+```
+
+**The good news: our payload is ALREADY in exactly this shape.** The r2modman profile carries
+`shimloader\mod\Multivoid\dlls\main.dll` + `enabled.txt` today. WP-9 is therefore **metadata +
+a zip + a publish step**, not a re-architecture. The folder name becomes `<Author>-Multivoid`
+once it comes from Thunderstore rather than our hand-install.
+
+### 7.3 The ONE open decision — `version_number` vs the Paper pair (USER CALL NEEDED)
+
+Thunderstore **requires** `version_number` to be semver `X.Y.Z` and orders updates by it.
+Multivoid deliberately **deleted mod semver** (USER DECISION 2026-07-19: the identity is the Paper
+pair — game target + build number, `Multivoid 0.9.0n b134`). These collide. Options:
+
+- **(a) `0.0.<build>` → `0.0.134`. RECOMMENDED.** Monotonic, satisfies Thunderstore, and carries
+  no independent meaning — it is a distribution-channel encoding of the build number, not a
+  resurrected semver. The Paper pair stays the identity everywhere else.
+- (b) `0.9.<build>` — carries the game half too, but the game target has a letter suffix (`0.9.0n`)
+  semver cannot hold, and a retarget could break monotonicity.
+- (c) resurrect a real mod semver — contradicts the 2026-07-19 decision; not recommended.
+
+### 7.4 Sequencing — why WP-4 must NOT flip the prose yet (and the weld, re-verified 2026-08-23)
+
+`docs/INSTALL.md` is the single owner of install prose **for players**, and the current PUBLIC
+release is still the xinput-proxy build. Flipping it to the UE4SS story before a UE4SS-lane build
+is actually released would break the instructions for **every current user**. So the order is:
+
+> **commit 3 (proxy deletion) → release a UE4SS-lane build → flip INSTALL/README/site/release lane
+> AND publish to Thunderstore, as one welded change.**
+
+The weld is real and was re-verified verbatim this session:
+
+- `tools/release/ledger_lint.ps1:64-66` FAILS unless `docs/INSTALL.md` contains, verbatim,
+  `WindowsNoEditor\VotV\Binaries\Win64` and ``delete the old `multivoid-*.dll` `` (defined at
+  `ledger_lib.ps1:149-150`), plus the current game target.
+- `tools/release/ledger_lib.ps1:231-234` emits the release-body Install block
+  *"You need **both** files ... `xinput1_3.dll` (the loader)"*.
+- `tools/release/publish.ps1:24-27` **throws** unless the artifact dir holds exactly one
+  `multivoid-*.dll` **and** one `xinput1_3.dll`.
+
+So INSTALL.md, README.md, the site templates + built `public/`, all three release-lane scripts, and
+the new Thunderstore packaging move together. Retiring the proxy also makes the
+`multivoid-*.dll` "highest build wins" scan and the "MOD INSTALL PROBLEM" duplicate dialog
+meaningless (the mod manager owns installation) — they retire WHOLE per RULE 2.
+
+### 7.5 Owed measurements before WP-9 ships
+
+- Which UE4SS build `Thunderstore-unreal_shimloader-<ver>` bundles, and whether our pinned
+  **UE4SS 3.0.1** contract holds against it (our repro profile runs an *experimental* UE4SS).
+- Thunderstore team/namespace creation for the `Author` field + the VOTV community listing rules.
+- Whether the VOTV community requires listing approval (VoidMod points at `votvmodding.github.io`).
+
+---
 
 Related: `[[project-wp2-realistic-env-test-2026-08-22]]`,
 `[[project-wp2-precut-and-trampoline-crash-2026-08-22]]`,
