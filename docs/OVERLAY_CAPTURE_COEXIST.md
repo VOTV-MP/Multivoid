@@ -5,22 +5,30 @@ RivaTuner (RTSS/MSI Afterburner OSD), and why can't OBS capture it — and what 
 Any finding, decision, or status on overlay-vs-third-party-hooker coexistence lives HERE. If another
 doc touches the subject, it links here; it does not re-state.
 
-- **Status (2026-08-22):** DESIGN CONVERGED (7-round /qf, "that holds" at round 7). **Increment 1 of the
-  implementation is BUILT (compiles only)**; the seam-move itself is NOT built. Precisely:
-  - **AS-BUILT (compiles, NOT deployed, NOT smoked, NOT hands-on):** the AOB
-    `kSigD3D11ViewportPresentChecked` + the `kD3D11Viewport_SwapChain = 0x70` literal in
-    `sdk_profile.h`, and a **log-only** boot resolve-probe in `ui/imgui_overlay.cpp::Init` that
-    prints where the seam resolved. This is the verify-before-retire step: it proves the signature
-    resolves on the running exe before anything is retired. **The live overlay is UNCHANGED** — it
-    still draws from the `IDXGISwapChain::Present` hook, so **S1 and S2 are both still present.**
-  - **NOT BUILT:** the seam-move itself (hook `PresentChecked`, draw there, retire the
-    swapchain-`Present` + `ResizeBuffers` hooks, RTV-on-`GetBuffer(0)`-change, fail-closed path).
-  - The converged design is §9; the IDA measurements that back it are §6b. Acceptance is a hands-on
-    RTSS+OBS screenshot (§9) — nothing here is VERIFIED until that runs.
-- **HEAD at authoring:** `856f3251` · proto 134 (a render-path change; **no wire format touched → no
+- **Status (2026-08-23):** design converged for DX11 (7-round /qf), then **materially REVISED by
+  measurement on 2026-08-23** — DX12 moved from "Phase 2, needs a rig" to **in scope for v1 with zero
+  hooks** (§6c). **Increment 1 is BUILT and now LIVE-VERIFIED**; the seam-move itself is NOT built.
+  - **AS-BUILT + LIVE-VERIFIED (deployed, solo boot, NOT hands-on RTSS/OBS):** the AOB
+    `kSigD3D11ViewportPresentChecked` + `kD3D11Viewport_SwapChain = 0x70` in `sdk_profile.h`, and a
+    **log-only** boot resolve-probe in `ui/imgui_overlay.cpp::Init`. **Verify-before-retire PASSED on a
+    running game** (2026-08-23 22:36/22:40, DLL `335AC774544E17AB`): the seam resolved at
+    `image+0x16F4BA0` — exactly the IDA-predicted address — and a live byte read at that address
+    returned the signature's bytes UNPATCHED (§6c).
+  - **NOT BUILT:** the seam-move itself (hook `PresentChecked`/`PresentInternal`, draw there, retire
+    the swapchain-`Present` + `ResizeBuffers` + `ExecuteCommandLists` hooks, RTV-on-`GetBuffer(0)`
+    change, fail-closed path). **The live overlay is UNCHANGED — S1 and S2 are both still present.**
+  - The design is §9 (DX11) + §9b (DX12); the IDA/live measurements backing it are §6b + §6c.
+    Acceptance is a hands-on RTSS+OBS screenshot — nothing here is VERIFIED until that runs.
+- **NOTE — this box does NOT currently reproduce S1.** [MEASURED 2026-08-23 + USER-CONFIRMED] the user
+  set RTSS's detection level to **None globally**, so `RTSSHooks64.dll` still injects (it is loaded at
+  `0x180000000`) but hooks nothing. An earlier revision of this doc claimed "this box can reproduce
+  both" — that was **wrong** and is retracted. **The acceptance test therefore requires the user to
+  re-enable RTSS detection first**, or it is vacuous (see `[[lesson-an-instrument-blind-to-the-
+  phenomenon-always-passes]]`).
+- **HEAD at authoring:** `01a43486` · proto 134 (a render-path change; **no wire format touched → no
   proto bump** expected).
 - **Owner subtree:** `src/votv-coop/src/ui/` (the overlay), `ue_wrap/core/hook.*` (the detour engine),
-  `ue_wrap/core/sdk_profile.h` (AOB signatures, currently 5 — a new native seam adds to this surface).
+  `ue_wrap/core/sdk_profile.h` (AOB signatures: **6 shipped**, 7 after the DX12 seam lands).
 - **Provenance tags** (used throughout, per OPUS §2 / verify-handed-down-measurements): `[SRC]` read
   from a component's source; `[AUTH]` the component author's own statement; `[COMM]` community-reported;
   `[MEASURED]` measured on THIS box / in THIS repo this session; `[DERIV]` derived by reasoning from
@@ -193,6 +201,90 @@ All measured against `VotV-Win64-Shipping.exe.i64` (the shipping exe, 84,751,360
 
 ---
 
+## 6c. Measured 2026-08-23 — the live present-chain census + the DX12 answer
+
+Two measurement passes ran this session: headless IDA on the shipping `.i64`, and a **live solo boot**
+(DLL `335AC774544E17AB`, `mp.py menushot` + `mp.py host`, DX11, RTSS detection = None) probed with
+**`tools/debug/present_hook_census.py`** (`census` + `follow` modes; promoted out of the scratchpad so
+these citations survive — the AOB tool beside it was promoted for the same reason).
+
+### (a) The DX11 seam, confirmed on a RUNNING process — verify-before-retire PASSED
+
+- `[MEASURED]` the boot probe logged `FD3D11Viewport::PresentChecked draw-seam resolved
+  @00007FF7D0604BA0 (image+0x16F4BA0)` — **the exact address IDA predicted.** The signature is not a
+  static artefact; it resolves on the real exe.
+- `[MEASURED]` a live byte read at that address returned
+  `48 89 5C 24 18 55 56 57 48 81 EC B0 00 00 00 48` — **the signature's own bytes, UNPATCHED.**
+  Nobody else is hooking the seam we intend to draw from. (Caveat: RTSS was at detection None for this
+  run, so this measures "no one *else* today", and must be re-read with RTSS armed.)
+- `[MEASURED]` re-decompiling `sub_1416F4BA0` confirms the swapchain read is `*(this+112)` = **`+0x70`**
+  and the present call is `vtbl[8]`. It also shows a **CustomPresent at `viewport+0xB0`** whose
+  `NeedsNativePresent()` gates the present — VOTV has no VR so it is null, but the seam design must not
+  assume the present always happens (§9).
+
+### (b) WHO ELSE patches the present chain in our process — a third hooker nobody knew about
+
+Every hooked DXGI entry was followed through its jmp chain to the owning module:
+
+| function (offset from RTSS's own cache) | patch | jmp chain resolves to | owner |
+|---|---|---|---|
+| `IDXGISwapChain::Present` | `E9` rel32 | trampoline `0x7FF923800FCE` → `main.dll +0x30BC10` | **us** |
+| `IDXGISwapChain::ResizeBuffers` | `E9` rel32 | trampoline `0x7FF923800F8E` → `main.dll +0x30C010` | **us** |
+| `IDXGISwapChain1::Present1` | `E9` rel32 | trampoline `0x7FF9257B0E93` → **`NahimicOSD.dll +0x17670`** | **third party** |
+| `ID3D12CommandQueue::ExecuteCommandLists` | — | `d3d12core.dll` NOT LOADED (DX11 run) | — |
+
+- `[MEASURED]` **`RTSSHooks64.dll` IS loaded (base `0x180000000`) even at detection level None** — it
+  injects system-wide unconditionally and only *decides* whether to hook the 3D API. This confirms the
+  `[AUTH]` injection claim in §3 directly, on this box.
+- `[MEASURED]` **`NahimicOSD.dll` (the A-Volute/Nahimic audio-driver overlay that ships with many
+  MSI/ASUS/Dell audio stacks) inline-hooks `IDXGISwapChain1::Present1`.** We never knew it was there.
+  It is a well-known cause of crashes and overlay conflicts in games, and it is a **new suspect for the
+  open 19:17 exec-at-NULL crash in `docs/UE4SS_ARC.md`** (that dump was described as "a DXGI/CEF-shaped
+  thread"). **This is a LEAD, not a diagnosis** — it is recorded here so the next dump symbolization
+  starts with the right module list.
+- **Design consequence:** the present chain is *more* crowded than the 7-round /qf assumed (us + RTSS
+  when armed + OBS when capturing + Nahimic). That strengthens the root fix rather than weakening it —
+  every one of those lives on the DXGI entry points, and none on the engine-private functions we are
+  moving to.
+- `[MEASURED]` RTSS's own offset cache contains `IDXGISwapChain1::m_pCommandQueue=00000118`, i.e.
+  **RTSS gets the D3D12 presenting queue by reading it out of the DXGI swapchain object, not by hooking
+  `ExecuteCommandLists`.** Independent precedent that struct-reading the queue is the normal shape —
+  though we will read it from the ENGINE (version-pinned by our own migration process) rather than from
+  an undocumented DXGI internal that Windows Update can move.
+
+### (c) DX12: the seam AND the presenting queue, both measured — no rig needed to DECIDE
+
+- `[MEASURED]` **`FD3D12Viewport::PresentInternal` = `sub_14177E0E0`** (image+0x177E0E0), 109 bytes,
+  **exactly one caller** (`sub_141770420` = `FD3D12Viewport::Present`, which reaches it only after the
+  `CustomPresent->NeedsNativePresent()` gate). It reads the swapchain at **`viewport+0x60`** and
+  **tail-jumps** to `IDXGISwapChain::Present` at `vtbl[8]` (`48 FF 60 40`). It is the DX12 twin of the
+  DX11 seam.
+- `[MEASURED]` its AOB is **unique at 24 bytes with NO wildcards** (occ=1; 190 at 16 bytes). Shipping
+  length 32 for margin:
+  ```
+  48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 20 33 DB 8B F2 48 8B F9 85 D2 75 10 38 59 54 75 0B 38
+  ```
+- `[MEASURED]` **the presenting `ID3D12CommandQueue` is reachable from the viewport by four constant
+  dereferences, no hook at all:**
+  ```
+  viewport + 0x18   -> FD3D12Adapter*
+  adapter  + 0x988  -> FD3D12Device*             (Devices[0])
+  device   + 0x38   -> FD3D12CommandListManager* (queue type 0 = Direct)
+  manager  + 0x28   -> ID3D12CommandQueue*       <- THE PRESENTING QUEUE
+  ```
+  This is not a heuristic: it is **the same pointer the engine itself passes as `pCommandQueue` to
+  `CreateSwapChainForHwnd`**, proven by the VERIFY string in `sub_14177D800`
+  (`WindowsD3D12Viewport.cpp:175`) whose argument is `*(sub_141720E30(Devices[0], 0) + 40)`.
+  `sub_141720E30` decompiles to a 32-byte switch returning `dev[7]/dev[8]/dev[9]` for queue type
+  0/1/2 — a plain offset, so no call is needed. Multi-GPU is safe by construction: the engine uses
+  `Devices[0]` unconditionally at swapchain creation, so `Devices[0]`'s Direct queue *is* the presenting
+  queue regardless of node count.
+- **Consequence:** the ECL capture is no longer the only way to learn the queue, and the new way is
+  **zero-ambiguity** (the ECL route was a statistical "last DIRECT submitter before Present wins", a
+  600/600 measurement — strong, but still a heuristic). See §9b.
+
+---
+
 ## 7. Candidate seams for "draw upstream of Present" (UE4.27)
 
 > **WINNER (see §9): candidate #1, `FD3D11Viewport::PresentChecked` (`sub_1416F4BA0`).** The table below
@@ -324,15 +416,50 @@ confirmed) — one user run.
   (PrintWindow/BitBlt = the DWM path) is BLIND to it and must not be used as the S2 gate.
 - Screenshots per `[[feedback-show-screens]]`.
 
-**DX12 (Phase 2, honest residual):** the same move applies to `FD3D12Viewport::Present`
-(`WindowsD3D12Viewport.cpp`), but D3D12 needs the presenting command queue to submit our draw. The
-proven way to get it is the existing ECL hook (`overlay_backend_dx12_capture.cpp`, LESSONS §3445) — which
-RTSS *also* defends, so on DX12 we must make ECL a **transient discovery** (hook, capture the queue on
-frame 1, uninstall — no persistent RTSS-defended patch) or read the queue from the engine viewport
-struct (unmeasured — needs a DX12 rig). The DX12+RTSS timing race (transient ECL vs RTSS's ECL restore)
-is the genuinely hard cell and needs a DX12 rig to measure/verify. **The box + the common case are DX11,
-so Phase 1 fixes the user's machine and most users;** DX12 users (opt-in via VOTV's `setting_rhi`) wait
-for Phase 2. This narrowing is stated to the user, not silently dropped.
+**DX12 — SUPERSEDED 2026-08-23, see §9b.** This paragraph originally phased DX12 to a later pass
+("needs the presenting command queue... read the queue from the engine viewport struct (unmeasured —
+needs a DX12 rig)"). That unmeasured option is now **measured** (§6c.c): the queue is four constant
+offsets from the viewport. DX12 is in scope for v1 and needs no ECL hook at all. The paragraph is kept
+only so the change of decision is visible; §9b is the design of record.
+
+---
+
+## 9b. DX12 — in scope for v1 (design of record, 2026-08-23)
+
+Symmetric to §9, on the facts in §6c.c:
+
+1. **New AOB** `kSigD3D12ViewportPresentInternal` (32 bytes, no wildcards, occ=1) + the offsets
+   `kD3D12Viewport_SwapChain = 0x60`, `kD3D12Viewport_Adapter = 0x18`, `kD3D12Adapter_Devices = 0x988`,
+   `kD3D12Device_DirectQueueMgr = 0x38`, `kD3D12CmdListMgr_Queue = 0x28`. Signature surface 6 → 7.
+2. **Hook `FD3D12Viewport::PresentInternal`**; draw before calling the original, exactly as DX11.
+3. **Get the presenting queue by walking the four offsets** — no `ExecuteCommandLists` hook, no tally,
+   no confirmation window, no swapchain-creation probe.
+4. **RULE 2 — `overlay_backend_dx12_capture.cpp` retires WHOLE** (~400 LOC): the ECL hook, the per-queue
+   tally, the candidate/confirmation state machine, `Rearm()`, and the creation probe. Its public seam
+   (`Device()` / `TryConfirmQueue()` / `InstallCreationProbe()` / `Rearm()` / `Shutdown()` in
+   `overlay_backend_internal.h`) collapses to a single "resolve the queue from the viewport" call. No
+   dual path: the ECL route does not survive behind a flag.
+5. **Fail-CLOSED validation** before first use, SEH-guarded: the swapchain pointer must
+   `QueryInterface(IID_IDXGISwapChain)`; the queue pointer must `QueryInterface(IID_ID3D12CommandQueue)`
+   **and** report `GetDesc().Type == D3D12_COMMAND_LIST_TYPE_DIRECT`. Any failure disables the overlay
+   with a native `MessageBox` — it never draws through an unvalidated pointer.
+
+**Why the ordering is correct (and better than today):** at `PresentInternal` the engine has already
+submitted the frame's command lists to *that same queue*. A D3D12 command queue is serial, so our
+submission after theirs is correctly ordered by construction — today's design submits to the same queue
+from inside the `Present` detour and relies on the same property.
+
+**What this buys beyond DX12 support:** after §9 + §9b, Multivoid owns **zero inline hooks on any
+function RTSS, OBS, or Nahimic target** — not `Present`, not `Present1`, not `ResizeBuffers`, not
+`ExecuteCommandLists`. Only two engine-private functions, which §6c.b measured nobody else touches.
+
+**Residual, named:** the queue walk is five new struct offsets, i.e. new version-migration surface
+(`docs/VERSION_MIGRATION.md`). It is fail-closed and QI-validated, so a drift disables the overlay
+rather than corrupting a frame. And **a `-dx12` run is still owed to VERIFY** the walk yields a live,
+QI-valid DIRECT queue — the rig is cheap (a `-dx12` launch flag) but it has not been run. The DECISION
+no longer waits on it; the VERIFICATION does.
+
+---
 
 **Cross-link (NOT folded into this root):** `docs/UE4SS_ARC.md`'s open 19:17 real-env exec-at-NULL crash
 is the same multi-hooker-on-Present class (our overlay hook + CEF/FusionFix). Retiring our
@@ -342,7 +469,37 @@ not a claimed cure. Keep the two investigations separate.
 
 ---
 
-## 10b. NEXT SESSION — the agreed order (user, 2026-08-22)
+## 10a. CURRENT STATE + NEXT (2026-08-23)
+
+**Where the arc stands right now:**
+
+| item | state |
+|---|---|
+| Root cause (S1 + S2, one cause) | **MEASURED / settled** (§3, §4, §6, §6c.b) |
+| DX11 seam chosen + AOB | **MEASURED, live-verified on a running game** (§6b, §6c.a) |
+| DX12 seam + presenting queue | **MEASURED statically**; `-dx12` run owed to verify (§6c.c, §9b) |
+| DX12 scope decision | **DECIDED: in v1** (was "Phase 2") — the deferral was not free, see below |
+| The seam-move implementation | **NOT BUILT** — S1 and S2 are both still live |
+| Acceptance (RTSS + OBS hands-on) | **NOT RUN**; blocked on the user re-enabling RTSS detection |
+
+**Why DX12 stopped being deferrable.** §9 retires the `IDXGISwapChain::Present` + `ResizeBuffers`
+hooks whole. If DX12 stayed on the old seam we would have to KEEP those hooks — a parallel old+new
+path (RULE 2) that also keeps the RTSS-defended surface in the process, i.e. it would not actually
+fix S1. Retiring them anyway would leave DX12 users with **no overlay at all**. So "Phase 2" was a
+choice between a RULE-2 violation and a regression — and the measurement removed the need for either.
+
+**NEXT, in order:**
+1. **`/qf` on the revised design** (§9 + §9b). The 7-round convergence predates §6c; DX12-in-v1, a
+   whole-TU retirement, and five new offsets are a material reframe, so the convergence does not carry.
+2. **Implement** — staged: build → autonomous smoke proving the overlay still draws from the new seam
+   (a non-regression check, NOT an S1/S2 proof) → deploy.
+3. **Hand off for acceptance** (user's, hands-on). **Precondition: RTSS detection must be re-enabled**
+   — it is currently None, so the test would otherwise pass vacuously.
+4. **Owed, cheap:** a `-dx12` launch to verify the queue walk resolves a QI-valid DIRECT queue.
+
+---
+
+## 10b. NEXT SESSION — the agreed order (user, 2026-08-22) — SUPERSEDED by §10a
 
 The user's words: *"In the next session we will tackle the two left things you mentioned and then
 implementation."* The two "left things" are the two items surfaced at the end of §9:
@@ -373,6 +530,21 @@ implementation."* The two "left things" are the two items surfaced at the end of
 
 ## 10. Decision record / changelog
 
+- **2026-08-23 — increment 1 LIVE-VERIFIED; DX12 promoted to v1; a third hooker found; one claim
+  RETRACTED.** Live solo boot (DLL `335AC774544E17AB`, DX11): the seam AOB resolved at the exact
+  IDA-predicted `image+0x16F4BA0` and its live bytes are unpatched (§6c.a) — verify-before-retire
+  PASSED. Present-chain census (§6c.b) attributed every patch: `Present` + `ResizeBuffers` are OURS,
+  and **`IDXGISwapChain1::Present1` is hooked by `NahimicOSD.dll`** — a third-party overlay we did not
+  know was in the process, and a new (unproven) lead for the UE4SS-arc 19:17 crash. `RTSSHooks64.dll`
+  is loaded even at detection None. **RETRACTED: "this box can reproduce both"** — the user has RTSS
+  detection set to None globally, so this box reproduces NEITHER symptom today; the acceptance test
+  requires re-enabling it. DX12 (§6c.c, §9b): `FD3D12Viewport::PresentInternal = sub_14177E0E0`
+  (109 B, one caller, swapchain at `+0x60`, AOB unique at 24 B with no wildcards) and the presenting
+  queue is four constant offsets from the viewport — provably the `pCommandQueue` the engine hands to
+  `CreateSwapChainForHwnd`. So DX12 ships in v1 with **no ECL hook**, and
+  `overlay_backend_dx12_capture.cpp` retires whole (RULE 2). Deferring DX12 was measured to be a choice
+  between a RULE-2 dual path and a DX12-user regression (§10a). The 7-round convergence does NOT carry
+  over this reframe — a fresh `/qf` is owed before building.
 - **2026-08-22 (session end) — increment 1 BUILT (compiles only): the AOB + the log-only resolve
   probe.** `sdk_profile.h` gains `kSigD3D11ViewportPresentChecked` (measured unique, occ=1, 48 bytes,
   GS-displacement wildcarded) + `kD3D11Viewport_SwapChain = 0x70`; `ui/imgui_overlay.cpp::Init` logs
