@@ -25,6 +25,7 @@
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/reflection.h"
 
 #include <cstdint>
@@ -49,7 +50,7 @@ constexpr size_t kMainPlayer_ragdollActor = 0x0C40;
 // gameplay and is always resident per the probe's residency check). Plain void*
 // caches -- no atomics/mutex (the incremental-link DLL-corruption rule does not
 // structurally trigger), consistent with the engine_mainplayer.cpp precedent.
-void* g_ragdollClass     = nullptr;
+ue_wrap::CachedObjRef g_ragdollClass;  // islive-zeroav row :71
 void* g_setAllBodiesSimFn = nullptr;
 void* g_setSimPhysFn      = nullptr;
 void* g_setCollisionFn    = nullptr;
@@ -68,9 +69,9 @@ void* g_setLinVelFn    = nullptr;  // ::SetPhysicsLinearVelocity
 void* g_setAngVelFn    = nullptr;  // ::SetPhysicsAngularVelocityInDegrees
 
 void* ResolveRagdollClass() {
-    if (g_ragdollClass && R::IsLive(g_ragdollClass)) return g_ragdollClass;
-    g_ragdollClass = R::FindClass(L"playerRagdoll_C");
-    return g_ragdollClass;
+    if (g_ragdollClass.Alive()) return g_ragdollClass.Raw();
+    g_ragdollClass.Set(R::FindClass(L"playerRagdoll_C"));
+    return g_ragdollClass.Raw();
 }
 
 // Start PhysX gravity simulation on the ragdoll body's skeletal-mesh component.
@@ -150,13 +151,13 @@ bool ResolvePhysicsFns() {
     // its own FindFunction, NOT a fresh FindClass GUObjectArray walk every frame (the
     // per-pointer-independent guard pattern the sibling SceneComponent lookups use).
     if (!g_getLinVelFn || !g_getAngVelFn || !g_setLinVelFn || !g_setAngVelFn) {
-        static void* sPrimCompCls = nullptr;
-        if (!sPrimCompCls || !R::IsLive(sPrimCompCls)) sPrimCompCls = R::FindClass(L"PrimitiveComponent");
-        if (sPrimCompCls) {
-            if (!g_getLinVelFn) g_getLinVelFn = R::FindFunction(sPrimCompCls, L"GetPhysicsLinearVelocity");
-            if (!g_getAngVelFn) g_getAngVelFn = R::FindFunction(sPrimCompCls, L"GetPhysicsAngularVelocityInDegrees");
-            if (!g_setLinVelFn) g_setLinVelFn = R::FindFunction(sPrimCompCls, L"SetPhysicsLinearVelocity");
-            if (!g_setAngVelFn) g_setAngVelFn = R::FindFunction(sPrimCompCls, L"SetPhysicsAngularVelocityInDegrees");
+        static ue_wrap::CachedObjRef sPrimCompCls;
+        if (!sPrimCompCls.Alive()) sPrimCompCls.Set(R::FindClass(L"PrimitiveComponent"));
+        if (void* sPrimCls = sPrimCompCls.Raw()) {
+            if (!g_getLinVelFn) g_getLinVelFn = R::FindFunction(sPrimCls, L"GetPhysicsLinearVelocity");
+            if (!g_getAngVelFn) g_getAngVelFn = R::FindFunction(sPrimCls, L"GetPhysicsAngularVelocityInDegrees");
+            if (!g_setLinVelFn) g_setLinVelFn = R::FindFunction(sPrimCls, L"SetPhysicsLinearVelocity");
+            if (!g_setAngVelFn) g_setAngVelFn = R::FindFunction(sPrimCls, L"SetPhysicsAngularVelocityInDegrees");
         }
     }
     return g_getSocketLocFn && g_getSocketRotFn &&

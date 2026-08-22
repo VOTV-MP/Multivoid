@@ -6,6 +6,7 @@
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflected_offset.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/types.h"
@@ -207,7 +208,7 @@ void* FindOwnerByWidgetField(const wchar_t* className, int32_t fieldOff, void* w
 // The one-slot PRE/POST aim save (door Active-gate shape; GT-only by
 // dispatch construction).
 struct SavedAim {
-    void*    player = nullptr;
+    ue_wrap::CachedObjRef player;  // held the WHOLE interface session (islive-zeroav row :288)
     void*    lookAtActor = nullptr;
     uint64_t hitActorWeak = 0;
 };
@@ -273,7 +274,7 @@ bool ClearAimForDispatch(void* player) {
     auto* pLook = reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(player) + offLook);
     auto* pWeak = reinterpret_cast<uint64_t*>(
         reinterpret_cast<uint8_t*>(player) + offHit + kFHitResult_Actor);
-    g_saved.player = player;
+    g_saved.player.Set(player);  // fresh at the enter seam
     g_saved.lookAtActor = *pLook;
     g_saved.hitActorWeak = *pWeak;
     *pLook = nullptr;
@@ -282,20 +283,21 @@ bool ClearAimForDispatch(void* player) {
 }
 
 void RestoreAim() {
-    if (!g_saved.player) return;
+    if (!g_saved.player.Raw()) return;
     const int32_t offLook = RO::MainPlayer_lookAtActor();
     const int32_t offHit  = RO::MainPlayer_HitResult();
-    if (offLook >= 0 && offHit >= 0 && R::IsLive(g_saved.player)) {
+    void* savedPlayer = g_saved.player.Get();  // slot-validated
+    if (offLook >= 0 && offHit >= 0 && savedPlayer) {
         *reinterpret_cast<void**>(
-            reinterpret_cast<uint8_t*>(g_saved.player) + offLook) = g_saved.lookAtActor;
+            reinterpret_cast<uint8_t*>(savedPlayer) + offLook) = g_saved.lookAtActor;
         *reinterpret_cast<uint64_t*>(
-            reinterpret_cast<uint8_t*>(g_saved.player) + offHit + kFHitResult_Actor) =
+            reinterpret_cast<uint8_t*>(savedPlayer) + offHit + kFHitResult_Actor) =
             g_saved.hitActorWeak;
     }
     g_saved = {};
 }
 
-bool HasClearedAim() { return g_saved.player != nullptr; }
+bool HasClearedAim() { return g_saved.player.Raw() != nullptr; }
 
 bool ForceExitInterface(void* player) {
     if (!player || !R::IsLive(player) || !g_setActiveInterfaceFn) return false;

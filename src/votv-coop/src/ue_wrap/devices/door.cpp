@@ -9,6 +9,7 @@
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/reflection.h"
 
 #include <atomic>
@@ -77,7 +78,11 @@ std::unordered_map<void*, SavedAutonomy> g_hostHeld;   // HOST-side per-held-doo
 // SmartApply verify list: a door we just tried to ANIMATE; if it hasn't reached the target by
 // the deadline (the swing froze = beyond tick range / invisible) we force-snap it. GT-only,
 // bounded (entries clear within ~700ms), so no growth. Drained by TickSmartApply.
-struct VerifyEntry { bool target; std::chrono::steady_clock::time_point deadline; };
+struct VerifyEntry {
+    bool target;
+    std::chrono::steady_clock::time_point deadline;
+    ue_wrap::CachedObjRef ref;  // slot-validated door (the map KEY is compare-only; islive-zeroav row :342)
+};
 std::unordered_map<void*, VerifyEntry> g_verify;
 
 // Toggle a door's sensor overlap events. false on the client KILLS checkSensor at its
@@ -331,15 +336,17 @@ void SmartApply(void* door, bool open) {
     // the target before the deadline (removed, no snap); a far frozen door gets FORCE-SNAPPED so
     // its state stays correct. Deadline > the longest swing so a slow-but-completing animation
     // is never double-finished by the snap.
-    g_verify[door] = VerifyEntry{ open, std::chrono::steady_clock::now() + std::chrono::milliseconds(1500) };
+    VerifyEntry ve{ open, std::chrono::steady_clock::now() + std::chrono::milliseconds(1500), {} };
+    ve.ref.Set(door);  // fresh at the apply seam
+    g_verify[door] = ve;
 }
 
 void TickSmartApply() {
     if (g_verify.empty()) return;
     const auto now = std::chrono::steady_clock::now();
     for (auto it = g_verify.begin(); it != g_verify.end();) {
-        void* door = it->first;
-        if (!R::IsLive(door) || g_isOpenedOff < 0) { it = g_verify.erase(it); continue; }
+        void* door = it->second.ref.Get();  // slot-validated (the key is compare-only)
+        if (!door || g_isOpenedOff < 0) { it = g_verify.erase(it); continue; }
         const bool cur = *reinterpret_cast<bool*>(reinterpret_cast<char*>(door) + g_isOpenedOff);
         if (cur == it->second.target) { it = g_verify.erase(it); continue; }  // animation completed -> smooth, no snap
         if (now >= it->second.deadline) {                                     // froze (far) -> guarantee the state

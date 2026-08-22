@@ -2,6 +2,7 @@
 
 #include "ue_wrap/actors/vitals.h"
 
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 
@@ -20,7 +21,7 @@ namespace R = ue_wrap::reflection;
 // Cleared / re-resolved only if the cached GameInstance fails IsLive (level
 // transition / hot reload); the GameInstance singleton otherwise never dies.
 struct Cache {
-    void* gameInstance = nullptr;        // live UmainGameInstance_C*
+    ue_wrap::CachedObjRef gameInstance;  // live UmainGameInstance_C* (islive-zeroav row :43)
     int32_t saveGameInstOff = -1;        // mainGameInstance_C::save_gameInst (UsaveSlot_C*)
     void* saveSlotClass = nullptr;       // UClass* for UsaveSlot_C (offset-lookup target)
     int32_t fieldOff[4] = {-1, -1, -1, -1};  // indexed by Field
@@ -40,15 +41,15 @@ const wchar_t* FieldName(Field f) {
 // Resolve GameInstance + the save_gameInst offset + the saveSlot UClass. Returns
 // false if any step isn't up yet. Game-thread only.
 bool EnsureBase() {
-    if (g_cache.gameInstance && !R::IsLive(g_cache.gameInstance)) {
-        g_cache.gameInstance = nullptr;  // stale after a level transition
+    if (g_cache.gameInstance.Raw() && !g_cache.gameInstance.Alive()) {
+        g_cache.gameInstance.Reset();  // stale after a level transition
     }
-    if (!g_cache.gameInstance) {
-        g_cache.gameInstance = R::FindObjectByClass(P::name::GameInstanceClass);
-        if (!g_cache.gameInstance) return false;
+    if (!g_cache.gameInstance.Raw()) {
+        g_cache.gameInstance.Set(R::FindObjectByClass(P::name::GameInstanceClass));
+        if (!g_cache.gameInstance.Raw()) return false;
     }
     if (g_cache.saveGameInstOff < 0) {
-        void* giClass = R::ClassOf(g_cache.gameInstance);
+        void* giClass = R::ClassOf(g_cache.gameInstance.Raw());
         if (!giClass) return false;
         g_cache.saveGameInstOff = R::FindPropertyOffset(giClass, L"save_gameInst");
         if (g_cache.saveGameInstOff < 0) return false;
@@ -67,7 +68,7 @@ bool EnsureBase() {
 void* ResolveSlot() {
     if (!EnsureBase()) return nullptr;
     return *reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(g_cache.gameInstance) + g_cache.saveGameInstOff);
+        reinterpret_cast<uint8_t*>(g_cache.gameInstance.Raw()) + g_cache.saveGameInstOff);
 }
 
 int32_t ResolveFieldOffset(Field f) {

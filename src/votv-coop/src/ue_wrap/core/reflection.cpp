@@ -1,4 +1,5 @@
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/sdk_profile.h"
@@ -352,7 +353,11 @@ namespace {
 // the game thread but nothing forbids net-thread lookups.
 struct CachedClass {
     std::wstring name;
-    void* cls = nullptr;
+    // Slot-validated ref (islive-zeroav row :380): this cache is read on ANY
+    // thread; Alive() reads only GUObjectArray slots, so the NameOf deref in
+    // BeginClassWalk is reached only behind slot validation -- no SEH probe of
+    // a possibly-freed class, no first-chance AV for a co-resident VEH to pop.
+    ue_wrap::CachedObjRef cls;
 };
 std::mutex g_classCacheMu;
 std::unordered_map<uint64_t, CachedClass> g_classCache;
@@ -376,18 +381,26 @@ void* BeginClassWalk(const wchar_t* className, uint64_t& hashOut) {
         auto it = g_classCache.find(hashOut);
         if (it == g_classCache.end()) return nullptr;
         if (::wcscmp(it->second.name.c_str(), className) != 0) return nullptr;  // collision
-        cls = it->second.cls;
+        cls = it->second.cls.Raw();
     }
-    // Revalidate OUTSIDE the lock (IsLive may SEH-probe a freed pointer; NameOf
-    // render touches the engine name table). Stale -> drop so the walk re-primes.
-    // Ordering is load-bearing: IsLive(cls) true means the GUObjectArray slot at
-    // cls's InternalIndex still points back at cls, i.e. cls is live and mapped --
-    // ONLY then is the unguarded NameOf(cls) deref in NameEquals safe (the &&
+    // Revalidate OUTSIDE the lock. Ordering is load-bearing: Alive() true means
+    // the GUObjectArray slot at the captured index still points back at cls (an
+    // array-slot read -- valid on any thread, zero AV by construction) -- ONLY
+    // then is the unguarded NameOf(cls) deref in NameEquals safe (the &&
     // short-circuit is the use-after-free guard here).
-    if (cls && IsLive(cls) && NameEquals(NameOf(cls), className)) return cls;
+    {
+        ue_wrap::CachedObjRef ref;
+        {
+            std::lock_guard<std::mutex> lk(g_classCacheMu);
+            auto it = g_classCache.find(hashOut);
+            if (it != g_classCache.end()) ref = it->second.cls;
+        }
+        void* live = ref.Get();
+        if (live && NameEquals(NameOf(live), className)) return live;
+    }
     std::lock_guard<std::mutex> lk(g_classCacheMu);
     auto it = g_classCache.find(hashOut);
-    if (it != g_classCache.end() && it->second.cls == cls) it->second.cls = nullptr;
+    if (it != g_classCache.end() && it->second.cls.Raw() == cls) it->second.cls.Reset();
     return nullptr;
 }
 
@@ -396,7 +409,7 @@ void PrimeClassWalk(const wchar_t* className, uint64_t hash, void* cls) {
     auto& e = g_classCache[hash];
     if (e.name.empty()) e.name = className;
     else if (::wcscmp(e.name.c_str(), className) != 0) return;  // collision: leave the first owner
-    e.cls = cls;
+    e.cls.Set(cls);  // fresh from the caller's walk
 }
 
 // Per-object match for the by-class walkers. Fast path: pointer compare against

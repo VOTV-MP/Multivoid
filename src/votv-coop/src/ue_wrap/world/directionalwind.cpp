@@ -2,6 +2,7 @@
 
 #include "ue_wrap/world/directionalwind.h"
 
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 
@@ -16,12 +17,12 @@ namespace R = ue_wrap::reflection;
 // Cached singleton pointer. FindObjectByClass is a GUObjectArray walk; cache it +
 // revalidate by IsLive (the actor is destroyed + recreated on level transitions, at
 // which point we re-resolve). Game-thread only -- matches weather_sync::ResolveCycle.
-void* g_windCache = nullptr;
+ue_wrap::CachedObjRef g_windCache;  // islive-zeroav row :22
 
 void* Resolve() {
-    if (g_windCache && R::IsLive(g_windCache)) return g_windCache;
-    g_windCache = R::FindObjectByClass(P::name::DirectionalWindClass);
-    return g_windCache;
+    if (g_windCache.Alive()) return g_windCache.Raw();
+    g_windCache.Set(R::FindObjectByClass(P::name::DirectionalWindClass));
+    return g_windCache.Raw();
 }
 
 }  // namespace
@@ -77,7 +78,7 @@ bool WriteTarget(const FVector& in) {
 }
 
 void OnDisconnect() {
-    g_windCache = nullptr;
+    g_windCache.Reset();
 }
 
 }  // namespace ue_wrap::directionalwind

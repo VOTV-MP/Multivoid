@@ -10,6 +10,7 @@
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/ftext_utils.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 
@@ -42,11 +43,11 @@ constexpr int32_t kReadItemCap = 256;
 constexpr size_t  kCommitItemCap = 64;
 
 // ---- cached resolution (mirrors ue_wrap/economy.cpp) ----------------------------------------
-void* g_gm = nullptr;
+ue_wrap::CachedObjRef g_gm;  // islive-zeroav row :47
 void* ResolveGamemode() {
-    if (g_gm && R::IsLive(g_gm)) return g_gm;
-    g_gm = R::FindObjectByClass(L"mainGamemode_C");
-    return g_gm;
+    if (g_gm.Alive()) return g_gm.Raw();
+    g_gm.Set(R::FindObjectByClass(L"mainGamemode_C"));
+    return g_gm.Raw();
 }
 
 // mainGamemode_C field offsets (constant per class; resolved once).

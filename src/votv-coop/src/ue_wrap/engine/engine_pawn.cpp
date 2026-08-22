@@ -15,6 +15,7 @@
 
 #include "ue_wrap/engine/engine.h"
 
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -57,7 +58,7 @@ void* g_setViewTargetFn = nullptr;
 void* g_camMgrClass = nullptr;
 void* g_getCamLocFn = nullptr;
 void* g_getCamRotFn = nullptr;
-void* g_camMgr = nullptr;  // cached instance; FindObjectByClass walks the array
+ue_wrap::CachedObjRef g_camMgr;  // cached instance (islive-zeroav row :74); FindObjectByClass walks the array
 
 bool ResolveCamMgrFns() {
     if (!g_camMgrClass) g_camMgrClass = R::FindClass(P::name::PlayerCameraManagerClass);
@@ -71,9 +72,9 @@ bool ResolveCamMgrFns() {
 // Cached camera manager; only walk the GUObjectArray when the cache is empty or
 // the previous instance was destroyed (level change). Safe for per-frame callers.
 void* CamMgr() {
-    if (g_camMgr && !R::IsLive(g_camMgr)) g_camMgr = nullptr;
-    if (!g_camMgr) g_camMgr = R::FindObjectByClass(P::name::PlayerCameraManagerClass);
-    return g_camMgr;
+    if (g_camMgr.Raw() && !g_camMgr.Alive()) g_camMgr.Reset();
+    if (!g_camMgr.Raw()) g_camMgr.Set(R::FindObjectByClass(P::name::PlayerCameraManagerClass));
+    return g_camMgr.Raw();
 }
 
 }  // namespace

@@ -206,7 +206,7 @@ static void* SpawnPuppetMainPlayer(const FVector& loc,
         return actor;
     }
     // Cache for GetSkeletalMeshComponent (the DriveAnimBP path).
-    g_meshComp[actor] = meshComp;
+    g_meshComp[actor].Set(meshComp);  // fresh from the spawn path
 
     // 2026-05-25 audit fix (CRITICAL #3): disable the orphan's
     // CharacterMovementComponent tick. CMC runs gravity+walking

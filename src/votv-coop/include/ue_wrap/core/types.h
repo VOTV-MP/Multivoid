@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include "ue_wrap/core/cached_obj_ref.h"
+
 #include <cmath>
 #include <cstdint>
 
@@ -56,7 +58,10 @@ static_assert(sizeof(FLinearColor) == 16, "FLinearColor layout");
 // marshaled into a param frame; it lives here (not engine.h) so the gameplay
 // layer (RemotePlayer) can cache a std::vector of them WITHOUT pulling the full
 // engine.h wrapper API into the widely-included remote_player.h.
-struct SavedMaterial { void* component = nullptr; int32_t index = 0; void* original = nullptr; };
+// component/original are CachedObjRef, not raw pointers: the vector is held
+// ACROSS the ~0.5 s flash window and both objects can be GC'd inside it
+// (islive-zeroav census rows engine_mainplayer:192/:196).
+struct SavedMaterial { CachedObjRef component; int32_t index = 0; CachedObjRef original; };
 
 inline FTransform MakeTransform(const FVector& location) {
     FTransform t;

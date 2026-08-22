@@ -7,6 +7,7 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/reflection.h"
 
 #include <atomic>
@@ -28,7 +29,7 @@ void*   g_setMoonPhaseFn = nullptr;  // setMoonPhase() -- re-applies the moon ma
 constexpr int32_t kSkyCompOffFallback   = 0x0250;
 constexpr int32_t kMoonPhaseOffFallback = 0x02BC;
 
-void* g_skyCache = nullptr;  // cached singleton (GT-only)
+ue_wrap::CachedObjRef g_skyCache;  // cached singleton (GT-only; islive-zeroav row :70)
 
 // The `sky` UStaticMeshComponent pointer off the actor -- its WORLD rotation IS the visible
 // star orientation. nullptr if unresolved / not present.
@@ -67,7 +68,7 @@ bool EnsureResolved() {
 }
 
 void* Sky() {
-    if (g_skyCache && R::IsLive(g_skyCache)) return g_skyCache;  // steady-state: a pointer check
+    if (g_skyCache.Alive()) return g_skyCache.Raw();  // steady-state: array-slot reads only
     // The sky actor is a singleton that, once found, stays live. THROTTLE the GUObjectArray
     // scan to once/sec so a transient miss can never become a per-call walk (the standing
     // per-frame-FindObjectByClass ban). Game-thread-only -> the static is unguarded.
@@ -76,8 +77,8 @@ void* Sky() {
     if (now - s_lastScan < std::chrono::seconds(1)) return nullptr;
     s_lastScan = now;
     if (!EnsureResolved()) return nullptr;
-    g_skyCache = R::FindObjectByClass(L"newsky_C");
-    return (g_skyCache && R::IsLive(g_skyCache)) ? g_skyCache : nullptr;
+    g_skyCache.Set(R::FindObjectByClass(L"newsky_C"));
+    return g_skyCache.Raw();  // fresh from the walk (null on miss)
 }
 
 bool ReadSky(FRotator& skyWorldRot, float& moonPhase) {

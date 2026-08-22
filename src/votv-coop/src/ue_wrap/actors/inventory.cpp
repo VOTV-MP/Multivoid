@@ -8,6 +8,7 @@
 
 #include "ue_wrap/actors/save_record.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/reflection.h"
 
 #include <cstdint>
@@ -36,7 +37,7 @@ constexpr int32_t kEquip_tag       = 0x110;  // FName
 // save_record::kSaveStride if the raw 0x118 is used for the equipment/hold arrays with N>=2.
 constexpr int32_t kEquipStride     = 0x120;
 
-void*   g_gm      = nullptr;
+ue_wrap::CachedObjRef g_gm;  // islive-zeroav row :100
 int32_t g_offSave = -1;
 
 // ---- live personal store: reflected offsets (resolved once; -1 = looked and failed) -----------
@@ -97,11 +98,11 @@ void BuildAndSwapArray(void* saveSlot, int32_t off, int32_t stride,
 }  // namespace
 
 void* ResolveSaveSlot() {
-    if (!g_gm || !R::IsLive(g_gm)) g_gm = R::FindObjectByClass(L"mainGamemode_C");
-    if (!g_gm) return nullptr;
-    if (g_offSave < 0) g_offSave = R::FindPropertyOffset(R::ClassOf(g_gm), L"saveSlot");
+    if (!g_gm.Alive()) g_gm.Set(R::FindObjectByClass(L"mainGamemode_C"));
+    if (!g_gm.Raw()) return nullptr;
+    if (g_offSave < 0) g_offSave = R::FindPropertyOffset(R::ClassOf(g_gm.Raw()), L"saveSlot");
     if (g_offSave < 0) return nullptr;
-    void* save = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(g_gm) + g_offSave);
+    void* save = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(g_gm.Raw()) + g_offSave);
     return (save && R::IsLive(save)) ? save : nullptr;
 }
 
@@ -140,10 +141,10 @@ bool ReadLivePersonalStore(LivePersonalStore& out) {
     out.records.clear();
 
     void* save = ResolveSaveSlot();   // also refreshes g_gm (and revalidates it via IsLive)
-    if (!save || !g_gm) return false;
+    if (!save || !g_gm.Raw()) return false;
 
-    if (CachedOffset(g_offPlayerContainer, R::ClassOf(g_gm), L"playerContainer") < 0) return false;
-    void* pc = ReadAt<void*>(g_gm, g_offPlayerContainer);
+    if (CachedOffset(g_offPlayerContainer, R::ClassOf(g_gm.Raw()), L"playerContainer") < 0) return false;
+    void* pc = ReadAt<void*>(g_gm.Raw(), g_offPlayerContainer);
     if (!pc || !SR::PlausibleObjPtr(pc) || !R::IsLive(pc)) return false;
 
     if (CachedOffset(g_offContainerPropInv, R::ClassOf(pc), L"propInventory") < 0) return false;

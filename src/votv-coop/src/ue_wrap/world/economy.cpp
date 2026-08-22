@@ -3,6 +3,7 @@
 #include "ue_wrap/world/economy.h"
 
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 
@@ -13,11 +14,11 @@ namespace R = ue_wrap::reflection;
 
 // Cached gamemode pointer (singleton-per-session); revalidated via IsLive, re-walked
 // via FindObjectByClass on a level transition. NOT a per-frame full-array scan (cached).
-void* g_gm = nullptr;
+ue_wrap::CachedObjRef g_gm;  // islive-zeroav row :18
 void* ResolveGamemode() {
-    if (g_gm && R::IsLive(g_gm)) return g_gm;
-    g_gm = R::FindObjectByClass(L"mainGamemode_C");
-    return g_gm;
+    if (g_gm.Alive()) return g_gm.Raw();
+    g_gm.Set(R::FindObjectByClass(L"mainGamemode_C"));
+    return g_gm.Raw();
 }
 
 // Cached property offsets. Constant per BP class (mainGamemode_C / saveSlot_C never

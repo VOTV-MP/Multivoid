@@ -46,14 +46,14 @@ namespace R = reflection;
 // PropDestroy doesn't hit a not-yet-resolved class on a peer that just
 // connected. The PhysicsHandleComponent UClass is engine-stable and loads
 // with the world; by the time any session connects it is resolvable.
-void* g_phcClsCache       = nullptr;
+ue_wrap::CachedObjRef g_phcClsCache;  // islive-zeroav row :53
 void* g_phcReleaseFnCache = nullptr;
 
 bool ResolvePhcReleaseCached() {
-    if (g_phcReleaseFnCache && R::IsLive(g_phcClsCache)) return true;
-    g_phcClsCache = R::FindClass(P::name::PhysicsHandleComponentClass);
-    if (!g_phcClsCache) return false;
-    g_phcReleaseFnCache = R::FindFunction(g_phcClsCache, P::name::ReleaseComponentFn);
+    if (g_phcReleaseFnCache && g_phcClsCache.Alive()) return true;
+    g_phcClsCache.Set(R::FindClass(P::name::PhysicsHandleComponentClass));
+    if (!g_phcClsCache.Raw()) return false;
+    g_phcReleaseFnCache = R::FindFunction(g_phcClsCache.Raw(), P::name::ReleaseComponentFn);
     return g_phcReleaseFnCache != nullptr;
 }
 
@@ -117,13 +117,13 @@ void ResolveAddPlayerDamageFn() {
 
 // Inc3 damage body-pulse: cached solid-red material + the UPrimitiveComponent
 // material UFunctions (GetNumMaterials / GetMaterial / SetMaterial).
-void* g_hurtMat = nullptr;
+ue_wrap::CachedObjRef g_hurtMat;  // islive-zeroav row :124
 void* g_getNumMatFn = nullptr, *g_getMatFn = nullptr, *g_setMatFn = nullptr;
 
 void* ResolveHurtMat() {
-    if (g_hurtMat && R::IsLive(g_hurtMat)) return g_hurtMat;
-    g_hurtMat = ResolveMaterialByName(P::name::PlayerHurtFlashMaterialName);
-    return g_hurtMat;
+    if (g_hurtMat.Alive()) return g_hurtMat.Raw();
+    g_hurtMat.Set(ResolveMaterialByName(P::name::PlayerHurtFlashMaterialName));
+    return g_hurtMat.Raw();
 }
 void ResolveMatFns() {
     if (g_getNumMatFn && g_getMatFn && g_setMatFn) return;
@@ -145,7 +145,11 @@ void SwapComponentMaterials(void* comp, void* mat, std::vector<SavedMaterial>& s
     for (int32_t i = 0; i < num && i < 16; ++i) {
         void* orig = nullptr;
         { ParamFrame f(g_getMatFn); f.Set<int32_t>(L"ElementIndex", i); if (Call(comp, f)) orig = f.Get<void*>(L"ReturnValue"); }
-        saved.push_back({comp, i, orig});
+        SavedMaterial sm;
+        sm.component.Set(comp);  // comp validated at entry; orig fresh from GetMaterial
+        sm.index = i;
+        sm.original.Set(orig);
+        saved.push_back(sm);
         { ParamFrame f(g_setMatFn); f.Set<int32_t>(L"ElementIndex", i); f.Set<void*>(L"Material", mat); Call(comp, f); }
     }
 }
@@ -189,15 +193,16 @@ bool RestoreHurtFlashMaterial(void* /*puppet*/, std::vector<SavedMaterial>& save
     ResolveMatFns();
     if (g_setMatFn) {
         for (const auto& s : saved) {
-            if (!s.component || !R::IsLive(s.component)) continue;  // component GC'd
+            void* comp = s.component.Get();  // slot-validated
+            if (!comp) continue;  // component GC'd
             // If the cached original material was GC'd during the ~0.5 s window,
             // restore nullptr -- SetMaterial(null) reverts the slot to the
             // SkeletalMesh asset's default (the kel skin), the correct outcome.
-            void* orig = (s.original && R::IsLive(s.original)) ? s.original : nullptr;
+            void* orig = s.original.Get();  // null -> revert to the asset default (correct)
             ParamFrame f(g_setMatFn);
             f.Set<int32_t>(L"ElementIndex", s.index);
             f.Set<void*>(L"Material", orig);
-            Call(s.component, f);
+            Call(comp, f);
         }
     }
     saved.clear();

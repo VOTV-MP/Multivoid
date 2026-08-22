@@ -5,6 +5,7 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/desk/tape_caddy.h"  // v114 (L7): the reel save-scalar (Progress) reader/writer
@@ -30,12 +31,12 @@ namespace R = reflection;
 // false and we re-resolve. NOT thread-safe to WRITE; readers run on the game
 // thread (the only write site is PropBaseClass itself, called only on the
 // game thread by the observer / autonomous-test paths).
-void* g_propBaseCls = nullptr;
+ue_wrap::CachedObjRef g_propBaseCls;  // islive-zeroav row :36
 
 void* PropBaseClass() {
-    if (g_propBaseCls && R::IsLive(g_propBaseCls)) return g_propBaseCls;
-    g_propBaseCls = R::FindClass(P::name::PropClass);
-    return g_propBaseCls;
+    if (g_propBaseCls.Alive()) return g_propBaseCls.Raw();
+    g_propBaseCls.Set(R::FindClass(P::name::PropClass));
+    return g_propBaseCls.Raw();
 }
 
 // Read raw bytes at offset; small helpers so the field offsets are the only
@@ -525,7 +526,7 @@ namespace {
 // frame is a fixed 32 B (BoneName FName 8 + FVector ReturnValue 12 + pad);
 // kept inline with no allocation. Game-thread only.
 struct PrimVelocityResolved {
-    void*    cls       = nullptr;  // UPrimitiveComponent UClass
+    ue_wrap::CachedObjRef cls;     // UPrimitiveComponent UClass (islive-zeroav row :542)
     void*    getLinFn  = nullptr;
     void*    getAngFn  = nullptr;
     int32_t  linFrameSize = 0;
@@ -539,7 +540,7 @@ struct PrimVelocityResolved {
 PrimVelocityResolved g_pvr;
 
 bool ResolvePrimVelocity() {
-    if (g_pvr.ok && R::IsLive(g_pvr.cls)) return true;
+    if (g_pvr.ok && g_pvr.cls.Alive()) return true;
     g_pvr = {};
     void* cls = R::FindClass(P::name::PrimitiveComponentClass);
     if (!cls) {
@@ -552,7 +553,7 @@ bool ResolvePrimVelocity() {
         UE_LOGW("prop::GetPhysicsVelocity: UFunction lookup failed");
         return false;
     }
-    g_pvr.cls          = cls;
+    g_pvr.cls.Set(cls);
     g_pvr.getLinFn     = fnLin;
     g_pvr.getAngFn     = fnAng;
     g_pvr.linFrameSize = R::FunctionFrameSize(fnLin);
@@ -718,7 +719,7 @@ namespace {
 // SetCollisionEnabled is a native UFunction on UPrimitiveComponent (engine-
 // stable across UE4.27); no BP override path to consider. Game-thread only.
 struct SetCollisionEnabledResolved {
-    void*   cls           = nullptr;
+    ue_wrap::CachedObjRef cls;  // islive-zeroav row :730
     void*   fn            = nullptr;
     int32_t frameSize     = 0;
     int32_t newTypeOff    = -1;
@@ -727,7 +728,7 @@ struct SetCollisionEnabledResolved {
 SetCollisionEnabledResolved g_sce;
 
 bool ResolveSetCollisionEnabled() {
-    if (g_sce.ok && R::IsLive(g_sce.cls)) return true;
+    if (g_sce.ok && g_sce.cls.Alive()) return true;
     g_sce = {};
     void* cls = R::FindClass(P::name::PrimitiveComponentClass);
     if (!cls) {
@@ -739,7 +740,7 @@ bool ResolveSetCollisionEnabled() {
         UE_LOGW("prop::ForceRestoreDefaultCollision: SetCollisionEnabled UFunction not found");
         return false;
     }
-    g_sce.cls       = cls;
+    g_sce.cls.Set(cls);
     g_sce.fn        = fn;
     g_sce.frameSize = R::FunctionFrameSize(fn);
     g_sce.newTypeOff = R::FindParamOffset(fn, L"NewType");

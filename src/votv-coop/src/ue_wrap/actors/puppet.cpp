@@ -4,6 +4,7 @@
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/reflected_offset.h"
@@ -26,7 +27,7 @@ namespace GT = game_thread;
 
 // puppet actor -> its cached SkeletalMeshComponent (avoid a GUObjectArray walk
 // per Drive() frame).
-std::unordered_map<void*, void*> g_meshComp;
+std::unordered_map<void*, ue_wrap::CachedObjRef> g_meshComp;  // islive-zeroav row :162
 
 // The live AnimInstance running on a SkeletalMeshComponent (comp + AnimScriptInstance).
 void* LiveAnimInstance(void* skeletalMeshComponent) {
@@ -159,7 +160,7 @@ void* GetSkeletalMeshComponent(void* puppetActor) {
         // component must NOT return the dying pointer -- the caller would then
         // read AnimScriptInstance @+0x6B0 on freed memory (AV). Treat as a
         // cache miss; drop the entry and fall through to re-resolve.
-        if (R::IsLive(it->second)) return it->second;
+        if (void* liveComp = it->second.Get()) return liveComp;  // slot-validated
         g_meshComp.erase(it);
     }
     // 2026-05-25 audit fix (post-ship CRITICAL-3): on cache miss for the
@@ -176,7 +177,7 @@ void* GetSkeletalMeshComponent(void* puppetActor) {
     // longer happen).
     void* comp = ReadPtr(puppetActor, P::off::AmainPlayer_mesh_playerVisible);
     if (comp && !R::IsLive(comp)) comp = nullptr;
-    if (comp) g_meshComp[puppetActor] = comp;
+    if (comp) g_meshComp[puppetActor].Set(comp);  // fresh + just-IsLive'd above
     return comp;
 }
 

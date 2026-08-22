@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include "ue_wrap/core/cached_obj_ref.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <unordered_map>
@@ -31,7 +33,7 @@ inline void WriteAt(void* base, size_t off, T value) {
 
 // puppet actor -> cached SkeletalMeshComponent. DEFINED in puppet.cpp (its owner/reader,
 // GetSkeletalMeshComponent); puppet_spawn.cpp fills the cache once at spawn.
-extern std::unordered_map<void*, void*> g_meshComp;
+extern std::unordered_map<void*, ue_wrap::CachedObjRef> g_meshComp;
 
 // The live AnimInstance running on a SkeletalMeshComponent (comp + AnimScriptInstance).
 // Defined in puppet.cpp; the spawn path reads it during the orphan rig-up.
