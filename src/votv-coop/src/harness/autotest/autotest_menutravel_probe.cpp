@@ -23,6 +23,7 @@
 
 #include "harness/autotest.h"
 
+#include "coop/config/config.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/fname_utils.h"
@@ -116,12 +117,19 @@ void RunProbe() {
     // ragdolls the player; the pause may be unavailable). Arm a held bypass FIRST, then
     // transition, in ONE task. Flat RSS for the whole probe == transition+held works for
     // a dead player -> the robust death-menu-return.
+    // VOTVCOOP_MENUTRAVEL_NO_BYPASS=1 (2026-08-22, the IsLive/VEH repro): transition
+    // with the layer LIVE -- the shape of a player's own in-game exit-to-menu, which
+    // is where the exit-path IsLive fault fires (the bypass keeps the layer dormant
+    // through teardown, so the default probe can never reproduce it).
+    const bool noBypass = coop::config::ReadEnv("VOTVCOOP_MENUTRAVEL_NO_BYPASS") == "1";
     auto done = std::make_shared<std::atomic<int>>(0);
     auto ok = std::make_shared<int>(0);
-    GT::Post([done, ok] {
-        ue_wrap::game_thread::SetTransparentBypass(300000);  // hold dormant (never expires in-probe)
+    GT::Post([done, ok, noBypass] {
+        if (!noBypass)
+            ue_wrap::game_thread::SetTransparentBypass(300000);  // hold dormant (never expires in-probe)
         if (CallTransitionInline(L"/Game/menu")) *ok = 1;
-        UE_LOGI("menutravel: armed bypass(300s) + transition(/Game/menu) dispatched=%d", *ok);
+        UE_LOGI("menutravel: %s + transition(/Game/menu) dispatched=%d",
+                noBypass ? "LAYER LIVE (no bypass)" : "armed bypass(300s)", *ok);
         done->store(1);
     });
     WaitDone(done, 8000);

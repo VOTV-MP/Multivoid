@@ -2476,8 +2476,15 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   HOLDS (real prologue `40 55 56 57 41 54` = us first). **Fix DECIDED (2026-08-22) = B** (followJmp-immune
   relay: `ff25[rip]` → `mov rax,imm64; jmp rax`, so followJmp stops on the `mov` and PolyHook cleanly
   in-place-hooks the relay → both detours chain); **C ruled out** (UE4SS's PE PreCallback returns `void`,
-  can't host our ~20 native-call interceptors → we always own our PE detour, B is permanent). BUILT
-  (`fac0c293` default-ON); baseline REPRODUCED in the real modded env, fix compose PENDING hands-on.
+  can't host our ~20 native-call interceptors → we always own our PE detour, B is permanent). **VERIFIED
+  2026-08-22 eve (commit `0c14a931`)** — real-env trampoline byte decode (PolyHook in-place-hooked our
+  immune relay mid-session; 80 s crash-free) + a DEV boot printing `POLYHOOK-COMPOSED`+`WE-FIRST`.
+  SUB-LESSON (same day): the pe_diag classifier's first-match scan read **MinHook's own jump-back stub**
+  (`FF25 00000000`+abs64→PE+6, which PRECEDES the relay in the trampoline slot and shares the legacy
+  relay's encoding) as "the relay" → printed LEGACY-CORRUPT on EVERY boot regardless of reality; only
+  the payload (`==&detour`) discriminates the relay from the jump-back — locate once at the install
+  snapshot, classify that offset thereafter. Also: UE4SS 3.0.1 stable in the DEV stack armed its PE hook
+  <10 s with NO ArmPE fixture — the "lazy, 0/15 solo" measurement does not generalize across stacks.
   `memory/lesson_two_inline_hook_engines_collide_via_followjmp.md`
 - **2026-08-22 — a coexisting VEH crash-reporter mod (CrashContext) pre-empts our SEH-guarded fault
   tolerance.** Our `ue_wrap::reflection::IsLive()` (`reflection.cpp:165`) SEH-guards the read of a
@@ -2485,10 +2492,15 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   `Moddy-CrashContext` installs an `AddVectoredExceptionHandler`, and **VEH fires BEFORE frame-based
   `__except`**, so it catches our normally-absorbed fault first and pops a crash report. Measured:
   exit-to-menu AV at `main.dll+0x11CC78` = `IsLive` (resolved via the build `.map`), only WITH
-  CrashContext present. NOT a bug in IsLive; a Windows exception-ordering coexistence trap. LOOK FIRST:
-  an AV whose RIP is in a function you SEH-guard that only reproduces WITH other mods → grep their
-  imports for `AddVectoredExceptionHandler`. FIX: don't fault (use index-based `IsLiveByIndex` /
-  clear the dangling cache on teardown). `memory/lesson_veh_crash_reporter_preempts_seh_guard.md`
+  CrashContext present. NOT a bug in IsLive; a Windows exception-ordering coexistence trap. **SHARPENED
+  2026-08-22 eve by measurement: it is a FALSE-crash (popup + report), not a crash** — CrashContext has
+  NO TerminateProcess/ExitProcess/MiniDump/`__fastfail` imports (byte-scan), the process survived (2nd
+  report 9 s later, no UE dump), and faults manifest only when the freed page is DECOMMITTED (DEV runs
+  silently clean). LOOK FIRST: an AV whose RIP is in a function you SEH-guard that only reproduces WITH
+  other mods → grep their imports for `AddVectoredExceptionHandler`. FIX: the zero-AV discipline —
+  design of record `research/findings/tooling/votv-islive-zeroav-cachedobjref-DESIGN-2026-08-22.md`
+  (CachedObjRef + 78-site conversion; the IsLive WARN now names its CALLER via `_ReturnAddress`).
+  `memory/lesson_veh_crash_reporter_preempts_seh_guard.md`
 - **2026-08-22 — the ProcessEvent double-detour crash is CONFIG-DEPENDENT, not universal.** It fires
   only if something ARMS UE4SS's PE inline detour via `RegisterProcessEventPreCallback` — and NO stock
   mod does (measured: not DebugMod/CrashContext/PBMovement, not jsbLuaProfiler, no UE4SS built-in; grep
@@ -2641,8 +2653,25 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   done → `weather_sync.cpp ResolveCycle` (setRainParticles crash, exit-to-menu 07-15) + TWO more
   (`world_actor_sync.cpp:380` OnDisconnect drain + `world_actor_mirror.cpp:208` OnDestroy — K2 on a cached
   mirror actor) all slipped it. Re-run the grep for real (`\bIsLive\s*\(` minus fresh/same-frame + autotest,
-  keep cached-ptr + UFunction-CALL + teardown-reachable); all fixed 07-15.
+  keep cached-ptr + UFunction-CALL + teardown-reachable); all fixed 07-15. **PROVEN AGAIN 2026-08-22: a
+  fresh full census found 78 bare-IsLive-on-cached sites still live post-07-15** (435 sites total; work
+  list + the CachedObjRef fix design =
+  `research/findings/tooling/votv-islive-zeroav-cachedobjref-DESIGN-2026-08-22.md` Appendix A). Two
+  sharpenings from that pass: `IsLiveByIndex` never reads FUObjectItem **SerialNumber**, so a
+  same-address SAME-SLOT successor passes (ABA — filed residual); and UE assigns serials LAZILY (0 until
+  a weak ref exists), so naive serial capture does not close it either.
   `memory/lesson_islive_recycled_slot_blind_use_by_index.md`
+- **2026-08-22 — a dying world's actors are NOT kill-flagged even after the MENU world is up** (measured:
+  `trash_pile` re-indexed 311 of the dying gameplay world's piles AT the menu, 16:46:03 — every one
+  passed IsLive's kill-flag check), so ANY liveness-based gate lags GC purge by seconds. Two dependent
+  traps: the `worldUp = Registry::Local() != nullptr` gate keeps the session chain running against the
+  dying world for the flee poll's ≤4 s window, and a session-install fanout re-running in that window
+  indexes soon-to-dangle actors. World-state gates must key on WORLD IDENTITY / travel-start signals,
+  never on per-object liveness. NOTE: `engine.cpp` `g_worldContext` is the GAMEINSTANCE (immortal) — not
+  a current-world read. LOOK FIRST: the D2 section of
+  `research/findings/tooling/votv-islive-zeroav-cachedobjref-DESIGN-2026-08-22.md` (seam candidates +
+  the unmeasured 3-clock race + the wire-window probe).
+  `memory/lesson_dying_world_actors_not_killflagged_at_menu.md`
 - **A runtime-spawned `AStaticMeshActor` is STATIC mobility** → set Movable BEFORE `SetActorLocation` (a
   Static root silently no-ops the teleport). `memory/lesson_runtime_staticmeshactor_must_be_movable.md`
 - **SEH shields must NEVER absorb `0xC00000FD`** (stack overflow). `memory/lesson_never_absorb_stack_overflow.md`

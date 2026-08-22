@@ -164,7 +164,7 @@ UE4SS's.** (This corrects an earlier framing that called C "B's eventual retirem
 - **The `DIAG` probe** keys on the `FF25` relay signature B overwrites, so it was updated to
   recognize the `MOV`-led relay and the "PolyHook-composed" success case.
 
-### As-built (2026-08-22 eve — baseline REPRODUCED in the real modded env; fix compose NOT yet hands-on)
+### As-built (2026-08-22 — baseline REPRODUCED in the real modded env; compose VERIFIED same day, see Proof status)
 
 - `ue_wrap/core/hook.{h,cpp}` — `Install(..., bool followJmpImmune=false)`; the relay rewrite
   (`MakeRelayFollowJmpImmune`) runs between `MH_CreateHook` and `MH_EnableHook` (target unpatched →
@@ -222,30 +222,42 @@ The double-detour crash is **config-dependent, not universal.** Measured in the 
 - **The ExeDir anchor works under the shimloader VFS** (our `multivoid.log`/`.ini` land in the real
   a09n exe dir, not lost in the VFS) — but one boot failed to rotate the log (stale-log caveat).
 
-### The IsLive / VEH exit-to-menu crash — NEW, SEPARATE from the double-detour (2026-08-22)
+### The IsLive / VEH exit-to-menu FALSE-CRASH — measured + design converged (2026-08-22 eve)
 
-Exiting a multiplayer save to the main menu produced a repeating AV at `main.dll+0x11CC78` =
-`ue_wrap::reflection::IsLive(void*)` (reflection.cpp:165), reading a dangling object pointer.
-`IsLive` is **SEH-guarded by design** (it catches the freed-pointer read and returns false). The crash
-happens because **CrashContext installs a Vectored Exception Handler, and VEH fires before frame-based
-SEH** — it intercepts our normally-absorbed fault first and reports it as a crash. This is a
-**coexistence artifact** between our SEH-based crash-safe reflection and a VEH-based crash-reporter mod;
-it is NOT the double-detour and NOT caused by B (silent without CrashContext across four proxy-lane
-takes). The two identical re-faults suggest our SEH still recovers underneath. **OPEN** — the proper
-fix is to not fault at all on the exit-teardown path (the caller should use the index-based
-`IsLiveByIndex`, which reads the GUObjectArray slot never obj's memory, or clear the dangling cache on
-world-teardown). Caller not yet identified (no native dump — CrashContext's VEH swallowed it).
+**Re-scoped by measurement: it is NOT a crash.** Exiting to the menu (the user was HOSTING) produced two
+CrashContext reports 9 s apart at `main.dll+0x11CC78` = `ue_wrap::reflection::IsLive` — but CrashContext
+**cannot terminate anything** (no TerminateProcess/ExitProcess/MiniDump/`__fastfail` imports; it is a
+VEH + `MessageBoxW`), the process survived (second report; no UE dump in the window), and the user saw a
+POPUP over a fault our SEH absorbed by contract. **VEH fires before frame-based SEH**, so any VEH crash
+reporter turns our first-chance probe AV into a user-visible "crash". Faults manifest only when the
+freed page is DECOMMITTED — nondeterministic (two DEV menutravel runs silently clean).
+
+**Root + design (10-round `/qf`, "that holds"): the ratified cached-pointer discipline (OPUS §3:59) is
+violated at 78 censused call sites** — bare `IsLive` on cross-tick caches (prime suspect for this exact
+symptom: `multiplayer_menu.cpp` `g_button`/`g_versionText`, freed all session, probed per menu tick on
+RETURN to menu). Fix = `CachedObjRef {ptr, idx, serial}` (ue_wrap/core) + staged conversion of all 78 +
+deterministic decommit drill + tripwire gate; acceptance = ZERO first-chance AVs from our probes; the
+IsLive fault WARN now attributes its CALLER module-relative (`_ReturnAddress`, shipped in `F71621E0`).
+**Design of record: `research/findings/tooling/votv-islive-zeroav-cachedobjref-DESIGN-2026-08-22.md`**
+(census appendix, serial semantics, the filed ABA residual, the D2 purge-blind world-gate deferral +
+its wire-window probe). **Run A (pre-fix attribution repro) was ATTEMPTED same evening: NO repro** —
+zero probe faults that run (pages stayed mapped; the decommit nondeterminism measured in the real env
+too), so run A is downgraded to opportunistic (the tripwire persists post-fix; attribution is never
+lost) and the 15:45 caller stays formally unnamed. Run B (post-fix exit) = acceptance (no report
+resolving into main.dll, no popup) — necessary-not-sufficient; the deterministic drill carries the
+zero-AV proof.
 
 ---
 
 ## 5. State / hands-on warning
 
-- **The r2modman test profile** (`C:\r2modman\...\VotV\profiles\Default`) carries the default-ON build
-  `fac0c293` + the `ArmPE` fixture + `VOTVCOOP_PE_DIAG=1`. Multivoid drops as
+- **The r2modman test profile** (`C:\r2modman\...\VotV\profiles\Default`) AND all four `Game_0.9.0n_*`
+  installs carry build `F71621E0` (default-ON immune relay + fixed pe_diag classifier + IsLive caller
+  attribution + the `VOTVCOOP_MENUTRAVEL_NO_BYPASS` probe knob; 2026-08-22 eve). The profile + ArmPE
+  fixture + `VOTVCOOP_PE_DIAG=1` stay as the real-env rig; Multivoid drops as
   `shimloader/mod/Multivoid/dlls/main.dll` + `enabled.txt`; the game is a separate `a09n` install whose
-  Win64 has the shimloader `dwmapi.dll` + `ue4ss.dll`, launched via r2modman.
-- The four `Game_0.9.0n_*` installs still carry the flag-gated `76a8d200` (default OFF) + the ArmPE
-  fixture in HOST/CLIENT_1.
+  Win64 has the shimloader `dwmapi.dll` + `ue4ss.dll`, launched via r2modman. Run A was attempted
+  (no repro — see §4); the profile may receive the D1 build once it is built + verified.
 - Rollback to the proxy lane if needed: copy `build/votv-coop/Release/xinput1_3.dll` + the versioned
   DLL beside the exe + delete `Mods\Multivoid\enabled.txt` (3 ops).
 - Nothing is pushed; commits are local pending the user's word + the five-axis leak audit.
@@ -254,8 +266,10 @@ world-teardown). Caller not yet identified (no native dump — CrashContext's VE
 
 1. ~~Confirm B in the real env~~ **DONE 2026-08-22** — see §4 Proof status (real-env byte decode +
    DEV `POLYHOOK-COMPOSED` boot, both crash-free).
-2. Fix the IsLive/VEH exit crash (index-based check / teardown cache-clear) — a coexistence bug, so it
-   only matters in a stack with a VEH crash-reporter (CrashContext), but that is the common stack.
+2. Build the IsLive zero-AV arc (design CONVERGED 2026-08-22, see §4 + the design of record; run A
+   attempted, no repro -> downgraded to opportunistic): the wire-window two-peer probe -> `CachedObjRef`
+   + the staged 78-site conversion + drill + gate -> run B acceptance. The ad-hoc `{ptr,idx}` pair
+   migration scope is a pending user decision recorded in the design doc.
 3. Add B's teardown leak-at-death (§4 residual), drop the `VOTVCOOP_PE_IMMUNE_RELAY=0` diagnostic escape.
 4. **Commit 3** — the proxy deletion (RULE 2): `xinput_proxy.cpp` + the loader lane + dup-dialog +
    `inject.ps1` go, fully. Then WP-2 is DONE.

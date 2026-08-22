@@ -478,11 +478,14 @@ followJmp stops on the `mov` and PolyHook cleanly in-place-hooks our relay → b
 detours chain; source-confirmed via PolyHook's VALLOC2 path). **C ruled out** —
 UE4SS's PE PreCallback returns `void` with no skip, so it cannot host our ~20
 native-call interceptors; Multivoid must always own its own PE detour, and B is the
-PERMANENT coexistence, not a stopgap. BUILT (`fac0c293` default-ON); baseline crash
-**REPRODUCED in the real modded env** (r2modman/shimloader + experimental UE4SS +
-DebugMod/CrashContext/PBMovement + an `ArmPE` fixture), fix compose PENDING hands-on.
+PERMANENT coexistence, not a stopgap. Baseline crash **REPRODUCED in the real modded
+env** (r2modman/shimloader + experimental UE4SS + DebugMod/CrashContext/PBMovement +
+an `ArmPE` fixture) and the fix compose **VERIFIED 2026-08-22 eve (commit `0c14a931`)**
+— real-env trampoline byte decode (PolyHook in-place-hooked our immune relay
+mid-session, 80 s crash-free) + a DEV boot printing `POLYHOOK-COMPOSED`+`WE-FIRST`.
 Two coexistence findings surfaced: the crash is config-dependent (no stock mod arms
-PE) and a separate exit-to-menu `IsLive`/VEH crash. The proxy stays in-tree until the
-fix is hands-on-confirmed and commit 3 lands. **Canonical arc doc now
+PE) and a separate exit-to-menu `IsLive`/VEH FALSE-crash (measured: a VEH reporter
+surfacing our absorbed probe AV; design converged, see UE4SS_ARC §4). The proxy stays
+in-tree until commit 3 lands. **Canonical arc doc now
 `docs/UE4SS_ARC.md`.** Record: design of record §3; FACTS doc §2; memory
 `project-wp2-realistic-env-test-2026-08-22`.

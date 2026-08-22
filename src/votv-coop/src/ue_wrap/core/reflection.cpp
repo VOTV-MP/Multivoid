@@ -6,6 +6,8 @@
 
 #include <windows.h>
 
+#include <intrin.h>
+
 #include <atomic>
 #include <cwchar>
 #include <mutex>
@@ -162,8 +164,39 @@ bool IsLiveByIndex(void* obj, int32_t internalIdx) {
     return (flags & kKillFlags) == 0;
 }
 
+namespace {
+// Cold path: log one IsLive fault with the CALLER attributed module-relative.
+// Born from the WP-2 IsLive/VEH finding (2026-08-22): a co-resident VEH crash
+// reporter (CrashContext) surfaces our absorbed probe fault as a "crash", and
+// its report names only IsLive itself -- the call site holding the dangling
+// cache was unidentifiable. Now every fault names its caller, so each occurrence
+// is directly actionable (principle 4: fix THAT site). First 16 faults log
+// unconditionally (a burst names every distinct site), then 1 per 1000.
+void ReportIsLiveFault(void* obj, void* caller) {
+    const uint64_t n = g_isLiveFaultCount.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (n > 16 && (n % 1000) != 0) return;
+    char path[MAX_PATH] = {};
+    const char* base = "?";
+    uintptr_t off = reinterpret_cast<uintptr_t>(caller);
+    HMODULE h = nullptr;
+    if (::GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                 GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                             reinterpret_cast<LPCSTR>(caller), &h) &&
+        h && ::GetModuleFileNameA(h, path, sizeof(path))) {
+        base = path;
+        for (const char* p = path; *p; ++p)
+            if (*p == '\\' || *p == '/') base = p + 1;
+        off -= reinterpret_cast<uintptr_t>(h);
+    }
+    UE_LOGW("reflection: IsLive caught AV reading freed pointer %p (fault #%llu, caller %s+0x%llX) -- reporting not-live",
+            obj, static_cast<unsigned long long>(n), base,
+            static_cast<unsigned long long>(off));
+}
+}  // namespace
+
 bool IsLive(void* obj) {
     if (!obj) return false;
+    void* const caller = _ReturnAddress();  // captured at entry: _ReturnAddress is unreliable inside an __except funclet
     // SEH-guard the ONE read of obj's OWN memory. IsLive is THE primitive for
     // checking a cached UObject* that may have been GC-purged (g_netLocal, the
     // local-player cache in players::Registry::Local, held props, cached
@@ -190,11 +223,7 @@ bool IsLive(void* obj) {
         idx = *reinterpret_cast<int32_t*>(
             reinterpret_cast<uint8_t*>(obj) + O::UObject_InternalIndex);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
-        const uint64_t n = g_isLiveFaultCount.fetch_add(1, std::memory_order_relaxed) + 1;
-        if (n == 1 || (n % 1000) == 0) {
-            UE_LOGW("reflection: IsLive caught AV reading freed pointer %p (fault #%llu) -- reporting not-live",
-                    obj, static_cast<unsigned long long>(n));
-        }
+        ReportIsLiveFault(obj, caller);
         return false;
     }
     return IsLiveByIndex(obj, idx);
