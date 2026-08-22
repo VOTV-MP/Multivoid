@@ -63,12 +63,14 @@ void* Registry::RescanLocal() {
     // (game-thread-only static); a BP class dies on world unload and its
     // address can be recycled, so it is revalidated (live + still named
     // mainPlayer_C) before each walk trusts it.
-    static void* sMpClass = nullptr;
-    if (sMpClass && (!R::IsLive(sMpClass) ||
-                     !R::NameEquals(R::NameOf(sMpClass), P::name::MainPlayerClass))) {
-        sMpClass = nullptr;
+    static ue_wrap::CachedObjRef sMpClass;
+    // NameOf derefs -- reached only after Alive() (slot-validated) short-circuits,
+    // so the read is validated-same-task, never a blind deref of a freed class.
+    if (sMpClass.Raw() && (!sMpClass.Alive() ||
+                           !R::NameEquals(R::NameOf(sMpClass.Raw()), P::name::MainPlayerClass))) {
+        sMpClass.Reset();
     }
-    void* mpClass = sMpClass;
+    void* mpClass = sMpClass.Raw();
     const int32_t n = R::NumObjects();
     for (int32_t i = 0; i < n; ++i) {
         void* obj = R::ObjectAt(i);
@@ -80,7 +82,7 @@ void* Registry::RescanLocal() {
         } else {
             if (!R::NameEquals(R::NameOf(cls), P::name::MainPlayerClass)) continue;
             mpClass = cls;
-            sMpClass = cls;
+            sMpClass.Set(cls);  // fresh from this walk
         }
         if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;  // skip CDO
         if (!R::IsLive(obj)) continue;
@@ -110,8 +112,8 @@ void* Registry::Local() {
     // COLD RescanLocal() still uses GetController as the tie-breaker among the
     // mainPlayer_C instances (local vs puppets); only the re-validation of an
     // already-resolved cache changed. (quadbike RE 2026-06-08.)
-    if (localCached_ && R::IsLive(localCached_) && !IsPuppet(localCached_)) {
-        return localCached_;
+    if (localCached_.Alive() && !IsPuppet(localCached_.Raw())) {
+        return localCached_.Raw();
     }
     // Negative-result TTL (v56 menu-window balloon fix, see header): a miss is
     // DETERMINISTIC while no gameplay world is up -- and a dead cached pawn
@@ -120,14 +122,14 @@ void* Registry::Local() {
     // is detected kLocalMissTtlMs late, against a multi-second world load.
     // InvalidateLocal resets both fields -> an explicit level-change re-walks
     // immediately.
-    localCached_ = nullptr;
+    localCached_.Reset();
     const unsigned long long now = ::GetTickCount64();
     if (localMissAtMs_ != 0 && now - localMissAtMs_ < kLocalMissTtlMs) {
         return nullptr;
     }
-    localCached_ = RescanLocal();
-    localMissAtMs_ = localCached_ ? 0 : now;
-    return localCached_;
+    localCached_.Set(RescanLocal());  // fresh from the walk (Set(nullptr) == Reset)
+    localMissAtMs_ = localCached_.Raw() ? 0 : now;
+    return localCached_.Raw();
 }
 
 uint8_t Registry::LocalPeerId() const {
@@ -165,7 +167,7 @@ void Registry::SetLocalPeerId(uint8_t id) {
 }
 
 void Registry::InvalidateLocal() {
-    localCached_ = nullptr;
+    localCached_.Reset();
     localMissAtMs_ = 0;  // explicit invalidation re-walks immediately (no miss TTL)
 }
 

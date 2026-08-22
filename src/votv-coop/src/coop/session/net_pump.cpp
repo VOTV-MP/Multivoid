@@ -47,6 +47,7 @@
 #include "coop/session/world_load_episode.h"  // JOIN BARRIER 2026-07-12: the announce waits on the load-tail quiescence latch
 
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
@@ -76,11 +77,13 @@ namespace P = ue_wrap::profile;
 // already caches + filters puppets via the controller discriminator
 // (per RULE 1 + [[feedback-always-use-user-test-poses]]); we just hold
 // a local cache on top to skip the atomic load in the hot pump path.
-void* g_netLocal = nullptr;
+// CachedObjRef (islive-zeroav design section 3): probed every 125 Hz pump tick
+// INCLUDING through teardown windows -- a bare-IsLive deref here was census row 1.
+ue_wrap::CachedObjRef g_netLocal;
 // Cached controller for the same pawn -- avoids 2 ProcessEvent dispatches per
 // pump tick (GetController + GetControlRotation). Bound to g_netLocal's lifetime:
-// nulled when g_netLocal is nulled (level change).
-void* g_netLocalController = nullptr;
+// Reset when g_netLocal is Reset (level change).
+ue_wrap::CachedObjRef g_netLocalController;
 
 // Connected-state edge detection for the disconnect cleanup (destroy
 // the puppet). File-scope (NOT a static-local in Tick) so a session
@@ -658,15 +661,16 @@ void Tick(coop::net::Session& session) {
     // re-issue backstop was removed: both were no-ops, and our detour is held in bypass
     // for the travel so nothing of ours runs to "back it up" anyway.)
 
-    if (g_netLocal && !R::IsLive(g_netLocal)) { g_netLocal = nullptr; g_netLocalController = nullptr; }
-    if (!g_netLocal) g_netLocal = localNow;  // resolved once at the top of this tick
+    if (g_netLocal.Raw() && !g_netLocal.Alive()) { g_netLocal.Reset(); g_netLocalController.Reset(); }
+    if (!g_netLocal.Raw()) g_netLocal.Set(localNow);  // resolved once at the top of this tick
     // The `!g_localDeathHandled` gate: the FIRST tick after death this block still runs
     // (it is where death is detected + the synchronous teardown fires), but once handled
     // we STOP all local-send work. Hands-on showed the ragdoll sender kept emitting 1140+
     // RagdollPose packets on the stopped session post-death -- reading the dead player's
     // pelvis ~100x/s while we are en route to the menu. Now the only per-tick work in the
     // dead window is the forced-menu backstop above.
-    if (g_netLocal && !g_localDeathHandled) {
+    // Raw() below: validated by the Alive()/Reset/Set block just above, THIS tick.
+    if (g_netLocal.Raw() && !g_localDeathHandled) {
         // DEATH POLICY (2026-06-01 client-death OOM fix, hardened after hands-on). On
         // local death, SYNCHRONOUSLY tear down ALL coop game-side state on THIS frame,
         // then Stop the session. Hands-on proved Session::Stop() alone is insufficient:
@@ -693,7 +697,7 @@ void Tick(coop::net::Session& session) {
         const bool sessionLiveForDeath = isHost ? session.running() : session.connected();
         if (!g_localDeathHandled && sessionLiveForDeath) {
             bool isRagdoll = false, dead = false;
-            if (ue_wrap::engine::ReadMainPlayerRagdollState(g_netLocal, isRagdoll, dead) && dead) {
+            if (ue_wrap::engine::ReadMainPlayerRagdollState(g_netLocal.Raw(), isRagdoll, dead) && dead) {
                 g_localDeathHandled = true;
                 UE_LOGW("net: LOCAL PLAYER DIED -- tearing down coop state synchronously + fleeing "
                         "to the main menu (role=%s; permadeath-rejoinable)",
@@ -716,8 +720,9 @@ void Tick(coop::net::Session& session) {
         // Re-resolve the controller only when missing or invalidated; the
         // controller pointer stays stable between possess events. Caching here
         // saves ~250 ProcessEvent dispatches/sec at 125 Hz pump.
-        if (g_netLocalController && !R::IsLive(g_netLocalController)) g_netLocalController = nullptr;
-        if (!g_netLocalController) g_netLocalController = ue_wrap::engine::GetController(g_netLocal);
+        if (g_netLocalController.Raw() && !g_netLocalController.Alive()) g_netLocalController.Reset();
+        if (!g_netLocalController.Raw())
+            g_netLocalController.Set(ue_wrap::engine::GetController(g_netLocal.Raw()));
         // One-shot install of the per-subsystem observers (idempotent).
         { PP::Scope _s{PP::Bucket::InstallObs}; coop::subsystems::Install(session); }
         // Outbound local streams: pose + held-prop + ragdoll (coop/local_streams).
@@ -759,7 +764,7 @@ void Tick(coop::net::Session& session) {
                       !g_reAnnounceWorldReady.load(std::memory_order_relaxed) &&
                       coop::join_membership_sweep::HasLoadTailQuiesced());
         if (poseAuthoritative)
-            coop::local_streams::Tick(session, g_netLocal, g_netLocalController);
+            coop::local_streams::Tick(session, g_netLocal.Raw(), g_netLocalController.Raw());
     }
 
     // Per-slot puppet drive -> coop/player/puppet_drive (2026-07-18
@@ -784,7 +789,7 @@ void Tick(coop::net::Session& session) {
     // Pass g_netLocal so remote_prop::OnRelease can call Aprop_C.thrown(player)
     // for the natural throw-sound dispatch (Path B in
     // research/findings/physics-grab/votv-throw-sound-path-2026-05-24.md).
-    { PP::Scope _s{PP::Bucket::EventFeed}; coop::event_feed::Update(session, g_netLocal); }
+    { PP::Scope _s{PP::Bucket::EventFeed}; coop::event_feed::Update(session, g_netLocal.Raw()); }
 }
 
 bool HasAnnouncedWorldReady() {

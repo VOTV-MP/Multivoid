@@ -80,9 +80,13 @@ const wchar_t* VerbName(Command c) {
 // The requesting player's BODY actor to follow: the host's own mainPlayer_C (kPeerIdHost) or a
 // remote client's puppet (a bare skeletal-mesh actor). Null while the owner is momentarily absent.
 void* ResolveOwnerBody(uint8_t ownerSlot) {
+    // Both branches return a VALIDATED pointer (Local() revalidates its cache;
+    // valid() is IsLiveByIndex on the puppet's captured index) -- callers need no
+    // bare IsLive on the result (islive-zeroav census row kerfur_command:138).
     auto& reg = coop::players::Registry::Get();
     if (ownerSlot == coop::players::kPeerIdHost) return reg.Local();
-    if (coop::RemotePlayer* p = reg.Puppet(ownerSlot)) return p->GetActor();
+    if (coop::RemotePlayer* p = reg.Puppet(ownerSlot))
+        return p->valid() ? p->GetActor() : nullptr;
     return nullptr;
 }
 
@@ -135,7 +139,7 @@ void RunFollowLoop() {
         void* kerfur = el ? el->GetActor() : nullptr;
         if (!kerfur || !R::IsLiveByIndex(kerfur, el->GetInternalIdx())) { dead.push_back(eid); continue; }
         void* body = ResolveOwnerBody(ownerSlot);
-        if (!body || !R::IsLive(body)) continue;  // owner momentarily gone -- keep the binding, skip this tick
+        if (!body) continue;  // owner momentarily gone -- keep the binding, skip this tick
         const auto loc = E::GetActorLocation(body);
         K::SetCommandState(kerfur, kKerfurStateIdle);  // re-assert (defensive vs any BP write)
         K::IssueFollowMoveTo(kerfur, body, loc.X, loc.Y, loc.Z, kFollowAcceptCm);

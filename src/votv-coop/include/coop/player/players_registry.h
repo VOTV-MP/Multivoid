@@ -35,6 +35,7 @@
 #pragma once
 
 #include "coop/element/element.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 
 #include <cstdint>
 #include <memory>
@@ -168,7 +169,9 @@ private:
     // mainPlayer_C with a non-null Controller. Game thread only.
     void* RescanLocal();
 
-    void* localCached_ = nullptr;       // local mainPlayer_C actor, cached
+    // Local mainPlayer_C actor, cached across frames (incl. menu windows) ->
+    // CachedObjRef, never a bare-IsLive raw pointer (islive-zeroav design s.3).
+    ue_wrap::CachedObjRef localCached_;
     // Negative-result TTL for Local(): at the MENU (no gameplay world) the
     // cache misses DETERMINISTICALLY, and per-tick callers (net_pump,
     // nameplate) would re-walk GUObjectArray at 60 Hz -- the v56 menu-window

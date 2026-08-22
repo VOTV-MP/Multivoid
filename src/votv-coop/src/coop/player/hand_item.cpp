@@ -518,8 +518,10 @@ void TickMirrors() {
             continue;
         }
         coop::RemotePlayer* pup = reg.Puppet(slot);
-        void* puppetActor = pup ? pup->GetActor() : nullptr;
-        if (!puppetActor || !R::IsLive(puppetActor)) {
+        // valid() = IsLiveByIndex on the puppet's captured index -- never bare
+        // IsLive on the cached actor (islive-zeroav census row hand_item:522).
+        void* puppetActor = (pup && pup->valid()) ? pup->GetActor() : nullptr;
+        if (!puppetActor) {
             // Puppet not up yet (join window) or torn down: keep the state,
             // drop any orphaned mirror, retry next tick.
             if (mirrorLive || m.actor) DestroyMirror(slot, "puppet gone");
