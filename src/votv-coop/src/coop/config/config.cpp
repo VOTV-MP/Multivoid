@@ -5,6 +5,7 @@
 #include "coop/config/config.h"
 
 #include "config_internal.h"
+#include "ue_wrap/core/paths.h"
 #include "coop/session/player_handshake.h"  // kNickMaxChars (ONE owner)
 #include "coop/text/utf8_codec.h"
 #include "coop/config/config_registry.h"
@@ -28,18 +29,6 @@
 #include <vector>
 
 namespace coop::config {
-
-std::wstring ModuleDir() {
-    HMODULE self = nullptr;
-    ::GetModuleHandleExW(
-        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-        reinterpret_cast<LPCWSTR>(&ModuleDir), &self);
-    wchar_t path[MAX_PATH] = {};
-    ::GetModuleFileNameW(self, path, MAX_PATH);
-    std::wstring p(path);
-    const size_t sep = p.find_last_of(L"\\/");
-    return sep == std::wstring::npos ? L"." : p.substr(0, sep);  // not-name-text: a path
-}
 
 std::string ReadEnv(const char* name) {
     // ARC D: read the environment WIDE and re-encode to UTF-8. Windows keeps the
@@ -185,7 +174,10 @@ static IniScan ScanIniFileAt(const std::wstring& path, Fn&& cb) {
     return st;
 }
 
-static std::wstring IniPath() { return ModuleDir() + L"\\multivoid.ini"; }
+static std::wstring IniPath() {
+    const std::wstring dir = ue_wrap::paths::ExeDir();
+    return dir.empty() ? std::wstring{} : dir + L"\\multivoid.ini";
+}
 
 static std::string StripInlineComment(const std::string& v, bool wsPrecededOnly);
 

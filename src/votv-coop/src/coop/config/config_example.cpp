@@ -24,6 +24,7 @@
 #include "coop/config/config_registry.h"
 #include "coop/version.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/paths.h"
 
 #include <windows.h>
 
@@ -174,7 +175,9 @@ IniScan ReadWholeFile(const std::wstring& path, std::string& bytes) {
 }  // namespace
 
 void GenerateExampleCatalog() {
-    const std::wstring path = ModuleDir() + L"\\multivoid.ini.example";
+    const std::wstring dir = ue_wrap::paths::ExeDir();
+    if (dir.empty()) return;
+    const std::wstring path = dir + L"\\multivoid.ini.example";
     const std::vector<std::string> lines = BuildExampleLines();
     int keys = 0;
     for (const auto& l : lines)

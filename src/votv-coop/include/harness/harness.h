@@ -17,10 +17,10 @@ namespace harness {
 // thread (each engine action is posted to the game thread). Requires the
 // game-thread dispatcher to be installed first. Non-blocking.
 //
-// Scenario is read from `scenario.txt` next to the mod DLL (one word):
-//   newgame -> skip straight into gameplay (open untitled_1), then report/shot
-//   none    -> launch only; do nothing automatic
-// Missing file defaults to "newgame" (the autonomous-test default).
+// The scenario comes from the VOTVCOOP_SCENARIO env var (per-launch signal;
+// the on-disk scenario.txt fallback was RETIRED 2026-06-06 because a leftover
+// file aliased later native launches -- see coop::config::ReadScenario).
+// No env (a native launch) -> "menu": boot to VOTV's own main menu.
 void Start();
 
 }  // namespace harness

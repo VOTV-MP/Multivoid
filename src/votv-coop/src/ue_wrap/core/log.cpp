@@ -1,11 +1,14 @@
 #include "ue_wrap/core/log.h"
 
+#include "ue_wrap/core/paths.h"
+
 #include <windows.h>
 
 #include <atomic>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <ctime>
 #include <locale.h>
 #include <mutex>
@@ -51,25 +54,17 @@ bool g_opened = false;
 // Optional log sink (the in-game console). Atomic so SetSink is lock-free vs Write.
 std::atomic<Sink> g_sink{nullptr};
 
-// Build "<dir of this DLL>\<logfile>". The filename is VOTVCOOP_LOG if set, else
-// multivoid.log -- so the two-instance LAN test can give each process its own log
-// (both instances load the SAME DLL from the SAME dir; without this they would
-// clobber one shared file).
+// Build "<game exe dir>\<logfile>". The filename is VOTVCOOP_LOG if set, else
+// multivoid.log (per-process log names for multi-instance tests). Anchored on
+// the EXE dir (ue_wrap::paths::ExeDir, the install-dir anchor) -- under UE4SS
+// the DLL itself lives in Mods\Multivoid\dlls\, which is loader-dependent and
+// (under shimloader) virtualized; the exe dir is the install's one real home.
 void LogPath(wchar_t (&out)[MAX_PATH]) {
-    HMODULE self = nullptr;
-    ::GetModuleHandleExW(
-        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-        reinterpret_cast<LPCWSTR>(&LogPath), &self);
-    wchar_t dll[MAX_PATH] = {};
-    ::GetModuleFileNameW(self, dll, MAX_PATH);
-    wchar_t* lastSep = nullptr;
-    for (wchar_t* p = dll; *p; ++p) {
-        if (*p == L'\\' || *p == L'/') lastSep = p;
-    }
     out[0] = L'\0';
-    if (lastSep) {
-        const size_t dirLen = static_cast<size_t>(lastSep - dll) + 1;
-        wcsncpy_s(out, MAX_PATH, dll, dirLen);
+    const std::wstring dir = paths::ExeDir();
+    if (!dir.empty()) {
+        wcscpy_s(out, dir.c_str());
+        wcscat_s(out, L"\\");
     }
     wchar_t name[64] = {};
     if (::GetEnvironmentVariableW(L"VOTVCOOP_LOG", name, 64) == 0 || name[0] == L'\0')

@@ -17,6 +17,7 @@
 #include "harness/sdk_check.h"
 
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/paths.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 
@@ -105,22 +106,9 @@ void ReportFooter(int ok, int total, int fail, int failPriority, int skipped) {
     }
 }
 
-// Find the directory containing the mod DLL so the report lands next to it
-// (same convention as multivoid.log, multivoid-loaded.txt, scenario.txt).
-std::wstring ModuleDir() {
-    HMODULE self = nullptr;
-    ::GetModuleHandleExW(
-        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-        reinterpret_cast<LPCWSTR>(&ModuleDir), &self);
-    wchar_t path[MAX_PATH] = {};
-    ::GetModuleFileNameW(self, path, MAX_PATH);
-    std::wstring p(path);
-    const size_t sep = p.find_last_of(L"\\/");
-    return sep == std::wstring::npos ? L"." : p.substr(0, sep);
-}
-
 void WriteReportFile() {
-    const std::wstring path = ModuleDir() + L"\\multivoid-compat-report.txt";
+    // The report lands beside the game exe (same convention as multivoid.log).
+    const std::wstring path = ue_wrap::paths::ExeDir() + L"\\multivoid-compat-report.txt";
     FILE* f = nullptr;
     if (_wfopen_s(&f, path.c_str(), L"w") != 0 || !f) {
         UE_LOGW("sdk-check: failed to open compat report '%ls' for writing", path.c_str());

@@ -27,7 +27,7 @@ enum class IniScan { Ok = 0, Absent = 1, Unreadable = 2 };
 // The one process-wide multivoid.ini lock (readers + writers + rebuilds).
 std::mutex& IniMutex();
 
-// ModuleDir()\multivoid.ini.
+// <exe dir>\multivoid.ini (ue_wrap::paths::ExeDir, the install-dir anchor).
 std::wstring LiveIniPath();
 
 // Deliver every line of `path` (verbatim, unbounded, trailing newline kept)

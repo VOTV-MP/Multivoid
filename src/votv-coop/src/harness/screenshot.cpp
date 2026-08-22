@@ -2,6 +2,7 @@
 
 #include "coop/session/shutdown.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/paths.h"
 
 #include <windows.h>
 #include <gdiplus.h>
@@ -26,19 +27,6 @@ void EnsureGdiPlus() {
         ULONG_PTR token = 0;  // intentionally leaked: GDI+ lives for the process
         Gdiplus::GdiplusStartup(&token, &gi, nullptr);
     });
-}
-
-// Directory of this mod DLL (the game's Win64 dir) -- screenshots land beside it.
-std::wstring ModuleDir() {
-    HMODULE self = nullptr;
-    ::GetModuleHandleExW(
-        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-        reinterpret_cast<LPCWSTR>(&ModuleDir), &self);
-    wchar_t path[MAX_PATH] = {};
-    ::GetModuleFileNameW(self, path, MAX_PATH);
-    std::wstring p(path);
-    const size_t sep = p.find_last_of(L"\\/");
-    return sep == std::wstring::npos ? L"." : p.substr(0, sep);
 }
 
 // The biggest visible top-level window owned by our process -- the game view.
@@ -124,7 +112,8 @@ DWORD WINAPI WatcherThread(LPVOID) {
 
 bool Capture(const wchar_t* label) {
     EnsureGdiPlus();
-    const std::wstring dir = ModuleDir() + L"\\coop-screenshots";
+    // Screenshots land beside the game exe (the install-dir anchor).
+    const std::wstring dir = ue_wrap::paths::ExeDir() + L"\\coop-screenshots";
     ::CreateDirectoryW(dir.c_str(), nullptr);
 
     HWND h = FindGameWindow();

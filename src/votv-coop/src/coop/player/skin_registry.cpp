@@ -2,7 +2,7 @@
 
 #include "coop/player/skin_registry.h"
 
-#include "coop/config/config.h"  // ModuleDir -- the pak folder is derived from the DLL location
+#include "ue_wrap/core/paths.h"  // ExeDir -- the pak folder is derived from the install dir
 #include "ue_wrap/core/log.h"
 
 #include <cwctype>
@@ -112,9 +112,9 @@ std::string PickRandomStarterSkin() {
 }
 
 std::wstring PakDir() {
-    // ModuleDir = <game>/VotV/Binaries/Win64 (the proxy DLL's folder). The model
-    // paks auto-mount from <game>/VotV/Content/Paks/LogicMods/multivoid.
-    const std::wstring base = coop::config::ModuleDir();
+    // ExeDir = <game>/VotV/Binaries/Win64. The model paks auto-mount from
+    // <game>/VotV/Content/Paks/LogicMods/multivoid.
+    const std::wstring base = ue_wrap::paths::ExeDir();
     if (base.empty()) return {};
     std::error_code ec;
     fs::path p = fs::path(base).parent_path().parent_path()

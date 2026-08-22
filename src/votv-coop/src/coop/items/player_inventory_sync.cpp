@@ -3,6 +3,7 @@
 #include "coop/items/player_inventory_sync.h"
 
 #include "coop/net/blob_chunks.h"
+#include "ue_wrap/core/paths.h"
 #include "coop/config/config.h"
 #include "coop/items/inventory_wire.h"
 #include "coop/net/protocol.h"
@@ -10,7 +11,6 @@
 #include "coop/session/player_handshake.h"
 #include "coop/text/utf8_codec.h"
 #include "coop/save/save_transfer.h"
-#include "coop/config/config.h"     // ModuleDir -- the coop_players store now lives in the GAME folder
 #include "ue_wrap/actors/begin_equipment.h"  // RULE-1 first-join: the game's own getData->AddEquipment equip
 #include "ue_wrap/engine/engine.h"      // Inc 4: SetSaveObjectReadyHook -- the pre-materialize apply point
 #include "ue_wrap/actors/inventory.h"
@@ -95,7 +95,7 @@ fs::path PlayerFilePath(const std::string& guid) {
     // chars must NEVER become a path component -- return empty so every write path no-ops cleanly,
     // foreclosing path traversal even if a non-hex guid ever reaches here. (Adversarial-verify HIGH.)
     if (!coop::player_handshake::IsValidGuid(guid)) return {};
-    const std::wstring base = coop::config::ModuleDir();
+    const std::wstring base = ue_wrap::paths::ExeDir();
     if (base.empty()) return {};
     const std::wstring slot = coop::save_transfer::HostSlot();
     if (slot.empty()) return {};

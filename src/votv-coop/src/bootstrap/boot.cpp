@@ -12,6 +12,7 @@
 #include "ui/boot_warning_dialog.h"  // v122: the duplicate-DLL install popup
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/paths.h"
 #include "ue_wrap/core/reflection.h"
 
 #include <windows.h>
@@ -46,26 +47,13 @@ unsigned long long MsSinceProcessStart() {
 }
 
 void WriteMarker(const char* entryTag) {
-    // Locate this DLL on disk so the marker lands next to it.
-    HMODULE self = nullptr;
-    ::GetModuleHandleExW(
-        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-        reinterpret_cast<LPCWSTR>(&WriteMarker), &self);
-
-    wchar_t dllPath[MAX_PATH] = {};
-    ::GetModuleFileNameW(self, dllPath, MAX_PATH);
-
-    // Replace the filename component with our marker name.
-    wchar_t* lastSep = nullptr;
-    for (wchar_t* p = dllPath; *p; ++p) {
-        if (*p == L'\\' || *p == L'/') lastSep = p;
-    }
+    // The marker lands beside the game exe (the install-dir anchor,
+    // ue_wrap/core/paths) -- same home as multivoid.log / multivoid.ini.
+    const std::wstring dir = ue_wrap::paths::ExeDir();
+    if (dir.empty()) return;
     wchar_t markerPath[MAX_PATH] = {};
-    if (lastSep) {
-        const size_t dirLen = static_cast<size_t>(lastSep - dllPath) + 1;
-        wcsncpy_s(markerPath, dllPath, dirLen);
-    }
-    wcscat_s(markerPath, L"multivoid-loaded.txt");
+    wcscpy_s(markerPath, dir.c_str());
+    wcscat_s(markerPath, L"\\multivoid-loaded.txt");
 
     FILE* f = nullptr;
     if (_wfopen_s(&f, markerPath, L"a") == 0 && f) {

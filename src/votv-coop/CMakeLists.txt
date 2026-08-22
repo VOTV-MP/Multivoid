@@ -215,6 +215,7 @@ add_library(votv-coop SHARED
     src/loader/cppmod_entry.cpp
     src/loader/cppmod_stubs.asm
     src/ue_wrap/core/log.cpp
+    src/ue_wrap/core/paths.cpp
     src/ue_wrap/core/sig_scan.cpp
     src/ue_wrap/core/reflection.cpp
     src/ue_wrap/core/reflection_props.cpp

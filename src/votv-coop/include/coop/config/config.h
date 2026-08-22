@@ -20,14 +20,12 @@
 
 namespace coop::config {
 
-// Directory of this mod DLL (its containing folder; no trailing slash).
-std::wstring ModuleDir();
-
 // Read an environment variable (ASCII). Empty string if unset.
 std::string ReadEnv(const char* name);
 
-// Read scenario string. Env override (VOTVCOOP_SCENARIO) -> scenario.txt
-// -> "newgame" default.
+// Read the launch scenario: the VOTVCOOP_SCENARIO env var (per-launch signal),
+// or "menu" on a native launch. (The on-disk scenario.txt fallback was RETIRED
+// 2026-06-06 -- a leftover file aliased later native launches.)
 std::string ReadScenario();
 
 // (arc 3: the string-keyed ReadIniValue is INTERNAL now -- product reads go

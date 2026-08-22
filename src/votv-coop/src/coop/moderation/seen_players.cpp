@@ -6,7 +6,7 @@
 #include "coop/player/players_registry.h"  // kMaxPeers
 #include "coop/text/utf8_codec.h"
 #include "coop/session/player_handshake.h"
-#include "coop/config/config.h"                // ModuleDir -- the file lives next to the DLL
+#include "ue_wrap/core/paths.h"                // ExeDir -- the file lives beside the game exe
 #include "ue_wrap/core/log.h"
 
 #include <windows.h>
@@ -40,7 +40,7 @@ std::unordered_map<std::string, Record> g_records;  // keyed by GUID; guarded by
 std::array<std::string, coop::players::kMaxPeers> g_onlineGuidBySlot{};
 
 fs::path RegistryPath() {
-    const std::wstring dir = coop::config::ModuleDir();
+    const std::wstring dir = ue_wrap::paths::ExeDir();
     if (dir.empty()) return {};
     return fs::path(dir) / L"multivoid-players.txt";
 }
