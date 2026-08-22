@@ -135,9 +135,12 @@ int FindSlotByKey(const coop::net::WireKey& k) {
 // instead. UAF-safe: the mirror is OUR stable spawn (it never morphs/self-frees like
 // the holder's source clump), so touching its root physics is safe; the gate still
 // protects the SENDER's snapshot path. [[project-bug-trash-chippile-uaf-crash]]
+// `actor` must arrive VALIDATED (fresh from a resolve, or drive.LiveActor() for
+// the cached-drive callers) -- the bare IsLive that sat here probed the cached
+// drive actor (islive-zeroav census rows remote_prop:140/:150). null = no-op.
 void DriveTogglePhysics(void* actor, void* mesh, bool simulate) {
     if (mesh) DriveSimulate(mesh, simulate);
-    else if (actor && R::IsLive(actor)) ue_wrap::engine::SetActorSimulatePhysics(actor, simulate);
+    else if (actor) ue_wrap::engine::SetActorSimulatePhysics(actor, simulate);
 }
 
 // v68: every release-shaped physics re-enable (explicit PropRelease, the
@@ -147,7 +150,8 @@ void DriveTogglePhysics(void* actor, void* mesh, bool simulate) {
 // sender's hold breaks -- the unconditional re-enable was exactly the
 // "host sees the camera fall" bug.
 bool StickHoldsPhysicsOff(void* actor) {
-    return actor && R::IsLive(actor) && ue_wrap::prop::IsDescendantOfProp(actor) &&
+    // Same validated-or-null param contract as DriveTogglePhysics above.
+    return actor && ue_wrap::prop::IsDescendantOfProp(actor) &&
            (ue_wrap::prop::IsFrozen(actor) || ue_wrap::prop::IsStatic(actor));
 }
 
@@ -291,13 +295,14 @@ void Tick(coop::net::Session& session) {
                     // physics on the prior body; generic for a clump). v68:
                     // unless a stick froze it mid-hold (then physics stays off).
                     UE_LOGI("remote_prop: slot %d implicit release (peer switched to a new key/eid)", slot);
-                    if (!StickHoldsPhysicsOff(drive.actor))
-                        DriveTogglePhysics(drive.actor, drive.mesh, true);
+                    void* liveA = drive.LiveActor();
+                    if (!StickHoldsPhysicsOff(liveA))
+                        DriveTogglePhysics(liveA, drive.mesh, true);
                     ResetDriveState(drive);
                 }
                 ResolveAndStartDrive(slot, pose);
             }
-            if (drive.actor && R::IsLive(drive.actor)) {
+            if (drive.LiveActor()) {
                 // Record the pose as the new lerp TARGET (AdvanceLerp below moves the
                 // actor toward it every tick -- a smooth follow, not a per-packet teleport).
                 BeginLerpToPose(drive, ue_wrap::FVector{pose.x, pose.y, pose.z},
@@ -331,8 +336,9 @@ void Tick(coop::net::Session& session) {
         if (drive.actor && !drive.isProxy && (nowMs - drive.lastApplyMs) > 500) {
             UE_LOGI("remote_prop: slot %d implicit release (%llu ms since last PropPose)",
                     slot, static_cast<unsigned long long>(nowMs - drive.lastApplyMs));
-            if (!StickHoldsPhysicsOff(drive.actor))
-                DriveTogglePhysics(drive.actor, drive.mesh, true);
+            void* liveA = drive.LiveActor();
+            if (!StickHoldsPhysicsOff(liveA))
+                DriveTogglePhysics(liveA, drive.mesh, true);
             ResetDriveState(drive);
         }
     }
@@ -382,7 +388,9 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
         if (d.actor && KeyMatchesCache(senderSlot, payload.key) &&
             (payload.elementId == 0 || d.lastEid == payload.elementId)) {
             releasedSlot = senderSlot;
-            propActor = d.actor;
+            propActor = d.LiveActor();  // slot-validated; null if the cached actor died
+                                        // (downstream applies then no-op, as the old
+                                        // per-use IsLive guards made them)
             meshToActOn = d.mesh;
         }
     }
@@ -446,7 +454,7 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
             UE_LOGI("remote_prop: fired Aprop_C.thrown(player=%p) + swing whoosh -- launch speed %.1f cm/s > threshold %.1f",
                     localPlayer, linSpeed, coop::net::kThrownLinVelThreshold);
         }
-    } else if (propActor && R::IsLive(propActor)) {
+    } else if (propActor) {  // validated-or-null since assignment (LiveActor / fresh resolve)
         // Non-Aprop_C clump (null mesh): re-enable physics + throw velocity via the GENERIC
         // root path so the mirror flies. Use PhysicsOnly collision (2, NOT QueryAndPhysics):
         // the PhysX contacts still make it fall + land + rest on the floor during its brief

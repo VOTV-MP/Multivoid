@@ -43,6 +43,14 @@ struct ActiveDrive {
                                  // foreign occupant (the setRainProperties-fatal class;
                                  // audit 2026-07-04 item (a)).
     void*        mesh = nullptr;
+
+    // The drive's actor SLOT-VALIDATED through actorIdx (islive-zeroav 2026-08-22:
+    // bare IsLive on the cached `actor` was the census's active_drive/remote_prop
+    // rows). nullptr when unset or dead/recycled.
+    void* LiveActor() const {
+        return ue_wrap::reflection::IsLiveByIndex(actor, actorIdx) ? actor : nullptr;
+    }
+
     std::string  lastKey;        // ASCII (the Aprop_C save UUID format); empty for a clump
     uint32_t     lastEid = 0;    // Prop Element id identity for the non-keyable clump
     uint64_t     lastApplyMs = 0;
@@ -130,9 +138,9 @@ inline void BeginLerpToPose(ActiveDrive& d, const ue_wrap::FVector& nloc,
         d.prevPoseMs = d.lastPoseMs = nowMs;
         d.haveTwoSnaps = false;     // only one distinct sample -> sit at it until the next pose
         d.lerpSeeded   = true;
-        if (d.actor && R::IsLive(d.actor)) {
-            E::SetActorLocation(d.actor, nloc);
-            E::SetActorRotation(d.actor, nrot);
+        if (void* a = d.LiveActor()) {
+            E::SetActorLocation(a, nloc);
+            E::SetActorRotation(a, nrot);
         }
         return;
     }
@@ -148,7 +156,7 @@ inline void BeginLerpToPose(ActiveDrive& d, const ue_wrap::FVector& nloc,
 // (frozen) or the actor died. Game thread.
 inline void AdvanceLerp(ActiveDrive& d, uint64_t nowMs) {
     if (!d.actor) return;
-    if (!R::IsLive(d.actor)) { d.haveTwoSnaps = false; return; }
+    if (!d.LiveActor()) { d.haveTwoSnaps = false; return; }
     if (!d.isProxy || !d.haveTwoSnaps) return;   // non-proxy snapped in BeginLerp; <2 samples -> sit at the pose
     // Render `span` BEHIND the newest pose. span = the REAL interval between the two buffered poses (clamped).
     uint64_t span = (d.lastPoseMs > d.prevPoseMs) ? (d.lastPoseMs - d.prevPoseMs) : kLerpMinMs;

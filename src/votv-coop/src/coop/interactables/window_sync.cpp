@@ -232,6 +232,7 @@ void MaybeSyntheticWipe() {
     if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;
     if (++s_ticks < 300) return;  // ~5s settle after connect (60 Hz tick)
     void* actor = nullptr;
+    int32_t idx = -1;
     std::wstring key;
     {
         std::lock_guard<std::mutex> lk(g_indexMutex);
@@ -239,8 +240,9 @@ void MaybeSyntheticWipe() {
         auto& kv = *g_byKey.begin();
         key = kv.first;
         actor = kv.second.actor;
+        idx = kv.second.idx;
     }
-    if (!actor || !R::IsLive(actor)) return;
+    if (!actor || !R::IsLiveByIndex(actor, idx)) return;  // the 4 sibling sites' shape (islive-zeroav row :243)
     float cur = 0.f;
     if (!BW::ReadClean(actor, cur)) return;
     float target = cur - 0.4f;

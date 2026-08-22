@@ -8,6 +8,7 @@
 #include "coop/props/remote_prop.h"       // ClearAnyDriveFor (evict the pose drive before destroying a proxy)
 #include "coop/props/trash_clump_pose_stream.h"  // v85: evict the per-eid carry drive before destroying a proxy
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"            // ResolvePileMesh
@@ -27,7 +28,11 @@ namespace R = ue_wrap::reflection;
 namespace E = ue_wrap::engine;
 
 struct ProxyEntry {
-    void* actor     = nullptr;
+    // CachedObjRef (islive-zeroav 2026-08-22): rooting makes the actor GC-immune in
+    // STEADY state, but a world teardown still force-kills actors regardless of the
+    // root set -- so cross-tick probes go through the slot-validated ref, not bare
+    // IsLive on the raw pointer (the census's 7 trash_proxy rows).
+    ue_wrap::CachedObjRef actor;
     void* comp      = nullptr;  // cached UStaticMeshComponent (invariant for the actor's life)
     int   ownerSlot = -1;       // originating peer slot (for the per-slot disconnect retire)
     bool  isClump   = false;    // current FORM (re-skinned pile<->clump) -- so NearestPileProxy can skip clumps
@@ -88,9 +93,9 @@ ClassKind ResolveClassKind(const std::wstring& className) {
 // resident yet on this client -- the caller then falls back to the pile mesh so a
 // proxy is never invisible.
 void* ResolveClumpMesh() {
-    static void* sDirtball = nullptr;
-    if (!sDirtball || !R::IsLive(sDirtball)) sDirtball = R::FindObject(L"dirtball", L"StaticMesh");
-    return sDirtball;
+    static ue_wrap::CachedObjRef sDirtball;
+    if (!sDirtball.Alive()) sDirtball.Set(R::FindObject(L"dirtball", L"StaticMesh"));
+    return sDirtball.Raw();  // just validated/refilled
 }
 
 // MEDIUM-1 last-ditch: the engine basic Cube, so a proxy is NEVER invisible even if
@@ -100,9 +105,9 @@ void* ResolveClumpMesh() {
 // caches -- so a full native StaticLoadObject primitive is not warranted; FindObject
 // (resident) is the proportionate guard. Last-good cached.
 void* ResolveCubeFallback() {
-    static void* sCube = nullptr;
-    if (!sCube || !R::IsLive(sCube)) sCube = R::FindObject(L"Cube", L"StaticMesh");
-    return sCube;
+    static ue_wrap::CachedObjRef sCube;
+    if (!sCube.Alive()) sCube.Set(R::FindObject(L"Cube", L"StaticMesh"));
+    return sCube.Raw();  // just validated/refilled
 }
 
 // Skin the proxy's StaticMeshComponent for the requested form. SetStaticMesh
@@ -163,9 +168,9 @@ void* SpawnProxy(coop::element::ElementId eid, uint8_t chipType, bool isClump, i
     // has since grabbed is the chipPile class (isClump=false) -- re-skinning on it would
     // flip a correctly-converted CLUMP back to a PILE. Form changes ride PropConvert only.
     if (auto it = g_proxies.find(eid);
-        it != g_proxies.end() && it->second.actor && R::IsLive(it->second.actor)) {
+        it != g_proxies.end() && it->second.actor.Alive()) {
         it->second.ownerSlot = ownerSlot;  // a re-bracket may re-stamp the owner
-        return it->second.actor;
+        return it->second.actor.Raw();     // just Alive()-validated
     }
     void* actor = E::SpawnActor(g_smaClass, loc, /*inertPawn=*/false);
     if (!actor) {
@@ -186,7 +191,12 @@ void* SpawnProxy(coop::element::ElementId eid, uint8_t chipType, bool isClump, i
     E::SetActorRootCollisionEnabled(actor, /*ECollisionEnabled::NoCollision=*/0);  // kinematic follower (aim-grab is a camera-ray cone, not collision)
     SkinProxy(actor, comp, chipType, isClump);
     ApplyProxyScale(actor, scale);                              // v83: host-sized (else default unit -> too small)
-    g_proxies[eid] = ProxyEntry{ actor, comp, ownerSlot, isClump };
+    ProxyEntry pe;
+    pe.actor.Set(actor);  // fresh from SpawnActor
+    pe.comp = comp;
+    pe.ownerSlot = ownerSlot;
+    pe.isClump = isClump;
+    g_proxies[eid] = pe;
     UE_LOGI("[PILE] trash_proxy: SPAWN eid=%u %s chipType=%u actor=%p ownerSlot=%d "
             "(AStaticMeshActor, rooted, NoCollision)",
             eid, isClump ? "clump" : "pile", static_cast<unsigned>(chipType), actor, ownerSlot);
@@ -197,8 +207,8 @@ void* ReskinProxy(coop::element::ElementId eid, uint8_t chipType, bool isClump, 
     UE_ASSERT_GAME_THREAD("trash_proxy::ReskinProxy");
     auto it = g_proxies.find(eid);
     if (it == g_proxies.end()) return nullptr;
-    void* actor = it->second.actor;
-    if (!actor || !R::IsLive(actor)) return nullptr;  // a rooted proxy is never stale -- defensive
+    void* actor = it->second.actor.Get();  // slot-validated (rooted, but teardown can kill)
+    if (!actor) return nullptr;
     SkinProxy(actor, it->second.comp, chipType, isClump);  // in place -> binding untouched -> no dup
     ApplyProxyScale(actor, scale);                         // v83: re-apply the per-form scale (clump != pile size)
     it->second.isClump = isClump;                          // track the new form (NearestPileProxy skips clumps)
@@ -209,7 +219,8 @@ void RetireProxy(coop::element::ElementId eid) {
     UE_ASSERT_GAME_THREAD("trash_proxy::RetireProxy");
     auto it = g_proxies.find(eid);
     if (it == g_proxies.end()) return;
-    void* actor = it->second.actor;
+    void* actor = it->second.actor.Raw();      // for pointer-compare drive evict + logs
+    void* liveActor = it->second.actor.Get();  // slot-validated for the destroy calls
     g_proxies.erase(it);
     // ClearAnyDriveFor -> Destroy -> RemoveFromRoot -> unbind. Evict the drive FIRST
     // so neither remote_prop::Tick nor ForceRelease touches the actor we destroy (a
@@ -219,9 +230,9 @@ void RetireProxy(coop::element::ElementId eid) {
     // memory GC-reapable (a rooted PendingKill actor would never be reaped = leak).
     coop::remote_prop::ClearAnyDriveFor(actor);
     coop::trash_clump_pose_stream::ClearDriveForEid(eid);  // v85: drop the host-auth per-eid carry drive too
-    if (actor && R::IsLive(actor)) {
-        E::DestroyActor(actor);
-        R::RemoveFromRoot(actor);
+    if (liveActor) {
+        E::DestroyActor(liveActor);
+        R::RemoveFromRoot(liveActor);
     }
     // Unbind the Prop mirror (deferred dtor outside the manager mutex -- the
     // documented teardown pattern; ~Prop -> ~Element -> Registry::UnregisterMirror).
@@ -235,7 +246,8 @@ void RetireProxyActorOnly(coop::element::ElementId eid) {
     UE_ASSERT_GAME_THREAD("trash_proxy::RetireProxyActorOnly");
     auto it = g_proxies.find(eid);
     if (it == g_proxies.end()) return;
-    void* actor = it->second.actor;
+    void* actor = it->second.actor.Raw();      // pointer-compare drive evict + logs
+    void* liveActor = it->second.actor.Get();  // slot-validated for the destroy calls
     g_proxies.erase(it);
     // Same drive-evict -> destroy -> un-root order as RetireProxy (GC can't interleave on the game thread),
     // but WITHOUT the Element unbind: the caller (remote_prop::OnConvert nativize hand-off) has already
@@ -243,9 +255,9 @@ void RetireProxyActorOnly(coop::element::ElementId eid) {
     // Element the native now owns (the destroy-before-load hazard). This is the ACTOR-only half of teardown.
     coop::remote_prop::ClearAnyDriveFor(actor);
     coop::trash_clump_pose_stream::ClearDriveForEid(eid);
-    if (actor && R::IsLive(actor)) {
-        E::DestroyActor(actor);
-        R::RemoveFromRoot(actor);
+    if (liveActor) {
+        E::DestroyActor(liveActor);
+        R::RemoveFromRoot(liveActor);
     }
     UE_LOGI("[PILE] trash_proxy: RETIRE-ACTOR-ONLY eid=%u actor=%p (drive-evicted, destroyed, un-rooted; "
             "Element KEPT -- rebound to the native pile by the caller)", eid, actor);
@@ -262,11 +274,12 @@ void* NearestPileProxy(const ue_wrap::FVector& fromLoc, float* outDistCm) {
     for (const auto& kv : g_proxies) {
         const ProxyEntry& e = kv.second;
         if (e.isClump) continue;                          // want a PILE form (a clump is the transient carry)
-        if (!e.actor || !R::IsLive(e.actor)) continue;
-        const ue_wrap::FVector p = E::GetActorLocation(e.actor);
+        void* a = e.actor.Get();  // slot-validated
+        if (!a) continue;
+        const ue_wrap::FVector p = E::GetActorLocation(a);
         const float dx = p.X - fromLoc.X, dy = p.Y - fromLoc.Y, dz = p.Z - fromLoc.Z;
         const float d2 = dx * dx + dy * dy + dz * dz;
-        if (best2 < 0.f || d2 < best2) { best2 = d2; best = e.actor; }
+        if (best2 < 0.f || d2 < best2) { best2 = d2; best = a; }
     }
     if (outDistCm) *outDistCm = (best2 >= 0.f) ? std::sqrt(best2) : -1.f;
     return best;
@@ -276,8 +289,7 @@ void* ProxyActorForEid(coop::element::ElementId eid) {
     UE_ASSERT_GAME_THREAD("trash_proxy::ProxyActorForEid");
     auto it = g_proxies.find(eid);
     if (it == g_proxies.end()) return nullptr;
-    void* actor = it->second.actor;
-    return (actor && R::IsLive(actor)) ? actor : nullptr;
+    return it->second.actor.Get();  // slot-validated
 }
 
 coop::element::ElementId EidForAimedPileProxy(const ue_wrap::FVector& camLoc, const ue_wrap::FVector& camFwd,
@@ -293,8 +305,9 @@ coop::element::ElementId EidForAimedPileProxy(const ue_wrap::FVector& camLoc, co
     for (const auto& kv : g_proxies) {
         const ProxyEntry& e = kv.second;
         if (e.isClump) continue;                          // a clump-form proxy is the transient carry -- not grabbable
-        if (!e.actor || !R::IsLive(e.actor)) continue;
-        const ue_wrap::FVector p = E::GetActorLocation(e.actor);
+        void* a = e.actor.Get();  // slot-validated
+        if (!a) continue;
+        const ue_wrap::FVector p = E::GetActorLocation(a);
         const float dx = p.X - camLoc.X, dy = p.Y - camLoc.Y, dz = p.Z - camLoc.Z;
         const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
         if (dist > maxRangeCm || dist < 1.f) continue;

@@ -196,28 +196,35 @@ void SyncDestroyedTrackedProp(void* actorKey, coop::element::ElementId eid) {
 
 void DestroyLocalProp(void* actor, bool deferred) {
     if (!actor) return;
-    auto doDestroy = [actor]() {
-        static void* sActorCls = nullptr;
+    // Capture the slot ref NOW (actor is live at every call site -- each caller just
+    // resolved it): the deferred task probes it a TICK LATER, which made the old
+    // lambda-captured raw pointer + bare IsLive the census's cross-task violator
+    // (prop_destroy_seam:213). Alive() reads array slots only.
+    ue_wrap::CachedObjRef ref;
+    ref.Set(actor);
+    auto doDestroy = [ref]() {
+        static ue_wrap::CachedObjRef sActorCls;
         static void* sDestroyFn = nullptr;
-        if (!sActorCls || !R::IsLive(sActorCls)) {
-            sActorCls = R::FindClass(P::name::ActorClassName);
+        if (!sActorCls.Alive()) {
+            sActorCls.Set(R::FindClass(P::name::ActorClassName));
             sDestroyFn = nullptr;
         }
-        if (sActorCls && !sDestroyFn) {
-            sDestroyFn = R::FindFunction(sActorCls, P::name::DestroyActorFn);
+        if (sActorCls.Raw() && !sDestroyFn) {
+            sDestroyFn = R::FindFunction(sActorCls.Raw(), P::name::DestroyActorFn);
         }
         if (!sDestroyFn) {
-            UE_LOGW("spawner-suppress: K2_DestroyActor UFunction unresolved -- cannot destroy local %p", actor);
+            UE_LOGW("spawner-suppress: K2_DestroyActor UFunction unresolved -- cannot destroy local %p", ref.Raw());
             return;
         }
-        if (!R::IsLive(actor)) {
+        void* target = ref.Get();
+        if (!target) {
             UE_LOGI("spawner-suppress: deferred destroy target %p no longer live (already destroyed elsewhere) -- skip",
-                    actor);
+                    ref.Raw());
             return;
         }
         // Mark BEFORE calling destroy so OUR PRE-observer skips broadcast.
-        coop::prop_echo_suppress::MarkIncomingDestroy(actor);
-        R::CallFunction(actor, sDestroyFn, nullptr);
+        coop::prop_echo_suppress::MarkIncomingDestroy(target);
+        R::CallFunction(target, sDestroyFn, nullptr);
     };
     if (deferred) {
         GT::Post(doDestroy);

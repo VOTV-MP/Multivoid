@@ -13,6 +13,7 @@
 #include "coop/props/prop_element_tracker.h"  // IndexActorKey
 #include "coop/props/prop_wire_parity.h"      // RestoreCollisionIfNeeded / SpParitySimulate
 #include "coop/props/remote_prop.h"           // RegisterPropMirror / DriveSimulate / DriveSet*Velocity
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/fname_utils.h"
@@ -32,17 +33,17 @@ namespace {
 
 // PropSpawn UFunction resolution (cached one-shot). Spawn path uses the
 // deferred-spawn pair on UGameplayStatics CDO; setKey is on Aprop_C base.
-void* g_gsCdo            = nullptr;
+ue_wrap::CachedObjRef g_gsCdo;   // slot-validated self-healing cache (islive-zeroav row :42)
 void* g_beginSpawnFn     = nullptr;
 void* g_finishSpawnFn    = nullptr;
 void* g_propSetKeyFn     = nullptr;
 bool  g_spawnResolved    = false;
 
 bool ResolveSpawnFns() {
-    if (g_spawnResolved && R::IsLive(g_gsCdo)) return true;
-    g_gsCdo = R::FindClassDefaultObject(P::name::GameplayStaticsClass);
-    if (!g_gsCdo) return false;
-    void* cls = R::ClassOf(g_gsCdo);
+    if (g_spawnResolved && g_gsCdo.Alive()) return true;
+    g_gsCdo.Set(R::FindClassDefaultObject(P::name::GameplayStaticsClass));
+    if (!g_gsCdo.Raw()) return false;
+    void* cls = R::ClassOf(g_gsCdo.Raw());
     if (!cls) return false;
     g_beginSpawnFn  = R::FindFunction(cls, P::name::BeginDeferredSpawnFn);
     g_finishSpawnFn = R::FindFunction(cls, P::name::FinishSpawningActorFn);
@@ -115,7 +116,7 @@ void* Materialize(const coop::net::PropSpawnPayload& payload, int senderSlot,
         begin.SetRaw(L"SpawnTransform", &xform, sizeof(xform));
         begin.Set<uint8_t>(L"CollisionHandlingOverride", kAlwaysSpawn);
         begin.Set<void*>(L"Owner", nullptr);
-        if (!Call(g_gsCdo, begin)) {
+        if (!Call(g_gsCdo.Raw(), begin)) {
             UE_LOGE("remote_prop::OnSpawn: BeginDeferredActorSpawnFromClass call failed");
             return nullptr;
         }
@@ -228,7 +229,7 @@ void* Materialize(const coop::net::PropSpawnPayload& payload, int senderSlot,
         ParamFrame finish(g_finishSpawnFn);
         finish.Set<void*>(L"Actor", spawned);
         finish.SetRaw(L"SpawnTransform", &xform, sizeof(xform));
-        if (!Call(g_gsCdo, finish)) {
+        if (!Call(g_gsCdo.Raw(), finish)) {
             UE_LOGE("remote_prop::OnSpawn: FinishSpawningActor call failed");
             return nullptr;
         }

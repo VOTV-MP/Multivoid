@@ -28,6 +28,7 @@
 #include "coop/props/trash_proxy.h"           // IsProxy / RetireProxy (proxy teardown path)
 #include "ue_wrap/engine/engine.h"                   // ReleaseMainPlayerGrabIfHolding
 #include "ue_wrap/core/hot_path_guard.h"           // UE_ASSERT_GAME_THREAD
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"                     // IsChipPile / IsGarbageClump
 #include "ue_wrap/core/reflection.h"
@@ -44,13 +45,13 @@ namespace {
 
 // Cached K2_DestroyActor UFunction for receiver-side destroys.
 void* g_destroyActorFn = nullptr;
-void* g_actorCls       = nullptr;
+ue_wrap::CachedObjRef g_actorCls;  // slot-validated self-healing cache (islive-zeroav row :50)
 
 bool ResolveDestroyFn() {
-    if (g_destroyActorFn && R::IsLive(g_actorCls)) return true;
-    g_actorCls = R::FindClass(P::name::ActorClassName);
-    if (!g_actorCls) return false;
-    g_destroyActorFn = R::FindFunction(g_actorCls, P::name::DestroyActorFn);
+    if (g_destroyActorFn && g_actorCls.Alive()) return true;
+    g_actorCls.Set(R::FindClass(P::name::ActorClassName));
+    if (!g_actorCls.Raw()) return false;
+    g_destroyActorFn = R::FindFunction(g_actorCls.Raw(), P::name::DestroyActorFn);
     return g_destroyActorFn != nullptr;
 }
 

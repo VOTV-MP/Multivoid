@@ -5,6 +5,7 @@
 #include "coop/net/session.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
@@ -35,8 +36,9 @@ int32_t g_buttonSaveOff = -1;     // ui_menu_C -> button_Save (UButton*)
 int32_t g_isPauseOff = -1;        // ui_menu_C -> isPause (bool)
 
 // Cached live pause-menu instance (GameInstance-owned -> persists the whole session).
-// Revalidated by IsLive on each use; only re-walked when stale.
-void* g_menuInstance = nullptr;
+// CachedObjRef: probed on EVERY ESC press incl. after a world swap freed the old
+// instance (islive-zeroav census row :90); only re-walked when stale.
+ue_wrap::CachedObjRef g_menuInstance;
 
 // UWidget::bIsEnabled is a PACKED bitfield @ +0xB4 (bit 0x04; siblings bIsVariable=0x01,
 // bCreatedByConstructionScript=0x02, bOverride_Cursor=0x08). READING a bit is safe; WRITING
@@ -87,10 +89,10 @@ void* PauseSaveButton(void* menu) {
 // dispatch). Resolve the cached GameInstance-owned ui_menu instance + disable its Save button.
 void OnEscapePost(void* /*self*/, void* /*function*/, void* /*params*/) {
     if (!IsClient()) return;
-    if (!g_menuInstance || !R::IsLive(g_menuInstance)) {
-        g_menuInstance = R::FindObjectByClass(prof::name::UiMenuClass);  // one-time walk, then cached
+    if (!g_menuInstance.Alive()) {
+        g_menuInstance.Set(R::FindObjectByClass(prof::name::UiMenuClass));  // one-time walk, then cached
     }
-    if (void* btn = PauseSaveButton(g_menuInstance)) ApplyGreyOut(btn);
+    if (void* btn = PauseSaveButton(g_menuInstance.Raw())) ApplyGreyOut(btn);
 }
 
 // POST observer on ui_menu_C::Tick: `self` IS the menu (zero scan). Self-heal -- only

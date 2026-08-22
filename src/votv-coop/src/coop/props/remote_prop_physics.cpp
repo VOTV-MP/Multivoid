@@ -13,6 +13,7 @@
 #include "coop/props/remote_prop.h"
 #include "remote_prop_internal.h"  // DrivePropThrown cross-TU declaration
 
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
@@ -38,7 +39,7 @@ namespace {
 // applies linear + angular velocity AFTER SetSimulatePhysics(true) so the
 // body resumes dynamic sim with the matching launch state. No AddImpulse
 // (the impulse was the v4 partial fix; replaced cleanly per RULE 2).
-void*  g_primCompCls            = nullptr;
+ue_wrap::CachedObjRef g_primCompCls;  // slot-validated self-healing cache (islive-zeroav row :84)
 void*  g_setSimulateFn          = nullptr;
 void*  g_setLinVelFn            = nullptr;
 void*  g_setAngVelFn            = nullptr;
@@ -81,15 +82,15 @@ bool ResolveUFns() {
     // succeeded but `prop_C` had not yet loaded, this picks up `thrown` the
     // next time a release fires.
     TryResolvePropThrown();
-    if (g_resolved && R::IsLive(g_primCompCls)) return true;
-    g_primCompCls = R::FindClass(P::name::PrimitiveComponentClass);
-    if (!g_primCompCls) {
+    if (g_resolved && g_primCompCls.Alive()) return true;
+    g_primCompCls.Set(R::FindClass(P::name::PrimitiveComponentClass));
+    if (!g_primCompCls.Raw()) {
         UE_LOGW("remote_prop: PrimitiveComponent class not found");
         return false;
     }
-    g_setSimulateFn = R::FindFunction(g_primCompCls, P::name::SetSimulatePhysicsFn);
-    g_setLinVelFn   = R::FindFunction(g_primCompCls, P::name::SetPhysicsLinearVelocityFn);
-    g_setAngVelFn   = R::FindFunction(g_primCompCls, P::name::SetPhysicsAngularVelocityInDegreesFn);
+    g_setSimulateFn = R::FindFunction(g_primCompCls.Raw(), P::name::SetSimulatePhysicsFn);
+    g_setLinVelFn   = R::FindFunction(g_primCompCls.Raw(), P::name::SetPhysicsLinearVelocityFn);
+    g_setAngVelFn   = R::FindFunction(g_primCompCls.Raw(), P::name::SetPhysicsAngularVelocityInDegreesFn);
     if (!g_setSimulateFn || !g_setLinVelFn || !g_setAngVelFn) {
         UE_LOGW("remote_prop: UFunction lookup failed (sim=%p setLin=%p setAng=%p)",
                 g_setSimulateFn, g_setLinVelFn, g_setAngVelFn);
