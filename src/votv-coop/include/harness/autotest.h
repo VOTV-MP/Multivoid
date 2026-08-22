@@ -271,6 +271,14 @@ DWORD WINAPI RagdollSpawnProbeThread(LPVOID arg);
 void RunMenuTravelProbe();
 DWORD WINAPI MenuTravelProbeThread(LPVOID arg);
 
+// Deterministic zero-AV drill for the CachedObjRef discipline (islive-zeroav
+// design section 4.2, harness/autotest_islive_drill.cpp): decommitted-page fake
+// object; legacy bare IsLive must fault exactly once (absorbed by its SEH),
+// CachedObjRef::Alive() must answer false with ZERO AVs. Registers a SCOPED
+// diagnostic VEH for the drill body only. Env VOTVCOOP_RUN_ISLIVE_DRILL=1;
+// DEV smoke lane only.
+DWORD WINAPI IsLiveDrillThread(LPVOID arg);
+
 // Fog ON/OFF model + clear-path PROBE (2026-06-01, harness/autotest_fog_probe.cpp).
 // SINGLE instance, role-agnostic (plain single-player; NO connection). Gates the
 // host-authoritative weather fix (hands-on bug: client STRONG MIST while host

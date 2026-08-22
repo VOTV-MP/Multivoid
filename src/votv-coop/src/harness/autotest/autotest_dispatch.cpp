@@ -130,6 +130,11 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // (for the client-death flee-to-menu fix). No connection needed.
     SpawnIf("VOTVCOOP_RUN_MENUTRAVEL_PROBE", "menu-travel probe", &MenuTravelProbeThread, role);
 
+    // CachedObjRef zero-AV drill: solo, engine-independent (fake decommitted-page
+    // object). Proves legacy IsLive faults exactly once (absorbed) while
+    // CachedObjRef::Alive() answers with zero AVs. DEV smoke lane only.
+    SpawnIf("VOTVCOOP_RUN_ISLIVE_DRILL", "islive zero-AV drill", &IsLiveDrillThread, role);
+
     // Fog ON/OFF model + clear-path probe: solo. Forces fog on, samples
     // finalFogDensity/thickFog/actors, then runs the RE'd clear sequence -- gates
     // the host-authoritative weather fix (client mist while host clear). No connection.

@@ -83,6 +83,14 @@ bool IsLive(void* obj);
 // UObject* cached past the current game-thread slice.
 bool IsLiveByIndex(void* obj, int32_t internalIdx);
 
+// Read the FUObjectItem.SerialNumber at a GUObjectArray slot -- array-slot read
+// only (never the object's memory), so it is safe on any thread and after a
+// purge. UE assigns serials LAZILY (0 until the first weak ref to the object),
+// so 0 means "never serialized", not "dead". Returns 0 for an out-of-range
+// index. Consumed by CachedObjRef's opportunistic serial rule
+// (ue_wrap/core/cached_obj_ref.h).
+int32_t SlotSerial(int32_t internalIdx);
+
 // Read a UObject's InternalIndex (its stable slot in GUObjectArray). MUST be
 // called only when `obj` is known live (it dereferences `obj`). Returns -1 for
 // null. Cache the result so the pointer can later be validated via

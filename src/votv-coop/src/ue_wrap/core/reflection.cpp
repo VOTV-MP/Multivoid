@@ -164,6 +164,13 @@ bool IsLiveByIndex(void* obj, int32_t internalIdx) {
     return (flags & kKillFlags) == 0;
 }
 
+int32_t SlotSerial(int32_t internalIdx) {
+    if (internalIdx < 0) return 0;
+    uint8_t* item = ItemAt(internalIdx);
+    if (!item) return 0;
+    return *reinterpret_cast<int32_t*>(item + O::FUObjectItem_SerialNumber);
+}
+
 namespace {
 // Cold path: log one IsLive fault with the CALLER attributed module-relative.
 // Born from the WP-2 IsLive/VEH finding (2026-08-22): a co-resident VEH crash
