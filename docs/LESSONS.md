@@ -1499,7 +1499,11 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   because the new code `Flush()`es at its own milestones. *Look FIRST:* after any killed process, trust
   only lines at-or-before the last WARN/ERROR/explicit-Flush; corroborate "did X run" with kernel facts
   (module lists, files created); a drill that NEEDS an INFO line to survive puts a Flush in the path
-  under test or ends with WM_CLOSE. `memory/lesson_kill_teardown_discards_buffered_info_log_lines.md`
+  under test or ends with WM_CLOSE. **Sharpened 2026-08-22: a QUIET SCREEN (the main menu) buries the
+  tail indefinitely — two D1 differential runs read as "no injection" because the re-injection INFO
+  lines sat buffered for 25+ s until the kill. Recipe: any instrument whose evidence is INFO lines read
+  after a kill OWNS a `ue_wrap::log::Flush()` at its final marker (menutravel DONE + wire_census Tick
+  both do now).** `memory/lesson_kill_teardown_discards_buffered_info_log_lines.md`
 
 - **2026-08-22 -- Python piped through the harness Git-Bash heredoc HALVES backslash runs even with
   a QUOTED delimiter; any script containing `\` must go through the Write tool to a .py file.**
@@ -2517,7 +2521,10 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   community runs EXPERIMENTAL UE4SS (not our 3.0.1) — the double-detour reproduces on both. All C++ mods
   (DebugMod/CrashContext/PBMovement) use UE4SS's OWN API (no second inline hooker). Multivoid drops as
   `shimloader/mod/Multivoid/dlls/main.dll` + `enabled.txt` (Thunderstore mods load via `enabled.txt`, not
-  `mods.txt`). ExeDir anchor WORKS under the VFS. `memory/lesson_realistic_votv_modded_stack.md`
+  `mods.txt`). ExeDir anchor WORKS under the VFS. **FIXTURE HYGIENE (2026-08-22): revert repro
+  fixtures on the coop rig the moment the repro ends — a leftover-enabled ArmPE on HOST/CLIENT_1
+  caused 2 phantom intermittent boot fatals hours later (`Mods\ArmPE\enabled.txt` → `.off`).**
+  `memory/lesson_realistic_votv_modded_stack.md`
 
 ## 5. Engine / UE4 facts
 
@@ -2659,7 +2666,12 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   `research/findings/tooling/votv-islive-zeroav-cachedobjref-DESIGN-2026-08-22.md` Appendix A). Two
   sharpenings from that pass: `IsLiveByIndex` never reads FUObjectItem **SerialNumber**, so a
   same-address SAME-SLOT successor passes (ABA — filed residual); and UE assigns serials LAZILY (0 until
-  a weak ref exists), so naive serial capture does not close it either.
+  a weak ref exists), so naive serial capture does not close it either. **CONVERTED WHOLE 2026-08-22
+  night (`f675de11`..`712fa33b`): the discipline is now a TYPE** — `ue_wrap::CachedObjRef` (+ one-root
+  accessors `Element::LiveActor()` / `ActiveDrive::LiveActor()`), policed by
+  `tools/reflection/islive_gate.ps1` (CI PASS = 0 bare-IsLive-on-static) + the deterministic decommit
+  drill (`VOTVCOOP_RUN_ISLIVE_DRILL=1`). LOOK FIRST now: `ue_wrap/core/cached_obj_ref.h` + the design
+  doc's Appendix B fill-site table.
   `memory/lesson_islive_recycled_slot_blind_use_by_index.md`
 - **2026-08-22 — a dying world's actors are NOT kill-flagged even after the MENU world is up** (measured:
   `trash_pile` re-indexed 311 of the dying gameplay world's piles AT the menu, 16:46:03 — every one
@@ -2668,9 +2680,13 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   dying world for the flee poll's ≤4 s window, and a session-install fanout re-running in that window
   indexes soon-to-dangle actors. World-state gates must key on WORLD IDENTITY / travel-start signals,
   never on per-object liveness. NOTE: `engine.cpp` `g_worldContext` is the GAMEINSTANCE (immortal) — not
-  a current-world read. LOOK FIRST: the D2 section of
-  `research/findings/tooling/votv-islive-zeroav-cachedobjref-DESIGN-2026-08-22.md` (seam candidates +
-  the unmeasured 3-clock race + the wire-window probe).
+  a current-world read. **WIRE LEG MEASURED 2026-08-22 (`mp.py wirewindow`, permanent instrument): the
+  exit window leaks NOTHING** — an EXISTING gameplay→MENU session-stop edge (`net_pump`) closes the
+  session at ~+1 s (not the 4 s flee poll); only ~2 s of pose stream crosses; zero reliables; the
+  destroy-seam episode gates held under world-teardown mass K2_DestroyActor → D2 stays deferred, its
+  residual harm = wasted local work. LOOK FIRST: the D2 section of
+  `research/findings/tooling/votv-islive-zeroav-cachedobjref-DESIGN-2026-08-22.md` (probe RESULT +
+  seam candidates), and `coop/dev/wire_census` for re-measuring.
   `memory/lesson_dying_world_actors_not_killflagged_at_menu.md`
 - **A runtime-spawned `AStaticMeshActor` is STATIC mobility** → set Movable BEFORE `SetActorLocation` (a
   Static root silently no-ops the teleport). `memory/lesson_runtime_staticmeshactor_must_be_movable.md`
@@ -2768,6 +2784,16 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   **non-canonical control transfer** (`#GP` sets no CR2 → address reported as -1), i.e. a corrupted
   jump-target pointer, not a null deref.
   `memory/lesson_votv_crash_dumps_live_in_localappdata.md`
+- **2026-08-22 — every UE4SS C++ mod ships as `main.dll` (FOUR modules named `main.dll` in one real-env
+  process: Multivoid + DebugMod + CrashContext + PBMovement), so a crash frame naming `main.dll` is
+  AMBIGUOUS until matched by module BASE+SIZE** — ours is trivially the ~18 MB one (0x11A9000
+  SizeOfImage; stock mods are 64 KB–816 KB); a naive resolver nearly attributed the 19:17 real-env
+  crash to the wrong mod. Bonus recipe: a full minidump parse needs no cdb — ~80 lines of Python
+  (streams: modules=4, exception=6, MemoryList=5 for the stack scan; `ModuleNameRva` @ +0x14,
+  ThreadContext locator @ exception-rva+8+152; DEP-exec AV with RIP=0 = call through a NULLed
+  pointer). LOOK FIRST: `tools/debug/parse_dump.py`; symbolize by rebuilding the
+  deployed sha's commit for its PDB.
+  `memory/lesson_every_ue4ss_mod_is_maindll_disambiguate_dumps_by_base.md`
 
 ## 6. Assets, models, geometry
 

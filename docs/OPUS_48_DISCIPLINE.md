@@ -56,8 +56,11 @@ These are mechanical — obeying them requires no intelligence, only discipline:
 - Mirrors: brains OFF (tick/RNG/fuses/inputs) — a mirrored actor with a live brain
   acts on the WRONG machine (it will grab the viewer's local player, double-roll RNG,
   double-explode). This class of bug is subtle to debug and trivial to prevent.
-- Cached actor pointers across ticks: IsLiveByIndex with the CAPTURED index, never
-  bare IsLive (recycled slots).
+- Cached actor pointers across ticks: `ue_wrap::CachedObjRef` (Set at a fresh
+  moment, Alive()/Get() thereafter — array-slot reads only), never bare IsLive
+  (recycled slots + the VEH false-crash class). Element/ActiveDrive carry it
+  built-in: use `LiveActor()`. Policed by `tools/reflection/islive_gate.ps1`
+  (2026-08-22: all 78 census violators converted).
 - Engine UFunctions: game thread only. Raw field writes only for fields the game
   itself raw-writes; anything with a setter goes through the setter.
 - Per-tick code: nothing that allocates or walks GUObjectArray in the steady state;

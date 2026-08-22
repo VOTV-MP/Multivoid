@@ -53,7 +53,7 @@ proxy / dup-dialog retire WHOLE per RULE 2 — no standalone-and-UE4SS dual path
 | WP | What | Status |
 |----|------|--------|
 | **WP-1** | Spike: prove the C-ABI shim boots the one binary as a UE4SS mod; measure the double-PE-detour survivability. | **AS-BUILT** — commit `cddb116c` (2026-08-21 eve). Matrix green ~110 ms; LAN join worked; double-detour "alive" on a SMALL sample (later found to crash ~2/10, see §3). WP-4 spike findings: ini err=3 under VFS; shimloader panics on `xinput1_3.dll`. |
-| **WP-2** | The loader cut: delete `xinput_proxy.cpp` + the proxy deploy path (RULE 2); `cppmod_entry.cpp` in; predecessor detection + mutex; keep EVERYTHING else. | **IN PROGRESS.** Pre-cut LANDED (§2). Fix (**B**, §4) is BUILT + default-ON and its compose is **VERIFIED** (2026-08-22 16:02 real-env byte decode + 16:25 DEV `POLYHOOK-COMPOSED` boot, §4 Proof status). Remaining before the proxy deletion: the IsLive/VEH exit-to-menu coexistence crash (§4) + commit 3 itself. |
+| **WP-2** | The loader cut: delete `xinput_proxy.cpp` + the proxy deploy path (RULE 2); `cppmod_entry.cpp` in; predecessor detection + mutex; keep EVERYTHING else. | **IN PROGRESS.** Pre-cut LANDED (§2). Fix (**B**, §4) is BUILT + default-ON and its compose is **VERIFIED** (2026-08-22 16:02 real-env byte decode + 16:25 DEV `POLYHOOK-COMPOSED` boot, §4 Proof status). The IsLive/VEH arc is BUILT (D1, 2026-08-22 night, §4 -- run B pending the user). Remaining before the proxy deletion: symbolize the 19:17 real-env EXEC-at-NULL dump (§4 residuals), B's teardown leak-at-death residual, then commit 3 itself. |
 | **WP-4** | Fix the stale install/update/uninstall prose + the site + installer for the UE4SS lane. | **PARKED** — census written (`votv-ue4ss-stale-loader-prose-CENSUS-2026-08-22.md`, ~139 rows); fix deferred until the arc ships. |
 | **WP-6** | Distribution re-home (the `multivoid-<game>-<build>.dll` filename + master + release flow onto the mod-folder shape). | **PARKED.** |
 | **WP-7** | The native DEBUG subsystem (USER 2026-08-21: adopt UE4SS's debug tooling / DebugMod ideas). | **PARKED** — scoped in the design finding §3c. |
@@ -178,8 +178,8 @@ UE4SS's.** (This corrects an earlier framing that called C "B's eventual retirem
 - **OPEN (2026-08-22 19:17, REAL ENV, dump analyzed): boot crash = EXEC-at-NULL with OUR frames
   on the faulting thread.** The user's real game (`Desktop\a09n\...\Win64`, profile build
   `F71621E0`, fix B ON, experimental UE4SS + VoidFax/CrashContext/Fusion stack) crashed ~7 s
-  after launch; `crash_2026_08_22_19_17_22*.dmp` (37 MB) parsed by hand (scratchpad
-  `parse_dump.py`): exception `0xC0000005` DEP-EXEC of address **0x0** (RIP=0 — a call through a
+  after launch; `crash_2026_08_22_19_17_22*.dmp` (37 MB) parsed by hand
+  (`tools/debug/parse_dump.py`): exception `0xC0000005` DEP-EXEC of address **0x0** (RIP=0 — a call through a
   NULLed function pointer), and the faulting thread's stack resolves into **our main.dll**
   (base sz 0x11A9000 = the 17.5 MB Multivoid module, many frames) interleaved with
   **chrome_elf.dll** (VoidFax's CEF — its own hooker), **dxgi.dll**, win32u/dwmapi — the shape of
@@ -250,7 +250,7 @@ The double-detour crash is **config-dependent, not universal.** Measured in the 
 - **The ExeDir anchor works under the shimloader VFS** (our `multivoid.log`/`.ini` land in the real
   a09n exe dir, not lost in the VFS) — but one boot failed to rotate the log (stale-log caveat).
 
-### The IsLive / VEH exit-to-menu FALSE-CRASH — measured + design converged (2026-08-22 eve)
+### The IsLive / VEH exit-to-menu FALSE-CRASH — measured, designed, **D1 BUILT 2026-08-22 night**
 
 **Re-scoped by measurement: it is NOT a crash.** Exiting to the menu (the user was HOSTING) produced two
 CrashContext reports 9 s apart at `main.dll+0x11CC78` = `ue_wrap::reflection::IsLive` — but CrashContext
@@ -275,17 +275,29 @@ lost) and the 15:45 caller stays formally unnamed. Run B (post-fix exit) = accep
 resolving into main.dll, no popup) — necessary-not-sufficient; the deterministic drill carries the
 zero-AV proof.
 
+**D1 BUILT (2026-08-22 night, commits `f675de11`..`712fa33b`): all 78 census sites converted.**
+Evidence: `tools/reflection/islive_gate.ps1` CI-mode PASS (0 bare-IsLive-on-static tree-wide); the
+deterministic decommit drill (`VOTVCOOP_RUN_ISLIVE_DRILL=1`) PASS on pre- AND post-conversion bytes
+(legacy = exactly 1 absorbed AV with caller attribution; `CachedObjRef::Alive()` = 0 AVs); the
+differential no-bypass menutravel bracket PASS around the prime-suspect commit; LAN smoke PASS on the
+final bytes with zero IsLive WARNs. New one-root accessors: `Element::LiveActor()`,
+`ActiveDrive::LiveActor()`; `SavedMaterial` carries refs; reflection's ANY-THREAD class cache
+converted. The D2 wire-window probe RAN: **zero reliable leakage** (the exit window is ~1 s, closed by
+the existing gameplay→MENU session-stop edge, not the 4 s flee poll) → D2 stays deferred; instrument
+permanent (`mp.py wirewindow` + `coop/dev/wire_census`). NOT hands-on — run B pending the user.
+
 ---
 
 ## 5. State / hands-on warning
 
 - **The r2modman test profile** (`C:\r2modman\...\VotV\profiles\Default`) AND all four `Game_0.9.0n_*`
-  installs carry build `F71621E0` (default-ON immune relay + fixed pe_diag classifier + IsLive caller
-  attribution + the `VOTVCOOP_MENUTRAVEL_NO_BYPASS` probe knob; 2026-08-22 eve). The profile + ArmPE
-  fixture + `VOTVCOOP_PE_DIAG=1` stay as the real-env rig; Multivoid drops as
-  `shimloader/mod/Multivoid/dlls/main.dll` + `enabled.txt`; the game is a separate `a09n` install whose
-  Win64 has the shimloader `dwmapi.dll` + `ue4ss.dll`, launched via r2modman. Run A was attempted
-  (no repro — see §4); the profile may receive the D1 build once it is built + verified.
+  installs carry the D1 build `95B02A826950DDC4` (immune relay + all 78 CachedObjRef conversions +
+  wire_census + the drill; 2026-08-22 night). Multivoid drops as
+  `shimloader/mod/multivoid/dlls/main.dll` + `enabled.txt`; the game is a separate `Desktop\a09n`
+  install whose Win64 has the shimloader `dwmapi.dll` + `ue4ss.dll`, launched via r2modman. The ArmPE
+  fixture stays in the PROFILE (the repro rig) but is **DISABLED on the four coop-rig installs**
+  (`enabled.txt` → `.off` on HOST/CLIENT_1) — two intermittent client boot fatals rode it (see §4
+  residuals). Run A was attempted (no repro — see §4); run B awaits the user on the D1 build.
 - Rollback to the proxy lane if needed: copy `build/votv-coop/Release/xinput1_3.dll` + the versioned
   DLL beside the exe + delete `Mods\Multivoid\enabled.txt` (3 ops).
 - Nothing is pushed; commits are local pending the user's word + the five-axis leak audit.
@@ -294,10 +306,13 @@ zero-AV proof.
 
 1. ~~Confirm B in the real env~~ **DONE 2026-08-22** — see §4 Proof status (real-env byte decode +
    DEV `POLYHOOK-COMPOSED` boot, both crash-free).
-2. Build the IsLive zero-AV arc (design CONVERGED 2026-08-22, see §4 + the design of record; run A
-   attempted, no repro -> downgraded to opportunistic): the wire-window two-peer probe -> `CachedObjRef`
-   + the staged 78-site conversion + drill + gate -> run B acceptance. The ad-hoc `{ptr,idx}` pair
-   migration scope is a pending user decision recorded in the design doc.
+2. ~~Build the IsLive zero-AV arc~~ **DONE 2026-08-22 night** (all 78 sites converted; gate/drill/
+   smoke/differential evidence in §4). Remaining from that arc: **USER run B** (one ordinary real-env
+   exit; acceptance = no CrashContext report resolving into main.dll) and the ad-hoc `{ptr,idx}` pair
+   migration scope (pending user decision, design doc §6; partially done en route — local_streams +
+   daynightcycle pairs retired).
+2b. **Symbolize the 19:17 real-env EXEC-at-NULL dump** (§4 residuals): rebuild `275e0f67` for
+   `F71621E0`'s PDB, map the stack offsets, decide the Present-seam multi-hooker hypothesis.
 3. Add B's teardown leak-at-death (§4 residual), drop the `VOTVCOOP_PE_IMMUNE_RELAY=0` diagnostic escape.
 4. **Commit 3** — the proxy deletion (RULE 2): `xinput_proxy.cpp` + the loader lane + dup-dialog +
    `inject.ps1` go, fully. Then WP-2 is DONE.
