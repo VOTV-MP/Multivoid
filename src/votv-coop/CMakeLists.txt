@@ -509,6 +509,7 @@ add_library(votv-coop SHARED
     src/coop/dev/roster_token_selftest.cpp
     src/coop/dev/kerfur_census.cpp
     src/coop/dev/puppet_head_probe.cpp
+    src/coop/dev/wire_census.cpp
     src/coop/input/input_owner.cpp
     src/coop/dev/perf_probe.cpp
     src/coop/dev/input_focus_probe.cpp

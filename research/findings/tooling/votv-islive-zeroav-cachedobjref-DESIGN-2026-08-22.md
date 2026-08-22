@@ -127,7 +127,22 @@ TYPE is the invariant; the script is a tripwire, not a proof.
   seam episode gates, prop_destroy_seam.cpp:116) but the 3-clock RACE (flee 4 s poll vs reaper 4 s scan
   vs GC purge) is UNMEASURED. **Probe item 1 (runs BEFORE this arc closes): two-peer DEV measurement —
   client native-quits with session live; census the HOST's inbound wire log for the window.** Zero
-  leakage → D2 stays deferred; any leakage → D2 re-prioritizes. D2's shape when built: ONE owner
+  leakage → D2 stays deferred; any leakage → D2 re-prioritizes.
+  **PROBE RESULT (2026-08-22 18:17, RUN — `mp.py wirewindow`, DLL E69A528307B741CF): ZERO leakage →
+  D2 STAYS DEFERRED.** Mechanism measured: the client joined, dwelled 25 s steady (baseline
+  [-5s,0): 0 reliables, ~60/s PoseSnapshot only), then `transition(/Game/menu)` with the layer
+  LIVE. The window [0,+10s] on the host: **0 reliables; poses continue ~2 s then stop**. The window
+  is closed not by the 4 s flee poll but by an EXISTING menu-edge detector at **+1 s** (client log
+  18:17:52 `net: gameplay->MENU while a session is live (VOTV quit-to-menu?) -- ending the session`),
+  which Stop()s the session → host sees `peer slot 1 closed (reason='session stop')` + the full
+  OnDisconnect fanout, all clean. The destroy-seam episode gates held (world-teardown mass
+  K2_DestroyActor produced zero PropDestroy on the wire). So the purge-blind window's wire-leak leg
+  is ~1 s and pose-only on this path; the residual harm shrinks to wasted local work. Caveats: n=1,
+  IDLE client (no held props / mid-action state at exit); the census instrument is permanent
+  (`coop/dev/wire_census` + `mp.py wirewindow`) so an adversarial variant (exit while holding /
+  mid-action) is a one-command rerun if D2 is ever re-opened. Bonus: zero `IsLive caught` WARNs on
+  this live-layer exit too (third consecutive clean run — the decommit nondeterminism holds).
+  D2's shape when built: ONE owner
   (`world_watch`, ue_wrap/engine) publishing current-world identity + tearing-down per tick; flee tell
   subsumed (RULE 2); reaper keeps its cadence reading shared truth. Seam candidates (probe decides):
   `UWorld::bIsTearingDown` (unreflected, +1 IDA offset on the version surface), current-world swap

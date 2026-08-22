@@ -47,6 +47,7 @@
 
 #include "coop/net/session.h"
 
+#include "coop/dev/wire_census.h"
 #include "coop/element/element.h"
 #include "coop/player/players_registry.h"
 #include "session_lanes.h"      // co-located private header (src tree, not include/)
@@ -371,6 +372,12 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
         }
     }
 
+    // DEV wire census (VOTVCOOP_WIRE_CENSUS=1; the D2 wire-window probe):
+    // count every non-reliable inbound by logical origin; reliables are logged
+    // individually inside their case below once the kind is parsed.
+    if (type != MsgType::Reliable && dev::wire_census::Enabled())
+        dev::wire_census::NoteStream(routeSlot, static_cast<unsigned>(type));
+
     switch (type) {
     case MsgType::PoseSnapshot:
     case MsgType::PropPose:
@@ -404,6 +411,8 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
         if (len < static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader))) return;
         ReliableHeader rh;
         std::memcpy(&rh, static_cast<const uint8_t*>(data) + sizeof(PacketHeader), sizeof(rh));
+        if (dev::wire_census::Enabled())
+            dev::wire_census::NoteReliable(routeSlot, static_cast<unsigned>(rh.kind));
         // payloadLen is uint16_t, can't be negative -- only the upper bound is
         // a real guard.
         const int payloadLen = static_cast<int>(rh.payloadLen);
@@ -524,6 +533,11 @@ void Session::NetThread() {
         // spawned and reset only after it joins, so the lock-free read is safe
         // (same discipline as ownEpoch_).
         if (signaling_) signaling_->Poll();
+
+        // DEV wire census: flush the aggregated stream counters at 1 Hz from the
+        // LOOP (not from arrivals), so the final second before a peer disconnect
+        // still lands in the log -- that tail IS the wire-window measurement.
+        if (dev::wire_census::Enabled()) dev::wire_census::Tick();
 
         // 1) Pump GNS internal timers + dispatch any pending status callbacks
         // (the trampoline runs inline on THIS thread).

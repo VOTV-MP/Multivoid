@@ -24,6 +24,8 @@
 #include "harness/autotest.h"
 
 #include "coop/config/config.h"
+#include "coop/net/session.h"
+#include "harness/session_runtime.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/fname_utils.h"
@@ -96,8 +98,12 @@ void RunProbe() {
 
     // Settle: wait until we're in gameplay (`untitled`), up to ~40 s (covers VOTV's
     // boot-time `open untitled_1` level travel). Uses the pump -- bypass not armed yet.
+    // WAIT_SESSION mode gets 240 s: a save-transfer JOIN reaches gameplay only after
+    // boot + menu + auto-connect + transfer + world load, well past the solo cap.
+    const int settleCap =
+        (coop::config::ReadEnv("VOTVCOOP_MENUTRAVEL_WAIT_SESSION") == "1") ? 240 : 40;
     std::wstring w;
-    for (int i = 0; i < 40; ++i) {
+    for (int i = 0; i < settleCap; ++i) {
         w = WorldNameGT();
         if (InGameplay(w)) break;
         ::Sleep(1000);
@@ -108,6 +114,31 @@ void RunProbe() {
         return;
     }
     UE_LOGI("menutravel: in gameplay (world='%ls') -- arming held bypass + transition", w.c_str());
+
+    // VOTVCOOP_MENUTRAVEL_WAIT_SESSION=1 (2026-08-22, the D2 wire-window probe):
+    // this peer is a CLIENT in a two-peer run -- wait until the coop session is
+    // live (join complete; gameplay is only reachable through the save-transfer
+    // world, so running()==true here means joined), then DWELL so the join-tail
+    // traffic (seeds, snapshot, replays) settles and the census window is not
+    // confounded by it. The transition then exits to menu with the layer LIVE,
+    // which opens the <=4 s purge-blind window the host-side wire census
+    // (VOTVCOOP_WIRE_CENSUS=1) measures.
+    if (coop::config::ReadEnv("VOTVCOOP_MENUTRAVEL_WAIT_SESSION") == "1") {
+        bool sessionUp = false;
+        for (int i = 0; i < 180; ++i) {
+            if (harness::session_runtime::Session().running()) { sessionUp = true; break; }
+            ::Sleep(1000);
+        }
+        if (!sessionUp) {
+            UE_LOGW("menutravel: WAIT_SESSION set but no running session after 180 s -- abort");
+            UE_LOGI("menutravel: DONE");
+            return;
+        }
+        UE_LOGI("menutravel: session LIVE -- dwelling 25 s to settle the join tail");
+        ::Sleep(25000);
+        UE_LOGI("menutravel: WIRE-WINDOW transition NOW tick=%llu",
+                static_cast<unsigned long long>(GetTickCount64()));
+    }
 
     // The decisive experiment. Established: (1) our detour HANGS the untitled_1 teardown
     // -> a transparent bypass is required; (2) the menu IS reachable; (3) the post-flee

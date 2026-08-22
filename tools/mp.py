@@ -2400,6 +2400,107 @@ def cmd_menutravel(args) -> None:
     sys.exit(0)
 
 
+def cmd_wirewindow(args) -> None:
+    """2-PEER D2 wire-window probe (islive-zeroav DESIGN 2026-08-22 section 6).
+
+    Question: when a CLIENT exits to the menu with the coop layer LIVE (a player's
+    own in-game exit), does it LEAK wire traffic about its dying world during the
+    <=4 s purge-blind window before the flee's poll notices -- traffic the host
+    then APPLIES to its healthy world? Zero leakage -> D2 (the world-identity
+    gate) stays deferred; any leakage -> D2 re-prioritizes.
+
+    Mechanism: host runs with VOTVCOOP_WIRE_CENSUS=1 (every inbound reliable
+    logged individually + 1 Hz aggregated stream counts, each line stamped with
+    GetTickCount64() -- machine-global ms, so the two logs align exactly). The
+    client runs the menutravel probe in WAIT_SESSION + NO_BYPASS mode: join, dwell
+    25 s to settle the join tail, then log 'WIRE-WINDOW transition NOW tick=T' and
+    transition('/Game/menu') with the layer live. The verdict censuses the host's
+    census lines in [T, T+10s] against a [T-5s, T) baseline.
+    """
+    if kill_all() > 0:
+        log("note: pre-existing VotV instances killed before wirewindow")
+    deploy_all()
+
+    log("--- HOST LAUNCH (wire census armed) ---")
+    host_pid = launch_peer("host", args.port, "Host", peer=None,
+                           res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
+                           memory_limit_gb=args.memory_limit_gb,
+                           extra_env={"VOTVCOOP_WIRE_CENSUS": "1",
+                                      "VOTVCOOP_VOICE_ENABLED": "0"})
+    host_log = HOST_DIR / "multivoid.log"
+    bound = False
+    for i in range(args.boot_timeout):
+        time.sleep(1)
+        if host_owns_udp(host_pid, args.port):
+            log(f"host bound UDP {args.port} after {i+1}s"); bound = True; break
+        if not any(p["PID"] == host_pid for p in list_votv()):
+            log("HOST DIED before binding UDP"); tail_log(host_log, 30, "HOST"); sys.exit(1)
+    if not bound:
+        log(f"FAIL: host did not bind UDP within {args.boot_timeout}s")
+        tail_log(host_log, 30, "HOST"); kill_all(); sys.exit(1)
+
+    log("--- CLIENT LAUNCH (menutravel WAIT_SESSION + NO_BYPASS) ---")
+    launch_peer("client", args.port, "Client", peer="127.0.0.1",
+                res_x=1280, res_y=720, monitor=2, tile_index=0,
+                memory_limit_gb=args.memory_limit_gb,
+                extra_env={"VOTVCOOP_RUN_MENUTRAVEL_PROBE": "1",
+                           "VOTVCOOP_MENUTRAVEL_NO_BYPASS": "1",
+                           "VOTVCOOP_MENUTRAVEL_WAIT_SESSION": "1",
+                           "VOTVCOOP_VOICE_ENABLED": "0"})
+    client_log = CLIENT_DIR / "multivoid.log"
+    if not _wait_for_log(client_log, "Joined ", args.client_boot_timeout, "CLIENT"):
+        log("FAIL: client never reached the world"); tail_log(client_log, 30, "CLIENT")
+        kill_all(); sys.exit(1)
+
+    # The probe dwells 25 s after the session reads live, then logs the marker.
+    if not _wait_for_log(client_log, "WIRE-WINDOW transition NOW", 120, "CLIENT"):
+        log("FAIL: transition marker never appeared"); tail_log(client_log, 40, "CLIENT")
+        kill_all(); sys.exit(1)
+
+    # Let the window elapse and the 1 Hz census flush land it on disk, then read
+    # the logs BEFORE killing (a killed process discards its buffered INFO tail).
+    time.sleep(20)
+    host_text = host_log.read_text(encoding="utf-8", errors="replace")
+    client_text = client_log.read_text(encoding="utf-8", errors="replace")
+    kill_all()
+
+    m = re.search(r"WIRE-WINDOW transition NOW tick=(\d+)", client_text)
+    if not m:
+        log("FAIL: marker line present per tail but tick unparseable"); sys.exit(1)
+    t0 = int(m.group(1))
+    win_end, base_start = t0 + 10000, t0 - 5000
+    log(f"--- WIRE-WINDOW CENSUS: transition tick={t0}; "
+        f"baseline=[-5s,0) window=[0,+10s] ---")
+    base_rel, win_rel, base_str, win_str = [], [], [], []
+    for line in host_text.splitlines():
+        cm = re.search(r"wire_census: tick=(\d+) slot=(\d+) (RELIABLE kind|STREAM type)=(\d+)(?: n=(\d+))?", line)
+        if not cm:
+            continue
+        tick = int(cm.group(1))
+        rec = (tick - t0, int(cm.group(2)), int(cm.group(4)), int(cm.group(5) or 1))
+        is_rel = cm.group(3) == "RELIABLE kind"
+        if base_start <= tick < t0:
+            (base_rel if is_rel else base_str).append(rec)
+        elif t0 <= tick <= win_end + 1000:  # +1s: a flush at T+11s covers second T+10
+            (win_rel if is_rel else win_str).append(rec)
+    log(f"BASELINE reliables ({len(base_rel)}):")
+    for dt, slot, kind, _ in base_rel:
+        log(f"  {dt:+6d}ms slot={slot} kind={kind}")
+    log(f"BASELINE streams (flushes: {len(base_str)}):")
+    for dt, slot, typ, n in base_str:
+        log(f"  {dt:+6d}ms slot={slot} type={typ} n={n}")
+    log(f"WINDOW reliables ({len(win_rel)}):  <-- the D2 leakage question")
+    for dt, slot, kind, _ in win_rel:
+        log(f"  {dt:+6d}ms slot={slot} kind={kind}")
+    log(f"WINDOW streams (flushes: {len(win_str)}):")
+    for dt, slot, typ, n in win_str:
+        log(f"  {dt:+6d}ms slot={slot} type={typ} n={n}")
+    log("Decode kinds/types against include/coop/net/protocol.h. Verdict: any WINDOW "
+        "reliable that is a world-mutating op (destroy/spawn/prop op) from the quitting "
+        "client = leakage -> D2 re-prioritizes; handshake/leave kinds are benign.")
+    sys.exit(0)
+
+
 def cmd_clumpvis(args) -> None:
     """SOLO clump-visibility probe. Launches ONE host with VOTVCOOP_RUN_CLUMPVIS_PROBE=1;
     the probe spawns a bare prop_garbageClump_C ~150cm in front of the player + logs
@@ -3540,6 +3641,17 @@ def main() -> None:
                               help="per-process commit cap in GB (0 = disabled)")
     for flag, kw in host_res: p_menutravel.add_argument(flag, **kw)
     p_menutravel.set_defaults(func=cmd_menutravel)
+
+    p_wirewin = sub.add_parser("wirewindow",
+                               help="2-PEER D2 probe: does a client exiting to menu with the layer "
+                                    "LIVE leak wire ops about its dying world? Census of the host's "
+                                    "inbound in [transition, +10s] (islive-zeroav DESIGN section 6)")
+    p_wirewin.add_argument("--boot-timeout", type=int, default=90, help="seconds to wait for host UDP bind")
+    p_wirewin.add_argument("--client-boot-timeout", type=int, default=180,
+                           help="seconds for the client to reach the world (save-transfer join)")
+    p_wirewin.add_argument("--memory-limit-gb", type=float, default=12.0, help="per-process commit cap in GB (0 = disabled)")
+    for flag, kw in host_res: p_wirewin.add_argument(flag, **kw)
+    p_wirewin.set_defaults(func=cmd_wirewindow)
 
     p_clumpvis = sub.add_parser("clumpvis",
                                 help="SOLO probe: spawn a bare prop_garbageClump_C + report whether its StaticMesh asset is null (empty) or named (visible)")
