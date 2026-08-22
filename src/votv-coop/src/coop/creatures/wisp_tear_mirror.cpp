@@ -61,8 +61,11 @@ void OnWispGrab(const coop::net::WispGrabPayload& p, uint8_t senderPeerSlot) {
             p.wispElementId, delay);
 }
 
+// `wispActor` must arrive slot-validated (the caller passes el->LiveActor(); a
+// fresh-null is a fine no-op). The bare IsLive that used to sit here probed a
+// cached element actor -- islive-zeroav census row wisp_tear_mirror:65.
 void PlayTearOnWisp(void* wispActor, uint32_t victimSlot) {
-    if (!wispActor || !R::IsLive(wispActor) || !ue_wrap::wisp::IsKillerWisp(wispActor)) return;
+    if (!wispActor || !ue_wrap::wisp::IsKillerWisp(wispActor)) return;
     // Force the parked mirror mesh to tick so a played montage advances, then play the
     // fatality tear. Both best-effort: the force-tick alone shows the mirror; the montage is
     // the gore. (Gibs + the victim socket-attach hold are a documented follow-on.)
@@ -87,7 +90,7 @@ void OnWispTear(const coop::net::WispTearPayload& p, uint8_t senderPeerSlot) {
                 p.wispElementId);
         return;
     }
-    PlayTearOnWisp(el->GetActor(), p.victimSlot);
+    PlayTearOnWisp(el->LiveActor(), p.victimSlot);
     // v2 choreography (third peers): hold the VICTIM's puppet at the mirror's socket for
     // the grab window. On the victim's own machine victimSlot==own slot -- no self-puppet;
     // its first-person ride came in with WispGrab (EngageSelf). Host never receives its

@@ -16,6 +16,7 @@
 #include "coop/element/element.h"
 
 #include "coop/element/registry.h"
+#include "ue_wrap/core/reflection.h"
 
 #include <atomic>
 
@@ -40,6 +41,11 @@ void NotifyRegistryShuttingDown() {
 Element::Element(ElementType type) : m_type(type) {
     // No Registry call -- the subsystem allocates explicitly after construction.
     // m_id stays kInvalidId until then.
+}
+
+// Slot-validated actor read (see the header comment; islive-zeroav 2026-08-22).
+void* Element::LiveActor() const {
+    return ue_wrap::reflection::IsLiveByIndex(m_actor, m_internalIdx) ? m_actor : nullptr;
 }
 
 // Maintains the Registry's unified actor->eid reverse alongside the local

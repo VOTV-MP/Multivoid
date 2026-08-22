@@ -131,8 +131,7 @@ void SpawnNpcOnFirstClient(const wchar_t* className) {
     uint8_t foundSlot = 0;
     for (uint8_t slot = 1; slot < coop::players::kMaxPeers; ++slot) {
         if (coop::RemotePlayer* pp = reg.Puppet(slot)) {
-            void* a = pp->GetActor();
-            if (a && R::IsLive(a)) { puppetActor = a; foundSlot = slot; break; }
+            if (pp->valid()) { puppetActor = pp->GetActor(); foundSlot = slot; break; }
         }
     }
     if (!puppetActor) {

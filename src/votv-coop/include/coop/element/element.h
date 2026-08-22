@@ -151,6 +151,15 @@ public:
     // Feed to reflection::IsLiveByIndex to validate m_actor after a possible GC.
     int32_t GetInternalIdx() const { return m_internalIdx; }
 
+    // The actor pointer, SLOT-VALIDATED: m_actor if IsLiveByIndex(m_actor,
+    // m_internalIdx) passes, else nullptr. This -- never bare IsLive(GetActor())
+    // -- is how a consumer probes an element's actor across ticks: bare IsLive
+    // dereferences the possibly GC-freed actor, and under a co-resident VEH
+    // crash reporter that first-chance AV pops as a user-visible "crash"
+    // (islive-zeroav design 2026-08-22; this accessor closed 12 census rows at
+    // one root). Non-inline: element.h cannot include reflection.h (layering).
+    void* LiveActor() const;
+
     // ---- Lifecycle / sync state -----------------------------------------
 
     // Mirrors MTA's m_bBeingDeleted. Set by the owning subsystem when the

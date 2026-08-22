@@ -46,8 +46,8 @@ void* ResolveWispActor(uint32_t wispEid) {
     auto* el = coop::element::Registry::Get().Get(
         static_cast<coop::element::ElementId>(wispEid));
     if (!el) return nullptr;
-    void* actor = el->GetActor();
-    if (!actor || !R::IsLive(actor) || !ue_wrap::wisp::IsKillerWisp(actor)) return nullptr;
+    void* actor = el->LiveActor();  // slot-validated; never bare IsLive on a cached actor
+    if (!actor || !ue_wrap::wisp::IsKillerWisp(actor)) return nullptr;
     return actor;
 }
 

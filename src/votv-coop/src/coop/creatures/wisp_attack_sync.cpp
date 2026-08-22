@@ -201,8 +201,8 @@ void DischargePendingDestroys() {
         void* actor = nullptr;
         if (auto* el = coop::element::Registry::Get().Get(
                 static_cast<coop::element::ElementId>(g_pendingDestroy[i].eid))) {
-            void* a = el->GetActor();
-            if (a && R::IsLive(a) && ue_wrap::wisp::IsKillerWisp(a)) actor = a;
+            void* a = el->LiveActor();  // slot-validated
+            if (a && ue_wrap::wisp::IsKillerWisp(a)) actor = a;
         }
         if (now < g_pendingDestroy[i].deadlineMs) {
             // Grab window still open: LIFT the wisp (the native kill's signature rise).
@@ -305,8 +305,8 @@ void Tick() {
 
     for (coop::element::Npc* npc : npcs) {
         if (!npc) continue;
-        void* actor = npc->GetActor();
-        if (!actor || !R::IsLive(actor) || !ue_wrap::wisp::IsKillerWisp(actor)) continue;
+        void* actor = npc->LiveActor();  // slot-validated
+        if (!actor || !ue_wrap::wisp::IsKillerWisp(actor)) continue;
         const uint32_t eid = static_cast<uint32_t>(coop::npc_sync::GetNpcIdForActor(actor));
         if (eid == 0 || eid == static_cast<uint32_t>(coop::element::kInvalidId)) continue;
         liveWispEids.insert(eid);

@@ -320,8 +320,8 @@ void EmitBindSummary() {
     if (g_holeInjected) {
         coop::element::Element* el =
             coop::element::Registry::Get().Get(static_cast<coop::element::ElementId>(g_holeEid));
-        void* boundActor = el ? el->GetActor() : nullptr;
-        const bool free = !(boundActor && R::IsLive(boundActor));
+        void* boundActor = el ? el->LiveActor() : nullptr;  // slot-validated
+        const bool free = (boundActor == nullptr);
         UE_LOGW("save_identity_bind: [force_kerfur_unmap] HOLE VERDICT=%s -- dropped kerfurOff key='%ls' eid=%u "
                 "boundActor=%p. %s",
                 free ? "PASS" : "FAIL", g_holeKey.c_str(), g_holeEid, boundActor,
@@ -652,8 +652,7 @@ void ForceSaveChurnForTest() {
         if (e.eid == 0u || e.eid == coop::element::kInvalidId) continue;
         coop::element::Element* el =
             coop::element::Registry::Get().Get(static_cast<coop::element::ElementId>(e.eid));
-        void* actor = el ? el->GetActor() : nullptr;
-        if (actor && R::IsLive(actor)) ++boundLive;
+        if (el && el->LiveActor()) ++boundLive;  // slot-validated
     }
     UE_LOGW("save_identity_bind: [force_save_churn] GATE -- flag=%d armed=%d chipEntries=%zu boundLive=%d",
             s_on ? 1 : 0, g_armed ? 1 : 0, g_chipEntries.size(), boundLive);
@@ -665,8 +664,8 @@ void ForceSaveChurnForTest() {
         if (e.eid == 0u || e.eid == coop::element::kInvalidId) continue;
         coop::element::Element* el =
             coop::element::Registry::Get().Get(static_cast<coop::element::ElementId>(e.eid));
-        void* actor = el ? el->GetActor() : nullptr;
-        if (!actor || !R::IsLive(actor)) continue;  // only churn a currently-bound, live save-native
+        void* actor = el ? el->LiveActor() : nullptr;  // slot-validated
+        if (!actor) continue;  // only churn a currently-bound, live save-native
         // Unbind: Take the mirror Element (the actor stays alive at its save position). ~Element clears the
         // registry slot + the unified actor->eid reverse, so variant-1 sees an UNBOUND native at savePos.
         coop::element::MirrorManager<coop::element::Prop>::Instance().Take(

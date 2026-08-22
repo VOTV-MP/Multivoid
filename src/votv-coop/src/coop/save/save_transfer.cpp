@@ -714,8 +714,8 @@ void FlushDivergedSavePositionsForSlot_(int peerSlot, bool firstRun) {
     for (const auto& [eid, savePos] : pileM) {
         ++checkedPile;
         coop::element::Element* el = coop::element::Registry::Get().Get(eid);
-        void* actor = el ? el->GetActor() : nullptr;
-        if (!actor || !ue_wrap::reflection::IsLive(actor)) continue;  // dead -> skip
+        void* actor = el ? el->LiveActor() : nullptr;  // slot-validated
+        if (!actor) continue;  // dead -> skip
         // CRITICAL (docs/piles/12, 18:52): only a RESTING chipPile native gets a position correction. A pile
         // the host is GRABBING/THROWING is a CLUMP (morphed), airborne on the throw arc -- the trash-channel
         // convert stream owns it (LAND drift ~0). Chasing its mid-air waypoints armed identity-key updates +
@@ -736,8 +736,8 @@ void FlushDivergedSavePositionsForSlot_(int peerSlot, bool firstRun) {
         const auto& savePos = kit->second;
         ++checkedKeyed;
         coop::element::Element* el = coop::element::Registry::Get().Get(eid);
-        void* actor = el ? el->GetActor() : nullptr;
-        if (!actor || !ue_wrap::reflection::IsLive(actor)) continue;  // dead (e.g. hold-R pickup destroyed it) -> skip
+        void* actor = el ? el->LiveActor() : nullptr;  // slot-validated
+        if (!actor) continue;  // dead (e.g. hold-R pickup destroyed it) -> skip
         // The keyed path arms only the GENERIC pos correction (the receiver's UpdateChipHostPos matches nothing
         // for a keyed eid -> NO vacate twin, unlike the pile path) so there is NO dup risk needing an IsChipPile
         // resting gate. A host CARRYING the keyed prop mid-join sends transient positions, but they self-correct

@@ -433,17 +433,18 @@ void OnEntityDestroy(const coop::net::EntityDestroyPayload& payload) {
                 payload.elementId);
         return;
     }
-    void* actor = drained->GetActor();
+    void* actor = drained->GetActor();          // raw: only for the null-vs-dead log split
+    void* liveActor = drained->LiveActor();     // slot-validated (islive-zeroav rows :442/:446)
     // v74 "floating camera" fix is STRUCTURAL, not a teardown crutch: an ADOPTED mirror IS the
     // client's own real save-kerfur (Inc-1), so K2_DestroyActor below runs its real ReceiveDestroyed
     // + engine child-actor cascade EXACTLY as on the host (which does not orphan the cam/camera
     // child -- RE sec 4). The old non-standard deferred-spawned mirror -- whose cascade was the
     // suspected orphan source -- is no longer the path for save-persisted kerfurs.
-    if (actor && g_k2DestroyFn && R::IsLive(actor)) {
-        R::CallFunction(actor, g_k2DestroyFn, nullptr);
+    if (liveActor && g_k2DestroyFn) {
+        R::CallFunction(liveActor, g_k2DestroyFn, nullptr);
         UE_LOGI("npc-sync[client OnDestroy]: K2_DestroyActor on mirror eid=%u actor=%p",
-                payload.elementId, actor);
-    } else if (actor && !R::IsLive(actor)) {
+                payload.elementId, liveActor);
+    } else if (actor && !liveActor) {
         UE_LOGI("npc-sync[client OnDestroy]: mirror eid=%u actor=%p already not-live -- "
                 "skipping K2_DestroyActor (engine destroyed it elsewhere)",
                 payload.elementId, actor);
