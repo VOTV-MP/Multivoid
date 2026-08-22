@@ -6,6 +6,7 @@
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/types.h"
@@ -20,7 +21,7 @@ namespace R = ue_wrap::reflection;
 
 // Cached reflection state (resolved on first call, then constant).
 struct Cache {
-    void* mainGameInstance = nullptr;   // UmainGameInstance_C*
+    ue_wrap::CachedObjRef mainGameInstance;  // UmainGameInstance_C* (islive-zeroav row :39)
     int32_t saveGameInstOff = -1;       // mainGameInstance_C::save_gameInst
     void* saveSlotClass = nullptr;
     int32_t batteryOff = -1;            // saveSlot.battery (float)
@@ -36,17 +37,17 @@ Cache g_cache;
 bool EnsureReflectionResolved(void* mainPlayer) {
     if (!mainPlayer) return false;
 
-    if (g_cache.mainGameInstance && !R::IsLive(g_cache.mainGameInstance))
-        g_cache.mainGameInstance = nullptr;
-    if (!g_cache.mainGameInstance) {
-        g_cache.mainGameInstance = R::FindObjectByClass(P::name::GameInstanceClass);
-        if (!g_cache.mainGameInstance) {
+    if (g_cache.mainGameInstance.Raw() && !g_cache.mainGameInstance.Alive())
+        g_cache.mainGameInstance.Reset();
+    if (!g_cache.mainGameInstance.Raw()) {
+        g_cache.mainGameInstance.Set(R::FindObjectByClass(P::name::GameInstanceClass));
+        if (!g_cache.mainGameInstance.Raw()) {
             UE_LOGW("flashlight_setup: mainGameInstance_C not yet alive");
             return false;
         }
     }
     if (g_cache.saveGameInstOff < 0) {
-        void* giClass = R::ClassOf(g_cache.mainGameInstance);
+        void* giClass = R::ClassOf(g_cache.mainGameInstance.Raw());
         if (giClass) g_cache.saveGameInstOff = R::FindPropertyOffset(giClass, L"save_gameInst");
         if (g_cache.saveGameInstOff < 0) {
             UE_LOGW("flashlight_setup: save_gameInst offset not found on mainGameInstance");
@@ -104,9 +105,9 @@ bool EnsureReflectionResolved(void* mainPlayer) {
 }
 
 void* GetLiveSaveSlot() {
-    if (!g_cache.mainGameInstance || g_cache.saveGameInstOff < 0) return nullptr;
+    if (!g_cache.mainGameInstance.Raw() || g_cache.saveGameInstOff < 0) return nullptr;
     return *reinterpret_cast<void**>(
-        reinterpret_cast<uint8_t*>(g_cache.mainGameInstance) + g_cache.saveGameInstOff);
+        reinterpret_cast<uint8_t*>(g_cache.mainGameInstance.Raw()) + g_cache.saveGameInstOff);
 }
 
 }  // namespace

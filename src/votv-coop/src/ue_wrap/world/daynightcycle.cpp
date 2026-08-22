@@ -7,6 +7,7 @@
 #include "ue_wrap/world/daynightcycle.h"
 
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/reflection.h"
 
 #include <atomic>
@@ -32,12 +33,13 @@ constexpr int32_t kTimeScaleOffFallback = 0x02B4;
 constexpr int32_t kMaxTimeOffFallback   = 0x02AC;
 constexpr int32_t kTimeZOffFallback     = 0x02D0;
 
-void* g_cycleCache = nullptr;    // cached singleton (GT-only)
-int32_t g_cycleCacheIdx = -1;    // its GUObjectArray index -- IsLiveByIndex (serial
+// Cached singleton (GT-only). CachedObjRef subsumes the hand-rolled
+// {ptr, g_cycleCacheIdx} pair (RULE 2; islive-zeroav D1) -- IsLiveByIndex (serial
                                  // slot-compare) rejects a RECYCLED slot that plain
                                  // IsLive accepts; raw float writes through a recycled
                                  // pointer corrupt the foreign occupant (audit
                                  // 2026-07-04 (c), the quit-to-menu teardown context)
+ue_wrap::CachedObjRef g_cycleCache;
 
 }  // namespace
 
@@ -70,8 +72,8 @@ bool EnsureResolved() {
 }
 
 void* Cycle() {
-    if (g_cycleCache && R::IsLiveByIndex(g_cycleCache, g_cycleCacheIdx))
-        return g_cycleCache;  // steady-state: a serial-checked slot compare
+    if (g_cycleCache.Alive())
+        return g_cycleCache.Raw();  // steady-state: a slot compare
     // The cycle is a singleton that, once found, stays live -- so a re-scan only happens at startup
     // (before it streams in) or if its UObject is briefly marked unreachable mid-session. THROTTLE
     // the GUObjectArray scan to once/sec so a transient miss can never become a per-call walk (the
@@ -81,9 +83,8 @@ void* Cycle() {
     if (now - s_lastScan < std::chrono::seconds(1)) return nullptr;
     s_lastScan = now;
     if (!EnsureResolved()) return nullptr;
-    g_cycleCache = R::FindObjectByClass(L"daynightCycle_C");
-    g_cycleCacheIdx = g_cycleCache ? R::InternalIndexOf(g_cycleCache) : -1;
-    return (g_cycleCache && R::IsLive(g_cycleCache)) ? g_cycleCache : nullptr;
+    g_cycleCache.Set(R::FindObjectByClass(L"daynightCycle_C"));
+    return g_cycleCache.Raw();  // fresh from the walk (null on miss)
 }
 
 bool ReadClock(float& totalTime, float& day, float& timeScale) {

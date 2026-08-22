@@ -6,6 +6,7 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/reflection.h"
 
 #include <array>
@@ -74,11 +75,11 @@ void RegisterOn(const wchar_t* className, const wchar_t* fnName, const char* lab
 bool g_installed = false;
 
 // ---- state poll cache ------------------------------------------------------
-void* g_gmCache = nullptr;
+ue_wrap::CachedObjRef g_gmCache;  // islive-zeroav row :79
 void* ResolveGamemode() {
-    if (g_gmCache && R::IsLive(g_gmCache)) return g_gmCache;
-    g_gmCache = R::FindObjectByClass(L"mainGamemode_C");
-    return g_gmCache;
+    if (g_gmCache.Alive()) return g_gmCache.Raw();
+    g_gmCache.Set(R::FindObjectByClass(L"mainGamemode_C"));
+    return g_gmCache.Raw();
 }
 
 int32_t Off(void* cls, const wchar_t* name) { return cls ? R::FindPropertyOffset(cls, name) : -1; }

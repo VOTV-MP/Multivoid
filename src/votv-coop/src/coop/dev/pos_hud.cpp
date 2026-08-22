@@ -6,6 +6,7 @@
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 
@@ -33,7 +34,7 @@ std::atomic<bool> g_active{false};
 // exist by then; before that nothing in the world is meaningful to read anyway).
 // Owned by the engine via the GameInstance outer -- not destroyed on level
 // changes; we just RemoveFromViewport / AddToViewport to hide/show.
-void* g_root = nullptr;
+ue_wrap::CachedObjRef g_root;  // islive-zeroav pos_hud rows
 void* g_text = nullptr;
 
 // Refresh-pump thread started once, lazily, on the first show.
@@ -50,11 +51,11 @@ bool LazyCreate() {
     // outer. If Show() is pressed BEFORE any Refresh runs (which has its own
     // IsLive self-heal), AddWidgetToViewport on a freed UObject would crash --
     // detect-and-null here so we re-create cleanly.
-    if (g_root && !R::IsLive(g_root)) {
+    if (g_root.Raw() && !g_root.Alive()) {
         UE_LOGI("pos_hud: widget GC'd (detected in LazyCreate); re-creating");
-        g_root = g_text = nullptr;
+        g_root.Reset(); g_text = nullptr;
     }
-    if (g_root) return true;
+    if (g_root.Raw()) return true;
     void* gi = R::FindObjectByClass(P::name::GameInstanceClass);
     if (!gi) {
         UE_LOGW("pos_hud: no GameInstance yet (not in gameplay) -- defer create");
@@ -65,17 +66,19 @@ bool LazyCreate() {
     // font; we don't have a monospace asset to point to, so digits drift a touch
     // in width -- live with it, this is a dev tool).
     const ue_wrap::FLinearColor kColor{1.0f, 0.95f, 0.3f, 1.0f};
+    void* rootOut = nullptr;
     if (!E::SpawnScreenTextWidget(gi, kZOrder,
                                   ue_wrap::FVector2D{0.f, 0.5f},
                                   ue_wrap::FVector2D{40.f, 540.f},
                                   /*justify Left*/ 0, /*fontSize*/ 14,
-                                  kColor, &g_root, &g_text)
-        || !g_root || !g_text) {
+                                  kColor, &rootOut, &g_text)
+        || !rootOut || !g_text) {
         UE_LOGE("pos_hud: SpawnScreenTextWidget failed");
-        g_root = g_text = nullptr;
+        g_root.Reset(); g_text = nullptr;
         return false;
     }
-    UE_LOGI("pos_hud: widget created (root=%p text=%p)", g_root, g_text);
+    g_root.Set(rootOut);  // fresh from the spawn
+    UE_LOGI("pos_hud: widget created (root=%p text=%p)", rootOut, g_text);
     return true;
 }
 
@@ -86,9 +89,9 @@ void Refresh() {
     if (!g_text) return;
     // Self-heal: if the widget object was GC'd (level change), drop pointers so
     // the next toggle-on re-creates it.
-    if (!R::IsLive(g_root)) {
+    if (!g_root.Alive()) {
         UE_LOGI("pos_hud: widget GC'd; will re-create on next toggle");
-        g_root = g_text = nullptr;
+        g_root.Reset(); g_text = nullptr;
         return;
     }
 
@@ -115,7 +118,7 @@ void Refresh() {
 
 void Show() {
     if (!LazyCreate()) return;
-    if (!E::AddWidgetToViewport(g_root, kZOrder)) {
+    if (!E::AddWidgetToViewport(g_root.Raw(), kZOrder)) {  // LazyCreate just validated
         UE_LOGW("pos_hud: AddToViewport failed");
         return;
     }
@@ -124,7 +127,7 @@ void Show() {
 }
 
 void Hide() {
-    if (g_root && R::IsLive(g_root)) E::RemoveWidgetFromViewport(g_root);
+    if (void* root = g_root.Get()) E::RemoveWidgetFromViewport(root);
     UE_LOGI("pos_hud: OFF");
 }
 

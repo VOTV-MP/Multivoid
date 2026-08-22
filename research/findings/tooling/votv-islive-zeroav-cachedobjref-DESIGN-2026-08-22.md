@@ -2,7 +2,15 @@
 
 > **Design of record** for the "IsLive/VEH exit crash" WP-2 queue item. Converged via a 10-round `/qf`
 > pass ("that holds" at round 10 of 15); the full Q&A transcript lives in the session scratchpad
-> (`qf_thread.md`) — this doc is its durable distillation. STATUS: **DESIGN converged, build starting.**
+> (`qf_thread.md`) — this doc is its durable distillation.
+> STATUS: **D1 BUILT 2026-08-22 eve** — all 78 census sites converted across 8 staged commits
+> (`f675de11` substrate → `d7f2904f` prime suspects [differential bracket PASS] → `3e38c62e`
+> session/player [LAN smoke PASS] → `42edbb51` Element::LiveActor → `ecb7fb57`+`7cf2d009` props →
+> `cb97d64e` ue_wrap+reflection → final dev/daynightcycle commit). Evidence: the deterministic
+> decommit drill PASSED twice (pre- and post-conversion bytes: legacy exactly 1 absorbed AV with
+> caller attribution, CachedObjRef 0 AVs), `tools/reflection/islive_gate.ps1` CI-mode **PASS** (0
+> bare-IsLive-on-static), full LAN smoke on final bytes (see §4 addendum), ~354 bare IsLive calls
+> remain — all fresh-same-task contract by census. NOT hands-on (run B pending the user).
 > Related: `docs/UE4SS_ARC.md` §4 (the finding's origin), `docs/LESSONS.md` (the VEH-preempts-SEH row +
 > the islive-recycled-slot row), `memory/lesson_veh_crash_reporter_preempts_seh_guard.md`.
 
@@ -245,10 +253,29 @@ commit. Line numbers are the PRE-conversion census rows (Appendix A).
 
 | file (census rows) | cache var | fill origin | commit |
 |---|---|---|---|
-| ui/multiplayer_menu.cpp :90/:212/:225/:248 | g_button | out-param of E::InjectCanvasButton, same GT task | prime-suspect commit |
-| ui/multiplayer_menu.cpp :122 (+:151/:156 steady) | g_versionText | out-param of E::InjectTextRowAbove, same GT task | prime-suspect commit |
-| coop/input/input_owner.cpp :155 (alias mp) | g_localPawn | Registry::Local() (validates internally), same GT task | prime-suspect commit |
-| coop/input/input_owner.cpp :336 | g_lastOwner | ObjectAt walk + fresh IsLive in the same scan | prime-suspect commit |
+| ui/multiplayer_menu.cpp :90/:212/:225/:248 | g_button | out-param of E::InjectCanvasButton, same GT task | d7f2904f |
+| ui/multiplayer_menu.cpp :122 (+:151/:156 steady) | g_versionText | out-param of E::InjectTextRowAbove, same GT task | d7f2904f |
+| coop/input/input_owner.cpp :155 (alias mp) | g_localPawn | Registry::Local() (validates internally), same GT task | d7f2904f |
+| coop/input/input_owner.cpp :336 | g_lastOwner | ObjectAt walk + fresh IsLive in the same scan | d7f2904f |
+| session/net_pump.cpp :661/:719 | g_netLocal / g_netLocalController | Registry::Local() this tick / GetController(fresh) | 3e38c62e |
+| player/players_registry.cpp :113/:67 | localCached_ (member) / sMpClass | RescanLocal walk / class walk hit | 3e38c62e |
+| player/local_streams.cpp :218 | g_lastHeldProp (ad-hoc {ptr,idx} pair RETIRED into the type) | new-held edge, IsLive-guarded branch | 3e38c62e |
+| player/hand_item.cpp :522 | RemotePlayer actor via valid() | RemotePlayer's own captured idx | 3e38c62e |
+| creatures/kerfur_command.cpp :138 | ResolveOwnerBody root-validated | Local()/valid() inside the resolver | 3e38c62e |
+| wisp ×4, npc_mirror :442/:446, save_transfer :718/:740, save_identity_bind :324/:656/:669, dev spawn_npc :135 | element actors | Element::LiveActor() (the element's own captured idx) | 42edbb51 |
+| props/remote_prop.cpp :140/:150/:300 + active_drive.h :133/:151 | drive actors | ActiveDrive::LiveActor() (actorIdx) | ecb7fb57 |
+| props/trash_proxy.cpp ×7 + :92/:104 | ProxyEntry.actor (rooted-exemption claim REJECTED: teardown kills rooted actors) + mesh caches | Set at SpawnActor / FindObject | ecb7fb57 |
+| props/prop_destroy_seam.cpp :213/:202 | lambda-captured ref (by value) + sActorCls | Set at the call site (callers pass fresh) | ecb7fb57 |
+| props/prop_fresh_spawn :42, remote_prop_physics :84, remote_prop_destroy :50 | class/CDO caches | FindClass/FindClassDefaultObject | ecb7fb57 |
+| interactables/window_sync.cpp :243 | entry {actor,idx} copied under the lock | entry's own idx (sibling shape) | ecb7fb57 |
+| save/save_button_disable.cpp :90 | g_menuInstance | FindObjectByClass | ecb7fb57 |
+| props/trash_clump_pose_stream.cpp :74 | carry ActiveDrive | LiveActor() | 7cf2d009 |
+| ue_wrap economy :18 / order_economy :47 / inventory :100 (g_gm ×3), skysphere :70, directionalwind :22, vitals :43, engine_pawn :74 | singletons | FindObjectByClass | cb97d64e |
+| ue_wrap engine_mainplayer :53/:124/:192-196 (SavedMaterial in types.h), prop.cpp :36/:542/:730, engine_playerragdoll :71/:154 | class/material/component caches | resolve walks / GetMaterial fresh | cb97d64e |
+| ue_wrap device_screen :288, puppet.cpp :162 (map values), door.cpp :342 (VerifyEntry.ref; key compare-only) | session/frame caches | enter seam / spawn path / apply seam | cb97d64e |
+| ue_wrap/core/reflection.cpp :380 | CachedClass.cls (ANY THREAD) | PrimeClassWalk (caller's fresh walk) | cb97d64e |
+| dev flashlight :39, freecam ×7, pos_hud ×3, drone_probe :79 | probe caches | resolver walks / spawn out-params | final commit |
+| ue_wrap daynightcycle (ad-hoc pair retired; not a census violator — gate CI residual) | g_cycleCache | FindObjectByClass | final commit |
 
 Differential bracket for this commit (design §4.3): PRE `CEAA0E93` vs POST `52FFF0F7`, solo
 no-bypass menutravel each — all 7 markers identical (LAYER LIVE dispatch → version label + button

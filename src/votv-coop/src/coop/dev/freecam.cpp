@@ -10,6 +10,7 @@
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/types.h"
@@ -40,9 +41,9 @@ float g_speed = kBaseSpeed;             // wheel-adjustable; game-thread only
 
 // All touched only on the game thread (Enable/Disable/Teleport are posted; the
 // movement tick runs inside the ProcessEvent detour).
-void* g_camActor = nullptr;
-void* g_pc = nullptr;
-void* g_player = nullptr;
+ue_wrap::CachedObjRef g_camActor;  // islive-zeroav freecam rows
+ue_wrap::CachedObjRef g_pc;
+ue_wrap::CachedObjRef g_player;
 ue_wrap::FVector g_camPos;
 
 constexpr float kFastMul = 4.f;
@@ -84,8 +85,8 @@ bool ResolveFreezeFns() {
 }
 
 void* PlayerCmc() {
-    return (g_player && R::IsLive(g_player))
-               ? ReadPtr(g_player, P::off::ACharacter_CharacterMovement)
+    return g_player.Alive()
+               ? ReadPtr(g_player.Raw(), P::off::ACharacter_CharacterMovement)
                : nullptr;
 }
 
@@ -134,23 +135,23 @@ void Enable() {
         UE_LOGW("freecam: REFUSED -- dev features are disabled while connected as a client");
         return;
     }
-    g_player = coop::players::Registry::Get().Local();
-    if (!g_player) { UE_LOGW("freecam: no local player (no mainPlayer_C with a Controller)"); return; }
-    g_pc = E::GetController(g_player);
-    if (!g_pc) { UE_LOGW("freecam: no controller"); return; }
+    g_player.Set(coop::players::Registry::Get().Local());
+    if (!g_player.Raw()) { UE_LOGW("freecam: no local player (no mainPlayer_C with a Controller)"); return; }
+    g_pc.Set(E::GetController(g_player.Raw()));
+    if (!g_pc.Raw()) { UE_LOGW("freecam: no controller"); return; }
 
     const ue_wrap::FVector loc = E::GetCameraLocation();
     const ue_wrap::FRotator rot = E::GetCameraRotation();
     void* camCls = R::FindClass(P::name::CameraActorClass);
-    g_camActor = camCls ? E::SpawnActor(camCls, loc) : nullptr;
-    if (!g_camActor) { UE_LOGE("freecam: failed to spawn CameraActor"); return; }
-    E::SetActorRotation(g_camActor, rot);
+    g_camActor.Set(camCls ? E::SpawnActor(camCls, loc) : nullptr);
+    if (!g_camActor.Raw()) { UE_LOGE("freecam: failed to spawn CameraActor"); return; }
+    E::SetActorRotation(g_camActor.Raw(), rot);
 
     // Copy the player camera's post-process onto the freecam camera, else the view
     // renders with default PP and goes dark (lost exposure/grading). Zero the one
     // TArray (WeightedBlendables) in the copy so the cameras don't alias its heap.
-    void* playerCam = ReadPtr(g_player, P::off::AmainPlayer_Camera);
-    void* freecamCam = ReadPtr(g_camActor, P::off::ACameraActor_CameraComponent);
+    void* playerCam = ReadPtr(g_player.Raw(), P::off::AmainPlayer_Camera);
+    void* freecamCam = ReadPtr(g_camActor.Raw(), P::off::ACameraActor_CameraComponent);
     if (playerCam && freecamCam) {
         uint8_t* dst = reinterpret_cast<uint8_t*>(freecamCam) + P::off::UCameraComponent_PostProcessSettings;
         uint8_t* src = reinterpret_cast<uint8_t*>(playerCam) + P::off::UCameraComponent_PostProcessSettings;
@@ -166,7 +167,7 @@ void Enable() {
                 playerCam, freecamCam);
     }
 
-    E::SetViewTargetWithBlend(g_pc, g_camActor, 0.15f);
+    E::SetViewTargetWithBlend(g_pc.Raw(), g_camActor.Raw(), 0.15f);
 
     // The fly keys (WASD/Space/Ctrl) must not ALSO drive the pawn (user 2026-07-05).
     FreezePlayerControl();
@@ -180,16 +181,16 @@ void Enable() {
 void Disable() {
     g_active.store(false);
     UnfreezePlayerControl();
-    if (g_pc && g_player && R::IsLive(g_pc) && R::IsLive(g_player))
-        E::SetViewTargetWithBlend(g_pc, g_player, 0.15f);
-    if (g_camActor && R::IsLive(g_camActor)) E::DestroyActor(g_camActor);
-    g_camActor = nullptr;
+    if (g_pc.Alive() && g_player.Alive())
+        E::SetViewTargetWithBlend(g_pc.Raw(), g_player.Raw(), 0.15f);
+    if (void* cam = g_camActor.Get()) E::DestroyActor(cam);
+    g_camActor.Reset();
     UE_LOGI("freecam: OFF");
 }
 
 void Teleport() {
-    if (!g_active.load() || !g_player || !R::IsLive(g_player)) return;
-    E::SetActorLocation(g_player, g_camPos);
+    if (!g_active.load() || !g_player.Alive()) return;
+    E::SetActorLocation(g_player.Raw(), g_camPos);
     UE_LOGI("freecam: teleported player to (%.0f,%.0f,%.0f)", g_camPos.X, g_camPos.Y, g_camPos.Z);
 }
 
@@ -197,7 +198,7 @@ void Teleport() {
 // frame-synced and dt-scaled (smooth regardless of fps), independent of any
 // specific event firing. Runs on the game thread inside the detour.
 void MovementTick() {
-    if (!g_active.load() || !g_camActor || !g_pc) return;
+    if (!g_active.load() || !g_camActor.Raw() || !g_pc.Raw()) return;
     // Live role gate: a freecam activated BEFORE joining (or during hosting,
     // then the role changed) dies the moment this peer is a connected client.
     // Runs on the game thread -- Disable() restores the view target directly.
@@ -216,10 +217,10 @@ void MovementTick() {
         ::ui::input_focus::IsOverlayCapturingText()) return;
     // The level may have reloaded under us (the cached actors are then freed).
     // Bail without touching dead objects -- never SetActorLocation a freed actor.
-    if (!R::IsLive(g_camActor) || !R::IsLive(g_pc)) {
+    if (!g_camActor.Alive() || !g_pc.Alive()) {
         g_active.store(false);
         UnfreezePlayerControl();  // restores if the pawn survived; no-ops on a freed pawn
-        g_camActor = nullptr; g_pc = nullptr; g_player = nullptr;
+        g_camActor.Reset(); g_pc.Reset(); g_player.Reset();
         UE_LOGW("freecam: view target invalidated (level change?); auto-off");
         return;
     }
@@ -238,7 +239,7 @@ void MovementTick() {
     }
 
     // Look = the game's own control rotation (smooth, no raw mouse).
-    const ue_wrap::FRotator rot = E::GetControlRotation(g_pc);
+    const ue_wrap::FRotator rot = E::GetControlRotation(g_pc.Raw());
     const float yaw = rot.Yaw * kDeg2Rad;
     const float pitch = rot.Pitch * kDeg2Rad;
     const float cp = std::cos(pitch), sp = std::sin(pitch);
@@ -260,10 +261,10 @@ void MovementTick() {
         g_camPos.X += mx * speed;
         g_camPos.Y += my * speed;
         g_camPos.Z += mz * speed;
-        E::SetActorLocation(g_camActor, g_camPos);
+        E::SetActorLocation(g_camActor.Raw(), g_camPos);
     }
     // Always keep the camera looking where the player aims (smooth game look).
-    E::SetActorRotation(g_camActor, rot);
+    E::SetActorRotation(g_camActor.Raw(), rot);
 }
 
 // Low-level mouse hook to read the wheel (GetAsyncKeyState can't -- the wheel is

@@ -163,6 +163,18 @@ UE4SS's.** (This corrects an earlier framing that called C "B's eventual retirem
   is unobserved, and B makes us strictly better than today (we stop corrupting UE4SS).
 - **The `DIAG` probe** keys on the `FF25` relay signature B overwrites, so it was updated to
   recognize the `MOV`-led relay and the "PolyHook-composed" success case.
+- **OPEN (2026-08-22 eve): two intermittent client boot fatals on the coop rig WITH the ArmPE
+  fixture enabled.** CLIENT_1 (fix B active, ArmPE forcing UE4SS's PE hook at boot) showed a
+  `Fatal Error!` dialog during asset load twice in ~8 boots (18:11, 19:31); no UE4CC dump, no WER
+  record (killed with the box up), mod log ends clean at the dispatch census both times.
+  Interleaved boots with the SAME bytes + fixture passed, incl. a full join. NOT correlated with
+  the D1 conversions (first fatal predates them). Hypothesis: a residual boot-time compose race —
+  PolyHook writing the relay prologue while another thread executes it — which the same-day
+  compose verification (small n) would not catch; or an unrelated UE/UE4SS boot fatal. The ArmPE
+  fixture is now DISABLED on the coop rig (HOST+CLIENT_1 `enabled.txt` → `.off`) per the test-rig
+  topology (the deliberate double-detour belongs in the r2modman repro rig); post-disable smoke
+  is the discriminator. If it reproduces in the r2modman rig, capture the DIALOG TEXT (it is the
+  diagnosis; no dump gets written) before dismissing it.
 
 ### As-built (2026-08-22 — baseline REPRODUCED in the real modded env; compose VERIFIED same day, see Proof status)
 
