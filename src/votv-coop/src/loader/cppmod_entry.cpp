@@ -341,6 +341,7 @@ extern "C" __declspec(dllexport) void* start_mod() {
     if (bootstrap::AlreadyBooted()) {
         if (bootstrap::Started()) {
             bootstrap::StartOnce("cppmod");  // logs the already-booted line
+            ue_wrap::log::Flush();
             return loader::cppmod::NextDummy();
         }
         UE_LOGE("cppmod: REFUSE reason=previously-refused -- restart re-entry on a "
@@ -394,6 +395,12 @@ extern "C" __declspec(dllexport) void* start_mod() {
             }
         }
     }
+    // Drain the boot evidence (the entry= line and the leg verdicts are INFO,
+    // which log.cpp deliberately leaves buffered): every autonomous teardown is
+    // TerminateProcess, and only the refuse legs flushed -- a clean boot's
+    // evidence must not depend on a later WARN or a vtable first-hit happening
+    // to drain it (lesson-kill-teardown-discards-buffered-info-log-lines).
+    ue_wrap::log::Flush();
     // kStarted and kAlreadyBooted both hand UE4SS a live dummy: the restart
     // re-entry must read as STARTED in their bookkeeping (m_is_started) --
     // our subsystems never stopped.
