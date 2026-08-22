@@ -530,41 +530,56 @@ void LogHookChainSnapshot(const char* when) {
     UE_LOGI("pe_diag[%-9s] tramp   %p : %s", when, (void*)tramp,
             tramp ? HexBytes(tramp, 48).c_str() : "(null)");
     // Classify the relay (WP-2 immune-relay aware). The relay lives inside the
-    // trampoline slot; scan for its form and verdict:
-    //   LEGACY FF25 00000000 <ptr>: ptr==&detour INTACT / else CORRUPT (the old
-    //     double-detour crash -- PolyHook clobbered our abs64 pointer).
-    //   IMMUNE  48 B8 <ptr> FF E0:  ptr==&detour => IMMUNE-INTACT (our mov-relay
-    //     survives; UE4SS has not in-place-hooked it this session).
-    //   Neither present but relay+0 carries a foreign jmp (FF25 with nonzero disp,
-    //     or E9): POLYHOOK-COMPOSED -- UE4SS cleanly hooked our relay, the fix
-    //     WORKING (the crash's absence, made visible).
+    // trampoline slot BEHIND MinHook's own jump-back stub (FF25 00000000 + abs64
+    // -> PE+len(stolen)), which shares the legacy relay's encoding -- a blind
+    // first-match scan reads the jump-back and mislabels every boot (2026-08-22:
+    // it printed LEGACY-CORRUPT on a run whose own byte dump showed the compose
+    // working). The abs64/imm64 payload uniquely discriminates: only the relay
+    // targets &detour. Locate it ONCE at the install snapshot (nothing has
+    // patched it yet), remember the offset, classify THAT offset in every later
+    // snapshot:
+    //   FF25 00000000 <&detour>      LEGACY-RELAY INTACT
+    //   FF25 00000000 <other>        LEGACY-RELAY CORRUPT (PolyHook clobbered the
+    //                                  pointer slot -- the old double-detour crash)
+    //   48 B8 <&detour> FF E0        IMMUNE-RELAY INTACT (fix on; UE4SS has not
+    //                                  armed its PE hook this session)
+    //   anything else at the offset  POLYHOOK-COMPOSED -- UE4SS in-place hooked
+    //                                  our relay; the fix WORKING (the crash's
+    //                                  absence, made visible)
     if (tramp) {
         const uint64_t wantDet = reinterpret_cast<uint64_t>(det);
-        const char* verdict = nullptr;
-        int foreignJmpOff = -1;
-        for (int off = 0; off + 14 <= 48; ++off) {
-            if (tramp[off] == 0xFF && tramp[off + 1] == 0x25 && tramp[off + 2] == 0 &&
-                tramp[off + 3] == 0 && tramp[off + 4] == 0 && tramp[off + 5] == 0) {
-                uint64_t p = 0; std::memcpy(&p, tramp + off + 6, 8);
+        static int s_relayOff = -1;  // located at the install snapshot, once per session
+        if (s_relayOff < 0) {
+            for (int off = 0; off + 14 <= 48; ++off) {
+                uint64_t p = 0;
+                if (tramp[off] == 0xFF && tramp[off + 1] == 0x25 && tramp[off + 2] == 0 &&
+                    tramp[off + 3] == 0 && tramp[off + 4] == 0 && tramp[off + 5] == 0) {
+                    std::memcpy(&p, tramp + off + 6, 8);
+                    if (p == wantDet) { s_relayOff = off; break; }
+                } else if (tramp[off] == 0x48 && tramp[off + 1] == 0xB8 &&
+                           tramp[off + 10] == 0xFF && tramp[off + 11] == 0xE0) {
+                    std::memcpy(&p, tramp + off + 2, 8);
+                    if (p == wantDet) { s_relayOff = off; break; }
+                }
+            }
+        }
+        const char* verdict = "UNKNOWN(relay not located at install)";
+        if (s_relayOff >= 0) {
+            const uint8_t* r = tramp + s_relayOff;
+            uint64_t p = 0;
+            if (r[0] == 0xFF && r[1] == 0x25 && r[2] == 0 && r[3] == 0 && r[4] == 0 &&
+                r[5] == 0) {
+                std::memcpy(&p, r + 6, 8);
                 verdict = (p == wantDet) ? "LEGACY-RELAY INTACT"
                                          : "LEGACY-RELAY CORRUPT(double-detour hit)";
-                break;
-            }
-            if (tramp[off] == 0x48 && tramp[off + 1] == 0xB8 &&
-                tramp[off + 10] == 0xFF && tramp[off + 11] == 0xE0) {
-                uint64_t p = 0; std::memcpy(&p, tramp + off + 2, 8);
+            } else if (r[0] == 0x48 && r[1] == 0xB8 && r[10] == 0xFF && r[11] == 0xE0) {
+                std::memcpy(&p, r + 2, 8);
                 verdict = (p == wantDet) ? "IMMUNE-RELAY INTACT(UE4SS not armed on it)"
                                          : "IMMUNE-RELAY PTR-MISMATCH";
-                break;
+            } else {
+                verdict = "POLYHOOK-COMPOSED(immune relay in-place hooked -- fix working)";
             }
-            // a foreign inline-jmp somewhere in the relay area = PolyHook's patch
-            if (foreignJmpOff < 0 &&
-                ((tramp[off] == 0xFF && tramp[off + 1] == 0x25) || tramp[off] == 0xE9))
-                foreignJmpOff = off;
         }
-        if (!verdict)
-            verdict = (foreignJmpOff >= 0) ? "POLYHOOK-COMPOSED(immune relay in-place hooked -- fix working)"
-                                           : "UNKNOWN(relay not located)";
         UE_LOGW("pe_diag[%-9s] RELAY: %s", when, verdict);
     }
     // WHO-FIRST is decided by what our trampoline HOLDS, not by PE's byte: if the

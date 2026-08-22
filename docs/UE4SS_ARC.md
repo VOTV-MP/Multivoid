@@ -53,7 +53,7 @@ proxy / dup-dialog retire WHOLE per RULE 2 — no standalone-and-UE4SS dual path
 | WP | What | Status |
 |----|------|--------|
 | **WP-1** | Spike: prove the C-ABI shim boots the one binary as a UE4SS mod; measure the double-PE-detour survivability. | **AS-BUILT** — commit `cddb116c` (2026-08-21 eve). Matrix green ~110 ms; LAN join worked; double-detour "alive" on a SMALL sample (later found to crash ~2/10, see §3). WP-4 spike findings: ini err=3 under VFS; shimloader panics on `xinput1_3.dll`. |
-| **WP-2** | The loader cut: delete `xinput_proxy.cpp` + the proxy deploy path (RULE 2); `cppmod_entry.cpp` in; predecessor detection + mutex; keep EVERYTHING else. | **IN PROGRESS.** Pre-cut LANDED (§2). Proxy DELETION is **HELD** behind the boot crash (§3). Fix (**B**, §4) is BUILT + default-ON; baseline crash **REPRODUCED in the real modded env** (§4 As-built); fix compose **PENDING hands-on** (queued relaunch). A separate exit-to-menu coexistence crash (IsLive/VEH) surfaced too (§4). |
+| **WP-2** | The loader cut: delete `xinput_proxy.cpp` + the proxy deploy path (RULE 2); `cppmod_entry.cpp` in; predecessor detection + mutex; keep EVERYTHING else. | **IN PROGRESS.** Pre-cut LANDED (§2). Fix (**B**, §4) is BUILT + default-ON and its compose is **VERIFIED** (2026-08-22 16:02 real-env byte decode + 16:25 DEV `POLYHOOK-COMPOSED` boot, §4 Proof status). Remaining before the proxy deletion: the IsLive/VEH exit-to-menu coexistence crash (§4) + commit 3 itself. |
 | **WP-4** | Fix the stale install/update/uninstall prose + the site + installer for the UE4SS lane. | **PARKED** — census written (`votv-ue4ss-stale-loader-prose-CENSUS-2026-08-22.md`, ~139 rows); fix deferred until the arc ships. |
 | **WP-6** | Distribution re-home (the `multivoid-<game>-<build>.dll` filename + master + release flow onto the mod-folder shape). | **PARKED.** |
 | **WP-7** | The native DEBUG subsystem (USER 2026-08-21: adopt UE4SS's debug tooling / DebugMod ideas). | **PARKED** — scoped in the design finding §3c. |
@@ -174,11 +174,11 @@ UE4SS's.** (This corrects an earlier framing that called C "B's eventual retirem
   RULE-2-exempt diagnostic escape, retired at commit 3). Boot logs `PE relay followJmp-immune (fix ON)`.
   The `VOTVCOOP_PE_DIAG` probe classifies the relay form (LEGACY-INTACT / LEGACY-CORRUPT / IMMUNE-INTACT
   / POLYHOOK-COMPOSED).
-- Committed build `0e14a2ca` = flag-gated **default OFF** (`multivoid-0.9.0n-134.dll` sha `76a8d200`).
-  The **default-ON** rebuild (`fac0c29352d1fcb8…`) is UNCOMMITTED — built + deployed to the r2modman
-  test profile only (see below).
+- Committed build `0e14a2ca` = flag-gated **default OFF** (`multivoid-0.9.0n-134.dll` sha `76a8d200`);
+  `bd617056` flipped the source default ON. The current build (classifier fix included, see below) is
+  sha `93AC315B` — deployed to all 4 installs + the r2modman test profile 2026-08-22.
 
-**PROOF STATUS — the honest picture (VERIFIED-baseline, PENDING-fix):**
+**PROOF STATUS — both legs VERIFIED (2026-08-22):**
 - **Baseline crash REPRODUCED in a REAL modded environment** [VERIFIED, matching real log/crash,
   2026-08-22 15:42]: r2modman `Default` profile (`unreal_shimloader` + **experimental** UE4SS +
   DebugMod + CrashContext + PBMovement + Fusion + FusionFix + VoidFax) + a 5-line `ArmPE` Lua fixture
@@ -187,12 +187,24 @@ UE4SS's.** (This corrects an earlier framing that called C "B's eventual retirem
   `RELAY: LEGACY-RELAY CORRUPT(double-detour hit)` + `WHO-FIRST: WE-FIRST`; `UE4SS.log`
   `ProcessEvent address 0x7ff64fc00fda` (= our trampoline **+0x1A**, the relay pointer slot); CrashContext
   + a UE fatal. So the mechanism holds identically on experimental UE4SS + shimloader.
-- **Fix compose NOT yet hands-on confirmed** [PENDING]: one fix-on session reached multiplayer with no
-  boot crash, but its `UE4SS.log` read `ProcessEvent address 0x…5930` (the REAL PE — a benign race where
-  UE4SS resolved PE *before* our hook), which proves nothing about the fix, and its log never rotated
-  (stale). The clean confirmation is queued: default-ON build + ArmPE, relaunch ×3-5, look for
-  `WHO-FIRST: WE-FIRST` + `RELAY: POLYHOOK-COMPOSED` boots (the exact crash-prone race, now surviving).
-  Until that log exists, B is BUILT + source-confirmed (§4 N4) but **not VERIFIED**.
+- **Fix compose VERIFIED** [2026-08-22, twice, independently]:
+  1. **Real env (user relaunch, 16:02, a09n + ArmPE, fix ON):** the trampoline byte dumps prove it —
+     at install the relay is the immune form `48 B8 <&detour> FF E0`; at post-init that slot holds a
+     foreign `FF 25` (PolyHook in-place-hooked our relay, i.e. UE4SS's PE hook DID arm mid-session —
+     the exact race that crashed the 15:42 baseline). No crash; the session ran ~80 s (server browser,
+     join attempt, clean shutdown). Log: `multivoid.log` 16:02 in the a09n install.
+  2. **DEV copy (autonomous boot, 16:25, UE4SS 3.0.1 stable, no ArmPE):** classifier printed
+     `IMMUNE-RELAY INTACT` at install → `POLYHOOK-COMPOSED(fix working)` + `WE-FIRST` at post-init,
+     no crash. (Side datum: 3.0.1 in the DEV stack armed its PE hook within 10 s with NO ArmPE
+     fixture — the earlier "lazy, 0/15 solo boots" measurement does not generalize to this stack;
+     trigger unidentified, harmless now that the compose holds.)
+  The 16:02 run also exposed a **classifier bug, fixed same day**: the diag's first-match scan read
+  MinHook's own jump-back stub (`FF25 00000000` + abs64 → PE+6, which precedes the relay in the
+  trampoline slot) as "the relay" and printed `LEGACY-RELAY CORRUPT` on every boot regardless of
+  reality. The scan now locates the relay once at the install snapshot (only the relay's payload
+  equals `&detour`) and classifies that remembered offset thereafter. The verdict strings above are
+  from the FIXED classifier (DEV boot); the 16:02 real-env proof rests on the raw byte dumps, which
+  were always trustworthy.
 
 ### Realistic-stack coexistence — MEASURED (2026-08-22)
 
@@ -240,8 +252,8 @@ world-teardown). Caller not yet identified (no native dump — CrashContext's VE
 
 ## 6. Next steps (in order)
 
-1. **Confirm B in the real env** (the queued relaunch): default-ON build + ArmPE, ×3-5 boots, read the
-   fresh `multivoid.log` for `WE-FIRST` + `POLYHOOK-COMPOSED` + no crash. THIS is what flips B to VERIFIED.
+1. ~~Confirm B in the real env~~ **DONE 2026-08-22** — see §4 Proof status (real-env byte decode +
+   DEV `POLYHOOK-COMPOSED` boot, both crash-free).
 2. Fix the IsLive/VEH exit crash (index-based check / teardown cache-clear) — a coexistence bug, so it
    only matters in a stack with a VEH crash-reporter (CrashContext), but that is the common stack.
 3. Add B's teardown leak-at-death (§4 residual), drop the `VOTVCOOP_PE_IMMUNE_RELAY=0` diagnostic escape.
