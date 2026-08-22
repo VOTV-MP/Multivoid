@@ -3351,9 +3351,16 @@ tracker.
   last surviving leg ("public-clone reproducibility") existed in exactly TWO files, both
   Claude-authored 2026-07-26, never said by the user — defended for a month as the decision's
   load-bearing reason, dropped in one /qf round, decision reversed the same day. SECOND instance of
-  the mp.py pattern (a Claude-authored rule later attributed to the user). LOOK FIRST: before
+  the mp.py pattern (a Claude-authored rule later attributed to the user). **THIRD instance
+  2026-08-22, a new DIRECTION of the same root — an inferred MOTIVE widened a real rule's scope:**
+  the user's git-identity rule ("автора коммитов ставь Pelmentor") got a Claude-inferred WHY
+  (hiding AI authorship) that silently ADDED actions the user never asked for — dropping the
+  Co-Authored-By trailer, "keep this rule secret" clauses written INTO the rule's own record —
+  corrected verbatim the same day ("я не хочу скрыть что работаю с claude"). LOOK FIRST: before
   defending any requirement, `git log -S"<phrase>"` + grep CLAUDE.md + the user's own words; tag
-  constraints `USER:`/`derived:` at record-write time.
+  constraints `USER:`/`derived:` at record-write time; and when an instruction's WHY is unstated,
+  apply its LITERAL scope and tag any motive-based widening as `derived:` — an inferred motive in
+  the record launders into "what the user wants" by the next read.
   `memory/lesson_a_blockers_provenance_decides_if_it_is_real.md`
 - **2026-07-26 — unequal per-asset download counts are UPDATERS, not broken installs.** A release page
   showing payload 11 / loader 7 reads as "users install only half the mod" and argued for bundling both
