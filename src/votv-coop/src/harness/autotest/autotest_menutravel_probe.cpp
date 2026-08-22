@@ -171,6 +171,10 @@ void RunProbe() {
     UE_LOGI("menutravel: MENU-SHOT READY");  // mp.py captures the window here
     ::Sleep(5000);
     UE_LOGI("menutravel: DONE");
+    // The menu is log-quiet, so everything since the last WARN (incl. the re-injection
+    // lines the D1 differential asserts on) sits in the CRT INFO buffer -- a kill would
+    // discard it. Flush so an external runner can read the full tail from disk.
+    ue_wrap::log::Flush();
 }
 
 }  // namespace

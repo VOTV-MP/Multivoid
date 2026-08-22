@@ -10,6 +10,7 @@
 #include <string>
 
 #include "coop/player/players_registry.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
@@ -46,8 +47,9 @@ char g_ownerName[64] = "-";
 
 // The widget the last full scan found holding focus, re-probed first on the next one
 // (focus is sticky). Diagnostics-adjacent but load-bearing for the scan's cost -- see
-// the sweep. Never dereferenced without an IsLive check.
-void* g_lastOwner = nullptr;
+// the sweep. Cached across 1 Hz scans (incl. at the menu) -> CachedObjRef, never a
+// bare-IsLive raw pointer (islive-zeroav design section 3).
+ue_wrap::CachedObjRef g_lastOwner;
 
 void* g_clsUserWidget = nullptr;
 void* g_fnHasKeyboardFocus = nullptr;
@@ -113,8 +115,10 @@ void ResolveOnce() {
 // not a tick boundary. `t_inPump` does not protect this: a WndProc is not inside a pump.
 // Reachable for real -- InvalidateLocal() on a level change or a respawn clears the
 // cache, and the first keypress after that would pay for it. So the tick owns the
-// resolve and the keystroke path only re-validates.
-void* g_localPawn = nullptr;
+// resolve and the keystroke path only re-validates. CachedObjRef: probed per
+// WndProc message INCLUDING at the menu -> the runner-up suspect of the
+// IsLive/VEH finding (islive-zeroav design section 3).
+ue_wrap::CachedObjRef g_localPawn;
 
 // The pointer is derived ONCE and handed back, so no caller re-walks the pawn and the
 // offset a second time -- doing that was a real null-deref, because the drill below can
@@ -144,15 +148,16 @@ void* ActiveInterfaceFrom(void* mp) {
 // TICK path: may resolve. Publishes the pawn for the keystroke path below.
 void* ActiveInterfaceResolving() {
     void* mp = coop::players::Registry::Get().Local();
-    g_localPawn = mp;
+    g_localPawn.Set(mp);  // fresh from the registry (it validates) -- the Set contract
     return ActiveInterfaceFrom(mp);
 }
 
-// KEYSTROKE path: pure memory reads. A dead or not-yet-published pawn answers
-// "no interface", which fails toward the game exactly like every other unknown here.
+// KEYSTROKE path: pure memory reads (Alive() is array-slot reads only). A dead or
+// not-yet-published pawn answers "no interface", which fails toward the game
+// exactly like every other unknown here.
 void* ActiveInterfaceCached() {
-    void* mp = g_localPawn;
-    if (!mp || !R::IsLive(mp)) return nullptr;
+    void* mp = g_localPawn.Get();
+    if (!mp) return nullptr;
     return ActiveInterfaceFrom(mp);
 }
 
@@ -333,15 +338,16 @@ void TickGameThread(bool doFullScan) {
     // is that whoever owned it a second ago still does -- and a hit here skips the
     // whole sweep. Without this the sweep pays TWO reflected UFunction calls for every
     // non-owning widget, because `A || B` only short-circuits on the rare true.
-    if (g_lastOwner && R::IsLive(g_lastOwner) && OwnsUserZeroFocus(g_lastOwner)) {
+    void* lastOwner = g_lastOwner.Get();
+    if (lastOwner && OwnsUserZeroFocus(lastOwner)) {
         owns = true;
-        Remember(g_lastOwner);
+        Remember(lastOwner);
     }
 
     const int32_t n = R::NumObjects();
     for (int32_t i = 0; i < n && !owns; ++i) {
         void* o = R::ObjectAt(i);
-        if (!o || o == g_lastOwner) continue;  // already asked
+        if (!o || o == g_lastOwner.Raw()) continue;  // already asked (identity compare only)
         void* cls = R::ClassOf(o);
         if (!DerivesFromUserWidget(cls)) continue;
         // NameStartsWith, not ToString(...).rfind: the latter built and destroyed a
@@ -349,9 +355,9 @@ void TickGameThread(bool doFullScan) {
         // primitive is the one players_registry and reflection already use here.
         if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;
         if (!R::IsLive(o)) continue;
-        if (OwnsUserZeroFocus(o)) { owns = true; Remember(o); g_lastOwner = o; }
+        if (OwnsUserZeroFocus(o)) { owns = true; Remember(o); g_lastOwner.Set(o); }
     }
-    if (!owns) g_lastOwner = nullptr;
+    if (!owns) g_lastOwner.Reset();
     if (!owns) g_ownerName[0] = '-', g_ownerName[1] = '\0';
     g_scanOwnsText.store(owns, std::memory_order_relaxed);
     g_everTicked.store(true, std::memory_order_relaxed);

@@ -15,6 +15,7 @@
 #include "coop/session/session_manager.h"  // RefreshLatestVersion + LatestVersionLine (native version label)
 #include "ui/server_browser.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -45,8 +46,13 @@ int32_t g_isPauseOff = -1;              // ui_menu_C -> isPause (bool)
 int32_t g_txtVersionOff = -1;           // ui_menu_C -> txt_version (UTextBlock*, the version label)
 
 // Injected-button tracking (game-thread only -- touched solely in the Tick observer).
-void* g_injectedMenu = nullptr;         // the menu instance we last injected into
-void* g_button = nullptr;               // our MULTIPLAYER UButton
+void* g_injectedMenu = nullptr;         // the menu instance we last injected into (compared, never deref'd)
+// Our MULTIPLAYER UButton. CachedObjRef, not a raw pointer: this widget is freed
+// with its menu instance for the WHOLE play session and probed per menu tick on
+// RETURN to the menu -- the prime suspect of the 2026-08-22 IsLive/VEH finding
+// (a bare IsLive deref here is a first-chance AV a co-resident VEH crash
+// reporter pops as a "crash"). islive-zeroav design section 3.
+ue_wrap::CachedObjRef g_button;
 bool  g_buttonInputBlocked = false;     // edge-tracking: is g_button currently HitTestInvisible?
 bool  g_prevLmb = false;                // VK_LBUTTON state last tick (click-edge detect)
 bool  g_lmbPrimed = false;             // first-tick guard: seed g_prevLmb without firing an edge
@@ -63,7 +69,7 @@ std::atomic<uint64_t> g_pauseTickMs{0};
 // A UTextBlock we inject as a sibling of VOTV's txt_version ("Alpha 0.9.0 / Build a090n"),
 // so the coop line sits organically among the game's build labels and auto show/hides with
 // the menu. Driven from session_manager::LatestVersionLine; refreshed on each menu entrance.
-void* g_versionText = nullptr;          // our injected UTextBlock
+ue_wrap::CachedObjRef g_versionText;    // our injected UTextBlock (same session-long-freed shape as g_button)
 void* g_versionMenu = nullptr;          // the menu instance we injected it into
 // "Normal" label colour: CYAN -- the coop accent, matching the injected MULTIPLAYER
 // button (user 2026-07-16). Amber overrides while an update is available.
@@ -87,13 +93,15 @@ inline void* ReadPtr(void* base, int32_t off) {
 // Idempotent per instance (no-op if our button is already live in this menu).
 // Returns true if our button is present afterward. Game thread only.
 bool DoInject(void* menu) {
-    if (menu == g_injectedMenu && g_button && R::IsLive(g_button)) return true;  // already done
+    if (menu == g_injectedMenu && g_button.Alive()) return true;  // already done
     void* buttonStart = ReadPtr(menu, g_buttonStartOff);
     if (!buttonStart) return false;  // menu not fully constructed yet
-    g_button = nullptr;
-    if (E::InjectCanvasButton(buttonStart, L"Multiplayer", &g_button)) {
+    g_button.Reset();
+    void* btn = nullptr;
+    if (E::InjectCanvasButton(buttonStart, L"Multiplayer", &btn)) {
+        g_button.Set(btn);  // fresh from the inject -- the Set contract's shape
         g_injectedMenu = menu;
-        UE_LOGI("multiplayer_menu: MULTIPLAYER button injected into menu=%p (button=%p)", menu, g_button);
+        UE_LOGI("multiplayer_menu: MULTIPLAYER button injected into menu=%p (button=%p)", menu, btn);
         return true;
     }
     return false;
@@ -119,15 +127,17 @@ std::string VersionLine(bool* outdated) {
 void UpdateVersionLabel(void* menu) {
     if (g_txtVersionOff < 0) return;  // txt_version field not resolved -> label disabled
     // Inject once per menu instance; self-heal if VOTV ever rebuilt the menu widget.
-    if (menu != g_versionMenu || !g_versionText || !R::IsLive(g_versionText)) {
+    if (menu != g_versionMenu || !g_versionText.Alive()) {
         void* txtVersion = ReadPtr(menu, g_txtVersionOff);
-        if (!txtVersion || !R::IsLive(txtVersion)) return;  // game's label not constructed yet
-        g_versionText = nullptr;
+        if (!txtVersion || !R::IsLive(txtVersion)) return;  // fresh read off the live menu -- bare IsLive is the contract here
+        g_versionText.Reset();
         bool outdated = false;
         const std::string initial = VersionLine(&outdated);
         const std::wstring winit(initial.begin(), initial.end());  // line is ASCII (URLs/idents)
+        void* vt = nullptr;
         if (E::InjectTextRowAbove(txtVersion, winit.c_str(),
-                                  &g_versionText, /*outColor=*/nullptr)) {
+                                  &vt, /*outColor=*/nullptr)) {
+            g_versionText.Set(vt);  // fresh from the inject
             g_versionMenu = menu;
             g_versionLastLine = initial;
             g_versionLastOutdated = outdated;
@@ -137,23 +147,24 @@ void UpdateVersionLabel(void* menu) {
             // this point, so a raw property write would never repaint (user 2026-07-16:
             // "no cyan" -- the raw write was exactly this trap).
             const ue_wrap::FLinearColor amber{1.f, 0.78f, 0.35f, 1.f};
-            E::SetTextBlockColorDispatch(g_versionText, outdated ? amber : kVersionCyan);
+            E::SetTextBlockColorDispatch(vt, outdated ? amber : kVersionCyan);
             UE_LOGI("multiplayer_menu: native version label injected (text=%p) ABOVE txt_version=%p",
-                    g_versionText, txtVersion);
+                    vt, txtVersion);
         }
         return;  // drive text/colour from next tick on
     }
-    // Steady state: push text/colour only when the verdict changed.
+    // Steady state: push text/colour only when the verdict changed. Raw() is legal
+    // here -- the branch above just Alive()-validated this ref in the SAME tick.
     bool outdated = false;
     const std::string line = VersionLine(&outdated);
     if (line != g_versionLastLine) {
         const std::wstring wline(line.begin(), line.end());
-        E::SetWidgetText(g_versionText, wline.c_str());
+        E::SetWidgetText(g_versionText.Raw(), wline.c_str());
         g_versionLastLine = line;
     }
     if (outdated != g_versionLastOutdated) {
         const ue_wrap::FLinearColor amber{1.f, 0.78f, 0.35f, 1.f};
-        E::SetTextBlockColorDispatch(g_versionText, outdated ? amber : kVersionCyan);
+        E::SetTextBlockColorDispatch(g_versionText.Raw(), outdated ? amber : kVersionCyan);
         g_versionLastOutdated = outdated;
     }
 }
@@ -209,7 +220,7 @@ void OnMenuTickPost(void* self, void* /*function*/, void* /*params*/) {
 
     // Inject once per menu instance; self-heal if VOTV ever tore our button out
     // (throttled to 1 attempt/s so a persistent failure never hammers SpawnObject).
-    const bool needInject = (self != g_injectedMenu) || !g_button || !R::IsLive(g_button);
+    const bool needInject = (self != g_injectedMenu) || !g_button.Alive();
     if (needInject) {
         const uint64_t now = ::GetTickCount64();
         if (now - g_lastInjectMs >= 1000) { g_lastInjectMs = now; DoInject(self); }
@@ -222,10 +233,10 @@ void OnMenuTickPost(void* self, void* /*function*/, void* /*params*/) {
     // click. The native menu buttons are already blocked by that same input swallow;
     // this makes ours behave identically. Edge-applied (SetVisibility only on a change);
     // restored to Visible (input-receiving) the moment the browser closes.
-    if (g_button && R::IsLive(g_button)) {
+    if (void* btn = g_button.Get()) {
         const bool block = ui::server_browser::IsOpen();
         if (block != g_buttonInputBlocked) {
-            E::SetWidgetVisibility(g_button, block ? 3 : 0);  // 3=HitTestInvisible, 0=Visible
+            E::SetWidgetVisibility(btn, block ? 3 : 0);  // 3=HitTestInvisible, 0=Visible
             g_buttonInputBlocked = block;
         }
     }
@@ -245,9 +256,10 @@ void OnMenuTickPost(void* self, void* /*function*/, void* /*params*/) {
     if (!g_lmbPrimed) { g_lmbPrimed = true; g_prevLmb = down; }
     const bool releaseEdge = !down && g_prevLmb;
     g_prevLmb = down;
-    if (releaseEdge && g_button && R::IsLive(g_button) && !ui::server_browser::IsOpen() &&
+    void* clickBtn = releaseEdge ? g_button.Get() : nullptr;
+    if (clickBtn && !ui::server_browser::IsOpen() &&
         !coop::join_progress::Active() &&  // suppress while connecting (the menu is hidden)
-        ui::input_focus::IsOurWindowForeground() && E::WidgetIsHovered(g_button)) {
+        ui::input_focus::IsOurWindowForeground() && E::WidgetIsHovered(clickBtn)) {
         UE_LOGI("multiplayer_menu: MULTIPLAYER clicked -> opening server browser");
         ui::server_browser::Open();
     }

@@ -240,5 +240,19 @@ meadow_store:39, email:71) already use ByIndex. Prior-art examples: door_box.cpp
 
 ## Appendix B — fill-site conversion table
 
-(Produced during the staged conversion; per site: file:line, cache var, fill origin classification,
-idx source, converting commit. Empty until the build starts.)
+Per site: cache var, fill origin (what makes Set()'s fresh-same-task contract hold), converting
+commit. Line numbers are the PRE-conversion census rows (Appendix A).
+
+| file (census rows) | cache var | fill origin | commit |
+|---|---|---|---|
+| ui/multiplayer_menu.cpp :90/:212/:225/:248 | g_button | out-param of E::InjectCanvasButton, same GT task | prime-suspect commit |
+| ui/multiplayer_menu.cpp :122 (+:151/:156 steady) | g_versionText | out-param of E::InjectTextRowAbove, same GT task | prime-suspect commit |
+| coop/input/input_owner.cpp :155 (alias mp) | g_localPawn | Registry::Local() (validates internally), same GT task | prime-suspect commit |
+| coop/input/input_owner.cpp :336 | g_lastOwner | ObjectAt walk + fresh IsLive in the same scan | prime-suspect commit |
+
+Differential bracket for this commit (design §4.3): PRE `CEAA0E93` vs POST `52FFF0F7`, solo
+no-bypass menutravel each — all 7 markers identical (LAYER LIVE dispatch → version label + button
+INJECTED on the RETURNED menu → menu-edge session stop → bypass RESUMED → SHOT READY → DONE →
+process alive), WARN class sets byte-identical after stripping run-identity noise (ASLR digits,
+fresh-save re-key suffixes), 0 IsLive WARNs both sides. Logs: scratchpad `diff_pre3.log` /
+`diff_post.log`.
