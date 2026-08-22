@@ -472,11 +472,17 @@ double-detour with UE4SS, corrupting via PolyHook's `followJmp`**. We MinHook PE
 patches the relay's POINTER slot, clobbering `&ProcessEventDetour` with a thunk to
 a non-canonical address → our relay `jmp [rip]` → `#GP` → the `AV read -1`. The
 variable is NOT install order (measured 14/14 boots WE-FIRST) but whether UE4SS's
-lazy PE hook arms (0/15 solo, ~2/7 two-peer runs). FIX is OPEN + forked: (A)
-install-after-UE4SS is DEAD (we are always first); (B) a followJmp-immune local
-relay form (LOCAL, keeps substrate, feasibility not yet measured); (C) observe PE
-via UE4SS's own Hook API = the deferred L-4 bridge + reverses the D-3 slim
-contract → a USER FORK. The proxy stays in-tree until the fix lands and the
-pre-cut gate passes. Record: WP-2 AS-RUN box in the design of record §3; FACTS doc
-§2 corrected; session detail in memory
-`project-wp2-precut-and-trampoline-crash-2026-08-22`.
+lazy PE hook arms (0/15 solo, ~2/7 two-peer runs). **FIX DECIDED 2026-08-22 (`/qf`,
+4 rounds) = B** (followJmp-immune relay: `ff25[rip]` → `mov rax,imm64; jmp rax`, so
+followJmp stops on the `mov` and PolyHook cleanly in-place-hooks our relay → both
+detours chain; source-confirmed via PolyHook's VALLOC2 path). **C ruled out** —
+UE4SS's PE PreCallback returns `void` with no skip, so it cannot host our ~20
+native-call interceptors; Multivoid must always own its own PE detour, and B is the
+PERMANENT coexistence, not a stopgap. BUILT (`fac0c293` default-ON); baseline crash
+**REPRODUCED in the real modded env** (r2modman/shimloader + experimental UE4SS +
+DebugMod/CrashContext/PBMovement + an `ArmPE` fixture), fix compose PENDING hands-on.
+Two coexistence findings surfaced: the crash is config-dependent (no stock mod arms
+PE) and a separate exit-to-menu `IsLive`/VEH crash. The proxy stays in-tree until the
+fix is hands-on-confirmed and commit 3 lands. **Canonical arc doc now
+`docs/UE4SS_ARC.md`.** Record: design of record §3; FACTS doc §2; memory
+`project-wp2-realistic-env-test-2026-08-22`.

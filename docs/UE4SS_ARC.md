@@ -53,7 +53,7 @@ proxy / dup-dialog retire WHOLE per RULE 2 — no standalone-and-UE4SS dual path
 | WP | What | Status |
 |----|------|--------|
 | **WP-1** | Spike: prove the C-ABI shim boots the one binary as a UE4SS mod; measure the double-PE-detour survivability. | **AS-BUILT** — commit `cddb116c` (2026-08-21 eve). Matrix green ~110 ms; LAN join worked; double-detour "alive" on a SMALL sample (later found to crash ~2/10, see §3). WP-4 spike findings: ini err=3 under VFS; shimloader panics on `xinput1_3.dll`. |
-| **WP-2** | The loader cut: delete `xinput_proxy.cpp` + the proxy deploy path (RULE 2); `cppmod_entry.cpp` in; predecessor detection + mutex; keep EVERYTHING else. | **IN PROGRESS.** Pre-cut LANDED (§2). Proxy DELETION is **HELD** behind the boot crash (§3), whose fix (**B**, §4) is **PENDING** (built + deployed, runtime proof not yet run). |
+| **WP-2** | The loader cut: delete `xinput_proxy.cpp` + the proxy deploy path (RULE 2); `cppmod_entry.cpp` in; predecessor detection + mutex; keep EVERYTHING else. | **IN PROGRESS.** Pre-cut LANDED (§2). Proxy DELETION is **HELD** behind the boot crash (§3). Fix (**B**, §4) is BUILT + default-ON; baseline crash **REPRODUCED in the real modded env** (§4 As-built); fix compose **PENDING hands-on** (queued relaunch). A separate exit-to-menu coexistence crash (IsLive/VEH) surfaced too (§4). |
 | **WP-4** | Fix the stale install/update/uninstall prose + the site + installer for the UE4SS lane. | **PARKED** — census written (`votv-ue4ss-stale-loader-prose-CENSUS-2026-08-22.md`, ~139 rows); fix deferred until the arc ships. |
 | **WP-6** | Distribution re-home (the `multivoid-<game>-<build>.dll` filename + master + release flow onto the mod-folder shape). | **PARKED.** |
 | **WP-7** | The native DEBUG subsystem (USER 2026-08-21: adopt UE4SS's debug tooling / DebugMod ideas). | **PARKED** — scoped in the design finding §3c. |
@@ -164,43 +164,93 @@ UE4SS's.** (This corrects an earlier framing that called C "B's eventual retirem
 - **The `DIAG` probe** keys on the `FF25` relay signature B overwrites, so it was updated to
   recognize the `MOV`-led relay and the "PolyHook-composed" success case.
 
-### As-built (PENDING proof)
-
-The fix is implemented behind a proof flag (`VOTVCOOP_PE_IMMUNE_RELAY=1`, default OFF so the same DLL
-reproduces the baseline crash for the A/B):
+### As-built (2026-08-22 eve — baseline REPRODUCED in the real modded env; fix compose NOT yet hands-on)
 
 - `ue_wrap/core/hook.{h,cpp}` — `Install(..., bool followJmpImmune=false)`; the relay rewrite
   (`MakeRelayFollowJmpImmune`) runs between `MH_CreateHook` and `MH_EnableHook` (target unpatched →
   thread-safe), fail-closed if the `FF25` relay signature is not found.
-- `ue_wrap/core/pe_detour.cpp` — reads the env, passes the flag; the `VOTVCOOP_PE_DIAG` probe now
-  classifies the relay form (LEGACY-INTACT / LEGACY-CORRUPT / IMMUNE-INTACT / POLYHOOK-COMPOSED).
+- `ue_wrap/core/pe_detour.cpp` — the immune relay is now **default ON** (`immuneRelay=true`;
+  `VOTVCOOP_PE_IMMUNE_RELAY=0` forces the LEGACY corruptible relay for an A/B baseline repro — a
+  RULE-2-exempt diagnostic escape, retired at commit 3). Boot logs `PE relay followJmp-immune (fix ON)`.
+  The `VOTVCOOP_PE_DIAG` probe classifies the relay form (LEGACY-INTACT / LEGACY-CORRUPT / IMMUNE-INTACT
+  / POLYHOOK-COMPOSED).
+- Committed build `0e14a2ca` = flag-gated **default OFF** (`multivoid-0.9.0n-134.dll` sha `76a8d200`).
+  The **default-ON** rebuild (`fac0c29352d1fcb8…`) is UNCOMMITTED — built + deployed to the r2modman
+  test profile only (see below).
 
-Built as `multivoid-0.9.0n-134.dll` (sha `76a8d200…`), deployed to all four installs. **Runtime proof
-NOT yet run** — the gate before this becomes unconditional and commit 3 lands: build behind the flag
-(done), run the crash-repro with flag-OFF (baseline still crashes) vs flag-ON (0 crashes + LAN join
-clean + the probe shows POLYHOOK-COMPOSED on armed boots). Once proven, the env gate is removed (B
-becomes unconditional; the flag was the proof scaffold, RULE-2 diagnostic) and the proxy deletion
-(commit 3) proceeds.
+**PROOF STATUS — the honest picture (VERIFIED-baseline, PENDING-fix):**
+- **Baseline crash REPRODUCED in a REAL modded environment** [VERIFIED, matching real log/crash,
+  2026-08-22 15:42]: r2modman `Default` profile (`unreal_shimloader` + **experimental** UE4SS +
+  DebugMod + CrashContext + PBMovement + Fusion + FusionFix + VoidFax) + a 5-line `ArmPE` Lua fixture
+  (`ExecuteInGameThread(fn, ProcessEvent)` — the only thing that arms UE4SS's PE hook) + Multivoid with
+  the fix OFF → boot crash. Evidence: `multivoid.baseline-1542.log` in the a09n install =
+  `RELAY: LEGACY-RELAY CORRUPT(double-detour hit)` + `WHO-FIRST: WE-FIRST`; `UE4SS.log`
+  `ProcessEvent address 0x7ff64fc00fda` (= our trampoline **+0x1A**, the relay pointer slot); CrashContext
+  + a UE fatal. So the mechanism holds identically on experimental UE4SS + shimloader.
+- **Fix compose NOT yet hands-on confirmed** [PENDING]: one fix-on session reached multiplayer with no
+  boot crash, but its `UE4SS.log` read `ProcessEvent address 0x…5930` (the REAL PE — a benign race where
+  UE4SS resolved PE *before* our hook), which proves nothing about the fix, and its log never rotated
+  (stale). The clean confirmation is queued: default-ON build + ArmPE, relaunch ×3-5, look for
+  `WHO-FIRST: WE-FIRST` + `RELAY: POLYHOOK-COMPOSED` boots (the exact crash-prone race, now surviving).
+  Until that log exists, B is BUILT + source-confirmed (§4 N4) but **not VERIFIED**.
+
+### Realistic-stack coexistence — MEASURED (2026-08-22)
+
+The double-detour crash is **config-dependent, not universal.** Measured in the r2modman stack:
+- **No mod arms UE4SS's ProcessEvent inline detour on its own.** All three C++ mods (DebugMod,
+  CrashContext, PBMovement) import `UE4SS.dll` and use UE4SS's OWN API — `RegisterHook`/`ProcessEvent`
+  (per-function) / `AddVectoredExceptionHandler` — **none ships its own inline-hook engine**; the Lua
+  mods (Fusion/FusionFix/VoidFax) ride UE4SS too. UE4SS hooks ProcessInternal / ProcessLocalScriptFunction
+  / BeginPlay / CallFunctionByName, and RESOLVES ProcessEvent's address, but installs **no PE detour**
+  unless something calls `RegisterProcessEventPreCallback` — which no stock mod does (verified: not even
+  jsbLuaProfiler). So the common stack **coexists with Multivoid with no crash.** The crash needs a
+  PE-callback mod OR Multivoid's own multiplayer/join path (the unknown ~2/10 trigger).
+- **Consequence for B (good):** the whole realistic stack has **no second independent inline PE hooker**
+  → the §4 Q2 residual does not exist in a normal modded setup; B fully covers it.
+- **The ExeDir anchor works under the shimloader VFS** (our `multivoid.log`/`.ini` land in the real
+  a09n exe dir, not lost in the VFS) — but one boot failed to rotate the log (stale-log caveat).
+
+### The IsLive / VEH exit-to-menu crash — NEW, SEPARATE from the double-detour (2026-08-22)
+
+Exiting a multiplayer save to the main menu produced a repeating AV at `main.dll+0x11CC78` =
+`ue_wrap::reflection::IsLive(void*)` (reflection.cpp:165), reading a dangling object pointer.
+`IsLive` is **SEH-guarded by design** (it catches the freed-pointer read and returns false). The crash
+happens because **CrashContext installs a Vectored Exception Handler, and VEH fires before frame-based
+SEH** — it intercepts our normally-absorbed fault first and reports it as a crash. This is a
+**coexistence artifact** between our SEH-based crash-safe reflection and a VEH-based crash-reporter mod;
+it is NOT the double-detour and NOT caused by B (silent without CrashContext across four proxy-lane
+takes). The two identical re-faults suggest our SEH still recovers underneath. **OPEN** — the proper
+fix is to not fault at all on the exit-teardown path (the caller should use the index-based
+`IsLiveByIndex`, which reads the GUObjectArray slot never obj's memory, or clear the dangling cache on
+world-teardown). Caller not yet identified (no native dump — CrashContext's VEH swallowed it).
 
 ---
 
 ## 5. State / hands-on warning
 
-- The four installs are LIVE on the UE4SS lane. With `VOTVCOOP_PE_IMMUNE_RELAY` UNSET, a hands-on
-  launch can still hit the ~20% boot crash; relaunching is safe (pre-gameplay, no corruption). To run
-  the FIXED path, set `VOTVCOOP_PE_IMMUNE_RELAY=1` in the environment before launch.
+- **The r2modman test profile** (`C:\r2modman\...\VotV\profiles\Default`) carries the default-ON build
+  `fac0c293` + the `ArmPE` fixture + `VOTVCOOP_PE_DIAG=1`. Multivoid drops as
+  `shimloader/mod/Multivoid/dlls/main.dll` + `enabled.txt`; the game is a separate `a09n` install whose
+  Win64 has the shimloader `dwmapi.dll` + `ue4ss.dll`, launched via r2modman.
+- The four `Game_0.9.0n_*` installs still carry the flag-gated `76a8d200` (default OFF) + the ArmPE
+  fixture in HOST/CLIENT_1.
 - Rollback to the proxy lane if needed: copy `build/votv-coop/Release/xinput1_3.dll` + the versioned
   DLL beside the exe + delete `Mods\Multivoid\enabled.txt` (3 ops).
-- Nothing here is pushed; commits are local pending the user's word + the five-axis leak audit.
+- Nothing is pushed; commits are local pending the user's word + the five-axis leak audit.
 
 ## 6. Next steps (in order)
 
-1. Run the B runtime proof (§4 "As-built"). Flag-OFF baseline crash reproduces; flag-ON 0/N + join
-   clean + POLYHOOK-COMPOSED observed.
-2. Make B unconditional (drop the env gate), add the teardown leak-at-death, re-run the pre-cut gate.
-3. **Commit 3** — the proxy deletion (RULE 2): `xinput_proxy.cpp` + the loader lane + dup-dialog +
+1. **Confirm B in the real env** (the queued relaunch): default-ON build + ArmPE, ×3-5 boots, read the
+   fresh `multivoid.log` for `WE-FIRST` + `POLYHOOK-COMPOSED` + no crash. THIS is what flips B to VERIFIED.
+2. Fix the IsLive/VEH exit crash (index-based check / teardown cache-clear) — a coexistence bug, so it
+   only matters in a stack with a VEH crash-reporter (CrashContext), but that is the common stack.
+3. Add B's teardown leak-at-death (§4 residual), drop the `VOTVCOOP_PE_IMMUNE_RELAY=0` diagnostic escape.
+4. **Commit 3** — the proxy deletion (RULE 2): `xinput_proxy.cpp` + the loader lane + dup-dialog +
    `inject.ps1` go, fully. Then WP-2 is DONE.
-4. Un-park WP-4 (stale prose + site + installer), then WP-6 (distribution), per the user's sequencing.
+5. Un-park WP-4 (stale prose + site + installer), then WP-6 (distribution), per the user's sequencing.
 
-Related: `[[project-wp2-precut-and-trampoline-crash-2026-08-22]]`,
-`[[project-f2-ue4ss-switch-decision-2026-08-21]]`.
+Related: `[[project-wp2-realistic-env-test-2026-08-22]]`,
+`[[project-wp2-precut-and-trampoline-crash-2026-08-22]]`,
+`[[project-f2-ue4ss-switch-decision-2026-08-21]]`,
+`[[lesson-veh-crash-reporter-preempts-our-seh-guard]]`,
+`[[lesson-double-detour-crash-is-config-dependent-needs-pe-callback-arm]]`.

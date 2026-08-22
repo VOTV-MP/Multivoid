@@ -2473,9 +2473,39 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   whether UE4SS's LAZY PE hook ARMS is (0/15 solo, ~2/10 two-peer runs). Impossible on the proxy lane
   (no PolyHook in-process). LOOK FIRST: a crash RIP inside a MinHook trampoline on the UE4SS lane →
   read the relay abs64 at `tramp+0x1A` in a `-fullcrashdump`; who-hooked-first = what OUR trampoline
-  HOLDS (real prologue `40 55 56 57 41 54` = us first). Fix OPEN + forked (A dead / B followJmp-immune
-  relay / C use UE4SS's Hook API = user fork).
+  HOLDS (real prologue `40 55 56 57 41 54` = us first). **Fix DECIDED (2026-08-22) = B** (followJmp-immune
+  relay: `ff25[rip]` → `mov rax,imm64; jmp rax`, so followJmp stops on the `mov` and PolyHook cleanly
+  in-place-hooks the relay → both detours chain); **C ruled out** (UE4SS's PE PreCallback returns `void`,
+  can't host our ~20 native-call interceptors → we always own our PE detour, B is permanent). BUILT
+  (`fac0c293` default-ON); baseline REPRODUCED in the real modded env, fix compose PENDING hands-on.
   `memory/lesson_two_inline_hook_engines_collide_via_followjmp.md`
+- **2026-08-22 — a coexisting VEH crash-reporter mod (CrashContext) pre-empts our SEH-guarded fault
+  tolerance.** Our `ue_wrap::reflection::IsLive()` (`reflection.cpp:165`) SEH-guards the read of a
+  possibly-dangling `UObject*` and returns false on a fault (deliberate; silent for months). But
+  `Moddy-CrashContext` installs an `AddVectoredExceptionHandler`, and **VEH fires BEFORE frame-based
+  `__except`**, so it catches our normally-absorbed fault first and pops a crash report. Measured:
+  exit-to-menu AV at `main.dll+0x11CC78` = `IsLive` (resolved via the build `.map`), only WITH
+  CrashContext present. NOT a bug in IsLive; a Windows exception-ordering coexistence trap. LOOK FIRST:
+  an AV whose RIP is in a function you SEH-guard that only reproduces WITH other mods → grep their
+  imports for `AddVectoredExceptionHandler`. FIX: don't fault (use index-based `IsLiveByIndex` /
+  clear the dangling cache on teardown). `memory/lesson_veh_crash_reporter_preempts_seh_guard.md`
+- **2026-08-22 — the ProcessEvent double-detour crash is CONFIG-DEPENDENT, not universal.** It fires
+  only if something ARMS UE4SS's PE inline detour via `RegisterProcessEventPreCallback` — and NO stock
+  mod does (measured: not DebugMod/CrashContext/PBMovement, not jsbLuaProfiler, no UE4SS built-in; grep
+  `reference/RE-UE4SS/assets/Mods/`). UE4SS hooks ProcessInternal/LocalScriptFunction/BeginPlay and
+  RESOLVES PE's address but installs NO PE detour without a callback registration. The arm = a Lua mod
+  calling `ExecuteInGameThread(fn, 0)` (ProcessEvent method, non-default) OR Multivoid's own MP/join
+  path (the ~2/10 trigger). So the common modded stack coexists crash-free. LOOK FIRST: to reproduce,
+  drop the `ArmPE` fixture; to predict, grep the stack for `RegisterProcessEventPreCallback`.
+  `memory/lesson_double_detour_crash_config_dependent.md`
+- **2026-08-22 — the real VOTV modded stack + how to test Multivoid in it.** r2modman (== Thunderstore
+  Mod Manager, same `ebkr/r2modmanPlus`; TMM = Overwolf wrapper) manages
+  `…\VotV\profiles\Default\shimloader\{mod,pak,cfg}`; the game is a SEPARATE install whose Win64 has the
+  shimloader `dwmapi.dll` + `ue4ss.dll`, launched via r2modman with `--mod-dir/--pak-dir/--cfg-dir`. The
+  community runs EXPERIMENTAL UE4SS (not our 3.0.1) — the double-detour reproduces on both. All C++ mods
+  (DebugMod/CrashContext/PBMovement) use UE4SS's OWN API (no second inline hooker). Multivoid drops as
+  `shimloader/mod/Multivoid/dlls/main.dll` + `enabled.txt` (Thunderstore mods load via `enabled.txt`, not
+  `mods.txt`). ExeDir anchor WORKS under the VFS. `memory/lesson_realistic_votv_modded_stack.md`
 
 ## 5. Engine / UE4 facts
 

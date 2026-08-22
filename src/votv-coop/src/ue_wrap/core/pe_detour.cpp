@@ -598,22 +598,23 @@ bool Install() {
     }
     if (!hook::Init()) return false;
     // WP-2 (2026-08-22): PE is the ONE function UE4SS's PolyHook also detours, so
-    // its MinHook relay must be followJmp-immune (root-cause fix for the UE4SS-lane
-    // boot crash). Gated on VOTVCOOP_PE_IMMUNE_RELAY for the A/B proof run; once
-    // proven it becomes unconditional (the env gate is the proof scaffold, RULE-2
-    // diagnostic). Default OFF here so the same DLL reproduces the baseline crash.
-    bool immuneRelay = false;
+    // its MinHook relay MUST be followJmp-immune (root-cause fix for the UE4SS-lane
+    // boot double-detour crash). Default ON -- this is the fix. VOTVCOOP_PE_IMMUNE_RELAY=0
+    // forces the LEGACY corruptible relay to reproduce the baseline crash for an A/B
+    // (RULE-2-exempt diagnostic escape; retire it when the flag is removed at commit 3).
+    bool immuneRelay = true;
     {
         char v[8] = {};
-        if (::GetEnvironmentVariableA("VOTVCOOP_PE_IMMUNE_RELAY", v, sizeof(v)) > 0 && v[0] == '1')
-            immuneRelay = true;
+        if (::GetEnvironmentVariableA("VOTVCOOP_PE_IMMUNE_RELAY", v, sizeof(v)) > 0 && v[0] == '0')
+            immuneRelay = false;
     }
     if (!hook::Install(pe, reinterpret_cast<void*>(&ProcessEventDetour),
                        reinterpret_cast<void**>(&g_originalPE), immuneRelay)) {
         return false;
     }
-    if (immuneRelay)
-        UE_LOGW("game_thread: PE relay made followJmp-immune (VOTVCOOP_PE_IMMUNE_RELAY=1)");
+    UE_LOGW("game_thread: PE relay %s", immuneRelay
+            ? "followJmp-immune (fix ON -- composes with a co-resident PolyHook PE detour)"
+            : "LEGACY corruptible (VOTVCOOP_PE_IMMUNE_RELAY=0 -- baseline crash repro)");
     g_hookTarget = pe;
     g_installed = true;
     UE_LOGI("game_thread: ProcessEvent hooked; game-thread dispatcher live");
