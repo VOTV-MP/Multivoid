@@ -173,8 +173,24 @@ UE4SS's.** (This corrects an earlier framing that called C "B's eventual retirem
   compose verification (small n) would not catch; or an unrelated UE/UE4SS boot fatal. The ArmPE
   fixture is now DISABLED on the coop rig (HOST+CLIENT_1 `enabled.txt` → `.off`) per the test-rig
   topology (the deliberate double-detour belongs in the r2modman repro rig); post-disable smoke
-  is the discriminator. If it reproduces in the r2modman rig, capture the DIALOG TEXT (it is the
-  diagnosis; no dump gets written) before dismissing it.
+  PASSED. If it reproduces in the r2modman rig, capture the DIALOG TEXT (it is the diagnosis; no
+  dump gets written) before dismissing it.
+- **OPEN (2026-08-22 19:17, REAL ENV, dump analyzed): boot crash = EXEC-at-NULL with OUR frames
+  on the faulting thread.** The user's real game (`Desktop\a09n\...\Win64`, profile build
+  `F71621E0`, fix B ON, experimental UE4SS + VoidFax/CrashContext/Fusion stack) crashed ~7 s
+  after launch; `crash_2026_08_22_19_17_22*.dmp` (37 MB) parsed by hand (scratchpad
+  `parse_dump.py`): exception `0xC0000005` DEP-EXEC of address **0x0** (RIP=0 — a call through a
+  NULLed function pointer), and the faulting thread's stack resolves into **our main.dll**
+  (base sz 0x11A9000 = the 17.5 MB Multivoid module, many frames) interleaved with
+  **chrome_elf.dll** (VoidFax's CEF — its own hooker), **dxgi.dll**, win32u/dwmapi — the shape of
+  the DXGI/Present seam, NOT the PE trampoline (that class was #GP at a noncanonical address,
+  not exec-at-0). Working hypothesis: a multi-hooker collision on the Present chain (our overlay
+  hook + CEF/FusionFix) nulling a chain pointer — the same coexistence CLASS as the PE
+  double-detour, on a different seam. NEXT for this thread: rebuild commit `275e0f67` to
+  regenerate `F71621E0`'s PDB and symbolize the stack offsets (+0x360E55/+0x308FD0/+0x11FFE2 …);
+  the naive scan is return-address-noisy — symbolization decides. Also note the real profile
+  root is **`C:\r2modman\r2modmanPlus-local\...`** (not AppData) — recorded so the next deploy
+  doesn't hunt for it.
 
 ### As-built (2026-08-22 — baseline REPRODUCED in the real modded env; compose VERIFIED same day, see Proof status)
 
