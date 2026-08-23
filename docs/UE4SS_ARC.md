@@ -493,6 +493,49 @@ the new Thunderstore packaging move together. Retiring the proxy also makes the
 `multivoid-*.dll` "highest build wins" scan and the "MOD INSTALL PROBLEM" duplicate dialog
 meaningless (the mod manager owns installation) — they retire WHOLE per RULE 2.
 
+### 7.4b DISTRIBUTION MODEL — DECIDED (USER, 2026-08-23): Thunderstore is PRIMARY, GitHub is the manual lane
+
+Verbatim: *"Я решил что thunderstore mod manager/r2modman будет основным распространением нашего мода.
+А релиз на гитхабе будет name_release.zip архив с иерархией такой что уже готова к ручной установке
+мода, это для ручных любителей установки. На сайте тоже инфу поменять, пусть будет гитхаб ссылка как
+раньше, но еще и на thunderstore сделаем кнопки/инфу."*
+
+This settles the ordering §7.1 could only guess at, and it changes the GitHub asset shape:
+
+| Lane | Channel | Artifact | Audience |
+|---|---|---|---|
+| **PRIMARY** | Thunderstore (r2modman / TMM) | the package of §7.2, `version_number` per §7.3 | the ordinary player — one click, no file handling |
+| **SECONDARY** | GitHub release | **ONE `.zip` whose internal hierarchy is already the on-disk layout** | people who install by hand |
+
+**The GitHub artifact becomes a single archive, not loose files.** Today `publish.ps1:24-27` throws
+unless the artifact dir holds exactly one `multivoid-*.dll` **and** one `xinput1_3.dll`, and
+`ledger_lib.ps1:231-234` writes a release body telling the player to place *both files* by hand. Both
+are the proxy lane and both retire with it. The replacement is one zip the user unpacks **over the
+game folder** with no decisions to make — the hierarchy IS the instruction, which is the whole point
+of the user's phrasing *"иерархией такой что уже готова к ручной установке"*.
+
+Consequences to carry into the WP-4/6/9 weld, so they are not re-derived:
+
+- The zip's internal tree must mirror the MANUAL UE4SS lane of §7.1 exactly
+  (`VotV/Binaries/Win64/Mods/Multivoid/dlls/main.dll` + `enabled.txt`, and the pak under
+  `VotV/Content/Paks/LogicMods/...`), because that lane is what a hand-installer is doing.
+  It does NOT mirror the Thunderstore package shape — those are different layouts for different
+  extractors, and conflating them is the obvious trap.
+- **UE4SS itself is a PREREQUISITE, not payload, in the manual lane** — the Thunderstore lane gets
+  `unreal_shimloader` via `dependencies` (§7.2), and the manual lane has no equivalent, so the
+  release body + INSTALL.md must state the UE4SS install step for the zip and only for the zip.
+- Naming: the user wrote `name_release.zip`. Concretely `multivoid-<game>-<build>_release.zip`
+  (e.g. `multivoid-0.9.0n-134_release.zip`) so the Paper pair stays on the filename, matching the
+  DLL-naming rule that is already load-bearing elsewhere.
+- `publish.ps1`'s asset assertion inverts: exactly ONE `*_release.zip`, and it must FAIL CLOSED if
+  the zip does not contain the expected tree (an empty or mis-rooted zip is a silently broken
+  release, and this project has shipped one silently-broken artifact before).
+- **The site keeps its GitHub link AND gains Thunderstore buttons/info** — the user was explicit
+  that GitHub does not go away. Two buttons, Thunderstore first (it is the primary lane).
+- `ledger_lint.ps1:64-66`'s verbatim anchor phrases (`WindowsNoEditor\VotV\Binaries\Win64`,
+  ``delete the old `multivoid-*.dll` ``) are proxy-lane text and must be re-minted against the new
+  INSTALL.md in the SAME commit, or CI fails the release.
+
 ### 7.6 The pak's CONTENT — DECIDED (USER 2026-08-23): the HL skins ship
 
 **USER DECISION:** the HL scientist skins ship with the mod. Rationale (user's): character-swap mods
