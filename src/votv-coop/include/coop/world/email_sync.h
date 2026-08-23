@@ -41,8 +41,11 @@
 // by the same sender within one poll second -- treated as negligible, same
 // class as an FNV collision.
 //
-// Join: saveSlot.emails rides the v56 save transfer -- a joiner starts
-// converged; this channel covers live appends/deletes only.
+// Join: saveSlot.emails rides the v56 save transfer, and rows authored
+// DURING a joiner's load window ride the READY-EDGE SEED (2026-08-23, the
+// shared coop/session/join_seed helper -- see the seed API below; before it
+// they were silently lost, b125 R-A shape (b), and solo-authored rows DUPED
+// via the hold-and-retry).
 //
 // Game thread throughout.
 

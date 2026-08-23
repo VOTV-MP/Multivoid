@@ -870,7 +870,11 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   section headed "modules of interest" quietly asserts that what is absent is uninteresting. Fixed by
   matching the FULL PATH against a widened graphics/injector key set and printing the path.
   *Look FIRST:* **when you re-use a tool to ask a question it was not built for, audit its FILTER
-  before you trust its silence.**
+  before you trust its silence.** SIXTH member (2026-08-23, the seeds drill's RED-1): a
+  TIMING-dependent drill whose scripted action RACES the phenomenon's anchor -- the "in-window"
+  email authored 3 s after connect landed BEFORE the save snapshot, rode the save, and the loss
+  case silently went unexercised while the run "passed" arrival. The ORDERING is the phenomenon:
+  assert the in-log ORDER (authored-line AFTER the "captured at blob instant" line), not arrival.
   `memory/lesson_an_instrument_blind_to_the_phenomenon_always_passes.md`
 
 - **VERIFY ROLE-EXCLUSIVITY BEFORE INVOKING THE PUBLISH RULE — read the accessor top to bottom.**
@@ -2108,12 +2112,14 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   past !IsSlotWorldReady — nothing queues, nothing retries; a no-reconcile lane diverges at every
   mid-activity join until the NEXT join). Root idiom: per-slot snapshot at save_transfer OnRequest (the
   g_blobKeys precedent) + ready-edge seedDelta(h)=cur-snap-unmaskedPending (op-counter masks) + a client
-  send gate on own ClientWorldReady. UN-RETROFITTED sharers: signal_sync (deck), email_sync —
-  RE-VERIFIED 2026-08-23 at the R-4b build (no ConnectReplayForSlot entry, no in-file world-ready hook
-  in either). **BOUNDARY DECIDED (R-4b /qf R1): the send-backlog delivery guarantee deliberately does
-  NOT absorb the pre-world gate's skips** — queueing them would deliver stale pre-world mutations at
-  ready-time and DUPE the connect replay; these two sharers need ready-edge SEEDS (this row's idiom),
-  their own arc. LOOK FIRST: meadow_db_sync.cpp CaptureJoinSnapshot/QueueConnectBroadcastForSlot.
+  send gate on own ClientWorldReady. **The sharers are RETROFITTED (2026-08-23 eve, `0676e5a8`): signal_sync + email_sync now
+  carry the seed pair via the SHARED helper `coop/session/join_seed` (the extract-on-third of the
+  meadow idiom)** — per-slot multiset capture at save_transfer's OnRequest, both-signs seedDelta at
+  ConnectReplayForSlot; drill-proven RED (loss reproduced under the capture-disabled mutate) →
+  GREEN (exactly-once delivery). The boundary decision stands: the send-backlog deliberately does
+  NOT absorb the pre-world gate's skips (queueing them would dupe the connect replay) — seeds are
+  the cure, per lane. LOOK FIRST: coop/session/join_seed.h + the lanes' CaptureJoinSnapshot;
+  design `votv-signal-email-ready-seeds-DESIGN-2026-08-23.md`.
   `memory/lesson_join_window_b2_skip_is_permanent_loss_seed_delta.md`
 - **A canonical-as-ack on the blob transport must be BOUNDED and SEND-CHECKED** — blob_chunks
   hard-caps a blob at MaxBlobBytes() (56,100 B) and returns false WITHOUT sending; an ignored result
@@ -3552,6 +3558,37 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   vocabulary) before asserting any library default. *Look FIRST:*
   `votv-reliable-delivery-guarantee-DESIGN-2026-08-23.md` §7 +
   `memory/lesson_a_librarys_default_is_not_your_binarys_config.md`
+- **A fan-out bool that conflates "refused" with "no audience" turns retry into a DUP generator**
+  (seeds arc commit-0, 2026-08-23): `SendReliable` returns `anySuccess` = FALSE with ZERO
+  world-ready receivers (session.cpp:241-250) -- indistinguishable from a real refusal -- so the
+  lanes' retry-until-sent idiom re-broadcast solo-authored rows to the first joiner, whose SAVE
+  already contained them: duplicate emails/signals, LIVE since v64 (audit-I-1's deliberate
+  hold-and-retry). Once a lane's absentee coverage is save+seed, a zero-audience refusal is a
+  VACUOUS SUCCESS (adopt sent=true, `!AnyWorldReadyPeer()`); ~15 other lanes consume the ambiguous
+  bool -- censused + FILED, never flip one without its own seed (dup <-> loss trade). The /qf
+  critic's "READ the return path before building" overturned three rounds of confident inference.
+  *Look FIRST:* the lanes' vacuous-adopt blocks + seeds design doc par.2.6/par.4.
+  `memory/lesson_a_fanout_bool_that_conflates_refused_with_no_audience.md`
+- **A GT flag gating a NET-thread consumer lags one drain -- give the event two clocks** (seeds
+  arc, 2026-08-23): MarkSlotWorldReady flips inside the ClientWorldReady GT drain case
+  (event_feed.cpp:230) while the host relay checks it at NET receive (session_relay.cpp:86) -- a
+  reliable received in [announce net-receipt, GT flip] was relay-skipped AND applied after the
+  seed's cur-read (queued behind the announce, FIFO): lost on both legs. Meadow carried this
+  micro-window from v120 unnoticed. Fix shape: a NET-thread view of the same event -- the
+  hConn-stamped `relayEligible_` set at receipt AFTER inbox accept, cleared beside every
+  FreeSlot; recycled-slot inheritance structurally impossible. *Look FIRST:* any per-slot gate
+  consulted from both threads -- "which thread flips it, what does the other consumer do during
+  the lag?" `memory/lesson_a_gt_flag_gating_a_net_thread_consumer_lags_one_drain.md`
+- **Engine-resolved is NOT lane-settled -- anchor deferred applies on the lane's own predicate**
+  (seeds-arc audit F-2/F-3/F-4, 2026-08-23): after a world travel `EnsureResolved()` succeeds
+  while the array is still ASYNCHRONOUSLY FILLING (email's own 2026-06-19 prime-stabilize
+  discovery), so the new apply park draining on bare resolve re-opened the clobber window one
+  level down. Folds: drain gates on `g_primed` (count-stability); unsettled arrivals park too;
+  stuck-front retries pace at 1 Hz REAL time (30 per-frame retries burned in ~0.4 s); tombstone
+  expiry pauses while the park is non-empty. The trap: the lane ALREADY owned the settle
+  machinery -- reuse it, never parallel it with a weaker generic predicate. *Look FIRST:*
+  DrainApplyPark's "Audit F-2" comment + the prime-stabilize block.
+  `memory/lesson_engine_resolved_is_not_lane_settled.md`
 - **A wall-clock TTL on a park that waits for data from a DIFFERENT lane is a silent drop one level
   up** (R-4b round 4): ContainerContents rides Normal, its PropSpawn rides Bulk -- lanes deliver
   independently, so under backpressure the contents SYSTEMATICALLY arrive first, and once delivery is

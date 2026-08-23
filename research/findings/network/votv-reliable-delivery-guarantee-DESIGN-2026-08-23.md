@@ -156,10 +156,10 @@ RULE-2 deletion).
 
 - **No wire-shape change; no `kProtocolVersion` bump owed by the design** (verified per-item —
   all endpoint-local; the release bumps the build number by standing policy anyway).
-- **Shape (b) of §R-A (pre-world-gate sharers) is a SEPARATE arc:** `signal_sync` + `email_sync`
-  have no `ConnectReplayForSlot` entry and no in-file world-ready hook (measured at HEAD) — they
-  get ready-edge seeds (the B2 idiom), NOT queue absorption (queueing gate-skips would dupe the
-  replay). Filed, not dropped.
+- **Shape (b) of §R-A (pre-world-gate sharers): BUILT the next evening (`0676e5a8`)** —
+  `signal_sync` + `email_sync` got ready-edge seeds via the shared `coop/session/join_seed`
+  helper (NOT queue absorption — queueing gate-skips would dupe the replay, the boundary this
+  section decided). Design: `votv-signal-email-ready-seeds-DESIGN-2026-08-23.md`.
 - The 689 post-episode KEYED client destroys (triage §5-CORR) stay with the R-4a end-condition
   `/qf`, unattributed here.
 - `prop_snapshot`, the ratio valve, and the membership sweep are untouched. The sweep-shrink

@@ -28,10 +28,11 @@ different actors 16:19:03 + 16:20:01), SkyState join losses (self-healing period
 ## The rows
 
 ### R-A [measured] ONE delivery-guarantee class: a reliable line silently dropped at send time
-> **(a)+(c) FIXED 2026-08-23 (linux-fps R-4b): `coop/net/send_backlog` -- the session-layer
-> delivery guarantee; design of record
-> `research/findings/network/votv-reliable-delivery-guarantee-DESIGN-2026-08-23.md`. (b) the
-> not-ready sharers (signal_sync, email_sync) remain OPEN as their own ready-edge-seed arc.**
+> **ALL THREE SHAPES FIXED 2026-08-23. (a)+(c): `coop/net/send_backlog` (linux-fps R-4b;
+> design `research/findings/network/votv-reliable-delivery-guarantee-DESIGN-2026-08-23.md`).
+> (b): the not-ready sharers got ready-edge seeds the same evening (`0676e5a8`, the shared
+> `coop/session/join_seed` helper; drill-proven RED->GREEN; design
+> `votv-signal-email-ready-seeds-DESIGN-2026-08-23.md`). NOT hands-on.**
 Three shapes, one owner for the design pass:
 - **(a) enqueue rejection deleted.** `session.cpp:176` sends with `bDeleteFailedMessages=true`; on
   rc=-25 (GNS enqueue refusal, send buffer full) the message is deleted and the false return is
@@ -43,8 +44,8 @@ Three shapes, one owner for the design pass:
   band ~#600-#930 of the eid-ascending enumeration (`registry.cpp:287-296` iterates id 0..max).
   Steady state on this log is clean (zero rc warns outside 15:46) but any future >512KB burst
   re-opens the shape.
-- **(b) not-ready skip = permanent loss.** Already codified (B2 seed-delta lesson); un-retrofitted
-  sharers: signal_sync, email_sync. Same class, folds into the same design pass.
+- **(b) not-ready skip = permanent loss.** Already codified (B2 seed-delta lesson); the two
+  un-retrofitted sharers (signal_sync, email_sync) were seeded 2026-08-23 (`0676e5a8`).
 - **(c) the 60+ rc-ignoring call sites** are the class's blast surface, not individual bugs.
 Fix direction (later design pass): pace the drain against the send-buffer budget + absorb enqueue
 rejections at the session layer (MTA packet-queue precedent); NOT per-kind retry patches.

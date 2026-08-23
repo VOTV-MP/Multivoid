@@ -28,9 +28,12 @@
 // instance-key change -> the diff re-broadcasts the row as delete+append --
 // renames converge (the row moves to the tail on mirrors; cosmetic).
 //
-// Join: savedSignals_comp_0 rides the v56 save transfer; this channel covers
-// live deltas only. The image PNG (laptop photo) is a deferred bulk-lane
-// increment -- live-mirrored rows carry an empty image until then.
+// Join: savedSignals_comp_0 rides the v56 save transfer, and rows authored
+// DURING a joiner's load window ride the READY-EDGE SEED (2026-08-23, the
+// shared coop/session/join_seed helper -- see the seed API below; before it
+// they were silently lost, b125 R-A shape (b)). The image PNG (laptop photo)
+// is a deferred bulk-lane increment -- live-mirrored rows carry an empty
+// image until then.
 //
 // Game thread throughout.
 
