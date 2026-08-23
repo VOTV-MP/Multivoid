@@ -441,4 +441,9 @@ void OnDisconnect() {
     if (n > 0) UE_LOGI("grime: OnDisconnect cleared %zu last-known", n);
 }
 
+std::wstring DebugPosKeyForActor(void* actor) {
+    // DEV-DRILL ONLY (R-2 parity probe): the real quantizer, cache-independent.
+    return actor ? PosKey(actor) : std::wstring();
+}
+
 }  // namespace coop::grime_sync

@@ -87,6 +87,7 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // Seeds arc: the RED/GREEN join-window email drill (host authors at the solo +
     // in-window instants; pair with VOTVCOOP_SEED_DISABLE=1 for the mutate RED).
     SpawnIf("VOTVCOOP_RUN_SEED_DRILL", "seed drill", &SeedDrillThread, role);
+    SpawnIf("VOTVCOOP_RUN_SCANPARITY", "scan-hub parity drill", &ScanParityThread, role);
     // Phase 5W weather: host-only; forces rain ON/OFF cycles, client applies via wire.
     SpawnIf("VOTVCOOP_RUN_WEATHER_TEST", "weather test", &WeatherTestThread, role);
     // Phase 5W Inc-fix-2 red sky: host-only; visually unambiguous variant.

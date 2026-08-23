@@ -39,6 +39,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace coop::net {
 class Session;
@@ -68,5 +69,12 @@ void Tick();
 
 // Session teardown: clear the per-session poll baseline + pending applies.
 void OnDisconnect();
+
+// DEV-DRILL ONLY: the quantized position key this module would index `actor` under. The R-2
+// parity probe uses it so its independent walk counts DISTINCT CELLS exactly as the index
+// does -- an instance count over-reads by the real cell collisions (measured 2026-08-23:
+// 1,023 live decals -> 1,021 distinct cells; the "grid is collision-free" comment was wrong
+// by 2).
+std::wstring DebugPosKeyForActor(void* actor);
 
 }  // namespace coop::grime_sync

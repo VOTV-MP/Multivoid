@@ -1,8 +1,29 @@
 # R-2: the shared object-scan hub — design of record (2026-08-23, 8-round /qf "that holds")
 
-> STATUS: DESIGN converged 2026-08-23 (8 rounds, fresh critic each; "that holds" at R8 with no
-> unmeasured assumption named). BUILD in progress the same day — the AS-BUILT box will replace
-> this line when the arc lands.
+> **AS-BUILT 2026-08-23 (same day; 5 commits from the hub commit; NOT hands-on).** The arc landed
+> whole: hub (`coop/element/object_scan_hub.{h,cpp}` 81+~300 LOC) + all 13 consumers migrated
+> per-consumer-atomically + both scan components DELETED + the parity drill
+> (`autotest_scanparity.cpp`, `VOTVCOOP_RUN_SCANPARITY=1`, modes A/B + `VOTVCOOP_HUB_SKIP`
+> mutate control). **Acceptance, all green on the final bytes:**
+> (i) parity `DONE fail=0` — mode A 13/13 (incl. grime 1021=1021 via the real PosKey), mode B
+> settled-consumers all OK; the MUTATE run first turned door RED in both modes (hub=(none)),
+> proving the instrument sees a miss. The historic June N-match numbers reproduced exactly
+> (door 50 / light 42 / container 56 / garage 1 / appliance 62 / doorbox 20).
+> (ii) numeric: **full-pass object-visits 5.17M vs ~51.5M pre-hub = 10.0×** (19 full passes vs
+> ~192 per-consumer fulls in the same scenario); `sync:scan_hub` [WALK-TIME] max **1.4 ms host /
+> 2.2 ms client** across the whole run (vs `sync:interactable` max 66 ms local / 305 ms field);
+> `sync:interactable` ≥1 ms events collapsed 25→**1 per peer** (the connect burst, not walks).
+> Steady-state [HITCH-SRC] no longer shows the per-2 s pattern — the residual ~20 s periodic
+> hitch is `reseed:KnownKeyedProps` (the FILED §6 row, outside this family).
+> (iii) the world-reload case rode the client's join transition (2 gen flips + indexes rebuilt
+> through it, gen-driven). (iv) pending applies drained (smoke PASS both peers). (v) all
+> settleScans=15 consumers settled inside the bound (tail passes from ~40 s on).
+> **Two instrument findings during acceptance, both fixed:** ForceSyncFullPass originally reset
+> every settle counter and dragged ~15 re-settle fulls behind it (5.8× contaminated gate →
+> one-shot force flag → clean 10.0×); and the grime probe's instance-count over-read by the
+> **2 real quantized-cell collisions among 1,023 decals** the "grid is collision-free" comment
+> denied — the probe now uses the real key fn (`grime_sync::DebugPosKeyForActor`).
+> NOT hands-on; rides the v134 batch runbook.
 >
 > Read together with: `research/findings/votv-linux-fps-triage-2026-08-23.md` §3 (the R-2 row +
 > field numbers), `memory/project_L5_fps_hitch_root_2026-06-23.md` (the June root + takes 1-3),
@@ -71,7 +92,13 @@ level per RULE 1; autonomous verification only.
 2. **Passes are SLICED**, time-boxed ~1 ms/frame (clock checked every 4k objects). Settle
    counts COMPLETED passes; computed settle wall-clock = 30 s — identical to today. The one
    honest regression (stated in-round): worst-case discovery latency grows by pass duration
-   (≤2 s → ≤~3.6 s on the 9-fps machine while unsettled).
+   (≤2 s → ≤~3.6 s on the 9-fps machine while unsettled). A second, build-time regression of
+   the same kind: the connect-snapshot paths' FORCED sync rebuilds are retired with the
+   walks, so a snapshot iterates an index ≤1 pass (~2 s) stale. For the static classes the
+   window is empty in practice (their actors long precede any join); for the runtime-churning
+   ones each site carries its own healer, noted at the site — atv (the purchase announce
+   fires on the next pass to the by-then-connected joiner), grime (a decal's state only moves
+   on a wipe, which broadcasts), trash_pile (the depleted-key replay + claim sweep).
 3. **World-stamped passes / gen-checked indexes (folds the R-1 class for all 13):** the pass
    records `world_identity` generation at start and aborts on a flip; the swap stamps the gen
    into the consumer index; every consumer read-path first compares `index.gen == current gen`

@@ -60,6 +60,7 @@ std::unordered_map<void*, MemoEntry> g_memo;   // pass-scoped: cleared at every 
 // Cross-pass state.
 int32_t                  g_tailCursor  = 0;    // objects >= this are "new" for the next tail pass
 int                      g_sinceFull   = 0;    // completed passes since the last full one
+bool                     g_forceFullOnce = false;  // dev drill: ONE forced full, settle untouched
 steady_clock::time_point g_nextPassDue = steady_clock::time_point::min();
 
 bool ScanDiagOn() {
@@ -112,7 +113,8 @@ bool StartPass() {
     // Shrink below the tail cursor = a purge freed slots we think we scanned -> full (the
     // NextRange rule, preserved).
     const bool shrunk = (n < g_tailCursor);
-    g_passFull = AnyUnsettled() || shrunk || (g_sinceFull >= kBackstopEvery);
+    g_passFull = AnyUnsettled() || shrunk || (g_sinceFull >= kBackstopEvery) || g_forceFullOnce;
+    g_forceFullOnce = false;
 
     int activeCount = 0;
     for (Row& r : g_rows) {
@@ -258,8 +260,11 @@ void Tick() {
 void ForceSyncFullPass() {
     // Parity drill mode A: one complete FULL pass inside this GT call (no slicing), so the
     // caller can compare indexes against an independent probe walk with zero staleness.
+    // NOTE: settle counters are NOT touched -- the first GREEN run reset them here and the
+    // forced pass then dragged ~15 re-settle fulls behind it, contaminating the numeric gate
+    // (5.8x instead of >=10x). One flag = one extra full, nothing else.
     if (g_inPass) AbortPass("ForceSyncFullPass preempt");
-    for (Row& r : g_rows) r.stableScans = 0;  // force FULL
+    g_forceFullOnce = true;
     if (!StartPass()) return;
     while (g_inPass) {
         // RunSlice re-checks validity between "slices"; budget still applies per call but we
@@ -270,5 +275,20 @@ void ForceSyncFullPass() {
 }
 
 bool PassActive() { return g_inPass; }
+
+bool DebugConsumerSettled(const char* name) {
+    for (const Row& r : g_rows) {
+        if (std::strcmp(r.c.name, name) == 0) return r.stableScans >= r.c.settleScans;
+    }
+    return false;
+}
+
+size_t DebugConsumerCount(const char* name) {
+    for (const Row& r : g_rows) {
+        if (std::strcmp(r.c.name, name) == 0)
+            return (r.lastCount == static_cast<size_t>(-1)) ? SIZE_MAX : r.lastCount;
+    }
+    return SIZE_MAX;
+}
 
 }  // namespace coop::element::scan_hub

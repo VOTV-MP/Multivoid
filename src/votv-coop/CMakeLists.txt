@@ -601,6 +601,7 @@ add_library(votv-coop SHARED
     src/harness/autotest/autotest_tracker_selftest.cpp
     src/harness/autotest/autotest_weather.cpp
     src/harness/autotest/autotest_seeddrill.cpp
+    src/harness/autotest/autotest_scanparity.cpp
     src/harness/autotest/autotest_worldctx.cpp
     src/harness/autotest/autotest_worldrules.cpp
     src/harness/autotest/autotest_config.cpp

@@ -137,6 +137,7 @@ DWORD WINAPI ConfigSelftestThread(LPVOID arg);
 void RunAutonomousWeatherTest();
 DWORD WINAPI WeatherTestThread(LPVOID arg);
 DWORD WINAPI SeedDrillThread(LPVOID arg);  // seeds-arc RED/GREEN drill (host-only)
+DWORD WINAPI ScanParityThread(LPVOID arg); // R-2 scan-hub N-match parity drill (either role)
 
 // Phase 5W Inc-fix-2 (2026-05-27, harness/autotest_weather.cpp): autonomous
 // RED SKY sync test. Host-

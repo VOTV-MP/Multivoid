@@ -68,4 +68,14 @@ void ForceSyncFullPass();
 // True while a started pass has not yet completed (diagnostic).
 bool PassActive();
 
+// DEV-DRILL ONLY: the live count of consumer `name`'s last COMPLETED pass (SIZE_MAX when the
+// consumer is unknown or has not completed a pass). The parity drill compares this against an
+// independent old-shape probe walk -- see autotest_scanparity.cpp.
+size_t DebugConsumerCount(const char* name);
+
+// DEV-DRILL ONLY: true when consumer `name` is currently SETTLED (its completed-count has
+// been stable for its settleScans). Parity mode B skips unsettled consumers -- a churning
+// class (grime in live play) is <=1 pass stale by design and is certified by mode A instead.
+bool DebugConsumerSettled(const char* name);
+
 }  // namespace coop::element::scan_hub
