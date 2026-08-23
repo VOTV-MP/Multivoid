@@ -575,6 +575,55 @@ user-visible difference.
 **Depends on §7.7** — whichever enumeration wins, the scan directory must also stop being pinned to
 `LogicMods/multivoid/`, or none of it is reachable from a Thunderstore install.
 
+### 7.7c The skin DISTRIBUTION model (USER 2026-08-23) — base pak + user packs + a missing-pack notice
+
+**USER DECISION, three parts:**
+1. **`scientists.pak` is the BASE pak and ships INSIDE the mod package** (not separate — this
+   supersedes the "ship skins separately" suggestion in §7.6).
+2. **Users may publish their OWN skin packages**, and those must work for everyone who installed them:
+   the skins appear in the browser and are selectable.
+3. **A peer missing a pack gets told, in chat:** if someone is wearing a custom skin you do not have,
+   you get a line saying so — rather than silently seeing the fallback body.
+
+**Sizes, measured** (`research/pak_re/`, 14 scientist paks): `570 KB … 4,522 KB` each, **≈32 MB
+total**. The mod DLL is ~18.5 MB, so a bundled package lands near **50 MB**, and Thunderstore/r2modman
+fetch a whole package per version — every build bump re-downloads all of it. Stated as a fact for the
+size budget, not as an argument against the decision; several paks are suspiciously equal at ~4.28 MB,
+so a single archive may dedupe/compress meaningfully better than the sum.
+
+**Part 2 is mostly free after §7.7.** Once the scan walks `LogicMods/` subdirectories, a user pack
+installed by r2modman lands in its own `<Author>-<Name>/` folder and is enumerated automatically. The
+subdirectory name is then also the **package identity** — useful for part 3.
+
+**Part 3 maps onto machinery that already exists:**
+- `[MEASURED]` the skin name is **already on the wire** — `SkinChange` reliable kind **82**, plus the
+  skin field on Join + RosterRow (`protocol.h:932-943`); every player carries a persisted
+  `player_skin=` choice in `multivoid.ini`.
+- `[MEASURED]` the failure is **already detected**: `client_model.cpp:52-53` logs
+  *"skin '%s' %s NOT loadable (pak absent on this machine?) -- native kel fallback"* and falls back to
+  the game's own kel body. Today it is log-only; part 3 is surfacing it.
+- The surfacing grammar exists too: the device-busy local chat line (`<HolderNick> is using <unit>`)
+  went through `AnnounceDirect`. **Standing rule to honour: the feed never renders "You" — always the
+  nickname.**
+- **Dedup:** `ResolveCached`'s `tried` latch is per skin NAME, not per peer, so the chat line needs its
+  own per-`(peer, skin)` latch or a respawn will repeat it.
+- **Mid-join (principle 8) is satisfied naturally** — the notice fires at puppet skin-resolve, which a
+  joiner performs on adoption, so a late joiner is told about skins already in use.
+- **The base pak never triggers it:** the join gate is byte-equality on the Paper pair, so every peer
+  in a lobby runs the same build and therefore the same bundled `scientists.pak`. Only CUSTOM packs can
+  produce the notice — which is exactly the intent.
+
+**THE ONE OPEN FORK — what does the message NAME?** The user's wording is *"нету у вас этого пакета"*
+(you don't have this PACKAGE), but only the SKIN NAME is on the wire today:
+- **(a) name the skin only** — *"Pelmentor is wearing 'walter_v1sc', which you don't have."* Zero wire
+  change, ships with part 3 immediately, and the player can search that name.
+- **(b) name the package** — *"…install 'CoolSkins' to see it."* Better UX and it becomes natural once
+  §7.7 lands (the registry then knows each skin's containing folder = the Thunderstore package name),
+  but it puts a pack identifier on the wire = **a protocol bump**.
+
+Recommend shipping (a) with part 3 and adding (b) when the wire is next bumped for another reason, so
+the notice is not gated on a protocol change. **User's call.**
+
 ### 7.8 The asset-provenance record (kept for context; the decision is §7.6)
 
 The **mechanism** is settled (§7.2). On the asset, this repo had a position that predates the question:
