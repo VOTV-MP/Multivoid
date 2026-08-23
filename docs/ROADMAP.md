@@ -499,21 +499,18 @@ Each item below is a feature increment series. Cross-referenced in
          Arcs 1-2 stay shipped. Design of record (as-built record only, no longer the plan):
          `research/findings/network/votv-tls-tier-b-c-DESIGN-2026-07-20.md`.
        - 2026-07-20 (later, same day): **the remaining TLS arcs are ON HOLD — a threat model was
-         finally written and it reordered the work.** `docs/security/` is now the source of truth
-         (`README.md` = model, `TRACKER.md` = findings; commit `d95683cc`). The measurement that
-         changed it: GNS is encrypted (AES-256-GCM) but **peer-UNAUTHENTICATED** — the opensource
-         build defaults `IP_AllowWithoutAuth = 2` ("don't attempt authentication") and we never
-         override it. So passive eavesdropping already fails, an ACTIVE attacker at the rendezvous
-         does not, and the control plane is the only place peer identity can be established.
-         `signalingToken` is a static shared secret every mod user holds, so **Tier C dissolves into
-         peer certificates** (GNS ships a CA: certstore + certtool + `SetCertificate`; Ed25519
-         sign/verify already links into our process). Arcs 3 / 3b / 4 / 5 are HELD pending the CA
-         spike; the `net.master.insecure` flag was designed and then dropped — do not build it.
-         Two read-only audits produced **20 OPEN findings** (all `[A]`, none personally re-verified,
-         nothing fixed): among them "Locked" lobbies are not locked, signaling identity is
-         self-asserted so a stranger can evict a host, `PropDestroy` trusts any client and is
-         relayed before validation, and three save-transfer lanes let a hostile host kill a joining
-         client with one packet. See `docs/security/TRACKER.md` for the ranked list + fix order.
+         finally written and it reordered the work.** The measurement that changed it: GNS is
+         encrypted (AES-256-GCM) but **peer-UNAUTHENTICATED** — the opensource build defaults
+         `IP_AllowWithoutAuth = 2` ("don't attempt authentication"). So passive eavesdropping
+         already fails, an active attacker at the rendezvous does not, and the control plane is the
+         only place peer identity can be established. `signalingToken` is a static shared secret
+         every mod user holds, so **Tier C dissolves into peer certificates** (GNS ships a CA:
+         certstore + certtool + `SetCertificate`; Ed25519 sign/verify already links into our
+         process). Arcs 3 / 3b / 4 / 5 are HELD pending the CA spike; the `net.master.insecure`
+         flag was designed and then dropped — do not build it. Two read-only audits ran the same
+         day; their findings, evidence and fix order live in the **local-only** register
+         (`docs/security/`, untracked since 2026-08-23 — `docs/DOCS_ARC.md` §1 says why). The
+         public statement of what the mod does and does not protect is the root `SECURITY.md`.
 
 ### Open / future
 - ☐ Phase 5N1 Inc3 cont. — EntityPoseBatch stream for NPC pose

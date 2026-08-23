@@ -295,4 +295,5 @@ confirmation of my own conclusion. Recorded so it is not repeated.
 
 Related: `COOP_SYNCER_MODEL.md` (per-element authority — the other half) · `docs/ROADMAP.md`
 phases 6-8 · `COOP_WORLD_PROP_DIVERGENCE.md` (the self-simulating prop class) ·
-`COOP_RNG_AUTHORITY.md` (spawner anchors, ticker census) · `docs/security/MTA_PRECEDENT.md`
+`COOP_RNG_AUTHORITY.md` (spawner anchors, ticker census) · `reference/mtasa-blue/` (the authority
+precedent itself — `CUnoccupiedVehicleSync.cpp` is the canonical read)

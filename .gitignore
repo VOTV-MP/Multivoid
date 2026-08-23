@@ -241,3 +241,51 @@ ignore_folder/
 # 2026-07-24 key-material block above was written about; the lesson had been recorded and not
 # applied one section down. A prose rule nothing enforces is not a rule.
 kerfur skins icons/
+
+# ---- CLAIMED-ENFORCED, ACTUALLY MISSING (measured 2026-08-23) --------------------------------
+# The memory index lists four never-commit rules as "ENFORCED .gitignore". Two of them were not in
+# this file at all: `*.lnk` and `ref_*vps*` -- i.e. VPS reference material was sitting
+# untracked-but-NOT-IGNORED, one `git add -A` from a public commit, while the index claimed cover.
+# That is the THIRD time this exact shape has been paid for here (key material 2026-07-24, game art
+# 2026-07-28, this). A prose rule nothing enforces is not a rule -- and an index that ASSERTS
+# enforcement is worse than silence, because it stops anyone checking. Verify with
+# `git check-ignore -v <path>`, never by reading a list of claims.
+*.lnk
+ref_*vps*
+imgui.ini
+# Same list, the "prose only, NOT enforced" half -- enforced now for the same reason.
+docs/QUESTION_FORM_*
+tools/workflows/
+
+# ---- RESEARCH CORPUS -- private in place (USER DECISION 2026-08-21, executed 2026-08-23) -----
+# "research folder also get fully offline from public repo, what else?" -- recorded in
+# research/findings/tooling/votv-ue4ss-f2-migration-DESIGN-2026-08-21.md:520-524 and NOT executed
+# until 2026-08-23. 420 files / 24 MB of point-in-time RE, raw session logs, crash dumps and
+# screenshots. It follows the site/ pattern: files STAY on disk with their own inner git repo, so
+# every reading-order pointer still resolves locally and nothing is lost -- it is simply unpublished.
+#
+# WHAT THE DELAY COST (measured 2026-08-23, docs/DOCS_ARC.md §1d): the origin VPS IP was sitting in
+# two tracked files -- research/crash_2026-07-03_rehost_wispkill/host_..._rehost_plain.log:11085-88
+# (four lines, stun/turn/signaling) and votv-connection-selector-events-pinecone-2026-06-11.md:225.
+# That is the SAME class as finding A11, which purged the IP from four docs on 2026-07-24 and whose
+# sweep never crossed into research/. Plus three UE4Minidump.dmp process dumps of the user's own
+# machine, contents unaudited. A leak sweep scoped to one directory is a leak sweep that has not run.
+research/
+
+# ---- SECURITY REGISTER -- a working exploit map for a SHIPPING mod ---------------------------
+# docs/security/ is the finding register + fix plans: 16 OPEN rows carrying exact file:line and an
+# explicit "attacker -> gain" column (wipe a stranger's persistent world; evict the real host and
+# receive every joiner; drive another player's desk). On a PUBLIC repo that is a ready-made map
+# against a mod real people are running right now. The files STAY on disk -- CLAUDE.md reading
+# order 4f still resolves locally -- they are simply not published.
+#
+# THREE THINGS NOT TO RE-DERIVE (measured 2026-08-23, docs/DOCS_ARC.md §1):
+#   - It WAS public for ~34 days (d95683cc, 2026-07-20 .. 2026-07-30, all on origin/main). The user
+#     decided NOT to rewrite history, so this is casual-discoverability removal, not secrecy. Say
+#     that plainly; never describe this ignore rule as having un-published anything.
+#   - Removing the map does not shrink the attack surface by one byte. The cure is closing the
+#     rows (docs/DOCS_ARC.md §5), and this rule must never be cited as "security handled".
+#   - Source-file comments citing TRACKER rows over a SHIPPED fix are fine and deliberately kept:
+#     attribution of a CLOSED finding reveals nothing. Only OPEN-count advertising is the problem.
+# If a genuinely public security document is ever wanted, it goes to the root SECURITY.md instead.
+docs/security/

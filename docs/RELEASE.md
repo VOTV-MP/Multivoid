@@ -11,6 +11,10 @@ runs on LOCAL builds.
 > The identity model is the Paper pair (game target + build number); the
 > version-identity design is
 > `research/findings/architecture-audits/votv-version-identity-v122-DESIGN-2026-07-19.md`.
+>
+> **`research/` is LOCAL-ONLY since 2026-08-23** (untracked + `.gitignore`d, files on disk in
+> their own inner repo — `docs/DOCS_ARC.md` §1d). Every `research/...` pointer in this tree
+> resolves in a working clone and will not resolve on GitHub. This is deliberate.
 
 A RELEASE is: a tag `v<game>-b<N>` (stable) or `v<game>-b<N>-dev` (dev prerelease)
 whose page carries `multivoid-<game>-<N>.dll` + `xinput1_3.dll` + their SHA256.

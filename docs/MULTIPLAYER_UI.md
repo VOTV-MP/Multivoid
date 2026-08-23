@@ -424,7 +424,7 @@ self-hoster without a certificate).
 **Tier C dissolves into peer certificates** instead of shipping as per-session tokens. The
 `net.master.insecure` flag discussed in that window was **never built and should not be**; the
 `http://` downgrade grammar above is still what ships today, but it is queued for RULE-2 retirement.
-**Read `docs/security/` (README = threat model, TRACKER = 20 OPEN findings) before touching any of
-this.** The arc-1/2 as-built record + drills stay in
+**Read the local-only security register (`docs/security/`, untracked since 2026-08-23 — see
+`docs/DOCS_ARC.md`) before touching any of this**, so a validation lands at the right layer. The arc-1/2 as-built record + drills stay in
 `research/findings/network/votv-tls-tier-b-c-DESIGN-2026-07-20.md` (superseded as a *plan*); the older
 `votv-master-server-RE-and-rust-port-scope-2026-07-16.md` remains the server RE/port scope.

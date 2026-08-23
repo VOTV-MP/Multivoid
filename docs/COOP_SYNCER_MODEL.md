@@ -15,9 +15,9 @@ cost calculus:
 
 | Road | What it needs | 
 |---|---|
-| **Security A3/A4** | Something on the receive path that answers *"is this peer allowed to change this element?"* |
+| **Authority on the receive path** | Something that answers *"is this peer allowed to change this element?"* at the moment a write arrives, not at the moment one is sent |
 | **The arbiter (ROADMAP phase 2 — pulled forward 2026-07-20 from the old phase 8)** | *"authority INVERSION to the true MTA shape — the server holds state + rules + arbitration, clients simulate the world with per-element syncers"* |
-| **The MTA migration** (standing rule 2026-05-28) | The syncer model is MTA's core abstraction; see `docs/security/MTA_PRECEDENT.md` §1-§3 |
+| **The MTA migration** (standing rule 2026-05-28) | The syncer model is MTA's core abstraction; read `reference/mtasa-blue/` — `CUnoccupiedVehicleSync.cpp:194-261` is the whole idea in one file |
 
 **These are the same mechanism.** Building it once for security and again for the dedicated server
 would be building it twice. The syncer model is the abstraction that survives the inversion: today
@@ -36,21 +36,23 @@ it is not extra scope, it is the same scope spent once.
 > *"Стоит архитектуру mta и авторитет модели, синкеры и тд перенять сначала, А ЗАТЕМ УЖЕ ВОПРОСАМИ
 > БЕЗОПАСНОСТИ ЗАНИМАТЬСЯ."*
 
-**The security findings that are authority-shaped are DOWNSTREAM of this document, not parallel to
-it.** `TRACKER` **A3**, **A4** and **A5** are not bugs to be patched — they are the absence of this
-architecture. Patching them first would build a mechanism this migration then replaces, which is
-migration baggage (RULE 2). `docs/security/PLAN_03_AUTHORITY.md` is therefore reduced to the
-*security framing* of this work; the mechanism lives here.
+**Everything authority-shaped is DOWNSTREAM of this document, not parallel to it.** A receive path
+that accepts a peer's assertion about an element it does not own is not a bug to be patched — it is
+the *absence of this architecture*. Patching each site first would build a mechanism this migration
+then replaces, which is migration baggage (RULE 2).
 
-**The carve-out, and it is narrow:** findings that live at the **parse layer**, below the authority
-question, are untouched by this migration and are not held behind it — **W4** (`blob_chunks`
-amplification), **W5** (65 536 spawns per peer), **W6** (no role gate, NaN into `SetActorLocation`).
-They fire before "who owns this element?" is ever asked, they are hours of work on already-verified
-sites, and nothing here rebuilds them.
+**The carve-out, and it is narrow:** anything at the **parse layer**, below the authority question,
+is untouched by this migration and is not held behind it — a message is sized, bounded and
+type-checked before "who owns this element?" is ever asked. That work is hours on already-verified
+sites and nothing here rebuilds it; it shipped separately in `0fcd2003`.
 
-**P1 (peer auth) stays orthogonal.** A syncer assignment is only as trustworthy as the identity it
-names, so P1 raises this model's ceiling — but the model is worth building before P1 lands, because
-it is the architecture either way. See §9 question 5.
+**Peer authentication stays orthogonal.** A syncer assignment is only as trustworthy as the identity
+it names, so authenticating peers raises this model's ceiling — but the model is worth building
+first, because it is the architecture either way. See §9 question 5.
+
+> Specific weaknesses, their evidence and their fix order are tracked in the local-only register
+> (`docs/security/`, untracked since 2026-08-23 — see `docs/DOCS_ARC.md`). The public statement of
+> what Multivoid does and does not protect is the root `SECURITY.md`.
 
 ## 1c. DEPLOYMENT REQUIREMENT (USER 2026-07-20) — the arbiter must be engine-free
 
@@ -348,16 +350,17 @@ Per `[[feedback-qf-before-implementation]]`, this design gets a full pass before
 
 ## 10. What this does NOT do
 
-- It does not authenticate *who* a peer is (`docs/security/PLAN_01_PEER_AUTH.md`).
-- It does not protect a client from a hostile **host** — the host is the arbiter. The save-blob trust
-  surface (`TRACKER` **S1**) is untouched and remains the hardest open problem.
+- It does not authenticate *who* a peer is — that is a separate arc, and the assignment is only as
+  trustworthy as the identity it names.
+- It does not protect a client from a hostile **host** — the host is the arbiter, and a joining
+  client adopts the host's save wholesale. That trust surface is untouched here and is the hardest
+  open problem in the model.
 - It does not make the host's simulation authoritative over physics. Per the retired-phase-8 note in ROADMAP, server-side
   authoritative physics without the engine is *"a decade-class trap"*; the inversion is about **rules
   and state machines**, not simulation.
 
 ---
 
-Related: `docs/security/MTA_PRECEDENT.md` (the citations) · `docs/security/PLAN_03_AUTHORITY.md`
-(the security framing of the same work) · `docs/ROADMAP.md` phase 2 (the arbiter) ·
+Related: `reference/mtasa-blue/` (the precedent itself) · `docs/ROADMAP.md` phase 2 (the arbiter) ·
 `docs/COOP_ENTITY_EXPRESSION_MAP.md` (identity per entity) · `docs/COOP_SYNC_MAP.md` (which file owns
 a lane).

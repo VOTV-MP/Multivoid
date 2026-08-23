@@ -46,8 +46,7 @@ generated from the game's own class dump by
 [`tools/coverage.py`](tools/coverage.py): of **2291** game classes, **1453** can
 actually diverge between peers, and our code names **175** of them. The
 measurement error on each rung, and why a finer verb-level percentage isn't yet
-honest, lives in the
-[readiness-metric doc](research/findings/architecture-audits/votv-coop-readiness-metric-DESIGN-2026-07-22.md).
+honest, are recorded in the project's research corpus, which is kept privately.
 
 ---
 
@@ -242,7 +241,6 @@ Repository layout:
 |--|--|
 | [`docs/`](docs/) | Architecture, roadmap, scope, per-system sync docs, lessons ledger |
 | [`docs/VERSION_MIGRATION.md`](docs/VERSION_MIGRATION.md) | **What happens when VOTV updates** — the measured version surface, the port runbook, the gates |
-| [`research/findings/`](research/findings/) | Append-only dated RE / reflection / design findings |
 | [`reference/`](reference/) | Vendored read-only references (UE4SS, MTA:SA, MinHook, GNS) |
 | [`src/votv-coop/`](src/votv-coop/) | Mod source (`ue_wrap` / `coop` / `harness` / `loader` / `ui`) |
 | [`tools/`](tools/) | Build / deploy / launch / autonomous-test helpers + the master server source |

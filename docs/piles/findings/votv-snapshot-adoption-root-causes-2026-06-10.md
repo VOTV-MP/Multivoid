@@ -614,8 +614,9 @@ there could corrupt the save/session. Design response (locked):
 
 ## WORKFLOW VERDICT (connect-world-bootstrap-design, 9 agents, ~28 min) + STAGE-1 STATE
 
-WINNER: SAVE-TRANSFER-AT-JOIN (hybrid) -- all 7 breaker blockers ABSORBED. Full verdict JSON:
-C:\Users\Alexgrv\AppData\Local\Temp\claude\d--Projects-Programming-VOTV-MP\86866d94-8692-44e2-b0a3-136eb16f4d11\tasks\w2t42d671.output
+WINNER: SAVE-TRANSFER-AT-JOIN (hybrid) -- all 7 breaker blockers ABSORBED. The full verdict JSON
+lived in a per-session scratchpad task output and is long gone; the absorbed conclusions below are
+the surviving record.
 Key absorptions changing the build: B1 autosave() is a TIMER-ARM NO-OP -- the real host
 trigger is mainGamemode::save(quicksave, bypassEvent=TRUE, overwriteSubsave) (gate-skip
 disasm pinned in the verdict; stage-0 item) + TORN-READ guard mandatory (VOTV writes .sav

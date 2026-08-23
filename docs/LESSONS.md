@@ -3713,11 +3713,48 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 
 ## 9. Security (threat model, trust boundaries, peer identity)
 
+> **`docs/security/` is LOCAL-ONLY since 2026-08-23** — untracked + `.gitignore`d, files still on
+> disk. It is a working exploit register and this repo is public; see `docs/DOCS_ARC.md` §1. Every
+> `docs/security/...` pointer below still resolves in a local clone of the working tree and will not
+> resolve on GitHub. The public security document is the root `SECURITY.md`. Finding IDs cited here
+> against a SHIPPED fix are deliberately kept — attribution of a closed row reveals nothing.
+
 Canonical home: **`docs/security/`** — `README.md` is navigation, `THREAT_MODEL.md` + `SUBSTRATE.md`
 are the facts, `TRACKER.md` is the ranked findings list, `EXECUTION.md` is the board, `RULES.md` is
 S1-S6, and `PLAN_01..05` are the fix plans. Read those before any security, transport,
 authority-boundary or website work. Everything below is the durable *lesson*; status lives in the
 tracker.
+
+- **2026-08-23 — A leak sweep scoped to one DIRECTORY is not a leak sweep.** The A11 fix purged the
+  origin VPS IP from four `docs/` files on 2026-07-24 and verified clean — *inside `docs/`*. One
+  directory over, the same address sat tracked and public for another month in a committed raw session
+  log (`research/crash_.../host_..._rehost_plain.log:11085-88`, four lines: stun / turn / signaling
+  resolve / P2P listen) plus a findings doc, alongside **three `UE4Minidump.dmp`** process dumps of
+  the maintainer's own machine, never audited. Nobody proofreads an artifact they committed *as
+  evidence*. The trap is structural: a finding is filed with a location, the location silently becomes
+  the sweep's scope, and the green result then reads as tree-wide. **The project had already written
+  the cure and applied it to keys only** — `.gitignore`'s key-material block, authored the SAME DAY as
+  A11, says *"scope by ARTIFACT KIND, not by location"*. Same lesson twice = wrong level
+  (`[[feedback-recurring-bug-is-architectural]]`). *Look FIRST:* sweep over `git ls-files` (the whole
+  index) once per artifact KIND — address, key, token, memory/crash dump, local account path, personal
+  identifier — and prefer **unpublishing the container** to a fourth grep: raw logs, dumps and
+  screenshots cannot be proofread at scale. Fix of record: `research/` private in place,
+  `docs/DOCS_ARC.md` §1d. `memory/lesson_a_leak_sweep_scoped_to_one_directory.md`
+
+- **2026-08-23 — A decision recorded only in a dated DESIGN doc does not happen.** The user's
+  2026-08-21 directive *"research folder also get fully offline from public repo"* was censused,
+  mechanism-chosen and written down — at
+  `research/findings/tooling/votv-ue4ss-f2-migration-DESIGN-2026-08-21.md:520-524`, inside a design doc
+  **about the UE4SS migration**. Nothing executed it; two days later the corpus was still fully
+  tracked, IP and all. A `*-DESIGN-<date>.md` is an archive by construction — deliberately never
+  rewritten, so it carries no status column, and `/documentize` Step 0.5 reconciles *status labels*,
+  which a buried directive does not present. Invisible to every mechanism built to catch this.
+  *Look FIRST:* when a user decision changes **repo / product / deployment state**, decide where its
+  STATUS will live *before* writing it down — a living doc row (an arc doc, `ROADMAP.md`, a TRACKER),
+  never a dated design record about another subject. Catching yourself writing a directive into an
+  off-topic `*-DESIGN-*.md` is the signal. And when a decision surfaces that no living doc tracks,
+  verify with `git ls-files <path>` whether it was ever executed before assuming it was.
+  `memory/lesson_a_decision_recorded_only_in_a_dated_design_doc.md`
 
 - **Write the THREAT MODEL before designing any security mechanism.** Tier B/C ran **26 `/qf` rounds**
   across two sessions and shipped two arcs without anyone asking what adversary, with what access,

@@ -1,7 +1,14 @@
 # VoidTogether-Server -> VOTV_MP adoption plan
 
 **Date:** 2026-05-25
-**Source:** `reference/VoidTogether-Server/` (rival sandbox VOTV multiplayer mod, Node.js/WebSocket; vendored copy REMOVED from the repo 2026-07-19 per user directive -- this doc + the RE doc are the surviving record)
+**Source:** `reference/VoidTogether-Server/` (a prior VOTV multiplayer mod, Node.js/WebSocket; vendored copy REMOVED from the repo 2026-07-19 per user directive -- this doc + the RE doc are the surviving record)
+
+> **Prior-art study, not code reuse (stated 2026-08-23).** This is an ARCHITECTURE read: which
+> ideas from another project's ops/moderation layer are worth having, and what each would cost to
+> build here from scratch. **No VoidTogether code was taken.** Verified by grep: the only mentions
+> anywhere in `src/` are three attribution comments crediting an idea
+> (`player_handshake_nick.cpp:80,106`, `engine_widget.cpp:128`). Where a design of ours is shaped by
+> theirs, our source says so in a comment, the same way it cites MTA.
 **Prior RE doc:** `research/findings/network/voidtogether-server-RE-2026-05-25.md` (architecture summary + per-file map)
 **User directive:** "from that voidtogether mod we can take CHAT, PERMISSIONS other stuff (ask agents)"
 

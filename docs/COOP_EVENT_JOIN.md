@@ -169,8 +169,8 @@ hands-on) -- AND DEFECTIVE.** A `/qf` IMPLEMENTATION pass over the diff (2026-07
 **12 defects**, and the USER then reframed the feature (all history, event-feed lines included ->
 proto 134). The late-join ANSWER below is correct and unchanged; the CODE implementing it is not
 finished. See the design doc SS19-SS21 before touching or trusting this row. A joiner receives the lobby's chat record on `ConnectReplayForSlot`, ONE reliable message
-per line (never a blob -- that would be the fourth "one packet kills a joining client" row in
-`docs/security/TRACKER.md`). Seeded rows land **RETAINED**, not live, so arriving does not replay a
+per line (never a blob -- a whole-history blob is the "one packet sizes an allocation on a joining
+client" shape the save-transfer hardening exists to prevent). Seeded rows land **RETAINED**, not live, so arriving does not replay a
 conversation you were not in across your screen: the feed is clear, and the history is there when you
 press T.
 
