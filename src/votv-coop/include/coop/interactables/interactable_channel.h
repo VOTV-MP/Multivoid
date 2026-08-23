@@ -23,7 +23,8 @@
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"  // WireKeyFromString / StringFromWireKey / FnvKey (shared)
 #include "coop/player/players_registry.h"   // coop::players::kMaxPeers
-#include "ue_wrap/core/settled_object_scan.h"  // the stream-settle scan discipline (L5 fix + the 18:41 reload cure)
+#include "coop/element/object_scan_hub.h"      // R-2: the shared sliced scan pass
+#include "ue_wrap/engine/world_identity.h"     // R-2: gen-stamped index (dead-world guard)
 
 #include "ue_wrap/devices/door.h"            // TickSmartApply (HostAuth Tick finishes mid-animate doors)
 #include "ue_wrap/core/log.h"
@@ -53,8 +54,8 @@ using coop::net::StringFromWireKey;
 using coop::net::FnvKey;
 
 inline constexpr auto kRetryRebuildThrottle = std::chrono::seconds(2);
-// Settle/backstop tuning (15 scans / 30-tick backstop) + its door-57 history moved to
-// ue_wrap/settled_object_scan.h with the extracted scan discipline.
+// Settle/backstop tuning (15 passes / 60 s backstop) + its door-57 history now live with the
+// shared pass: coop/element/object_scan_hub.h (R-2; the SettledObjectScan component retired).
 inline constexpr auto kPendingTTL = std::chrono::seconds(25);
 // After the host commands a door close, isOpened flips ~0.5s later (the door animates).
 // The poll skips the door for this bridge window so the mid-animation transient isn't
@@ -95,10 +96,18 @@ public:
     // re-drives the state each tick, so a symmetric poll oscillates). MTA single-syncer.
     enum class Mode { Symmetric, HostAuth };
 
-    // Scan discipline (stream-settle + staggered backstop) is owned by SettledObjectScan --
-    // see ue_wrap/settled_object_scan.h for the L5 take-3 rationale it was extracted from.
-    explicit Channel(const Adapter& a, Mode mode = Mode::Symmetric) : a_(a), mode_(mode) {
-        scan_.diagName = a.name;  // [SCAN-DIAG] attribution (adapter names are string literals)
+    explicit Channel(const Adapter& a, Mode mode = Mode::Symmetric) : a_(a), mode_(mode) {}
+
+    // R-2: register this channel as a shared-scan-hub consumer. Called from the module's
+    // Install, NOT the ctor -- the channel instances are namespace-scope statics in another
+    // TU, and cross-TU static-init ordering against the hub's own state is undefined.
+    void RegisterWithScanHub() {
+        if (scanRegistered_) return;
+        scanRegistered_ = true;
+        coop::element::scan_hub::Register(coop::element::scan_hub::Consumer{
+            a_.name, this, a_.EnsureResolved, a_.IsInstance,
+            &Channel::HubPassBeginThunk, &Channel::HubMatchThunk, &Channel::HubPassCompleteThunk,
+            /*settleScans*/ 15});
     }
 
     void SetSession(coop::net::Session* s) { session_.store(s, std::memory_order_release); }
@@ -124,6 +133,7 @@ public:
     // net-pump Tick asserts GT) -- reading the bool fields + SendReliable are GT-safe.
     void PollAndBroadcast() {
         if (echo_.load(std::memory_order_acquire)) return;  // mid-apply -- belt-and-suspenders
+        if (!IndexCurrent()) return;  // index belongs to a dead world (R-1 class) -- wait for the hub
         auto* s = session_.load(std::memory_order_acquire);
         // Gate on connected(): while a host is solo (no client yet, or its last client
         // left) there is nobody to send to. We deliberately do NOT advance lastKnown_
@@ -367,7 +377,9 @@ public:
         if (!s) return;
         if (s->role() != coop::net::Role::Host) return;  // host-only snapshot
         if (peerSlot < 0 || peerSlot >= static_cast<int>(coop::players::kMaxPeers)) return;
-        RebuildIndex();
+        // R-2: the forced sync rebuild is gone -- the hub keeps the index <=1 pass (~2 s)
+        // fresh (these are static level actors on the host's long-loaded world at join time;
+        // a swinger spawned inside the window reaches the joiner via its next state change).
         std::vector<std::pair<std::wstring, Ref>> items;
         {
             std::lock_guard<std::mutex> lk(indexMutex_);
@@ -399,17 +411,14 @@ public:
 
     void Tick() {
         if (!a_.EnsureResolved()) return;
+        RegisterWithScanHub();  // safety net for any order where Tick precedes Install
         if (mode_ == Mode::HostAuth) ue_wrap::door::TickSmartApply();  // finish/snap doors mid-animate
+        if (!IndexCurrent()) return;  // index belongs to a dead world -- wait for the hub's next pass
         const auto now = std::chrono::steady_clock::now();
-        // Refresh the index on a throttle so the poll set picks up newly-streamed
-        // instances (doors stream in progressively: 26 at connect -> 57 later) and drops
-        // ones that streamed out. A full GUObjectArray walk is NOT a per-frame cost; the
-        // per-tick poll below iterates only the already-built index (cheap bool reads).
-        // The same refresh re-resolves deferred receiver applies.
         if (now - lastRetry_ >= kRetryRebuildThrottle) {
             lastRetry_ = now;
-            RebuildIndex();
-            // RECEIVER: retry deferred applies for instances that have now streamed in.
+            // RECEIVER: retry deferred applies for instances that have now streamed in (the
+            // hub refreshes the index on its own cadence; this throttle paces only retries).
             if (!pending_.empty()) {
                 int applied = 0, expired = 0, still = 0;
                 for (auto it = pending_.begin(); it != pending_.end();) {
@@ -466,43 +475,33 @@ public:
             UE_LOGI("%s: OnDisconnect cleared %zu last-known + %zu pending", a_.name, n, nP);
     }
 
-    // Full GUObjectArray walk -> rebuild the key->actor index. Game thread.
-    // Returns the instance count. Logs an order-independent hash of all Keys so
-    // host vs client logs reveal cross-peer Key stability (critical for the
-    // swinger/container channel whose child-actor Keys may be per-peer GUIDs).
-    size_t RebuildIndex() {
-        if (!a_.EnsureResolved()) return 0;
-        // Per-channel walk timer (2026-08-23 R-2): the outer "sync:interactable" [WALK-TIME]
-        // covers all six channels + polls fused -- the b133 field log could not say WHICH
-        // channel or WHICH phase cost the 74 ms median. >=1ms gate keeps steady state silent.
-        ue_wrap::ScopedWalkTimer _rebuildTimer{a_.name};
-        // L5 fix (2026-06-23, take 2 + take 3): the stream-settle scan discipline -- full-walk while the
-        // live count changes, cheap tail-scan once settled, staggered 60s full backstop. The rationale +
-        // history (door 57->19 take-1 regression, the 18:41 world-reload prune-to-0 root) live with the
-        // extracted implementation: ue_wrap/settled_object_scan.h. Under the tail-scan: REMOVAL is
-        // pruned each tick (cached idx + IsLiveByIndex), state is read every tick by PollAndBroadcast.
-        const bool settled = scan_.settled();
-        const ue_wrap::scan::ScanRange range = scan_.Begin();
-        std::vector<std::pair<std::wstring, Ref>> found;
-        found.reserve(64);
-        for (int32_t i = range.begin; i < range.end; ++i) {
-            void* obj = R::ObjectAt(i);
-            if (!obj) continue;
-            if (!a_.IsInstance(obj)) continue;  // cheap filter (no alloc)
-            const std::wstring nm = R::ToString(R::NameOf(obj));
-            if (nm.rfind(L"Default__", 0) == 0) continue;  // skip CDO
-            if (!R::IsLive(obj)) continue;
-            std::wstring key = a_.GetKey(obj);
-            if (key.empty() || key == L"None") continue;
-            found.emplace_back(std::move(key), Ref{ obj, R::InternalIndexOf(obj) });
-        }
+    // ---- R-2 shared-scan hub consumer (design: votv-shared-scan-hub-R2-DESIGN-2026-08-23).
+    // The per-channel SettledObjectScan full walk is RETIRED; the hub's shared sliced pass
+    // drives the callbacks below (one GUObjectArray walk serves all six channels + the seven
+    // module consumers). The index is WORLD-STAMPED: indexGen_ records the generation it was
+    // built in, and every read path treats a stale-gen index as EMPTY (slot+serial liveness
+    // is blind to world death -- the R-1 44-s window; the gen compare is not).
+    bool IndexCurrent() const { return indexGen_ == ue_wrap::world_identity::Generation(); }
+
+    void HubPassBegin(bool /*isFull*/) { scanFound_.clear(); }
+
+    void HubMatch(void* obj) {
+        const std::wstring nm = R::ToString(R::NameOf(obj));
+        if (nm.rfind(L"Default__", 0) == 0) return;  // skip CDO
+        if (!R::IsLive(obj)) return;
+        std::wstring key = a_.GetKey(obj);
+        if (key.empty() || key == L"None") return;
+        scanFound_.emplace_back(std::move(key), Ref{ obj, R::InternalIndexOf(obj) });
+    }
+
+    size_t HubPassComplete(bool isFull, uint32_t worldGen) {
         size_t liveCount = 0;
         uint64_t keysHash = 0;
         {
             std::lock_guard<std::mutex> lk(indexMutex_);
-            if (range.isFull) byKey_.clear();                  // full re-scan rebuilds from scratch
-            for (auto& f : found) byKey_[f.first] = f.second;  // add new (full path: all; tail path: only new)
-            if (!range.isFull) {                               // tail path: prune entries whose actor died
+            if (isFull) byKey_.clear();                        // full pass rebuilds from scratch
+            for (auto& f : scanFound_) byKey_[f.first] = f.second;
+            if (!isFull) {                                     // tail pass: prune entries whose actor died
                 for (auto it = byKey_.begin(); it != byKey_.end();) {
                     if (!R::IsLiveByIndex(it->second.actor, it->second.idx)) it = byKey_.erase(it);
                     else ++it;
@@ -510,24 +509,17 @@ public:
             }
             for (auto& kv : byKey_) keysHash ^= FnvKey(kv.first);  // hash over the FULL current set (cross-peer signal)
             liveCount = byKey_.size();
+            indexGen_ = worldGen;
         }
-        scan_.End(liveCount);  // feed the settle gate (any count change re-arms full walks)
-        // Log the (count, keysHash) only when it CHANGES -- throttled retry-tick
-        // rebuilds otherwise spam the same line. The hash is the cross-peer Key-
-        // stability signal (compare host vs client).
+        scanFound_.clear();
+        // Log the (count, keysHash) only when it CHANGES -- steady passes otherwise spam the
+        // same line. The hash is the cross-peer Key-stability signal (compare host vs client).
         if (liveCount != lastLogCount_ || keysHash != lastLogHash_) {
             lastLogCount_ = liveCount;
             lastLogHash_ = keysHash;
             UE_LOGI("%s: index rebuilt -- %zu live keyed instance(s), keysHash=0x%016llX "
                     "(compare host vs client for cross-peer Key stability)",
                     a_.name, liveCount, static_cast<unsigned long long>(keysHash));
-        }
-        // L5 take-3 verify marker: a FULL walk while already SETTLED is a 60s backstop (or a world-travel
-        // shrink) -- the slot-reuse + gap-stream safety net. Fires once per 60s per channel (6 lines/60s =
-        // trivial). Lets the N-match verify SHOW the backstop recovering a gap-streamed tail (e.g. door
-        // 50 -> 57 lands on one of these). Distinct from the streaming-phase full walks (those are !settled).
-        if (settled && range.isFull) {
-            UE_LOGI("%s: backstop full-rescan (60s safety net) -- %zu live keyed instance(s)", a_.name, liveCount);
         }
         if (ProbeLog()) {
             std::lock_guard<std::mutex> lk(indexMutex_);
@@ -542,6 +534,7 @@ private:
     struct Pending { bool want; std::chrono::steady_clock::time_point deadline; };
 
     void* ResolveFast(const std::wstring& key) {
+        if (!IndexCurrent()) return nullptr;  // stale-gen index = another world's actors
         std::lock_guard<std::mutex> lk(indexMutex_);
         auto it = byKey_.find(key);
         if (it != byKey_.end() && R::IsLiveByIndex(it->second.actor, it->second.idx))
@@ -593,9 +586,17 @@ private:
     std::atomic<coop::net::Session*> session_{nullptr};
     std::atomic<bool> echo_{false};
 
+    static void HubPassBeginThunk(void* ctx, bool isFull) { static_cast<Channel*>(ctx)->HubPassBegin(isFull); }
+    static void HubMatchThunk(void* ctx, void* obj) { static_cast<Channel*>(ctx)->HubMatch(obj); }
+    static size_t HubPassCompleteThunk(void* ctx, bool isFull, uint32_t gen) {
+        return static_cast<Channel*>(ctx)->HubPassComplete(isFull, gen);
+    }
+
     std::mutex indexMutex_;
     std::unordered_map<std::wstring, Ref> byKey_;
-    ue_wrap::scan::SettledObjectScan scan_;  // the stream-settle scan discipline (auto-staggered per instance)
+    std::vector<std::pair<std::wstring, Ref>> scanFound_;  // hub-pass scratch (GT-only)
+    uint32_t indexGen_ = 0;   // world gen of the last completed hub pass (GT-write, GT-read)
+    bool scanRegistered_ = false;
 
     std::mutex stateMutex_;
     std::unordered_map<std::wstring, bool> lastKnown_;

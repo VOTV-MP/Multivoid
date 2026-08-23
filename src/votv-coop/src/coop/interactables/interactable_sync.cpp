@@ -316,29 +316,16 @@ void InstallUseInputObserver() {
     UE_LOGI("door: InpActEvt_use PRE+POST observers installed (PRE gates the native toggle; POST restores + sends DoorOpenRequest)");
 }
 
-// ---- Receiver index (one-shot per channel, latched). The receiver resolves by Key;
-// late-loaded instances are caught by the retry-tick + connect-snapshot rebuilds. ------
-bool g_doorIndexed = false, g_lightIndexed = false, g_containerIndexed = false,
-     g_garageIndexed = false, g_applianceIndexed = false, g_doorBoxIndexed = false;
+// ---- Receiver index: R-2 -- the six channels register as shared-scan-hub consumers; the
+// hub builds every index on its own sliced cadence (the one-shot RebuildIndex prime is gone
+// with the per-channel walks).
 void IndexChannels() {
-    if (!g_doorIndexed && ue_wrap::door::EnsureResolved()) {
-        UE_LOGI("door: indexed %zu door(s)", g_door.RebuildIndex()); g_doorIndexed = true;
-    }
-    if (!g_lightIndexed && ue_wrap::lightswitch::EnsureSwitchResolved()) {
-        UE_LOGI("light: indexed %zu switch(es)", g_light.RebuildIndex()); g_lightIndexed = true;
-    }
-    if (!g_containerIndexed && ue_wrap::swinger::EnsureResolved()) {
-        UE_LOGI("container: indexed %zu lid(s)", g_container.RebuildIndex()); g_containerIndexed = true;
-    }
-    if (!g_garageIndexed && ue_wrap::garage::EnsureResolved()) {
-        UE_LOGI("garage: indexed %zu garage door(s)", g_garage.RebuildIndex()); g_garageIndexed = true;
-    }
-    if (!g_applianceIndexed && ue_wrap::appliance::EnsureResolved()) {
-        UE_LOGI("appliance: indexed %zu appliance(s)", g_appliance.RebuildIndex()); g_applianceIndexed = true;
-    }
-    if (!g_doorBoxIndexed && ue_wrap::door_box::EnsureResolved()) {
-        UE_LOGI("doorbox: indexed %zu locker/console door(s)", g_doorBox.RebuildIndex()); g_doorBoxIndexed = true;
-    }
+    g_door.RegisterWithScanHub();
+    g_light.RegisterWithScanHub();
+    g_container.RegisterWithScanHub();
+    g_garage.RegisterWithScanHub();
+    g_appliance.RegisterWithScanHub();
+    g_doorBox.RegisterWithScanHub();
 }
 
 }  // namespace
