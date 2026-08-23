@@ -144,6 +144,10 @@ bool Tick(coop::net::Session& session) {
         // gameplay world prefix-case-agnostically).
         const bool inGameplayWorld =
             reapWorld && R::NameContains(R::NameOf(reapWorld), L"ntitled");
+        // R-2b: publish the verdict for the reseed hub consumer's gate (same source +
+        // cadence the retired steady branch read; prop_census must not dereference a
+        // world_identity pointer for a name check).
+        coop::prop_element_tracker::SetReaperInGameplayWorld(inGameplayWorld);
         // RAM-balloon guard (2026-06-08, user: HOST pressed MAIN MENU mid-session ->
         // ballooning). VOTV's OWN quit-to-menu travels to /Game/menu WITHOUT going
         // through our FleeToMainMenu, so the session stays running + our whole layer
@@ -320,80 +324,17 @@ bool Tick(coop::net::Session& session) {
             UE_LOGI("net_pump: world changed without a mass purge -- re-seeded (%zu new keyed)", added);
             if (added > 0) retriggerReadySlots();
             maybeReAnnounce();  // only if the UWorld actually swapped (the owner compares)
-        } else if (inGameplayWorld &&
-                   coop::prop_element_tracker::HasSeededOnce() &&
-                   coop::prop_element_tracker::IsRegistrySeededForCurrentWorld()) {
-            // STEADY gameplay world (no level transition): the ONLY ongoing
-            // detector for props that come into existence mid-session via
-            // EX_CallMath -- the Q spawn-menu, the toolgun, the ambient
-            // spawners, and grab-morph chipPiles. Those bypass UObject::
-            // ProcessEvent (our sole hook seam), so the Init-POST observer
-            // never sees them: they sit UNTRACKED (overlay "key=.. / no eid")
-            // and are never mirrored to peers (user 2026-06-16: spawn-menu
-            // props + piles invisible on the client). This 0.25 Hz
-            // GUObjectArray re-seed (same cadence + cost class as the reaper
-            // above; the FindObjectByClass world resolve is shared) mints
-            // each new keyed prop's eid AND each keyless chipPile's eid (the
-            // SeedWalk_ IsChipPile branch). added==0 (steady, nothing newly
-            // spawned) costs only the walk -- zero peer traffic.
-            //
-            // R1 (2026-06-17, MTA CEntityAddPacket): broadcast ONE bracket-free
-            // additive PropSpawn per NEWLY-adopted prop (prop_snapshot::
-            // ExpressIncrementalSpawn), NOT a full re-bracketed snapshot. The old
-            // retriggerReadySlots() re-fired a SnapshotBegin/Complete bracket every
-            // ~4s during a join, and each bracket RE-ARMED the client's destructive
-            // divergence sweep (~10x in 90s = the join-churn that thrashed piles +
-            // doomed kerfur mirrors). An incremental add never opens a bracket -> the
-            // sweep is not re-armed. MTA's strictly-incremental streaming: one
-            // CEntityAddPacket per new entity, never a world re-send
-            // (Server/.../CStaticFunctionDefinitions.cpp:8349). ExpressIncrementalSpawn
-            // is host-only internally; on a client the re-seed key-INDEXES keyed props
-            // WITHOUT minting Elements (v122 no-passive-mint -- the silent census mint
-            // was the zombie double-row factory) and still mints keyless chipPile
-            // elements; it broadcasts nothing. (retriggerReadySlots stays --
-            // the episode-end + small-travel branches above legitimately re-bracket on
-            // a real world transition, where the client SHOULD re-reconcile.)
-            // PERF (FPS #3, user 2026-06-22 -- a periodic ~4s FPS stutter on BOTH peers): ReSeedKnownKeyedProps
-            // is a FULL ~237k-entry GUObjectArray census (+ a ToString(NameOf) string-alloc per keyed-
-            // interactable + a second full walk for the world). Running it every ~4s unconditionally cost the
-            // whole walk even when nothing spawned (added==0). GUARD it on the GUObjectArray HIGH-WATER MARK:
-            // NumObjects() grows when a new UObject is appended (the common case for a spawn-menu/toolgun/
-            // ambient/morph prop), so do the census EXACTLY then and SKIP the no-op walk while NumObjects is
-            // unchanged -- eliminating the at-rest stutter (the idle client never walks). A spawn that reuses
-            // a freed slot leaves NumObjects flat; a periodic SAFETY census every ~5th invocation (~20s)
-            // bounds that coverage gap, and any later array growth catches it immediately. The join/world-
-            // change branches above are UNGATED (they always re-seed in full), so snapshot coherence is intact.
-            static int32_t sLastSteadyNum = -1;
-            static int     sSinceFullWalk = 0;
-            const int32_t  curNum   = R::NumObjects();
-            const bool     grew     = (curNum != sLastSteadyNum);
-            const bool     periodic = (++sSinceFullWalk >= 5);   // ~20s safety walk (this branch runs ~0.25 Hz)
-            // (v106: recycled-slot drop/place actors -- NumObjects flat,
-            // `grew` blind -- are expressed event-driven at the hand edge /
-            // FinishSpawningActor Func seam; the ~20s periodic walk here is
-            // the safety net only.)
-            if (grew || periodic) {
-                if (periodic && !grew)
-                    UE_LOGI("net_pump: steady-world re-seed -- periodic SAFETY census (NumObjects flat at %d; "
-                            "catches any free-slot-reused spawn the high-water guard skipped)", curNum);
-                sLastSteadyNum  = curNum;
-                sSinceFullWalk  = 0;
-                std::vector<void*> newProps;
-                ue_wrap::ScopedWalkTimer _wt("reseed:KnownKeyedProps");  // L5 profile (this branch is high-water-gated)
-                const size_t added = coop::prop_element_tracker::ReSeedKnownKeyedProps(&newProps);
-                if (added > 0) {
-                    UE_LOGI("net_pump: steady-world re-seed adopted %zu NEW runtime-spawned keyed prop(s) "
-                            "(spawn-menu/toolgun/ambient/pile) -- broadcasting one PropSpawn each "
-                            "(incremental delta, no re-bracket; MTA CEntityAddPacket shape)", added);
-                    // The late-registration deliver-missing owner: a generic prop broadcasts an
-                    // incremental PropSpawn; a kerfur OFF-prop (skipped by the generic express, no
-                    // KerfurConvert fired) takes the convert-safe deferred path. See
-                    // coop::prop_snapshot::DeliverLateRegisteredProps + the OWNER BOUNDARY there.
-                    coop::prop_snapshot::DeliverLateRegisteredProps(newProps);
-                }
-            }
-            // else: NumObjects unchanged -> nothing newly allocated -> SKIP the full census (the FPS fix).
         }
+        // (R-2b, 2026-08-23: the STEADY-world third branch -- the 0.25 Hz single-frame
+        // full census with its NumObjects high-water guard -- is RETIRED whole (RULE 2).
+        // Its detector now lives as scan-hub consumer #14 "prop_reseed" (prop_census.cpp
+        // InstallReseedScanConsumer/DrainReseedQueue, ticked from subsystems beside the
+        // hub): sliced candidate collection + a ~1 ms/tick budget adjudication drain,
+        // grew-based SeedGeneration bump parity, ~20 s recycled-slot latency preserved
+        // via the hub backstop. Field basis + design:
+        // votv-reseed-hub-consumer-DESIGN-2026-08-23.md. The episode-end + small-travel
+        // branches above KEEP their synchronous walks -- rare transition events that
+        // need a settled result before retriggerReadySlots/maybeReAnnounce.)
     }
     return false;
 }

@@ -288,6 +288,26 @@ void SeedKnownKeyedProps();
 // nullptr (boot seed / throttled reconcile) keeps the prior count-only behavior.
 size_t ReSeedKnownKeyedProps(std::vector<void*>* outNewActors = nullptr);
 
+// ---- R-2b (2026-08-23): the STEADY re-seed as scan-hub consumer #14 -------
+// The 0.25 Hz single-frame full-census steady branch (retired from
+// registry_reaper, RULE 2) is replaced by a demand-exempt (settleScans=0)
+// hub consumer: the shared sliced pass collects keyed-interactable candidates
+// ({obj, InternalIndex, SlotSerial} scratch, no per-slice filtering), and a
+// BUDGET drain (~1 ms/tick) adjudicates them with today's phase-1/phase-2
+// semantics relocated verbatim (insert().second under the leaf mutex is the
+// SOLE newness authority; MarkPropElement / keyless-pile mint / per-chunk
+// DeliverLateRegisteredProps outside the lock). Design of record:
+// research/findings/architecture-audits/votv-reseed-hub-consumer-DESIGN-2026-08-23.md.
+// Both game thread. Install self-latches; Drain early-returns on an empty queue.
+void InstallReseedScanConsumer();
+void DrainReseedQueue();
+
+// The reaper's 4 s gameplay-vs-menu verdict, published for the reseed gate
+// (same source + cadence today's steady branch read; world_identity pointers
+// are identities and must not be dereferenced for a name check). Written by
+// registry_reaper only; read by the census-internal gate.
+void SetReaperInGameplayWorld(bool inGameplay);
+
 // ---- World-coherence stamp (Fork A, 2026-06-10) ---------------------------
 // Every seed walk stamps the live gameplay UWorld it expressed; the snapshot
 // trigger gate refuses to open a bracket (a DESTRUCTIVE contract: the client

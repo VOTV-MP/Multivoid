@@ -9,6 +9,7 @@
 
 #include "coop/props/prop_snapshot.h"
 
+#include "coop/config/config.h"  // ReadEnv (R-2b dedupe-bypass RED-calibration drill)
 #include "coop/element/prop.h"
 #include "coop/element/registry.h"
 #include "coop/creatures/kerfur_convert.h" // TryAdoptFreshKerfurProp (kerfur-conversion first refusal at the one builder, take-8)
@@ -468,7 +469,13 @@ void TriggerForSlot(int peerSlot) {
         // Fork A: a re-trigger of the slot being drained RIGHT NOW, for the
         // SAME registry generation, is already covered by the in-flight
         // bracket -- queueing it would produce a duplicate identical bracket.
-        if (peerSlot == g_currentTargetSlot && g_drainSeedGen == PT::SeedGeneration()) {
+        // [drill] R-2b RED calibration: bypassing this dedupe MUST make the
+        // acceptance's zero-duplicate-brackets grep go red (a gate never shown
+        // red proves nothing). Never set outside a drill.
+        static const bool sDedupBypass =
+            !coop::config::ReadEnv("VOTVCOOP_SNAPSHOT_DEDUP_BYPASS").empty();
+        if (!sDedupBypass &&
+            peerSlot == g_currentTargetSlot && g_drainSeedGen == PT::SeedGeneration()) {
             return;
         }
         // Another drain is in flight. Queue this slot for after it

@@ -53,7 +53,11 @@ struct Consumer {
     void (*OnPassBegin)(void* ctx, bool isFull);
     void (*OnMatch)(void* ctx, void* obj);
     size_t (*OnPassComplete)(void* ctx, bool isFull, uint32_t worldGen);  // swap + return count
-    int settleScans;                           // demand term (2 = churny, 15 = static classes)
+    int settleScans;                           // demand term (2 = churny, 15 = static classes;
+                                               // 0 = DEMAND-EXEMPT: 0<0 is false at every settle
+                                               // site, so the consumer never forces full passes
+                                               // and rides tails + the backstop -- the R-2b
+                                               // reseed consumer, which builds no hub index)
 };
 
 // Register a consumer (game thread). During an active pass the registration is QUEUED and

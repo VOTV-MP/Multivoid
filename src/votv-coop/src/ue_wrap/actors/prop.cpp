@@ -180,6 +180,11 @@ bool EnsureTrashBitsPileResolved() {
     return TrashBitsPileCls() != nullptr;
 }
 
+bool EnsurePropBaseResolved() {
+    // R-2b (see prop.h): the reseed hub consumer's EnsureResolved.
+    return PropBaseClass() != nullptr;
+}
+
 // AtrashBitsPile_C collect counters (v57 trash_pile_sync). Raw int32 fields per
 // the CXX dump: amountA @0x0260, amountB @0x0264 (the displayed "uses" count is
 // their SUM, formatted live by lookAt -- no refresh verb exists or is needed).

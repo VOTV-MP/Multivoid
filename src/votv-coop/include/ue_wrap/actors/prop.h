@@ -92,6 +92,11 @@ bool IsTrashBitsPile(void* obj);
 // benches the trash_pile consumer instead of letting IsTrashBitsPile re-run FindClass
 // (a full GUObjectArray walk) once per memo-missed class per pass.
 bool EnsureTrashBitsPileResolved();
+
+// R-2b: resolution attempt for the reseed scan-hub consumer's EnsureResolved --
+// true once the Aprop base class is resolvable (IsKeyedInteractable is safe but
+// vacuously false before that; the consumer sits the pass out instead).
+bool EnsurePropBaseResolved();
 bool ReadTrashPileAmounts(void* actor, int32_t& a, int32_t& b);
 bool WriteTrashPileAmounts(void* actor, int32_t a, int32_t b);
 

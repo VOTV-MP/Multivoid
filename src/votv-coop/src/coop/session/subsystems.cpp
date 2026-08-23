@@ -109,6 +109,7 @@
 #include "coop/creatures/piramid_sync.h"      // v97: piramid event choreography lane (mirror brain suppression + PyramidGather)
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_lifecycle.h"
+#include "coop/props/prop_element_tracker.h"  // R-2b: reseed hub consumer install + drain
 #include "coop/props/prop_snapshot.h"
 #include "coop/props/remote_prop.h"
 #include "coop/props/remote_prop_spawn.h"
@@ -494,6 +495,11 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     // consumer (design: votv-shared-scan-hub-R2-DESIGN-2026-08-23.md). Runs BEFORE the
     // consumers' Ticks so a completed pass's fresh index is visible in the same pump tick.
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:scan_hub"}; coop::element::scan_hub::Tick(); }
+    // R-2b: consumer #14 (the steady prop re-seed) -- registration self-latches; the
+    // budget adjudication drain carries its own [WALK-TIME] reseed:drain label inside.
+    { PP::Scope _s{PP::Bucket::Interactable};
+      coop::prop_element_tracker::InstallReseedScanConsumer();
+      coop::prop_element_tracker::DrainReseedQueue(); }
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:interactable"}; coop::interactable_sync::Tick(); }  // retry deferred door/light/container applies (still streaming in)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:keypad"}; coop::keypad_sync::Tick(); }        // v33 keypad poll + deferred-apply retry
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:time"}; coop::time_sync::Tick(); }          // v36/v109 world clock: HOST publishes the clock (net thread streams unreliable ClockPose); CLIENT drains + applies (design F)

@@ -19,10 +19,14 @@ namespace {
 namespace R = ue_wrap::reflection;
 using steady_clock = std::chrono::steady_clock;
 
-// Proven tuning carried over verbatim from the retired SettledObjectScan (L5 take-3): at the
-// 2 s pass cadence, a full backstop every 30 completed passes ~ 60 s.
+// Pass cadence carried verbatim from the retired SettledObjectScan (L5 take-3).
+// Backstop 30 -> 10 (R-2b, 2026-08-23): ~20 s full-pass cadence, NOT 60 s -- the reseed
+// consumer's recycled-slot detection latency is field-load-bearing (the periodic SAFETY
+// census caught REAL NumObjects-flat spawns in both field logs: 1+1 on the host, 50/17/12
+// per 20 s window on the client; votv-reseed-hub-consumer-DESIGN-2026-08-23.md §0). Cost:
+// duty cycle of sliced fulls triples; the per-frame cap below is unchanged by construction.
 constexpr auto    kPassCadence   = std::chrono::seconds(2);
-constexpr int     kBackstopEvery = 30;
+constexpr int     kBackstopEvery = 10;
 // Slice budget: ~1 ms of GT time per frame, clock checked every kSliceCheck objects. Priced in
 // the design (~17 ns/object dev, ~43 ns/object on the field reporter's machine).
 constexpr int64_t kSliceBudgetUs = 1000;
