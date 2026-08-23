@@ -2219,9 +2219,50 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   ini settles it, only the target's bytes; and **"this box reproduces the bug" is itself a claim that
   needs measuring** — an earlier revision of the coexistence doc asserted it while the user had RTSS
   detection globally off, so the box reproduced NEITHER symptom.
+  **2026-08-23 evening — S1's MECHANISM MEASURED, and the "we lost the install race" model is WRONG.**
+  With RTSS armed: `imgui_overlay: DX11 bring-up OK` DOES appear, so our detour fires, ImGui comes up,
+  the WndProc detour installs and **an RTV is created** — and only THEN does `frames=0/s` set in
+  (sustained 8+ s at `PE=243537/s`, against a `frames=120/s` control at the same PE rate 20 min
+  earlier with RTSS off). **RTSS lets you install and reclaims the function AFTERWARDS, per-function
+  and STAGGERED** — with `Present` already dead our `ResizeBuffers` bracket still ran once and was
+  gone ~90 s later. Consequence: being on ANY DXGI vtable function is a losing POSITION, not a race
+  lost at install time, so "hook earlier" is not a fix. Diagnostic that settles it in one read:
+  `frames=N/s` (the `perf_probe::NoteFrame()` counter, driven from `PresentDetour`) against a
+  same-build control — a live per-frame counter distinguishes "unlinked" from "drawing but invisible"
+  where a screenshot cannot.
   See `[[lesson-census-the-present-chain-by-following-jmp-to-the-owner]]`.
   Full: `[[lesson-an-overlay-that-inline-hooks-present-loses-to-rtss-and-obs]]`.
   `memory/lesson_an_overlay_that_inline_hooks_present_loses_to_rtss_and_obs.md`
+
+- **A hooked RESIZE bracket is load-bearing: drop it and `ResizeBuffers` FAILS the engine into a
+  FATAL.** 2026-08-23, measured with a real crash dialog. `[SRC MSDN]` `IDXGISwapChain::ResizeBuffers`
+  returns `DXGI_ERROR_INVALID_CALL` unless every direct AND indirect reference to the back buffers is
+  released first — an `ID3D11RenderTargetView` created on the backbuffer is exactly such a reference
+  (`overlay_backend_dx11.cpp:34-48`), and `[MEASURED]` UE turns the failure into
+  `VERIFYD3D11RESULT_EX` → **`Fatal`**: `LowLevelFatalError ... D3D11Viewport.cpp:298 ...
+  DXGI_ERROR_INVALID_CALL`. The trap that makes this expensive: **a post-hoc "detect the backbuffer
+  changed" check at the DRAW seam cannot substitute for a release BEFORE the resize** — an overlay
+  redesign had exactly that substitution in it, `/qf`-converged over 7 rounds, and it would have
+  turned an RTSS-only crash into a crash for every user on every resize. Two more carryables: the
+  crash text named the **same function and line** (`D3D11Viewport.cpp:298`) that IDA had identified
+  hours earlier from UE's own `VERIFYD3D11RESULT_EX` argument string, so **UE ships its verify
+  expressions AND line numbers into the shipping exe and a crash dialog can confirm a static RE**;
+  and `[?]` attribution is a separate claim — a co-resident overlay holds its own backbuffer
+  references, so "the outstanding ref was ours" needs its own falsifier (resize before your own RTV
+  exists). *Look FIRST:* `docs/OVERLAY_CAPTURE_COEXIST.md` §6d.b + §9's CONDEMNED item 4.
+  `memory/lesson_a_resize_bracket_is_load_bearing_not_bookkeeping.md`
+
+- **A negative reported before the evidence finishes arriving is worse than no report.** 2026-08-23:
+  a resize test was called "did NOT crash" off a single `Get-Process` returning alive — while UE was
+  displaying its `LowLevelFatalError` modal and had not yet exited. The dialog reached the user three
+  minutes later. Then the relaunch that continued the work **destroyed the crash log** (HOST has no
+  `multivoid.prev.log`; CLIENT_1 does), so the decisive finding survived only because it had been
+  grepped in-flight. This is the same class as marking a todo done on intention, and it recurred three
+  times in one session (a task marked completed for a measurement never made; a `-dx12` rig named in a
+  task title and never run; this). *Rule:* write the crash predicate DOWN before the run — **crash = a
+  window titled `*crash*` OR process exit, polled over >= 30 s**, never one instantaneous liveness
+  poll — and **preserve the artifact before doing anything that rotates it.**
+  `memory/lesson_a_negative_called_before_the_evidence_arrives.md`
 
 - **A file-SHAPE assumption hides in PRESENCE TESTS and in PROSE, not just in the enumerator.**
   2026-08-23, migrating skins from one-pak-per-skin to one shared `scientists.pak`. The obvious break

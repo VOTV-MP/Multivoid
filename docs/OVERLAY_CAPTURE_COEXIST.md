@@ -5,9 +5,25 @@ RivaTuner (RTSS/MSI Afterburner OSD), and why can't OBS capture it — and what 
 Any finding, decision, or status on overlay-vs-third-party-hooker coexistence lives HERE. If another
 doc touches the subject, it links here; it does not re-state.
 
-- **Status (2026-08-23):** design converged for DX11 (7-round /qf), then **materially REVISED by
-  measurement on 2026-08-23** — DX12 moved from "Phase 2, needs a rig" to **in scope for v1 with zero
-  hooks** (§6c). **Increment 1 is BUILT and now LIVE-VERIFIED**; the seam-move itself is NOT built.
+- **Status (2026-08-23 evening, after a 9-round `/qf`):** **ALL THREE SYMPTOMS ARE NOW MEASURED
+  FIRST-HAND** (§6d) — S1's mechanism, S2's exact boundary, and a **third, previously unknown, LIVE
+  SHIPPED CRASH**. The 7-round design of §9 is **PARTLY CONDEMNED**: its item 4 would have made that
+  crash UNIVERSAL. The plan is now **three independent commits** (§9c). **NOTHING IS BUILT beyond
+  increment 1; S1, S2 and the crash are all live in the shipped DLL.**
+  - **THE CRASH (new, 2026-08-23, `[MEASURED]` — user's own crash dialog):** with RTSS armed, a window
+    resize hard-kills the game:
+    `LowLevelFatalError ... SwapChain->ResizeBuffers(0, SizeX, SizeY, RenderTargetFormat,
+    SwapChainFlags) failed at .../D3D11RHI/Private/D3D11Viewport.cpp:298 with error
+    DXGI_ERROR_INVALID_CALL (984x561) -> (1424x771)`. The game's own crash text names the **exact
+    function and line** this session had already identified from IDA hours earlier (§6d.b).
+    **Attribution is NOT yet proven** — see the owed falsifier in §6d.b.
+  - **CONDEMNED, do not build: §9 item 4** (retire the `ResizeBuffers` hook, replace with a per-frame
+    `GetBuffer(0)` compare *at the draw seam*). The compare runs AFTER `ResizeBuffers` has already
+    returned `DXGI_ERROR_INVALID_CALL`, so it cannot prevent the crash — it would remove the only
+    working bracket and make the crash fire for **every user, on every resize, with no RTSS involved.**
+    Seven rounds of `/qf` did not catch this; round 9 did. RULE 2: one RTV mechanism only — the
+    engine-seam bracket of §9c commit 1. The compare is deleted from the design, never written.
+  - **AS-BUILT + LIVE-VERIFIED:** increment 1 only (the AOB + a log-only boot probe).
   - **AS-BUILT + LIVE-VERIFIED (deployed, solo boot, NOT hands-on RTSS/OBS):** the AOB
     `kSigD3D11ViewportPresentChecked` + `kD3D11Viewport_SwapChain = 0x70` in `sdk_profile.h`, and a
     **log-only** boot resolve-probe in `ui/imgui_overlay.cpp::Init`. **Verify-before-retire PASSED on a
@@ -19,12 +35,12 @@ doc touches the subject, it links here; it does not re-state.
     change, fail-closed path). **The live overlay is UNCHANGED — S1 and S2 are both still present.**
   - The design is §9 (DX11) + §9b (DX12); the IDA/live measurements backing it are §6b + §6c.
     Acceptance is a hands-on RTSS+OBS screenshot — nothing here is VERIFIED until that runs.
-- **NOTE — this box does NOT currently reproduce S1.** [MEASURED 2026-08-23 + USER-CONFIRMED] the user
-  set RTSS's detection level to **None globally**, so `RTSSHooks64.dll` still injects (it is loaded at
-  `0x180000000`) but hooks nothing. An earlier revision of this doc claimed "this box can reproduce
-  both" — that was **wrong** and is retracted. **The acceptance test therefore requires the user to
-  re-enable RTSS detection first**, or it is vacuous (see `[[lesson-an-instrument-blind-to-the-
-  phenomenon-always-passes]]`).
+- **NOTE — this box DOES reproduce both, once RTSS detection is re-armed.** Earlier on 2026-08-23 this
+  doc said "does not currently reproduce S1", which was true only of the *disarmed* state: the user had
+  set RTSS's detection level to **None globally**. Re-armed at ~09:55 the same day, **S1 reproduced
+  immediately and was measured end-to-end** (§6d.a), and S2 was localised by capture mode (§6d.c).
+  The standing caution still holds: a run with detection at None measures nothing
+  (`[[lesson-an-instrument-blind-to-the-phenomenon-always-passes]]`).
 - **HEAD at authoring:** `01a43486` · proto 134 (a render-path change; **no wire format touched → no
   proto bump** expected).
 - **Owner subtree:** `src/votv-coop/src/ui/` (the overlay), `ue_wrap/core/hook.*` (the detour engine),
@@ -293,6 +309,88 @@ Every hooked DXGI entry was followed through its jmp chain to the owning module:
 
 ---
 
+## 6d. Measured 2026-08-23 evening — ALL THREE SYMPTOMS, FIRST-HAND
+
+Until this session **neither S1 nor S2 had ever been observed by us**: S1 was `[COMM]` (the user's
+originating sentence is third-person — *"when **users** have riva tuner"*), and "properly" in the S2
+report was never characterised. All 10 real logs on disk carried `imgui_overlay: DX11 bring-up OK`, so
+none of them was an S1 session. This section closes that.
+
+### (a) S1's mechanism — RTSS lets us install, then UNLINKS US AFTERWARDS
+
+The user re-armed RTSS detection and reported the F1 menu simply gone. Run at 09:55, DX11, windowed:
+
+- `[MEASURED]` `imgui_overlay: DX11 bring-up OK (hwnd=...)` at 09:55:43 — **PRESENT**. So the Present
+  detour **does** fire, ImGui **does** come up, the `WndProc` detour **is** installed
+  (`imgui_overlay.cpp:393-394` sits inside `BringUp()`), and **an RTV IS created**.
+- `[MEASURED]` then `frames=0/s` sustained across 8+ consecutive `[perf]` lines while `PE=243537/s`.
+  `frames` is `perf_probe::NoteFrame()`, called only from `PresentDetour`. **Control 20 minutes
+  earlier, RTSS off: `PE=243167/s` and `frames=120/s`.** Same game, same PE rate, our detour simply
+  stops being called.
+- **This FALSIFIES the "we lose the install race" model** that §3 inferred, and it falsifies this
+  arc's own earlier claim that under RTSS `BringUp` never runs. hudhook #196's fingerprint
+  (*"the Present hook is only called once ... ImGui never shows up"*) is confirmed verbatim.
+- `[MEASURED]` **the unlink is PER-FUNCTION and STAGGERED.** With `Present` already dead, the FIRST
+  window resize still logged our `ResizeBuffersDetour` bracket (`swapchain resized (984x561)` at
+  09:57:23); the SECOND, ~90 s later, logged **nothing** — neither the success line nor the
+  `FAILED(hr)` branch at `imgui_overlay.cpp:574`.
+- **Design consequence:** being on *any* DXGI vtable function is a losing position, not a race lost at
+  install time. That is the root §6 states, now measured rather than inferred.
+
+### (b) THE CRASH — a live shipped defect nobody knew about
+
+That second resize hard-killed the game (user's dialog, verbatim):
+
+```
+LowLevelFatalError
+SwapChain->ResizeBuffers(0, SizeX, SizeY, RenderTargetFormat, SwapChainFlags) failed
+at D:/Build/++UE4/Sync/Engine/Source/Runtime/Windows/D3D11RHI/Private/D3D11Viewport.cpp:298
+with error DXGI_ERROR_INVALID_CALL
+(Size=984x561 Fullscreen=0 Format=DXGI_FORMAT_R10G10B10A2_UNORM) -> (Size=1424x771 ...)
+```
+
+- **The crash text independently confirms this session's static RE.** Hours earlier, IDA identified
+  `FD3D11Viewport::Resize = sub_141703750` from UE's own `VERIFYD3D11RESULT_EX` argument string
+  `"SwapChain->ResizeBuffers(...)"` at `D3D11Viewport.cpp:298`. The running game printed the same
+  file and the same line. Static identification and runtime failure agree.
+- `[SRC MSDN]` `DXGI_ERROR_INVALID_CALL` from `ResizeBuffers` means **outstanding references to the
+  back buffers**. Our `g_rtv` (`overlay_backend_dx11.cpp:34-48`) is exactly such a reference, created
+  at bring-up and orphaned when RTSS unlinked the bracket.
+- **`[?]` ATTRIBUTION IS NOT PROVEN, and this doc must not claim it is.** RTSS draws its own OSD into
+  the backbuffer and holds its own resources, and its own `ResizeBuffers` hook was in the same
+  staggered-unlink state — so the outstanding reference **may be RTSS's, not ours.** What is measured:
+  with RTSS off and our bracket alive, three scripted resizes, no crash. That is *consistent with*
+  our reference; it does not prove it.
+- **OWED FALSIFIER (one run, decides commit 1's whole premise):** with RTSS armed, resize twice
+  **before** `bring-up OK` appears — i.e. before any RTV of ours exists. Crash anyway → the reference
+  is not ours and commit 1 cures nothing. No crash, then crash after bring-up → attribution proven.
+
+### (c) S2 — localised by CAPTURE METHOD, not by target selection
+
+`[MEASURED, user first-hand]` *"the capture is fine overall, just that the imgui is missing from the
+capture"* — so "properly" means **entirely absent**, everything else captured. By OBS source type:
+
+| OBS source | sees the F1 menu? | how it captures |
+|---|---|---|
+| Game Capture — specific window | **NO** | Detour on `Present`, copies at the TOP of the detour |
+| Game Capture — any fullscreen application | **NO** | same hook, different target selection |
+| Window Capture | **YES** | DWM / PrintWindow — sees the composited frame |
+| Display Capture | **YES** | DWM — sees the composited frame |
+
+This is exactly §4's predicted signature and it confirms the derivation that Window/Display capture
+already see us today. It also means the two Game-Capture modes fail for one reason (the hook), so the
+fix target is the capture *method*, not any per-mode behaviour.
+
+### (d) Falsifiers, written down BEFORE the runs (round 7 of the `/qf` demanded it)
+
+- **F1** "real OBS records the overlay today" → **did NOT fire** (both Game Capture modes blind).
+- **F2** "the RTSS-on log shows bring-up, so the unlink theory is dead" → **PARTIALLY fired**:
+  unlink-at-first-fire is dead, unlink-after-install is measured. Same root, corrected mechanism.
+- **F3** "both die → STOP, do not build" → **did NOT fire.** The design's justification survives and
+  the arc now also has a crash to fix.
+
+---
+
 ## 7. Candidate seams for "draw upstream of Present" (UE4.27)
 
 > **WINNER (see §9): candidate #1, `FD3D11Viewport::PresentChecked` (`sub_1416F4BA0`).** The table below
@@ -381,12 +479,21 @@ choke point (§6b), unique AOB. Draw there, before the original runs. Everything
 3. **Retire WHOLE (RULE 2)** the `IDXGISwapChain::Present` (vtbl[8]) **and** `ResizeBuffers` (vtbl[13])
    inline hooks + the dummy-swapchain vtable resolve that feeds them. Both are RTSS-defended; keeping
    either leaves an S1 surface. No dual draw path — the ImGui pass runs only at the new seam.
-4. **RTV lifecycle without the ResizeBuffers hook:** at the draw seam, `GetBuffer(0)` and compare the
-   backbuffer resource pointer to the cached one; recreate the render target on change. A resize leaves
-   `viewport+0x70` (the swapchain) unchanged but replaces the backbuffers, and our seam runs *after* the
-   engine rendered the new backbuffer, so `GetBuffer(0)` already returns the new one — no stale-RTV
-   frame. Cost: one COM `AddRef`/`Release` + compare per frame (no allocation, no array walk — not a
-   per-tick violation).
+4. ~~**RTV lifecycle without the ResizeBuffers hook:** at the draw seam, `GetBuffer(0)` and compare the
+   backbuffer resource pointer to the cached one; recreate the render target on change.~~
+   **CONDEMNED 2026-08-23 — DO NOT BUILD. This item was actively harmful.**
+   `[SRC MSDN]` `IDXGISwapChain::ResizeBuffers` FAILS with `DXGI_ERROR_INVALID_CALL` unless every
+   direct AND indirect reference to the back buffers has been released first, and `[MEASURED]` UE turns
+   that failure into `VERIFYD3D11RESULT_EX` → **`Fatal`** (§6d.b, with the real crash dialog). A
+   compare *at the draw seam* runs long AFTER `ResizeBuffers` has already returned the error, so it
+   cannot prevent anything — it merely deletes the one bracket that works
+   (`imgui_overlay.cpp:560-578` → `overlay_backend::OnResizeRelease()` BEFORE the original; the public
+   header states the contract at `include/ui/overlay_backend.h:50-53`). Shipping it would have turned
+   an RTSS-only crash into **a crash for every user on every resize.** Its two premises were also both
+   unmeasured and one is contradicted by the shipped code: "a resize leaves `viewport+0x70` unchanged"
+   is an assumption, and `overlay_backend_dx12.cpp:488-489` already carries the audited note *"A
+   swapchain RECREATION never passes through our ResizeBuffers hook"* and re-compares every call.
+   Replacement: the engine-seam bracket, §9c commit 1. **RULE 2 — one RTV mechanism, never two.**
 5. **Unchanged:** the `WndProc` hook (`SetWindowLongPtrW`) and the `user32!SetCursorPos` hook — neither
    is on an RTSS-defended function; input capture is unaffected by the seam move. The whole `ui/*.cpp`
    surface layer (~9,600 LOC) is untouched.
@@ -469,6 +576,98 @@ no longer waits on it; the VERIFICATION does.
 
 ---
 
+## 9c. THE PLAN OF RECORD — three independent commits (2026-08-23, 9-round `/qf`)
+
+`/qf` round 8 forced this split: the resize crash is a **separate shipped defect with a separate,
+smaller fix**, and it had been folded in as supporting evidence for the big design. `OnResizeRelease()`
+has exactly one caller — `ResizeBuffersDetour` (`imgui_overlay.cpp:562`), the very hook RTSS unlinks —
+so the crash closes with the Present seam untouched.
+
+| # | commit | fixes | new signatures | depends on |
+|---|---|---|---|---|
+| **1** | hook `FD3D11Viewport::Resize` + `FD3D12Viewport::Resize`, move the release bracket there, retire `ResizeBuffersDetour` | **the live crash** | 2 | — |
+| **2** | take `perf_probe::NoteFrame`, `input_focus_probe::NoteFrame` and the 10 Hz `input_owner::TickGameThread` post OFF the present path | a render/input coupling + a counter that would start lying | 0 | — |
+| **3** | draw from `PresentChecked` / `PresentInternal`; retire the `Present` hook, `ResolveSwapChainVtable`, `overlay_backend_dx12_capture.cpp` (405 LOC) | **S1 + S2** | 1 | **commit 1** |
+
+**Commit 3 must NEVER land without commit 1** — it retires DXGI hooks, and without the engine-seam
+bracket already in place that is exactly the condemned §9 item 4.
+
+**Seams, all AOB-derived and occurrence-counted this session:**
+
+| seam | address | AOB | occ |
+|---|---|---|---|
+| `FD3D11Viewport::PresentChecked` | `image+0x16F4BA0` | 48 B, GS displacement wildcarded (**shipped**) | 1 |
+| `FD3D12Viewport::PresentInternal` | `image+0x177E0E0` | 32 B, **no wildcards** | 1 |
+| `FD3D11Viewport::Resize` | `image+0x1703750` | 48 B, GS displacement wildcarded | 1 |
+| `FD3D12Viewport::Resize` | `image+0x177E8B0` | 32 B, **no wildcards** | 1 |
+
+**Cross-cutting rules (carried from the `/qf`, each with its reason):**
+
+- **Never cache the swapchain.** Re-read `viewport+0x70` / `+0x60` on EVERY call; QI-validate on
+  pointer CHANGE, not once at frame 1. This is the invariant that covers every swapchain-replacement
+  site whether or not it was censused, and it matches the shipped DX12 discipline
+  (`overlay_backend_dx12.cpp:488`).
+- **Draw UNCONDITIONALLY at the seam.** `PresentChecked` has THREE exits (§6d / §6c.a) — the
+  CustomPresent gate, `if (swapchain)`, and `GetFullscreenState() == bIsFullscreen` (mismatch → no
+  present, writes `viewport+0x5C = 3`) — and its parent `FD3D11Viewport::Present` returns early when
+  `+0x5C & 1`. On the non-presenting exits our draw is wasted, not harmful. **Do NOT pre-check the
+  engine's conditions:** that duplicates engine logic in our detour — a site list that breaks silently
+  the day those conditions change. Owned by commit 3.
+- **Fail-closed = `UE_LOGE` + `Flush` + a HealthCheck FAIL row.** The `MessageBox` requirement in the
+  old §9/§9b was **authored by this project, not required by the engine**, and is DELETED: the seam
+  runs on the render thread, so a modal there is wrong, and `ui/boot_warning_dialog` is unavailable by
+  definition when the overlay is disabled. (`[[feedback-drop-my-requirement-if-it-blocks-rule-1]]`.)
+- **`RunHealthCheck` must ENUMERATE the signature table.** `[MEASURED]` `reflection.cpp:634-700` names
+  exactly THREE signatures by hand (GUObjectArray, FName::ToString, ProcessEvent) plus a generic exe
+  size/version WARN — `kSigSaveGameToSlot` and `kSigFMemoryRealloc` are *already* outside it. §9's old
+  claim that "HealthCheck covers it like every other signature" was **false**. Adding "the overlay
+  seams" to a hand-written list is the site-list version of the same bug.
+- **`present_hook_census.py` becomes a GATE, not a one-off.** §9b's payoff ("Multivoid owns zero inline
+  hooks on any function RTSS/OBS/Nahimic target") is prose, and prose nothing enforces is not a rule —
+  the 4th injector nobody has met yet is the case it must survive. Idiom: `registry_gate.ps1`,
+  `nick_gate.ps1`, `atlas_regime_gate.ps1`.
+
+**Considered and DECLINED, recorded so they are not re-derived:**
+
+- **`FRHICustomPresent`** — the engine's *designed* interception point, and `Resize`'s prologue shows
+  `CustomPresent->OnBackBufferResize()` is the engine's own release bracket, so it would dissolve both
+  resize AOBs. `[MEASURED]` complete slot census on `viewport+0xB0`: **`+0x08` `OnBackBufferResize`**
+  (from `Resize`), **`+0x28` `Present(int32&)`** (gates the native present), **`+0x30` `PostPresent`**
+  (PresentChecked tail). **DECLINED because three call sites is not an ABI:** unmeasured are the slot
+  count, slot 0's destructor contract, and `FRHIResource`'s non-virtual `AddRef`/`Release`, which touch
+  a refcount field *inside our object* at a guessed offset — and `FRHICustomPresent` is constructed
+  with `bDoNotDeferDelete`, so a refcount reaching zero calls `delete` on our static. Decisively:
+  **VOTV ships no CustomPresent implementation (no VR), so there is no vtable in the binary to
+  validate against.** An AOB fails LOUDLY; a wrong struct write fails SILENTLY.
+  **Corrected:** §7's "need the live viewport pointer (heap-scan/bootstrap)" is WRONG — our own
+  `PresentChecked` detour hands us `a1` = the viewport on frame 1. The obstacle is the ABI, not the
+  pointer.
+- **The return-address bootstrap as a second resolver** — it is a second *resolver for one seam*, not a
+  second implementation, so RULE 2 does not forbid it. Declined on **proportion**: `ProcessEvent`
+  already rides an AOB and is a hard-FAIL health check, so if a recook breaks AOBs the entire mod is
+  dead. The overlay's DXGI-vtable immunity was an outlier in a codebase where every core capability
+  already depends on a byte pattern. Named residual, not a v1 blocker.
+
+**Owed before / with the build:**
+
+1. **The attribution falsifier** (§6d.b) — resize twice with RTSS armed BEFORE `bring-up OK`. Decides
+   whether commit 1 fixes anything.
+2. **The `-dx12` run**, now with the **D3D12 debug layer**, and its question has changed: not only "do
+   the four offsets resolve a QI-valid DIRECT queue" but **"does it crash"** —
+   `overlay_backend_dx12.cpp:336` AddRefs up to 8 backbuffers behind the same single bracket, so DX12
+   is structurally exposed *worse* than DX11. `[?]` inferred, not measured.
+3. **Fix `tools/debug/ida_aob_derive.py`.** `[MEASURED]` for `sub_141703750` it printed
+   `RECOMMENDED (first-unique + 8 bytes of margin, len=24, occ=2)` — **occ=2 is not unique**; masking
+   the rip displacement destroyed the uniqueness `len=16` had. The recommendation must be the shortest
+   length unique **after** masking. This is the tool a future migration will use to re-derive all nine
+   signatures (`[[lesson-wildcarding-an-aob-can-destroy-its-uniqueness]]`).
+4. **Price the version surface in `docs/VERSION_MIGRATION.md`:** signatures **6 → 9**, plus 5 DX12
+   struct offsets and 2 viewport swapchain offsets, and name the migration failure mode plainly —
+   **a stale AOB means no chat, no scoreboard, no F1, no UI at all.** Note the trade honestly: the
+   version-IMMUNE `ResolveSwapChainVtable` is deleted in exchange.
+
+---
+
 **Cross-link (NOT folded into this root):** `docs/UE4SS_ARC.md`'s open 19:17 real-env exec-at-NULL crash
 is the same multi-hooker-on-Present class (our overlay hook + CEF/FusionFix). Retiring our
 `IDXGISwapChain::Present` + `ResizeBuffers` inline patches *reduces* our Present-chain footprint, so it
@@ -483,12 +682,17 @@ not a claimed cure. Keep the two investigations separate.
 
 | item | state |
 |---|---|
-| Root cause (S1 + S2, one cause) | **MEASURED / settled** (§3, §4, §6, §6c.b) |
-| DX11 seam chosen + AOB | **MEASURED, live-verified on a running game** (§6b, §6c.a) |
-| DX12 seam + presenting queue | **MEASURED statically**; `-dx12` run owed to verify (§6c.c, §9b) |
+| **S1 — mechanism** | **MEASURED FIRST-HAND 2026-08-23** (§6d.a). RTSS lets us install, then unlinks us; per-function, staggered. `frames=0/s` vs a `120/s` control. |
+| **S2 — boundary** | **MEASURED FIRST-HAND 2026-08-23** (§6d.c). Both Game Capture modes blind; Window + Display Capture fine. Split is by capture METHOD. |
+| **The resize crash** | **MEASURED 2026-08-23** (§6d.b) — a LIVE SHIPPED defect, `DXGI_ERROR_INVALID_CALL` → UE `Fatal`. **Attribution to OUR RTV is `[?]` UNPROVEN**; falsifier owed. |
+| Root cause (S1 + S2, one cause) | **MEASURED / settled** (§3, §4, §6, §6c.b, §6d) |
+| DX11 seam chosen + AOB | **MEASURED, live-verified on THREE separate boots** (§6b, §6c.a, §6d) |
+| DX12 seam + presenting queue | **MEASURED statically**; `-dx12` run owed, and its question is now "does it crash" too (§9c) |
 | DX12 scope decision | **DECIDED: in v1** (was "Phase 2") — the deferral was not free, see below |
-| The seam-move implementation | **NOT BUILT** — S1 and S2 are both still live |
-| Acceptance (RTSS + OBS hands-on) | **NOT RUN**; blocked on the user re-enabling RTSS detection |
+| §9 item 4 (per-frame `GetBuffer(0)` compare) | **CONDEMNED — would have made the crash universal** (§9, §9c) |
+| The plan | **THREE independent commits** (§9c); commit 3 depends on commit 1 |
+| Everything in §9c | **NOT BUILT.** S1, S2 and the crash are all live in the shipped DLL. |
+| Acceptance (RTSS + OBS) | **S1 + S2 both reproduced and measured**; the post-fix acceptance run is still owed |
 
 **Why DX12 stopped being deferrable.** §9 retires the `IDXGISwapChain::Present` + `ResizeBuffers`
 hooks whole. If DX12 stayed on the old seam we would have to KEEP those hooks — a parallel old+new
@@ -538,6 +742,20 @@ implementation."* The two "left things" are the two items surfaced at the end of
 
 ## 10. Decision record / changelog
 
+- **2026-08-23 evening — 9-round `/qf`: ALL THREE SYMPTOMS MEASURED FIRST-HAND, a THIRD (crash) FOUND,
+  and the 7-round design PARTLY CONDEMNED.** S1's mechanism measured (§6d.a: bring-up succeeds, then
+  `frames=0/s` vs a `120/s` control — RTSS unlinks us *after* install, per-function and staggered).
+  S2 localised by capture method (§6d.c: both Game Capture modes blind, Window/Display fine). A LIVE
+  SHIPPED CRASH found (§6d.b: `ResizeBuffers` → `DXGI_ERROR_INVALID_CALL` → UE `Fatal`), whose crash
+  text independently confirmed this session's IDA identification of `FD3D11Viewport::Resize` at
+  `D3D11Viewport.cpp:298`; **attribution to our RTV remains UNPROVEN** and has an owed falsifier.
+  **§9 item 4 CONDEMNED** — it would have made that crash universal. Plan restructured into three
+  independent commits (§9c), commit 3 gated on commit 1. Both resize seams identified and AOB-derived.
+  `FRHICustomPresent` measured (3 slots) and declined with reasons. The `MessageBox` requirement
+  deleted as self-authored. `RunHealthCheck` measured to cover 3 of 6 signatures — the old §9 claim was
+  false. **Process failures recorded rather than buried:** a negative called before the evidence
+  arrived, the crash log destroyed by relaunching, two tasks marked done on intention, a log census
+  wrong twice, and `ida_aob_derive.py` caught recommending a non-unique signature.
 - **2026-08-23 — increment 1 LIVE-VERIFIED; DX12 promoted to v1; a third hooker found; one claim
   RETRACTED.** Live solo boot (DLL `335AC774544E17AB`, DX11): the seam AOB resolved at the exact
   IDA-predicted `image+0x16F4BA0` and its live bytes are unpatched (§6c.a) — verify-before-retire

@@ -40,9 +40,21 @@ Two consequences worth stating plainly:
   moved**. That is one file plus a name file — not a codebase-wide sweep.
   (The 6th, `kSigD3D11ViewportPresentChecked`, was added 2026-08-22 for the overlay
   coexistence seam — `docs/OVERLAY_CAPTURE_COEXIST.md`. It is the first signature whose
-  failure is USER-VISIBLE by design: it fails CLOSED, disabling the overlay with a native
-  MessageBox rather than degrading silently. It also carries one offset literal,
-  `kD3D11Viewport_SwapChain = 0x70`, runtime-validated by QueryInterface.)
+  failure is USER-VISIBLE by design: it fails CLOSED rather than degrading silently.
+  It also carries one offset literal, `kD3D11Viewport_SwapChain = 0x70`, runtime-validated
+  by QueryInterface.)
+- **PLANNED, NOT BUILT (design of record `docs/OVERLAY_CAPTURE_COEXIST.md` §9c, 2026-08-23):**
+  the overlay seam-move takes this surface from **6 → 9 signatures** (`FD3D12Viewport::
+  PresentInternal`, `FD3D11Viewport::Resize`, `FD3D12Viewport::Resize` — all three derived and
+  occurrence-counted 2026-08-23) **plus 5 DX12 struct offsets and 2 viewport swapchain offsets**.
+  Price it honestly when it lands: the failure mode is **no chat, no scoreboard, no F1 — no mod
+  UI at all** on recook day, and the trade is that the version-IMMUNE `ResolveSwapChainVtable`
+  (a DXGI vtable read, which no recook can move) is deleted in exchange. The 7 offsets are each
+  runtime-validated fail-closed at FIRST USE (QueryInterface on the swapchain; QI +
+  `GetDesc().Type == DIRECT` on the queue) — but that validation is LAZY and unreportable at
+  boot, and **nothing enforces that a future offset gets a validator at all**. Candidate gate,
+  in this codebase's own idiom (`registry_gate.ps1` / `nick_gate.ps1` / `atlas_regime_gate.ps1`):
+  every new `k*` offset in `sdk_profile.h` must have one.
 - The mod does NOT hardcode addresses into gameplay code. If a signature fails,
   the mod says so at boot instead of corrupting anything (see §3).
 
@@ -55,7 +67,7 @@ read after a game update, because it tells you the signatures are now suspect.
 | Symptom | Almost certainly | Where to look |
 |---|---|---|
 | Boot log: `[FAIL] GUObjectArray signature` / `FName::ToString` / `ProcessEvent` | The 6 AOBs, or 1-2 of them | `sdk_profile.h` §"AOB signatures"; §4 step 3 |
-| The OVERLAY does not come up + a native "MOD" MessageBox at boot | `kSigD3D11ViewportPresentChecked` went stale (fail-CLOSED by design), or the `+0x70` swapchain offset drifted | `docs/OVERLAY_CAPTURE_COEXIST.md` §9; re-derive per §6b (the census + uniqueness method is written there) |
+| **No chat, no scoreboard, no F1 — no mod UI at all**, with `UE_LOGE` + a HealthCheck FAIL row | `kSigD3D11ViewportPresentChecked` went stale (fail-CLOSED by design), or the `+0x70` swapchain offset drifted | `docs/OVERLAY_CAPTURE_COEXIST.md` §9c; re-derive per §6b (census + uniqueness method written there). **2026-08-23:** the fail-closed notice is a LOG line + HealthCheck row, **not** a MessageBox — the seam runs on the render thread, so a modal there is wrong, and the in-ImGui dialog is unavailable by definition when the overlay is down |
 | Signatures OK but `NumObjects()` tiny / `[FAIL] object array populated` | Engine struct offsets (an engine bump, not a recook) | `sdk_profile.h` §"struct offsets" |
 | Name round-trip or `FindClass(Actor/World)` fails | `sdk_profile_names.h`, or FName layout | health check output |
 | Everything resolves, but one system is dead / reads garbage | A **game blueprint offset** moved (the 29) or a name changed | `tools/sdk_diff.py` against the previous dump |
