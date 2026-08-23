@@ -160,7 +160,8 @@ Source of truth: [`src/votv-coop/CMakeLists.txt`](src/votv-coop/CMakeLists.txt)
 > **There is no stable release yet — every build on the
 > [Releases page](https://github.com/VOTV-MP/Multivoid/releases) is a dev build,
 > and everyone playing one is a tester.** Expect bugs, and please report them on
-> [Discord](https://discord.gg/bA6tGBvGMN) — good reports get credited. Full
+> [Discord](https://discord.gg/bA6tGBvGMN) — good reports get credited in
+> [Field reports](#field-reports). Full
 > disclaimer and what to attach: **[docs/INSTALL.md](docs/INSTALL.md)**.
 
 Download **both** files from the release page, drop them next to the game
@@ -209,6 +210,19 @@ detect it automatically. The autonomous two-peer test harness lives in `tools/`.
 It's the fastest way to reach the author, follow development as it happens, and find
 people to test co-op with. Bug reports and feedback are welcome there or in
 [GitHub issues](https://github.com/VOTV-MP/Multivoid/issues).
+
+## Field reports
+
+Multivoid is tested in the field by the people playing it, and their reports
+drive real fixes. This table credits every tester whose report changed the mod:
+who reported, what they reported (their words, roughly), and what came of it.
+
+| Tester | Reported | What came of it | Build |
+|--|--|--|--|
+| **Violet** (Discord) | A friend joining her session ran the game at ~9 FPS on Linux | The log triage exposed two real defects: after any quit-to-menu the mod kept feeding a dead world's actors into engine calls (~2,500 absorbed access violations per second, flooding the log), and every client world load broadcast ~870 spurious destroy events. Both fixed at the class level — every cached engine object is now world-stamped. | b134 |
+| **decodinatorX** ([issue #5](https://github.com/VOTV-MP/Multivoid/issues/5)) | Couldn't type `sv.request` at the in-game SAT console — `T` kept opening the mod's chat | The mod no longer steals keys while the game is typing: the SAT console, notepad, save-slot names and settings search all type normally now; function keys still reach the mod. | b133 |
+| **huoyan1231** + **gediao** (Discord) | A full host-log pack from a real b125 session — lost props, stuck grabs, and more | Became the b125 triage map (ten root-cause rows). Headliner: a silent message-loss class in the reliable send path, closed by the delivery-guarantee rework — every reliable message now goes into the stream, into the backlog, or the connection closes; never silently dropped. More rows from the same map are still being worked. | b134 |
+| **SirWilliam** (Discord) | Rejoining a session requires fully relaunching the game | Filed as a session-lifecycle row from the same triage; reproduction and fix are queued. | — |
 
 ---
 
