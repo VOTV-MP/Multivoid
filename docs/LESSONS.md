@@ -859,6 +859,18 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   OBS can. (The RTSS half of the same arc IS answerable by a window grab: "is the overlay in the
   rendered frame at all".) *Look FIRST, additionally:* **if the claim is about WHERE IN A CHAIN
   something happens, the instrument must live in that same chain.**
+  **THIRD INSTANCE — A FILTER IS AN INSTRUMENT (2026-08-23, the crash-dump module list):**
+  `tools/debug/parse_dump.py` printed "modules of interest" filtered by matching the **BASENAME**
+  against a loader-shaped key set (`main.dll`/`ue4ss`/`shim`/`xinput`/`votv`/`dwmapi`/`crash`) —
+  right for the question it was born for (which UE4SS mod is which), wrong for the question the 19:17
+  dump was later re-read against (who else is on the DXGI Present chain). `NahimicOSD.dll` was loaded
+  in that dump the whole time and **could not appear**: it matches none of those keys and lives in a
+  vendor folder (`C:\ProgramData\A-Volute\...`) whose basename says nothing. Nastier than the camera
+  cases because the tool is correct AND its output is a positive list, which reads as complete — a
+  section headed "modules of interest" quietly asserts that what is absent is uninteresting. Fixed by
+  matching the FULL PATH against a widened graphics/injector key set and printing the path.
+  *Look FIRST:* **when you re-use a tool to ask a question it was not built for, audit its FILTER
+  before you trust its silence.**
   `memory/lesson_an_instrument_blind_to_the_phenomenon_always_passes.md`
 
 - **VERIFY ROLE-EXCLUSIVITY BEFORE INVOKING THE PUBLISH RULE — read the accessor top to bottom.**
@@ -2184,7 +2196,33 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   hook, the DXGI hooks, or the present signatures. And treat "who ELSE patches this function?" as a
   standing question for every inline hook — this is the SECOND instance of the class after the UE4SS
   PolyHook/ProcessEvent collision.**
+  **2026-08-23 — that standing question is now CHEAP to answer, and the answer was bigger than assumed:**
+  `tools/debug/present_hook_census.py` reads each present-chain prologue on a LIVE process and follows
+  the jmp chain to the owning module. Result: `Present` + `ResizeBuffers` are ours, and
+  **`IDXGISwapChain1::Present1` is hooked by `NahimicOSD.dll`** — an A-Volute audio-driver overlay
+  nobody knew was in the process (so the chain holds us + RTSS-when-armed + OBS-when-capturing +
+  Nahimic). Two corollaries worth carrying: **a tool being LOADED is not a tool being ARMED** —
+  `RTSSHooks64.dll` is present even at detection level None, and neither the process list nor RTSS's
+  ini settles it, only the target's bytes; and **"this box reproduces the bug" is itself a claim that
+  needs measuring** — an earlier revision of the coexistence doc asserted it while the user had RTSS
+  detection globally off, so the box reproduced NEITHER symptom.
+  See `[[lesson-census-the-present-chain-by-following-jmp-to-the-owner]]`.
   Full: `[[lesson-an-overlay-that-inline-hooks-present-loses-to-rtss-and-obs]]`.
+  `memory/lesson_an_overlay_that_inline_hooks_present_loses_to_rtss_and_obs.md`
+
+- **Census the present chain by FOLLOWING the jmp to its owner — a trampoline belongs to no module.**
+  2026-08-23. `E9` at a hooked function points into a `MEM_PRIVATE` page the hook engine allocated, so
+  "which module is this address in?" returns NOTHING and reads as unattributable. One more hop settles
+  it: MinHook's relay is `FF 25 [rip+0]` + abs64 (the followJmp-immune form is `48 B8 <imm64> FF E0`) —
+  read the pointer slot and a real module name appears. Measured this way in VotV: two patches ours,
+  one `NahimicOSD.dll`. Second trap: **third-party injectors live in VENDOR folders**
+  (`C:\ProgramData\A-Volute\...`), so a module filter matching only the BASENAME can never show them —
+  which is exactly why `parse_dump.py` had hidden Nahimic from every earlier read of the 19:17 dump
+  (filter widened to full-path + graphics/injector keys the same day). *Look FIRST:*
+  `tools/debug/present_hook_census.py census <pid>` before installing any inline hook, and before
+  concluding a coexistence crash is yours. Also read your CHOSEN seam's live bytes — an unpatched
+  prologue is what turns "nobody else is on this seam" from a hope into a measurement.
+  `memory/lesson_census_the_present_chain_by_following_jmp_to_the_owner.md`
 
 - **The SAME distinction can be needed in BOTH directions, two terms apart — and the second
   direction is the one nobody asks about.** MEASURED 2026-07-31, GitHub issue #5. The fix existed
@@ -3511,10 +3549,20 @@ tracker.
   **UPDATED 2026-08-22: RTSS defends `ExecuteCommandLists` TOO** (measured: its `Profiles\Config`
   resolves ECL alongside the DXGI Present entries), so a PERSISTENT ECL hook is a second surface for
   the "RTSS unlinks the later inline hooker" defect -> it must become a TRANSIENT discovery (hook,
-  capture the queue, uninstall). Also note the VANTAGE trap: "no API gives the presenting queue" was
-  measured from OUTSIDE (from the swapchain); whether the queue is reachable from INSIDE the engine's
-  own `FD3D12Viewport` present is a DIFFERENT, still-UNMEASURED question — do not let the first fact
-  answer the second. `docs/OVERLAY_CAPTURE_COEXIST.md` §9 (Phase 2).
+  capture the queue, uninstall).
+  **VANTAGE TRAP, AND ITS ANSWER (2026-08-23) — the headline above is true only from OUTSIDE.**
+  "No API gives the presenting queue" was measured from the SWAPCHAIN, where DXGI hides it. Asked
+  from INSIDE the engine the answer is the opposite and trivial: the queue is **four constant
+  offsets** from the viewport — `FD3D12Viewport+0x18` -> Adapter `+0x988` -> `Devices[0]` `+0x38` ->
+  CommandListManager `+0x28` -> `ID3D12CommandQueue*` — and it is not "a" direct queue but **the very
+  pointer the engine passes as `pCommandQueue` to `CreateSwapChainForHwnd`** (proven by the VERIFY
+  string in `sub_14177D800`, `WindowsD3D12Viewport.cpp:175`). So the ECL hook was never needed at
+  all: it is both statistical AND on a function RTSS defends, while the engine read is zero-ambiguity
+  and on a function nobody patches -> `overlay_backend_dx12_capture.cpp` (378 LOC) retires WHOLE
+  rather than becoming "transient". DX12 seam = `FD3D12Viewport::PresentInternal = sub_14177E0E0`
+  (109 B, one caller, swapchain `+0x60`). **The general rule: a fact tagged `measured` carries the
+  VANTAGE it was measured from, and moving the code moves the vantage — re-asking a settled question
+  from a new position is not redundant work.** LOOK FIRST: `docs/OVERLAY_CAPTURE_COEXIST.md` §6c.c + §9b.
   `memory/lesson_d3d12_has_no_api_for_the_presenting_queue.md`
 - **2026-07-26 — a branch that only logs on FAILURE cannot be drilled.** The DX12 resize drill produced
   a correct-looking screenshot and ZERO log lines, because `ResizeBuffers` logged only its failure

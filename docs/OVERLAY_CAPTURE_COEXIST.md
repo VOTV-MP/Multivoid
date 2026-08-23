@@ -405,8 +405,8 @@ OPUS §1 — the AOB is the only discovery that works under RTSS, so it is manda
 a second mechanism for the already-covered no-RTSS case is not load-bearing). Fail-CLOSED on a stale AOB
 or failed swapchain validation: overlay does not come up, a native `MessageBox` says so; **no fallback to
 the old swapchain-Present draw** (that is RULE-2 baggage and would reintroduce S1/S2). This is the same
-version-surface contract the existing 5 signatures carry (re-derived per `docs/VERSION_MIGRATION.md` on
-a game recook).
+version-surface contract the other signatures carry (**6 in `sdk_profile.h` as of `26674b21`**, 7 once
+§9b's DX12 seam lands; re-derived per `docs/VERSION_MIGRATION.md` on a game recook).
 
 **Two acceptance-gated inferences (named, not hidden):** that S1's *exact* mechanism is RTSS's
 integrity-restore, and that RTSS leaves the private `PresentChecked` untouched, are `[inferred]` (strong:
@@ -442,7 +442,7 @@ Symmetric to §9, on the facts in §6c.c:
 2. **Hook `FD3D12Viewport::PresentInternal`**; draw before calling the original, exactly as DX11.
 3. **Get the presenting queue by walking the four offsets** — no `ExecuteCommandLists` hook, no tally,
    no confirmation window, no swapchain-creation probe.
-4. **RULE 2 — `overlay_backend_dx12_capture.cpp` retires WHOLE** (~400 LOC): the ECL hook, the per-queue
+4. **RULE 2 — `overlay_backend_dx12_capture.cpp` retires WHOLE** (**378 LOC, measured at `26674b21`**): the ECL hook, the per-queue
    tally, the candidate/confirmation state machine, `Rearm()`, and the creation probe. Its public seam
    (`Device()` / `TryConfirmQueue()` / `InstallCreationProbe()` / `Rearm()` / `Shutdown()` in
    `overlay_backend_internal.h`) collapses to a single "resolve the queue from the viewport" call. No
@@ -570,7 +570,8 @@ implementation."* The two "left things" are the two items surfaced at the end of
   hand off for the hands-on RTSS+OBS acceptance test.
 - **2026-08-22 — doc created (DESIGN, pre-/qf).** RE complete via three parallel research agents
   (OBS/RTSS source mechanics; MTA GUI-seam precedent; UE4.27 pre-Present seams), cross-checked against
-  the repo (5 AOB signatures confirmed `sdk_profile.h:38-93`; PresentDetour draws-before-original
+  the repo (5 AOB signatures confirmed `sdk_profile.h:38-93` — the count AS OF THAT DAY; it is 6 now,
+  see the status block; PresentDetour draws-before-original
   confirmed `imgui_overlay.cpp:540/543`; DX12 creation-probe "boot does not precede creation" confirmed
   `overlay_backend_internal.h:80-85`). Root cause identified (inline hook on the swapchain-Present seam
   = both symptoms). Recommendation: Option 1 (move the draw to a native viewport-present seam, keep
