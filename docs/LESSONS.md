@@ -2108,8 +2108,12 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   past !IsSlotWorldReady — nothing queues, nothing retries; a no-reconcile lane diverges at every
   mid-activity join until the NEXT join). Root idiom: per-slot snapshot at save_transfer OnRequest (the
   g_blobKeys precedent) + ready-edge seedDelta(h)=cur-snap-unmaskedPending (op-counter masks) + a client
-  send gate on own ClientWorldReady. UN-RETROFITTED sharers: signal_sync (deck), email_sync. LOOK FIRST:
-  meadow_db_sync.cpp CaptureJoinSnapshot/QueueConnectBroadcastForSlot.
+  send gate on own ClientWorldReady. UN-RETROFITTED sharers: signal_sync (deck), email_sync —
+  RE-VERIFIED 2026-08-23 at the R-4b build (no ConnectReplayForSlot entry, no in-file world-ready hook
+  in either). **BOUNDARY DECIDED (R-4b /qf R1): the send-backlog delivery guarantee deliberately does
+  NOT absorb the pre-world gate's skips** — queueing them would deliver stale pre-world mutations at
+  ready-time and DUPE the connect replay; these two sharers need ready-edge SEEDS (this row's idiom),
+  their own arc. LOOK FIRST: meadow_db_sync.cpp CaptureJoinSnapshot/QueueConnectBroadcastForSlot.
   `memory/lesson_join_window_b2_skip_is_permanent_loss_seed_delta.md`
 - **A canonical-as-ack on the blob transport must be BOUNDED and SEND-CHECKED** — blob_chunks
   hard-caps a blob at MaxBlobBytes() (56,100 B) and returns false WITHOUT sending; an ignored result
@@ -3527,6 +3531,22 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   link.** *Look FIRST:*
   `research/findings/network/votv-reliable-delivery-guarantee-DESIGN-2026-08-23.md` +
   `memory/lesson_reliable_enqueue_loss_is_silent_and_contiguous.md`
+- **GNS's RECEIVE side is lossless-by-stall at BOTH overflow caps** (measured in the vendored source,
+  R-4b): reliable reassembly overflow returns do-not-ACK (`snp.cpp:3479-3493`); decoded-queue overflow
+  (`RecvBufferMessages`=1000) propagates as no-ACK with NO stream advance (`snp.cpp:3807-3816`) -- the
+  sender retransmits. Stopping/lagging the receive poll = true end-to-end backpressure, never
+  GNS-internal loss or a kill. This is what makes the client inbox's pause-not-drop (R-4b D10) safe --
+  the fear "GNS under me will drop" is measured false. *Look FIRST:* session.cpp NetThread client
+  receive branch + `memory/lesson_gns_receive_overflow_stalls_never_drops.md`
+- **A wall-clock TTL on a park that waits for data from a DIFFERENT lane is a silent drop one level
+  up** (R-4b round 4): ContainerContents rides Normal, its PropSpawn rides Bulk -- lanes deliver
+  independently, so under backpressure the contents SYSTEMATICALLY arrive first, and once delivery is
+  guaranteed a slow link holds the Bulk stream past ANY fixed TTL with zero wire loss (282 expired
+  parks in the field). Fix shape (D9, built): anchor aging to the EVENT that proves
+  arrival-or-orphanhood (SnapshotComplete is lane-ordered after every spawn it brackets); the TTL
+  survives as a leak-guard only. Ask this of every fixed-TTL park whose feed rides another channel.
+  *Look FIRST:* container_contents_sync.cpp `NoteJoinSnapshotBracket` +
+  `memory/lesson_wall_clock_ttl_on_cross_lane_dependency_is_a_drop.md`
 - **An identity-minting migration must census the wire SENDERS, not only the identity maps.** v122
   no-passive-mint demoted client keyed minting, but TWO client-reachable express paths
   (`prop_container_extract.cpp` takeObj-POST — no role gate; `trash_collect_sync.cpp`
