@@ -883,6 +883,11 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   anchor the window on every client's world-ready edge (mp.py `--ready-timeout`). *Look FIRST:*
   **a growing input (save/world/log) silently re-opens any wall-clock window that was once wide
   enough — anchor verdict windows on the pipeline's own settle edge, not on wall clock.**
+  COROLLARY (same day, the R-2 acceptance): an instrument that PERTURBS the system contaminates
+  the gate it certifies — ForceSyncFullPass's settle reset queued ~15 re-settle fulls and dragged
+  the numeric gate 10.0x → 5.8x; force exactly the one action (a one-shot flag), never a state
+  reset. The same drill falsified grime's "collision-free grid" comment by measurement
+  (1,023 decals → 1,021 cells).
   `memory/lesson_an_instrument_blind_to_the_phenomenon_always_passes.md`
 
 - **VERIFY ROLE-EXCLUSIVITY BEFORE INVOKING THE PUBLISH RULE — read the accessor top to bottom.**

@@ -1,8 +1,9 @@
 # Hands-on runbook — the v134 batch (2026-08-23; NOTHING in it is hands-on yet)
 
-**Deployed:** `multivoid-0.9.0n-134.dll` sha256 `588960CF15944F17` ×4 (HOST/CLIENT_1/2/3),
-proto **134**. HEAD at write time: `0676e5a8` + the documentize commit. **RELAUNCH BOTH PEERS**
-(every copy already carries the final bytes via deploy-all).
+**Deployed:** `multivoid-0.9.0n-134.dll` sha256 **`7099255A7A98435F`** ×4 (HOST/CLIENT_1/2/3),
+proto **134**. (Supersedes the `588960CF…` bytes this runbook first named — the R-2 scan-hub
+arc landed after them, same day.) **RELAUNCH BOTH PEERS** (every copy already carries the
+final bytes via deploy-all).
 
 ## What this batch contains (all autonomous-verified only)
 
@@ -17,6 +18,11 @@ proto **134**. HEAD at write time: `0676e5a8` + the documentize commit. **RELAUN
 4. **Seeds arc** — emails/saved-signals authored during a joiner's load window now DELIVERED
    (ready-edge seed); the solo-author email DUP (live since v64) retired; apply parks replace
    the "row lost" drops; per-slot assembler teardown.
+5. **R-2 — the shared scan hub**: the once-per-1-2 s stutter's root (13 independent full
+   GUObjectArray walks) replaced by ONE sliced shared pass; per-frame walk cost capped ~1-2 ms
+   (was 66-305 ms spikes); dead-world index window closed family-wide. FEEL check: the
+   once-per-second stutter should be gone in steady play; a residual ~20 s periodic hitch is
+   the known separate reseed row.
 
 ## Suggested hands-on checks (any subset; prefixes attribute)
 

@@ -319,6 +319,16 @@ KEYED broadcasts at 23:20:06+ are **unattributed** — do not assume they share 
 
 ---
 
+## §5b NEW ROW (2026-08-23 day 3, found during the R-2 phase-split): reseed:KnownKeyedProps stalls the HOST
+
+Re-mining VIOLET's (host) log with per-label walk totals: `reseed:KnownKeyedProps` n=17,
+avg **120 ms, max 1,880 ms** — nearly 2-second single-frame stalls on the healthy machine, the
+largest single [WALK-TIME] anywhere in either field log. Separate walker (prop reseed cadence),
+NOT part of the SettledObjectScan family R-2 covers; also visible small on the friend
+(n=7 avg 30 ms). Own row, own dig — do NOT fold into R-2's hub design. Also measured while
+phase-splitting: `sync:npc_client` on the friend = 42 ms avg ×25 (mirror interp/apply, not an
+array walk; the ghost-sweep walk is once-per-world) — a third row if it recurs after R-2 lands.
+
 ## §6 Small residuals + context (so nobody re-derives them)
 
 - **Snapshot apply took 28 s** (3,093 objects, applied 2,607) on the friend's machine —
@@ -364,7 +374,7 @@ exception, not the rule.
 | **R-1b'** | **BUILT** (`3f7b2b4e`) | `RemotePlayer::Spawn`'s `FindObjectByClass` fallback judged the same way — it could otherwise hand back exactly the pawn `Local()` had just learned to refuse. Found by a 72-site census of every `Local()` consumer (5 teardown-sensitive, 12 gates, 55 steady). |
 | **R-1d** | **STILL OPEN** | `reflection.cpp:88-93` still `return true` unconditionally at `86ff94a2` — the absorb happens below it, so the caller cannot see a faulted call. Needs a thread-local fault-generation counter + a census of the 61 `CallFunction` sites. Now hardening rather than the fix, since R-1b closed the source. |
 | **R-1e** | **BUILT + drilled** (`86ff94a2`) | USER-APPROVED. First 5 lines per distinct `(function, ip)` in full, then folds and re-reports on decade boundaries. Keyed on `(function, ip)` NOT `self` — the storm had a constant ip and a varying self. DRILL (`VOTVCOOP_AV_LATCH_DRILL=1`): 120 calls → 7 lines, 3 at a new site → 3 lines, both peers, in a PASSING smoke. |
-| **R-2** | **STILL OPEN — the one she would FEEL** | No shared settled-scan exists at `86ff94a2`. Precondition unchanged: the N-match gate (door 57 count regression) that failed takes 1 and 2. |
+| **R-2** | **BUILT 2026-08-23 day 3 (the shared scan hub) — acceptance GREEN, NOT hands-on** | `coop/element/object_scan_hub` (8-round /qf "that holds"): ONE sliced shared pass replaces the 13 per-consumer full walks; 10.0× fewer walk visits, per-frame walk cost capped ~1-2 ms (was 66 ms local / 305 ms field spikes), N-match parity 13/13 vs an independent probe (June's numbers reproduced: door 50/light 42/...), the pre-existing dead-world index window (R-1 class) closed family-wide via gen-stamped indexes. Design + AS-BUILT: `architecture-audits/votv-shared-scan-hub-R2-DESIGN-2026-08-23.md`. Residual periodic hitch = reseed:KnownKeyedProps (§5b, own row). |
 | **R-3** | **prescription DEAD, plan REPLACED** | The reporter cannot run probes (USER). See §4-CORR: measure our passives locally, project via the ~10× factor her own logs give, plus the solo heavy-save A/B. Honest ceiling: this may EXPLAIN the floor without FIXING it. |
 | **R-4a** | **HALF BUILT** (`65fccd70`) | Key-scoping half shipped and measured 871 → 0 broadcasts / 871 → 0 host defers, 1:1. End-condition half NOT built and needs its own `/qf`. The doc's attribution of the burst was **false** — see §5-CORR. |
 | **R-4b** | **BUILT 2026-08-23 (4 commits from `a39a19cd`)** | 6-round `/qf` "that holds" → `coop/net/send_backlog`: the ONE delivery-guarantee owner (per-(slot,lane) FIFO, absorbs only -LimitExceeded, hConn-stamped, 64KB pose-reserve, fatal bounds close-not-drop) + save-pump Begin success-gating + 4MB SendBufferSize + bracket-anchored park aging + client inbox pause-not-drop. Drill RED 956 losses → GREEN 0; throttled run: one 5s episode "all delivered", 0 expired parks, sweep 0 unclaimed destroyed. Design of record: `research/findings/network/votv-reliable-delivery-guarantee-DESIGN-2026-08-23.md`. NOT hands-on. |
