@@ -1,6 +1,6 @@
 # Hands-on runbook — the v134 batch (2026-08-23; NOTHING in it is hands-on yet)
 
-**Deployed:** `multivoid-0.9.0n-134.dll` sha256 **`1DAC87AF6BD98A34`** ×4 (post R-3/R-2b/R-4a-end, 2026-08-23 late eve) (HOST/CLIENT_1/2/3),
+**Deployed:** `multivoid-0.9.0n-134.dll` sha256 **`2766C7C87F2675DC`** ×4 (post R-3/R-2b/R-4a-end, 2026-08-23 late eve) (HOST/CLIENT_1/2/3),
 proto **134**. (Supersedes the `588960CF…`/`7099255A…` bytes this runbook earlier named — the R-2 scan-hub
 arc landed after them, same day.) **RELAUNCH BOTH PEERS** (every copy already carries the
 final bytes via deploy-all).
