@@ -3515,13 +3515,17 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   `bDeleteFailedMessages=true` DELETES the message and 60+ `SendReliableToSlot` callers ignore the
   false return. Measured (b125 tester log): ALL 164 losses in ONE join second; loss contiguous in
   the drain's eid-ascending order (`registry.cpp:291`) — the join drain paces by CPU, blind to the
-  link. Same class as the B2 not-ready skip: ONE delivery-guarantee owner. **RECURRED 2026-08-23 at
-  3× volume, still unfixed (code re-verified at `50b78d47`: session.cpp:177 delete-on-fail, :182
-  warn-only): 485× rc=-25 kind=3 (PropSpawn) in one join minute, chain measured end-to-end into 282
-  expired container_contents parks on the client; the same minute carried ~1,600 client join-cull
-  DESTROY broadcasts (episode suppression covers keyed, NOT eid-only clumps) feeding the flood.**
-  *Look FIRST:* `research/findings/votv-tester-log-triage-b125-2026-07-26.md` §R-A +
-  `research/findings/votv-linux-fps-triage-2026-08-23.md` §5 +
+  link. Same class as the B2 not-ready skip: ONE delivery-guarantee owner. RECURRED 2026-08-23 at
+  3× volume (485× rc=-25 → 282 expired container parks, measured end-to-end). **FIXED 2026-08-23
+  (R-4b): `coop/net/send_backlog` — per-(slot,lane) FIFO of final wire bytes at the session layer,
+  absorbs ONLY -LimitExceeded, FIFO-once-nonempty, hConn-stamped vs slot recycling; save family
+  stays the pump's pacing lane (Begin now success-gated); 4MB SendBufferSize; bracket-anchored
+  container-park aging; client inbox pause-not-drop. Bool contract: true = WILL deliver, false =
+  never will. Drill: RED 956 losses on a pinned-buffer LAN join → GREEN 0, throttled-link episode
+  5,783 msgs "all delivered", 0 expired parks. Bonus measured fact: the GNS default send RATE is a
+  fixed 256 KB/s clamp (no bandwidth estimation) — the field bottleneck was the clamp, not the
+  link.** *Look FIRST:*
+  `research/findings/network/votv-reliable-delivery-guarantee-DESIGN-2026-08-23.md` +
   `memory/lesson_reliable_enqueue_loss_is_silent_and_contiguous.md`
 - **An identity-minting migration must census the wire SENDERS, not only the identity maps.** v122
   no-passive-mint demoted client keyed minting, but TWO client-reachable express paths

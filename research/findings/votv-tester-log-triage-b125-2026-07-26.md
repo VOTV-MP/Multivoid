@@ -28,6 +28,10 @@ different actors 16:19:03 + 16:20:01), SkyState join losses (self-healing period
 ## The rows
 
 ### R-A [measured] ONE delivery-guarantee class: a reliable line silently dropped at send time
+> **(a)+(c) FIXED 2026-08-23 (linux-fps R-4b): `coop/net/send_backlog` -- the session-layer
+> delivery guarantee; design of record
+> `research/findings/network/votv-reliable-delivery-guarantee-DESIGN-2026-08-23.md`. (b) the
+> not-ready sharers (signal_sync, email_sync) remain OPEN as their own ready-edge-seed arc.**
 Three shapes, one owner for the design pass:
 - **(a) enqueue rejection deleted.** `session.cpp:176` sends with `bDeleteFailedMessages=true`; on
   rc=-25 (GNS enqueue refusal, send buffer full) the message is deleted and the false return is

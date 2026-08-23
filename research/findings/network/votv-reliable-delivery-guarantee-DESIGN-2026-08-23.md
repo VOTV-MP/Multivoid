@@ -1,6 +1,36 @@
 # The reliable delivery guarantee — R-4b / b125 §R-A design of record (2026-08-23)
 
-**Status: DESIGN, converged (`/qf` 6 rounds, critic "that holds" at R6). NOT BUILT.**
+## AS-BUILT (2026-08-23, same day — read this box first)
+
+**BUILT in 4 commits from `a39a19cd`** (commit-0 knobs → the backlog core → D4+D9+D10), proto 134
+unchanged (no wire-shape change), DLL deployed ×4, **NOT hands-on**. Owner:
+`coop/net/send_backlog.{h,cpp}` (121+205 LOC). Deviations from the plan below, all documented:
+
+- **The drain runs on the NET THREAD** (NetThread step 3b), not net_pump's game-thread tick — the
+  backlog is engine-free and the net thread survives game-thread stalls. Same locks either way.
+- **The mutex is per-SLOT (covering its 3 lanes), not per-(slot,lane)** — the FIFO-once-nonempty
+  proof only needs atomicity per lane; one mutex per slot is the same correctness with less state.
+- **`SendRateMin/Max` was NOT raised** — measured mid-build: the GNS default send RATE is a fixed
+  **256 KB/s clamp** (no bandwidth estimation in this build). Raising it was not `/qf`-vetted, so
+  it stays default and is a named residual (§6). The `net.sendrate_kbs` knob pins it for drills.
+- **`ArmBeginNoSave_` unifies ALL Begin sends into the pump** (the no-save announce is a
+  zero-chunk stream) — the design only demanded the blob path's Begin be gated.
+- **D10's client pause threshold is a SOFT cap (6144)** below the 8192 hard cap, so the client
+  can never reach the dropping branch at all.
+
+Drill evidence: **RED** (commit-0 bytes, 128 KB pin) = 956 silent losses in one LAN join
+(GrimeState ×632 / TrashPileState ×306 / ContainerContents ×18 — the class was never
+PropSpawn-specific) + 267 parks; host "sent" counter lying (3127/3128). **GREEN** (same pin) =
+rc=-25 **0**, episodes "all delivered", 285 parks 0 expired. **Throttled** (128 KB buffer +
+256 KB/s rate, the 19.4 MB test save) = ONE 5 s episode, 5,783 msgs peak 983 KB all delivered,
+**poses flowing mid-episode** (puppet spawned the same second the episode opened — D8 proven),
+claim sweep verdict **0 unclaimed destroyed** (the §4-fenced sweep-shrink inference now measured).
+**Unpinned baseline** = episodes 0 (D4's 4 MB absorbs the burst), D9 re-stamp line live, logs
+clean. Note for future throttle drills: the test save is **19.4 MB** (339 chunks) — a rate pin
+below ~256 KB/s starves the transfer past the smoke's join window.
+
+**Status: DESIGN converged (`/qf` 6 rounds, critic "that holds" at R6) — then BUILT same day (see
+the AS-BUILT box).**
 Thread transcript: session scratchpad `qf_thread.md` (2026-08-23). Supersedes the fix-direction
 prose in `votv-tester-log-triage-b125-2026-07-26.md` §R-A and
 `votv-linux-fps-triage-2026-08-23.md` §5 for R-4b; those rows point here when built.
