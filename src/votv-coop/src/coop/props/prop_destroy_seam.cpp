@@ -110,11 +110,34 @@ void DestroySeamBody(void* self) {
     // The invariant is about the WINDOW, not the key: inside its own world-load a client is not
     // generating events, it is being torn down and rebuilt. loadObjects deletes keyed props and
     // keyless piles with equal enthusiasm, and neither deletion is something a peer needs to hear.
-    if (s->role() == coop::net::Role::Client && coop::world_load_episode::InEpisode()) {
+    // R-4a end-condition (2026-08-23, design doc votv-r4a-end-condition-DESIGN-2026-08-23.md):
+    // the suppression window is InEpisode() OR the reconcile window (ANY kind -- a junk
+    // broadcast costs more than a suppressed destroy, which the bracket re-expresses). The
+    // field's class-B churn (~660 KEYED eid=0 broadcasts) ran INSIDE the bracket, 23 s after
+    // the episode had closed by construction. New-segment suppressions (reconcile window
+    // without the load episode) WARN with an R-1e-shape rate latch.
+    if (s->role() == coop::net::Role::Client &&
+        (coop::world_load_episode::InEpisode() ||
+         coop::world_load_episode::InReconcileWindow())) {
+        const bool newSegment = !coop::world_load_episode::InEpisode();
+        if (newSegment && !keyless) {
+            static uint32_t sWarned = 0;
+            ++sWarned;
+            if (sWarned <= 5 || (sWarned <= 100 && sWarned % 10 == 0) || sWarned % 100 == 0) {
+                UE_LOGW("grab_hook[destroy-seam]: CLIENT suppressed KEYED DESTROY #%u actor=%p "
+                        "key='%ls' eid=%u -- inside the RECONCILE window (bracket apply churn; "
+                        "if a player's genuine destroy vanished, this line is the trace)",
+                        sWarned, self, keyStr.c_str(),
+                        (destroyEid == coop::element::kInvalidId) ? 0u
+                                                                  : static_cast<unsigned>(destroyEid));
+            }
+            return;
+        }
         UE_LOGI("grab_hook[destroy-seam]: CLIENT suppressed %s DESTROY actor=%p key='%ls' eid=%u "
-                "-- inside world-load episode (loadObjects churn; host-wipe fix, not broadcast)",
+                "-- inside %s (loadObjects/rebuild churn; host-wipe fix, not broadcast)",
                 keyless ? "eid-only" : "KEYED", self, keyless ? L"None" : keyStr.c_str(),
-                (destroyEid == coop::element::kInvalidId) ? 0u : static_cast<unsigned>(destroyEid));
+                (destroyEid == coop::element::kInvalidId) ? 0u : static_cast<unsigned>(destroyEid),
+                newSegment ? "the reconcile window" : "world-load episode");
         return;
     }
     // KERFUR FIRST-REFUSAL at the DESTROY chokepoint (take-9 2026-07-13, the destroy-edge twin of

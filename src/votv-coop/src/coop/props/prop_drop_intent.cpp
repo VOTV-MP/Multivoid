@@ -103,7 +103,25 @@ void OnClientFinishSpawn(void* /*context*/, void* /*srcObj*/, void* result) {
     auto* s = LoadSession();
     if (!s || !s->connected()) return;
     if (s->role() != coop::net::Role::Client) return;      // host places broadcast via host_spawn_watcher
+    // R-4a end-condition: quiet during the load episode AND the reconcile window's kind==load
+    // segments (the join/reload bracket -- the [PROP-DROP] x242 field flood was class-B spawn
+    // churn inside the bracket; PeekIncomingSpawn below already cause-scopes OUR applies out).
+    // kind==midSessionBracket does NOT suppress: a client's genuine place has NO other delivery
+    // channel (the census express is host-only) and the re-bracket sweep would doom it --
+    // intent -> host spawn -> express -> claim must flow. Design doc
+    // votv-r4a-end-condition-DESIGN-2026-08-23.md; WARN latch mirrors the destroy seam's.
     if (coop::world_load_episode::InEpisode()) return;     // quiet during the join loadObjects churn
+    if (coop::world_load_episode::InReconcileWindow() &&
+        coop::world_load_episode::ReconcileWindowIsLoadKind()) {
+        static uint32_t sWarned = 0;
+        ++sWarned;
+        if (sWarned <= 5 || (sWarned <= 100 && sWarned % 10 == 0) || sWarned % 100 == 0) {
+            UE_LOGW("[PROP-DROP] client place-detection suppressed #%u (reconcile window, "
+                    "kind=load -- bracket spawn churn; a genuine blind place would re-arrive "
+                    "via rejoin)", sWarned);
+        }
+        return;
+    }
     void* actor = result;
     if (!actor || !R::IsLive(actor)) return;
     if (coop::prop_echo_suppress::PeekIncomingSpawn(actor)) return;  // a host-authored mirror we adopt, not a place

@@ -15,6 +15,12 @@
 #include "coop/comms/chat_feed.h"
 #include "coop/comms/chat_sync.h"
 #include "coop/config/config.h"  // IsIniKeyTrue -- v86 Path 1c JOIN-WINDOW CLOSED hands-on cue gate
+#include "coop/element/registry.h"           // R-4a EPISODE_DRILL: pick 5 keyed locals to destroy
+#include "coop/props/prop_element_tracker.h" // R-4a drill: GetPropElementIdForActor (skip mirrors)
+#include "coop/session/world_load_episode.h" // R-4a: NoteReconcileBegin/Complete at the bracket edges
+#include "ue_wrap/actors/prop.h"             // R-4a drill: IsKeyedInteractable + GetInteractableKeyString
+#include "ue_wrap/engine/engine.h"           // DestroyActor (drill)
+#include "ue_wrap/core/reflection.h"         // NumObjects/ObjectAt/IsLive (drill)
 #include "coop/interactables/interactable_sync.h"
 #include "ui/join_curtain.h"  // instant-world SEAM 1: the short curtain (Show at SnapshotBegin / dismiss at Complete)
 #include "coop/session/join_progress.h"
@@ -457,6 +463,45 @@ void Update(net::Session& session, void* localPlayer) {
             // R-4b D9: while the bracket is open, container-contents parks do
             // not age (their PropSpawns are still in the Bulk stream behind us).
             coop::props::container_contents_sync::NoteJoinSnapshotBracket(true);
+            // R-4a end-condition: the bracket apply window opens -- raise/refresh the
+            // reconcile window (kind classified by completeSinceArm; see world_load_episode.h).
+            coop::world_load_episode::NoteReconcileBegin();
+            // [drill] R-4a leg 1 (VOTVCOOP_EPISODE_DRILL=1): destroy 5 keyed locals RIGHT
+            // HERE -- inside the bracket window where the field's class-B churn ran. OLD
+            // close edge -> 5 "broadcasting DESTROY" lines (RED = the field reproduced);
+            // NEW -> 5 "suppressed" + 0 broadcasts (GREEN). Never set outside a drill.
+            {
+                static const bool sDrill =
+                    !coop::config::ReadEnv("VOTVCOOP_EPISODE_DRILL").empty();
+                static bool sFired = false;
+                if (sDrill && !sFired) {
+                    sFired = true;
+                    // Target CLIENT-LOCAL keyed props: on a v122 client the element Registry
+                    // holds only host-bound MIRRORS (the first drill cut destroyed five pile
+                    // mirrors, which the mirror layer healed without touching the seam's
+                    // broadcast path). A local = keyed interactable with NO element bound.
+                    // One-shot dev walk; drill-only cost.
+                    int killed = 0;
+                    const int32_t n = ue_wrap::reflection::NumObjects();
+                    for (int32_t i = 0; i < n && killed < 5; ++i) {
+                        void* obj = ue_wrap::reflection::ObjectAt(i);
+                        if (!obj) continue;
+                        if (!ue_wrap::prop::IsKeyedInteractable(obj)) continue;
+                        if (!ue_wrap::reflection::IsLive(obj)) continue;
+                        const std::wstring nm =
+                            ue_wrap::reflection::ToString(ue_wrap::reflection::NameOf(obj));
+                        if (nm.rfind(L"Default__", 0) == 0) continue;
+                        if (coop::prop_element_tracker::GetPropElementIdForActor(obj) !=
+                            coop::element::kInvalidId) continue;  // element-bound = a mirror, skip
+                        const std::wstring key = ue_wrap::prop::GetInteractableKeyString(obj);
+                        if (key.empty() || key == L"None") continue;  // keyed locals only
+                        UE_LOGW("event_feed: [drill] EPISODE_DRILL destroying keyed LOCAL %p "
+                                "key='%ls' inside the bracket window", obj, key.c_str());
+                        ue_wrap::engine::DestroyActor(obj);  // UNMARKED -> hits the seam organically
+                        ++killed;
+                    }
+                }
+            }
             break;
         }
         case net::ReliableKind::SnapshotComplete: {
@@ -513,6 +558,9 @@ void Update(net::Session& session, void* localPlayer) {
             // still-loading local twin is adopted, never swept or fresh-spawned into a duplicate.
             coop::npc_adoption::OnSnapshotComplete();
             coop::kerfur_prop_adoption::OnSnapshotComplete();  // K-6 parity (reserved; no-op today)
+            // R-4a end-condition: the bracket apply window closes -- lower the reconcile
+            // window + flip the kind classifier (unconditionally, even post-ceiling).
+            coop::world_load_episode::NoteReconcileComplete();
             break;
         }
 

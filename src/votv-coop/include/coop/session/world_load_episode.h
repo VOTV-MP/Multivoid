@@ -94,4 +94,45 @@ void Reset();
 // destroy broadcasts while this holds. Any thread (atomic relaxed; advisory for the census tag).
 bool InEpisode();
 
+// ---- The RECONCILE WINDOW (R-4a end-condition, 2026-08-23; 9-round /qf) -------------------
+// Design of record: research/findings/architecture-audits/votv-r4a-end-condition-DESIGN-2026-08-23.md.
+// The episode above closes at load-tail quiescence -- the SAME latch that permits the
+// ClientWorldReady announce, and the host's snapshot bracket only starts AFTER the announce: by
+// construction the episode always ends before the join reconcile it exists to cover (the field's
+// 1,629 junk destroy broadcasts landed 23 s after "episode CLOSED"). This SECOND window covers
+// the whole teardown-AND-rebuild: raised at Arm() / the world-reload re-announce arm /
+// SnapshotBegin; lowered at SnapshotComplete / the sweep's lost-bracket flake backstop / a 180 s
+// rising-edge ceiling / Reset. It does NOT replace InEpisode() -- the lane parks (signal/email)
+// measurably must NOT follow it (a mid-session re-raise would absorb a legitimate local append
+// into their re-prime = a lost write).
+//
+// KIND: `load` = raised via Arm()/reload-arm, OR a Begin with NO SnapshotComplete since Arm --
+// on the join path that is exactly "the curtain never dropped" (the player could act only
+// BLINDLY; the curtain is render-gate-only, imgui_overlay.cpp:548-551). `midSessionBracket` = a
+// re-bracket after the first Complete (the player is live). Readers: the destroy seam suppresses
+// under ANY kind (a junk broadcast costs more than a suppressed destroy, which the bracket
+// re-expresses); drop-intent suppresses ONLY kind==load (a client's suppressed place has NO
+// delivery channel -- the census express is host-only -- and the re-bracket sweep would doom it;
+// genuine mid-session places must flow intent->host-spawn->express->claim).
+
+// Raise the reconcile window kind=load for a world-reload re-announce (net_pump's world-change
+// path; fires on the REAL join flow too). Does NOT touch the load episode or the probe. GT.
+void RaiseReconcileForReload();
+
+// Client SnapshotBegin received (event_feed GT drain). Window up -> refresh (kind kept, no
+// ceiling restamp); down -> raise, kind = (a Complete happened since Arm) ? midSessionBracket
+// : load. GT.
+void NoteReconcileBegin();
+
+// Client SnapshotComplete received. UNCONDITIONALLY records complete-since-Arm (a post-ceiling
+// Complete keeps the classifier right), then lowers the window if up. GT.
+void NoteReconcileComplete();
+
+// True while the reconcile window is up. Any thread (atomic).
+bool InReconcileWindow();
+
+// True while the window is up with kind==load. Meaningful only while InReconcileWindow(). Any
+// thread (atomic).
+bool ReconcileWindowIsLoadKind();
+
 }  // namespace coop::world_load_episode

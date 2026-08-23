@@ -371,6 +371,11 @@ void MaybeRequestReAnnounce(coop::net::Session& session, void* reapWorld) {
         // JOIN BARRIER: the re-announce waits for the NEW world's load tail exactly
         // like the first announce did -- open a fresh probe session for it.
         coop::world_load_episode::ArmQuiesceProbe("world-change re-announce");
+        // R-4a: a world reload is a teardown+rebuild -- raise the reconcile window
+        // (kind=load; the classifier resets) so the destroy seam + drop intent stay
+        // suppressed through the re-replay bracket. InEpisode is NOT raised here
+        // (the lane parks' reload semantics are unmeasurable today -- design doc §3).
+        coop::world_load_episode::RaiseReconcileForReload();
     } else {
         UE_LOGI("net_pump: world-change re-seed on the SAME world already announced (%p) -- "
                 "NOT re-announcing (suppresses the join menu-shadow-drain double-snapshot + "

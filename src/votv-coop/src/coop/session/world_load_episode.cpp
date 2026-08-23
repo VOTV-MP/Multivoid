@@ -5,6 +5,8 @@
 
 #include "coop/session/world_load_episode.h"
 
+#include "coop/config/config.h"  // ReadEnv (R-4a RED-calibration drill switch)
+
 #include "coop/creatures/npc_sync.h"          // IsAllowlistedClass (the NPC load tail)
 #include "coop/props/prop_element_tracker.h"  // HasSeededOnce / InPurgeEpisode (purge-aware progress)
 #include "coop/props/prop_lifecycle.h"        // IsPerPlayerPropClass
@@ -65,6 +67,34 @@ constexpr int kNoProgressMs     = 45000;  // NO-PROGRESS deadline (since last pr
                                           // genuine stall, never a legitimate ~50 s purge drain
 constexpr int kAbsoluteCeilingMs = 120000; // absolute ceiling since arm (stuck-purge backstop); on
                                           // this latch the announce/sweep proceed in DEGRADED mode
+
+// ---- The RECONCILE WINDOW (R-4a end-condition, 2026-08-23) -- see the header block. ----------
+// `up` + `kindIsLoad` are atomics: Arm() raises off-GT (TimelineThread); every other writer and
+// BOTH readers (destroy seam, drop intent) are GT. raisedAt + completeSinceArm are GT-only;
+// Arm's raise materializes its GT half via g_reconRaiseRequested (the g_joinProbeRequested
+// shape -- the ceiling starting one tick late is harmless).
+std::atomic<bool> g_reconUp{false};
+std::atomic<bool> g_reconKindLoad{true};
+std::atomic<bool> g_reconRaiseRequested{false};
+std::chrono::steady_clock::time_point g_reconRaisedAt{};  // GT; rising-edge only (never restamped by Begin)
+bool g_reconCompleteSinceArm = false;                     // GT; the kind classifier
+constexpr int kReconCeilingMs = 180000;  // 4.7x the field's measured 38 s Arm->Complete on the 9-fps box
+
+// GT rising-edge raise (shared by the GT raise sites + the Arm-request consume).
+void ReconRaiseGT_(bool kindLoad, const char* who) {
+    g_reconKindLoad.store(kindLoad, std::memory_order_relaxed);
+    if (!g_reconUp.exchange(true, std::memory_order_relaxed)) {
+        g_reconRaisedAt = std::chrono::steady_clock::now();
+        UE_LOGI("world_load_episode: reconcile window RAISED (kind=%s by=%s completeSinceArm=%d)",
+                kindLoad ? "load" : "midSessionBracket", who, g_reconCompleteSinceArm ? 1 : 0);
+    }
+}
+
+void ReconLowerGT_(const char* why) {
+    if (g_reconUp.exchange(false, std::memory_order_relaxed)) {
+        UE_LOGI("world_load_episode: reconcile window LOWERED (%s)", why);
+    }
+}
 
 // Load-tail population census: counts two populations whose sum settles exactly when the async
 // loadObjects pass finishes materializing the world.
@@ -139,11 +169,16 @@ void Latch_(const char* how) {
 }  // namespace
 
 void Arm() {
-    // OFF-GT SAFE (TimelineThread): touches ONLY the two atomics. The probe session opens on the
+    // OFF-GT SAFE (TimelineThread): touches ONLY the atomics. The probe session opens on the
     // next GT TickQuiesceProbe via g_joinProbeRequested (audit CRITICAL 2026-07-12 -- the first cut
     // opened it inline and raced the GT ticker on eight plain fields incl. a std::string).
     if (g_inEpisode.load(std::memory_order_relaxed)) return;  // idempotent -- one arm per world-load
     g_inEpisode.store(true, std::memory_order_relaxed);
+    // R-4a: raise the reconcile window kind=load. Atomics here; the GT half (raisedAt stamp +
+    // completeSinceArm=false reset) materializes on the next GT tick via the request below.
+    g_reconKindLoad.store(true, std::memory_order_relaxed);
+    g_reconUp.store(true, std::memory_order_relaxed);
+    g_reconRaiseRequested.store(true, std::memory_order_release);
     g_joinProbeRequested.store(true, std::memory_order_release);
     UE_LOGI("world_load_episode: ARMED -- client world-load starting; KEYED-prop destroy broadcasts "
             "suppressed until load-tail quiescence (host-wipe root fix); probe session opens on the "
@@ -157,6 +192,26 @@ void ArmQuiesceProbe(const char* reason) {
 
 bool TickQuiesceProbe() {
     UE_ASSERT_GAME_THREAD("world_load_episode::TickQuiesceProbe");
+    // R-4a: materialize a pending off-GT reconcile raise (Arm) -- stamp the rising edge + reset
+    // the kind classifier ON the GT. BEFORE the !probeOpen early-return: this and the ceiling
+    // below must run every tick (TickClientReconcile drives us unconditionally).
+    if (g_reconRaiseRequested.exchange(false, std::memory_order_acq_rel)) {
+        g_reconCompleteSinceArm = false;
+        g_reconRaisedAt = std::chrono::steady_clock::now();
+        UE_LOGI("world_load_episode: reconcile window RAISED (kind=load by=Arm completeSinceArm=0)");
+    }
+    // R-4a ceiling: rising-edge-anchored (Begin never restamps). Bounds every stuck shape --
+    // lost bracket on the reload path, Begin-without-Complete abort loops. Field headroom:
+    // Arm->Complete measured ~38 s on the 9-fps box vs 180 s.
+    if (g_reconUp.load(std::memory_order_relaxed) &&
+        g_reconRaisedAt.time_since_epoch().count() != 0 &&
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - g_reconRaisedAt).count() >= kReconCeilingMs) {
+        UE_LOGW("world_load_episode: reconcile window CEILING (%d s) -- force-lowering (lost "
+                "bracket / pathological reconcile; suppression must not outlive the player's "
+                "patience)", kReconCeilingMs / 1000);
+        ReconLowerGT_("ceiling");
+    }
     // Consume a pending join-session request (raised off-GT by Arm) -- the session opens HERE, on
     // the GT, so the plain probe fields below are single-thread-owned.
     if (g_joinProbeRequested.exchange(false, std::memory_order_acq_rel))
@@ -232,8 +287,57 @@ void Reset() {
     g_quiesced = false;
     g_lastUnsettledCount = -1;
     g_stableScans = 0;
+    // R-4a: session teardown lowers the reconcile window + clears its classifier.
+    g_reconRaiseRequested.store(false, std::memory_order_relaxed);
+    ReconLowerGT_("Reset");
+    g_reconCompleteSinceArm = false;
+    g_reconRaisedAt = {};
 }
 
 bool InEpisode() { return g_inEpisode.load(std::memory_order_relaxed); }
+
+// ---- R-4a reconcile window (see the header block + the design doc) -----------------------
+
+void RaiseReconcileForReload() {
+    UE_ASSERT_GAME_THREAD("world_load_episode::RaiseReconcileForReload");
+    g_reconCompleteSinceArm = false;  // a world reload restarts the classifier (a reload IS a load)
+    ReconRaiseGT_(/*kindLoad*/ true, "reload-arm");
+}
+
+void NoteReconcileBegin() {
+    UE_ASSERT_GAME_THREAD("world_load_episode::NoteReconcileBegin");
+    if (g_reconUp.load(std::memory_order_relaxed)) {
+        // Refresh: kind KEPT, ceiling NOT restamped (rising edge only). A normal join's bracket
+        // Begins with the window already up from Arm() -> stays kind=load through the bracket.
+        UE_LOGI("world_load_episode: reconcile Begin (window up, kind=%s kept, completeSinceArm=%d)",
+                g_reconKindLoad.load(std::memory_order_relaxed) ? "load" : "midSessionBracket",
+                g_reconCompleteSinceArm ? 1 : 0);
+        return;
+    }
+    // Down -> raise. kind==load iff NO SnapshotComplete since Arm -- on the join path exactly
+    // "the curtain never dropped" (a late bracket after the flake backstop, or a join-bracket
+    // abort re-bracket, both classify load: the player could still only act blindly).
+    ReconRaiseGT_(/*kindLoad*/ !g_reconCompleteSinceArm, "Begin");
+}
+
+void NoteReconcileComplete() {
+    UE_ASSERT_GAME_THREAD("world_load_episode::NoteReconcileComplete");
+    // UNCONDITIONAL: a Complete arriving after a ceiling force-lower must still flip the
+    // classifier, or the NEXT mid-session bracket would misclassify as load.
+    g_reconCompleteSinceArm = true;
+    ReconLowerGT_("SnapshotComplete");
+}
+
+bool InReconcileWindow() {
+    // [drill] RED calibration: disabling the window reproduces the OLD close edge (the field
+    // bug) so the EPISODE_DRILL's 5 destroys BROADCAST -- the instrument must be shown able to
+    // see the phenomenon before a green run counts. Never set outside a drill.
+    static const bool sDisabled =
+        !coop::config::ReadEnv("VOTVCOOP_RECON_DISABLE").empty();
+    if (sDisabled) return false;
+    return g_reconUp.load(std::memory_order_relaxed);
+}
+
+bool ReconcileWindowIsLoadKind() { return g_reconKindLoad.load(std::memory_order_relaxed); }
 
 }  // namespace coop::world_load_episode
