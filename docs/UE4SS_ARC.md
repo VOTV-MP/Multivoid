@@ -613,6 +613,44 @@ subdirectory name is then also the **package identity** — useful for part 3.
   in a lobby runs the same build and therefore the same bundled `scientists.pak`. Only CUSTOM packs can
   produce the notice — which is exactly the intent.
 
+**RESOLVED (USER 2026-08-23): ship (a) first, then (b).** Rationale below stands as recorded.
+
+**RESOLVED (USER 2026-08-23): the base pak holds ~4 skins, not all 14 — the user picks which.** That
+cuts the bundle from ~32 MB to roughly 2-16 MB depending on the choice. It also creates a constraint
+set that must be honoured or the out-of-box experience breaks:
+
+- **`kDefaultSkinName` MUST be one of the chosen ~4.** It is `hl_einstein_v1sc` today
+  (`protocol.h:942`, `multivoid.ini player_skin=`). If the default is not in the base pak, every fresh
+  install defaults to a body nobody can load — so every peer would fire the §7.7c notice about every
+  other peer on first join. This is the single most likely way to ship this feature broken.
+- **The base pak defines the LOBBY-SAFE set.** Because the Paper-pair join gate guarantees one build
+  per lobby, exactly the bundled skins are the ones every peer is certain to have. Everything else is
+  optional-by-construction.
+- **The starter roll should therefore prefer base-pak skins.** After §7.7 the registry also lists
+  user-pack skins; rolling a NEW identity onto one of those would hand a first-time player a body most
+  of the lobby cannot see. Roll among the guaranteed set.
+
+**A THIRD site is pinned to one-pak-per-skin — `PickRandomStarterSkin()`.** `[MEASURED]`
+`skin_registry.cpp:84-112` curates six starter names (`walter_v1sc`, `sci_v1sc`, `rvi_scientist_v1sc`,
+`luther_v1sc`, `twhl_scientist2_v1sc`, `twhl_scientist3_v1sc`) and tests presence by asking the
+filesystem **whether `<dir>/<name>.pak` is a regular file** (`:97-99`). With a single `scientists.pak`
+none of those files exist, `present` is empty, and **every new identity silently falls back to
+`kDefaultSkinName`** — the curated roll quietly dies. The six names must also be reconciled with
+whichever ~4 actually ship.
+
+So there are **three** sites carrying the one-pak-per-skin assumption, and they share one root:
+
+| site | assumption | breaks as |
+|---|---|---|
+| `PakDir()` `:114-124` | skins live in exactly `LogicMods/multivoid/` | nothing found from a Thunderstore install (§7.7) |
+| `Entries()` `:153-159` | skin name = pak file stem | one pak = one bogus skin named `scientists` (§7.7b) |
+| `PickRandomStarterSkin()` `:97-99` | presence = `<name>.pak` exists | starter roll dies, everyone gets the default |
+
+**RULE-1 fix, one root for all three: presence must be asked of the REGISTRY ("is this skin name
+available?"), never of the filesystem ("does `<name>.pak` exist?").** One authority for what exists;
+`PakDir`, `Entries` and the starter roll all consume it. Fixing them piecemeal would leave the next
+pak-shape change to break the survivor.
+
 **THE ONE OPEN FORK — what does the message NAME?** The user's wording is *"нету у вас этого пакета"*
 (you don't have this PACKAGE), but only the SKIN NAME is on the wire today:
 - **(a) name the skin only** — *"Pelmentor is wearing 'walter_v1sc', which you don't have."* Zero wire
