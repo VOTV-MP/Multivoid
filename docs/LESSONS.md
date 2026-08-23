@@ -2734,6 +2734,17 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 
 ## 5. Engine / UE4 facts
 
+- **2026-08-23 — An instance index without BOTH a CDO filter and a world filter silently indexes
+  the CLASS DEFAULT OBJECT.** turbine_sync (the one scan consumer with no `Default__` skip) had a
+  phantom 5th "placed turbine" — the CDO — for its whole life: IsInstance matches the CDO
+  (class-pure), IsLive passes (CDOs are live), PosKey quantized its DEFAULT position into a stable
+  key IDENTICAL on both peers, so every count/parity/N-match instrument agreed 5==5 and the poll
+  "synced" it CDO-to-CDO. Only an ORTHOGONAL discriminator — the R-2 hub's per-MATCH
+  `WorldOf(obj)==CurrentWorld()` term (a CDO outers to its package, not a world) — broke the
+  symmetry (probe=5 hub=4). The name skip and the world test exclude DIFFERENT non-instances;
+  carry both. *Look FIRST:* the WorldOf term (`object_scan_hub.cpp` audit-W-3 comment) + the
+  turbine probe-row comment (`autotest_scanparity.cpp`).
+  `memory/lesson_an_instance_index_without_a_cdo_world_filter_indexes_the_cdo.md`
 - **2026-08-22 — WILDCARDING an AOB can DESTROY its uniqueness: measure occurrences AFTER masking,
   never before.** Deriving `kSigD3D11ViewportPresentChecked`: the LITERAL first 24 bytes of
   `sub_1416F4BA0` occurred exactly ONCE in the image — but the same window with the `/GS`

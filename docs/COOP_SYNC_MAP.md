@@ -115,11 +115,16 @@ The eid↔actor owner. Everything here goes through `Registry` / `MirrorManager<
 ## L2 — Keyed object/device state (apply to a named native, no identity)
 Each keys off the actor's save Key. Pattern: an index + a poll + a connect-snapshot rebroadcast +
 an `OnReliable` apply. Template siblings: `keypad_sync` / `power_sync`.
-**Index-scan discipline (AS-BUILT 2026-07-04 `497b38e0`): every GUObjectArray index here (and
-grime/turbine/atv/trash_pile) rebuilds via `coop/scan/settled_object_scan.h` — full-walk while the
-live count changes, tail-scan once settled, 60s staggered backstop. A raw tail-scan goes permanently
-EMPTY at the host's session-start world reload (the 18:41 keypad-0-sync root; recycled slots below
-the cursor) — any new index MUST use the shared component, never raw `NextRange`.**
+**Index-scan discipline (AS-BUILT 2026-08-23, R-2): every GUObjectArray index here (and
+grime/turbine/atv/trash_pile) is built by THE shared sliced pass —
+`coop/element/object_scan_hub.{h,cpp}` — via three registered callbacks per consumer
+(OnPassBegin / OnMatch / OnPassComplete); the per-consumer `SettledObjectScan` walks are
+RETIRED (both scan components deleted). Semantics preserved: full pass while any consumer's
+count moves, tail once all settled, one 60 s backstop; indexes are WORLD-GEN-STAMPED (a
+stale-gen index reads as empty — the dead-world guard). The 18:41 rule survives at the hub
+(zero never settles; array shrink forces full). A NEW index = a new hub consumer — never a
+private walk. Design + acceptance: `research/findings/architecture-audits/
+votv-shared-scan-hub-R2-DESIGN-2026-08-23.md`.**
 
 | File | What | ReliableKind(s) |
 |---|---|---|

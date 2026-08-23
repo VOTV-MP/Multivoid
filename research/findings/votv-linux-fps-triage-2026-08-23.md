@@ -167,6 +167,11 @@ load and the join minute, WS ~3.1 GB (friend ~3.4 GB — unremarkable).
 
 ## §3 R-2 [measured; KNOWN root recurring] The 1 Hz walk stack = the once-per-second our-code stutter
 
+> **FIXED 2026-08-23 day 3 -- read §8's R-2 row; this section's "what ships today" prose
+> (interactable_channel.h:470-524, settled_object_scan.h, per-consumer walks) describes the
+> RETIRED state.** The shared scan hub replaced the whole family:
+> `architecture-audits/votv-shared-scan-hub-R2-DESIGN-2026-08-23.md` (AS-BUILT + acceptance).
+
 - Friend, whole log: `sync:interactable` n=120, **median 74 ms, p90 104 ms, max 305 ms**;
   in the same seconds `sync:atv`/`keypad`/`power`/`turbine` ~13 ms each and `sync:grime`
   ~14 ms — a stacked our-code frame of ~65–130+ ms about once per 1–2 s (**exactly one
