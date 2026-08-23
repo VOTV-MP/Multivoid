@@ -82,8 +82,12 @@ void Session::RelayReliableToOtherClients(int originSlot, ReliableKind kind,
         if (hConn == 0) continue;
         // v56 pre-world gate (B2): relayed gameplay reliables (all world-mutating
         // by the relay whitelist's nature) skip a joiner still at the menu -- its
-        // world-ready replay re-derives the state.
-        if (!IsSlotWorldReady(i) && !IsPreWorldSendableKind(kind)) continue;
+        // world-ready replay re-derives the state. Seeds arc: IsRelayEligible is
+        // the NET-THREAD view of the same world-ready event (stamped at the
+        // ClientWorldReady receipt) -- without it, a peer reliable received in the
+        // receipt->GT-flip gap was skipped here AND missed by the ready-edge seed.
+        if (!IsSlotWorldReady(i) && !IsRelayEligible(i, hConn) &&
+            !IsPreWorldSendableKind(kind)) continue;
         // R-4b: the relay rides the same delivery guarantee as every other
         // reliable send -- before the backlog existed a refusal here was the
         // WORST silent-loss surface (deleted with not even a warn, so the

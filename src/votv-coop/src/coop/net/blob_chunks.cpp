@@ -135,4 +135,16 @@ void Assembler::Sweep(std::chrono::steady_clock::time_point now, std::chrono::se
 
 void Assembler::Clear() { map_.clear(); }
 
+void Assembler::ClearSlot(uint8_t senderSlot) {
+    // Slot teardown is a ROW TRANSITION (roster doctrine): slots recycle lowest-free
+    // with no observable absence, so person Y's chunks must never merge into person
+    // X's half-assembly under the same slot id. The 20 s TTL alone leaves that window
+    // open (measured 2026-08-23, the seeds-arc /qf R2); callers hook this into the
+    // per-slot disconnect fan-out.
+    for (auto it = map_.begin(); it != map_.end();) {
+        if (it->first.first == senderSlot) it = map_.erase(it);
+        else ++it;
+    }
+}
+
 }  // namespace coop::blob_chunks

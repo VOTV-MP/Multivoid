@@ -425,6 +425,7 @@ void Session::Stop() {
             const uint32_t hConn = peerConns_[i].exchange(0);
             peerGenBySlot_[i].store(0, std::memory_order_release);
             backlog_.FreeSlot(i);  // R-4b: queued state dies with the session
+            relayEligible_[i].store(0, std::memory_order_release);  // seeds arc
             if (hConn != 0) {
                 sockets->CloseConnection(hConn, 0, "session stop", true);
             }

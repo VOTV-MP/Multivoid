@@ -279,6 +279,8 @@ void ConnectReplayForSlot(int slot) {
     coop::drive_sync::QueueConnectBroadcastForSlot(slot);         // v119 (L5): slot lines + drive payloads
     coop::drive_rack_sync::QueueConnectBroadcastForSlot(slot);    // v119 (L5): rack canonicals (AFTER the payloads -- the shipped seed order on the one pinned lane)
     coop::meadow_db_sync::QueueConnectBroadcastForSlot(slot);     // v120 (L9): the seedDelta(h) join seed (blob-instant snapshot vs live)
+    coop::signal_sync::QueueConnectBroadcastForSlot(slot);        // seeds arc (2026-08-23): join-window saved-signal seed (both signs)
+    coop::email_sync::QueueConnectBroadcastForSlot(slot);         // seeds arc (2026-08-23): join-window email seed (both signs)
     coop::signal_catch_sync::QueueConnectBroadcastForSlot(slot);  // v70 in-flight catch replay (identity half; kind=2 state-seed since v116)
     coop::laptop_sync::QueueConnectBroadcastForSlot(slot);        // v116: PC power/slot state + content + live disc rows (ground truth) + v121 lid rows
     coop::laptop_buffer_sync::QueueConnectBroadcastForSlot(slot); // v121: the canonical quad (in-lane after the op=3 + slot content)
@@ -356,6 +358,10 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     // gate for the departed slot (a rejoin re-opens both fresh).
     coop::save_transfer::CancelForSlot(slot);
     session.MarkSlotWorldReady(slot, false);
+    // Seeds arc: a slot teardown is a roster ROW TRANSITION -- the leaver's half
+    // assemblies + seed brackets must not survive into a recycled occupant.
+    coop::signal_sync::OnDisconnectSlot(slot);
+    coop::email_sync::OnDisconnectSlot(slot);
     if (slot >= 0 && slot < static_cast<int>(coop::players::kMaxPeers))
         g_joinPlaced[slot] = false;  // rejoin re-places the joiner at the host
     // Shut the chat lane's per-slot seed gate: the NEXT occupant's applied range starts

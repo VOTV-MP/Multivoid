@@ -455,6 +455,7 @@ add_library(votv-coop SHARED
     src/coop/save/save_indicator_suppress.cpp
     src/coop/session/session_manager.cpp
     src/coop/session/join_progress.cpp
+    src/coop/session/join_seed.cpp
     src/coop/session/net_pump.cpp
     src/coop/player/puppet_drive.cpp
     src/coop/props/registry_reaper.cpp
@@ -598,6 +599,7 @@ add_library(votv-coop SHARED
     src/harness/autotest/autotest_flashlight.cpp
     src/harness/autotest/autotest_tracker_selftest.cpp
     src/harness/autotest/autotest_weather.cpp
+    src/harness/autotest/autotest_seeddrill.cpp
     src/harness/autotest/autotest_worldctx.cpp
     src/harness/autotest/autotest_worldrules.cpp
     src/harness/autotest/autotest_config.cpp

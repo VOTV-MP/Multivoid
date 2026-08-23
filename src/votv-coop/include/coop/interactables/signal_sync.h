@@ -46,7 +46,22 @@ namespace coop::signal_sync {
 
 void Install(coop::net::Session* session);
 
-// Per-tick: throttled resolve + the 1 Hz shadow poll + tombstone retry.
+// --- Seeds arc (2026-08-23): the ready-edge join seed -- state authored during a
+// joiner's 30-60 s load window was silently never delivered (B2 skip, no queue).
+// Design: research/findings/network/votv-signal-email-ready-seeds-DESIGN-2026-08-23.md.
+// HOST, game thread. Capture at save_transfer's OnRequest scratch-serialize;
+// seed (both signs, multiset) at subsystems::ConnectReplayForSlot; cancel at the
+// transfer-teardown site. Per-slot; consume-once.
+void CaptureJoinSnapshot(int peerSlot);
+void CancelJoinSnapshot(int peerSlot);
+void QueueConnectBroadcastForSlot(int peerSlot);
+
+// Slot teardown (roster row transition): drop the leaver's half-assemblies +
+// seed bracket so a recycled occupant can never inherit them.
+void OnDisconnectSlot(int peerSlot);
+
+// Per-tick: apply-park drain + throttled resolve + the 1 Hz shadow poll +
+// tombstone retry.
 void Tick();
 
 // Wire ingest: one chunk of an appended row.

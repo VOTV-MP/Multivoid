@@ -369,6 +369,7 @@ void Session::HandleConnStatusChanged(void* info) {
             peerLanesConfigured_[slot].store(false, std::memory_order_release);
             // R-4b: the departing peer's queued reliable state dies with it.
             backlog_.FreeSlot(slot);
+            relayEligible_[slot].store(0, std::memory_order_release);  // seeds arc
         }
         // Per the GNS header doc on the status callback, terminal states
         // require us to CloseConnection to release the handle.
@@ -502,6 +503,7 @@ bool Session::KickClaimed(int peerSlot, uint32_t hConn, const char* reason) {
     // R-4b: the delivery guarantee is scoped to the connection's lifetime --
     // the departing peer's queued state dies with the peer.
     backlog_.FreeSlot(peerSlot);
+    relayEligible_[peerSlot].store(0, std::memory_order_release);  // seeds arc
 
     if (auto* sockets = SteamNetworkingSockets()) {
         // No linger: an admin kick should drop the peer immediately. The reason

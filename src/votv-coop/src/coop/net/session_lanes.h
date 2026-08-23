@@ -141,6 +141,16 @@ inline Lane LaneForKind(ReliableKind k) {
     case ReliableKind::MeadowAppend:   return Lane::Normal;
     case ReliableKind::MeadowDelete:   return Lane::Normal;
     case ReliableKind::MeadowOrder:    return Lane::Normal;  // v120: same FIFO stream as 112/113 (an order line must not overtake the append it references)
+    // Seeds arc (2026-08-23): RosterRow + the email/signal families are pinned to the
+    // default they already ride because the ready-edge seed's exactly-once + clear-
+    // before-chunks proofs REQUIRE the roster transition, the seed rows and the live
+    // rows to share ONE (slot, lane) FIFO (votv-signal-email-ready-seeds par.2.4);
+    // a future single-kind lane move would silently break both proofs.
+    case ReliableKind::RosterRow:         return Lane::Normal;
+    case ReliableKind::EmailAppend:       return Lane::Normal;
+    case ReliableKind::EmailDelete:       return Lane::Normal;
+    case ReliableKind::SavedSignalAppend: return Lane::Normal;
+    case ReliableKind::SavedSignalDelete: return Lane::Normal;
     // v121 (OPEN-10): the laptop family MUST share LaptopState's lane -- an op=1/3
     // park pairs with the LaptopBlob content stream right behind it, and the
     // joiner's op=3-then-content ordering rides the same proof (GNS orders within

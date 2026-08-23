@@ -3,6 +3,7 @@
 #include "harness/autotest_dispatch.h"
 
 #include "harness/autotest.h"
+#include "coop/session/join_seed.h"  // seeds arc selftest
 #include "coop/config/config.h"
 #include "coop/dev/director/director.h"
 #include "ue_wrap/core/log.h"
@@ -79,6 +80,13 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // Config-corpus selftest (ini rework arc 1): solo, role-agnostic; runs the real
     // ini lexer over a corpus dir + the tri-state fault-injection controls.
     SpawnIf("VOTVCOOP_RUN_CONFIG_SELFTEST", "config-corpus selftest", &ConfigSelftestThread, role);
+    // Seeds arc (2026-08-23): join_seed delta-math selftest -- pure, engine-free,
+    // runs inline (no thread; ~microseconds). PASS/FAIL lines grep-asserted by the
+    // smoke driver.
+    if (cfg::ReadEnv("VOTVCOOP_RUN_SEED_SELFTEST") == "1") coop::join_seed::RunSelfTest();
+    // Seeds arc: the RED/GREEN join-window email drill (host authors at the solo +
+    // in-window instants; pair with VOTVCOOP_SEED_DISABLE=1 for the mutate RED).
+    SpawnIf("VOTVCOOP_RUN_SEED_DRILL", "seed drill", &SeedDrillThread, role);
     // Phase 5W weather: host-only; forces rain ON/OFF cycles, client applies via wire.
     SpawnIf("VOTVCOOP_RUN_WEATHER_TEST", "weather test", &WeatherTestThread, role);
     // Phase 5W Inc-fix-2 red sky: host-only; visually unambiguous variant.

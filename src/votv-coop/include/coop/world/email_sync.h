@@ -59,6 +59,19 @@ namespace coop::email_sync {
 // Store the session. Idempotent; called per tick from subsystems::Install.
 void Install(coop::net::Session* session);
 
+// --- Seeds arc (2026-08-23): the ready-edge join seed -- emails authored during
+// a joiner's 30-60 s load window were silently never delivered (B2 skip, no
+// queue). Design: votv-signal-email-ready-seeds-DESIGN-2026-08-23.md. HOST, game
+// thread; per-slot; consume-once. Hooked beside meadow's calls in save_transfer
+// (capture/cancel) and subsystems::ConnectReplayForSlot (seed).
+void CaptureJoinSnapshot(int peerSlot);
+void CancelJoinSnapshot(int peerSlot);
+void QueueConnectBroadcastForSlot(int peerSlot);
+
+// Slot teardown (roster row transition): drop the leaver's half-assemblies +
+// seed bracket so a recycled occupant can never inherit them.
+void OnDisconnectSlot(int peerSlot);
+
 // Per-tick: throttled resolve + the 1 Hz shadow poll (append broadcast +
 // delete diff) + tombstone retry.
 void Tick();

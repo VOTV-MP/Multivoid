@@ -478,6 +478,23 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
                         static_cast<const uint8_t*>(data) + sizeof(PacketHeader) + sizeof(ReliableHeader),
                         static_cast<size_t>(payloadLen));
         }
+        // Seeds arc (2026-08-23): stamp the slot RELAY-ELIGIBLE at the net-thread
+        // RECEIPT of ClientWorldReady, hConn-stamped (the send_backlog anti-recycle
+        // idiom). Placed AFTER the inbox accepted the announce (audit F-5: stamping
+        // a hard-cap-DROPPED announce would open relays while the GT flip + seed
+        // never run). The GT flip lags this instant by one drain; a peer reliable
+        // received in that gap was relay-SKIPPED for the joiner AND applied to the
+        // host array after the ready-edge seed's cur-read -- lost (the /qf R1
+        // micro-window). With the stamp, received-after rows relay directly (the
+        // joiner IS world-ready) and stay out of the seed; received-before rows
+        // drain ahead of ClientWorldReady in the FIFO inbox and ride the seed.
+        // Exactly once, by ordering. Design doc par.2 (votv-signal-email-ready-seeds).
+        if (cfg_.role == Role::Host &&
+            static_cast<ReliableKind>(rh.kind) == ReliableKind::ClientWorldReady &&
+            peerSlot >= 1 && peerSlot < kMaxPeers) {
+            relayEligible_[peerSlot].store(peerConns_[peerSlot].load(),
+                                           std::memory_order_release);
+        }
         // Host relay (T2-3): forward peer-originated gameplay reliables to
         // every OTHER client so cross-peer item/prop actions are seen by
         // all. Host-authoritative kinds (Weather/RedSky/Lightning/Entity*)
@@ -596,7 +613,11 @@ void Session::NetThread() {
                     std::lock_guard<std::mutex> lk(reliableInboxMutex_);
                     inboxFull = reliableInbox_.size() >= kReliableInboxSoftPause;
                 }
-                if (inboxFull) break;
+                // Seeds arc: a lane's apply park at its flood bound escalates to the
+                // SAME pause (pause-not-drop; GNS receive is lossless-by-stall at both
+                // caps). Terminal honesty then belongs to the host's per-connection
+                // no-progress fatal -- never a local drop.
+                if (inboxFull || applyBackpressureCount_.load(std::memory_order_acquire) > 0) break;
                 const uint32_t hConn = peerConns_[0].load();
                 if (hConn != 0) {
                     n = sockets->ReceiveMessagesOnConnection(

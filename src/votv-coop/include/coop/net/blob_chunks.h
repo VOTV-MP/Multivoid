@@ -76,6 +76,11 @@ public:
 
     void Clear();
 
+    // Drop every half-assembly from ONE sender slot. Call from the per-slot
+    // disconnect fan-out: a recycled slot (X -> Y, no observable absence) must
+    // not merge Y's chunks into X's partial (seeds-arc /qf R2, 2026-08-23).
+    void ClearSlot(uint8_t senderSlot);
+
 private:
     struct Assembly {
         uint8_t expectChunks = 0, gotChunks = 0;

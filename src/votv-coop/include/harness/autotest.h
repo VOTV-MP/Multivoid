@@ -136,6 +136,7 @@ DWORD WINAPI ConfigSelftestThread(LPVOID arg);
 // Gated by env VOTVCOOP_RUN_WEATHER_TEST="1" + role=Host.
 void RunAutonomousWeatherTest();
 DWORD WINAPI WeatherTestThread(LPVOID arg);
+DWORD WINAPI SeedDrillThread(LPVOID arg);  // seeds-arc RED/GREEN drill (host-only)
 
 // Phase 5W Inc-fix-2 (2026-05-27, harness/autotest_weather.cpp): autonomous
 // RED SKY sync test. Host-

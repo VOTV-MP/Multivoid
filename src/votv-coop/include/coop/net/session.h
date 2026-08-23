@@ -323,6 +323,40 @@ public:
         return peerSlot >= 0 && peerSlot < kMaxPeers &&
                slotWorldReady_[peerSlot].load(std::memory_order_acquire);
     }
+    // Seeds arc: net-thread view of the same event (relay-eligible since the
+    // ClientWorldReady RECEIPT for exactly this hConn -- see relayEligible_).
+    bool IsRelayEligible(int peerSlot, uint32_t hConn) const {
+        return peerSlot >= 0 && peerSlot < kMaxPeers && hConn != 0 &&
+               relayEligible_[peerSlot].load(std::memory_order_acquire) == hConn;
+    }
+
+    // Seeds arc: is a remote connection registered in this slot (any state)?
+    bool HasPeerConn(int peerSlot) const {
+        return peerSlot >= 0 && peerSlot < kMaxPeers && peerConns_[peerSlot].load() != 0;
+    }
+
+    // Seeds arc: does ANY live remote peer pass the world-ready send gate? A
+    // fan-out that "failed" with zero eligible receivers is a VACUOUS success
+    // for a save+seed-covered lane (absent peers are owed save+seed, not wire)
+    // -- without this test the retry-until-heard idiom re-broadcasts a row a
+    // future joiner already has in its save (the pre-existing duplicate,
+    // design doc par.2.6). Game or net thread.
+    bool AnyWorldReadyPeer() const {
+        for (int i = 0; i < kMaxPeers; ++i)
+            if (peerConns_[i].load() != 0 &&
+                slotWorldReady_[i].load(std::memory_order_acquire)) return true;
+        return false;
+    }
+
+    // Seeds arc: a receive-side lane park at its flood bound flips this to
+    // pause the client's inbox drain (pause-not-drop; see NetThread). REFCOUNTED
+    // (audit F-1): each lane edge-latches locally and contributes +1/-1 here, so
+    // one lane draining cannot cancel another lane's still-standing escalation.
+    // Callers MUST call only on their own local edge (the lanes' g_parkBackpressure
+    // latches guarantee that).
+    void SetApplyBackpressure(bool on) {
+        applyBackpressureCount_.fetch_add(on ? 1 : -1, std::memory_order_acq_rel);
+    }
 
     // Game thread: pop a delivered reliable message. Inbox is shared across
     // peers (FIFO of arrivals); the kind-typed payload tells the drainer what
@@ -811,6 +845,15 @@ private:
 
     // v56 per-slot world-ready flags (see MarkSlotWorldReady).
     std::array<std::atomic<bool>, kMaxPeers> slotWorldReady_{};
+    // Seeds arc: receive-side apply backpressure refcount (see SetApplyBackpressure).
+    std::atomic<int> applyBackpressureCount_{0};
+    // Seeds arc (2026-08-23): per-slot relay-eligibility stamp = the hConn that
+    // announced ClientWorldReady, set on the NET thread at receipt (the GT
+    // world-ready flag lags by one drain; the relay consults this so a reliable
+    // received in that gap is neither skipped-and-lost nor double-delivered --
+    // session.cpp receive path + session_relay.cpp). hConn-stamped so a recycled
+    // slot can never inherit eligibility. Cleared beside backlog_.FreeSlot.
+    std::array<std::atomic<uint32_t>, kMaxPeers> relayEligible_{};
 
     std::atomic<uint32_t> sendSeq_{0};
 

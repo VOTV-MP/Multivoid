@@ -7,6 +7,8 @@
 #include "coop/element/registry.h"  // b3: Registry::Get().Get(eid) (the host eid->actor lookup)
 #include "coop/config/config.h"  // IsIniKeyTrue -- the hands-on test-cue gate
 #include "coop/interactables/meadow_db_sync.h"  // v120 (L9): the join-seed multiset snapshot at blob instant
+#include "coop/interactables/signal_sync.h"  // seeds arc capture/cancel
+#include "coop/world/email_sync.h"           // seeds arc capture/cancel
 #include "coop/net/session.h"
 #include "coop/props/prop_element_tracker.h"  // R2: CollectTrackedKeyedPropKeys (blob-vs-live diff)
 #include "coop/props/save_identity_bind.h"  // Phase 2b: client eid-range bind (SetReceivedMap / OnDisconnect)
@@ -550,6 +552,10 @@ void OnRequest(int peerSlot) {
             // against the then-live store (the g_blobKeys idiom on hash counts). LIVE-
             // capture path only; the stale fallback leaves it invalid -> no seed (loud).
             coop::meadow_db_sync::CaptureJoinSnapshot(peerSlot);
+            // Seeds arc (2026-08-23): the signal/email twins capture at the SAME
+            // blob instant (the shared join_seed helper; b125 R-A shape (b)).
+            coop::signal_sync::CaptureJoinSnapshot(peerSlot);
+            coop::email_sync::CaptureJoinSnapshot(peerSlot);
             UE_LOGI("save_transfer: slot %d -- captured %zu keyed-prop keys + %zu pile + %zu kerfur + %zu keyed "
                     "save-time xforms at blob instant (R2 + Path 1c + scope A + F1 baselines)",
                     peerSlot, g_blobKeys[peerSlot].size(), g_blobPileXforms[peerSlot].size(),
@@ -625,6 +631,8 @@ void CancelForSlot(int peerSlot) {
         UE_LOGI("save_transfer: slot %d left mid-stream -- cancelled", peerSlot);
     g_host[peerSlot] = HostStream{};
     coop::meadow_db_sync::CancelJoinSnapshot(peerSlot);  // v120 (L9): drop the seed baseline + scrub pending masks
+    coop::signal_sync::CancelJoinSnapshot(peerSlot);     // seeds arc: same lifetime
+    coop::email_sync::CancelJoinSnapshot(peerSlot);      // seeds arc: same lifetime
     g_blobKeys[peerSlot].clear();  // R2: drop any unconsumed blob baseline
     g_blobPileXforms[peerSlot].clear();  // v86 Path 1c: drop the unconsumed save-time pile map
     g_blobKerfurXforms[peerSlot].clear();  // scope A: drop the unconsumed save-time kerfur map
