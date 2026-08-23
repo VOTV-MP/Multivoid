@@ -116,10 +116,10 @@ void DestroySeamBody(void* self) {
     // field's class-B churn (~660 KEYED eid=0 broadcasts) ran INSIDE the bracket, 23 s after
     // the episode had closed by construction. New-segment suppressions (reconcile window
     // without the load episode) WARN with an R-1e-shape rate latch.
+    const bool inLoadEpisode = coop::world_load_episode::InEpisode();  // read ONCE (audit MINOR-5)
     if (s->role() == coop::net::Role::Client &&
-        (coop::world_load_episode::InEpisode() ||
-         coop::world_load_episode::InReconcileWindow())) {
-        const bool newSegment = !coop::world_load_episode::InEpisode();
+        (inLoadEpisode || coop::world_load_episode::InReconcileWindow())) {
+        const bool newSegment = !inLoadEpisode;
         if (newSegment && !keyless) {
             static uint32_t sWarned = 0;
             ++sWarned;

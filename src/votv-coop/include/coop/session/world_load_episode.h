@@ -128,6 +128,11 @@ void NoteReconcileBegin();
 // Complete keeps the classifier right), then lowers the window if up. GT.
 void NoteReconcileComplete();
 
+// The sweep's lost-bracket flake backstop fired (no SnapshotBegin within its timeout of the
+// announce). Lowers the window WITHOUT touching the classifier -- a late real bracket's Begin
+// must still classify kind=load. GT.
+void NoteBracketFlake();
+
 // True while the reconcile window is up. Any thread (atomic).
 bool InReconcileWindow();
 

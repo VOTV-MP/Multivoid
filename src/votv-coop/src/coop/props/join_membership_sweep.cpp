@@ -623,6 +623,9 @@ void TickClientReconcile() {
                     "announce (SnapshotBegin lost / host wedged?) -- declaring load-tail quiescence "
                     "WITHOUT a doom sweep so the deferred reconcile queues drain via the steady tick",
                     kBracketFlakeMs / 1000);
+            // R-4a end-condition (audit IMPORTANT-1): the lost-bracket flake also lowers the
+            // reconcile window -- the ~30 s bound the header promises, not the 180 s ceiling.
+            coop::world_load_episode::NoteBracketFlake();
         }
         return;  // zero cost when disarmed (the steady state)
     }

@@ -198,6 +198,8 @@ bool TickQuiesceProbe() {
     if (g_reconRaiseRequested.exchange(false, std::memory_order_acq_rel)) {
         g_reconCompleteSinceArm = false;
         g_reconRaisedAt = std::chrono::steady_clock::now();
+        g_reconUp.store(true, std::memory_order_relaxed);  // audit MINOR-1: re-assert (a stale
+        // >180 s raisedAt could let the ceiling force-lower between Arm's store and this consume)
         UE_LOGI("world_load_episode: reconcile window RAISED (kind=load by=Arm completeSinceArm=0)");
     }
     // R-4a ceiling: rising-edge-anchored (Begin never restamps). Bounds every stuck shape --
@@ -326,6 +328,14 @@ void NoteReconcileComplete() {
     // classifier, or the NEXT mid-session bracket would misclassify as load.
     g_reconCompleteSinceArm = true;
     ReconLowerGT_("SnapshotComplete");
+}
+
+void NoteBracketFlake() {
+    UE_ASSERT_GAME_THREAD("world_load_episode::NoteBracketFlake");
+    // The lost-bracket flake backstop (audit IMPORTANT-1: this lower was in the spec but not
+    // wired). Lowers WITHOUT touching completeSinceArm -- no Complete happened, so a LATE real
+    // bracket's Begin must still classify kind=load (the curtain never dropped).
+    ReconLowerGT_("bracket-flake backstop");
 }
 
 bool InReconcileWindow() {

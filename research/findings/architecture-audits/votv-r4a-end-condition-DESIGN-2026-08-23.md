@@ -24,6 +24,13 @@
 >   (post-window stragglers; field had 14 — the deliberate Complete-anchored end accepts them,
 >   design §2).
 > - Wire format unchanged (proto 134).
+> - **Post-ship audit folded (PASS, 0 CRITICAL, 2 IMPORTANT, 5 MINOR):** IMPORTANT-1 — the
+>   flake-backstop LOWER was in the spec but not wired; fixed via `NoteBracketFlake()` (lowers
+>   WITHOUT flipping the classifier — a late real bracket still classifies load). IMPORTANT-2 —
+>   this arc pushed net_pump.cpp 799 → 804 (> 800 soft cap): extraction proposed
+>   (`MaybeRequestReAnnounce`'s world-changed branch → `coop/session/world_reannounce.cpp`).
+>   MINOR-1 (consume re-asserts up) + MINOR-5 (single InEpisode read) fixed; MINOR-2/3 recorded
+>   in §3.
 >
 > The original STATUS line follows; the /qf thread (9 rounds) is at the session scratchpad
 > `qf_r4a_end_brief.md`.
@@ -119,6 +126,11 @@ one tick late is harmless.
 
 - Reload path, bracket never arrives: drop-intent suppresses genuine places up to 180 s with
   no delivery channel — WARN + ceiling; accepted.
+- A reload raise while the window is already up does NOT restamp the ceiling (rising edge
+  only) -- a late reload inherits the old edge and may get a truncated remaining ceiling for
+  its teardown (audit MINOR-2; part of the same cave-travel trip-note).
+- The WARN latches are process-lifetime -- a second join in the same process logs only
+  decade/century folds (audit MINOR-3; diagnostic visibility only).
 - The reload FLOW (a real mid-session cave/world travel) is unmeasurable today (L3
   one-persistent-world); the :373 RAISE SITE is exercised by drill leg 1 (it fires on the real
   join), but the flow's lane-park semantics are FILED with a trip-note: a future cave-travel
