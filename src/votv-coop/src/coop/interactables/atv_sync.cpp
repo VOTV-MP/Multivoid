@@ -7,6 +7,11 @@
 // always-present keyed actor; the grime/window dirt sync made the same divergence vs its element
 // blueprint). The index/poll/connect-snapshot shape follows the keyed-interactable modules
 // (power_sync/keypad_sync); the per-ATV LerpWindow interp follows element::Npc's pose drive.
+//
+// Seat Contention / Double-Mount Prevention:
+// Each ATV entry tracks occupantSlot (0xFF = unoccupied). Authority is claimed only if the seat
+// is free or already owned by the local peer. If a remote peer is driving, local mount attempts
+// are blocked / disregarded so two players cannot seat simultaneously or fight for pose authority.
 
 #include "coop/interactables/atv_sync.h"
 
@@ -61,6 +66,7 @@ struct AtvEntry {
     float   curYaw   = 0.f, tgtYaw   = 0.f, errYaw   = 0.f;
     float   curRoll  = 0.f, tgtRoll  = 0.f, errRoll  = 0.f;
     uint64_t lastSentMs      = 0;
+    uint8_t  occupantSlot    = 0xFF;     // 0xFF = unseated/free, otherwise peer slot of the active driver
     bool     hasPose         = false;
     bool     dirty           = false;
     bool     preparedAsMirror = false;   // we disabled this ATV's physics/tick to mirror it
@@ -88,10 +94,10 @@ bool     g_installed    = false;  // latch the one-time index+log (Install is th
 // gives each such ATV a SYNTHETIC stable wire key ("coopatv#N") and announces it (AtvSpawn); clients
 // fresh-spawn a native AATV_C under that key. Default SAVE-PLACED ATVs (deterministic key, both peers
 // loaded them) stay on the real-key path untouched.
-std::unordered_set<std::wstring>     g_savePlacedKeys;       // HOST: real keys seen BEFORE any client connected = save-placed (a joiner loads them)
-std::unordered_set<void*>            g_savePlacedActors;     // HOST: ATV ACTORS present before any client connected -- so a save ATV that mints its UCS key LATE (after connect) is recognised by its actor, not misread as a purchase (-> client dupe)
+std::unordered_set<std::wstring>        g_savePlacedKeys;    // HOST: real keys seen BEFORE any client connected = save-placed (a joiner loads them)
+std::unordered_set<void*>               g_savePlacedActors;  // HOST: ATV ACTORS present before any client connected -- so a save ATV that mints its UCS key LATE (after connect) is recognised by its actor, not misread as a purchase (-> client dupe)
 std::unordered_map<void*, std::wstring> g_synthForActor;     // actor -> synthetic wire key (host purchased + client mirror)
-uint32_t                             g_synthCounter = 0;     // HOST: monotonic synth-key id
+uint32_t                                g_synthCounter = 0;  // HOST: monotonic synth-key id
 
 const wchar_t* const kSynthPrefix = L"coopatv#";  // distinguishes synth keys from real ATV keys ("atv"/base64)
 
@@ -105,6 +111,7 @@ void FillWireClassName(coop::net::WireClassName& out, const std::wstring& name) 
     for (size_t i = 0; i < name.size() && i < sizeof(out.data); ++i)
         out.data[out.len++] = static_cast<char>(name[i]);
 }
+
 std::wstring WireClassNameToString(const coop::net::WireClassName& in) {
     std::wstring s;
     const uint8_t n = in.len <= sizeof(in.data) ? in.len : static_cast<uint8_t>(sizeof(in.data));
@@ -145,9 +152,16 @@ uint64_t NowMs() {
         std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
-// True iff THIS peer's local player is currently seated in `actor` -- i.e. we are the driver.
+// True iff THIS peer's local player is currently seated in `actor` according to the local engine.
 bool IsLocalOccupant(void* actor, void* localPlayer) {
     return localPlayer && A::IsDriven(actor) && A::GetOccupantPlayer(actor) == localPlayer;
+}
+
+// True iff THIS peer can claim or currently holds driver authority.
+// Prevents claiming driver authority if another network peer is already seated (fixes double-mount races).
+bool CanClaimOrIsDriver(void* actor, void* localPlayer, uint8_t occupantSlot, uint8_t localSlot) {
+    if (!IsLocalOccupant(actor, localPlayer)) return false;
+    return occupantSlot == 0xFF || occupantSlot == localSlot;
 }
 
 // True iff THIS peer's local player is currently grav-hand GRABBING `actor` (carrying it in the
@@ -165,10 +179,10 @@ bool IsLocalGrabber(void* actor, void* localPlayer) {
 }
 
 // THIS peer is the single authority for `actor` -- it must STREAM it, not mirror it -- iff its
-// local player is the driver OR the grav-hand grabber. The two are mutually exclusive (you cannot
-// be seated and grav-hand-holding the same ATV at once), so there is still exactly one authority.
-bool IsLocalAuthority(void* actor, void* localPlayer) {
-    return IsLocalOccupant(actor, localPlayer) || IsLocalGrabber(actor, localPlayer);
+// local player is the validated driver OR the grav-hand grabber. The two are mutually exclusive.
+bool IsLocalAuthority(void* actor, void* localPlayer, uint8_t occupantSlot, uint8_t localSlot) {
+    const bool isDriver = CanClaimOrIsDriver(actor, localPlayer, occupantSlot, localSlot);
+    return isDriver || (!isDriver && IsLocalGrabber(actor, localPlayer));
 }
 
 // Fill an AtvStatePayload from a live ATV read. False if the transform read fails. `grabbed` marks
@@ -371,9 +385,17 @@ void OnReliable(const coop::net::AtvStatePayload& payload, uint8_t /*senderPeerS
     if (it == g_atvs.end()) return;  // not indexed yet -- the throttled rebuild will pick it up
     AtvEntry& e = it->second;
     if (!R::IsLiveByIndex(e.actor, e.idx)) return;
-    // If WE are the AUTHORITY of this ATV (driving OR grav-hand grabbing it), ignore the incoming
+
+    void* localPlayer = coop::players::Registry::Get().Local();
+    const uint8_t localSlot = coop::players::Registry::Get().LocalPeerId();
+
+    // If WE are the legitimate authority of this ATV (driving OR grav-hand grabbing it), ignore the incoming
     // pose so a relayed/echoed copy can't fight our live driving/carrying.
-    if (IsLocalAuthority(e.actor, coop::players::Registry::Get().Local())) return;
+    if (IsLocalAuthority(e.actor, localPlayer, e.occupantSlot, localSlot)) return;
+
+    // Track the incoming network occupant slot.
+    e.occupantSlot = payload.occupantSlot;
+
     // v77: a connect-snapshot (adopt=1) of an IDLE ATV (bit3 authored clear -- no peer is driving/
     // grabbing it) must NOT freeze it: place it at the host pose but keep physics ON so the local
     // player can grab/drive it like a native ATV. (A live stream always comes from an authority, so
@@ -387,6 +409,7 @@ void OnReliable(const coop::net::AtvStatePayload& payload, uint8_t /*senderPeerS
         e.hasPose = false; e.window.Close(); e.dirty = false;
         return;
     }
+
     // Mirror an actively-authored ATV: disable the local rig once (so it can't fight the stream),
     // then open the interp.
     if (!e.preparedAsMirror) { A::PrepareMirror(e.actor); e.preparedAsMirror = true; }
@@ -407,9 +430,17 @@ void OnAtvRelease(const coop::net::AtvReleasePayload& payload, uint8_t /*senderP
     if (it == g_atvs.end()) return;  // not indexed yet -- nothing to un-freeze
     AtvEntry& e = it->second;
     if (!R::IsLiveByIndex(e.actor, e.idx)) return;
+
+    void* localPlayer = coop::players::Registry::Get().Local();
+    const uint8_t localSlot = coop::players::Registry::Get().LocalPeerId();
+
     // If WE are the authority (driving OR grabbing this ATV), we own its physics -- ignore a stale
     // or echoed release so it can't perturb our live carry.
-    if (IsLocalAuthority(e.actor, coop::players::Registry::Get().Local())) return;
+    if (IsLocalAuthority(e.actor, localPlayer, e.occupantSlot, localSlot)) return;
+
+    // Remote peer released the vehicle -> reset the occupant reservation.
+    e.occupantSlot = 0xFF;
+
     // Re-enable physics FIRST, THEN write the launch velocity: a kinematic body (mirror) ignores a
     // velocity write, so the simulate-on must precede it (the PropRelease apply order). Stop driving
     // the interp so the ATV's own simulation carries it from here (arc + land).
@@ -475,6 +506,7 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     if (peerSlot < 0 || peerSlot >= static_cast<int>(coop::players::kMaxPeers)) return;
     RebuildIndex();
     void* localPlayer = coop::players::Registry::Get().Local();
+    const uint8_t localSlot = coop::players::Registry::Get().LocalPeerId();
     int sent = 0, spawns = 0;
     for (auto& kv : g_atvs) {
         AtvEntry& e = kv.second;
@@ -483,12 +515,14 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         // FIRST so the joiner fresh-spawns it. Same Normal lane as AtvState, so the AtvSpawn arrives
         // before the pose below (spawn-then-pose, in order).
         if (IsSynthKey(kv.first)) { SendAtvSpawn(kv.first, e.actor, peerSlot); ++spawns; }
+
         // authored = SOME peer is actively driving/grabbing this ATV NOW (host occupant/grabber, or
         // the host is itself mirroring a client's stream). The joiner freezes only an authored ATV;
-        // an idle one stays physics-on + grabbable (occupantSlot 0xFF; adopt=1 snaps the body).
-        const bool authored = IsLocalAuthority(e.actor, localPlayer) || e.preparedAsMirror;
+        // an idle one stays physics-on + grabbable. Pass e.occupantSlot so the joiner inherits the active driver.
+        const bool isAuthority = IsLocalAuthority(e.actor, localPlayer, e.occupantSlot, localSlot);
+        const bool authored = isAuthority || e.preparedAsMirror;
         coop::net::AtvStatePayload p{};
-        if (!ReadPayload(e.actor, kv.first, 0xFF, /*adopt*/true, p, /*grabbed*/false, /*authored*/authored)) continue;
+        if (!ReadPayload(e.actor, kv.first, e.occupantSlot, /*adopt*/true, p, /*grabbed*/false, /*authored*/authored)) continue;
         s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::AtvState, &p, sizeof(p));
         ++sent;
     }
@@ -515,9 +549,10 @@ void Tick() {
     for (auto& kv : g_atvs) {
         AtvEntry& e = kv.second;
         if (!R::IsLiveByIndex(e.actor, e.idx)) continue;
-        const bool occupant  = IsLocalOccupant(e.actor, localPlayer);
-        const bool grabber   = !occupant && IsLocalGrabber(e.actor, localPlayer);  // mutually exclusive
-        const bool authority = occupant || grabber;
+
+        const bool isDriver  = CanClaimOrIsDriver(e.actor, localPlayer, e.occupantSlot, localSlot);
+        const bool isGrabber = !isDriver && IsLocalGrabber(e.actor, localPlayer);  // mutually exclusive
+        const bool authority = isDriver || isGrabber;
 
         // AUTHORITY-LOST edge (v77, generalizes the grab-release): we were the authority last tick
         // (driver OR grabber) and are now neither. Tell receivers to re-enable the ATV's physics and
@@ -527,6 +562,7 @@ void Tick() {
         // model). The final pose streamed last tick rides the same Normal lane, so GNS delivers
         // pose-then-release in order -- no settle delay needed.
         if (e.wasAuthority && !authority) {
+            e.occupantSlot = 0xFF;  // unseat / release slot reservation
             FVector lin{}, ang{};
             ue_wrap::engine::GetActorRootPhysicsVelocity(e.actor, lin, ang);  // best-effort; zero on fail
             coop::net::AtvReleasePayload rp{};
@@ -541,6 +577,11 @@ void Tick() {
         e.wasAuthority = authority;
 
         if (authority) {
+            // Claim the occupant slot locally if we are driving.
+            if (isDriver) {
+                e.occupantSlot = localSlot;
+            }
+
             // We own this ATV (driving OR grabbing). If it had been a mirror (physics off), restore
             // its rig so our local driving/carrying works again -- and stop applying any stale interp.
             if (e.preparedAsMirror) {
@@ -552,8 +593,8 @@ void Tick() {
             if (nowMs - e.lastSentMs >= kSendIntervalMs) {
                 e.lastSentMs = nowMs;
                 coop::net::AtvStatePayload p{};
-                const uint8_t occSlot = occupant ? localSlot : uint8_t{0xFF};  // grabber: no seated driver
-                if (ReadPayload(e.actor, kv.first, occSlot, /*adopt*/false, p, /*grabbed*/grabber))
+                const uint8_t occSlot = isDriver ? localSlot : uint8_t{0xFF};  // grabber: no seated driver
+                if (ReadPayload(e.actor, kv.first, occSlot, /*adopt*/false, p, /*grabbed*/isGrabber))
                     s->SendReliable(coop::net::ReliableKind::AtvState, &p, sizeof(p));
             }
         } else if (e.hasPose) {
@@ -581,6 +622,23 @@ void OnDisconnect() {
     g_synthCounter = 0;
     g_installed = false;  // a new session re-indexes via the next Install (latched again)
     if (n > 0) UE_LOGI("atv: OnDisconnect -- cleared %zu ATV(s) (released save mirrors; destroyed purchased mirrors)", n);
+}
+
+// Check if an ATV actor is occupied by a remote peer (used to block local mount interactions).
+bool IsOccupiedByOther(void* actor, uint8_t* outOccupantSlot) {
+    if (!actor) return false;
+    const uint8_t localSlot = coop::players::Registry::Get().LocalPeerId();
+    for (const auto& kv : g_atvs) {
+        if (kv.second.actor == actor) {
+            const uint8_t occ = kv.second.occupantSlot;
+            if (occ != 0xFF && occ != localSlot) {
+                if (outOccupantSlot) *outOccupantSlot = occ;
+                return true;
+            }
+            return false;
+        }
+    }
+    return false;
 }
 
 }  // namespace coop::atv_sync

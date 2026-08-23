@@ -3,6 +3,7 @@
 #include "coop/interactables/device_occupancy.h"
 
 #include "coop/comms/peer_action_feed.h"  // the busy-notice chat line (AnnounceDirect)
+#include "coop/interactables/atv_sync.h"  // IsOccupiedByOther -> ATV seating deny gate
 #include "coop/interactables/desk_input_sync.h"  // v116: PingActiveSlot -> the desk FSM-hold
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"
@@ -10,6 +11,7 @@
 #include "coop/props/prop_sound.h"
 
 #include "ue_wrap/desk/device_screen.h"
+#include "ue_wrap/devices/atv.h"          // EnsureResolved / IsAtv
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
@@ -216,11 +218,30 @@ void OnUseInputPre(void* self, void*, void*) {
     if (!self) return;
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) return;
-    if (!DS::EnsureResolved()) return;
+
     // Only the LOCAL player processes input (puppets are unpossessed), so
     // `self` is the local mainPlayer_C by construction.
     void* aimed = ue_wrap::engine::ReadMainPlayerLookAtActor(self);
     if (!aimed) return;
+
+    // ATV occupancy gate: if another peer is already seated on this ATV, deny seating.
+    if (ue_wrap::atv::EnsureResolved() && ue_wrap::atv::IsAtv(aimed)) {
+        uint8_t holder = 0xFF;
+        if (coop::atv_sync::IsOccupiedByOther(aimed, &holder)) {
+            g_memoName = L"the ATV";
+            g_memoKey = L"atv";
+            g_memoTime = std::chrono::steady_clock::now();
+            if (DS::ClearAimForDispatch(self)) {
+                g_denyPending = true;
+                g_denyKey = L"atv";
+                g_denyHolder = holder;
+                g_denyName = L"the ATV";
+            }
+            return;
+        }
+    }
+
+    if (!DS::EnsureResolved()) return;
     const std::wstring key = DS::ClassifyDeviceActorClaimKey(aimed);
     if (key.empty()) return;  // not aiming at an enterable device
     // Aim memo -- written UNCONDITIONALLY (before the busy check): the canonical

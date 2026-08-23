@@ -78,4 +78,8 @@ void Tick();
 // single-player), then clear the index + interp state.
 void OnDisconnect();
 
+// Interaction query: true iff `actor` is indexed as an ATV currently occupied by another network
+// peer (occupantSlot != 0xFF && occupantSlot != LocalSlot()). Populates `outOccupantSlot` if non-null.
+bool IsOccupiedByOther(void* actor, uint8_t* outOccupantSlot = nullptr);
+
 }  // namespace coop::atv_sync
