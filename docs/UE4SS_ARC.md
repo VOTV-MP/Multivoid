@@ -469,7 +469,31 @@ re-introducing a hand-typed `version_number` in `manifest.json` would recreate i
 `manifest.json` is emitted at package time from the two sources above, and the packaging step fails
 closed if either parse misses. Do not check a literal version into the repo's manifest template.
 
-### 7.4 Sequencing — why WP-4 must NOT flip the prose yet (and the weld, re-verified 2026-08-23)
+### 7.4 Sequencing — SUPERSEDED 2026-08-23 by the user's no-push ruling (read 7.4a first)
+
+> **7.4a — USER RULING 2026-08-23, and it dissolves this section's blocker.** Verbatim: *"We don't
+> break anything if we flip now, since I'm against pushing commits for now. We will push when
+> everything is ready, so changes are allowed, we don't confuse anyone is it sits locally."*
+>
+> The rule below existed for exactly ONE reason — prose describing a build the public does not have
+> would break the instructions for every current user. Nothing is published until the whole weld is
+> ready, so that reason no longer applies and **the prose may be flipped NOW, locally.**
+>
+> What does NOT change, because it was never about publication timing:
+> - **The weld is still a weld.** `ledger_lint.ps1:64-66` FAILS unless `docs/INSTALL.md` carries the
+>   verbatim anchors defined at `ledger_lib.ps1:149-150`, which are proxy-lane text. Flipping
+>   INSTALL.md without re-minting those anchors in the SAME commit breaks CI on the spot — a local
+>   self-inflicted break, not a user-facing one, but a break.
+> - **The prose must be TRUE of the build in the tree**, which it now is: the payload is already the
+>   `Mods/Multivoid/dlls/main.dll` shape, the r2modman profile runs it, and WP-2's fix B is built.
+> - **Commit 3 (proxy deletion) still owns the retirement**, and the release-body/publish.ps1 asset
+>   shape still moves with it (7.4b). Flipping the prose early just means the docs land first and
+>   wait for it, instead of the other way round.
+>
+> The rest of this section is kept for its measured content (what the weld consists of); its
+> "must NOT flip yet" instruction is the part that is superseded.
+
+**Original section (2026-08-23) — the weld inventory, still accurate:**
 
 `docs/INSTALL.md` is the single owner of install prose **for players**, and the current PUBLIC
 release is still the xinput-proxy build. Flipping it to the UE4SS story before a UE4SS-lane build

@@ -209,7 +209,42 @@ load and the join minute, WS ~3.1 GB (friend ~3.4 GB — unremarkable).
 
 ---
 
-## §5 R-4 [measured; b125 §R-A recurrence + two NEW pieces] The join flood: silent reliable loss + self-cull broadcast burst + downstream expiry
+## §5 R-4 — **§5 AS WRITTEN IS PARTLY WRONG; read §5-CORR first (2026-08-23, same day)**
+
+### §5-CORR — what re-grepping the same two logs actually shows
+
+The original §5 below was written from a plausible reading, not from grepping each claim. Three of
+its statements are false and one causal chain was inverted. Corrected by counting, in the same two
+files, before any of it was built on:
+
+| §5 claim | Measured |
+|---|---|
+| "At SnapshotComplete the **membership sweep** culls the client's unclaimed locals" | **FALSE.** The sweep **ABORTED**: `claim sweep ABORTED -- would destroy 957 of 1829 in-universe actor(s) (>50%)` at 23:20:13, and `dooming` appears **0 times**. It destroyed nothing. It also *cannot* be the source even when it runs: it retires through `prop_lifecycle::DestroyLocalProp`, which echo-suppresses (`prop_destroy_seam.cpp:226`). |
+| "the suppression fired **for keyed props (65×)**" | **FALSE — 2,172×**, all at 23:19. The gate worked, and worked at scale. |
+| "the host **parked 940** as `[DESTROY-DEFER]` and TTL-dropped them" | **1,618 parked, exactly 1 dropped.** The client broadcast **1,629** destroys total: **940 eid-only clumps at 23:20:01** + **689 KEYED at 23:20:06+** (`eid=0`). |
+| implied: the burst happens *inside* the episode, so widening the gate covers it | **In the FIELD the episode had already CLOSED** — `load-tail QUIESCED ... episode CLOSED` at **23:19:38**, 23 s before the burst. **Locally the same burst lands INSIDE the episode** (reproduced 1:1: 871 broadcasts / 871 host defers). So the gate's key-scoping and the gate's end-condition are **two independent defects**, and each hides the other depending on machine speed. |
+
+**The causal chain, re-derived.** The sweep's abort is not a separate finding — it is R-4b's
+consequence: 485 `PropSpawn` sends were refused at enqueue (`rc=-25`, silent), so the host's snapshot
+arrived genuinely incomplete (2,607 of 3,093 applied), so 957 of 1,829 client locals were unclaimed,
+so the >50% ratio valve correctly refused to destroy half the world. **The valve did its job.** The
+284 parked `container_contents` (282 expired) are the same root one hop further down. R-4b is
+therefore not a "structural, secondary" item — **it is the thing that broke the join.**
+
+**Why the episode closed early (field only).** The quiescence probe latched *population stable* at
+23:19:38 — the same second `ClientWorldReady` fired and `BeginSnapshot(3,093)` began. It measured a
+lull immediately BEFORE the host's snapshot started pouring in, and the world rebuild then ran to
+23:20:13. `Arm()` is once-per-world-load and `ArmQuiesceProbe` does not re-raise `g_inEpisode`, so
+once closed the episode never reopens. The end condition needs the snapshot bracket, not population
+stability alone — two independent signals for one question.
+
+**Status:** the key-scoping half is FIXED (the `!keyless` scoping removed; before/after measured
+locally 871 → 0). The end-condition half is NOT fixed and needs its own `/qf`. The 689 post-episode
+KEYED broadcasts at 23:20:06+ are **unattributed** — do not assume they share a root with the 940.
+
+---
+
+### §5 (original, superseded in the four rows above)
 
 - **Recurrence:** the HOST logged **485× `net: SendReliableToSlot(slot=1) rc=-25 kind=3`**
   — kind 3 = **PropSpawn**, rc=-25 = GNS enqueue refusal (send buffer full) — all inside

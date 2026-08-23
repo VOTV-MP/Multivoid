@@ -142,9 +142,10 @@ void TryDestroyTwin(const coop::net::PropSpawnPayload& payload,
         // the (latched) build is still in the index. Re-check at the consume site so a bound native can never
         // be destroyed even if it bound late (cheap -- one map lookup on the single matched candidate).
         if (coop::prop_element_tracker::IsBoundMirrorNative(native)) return;
-        // Drop its client-minted eid from the tracker FIRST so the K2_DestroyActor PRE observer
-        // stays silent (keyless + no eid) -- no stray PropDestroy on the superseded client eid
-        // (the same fresh-mirror invariant the adopt-bind path enforces, audit 2026-06-10).
+        // Retire the superseded client-minted twin. The kernel marks the destroy as local
+        // bookkeeping so the K2_DestroyActor PRE observer does not broadcast it -- this comment
+        // used to claim the Unmark alone achieved that "keyless + no eid" silence, and the
+        // 2026-08-23 field logs measured 940 PropDestroys escaping anyway. See the kernel.
         coop::save_time_retire_util::UnmarkAndDestroy(native);
         if (g_pileBindCount < 8 || (g_pileBindCount % 200) == 0)
             UE_LOGI("[PILE] DESTROY native level-pile twin eid=%u at (%.1f,%.1f,%.1f) chipType=%u -- "

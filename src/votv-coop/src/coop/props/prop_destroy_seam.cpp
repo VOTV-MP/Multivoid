@@ -93,17 +93,27 @@ void DestroySeamBody(void* self) {
     // (ProcessEvent-invisible) and never crossed the wire; the v106 K2_DestroyActor Func-patch
     // catches them and would broadcast the destroy half -> the HOST destroys its AUTHORITATIVE
     // copies by key (measured 2026-07-08 bare join: host 3345->1255 keyed props, never recovered).
-    // Suppress the OUTBOUND broadcast of KEYED destroys for the duration of the episode; the local
-    // K2_DestroyActor already ran, so this peer's world is unaffected. Scoped to KEYED (the wipe is
-    // 100%% keyed props) so eid-only (pile) destroys pass through untouched -- piles are already
-    // fixed and the host DEFERS them anyway. Client-scoped (the host never arms the episode); the
-    // role guard is defense-in-depth on the shared bidirectional seam. Vetted /qf rounds 0-13.
+    // Suppress the OUTBOUND broadcast of the client's destroys for the duration of the episode; the
+    // local K2_DestroyActor already ran, so this peer's world is unaffected. Client-scoped (the host
+    // never arms the episode); the role guard is defense-in-depth on the shared bidirectional seam.
     // See coop/session/world_load_episode.h + research/findings/props-lifecycle/votv-destroy-seam-hostwipe-and-rock-rdrop-RE-2026-07-08.md
-    if (!keyless && s->role() == coop::net::Role::Client &&
-        coop::world_load_episode::InEpisode()) {
-        UE_LOGI("grab_hook[destroy-seam]: CLIENT suppressed KEYED DESTROY actor=%p key='%ls' eid=%u "
+    //
+    // THE `!keyless` SCOPING IS GONE (2026-08-23, field-measured). It was justified as "the wipe is
+    // 100%% keyed props ... piles are already fixed and the host DEFERS them anyway" -- and that last
+    // clause is the crutch admitting itself: the traffic was known to be garbage and was tolerated
+    // because the receiver swallowed it. Measured cost, reproduced locally 1:1 with the Linux triage
+    // logs: a joining client broadcasts ONE eid-only trash-clump destroy per level pile (871 here,
+    // 940 in the field), every one carrying a CLIENT-BAND eid the host has never seen, so the host
+    // parks all 871 as destroy-before-load and expires them. In the field that burst lands in the
+    // same minute as 485 PropSpawn sends being refused at enqueue for a full send buffer.
+    //
+    // The invariant is about the WINDOW, not the key: inside its own world-load a client is not
+    // generating events, it is being torn down and rebuilt. loadObjects deletes keyed props and
+    // keyless piles with equal enthusiasm, and neither deletion is something a peer needs to hear.
+    if (s->role() == coop::net::Role::Client && coop::world_load_episode::InEpisode()) {
+        UE_LOGI("grab_hook[destroy-seam]: CLIENT suppressed %s DESTROY actor=%p key='%ls' eid=%u "
                 "-- inside world-load episode (loadObjects churn; host-wipe fix, not broadcast)",
-                self, keyStr.c_str(),
+                keyless ? "eid-only" : "KEYED", self, keyless ? L"None" : keyStr.c_str(),
                 (destroyEid == coop::element::kInvalidId) ? 0u : static_cast<unsigned>(destroyEid));
         return;
     }

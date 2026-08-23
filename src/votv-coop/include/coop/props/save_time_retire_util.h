@@ -29,6 +29,7 @@
 
 #pragma once
 
+#include "coop/props/prop_echo_suppress.h"    // MarkIncomingDestroy (the silencer)
 #include "coop/props/prop_element_tracker.h"  // UnmarkKnownKeyedProp
 #include "ue_wrap/engine/engine.h"             // DestroyActor
 #include "ue_wrap/core/reflection.h"         // IsLiveByIndex
@@ -45,11 +46,31 @@ namespace coop::save_time_retire_util {
 // skip guard below keeps it FAIL-SAFE if two ever sat <1cm apart.
 constexpr float kExactMatchR2Cm = 1.0f;
 
-// Silence the K2_DestroyActor PRE observer (drop the actor's client-minted eid
-// FIRST so no stray PropDestroy fires on the superseded client eid -- the same
-// fresh-mirror invariant the adopt-bind path enforces), then destroy it.
-// Game-thread only (no mutex). This is the byte-identical retire both sweeps ran.
+// Silence the K2_DestroyActor PRE observer, then destroy. Game-thread only.
+//
+// THE SILENCE IS EXPLICIT, NOT A SIDE EFFECT (fixed 2026-08-23, field-measured).
+// This used to rely on "UnmarkKnownKeyedProp first, so the seam reads no eid and
+// the keyless+no-eid early-out swallows it". That premise is FALSE BY
+// CONSTRUCTION: UnmarkKnownKeyedProp DEFERS the Element destruction to
+// ElementDeleter::Flush, so the registry's actor->eid reverse is still live when
+// the seam runs -- synchronously, inside the DestroyActor on the next line. The
+// same deferred-drain hazard is documented at registry_reaper.cpp:267-276.
+//
+// What it cost, from the Linux 9-fps triage logs (2026-08-23): a joining client
+// broadcast 940 PropDestroys carrying its OWN client-band eids while retiring
+// level-pile twins the host had never heard of -- the host parked 1,618 of them
+// as destroy-before-load and expired them. All of it landed in the join minute,
+// the same window in which 485 PropSpawn sends were being refused at enqueue for
+// a full send buffer. Pure self-inflicted flood.
+//
+// The mechanism for "this destroy is local bookkeeping" already existed and is
+// what prop_lifecycle::DestroyLocalProp uses: mark it, and the seam consumes the
+// mark before it looks at anything else (prop_destroy_seam.cpp:64). Ordering
+// requirement: the mark must precede the destroy, because the seam fires INSIDE
+// it. UnmarkKnownKeyedProp stays -- it is tracker hygiene, and it was never the
+// silencer it was documented to be.
 inline void UnmarkAndDestroy(void* actor) {
+    coop::prop_echo_suppress::MarkIncomingDestroy(actor);
     coop::prop_element_tracker::UnmarkKnownKeyedProp(actor);
     ue_wrap::engine::DestroyActor(actor);
 }
