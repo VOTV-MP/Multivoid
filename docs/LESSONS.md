@@ -2210,6 +2210,28 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   Full: `[[lesson-an-overlay-that-inline-hooks-present-loses-to-rtss-and-obs]]`.
   `memory/lesson_an_overlay_that_inline_hooks_present_loses_to_rtss_and_obs.md`
 
+- **A file-SHAPE assumption hides in PRESENCE TESTS and in PROSE, not just in the enumerator.**
+  2026-08-23, migrating skins from one-pak-per-skin to one shared `scientists.pak`. The obvious break
+  was the enumerator (`skin_registry.cpp:159` derives a skin's name from the pak file's **stem**), and
+  it was not the dangerous one. **`PickRandomStarterSkin()` (`:84-99`) tests presence by asking the
+  FILESYSTEM whether `<dir>/<name>.pak` is a regular file (`:98-99`)** — with a shared pak none exist,
+  the candidate list is empty, and **every new identity silently falls back to `kDefaultSkinName`**
+  (`skin_registry.h:36`). No crash, no WARN that reads as broken; "everyone is the same skin" looks
+  like a content decision. That function contains no enumeration and never surfaces in a search for
+  "how are skins listed". A tree-wide grep of the extension AND the directory name then found
+  **11 surfaces, only 3 of them logic**: +2 **player-facing strings** that become false
+  (`local_body.cpp:127`, and `skins_panel.cpp:52` — the F1 browser stating the retired rule AS the
+  rule) and +6 **contract comments** (`skin_registry.h:8,40,62,68`, `protocol.h:944,2182`), which are
+  what the next implementer reads. Fixing the logic alone ships a build whose own UI lies. I had
+  written "three sites" into the doc BEFORE running that grep — a census claim is a claim.
+  *Look FIRST:* when changing an artifact's on-disk shape, grep the extension **and** the directory
+  name tree-wide, sort hits into logic / user-visible text / contract comments, fix all three classes
+  together. **Invariant: presence is asked of the AUTHORITY ("is name X available?"), never of the
+  filesystem ("does `<X>.ext` exist?")** — every direct `is_regular_file` on a derived path is a future
+  break of this kind. Sub-trap: two of my own citations pointed at a changelog COMMENT rather than the
+  definition; cite the definition, the comment is not the authority.
+  `memory/lesson_a_file_shape_assumption_hides_in_presence_tests_and_prose.md`
+
 - **Census the present chain by FOLLOWING the jmp to its owner — a trampoline belongs to no module.**
   2026-08-23. `E9` at a hooked function points into a `MEM_PRIVATE` page the hook engine allocated, so
   "which module is this address in?" returns NOTHING and reads as unattributable. One more hop settles

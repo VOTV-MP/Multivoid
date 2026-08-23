@@ -596,9 +596,9 @@ installed by r2modman lands in its own `<Author>-<Name>/` folder and is enumerat
 subdirectory name is then also the **package identity** — useful for part 3.
 
 **Part 3 maps onto machinery that already exists:**
-- `[MEASURED]` the skin name is **already on the wire** — `SkinChange` reliable kind **82**, plus the
-  skin field on Join + RosterRow (`protocol.h:932-943`); every player carries a persisted
-  `player_skin=` choice in `multivoid.ini`.
+- `[MEASURED]` the skin name is **already on the wire** — `SkinChange` reliable kind **82**, defined at
+  `protocol.h:2181` (`:939` is the changelog note), plus the skin field on Join + RosterRow; every
+  player carries a persisted `player_skin=` choice in `multivoid.ini`.
 - `[MEASURED]` the failure is **already detected**: `client_model.cpp:52-53` logs
   *"skin '%s' %s NOT loadable (pak absent on this machine?) -- native kel fallback"* and falls back to
   the game's own kel body. Today it is log-only; part 3 is surfacing it.
@@ -619,8 +619,9 @@ subdirectory name is then also the **package identity** — useful for part 3.
 cuts the bundle from ~32 MB to roughly 2-16 MB depending on the choice. It also creates a constraint
 set that must be honoured or the out-of-box experience breaks:
 
-- **`kDefaultSkinName` MUST be one of the chosen ~4.** It is `hl_einstein_v1sc` today
-  (`protocol.h:942`, `multivoid.ini player_skin=`). If the default is not in the base pak, every fresh
+- **`kDefaultSkinName` MUST be one of the chosen ~4.** `[MEASURED]` it is `"hl_einstein_v1sc"`, defined
+  at **`include/coop/player/skin_registry.h:36`** (the `multivoid.ini player_skin=` default; the
+  `protocol.h:942` mention is a changelog comment, not the definition). If the default is not in the base pak, every fresh
   install defaults to a body nobody can load — so every peer would fire the §7.7c notice about every
   other peer on first join. This is the single most likely way to ship this feature broken.
 - **The base pak defines the LOBBY-SAFE set.** Because the Paper-pair join gate guarantees one build
@@ -638,18 +639,31 @@ none of those files exist, `present` is empty, and **every new identity silently
 `kDefaultSkinName`** — the curated roll quietly dies. The six names must also be reconciled with
 whichever ~4 actually ship.
 
-So there are **three** sites carrying the one-pak-per-skin assumption, and they share one root:
+**FULL CENSUS — 11 surfaces, not 3.** An earlier revision of this section said "three sites"; a
+tree-wide census of `.pak` / `LogicMods` / `PakDir` corrects that. Fixing only the logic would ship a
+build whose own UI tells players the wrong thing.
 
-| site | assumption | breaks as |
-|---|---|---|
-| `PakDir()` `:114-124` | skins live in exactly `LogicMods/multivoid/` | nothing found from a Thunderstore install (§7.7) |
-| `Entries()` `:153-159` | skin name = pak file stem | one pak = one bogus skin named `scientists` (§7.7b) |
-| `PickRandomStarterSkin()` `:97-99` | presence = `<name>.pak` exists | starter roll dies, everyone gets the default |
+| # | surface | assumption | breaks as |
+|---|---|---|---|
+| **LOGIC (3)** | | | |
+| 1 | `skin_registry.cpp:114-121` `PakDir()` | skins live in exactly `LogicMods/multivoid/` | nothing found from a Thunderstore install (§7.7) |
+| 2 | `skin_registry.cpp:126-159` `Entries()` | skin name = pak file **stem** (`:159`) | one shared pak = one bogus skin named `scientists` |
+| 3 | `skin_registry.cpp:84-99` `PickRandomStarterSkin()` | presence = `<name>.pak` **is a file** (`:98-99`) | `present` empty -> every new identity silently gets `kDefaultSkinName` |
+| **PLAYER-FACING TEXT (2) — becomes FALSE** | | | |
+| 4 | `local_body.cpp:127` | *"(drop the pak into LogicMods/multivoid and re-pick)"* | tells the player the wrong folder |
+| 5 | `skins_panel.cpp:52` | *"A skin = a converter .pak in Content/Paks/LogicMods/multivoid"* | states the retired rule as the rule, in the F1 browser itself |
+| **CONTRACT COMMENTS (6) — the header IS the spec** | | | |
+| 6-9 | `skin_registry.h:8, 40, 62, 68` | four blocks describing one-pak-per-skin (`:62` *"per `*.pak` in the LogicMods multivoid folder"*) | the next reader implements the old shape from the header |
+| 10-11 | `protocol.h:944, 2182` | *"skins = converter paks in LogicMods/multivoid/, name = ..."* | the wire doc describes a dead layout |
 
-**RULE-1 fix, one root for all three: presence must be asked of the REGISTRY ("is this skin name
-available?"), never of the filesystem ("does `<name>.pak` exist?").** One authority for what exists;
-`PakDir`, `Entries` and the starter roll all consume it. Fixing them piecemeal would leave the next
-pak-shape change to break the survivor.
+**RULE-1 fix, one root: presence must be asked of the REGISTRY ("is this skin name available?"), never
+of the filesystem ("does `<name>.pak` exist?").** One authority for what exists; `PakDir`, `Entries`
+and the starter roll all consume it. Fixing them piecemeal leaves the next pak-shape change to break
+whichever survived — and leaves surfaces 4-11 lying.
+
+`[MEASURED]` the fact the whole migration rests on is stated in our own header,
+`ue_wrap/core/asset_load.h:5-6`: *"UE4 auto-mounts every `.pak` under `Content/Paks/` at startup"* —
+which is why loading is pak-shape-agnostic and only the presence/enumeration layer has to change.
 
 **THE ONE OPEN FORK — what does the message NAME?** The user's wording is *"нету у вас этого пакета"*
 (you don't have this PACKAGE), but only the SKIN NAME is on the wire today:

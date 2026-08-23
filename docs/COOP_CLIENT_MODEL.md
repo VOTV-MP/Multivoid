@@ -1,5 +1,18 @@
 # COOP client model — custom per-client skeletal mesh (full handoff doc)
 
+> **PACKAGING SUPERSEDED 2026-08-23 — read `docs/UE4SS_ARC.md` §7.7/§7.7b/§7.7c BEFORE acting on the
+> pak parts of this doc.** Everything below describes **one pak per skin**
+> (`repak pack -> hl_einstein_v1sc.pak`, shipped to `Content/Paks/LogicMods/multivoid/` by
+> `deploy-all.ps1`). The user decided 2026-08-23 to move to **ONE shared `scientists.pak`** (~4 chosen
+> skins) bundled inside the Thunderstore mod package, plus user-published skin packs.
+> **The MODEL/COOK pipeline in this doc is unaffected and remains correct** — it is model-agnostic and
+> pak-shape-agnostic, because `client_model.cpp:75-84` resolves by ASSET PATH
+> (`/Game/Mods/VOTVCoop/<name>.kerfurOmega_KelSkin`), never by pak filename, and UE auto-mounts any
+> `.pak` under `Content/Paks/` (`ue_wrap/core/asset_load.h:5-6`). What changes is only the
+> PRESENCE/ENUMERATION layer: a census found **11 surfaces** pinned to one-pak-per-skin (3 logic in
+> `skin_registry.cpp`, 2 player-facing strings, 6 contract comments) — the table is in `UE4SS_ARC.md`
+> §7.7c. Do not implement a new skin from this doc's packaging steps until that lands.
+
 **Read top-to-bottom.** Goal: give every remote CLIENT puppet a custom character
 model (the user's own mesh) while the HOST stays Dr. Kel. First model = a Half-Life 1
 GoldSrc scientist. The pipeline generalizes to any HL1 humanoid `.mdl`.
