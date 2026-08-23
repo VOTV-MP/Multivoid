@@ -1,6 +1,6 @@
 # Hands-on runbook — the v134 batch (2026-08-23; NOTHING in it is hands-on yet)
 
-**Deployed:** `multivoid-0.9.0n-134.dll` sha256 **`123374DAD5D731EF`** ×4 (post R-3/R-2b, 2026-08-23 eve) (HOST/CLIENT_1/2/3),
+**Deployed:** `multivoid-0.9.0n-134.dll` sha256 **`1DAC87AF6BD98A34`** ×4 (post R-3/R-2b/R-4a-end, 2026-08-23 late eve) (HOST/CLIENT_1/2/3),
 proto **134**. (Supersedes the `588960CF…`/`7099255A…` bytes this runbook earlier named — the R-2 scan-hub
 arc landed after them, same day.) **RELAUNCH BOTH PEERS** (every copy already carries the
 final bytes via deploy-all).
@@ -26,6 +26,11 @@ final bytes via deploy-all).
    periodic hitch (13-18 ms single-frame; field 120/1,880 ms) is ALSO retired -- sliced pass +
    ~1 ms/tick budget drain. FEEL check: NO periodic hitch should remain in steady play at all;
    spawn-menu/toolgun props must still appear on the other peer within ~2-20 s.
+7. **R-4a-end — the reconcile window (2026-08-23 late eve)**: the joining client no longer
+   broadcasts its own rebuild-churn destroys after the load episode closes (the field's 1,629
+   junk broadcasts). FEEL check: nothing visible -- verify by grepping the client log for
+   "reconcile window RAISED/LOWERED" around the join and ZERO "CLIENT broadcasting DESTROY"
+   bursts in the join minute.
 
 ## Suggested hands-on checks (any subset; prefixes attribute)
 
