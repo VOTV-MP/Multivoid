@@ -493,11 +493,91 @@ the new Thunderstore packaging move together. Retiring the proxy also makes the
 `multivoid-*.dll` "highest build wins" scan and the "MOD INSTALL PROBLEM" duplicate dialog
 meaningless (the mod manager owns installation) — they retire WHOLE per RULE 2.
 
-### 7.6 WHICH model may ship in the pak — OPEN, and it is a redistribution question (2026-08-23)
+### 7.6 The pak's CONTENT — DECIDED (USER 2026-08-23): the HL skins ship
 
-The user's intent: *"Наш мод тоже должен [идти с .pak], там будут модели ученых hl"* — ship the pak with
-the HL scientist models. The **mechanism** is settled (§7.2). The **asset** is not, and this repo
-already took a position on it that predates the question:
+**USER DECISION:** the HL scientist skins ship with the mod. Rationale (user's): character-swap mods
+built on assets from other games are ubiquitous across Steam Workshop and the modding scene at large,
+and Valve has never been aggressive about its own assets in that context. **Recorded as settled — do
+not re-litigate it.** One correction to how it was first put to the user: the three `.gitignore` rules
+below are a *"what do we commit to a public git repo"* triage (binaries, heavy, regenerable), not a
+considered decision about what to ship to players — they were presented as stronger than they are.
+
+The residual risk is not legal but **availability**: Thunderstore is a third party with its own
+content policy, and a takedown of the package would remove the *whole mod*, not just the skins. That
+argues for shipping skins as a **separate package** from the mod (see §7.7), which is better packaging
+anyway — skins are optional, bulky, and should not force a re-download on every mod update.
+
+### 7.7 THE BLOCKER NOBODY WOULD HAVE PREDICTED — the skin scan is pinned to one folder name
+
+`[MEASURED 2026-08-23]` **`skin_registry.cpp:114-124` hardcodes the scan directory to
+`<game>/VotV/Content/Paks/LogicMods/`*`multivoid`*`/`**, and `Entries()` (`:153`) runs a FLAT,
+non-recursive `directory_iterator` over exactly that folder looking for `*.pak` (+ a `<stem>.png|.bmp`
+preview sidecar; the skin's display name is the pak's **stem**, `:159`).
+
+Thunderstore does not use that folder. A package's pak lands in
+`shimloader\pak\`**`<Author>-<Name>`**`\` -> `Content\Paks\LogicMods\<Author>-<Name>\`. So:
+
+- **Our own package's pak would NOT be listed in the F1 skin browser.** UE auto-mounts any `.pak`
+  under `Content/Paks/`, so the mesh would be loadable — but the registry never sees the file, the
+  browser shows `dr_kel + builtins only`, and the skin cannot be picked. It works today ONLY because
+  `tools/deploy-all.ps1` hand-copies into `LogicMods/multivoid/`.
+- A **separate** skins package is impossible for the same reason.
+
+**Requirement for WP-9 (RULE 1 — fix the scan, do not special-case a folder name):** `PakDir()` must
+stop being one pinned path. Scan `Content\Paks\LogicMods\` **and its immediate subdirectories** for
+`*.pak` + sidecars. That single change simultaneously (a) makes our Thunderstore package work whatever
+`<Author>-Name` resolves to, (b) makes independent third-party Multivoid skin packs work — anyone can
+publish one, (c) keeps the existing dev-deploy path working unchanged. Needs a name-collision rule,
+since the display name is the pak stem and two packages may ship the same stem.
+
+**This is a hard precondition: without it, shipping the pak from Thunderstore silently produces a mod
+with no selectable skins.**
+
+### 7.7b TASK (USER 2026-08-23): one `scientists.pak` holding every scientist skin + previews
+
+*"Будет задача все скины ученых собрать и их превью и затолкать в один .pak и назвать scientists.pak"* —
+collapse the per-skin paks into ONE `scientists.pak`. Measured against the code, this is **much smaller
+than it looks**, because one half of it already works:
+
+**LOADING already works, zero code change.** `[MEASURED]` `client_model.cpp:75-84` resolves a skin by
+ASSET PATH, never by pak filename:
+```
+mesh    -> /Game/Mods/VOTVCoop/<name>.kerfurOmega_KelSkin
+texture -> /Game/Mods/VOTVCoop/tex_<name>.tex_<name>
+```
+UE mounts any `.pak` under `Content/Paks/` and resolves those paths regardless of which archive the
+packages came from. So N packages inside one `scientists.pak` load exactly as N separate paks do.
+(Every converted model keeps the same export name `kerfurOmega_KelSkin`; the **package** name is the
+skin identity — `docs/COOP_CLIENT_MODEL.md` §6a.)
+
+**ENUMERATION is the part that breaks.** `[MEASURED]` `skin_registry.cpp:153-159` builds the skin list
+from pak **filenames** (`p.stem()`), one pak = one skin. Given a single `scientists.pak` it would offer
+exactly one entry named `scientists`, which then fails to load (`/Game/Mods/VOTVCoop/scientists` does
+not exist). The list must instead come from the pak's CONTENTS. Options, in preference order:
+
+- **(ii) enumerate the mounted packages under `/Game/Mods/VOTVCoop/`** (asset registry / object walk).
+  The RULE-1 answer — cannot drift from what the pak actually contains, and third-party skin packs
+  work automatically. Feasibility not yet measured; needs the mount to precede enumeration.
+- **(i) a manifest sidecar** (`scientists.txt`, one skin name per line) beside the pak. Trivial, no
+  reflection — but it is a second source of truth that can drift from the pak.
+- (iii) a hardcoded list like `kBuiltinSkins` — works for OUR pak, but then nobody else can ship a
+  skin pack. Rejected unless (i)/(ii) both fail.
+
+**PREVIEWS are nearly free if they stay sidecars.** `[MEASURED]` the preview lookup is ALREADY keyed on
+the skin NAME, not the pak stem — `skin_registry.cpp:137-147` does exactly that for the builtin kerfur
+skins (`<dir>/<name>.png|.bmp`). So dropping `dr_x.png` beside `scientists.pak` needs **no new code**.
+Putting the previews INSIDE the pak instead means loading a cooked `UTexture2D` and getting its mip
+pixels into an ImGui texture — a genuinely new path, versus today's WIC decode of a loose PNG
+(`DecodeImageFileBgra`). **Worth confirming with the user which they meant**: "затолкать в один .pak"
+reads as inside, but the sidecar route costs nothing and the in-pak route is real work for no
+user-visible difference.
+
+**Depends on §7.7** — whichever enumeration wins, the scan directory must also stop being pinned to
+`LogicMods/multivoid/`, or none of it is reachable from a Thunderstore install.
+
+### 7.8 The asset-provenance record (kept for context; the decision is §7.6)
+
+The **mechanism** is settled (§7.2). On the asset, this repo had a position that predates the question:
 
 - `[MEASURED]` the pak we deploy today, `research/pak_re/hl_einstein_v1sc.pak`, is **derived from
   Valve's Half-Life scientist model**, and it has **never been in git** — three independent
@@ -514,23 +594,11 @@ already took a position on it that predates the question:
   to `kerfurOmega_KelSkin` — **the game's own skin**, already on every player's disk, nothing
   redistributed. A pak-less package is a fully working mod.
 
-**The three ways forward** (this is a product + legal call, the user's to make):
-
-- **(a) Ship a pak with a REDISTRIBUTABLE scientist model.** This gives the user exactly what was
-  asked for and is the RULE-1 answer — the blocker is the asset's provenance, not the pipeline. The
-  conversion chain in `docs/COOP_CLIENT_MODEL.md` (`mdl -> psk -> repose -> ue_cook -> repak`) is
-  **model-agnostic**, so the work is *sourcing* a CC0/CC-BY or commissioned scientist mesh, not
-  rebuilding anything. Attribution-required licences are fine if the package README carries the credit.
-- **(b) Ship the HL model anyway.** Not recommended: copyright aside, it exposes the Thunderstore
-  package (and the namespace) to takedown, and it contradicts a stance this repo recorded for itself
-  in three places.
-- **(c) Launch WITHOUT a pak** (kel fallback), and keep model paks as the user-supplied skin library
-  the mod already supports (the F1 skin browser reads paks + preview tiles from disk). Costs nothing,
-  blocks nothing, and composes with (a) later.
-
-**Recommended sequencing: (c) now, (a) when a redistributable mesh exists.** They are not exclusive —
-(c) unblocks the Thunderstore launch immediately, and adding a pak later is a package-content change,
-not an architecture change.
+**Resolved by the user 2026-08-23 (§7.6): the HL skins ship.** The alternative that was on the table —
+sourcing a CC0/CC-BY or commissioned scientist mesh — remains cheap if it is ever wanted, because the
+conversion chain in `docs/COOP_CLIENT_MODEL.md` (`mdl -> psk -> repose -> ue_cook -> repak`) is
+**model-agnostic**: the work would be sourcing a mesh, not rebuilding tooling. Noted only so that
+option is not re-derived from scratch later.
 
 ### 7.5 Owed measurements before WP-9 ships
 
