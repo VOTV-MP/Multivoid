@@ -20,8 +20,8 @@
 #include "ue_wrap/engine/engine.h"          // ReadMainPlayerGrabState (grabber authority) + Get/SetActorRootPhysicsVelocity (release)
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/core/settled_object_scan.h"  // stream-settle scan (L5 + the 18:41 world-reload cure)
-#include "ue_wrap/core/walk_timer.h"           // L5: [WALK-TIME] profiling
+#include "ue_wrap/engine/world_identity.h"     // R-2: gen-stamped index (dead-world guard)
+#include "coop/element/object_scan_hub.h"      // R-2: the shared sliced scan pass
 #include "ue_wrap/core/types.h"           // FVector, FRotator, NormalizeAxis
 
 #include <atomic>
@@ -46,7 +46,6 @@ using coop::net::WireKeyFromString;
 using coop::net::StringFromWireKey;
 using coop::net::FnvKey;
 
-constexpr auto     kRebuildThrottle = std::chrono::seconds(2);
 constexpr uint64_t kSendIntervalMs  = 50;   // ~20 Hz occupant stream while seated
 constexpr int      kInterpWindowMs  = 75;   // matches the NPC pose interp window
 
@@ -73,10 +72,10 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 // g_atvs is GAME-THREAD ONLY: Install / Tick / OnReliable (event_feed drain) /
 // QueueConnectBroadcastForSlot / OnDisconnect all run on the game thread, serially within the
 // net-pump, so no synchronization is needed (the drain + the sync ticks never overlap). Tick
-// mutates only entry FIELDS; structural inserts/erases happen in RebuildIndex (called at the top
-// of Tick, before the iteration) and OnReliable (the drain, before the ticks).
+// mutates only entry FIELDS; structural inserts/erases happen in the hub pass's
+// HubPassComplete (scan_hub::Tick runs before this module's Tick in the pump order, and both
+// are GT-serial) and OnReliable (the drain, before the ticks).
 std::unordered_map<std::wstring, AtvEntry> g_atvs;
-std::chrono::steady_clock::time_point g_lastRebuild{};
 size_t   g_lastLogCount = SIZE_MAX;
 uint64_t g_lastLogHash  = 0;
 bool     g_installed    = false;  // latch the one-time index+log (Install is the per-tick ensure path)
@@ -245,40 +244,44 @@ void ApplyMirror(AtvEntry& e) {
     e.dirty = false;
 }
 
-// Full GUObjectArray walk -> refresh the WIRE-key->actor index, PRESERVING interp/sender state for
-// keys that persist (only actor/idx are updated). Classifies each ATV's identity (v77): a save-placed
-// ATV (real key, both peers loaded it) keeps its real key; a HOST-side mid-session PURCHASED ATV gets
-// a synthetic key + an AtvSpawn announce so clients fresh-spawn it. Game thread. Logs a keys-hash.
-size_t RebuildIndex() {
-    if (!A::EnsureResolved()) return 0;
+// ---- R-2 shared-scan hub consumer (design: votv-shared-scan-hub-R2-DESIGN-2026-08-23.md).
+// The per-module walk is RETIRED; the hub's shared sliced pass drives these callbacks --
+// PRESERVING interp/sender state for keys that persist (only actor/idx are updated), and the
+// v77 identity classification verbatim: a save-placed ATV (real key, both peers loaded it)
+// keeps its real key; a HOST-side mid-session PURCHASED ATV gets a synthetic key + an
+// AtvSpawn announce so clients fresh-spawn it. Note the join edge: a purchase landing inside
+// the <=1-pass (~2 s) index staleness window at a join is announced on the NEXT pass, when
+// the joiner is already connected -- the announce reaches it; no re-announce machinery needed.
+uint32_t g_indexGen = 0;  // world gen of the last completed pass (stale-gen index = EMPTY)
+bool IndexCurrent() { return g_indexGen == ue_wrap::world_identity::Generation(); }
+struct ScanFound { std::wstring wireKey; void* obj; int32_t idx; std::wstring realKey; };
+std::vector<ScanFound> g_scanFound;   // pass scratch (GT-only)
+bool g_scanIsHost = false;            // pass context, captured at pass begin
+bool g_scanCapturing = false;
+
+void HubPassBegin(void*, bool) {
+    g_scanFound.clear();
     auto* s = g_session.load(std::memory_order_acquire);
-    const bool isHost = s && s->role() == coop::net::Role::Host;
+    g_scanIsHost = s && s->role() == coop::net::Role::Host;
+    const bool isHost = g_scanIsHost;
     // Baseline-capture window: before any client is connected, EVERY keyed ATV the host has is
     // save-placed (a joiner will load it from the save). After a client connects, a newly-appearing
     // key is a runtime purchase. (Accumulated -- not a single-frame latch -- so a default ATV that is
     // a few seconds slow to mint its UCS key still lands in the save-set before the first joiner.)
-    const bool capturing = isHost && (!s || !s->connected());
+    g_scanCapturing = isHost && (!s || !s->connected());
+}
 
-    // Stream-settle scan (ue_wrap/settled_object_scan.h) -- the raw tail-scan died at the 18:41
-    // host world reload (prune-to-0, recycled slots below the cursor; the host log's "atv: indexed
-    // 0 ATV(s)" at 18:41:10 is this). The capturing baseline + purchase-detect orderings are preserved
-    // below: the not-settled phase scans [0, N) so the initial save-set is fully captured.
-    static ue_wrap::scan::SettledObjectScan sScan;
-    sScan.diagName = "atv";  // [SCAN-DIAG] attribution
-    const auto r = sScan.Begin();
-
-    struct Found { std::wstring wireKey; void* obj; int32_t idx; std::wstring realKey; };
-    std::vector<Found> found;
-    found.reserve(4);
-    for (int32_t i = r.begin; i < r.end; ++i) {
-        void* obj = R::ObjectAt(i);
-        if (!obj || !A::IsAtv(obj)) continue;
+void HubMatch(void*, void* obj) {
+    const bool isHost = g_scanIsHost;
+    const bool capturing = g_scanCapturing;
+    auto& found = g_scanFound;
+    {
         const std::wstring nm = R::ToString(R::NameOf(obj));
-        if (nm.rfind(L"Default__", 0) == 0) continue;  // skip CDO
-        if (!R::IsLive(obj)) continue;
+        if (nm.rfind(L"Default__", 0) == 0) return;  // skip CDO
+        if (!R::IsLive(obj)) return;
         if (capturing) g_savePlacedActors.insert(obj);  // capture the ACTOR (even before it mints its key)
         std::wstring realKey = A::GetKeyString(obj);
-        if (realKey.empty() || realKey == L"None") continue;  // not yet keyed -- next rebuild picks it up
+        if (realKey.empty() || realKey == L"None") return;  // not yet keyed -- the next pass picks it up
         std::wstring wireKey;
         auto sf = g_synthForActor.find(obj);
         if (sf != g_synthForActor.end()) {
@@ -301,16 +304,21 @@ size_t RebuildIndex() {
         }
         found.push_back({ std::move(wireKey), obj, R::InternalIndexOf(obj), std::move(realKey) });
     }
+}
+
+size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
+    const bool isHost = g_scanIsHost;
+    auto& found = g_scanFound;
     // Drop entries whose ATV vanished. A HOST synth (purchased) ATV that's gone -> AtvDestroy so the
     // clients tear down their fresh-spawned mirror; clean its synth map entry.
-    //   FULL scan: `found` is authoritative (it covered [0,N)) -> drop any entry NOT in `found`.
-    //   TAIL scan: `found` is only the new tail -> a persistent live entry is NOT in `found`; prune by
+    //   FULL pass: `found` is authoritative (it covered [0,N)) -> drop any entry NOT in `found`.
+    //   TAIL pass: `found` is only the new tail -> a persistent live entry is NOT in `found`; prune by
     //   IsLiveByIndex instead (drop only entries whose actor actually died). The synth AtvDestroy folds
     //   into this prune (a gone host-synth -> announce + clean its synth map) -- same teardown, different
     //   liveness oracle. Either way the same set is removed (a tail vanish-drop is index-cheap, O(index)).
     for (auto it = g_atvs.begin(); it != g_atvs.end();) {
         bool keep;
-        if (r.isFull) {
+        if (isFull) {
             keep = false;
             for (auto& f : found) if (f.wireKey == it->first) { keep = true; break; }
         } else {
@@ -329,20 +337,30 @@ size_t RebuildIndex() {
         e.actor = f.obj;
         e.idx   = f.idx;
     }
-    sScan.End(g_atvs.size());  // feed the settle gate (any count change re-arms full walks)
-    // Recompute the keys-hash over the WHOLE index (cheap, O(index)) -- on a tail scan `found` is only the
+    g_indexGen = worldGen;
+    // Recompute the keys-hash over the WHOLE index (cheap, O(index)) -- on a tail pass `found` is only the
     // new arrivals, so hashing just `found` would lose the persistent keys + thrash the dedup log.
     uint64_t keysHash = 0;
     for (auto& kv : g_atvs) keysHash ^= FnvKey(kv.first);
     if (g_atvs.size() != g_lastLogCount || keysHash != g_lastLogHash) {
         g_lastLogCount = g_atvs.size();
         g_lastLogHash  = keysHash;
-        UE_LOGI("atv: index rebuilt -- %zu live ATV(s), keysHash=0x%016llX (%s scan, +%zu new) "
+        UE_LOGI("atv: index rebuilt -- %zu live ATV(s), keysHash=0x%016llX (%s pass, +%zu new) "
                 "(compare host vs client for cross-peer Key stability)",
                 g_atvs.size(), static_cast<unsigned long long>(keysHash),
-                r.isFull ? "full" : "tail", found.size());
+                isFull ? "full" : "tail", found.size());
     }
+    g_scanFound.clear();
     return g_atvs.size();
+}
+
+void RegisterWithScanHub() {
+    static bool sDone = false;
+    if (sDone) return;
+    sDone = true;
+    coop::element::scan_hub::Register(coop::element::scan_hub::Consumer{
+        "atv", nullptr, &A::EnsureResolved, &A::IsAtv,
+        &HubPassBegin, &HubMatch, &HubPassComplete, /*settleScans*/ 15});
 }
 
 }  // namespace
@@ -353,7 +371,7 @@ void Install(coop::net::Session* session) {
     // until the class loads) -- latch the one-time initial index + log so we don't full-walk the
     // GUObjectArray + spam the log every tick (the Tick's throttled rebuild owns ongoing indexing).
     if (!g_installed && A::EnsureResolved()) {
-        UE_LOGI("atv: indexed %zu ATV(s)", RebuildIndex());
+        RegisterWithScanHub();  // the hub builds the index on its own cadence
         g_installed = true;
     }
 }
@@ -474,7 +492,9 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Host) return;  // host-only snapshot
     if (peerSlot < 0 || peerSlot >= static_cast<int>(coop::players::kMaxPeers)) return;
-    RebuildIndex();
+    // R-2: the forced sync rebuild is gone -- the hub keeps the index <=1 pass (~2 s) fresh;
+    // a purchase inside that window is announced on the next pass to the (by then connected)
+    // joiner -- see the hub-consumer block note.
     void* localPlayer = coop::players::Registry::Get().Local();
     int sent = 0, spawns = 0;
     for (auto& kv : g_atvs) {
@@ -499,14 +519,9 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
 
 void Tick() {
     if (!A::EnsureResolved()) return;
+    RegisterWithScanHub();  // safety net for any order where Tick precedes Install
+    if (!IndexCurrent()) return;  // index belongs to a dead world -- wait for the hub's next pass
     auto* s = g_session.load(std::memory_order_acquire);
-
-    const auto nowTp = std::chrono::steady_clock::now();
-    if (nowTp - g_lastRebuild >= kRebuildThrottle) {
-        g_lastRebuild = nowTp;
-        ue_wrap::ScopedWalkTimer _wt("atv:RebuildIndex");  // logs only the rare ~5min full safety
-        RebuildIndex();   // L5: INCREMENTAL -- tail-scan + a rare full safety (no 237k walk)
-    }
 
     if (!s || !s->connected()) return;
     void* localPlayer = coop::players::Registry::Get().Local();

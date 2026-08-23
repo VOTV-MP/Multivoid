@@ -18,8 +18,8 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/devices/power_control.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/core/settled_object_scan.h"  // stream-settle scan (L5 + the 18:41 world-reload cure)
-#include "ue_wrap/core/walk_timer.h"           // L5: [WALK-TIME] profiling
+#include "ue_wrap/engine/world_identity.h"     // R-2: gen-stamped index (dead-world guard)
+#include "coop/element/object_scan_hub.h"      // R-2: the shared sliced scan pass
 
 #include <atomic>
 #include <chrono>
@@ -54,7 +54,6 @@ std::unordered_map<std::wstring, Pending> g_pending;    // key -> deferred incom
 std::chrono::steady_clock::time_point g_lastRetry{};
 size_t g_lastLogCount = SIZE_MAX;
 uint64_t g_lastLogHash = 0;
-bool g_indexed = false;
 std::vector<std::pair<std::wstring, Ref>> g_pollScratch;  // GT-only: reused per-tick poll snapshot
 
 using coop::net::WireKeyFromString;
@@ -67,41 +66,44 @@ void MaskToPayload(const std::wstring& key, uint8_t mask, coop::net::PowerPanelP
     p.pressMask = static_cast<uint8_t>(mask & kMaskBits);
 }
 
+// R-2: world generation of the last completed hub pass; a stale-gen index is treated as EMPTY
+// on every read path (dead-world guard -- see the hub-consumer block below).
+uint32_t g_indexGen = 0;
+bool IndexCurrent() { return g_indexGen == ue_wrap::world_identity::Generation(); }
+
 void* ResolveFast(const std::wstring& key) {
+    if (!IndexCurrent()) return nullptr;  // stale-gen index = another world's actors (R-1 class)
     std::lock_guard<std::mutex> lk(g_mutex);
     auto it = g_index.find(key);
     if (it != g_index.end() && R::IsLiveByIndex(it->second.actor, it->second.idx)) return it->second.actor;
     return nullptr;
 }
 
-// Full GUObjectArray walk -> rebuild the key->actor index. Game thread. Logs a keys-hash
-// (cross-peer Key stability signal) only on change.
-size_t RebuildIndex() {
-    if (!PC::EnsureResolved()) return 0;
-    // Stream-settle scan (ue_wrap/settled_object_scan.h) -- the raw tail-scan died at the 18:41
-    // host world reload (prune-to-0, recycled slots below the cursor).
-    static ue_wrap::scan::SettledObjectScan sScan;
-    sScan.diagName = "power";  // [SCAN-DIAG] attribution
-    const auto r = sScan.Begin();
-    std::vector<std::pair<std::wstring, Ref>> found;
-    found.reserve(4);  // there are typically 1-2 panels in a base
-    for (int32_t i = r.begin; i < r.end; ++i) {
-        void* obj = R::ObjectAt(i);
-        if (!obj || !PC::IsPowerControl(obj)) continue;
-        const std::wstring nm = R::ToString(R::NameOf(obj));
-        if (nm.rfind(L"Default__", 0) == 0) continue;  // skip CDO
-        if (!R::IsLive(obj)) continue;
-        std::wstring key = PC::GetKeyString(obj);
-        if (key.empty() || key == L"None") continue;  // unkeyed template
-        found.emplace_back(std::move(key), Ref{ obj, R::InternalIndexOf(obj) });
-    }
+// ---- R-2 shared-scan hub consumer (design: votv-shared-scan-hub-R2-DESIGN-2026-08-23.md).
+// The per-module SettledObjectScan full walk is RETIRED; the hub's shared sliced pass drives
+// these callbacks. Behavior preserved verbatim from the old RebuildIndex.
+std::vector<std::pair<std::wstring, Ref>> g_scanFound;  // pass scratch (GT-only)
+
+void HubPassBegin(void*, bool) { g_scanFound.clear(); }
+
+void HubMatch(void*, void* obj) {
+    const std::wstring nm = R::ToString(R::NameOf(obj));
+    if (nm.rfind(L"Default__", 0) == 0) return;  // skip CDO
+    if (!R::IsLive(obj)) return;
+    std::wstring key = PC::GetKeyString(obj);
+    if (key.empty() || key == L"None") return;  // unkeyed template
+    g_scanFound.emplace_back(std::move(key), Ref{ obj, R::InternalIndexOf(obj) });
+}
+
+size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
+    const size_t added = g_scanFound.size();
     uint64_t keysHash = 0;
     size_t   total;
     {
         std::lock_guard<std::mutex> lk(g_mutex);
-        if (r.isFull) g_index.clear();                         // full re-scan: rebuild from scratch
-        for (auto& f : found) g_index[f.first] = f.second;     // add the new (or all, on a full scan)
-        if (!r.isFull) {                                       // tail scan: prune dead entries (cheap, O(index))
+        if (isFull) g_index.clear();                           // full pass: rebuild from scratch
+        for (auto& f : g_scanFound) g_index[f.first] = f.second;
+        if (!isFull) {                                         // tail pass: prune dead entries (cheap, O(index))
             for (auto it = g_index.begin(); it != g_index.end(); ) {
                 if (R::IsLiveByIndex(it->second.actor, it->second.idx)) ++it;
                 else it = g_index.erase(it);
@@ -109,16 +111,26 @@ size_t RebuildIndex() {
         }
         for (auto& kv : g_index) keysHash ^= FnvKey(kv.first);  // recompute over the index (cheap, O(index))
         total = g_index.size();
+        g_indexGen = worldGen;
     }
-    sScan.End(total);  // feed the settle gate (any count change re-arms full walks)
+    g_scanFound.clear();
     if (total != g_lastLogCount || keysHash != g_lastLogHash) {
         g_lastLogCount = total;
         g_lastLogHash = keysHash;
-        UE_LOGI("power: index rebuilt -- %zu live power panel(s), keysHash=0x%016llX (%s scan, +%zu new) "
+        UE_LOGI("power: index rebuilt -- %zu live power panel(s), keysHash=0x%016llX (%s pass, +%zu new) "
                 "(compare host vs client for cross-peer Key stability)",
-                total, static_cast<unsigned long long>(keysHash), r.isFull ? "full" : "tail", found.size());
+                total, static_cast<unsigned long long>(keysHash), isFull ? "full" : "tail", added);
     }
     return total;
+}
+
+void RegisterWithScanHub() {
+    static bool sDone = false;
+    if (sDone) return;
+    sDone = true;
+    coop::element::scan_hub::Register(coop::element::scan_hub::Consumer{
+        "power", nullptr, &PC::EnsureResolved, &PC::IsPowerControl,
+        &HubPassBegin, &HubMatch, &HubPassComplete, /*settleScans*/ 15});
 }
 
 // RECEIVER apply: drive `actor`'s 5 breaker bools to `mask` (write + panel-visual refresh via
@@ -179,10 +191,7 @@ void PollAndBroadcast() {
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
-    if (!g_indexed && PC::EnsureResolved()) {
-        UE_LOGI("power: indexed %zu power panel(s)", RebuildIndex());
-        g_indexed = true;
-    }
+    RegisterWithScanHub();  // the hub builds the index on its own cadence
 }
 
 void OnReliable(const coop::net::PowerPanelPayload& payload, uint8_t senderPeerSlot) {
@@ -200,7 +209,8 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Host) return;  // host-only snapshot
     if (peerSlot < 0 || peerSlot >= static_cast<int>(coop::players::kMaxPeers)) return;
-    RebuildIndex();
+    // R-2: the forced sync rebuild is gone -- the hub keeps the index <=1 pass (~2 s) fresh
+    // (power panels are static level actors; the staleness window is empty in practice).
     std::vector<std::pair<std::wstring, Ref>> items;
     {
         std::lock_guard<std::mutex> lk(g_mutex);
@@ -224,14 +234,14 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
 
 void Tick() {
     if (!PC::EnsureResolved()) return;
-    if (!g_indexed) { UE_LOGI("power: indexed %zu power panel(s)", RebuildIndex()); g_indexed = true; }
+    RegisterWithScanHub();  // safety net for any order where Tick precedes Install
+    if (!IndexCurrent()) return;  // index belongs to a dead world -- wait for the hub's next pass
 
     const auto now = std::chrono::steady_clock::now();
     if (now - g_lastRetry >= kRetryRebuildThrottle) {
         g_lastRetry = now;
-        ue_wrap::ScopedWalkTimer _wt("power:RebuildIndex");  // logs only the rare ~5min full safety
-        RebuildIndex();   // L5: INCREMENTAL -- tail-scan + a rare full safety (no 237k walk)
-        // RECEIVER: retry deferred applies for panels that have now streamed in.
+        // RECEIVER: retry deferred applies for panels that have now streamed in (the hub
+        // refreshed the index on its own cadence; this throttle now paces only the retries).
         std::vector<std::pair<std::wstring, uint8_t>> ready;
         {
             std::lock_guard<std::mutex> lk(g_mutex);
@@ -258,12 +268,11 @@ void OnDisconnect() {
     const size_t n = g_lastKnown.size();
     g_lastKnown.clear();
     g_pending.clear();
-    // Also drop the key->actor index: a new session re-indexes from scratch (Install ->
-    // RebuildIndex once g_indexed is false), so we never carry a prior session's (possibly
-    // world-reloaded) actor pointers across. IsLiveByIndex would catch stale ones, but a clean
-    // rebuild per session is the correct posture (don't lean on the 2s throttle to self-heal).
+    // Also drop the key->actor index: a new session starts clean (the hub's next pass
+    // rebuilds it), so we never carry a prior session's (possibly world-reloaded) actor
+    // pointers across. IsLiveByIndex + the gen stamp would catch stale ones, but a clean
+    // rebuild per session is the correct posture.
     g_index.clear();
-    g_indexed = false;
     if (n > 0) UE_LOGI("power: OnDisconnect cleared %zu last-known", n);
 }
 

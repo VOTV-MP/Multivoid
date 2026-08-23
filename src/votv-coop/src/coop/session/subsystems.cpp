@@ -5,6 +5,7 @@
 
 #include "coop/session/subsystems.h"
 
+#include "coop/element/object_scan_hub.h"  // R-2: the shared sliced GUObjectArray pass
 #include "coop/world/balance_sync.h"
 #include "coop/interactables/comp_sync.h"
 #include "coop/interactables/console_state_sync.h"
@@ -489,6 +490,10 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     // for this whole block, so it named the BLOCK (~45-100ms/2s steady-state spike) but not the member.
     // ScopedWalkTimer logs [WALK-TIME] sync:<name> per call >=1ms -> the culprit self-identifies in one run
     // (cheap no-op syncs stay silent). Remove once the heavy one is found + fixed. WT = ue_wrap::ScopedWalkTimer.
+    // R-2 (2026-08-23): THE shared sliced GUObjectArray pass -- one walk serves every index
+    // consumer (design: votv-shared-scan-hub-R2-DESIGN-2026-08-23.md). Runs BEFORE the
+    // consumers' Ticks so a completed pass's fresh index is visible in the same pump tick.
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:scan_hub"}; coop::element::scan_hub::Tick(); }
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:interactable"}; coop::interactable_sync::Tick(); }  // retry deferred door/light/container applies (still streaming in)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:keypad"}; coop::keypad_sync::Tick(); }        // v33 keypad poll + deferred-apply retry
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:time"}; coop::time_sync::Tick(); }          // v36/v109 world clock: HOST publishes the clock (net thread streams unreliable ClockPose); CLIENT drains + applies (design F)

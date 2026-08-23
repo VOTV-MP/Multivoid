@@ -9,8 +9,8 @@
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/core/settled_object_scan.h"  // stream-settle scan (L5 + the 18:41 world-reload cure)
-#include "ue_wrap/core/walk_timer.h"           // L5: [WALK-TIME] profiling
+#include "ue_wrap/engine/world_identity.h"     // R-2: gen-stamped index (dead-world guard)
+#include "coop/element/object_scan_hub.h"      // R-2: the shared sliced scan pass
 #include "ue_wrap/devices/windturbine.h"
 
 #include <atomic>
@@ -111,41 +111,55 @@ bool PayloadFinite(const coop::net::TurbineStatePayload& p) {
     return true;
 }
 
-// Rebuild the posKey->actor index (~13 static actors; the set virtually never changes).
-// Stream-settle scan (ue_wrap/settled_object_scan.h) -- the raw tail-scan died at the 18:41
-// host world reload (prune-to-0, recycled slots below the cursor). WT::IsTurbine is the same
-// cheap class-descendant filter the old FindObjectsByClass applied, per-object on the range.
-void RebuildIndex() {
-    static ue_wrap::scan::SettledObjectScan sScan;
-    sScan.diagName = "turbine";  // [SCAN-DIAG] attribution
-    const auto r = sScan.Begin();
-    std::vector<std::pair<std::wstring, Ref>> found;
-    for (int32_t i = r.begin; i < r.end; ++i) {
-        void* obj = R::ObjectAt(i);
-        if (!obj || !WT::IsTurbine(obj) || !R::IsLive(obj)) continue;
-        found.emplace_back(PosKey(obj), Ref{ obj, R::InternalIndexOf(obj) });
-    }
+// ---- R-2 shared-scan hub consumer (~13 static actors; the set virtually never changes).
+// The per-module walk is RETIRED; the hub's shared sliced pass drives these callbacks
+// (design: votv-shared-scan-hub-R2-DESIGN-2026-08-23.md). Behavior preserved verbatim from
+// the old RebuildIndex, including its filter set (no Default__ skip -- turbine never had one).
+uint32_t g_indexGen = 0;  // world gen of the last completed pass (stale-gen index = EMPTY)
+bool IndexCurrent() { return g_indexGen == ue_wrap::world_identity::Generation(); }
+std::vector<std::pair<std::wstring, Ref>> g_scanFound;  // pass scratch (GT-only)
+
+void HubPassBegin(void*, bool) { g_scanFound.clear(); }
+
+void HubMatch(void*, void* obj) {
+    if (!R::IsLive(obj)) return;
+    g_scanFound.emplace_back(PosKey(obj), Ref{ obj, R::InternalIndexOf(obj) });
+}
+
+size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
     size_t total;
     {
         std::lock_guard<std::mutex> lk(g_mutex);
-        if (r.isFull) g_index.clear();                         // full re-scan: rebuild from scratch
-        for (auto& f : found) g_index[f.first] = f.second;     // add the new (or all, on a full scan)
-        if (!r.isFull) {                                       // tail scan: prune dead entries (cheap, O(index))
+        if (isFull) g_index.clear();                           // full pass: rebuild from scratch
+        for (auto& f : g_scanFound) g_index[f.first] = f.second;
+        if (!isFull) {                                         // tail pass: prune dead entries (cheap, O(index))
             for (auto it = g_index.begin(); it != g_index.end(); ) {
                 if (R::IsLiveByIndex(it->second.actor, it->second.idx)) ++it;
                 else it = g_index.erase(it);
             }
         }
         total = g_index.size();
+        g_indexGen = worldGen;
     }
-    sScan.End(total);  // feed the settle gate (any count change re-arms full walks)
+    g_scanFound.clear();
     if (total != g_lastLogCount) {
         g_lastLogCount = total;
         UE_LOGI("turbine: index rebuilt -- %zu turbine(s)", total);
     }
+    return total;
+}
+
+void RegisterWithScanHub() {
+    static bool sDone = false;
+    if (sDone) return;
+    sDone = true;
+    coop::element::scan_hub::Register(coop::element::scan_hub::Consumer{
+        "turbine", nullptr, &WT::EnsureResolved, &WT::IsTurbine,
+        &HubPassBegin, &HubMatch, &HubPassComplete, /*settleScans*/ 15});
 }
 
 void* ResolveFast(const std::wstring& key) {
+    if (!IndexCurrent()) return nullptr;  // stale-gen index = another world's actors (R-1 class)
     std::lock_guard<std::mutex> lk(g_mutex);
     auto it = g_index.find(key);
     if (it != g_index.end() && R::IsLiveByIndex(it->second.actor, it->second.idx))
@@ -163,16 +177,18 @@ void ApplyState(void* turbine, const std::wstring& key, const WT::State& want) {
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
+    RegisterWithScanHub();  // the hub builds the index on its own cadence
 }
 
 void Tick() {
     if (!WT::EnsureResolved()) return;
+    RegisterWithScanHub();  // safety net for any order where Tick precedes Install
+    if (!IndexCurrent()) return;  // index belongs to a dead world -- wait for the hub's next pass
     const auto now = std::chrono::steady_clock::now();
     if (now - g_lastRebuild >= kRebuildThrottle) {
         g_lastRebuild = now;
-        ue_wrap::ScopedWalkTimer _wt("turbine:RebuildIndex");  // logs only the rare ~5min full safety
-        RebuildIndex();   // L5: INCREMENTAL -- tail-scan + a rare full safety (no 237k walk)
-        // Retry deferred applies for turbines that streamed in.
+        // Retry deferred applies for turbines that streamed in (the hub refreshes the index
+        // on its own cadence; this throttle now paces only the retries).
         std::vector<std::pair<std::wstring, WT::State>> ready;
         {
             std::lock_guard<std::mutex> lk(g_mutex);
@@ -245,7 +261,8 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Host) return;
     if (!WT::EnsureResolved()) return;
-    RebuildIndex();
+    // R-2: the forced sync rebuild is gone -- the hub keeps the index <=1 pass (~2 s) fresh
+    // (turbines are static level actors; the staleness window is empty in practice).
     std::vector<std::pair<std::wstring, Ref>> items;
     {
         std::lock_guard<std::mutex> lk(g_mutex);

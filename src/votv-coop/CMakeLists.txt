@@ -429,6 +429,7 @@ add_library(votv-coop SHARED
     src/coop/config/config_selftest.cpp
     src/coop/config/config_review.cpp
     src/coop/element/element.cpp
+    src/coop/element/object_scan_hub.cpp
     src/coop/element/element_deleter.cpp
     src/coop/element/registry.cpp
     src/coop/element/world_actor.cpp
