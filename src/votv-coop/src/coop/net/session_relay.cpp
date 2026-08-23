@@ -73,9 +73,8 @@ void Session::RelayReliableToOtherClients(int originSlot, ReliableKind kind,
     // re-validates (range + epoch), so a forged relay is dropped per-endpoint.
     if (cfg_.role != Role::Host) return;
     if (len < static_cast<int>(sizeof(PacketHeader)) || len > kMaxPacketBytes) return;
-    auto* sockets = SteamNetworkingSockets();
-    auto* utils = SteamNetworkingUtils();
-    if (!sockets || !utils) return;
+    // GNS availability guard (the backlog's send helper re-checks per attempt).
+    if (!SteamNetworkingSockets() || !SteamNetworkingUtils()) return;
     const int laneIdx = static_cast<int>(LaneForKind(kind));
     for (int i = 1; i < kMaxPeers; ++i) {
         if (i == originSlot) continue;
@@ -85,24 +84,18 @@ void Session::RelayReliableToOtherClients(int originSlot, ReliableKind kind,
         // by the relay whitelist's nature) skip a joiner still at the menu -- its
         // world-ready replay re-derives the state.
         if (!IsSlotWorldReady(i) && !IsPreWorldSendableKind(kind)) continue;
-        // One GNS-owned message per recipient (cannot share across sends).
-        SteamNetworkingMessage_t* msg = utils->AllocateMessage(len);
-        if (!msg) {
-            UE_LOGW("net: relay AllocateMessage(%d) returned null", len);
-            continue;
-        }
-        auto* dst = static_cast<uint8_t*>(msg->m_pData);
-        std::memcpy(dst, data, static_cast<size_t>(len));
-        auto* h = reinterpret_cast<PacketHeader*>(dst);
+        // R-4b: the relay rides the same delivery guarantee as every other
+        // reliable send -- before the backlog existed a refusal here was the
+        // WORST silent-loss surface (deleted with not even a warn, so the
+        // field's rc=-25 count undercounted for 3+ peer sessions). Rewrite the
+        // header on a stack copy and hand the final wire bytes to the backlog.
+        uint8_t wire[kMaxPacketBytes];
+        std::memcpy(wire, data, static_cast<size_t>(len));
+        auto* h = reinterpret_cast<PacketHeader*>(wire);
         h->senderEpoch = ownEpoch_;
         h->senderSlot = static_cast<uint8_t>(originSlot);
         h->_reserved2[0] = h->_reserved2[1] = h->_reserved2[2] = 0;
-        msg->m_conn = hConn;
-        msg->m_nFlags = k_nSteamNetworkingSend_Reliable;
-        msg->m_idxLane = static_cast<uint16>(laneIdx);
-        int64 outMsgNum = 0;
-        sockets->SendMessages(1, &msg, &outMsgNum, /*bDeleteFailedMessages*/true);
-        if (outMsgNum >= 0) net_stats::AddSent(static_cast<uint32_t>(len));
+        backlog_.SendOrQueue(i, laneIdx, hConn, wire, len);
     }
 }
 

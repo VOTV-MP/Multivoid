@@ -83,6 +83,15 @@ constexpr uint64_t kStablePollMs = 300;
 struct HostStream {
     bool     active = false;
     bool     blobReady = false;
+    // R-4b D2: the pump owns Begin's delivery too. Begin used to be a
+    // fire-and-forget SendReliableToSlot whose false return was ignored --
+    // under send-buffer backpressure it was silently DELETED and the chunks
+    // followed with no announce. Now Begin is staged here and TickHost
+    // try-sends it (retry next tick on backpressure) BEFORE any chunk, which
+    // is what keeps the in-lane "Begin precedes its chunks" proof true now
+    // that the save family is exempt from the session's send backlog.
+    bool     beginSent = false;
+    coop::net::SaveTransferBeginPayload beginPayload{};
     uint32_t nextChunk = 0;
     uint32_t chunkCount = 0;
     // stable-read probe state
@@ -169,11 +178,19 @@ std::chrono::steady_clock::time_point g_pileFlushLastRun[coop::net::kMaxPeers]{}
 constexpr auto kPileFlushLateWindow = std::chrono::seconds(25);       // cover a long load tail + late clusters
 constexpr auto kPileFlushCadence    = std::chrono::milliseconds(500); // 2 Hz re-flush (cold; deduped to changes)
 
-void SendBeginNoSave_(int slot) {
-    coop::net::SaveTransferBeginPayload b{};
-    b.totalBytes = 0;
-    g_session->SendReliableToSlot(slot, coop::net::ReliableKind::SaveTransferBegin,
-                                  &b, sizeof(b));
+// R-4b D2: arm a "no save" announce (totalBytes=0, zero chunks) as a pump
+// stream so TickHost delivers the Begin with retry -- the old direct send's
+// false return was ignored, and a backpressure-deleted no-save Begin left the
+// client waiting forever.
+void ArmBeginNoSave_(int slot) {
+    HostStream& hs = g_host[slot];
+    hs = HostStream{};
+    hs.active = true;
+    hs.blobReady = true;
+    hs.beginSent = false;
+    hs.beginPayload = coop::net::SaveTransferBeginPayload{};
+    hs.beginPayload.totalBytes = 0;
+    hs.chunkCount = 0;
     UE_LOGW("save_transfer: no readable host save for slot %d -- client will fresh-boot", slot);
 }
 
@@ -190,15 +207,18 @@ void BeginStreamFromBlob_(int slot, HostStream& hs, std::vector<uint8_t>&& bytes
     hs.chunkCount = static_cast<uint32_t>(
         (hs.blob.size() + coop::net::kSaveChunkBytes - 1) / coop::net::kSaveChunkBytes);
 
-    coop::net::SaveTransferBeginPayload b{};
-    b.totalBytes = static_cast<uint32_t>(hs.blob.size());
-    b.chunkCount = hs.chunkCount;
-    b.crc32 = crc;
-    b.gameMode = 0;  // story -- the coop target; a sandbox-host variant threads the
-                     // live GameMode here when sandbox coop becomes a goal
-    b.sidecarBytes = sidecarBytes;  // Phase 2: leading bytes of the stream that are the framed identity map
-    g_session->SendReliableToSlot(slot, coop::net::ReliableKind::SaveTransferBegin,
-                                  &b, sizeof(b));
+    // R-4b D2: STAGE the announce; TickHost try-sends it (with retry) before
+    // any chunk. The old direct send here ignored its return -- a
+    // backpressure-deleted Begin meant chunks with no announce.
+    hs.beginSent = false;
+    hs.beginPayload = coop::net::SaveTransferBeginPayload{};
+    hs.beginPayload.totalBytes = static_cast<uint32_t>(hs.blob.size());
+    hs.beginPayload.chunkCount = hs.chunkCount;
+    hs.beginPayload.crc32 = crc;
+    hs.beginPayload.gameMode = 0;  // story -- the coop target; a sandbox-host variant threads the
+                                   // live GameMode here when sandbox coop becomes a goal
+    hs.beginPayload.sidecarBytes = sidecarBytes;  // Phase 2: leading stream bytes = the framed identity map
+    (void)slot;
 }
 
 // One stable-read attempt for a slot still capturing its blob. Returns true when
@@ -212,7 +232,7 @@ bool TryCaptureBlob_(int slot, HostStream& hs) {
     std::error_code ec;
     const uint64_t size = fs::file_size(file, ec);
     if (ec) {
-        if (++hs.readAttempts >= 4) { SendBeginNoSave_(slot); hs.active = false; }
+        if (++hs.readAttempts >= 4) { ArmBeginNoSave_(slot); }  // R-4b: retried by the pump
         return false;
     }
     const auto mtime = fs::last_write_time(file, ec).time_since_epoch().count();
@@ -231,7 +251,7 @@ bool TryCaptureBlob_(int slot, HostStream& hs) {
 
     std::vector<uint8_t> bytes;
     if (!ReadWholeFile(file, bytes) || bytes.empty()) {
-        if (++hs.readAttempts >= 4) { SendBeginNoSave_(slot); hs.active = false; }
+        if (++hs.readAttempts >= 4) { ArmBeginNoSave_(slot); }  // R-4b: retried by the pump
         return false;
     }
     const uint32_t crc = Crc32(bytes.data(), bytes.size());
@@ -545,7 +565,7 @@ void OnRequest(int peerSlot) {
     // to the canonical on-disk slot via TickHost's torn-read guard rather than deny
     // the join: a stale world still beats no world (the reconcile layer covers it, as
     // it did before this fix).
-    if (g_hostSlot.empty()) { SendBeginNoSave_(peerSlot); return; }
+    if (g_hostSlot.empty()) { ArmBeginNoSave_(peerSlot); return; }
     hs.active = true;  // TickHost::TryCaptureBlob_ captures the canonical slot
     UE_LOGW("save_transfer: slot %d -- LIVE capture unavailable; falling back to canonical "
             "slot '%ls' (stale; torn-read guard)", peerSlot, g_hostSlot.c_str());
@@ -562,6 +582,17 @@ void TickHost() {
             TryCaptureBlob_(slot, hs);
             continue;
         }
+        // R-4b D2: Begin FIRST, success-gated -- the pump's pacing lane
+        // (TrySendReliableToSlot) refuses under backpressure and we retry next
+        // tick; no chunk moves until the announce is in the stream.
+        if (!hs.beginSent) {
+            if (!g_session->TrySendReliableToSlot(
+                    slot, coop::net::ReliableKind::SaveTransferBegin,
+                    &hs.beginPayload, sizeof(hs.beginPayload))) {
+                continue;  // backpressure (or slot dropped) -- retry next tick
+            }
+            hs.beginSent = true;
+        }
         for (int n = 0; n < kChunksPerTick && hs.nextChunk < hs.chunkCount; ++n) {
             const size_t off = static_cast<size_t>(hs.nextChunk) * coop::net::kSaveChunkBytes;
             const size_t dataLen =
@@ -573,7 +604,7 @@ void TickHost() {
             static uint8_t msg[4 + coop::net::kSaveChunkBytes];
             std::memcpy(msg, &hs.nextChunk, 4);
             std::memcpy(msg + 4, hs.blob.data() + off, dataLen);
-            if (!g_session->SendReliableToSlot(
+            if (!g_session->TrySendReliableToSlot(
                     slot, coop::net::ReliableKind::SaveTransferChunk, msg,
                     static_cast<int>(4 + dataLen))) {
                 break;  // send-buffer backpressure (or slot dropped) -- retry next tick

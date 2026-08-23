@@ -273,6 +273,14 @@ void Session::HandleConnStatusChanged(void* info) {
             return;
         }
         ConfigureLanesForPeer(hConn);
+        // R-4b: mirror the buffer size the connection actually runs with --
+        // the backlog drain's D8 reserve gate is computed against it. Same
+        // resolve as ConfigureLanesForPeer's pin (knob or the default).
+        {
+            const long bufKb =
+                coop::config::ResolveInt(coop::config_registry::rows::net_sendbuf_kb);
+            sendBufBytes_ = (bufKb > 0) ? static_cast<int>(bufKb) * 1024 : 512 * 1024;
+        }
         // Order matters: lanes-configured flag flips ONLY after the
         // ConfigureConnectionLanes call returns, so IsSlotReady() readers
         // see the slot as ready only when the per-kind lane mapping is
@@ -341,6 +349,8 @@ void Session::HandleConnStatusChanged(void* info) {
             // still-queued reliable from this peer dispatch AFTER the teardown.
             peerConns_[slot].store(0);
             peerLanesConfigured_[slot].store(false, std::memory_order_release);
+            // R-4b: the departing peer's queued reliable state dies with it.
+            backlog_.FreeSlot(slot);
         }
         // Per the GNS header doc on the status callback, terminal states
         // require us to CloseConnection to release the handle.
@@ -439,12 +449,41 @@ bool Session::Kick(int peerSlot, const char* reason) {
     return KickClaimed(peerSlot, hConn, reason);
 }
 
+// R-4b D3: a slot's send backlog tripped a fatal bound (no progress for
+// kNoProgress with a non-empty queue, or the byte cap). "Queued-until-sent or
+// connection-fatal, never warn-and-drop": the honest exit is closing the
+// connection, and the backlog dies WITH it (FreeSlot in KickClaimed's
+// teardown). Host: kick the slot. Client: slot 0 is our host link -- claim it
+// and run the SAME teardown (GNS delivers no callback for a connection we
+// close; KickClaimed is slot-agnostic). A slow-but-DRAINING link never gets
+// here -- progress resets the timer; a truly dead link normally dies at GNS's
+// own connected-timeout first.
+void Session::FatalCloseSlot(int slot, const char* reason) {
+    UE_LOGE("net: send backlog FATAL for slot %d -- %s; closing the connection "
+            "(delivery guarantee: never silently drop)", slot, reason ? reason : "?");
+    if (cfg_.role == Role::Host) {
+        Kick(slot, reason);
+        return;
+    }
+    if (slot != 0) return;  // a client only owns its host link
+    {   // Surface WHY on the client's own flee-to-menu path.
+        std::lock_guard<std::mutex> lk(hostCloseMutex_);
+        hostCloseReason_ = reason ? reason : "send backlog fatal";
+    }
+    const uint32_t hConn = peerConns_[0].exchange(0);
+    if (hConn == 0) return;
+    KickClaimed(0, hConn, reason);
+}
+
 // The teardown for a connection whose slot the caller has ALREADY claimed
 // (peerConns_[peerSlot] exchanged/CAS'd to 0). Split out so the token-checked
 // entry point can do a compare-exchange claim instead of a blind exchange and
 // still share one teardown.
 bool Session::KickClaimed(int peerSlot, uint32_t hConn, const char* reason) {
     peerLanesConfigured_[peerSlot].store(false, std::memory_order_release);
+    // R-4b: the delivery guarantee is scoped to the connection's lifetime --
+    // the departing peer's queued state dies with the peer.
+    backlog_.FreeSlot(peerSlot);
 
     if (auto* sockets = SteamNetworkingSockets()) {
         // No linger: an admin kick should drop the peer immediately. The reason

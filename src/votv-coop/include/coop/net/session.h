@@ -26,6 +26,7 @@
 #include "coop/net/link_kind.h"            // how a player's traffic reaches the session
 #include "coop/net/net_stats.h"            // session traffic accounting (the one counter owner)
 #include "coop/net/protocol.h"
+#include "coop/net/send_backlog.h"         // R-4b: the reliable-send delivery guarantee
 #include "coop/player/players_registry.h"  // kMaxPeers (host + 3 clients = 4)
 
 #include <array>
@@ -269,8 +270,24 @@ public:
     // PEER-state replay (T2-4) passes the existing peer's slot so the new
     // client routes the replayed action to that peer's puppet (and the
     // receiver's eid-range trust check sees the right role).
+    // R-4b DELIVERY CONTRACT: true = the message WILL be delivered -- it entered
+    // the GNS stream or the session's send backlog (drained on the net thread;
+    // queued-until-sent or connection-fatal, never silently dropped). false =
+    // it never will be: pre-world gate, dead/dying slot, or invalid length.
+    // The save-stream family (SaveTransferBegin/Chunk) is the ONE exemption and
+    // is routed to TrySendReliableToSlot below (its pump owns pacing + retry;
+    // mixing it with the backlog would let a bypassing chunk overtake a queued
+    // Begin in the same lane).
     bool SendReliableToSlot(int peerSlot, ReliableKind kind, const void* payload,
                             int len, uint8_t senderSlot = 0);
+
+    // The PACING lane (R-4b D2): one direct GNS attempt, NO backlog. Returns
+    // false on send-buffer backpressure (rc=-25) -- that false IS the caller's
+    // pacing signal (retry next tick). Sole intended caller: the save-transfer
+    // pump (Begin + Chunk, both success-gated there). Everything else uses
+    // SendReliableToSlot's guarantee.
+    bool TrySendReliableToSlot(int peerSlot, ReliableKind kind, const void* payload,
+                               int len, uint8_t senderSlot = 0);
 
     // v56 save-transfer bulk sink: SaveTransferChunk payloads (~56KB, far over the
     // fixed inbox slot) are handed to this callback on the NET THREAD instead of
@@ -796,6 +813,18 @@ private:
     std::array<std::atomic<bool>, kMaxPeers> slotWorldReady_{};
 
     std::atomic<uint32_t> sendSeq_{0};
+
+    // R-4b: the reliable-send delivery guarantee (per-(slot,lane) backlogs;
+    // see send_backlog.h). Drained on the net thread each loop pass; freed at
+    // every peerConns_ zeroing site. sendBufBytes_ mirrors the per-connection
+    // SendBufferSize actually configured (knob or default) -- the drain's D8
+    // reserve gate is computed against it.
+    SendBacklog backlog_;
+    int sendBufBytes_ = 512 * 1024;
+    // Fatal-backlog close (D3): host -> Kick(slot); client -> claim + the same
+    // KickClaimed teardown on its host connection (GNS delivers no callback
+    // for a connection we close ourselves). Net thread.
+    void FatalCloseSlot(int slot, const char* reason);
     // Per-slot RTT (ms), sampled ~1 Hz on the net thread from GNS m_nPing. 0-init;
     // the sampler sets -1 for a slot with no live connection and the real ping for a
     // connected one. Replaces the old aggregate lastRttMs_ (RULE 2: event_feed now

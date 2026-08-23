@@ -125,8 +125,63 @@ bool Session::TryGetReliable(ReliableMessage& out) {
 // (v66 voice send/inbox live in session_voice.cpp -- the session_npc.cpp
 // extraction precedent; session.cpp had crossed the 800-LOC soft cap.)
 
+namespace {
+// R-4b: build the complete on-wire reliable packet (PacketHeader +
+// ReliableHeader + payload) into `buf` (caller-sized). ONE builder for the
+// guaranteed path, the try path and the fan-out -- the backlog stores and
+// retries exactly these bytes.
+int BuildReliableWire_(uint8_t* buf, ReliableKind kind, const void* payload, int len,
+                       uint32_t seq, uint32_t ownEpoch, uint8_t senderSlot) {
+    auto* hdr = reinterpret_cast<PacketHeader*>(buf);
+    WriteHeader(*hdr, MsgType::Reliable, seq, ownEpoch, senderSlot);
+    auto* rh = reinterpret_cast<ReliableHeader*>(buf + sizeof(PacketHeader));
+    std::memset(rh, 0, sizeof(*rh));
+    rh->kind = static_cast<uint8_t>(kind);
+    rh->payloadLen = static_cast<uint16_t>(len);
+    // len=0 with payload=nullptr is a legitimate control packet; memcpy of a
+    // null source is UB pre-C++20, hence the guard.
+    if (len > 0 && payload) {
+        std::memcpy(buf + sizeof(PacketHeader) + sizeof(ReliableHeader), payload, len);
+    }
+    return static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader)) + len;
+}
+}  // namespace
+
 bool Session::SendReliableToSlot(int peerSlot, ReliableKind kind, const void* payload,
                                  int len, uint8_t senderSlot) {
+    // R-4b D2: the save-stream family is the pump's PACING lane -- it must not
+    // mix with the backlog (a bypassing chunk would overtake a queued Begin in
+    // the same Bulk lane). The pump calls TrySendReliableToSlot directly; this
+    // routing keeps any stray caller correct rather than silently wrong.
+    if (kind == ReliableKind::SaveTransferBegin || kind == ReliableKind::SaveTransferChunk)
+        return TrySendReliableToSlot(peerSlot, kind, payload, len, senderSlot);
+    if (peerSlot < 0 || peerSlot >= kMaxPeers) return false;
+    if (len < 0 || len > kMaxReliablePayload) {
+        UE_LOGW("net: SendReliableToSlot rejected (slot=%d len=%d > %d)",
+                peerSlot, len, kMaxReliablePayload);
+        return false;
+    }
+    // v56 pre-world gate (B2, the MTA invariant): world-mutating kinds don't
+    // flow to a slot that hasn't announced world-ready (a menu-mode joiner is
+    // connected ~30-60 s before it has a world); the world-ready connect replay
+    // reconstructs all of it. Allowlist: handshake/identity + the save transfer.
+    // Deliberately NOT absorbed by the backlog: queueing a gate-skip would
+    // deliver stale pre-world mutations at ready-time and DUPE the replay.
+    if (!IsSlotWorldReady(peerSlot) && !IsPreWorldSendableKind(kind)) return false;
+    const uint32_t hConn = peerConns_[peerSlot].load();
+    if (hConn == 0) return false;
+
+    uint8_t wire[sizeof(PacketHeader) + sizeof(ReliableHeader) + kMaxReliablePayload];
+    const int total = BuildReliableWire_(wire, kind, payload, len,
+                                         sendSeq_.fetch_add(1), ownEpoch_, senderSlot);
+    // Delivery contract: entered the stream or the backlog -> true; a dying
+    // connection -> false (teardown owns cleanup). See send_backlog.h.
+    return backlog_.SendOrQueue(peerSlot, static_cast<int>(LaneForKind(kind)),
+                                hConn, wire, total);
+}
+
+bool Session::TrySendReliableToSlot(int peerSlot, ReliableKind kind, const void* payload,
+                                    int len, uint8_t senderSlot) {
     if (peerSlot < 0 || peerSlot >= kMaxPeers) return false;
     // v56: SaveTransferChunk is the one BULK kind -- it bypasses the 228B inbox on
     // the receiver (bulk sink), so its real bound is ReliableHeader.payloadLen's
@@ -134,14 +189,10 @@ bool Session::SendReliableToSlot(int peerSlot, ReliableKind kind, const void* pa
     // tight event-datagram cap.
     const int cap = (kind == ReliableKind::SaveTransferChunk) ? 65000 : kMaxReliablePayload;
     if (len < 0 || len > cap) {
-        UE_LOGW("net: SendReliableToSlot rejected (slot=%d len=%d > %d)",
+        UE_LOGW("net: TrySendReliableToSlot rejected (slot=%d len=%d > %d)",
                 peerSlot, len, cap);
         return false;
     }
-    // v56 pre-world gate (B2, the MTA invariant): world-mutating kinds don't
-    // flow to a slot that hasn't announced world-ready (a menu-mode joiner is
-    // connected ~30-60 s before it has a world); the world-ready connect replay
-    // reconstructs all of it. Allowlist: handshake/identity + the save transfer.
     if (!IsSlotWorldReady(peerSlot) && !IsPreWorldSendableKind(kind)) return false;
     const uint32_t hConn = peerConns_[peerSlot].load();
     if (hConn == 0) return false;
@@ -155,20 +206,11 @@ bool Session::SendReliableToSlot(int peerSlot, ReliableKind kind, const void* pa
 
     SteamNetworkingMessage_t* msg = utils->AllocateMessage(total);
     if (!msg) {
-        UE_LOGW("net: SendReliableToSlot AllocateMessage(%d) returned null", total);
+        UE_LOGW("net: TrySendReliableToSlot AllocateMessage(%d) returned null", total);
         return false;
     }
-    auto* buf = static_cast<uint8_t*>(msg->m_pData);
-    auto* hdr = reinterpret_cast<PacketHeader*>(buf);
-    WriteHeader(*hdr, MsgType::Reliable, seq, ownEpoch_, senderSlot);
-    auto* rh = reinterpret_cast<ReliableHeader*>(buf + sizeof(PacketHeader));
-    std::memset(rh, 0, sizeof(*rh));
-    rh->kind = static_cast<uint8_t>(kind);
-    rh->payloadLen = static_cast<uint16_t>(len);
-    if (len > 0 && payload) {
-        std::memcpy(buf + sizeof(PacketHeader) + sizeof(ReliableHeader), payload, len);
-    }
-
+    BuildReliableWire_(static_cast<uint8_t*>(msg->m_pData), kind, payload, len,
+                       seq, ownEpoch_, senderSlot);
     msg->m_conn = hConn;
     msg->m_nFlags = k_nSteamNetworkingSend_Reliable;
     msg->m_idxLane = static_cast<uint16>(laneIdx);
@@ -176,12 +218,8 @@ bool Session::SendReliableToSlot(int peerSlot, ReliableKind kind, const void* pa
     int64 outMsgNum = 0;
     sockets->SendMessages(1, &msg, &outMsgNum, /*bDeleteFailedMessages*/true);
     if (outMsgNum < 0) {
-        // Chunk sends fail ROUTINELY under send-buffer backpressure -- that IS the
-        // save-transfer pump's pacing signal (it retries next tick); don't spam.
-        if (kind != ReliableKind::SaveTransferChunk) {
-            UE_LOGW("net: SendReliableToSlot(slot=%d) rc=%lld kind=%u",
-                    peerSlot, static_cast<long long>(outMsgNum), static_cast<unsigned>(kind));
-        }
+        // Save-family sends fail ROUTINELY under send-buffer backpressure -- that
+        // IS the pump's pacing signal (it retries next tick); don't spam.
         return false;
     }
     net_stats::AddSent(static_cast<uint32_t>(total));
@@ -193,55 +231,21 @@ bool Session::SendReliable(ReliableKind kind, const void* payload, int len) {
         UE_LOGW("net: SendReliable rejected (len=%d > %d)", len, kMaxReliablePayload);
         return false;
     }
-    const int total = static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader)) + len;
-    const uint32_t seq = sendSeq_.fetch_add(1);
+    // ONE wire build, ONE seq for the whole fan-out (the pre-R-4b behavior);
+    // the backlog copies the bytes per slot as needed.
+    uint8_t wire[sizeof(PacketHeader) + sizeof(ReliableHeader) + kMaxReliablePayload];
+    const int total = BuildReliableWire_(wire, kind, payload, len,
+                                         sendSeq_.fetch_add(1), ownEpoch_, /*senderSlot*/0);
     const int laneIdx = static_cast<int>(LaneForKind(kind));
 
-    auto* sockets = SteamNetworkingSockets();
-    auto* utils = SteamNetworkingUtils();
-
-    // Fan-out: allocate one GNS message per connected peer (GNS takes ownership
-    // of each; we cannot share a single message across SendMessages calls).
     bool anySuccess = false;
     for (int i = 0; i < kMaxPeers; ++i) {
         const uint32_t hConn = peerConns_[i].load();
         if (hConn == 0) continue;
         // v56 pre-world gate (B2) -- same rule as SendReliableToSlot, per slot.
         if (!IsSlotWorldReady(i) && !IsPreWorldSendableKind(kind)) continue;
-
-        SteamNetworkingMessage_t* msg = utils->AllocateMessage(total);
-        if (!msg) {
-            UE_LOGW("net: AllocateMessage(%d) returned null", total);
-            continue;
-        }
-        auto* buf = static_cast<uint8_t*>(msg->m_pData);
-        auto* hdr = reinterpret_cast<PacketHeader*>(buf);
-        WriteHeader(*hdr, MsgType::Reliable, seq, ownEpoch_);
-        auto* rh = reinterpret_cast<ReliableHeader*>(buf + sizeof(PacketHeader));
-        std::memset(rh, 0, sizeof(*rh));
-        rh->kind = static_cast<uint8_t>(kind);
-        rh->payloadLen = static_cast<uint16_t>(len);
-        // Symmetric with SendReliableToSlot: caller may legitimately pass
-        // len=0 (control packet, payload-less kind) with payload=nullptr.
-        // memcpy of a null source is UB pre-C++20; the guard makes both
-        // entry points safe under the same contract.
-        if (len > 0 && payload) {
-            std::memcpy(buf + sizeof(PacketHeader) + sizeof(ReliableHeader), payload, len);
-        }
-
-        msg->m_conn = hConn;
-        msg->m_nFlags = k_nSteamNetworkingSend_Reliable;
-        msg->m_idxLane = static_cast<uint16>(laneIdx);
-
-        int64 outMsgNum = 0;
-        sockets->SendMessages(1, &msg, &outMsgNum, /*bDeleteFailedMessages*/true);
-        if (outMsgNum < 0) {
-            UE_LOGW("net: SendMessages(slot=%d) rc=%lld kind=%u",
-                    i, static_cast<long long>(outMsgNum), static_cast<unsigned>(kind));
-            continue;
-        }
-        net_stats::AddSent(static_cast<uint32_t>(total));
-        anySuccess = true;
+        // R-4b delivery contract per slot (stream or backlog -> counted sent).
+        if (backlog_.SendOrQueue(i, laneIdx, hConn, wire, total)) anySuccess = true;
     }
     return anySuccess;
 }
@@ -624,6 +628,19 @@ void Session::NetThread() {
         const auto now = std::chrono::steady_clock::now();
         SendStreamsTick(now, sendInterval, nextSend, nextClockSend, nextDeskSimSend, sendFails);
 
+        // 3b) R-4b: drain the reliable-send backlogs (the delivery guarantee) --
+        // one pass per loop iteration per live slot. The GNS rc is the headroom
+        // read; the D8 reserve keeps the UnreliableNoDelay pose/voice streams
+        // flowing during a drain episode. A slot whose backlog trips a fatal
+        // bound (no progress / byte cap) is closed honestly, never trimmed.
+        for (int i = 0; i < kMaxPeers; ++i) {
+            const uint32_t hConn = peerConns_[i].load();
+            if (hConn == 0) continue;
+            backlog_.Drain(i, hConn, sendBufBytes_);
+            const char* fatalReason = nullptr;
+            if (backlog_.CheckFatal(i, &fatalReason)) FatalCloseSlot(i, fatalReason);
+        }
+
         // 4) Per-peer NET DIAGNOSTICS every ~1 s (RTT + send-queue + rate-limit telemetry).
         // GNS GetConnectionRealTimeStatus exposes the SEND-side state that explains a laggy
         // peer: m_usecQueueTime (how long the NEXT outbound packet will wait before it hits the
@@ -667,12 +684,13 @@ void Session::NetThread() {
                 rttMsBySlot_[i].store((st.m_nPing >= 0 && st.m_nPing < 60000) ? st.m_nPing : -1,
                                       std::memory_order_relaxed);
                 UE_LOGI("net-diag[slot %d]: ping=%dms qual=%.0f/%.0f%% in=%.0f out=%.0f pkt/s "
-                        "sendRate=%dB/s pendRel=%dB pendUnrel=%dB unacked=%dB queue=%lldms",
+                        "sendRate=%dB/s pendRel=%dB pendUnrel=%dB unacked=%dB queue=%lldms "
+                        "backlog=%zuB",
                         i, st.m_nPing, st.m_flConnectionQualityLocal * 100.f,
                         st.m_flConnectionQualityRemote * 100.f, st.m_flInPacketsPerSec,
                         st.m_flOutPacketsPerSec, st.m_nSendRateBytesPerSecond,
                         st.m_cbPendingReliable, st.m_cbPendingUnreliable,
-                        st.m_cbSentUnackedReliable, queueMs);
+                        st.m_cbSentUnackedReliable, queueMs, backlog_.DepthBytes(i));
                 if (st.m_nPing > kHighPingMs)
                     UE_LOGW("net-diag[slot %d]: HIGH PING %d ms (> %d) -- the link/relay is slow",
                             i, st.m_nPing, kHighPingMs);
