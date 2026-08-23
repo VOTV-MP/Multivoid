@@ -412,18 +412,38 @@ Measured on this box from the real r2modman profile
 a zip + a publish step**, not a re-architecture. The folder name becomes `<Author>-Multivoid`
 once it comes from Thunderstore rather than our hand-install.
 
-### 7.3 The ONE open decision — `version_number` vs the Paper pair (USER CALL NEEDED)
+### 7.3 `version_number` — DECIDED (USER, 2026-08-23): **`<game-major>.<game-minor>.<build>`**
 
-Thunderstore **requires** `version_number` to be semver `X.Y.Z` and orders updates by it.
-Multivoid deliberately **deleted mod semver** (USER DECISION 2026-07-19: the identity is the Paper
-pair — game target + build number, `Multivoid 0.9.0n b134`). These collide. Options:
+Thunderstore **requires** `version_number` to be semver `X.Y.Z` and orders updates by it. Multivoid
+deliberately **deleted mod semver** (USER DECISION 2026-07-19: the identity is the Paper pair — game
+target + build number, `Multivoid 0.9.0n b134`). The user chose the mapping that keeps the Paper pair
+visible: **`0.9.134`** for game target `0.9.0n` + build `134`.
 
-- **(a) `0.0.<build>` → `0.0.134`. RECOMMENDED.** Monotonic, satisfies Thunderstore, and carries
-  no independent meaning — it is a distribution-channel encoding of the build number, not a
-  resurrected semver. The Paper pair stays the identity everywhere else.
-- (b) `0.9.<build>` — carries the game half too, but the game target has a letter suffix (`0.9.0n`)
-  semver cannot hold, and a retarget could break monotonicity.
-- (c) resurrect a real mod semver — contradicts the 2026-07-19 decision; not recommended.
+**The derivation (exact, so WP-9 does not re-derive it):**
+
+**`X.Y` comes from the GAME target; `Z` is OURS** (the user's own phrasing, 2026-08-23).
+
+| component | source | today |
+|---|---|---|
+| `X.Y` | **THEIRS** — the first two dot-separated fields of `VOTVCOOP_GAME_TARGET` (`src/votv-coop/CMakeLists.txt:23`, read via the ONE existing parser `Get-GameTargetFromCMake`, `tools/release/ledger_lib.ps1:160`), with any non-digit characters stripped from each field | `0.9` (from `0.9.0n`) |
+| `Z` | **OURS** — `kProtocolVersion` (`src/votv-coop/include/coop/net/protocol.h:708`), the Paper pair's build half | `134` |
+
+Parse rule, stated so it cannot be misread: split the game target on `.`, take fields 1 and 2, strip
+non-digits from each (so a hypothetical `0.9n` still yields `0.9`), and fail closed if either field is
+empty after stripping. The game target's THIRD field and letter suffix are deliberately not used.
+
+**Monotonicity holds** — and this corrects a weaker caveat written earlier the same day. Semver
+compares components numerically, `kProtocolVersion` never resets and only increases, and a game
+version's numeric prefix never decreases; so `0.9.134` -> `0.10.135` -> `1.0.140` all order correctly.
+The only information lost is the game target's letter suffix (`0.9.0n` and a later `0.9.1a` both map
+to `0.9`), which the build number already disambiguates and which the full Paper pair — displayed in
+the package `description` and README — still states exactly.
+
+**HARD REQUIREMENT: the manifest is GENERATED, never hand-edited.** A hand-kept version string that
+rots unbumped is precisely the failure that got mod semver deleted in the first place (2026-07-19);
+re-introducing a hand-typed `version_number` in `manifest.json` would recreate it one layer out. So
+`manifest.json` is emitted at package time from the two sources above, and the packaging step fails
+closed if either parse misses. Do not check a literal version into the repo's manifest template.
 
 ### 7.4 Sequencing — why WP-4 must NOT flip the prose yet (and the weld, re-verified 2026-08-23)
 
