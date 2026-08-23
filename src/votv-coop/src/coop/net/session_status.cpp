@@ -30,12 +30,15 @@
 
 #include "coop/net/session.h"
 
+#include "coop/config/config.h"           // R-4b commit-0: ResolveInt for the wire knobs
+#include "coop/config/config_registry.h"  // rows::net_sendbuf_kb / rows::net_sendrate_kbs
 #include "coop/player/players_registry.h"
 #include "ue_wrap/core/log.h"
 
 #pragma warning(push)
 #pragma warning(disable: 4100 4127 4191 4244 4245 4267 4310 4324 4458)
 #include <steam/steamnetworkingsockets.h>
+#include <steam/isteamnetworkingutils.h>  // SteamNetworkingUtils() for the R-4b wire knobs
 #pragma warning(pop)
 
 namespace coop::net {
@@ -54,6 +57,30 @@ void ConfigureLanesForPeer(HSteamNetConnection hConn) {
     if (rc != k_EResultOK) {
         UE_LOGW("net: ConfigureConnectionLanes(h=0x%08x) rc=%d",
                 static_cast<unsigned>(hConn), static_cast<int>(rc));
+    }
+    // R-4b commit-0: per-connection wire knobs (the delivery-guarantee drill +
+    // slow-link simulation; research/findings/network/
+    // votv-reliable-delivery-guarantee-DESIGN-2026-08-23.md D7). 0 = leave the
+    // mod's defaults. SendRateMin/Max are set to the SAME value per the GNS
+    // header's own instruction ("should always be set to the same value, to
+    // manually configure a specific send rate"; the engine default is a fixed
+    // 256 KB/s clamp -- there is no bandwidth estimation in this build).
+    auto* utils = SteamNetworkingUtils();
+    const long bufKb = coop::config::ResolveInt(coop::config_registry::rows::net_sendbuf_kb);
+    if (bufKb > 0) {
+        utils->SetConnectionConfigValueInt32(hConn, k_ESteamNetworkingConfig_SendBufferSize,
+                                             static_cast<int32>(bufKb) * 1024);
+        UE_LOGW("net: send buffer PINNED to %ld KB for h=0x%08x (drill knob net.sendbuf_kb)",
+                bufKb, static_cast<unsigned>(hConn));
+    }
+    const long rateKbs = coop::config::ResolveInt(coop::config_registry::rows::net_sendrate_kbs);
+    if (rateKbs > 0) {
+        utils->SetConnectionConfigValueInt32(hConn, k_ESteamNetworkingConfig_SendRateMin,
+                                             static_cast<int32>(rateKbs) * 1024);
+        utils->SetConnectionConfigValueInt32(hConn, k_ESteamNetworkingConfig_SendRateMax,
+                                             static_cast<int32>(rateKbs) * 1024);
+        UE_LOGW("net: send rate PINNED to %ld KB/s for h=0x%08x (drill knob net.sendrate_kbs)",
+                rateKbs, static_cast<unsigned>(hConn));
     }
 }
 

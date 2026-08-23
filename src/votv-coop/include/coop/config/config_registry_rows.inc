@@ -38,6 +38,12 @@ CFG_INT(net_port, "net.port", "net", ::coop::net::kDefaultPort, 1, 65535, "VOTVC
 CFG_ENUM(net_topology, "net.topology", "net", "lan", "lan|p2p", "VOTVCOOP_NET_TOPOLOGY",
     "Transport shape: lan = direct UDP, p2p = internet session via the signaling server "
     "(NAT traversal, no port forwarding needed).")
+CFG_INT(net_sendbuf_kb, "net.sendbuf_kb", "net", 0, 0, 262144, "VOTVCOOP_NET_SENDBUF_KB",
+    "Per-connection network send buffer, KB. 0 = the mod's default. Testing knob -- lowering "
+    "it forces send-buffer backpressure (the delivery-queue drill).")
+CFG_INT(net_sendrate_kbs, "net.sendrate_kbs", "net", 0, 0, 1048576, "VOTVCOOP_NET_SENDRATE_KBS",
+    "Fixed network send rate, KB/s (sets the transport's min+max rate clamp). 0 = the mod's "
+    "default. Testing knob -- lowering it simulates a slow link end-to-end.")
 CFG_STRING_GATED(net_master, "net.master", "net", ::coop::net::kOfficialMasterUrl,
     "VOTVCOOP_MASTER_URL", false, "net.master.custom",
     "Master (lobby list) server, host:port. The special value DEFAULT also means the official "
