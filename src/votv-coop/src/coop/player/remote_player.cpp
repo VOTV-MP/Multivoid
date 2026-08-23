@@ -7,6 +7,7 @@
 #include "coop/player/players_registry.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/puppet.h"
 #include "ue_wrap/core/reflection.h"
@@ -65,6 +66,19 @@ bool RemotePlayer::Spawn(const std::string& skinName) {
     void* local = players::Registry::Get().Local();
     if (!local) {
         local = R::FindObjectByClass(P::name::MainPlayerClass);
+        // ...but the fallback must not undo the world-currency term the registry
+        // now enforces (2026-08-23). FindObjectByClass answers "any mainPlayer_C in
+        // the array", and after a world change the DEAD world's pawn is still in the
+        // array and still slot-live for seconds -- so an unfiltered fallback hands
+        // back exactly the object Local() just refused, at a call site whose stated
+        // purpose ("the pre-possession window") is indistinguishable from
+        // "mid-teardown" from the inside. Judge it the same way, and only when we
+        // can judge at all.
+        if (local) {
+            if (void* const cur = ue_wrap::world_identity::CurrentWorld()) {
+                if (ue_wrap::world_identity::WorldOf(local) != cur) local = nullptr;
+            }
+        }
     }
     if (!local) {
         UE_LOGW("RemotePlayer::Spawn: no local mainPlayer_C (not in gameplay yet)");
