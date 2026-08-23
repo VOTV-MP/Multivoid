@@ -62,6 +62,27 @@ first-chance; ordering arms race), (d) accept-and-attribute (leaves the symptom)
 
 A small type carries the invariant so a cached use cannot silently regress:
 
+> **CONTRACT EXTENDED 2026-08-23 (`88e29669`, `86ff94a2`) — this section describes the ORIGINAL type.
+> A FOURTH field and a SECOND validity term now exist**; the description below is otherwise still
+> accurate and the D1 conversion story is unchanged. What changed, and why it belongs to this type:
+> **liveness is not sufficient for a WORLD-SCOPED object.** A dying world's actors are not kill-flagged
+> until GC purge (this doc's own D2 half), measured at 44+ s after a solo quit-to-menu — so the
+> slot+serial predicate below kept handing out actors of a world that no longer existed, and the engine
+> faulted when they were passed back in (~2,508 absorbed AVs/s for 44 s; see
+> `research/findings/votv-linux-fps-triage-2026-08-23.md` §2). So:
+> - `world_` — stamped at `Set()` from `ue_wrap::world_identity::WorldOf(p)`, **read while the object is
+>   healthy and never re-read**, so a teardown that nulls or scribbles the dead object's Outer chain
+>   cannot defeat it. `nullptr` = not world-scoped (UClass / UFunction / CDO / cooked asset /
+>   GameInstance) and the term is skipped — that IS the discrimination.
+> - `Alive()` additionally requires `world_ == world_identity::CurrentWorld()` when both are non-null.
+>   The `world_` test **guards the call**, which is a measured perf requirement: `Alive()` is reached
+>   per-object inside at least six full GUObjectArray walks, so evaluating `CurrentWorld()` first
+>   multiplied it by ~237k per walk.
+> - **KNOWN GAP:** UMG widgets Outer to the GameInstance, not a ULevel, so the term is silently inert
+>   for the whole widget surface. Stated in `cached_obj_ref.h`; not fixed.
+> This is D2's answer in the direction the D2 section itself pointed ("world gates must key on WORLD
+> IDENTITY, never per-object liveness") — D2's *wire-window* half stays deferred on its own measurement.
+
 - `CachedObjRef { void* ptr; int32 idx; int32 serial; }`
   - `Set(p)` — captures `InternalIndexOf(p)` + the FUObjectItem SerialNumber. **Contract: `p` must be
     fresh-or-just-ByIndex-validated in the SAME game-thread task** (Set derefs to read the index).

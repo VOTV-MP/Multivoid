@@ -2184,10 +2184,51 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   12.35 MB field log). Four stacked traps: comment-as-wiring; liveness≠world-validity; the absorb
   lands BELOW `R::CallFunction` so the sweep sees a clean `false` and cannot latch; and the trigger
   flow (solo → quit → join) is ordinary for players yet exercised by NO autonomous smoke (0 instances
-  in all 4 local logs). Fix shape: wire the invalidation from the ONE world-change authority +
-  world-identity stamp on the warm path + fault-generation abort. *Look FIRST:*
-  `research/findings/votv-linux-fps-triage-2026-08-23.md` §2.
+  in all 4 local logs). ~~Fix shape: wire the invalidation from the ONE world-change authority~~ —
+  **CORRECTED 2026-08-23 eve: wiring it was IMPOSSIBLE; `InvalidateLocal()` was DELETED instead
+  (`88e29669`)** — see the next row. *Look FIRST:*
+  `research/findings/votv-linux-fps-triage-2026-08-23.md` §2 + §8's status table.
   `memory/lesson_documented_invalidation_with_zero_callers.md`
+- **2026-08-23 — invalidating a cache whose REFILL is equally blind is a no-op that looks like a fix.**
+  The prescribed cure for the row above was "wire the missing `InvalidateLocal()` edge". Reading the
+  refill path killed it: `RescanLocal`'s filter is `IsLive` + non-null `Controller`, and the dead pawn
+  passes BOTH — so an immediate re-walk re-caches the identical bug and buys one full GUObjectArray
+  walk. What shipped is the missing term at **both** points (a world stamp compared at `Alive()`, a
+  world filter in the rescan loop) and `InvalidateLocal()` **deleted**, because once the predicate is
+  complete the cache self-heals and a second mechanism for one invariant is RULE-2 baggage. *Look
+  FIRST:* before wiring ANY invalidation, open the refill path and ask "would a fresh read return the
+  same wrong thing?" `memory/lesson_invalidating_a_cache_whose_refill_is_equally_blind.md`
+- **2026-08-23 — a crutch usually NAMES ITSELF in its own justifying comment.** The destroy seam's
+  world-load gate was scoped `!keyless`, excused as *"piles are already fixed and the host DEFERS them
+  anyway"* — a confession that the traffic was known garbage, tolerated because the RECEIVER swallowed
+  it. Cost, reproduced locally 1:1 with the field: **871** spurious `PropDestroy`s per client join
+  (field 940), each carrying a client-band eid the host has never seen, all **871** parked and expired
+  (field 1,618) — landing in the same minute as **485** sends refused for a full buffer. Deleting two
+  words gave 871 → 0 (`65fccd70`). Second confession, same day and same area: `UnmarkAndDestroy`'s
+  "drop the eid first so the seam stays silent" was false by construction — `UnmarkKnownKeyedProp`
+  DEFERS the Element destruction, so the actor→eid reverse is still live when the seam runs
+  synchronously inside the next line's `DestroyActor`. *Look FIRST:* grep for "handles it anyway" /
+  "already fixed" / "the receiver dedupes", and price each under a join flood, not steady state.
+  `memory/lesson_a_crutch_that_names_itself_in_its_own_comment.md`
+- **2026-08-23 — a predicate added to a SHARED cache type lands inside every full-array walk.** Adding
+  a world term to `CachedObjRef::Alive()` (~67 uses) reads as O(1) per probe; the post-ship audit
+  measured it reached **per object inside six 237k-object GUObjectArray walks**, three levels below the
+  loop (`prop::IsClassDescendantOfProp` → `PropBaseClass()` → `g_propBaseCls.Alive()`), the heaviest at
+  5 Hz **during a join** — projected +200–300 ms/s on the reporting machine. Cure: guard the expensive
+  accessor behind the cheap local field (`if (world_)`), zeroing it for exactly the class/CDO holders
+  those loops use. Then the guard **thinned a drive nobody had documented** — `Alive()` was the
+  de-facto refresh heartbeat — and the measured travel edge regressed 1 s → 5 s until an explicit
+  driver was added. *Look FIRST:* before adding any term to a shared primitive, follow the per-object
+  predicates of every `for (i < NumObjects())` loop down to it.
+  `memory/lesson_a_predicate_added_to_a_shared_cache_type_lands_inside_every_walk.md`
+- **2026-08-23 — a drill that kills boot is worse than no drill; it falsifies what it was built to
+  prove.** The rate-latch drill killed the game twice: `nullptr` as the UFunction (`LogObserverAv`
+  derefs it via `NameOf`), then running from the top of `Install()` — 123 reflection lookups on the
+  loader thread before our own dispatcher existed. Env-gating contains the behaviour, not the
+  CONCLUSION: the next reader arms it, sees a dead process, and decides the detector is broken. The
+  discriminator that separates "my instrument" from "my change" is one command — a run with the drill
+  disabled. *Look FIRST:* place one-shot drills AFTER the subsystem they measure is live, and feed them
+  real objects. `memory/lesson_a_drill_that_kills_boot_is_worse_than_no_drill.md`
 
 ## 4. Dispatch, hooks & input seams
 

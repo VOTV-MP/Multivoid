@@ -1,8 +1,17 @@
 # Linux 9-fps triage — the absorbed-AV storm, the 1 Hz walk stack, and the join-flood recurrence (2026-08-23)
 
-**Session directive (user, 2026-08-23): investigation ONLY.** Nothing was built, fixed, or
-launched this session; this document is the sole artifact. Every fix below is a PRESCRIPTION,
-not a change.
+**Original session directive (user, 2026-08-23 day): investigation ONLY.** Nothing was built that
+session; every fix below was written as a PRESCRIPTION.
+
+> **STATUS 2026-08-23 eve — PARTLY BUILT, AND TWO PRESCRIPTIONS WERE WRONG. Read §8's status table
+> FIRST**, then §5-CORR and §4-CORR before acting on any prose below them.
+> - **BUILT + drilled:** R-1 (the storm root, `88e29669`+`3f7b2b4e`), R-1e (the rate latch,
+>   `86ff94a2`), R-4a's key-scoping half (`65fccd70`, measured 871 → 0).
+> - **The prescription for R-1a could not work** and was dropped for a delete; **§5's whole R-4 story
+>   was false** (the sweep aborted and doomed zero; 2,172 not 65; 1,618 not 940) and the causal chain
+>   inverts — R-4b is what broke the join, not a secondary.
+> - **R-3's prescription is dead:** the reporter cannot run probes.
+> - Verification is autonomous `mp.py smoke` + purpose-built drills. **Nothing here is hands-on.**
 
 **Inputs** (`ignore_folder/linux_fps_issue/`):
 - `discord chat.txt` — Violet (host) reports a friend "running the game at like 9 fps…
@@ -201,11 +210,45 @@ load and the join minute, WS ~3.1 GB (friend ~3.4 GB — unremarkable).
 - **The discriminator already exists and was OFF in this run:** `[dev] perf_probe=1`
   (+ `perf_probe_selftime=1`) arms per-dispatch counting and 1-in-256 self-time sampling
   (`pe_detour.cpp SetPerfCounting`, rows `config_registry_rows.inc:259-261`) and reports
-  per-second tables. **Prescription:** the next Linux report gets a run with both flags on;
-  compare PE self-ns + the bucket table against the frame time. Note also the solo window
-  was uninstrumented (the pump only ticks with a session), so "base game fine" vs "mod
-  loaded but idle, solo" is not yet separated either — the same probe run answers both.
+  per-second tables.
 - Context: WS friend ~3.38 GB / host ~3.12 GB — unremarkable for a loaded VOTV world.
+
+### §4-CORR — the prescription is DEAD; R-3 is answerable from THIS end (2026-08-23 eve)
+
+The original prescription was "the next Linux report gets a run with both flags on". **USER, verbatim:
+*"I can't make Violet run things with probes unfortunately we're in this alone."*** R-3 was the only
+row that ever depended on reporter cooperation, so that prescription is retired, not deferred.
+
+It does NOT follow that R-3 is unanswerable. The replacement plan needs nobody:
+
+1. **Measure our own passive overhead locally**, both flags on, on a join. The measured negative above
+   already exonerates our per-frame game-thread work (whole `net_pump::Tick` < 10 ms on 54–94 ms
+   frames), so what remains attributable to us is exactly two things, both invisible to `[HITCH-SRC]`
+   by construction: the PE-detour per-dispatch cost and the overlay's render-thread draw. Those are
+   precisely what `perf_probe_selftime` samples.
+2. **Project it using the scaling factor her own logs supply.** The SAME walk cost 74 ms median on her
+   machine vs 7.5 ms on the host (§3) — ~10×. So a locally-measured per-frame overhead projects onto
+   her hardware with a measured multiplier instead of a guess. Worth the order-of-magnitude BEFORE the
+   run, because it shows the question is not rhetorical: at ~150k dispatches/s a 200 ns detour overhead
+   is 30 ms/s here and ~300 ms/s projected — either negligible or a third of her frame budget, and
+   nothing currently known separates those. *(Arithmetic, not measurement — which is the argument FOR
+   measuring, not a substitute for it.)*
+3. **Run the A/B nobody has run:** the HOST's heavy save, SOLO, mod loaded vs mod absent, on this box.
+   Her log could never separate "base game fine" from "mod loaded but idle, solo" because the solo
+   window is uninstrumented (the pump only ticks with a session). Ours can.
+
+**Honest ceiling, stated now so it is not discovered late.** If (1)+(2) return "our passives are
+small", we will have EXPLAINED the floor — her hardware + DXVK + a world heavier than her own save —
+without FIXING it. That is a real result and it is the honest close for R-3, but it is not her getting
+playable frames. Two levers help her REGARDLESS of how attribution lands, and need nobody:
+- **make the inherited world lighter** (a joiner takes the host's whole population — 2,607 snapshot
+  objects + 871 pile proxies in one burst; proxy LOD / distance culling / deferring non-essential
+  spawns at join are all ours to choose), and
+- **make the discriminator cheap enough to ship ON**, so the next report of this class arrives
+  pre-attributed instead of needing a round trip through a human who cannot make it. The always-on
+  `[perf]` lines already carry the frame + PE rates in her log; it is the per-dispatch self-time that
+  is gated behind an ini flag nobody will ever set. That is the ROOT fix for this whole class of
+  "user reports slow, we cannot reach them".
 
 ---
 
@@ -301,27 +344,39 @@ KEYED broadcasts at 23:20:06+ are **unattributed** — do not assume they share 
    root-caused (it triggers after "play solo → quit to menu → join"); the fix lands at the
    identity layer, not a workaround.
 2. The sustained low-fps floor inside the joined world is measured NOT to be the mod's
-   per-frame game-thread work; whether it is the machine rendering the host's heavier world
-   or the mod's passive hook overhead is exactly one diagnostic run away: set
-   `perf_probe=1` and `perf_probe_selftime=1` under `[dev]` in `multivoid.ini`, play a
-   minute, send the log.
+   per-frame game-thread work. ~~whether it is ... is exactly one diagnostic run away: set
+   `perf_probe=1` ... send the log.~~ **RETRACTED 2026-08-23 eve — the reporter cannot run
+   probes (USER), so nothing here is relayable.** Attribution is now ours to do from this end;
+   see §4-CORR. Do not draft another "please set these flags" message.
 3. Locked-game joining (unlock → join → re-lock) was already answered in the chat; a proper
    invite/allow flow is a product gap, not part of this defect set.
 
-## §8 Prescription summary
+## §8 Prescription summary — STATUS AS OF 2026-08-23 eve (`86ff94a2`)
 
-| Row | Layer | Fix | Size | Precondition |
-|---|---|---|---|---|
-| R-1a | players_registry ← world-transition edge | wire `InvalidateLocal()` from the ONE world-change authority; census sibling `CachedObjRef` holders | S | pick the authority (spawn-refusal arm vs world_load_episode) |
-| R-1b | players_registry warm path | world-identity stamp on the cached pawn; compare on warm read (pointer reads only) | S | none |
-| R-1d | input_owner sweep | abort pass when a callee absorbed a fault (expose fault-generation counter from `t_lastTaskFault`) | S | R-1a/b first (this is hardening, not the fix) |
-| R-1e | absorb-path logging | same-(function,ip) dedup/rate-latch | S | **user decision** (crash-forensics policy) |
-| R-2 | interactables + sibling pollers | one shared settled-scan feeding all class indexes + global stagger | M | resume the 2026-06-23 fork; N-match gate must pass |
-| R-3 | measurement | `perf_probe` run on the affected machine (and one solo run) | — | reporter cooperation |
-| R-4a | grab_hook destroy-seam / world_load_episode | suppress eid-only clump culls in-episode; re-derive the episode end condition vs the snapshot bracket | S–M | none |
-| R-4b | session send boundary | the §R-A ONE delivery-guarantee owner design pass | M–L | /qf per standing rule before impl |
+Every row re-checked against the code this pass. **Two prescriptions were WRONG and are not what
+shipped** (R-1a, R-4a) — see the CORR sections; a prescription that survives contact unchanged is the
+exception, not the rule.
+
+| Row | Status | What actually happened |
+|---|---|---|
+| **R-1a** | **DROPPED — the prescription could not work** | "Wire `InvalidateLocal()`" is self-defeating: `RescanLocal`'s refill filter had the SAME blind spot (`IsLive` + non-null `Controller` both pass on the dead pawn), so an immediate re-walk re-caches it. `InvalidateLocal()` was **DELETED** instead (`88e29669`) — zero callers for its whole life, and one invariant gets one mechanism. |
+| **R-1b** | **BUILT + drilled** (`88e29669`) | The world stamp, but on `CachedObjRef` (the shared cross-tick cache type, ~67 uses) rather than the registry alone — it was three bugs in one 44 s window, not one. `Set()` stamps, `Alive()` compares; teardown cannot defeat it because the object is never re-read. NEGATIVE CONTROL ×3: object/slot/serial held constant, world poisoned → `slotLive=1 aliveBefore=1 alivePoisoned=0`. |
+| **R-1b'** | **BUILT** (`3f7b2b4e`) | `RemotePlayer::Spawn`'s `FindObjectByClass` fallback judged the same way — it could otherwise hand back exactly the pawn `Local()` had just learned to refuse. Found by a 72-site census of every `Local()` consumer (5 teardown-sensitive, 12 gates, 55 steady). |
+| **R-1d** | **STILL OPEN** | `reflection.cpp:88-93` still `return true` unconditionally at `86ff94a2` — the absorb happens below it, so the caller cannot see a faulted call. Needs a thread-local fault-generation counter + a census of the 61 `CallFunction` sites. Now hardening rather than the fix, since R-1b closed the source. |
+| **R-1e** | **BUILT + drilled** (`86ff94a2`) | USER-APPROVED. First 5 lines per distinct `(function, ip)` in full, then folds and re-reports on decade boundaries. Keyed on `(function, ip)` NOT `self` — the storm had a constant ip and a varying self. DRILL (`VOTVCOOP_AV_LATCH_DRILL=1`): 120 calls → 7 lines, 3 at a new site → 3 lines, both peers, in a PASSING smoke. |
+| **R-2** | **STILL OPEN — the one she would FEEL** | No shared settled-scan exists at `86ff94a2`. Precondition unchanged: the N-match gate (door 57 count regression) that failed takes 1 and 2. |
+| **R-3** | **prescription DEAD, plan REPLACED** | The reporter cannot run probes (USER). See §4-CORR: measure our passives locally, project via the ~10× factor her own logs give, plus the solo heavy-save A/B. Honest ceiling: this may EXPLAIN the floor without FIXING it. |
+| **R-4a** | **HALF BUILT** (`65fccd70`) | Key-scoping half shipped and measured 871 → 0 broadcasts / 871 → 0 host defers, 1:1. End-condition half NOT built and needs its own `/qf`. The doc's attribution of the burst was **false** — see §5-CORR. |
+| **R-4b** | **STILL OPEN — re-ranked to FIRST** | Was "structural, secondary". §5-CORR re-derived it as **what actually broke the join**: 485 silent `rc=-25` drops → snapshot 2,607/3,093 → 957/1,829 unclaimed → the ratio valve correctly refused → 282 containers permanently empty. Needs `/qf`. |
+
+**Residual audit items** from the post-ship audit of `88e29669` (one CRITICAL of my own making, fixed
+in `86ff94a2`): UMG widgets Outer to the GameInstance not a ULevel, so the world term is **silently
+inert for the whole widget surface** — documented in `cached_obj_ref.h`, not fixed. Plus the boot-window
+null stamp, the non-atomic resolution globals, and `FindClass(L"Level")`'s first-match. Tracked as one
+item; do not read the discrimination list in `cached_obj_ref.h` as complete without reading its gap note.
 
 **Provenance:** all numbers grep-derived from the two logs in
-`ignore_folder/linux_fps_issue/` on 2026-08-23; code cites verified against the working tree
-at `50b78d47` (+ held WIP). Confidence tags: [M] = measured this session, [H] = hypothesis
-explicitly marked inline.
+`ignore_folder/linux_fps_issue/` on 2026-08-23; original code cites verified against the working tree
+at `50b78d47`, status column re-verified at `86ff94a2`. Confidence tags: [M] = measured, [H] =
+hypothesis explicitly marked inline. Before/after figures in the status column are from `mp.py smoke`
+runs on this box (autonomous — NOT hands-on), same save both sides of each comparison.
