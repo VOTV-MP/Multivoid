@@ -63,19 +63,24 @@ bool EnsureGnsInit() {
         UE_LOGE("net: GameNetworkingSockets_Init failed: %s", err);
         return false;
     }
-    // Raise the send-rate ceiling. GNS defaults SendRateMax to ~256 KB/s -- which a coop
+    // Raise the send-rate ceiling. GNS STOCK defaults SendRateMin/Max to 256 KB/s -- which a coop
     // session's RELIABLE bursts saturate: the ~368 KB connect-snapshot, and the world-change
     // re-seed that re-sends the full snapshot whenever the host's churning world mass-purges
     // props. At 256 KB/s each burst takes ~0.8-1.4 s of fully-saturated outbound, during which
     // the unreliable POSE stream is starved of bandwidth -- so the REMOTE PLAYER lags while a
     // client's prop edits (which never send big reliable bursts that direction) stay real-time
     // (the exact user-reported asymmetry; measured 2026-06-06: net-diag SEND BACKLOG
-    // pendRel=204KB @ sendRate=262144B/s, puppet trail spiking to 256 cm). On LAN there is zero
-    // reason to cap at 256 KB/s. Min 1 MB/s = an immediate floor so the snapshot doesn't crawl
-    // during GNS slow-start; Max 25 MB/s lifts the ceiling for a fast path. GNS still adapts the
-    // rate DOWN toward Min on a lossy link, so this only raises the headroom. Global default ->
-    // every connection (LanDirect + P2P). [P2P-over-slow-internet follow-up: make Min topology-
-    // aware so a genuinely thin uplink isn't forced to 1 MB/s.]
+    // pendRel=204KB @ sendRate=262144B/s, puppet trail spiking to 256 cm).
+    // EFFECTIVE-RATE MECHANISM (measured 2026-08-23, snp.cpp:286 + :4243-4276): there is NO rate
+    // adaptation in this GNS build -- the estimate is written once at SNP init (4380 B / ping)
+    // and then only clamped into [Min, Max], never updated (the BBR probe is a FIXME). Any
+    // internet ping > ~4.4 ms therefore runs at Min = 1 MB/s FOREVER (field: 180/180 net-diag
+    // samples at 1048576 B/s); sub-ms LAN ping runs at Max. A host uplink slower than Min is
+    // OVERDRIVEN with pure loss + ARQ retransmits -- the per-connection net.sendrate_kbs knob is
+    // the remedy, and the overdrive drill spec lives in
+    // votv-reliable-delivery-guarantee-DESIGN-2026-08-23.md par.7.3. Global default -> every
+    // connection (LanDirect + P2P). [P2P-over-slow-internet follow-up: make Min topology-aware
+    // so a genuinely thin uplink isn't forced to 1 MB/s.]
     if (auto* utils = SteamNetworkingUtils()) {
         utils->SetGlobalConfigValueInt32(k_ESteamNetworkingConfig_SendRateMin, 1 * 1024 * 1024);
         utils->SetGlobalConfigValueInt32(k_ESteamNetworkingConfig_SendRateMax, 25 * 1024 * 1024);

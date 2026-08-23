@@ -68,8 +68,12 @@ void ConfigureLanesForPeer(HSteamNetConnection hConn) {
     // votv-reliable-delivery-guarantee-DESIGN-2026-08-23.md D7). 0 = leave the
     // mod's defaults. SendRateMin/Max are set to the SAME value per the GNS
     // header's own instruction ("should always be set to the same value, to
-    // manually configure a specific send rate"; the engine default is a fixed
-    // 256 KB/s clamp -- there is no bandwidth estimation in this build).
+    // manually configure a specific send rate"). GNS STOCK defaults both to
+    // 256 KB/s, but OUR binary overrides globally at init (session_start.cpp:
+    // Min 1 MB/s / Max 25 MB/s) -- and there is no bandwidth estimation in
+    // this build, so the effective rate is clamp(ping-at-init estimate, Min,
+    // Max): Min forever on any internet link, Max on LAN. This per-connection
+    // pin overrides that global in BOTH directions.
     auto* utils = SteamNetworkingUtils();
     const long bufKb = coop::config::ResolveInt(coop::config_registry::rows::net_sendbuf_kb);
     if (bufKb > 0) {

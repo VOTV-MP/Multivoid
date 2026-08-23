@@ -10,9 +10,11 @@ unchanged (no wire-shape change), DLL deployed ×4, **NOT hands-on**. Owner:
   backlog is engine-free and the net thread survives game-thread stalls. Same locks either way.
 - **The mutex is per-SLOT (covering its 3 lanes), not per-(slot,lane)** — the FIFO-once-nonempty
   proof only needs atomicity per lane; one mutex per slot is the same correctness with less state.
-- **`SendRateMin/Max` was NOT raised** — measured mid-build: the GNS default send RATE is a fixed
-  **256 KB/s clamp** (no bandwidth estimation in this build). Raising it was not `/qf`-vetted, so
-  it stays default and is a named residual (§6). The `net.sendrate_kbs` knob pins it for drills.
+- **`SendRateMin/Max` was NOT raised** — and the "GNS default is a fixed 256 KB/s clamp" fact this
+  bullet originally recorded was **FALSE for our binary** (pass-2 correction, 2026-08-23 §7): it
+  measured GNS *stock* defaults, but `session_start.cpp:79-84` has set global Min=1 MB/s /
+  Max=25 MB/s since 2026-06-06 (`8dd62916`), and the field host's net-diag reads exactly
+  1,048,576 B/s in 180/180 samples. The rate DECISION is §7; `net.sendrate_kbs` pins for drills.
 - **`ArmBeginNoSave_` unifies ALL Begin sends into the pump** (the no-save announce is a
   zero-chunk stream) — the design only demanded the blob path's Begin be gated.
 - **D10's client pause threshold is a SOFT cap (6144)** below the 8192 hard cap, so the client
@@ -181,3 +183,88 @@ RULE-2 deletion).
 Exact R / cap / N constants (drill-tuned); the sweep-shrink outcome; whether a D10 pause ever
 brushes the host's connected-timeout; per-site sweep of the ~60 callers against the new bool
 contract (semantic argument says all safe; the build re-reads each).
+
+## 7. The SendRate decision (pass 2, 2026-08-23 — `/qf` 5 rounds, converged)
+
+**User delegated: "SendRate decision - I'm not sure, go with what's best."** Round-1's demand to
+MEASURE instead of carry reframed the whole question — the §AS-BUILT premise was false.
+
+### 7.1 Corrected fact base (all measured)
+
+- `session_start.cpp:79-84` sets **global SendRateMin = 1 MB/s, SendRateMax = 25 MB/s** at GNS
+  init — shipped in `8dd62916` (2026-06-06, proto v40 era). The R-4b pass measured GNS *stock*
+  defaults (`csteamnetworkingsockets.cpp:84-85` = 256 KB/s) and recorded them as our binary's —
+  without censusing our own init path for overrides. The June memory
+  (`project_puppet_lag_interp_starvation.md:162`) had recorded the raise correctly all along.
+- **Effective-rate mechanism** (vendored `snp.cpp`): rate = clamp(init-estimate, Min, Max);
+  the estimate (`m_nCurrentSendRateEstimate`) is written ONLY at `SNP_InitializeConnection:286`
+  (4380 B / ping-at-init) and by the clamp itself (:4253/:4263/:4268). **No loss-, ack- or
+  timer-driven writer exists** ("FIXME — we might implement BBR probe cycle"). Any internet ping
+  > ~4.4 ms ⇒ rate sits at **Min = 1 MB/s forever**; LAN sub-ms ping ⇒ Max. `session_start`'s
+  old comment "GNS still adapts the rate DOWN toward Min on a lossy link" was FALSE (fixed).
+- **Field artifacts match the model exactly.** The Linux pair's HOST log: net-diag
+  `sendRate=1048576B/s` in **180/180 samples** (ping 19-25 ms, including the 485-drop burst
+  second — adaptation would have moved it). Her 18 MB save crossed in ~18 s (:31336/:32678 client
+  log) = 1.0 MB/s. Our unpinned loopback smokes run 3.9-10 MB/s under the 25 MB/s ceiling
+  (pump-paced). The 19 SEND BACKLOG warns in her log = exactly the 18 s transfer window (intended
+  buffer-full pacing) + the one rc=-25 burst second (the R-4b class, fixed). **Zero chronic
+  backlog** — her link absorbed the 1 MB/s floor cleanly.
+
+### 7.2 Decision of record
+
+**A. NO rate-value change.** The residual question ("raise the 256 KB/s default?") was moot — the
+raise shipped 2.5 months ago. Min=1 MB/s / Max=25 MB/s stands: field-measured clean at Min on the
+internet path; knob `net.sendrate_kbs` overrides per-connection in both directions. Raising Min
+further buys ~9 s per join while overdriving more uplinks with zero adaptation — rejected.
+**The thin-uplink case (host uplink < 8 Mbit ⇒ fixed-rate overdrive) is OPEN-UNMEASURED**, not
+"unmotivated": absence of reports from a small tester base is not a measurement. It is
+pre-existing shipped behavior; §7.3 is its instrument. `session_start`'s "[P2P-over-slow-internet
+follow-up: topology-aware Min]" note stays open and points here.
+
+**B. Premise-contamination census (7 sites, all fixed 2026-08-23):** this doc's AS-BUILT bullet;
+`docs/LESSONS.md` R-4b lesson row; `session_start.cpp:76` (false adapts-DOWN comment);
+`session_status.cpp:71-72` (stock-vs-ours ambiguity); memory `MEMORY.md` НОВЫЙ-ФАКТ line; memory
+r4b topic (description + fact + OPEN item); memory enqueue-loss lesson. **Constants re-audit:
+no shipped R-4b constant derived from the false premise** — kNoProgress=30s is drain-motion-based,
+kMaxBytesPerSlot=16MB is 20× the measured 742 KB burst, kReserve=64KB is snp.cpp:320 arithmetic,
+4 MB buffer is burst-vs-buffer sizing, save pump `kChunksPerTick=4` is backpressure-paced by
+explicit comment. Prose only. New lesson: `[[lesson-a-librarys-default-is-not-your-binarys-config]]`.
+
+### 7.3 Drill: overdrive survivability (STAGED, RUN DEFERRED — this row is the tracker)
+
+> **STATUS: NOT RUN.** Deferred 2026-08-23 behind the user's no-launch constraint (RAM-heavy job).
+> This section is the self-contained spec — a later session runs it without pass-2 context.
+> Until it runs, overdrive survivability stays tagged UNMEASURED. It does NOT block decision A.
+
+Instrument: new registry testing-knob row `net.fakelink_kbs` (same shape as the two R-4b knobs;
+one init-time `ResolveInt` read in `session_start` ⇒ `SetGlobalConfigValueInt32(FakeRateLimit_Send_Rate)`.
+Gate-clean: `registry_gate.ps1` counts any `rows::` token; no exemption). FakeRateLimit is a
+**policer** — it silently DISCARDS packets beyond the token bucket (`lowlevel.cpp:1885-1907`) —
+i.e. worst-case thin-uplink physics (no queueing, pure loss).
+
+Topology: **host + client_1 only** (the policer is process-global and starves acks/keepalives of
+every host connection — no bystander peer may confound the verdict). Client→host is unthrottled.
+
+Runs (host-side knobs; 19.4 MB test save):
+1. **CONTROL**: `net.sendrate_kbs=256` + `net.fakelink_kbs=256` (zero overdrive) — must PASS
+   clean; isolates overdrive as the only variable in run 2.
+2. **OVERDRIVE**: `net.sendrate_kbs=1024` + `net.fakelink_kbs=256` (the 4× thin-uplink case,
+   default 4 MB buffer) — the product-realism run.
+3. **CONTRACT-PATH**: run 2 + `net.sendbuf_kb=128` (the R-4b RED recipe) — forces the backlog to
+   engage under overdrive (with the 4 MB buffer it rarely does).
+
+Verdict (three-way, pre-registered):
+- **PASS** = transfer completes capacity-bound (~78 s at effective ~256 KB/s), any backlog
+  episodes close "all delivered", claim sweep 0 unclaimed destroyed, 0 ERROR, save written crc-ok.
+- **DESIGNED-FATAL** = a `FatalCloseSlot`/kick line with reason — contract-legal ("or the
+  connection dies") but a **PRODUCT FINDING that REOPENS decision A** (thin-uplink joins would die
+  rather than degrade; motivates lowering Min or topology-aware Min).
+- **FAIL** = neither key within the smoke's bounded window (a silent stall times out as FAIL,
+  never hangs unjudged). Attribution discriminators: GNS `qual=`/pending in net-diag + save-chunk
+  progress cadence (transport physics) vs a backlog episode stuck WITH buffer space free
+  (contract defect).
+
+**Aggregate threat model (pre-registered):** Min is per-CONNECTION — a host serving 3 clients
+floors at **3 MB/s aggregate** (24 Mbit) during simultaneous bursts. A clean 2-peer PASS
+therefore does NOT clear the 4-peer field case; after runs 1-3, a fourth confirmation run
+(host + 3 clients, `net.fakelink_kbs=768`) is the field-shaped variant.

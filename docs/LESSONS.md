@@ -3526,9 +3526,10 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   stays the pump's pacing lane (Begin now success-gated); 4MB SendBufferSize; bracket-anchored
   container-park aging; client inbox pause-not-drop. Bool contract: true = WILL deliver, false =
   never will. Drill: RED 956 losses on a pinned-buffer LAN join → GREEN 0, throttled-link episode
-  5,783 msgs "all delivered", 0 expired parks. Bonus measured fact: the GNS default send RATE is a
-  fixed 256 KB/s clamp (no bandwidth estimation) — the field bottleneck was the clamp, not the
-  link.** *Look FIRST:*
+  5,783 msgs "all delivered", 0 expired parks. (An earlier "bonus fact" here — "the GNS default
+  send RATE is a fixed 256 KB/s clamp; the field bottleneck was the clamp" — was FALSE for our
+  binary and is retracted: `session_start.cpp` raises Min/Max globally to 1/25 MB/s since
+  2026-06-06, and the field host ran at exactly 1 MB/s; see the next lesson.)** *Look FIRST:*
   `research/findings/network/votv-reliable-delivery-guarantee-DESIGN-2026-08-23.md` +
   `memory/lesson_reliable_enqueue_loss_is_silent_and_contiguous.md`
 - **GNS's RECEIVE side is lossless-by-stall at BOTH overflow caps** (measured in the vendored source,
@@ -3538,6 +3539,19 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   GNS-internal loss or a kill. This is what makes the client inbox's pause-not-drop (R-4b D10) safe --
   the fear "GNS under me will drop" is measured false. *Look FIRST:* session.cpp NetThread client
   receive branch + `memory/lesson_gns_receive_overflow_stalls_never_drops.md`
+- **A library's DEFAULT is not your binary's effective config — census your own init path for
+  overrides before recording a "default" as a fact** (SendRate pass, 2026-08-23): R-4b measured GNS
+  stock `SendRateMin/Max = 256 KB/s` (`csteamnetworkingsockets.cpp:84-85`) and recorded it as the
+  shipped behavior + filed a "raise it?" product question — but `session_start.cpp:79-84` had
+  overridden BOTH globally (1/25 MB/s) since 2026-06-06, and the June memory recorded that raise.
+  One false fact contaminated 7 prose sites before a critic forced the measurement. DETECTION
+  instrument (the positive check, not just the caution): read the effective value your OWN
+  telemetry logs — net-diag's `sendRate=` field showed exactly 1048576 in 180/180 field samples;
+  a "default" claim that contradicts your own logged effective value is wrong by artifact. Also
+  grep init paths for `SetGlobalConfigValue|SetConnectionConfigValue` (or the library's setter
+  vocabulary) before asserting any library default. *Look FIRST:*
+  `votv-reliable-delivery-guarantee-DESIGN-2026-08-23.md` §7 +
+  `memory/lesson_a_librarys_default_is_not_your_binarys_config.md`
 - **A wall-clock TTL on a park that waits for data from a DIFFERENT lane is a silent drop one level
   up** (R-4b round 4): ContainerContents rides Normal, its PropSpawn rides Bulk -- lanes deliver
   independently, so under backpressure the contents SYSTEMATICALLY arrive first, and once delivery is
