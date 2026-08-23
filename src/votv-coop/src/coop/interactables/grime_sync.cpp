@@ -27,8 +27,8 @@
 #include "ue_wrap/devices/grime.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/core/settled_object_scan.h"  // stream-settle scan (L5 + the 18:41 world-reload cure)
-#include "ue_wrap/core/walk_timer.h"           // L5: [WALK-TIME] profiling
+#include "ue_wrap/engine/world_identity.h"     // R-2: gen-stamped index (dead-world guard)
+#include "coop/element/object_scan_hub.h"      // R-2: the shared sliced scan pass
 
 #include <algorithm>
 #include <atomic>
@@ -141,7 +141,13 @@ bool DecodePosKey(const std::wstring& key, ue_wrap::FVector& out) {
     return true;
 }
 
+// R-2: world generation of the last completed hub pass; a stale-gen index is treated as EMPTY
+// on every read path (dead-world guard).
+uint32_t g_indexGen = 0;
+bool IndexCurrent() { return g_indexGen == ue_wrap::world_identity::Generation(); }
+
 void* ResolveFast(const std::wstring& key) {
+    if (!IndexCurrent()) return nullptr;  // stale-gen index = another world's actors (R-1 class)
     std::lock_guard<std::mutex> lk(g_indexMutex);
     auto it = g_byKey.find(key);
     if (it != g_byKey.end() && R::IsLiveByIndex(it->second.actor, it->second.idx))
@@ -149,72 +155,78 @@ void* ResolveFast(const std::wstring& key) {
     return nullptr;
 }
 
-// Full GUObjectArray walk -> rebuild the position->actor index. Game thread, throttled (NOT
-// per-frame). Logs a (count, posHash) that host vs client compare for cross-peer position
-// stability -- the grime analog of the window's keysHash (if these MATCH, the position-identity
-// model is proven; if not, the decals diverge across peers and the model needs revisiting).
-size_t RebuildIndex() {
-    if (!G::EnsureResolved()) return 0;
-    // PosKey cache (perf audit H-1): a grime decal is STATIC, so its PosKey never changes -- yet
-    // computing it dispatches GetActorLocation (a ProcessEvent UFunction), and doing that for ~1000
-    // unchanged decals on every 2 s rebuild was a recurring ~3 ms frame hitch. Cache PosKey per actor
-    // pointer: only a NEW (streamed-in) decal computes it; known decals reuse the cached string. The
-    // cache is rebuilt from the live set each pass (a re-streamed decal gets a fresh pointer ->
-    // recomputes; dead actors drop). GT-only (RebuildIndex is game-thread-serial). [Ideal per the
-    // audit is a direct RootComponent->location field read with no UFunction at all -- queued.]
-    static std::unordered_map<void*, std::wstring> s_posKeyByActor;
-    // Stream-settle scan (ue_wrap/settled_object_scan.h) -- the raw tail-scan died at the 18:41
-    // host world reload (prune-to-0, recycled slots below the cursor). settleScans=2 (not 15):
-    // grime CHURNS whenever the player washes (decal deaths re-arm the gate), so 15 would pin a
-    // cleaning session in 2s-cadence full walks (perf-audit 2026-07-04 Q2); new decals APPEND (tail
-    // catches them), recycled-slot arrivals heal within the 60s backstop. The PosKey cache below is
-    // maintained incrementally (new actors compute + cache; a full scan rebuilds it from scratch).
-    static ue_wrap::scan::SettledObjectScan sScan{/*settleScans*/ 2, /*backstopFullEvery*/ 30};
-    sScan.diagName = "grime";  // [SCAN-DIAG] attribution
-    const auto r = sScan.Begin();
-    std::unordered_map<void*, std::wstring> nextCache;  // populated only on a full scan
-    std::vector<std::pair<std::wstring, Ref>> found;
-    found.reserve(64);
-    for (int32_t i = r.begin; i < r.end; ++i) {
-        void* obj = R::ObjectAt(i);
-        if (!obj) continue;
-        if (!G::IsGrime(obj)) continue;  // cheap class-descendant filter (no alloc)
-        if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;  // skip CDO (alloc-free; audit W-e)
-        if (!R::IsLive(obj)) continue;
-        auto cit = s_posKeyByActor.find(obj);
-        std::wstring key = (cit != s_posKeyByActor.end()) ? cit->second : PosKey(obj);
-        if (r.isFull) nextCache.emplace(obj, key);   // full scan rebuilds the cache from the live set
-        else          s_posKeyByActor.emplace(obj, key);  // tail scan: cache the NEW actor's key
-        found.emplace_back(std::move(key), Ref{ obj, R::InternalIndexOf(obj) });
-    }
-    if (r.isFull) s_posKeyByActor.swap(nextCache);  // keep live actors' cached keys, drop dead ones
+// ---- R-2 shared-scan hub consumer (design: votv-shared-scan-hub-R2-DESIGN-2026-08-23.md).
+// The per-module walk is RETIRED; the hub's shared sliced pass drives these callbacks.
+// settleScans=2 kept (not 15): grime CHURNS whenever the player washes (decal deaths re-arm
+// the demand), so 15 would pin a cleaning session in 2s-cadence full demand (perf-audit
+// 2026-07-04 Q2); new decals APPEND (tail passes catch them), recycled-slot arrivals heal
+// within the hub's 60 s backstop.
+// PosKey cache (perf audit H-1, preserved): a grime decal is STATIC, so its PosKey never
+// changes -- yet computing it dispatches GetActorLocation (a ProcessEvent UFunction), and
+// doing that for ~1000 unchanged decals on every rebuild was a recurring ~3 ms frame hitch.
+// Only a NEW decal computes it; a full pass rebuilds the cache from the live set.
+std::unordered_map<void*, std::wstring> g_posKeyByActor;   // actor -> cached PosKey (GT-only)
+std::unordered_map<void*, std::wstring> g_scanNextCache;   // pass scratch: full-pass cache rebuild
+std::vector<std::pair<std::wstring, Ref>> g_scanFound;     // pass scratch (GT-only)
+bool g_scanIsFull = false;                                  // pass context
+
+void HubPassBegin(void*, bool isFull) {
+    g_scanFound.clear();
+    g_scanNextCache.clear();
+    g_scanIsFull = isFull;
+}
+
+void HubMatch(void*, void* obj) {
+    if (R::NameStartsWith(R::NameOf(obj), L"Default__")) return;  // skip CDO (alloc-free; audit W-e)
+    if (!R::IsLive(obj)) return;
+    auto cit = g_posKeyByActor.find(obj);
+    std::wstring key = (cit != g_posKeyByActor.end()) ? cit->second : PosKey(obj);
+    if (g_scanIsFull) g_scanNextCache.emplace(obj, key);   // full pass rebuilds the cache from the live set
+    else              g_posKeyByActor.emplace(obj, key);   // tail pass: cache the NEW actor's key
+    g_scanFound.emplace_back(std::move(key), Ref{ obj, R::InternalIndexOf(obj) });
+}
+
+size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
+    const size_t added = g_scanFound.size();
+    if (isFull) g_posKeyByActor.swap(g_scanNextCache);  // keep live actors' cached keys, drop dead ones
     uint64_t posHash = 0;
     size_t   total;
     {
         std::lock_guard<std::mutex> lk(g_indexMutex);
-        if (r.isFull) g_byKey.clear();                         // full re-scan: rebuild from scratch
-        for (auto& f : found) g_byKey[f.first] = f.second;     // add the new (or all, on a full scan)
-        if (!r.isFull) {                                       // tail scan: prune dead entries (cheap, O(index))
+        if (isFull) g_byKey.clear();                           // full pass: rebuild from scratch
+        for (auto& f : g_scanFound) g_byKey[f.first] = f.second;
+        if (!isFull) {                                         // tail pass: prune dead entries (cheap, O(index))
             for (auto it = g_byKey.begin(); it != g_byKey.end(); ) {
                 if (R::IsLiveByIndex(it->second.actor, it->second.idx)) ++it;
-                else { s_posKeyByActor.erase(it->second.actor); it = g_byKey.erase(it); }
+                else { g_posKeyByActor.erase(it->second.actor); it = g_byKey.erase(it); }
             }
         }
         for (auto& kv : g_byKey) posHash ^= FnvKey(kv.first);  // recompute over the index (cheap, O(index))
         total = g_byKey.size();
+        g_indexGen = worldGen;
     }
-    sScan.End(total);  // feed the settle gate (any count change re-arms full walks)
     if (total != g_lastLogCount || posHash != g_lastLogHash) {
         g_lastLogCount = total;
         g_lastLogHash = posHash;
-        UE_LOGI("grime: index rebuilt -- %zu live grime decal(s), posHash=0x%016llX (%s scan, +%zu new) "
+        UE_LOGI("grime: index rebuilt -- %zu live grime decal(s), posHash=0x%016llX (%s pass, +%zu new) "
                 "(compare host vs client for cross-peer position stability)",
-                total, static_cast<unsigned long long>(posHash), r.isFull ? "full" : "tail", found.size());
+                total, static_cast<unsigned long long>(posHash), isFull ? "full" : "tail", added);
     }
     if (ProbeLog())
-        for (auto& f : found)
+        for (auto& f : g_scanFound)
             UE_LOGI("grime[probe]: key='%ls' idx=%d actor=%p", f.first.c_str(), f.second.idx, f.second.actor);
+    g_scanFound.clear();
+    g_scanNextCache.clear();
     return total;
+}
+
+void RegisterWithScanHub() {
+    static bool sDone = false;
+    if (sDone) return;
+    sDone = true;
+    coop::element::scan_hub::Register(coop::element::scan_hub::Consumer{
+        "grime", nullptr, &G::EnsureResolved, &G::IsGrime,
+        &HubPassBegin, &HubMatch, &HubPassComplete, /*settleScans*/ 2});
 }
 
 // Apply a remote process value. adopt -> VERBATIM (host connect-snapshot); else MIN(local, wire)
@@ -313,10 +325,7 @@ void PollAndBroadcast() {
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
-    if (G::EnsureResolved()) {
-        static bool s_indexed = false;
-        if (!s_indexed) { UE_LOGI("grime: indexed %zu decal(s)", RebuildIndex()); s_indexed = true; }
-    }
+    RegisterWithScanHub();  // the hub builds the index on its own cadence
 }
 
 void OnReliable(const coop::net::KeyedScalarPayload& payload, uint8_t senderPeerSlot) {
@@ -348,7 +357,9 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     if (!s) return;
     if (s->role() != coop::net::Role::Host) return;  // host-only snapshot
     if (peerSlot < 0 || peerSlot >= static_cast<int>(coop::players::kMaxPeers)) return;
-    RebuildIndex();
+    // R-2: the forced sync rebuild is gone -- the hub keeps the index <=1 pass (~2 s) fresh
+    // (a decal minted in that window reaches the joiner via its next state change; grime state
+    // only ever moves on a wipe, which broadcasts).
     // Iterate the ~1000-entry index IN PLACE (no per-key wstring snapshot -- same reason as
     // PollAndBroadcast). The connect edge is game-thread-serial with RebuildIndex (no observer ->
     // no real contention), so holding both locks across the SendReliableToSlot enqueues is safe.
@@ -389,14 +400,13 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
 
 void Tick() {
     if (!G::EnsureResolved()) return;
+    RegisterWithScanHub();  // safety net for any order where Tick precedes Install
+    if (!IndexCurrent()) return;  // index belongs to a dead world -- wait for the hub's next pass
     const auto now = std::chrono::steady_clock::now();
     if (now - g_lastRetry >= kRetryRebuildThrottle) {
         g_lastRetry = now;
-        // L5 (FPS): INCREMENTAL rebuild -- tail-scan only the NEW decals (the array TAIL) + a rare ~5min
-        // full safety (no 237k walk) + profile it. The cheap g_pending resolution below still runs every
-        // throttle (a pending item only resolves once its actor exists in the index).
-        ue_wrap::ScopedWalkTimer _wt("grime:RebuildIndex");  // logs only the rare ~5min full safety
-        RebuildIndex();
+        // The cheap g_pending resolution below still runs every throttle (a pending item only
+        // resolves once its actor exists in the hub-maintained index).
         if (!g_pending.empty()) {
             int applied = 0, expired = 0, still = 0;
             for (auto it = g_pending.begin(); it != g_pending.end();) {

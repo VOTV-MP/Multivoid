@@ -14,8 +14,8 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/core/settled_object_scan.h"  // stream-settle scan (L5 + the 18:41 world-reload cure)
-#include "ue_wrap/core/walk_timer.h"           // L5: [WALK-TIME] profiling
+#include "ue_wrap/engine/world_identity.h"     // R-2: gen-stamped index (dead-world guard)
+#include "coop/element/object_scan_hub.h"      // R-2: the shared sliced scan pass
 #include "ue_wrap/core/types.h"
 
 #include <atomic>
@@ -70,39 +70,44 @@ uint64_t Fnv1a(const std::wstring& s, uint64_t h) {
 // entries keep their poll baselines (re-primed only for NEW keys). Logs
 // (count, keysHash) on population change -- host==client hash is the smoke
 // signal for cross-peer key identity (~392 placed piles expected).
-void RebuildIndex() {
+// ---- R-2 shared-scan hub consumer (design: votv-shared-scan-hub-R2-DESIGN-2026-08-23.md).
+// The per-module walk is RETIRED; the hub's shared sliced pass drives these callbacks.
+// settleScans=2 kept (not the static-channel 15): this class CHURNS at runtime (depleted pile
+// self-destructs + spawner re-spawns) and every churn re-arms the full demand -- 15 would keep
+// a collecting session in permanent full-demand mode (the L5 hitch). Entries are merged
+// IN PLACE (no full-pass clear) exactly as before: persistent keys keep their poll baselines.
+uint32_t g_indexGen = 0;  // world gen of the last completed pass (stale-gen index = EMPTY)
+bool IndexCurrent() { return g_indexGen == ue_wrap::world_identity::Generation(); }
+struct ScanFound { std::wstring key; void* obj; int32_t idx; ue_wrap::FVector loc; };
+std::vector<ScanFound> g_scanFound;  // pass scratch (GT-only)
+
+void HubPassBegin(void*, bool) { g_scanFound.clear(); }
+
+void HubMatch(void*, void* obj) {
+    if (!R::IsLive(obj)) return;
+    if (R::NameStartsWith(R::NameOf(obj), L"Default__")) return;
+    std::wstring key = UP::GetInteractableKeyString(obj);
+    if (key.empty() || key == L"None") return;
+    const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(obj);
+    g_scanFound.push_back({ std::move(key), obj, R::InternalIndexOf(obj), loc });
+}
+
+size_t HubPassComplete(void*, bool /*isFull*/, uint32_t worldGen) {
     size_t before = g_index.size();
-    // Stream-settle scan (ue_wrap/settled_object_scan.h) -- the raw tail-scan died at the 18:41
-    // host world reload (prune-to-0, recycled slots below the cursor). settleScans=2 (not the
-    // static-channel 15): this class CHURNS at runtime (depleted pile self-destructs + spawner
-    // re-spawns) and every churn re-arms the full walk -- 15 would keep a collecting session in
-    // permanent full-walk mode (the L5 hitch). 2 full walks heal a reload/churned slot immediately;
-    // the 60s backstop (fullEvery=30 at the 2s throttle, unchanged) covers any straggler.
-    static ue_wrap::scan::SettledObjectScan sScan{/*settleScans*/ 2, /*backstopFullEvery*/ 30};
-    sScan.diagName = "trash_pile";  // [SCAN-DIAG] attribution
-    const auto r = sScan.Begin();
-    for (int32_t i = r.begin; i < r.end; ++i) {
-        void* obj = R::ObjectAt(i);
-        if (!obj) continue;
-        if (!UP::IsTrashBitsPile(obj)) continue;
-        if (!R::IsLive(obj)) continue;
-        if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;
-        const std::wstring key = UP::GetInteractableKeyString(obj);
-        if (key.empty() || key == L"None") continue;
-        auto& e = g_index[key];
-        if (e.actor != obj) { e.actor = obj; e.idx = R::InternalIndexOf(obj); }
-        const ue_wrap::FVector loc = ue_wrap::engine::GetActorLocation(obj);
-        e.x = loc.X; e.y = loc.Y; e.z = loc.Z;
+    for (auto& f : g_scanFound) {
+        auto& e = g_index[f.key];
+        if (e.actor != f.obj) { e.actor = f.obj; e.idx = f.idx; }
+        e.x = f.loc.X; e.y = f.loc.Y; e.z = f.loc.Z;
     }
-    // Prune dead entries by LIVENESS only (the incremental scan no longer builds a full `seen` set, but the
-    // original `!seen.count && !IsLiveByIndex` reduces to `!IsLiveByIndex`: a persistent LIVE entry is kept,
-    // a vanished one's actor goes not-live -> dropped). The death-watch owns live-session deaths; this is
-    // rebuild hygiene. O(index), not O(237k).
+    // Prune dead entries by LIVENESS only (as before: a persistent LIVE entry is kept, a
+    // vanished one's actor goes not-live -> dropped). The death-watch owns live-session
+    // deaths; this is rebuild hygiene. O(index), not O(237k).
     for (auto it = g_index.begin(); it != g_index.end();) {
         if (!R::IsLiveByIndex(it->second.actor, it->second.idx)) it = g_index.erase(it);
         else ++it;
     }
-    sScan.End(g_index.size());  // feed the settle gate (any count change re-arms full walks)
+    g_indexGen = worldGen;
+    g_scanFound.clear();
     if (g_index.size() != before) {
         // XOR-fold of per-key FNV hashes: ORDER-INDEPENDENT, so identical key sets
         // hash identically across peers regardless of map iteration order.
@@ -111,6 +116,23 @@ void RebuildIndex() {
         UE_LOGI("trash_pile: indexed %zu pile(s), keysHash=0x%llX", g_index.size(),
                 static_cast<unsigned long long>(h));
     }
+    return g_index.size();
+}
+
+bool HubEnsureResolved() {
+    // The wrapper resolves its class cache lazily inside the predicate; a probe object is not
+    // needed -- report ready and let IsTrashBitsPile gate per object (preserves the old
+    // "readiness == the class resolving inside the first successful walk" behavior).
+    return true;
+}
+
+void RegisterWithScanHub() {
+    static bool sDone = false;
+    if (sDone) return;
+    sDone = true;
+    coop::element::scan_hub::Register(coop::element::scan_hub::Consumer{
+        "trash_pile", nullptr, &HubEnsureResolved, &UP::IsTrashBitsPile,
+        &HubPassBegin, &HubMatch, &HubPassComplete, /*settleScans*/ 2});
 }
 
 void SendState(coop::net::Session* s, const std::wstring& key, int32_t a, int32_t b, bool adopt,
@@ -158,14 +180,13 @@ void ApplyToLive(Entry& e, const std::wstring& key, int16_t wa, int16_t wb, bool
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     if (g_installed) return;
-    // Readiness == the class cache resolving inside the first successful walk
-    // (RebuildIndex finds instances only once trashBitsPile_C is loaded).
-    RebuildIndex();
+    RegisterWithScanHub();  // the hub builds the index on its own cadence
+    // Readiness == instances appearing in the hub-built index (only once trashBitsPile_C is
+    // loaded and a pass has run). Retried by the next tick's Install call until then.
     if (!g_index.empty()) {
         g_installed = true;
         UE_LOGI("trash_pile: installed (%zu pile(s) indexed)", g_index.size());
     }
-    // No piles yet (class not loaded / menu): retried by the next tick's Install call.
 }
 
 void OnReliable(const coop::net::TrashPileStatePayload& payload, uint8_t senderPeerSlot) {
@@ -209,7 +230,9 @@ void NotifyWireDestroy(const std::wstring& key) {
 void QueueConnectBroadcastForSlot(int peerSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Host) return;
-    RebuildIndex();
+    // R-2: the forced sync rebuild is gone -- the hub keeps the index <=1 pass (~2 s) fresh;
+    // a pile churned in that window reaches the joiner via the depleted-key replay below /
+    // the claim sweep (both pre-existing backstops for exactly this race).
     size_t sent = 0;
     for (auto& [key, e] : g_index) {
         if (!R::IsLiveByIndex(e.actor, e.idx)) continue;
@@ -241,12 +264,12 @@ void Tick(bool inTransition) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) return;
     if (!g_installed) { Install(s); if (!g_installed) return; }
+    if (!IndexCurrent()) return;  // index belongs to a dead world -- wait for the hub's next pass
     const auto now = Clock::now();
     if (now >= g_nextRebuild) {
         g_nextRebuild = now + kRebuildEvery;
-        ue_wrap::ScopedWalkTimer _wt("trash_pile:RebuildIndex");  // logs only the rare full safety
-        RebuildIndex();   // L5: INCREMENTAL -- tail-scan + a ~60s full safety (trashBitsPile has runtime churn)
-        // Deferred-apply retry on the same throttle.
+        // Deferred-apply retry on the same throttle (the hub refreshes the index on its own
+        // cadence; this throttle now paces only the retries).
         for (auto it = g_pending.begin(); it != g_pending.end();) {
             auto idx = g_index.find(it->first);
             if (idx != g_index.end() && R::IsLiveByIndex(idx->second.actor, idx->second.idx)) {

@@ -22,8 +22,8 @@
 #include "ue_wrap/devices/base_window.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/core/settled_object_scan.h"  // stream-settle scan (L5 + the 18:41 world-reload cure)
-#include "ue_wrap/core/walk_timer.h"                  // L5: [WALK-TIME] profiling (logs only the rare full safety)
+#include "ue_wrap/engine/world_identity.h"     // R-2: gen-stamped index (dead-world guard)
+#include "coop/element/object_scan_hub.h"      // R-2: the shared sliced scan pass
 
 #include <algorithm>
 #include <atomic>
@@ -76,7 +76,13 @@ size_t g_lastLogCount = SIZE_MAX;  // GT-only: dedup the rebuilt log
 uint64_t g_lastLogHash = 0;        // GT-only
 std::vector<std::pair<std::wstring, Ref>> g_pollScratch;  // GT-only: reused per-tick poll snapshot (capacity retained across clear() -> no realloc in steady state; the few short keys are SSO)
 
+// R-2: world generation of the last completed hub pass; a stale-gen index is treated as EMPTY
+// on every read path (dead-world guard).
+uint32_t g_indexGen = 0;
+bool IndexCurrent() { return g_indexGen == ue_wrap::world_identity::Generation(); }
+
 void* ResolveFast(const std::wstring& key) {
+    if (!IndexCurrent()) return nullptr;  // stale-gen index = another world's actors (R-1 class)
     std::lock_guard<std::mutex> lk(g_indexMutex);
     auto it = g_byKey.find(key);
     if (it != g_byKey.end() && R::IsLiveByIndex(it->second.actor, it->second.idx))
@@ -84,40 +90,33 @@ void* ResolveFast(const std::wstring& key) {
     return nullptr;
 }
 
-// Full GUObjectArray walk -> rebuild the key->actor index. Game thread. NOT a per-frame cost
-// (Tick throttles it to every kRetryRebuildThrottle); the per-tick poll iterates only the
-// built index. Logs an order-independent Key hash so host vs client logs reveal cross-peer
-// Key stability (AbaseWindow_C is an Aactor_save_C -- its Key should be stable like doors).
-size_t RebuildIndex() {
-    if (!BW::EnsureResolved()) return 0;
-    // Stream-settle scan (ue_wrap/settled_object_scan.h) -- the raw tail-scan died at the 18:41
-    // host world reload (prune-to-0, recycled slots below the cursor). settleScans=2: a window
-    // break/repair changes the count and would re-arm 15x2s of full walks for a routine event
-    // (perf-audit 2026-07-04); only 4 windows exist -- 2 stable scans suffice, the 60s backstop
-    // covers recycled-slot stragglers.
-    static ue_wrap::scan::SettledObjectScan sScan{/*settleScans*/ 2, /*backstopFullEvery*/ 30};
-    sScan.diagName = "window";  // [SCAN-DIAG] attribution
-    const auto r = sScan.Begin();
-    std::vector<std::pair<std::wstring, Ref>> found;
-    found.reserve(8);
-    for (int32_t i = r.begin; i < r.end; ++i) {
-        void* obj = R::ObjectAt(i);
-        if (!obj) continue;
-        if (!BW::IsBaseWindow(obj)) continue;  // cheap class-descendant filter (no alloc)
-        const std::wstring nm = R::ToString(R::NameOf(obj));
-        if (nm.rfind(L"Default__", 0) == 0) continue;  // skip CDO
-        if (!R::IsLive(obj)) continue;
-        std::wstring key = BW::GetKeyString(obj);
-        if (key.empty() || key == L"None") continue;
-        found.emplace_back(std::move(key), Ref{ obj, R::InternalIndexOf(obj) });
-    }
+// ---- R-2 shared-scan hub consumer (design: votv-shared-scan-hub-R2-DESIGN-2026-08-23.md).
+// The per-module walk is RETIRED; the hub's shared sliced pass drives these callbacks.
+// settleScans=2 kept: a window break/repair changes the count and would re-arm 15x2s of full
+// demand for a routine event (perf-audit 2026-07-04); only 4 windows exist -- 2 stable passes
+// suffice, the hub's 60 s backstop covers recycled-slot stragglers.
+std::vector<std::pair<std::wstring, Ref>> g_scanFound;  // pass scratch (GT-only)
+
+void HubPassBegin(void*, bool) { g_scanFound.clear(); }
+
+void HubMatch(void*, void* obj) {
+    const std::wstring nm = R::ToString(R::NameOf(obj));
+    if (nm.rfind(L"Default__", 0) == 0) return;  // skip CDO
+    if (!R::IsLive(obj)) return;
+    std::wstring key = BW::GetKeyString(obj);
+    if (key.empty() || key == L"None") return;
+    g_scanFound.emplace_back(std::move(key), Ref{ obj, R::InternalIndexOf(obj) });
+}
+
+size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
+    const size_t added = g_scanFound.size();
     uint64_t keysHash = 0;
     size_t   total;
     {
         std::lock_guard<std::mutex> lk(g_indexMutex);
-        if (r.isFull) g_byKey.clear();                         // full re-scan: rebuild from scratch
-        for (auto& f : found) g_byKey[f.first] = f.second;     // add the new (or all, on a full scan)
-        if (!r.isFull) {                                       // tail scan: prune dead entries (cheap, O(index))
+        if (isFull) g_byKey.clear();                           // full pass: rebuild from scratch
+        for (auto& f : g_scanFound) g_byKey[f.first] = f.second;
+        if (!isFull) {                                         // tail pass: prune dead entries (cheap, O(index))
             for (auto it = g_byKey.begin(); it != g_byKey.end(); ) {
                 if (R::IsLiveByIndex(it->second.actor, it->second.idx)) ++it;
                 else it = g_byKey.erase(it);
@@ -125,19 +124,29 @@ size_t RebuildIndex() {
         }
         for (auto& kv : g_byKey) keysHash ^= FnvKey(kv.first);  // recompute over the index (cheap, O(index))
         total = g_byKey.size();
+        g_indexGen = worldGen;
     }
-    sScan.End(total);  // feed the settle gate (any count change re-arms full walks)
     if (total != g_lastLogCount || keysHash != g_lastLogHash) {
         g_lastLogCount = total;
         g_lastLogHash = keysHash;
-        UE_LOGI("window: index now %zu live keyed window(s), keysHash=0x%016llX (%s scan, +%zu new) "
+        UE_LOGI("window: index now %zu live keyed window(s), keysHash=0x%016llX (%s pass, +%zu new) "
                 "(compare host vs client for cross-peer Key stability)",
-                total, static_cast<unsigned long long>(keysHash), r.isFull ? "full" : "tail", found.size());
+                total, static_cast<unsigned long long>(keysHash), isFull ? "full" : "tail", added);
     }
     if (ProbeLog())
-        for (auto& f : found)
+        for (auto& f : g_scanFound)
             UE_LOGI("window[probe]: key='%ls' idx=%d actor=%p", f.first.c_str(), f.second.idx, f.second.actor);
+    g_scanFound.clear();
     return total;
+}
+
+void RegisterWithScanHub() {
+    static bool sDone = false;
+    if (sDone) return;
+    sDone = true;
+    coop::element::scan_hub::Register(coop::element::scan_hub::Consumer{
+        "window", nullptr, &BW::EnsureResolved, &BW::IsBaseWindow,
+        &HubPassBegin, &HubMatch, &HubPassComplete, /*settleScans*/ 2});
 }
 
 // Apply a remote clean value. adopt -> VERBATIM (connect-snapshot: the joiner adopts the
@@ -259,10 +268,7 @@ void MaybeSyntheticWipe() {
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
-    if (BW::EnsureResolved()) {
-        static bool s_indexed = false;
-        if (!s_indexed) { UE_LOGI("window: indexed %zu window(s)", RebuildIndex()); s_indexed = true; }
-    }
+    RegisterWithScanHub();  // the hub builds the index on its own cadence
 }
 
 void OnReliable(const coop::net::KeyedScalarPayload& payload, uint8_t senderPeerSlot) {
@@ -303,7 +309,8 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     if (!s) return;
     if (s->role() != coop::net::Role::Host) return;  // host-only snapshot
     if (peerSlot < 0 || peerSlot >= static_cast<int>(coop::players::kMaxPeers)) return;
-    RebuildIndex();
+    // R-2: the forced sync rebuild is gone -- the hub keeps the index <=1 pass (~2 s) fresh
+    // (windows are static level actors; the staleness window is empty in practice).
     std::vector<std::pair<std::wstring, Ref>> items;
     {
         std::lock_guard<std::mutex> lk(g_indexMutex);
@@ -329,13 +336,14 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
 
 void Tick() {
     if (!BW::EnsureResolved()) return;
+    RegisterWithScanHub();  // safety net for any order where Tick precedes Install
+    if (!IndexCurrent()) return;  // index belongs to a dead world -- wait for the hub's next pass
     MaybeSyntheticWipe();  // dev-only, ini-gated one-shot (no-op unless window_synth=1)
     const auto now = std::chrono::steady_clock::now();
     if (now - g_lastRetry >= kRetryRebuildThrottle) {
         g_lastRetry = now;
-        ue_wrap::ScopedWalkTimer _wt("window:RebuildIndex");  // logs only the rare ~5min full safety
-        RebuildIndex();   // L5: INCREMENTAL -- tail-scan only the new objects + a rare full safety (no 237k walk)
-        // RECEIVER: retry deferred applies for windows that have now streamed in.
+        // RECEIVER: retry deferred applies for windows that have now streamed in (the hub
+        // refreshed the index on its own cadence; this throttle now paces only the retries).
         if (!g_pending.empty()) {
             int applied = 0, expired = 0, still = 0;
             for (auto it = g_pending.begin(); it != g_pending.end();) {
