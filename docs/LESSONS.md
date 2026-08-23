@@ -888,7 +888,23 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   the numeric gate 10.0x → 5.8x; force exactly the one action (a one-shot flag), never a state
   reset. The same drill falsified grime's "collision-free grid" comment by measurement
   (1,023 decals → 1,021 cells).
+  EIGHTH member (2026-08-23 eve, R-2b): **a gate observable that counts ATTEMPTS at the call
+  site cannot go red** — the reseed summary's `bumps=` was incremented beside
+  `BumpSeedGeneration_()` instead of inside it past the mute; the RED-calibration run showed
+  `bumps=19` with the generation FROZEN. The counter must live past every early-out of the
+  mechanism it certifies; both R-2b instrument defects were caught ONLY by running the gates
+  red/loaded, never by green paths.
   `memory/lesson_an_instrument_blind_to_the_phenomenon_always_passes.md`
+
+- **A PER-ITEM TIME BUDGET THAT EXCLUDES THE AFTER-LOOP DELIVERY HALF IS NOT A BUDGET.**
+  Measured 2026-08-23 (R-2b acceptance run 1): the reseed drain's ~1 ms QPC loop bounded
+  nothing — `DeliverLateRegisteredProps` ran AFTER the loop on the whole chunk, landing ~800
+  adoptions' payload+send on ONE tick (140/254 ms [WALK-TIME], the exact stall class the drain
+  existed to remove); and a per-8-items clock check let 8 back-to-back ~170 us items overshoot
+  2.4x. *Look FIRST:* any budgeted/sliced drain — verify the WHOLE per-item cost (including
+  express/broadcast halves staged "for later") executes inside the clock check, granularity
+  matched to the worst single item. Reference impl: `prop_census.cpp DrainReseedQueue`.
+  `memory/lesson_a_budget_that_excludes_the_after_loop_delivery.md`
 
 - **VERIFY ROLE-EXCLUSIVITY BEFORE INVOKING THE PUBLISH RULE — read the accessor top to bottom.**
   Measured 2026-07-28: a 15-round design pass was founded on "only the host can measure a peer's

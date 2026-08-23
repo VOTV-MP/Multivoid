@@ -1,6 +1,6 @@
 # Hands-on runbook — the v134 batch (2026-08-23; NOTHING in it is hands-on yet)
 
-**Deployed:** `multivoid-0.9.0n-134.dll` sha256 **`73F4E8B34EB3F852`** ×4 (HOST/CLIENT_1/2/3),
+**Deployed:** `multivoid-0.9.0n-134.dll` sha256 **`123374DAD5D731EF`** ×4 (post R-3/R-2b, 2026-08-23 eve) (HOST/CLIENT_1/2/3),
 proto **134**. (Supersedes the `588960CF…`/`7099255A…` bytes this runbook earlier named — the R-2 scan-hub
 arc landed after them, same day.) **RELAUNCH BOTH PEERS** (every copy already carries the
 final bytes via deploy-all).
@@ -21,8 +21,11 @@ final bytes via deploy-all).
 5. **R-2 — the shared scan hub**: the once-per-1-2 s stutter's root (13 independent full
    GUObjectArray walks) replaced by ONE sliced shared pass; per-frame walk cost capped ~1-2 ms
    (was 66-305 ms spikes); dead-world index window closed family-wide. FEEL check: the
-   once-per-second stutter should be gone in steady play; a residual ~20 s periodic hitch is
-   the known separate reseed row.
+   once-per-second stutter should be gone in steady play.
+6. **R-2b — the steady reseed census as hub consumer #14 (2026-08-23 eve)**: the residual ~20 s
+   periodic hitch (13-18 ms single-frame; field 120/1,880 ms) is ALSO retired -- sliced pass +
+   ~1 ms/tick budget drain. FEEL check: NO periodic hitch should remain in steady play at all;
+   spawn-menu/toolgun props must still appear on the other peer within ~2-20 s.
 
 ## Suggested hands-on checks (any subset; prefixes attribute)
 
