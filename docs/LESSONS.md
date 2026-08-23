@@ -2175,6 +2175,19 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   trap: blob-then-overlay already exists in the tree (joiner loads the host save, `prop_snapshot`
   reconciles by key), and that familiarity hides the new authority question. LOOK FIRST:
   `docs/COOP_SERVER_MODEL.md` §5b. `memory/lesson_opaque_blob_custody_donor_dictates_the_remainder.md`
+- **2026-08-23 — a documented invalidation can have ZERO callers; grep the call sites, and know the
+  absorb hides failure from the caller.** `Registry::InvalidateLocal()` is promised by
+  `input_owner.cpp:116` ("cleared on a level change") and has NO call site at `50b78d47` — so after a
+  SOLO quit-to-menu the warm cache (slot+serial `Alive()`, no world identity) served the dead world's
+  pawn for 44+ s, `GetController(dead pawn)` returned the dead PC, and input_owner's 1 Hz sweep fed it
+  into `HasUserFocusedDescendants` on ~2,508 widgets/sweep → ~2,508 absorbed AVs/s for 44 s (78% of a
+  12.35 MB field log). Four stacked traps: comment-as-wiring; liveness≠world-validity; the absorb
+  lands BELOW `R::CallFunction` so the sweep sees a clean `false` and cannot latch; and the trigger
+  flow (solo → quit → join) is ordinary for players yet exercised by NO autonomous smoke (0 instances
+  in all 4 local logs). Fix shape: wire the invalidation from the ONE world-change authority +
+  world-identity stamp on the warm path + fault-generation abort. *Look FIRST:*
+  `research/findings/votv-linux-fps-triage-2026-08-23.md` §2.
+  `memory/lesson_documented_invalidation_with_zero_callers.md`
 
 ## 4. Dispatch, hooks & input seams
 
@@ -2802,7 +2815,18 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   destroy-seam episode gates held under world-teardown mass K2_DestroyActor → D2 stays deferred, its
   residual harm = wasted local work. LOOK FIRST: the D2 section of
   `research/findings/tooling/votv-islive-zeroav-cachedobjref-DESIGN-2026-08-22.md` (probe RESULT +
-  seam candidates), and `coop/dev/wire_census` for re-measuring.
+  seam candidates), and `coop/dev/wire_census` for re-measuring. **SOLO asymmetry (2026-08-23): the
+  ~+1 s session-stop edge and the ≤4 s flee poll exist only WITH a session — a SOLO quit-to-menu has
+  neither, and the dead pawn stayed slot-live 44+ s (until the next world load's purge), vs ~3 s on
+  the same log's connected quit. The stale window is transition-path-dependent.**
+- **2026-08-23 — `access=FFFFFFFFFFFFFFFF` in a PE-absorb line = NON-CANONICAL pointer deref**
+  (#GP-class AV, `ExceptionInformation[1] = -1`, the Windows "address unknown" convention) — the code
+  dereferenced scribbled garbage, not a mapped-but-wrong address. Reading pattern: constant ip +
+  constant access + VARYING self across thousands of lines ⇒ the poison is a SHARED INPUT to the call
+  (an argument/global — in the triage, the stale PlayerController), never per-object corruption.
+  *Look FIRST:* `pe_detour.cpp TaskFaultFilter` (field meanings) +
+  `research/findings/votv-linux-fps-triage-2026-08-23.md` §2 (worked example).
+  `memory/lesson_absorb_log_access_minus_one_is_noncanonical_deref.md`
   `memory/lesson_dying_world_actors_not_killflagged_at_menu.md`
 - **A runtime-spawned `AStaticMeshActor` is STATIC mobility** → set Movable BEFORE `SetActorLocation` (a
   Static root silently no-ops the teleport). `memory/lesson_runtime_staticmeshactor_must_be_movable.md`
@@ -2994,6 +3018,14 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   express) carries its negative-result backoff INSIDE itself — call-site throttles don't survive
   new callers. `memory/lesson_full_array_walk_cheap_filter_before_nameof.md`
 - **A periodic FPS hitch by PERIOD COINCIDENCE is not causation** — measure the real source. `memory/lesson_periodic_hitch_not_the_walk_by_period_coincidence.md`
+- **2026-08-23 — the `[HITCH]` message QUOTES the string `[HITCH-SRC]` in its own prose, so ANY
+  substring grep for HITCH-SRC (even `-F "[HITCH-SRC]"`) matches BOTH lines and double-counts** — in
+  the Linux triage this produced a false "HITCH-SRC median 74 ms, n=808" (really the [HITCH] frame
+  values) and briefly inverted the fps-floor attribution; the clean split showed ONE real HITCH-SRC
+  per 1–2 s and our tick <10 ms on the floor frames. Anchor markers at MESSAGE START (strip the
+  timestamp+level prefix, then `^\[HITCH\]` vs `^\[HITCH-SRC\]`); instrument-design rule: never quote
+  one marker's bracket-name inside another message's prose. *Look FIRST:*
+  `memory/lesson_hitch_marker_greps_split_by_label.md`
 - **A fixed-capacity hook table + ASYMMETRIC roles = a half-working fix.** `memory/lesson_hook_table_capacity_asymmetric_peers.md`
 - **ImGui COMPOSITE widgets: commit via a DEBOUNCE on value-changed.** `memory/lesson_imgui_composite_commit_debounce.md`
 - **`coop::subsystems::Install` is a per-tick RETRY PUMP, not boot code** — `net_pump.cpp:720` calls it
@@ -3401,8 +3433,13 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   `bDeleteFailedMessages=true` DELETES the message and 60+ `SendReliableToSlot` callers ignore the
   false return. Measured (b125 tester log): ALL 164 losses in ONE join second; loss contiguous in
   the drain's eid-ascending order (`registry.cpp:291`) — the join drain paces by CPU, blind to the
-  link. Same class as the B2 not-ready skip: ONE delivery-guarantee owner. *Look FIRST:*
-  `research/findings/votv-tester-log-triage-b125-2026-07-26.md` §R-A +
+  link. Same class as the B2 not-ready skip: ONE delivery-guarantee owner. **RECURRED 2026-08-23 at
+  3× volume, still unfixed (code re-verified at `50b78d47`: session.cpp:177 delete-on-fail, :182
+  warn-only): 485× rc=-25 kind=3 (PropSpawn) in one join minute, chain measured end-to-end into 282
+  expired container_contents parks on the client; the same minute carried ~1,600 client join-cull
+  DESTROY broadcasts (episode suppression covers keyed, NOT eid-only clumps) feeding the flood.**
+  *Look FIRST:* `research/findings/votv-tester-log-triage-b125-2026-07-26.md` §R-A +
+  `research/findings/votv-linux-fps-triage-2026-08-23.md` §5 +
   `memory/lesson_reliable_enqueue_loss_is_silent_and_contiguous.md`
 - **An identity-minting migration must census the wire SENDERS, not only the identity maps.** v122
   no-passive-mint demoted client keyed minting, but TWO client-reachable express paths
