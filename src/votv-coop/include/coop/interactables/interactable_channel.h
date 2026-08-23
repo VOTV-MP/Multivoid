@@ -451,7 +451,10 @@ public:
         // HostAuth: restore each door's authored autonomy (we suppressed autoclose on the
         // client). Safe to call unconditionally -- RestoreAutonomy is a no-op for any door
         // we never suppressed (host side / never applied), and for Symmetric channels.
-        if (mode_ == Mode::HostAuth && a_.RestoreAutonomy) {
+        if (mode_ == Mode::HostAuth && a_.RestoreAutonomy && IndexCurrent()) {
+            // The IndexCurrent gate (audit W-2): a quit-to-menu disconnect would otherwise
+            // sweep RestoreAutonomy field-writes across ~57 dead-world doors (slot+serial
+            // liveness is world-blind for <=44 s). A dead world needs no autonomy restore.
             std::vector<Ref> live;
             { std::lock_guard<std::mutex> lk(indexMutex_); live.reserve(byKey_.size());
               for (auto& kv : byKey_) live.push_back(kv.second); }

@@ -120,10 +120,12 @@ size_t HubPassComplete(void*, bool /*isFull*/, uint32_t worldGen) {
 }
 
 bool HubEnsureResolved() {
-    // The wrapper resolves its class cache lazily inside the predicate; a probe object is not
-    // needed -- report ready and let IsTrashBitsPile gate per object (preserves the old
-    // "readiness == the class resolving inside the first successful walk" behavior).
-    return true;
+    // audit W-1: report readiness HONESTLY so the hub benches this consumer while the class
+    // is unresolved -- IsTrashBitsPile's ResolveExtraBases re-runs FindClass (a full array
+    // walk) on EVERY call until all three extra bases resolve, and the hub calls IsInstance
+    // once per memo-missed class per pass; a stub `return true` discarded exactly the
+    // protection Consumer::EnsureResolved exists to give. One resolve attempt per pass.
+    return UP::EnsureTrashBitsPileResolved();
 }
 
 void RegisterWithScanHub() {
@@ -197,7 +199,10 @@ void OnReliable(const coop::net::TrashPileStatePayload& payload, uint8_t senderP
     for (uint8_t i = 0; i < payload.key.len && i < 31; ++i)
         key.push_back(static_cast<wchar_t>(static_cast<unsigned char>(payload.key.data[i])));
     if (key.empty()) return;
-    auto it = g_index.find(key);
+    // audit W-2: a stale-gen index holds another world's piles (R-1 class) -- treat it as a
+    // miss so the apply PARKS in g_pending and lands after the hub's next pass, never on a
+    // dead-world actor.
+    auto it = IndexCurrent() ? g_index.find(key) : g_index.end();
     if (it != g_index.end() && R::IsLiveByIndex(it->second.actor, it->second.idx)) {
         ApplyToLive(it->second, key, payload.amountA, payload.amountB, adopt, senderPeerSlot);
         return;

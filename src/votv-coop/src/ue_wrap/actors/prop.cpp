@@ -174,6 +174,12 @@ bool IsTrashBitsPile(void* obj) {
     return WalksToBase(R::ClassOf(obj), TrashBitsPileCls());
 }
 
+bool EnsureTrashBitsPileResolved() {
+    // R-2 audit W-1 (see prop.h): one resolve attempt per call; cheap once latched.
+    ResolveExtraBases();
+    return TrashBitsPileCls() != nullptr;
+}
+
 // AtrashBitsPile_C collect counters (v57 trash_pile_sync). Raw int32 fields per
 // the CXX dump: amountA @0x0260, amountB @0x0264 (the displayed "uses" count is
 // their SUM, formatted live by lookAt -- no refresh verb exists or is needed).

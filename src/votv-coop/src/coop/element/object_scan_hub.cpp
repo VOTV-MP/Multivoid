@@ -215,6 +215,14 @@ bool RunSlice() {
             g_memo[cls] = MemoEntry{bits, clsIdx, R::SlotSerial(clsIdx)};
         }
         if (bits) {
+            // Audit W-3: during the <=44 s old/new world coexistence after a travel, a
+            // slot+serial-live actor can still belong to the DYING world (IsLive is
+            // world-blind) -- without this term a pass run in the new world would re-admit
+            // it under the CURRENT gen stamp. One bounded outer-climb per MATCHING object
+            // per pass (never per object). WorldOf()==nullptr means "not world-scoped",
+            // which no actor a consumer indexes ever is -- exclude those too.
+            if (ue_wrap::world_identity::WorldOf(obj) != ue_wrap::world_identity::CurrentWorld())
+                continue;
             for (size_t ci = 0; ci < g_rows.size(); ++ci) {
                 if (bits & (1ull << ci)) g_rows[ci].c.OnMatch(g_rows[ci].c.ctx, obj);
             }

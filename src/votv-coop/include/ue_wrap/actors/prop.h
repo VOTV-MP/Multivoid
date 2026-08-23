@@ -87,6 +87,11 @@ bool IsGarbageClump(void* obj);
 // writes are fully consistent (no refresh verb exists on the class). The
 // Read/Write pair returns false for non-trashBitsPile actors (no stray reads).
 bool IsTrashBitsPile(void* obj);
+// R-2 audit W-1: an honest readiness probe for the scan hub -- attempts the extra-base
+// resolve once and reports whether trashBitsPile_C is known. While it is not, the hub
+// benches the trash_pile consumer instead of letting IsTrashBitsPile re-run FindClass
+// (a full GUObjectArray walk) once per memo-missed class per pass.
+bool EnsureTrashBitsPileResolved();
 bool ReadTrashPileAmounts(void* actor, int32_t& a, int32_t& b);
 bool WriteTrashPileAmounts(void* actor, int32_t a, int32_t b);
 

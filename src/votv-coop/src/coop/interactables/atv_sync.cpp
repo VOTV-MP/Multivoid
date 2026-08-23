@@ -380,6 +380,7 @@ void OnReliable(const coop::net::AtvStatePayload& payload, uint8_t /*senderPeerS
     std::wstring key = StringFromWireKey(payload.key);
     if (key.empty()) { UE_LOGW("atv: OnReliable empty key -- dropping"); return; }
     if (!A::EnsureResolved()) return;
+    if (!IndexCurrent()) return;  // audit W-2: a stale-gen index holds another world's ATVs (R-1 class); the 20 Hz stream re-sends
     // NaN/Inf guard before the kinematic engine writes (event_feed also guards; defensive).
     if (!std::isfinite(payload.x) || !std::isfinite(payload.y) || !std::isfinite(payload.z) ||
         !std::isfinite(payload.pitch) || !std::isfinite(payload.yaw) || !std::isfinite(payload.roll)) {
@@ -416,6 +417,7 @@ void OnAtvRelease(const coop::net::AtvReleasePayload& payload, uint8_t /*senderP
     std::wstring key = StringFromWireKey(payload.key);
     if (key.empty()) { UE_LOGW("atv: OnAtvRelease empty key -- dropping"); return; }
     if (!A::EnsureResolved()) return;
+    if (!IndexCurrent()) return;  // audit W-2: never drive velocity writes into a dead-world actor
     // NaN/Inf guard before the kinematic-off + velocity engine writes (event_feed also guards).
     if (!std::isfinite(payload.linVelX) || !std::isfinite(payload.linVelY) || !std::isfinite(payload.linVelZ) ||
         !std::isfinite(payload.angVelX) || !std::isfinite(payload.angVelY) || !std::isfinite(payload.angVelZ)) {
@@ -479,6 +481,7 @@ void OnAtvDestroy(const coop::net::AtvDestroyPayload& payload, uint8_t /*senderP
     if (!s || s->role() == coop::net::Role::Host) return;  // client-only
     std::wstring synthKey = StringFromWireKey(payload.synthKey);
     if (synthKey.empty()) return;
+    if (!IndexCurrent()) return;  // audit W-2: the pass prunes a dead-world entry itself
     auto it = g_atvs.find(synthKey);
     if (it == g_atvs.end()) return;
     void* actor = it->second.actor;

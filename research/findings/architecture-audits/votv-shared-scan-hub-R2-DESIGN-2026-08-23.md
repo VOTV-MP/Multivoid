@@ -23,7 +23,21 @@
 > one-shot force flag → clean 10.0×); and the grime probe's instance-count over-read by the
 > **2 real quantized-cell collisions among 1,023 decals** the "grid is collision-free" comment
 > denied — the probe now uses the real key fn (`grime_sync::DebugPosKeyForActor`).
-> NOT hands-on; rides the v134 batch runbook.
+> **POST-SHIP AUDIT (agent, same day): 0 CRITICAL, 4 WARN — W-1/W-2/W-3 FOLDED, W-4 noted.**
+> W-1: trash_pile's stubbed EnsureResolved (a latent FindClass-per-memo-miss bomb) → honest
+> `prop::EnsureTrashBitsPileResolved()` gate. W-2: gen-gates added to the receive edges the
+> census missed (atv OnReliable/OnAtvRelease/OnAtvDestroy, trash_pile OnReliable parks-not-
+> drops, Channel::OnDisconnect RestoreAutonomy sweep). W-3: the re-admission half of the
+> dead-world window closed with a per-MATCH `WorldOf(obj)==CurrentWorld()` term in the pass —
+> which immediately PROVED a latent wart: the old turbine index carried a phantom 5th entry,
+> the turbine CDO (only consumer with no Default__ skip; PosKey'd from its default position,
+> "synced" CDO-to-CDO across peers). The probe now mirrors the intended truth. The drill's
+> verdict became the INTERSECTION of modes (A = zero-staleness oracle; a B-only mismatch is
+> inter-pass churn lag — grime settles BETWEEN its ~30 s count steps, so the settled gate
+> cannot see the step landing after the last pass). W-4 (slice overshoot under PE-heavy
+> OnMatch) noted, bounded. Final GREEN on final bytes: parity DONE fail=0 churn-lag=0;
+> 18 full passes / 4.94M visits (10.4×); hub-walk max 2.1 ms; smoke PASS.
+> Final DLL `73F4E8B34EB3F852` ×4. NOT hands-on; rides the v134 batch runbook.
 >
 > Read together with: `research/findings/votv-linux-fps-triage-2026-08-23.md` §3 (the R-2 row +
 > field numbers), `memory/project_L5_fps_hitch_root_2026-06-23.md` (the June root + takes 1-3),

@@ -25,8 +25,11 @@
 //     cleared by the next OnPassBegin.
 //   - WORLD-STAMPED passes: the pass records world_identity::Generation() at start and aborts
 //     on a flip; consumers MUST treat an index whose stamped gen != current gen as EMPTY on
-//     every read path (one int compare per Tick) -- this closes the pre-existing 44-s
-//     dead-world window (R-1 class) for the whole family: slot+serial liveness is world-blind.
+//     every read path (one int compare per Tick). Together with the per-MATCH WorldOf() ==
+//     CurrentWorld() term in the pass (audit W-3), this closes the pre-existing 44-s
+//     dead-world window (R-1 class) for the whole family on BOTH halves: the stale-index
+//     half (gen stamp) and the re-admission half (a slot+serial-live actor of the DYING
+//     world matched during world coexistence -- slot+serial liveness is world-blind).
 //   - Settle semantics preserved verbatim from the retired SettledObjectScan: a consumer's
 //     count change (or zero) re-arms full passes; `settleScans` consecutive unchanged non-zero
 //     counts settle it; the pass runs FULL while ANY consumer is unsettled (each consumer's
