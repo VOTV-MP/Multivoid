@@ -30,6 +30,19 @@
 //    Objects with NO world -- a UClass, a UFunction, a CDO, a cooked asset, the
 //    GameInstance -- stamp nullptr and are unaffected: they legitimately outlive
 //    worlds, and that is the whole discrimination.
+//
+//    KNOWN GAP, STATED RATHER THAN IMPLIED (audit 2026-08-23): **UMG widgets are NOT
+//    covered.** A top-level UUserWidget is Outered to the GameInstance, not to a
+//    ULevel -- this repo measured it (`coop/dev/input_focus_probe.cpp:113-115`:
+//    "a live widget reaches a UUserWidget instance and then the World/GameInstance").
+//    So WorldOf() answers nullptr for the whole widget surface and the term is
+//    silently inert there, including for the three widget caches whose own comments
+//    cite surviving a world swap as their reason for existing (save_button_disable's
+//    g_menuInstance, multiplayer_menu's g_button + g_versionText) plus input_owner's
+//    g_lastOwner and pos_hud's g_root. Those still rely on liveness alone and can
+//    still hand out a torn-down world's widget for the same tens of seconds. A widget
+//    needs a different world question (its OwningPlayer's world, not its Outer's);
+//    that is not built. Do not read the list above as "everything is covered".
 //  - Serial rule (FWeakObjectPtr semantics): if the captured serial != 0, the
 //    current slot serial MUST equal it (mismatch INCLUDING current==0 -> dead).
 //    UE assigns serials LAZILY (0 until a weak ref exists), so captured==0
@@ -85,8 +98,28 @@ public:
         //                         OPEN: the pre-2026-08-23 behaviour is a performance
         //                         defect, whereas failing closed would read every
         //                         cached actor as dead and take the mod down.
-        void* const current = world_identity::CurrentWorld();
-        if (world_ && current && world_ != current) return false;
+        //
+        // THE `world_` TEST GUARDS THE CALL, and that nesting is a measured perf
+        // requirement, not style (audit 2026-08-23, CRITICAL). `Alive()` is reached
+        // PER OBJECT inside at least six full GUObjectArray walks -- the loops call
+        // ue_wrap::prop::IsClassDescendantOfProp, which calls PropBaseClass(), which
+        // is `g_propBaseCls.Alive()` three levels below the loop and unconditional
+        // for every one of ~237k objects. CurrentWorld() is a cross-TU call plus
+        // IsGameThread() plus a dynamic-TLS read plus GetTickCount64(); evaluating it
+        // before the `world_` test multiplied that by 237k per walk, and the heaviest
+        // of those walks (world_load_episode's load-tail census, 5 Hz for the whole
+        // episode) runs DURING A JOIN -- the exact window this term exists to protect.
+        // Every holder in those hot loops is a UClass/CDO/asset, i.e. world_ ==
+        // nullptr, so the guard removes the entire cost for exactly that set.
+        //
+        // COUPLED REQUIREMENT: CurrentWorld() memoises on a 100 ms timer and is
+        // driven BY ITS CALLERS, so making the call conditional also thins the drive.
+        // input_owner::TickGameThread calls it unconditionally at 10 Hz to keep an
+        // explicit floor under the refresh rate; do not remove that call.
+        if (world_) {
+            void* const current = world_identity::CurrentWorld();
+            if (current && world_ != current) return false;
+        }
         return true;
     }
 

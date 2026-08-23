@@ -164,7 +164,59 @@ int TaskFaultFilter(EXCEPTION_POINTERS* ep) {
 // the engine's own dispatch (e.g. BP-VM deref of a stale UObject*), not in our
 // callback. Diagnosing the re-host crash needed a minidump to learn that; now
 // the log says it directly.
+// RATE LATCH on identical absorbs (USER-APPROVED 2026-08-23, triage R-1e).
+//
+// WHY: one absorbed-fault storm turned a 6-minute session's log into 12.35 MB of
+// which 9.64 MB -- 78% -- was ONE repeated line: 33,490 copies of the same
+// (function, fault-ip) pair at ~2,508/s for 44 s. That is not diagnosis, it is
+// diagnosis buried in its own repetition, and every OTHER line in the run became
+// unreadable. It also made the log a per-second disk-write load on the game thread
+// during the exact window the game was already choking.
+//
+// WHAT IS PRESERVED: the FIRST kLogFirstN of any distinct (function, ip) still log in
+// full, so the forensic content -- which UFunction, which faulting instruction, which
+// access address -- is never lost. Only the (N+1)th identical repeat is folded, and it
+// is folded into a COUNT that is itself reported, so "this happened 33,490 times" is
+// still readable. A storm therefore costs a handful of lines plus one summary instead
+// of 9.64 MB, and a NEW fault site is never suppressed by an old one's volume.
+//
+// WHAT IS NOT: this is log policy, not behaviour. Nothing about absorbing, forwarding
+// or the caller's view changes. Deliberately keyed on (function, ip) rather than on
+// `self`, because the 2026-08-23 storm had a CONSTANT ip and a VARYING self -- keying
+// on self would have suppressed nothing.
+constexpr int kLogFirstN   = 5;    // full lines per distinct site before folding
+constexpr int kAvSiteSlots = 16;   // distinct sites tracked; LRU-free, oldest wins
+struct AvSite { void* fn; void* ip; unsigned long long count; unsigned long long lastReportedAt; };
+AvSite g_avSites[kAvSiteSlots]{};
+int    g_avSiteNext = 0;
+
 void LogObserverAv(void* function, void* self, const char* phase) {
+    // Find or claim a slot. Linear over 16 -- this runs only on a fault.
+    AvSite* site = nullptr;
+    for (auto& s : g_avSites) {
+        if (s.fn == function && s.ip == t_lastTaskFault.faultingIP) { site = &s; break; }
+    }
+    if (!site) {
+        site = &g_avSites[g_avSiteNext];
+        g_avSiteNext = (g_avSiteNext + 1) % kAvSiteSlots;
+        *site = AvSite{function, t_lastTaskFault.faultingIP, 0, 0};
+    }
+    ++site->count;
+
+    // Fold: past the first N, report only on a decade boundary, so a storm's shape
+    // (how fast, how far) still reaches the log at logarithmic cost.
+    if (site->count > kLogFirstN) {
+        unsigned long long decade = 10;
+        while (decade < site->count) decade *= 10;
+        if (site->count != decade || site->count == site->lastReportedAt) return;
+        site->lastReportedAt = site->count;
+        UE_LOGE("game_thread: PE %s-callback AV at ip=%s x%llu (identical (function,ip) "
+                "repeats folded after the first %d; latest self=%p)",
+                phase, D::FormatModuleRva(t_lastTaskFault.faultingIP), site->count,
+                kLogFirstN, self);
+        return;
+    }
+
     const auto fname = reflection::NameOf(function);
     const std::wstring nameStr = reflection::ToString(fname);
     UE_LOGE("game_thread: PE %s-callback AV caught -- function='%ls' (%p) self=%p; "
@@ -603,6 +655,39 @@ DWORD WINAPI PeDiagDelayedThread(LPVOID) {
 
 // ---- public API owned by this TU ----------------------------------------------
 
+// DRILL for the absorbed-AV rate latch (VOTVCOOP_AV_LATCH_DRILL=1). A latch that has
+// only ever been observed NOT firing is indistinguishable from a latch that is wired
+// up wrong, and the storm it exists for is not reproducible on demand -- so drive the
+// fold logic directly with synthetic sites. It exercises the real LogObserverAv, so
+// what it proves is the real behaviour; it does NOT exercise the fault path, which is
+// unchanged. EXPECTED in the log: site A -> 5 full lines then folds at 10 and 100 (7
+// lines for 120 calls, not 120); site B -> its own 5 full lines, i.e. a NEW site is
+// never suppressed by an old site's volume, which is the property that matters most.
+void RunAvLatchDrill() {
+    char v[8]{};
+    if (!(::GetEnvironmentVariableA("VOTVCOOP_AV_LATCH_DRILL", v, sizeof(v)) > 0 && v[0] == '1'))
+        return;
+    // A REAL UFunction: the full-line path calls reflection::NameOf(function), which
+    // dereferences it. The first cut passed nullptr and killed the process at boot --
+    // which is itself the argument for drilling rather than reasoning.
+    void* fn = nullptr;
+    if (void* cls = reflection::FindClass(L"Actor"))
+        fn = reflection::FindFunction(cls, L"K2_DestroyActor");
+    if (!fn) {
+        UE_LOGW("av_latch_drill: SKIPPED -- no Actor::K2_DestroyActor to name (too early?)");
+        return;
+    }
+    UE_LOGW("av_latch_drill: BEGIN -- 120 calls at site A, then 3 at site B. "
+            "PASS = site A prints 7 ERROR lines (5 full + x10 + x100), site B prints 3.");
+    t_lastTaskFault.code = 0xC0000005;
+    t_lastTaskFault.accessAddr = reinterpret_cast<void*>(0xFFFFFFFFFFFFFFFFull);
+    t_lastTaskFault.faultingIP = reinterpret_cast<void*>(0xA000);
+    for (int i = 0; i < 120; ++i) LogObserverAv(fn, reinterpret_cast<void*>(0x1000 + i), "drillA");
+    t_lastTaskFault.faultingIP = reinterpret_cast<void*>(0xB000);
+    for (int i = 0; i < 3; ++i) LogObserverAv(fn, reinterpret_cast<void*>(0x2000 + i), "drillB");
+    UE_LOGW("av_latch_drill: END -- count the [ERROR] lines tagged drillA / drillB above.");
+}
+
 bool Install() {
     if (g_installed) return true;
 
@@ -633,6 +718,13 @@ bool Install() {
     g_hookTarget = pe;
     g_installed = true;
     UE_LOGI("game_thread: ProcessEvent hooked; game-thread dispatcher live");
+    // AFTER the hook is live, never before. Run from the top of Install() this drill
+    // destabilised boot twice (the game died a few seconds in, mid-`cppmod` dispatch
+    // census) -- it does 123 reflection lookups + formatted log writes on the loader
+    // thread while the engine is still building its object graph and before our own
+    // dispatcher exists. The drill is diagnostic-only and env-gated, but a drill that
+    // kills the process teaches the next reader that the latch is broken when it is not.
+    RunAvLatchDrill();
     if (PeDiagEnabled()) {
         LogHookChainSnapshot("install");
         if (HANDLE t = ::CreateThread(nullptr, 0, PeDiagDelayedThread, nullptr, 0, nullptr)) {

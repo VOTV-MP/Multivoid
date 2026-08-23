@@ -163,10 +163,14 @@ void RefreshOnGameThread_() {
 
     EnsureResolved();
     void* pc = CurrentPlayerController_();
-    // WorldOf dereferences `pc`; the pointer came from the engine's own live field a
-    // few instructions ago, which is the same freshness contract CachedObjRef::Set
-    // demands of its caller.
-    void* world = pc ? WorldOf(pc) : nullptr;
+    // WorldOf dereferences `pc` and then climbs its Outer chain, so `pc` is validated
+    // FIRST -- and by the fresh-pointer contract (bare IsLive), which is legitimate
+    // here precisely because `pc` was read out of the engine's own field a few
+    // instructions ago rather than cached across tasks. Without this the refresh was
+    // an unguarded multi-object deref at 10 Hz, forever, INCLUDING through world
+    // teardown; it survived only because UE nulls strong UPROPERTY references at GC,
+    // which is a property we were relying on without saying so (audit 2026-08-23).
+    void* world = (pc && R::IsLive(pc)) ? WorldOf(pc) : nullptr;
 
     void* prev = g_currentWorld.exchange(world, std::memory_order_relaxed);
     if (prev != world) {
@@ -210,12 +214,15 @@ void LogResolutionStateOnce() {
 // PURE READ -- deliberately does NOT call EnsureResolved(), and that is load-bearing
 // re-entrancy, not laziness. `CachedObjRef::Set()` calls this, and `reflection.cpp`
 // calls `Set()` from `PrimeClassWalk` **while holding `g_classCacheMu`**
-// (`reflection.cpp:408-412`). EnsureResolved() calls `R::FindClass`, which takes that
-// same non-recursive mutex -- so resolving from here is an instant self-deadlock on
-// the first class the process ever caches. Resolution belongs to the throttled refresh
-// path, which runs at top level. Before resolution completes this answers nullptr,
-// i.e. "no world term", i.e. exactly the pre-2026-08-23 behaviour for the handful of
-// objects stamped during the boot window.
+// (`reflection.cpp:408-412`), a non-recursive std::mutex. So nothing reachable from
+// here may take that mutex. EnsureResolved() transitively can -- not through
+// `R::FindClass` (which takes no lock; an earlier revision of this comment named the
+// wrong function and an audit caught it) but through `GameInstance()` ->
+// `FindObjectByClass` -> `BeginClassWalk`/`PrimeClassWalk`. Resolution therefore
+// belongs to the refresh path, which is entered from Alive() rather than Set() and so
+// is never inside that lock. Before resolution completes this answers nullptr, i.e.
+// "no world term", i.e. exactly the pre-2026-08-23 behaviour for the handful of
+// objects stamped during the boot window (see the residual note in Degraded()).
 void* WorldOf(void* obj) {
     if (!obj) return nullptr;
     if (!g_levelCls || !g_worldCls || g_owningWorldOff < 0) return nullptr;

@@ -292,6 +292,24 @@ void LogOwnerEdge() {
 // a field in one of those 8 surfaces can be focused for up to ~1 s before we notice, and
 // during that window a hotkey could still take its key. Everything else is <=100 ms.
 void TickGameThread(bool doFullScan) {
+    // THE REFRESH FLOOR for ue_wrap::world_identity, and it must be FIRST (2026-08-23).
+    //
+    // CurrentWorld() memoises on a 100 ms timer and is refreshed by whoever calls it.
+    // Its main caller is CachedObjRef::Alive(), which -- since the audit's perf fix --
+    // only calls it for WORLD-SCOPED refs, so the drive rate is now a function of which
+    // caches happen to be probed, which is not a floor. This is one: 10 Hz, ungated,
+    // game thread, alive at the menu with no session.
+    //
+    // FIRST, because the ordering is the whole point. This tick is posted from the
+    // overlay's PresentDetour, and presents STOP during a world teardown -- measured
+    // ~5 s of blackout. Nothing runs in that gap, so a stale world harms nobody there;
+    // what matters is that the FIRST tick after presents resume already knows the
+    // truth. Sitting below ActiveInterfaceResolving() (which calls Registry::Local())
+    // meant that first tick resolved the pawn against the PREVIOUS world -- the exact
+    // dead-pawn read this whole term exists to refuse, surviving one scan into the new
+    // world. Considered and rejected as disproportionate: a per-ProcessEvent heartbeat
+    // (~240k/s) to erase the blackout itself.
+    (void)ue_wrap::world_identity::CurrentWorld();
     ResolveOnce();
     if (!g_fnHasKeyboardFocus || !g_clsUserWidget) {
         // Unresolved means UNKNOWN, and unknown must read as "the game might own text"
