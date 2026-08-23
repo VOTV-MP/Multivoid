@@ -10,7 +10,10 @@ session; every fix below was written as a PRESCRIPTION.
 > - **The prescription for R-1a could not work** and was dropped for a delete; **§5's whole R-4 story
 >   was false** (the sweep aborted and doomed zero; 2,172 not 65; 1,618 not 940) and the causal chain
 >   inverts — R-4b is what broke the join, not a secondary.
-> - **R-3's prescription is dead:** the reporter cannot run probes.
+> - **R-3 is CLOSED by local measurement (§4-MEASURED, day 3 eve):** our passives measured ~0.45
+>   ms/frame (client, both probes on, b134) — ×10-projected ≤ ~6% of her frame budget. The floor is
+>   NOT ours; engine + DXVK + inherited heavier world. (The original reporter-side prescription was
+>   dead: she cannot run probes.)
 > - Verification is autonomous `mp.py smoke` + purpose-built drills. **Nothing here is hands-on.**
 
 **Inputs** (`ignore_folder/linux_fps_issue/`):
@@ -32,9 +35,10 @@ join flow. Proton amplifies the per-AV cost; the mechanism itself is OS-independ
 (R-2) The **known** 2026-06-23 L5 root recurs at field scale: the per-channel GUObjectArray
 walks cost the friend a 65–305 ms our-code hitch every 1–2 s (host: same shape, ~9× cheaper).
 (R-3) The **sustained** ~11–13 fps floor during actual gameplay is measured NOT to be our
-game-thread tick (whole `net_pump::Tick` < 10 ms on those frames) — attribution between the
-engine on that machine vs our uninstrumented passives (PE-detour overhead, overlay draw) is
-open, and the already-built `perf_probe` is the discriminator to run next. (R-4) The b125
+game-thread tick (whole `net_pump::Tick` < 10 ms on those frames) — and the passive half of the
+attribution is now CLOSED too (§4-MEASURED, day 3 eve): PE-detour + overlay measured ~0.45 ms/frame
+locally, ≤ ~6% of her frame budget ×10-projected — the floor is the engine + DXVK + the inherited
+heavier world, not us. (R-4) The b125
 §R-A reliable-loss shape recurred at 3× volume: **485 PropSpawn sends dropped at enqueue**
 (`rc=-25`) in the join minute, plus a new finding — the client broadcast **~1,600 DESTROYs
 of its own join-culled locals** because the world-load-episode suppression covers keyed
@@ -255,6 +259,46 @@ playable frames. Two levers help her REGARDLESS of how attribution lands, and ne
   is gated behind an ini flag nobody will ever set. That is the ROOT fix for this whole class of
   "user reports slow, we cannot reach them".
 
+### §4-MEASURED — R-3 CLOSED by local measurement (2026-08-23, day 3 eve; b134 post-R-2 bytes)
+
+Plan items (1)+(2) of §4-CORR were RUN on this box: `perf_probe=1` + `perf_probe_selftime=1` on
+BOTH peers, plus a NEW `OverlayPresent` bucket (the second passive §4-CORR named as invisible by
+construction — the whole Present-detour body, render thread, engine's own Present excluded;
+`imgui_overlay.cpp PresentDetour` -> `perf_probe.h Bucket::OverlayPresent`). One 90 s joined
+smoke, steady-state medians with the join transient dropped (HOST n=87, CLIENT n=24 samples):
+
+| median | HOST | CLIENT_1 |
+|---|---|---|
+| PE dispatches/s | 248k | 168k (PE/frame ~2 100 both) |
+| frames/s | 119 | 77 |
+| detour self-time | 131 ns/disp -> **0.27 ms/frame** | 171 ns/disp -> **0.38 ms/frame** |
+| observer/interceptor bodies | ~0.00 ms/frame | ~0.00 ms/frame |
+| overlay Present body | **0.02 ms/frame** | **0.07 ms/frame** |
+| whole net_pump::Tick | 0.20 ms/frame | 0.41 ms/frame |
+
+**Total our per-frame cost, client, IN SESSION: ~0.9 ms/frame; passives alone ~0.45 ms/frame.**
+Projection onto her machine via the §3 walk factor (~10x, and that factor is walk-derived — a
+memory-bound GUObjectArray sweep — so for the cache-hot 167 ns detour body it is an UPPER bound):
+per-frame dispatch count is world-bound (~2 100/frame at any fps), so detour <= ~3.8 ms/frame +
+overlay <= ~0.7 ms/frame on her ~80 ms frames = **<= ~6% of her frame budget**. Her own log already
+bounded the whole `net_pump::Tick` at < 10 ms on those frames (§4 head), and R-2 has since removed
+the walk spikes from it. An 11-13 fps floor needs ~90% of an 80 ms frame; our measured+projected
+worst case cannot produce it.
+
+**VERDICT [M]: the sustained floor is NOT ours — engine + DXVK + the inherited heavier world.**
+This is the §4-CORR honest-ceiling outcome: EXPLAINED, not fixed for her. What WAS ours in her log —
+the once-per-second walk spikes (R-2), the absorbed-AV storm (R-1), the 871-broadcast join burst
+(R-4a) — is fixed in b134. The two levers that help her regardless remain FILED, not built: a
+lighter inherited world (proxy LOD / join-time deferral) and shipping the discriminator ON by
+default (needs its own decision — 4 log lines/s of spam vs pre-attributed field reports; the armed
+counting itself measured ~0.3% of frame time).
+
+Item (3), the solo A/B, was DOWN-SCOPED: the direct per-frame counters above measure the same
+quantity the A/B would infer from an FPS delta, with better attribution. Its mod-OFF leg is also
+instrument-blocked autonomously (no admin for PresentMon ETW on this shell; the solo window has no
+`[perf]` sampler — `Sample()` runs from `net_pump::Tick`, which needs a session). If corroboration
+is ever wanted: one elevated PresentMon run, mod-on vs renamed-away `xinput1_3.dll`, same save.
+
 ---
 
 ## §5 R-4 — **§5 AS WRITTEN IS PARTLY WRONG; read §5-CORR first (2026-08-23, same day)**
@@ -380,7 +424,7 @@ exception, not the rule.
 | **R-1d** | **STILL OPEN** | `reflection.cpp:88-93` still `return true` unconditionally at `86ff94a2` — the absorb happens below it, so the caller cannot see a faulted call. Needs a thread-local fault-generation counter + a census of the 61 `CallFunction` sites. Now hardening rather than the fix, since R-1b closed the source. |
 | **R-1e** | **BUILT + drilled** (`86ff94a2`) | USER-APPROVED. First 5 lines per distinct `(function, ip)` in full, then folds and re-reports on decade boundaries. Keyed on `(function, ip)` NOT `self` — the storm had a constant ip and a varying self. DRILL (`VOTVCOOP_AV_LATCH_DRILL=1`): 120 calls → 7 lines, 3 at a new site → 3 lines, both peers, in a PASSING smoke. |
 | **R-2** | **BUILT 2026-08-23 day 3 (the shared scan hub) — acceptance GREEN, NOT hands-on** | `coop/element/object_scan_hub` (8-round /qf "that holds"): ONE sliced shared pass replaces the 13 per-consumer full walks; 10.0× fewer walk visits, per-frame walk cost capped ~1-2 ms (was 66 ms local / 305 ms field spikes), N-match parity 13/13 vs an independent probe (June's numbers reproduced: door 50/light 42/...), the pre-existing dead-world index window (R-1 class) closed family-wide via gen-stamped indexes. Design + AS-BUILT: `architecture-audits/votv-shared-scan-hub-R2-DESIGN-2026-08-23.md`. Residual periodic hitch = reseed:KnownKeyedProps (§5b, own row). |
-| **R-3** | **prescription DEAD, plan REPLACED** | The reporter cannot run probes (USER). See §4-CORR: measure our passives locally, project via the ~10× factor her own logs give, plus the solo heavy-save A/B. Honest ceiling: this may EXPLAIN the floor without FIXING it. |
+| **R-3** | **CLOSED by measurement 2026-08-23 (§4-MEASURED)** | Both flags on, 90 s joined smoke on b134 post-R-2 bytes + a NEW `OverlayPresent` bucket for the second passive. Client totals: detour 0.38 ms/frame + overlay 0.07 + whole pump 0.41 ≈ 0.9 ms/frame; ×10-projected ≤ ~6% of her 80 ms frame. **The floor is NOT ours [M]** — engine + DXVK + inherited heavier world. The two help-her-anyway levers (lighter inherited world; discriminator ON by default) FILED, not built. Solo A/B down-scoped (same quantity measured directly; mod-off leg needs an elevated PresentMon run). |
 | **R-4a** | **HALF BUILT** (`65fccd70`) | Key-scoping half shipped and measured 871 → 0 broadcasts / 871 → 0 host defers, 1:1. End-condition half NOT built and needs its own `/qf`. The doc's attribution of the burst was **false** — see §5-CORR. |
 | **R-4b** | **BUILT 2026-08-23 (4 commits from `a39a19cd`)** | 6-round `/qf` "that holds" → `coop/net/send_backlog`: the ONE delivery-guarantee owner (per-(slot,lane) FIFO, absorbs only -LimitExceeded, hConn-stamped, 64KB pose-reserve, fatal bounds close-not-drop) + save-pump Begin success-gating + 4MB SendBufferSize + bracket-anchored park aging + client inbox pause-not-drop. Drill RED 956 losses → GREEN 0; throttled run: one 5s episode "all delivered", 0 expired parks, sweep 0 unclaimed destroyed. Design of record: `research/findings/network/votv-reliable-delivery-guarantee-DESIGN-2026-08-23.md`. NOT hands-on. |
 

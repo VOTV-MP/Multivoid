@@ -518,6 +518,13 @@ HRESULT STDMETHODCALLTYPE PresentDetour(IDXGISwapChain* sc, UINT sync, UINT flag
     // Perf probe: count every presented frame (the frame anchor for ms/frame).
     // Cheap relaxed increment when armed; a single bool load when off.
     coop::dev::perf_probe::NoteFrame();
+    // R-3 passive #2: time our WHOLE detour body (input publish + ImGui render)
+    // up to -- but excluding -- the engine's own Present. Accumulated into the
+    // OverlayPresent bucket (render thread; AddTicks is a relaxed fetch_add).
+    // Cannot use perf_probe::Scope here: its destructor would fire AFTER
+    // g_origPresent returns and swallow the present/vsync wait.
+    const bool perfOn = coop::dev::perf_probe::Armed();
+    const unsigned long long perfT0 = perfOn ? coop::dev::perf_probe::NowTicks() : 0;
     // The input probe must sample even with NO surface open (that is the state in which
     // the game owns text), so it hangs off Present, not off the ImGui pass below.
     coop::dev::input_focus_probe::NoteFrame();
@@ -553,6 +560,10 @@ HRESULT STDMETHODCALLTYPE PresentDetour(IDXGISwapChain* sc, UINT sync, UINT flag
         overlay_backend::EnsureTarget(sc);  // recreate the render target after a resize
         RenderFrameGuarded(sc);
         g_inFrame.store(false, std::memory_order_release);
+    }
+    if (perfOn) {
+        coop::dev::perf_probe::AddTicks(coop::dev::perf_probe::Bucket::OverlayPresent,
+                                        coop::dev::perf_probe::NowTicks() - perfT0);
     }
     return g_origPresent(sc, sync, flags);
 }

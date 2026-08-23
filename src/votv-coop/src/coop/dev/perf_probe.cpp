@@ -39,7 +39,7 @@ std::array<std::atomic<unsigned long long>, static_cast<size_t>(Bucket::Count)> 
 const char* kBucketNames[static_cast<size_t>(Bucket::Count)] = {
     "netPumpTick", "reaper", "localSend", "installObs", "interactable", "weatherConn",
     "itemConn", "trashWatch", "balance", "snapshotDrain", "remoteProp", "puppets",
-    "eventFeed", "nameplate", "roster",
+    "eventFeed", "nameplate", "roster", "overlayPresent",
 };
 
 long long QpcFreq() {
@@ -187,7 +187,10 @@ void Sample() {
         const double msFr = dFr > 0 ? ms / dFr : 0.0;
         const double msSec = ms / elapsed;
         // Only print buckets that cost something so the line stays readable.
-        if (msSec < 0.05 && i != static_cast<size_t>(Bucket::NetPumpTick)) continue;
+        // NetPumpTick + OverlayPresent always print: they are the two per-frame
+        // passives the R-3 attribution needs even when near-zero.
+        if (msSec < 0.05 && i != static_cast<size_t>(Bucket::NetPumpTick) &&
+            i != static_cast<size_t>(Bucket::OverlayPresent)) continue;
         std::swprintf(cell, sizeof(cell) / sizeof(cell[0]), L" %hs=%.2f/fr(%.1f/s)",
                       kBucketNames[i], msFr, msSec);
         line += cell;

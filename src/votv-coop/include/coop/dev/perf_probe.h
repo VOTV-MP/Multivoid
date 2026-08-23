@@ -46,6 +46,7 @@ enum class Bucket {
     EventFeed,      // event_feed::Update
     Nameplate,      // nameplate::Update (harness post)
     Roster,         // roster::Refresh (harness post)
+    OverlayPresent, // our WHOLE Present-detour body (render thread; excludes the engine's own Present) -- the R-3 passive
     Count
 };
 
