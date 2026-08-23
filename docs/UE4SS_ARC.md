@@ -412,6 +412,30 @@ Measured on this box from the real r2modman profile
 a zip + a publish step**, not a re-architecture. The folder name becomes `<Author>-Multivoid`
 once it comes from Thunderstore rather than our hand-install.
 
+**A package can ship a `.pak` TOO, in the same zip — measured 2026-08-23.** `acitulen-DebugMod` is the
+exact precedent for what we need: one Thunderstore package that carries **both** a C++ DLL mod and a
+blueprint pak. On disk it lands in two places at once:
+
+```
+<profile>\shimloader\mod\acitulen-DebugMod\dlls\main.dll     <- the --mod-dir lane
+<profile>\shimloader\pak\acitulen-DebugMod\DebugMod.pak      <- the --pak-dir lane
+```
+
+So the package holds a root-level **`pak/`** folder beside `dlls/`, and the manager routes each to its
+own shimloader directory (`--pak-dir` VFS-maps to `Content\Paks\LogicMods`). `NynrahGhost-Fusion`
+does the same. Multivoid's target package is therefore:
+
+```
+manifest.json  icon.png  README.md  CHANGELOG.md  enabled.txt
+dlls\main.dll
+pak\<model>.pak        (+ its <model>.png preview tile, which the F1 skin browser reads)
+```
+
+This matches what `tools/deploy-all.ps1` already does for the four dev installs (it copies the pak to
+`Content\Paks\LogicMods\multivoid\` plus the preview `.png`) — the mechanism is built and shipping
+locally; only the packaging wrapper is missing. **But WHICH model may go in that pak is an open
+question — see §7.6.**
+
 ### 7.3 `version_number` — DECIDED (USER, 2026-08-23): **`<game-major>.<game-minor>.<build>`**
 
 Thunderstore **requires** `version_number` to be semver `X.Y.Z` and orders updates by it. Multivoid
@@ -468,6 +492,45 @@ So INSTALL.md, README.md, the site templates + built `public/`, all three releas
 the new Thunderstore packaging move together. Retiring the proxy also makes the
 `multivoid-*.dll` "highest build wins" scan and the "MOD INSTALL PROBLEM" duplicate dialog
 meaningless (the mod manager owns installation) — they retire WHOLE per RULE 2.
+
+### 7.6 WHICH model may ship in the pak — OPEN, and it is a redistribution question (2026-08-23)
+
+The user's intent: *"Наш мод тоже должен [идти с .pak], там будут модели ученых hl"* — ship the pak with
+the HL scientist models. The **mechanism** is settled (§7.2). The **asset** is not, and this repo
+already took a position on it that predates the question:
+
+- `[MEASURED]` the pak we deploy today, `research/pak_re/hl_einstein_v1sc.pak`, is **derived from
+  Valve's Half-Life scientist model**, and it has **never been in git** — three independent
+  `.gitignore` rules keep it and its inputs out: `research/pak_re/` (:144, *"extracted copyrighted
+  game content — dev/RE only, never shipped"*), `tools/hl_einstein_v1sc/` (:169, *"third-party model
+  assets (Valve/COF), local only — never commit"*), and `models/` (:174), whose comment says it
+  verbatim: **"distribution-unsafe, deploy reads it from disk, git never carries it"** (2026-07-02).
+- So "our mod ships the scientist model" has only ever been true of **local dev installs**.
+  `tools/deploy-all.ps1` copies it from disk; the public repo has never carried a byte of it.
+  Publishing it in a Thunderstore package would be **public redistribution of a Valve asset** — a
+  different act from a local dev copy, and the one the gitignore comment was written about.
+- `[MEASURED]` **nothing breaks without it.** `coop/player/client_model.cpp:52-53` logs
+  *"skin ... NOT loadable (pak absent on this machine?) — native kel fallback"* and puppets fall back
+  to `kerfurOmega_KelSkin` — **the game's own skin**, already on every player's disk, nothing
+  redistributed. A pak-less package is a fully working mod.
+
+**The three ways forward** (this is a product + legal call, the user's to make):
+
+- **(a) Ship a pak with a REDISTRIBUTABLE scientist model.** This gives the user exactly what was
+  asked for and is the RULE-1 answer — the blocker is the asset's provenance, not the pipeline. The
+  conversion chain in `docs/COOP_CLIENT_MODEL.md` (`mdl -> psk -> repose -> ue_cook -> repak`) is
+  **model-agnostic**, so the work is *sourcing* a CC0/CC-BY or commissioned scientist mesh, not
+  rebuilding anything. Attribution-required licences are fine if the package README carries the credit.
+- **(b) Ship the HL model anyway.** Not recommended: copyright aside, it exposes the Thunderstore
+  package (and the namespace) to takedown, and it contradicts a stance this repo recorded for itself
+  in three places.
+- **(c) Launch WITHOUT a pak** (kel fallback), and keep model paks as the user-supplied skin library
+  the mod already supports (the F1 skin browser reads paks + preview tiles from disk). Costs nothing,
+  blocks nothing, and composes with (a) later.
+
+**Recommended sequencing: (c) now, (a) when a redistributable mesh exists.** They are not exclusive —
+(c) unblocks the Thunderstore launch immediately, and adding a pak later is a package-content change,
+not an architecture change.
 
 ### 7.5 Owed measurements before WP-9 ships
 
