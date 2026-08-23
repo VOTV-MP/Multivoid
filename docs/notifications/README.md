@@ -1,5 +1,7 @@
 # docs/notifications/ — VOTV on-screen TOAST / HINT / NOTIFICATION knowledge base
 
+*[↑ docs index](../README.md)*
+
 The living catalog + mechanism map for VOTV's corner popups (`SAVE ERROR: invalid mode`,
 `Cannot be used when held`, the `SERVER "X" is down` notices, achievement toasts, subtitles).
 Born 2026-07-09 for the coop feature: **suppress the misleading native toasts a CLIENT

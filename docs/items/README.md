@@ -1,5 +1,7 @@
 # docs/items/ — the per-item coop knowledge base
 
+*[↑ docs index](../README.md)*
+
 One doc per VOTV ITEM whose behavior is its own subsystem (user ask 2026-07-06, born from
 the hook). Same discipline as `docs/events/` (THE METHOD, granular passes): each item's
 native behavior (bytecode ground truth, tagged), its sync-axis table, its coop design, and

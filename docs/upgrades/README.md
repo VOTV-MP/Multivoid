@@ -1,5 +1,7 @@
 # Upgrades subsystem — the home for all upgrade RE + coop design
 
+*[↑ docs index](../README.md)*
+
 **Created 2026-07-21.** This folder is the canonical home for the VOTV **upgrade system**: how upgrades
 are stored, bought, applied, and displayed natively — and (the open work) how they sync in coop. It
 mirrors the `docs/signals/`, `docs/events/`, `docs/items/` pattern: this `README.md` is the hub + the

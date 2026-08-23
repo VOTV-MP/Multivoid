@@ -1,5 +1,7 @@
 # docs/events/ — the per-event coop knowledge base
 
+*[↑ docs index](../README.md)*
+
 One doc per VOTV event SCENARIO (user rule 2026-07-04): each event's native behavior, its
 coop sync design, and its caveats live in that event's own file here. This folder answers
 "what exactly happens during event X and how does coop deliver it to every peer" — the

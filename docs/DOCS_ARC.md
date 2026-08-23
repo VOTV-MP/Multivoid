@@ -178,7 +178,7 @@ re-derived.
 | **WP-2** | The citation bleed: public prose keeps the architectural statements, drops the open-hole advertising. **Source-file citations NOT touched** | **AS-BUILT** for living docs; dated records deliberately untouched (see below) | no |
 | **WP-3** | Root `SECURITY.md` — the public vulnerability-reporting policy. This is the correct public replacement for a private register | **AS-BUILT** | no |
 | **WP-4** | The §1b scrubs (local path, "rival" wording + an explicit no-code-taken line) | **AS-BUILT** | no |
-| **WP-5** | `docs/README.md` — the three-lane reader map (I play / I want to help / I maintain this) + upward backlinks from the subdir READMEs | **OPEN** | maybe — the lane split is a product decision about who we expect |
+| **WP-5** | `docs/README.md` — the three-lane reader map (I play / I want to help / I maintain this) + upward backlinks from the subdir READMEs | **AS-BUILT** | not taken — see below |
 | **WP-6** | Close the OPEN security findings themselves | **DEFERRED to its own arc** — see §5 | yes, per finding |
 
 Ordering ran WP-1 → WP-1b (promoted the moment the leak was measured) → WP-4 → WP-3 → WP-2 → WP-5.
@@ -200,7 +200,25 @@ re-litigate it.
   in its own header). WP-1b unpublishes them anyway, which is what actually resolves those.
 - Where an unpublished path is still the right *local* pointer it stays, and the doc gets **one
   local-only banner** instead of a scrub on every line: `docs/LESSONS.md` §9, `docs/RELEASE.md`,
-  `CLAUDE.md` 4f.
+  `CLAUDE.md` 4f. `docs/README.md` states the same thing once for the whole tree, so a visitor
+  reads "unpublished on purpose" rather than "broken link".
+
+### WP-5 — why no `/qf`, and what was decided instead
+
+The table flagged this as *maybe* needing a `/qf` because "who do we expect to read this" is a
+product question. It was not taken: the audience question turned out already answered by artifacts
+that exist. `README.md` names players and testers, `docs/INSTALL.md` exists solely for them, and
+`RE_WORKFLOW.md` + `AUTONOMOUS_TESTING.md` are addressed to someone who wants to work on the code.
+Three lanes were a description of the tree, not a new decision about it — and a `/qf` round on a
+navigation page would have been ritual, not scrutiny. Two calls inside it are worth recording:
+
+- **The evidence-tag legend is on the index page, not buried.** A newcomer's first risk here is
+  reading a `[?]` or `[A]` claim as fact; the tags only work if the reader knows they exist. The
+  same section states the "never VERIFIED from a smoke alone" rule out loud, publicly.
+- **`OPUS_48_DISCIPLINE.md` and `LESSONS.md` stay listed, under the maintainer lane** — the
+  2026-08-21 census had proposed unpublishing them as "AI-process exhaust". The project states its
+  working method openly (§1d); a tree that hides how it was built while claiming measurement
+  discipline would be contradicting itself.
 
 ---
 
@@ -213,7 +231,9 @@ re-litigate it.
 | 2026-08-23 | WP-1b | `research/` untracked (433 index entries, 24 MB) + `.gitignore` block + inner repo `f69be11` (8,138 files, **no remote**). A stray Windows-reserved `research/pak_re/nul` blocked `git add` and was deleted (0 bytes, junk from a `> nul` redirect) | see §4 commit |
 | 2026-08-23 | WP-4 | Local-account path scrubbed from a piles finding; "rival" softened + a measured no-code-taken statement added to the VoidTogether doc | see §4 commit |
 | 2026-08-23 | WP-3 | Root `SECURITY.md` written: private-advisory reporting, scope in/out, and an honest "what holds / what does not" section | see §4 commit |
-| 2026-08-23 | WP-2 | Citation bleed swept per the rule above across `ROADMAP`, `MULTIPLAYER_UI`, `COOP_SYNCER_MODEL`, `COOP_SERVER_MODEL`, `COOP_EVENT_JOIN`, `LESSONS` §9; two now-dead `research/` links removed from `README.md` | see §4 commit |
+| 2026-08-23 | WP-2 | Citation bleed swept per the rule above across `ROADMAP`, `MULTIPLAYER_UI`, `COOP_SYNCER_MODEL`, `COOP_SERVER_MODEL`, `COOP_EVENT_JOIN`, `LESSONS` §9; two now-dead `research/` links removed from `README.md` | `cf3780d2` |
+| 2026-08-23 | — | Same sweep, unplanned: **two `.gitignore` rules the memory index called ENFORCED did not exist** — `*.lnk` and `ref_*vps*`, i.e. VPS reference material sat untracked-but-not-ignored, one `git add -A` from a public commit. Added, along with the "prose only" half (`QUESTION_FORM_*`, `tools/workflows/`). Third instance of this shape in this repo | `cf3780d2` |
+| 2026-08-23 | WP-5 | `docs/README.md` written — three reader lanes, a "how to read a claim" section explaining the evidence tags and the `-RE-`/`-DESIGN-` conventions, and a note that `research/` + `docs/security/` pointers are unpublished on purpose (not broken links). Upward backlinks added to all 7 subdir READMEs; root `README.md` now points at the index | see §4 commit |
 
 ---
 

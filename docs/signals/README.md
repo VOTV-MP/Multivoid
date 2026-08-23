@@ -1,5 +1,7 @@
 # docs/signals/ — the signal-processing subsystem coop knowledge base
 
+*[↑ docs index](../README.md)*
+
 **The concept (one folder = one domain, per the folder-per-domain-concept rule):** everything the
 player does at the **signal desk / console workstation** to turn a signal from space into a decoded
 recording — catch it on a dish, tune frequency + polarity to lock it, download it, watch the

@@ -1,5 +1,7 @@
 # Piles — the complete knowledge base (ambient trash pile coop sync)
 
+*[↑ docs index](../README.md)*
+
 > **DONE + VERIFIED + PUSHED (2026-07-01): pile mirror proxy → NATIVE nativization.** The resting/re-piled PILE
 > form is now a rooted real `actorChipPile_C` native (native hover GUI + collision + host-synced rotation +
 > host-synced chipType); the in-hand CLUMP stays a proxy. Shipped: inc 1 spawn-seam (`abfaaed8`), inc 2

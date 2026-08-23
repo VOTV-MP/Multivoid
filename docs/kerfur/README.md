@@ -1,5 +1,7 @@
 # Kerfur — the coop knowledge base (kerfurOmega NPC <-> prop sync)
 
+*[↑ docs index](../README.md)*
+
 > **PUSH STATUS (2026-06-28): every commit at/below origin/main `63aa4c01` is now PUSHED.** Any "push HELD" /
 > "N ahead of origin" status below referencing a 2026-06-23..28 commit is STALE (the whole sync arc shipped to
 > origin on 2026-06-28).
