@@ -87,6 +87,14 @@ void OnContentsChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot);
 // save-transfer blob is a snapshot taken at OnRequest time; this is the anchor that corrects it).
 void QueueConnectBroadcastForSlot(int peerSlot);
 
+// R-4b D9: park aging is anchored to the client's own join-snapshot bracket --
+// parks do not age while the bracket is open (a Normal-lane contents slice
+// systematically precedes its Bulk-lane PropSpawn under backpressure, and with
+// delivery guaranteed a slow link can exceed any fixed TTL with zero loss);
+// at Complete every park is re-stamped and the TTL runs as a leak-guard only.
+// Called from event_feed's client-side SnapshotBegin/SnapshotComplete dispatch.
+void NoteJoinSnapshotBracket(bool open);
+
 void OnDisconnect();
 
 // ---- dev-instrument seams (coop/dev/container_selftest) --------------------------------------

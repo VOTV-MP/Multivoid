@@ -43,6 +43,11 @@
 
 namespace coop::net {
 
+// R-4b D4: the per-connection send buffer the mod configures when the
+// net.sendbuf_kb knob is 0 (see ConfigureLanesForPeer). Shared with the
+// sendBufBytes_ mirror below -- ONE constant, no drift.
+constexpr int kDefaultSendBufBytes = 4 * 1024 * 1024;
+
 namespace {
 
 // PR-3 lane plumbing applied to a freshly-connected peer (called from the
@@ -72,6 +77,14 @@ void ConfigureLanesForPeer(HSteamNetConnection hConn) {
                                              static_cast<int32>(bufKb) * 1024);
         UE_LOGW("net: send buffer PINNED to %ld KB for h=0x%08x (drill knob net.sendbuf_kb)",
                 bufKb, static_cast<unsigned>(hConn));
+    } else {
+        // R-4b D4: the GNS default (512 KB) is STRUCTURALLY smaller than a join
+        // burst (~740 KB of PropSpawns + the connect replay), so the backlog
+        // engaged on every join. 4 MB makes the backlog the exception (a real
+        // slow link), not the common path. The backlog remains the correctness
+        // net either way.
+        utils->SetConnectionConfigValueInt32(hConn, k_ESteamNetworkingConfig_SendBufferSize,
+                                             kDefaultSendBufBytes);
     }
     const long rateKbs = coop::config::ResolveInt(coop::config_registry::rows::net_sendrate_kbs);
     if (rateKbs > 0) {
@@ -279,7 +292,8 @@ void Session::HandleConnStatusChanged(void* info) {
         {
             const long bufKb =
                 coop::config::ResolveInt(coop::config_registry::rows::net_sendbuf_kb);
-            sendBufBytes_ = (bufKb > 0) ? static_cast<int>(bufKb) * 1024 : 512 * 1024;
+            sendBufBytes_ = (bufKb > 0) ? static_cast<int>(bufKb) * 1024
+                                        : kDefaultSendBufBytes;
         }
         // Order matters: lanes-configured flag flips ONLY after the
         // ConfigureConnectionLanes call returns, so IsSlotReady() readers

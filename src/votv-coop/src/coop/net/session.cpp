@@ -566,6 +566,9 @@ void Session::NetThread() {
         // far above any real rate AND above the ~2300 one-shot snapshot (which clears in one
         // pass via the n<256 break first), so this cap is invisible in normal operation.
         constexpr int kMaxDrainPerPass = 4096;
+        // R-4b D10: the client's pause threshold -- safely BELOW HandleMessage's
+        // 8192 hard cap so the drop branch is unreachable on the client path.
+        constexpr size_t kReliableInboxSoftPause = 6144;
         SteamNetworkingMessage_t* msgs[256]{};
         int drained = 0;
         for (;;) {
@@ -578,6 +581,22 @@ void Session::NetThread() {
                         static_cast<int>(std::size(msgs)));
                 }
             } else {
+                // R-4b D10: on the CLIENT the reliable inbox at cap becomes
+                // BACKPRESSURE, not drop -- pause this pass's receive so GNS
+                // buffers underneath (measured lossless-by-stall: reassembly
+                // overflow does not ACK, decoded-queue overflow refuses without
+                // advancing the stream -> the host retransmits). The pause is
+                // bounded by the game-thread stall that caused the pile-up (the
+                // inbox drains on the game tick); unreliable pose staleness
+                // during it is the channel's normal contract. The HOST keeps
+                // the in-HandleMessage cap as a per-sender flood defense (its
+                // poll group cannot pause one connection selectively).
+                bool inboxFull = false;
+                {
+                    std::lock_guard<std::mutex> lk(reliableInboxMutex_);
+                    inboxFull = reliableInbox_.size() >= kReliableInboxSoftPause;
+                }
+                if (inboxFull) break;
                 const uint32_t hConn = peerConns_[0].load();
                 if (hConn != 0) {
                     n = sockets->ReceiveMessagesOnConnection(

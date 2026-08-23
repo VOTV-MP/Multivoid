@@ -33,6 +33,7 @@
 #include "coop/props/remote_prop_spawn.h"
 #include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
 #include "coop/props/snapshot_census.h"  // Phase 0: parse the completeness census tail on SnapshotComplete
+#include "coop/props/container_contents_sync.h"  // R-4b D9: park aging anchored to the snapshot bracket
 #include "coop/save/save_transfer.h"
 #include "coop/moderation/seen_players.h"
 #include "coop/dev/restore_vitals.h"
@@ -453,6 +454,9 @@ void Update(net::Session& session, void* localPlayer) {
             // it guarded against is now prevented by the >50% safety valve in
             // RunDivergenceSweep_, not by skipping the reconcile.)
             coop::join_membership_sweep::BeginClaimTracking();
+            // R-4b D9: while the bracket is open, container-contents parks do
+            // not age (their PropSpawns are still in the Bulk stream behind us).
+            coop::props::container_contents_sync::NoteJoinSnapshotBracket(true);
             break;
         }
         case net::ReliableKind::SnapshotComplete: {
@@ -478,6 +482,10 @@ void Update(net::Session& session, void* localPlayer) {
                     static_cast<size_t>(msg.payloadLen) - sizeof(net::SnapshotEndPayload));
             }
             coop::join_progress::Complete();
+            // R-4b D9: bracket closed -- every PropSpawn it carried has been
+            // dispatched above (same lane, strictly before this). Parks
+            // re-stamp; the TTL runs from here as a leak-guard.
+            coop::props::container_contents_sync::NoteJoinSnapshotBracket(false);
             // instant-world curtain LIFT (SEAM 1+3): the primary world is assembled -- every host
             // PropSpawn/EntitySpawn in this snapshot has been applied above. Fade the curtain out and reveal
             // the CONFIRMED mirrors NOW (~2s BEFORE quiescence -> the world fades in already-assembled, no

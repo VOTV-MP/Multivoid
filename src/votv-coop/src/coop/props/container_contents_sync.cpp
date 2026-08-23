@@ -119,6 +119,16 @@ uint64_t g_conflictRejects = 0;
 struct Parked { std::vector<uint8_t> blob; std::chrono::steady_clock::time_point at; };
 std::map<uint32_t, Parked> g_parked;
 constexpr int kParkTtlSec = 30;
+// R-4b D9: park aging is EVENT-ANCHORED, not wall-clock-from-arrival. A
+// contents slice rides Normal while its PropSpawn rides Bulk -- independent
+// GNS lanes -- so under backpressure the contents SYSTEMATICALLY arrive first,
+// and with delivery now guaranteed a slow link can hold the Bulk stream past
+// any fixed TTL with ZERO wire loss. While our own join snapshot is in flight
+// (Begin seen, Complete not yet) parks do not age; at Complete every park is
+// re-stamped and the TTL runs from there as a leak-guard only (Complete is
+// lane-ordered after every PropSpawn it brackets, so a park still unresolved
+// then is genuinely orphaned).
+bool g_joinBracketOpen = false;
 
 uint64_t NowMs() {
     return static_cast<uint64_t>(
@@ -665,7 +675,8 @@ void SweepParked() {
         // so slot 0 is the correct author for every replay here.
         if (ParseAndApply(it->second.blob, eid, /*senderSlot=*/0) != Ingest::Park) {
             it = g_parked.erase(it);
-        } else if (now - it->second.at > std::chrono::seconds(kParkTtlSec)) {
+        } else if (!g_joinBracketOpen &&
+                   now - it->second.at > std::chrono::seconds(kParkTtlSec)) {
             UE_LOGW("container_contents: parked eid=%u expired after %ds unresolved -- dropped",
                     it->first, kParkTtlSec);
             it = g_parked.erase(it);
@@ -728,6 +739,21 @@ void OnVerbEntry(const vm::Bracket& br) {
 }
 
 }  // namespace
+
+// R-4b D9 (see g_joinBracketOpen above). Called from event_feed's client-side
+// SnapshotBegin/SnapshotComplete dispatch. Game thread (the dispatch drain).
+void NoteJoinSnapshotBracket(bool open) {
+    if (g_joinBracketOpen == open) return;
+    g_joinBracketOpen = open;
+    if (!open) {
+        const auto now = std::chrono::steady_clock::now();
+        for (auto& kv : g_parked) kv.second.at = now;
+        if (!g_parked.empty())
+            UE_LOGI("container_contents: snapshot bracket closed -- %zu park(s) re-stamped, "
+                    "TTL runs from now (leak-guard)", g_parked.size());
+    }
+}
+
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
