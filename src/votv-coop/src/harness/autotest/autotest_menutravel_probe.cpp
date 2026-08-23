@@ -36,6 +36,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <string>
 
@@ -115,6 +116,25 @@ void RunProbe() {
     }
     UE_LOGI("menutravel: in gameplay (world='%ls') -- arming held bypass + transition", w.c_str());
 
+    // VOTVCOOP_MENUTRAVEL_DWELL_S (2026-08-23, the stale-cross-world-pawn measurement):
+    // reaching gameplay is not the same as HAVING PLAYED. This probe historically fired
+    // `transition` within ~1 s of the world coming up -- before the overlay's first
+    // present, so before `input_owner` had ever ticked and before anything had warmed
+    // `players::Registry::Local()`. The field flow it is standing in for (Linux triage
+    // 2026-08-23) played a solo save for ~75 s first, and the 44-second stale window
+    // that followed is GC-purge-timing dependent, i.e. a function of how much the
+    // session actually generated. Dwell here so the run is the same experiment.
+    {
+        const std::string dwell = coop::config::ReadEnv("VOTVCOOP_MENUTRAVEL_DWELL_S");
+        const int dwellS = dwell.empty() ? 0 : atoi(dwell.c_str());
+        if (dwellS > 0) {
+            UE_LOGI("menutravel: DWELL %d s in gameplay before travel (warming the caches "
+                    "a real play session would have warmed)", dwellS);
+            ::Sleep(static_cast<DWORD>(dwellS) * 1000);
+            UE_LOGI("menutravel: dwell complete -- travelling now");
+        }
+    }
+
     // VOTVCOOP_MENUTRAVEL_WAIT_SESSION=1 (2026-08-22, the D2 wire-window probe):
     // this peer is a CLIENT in a two-peer run -- wait until the coop session is
     // live (join complete; gameplay is only reachable through the save-transfer
@@ -167,7 +187,15 @@ void RunProbe() {
 
     // Pump is off now (bypass armed). Just wait for VOTV's fade + teardown + menu load,
     // then signal the screenshot. Worker-thread logging is GT-independent.
-    ::Sleep(32000);
+    // VOTVCOOP_MENUTRAVEL_MENU_S widens the menu window past the default 32 s: the
+    // stale-pawn window this probe now also measures ran 44 s in the field, and a
+    // 32 s observation cannot distinguish "it never went stale" from "it was still
+    // stale when we stopped looking".
+    {
+        const std::string ms = coop::config::ReadEnv("VOTVCOOP_MENUTRAVEL_MENU_S");
+        const int menuS = ms.empty() ? 32 : atoi(ms.c_str());
+        ::Sleep(static_cast<DWORD>(menuS > 0 ? menuS : 32) * 1000);
+    }
     UE_LOGI("menutravel: MENU-SHOT READY");  // mp.py captures the window here
     ::Sleep(5000);
     UE_LOGI("menutravel: DONE");

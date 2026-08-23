@@ -273,6 +273,7 @@ add_library(votv-coop SHARED
     src/ue_wrap/actors/wisp.cpp
     src/ue_wrap/actors/swinger.cpp
     src/ue_wrap/engine/engine_pawn.cpp
+    src/ue_wrap/engine/world_identity.cpp
     src/ue_wrap/engine/engine_nav.cpp
     src/ue_wrap/engine/engine_widget.cpp
     src/ue_wrap/engine/save_browser.cpp

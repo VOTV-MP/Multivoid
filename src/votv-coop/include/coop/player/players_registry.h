@@ -71,8 +71,14 @@ public:
     uint8_t LocalPeerId() const;
     void SetLocalPeerId(uint8_t id);
 
-    // Force re-resolve of the local cache. Call on level change.
-    void InvalidateLocal();
+    // (InvalidateLocal() lived here until 2026-08-23 and had ZERO call sites for its
+    // whole life, while three comments -- including one in input_owner.cpp -- asserted
+    // it fired "on a level change or a respawn". That gap is what let a dead world's
+    // pawn be served for 44 seconds. It is not re-wired but DELETED, per RULE 2 and
+    // because wiring it could not have worked: the refill path (RescanLocal) had the
+    // SAME blind spot, so an immediate re-walk found and re-cached the same dead pawn.
+    // One invariant, one mechanism, and the surviving one is self-healing: the world
+    // stamp on the cache, checked at the point of use, needs no edge to be noticed.)
 
     // ---- Puppets (remote players) ----
 
@@ -171,6 +177,9 @@ private:
 
     // Local mainPlayer_C actor, cached across frames (incl. menu windows) ->
     // CachedObjRef, never a bare-IsLive raw pointer (islive-zeroav design s.3).
+    // The CachedObjRef also carries the WORLD STAMP (2026-08-23): the cache goes
+    // stale by itself when the world changes, which is what makes the deleted
+    // InvalidateLocal() unnecessary rather than merely unwired.
     ue_wrap::CachedObjRef localCached_;
     // Negative-result TTL for Local(): at the MENU (no gameplay world) the
     // cache misses DETERMINISTICALLY, and per-tick callers (net_pump,
@@ -178,7 +187,6 @@ private:
     // client balloon (3.1->11 GB before the save Request). A miss is cached
     // for kLocalMissTtlMs; world-up detection is delayed by at most that
     // (irrelevant against a multi-second world load). 0 = no cached miss.
-    // Reset by InvalidateLocal so a level change re-walks immediately.
     static constexpr unsigned long long kLocalMissTtlMs = 500;
     unsigned long long localMissAtMs_ = 0;
     uint8_t localPeerId_ = kPeerIdUnknown;

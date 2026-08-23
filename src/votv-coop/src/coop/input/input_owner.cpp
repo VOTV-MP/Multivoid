@@ -15,6 +15,7 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/engine/world_identity.h"
 
 namespace R = ue_wrap::reflection;
 
@@ -113,9 +114,11 @@ void ResolveOnce() {
 // DrainPostedTasksAtTopLevel(), so spawns, wire applies and net_pump::Tick would execute
 // synchronously INSIDE a WM_KEYDOWN callback, re-entering the engine at a point that is
 // not a tick boundary. `t_inPump` does not protect this: a WndProc is not inside a pump.
-// Reachable for real -- InvalidateLocal() on a level change or a respawn clears the
-// cache, and the first keypress after that would pay for it. So the tick owns the
-// resolve and the keystroke path only re-validates. CachedObjRef: probed per
+// Reachable for real -- a world change now invalidates the registry's cache through
+// the CachedObjRef world stamp (2026-08-23; this comment used to cite InvalidateLocal(),
+// which never had a caller and is deleted), and the first keypress after a travel would
+// pay for the refill. So the tick owns the resolve and the keystroke path only
+// re-validates. CachedObjRef: probed per
 // WndProc message INCLUDING at the menu -> the runner-up suspect of the
 // IsLive/VEH finding (islive-zeroav design section 3).
 ue_wrap::CachedObjRef g_localPawn;
@@ -301,6 +304,12 @@ void TickGameThread(bool doFullScan) {
     // (Registry::Local() is a validated cache -- the GUObjectArray walk that used to
     // sit here ran 10x/second for an answer the registry already held).
     void* iface = ActiveInterfaceResolving();
+    // [dev] world-identity instrument (VOTVCOOP_WORLD_ID_PROBE=1; a no-op otherwise).
+    // It hangs HERE because this tick is the mod's only UNGATED game-thread heartbeat
+    // -- posted from the overlay's present path, so it runs at the MENU with no
+    // session, which is exactly the window the 2026-08-23 stale-pawn storm lives in.
+    // The pawn it compares against is the one THIS file feeds to the engine.
+    ue_wrap::world_identity::TickProbe(g_localPawn.Raw());
     if (iface || DrillForcesInterface()) {
         if (iface) Remember(iface);
         else       std::snprintf(g_ownerName, sizeof(g_ownerName), "(drill)");

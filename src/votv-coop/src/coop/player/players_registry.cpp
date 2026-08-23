@@ -6,6 +6,7 @@
 #include "coop/element/registry.h"
 #include "coop/player/remote_player.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -86,6 +87,21 @@ void* Registry::RescanLocal() {
         }
         if (R::NameStartsWith(R::NameOf(obj), L"Default__")) continue;  // skip CDO
         if (!R::IsLive(obj)) continue;
+        // WORLD CURRENCY -- and this term is why wiring the (never-called)
+        // InvalidateLocal() would NOT have fixed the 2026-08-23 storm: an immediate
+        // re-walk finds the SAME dead pawn, because it is still slot-live and
+        // GetController() still succeeds on its intact memory. Invalidating a cache
+        // whose refill has the same blind spot just re-caches the bug.
+        //
+        // FAILS CLOSED, unlike the CachedObjRef term: for an ACTOR, "I cannot
+        // determine your world" is not a legitimate state, and the cost of being
+        // wrong here is one more walk (self-healing, 500 ms later) versus 44 seconds
+        // of feeding a dead world's PlayerController to the engine. The
+        // cannot-determine-ANY-world case is handled one level up: when
+        // CurrentWorld() is null the whole term is skipped.
+        if (void* const curWorld = ue_wrap::world_identity::CurrentWorld()) {
+            if (ue_wrap::world_identity::WorldOf(obj) != curWorld) continue;
+        }
         // The discriminator: only the LOCAL player has a non-null Controller.
         // Puppets are explicitly unpossessed (AutoPossess + AI disabled at
         // deferred-spawn) per [[project-coop-enemies-target-both]]. This
@@ -120,8 +136,6 @@ void* Registry::Local() {
     // mid-travel misses for the whole load window -- so per-tick callers must
     // not re-walk GUObjectArray at tick rate for it. Worst case the new pawn
     // is detected kLocalMissTtlMs late, against a multi-second world load.
-    // InvalidateLocal resets both fields -> an explicit level-change re-walks
-    // immediately.
     localCached_.Reset();
     const unsigned long long now = ::GetTickCount64();
     if (localMissAtMs_ != 0 && now - localMissAtMs_ < kLocalMissTtlMs) {
@@ -164,11 +178,6 @@ void Registry::SetLocalPeerId(uint8_t id) {
         // and are created by RegisterPuppet.
         EnsurePlayerElement_(id, /*puppet=*/nullptr);
     }
-}
-
-void Registry::InvalidateLocal() {
-    localCached_.Reset();
-    localMissAtMs_ = 0;  // explicit invalidation re-walks immediately (no miss TTL)
 }
 
 RemotePlayer* Registry::Puppet(uint8_t peerSessionId) {
