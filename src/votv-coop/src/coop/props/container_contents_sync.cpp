@@ -893,6 +893,7 @@ void OnDisconnect() {
     g_localChangeMs.clear();
     g_conflictRejects = 0;
     g_parked.clear();
+    g_joinBracketOpen = false;  // audit WARN-3: session state must not survive the session
     g_sentHash.clear();
     g_publishedHash.clear();
     g_baseHash.clear();

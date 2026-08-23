@@ -59,6 +59,7 @@ void SendBacklog::ResetLocked_(SlotQ& s) {
     s.episodePeakBytes = 0;
     s.fatal = false;
     s.fatalReason = nullptr;
+    s.dyingLogged = false;
 }
 
 bool SendBacklog::SendOrQueue(int slot, int lane, uint32_t hConn, const uint8_t* wire, int len) {
@@ -85,10 +86,15 @@ bool SendBacklog::SendOrQueue(int slot, int lane, uint32_t hConn, const uint8_t*
         if (rc != -k_EResultLimitExceeded) {
             // Dying/dead connection (NoConnection / InvalidState) or our own
             // bug (InvalidParam). Never queued: the slot's teardown owns the
-            // cleanup; state for a gone peer dies with the peer.
-            UE_LOGW("send_backlog: slot %d lane %d send refused fatally rc=%lld -- "
-                    "connection dying (not queued)",
-                    slot, lane, static_cast<long long>(rc));
+            // cleanup; state for a gone peer dies with the peer. Logged once
+            // per connection (the window before the status callback tears the
+            // slot down can see many sends).
+            if (!s.dyingLogged) {
+                s.dyingLogged = true;
+                UE_LOGW("send_backlog: slot %d lane %d send refused fatally rc=%lld -- "
+                        "connection dying (not queued; further lines folded)",
+                        slot, lane, static_cast<long long>(rc));
+            }
             return false;
         }
         // -LimitExceeded: backpressure. Fall through to queue.
@@ -137,17 +143,20 @@ void SendBacklog::Drain(int slot, uint32_t hConn, int sendBufBytes) {
     int pending = PendingBytesTotal_(hConn);
     bool progressed = false;
     bool blocked = false;
+    int sentThisPass = 0;  // kDrainPassCap bounds the mutex hold (audit WARN-1)
     for (int lane = 0; lane < kLaneCount && !blocked; ++lane) {  // High -> Normal -> Bulk
         LaneQ& l = s.lanes[lane];
         while (!l.q.empty()) {
+            if (sentThisPass >= kDrainPassCap) { blocked = true; break; }
             const std::vector<uint8_t>& head = l.q.front();
             const int len = static_cast<int>(head.size());
             if (pending + len > sendBufBytes - kReserve) { blocked = true; break; }
             const int64_t rc = AttemptSend_(hConn, lane, head.data(), len);
             if (rc < 0) {
-                if (rc != -k_EResultLimitExceeded) {
+                if (rc != -k_EResultLimitExceeded && !s.dyingLogged) {
+                    s.dyingLogged = true;
                     UE_LOGW("send_backlog: slot %d lane %d drain hit fatal rc=%lld -- "
-                            "connection dying, backlog freed at teardown",
+                            "connection dying, backlog freed at teardown (folded)",
                             slot, lane, static_cast<long long>(rc));
                 }
                 blocked = true;
@@ -158,6 +167,7 @@ void SendBacklog::Drain(int slot, uint32_t hConn, int sendBufBytes) {
             s.totalBytes -= static_cast<size_t>(len);
             l.q.pop_front();
             progressed = true;
+            ++sentThisPass;
         }
     }
     if (progressed) s.lastProgress = std::chrono::steady_clock::now();

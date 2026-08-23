@@ -14,12 +14,18 @@
 // backlog (its state dies with it -- MTA CNetServerBuffer precedent).
 //
 // Shape: one FIFO per (slot, lane) -- GNS's ordering domain is the LANE, so a
-// per-slot queue would collapse lane independence (a Bulk join-burst backlog
+// per-slot QUEUE would collapse lane independence (a Bulk join-burst backlog
 // must not block a High-lane TeleportClient). FIFO-once-nonempty: while a
 // (slot,lane) backlog is non-empty, every later send for that (slot,lane)
-// appends behind it -- enforced by holding the per-(slot,lane) section across
+// appends behind it -- enforced by holding the slot's section across
 // [empty-check -> GNS attempt -> on-refusal append], which is what keeps the
 // order across BOTH producer threads (game-thread authors, net-thread relay).
+// THE MUTEX IS PER-SLOT (covering its 3 lanes) BY CHOICE -- coarser than the
+// ordering domain (audit 2026-08-23): correctness needs only per-lane
+// atomicity, but one lock per slot avoids three-way lock-order surface for
+// zero measured need; the cross-lane hold is bounded by kDrainPassCap below
+// (a drain pass is at most 256 sends, ~sub-ms), so a High send never waits on
+// a whole Bulk episode.
 //
 // Each slot's backlog is stamped with the hConn it opened under; the drain
 // discards the whole backlog when the slot's live hConn no longer matches
@@ -94,6 +100,11 @@ public:
     // (3 peers x 228 B voice frames + poses) -- 64 KB is ~30x margin.
     static constexpr int kReserve = 64 * 1024;
 
+    // Max messages one Drain() pass re-injects (audit WARN-1): bounds the
+    // per-slot mutex hold (and the cross-lane wait) to sub-ms; the next
+    // net-thread pass continues. 256 * ~200 passes/s far exceeds any burst.
+    static constexpr int kDrainPassCap = 256;
+
 private:
     struct LaneQ {
         std::deque<std::vector<uint8_t>> q;
@@ -111,6 +122,7 @@ private:
         size_t episodePeakBytes = 0;
         bool fatal = false;
         const char* fatalReason = nullptr;
+        bool dyingLogged = false;  // fold the dying-conn lines (audit WARN-2)
     };
     // Reset q to a fresh state under mu (caller holds mu).
     void ResetLocked_(SlotQ& s);
