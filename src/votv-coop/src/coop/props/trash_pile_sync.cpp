@@ -79,6 +79,7 @@ void RebuildIndex() {
     // permanent full-walk mode (the L5 hitch). 2 full walks heal a reload/churned slot immediately;
     // the 60s backstop (fullEvery=30 at the 2s throttle, unchanged) covers any straggler.
     static ue_wrap::scan::SettledObjectScan sScan{/*settleScans*/ 2, /*backstopFullEvery*/ 30};
+    sScan.diagName = "trash_pile";  // [SCAN-DIAG] attribution
     const auto r = sScan.Begin();
     for (int32_t i = r.begin; i < r.end; ++i) {
         void* obj = R::ObjectAt(i);

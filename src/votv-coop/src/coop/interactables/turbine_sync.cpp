@@ -117,6 +117,7 @@ bool PayloadFinite(const coop::net::TurbineStatePayload& p) {
 // cheap class-descendant filter the old FindObjectsByClass applied, per-object on the range.
 void RebuildIndex() {
     static ue_wrap::scan::SettledObjectScan sScan;
+    sScan.diagName = "turbine";  // [SCAN-DIAG] attribution
     const auto r = sScan.Begin();
     std::vector<std::pair<std::wstring, Ref>> found;
     for (int32_t i = r.begin; i < r.end; ++i) {

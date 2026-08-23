@@ -81,6 +81,7 @@ size_t RebuildIndex() {
     // Stream-settle scan (ue_wrap/settled_object_scan.h) -- the raw tail-scan died at the 18:41
     // host world reload (prune-to-0, recycled slots below the cursor).
     static ue_wrap::scan::SettledObjectScan sScan;
+    sScan.diagName = "power";  // [SCAN-DIAG] attribution
     const auto r = sScan.Begin();
     std::vector<std::pair<std::wstring, Ref>> found;
     found.reserve(4);  // there are typically 1-2 panels in a base

@@ -27,6 +27,7 @@
 
 #include "ue_wrap/devices/door.h"            // TickSmartApply (HostAuth Tick finishes mid-animate doors)
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/walk_timer.h"         // per-channel RebuildIndex [WALK-TIME] (R-2 phase split)
 #include "ue_wrap/core/reflection.h"
 
 #include <atomic>
@@ -96,7 +97,9 @@ public:
 
     // Scan discipline (stream-settle + staggered backstop) is owned by SettledObjectScan --
     // see ue_wrap/settled_object_scan.h for the L5 take-3 rationale it was extracted from.
-    explicit Channel(const Adapter& a, Mode mode = Mode::Symmetric) : a_(a), mode_(mode) {}
+    explicit Channel(const Adapter& a, Mode mode = Mode::Symmetric) : a_(a), mode_(mode) {
+        scan_.diagName = a.name;  // [SCAN-DIAG] attribution (adapter names are string literals)
+    }
 
     void SetSession(coop::net::Session* s) { session_.store(s, std::memory_order_release); }
     coop::net::Session* GetSession() const { return session_.load(std::memory_order_acquire); }
@@ -469,6 +472,10 @@ public:
     // swinger/container channel whose child-actor Keys may be per-peer GUIDs).
     size_t RebuildIndex() {
         if (!a_.EnsureResolved()) return 0;
+        // Per-channel walk timer (2026-08-23 R-2): the outer "sync:interactable" [WALK-TIME]
+        // covers all six channels + polls fused -- the b133 field log could not say WHICH
+        // channel or WHICH phase cost the 74 ms median. >=1ms gate keeps steady state silent.
+        ue_wrap::ScopedWalkTimer _rebuildTimer{a_.name};
         // L5 fix (2026-06-23, take 2 + take 3): the stream-settle scan discipline -- full-walk while the
         // live count changes, cheap tail-scan once settled, staggered 60s full backstop. The rationale +
         // history (door 57->19 take-1 regression, the 18:41 world-reload prune-to-0 root) live with the

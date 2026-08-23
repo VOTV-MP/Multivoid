@@ -29,11 +29,26 @@
 #pragma once
 
 #include "ue_wrap/core/incremental_object_scan.h"
+#include "ue_wrap/core/log.h"
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 
 namespace ue_wrap::scan {
+
+// [SCAN-DIAG] phase-split probe (2026-08-23, the R-2 stutter design): env-gated
+// (VOTVCOOP_SCAN_DIAG=1) one-line-per-Begin() trace naming the consumer, the walk MODE and the
+// RANGE LENGTH -- the b133 field log could not discriminate "expensive FULL walks" from
+// "expensive TAILS over allocation churn", and those are different fixes. Diagnostic
+// ([[feedback-rule2-exempts-probes-diagnostics-tools]]); ~zero cost when the env var is unset.
+inline bool ScanDiagOn() {
+    static const bool on = [] {
+        const char* v = std::getenv("VOTVCOOP_SCAN_DIAG");
+        return v && v[0] == '1';
+    }();
+    return on;
+}
 
 // Proven tuning (interactable_channel L5 take-3, 2026-06-23): at a 2s caller throttle,
 // settle after 15 unchanged scans (~30s -- settling earlier is the take-1 door 57->19
@@ -54,16 +69,26 @@ struct SettledObjectScan {
 
     bool settled() const { return stableScans_ >= settleScans_; }
 
+    // Diagnostic label for the [SCAN-DIAG] trace; a string literal that outlives this object.
+    const char* diagName = nullptr;
+
     // The range to scan this call. NOT-settled -> FULL walk (and the tail cursor is parked at the
     // live end so the first post-settle tail starts clean, with the backstop counter staggered).
     ScanRange Begin() {
+        ScanRange r;
         if (!settled()) {
-            ScanRange r{0, ue_wrap::reflection::NumObjects(), true};
+            r = ScanRange{0, ue_wrap::reflection::NumObjects(), true};
             scan_.scannedTo = r.end;
             scan_.sinceFull = staggerOffset_;
-            return r;
+        } else {
+            r = NextRange(scan_, backstopFullEvery_);
         }
-        return NextRange(scan_, backstopFullEvery_);
+        if (ScanDiagOn()) {
+            UE_LOGI("[SCAN-DIAG] %s mode=%s range=%d stable=%d/%d",
+                    diagName ? diagName : "?", r.isFull ? "full" : "tail",
+                    static_cast<int>(r.end - r.begin), stableScans_, settleScans_);
+        }
+        return r;
     }
 
     // Feed the post-scan index size. Any count CHANGE (grow = streaming, shrink = deaths/reload

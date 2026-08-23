@@ -264,6 +264,7 @@ size_t RebuildIndex() {
     // 0 ATV(s)" at 18:41:10 is this). The capturing baseline + purchase-detect orderings are preserved
     // below: the not-settled phase scans [0, N) so the initial save-set is fully captured.
     static ue_wrap::scan::SettledObjectScan sScan;
+    sScan.diagName = "atv";  // [SCAN-DIAG] attribution
     const auto r = sScan.Begin();
 
     struct Found { std::wstring wireKey; void* obj; int32_t idx; std::wstring realKey; };

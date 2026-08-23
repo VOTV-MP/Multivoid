@@ -170,6 +170,7 @@ size_t RebuildIndex() {
     // catches them), recycled-slot arrivals heal within the 60s backstop. The PosKey cache below is
     // maintained incrementally (new actors compute + cache; a full scan rebuilds it from scratch).
     static ue_wrap::scan::SettledObjectScan sScan{/*settleScans*/ 2, /*backstopFullEvery*/ 30};
+    sScan.diagName = "grime";  // [SCAN-DIAG] attribution
     const auto r = sScan.Begin();
     std::unordered_map<void*, std::wstring> nextCache;  // populated only on a full scan
     std::vector<std::pair<std::wstring, Ref>> found;

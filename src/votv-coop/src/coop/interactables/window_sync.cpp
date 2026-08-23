@@ -96,6 +96,7 @@ size_t RebuildIndex() {
     // (perf-audit 2026-07-04); only 4 windows exist -- 2 stable scans suffice, the 60s backstop
     // covers recycled-slot stragglers.
     static ue_wrap::scan::SettledObjectScan sScan{/*settleScans*/ 2, /*backstopFullEvery*/ 30};
+    sScan.diagName = "window";  // [SCAN-DIAG] attribution
     const auto r = sScan.Begin();
     std::vector<std::pair<std::wstring, Ref>> found;
     found.reserve(8);

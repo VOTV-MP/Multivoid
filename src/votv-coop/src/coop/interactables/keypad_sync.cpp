@@ -178,6 +178,7 @@ size_t RebuildIndex() {
     // tail-scan once settled. The raw tail-scan this replaces died at the 18:41 host world reload
     // (prune-to-0, new actors in recycled slots below the cursor -> keypad 0-sync all session).
     static ue_wrap::scan::SettledObjectScan sScan;
+    sScan.diagName = "keypad";  // [SCAN-DIAG] attribution
     const auto r = sScan.Begin();
     std::vector<std::pair<std::wstring, Ref>> found;
     found.reserve(32);
