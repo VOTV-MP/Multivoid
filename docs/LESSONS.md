@@ -1568,6 +1568,28 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
 
+- **A WINDOW CLOSED BY THE LATCH THAT STARTS THE NEXT PHASE ENDS BEFORE THAT PHASE — BY
+  CONSTRUCTION.** Measured 2026-08-23 (R-4a-end, 9-round /qf): the world-load episode's destroy
+  suppression lowered on the quiescence latch, the quiescence latch is what permits the
+  ClientWorldReady announce, and the host's bracket starts only after the announce — so the
+  suppression ALWAYS ended before the join reconcile it existed to cover (field: 1,629 junk
+  broadcasts 23 s after "episode CLOSED"; a fast box masks it entirely). *Look FIRST:* any gate
+  whose CLOSE edge doubles as the TRIGGER of the work it guards — ask "what does this latch
+  START, and must my window span that too?" Fix shape (a second, kind-classified window spanning
+  the triggered phase): `world_load_episode` reconcile window +
+  `votv-r4a-end-condition-DESIGN-2026-08-23.md`.
+  `memory/lesson_a_window_closed_by_the_latch_that_starts_the_next_phase.md`
+
+- **ON A v122 CLIENT THE ELEMENT REGISTRY HOLDS ONLY HOST-BOUND MIRRORS — "local props" must be
+  selected by keyed-interactable + NO element bound.** Measured 2026-08-23 (the R-4a-end drill's
+  RED run): `Registry::SnapshotActorsByType(Prop)` on a client picked five pile MIRRORS whose
+  destruction the mirror layer healed without touching the seam's broadcast path (RED read 1/5).
+  The delivery side mirrors the asymmetry: `ExpressIncrementalSpawn`/`DeliverLateRegisteredProps`
+  are HOST-only (prop_snapshot.cpp:620/:642) — a client's suppressed place has NO census
+  delivery channel. *Look FIRST:* any client-side census/drill needing locals —
+  `IsKeyedInteractable(obj) && GetPropElementIdForActor(obj)==kInvalidId`, never the Registry.
+  `memory/lesson_v122_client_registry_holds_only_mirrors.md`
+
 - **Row field vs per-slot state: does it describe the PERSON or the LINK?** The arc-A design put the
   `joinSent` latch in the roster ledger's row beside nick/guid/skin. It cannot live there: a CLIENT
   sends its Join to slot 0 BEFORE the host's Join arrives, so row 0 does not exist yet, the

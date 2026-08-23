@@ -141,7 +141,12 @@ stack/rekey corruption the ghost-twin cure rode on). The join sweep's keyed univ
   (takes 1-2), the wire-order queue netting (take 4), the SnapshotBegin-lost watchdog
   quiescence-by-ceiling (the probe is wire-independent; the lost-bracket flake is a 30 s
   post-announce timeout in the sweep). KEPT: the outbound destroy-broadcast suppression episode
-  (host-wipe fix; now self-closing at the probe latch), deferred destroys (travel window +
+  (host-wipe fix; the LOAD episode still self-closes at the probe latch, **but since 2026-08-23
+  R-4a-end `391c0dcb` the destroy seam's suppression rides the RECONCILE WINDOW on top** — raised
+  Arm/reload-arm/SnapshotBegin, lowered SnapshotComplete/flake/180 s ceiling — because the probe
+  latch is the same latch that permits the announce, so the old window always ended BEFORE the
+  bracket it existed to cover; see COOP_DISPATCH_VISIBILITY's K2 row + the R-4a-end design doc),
+  deferred destroys (travel window +
   probe-deadline DEGRADED mode), b3 pos-corrections, twins/ghost/kerfur retires (save-vs-wire
   STATE reconcile), the doom sweep (claims → doom judges last, take-3 order preserved), the fuzzy
   rekey-steal denial (`ResolveMirrorEidByActor(wireMirrorOnly)`), the dead-row TRIPWIRE + per-doom

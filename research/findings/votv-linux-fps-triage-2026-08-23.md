@@ -3,10 +3,12 @@
 **Original session directive (user, 2026-08-23 day): investigation ONLY.** Nothing was built that
 session; every fix below was written as a PRESCRIPTION.
 
-> **STATUS 2026-08-23 eve — PARTLY BUILT, AND TWO PRESCRIPTIONS WERE WRONG. Read §8's status table
-> FIRST**, then §5-CORR and §4-CORR before acting on any prose below them.
+> **STATUS 2026-08-23 late eve — EVERY ROW CLOSED (all autonomous, NOTHING hands-on). Read §8's
+> status table FIRST**, then §5-CORR and §4-CORR before acting on any prose below them.
 > - **BUILT + drilled:** R-1 (the storm root, `88e29669`+`3f7b2b4e`), R-1e (the rate latch,
->   `86ff94a2`), R-4a's key-scoping half (`65fccd70`, measured 871 → 0).
+>   `86ff94a2`), R-2 (the shared scan hub) + R-2b (the steady reseed as hub consumer #14,
+>   `e1b1639f`), R-4a BOTH halves (key-scoping `65fccd70` 871 → 0 + the end-condition RECONCILE
+>   WINDOW `391c0dcb`/`79cf7d8f`, RED/GREEN drilled), R-4b (the delivery guarantee).
 > - **The prescription for R-1a could not work** and was dropped for a delete; **§5's whole R-4 story
 >   was false** (the sweep aborted and doomed zero; 2,172 not 65; 1,618 not 940) and the causal chain
 >   inverts — R-4b is what broke the join, not a secondary.
@@ -330,9 +332,12 @@ lull immediately BEFORE the host's snapshot started pouring in, and the world re
 once closed the episode never reopens. The end condition needs the snapshot bracket, not population
 stability alone — two independent signals for one question.
 
-**Status:** the key-scoping half is FIXED (the `!keyless` scoping removed; before/after measured
-locally 871 → 0). The end-condition half is NOT fixed and needs its own `/qf`. The 689 post-episode
-KEYED broadcasts at 23:20:06+ are **unattributed** — do not assume they share a root with the 940.
+**Status (updated 2026-08-23 late eve): BOTH halves FIXED.** Key-scoping: the `!keyless` scoping
+removed, measured 871 → 0. **End-condition: BUILT (`391c0dcb`+`79cf7d8f`, 9-round /qf) — the
+RECONCILE WINDOW**, see §8's R-4a row + the design doc. The "689 post-episode KEYED" were
+RE-ATTRIBUTED by counting the sender's lines: ~870 clump-eidN = the twin-retire kernel (fixed
+cause-scoped via MarkIncomingDestroy) + ~660 KEYED eid=0 = untaggable engine/BP rebuild churn
+(the window's class; local twin 2,174 suppressed inside the local episode).
 
 ---
 
