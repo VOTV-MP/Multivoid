@@ -875,6 +875,14 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   email authored 3 s after connect landed BEFORE the save snapshot, rode the save, and the loss
   case silently went unexercised while the run "passed" arrival. The ORDERING is the phenomenon:
   assert the in-log ORDER (authored-line AFTER the "captured at blob instant" line), not arrival.
+  SEVENTH member, the INVERSE polarity (2026-08-23, the smoke4 "relay gap"): a verdict window
+  anchored on the last client's wire-CONNECT while the phenomenon (its first relayed pose) needs
+  save transfer + world load + ~13 s ready→pose INSIDE it — the smoke save grew to ~19 MB and the
+  window silently starved the last joiner, producing a false POSITIVE bug ("RELAY GAP") that got
+  filed in three docs as pre-existing. Same bytes, 120 s window = clean PASS; relay healthy. Fix:
+  anchor the window on every client's world-ready edge (mp.py `--ready-timeout`). *Look FIRST:*
+  **a growing input (save/world/log) silently re-opens any wall-clock window that was once wide
+  enough — anchor verdict windows on the pipeline's own settle edge, not on wall clock.**
   `memory/lesson_an_instrument_blind_to_the_phenomenon_always_passes.md`
 
 - **VERIFY ROLE-EXCLUSIVITY BEFORE INVOKING THE PUBLISH RULE — read the accessor top to bottom.**

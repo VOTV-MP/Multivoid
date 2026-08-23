@@ -40,6 +40,8 @@ stay absent), `[SEED-DRILL]` (only if the drill env was on — not in normal pla
 ## Honest status
 
 Everything above: smoke + purpose-built drills + agent audits (0 CRITICAL), **zero hands-on**.
-The 4-peer smoke's cross-peer verdict FAILs today on a PRE-EXISTING relay gap (earlier joiners
-don't see the LAST joiner's puppet in the smoke window) — if a 3-4 player hands-on reproduces
-"can't see the newest player", that's the filed row, not a regression of this batch.
+The "4-peer relay gap" that FAILed the smoke's cross-peer verdict turned out to be the SMOKE'S
+OWN WINDOW, not a relay bug (resolved 2026-08-23 same day: with the window anchored on every
+client's world-ready edge, all four peers see each other via relay — the relay is healthy in
+both directions). If a 3-4 player hands-on still shows "can't see the newest player" after
+everyone has fully loaded in, that IS news — grab both logs.

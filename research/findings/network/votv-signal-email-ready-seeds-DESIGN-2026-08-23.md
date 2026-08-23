@@ -34,7 +34,11 @@ unchanged (zero wire change as designed), **NOT hands-on**. As designed except w
   both peers. Drill caveat: the first drill run authored at 3 s and RACED AHEAD of the snapshot
   (email rode the save — the loss case unexercised); the drill now waits 12 s and the log ORDER
   (authored-after-captured) is the per-run proof. One unrelated client boot-death flake observed
-  once (died 4 s into boot, pre-dispatch, no dump; not reproduced).
+  once (died 4 s into boot, pre-dispatch, no dump; not reproduced). **A SECOND boot-fatal flake
+  the same day** (smoke4 window-120 try 1): a client instance hit a UE "Fatal Error!" ~70 s into
+  boot during main-menu bring-up, BEFORE connect and before `multiplayer_menu: INSTALLED`; no
+  UE4CC dump folder, mod log clean to the end. 1-of-3 smoke4 runs; both flakes under 4-instance
+  contention, different phases — WATCH item, not yet attributable to the mod.
 - Files over the soft cap after this arc: `session.h` 895 (+40) and `save_transfer.cpp` 1014
   (+8) — both carry standing extraction proposals (session.h split; the HostStream pump TU).
 
@@ -138,12 +142,18 @@ what the joiner's save will contain), seedDelta at the ready edge, `CancelJoinSn
   math (in snap, absent cur ⇒ one delete); multiset counts (two identical rows ⇒ d=2).
 - The author-solo → join → exactly-one-copy case rides the RED/GREEN drill (needs two processes).
 - The 4-peer variant is UNJUDGEABLE on the cross-peer axis until the pre-existing relay-gap row
-  (§4) is fixed.
+  (§4) is fixed. **RESOLVED same day — see §4: the "gap" was the smoke's own window, not the
+  relay; smoke4's cross-peer axis is judgeable again.**
 
 ## 4. Filed (not this arc's to fix)
 
-- **4-peer relay gap**: baseline smoke4 FAILs today — earlier joiners never see the LAST joiner's
-  puppet (identical with/without rate knobs; measured 2026-08-23). Pre-existing; own row.
+- **4-peer relay gap — RESOLVED 2026-08-23 (same day, later session): NOT A RELAY BUG.** The
+  smoke's monitoring window anchored on the last client's wire-CONNECT while the verdict needs
+  its save transfer (~19 MB smoke save since ~07-31) + world load + ~13 s world-ready→first-pose
+  latency inside that window. Discriminating run: same bytes, window 120 s ⇒ **clean PASS, every
+  client sees host + both peers via relay** (`drill/smoke4_window120_try2.txt`). Fix at the
+  instrument: smoke4 now anchors the steady-state window on EVERY client's world-ready edge in
+  the host log (`--ready-timeout`, mp.py window-anchor note).
 - **Tree-wide Assembler per-slot teardown census**: every blob_chunks::Assembler owner
   (laptop_buffer, laptop, container_contents, meadow, comp, drive, player_inventory, chat…) shares
   the recycle-merge exposure §1.5 closes for the twins.

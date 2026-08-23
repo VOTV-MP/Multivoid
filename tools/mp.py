@@ -1228,6 +1228,30 @@ def cmd_smoke4(args) -> None:
             time.sleep(1.5)
         time.sleep(4)
 
+    # WINDOW ANCHOR (2026-08-23): the monitoring window used to start at the
+    # LAST client's wire-connect -- but the cross-peer verdict needs the last
+    # joiner to finish its save transfer + world load AND stream its first
+    # pose (~13 s after world-ready, measured) INSIDE that window. The host
+    # smoke save has grown to ~19 MB, so a wall-clock window anchored on
+    # connect silently starved the last joiner and produced a false
+    # "RELAY GAP" verdict: measured 2026-08-23, FAIL at 45 s post-connect,
+    # clean PASS on the SAME bytes once the window covered the join pipeline
+    # (drill/smoke4_window120_try2.txt). Anchor the steady-state window on
+    # EVERY client's world-ready edge in the HOST log instead; --duration
+    # then means what it says (steady-state dwell), independent of save
+    # size. A timeout is logged and falls through -- the verdict then fails
+    # WITH that attribution instead of a misleading relay-gap row.
+    log(f"--- WAITING for all clients to reach world-ready in the host log "
+        f"(save transfer + world load; up to {args.ready_timeout}s each) ---")
+    for slot_arg, _gd, label in client_specs:
+        slot = assigned.get(slot_arg)
+        if slot is None:
+            log(f"  {label}: never connected -- skipping its world-ready wait "
+                f"(the verdict will fail with that attribution)")
+            continue
+        _wait_for_log(HOST_DIR / "multivoid.log",
+                      f"net: slot {slot} world-ready", args.ready_timeout, label)
+
     log(f"--- MONITORING for {args.duration}s (sample every {args.sample_interval}s, "
         f"RAM kill arms after {args.settle_grace}s) ---")
     t0 = time.time()
@@ -3489,7 +3513,14 @@ def main() -> None:
     p_smoke4 = sub.add_parser("smoke4",
                               help="autonomous 4-PEER LAN smoke (Tier 8 cross-peer relay verdict)")
     p_smoke4.add_argument("--duration", type=int, default=45,
-                          help="seconds to monitor after all peers connect")
+                          help="steady-state seconds to monitor after every client is "
+                               "world-ready (the window anchors on the world-ready edge, "
+                               "not on connect -- see the 2026-08-23 window-anchor note)")
+    p_smoke4.add_argument("--ready-timeout", type=int, default=150,
+                          help="per-client seconds to wait for its world-ready edge in the "
+                               "host log before the steady-state window starts (covers the "
+                               "save transfer + world load of a ~19 MB save under "
+                               "4-instance contention)")
     p_smoke4.add_argument("--sample-interval", type=int, default=5,
                           help="seconds between RSS samples")
     p_smoke4.add_argument("--boot-timeout", type=int, default=40,
@@ -3530,6 +3561,7 @@ def main() -> None:
                             help="4-peer MIXED-SCRIPT lobby (en/ru/zh/ja + emoji): connect, "
                                  "arbitrate, chat, and assert every name and message survived")
     p_i18n.add_argument("--duration", type=int, default=60)
+    p_i18n.add_argument("--ready-timeout", type=int, default=150)
     p_i18n.add_argument("--sample-interval", type=int, default=5)
     p_i18n.add_argument("--boot-timeout", type=int, default=40)
     p_i18n.add_argument("--client-boot-timeout", type=int, default=75)

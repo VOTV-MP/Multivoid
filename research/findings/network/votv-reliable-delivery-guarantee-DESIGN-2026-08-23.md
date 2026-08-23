@@ -252,6 +252,12 @@ explicit comment. Prose only. New lesson: `[[lesson-a-librarys-default-is-not-yo
 >   row** (see the b125 R-F family / new row below). The aggregate cross-peer axis is unjudgeable
 >   until that row is fixed; smoke4's joins are also serialized (one at a time), so the
 >   simultaneous-3-join worst case remains a modeled, not measured, corner.
+>   **RELAY-GAP ROW RESOLVED 2026-08-23 (later session): NOT A RELAY BUG — it was smoke4's own
+>   window**, anchored on the last client's CONNECT while the ~19 MB smoke save + world load +
+>   the ~13 s world-ready→first-pose latency no longer fit inside it. Same bytes with a 120 s
+>   window = clean cross-peer PASS (`drill/smoke4_window120_try2.txt`); mp.py now anchors the
+>   window on every client's world-ready edge (`--ready-timeout`). The relay itself was verified
+>   healthy in both directions between all connected peers.
 > Logs: session scratchpad `drill/run{1..4}_*.log`.
 
 Instrument: new registry testing-knob row `net.fakelink_kbs` (same shape as the two R-4b knobs;
