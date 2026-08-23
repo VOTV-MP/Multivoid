@@ -14,6 +14,8 @@
 
 #include "coop/net/session.h"
 
+#include "coop/config/config.h"           // ResolveInt for the fakelink drill knob
+#include "coop/config/config_registry.h"  // rows::net_fakelink_kbs
 #include "coop/player/nickname_arbiter.h"
 #include "coop/text/case_fold.h"
 #include "coop/text/repertoire.h"
@@ -84,6 +86,18 @@ bool EnsureGnsInit() {
     if (auto* utils = SteamNetworkingUtils()) {
         utils->SetGlobalConfigValueInt32(k_ESteamNetworkingConfig_SendRateMin, 1 * 1024 * 1024);
         utils->SetGlobalConfigValueInt32(k_ESteamNetworkingConfig_SendRateMax, 25 * 1024 * 1024);
+        // Overdrive-drill knob (design doc par.7.3): simulate a thin OUTBOUND link with GNS's
+        // FakeRateLimit_Send policer (process-global; silently DROPS packets beyond the token
+        // budget -- lowlevel.cpp:1885-1907). 0 = off (the shipped default).
+        const long fakeKbs =
+            coop::config::ResolveInt(coop::config_registry::rows::net_fakelink_kbs);
+        if (fakeKbs > 0) {
+            utils->SetGlobalConfigValueInt32(k_ESteamNetworkingConfig_FakeRateLimit_Send_Rate,
+                                             static_cast<int32>(fakeKbs) * 1024);
+            UE_LOGW("net: FAKE LINK LIMIT %ld KB/s outbound (drill knob net.fakelink_kbs) -- "
+                    "packets beyond the budget are silently dropped",
+                    fakeKbs);
+        }
     }
     g_inited = true;
     UE_LOGI("net: GameNetworkingSockets_Init OK (send rate raised: min 1 MB/s, max 25 MB/s)");

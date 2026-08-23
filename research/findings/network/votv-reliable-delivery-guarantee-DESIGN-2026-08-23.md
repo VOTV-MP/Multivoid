@@ -230,11 +230,29 @@ kMaxBytesPerSlot=16MB is 20× the measured 742 KB burst, kReserve=64KB is snp.cp
 4 MB buffer is burst-vs-buffer sizing, save pump `kChunksPerTick=4` is backpressure-paced by
 explicit comment. Prose only. New lesson: `[[lesson-a-librarys-default-is-not-your-binarys-config]]`.
 
-### 7.3 Drill: overdrive survivability (STAGED, RUN DEFERRED — this row is the tracker)
+### 7.3 Drill: overdrive survivability (RUN + PASSED 2026-08-23 eve — results in the status box)
 
-> **STATUS: NOT RUN.** Deferred 2026-08-23 behind the user's no-launch constraint (RAM-heavy job).
-> This section is the self-contained spec — a later session runs it without pass-2 context.
-> Until it runs, overdrive survivability stays tagged UNMEASURED. It does NOT block decision A.
+> **STATUS: RUN 2026-08-23 eve (PC freed) — ALL FOUR RUNS PASS THE PRE-REGISTERED KEYS; overdrive
+> survivability is MEASURED.** DLL `8DF99D90D747081E` ×4 (the fakelink knob build). Results:
+> - **Run 1 CONTROL** (rate 256 = fakelink 256): PASS — transfer 19.3 MB in 77 s = exactly
+>   clamp-paced, crc ok, rc=-25 0, 0 ERROR, both knob log lines live.
+> - **Run 2 OVERDRIVE** (rate 1024, fakelink 256, 4 MB buffer): **PASS — the decision-A branch.**
+>   Transfer capacity-bound 79 s (same wall-clock as control); GNS send buffer sat pinned ~4.1 MB
+>   for 83 s (SEND BACKLOG warns = intended pacing); net-diag `qual=100/26%` (the ~75% wire loss
+>   is real and ARQ recovered all of it); crc ok, 0 rc=-25, 0 ERROR, no fatal, no kick, poses/
+>   puppet fine. **Sustained 4× overdrive degrades gracefully and never dies** — the thin-uplink
+>   case does NOT reopen decision A.
+> - **Run 3 CONTRACT-PATH** (run 2 + 128 KB sendbuf): PASS — the backlog engaged under overdrive
+>   and closed three episodes "all delivered" (largest 5,544 msgs, peak 930 KB), transfer 79 s,
+>   crc ok, 0 errors, no fatal.
+> - **Run 4 AGGREGATE** (4-peer smoke4, fakelink 768): the DELIVERY axis passed (all 3 saves
+>   crc-ok, episodes closed, 0 rc=-25, no fatal) — but the smoke's cross-peer verdict FAILED on a
+>   relay gap (earlier joiners never see the LAST joiner's puppet) that reproduces IDENTICALLY in
+>   an unpinned BASELINE smoke4 → **pre-existing, independent of rate/overdrive; filed as its own
+>   row** (see the b125 R-F family / new row below). The aggregate cross-peer axis is unjudgeable
+>   until that row is fixed; smoke4's joins are also serialized (one at a time), so the
+>   simultaneous-3-join worst case remains a modeled, not measured, corner.
+> Logs: session scratchpad `drill/run{1..4}_*.log`.
 
 Instrument: new registry testing-knob row `net.fakelink_kbs` (same shape as the two R-4b knobs;
 one init-time `ResolveInt` read in `session_start` ⇒ `SetGlobalConfigValueInt32(FakeRateLimit_Send_Rate)`.

@@ -44,6 +44,10 @@ CFG_INT(net_sendbuf_kb, "net.sendbuf_kb", "net", 0, 0, 262144, "VOTVCOOP_NET_SEN
 CFG_INT(net_sendrate_kbs, "net.sendrate_kbs", "net", 0, 0, 1048576, "VOTVCOOP_NET_SENDRATE_KBS",
     "Fixed network send rate, KB/s (sets the transport's min+max rate clamp). 0 = the mod's "
     "default. Testing knob -- lowering it simulates a slow link end-to-end.")
+CFG_INT(net_fakelink_kbs, "net.fakelink_kbs", "net", 0, 0, 1048576, "VOTVCOOP_NET_FAKELINK_KBS",
+    "Simulated OUTBOUND link capacity, KB/s (GNS FakeRateLimit_Send: a process-global policer "
+    "that silently DROPS packets beyond the budget -- worst-case thin-uplink physics). 0 = off. "
+    "Testing knob for the overdrive drill; pair with net.sendrate_kbs above this value.")
 CFG_STRING_GATED(net_master, "net.master", "net", ::coop::net::kOfficialMasterUrl,
     "VOTVCOOP_MASTER_URL", false, "net.master.custom",
     "Master (lobby list) server, host:port. The special value DEFAULT also means the official "
