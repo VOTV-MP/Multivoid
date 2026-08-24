@@ -47,6 +47,15 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   rounds of growth means stop designing and go re-derive what the defect IS in mechanism terms; four
   or more discarded mechanisms is the same signal. And when a fix does converge small, name the
   discarded designs in the commit so the next session does not re-propose them.
+  **SHARPENED 2026-08-24 with its counter-case: shrinking is a SIGNAL, not a PROOF, and the failure
+  runs in this direction too.** v137's impl `/qf` deleted a suppression, a heal and a whole refusal
+  branch in one round and treated the shrink as validation; the justification ("a refusal then degrades
+  to exactly today's behaviour") was FALSE BY CONSTRUCTION, because the client's suppression of its own
+  artifacts was unconditional while the authorization was conditional and decided later — the field
+  found it as a total loss. The follow-up pass then deleted the same suppression a SECOND time on
+  arguments that, re-derived, only showed it was unnecessary on the HAPPY path. *Look FIRST, on a
+  sudden shrink:* which branch just disappeared, and was it load-bearing on the FAILURE path? A fix
+  that shrinks by deleting the failure branch has stopped modelling failure, not converged.
   `memory/feedback_a_converged_fix_should_shrink_not_grow.md`
 
 - **An instrument must report its INPUTS, not only its verdict.** 2026-07-31: one probe printed
@@ -2330,6 +2339,19 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   discriminator that separates "my instrument" from "my change" is one command — a run with the drill
   disabled. *Look FIRST:* place one-shot drills AFTER the subsystem they measure is live, and feed them
   real objects. `memory/lesson_a_drill_that_kills_boot_is_worse_than_no_drill.md`
+- **2026-08-24 — an entity-death discriminator must be fail-CLOSED, and the census that settles it is
+  the census of DEATHS, not of reads.** A design was going to read "this mirror coin died locally and it
+  was not our wire destroy" as "the player collected it", made sound by draining the registry row before
+  every one of OUR teardowns kills an actor. That ordering discipline is correct and still insufficient:
+  of the eight ways a mirror can die, **four — killZ, level unload, GC purge (which never calls
+  `K2_DestroyActor` at all), and another actor destroying it — can never be made to announce themselves
+  first.** The design's own earlier finding described a coin drifting away and dying unattended, so the
+  discriminator would have read "it fell into the void" as "someone collected it" and the host would have
+  **minted real currency**. A false negative costs a missed pickup; a false positive creates money, so
+  the argument must come from the expensive side. *Look FIRST:* when inferring an event from a
+  destruction, enumerate every killer including the engine's; name the noun your census actually covered
+  (reads ≠ deaths); and act on POSITIVE evidence that you are inside the verb, never on the absence of
+  the causes you happen to own. `memory/lesson_an_entity_death_discriminator_must_be_fail_closed.md`
 
 ## 4. Dispatch, hooks & input seams
 
