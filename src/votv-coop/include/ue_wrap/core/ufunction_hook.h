@@ -10,8 +10,24 @@
 // ProcessEvent observer on such a callee registers but never fires (the chipPile
 // grab + the clump re-pile spawn are exactly this -- EX_CallMath). To catch one we
 // patch the callee UFunction's Func pointer (UFunction + off::UFunction_Func) with
-// our own transparent forwarder: EVERY dispatch path funnels through Func, so the
-// hook fires regardless of the caller's opcode. (docs/COOP_DISPATCH_VISIBILITY.md;
+// our own transparent forwarder.
+//
+// *** SCOPE, AND IT IS LOAD-BEARING (corrected 2026-08-24, /qf rounds 34-35) ***
+// The routes listed above funnel through `Func` ONLY WHEN THE CALLEE IS **NATIVE**.
+// Both dispatch handlers branch on `FunctionFlags & 0x400 (FUNC_Native)` @UFunction+0xB0:
+// a NATIVE callee goes UFunction::Invoke -> Func@+0xD8 (what we patch), while a
+// **SCRIPT (BP-bytecode) callee goes ProcessScriptFunction -> ProcessInternal and NEVER
+// READS Func AT ALL**. Every Func patch this facility ships today is native
+// (BeginDeferredActorSpawnFromClass, K2_DestroyActor, AudioComponent::Play), which is
+// why the sentence above was written unqualified -- but a Func patch on a BP function
+// called via EX_Local* INSTALLS SUCCESSFULLY (Func = ProcessInternal, non-null, so it
+// passes the null guard below), LOGS "patched", AND NEVER FIRES. A script UFunction
+// called via EX_Local* is THE ONLY REMAINING INVISIBLE CLASS and is reachable only via
+// the 0x45 GNatives swap (ue_wrap/core/vm_dispatch.h).
+// Authority: docs/COOP_DISPATCH_VISIBILITY.md:88 (bold) + docs/COOP_VM_DISPATCH_PLAN.md:300-304
+// ("Option E ELIMINATED BY MEASUREMENT"). A design cascade was built on the unqualified
+// sentence and had to be reversed; see [[lesson-a-module-header-is-not-the-capability-map]].
+// (docs/COOP_DISPATCH_VISIBILITY.md;
 // research/findings/piles-trash/votv-chippile-dispatch-and-thunk-hook-RE-2026-06-21.md, IDA-pinned.)
 //
 // The forwarder reads FFrame::Object (the actor whose bytecode is executing = the

@@ -33,6 +33,41 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 1. How to work (process / working agreements)
 
+- **A VERDICT THAT ALREADY PASSES ON THE BROKEN BUILD MEASURES NOTHING — two of four did, and it took
+  27 rounds to notice.** 2026-08-24, `/qf` rounds 42-44. `[MEASURED]` Verdict 2 was *"a client picks up
+  a host coin and the HOST's balance moves by that coin's denomination"* — satisfied by the **unfixed**
+  build: `HOST/…/multivoid.log:32118` retires coin 6182 (`PE-invisible self-destroy`) and `:32119` is
+  `balance_sync: host Points -> 350`, **+1 in v137**, because *the host collected its own coin*
+  (`HOST:32117` carries `grab_hook[InpActEvt.use]` one line earlier — attribution, not adjacency).
+  Verdict 1 (*"both peers agree on the coin set"*) passed **vacuously**: a client sale was refused 3/3,
+  so it compared **two empty sets**. Verdict 4 had the same shape one level down — the CDO default
+  `points = 5` renders bronze, so a **1-point** coin is accidentally correct on a mirror.
+  A related trap in the same family: verdict 1's original wording measured a **collect**, because
+  `[V]` **a sale does not credit at all** — `sell` mints coins worth the price and the balance moves
+  only when one is collected (`HOST:28763` mint, no movement; `HOST:29410` +25 on the dead-retire) — so
+  it would have FAILED on a perfectly correct sale lane.
+  **LOOK HERE FIRST:** before trusting any acceptance verdict, run it against the FAILING build's own
+  logs and ask three questions in order — (1) does it already pass? (2) can it pass *vacuously* (empty
+  set, coinciding default, no-op)? (3) does it measure MY axis or a neighbouring one? Prefer an
+  **attribution read** over an instruction to the tester ("a credit with no host use-press in the
+  preceding N ms") — the field run violated the instruction by accident. And note the dual: splitting
+  verdicts for clean attribution can leave the **user's actual criterion** tested by no rung at all;
+  keep one composite ACCEPTANCE verdict alongside the diagnostic ones. Full:
+  `memory/lesson_a_verdict_that_already_passes_on_the_broken_build.md`.
+
+- **THE FAIL-SAFE YOU ADD TO REMOVE AN ASSUMPTION CAN ITSELF BE FAIL-OPEN.** 2026-08-24, `/qf` round 38.
+  A mirror-park owner was given "read `bSimulatePhysics` before writing, and skip components already
+  false" precisely so it would stop *assuming* which components simulate. `[MEASURED]` but
+  `bSimulatePhysics` is **not** a `UPrimitiveComponent` property — it is a packed bitfield on
+  `FBodyInstanceCore` (`PhysicsCore.hpp:8`, seven `uint8` all at `0x0010`) reached only via
+  `UPrimitiveComponent::BodyInstance` (`Engine.hpp:1011`) — so `FindPropertyOffset(primClass,
+  L"bSimulatePhysics")` returns **-1**, which "skip if already false" reads as **already false**: the
+  owner would have skipped every component and parked **nothing**, silently, in the one commit two of
+  the four reported symptoms rested on. **LOOK HERE FIRST:** when adding a read-before-write guard, ask
+  what the guard does when the READ FAILS, and make that branch do the guarded ACTION, not skip it —
+  the purpose is to park, so failing to park *is* the defect and the read is only an optimisation.
+  Read a bitfield via `FindBoolFieldBits` (`reflection.h:277-290`), never `FindPropertyOffset`.
+
 - **2026-08-24 — STANDING USER RULE: scope is NEVER a reason to hold back.** Verbatim: *"Я даю зеленый
   свет даже на самые радикальные решения, если они окажутся верными и правильными."* This is the
   standing form of RULE 1's per-request green light — it does not need re-asking. Dissolving a module,
