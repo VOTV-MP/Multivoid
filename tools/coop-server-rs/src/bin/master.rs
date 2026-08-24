@@ -429,10 +429,15 @@ fn h_heartbeat(state: &mut MasterState, ip: &str, body: &Value) -> (u16, Value) 
         }
         lo.last_seen = Instant::now();
     }
-    // TURN cred bound to the client IP bucket (audit M2), refreshed each heartbeat.
-    let turn = turn_creds(&CFG.turn_uri, &CFG.turn_secret, &ip_bucket(ip), TURN_TTL)
-        .unwrap_or_else(|| json!({}));
-    (200, json!({"ok": true, "turn": turn}))
+    // SECURITY A6 (docs/security/TRACKER.md): this endpoint used to re-mint a TURN
+    // credential on EVERY heartbeat -- an HMAC signature handed out at RL_MUTATE rate to
+    // anyone holding a token for their own lobby. The minting was retired whole (RULE 2)
+    // rather than rate-limited, because it had NO CONSUMER: [V] the only caller is
+    // LobbyAnnouncer's heartbeat thread, and lobby_announcer.cpp:115-118 reads ONLY
+    // resp.ok and resp.status -- it never parses the response body at all (contrast :53,
+    // which does ParseObject for the /v1/host announce). Credentials are issued where
+    // they are actually consumed, at /v1/host and /v1/join.
+    (200, json!({"ok": true}))
 }
 
 fn h_leave(state: &mut MasterState, ip: &str, body: &Value) -> (u16, Value) {
