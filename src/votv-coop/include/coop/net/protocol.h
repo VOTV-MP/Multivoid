@@ -4034,10 +4034,10 @@ static_assert(sizeof(DroneStatePayload) == 40, "DroneStatePayload must be 40 byt
 // producer already ships const-empty subcategories, and copying the live FText instead would rest on
 // an unmeasured refcount claim.
 //
-// `time` (the delivery ETA) is IGNORED on receive from v136: the HOST rolls its own
-// RandomFloatInRange(120,180), per the standing host-authoritative-RNG rule. It stays in the header
-// rather than being removed because the field is free and removing it would re-cut the struct for
-// nothing; a receiver must not read it.
+// The delivery-ETA field is GONE from the header in v136 (RULE 2). The HOST rolls its own
+// RandomFloatInRange(120,180) per the host-authoritative-RNG rule, so a client-supplied ETA has no
+// reader -- and "leave the dead field, a receiver must not read it" is how a wire grows a field that
+// somebody eventually reads. The struct is 12 bytes now; this bump was the free moment.
 //
 // An order with more items than fit in one datagram (kMaxReliablePayload) is split into multiple
 // OrderRequest messages sharing one orderId; the host assembles them by (senderSlot, orderId) using
@@ -4049,9 +4049,8 @@ struct OrderRequestHeader {
     uint16_t baseIndex;   // 2 -- index of this chunk's first item (== items already sent)
     uint16_t chunkItems;  // 2 -- items carried in THIS message
     uint16_t _pad;        // 2
-    float    time;        // 4 -- delivery-ETA (Fstruct_storeOrder.time @0x10; same across chunks)
 };
-static_assert(sizeof(OrderRequestHeader) == 16, "OrderRequestHeader must be 16 bytes");
+static_assert(sizeof(OrderRequestHeader) == 12, "OrderRequestHeader must be 12 bytes");
 
 // Economy wire bounds (host trust boundary -- a client must not make the host allocate unbounded).
 inline constexpr int kMaxOrderItems   = 64;  // a cart > 64 line-items is rejected as garbage

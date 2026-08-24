@@ -130,4 +130,27 @@ bool QuietLocalDrone();
 // correctness half of a refusal, the cart is the courtesy half. Game thread.
 int32_t RestoreCartItems(const std::vector<std::wstring>& rowNames);
 
+// CLIENT, DEV-ONLY: place a shop order the way a PLAYER does -- run the laptop's own
+// `generateStore`, find the shop slots whose stamped `name` matches `rowNames`, `addStoreCart` each
+// one, then `makeAnOrder` with the resulting cart. Returns the summed price of the items actually
+// added (0 on any failure), so the caller can apply the same local debit Button_order applies.
+//
+// WHY IT EXISTS, and it is not a convenience: the order selftest used to build its order through
+// `CommitOrder`, i.e. through `ue_wrap::store_catalog` -- which meant the DRILL warmed the catalog
+// before the production path ever touched it. That masked a CRITICAL defect for a whole session
+// (`ReadOrder` asked for a cached offset and never BUILT the catalog, so on a real client every
+// order silently failed to forward while the client had already paid locally). An instrument that
+// sets up state the real path does not set up proves only that the instrument works.
+//
+// So this deliberately touches NO store_catalog: the row identity comes from the shop slots the game
+// itself generated, and the Fstruct_store member offsets are resolved off the `cart` property's own
+// inner struct. After this runs, the client's saveSlot.orders holds exactly what a human purchase
+// would have left there, and the forward path starts from cold.
+//
+// DRILL ARTEFACT, stated rather than hidden: `Button_order` clears `cart` after committing and this
+// does not (clearing a TArray of FText-bearing structs by hand is a memory-correctness question the
+// drill has no reason to answer), so the items stay in the local cart. One-shot use only.
+// Game thread.
+int32_t PlaceOrderFromShopUI(const std::vector<std::wstring>& rowNames, float etaSeconds);
+
 }  // namespace ue_wrap::order_economy

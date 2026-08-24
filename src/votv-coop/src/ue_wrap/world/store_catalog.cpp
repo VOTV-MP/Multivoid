@@ -12,6 +12,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 
+#include <chrono>
 #include <cstdlib>
 #include <unordered_map>
 #include <vector>
@@ -50,8 +51,28 @@ ue_wrap::CachedObjRef g_table;      // the UDataTable; a cooked asset, so world-
 std::unordered_map<std::wstring, Row> g_rows;
 int32_t g_subcatOff = -1;
 int32_t g_nameOff   = -1;
-bool    g_built     = false;  // a build ATTEMPT has completed (success or failure)
-bool    g_valid     = false;  // ...and it produced a usable catalog
+bool    g_valid     = false;  // a build produced a usable catalog
+
+// A failed build is not one thing, and treating it as one was wrong in BOTH directions (audit
+// 2026-08-24):
+//   HARD -- a verdict about LAYOUT or DATA (the price gate disagreed, duplicate row keys, row-struct
+//           members missing). Retrying cannot change the answer, so latch it forever.
+//   SOFT -- something was not resolvable YET (the table, the function library, the RowMap head).
+//           Retrying is right... but the retry runs `FindObject`, a full GUObjectArray walk that
+//           renders an FName per object, and the first cut had NO latch on this path at all, so a
+//           host with a pending order could re-walk ~237k objects per order per frame. Retry, on a
+//           wall-clock throttle.
+// The first cut also latched SOFT failures permanently, which would have refused every client order
+// for the rest of a session because a UFunction happened to be unresolved for one tick.
+enum class Outcome { Never, Soft, Hard };
+Outcome  g_outcome      = Outcome::Never;
+uint64_t g_lastAttemptMs = 0;
+constexpr uint64_t kRebuildThrottleMs = 3000;
+
+uint64_t NowMs() {
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+}
 
 // Lowercase for the key, because FName comparison is case-insensitive and a caller holding a name
 // read back from an FName must find the row regardless of the display casing.
@@ -110,20 +131,21 @@ bool ReadPriceColumn(void* table, const std::wstring& propName, std::vector<int3
 // Build once. Any failure leaves g_valid false and is LOUD: this module's whole job is to be the
 // thing a charge is derived from, so "quietly degraded" is not an available state.
 void Build() {
-    g_built = true;
     g_valid = false;
+    g_outcome = Outcome::Soft;  // upgraded to Hard by a verdict, cleared to Never on success
+    g_lastAttemptMs = NowMs();
     g_rows.clear();
     g_subcatOff = -1;
     g_nameOff   = -1;
 
     void* table = ResolveTable();
-    if (!table) return;  // not loaded yet -- Ready() retries (see the g_built reset there)
+    if (!table) return;  // not loaded yet -- SOFT, so Ready() retries on the throttle
 
     void* dtCls = R::ClassOf(table);
     const int32_t offRowStruct = dtCls ? R::FindPropertyOffset(dtCls, L"RowStruct") : -1;
     if (offRowStruct < 0) {
         UE_LOGE("store_catalog: UDataTable::RowStruct did not resolve -- catalog INVALID");
-        return;
+        return;  // SOFT: a reflection miss, not a verdict about the data
     }
     void* rowStruct = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(table) + offRowStruct);
     if (!rowStruct) {
@@ -138,6 +160,7 @@ void Build() {
     if (offPrice < 0 || offSubcat < 0 || offName < 0) {
         UE_LOGE("store_catalog: row struct members did not resolve (price@%d subcategory@%d "
                 "name@%d) -- catalog INVALID", offPrice, offSubcat, offName);
+        g_outcome = Outcome::Hard;  // the struct is not what we think it is; retrying won't help
         return;
     }
 
@@ -176,13 +199,15 @@ void Build() {
         Row r;
         r.data  = rowPtr;
         r.price = *reinterpret_cast<const int32_t*>(rowPtr + readOff);
+        r.key   = *reinterpret_cast<R::FName*>(e);  // kept: the commit stamps it, no re-mint needed
         walkPrices.push_back(r.price);
-        g_rows.emplace(Key(R::ToString(*reinterpret_cast<R::FName*>(e))), r);
+        g_rows.emplace(Key(R::ToString(r.key)), r);
     }
     if (g_rows.size() != static_cast<size_t>(elems.Num)) {
         UE_LOGE("store_catalog: %d rows collapsed to %zu keys -- duplicate row names, catalog "
                 "INVALID", elems.Num, g_rows.size());
         g_rows.clear();
+        g_outcome = Outcome::Hard;  // a fact about the table's data
         return;
     }
 
@@ -214,6 +239,7 @@ void Build() {
                     "layout assumption is wrong on this build; catalog INVALID, client orders will "
                     "be refused rather than mischarged", i, walkPrices[i], colPrices[i]);
             g_rows.clear();
+            g_outcome = Outcome::Hard;  // a LAYOUT verdict -- never retry, never guess
             return;
         }
     }
@@ -221,6 +247,7 @@ void Build() {
     g_subcatOff = offSubcat;
     g_nameOff   = offName;
     g_valid     = true;
+    g_outcome   = Outcome::Never;
     int64_t sum = 0;
     for (int32_t p : walkPrices) sum += p;
     UE_LOGI("store_catalog: %zu rows, price sum %lld, verified against the reflected price column "
@@ -231,9 +258,9 @@ void Build() {
 
 bool Ready() {
     if (g_valid && g_table.Alive()) return true;
-    if (g_built && g_table.Alive()) return false;  // built and rejected -- do not rebuild in a loop
-    // Either never built, or the table went away (which for a cooked asset should not happen; if it
-    // does, rebuilding against whatever replaced it is the honest response).
+    if (g_outcome == Outcome::Hard) return false;  // a verdict; retrying cannot change it
+    if (g_outcome == Outcome::Soft && NowMs() - g_lastAttemptMs < kRebuildThrottleMs)
+        return false;  // the retry is a full GUObjectArray walk -- do not run it per call
     Build();
     return g_valid;
 }
@@ -246,8 +273,8 @@ const Row* Find(const std::wstring& rowName) {
 
 int32_t Count() { return g_valid ? static_cast<int32_t>(g_rows.size()) : 0; }
 
-int32_t SubcategoryOffset() { return g_valid ? g_subcatOff : -1; }
+int32_t SubcategoryOffset() { return Ready() ? g_subcatOff : -1; }
 
-int32_t NameOffset() { return g_valid ? g_nameOff : -1; }
+int32_t NameOffset() { return Ready() ? g_nameOff : -1; }
 
 }  // namespace ue_wrap::store_catalog

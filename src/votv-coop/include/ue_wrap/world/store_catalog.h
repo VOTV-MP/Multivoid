@@ -55,6 +55,8 @@
 
 #pragma once
 
+#include "ue_wrap/core/reflection.h"
+
 #include <cstdint>
 #include <string>
 
@@ -64,8 +66,16 @@ namespace ue_wrap::store_catalog {
 // -- valid for as long as `Ready()` keeps returning true, which is the table's own lifetime. Do not
 // free it, do not hold it across a `Ready()` that returned false.
 struct Row {
-    const uint8_t* data  = nullptr;  // the live Fstruct_store row
-    int32_t        price = 0;        // its `price` member, gate-verified
+    const uint8_t*   data  = nullptr;  // the live Fstruct_store row
+    int32_t          price = 0;        // its `price` member, gate-verified
+    reflection::FName key{};           // the RowMap key, kept as an FName rather than re-minted
+                                       // from a string: the commit path has to stamp it into the
+                                       // item (the table stores "None"), and round-tripping it
+                                       // through `StringToFName` was both a ProcessEvent PER ITEM
+                                       // and a SILENT failure -- that helper returns NAME_None when
+                                       // Kismet is unresolved, which is exactly the state this
+                                       // change exists to stop shipping. The walk already reads
+                                       // this value; it used to throw it away.
 };
 
 // Build the catalog if it is not built, and report whether it is usable. False means the table did
@@ -82,6 +92,13 @@ int32_t Count();
 
 // Byte offset of the `subcategory` FText inside a row, resolved by name. The commit path overwrites
 // exactly this field (see order_economy::CommitOrder for why) and needs nothing else. -1 if unusable.
+//
+// BUILDS THE CATALOG IF IT IS NOT BUILT, like Find() and unlike the first cut of this API. Returning
+// a cached offset without building was a CRITICAL defect found by two independent audits: on a real
+// client nothing else on the forward path called Ready(), so the catalog never built, this returned
+// -1 forever, and every client order failed to forward -- after the client had already debited
+// itself and disarmed its own delivery. The accessor now honours the contract this comment always
+// claimed ("order_economy::ReadOrder asks here").
 int32_t SubcategoryOffset();
 
 // Byte offset of the `name` FName inside a row, resolved by name. This module owns the row's SHAPE,
@@ -90,6 +107,6 @@ int32_t SubcategoryOffset();
 // its own literal. -1 if unusable. (In the TABLE this field is "None" on all 473 rows; `[V]`
 // `generateStore` stamps the row key into it at store-generation time, which is why a live order
 // item carries it and a table row does not.)
-int32_t NameOffset();
+int32_t NameOffset();  // same: BUILDS if needed (see SubcategoryOffset)
 
 }  // namespace ue_wrap::store_catalog

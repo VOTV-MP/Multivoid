@@ -83,8 +83,10 @@ bool AddPoints(int32_t amount) {
     // AmainGamemode_C::AddPoints(int32 Add) -- writes saveSlot.Points + BP side-effects.
     ue_wrap::ParamFrame f(fn);
     f.Set<int32_t>(L"Add", amount);
-    ue_wrap::Call(gm, f);
-    return true;
+    // PROPAGATE the dispatch result. This used to `Call(); return true;`, which made every caller's
+    // failure branch unreachable -- including order_sync's "committed but not charged" guard, the one
+    // instrument watching for the exact regression A34 is about (audit 2026-08-24).
+    return ue_wrap::Call(gm, f);
 }
 
 bool RefreshPointsHud() {

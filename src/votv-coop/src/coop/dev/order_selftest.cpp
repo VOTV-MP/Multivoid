@@ -7,7 +7,6 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/world/economy.h"
 #include "ue_wrap/world/order_economy.h"
-#include "ue_wrap/world/store_catalog.h"
 
 #include <chrono>
 #include <string>
@@ -17,7 +16,6 @@ namespace coop::dev::order_selftest {
 namespace {
 
 namespace OE = ue_wrap::order_economy;
-namespace SC = ue_wrap::store_catalog;
 namespace E  = ue_wrap::economy;
 
 // Deliberately later than order_sync's own watermark prime (which happens the first tick the
@@ -62,49 +60,38 @@ void Tick(bool connected, bool isHost) {
     if (std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - g_armedAt).count() < kSettleMs) return;
 
-    if (!SC::Ready()) {
-        // Not fatal and not a verdict: the table may still be loading. Say so at a low rate rather
-        // than latching, so a run that never fires is distinguishable from one that fired and failed.
-        if ((g_waitLogs++ % 300) == 0)
-            UE_LOGW("[order_selftest] waiting: this peer's store_catalog is not ready yet");
-        return;
-    }
-
-    OE::OrderData od;
-    int64_t total = 0;
-    for (const wchar_t* name : kRows) {
-        const SC::Row* row = SC::Find(name);
-        if (!row) {
-            UE_LOGE("[order_selftest] ABORT: row '%ls' is not in this peer's list_store -- the "
-                    "selftest's chosen rows are stale against this game build", name);
-            g_fired = true;  // do not spin; a stale row list is a code fix, not a retry
-            return;
-        }
-        od.rowNames.emplace_back(name);
-        total += row->price;
-    }
-
+    UE_LOGI("[order_selftest] settle elapsed -- FIRING now");
     g_fired = true;
     int32_t before = 0;
     E::ReadPoints(&before);
 
-    // Reproduce Button_order's LOCAL half: the client debits itself first. `[V]` @6122
-    // Multiply(storePrice,-1) -> @6168 lib_C::addPoints. This is the debit the host's verdict has to
-    // correct -- on a commit by the change-polled broadcast, on a refusal by a direct send -- so a
-    // drill that skipped it would test the easy half only.
-    E::AddPoints(-static_cast<int32_t>(total));
+    // Place the order THROUGH THE GAME'S OWN SHOP -- generateStore, then addStoreCart on the slots
+    // whose stamped name matches, then makeAnOrder on the resulting cart. Deliberately NOT through
+    // `store_catalog`: the first version of this drill resolved its rows through the catalog and so
+    // BUILT it before the production path ever ran, which hid a CRITICAL defect for a whole session
+    // (`ReadOrder` never built the catalog, so on a real client every order silently failed to
+    // forward). An instrument that primes state the real path does not prime proves only itself.
+    std::vector<std::wstring> rows;
+    for (const wchar_t* n : kRows) rows.emplace_back(n);
+    const int32_t total = OE::PlaceOrderFromShopUI(rows, /*etaSeconds*/ 150.f);
+    if (total <= 0) {
+        UE_LOGE("[order_selftest] ABORT: the game's own shop produced no cart for %ls/%ls/%ls -- "
+                "either generateStore did not run or the chosen rows are stale against this build",
+                kRows[0], kRows[1], kRows[2]);
+        return;
+    }
 
-    // ...then the commit half. makeAnOrder appends to this peer's own saveSlot.orders, which is what
-    // order_sync's watermark poll picks up and forwards. `automatic=false` matches what Button_order
-    // passes (it gates the items_bought STAT, not any charge).
-    const bool ok = OE::CommitOrder(od, /*etaSeconds*/ 150.f, /*automatic*/ false);
+    // Reproduce Button_order's LOCAL debit. `[V]` @6122 Multiply(storePrice,-1) -> @6168
+    // lib_C::addPoints. This is the debit the host's verdict has to correct -- on a commit by the
+    // change-polled broadcast, on a refusal by a direct send -- so a drill that skipped it would be
+    // testing the easy half only.
+    E::AddPoints(-total);
 
-    UE_LOGI("[order_selftest] placed a %zu-item order (%ls, %ls, %ls) costing %lld; local balance "
-            "%d -> %d; makeAnOrder dispatch=%d. EXPECT the host to log either 'committed ... and "
-            "charged %lld' or 'REFUSING order'",
-            od.rowNames.size(), kRows[0], kRows[1], kRows[2], static_cast<long long>(total),
-            before, before - static_cast<int32_t>(total), ok ? 1 : 0,
-            static_cast<long long>(total));
+    UE_LOGI("[order_selftest] placed a real shop order (%ls, %ls, %ls) costing %d; local balance "
+            "%d -> %d. NOTE: nothing on this path touched store_catalog, so the forward that "
+            "follows starts from COLD. EXPECT the host to log either 'committed ... and charged %d' "
+            "or 'REFUSING order'",
+            kRows[0], kRows[1], kRows[2], total, before, before - total, total);
 }
 
 }  // namespace coop::dev::order_selftest

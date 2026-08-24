@@ -142,11 +142,20 @@ void ForwardOrder(net::Session* s, int32_t idx) {
         UE_LOGW("order_sync: ReadOrder(%d) failed -- skip", idx);
         return;
     }
-    size_t total = od.rowNames.size();
+    const size_t total = od.rowNames.size();
     if (total > static_cast<size_t>(net::kMaxOrderItems)) {
-        UE_LOGW("order_sync: order idx=%d has %zu items > cap %d -- forwarding first %d (rest dropped)",
-                idx, total, net::kMaxOrderItems, net::kMaxOrderItems);
-        total = static_cast<size_t>(net::kMaxOrderItems);
+        // Do NOT truncate. The client has already been debited locally for ALL of these, so
+        // forwarding the first 64 would have the host price and deliver a DIFFERENT basket than the
+        // one the player paid for, silently. `[V]` The game's own cart caps at 50 ("<n>/50" in the
+        // shop UI), so a legitimate order can never reach this; refusing the whole thing is correct
+        // for the only case that can, and the player is told rather than left guessing.
+        UE_LOGW("order_sync: order idx=%d has %zu items > cap %d -- NOT forwarding (a partial basket "
+                "would be priced and delivered differently from the one that was paid for)",
+                idx, total, net::kMaxOrderItems);
+        coop::peer_action_feed::AnnounceDirect(
+            static_cast<uint8_t>(coop::players::Registry::Get().LocalPeerId()),
+            L"could not order: too many items in one order");
+        return;
     }
     const uint32_t orderId = ++g_orderIdCounter;
 
@@ -174,10 +183,14 @@ void ForwardOrder(net::Session* s, int32_t idx) {
         }
         if (chunkCount == 0) {
             // A single item that cannot fit even an empty chunk -- impossible given the caps
-            // (header 16 + 1 + name<=96 = 113 <= 228), but never spin forever.
-            UE_LOGW("order_sync: item %zu too large to chunk -- skipping", i);
-            ++i;
-            continue;
+            // (header 12 + 1 + name<=96 = 109 <= 228). ABORT the whole forward rather than skip the
+            // item: `totalItems` in the chunks already sent counts it, so skipping would leave the
+            // host assembling an order that can never complete -- it would sit until the assembly
+            // timeout and be dropped WITHOUT a refusal (only `pending` entries produce those),
+            // leaving the client debited with no verdict and no cart restore.
+            UE_LOGE("order_sync: item %zu cannot be chunked -- ABORTING order id=%u (already sent "
+                    "%d chunk(s); the host will time the partial assembly out)", i, orderId, chunks);
+            return;
         }
         net::OrderRequestHeader h{};
         h.orderId    = orderId;
@@ -185,14 +198,20 @@ void ForwardOrder(net::Session* s, int32_t idx) {
         h.baseIndex  = static_cast<uint16_t>(chunkStart);
         h.chunkItems = chunkCount;
         h._pad       = 0;
-        h.time       = 0.f;  // v136: the HOST rolls the ETA; a receiver must not read this
         std::memcpy(buf, &h, sizeof(h));
         s->SendReliable(net::ReliableKind::OrderRequest, buf, pos);
         ++chunks;
     }
 
     if (!sent.empty()) {
-        if (g_inFlight.size() >= kMaxInFlight) g_inFlight.clear();  // bounded; a verdict drops rows
+        // Evict the OLDEST (lowest orderId -- the counter is monotonic), not the whole map: wiping
+        // it would strand the cart-restore data of every other order still awaiting a verdict.
+        while (g_inFlight.size() >= kMaxInFlight) {
+            auto oldest = g_inFlight.begin();
+            for (auto it = g_inFlight.begin(); it != g_inFlight.end(); ++it)
+                if (it->first < oldest->first) oldest = it;
+            g_inFlight.erase(oldest);
+        }
         g_inFlight[orderId] = std::move(sent);
     }
     UE_LOGI("order_sync: forwarded order idx=%d id=%u items=%zu in %d chunk(s)", idx, orderId, total,

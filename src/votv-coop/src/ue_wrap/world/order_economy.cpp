@@ -119,6 +119,19 @@ int32_t OrderCount() {
 
 bool ReadOrder(int32_t index, OrderData& out) {
     out.rowNames.clear();
+    // Ready() BUILDS the catalog; NameOffset() only reads what a previous build cached. Asking for
+    // the offset alone was a CRITICAL defect (audit 2026-08-24): on a real client nothing else on
+    // this path calls Ready(), so the catalog was never built, NameOffset() returned -1 forever, and
+    // EVERY client order failed to forward -- while the client had already debited itself locally
+    // and QuietLocalDrone had already disarmed its own delivery. A money sink with no goods, and a
+    // straight regression from the free-shop bug this change exists to fix. It survived the drill
+    // because the drill calls Ready() itself before placing its order, warming the same
+    // process-global the production path never warms.
+    if (!ue_wrap::store_catalog::Ready()) {
+        UE_LOGW("order_economy: ReadOrder -- store_catalog unusable; refusing to read an order whose "
+                "items we could not name");
+        return false;
+    }
     const int32_t nameOff = ue_wrap::store_catalog::NameOffset();
     if (nameOff < 0) {
         UE_LOGW("order_economy: ReadOrder -- store_catalog unusable, so the row-name field cannot be "
@@ -220,8 +233,12 @@ bool CommitOrder(const OrderData& order, float etaSeconds, bool automatic) {
         // therefore produce an item that is NOT what the host's own purchase produces -- and would
         // strand the identity that v136 made load-bearing. Found by the order selftest, whose
         // forward failed with "ReadOrder(0) failed" until this line existed.
-        *reinterpret_cast<R::FName*>(base + nameOff) =
-            ue_wrap::fname_utils::StringToFName(order.rowNames[i]);
+        //
+        // The FName comes from the catalog's own RowMap key, not from `StringToFName`: that helper
+        // is a ProcessEvent dispatch PER ITEM and returns NAME_None SILENTLY when Kismet is
+        // unresolved, i.e. it could re-create the exact defect above without a word in the log
+        // (audit 2026-08-24).
+        *reinterpret_cast<R::FName*>(base + nameOff) = row->key;
     }
 
     // Wrap in a native Fstruct_storeOrder { items TArray; time f32 }.
@@ -309,6 +326,116 @@ int32_t RestoreCartItems(const std::vector<std::wstring>& rowNames) {
     UE_LOGI("order_economy: RestoreCartItems -- re-added %d of %zu refused item(s) to the cart",
             added, rowNames.size());
     return added;
+}
+
+int32_t PlaceOrderFromShopUI(const std::vector<std::wstring>& rowNames, float etaSeconds) {
+    // EVERY bail below logs. A silent `return 0` here is indistinguishable from "the shop was
+    // empty", which is exactly the ambiguity that has already cost this feature three smoke runs.
+    if (rowNames.empty()) return 0;
+    void* gm = ResolveGamemode();
+    if (!gm || !ResolveGmOffsets(gm) || g_offLaptop < 0) {
+        UE_LOGW("order_economy: PlaceOrderFromShopUI -- gamemode/laptop offset unresolved");
+        return 0;
+    }
+    void* laptop = ReadPtr(gm, g_offLaptop);
+    void* lapCls = laptop ? R::ClassOf(laptop) : nullptr;
+    if (!laptop || !lapCls) {
+        UE_LOGW("order_economy: PlaceOrderFromShopUI -- laptop widget not live yet");
+        return 0;
+    }
+
+    void* genFn = R::FindFunction(lapCls, L"generateStore");
+    void* addFn = R::FindFunction(lapCls, L"addStoreCart");
+    void* mkFn  = R::FindFunction(lapCls, L"makeAnOrder");
+    if (!genFn || !addFn || !mkFn) {
+        UE_LOGW("order_economy: PlaceOrderFromShopUI -- generateStore/addStoreCart/makeAnOrder "
+                "not all found");
+        return 0;
+    }
+
+    // Fstruct_store's member offsets -- asked of `addStoreCart`'s own `struct_store` PARAMETER,
+    // which IS a struct-typed property. Deliberately NOT store_catalog (see the header), and
+    // deliberately not the `cart` member either: `cart` is a TArray<Fstruct_store>, so the struct
+    // is the ARRAY'S INNER and PropertyInnerStruct returns null for it -- measured, the first cut of
+    // this function failed with "name@-1 price@-1" while cart@2832 resolved perfectly.
+    void* rowStruct = R::PropertyInnerStruct(addFn, L"struct_store");
+    const int32_t offName  = rowStruct ? R::FindPropertyOffsetByPrefix(rowStruct, L"name_")  : -1;
+    const int32_t offPrice = rowStruct ? R::FindPropertyOffsetByPrefix(rowStruct, L"price_") : -1;
+    const int32_t offCart  = R::FindPropertyOffset(lapCls, L"cart");
+    const int32_t offSlots = R::FindPropertyOffset(lapCls, L"storeSlots");
+    if (offName < 0 || offPrice < 0 || offCart < 0 || offSlots < 0) {
+        UE_LOGW("order_economy: PlaceOrderFromShopUI -- unresolved (name@%d price@%d cart@%d "
+                "storeSlots@%d)", offName, offPrice, offCart, offSlots);
+        return 0;
+    }
+
+    // The game's own store generation -- this is what stamps the list_store row key into each
+    // slot's Fstruct_store.name (the table itself stores "None" on all 473 rows).
+    { ue_wrap::ParamFrame f(genFn); if (f.valid()) ue_wrap::Call(laptop, f); }
+
+    int32_t addParamSize = -1;
+    for (const auto& prm : R::FunctionParams(addFn))
+        if (prm.name == L"struct_store") { addParamSize = prm.size; break; }
+    if (addParamSize <= 0 || addParamSize > kItemStride) {
+        UE_LOGW("order_economy: PlaceOrderFromShopUI -- addStoreCart param size %d implausible",
+                addParamSize);
+        return 0;
+    }
+
+    const int32_t slotsNum = ReadAt<int32_t>(laptop, offSlots + 8);
+    void* slotsData = ReadAt<void*>(laptop, offSlots + 0);
+    if (!slotsData || slotsNum <= 0) {
+        UE_LOGW("order_economy: PlaceOrderFromShopUI -- generateStore produced %d slots", slotsNum);
+        return 0;
+    }
+    // Every shop slot is a widget; `data` is its Fstruct_store. Resolved once off the first slot.
+    void* firstSlot = ReadAt<void*>(slotsData, 0);
+    const int32_t offData = firstSlot ? R::FindPropertyOffset(R::ClassOf(firstSlot), L"data") : -1;
+    if (offData < 0) { UE_LOGW("order_economy: PlaceOrderFromShopUI -- shopSlot.data unresolved"); return 0; }
+
+    int32_t total = 0;
+    int32_t added = 0;
+    for (const std::wstring& want : rowNames) {
+        bool hit = false;
+        for (int32_t i = 0; i < slotsNum && !hit; ++i) {
+            void* slot = ReadAt<void*>(slotsData, static_cast<int32_t>(i * sizeof(void*)));
+            if (!slot || !R::IsLive(slot)) continue;
+            auto* data = reinterpret_cast<uint8_t*>(slot) + offData;
+            if (R::ToString(*reinterpret_cast<R::FName*>(data + offName)) != want) continue;
+            ue_wrap::ParamFrame f(addFn);
+            if (!f.valid() || !f.SetRaw(L"struct_store", data, addParamSize)) break;
+            if (!ue_wrap::Call(laptop, f)) break;
+            total += *reinterpret_cast<int32_t*>(data + offPrice);
+            ++added;
+            hit = true;
+        }
+        if (!hit) UE_LOGW("order_economy: PlaceOrderFromShopUI -- no shop slot named '%ls' (locked "
+                          "by an achievement, or not in this build's store)", want.c_str());
+    }
+    if (added == 0) {
+        UE_LOGW("order_economy: PlaceOrderFromShopUI -- generateStore produced %d slots but none "
+                "matched the requested rows", slotsNum);
+        return 0;
+    }
+
+    // Commit the cart exactly as Button_order does: items = cart, time = the ETA.
+    uint8_t orderStruct[kOrderStride] = {0};
+    std::memcpy(orderStruct + kOrderItemsOff, reinterpret_cast<uint8_t*>(laptop) + offCart, 16);
+    *reinterpret_cast<float*>(orderStruct + kOrderTimeOff) = etaSeconds;
+    ue_wrap::ParamFrame f(mkFn);
+    if (!f.valid() || !f.SetRaw(L"NewItem", orderStruct, kOrderStride)) {
+        UE_LOGW("order_economy: PlaceOrderFromShopUI -- makeAnOrder frame/SetRaw failed");
+        return 0;
+    }
+    f.Set<bool>(L"automatic", false);
+    if (!ue_wrap::Call(laptop, f)) {
+        UE_LOGW("order_economy: PlaceOrderFromShopUI -- makeAnOrder dispatch failed");
+        return 0;
+    }
+
+    UE_LOGI("order_economy: PlaceOrderFromShopUI -- added %d of %zu item(s) from the generated shop, "
+            "total %d, committed via makeAnOrder", added, rowNames.size(), total);
+    return total;
 }
 
 }  // namespace ue_wrap::order_economy

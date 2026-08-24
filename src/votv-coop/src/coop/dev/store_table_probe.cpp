@@ -14,6 +14,7 @@
 #include "ue_wrap/core/reflection.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -271,8 +272,9 @@ bool TryColumnAsString(void* cdo, void* fn, void* table, const std::vector<std::
         if (s->Data && s->Num > 0) {
             r.price = static_cast<int32_t>(_wtoi(s->Data));
             r.havePrice = true;
-            R::EngineFree(s->Data);
         }
+        if (s->Data) R::EngineFree(s->Data);  // free OUTSIDE the value test -- a non-null buffer
+                                              // with Num<=0 would otherwise leak
         rows.push_back(std::move(r));
     }
     R::EngineFree(arr.Data);
@@ -320,16 +322,27 @@ void Tick() {
         coop::config::ResolveFlag(::coop::config_registry::rows::store_table_probe);
     if (!s_enabled || g_done) return;
 
+    // THROTTLE THE WORK, not just the log. `FindObject` is a full GUObjectArray walk that renders
+    // an FName per object; running it every frame while the table is unresolved is a per-frame
+    // stall that reads as a game problem, not a probe problem (audit 2026-08-24). And give up
+    // loudly rather than retrying forever in silence.
+    static uint64_t s_lastTryMs = 0;
+    static int32_t  s_tries     = 0;
+    const uint64_t nowMs = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+    if (nowMs - s_lastTryMs < 1000) return;
+    s_lastTryMs = nowMs;
+
     void* table = R::FindObject(L"list_store", L"DataTable");
     if (!table) {
-        // Retry next tick -- but say so ONCE. A probe that prints nothing when it cannot resolve is
-        // indistinguishable from a probe that is switched off, and this one already cost a smoke
-        // run to that ambiguity (the ini key had landed inside a comment, so an empty log read as
-        // "ran, found nothing" instead of "never enabled").
-        static int32_t s_waits = 0;
-        if (++s_waits == 600)
-            UE_LOGW("store_table_probe: ENABLED but `list_store` has not resolved after %d ticks "
-                    "-- still retrying (this is not a result)", s_waits);
+        // A probe that prints nothing when it cannot resolve is indistinguishable from a probe that
+        // is switched off, and that ambiguity already cost a smoke run on this feature.
+        if (++s_tries == 30) {
+            UE_LOGE("store_table_probe: ENABLED but `list_store` never resolved in %d seconds -- "
+                    "GIVING UP. This is a probe failure, NOT a result about the readers.", s_tries);
+            g_done = true;
+        }
         return;
     }
     g_done = true;
