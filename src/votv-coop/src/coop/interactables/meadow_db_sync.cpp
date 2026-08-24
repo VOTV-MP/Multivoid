@@ -42,6 +42,11 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 constexpr auto kPollInterval = std::chrono::milliseconds(1000);
 constexpr auto kAssemblyTTL  = std::chrono::seconds(20);
 constexpr auto kTombstoneTTL = std::chrono::seconds(20);
+// SECURITY W9: the absolute size bound on the tombstone vector (see OnDelete for why the
+// unmatched case is the inserting case). Legitimate tombstones are bounded by the number
+// of deletes racing an append that has not landed yet -- a handful within one 20 s TTL.
+// 256 is far above that and caps the vector at ~4 KB.
+constexpr size_t kTombstoneCap = 256;
 constexpr int  kVerbMark = 1;  // one id: both verbs only accelerate the poll
 
 // ---- shadow: the broadcast-acknowledged multiset ----
@@ -740,8 +745,21 @@ void OnAppendChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
 void OnDelete(const coop::net::ContentHashPayload& p, uint8_t senderSlot) {
     if (senderSlot >= coop::net::kMaxPeers) return;
     if (p.contentHash == 0) return;
-    if (!ApplyDeleteByHash(p.contentHash))
+    if (!ApplyDeleteByHash(p.contentHash)) {
+        // SECURITY W9 (docs/security/TRACKER.md): a tombstone is recorded exactly when the
+        // delete did NOT match -- the unmatched case is the inserting case, so a stream of
+        // attacker-chosen hashes grows this vector at line rate. The 20 s TTL bounds it in
+        // TIME but not in RATE. Refuse past the bound rather than evict: eviction would let
+        // a flood push out the legitimate not-yet-arrived-row tombstone this exists to hold.
+        if (g_tombs.size() >= kTombstoneCap) {
+            UE_LOGW("meadow_db: tombstone REFUSED (hash=%016llx, from slot %u) -- at the "
+                    "%zu-entry bound (security W9)",
+                    static_cast<unsigned long long>(p.contentHash),
+                    static_cast<unsigned>(senderSlot), kTombstoneCap);
+            return;
+        }
         g_tombs.push_back({p.contentHash, Clock::now() + kTombstoneTTL});
+    }
 }
 
 void OnOrderChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {

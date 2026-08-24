@@ -40,6 +40,24 @@ constexpr uint64_t kEjectWatchMs  = 10000;  // post-eject disc-content publish w
 constexpr uint64_t kChunkTtlMs    = 10000;  // half-assembled content stream TTL
 constexpr uint64_t kPendingTtlMs  = 30000;  // deferred disc-content apply TTL
 constexpr size_t   kContentCapBytes = 4096; // total content cap (truncate + WARN; OPEN-9 residual)
+// SECURITY W9 (docs/security/TRACKER.md): g_lidPending is keyed by a WIRE eid and is
+// inserted into precisely when that eid does NOT resolve -- the garbage case is the
+// inserting case, so an attacker-chosen eid stream grows it at line rate. The 30 s TTL
+// bounds it in TIME but not in RATE. This is the absolute size bound.
+//
+// Why REFUSE a new key rather than evict the oldest: an eviction policy lets a newcomer
+// displace an incumbent, so a flood would push out exactly the legitimate birth-lane-skew
+// entry the map exists to hold (the same principle that made eviction the wrong answer for
+// the master's lobby table). Refusing degrades the flooder, not the pending entry.
+//
+// Sizing: legitimate pending entries are bounded by the number of portable PCs in the
+// world whose eid has not yet resolved on this peer -- single digits. 64 is ~8x that, and
+// at ~24 B per entry the map cannot exceed ~1.5 KB.
+//
+// RESIDUAL, stated rather than hidden: under a SUSTAINED flood a legitimate lid op can be
+// refused while the table is full. It is not lost permanently -- the 4 Hz edge poll on the
+// authoring side re-detects the unchanged lid state and re-sends -- but there is a window.
+constexpr size_t   kLidPendingCap = 64;
 
 // v121: LaptopBlob head = [u8 contentKind][u32 eid]; kinds 0=slot, 1=disc.
 constexpr size_t kBlobHead = 5;
@@ -504,8 +522,17 @@ void OnLaptopState(const coop::net::LaptopStatePayload& p, uint8_t senderSlot) {
                             static_cast<unsigned>(senderSlot));
             }
             g_lidPrev[p.eid] = opened;
-        } else {
+        } else if (g_lidPending.size() < kLidPendingCap ||
+                   g_lidPending.count(p.eid) != 0) {
+            // The count() term matters: refreshing an eid ALREADY pending is an update,
+            // not growth, and must stay allowed at the cap or a legitimate repeated lid
+            // edge would be refused while its own entry sits in the table.
             g_lidPending[p.eid] = PendingLid{opened, NowMs() + kPendingTtlMs};
+        } else {
+            UE_LOGW("laptop_sync: lid stash REFUSED for eid=%u (from slot %u) -- pending "
+                    "table at its %zu-entry bound (security W9); the inserting case is the "
+                    "unresolved-eid case, so a wire eid stream cannot grow it",
+                    p.eid, static_cast<unsigned>(senderSlot), kLidPendingCap);
         }
         if (isHost) SendOut(s, p, /*exceptSlot*/ senderSlot);
         return;
