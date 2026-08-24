@@ -236,6 +236,8 @@ CFG_FLAG(delivery_census, "delivery_census", "dev", false, nullptr,
     "Diagnostic census: delivery spawn events.")
 CFG_FLAG(store_table_probe, "store_table_probe", "dev", false, nullptr,
     "Diagnostic census: which mechanism can read a list_store row (one-shot).")
+CFG_FLAG(order_selftest, "order_selftest", "dev", false, nullptr,
+    "Selftest: a client places a real shop order so host-side pricing is exercised.")
 CFG_FLAG(flashlight_log, "flashlight_log", "dev", false, nullptr,
     "Diagnostic logging for flashlight/item-activate sync.")
 CFG_FLAG(kerfur_census, "kerfur_census", "dev", false, nullptr,

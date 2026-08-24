@@ -52,6 +52,21 @@ bool HandleIntentEvent(net::Session& session,
                                      static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
+    case net::ReliableKind::OrderRefused: {
+        // v136 (2026-08-24, security A34): the HOST tells ONE client that its forwarded shop order
+        // was not performed, and why. HOST->CLIENT, addressed with SendReliableToSlot, never
+        // relayed. A client that receives this has ALREADY debited itself locally (Button_order
+        // @6168 runs lib_C::addPoints before we ever see the order, and that call is
+        // EX_LocalVirtualFunction, so it cannot be suppressed) -- the correction rides a direct
+        // BalanceSync the host sends alongside; this message carries the REASON and the orderId the
+        // client needs to rebuild its cart.
+        if (session.role() == net::Role::Host) {
+            UE_LOGW("event_feed: OrderRefused received on the HOST -- dropping");
+            break;
+        }
+        coop::order_sync::OnReliableRefused(msg.payload, static_cast<int>(msg.payloadLen));
+        break;
+    }
     case net::ReliableKind::DoorOpenRequest: {
         // v32 (2026-06-04): client->host door open/close REQUEST. Doors are HOST-
         // authoritative; only the host honors this. The host applies it (real lock/

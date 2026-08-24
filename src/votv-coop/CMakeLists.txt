@@ -293,6 +293,7 @@ add_library(votv-coop SHARED
     src/ue_wrap/world/votv_lib.cpp
     src/ue_wrap/world/economy.cpp
     src/ue_wrap/world/order_economy.cpp
+    src/ue_wrap/world/store_catalog.cpp
     src/ue_wrap/actors/prop.cpp
     src/ue_wrap/actors/vitals.cpp
     src/ue_wrap/world/game_rules.cpp
@@ -489,6 +490,7 @@ add_library(votv-coop SHARED
     src/coop/props/container_contents_sync.cpp
     src/coop/dev/delivery_census_probe.cpp
     src/coop/dev/store_table_probe.cpp
+    src/coop/dev/order_selftest.cpp
     src/ue_wrap/actors/inventory.cpp
     src/ue_wrap/actors/save_record.cpp
     src/coop/world/email_sync.cpp

@@ -73,17 +73,17 @@ void Tick() {
     }
 }
 
-void OnClientConnect(int slot) {
+void SendCurrentToSlot(int slot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Host) return;
     int32_t points = 0;
     if (!E::ReadPoints(&points)) {
-        UE_LOGW("balance_sync: connect-edge slot %d -- Points not resolved yet (no replay)", slot);
+        UE_LOGW("balance_sync: direct send to slot %d -- Points not resolved yet (no replay)", slot);
         return;
     }
     coop::net::BalancePayload p{points};
     s->SendReliableToSlot(slot, coop::net::ReliableKind::BalanceSync, &p, sizeof(p));
-    UE_LOGI("balance_sync: connect-edge -> sent Points=%d to slot %d", points, slot);
+    UE_LOGI("balance_sync: sent current Points=%d directly to slot %d", points, slot);
 }
 
 void ApplyFromHost(int32_t total) {

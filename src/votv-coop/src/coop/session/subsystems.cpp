@@ -46,6 +46,7 @@
 #include "coop/dev/drone_probe.h"
 #include "coop/dev/delivery_census_probe.h"  // O-1 gate: COUNT the delivery-path actors
 #include "coop/dev/store_table_probe.h"      // A34 STEP 0: which mechanism can read a list_store row
+#include "coop/dev/order_selftest.h"          // A34: exercise host-side order pricing end to end
 #include "coop/dev/native_pile_inert_probe.h"
 #include "coop/dev/client_model_probe.h"  // kel-vs-scientist side-by-side visual check (ini client_model_probe=1)
 #include "coop/dev/pinecone_probe.h"
@@ -299,7 +300,7 @@ void ConnectReplayForSlot(int slot) {
     coop::npc_world_enum::RegisterExistingWorldNpcs(coop::npc_world_enum::NpcEnumOrigin::ConnectEdge);  // pre-existing/level-load NPCs (the save's kerfur) -> joiner adopts its twin
     coop::npc_sync::QueueConnectBroadcastForSlot(slot);           // existing NPCs -> joiner
     coop::world_actor_sync::QueueConnectBroadcastForSlot(slot);   // v80 (B3b): existing event WorldActors -> joiner
-    coop::balance_sync::OnClientConnect(slot);                    // v30: host's current balance
+    coop::balance_sync::SendCurrentToSlot(slot);                    // v30: host's current balance
     coop::player_inventory_sync::EnsurePlayerFile(slot);         // v73: ensure this peer's per-save inventory file exists
     // v73 Inc4: the host->client apply-blob push is NOT here -- ConnectReplayForSlot fires at
     // ClientWorldReady, AFTER the joiner already loaded its world, so the apply blob would miss
@@ -585,6 +586,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     coop::dev::drone_probe::Install();  // dev-only delivery-drone RE probe (ini drone_probe=1; self-latches + retries until the BP class loads)
     coop::dev::drone_probe::Tick(isConnected, isHost);
     coop::dev::store_table_probe::Tick();  // ini store_table_probe=1; ONE-SHOT: which mechanism can read a list_store row (security A34 STEP 0)
+    coop::dev::order_selftest::Tick(isConnected, isHost);  // ini order_selftest=1; ONE-SHOT: a CLIENT places a real shop order -> the host must price + charge (or refuse) it
     coop::dev::delivery_census::Tick(isHost);  // ini delivery_census=1; edges only  // polls drone/order/radar; with drone_probe_drive=1 ALSO auto-fires one delivery (host) / order (client)
     coop::dev::native_pile_inert_probe::Install();  // GO/NO-GO gate for nativizing the trash mirror (ini native_pile_inert_probe=1)
     coop::dev::native_pile_inert_probe::Tick(isConnected, isHost);  // spawns 1 rooted runtime chipPile, logs [INERT-PROBE] IsLive/class 60s -> does a live-ubergraph native stay inert?

@@ -1,25 +1,37 @@
-// coop/order_sync.cpp -- see coop/order_sync.h. Delivery-drone ECONOMY: client->host order forward.
+// coop/order_sync.cpp -- see coop/items/order_sync.h. Delivery-drone ECONOMY: client->host order
+// forward, and (v136) the host-authoritative CHARGE for it.
 //
 // CLIENT: polls saveSlot.orders.Num (a WATERMARK -- the commit verb is BP-internal/unobservable);
-// on an increment serializes the new order(s), chunks them to fit kMaxReliablePayload, forwards to
-// the host, and resets the mirror drone's self-takeoff (RE Q2). It never mutates its own orders array
-// (removeOrderCart needs the laptop UI + is host-only; the client is ephemeral + never saves, so the
-// retained local entries are harmless and leak-free).
-// HOST: assembles the chunks per (senderSlot, orderId), then commits a completed order via the native
-// makeAnOrder (ue_wrap::order_economy) -- which queues + flies + natively drains. All GT-only.
+// on an increment reads the new order's list_store ROW NAMES, chunks them to fit
+// kMaxReliablePayload, forwards to the host, and resets the mirror drone's self-takeoff (RE Q2). It
+// never mutates its own orders array (removeOrderCart needs the laptop UI and pops index 0
+// unconditionally; the client is ephemeral and never saves -- save_block holds disableSave -- so the
+// retained local entries are harmless and leak-free, and the panel they feed is security A46).
+//
+// HOST: assembles chunks per (slot, orderId), then PRICES the order from its own store table, checks
+// its OWN balance, commits via the native makeAnOrder, confirms the commit by an orders.Num +1 edge,
+// and only then charges. A refusal tells the ordering client, corrects its balance, and restores its
+// cart. All GT-only.
 
 #include "coop/items/order_sync.h"
 
+#include "coop/comms/peer_action_feed.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/player/players_registry.h"
+#include "coop/player/roster_ledger.h"
+#include "coop/world/balance_sync.h"
 
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/world/economy.h"
 #include "ue_wrap/world/order_economy.h"
+#include "ue_wrap/world/store_catalog.h"
 
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <random>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -28,45 +40,71 @@ namespace coop::order_sync {
 namespace {
 
 namespace OE  = ue_wrap::order_economy;
+namespace SC  = ue_wrap::store_catalog;
+namespace E   = ue_wrap::economy;
 namespace net = coop::net;
 
 std::atomic<net::Session*> g_session{nullptr};
 
-// Per-item fixed prefix on the wire: price(4) + size(4) + category(1) + objLen(1).
-constexpr int      kItemFixed        = 10;
+// Per-item wire prefix: nameLen(1). v136: price/size/category/objLen are GONE from the wire.
+constexpr int      kItemFixed         = 1;
 constexpr uint64_t kAssemblyTimeoutMs = 15000;  // drop a partial order whose chunks stop arriving
 constexpr uint64_t kPendingTimeoutMs  = 60000;  // drop a completed order the world never lets us commit
-constexpr size_t   kMaxAssembly       = 16;     // cap concurrent partial orders (anti-flood)
-constexpr size_t   kMaxPending        = 32;     // cap queued-for-commit orders (anti-flood)
+constexpr size_t   kMaxAssembly       = 16;     // cap concurrent partial orders, PER SLOT (see below)
+constexpr size_t   kMaxPending        = 32;     // cap queued-for-commit orders, PER SLOT
 constexpr int      kMaxCommitTries    = 3;      // a commit that keeps failing while committable -> drop
+constexpr size_t   kMaxInFlight       = 32;     // client: remembered orders awaiting a verdict
 
 // ---- client forward state (game thread only) ----
 int32_t  g_forwardedThrough = -1;  // watermark: orders.Num value we've forwarded up to (-1 = unprimed)
 uint32_t g_orderIdCounter   = 0;   // monotonic id per forwarded order (uniqueness within this sender)
 
+// What we sent, per orderId, so a REFUSAL can put the cart back. Dropped on the first verdict and
+// bounded: it is the client's only per-session accumulator on this path, and an unbounded one would
+// be the same defect as the orders array it exists to avoid reading.
+std::unordered_map<uint32_t, std::vector<std::wstring>> g_inFlight;
+
 // ---- host assembly state (game thread only) ----
 struct Assembly {
     uint16_t totalItems = 0;
-    float    time       = 0.f;
-    std::vector<OE::OrderItem> items;
-    uint64_t lastMs     = 0;
+    std::vector<std::wstring> rowNames;
+    uint64_t lastMs = 0;
 };
-std::unordered_map<uint64_t, Assembly> g_assembly;  // key = (senderSlot<<32)|orderId
-
 struct Pending {
     OE::OrderData od;
-    uint64_t      firstMs = 0;
-    int           tries   = 0;
+    uint32_t orderId = 0;
+    uint64_t firstMs = 0;
+    int      tries   = 0;
 };
-std::vector<Pending> g_pending;
+
+// PER SLOT, and that is load-bearing (security A49). These used to be two globals keyed by
+// (senderSlot<<32)|orderId with only a session-wide reset -- but a client leaving is NOT a session
+// teardown on the host, slots recycle LOWEST-FREE with no absence between occupants, and a fresh
+// occupant's g_orderIdCounter restarts at 1. So a departed peer's partial assembly absorbed the
+// newcomer's chunks and a departed peer's completed order committed under the newcomer's name.
+// Harmless while the goods were free; a CHARGE against the shared balance attributed to someone who
+// never ordered, once they are not. PerSlotState registers its own clear on the occupant-change edge
+// -- the one edge no per-slot boolean can observe -- so this is coverage by construction rather than
+// a check somebody has to remember. It also makes the two caps PER SLOT, so one client flooding
+// partial orders can no longer deny every other peer's orders for the assembly timeout.
+struct SlotOrders {
+    std::unordered_map<uint32_t, Assembly> assembly;
+    std::vector<Pending>                   pending;
+};
+coop::roster_ledger::PerSlotState<SlotOrders> g_bySlot;
 
 uint64_t NowMs() {
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
-uint64_t AsmKey(uint8_t slot, uint32_t orderId) {
-    return (static_cast<uint64_t>(slot) << 32) | orderId;
+// The host rolls the delivery ETA itself -- `[V]` the game's own Button_order does
+// RandomFloatInRange(120,180), and shared-world RNG is host-authoritative
+// (docs/COOP_RNG_AUTHORITY.md). The client's number is not on the wire.
+float RollEta() {
+    static std::mt19937 s_rng{static_cast<uint32_t>(NowMs())};
+    static std::uniform_real_distribution<float> s_dist(120.f, 180.f);
+    return s_dist(s_rng);
 }
 
 // Reset all per-session state. Called by BOTH Install (session start) and OnDisconnect (teardown)
@@ -75,12 +113,15 @@ uint64_t AsmKey(uint8_t slot, uint32_t orderId) {
 void ResetState() {
     g_forwardedThrough = -1;
     g_orderIdCounter   = 0;
-    g_assembly.clear();
-    g_pending.clear();
+    g_inFlight.clear();
+    for (int i = 0; i < g_bySlot.size(); ++i) {
+        g_bySlot[i].assembly.clear();
+        g_bySlot[i].pending.clear();
+    }
 }
 
-// UE class/FName leaf names are ASCII -> narrow/widen losslessly (non-ASCII -> '?', which simply
-// fails FindClass host-side and the item is skipped, logged).
+// list_store keys are ASCII identifiers -> narrow/widen losslessly (non-ASCII -> '?', which simply
+// fails the host's catalog lookup and refuses the order, loudly, rather than silently mis-resolving).
 std::string NarrowAscii(const std::wstring& w) {
     std::string s;
     s.reserve(w.size());
@@ -101,13 +142,16 @@ void ForwardOrder(net::Session* s, int32_t idx) {
         UE_LOGW("order_sync: ReadOrder(%d) failed -- skip", idx);
         return;
     }
-    size_t total = od.items.size();
+    size_t total = od.rowNames.size();
     if (total > static_cast<size_t>(net::kMaxOrderItems)) {
         UE_LOGW("order_sync: order idx=%d has %zu items > cap %d -- forwarding first %d (rest dropped)",
                 idx, total, net::kMaxOrderItems, net::kMaxOrderItems);
-        total = net::kMaxOrderItems;
+        total = static_cast<size_t>(net::kMaxOrderItems);
     }
     const uint32_t orderId = ++g_orderIdCounter;
+
+    std::vector<std::wstring> sent;
+    sent.reserve(total);
     size_t i = 0;
     int chunks = 0;
     while (i < total) {
@@ -116,22 +160,21 @@ void ForwardOrder(net::Session* s, int32_t idx) {
         const size_t chunkStart = i;
         uint16_t chunkCount = 0;
         while (i < total) {
-            std::string name = NarrowAscii(od.items[i].objectClass);
-            if (name.size() > static_cast<size_t>(net::kMaxOrderClassName))
-                name.resize(net::kMaxOrderClassName);
+            std::string name = NarrowAscii(od.rowNames[i]);
+            if (name.size() > static_cast<size_t>(net::kMaxOrderRowName))
+                name.resize(static_cast<size_t>(net::kMaxOrderRowName));
             const int itemSize = kItemFixed + static_cast<int>(name.size());
             if (pos + itemSize > net::kMaxReliablePayload) break;  // this chunk is full
-            std::memcpy(buf + pos, &od.items[i].price, 4); pos += 4;
-            std::memcpy(buf + pos, &od.items[i].size, 4);  pos += 4;
-            buf[pos++] = od.items[i].category;
             buf[pos++] = static_cast<uint8_t>(name.size());
-            std::memcpy(buf + pos, name.data(), name.size()); pos += static_cast<int>(name.size());
+            std::memcpy(buf + pos, name.data(), name.size());
+            pos += static_cast<int>(name.size());
+            sent.push_back(od.rowNames[i]);
             ++chunkCount;
             ++i;
         }
         if (chunkCount == 0) {
-            // A single item that can't fit even an empty chunk -- impossible given the caps
-            // (header 16 + fixed 10 + name<=96 = 122 <= 228), but never spin forever.
+            // A single item that cannot fit even an empty chunk -- impossible given the caps
+            // (header 16 + 1 + name<=96 = 113 <= 228), but never spin forever.
             UE_LOGW("order_sync: item %zu too large to chunk -- skipping", i);
             ++i;
             continue;
@@ -142,12 +185,18 @@ void ForwardOrder(net::Session* s, int32_t idx) {
         h.baseIndex  = static_cast<uint16_t>(chunkStart);
         h.chunkItems = chunkCount;
         h._pad       = 0;
-        h.time       = od.time;
+        h.time       = 0.f;  // v136: the HOST rolls the ETA; a receiver must not read this
         std::memcpy(buf, &h, sizeof(h));
         s->SendReliable(net::ReliableKind::OrderRequest, buf, pos);
         ++chunks;
     }
-    UE_LOGI("order_sync: forwarded order idx=%d id=%u items=%zu in %d chunk(s)", idx, orderId, total, chunks);
+
+    if (!sent.empty()) {
+        if (g_inFlight.size() >= kMaxInFlight) g_inFlight.clear();  // bounded; a verdict drops rows
+        g_inFlight[orderId] = std::move(sent);
+    }
+    UE_LOGI("order_sync: forwarded order idx=%d id=%u items=%zu in %d chunk(s)", idx, orderId, total,
+            chunks);
 }
 
 void TickClient(net::Session* s) {
@@ -167,39 +216,158 @@ void TickClient(net::Session* s) {
     OE::QuietLocalDrone();  // reset the mirror drone's self-takeoff once after forwarding (RE Q2)
 }
 
-void TickHost() {
+// ---- HOST: tell one client its order was not performed, and undo what its local run already did ----
+void Refuse(net::Session* s, uint8_t slot, uint32_t orderId, net::OrderRefusedReason reason,
+            const wchar_t* why) {
+    UE_LOGW("order_sync: REFUSING order id=%u from slot %u -- %ls", orderId, slot, why);
+    net::OrderRefusedPayload p{};
+    p.orderId = orderId;
+    p.reason  = static_cast<uint8_t>(reason);
+    s->SendReliableToSlot(slot, net::ReliableKind::OrderRefused, &p, sizeof(p));
+    // The refusal moved NOTHING on the host, so the change-polled BalanceSync broadcast can never
+    // fire -- and the client already debited itself through an EX_LocalVirtualFunction we cannot
+    // suppress. Its balance is corrected by saying so directly.
+    coop::balance_sync::SendCurrentToSlot(static_cast<int>(slot));
+}
+
+// Price + commit + charge ONE completed order. Returns true when the entry is finished with
+// (committed, or refused for good) and should be dropped.
+bool ResolveOne(net::Session* s, uint8_t slot, Pending& pe) {
+    if (!SC::Ready()) {
+        // Fail CLOSED. The catalog is the only thing that can price this, and guessing is the one
+        // outcome worse than refusing.
+        Refuse(s, slot, pe.orderId, net::OrderRefusedReason::NoCatalog,
+               L"the host's store catalog is unusable");
+        return true;
+    }
+
+    // Resolve + sum from the HOST's own table. An intent may name WHAT, never WHAT IT COSTS.
+    int64_t total = 0;
+    for (const std::wstring& name : pe.od.rowNames) {
+        const SC::Row* row = SC::Find(name);
+        if (!row) {
+            UE_LOGW("order_sync: slot %u ordered unknown store row '%ls'", slot, name.c_str());
+            Refuse(s, slot, pe.orderId, net::OrderRefusedReason::UnknownItem,
+                   L"an item is not in the host's store table");
+            return true;
+        }
+        total += row->price;
+    }
+
+    // Read the balance HERE, per order -- NOT once per pass. Two orders draining in the same pass
+    // would otherwise both price against the pre-debit value and overspend.
+    int32_t points = 0;
+    if (!E::ReadPoints(&points)) return false;  // world still resolving -- retry next tick
+    if (static_cast<int64_t>(points) < total) {
+        // CLIENT-SCOPED BY CONSTRUCTION: the host's own orders never reach this code at all, so this
+        // is not a rule the host applies to itself (docs/security/THREAT_MODEL.md -- the host may
+        // cheat and we relay it). `[V]` The game's own gate does the same test at Button_order @5990,
+        // silently; what the client gets extra is a reason, because its local debit already happened.
+        Refuse(s, slot, pe.orderId, net::OrderRefusedReason::Unaffordable,
+               L"the shared balance is short");
+        return true;
+    }
+
+    if (!OE::CanCommit()) return false;  // world still loading -- retry (kPendingTimeoutMs bounds it)
+
+    ++pe.tries;
+    const int32_t before = OE::OrderCount();
+    const bool dispatched = OE::CommitOrder(pe.od, RollEta(), /*automatic*/ true);
+    const int32_t after = OE::OrderCount();
+
+    // `dispatched` only says ProcessEvent ran. The ORDER is what we charge for, so the post-condition
+    // is the artifact: exactly one new row in saveSlot.orders. `[V]` That edge is exact -- nothing
+    // pops synchronously inside the commit (drone::checkOrders has no removeOrderCart/Array_Remove).
+    if (!dispatched || before < 0 || after != before + 1) {
+        UE_LOGW("order_sync: commit did not queue an order (dispatch=%d orders %d -> %d, try %d)",
+                dispatched ? 1 : 0, before, after, pe.tries);
+        if (pe.tries >= kMaxCommitTries) {
+            Refuse(s, slot, pe.orderId, net::OrderRefusedReason::CommitFailed,
+                   L"the order could not be placed");
+            return true;
+        }
+        return false;  // retry
+    }
+
+    // Charge AFTER the goods are confirmed queued, and synchronously. Deliberately NOT
+    // balance_sync::CreditLocal: its host branch defers through GT::Post, and a deferred debit would
+    // let a second order in this same drain pass price against a balance that has not moved yet.
+    // The host's next balance poll broadcasts the new value to everyone, so no direct send is needed
+    // on the success path.
+    if (!E::AddPoints(-static_cast<int32_t>(total)))
+        UE_LOGE("order_sync: order committed but AddPoints(%lld) FAILED -- the group got goods it "
+                "was not charged for", static_cast<long long>(-total));
+    else
+        UE_LOGI("order_sync: committed slot %u order id=%u (%zu items) and charged %lld from the "
+                "shared balance (%d -> %d)", slot, pe.orderId, pe.od.rowNames.size(),
+                static_cast<long long>(total), points, points - static_cast<int32_t>(total));
+    return true;
+}
+
+void TickHost(net::Session* s) {
     const uint64_t now = NowMs();
-    // Commit completed orders (busy/broken drone is fine -- the native queues; CanCommit only guards
-    // against a null actor while the world is still loading).
-    for (size_t i = 0; i < g_pending.size();) {
-        Pending& pe = g_pending[i];
-        bool done = false;
-        if (OE::CanCommit()) {
-            ++pe.tries;
-            if (OE::CommitOrder(pe.od, /*automatic*/ true)) {
-                done = true;
-            } else if (pe.tries >= kMaxCommitTries) {
-                UE_LOGW("order_sync: commit failed %d times -- dropping order", pe.tries);
+    for (int slot = 0; slot < g_bySlot.size(); ++slot) {
+        SlotOrders& so = g_bySlot[slot];
+        for (size_t i = 0; i < so.pending.size();) {
+            Pending& pe = so.pending[i];
+            bool done = ResolveOne(s, static_cast<uint8_t>(slot), pe);
+            if (!done && now - pe.firstMs > kPendingTimeoutMs) {
+                UE_LOGW("order_sync: pending order undeliverable for %llums -- dropping",
+                        static_cast<unsigned long long>(now - pe.firstMs));
+                Refuse(s, static_cast<uint8_t>(slot), pe.orderId,
+                       net::OrderRefusedReason::CommitFailed, L"the order timed out unplaced");
                 done = true;
             }
+            if (done) so.pending.erase(so.pending.begin() + static_cast<long>(i));
+            else ++i;
         }
-        if (!done && now - pe.firstMs > kPendingTimeoutMs) {
-            UE_LOGW("order_sync: pending order undeliverable for %llums -- dropping",
-                    static_cast<unsigned long long>(now - pe.firstMs));
-            done = true;
-        }
-        if (done) g_pending.erase(g_pending.begin() + static_cast<long>(i));
-        else ++i;
-    }
-    // Evict partial assemblies whose remaining chunks never arrived.
-    for (auto it = g_assembly.begin(); it != g_assembly.end();) {
-        if (now - it->second.lastMs > kAssemblyTimeoutMs) {
-            UE_LOGW("order_sync: dropping stale partial order assembly");
-            it = g_assembly.erase(it);
-        } else {
-            ++it;
+        // Evict partial assemblies whose remaining chunks never arrived.
+        for (auto it = so.assembly.begin(); it != so.assembly.end();) {
+            if (now - it->second.lastMs > kAssemblyTimeoutMs) {
+                UE_LOGW("order_sync: dropping stale partial order assembly (slot %d)", slot);
+                it = so.assembly.erase(it);
+            } else {
+                ++it;
+            }
         }
     }
+}
+
+// ---- CLIENT: a refusal came back ----
+const wchar_t* ReasonText(uint8_t reason) {
+    switch (static_cast<net::OrderRefusedReason>(reason)) {
+        case net::OrderRefusedReason::UnknownItem:  return L"an item was not in the host's store";
+        case net::OrderRefusedReason::Unaffordable: return L"there were not enough credits";
+        case net::OrderRefusedReason::NoCatalog:    return L"the host could not read its store";
+        case net::OrderRefusedReason::CommitFailed: return L"the delivery could not be placed";
+    }
+    return L"the host refused it";
+}
+
+void OnRefused(const void* payload, int len) {
+    if (!payload || len < static_cast<int>(sizeof(net::OrderRefusedPayload))) {
+        UE_LOGW("order_sync: OrderRefused too short (%d) -- drop", len);
+        return;
+    }
+    net::OrderRefusedPayload p{};
+    std::memcpy(&p, payload, sizeof(p));
+
+    std::vector<std::wstring> rows;
+    auto it = g_inFlight.find(p.orderId);
+    if (it != g_inFlight.end()) {
+        rows = std::move(it->second);
+        g_inFlight.erase(it);
+    }
+
+    // Say it, then put the cart back. `[V]` The base game's own affordability gate pops BEFORE
+    // Array_Clear(cart), so a refused purchase leaves the cart intact -- our refusal arrives after
+    // the local run already cleared it, and not restoring would invent a punishment SP lacks.
+    const std::wstring line = std::wstring(L"could not order: ") + ReasonText(p.reason);
+    coop::peer_action_feed::AnnounceDirect(
+        static_cast<uint8_t>(coop::players::Registry::Get().LocalPeerId()), line);
+    const int32_t restored = OE::RestoreCartItems(rows);
+    UE_LOGW("order_sync: order id=%u REFUSED by the host (%ls); %d of %zu item(s) restored to the "
+            "cart", p.orderId, ReasonText(p.reason), restored, rows.size());
 }
 
 }  // namespace
@@ -216,7 +384,7 @@ void Install(net::Session* session) {
 void Tick() {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) return;
-    if (s->role() == net::Role::Host) TickHost();
+    if (s->role() == net::Role::Host) TickHost(s);
     else                              TickClient(s);
 }
 
@@ -242,68 +410,70 @@ void OnReliable(const void* payload, int len, uint8_t senderSlot) {
 
     const uint8_t* p   = static_cast<const uint8_t*>(payload) + sizeof(h);
     const uint8_t* end = static_cast<const uint8_t*>(payload) + len;
-    std::vector<OE::OrderItem> chunkItems;
-    chunkItems.reserve(h.chunkItems);
+    std::vector<std::wstring> chunkNames;
+    chunkNames.reserve(h.chunkItems);
     for (uint16_t k = 0; k < h.chunkItems; ++k) {
         if (p + kItemFixed > end) { UE_LOGW("order_sync: OrderRequest truncated item -- drop"); return; }
-        OE::OrderItem it;
-        std::memcpy(&it.price, p, 4); p += 4;
-        std::memcpy(&it.size,  p, 4); p += 4;
-        it.category = *p++;
-        const uint8_t objLen = *p++;
-        if (objLen > net::kMaxOrderClassName || p + objLen > end) {
-            UE_LOGW("order_sync: OrderRequest bad objLen=%u -- drop", objLen);
+        const uint8_t nameLen = *p++;
+        if (nameLen == 0 || nameLen > net::kMaxOrderRowName || p + nameLen > end) {
+            UE_LOGW("order_sync: OrderRequest bad nameLen=%u -- drop", nameLen);
             return;
         }
-        it.objectClass = WidenAscii(p, objLen);
-        p += objLen;
-        chunkItems.push_back(std::move(it));
+        chunkNames.push_back(WidenAscii(p, nameLen));
+        p += nameLen;
     }
 
-    const uint64_t key = AsmKey(senderSlot, h.orderId);
-    auto itA = g_assembly.find(key);
-    if (itA == g_assembly.end()) {
+    SlotOrders& so = g_bySlot[static_cast<int>(senderSlot)];
+    auto itA = so.assembly.find(h.orderId);
+    if (itA == so.assembly.end()) {
         if (h.baseIndex != 0) {
             UE_LOGW("order_sync: first chunk baseIndex=%u != 0 (lost head) -- drop", h.baseIndex);
             return;
         }
-        if (g_assembly.size() >= kMaxAssembly) {
-            UE_LOGW("order_sync: assembly table full (%zu) -- drop new order", g_assembly.size());
+        if (so.assembly.size() >= kMaxAssembly) {
+            UE_LOGW("order_sync: slot %u assembly table full (%zu) -- drop new order", senderSlot,
+                    so.assembly.size());
             return;
         }
         Assembly a;
         a.totalItems = h.totalItems;
-        a.time       = h.time;
         a.lastMs     = NowMs();
-        itA = g_assembly.emplace(key, std::move(a)).first;
+        itA = so.assembly.emplace(h.orderId, std::move(a)).first;
     }
     Assembly& a = itA->second;
-    if (h.baseIndex != static_cast<uint16_t>(a.items.size()) || h.totalItems != a.totalItems) {
+    if (h.baseIndex != static_cast<uint16_t>(a.rowNames.size()) || h.totalItems != a.totalItems) {
         UE_LOGW("order_sync: chunk out-of-order/mismatch (base=%u have=%zu total=%u/%u) -- drop assembly",
-                h.baseIndex, a.items.size(), h.totalItems, a.totalItems);
-        g_assembly.erase(itA);
+                h.baseIndex, a.rowNames.size(), h.totalItems, a.totalItems);
+        so.assembly.erase(itA);
         return;
     }
-    for (auto& it : chunkItems) a.items.push_back(std::move(it));
+    for (auto& n : chunkNames) a.rowNames.push_back(std::move(n));
     a.lastMs = NowMs();
 
-    if (a.items.size() >= a.totalItems) {
-        if (g_pending.size() >= kMaxPending) {
-            UE_LOGW("order_sync: pending-commit queue full (%zu) -- drop completed order", g_pending.size());
-            g_assembly.erase(itA);
+    if (a.rowNames.size() >= a.totalItems) {
+        if (so.pending.size() >= kMaxPending) {
+            UE_LOGW("order_sync: slot %u pending-commit queue full (%zu) -- drop completed order",
+                    senderSlot, so.pending.size());
+            so.assembly.erase(itA);
             return;
         }
         Pending pe;
-        pe.od.items = std::move(a.items);
-        pe.od.time  = a.time;
-        pe.firstMs  = NowMs();
-        pe.tries    = 0;
-        const size_t nItems = pe.od.items.size();
-        g_pending.push_back(std::move(pe));
-        g_assembly.erase(itA);
-        UE_LOGI("order_sync: order assembled (slot=%u id=%u items=%zu) -- queued for commit",
+        pe.od.rowNames = std::move(a.rowNames);
+        pe.orderId     = h.orderId;
+        pe.firstMs     = NowMs();
+        pe.tries       = 0;
+        const size_t nItems = pe.od.rowNames.size();
+        so.pending.push_back(std::move(pe));
+        so.assembly.erase(itA);
+        UE_LOGI("order_sync: order assembled (slot=%u id=%u items=%zu) -- queued for pricing",
                 senderSlot, h.orderId, nItems);
     }
+}
+
+void OnReliableRefused(const void* payload, int len) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || s->role() == net::Role::Host) return;  // host->client only
+    OnRefused(payload, len);
 }
 
 void OnDisconnect() {

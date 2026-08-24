@@ -40,6 +40,14 @@ void Tick();
 // reliable drain loop (game thread). A client receiving this (shouldn't happen) no-ops.
 void OnReliable(const void* payload, int len, uint8_t senderSlot);
 
+// Receiver entry (CLIENT ingest): the HOST refused a forwarded order (OrderRefused). Renders one
+// feed line naming the reason and puts the refused items back in the laptop cart -- `[V]` the base
+// game's own affordability gate pops BEFORE Array_Clear(cart), so a refused purchase normally leaves
+// the cart intact, while our refusal arrives after the local run already cleared it. The balance
+// correction rides a direct BalanceSync from the host, not this message. A host receiving this
+// (shouldn't happen) no-ops. Game thread.
+void OnReliableRefused(const void* payload, int len);
+
 // Session teardown: reset the client watermark + drop host assembly/commit queues. Game thread.
 void OnDisconnect();
 

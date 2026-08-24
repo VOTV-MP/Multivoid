@@ -706,7 +706,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // + replays them in ConnectReplayForSlot. mainPlayer.holding_actor with an Aprop_C no
 // longer feeds the PropSpawn/PropPose path (the trash clump/pile carry -- the
 // non-Aprop_C holding_actor case -- stays on its lane untouched).
-inline constexpr uint16_t kProtocolVersion = 135; // v135 (2026-08-24, WP-6 security: the client->host BalanceDelta (24) lane is RETIRED WHOLE -- it was an unbounded client-authored economy write the host applied via AddPoints, so any peer could set the shared balance to +/-2^31 (security A5). Retired rather than clamped per RULE 2; [V] its only in-tree sender was the dev +1000 button, already refused on a client by dev_gate, and the laptop shop it was built for shipped on OrderRequest with a HOST re-commit. Kind 24 STAYS UNASSIGNED. A parse change (a kind that was accepted is now unknown), so the bump is mandatory, not just the release rule). Prior: v134 (2026-07-31, consume b133: chat HISTORY + the roster ledger/player list + host-assigned unique nicknames persisted to ini + real UTF-8 across every text surface (imgui 1.92.9 lazy atlas, +4,741 codepoints and the combining marks) + the CURSOR fix (ScaleAllSizes truncated MouseCursorScale to 0) + GitHub issue #5 (the overlay stops taking keys the GAME is typing: the predicate is now the game's own IsValid(activeInterface) guard, and the focus backstop asks about USER 0 so WidgetInteraction's virtual user cannot latch it) + the chat send-flicker and nameplate centring/host-ping fixes. No wire-format change in the b133 range; the bump is the release rule + the Paper-pair build number). Prior: v133 (2026-07-29, CHAT HISTORY -- +ChatLine=119 +ChatSpeaker=120, and ChatMessage=48 becomes client->host ONLY (out of IsClientRelayableReliableKind, RULE 2). Chat inverts from host-RELAYED to host-AUTHORED: the lobby now has a chat RECORD with a host-assigned lineSeq that IS the total order every peer sorts by, and a joiner is SEEDED from it. The relay could not carry this -- it fires on the NET thread at receive time, before the game thread where a lineSeq could be assigned even exists, so at relay time the order does not yet exist. A parse change AND a release, so the Paper-pair build number moves with it). Prior: v132 (2026-07-28, ARC B -- the HOST is the canonical namer: a Join's nick is ARBITRATED before it enters the ledger, and the assignment reaches the named peer on its own RosterRow (whose nick already sat in the FIXED PREFIX above the applyDeclared gate for exactly this). The row FORMAT is unchanged -- what changed is who authors the value and that the named peer KEEPS it: per the user's 2026-07-28 decision the assigned name is written back to multivoid.ini, so the next session asks to be called Pelmentor2 and keeps it unless someone else already is. The bump is the release rule + the Paper-pair build number, not a parse change). Prior: v131 (2026-07-28: RosterRow FIXED PREFIX widened -- +[u8 linkKind][i16 pingMs] after eid, so the HOST publishes how every player is connected to the SESSION and every board renders the same value for the same player. Retires the per-viewer derivation that answered transport on some rows and ROUTE ("VIA HOST") on others, in one column, side by side; retires the client-side rttMsForSlot fan-out to nameplates, which could only ever measure the host link. The fields sit in the FIXED PREFIX because the tail's offset arithmetic lives inside the applyDeclared block, which is skipped for exactly the host row and the receiver's own row). Prior: v130 (2026-07-27, arc A: PlayerJoined WIDENED + renamed RosterRow -- +uint16 playerNo, admits slot 0 and the receiver's own slot, playerNo 0 = slot empty. The roster ledger is now the single presence authority; a client's TAB used to list only itself and the host). Prior: v129 (2026-07-26, consume b128: DX12 overlay renderer + Graphics API indicator + Tidy-up fix + the release notes/install pipeline); v128 (consume b127, the WHOLE ini workstream -- arc 3 const Row& ratchet + arc 4 T8 catalog); v127 (consume b126, arcs 1+2); v126 (consume b125, drill-matrix, retracted); v125 (2026-07-22, R11b container extraction):
+inline constexpr uint16_t kProtocolVersion = 136; // v136 (2026-08-24, security A34/A35: the laptop shop stops being FREE for every client. An OrderRequest item is now a `list_store` ROW NAME and nothing else -- it used to carry the client's own price/size/category/objectClass, which the host wrote through verbatim, and `[V]` `makeAnOrder` contains no `addPoints` at all (the charge lives in ui_laptop's Button_order ubergraph), so the client debited itself locally, the host was never charged, the goods were delivered, and the client's debit was refunded by the host's next balance broadcast. The host now prices the order from ITS OWN table (ue_wrap::store_catalog), checks its OWN balance, rolls its OWN ETA, and charges after the commit is confirmed by an orders.Num +1 edge. +OrderRefused=121 (host->one client) because a refusal moves nothing, so the change-polled BalanceSync can never fire, while the client has ALREADY debited itself through an EX_LocalVirtualFunction we cannot suppress. A parse change on both sides, so the bump is mandatory. NOT ONLY SECURITY: `[V]` 473 rows map onto 368 object classes, so the old class-keyed wire could not uniquely name 112 of 473 shop items, and the host's wholesale row copy also fixes the ~141 rows that mis-delivered while name/asProp/parseRowNameToObject were written as NAME_None). Prior: v135 (2026-08-24, WP-6 security: the client->host BalanceDelta (24) lane is RETIRED WHOLE -- it was an unbounded client-authored economy write the host applied via AddPoints, so any peer could set the shared balance to +/-2^31 (security A5). Retired rather than clamped per RULE 2; [V] its only in-tree sender was the dev +1000 button, already refused on a client by dev_gate, and the laptop shop it was built for shipped on OrderRequest with a HOST re-commit. Kind 24 STAYS UNASSIGNED. A parse change (a kind that was accepted is now unknown), so the bump is mandatory, not just the release rule). Prior: v134 (2026-07-31, consume b133: chat HISTORY + the roster ledger/player list + host-assigned unique nicknames persisted to ini + real UTF-8 across every text surface (imgui 1.92.9 lazy atlas, +4,741 codepoints and the combining marks) + the CURSOR fix (ScaleAllSizes truncated MouseCursorScale to 0) + GitHub issue #5 (the overlay stops taking keys the GAME is typing: the predicate is now the game's own IsValid(activeInterface) guard, and the focus backstop asks about USER 0 so WidgetInteraction's virtual user cannot latch it) + the chat send-flicker and nameplate centring/host-ping fixes. No wire-format change in the b133 range; the bump is the release rule + the Paper-pair build number). Prior: v133 (2026-07-29, CHAT HISTORY -- +ChatLine=119 +ChatSpeaker=120, and ChatMessage=48 becomes client->host ONLY (out of IsClientRelayableReliableKind, RULE 2). Chat inverts from host-RELAYED to host-AUTHORED: the lobby now has a chat RECORD with a host-assigned lineSeq that IS the total order every peer sorts by, and a joiner is SEEDED from it. The relay could not carry this -- it fires on the NET thread at receive time, before the game thread where a lineSeq could be assigned even exists, so at relay time the order does not yet exist. A parse change AND a release, so the Paper-pair build number moves with it). Prior: v132 (2026-07-28, ARC B -- the HOST is the canonical namer: a Join's nick is ARBITRATED before it enters the ledger, and the assignment reaches the named peer on its own RosterRow (whose nick already sat in the FIXED PREFIX above the applyDeclared gate for exactly this). The row FORMAT is unchanged -- what changed is who authors the value and that the named peer KEEPS it: per the user's 2026-07-28 decision the assigned name is written back to multivoid.ini, so the next session asks to be called Pelmentor2 and keeps it unless someone else already is. The bump is the release rule + the Paper-pair build number, not a parse change). Prior: v131 (2026-07-28: RosterRow FIXED PREFIX widened -- +[u8 linkKind][i16 pingMs] after eid, so the HOST publishes how every player is connected to the SESSION and every board renders the same value for the same player. Retires the per-viewer derivation that answered transport on some rows and ROUTE ("VIA HOST") on others, in one column, side by side; retires the client-side rttMsForSlot fan-out to nameplates, which could only ever measure the host link. The fields sit in the FIXED PREFIX because the tail's offset arithmetic lives inside the applyDeclared block, which is skipped for exactly the host row and the receiver's own row). Prior: v130 (2026-07-27, arc A: PlayerJoined WIDENED + renamed RosterRow -- +uint16 playerNo, admits slot 0 and the receiver's own slot, playerNo 0 = slot empty. The roster ledger is now the single presence authority; a client's TAB used to list only itself and the host). Prior: v129 (2026-07-26, consume b128: DX12 overlay renderer + Graphics API indicator + Tidy-up fix + the release notes/install pipeline); v128 (consume b127, the WHOLE ini workstream -- arc 3 const Row& ratchet + arc 4 T8 catalog); v127 (consume b126, arcs 1+2); v126 (consume b125, drill-matrix, retracted); v125 (2026-07-22, R11b container extraction):
                                                   // ContainerContents becomes BIDIRECTIONAL and its
                                                   // blob gains a baseHash. A client now AUTHORS the
                                                   // world container it mutated (presser-authored
@@ -1540,12 +1540,26 @@ enum class ReliableKind : uint8_t {
                        //     NO value bound -- any peer could set the shared balance to
                        //     +/-2^31 (security A5). Retired rather than clamped (RULE 2):
                        //     [V] its only in-tree sender was the +1000 dev button, already
-                       //     refused on a client by dev_gate, and the laptop shop it was
-                       //     built to serve shipped on OrderRequest instead, where the HOST
-                       //     re-commits via makeAnOrder so the charge is host-authored.
-                       //     Balance is host-authoritative everywhere; there is no
-                       //     legitimate client->host economy write. 24 STAYS UNASSIGNED --
-                       //     never reuse a retired wire value.
+                       //     refused on a client by dev_gate. Balance is host-authoritative
+                       //     everywhere; there is no legitimate client->host economy write.
+                       //     24 STAYS UNASSIGNED -- never reuse a retired wire value.
+                       //
+                       //     CORRECTION 2026-08-24 (same day, security A34). This comment
+                       //     also claimed the laptop shop "shipped on OrderRequest instead,
+                       //     where the HOST re-commits via makeAnOrder SO THE CHARGE IS
+                       //     HOST-AUTHORED". That last clause was FALSE and it is deleted
+                       //     above. `[V]` `makeAnOrder`'s blocks 0/56/271/619/788 contain
+                       //     ZERO `addPoints`; the charge lives in ui_laptop's Button_order
+                       //     ubergraph (@6122 Multiply(storePrice,-1), @6168 addPoints, THEN
+                       //     @6302 makeAnOrder) -- and line 1745 of THIS FILE has said
+                       //     exactly that, correctly, since v49. So the retirement removed a
+                       //     cheat lane and asserted a successor that did not charge: the
+                       //     LOSS-direction blindness in
+                       //     [[lesson-defending-only-the-cheat-direction-manufactures-the-loss-direction]],
+                       //     written the same day, one section away from the claim it names.
+                       //     The deletion itself still stands (nothing legitimate used the
+                       //     lane); v136 supplies the missing successor -- the host prices
+                       //     the order from its own store table and charges for it.
     KeypadState = 25,  // 2026-06-06 (v35): password-keypad INPUT mirror (ApasswordLock_C). v38: + active (cancel->red).
                        //     v59: + event (the short-code submit mirror -- see KeypadEvent).
                        //     SYMMETRIC, MTA input-replication. The keypad verbs are BP-internal
@@ -2658,6 +2672,21 @@ enum class ReliableKind : uint8_t {
                        //     set, no versioning, no delivery bookkeeping. speakerId is a
                        //     PER-BURST index: no minting policy, no eviction policy,
                        //     nothing to bound.
+    OrderRefused = 121, // v136 (order_sync -- security A34): the HOST tells ONE client that the
+                       //     shop order it forwarded was NOT performed, and why. Refusal-only by
+                       //     design: a COMMITTED order moves the host's balance, so the existing
+                       //     change-polled BalanceSync broadcast already corrects every peer and a
+                       //     success notice would be a second compensation layer over a working
+                       //     anchor. A REFUSAL moves nothing, so nothing would ever fire -- and the
+                       //     client has ALREADY debited itself locally (`ui_laptop` Button_order
+                       //     @6168 runs `lib_C::addPoints(-storePrice)` before we ever see the
+                       //     order, and that call is EX_LocalVirtualFunction, i.e. unsuppressable).
+                       //     So the refusal carries the correction: the host also sends that slot
+                       //     its current balance directly (balance_sync::SendCurrentToSlot).
+                       //     The client renders one feed line and REBUILDS ITS CART, because
+                       //     `[V]` single-player's own affordability gate pops at @5990 BEFORE
+                       //     `Array_Clear(cart)` @6326 -- refusing without restoring the cart would
+                       //     invent a punishment the base game does not have. HOST->CLIENT only.
     // Slots 21/22 (HeldClumpGrab/Release) RETIRED 2026-06-03 (v26, RULE 2): the v25
     // hand-attach model for the trash clump was the wrong shape (VOTV carries the
     // clump via the physics grab, floating in front, like the mannequin -- not
@@ -3981,17 +4010,39 @@ static_assert(sizeof(DroneStatePayload) == 40, "DroneStatePayload must be 40 byt
 // v49 (2026-06-09): delivery-drone ECONOMY -- the CLIENT->HOST OrderRequest (see ReliableKind::
 // OrderRequest). VARIABLE-LENGTH: this fixed 16-byte header is followed by `chunkItems` packed
 // items, each laid out as:
-//     int32  price;       // Fstruct_store.price  @0x00 (box-fidelity, not load-bearing)
-//     int32  size;        // Fstruct_store.size   @0x40
-//     uint8  category;    // Fstruct_store.category@0x20 (enum_shopCats)
-//     uint8  objLen;      // length of the class name that follows (1..kMaxOrderClassName)
-//     <objLen bytes>      // object @0x10 leaf CLASS NAME (ASCII; host FindClass -> the spawn class)
+//     uint8  nameLen;     // length of the row name that follows (1..kMaxOrderRowName)
+//     <nameLen bytes>     // the `list_store` ROW NAME (ASCII), i.e. Fstruct_store.name
+//
+// v136 (2026-08-24, security A34/A35) -- AN ITEM IS NOW A ROW NAME AND NOTHING ELSE. It used to
+// carry the client's own price + size + category + object CLASS NAME, and the host wrote all four
+// through verbatim into the native order. Two defects, one shape:
+//   * the client priced its own purchase -- and since `[V]` `makeAnOrder` contains no `addPoints`
+//     at all (the charge lives in `ui_laptop`'s Button_order ubergraph), the host was never charged
+//     for it either, so every connected client shopped FREE by default. The rule that fixes it is
+//     `docs/COOP_SYNCER_MODEL.md` 2b: an intent may name WHAT, never WHAT IT COSTS. The host now
+//     resolves the row in ITS OWN `list_store` (ue_wrap::store_catalog) and takes
+//     price/object/size/category/asProp/parseRowNameToObject from there.
+//   * a class name cannot even NAME a shop item: `[V]` the 473 rows map onto only 368 distinct
+//     object classes (`prop_C` shared by 50 rows, `prop_seed_C` by 26), so 112 of 473 rows were
+//     not uniquely identified by their class. `[V]` `generateStore` stamps the row key into
+//     `Fstruct_store.name`, so a forwarded order already carries the right identity.
+// The host now copies the LIVE table row wholesale into the native cart element, which also fixes
+// the ~141 rows that mis-delivered while `name`/`asProp`/`parseRowNameToObject` were written as
+// NAME_None (`prop_orderBox` reads them back and calls `player->sendName(item.asProp)`). The ONE
+// field still overwritten is `subcategory`, stamped with the pinned empty FText -- `[V]`
+// `prop_orderBox` builds its own order items with `subcategory = EX_TextConst`, so a second in-game
+// producer already ships const-empty subcategories, and copying the live FText instead would rest on
+// an unmeasured refcount claim.
+//
+// `time` (the delivery ETA) is IGNORED on receive from v136: the HOST rolls its own
+// RandomFloatInRange(120,180), per the standing host-authoritative-RNG rule. It stays in the header
+// rather than being removed because the field is free and removing it would re-cut the struct for
+// nothing; a receiver must not read it.
+//
 // An order with more items than fit in one datagram (kMaxReliablePayload) is split into multiple
 // OrderRequest messages sharing one orderId; the host assembles them by (senderSlot, orderId) using
 // baseIndex/totalItems, then commits once all totalItems arrive. The reliable channel is ordered, so
-// chunks arrive in baseIndex order. (omitted vs Fstruct_store: subcategory FText + achievementUnlock
-// + name/asProp -- bytecode-verified never read on the commit/deliver path; the spawn uses `object`
-// directly. host reconstruction fills subcategory with a pinned empty FText for laptop-UI safety.)
+// chunks arrive in baseIndex order.
 struct OrderRequestHeader {
     uint32_t orderId;     // 4 -- client-local monotonic order id (unique per sender slot)
     uint16_t totalItems;  // 2 -- total items in the WHOLE order (1..kMaxOrderItems)
@@ -4003,8 +4054,28 @@ struct OrderRequestHeader {
 static_assert(sizeof(OrderRequestHeader) == 16, "OrderRequestHeader must be 16 bytes");
 
 // Economy wire bounds (host trust boundary -- a client must not make the host allocate unbounded).
-inline constexpr int kMaxOrderItems     = 64;   // a cart > 64 line-items is rejected as garbage
-inline constexpr int kMaxOrderClassName = 96;   // UE leaf class names are short; cap the per-item string
+inline constexpr int kMaxOrderItems   = 64;  // a cart > 64 line-items is rejected as garbage
+inline constexpr int kMaxOrderRowName = 96;  // `list_store` keys are short identifiers; cap the string
+                                             // (v136: replaces kMaxOrderClassName, RULE 2 -- the wire
+                                             //  no longer carries a class name at all)
+
+// v136: why the HOST refused a client's shop order. Refusal-only -- see ReliableKind::OrderRefused
+// for why a success notice would be a second compensation layer over a working anchor.
+enum class OrderRefusedReason : uint8_t {
+    UnknownItem  = 1,  // a row name that is not in the host's own list_store
+    Unaffordable = 2,  // the host's OWN balance is short (the client's BP gate tested a mirror that
+                       // was stale, or two clients ordered in the same drain pass, or it was bypassed)
+    NoCatalog    = 3,  // ue_wrap::store_catalog is INVALID on the host -- fail closed, never guess
+    CommitFailed = 4,  // the native makeAnOrder never produced its saveSlot.orders row
+};
+
+// (already inside the file-wide `#pragma pack(push, 1)` that opens above the wire structs)
+struct OrderRefusedPayload {
+    uint32_t orderId;  // 4 -- echoes OrderRequestHeader.orderId so the client can find its cart items
+    uint8_t  reason;   // 1 -- OrderRefusedReason
+    uint8_t  _pad[3];  // 3
+};
+static_assert(sizeof(OrderRefusedPayload) == 8, "OrderRefusedPayload must be 8 bytes");
 
 // Phase 5N1 Inc2 (2026-05-25, updated 2026-05-28 Tier 3 PoC): NPC spawn
 // reliable payload. Host detects an NPC instantiation via the host-side

@@ -9,10 +9,12 @@
 #include "ue_wrap/world/order_economy.h"
 
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/ftext_utils.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/world/store_catalog.h"
 
 #include <cstring>
 #include <vector>
@@ -27,14 +29,14 @@ namespace R = ue_wrap::reflection;
 constexpr int32_t kOrderStride   = 0x18;
 constexpr int32_t kOrderItemsOff = 0x00;
 constexpr int32_t kOrderTimeOff  = 0x10;
-// Fstruct_store (0x4D, element stride 0x50 -- 8-byte aligned): price@0x00, object@0x10 (TSubclassOf),
-// category@0x20 (u8), subcategory@0x28 (FText 0x18), size@0x40.
-constexpr int32_t kItemStride   = 0x50;
-constexpr int32_t kItemPriceOff = 0x00;
-constexpr int32_t kItemObjOff   = 0x10;
-constexpr int32_t kItemCatOff   = 0x20;
-constexpr int32_t kItemSubcatOff= 0x28;  // FText subcategory -- filled with a pinned empty FText
-constexpr int32_t kItemSizeOff  = 0x40;
+// Fstruct_store: 0x4D, TArray element stride 0x50 (8-byte aligned for the FText member).
+//
+// v136: the per-FIELD offsets that used to live here (price@0x00, object@0x10, category@0x20,
+// subcategory@0x28, size@0x40) are GONE -- five version-coupled literals retired, not moved. The
+// commit copies the whole row, and the two offsets still needed (`subcategory` to stamp, `name` to
+// read) are resolved BY NAME by ue_wrap::store_catalog, which owns the row's shape. What remains
+// here is the two STRIDES, which are properties of the native TArray rather than of any field.
+constexpr int32_t kItemStride = 0x50;
 
 // Defensive cap when reading an order's items array (a garbage Num must not drive a huge read).
 constexpr int32_t kReadItemCap = 256;
@@ -116,8 +118,13 @@ int32_t OrderCount() {
 }
 
 bool ReadOrder(int32_t index, OrderData& out) {
-    out.items.clear();
-    out.time = 0.f;
+    out.rowNames.clear();
+    const int32_t nameOff = ue_wrap::store_catalog::NameOffset();
+    if (nameOff < 0) {
+        UE_LOGW("order_economy: ReadOrder -- store_catalog unusable, so the row-name field cannot be "
+                "located; refusing to read an order whose items we could not name");
+        return false;
+    }
     int32_t off = -1;
     void* save = ResolveSaveSlot(&off);
     if (!save) return false;
@@ -129,22 +136,23 @@ bool ReadOrder(int32_t index, OrderData& out) {
     void* order = reinterpret_cast<uint8_t*>(ordersData) + static_cast<size_t>(index) * kOrderStride;
     void* itemsData = ReadAt<void*>(order, kOrderItemsOff + 0);
     int32_t itemsNum = ReadAt<int32_t>(order, kOrderItemsOff + 8);
-    out.time = ReadAt<float>(order, kOrderTimeOff);
     if (!itemsData || itemsNum <= 0) return false;
     if (itemsNum > kReadItemCap) itemsNum = kReadItemCap;
 
-    out.items.reserve(static_cast<size_t>(itemsNum));
+    out.rowNames.reserve(static_cast<size_t>(itemsNum));
     for (int32_t i = 0; i < itemsNum; ++i) {
         void* item = reinterpret_cast<uint8_t*>(itemsData) + static_cast<size_t>(i) * kItemStride;
-        OrderItem it;
-        void* objCls = ReadAt<void*>(item, kItemObjOff);  // TSubclassOf<AActor> -- a UClass*
-        if (objCls && R::IsLive(objCls)) it.objectClass = R::ToString(R::NameOf(objCls));
-        it.price    = ReadAt<int32_t>(item, kItemPriceOff);
-        it.size     = ReadAt<int32_t>(item, kItemSizeOff);
-        it.category = ReadAt<uint8_t>(item, kItemCatOff);
-        out.items.push_back(std::move(it));
+        // `[V]` generateStore stamps the list_store row key into Fstruct_store.name, so this IS the
+        // shop identity of the line item -- and the only part of it that travels.
+        const R::FName nm = ReadAt<R::FName>(item, nameOff);
+        std::wstring s = R::ToString(nm);
+        if (s.empty() || s == L"None") {
+            UE_LOGW("order_economy: ReadOrder(%d) item %d carries no row name -- skipping", index, i);
+            continue;
+        }
+        out.rowNames.push_back(std::move(s));
     }
-    return !out.items.empty();
+    return !out.rowNames.empty();
 }
 
 bool CanCommit() {
@@ -161,55 +169,67 @@ bool CanCommit() {
     return true;
 }
 
-bool CommitOrder(const OrderData& order, bool automatic) {
+bool CommitOrder(const OrderData& order, float etaSeconds, bool automatic) {
+    namespace SC = ue_wrap::store_catalog;
+
     void* gm = ResolveGamemode();
     if (!gm || !ResolveGmOffsets(gm) || g_offLaptop < 0) return false;
     void* laptop = ReadPtr(gm, g_offLaptop);
     if (!laptop) { UE_LOGW("order_economy: CommitOrder -- laptop null"); return false; }
 
-    size_t n = order.items.size();
+    size_t n = order.rowNames.size();
     if (n == 0) return false;
     if (n > kCommitItemCap) n = kCommitItemCap;
 
-    // A valid empty FText for every item's subcategory slot (zeroed bytes would deref-fault if the
-    // host opens the laptop orders UI -- bytecode says commit/deliver never reads it, but be robust).
+    if (!SC::Ready()) {
+        UE_LOGW("order_economy: CommitOrder -- store_catalog INVALID; refusing to commit an order "
+                "whose items we cannot name or price");
+        return false;
+    }
+    const int32_t subcatOff = SC::SubcategoryOffset();
+    const int32_t nameOff   = SC::NameOffset();
+    if (subcatOff < 0 || nameOff < 0) return false;
+
+    // A valid empty FText for every item's subcategory slot. See the header: this is the ONE field
+    // where our committed row deliberately differs from what the host's own Button_order builds.
     uint8_t emptyText[ue_wrap::ftext_utils::kFTextSize];
     if (!ue_wrap::ftext_utils::EmptyFText(emptyText)) {
         UE_LOGW("order_economy: CommitOrder -- empty FText unresolved (Kismet not ready) -- defer");
         return false;
     }
 
-    // Build a contiguous items buffer the native addOrderCart deep-copies (then we free it). Only
-    // resolvable item classes are packed (a bad class name is skipped, not faulted).
-    std::vector<uint8_t> itemsBuf(n * kItemStride, 0);
-    int32_t nValid = 0;
+    // Build a contiguous items buffer the native addOrderCart deep-copies (then we free it), by
+    // copying each LIVE list_store row wholesale. ALL-OR-NOTHING: an unknown row name aborts the
+    // whole commit, because a partial delivery would hand over goods the arbiter could not name
+    // while the caller has already priced the full basket.
+    std::vector<uint8_t> itemsBuf(n * static_cast<size_t>(kItemStride), 0);
     for (size_t i = 0; i < n; ++i) {
-        const OrderItem& it = order.items[i];
-        if (it.objectClass.empty()) continue;
-        void* cls = R::FindClass(it.objectClass.c_str());
-        if (!cls) {
-            UE_LOGW("order_economy: CommitOrder -- unknown class '%ls' -- skipping item",
-                    it.objectClass.c_str());
-            continue;
+        const SC::Row* row = SC::Find(order.rowNames[i]);
+        if (!row || !row->data) {
+            UE_LOGW("order_economy: CommitOrder -- unknown store row '%ls' -- committing NOTHING",
+                    order.rowNames[i].c_str());
+            return false;
         }
-        uint8_t* base = itemsBuf.data() + static_cast<size_t>(nValid) * kItemStride;
-        *reinterpret_cast<int32_t*>(base + kItemPriceOff) = it.price;
-        *reinterpret_cast<void**>(base + kItemObjOff)     = cls;       // object TSubclassOf
-        *reinterpret_cast<uint8_t*>(base + kItemCatOff)   = it.category;
-        std::memcpy(base + kItemSubcatOff, emptyText, ue_wrap::ftext_utils::kFTextSize);
-        *reinterpret_cast<int32_t*>(base + kItemSizeOff)  = it.size;
-        // name/asProp/achievementUnlock FNames left NAME_None (0,0); parseRowNameToObject false --
-        // the spawn uses `object` directly (RE Q5), so these are cosmetic for MVP.
-        ++nValid;
+        uint8_t* base = itemsBuf.data() + i * static_cast<size_t>(kItemStride);
+        std::memcpy(base, row->data, static_cast<size_t>(kItemStride));
+        std::memcpy(base + subcatOff, emptyText, ue_wrap::ftext_utils::kFTextSize);
+        // ...and stamp the row KEY into `name`, because the table does not carry it. `[V]` every
+        // one of the 473 stored rows has name = "None"; `generateStore` writes the key into the
+        // SHOP SLOT's copy at store-generation time (@1419), so a cart item built by the game's own
+        // Button_order carries it and a raw table row does not. Copying the row alone would
+        // therefore produce an item that is NOT what the host's own purchase produces -- and would
+        // strand the identity that v136 made load-bearing. Found by the order selftest, whose
+        // forward failed with "ReadOrder(0) failed" until this line existed.
+        *reinterpret_cast<R::FName*>(base + nameOff) =
+            ue_wrap::fname_utils::StringToFName(order.rowNames[i]);
     }
-    if (nValid == 0) { UE_LOGW("order_economy: CommitOrder -- no resolvable item classes -- dropped"); return false; }
 
     // Wrap in a native Fstruct_storeOrder { items TArray; time f32 }.
     uint8_t orderStruct[kOrderStride] = {0};
-    *reinterpret_cast<void**>(orderStruct + kOrderItemsOff + 0) = itemsBuf.data();  // items.Data
-    *reinterpret_cast<int32_t*>(orderStruct + kOrderItemsOff + 8) = nValid;          // items.Num
-    *reinterpret_cast<int32_t*>(orderStruct + kOrderItemsOff + 12) = nValid;         // items.Max
-    *reinterpret_cast<float*>(orderStruct + kOrderTimeOff) = order.time;
+    *reinterpret_cast<void**>(orderStruct + kOrderItemsOff + 0)   = itemsBuf.data();
+    *reinterpret_cast<int32_t*>(orderStruct + kOrderItemsOff + 8) = static_cast<int32_t>(n);
+    *reinterpret_cast<int32_t*>(orderStruct + kOrderItemsOff + 12) = static_cast<int32_t>(n);
+    *reinterpret_cast<float*>(orderStruct + kOrderTimeOff) = etaSeconds;
 
     void* fn = R::FindFunction(R::ClassOf(laptop), L"makeAnOrder");
     if (!fn) { UE_LOGW("order_economy: CommitOrder -- makeAnOrder UFunction not found"); return false; }
@@ -221,9 +241,11 @@ bool CommitOrder(const OrderData& order, bool automatic) {
     }
     f.Set<bool>(L"automatic", automatic);
     const bool ok = ue_wrap::Call(laptop, f);
-    UE_LOGI("order_economy: CommitOrder -- makeAnOrder(items=%d, automatic=%d) ok=%d",
-            nValid, automatic ? 1 : 0, ok ? 1 : 0);
+    UE_LOGI("order_economy: CommitOrder -- makeAnOrder(items=%zu, eta=%.1f, automatic=%d) dispatch=%d",
+            n, etaSeconds, automatic ? 1 : 0, ok ? 1 : 0);
     // itemsBuf freed here -- safe: addOrderCart's Array_Add already deep-copied into saveSlot.orders.
+    // NOTE `ok` is the DISPATCH result, NOT makeAnOrder's outcome. The caller confirms the commit
+    // with an OrderCount() +1 edge before it charges anyone.
     return ok;
 }
 
@@ -237,6 +259,56 @@ bool QuietLocalDrone() {
     if (g_offDroneFlying   >= 0) *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(drone) + g_offDroneFlying) = -1;
     if (g_offDroneHasOrder >= 0) *reinterpret_cast<bool*>(reinterpret_cast<uint8_t*>(drone) + g_offDroneHasOrder)  = false;
     return true;
+}
+
+int32_t RestoreCartItems(const std::vector<std::wstring>& rowNames) {
+    namespace SC = ue_wrap::store_catalog;
+    if (rowNames.empty()) return 0;
+    if (!SC::Ready()) {
+        UE_LOGW("order_economy: RestoreCartItems -- store_catalog unusable; the refused cart cannot "
+                "be rebuilt (the balance correction still applies)");
+        return 0;
+    }
+    void* gm = ResolveGamemode();
+    if (!gm || !ResolveGmOffsets(gm) || g_offLaptop < 0) return 0;
+    void* laptop = ReadPtr(gm, g_offLaptop);
+    if (!laptop) return 0;
+
+    void* fn = R::FindFunction(R::ClassOf(laptop), L"addStoreCart");
+    if (!fn) { UE_LOGW("order_economy: RestoreCartItems -- addStoreCart not found"); return 0; }
+
+    // The native takes the struct BY VALUE, and its declared size is the STRUCT size (0x4D), not the
+    // TArray element STRIDE (0x50). Ask the UFunction rather than assuming which of the two it is --
+    // writing 0x50 bytes into a 0x4D parameter slot would scribble on whatever follows it.
+    int32_t paramSize = -1;
+    for (const auto& prm : R::FunctionParams(fn))
+        if (prm.name == L"struct_store") { paramSize = prm.size; break; }
+    if (paramSize <= 0 || paramSize > kItemStride) {
+        UE_LOGW("order_economy: RestoreCartItems -- addStoreCart param size %d is not plausible "
+                "(stride %d) -- skipping", paramSize, kItemStride);
+        return 0;
+    }
+
+    int32_t added = 0;
+    for (const std::wstring& name : rowNames) {
+        const SC::Row* row = SC::Find(name);
+        if (!row || !row->data) {
+            UE_LOGW("order_economy: RestoreCartItems -- unknown store row '%ls' -- skipped",
+                    name.c_str());
+            continue;
+        }
+        ue_wrap::ParamFrame f(fn);
+        if (!f.valid()) break;
+        // The LIVE row, unmodified: this is a local UI restore, so unlike the commit path there is
+        // no reason to stamp over `subcategory` -- the real FText is what the cart row would have
+        // held, and the native copies it out of our frame the same way the game's own path does.
+        if (!f.SetRaw(L"struct_store", row->data, paramSize)) break;
+        if (!ue_wrap::Call(laptop, f)) break;
+        ++added;
+    }
+    UE_LOGI("order_economy: RestoreCartItems -- re-added %d of %zu refused item(s) to the cart",
+            added, rowNames.size());
+    return added;
 }
 
 }  // namespace ue_wrap::order_economy
