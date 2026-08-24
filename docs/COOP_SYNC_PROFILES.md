@@ -138,7 +138,7 @@ a take-4 bug that a later unverified fix addressed stays at its last-measured `B
 | Time-of-day | sleep-accelerate toggle | U | code | CO | `SetSleepAccelerate` | none (sleep lane) |
 | Alarm | klaxon `active` on/off | U | code | CO | `alarm_sync::Apply` | snapshot incl active=0 |
 | Balance | canonical Points total | U | code | HA | `balance_sync::ApplyFromHost` | connect-replay |
-| Balance | credit delta request | U | code | ARB | `OnDeltaRequest` (only host applies) | none (transient) |
+| Balance | credit delta request | **RETIRED v135** | code | n/a | The facet no longer exists: `OnDeltaRequest` and the whole client->host `BalanceDelta` lane were deleted 2026-08-24 (security A5). A connected client cannot author the shared balance at all; `CreditLocal` refuses and logs. Credits reach the balance host-side only (shop orders re-committed by the host via `order_sync`, sells, task rewards, the dev button), and the host's Points poll broadcasts the new total | n/a |
 | Daily-task | taskNew (arrays + scalars) | U | code | HA | `OnTaskNewState` | baseline-first-sight (save transfer) |
 | Email | row append (chunked) | U | code | HA | `email_sync::CompleteAssembly` | save transfer + shadow prime |
 | Email | row delete (content-hash) | U | code | CA | `ApplyDeleteByHash` | episode gate |

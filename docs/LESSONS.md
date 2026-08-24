@@ -33,6 +33,21 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 1. How to work (process / working agreements)
 
+- **2026-08-24 — If the fix GROWS every round, you have not found the root yet.** Across a 9-round
+  `/qf` the W10 fix accreted a per-sender share cap, a full per-connection drain, a shared-drain
+  pause, a `FatalCloseSlot` terminal, an hConn-stamped connection park with counters, and a
+  largest-contributor rule — **every one designed, defended, then discarded** — before converging on
+  *moving one existing check above a role split*, with no new constant and a net-negative diff. Each
+  intermediate design was locally defensible (it answered the previous round's objection), which is
+  exactly what makes the pattern invisible from inside: accretion feels like progress. Complexity
+  growth is a free per-round proxy for "the root is still mis-stated" — and it was: the register had
+  named a fairness bug when the defect was one-role-only backpressure. *Look FIRST:* state the fix's
+  SIZE in every `/qf` brief (lines, new constants, new state, new API surface); two consecutive
+  rounds of growth means stop designing and go re-derive what the defect IS in mechanism terms; four
+  or more discarded mechanisms is the same signal. And when a fix does converge small, name the
+  discarded designs in the commit so the next session does not re-propose them.
+  `memory/feedback_a_converged_fix_should_shrink_not_grow.md`
+
 - **An instrument must report its INPUTS, not only its verdict.** 2026-07-31: one probe printed
   `PREDICATE DEAD` on four consecutive runs for four UNRELATED reasons — it targeted a class default
   object; then a widget-tree template (filtering only the immediate outer removed 3 of 400, because a
@@ -3639,9 +3654,13 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   R-4b): reliable reassembly overflow returns do-not-ACK (`snp.cpp:3479-3493`); decoded-queue overflow
   (`RecvBufferMessages`=1000) propagates as no-ACK with NO stream advance (`snp.cpp:3807-3816`) -- the
   sender retransmits. Stopping/lagging the receive poll = true end-to-end backpressure, never
-  GNS-internal loss or a kill. This is what makes the client inbox's pause-not-drop (R-4b D10) safe --
-  the fear "GNS under me will drop" is measured false. *Look FIRST:* session.cpp NetThread client
-  receive branch + `memory/lesson_gns_receive_overflow_stalls_never_drops.md`
+  GNS-internal loss or a kill. This is what makes the inbox's pause-not-drop (R-4b D10) safe --
+  the fear "GNS under me will drop" is measured false. **UPDATED 2026-08-24:** the pause shipped
+  CLIENT-ONLY, so the host re-created the very loss this row says GNS never inflicts, one layer up in
+  our own code -- fixed in `5dd21bb6`, and the one-sided application is its own lesson
+  (`memory/lesson_a_protection_added_to_one_role_only.md`). *Look FIRST:* session.cpp NetThread drain
+  loop -- the check now sits ABOVE the `if (role == Host)` split, not inside a branch --
+  + `memory/lesson_gns_receive_overflow_stalls_never_drops.md`
 - **A library's DEFAULT is not your binary's effective config — census your own init path for
   overrides before recording a "default" as a fact** (SendRate pass, 2026-08-23): R-4b measured GNS
   stock `SendRateMin/Max = 256 KB/s` (`csteamnetworkingsockets.cpp:84-85`) and recorded it as the
@@ -3763,6 +3782,51 @@ are the facts, `TRACKER.md` is the ranked findings list, `EXECUTION.md` is the b
 S1-S6, and `PLAN_01..05` are the fix plans. Read those before any security, transport,
 authority-boundary or website work. Everything below is the durable *lesson*; status lives in the
 tracker.
+
+- **2026-08-24 — A comment that justifies a WORSE design with an IMPOSSIBILITY caps every future
+  fix.** The host's silent reliable-message drop was defended by *"its poll group cannot pause one
+  connection selectively"*. `[V]` All three of its claims were false: the cap was global not
+  per-sender; `SetConnectionPollGroup` accepts `k_HSteamNetPollGroup_Invalid` and **our own
+  `session_status.cpp:229` already calls that function**; and pausing never needed to be
+  per-connection at all, since not draining the group pauses every source. Rule S1 covers a comment
+  asserting a **control that does not exist** — this is the inverse and it is worse, because a false
+  *constraint* is load-bearing on design: every later author builds around "we cannot do X". Worst
+  part: the primary **inherited the sentence twice more inside the same `/qf` loop** after personally
+  labelling it false, using it to justify a terminal and then a connection park. *Look FIRST:* treat
+  any comment explaining why a worse option was taken as `carried-framing UNVERIFIED`; grep the API
+  it says is unavailable. And after labelling a claim false, **re-derive every conclusion that rested
+  on it in the same pass** — the `/qf` brief has a RE-AUDIT line for exactly this.
+  `memory/lesson_a_comment_that_justifies_a_worse_design_with_an_impossibility.md`
+
+- **2026-08-24 — A protection added to ONE ROLE only is a defect on the other, wearing a different
+  name.** `HandleMessage` and the drain loop run on both roles, but R-4b D10's inbox backpressure was
+  written inside the CLIENT branch; `[V]` the host branch read no inbox depth at all, grew to the
+  hard 8192 cap and executed `return;` — a silent drop of a reliable message, i.e. permanent state
+  divergence on an in-order lane, discarding whoever's message arrived rather than the flooder's. The
+  existing comment even said the client threshold sits below the cap *"so the drop branch is
+  unreachable **on the client path**"* — a sentence naming the path where it IS reachable, read for
+  months as reassurance. **The finding was registered under the wrong name** ("the cap is global, not
+  per-peer" — a fairness bug), which sent three `/qf` rounds designing shares, counters and parks
+  before anyone re-derived the mechanism. *Look FIRST:* after writing any guard into a function both
+  roles reach, grep the other branch in the same sitting and state what it does; distrust
+  `if (role == Host) {...} else {...}`; and read "unreachable on path P" as a to-do about not-P.
+  Fix `5dd21bb6`. `memory/lesson_a_protection_added_to_one_role_only.md`
+
+- **2026-08-24 — A PE-INVISIBLE verb forces producer-side polling, which silently makes EVERY PEER an
+  author.** `gamemode.addEmail` cannot be intercepted, so the email lane was built as producer-side
+  watermark polling (`protocol.h:1946-1951`): each peer polls `saveSlot.emails.Num` and ships new
+  rows. That mechanical choice IS an authority model, arrived at without anyone deciding it — so
+  `[V]` `email_sync.cpp:662-668` has no role gate (correctly, within that design, since a client's
+  own game really does generate mail) and no count or rate cap, while the host **persists** what it
+  receives and `SeedSendRowToSlot` replays it to every future joiner. `EmailDelete` is worse: it is
+  on the client-relay whitelist, so a client's delete fans out **before** the host validates — rule
+  S2, the A3 shape. Note A4 had named this as one word, "email delete"; the word was doing the work
+  of a finding. *Look FIRST:* when a lane's design says "the producing peer polls and ships", ask
+  *who is allowed to be a producer* — if the answer is "whoever ran the code", the lane has no
+  authority model, and the fix is client-side producer SUPPRESSION (`event_fire_sync.h:15-17`), never
+  a receive-side gate, which would silently lose legitimate client-produced rows. Registered as
+  **A12**, user-raised, OPEN.
+  `memory/lesson_pe_invisible_verbs_force_producer_polling_which_makes_every_peer_an_author.md`
 
 - **2026-08-23 — A leak sweep scoped to one DIRECTORY is not a leak sweep.** The A11 fix purged the
   origin VPS IP from four `docs/` files on 2026-07-24 and verified clean — *inside `docs/`*. One
