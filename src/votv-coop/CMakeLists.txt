@@ -488,6 +488,7 @@ add_library(votv-coop SHARED
     src/coop/items/save_record_wire.cpp
     src/coop/props/container_contents_sync.cpp
     src/coop/dev/delivery_census_probe.cpp
+    src/coop/dev/store_table_probe.cpp
     src/ue_wrap/actors/inventory.cpp
     src/ue_wrap/actors/save_record.cpp
     src/coop/world/email_sync.cpp
