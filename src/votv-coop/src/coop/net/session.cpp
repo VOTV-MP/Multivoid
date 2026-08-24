@@ -450,18 +450,18 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
         }
         {
             std::lock_guard<std::mutex> lk(reliableInboxMutex_);
-            // Cap the inbox so a flooding peer can't grow it unboundedly on
-            // the host's net thread. 8192 provides ~4x headroom over an
-            // observed worst-case connect-time snapshot burst (~1700
-            // PropSpawn for a fully-populated VOTV world). At ~232 B per
-            // inline message that's ~1.9 MB worst case -- bounded for DoS
-            // while still fitting legitimate fan-outs.
-            constexpr size_t kReliableInboxCap = 8192;
-            if (reliableInbox_.size() >= kReliableInboxCap) {
-                UE_LOGW("net: reliableInbox full (%zu) -- dropping kind=%u from peer slot %d",
-                        kReliableInboxCap, static_cast<unsigned>(rh.kind), peerSlot);
-                return;
-            }
+            // SECURITY W10: the 8192 hard cap that used to DROP here is gone (RULE 2).
+            // A silent drop on an in-order reliable lane is permanent state divergence,
+            // and it discarded whichever message happened to arrive at the cap -- not
+            // necessarily the flooder's. Growth is now bounded upstream instead, by the
+            // NetThread pause both roles share: the drain loop stops receiving at
+            // kReliableInboxSoftPause (6144) and GNS buffers losslessly beneath it.
+            //
+            // The pause is evaluated once per loop iteration and each iteration receives
+            // at most one 256-wide batch, so the depth cannot exceed 6144 + 256 = 6400
+            // before the next evaluation -- with 1792 messages of margin under the value
+            // this branch used to fire at. HandleMessage has exactly ONE caller (the drain
+            // loop below), so there is no second path that could grow the inbox unchecked.
             // emplace + memcpy avoids the per-receive heap alloc
             // (vector::assign). ReliableMessage now holds an inline 228 B
             // payload buffer. Stamp senderPeerSlot = routeSlot so drainers
@@ -583,12 +583,38 @@ void Session::NetThread() {
         // far above any real rate AND above the ~2300 one-shot snapshot (which clears in one
         // pass via the n<256 break first), so this cap is invisible in normal operation.
         constexpr int kMaxDrainPerPass = 4096;
-        // R-4b D10: the client's pause threshold -- safely BELOW HandleMessage's
-        // 8192 hard cap so the drop branch is unreachable on the client path.
+        // R-4b D10 + SECURITY W10 (docs/security/TRACKER.md): the reliable inbox at its
+        // threshold is BACKPRESSURE, not drop -- pause this pass's receive so GNS buffers
+        // underneath (measured lossless-by-stall: reassembly overflow does not ACK, and
+        // decoded-queue overflow refuses without advancing the stream, so the sender
+        // retransmits). The pause is bounded by the game-thread stall that caused the
+        // pile-up, since the inbox drains on the game tick; unreliable pose staleness
+        // during it is the channel's normal contract.
+        //
+        // W10: THIS USED TO BE CLIENT-ONLY, and that was the whole finding. The host had
+        // no depth check at all, so its inbox grew to a hard 8192 cap in HandleMessage and
+        // then SILENTLY DROPPED a reliable message -- permanent state divergence on an
+        // in-order lane, and the arriving message need not even be the flooder's. The
+        // comment here used to justify that with "its poll group cannot pause one
+        // connection selectively", which is doubly wrong: [V] pausing is not per-connection
+        // at all (not draining the group pauses every source, which is exactly what the
+        // client's pause does with its one source), and [V] selective pausing WOULD have
+        // been available anyway via SetConnectionPollGroup, which session_status.cpp:229
+        // already calls. The fix is therefore not a cap, a share, or a terminal: the host
+        // simply gets the pause the client already had, and the drop becomes unreachable.
+        //
+        // Both triggers are load-bearing and both apply to both roles: inbox depth, AND a
+        // lane's apply park escalating (the seeds arc -- pause-not-drop at both caps).
         constexpr size_t kReliableInboxSoftPause = 6144;
         SteamNetworkingMessage_t* msgs[256]{};
         int drained = 0;
         for (;;) {
+            bool inboxFull = false;
+            {
+                std::lock_guard<std::mutex> lk(reliableInboxMutex_);
+                inboxFull = reliableInbox_.size() >= kReliableInboxSoftPause;
+            }
+            if (inboxFull || applyBackpressureCount_.load(std::memory_order_acquire) > 0) break;
             int n = 0;
             if (cfg_.role == Role::Host) {
                 const uint32_t hPoll = hPollGroup_.load();
@@ -598,26 +624,6 @@ void Session::NetThread() {
                         static_cast<int>(std::size(msgs)));
                 }
             } else {
-                // R-4b D10: on the CLIENT the reliable inbox at cap becomes
-                // BACKPRESSURE, not drop -- pause this pass's receive so GNS
-                // buffers underneath (measured lossless-by-stall: reassembly
-                // overflow does not ACK, decoded-queue overflow refuses without
-                // advancing the stream -> the host retransmits). The pause is
-                // bounded by the game-thread stall that caused the pile-up (the
-                // inbox drains on the game tick); unreliable pose staleness
-                // during it is the channel's normal contract. The HOST keeps
-                // the in-HandleMessage cap as a per-sender flood defense (its
-                // poll group cannot pause one connection selectively).
-                bool inboxFull = false;
-                {
-                    std::lock_guard<std::mutex> lk(reliableInboxMutex_);
-                    inboxFull = reliableInbox_.size() >= kReliableInboxSoftPause;
-                }
-                // Seeds arc: a lane's apply park at its flood bound escalates to the
-                // SAME pause (pause-not-drop; GNS receive is lossless-by-stall at both
-                // caps). Terminal honesty then belongs to the host's per-connection
-                // no-progress fatal -- never a local drop.
-                if (inboxFull || applyBackpressureCount_.load(std::memory_order_acquire) > 0) break;
                 const uint32_t hConn = peerConns_[0].load();
                 if (hConn != 0) {
                     n = sockets->ReceiveMessagesOnConnection(
