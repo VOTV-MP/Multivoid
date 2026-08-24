@@ -1583,6 +1583,28 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   clean every time. LOOK FIRST: a heredoc script mysteriously not matching / erroring on a
   backslash = rerun via a Write-tool file before debugging the script itself.
   `memory/lesson_bash_heredoc_halves_backslashes_in_python.md`
+- **Mechanical tractability is NOT reachability — census the world before picking which member of a
+  defect class to fix first.** A 7-round `/qf` converged on `prop_pointSack` as consumer-one of the
+  credit lane on entirely sound mechanical grounds (class-constant value, plain destroy-edge artifact,
+  none of the coin/RNG/pickup machinery that got the coin gun cut) — and it is placed in **0 of the
+  261 cooked `.umap` files**, fewer than the gun already cut for being unused; the most-placed paying
+  props (`atm` 10, `prop_miner` 7) are the ones blocked on other lanes. The two axes are independent
+  and here they were inversely ordered. **A `/qf` cannot catch this for you** — the critic interrogates
+  the frame it is handed, so a target named in the brief's first line gets refined, never replaced.
+  The tell was in plain sight: zero occurrences in `docs/`. LOOK FIRST: run
+  `grep -rl <class> --include=*.umap research/pak_re/extracted` at ROUND 0, and put the target itself
+  in the brief as a question. `memory/lesson_mechanical_tractability_is_not_reachability.md`
+- **A CLASS DEFAULT is agreement by construction — check for one before arguing about sync.** Asked
+  whether the host's copy carries the same value the client just earned, the reflex was a sync argument
+  (keyed, save-transferred). The real answer was one level down: `prop_pointSack.points` is **never
+  written** (18-statement ubergraph, read-only, zero `Random*`, no spawner sets it) and lives in the
+  class default (base 25, `_xs` 5, `_s` 10, `_l` 50). Every peer loads the same cooked asset, so both
+  agree by construction — stronger than any lane argument, and it collapsed a resolve-the-actor branch
+  out of the design (the arbiter needs only the CLASS, which `PropSpawn` already carries). **Never
+  generalise by field name:** `points` on the sibling `baocoin_C` IS spawner-stamped
+  (`SetIntPropertyByName`). LOOK FIRST: grep the owning asset for writes to the field and the corpus
+  for a `Set*PropertyByName('<field>')` spawner; if nothing writes it, read the class default and stop.
+  `memory/lesson_a_class_default_is_agreement_by_construction.md`
 
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
 
