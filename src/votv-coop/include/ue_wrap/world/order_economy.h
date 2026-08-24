@@ -45,9 +45,20 @@ bool ReadOrder(int32_t index, OrderData& out);
 
 // HOST: commit `order` as a real delivery via the native Uui_laptop_C::makeAnOrder(order, automatic).
 // Builds the native Fstruct_storeOrder (objects via FindClass; a pinned empty FText for subcategory;
-// a heap items buffer the native deep-copies then we free). `automatic=true` = the auto/unpaid path
-// (no points charge -- the coop economy delivers for the group; shared-wallet charging is a separate
-// concern). False if unresolved / no item class resolved / the dispatch failed. Game thread.
+// a heap items buffer the native deep-copies then we free). False if unresolved / no item class
+// resolved / the dispatch failed. Game thread.
+//
+// CORRECTION 2026-08-24 (bytecode census, security A34 -- rule S1). This comment used to read
+// "`automatic=true` = the auto/unpaid path (no points charge ...)", which frames the flag as a
+// CHOICE between a paid and an unpaid variant. **There is no paid variant inside this function.**
+// `[V]` `makeAnOrder`'s blocks 0/56/271/619/788 contain ZERO `addPoints`. The charge lives in the
+// CALLER: `ui_laptop`'s Button_order ubergraph does `addPoints(storePrice * -1)` at @6168 and only
+// THEN calls `makeAnOrder(order, false)` at @6302. So our host re-commit cannot charge whatever we
+// pass for `automatic`, and the shipped consequence is that a client's order debits the CLIENT
+// locally, never the host, and that debit is then refunded by the host's next balance broadcast:
+// **unbounded free goods for every client, by default.** The false "unpaid path" framing is why
+// nobody looked. Fixing it means the HOST prices the order from its own store table and applies the
+// charge itself -- an intent may name WHAT, never WHAT IT COSTS. See docs/security/TRACKER.md A34.
 bool CommitOrder(const OrderData& order, bool automatic);
 
 // HOST: are the actors CommitOrder dereferences all present, so a commit can't null-fault?
