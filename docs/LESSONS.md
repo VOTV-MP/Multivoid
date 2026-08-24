@@ -33,6 +33,7 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 1. How to work (process / working agreements)
 
+- **2026-08-24 — RUN A NEW DECISION RULE ON ITS OWN MOTIVATING CASE, BEFORE YOU COMMIT IT.** I wrote a three-step test for the act-as-host rule (`COOP_SYNCER_MODEL.md` §2b) and committed it (`d5d56eac`) without running it on the **sell gun** — the case the user raised to motivate the whole rule. A `/qf` critic asked me to walk it out loud and it **could not decide that case**: the deciding question, *can the arbiter OBSERVE the trigger?*, was not one of the three steps, so the test returned "build it" for something that cannot be built until the `0x45` `vm_dispatch` substrate lands (`[V]` all 19 credit sites are `EX_LocalVirtualFunction`). Added as step 2 in `b007dac0`. **The missing step is usually the important one — the motivating case is motivating BECAUSE it is hard, so a procedure validated only on easy cases encodes the easy questions.** *Look FIRST:* before committing any rule/test/checklist/taxonomy, execute it verbatim in writing on the originating example AND on a case it should REJECT; if the motivating case is still being measured, that is a reason to WAIT, not to commit and revise (I revised twice in one session). `memory/feedback_run_a_new_decision_rule_on_its_own_motivating_case.md`
 - **2026-08-24 — If the fix GROWS every round, you have not found the root yet.** Across a 9-round
   `/qf` the W10 fix accreted a per-sender share cap, a full per-connection drain, a shared-drain
   pause, a `FatalCloseSlot` terminal, an hConn-stamped connection park with counters, and a
@@ -64,6 +65,7 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   population (`instances=327 focused=0`), assert the precondition inside the run, and treat every
   helper that touches global UI state as a confound.**
   Full: `[[lesson-an-instrument-must-report-its-inputs-not-only-its-verdict]]`.
+  **NEW MEMBER 2026-08-24 (security W10).** W10 deleted the host's silent reliable DROP and put a receive PAUSE in its place — and the pause was **silent on both roles**: nothing logged when it fired, nothing logged how deep the inbox got. The owed RED drill was therefore blind BY CONSTRUCTION, since "no pause fired" and "the depth never got there" print identically. Fixed `0de1c1dc`: an exact enqueue-side depth high-water plus per-trigger counters (depth vs apply-park, kept SEPARATE so a seeds-arc park can never be misread as a depth pause), every ~1 Hz **including the quiet case**. Second-order: the drill's THRESHOLD is now chosen FROM the measurement rather than guessed, which is why the drill knob was deliberately left unbuilt in the same commit.
 
 - **A DECLINED PRODUCT QUESTION DOES NOT GO AWAY — it just gets answered after you build it
   (2026-07-30).** The `/qf` critic asked in **round 1** and again in **round 2** whether the homoglyph
@@ -3777,6 +3779,8 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 > resolve on GitHub. The public security document is the root `SECURITY.md`. Finding IDs cited here
 > against a SHIPPED fix are deliberately kept — attribution of a closed row reveals nothing.
 
+- **2026-08-24 — DEFENDING ONLY THE *CHEAT* DIRECTION MANUFACTURES THE *LOSS* DIRECTION.** **A5** deleted the client→host `BalanceDelta` lane as an unbounded client-authored economy write. Correct — nothing legitimate used it — and **nothing replaced it**, so the shared balance now has no client→host path AT ALL. `[V]` `balance_sync.cpp:48-58` is host-poll + broadcast-ON-CHANGE, so a client's legitimate earning (a sell-gun coin, a point sack, a chest, an ATM bill, any of 52 achievement assets) **persists and DIVERGES** — HUD included, because `lib::addPoints` does its own `SetText` — and then silently vanishes when the host's balance next moves. **And it is worse than "lost": `prop_destroy_seam.cpp:177` broadcasts destroys for BOTH roles, so the CONSUMPTION replicates while the CREDIT does not — a client selling something makes the group LOSE THE ITEM AND GAIN NOTHING.** An authority gap has two directions sharing one root and one fix, so a patch aimed at either feels like it addressed the root; deleting a lane closes CHEAT *by removing the path*, which is exactly what opens LOSS. *Look FIRST:* before closing an authority row, ask what LEGITIMATE traffic used the path you are removing or gating, and say how you know (a sender census, not an assumption) — "nothing used this" is not "nothing needs this". **The diagnostic signature is REPLICATED COST WITH UNREPLICATED BENEFIT:** check whether an action's cost (a destroy, a decrement) and its benefit (a credit, a spawn) ride the same lane. Register **A13** + the economy block; rule `COOP_SYNCER_MODEL.md` §2b. `memory/lesson_defending_only_the_cheat_direction_manufactures_the_loss_direction.md`
+
 Canonical home: **`docs/security/`** — `README.md` is navigation, `THREAT_MODEL.md` + `SUBSTRATE.md`
 are the facts, `TRACKER.md` is the ranked findings list, `EXECUTION.md` is the board, `RULES.md` is
 S1-S6, and `PLAN_01..05` are the fix plans. Read those before any security, transport,
@@ -3894,6 +3898,7 @@ tracker.
   (now `*.pem`/`*.key`/`*.p12`/`*.pfx`/`*.jks`/`id_rsa`/`id_ed25519`, global, `3f1a4e4a`). *Look FIRST:*
   for any ignore/allow/deny rule, verify with the tool, not the comment beside it.
   `memory/lesson_false_security_comment_worse_than_none.md`
+  **THIRD SHAPE 2026-08-24 — a comment that names a MODE claims the sibling mode exists.** `order_economy.h` called `CommitOrder(..., automatic=true)` *"the auto/unpaid path"*; every word is defensible and it smuggles in a PAID path that does not exist (`makeAnOrder`'s blocks contain zero `addPoints` — the charge is in `ui_laptop`'s `Button_order` @6168). Result: our host re-commit could not charge for ANY flag value → **unbounded free goods for every client, by default** (**A34/A35**, corrected `96742f45`). *Look FIRST:* naming a flag value "the unpaid path" is a claim about the paid path — grep for the sibling before believing in it; when WRITING one, name what the code does, not which of two things it is.
 - **Before CAPPING an allocation driven by a wire value, ask whether the allocation is needed at
   all.** `save_transfer.cpp:857` reserved from an unvalidated wire `u32` (one packet → 4 GiB →
   process death). The planned fix was a `kMaxSaveBlobBytes` cap; a use census showed the `reserve()`
@@ -3925,6 +3930,7 @@ tracker.
   denominator and CRC out from under an in-flight transfer. Two audit agents and two `/qf` rounds
   missed it while the field sat in the brief, described by its readers. Announce-then-stream lanes owe
   an "announced exactly once per arm" invariant. `memory/lesson_census_writers_not_just_uses.md`
+  **PREREQUISITE added 2026-08-24: verify the named writer is not a FORWARDER.** `ue_wrap/world/economy.h` called `AmainGamemode_C::AddPoints` "the single credit-writer" for months; `[V]` it is a THREE-STATEMENT forwarder to `lib_C::addPoints`, the real sole writer. Because the doc named the forwarder, every later "who writes the balance" census enumerated OUR callers of it — one dev button — and read like a census of the game's earnings (the true answer: 19 sites across sell guns, coins, the ATM, chests, miners, 52 achievement assets, the shop). *Look FIRST:* open the named writer and COUNT ITS STATEMENTS. A single delegating call is a signpost, not a destination.
 - **Send-side caps are not caps — validate on APPLY.** The classic bug classes are largely absent in
   this tree (lengths checked, strings clamped, paths allow-listed, zero non-literal format strings);
   the real exposure is every "the peer is a well-behaved copy of this build" assumption. Peers come

@@ -140,6 +140,42 @@ pillars (if melee turns out EX_CallMath→native, the existing Func patch serves
 The mirror-STATE-not-verb doctrine remains law for scalar lanes (devices L2, eventer, pause…) —
 this substrate serves the identity-flip / intent-attribution class only.
 
+## 0b. A SECOND named consumer, and a security stake (2026-08-24)
+
+Written after the user-directed authority census. This document's first consumer is the kerfur
+form-flip assembler (§3). It now has a second, and the second one is what makes the HALT-gated ladder
+worth walking:
+
+`[V]` **Every credit and debit in VOTV goes through `lib_C::addPoints`, and all 19 call sites are
+`EX_Context(Default__lib_C)` -> `EX_LocalVirtualFunction`** — i.e. squarely the invisible class §0
+describes. Measured by `kismet-analyzer` over the extracted cooked tree, with coverage checked before
+the census was trusted (2,641 CXXHeaderDump classes vs 2,993 extracted `.uasset` basenames; BP
+bytecode is present, not nativized). Name census: `addPoints` appears in 18 assets and every non-`lib`
+use of the `points`+`saveSlot` FName pair is a READ.
+
+Consequences for this plan:
+
+- **The economy cannot be made host-authoritative without this substrate.** That is the honest answer
+  to "why is the shared balance still broken" — dispatch visibility, not design. Register: `A13` (a
+  client's legitimate earning never reaches the shared balance) plus the whole economy block at the
+  foot of `docs/security/TRACKER.md` (A37-A43: sell-gun coins, point sacks, chests, the ATM, the miner,
+  achievements). Same root as `A12` (email), which is the other lane forced into producer-side polling
+  by an invisible verb.
+- **One choke point, not 19.** A consumer here does not need per-site coverage: `lib_C::addPoints` is
+  the sole writer, so a single VM bracket on it observes every earning in the game. That is an unusually
+  good fit for the type-dispatched consumer shape in §1.
+- **The measured alternative, for the comparative pass:** Func-patch the NATIVE
+  `VictoryBPFunctionLibrary::VictoryIntPlusEquals` that `lib::addPoints` calls. It IS reachable with
+  today's primitives — but it is called from everywhere in the game, so the filter cost and noise are
+  the reason to prefer the VM bracket, not an argument that the bracket is required.
+- **`AmainGamemode_C::AddPoints` is NOT the seam.** It is a three-statement forwarder. Our
+  `ue_wrap/world/economy.h` asserted it was "the single credit-writer" for months; corrected `96742f45`.
+
+**This does NOT unblock the ladder.** The HALT gates in §2 stand unchanged; this section adds a
+consumer and a motivation, not a verdict.
+
+---
+
 ## 1. The substrate: GNatives pointer-swap (option A)
 
 Patch the two `GNatives[256]` exec-handler table entries (`EX_LocalVirtualFunction`,

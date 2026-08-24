@@ -219,6 +219,20 @@ defect. `[V]` The one economy path that works proves it: `drone_sync.cpp:150,241
 **client's drone tick**, so only the host ever runs the sale. A lane that does not name its suppressed
 side is not specified.
 
+**THE ARBITER'S VALUES ARE CANONICAL EVEN WHEN THEY ARE ABSURD (USER 2026-08-24).**
+
+> *"if host cheats thats fine, if he alters his balance to 99999 — that's also fine as he's the owner,
+> he's the host. We have to relay whatever the host has cheated (balance, whatever else)."*
+
+This constrains the rule in a direction that is easy to get wrong while "hardening" something. The
+arbiter is not a referee applying rules to itself — it is the definition of truth. So **every bound,
+clamp or plausibility check this model adds is CLIENT-SCOPED; a symmetric check is a bug**, because it
+would override the host's prerogative over their own world. Write the role into the check, or do not
+write the check. The existing correct shape is `balance_sync::CreditLocal`: it credits on host/solo,
+refuses only on a CONNECTED CLIENT, and the host's poll broadcasts the result like any other change —
+a host-side cheat is a BROADCAST, not an exception. Full statement: `docs/security/THREAT_MODEL.md`,
+"The host may cheat, and we RELAY it".
+
 **An intent may name WHAT. It must never carry WHAT IT COSTS.** `[V]` `order_sync` is the one lane
 already built in this shape and it is still exploitable, because the intent carries a client-chosen
 `price` and class that the host writes through verbatim (**A34/A35**). The arbiter must price the
