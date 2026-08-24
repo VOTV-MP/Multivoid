@@ -19,6 +19,13 @@
 
 namespace ue_wrap::floppybox {
 
+// The NATIVE stack depth (RE fact, see the header comment above): addFloppy appends
+// onto a LIFO of at most this many discs. It lives here rather than at a use site
+// because it is a property of the GAME's crate, not of any one sync lane -- a receive
+// path that lets a wire op push past it has written a state the game itself cannot
+// produce (security W8).
+inline constexpr size_t kNativeCapacity = 15;
+
 bool IsFloppyBoxClass(void* cls);
 
 struct BoxArrays {

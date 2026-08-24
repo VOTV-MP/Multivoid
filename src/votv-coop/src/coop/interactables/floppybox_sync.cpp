@@ -397,11 +397,22 @@ void OnBoxChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
             const int32_t type = static_cast<int32_t>(r.U32());
             const std::wstring str = r.Str();
             if (!r.ok) return;
+            // SECURITY W8 (docs/security/TRACKER.md): REFUSE at the game's own capacity.
+            // This used to push first and then WARN above 15, which is not a cap at all --
+            // a wire op could grow the crate's two persisted TArrays without bound, into a
+            // state the native addFloppy can never produce. Refusing needs no new policy
+            // and no invented number: the bound is the game's, and the unconditional
+            // canonical below is already the ack, so the pusher's optimistic local push is
+            // undone by the same broadcast that acks a successful one.
+            if (a.data.size() >= FB::kNativeCapacity) {
+                UE_LOGW("floppybox: push REFUSED (eid=%u, from slot %u) -- box is at the "
+                        "native capacity (%zu); canonical follows and heals the sender",
+                        eid, static_cast<unsigned>(senderSlot), FB::kNativeCapacity);
+                HostBroadcastCanonical(s, eid, actor);
+                return;
+            }
             a.types.push_back(type);
             a.data.push_back(str);
-            if (a.data.size() > 15)
-                UE_LOGW("floppybox: box eid=%u exceeds the native cap (%zu) -- divergence "
-                        "healed by canonical, watch for a dupe source", eid, a.data.size());
             FB::WriteArraysAndGen(actor, a);
             { FB::BoxArrays copy = a; PrimeShadow(eid, actor, std::move(copy)); }
             UE_LOGI("floppybox: push applied (eid=%u type=%d, from slot %u)",

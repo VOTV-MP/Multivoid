@@ -324,6 +324,19 @@ void HostApplyBatch(Reader& r, uint8_t senderSlot) {
     if (!r.ok) {
         UE_LOGW("laptop_buffer: malformed batch from slot %u -- dropped (canonical follows)",
                 static_cast<unsigned>(senderSlot));
+    } else if (const size_t packed = PackCanonical(q).size();
+               packed > coop::blob_chunks::MaxBlobBytes()) {
+        // SECURITY W8 (docs/security/TRACKER.md): appendTail had NO cap, so a wire batch
+        // could grow the host's engine arrays without bound. The bound is NOT invented
+        // here -- it already exists one function away: PackCanonicalBounded drops TAIL
+        // rows to fit MaxBlobBytes(), so any state past that point is one the canonical
+        // cannot carry. Applying it would grow the engine array into a region the ack
+        // silently truncates, which is unbounded growth AND permanent divergence at once.
+        // Refuse the WHOLE batch (a partially-applied edit script is not an edit anyone
+        // authored) and let the unconditional canonical below heal the sender.
+        UE_LOGW("laptop_buffer: batch from slot %u REFUSED -- the applied quad would pack "
+                "to %zu B, past the %zu B transport cap; nothing written, canonical follows",
+                static_cast<unsigned>(senderSlot), packed, coop::blob_chunks::MaxBlobBytes());
     } else {
         L::WriteQuadAndRebuild(q);
         UE_LOGI("laptop_buffer: batch from slot %u applied (%d op(s), %d skipped, rwDelta=%d)",
