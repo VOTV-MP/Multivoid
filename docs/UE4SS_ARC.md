@@ -56,7 +56,7 @@ proxy / dup-dialog retire WHOLE per RULE 2 — no standalone-and-UE4SS dual path
 | **WP-2** | The loader cut: delete `xinput_proxy.cpp` + the proxy deploy path (RULE 2); `cppmod_entry.cpp` in; predecessor detection + mutex; keep EVERYTHING else. | **IN PROGRESS.** Pre-cut LANDED (§2). Fix (**B**, §4) is BUILT + default-ON and its compose is **VERIFIED** (2026-08-22 16:02 real-env byte decode + 16:25 DEV `POLYHOOK-COMPOSED` boot, §4 Proof status). The IsLive/VEH arc is BUILT (D1, 2026-08-22 night, §4 -- run B pending the user). Remaining before the proxy deletion: symbolize the 19:17 real-env EXEC-at-NULL dump (§4 residuals), B's teardown leak-at-death residual, then commit 3 itself. |
 | **WP-4** | Fix the stale install/update/uninstall prose + the site + installer for the UE4SS lane. | **PARKED, but now SPECIFIED** — census written (`votv-ue4ss-stale-loader-prose-CENSUS-2026-08-22.md`, ~139 rows); §7 measures the target shape and §7.3 fixes the sequencing (it must not flip before a UE4SS-lane build is released). **+ §7.0 (USER 2026-08-24): the GitHub repo DESCRIPTION and topics are stale prose too and are invisible to the census — they live outside the tree. `description` still says "a standalone C++ DLL"; the `dll-injection` topic goes; `homepageUrl` is empty and is fixable NOW.** |
 | **WP-6** | Distribution re-home (the `multivoid-<game>-<build>.dll` filename + master + release flow onto the mod-folder shape). | **PARKED, now SPECIFIED** — §7.2 + §7.4. |
-| **WP-9** | **Thunderstore publication** (USER 2026-08-23: "надо нам бы стать официальным модом и попасть в магазин thunderstore ... чтобы обычный юзер смог поставить нативно"). Ship Multivoid as a Thunderstore package so r2modman / Thunderstore Mod Manager installs it natively. | **NEW, SPECIFIED, NOT BUILT** — §7. The payload shape is ALREADY correct; what is missing is package metadata, a version mapping decision, and a publish step. |
+| **WP-9** | **Thunderstore publication** (USER 2026-08-23: "надо нам бы стать официальным модом и попасть в магазин thunderstore ... чтобы обычный юзер смог поставить нативно"). Ship Multivoid as a Thunderstore package so r2modman / Thunderstore Mod Manager installs it natively. | **NEW, SPECIFIED, NOT BUILT** — §7. The payload shape is ALREADY correct; what is missing is package metadata, a GENERATED manifest, and a publish step. **The version mapping is DECIDED, not owed** (§7.3, user 2026-08-23: `<game-major>.<game-minor>.<build>`); this row said "a version mapping decision" was missing after §7.3 had already made it. **§7.3a (2026-08-24, user-raised) measures what the versioned DLL name costs today** — it moves on every proto bump including security-only ones (`0.9.135` as of `ca3943e9`), its CMake justification expires with WP-2 commit 3, `deploy-mod.ps1` picks the payload by mtime out of 14 artifacts, and the six anchor sites that must move in one commit are tabulated. |
 | **WP-7** | The native DEBUG subsystem (USER 2026-08-21: adopt UE4SS's debug tooling / DebugMod ideas). | **PARKED** — scoped in the design finding §3c. |
 | **WP-8** | The hygiene split (USER 2026-08-21: "everything that is a tool, not the mod" moves out). | **PARKED** — scoped in the design finding §3d. |
 | **L-4** | Engine access via UE4SS's own APIs (the "bridge"). | **DEFERRED**, and **permanently PARTIAL** — the ProcessEvent interception path stays ours forever (§4). |
@@ -497,6 +497,53 @@ rots unbumped is precisely the failure that got mod semver deleted in the first 
 re-introducing a hand-typed `version_number` in `manifest.json` would recreate it one layer out. So
 `manifest.json` is emitted at package time from the two sources above, and the packaging step fails
 closed if either parse misses. Do not check a literal version into the repo's manifest template.
+
+### 7.3a What the artifact name costs TODAY — measured 2026-08-24 (USER-RAISED)
+
+The user asked mid-WP-6: *"Why do we still produce `multivoid-0.9.0n-135.dll` outputs? We have to
+re-work semver according to UE4SS arc."* The mapping itself is NOT open — §7.3 above decided it and
+the user decided it. What the question exposed is a set of facts nobody had written down, recorded
+here so WP-4/WP-9 do not re-derive them.
+
+**1. `version_number` moves on EVERY protocol bump, including a security-only one.** This session's
+WP-6 fix retired the `BalanceDelta` lane, which is a real parse change, so `kProtocolVersion` went
+134 -> 135 (`ca3943e9`). By §7.3's own rule that silently moved the release identity:
+`multivoid-0.9.0n-135.dll`, Thunderstore `version_number` **`0.9.135`**. This is the first time the
+pair has moved for a reason that is neither a release nor a game recook. **Consequence:** any
+release-notes ledger row, INSTALL anchor or draft body still keyed to `134` is stale, and the
+packaging step must read the number rather than carry one.
+
+**2. The name's stated justification expires with commit 3.** `src/votv-coop/CMakeLists.txt:636-638`
+declares *"the filename is load-bearing, not cosmetic"* and gives the reason: **the xinput proxy
+scans for `multivoid-*.dll`** (loads the highest build, flags duplicates for the in-game popup). WP-2
+commit 3 deletes that scanner, at which point the sentence is false and the versioned filename has no
+consumer inside the mod folder at all — UE4SS's contract name is the fixed `dlls\main.dll`. The
+identity does not disappear; it moves to the zip name, the generated `manifest.json`, and the
+in-game banner (`coop/version.h` + `kProtocolVersion`), none of which need it in the DLL filename.
+
+**3. A live defect, independent of the cutover.** `tools/deploy-mod.ps1:38-43` picks the payload by
+globbing `multivoid-*.dll` and taking `Sort-Object LastWriteTime -Descending | Select -First 1`. The
+build directory currently holds **14** such artifacts (`122` through `135`), so the deploy is one
+stale rebuild away from shipping the wrong payload while reporting success. It should compute the
+exact expected filename from the two sources §7.3 already names and fail closed if it is absent —
+the same "derive it, never guess it" rule the manifest is held to.
+
+**4. The anchors that must move in the SAME commit** (measured; this is the weld's real edge, and
+`ledger_lint` fails on the spot if they drift):
+
+| site | what it asserts |
+|---|---|
+| `tools/release/publish.ps1:24-36` | exactly one `multivoid-*.dll` in the artifact dir, and its name equals `multivoid-<game>-<N>.dll` |
+| `tools/release/ledger_lib.ps1:219-220` | the release body is built from exactly one `multivoid-*.dll` key in the sha map |
+| `tools/release/ledger_lib.ps1:149-150` | the verbatim INSTALL anchor `delete the old ` + backtick-`multivoid-*.dll` |
+| `tools/release/ledger_lint.ps1:74-77` | INSTALL.md carries no literal build filename, only the placeholder |
+| `tools/release/tag_regex_selftest.ps1:58,78` | fixtures `multivoid-0.9.0n-999.dll` + `xinput1_3.dll` |
+| `src/votv-coop/CMakeLists.txt:675-679` | the `xinput1_3` target still BUILDS today; it retires with commit 3 |
+
+**5. Sequencing is unchanged and already answered by 7.4a** — the flip is allowed locally right now
+because nothing is being pushed; what is forbidden is flipping the prose without re-minting the CI
+anchors in the same commit. The user's 2026-08-24 ruling on ordering: **this work happens AFTER the
+security holes are closed** (WP-6), together with the release-pipeline fix in item 3.
 
 ### 7.4 Sequencing — SUPERSEDED 2026-08-23 by the user's no-push ruling (read 7.4a first)
 
