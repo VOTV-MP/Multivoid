@@ -99,6 +99,11 @@ bool IsMirroredActor(void* actor);
 // Register/unregister a materialized mirror. Called by the mirror path only. Any thread.
 void NoteMirrorActor(void* actor, bool add);
 
+// Drop every entry. Called from the teardown drain -- the set is keyed on a raw pointer, so it must
+// not outlive the mirrors (a recycled address would otherwise make a genuine local actor read as a
+// mirror). Any thread.
+void ClearMirrorActors();
+
 // True while THIS THREAD is inside a mirror materialization (BeginDeferred..FinishSpawning inclusive),
 // which is exactly the window in which a mirror's BeginPlay runs and its delegates bind.
 bool IsMaterializingMirror();

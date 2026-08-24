@@ -67,12 +67,18 @@ public:
     bool  HasPose() const { return hasPose_; }
 
     // v137 TRANSFORM-DELTA GATE (host send side). True when this actor's transform differs from the
-    // one we last PUT IN A BATCH by more than a hair, and records the new value when it does. A
-    // settled actor therefore consumes ZERO of the batch's 28 slots -- which is what stops an
-    // accumulated sell-gun coin population (baocoin_C never despawns) from starving the shipped event
-    // actors out of a stream that truncates by iteration order. Self-re-arming: anything that moves a
-    // resting actor (a collector's capsule shoving the coin's r=15 physics body) is a change again.
-    // Epsilon is deliberately coarse -- this gates a MIRROR's visual pose, not a physics result.
+    // one we last batched, recording the new value when it does. Self-re-arming: anything that moves a
+    // resting actor (a collector's capsule shoving a coin's r=15 physics body sits OUTSIDE its r=10
+    // pickup trigger) is a change again. Epsilon is coarse on purpose -- this gates a MIRROR's visual
+    // pose, not a physics result.
+    //
+    // SCOPE, corrected by the 2026-08-24 audit: this saves WIRE BYTES, not batch slots. The caller
+    // MUST test the batch cap BEFORE calling, because reading the transform costs two ProcessEvent
+    // dispatches and two heap allocations -- gating on delta ahead of the cap made the walk scale with
+    // the whole live population instead of with 28. It follows that a resting sell-gun coin still
+    // OCCUPIES its slot in iteration order; starving the shipped event actors out of a 28-entry batch
+    // remains an open concern once coins accumulate, and the honest fix for that is fairness in the
+    // walk (a rotating start), NOT moving this call.
     bool PoseChangedSinceLastSend(const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot);
 
 private:

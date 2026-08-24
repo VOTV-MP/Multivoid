@@ -366,6 +366,8 @@ void Install(coop::net::Session* session) {
 
 bool IsInstalled() { return g_installed.load(std::memory_order_acquire); }
 
+void ClearMirrorActors();   // defined below with the mirror-set helpers
+
 void OnDisconnect() {
     // Drain the unified MirrorManager<WorldActor> (a process holds host XOR client WA elements, like
     // Npc). K2_DestroyActor ONLY the client mirror actors (IsMirror()==true); the host's real WA
@@ -389,6 +391,7 @@ void OnDisconnect() {
             ++nK2;
         }
     }
+    ClearMirrorActors();   // I-3: the raw-pointer mirror set must not outlive the mirrors
     const size_t total = WaMirrors().DrainAll();
     if (total > 0)
         UE_LOGI("world-actor: drained %zu WorldActor element(s) (%zu host release-only, %zu client "
@@ -435,18 +438,22 @@ void TickPoseStream() {
             continue;
         }
         if (!connected) continue;  // no peers: lifecycle-only pass, no batch to build
-        // v137 TRANSFORM-DELTA GATE. A sell-gun coin takes ONE impulse and then rests forever (`[V]`
-        // baocoin_C has no InitialLifeSpan and its only destroy is the collect), so an accumulated
-        // coin population would otherwise hold pose slots permanently -- and this batch TRUNCATES at
-        // kMaxWorldActorBatchEntries (28) BY ITERATION ORDER with no fairness, which would starve the
-        // shipped piramid/wisp/event actors out of the stream. Batching only on CHANGE makes a settled
-        // coin cost ZERO slots, and a coin shoved by a collector's capsule (its r=15 physics body sits
-        // OUTSIDE the r=10 pickup trigger) re-arms itself with no timer and no latch to get wrong.
-        // Deliberately placed AFTER the dead check above, which is what keeps dead-retire immune.
+        // C-2 + I-1 (audit 2026-08-24) -- READ THE ORDER HERE BEFORE CHANGING IT.
+        // The cap check MUST come first. `E::GetActorLocation` / `GetActorRotation` are each a full
+        // ProcessEvent dispatch WITH a per-call heap allocation, so hoisting them above this check (as
+        // the first v137 draft did) made the walk cost 2 PE + 2 mallocs per LIVE WorldActor per tick at
+        // 125 Hz instead of a hard 28x2 -- unbounded in exactly the population this feature creates,
+        // since coins never despawn. That traded 28 batch slots for tens of thousands of dispatches a
+        // second: a net loss, and the shape the standing no-per-frame-scan rule exists to stop.
+        if (static_cast<int>(batch.size()) >= coop::net::kMaxWorldActorBatchEntries) { ++truncated; continue; }
         const auto loc = E::GetActorLocation(actor);
         const auto rot = E::GetActorRotation(actor);
+        // The delta gate now saves WIRE BYTES, not slots: a resting actor is not re-sent. It runs
+        // AFTER the cap so `sent*` can only record a pose we are actually about to batch -- I-1: the
+        // draft recorded before truncation, so an actor whose FINAL resting tick was the truncated one
+        // would latch that pose as "sent", never satisfy the delta test again, and freeze its mirror
+        // mid-flight for the rest of the session.
         if (!el->PoseChangedSinceLastSend(loc, rot)) continue;
-        if (static_cast<int>(batch.size()) >= coop::net::kMaxWorldActorBatchEntries) { ++truncated; continue; }
         coop::net::WorldActorPoseSnapshot snap{};
         snap.elementId = static_cast<uint32_t>(el->GetId());
         snap.x = loc.X; snap.y = loc.Y; snap.z = loc.Z;
@@ -562,6 +569,17 @@ bool IsMirroredActor(void* actor) {
     if (!actor) return false;
     std::lock_guard<std::mutex> lk(g_mirrorActorsMu);
     return g_mirrorActors.find(actor) != g_mirrorActors.end();
+}
+
+void ClearMirrorActors() {
+    // I-3 (audit 2026-08-24). The set is keyed on a RAW pointer and was only ever erased on a wire
+    // destroy -- so a disconnect/world teardown (which K2-destroys the mirrors and DrainAll()s the
+    // table) left every entry behind. Two failures: unbounded growth across rejoins, and -- worse -- a
+    // recycled allocation matching a stale entry makes IsMirroredActor() answer TRUE for a MAP-PLACED
+    // baocoin_C, so coingun_sync cancels its pickup and the coin becomes permanently uncollectable and
+    // ghosted. That is precisely the NEW loss the mirror-scoping was introduced to avoid.
+    std::lock_guard<std::mutex> lk(g_mirrorActorsMu);
+    g_mirrorActors.clear();
 }
 
 void NoteMirrorActor(void* actor, bool add) {

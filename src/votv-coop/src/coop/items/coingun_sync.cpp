@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <cstring>
 #include <mutex>
+#include <unordered_map>
 #include <vector>
 
 namespace coop::coingun_sync {
@@ -33,7 +34,12 @@ namespace E  = ue_wrap::engine;
 namespace GT = ue_wrap::game_thread;
 namespace vm = ue_wrap::vm_dispatch;
 
-constexpr int kVerbCoinGunUse = 1;
+// C-1 (audit 2026-08-24): vm_dispatch's active-verb window is ONE global thread-local, so a verb id
+// is a PROJECT-WIDE namespace, not a per-file one. Id 1 was already taken by four consumers
+// (kerfur_form_assembler kVerbTurnOff, drive_sync kVerbPutDriveIn, meadow_db_sync kVerbMark,
+// container_contents_sync kVerbDirty). Distinct id here -- but the id is NOT the correctness gate;
+// the Context class check in IsInCoinGunVerb() is (see below).
+constexpr int kVerbCoinGunUse = 6;
 
 constexpr const wchar_t* kGunClassName  = L"prop_coingun_C";
 constexpr const wchar_t* kCoinClassName = L"baocoin_C";
@@ -50,6 +56,11 @@ void* g_collectFn     = nullptr;   // Abaocoin_C's collect BndEvt (the PE-visibl
 void* g_libCdo        = nullptr;   // Default__lib_C -- sellObject's context
 void* g_sellObjectFn  = nullptr;
 void* g_coinClass     = nullptr;
+void* g_gunClass      = nullptr;   // prop_coingun_C -- the Context gate (C-1) and the mint executor
+void* g_sellFn        = nullptr;   // prop_coingun_C::sell -- cached (M-5: was re-resolved per sale)
+int32_t g_offCoinSphere  = -1;   // Abaocoin_C::Sphere -- the SIMULATING component (NOT the root)
+void* g_setSimFn      = nullptr;   // UPrimitiveComponent::SetSimulatePhysics
+ue_wrap::CachedObjRef g_gunRef;     // a live gun instance, world-stamped (C-3: was a walk per sale)
 int32_t g_offCoinPoints  = -1;   // Abaocoin_C::points  (@0x0240 in the dump; resolved by NAME)
 int32_t g_offPropMesh    = -1;   // Aprop_C::StaticMesh (@0x0238 in the dump; resolved by NAME)
 
@@ -68,6 +79,14 @@ std::atomic<unsigned long long> g_salesRefused{0};
 // the 2026-08-23 world-stamp arc converted 78 sites away from.
 std::mutex g_pendingMu;
 std::vector<ue_wrap::CachedObjRef> g_pendingKill;
+
+// C-3 (audit 2026-08-24): the artifact must be CONSUMED, or a client can replay one CoinGunSell and
+// mint for the same prop forever -- the host removes nothing itself (by design: the client's own
+// PropDestroy does that), so nothing else stops a repeat. `order_sync`, which this lane cites as its
+// precedent, confirms its commit with an OrderCount()+1 edge before charging; this is the equivalent.
+// Keyed on eid AND the actor pointer so it self-cleans: once that prop dies and the eid is recycled
+// onto a different actor, LivePropActor returns a new pointer and the sale is allowed again.
+std::unordered_map<uint32_t, void*> g_soldEid;
 
 bool IsCoinActor(void* actor) {
     if (!actor) return false;
@@ -176,16 +195,60 @@ void OnVerbEntry(const vm::Bracket& b) {
 void* FindLiveGun() {
     // `[V]` `sell` reads ZERO gun state and positions coins from the SOLD PROP's component, so ANY
     // live instance behaves identically -- there is nothing to prefer.
-    // FindObjectByClass walks GUObjectArray, so this is COLD-PATH ONLY -- once per sale, never
-    // per frame (the standing perf rule bans per-frame full-array scans).
-    return R::FindObjectByClass(kGunClassName);
+    // C-3 (audit): "once per sale" is NOT cold enough -- the sale rate is attacker-controlled, and
+    // FindObjectByClass is a full GUObjectArray walk. Cache it and walk only on a miss.
+    if (void* cached = g_gunRef.Get()) return cached;
+    void* found = R::FindObjectByClass(kGunClassName);
+    if (found) g_gunRef.Set(found);
+    return found;
 }
 
 }  // namespace
 
+void PrepareCoinMirror(void* coin) {
+    // I-5 (audit 2026-08-24). The first draft called E::SetActorSimulatePhysics, which applies to the
+    // ROOT component -- and `[V]` Abaocoin_C declares `collect` (USphereComponent) FIRST, `baocoin`
+    // (mesh) second, and `Sphere` (the one shipping bSimulatePhysics=True) THIRD. The BP root is
+    // conventionally the first-declared component, so that call would have logged physics-off=1 while
+    // `Sphere` kept simulating and fought the pose drive. Target the component BY NAME instead: a
+    // UActorComponent is a UObject, so it takes a normal reflected call.
+    if (!coin) return;
+    if (g_offCoinSphere < 0 && g_coinClass)
+        g_offCoinSphere = R::FindPropertyOffset(g_coinClass, L"Sphere");
+    if (g_offCoinSphere < 0) {
+        UE_LOGW("coingun[mirror]: coin %p -- 'Sphere' offset unresolved, cannot stop the mirror "
+                "simulating; it may drift from the host's authoritative pose", coin);
+        return;
+    }
+    void* sphere = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(coin) + g_offCoinSphere);
+    if (!sphere) return;
+    if (!g_setSimFn) g_setSimFn = R::FindFunction(R::ClassOf(sphere), L"SetSimulatePhysics");
+    if (!g_setSimFn) {
+        UE_LOGW("coingun[mirror]: SetSimulatePhysics unresolved on the coin's Sphere component");
+        return;
+    }
+    ue_wrap::ParamFrame f(g_setSimFn);
+    if (!f.valid()) return;
+    f.Set<bool>(L"bSimulate", false);
+    const bool ok = ue_wrap::Call(sphere, f);
+    UE_LOGI("coingun[mirror]: coin %p -- Sphere(%p) SetSimulatePhysics(false) dispatch=%d (a pose-driven "
+            "mirror must not also simulate)", coin, sphere, ok ? 1 : 0);
+}
+
 bool IsInCoinGunVerb() {
     const vm::ActiveVerb av = vm::CurrentThreadVerb();
-    return av.active && av.verbId == kVerbCoinGunUse;
+    if (!av.active || av.verbId != kVerbCoinGunUse) return false;
+    // THE CORRECTNESS GATE (C-1, audit 2026-08-24). `vm_dispatch` matches on the verb NAME alone and
+    // says so: "any further class/authority discrimination is the CONSUMER's job". `playerHandUse_LMB`
+    // is declared by 146 classes in the CXX dump -- prop_knife, prop_hacksaw, prop_flamethrower,
+    // prop_garbageGun, prop_arirDisint, prop_toolgun... Without this check a client destroying a keyed
+    // prop with ANY of them would author a sale and the host would MINT COINS FOR IT: a free-money
+    // path in ordinary play, manufacturing the very defect this lane exists to close. The header
+    // promised this check from the first draft and the code did not have it, which is
+    // `[[lesson-false-security-comment-worse-than-none]]` in its purest form.
+    if (!av.ctx) return false;
+    if (!g_gunClass) g_gunClass = R::FindClass(kGunClassName);
+    return g_gunClass && R::ClassOf(av.ctx) == g_gunClass;
 }
 
 void SendSaleForDyingProp(uint32_t elementId) {
@@ -249,6 +312,18 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
         return;
     }
 
+    // C-3: has this exact prop already been sold? (see g_soldEid)
+    {
+        auto it = g_soldEid.find(p.elementId);
+        if (it != g_soldEid.end() && it->second == prop) {
+            g_salesRefused.fetch_add(1, std::memory_order_relaxed);
+            UE_LOGW("coingun[host]: REFUSED slot=%u eid=%u -- REASON=already-sold. This prop was already "
+                    "minted for and its destroy has not yet removed it. A replayed or duplicated sale "
+                    "mints nothing.", senderSlot, p.elementId);
+            return;
+        }
+    }
+
     void* gun = FindLiveGun();
     if (!gun) {
         g_salesRefused.fetch_add(1, std::memory_order_relaxed);
@@ -299,7 +374,8 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
     void* meshComp = (g_offPropMesh >= 0)
         ? *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(prop) + g_offPropMesh)
         : nullptr;
-    void* sellFn   = R::FindFunction(R::ClassOf(gun), L"sell");
+    if (!g_sellFn) g_sellFn = R::FindFunction(R::ClassOf(gun), L"sell");   // M-5: cache, not per sale
+    void* sellFn = g_sellFn;
     if (!sellFn) {
         UE_LOGW("coingun[host]: REFUSED slot=%u eid=%u -- REASON=sell-unresolved", senderSlot,
                 p.elementId);
@@ -314,6 +390,7 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
     sf.Set<int32_t>(L"Index", points);           // `[V]` `Index` IS the price
     sf.Set<void*>(L"comp", meshComp);
     const bool ok = ue_wrap::Call(gun, sf);
+    g_soldEid[p.elementId] = prop;   // C-3: consume the artifact
 
     // The coins the mint spawns are EX_CallMath BeginDeferreds from the gun's bytecode, so
     // npc_world_enum's source-gated Func thunk catches them and drains to
@@ -328,8 +405,17 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     if (g_installed.load(std::memory_order_acquire)) return;
+    // C-4 (audit 2026-08-24). This runs at the 125 Hz pump rate, and every resolve below is a linear
+    // GUObjectArray walk with a name render per entry. The g_installed latch only helps AFTER success;
+    // in a world where baocoin_C's UClass is not resident (it loads on demand with the gun asset) this
+    // would burn up to five full walks per tick, forever, for every player in every session. Bound the
+    // retry to ~1 Hz -- the same shape wisp_attack_sync.cpp:277 already carries, added there by a
+    // 2026-06-14 audit as its own CRITICAL.
+    static uint32_t sResolveN = 0;
+    if ((sResolveN++ % 125u) != 0u) return;
 
     if (!g_coinClass)     g_coinClass     = R::FindClass(kCoinClassName);
+    if (!g_gunClass)      g_gunClass      = R::FindClass(kGunClassName);
     if (g_offCoinPoints < 0 && g_coinClass)
         g_offCoinPoints = R::FindPropertyOffset(g_coinClass, L"points");
     if (!g_libCdo)        g_libCdo        = R::FindClassDefaultObject(L"lib_C");

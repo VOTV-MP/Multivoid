@@ -72,6 +72,12 @@ void Tick();
 // host. `senderSlot` is used only for logging and for preferring that peer's gun instance.
 void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot);
 
+// Called by the WorldActor mirror path for a freshly materialized `baocoin_C` mirror: stops it
+// simulating. Targets the coin's `Sphere` component BY NAME -- `[V]` that is the one shipping
+// bSimulatePhysics=True, and it is NOT the root (`collect` is declared first), so the actor-level
+// helper would silently miss it and the mirror would fight the pose drive. Game thread.
+void PrepareCoinMirror(void* coin);
+
 // TRUE while this thread is inside a `playerHandUse_LMB` dispatch whose Context is a
 // `prop_coingun_C`. The destroy seam asks this to know that the prop it is watching die is the gun's
 // victim, so it can put `CoinGunSell` in front of its own broadcast. Synchronous, thread-local.

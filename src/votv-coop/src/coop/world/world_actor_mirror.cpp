@@ -14,6 +14,7 @@
 #include "coop/creatures/piramid_sync.h"  // v100 auxYaw + v102 auxVec consumers
 
 #include "coop/element/identity_create.h"  // the single WorldActor mirror create funnel (Inc A)
+#include "coop/items/coingun_sync.h"
 #include "coop/element/mirror_managers.h"  // WaMirrors
 #include "coop/element/registry.h"
 #include "coop/element/world_actor.h"
@@ -194,15 +195,11 @@ void OnWorldActorSpawn(const coop::net::EntitySpawnPayload& payload) {
     // the FIRST simulating member of this allowlist; the 18 already-shipped classes are event actors
     // that do not simulate. CLASS-SCOPED on purpose (OPUS section 8: do not widen a seam in the same
     // commit that introduces its first consumer) -- the general invariant is named here, not applied.
-    if (classW == L"baocoin_C") {
-        // NOTE this targets the ROOT component (K2_GetRootComponent). `[V]` the simulating component is
-        // `Sphere` (r=15, bSimulatePhysics=True); whether Sphere IS the root is NOT determinable from the
-        // CXX header dump, so the result is LOGGED rather than assumed -- if a mirrored coin visibly
-        // drifts away from the host's, this line is the first thing to read.
-        const bool physOff = E::SetActorSimulatePhysics(spawned, false);
-        UE_LOGI("world-actor[client OnSpawn]: baocoin_C mirror eid=%u physics-off=%d (a pose-driven "
-                "mirror must not also simulate)", payload.elementId, physOff ? 1 : 0);
-    }
+    // A pose-driven mirror must not ALSO simulate. Class-scoped (OPUS section 8: do not widen a seam in
+    // the same commit that introduces its first consumer) -- `[V]` baocoin_C is the first allowlist
+    // member that simulates at all. The coin lane owns the coin specifics; it targets the right
+    // component by name (I-5: the actor-level root helper misses it).
+    if (classW == L"baocoin_C") coop::coingun_sync::PrepareCoinMirror(spawned);
     coop::world_actor_sync::NoteMirrorActor(spawned, /*add=*/true);
     UE_LOGI("world-actor[client OnSpawn]: materialized mirror eid=%u class='%ls' actor=%p loc=(%.0f,%.0f,%.0f) "
             "scale=(%.2f,%.2f,%.2f)", payload.elementId, classW.c_str(), spawned,
