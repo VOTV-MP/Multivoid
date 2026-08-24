@@ -2368,6 +2368,31 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 
 ## 4. Dispatch, hooks & input seams
 
+- **A MODULE HEADER IS NOT THE CAPABILITY MAP — a whole design cascade was built on one sentence in
+  `ufunction_hook.h` while `COOP_DISPATCH_VISIBILITY.md:88` stated the opposite IN BOLD.** 2026-08-24,
+  `/qf` rounds 34-35. `[SRC]` `ue_wrap/core/ufunction_hook.h` says a BP-internal call — listing
+  `EX_CallMath / EX_FinalFunction / EX_VirtualFunction / EX_Local*Function` — routes through
+  `UFunction::Func`, and that *"EVERY dispatch path funnels through Func, so the hook fires regardless
+  of the caller's opcode."* That is true **only for a NATIVE callee**. `[MEASURED]`
+  `docs/COOP_DISPATCH_VISIBILITY.md:88`: a SCRIPT UFunction called via `EX_Local*Function` is
+  *"INVISIBLE to BOTH ProcessEvent AND a Func patch (EX_Local\* never goes through `UFunction::Func`)"*
+  and is *"THE ONLY REMAINING INVISIBLE CLASS"*; `docs/COOP_VM_DISPATCH_PLAN.md:300-304` pins it in IDA
+  (both handlers branch on `FunctionFlags & 0x400` @`UFunction+0xB0` → `Invoke`/Func@`+0xD8` for native
+  vs `ProcessScriptFunction` → `ProcessInternal` for script, which never reads `Func`) and records
+  **"Option E ELIMINATED BY MEASUREMENT"** on 2026-07-13. Every Func patch the project ships
+  (`BeginDeferredActorSpawnFromClass`, `K2_DestroyActor`, `AudioComponent::Play`) is native — which is
+  precisely why the header reads as it does: an accurate description of ITS OWN consumers, and a false
+  generalisation about the engine. The cascade it produced ("we can cancel a BP verb, so the
+  act-as-host lane simplifies, so F0b's suppression dissolves, so the `0x45` registration and F6
+  dissolve with it") was entirely wrong, and the patch would have **installed successfully** (`Func` =
+  `ProcessInternal`, non-null, passes the null guard), logged `"patched ufn=… slot N"`, and never
+  fired — the same silent-no-op defect class the lane was being fixed for.
+  **LOOK HERE FIRST:** before claiming ANY seam can observe, drive, or CANCEL something, open
+  `docs/COOP_DISPATCH_VISIBILITY.md` — `CLAUDE.md`'s reading order already mandates it at step 4. A
+  module header answers *"how do I use this facility"*; the map answers *"is this possible at all"*,
+  and a design rests on the second. When they disagree, **the map wins and the header is a doc
+  defect**. Full: `memory/lesson_a_module_header_is_not_the_capability_map.md`.
+
 - **An overlay that inline-hooks `IDXGISwapChain::Present` LOSES to RivaTuner and is INVISIBLE to OBS
   game-capture — two user-reported defects, one root: we sit too far down the Present chain.**
   2026-08-22. `[AUTH]` RTSS does not overwrite prologues like MinHook/Detours — it unwinds the jmp
