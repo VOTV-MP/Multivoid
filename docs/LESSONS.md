@@ -2392,6 +2392,14 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   module header answers *"how do I use this facility"*; the map answers *"is this possible at all"*,
   and a design rests on the second. When they disagree, **the map wins and the header is a doc
   defect**. Full: `memory/lesson_a_module_header_is_not_the_capability_map.md`.
+  **SAME FAILURE, TWICE IN ONE SESSION — the general form is CONFIRMATION-STOPPING.** `/qf` round 39,
+  minutes later: asked whether MTA heartbeats its entity streams, I read
+  `CUnoccupiedVehicleSync.cpp:64` (`ulCurrentTime >= m_ulLastSyncTime + UNOCCUPIED_VEHICLE_SYNC_RATE`)
+  and reported "MTA is rate-driven". That is a RATE LIMITER; the actual send site 300 lines later is
+  change-gated (`:387-389`, *"If nothing has changed we dont sync the vehicle"*), as are
+  `CPedSync.cpp:314-316` and `CObjectSync.cpp:227-229`. The false citation reversed the design's
+  direction for a full round. **A gate is not a send; a header is not a map; an entry point is not a
+  mechanism — read to the site where the thing you are claiming actually HAPPENS, and cite THAT line.**
 
 - **An overlay that inline-hooks `IDXGISwapChain::Present` LOSES to RivaTuner and is INVISIBLE to OBS
   game-capture — two user-reported defects, one root: we sit too far down the Present chain.**
