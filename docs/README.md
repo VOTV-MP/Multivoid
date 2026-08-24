@@ -16,6 +16,7 @@ instead of being quietly edited. Pick a lane below rather than reading top-to-bo
 | **[INSTALL.md](INSTALL.md)** | Install, update, uninstall. The single owner of that prose — the README and every release body just link here |
 | **[../SECURITY.md](../SECURITY.md)** | What the mod does and does not protect, and how to report a vulnerability. **Read the "what does not hold" part before hosting for strangers** |
 | **[../README.md](../README.md)** | The project front page: what works today, field reports from testers, where to get builds |
+| **[FIELD_REPORTS.md](FIELD_REPORTS.md)** | The full tester-credit ledger — every report that changed the mod, what it actually turned out to be, and what shipped. The README and the site carry a one-line-per-tester summary of this |
 
 Everything below this line is for people who want to know how it works. You do not need it to play.
 
