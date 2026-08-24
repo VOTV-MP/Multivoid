@@ -33,6 +33,19 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 1. How to work (process / working agreements)
 
+- **2026-08-24 — STANDING USER RULE: scope is NEVER a reason to hold back.** Verbatim: *"Я даю зеленый
+  свет даже на самые радикальные решения, если они окажутся верными и правильными."* This is the
+  standing form of RULE 1's per-request green light — it does not need re-asking. Dissolving a module,
+  inverting a shared primitive's default across hundreds of call sites, retiring a shipped lane whole,
+  changing how the GAME behaves: none of these is a reason to design something smaller. The operative
+  test: **a design that is second-best because the best was judged too big has NOT converged.** The
+  boundary is the user's own wording — *"верными и правильными"* — so the licence covers SCOPE and
+  BEHAVIOUR only and never a skipped measurement, a skipped audit, or a shipped bug. Now enforced
+  mechanically: `.claude/skills/qf/SKILL.md` carries it in the critic prompt, in the brief assembly
+  (name every option you rejected for being large), and as a convergence condition.
+  *Look FIRST:* when you write "X would be the right fix, but it would mean rewriting Y", X is the live
+  option and Y's size is not an argument.
+  `memory/feedback_scope_is_never_a_reason_to_hold_back.md`
 - **2026-08-24 — RUN A NEW DECISION RULE ON ITS OWN MOTIVATING CASE, BEFORE YOU COMMIT IT.** I wrote a three-step test for the act-as-host rule (`COOP_SYNCER_MODEL.md` §2b) and committed it (`d5d56eac`) without running it on the **sell gun** — the case the user raised to motivate the whole rule. A `/qf` critic asked me to walk it out loud and it **could not decide that case**: the deciding question, *can the arbiter OBSERVE the trigger?*, was not one of the three steps, so the test returned "build it" for something that cannot be built until the `0x45` `vm_dispatch` substrate lands (`[V]` all 19 credit sites are `EX_LocalVirtualFunction`). Added as step 2 in `b007dac0`. **The missing step is usually the important one — the motivating case is motivating BECAUSE it is hard, so a procedure validated only on easy cases encodes the easy questions.** *Look FIRST:* before committing any rule/test/checklist/taxonomy, execute it verbatim in writing on the originating example AND on a case it should REJECT; if the motivating case is still being measured, that is a reason to WAIT, not to commit and revise (I revised twice in one session). `memory/feedback_run_a_new_decision_rule_on_its_own_motivating_case.md`
 - **2026-08-24 — If the fix GROWS every round, you have not found the root yet.** Across a 9-round
   `/qf` the W10 fix accreted a per-sender share cap, a full per-connection drain, a shared-drain

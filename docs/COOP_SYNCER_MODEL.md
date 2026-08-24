@@ -152,7 +152,12 @@ its own table (`ue_wrap/world/store_catalog`), checks its own balance, rolls its
 commit by an `OrderCount()` +1 edge, then charges. A correct act-as-host lane needs both halves — the
 arbiter performs it, *and* the arbiter supplies the numbers. **NOT hands-on**; and the lane's own
 credit half (a client's sell-gun earnings, A37/A38) is still open, so a client can currently spend the
-group's money but not earn it.
+group's money but not earn it. **It was ATTEMPTED and FAILED, so do not re-derive it from scratch**:
+v137 shipped the credit half on 2026-08-24 and the hands-on found it broken four ways the same day —
+the intent named the prop by an eid a v122 client never mints, the mirror physics-off never resolved,
+the collect seam hooks the wrong one of the credit block's two entries, and the coin's material (which
+IS its denomination) is off the wire. The corrected design, four censuses and a build ladder with a
+falsifiable verdict per step: `research/findings/inventory-items/votv-v137-field-defects-DESIGN-2026-08-24.md`.
 
 **Why the rule is needed at all — it is not only about cheating.** It has two failure directions and
 the register carries one of each:

@@ -1,5 +1,42 @@
 // coop/items/coingun_sync.h -- the SELL GUN and its COINS (v137, security A37/A38).
 //
+// ============================================================================================
+// FIELD-FAILED 2026-08-24, the same day it shipped. READ THIS BEFORE TRUSTING ANY PROSE BELOW.
+// The hands-on found FOUR failures and the design prose in this header contains claims that are
+// now MEASURED FALSE. Roots + the corrected design + the build ladder:
+//   research/findings/inventory-items/votv-v137-field-defects-DESIGN-2026-08-24.md
+//
+//   1. THE INTENT NEVER AUTHORS. `CoinGunSell` names the prop by an ELEMENT ID, and a v122 client
+//      mints no Element row for its OWN save-loaded keyed prop -- so the eid is 0 for exactly the
+//      props a player shoots. 3 of 3 sales refused on the client. The surviving identity is the
+//      KEY, which `PropDestroy` already carries and whose receiver resolves.
+//   2. "A REFUSED SALE DEGRADES TO EXACTLY TODAY'S BEHAVIOUR" (below) IS FALSE BY CONSTRUCTION.
+//      The capture of the client's own coins is UNCONDITIONAL (it keys on the verb alone) while
+//      the authorization is CONDITIONAL and decided LATER and INDEPENDENTLY -- so a refusal is a
+//      TOTAL loss: item gone, coins gone, nothing credited. The invariant that was missing:
+//      a local artifact must not be suppressed until the authoritative one is CONFIRMED.
+//   3. `PrepareCoinMirror` NEVER WORKED (6/6 `SetSimulatePhysics unresolved`): it resolves on the
+//      LEAF `USphereComponent` while `R::FindFunction` is EXACT-OWNER (reflection.cpp:468-481) and
+//      the function is declared on `UPrimitiveComponent`. Every other site in the tree resolves it
+//      on the declaring class. Consequence: a mirror coin keeps simulating, and once the pose
+//      delta gate silences a RESTING host coin the mirror drifts away uncorrected -- the likeliest
+//      reason a client cannot pick up the host's coins.
+//   4. THE COLLECT SEAM IS THE WRONG ENTRY. `[V]` TWO entries reach the credit block
+//      `ExecuteUbergraph_baocoin:441`: the overlap BndEvt hooked here, and `actionOptionIndex`
+//      DIRECTLY -- the E-press, `EX_LocalVirtualFunction`, PE-invisible. Six real host-side
+//      credits produced ZERO lines from this interceptor, so `OnCollectPre` has never been
+//      observed firing at all. Do not treat it as proven.
+//   5. `Points` IS NOT COSMETIC. `[V]` `ReceiveBeginPlay` picks the coin's MATERIAL from `points`
+//      (<=10 bronze / 11..25 silver / >=26 gold), once, and the CDO default is 5 -- so a mirror
+//      renders the WRONG DENOMINATION, not a wrong tint.
+//
+// Also measured while re-deriving this lane: the sold prop's destroy lives in the GUN's ubergraph
+// (@1730, inside the `if sold` branch), NOT inside `sell` -- so a host that only calls `sell` mints
+// coins and leaves the prop alive. And the coin's self-destroy is Func-VISIBLE but NOT CANCELLABLE:
+// `ufunction_hook`'s entire API is `InstallPostHook`, and `K2_DestroyActor` is `EX_VirtualFunction`
+// so ProcessEvent never sees it either.
+// ============================================================================================
+//
 // THE DEFECT (register A13's worst instance). `[V]` `Abaocoin_C : public AActor` -- NOT an `Aprop_C`
 // -- so it failed `IsDescendantOfProp` and appeared in no allowlist: coins were synced by nothing.
 // A client firing the gun therefore span up coins only on its own machine, credited only its own
