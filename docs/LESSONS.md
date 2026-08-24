@@ -3772,6 +3772,41 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   rel-path computation -- confirm the base went through Resolve-Path.
   `memory/lesson_powershell_unresolved_dotdot_breaks_substring_relpaths.md`
 
+- **2026-08-24 — A PUBLIC DOC THAT GIVES COORDINATES INTO REMOVED-BUT-HISTORICAL CONTENT *IS* THE
+  LEAK.** Unpublishing a directory removes it from the TIP, not from history — and that was a
+  considered decision. `[V]` What was not considered: a row in the arc doc's findings table -- then a tracked public file --
+  named the exact path AND line range of a committed crash log, plus the four log lines it held, as
+  *evidence that the origin VPS IP had leaked*. The value was in **zero** tracked files; the MAP was
+  published. Two trivial steps, and the second is only findable because the first was printed. **Axis 2
+  of the pre-push audit — the secrets grep — passed clean**, as it always does in this failure mode.
+  The sentence was written BY the remediation (a precise citation is a better record — and a better
+  treasure map), and it survived a full docs audit whose rule was about *citation bleed*, i.e. aimed
+  one category away: that rule polices sentences about FINDINGS, this was a sentence about a FILE.
+  *Look FIRST:* after unpublishing anything, **grep the still-public tree for coordinates INTO it** —
+  `git grep -nE "<removed-prefix>[A-Za-z0-9_./-]+[:0-9-]*[0-9]"` over tracked docs; removing a
+  container while keeping its index is not removing it. **Distinguish "reachable" from "advertised"
+  when you write the decision down** — "history is not rewritten" reads as risk-accepted-and-closed,
+  and it accepted reachability, not advertising. Name the CLASS, withhold the coordinates, say you are
+  withholding them. And prefer unpublishing the CONTAINER to patching the row.
+  `memory/lesson_a_public_doc_that_gives_coordinates_into_removed_content.md`
+
+- **2026-08-24 — MOVING A SECTION OUT OF A FILE THAT AGENTS ARE *INSTRUCTED* TO READ silently costs
+  them that corpus, and a tidy stub is worse than a broken link.** Section 9 of this very file was
+  split out to a local-only path; every referential check passed (no dangling public link, new file on
+  disk, honest stub). `[V]` But the `/qf` critic prompt tells its agent *"read docs/LESSONS.md ... it
+  is your PRIOR-ART index"* — so every future critic would open this file, find prose where §9 was, and
+  move on, losing the peer-identity / trust-boundary / receive-boundary / authority-signature rows.
+  **The user caught it, not me.** What I had checked was REFERENTIAL integrity (does every pointer
+  resolve); what I had not checked was INSTRUCTIONAL integrity (is anything told to read this file, and
+  does that instruction still get what it came for). A broken link announces itself; a well-written
+  stub reads like a complete short section, so the tidier it is the quieter the loss — and a critic
+  that never saw the corpus just asks slightly worse questions forever, with no signal anywhere.
+  *Look FIRST:* before moving a section out, **grep who is INSTRUCTED to read the file** (skills,
+  agent prompts, CLAUDE.md's reading order) and ask what each reader came for. Fix it in BOTH places —
+  an agent-addressed directive in the stub AND the instruction itself naming both files. Note the
+  knock-on: this ledger's 1:1 `memory/` pairing now SPANS two files, so a pairing check that greps one
+  reports false violations. `memory/feedback_moving_a_section_out_of_an_agent_read_file.md`
+
 ## 9. Security (threat model, trust boundaries, peer identity)
 
 > **READING THIS FILE AS AN AGENT (`/qf` critic, auditor, reviewer): OPEN
