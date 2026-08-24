@@ -4,12 +4,19 @@
 // every writer -- shop orders, signal-disk sells, task rewards, the +1000 dev button)
 // and broadcasts BalanceSync on CHANGE (+ to a joining client on its connect edge), so
 // every peer MIRRORS the host's balance. The CLIENT writes the host's absolute value
-// directly (no AddPoints side-effects). A client-side credit (the +1000 dev button; a
-// future laptop-shop buy) can't write its own mirror -- the next BalanceSync overwrites
-// it -- so it routes to the host as a BalanceDelta, which the host applies via AddPoints
-// (its poll then re-broadcasts the new total). HOST-authoritative, MTA server-economy
-// shape. Game thread only for the apply paths (SetSession/Tick/connect run on the net-
-// pump game thread; the receivers GT::Post their UObject writes).
+// directly (no AddPoints side-effects). HOST-authoritative, MTA server-economy shape.
+// Game thread only for the apply paths (SetSession/Tick/connect run on the net-pump
+// game thread; the receivers GT::Post their UObject writes).
+//
+// THE WIRE IS ONE-WAY, HOST->CLIENT (v135, security A5). A client->host BalanceDelta
+// request lane existed from v30 and the host applied it via AddPoints with NO value
+// bound, so any peer could set the shared balance to +/-2^31. It was retired whole
+// rather than clamped (RULE 2): a clamp keeps a client-authored economy lane alive as a
+// foothold and needs a "legitimate range" nobody can define. [V] Nothing legitimate used
+// it -- its only in-tree sender was the +1000 dev button, already refused on a client by
+// coop::dev_gate, and the laptop shop this header once named as a future user shipped on
+// OrderRequest instead (coop/items/order_sync.h), where the HOST re-commits the order via
+// makeAnOrder so the charge is host-authored like every other writer the poll catches.
 
 #pragma once
 
@@ -35,13 +42,10 @@ void OnClientConnect(int slot);
 // on the host (authoritative). GT::Posts the write.
 void ApplyFromHost(int32_t total);
 
-// RECEIVER (host): apply a client's signed DELTA request via AddPoints (the poll then
-// re-broadcasts the new total). No-op on a client. GT::Posts the apply.
-void OnDeltaRequest(int32_t amount);
-
-// Route a LOCAL credit (the +1000 dev button): host/solo applies via AddPoints; a client
-// sends a BalanceDelta to the host. Safe from the render thread (menu).
-void CreditRouted(int32_t amount);
+// Apply a LOCAL credit (the +1000 dev button) on the host or solo, via AddPoints. On a
+// connected CLIENT this REFUSES and logs: there is no client->host economy write (the
+// BalanceDelta lane was retired in v135, security A5). Safe from the render thread (menu).
+void CreditLocal(int32_t amount);
 
 // Reset the broadcast dedup on session teardown (so a reconnect re-broadcasts).
 void OnDisconnect();

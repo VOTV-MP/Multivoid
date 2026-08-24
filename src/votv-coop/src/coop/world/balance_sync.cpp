@@ -94,17 +94,7 @@ void ApplyFromHost(int32_t total) {
     g_havePending.store(true, std::memory_order_release);
 }
 
-void OnDeltaRequest(int32_t amount) {
-    if (!IsHost()) return;  // only the host applies credit deltas
-    GT::Post([amount] {
-        if (E::AddPoints(amount))
-            UE_LOGI("balance_sync: applied client delta %+d (AddPoints) -- poll re-broadcasts", amount);
-        else
-            UE_LOGW("balance_sync: AddPoints(%+d) failed", amount);
-    });
-}
-
-void CreditRouted(int32_t amount) {
+void CreditLocal(int32_t amount) {
     auto* s = g_session.load(std::memory_order_acquire);
     const bool host      = s && s->role() == coop::net::Role::Host;
     const bool connected = s && s->connected();
@@ -114,19 +104,16 @@ void CreditRouted(int32_t amount) {
         GT::Post([amount] { E::AddPoints(amount); });
         UE_LOGI("balance_sync: local credit %+d (%s)", amount,
                 host ? "host -> will broadcast" : "solo");
-    } else {
-        // Client: ask the host to apply it (writing our own mirror would be overwritten
-        // by the next BalanceSync). Send from the GAME thread -- GNS's send fan-out reads
-        // peerConns_ which the game thread mutates on connect/disconnect callbacks; every
-        // other render-thread-originating send in this codebase routes through GT::Post.
-        GT::Post([amount] {
-            auto* s2 = g_session.load(std::memory_order_acquire);
-            if (!s2 || !s2->connected()) return;
-            coop::net::BalancePayload p{amount};
-            s2->SendReliable(coop::net::ReliableKind::BalanceDelta, &p, sizeof(p));
-            UE_LOGI("balance_sync: client -> host credit request %+d (BalanceDelta)", amount);
-        });
+        return;
     }
+    // SECURITY A5 (docs/security/TRACKER.md): a connected CLIENT has no way to credit
+    // the shared balance, and that is deliberate. This used to send a BalanceDelta the
+    // host applied via AddPoints with no value bound; the lane was retired whole in v135
+    // rather than clamped (RULE 2) because balance is host-authoritative everywhere and
+    // there is no legitimate client->host economy write. Refusing here is defence in
+    // depth -- coop::dev_gate already refuses the only caller on a client.
+    UE_LOGW("balance_sync: local credit %+d REFUSED -- balance is host-authoritative "
+            "(the client->host delta lane was retired in v135, security A5)", amount);
 }
 
 void OnDisconnect() {

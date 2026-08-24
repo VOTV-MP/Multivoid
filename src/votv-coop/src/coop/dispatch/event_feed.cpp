@@ -340,20 +340,6 @@ void Update(net::Session& session, void* localPlayer) {
             coop::balance_sync::ApplyFromHost(p.value);  // no-op on the host (authoritative)
             break;
         }
-        case net::ReliableKind::BalanceDelta: {
-            // v30 shared balance: a client requested a credit (the +1000 dev button) --
-            // the host applies it via AddPoints (its poll re-broadcasts the new total).
-            // Client->host; OnDeltaRequest no-ops unless we are the host.
-            if (msg.payloadLen < sizeof(net::BalancePayload)) {
-                UE_LOGW("event_feed: BalanceDelta payload too short (%zu < %zu)",
-                        static_cast<size_t>(msg.payloadLen), sizeof(net::BalancePayload));
-                break;
-            }
-            net::BalancePayload p{};
-            std::memcpy(&p, msg.payload, sizeof(p));
-            coop::balance_sync::OnDeltaRequest(p.value);
-            break;
-        }
         case net::ReliableKind::TeleportClient: {
             // 2026-05-25 LATE +5h (F4 dev key): host snapshotted its pose and
             // sent it; client applies to local mainPlayer. Host echo is
