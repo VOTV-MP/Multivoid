@@ -201,12 +201,42 @@ the original text of §2b did not answer it.`]`
 three-step version could not decide the very case that motivated the rule):
 
 1. *Is the state shared and persistent?* — if not, boundary 4.
-2. *Can the arbiter **observe** the trigger?* — **this is the step that actually blocks us.** `[V]`
-   All 19 of the game's credit sites are `EX_LocalVirtualFunction`, i.e. PE-INVISIBLE, so no
-   ProcessEvent hook can see an earning at all. A lane can be perfectly well-suited to act-as-host and
-   still be unbuildable until the `0x45` `vm_dispatch` substrate lands
-   (`docs/COOP_VM_DISPATCH_PLAN.md`). This is the same root as A12, and it is why the answer to "why
-   isn't the economy host-authoritative yet" is *dispatch visibility*, not *design*.
+2. *Can the arbiter **learn of** the trigger?* — and this step asks TWO things, which the first
+   version of it conflated. **CORRECTED 2026-08-24 (evening), by building the counter-example to
+   its own claim.**
+
+   The original text said: *"this is the step that actually blocks us — all 19 of the game's credit
+   sites are `EX_LocalVirtualFunction`, so no ProcessEvent hook can see an earning; the answer to
+   'why isn't the economy host-authoritative yet' is dispatch visibility, not design."* That is
+   **too strong, and the laptop-shop fix (v136) is the proof**: it charges a client's purchase to
+   the shared balance without hooking `addPoints` at all.
+
+   The two questions are:
+
+   - **(a) Can the arbiter HOOK the trigger?** For the 19 credit sites, no — `[V]` all are
+     `EX_LocalVirtualFunction`, invisible to both the ProcessEvent detour and a `UFunction::Func`
+     patch.
+   - **(b) Can the acting client point at an ARTIFACT the arbiter can resolve?** Often yes, and
+     that is enough. A shop purchase leaves a **persistent, pollable artifact** — an appended row in
+     `saveSlot.orders` — so `order_sync` produces a real intent with no hook anywhere, and the
+     arbiter prices it from its own table.
+
+   So the honest scope is: **the DEBIT direction is not blocked; the CREDIT direction is** — because
+   a debit leaves an order row and a credit leaves only a number. And not even all of the credit
+   direction: `[V]` `baocoin_C` is a real world actor carrying an int `points`, and `[V]` its pickup
+   is `BndEvt__baocoin_collect_..._ComponentBeginOverlapSignature__DelegateSignature`, a
+   component-bound multicast delegate dispatched through `ProcessDelegate -> ProcessEvent` — i.e.
+   PE-VISIBLE and interceptable. The sell gun has an artifact too.
+
+   What is genuinely blocked on `0x45` (`docs/COOP_VM_DISPATCH_PLAN.md`) is a credit whose ONLY
+   trace is the balance itself: a point sack, a treasure chest, an ATM deposit, an achievement
+   award. For those there is nothing to name but the number, and naming the number is A5 reinvented.
+
+   **The generalisable form of this step: does the arbiter have a SOURCE?** If yes, the intent names
+   an identity and the arbiter derives the value. If no, you are at boundary 3 — the intent must
+   carry the outcome and the arbiter must validate it. `docs/security/TRACKER.md`'s five-signature
+   section applies exactly this split to the register's 12 "client-authored value" rows and finds
+   nine on the first side and two (A12, A25) on the second.
 3. *Can the arbiter **perform** the change from an intent?* — if not, boundary 3: the intent must
    carry the outcome and the arbiter validates it.
 4. *Would replaying it on the client double an effect another lane already carries?* — if yes,
