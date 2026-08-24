@@ -823,6 +823,14 @@ private:
     // Reliable inbox (shared across peers; FIFO of arrival order).
     std::mutex reliableInboxMutex_;
     std::deque<ReliableMessage> reliableInbox_;
+    // Exact high-water of reliableInbox_ depth since the last ~1 Hz net-diag sample,
+    // stamped at the ENQUEUE site (under reliableInboxMutex_, so it sees every push --
+    // sampling it in the drain loop would only observe the 200 Hz pre-receive value and
+    // miss a spike the game thread drained between iterations). Reported and reset by the
+    // net-diag block. It exists because the W10 pause is otherwise INVISIBLE: without the
+    // depth that armed it, "no pause fired" cannot be told apart from "the depth never got
+    // there", and the instrument would pass blind. Net thread writes, net thread reads.
+    std::atomic<uint32_t> reliableInboxPeak_{0};
 
     // v66 voice inbox (audit I-3): per-SLOT fixed rings -- zero net-thread heap
     // alloc (the old shared deque allocated per frame) and per-sender fairness

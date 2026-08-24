@@ -477,6 +477,10 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
             std::memcpy(m.payload,
                         static_cast<const uint8_t*>(data) + sizeof(PacketHeader) + sizeof(ReliableHeader),
                         static_cast<size_t>(payloadLen));
+            // Exact depth high-water for the net-diag sample (see the member's comment).
+            const auto depth = static_cast<uint32_t>(reliableInbox_.size());
+            if (depth > reliableInboxPeak_.load(std::memory_order_relaxed))
+                reliableInboxPeak_.store(depth, std::memory_order_relaxed);
         }
         // Seeds arc (2026-08-23): stamp the slot RELAY-ELIGIBLE at the net-thread
         // RECEIPT of ClientWorldReady, hConn-stamped (the send_backlog anti-recycle
@@ -544,6 +548,11 @@ void Session::NetThread() {
     constexpr int kHighPendingBytes = 65536; // 64 KB outbound PENDING = a real send backlog
     uint64_t sendFails  = 0;  // SendMessageToConnection rejections since the last status sample
     int      worstDrain = 0;  // worst single-pass receive drain since the last status sample
+    // W10 pause accounting, per trigger, since the last status sample. Kept SEPARATE
+    // because the two triggers mean different things: a depth pause says the game thread
+    // is behind, an apply-park pause says one lane asked for backpressure.
+    uint64_t pauseDepthHits = 0, pauseParkHits = 0;
+    size_t   pauseWorstDepth = 0;
 
     while (running_.load()) {
         // 0) P2P: pump the signaling transport -- drain inbound ICE rendezvous
@@ -609,12 +618,25 @@ void Session::NetThread() {
         SteamNetworkingMessage_t* msgs[256]{};
         int drained = 0;
         for (;;) {
-            bool inboxFull = false;
+            size_t inboxDepth = 0;
             {
                 std::lock_guard<std::mutex> lk(reliableInboxMutex_);
-                inboxFull = reliableInbox_.size() >= kReliableInboxSoftPause;
+                inboxDepth = reliableInbox_.size();
             }
-            if (inboxFull || applyBackpressureCount_.load(std::memory_order_acquire) > 0) break;
+            const bool inboxFull = inboxDepth >= kReliableInboxSoftPause;
+            const bool parked    = applyBackpressureCount_.load(std::memory_order_acquire) > 0;
+            if (inboxFull || parked) {
+                // Attribute the pause to ONE trigger, depth first. Conflating them would let
+                // a seeds-arc apply park read as a depth pause -- the W10 drill would then
+                // "pass" on a fire it did not cause.
+                if (inboxFull) {
+                    ++pauseDepthHits;
+                    if (inboxDepth > pauseWorstDepth) pauseWorstDepth = inboxDepth;
+                } else {
+                    ++pauseParkHits;
+                }
+                break;
+            }
             int n = 0;
             if (cfg_.role == Role::Host) {
                 const uint32_t hPoll = hPollGroup_.load();
@@ -758,8 +780,27 @@ void Session::NetThread() {
             if (worstDrain > static_cast<int>(std::size(msgs)))
                 UE_LOGW("net-diag: receive backlog -- worst single-pass drain %d msgs (> one 256 "
                         "batch) since last sample; an inbound burst exceeded the batch", worstDrain);
+            // SECURITY W10 instrument. Reported EVERY sample, including the quiet case, and
+            // with its INPUT: the peak depth is what the pause compares, so "no pause fired"
+            // is only meaningful next to how close the depth actually came. Without this the
+            // drill cannot tell a working pause from a depth that never got there.
+            const uint32_t inboxPeak = reliableInboxPeak_.exchange(0, std::memory_order_relaxed);
+            UE_LOGI("net-diag: reliable inbox peak %u/%zu since last sample (%s); pauses: "
+                    "depth=%llu (worst %zu) park=%llu",
+                    inboxPeak, kReliableInboxSoftPause,
+                    cfg_.role == Role::Host ? "host" : "client",
+                    static_cast<unsigned long long>(pauseDepthHits), pauseWorstDepth,
+                    static_cast<unsigned long long>(pauseParkHits));
+            if (pauseDepthHits > 0)
+                UE_LOGW("net-diag: reliable receive PAUSED %llu time(s) on depth since last "
+                        "sample (worst %zu >= %zu) on the %s net thread -- the game thread is "
+                        "behind the inbox; GNS buffers losslessly beneath (no drop)",
+                        static_cast<unsigned long long>(pauseDepthHits), pauseWorstDepth,
+                        kReliableInboxSoftPause, cfg_.role == Role::Host ? "host" : "client");
             sendFails = 0;
             worstDrain = 0;
+            pauseDepthHits = pauseParkHits = 0;
+            pauseWorstDepth = 0;
             nextRttSample = now + std::chrono::milliseconds(1000);
         }
 
