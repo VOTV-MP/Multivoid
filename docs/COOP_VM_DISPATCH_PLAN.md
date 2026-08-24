@@ -155,12 +155,17 @@ use of the `points`+`saveSlot` FName pair is a READ.
 
 Consequences for this plan:
 
-- **The economy cannot be made host-authoritative without this substrate.** That is the honest answer
-  to "why is the shared balance still broken" — dispatch visibility, not design. Register: `A13` (a
-  client's legitimate earning never reaches the shared balance) plus the whole economy block at the
-  foot of `docs/security/TRACKER.md` (A37-A43: sell-gun coins, point sacks, chests, the ATM, the miner,
-  achievements). Same root as `A12` (email), which is the other lane forced into producer-side polling
-  by an invisible verb.
+- **The CREDIT direction cannot be made host-authoritative without this substrate** — and that
+  scoping is a correction made 2026-08-24 (evening), because this bullet used to say "the economy"
+  flatly and v136 falsified it the same day. `afcbff39` made a client's laptop PURCHASE charge the
+  shared balance with no hook on `addPoints` anywhere: a purchase leaves a **pollable artifact** (a row
+  in `saveSlot.orders`) the acting client can point at, so the arbiter can price it from its own table.
+  A credit leaves only the number. Register: `A13` plus the economy block at the foot of
+  `docs/security/TRACKER.md` — **minus** A34/A35, now BUILT, and **minus** A37/A38, which `[V]` also
+  have an artifact (`baocoin_C` is a world actor and its pickup is a component-bound delegate,
+  `ProcessDelegate -> ProcessEvent`, PE-visible). What is left genuinely blocked here is a credit whose
+  ONLY trace is the balance: point sacks, chests, the ATM, the miner, achievements. Same root as `A12`
+  (email), the other lane forced into producer-side polling by an invisible verb.
 - **One choke point, not 19.** A consumer here does not need per-site coverage: `lib_C::addPoints` is
   the sole writer, so a single VM bracket on it observes every earning in the game. That is an unusually
   good fit for the type-dispatched consumer shape in §1.

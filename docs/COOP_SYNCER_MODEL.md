@@ -144,10 +144,15 @@ state. It authors an **intent**; the arbiter performs the change; the result com
 normal host→peer channel. A client's action is not *refused* — it is *re-issued by the authority*.
 This is the degenerate case of §2's invariant where the syncer is always the arbiter, and it is what
 `order_sync` already ships in SHAPE — `[V]` `order_sync.cpp:224` is host-only and the host re-runs
-`makeAnOrder`. **Read that citation with its caveat:** the shape is right and the lane is still
-exploitable, because the intent carries client-chosen values the host never checks (**A34/A35**). A
-correct act-as-host lane needs both halves — the arbiter performs it, *and* the arbiter supplies the
-numbers.
+`makeAnOrder`. **UPDATED 2026-08-24 (evening): the lane now ships BOTH halves and is the rule's reference
+implementation.** It used to be the caveat instead — the shape was right while the intent carried
+client-chosen values the host wrote through verbatim (**A34/A35**), so every client shopped free. v136
+(`afcbff39`) made the intent carry a `list_store` ROW NAME and nothing else; the host prices it from
+its own table (`ue_wrap/world/store_catalog`), checks its own balance, rolls its own ETA, confirms the
+commit by an `OrderCount()` +1 edge, then charges. A correct act-as-host lane needs both halves — the
+arbiter performs it, *and* the arbiter supplies the numbers. **NOT hands-on**; and the lane's own
+credit half (a client's sell-gun earnings, A37/A38) is still open, so a client can currently spend the
+group's money but not earn it.
 
 **Why the rule is needed at all — it is not only about cheating.** It has two failure directions and
 the register carries one of each:
@@ -263,10 +268,14 @@ refuses only on a CONNECTED CLIENT, and the host's poll broadcasts the result li
 a host-side cheat is a BROADCAST, not an exception. Full statement: `docs/security/THREAT_MODEL.md`,
 "The host may cheat, and we RELAY it".
 
-**An intent may name WHAT. It must never carry WHAT IT COSTS.** `[V]` `order_sync` is the one lane
-already built in this shape and it is still exploitable, because the intent carries a client-chosen
-`price` and class that the host writes through verbatim (**A34/A35**). The arbiter must price the
-action from its own tables.
+**An intent may name WHAT. It must never carry WHAT IT COSTS.** `[V]` `order_sync` was the lane
+that proved the rule by breaking it: the intent carried a client-chosen `price` and class the host
+wrote through verbatim (**A34/A35**), so every connected client shopped free by default. Fixed in
+v136 (`afcbff39`) — the arbiter prices the action from its own tables. Two things that pass generalise
+beyond the price: the intent must name an identity the arbiter can RESOLVE (`[V]` a class name could
+not even do that — 473 shop rows map onto 368 classes, so 112 were not uniquely nameable), and the
+value the arbiter derives must come from its OWN copy, which is the same rule `roach_sync.cpp:453-461`
+still breaks by resolving against client-supplied coordinates (**A27**).
 
 **Status: recorded 2026-08-24 from the user's directive; revised the same day by a `/qf` round and by
 two read-only censuses (economy + client-producer).** The four boundaries and the four-step test are

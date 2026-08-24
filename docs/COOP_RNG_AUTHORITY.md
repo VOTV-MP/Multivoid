@@ -60,6 +60,15 @@ small + scary enough to verify on its own in parallel.
 fossilhound, antibreather, orborb, arirFollower, ariralShooter, ariralPigBeater, killerwisp,
 ventCrawler, wisp) + piramid2 + arirShip. UNCOVERED spawners (each ticker rolls per-peer):
 
+**2026-08-24 — one roll moved to the host and is worth recording here because it is the shape the
+rest of this doc wants:** the laptop shop order's **delivery ETA**. `[V]` The game's own Button_order
+does `RandomFloatInRange(120,180)` on the peer that clicks; from v136 (`afcbff39`) the client's number
+never reaches the wire at all (the field was removed from `OrderRequestHeader`, RULE 2) and the HOST
+rolls its own in `order_sync::RollEta`. Status **DONE-HOST-OWNED**, drill-evidenced (the host logged
+`eta=169.3` for an order the client placed with 150), NOT hands-on. Note the pattern: the roll became
+host-owned for free because the lane was already an *intent* — the client asks for an order, it does
+not describe one. A roll that rides an intent needs no substrate; a roll inside a BP tick still does.
+
 | spawner | spawns | RNG decides | status |
 |---|---|---|---|
 | ticker_deerSpawner | deer_C | gate[0.02] + pos + variant | NEEDS-PROBE |

@@ -162,7 +162,7 @@ a take-4 bug that a later unverified fix addressed stays at its last-measured `B
 | ATV | authority-release / throw | U | code | CA | `OnAtvRelease` | none |
 | ATV | purchased spawn | U | code | HA | `OnAtvSpawn` | snapshot (synth key) |
 | ATV | purchased destroy | U | code | HA | `OnAtvDestroy` | n/a |
-| Shop-order | new order forward | U | code | ARB | `order_sync::CommitOrder` (host commits) | watermark-prime |
+| Shop-order | new order forward | HO | code+drill | ARB | v136 `afcbff39`: the intent is a `list_store` ROW NAME only; the host PRICES it from its own table, checks its own balance, rolls its own ETA, confirms an `OrderCount()` +1 edge, then charges (`order_sync::ResolveOne`). GREEN+RED drill on DLL `899E80EDE468AEC1`; NOT hands-on | watermark-prime |
 | Appliance | on/off bool (6 classes) | U | code | CO | `g_applianceAdapter` | snapshot |
 | Container (device) | open/closed state | U | code | CO | `interactable_sync` `g_container` (`ReliableKind::ContainerState`) | snapshot |
 
