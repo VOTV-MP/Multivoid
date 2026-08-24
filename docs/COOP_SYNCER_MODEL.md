@@ -50,6 +50,15 @@ sites and nothing here rebuilds it; it shipped separately in `0fcd2003`.
 it names, so authenticating peers raises this model's ceiling — but the model is worth building
 first, because it is the architecture either way. See §9 question 5.
 
+> **2026-08-24 — this ordering was inverted in practice, and then re-righted by the user.** WP-6 spent
+> a session closing register rows site-by-site (A5, A6, W3, W8, W9, W10), which is exactly the
+> "patch each site first" this section calls migration baggage. It was not wrong — those were parse-
+> and bound-layer rows, the narrow carve-out below, plus one retired lane. But the two rows it could
+> NOT close that way (**A12** email, **A13** balance) are both pure authority, and the user's own
+> answer to them — *"clients just do actions and they go as if host itself did that"* — **is this
+> document arriving**. See §2b. The ordering stands; what changed is that authority work is now
+> pulled by a concrete pair of findings instead of waiting on a green field.
+
 > Specific weaknesses, their evidence and their fix order are tracked in the local-only register
 > (`docs/security/`, untracked since 2026-08-23 — see `docs/DOCS_ARC.md`). The public statement of
 > what Multivoid does and does not protect is the root `SECURITY.md`.
@@ -116,6 +125,66 @@ The invariant, and everything below is a consequence of it:
 
 > **An inbound write is applied only if its sender is the element's current syncer, as recorded by
 > the arbiter. Authority is assigned, never asserted.**
+
+---
+
+## 2b. THE ACT-AS-HOST RULE (USER 2026-08-24) — and the boundary where it stops
+
+> *"the approach of host owns (like email and balance), clients just do actions and they go as if
+> host itself did that. Probably in some areas this approach is not going to be enough."*
+> — and, on the economy specifically: *"Legitimate ways of getting balance like selling items via
+> drone container or sell gun are fine if clients do that, these actions from clients are legitimate
+> they just go as if host himself sold those items or used sell gun."*
+
+The user is right on both halves, and the second half is the part worth writing down, because the
+first half alone is a trap.
+
+**The rule.** For a **discrete, persistent, shared-world** state change, a client never authors the
+state. It authors an **intent**; the arbiter performs the change; the result comes back down the
+normal host→peer channel. A client's action is not *refused* — it is *re-issued by the authority*.
+This is the degenerate case of §2's invariant where the syncer is always the arbiter, and it is what
+`order_sync` already ships (the host re-runs `makeAnOrder`).
+
+**Why the rule is needed at all — it is not only about cheating.** It has two failure directions and
+the register carries one of each:
+
+| direction | what goes wrong | register |
+|---|---|---|
+| **CHEAT** | the client authors shared state the arbiter never validates | **A12** (email append/delete), **A3**, **A4** |
+| **LOSS** | the client's *legitimate* action produces shared state the arbiter never learns of, so it is stomped or diverges | **A13** (a client's earnings never reach the shared balance) |
+
+A design that only defends against the first direction produces the second. That is exactly what
+happened to the economy: `BalanceDelta` was deleted as a cheat lane (**A5**) and *nothing* replaced
+it, so today the economy silently only works if the host does all the earning.
+
+**Where the rule is NOT enough — four measured boundaries.** Do not apply it blindly:
+
+1. **Continuous / locally-predicted state.** Pose at 60 Hz, the desk cursor, the prop in your hands,
+   your own look direction. A round-trip through the arbiter is either impossible or feels awful.
+   Here §2's general form applies instead: the element's syncer is the acting client, and the
+   arbiter *validates* rather than *performs*. This is the whole reason the syncer model is
+   per-element and not a global "host authors everything".
+2. **Double-delivery.** `event_fire_sync.h:22-31` is the in-tree proof: it suppresses the client
+   producer, has the host observe and broadcast — and then replays on the client **only for rows on
+   an allowlist**, default NO-replay, *because rows whose outputs already ride another lane would
+   double-deliver*. So "host authors, client replays" is incomplete: every act-as-host lane owes a
+   statement of what the client re-applies and what it must not, or it duplicates the effect it was
+   built to deliver.
+3. **Outcomes the arbiter cannot reproduce.** If the client's action resolves against local physics
+   or a local roll, the arbiter cannot re-run it and get the same answer; the intent must carry the
+   *outcome* and the arbiter must validate it (**A10**'s shape — item provenance), not re-simulate.
+4. **Per-player state that is not shared at all.** Your inventory view, your settings, your own
+   camera. Making the host author these is pure cost.
+
+**The test to apply.** Before building a lane, ask in this order: *is the state shared and
+persistent?* → *can the arbiter perform the change itself from an intent?* → *would replaying it on
+the client double an effect another lane already carries?* Only "yes / yes / no" gets the act-as-host
+shape; anything else is a syncer question, not an authorship question.
+
+**Status: recorded 2026-08-24 from the user's directive, and the four boundaries are code-cited but
+the rule has NOT been `/qf`-ed as an architecture.** It is written here rather than in a new file
+because it is a statement about §2's invariant, not a fifth parallel model. The authority census that
+prompted it ran the same day; its findings land in the register, not here.
 
 ---
 
