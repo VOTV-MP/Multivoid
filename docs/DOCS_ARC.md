@@ -104,7 +104,7 @@ not done: on 2026-08-23 the corpus was still fully tracked at **420 files / 24 M
 
 | Exposure | Where |
 |---|---|
-| **The origin VPS IP, in the clear** | `research/crash_2026-07-03_rehost_wispkill/host_votv-coop_2026-07-04_rehost_plain.log:11085-11088` (four lines: `stun:`, `turn:`, `signaling: resolved`, `net: P2P host listening ... via signaling`) and `research/findings/computers-devices/votv-connection-selector-events-pinecone-2026-06-11.md:225` |
+| **The origin VPS IP, in the clear** | Two places in the (now unpublished) `research/` corpus: a committed crash-session log, in four connection lines, and one RE finding. **Coordinates deliberately not given here** — this file is public and the corpus is still reachable from history (the 2026-08-23 decision was not to rewrite it), so an exact `path:line` would be a published map to a value that is otherwise unindexed. The value itself appears in no tracked file. Local readers: `git grep` the octets in the pre-`cf3780d2` tree |
 | **3 × `UE4Minidump.dmp`** | `research/crash_2026-07-03_rehost_wispkill/UE4CC-Windows-*/` — process memory dumps of the maintainer's own machine, contents never audited |
 
 The IP is **the same class as finding A11**, which purged that exact address from four tracked docs

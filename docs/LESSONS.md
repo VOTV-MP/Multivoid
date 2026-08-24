@@ -3844,7 +3844,7 @@ tracker.
 - **2026-08-23 — A leak sweep scoped to one DIRECTORY is not a leak sweep.** The A11 fix purged the
   origin VPS IP from four `docs/` files on 2026-07-24 and verified clean — *inside `docs/`*. One
   directory over, the same address sat tracked and public for another month in a committed raw session
-  log (`research/crash_.../host_..._rehost_plain.log:11085-88`, four lines: stun / turn / signaling
+  log (a committed crash-session log; exact coordinates withheld — this ledger is public and the corpus is still reachable from history, so a `path:line` would be a map. Four lines: stun / turn / signaling
   resolve / P2P listen) plus a findings doc, alongside **three `UE4Minidump.dmp`** process dumps of
   the maintainer's own machine, never audited. Nobody proofreads an artifact they committed *as
   evidence*. The trap is structural: a finding is filed with a location, the location silently becomes
