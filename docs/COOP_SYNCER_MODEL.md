@@ -143,7 +143,11 @@ first half alone is a trap.
 state. It authors an **intent**; the arbiter performs the change; the result comes back down the
 normal host→peer channel. A client's action is not *refused* — it is *re-issued by the authority*.
 This is the degenerate case of §2's invariant where the syncer is always the arbiter, and it is what
-`order_sync` already ships (the host re-runs `makeAnOrder`).
+`order_sync` already ships in SHAPE — `[V]` `order_sync.cpp:224` is host-only and the host re-runs
+`makeAnOrder`. **Read that citation with its caveat:** the shape is right and the lane is still
+exploitable, because the intent carries client-chosen values the host never checks (**A34/A35**). A
+correct act-as-host lane needs both halves — the arbiter performs it, *and* the arbiter supplies the
+numbers.
 
 **Why the rule is needed at all — it is not only about cheating.** It has two failure directions and
 the register carries one of each:
@@ -155,7 +159,15 @@ the register carries one of each:
 
 A design that only defends against the first direction produces the second. That is exactly what
 happened to the economy: `BalanceDelta` was deleted as a cheat lane (**A5**) and *nothing* replaced
-it, so today the economy silently only works if the host does all the earning.
+it, so today the economy only works if the host does all the earning.
+
+**Measured 2026-08-24, and it is worse than "lost".** `[V]` The host broadcasts only on its OWN change
+(`balance_sync.cpp:52`), so a client's earning **persists and diverges** — HUD included, since
+`lib::addPoints` does its own `SetText` — and then silently vanishes whenever the host's balance next
+moves. Meanwhile `prop_destroy_seam.cpp:177` broadcasts destroys for **both** roles: the
+**consumption replicates while the credit does not**. A client selling a prop, looting a sack or
+opening a chest makes the group **lose the item and gain nothing**. That asymmetry — replicated cost,
+unreplicated benefit — is the signature to look for in any lane suspected of this class.
 
 **Where the rule is NOT enough — four measured boundaries.** Do not apply it blindly:
 
@@ -176,15 +188,47 @@ it, so today the economy silently only works if the host does all the earning.
 4. **Per-player state that is not shared at all.** Your inventory view, your settings, your own
    camera. Making the host author these is pure cost.
 
-**The test to apply.** Before building a lane, ask in this order: *is the state shared and
-persistent?* → *can the arbiter perform the change itself from an intent?* → *would replaying it on
-the client double an effect another lane already carries?* Only "yes / yes / no" gets the act-as-host
-shape; anything else is a syncer question, not an authorship question.
+**This is NOT a seventh authority model — read §4b before you think it is.** §4b measured ~6 authority
+models already living in `session_lanes.h:179`'s comments and warns that adding a parallel table is
+RULE 2. Act-as-host is not a competitor to that taxonomy: it is **the model §4b's `SYMMETRIC` bucket
+should be promoted to**. §4b already says `SYMMETRIC` "is not a model, it is the absence of one" and
+that those 13 kinds are finding A4 — act-as-host is the name of what fills that absence. So §4b's
+corrected direction (*promote the existing taxonomy from comments into the type, one model at a time*)
+is the delivery mechanism for this rule, not an alternative to it. `[/qf` R1 asked exactly this and
+the original text of §2b did not answer it.`]`
 
-**Status: recorded 2026-08-24 from the user's directive, and the four boundaries are code-cited but
-the rule has NOT been `/qf`-ed as an architecture.** It is written here rather than in a new file
-because it is a statement about §2's invariant, not a fifth parallel model. The authority census that
-prompted it ran the same day; its findings land in the register, not here.
+**The test to apply** (four steps — the third was added 2026-08-24 when the economy census showed the
+three-step version could not decide the very case that motivated the rule):
+
+1. *Is the state shared and persistent?* — if not, boundary 4.
+2. *Can the arbiter **observe** the trigger?* — **this is the step that actually blocks us.** `[V]`
+   All 19 of the game's credit sites are `EX_LocalVirtualFunction`, i.e. PE-INVISIBLE, so no
+   ProcessEvent hook can see an earning at all. A lane can be perfectly well-suited to act-as-host and
+   still be unbuildable until the `0x45` `vm_dispatch` substrate lands
+   (`docs/COOP_VM_DISPATCH_PLAN.md`). This is the same root as A12, and it is why the answer to "why
+   isn't the economy host-authoritative yet" is *dispatch visibility*, not *design*.
+3. *Can the arbiter **perform** the change from an intent?* — if not, boundary 3: the intent must
+   carry the outcome and the arbiter validates it.
+4. *Would replaying it on the client double an effect another lane already carries?* — if yes,
+   boundary 2: an allowlist with a NO-replay default.
+
+**And state, per lane, WHICH SIDE IS SUPPRESSED.** A12's lesson is explicit that the fix for a
+producer-polled lane is **client-side producer suppression**, never a receive-side gate, which would
+silently lose legitimate client-produced state — that is precisely how the CHEAT fix creates the LOSS
+defect. `[V]` The one economy path that works proves it: `drone_sync.cpp:150,241` suppresses the
+**client's drone tick**, so only the host ever runs the sale. A lane that does not name its suppressed
+side is not specified.
+
+**An intent may name WHAT. It must never carry WHAT IT COSTS.** `[V]` `order_sync` is the one lane
+already built in this shape and it is still exploitable, because the intent carries a client-chosen
+`price` and class that the host writes through verbatim (**A34/A35**). The arbiter must price the
+action from its own tables.
+
+**Status: recorded 2026-08-24 from the user's directive; revised the same day by a `/qf` round and by
+two read-only censuses (economy + client-producer).** The four boundaries and the four-step test are
+code-cited; the rule has NOT been `/qf`-ed to convergence as an architecture. It lives here rather than
+in a new file because it is a statement about §2's invariant. Census findings are in the register
+(`docs/security/TRACKER.md`), not here.
 
 ---
 
