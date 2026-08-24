@@ -3774,6 +3774,13 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 
 ## 9. Security (threat model, trust boundaries, peer identity)
 
+> **READING THIS FILE AS AN AGENT (`/qf` critic, auditor, reviewer): OPEN
+> `docs/security/LESSONS_SECURITY.md` TOO.** It is on disk in every local clone and it holds this
+> section's rows in full. A prior-art scan that stops at this stub silently loses the entire security
+> corpus — peer identity, trust boundaries, the receive-boundary lessons, the authority-signature
+> ones — which is exactly the class of question a critic is most useful for. Treat the two files as
+> one ledger: the pairing rule (`memory/lesson_*.md` twin for every row) spans both.
+
 **These lessons are LOCAL-ONLY as of 2026-08-24 — they live in `docs/security/LESSONS_SECURITY.md`,
 which is untracked and `.gitignore`d. The file is on disk; this pointer resolves in a local clone and
 does not resolve on GitHub, deliberately.**
