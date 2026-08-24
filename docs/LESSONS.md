@@ -2810,6 +2810,18 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   caused 2 phantom intermittent boot fatals hours later (`Mods\ArmPE\enabled.txt` → `.off`).**
   `memory/lesson_realistic_votv_modded_stack.md`
 
+- **A `vm_dispatch` verb NAME is not a gate, and the verb ID is a PROJECT-WIDE namespace.** The 0x45
+  substrate matches on the name alone -- its header says the class/authority check is "the CONSUMER's
+  job" -- and `[V]` `playerHandUse_LMB` is declared by **146 classes** (knife, hacksaw, flamethrower,
+  garbage gun, disintegrator, toolgun...). A v137 consumer gated only on `av.verbId` and would have let
+  a client mint coins by destroying a prop with ANY tool; ten `/qf` rounds passed it because the design
+  said Context-gated and only the code didn't. Ids collide too: `1` was already used by four modules,
+  since `CurrentThreadVerb()` is one global thread-local. LOOK FIRST: grep the `CXXHeaderDump` for how
+  many classes declare the verb, gate on `av.ctx`'s class in the SAME function that tests the id, and
+  census `kVerb* =` across the tree before picking one. `drive_sync.cpp:47` and
+  `container_contents_sync` already did this correctly.
+  `memory/lesson_vm_dispatch_verb_name_is_not_the_gate.md`
+
 ## 5. Engine / UE4 facts
 
 - **2026-08-23 — An instance index without BOTH a CDO filter and a world filter silently indexes
@@ -3233,6 +3245,19 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   repeated in-place mints on the SAME live object's fields LEAK on receivers (no native reassign ever
   runs there); swap-and-EngineFree instead (v116 perf audit finding 1). *Look FIRST:*
   `ue_wrap/devices/laptop.cpp FreeFStringSlot`. `memory/lesson_fstring_pin_doctrine_fresh_buffers_only.md`
+
+- **An optimisation hoisted ABOVE the bound it was protecting.** To stop never-despawning coins from
+  holding the WorldActor pose batch's 28 slots, a delta gate was added -- and computing the delta read
+  the transform, moving `GetActorLocation`/`GetActorRotation` above the cap check they used to sit
+  below. `[V]` each is a full ProcessEvent dispatch WITH a per-call heap allocation (`ParamFrame`'s
+  ctor is documented "per-call, NOT cached"), so a hard 28x2 per tick became 2 per LIVE actor per tick
+  at 125 Hz -- ~50k dispatches and ~50k allocs/sec at 200 coins. It bought a bounded resource with an
+  unbounded cost. A second defect rode along: recording "last sent" before the truncation check let a
+  truncated actor latch its final pose as delivered and freeze its mirror for the session. LOOK FIRST:
+  when adding a skip-test to a loop, price the TEST, and place it relative to EVERY existing bound --
+  ask what the old worst case was and what the new one is. If the bounded resource really needs
+  protecting, fix it INSIDE the bound (fairness / rotating start), not upstream of it.
+  `memory/lesson_an_optimization_hoisted_above_the_bound_it_protected.md`
 
 ## 8. Build / deploy / git hygiene
 
