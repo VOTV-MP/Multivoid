@@ -289,3 +289,17 @@ research/
 #     attribution of a CLOSED finding reveals nothing. Only OPEN-count advertising is the problem.
 # If a genuinely public security document is ever wanted, it goes to the root SECURITY.md instead.
 docs/security/
+
+# docs/DOCS_ARC.md -- LOCAL-ONLY from 2026-08-24 (USER: "Docs arc md can be non public too").
+# It is the living doc for the public-repo documentation audit, which means its whole job is to
+# enumerate WHAT LEAKED, WHERE, and WHAT IS STILL OPEN -- a map of the same shape as the register it
+# was written to unpublish. The trigger was concrete: a pre-push audit found its findings table
+# giving the exact path AND line numbers of a committed log holding the origin VPS IP, in a file that
+# is still reachable from history (the 2026-08-23 decision was not to rewrite it). The coordinates
+# were neutralised in the last tracked revision before this rule landed, so the final public state of
+# the file is the scrubbed one; unpublishing the CONTAINER is the fix that does not need a fourth
+# grep ([[lesson-a-leak-sweep-scoped-to-one-directory]]).
+# Same terms as its siblings: the file stays ON DISK, every reading-order pointer to it still
+# resolves LOCALLY, none resolves on GitHub, and history is NOT rewritten. Public-facing docs must
+# not link it -- docs/README.md and the other tracked docs were de-linked in the same commit.
+docs/DOCS_ARC.md

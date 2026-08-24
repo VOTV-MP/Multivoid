@@ -499,17 +499,14 @@ Each item below is a feature increment series. Cross-referenced in
          Arcs 1-2 stay shipped. Design of record (as-built record only, no longer the plan):
          `research/findings/network/votv-tls-tier-b-c-DESIGN-2026-07-20.md`.
        - 2026-07-20 (later, same day): **the remaining TLS arcs are ON HOLD — a threat model was
-         finally written and it reordered the work.** The measurement that changed it: GNS is
-         encrypted (AES-256-GCM) but **peer-UNAUTHENTICATED** — the opensource build defaults
-         `IP_AllowWithoutAuth = 2` ("don't attempt authentication"). So passive eavesdropping
-         already fails, an active attacker at the rendezvous does not, and the control plane is the
-         only place peer identity can be established. `signalingToken` is a static shared secret
-         every mod user holds, so **Tier C dissolves into peer certificates** (GNS ships a CA:
+         finally written and it reordered the work.** The short public version: the transport is
+         already encrypted, so the next thing worth building is **peer IDENTITY**, not more transport
+         encryption — which is why **Tier C dissolves into peer certificates** (GNS ships a CA:
          certstore + certtool + `SetCertificate`; Ed25519 sign/verify already links into our
          process). Arcs 3 / 3b / 4 / 5 are HELD pending the CA spike; the `net.master.insecure`
          flag was designed and then dropped — do not build it. Two read-only audits ran the same
          day; their findings, evidence and fix order live in the **local-only** register
-         (`docs/security/`, untracked since 2026-08-23 — `docs/DOCS_ARC.md` §1 says why). The
+         (`docs/security/`, untracked since 2026-08-23 — the local-only docs-arc note says why). The
          public statement of what the mod does and does not protect is the root `SECURITY.md`.
 
 ### Open / future

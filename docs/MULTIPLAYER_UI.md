@@ -151,7 +151,7 @@ The menu must (a) look native/integrated, (b) not edit VOTV's menu asset
 
 **2026-05-25 update (revisited after the user pushed back on "VT mod looks natural; we look dirty"):** the original rejection conflated BPModLoader-dependent paks (which DO require UE4SS) with all paks. UE4 itself auto-mounts every `.pak` it finds under `Content/Paks/` at engine startup — independently of UE4SS. So a sibling `votv-coop-content.pak` we author and ship alongside our DLL would mount cleanly without ANY mod-framework dependency (RULE 3 preserved). VOTV also ships `UPakLoaderLibrary` (Rama's PakLoader) + `URyRuntimePakHelpers` as Blueprint libraries already callable through our existing `ParamFrame` infrastructure, providing explicit `MountPakFile` if we want non-auto-mounted paks. See:
 
-- `research/findings/architecture-audits/votv-mp-pak-mount-feasibility-2026-05-25.md` — implementation feasibility (FEASIBLE without UE4SS via auto-mount or UPakLoaderLibrary). *(In the local-only research corpus since 2026-08-23 — `docs/DOCS_ARC.md` §1d. Left as a path, not a link, so it does not read as a broken one.)*
+- `research/findings/architecture-audits/votv-mp-pak-mount-feasibility-2026-05-25.md` — implementation feasibility (FEASIBLE without UE4SS via auto-mount or UPakLoaderLibrary). *(In the local-only research corpus since 2026-08-23 — the local-only docs-arc note. Left as a path, not a link, so it does not read as a broken one.)*
 - Architectural + reality-check verdicts (stay all-DLL for now, revisit the public-server phase; the perceived polish gap closes with programmatic outline + shadow + UBorder): recorded in this section — the planned standalone `hybrid-pak-architecture` / `hybrid-pak-reality-check` finding files were never filed (dead links removed 2026-07-12).
 
 The "chosen" row remains correct for the current scope. The "rejected" row's reasoning is preserved (BPModLoader specifically does tie us to UE4SS). A new "deferred" row replaces a small fraction of the rejected row's blast radius — the sibling-pak path is technically clean per RULE 3 but the 80 GB UE4.27-editor toolchain cost isn't justified until a the public-server phase widget (server browser with sortable rows, etc.) actually needs it. For now, polish via programmatic UMG (text outline + drop shadow already shipped 2026-05-25; UBorder background panel queued).
@@ -369,7 +369,7 @@ slot layout) + `engine::SetTextBlockColorDispatch` (post-attach colour MUST be t
 **Re-polled on every main-menu entrance** (a >500 ms tick gap = a fresh entrance →
 `session_manager::RefreshLatestVersion`, DoS-safe: one worker in flight + an 8 s min-interval floor).
 The master's `/v1/latest` answer is env-overridable on the VPS (`COOP_LATEST_PROTO` in
-`/etc/coop-master.env` — a release bump is an env edit + restart, no rebuild; docs/RELEASE.md step 5).
+the master service env file (path in the local-only deploy notes) — a release bump is an env edit + restart, no rebuild; docs/RELEASE.md step 5).
 Since 2026-07-19 (b122) the compiled default AND the box env are proto 0 = "no released record" — the
 informational line stays silent until the FIRST real release sets the env (a stale record can never
 fake "(latest)": equality required; the old stale-66 bug class is closed by the 0-default + the
@@ -418,13 +418,13 @@ ports **10443 (master) / 10442 (signaling)**, running beside the plaintext pair 
 (`87e66bce`). The client URL grammar is **SCHEMELESS = SECURE** — a bare `host:port` means TLS, so
 `net.master` needs **no** `https://` prefix (an explicit `http://` is the deliberate downgrade for a
 self-hoster without a certificate).
-**Still cleartext:** the **signaling** channel. **Arcs 3 / 3b / 4 / 5 are ON HOLD as of 2026-07-20
-(same day)** — a threat model was written and reordered the work: GNS is encrypted but
-**peer-UNAUTHENTICATED**, so the real gap is peer identity rather than transport encryption, and
-**Tier C dissolves into peer certificates** instead of shipping as per-session tokens. The
+**Arcs 3 / 3b / 4 / 5 are ON HOLD as of 2026-07-20 (same day)** — a threat model was written and
+reordered the work: the transport is already encrypted, so the next thing worth building is **peer
+IDENTITY**, and **Tier C dissolves into peer certificates** instead of shipping as per-session
+tokens. The
 `net.master.insecure` flag discussed in that window was **never built and should not be**; the
 `http://` downgrade grammar above is still what ships today, but it is queued for RULE-2 retirement.
 **Read the local-only security register (`docs/security/`, untracked since 2026-08-23 — see
-`docs/DOCS_ARC.md`) before touching any of this**, so a validation lands at the right layer. The arc-1/2 as-built record + drills stay in
+the local-only docs-arc note) before touching any of this**, so a validation lands at the right layer. The arc-1/2 as-built record + drills stay in
 `research/findings/network/votv-tls-tier-b-c-DESIGN-2026-07-20.md` (superseded as a *plan*); the older
 `votv-master-server-RE-and-rust-port-scope-2026-07-16.md` remains the server RE/port scope.

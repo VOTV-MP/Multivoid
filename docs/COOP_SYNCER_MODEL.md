@@ -60,7 +60,7 @@ first, because it is the architecture either way. See §9 question 5.
 > pulled by a concrete pair of findings instead of waiting on a green field.
 
 > Specific weaknesses, their evidence and their fix order are tracked in the local-only register
-> (`docs/security/`, untracked since 2026-08-23 — see `docs/DOCS_ARC.md`). The public statement of
+> (`docs/security/`, untracked since 2026-08-23 — see the local-only docs-arc note). The public statement of
 > what Multivoid does and does not protect is the root `SECURITY.md`.
 
 ## 1c. DEPLOYMENT REQUIREMENT (USER 2026-07-20) — the arbiter must be engine-free

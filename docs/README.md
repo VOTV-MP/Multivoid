@@ -89,7 +89,7 @@ time) · [COOP_MIRROR_IDENTITY_WINDOW_RACE.md](COOP_MIRROR_IDENTITY_WINDOW_RACE.
 
 [UE4SS_ARC.md](UE4SS_ARC.md) (becoming a UE4SS mod) ·
 [OVERLAY_CAPTURE_COEXIST.md](OVERLAY_CAPTURE_COEXIST.md) (coexisting with RTSS and OBS) ·
-[DOCS_ARC.md](DOCS_ARC.md) (this documentation audit)
+the local-only docs-arc note (this documentation audit)
 
 **The ledger**
 
@@ -126,4 +126,4 @@ for the live one.
 
 Some pointers in these docs lead to `research/` or `docs/security/`. Those resolve in the
 maintainer's working tree and not on GitHub — both are kept unpublished on purpose
-([DOCS_ARC.md](DOCS_ARC.md) says why). That is not a broken link.
+(the local-only docs-arc note says why). That is not a broken link.

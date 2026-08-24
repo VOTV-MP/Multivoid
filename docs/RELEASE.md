@@ -13,7 +13,7 @@ runs on LOCAL builds.
 > `research/findings/architecture-audits/votv-version-identity-v122-DESIGN-2026-07-19.md`.
 >
 > **`research/` is LOCAL-ONLY since 2026-08-23** (untracked + `.gitignore`d, files on disk in
-> their own inner repo — `docs/DOCS_ARC.md` §1d). Every `research/...` pointer in this tree
+> their own inner repo — the local-only docs-arc note). Every `research/...` pointer in this tree
 > resolves in a working clone and will not resolve on GitHub. This is deliberate.
 
 A RELEASE is: a tag `v<game>-b<N>` (stable) or `v<game>-b<N>-dev` (dev prerelease)
@@ -86,7 +86,7 @@ consumes numbers.
    RECOMMENDED: push it right away while watching the green run.
 
 STABLE extra (dev releases skip this — `COOP_LATEST_*` is stable-only):
-6. On the coop box edit `/etc/coop-master.env`:
+6. On the master box, edit the master service's env file (the path is in the local-only deploy notes):
    `COOP_LATEST_PROTO=<N>`, `COOP_LATEST_MOD=<game> b<N>`, then
    `systemctl restart coop-master`. (Informational toast only — never gates a join.)
 7. `tools/release/verify_latest.ps1` — must PASS (it FAILs before step 6 by
@@ -110,7 +110,7 @@ STABLE extra (dev releases skip this — `COOP_LATEST_*` is stable-only):
 - **RETRACTION** (published bytes must go): delete the release page, delete the
   tag, append a `retracted` row, push NOW. A retracted N NEVER republishes —
   fixed bytes take a NEW number via a new consume. STABLE retraction also:
-  roll `/etc/coop-master.env` back to the previous stable (or clear), restart,
+  roll the master service's env file back to the previous stable value (or clear it), restart,
   re-run `verify_latest.ps1`.
 - **Re-run on a completed tag** — lands on `ALREADY_PUBLISHED` (no-op, assets
   untouched). `RELEASE_TAG_MISMATCH` / `RELEASE_BODY_UNPARSEABLE` = reconcile
