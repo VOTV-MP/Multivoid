@@ -46,6 +46,28 @@ constexpr float kSnapBaseCm     = 2000.f; // > one window's legal motion for a f
 
 }  // namespace
 
+bool WorldActor::PoseChangedSinceLastSend(const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot) {
+    // See the header for WHY this exists. Coarse on purpose: 0.5 cm / 0.25 deg is far below what a
+    // mirror's interpolation renders, and far above float noise on a resting body.
+    constexpr float kLocEps = 0.5f;
+    constexpr float kRotEps = 0.25f;
+    const float p = ue_wrap::NormalizeAxis(rot.Pitch);
+    const float y = ue_wrap::NormalizeAxis(rot.Yaw);
+    const float r = ue_wrap::NormalizeAxis(rot.Roll);
+    const bool changed =
+        !sentAny_ ||
+        std::fabs(loc.X - sentX_) > kLocEps || std::fabs(loc.Y - sentY_) > kLocEps ||
+        std::fabs(loc.Z - sentZ_) > kLocEps ||
+        std::fabs(ue_wrap::NormalizeAxis(p - sentPitch_)) > kRotEps ||
+        std::fabs(ue_wrap::NormalizeAxis(y - sentYaw_))   > kRotEps ||
+        std::fabs(ue_wrap::NormalizeAxis(r - sentRoll_))  > kRotEps;
+    if (!changed) return false;
+    sentAny_ = true;
+    sentX_ = loc.X; sentY_ = loc.Y; sentZ_ = loc.Z;
+    sentPitch_ = p; sentYaw_ = y; sentRoll_ = r;
+    return true;
+}
+
 void WorldActor::SetTargetPose(const coop::net::WorldActorPoseSnapshot& snap) {
     // v102 aux target vec + v104 target identity: latest-wins, no interp (targets the mirror's
     // native easing / branch selection consume).

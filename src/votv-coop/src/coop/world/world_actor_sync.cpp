@@ -45,6 +45,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace coop::world_actor_sync {
@@ -434,11 +435,20 @@ void TickPoseStream() {
             continue;
         }
         if (!connected) continue;  // no peers: lifecycle-only pass, no batch to build
+        // v137 TRANSFORM-DELTA GATE. A sell-gun coin takes ONE impulse and then rests forever (`[V]`
+        // baocoin_C has no InitialLifeSpan and its only destroy is the collect), so an accumulated
+        // coin population would otherwise hold pose slots permanently -- and this batch TRUNCATES at
+        // kMaxWorldActorBatchEntries (28) BY ITERATION ORDER with no fairness, which would starve the
+        // shipped piramid/wisp/event actors out of the stream. Batching only on CHANGE makes a settled
+        // coin cost ZERO slots, and a coin shoved by a collector's capsule (its r=15 physics body sits
+        // OUTSIDE the r=10 pickup trigger) re-arms itself with no timer and no latch to get wrong.
+        // Deliberately placed AFTER the dead check above, which is what keeps dead-retire immune.
+        const auto loc = E::GetActorLocation(actor);
+        const auto rot = E::GetActorRotation(actor);
+        if (!el->PoseChangedSinceLastSend(loc, rot)) continue;
         if (static_cast<int>(batch.size()) >= coop::net::kMaxWorldActorBatchEntries) { ++truncated; continue; }
         coop::net::WorldActorPoseSnapshot snap{};
         snap.elementId = static_cast<uint32_t>(el->GetId());
-        const auto loc = E::GetActorLocation(actor);
-        const auto rot = E::GetActorRotation(actor);
         snap.x = loc.X; snap.y = loc.Y; snap.z = loc.Z;
         snap.pitch = ue_wrap::NormalizeAxis(rot.Pitch);
         snap.yaw   = ue_wrap::NormalizeAxis(rot.Yaw);
@@ -540,6 +550,31 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         UE_LOGI("world-actor: connect-snapshot -- sent %d existing WA(s) to slot %d (%zu element(s), "
                 "%d unbound-skipped)", sent, peerSlot, elems.size(), unbound);
 }
+
+// ---- v137: mirror identity + the materialization window (see world_actor_sync.h) ----------------
+namespace {
+std::mutex g_mirrorActorsMu;
+std::unordered_set<void*> g_mirrorActors;      // live wire-materialized mirrors on this peer
+thread_local int t_materializeDepth = 0;       // nested is impossible today; a counter is still free
+}  // namespace
+
+bool IsMirroredActor(void* actor) {
+    if (!actor) return false;
+    std::lock_guard<std::mutex> lk(g_mirrorActorsMu);
+    return g_mirrorActors.find(actor) != g_mirrorActors.end();
+}
+
+void NoteMirrorActor(void* actor, bool add) {
+    if (!actor) return;
+    std::lock_guard<std::mutex> lk(g_mirrorActorsMu);
+    if (add) g_mirrorActors.insert(actor);
+    else     g_mirrorActors.erase(actor);
+}
+
+bool IsMaterializingMirror() { return t_materializeDepth > 0; }
+
+MaterializeScope::MaterializeScope()  { ++t_materializeDepth; }
+MaterializeScope::~MaterializeScope() { --t_materializeDepth; }
 
 unsigned int HostEnrollExSpawn(void* actor) {
     // HOSTING-gated, not connected-gated (RULE 1 root fix 2026-07-05): a WA spawned while

@@ -213,6 +213,15 @@ inline constexpr const wchar_t* kWorldActorAllowlist[] = {
     L"piramidSubpawn_C",           // pyramid sub-pawn (APawn; the SANDBOX piramidTest_C child, not the event)
     L"piramid2_C",                 // walking pyramid EVENT actor (plain AActor, host-random path; mirror
                                    // brain suppression + gather relay = coop/creatures/piramid_sync, v97)
+    L"baocoin_C",                  // v137: the sell gun's COIN. `[V]` Abaocoin_C : AActor (NOT Aprop_C),
+                                   // so it fails IsDescendantOfProp and rode NO lane -- a client's sale
+                                   // credited only itself and the host's next broadcast erased it. Coins
+                                   // are now host-minted and mirrored (coop/items/coingun_sync).
+                                   // NOTE the mint is EX_CallMath, so this allowlist entry alone does
+                                   // NOTHING on either side: the lane's PE interceptor/author cannot see
+                                   // it. `prop_coingun_C` is in kExSpawnSourceClasses so the Func-thunk
+                                   // drain reaches world_actor_sync::HostEnrollExSpawn -- that is what
+                                   // allocates the eid and broadcasts WorldActorSpawn.
 };
 inline constexpr size_t kWorldActorAllowlistSize =
     sizeof(kWorldActorAllowlist) / sizeof(kWorldActorAllowlist[0]);

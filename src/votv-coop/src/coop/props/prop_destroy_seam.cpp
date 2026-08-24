@@ -18,6 +18,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/props/prop_drop_intent.h"
+#include "coop/items/coingun_sync.h"
 #include "coop/props/prop_echo_suppress.h"
 #include "coop/props/prop_element_tracker.h"
 #include "coop/session/world_load_episode.h"
@@ -174,6 +175,16 @@ void DestroySeamBody(void* self) {
     UE_LOGI("grab_hook[destroy-seam]: %s broadcasting DESTROY actor=%p key='%ls' eid=%u%s",
             roleStr, self, keyless ? L"None" : keyStr.c_str(), dp.elementId,
             keyless ? " (eid-only: trash clump)" : "");
+    // v137 (A37/A38): if this prop is dying inside the coin gun's verb bracket, author the SALE
+    // FIRST, on this same lane. FIFO then delivers it while the host's copy is still alive -- which
+    // the mint REQUIRES, because `[V]` `sell` positions its coins from the SOLD PROP's component.
+    // The destroy below is deliberately UNCHANGED: a sale the host refuses degrades to exactly
+    // today's behaviour, so nothing new is lost and no heal lane exists to get wrong. This sits
+    // AFTER every gate above, so the world-load episode and the R-4a reconcile window are inherited
+    // and a joining client's loadObjects churn can never author a sale (principle 8).
+    if (coop::coingun_sync::IsInCoinGunVerb())
+        coop::coingun_sync::SendSaleForDyingProp(dp.elementId);
+
     s->SendPropDestroy(dp);  // channel queues internally; always accepted
     // F2 Inc-1 (2026-07-09): a CLIENT that just broadcast a KEYED destroy may be about to RE-PLACE the
     // same prop (hold-R pickup -> hold-R place). Park the key so the place authors a host-authoritative

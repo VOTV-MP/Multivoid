@@ -140,6 +140,14 @@ inline Lane LaneForKind(ReliableKind k) {
     // versa). Pinned so a future single-kind lane move can't split the pair.
     case ReliableKind::MeadowAppend:   return Lane::Normal;
     case ReliableKind::MeadowDelete:   return Lane::Normal;
+    // v137 (A37/A38): CoinGunSell rides **Bulk**, because that is where PropDestroy rides (:43) and
+    // the entire design rests on the sale arriving IN FRONT of the sender's own PropDestroy for the
+    // same prop -- the host mints from the SOLD PROP's component, so it needs that prop still alive.
+    // GNS guarantees order only WITHIN a lane, so pinning this to Normal (its default) would put the
+    // pair on two lanes and let the destroy overtake the sale: the host would destroy first and EVERY
+    // sale would refuse with eid-unresolved. Same hazard class the trash-intent comment at :54
+    // records. If PropDestroy ever moves lane, this MUST move with it.
+    case ReliableKind::CoinGunSell:    return Lane::Bulk;
     case ReliableKind::MeadowOrder:    return Lane::Normal;  // v120: same FIFO stream as 112/113 (an order line must not overtake the append it references)
     // Seeds arc (2026-08-23): RosterRow + the email/signal families are pinned to the
     // default they already ride because the ready-edge seed's exactly-once + clear-

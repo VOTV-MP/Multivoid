@@ -134,6 +134,16 @@ constexpr const wchar_t* kExSpawnSourceClasses[] = {
                               // so the old "per-peer decor" call was wrong. Host rolls (the
                               // client's ticker tick is cancelled in spawn_authority); same
                               // EX_CallMath catch, variants allowlisted individually.
+    L"prop_coingun_C",        // v137: the SELL GUN's coin mint. `prop_coingun_C::sell` issues its
+                              // BeginDeferredActorSpawnFromClass(baocoin_C) as EX_CallMath, so the
+                              // WorldActor lane's own PE interceptor/author NEVER sees it -- exactly
+                              // the piramidSpawner_C shape above. Without this row the baocoin_C
+                              // allowlist entry is inert: no Element, no eid, no WorldActorSpawn,
+                              // silently. Output drains to world_actor_sync::HostEnrollExSpawn.
+                              // NOTE this catches the host's own hand-fired sale AND the host's
+                              // re-commit of a client's sale (we invoke `sell` via ProcessEvent, but
+                              // the BeginDeferred INSIDE it is still EX_CallMath from the gun's
+                              // bytecode, so FFrame::Object is still the gun).
 };
 
 // A source's output may be a WorldActor-lane class (piramid2_C): same catch seam, drained to

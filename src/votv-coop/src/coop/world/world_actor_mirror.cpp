@@ -121,6 +121,14 @@ void OnWorldActorSpawn(const coop::net::EntitySpawnPayload& payload) {
     xform.SY = coop::net::SanitizeWireScaleAxis(payload.scaleY);
     xform.SZ = coop::net::SanitizeWireScaleAxis(payload.scaleZ);
 
+    // v137 MATERIALIZATION WINDOW. A mirror's component-bound delegates bind during BeginPlay, i.e.
+    // INSIDE FinishSpawning, BEFORE the mirror row below exists -- so for any consumer that needs to
+    // know "is this actor a mirror?", the row can never be the sole discriminator. A coin seeded onto
+    // a joiner standing where it lies would otherwise fire its collect overlap in this window, be
+    // judged a non-mirror, and credit that client locally. Publish the window; coop/items/coingun_sync
+    // tests `mirror OR materializing`.
+    coop::world_actor_sync::MaterializeScope materializeScope;
+
     // Bypass our own client interceptor for THIS spawn, then BeginDeferred + FinishSpawning the mirror.
     D::SetIncomingClass(actorClass);
     constexpr uint8_t kAlwaysSpawn = 1;
@@ -181,6 +189,21 @@ void OnWorldActorSpawn(const coop::net::EntitySpawnPayload& payload) {
     // a WorldActor is a plain AActor). Any residual component tick is overwritten each frame by the
     // pose drive's SetActorLocation/SetActorRotation (the MTA dead-reckoning model).
     E::SetActorTickEnabled(spawned, false);
+    // v137: a pose-driven mirror must not ALSO simulate -- the two fight and the mirror drifts off the
+    // host's authoritative transform. `[V]` baocoin_C's `Sphere` ships bSimulatePhysics=True, making it
+    // the FIRST simulating member of this allowlist; the 18 already-shipped classes are event actors
+    // that do not simulate. CLASS-SCOPED on purpose (OPUS section 8: do not widen a seam in the same
+    // commit that introduces its first consumer) -- the general invariant is named here, not applied.
+    if (classW == L"baocoin_C") {
+        // NOTE this targets the ROOT component (K2_GetRootComponent). `[V]` the simulating component is
+        // `Sphere` (r=15, bSimulatePhysics=True); whether Sphere IS the root is NOT determinable from the
+        // CXX header dump, so the result is LOGGED rather than assumed -- if a mirrored coin visibly
+        // drifts away from the host's, this line is the first thing to read.
+        const bool physOff = E::SetActorSimulatePhysics(spawned, false);
+        UE_LOGI("world-actor[client OnSpawn]: baocoin_C mirror eid=%u physics-off=%d (a pose-driven "
+                "mirror must not also simulate)", payload.elementId, physOff ? 1 : 0);
+    }
+    coop::world_actor_sync::NoteMirrorActor(spawned, /*add=*/true);
     UE_LOGI("world-actor[client OnSpawn]: materialized mirror eid=%u class='%ls' actor=%p loc=(%.0f,%.0f,%.0f) "
             "scale=(%.2f,%.2f,%.2f)", payload.elementId, classW.c_str(), spawned,
             payload.locX, payload.locY, payload.locZ, xform.SX, xform.SY, xform.SZ);
@@ -204,6 +227,7 @@ void OnWorldActorDestroy(const coop::net::EntityDestroyPayload& payload) {
         return;
     }
     void* actor = drained->GetActor();
+    coop::world_actor_sync::NoteMirrorActor(actor, /*add=*/false);
     const D::SpawnPath sp = D::GetSpawnPath();
     // IsLiveByIndex, NOT plain IsLive (2026-07-15 IsLive-enumeration sweep): a CACHED mirror
     // actor drained from the table + a K2_DestroyActor CALL -- if its slot was recycled (this

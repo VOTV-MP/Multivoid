@@ -346,6 +346,7 @@ add_library(votv-coop SHARED
     src/coop/interactables/power_sync.cpp
     src/coop/interactables/atv_sync.cpp
     src/coop/interactables/drone_sync.cpp
+    src/coop/items/coingun_sync.cpp
     src/coop/items/order_sync.cpp
     src/coop/world/firefly_sync.cpp
     src/coop/world/spawn_authority.cpp

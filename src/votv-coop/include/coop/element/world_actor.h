@@ -66,7 +66,21 @@ public:
     uint32_t CurrentAuxTargetEid() const { return auxTargetEid_; }
     bool  HasPose() const { return hasPose_; }
 
+    // v137 TRANSFORM-DELTA GATE (host send side). True when this actor's transform differs from the
+    // one we last PUT IN A BATCH by more than a hair, and records the new value when it does. A
+    // settled actor therefore consumes ZERO of the batch's 28 slots -- which is what stops an
+    // accumulated sell-gun coin population (baocoin_C never despawns) from starving the shipped event
+    // actors out of a stream that truncates by iteration order. Self-re-arming: anything that moves a
+    // resting actor (a collector's capsule shoving the coin's r=15 physics body) is a change again.
+    // Epsilon is deliberately coarse -- this gates a MIRROR's visual pose, not a physics result.
+    bool PoseChangedSinceLastSend(const ue_wrap::FVector& loc, const ue_wrap::FRotator& rot);
+
 private:
+    // last transform actually batched (host send side; see PoseChangedSinceLastSend)
+    bool  sentAny_    = false;
+    float sentX_ = 0.f, sentY_ = 0.f, sentZ_ = 0.f;
+    float sentPitch_ = 0.f, sentYaw_ = 0.f, sentRoll_ = 0.f;
+
     void AdvanceInterp();   // advance the open window to now (mirrors Npc::AdvanceInterp)
     void ApplyToEngine();   // SetActorLocation + SetActorRotation (FULL rotation; no CMC, no kerfur)
 

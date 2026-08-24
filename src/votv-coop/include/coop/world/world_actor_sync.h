@@ -82,4 +82,33 @@ void OnWorldActorDestroy(const coop::net::EntityDestroyPayload& payload);
 // thread (UFunction-free, but the reverse map + element store expect the pump context).
 unsigned int HostEnrollExSpawn(void* actor);
 
+// ---- v137: who is a MIRROR, and when is one being born --------------------------------------------
+// Added for coop/items/coingun_sync, which must decide -- inside a component-overlap delegate -- whether
+// the coin it is looking at is a host-owned mirror (suppress: a client never credits) or genuine local
+// content (leave native: `[V]` two cooked maps carry PLACED baocoin_C, and cancelling those would make
+// them permanently uncollectable AND ghosted, which is a NEW loss).
+//
+// Two calls because ONE is not enough: a mirror's component-bound delegates bind during BeginPlay, i.e.
+// INSIDE FinishSpawningActor, BEFORE the mirror row is installed -- so a row lookup alone loses the race
+// for anything seeded onto a peer standing where the actor lands. Consumers test `IsMirroredActor() ||
+// IsMaterializingMirror()`.
+
+// True if `actor` is a live wire-materialized mirror on this peer. O(1). Any thread.
+bool IsMirroredActor(void* actor);
+
+// Register/unregister a materialized mirror. Called by the mirror path only. Any thread.
+void NoteMirrorActor(void* actor, bool add);
+
+// True while THIS THREAD is inside a mirror materialization (BeginDeferred..FinishSpawning inclusive),
+// which is exactly the window in which a mirror's BeginPlay runs and its delegates bind.
+bool IsMaterializingMirror();
+
+// RAII publisher for that window. Constructed by the mirror path around its spawn pair.
+struct MaterializeScope {
+    MaterializeScope();
+    ~MaterializeScope();
+    MaterializeScope(const MaterializeScope&) = delete;
+    MaterializeScope& operator=(const MaterializeScope&) = delete;
+};
+
 }  // namespace coop::world_actor_sync

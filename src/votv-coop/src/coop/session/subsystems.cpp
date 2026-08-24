@@ -75,6 +75,7 @@
 #include "coop/interactables/interactable_sync.h"
 #include "coop/interactables/atv_sync.h"
 #include "coop/interactables/drone_sync.h"
+#include "coop/items/coingun_sync.h"
 #include "coop/items/order_sync.h"
 #include "coop/world/event_cue_sync.h"
 #include "coop/world/event_fire_sync.h"
@@ -146,6 +147,7 @@ void Install(coop::net::Session& session) {
     coop::atv_sync::Install(&session);       // v47 ATV body pose (occupant-authoritative keyed stream)
     coop::drone_sync::Install(&session);     // v48 delivery drone body pose (host-authoritative singleton)
     coop::order_sync::Install(&session);     // v49 delivery-drone economy: client->host shop-order forward
+    coop::coingun_sync::Install(&session);   // v137 A37/A38: the sell gun + host-minted coins
     coop::firefly_sync::Install(&session);   // v51 peer-symmetric ambient firefly mirror (each peer captures+shares its own)
     coop::event_cue_sync::Install(&session); // v79 HOST-AUTH cosmetic emitter-cue mirror (B1: starfall etc. -- host detects PSC, client replays)
     coop::event_fire_sync::Install(&session); // v95 HOST-AUTH scheduled-event replay (passEvents growth poll -> EventFire; client suppress + policy replay)
@@ -546,7 +548,11 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:meadow"}; coop::meadow_db_sync::Tick(); }        // v120 (L9): meadow-DB pre-gated multiset poll + tombstone/pending retry
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:comp"}; coop::comp_sync::Tick(); }           // v65: decode-pane simulator stream + comp_data edges + client world-up unlatch
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:voice"}; coop::voice_chat::Tick(); }          // v66: voice frame pump (mic drain -> send; inbox -> jitter; positions; state edges)
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:order"}; coop::order_sync::Tick(); }           // v49 drone economy: client polls+forwards orders / host commits assembled orders
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:order"}; coop::order_sync::Tick(); }  // v49 drone economy: client polls+forwards orders / host commits assembled orders
+    // v137: THE BARRIER for coingun_sync. The client's own coins are CAPTURED inside the gun's 0x45
+    // bracket (reads only -- an engine call mid-bytecode corrupts, per lesson-vm-bracket-zero-engine-
+    // mid-verb) and destroyed HERE, one pump tick later, where a ProcessEvent dispatch is safe.
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:coingun"}; coop::coingun_sync::Tick(); }
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:window"}; coop::window_sync::Tick(); }         // v41 base-window clean: poll for wipes + deferred-apply retry (symmetric)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:grime"}; coop::grime_sync::Tick(); }          // v42 surface grime: poll wipes + death-watch destroy + deferred-apply retry
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:npc_host"}; coop::npc_sync::TickPoseStream(); }    // v37 HOST: read NPCs -> publish EntityPose batch (host-only, no-op on client)

@@ -16,6 +16,7 @@
 #include "coop/creatures/kerfur_convert_host.h"
 #include "coop/creatures/roach_sync.h"    // v108: CLIENT->HOST local roach consumption intent
 #include "coop/interactables/interactable_sync.h"
+#include "coop/items/coingun_sync.h"
 #include "coop/items/order_sync.h"
 #include "coop/props/prop_drop_intent.h"  // v106 F2 Inc-1: CLIENT->HOST client-placed keyed prop
 #include "coop/props/trash_channel.h"
@@ -50,6 +51,23 @@ bool HandleIntentEvent(net::Session& session,
         }
         coop::order_sync::OnReliable(msg.payload, static_cast<int>(msg.payloadLen),
                                      static_cast<uint8_t>(msg.senderPeerSlot));
+        break;
+    }
+    case net::ReliableKind::CoinGunSell: {
+        // v137 (coingun_sync -- security A37/A38): a CLIENT shot a prop with the coin gun. The
+        // payload is an ElementId and nothing else; the host prices the sale from its OWN copy and
+        // mints through the game's own `sell`. HOST-TERMINAL -- never relayed, because the host
+        // authors every consequence itself (coins via WorldActorSpawn, the prop's removal via the
+        // client's own unchanged PropDestroy, which arrives right behind this on the same lane).
+        // CLIENT->HOST: slot 0 is the host, which never sends itself a sale. Drop at the boundary
+        // rather than routing an unassigned slot under a sentinel.
+        if (msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers) {
+            UE_LOGW("event_feed: CoinGunSell from invalid senderPeerSlot=%d -- dropping",
+                    msg.senderPeerSlot);
+            break;
+        }
+        coop::coingun_sync::OnReliable(msg.payload, static_cast<int>(msg.payloadLen),
+                                       static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
     case net::ReliableKind::OrderRefused: {
