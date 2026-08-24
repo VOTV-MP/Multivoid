@@ -273,7 +273,7 @@ tools/workflows/
 research/
 
 # ---- SECURITY REGISTER -- a working exploit map for a SHIPPING mod ---------------------------
-# docs/security/ is the finding register + fix plans: 16 OPEN rows carrying exact file:line and an
+# docs/security/ is the finding register + fix plans: 18 OPEN rows of 33 carrying exact file:line and an
 # explicit "attacker -> gain" column (wipe a stranger's persistent world; evict the real host and
 # receive every joiner; drive another player's desk). On a PUBLIC repo that is a ready-made map
 # against a mod real people are running right now. The files STAY on disk -- CLAUDE.md reading

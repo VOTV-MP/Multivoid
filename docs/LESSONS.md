@@ -3196,6 +3196,41 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 
 ## 8. Build / deploy / git hygiene
 
+- **2026-08-24 — Project prose that lives OUTSIDE the repo tree cannot be censused, and it is the
+  most public prose you have.** The UE4SS arc's stale-loader-prose census
+  (`votv-ue4ss-stale-loader-prose-CENSUS-2026-08-22.md`, ~139 rows) was complete over FILES and
+  structurally blind to the GitHub repo's own About blurb, which still reads *"a standalone C++
+  DLL"* — the exact claim the D-3 migration falsifies — plus a `dll-injection` topic, and an **empty
+  `homepageUrl`** while `multivoid.dev` has been live since 2026-07-19. The user raised it; no
+  instrument could have. Everything this project trusts for drift — `grep`, the CI gates,
+  `ledger_lint`, `/documentize` Step 0.5 — operates on the working tree, so a field in GitHub's
+  database produces no diff and cannot go stale loudly. The census was not sloppy: its scope silently
+  equalled "what a grep can reach". *Look FIRST:* the off-tree surface list, kept in
+  `docs/UE4SS_ARC.md` §7.0 — GitHub description/topics/homepage
+  (`gh repo view --json description,homepageUrl,repositoryTopics`), the Thunderstore package
+  description (write it correct the first time), the hand-deployed `site/` copy, Discord topic +
+  pins, the release-body template. Sequencing rule: a public "what this IS" statement flips **with**
+  the release that makes it true, never before — except a field already wrong on its own terms.
+  `memory/lesson_project_prose_outside_the_repo_tree_is_uncensusable.md`
+
+- **2026-08-24 — A running total stated in prose inside an APPEND-ONLY register is stale by
+  construction.** `docs/security/TRACKER.md` narrated its own size in three dated notes — "15 OPEN"
+  (07-20) → "Now 16 OPEN" (07-23) → "Still 16 OPEN" (07-24) — while rows kept landing (`A8 A9 W7 W8
+  W9 W10 A7 S2` among them). Appending a table row is not the same edit as rewriting a paragraph
+  three screens up, so nothing ever recomputed it. Thirty days later "16 OPEN" was quoted into
+  `docs/DOCS_ARC.md` twice, a `.gitignore` rationale block and a **public commit message** before a
+  census ran: **33 rows — 18 OPEN, 12 BUILT, 1 DESIGN, 1 VERIFIED, 1 DISMISSED** (a neighbouring doc
+  carried a third frozen figure, "20 OPEN", from the 2026-07-20 audit). The trap is that every note
+  was honest *on its own date*, the file looks maintained, and quoting the number feels like citing
+  the source rather than inheriting an inference. **The project had already paid for this exact shape
+  in another domain** — `CLAUDE.md`'s modular file-size rule ("catalog is auto-generated, not
+  hand-maintained; hand-curated catalogs go stale fast", after one listed `harness.cpp` at 3,126 LOC
+  long past its cut to ~778). Second domain = generalise (`[[feedback-recurring-bug-is-architectural]]`).
+  *Look FIRST:* never write an aggregate in prose in a document designed to grow — write the COMMAND,
+  or a dated snapshot line with the command beside it; and recompute any count before quoting it
+  outward, since a count is the cheapest measurement there is.
+  `memory/lesson_a_running_total_in_an_append_only_register.md`
+
 - **A CRT `_s` "safe" variant can be the DANGEROUS one inside an injected DLL.** Measured 2026-07-28:
   `_vsnprintf_s_l` routes a malformed conversion specifier (`%q`) to the CRT invalid-parameter handler,
   which raises `__fastfail` — the probe **terminated, exit 127**, where plain `_snprintf_l` printed
@@ -3677,7 +3712,11 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   docs defeated that proxying outright (origin bypass) plus named the host. Ask *which of the two* and
   *from whom* before redacting. Also: "not a secret" and "fine to publish" are different judgements —
   casual discoverability is a real axis; say which one you are buying. `docs/security/TRACKER.md` **A11**,
-  `b2c4b3ef`. *Look FIRST:* `memory/lesson_public_hostname_is_not_a_public_origin_ip.md`
+  `b2c4b3ef`. **RECURRED 2026-08-23:** the same address was still public for another month in
+  `research/` — a committed raw session log (four lines: stun / turn / signaling resolve / P2P listen)
+  and a findings doc — because the A11 sweep was scoped to `docs/`. Fixed by unpublishing the corpus
+  (`cf3780d2`), not by a fourth grep; the durable form is the leak-sweep-scope row above.
+  *Look FIRST:* `memory/lesson_public_hostname_is_not_a_public_origin_ip.md`
 
 - **A rule an agent wrote comes back cited as the user's rule — check provenance before obeying it.**
   "`tools/mp.py` is NEVER committed" was quoted as policy by `MEMORY.md`, by `tools/net/departure_drill.ps1`'s

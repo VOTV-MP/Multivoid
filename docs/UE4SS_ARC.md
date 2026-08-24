@@ -54,7 +54,7 @@ proxy / dup-dialog retire WHOLE per RULE 2 — no standalone-and-UE4SS dual path
 |----|------|--------|
 | **WP-1** | Spike: prove the C-ABI shim boots the one binary as a UE4SS mod; measure the double-PE-detour survivability. | **AS-BUILT** — commit `cddb116c` (2026-08-21 eve). Matrix green ~110 ms; LAN join worked; double-detour "alive" on a SMALL sample (later found to crash ~2/10, see §3). WP-4 spike findings: ini err=3 under VFS; shimloader panics on `xinput1_3.dll`. |
 | **WP-2** | The loader cut: delete `xinput_proxy.cpp` + the proxy deploy path (RULE 2); `cppmod_entry.cpp` in; predecessor detection + mutex; keep EVERYTHING else. | **IN PROGRESS.** Pre-cut LANDED (§2). Fix (**B**, §4) is BUILT + default-ON and its compose is **VERIFIED** (2026-08-22 16:02 real-env byte decode + 16:25 DEV `POLYHOOK-COMPOSED` boot, §4 Proof status). The IsLive/VEH arc is BUILT (D1, 2026-08-22 night, §4 -- run B pending the user). Remaining before the proxy deletion: symbolize the 19:17 real-env EXEC-at-NULL dump (§4 residuals), B's teardown leak-at-death residual, then commit 3 itself. |
-| **WP-4** | Fix the stale install/update/uninstall prose + the site + installer for the UE4SS lane. | **PARKED, but now SPECIFIED** — census written (`votv-ue4ss-stale-loader-prose-CENSUS-2026-08-22.md`, ~139 rows); §7 measures the target shape and §7.3 fixes the sequencing (it must not flip before a UE4SS-lane build is released). |
+| **WP-4** | Fix the stale install/update/uninstall prose + the site + installer for the UE4SS lane. | **PARKED, but now SPECIFIED** — census written (`votv-ue4ss-stale-loader-prose-CENSUS-2026-08-22.md`, ~139 rows); §7 measures the target shape and §7.3 fixes the sequencing (it must not flip before a UE4SS-lane build is released). **+ §7.0 (USER 2026-08-24): the GitHub repo DESCRIPTION and topics are stale prose too and are invisible to the census — they live outside the tree. `description` still says "a standalone C++ DLL"; the `dll-injection` topic goes; `homepageUrl` is empty and is fixable NOW.** |
 | **WP-6** | Distribution re-home (the `multivoid-<game>-<build>.dll` filename + master + release flow onto the mod-folder shape). | **PARKED, now SPECIFIED** — §7.2 + §7.4. |
 | **WP-9** | **Thunderstore publication** (USER 2026-08-23: "надо нам бы стать официальным модом и попасть в магазин thunderstore ... чтобы обычный юзер смог поставить нативно"). Ship Multivoid as a Thunderstore package so r2modman / Thunderstore Mod Manager installs it natively. | **NEW, SPECIFIED, NOT BUILT** — §7. The payload shape is ALREADY correct; what is missing is package metadata, a version mapping decision, and a publish step. |
 | **WP-7** | The native DEBUG subsystem (USER 2026-08-21: adopt UE4SS's debug tooling / DebugMod ideas). | **PARKED** — scoped in the design finding §3c. |
@@ -365,6 +365,35 @@ Measured on this box from the real r2modman profile
 (`C:\r2modman\r2modmanPlus-local\VotV\profiles\Default`) and the vendored
 `reference/unreal-shimloader` + `reference/voidmod-extracted`. This replaces guesswork about
 "what the new install is" — the question WP-4 was parked without an answer to.
+
+### 7.0 The GitHub repo's own DESCRIPTION is stale prose too (USER 2026-08-24)
+
+The WP-4 census counted install/update/uninstall prose in files. **The repository's GitHub "About"
+blurb and topics are the same surface and are not in any file**, so no census, grep or CI gate can
+ever see them — they have to be changed by hand, in the GitHub UI or via `gh`.
+
+**Measured 2026-08-24 `[V]`** (`gh repo view VOTV-MP/Multivoid --json description,homepageUrl,repositoryTopics`):
+
+| field | current value | after the D-3 migration |
+|---|---|---|
+| `description` | *"Multiplayer co-op mod for Voices of the Void — **a standalone C++ DLL** layered on UE4.27 that syncs full game state between host and clients without modifying any game files."* | **FALSE at the load-bearing word.** Multivoid stops being standalone: it ships as `Mods/Multivoid/dlls/main.dll` and is loaded by UE4SS (§0). "without modifying any game files" stays true and stays in — it is principle 1 and the thing that distinguishes us |
+| topic `dll-injection` | present | **wrong lane** once the proxy is deleted — we are loaded by a mod framework, not injected. Candidates to add: `ue4ss`, `thunderstore` |
+| `homepageUrl` | **empty** | `https://multivoid.dev` — this one is stale *today*, independent of the migration, and is a free fix |
+
+**Sequencing — the same rule as §7.4a.** The description must NOT flip to the UE4SS lane before a
+UE4SS-lane build is actually released, or the front page will tell a player to install a thing that
+does not exist yet. `homepageUrl` is exempt from that ordering: it is wrong now and can be set now.
+
+**Why this is filed here and not "just done":** it is a public-facing statement about what the mod
+IS, on the surface most people read first. It belongs to the WP-4 flip, with the release, not to a
+tidy-up commit. Add it to the WP-4 checklist rather than treating it as done because it is small.
+
+**Generalise the miss:** any project statement that lives OUTSIDE the repo tree is invisible to every
+mechanism this project trusts. The known set, so the next stale-prose sweep starts from a list
+instead of a memory: the GitHub description + topics + homepage, the Thunderstore package
+description (WP-9, not created yet — it will be written from this same prose and must be written
+*correct*, not migrated later), the site's own copy (`site/`, deployed by hand), the Discord channel
+topic/pins, and the release-body template in `tools/release/notes/`.
 
 ### 7.1 The two install lanes
 

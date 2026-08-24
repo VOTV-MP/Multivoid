@@ -45,7 +45,12 @@ untracked (`git ls-files docs/piles/re-artifacts` → 0). No key material, no `.
 except `master.multivoid.dev`, which is public by necessity.
 
 **The finding is `docs/security/`** — 14 files, ~130 KB, a working exploit map for a SHIPPING mod.
-`TRACKER.md` carries 16 OPEN rows with exact `file:line` and an explicit "attacker → gain" column:
+`TRACKER.md` carries **18 OPEN rows of 33** with exact `file:line` and an explicit "attacker → gain"
+column (census run 2026-08-24 `[V]`: `P1 A1 A2 A3 W3 A4 A5 A6 A8 A9 W7 W8 W9 W10 A7 S1 S2 A10`
+OPEN · 12 BUILT · 1 DESIGN · 1 VERIFIED · 1 DISMISSED; the `F*` rows are forward design rules, not
+findings). **The "16 OPEN" figure this doc carried on 2026-08-23 was wrong** — it was inherited from
+the register's own dated prose note of 2026-07-24, and rows were added after it without the running
+total being updated. Corrected here rather than re-asserted; see §4:
 
 | Row | What a stranger gets, per our own register |
 |---|---|
@@ -233,6 +238,8 @@ navigation page would have been ritual, not scrutiny. Two calls inside it are wo
 | 2026-08-23 | WP-3 | Root `SECURITY.md` written: private-advisory reporting, scope in/out, and an honest "what holds / what does not" section | see §4 commit |
 | 2026-08-23 | WP-2 | Citation bleed swept per the rule above across `ROADMAP`, `MULTIPLAYER_UI`, `COOP_SYNCER_MODEL`, `COOP_SERVER_MODEL`, `COOP_EVENT_JOIN`, `LESSONS` §9; two now-dead `research/` links removed from `README.md` | `cf3780d2` |
 | 2026-08-23 | — | Same sweep, unplanned: **two `.gitignore` rules the memory index called ENFORCED did not exist** — `*.lnk` and `ref_*vps*`, i.e. VPS reference material sat untracked-but-not-ignored, one `git add -A` from a public commit. Added, along with the "prose only" half (`QUESTION_FORM_*`, `tools/workflows/`). Third instance of this shape in this repo | `cf3780d2` |
+| 2026-08-24 | — | `/documentize` №9 reconciliation. **Corrected this arc's own error:** "16 OPEN" was inherited from the register's stale prose and propagated into three files + a public commit; censused to **18 OPEN of 33** and fixed in `DOCS_ARC` ×2, `.gitignore`, and the register itself (which now carries a census command instead of a running total). One markdown link into the unpublished corpus (`MULTIPLAYER_UI.md:154`) demoted to a plain path. `research/README.md` written (inner repo, no remote, why). `CLAUDE.md` reading order gained 1b/1c. **Verified no CI gate or release script depends on either unpublished path** | this entry |
+| 2026-08-24 | UE4SS-arc | User-raised: the GitHub repo DESCRIPTION is stale prose the WP-4 census structurally could not see. Measured and filed as `UE4SS_ARC.md` §7.0 with the off-tree surface list | — |
 | 2026-08-23 | WP-5 | `docs/README.md` written — three reader lanes, a "how to read a claim" section explaining the evidence tags and the `-RE-`/`-DESIGN-` conventions, and a note that `research/` + `docs/security/` pointers are unpublished on purpose (not broken links). Upward backlinks added to all 7 subdir READMEs; root `README.md` now points at the index | see §4 commit |
 
 ---
@@ -240,7 +247,7 @@ navigation page would have been ritual, not scrutiny. Two calls inside it are wo
 ## 5. What this arc does NOT do
 
 **It does not close a single security hole.** As of this writing `docs/security/TRACKER.md` stands
-at 16 OPEN rows, four of them CRITICAL. The user's decision is explicit: pull the register out of
+at **18 OPEN rows of 33** (measured 2026-08-24, §1), four of them CRITICAL. The user's decision is explicit: pull the register out of
 public *and then* close the holes. That second half is a separate arc with its own `/qf` per finding
 and the fix order the `PLAN_*` files already rank (P1 peer auth → A1 signaling identity → A3/A4
 authority-on-receive → W3 net-thread Begin latch).
