@@ -499,6 +499,9 @@ Three idioms worth copying, each measured in more than one screen:
 1. **Description-on-hover** — settings' `rtb_desc`, saveSlots' rule description, gamemode's `tex_desc`.
    A house idiom, not a one-off.
 2. **The whole row is an invisible button over a tinted background image** — not a styled button.
+   *(We copy the LOOK — a tinted background image carrying the state — but **not** the button: see
+   §8's "Why no row button". A control that draws nothing in every state is a hit-target, and we
+   already hit-test in C++ for hover.)*
 3. **Every native interaction is a BOUND DELEGATE** (`BndEvt__..._OnButtonClickedEvent__DelegateSignature`);
    the assets carry a `ComponentDelegateBinding` export. See §6e — and see §8 for why we still poll in v1.
 
@@ -628,9 +631,32 @@ and should not be silently re-opened.
    *indistinguishable* from "no handle, no bug, donors absent" — an instrument blind to the
    phenomenon always passes. It runs from the same observer as the inject, and records **which menu
    instance and tick it sampled**, so a null is attributable.
-   - **O1**: does `R::FindClass` resolve the **7 new** UMG classes? Today the mod resolves only five
-     (`TextBlock`:384, `UserWidget`:398, `WidgetTree`:399, `VerticalBox`:405, `Button`:432); v1 adds
-     `ScrollBox`, `Overlay`, `SizeBox`, `Image`, `HorizontalBox`, `EditableTextBox`, `CanvasPanel`.
+   - **RUNG 1 — the cheapest falsifier, and it can invalidate the placement.** `BuildTextWidget`
+     (`engine_widget.cpp:154-167`) already hand-wires `UUserWidget -> UWidgetTree -> root` with bare
+     `SpawnObject` + raw offsets, and ships through `pos_hud` — **into the VIEWPORT, which is the only
+     path ever proven.** Whether a never-`Initialize`d `UUserWidget` renders **inside a
+     `UWidgetSwitcher`** is unmeasured. So: `AddChild` that same throwaway as child 12,
+     `SetActiveWidgetIndex(11)`, take **one screenshot**. That single step tests `AddChild`
+     resolution, switcher rendering of a hand-wired widget, the ESC behaviour and `input_owner`'s
+     focus term **at once** — before any of P2's ~700 LOC. **If it renders nowhere, the screen falls
+     back to `AddToViewport` like every other surface we ship, and the 12th-child design goes with
+     it.**
+   - **O1 — measure FUNCTION resolution, not class names.** Corrected in `/qf` round 8:
+     `R::FindFunction` matches `OuterOf(fn) == owningClass` with **no super-walk**
+     (`reflection.cpp:493`; `sdk_profile_names.h:414` says so in a comment). So resolving `ScrollBox`
+     buys nothing by itself — `AddChild` lives on **`UPanelWidget`**, a class we already resolve, and
+     **one** resolve there serves ScrollBox, Overlay, HorizontalBox and CanvasPanel alike. (The mod
+     already declares **nine** UMG class constants, not five: `Widget`:387/:414 — a duplicated
+     constant — `PanelWidget`:433, `ContentWidget`:434, `WidgetComponent`:376, `WidgetTree`:399,
+     `UserWidget`:398, `TextBlock`:384, `VerticalBox`:405, `Button`:432.)
+     **Classes to resolve** (instantiation only): `ScrollBox`, `Overlay`, `SizeBox`, `Image`,
+     `HorizontalBox`, `EditableTextBox`, `CanvasPanel`.
+     **Functions to resolve, each on its OWNING class** — the real risk: `AddChild` on
+     `UPanelWidget` (**resolved nowhere today**); `SetBrushFromMaterial`/`SetBrushTintColor` on
+     `UImage`; `SetHeightOverride` on `USizeBox`; `SetText`/`GetText` on `UEditableTextBox`; the slot
+     setters on each `U*Slot`; and `GetMousePositionOnViewport`/`GetViewportScale` on the **CDO** of
+     `UWidgetLayoutLibrary` — a `UBlueprintFunctionLibrary` (`UMG.hpp:2067`) that appears **nowhere**
+     in our tree, so it needs the `FindClassDefaultObject` pattern of `spawn_menu.cpp:129`.
      A miss must **fail loud at resolve time**, never draw a broken screen — names survive a recook,
      offsets do not (`docs/VERSION_MIGRATION.md`).
    - **O5**: is the donor's `FSlateResourceHandle` (the 16 unreflected bytes at `FSlateBrush`+0x70)
@@ -680,9 +706,22 @@ and should not be silently re-opened.
    - **Lifecycle** exactly per `multiplayer_menu.cpp:222-227`: inject once per menu instance,
      self-heal on `!Alive()` (`CachedObjRef`, world-stamped), 1/s throttle, everything else
      edge-applied. That is the one **hands-on-verified** native inject we have.
-   - **The row.** `USizeBox(HeightOverride = 64)` -> **`UOverlay`** holding a `UImage` background +
-     a `UHorizontalBox` of five `UTextBlock`s + an invisible `UButton`. **Not a `UBorder`** — that is
-     a `UContentWidget` (`SetContent`/`GetContent`, single child) and a row stacks three things.
+   - **The row — and it has NO `UButton`.** `USizeBox(HeightOverride = 64)` -> **`UOverlay`**
+     holding a `UImage` background + a `UHorizontalBox` of five `UTextBlock`s. **Not a `UBorder`** —
+     that is a `UContentWidget` (`SetContent`/`GetContent`, single child) and a row stacks two things.
+
+     > **Why no row button (`/qf` round 8 — it dissolved a problem rather than solving one).** The
+     > native row's `button_select` draws nothing in all three states (`DrawAs: NoDrawType`), and the
+     > release-edge poll's one surviving justification is *"let the `UButton` finish its own
+     > press->release visual"* — **which is false for a button that has no visual.** Hover is already
+     > pure C++ rect math, and click hit-testing is the *same* rect math on the *same* mouse read, so
+     > a per-row `UButton` buys only the click **sound**, which the screen can play directly.
+     > Removing it also removes any need to author `DrawAs = NoDrawType` into a cloned brush — which
+     > would have been a carve-out in the clone-don't-author rule below, and which I had justified
+     > with an asset-reference census that structurally cannot see `DrawAs` (a one-byte reflected
+     > value, `SlateCore.hpp:293`). **Real `UButton`s remain only on the chrome** — Connect /
+     > Refresh / Back / Host — where the press visual and the native sound are genuine and the framed
+     > `button_*` donor is the right one.
      **Not a `UUserWidget`** either: rows would then land in `GUObjectArray` for `input_owner`'s 1 Hz
      focus walk and churn on every refresh. (A `UBorder` *is* right for a framed background panel —
      one content child. Choose by child count, not by habit.) The game uses `UCanvasPanel` + explicit
