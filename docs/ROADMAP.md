@@ -316,6 +316,16 @@ LAN (two-machine + same-box-two-instance both confirmed).
        panel itself renders in ImGui (in-process overlay), not pure UMG. The
        `mp_host_game.bat` / `mp_client_connect.bat` launchers remain only as
        the autonomous-test entry points.
+       **A NATIVE-UMG replacement for the browser panel is designed and its
+       measurement pass has RUN (2026-08-25) — `docs/MULTIPLAYER_UI.md` §8a/§8,
+       commits `dc846e02` + `7a8c239b`. Nothing native is built yet; the ImGui
+       panel above is still what ships.** Two results from that pass bind other
+       phases: a hand-wired `UUserWidget` RENDERS inside `ui_menu_C`'s live
+       `UWidgetSwitcher` (so the placement holds), and **the ImGui overlay
+       substrate is NOT retirable** — at every launch the game presents ~540
+       frames over ~11.4 s in which no world exists and our game-thread task
+       pump does not advance, so a UMG surface cannot be created or attached
+       there. Two substrates is the measured end state, not a transition.
 
 ## Phase 4 — Replication layers (the bulk) ◐
 

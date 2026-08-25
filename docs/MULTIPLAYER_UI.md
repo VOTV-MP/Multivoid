@@ -212,7 +212,7 @@ The interactive-native-widget mechanism is **shipping today**, in the live main 
   `ColorAndOpacity`, `BackgroundColor`), injected by a POST observer on `ui_menu_C::Tick` and
   re-injected on the death-menu (`net_pump.cpp:140-154`).
 - **Clicks are POLLED, not delegate-bound** — `UWidget::IsHovered()` plus our own mouse state
-  (`engine.h:540,566`; `engine_widget.cpp:484` forces Visible so the hover/click poll sees it).
+  (`engine.h:540,566`; `engine_widget.cpp:492-495` forces Visible so the hover/click poll sees it).
   **This is the fact that makes the runtime route viable**: binding a UMG multicast delegate from
   raw reflection needs a UFunction on a UObject we own, and we never solved that — we sidestepped it.
 - We build widget trees at runtime with no cooked asset: `SpawnObject` -> `UUserWidget` ->
@@ -406,7 +406,7 @@ widget classes carrying the game's own style, **read off the live menu at runtim
 
 | element | how it is built | what it actually takes from the game |
 |---|---|---|
-| **MULTIPLAYER button** | `engine::InjectCanvasButton(refButton, label, &out)` (`engine_widget.cpp:365-432`) | **not a style clone.** It walks `refButton`'s slot -> parent `UVerticalBox` and adds our `UButton` as a SIBLING there, so **slot + layout parity is structural**. The label's text style is **hardcoded from a MEASUREMENT** — `font_ui`, Size 16, ShadowOffset (2,2), black shadow, *"verified: `bp_reflection/ui_menu.json` tex_btnStart/tex_btnstat"* — and the label is then **deliberately tinted CYAN** to mark the coop entry. The source comment ends *"(Font parity is deferred.)"* |
+| **MULTIPLAYER button** | `engine::InjectCanvasButton(refButton, label, &out)` (`engine_widget.cpp:373-500`) | **not a style clone.** It walks `refButton`'s slot -> parent `UVerticalBox` and adds our `UButton` as a SIBLING there, so **slot + layout parity is structural**. The label's text style is **hardcoded from a MEASUREMENT** — `font_ui`, Size 16, ShadowOffset (2,2), black shadow, *"verified: `bp_reflection/ui_menu.json` tex_btnStart/tex_btnstat"* — and the label is then **deliberately tinted CYAN** to mark the coop entry. The source comment ends *"(Font parity is deferred.)"* |
 | **the version / update line** (the upper-left "Multivoid …" text) | `engine::InjectTextRowAbove(refText, ...)` (`engine.h:551-564`) | **a real clone**: VOTV's own `txt_version` text style (font/colour/shadow/justification) **and** its row's slot layout (padding/alignment), inserted as one more row in the same `UVerticalBox` |
 
 So the arguments, re-stated honestly after reading the implementation:
@@ -431,7 +431,7 @@ which is the part not to re-derive.** Our own source says *"Font parity is defer
 button-label parity is **incomplete today by admission**, and nobody has compared our button to
 `button_start` on screen. The reflex fix is *"re-read the reference widget's style at inject time
 instead of using frozen constants"* — **that was TRIED and REVERTED, and the frozen constants ARE
-the fix.** `engine_widget.cpp:394-400` records why, verbatim: *"We do NOT clone a reference
+the fix.** `engine_widget.cpp:403-409` records why, verbatim: *"We do NOT clone a reference
 UTextBlock (tex_btnStart): its pointer is null at some inject timings, which fell through to a
 Roboto / centered / white default — the 'wrong font, indented, wrong colour' bug."* So:
 
@@ -622,8 +622,10 @@ built from **our** widgets — never the game's classes (§8).
 > `src/coop/dev/worldless_frames.cpp` (RUNG 0), armed by `[dev] native_ui_probe=1` /
 > `native_ui_probe_write=1`, driven by `python tools/mp.py nativeui`. Solo, MENU scenario, no
 > save, no session. DLL `multivoid-0.9.0n-143.dll`, **proto 143 unchanged** (no wire change).
-> **This is a real log from a real run, not a smoke marker** — but it is a LAB run at the main
-> menu, not hands-on, and RUNG 0's caveat below is load-bearing.
+> **This is a real log from a real run, not a smoke marker** — but it is a LAB run, not hands-on.
+> The full measurement record, including the six instrument defects found and fixed during the pass,
+> is `research/findings/tooling/votv-native-umg-p1-probe-MEASUREMENTS-2026-08-25.md` (local-only
+> corpus, per `docs/DOCS_ARC.md`).
 
 | # | question | answer | consequence |
 |---|---|---|---|
@@ -794,7 +796,7 @@ load-bearing and should not be silently re-opened.
      substrates is the measured answer. Banking "two substrates permanently" while the instrument
      sits in the same loop, unused, is the blind-instrument shape this doc keeps catching.
    - **RUNG 1 — the cheapest falsifier, and it can invalidate the placement.** `BuildTextWidget`
-     (`engine_widget.cpp:154-167`) already hand-wires `UUserWidget -> UWidgetTree -> root` with bare
+     (`engine_widget.cpp:157-170`) already hand-wires `UUserWidget -> UWidgetTree -> root` with bare
      `SpawnObject` + raw offsets, and ships through `pos_hud` — **into the VIEWPORT, which is the only
      path ever proven.** Whether a never-`Initialize`d `UUserWidget` renders **inside a
      `UWidgetSwitcher`** is unmeasured. So: `AddChild` that same throwaway as child 12,
@@ -825,7 +827,8 @@ load-bearing and should not be silently re-opened.
      **Classes to resolve** (instantiation only): `ScrollBox`, `Overlay`, `SizeBox`, `Image`,
      `HorizontalBox`, `EditableTextBox`, `CanvasPanel`.
      **Functions to resolve, each on its OWNING class** — the real risk: `AddChild` on
-     `UPanelWidget` (**resolved nowhere today**); `SetBrushFromMaterial`/`SetBrushTintColor` on
+     `UPanelWidget` (**was resolved nowhere in the tree; §8a measured it RESOLVES**);
+     `SetBrushFromMaterial`/`SetBrushTintColor` on
      `UImage`; `SetHeightOverride` on `USizeBox`; `SetText`/`GetText` on `UEditableTextBox`; the slot
      setters on each `U*Slot`; and `GetMousePositionOnViewport`/`GetViewportScale` on the **CDO** of
      `UWidgetLayoutLibrary` — a `UBlueprintFunctionLibrary` (`UMG.hpp:2067`) that appears **nowhere**
@@ -842,7 +845,7 @@ load-bearing and should not be silently re-opened.
    `ImageType` @0x6F and the bitfield bools resume @0x80, so **the 16 bytes at +0x70 are an
    unreflected `FSlateResourceHandle` (a `TSharedPtr`)**. `FButtonStyle` is four brushes at
    0x08/0x90/0x118/0x1A0 (`SlateCore.hpp:12-15`), and `InjectCanvasButton`'s 0x278 `memcpy` covers all
-   four while zeroing only the two `FSlateSound` tails (`engine_widget.cpp:454-458`). If the handle is
+   four while zeroing only the two `FSlateSound` tails (`engine_widget.cpp:463-466`). If the handle is
    populated we copy a refcounted pointer without `AddRef`. **The consequence is INFERRED, not
    measured — hence the gate.** If armed: zero the four handles exactly as `sdk_profile.h:193-196`
    already does for sound, then re-check visually that the button still draws its background (the same
@@ -950,7 +953,7 @@ load-bearing and should not be silently re-opened.
      >
      > **`IsHovered()` is correct by construction — Slate already did the hit-test.** The cost worry
      > that motivated rect math is handled by edge-gating, but **not inside the WndProc** — corrected
-     > in `/qf` round 11. `imgui_overlay.cpp:323` calls `CallWindowProcW(g_origWndProc, ...)` **last**,
+     > in `/qf` round 11. `imgui_overlay.cpp:324` calls `CallWindowProcW(g_origWndProc, ...)` **last**,
      > so our detour runs *before* the engine sees the message: on a `WM_MOUSEMOVE`, Slate has not
      > processed that move yet and `IsHovered()` still answers for the **previous** position.
      > ("`WndProcDetour` runs on the game thread" was inferred to mean "sees the move"; those are

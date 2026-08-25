@@ -1363,6 +1363,17 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   each; cite the SYMBOL and let the line number be a convenience; state the OUTCOME you rely on
   separately from the MECHANISM you observed; and never close a comment by telling the reader not to
   change the thing — if it is load-bearing make it a test, a gate or a `static_assert`.
+  **SECOND INSTANCE, 2026-08-25, and it was OUR OWN file rotted by an ADDITIVE change:** adding one
+  public seam — `SpawnUObject`, **8 lines inserted at `engine_widget.cpp:287`** — shifted everything
+  below it and silently invalidated **seven** citations across **three** files the commit never
+  touched (`365-432`→`373-500` twice, `394-400`/`394-424`→`403-409`/`403-433`, `452-482`→`451-470`,
+  `454-458`→`463-466`, `484`→`492-495`), including one inside `sdk_profile_names.h`. Two more were
+  already wrong and had never been caught — `154-167` (really `157-170`) and `imgui_overlay.cpp:323`
+  (really `324`, **off by one from the day it was written**). *Look FIRST:* **"did I edit that
+  function?" is the wrong question — the right one is "did I change the LINE COUNT of any file
+  anyone cites into?"**, and for a well-cited file the answer is yes for essentially any addition.
+  After any such commit, `grep -rn "<basename>:[0-9]" docs/ src/ include/` and re-verify each hit;
+  it is mechanical, not a judgement call.
   `memory/lesson_a_comment_citing_a_dependency_line_number_rots_silently.md`
 
 - **A correction in a NEW SUBSECTION leaves the headline stale — and the headline is what gets quoted.**
@@ -2833,7 +2844,7 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   Answering "should the main-menu buttons move to a pak?", a build plan asserted the MULTIPLAYER
   button is *"a real `UButton` whose `FButtonStyle` is cloned from the live `button_start`"* and
   argued from it that *a clone tracks the game while an authored asset freezes it*.
-  `engine_widget.cpp:365-432` says otherwise: it walks `refButton`'s slot to its parent `UVerticalBox`
+  `engine_widget.cpp:373-500` says otherwise: it walks `refButton`'s slot to its parent `UVerticalBox`
   and adds ours as a **sibling** (slot/layout parity is structural — that part is real), but the
   label's style is **hardcoded constants measured once** from `bp_reflection/ui_menu.json` (`font_ui`,
   size 16, shadow (2,2), black), the label is **deliberately tinted cyan**, and the comment ends
