@@ -484,9 +484,34 @@ question — see §7.6.**
 
 ### 7.2a The routing rule — AUTHORITATIVE `[V]` 2026-08-25, and §7.2's tree would NOT have loaded
 
-A Thunderstore zip is not extracted "whole" anywhere. The **manager** routes each top-level entry
-according to a per-game rule set that Thunderstore publishes as machine-readable data, and VOTV's
-rule set is this — fetched live from
+**The mental model, first, because every mistake in this area is the same mistake: THE MANAGER WRITES
+TWO PATH SEGMENTS THAT THE ZIP NEVER CONTAINS.** The profile tree you can see on disk
+(`…\profiles\Default\shimloader\…`) is the install's **output**; the zip is its **input**; and the
+manager inserts `shimloader\` (the profile root) and `<Author>-<Name>\` (from `mod.getName()`)
+between them. Authoring either one into the zip, or reading the profile and writing it down as the
+package shape, is the same error — and it is the error §7.2 made.
+
+Side by side, one real package, measured on this box:
+
+```
+ZIP  (what we build)                 ->   PROFILE  (what you see on disk)
+acitulen-DebugMod-5.0.3.zip               ...\profiles\Default\shimloader\
+    manifest.json                             mod\acitulen-DebugMod\manifest.json
+    icon.png                                  mod\acitulen-DebugMod\icon.png
+    README.md                                 mod\acitulen-DebugMod\README.md
+    mod\enabled.txt                           mod\acitulen-DebugMod\enabled.txt
+    mod\dlls\main.dll                         mod\acitulen-DebugMod\dlls\main.dll
+    pak\DebugMod.pak                          pak\acitulen-DebugMod\DebugMod.pak
+```
+
+Neither `shimloader\` nor `acitulen-DebugMod\` appears anywhere in the zip. **None of the five field
+packages in §7.2b contains a `shimloader\` folder.** And a zip that *did* carry `shimloader\mod\…`
+would hit a top-level directory named `shimloader`, which matches no route, so the rule engine would
+recurse into it and *might* then match the `mod\` one level down by accident — **untested, and not
+something to rely on instead of the convention every shipped package follows.**
+
+The **manager** routes each top-level entry according to a per-game rule set that Thunderstore
+publishes as machine-readable data, and VOTV's rule set is this — fetched live from
 `https://thunderstore.io/api/experimental/schema/dev/latest/`,
 `games["voices-of-the-void"].r2modman[0]` (326 games in that document):
 
@@ -1143,6 +1168,16 @@ option is not re-derived from scratch later.
 - **STILL OWED, and it is an account action, not a measurement:** Thunderstore team/namespace
   creation (the namespace becomes the `<Author>` half of `<Author>-Multivoid`, which §7.2a trap 4
   shows is load-bearing for the pak path), plus the service-account API token that §7.9 needs.
+- **NEWLY OWED 2026-08-25 — the negative control §7.2a could not run.** Everything in §7.2a about
+  where files land is `[V]` from three independent sources (the live ecosystem schema, r2modman's
+  rule engine + its own test spec, and five real packages measured against this box's profile) — but
+  **our own package has never been installed by a manager**, and trap 1 ("a root-level `dlls/`
+  silently never loads") is read off the rule engine, not observed. r2modman can install a **local
+  zip** ("Import local mod"), so the whole thing is testable before anything is published: build a
+  candidate package from the current DLL + `assets/branding/icon.png`, import it, and diff the
+  resulting profile tree against §7.2a's prediction. **Do this before the first Thunderstore upload,
+  not after** — a wrong layout is invisible until a player reports the mod doing nothing. Note it
+  touches the shared r2modman profile, so it needs a window when no other session is using it.
 
 ### 7.9 Can GitHub produce the ready-to-install package, or must it come from the maintainer's PC? (USER 2026-08-25)
 
