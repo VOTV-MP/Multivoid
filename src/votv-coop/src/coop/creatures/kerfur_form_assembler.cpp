@@ -80,6 +80,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cwchar>
 
 namespace coop::kerfur_form_assembler {
 namespace {
@@ -93,6 +94,35 @@ namespace E  = coop::element;
 // Verb ids echoed back in the substrate Bracket (also the window's verbId).
 constexpr int kVerbTurnOff = 1;  // dropKerfurProp -- NPC -> prop (destroys the NPC self)
 constexpr int kVerbTurnOn  = 2;  // spawnKerfuro   -- prop -> NPC (destroys the prop self)
+
+// The two BP function names we register. These literals ARE the identity the ambient
+// window publishes (vm_dispatch.h: "gate on verbName, never on verbId"), so the same
+// pointers are what InKerfurVerb() compares.
+constexpr const wchar_t* kVerbNameTurnOff = L"dropKerfurProp";
+constexpr const wchar_t* kVerbNameTurnOn  = L"spawnKerfuro";
+
+// Is the calling thread inside one of OUR OWN two verbs?
+//
+// THIS PREDICATE IS THE FIX FOR A REAL DEFECT (2026-08-24, /qf rounds 46-47). Every gate
+// below used to test `av.active` ALONE, which is true for ANY registered 0x45 verb on this
+// thread -- and three shipped modules (container_contents_sync's kVerbDirty, meadow_db_sync's
+// kVerbMark, drive_sync's kVerbPutDriveIn) publish verbId 1, the value we call kVerbTurnOff,
+// while drive_sync's kVerbPulledOut=2 is our kVerbTurnOn. So testing the id would not have
+// helped either. Under a FOREIGN verb's bracket the old gates inverted twice over: an
+// unrelated spawn counted as ours (`formIn`), and `reqScope = !av.active && InReqScope()`
+// went FALSE, blinding the CallFunction route G1 exists to cover.
+//
+// MEASURED SEVERITY, so this is not overstated: the 2026-08-24 field run's session-end
+// CONTAINMENT SUMMARY reads `catch{off=0 on=0}` on BOTH peers -- zero kerfur conversions
+// occurred -- so the inversion was LATENT, not observed. It is reachable (the coin gun
+// destroying a prop_kerfur nests our destroy inside its bracket), and it becomes reachable
+// far more often the moment another verb is registered on a common path.
+bool InKerfurVerb(const vm::ActiveVerb& av) {
+    if (!av.active || !av.verbName) return false;
+    return av.verbName == kVerbNameTurnOff || av.verbName == kVerbNameTurnOn ||
+           std::wcscmp(av.verbName, kVerbNameTurnOff) == 0 ||
+           std::wcscmp(av.verbName, kVerbNameTurnOn) == 0;
+}
 
 coop::net::Session* g_session = nullptr;
 
@@ -192,7 +222,7 @@ bool IsKerfurNpcClass(void* cls) {
     return nb && R::IsDescendantOfAny(cls, &nb, 1);
 }
 // Record the freshly-finished successor B in the one-shot slot (2a-capture). Called from
-// OnFinishSpawn on both the 0x45 (av.active) and the CallFunction (reqScope) form branch,
+// OnFinishSpawn on both the 0x45 (InKerfurVerb) and the CallFunction (reqScope) form branch,
 // only when B has a live index. Overwrites any prior slot (this bracket's B supersedes).
 void StoreCapturedForm(void* b, int32_t idx, void* cls) {
     tls_capturedForm    = b;
@@ -232,7 +262,7 @@ void OnVerbEntry(const vm::Bracket& b) {
 
     if (!LogVerbose()) return;
     if (g_logged.fetch_add(1, std::memory_order_relaxed) >= kLogCap) return;
-    const wchar_t* verb = (b.verbId == kVerbTurnOff) ? L"dropKerfurProp" : L"spawnKerfuro";
+    const wchar_t* verb = (b.verbId == kVerbTurnOff) ? kVerbNameTurnOff : kVerbNameTurnOn;
     std::wstring cls = R::ClassNameOf(b.ctx);
     UE_LOGI("[kerfur_asm][%s] VERB %ls id=%d Context=%p class=%ls depth=%d eid=%s%u (observe-only)",
             RoleTag(), verb, b.verbId, b.ctx, cls.c_str(), b.depth,
@@ -256,24 +286,25 @@ void OnFinishSpawn(void* /*context*/, void* /*sourceObject*/, void* spawnedResul
         // floppyIn=0-style NULL result. Out-of-window neither = an ordinary world spawn (the vast
         // majority) -> ignored (CurrentThreadVerb is the cheap gate).
         const vm::ActiveVerb av = vm::CurrentThreadVerb();
-        if (av.active) {
+        if (InKerfurVerb(av)) {
             g_spawnOtherInWindow.fetch_add(1, std::memory_order_relaxed);
             if (LogVerbose() && g_logged.fetch_add(1, std::memory_order_relaxed) < kLogCap) {
                 std::wstring cn = R::ClassNameOf(spawnedResult);
-                UE_LOGI("[kerfur_asm][%s] SPAWN OTHER IN-WINDOW actor=%p class=%ls verbId=%d depth=%d "
+                UE_LOGI("[kerfur_asm][%s] SPAWN OTHER IN-WINDOW actor=%p class=%ls verb=%ls depth=%d "
                         "-- filter REJECTS (not form, not floppy; NOT a repoint target)",
-                        RoleTag(), spawnedResult, cn.c_str(), av.verbId, av.depth);
+                        RoleTag(), spawnedResult, cn.c_str(), av.verbName ? av.verbName : L"<none>", av.depth);
             }
         }
         return;
     }
 
     const vm::ActiveVerb av = vm::CurrentThreadVerb();
-    const bool reqScope = !av.active && InReqScope();  // G1: CallFunction route (0x45-blind)
+    const bool inVerb  = InKerfurVerb(av);
+    const bool reqScope = !inVerb && InReqScope();  // G1: CallFunction route (0x45-blind)
     bool bIndexLive = false;
     int32_t bIdx = -1;
     if (isForm) {
-        if (av.active) {
+        if (inVerb) {
             g_spawnFormInWindow.fetch_add(1, std::memory_order_relaxed);
             // GATE 3b -- mark that the form-spawn fired in THIS bracket, so the later
             // self-destroy can prove spawn-before-destroy ordering.
@@ -296,14 +327,14 @@ void OnFinishSpawn(void* /*context*/, void* /*sourceObject*/, void* spawnedResul
             g_spawnFormOutWindow.fetch_add(1, std::memory_order_relaxed);
         }
     } else {  // floppy
-        if (av.active) g_spawnFloppyInWindow.fetch_add(1, std::memory_order_relaxed);
+        if (inVerb) g_spawnFloppyInWindow.fetch_add(1, std::memory_order_relaxed);
     }
     if (LogVerbose() && g_logged.fetch_add(1, std::memory_order_relaxed) < kLogCap) {
         std::wstring cn = R::ClassNameOf(spawnedResult);
-        const char* scope = av.active ? "IN-WINDOW" : (reqScope ? "IN-WINDOW(req-scope)" : "out-of-window");
-        UE_LOGI("[kerfur_asm][%s] SPAWN %ls actor=%p class=%ls %s verbId=%d depth=%d bIdx=%d bLive=%d reqEid=%d",
+        const char* scope = inVerb ? "IN-WINDOW" : (reqScope ? "IN-WINDOW(req-scope)" : "out-of-window");
+        UE_LOGI("[kerfur_asm][%s] SPAWN %ls actor=%p class=%ls %s verb=%ls depth=%d bIdx=%d bLive=%d reqEid=%d",
                 RoleTag(), isForm ? L"FORM" : L"floppy", spawnedResult, cn.c_str(),
-                scope, av.verbId, av.depth, bIdx, bIndexLive ? 1 : 0,
+                scope, av.verbName ? av.verbName : L"<none>", av.depth, bIdx, bIndexLive ? 1 : 0,
                 reqScope ? static_cast<int>(coop::kerfur_convert_host::ActiveRequestVerbEid()) : -1);
     }
 }
@@ -318,7 +349,7 @@ void OnDestroy(void* context, void* /*sourceObject*/, void* /*result*/) {
     const vm::ActiveVerb av = vm::CurrentThreadVerb();
     const char* kind;
     bool orderGood = false;
-    if (!av.active) {
+    if (!InKerfurVerb(av)) {
         if (InReqScope()) {
             // G1: the host is executing a client's convert-request via CallFunction (0x45-blind route);
             // a kerfur destroy here is the conversion's own self-destroy. Captures the CallFunction-route
@@ -348,8 +379,8 @@ void OnDestroy(void* context, void* /*sourceObject*/, void* /*result*/) {
     (void)orderGood;
     if (LogVerbose() && g_logged.fetch_add(1, std::memory_order_relaxed) < kLogCap) {
         std::wstring cn = R::ClassNameOf(context);
-        UE_LOGI("[kerfur_asm][%s] DESTROY actor=%p class=%ls %s verbId=%d ctx=%p depth=%d",
-                RoleTag(), context, cn.c_str(), kind, av.verbId, av.ctx, av.depth);
+        UE_LOGI("[kerfur_asm][%s] DESTROY actor=%p class=%ls %s verb=%ls ctx=%p depth=%d",
+                RoleTag(), context, cn.c_str(), kind, av.verbName ? av.verbName : L"<none>", av.ctx, av.depth);
     }
 }
 
@@ -469,8 +500,8 @@ bool IsCapturedForm(void* actor) {
 
 void Install(coop::net::Session* session) {
     g_session = session;
-    vm::RegisterVirtualVerb(L"dropKerfurProp", kVerbTurnOff, &OnVerbEntry);
-    vm::RegisterVirtualVerb(L"spawnKerfuro",   kVerbTurnOn,  &OnVerbEntry);
+    vm::RegisterVirtualVerb(kVerbNameTurnOff, kVerbTurnOff, &OnVerbEntry);
+    vm::RegisterVirtualVerb(kVerbNameTurnOn,  kVerbTurnOn,  &OnVerbEntry);
     vm::SetEnabled(true);  // gate ACTIVITY on session-active (both roles -- the client
                            // needs the bracket to observe its OWN conversion; plan R9).
 }

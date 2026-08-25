@@ -53,6 +53,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <cwchar>
 
 namespace coop::kerfur_convert {
 namespace {
@@ -573,12 +574,20 @@ bool TryCaptureKerfurPropDestroy(void* actor, coop::element::ElementId dyingEid)
         if (s_vmLog) {
             const ue_wrap::vm_dispatch::ActiveVerb av = ue_wrap::vm_dispatch::CurrentThreadVerb();
             const coop::element::ElementId reqEid = coop::kerfur_convert_host::ActiveRequestVerbEid();
-            if (av.active || reqEid != coop::element::kInvalidId)
+            // vmActive alone would claim "in-bracket" for ANY module's verb (see
+            // vm_dispatch.h: gate on verbName, never on verbId/active). A diagnostic that
+            // asserts the wrong provenance is the false-comment family this lane keeps
+            // paying for, so it names the verb it actually saw.
+            const bool inOurVerb = av.active && av.verbName &&
+                                   (std::wcscmp(av.verbName, L"dropKerfurProp") == 0 ||
+                                    std::wcscmp(av.verbName, L"spawnKerfuro") == 0);
+            if (inOurVerb || reqEid != coop::element::kInvalidId)
                 UE_LOGW("kerfur_convert: 2a-capture MISS in-bracket (%s) actor=%p -- no captured B at the destroy "
                         "edge (ORDER ASSERT: spawn<destroy expected) -- treating as genuine destroy (generic "
-                        "relay). provenance{vmActive=%d verbId=%d ctxSelf=%d reqEid=%d}",
-                        isHost ? "HOST" : "CLIENT", actor, av.active ? 1 : 0, av.verbId,
-                        (av.active && av.ctx == actor) ? 1 : 0,
+                        "relay). provenance{inOurVerb=%d verb=%ls ctxSelf=%d reqEid=%d}",
+                        isHost ? "HOST" : "CLIENT", actor, inOurVerb ? 1 : 0,
+                        av.verbName ? av.verbName : L"<none>",
+                        (inOurVerb && av.ctx == actor) ? 1 : 0,
                         reqEid == coop::element::kInvalidId ? -1 : static_cast<int>(reqEid));
         }
         return false;  // no captured conversion successor -> genuine destroy -> generic relay

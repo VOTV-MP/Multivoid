@@ -68,9 +68,20 @@ std::mutex g_regMutex;  // registration only -- NEVER taken on the dispatch hot 
 // match (a non-matching dispatch pays nothing). t_currentVerbId / t_currentCtx name
 // the innermost active matched verb so a consumer's own Func-seam hooks firing inside
 // the verb body can attribute a spawn/destroy to it (CurrentThreadVerb()).
-thread_local int   t_matchDepth    = 0;
-thread_local int   t_currentVerbId = 0;
-thread_local void* t_currentCtx    = nullptr;
+//
+// t_currentVerbName IS THE ONLY GLOBALLY UNIQUE HANDLE, and the ambient read MUST key
+// on it (2026-08-24, /qf round 46-47). `verbId` is a CALLER-CHOSEN int echoed back --
+// container_contents_sync (kVerbDirty), meadow_db_sync (kVerbMark) and drive_sync
+// (kVerbPutDriveIn) all publish 1, which kerfur_form_assembler reads as its own
+// kVerbTurnOff, and drive_sync's kVerbPulledOut=2 collides with kVerbTurnOn. An id is
+// unique only WITHIN the consumer that registered it, so it is meaningless to a
+// CROSS-MODULE ambient reader. The verb NAME is the BP function name and
+// RegisterVirtualVerb already requires it to have static lifetime, so the registration
+// slot's `name` pointer is unique by construction and free to publish.
+thread_local int            t_matchDepth     = 0;
+thread_local int            t_currentVerbId  = 0;
+thread_local void*          t_currentCtx     = nullptr;
+thread_local const wchar_t* t_currentVerbName = nullptr;
 
 // Unwind-safe RAII bracket around g_origVirtual (the verb body): increments depth +
 // publishes the active verb, and restores the prior state on ANY exit -- normal
@@ -82,17 +93,21 @@ thread_local void* t_currentCtx    = nullptr;
 // the consumer cross-checks its counter against the raw catch count, so a leak would
 // surface as an anomaly rather than a silent lie.
 struct MatchScope {
-    int   prevVerbId;
-    void* prevCtx;
-    MatchScope(int verbId, void* ctx) : prevVerbId(t_currentVerbId), prevCtx(t_currentCtx) {
+    int            prevVerbId;
+    void*          prevCtx;
+    const wchar_t* prevVerbName;
+    MatchScope(int verbId, const wchar_t* verbName, void* ctx)
+        : prevVerbId(t_currentVerbId), prevCtx(t_currentCtx), prevVerbName(t_currentVerbName) {
         ++t_matchDepth;
         t_currentVerbId = verbId;
         t_currentCtx = ctx;
+        t_currentVerbName = verbName;
     }
     ~MatchScope() {
         --t_matchDepth;
         t_currentVerbId = prevVerbId;
         t_currentCtx = prevCtx;
+        t_currentVerbName = prevVerbName;
     }
     MatchScope(const MatchScope&) = delete;
     MatchScope& operator=(const MatchScope&) = delete;
@@ -160,7 +175,7 @@ std::uintptr_t __fastcall WrapperVirtual(void* ctx, void* stack, void* result) {
     // -- capture/suppress/converge are 2a-2c.)
     const VerbEntry& e = g_verbs[idx];
     g_callbackFired.fetch_add(1, std::memory_order_relaxed);
-    MatchScope scope(e.verbId, ctx);
+    MatchScope scope(e.verbId, e.name, ctx);
     if (e.cb) {
         Bracket b{ctx, e.verbId, t_matchDepth};
         e.cb(b);
@@ -315,6 +330,7 @@ ActiveVerb CurrentThreadVerb() {
     ActiveVerb v{};
     v.active = t_matchDepth > 0;
     v.verbId = t_currentVerbId;
+    v.verbName = t_currentVerbName;
     v.depth  = t_matchDepth;
     v.ctx    = t_currentCtx;
     return v;

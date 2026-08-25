@@ -76,11 +76,24 @@ using EntryFn = void (*)(const Bracket&);
 // ctx is the verb's own victim, distinguished from unrelated churn by IDENTITY, not
 // class). Thread-local; valid only synchronously within the verb body. The window is
 // published under an unwind-safe RAII bracket, so it cannot leak past the verb.
+// *** GATE ON `verbName`, NOT ON `active`, AND NEVER ON `verbId` (2026-08-24, /qf 46-47) ***
+// `verbId` is a CALLER-CHOSEN tag, unique only WITHIN the consumer that registered it.
+// Measured: container_contents_sync's kVerbDirty, meadow_db_sync's kVerbMark and
+// drive_sync's kVerbPutDriveIn are all 1 -- the value kerfur_form_assembler reads as its
+// own kVerbTurnOff -- and drive_sync's kVerbPulledOut=2 collides with kVerbTurnOn. So for
+// a CROSS-MODULE ambient read the id is meaningless and `active` alone is worse: it is
+// true for ANY registered verb on this thread, so a consumer testing only `active`
+// silently misattributes every other module's verb to its own. `verbName` is the BP
+// function name from the registration slot (static lifetime, required by
+// RegisterVirtualVerb below), hence unique by construction -- compare it, by pointer for
+// a literal you registered yourself or by wcscmp otherwise. A consumer reading the
+// `Bracket` handed to its OWN callback is unaffected: that one is already scoped.
 struct ActiveVerb {
-    bool  active;
-    int   verbId;
-    int   depth;
-    void* ctx;
+    bool           active;
+    int            verbId;
+    int            depth;
+    void*          ctx;
+    const wchar_t* verbName;   // the matched verb's registered name; null iff !active.
 };
 ActiveVerb CurrentThreadVerb();
 
