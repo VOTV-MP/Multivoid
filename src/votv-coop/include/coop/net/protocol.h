@@ -706,7 +706,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // + replays them in ConnectReplayForSlot. mainPlayer.holding_actor with an Aprop_C no
 // longer feeds the PropSpawn/PropPose path (the trash clump/pile carry -- the
 // non-Aprop_C holding_actor case -- stays on its lane untouched).
-inline constexpr uint16_t kProtocolVersion = 137; // v137 (2026-08-24, security A37/A38: the coin gun and its coins are SYNCED. `[V]` `Abaocoin_C : AActor` (not `Aprop_C`) was absent from every lane, so a client's sale spawned coins only on the client, credited only the client's local balance, and the host's next broadcast erased it -- while the prop's destroy replicated, so the group LOST THE ITEM AND GAINED NOTHING. Coins are now HOST-MINTED world actors: a client sends +CoinGunSell=122 carrying the sold prop's ElementId AND NOTHING ELSE, immediately BEFORE its ordinary (byte-unchanged) PropDestroy on the same lane, so FIFO delivers the sale while the host's prop is still alive; the host prices it from ITS OWN copy via `lib_C::sellObject` and mints via the game's own `sell`. `baocoin_C` joins kWorldActorAllowlist and `prop_coingun_C` joins kExSpawnSourceClasses (the WA lane's PE author is structurally blind to the gun's EX_CallMath mint, so HostEnrollExSpawn is what allocates the eid and broadcasts). A parse change on both sides, so the bump is mandatory. Prior: v136 (2026-08-24, security A34/A35: the laptop shop stops being FREE for every client. An OrderRequest item is now a `list_store` ROW NAME and nothing else -- it used to carry the client's own price/size/category/objectClass, which the host wrote through verbatim, and `[V]` `makeAnOrder` contains no `addPoints` at all (the charge lives in ui_laptop's Button_order ubergraph), so the client debited itself locally, the host was never charged, the goods were delivered, and the client's debit was refunded by the host's next balance broadcast. The host now prices the order from ITS OWN table (ue_wrap::store_catalog), checks its OWN balance, rolls its OWN ETA, and charges after the commit is confirmed by an orders.Num +1 edge. +OrderRefused=121 (host->one client) because a refusal moves nothing, so the change-polled BalanceSync can never fire, while the client has ALREADY debited itself through an EX_LocalVirtualFunction we cannot suppress. A parse change on both sides, so the bump is mandatory. NOT ONLY SECURITY: `[V]` 473 rows map onto 368 object classes, so the old class-keyed wire could not uniquely name 112 of 473 shop items, and the host's wholesale row copy also fixes the ~141 rows that mis-delivered while name/asProp/parseRowNameToObject were written as NAME_None). Prior: v135 (2026-08-24, WP-6 security: the client->host BalanceDelta (24) lane is RETIRED WHOLE -- it was an unbounded client-authored economy write the host applied via AddPoints, so any peer could set the shared balance to +/-2^31 (security A5). Retired rather than clamped per RULE 2; [V] its only in-tree sender was the dev +1000 button, already refused on a client by dev_gate, and the laptop shop it was built for shipped on OrderRequest with a HOST re-commit. Kind 24 STAYS UNASSIGNED. A parse change (a kind that was accepted is now unknown), so the bump is mandatory, not just the release rule). Prior: v134 (2026-07-31, consume b133: chat HISTORY + the roster ledger/player list + host-assigned unique nicknames persisted to ini + real UTF-8 across every text surface (imgui 1.92.9 lazy atlas, +4,741 codepoints and the combining marks) + the CURSOR fix (ScaleAllSizes truncated MouseCursorScale to 0) + GitHub issue #5 (the overlay stops taking keys the GAME is typing: the predicate is now the game's own IsValid(activeInterface) guard, and the focus backstop asks about USER 0 so WidgetInteraction's virtual user cannot latch it) + the chat send-flicker and nameplate centring/host-ping fixes. No wire-format change in the b133 range; the bump is the release rule + the Paper-pair build number). Prior: v133 (2026-07-29, CHAT HISTORY -- +ChatLine=119 +ChatSpeaker=120, and ChatMessage=48 becomes client->host ONLY (out of IsClientRelayableReliableKind, RULE 2). Chat inverts from host-RELAYED to host-AUTHORED: the lobby now has a chat RECORD with a host-assigned lineSeq that IS the total order every peer sorts by, and a joiner is SEEDED from it. The relay could not carry this -- it fires on the NET thread at receive time, before the game thread where a lineSeq could be assigned even exists, so at relay time the order does not yet exist. A parse change AND a release, so the Paper-pair build number moves with it). Prior: v132 (2026-07-28, ARC B -- the HOST is the canonical namer: a Join's nick is ARBITRATED before it enters the ledger, and the assignment reaches the named peer on its own RosterRow (whose nick already sat in the FIXED PREFIX above the applyDeclared gate for exactly this). The row FORMAT is unchanged -- what changed is who authors the value and that the named peer KEEPS it: per the user's 2026-07-28 decision the assigned name is written back to multivoid.ini, so the next session asks to be called Pelmentor2 and keeps it unless someone else already is. The bump is the release rule + the Paper-pair build number, not a parse change). Prior: v131 (2026-07-28: RosterRow FIXED PREFIX widened -- +[u8 linkKind][i16 pingMs] after eid, so the HOST publishes how every player is connected to the SESSION and every board renders the same value for the same player. Retires the per-viewer derivation that answered transport on some rows and ROUTE ("VIA HOST") on others, in one column, side by side; retires the client-side rttMsForSlot fan-out to nameplates, which could only ever measure the host link. The fields sit in the FIXED PREFIX because the tail's offset arithmetic lives inside the applyDeclared block, which is skipped for exactly the host row and the receiver's own row). Prior: v130 (2026-07-27, arc A: PlayerJoined WIDENED + renamed RosterRow -- +uint16 playerNo, admits slot 0 and the receiver's own slot, playerNo 0 = slot empty. The roster ledger is now the single presence authority; a client's TAB used to list only itself and the host). Prior: v129 (2026-07-26, consume b128: DX12 overlay renderer + Graphics API indicator + Tidy-up fix + the release notes/install pipeline); v128 (consume b127, the WHOLE ini workstream -- arc 3 const Row& ratchet + arc 4 T8 catalog); v127 (consume b126, arcs 1+2); v126 (consume b125, drill-matrix, retracted); v125 (2026-07-22, R11b container extraction):
+inline constexpr uint16_t kProtocolVersion = 138; // v138 (2026-08-25, B1 -- the coin-gun sale finally NAMES the prop it sold. v137 named it by ElementId alone; `[V]` under v122 no-passive-mint a client mints no Element row for its OWN save-loaded keyed prop, so the eid was 0 for exactly the props a player shoots and 3 of 3 field sales refused with REASON=no element id before the host looked at anything. CoinGunSellPayload becomes {WireKey key; uint32 elementId; uint32 _pad} -- PropDestroyPayload's layout, deliberately, because it names the same artifact as the destroy riding right behind it on the same lane; the host resolves the KEY first and falls back to the eid for the keyless families (clump/chip pile carry Key=None). +CoinGunResult=123 (host->one client): a refusal used to be SILENT, and a silent refusal is INDISTINGUISHABLE from the reported bug (the seller's prop vanishes -- its own destroy is unchanged and still lands -- and no coins appear), so the seller now gets a sentence; a success carries the price the HOST used, which can legitimately differ from the seller's own local toast because `getPriceMultiplier` is per-instance and divergent for prop_batts/prop_food/prop_cementBag/prop_garbBagRoll. Also: the consumption guard is re-keyed off the eid (it would have collapsed onto g_soldEid[0] and poisoned every later sale) onto the artifact name + a world-stamped CachedObjRef, and it is now genuinely erased -- by a host-side sweep of entries whose actor died and by a new OnDisconnect, where v137's comment merely CLAIMED it self-cleaned while the map was erased nowhere at all. A parse change on both sides, so the bump is mandatory. Prior: v137 (2026-08-24, security A37/A38: the coin gun and its coins are SYNCED. `[V]` `Abaocoin_C : AActor` (not `Aprop_C`) was absent from every lane, so a client's sale spawned coins only on the client, credited only the client's local balance, and the host's next broadcast erased it -- while the prop's destroy replicated, so the group LOST THE ITEM AND GAINED NOTHING. Coins are now HOST-MINTED world actors: a client sends +CoinGunSell=122 carrying the sold prop's ElementId AND NOTHING ELSE, immediately BEFORE its ordinary (byte-unchanged) PropDestroy on the same lane, so FIFO delivers the sale while the host's prop is still alive; the host prices it from ITS OWN copy via `lib_C::sellObject` and mints via the game's own `sell`. `baocoin_C` joins kWorldActorAllowlist and `prop_coingun_C` joins kExSpawnSourceClasses (the WA lane's PE author is structurally blind to the gun's EX_CallMath mint, so HostEnrollExSpawn is what allocates the eid and broadcasts). A parse change on both sides, so the bump is mandatory). Prior: v136 (2026-08-24, security A34/A35: the laptop shop stops being FREE for every client. An OrderRequest item is now a `list_store` ROW NAME and nothing else -- it used to carry the client's own price/size/category/objectClass, which the host wrote through verbatim, and `[V]` `makeAnOrder` contains no `addPoints` at all (the charge lives in ui_laptop's Button_order ubergraph), so the client debited itself locally, the host was never charged, the goods were delivered, and the client's debit was refunded by the host's next balance broadcast. The host now prices the order from ITS OWN table (ue_wrap::store_catalog), checks its OWN balance, rolls its OWN ETA, and charges after the commit is confirmed by an orders.Num +1 edge. +OrderRefused=121 (host->one client) because a refusal moves nothing, so the change-polled BalanceSync can never fire, while the client has ALREADY debited itself through an EX_LocalVirtualFunction we cannot suppress. A parse change on both sides, so the bump is mandatory. NOT ONLY SECURITY: `[V]` 473 rows map onto 368 object classes, so the old class-keyed wire could not uniquely name 112 of 473 shop items, and the host's wholesale row copy also fixes the ~141 rows that mis-delivered while name/asProp/parseRowNameToObject were written as NAME_None). Prior: v135 (2026-08-24, WP-6 security: the client->host BalanceDelta (24) lane is RETIRED WHOLE -- it was an unbounded client-authored economy write the host applied via AddPoints, so any peer could set the shared balance to +/-2^31 (security A5). Retired rather than clamped per RULE 2; [V] its only in-tree sender was the dev +1000 button, already refused on a client by dev_gate, and the laptop shop it was built for shipped on OrderRequest with a HOST re-commit. Kind 24 STAYS UNASSIGNED. A parse change (a kind that was accepted is now unknown), so the bump is mandatory, not just the release rule). Prior: v134 (2026-07-31, consume b133: chat HISTORY + the roster ledger/player list + host-assigned unique nicknames persisted to ini + real UTF-8 across every text surface (imgui 1.92.9 lazy atlas, +4,741 codepoints and the combining marks) + the CURSOR fix (ScaleAllSizes truncated MouseCursorScale to 0) + GitHub issue #5 (the overlay stops taking keys the GAME is typing: the predicate is now the game's own IsValid(activeInterface) guard, and the focus backstop asks about USER 0 so WidgetInteraction's virtual user cannot latch it) + the chat send-flicker and nameplate centring/host-ping fixes. No wire-format change in the b133 range; the bump is the release rule + the Paper-pair build number). Prior: v133 (2026-07-29, CHAT HISTORY -- +ChatLine=119 +ChatSpeaker=120, and ChatMessage=48 becomes client->host ONLY (out of IsClientRelayableReliableKind, RULE 2). Chat inverts from host-RELAYED to host-AUTHORED: the lobby now has a chat RECORD with a host-assigned lineSeq that IS the total order every peer sorts by, and a joiner is SEEDED from it. The relay could not carry this -- it fires on the NET thread at receive time, before the game thread where a lineSeq could be assigned even exists, so at relay time the order does not yet exist. A parse change AND a release, so the Paper-pair build number moves with it). Prior: v132 (2026-07-28, ARC B -- the HOST is the canonical namer: a Join's nick is ARBITRATED before it enters the ledger, and the assignment reaches the named peer on its own RosterRow (whose nick already sat in the FIXED PREFIX above the applyDeclared gate for exactly this). The row FORMAT is unchanged -- what changed is who authors the value and that the named peer KEEPS it: per the user's 2026-07-28 decision the assigned name is written back to multivoid.ini, so the next session asks to be called Pelmentor2 and keeps it unless someone else already is. The bump is the release rule + the Paper-pair build number, not a parse change). Prior: v131 (2026-07-28: RosterRow FIXED PREFIX widened -- +[u8 linkKind][i16 pingMs] after eid, so the HOST publishes how every player is connected to the SESSION and every board renders the same value for the same player. Retires the per-viewer derivation that answered transport on some rows and ROUTE ("VIA HOST") on others, in one column, side by side; retires the client-side rttMsForSlot fan-out to nameplates, which could only ever measure the host link. The fields sit in the FIXED PREFIX because the tail's offset arithmetic lives inside the applyDeclared block, which is skipped for exactly the host row and the receiver's own row). Prior: v130 (2026-07-27, arc A: PlayerJoined WIDENED + renamed RosterRow -- +uint16 playerNo, admits slot 0 and the receiver's own slot, playerNo 0 = slot empty. The roster ledger is now the single presence authority; a client's TAB used to list only itself and the host). Prior: v129 (2026-07-26, consume b128: DX12 overlay renderer + Graphics API indicator + Tidy-up fix + the release notes/install pipeline); v128 (consume b127, the WHOLE ini workstream -- arc 3 const Row& ratchet + arc 4 T8 catalog); v127 (consume b126, arcs 1+2); v126 (consume b125, drill-matrix, retracted); v125 (2026-07-22, R11b container extraction):
                                                   // ContainerContents becomes BIDIRECTIONAL and its
                                                   // blob gains a baseHash. A client now AUTHORS the
                                                   // world container it mutated (presser-authored
@@ -2692,10 +2692,14 @@ enum class ReliableKind : uint8_t {
                        //     relayed -- the host authors every consequence itself: the coins via
                        //     WorldActorSpawn, the prop's removal via the client's OWN unchanged
                        //     PropDestroy).
-                       //     The payload is an ELEMENT ID AND NOTHING ELSE -- no price, no coin
-                       //     count, no class (§2b: "an intent may name WHAT, never WHAT IT COSTS").
-                       //     The host re-derives the value from ITS OWN copy of the prop via
-                       //     `lib_C::sellObject`, so a client cannot name what its sale was worth.
+                       //     v138 (B1): the payload NAMES THE PROP THE WAY PropDestroy DOES -- the
+                       //     save KEY first, the ElementId as the keyless fallback. It used to be an
+                       //     eid and nothing else, and the field measured that FALSE for exactly the
+                       //     props a player shoots: a v122 client mints no Element row for its own
+                       //     save-loaded keyed prop, so the eid was 0 and 3 of 3 sales refused
+                       //     before the host ever looked. Still no price, no coin count, no class
+                       //     (§2b: "an intent may name WHAT, never WHAT IT COSTS") -- the host
+                       //     re-derives the value from ITS OWN copy via `lib_C::sellObject`.
                        //     ORDERING IS LOAD-BEARING: this is sent immediately BEFORE the client's
                        //     ordinary PropDestroy on the SAME lane, so FIFO delivers the sale while
                        //     the host's prop is still alive (the mint needs it -- `sell` positions
@@ -2703,6 +2707,25 @@ enum class ReliableKind : uint8_t {
                        //     That is why the client's destroy is left byte-unchanged: a sale the
                        //     host refuses degrades to exactly today's behaviour instead of opening
                        //     a heal lane for a prop the client already destroyed locally.
+    CoinGunResult = 123, // v138 (coingun_sync -- B1): the HOST tells the SELLING client what its
+                       //     sale actually did. HOST->CLIENT, addressed with SendReliableToSlot,
+                       //     never relayed. TWO reasons this is not refusal-only the way
+                       //     OrderRefused (121) is:
+                       //       - a REFUSAL is otherwise SILENT AND INDISTINGUISHABLE FROM THE BUG
+                       //         the user reported ("монеты не создаются") -- the prop vanishes on
+                       //         the seller's screen (its own destroy is unchanged and still lands)
+                       //         and no coins appear, which is exactly the field symptom. Shipping
+                       //         that as designed behaviour is not acceptable; the seller gets a
+                       //         sentence. Precedent: order_sync's refusal answers with BOTH a
+                       //         `peer_action_feed::AnnounceDirect` line and a state repair.
+                       //       - a SUCCESS carries the PRICE THE HOST USED, and that is not
+                       //         redundant with the balance broadcast: `[V]` `getPriceMultiplier`
+                       //         is per-instance and divergent for prop_batts / prop_food /
+                       //         prop_cementBag / prop_garbBagRoll (energy, uses, ripeness -- the
+                       //         scalars COOP_WORLD_PROP_DIVERGENCE documents), so the client's own
+                       //         local `sell` toast can legitimately name a DIFFERENT number than
+                       //         the host minted. The result line makes that divergence visible
+                       //         instead of leaving the seller to trust a toast we know can lie.
     // Slots 21/22 (HeldClumpGrab/Release) RETIRED 2026-06-03 (v26, RULE 2): the v25
     // hand-attach model for the trash clump was the wrong shape (VOTV carries the
     // clump via the physics grab, floating in front, like the mannequin -- not
@@ -4092,23 +4115,60 @@ struct OrderRefusedPayload {
 };
 static_assert(sizeof(OrderRefusedPayload) == 8, "OrderRefusedPayload must be 8 bytes");
 
-// v137 (2026-08-24, security A37/A38 -- coop/items/coingun_sync). A CLIENT shot a prop with the
-// coin gun. The ENTIRE payload is the prop's ElementId, deliberately: §2b says an intent may name
-// WHAT but never WHAT IT COSTS, and the host re-derives the value from its OWN copy of that prop
-// (`lib_C::sellObject`, whose price is `list_store.price/2` or the `list_props` price, times the
-// prop's own `getPriceMultiplier()`). Nothing here is trusted beyond "which element".
+// v137 (2026-08-24, security A37/A38 -- coop/items/coingun_sync), REWRITTEN v138 (B1). A CLIENT shot
+// a prop with the coin gun. The payload NAMES THE ARTIFACT and nothing else: §2b says an intent may
+// name WHAT but never WHAT IT COSTS, and the host re-derives the value from its OWN copy of that
+// prop (`lib_C::sellObject`, whose price is `list_store.price/2` or the `list_props` price, times
+// the prop's own `getPriceMultiplier()`). Nothing here is trusted beyond "which prop".
 //
-// Why there is no coin count, no price and no gun id:
+// WHY THE LAYOUT IS PropDestroyPayload's. v137 named the prop by ElementId alone and the field
+// measured that FALSE at the first shot: `[V]` under v122 no-passive-mint a client mints no Element
+// row for its OWN save-loaded keyed prop, so `elementId` was 0 for exactly the props a player walks
+// up to and shoots -- 3 of 3 sales refused with REASON=no element id before the host looked at
+// anything. The identity that DOES survive is the one the client's own PropDestroy has always
+// carried and whose receiver has always resolved: the save KEY. So the sale is named the way the
+// destroy riding right behind it on the same lane is named -- key first, eid as the keyless
+// fallback (a trash clump / chip pile carries Key=None and is eid-identified by construction).
+// Both empty means the client could not name the artifact at all; it authors NO sale in that case
+// rather than sending an unresolvable one.
+//
+// Why there is still no coin count, no price and no gun id:
 //   - the coins are minted BY THE HOST from its own `sellObject` result, so a count would be a
 //     second source of truth for something the host already computes;
-//   - `[V]` `sell` reads ZERO gun state and positions its coins from the SOLD PROP's component
+//   - `[V]` `sell` reads ZERO gun FIELDS and positions its coins from the SOLD PROP's component
 //     (`rnd(c, comp)`), so WHICH `prop_coingun_C` instance executes cannot change the outcome --
 //     naming the gun would be a field nobody could act on. A client's gun is a hand-item display
-//     mirror with no world element anyway.
+//     mirror with no world element anyway. (`sell` is NOT world-agnostic, though -- see
+//     coingun_sync.cpp's FindLiveGun: `EX_Self` is the WorldContextObject of every deferred spawn
+//     inside it, so the executor must be a live, world-placed instance, never a CDO.)
 struct CoinGunSellPayload {
-    uint32_t elementId;  // 4 -- the SOLD prop's Element id (host band). 0 / kInvalid -> refused.
+    WireKey  key;        // 32 -- the SOLD prop's save Key. len=0 -> keyless, resolve by eid.
+    uint32_t elementId;  // 4  -- the SOLD prop's Element id in the SENDER's band. 0 = none.
+    uint32_t _pad;       // 4  -- 8-byte alignment (mirrors PropDestroyPayload exactly)
 };
-static_assert(sizeof(CoinGunSellPayload) == 4, "CoinGunSellPayload must be 4 bytes");
+static_assert(sizeof(CoinGunSellPayload) == 40, "CoinGunSellPayload must be 40 bytes");
+
+// v138 (B1): what the host's answer to a CoinGunSell says. `Sold` is not a redundant ack -- it
+// carries the price the HOST used, which can legitimately differ from the number the seller's own
+// local `sell` toast printed (`getPriceMultiplier` is per-instance and divergent). Every other
+// value is a refusal, and a refusal must be SAID: the seller's prop is already gone from its own
+// screen (its destroy is deliberately unchanged) so silence renders as the reported bug.
+enum class CoinGunResultCode : uint8_t {
+    Sold          = 1,  // minted; `points` is the price the host derived from ITS copy
+    NoSuchProp    = 2,  // neither the key nor the eid resolves to a live prop in the host's world
+    AlreadySold   = 3,  // this exact artifact was already minted for and has not died yet
+    NoGun         = 4,  // no live, world-placed prop_coingun_C exists to execute the mint
+    NotSellable   = 5,  // the host's own sellObject said sold=0 for this prop's name
+    HostInternal  = 6,  // a reflection resolve / dispatch on the host failed -- our bug, not theirs
+};
+
+// (already inside the file-wide `#pragma pack(push, 1)`)
+struct CoinGunResultPayload {
+    uint8_t  code;      // 1 -- CoinGunResultCode
+    uint8_t  _pad[3];   // 3
+    int32_t  points;    // 4 -- the price the host minted (Sold only; 0 on every refusal)
+};
+static_assert(sizeof(CoinGunResultPayload) == 8, "CoinGunResultPayload must be 8 bytes");
 
 // Phase 5N1 Inc2 (2026-05-25, updated 2026-05-28 Tier 3 PoC): NPC spawn
 // reliable payload. Host detects an NPC instantiation via the host-side

@@ -430,6 +430,7 @@ DisconnectStats DisconnectAll() {
     coop::atv_sync::OnDisconnect();
     coop::drone_sync::OnDisconnect();
     coop::order_sync::OnDisconnect();
+    coop::coingun_sync::OnDisconnect();       // v138 (B1): dump the lane summary + drop the sold-set, the barrier queue and the cached gun (v137 had NONE, so a reconnect carried a dead world's actors)
     coop::firefly_sync::OnDisconnect();
     coop::event_cue_sync::OnDisconnect();    // v79 clear the cosmetic-cue poll snapshot
     coop::event_fire_sync::OnDisconnect();   // v95 restore the client scheduler (allEvents.Num) + drop poll baseline/queues

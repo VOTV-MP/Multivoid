@@ -2,9 +2,12 @@
 
 #include "coop/items/coingun_sync.h"
 
+#include "coop/comms/peer_action_feed.h"
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/player/players_registry.h"
+#include "coop/props/prop_element_tracker.h"
 #include "coop/session/world_load_episode.h"
 #include "coop/world/world_actor_sync.h"
 
@@ -23,6 +26,7 @@
 #include <cstdint>
 #include <cstring>
 #include <mutex>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -80,13 +84,36 @@ std::atomic<unsigned long long> g_salesRefused{0};
 std::mutex g_pendingMu;
 std::vector<ue_wrap::CachedObjRef> g_pendingKill;
 
-// C-3 (audit 2026-08-24): the artifact must be CONSUMED, or a client can replay one CoinGunSell and
-// mint for the same prop forever -- the host removes nothing itself (by design: the client's own
-// PropDestroy does that), so nothing else stops a repeat. `order_sync`, which this lane cites as its
-// precedent, confirms its commit with an OrderCount()+1 edge before charging; this is the equivalent.
-// Keyed on eid AND the actor pointer so it self-cleans: once that prop dies and the eid is recycled
-// onto a different actor, LivePropActor returns a new pointer and the sale is allowed again.
-std::unordered_map<uint32_t, void*> g_soldEid;
+// THE CONSUMPTION GUARD (C-3, audit 2026-08-24; RE-KEYED AND GIVEN A REAL LIFETIME in v138/B1).
+// The artifact must be CONSUMED, or a client can replay one CoinGunSell and mint for the same prop
+// forever -- the host removes nothing itself (by design: the client's own PropDestroy does that),
+// so nothing else stops a repeat. `order_sync`, this lane's precedent, confirms its commit with an
+// OrderCount()+1 edge before charging; this is the equivalent.
+//
+// TWO v137 DEFECTS FIXED HERE, both measured, both in this comment's predecessor:
+//   1. IT WAS KEYED ON THE EID. Once B1 names the artifact by KEY, an eid key collapses onto
+//      g_soldEid[0] for exactly the props this lane exists for (a v122 client's own save-loaded
+//      keyed prop has eid 0), so the FIRST client sale would poison the guard against EVERY later
+//      one -- a free denial of the whole feature. The key is now the artifact NAME: the save key
+//      when there is one, "#<eid>" for the keyless families, which is unique in each domain.
+//   2. IT CLAIMED TO SELF-CLEAN AND WAS ERASED NOWHERE. The old comment said the map "self-cleans:
+//      once that prop dies and the eid is recycled onto a different actor...". `[V]` It was written
+//      at :393 and read at :317 and never erased at all, and the recycle it leaned on cannot happen
+//      in a real session anyway -- registry.cpp:177 pushes a freed id to the FRONT while Alloc pops
+//      the BACK, deferring reuse by ~28k allocations. So the map only ever grew, and a reconnecting
+//      client carried a stale sold-set into a new world. It is erased in TWO places now: the ~1 Hz
+//      host sweep in Tick() drops entries whose prop has died (a CachedObjRef reads dead as null,
+//      including "the world moved on" -- CLAUDE.md 4j), and OnDisconnect clears it whole.
+// The value is a world-stamped CachedObjRef, not a raw pointer: the guard compares IDENTITY, and a
+// raw pointer to a freed actor can be matched by a recycled allocation.
+std::unordered_map<std::wstring, ue_wrap::CachedObjRef> g_sold;
+
+// The artifact's NAME: the save key when the prop has one, "#<eid>" otherwise. The two spaces
+// cannot collide -- a save key is never empty and never starts with '#'.
+std::wstring ArtifactName(const std::wstring& key, uint32_t eid) {
+    if (!key.empty()) return key;
+    return L"#" + std::to_wstring(static_cast<unsigned long>(eid));
+}
 
 bool IsCoinActor(void* actor) {
     if (!actor) return false;
@@ -203,6 +230,43 @@ void* FindLiveGun() {
     return found;
 }
 
+// ---- the host's ANSWER (v138 B1) ---------------------------------------------------------------
+// Every sale gets one, success or refusal. A refusal that says nothing renders on the seller's
+// screen as the exact bug the user reported: their prop vanishes (its own destroy is unchanged and
+// still lands) and no coins appear. See the header's THE RESULT SENTENCE.
+void SendResult(coop::net::Session* s, uint8_t slot, coop::net::CoinGunResultCode code,
+                int32_t points) {
+    if (!s) return;
+    coop::net::CoinGunResultPayload r{};
+    r.code   = static_cast<uint8_t>(code);
+    r.points = points;
+    s->SendReliableToSlot(static_cast<int>(slot), coop::net::ReliableKind::CoinGunResult, &r,
+                          sizeof(r));
+}
+
+// Refuse + answer + count, in one place so a new refusal path cannot silently skip the sentence.
+void Refuse(coop::net::Session* s, uint8_t slot, coop::net::CoinGunResultCode code) {
+    g_salesRefused.fetch_add(1, std::memory_order_relaxed);
+    SendResult(s, slot, code, 0);
+}
+
+const wchar_t* ResultText(coop::net::CoinGunResultCode code) {
+    switch (code) {
+        case coop::net::CoinGunResultCode::Sold:         return L"sold it";
+        case coop::net::CoinGunResultCode::NoSuchProp:
+            return L"could not sell that: the host does not have it";
+        case coop::net::CoinGunResultCode::AlreadySold:
+            return L"could not sell that: it was already sold";
+        case coop::net::CoinGunResultCode::NoGun:
+            return L"could not sell that: no coin gun exists in the host's world";
+        case coop::net::CoinGunResultCode::NotSellable:
+            return L"could not sell that: the host's store will not take it";
+        case coop::net::CoinGunResultCode::HostInternal:
+            return L"could not sell that: the host hit an internal error";
+    }
+    return L"could not sell that";
+}
+
 }  // namespace
 
 void PrepareCoinMirror(void* coin) {
@@ -251,24 +315,55 @@ bool IsInCoinGunVerb() {
     return g_gunClass && R::ClassOf(av.ctx) == g_gunClass;
 }
 
-void SendSaleForDyingProp(uint32_t elementId) {
+void SendSaleForDyingProp(const std::wstring& key, uint32_t elementId) {
     auto* s = LoadSession();
     if (!s || !s->connected()) return;
     if (s->role() != coop::net::Role::Client) return;      // the host's own sale needs no wire
-    if (elementId == 0u || elementId == static_cast<uint32_t>(coop::element::kInvalidId)) {
-        UE_LOGW("coingun[client sale]: the gun's victim has no element id -- nothing to name, so no "
-                "sale is authored (the destroy still goes, i.e. today's behaviour)");
+    const uint32_t eid =
+        (elementId == static_cast<uint32_t>(coop::element::kInvalidId)) ? 0u : elementId;
+    if (key.empty() && eid == 0u) {
+        // B1: this is the ONLY remaining "nothing to name" case, and it is genuinely empty -- a
+        // keyless prop with no element row is unnameable in BOTH identity domains. v137 reached
+        // this branch for every ordinary keyed prop because it only ever looked at the eid.
+        UE_LOGW("coingun[client sale]: the gun's victim has neither a save key nor an element id -- "
+                "nothing to name, so no sale is authored (the destroy still goes, i.e. today's "
+                "behaviour). If this line appears for an ordinary keyed prop, the destroy seam's "
+                "key read is the defect, not this lane.");
         return;
     }
     coop::net::CoinGunSellPayload p{};
-    p.elementId = elementId;
+    p.key.len = 0;
+    for (size_t i = 0; i < key.size() && i < sizeof(p.key.data); ++i)
+        p.key.data[p.key.len++] = static_cast<char>(key[i]);
+    p.elementId = eid;
     s->SendReliable(coop::net::ReliableKind::CoinGunSell, &p, sizeof(p));
     g_salesSent.fetch_add(1, std::memory_order_relaxed);
-    UE_LOGI("coingun[client sale]: sent CoinGunSell(eid=%u) -- rides IN FRONT of our own unchanged "
-            "PropDestroy on this lane, so the host mints while its copy is still alive", elementId);
+    UE_LOGI("coingun[client sale]: sent CoinGunSell(key='%ls' eid=%u) -- rides IN FRONT of our own "
+            "unchanged PropDestroy on this lane, so the host mints while its copy is still alive",
+            key.empty() ? L"None" : key.c_str(), eid);
 }
 
 void Tick() {
+    // THE HOST HALF: erase consumed artifacts whose prop has died. This is what gives the
+    // consumption guard a real lifetime -- v137's comment CLAIMED the map self-cleaned while the
+    // map was erased nowhere at all, so it only ever grew. A CachedObjRef reads dead as null,
+    // including "the world moved on" (CLAUDE.md 4j), so this is exactly the liveness test the guard
+    // itself uses. Throttled to ~1 Hz at the 125 Hz pump rate; the map holds only props that were
+    // sold and have not died yet, which is normally zero or one entry.
+    if (!g_sold.empty()) {
+        static uint32_t sSweepN = 0;
+        if ((sSweepN++ % 125u) == 0u) {
+            size_t dropped = 0;
+            for (auto it = g_sold.begin(); it != g_sold.end();) {
+                if (it->second.Get() == nullptr) { it = g_sold.erase(it); ++dropped; }
+                else                             { ++it; }
+            }
+            if (dropped)
+                UE_LOGI("coingun[sold-set]: swept %zu consumed artifact(s) whose prop is gone "
+                        "(%zu still live)", dropped, g_sold.size());
+        }
+    }
+
     std::vector<ue_wrap::CachedObjRef> pending;
     {
         std::lock_guard<std::mutex> lk(g_pendingMu);
@@ -300,51 +395,90 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
     coop::net::CoinGunSellPayload p{};
     std::memcpy(&p, payload, sizeof(p));
 
+    // --- read the artifact's NAME off the wire ----------------------------------------------------
+    // WireKey's contract is that bytes beyond `len` are zero, but a hostile sender is not bound by a
+    // contract: clamp the length and stop at the first NUL rather than trusting either.
+    std::wstring keyStr;
+    {
+        const uint8_t klen = (p.key.len <= sizeof(p.key.data))
+                                 ? p.key.len
+                                 : static_cast<uint8_t>(sizeof(p.key.data));
+        for (uint8_t i = 0; i < klen; ++i) {
+            const char ch = p.key.data[i];
+            if (ch == '\0') break;
+            keyStr.push_back(static_cast<wchar_t>(static_cast<unsigned char>(ch)));
+        }
+    }
+    const std::wstring artifact = ArtifactName(keyStr, p.elementId);
+
     // --- resolve the artifact against OUR OWN world -----------------------------------------------
-    void* prop = coop::element::LivePropActor(static_cast<coop::element::ElementId>(p.elementId));
+    // KEY FIRST. This is the whole of B1: v137 resolved the eid alone, and `[V]` a v122 client mints
+    // no Element row for its own save-loaded keyed prop, so the eid it sent was 0 for exactly the
+    // props a player shoots -- 3 of 3 field sales died right here. The key is the identity that
+    // survives, and ResolveLiveActorByKey is the same primitive the PropDestroy receiver uses.
+    void* prop = nullptr;
+    const wchar_t* how = L"key";
+    if (!keyStr.empty()) prop = coop::prop_element_tracker::ResolveLiveActorByKey(keyStr);
+    if (!prop && p.elementId != 0u) {
+        // The keyless fallback. `[V]` It is NOT reachable through the coin gun today -- the gun's
+        // ubergraph casts the hit actor with `asProp` and returns on failure, while the keyless
+        // families (prop_garbageClump_C / actorChipPile / trashBitsPile) are NOT Aprop_C descendants
+        // (ue_wrap/actors/prop.cpp:145-152 adds them by UNION for exactly that reason). It stays as
+        // the fallback for an Aprop_C whose Key genuinely reads None, and it costs nothing: the 4
+        // bytes sit in alignment padding the payload needs regardless.
+        prop = coop::element::LivePropActor(static_cast<coop::element::ElementId>(p.elementId));
+        how  = L"eid";
+    }
     if (!prop) {
-        g_salesRefused.fetch_add(1, std::memory_order_relaxed);
-        UE_LOGW("coingun[host]: REFUSED slot=%u eid=%u -- REASON=eid-unresolved. No live prop of ours "
-                "carries it. Known cause: the rejoin residual where one actor holds a provisional "
-                "client-band eid AND an adopted host eid. The client's own destroy still lands, so "
-                "this degrades to pre-A37 behaviour (item lost, nothing credited) -- it does not "
-                "manufacture a NEW loss.", senderSlot, p.elementId);
+        Refuse(s, senderSlot, coop::net::CoinGunResultCode::NoSuchProp);
+        UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' (key='%ls' eid=%u) -- "
+                "REASON=no-such-prop. NEITHER name resolves to a live prop in our world, so the two "
+                "peers disagreed about this prop BEFORE anyone fired: a pre-existing stable-ID "
+                "divergence this lane exposes, not one it causes. The client's own destroy still "
+                "lands, so this degrades to pre-A37 behaviour (item lost, nothing credited) -- it "
+                "does not manufacture a NEW loss, and the seller is TOLD.",
+                senderSlot, artifact.c_str(), keyStr.empty() ? L"None" : keyStr.c_str(),
+                p.elementId);
         return;
     }
 
-    // C-3: has this exact prop already been sold? (see g_soldEid)
+    // THE CONSUMPTION GUARD -- has this exact artifact already been minted for? (see g_sold)
     {
-        auto it = g_soldEid.find(p.elementId);
-        if (it != g_soldEid.end() && it->second == prop) {
-            g_salesRefused.fetch_add(1, std::memory_order_relaxed);
-            UE_LOGW("coingun[host]: REFUSED slot=%u eid=%u -- REASON=already-sold. This prop was already "
-                    "minted for and its destroy has not yet removed it. A replayed or duplicated sale "
-                    "mints nothing.", senderSlot, p.elementId);
+        auto it = g_sold.find(artifact);
+        if (it != g_sold.end() && it->second.Get() == prop) {
+            Refuse(s, senderSlot, coop::net::CoinGunResultCode::AlreadySold);
+            UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=already-sold. This prop "
+                    "was already minted for and its destroy has not yet removed it. A replayed or "
+                    "duplicated sale mints nothing.", senderSlot, artifact.c_str());
             return;
         }
     }
 
     void* gun = FindLiveGun();
     if (!gun) {
-        g_salesRefused.fetch_add(1, std::memory_order_relaxed);
-        UE_LOGW("coingun[host]: REFUSED slot=%u eid=%u -- REASON=no-live-coingun. Nothing in our world "
-                "can execute `sell` (the sender's hand mirror may have been stowed within the RTT). "
-                "We mint nothing rather than inventing an instance.", senderSlot, p.elementId);
+        Refuse(s, senderSlot, coop::net::CoinGunResultCode::NoGun);
+        UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=no-live-coingun. Nothing in "
+                "our world can execute `sell` (the sender's hand mirror may have been stowed within "
+                "the RTT). We mint nothing rather than inventing an instance -- `[V]` a CDO executor "
+                "would mint ZERO coins anyway, since EX_Self is the WorldContextObject of every "
+                "deferred spawn inside `sell`.", senderSlot, artifact.c_str());
         return;
     }
 
     // --- price it from OUR OWN copy ---------------------------------------------------------------
     if (!g_sellObjectFn || !g_libCdo) {
-        UE_LOGW("coingun[host]: REFUSED slot=%u eid=%u -- REASON=sellObject-unresolved", senderSlot,
-                p.elementId);
+        Refuse(s, senderSlot, coop::net::CoinGunResultCode::HostInternal);
+        UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=sellObject-unresolved",
+                senderSlot, artifact.c_str());
         return;
     }
     const std::wstring propNameStr = ue_wrap::prop::GetPropNameString(prop);
     const R::FName propName = ue_wrap::fname_utils::StringToFName(propNameStr);
     ue_wrap::ParamFrame f(g_sellObjectFn);
     if (!f.valid()) {
-        UE_LOGW("coingun[host]: REFUSED slot=%u eid=%u -- REASON=sellObject-frame-invalid", senderSlot,
-                p.elementId);
+        Refuse(s, senderSlot, coop::net::CoinGunResultCode::HostInternal);
+        UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=sellObject-frame-invalid",
+                senderSlot, artifact.c_str());
         return;
     }
     f.Set<R::FName>(L"object", propName);
@@ -352,18 +486,27 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
     f.Set<void*>(L"objectToSell", prop);
     f.Set<void*>(L"__WorldContext", prop);
     if (!ue_wrap::Call(g_libCdo, f)) {
-        UE_LOGW("coingun[host]: REFUSED slot=%u eid=%u -- REASON=sellObject-dispatch-failed",
-                senderSlot, p.elementId);
+        Refuse(s, senderSlot, coop::net::CoinGunResultCode::HostInternal);
+        UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=sellObject-dispatch-failed",
+                senderSlot, artifact.c_str());
         return;
     }
     const int32_t points = f.Get<int32_t>(L"Points");
     const bool    sold   = f.Get<bool>(L"sold");
     if (!sold) {
-        g_salesRefused.fetch_add(1, std::memory_order_relaxed);
-        UE_LOGW("coingun[host]: REFUSED slot=%u eid=%u -- REASON=not-sellable (sellObject said sold=0 "
-                "for name='%ls'). `[V]` with onlyShop=TRUE a list_props row priced <=1 is refused, and "
-                "an unknown name is refused outright. Our prop is left UNMUTATED; the client's destroy "
-                "still lands, exactly as today.", senderSlot, p.elementId, propNameStr.c_str());
+        // NEAR-UNREACHABLE BY CONSTRUCTION, and kept fail-closed anyway. `[V]` the refusal gate is
+        // `row.price <= 1 && onlyShop` over `list_props` -- pure cooked TABLE data, byte-identical on
+        // both peers -- so a client whose own `sell` refused never destroyed the prop, never entered
+        // our destroy seam and never authored a sale at all. Reaching here means the two peers'
+        // tables or prop NAMES disagree, which is a version/identity fault worth seeing, not a
+        // routine outcome. (Refusal by price is very much routine in SP: measured over the shipped
+        // list_props, every loose-garbage row -- ntrash*, g3_bag_*, garbBin2, garbContainer,
+        // trashClump -- prices at 1 and is refused, so shooting garbage does nothing on ANY peer.)
+        Refuse(s, senderSlot, coop::net::CoinGunResultCode::NotSellable);
+        UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=not-sellable (sellObject said "
+                "sold=0 for name='%ls'). Our prop is left UNMUTATED; the client's destroy still "
+                "lands, exactly as today. If this fires, the peers disagree about this prop's name "
+                "or about list_props itself.", senderSlot, artifact.c_str(), propNameStr.c_str());
         return;
     }
 
@@ -377,29 +520,100 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
     if (!g_sellFn) g_sellFn = R::FindFunction(R::ClassOf(gun), L"sell");   // M-5: cache, not per sale
     void* sellFn = g_sellFn;
     if (!sellFn) {
-        UE_LOGW("coingun[host]: REFUSED slot=%u eid=%u -- REASON=sell-unresolved", senderSlot,
-                p.elementId);
+        Refuse(s, senderSlot, coop::net::CoinGunResultCode::HostInternal);
+        UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=sell-unresolved", senderSlot,
+                artifact.c_str());
         return;
     }
     ue_wrap::ParamFrame sf(sellFn);
     if (!sf.valid()) {
-        UE_LOGW("coingun[host]: REFUSED slot=%u eid=%u -- REASON=sell-frame-invalid", senderSlot,
-                p.elementId);
+        Refuse(s, senderSlot, coop::net::CoinGunResultCode::HostInternal);
+        UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=sell-frame-invalid",
+                senderSlot, artifact.c_str());
         return;
     }
     sf.Set<int32_t>(L"Index", points);           // `[V]` `Index` IS the price
     sf.Set<void*>(L"comp", meshComp);
     const bool ok = ue_wrap::Call(gun, sf);
-    g_soldEid[p.elementId] = prop;   // C-3: consume the artifact
+    if (!ok) {
+        // The dispatch itself failed, so nothing was minted -- do NOT consume the artifact, and do
+        // NOT tell the seller it sold. v137 stamped the sold-set unconditionally right here.
+        Refuse(s, senderSlot, coop::net::CoinGunResultCode::HostInternal);
+        UE_LOGE("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=sell-dispatch-failed "
+                "(gun=%p comp=%p price=%d). No coins were minted and the artifact is NOT consumed.",
+                senderSlot, artifact.c_str(), gun, meshComp, points);
+        return;
+    }
+    g_sold[artifact].Set(prop);      // consume the artifact (see THE CONSUMPTION GUARD)
+    SendResult(s, senderSlot, coop::net::CoinGunResultCode::Sold, points);
 
     // The coins the mint spawns are EX_CallMath BeginDeferreds from the gun's bytecode, so
     // npc_world_enum's source-gated Func thunk catches them and drains to
     // world_actor_sync::HostEnrollExSpawn -- that is what allocates each eid and broadcasts
     // WorldActorSpawn. Nothing here has to enroll anything.
-    UE_LOGI("coingun[host]: SOLD slot=%u eid=%u name='%ls' price=%d -> minted via gun=%p comp=%p "
-            "dispatch=%d. Coins are HOST-OWNED; whoever's body trips one credits the host. The "
-            "client's own PropDestroy follows on this lane and removes the prop.",
-            senderSlot, p.elementId, propNameStr.c_str(), points, gun, meshComp, ok ? 1 : 0);
+    UE_LOGI("coingun[host]: SOLD slot=%u artifact='%ls' (resolved by %ls) name='%ls' price=%d -> "
+            "minted via gun=%p comp=%p. Coins are HOST-OWNED; whoever's body trips one credits the "
+            "host. The client's own PropDestroy follows on this lane and removes the prop.",
+            senderSlot, artifact.c_str(), how, propNameStr.c_str(), points, gun, meshComp);
+}
+
+void OnReliableResult(const uint8_t* payload, int len) {
+    auto* s = LoadSession();
+    if (!s || s->role() == coop::net::Role::Host) {
+        UE_LOGW("coingun[client]: CoinGunResult received on the HOST -- dropping");
+        return;
+    }
+    if (!payload || len < static_cast<int>(sizeof(coop::net::CoinGunResultPayload))) {
+        UE_LOGW("coingun[client]: CoinGunResult payload too small (len=%d) -- dropping", len);
+        return;
+    }
+    coop::net::CoinGunResultPayload r{};
+    std::memcpy(&r, payload, sizeof(r));
+    const auto code = static_cast<coop::net::CoinGunResultCode>(r.code);
+
+    std::wstring line;
+    if (code == coop::net::CoinGunResultCode::Sold) {
+        // The PRICE, not a bare ack. `[V]` getPriceMultiplier is per-instance and divergent
+        // (prop_batts by energy, prop_food by uses/ripeness, prop_cementBag, prop_garbBagRoll), so
+        // the toast this player's own local `sell` just printed can legitimately name a DIFFERENT
+        // number than the host actually minted. Saying the host's number makes that visible.
+        line = L"sold it for " + std::to_wstring(static_cast<long long>(r.points)) +
+               L" points (the host's price)";
+    } else {
+        line = ResultText(code);
+    }
+    // AnnounceDirect, not Announce: this is functional feedback about the player's own action, not
+    // cosmetic ambience, so the ui.chat.peer_actions toggle must not be able to hide it (the
+    // order_sync refusal takes the same seam for the same reason).
+    coop::peer_action_feed::AnnounceDirect(
+        static_cast<uint8_t>(coop::players::Registry::Get().LocalPeerId()), line);
+    UE_LOGI("coingun[client]: CoinGunResult code=%u points=%d -- '%ls'",
+            static_cast<unsigned>(r.code), r.points, line.c_str());
+}
+
+void OnDisconnect() {
+    // The free measurement: a session that ends having measured nothing is the failure
+    // `[[lesson-your-own-session-end-summary-is-a-free-measurement]]` exists to prevent. One grep
+    // of this line answers "did this lane do anything at all this run" without reading the body.
+    UE_LOGI("coingun: SESSION SUMMARY -- sales{sent=%llu refused=%llu} coins{captured=%llu "
+            "barrierDestroyed=%llu anomalyBirths=%llu} soldSet=%zu pendingKill=%zu",
+            g_salesSent.load(std::memory_order_relaxed),
+            g_salesRefused.load(std::memory_order_relaxed),
+            g_capturedCoins.load(std::memory_order_relaxed),
+            g_barrierDestroyed.load(std::memory_order_relaxed),
+            g_anomalyBirths.load(std::memory_order_relaxed),
+            g_sold.size(), g_pendingKill.size());
+
+    // Every WORLD-scoped thing goes. v137 had no OnDisconnect at all, so a reconnecting peer carried
+    // a stale sold-set and a pending-kill list of actors belonging to a dead world into the new one.
+    // The resolved UClass / UFunction / CDO pointers are NOT world-scoped and stay (CLAUDE.md 4j);
+    // the counters stay monotonic on purpose, so the summary above spans the whole process.
+    g_sold.clear();
+    {
+        std::lock_guard<std::mutex> lk(g_pendingMu);
+        g_pendingKill.clear();
+    }
+    g_gunRef = ue_wrap::CachedObjRef{};
 }
 
 void Install(coop::net::Session* session) {

@@ -54,11 +54,12 @@ bool HandleIntentEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::CoinGunSell: {
-        // v137 (coingun_sync -- security A37/A38): a CLIENT shot a prop with the coin gun. The
-        // payload is an ElementId and nothing else; the host prices the sale from its OWN copy and
-        // mints through the game's own `sell`. HOST-TERMINAL -- never relayed, because the host
-        // authors every consequence itself (coins via WorldActorSpawn, the prop's removal via the
-        // client's own unchanged PropDestroy, which arrives right behind this on the same lane).
+        // v137 (coingun_sync -- security A37/A38), payload rewritten v138 (B1): a CLIENT shot a prop
+        // with the coin gun. The payload NAMES the prop (save key first, ElementId as the keyless
+        // fallback) and nothing else; the host prices the sale from its OWN copy and mints through
+        // the game's own `sell`. HOST-TERMINAL -- never relayed, because the host authors every
+        // consequence itself (coins via WorldActorSpawn, the prop's removal via the client's own
+        // unchanged PropDestroy, which arrives right behind this on the same lane).
         // CLIENT->HOST: slot 0 is the host, which never sends itself a sale. Drop at the boundary
         // rather than routing an unassigned slot under a sentinel.
         if (msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers) {
@@ -68,6 +69,20 @@ bool HandleIntentEvent(net::Session& session,
         }
         coop::coingun_sync::OnReliable(msg.payload, static_cast<int>(msg.payloadLen),
                                        static_cast<uint8_t>(msg.senderPeerSlot));
+        break;
+    }
+    case net::ReliableKind::CoinGunResult: {
+        // v138 (coingun_sync -- B1): the HOST's answer to ONE client's sale. HOST->CLIENT, addressed
+        // with SendReliableToSlot, never relayed. The seller's prop is already gone from its own
+        // screen (its destroy is deliberately unchanged and still lands), so a refusal that says
+        // NOTHING renders as the exact bug the field reported -- the sentence is the point. A
+        // success carries the price the HOST used, which can legitimately differ from the seller's
+        // own local toast (`getPriceMultiplier` is per-instance and divergent).
+        if (session.role() == net::Role::Host) {
+            UE_LOGW("event_feed: CoinGunResult received on the HOST -- dropping");
+            break;
+        }
+        coop::coingun_sync::OnReliableResult(msg.payload, static_cast<int>(msg.payloadLen));
         break;
     }
     case net::ReliableKind::OrderRefused: {

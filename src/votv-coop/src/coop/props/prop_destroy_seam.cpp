@@ -182,8 +182,12 @@ void DestroySeamBody(void* self) {
     // today's behaviour, so nothing new is lost and no heal lane exists to get wrong. This sits
     // AFTER every gate above, so the world-load episode and the R-4a reconcile window are inherited
     // and a joining client's loadObjects churn can never author a sale (principle 8).
+    // v138 (B1): the sale carries the SAME identity pair this destroy does -- key first, eid as the
+    // keyless fallback. v137 passed the eid alone and `[V]` a v122 client mints no Element row for
+    // its own save-loaded keyed prop, so it was 0 for exactly the props a player shoots and the
+    // lane could never author at all. `keyStr` is what the destroy itself is about to name.
     if (coop::coingun_sync::IsInCoinGunVerb())
-        coop::coingun_sync::SendSaleForDyingProp(dp.elementId);
+        coop::coingun_sync::SendSaleForDyingProp(keyless ? std::wstring() : keyStr, dp.elementId);
 
     s->SendPropDestroy(dp);  // channel queues internally; always accepted
     // F2 Inc-1 (2026-07-09): a CLIENT that just broadcast a KEYED destroy may be about to RE-PLACE the

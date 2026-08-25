@@ -148,6 +148,10 @@ inline Lane LaneForKind(ReliableKind k) {
     // sale would refuse with eid-unresolved. Same hazard class the trash-intent comment at :54
     // records. If PropDestroy ever moves lane, this MUST move with it.
     case ReliableKind::CoinGunSell:    return Lane::Bulk;
+    // v138 (B1): CoinGunResult is host->one-client and is deliberately NOT pinned. It is ordered
+    // against nothing -- the sale it answers travelled the other direction, and the coins it
+    // describes arrive on their own WorldActorSpawn lane whose ordering relative to a text line is
+    // meaningless. It takes the default (Normal) by decision, not by omission.
     case ReliableKind::MeadowOrder:    return Lane::Normal;  // v120: same FIFO stream as 112/113 (an order line must not overtake the append it references)
     // Seeds arc (2026-08-23): RosterRow + the email/signal families are pinned to the
     // default they already ride because the ready-edge seed's exactly-once + clear-

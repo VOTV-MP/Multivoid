@@ -6,10 +6,12 @@
 // now MEASURED FALSE. Roots + the corrected design + the build ladder:
 //   research/findings/inventory-items/votv-v137-field-defects-DESIGN-2026-08-24.md
 //
-//   1. THE INTENT NEVER AUTHORS. `CoinGunSell` names the prop by an ELEMENT ID, and a v122 client
-//      mints no Element row for its OWN save-loaded keyed prop -- so the eid is 0 for exactly the
-//      props a player shoots. 3 of 3 sales refused on the client. The surviving identity is the
-//      KEY, which `PropDestroy` already carries and whose receiver resolves.
+//   1. THE INTENT NEVER AUTHORS. -- FIXED IN v138 (B1). `CoinGunSell` named the prop by an ELEMENT
+//      ID, and a v122 client mints no Element row for its OWN save-loaded keyed prop -- so the eid
+//      was 0 for exactly the props a player shoots. 3 of 3 sales refused on the client. The
+//      surviving identity is the KEY, which `PropDestroy` already carries and whose receiver
+//      resolves; the payload now carries it, and the host resolves key-first / eid-fallback.
+//      NOT hands-on confirmed -- see THE SALE'S IDENTITY below for what B1 does and does not close.
 //   2. "A REFUSED SALE DEGRADES TO EXACTLY TODAY'S BEHAVIOUR" (below) IS FALSE BY CONSTRUCTION.
 //      The capture of the client's own coins is UNCONDITIONAL (it keys on the verb alone) while
 //      the authorization is CONDITIONAL and decided LATER and INDEPENDENTLY -- so a refusal is a
@@ -51,7 +53,7 @@
 //
 //   1. the client's own coins are CAPTURED at the `FinishSpawningActor` POST and destroyed at the
 //      next net-pump barrier -- never in the bracket, see THE BARRIER RULE below;
-//   2. the client sends `CoinGunSell{propEid}` -- an element id AND NOTHING ELSE -- immediately
+//   2. the client sends `CoinGunSell{key, eid}` -- the artifact's NAME and nothing else -- immediately
 //      BEFORE its ordinary, byte-UNCHANGED `PropDestroy`, on the SAME lane;
 //   3. the host resolves that eid against ITS OWN world, prices the sale from ITS OWN copy via
 //      `lib_C::sellObject`, and mints through the game's own `prop_coingun_C::sell`;
@@ -76,10 +78,38 @@
 // world-stamped `CachedObjRef` and destroy at the barrier. Accepted cost: the client's coins live
 // 1-2 frames and take their impulse, so there is a brief flash before the mirrors arrive.
 //
+// THE SALE'S IDENTITY (v138, B1 -- the fix for field failure 1 above). The sale names the prop the
+// SAME WAY the destroy riding right behind it on the same lane names it: the save KEY first, the
+// ElementId as the keyless fallback. That is not a widening for safety, it is the correction of a
+// measured falsehood -- v137 shipped eid-only naming and the eid is 0 by construction on a client
+// for its own save-loaded keyed props, so the lane could never author at all.
+//   - KEYED prop -> the key resolves through the maintained key index (prop_element_tracker's
+//     ResolveLiveActorByKey, the same primitive the destroy receiver uses).
+//   - KEYLESS family (trash clump / chip pile carry Key=None) -> the eid resolves.
+//   - NEITHER present -> the client authors NO sale. There is nothing to name, so sending would
+//     only manufacture a refusal.
+// WHAT THIS DOES NOT CLOSE: a keyed prop the host genuinely does not have -- the two peers already
+// disagreed about that prop before anyone fired. That is a pre-existing stable-ID divergence this
+// lane EXPOSES rather than causes; it refuses with NoSuchProp, the seller is TOLD, and the residual
+// is filed to the stable-ID thread. "Logged loudly" is not a fix and is not claimed as one.
+//
+// THE RESULT SENTENCE (v138, B1). The host answers every sale with `CoinGunResult`, addressed to
+// the seller. A refusal MUST be said: the seller's prop is already gone from its own screen (the
+// destroy is deliberately unchanged and still lands) and no coins appeared -- which is
+// letter-for-letter the symptom the user reported. Shipping that silence as designed behaviour
+// would be shipping the bug. A SUCCESS is not a redundant ack either: it carries the price the HOST
+// derived, and `[V]` `getPriceMultiplier` is per-instance and divergent (prop_batts by energy,
+// prop_food by uses/ripeness, prop_cementBag, prop_garbBagRoll), so the seller's own local `sell`
+// toast can legitimately name a different number. The result makes that visible instead of leaving
+// the player to trust a toast we know can lie. Precedent: `order_sync`'s refusal, which answers
+// with both a feed line and a state repair.
+//
 // WHAT THE INTENT DELIBERATELY DOES NOT CARRY (`COOP_SYNCER_MODEL.md` §2b: "an intent may name WHAT,
 // never WHAT IT COSTS"): no price, no coin count, no class, no gun id. `[V]` `sell` reads ZERO gun
-// state, so WHICH `prop_coingun_C` executes cannot change the outcome -- naming the gun would be a
+// FIELDS, so WHICH `prop_coingun_C` executes cannot change the outcome -- naming the gun would be a
 // field nobody could act on, and a client's gun is a hand-item display mirror with no world element.
+// (`sell` is not world-agnostic though: `[V]` `EX_Self` is the WorldContextObject of every deferred
+// coin spawn inside it, so the executor must be a LIVE, world-placed instance -- a CDO mints zero.)
 //
 // RESIDUAL, DELIBERATE AND LOGGED: `[V]` two cooked maps carry PLACED `baocoin_C` instances. Those
 // are level content on both peers, never enrolled, never mirrors -- so the client-side collect cancel
@@ -92,6 +122,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace coop::net { class Session; }
 
@@ -101,13 +132,27 @@ namespace coop::coingun_sync {
 // with retries (the gun/coin BP classes load with the level). Called every NetPumpTick.
 void Install(coop::net::Session* session);
 
-// The NET-PUMP BARRIER. Destroys the coins captured inside the client's gun bracket (see THE BARRIER
-// RULE). No-op on the host and when nothing was captured.
+// The NET-PUMP BARRIER (client) + the CONSUMPTION-GUARD SWEEP (host). On the client, destroys the
+// coins captured inside the gun bracket (see THE BARRIER RULE). On the host, throttled to ~1 Hz,
+// drops sold-set entries whose prop has died -- which is what makes the guard's lifetime a fact
+// instead of the claim v137's comment made about a map that was erased nowhere. Cheap when idle.
 void Tick();
 
 // HOST ingest for `ReliableKind::CoinGunSell`. Fully range-checks the payload and no-ops off the
-// host. `senderSlot` is used only for logging and for preferring that peer's gun instance.
+// host. `senderSlot` names the peer to log and to address the CoinGunResult back to -- it does NOT
+// select a gun instance (FindLiveGun takes no argument and there is nothing to prefer; v137's
+// comment here claimed otherwise and was false).
 void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot);
+
+// CLIENT ingest for `ReliableKind::CoinGunResult`. Renders one feed line telling the seller what
+// its sale did -- the price the host used, or why nothing was minted. No-ops on the host.
+void OnReliableResult(const uint8_t* payload, int len);
+
+// Session teardown. Dumps the lane's counters (a session that ends having measured nothing is the
+// failure `[[lesson-your-own-session-end-summary-is-a-free-measurement]]` exists to prevent), then
+// drops every piece of WORLD-scoped state: the sold-set, the barrier queue and the cached gun.
+// The resolved UClass/UFunction/CDO pointers are NOT world-scoped and stay (CLAUDE.md 4j).
+void OnDisconnect();
 
 // Called by the WorldActor mirror path for a freshly materialized `baocoin_C` mirror: stops it
 // simulating. Targets the coin's `Sphere` component BY NAME -- `[V]` that is the one shipping
@@ -120,11 +165,14 @@ void PrepareCoinMirror(void* coin);
 // victim, so it can put `CoinGunSell` in front of its own broadcast. Synchronous, thread-local.
 bool IsInCoinGunVerb();
 
-// Called by the destroy seam, ON THE CLIENT, immediately BEFORE it sends its ordinary PropDestroy for
-// a prop killed inside the gun bracket. Sends `CoinGunSell{eid}`. No-op on the host, on an invalid
-// eid, or when not connected. The seam calls this AFTER all of its existing gates, so the world-load
-// episode and the R-4a reconcile window are inherited -- which is what stops a joining client's
-// `loadObjects` churn from authoring sales (principle 8).
-void SendSaleForDyingProp(uint32_t elementId);
+// Called by the destroy seam, ON THE CLIENT, immediately BEFORE it sends its ordinary PropDestroy
+// for a prop killed inside the gun bracket. Sends `CoinGunSell{key, eid}` -- the SAME identity pair
+// the destroy that follows carries, deliberately (see THE SALE'S IDENTITY). `key` empty means the
+// prop is keyless and the eid names it. No-op on the host, when not connected, or when BOTH names
+// are absent (nothing to name -> authoring a sale could only produce a refusal). The seam calls
+// this AFTER all of its existing gates, so the world-load episode and the R-4a reconcile window are
+// inherited -- which is what stops a joining client's `loadObjects` churn from authoring sales
+// (principle 8).
+void SendSaleForDyingProp(const std::wstring& key, uint32_t elementId);
 
 }  // namespace coop::coingun_sync
