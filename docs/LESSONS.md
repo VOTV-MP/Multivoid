@@ -1766,6 +1766,19 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   messages for "never ran" and "FAIL rows".
   `memory/lesson_a_smoke_shorter_than_the_reporting_period.md`
 
+- **The number you quoted refutes the label you gave it — read a run's CONDITIONS off its own output.**
+  A 120 s autonomous smoke was written up in three documents as the "client idle" baseline, with
+  `maxImplied=0..859 cm/s` and `maxStep=0..15 cm` quoted on the very next line. 859 cm/s is between the
+  game's walk speed and its sprint ceiling; an idle client reports 0, and three of eight windows did
+  exactly that while five did not. A person had joined the autonomous test and played through it. The
+  data was fine; the LABEL was invented, and the refutation was on the same screen. It cost real
+  strength: the sample was human play, not a floor, which makes `wireVsActor=0 cm` *measured while
+  moving* a much stronger claim and adds a live no-false-positive result. Getting the conditions right
+  also exposed the honest limit the wrong label hid — a 14.6 cm step is under the ceiling the pre-fix
+  arithmetic imposed, so **the broken build would have passed that session too**. LOOK FIRST: before
+  writing "idle" / "stationary" / "solo" / "unattended", check the word against the numbers you are
+  already pasting. `memory/lesson_the_number_you_quoted_refutes_the_label_you_gave_it.md`
+
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
 
 - **A WINDOW CLOSED BY THE LATCH THAT STARTS THE NEXT PHASE ENDS BEFORE THAT PHASE — BY
