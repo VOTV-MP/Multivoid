@@ -761,6 +761,15 @@ meaningless (the mod manager owns installation) — they retire WHOLE per RULE 2
 
 ### 7.4b DISTRIBUTION MODEL — DECIDED (USER, 2026-08-23): Thunderstore is PRIMARY, GitHub is the manual lane
 
+> **PARTLY SUPERSEDED 2026-08-25 by §7.4c — read that first.** The *channel* half of this section
+> stands unchanged: Thunderstore is primary, GitHub is the manual lane, the site keeps both. What is
+> retired is the **second artifact** — the separate `*_release.zip` in game-folder hierarchy. There
+> is now ONE zip in Thunderstore/r2modman layout serving both lanes, and the manual lane gets a
+> documented relocation step instead of a pre-shaped tree. Every bullet below about *"the GitHub
+> artifact becomes a single archive"*, its naming, and its internal tree is therefore obsolete;
+> the bullets about the proxy-lane anchors and `publish.ps1` inverting are still live, restated in
+> §7.4c.
+
 Verbatim: *"Я решил что thunderstore mod manager/r2modman будет основным распространением нашего мода.
 А релиз на гитхабе будет name_release.zip архив с иерархией такой что уже готова к ручной установке
 мода, это для ручных любителей установки. На сайте тоже инфу поменять, пусть будет гитхаб ссылка как
@@ -801,6 +810,67 @@ Consequences to carry into the WP-4/6/9 weld, so they are not re-derived:
 - `ledger_lint.ps1:64-66`'s verbatim anchor phrases (`WindowsNoEditor\VotV\Binaries\Win64`,
   ``delete the old `multivoid-*.dll` ``) are proxy-lane text and must be re-minted against the new
   INSTALL.md in the SAME commit, or CI fails the release.
+
+### 7.4c ONE ARTIFACT, r2modman-shaped — DECIDED (USER 2026-08-25). Supersedes §7.4b's second row.
+
+Verbatim: *"Я хочу чтобы в zip лежал сам мод с нужной иерархией под r2modman и pak тоже там был под
+иерархию r2modman уже в готовом правильном месте лежал. Кто захочет установить не для r2modman, а
+вручную для ue4ss без shimloader то сам разберется и закинет куда надо файлы из нашего собранного zip
+release. Можем подсказать в install.md и в других местах как устанавливать для тех кто на что ставит."*
+
+**What changed.** §7.4b (2026-08-23) specified **two** artifacts: the Thunderstore package, and a
+separate GitHub `*_release.zip` whose internal tree was *already the game-folder hierarchy*, so that
+a hand-installer could unpack it over their install with no decisions to make — the hierarchy WAS the
+instruction. **That second artifact is now retired before it was ever built.** There is ONE zip, in
+the §7.2a Thunderstore/r2modman layout, and both lanes take the same file:
+
+```
+manifest.json   icon.png   README.md   [CHANGELOG.md]
+mod\enabled.txt
+mod\dlls\main.dll
+pak\scientists.pak      (+ the preview tiles the F1 browser reads)
+```
+
+**What was traded, stated once so nobody re-derives §7.4b's rationale as if it still stood:** the
+manual lane loses "no decisions to make" and gains a relocation step it must be *told* about. The
+user accepted that explicitly and asked for it to be documented — so the mapping below is not a
+nice-to-have, it is the thing that replaces the property we gave up. It belongs in `docs/INSTALL.md`
+(the single owner of install prose, §4i), in the release-body template, and on the site.
+
+**The mapping, for INSTALL.md's manual/UE4SS-without-shimloader lane:**
+
+| in the zip | goes to | note |
+|---|---|---|
+| `mod\dlls\main.dll` + `mod\enabled.txt` | `<Game>\VotV\Binaries\Win64\Mods\Multivoid\` | i.e. **the CONTENTS of `mod\`**, into a folder you name `Multivoid` |
+| `pak\*` | `<Game>\VotV\Content\Paks\LogicMods\Multivoid\` | any subfolder name works once §7.7 lands |
+| `manifest.json`, `icon.png`, `README.md` | nowhere — Thunderstore metadata, inert in a manual install | harmless if copied |
+
+**Three measured facts that make this work, and one that makes it fail:**
+
+- `[V]` **Nothing in our code depends on the mod folder's name.** `ue_wrap/core/paths.h` is the sole
+  owner of the install anchor and deliberately anchors every runtime artifact (`multivoid.log`,
+  `multivoid.ini`, `multivoid-players.txt`, …) on the **game EXE directory**, not the module's — and
+  a grep for `Mods\` / `Mods/` across `src/votv-coop/` returns **zero** hits. So the manual installer
+  may call the folder anything; the only cost of copying `mod\` verbatim is UE4SS listing a mod
+  named "mod".
+- `[V]` The Thunderstore root files are inert. UE4SS reads `Mods/<name>/enabled.txt` and
+  `Mods/<name>/dlls/main.dll` and ignores everything else in the folder.
+- **THE FAILURE MODE TO DOCUMENT AGAINST, because it is the one a careful person makes:** copying the
+  *whole zip* into `Mods\Multivoid\` yields `Mods\Multivoid\mod\dlls\main.dll`, which UE4SS does not
+  load — same silent non-load as §7.2a trap 1, one level out. The instruction must say **contents of
+  `mod\`**, not `mod\`.
+- **§7.7 is a precondition here too.** The pak arrives under a subfolder whose name differs between
+  lanes (`<Author>-Multivoid` from r2modman, whatever the human typed manually), and
+  `skin_registry.cpp:114` hardcodes `LogicMods/multivoid`. Until the scan walks `LogicMods/`
+  subdirectories, **both** lanes ship a pak the game cannot see.
+
+**Consequences for the release machinery**, all in the same welded commit as §7.3a item 4:
+`publish.ps1:24-28`'s assertion inverts from *exactly one `multivoid-*.dll` + one `xinput1_3.dll`* to
+**exactly one `.zip`**, and — because a human now builds it (§7.9 candidate (c)) — it must verify the
+zip's **internal tree**, not just its name: an empty or mis-rooted zip is a silently broken release,
+and hand assembly is precisely the step that produces one. `ledger_lib.ps1:149-151`'s verbatim
+INSTALL anchors and `ledger_lint.ps1:64-77`'s checks are proxy-lane text and must be re-minted
+against the new INSTALL.md in that same commit or CI fails on the spot.
 
 ### 7.6 The pak's CONTENT — DECIDED (USER 2026-08-23): the HL skins ship
 
