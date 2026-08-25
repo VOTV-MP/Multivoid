@@ -785,7 +785,16 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   tested; it became the central result of a 733-line RE doc and a counting probe killed it on the
   first sample. Two levels: are the facts real (grep), AND does the conclusion follow / what would
   falsify it? "X can never happen, therefore Y" is a RUNTIME prediction — tag `[RD]`, settle with a
-  count before building.
+  count before building. **2026-08-25 adds a third level: the SEVERITY is a claim too, and it is the
+  one you are most likely to accept.** An audit filed a CRITICAL whose arithmetic was exactly right
+  and re-derived independently — and whose severity was wrong: the constant it attacked TIGHTENS the
+  bound rather than loosening it, so the behaviour described was inside what the module already
+  declares. Accepting the label would have added an invented constant to a MEASURE-ONLY build whose
+  stated purpose is to measure the number that constant needs (`[[feedback-probe-dont-guess-rule]]`).
+  What was real in the finding was something else entirely, one level over — and finding THAT is what
+  produced the fix. Two sentences of arithmetic settled it ("what does the bound alone permit over the
+  same interval?"). A correct calculation attached to the wrong verdict is more persuasive than either
+  half alone, because the calculation checks out and the verdict rides in behind it.
   *Look FIRST:* `memory/feedback_verify_handed_down_measurement_before_building.md`
 - **A probe must COUNT, not CONFIRM — and must never resolve through the mechanism under suspicion.**
   A probe written to confirm "the drone spawns its own container" would have looked the container up
@@ -1733,6 +1742,29 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   (`SetIntPropertyByName`). LOOK FIRST: grep the owning asset for writes to the field and the corpus
   for a `Set*PropertyByName('<field>')` spawner; if nothing writes it, read the class default and stop.
   `memory/lesson_a_class_default_is_agreement_by_construction.md`
+
+- **A selftest that RE-IMPLEMENTS the path it tests can pass while the shipped code is wrong.**
+  `join_seed::RunSelfTest` computes its delta inside the test body, so it verifies the author's model
+  of the algorithm and can never fail when the shipped `Seeder` diverges from it. What blocks that is
+  making the arithmetic callable: pass the state and the clock IN (`ApplyPose(Row&, gen, pos, stateMs,
+  nowMs)`) instead of reaching for a file-scope array and `Clock::now()`. Production passes its row
+  under the mutex, the test passes its own -- **same function both times**, the test cannot touch
+  production state, and every branch a two-peer LAN smoke cannot reach (a 24-bit clock wrap, an 8 s
+  network gap, a slot recycling to a new occupant, a drained receive queue) becomes reachable
+  instantly. It found TWO CRITICALs in `movement_ledger` the day it was written. And when the thing
+  guarded fails SILENTLY -- a verdict that merely reads wrong -- run it UN-GATED at session start
+  rather than behind an env var; this one costs microseconds.
+  `memory/lesson_a_selftest_that_reimplements_the_path_it_tests.md`
+- **A smoke shorter than an instrument's reporting period proves nothing about the instrument.** A
+  35 s smoke returned PASS while the new ledger's 10 s summary line had printed ZERO times: the client
+  connected at T+34 s, so the row armed one second before the peers were killed. Nothing warned --
+  the driver's verdict is about peer stability and RAM, and "no line" reads identically to the two
+  states the module was built to distinguish (`n=0` = armed but starved, no line = dead). Connect
+  costs ~30 s in this project, so **set `--duration` from connect-time + N x period**, then GREP THE
+  LOG FOR THE NEW LINE AND COUNT IT rather than trusting PASS. Better: make the driver assert it --
+  `tools/mp.py` now exits 11 when the ledger's selftest line is missing on either peer, with distinct
+  messages for "never ran" and "FAIL rows".
+  `memory/lesson_a_smoke_shorter_than_the_reporting_period.md`
 
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
 
