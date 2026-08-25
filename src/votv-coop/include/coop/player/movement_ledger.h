@@ -120,6 +120,23 @@ inline constexpr float kUnearnedJumpCm = 50.0f;
 // level vectors) says a genuine cross-world teleport WOULD cost ~55 s at the speed bound, and 30 s is
 // a decision about how much loss to accept. It under-charges only hops longer than 3 km, which the
 // enumeration attack has no use for because props cluster.
+//
+// *** USER DECISION 2026-08-25 -- AN UNEXPLAINED DISCONTINUITY NEVER BLOCKS INTERACTION. "Just log." ***
+// Asked as a plain product question ("someone teleports and the host can't tell why -- do we punish
+// that?"): never block / a few seconds / keep 30 s. The user chose NEVER BLOCK. So this constant is
+// now DESCRIPTIVE ONLY -- it governs how long the LOG reports a slot untrusted, and no refusal may
+// ever be built on it. Consequences, written here rather than discovered later:
+//   - `PositionTrusted` has NO refusal consumer. An intent authorizer may consume it to LOG, never to
+//     deny. A future reader wiring it into a deny path is contradicting a user decision, not fixing
+//     an oversight.
+//   - Therefore an A54 reach gate rests on the sender's last CLAIMED position alone, which the sender
+//     writes -- so it stops the NAIVE enumeration (one packet per prop, no movement) and costs a
+//     serious attacker exactly one extra pose packet. That is a rate-and-effort mitigation, the same
+//     honest label A50 carries. It is NOT a closure, and the only thing that closes it is
+//     host-authoritative character movement (see the module header, phase-2 arbiter arc).
+//   - The "host-derivable destination set" idea (explain a hop that lands on the save spawn / ATV /
+//     bed / treehouse anchor instead of charging it) loses its refusal consumer too, and survives only
+//     as LOG-QUALITY work: fewer false discontinuity lines. Sized accordingly, not as a gate.
 inline constexpr float kMaxDebtSeconds = 30.0f;
 
 // How much REAL time the sender may bank and spend as claimed elapsed. This is what absorbs a
