@@ -41,6 +41,7 @@ Then, if you are going to touch code:
 | **[RE_WORKFLOW.md](RE_WORKFLOW.md)** | How this project reverse-engineers the game: reflection first, then IDA, then UE4SS as a probe. None of those ship |
 | **[AUTONOMOUS_TESTING.md](AUTONOMOUS_TESTING.md)** | The two-instance LAN harness — how a change gets smoke-tested without a human in the loop |
 | **[RELEASE.md](RELEASE.md)** | How a build becomes a release, and the gates it must pass |
+| **[THUNDERSTORE.md](THUNDERSTORE.md)** | How a release becomes a Thunderstore package: the manifest, the upload, and the rules that cannot be undone (a version is immutable; an author cannot delete a package) |
 | **[VERSION_MIGRATION.md](VERSION_MIGRATION.md)** | What happens when VOTV updates: the measured version surface and the port runbook |
 | **[MULTIPLAYER_UI.md](MULTIPLAYER_UI.md)** | The menus, the server browser, the master/signaling servers behind them |
 

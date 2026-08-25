@@ -361,6 +361,14 @@ permanent (`mp.py wirewindow` + `coop/dev/wire_census`). NOT hands-on — run B 
 
 ## 7. How a VOTV player installs a mod NATIVELY — MEASURED 2026-08-23 (WP-4 / WP-6 / WP-9 input)
 
+> **THE PROCEDURE MOVED OUT 2026-08-25 → `docs/THUNDERSTORE.md`.** This section keeps what it is good
+> at — the *decisions*, the *measurements*, and the record of what was overturned. The repeatable
+> *how* (preconditions, the manifest field-by-field, first upload, the immutability rules that make a
+> botched upload unrepairable, why a package may be invisible, the moderation rules that bite
+> `scientists.pak`, "player says it doesn't work" triage, and the pre-flight checklist) is now its
+> own doc, written from the official wiki. **Read `THUNDERSTORE.md` before uploading anything; read
+> §7.2a here before building the zip.**
+
 Measured on this box from the real r2modman profile
 (`C:\r2modman\r2modmanPlus-local\VotV\profiles\Default`) and the vendored
 `reference/unreal-shimloader` + `reference/voidmod-extracted`. This replaces guesswork about
