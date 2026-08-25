@@ -544,6 +544,11 @@ A=0.5. `ExpandableArea.Style.RolloutAnimationSeconds = 0` — instant, no animat
 
 ### 7c. What it will LOOK like (`[V]` for the shape, DESIGN for the layout)
 
+> **USER DECISION 2026-08-25, on being shown this gap: *"it's fine, will fix styles later — the main
+> thing is to properly lay out foundation, build something per rule 1 properly first."* So the visual
+> verification below is EXPLICITLY DEFERRED, and the FOUNDATION (§8's probe, placement, lifetime and
+> input seams) outranks it.** The gap is left standing and named rather than quietly closed.
+>
 > **HONEST GAP, named by `/qf` round 11 and NOT yet closed: there are no screenshots here, and the
 > palette below was read out of asset JSON — nobody has LOOKED at the two menus.** The standing rule
 > is *where eyes are needed, screenshot and show*
@@ -593,12 +598,18 @@ rows are dimmed. This is ported verbatim from `server_browser.cpp:218-231`, not 
 
 **Sort** is a header click, resolved in pure C++ over our `std::vector<LobbyRow>` — zero engine cost.
 
-**Search — an OPEN PRODUCT QUESTION for the user, not a technical deferral.** This first read
-*"Search is v2: it needs the live-filter path through `UEditableTextBox`"*. **That reason is empty**
-(`/qf` round 9): v1 already carries the Nickname and Direct-IP fields and already resolves
-`SetText`/`GetText` on `UEditableTextBox`, so the path is paid for either way. What actually remains
-is a judgement — *does a search box earn its space before the lobby list is long enough to need
-one?* — and that is the user's call, not the design's.
+**Search — DEFERRED to v2, on a named trigger (USER 2026-08-25: *"do what's best"*).** The first
+version of this line deferred it *"because it needs the live-filter path through `UEditableTextBox`"*,
+and `/qf` round 9 showed **that reason is empty**: v1 already carries the Nickname and Direct-IP
+fields and already resolves `SetText`/`GetText`, so the path is paid for either way.
+
+The honest reason is that **search has no denominator yet.** A filter over the handful of rows the
+master currently returns costs vertical space in the chrome and buys nothing; sort is free by
+comparison (pure C++ over the vector, zero engine cost) and covers the same need at this scale.
+**Trigger to build it: when a full list no longer fits without scrolling as a matter of course** —
+i.e. when the browser stops being a list you read and becomes one you hunt in. Recorded as a trigger
+rather than a "no" so the next reader knows what would change the answer, per this doc's own
+re-decline convention.
 
 **The host form** follows `ui_gamemode`'s shape (§7b): mode/option rows plus description-on-hover,
 built from **our** widgets — never the game's classes (§8).
