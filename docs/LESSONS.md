@@ -3803,6 +3803,19 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 
 ## 8. Build / deploy / git hygiene
 
+
+- **"Ask before push" assumes ONE session owns the push** (2026-08-25, two Claude sessions in one
+  working copy). I obeyed the rule exactly — six commits, zero pushes — and three of my commits reached
+  the **public** origin anyway, inside the *parallel* session's push, un-audited. `git push` publishes
+  the **branch**, not a session's commits: the rule's unit is a session, git's unit is a branch, so with
+  two sessions **my commit is the other session's push-in-waiting**. Audited after the fact and clean
+  (two intentionally-public files, no IPs/keys/ignored paths) — but the audit ran *after* publication,
+  which is the ordering the rule exists to prevent. LOOK HERE FIRST: when a second session shares the
+  working copy, **treat COMMIT as the publication boundary** and run the leak axes before `git commit`;
+  ask up front which session owns the push. The tell is `git rev-list --count origin/main..HEAD`
+  **moving down without your push**. This adds a precondition to the standing rule, it does not weaken
+  it. `memory/lesson_ask_before_push_assumes_one_session_owns_the_push.md`
+
 - **2026-08-25 — Measuring a tool's OUTPUT and recording it as its INPUT. The doc even said
   "measured", and it was — of the wrong artifact.** `UE4SS_ARC.md` §7.2, *"The package shape —
   measured from a real VOTV UE4SS C++ mod"*, was read off the extracted r2modman profile
