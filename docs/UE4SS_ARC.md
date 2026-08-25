@@ -919,6 +919,14 @@ considered decision about what to ship to players — they were presented as str
 The residual risk is not legal but **availability**: Thunderstore is a third party with its own
 content policy, and a takedown of the package would remove the *whole mod*, not just the skins.
 
+> **SIZED BY MEASUREMENT 2026-08-25 (USER-RAISED) — it is smaller than this paragraph implies.** The
+> live VOTV catalog (185 packages) carries cross-property asset replacement openly and
+> un-deprecated: `Hirokhai-MinecraftBeehive`, `forder-Kerfur_Kurobara`, `Yojimo-Kerfuro_Snickers`,
+> `AmariMakes-NSFW_Loona_3d_prints`. Third-party character assets are **accepted practice here**, not
+> a live hazard. The one leg with no observed precedent is the cooked template extracted from VOTV's
+> **own** paks, which the platform rule names explicitly. Full measurement + the two rule texts:
+> `docs/THUNDERSTORE.md` §7 / §7a.
+
 > **SUPERSEDED 2026-08-23 by §7.7c part 1, re-confirmed by the user 2026-08-25** (*"пусть всё внутри
 > одного zip будет — сам мод и pak скинов дефолтных"*). The paragraph below argued from that residual
 > risk toward a **separate** skins package. **The user decided the opposite: ONE package, base pak

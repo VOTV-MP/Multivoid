@@ -167,13 +167,53 @@ not**, and both are aimed at the same file:
    names game files specifically.
 
 **The decision that the skins ship is SETTLED (`UE4SS_ARC` §7.6, USER 2026-08-23) and this section
-does not re-open it.** What it changes is the shape of the risk §7.6 already named: that section
-called the residual "availability, not legal", and this is the *named rule* the availability risk
-runs through — plus a second leg nobody had costed. Two facts follow that are worth knowing before
-the upload rather than after:
+does not re-open it.**
 
-- The failure mode is **rejection**, which per §6 is silent — the package simply is not visible.
-- Under §8 we could not delete it ourselves anyway.
+### 7a. What the community actually ships — MEASURED 2026-08-25, and it moderates the above
+
+The user's answer to the paragraph above was that VOTV's Thunderstore already carries skins from
+other games, so this is fine. **Checked against the live catalog** (`thunderstore.io/c/voices-of-the-void/api/v1/package/`,
+185 packages), and the substance holds: cross-property **asset replacement is normal here and is
+neither hidden nor deprecated**. Live, non-deprecated examples:
+
+| package | what it replaces with |
+|---|---|
+| `Hirokhai-MinecraftBeehive` | *"Replaces the beehive and beebox with **minecraft**"* |
+| `forder-Kerfur_Kurobara` | a commissioned character, *"rigged to the game's own skeleton"* |
+| `Yojimo-Kerfuro_Snickers` | *"Replaces Kerfur-o with Lenyavok's Snickers"* (another creator's OC) |
+| `AmariMakes-NSFW_Loona_3d_prints` | Helluva Boss character models — NSFW-flagged **and "MANUAL DOWNLOAD REQUIRED"** |
+
+**One correction to the user's framing, on the record because it is the leg that matters for us:**
+the catalog's Half-Life presence is **code, not assets** — `Moddy-PBMovement` ports Project Borealis'
+MIT movement code with attribution, and `blueprintwastaken-HL2AHop` adds a mechanic. Neither ships
+Valve meshes. Searching package **names and descriptions** finds no bundled-HL-asset precedent; that
+is a limit of the search, not proof of absence (a package can ship assets without saying so).
+
+**So the honest reading, which is what this section should have said the first time:**
+
+- **Leg 1 (third-party character assets) has strong live precedent** and the written rule is plainly
+  not enforced against it in this community. Treat it as accepted practice.
+- **Leg 2 (the cooked template extracted from VOTV's own paks) has no observed precedent either
+  way**, and it is the leg the rule names *explicitly* (*"do not distribute game files"*). It is also
+  the quieter one: it is not what a moderator would notice, and it is not what a takedown would
+  usually be about.
+- The one behaviour worth copying regardless is `AmariMakes`': that author **kept the third-party
+  models out of the Thunderstore zip** and made them a manual download. We are not doing that (one
+  zip, §7.4c) — noted only so the option is on the record rather than re-invented.
+
+**Net: downgrade this from "a risk to weigh" to "a known, accepted community practice with one
+un-precedented leg."** The failure mode if it ever does bite is still the §6 silent rejection, and
+§8 still means we could not delete the package ourselves — those two facts are unchanged and are why
+the section stays.
+
+### 7b. Someone already holds a VOTV coop listing — MEASURED 2026-08-25
+
+`migabyte-VotVCoop` (`thunderstore.io/c/voices-of-the-void/p/migabyte/VotVCoop/`) — *"Co-op
+multiplayer mod for Voices of the Void. Not publicly functional at the moment"* — v0.1.1, last
+updated **2026-03-30**, categories `Tweaks/Mods/Tools`, and **DEPRECATED**. Recorded because it is
+the first thing a VOTV player searching "coop" finds, and because nobody on this project knew it
+existed. It does **not** collide with us: the package name is `VotVCoop` under team `migabyte`, ours
+is `Multivoid` under our own team, and Thunderstore keys on `<team>-<name>`. No action; context only.
 
 ## 8. Removal — we cannot delete our own package
 
