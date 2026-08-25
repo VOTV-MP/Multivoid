@@ -445,6 +445,22 @@ void* FindObject(const wchar_t* name, const wchar_t* className) {
 
 void* FindClass(const wchar_t* className) {
     if (!className) return nullptr;
+    // THE CACHE ITS THREE SIBLINGS ALREADY HAD (2026-08-25, found by a post-ship perf audit).
+    // `FindObjectByClass` (:486), `FindObjectsByClass` (:558) and `FindActorsByClass` (:574) all open
+    // with `BeginClassWalk`; this one did not, so EVERY call walked all ~237k objects doing
+    // `NameEquals(NameOf(obj), ...)` per entry -- and `NameEquals` renders the name into a fresh
+    // engine FString per object compared. 428 call sites in 155 files paid that.
+    //
+    // The load case that surfaced it: `world_actor_mirror.cpp` resolves the class per inbound
+    // WorldActorSpawn, one coin-gun sale mints ~47 coins, and `game_thread::Pump()` drains its queue to
+    // EMPTY in one go -- so 47 full walks landed back to back, in one frame, for the same class name.
+    //
+    // `BeginClassWalk` is not merely a map lookup: it revalidates the cached pointer's GUObjectArray
+    // slot and re-compares the name before returning it, and drops the entry if either fails. So this
+    // is the siblings' semantics exactly, not a weaker fast path. A MISS is deliberately not cached --
+    // a class can load later, and every sibling behaves the same way.
+    uint64_t hash = 0;
+    if (void* cached = BeginClassWalk(className, hash)) return cached;
     const int32_t n = NumObjects();
     for (int32_t i = 0; i < n; ++i) {
         void* obj = ObjectAt(i);
@@ -459,6 +475,7 @@ void* FindClass(const wchar_t* className) {
         // handful of name matches, so the wstring here is off the hot path.
         const std::wstring meta = ClassNameOf(obj);
         if (meta.size() >= 5 && meta.compare(meta.size() - 5, 5, L"Class") == 0) {
+            PrimeClassWalk(className, hash, obj);
             return obj;
         }
     }
