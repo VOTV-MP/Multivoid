@@ -46,7 +46,7 @@ void Session::RelayUnreliableToOtherClients(int originSlot, const void* data, in
     auto* h = reinterpret_cast<PacketHeader*>(buf);
     h->senderEpoch = ownEpoch_;
     h->senderSlot = static_cast<uint8_t>(originSlot);
-    h->_reserved2[0] = h->_reserved2[1] = h->_reserved2[2] = 0;
+    coop::net::WriteStateTimeMs24(*h, 0);  // v141: the origin's state time is not the relayer's -- scrub (no client-side reader)
     for (int i = 1; i < kMaxPeers; ++i) {
         if (i == originSlot) continue;
         const uint32_t hConn = peerConns_[i].load();
@@ -98,7 +98,7 @@ void Session::RelayReliableToOtherClients(int originSlot, ReliableKind kind,
         auto* h = reinterpret_cast<PacketHeader*>(wire);
         h->senderEpoch = ownEpoch_;
         h->senderSlot = static_cast<uint8_t>(originSlot);
-        h->_reserved2[0] = h->_reserved2[1] = h->_reserved2[2] = 0;
+        coop::net::WriteStateTimeMs24(*h, 0);  // v141: the origin's state time is not the relayer's -- scrub (no client-side reader)
         backlog_.SendOrQueue(i, laneIdx, hConn, wire, len);
     }
 }
