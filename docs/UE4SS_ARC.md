@@ -56,7 +56,7 @@ proxy / dup-dialog retire WHOLE per RULE 2 — no standalone-and-UE4SS dual path
 | **WP-2** | The loader cut: delete `xinput_proxy.cpp` + the proxy deploy path (RULE 2); `cppmod_entry.cpp` in; predecessor detection + mutex; keep EVERYTHING else. | **IN PROGRESS.** Pre-cut LANDED (§2). Fix (**B**, §4) is BUILT + default-ON and its compose is **VERIFIED** (2026-08-22 16:02 real-env byte decode + 16:25 DEV `POLYHOOK-COMPOSED` boot, §4 Proof status). The IsLive/VEH arc is BUILT (D1, 2026-08-22 night, §4 -- run B pending the user). Remaining before the proxy deletion: symbolize the 19:17 real-env EXEC-at-NULL dump (§4 residuals), B's teardown leak-at-death residual, then commit 3 itself. |
 | **WP-4** | Fix the stale install/update/uninstall prose + the site + installer for the UE4SS lane. | **PARKED, but now SPECIFIED** — census written (`votv-ue4ss-stale-loader-prose-CENSUS-2026-08-22.md`, ~139 rows); §7 measures the target shape and §7.3 fixes the sequencing (it must not flip before a UE4SS-lane build is released). **+ §7.0 (USER 2026-08-24): the GitHub repo DESCRIPTION and topics are stale prose too and are invisible to the census — they live outside the tree. `description` still says "a standalone C++ DLL"; the `dll-injection` topic goes; `homepageUrl` is empty and is fixable NOW.** |
 | **WP-6** | Distribution re-home (the `multivoid-<game>-<build>.dll` filename + master + release flow onto the mod-folder shape). | **PARKED, now SPECIFIED** — §7.2 + §7.4. |
-| **WP-9** | **Thunderstore publication** (USER 2026-08-23: "надо нам бы стать официальным модом и попасть в магазин thunderstore ... чтобы обычный юзер смог поставить нативно"). Ship Multivoid as a Thunderstore package so r2modman / Thunderstore Mod Manager installs it natively. | **NEW, SPECIFIED, NOT BUILT** — §7. The payload shape is ALREADY correct; what is missing is package metadata, a GENERATED manifest, and a publish step. **The version mapping is DECIDED, not owed** (§7.3, user 2026-08-23: `<game-major>.<game-minor>.<build>`); this row said "a version mapping decision" was missing after §7.3 had already made it. **§7.3a (2026-08-24, user-raised) measures what the versioned DLL name costs today** — it moves on every proto bump including security-only ones (`0.9.135` as of `ca3943e9`), its CMake justification expires with WP-2 commit 3, `deploy-mod.ps1` picks the payload by mtime out of 14 artifacts, and the six anchor sites that must move in one commit are tabulated. |
+| **WP-9** | **Thunderstore publication** (USER 2026-08-23: "надо нам бы стать официальным модом и попасть в магазин thunderstore ... чтобы обычный юзер смог поставить нативно"). Ship Multivoid as a Thunderstore package so r2modman / Thunderstore Mod Manager installs it natively. | **NEW, SPECIFIED, NOT BUILT** — §7. The payload shape is ALREADY correct; what is missing is package metadata, a GENERATED manifest, and a publish step. **The version mapping is DECIDED, not owed** (§7.3, user 2026-08-23: `<game-major>.<game-minor>.<build>`); this row said "a version mapping decision" was missing after §7.3 had already made it. **§7.3a (2026-08-24, user-raised) measures what the versioned DLL name costs today** — it moves on every proto bump including security-only ones (`0.9.135` as of `ca3943e9`), its CMake justification expires with WP-2 commit 3, `deploy-mod.ps1` picks the payload by mtime out of 14 artifacts, and the six anchor sites that must move in one commit are tabulated. **2026-08-25 (user-raised, five real Thunderstore packages): §7.2 was measuring the extracted PROFILE and calling it the ZIP — the real zip has a `mod/` wrapper, and §7.2's tree would have installed cleanly and never loaded. §7.2a is now the authoritative routing rule (from Thunderstore's own ecosystem schema + r2modman's rule engine and test spec), §7.2b is the field survey + the measurement that shows what D-3 bought (field mods import 32/40/130 mangled C++ symbols from `UE4SS.dll`; we import 0), and §7.9 answers "can GitHub produce the package" — yes for everything except the pak, whose blocker is its inputs.** |
 | **WP-7** | The native DEBUG subsystem (USER 2026-08-21: adopt UE4SS's debug tooling / DebugMod ideas). | **PARKED** — scoped in the design finding §3c. |
 | **WP-8** | The hygiene split (USER 2026-08-21: "everything that is a tool, not the mod" moves out). | **PARKED** — scoped in the design finding §3d. |
 | **L-4** | Engine access via UE4SS's own APIs (the "bridge"). | **DEFERRED**, and **permanently PARTIAL** — the ProcessEvent interception path stays ours forever (§4). |
@@ -398,10 +398,13 @@ topic/pins, and the release-body template in `tools/release/notes/`.
 ### 7.1 The two install lanes
 
 1. **Mod manager (r2modman / Thunderstore Mod Manager) — this IS "natively, the way they do it".**
-   The manager downloads a Thunderstore zip and extracts it **whole** into
-   `<profile>\shimloader\mod\<Author>-<Name>\`. It then launches the game through
-   `unreal_shimloader`, which VFS-maps `--mod-dir` → `GAME\Binaries\Win64\Mods`,
-   `--pak-dir` → `Content\Paks\LogicMods`, `--cfg-dir` → `Config`
+   The manager downloads a Thunderstore zip and ~~extracts it **whole** into
+   `<profile>\shimloader\mod\<Author>-<Name>\`~~ — **WRONG, corrected 2026-08-25: it ROUTES each
+   top-level entry to a different profile directory per a published per-game rule set, and strips
+   the matched folder's own name. See §7.2a, which is authoritative.** It then launches the game
+   through `unreal_shimloader`, which VFS-maps `--mod-dir` → `GAME\Binaries\Win64\Mods`,
+   `--pak-dir` → `Content\Paks\LogicMods`, `--cfg-dir` → `Config`, and
+   `--overlay-dir` → `GAME\Binaries\Win64` itself
    (`reference/unreal-shimloader/README.md:21-31`). Nothing is written into the game folder.
 2. **Manual UE4SS** — install UE4SS per the upstream guide, then drop
    `GAME\VotV\Binaries\Win64\Mods\Multivoid\dlls\main.dll` + `enabled.txt`.
@@ -410,6 +413,15 @@ topic/pins, and the release-body template in `tools/release/notes/`.
 `docs/INSTALL.md` must document BOTH, with lane 1 first (it is what most players use).
 
 ### 7.2 The package shape — measured from a real VOTV UE4SS C++ mod
+
+> **CORRECTED 2026-08-25 — THIS SECTION DESCRIBED THE WRONG TREE, AND THE ERROR WAS SHIP-BREAKING.**
+> Everything below was measured from the **extracted r2modman profile**, i.e. the *output* of the
+> install, and was then written down as if it were the **zip**. It is not: the zip carries a
+> top-level **`mod/`** wrapper that the manager strips. A package built to the tree below would
+> install "successfully", show up in the manager, and **never load** (§7.2a proves why, from
+> r2modman's own rule engine). **Read §7.2a before building any package.** The section is kept —
+> not rewritten — because everything it says about the *profile* layout is still true, and because
+> the failure mode it would have caused is the thing worth remembering.
 
 `acitulen-DebugMod` 5.0.3 (and `Moddy-CrashContext`, `Flyingcoyote-VoidFax`) unpack to:
 
@@ -450,20 +462,171 @@ blueprint pak. On disk it lands in two places at once:
 <profile>\shimloader\pak\acitulen-DebugMod\DebugMod.pak      <- the --pak-dir lane
 ```
 
-So the package holds a root-level **`pak/`** folder beside `dlls/`, and the manager routes each to its
-own shimloader directory (`--pak-dir` VFS-maps to `Content\Paks\LogicMods`). `NynrahGhost-Fusion`
-does the same. Multivoid's target package is therefore:
+So the package holds a root-level **`pak/`** folder beside ~~`dlls/`~~ **`mod/`** (the pak half of this
+sentence is right; the `dlls/` half is the §7.2 error — corrected 2026-08-25), and the manager routes
+each to its own shimloader directory (`--pak-dir` VFS-maps to `Content\Paks\LogicMods`).
+`NynrahGhost-Fusion` does the same. Multivoid's target package is therefore:
 
 ```
-manifest.json  icon.png  README.md  CHANGELOG.md  enabled.txt
-dlls\main.dll
-pak\<model>.pak        (+ its <model>.png preview tile, which the F1 skin browser reads)
+  DO NOT COPY THIS BLOCK -- it is the §7.2 error, kept only so the correction has a subject.
+  The buildable tree is in §7.2a. What is wrong here: `enabled.txt` and `dlls/` are NOT at the
+  zip root; they live under `mod/`, and a root-level `dlls/` silently never loads.
+
+manifest.json  icon.png  README.md  CHANGELOG.md  enabled.txt      <- enabled.txt belongs in mod/
+dlls\main.dll                                                      <- belongs at mod\dlls\main.dll
+pak\<model>.pak        (+ its <model>.png preview tile, which the F1 skin browser reads)   <- correct
 ```
 
 This matches what `tools/deploy-all.ps1` already does for the four dev installs (it copies the pak to
 `Content\Paks\LogicMods\multivoid\` plus the preview `.png`) — the mechanism is built and shipping
 locally; only the packaging wrapper is missing. **But WHICH model may go in that pak is an open
 question — see §7.6.**
+
+### 7.2a The routing rule — AUTHORITATIVE `[V]` 2026-08-25, and §7.2's tree would NOT have loaded
+
+A Thunderstore zip is not extracted "whole" anywhere. The **manager** routes each top-level entry
+according to a per-game rule set that Thunderstore publishes as machine-readable data, and VOTV's
+rule set is this — fetched live from
+`https://thunderstore.io/api/experimental/schema/dev/latest/`,
+`games["voices-of-the-void"].r2modman[0]` (326 games in that document):
+
+| zip folder | → profile route | `isDefaultLocation` | `defaultFileExtensions` | `trackingMethod` |
+|---|---|---|---|---|
+| `mod/` | `shimloader/mod/<pkg>/` | **true** | `[]` | `subdir` |
+| `pak/` | `shimloader/pak/<pkg>/` | false | **`[]`** | `subdir` |
+| `cfg/` | `shimloader/cfg/` | false | `[]` | **`none`** |
+| `overlay/` | `shimloader/overlay/<pkg>/` | false | `[]` | `subdir` |
+
+Same object: `packageLoader: "shimloader"`, `internalFolderName`/`dataFolderName`/`settingsIdentifier`
+`"VotV"`, `exeNames: ["VotV.exe"]`, community label **`voices-of-the-void`** (the `--community` a
+publish step needs), `wikiUrl: https://questwalker.github.io/votv-modding-wiki/`. Two packages are
+registered as the loader for this community — `Thunderstore-unreal_shimloader` **and**
+`0xFFF7-votv_shimloader` — so a player may arrive with either.
+
+**The algorithm, which is what makes §7.2 wrong** (`ebkr/r2modmanPlus`,
+`src/installers/InstallRulePluginInstaller.ts`, `buildInstallForRuleSubtype`):
+
+- A top-level **directory** matches a rule when its name equals `basename(rule.route)` — literally
+  `mod`, `pak`, `cfg`, `overlay`. A directory that matches **nothing is recursed into**, and the
+  files inside are classified individually — the folder is *not* carried along as a unit.
+- A **file** matches by extension; with no extension rule it falls to the `isDefaultLocation` rule,
+  i.e. `shimloader/mod`.
+- `installSubDir` then copies each matched source's **children** into `<route>/<pkg>/`. So the
+  matched folder's own name is stripped and everything beneath it is preserved.
+
+r2modman's own test spec pins the mapping (`test/vitest/tests/unit/Installers/ModLoader/Shimloader.Tests.spec.ts`):
+
+```
+README.md            -> shimloader/mod/<pkg>/README.md
+manifest.json        -> shimloader/mod/<pkg>/manifest.json
+icon.png             -> shimloader/mod/<pkg>/icon.png
+mod/scripts/main.lua -> shimloader/mod/<pkg>/scripts/main.lua
+mod/dll/mod.dll      -> shimloader/mod/<pkg>/dll/mod.dll     <- the `mod/` level is STRIPPED
+pak/blueprint.pak    -> shimloader/pak/<pkg>/blueprint.pak
+cfg/package.cfg      -> shimloader/cfg/package.cfg           <- FLAT, no <pkg>
+```
+
+Confirmed independently on this box against the real profile: `acitulen-DebugMod`'s zip is
+`mod/dlls/main.dll` + `mod/enabled.txt` + `pak/DebugMod.pak` + four root metadata files, and it
+lands as `shimloader/mod/acitulen-DebugMod/{dlls/main.dll, enabled.txt, + the metadata}` and
+`shimloader/pak/acitulen-DebugMod/DebugMod.pak`. `forder-FusionFix` is the clean control (no runtime
+writer): zip `mod/Scripts/*.lua` → profile `.../Scripts/*.lua`. `NynrahGhost-Fusion` is **not**
+usable as evidence — its `Fusion.exe` writes into its own mod folder at runtime, which is why that
+folder looks flattened.
+
+**So the shape to build is:**
+
+```
+manifest.json          icon.png (EXACTLY 256x256)   README.md   [CHANGELOG.md]
+mod\enabled.txt
+mod\dlls\main.dll
+pak\<model>.pak        (+ its <model>.png preview tile)
+```
+
+Four traps, each of which produces a package that installs cleanly and then misbehaves silently:
+
+1. **`dlls/` at the zip root does not work.** Its name matches no route, so it is recursed into;
+   `main.dll` matches no extension rule; it falls to the default location; `installSubDir` copies it
+   **by basename** → `Mods/<pkg>/main.dll`. UE4SS scans `Mods/<name>/dlls/main.dll` (measured across
+   all three UE4SS eras — `src/loader/cppmod_entry.cpp:5-9`), so the mod is simply never loaded, with
+   no error anywhere. `[V]` by rule-engine read; not run as a negative control.
+2. **VOTV's `pak` route declares NO extension rule** (`defaultFileExtensions: []`). A loose `.pak`
+   at the zip root therefore goes to `shimloader/mod/<pkg>/`, not to the pak dir — r2modman has a
+   named test for exactly this (*"Loose .pak files route to schema default location when no
+   extension rule exists"*). The pak **must** be inside `pak/`.
+3. **`cfg/` is a shared, un-owned namespace.** `trackingMethod: "none"` means no per-package subdir
+   *and* no removal on uninstall — r2modman's test asserts `shimloader/cfg/package.cfg` still exists
+   after the package is uninstalled. Anything we put there collides across mods by filename and
+   outlives us. (`multivoid.ini` already lives beside the game exe / under `SHIMLOADER_CFG_DIR`;
+   this is a reason not to move it into the package.)
+4. **`<pkg>` is `<Author>-<Name>`, not `<Name>`** (`installSubDir` uses `mod.getName()`; measured on
+   disk as `acitulen-DebugMod`). Our hand-installs are `Multivoid`; a Thunderstore install is
+   `<Author>-Multivoid`. This is the same fact §7.7 hits from the other side — `skin_registry.cpp:114`
+   hardcodes `LogicMods/multivoid`, and the pak will arrive at `LogicMods/<Author>-Multivoid/`.
+
+**`shimloader/overlay` is new information for this doc, and it is upstream, not ours** `[V]`. It maps
+a package subtree onto `GAME/Binaries/Win64/`, and shimloader publishes `SHIMLOADER_MOD_DIR` /
+`_PAK_DIR` / `_CFG_DIR` / `_OVERLAY_DIR` into the environment *before* `ue4ss.dll` loads so an
+overlay-loaded wrapper can resolve the profile from `DllMain`
+(`reference/unreal-shimloader/README.md:30,40-42`; `src/hooks.rs:117`, `src/lib.rs:128-195`,
+`src/paths/registry.rs:70`). Provenance checked because the vendored copy is gitignored and could
+have been a local fork: `git log -- reference/unreal-shimloader` is exactly two commits, both the
+vendoring drop and its later un-tracking, **no authored source change**, and the same text is live at
+`raw.githubusercontent.com/thunderstore-io/unreal-shimloader/master/README.md`.
+Consequence to record and *not* act on: the mod-manager lane **does** have a supported way to ship a
+DLL that must live in `Binaries/Win64/` — so WP-2 commit 3 deleting the proxy does not burn that
+bridge, and the existence of this route is **not** an argument for keeping the proxy.
+
+### 7.2b What five real VOTV packages actually ship — field survey `[V]` 2026-08-25
+
+Downloaded by the user to `ignore_folder/thunderstore_mod_examples/` and measured from the **zips**,
+not the profile:
+
+| package | kind | zip tree beyond the 3 required root files | manifest `dependencies` |
+|---|---|---|---|
+| `acitulen-DebugMod` 5.0.3 | C++ **+ pak** | `CHANGELOG.md`, `mod/enabled.txt`, `mod/dlls/main.dll` (814,592 B), `pak/DebugMod.pak` (1,337,587 B) | `Thunderstore-unreal_shimloader-1.1.7` |
+| `Moddy-PBMovement` 1.0.1 | C++ **+ ini** | `CHANGELOG.md`, `mod/enabled.txt`, `mod/dlls/main.dll` (523,776 B), **`mod/dlls/PBMovement.ini`** (4,414 B) | same |
+| `Moddy-CrashContext` 1.0.0 | C++ | `mod/enabled.txt`, `mod/dlls/main.dll` (46,080 B) — no CHANGELOG | same |
+| `Flyingcoyote-VoidFax` 1.0.7 | **Lua** | `CHANGELOG.md`, `mod/enabled.txt`, `mod/Scripts/main.lua`, `mod/Scripts/config.lua` | same |
+| `SquishEk-BlyatErrorReplacement` 0.0.0 | **pak only** | `CHANGELOG.md`, `pak/BlyatErrorReplacement_P.pak` — **no `mod/`, no `enabled.txt`** | `[]` |
+
+Every icon is exactly 256×256. Three of five omit `author` from the manifest entirely — the
+namespace comes from the uploading **team**, not the file. Four of five declare the single dependency
+`Thunderstore-unreal_shimloader-1.1.7`; the pak-only package declares none. **`PBMovement` puts its
+config file next to the DLL** (`mod/dlls/PBMovement.ini`) rather than in `cfg/` — consistent with
+trap 3 above, and the closest field precedent for where `multivoid.ini` would go if it ever moved
+into the package.
+
+**The linkage measurement — this is D-3's slim contract shown against the field.** PE import/export
+tables, parsed directly:
+
+| binary | imports from `UE4SS.dll` | CRT | exports |
+|---|---|---|---|
+| `Moddy-CrashContext` | **32** | dynamic (`MSVCP140`, `VCRUNTIME140`, `api-ms-win-crt-*`) | `start_mod`, `uninstall_mod` |
+| `Moddy-PBMovement` | **40** | dynamic | same two |
+| `acitulen-DebugMod` | **130** | dynamic | same two |
+| **`multivoid-0.9.0n-141.dll`** | **0** | **static** (`CMakeLists.txt:186,691`) | same two, plus 18 leaked `SteamNetworking*` from static GNS |
+
+Every one of those imports is an **MSVC-mangled C++ symbol carrying `std::` types across the DLL
+boundary** — e.g.
+`?on_dll_load@CppUserModBase@RC@@UEAAXV?$basic_string_view@_WU?$char_traits@_W@std@@@std@@@Z`,
+`?RegisterProcessInternalPreCallback@Hook@Unreal@RC@@YAXV?$function@...@Z`. Two things follow, and
+they are the concrete payoff of the D-3 choice:
+
+- **Their** ABI surface is (this UE4SS build) × (this MSVC STL). A signature change upstream is a
+  *missing import* — the Windows loader fails the DLL outright; there is no degraded mode. That is
+  why the whole cohort pins `unreal_shimloader-1.1.7`. **Our** surface is two `extern "C"` symbols
+  plus a vtable of no-op stubs whose slot count is watched at runtime
+  (`cppmod_entry.cpp`, tripwire wire-e).
+- All three field mods **require the VC++ redistributable**; Multivoid does not. One fewer
+  precondition in the install prose, and one fewer support class.
+
+The size gap is real and worth naming before WP-9: **17,688,064 B vs 814,592 B** — 21× the largest
+VOTV C++ mod. Thunderstore's documented ceiling is ~5 GB, so this is not a store problem; it is a
+*download-on-every-update* problem, and it is the strongest practical argument for §7.6's
+"skins as a separate package" conclusion.
+
+**Two of §7.5's owed measurements are closed by this pass** — see §7.5.
 
 ### 7.3 `version_number` — DECIDED (USER, 2026-08-23): **`<game-major>.<game-minor>.<build>`**
 
@@ -846,10 +1009,97 @@ option is not re-derived from scratch later.
 
 ### 7.5 Owed measurements before WP-9 ships
 
-- Which UE4SS build `Thunderstore-unreal_shimloader-<ver>` bundles, and whether our pinned
-  **UE4SS 3.0.1** contract holds against it (our repro profile runs an *experimental* UE4SS).
-- Thunderstore team/namespace creation for the `Author` field + the VOTV community listing rules.
-- Whether the VOTV community requires listing approval (VoidMod points at `votvmodding.github.io`).
+- ~~Which UE4SS build `Thunderstore-unreal_shimloader-<ver>` bundles~~ **CLOSED `[V]` 2026-08-25.**
+  The shimloader package **is** the UE4SS delivery: `Thunderstore-unreal_shimloader-1.1.7` ships
+  `dwmapi.dll` (700,488 B, FileVersion 1.1.7 — shimloader itself) plus a whole `UE4SS/` drop —
+  `UE4SS/UE4SS.dll` (16,228,864 B, md5 `8A78269B`, **no version resource at all**),
+  `UE4SS/dwmapi.dll` (61,952 B — UE4SS's own proxy), `UE4SS-settings.ini`, and the eight built-in Lua
+  mods. `ShimloaderInstaller.ts` copies exactly `dwmapi.dll`, `UE4SS/ue4ss.dll`,
+  `UE4SS/UE4SS-settings.ini` to the profile root and `UE4SS/Mods/**` → `shimloader/mod/**`.
+  **Era, by exported symbol set rather than by a version string** (there is none): this build exports
+  `on_program_start`, `on_unreal_init`, `on_ui_init`, `on_dll_load`, `on_update`, `on_cpp_mods_loaded`,
+  `render_tab`, `register_tab`, `register_keydown_event` (2 overloads) and 4+4 `on_lua_start`/`on_lua_stop`
+  overloads — i.e. the **wide, post-3.0.1 `CppUserModBase`**, matching the vendored
+  `reference/RE-UE4SS/UE4SS/include/Mod/CppUserModBase.hpp`, not the narrow v3.0.1 surface.
+  **Our contract is unaffected either way** — §7.2b measured that we import **zero** UE4SS symbols,
+  and `cppmod_entry.cpp` already sizes its stub table for the wide era (slots 0..15) with a runtime
+  WARN above it. The `UE4SS-settings.ini` this package ships also has `GraphicsAPI = opengl` and
+  `GuiConsoleEnabled = 0`, which is worth knowing before blaming our overlay for anything.
+- ~~Whether the VOTV community requires listing approval~~ **PARTLY CLOSED `[V]` 2026-08-25.** The
+  ecosystem schema lists the community as `voices-of-the-void`, `listed: true`, with 15 categories
+  (`mods`, `tools`, `libraries`, `tweaks`, `misc`, `audio`, `items`, `language`, `console`, `kerfur`,
+  `signals`, `crafts`, `placeables`, `modpacks`, `nsfw` — **no multiplayer/co-op category**), two
+  sections (`mods` excluding `modpacks`; `modpacks` requiring it), `wikiUrl`
+  `https://questwalker.github.io/votv-modding-wiki/` and a Discord invite. Whether uploads pass
+  through moderation is **not** expressible in that schema, so it stays open — but it is a question
+  for the community's own channels, not a measurement.
+- **STILL OWED, and it is an account action, not a measurement:** Thunderstore team/namespace
+  creation (the namespace becomes the `<Author>` half of `<Author>-Multivoid`, which §7.2a trap 4
+  shows is load-bearing for the pak path), plus the service-account API token that §7.9 needs.
+
+### 7.9 Can GitHub produce the ready-to-install package, or must it come from the maintainer's PC? (USER 2026-08-25)
+
+**Short answer: GitHub can do all of it except the `.pak`, and the missing piece is a zip step, not
+a capability.** The blocker is one unshipped asset's *inputs*, not CI.
+
+**What GitHub already does, proven by green runs and not by reading YAML** `[V]` 2026-08-25:
+
+| step | on GitHub? | evidence |
+|---|---|---|
+| Fetch every dependency | yes — all 6 submodules public; vcpkg pinned by `builtin-baseline` and bootstrapped by the workflow itself | `.gitmodules`; `build-core.yml:70,158-174` |
+| Compile the payload DLL | yes, `windows-latest`, ~34 min wall clock | `build-core.yml:37,208`; runs `2026-07-31 06:43→07:18`, `07-27`, `07-25` all `success` |
+| Needs UE4SS headers/libs | **no** — D-3 means we link nothing of UE4SS; the contract is our own `cppmod_entry.cpp` + `cppmod_stubs.asm` | `CMakeLists.txt:219-220` |
+| Needs the game install / a dumped SDK header | **no** — `sdk_profile.h`/`sdk_profile_names.h` are committed, fonts are committed, `version.h` is `configure_file`d | tracked in git; `CMakeLists.txt:41-44` |
+| Tag → judge → cacheless rebuild → publish + sha256 verify | yes, entirely on the runner with `GH_TOKEN: ${{ github.token }}` | `release-core.yml`; the `release` workflow has completed `success` (e.g. 2026-07-26) and the ledger carries published builds |
+
+**What is missing is one step, and its precedent is already sitting in our own tree.**
+`publish.ps1:24-28` asserts *exactly two loose DLLs* and uploads them individually — there is no zip
+anywhere, and `git ls-files | grep -icE 'thunderstore|manifest\.json|icon\.png'` → **0**, i.e. no
+packaging script exists at all. Meanwhile
+`reference/unreal-shimloader/.github/workflows/release.yml:79-97` — written by the people whose
+loader we are targeting — does the whole thing on `windows-latest` with no maintainer machine: stage
+`icon.png` + `README.md` + the payload, heredoc `manifest.json` **with the version interpolated**
+(exactly §7.3's "generated, never hand-edited" requirement), `7z a -tzip`, then `gh release create`
+with the zip. That is a complete working answer to the question, and it is upstream's, not ours.
+
+Publishing onward to Thunderstore from CI is a first-party path: a **service account** on the team
+issues an API token, it goes in a repo secret, and `tcli publish` reads it as `TCLI_AUTH_TOKEN`.
+Marketplace actions wrap this and accept a **pre-built zip** via a `file:` input, so we would not
+have to hand our packaging to a third-party action to use one — we build the zip, it uploads it.
+
+**What genuinely cannot come from GitHub today, and why each is a different kind of problem:**
+
+1. **The `.pak` — an INPUT problem, not a tooling problem.** Zero `.pak` files are tracked
+   (`git ls-files | grep -c '\.pak$'` → 0; `.gitignore:6` `*.pak`), and the one we deploy,
+   `research/pak_re/hl_einstein_v1sc.pak`, sits under three independent ignore rules
+   (`.gitignore:6`, `:144`, `:273`). The *chain* is deliberately editor-free Python + `repak`
+   (`tools/client_model/README.md`), so nothing about it needs the Unreal Editor — but its inputs are
+   a cooked template extracted from the game's own paks and a Valve source model, neither of which has
+   ever been in git (§7.8), and neither of which can be. **This needs a decision, not code**, and it
+   should be taken with §7.6/§7.7c (skins as a separate package) rather than inside WP-9.
+2. **`fingerprint.json`** — a human commits the toolchain dump from a cacheless run
+   (`docs/RELEASE.md:99-104`); a mismatch is a hard refusal (`fingerprint.ps1:56-60`). By design.
+3. **The build number, `LEDGER.tsv`, `notes/b<N>.md`, the tag push** — human by design; `LEDGER.tsv`
+   calls itself the single mint authority and append-only.
+4. **The Thunderstore team + service-account token** — an account action (§7.5), one time.
+
+**One honest caveat on item 1's opposite side:** the GNS submodule pulls nested submodules including
+`webrtc.googlesource.com` (~263 MB), which is public but is *not* GitHub. CI has been green with this
+repeatedly, so it is a proven path rather than a hypothetical, but it is the one dependency whose
+availability we do not control and it is worth naming before anyone calls the CI build hermetic.
+
+**One asset nobody has costed: the icon.** Thunderstore requires `icon.png` at the zip root, **exactly
+256×256** (§7.2b: all five field packages comply). This repo tracks **zero image files of any kind**
+(`git ls-files | grep -icE '\.(png|ico|svg)$'` → 0). The only candidate on disk is
+`site/public/favicon.svg`, and **`site/` is untracked** (`.gitignore:205`) — so CI cannot reach it.
+Whatever icon we choose has to be *committed to this repo* to be packageable, which makes it the first
+tracked binary asset the project would own. Small, but it is a decision (and a licence question if the
+art is not ours), not a build step.
+
+**Where this lands the WP-9 estimate:** unchanged in kind, sharper in shape. WP-9 is a `7z`/`Compress-Archive`
+step plus a generated `manifest.json` plus a committed `icon.png` — bolted onto a release lane that
+already builds, verifies and publishes without a maintainer's PC. The pak is the only part that is not
+merely absent but *blocked*, and §7.6 already argues it should not ride in the same package anyway.
 
 ---
 
