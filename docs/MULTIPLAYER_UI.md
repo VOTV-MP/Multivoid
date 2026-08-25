@@ -637,6 +637,14 @@ and should not be silently re-opened.
    *indistinguishable* from "no handle, no bug, donors absent" — an instrument blind to the
    phenomenon always passes. It runs from the same observer as the inject, and records **which menu
    instance and tick it sampled**, so a null is attributable.
+   - **RUNG 0 — one counter, and it settles O4's only real leg (`/qf` round 10).** The overlay frame
+     loop already runs every Present, and `CurrentWorld()` already ships (reading-order 4j). So count
+     **frames presented while `CurrentWorld()` is null**. That is the entire question behind "can UMG
+     serve `join_curtain` / `loading_screen` / `boot_warning_dialog`": if the game never presents a
+     frame without a world, UMG can serve them and the ~3,700 LOC of overlay substrate is bankable
+     after all; if it does, ImGui's Present hook covers a window UMG structurally cannot, and two
+     substrates is the measured answer. Banking "two substrates permanently" while the instrument
+     sits in the same loop, unused, is the blind-instrument shape this doc keeps catching.
    - **RUNG 1 — the cheapest falsifier, and it can invalidate the placement.** `BuildTextWidget`
      (`engine_widget.cpp:154-167`) already hand-wires `UUserWidget -> UWidgetTree -> root` with bare
      `SpawnObject` + raw offsets, and ships through `pos_hud` — **into the VIEWPORT, which is the only
@@ -730,9 +738,13 @@ and should not be silently re-opened.
      > **Why no row button (`/qf` round 8 — it dissolved a problem rather than solving one).** The
      > native row's `button_select` draws nothing in all three states (`DrawAs: NoDrawType`), and the
      > release-edge poll's one surviving justification is *"let the `UButton` finish its own
-     > press->release visual"* — **which is false for a button that has no visual.** Hover is already
-     > pure C++ rect math, and click hit-testing is the *same* rect math on the *same* mouse read, so
-     > a per-row `UButton` buys only the click **sound**, which the screen can play directly.
+     > press->release visual"* — **which is false for a button that has no visual.** And the hit
+     > target does not need to be a button at all: `IsHovered()` is resolved on **`UWidget`**
+     > (`engine_widget.cpp:214-217`), so it answers for the row's background `UImage` just as well —
+     > see the hover step below. A per-row `UButton` therefore buys only the click **sound**, which
+     > the screen can play directly.
+     > *(Reason revised twice: the first version of this box said rect math replaced the button —
+     > `/qf` round 10 reversed that, and the button stays gone for the reason above instead.)*
      > Removing it also removes any need to author `DrawAs = NoDrawType` into a cloned brush — which
      > would have been a carve-out in the clone-don't-author rule below, and which I had justified
      > with an asset-reference census that structurally cannot see `DrawAs` (a one-byte reflected
@@ -773,16 +785,45 @@ and should not be silently re-opened.
    - **Bound the retry.** Fail-closed means retry, and retry means a genuinely-absent donor must be
      *diagnosable rather than silent*: log once after N attempts naming the missing donor. A silent
      forever-retry is the same defect class as a fallback style, one level quieter.
-   - **Hover** (needed for §7b's description idiom): `UWidgetLayoutLibrary::GetMousePositionOnViewport`
-     (`UMG.hpp:2090`) + `GetViewportScale` (`:2087`) is **one** call, and the row rects are ours, so
-     hit-testing is pure C++ **independent of N**. `WndProcDetour` runs on the game thread (`gate3`),
-     so hover recomputes on `WM_MOUSEMOVE` for **zero** UFunction calls in the common case. A
-     per-frame `IsHovered()` sweep over N rows is exactly the per-tick pattern this project bans.
+   - **Hover and click — `IsHovered()` on the row, edge-gated. Rect math was REVERSED in `/qf`
+     round 10.**
+
+     > This step used to say hit-testing would be *"pure C++ rect math, independent of N"* because
+     > *"the row rects are ours"*. **Two measurements killed that.** (1) `IsHovered` is resolved on
+     > **`UWidget`** — `engine_widget.cpp:214-217`, whose own comment says *"IsHovered + SetVisibility
+     > are owned by UWidget"* — so it is callable on **any** `UWidget*`, a bare row `UImage`
+     > included; the premise that we *needed* rect math was one grep from false. (2) Neither
+     > `GetCachedGeometry` nor `GetScrollOffset` is resolved anywhere in our tree, and **the rows live
+     > inside a `UScrollBox` that scrolls** — so "the rects are ours" quietly assumed a *static*
+     > layout. Doing it by hand would mean reimplementing Slate's scroll transform, DPI scale and
+     > clipping, and getting them wrong at the first scroll or non-1.0 UI scale.
+     >
+     > **`IsHovered()` is correct by construction — Slate already did the hit-test.** The cost worry
+     > that motivated rect math is handled the same way either approach would: `WndProcDetour` runs on
+     > the game thread (`gate3`), so hover is recomputed **only on `WM_MOUSEMOVE` edges**, not per
+     > frame. A per-*frame* sweep over N rows would indeed be the per-tick pattern this project bans;
+     > an on-move sweep is not.
+     >
+     > The row's hit target is its background **`UImage`**, which must be set explicitly to
+     > `Visibility = Visible` (a `SelfHitTestInvisible` image answers `IsHovered() == false`) —
+     > **a probe item**. This is also the third and final reason the row needs no `UButton`: a
+     > `UImage` is a sufficient hit target, while a `UButton` would add a press visual we do not want
+     > and a style we would then have to suppress.
    - **Clicks**: the release-edge poll — **re-derived, not inherited.** Its comment gives two reasons;
      the "ImGui swallows `WM_LBUTTONUP`" reason **dies with the ImGui browser**, and only "let the
      `UButton` finish its own press->release visual" survives. Rewrite the comment to say so — a
      comment citing a dead cause is how a false comment is born. `multiplayer_menu.cpp:228-241`'s
      `HitTestInvisible` block **dies entirely**; its only cause was ImGui capture.
+   - **Row lifetime and GC — POOL, do not rebuild (`/qf` round 10; I had not considered this).**
+     `BuildTextWidget` widgets come from bare `SpawnObject`, and the only thing that keeps a row
+     reachable is the panel's `Slots` — a UPROPERTY `TArray` — so `RemoveChild`/`ClearChildren`
+     (already resolved, `engine_widget.cpp:212`) is what makes one collectable. Two consequences:
+     **(a)** our C++ side must hold rows through `CachedObjRef` (world-stamped, reading-order 4j),
+     never raw pointers, or a GC'd row becomes a dangling read; **(b)** a 1 Hz refresh that
+     *rebuilds* N rows would churn GC for nothing. **The game already shows the answer**: it keeps
+     `TArray<Uuicomp_saveSlot_C*> Slots` and calls `upd(int32)` — **reuse the widgets, update their
+     text, and add/remove only when the row COUNT changes.** That is the bounded teardown, and it is
+     one more thing to copy rather than invent.
    - **Unchanged**: `coop::net::lobby::LobbyRow` and every `coop::session_manager` call. Only the
      renderer is replaced.
    - **PORT THE INCUMBENT'S CORRECTNESS, do not re-derive it.** The 277 LOC being retired encodes
