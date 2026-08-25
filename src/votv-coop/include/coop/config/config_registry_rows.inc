@@ -322,3 +322,20 @@ CFG_FLAG(atlas_no_exclude_drill, "atlas_no_exclude_drill", "dev", false,
     "VOTVCOOP_ATLAS_NO_EXCLUDE",
     "Drop GlyphExcludeRanges from every font source, so the faces bake their whole "
     "cmaps. Proves the superset invariant fires. Breaks name folding -- drill only.")
+
+// THE NATIVE-UI PROBE (docs/MULTIPLAYER_UI.md section 8, P1). Two knobs on
+// purpose: the read half answers every question the native server browser's
+// design left unmeasured and touches nothing, while RUNG 1 -- the one that
+// decides the screen's PLACEMENT -- writes into the live shipped
+// `switcher_widgets`. A write into the one hands-on-verified native inject does
+// not ride the same opt-in as a log line.
+CFG_FLAG(native_ui_probe, "native_ui_probe", "dev", false, "VOTVCOOP_NATIVE_UI_PROBE",
+    "Diagnostic probe (READ-ONLY): UMG class/function resolution census, donor "
+    "residency, the ui_menu switcher child map, and the count of frames presented "
+    "while no world exists (decides whether the ImGui overlay substrate is retirable).")
+CFG_FLAG(native_ui_probe_write, "native_ui_probe_write", "dev", false,
+    "VOTVCOOP_NATIVE_UI_PROBE_WRITE",
+    "RUNG 1 of native_ui_probe, and it WRITES: adds a throwaway UUserWidget to the "
+    "live ui_menu widget switcher, shows it for ~2 s, then restores the previous "
+    "active index and removes it. Main menu only, never with a session up. Requires "
+    "native_ui_probe=1.")

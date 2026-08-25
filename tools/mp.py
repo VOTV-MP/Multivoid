@@ -2897,6 +2897,134 @@ def cmd_fogprobe(args) -> None:
     sys.exit(0 if len(shots) >= 1 else 2)
 
 
+def cmd_nativeui(args) -> None:
+    """SOLO MENU-TIME probe for the native server browser (docs/MULTIPLAYER_UI.md
+    section 8, P1). Launches ONE instance in `menu` scenario -- VOTV's own main menu,
+    no save, no session -- with `native_ui_probe` armed and, unless --no-write is
+    passed, `native_ui_probe_write` too.
+
+    It asserts on the LOG rather than on a screenshot, because the design's own rule is
+    that an instrument nobody has seen fail passes by construction: every question the
+    probe answers prints a line with a machine-readable prefix, and this command fails
+    if a line is ABSENT as loudly as if it is wrong.
+
+      RUNG 0  frames presented per WorldKind -- 'unknown' is the window UMG cannot draw
+              in, i.e. whether the ~3,700 LOC ImGui overlay substrate is retirable.
+      O1      the UMG class/function resolve census (a MISS is fatal to that feature).
+      O5      is the donor brush's FSlateResourceHandle populated (does P0 arm?).
+      O7      donor residency at menu time.
+      O8      UButton::OnClicked layout, read-only off the game's own bound button.
+      A5      the switcher child map -- which sub-screen sits at which index.
+      RUNG 1  does a hand-wired UUserWidget render inside the live UWidgetSwitcher.
+    """
+    shots_dir = Path(__file__).resolve().parent.parent / "research" / "nativeui_shots"
+    shots_dir.mkdir(parents=True, exist_ok=True)
+    if kill_all() > 0:
+        log("note: pre-existing VotV instances killed before nativeui")
+    deploy_all()
+
+    env = {
+        "VOTVCOOP_NATIVE_UI_PROBE": "1",
+        # The content-warning screen is itself a switcher child; advance past it so the
+        # probe settles on the real main menu.
+        "VOTVCOOP_MENU_PROCEED": "1",
+    }
+    if not args.no_write:
+        env["VOTVCOOP_NATIVE_UI_PROBE_WRITE"] = "1"
+
+    log("--- HOST LAUNCH (solo native-UI probe, MENU scenario) ---")
+    host_pid = launch_peer("host", args.port, "Host", peer=None,
+                           res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
+                           memory_limit_gb=args.memory_limit_gb,
+                           set_net_role=False, set_scenario="menu", extra_env=env)
+    host_log = HOST_DIR / "multivoid.log"
+
+    t0 = time.time()
+    shot: Path | None = None
+    saw_stage_a = False
+    while time.time() - t0 < args.duration:
+        time.sleep(3)
+        if not list_votv():
+            log("  (no VotV process -- exited/crashed)")
+            break
+        try:
+            text = host_log.read_text(errors="ignore")
+        except Exception:
+            text = ""
+        if not saw_stage_a and "STAGE A done" in text:
+            saw_stage_a = True
+            log(f"  t+{int(time.time()-t0)}s STAGE A complete")
+        if shot is None and "RUNG1 HOLD BEGIN" in text and "RUNG1 restore" not in text:
+            p = shots_dir / "nativeui_rung1.png"
+            if _capture_window(host_pid, p):
+                shot = p
+                log(f"  rung-1 shot: {p.name}")
+    lines = []
+    try:
+        lines = [ln for ln in host_log.read_text(errors="ignore").splitlines()
+                 if "[native_ui_probe]" in ln]
+    except Exception:
+        pass
+    log("--- KILLING ---")
+    kill_all()
+
+    log("--- NATIVE-UI PROBE OUTPUT ---")
+    for ln in lines:
+        print(ln)
+
+    def find(needle: str) -> str | None:
+        for ln in lines:
+            if needle in ln:
+                return ln
+        return None
+
+    log("--- NATIVEUI VERDICT ---")
+    fails = []
+    if not find("STAGE A done"):
+        fails.append("STAGE A never ran (no ui_menu_C tick? read the tail)")
+    o1 = find("O1 SUMMARY")
+    if not o1:
+        fails.append("no O1 SUMMARY line")
+    elif ", 0 MISSING" not in o1:
+        log(f"NOTE: O1 has misses -- {o1.strip()}")
+    # O5 prints VERDICT or INCONCLUSIVE -- an inconclusive donor is a real answer about
+    # the donor, not a missing line, and the assert must not confuse the two.
+    if not (find("O5 VERDICT") or find("O5 INCONCLUSIVE")):
+        fails.append("no O5 verdict line at all (donor button absent?)")
+    if not find("O5 VERDICT (ui_saveSlots_C.button_back"):
+        fails.append("O5 never reached the art-bearing donor (ui_saveSlots_C.button_back)")
+    if not find("A5: switcher_widgets"):
+        fails.append("no A5 switcher line")
+    # Every donor section 8 names must be RESIDENT. A NULL donor is not a soft note: the
+    # styling rule is fail-closed, so a null donor means the browser retries forever.
+    nulls = [ln for ln in lines if "O7[" in ln and "NULL --" in ln]
+    if nulls:
+        for ln in nulls:
+            log(f"NOTE: donor NULL -- {ln.strip()}")
+        fails.append(f"{len(nulls)} style donor(s) NULL at menu time -- fail-closed retry would spin")
+    if not find("O8 "):
+        fails.append("no O8 delegate line")
+    if not find("RUNG0 "):
+        fails.append("no RUNG0 report -- NoteFrame never ran (overlay Present hook down?)")
+    if args.no_write:
+        log("rung 1 skipped (--no-write)")
+    else:
+        r1 = find("RUNG1 VERDICT")
+        if not r1:
+            fails.append("no RUNG1 VERDICT line")
+        # A hold that began must have been torn down -- the probe must never leave the
+        # switcher pointing at a throwaway.
+        if find("RUNG1 HOLD BEGIN") and not (find("RUNG1 restore") or find("RUNG1 ABORTED")):
+            fails.append("RUNG1 held but never restored -- THE SWITCHER WAS LEFT ON OUR INDEX")
+    if shot:
+        log(f"screenshot: {shot}")
+    for f in fails:
+        log(f"FAIL: {f}")
+    if not fails:
+        log("ALL PASS -- every probe question produced a line; read them above.")
+    sys.exit(0 if not fails else 2)
+
+
 def cmd_menushot(args) -> None:
     """SOLO screenshot proof of the Dear ImGui F1 menu. Launches ONE host with
     VOTVCOOP_MENU_OPEN=1 so the menu starts visible (an autonomous run can't press
@@ -3773,6 +3901,19 @@ def main() -> None:
                             help="per-process commit cap in GB (0 = disabled)")
     for flag, kw in host_res: p_fogprobe.add_argument(flag, **kw)
     p_fogprobe.set_defaults(func=cmd_fogprobe)
+
+    p_nativeui = sub.add_parser("nativeui",
+                                help="SOLO menu-time probe for the native server browser (P1): UMG "
+                                     "resolve census + donor residency + switcher map + world-less "
+                                     "frame count, and RUNG 1's one write")
+    p_nativeui.add_argument("--duration", type=int, default=45,
+                            help="seconds to hold at the menu while the probe runs")
+    p_nativeui.add_argument("--no-write", action="store_true",
+                            help="reads only -- skip RUNG 1 (the switcher write)")
+    p_nativeui.add_argument("--memory-limit-gb", type=float, default=12.0,
+                            help="per-process commit cap in GB (0 = disabled)")
+    for flag, kw in host_res: p_nativeui.add_argument(flag, **kw)
+    p_nativeui.set_defaults(func=cmd_nativeui)
 
     p_menushot = sub.add_parser("menushot",
                                 help="SOLO: screenshot proof the Dear ImGui F1 menu renders over the game (VOTVCOOP_MENU_OPEN=1)")

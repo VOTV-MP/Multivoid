@@ -540,6 +540,8 @@ add_library(votv-coop SHARED
     src/coop/dev/keypad_probe.cpp
     src/coop/dev/door_probe.cpp
     src/coop/dev/save_probe.cpp
+    src/coop/dev/native_ui_probe.cpp
+    src/coop/dev/worldless_frames.cpp
     src/coop/dev/dev_gate.cpp
     src/coop/dev/director/player_context.cpp
     src/coop/dev/director/control_manager.cpp

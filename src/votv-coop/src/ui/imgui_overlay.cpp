@@ -78,6 +78,7 @@
 #include "coop/session/session_manager.h"
 #include "coop/dev/perf_probe.h"
 #include "coop/dev/input_focus_probe.h"
+#include "coop/dev/worldless_frames.h"
 #include "coop/input/input_owner.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hook.h"
@@ -528,6 +529,11 @@ HRESULT STDMETHODCALLTYPE PresentDetour(IDXGISwapChain* sc, UINT sync, UINT flag
     // The input probe must sample even with NO surface open (that is the state in which
     // the game owns text), so it hangs off Present, not off the ImGui pass below.
     coop::dev::input_focus_probe::NoteFrame();
+    // Count frames presented per WorldKind (RUNG 0 of the native-UI probe). This is the
+    // ONE place the question "does the game present frames when no world exists" can be
+    // asked, and leaving the instrument out of the loop while banking an answer about it
+    // is the blind-instrument shape docs/MULTIPLAYER_UI.md section 8 refuses.
+    coop::dev::worldless_frames::NoteFrame();
     // Republish "does the game own typed text". Two cadences (see input_owner.h): the
     // cheap fast path at ~10 Hz, the GUObjectArray walk at ~1 Hz, both hopped onto the
     // game thread because they call engine UFunctions.

@@ -614,11 +614,99 @@ re-decline convention.
 **The host form** follows `ui_gamemode`'s shape (§7b): mode/option rows plus description-on-hover,
 built from **our** widgets — never the game's classes (§8).
 
+### 8a. P1 HAS RUN — the measurement, and what it changed (`[V]` 2026-08-25, b143)
+
+> **Read this before the plan below it.** §8 is still the design of record, but **five of its
+> statements are now measured and two of them were WRONG**. Instrument:
+> `src/coop/dev/native_ui_probe.cpp` (the game-thread census + RUNG 1) and
+> `src/coop/dev/worldless_frames.cpp` (RUNG 0), armed by `[dev] native_ui_probe=1` /
+> `native_ui_probe_write=1`, driven by `python tools/mp.py nativeui`. Solo, MENU scenario, no
+> save, no session. DLL `multivoid-0.9.0n-143.dll`, **proto 143 unchanged** (no wire change).
+> **This is a real log from a real run, not a smoke marker** — but it is a LAB run at the main
+> menu, not hands-on, and RUNG 0's caveat below is load-bearing.
+
+| # | question | answer | consequence |
+|---|---|---|---|
+| **O1** | do the UMG classes + UFunctions resolve, each on its OWNING class? | **44/44, 0 missing** — including `UPanelWidget::AddChild`, which resolved nowhere in the tree before | P2 is unblocked on reflection |
+| **O5** | is a donor brush's `FSlateResourceHandle` (+0x70) populated? | **0/4 populated across 3/4 brushes that DO carry a `ResourceObject`** (`ui_saveSlots_C.button_back`) | **P0 IS DISARMED.** There is no refcount bug and the hands-on-verified inject is not touched |
+| **O7** | are §8's style donors resident at menu time? | **every one RESIDENT** — but only when read off the switcher's own child (see the trap below) | the donor table works; **one row was wrong** |
+| **O8** | `UButton::OnClicked` layout | **`+0x3C8`, `num=1`**, entry = `BndEvt__button_NewGame_K2Node_ComponentBoundEvent_0_OnButtonClickedEvent__DelegateSignature` | the v2 retire-the-poll decision now has evidence; v1 still polls |
+| **A5** | which sub-screen sits at which switcher index? | measured, table below | placement indices are no longer guesses |
+| **RUNG 1** | does a hand-wired, never-`Initialize()`d `UUserWidget` render inside `UWidgetSwitcher`? | **RENDERS.** `AddChild` 11→12 children, index 0→11, `GetDesiredSize` (0,0)→**(623,39)**, screenshot confirms the magenta text on screen, index restored to 0 and `RemoveChild` back to 11 | **the 12th-child placement HOLDS** |
+| **RUNG 0** | frames presented while no world exists? | 1103 frames, 571 `Unknown` — **but all 571 were STALE and `fresh=0`** | **O4 IS STILL OPEN** — see below |
+
+**`switcher_widgets` child map `[V]`** — 11 children, `ActiveWidgetIndex=0` at the main menu:
+
+| 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `CanvasPanel` | `ui_settings_C` | `ui_help_C` | `ui_keybinds_C` | `ui_saveSlots_C` | `ui_credits_C` | `CanvasPanel` | `ui_langs_C` | `ui_achievements_C` | `ui_gamemode_C` | `ui_stats_C` |
+
+**THE SWITCHER IS AN OVERLAY LAYER, NOT THE MENU — and nothing said so.** With
+`ActiveWidgetIndex = 11` (our throwaway), the screenshot still shows the title, the button list,
+the patron column and the credits. So index 0's `CanvasPanel` is the *empty* state, the main-menu
+chrome lives **outside** this switcher, and swapping the index **does not hide the menu**. Every
+sub-screen must therefore be painting its own opaque background — which is why §8's donor table
+already leads with a panel fill and a border, and why **P2 must paint one too**. Recorded because
+"the 12th child replaces the menu" was an unstated assumption in every version of this plan.
+
+**CORRECTION 1 — the donor table names a field that does not exist.** `image_border_*` is **not a
+member of `ui_saveSlots_C`** in this build (it exists on `ui_cheatMenu`, `ui_objectUpgrades`,
+`ui_spawnmenu`, `uicomp_dishStatusSlot`, `uicomp_signalSlot`, none of them menu-resident). The
+probe carries that row deliberately so the log says so out loud. The measured border candidate on
+that screen is **`Image_6`** (`@+0x340`, resident); the panel fill is `Image_0` (`@+0x338`). The
+table below is left as written with this correction stapled to it rather than silently edited,
+because the *reason* the row was wrong — it came from a §7b prose sweep, not from the class — is
+the thing worth keeping.
+
+**CORRECTION 2 — `FindObjectByClass` does not answer "the live one", and it produced a false
+finding for one whole round.** Read through `R::FindObjectByClass` alone, **every** widget field on
+`ui_saveSlots_C` and `ui_settings_C` came back null, while both instances were alive as switcher
+children. Read as a finding, that says the sub-screen donors do not exist until the screen is shown
+— which would have forced this design to add a precondition it explicitly rejected when it dropped
+the row-instance donor. Measured with **both** pointers side by side: `FindObjectByClass` returns a
+**different non-CDO instance** (a `WidgetBlueprint` carries a tree template that is *not* named
+`Default__`, so the CDO skip at `reflection.cpp:511` does not exclude it), and the switcher's own
+child has every donor resident. **Any donor read in P2 must come from the switcher child list, never
+from a class-wide lookup.**
+
+**CORRECTION 3 — O5's own instrument nearly published a verdict stronger than its evidence.** The
+first run read `ui_menu_C.button_start` and found 0/4 handles set, and said "there is no handle
+bug". Its four brushes carry **no `ResourceObject` at all** — and a handle is a *cache of a
+resource*, so zero from a brush with no resource says nothing about a brush with one. The verdict
+is now gated on `ResourceObject` (`INCONCLUSIVE` when none of the four carry art) and the answer
+above comes from `ui_saveSlots_C.button_back`, which does. **This is also a fact about the shipped
+inject worth keeping: `ui_menu_C`'s own menu buttons carry no brush art**, which is why
+`InjectCanvasButton`'s clone produces a native-looking button without ever loading a texture.
+
+**RUNG 0 DID NOT SETTLE O4, and this is the honest reading.** 571 of 1103 presented frames read
+`Unknown`, and **every one of them was a STALE sample** (`fresh=0`): they were presented before the
+game thread had run a single one of the probe's refresh tasks, because `world_identity`'s memo is
+refreshed only by a game-thread caller and `GT::Post` needs `ProcessEvent` traffic to drain. So the
+measured statement is *"the game presents ~571 frames before the mod can determine whether a world
+exists"* — **not** *"571 frames were presented with no world"*. Those are different claims and only
+the second one is evidence about what UMG could have drawn. What is settled: **after the world
+resolves, zero world-less frames were observed at the menu**, and the level-transition case — the
+other half of O4 — **was never exercised**, because this run never left the menu. **The ~3,700 LOC
+substrate retirement stays unbankable**, now for a measured reason rather than an unmeasured one.
+The next O4 run must (a) boot→gameplay→quit-to-menu so a transition is in the sample, and (b) find
+a way to keep the memo fresh across a blocked game thread, or accept that the boot window is
+structurally unattributable and say so.
+
+**What P1 did NOT answer**, and is still owed before or during P2: whether a bare `UImage` with
+`Visibility=Visible` answers `IsHovered()` for a pointer over it (RUNG 1's root reported
+`rootHovered=1` on every sample, which is suspicious rather than confirming — a full-screen
+top-left widget under an unmoved cursor is not a hit-test proof); and the delegate BIND, which
+stays out of v1 by decision.
+
+---
+
 ### 8. Build plan for the native server browser — CONVERGED `/qf`, 2026-08-25
 
-**Status: DESIGN.** Nothing here is built. The `/qf` this project requires ran to convergence over
-six rounds; **every round removed or corrected something**, so the rejections below are load-bearing
-and should not be silently re-opened.
+**Status: DESIGN, with P1 MEASURED — read §8a first.** The plan below is unbuilt except for its
+step 2 (the probe), which RAN on 2026-08-25 and is reported in §8a; **§8a corrects three statements
+in this section and disarms step 3.** The `/qf` this project requires ran to convergence over
+eleven rounds; **every round removed or corrected something**, so the rejections below are
+load-bearing and should not be silently re-opened.
 
 **What the `/qf` took OUT (each a concession, not a plan):**
 
@@ -652,7 +740,8 @@ and should not be silently re-opened.
 1. **The DOC (this section + §7b/§7c) — FIRST, and done.** `:151`/`:160` were live false statements
    ("the moment ARRIVED... the user has the editor") contradicting §5/§6's cancellation boxes ~100
    lines below; a parallel session sharing this repo could read them as a verdict. Fixed in place.
-2. **P1 — one read-only MENU-TIME probe**, one log line per fact. **Not a boot probe** — corrected in
+2. **P1 — one read-only MENU-TIME probe**, one log line per fact. **BUILT AND RUN 2026-08-25 —
+   results in §8a.** **Not a boot probe** — corrected in
    `/qf` round 7: O5 asks about the inject, which fires from the `ui_menu` **Tick observer**
    (`multiplayer_menu.cpp:222-227`), and every O7 donor is a live-menu widget. **At boot there is no
    `ui_menu`**, so a boot-time run would read null for all of them, and that null is
@@ -710,7 +799,9 @@ and should not be silently re-opened.
      **populated** at inject time? This gates step 3 and nothing else.
    - **O7**: donor residency per donor (step 4's table). All donors are now menu members — the row-instance donor was dropped in `/qf` round 7 (see step 4).
    - the delegate observation above, and the `input_owner` assertion.
-3. **P0 — the brush-handle fix, GATED on O5.** `FSlateBrush` is 0x88: reflected fields end at
+3. **P0 — the brush-handle fix, GATED on O5. THE GATE CAME BACK CLOSED (§8a): 0/4 handles
+   populated across 3/4 brushes that carry art, so there is NO handle bug and P0 IS NOT BUILT.**
+   The reasoning is kept because it is what the gate was measured against. `FSlateBrush` is 0x88: reflected fields end at
    `ImageType` @0x6F and the bitfield bools resume @0x80, so **the 16 bytes at +0x70 are an
    unreflected `FSlateResourceHandle` (a `TSharedPtr`)**. `FButtonStyle` is four brushes at
    0x08/0x90/0x118/0x1A0 (`SlateCore.hpp:12-15`), and `InjectCanvasButton`'s 0x278 `memcpy` covers all
@@ -790,11 +881,11 @@ and should not be silently re-opened.
      | brush | donor |
      |---|---|
      | panel fill | `ui_saveSlots.Image_0` |
-     | border | `ui_saveSlots.image_border_*` |
+     | border | ~~`ui_saveSlots.image_border_*`~~ **-> `ui_saveSlots.Image_6`** (§8a correction 1: `image_border` is not a field on this class) |
      | button — 3 states **and both sounds** | any `ui_saveSlots.button_*` |
      | text box | `ui_saveSlots.ETB_slotName` |
      | scrollbar | `ui_settings.scrollboxRoot` |
-     | row background | `ui_saveSlots.image_border_*` **+ our own tint** — see the note below |
+     | row background | `ui_saveSlots.Image_6` **+ our own tint** — see the note below (was `image_border_*`; §8a correction 1) |
 
    - **Why the row background is NOT donated by `uicomp_saveSlot` (corrected, `/qf` round 7).** The
      first draft donated it from a live row instance. Measured: `uicomp_saveSlot` references **only**

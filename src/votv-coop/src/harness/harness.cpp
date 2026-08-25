@@ -38,6 +38,7 @@
 #include "ui/multiplayer_menu.h"
 #include "coop/dev/menu_proceed.h"
 #include "coop/dev/save_probe.h"
+#include "coop/dev/native_ui_probe.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/game_thread.h"
@@ -525,6 +526,15 @@ void Start() {
     // (ue_wrap::save_browser drives VOTV's loadSlots) at the menu before the ImGui
     // Host-Game picker is layered on it. No-op unless the env is set.
     coop::dev::save_probe::Init();
+
+    // P1 of the native server browser (docs/MULTIPLAYER_UI.md section 8), ini
+    // `native_ui_probe=1`: the read-only UMG resolve census + donor residency + the
+    // ui_menu switcher child map, plus RUNG 0 -- the count of frames PRESENTED while no
+    // world exists, which is the whole of question O4 and decides whether the ImGui
+    // overlay substrate is retirable at all. `native_ui_probe_write=1` adds RUNG 1, the
+    // one write. Rides the ui_menu Tick observer (never boot: at boot there is no menu,
+    // and a null donor there is indistinguishable from a real absence).
+    coop::dev::native_ui_probe::Init();
 
     // Install WM_CLOSE subclass on the game HWND so X-close runs our
     // cleanup BEFORE the engine's teardown PE calls fire. Without this

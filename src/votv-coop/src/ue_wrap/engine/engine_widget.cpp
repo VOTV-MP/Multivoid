@@ -284,6 +284,14 @@ bool InsertAtTopOfVBox(void* vbox, void* child) {
 
 }  // namespace
 
+void* SpawnUObject(void* objectClass, void* outer) {
+    // ResolveNameplateFns owns the GameplayStatics CDO + the SpawnObject UFunction that
+    // every widget build in this TU already goes through; reuse it rather than mint a
+    // second resolver for the same two pointers (RULE 2).
+    if (!ResolveNameplateFns()) return nullptr;
+    return SpawnObject(objectClass, outer);
+}
+
 bool SetWidgetText(void* textBlock, const wchar_t* text) {
     if (!textBlock || !ResolveNameplateFns()) return false;
     SetTextOnBlock(textBlock, text);

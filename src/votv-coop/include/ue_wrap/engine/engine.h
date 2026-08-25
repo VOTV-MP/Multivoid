@@ -498,6 +498,17 @@ bool SpawnScreenTextWidget(void* outer, int zOrder, FVector2D alignment, FVector
                            int justify, int fontSize, const FLinearColor& color,
                            void** outRoot, void** outText);
 
+// NewObject by class: the reflected UGameplayStatics::SpawnObject(objectClass, Outer).
+// The one way this mod mints a UObject it owns -- every runtime-built UMG widget in the
+// tree comes from here. `outer` must be a live UObject that keeps the result reachable
+// (a widget's Outer does NOT root it; a UMG widget stays alive because its panel's
+// `Slots` array -- a UPROPERTY -- references it, so a widget you build and never attach
+// is collectable at the next GC).
+//
+// Returns nullptr if the SpawnObject UFunction has not resolved yet (it resolves off the
+// same lazy set the widget builders use) or if either argument is null. Game thread only.
+void* SpawnUObject(void* objectClass, void* outer);
+
 // Set a UTextBlock's text (Conv_StringToText -> UTextBlock::SetText). The HUD feed
 // updates its line by rebuilding the whole multi-line string. Game thread only.
 bool SetWidgetText(void* textBlock, const wchar_t* text);
