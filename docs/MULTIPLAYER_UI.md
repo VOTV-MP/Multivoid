@@ -241,7 +241,12 @@ the one surface that matters most.
 | **A — cooked WidgetBlueprints in a pak** (SmartTV's way) | best; designer-authored | editor: **HAVE IT**; cook path our Python chain does not have; authoring channel unsolved (§6) | **maybe — see §6** |
 | C — keep ImGui, restyle | foreign either way | none | yes, but it does not answer the ask |
 
-**Recommendation: B, or the B+art hybrid in §6.** A's loading half became free with D-3 and its
+> **DECIDED 2026-08-25 (USER): route B — all of it in C++, no editor, no authored widget.**
+> *"Тогда нафиг этот редактор, сделаем всё сами в c++."* Route A is a recorded-and-declined branch
+> (§6's superseded box). The table below is kept because the COSTS in it are measured and answer
+> "why not the editor" without re-digging — it is no longer a live fork.
+
+**Recommendation (pre-decision, now the decision): B, or the B+art hybrid in §6.** A's loading half became free with D-3 and its
 80 GB half is now paid, so the only thing still standing between us and A is HOW a widget gets
 authored — §6. The missing pieces for B are a scroll container
 and per-row buttons — both are UMG classes we resolve the same way we already resolve `Button`,
@@ -300,9 +305,15 @@ blocks nothing on the path we would actually walk.**
 That is route B plus art, and it is the cheapest thing that closes the "we look dirty" gap the user
 raised back on 2026-05-25.
 
-**USER DECISION 2026-08-25: build via UE 4.27 Python — route (c).** So (c)'s unverified crux above
-is now the blocking measurement rather than a footnote: **spike `WidgetTree` population before
-designing anything on it.** (d) stays the fallback that needs no spike at all; (b) is not built on.
+> **SUPERSEDED THE SAME DAY — 2026-08-25 evening. The editor is OUT. Do not restart the spike.**
+> An earlier decision this day read *"USER DECISION 2026-08-25: build via UE 4.27 Python — route (c),
+> so spike `WidgetTree` population before designing anything on it."* **USER, later the same day:**
+> *"Тогда нафиг этот редактор, сделаем всё сами в c++."* Everything in §6(a)/(b)/(c) is kept as a
+> **recorded-and-declined branch** — the measurements are durable and answering "why not the editor"
+> should never need re-digging — but **nothing below is a live plan.** What replaced it: §6e (the
+> delegate finding, which removed the reason to want an authored widget at all) and the MTA
+> precedent in §8. The written spike script was never run; it is not needed and is not in the repo.
+> **`[V]` decision recorded from the user's own words, this session.**
 
 **The engine is located `[V]` 2026-08-25** — the earlier "not found" note is retired. From the Epic
 launcher manifests (`C:\ProgramData\Epic\EpicGamesLauncher\Data\Manifests`) and
@@ -318,6 +329,49 @@ Two things there matter more than the path. `H:\UE_4.27\Engine\Binaries\Win64\` 
 repeatable instead of a hand session in the GUI. And `Engine\Plugins\Experimental\PythonScriptPlugin`
 **is present** in this install, which is the precondition for any of it. Do not assume the invocation
 form: 4.27's Python commandlet switch is itself worth confirming in the same spike.
+
+### 6e. DELEGATE BINDING IS AVAILABLE TO US — the "we cannot bind, so we poll" premise was a MISSING PIECE, not a limit (2026-08-25)
+
+**Origin: a USER question, and it is the single most consequential finding of this arc.** Told the
+editor route's appeal was that an authored widget could wire its own clicks, the user asked
+*"а может графы тоже сделаем?"* — then, when the answer went too broad, narrowed it precisely:
+*"я про графы для биндинга делегатов."* The proposal was: ship a Blueprint purely to OWN a UFunction, so
+there is something to point a delegate at. Chasing it down showed the Blueprint is not needed either.
+
+**The premise, and it is real `[V]`.** `include/ui/multiplayer_menu.h:13` records why every click in
+this codebase is polled: *"A reflection-only DLL cannot bind the `UButton::OnClicked`
+FMulticastScriptDelegate (no UObject+UFunction to point it at)"*. Censused this session:
+**zero occurrences of `FScriptDelegate` / `InvocationList` / any binding code in the entire tree.**
+We have never bound one. So the comment is an accurate account of what was tried — but *"no UObject+
+UFunction to point it at"* is a statement about **what we had built**, not about the substrate.
+
+**Every piece the bind needs already exists, and each was verified this session:**
+
+| piece | where | tag |
+|---|---|---|
+| the delegate is a plain `TArray<FScriptDelegate>` at a known offset | `UButton::OnClicked` **@ 0x03C8, size 0x10**; also `OnPressed` 0x03D8, `OnReleased` 0x03E8, `OnHovered` 0x03F8, `OnUnhovered` 0x0408 | `[V]` CXXHeaderDump `UMG.hpp:284` |
+| a delegate-dispatched BP event **reaches our ProcessEvent hook** | `docs/COOP_DISPATCH_VISIBILITY.md:81` — the game's OWN inventory buttons (`ui_playerInventory.BndEvt__Button_a_drop`): *widget delegate → PE* = **VISIBLE**, called "expected" there; :210 — `delegate → BP` is an OUTER door | `[V]` |
+| weak-pointer construction for the target | `reflection.h` — `InternalIndexOf()` + `SlotSerial()`, both already public | `[V]` |
+| engine-side allocation for the array | `reflection.h` — `EngineAlloc()` / `EngineFree()` | `[V]` |
+| the FName half | `fname_utils.h:24` — `StringToFName()`; or simply `NameOf()` on the resolved UFunction | `[V]` |
+| observe the resulting call, and CANCEL it if its body matters | `game_thread.h:86,124` — `RegisterInterceptor(targetUFunction, cb)`, *"returning true cancels the original"*; 17 live of `kMaxInterceptors=40`. Also `RegisterPreObserver` / `RegisterPostObserver` | `[V]` |
+| `FScriptDelegate` = `{TWeakObjectPtr, FName}` = 16 B | UE engine layout; the dump does not export engine struct internals, and the 0x10 multicast size is consistent with it | **`[RD]` — NOT dump-verified. Measure in the spike.** |
+
+**The shape that falls out — and it needs no asset, no editor, no pak.** A delegate target only has to
+be *some* UObject carrying a void/no-param UFunction. So: spawn our own sink object, point the
+delegate at a no-param UFunction the engine already provides, register an interceptor on that
+UFunction, and **discriminate by the `self` pointer in the callback** — interceptors are keyed on the
+UFunction, and the callback receives `self`, so **N sink objects share ONE function name and stay
+distinguishable**. Cancel in the callback if the borrowed body would do anything.
+
+**Why this matters more than the click itself:** the same mechanism reaches
+`UEditableTextBox::OnTextChanged` / `OnTextCommitted`, which **dissolves the input half's risk**
+(§8 step 2b) — the one part of the runtime route that was measured-hard, via the
+`HasKeyboardFocus`-is-an-exact-widget-test trap in `coop/input/input_owner.h:64-69`.
+
+**STATUS: `[RD]`, NOT `[V]`. Every LINK is measured; the COMPOSITION has never run.** That is
+precisely what the spike in §8 step 1 now is — a C++ spike binding ONE button, not an editor one.
+If the bind works, the poll retires whole (RULE 2), including `WidgetIsHovered`'s click role.
 
 ### 7. Should the EXISTING main-menu elements move to the pak too? NO — measured, and a pak would make them WORSE
 
@@ -412,10 +466,23 @@ requires it for non-trivial work; this qualifies).
 
 **The order, cheapest-first, each step independently useful:**
 
-1. **SPIKE (blocking, and it is a measurement not a build):** can a `UWidgetTree` be populated from
-   4.27 Python, headless via `UE4Editor-Cmd.exe`? §6 — `[?]` unverified, and everything designed on
-   top of it is worthless until it answers. **If it fails, §6(d) is the fallback and step 2 is
-   unaffected either way.**
+0. **PRECEDENT, and it decides the shape `[V]` 2026-08-25.** MTA's own server browser —
+   `reference/mtasa-blue/Client/core/ServerBrowser/CServerBrowser.cpp`, **3,400 LOC** — constructs
+   **every widget in C++** (`CreateLabel` / `CreateButton` / `SetPosition` / `SetSize`), and there is
+   **not one `.layout` file anywhere in the MTA tree**. The project's standing rule is to default to
+   the shape MTA shipped at scale; for this exact feature that shape is CODE, not an authored asset.
+   The one place we diverge is binding: MTA binds handlers (`SetClickHandler(GUI_CALLBACK(...))`,
+   `CServerBrowser.cpp:473,489-490,506`) because CEGUI is their own toolkit and they own the objects.
+   Ours is UMG — see §6e for how we get an equivalent, and put a one-line citation comment at the
+   divergence per the MTA rule.
+1. **SPIKE (blocking, a measurement not a build) — REPLACED 2026-08-25.** It used to be *"can a
+   `UWidgetTree` be populated from 4.27 Python"*; the editor route is out (§6's superseded box), so
+   that question is closed as **not asked**, and its written script was never run. **The spike is now
+   §6e's: bind ONE delegate from C++.** Point `OnClicked` on the live MULTIPLAYER button at a sink
+   object + a no-param UFunction, register an interceptor, and see the call arrive with the right
+   `self`. **Also measure the `[RD]` row in §6e's table** — that `FScriptDelegate` really is
+   `{TWeakObjectPtr, FName}` at 16 B — because it is the one link taken from engine knowledge rather
+   than from this build. If it works, the click poll retires whole (RULE 2) and step 2b collapses.
 2. **Build the browser's TREE at runtime** (no pak): a `UBorder` panel + a scroll container + N row
    widgets, each row a `UHorizontalBox` of `UTextBlock`s, clicks polled per §7's pattern. This is
    pure `engine_widget.cpp` extension and needs **nothing from the editor**. **`[V]` measured
@@ -444,6 +511,11 @@ requires it for non-trivial work; this qualifies).
    fields on the ImGui panel until the focus question is answered.** That contradicts step 4's
    RULE-2 retirement only if both renderers draw the SAME thing; a list and a form are not the same
    thing, and the split is the ordering, not a parallel implementation.
+   **— REVISED the same day: if §6e's spike lands, most of this step evaporates.** Binding
+   `OnTextChanged` / `OnTextCommitted` reaches typed text through the engine's own dispatch, so the
+   focus predicate stops being load-bearing and the list/form split stops being necessary. Keep the
+   split only as the fallback for a RED spike. `UEditableTextBox` still has to resolve and still has
+   to be constructible at runtime — that part is unchanged and unmeasured.
 
 3. **Add the ART from the pak** once step 1 says how: brush textures for the row/hover/selected
    states, the scrollbar, the status icons. If step 1 failed, ship these as `UTexture2D` assets

@@ -1638,6 +1638,24 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   number with a probe number into one interval; re-derive from the source table, never from your own
   previous summary. `memory/lesson_a_cost_number_must_carry_its_regime.md`
 
+- **Answer a short proposal's SCOPE, not its widest reading -- a well-evidenced rebuttal of the version
+  they did not propose can kill a correct idea.** 2026-08-25: the user asked **"А может графы тоже
+  сделаем?"** (four words). I answered the maximal reading -- author the browser's logic in Blueprint
+  graphs -- measured the MTA precedent, listed four costs and recommended against it. Their next
+  message: **"Я про графы для биндинга делегатов"** -- a Blueprint purely to OWN a UFunction so a
+  delegate has a target. Narrow, precise, and RIGHT: it dissolved a premise this codebase had polled
+  around for months, and the final shape needed no Blueprint at all. Note the failure mode is not the
+  wasted message -- it is that **"you would click every node" and "debugging a graph in a cooked pak is
+  painful" are true of the wide version and irrelevant to a 3-node sink**, so a deferring user would
+  have dropped a good idea to objections it never earned; confidence transfers across scopes. LOOK
+  FIRST: when a short proposal touches a settled decision, **ask which scope** (one line; this is asking
+  what was SAID, not which option to take, so it does not conflict with
+  `feedback_no_crutch_questions_act_autonomously`) -- or failing that, **answer the NARROWEST useful
+  reading first** and offer the wide one in a sentence. Watch the word **"тоже"/"also"**: it scopes an
+  ADDITION to what is already agreed, not a replacement. And when a proposal attacks a premise you are
+  defending, **take the premise down to the studs before defending the design on top of it**.
+  `memory/feedback_answer_the_proposals_scope_not_its_widest_reading.md`
+
 ### 1b. Standing working agreements (previously indexed NOWHERE)
 
 Measured 2026-07-27 by a full pairing sweep of `memory/` against this file: **all 194 `lesson_*`
@@ -3168,6 +3186,27 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   ambient "what am I inside" window is a CROSS-MODULE namespace, so gate on something unique by
   construction; `active` is never a gate. Contract: `docs/COOP_DISPATCH_VISIBILITY.md` "The AMBIENT verb
   window". `memory/lesson_vm_dispatch_verb_name_is_not_the_gate.md`
+
+- **A "cannot" in a comment is a snapshot of what was TRIED, not a property of the substrate.** `[V]`
+  `ui/multiplayer_menu.h:13` justified every polled click in this codebase with *"a reflection-only DLL
+  cannot bind the `UButton::OnClicked` FMulticastScriptDelegate (no UObject+UFunction to point it at)"*.
+  True as an account of what had been built -- census 2026-08-25 finds **zero** `FScriptDelegate` /
+  `InvocationList` code in the tree -- and read for months as an architectural fact, until a USER
+  question forced the re-derivation. Every link was already there: `OnClicked` is a plain
+  `TArray<FScriptDelegate>` @ **+0x3C8, size 0x10** (`UMG.hpp:284`, with `OnPressed`/`OnHovered`/
+  `OnUnhovered` beside it); a delegate-dispatched event is **already PE-VISIBLE and our own map says
+  so** (`COOP_DISPATCH_VISIBILITY.md:81`, the game's own inventory buttons, marked "expected"); and all
+  five primitives were **already public in our own headers** -- `InternalIndexOf` + `SlotSerial`,
+  `EngineAlloc`, `StringToFName` (`fname_utils.h:24`), `RegisterInterceptor` with cancel-on-true
+  (`game_thread.h:86,124`). Interceptors key on the **UFunction**, so N sink objects share one function
+  name and are told apart by `self` -- no authored asset, no editor. The false premise had already
+  propagated into a build plan and nearly bought an entire UE-editor toolchain. LOOK FIRST: **read the
+  clause after the "cannot"** -- if it names an ARTIFACT WE LACK ("no X to point it at") it is a backlog
+  item wearing a limit's clothes; if it names a MECHANISM THAT DOES NOT EXIST (measured-invisible
+  dispatch) it is a real limit. And **a zero-hit census is evidence about US, not the engine**: "we have
+  never done X" and "X is impossible" grep identically. Status `[RD]` -- links measured, composition
+  NEVER RUN. `docs/MULTIPLAYER_UI.md` 6e.
+  `memory/lesson_a_cannot_in_a_comment_is_a_snapshot_of_what_was_tried.md`
 
 ## 5. Engine / UE4 facts
 

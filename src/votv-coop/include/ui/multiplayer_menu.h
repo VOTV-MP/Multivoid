@@ -9,12 +9,23 @@
 //
 // Click detection is a POLL, not a delegate bind: a POST observer on
 // ui_menu_C::Tick (the menu's own per-frame game-thread tick) checks
-// UButton::IsHovered() + a global VK_LBUTTON edge. A reflection-only DLL cannot
-// bind the UButton::OnClicked FMulticastScriptDelegate (no UObject+UFunction to
-// point it at), and the Tick observer is the one reliable game-thread tick that
-// runs while the menu is up (net_pump does not run pre-gameplay). Mirrors the
-// proven coop::save_button_disable pattern (same Tick observer, FindPropertyOffset
-// field reads, isPause main-vs-pause discriminator).
+// UButton::IsHovered() + a global VK_LBUTTON edge. The Tick observer is the one
+// reliable game-thread tick that runs while the menu is up (net_pump does not run
+// pre-gameplay). Mirrors the proven coop::save_button_disable pattern (same Tick
+// observer, FindPropertyOffset field reads, isPause main-vs-pause discriminator).
+//
+// WHY NOT A DELEGATE BIND -- and read this before repeating the old claim. This
+// comment used to assert that "a reflection-only DLL CANNOT bind the OnClicked
+// FMulticastScriptDelegate (no UObject+UFunction to point it at)". That described
+// what had been BUILT, not the substrate, and it is now measured to be reachable:
+// OnClicked is a plain TArray<FScriptDelegate> at UButton+0x3C8 (CXXHeaderDump
+// UMG.hpp:284), a delegate-dispatched event IS ProcessEvent-visible
+// (COOP_DISPATCH_VISIBILITY.md:81 -- the game's own inventory buttons), and every
+// primitive the bind needs is already public here (reflection InternalIndexOf /
+// SlotSerial / EngineAlloc, fname_utils StringToFName, game_thread
+// RegisterInterceptor with its cancel-on-true). The bind has still NEVER RUN --
+// design + the one [RD] link left to measure: docs/MULTIPLAYER_UI.md 6e. The poll
+// stays until that spike is green; when it is, the poll retires whole (RULE 2).
 
 #pragma once
 
