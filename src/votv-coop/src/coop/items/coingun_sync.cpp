@@ -133,10 +133,17 @@ std::vector<PendingShot> g_pendingShots;
 // raw pointer to a freed actor can be matched by a recycled allocation.
 std::unordered_map<std::wstring, ue_wrap::CachedObjRef> g_sold;
 
-// The artifact's NAME: the save key when the prop has one, "#<eid>" otherwise. The two spaces
-// cannot collide -- a save key is never empty and never starts with '#'.
+// The artifact's NAME: the save key when the prop has one, the eid otherwise.
+//
+// BOTH FORMS ARE PREFIXED BY US (item 11, v140). The previous version returned the key VERBATIM and
+// justified it with "a save key never starts with '#'" -- which is a fact about SAVE KEYS being
+// applied to an ATTACKER-SUPPLIED STRING. A client is free to send key="#5" and collide its artifact
+// name with the keyless form for eid 5, which is a consumption-guard collision: one sale poisons the
+// guard for an unrelated prop, or launders a replay past it. The generator, not the input, is what
+// has to make the namespaces disjoint, so the key form now carries its own prefix and no wire string
+// can reach the eid namespace at all.
 std::wstring ArtifactName(const std::wstring& key, uint32_t eid) {
-    if (!key.empty()) return key;
+    if (!key.empty()) return L"k:" + key;
     return L"#" + std::to_wstring(static_cast<unsigned long>(eid));
 }
 
@@ -345,9 +352,20 @@ void SendResult(coop::net::Session* s, uint8_t slot, coop::net::CoinGunResultCod
 }
 
 // Refuse + answer + count, in one place so a new refusal path cannot silently skip the sentence.
-void Refuse(coop::net::Session* s, uint8_t slot, coop::net::CoinGunResultCode code) {
+//
+// RETURNS whether this refusal should be LOGGED (item 7, v140). Every refusal path here is reachable
+// from the trust boundary at whatever rate a sender likes, and each one carried an unconditional
+// UE_LOGW -- so one peer could fill the log faster than anything else in it could be read, which is
+// the same denial the A51 walk was, one layer up. The R-1e latch shape from prop_destroy_seam: the
+// first five, then every tenth to a hundred, then every hundredth. PER CODE, so a flood of
+// no-such-prop cannot hide the first not-sellable.
+bool Refuse(coop::net::Session* s, uint8_t slot, coop::net::CoinGunResultCode code) {
     g_salesRefused.fetch_add(1, std::memory_order_relaxed);
     SendResult(s, slot, code, 0);
+    static uint32_t sSeen[8] = {};
+    const unsigned idx = static_cast<unsigned>(code) < 8u ? static_cast<unsigned>(code) : 0u;
+    const uint32_t n = ++sSeen[idx];
+    return n <= 5 || (n <= 100 && n % 10 == 0) || n % 100 == 0;
 }
 
 const wchar_t* ResultText(coop::net::CoinGunResultCode code) {
@@ -388,11 +406,29 @@ void PrepareCoinMirror(void* coin) {
     }
     void* sphere = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(coin) + g_offCoinSphere);
     if (!sphere) return;
-    if (!g_setSimFn) g_setSimFn = R::FindFunction(R::ClassOf(sphere), L"SetSimulatePhysics");
-    if (!g_setSimFn) {
-        UE_LOGW("coingun[mirror]: SetSimulatePhysics unresolved on the coin's Sphere component");
-        return;
+    // RESOLVE ON THE DECLARING CLASS (item 10, v140). This used to ask
+    // `FindFunction(ClassOf(sphere), L"SetSimulatePhysics")`, and `[V]` that could never succeed:
+    // `R::FindFunction` matches `OuterOf(obj) == owningClass` EXACTLY -- it does not climb
+    // SuperStruct (reflection.cpp:468-479) -- while `[V]` `SetSimulatePhysics` is declared on
+    // UPrimitiveComponent (CXXHeaderDump/Engine.hpp:17349, inside `class UPrimitiveComponent : public
+    // USceneComponent`) and the component here is a USphereComponent. Worse, FindFunction's miss is a
+    // FULL GUObjectArray walk, and this runs once per mirrored coin -- ~47 per sale -- so the failure
+    // was not merely silent, it was the most expensive thing in the lane. Ask the class that actually
+    // owns the function, and latch the negative so a future resolve failure costs one walk, not one
+    // per coin forever. (The general "FindFunction should walk SuperStruct" item stays on the backlog;
+    // changing it globally would alter identity semantics at every other call site.)
+    static bool sSetSimResolveFailed = false;
+    if (!g_setSimFn && !sSetSimResolveFailed) {
+        if (void* primCls = R::FindClass(L"PrimitiveComponent"))
+            g_setSimFn = R::FindFunction(primCls, L"SetSimulatePhysics");
+        if (!g_setSimFn) {
+            sSetSimResolveFailed = true;
+            UE_LOGW("coingun[mirror]: SetSimulatePhysics unresolved on UPrimitiveComponent -- mirrors "
+                    "will keep simulating and may drift from the host's pose. Latched: this walk is "
+                    "not repeated per coin.");
+        }
     }
+    if (!g_setSimFn) return;
     ue_wrap::ParamFrame f(g_setSimFn);
     if (!f.valid()) return;
     f.Set<bool>(L"bSimulate", false);
@@ -545,6 +581,26 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
     }
     const std::wstring artifact = ArtifactName(keyStr, p.elementId);
 
+    // --- eid RANGE trust (item 6, v140) -----------------------------------------------------------
+    // The `IsAllowedHostAllocatedEid` idiom is obeyed at 14 other receive sites and was missing here,
+    // while the header claimed this receiver "fully range-checks the payload" -- a sentence deleted
+    // rather than softened when it was measured false. EITHER range is accepted for the same reason
+    // the PropDestroy receiver accepts either (event_dispatch_entity.cpp): a sale REFERENCES an
+    // existing shared entity rather than allocating one, and the keyless families can carry an eid
+    // allocated by the peer that first expressed them. A genuinely invalid id (0 / kInvalidId / out
+    // of both ranges) never reaches the resolver.
+    if (p.elementId != 0u && p.elementId != coop::element::kInvalidId &&
+        !coop::element::Registry::IsAllowedHostAllocatedEid(p.elementId) &&
+        !coop::element::Registry::IsAllowedPeerAllocatedEid(p.elementId)) {
+        const bool logIt = Refuse(s, senderSlot, coop::net::CoinGunResultCode::NoSuchProp);
+        if (logIt)
+            UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=eid-out-of-range "
+                    "(0x%08x is in neither the host nor the peer allocation band). Nothing that names "
+                    "an id we could not have issued gets as far as the resolver.",
+                    senderSlot, artifact.c_str(), p.elementId);
+        return;
+    }
+
     // --- resolve the artifact against OUR OWN world -----------------------------------------------
     // KEY FIRST. This is the whole of B1: v137 resolved the eid alone, and `[V]` a v122 client mints
     // no Element row for its own save-loaded keyed prop, so the eid it sent was 0 for exactly the
@@ -583,8 +639,8 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
         how  = L"eid";
     }
     if (!prop) {
-        Refuse(s, senderSlot, coop::net::CoinGunResultCode::NoSuchProp);
-        UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' (key='%ls' eid=%u) -- "
+        const bool logIt = Refuse(s, senderSlot, coop::net::CoinGunResultCode::NoSuchProp);
+        if (logIt) UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' (key='%ls' eid=%u) -- "
                 "REASON=no-such-prop. NEITHER name resolves to a live prop in our world, so the two "
                 "peers disagreed about this prop BEFORE anyone fired: a pre-existing stable-ID "
                 "divergence this lane exposes, not one it causes. The client's own destroy still "
@@ -602,8 +658,8 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
     {
         float dist = -1.f, allowed = -1.f;
         if (!SenderMayReach(senderSlot, prop, dist, allowed)) {
-            Refuse(s, senderSlot, coop::net::CoinGunResultCode::TooFarAway);
-            UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=too-far-away "
+            const bool logIt = Refuse(s, senderSlot, coop::net::CoinGunResultCode::TooFarAway);
+            if (logIt) UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=too-far-away "
                     "(dist=%.0f allowed=%.0f; -1 for both means the sender has no live puppet here, "
                     "so there is no body to measure a reach from and we refuse rather than assume "
                     "one). The gun `[V]` traces arm(1000.0) FROM THE PLAYER, so a prop outside that "
@@ -617,8 +673,8 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
     {
         auto it = g_sold.find(artifact);
         if (it != g_sold.end() && it->second.Get() == prop) {
-            Refuse(s, senderSlot, coop::net::CoinGunResultCode::AlreadySold);
-            UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=already-sold. This prop "
+            const bool logIt = Refuse(s, senderSlot, coop::net::CoinGunResultCode::AlreadySold);
+            if (logIt) UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=already-sold. This prop "
                     "was already minted for and its destroy has not yet removed it. A replayed or "
                     "duplicated sale mints nothing.", senderSlot, artifact.c_str());
             return;
@@ -627,8 +683,8 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
 
     void* gun = FindLiveGun();
     if (!gun) {
-        Refuse(s, senderSlot, coop::net::CoinGunResultCode::NoGun);
-        UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=no-live-coingun. Nothing in "
+        const bool logIt = Refuse(s, senderSlot, coop::net::CoinGunResultCode::NoGun);
+        if (logIt) UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=no-live-coingun. Nothing in "
                 "our world can execute `sell` (the sender's hand mirror may have been stowed within "
                 "the RTT). We mint nothing rather than inventing an instance -- `[V]` a CDO executor "
                 "would mint ZERO coins anyway, since EX_Self is the WorldContextObject of every "
@@ -638,8 +694,8 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
 
     // --- price it from OUR OWN copy ---------------------------------------------------------------
     if (!g_sellObjectFn || !g_libCdo) {
-        Refuse(s, senderSlot, coop::net::CoinGunResultCode::HostInternal);
-        UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=sellObject-unresolved",
+        const bool logIt = Refuse(s, senderSlot, coop::net::CoinGunResultCode::HostInternal);
+        if (logIt) UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=sellObject-unresolved",
                 senderSlot, artifact.c_str());
         return;
     }
@@ -647,8 +703,8 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
     const R::FName propName = ue_wrap::fname_utils::StringToFName(propNameStr);
     ue_wrap::ParamFrame f(g_sellObjectFn);
     if (!f.valid()) {
-        Refuse(s, senderSlot, coop::net::CoinGunResultCode::HostInternal);
-        UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=sellObject-frame-invalid",
+        const bool logIt = Refuse(s, senderSlot, coop::net::CoinGunResultCode::HostInternal);
+        if (logIt) UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=sellObject-frame-invalid",
                 senderSlot, artifact.c_str());
         return;
     }
@@ -657,8 +713,8 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
     f.Set<void*>(L"objectToSell", prop);
     f.Set<void*>(L"__WorldContext", prop);
     if (!ue_wrap::Call(g_libCdo, f)) {
-        Refuse(s, senderSlot, coop::net::CoinGunResultCode::HostInternal);
-        UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=sellObject-dispatch-failed",
+        const bool logIt = Refuse(s, senderSlot, coop::net::CoinGunResultCode::HostInternal);
+        if (logIt) UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=sellObject-dispatch-failed",
                 senderSlot, artifact.c_str());
         return;
     }
@@ -673,8 +729,8 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
         // routine outcome. (Refusal by price is very much routine in SP: measured over the shipped
         // list_props, every loose-garbage row -- ntrash*, g3_bag_*, garbBin2, garbContainer,
         // trashClump -- prices at 1 and is refused, so shooting garbage does nothing on ANY peer.)
-        Refuse(s, senderSlot, coop::net::CoinGunResultCode::NotSellable);
-        UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=not-sellable (sellObject said "
+        const bool logIt = Refuse(s, senderSlot, coop::net::CoinGunResultCode::NotSellable);
+        if (logIt) UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=not-sellable (sellObject said "
                 "sold=0 for name='%ls'). Our prop is left UNMUTATED; the client's destroy still "
                 "lands, exactly as today. If this fires, the peers disagree about this prop's name "
                 "or about list_props itself.", senderSlot, artifact.c_str(), propNameStr.c_str());
@@ -691,15 +747,15 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
     if (!g_sellFn) g_sellFn = R::FindFunction(R::ClassOf(gun), L"sell");   // M-5: cache, not per sale
     void* sellFn = g_sellFn;
     if (!sellFn) {
-        Refuse(s, senderSlot, coop::net::CoinGunResultCode::HostInternal);
-        UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=sell-unresolved", senderSlot,
+        const bool logIt = Refuse(s, senderSlot, coop::net::CoinGunResultCode::HostInternal);
+        if (logIt) UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=sell-unresolved", senderSlot,
                 artifact.c_str());
         return;
     }
     ue_wrap::ParamFrame sf(sellFn);
     if (!sf.valid()) {
-        Refuse(s, senderSlot, coop::net::CoinGunResultCode::HostInternal);
-        UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=sell-frame-invalid",
+        const bool logIt = Refuse(s, senderSlot, coop::net::CoinGunResultCode::HostInternal);
+        if (logIt) UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=sell-frame-invalid",
                 senderSlot, artifact.c_str());
         return;
     }
@@ -709,8 +765,8 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
     if (!ok) {
         // The dispatch itself failed, so nothing was minted -- do NOT consume the artifact, and do
         // NOT tell the seller it sold. v137 stamped the sold-set unconditionally right here.
-        Refuse(s, senderSlot, coop::net::CoinGunResultCode::HostInternal);
-        UE_LOGE("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=sell-dispatch-failed "
+        const bool logIt = Refuse(s, senderSlot, coop::net::CoinGunResultCode::HostInternal);
+        if (logIt) UE_LOGE("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=sell-dispatch-failed "
                 "(gun=%p comp=%p price=%d). No coins were minted and the artifact is NOT consumed.",
                 senderSlot, artifact.c_str(), gun, meshComp, points);
         return;

@@ -40,7 +40,12 @@ using ExecFn = std::uintptr_t(__fastcall*)(void* ctx, void* stack, void* result)
 // its own operands from Code and advances the cursor itself.
 constexpr std::size_t kFFrameCodeOff = 0x20;
 constexpr int kOpcodeLocalVirtual = 0x45;
-constexpr int kMaxVerbs = 16;
+// The verb table is a fixed array walked linearly per matched-name test, so it is sized rather than
+// grown. 2026-08-25: it was 16 and B2's collect verb took the FIFTEENTH slot -- one registration from
+// a full table, whose failure mode is `UE_LOGE` + a lane that silently never observes anything. 32 is
+// the same shape with room; the walk is over registered entries, not the capacity, so an unused slot
+// costs one pointer and nothing per dispatch.
+constexpr int kMaxVerbs = 32;
 
 std::uintptr_t* g_gnatives = nullptr;   // GNatives[256], the exec-handler table base.
 ExecFn          g_origVirtual = nullptr;  // GNatives[0x45] original handler.

@@ -41,6 +41,7 @@
 #include "coop/net/session.h"
 #include "coop/world/world_actor_sync.h"
 
+#include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
@@ -85,12 +86,35 @@ void* g_actionOptFn = nullptr;   // baocoin_C::actionOptionIndex -- the host's c
 // Per-ENTRY counters, so the log can answer the question v137 could not: which of the two entries do
 // players actually use? `[V]` v137's overlap interceptor printed ZERO lines across six real credits,
 // and a seam never observed firing is indistinguishable from a broken one.
-std::atomic<unsigned long long> g_seenPress{0};      // the E-press / 0x45 entry
-std::atomic<unsigned long long> g_seenOverlap{0};    // the BndEvt overlap entry
+//
+// SPLIT BY ROLE (item 8, v140). They were printed side by side as the answer to that question while
+// counting DIFFERENT POPULATIONS -- press counted host+client, overlap counted client only -- so the
+// comparison the summary invited was invalid, and on a host the press number was inflated by exactly
+// the traffic the overlap number excluded. Two numbers put next to each other are a claim that they
+// are comparable; if they are not, the fix is to make them so, not to caption around it.
+std::atomic<unsigned long long> g_seenPressHost{0};      // the E-press / 0x45 entry, host side
+std::atomic<unsigned long long> g_seenPressClient{0};    //   ... client side
+std::atomic<unsigned long long> g_seenOverlapHost{0};    // the BndEvt overlap entry, host side
+std::atomic<unsigned long long> g_seenOverlapClient{0};  //   ... client side
 std::atomic<unsigned long long> g_forwarded{0};
 std::atomic<unsigned long long> g_performed{0};
 std::atomic<unsigned long long> g_unresolved{0};
 std::atomic<unsigned long long> g_noCredit{0};
+std::atomic<unsigned long long> g_replayed{0};
+
+// THE COLLECT LANE'S CONSUMPTION GUARD (item 12, v140). It had none, and the dedup it relied on --
+// "the coin will be dead the next time" -- holds only if the `K2_DestroyActor` at credit block @441
+// takes effect SYNCHRONOUSLY within our dispatch. `[V]` the destroy EXISTS at @441 (RE doc 2d); its
+// TIMING is not measured, and UE actor destruction is not obliged to be immediate. The reliable
+// inbox drains with an unbounded `while (TryGetReliable(msg))` per tick, so two CoinCollect packets
+// naming one eid in a single frame is the cheapest replay there is -- and if the coin is still
+// resolvable on the second, the host credits twice for one coin.
+//
+// So do not depend on an unmeasured timing: record what we performed for, exactly as the SALE lane's
+// sold-set does. Keyed by eid, valued by a world-stamped CachedObjRef so the guard compares IDENTITY
+// (a raw pointer to a freed actor can be matched by a recycled allocation) and so an entry reads dead
+// once the coin is really gone -- including "the world moved on", CLAUDE.md 4j.
+std::unordered_map<uint32_t, ue_wrap::CachedObjRef> g_collected;
 
 // ---- ONE QUESTION, ONE ANSWER (v140) -----------------------------------------------------------
 // "Is this coin the host's?" had TWO predicates in v139 and they disagreed: OnCollectPre asked
@@ -183,11 +207,12 @@ bool OnCollectPre(void* self, void* params) {
         UE_LOGI("coingun[host collect]: coin=%p points=%d TRIPPED BY actor=%p class='%ls' -- the "
                 "native credit runs, balance_sync will broadcast the new total",
                 self, pts, other, other ? R::ClassNameOf(other).c_str() : L"<null>");
+        g_seenOverlapHost.fetch_add(1, std::memory_order_relaxed);
         return false;                            // observe only; the host credits natively
     }
 
     // ---- client ----
-    g_seenOverlap.fetch_add(1, std::memory_order_relaxed);
+    g_seenOverlapClient.fetch_add(1, std::memory_order_relaxed);
 
     // WHO TRIPPED IT decides what we may do, and the authority for that question is the GAME's own
     // gate, not ours. `[V]` the coin's overlap path is BndEvt -> ExecuteUbergraph_baocoin @1871
@@ -271,9 +296,8 @@ void OnCollectVerb(const vm::Bracket& b) {
     auto* s = I::Session();
     if (!s || !s->connected()) return;            // solo: the native credit is correct
 
-    g_seenPress.fetch_add(1, std::memory_order_relaxed);
-
     if (s->role() == coop::net::Role::Host) {
+        g_seenPressHost.fetch_add(1, std::memory_order_relaxed);
         // The host's own press. Observe only -- the native credit is authoritative and already runs.
         // This is the POSITIVE CONTROL for the client's silence: without a line that fires where the
         // observer is EXPECTED to fire, a quiet client log is indistinguishable from a dead hook
@@ -285,6 +309,8 @@ void OnCollectVerb(const vm::Bracket& b) {
                 "proves the 0x45 bracket is live in this session", b.ctx);
         return;
     }
+
+    g_seenPressClient.fetch_add(1, std::memory_order_relaxed);
 
     // WE CANNOT CANCEL THIS -- see the file header. The local credit and the local self-destroy of
     // our mirror WILL happen; the phantom credit is corrected by the host's balance broadcast, and
@@ -309,6 +335,24 @@ void OnCoinCollect(const uint8_t* payload, int len, uint8_t senderSlot, void* lo
     coop::net::CoinCollectPayload p{};
     std::memcpy(&p, payload, sizeof(p));
 
+    // --- eid RANGE trust (item 6, v140) -----------------------------------------------------------
+    // HOST band only, unlike the sale lane's either-band check, and the asymmetry is the point: `[V]`
+    // a baocoin_C is a HOST-MINTED WorldActor with no save key -- it exists only because the host's
+    // own `sell` spawned it and broadcast a WorldActorSpawn carrying this exact eid -- so an id
+    // outside the host's own allocation band cannot name a coin at all. The `IsAllowedHostAllocatedEid`
+    // idiom is obeyed at 14 other receive sites and was missing here while the header claimed the
+    // payload was fully range-checked.
+    if (!coop::element::Registry::IsAllowedHostAllocatedEid(p.elementId)) {
+        static uint32_t sBad = 0;
+        const uint32_t n = ++sBad;
+        if (n <= 5 || (n <= 100 && n % 10 == 0) || n % 100 == 0)
+            UE_LOGW("coingun[host]: CoinCollect #%u from slot=%u names eid=0x%08x, which is not in "
+                    "the HOST allocation band -- dropping. A coin is host-minted by construction, so "
+                    "no other band can name one. (Rate-latched: this receiver is reachable from the "
+                    "trust boundary at whatever rate a sender likes.)", n, senderSlot, p.elementId);
+        return;
+    }
+
     // Resolve against OUR OWN registry, fail-closed on TYPE. `LiveActorOfType` refuses an eid naming
     // an Element of any other kind, so a client cannot address, say, a Prop through this lane.
     void* coin = coop::element::LiveActorOfType(
@@ -324,6 +368,26 @@ void OnCoinCollect(const uint8_t* payload, int len, uint8_t senderSlot, void* lo
                 senderSlot, p.elementId);
         return;
     }
+    // THE CONSUMPTION GUARD -- did we already perform a collect for this exact coin? (see g_collected)
+    {
+        auto it = g_collected.find(p.elementId);
+        if (it != g_collected.end() && it->second.Get() == coin) {
+            g_replayed.fetch_add(1, std::memory_order_relaxed);
+            UE_LOGW("coingun[host collect]: REFUSED slot=%u eid=%u -- already collected, and the coin "
+                    "has not left the world yet. A replayed or duplicated forward credits nothing.",
+                    senderSlot, p.elementId);
+            return;
+        }
+        // Opportunistic sweep, bounded: this map holds coins we credited for that have not finished
+        // dying, which is normally zero or one entry. It is erased here and cleared whole on
+        // disconnect -- v137's sold-set is the cautionary tale of a guard whose comment claimed a
+        // self-clean it never had.
+        for (auto e = g_collected.begin(); e != g_collected.end();) {
+            if (e->second.Get() == nullptr) e = g_collected.erase(e);
+            else                            ++e;
+        }
+    }
+
     // CLASS gate. The eid resolving is not enough: a WorldActor eid could name a piramid or a wisp,
     // and dispatching `actionOptionIndex` on one of those would run an unrelated interaction.
     if (!I::IsCoinActor(coin)) {
@@ -369,6 +433,7 @@ void OnCoinCollect(const uint8_t* payload, int len, uint8_t senderSlot, void* lo
 
     if (dispatched && credited) {
         g_performed.fetch_add(1, std::memory_order_relaxed);
+        g_collected[p.elementId].Set(coin);   // consume it (see THE CONSUMPTION GUARD)
         UE_LOGI("coingun[host collect]: PERFORMED slot=%u eid=%u coin=%p -- balance %d -> %d (+%d). "
                 "The coin's own verb ran, so its native credit and self-destroy are the game's, not "
                 "ours; the WorldActorDestroy that follows removes every peer's mirror.",
@@ -453,17 +518,26 @@ void internal::OnDisconnectCollect() {
     // The free measurement, per lane. `[[lesson-your-own-session-end-summary-is-a-free-measurement]]`:
     // the two entry counters are here so the next field run answers BY GREP which entry players
     // actually use -- the question v137 could not answer about its own seam.
-    UE_LOGI("coingun[collect]: SESSION SUMMARY -- entries{press=%llu overlap=%llu} forwarded=%llu "
-            "host{performed=%llu unresolved=%llu noCredit=%llu}",
-            g_seenPress.load(std::memory_order_relaxed),
-            g_seenOverlap.load(std::memory_order_relaxed),
+    UE_LOGI("coingun[collect]: SESSION SUMMARY -- thisPeer{press=%llu overlap=%llu} "
+            "otherRole{press=%llu overlap=%llu} forwarded=%llu "
+            "host{performed=%llu unresolved=%llu noCredit=%llu replayed=%llu} -- the FIRST pair is the comparable "
+            "one: both entries counted on the same side. Only one pair is ever non-zero in a run.",
+            g_seenPressClient.load(std::memory_order_relaxed),
+            g_seenOverlapClient.load(std::memory_order_relaxed),
+            g_seenPressHost.load(std::memory_order_relaxed),
+            g_seenOverlapHost.load(std::memory_order_relaxed),
             g_forwarded.load(std::memory_order_relaxed),
             g_performed.load(std::memory_order_relaxed),
             g_unresolved.load(std::memory_order_relaxed),
-            g_noCredit.load(std::memory_order_relaxed));
+            g_noCredit.load(std::memory_order_relaxed),
+            g_replayed.load(std::memory_order_relaxed));
     // Nothing world-scoped is held: g_actionOptFn is a UFunction (not world-scoped, CLAUDE.md 4j)
     // and the repair throttle is a timestamp map keyed by slot, which a new session may reuse
     // safely -- a stale 2 s window can only DELAY a repair, never cause one.
+    //
+    // g_collected IS world-scoped and goes whole (v140). Carrying a consumption guard keyed on a dead
+    // world's eids into a new session is the exact defect v137's sold-set had.
+    g_collected.clear();
 }
 
 }  // namespace coop::coingun_sync
