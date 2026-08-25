@@ -1746,6 +1746,26 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   `game + " b" + proto`, not `game + version`.
   `memory/lesson_a_targeted_grep_is_not_a_census.md`
 
+- **A `[V]` with no citation deletes its own fact — and a grep for a VALUE cannot hit a STRUCTURED
+  dump** (2026-08-25, A54 design pass). `mainPlayer.armLength = 200.0` carried `[V]` in four places
+  with a pointer to WHERE in none of them, and it is load-bearing twice: the SHIPPED A52 ledger sizes
+  `kUnearnedJumpCm = 50` as "4x under the 200 uu reach". Grepping `research/` found only my own prose,
+  so I wrote "traceable to nothing" into a `/qf` brief and a critic made it blocking. **The value was
+  measured all along** — the CDO tagged property in `research/pak_re/inv_ui_dump/mainPlayer.json`,
+  export `Default__mainPlayer_C`, `{"Name":"armLength","Value":200.0}`. Two mechanical failures: a
+  tag earns itself from a citation, not from confidence (without one the failure is inverted — you
+  DELETE a true fact); and `armLength = 200` appears in no UAssetAPI JSON because name and number are
+  separate keys. Same pass, second instance: "`arm` rays from the CAMERA" was presented to a critic as
+  a new finding that broke the design — it was documented **two lines below the claim being grepped**
+  and the code comment already corrected in `abc9681b`.
+  LOOK HERE FIRST: before writing `[V]`, write WHERE (file + export + key). Before calling a constant
+  unmeasured, grep the property NAME (never the value) across `research/pak_re/*.json` and
+  `research/bp_reflection/*.json` and walk `Default__<Class>_C` → `Data` → `{"Name","Value"}` in
+  Python; `_fn.py <asset> <Function>` / `_cfg.py <asset> <Ubergraph>` answer the different question
+  "literal or property?" in seconds. And read the WHOLE paragraph before telling anyone a fact is
+  unsourced.
+  `memory/lesson_a_v_tag_without_a_citation_deletes_its_own_fact.md`
+
 ### 1b. Standing working agreements (previously indexed NOWHERE)
 
 Measured 2026-07-27 by a full pairing sweep of `memory/` against this file: **all 194 `lesson_*`
