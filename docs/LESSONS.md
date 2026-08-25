@@ -1727,6 +1727,25 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   defending, **take the premise down to the studs before defending the design on top of it**.
   `memory/feedback_answer_the_proposals_scope_not_its_widest_reading.md`
 
+
+- **A targeted grep is not a census, and the claim is about the SET** (2026-08-25, the native-browser
+  `/qf` — the same error **five times in one session**, four caught by a critic). Whenever the sentence
+  is about a set — *all callers*, *the palette*, *N offsets*, *no override*, *exactly two functions* —
+  a grep that confirms the thing already suspected got reported as the answer to the wider claim. The
+  grep **succeeds**, so there is no error signal. Two shapes, two fixes: **depth** (evidence one
+  indirection short — a sibling field `ResourceObject` vs `ResourceName`, a wrapper `LoadCached` vs
+  the direct call sites, a subordinate clause *"(and any future ImGui menu surface)"*) → follow one
+  more hop; **breadth** (evidence one scope short — six offset names instead of the block's 30, one
+  menu's palette instead of both, `switcher_widgets` censused inside `ui_menu` only and shipped as an
+  *invariant* while `ui_stats` and `ui_settings` both reach it) → widen by one unit and re-run.
+  LOOK HERE FIRST: grep your own SENTENCE before the code — if it holds `all`/`every`/`only`/`no`/
+  `exactly`/a count/a plural set-noun, the evidence owed is an **enumeration**, not a hit. An
+  invariant censused inside one file is a site list wearing an invariant's clothes (the sibling case
+  of the leak-sweep lesson below). And when RETIRING code this compounds: **the renderer being deleted
+  encodes correctness its data struct's field names do not** — the version cell was
+  `game + " b" + proto`, not `game + version`.
+  `memory/lesson_a_targeted_grep_is_not_a_census.md`
+
 ### 1b. Standing working agreements (previously indexed NOWHERE)
 
 Measured 2026-07-27 by a full pairing sweep of `memory/` against this file: **all 194 `lesson_*`
