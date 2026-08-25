@@ -346,13 +346,28 @@ So the arguments, re-stated honestly after reading the implementation:
    from `button_start` and `txt_version`. That is a parity problem, and parity is cheaper to reach by
    measuring the reference widget than by drawing a new one that must then be kept matching.
 
-**Residual this correction exposes, and it is real:** our own source says **"Font parity is
-deferred"** — so button-label parity is **incomplete today**, by admission, not by measurement of the
-result. Nobody has compared our button to `button_start` on screen. **If the user's "они хуже?"
-was prompted by actually seeing a difference, the fix is to close that residual (re-read the
-reference widget's style at inject time instead of using the frozen constants), NOT to move the
-element into a pak.** That is a small, contained change in `engine_widget.cpp` and it would also make
-argument 1 true for the first time.
+**Residual this correction exposes — and the obvious fix for it is FORBIDDEN by a measurement,
+which is the part not to re-derive.** Our own source says *"Font parity is deferred"*, so
+button-label parity is **incomplete today by admission**, and nobody has compared our button to
+`button_start` on screen. The reflex fix is *"re-read the reference widget's style at inject time
+instead of using frozen constants"* — **that was TRIED and REVERTED, and the frozen constants ARE
+the fix.** `engine_widget.cpp:394-400` records why, verbatim: *"We do NOT clone a reference
+UTextBlock (tex_btnStart): its pointer is null at some inject timings, which fell through to a
+Roboto / centered / white default — the 'wrong font, indented, wrong colour' bug."* So:
+
+- **Do not propose runtime style-cloning for the BUTTON.** It is not an un-done improvement, it is a
+  rejected design with a named failure. (`InjectTextRowAbove` clones safely only because
+  `txt_version` is a menu property that is always live at ITS inject timing — the difference is the
+  reference pointer's lifetime, not the technique.)
+- **What "font parity is deferred" actually leaves open** is narrower: `TypefaceFontName` is left
+  None (correct for font_ui, a one-face font) and the constants were read from `ui_menu.json` once,
+  in 2026-07. If the labels look wrong TODAY, that is a **stale-measurement** question — re-dump
+  `tex_btnStart`'s style and compare it to the six constants — not a technique question.
+- Either way the answer to *"should it move to a pak?"* is unchanged: **no**. A pak asset freezes the
+  same values with none of argument 2's free lifetime.
+
+**Reality check before spending anything here: the CYAN tint is deliberate**, so our button is
+*supposed* to differ from `button_start`. If "хуже" meant the colour, nothing is broken at all.
 
 **So the rule this section establishes, and it is the one to build by:**
 
@@ -403,6 +418,25 @@ requires it for non-trivial work; this qualifies).
    planning around it, and expect the per-class *slot* offsets (`UScrollBoxSlot`, `UBorderSlot`,
    `UHorizontalBoxSlot`) to need the same treatment `UVerticalBoxSlot_LayoutSize` already gets in
    `sdk_profile.h`.
+2b. **The INPUT half — measured 2026-08-25, and step 2's list undercounted it.** The ImGui browser
+   is not a list, it is a **form**: `server_browser.cpp` uses **three `InputText` fields** (nick :118,
+   host name :126, direct IP :144 with `EnterReturnsTrue`), **one `Checkbox`** (Locked :128), a
+   `Selectable` row with **double-click** (:193-195) and five buttons. A native port therefore needs
+   **`UEditableTextBox`** — a fourth unresolved UMG class — plus real **keyboard focus routing**, and
+   that is the part with a measured trap already on file: `coop/input/input_owner.h:64-69` —
+   **`UWidget::HasKeyboardFocus()` is an EXACT-widget test and reads FALSE on a live on-screen
+   `UEditableTextBox`**, even right after the engine's own `SetKeyboardFocus()`; it reads TRUE on the
+   owning USER WIDGET, which is the shipped invariant. There is a standing probe for exactly this
+   (`coop/dev/input_focus_probe.cpp` — it already resolves `EditableTextBox`,
+   `MultiLineEditableText`, `MultiLineEditableTextBox`, `HasKeyboardFocus`, `SetKeyboardFocus`), so
+   **run the probe before designing the form**, and expect our own `input_owner` swallow to need a
+   term for the browser (today T is swallowed unless a VOTV user widget owns focus — our own
+   runtime-built widget is not one of those). **Cheapest de-risk: split the work — ship the LIST
+   natively (read-only, clicks polled, Connect/Refresh/Close as `UButton`s) and keep the three text
+   fields on the ImGui panel until the focus question is answered.** That contradicts step 4's
+   RULE-2 retirement only if both renderers draw the SAME thing; a list and a form are not the same
+   thing, and the split is the ordering, not a parallel implementation.
+
 3. **Add the ART from the pak** once step 1 says how: brush textures for the row/hover/selected
    states, the scrollbar, the status icons. If step 1 failed, ship these as `UTexture2D` assets
    (which our Python cook chain *can* already emit) and set them on runtime-built `UImage`/`UBorder`
