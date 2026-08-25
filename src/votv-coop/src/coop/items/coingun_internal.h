@@ -50,8 +50,8 @@ coop::net::Session* Session();
 // Is `actor` a baocoin_C? Falls back to a name compare before the class resolves.
 bool IsCoinActor(void* actor);
 
-// Is this thread inside a 0x45 dispatch of the verb called `name`? The ONE ambient-window read
-// either lane makes. Pointer-compares first (both lanes pass a literal they registered themselves,
+// Is this thread inside a 0x45 dispatch of the verb called `name`? The SALE lane's ambient-window
+// read (the collect lane reads `b.ctx` off its own bracket and does not call this). Pointer-compares first (both lanes pass a literal they registered themselves,
 // and RegisterVirtualVerb requires static lifetime, so the pointers are identical), then wcscmp.
 bool InVerb(const ue_wrap::vm_dispatch::ActiveVerb& av, const wchar_t* name);
 
@@ -59,11 +59,9 @@ bool InVerb(const ue_wrap::vm_dispatch::ActiveVerb& av, const wchar_t* name);
 // first and already retries at ~1 Hz); the collect lane reads it and stays inert until it appears.
 void* CoinClass();
 
-// prop_coingun_C's UClass once resolved, else nullptr. Same resolver, same retry. The ARBITER reads
-// it for its gun lookup; the sale lane reads it for the two ctx gates (`vm_dispatch` matches on the
-// verb NAME and `playerHandUse_LMB` is declared by 146 classes, so a ctx class check is what makes
-// the bracket mean "the coin gun" -- see IsInCoinGunVerb).
-void* GunClass();
+// (There is no GunClass() accessor. The extraction added one on the belief that the arbiter would
+//  read it; the arbiter resolves its gun with FindObjectByClass and never asks for the class, so it
+//  was dead the day it was written and is deleted per RULE 2 rather than left as a false promise.)
 
 // Byte offset of Abaocoin_C::points, or -1 if unresolved. Resolved by NAME beside CoinClass().
 int32_t CoinPointsOffset();

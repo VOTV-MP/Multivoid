@@ -31,6 +31,7 @@
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"   // A50: the sender's puppet body, to measure its reach
+#include "coop/props/prop_echo_suppress.h"   // I-2: mark the key we consume as the arbiter
 #include "coop/props/prop_element_tracker.h"
 
 #include "ue_wrap/actors/prop.h"
@@ -125,31 +126,63 @@ constexpr float kPoseStalenessUU = 600.0f;
 // the ACTOR, so any peer could name any prop in the world.
 //
 // MTA does exactly this for a write it did not witness --
-// `reference/mtasa-blue/Server/mods/deathmatch/logic/CUnoccupiedVehicleSync.cpp:244` and `:491`:
-// `IsPointNearPoint3D(vecVehiclePosition, pPlayer->GetPosition(), fMaxDistance)`. Same shape, same
-// reason, same place in the flow (before the state change is honoured, not after).
+// `reference/mtasa-blue/Server/mods/deathmatch/logic/CUnoccupiedVehicleSync.cpp:491`, inside
+// `Packet_UnoccupiedVehiclePushSync`: `IsPointNearPoint3D(pVehicle->GetPosition(),
+// pPlayer->GetPosition(), radius)` gating an inbound packet before its state change is honoured.
+// Same shape, same reason, same place in the flow. (A first draft also cited `:244`; that line is in
+// `FindPlayerCloseToVehicle`, the SYNCER-ELECTION path, which validates no write at all and is not a
+// packet handler -- audit I-6, 2026-08-25. Wrong citation, dropped.)
 //
-// FAIL-CLOSED: no live puppet on the host means there is no body to measure a reach from, so the
-// answer is no. A joining client whose puppet has not spawned yet is refused and TOLD (TooFarAway),
-// which is the principle-8 answer for this lane: the sale is the client's to retry, its own prop is
-// gone either way, and inventing a reach for a body we cannot see is precisely the enumeration hole.
+// FAIL-CLOSED ON THE PUPPET: no live puppet on the host means there is no body to measure a reach
+// from, so the answer is no. A joining client whose puppet has not spawned yet is refused and TOLD
+// (TooFarAway), which is the principle-8 answer for this lane: the sale is the client's to retry, its
+// own prop is gone either way, and inventing a reach for a body we cannot see is the enumeration hole.
+//
+// *** WHAT THIS DOES NOT DO, AND THE HEADER USED TO CLAIM IT DID (audit CRITICAL C-1, 2026-08-25) ***
+// The anchor is the SENDER'S OWN POSITION, and the sender writes it. `[V]` the host applies an
+// inbound pose after `ValidatePose` only, which is a static garbage filter -- finite, |xyz| <= 1e6 cm
+// (TEN KILOMETRES), a SELF-REPORTED speed bound, angle ranges -- with no delta-vs-time check
+// anywhere; and the one place distance is examined, `remote_player.cpp`'s snap limit, ACCEPTS the
+// teleport and scales its own threshold off that self-reported speed. So the A50 enumeration survives
+// at one extra packet per prop: pose to the prop, sell the prop, repeat.
+//
+// This gate is therefore a RATE-AND-EFFORT mitigation, not a closure, and it is deliberately kept
+// because it is the right architecture (it is MTA's) and because it costs an attacker a visible body
+// moving through the world. THE CLOSURE IS A HOST-SIDE MOVEMENT VALIDATOR ON THE POSE LANE -- one
+// fix, at the boundary where the unvalidated value actually enters, benefiting every present and
+// future lane that asks "was this peer near it", instead of a second compensation bolted on here.
+// Tracked as its own row; do not write "A50 closed" until that ships.
 bool SenderMayReach(uint8_t senderSlot, void* prop, float& outDist, float& outAllowed) {
     outDist = outAllowed = -1.f;
     coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(senderSlot);
     void* puppet = (rp && rp->valid()) ? rp->GetActor() : nullptr;
     if (!puppet) return false;
 
-    const ue_wrap::FVector body = E::GetActorLocation(puppet);
+    // CHECKED READS ONLY (audit I-1, 2026-08-25). The first version of this used
+    // `E::GetActorLocation`, which returns a default FVector on failure -- and (0,0,0) is the WORLD
+    // ORIGIN, an ordinary position -- so a failed read reported the body as standing at the origin
+    // and authorized anything else near it. That is a fail-OPEN inside a function whose own comment
+    // said FAIL-CLOSED, which is this lane's own recurring defect one more time.
+    ue_wrap::FVector body{};
+    if (!E::TryGetActorLocation(puppet, body)) return false;
 
     // The prop's ORIGIN is not its surface, and the native trace stops at whatever it HITS -- so a
     // large prop is legitimately sellable from further away than reach-from-origin. Measure the real
     // bounds instead of inventing a constant fudge for "big things".
+    //
+    // `GetActorBounds` returning true means THE DISPATCH SUCCEEDED, not that the box is meaningful:
+    // `[A]` UE4's AActor::GetActorBounds starts from an empty FBox and expands it per qualifying
+    // component, so an actor with no COLLIDING components (carried, physics off, inside a container)
+    // yields Origin=(0,0,0) Extent=(0,0,0) -- the world origin again, by a second route. A zero
+    // extent is therefore treated as "no bounds", not as "a point-sized prop at the origin".
     ue_wrap::FVector origin{}, extent{};
     float propRadius = 0.f;
-    if (E::GetActorBounds(prop, /*onlyColliding=*/true, origin, extent)) {
+    const bool haveBounds = E::GetActorBounds(prop, /*onlyColliding=*/true, origin, extent) &&
+                            !(extent.X == 0.f && extent.Y == 0.f && extent.Z == 0.f);
+    if (haveBounds) {
         propRadius = std::sqrt(extent.X * extent.X + extent.Y * extent.Y + extent.Z * extent.Z);
-    } else {
-        origin = E::GetActorLocation(prop);
+    } else if (!E::TryGetActorLocation(prop, origin)) {
+        return false;   // we cannot say where it is, so we cannot say the sender could reach it
     }
 
     const float dx = origin.X - body.X, dy = origin.Y - body.Y, dz = origin.Z - body.Z;
@@ -208,9 +241,14 @@ void SendResult(coop::net::Session* s, uint8_t slot, coop::net::CoinGunResultCod
 bool Refuse(coop::net::Session* s, uint8_t slot, coop::net::CoinGunResultCode code) {
     g_salesRefused.fetch_add(1, std::memory_order_relaxed);
     SendResult(s, slot, code, 0);
-    static uint32_t sSeen[8] = {};
-    const unsigned idx = static_cast<unsigned>(code) < 8u ? static_cast<unsigned>(code) : 0u;
-    const uint32_t n = ++sSeen[idx];
+    // PER SENDER as well as per code (audit MINOR, 2026-08-25): a global counter lets one peer
+    // flooding NoSuchProp suppress a DIFFERENT peer's first legitimate refusal -- which turns a
+    // noise-control measure into a way to silence somebody else's diagnostics. 8 codes x kMaxPeers
+    // slots is 32 counters.
+    static uint32_t sSeen[8][coop::players::kMaxPeers] = {};
+    const unsigned ci = static_cast<unsigned>(code) < 8u ? static_cast<unsigned>(code) : 0u;
+    const unsigned si = slot < coop::players::kMaxPeers ? slot : 0u;
+    const uint32_t n = ++sSeen[ci][si];
     return n <= 5 || (n <= 100 && n % 10 == 0) || n % 100 == 0;
 }
 
@@ -454,11 +492,20 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
     // The seller's own PropDestroy then arrives at a host that no longer resolves the prop and lands
     // as the steady-state no-op OnDestroyImpl_ already implements for an echo.
     //
-    // This also makes the consumption guard's job much smaller: g_sold now only has to survive the
-    // window between this destroy and the actor actually leaving the key index, i.e. a replay landing
-    // in the SAME drained batch. It stays because that window is real -- the reliable inbox drains
-    // unbounded per tick, so two CoinGunSell packets in one frame is the cheapest thing an attacker
-    // can do.
+    // WHAT THE CONSUMPTION GUARD ACTUALLY COVERS NOW, corrected (audit MINOR, 2026-08-25). It is NOT
+    // what stops a same-frame replay: both resolvers reject a PendingKill actor (IsLiveByIndex in the
+    // key index; LiveActorOfType in the collect lane), so a second packet naming this prop resolves
+    // nothing and refuses with NoSuchProp before the guard is consulted. The guard compares through
+    // CachedObjRef::Get(), which is itself liveness-validated, so once this destroy lands it is
+    // structurally silent. Its real remaining job is the FAILED-destroy case -- we minted, the destroy
+    // did not take, the prop is still resolvable -- which is exactly the case nothing else covers.
+    //
+    // I-2 (audit 2026-08-25): mark the key BEFORE destroying it. Our destroy evicts the key from the
+    // maintained index, so the seller's own PropDestroy arriving behind us would miss the index and
+    // pay a full FindByKeyString GUObjectArray walk to rediscover that the prop is gone -- converting
+    // what used to be an O(1) index hit into a guaranteed cold scan on every arbiter-performed sale,
+    // which is the very cost A51 had just removed from this lane. The mark is the fact only we know.
+    if (!keyStr.empty()) coop::prop_echo_suppress::MarkArbiterConsumedKey(keyStr);
     E::DestroyActor(prop);
 
     // The coins the mint spawns are EX_CallMath BeginDeferreds from the gun's bytecode, so

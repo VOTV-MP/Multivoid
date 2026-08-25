@@ -122,6 +122,22 @@ bool IsMaterializingMirror();
 // is open, which is precisely the not-yet-installed case.
 unsigned int MaterializingEid();
 
+// The ACTOR this thread is materializing, or nullptr before BeginDeferred has produced it (and
+// outside the window). Published by the mirror path between BeginDeferred and FinishSpawning --
+// which is exactly the gap the actor exists in but its mirror row does not, and therefore exactly
+// the window a consumer needs to identify it in.
+//
+// THIS IS WHAT MAKES THE WINDOW ANSWERABLE ABOUT AN ACTOR (audit I-7, 2026-08-25).
+// `IsMaterializingMirror()` takes no actor, so a consumer that ORs it into an "is this actor a
+// mirror?" predicate is really asking "is SOME mirror being born right now", and during any
+// materialization every unrelated coin, prop or pile a player touches answers yes. Compare against
+// this instead: `IsMirroredActor(a) || MaterializingActor() == a`.
+void* MaterializingActor();
+
+// Publish the actor into the open window. Called by the mirror path only, once, after BeginDeferred
+// returns and before FinishSpawningActor. No-op outside a window.
+void NoteMaterializingActor(void* actor);
+
 // RAII publisher for that window. Constructed by the mirror path around its spawn pair, with the eid
 // it is about to install.
 struct MaterializeScope {
@@ -131,7 +147,8 @@ struct MaterializeScope {
     MaterializeScope& operator=(const MaterializeScope&) = delete;
 
 private:
-    unsigned int prevEid_ = 0;
+    unsigned int prevEid_   = 0;
+    void*        prevActor_ = nullptr;
 };
 
 }  // namespace coop::world_actor_sync

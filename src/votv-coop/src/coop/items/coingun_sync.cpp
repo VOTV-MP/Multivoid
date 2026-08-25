@@ -11,32 +11,25 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
-#include "coop/player/remote_player.h"   // A50: the sender's puppet body, to measure its reach
-#include "coop/props/prop_element_tracker.h"
 #include "coop/session/world_load_episode.h"
 #include "coop/world/world_actor_sync.h"
 
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
-#include "ue_wrap/core/fname_utils.h"
-#include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/ufunction_hook.h"
 #include "ue_wrap/core/vm_dispatch.h"
 #include "ue_wrap/engine/engine.h"
-#include "ue_wrap/world/economy.h"
 
 #include <atomic>
 #include <chrono>
-#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <cwchar>
 #include <mutex>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 namespace coop::coingun_sync {
@@ -44,7 +37,6 @@ namespace {
 
 namespace R  = ue_wrap::reflection;
 namespace E  = ue_wrap::engine;
-namespace GT = ue_wrap::game_thread;
 namespace vm = ue_wrap::vm_dispatch;
 
 }  // namespace
@@ -96,9 +88,18 @@ std::atomic<unsigned long long> g_salesSent{0};
 // the authoritative one is CONFIRMED.
 //
 // So a shot opens a group at the verb bracket, coins land in it, and the group is only committed to
-// destruction if that shot ACTUALLY SENT a sale. An unauthored shot RELEASES its coins: they stay,
-// they credit locally, and that is precisely today's single-player behaviour -- no new loss, no
-// phantom, nothing to heal.
+// destruction if that shot ACTUALLY SENT a sale. An unauthored shot RELEASES its coins rather than
+// eating them.
+//
+// WHAT A RELEASE ACTUALLY DEGRADES TO, stated honestly (audit I-5, 2026-08-25 -- the first version of
+// this comment said "precisely today's single-player behaviour -- no new loss, no phantom", and the
+// collect lane says the opposite about the same coin forty lines away). A released coin is a
+// client-local NON-mirror, so picking it up takes coingun_collect's map-placed branch and credits
+// THIS CLIENT ONLY -- a phantom the host's next balance move erases (residual A13) -- while the
+// prop's own destroy is unchanged and still replicates. So the player keeps the coins and does NOT
+// keep the payment: the release degrades to the pre-A37 LOSS, not to single-player. It is still
+// strictly better than the alternative, which was to lose the prop, the coins AND the explanation --
+// but "strictly better" is the claim, not "no loss".
 struct PendingShot {
     std::vector<ue_wrap::CachedObjRef> coins;
     bool authored = false;
@@ -121,8 +122,8 @@ bool IsCoinActor(void* actor) {
     return R::ClassNameOf(actor) == kCoinClassName;   // pre-resolution fallback
 }
 
-// Am I inside THIS verb? The ONE ambient-window read either lane makes -- see vm_dispatch.h's
-// contract box for why it is the NAME and not the id or `active`. Pointer-compares first because
+// Am I inside THIS verb? The SALE lane's ambient-window read (the collect lane reads `b.ctx` off its
+// own bracket) -- see vm_dispatch.h's contract box for why it is the NAME and not the id or `active`. Pointer-compares first because
 // every caller passes a literal this module registered (RegisterVirtualVerb requires static
 // lifetime, so the pointers are identical), then falls back to a compare for robustness.
 bool InVerb(const vm::ActiveVerb& av, const wchar_t* name) {
@@ -131,7 +132,6 @@ bool InVerb(const vm::ActiveVerb& av, const wchar_t* name) {
 }
 
 void*   CoinClass()        { return g_coinClass; }
-void*   GunClass()         { return g_gunClass; }
 int32_t CoinPointsOffset() { return g_offCoinPoints; }
 
 bool IsCapturedCoin(void* coin) {
@@ -208,11 +208,25 @@ void OnVerbEntry(const vm::Bracket& b) {
     // without it every knife swing, hacksaw cut and flamethrower burst in the game would open (and
     // then release) an empty group -- turning the barrier's release WARNING into a false alarm on
     // every left click. Matching the gate the capture itself uses also keeps the two from drifting.
+    //
+    // READ-ONLY ON `g_gunClass` -- NEVER RESOLVE HERE (audit CRITICAL C-2, 2026-08-25, a defect this
+    // very function introduced). `R::FindClass` is an UNCACHED, negative-unlatched walk of the whole
+    // GUObjectArray with a name render per object, and `prop_coingun_C`'s UClass is not resident in
+    // the ordinary world (`[V]` the gun is placed in 3 of 261 maps) -- so resolving here bought one
+    // full object-array walk on EVERY left click of all 146 of those classes, at click rate,
+    // unthrottled. `Install` already retries the identical resolve inside its ~1 Hz throttle, so this
+    // call could never buy anything the throttle does not deliver within a second.
+    //
+    // What the read-only form costs, stated rather than hidden: for at most one second after the gun
+    // class first becomes resident, a shot opens no group -- its coins land in the defensive group
+    // the birth seam opens, which is never marked authored, so they are RELEASED. That is the safe
+    // direction (the player keeps their coins), and it is also why BOTH this gate and
+    // IsInCoinGunVerb must read without resolving: if one of them resolved mid-bracket the other
+    // would disagree with it inside a single shot, and the destroy seam would mark a stale group.
     auto* s = LoadSession();
     if (!s || !s->connected() || s->role() != coop::net::Role::Client) return;
-    if (!b.ctx) return;
-    if (!g_gunClass) g_gunClass = R::FindClass(kGunClassName);
-    if (!g_gunClass || R::ClassOf(b.ctx) != g_gunClass) return;
+    if (!b.ctx || !g_gunClass) return;
+    if (R::ClassOf(b.ctx) != g_gunClass) return;
     std::lock_guard<std::mutex> lk(g_pendingMu);
     g_pendingShots.emplace_back();
 }
@@ -299,9 +313,12 @@ bool IsInCoinGunVerb() {
     // path in ordinary play, manufacturing the very defect this lane exists to close. The header
     // promised this check from the first draft and the code did not have it, which is
     // `[[lesson-false-security-comment-worse-than-none]]` in its purest form.
-    if (!av.ctx) return false;
-    if (!g_gunClass) g_gunClass = R::FindClass(kGunClassName);
-    return g_gunClass && R::ClassOf(av.ctx) == g_gunClass;
+    // READ-ONLY on g_gunClass -- see OnVerbEntry for why neither gate may resolve here. This one is
+    // colder (it is reached only from the destroy seam, for a keyed prop actually dying) but it must
+    // agree with OnVerbEntry within a single bracket, and the only way to guarantee that is for both
+    // to read the value Install publishes rather than race to produce it.
+    if (!av.ctx || !g_gunClass) return false;
+    return R::ClassOf(av.ctx) == g_gunClass;
 }
 
 void SendSaleForDyingProp(const std::wstring& key, uint32_t elementId) {
@@ -380,10 +397,12 @@ void Tick() {
     }
     if (released) {
         UE_LOGW("coingun[barrier]: RELEASED %zu coin(s) from %zu shot(s) that authored NO sale -- they "
-                "stay in the world and credit locally, which is what single-player does. If this "
-                "fires, the sale was blocked upstream (world-load episode / reconcile window / kerfur "
-                "capture / no name to send) and the player keeps their coins instead of losing both "
-                "the prop and the payment.", released, releasedShots);
+                "stay in the world, and picking them up credits THIS CLIENT ONLY (a phantom the "
+                "host's next balance move erases -- residual A13), while the prop's own destroy still "
+                "replicates. So this degrades to the pre-A37 LOSS, not to single-player: strictly "
+                "better than eating the coins too, not harmless. If this fires, the sale was blocked "
+                "upstream (world-load episode / reconcile window / kerfur capture / no name to send) "
+                "and THAT is the thing to fix.", released, releasedShots);
     }
     if (destroyed) {
         UE_LOGI("coingun[barrier]: destroyed %zu of our own client-side coins across %zu authored "

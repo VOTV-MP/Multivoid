@@ -143,6 +143,19 @@ bool OnDestroyImpl_(const coop::net::PropDestroyPayload& payload, void* localPla
         actor = ResolveLiveActorByEid(payload.elementId);
     }
     if (!actor && !keyW.empty()) {
+        // ARBITER ECHO SHORT-CIRCUIT (2026-08-25, audit I-2). If WE destroyed this key ourselves as
+        // the authority's half of a transaction a client asked for, the client's own destroy behind
+        // it is an echo and there is provably nothing left to find: our destroy evicted the key from
+        // the index, so the resolve below would miss and pay a full FindByKeyString GUObjectArray
+        // walk to rediscover what we already know. One-shot, so only the echo is short-circuited and
+        // an unrelated later destroy of a re-placed prop under the same key resolves normally.
+        if (coop::prop_echo_suppress::ConsumeArbiterConsumedKey(keyW)) {
+            UnregisterPropMirror(payload.elementId);
+            UE_LOGI("remote_prop::OnDestroy: key '%ls' eid=%u -- ECHO of a destroy this host already "
+                    "performed as the arbiter; nothing to resolve, no scan paid",
+                    keyW.c_str(), payload.elementId);
+            return false;
+        }
         actor = coop::prop_element_tracker::ResolveLiveActorByKey(keyW);
     }
     // Now drain the wire-received mirror Element. It must vacate the Registry regardless

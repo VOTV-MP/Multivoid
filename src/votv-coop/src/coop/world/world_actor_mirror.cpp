@@ -186,6 +186,10 @@ void OnWorldActorSpawn(const coop::net::EntitySpawnPayload& payload) {
         D::ClearIncomingClass();
         return;
     }
+    // The actor exists and its mirror row does not: publish it into the open window so a consumer
+    // firing inside FinishSpawning's BeginPlay can identify THIS actor rather than merely observe
+    // that some materialization is in progress (audit I-7).
+    coop::world_actor_sync::NoteMaterializingActor(spawned);
     {
         ParamFrame finish(sp.finishSpawnFn);
         if (!finish.valid()) {

@@ -13,28 +13,33 @@
 //      resolves; the payload now carries it, and the host resolves key-first / eid-fallback.
 //      NOT hands-on confirmed -- see THE SALE'S IDENTITY below for what B1 does and does not close.
 //   2. "A REFUSED SALE DEGRADES TO EXACTLY TODAY'S BEHAVIOUR" (below) IS FALSE BY CONSTRUCTION.
+//      -- FIXED IN v140: the capture is per-shot and COMMIT-OR-RELEASE (see THE BARRIER QUEUE in
+//      coingun_sync.cpp). A shot that authored no sale releases its coins instead of eating them.
 //      The capture of the client's own coins is UNCONDITIONAL (it keys on the verb alone) while
 //      the authorization is CONDITIONAL and decided LATER and INDEPENDENTLY -- so a refusal is a
 //      TOTAL loss: item gone, coins gone, nothing credited. The invariant that was missing:
 //      a local artifact must not be suppressed until the authoritative one is CONFIRMED.
-//   3. `PrepareCoinMirror` NEVER WORKED (6/6 `SetSimulatePhysics unresolved`): it resolves on the
+//   3. `PrepareCoinMirror` NEVER WORKED (6/6 `SetSimulatePhysics unresolved`) -- FIXED IN v140
+//      (item 10): resolved on the DECLARING class. It resolves on the
 //      LEAF `USphereComponent` while `R::FindFunction` is EXACT-OWNER (reflection.cpp:468-481) and
 //      the function is declared on `UPrimitiveComponent`. Every other site in the tree resolves it
 //      on the declaring class. Consequence: a mirror coin keeps simulating, and once the pose
 //      delta gate silences a RESTING host coin the mirror drifts away uncorrected -- the likeliest
 //      reason a client cannot pick up the host's coins.
-//   4. THE COLLECT SEAM IS THE WRONG ENTRY. `[V]` TWO entries reach the credit block
+//   4. THE COLLECT SEAM IS THE WRONG ENTRY -- FIXED IN v139 (B2) + v140 (both entries observed, and
+//      the interceptor now mirrors the game's own mainPlayer_C gate). `[V]` TWO entries reach the credit block
 //      `ExecuteUbergraph_baocoin:441`: the overlap BndEvt hooked here, and `actionOptionIndex`
 //      DIRECTLY -- the E-press, `EX_LocalVirtualFunction`, PE-invisible. Six real host-side
 //      credits produced ZERO lines from this interceptor, so `OnCollectPre` has never been
 //      observed firing at all. Do not treat it as proven.
-//   5. `Points` IS NOT COSMETIC. `[V]` `ReceiveBeginPlay` picks the coin's MATERIAL from `points`
+//   5. `Points` IS NOT COSMETIC -- **STILL OPEN, this is B3.** `[V]` `ReceiveBeginPlay` picks the coin's MATERIAL from `points`
 //      (<=10 bronze / 11..25 silver / >=26 gold), once, and the CDO default is 5 -- so a mirror
 //      renders the WRONG DENOMINATION, not a wrong tint.
 //
 // Also measured while re-deriving this lane: the sold prop's destroy lives in the GUN's ubergraph
 // (@1730, inside the `if sold` branch), NOT inside `sell` -- so a host that only calls `sell` mints
-// coins and leaves the prop alive. And the coin's self-destroy is Func-VISIBLE but NOT CANCELLABLE:
+// coins and leaves the prop alive. That is security A50, and v140's arbiter now runs the destroy
+// itself. And the coin's self-destroy is Func-VISIBLE but NOT CANCELLABLE:
 // `ufunction_hook`'s entire API is `InstallPostHook`, and `K2_DestroyActor` is `EX_VirtualFunction`
 // so ProcessEvent never sees it either.
 // ============================================================================================
@@ -112,10 +117,17 @@
 // coin spawn inside it, so the executor must be a LIVE, world-placed instance -- a CDO mints zero.)
 //
 // RESIDUAL, DELIBERATE AND LOGGED: `[V]` two cooked maps carry PLACED `baocoin_C` instances. Those
-// are level content on both peers, never enrolled, never mirrors -- so the client-side collect cancel
-// is MIRROR-SCOPED and leaves them native. Cancelling them would make them permanently uncollectable
-// AND ghosted, which is a NEW loss; leaving them keeps today's behaviour, and the collect logs a line
-// saying so.
+// are level content on both peers, never enrolled, never mirrors -- and a client picking one up with
+// its OWN body is left native. Cancelling that would make them permanently uncollectable AND
+// ghosted, which is a NEW loss; leaving it keeps today's behaviour, and the collect logs a line.
+//
+// The cancel is NO LONGER simply "mirror-scoped", and the older one-word summary is corrected here
+// rather than left standing (v140): there are now three non-mirror cases the client DOES cancel, each
+// for a reason that is not about mirrors at all -- our own pre-barrier coins (they are not level
+// content and the host may be about to mint the real ones), any coin a PUPPET trips (a puppet IS a
+// mainPlayer_C, so the native path would credit US for someone else's pickup), and nothing at all
+// when the toucher is not a player, because `[V]` the game's own gate casts OtherActor to
+// mainPlayer_C and credits nobody otherwise.
 //
 // Game-thread only unless a function says otherwise.
 
@@ -140,7 +152,8 @@ void Tick();
 
 // HOST ingest for `ReliableKind::CoinGunSell`. No-ops off the host.
 //
-// SECURITY A50 -- CLOSED in v140 (2026-08-25). Both halves shipped; neither closes it alone:
+// SECURITY A50 -- MITIGATED in v140 (2026-08-25), NOT CLOSED. Read the residual at the end of this
+// block before writing "closed" anywhere. Two halves shipped:
 //   - AUTHORIZATION. The receiver now asks one question about the ACTOR before any question that
 //     spends the world: is the named prop within the SENDER'S OWN reach, measured on the host's copy
 //     of the sender's puppet? `[V]` the gun traces `arm(1000.0)` FROM THE PLAYER (prop_coingun
@@ -155,10 +168,24 @@ void Tick();
 //     rides E::DestroyActor -> Actor.K2_DestroyActor -> the ordinary prop_destroy_seam Func patch, so
 //     every peer learns about it through the one existing mechanism; the seller's own PropDestroy
 //     then lands as the steady-state no-op echo OnDestroyImpl_ already implements.
+// *** THE RESIDUAL, AND IT IS WHY THIS ROW IS NOT CLOSED (audit CRITICAL C-1, 2026-08-25) ***
+// The reach gate anchors on the SENDER'S OWN POSITION, and the sender writes it. `[V]` an inbound
+// pose is admitted by `ValidatePose` alone -- a static garbage filter (finite, |xyz| <= 1e6 cm = TEN
+// KILOMETRES, a SELF-REPORTED speed bound, angle ranges) with no delta-vs-time check anywhere -- and
+// the one site that examines distance ACCEPTS the teleport, against a threshold scaled by that same
+// self-reported speed. So the enumeration survives at one extra packet per prop: pose to the prop,
+// sell the prop, repeat. What v140 genuinely changed is that the host now also DESTROYS each prop it
+// pays for, so the attack costs the world its props instead of being free.
+// THE CLOSURE IS A HOST-SIDE MOVEMENT VALIDATOR ON THE POSE LANE -- at the boundary where the
+// unvalidated value enters, once, for every lane that will ever ask "was this peer near it" -- not a
+// second compensation inside this receiver. Until that ships, this row reads MITIGATED.
+//
 // What this receiver still does NOT do, deliberately recorded rather than claimed away:
-//   - it does NOT range-check the eid (the `IsAllowedHostAllocatedEid` idiom 14 other receive sites
-//     obey). An earlier version of this sentence said "fully range-checks the payload" -- FALSE, and
-//     deleted rather than softened. Tracked as an open item in the design doc's §11.4;
+//   - nothing further on the eid: it IS range-checked (v140 item 6, both bands, for the reason the
+//     PropDestroy receiver accepts both). An earlier sentence here said "fully range-checks the
+//     payload" when nothing did, and its replacement then said the check was still owed after the
+//     check had shipped -- the same lane's third and fourth false header sentences, in opposite
+//     directions. This one is code-checked;
 // SECURITY A51 -- CLOSED in v140 (2026-08-25). Both attacker-reachable GUObjectArray walks in this
 // lane are gone:
 //   - the key resolve is INDEX ONLY (`FindLiveActorByKey`, not `ResolveLiveActorByKey`). The cold
@@ -189,12 +216,18 @@ void OnReliableResult(const uint8_t* payload, int len);
 // so the game's native credit and self-destroy run. Checks the payload SIZE, then fails closed on the
 // Element TYPE and the actor's CLASS. No-ops off the host.
 //
-// IT DOES **NOT** RANGE-CHECK THE EID (owed, 2026-08-25 audit; an earlier version of this sentence
-// said "fully range-checks the payload" and that was false). The consequence is not only idiom: the
-// no-resolve branch logs "the coin is already gone" as POSITIVE KNOWLEDGE, and without a range gate
-// that claim also swallows a client-band eid, an out-of-range eid and pure garbage -- the fact that
-// the number was never a host eid is discarded before it is read. `IsAllowedHostAllocatedEid` first;
-// the coin's eid is host-issued by construction.
+// IT RANGE-CHECKS THE EID, **HOST BAND ONLY** (v140 item 6), and the asymmetry with the sale lane --
+// which accepts either band -- is the point: `[V]` a baocoin_C is host-minted by construction (no save
+// key, spawned by the host's own `sell`, announced under the host's own eid), so no other band can
+// name one. It matters beyond idiom because the no-resolve branch below logs "the coin is already
+// gone" as POSITIVE KNOWLEDGE, and without the gate that claim would also swallow a client-band eid,
+// an out-of-range eid and pure garbage -- discarding the fact that the number was never a host eid
+// before anyone reads it. Refusals here are rate-latched for the same reason the sale lane's are.
+//
+// (This sentence is the FOURTH generation of itself and the previous three were all wrong: it said
+// "fully range-checks the payload" when nothing did, then said the check was owed after the check had
+// shipped. Twice overstating, once understating. Verified against `coingun_collect.cpp`'s actual gate
+// on 2026-08-25 -- `[[lesson-false-security-comment-worse-than-none]]`.)
 //
 // `localPlayer` is the host's own mainPlayer, passed as the verb's `player` argument. `[V]` (upgraded
 // from `[RD]` 2026-08-25 by direct bytecode read) block @441 is `addPoints(points, self)` + format +

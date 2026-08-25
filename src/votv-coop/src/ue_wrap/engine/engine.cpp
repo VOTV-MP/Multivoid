@@ -372,6 +372,25 @@ FVector GetActorLocation(void* actor) {
     return loc;
 }
 
+bool TryGetActorLocation(void* actor, FVector& out) {
+    // The CHECKED read. GetActorLocation above returns a default-constructed FVector on every failure
+    // path and has no way to say so -- and a default FVector is (0,0,0), which is the WORLD ORIGIN, a
+    // perfectly ordinary position. For a display or a log that is harmless. For an AUTHORIZATION gate
+    // it is a fail-OPEN: a failed read reports the actor as standing at the origin, so anything else
+    // near the origin measures as adjacent to it (audit IMPORTANT I-1, 2026-08-25, found in the
+    // coin gun's reach check, whose own comment claimed fail-CLOSED).
+    //
+    // Added rather than worked around at the call site, per RULE 1: the defect is that this wrapper
+    // cannot signal failure, so the fix belongs here, where every future caller that must not guess
+    // gets it too.
+    out = FVector{};
+    if (!actor || !ResolveActorFns()) return false;
+    ParamFrame f(g_getLocFn);
+    if (!Call(actor, f)) return false;
+    f.GetRaw(L"ReturnValue", &out, sizeof(out));
+    return true;
+}
+
 FVector GetActorScale3D(void* actor) {
     // Unit scale on failure -- callers stamp it straight into a spawn
     // transform, where (0,0,0) would collapse the mirror invisibly.

@@ -133,6 +133,14 @@ bool DebugCheckWorldContextRecovery();
 // AActor::K2_GetActorLocation on `actor`. Returns (0,0,0) if it cannot be called.
 FVector GetActorLocation(void* actor);
 
+// The CHECKED read: false when the location could not be obtained, leaving `out` zeroed.
+//
+// USE THIS, NOT THE ABOVE, ANYWHERE A WRONG ANSWER GRANTS SOMETHING. GetActorLocation returns a
+// default FVector on every failure path -- and (0,0,0) is the world ORIGIN, an ordinary position --
+// so a failed read silently reports "this actor is at the origin". In a distance/authority test that
+// is a fail-OPEN for anything near the origin and a false denial for everything else. Game thread.
+bool TryGetActorLocation(void* actor, FVector& out);
+
 // AActor::GetActorScale3D on `actor` (root component world scale). Returns
 // UNIT scale (1,1,1) on failure -- callers stamp it straight into spawn
 // transforms, where a zero scale would collapse the mirror invisibly. v54

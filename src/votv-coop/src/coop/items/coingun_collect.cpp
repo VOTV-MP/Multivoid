@@ -124,9 +124,16 @@ std::unordered_map<uint32_t, ue_wrap::CachedObjRef> g_collected;
 // delegates bind during BeginPlay INSIDE FinishSpawning, before the row is installed -- was therefore
 // SUPPRESSED by the first and NOT FORWARDED by the second. Neither peer credited it. Two predicates
 // for one question is the shape (`[[feedback-recurring-bug-is-architectural]]`); this is the one.
+//
+// AND THE SECOND TERM IS IDENTITY-CHECKED (audit I-7, 2026-08-25). The first version ORed in a bare
+// `IsMaterializingMirror()`, which takes no actor and therefore answers "is SOME mirror being born on
+// this thread right now" -- so during ANY materialization, a map-placed coin or one of our own
+// pre-barrier coins that a player happened to trip was judged host-owned, cancelled, and forwarded
+// under the OTHER actor's eid. `world_actor_sync.h` already warned about exactly this for the eid and
+// the first fix applied the warning only to the eid, not to the predicate the eid hangs off.
 bool IsHostOwnedCoin(void* coin) {
-    return coop::world_actor_sync::IsMirroredActor(coin) ||
-           coop::world_actor_sync::IsMaterializingMirror();
+    if (coop::world_actor_sync::IsMirroredActor(coin)) return true;
+    return coin != nullptr && coop::world_actor_sync::MaterializingActor() == coin;
 }
 
 // ---- the CLIENT half: forward -----------------------------------------------------------------
@@ -150,9 +157,13 @@ bool ForwardCollectToHost(void* coin, const wchar_t* entry) {
     coop::element::ElementId eid = coop::element::Registry::Get().EidForActor(coin);
     const wchar_t* idFrom = L"row";
     if (eid == coop::element::kInvalidId || eid == 0u) {
-        if (const unsigned int born = coop::world_actor_sync::MaterializingEid()) {
-            eid    = static_cast<coop::element::ElementId>(born);
-            idFrom = L"materializing";
+        // IDENTITY-CHECKED, not merely window-checked (audit I-7): the window belongs to the actor
+        // being SPAWNED, so its eid may only name THIS coin if this coin IS that actor.
+        if (coop::world_actor_sync::MaterializingActor() == coin) {
+            if (const unsigned int born = coop::world_actor_sync::MaterializingEid()) {
+                eid    = static_cast<coop::element::ElementId>(born);
+                idFrom = L"materializing";
+            }
         }
     }
     if (eid == coop::element::kInvalidId || eid == 0u) {
@@ -343,8 +354,8 @@ void OnCoinCollect(const uint8_t* payload, int len, uint8_t senderSlot, void* lo
     // idiom is obeyed at 14 other receive sites and was missing here while the header claimed the
     // payload was fully range-checked.
     if (!coop::element::Registry::IsAllowedHostAllocatedEid(p.elementId)) {
-        static uint32_t sBad = 0;
-        const uint32_t n = ++sBad;
+        static uint32_t sBad[coop::players::kMaxPeers] = {};
+        const uint32_t n = ++sBad[senderSlot < coop::players::kMaxPeers ? senderSlot : 0u];
         if (n <= 5 || (n <= 100 && n % 10 == 0) || n % 100 == 0)
             UE_LOGW("coingun[host]: CoinCollect #%u from slot=%u names eid=0x%08x, which is not in "
                     "the HOST allocation band -- dropping. A coin is host-minted by construction, so "
@@ -518,14 +529,21 @@ void internal::OnDisconnectCollect() {
     // The free measurement, per lane. `[[lesson-your-own-session-end-summary-is-a-free-measurement]]`:
     // the two entry counters are here so the next field run answers BY GREP which entry players
     // actually use -- the question v137 could not answer about its own seam.
-    UE_LOGI("coingun[collect]: SESSION SUMMARY -- thisPeer{press=%llu overlap=%llu} "
+    // The labels follow the ROLE, not a hardcoded guess (audit MINOR, 2026-08-25: the first version
+    // printed the CLIENT counters under "thisPeer" unconditionally, so on a host "thisPeer" was the
+    // always-zero pair -- inside the very item whose point was that two numbers side by side are a
+    // claim about comparability).
+    auto* sess = I::Session();
+    const bool asHost = sess && sess->role() == coop::net::Role::Host;
+    UE_LOGI("coingun[collect]: SESSION SUMMARY (%ls) -- thisPeer{press=%llu overlap=%llu} "
             "otherRole{press=%llu overlap=%llu} forwarded=%llu "
-            "host{performed=%llu unresolved=%llu noCredit=%llu replayed=%llu} -- the FIRST pair is the comparable "
-            "one: both entries counted on the same side. Only one pair is ever non-zero in a run.",
-            g_seenPressClient.load(std::memory_order_relaxed),
-            g_seenOverlapClient.load(std::memory_order_relaxed),
-            g_seenPressHost.load(std::memory_order_relaxed),
-            g_seenOverlapHost.load(std::memory_order_relaxed),
+            "host{performed=%llu unresolved=%llu noCredit=%llu replayed=%llu} -- the FIRST pair is the "
+            "comparable one: both entries counted on the same side.",
+            asHost ? L"host" : L"client",
+            (asHost ? g_seenPressHost   : g_seenPressClient).load(std::memory_order_relaxed),
+            (asHost ? g_seenOverlapHost : g_seenOverlapClient).load(std::memory_order_relaxed),
+            (asHost ? g_seenPressClient : g_seenPressHost).load(std::memory_order_relaxed),
+            (asHost ? g_seenOverlapClient : g_seenOverlapHost).load(std::memory_order_relaxed),
             g_forwarded.load(std::memory_order_relaxed),
             g_performed.load(std::memory_order_relaxed),
             g_unresolved.load(std::memory_order_relaxed),

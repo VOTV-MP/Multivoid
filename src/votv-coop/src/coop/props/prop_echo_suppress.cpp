@@ -2,6 +2,7 @@
 
 #include "coop/props/prop_echo_suppress.h"
 
+#include <string>
 #include <unordered_set>
 
 namespace coop::prop_echo_suppress {
@@ -42,6 +43,25 @@ bool ConsumeIncomingSpawn(void* actor)  { return actor ? TakeOne(g_incomingSpawn
 bool PeekIncomingSpawn(void* actor)     { return actor && g_incomingSpawns.count(actor) != 0; }
 void MarkIncomingDestroy(void* actor)   { if (actor) InsertCapped(g_incomingDestroys, actor); }
 bool ConsumeIncomingDestroy(void* actor){ return actor ? TakeOne(g_incomingDestroys, actor) : false; }
+
+// ---- the ARBITER-CONSUMED key set (2026-08-25) --------------------------------------------------
+// Keyed by save KEY, not by pointer, because the whole point is that the actor is already gone: the
+// pointer set above cannot express "a destroy naming THIS KEY is an echo of one I performed myself".
+std::unordered_set<std::wstring> g_arbiterConsumedKeys;
+
+void MarkArbiterConsumedKey(const std::wstring& key) {
+    if (key.empty()) return;
+    if (g_arbiterConsumedKeys.size() >= kIncomingCap) g_arbiterConsumedKeys.clear();
+    g_arbiterConsumedKeys.insert(key);
+}
+
+bool ConsumeArbiterConsumedKey(const std::wstring& key) {
+    if (key.empty()) return false;
+    auto it = g_arbiterConsumedKeys.find(key);
+    if (it == g_arbiterConsumedKeys.end()) return false;
+    g_arbiterConsumedKeys.erase(it);
+    return true;
+}
 
 ScopedMirrorSpawn::ScopedMirrorSpawn()  { ++g_mirrorSpawnDepth; }
 ScopedMirrorSpawn::~ScopedMirrorSpawn() { --g_mirrorSpawnDepth; }

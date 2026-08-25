@@ -595,16 +595,24 @@ bool IsMaterializingMirror() { return t_materializeDepth > 0; }
 // materialization (a mirror spawn re-entering the mirror path) cannot leave the outer scope naming
 // the inner one's eid on the way out.
 thread_local unsigned int t_materializeEid = 0;
+thread_local void* t_materializeActor = nullptr;
 
 unsigned int MaterializingEid() { return t_materializeDepth > 0 ? t_materializeEid : 0u; }
+void* MaterializingActor()      { return t_materializeDepth > 0 ? t_materializeActor : nullptr; }
+void NoteMaterializingActor(void* actor) {
+    if (t_materializeDepth > 0) t_materializeActor = actor;
+}
 
-MaterializeScope::MaterializeScope(unsigned int eid) : prevEid_(t_materializeEid) {
+MaterializeScope::MaterializeScope(unsigned int eid)
+    : prevEid_(t_materializeEid), prevActor_(t_materializeActor) {
     ++t_materializeDepth;
-    t_materializeEid = eid;
+    t_materializeEid   = eid;
+    t_materializeActor = nullptr;   // not produced yet -- BeginDeferred publishes it
 }
 MaterializeScope::~MaterializeScope() {
     --t_materializeDepth;
-    t_materializeEid = prevEid_;
+    t_materializeEid   = prevEid_;
+    t_materializeActor = prevActor_;
 }
 
 unsigned int HostEnrollExSpawn(void* actor) {
