@@ -156,8 +156,11 @@ void Tick();
 // block before writing "closed" anywhere. Two halves shipped:
 //   - AUTHORIZATION. The receiver now asks one question about the ACTOR before any question that
 //     spends the world: is the named prop within the SENDER'S OWN reach, measured on the host's copy
-//     of the sender's puppet? `[V]` the gun traces `arm(1000.0)` FROM THE PLAYER (prop_coingun
-//     ubergraph [4]), widened by the prop's measured bounds and one pose-staleness budget. MTA
+//     of the sender's puppet? `[V]` the gun traces `arm(1000.0)` from the sender's own CAMERA
+//     (prop_coingun ubergraph [4] -> `mainPlayer.arm`, whose start is
+//     `GetPlayerCameraManager().K2_GetActorLocation()`; an earlier wording said "FROM THE PLAYER",
+//     which is true of the body but not of the origin, and the eye-height offset is one of the terms
+//     `kPoseStalenessUU` absorbs), widened by the prop's measured bounds and that budget. MTA
 //     `CUnoccupiedVehicleSync.cpp:244/491` `IsPointNearPoint3D` shape. FAIL-CLOSED: no live puppet on
 //     the host means no body to measure from, so the sale is refused (`TooFarAway`) and the seller is
 //     told, rather than a reach being assumed for a body we cannot see.

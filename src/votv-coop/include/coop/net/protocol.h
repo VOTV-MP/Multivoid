@@ -4182,7 +4182,10 @@ enum class CoinGunResultCode : uint8_t {
     NotSellable   = 5,  // the host's own sellObject said sold=0 for this prop's name
     HostInternal  = 6,  // a reflection resolve / dispatch on the host failed -- our bug, not theirs
     TooFarAway    = 7,  // v140 (A50): the named prop is not within the sender's own reach. The gun
-                        // `[V]` traces `arm(1000.0)` FROM THE PLAYER, so a prop the sender could not
+                        // `[V]` traces `arm(1000.0)` from the sender's own CAMERA (2026-08-25
+                        // correction: `mainPlayer.arm` starts at
+                        // `GetPlayerCameraManager().K2_GetActorLocation()`, not at the actor root --
+                        // the body is the same, the origin is an eye-height above it), so a prop the sender could not
                         // possibly have shot is not a sale, it is an enumeration. Also the answer
                         // when the sender has no live puppet on the host to measure against at all
                         // (fail-CLOSED: no body, no reach).

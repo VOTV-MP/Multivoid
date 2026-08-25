@@ -107,8 +107,17 @@ std::unordered_map<std::wstring, ue_wrap::CachedObjRef> g_sold;
 // `[V]` prop_coingun's ubergraph statement [4], read this session off research/bp_reflection:
 //     K2Node_Event_player->CALLVIRT arm(1000.0, out arm_start, out arm_end, out arm_rotation)
 //     LineTraceSingleForObjects(self, arm_start, arm_end, ...)
-// The reach is 1000 uu and the trace originates AT THE PLAYER, not at the gun -- which is exactly
+// The reach is 1000 uu and the trace originates on the PLAYER, not on the gun -- which is exactly
 // why the sender's own puppet is the right thing to measure against.
+//
+// PRECISION CORRECTION (2026-08-25). The line above used to read "AT THE PLAYER", and `mainPlayer.arm`
+// says otherwise: `[V]` `start := GetPlayerCameraManager().K2_GetActorLocation()` and
+// `end := start + CameraForwardVector * (customLength > 0 ? customLength : armLength)`. The trace
+// begins at the PLAYER CAMERA, which follows the player at eye height, not at the actor root that
+// `GetActorLocation` reports. The conclusion is unchanged -- the camera is rigidly the sender's own
+// body -- but the offset is real and is one of the things `kPoseStalenessUU` below absorbs. This lane
+// has already shipped four generations of a comment that overstated what was measured (v140 audit,
+// I-3/4/5/6); a comment that is approximately true is the shape that becomes false later.
 constexpr float kGunReachUU = 1000.0f;
 
 // The pose-staleness budget. The host's copy of a client's body is behind reality by the one-way
@@ -364,7 +373,7 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
             if (logIt) UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=too-far-away "
                     "(dist=%.0f allowed=%.0f; -1 for both means the sender has no live puppet here, "
                     "so there is no body to measure a reach from and we refuse rather than assume "
-                    "one). The gun `[V]` traces arm(1000.0) FROM THE PLAYER, so a prop outside that "
+                    "one). The gun `[V]` traces arm(1000.0) from the sender's own camera, so a prop outside that "
                     "reach was not shot -- naming it is enumeration, not a sale.",
                     senderSlot, artifact.c_str(), dist, allowed);
             return;
