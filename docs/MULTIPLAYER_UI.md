@@ -320,26 +320,39 @@ USER 2026-08-25: *"кнопки в главном меню (MULTIPLAYER, Multivo
 downgrade.** Both existing elements do not merely *look* like the game — they are the game's own
 widget classes carrying the game's own style, **read off the live menu at runtime**:
 
-| element | how it is built | what it clones, from where |
+> **CORRECTED within the hour, 2026-08-25 — the first version of this section overstated the
+> mechanism, and the correction weakens one of its three arguments to nothing. Read this table, not
+> the earlier claim that both elements "clone the live style".** The two are NOT built the same way:
+
+| element | how it is built | what it actually takes from the game |
 |---|---|---|
-| **MULTIPLAYER button** | `engine::InjectCanvasButton(refButton, label, &out)` (`engine.h:549`) | a real `UButton` whose `FButtonStyle` is cloned from the live `button_start` ("NEW GAME") |
-| **the version / update line** (the upper-left "Multivoid …" text) | `engine::InjectTextRowAbove(refText, ...)` (`engine.h:551-564`) | VOTV's own `txt_version` — its **text style** (font/colour/shadow/justification) **and** its row's **slot layout** (padding/alignment), inserted as one more row in the same `UVerticalBox` |
+| **MULTIPLAYER button** | `engine::InjectCanvasButton(refButton, label, &out)` (`engine_widget.cpp:365-432`) | **not a style clone.** It walks `refButton`'s slot -> parent `UVerticalBox` and adds our `UButton` as a SIBLING there, so **slot + layout parity is structural**. The label's text style is **hardcoded from a MEASUREMENT** — `font_ui`, Size 16, ShadowOffset (2,2), black shadow, *"verified: `bp_reflection/ui_menu.json` tex_btnStart/tex_btnstat"* — and the label is then **deliberately tinted CYAN** to mark the coop entry. The source comment ends *"(Font parity is deferred.)"* |
+| **the version / update line** (the upper-left "Multivoid …" text) | `engine::InjectTextRowAbove(refText, ...)` (`engine.h:551-564`) | **a real clone**: VOTV's own `txt_version` text style (font/colour/shadow/justification) **and** its row's slot layout (padding/alignment), inserted as one more row in the same `UVerticalBox` |
 
-Three concrete reasons a pak-authored replacement would be worse, not equal:
+So the arguments, re-stated honestly after reading the implementation:
 
-1. **A clone tracks the game; an authored asset freezes it.** The style is copied from the live
-   reference widget *on every menu entrance*. If VOTV recooks its menu — a new font, a new button
-   brush, a palette change — our button follows automatically. A pak widget carries a **snapshot of
-   the style taken at authoring time** and would silently drift out of match on exactly the game
-   update we are otherwise adapting to (`docs/VERSION_MIGRATION.md`'s whole subject).
-2. **The version line is a CHILD of the menu, so lifetime is free.** Because it is inserted into the
-   menu's own `UVerticalBox`, it auto show/hides with the menu — the header of `InjectTextRowAbove`
-   states it: *"a child of the menu, so it auto show/hides with the menu (no viewport add/remove, no
-   per-frame gating)"*. A pak widget added to the viewport needs that gating **written and
-   maintained by us**, which is new code that can be wrong.
-3. **There is nothing for a pak to add here.** A pak buys *custom art*. For these two elements we do
-   not want custom art — we want to be indistinguishable from `button_start` and `txt_version`, which
-   is what cloning literally guarantees.
+1. ~~**A clone tracks the game; an authored asset freezes it.**~~ **RETRACTED — this was wrong for the
+   button.** `InjectCanvasButton` writes **frozen constants** measured once from `ui_menu.json`; it
+   does not re-read `button_start`. A pak asset would freeze values too, so on this axis the two are
+   **equivalent, not favourable to us**. (It remains true for the version LINE, which does clone at
+   runtime — but that is one element, not the pair.)
+2. **The version line and the button are CHILDREN of the menu, so lifetime and layout are free.**
+   Both are inserted into the menu's own `UVerticalBox`. `InjectTextRowAbove`'s header states the
+   consequence: *"a child of the menu, so it auto show/hides with the menu (no viewport add/remove,
+   no per-frame gating)"*. A pak widget added to the viewport needs that gating **written and
+   maintained by us**, plus its own position/DPI handling. **This is the strong argument and it
+   survives intact.**
+3. **A pak buys custom art, and custom art is not the goal here.** We want to be indistinguishable
+   from `button_start` and `txt_version`. That is a parity problem, and parity is cheaper to reach by
+   measuring the reference widget than by drawing a new one that must then be kept matching.
+
+**Residual this correction exposes, and it is real:** our own source says **"Font parity is
+deferred"** — so button-label parity is **incomplete today**, by admission, not by measurement of the
+result. Nobody has compared our button to `button_start` on screen. **If the user's "они хуже?"
+was prompted by actually seeing a difference, the fix is to close that residual (re-read the
+reference widget's style at inject time instead of using the frozen constants), NOT to move the
+element into a pak.** That is a small, contained change in `engine_widget.cpp` and it would also make
+argument 1 true for the first time.
 
 **So the rule this section establishes, and it is the one to build by:**
 
@@ -382,9 +395,14 @@ requires it for non-trivial work; this qualifies).
    unaffected either way.**
 2. **Build the browser's TREE at runtime** (no pak): a `UBorder` panel + a scroll container + N row
    widgets, each row a `UHorizontalBox` of `UTextBlock`s, clicks polled per §7's pattern. This is
-   pure `engine_widget.cpp` extension and needs **nothing from the editor**. New UMG classes to
-   resolve by name, the same way `Button` / `VerticalBox` / `TextBlock` already are: `ScrollBox`,
-   `HorizontalBox`, `Border`, `Image`, `SizeBox`.
+   pure `engine_widget.cpp` extension and needs **nothing from the editor**. **`[V]` measured
+   2026-08-25: the ONLY UMG classes we resolve today are `TextBlock`, `VerticalBox` and `Button`
+   (`sdk_profile_names.h:384,405,432`) — `ScrollBox`, `HorizontalBox`, `Border`, `Image` and `SizeBox`
+   appear NOWHERE in the tree.** They should resolve by FName the same way (they are ordinary UMG
+   `UClass`es), but that is an **inference, not a measurement** — confirm each one resolves before
+   planning around it, and expect the per-class *slot* offsets (`UScrollBoxSlot`, `UBorderSlot`,
+   `UHorizontalBoxSlot`) to need the same treatment `UVerticalBoxSlot_LayoutSize` already gets in
+   `sdk_profile.h`.
 3. **Add the ART from the pak** once step 1 says how: brush textures for the row/hover/selected
    states, the scrollbar, the status icons. If step 1 failed, ship these as `UTexture2D` assets
    (which our Python cook chain *can* already emit) and set them on runtime-built `UImage`/`UBorder`

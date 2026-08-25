@@ -2636,7 +2636,26 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   `docs/COOP_DISPATCH_VISIBILITY.md` — `CLAUDE.md`'s reading order already mandates it at step 4. A
   module header answers *"how do I use this facility"*; the map answers *"is this possible at all"*,
   and a design rests on the second. When they disagree, **the map wins and the header is a doc
-  defect**. Full: `memory/lesson_a_module_header_is_not_the_capability_map.md`.
+  defect**. **SECOND SHAPE 2026-08-25 — with no map to consult, the NEIGHBOUR became the spec.**
+  Answering "should the main-menu buttons move to a pak?", a build plan asserted the MULTIPLAYER
+  button is *"a real `UButton` whose `FButtonStyle` is cloned from the live `button_start`"* and
+  argued from it that *a clone tracks the game while an authored asset freezes it*.
+  `engine_widget.cpp:365-432` says otherwise: it walks `refButton`'s slot to its parent `UVerticalBox`
+  and adds ours as a **sibling** (slot/layout parity is structural — that part is real), but the
+  label's style is **hardcoded constants measured once** from `bp_reflection/ui_menu.json` (`font_ui`,
+  size 16, shadow (2,2), black), the label is **deliberately tinted cyan**, and the comment ends
+  **"(Font parity is deferred.)"**. So the argument was backwards — our values freeze exactly like a
+  pak's — and a third of the case was retracted inside the hour, in a doc another session had been
+  told to build from. The wrong inference came from `InjectTextRowAbove` twenty lines below: same
+  argument shape, and its comment **explicitly says it clones**. *Look FIRST:* **a neighbour is not a
+  specification** — a shared naming pattern is a reason to read BOTH bodies; **treat a MISSING claim
+  as a claim** (if the sibling's header states a behaviour and this one's does not, the default is
+  that it does not do it); and **before a mechanism claim becomes an ARGUMENT, open the body** — a
+  header is enough to *use* a function, not to reason about what it guarantees. Cheap tell here:
+  parity written as hardcoded constants with a `bp_reflection/...` citation is measured-once, not
+  tracking; grep the body for any read of the reference object, and if the only reads are offsets
+  into our own new widget, nothing is being cloned.
+  Full: `memory/lesson_a_module_header_is_not_the_capability_map.md`.
   **SAME FAILURE, TWICE IN ONE SESSION — the general form is CONFIRMATION-STOPPING.** `/qf` round 39,
   minutes later: asked whether MTA heartbeats its entity streams, I read
   `CUnoccupiedVehicleSync.cpp:64` (`ulCurrentTime >= m_ulLastSyncTime + UNOCCUPIED_VEHICLE_SYNC_RATE`)
