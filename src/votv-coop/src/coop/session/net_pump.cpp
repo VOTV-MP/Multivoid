@@ -51,10 +51,9 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/core/reflection.h"
-#include "ue_wrap/core/walk_timer.h"  // L5: [WALK-TIME] profiling of the reaper World walk + the re-seed census
 #include "ue_wrap/core/sdk_profile.h"
+#include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/core/types.h"
 
 #include <array>
@@ -570,7 +569,7 @@ void Tick(coop::net::Session& session) {
                 g_reAnnounceWorldReady.store(false, std::memory_order_relaxed);
                 // Stamp the world we just announced against; a later re-seed only re-announces if the
                 // current world differs (maybeReAnnounce). Resolved here (rare -- once per real
-                // announce), never per-frame. R/P are the file-scope reflection/profile aliases.
+                // announce), never per-frame.
                 // B4 (2026-08-25): the SAME reader the reaper's world gate now uses. These two
                 // are compared against each other in MaybeRequestReAnnounce, so they must not
                 // be two different notions of "the current world" -- and `FindObjectByClass`

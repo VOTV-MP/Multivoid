@@ -166,7 +166,8 @@ bool NameEquals(const FName& name, const wchar_t* expected);
 bool NameStartsWith(const FName& name, const wchar_t* prefix);
 // Substring form. Its one world-name consumer is `world_identity`'s classifier
 // ("ntitled" matches the live UWorld's "Untitled_1" case-agnostically); the reaper
-// used to do this itself and no longer reads a world pointer at all (B4, 2026-08-25).
+// used to do this itself and no longer DEREFERENCES a world pointer (B4, 2026-08-25); it
+// still reads one as an opaque identity to pass along.
 // Bounded scan, zero alloc.
 bool NameContains(const FName& name, const wchar_t* needle);
 

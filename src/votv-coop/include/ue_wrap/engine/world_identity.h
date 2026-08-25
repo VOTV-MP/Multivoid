@@ -79,10 +79,18 @@ uint32_t Generation();
 
 // True when the reflection lookups this module needs could not be resolved (a game
 // recook renamed ULevel::OwningWorld / UPlayer::PlayerController /
-// UGameInstance::LocalPlayers). In that state CurrentWorld() returns nullptr and
-// every world term in the tree MUST fail OPEN -- degrading to the pre-2026-08-23
-// liveness-only behaviour is a performance defect; failing closed would make every
-// cached actor read as dead and take the whole mod down.
+// UGameInstance::LocalPlayers, or either of the two CLASSES the chain needs). In that
+// state CurrentWorld() returns nullptr and every world term that guards a CACHED
+// OBJECT READ must fail OPEN -- degrading to the pre-2026-08-23 liveness-only
+// behaviour is a performance defect; failing closed would make every cached actor
+// read as dead and take the whole mod down.
+//
+// THE EXCEPTION, written down because the next consumer will read the rule above and
+// follow it: a gate that decides WHETHER TO ACT ON THE WORLD -- rather than whether a
+// pointer is still valid -- fails CLOSED here on purpose, because Unknown is not a
+// licence to act. `registry_reaper` is the shipped instance: it neither reaps nor flees
+// on Unknown, accepts that a genuine recook therefore stops its safety net, and says so
+// in a one-shot alarm keyed on a sustained Unknown rather than on this flag.
 bool Degraded();
 
 // One-shot ERROR log + the degraded latch, called internally. Exposed so the boot

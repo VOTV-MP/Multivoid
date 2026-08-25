@@ -28,12 +28,21 @@ std::atomic<uint32_t> g_generation{1};   // 0 is reserved for "never stamped"
 std::atomic<bool>     g_degraded{false};
 std::atomic<WorldKind> g_worldKind{WorldKind::Unknown};
 
-// The gameplay map's name, as a SUBSTRING. `P::name::GameplayLevel` is the authoritative
-// spelling ("untitled_1") and lives on the version surface; the substring exists because the
-// live UWorld is named "Untitled_1" with a capital U (measured -- the client log prints
-// `menutravel: in gameplay (world='Untitled_1')`), and NameContains is the allocation-free
-// comparison. Everything that is NOT this is `Other`: the menu, preLoad, and the three
-// tutorial maps -- all six of VOTV's worlds are enumerated in mainGamemode's own level array.
+// The gameplay map's name, as a SUBSTRING -- and the substring is a DELIBERATE WIDENING, not a
+// case dodge. (An earlier version of this comment said it existed because the live UWorld is
+// named "Untitled_1" with a capital U; that reason is false -- `NameContains` compares with
+// `_wcsnicmp` and is case-insensitive already, so `NameEquals(name, P::name::GameplayLevel)`
+// would match. It is kept as a substring because it is what the reaper matched before this
+// module took the question over, and switching to the exact name would reclassify every OTHER
+// `untitled_*` map -- the RE census names sixteen more (untitled_47/55/80/.../211) -- from
+// Gameplay to Other, i.e. from "reap here" to "flee from here". None is a travel target in
+// the 637-dump census, so the two forms are behaviourally identical TODAY; the exact-name form
+// is the better one and wants its own verified change, not a silent one riding this commit.
+// `P::name::GameplayLevel` remains the authoritative spelling on the version surface.
+//
+// Everything that is NOT this is `Other` -- the menu, preLoad and the three tutorial maps are
+// the ones mainGamemode's own level array enumerates; that array is the TRAVEL set, not the
+// full map list, which is why this is written as a complement rather than as a list.
 constexpr const wchar_t* kGameplayWorldSubstr = L"ntitled";
 
 // ---- resolution (name-driven; the version surface, per docs/VERSION_MIGRATION) --
@@ -208,7 +217,12 @@ void LogResolutionStateOnce() {
     // The FLAG is refreshed on every call; only the LOG LINE is once. Latching both
     // together is how a transient boot-window miss would be reported as permanent
     // even after a later retry succeeded.
-    const bool bad = (g_owningWorldOff < 0 || g_localPlayersOff < 0 || g_playerCtrlOff < 0);
+    // The CLASSES belong in this predicate too, not just the offsets: `WorldOf()` rejects
+    // unconditionally on `g_levelCls`/`g_worldCls`, so a class-name break would leave every
+    // world term dead while this line reported HEALTH -- a log that actively asserts the
+    // opposite of the truth is worse than silence (audit 2026-08-25).
+    const bool bad = (g_owningWorldOff < 0 || g_localPlayersOff < 0 || g_playerCtrlOff < 0 ||
+                      g_levelCls == nullptr || g_worldCls == nullptr);
     g_degraded.store(bad, std::memory_order_relaxed);
     static bool sLogged = false;
     if (sLogged) return;
@@ -219,11 +233,12 @@ void LogResolutionStateOnce() {
         // says WHICH one moved.
         UE_LOGE("world_identity: DEGRADED -- ULevel::OwningWorld=%d "
                 "UGameInstance::LocalPlayers=%d UPlayer::PlayerController=%d "
-                "(-1 = not found). Every world-currency term in the tree now fails "
+                "(-1 = not found; ULevel=%p UWorld=%p, null = the CLASS itself did not "
+                "resolve). Every world-currency term in the tree now fails "
                 "OPEN, i.e. back to liveness-only caches and the 2026-08-23 "
                 "stale-cross-world-pawn class of bug. A game recook that renamed one "
                 "of these fields looks exactly like this.",
-                g_owningWorldOff, g_localPlayersOff, g_playerCtrlOff);
+                g_owningWorldOff, g_localPlayersOff, g_playerCtrlOff, g_levelCls, g_worldCls);
     } else {
         UE_LOGI("world_identity: resolved OwningWorld=+0x%X LocalPlayers=+0x%X "
                 "PlayerController=+0x%X", g_owningWorldOff, g_localPlayersOff,

@@ -134,30 +134,59 @@ bool Tick(coop::net::Session& session) {
         // PlayerController -> ULevel::OwningWorld chain, which the dying world cannot hold
         // alive, and it publishes the CLASSIFICATION so nothing here dereferences a world
         // pointer. It also costs no walk: the memo is refreshed at 10 Hz by whoever asks.
-        const auto kind = ue_wrap::world_identity::CurrentWorldKind();
+        const auto  kind  = ue_wrap::world_identity::CurrentWorldKind();
+        // ONE read per scan, taken at the same instant as the kind. Not re-read at the use
+        // site below: `CurrentWorld()` re-enters the 100 ms refresh, and both of its call
+        // sites sit AFTER synchronous full-array walks (ReSeedKnownKeyedProps /
+        // BindUnboundReCreates -- the class measured at 120 ms avg, 1880 ms max on a
+        // reporter's host), so a re-read there would usually land in a DIFFERENT refresh
+        // than the one `kind` came from and can answer null mid-travel. Passing null into
+        // MaybeRequestReAnnounce reads as a world CHANGE and arms a spurious re-announce --
+        // the 2026-06-16 double-snapshot + duplicate-kerfur bug. The old code was immune
+        // because it captured `reapWorld` once at the top of the scan; so does this.
+        void* const world = ue_wrap::world_identity::CurrentWorld();
         const bool inGameplayWorld = (kind == ue_wrap::world_identity::WorldKind::Gameplay);
-        // The one case this reader is WORSE than the walk it replaces, stated rather than
-        // discovered later. `Degraded()` means a recook renamed one of the three fields the
-        // chain walks, so the kind is Unknown for the whole process -- and Unknown is not
-        // Gameplay, so THIS MODULE'S DECLARED SAFETY NET (the mass-GC-purge reap that keeps
-        // the tracker off its 16384 caps) stops running. That is a real cost and it is taken
-        // deliberately: the alternative, treating Unknown as gameplay, resumes the reap at the
-        // MENU and brings back the RAM balloon this gate exists to prevent -- a user-visible
-        // OOM versus a silent degradation after ~7 transitions. Post-recook the mod needs a
-        // port either way (docs/VERSION_MIGRATION.md); what it must not do is degrade QUIETLY.
-        if (kind == ue_wrap::world_identity::WorldKind::Unknown &&
-            ue_wrap::world_identity::Degraded()) {
-            static bool sSaid = false;
-            if (!sSaid) {
+        // THE ONE CASE this reader is worse than the walk it replaces, stated rather than
+        // discovered later. If the world cannot be resolved at all, `kind` is Unknown, and
+        // Unknown is not Gameplay -- so FIVE things stop, not the two an earlier draft of this
+        // comment named: the mass-GC-purge reap (this module's declared safety net, the thing
+        // that keeps the tracker off its 16384 caps), the world-change re-seed, the STEADY
+        // re-seed and with it `SeedGeneration()` itself (the wake signal deferred joiners wait
+        // on -- `SetReaperInGameplayWorld(false)` closes `ReseedGatePasses_`, which early-returns
+        // before the bump), AND the quit-to-menu flee, which is the bug this commit exists to
+        // fix. So the honest trade is NOT "an OOM versus a silent degradation": treating Unknown
+        // as gameplay would resume the reap AT THE MENU, but leaving it as Unknown keeps the
+        // SESSION running at the menu, which this file's own RAM-balloon guard below calls the
+        // same balloon by another route. Neither branch avoids it; this one at least cannot
+        // re-seed on the menu's own actors. Post-recook the mod needs a port either way
+        // (docs/VERSION_MIGRATION.md) -- what it must not do is degrade QUIETLY.
+        //
+        // The alarm keys on the SYMPTOM (a sustained Unknown), not on `Degraded()`. Keying it on
+        // the flag left the quiet path open: `world_identity`'s `bad` predicate covers the three
+        // OFFSETS, and a failure to resolve the World or Level CLASS would leave `Degraded()`
+        // false while `WorldOf()` returns null forever -- the log would assert health while every
+        // gate above was off. `sEverKnown` keeps a slow boot from tripping it.
+        {
+            constexpr int kUnknownScansBeforeAlarm = 8;  // x the 4 s scan = ~32 s
+            static int  sUnknownScans = 0;
+            static bool sEverKnown = false, sSaid = false;
+            if (kind != ue_wrap::world_identity::WorldKind::Unknown) {
+                sEverKnown = true;
+                sUnknownScans = 0;
+            } else if (sEverKnown && !sSaid && ++sUnknownScans >= kUnknownScansBeforeAlarm) {
                 sSaid = true;
-                UE_LOGE("reaper: world_identity is DEGRADED, so the current world is Unknown and "
-                        "the dead-Prop-Element reap + world-change re-seed are BOTH OFF for this "
-                        "process. Prop tracking will silently break after ~7 world transitions "
-                        "(the 16384 tracker caps). This is a version-surface break -- see the "
-                        "world_identity DEGRADED line above it and docs/VERSION_MIGRATION.md.");
+                UE_LOGE("reaper: the current world has been UNRESOLVABLE for ~%d s "
+                        "(world_identity degraded=%d). While it stays that way FIVE things are "
+                        "off: the dead-Prop-Element reap, the world-change re-seed, the steady "
+                        "re-seed (so SeedGeneration is FROZEN and deferred joiners never wake), "
+                        "and the quit-to-menu flee -- so a peer that leaves to the menu keeps its "
+                        "session, and prop tracking breaks silently after ~7 world transitions "
+                        "(the 16384 caps). This is a version-surface break: see the world_identity "
+                        "resolution line and docs/VERSION_MIGRATION.md.",
+                        kUnknownScansBeforeAlarm * 4,
+                        ue_wrap::world_identity::Degraded() ? 1 : 0);
             }
         }
-        coop::prop_element_tracker::SetReaperInGameplayWorld(inGameplayWorld);
         // RAM-balloon guard (2026-06-08, user: HOST pressed MAIN MENU mid-session ->
         // ballooning). VOTV's OWN quit-to-menu travels to /Game/menu WITHOUT going
         // through our FleeToMainMenu, so the session stays running + our whole layer
@@ -189,7 +218,15 @@ bool Tick(coop::net::Session& session) {
             coop::net_pump::FleeAfterNativeMenuTravel(session);
             return true;
         }
-        if (!inGameplayWorld) coop::prop_element_tracker::SetInPurgeEpisode(false);  // inert at menu; re-arm on gameplay re-entry
+        // POSITIVE `Other`, matching the flee above and the rule this module's own header
+        // states: a gate that ENDS something may not fire on `Unknown`. Clearing the episode
+        // ENDS it, and a travel publishes Unknown for ~1 s -- during which the reaper is
+        // running at tick rate (the escalation below cancels the 4 s throttle inside an
+        // episode), so a negation here clears a live episode within ~16 ms and skips the
+        // whole episode-END block: the deleter flush, the dead-key drain, the re-seed, the
+        // re-bind and the client re-announce.
+        if (kind == ue_wrap::world_identity::WorldKind::Other)
+            coop::prop_element_tracker::SetInPurgeEpisode(false);  // inert at the menu; re-arms on gameplay re-entry
         std::vector<coop::element::ElementId> reapedEids;
         const size_t reaped = inGameplayWorld
             ? coop::prop_element_tracker::ReapDeadLocalPropElements(kReapEvictCap, &reapedEids)
@@ -270,9 +307,8 @@ bool Tick(coop::net::Session& session) {
         // actually SWAPPED since our last announce -- NOT for the join's menu-shadow drain within
         // the same world (which spuriously double-snapshotted + duped kerfurs). The announce
         // axis' state + compare live with their ONE owner (net_pump).
-        auto maybeReAnnounce = [&session]() {
-            // Both call sites are inside `inGameplayWorld` branches, so the read is non-null there.
-            coop::net_pump::MaybeRequestReAnnounce(session, ue_wrap::world_identity::CurrentWorld());
+        auto maybeReAnnounce = [&session, world]() {
+            coop::net_pump::MaybeRequestReAnnounce(session, world);
         };
         if (reaped >= kReseedPurge) {
             if (!coop::prop_element_tracker::InPurgeEpisode()) {
@@ -280,7 +316,11 @@ bool Tick(coop::net::Session& session) {
                 UE_LOGI("net_pump: mass-purge detected (reaped %zu >= %zu) -- world-change re-seed deferred to drain-complete",
                         reaped, kReseedPurge);
             }
-        } else if (coop::prop_element_tracker::InPurgeEpisode()) {
+        } else if (inGameplayWorld && coop::prop_element_tracker::InPurgeEpisode()) {
+            // `inGameplayWorld` is explicit here rather than inherited: with the episode clear
+            // above now requiring positive `Other`, an `Unknown` scan reaches this branch with
+            // `reaped == 0` (the reap is gameplay-gated) and would run the episode-END work --
+            // including maybeReAnnounce -- in the middle of a travel. Unknown does NOTHING.
             // Drain caught up: the old level's dead Prop Elements are fully
             // evicted and the new level has loaded. Re-seed now (clean -- no
             // recycled-address collisions) + catch up connected peers.
