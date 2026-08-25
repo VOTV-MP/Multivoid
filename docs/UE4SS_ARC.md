@@ -623,8 +623,11 @@ they are the concrete payoff of the D-3 choice:
 
 The size gap is real and worth naming before WP-9: **17,688,064 B vs 814,592 B** — 21× the largest
 VOTV C++ mod. Thunderstore's documented ceiling is ~5 GB, so this is not a store problem; it is a
-*download-on-every-update* problem, and it is the strongest practical argument for §7.6's
-"skins as a separate package" conclusion.
+*download-on-every-update* problem. ~~and it is the strongest practical argument for §7.6's
+"skins as a separate package" conclusion.~~ **Corrected 2026-08-25 within a day of being written: that
+last clause cited a recommendation the user had already overturned on 2026-08-23 (§7.7c part 1 — one
+package, base pak inside), re-confirmed 2026-08-25. The size fact stands and is the reason §7.7c caps
+the base pak at ~4 skins rather than all 14; it is not an argument for splitting the package.**
 
 **Two of §7.5's owed measurements are closed by this pass** — see §7.5.
 
@@ -809,9 +812,16 @@ below are a *"what do we commit to a public git repo"* triage (binaries, heavy, 
 considered decision about what to ship to players — they were presented as stronger than they are.
 
 The residual risk is not legal but **availability**: Thunderstore is a third party with its own
-content policy, and a takedown of the package would remove the *whole mod*, not just the skins. That
-argues for shipping skins as a **separate package** from the mod (see §7.7), which is better packaging
-anyway — skins are optional, bulky, and should not force a re-download on every mod update.
+content policy, and a takedown of the package would remove the *whole mod*, not just the skins.
+
+> **SUPERSEDED 2026-08-23 by §7.7c part 1, re-confirmed by the user 2026-08-25** (*"пусть всё внутри
+> одного zip будет — сам мод и pak скинов дефолтных"*). The paragraph below argued from that residual
+> risk toward a **separate** skins package. **The user decided the opposite: ONE package, base pak
+> inside.** Kept because the availability risk it names is real and unchanged — it is a risk we
+> accepted, not one that went away. Do not re-derive the split from it.
+
+~~That argues for shipping skins as a **separate package** from the mod (see §7.7), which is better packaging
+anyway — skins are optional, bulky, and should not force a re-download on every mod update.~~
 
 ### 7.7 THE BLOCKER NOBODY WOULD HAVE PREDICTED — the skin scan is pinned to one folder name
 
@@ -1069,14 +1079,23 @@ have to hand our packaging to a third-party action to use one — we build the z
 
 **What genuinely cannot come from GitHub today, and why each is a different kind of problem:**
 
-1. **The `.pak` — an INPUT problem, not a tooling problem.** Zero `.pak` files are tracked
-   (`git ls-files | grep -c '\.pak$'` → 0; `.gitignore:6` `*.pak`), and the one we deploy,
-   `research/pak_re/hl_einstein_v1sc.pak`, sits under three independent ignore rules
+1. **The `.pak` — an INPUT problem, not a tooling problem, and now the ONLY unanswered one.** Zero
+   `.pak` files are tracked (`git ls-files | grep -c '\.pak$'` → 0; `.gitignore:6` `*.pak`), and the
+   one we deploy, `research/pak_re/hl_einstein_v1sc.pak`, sits under three independent ignore rules
    (`.gitignore:6`, `:144`, `:273`). The *chain* is deliberately editor-free Python + `repak`
    (`tools/client_model/README.md`), so nothing about it needs the Unreal Editor — but its inputs are
    a cooked template extracted from the game's own paks and a Valve source model, neither of which has
-   ever been in git (§7.8), and neither of which can be. **This needs a decision, not code**, and it
-   should be taken with §7.6/§7.7c (skins as a separate package) rather than inside WP-9.
+   ever been in git (§7.8), and neither of which can be.
+   **The DISTRIBUTION half is decided** (§7.7c part 1, re-confirmed by the user 2026-08-25: one zip,
+   base `scientists.pak` inside, ~4 skins). What is still open is narrower and purely mechanical:
+   **how the base pak's bytes reach a CI runner that cannot rebuild them.** The candidates, so this is
+   not re-derived from scratch: (a) commit the built `scientists.pak` — it is a *product* of the
+   ignored inputs, not the inputs themselves, and `.gitignore:6`'s blanket `*.pak` would need one
+   explicit negation with a written why; (b) attach it once to a GitHub release and have the
+   packaging step download it by pinned sha256; (c) keep it maintainer-side and accept that the
+   Thunderstore zip is assembled locally, which forfeits everything else §7.9 establishes.
+   **This is a decision for the user, not a design fork for Claude** — it turns on whether a
+   Valve-derived binary sits in a public git history, which is the §7.6/§7.8 question one level down.
 2. **`fingerprint.json`** — a human commits the toolchain dump from a cacheless run
    (`docs/RELEASE.md:99-104`); a mismatch is a hard refusal (`fingerprint.ps1:56-60`). By design.
 3. **The build number, `LEDGER.tsv`, `notes/b<N>.md`, the tag push** — human by design; `LEDGER.tsv`
@@ -1088,18 +1107,25 @@ have to hand our packaging to a third-party action to use one — we build the z
 repeatedly, so it is a proven path rather than a hypothetical, but it is the one dependency whose
 availability we do not control and it is worth naming before anyone calls the CI build hermetic.
 
-**One asset nobody has costed: the icon.** Thunderstore requires `icon.png` at the zip root, **exactly
-256×256** (§7.2b: all five field packages comply). This repo tracks **zero image files of any kind**
-(`git ls-files | grep -icE '\.(png|ico|svg)$'` → 0). The only candidate on disk is
-`site/public/favicon.svg`, and **`site/` is untracked** (`.gitignore:205`) — so CI cannot reach it.
-Whatever icon we choose has to be *committed to this repo* to be packageable, which makes it the first
-tracked binary asset the project would own. Small, but it is a decision (and a licence question if the
-art is not ours), not a build step.
+**The icon — RESOLVED, USER-SUPPLIED 2026-08-25.** Thunderstore requires `icon.png` at the zip root,
+**exactly 256×256** (§7.2b: all five field packages comply). When this section was first written the
+repo tracked **zero image files of any kind**, and the only candidate on disk was
+`site/public/favicon.svg` inside an untracked `site/` (`.gitignore:205`) that CI cannot reach. The
+user then supplied the art. It now lives in the repo, and it is the **first tracked binary art asset
+the project owns**:
+
+- `assets/branding/icon-512.png` — the master, verbatim as supplied (512×512, PNG, 32bpp alpha).
+- `assets/branding/icon.png` — **256×256, GENERATED** from the master by the one-line HighQualityBicubic
+  downscale recorded in `assets/branding/README.md`. Alpha survives (the art has rounded corners, and
+  the Thunderstore spec explicitly supports transparency). Never hand-edit it; re-run the line.
+- Provenance, stated once so it is not re-litigated: the art is a Multivoid screenshot showing the
+  HL-derived client model. That is the **same asset class §7.6 already settled** — it ships.
 
 **Where this lands the WP-9 estimate:** unchanged in kind, sharper in shape. WP-9 is a `7z`/`Compress-Archive`
-step plus a generated `manifest.json` plus a committed `icon.png` — bolted onto a release lane that
-already builds, verifies and publishes without a maintainer's PC. The pak is the only part that is not
-merely absent but *blocked*, and §7.6 already argues it should not ride in the same package anyway.
+step plus a generated `manifest.json`, with the `icon.png` now in hand — bolted onto a release lane
+that already builds, verifies and publishes without a maintainer's PC. **The base `scientists.pak`
+rides in the same zip** (§7.7c part 1), so item 1 above — how its bytes reach the runner — is the one
+remaining question standing between WP-9 and a fully hands-off publish.
 
 ---
 
