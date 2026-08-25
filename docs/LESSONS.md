@@ -33,6 +33,34 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 1. How to work (process / working agreements)
 
+- **A safety constraint added to a spike can BLIND the measurement, and the resulting PASS/FAIL is a
+  fact about the constraint.** 2026-08-25: a `/qf` round correctly noticed that RUNG 1 of the native-UI
+  probe WRITES into VOTV's live `ui_menu_C::switcher_widgets` — at our index ESC is a no-op and a
+  throwaway has no `button_back`, so a hold left open strands the player — and hardened it to *"restore
+  the index and `RemoveChild` in the SAME tick"*. `[V]` Slate lays out AFTER a `ProcessEvent` observer
+  returns, so a same-tick restore presents no frame with the widget active and leaves
+  `GetDesiredSize()` reading the same `(0,0)` it read before: the spike **always** reports "did not
+  render", on a build where it does. Run as written it would have killed the 12th-child placement on
+  false evidence; held for a 2,200 ms deadline it read `(623,39)` and RENDERS. *Look FIRST:* when you
+  harden a spike, re-ask what it can still OBSERVE — and bound the exposure by a deadline the
+  instrument owns (restore only if the state is still yours; tear down on the edge that would make it
+  dangerous) rather than by shrinking the window to zero.
+  `memory/lesson_a_safety_constraint_can_blind_the_measurement.md`
+
+- **A counter over a memoised, cross-thread predicate counts the REFRESH, not the phenomenon — and it
+  lies hardest in exactly the window you are investigating.** 2026-08-25: counting presented frames by
+  `world_identity::CurrentWorldKind()` from the Present detour gave `unknown=571` of 1103 — and `[V]`
+  **every one was a STALE sample** (`fresh=0`), because the memo is written only by a game-thread
+  caller and `GT::Post` drains inside `ProcessEvent`, which barely runs at boot. "No world existed" and
+  "we had not yet measured whether one did" were one bucket, and only the first is evidence about what
+  a UMG surface could have drawn. Two sub-traps, both real: stamping "refreshed" when you QUEUE the
+  refresh makes the stale bucket permanently empty (two stamps are needed — the queue stamp gates the
+  post cadence so a blocked game thread does not accumulate a task per frame; the ran stamp is
+  staleness), and a zero-initialised stamp is *never refreshed*, not "0 ms ago". *Look FIRST:* any
+  predicate read across threads is a memo — ask who writes it, on which thread, and what stops that
+  writer during the window that matters; then bucket staleness beside the value.
+  `memory/lesson_a_counter_over_a_cross_thread_memo_counts_the_refresh.md`
+
 - **Your own memory file can silently EDIT the plan of record, and you will read it back as the plan.**
   2026-08-25: on "go next" I was one call from implementing a security root (A54). `[V]` The design doc
   of record ordered `A52 -> B3 -> B4 -> checklist`; A52 had shipped, so B3 was next -- and B3/B4 are the
@@ -3319,6 +3347,39 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   `memory/lesson_a_cannot_in_a_comment_is_a_snapshot_of_what_was_tried.md`
 
 ## 5. Engine / UE4 facts
+
+- **`FindObjectByClass` answers "the FIRST instance", which is not "the LIVE one" — and a
+  WidgetBlueprint has a second non-CDO instance to trip on.** 2026-08-25: reading VOTV's style donors
+  through `R::FindObjectByClass(L"ui_saveSlots_C")` reported **every** widget field on
+  `ui_saveSlots_C` and `ui_settings_C` null, while both classes had a fully-populated instance sitting
+  in `ui_menu_C::switcher_widgets` as children 4 and 1. `[V]` A `WidgetBlueprint` carries a widget-tree
+  TEMPLATE that is a real instance of the generated class and is **not** named `Default__<Class>`, so
+  the CDO skip at `reflection.cpp:511` does not exclude it. The null read is not a crash — it is a
+  *plausible finding* ("nested sub-screen widgets don't exist until the screen is shown") that fits the
+  data, has a believable UMG mechanism, and would have forced a donor-table redesign around a
+  precondition the design had already rejected. A whole probe rung was written to measure the cause of
+  a phenomenon that did not exist. *Look FIRST:* prefer the owner that structurally HOLDS the object
+  (`GetChildAt(i)`, a panel's `Slots`, a field on the live parent); when a class-wide lookup is
+  unavoidable, print the pointer you used AND the one the lookup returns — they differ silently, and
+  "the field is null" vs "I read a different instance" look identical in a log. A uniformly-null read
+  across many fields of one object is a smell about the OBJECT, not the fields.
+  `memory/lesson_findobjectbyclass_returns_the_first_instance_not_the_live_one.md`
+
+- **A cache reads null when the thing it caches is absent — so that null is not evidence about the
+  cache.** 2026-08-25, asking whether `FSlateBrush`'s unreflected `FSlateResourceHandle` at **+0x70**
+  (0x88 struct; reflected fields end at `ImageType` @0x6F, bitfields resume @0x80) is populated, which
+  gates whether `InjectCanvasButton`'s 0x278 `FButtonStyle` memcpy aliases a refcounted pointer with no
+  `AddRef`. The probe read the obvious donor — `ui_menu_C.button_start`, the button the shipped inject
+  actually clones — found 0/4 handles set and printed *"there is NO handle bug"*. `[V]` All four of that
+  donor's brushes carry **no `ResourceObject` at all**: VOTV's own main-menu buttons have no brush art,
+  which is separately worth knowing (it is why the inject looks native without loading a texture). The
+  caveat was already written in a comment three lines above the verdict that contradicted it. Re-read
+  against `ui_saveSlots_C.button_back` (which does carry `inst_uiButton`): **0/4 handles across 3/4
+  brushes that DO carry a resource** — and only that licensed the conclusion. *Look FIRST:* when a
+  probe answers "the derived thing is absent", ask what it derives FROM **on this exact sample**; null
+  cache + null source is a THIRD verdict (`INCONCLUSIVE`) that must exist in the code, not only in a
+  comment. Pick the sample that can produce a positive.
+  `memory/lesson_a_cache_reads_null_when_the_thing_it_caches_is_absent.md`
 
 - **VOTV's own maximum player speed is NOCLIP, not sprint — and noclip is reachable in ordinary play.**
   Measured 2026-08-25 from the BP dumps while sizing a movement bound: walk is `defSpeed = 400`; sprint
