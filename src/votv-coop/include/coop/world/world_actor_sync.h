@@ -15,7 +15,7 @@
 // HOST-AUTHORITATIVE (clients run a dormant event scheduler -- time_sync pins their TimeScale=0 -- so
 // they never fire an event themselves; the host is the sole event producer):
 //   - host interceptor: an allowlisted spawn -> allocate a WorldActor Element + broadcast WorldActorSpawn
-//     (reuse EntitySpawnPayload, savePersisted=0). Lets the spawn proceed (returns false).
+//     (WorldActorSpawnPayload). Lets the spawn proceed (returns false).
 //   - host POST observer (same UFunction): bind the returned AActor* + actor->eid reverse map.
 //   - host K2_DestroyActor PRE observer: broadcast WorldActorDestroy + release the Element.
 //   - host TickPoseStream (~sendHz): read each live WA's transform -> publish ONE WorldActorPose batch.
@@ -32,7 +32,7 @@
 
 namespace coop::net {
 class Session;
-struct EntitySpawnPayload;
+struct WorldActorSpawnPayload;
 struct EntityDestroyPayload;
 }  // namespace coop::net
 
@@ -68,7 +68,7 @@ void QueueConnectBroadcastForSlot(int peerSlot);
 
 // CLIENT receiver: materialize a transform-only mirror for a host WorldActorSpawn. Game-thread (the
 // event_feed dispatcher GT::Post's it; UFunction calls inside are game-thread only).
-void OnWorldActorSpawn(const coop::net::EntitySpawnPayload& payload);
+void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload);
 
 // CLIENT receiver: tear down the mirror for a host WorldActorDestroy. Game thread.
 void OnWorldActorDestroy(const coop::net::EntityDestroyPayload& payload);

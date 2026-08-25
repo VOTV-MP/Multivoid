@@ -120,7 +120,7 @@ bool IsAllowlistedClassNameW(const std::wstring& nm) {
 // Read the FTransform spawn param into the payload (translation + FQuat->FRotator + v99 Scale3D).
 // Identical math to npc_sync's interceptor (FQuat XYZW @ +0, FVector translation @ +0x10, Scale3D
 // @ +0x20 -- the piramid spawner passes 2.0 here; losing it half-sizes the mirror).
-void ReadSpawnXform(const void* params, coop::net::EntitySpawnPayload& p) {
+void ReadSpawnXform(const void* params, coop::net::WorldActorSpawnPayload& p) {
     if (g_spawnXformParamOff < 0) return;
     const uint8_t* xf = reinterpret_cast<const uint8_t*>(params) + g_spawnXformParamOff;
     const float qx = *reinterpret_cast<const float*>(xf + 0);
@@ -219,8 +219,7 @@ bool WorldActorSuppress_Interceptor(void* self, void* params) {
             reinterpret_cast<uint8_t*>(params) + g_spawnActorClassParamOff);
         if (!actorClass || !IsAllowlistedClass(actorClass)) return false;  // not a WA; let it run
 
-        coop::net::EntitySpawnPayload p{};
-        p.savePersisted = 0;  // event WAs are never save objects -> client fresh-spawns a mirror
+        coop::net::WorldActorSpawnPayload p{};
         ReadSpawnXform(params, p);
         const std::wstring cls = R::ToString(R::NameOf(actorClass));
         p.className.len = 0;
@@ -537,13 +536,12 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         if (!el) continue;
         void* actor = el->GetActor();
         if (!actor || !R::IsLiveByIndex(actor, el->GetInternalIdx())) { ++unbound; continue; }
-        coop::net::EntitySpawnPayload p{};
+        coop::net::WorldActorSpawnPayload p{};
         const std::string& tn = el->GetTypeName();
         p.className.len = 0;
         for (size_t i = 0; i < tn.size() && i < 63; ++i)
             p.className.data[p.className.len++] = tn[i];
         p.elementId = static_cast<uint32_t>(el->GetId());
-        p.savePersisted = 0;
         const auto loc = E::GetActorLocation(actor);
         const auto rot = E::GetActorRotation(actor);
         const auto scl = E::GetActorScale3D(actor);  // v99: the piramid is scale 2 -- the mirror must match
@@ -654,9 +652,8 @@ unsigned int HostEnrollExSpawn(void* actor) {
         std::lock_guard<std::mutex> lk(g_actorToWaIdMutex);
         g_actorToWaId[actor] = eid;
     }
-    coop::net::EntitySpawnPayload p{};
+    coop::net::WorldActorSpawnPayload p{};
     p.elementId = static_cast<uint32_t>(eid);
-    p.savePersisted = 0;  // event WAs are never save objects
     p.className.len = 0;
     for (size_t i = 0; i < clsW.size() && i < 63; ++i)
         p.className.data[p.className.len++] = static_cast<char>(clsW[i]);

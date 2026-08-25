@@ -528,9 +528,9 @@ bool HandleEntityEvent(net::Session& session,
         // otherwise flood crafted classNames forcing FindClass walks on the host game thread).
         // OnWorldActorSpawn does the full per-field validation (finite + bounds + allowlist + dedup);
         // its UFunction calls are game-thread only, so dispatch via GT::Post.
-        if (msg.payloadLen < sizeof(net::EntitySpawnPayload)) {
+        if (msg.payloadLen < sizeof(net::WorldActorSpawnPayload)) {
             UE_LOGW("event_feed: WorldActorSpawn payload too short (%zu < %zu)",
-                    static_cast<size_t>(msg.payloadLen), sizeof(net::EntitySpawnPayload));
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::WorldActorSpawnPayload));
             break;
         }
         if (msg.senderPeerSlot != 0) {
@@ -538,13 +538,13 @@ bool HandleEntityEvent(net::Session& session,
                     msg.senderPeerSlot);
             break;
         }
-        net::EntitySpawnPayload pWa{};
+        net::WorldActorSpawnPayload pWa{};
         std::memcpy(&pWa, msg.payload, sizeof(pWa));
         if (pWa.className.len > 63) {
             UE_LOGW("event_feed: WorldActorSpawn className.len=%u > 63 -- dropping", pWa.className.len);
             break;
         }
-        net::EntitySpawnPayload pWaCopy = pWa;
+        net::WorldActorSpawnPayload pWaCopy = pWa;
         ue_wrap::game_thread::Post([pWaCopy] {
             ::coop::world_actor_sync::OnWorldActorSpawn(pWaCopy);
         });

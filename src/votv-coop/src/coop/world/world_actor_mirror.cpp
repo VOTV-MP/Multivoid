@@ -45,7 +45,7 @@ using coop::element::WaMirrors;
 
 }  // namespace
 
-void OnWorldActorSpawn(const coop::net::EntitySpawnPayload& payload) {
+void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
     using ue_wrap::ParamFrame;
     using ue_wrap::Call;
     auto* s = D::Session();
