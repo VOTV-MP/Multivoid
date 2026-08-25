@@ -284,11 +284,19 @@ wb = tools.create_asset("ui_serverBrowser", "/Game/Mods/Multivoid",
 as not straightforward — `UWidgetTree` is poorly exposed to the 4.27 Python API. That needs a spike
 before anything is planned on it. Do not treat this route as costed until it is run.
 
-**(d) The route that needs none of the above.** Our tree is already built at runtime by shipping code
+**(d) The route that needs none of the above — and its tooling is not a plan, it SHIPS `[V]`.** Our tree is already built at runtime by shipping code
 (§3), so the pak does not have to carry a widget at all — it can carry **only art**: textures for the
 row/scrollbar/button brushes, a `UBorder` background, an icon set, and VOTV's `font_ui` is already on
 disk. No Blueprint graph means **no compiled class, so no downgrade problem, no Python `WidgetTree`
-problem, and no MCP need** — and the art half is exactly what our Python cook chain already does.
+problem, and no MCP need** — and the art half is not a capability we would have to build.
+**`tools/client_model/ue_tex.py` cooks a PNG into a UE 4.27 cooked `UTexture2D` package in pure
+Python with NO EDITOR**, its byte layout validated against the game's own `tex_kel3_skin`
+(*"19/19 both slots vs the template"*), it carries a `selftest`, and it is **already in production**
+— the portable skin pipeline calls it on every build (`tools/client_model/portable/build/stage/__main__.py:234`).
+The whole pak chain is the same shape: **we have never used the UE editor to ship an asset**;
+`ue_cook.py` splices the game's own cooked template byte-for-byte and hands off to UnrealPak.
+**Consequence for the ordering below: the editor/Python spike is blocking for route (a) ONLY. It
+blocks nothing on the path we would actually walk.**
 That is route B plus art, and it is the cheapest thing that closes the "we look dirty" gap the user
 raised back on 2026-05-25.
 
