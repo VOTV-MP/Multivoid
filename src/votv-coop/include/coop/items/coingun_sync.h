@@ -140,21 +140,28 @@ void Tick();
 
 // HOST ingest for `ReliableKind::CoinGunSell`. No-ops off the host.
 //
-// *** SECURITY A50 / A51 (2026-08-25) -- THIS RECEIVER IS NOT DEPLOYABLE AS WRITTEN. ***
-// It checks the payload SIZE and clamps the key, and that is the whole of its input validation:
+// SECURITY A50 -- CLOSED in v140 (2026-08-25). Both halves shipped; neither closes it alone:
+//   - AUTHORIZATION. The receiver now asks one question about the ACTOR before any question that
+//     spends the world: is the named prop within the SENDER'S OWN reach, measured on the host's copy
+//     of the sender's puppet? `[V]` the gun traces `arm(1000.0)` FROM THE PLAYER (prop_coingun
+//     ubergraph [4]), widened by the prop's measured bounds and one pose-staleness budget. MTA
+//     `CUnoccupiedVehicleSync.cpp:244/491` `IsPointNearPoint3D` shape. FAIL-CLOSED: no live puppet on
+//     the host means no body to measure from, so the sale is refused (`TooFarAway`) and the seller is
+//     told, rather than a reach being assumed for a body we cannot see.
+//   - CONSUMPTION. The host destroys the sold prop ITSELF, right after `sell` returns -- the native
+//     order (`sell` at gun ubergraph [24], `K2_DestroyActor` at [26]; the destroy has never been
+//     inside `sell`). Until v140 the cost half was delegated to the client's own PropDestroy arriving
+//     behind us, i.e. to the attacker's goodwill, and the success log said so out loud. The destroy
+//     rides E::DestroyActor -> Actor.K2_DestroyActor -> the ordinary prop_destroy_seam Func patch, so
+//     every peer learns about it through the one existing mechanism; the seller's own PropDestroy
+//     then lands as the steady-state no-op echo OnDestroyImpl_ already implements.
+// What this receiver still does NOT do, deliberately recorded rather than claimed away:
 //   - it does NOT range-check the eid (the `IsAllowedHostAllocatedEid` idiom 14 other receive sites
 //     obey). An earlier version of this sentence said "fully range-checks the payload" -- FALSE, and
-//     deleted rather than softened;
-//   - it does NOT bind the named artifact to `senderSlot` in any way, so ANY peer can name ANY prop
-//     in the host's world and be paid for it (A50);
-//   - the host does NOT destroy the prop it pays for -- `[V]` the sold prop's destroy lives in the
-//     GUN's ubergraph @1730, not in `sell` -- so the cost half of the transaction is delegated to the
-//     client's own PropDestroy, i.e. to the attacker's goodwill (A50);
-//   - the key resolve takes `ResolveLiveActorByKey`, whose cold fallback is a full GUObjectArray scan,
-//     at attacker-controlled rate on the game thread (A51).
-// Fix of record: `docs/security/TRACKER.md` 2026-08-25 block. The arbiter must perform the WHOLE
-// transaction (host destroys, client's destroy becomes a suppressed echo) AND carry the §2b proximity
-// check; neither alone closes it.
+//     deleted rather than softened. Tracked as an open item in the design doc's §11.4;
+//   - A51 (the key resolve's cold GUObjectArray fallback, walked at attacker rate on the game thread)
+//     is a SEPARATE open row and still blocks deploy on its own.
+// Rows + evidence: `docs/security/TRACKER.md` 2026-08-25 block.
 //
 // `senderSlot` names the peer to log and to address the CoinGunResult back to -- it does NOT select a
 // gun instance (FindLiveGun takes no argument and there is nothing to prefer; v137's comment here

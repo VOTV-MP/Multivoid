@@ -11,6 +11,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/remote_player.h"   // A50: the sender's puppet body, to measure its reach
 #include "coop/props/prop_element_tracker.h"
 #include "coop/session/world_load_episode.h"
 #include "coop/world/world_actor_sync.h"
@@ -29,6 +30,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <cwchar>
@@ -204,6 +206,62 @@ void OnVerbEntry(const vm::Bracket& b) {
 }
 
 // ---- host helpers ------------------------------------------------------------------------------
+
+// `[V]` prop_coingun's ubergraph statement [4], read this session off research/bp_reflection:
+//     K2Node_Event_player->CALLVIRT arm(1000.0, out arm_start, out arm_end, out arm_rotation)
+//     LineTraceSingleForObjects(self, arm_start, arm_end, ...)
+// The reach is 1000 uu and the trace originates AT THE PLAYER, not at the gun -- which is exactly
+// why the sender's own puppet is the right thing to measure against.
+constexpr float kGunReachUU = 1000.0f;
+
+// The pose-staleness budget. The host's copy of a client's body is behind reality by the one-way
+// latency + RemotePlayer::kInterpWindowMs (75 ms) + one send interval, and the native trace starts
+// at the player's ARM, which sits above the actor root that GetActorLocation reports. 600 uu covers
+// roughly half a second at a sprint plus the eye-height offset. Deliberately generous: this gate
+// exists to stop WORLD-WIDE enumeration, not to adjudicate centimetres, and a false refusal costs a
+// real player a real sale. Widening it does not re-open A50 -- the arbiter's own destroy does that
+// work; this bound only decides how far a peer may reach to spend the world's props.
+constexpr float kPoseStalenessUU = 600.0f;
+
+// A50 (2026-08-25). Is the named prop within the SENDER'S OWN reach, measured entirely on the HOST's
+// copies of both bodies? Before this existed, `senderSlot` occurred in this file only as a reply
+// address and a printf argument: the receiver asked five questions about the ARTIFACT and none about
+// the ACTOR, so any peer could name any prop in the world.
+//
+// MTA does exactly this for a write it did not witness --
+// `reference/mtasa-blue/Server/mods/deathmatch/logic/CUnoccupiedVehicleSync.cpp:244` and `:491`:
+// `IsPointNearPoint3D(vecVehiclePosition, pPlayer->GetPosition(), fMaxDistance)`. Same shape, same
+// reason, same place in the flow (before the state change is honoured, not after).
+//
+// FAIL-CLOSED: no live puppet on the host means there is no body to measure a reach from, so the
+// answer is no. A joining client whose puppet has not spawned yet is refused and TOLD (TooFarAway),
+// which is the principle-8 answer for this lane: the sale is the client's to retry, its own prop is
+// gone either way, and inventing a reach for a body we cannot see is precisely the enumeration hole.
+bool SenderMayReach(uint8_t senderSlot, void* prop, float& outDist, float& outAllowed) {
+    outDist = outAllowed = -1.f;
+    coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(senderSlot);
+    void* puppet = (rp && rp->valid()) ? rp->GetActor() : nullptr;
+    if (!puppet) return false;
+
+    const ue_wrap::FVector body = E::GetActorLocation(puppet);
+
+    // The prop's ORIGIN is not its surface, and the native trace stops at whatever it HITS -- so a
+    // large prop is legitimately sellable from further away than reach-from-origin. Measure the real
+    // bounds instead of inventing a constant fudge for "big things".
+    ue_wrap::FVector origin{}, extent{};
+    float propRadius = 0.f;
+    if (E::GetActorBounds(prop, /*onlyColliding=*/true, origin, extent)) {
+        propRadius = std::sqrt(extent.X * extent.X + extent.Y * extent.Y + extent.Z * extent.Z);
+    } else {
+        origin = E::GetActorLocation(prop);
+    }
+
+    const float dx = origin.X - body.X, dy = origin.Y - body.Y, dz = origin.Z - body.Z;
+    outDist    = std::sqrt(dx * dx + dy * dy + dz * dz);
+    outAllowed = kGunReachUU + propRadius + kPoseStalenessUU;
+    return outDist <= outAllowed;
+}
+
 void* FindLiveGun() {
     // `[V]` `sell` reads ZERO gun state and positions coins from the SOLD PROP's component, so ANY
     // live instance behaves identically -- there is nothing to prefer.
@@ -248,6 +306,8 @@ const wchar_t* ResultText(coop::net::CoinGunResultCode code) {
             return L"could not sell that: the host's store will not take it";
         case coop::net::CoinGunResultCode::HostInternal:
             return L"could not sell that: the host hit an internal error";
+        case coop::net::CoinGunResultCode::TooFarAway:
+            return L"could not sell that: the host does not see you next to it";
     }
     return L"could not sell that";
 }
@@ -427,6 +487,24 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
         return;
     }
 
+    // --- THE AUTHORIZATION GATE (A50, v140) -------------------------------------------------------
+    // FIRST question about the ACTOR, and it comes before every remaining question about the
+    // artifact so that a peer probing keys learns nothing it did not already have. Everything above
+    // this line is identity resolution; everything below it spends the world's props.
+    {
+        float dist = -1.f, allowed = -1.f;
+        if (!SenderMayReach(senderSlot, prop, dist, allowed)) {
+            Refuse(s, senderSlot, coop::net::CoinGunResultCode::TooFarAway);
+            UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=too-far-away "
+                    "(dist=%.0f allowed=%.0f; -1 for both means the sender has no live puppet here, "
+                    "so there is no body to measure a reach from and we refuse rather than assume "
+                    "one). The gun `[V]` traces arm(1000.0) FROM THE PLAYER, so a prop outside that "
+                    "reach was not shot -- naming it is enumeration, not a sale.",
+                    senderSlot, artifact.c_str(), dist, allowed);
+            return;
+        }
+    }
+
     // THE CONSUMPTION GUARD -- has this exact artifact already been minted for? (see g_sold)
     {
         auto it = g_sold.find(artifact);
@@ -532,13 +610,37 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
     g_sold[artifact].Set(prop);      // consume the artifact (see THE CONSUMPTION GUARD)
     SendResult(s, senderSlot, coop::net::CoinGunResultCode::Sold, points);
 
+    // --- THE ARBITER CONSUMES WHAT IT PAID FOR (A50, v140) ----------------------------------------
+    // `[V]` the sold prop's destroy lives in the GUN's ubergraph at [26] (`HitActor->K2_DestroyActor`,
+    // right after [24] `self->sell(...)`), NOT inside `sell` -- so calling `sell` alone mints coins
+    // and leaves the prop standing. Until v140 this half of the transaction was delegated to the
+    // client's own PropDestroy arriving behind us on the same lane, and the success log below said so
+    // out loud: a cost paid on the counterparty's honour is not a transaction. An attacker simply
+    // omitted the destroy.
+    //
+    // We run it HERE, in the native order (sell, then destroy), on the host's own copy. Nothing new
+    // has to broadcast it: E::DestroyActor dispatches Actor.K2_DestroyActor, which is the exact
+    // UFunction prop_destroy_seam Func-patches, so DestroySeamBody sees this destroy and sends the
+    // ordinary PropDestroy to every peer -- one owner, one mechanism. (SendSaleForDyingProp inside
+    // that seam is a no-op for us: it returns immediately off a Client role, and we are the host.)
+    // The seller's own PropDestroy then arrives at a host that no longer resolves the prop and lands
+    // as the steady-state no-op OnDestroyImpl_ already implements for an echo.
+    //
+    // This also makes the consumption guard's job much smaller: g_sold now only has to survive the
+    // window between this destroy and the actor actually leaving the key index, i.e. a replay landing
+    // in the SAME drained batch. It stays because that window is real -- the reliable inbox drains
+    // unbounded per tick, so two CoinGunSell packets in one frame is the cheapest thing an attacker
+    // can do.
+    E::DestroyActor(prop);
+
     // The coins the mint spawns are EX_CallMath BeginDeferreds from the gun's bytecode, so
     // npc_world_enum's source-gated Func thunk catches them and drains to
     // world_actor_sync::HostEnrollExSpawn -- that is what allocates each eid and broadcasts
     // WorldActorSpawn. Nothing here has to enroll anything.
     UE_LOGI("coingun[host]: SOLD slot=%u artifact='%ls' (resolved by %ls) name='%ls' price=%d -> "
-            "minted via gun=%p comp=%p. Coins are HOST-OWNED; whoever's body trips one credits the "
-            "host. The client's own PropDestroy follows on this lane and removes the prop.",
+            "minted via gun=%p comp=%p, and WE destroyed the prop ourselves (v140 A50: the arbiter "
+            "performs the whole transaction; the destroy rides the ordinary K2_DestroyActor seam out "
+            "to every peer). Coins are HOST-OWNED; whoever's body trips one credits the host.",
             senderSlot, artifact.c_str(), how, propNameStr.c_str(), points, gun, meshComp);
 }
 
