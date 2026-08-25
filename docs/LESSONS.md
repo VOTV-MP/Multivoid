@@ -104,7 +104,33 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   arguments that, re-derived, only showed it was unnecessary on the HAPPY path. *Look FIRST, on a
   sudden shrink:* which branch just disappeared, and was it load-bearing on the FAILURE path? A fix
   that shrinks by deleting the failure branch has stopped modelling failure, not converged.
+  **AND THE ORIGINAL DIRECTION, INSTANCED 2026-08-24 (`/qf` 46-47):** round 46 answered a cross-module
+  verb-identity defect with a **cross-cutting `.inc` id ratchet touching every consumer**; round 47
+  measured that the substrate **already owned a globally unique handle and simply was not publishing
+  it** (`RegisterVirtualVerb` requires the verb NAME to have static lifetime; the table stores that
+  pointer), collapsing the fix to ~4 lines plus the one offending consumer. **The tell was the shape,
+  before any measurement: the fix's blast radius exceeded the defect's** — one module misreading one
+  value. And the ratchet would not have been one: **an `.inc` of ints makes duplicates impossible only
+  if the registration signature becomes TYPED**, else it is convention wearing a ratchet's hat. ASK, when
+  a fix grows: *what does the substrate already own that is unique by construction?* — the answer is
+  often in the registration path, unpublished.
   `memory/feedback_a_converged_fix_should_shrink_not_grow.md`
+
+- **Your own session-end SUMMARY is a free measurement — read it before arguing mechanism.** 2026-08-24
+  (`/qf` 46-47). A kerfur gate defect was traced correctly (`av.active` is true for ANY registered verb,
+  so a foreign bracket inverts the gates) and elevated to **"SIXTH live shipped defect, ordered STRICTLY
+  BEFORE any new verb registration"** on that reasoning alone. `[V]` Both field logs already carried the
+  verdict, printed by that same module at `OnDisconnect`: `[kerfur_asm] CONTAINMENT SUMMARY
+  (session-end): catch{off=0 on=0} ... otherIn=6/7` — **zero conversions in the whole run**, so the
+  defect was latent; and `otherIn=6/7` further showed the bracket window WAS live with every in-window
+  spawn correctly class-rejected. The log had been read for several rounds — but **by searching for the
+  SYMPTOM** (the coin's eid, the credit lines, the drive traces), and a session-end summary sits at the
+  END, one line, answering a question nobody had asked. LOOK FIRST: before writing "live shipped defect"
+  or ordering work on urgency, grep the artifacts for the module's own counters (`SUMMARY`,
+  `session-end`, `STATS`, `GATES`, `containment`) — this project dumps them at `OnDisconnect` precisely
+  so a run can never end having measured nothing, and that investment is wasted unread. **Grep for your
+  SUBSYSTEM'S name, not only for the symptom.**
+  `memory/lesson_your_own_session_end_summary_is_a_free_measurement.md`
 
 - **An instrument must report its INPUTS, not only its verdict.** 2026-07-31: one probe printed
   `PREDICATE DEAD` on four consecutive runs for four UNRELATED reasons — it targeted a class default
@@ -1650,7 +1676,16 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   the frame it is handed, so a target named in the brief's first line gets refined, never replaced.
   The tell was in plain sight: zero occurrences in `docs/`. LOOK FIRST: run
   `grep -rl <class> --include=*.umap research/pak_re/extracted` at ROUND 0, and put the target itself
-  in the brief as a question. `memory/lesson_mechanical_tractability_is_not_reachability.md`
+  in the brief as a question.
+  **SECOND INSTANCE 2026-08-24, ONE DAY LATER, same author — this time about SEVERITY.** A kerfur gate
+  defect was traced correctly at the mechanism level and written up as the "SIXTH **live shipped**
+  defect, ordered STRICTLY FIRST" with no reachability census — while both field logs' session-end
+  `CONTAINMENT SUMMARY` already read `catch{off=0 on=0}`, i.e. zero conversions occurred and the defect
+  was **latent**. **Generalisation: a correct mechanism trace is not measurement either.** It feels like
+  one because it produces real citations, but it establishes only that the defect CAN fire. The sentence
+  that earns a severity word is *"and the triggering condition occurred N times in the run, measured at
+  `<file:line>`"* — if you cannot write it, do not write the word.
+  `memory/lesson_mechanical_tractability_is_not_reachability.md`
 - **A CLASS DEFAULT is agreement by construction — check for one before arguing about sync.** Asked
   whether the host's copy carries the same value the client just earned, the reflex was a sync argument
   (keyed, save-transferred). The real answer was one level down: `prop_pointSack.points` is **never
@@ -2923,7 +2958,22 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   many classes declare the verb, gate on `av.ctx`'s class in the SAME function that tests the id, and
   census `kVerb* =` across the tree before picking one. `drive_sync.cpp:47` and
   `container_contents_sync` already did this correctly.
-  `memory/lesson_vm_dispatch_verb_name_is_not_the_gate.md`
+  **THIRD MEMBER 2026-08-24 (`/qf` 46-47) — the AMBIENT read, where `active` is worse than the id.**
+  The first two members were consumers reading the `Bracket` handed to their OWN callback (scoped, and
+  always correct). `CurrentThreadVerb()` is different: it is a project-wide namespace. `[V]`
+  `kerfur_form_assembler`'s six gates tested **`av.active` ALONE** — true for ANY registered verb — so a
+  foreign bracket inverted them twice over: an unrelated spawn counted as a kerfur form spawn, and
+  `reqScope = !av.active && InReqScope()` went FALSE, blinding the CallFunction route. `[V]` testing the
+  id would not have saved it: `container_contents_sync`'s `kVerbDirty`, `meadow_db_sync`'s `kVerbMark`
+  and `drive_sync`'s `kVerbPutDriveIn` are all **1** = kerfur's `kVerbTurnOff`, and `kVerbPulledOut = 2`
+  is its `kVerbTurnOn`. `[V]` **the substrate already owned the unique handle and was not publishing
+  it** — `RegisterVirtualVerb` requires the NAME to have static lifetime and the table stores that
+  pointer — so `ActiveVerb` now carries `verbName` (~4 lines) and kerfur routes all six gates through
+  one `InKerfurVerb()` (commit `0361b815`). `[V]` **severity as measured, not feared: LATENT** — the
+  field run's session-end `CONTAINMENT SUMMARY` reads `catch{off=0 on=0}` on both peers. LOOK FIRST: an
+  ambient "what am I inside" window is a CROSS-MODULE namespace, so gate on something unique by
+  construction; `active` is never a gate. Contract: `docs/COOP_DISPATCH_VISIBILITY.md` "The AMBIENT verb
+  window". `memory/lesson_vm_dispatch_verb_name_is_not_the_gate.md`
 
 ## 5. Engine / UE4 facts
 

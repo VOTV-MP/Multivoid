@@ -319,6 +319,42 @@ OUTER door (engine/native/delegate → BP); it is not re-entered for an inner BP
 > can change the engine's branch and hide the real bug. Root + fix:
 > `research/findings/piles-trash/votv-chippile-carry-churn-holdplayer-gate-2026-06-22.md`. **[V]**
 
+## The AMBIENT verb window: gate on `verbName`, never on `active` or `verbId` (2026-08-24)
+
+`vm_dispatch::CurrentThreadVerb()` publishes the innermost matched `0x45` verb for the calling thread,
+so a consumer's own `Func`-seam hooks (`FinishSpawningActor`, `K2_DestroyActor`) firing INSIDE a verb
+body can attribute the spawn/destroy to that verb. It is a **project-wide namespace**, and two ways of
+reading it are wrong:
+
+- **`av.active` alone is not "my verb is running".** It is true for **any** registered verb on this
+  thread. A consumer gating on `active` silently adopts every other module's verb as its own.
+- **`av.verbId` is not identity either.** `RegisterVirtualVerb(name, verbId, cb)` takes the id as a
+  **caller-chosen tag**, unique only within the consumer that picked it. **[V]** measured 2026-08-24:
+  `container_contents_sync`'s `kVerbDirty`, `meadow_db_sync`'s `kVerbMark` and `drive_sync`'s
+  `kVerbPutDriveIn` are **all 1** — the value `kerfur_form_assembler` calls `kVerbTurnOff` — and
+  `drive_sync`'s `kVerbPulledOut = 2` is kerfur's `kVerbTurnOn`.
+- **`av.verbName` IS the identity.** `RegisterVirtualVerb` requires the name to have static lifetime and
+  the table stores that pointer, so the ambient window republishes it (`vm_dispatch.cpp`, `MatchScope`).
+  Compare by pointer for a literal you registered yourself, `wcscmp` otherwise.
+
+A consumer reading the **`Bracket`** handed to its own callback is unaffected — that one is already
+scoped to the verb that matched. **[V]** `drive_sync` / `meadow_db_sync` / `container_contents_sync` all
+do this and were always correct; the only ambient readers are `coingun_sync` (correct: tests `verbId`
+against its own registration in the same TU) and kerfur, which was the defect.
+
+**The defect this fixed, stated at its measured size:** kerfur's six gates tested `active` alone, so
+under a foreign bracket an unrelated spawn counted as a kerfur form spawn and
+`reqScope = !av.active && InReqScope()` went FALSE, blinding the CallFunction route. **[V]** it was
+LATENT, not observed — the 2026-08-24 field run's session-end `CONTAINMENT SUMMARY` reads
+`catch{off=0 on=0}` on both peers, i.e. zero conversions occurred. Reachable (the coin gun destroying a
+`prop_kerfur` nests kerfur's destroy inside the gun's bracket), and reachable far more often once
+another verb is registered on a common path. Fixed by `InKerfurVerb()` in `kerfur_form_assembler.cpp`
+(commit `0361b815`). **Any new ambient reader must gate on the name.**
+
+Related: `[[lesson-vm-dispatch-verb-name-is-not-the-gate]]` — the same family one level down (a verb
+NAME does not gate the CLASS: `playerHandUse_LMB` is declared by 146 classes, so the consumer must
+check `av.ctx`'s class too).
+
 ## NEEDS-PROBE
 
 - **[?]** `ReceiveBeginPlay` for a normal runtime-spawned (non-deferred) actor reaching ProcessEvent — not
