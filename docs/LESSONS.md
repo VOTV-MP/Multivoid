@@ -33,6 +33,21 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 1. How to work (process / working agreements)
 
+- **Grep the field logs before declaring a measurement impossible — then separate the SERIES inside
+  them.** 2026-08-25: asked for a distribution of real per-pose deltas, I answered that it "does not
+  exist on disk (poses are never logged, by design)" — and in the same pass derived a world diameter
+  from coordinates found in those same logs. `pos diag:` prints `local actor=` **and** `puppet world=`
+  at 0.5 Hz; **808 player samples** were sitting in the 2026-08-24 logs the whole time, and they carried
+  the entire distribution the design needed (host local max **692 cm/s**, puppet max **606**, exactly
+  one discontinuity in 11.5 minutes). The second half is the sharper one: the first extraction mixed
+  those samples with `[WA-TRACE]` prop coordinates and one pre-join sample from the client's *preLoad
+  world*, producing a "2.34 km world diameter" that was wrong twice over — the two players never left a
+  **35 m patch**, and the world's real diagonal (**~5.53 km**) comes from the level dumps with the
+  engine sentinels filtered. **Look here FIRST:** grep the logs for the noun and for the subsystem's
+  own name, then label every series before computing anything over it.
+  `memory/lesson_grep_the_log_before_declaring_a_measurement_impossible.md`
+
+
 - **AN EQUIVALENCE INSTRUMENT THAT STRIPS COMMENTS CANNOT SEE A COMMENT DELETED — AND YOUR OWN
   MUTATE CONTROLS WILL NOT TELL YOU.** 2026-08-25, the `a290a466` coingun extraction. `[MEASURED]`
   The commit claimed all three moved bodies *"line-for-line identical modulo four substitutions"* and
@@ -1956,6 +1971,21 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 
 ## 3. Sync architecture (owners, routers, lifecycle)
 
+- **Before designing a receiver-side answer to a phenomenon, read the PRODUCER's gate — it may already
+  suppress it.** 2026-08-25: A52's design spent four rounds building "forgiveness" rules so a host-side
+  movement validator would not punish the join teleport, including a whole source kind
+  (`saveSlot.playerTransform`) to cover it. Then `net_pump.cpp:765-772` was read: a client emits **no
+  poses at all** until `g_worldReadyAnnounced && !g_reAnnounceWorldReady && HasLoadTailQuiesced()`, and
+  the gate's own comment says why — *"loadObjects' spawn flux (which contains the player teleport)"*.
+  The join teleport **never reaches the wire**, the forgiveness source had no reader, and it was
+  deleted. Two true receiver-side facts had pointed the other way and were irrelevant
+  (`IsSlotWorldReady` gates sends and relays but not `StoreStreamPacket`; the occupancy generation is
+  minted at accept). **Look here FIRST:** when a receiver-side design starts growing exceptions, grep
+  who calls the publish function (`SetLocal*`) and what guards that call — this project's gates usually
+  carry a comment naming the bug they were built for.
+  `memory/lesson_the_producer_may_already_suppress_the_phenomenon.md`
+
+
 - **When two readiness predicates differ only by a QUALIFIER, the bare one is the WEAKER claim.**
   MEASURED 2026-07-29: `Session::IsSlotReady()` returns `peerLanesConfigured_` (`session.h:397-400`) —
   "GNS lanes are up" — while `IsSlotWorldReady()` returns `slotWorldReady_` (`session.h:305-308`). The
@@ -3018,6 +3048,23 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   window". `memory/lesson_vm_dispatch_verb_name_is_not_the_gate.md`
 
 ## 5. Engine / UE4 facts
+
+- **VOTV's own maximum player speed is NOCLIP, not sprint — and noclip is reachable in ordinary play.**
+  Measured 2026-08-25 from the BP dumps while sizing a movement bound: walk is `defSpeed = 400`; sprint
+  is `defSpeed * 2.0 * Lerp(1.0, 1.25, agility/100)`, so **<= 1000 cm/s**; the ATV's `speed_turbo` is
+  3200; and **no `TerminalVelocity` override exists in any of the 292 asset dumps**, so UE4's ~4000
+  default stands. Noclip (`mainPlayer` ubergraph @64501) is `SelectFloat(5000, SelectFloat(250, 1000,
+  crouch), run)` applied as **three separately summed `dir * dt * 5000` terms** (@64694..@64974), so its
+  worst case is `sqrt(3) * 5000 = 8660 cm/s` — 8.7x sprint. It is gated by `lib_C::isBuoyant`, whose
+  name is about buoyancy and whose body is not; the branch that matters returns `gamemode.hasWeapon`,
+  a story flag, so **a bound written against "the fastest the game can move a player" must cover 8660,
+  not 1000**. Also measured in the same pass, and worth having: `mainPlayer.armLength = 200.0` is the
+  default interaction reach, `arm()` is called at exactly **10 sites game-wide** (1000 for the coin gun
+  and groundHose, 300 for prop_vacuum2, 0 -> 200 everywhere else), and **`arm()` starts at the
+  CAMERA** (`GetPlayerCameraManager().K2_GetActorLocation()`), not the actor root — three shipped
+  comments carried a `[V]` tag on "FROM THE PLAYER" until `abc9681b`.
+  `memory/lesson_isbuoyant_is_votvs_cheat_gate_not_buoyancy.md`
+
 
 - **2026-08-25 — A default-on-failure return is FAIL-OPEN whenever the default is a LEGAL value.**
   `E::GetActorLocation` returns a default `FVector` on every failure path and cannot signal it -- and
