@@ -1235,6 +1235,21 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   CONSTRUCTION. The append-only instinct is right for reasoning and wrong for values. *Look FIRST:* edit
   the ORIGINAL sentence and put the correction note inside the same section; `grep` the tree for the
   figure you just retired before finishing; and label estimate-vs-measurement at the moment of writing.
+  **SECOND INSTANCE 2026-08-25, and the worse shape: the supersession note EXISTED and was CORRECT —
+  it just lived in the superseding section.** `UE4SS_ARC.md` §7.6 ended *"that argues for shipping
+  skins as a **separate package**"*; §7.7c part 1, ~180 lines below, recorded the user's opposite
+  decision and said outright *"this supersedes the 'ship skins separately' suggestion in §7.6"*. §7.6
+  itself carried no mark and read as current — so two days later **Claude wrote two new sections of
+  that same file and cited §7.6's recommendation as live, twice**, one of them calling a freshly
+  measured size gap *"the strongest practical argument for §7.6's conclusion"*. Pointing FORWARD from
+  the new text protects nobody: readers reach §7.6 from a grep, a heading list or a cross-doc
+  citation, and never see §7.7c. *Look FIRST, for an overturned DECISION:* the stamp goes on the
+  **superseded** text (both ends need marking, only one is optional); **strike** the retired sentence
+  rather than leaving it plain; **keep the rationale, retire the conclusion** — §7.6's premise (a
+  third-party takedown removes the whole mod) stayed TRUE and was a risk ACCEPTED, so deleting it
+  would have invited re-deriving the split, while leaving it unmarked invited quoting it; and before
+  citing any section, grep the file for a supersession note aimed at it — reading top-to-bottom does
+  not protect you when the note is 180 lines away.
   `memory/lesson_a_correction_in_a_new_subsection_leaves_the_headline_stale.md`
 
 - **A legacy wrapper is not a translation shim — read what it does AFTER the forward call.** MEASURED
@@ -3571,6 +3586,47 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   `memory/lesson_an_optimization_hoisted_above_the_bound_it_protected.md`
 
 ## 8. Build / deploy / git hygiene
+
+- **2026-08-25 — Measuring a tool's OUTPUT and recording it as its INPUT. The doc even said
+  "measured", and it was — of the wrong artifact.** `UE4SS_ARC.md` §7.2, *"The package shape —
+  measured from a real VOTV UE4SS C++ mod"*, was read off the extracted r2modman profile
+  (`...\profiles\Default\shimloader\mod\acitulen-DebugMod\`), a directory that genuinely exists and
+  holds exactly what was written down. **But that is the install's output; the zip is its input**, and
+  the manager performs three transformations the record had un-done none of: it **inserts**
+  `shimloader/` (profile root) and `<Author>-<Name>/` (from `mod.getName()`), and **strips** the
+  matched folder's own name (`mod/`). So §7.2's tree put `dlls/` at the zip root — where the rule
+  engine, finding no matching route, recurses in, fails to match `.dll` on any extension rule, falls
+  to `isDefaultLocation`, and `installSubDir` copies it **by basename** to `Mods/<pkg>/main.dll`.
+  UE4SS scans `Mods/<name>/dlls/main.dll`. **The package installs successfully, appears in the
+  manager, and the mod never loads — no error anywhere**, so the first report would have been a
+  player saying it does nothing. It survived a second pass too: §7.1 said the manager *"extracts it
+  whole"*, which is the error stated outright, and read as fact for two days. *Look FIRST:* when a
+  tool transforms an artifact, write down the TRANSFORMATION before the shape — what does it add,
+  strip, rename? Then subtract. Prefer the input when it is obtainable (`unzip -l` on the five real
+  packages answered this in one command). Hunt for the transformer's own TESTS — r2modman ships
+  `Shimloader.Tests.spec.ts`, which asserts every source→destination pair and is the cheapest
+  authoritative spec there is. And suspect any sentence containing *"extracts it whole"* / *"just
+  unpacks"* / *"1:1"*: those claim a transformation is the identity, and they are rarely checked.
+  `memory/lesson_measuring_the_output_and_recording_it_as_the_input.md`
+
+- **2026-08-25 — A plugin's real ABI coupling is in its IMPORT TABLE, not in the framework's
+  headers.** Asked what D-3's "slim C-ABI contract" actually buys, the instinct is to read UE4SS's
+  SDK — which answers *what is available to bind*, an upper bound shared by every consumer, and
+  cannot tell a mod using two entry points from one using 130. Parsing the PE import/export tables of
+  three shipped VOTV mods answered it as a number: `Moddy-CrashContext` **32**, `Moddy-PBMovement`
+  **40**, `acitulen-DebugMod` **130** MSVC-mangled C++ symbols imported from `UE4SS.dll` — with
+  `std::` types crossing the DLL boundary (`?on_dll_load@CppUserModBase@RC@@UEAAXV?$basic_string_view@_WU?$char_traits@_W@std@@@std@@@Z`)
+  — versus Multivoid's **0**. Their binding surface is (this UE4SS build) x (this MSVC STL): an
+  upstream signature change is a *missing import*, so the loader fails the DLL outright with no
+  degraded mode, which is why the whole cohort pins `unreal_shimloader-1.1.7`. Free finding in the
+  same glance: all three link the **dynamic** CRT (`MSVCP140`/`VCRUNTIME140`/`api-ms-win-crt-*`) and
+  therefore need the VC++ redist; we link static (`CMakeLists.txt:186,691`) and do not — a
+  player-facing install fact invisible to source review. *Look FIRST:* for any "how coupled is X to
+  Y" / "will this upgrade break us" question about a shipped binary, parse the import table, and
+  compare **against the field** rather than only against yourself. No `objdump`/`strings` on this box
+  is not a blocker — the PE walk (DOS header → `e_lfanew` → optional-header data directories →
+  RVA-to-offset via the section table) is ~40 lines of PowerShell `[BitConverter]` with no dependency.
+  `memory/lesson_a_plugin_abi_coupling_is_measurable_in_the_import_table.md`
 
 - **2026-08-24 — Project prose that lives OUTSIDE the repo tree cannot be censused, and it is the
   most public prose you have.** The UE4SS arc's stale-loader-prose census

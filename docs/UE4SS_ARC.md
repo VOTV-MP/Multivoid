@@ -704,7 +704,9 @@ pair has moved for a reason that is neither a release nor a game recook. **Conse
 release-notes ledger row, INSTALL anchor or draft body still keyed to `134` is stale, and the
 packaging step must read the number rather than carry one.
 
-**2. The name's stated justification expires with commit 3.** `src/votv-coop/CMakeLists.txt:636-638`
+**2. The name's stated justification expires with commit 3.** `src/votv-coop/CMakeLists.txt:642-645`
+(the `OUTPUT_NAME`/`multivoid-` comment block; **re-cited 2026-08-25 — it was `:636-638`, which the file
+outgrew. Grep `load-bearing, not cosmetic` rather than trusting the number.**)
 declares *"the filename is load-bearing, not cosmetic"* and gives the reason: **the xinput proxy
 scans for `multivoid-*.dll`** (loads the highest build, flags duplicates for the in-game popup). WP-2
 commit 3 deletes that scanner, at which point the sentence is false and the versioned filename has no
@@ -729,7 +731,7 @@ the same "derive it, never guess it" rule the manifest is held to.
 | `tools/release/ledger_lib.ps1:149-150` | the verbatim INSTALL anchor `delete the old ` + backtick-`multivoid-*.dll` |
 | `tools/release/ledger_lint.ps1:74-77` | INSTALL.md carries no literal build filename, only the placeholder |
 | `tools/release/tag_regex_selftest.ps1:58,78` | fixtures `multivoid-0.9.0n-999.dll` + `xinput1_3.dll` |
-| `src/votv-coop/CMakeLists.txt:675-679` | the `xinput1_3` target still BUILDS today; it retires with commit 3 |
+| `src/votv-coop/CMakeLists.txt:678-686` (`add_library(xinput1_3 SHARED)` at `:682`; **re-cited 2026-08-25, was `:675-679`**) | the `xinput1_3` target still BUILDS today; it retires with commit 3 |
 
 **5. Sequencing is unchanged and already answered by 7.4a** — the flip is allowed locally right now
 because nothing is being pushed; what is forbidden is flipping the prose without re-minting the CI
