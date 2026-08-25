@@ -90,6 +90,27 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   re-transmitter** -- grep the setter's call sites for a `false` argument.
   `memory/lesson_a_counter_downstream_of_a_retransmitter.md`
 
+- **When the lab cannot reproduce the field, build the knob that FORCES the field's condition -- an
+  acceptance test that already passes cannot show your fix works.** 2026-08-25, B4: a user reported a
+  client that quit to the menu standing on the host "infinitely", and the scenario that drives exactly
+  that (`mp.py wirewindow`) PASSED on the broken build, twice. For several rounds that was read as
+  evidence the bug did not exist. The mechanism was real but CONDITIONAL: `registry_reaper` revalidated
+  its cached world with `IsLiveByIndex`, which tests slot-occupancy + `Unreachable|PendingKill` only, so
+  the flee could not fire until the dying world was flagged -- `[V]` ~5 s here (`liveWorlds` 1->2->1),
+  evidently never in the field. The unblock was a one-line dev knob (`VOTVCOOP_REAPER_PIN_WORLD=1`)
+  pinning that cache so the window is infinite: RED = 11 pose flushes at ~60/s, 3 leaked reliables, no
+  flee, slot never freed -- the report reproduced exactly, including the `fresh=61/s` the whole
+  investigation had argued about; GREEN = 2 flushes, flee at +1 s, slot emptied. Same command, only the
+  build differing.
+  *Look FIRST:* if the acceptance test passes on the build you believe is broken, do not conclude the
+  bug is absent and do not hunt a second root -- ask which term in your mechanism is ENVIRONMENTAL and
+  pin it. The tell is your own words "only if" / "depending on timing" / "on a slower machine": those
+  name the knob. And exclude the other side by measurement first -- a hard-killed client PROCESS freed
+  the host slot in +11.1 s via GNS's own timeout, retiring a competing hypothesis that had survived
+  three rounds of argument. The knob retires with the mechanism (RULE 2); the RED table is the durable
+  artifact.
+  `memory/lesson_force_the_field_condition_the_lab_lacks.md`
+
 - **Grep the field logs before declaring a measurement impossible — then separate the SERIES inside
   them.** 2026-08-25: asked for a distribution of real per-pose deltas, I answered that it "does not
   exist on disk (poses are never logged, by design)" — and in the same pass derived a world diameter
