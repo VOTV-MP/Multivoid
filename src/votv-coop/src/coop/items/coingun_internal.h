@@ -62,6 +62,18 @@ void* CoinClass();
 // Byte offset of Abaocoin_C::points, or -1 if unresolved. Resolved by NAME beside CoinClass().
 int32_t CoinPointsOffset();
 
+// Is `coin` one of OUR OWN coins, captured inside our gun bracket and still held at the barrier?
+//
+// The collect lane needs this because such a coin is NOT a mirror and NOT map-placed -- it is the
+// third member of a set the non-mirror branch's comment described as having two, so a client
+// overlapping its own pre-barrier coins credited itself under a comment blaming level content. The
+// answer at overlap time must be "suppress": if the shot goes on to author a sale the host mints the
+// real coins and a local credit is a phantom; if it does not, the coin is RELEASED rather than
+// destroyed (v140) and stays pickable, so suppressing costs a step off and back on, never the coin.
+// Cheap: the held set is one shot's worth of coins for at most one pump interval, and empty
+// otherwise. Any thread (takes the barrier lock).
+bool IsCapturedCoin(void* coin);
+
 // ---- the COLLECT lane's own lifecycle (coingun_collect.cpp) ------------------------------------
 // Driven from the SALE lane's Install/OnDisconnect rather than from subsystems.cpp: the two lanes
 // are one public surface (`coop/items/coingun_sync.h`) and one concept, and the collect lane's

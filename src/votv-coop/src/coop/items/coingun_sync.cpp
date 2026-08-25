@@ -83,13 +83,31 @@ std::atomic<unsigned long long> g_anomalyBirths{0};
 std::atomic<unsigned long long> g_salesSent{0};
 std::atomic<unsigned long long> g_salesRefused{0};
 // ---- THE BARRIER QUEUE -------------------------------------------------------------------------
-// Client-side coins captured inside the gun bracket, destroyed at the next net-pump Tick. These are
+// Client-side coins captured inside the gun bracket, resolved at the next net-pump Tick. These are
 // world-scoped engine objects crossing a frame boundary, so they are CachedObjRef (CLAUDE.md 4j: a
 // dying world's actors are not kill-flagged until GC purge, measured 44+ s, so slot liveness alone
 // hands out actors of a world that no longer exists). A bare AActor* here would be the exact defect
 // the 2026-08-23 world-stamp arc converted 78 sites away from.
+//
+// v140: THE CAPTURE IS NOW PER-SHOT AND CONDITIONAL, which is the root fix the header had already
+// named and the code had not implemented. The capture used to be UNCONDITIONAL -- it keyed on the
+// gun verb bracket alone -- while the authorization that justifies it was decided LATER and
+// ELSEWHERE. Four client-side paths eat a shot's coins and author no sale at all (the world-load
+// episode return, the R-4a reconcile window, the kerfur capture, and SendSaleForDyingProp's own
+// no-name return), and on every one of them the player lost the coins AND the prop AND got no
+// sentence, which is exactly the principle-8 shape: a local artifact must not be suppressed until
+// the authoritative one is CONFIRMED.
+//
+// So a shot opens a group at the verb bracket, coins land in it, and the group is only committed to
+// destruction if that shot ACTUALLY SENT a sale. An unauthored shot RELEASES its coins: they stay,
+// they credit locally, and that is precisely today's single-player behaviour -- no new loss, no
+// phantom, nothing to heal.
+struct PendingShot {
+    std::vector<ue_wrap::CachedObjRef> coins;
+    bool authored = false;
+};
 std::mutex g_pendingMu;
-std::vector<ue_wrap::CachedObjRef> g_pendingKill;
+std::vector<PendingShot> g_pendingShots;
 
 // THE CONSUMPTION GUARD (C-3, audit 2026-08-24; RE-KEYED AND GIVEN A REAL LIFETIME in v138/B1).
 // The artifact must be CONSUMED, or a client can replay one CoinGunSell and mint for the same prop
@@ -147,6 +165,15 @@ bool InVerb(const vm::ActiveVerb& av, const wchar_t* name) {
 void*   CoinClass()        { return g_coinClass; }
 int32_t CoinPointsOffset() { return g_offCoinPoints; }
 
+bool IsCapturedCoin(void* coin) {
+    if (!coin) return false;
+    std::lock_guard<std::mutex> lk(g_pendingMu);
+    for (const auto& shot : g_pendingShots)
+        for (const auto& ref : shot.coins)
+            if (ref.Get() == coin) return true;
+    return false;
+}
+
 }  // namespace internal
 
 namespace {
@@ -171,12 +198,15 @@ void OnFinishSpawnPost(void* /*context*/, void* /*sourceObject*/, void* spawned)
     if (inGunVerb) {
         {
             std::lock_guard<std::mutex> lk(g_pendingMu);
-            g_pendingKill.emplace_back();
-            g_pendingKill.back().Set(spawned);   // a read + a stamp; no dispatch
+            // Defensive: the verb ENTRY callback opens the group, but if a coin somehow reaches us
+            // with no group open we open one rather than dropping the capture on the floor.
+            if (g_pendingShots.empty()) g_pendingShots.emplace_back();
+            g_pendingShots.back().coins.emplace_back();
+            g_pendingShots.back().coins.back().Set(spawned);   // a read + a stamp; no dispatch
         }
         g_capturedCoins.fetch_add(1, std::memory_order_relaxed);
-        UE_LOGI("coingun[client birth]: captured coin %p from our own shot -- deferred to the barrier "
-                "(the host mints the real ones)", spawned);
+        UE_LOGI("coingun[client birth]: captured coin %p from our own shot -- held for the barrier, "
+                "which destroys it ONLY if this shot actually authored a sale (v140)", spawned);
         return;
     }
 
@@ -200,9 +230,22 @@ void OnFinishSpawnPost(void* /*context*/, void* /*sourceObject*/, void* spawned)
 // coingun_collect.cpp -- `vm_dispatch` is one callback per NAME, and the names differ, so neither
 // lane needs the other's entry point.
 void OnVerbEntry(const vm::Bracket& b) {
-    // Nothing to do at entry -- the work keys off CurrentThreadVerb() in the birth and destroy
-    // seams. Kept so a missing bracket is visible in vm_dispatch's stats.
-    (void)b;
+    // v140: OPEN A SHOT GROUP. The birth seam appends to it and the destroy seam marks it authored;
+    // the barrier then destroys the group's coins only if a sale really went out. Before this the
+    // entry callback did nothing at all and the capture was unconditional -- see THE BARRIER QUEUE.
+    //
+    // THE CTX GATE IS NOT OPTIONAL HERE, for the same reason it is not optional in IsInCoinGunVerb:
+    // `vm_dispatch` matches on the verb NAME and `playerHandUse_LMB` is declared by 146 classes, so
+    // without it every knife swing, hacksaw cut and flamethrower burst in the game would open (and
+    // then release) an empty group -- turning the barrier's release WARNING into a false alarm on
+    // every left click. Matching the gate the capture itself uses also keeps the two from drifting.
+    auto* s = LoadSession();
+    if (!s || !s->connected() || s->role() != coop::net::Role::Client) return;
+    if (!b.ctx) return;
+    if (!g_gunClass) g_gunClass = R::FindClass(kGunClassName);
+    if (!g_gunClass || R::ClassOf(b.ctx) != g_gunClass) return;
+    std::lock_guard<std::mutex> lk(g_pendingMu);
+    g_pendingShots.emplace_back();
 }
 
 // ---- host helpers ------------------------------------------------------------------------------
@@ -397,6 +440,13 @@ void SendSaleForDyingProp(const std::wstring& key, uint32_t elementId) {
     p.elementId = eid;
     s->SendReliable(coop::net::ReliableKind::CoinGunSell, &p, sizeof(p));
     g_salesSent.fetch_add(1, std::memory_order_relaxed);
+    // v140: THIS is what authorizes the barrier to destroy the coins this shot spawned. It is set
+    // only after the send actually happened, on the group this shot opened -- so every path that
+    // returns before here (all four of them) leaves its coins to be RELEASED, not eaten.
+    {
+        std::lock_guard<std::mutex> lk(g_pendingMu);
+        if (!g_pendingShots.empty()) g_pendingShots.back().authored = true;
+    }
     UE_LOGI("coingun[client sale]: sent CoinGunSell(key='%ls' eid=%u) -- rides IN FRONT of our own "
             "unchanged PropDestroy on this lane, so the host mints while its copy is still alive",
             key.empty() ? L"None" : key.c_str(), eid);
@@ -423,22 +473,47 @@ void Tick() {
         }
     }
 
-    std::vector<ue_wrap::CachedObjRef> pending;
+    // THE BARRIER, v140: commit-or-release, per shot. The bracket that opened each group completed
+    // synchronously on this same thread before we got here, so `authored` is final by now.
+    std::vector<PendingShot> shots;
     {
         std::lock_guard<std::mutex> lk(g_pendingMu);
-        if (g_pendingKill.empty()) return;
-        pending.swap(g_pendingKill);
+        if (g_pendingShots.empty()) return;
+        shots.swap(g_pendingShots);
     }
-    for (auto& ref : pending) {
-        void* actor = ref.Get();                 // null if dead, or if the world moved on
-        if (!actor) continue;
-        E::DestroyActor(actor);
-        g_barrierDestroyed.fetch_add(1, std::memory_order_relaxed);
+    size_t destroyed = 0, released = 0, releasedShots = 0;
+    for (auto& shot : shots) {
+        if (!shot.authored) {
+            // NO SALE WENT OUT for this shot, so there is no authoritative coin to defer to. Leave
+            // ours alone: they credit locally, which is exactly single-player behaviour. Destroying
+            // them here is what made the four principle-8 paths cost the player the prop AND the
+            // coins AND any explanation.
+            released += shot.coins.size();
+            ++releasedShots;
+            continue;
+        }
+        for (auto& ref : shot.coins) {
+            void* actor = ref.Get();             // null if dead, or if the world moved on
+            if (!actor) continue;
+            E::DestroyActor(actor);
+            ++destroyed;
+            g_barrierDestroyed.fetch_add(1, std::memory_order_relaxed);
+        }
     }
-    UE_LOGI("coingun[barrier]: destroyed %zu of our own client-side coins (captured=%llu, total "
-            "destroyed=%llu)", pending.size(),
-            g_capturedCoins.load(std::memory_order_relaxed),
-            g_barrierDestroyed.load(std::memory_order_relaxed));
+    if (released) {
+        UE_LOGW("coingun[barrier]: RELEASED %zu coin(s) from %zu shot(s) that authored NO sale -- they "
+                "stay in the world and credit locally, which is what single-player does. If this "
+                "fires, the sale was blocked upstream (world-load episode / reconcile window / kerfur "
+                "capture / no name to send) and the player keeps their coins instead of losing both "
+                "the prop and the payment.", released, releasedShots);
+    }
+    if (destroyed) {
+        UE_LOGI("coingun[barrier]: destroyed %zu of our own client-side coins across %zu authored "
+                "shot(s) (captured=%llu, total destroyed=%llu)", destroyed,
+                shots.size() - releasedShots,
+                g_capturedCoins.load(std::memory_order_relaxed),
+                g_barrierDestroyed.load(std::memory_order_relaxed));
+    }
 }
 
 void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
@@ -716,13 +791,13 @@ void OnDisconnect() {
     // `[[lesson-your-own-session-end-summary-is-a-free-measurement]]` exists to prevent. One grep
     // of this line answers "did this lane do anything at all this run" without reading the body.
     UE_LOGI("coingun[sale]: SESSION SUMMARY -- sales{sent=%llu refused=%llu} coins{captured=%llu "
-            "barrierDestroyed=%llu anomalyBirths=%llu} soldSet=%zu pendingKill=%zu",
+            "barrierDestroyed=%llu anomalyBirths=%llu} soldSet=%zu pendingShots=%zu",
             g_salesSent.load(std::memory_order_relaxed),
             g_salesRefused.load(std::memory_order_relaxed),
             g_capturedCoins.load(std::memory_order_relaxed),
             g_barrierDestroyed.load(std::memory_order_relaxed),
             g_anomalyBirths.load(std::memory_order_relaxed),
-            g_sold.size(), g_pendingKill.size());
+            g_sold.size(), g_pendingShots.size());
     internal::OnDisconnectCollect();   // the collect lane dumps its own half
 
     // Every WORLD-scoped thing goes. v137 had no OnDisconnect at all, so a reconnecting peer carried
@@ -732,7 +807,7 @@ void OnDisconnect() {
     g_sold.clear();
     {
         std::lock_guard<std::mutex> lk(g_pendingMu);
-        g_pendingKill.clear();
+        g_pendingShots.clear();
     }
     g_gunRef = ue_wrap::CachedObjRef{};
 }

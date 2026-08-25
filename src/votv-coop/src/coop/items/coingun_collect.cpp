@@ -227,6 +227,20 @@ bool OnCollectPre(void* self, void* params) {
         return true;                             // cancel: no local addPoints, no local destroy
     }
 
+    // OUR OWN PRE-BARRIER COINS. `[V]` The non-mirror set has THREE members, not the two the branch
+    // below names: map-placed level content, a host mirror that failed to enrol -- and the coins our
+    // own shot just spawned, held by the barrier. Those are not level content and crediting for them
+    // is a phantom whenever the shot authors a sale (the host mints the real ones). Suppress, forward
+    // nothing: there is no eid to name, and if the shot authors nothing the barrier RELEASES the coin
+    // (v140) so it stays pickable a moment later.
+    if (I::IsCapturedCoin(self)) {
+        UE_LOGI("coingun[client collect]: SUPPRESSED on OUR OWN pre-barrier coin=%p (tripped by %p) "
+                "-- our shot spawned it and the barrier still holds it. If the shot authors a sale "
+                "the host mints the real coins; if it does not, the barrier releases this one and it "
+                "is pickable again.", self, other);
+        return true;
+    }
+
     if (byPuppet) {
         // A map-placed coin tripped by someone else's body. Native would credit us for their pickup,
         // which is wrong for the same reason as above and is not the A13 residual (that one is about
