@@ -621,7 +621,13 @@ and should not be silently re-opened.
 1. **The DOC (this section + §7b/§7c) — FIRST, and done.** `:151`/`:160` were live false statements
    ("the moment ARRIVED... the user has the editor") contradicting §5/§6's cancellation boxes ~100
    lines below; a parallel session sharing this repo could read them as a verdict. Fixed in place.
-2. **P1 — one read-only boot probe**, one log line per fact:
+2. **P1 — one read-only MENU-TIME probe**, one log line per fact. **Not a boot probe** — corrected in
+   `/qf` round 7: O5 asks about the inject, which fires from the `ui_menu` **Tick observer**
+   (`multiplayer_menu.cpp:222-227`), and every O7 donor is a live-menu widget. **At boot there is no
+   `ui_menu`**, so a boot-time run would read null for all of them, and that null is
+   *indistinguishable* from "no handle, no bug, donors absent" — an instrument blind to the
+   phenomenon always passes. It runs from the same observer as the inject, and records **which menu
+   instance and tick it sampled**, so a null is attributable.
    - **O1**: does `R::FindClass` resolve the **7 new** UMG classes? Today the mod resolves only five
      (`TextBlock`:384, `UserWidget`:398, `WidgetTree`:399, `VerticalBox`:405, `Button`:432); v1 adds
      `ScrollBox`, `Overlay`, `SizeBox`, `Image`, `HorizontalBox`, `EditableTextBox`, `CanvasPanel`.
@@ -629,7 +635,7 @@ and should not be silently re-opened.
      offsets do not (`docs/VERSION_MIGRATION.md`).
    - **O5**: is the donor's `FSlateResourceHandle` (the 16 unreflected bytes at `FSlateBrush`+0x70)
      **populated** at inject time? This gates step 3 and nothing else.
-   - **O7**: donor residency per donor (step 4's table), including the row-instance donor.
+   - **O7**: donor residency per donor (step 4's table). All donors are now menu members — the row-instance donor was dropped in `/qf` round 7 (see step 4).
    - the delegate observation above, and the `input_owner` assertion.
 3. **P0 — the brush-handle fix, GATED on O5.** `FSlateBrush` is 0x88: reflected fields end at
    `ImageType` @0x6F and the bitfield bools resume @0x80, so **the 16 bytes at +0x70 are an
@@ -643,17 +649,34 @@ and should not be silently re-opened.
    hands-on-verified inject is not touched at all.**
 4. **P2 — build `ui/server_browser_native.{h,cpp}`, concretely.**
    - **Where it lives.** A screen `UUserWidget` added as the **12th child of `switcher_widgets`
-     @0x360**. Safe by an *enumerated* invariant, not a guess: exactly two `ui_menu` functions touch
-     that switcher (`ExecuteUbergraph_ui_menu` 8,283 B and `OnKeyDown` 538 B), and **nothing in
-     `ui_menu` iterates the child list** — zero hits for `GetAllChildren` / `GetChildAt` /
-     `GetChildrenCount` / `GetNumWidgets` / `GetWidgetAtIndex`. The switcher is only ever
-     read/written as `ActiveWidgetIndex`, plus a DynamicCast of **the active** widget to
-     `int_widgets`. **A 12th child is inert unless we make it active.**
-   - **Back/ESC.** An explicit `button_back`. `int_widgets` is an *interface* (`Iint_widgets_C`:
-     `triggerRandom`/`getSearchName`/`setIndex`/`resume`), and **`ui_saveSlots` and `ui_gamemode` —
-     the two screens we model on — do not implement it**; their cast fails today and the game is
-     fine, so a failed cast is a normal exercised path. We need no interface, and could not implement
-     one without owning a `UClass`.
+     @0x360**.
+
+     > **The safety argument, CORRECTED 2026-08-25 (`/qf` round 7).** The first version of this
+     > paragraph said "exactly two `ui_menu` functions touch that switcher, and nothing iterates the
+     > child list" — that was a census **inside `ui_menu` only**, sold as an invariant
+     > (`lesson_a_leak_sweep_scoped_to_one_directory`). Measured across the siblings, in the
+     > **bytecode** (the name `switcher_widgets` appears in all nine siblings' `.uasset` *name maps*,
+     > which proves nothing): `ui_stats::ExecuteUbergraph` (3,379 B) touches `switcher_widgets`,
+     > `SetActiveWidgetIndex` **and `GetAllChildren`**, and `ui_settings::ExecuteUbergraph`
+     > (11,968 B) touches the first two. **Sibling screens do reach back into the switcher.**
+     >
+     > The placement still holds, for a reason that survives the wider sweep:
+     > **(a)** `ui_stats`'s `GetAllChildren` is on its own **`statsList`**, not on the switcher —
+     > *nobody iterates the switcher's children*; **(b)** what the siblings do is **write**
+     > `ActiveWidgetIndex` to navigate; and **(c)** `AddChild` **appends**, so indices 0..10 keep
+     > their meaning and a 12th child cannot renumber anything a hardcoded index refers to.
+     > That is the invariant: **the child list is never iterated, and appending cannot renumber.**
+   - **Back — and ESC does NOT work, on purpose, exactly as on the two model screens.**
+     `int_widgets` is an *interface* (`Iint_widgets_C`: `triggerRandom`/`getSearchName`/`setIndex`/
+     `resume`), and **`ui_saveSlots` and `ui_gamemode` do not implement it**; their cast fails today
+     and the game is fine, so a failed cast is a normal exercised path. We need no interface, and
+     could not implement one without owning a `UClass`.
+     **Disassembled (`/qf` round 7) rather than assumed:** `OnKeyDown` is 538 B and its **only**
+     integer constant is `0` — it casts `widgetEnter` to the interface, calls `resume()` if that
+     succeeds, then tests `ActiveWidgetIndex == 0` and clears `widgetEnter`. There is **no
+     comparison against 11 or any other index**. So at index 11 the cast fails and the `== 0` test
+     fails: **ESC is a no-op on our screen — as it already is on `ui_saveSlots` and `ui_gamemode`.**
+     Navigation is the explicit `button_back`. Stated rather than left to read as inherited.
    - **Lifecycle** exactly per `multiplayer_menu.cpp:222-227`: inject once per menu instance,
      self-heal on `!Alive()` (`CachedObjRef`, world-stamped), 1/s throttle, everything else
      edge-applied. That is the one **hands-on-verified** native inject we have.
@@ -681,8 +704,19 @@ and should not be silently re-opened.
      | button — 3 states **and both sounds** | any `ui_saveSlots.button_*` |
      | text box | `ui_saveSlots.ETB_slotName` |
      | scrollbar | `ui_settings.scrollboxRoot` |
-     | row background | `uicomp_saveSlot.Image_background` — **a row instance, not a menu member; the strictest precondition** |
+     | row background | `ui_saveSlots.image_border_*` **+ our own tint** — see the note below |
 
+   - **Why the row background is NOT donated by `uicomp_saveSlot` (corrected, `/qf` round 7).** The
+     first draft donated it from a live row instance. Measured: `uicomp_saveSlot` references **only**
+     `inst_uiButton`, `inst_uiBorder`, `font_ui` and the two sounds — **every one already donated by a
+     menu member** (`button_*` gives `inst_uiButton` and both sounds; `image_border_*` gives
+     `inst_uiBorder`), and `Image_background` is simply `inst_uiBorder` tinted `(0.5,0.5,0.5)`. So the
+     row-instance donor supplied **nothing unique** while imposing the design's strictest
+     precondition — a populated `Slots`, i.e. *the user must first have opened the save-slot screen*.
+     A fail-closed retry against a donor that may never exist would spin forever. **Dropped.**
+   - **Bound the retry.** Fail-closed means retry, and retry means a genuinely-absent donor must be
+     *diagnosable rather than silent*: log once after N attempts naming the missing donor. A silent
+     forever-retry is the same defect class as a fallback style, one level quieter.
    - **Hover** (needed for §7b's description idiom): `UWidgetLayoutLibrary::GetMousePositionOnViewport`
      (`UMG.hpp:2090`) + `GetViewportScale` (`:2087`) is **one** call, and the row rects are ours, so
      hit-testing is pure C++ **independent of N**. `WndProcDetour` runs on the game thread (`gate3`),
