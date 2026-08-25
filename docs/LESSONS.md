@@ -1974,7 +1974,9 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 - **Before designing a receiver-side answer to a phenomenon, read the PRODUCER's gate — it may already
   suppress it.** 2026-08-25: A52's design spent four rounds building "forgiveness" rules so a host-side
   movement validator would not punish the join teleport, including a whole source kind
-  (`saveSlot.playerTransform`) to cover it. Then `net_pump.cpp:765-772` was read: a client emits **no
+  (`saveSlot.playerTransform`) to cover it. **It was already written down** — `COOP_SYNC_MAP.md:103`
+  has carried the "JOIN-JUMP sender gate" row since `614cade8`, in the very doc the reading order names
+  for "where does this sync live". Then `net_pump.cpp:765-772` was read: a client emits **no
   poses at all** until `g_worldReadyAnnounced && !g_reAnnounceWorldReady && HasLoadTailQuiesced()`, and
   the gate's own comment says why — *"loadObjects' spawn flux (which contains the player teleport)"*.
   The join teleport **never reaches the wire**, the forgiveness source had no reader, and it was

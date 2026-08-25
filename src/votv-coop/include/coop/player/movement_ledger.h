@@ -30,8 +30,10 @@
 // traversal at the game's own maximum, paying for every prop destroyed. The option that would
 // actually close it is HOST-AUTHORITATIVE CHARACTER MOVEMENT (the host simulates the client's
 // character instead of believing its poses), which dissolves this module, the reach anchors and the
-// trust question together. It is ROADMAP phase 8's MTA authority inversion, and it is named here
-// rather than buried so the next reader does not mistake this for closure.
+// trust question together. It belongs to the phase-2 ARBITER arc (`docs/ROADMAP.md`) -- and note the
+// citation, because an earlier draft of this comment said "ROADMAP phase 8": the authority work was
+// pulled FORWARD to phase 2 on 2026-07-20 and the old "native standalone server" phase 8 was retired
+// outright. It is named here rather than buried so the next reader does not mistake this for closure.
 //
 // CLIENT-SCOPED, AND THAT IS NOT NEGOTIABLE (USER 2026-08-24, `docs/security/THREAT_MODEL.md`): the
 // host may cheat and we relay it. This runs on the HOST ONLY, over poses arriving on a

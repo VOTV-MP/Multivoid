@@ -64,7 +64,8 @@ struct Row {
     float    maxStepCm = 0.f;
     uint32_t minDtMs = UINT32_MAX;
     uint32_t maxDtMs = 0;
-    float    minCreditCm = 0.f;   // the residual-slack MINIMUM: the number that says if C0 is too small
+    float    minCreditCm = 0.f;   // the residual-slack MINIMUM -- the number that says if the
+                                  // un-earned-jump cap is too small to survive real jitter
     float    maxImpliedSpeed = 0.f;
     float    lastWireVsActorCm = -1.f;  // game-thread sample; -1 = never taken
 };
@@ -109,8 +110,8 @@ void OnSessionStop() {
 
 void OnClientPose(coop::net::Session& session, int slot,
                   const ue_wrap::FVector& pos, uint32_t stateTimeMs24) {
-    if (slot <= 0 || slot >= kSlots) return;   // slot 0 is the host itself; it never validates itself
-    if (session.role() != coop::net::Role::Host) return;   // client-scoped: a client validates nothing
+    if (slot <= 0 || slot >= kSlots) return;   // slot 0 is the host; it never validates itself
+    if (session.role() != coop::net::Role::Host) return;   // client-scoped: a client validates none
 
     const uint32_t gen = session.peerGenerationForSlot(slot);
     const auto now = Clock::now();
