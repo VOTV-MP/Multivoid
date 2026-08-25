@@ -344,10 +344,13 @@ tests `verbId` against its own registration in the same TU" and that has been SU
 it now tests `verbName` through one shared `internal::InVerb`, because a verbId is a caller-chosen tag
 in a project-wide namespace and cannot identify anything. Its two ctx gates (`OnVerbEntry`,
 `IsInCoinGunVerb`) then compare `av.ctx`'s class -- and **both READ the resolved UClass and neither
-RESOLVES it**: `R::FindClass` is an uncached, negative-unlatched full `GUObjectArray` walk, so a
-resolve there costs one whole walk on every left click of all 146 declaring classes in any world where
-the gun's class is not resident, which is the ordinary world (`[V]` the gun is placed in 3 of 261
-maps). That regression was shipped and caught by audit the same day (`cc90095c`). **A ctx gate belongs
+RESOLVES it**: a resolve there costs one whole `GUObjectArray` walk on every left click of all 146
+declaring classes in any world where the gun's class is not resident, which is the ordinary world
+(`[V]` the gun is placed in 3 of 261 maps). **PRECISION UPDATE 2026-08-25 (`ca1cd5e4`):** `R::FindClass`
+used to be uncached outright; it now opens with `BeginClassWalk` and primes on the hit, like the three
+sibling walkers beside it, so a HIT is O(1). **A MISS still walks the whole array** -- deliberately, a
+class can load later -- and the case above is a miss every time, so the cost described here is
+unchanged for exactly this defect. That regression was shipped and caught by audit the same day (`cc90095c`). **A ctx gate belongs
 in a hot ambient callback; a ctx RESOLVE does not.** The collect lane reads `b.ctx` off its own bracket
 and makes no ambient read at all.
 

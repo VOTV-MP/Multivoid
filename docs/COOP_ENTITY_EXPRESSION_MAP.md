@@ -521,6 +521,11 @@ HEAD `29353191`; see the Increment-2 bullet below). A sync-time-context byte rej
   2026-07-05; facing v100 pending 0s-FACING2]**
 - **2026-07-05 (the frozen/small/wrong-facing pyramid arc — three wire truths, all classes):**
   (1) **v99 Scale3D in EntitySpawnPayload** (`419e3894`): the deferred-spawn FTransform CARRIES scale
+  [PAYLOAD RENAMED 2026-08-25: the WA lane split off `EntitySpawnPayload` into its own
+  `WorldActorSpawnPayload` (`089156d7`, proto 142) and then grew a 64-byte class-interpreted BIRTH
+  BLOB (`dcf73c26`, proto 143) so a mirrored coin is born with the `points` its material comes from.
+  The scale field and its semantics are unchanged; `[V]` a smoke round-tripped `piramid2_C` at
+  `scale=(2.00,..)` through the new struct.]
   (piramid = 2.0) and a mirror spawned without it renders wrong-size + hovers at the wrong altitude
   (the host streams Z from ITS 10000*scaleX hover). All 6 EntitySpawn senders fill it (WA + NPC:
   interceptor / ex-enroll / connect-snapshot each); both receivers apply it into the spawn transform

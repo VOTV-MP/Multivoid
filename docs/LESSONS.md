@@ -3593,7 +3593,10 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 - **2026-08-25 — a ctx GATE belongs in a hot callback; a ctx RESOLVE does not.** Obeying
   `[[lesson-vm-dispatch-verb-name-is-not-the-gate]]` ("check `av.ctx`'s class") put
   `if (!g_gunClass) g_gunClass = R::FindClass(...)` inside a `vm_dispatch` entry callback. `R::FindClass`
-  is an **uncached, negative-unlatched walk of ~237k objects with a name render per object**, and
+  was an **uncached, negative-unlatched walk of ~237k objects with a name render per object** (2026-08-25
+  `ca1cd5e4` gave it the `BeginClassWalk` cache its three siblings already had, so a HIT is now O(1) --
+  but a MISS still walks, and this defect was a miss EVERY time, so the case below is exactly the case
+  the cache does not help), and
   `prop_coingun_C`'s UClass is not resident in the ordinary world (`[V]` the gun is in 3 of 261 maps),
   so the resolve FAILED and re-walked on **every left click of all 146 `playerHandUse_LMB` classes**.
   `Install` was already retrying the identical resolve inside a ~1 Hz throttle. The fix is
