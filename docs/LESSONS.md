@@ -3509,6 +3509,11 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   ~+1 s session-stop edge and the ≤4 s flee poll exist only WITH a session — a SOLO quit-to-menu has
   neither, and the dead pawn stayed slot-live 44+ s (until the next world load's purge), vs ~3 s on
   the same log's connected quit. The stale window is transition-path-dependent.**
+  **PAWN != WORLD (2026-08-25, B4): this 44 s was measured on a PAWN and does NOT transfer to the WORLD
+  object without measuring it.** The v137 doc's D3 row used the figure to explain why a cached
+  `FindObjectByClass(WorldClass)` never invalidated -- a silent pawn->world transfer that stood for a
+  day. Measured on the world directly (`VOTVCOOP_WORLD_ID_PROBE=1`): `liveWorlds` 1->2->1 in about
+  **5 s** here. Both can be true; they are different objects. Cite which one you measured.
 - **2026-08-23 — `access=FFFFFFFFFFFFFFFF` in a PE-absorb line = NON-CANONICAL pointer deref**
   (#GP-class AV, `ExceptionInformation[1] = -1`, the Windows "address unknown" convention) — the code
   dereferenced scribbled garbage, not a mapped-but-wrong address. Reading pattern: constant ip +

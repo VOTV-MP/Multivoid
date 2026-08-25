@@ -187,7 +187,21 @@ UE4SS's.** (This corrects an earlier framing that called C "B's eventual retirem
   the DXGI/Present seam, NOT the PE trampoline (that class was #GP at a noncanonical address,
   not exec-at-0). Working hypothesis: a multi-hooker collision on the Present chain (our overlay
   hook + CEF/FusionFix) nulling a chain pointer — the same coexistence CLASS as the PE
-  double-detour, on a different seam. NEXT for this thread: rebuild commit `275e0f67` to
+  double-detour, on a different seam.
+  **NEW DATA POINT (2026-08-25, and it WEAKENS the CEF hypothesis): the same shape occurred in the
+  CLEAN LAB env, with no VoidFax/CEF/FusionFix present at all.** `mp.py smoke` on b143 bytes
+  `c81f836e`: the HOST launched at 20:48:54, logged normally for ~10 s, and was found at kill time
+  with the GAME's own `Fatal Error!` window and no UDP bind (`FAIL: host did NOT bind UDP within
+  30s`). Both logs end CLEANLY — `multivoid.log`'s last lines are the `pe_diag[post-init]` block
+  (`RELAY: POLYHOOK-COMPOSED(immune relay in-place hooked -- fix working)` / `WHO-FIRST: WE-FIRST`),
+  and `UE4SS.log` ends at `Event loop start`. No crash dump was produced. **Frequency: 1 of 2
+  consecutive boots on IDENTICAL bytes** — the immediate re-run PASSED (both peers stable, client
+  connected, ledger selftest ALL PASS), so it is not deterministic and it is NOT caused by that
+  session's diff (the only delta from the previous PASSING build was a one-line comment). `[?]`
+  Unattributed: with no dump there is no callstack, so this is a LEAD, not a second root — but it
+  means the class is reachable WITHOUT a third-party hooker, which is what the row above assumed.
+  Cheapest next step: re-run the boot in a loop and capture a dump when it fires.
+  NEXT for this thread: rebuild commit `275e0f67` to
   regenerate `F71621E0`'s PDB and symbolize the stack offsets (+0x360E55/+0x308FD0/+0x11FFE2 …);
   the naive scan is return-address-noisy — symbolization decides. Also note the real profile
   root is **`C:\r2modman\r2modmanPlus-local\...`** (not AppData) — recorded so the next deploy

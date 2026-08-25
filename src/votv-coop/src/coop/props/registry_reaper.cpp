@@ -208,7 +208,7 @@ bool Tick(coop::net::Session& session) {
             // remaining four neither reaped nor fled.
             UE_LOGW("net: gameplay->MENU while a session is live (VOTV quit-to-menu?) -- "
                     "ending the session + stopping the layer churn (RAM-balloon guard)");
-            coop::prop_element_tracker::SetInPurgeEpisode(false);  // left gameplay (matches the !inGameplayWorld reset below)
+            coop::prop_element_tracker::SetInPurgeEpisode(false);  // left gameplay (matches the positive-Other reset below)
             // FULL teardown first (2026-07-04 client ESC->menu crash): this path used
             // to skip the disconnect fanout entirely (FleeToMainMenu's edge reset also
             // suppresses the aggregate-disconnect edge), leaving stale weather/time/sky
