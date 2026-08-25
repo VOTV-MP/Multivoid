@@ -111,6 +111,22 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   artifact.
   `memory/lesson_force_the_field_condition_the_lab_lacks.md`
 
+- **When a boolean becomes THREE-valued, every `!` is a bug candidate -- and writing the rule in a
+  header does not make you follow it.** 2026-08-25, B4: the diff introduced
+  `WorldKind {Unknown, Gameplay, Other}` and stated the rule in the header it was adding -- *"a gate
+  that STARTS something wants positive Gameplay, a gate that ENDS something wants positive Other, and
+  neither may fire on Unknown"*. Nine comparisons were then written; eight were positive and correct,
+  and **the one that was wrong was the only negation**: `if (!inGameplayWorld) SetInPurgeEpisode(false)`
+  ends the episode, and `!Gameplay` is true for Unknown. Not theoretical -- a travel publishes Unknown
+  for ~1 s and inside an episode the module cancels its own 4 s throttle, so it cleared a LIVE episode
+  in ~16 ms and skipped the whole episode-END block (deleter flush, dead-key drain, re-seed, re-bind,
+  client re-announce). Three of the nine sites were authored AFTER the header sentence, same sitting.
+  *Look FIRST:* the moment a bool becomes three-valued, **grep the diff for `!` and `? :` on the
+  projection variable** and re-derive each from all three cases -- that grep finds it in seconds where
+  reading for sense does not. Better: keep the enum at the use site, or derive TWO bools so nothing
+  has to negate. The projection is what makes the third value invisible.
+  `memory/lesson_every_negation_is_a_bug_when_you_add_a_third_value.md`
+
 - **Grep the field logs before declaring a measurement impossible — then separate the SERIES inside
   them.** 2026-08-25: asked for a distribution of real per-pose deltas, I answered that it "does not
   exist on disk (poses are never logged, by design)" — and in the same pass derived a world diameter
