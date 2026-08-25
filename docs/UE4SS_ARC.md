@@ -1118,15 +1118,47 @@ have to hand our packaging to a third-party action to use one — we build the z
    mechanical — how the pak's bytes reach a CI runner that cannot rebuild them — and the user
    answered it the same day.
 
-   > **USER DIRECTION 2026-08-25 (stated as a leaning, "скорее всего", so treat it as the working
-   > answer rather than a closed record): `scientists.pak` goes IN THE PUBLIC REPO.** It is the
+   > **USER DIRECTION 2026-08-25, and it MOVED within the day — read both, the second supersedes:**
+   >
+   > **First: `scientists.pak` goes IN THE PUBLIC REPO** ("скорее всего") — candidate (a). It is the
    > mod's default skin pack and ships with the mod, so it is a build input like any other, and
-   > committing it is what makes the whole publish hands-off. Of the three candidates that were on
-   > the table — (a) commit it, (b) attach it to a release and fetch by pinned sha256, (c) keep it
-   > maintainer-side — this is **(a)**. (c) is dead: it forfeits everything else §7.9 establishes.
+   > committing it is what makes the whole publish hands-off.
+   >
+   > **Then, on being shown that a public blob costs its size × every future recook, forever:
+   > "ну мы можем вручную тогда релиз собирать и zip релиза будет содержать мод и пак"** — i.e.
+   > candidate **(c)**, assemble by hand, pak never enters git. **This supersedes (a).**
+   >
+   > **The earlier line calling (c) "dead" was wrong and is retracted.** It read the choice as
+   > all-or-nothing: manual *assembly* versus automated *everything*. Those are separable, and only
+   > one of the two seams actually matters (below). (c) costs one human step per release in a ritual
+   > that is already human-driven end to end (`docs/RELEASE.md`: local build + LAN smoke gate,
+   > authoring `notes/b<N>.md`, tagging, the ledger bump, the push, the published row).
 
-   **What (a) mechanically requires, measured 2026-08-25** — none of it is hard, but all of it is
-   easy to discover too late:
+   **What (c) does and does not cost, measured — this is the part worth not re-deriving:**
+   - **Nothing structural is lost or forked.** The zip's internal tree is identical whether a human
+     or a runner writes it. Starting manual is a *sequencing* choice, not an architecture choice, and
+     (a) or (b) stay available later at the cost of the packaging step alone.
+   - **THE ONE SEAM THAT MUST NOT GO MANUAL: which DLL bytes go in the zip.** The whole
+     `judge.ps1` → cacheless rebuild from the tag → `publish.ps1` download-back-and-sha256-verify
+     chain exists for exactly one guarantee — *the published bytes are the tagged source*. A hand-
+     assembled zip that scoops a DLL out of a local `build/` directory silently voids it, and this
+     project has already shipped wrong bytes from precisely that shape of mistake (`deploy-mod.ps1`
+     picking its payload by mtime, which put a broken b137 into four installs). **The rule to write
+     into RELEASE.md: the DLL in a hand-made zip is DOWNLOADED FROM THE CI ARTIFACT of the tagged
+     run, never taken from a local build.** The pak, by contrast, is fine to add by hand — it has no
+     equivalent provenance chain and cannot be rebuilt by CI anyway.
+   - **It is TWO zips by hand, not one.** §7.4b already separates them and warns that conflating
+     them is the obvious trap: the **Thunderstore** package is `manifest.json` + `icon.png` +
+     `README.md` + `mod/` + `pak/` (§7.2a), while the **GitHub** `*_release.zip` is the game-folder
+     tree a hand-installer unpacks over their install
+     (`VotV/Binaries/Win64/Mods/Multivoid/dlls/main.dll` + `VotV/Content/Paks/LogicMods/...`).
+     Same two payloads, two different layouts, and a human doing this twice per release is exactly
+     where a mis-rooted zip gets shipped — so `publish.ps1`'s asset assertion should still verify the
+     zip's internal tree even when a human built it.
+
+   **What (a) WOULD require — SUPERSEDED by (c) the same day, kept because the measurements stand
+   and (a) is the fallback if the hand-assembly step ever proves too error-prone.** Under (c) none of
+   this applies: the pak stays exactly where it is, in the ignored trees, and never enters git.
    - **The bytes must move to a tracked path first.** Every current source folder is ignored:
      `models/` (`.gitignore:174`), `research/pak_re/` (`:144` and `:273`), and
      `tools/client_model/_*/` (`:200`, where `rvi_scientist_v1sc` lives). The pak's new home has to
