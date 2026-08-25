@@ -298,6 +298,7 @@ add_library(votv-coop SHARED
     src/ue_wrap/actors/vitals.cpp
     src/ue_wrap/world/game_rules.cpp
     src/ue_wrap/engine/spawn_menu.cpp
+    src/coop/player/movement_ledger.cpp
     src/coop/player/remote_player.cpp
     src/coop/player/remote_player_ragdoll.cpp
     src/coop/player/client_model.cpp

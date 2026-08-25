@@ -686,6 +686,11 @@ private:
     // Local pose slot (game thread writes, net thread reads + fan-outs).
     std::mutex localMutex_;
     PoseSnapshot localPose_{};
+    // v141 (A52): the monotonic time at which localPose_ was SAMPLED, not at which it is sent. The
+    // net thread stamps this into the header rather than "now", because a game-thread hitch would
+    // otherwise pair an old position with a fresh stamp and the receiver's interval would
+    // under-report the motion that actually happened.
+    uint32_t     localPoseStateMs_ = 0;
     bool hasLocal_ = false;
     PropPoseSnapshot localPropPose_{};
     bool hasLocalProp_ = false;

@@ -17,6 +17,7 @@
 // Mutex discipline is UNCHANGED from the inline version: local* under
 // localMutex_, remote* under remoteMutex_.
 
+#include "coop/player/movement_ledger.h"
 #include "coop/net/session.h"
 
 #pragma warning(push)
@@ -33,8 +34,13 @@ namespace coop::net {
 // --- game-thread publishers (verbatim) --------------------------------------
 
 void Session::SetLocalPose(const PoseSnapshot& pose) {
+    // v141 (A52): stamp the SAMPLE moment here, not the send moment in the net thread. This
+    // runs on the game thread directly after ReadLocalPose, so `now` is when this position was
+    // actually true -- which is the whole contract of PacketHeader::stateTimeMs24.
+    const uint32_t stateMs = NowStateTimeMs24();
     std::lock_guard<std::mutex> lk(localMutex_);
     localPose_ = pose;
+    localPoseStateMs_ = stateMs;
     hasLocal_ = true;
 }
 
@@ -206,6 +212,19 @@ void Session::StoreStreamPacket(MsgType type, int routeSlot, int peerSlot,
             lastRemoteSeq_[routeSlot] = seq;
             hasRemote_[routeSlot] = true;
             ++remoteStamp_[routeSlot];
+        }
+        // v141 (security A52): bill this peer for the distance it just CLAIMED to have covered.
+        // AFTER the freshness check above and outside remoteMutex_, both deliberately: a reordered
+        // datagram would otherwise walk the ledger's anchor backwards and then forwards and bill one
+        // metre twice, and the ledger owns its own lock because its row holds correlated fields.
+        // HOST ONLY -- the host may cheat and we relay it (USER 2026-08-24), so a symmetric validator
+        // would be a bug. `routeSlot == peerSlot` here == the GNS-authenticated connection.
+        // MEASURE-ONLY on this build: it records, nothing refuses.
+        if (cfg_.role == Role::Host) {
+            coop::movement_ledger::OnClientPose(
+                *this, routeSlot,
+                ue_wrap::FVector{pkt.pose.x, pkt.pose.y, pkt.pose.z},
+                ReadStateTimeMs24(pkt.header));
         }
         // Host relay: forward this client's pose to every OTHER client.
         if (cfg_.role == Role::Host) {
@@ -440,6 +459,7 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
     if (state_.load() == ConnState::Connected && now >= nextSend) {
         PoseSnapshot local;
         bool have;
+        uint32_t localStateMs;
         PropPoseSnapshot localProp;
         bool haveProp;
         RagdollPoseSnapshot localRagdoll;
@@ -457,7 +477,7 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
         ReelPosePayload localReelPose;
         bool reelPoseDue;
         { std::lock_guard<std::mutex> lk(localMutex_);
-          local = localPose_; have = hasLocal_;
+          local = localPose_; have = hasLocal_; localStateMs = localPoseStateMs_;
           localProp = localPropPose_; haveProp = hasLocalProp_;
           localRagdoll = localRagdollPose_; haveRagdoll = hasLocalRagdoll_;
           localHand = localHandPose_; haveHand = hasLocalHand_;
@@ -500,6 +520,11 @@ void Session::SendStreamsTick(std::chrono::steady_clock::time_point now,
                     PosePacket pkt{};
                     WriteHeader(pkt.header, MsgType::PoseSnapshot,
                                 sendSeq_.fetch_add(1), ownEpoch_);
+                    // v141 (A52): the ORIGIN's time for the STATE in this datagram. WriteHeader
+                    // leaves 0 (= not stamped) for every lane without a reader; the pose lane has
+                    // one (coop::movement_ledger on the host), so it stamps the SAMPLE time that
+                    // came out of localMutex_ with the pose itself.
+                    WriteStateTimeMs24(pkt.header, localStateMs);
                     pkt.pose = local;
                     const EResult rc = sockets->SendMessageToConnection(
                         hConn, &pkt, sizeof(pkt),

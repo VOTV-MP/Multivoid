@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -2843,6 +2844,18 @@ inline uint32_t ElapsedMs24(uint32_t earlier, uint32_t later) {
     return (later - earlier) & 0x00FFFFFFu;
 }
 inline constexpr uint32_t kStateTimeMs24Period = 0x01000000u;
+
+// This process's monotonic time, folded into the 24-bit field. NEVER returns 0, because 0 is the
+// "not stamped" sentinel -- a legitimate sample landing exactly on the wrap would otherwise announce
+// itself as unstamped and hold its own peer untrusted. The 1 ms substituted once every ~4.7 hours is
+// far below every bound that reads this field.
+inline uint32_t NowStateTimeMs24() {
+    static const std::chrono::steady_clock::time_point kEpoch = std::chrono::steady_clock::now();
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - kEpoch).count();
+    const uint32_t v = static_cast<uint32_t>(ms) & 0x00FFFFFFu;
+    return v == 0u ? 1u : v;
+}
 
 // Position + view-direction pose. Floats are UE4 cm / degrees (UE4.27's
 // FVector/FRotator are float, not double).

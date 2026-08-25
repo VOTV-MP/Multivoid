@@ -19,6 +19,7 @@
 #include "coop/moderation/moderation.h"
 #include "coop/moderation/seen_players.h"
 #include "coop/net/session.h"
+#include "coop/player/movement_ledger.h"
 #include "coop/player/nameplate.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/puppet_drive.h"
@@ -390,6 +391,7 @@ bool StartCoopSession(const coop::net::Config& netCfg) {
     // Reset net_pump edge-detector state so a Stop()/Start() cycle on the same process
     // doesn't carry stale "was connected" / "was holding prop" entries into the new
     // session (phantom disconnect edge / suppressed connect replay / stale prop key).
+    coop::movement_ledger::OnSessionStart();   // v141 A52: rows are per-session; a stale anchor across a restart would read as a teleport
     coop::net_pump::OnSessionStart();
     coop::prop_lifecycle::SetSession(&g_session);
     coop::npc_sync::SetSession(&g_session);
