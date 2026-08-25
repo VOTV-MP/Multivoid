@@ -21,9 +21,7 @@
 #include "coop/session/world_load_episode.h"
 
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/reflection.h"
-#include "ue_wrap/core/sdk_profile.h"
-#include "ue_wrap/core/walk_timer.h"
+#include "ue_wrap/engine/world_identity.h"
 
 #include <chrono>
 #include <cstdint>
@@ -32,8 +30,6 @@
 namespace coop::registry_reaper {
 namespace {
 
-namespace R  = ue_wrap::reflection;
-namespace P  = ue_wrap::profile;
 namespace PP = coop::dev::perf_probe;
 
 // True once the local peer has been in the gameplay world during THIS session. Lets the
@@ -121,32 +117,46 @@ bool Tick(coop::net::Session& session) {
         // for a minute, then ballooned -- exactly when the temporary detour bypass
         // expired and this resumed). At a non-gameplay world we skip BOTH: the shadows
         // sit inert and the reaper resumes + cleans them on the next gameplay entry.
-        // Gameplay world is untitled_1; the menu is /Game/menu.menu.
-        // L5 (FPS): the World instance changes ~once per session (level travel), so DON'T full-walk
-        // ~237k GUObjectArray for it every 4s -- cache it + IsLiveByIndex-revalidate, re-resolving (one
-        // walk) only on a miss. A travel kills the old world -> serial bump -> IsLiveByIndex false ->
-        // re-resolve finds the new /Game/menu world, so the menu-travel RAM-balloon guard below STILL
-        // fires; the death-watch scans the Prop Registry (not reapWorld), so it is unaffected. (engine.cpp:60
-        // EnsureWorldContext caches identically but returns the immortal GameInstance -- the reaper needs
-        // the WORLD instance for its gameplay-vs-menu name check, so it keeps its own cache.)
-        static void*   g_reapWorld    = nullptr;
-        static int32_t g_reapWorldIdx = -1;
-        if (!g_reapWorld || !R::IsLiveByIndex(g_reapWorld, g_reapWorldIdx)) {
-            ue_wrap::ScopedWalkTimer _wt("reaper:FindWorld");
-            g_reapWorld    = R::FindObjectByClass(P::name::WorldClass);
-            g_reapWorldIdx = g_reapWorld ? R::InternalIndexOf(g_reapWorld) : -1;
+        //
+        // THE READER (2026-08-25, B4). This used to cache `FindObjectByClass(WorldClass)`
+        // and revalidate it with `IsLiveByIndex` -- a cache revalidated by its own
+        // victim's liveness. `IsLiveByIndex` tests slot-occupancy + Unreachable|PendingKill
+        // only, so for as long as the dying gameplay world is not yet flagged the cache
+        // keeps answering with it, `inGameplayWorld` stays TRUE, and the quit-to-menu flee
+        // below is UNREACHABLE. The comment that used to sit here asserted the opposite
+        // ("a travel kills the old world -> serial bump -> IsLiveByIndex false -> re-resolve
+        // finds the new /Game/menu world"); it was false, and it is deleted rather than
+        // corrected. PROVEN by drill: pinning that cache reproduced the user's 2026-08-24
+        // field report exactly -- 11 pose flushes at ~60/s across the whole window, zero
+        // flee, zero `ledger: slot 1 emptied`, the body standing on the host.
+        //
+        // `world_identity` resolves through the immortal GameInstance -> LocalPlayers[0] ->
+        // PlayerController -> ULevel::OwningWorld chain, which the dying world cannot hold
+        // alive, and it publishes the CLASSIFICATION so nothing here dereferences a world
+        // pointer. It also costs no walk: the memo is refreshed at 10 Hz by whoever asks.
+        const auto kind = ue_wrap::world_identity::CurrentWorldKind();
+        const bool inGameplayWorld = (kind == ue_wrap::world_identity::WorldKind::Gameplay);
+        // The one case this reader is WORSE than the walk it replaces, stated rather than
+        // discovered later. `Degraded()` means a recook renamed one of the three fields the
+        // chain walks, so the kind is Unknown for the whole process -- and Unknown is not
+        // Gameplay, so THIS MODULE'S DECLARED SAFETY NET (the mass-GC-purge reap that keeps
+        // the tracker off its 16384 caps) stops running. That is a real cost and it is taken
+        // deliberately: the alternative, treating Unknown as gameplay, resumes the reap at the
+        // MENU and brings back the RAM balloon this gate exists to prevent -- a user-visible
+        // OOM versus a silent degradation after ~7 transitions. Post-recook the mod needs a
+        // port either way (docs/VERSION_MIGRATION.md); what it must not do is degrade QUIETLY.
+        if (kind == ue_wrap::world_identity::WorldKind::Unknown &&
+            ue_wrap::world_identity::Degraded()) {
+            static bool sSaid = false;
+            if (!sSaid) {
+                sSaid = true;
+                UE_LOGE("reaper: world_identity is DEGRADED, so the current world is Unknown and "
+                        "the dead-Prop-Element reap + world-change re-seed are BOTH OFF for this "
+                        "process. Prop tracking will silently break after ~7 world transitions "
+                        "(the 16384 tracker caps). This is a version-surface break -- see the "
+                        "world_identity DEGRADED line above it and docs/VERSION_MIGRATION.md.");
+            }
         }
-        void* reapWorld = g_reapWorld;
-        // Allocation-free name checks (audit 2026-06-10): the old ToString
-        // wstring here was the one survivor of the balloon-fix pattern in
-        // this file -- 4s-throttled so never a balloon, but same pattern,
-        // same diff. Substring semantics preserved ("ntitled" matches the
-        // gameplay world prefix-case-agnostically).
-        const bool inGameplayWorld =
-            reapWorld && R::NameContains(R::NameOf(reapWorld), L"ntitled");
-        // R-2b: publish the verdict for the reseed hub consumer's gate (same source +
-        // cadence the retired steady branch read; prop_census must not dereference a
-        // world_identity pointer for a name check).
         coop::prop_element_tracker::SetReaperInGameplayWorld(inGameplayWorld);
         // RAM-balloon guard (2026-06-08, user: HOST pressed MAIN MENU mid-session ->
         // ballooning). VOTV's OWN quit-to-menu travels to /Game/menu WITHOUT going
@@ -159,8 +169,14 @@ bool Tick(coop::net::Session& session) {
         // this existing 4 s world scan (no new per-tick cost) -- 4 s << the ~1 min balloon.
         if (inGameplayWorld) {
             g_everInGameplayThisSession = true;
-        } else if (g_everInGameplayThisSession && !coop::net_pump::IsFleeing() && session.running() &&
-                   reapWorld && R::NameContains(R::NameOf(reapWorld), L"menu")) {
+        } else if (kind == ue_wrap::world_identity::WorldKind::Other &&
+                   g_everInGameplayThisSession && !coop::net_pump::IsFleeing() && session.running()) {
+            // POSITIVE `Other`, never `Unknown`. A travel publishes null for ~1 s (measured
+            // 2026-08-25, both directions), and fleeing on that would end the session of a peer
+            // in the middle of a legitimate level load -- principle 8, the exact trap F3b was
+            // caught in. `Other` also covers preLoad and the three tutorial maps, which the old
+            // `NameContains("menu")` test did not: two of VOTV's six worlds were named, and the
+            // remaining four neither reaped nor fled.
             UE_LOGW("net: gameplay->MENU while a session is live (VOTV quit-to-menu?) -- "
                     "ending the session + stopping the layer churn (RAM-balloon guard)");
             coop::prop_element_tracker::SetInPurgeEpisode(false);  // left gameplay (matches the !inGameplayWorld reset below)
@@ -254,8 +270,9 @@ bool Tick(coop::net::Session& session) {
         // actually SWAPPED since our last announce -- NOT for the join's menu-shadow drain within
         // the same world (which spuriously double-snapshotted + duped kerfurs). The announce
         // axis' state + compare live with their ONE owner (net_pump).
-        auto maybeReAnnounce = [&session, reapWorld]() {
-            coop::net_pump::MaybeRequestReAnnounce(session, reapWorld);
+        auto maybeReAnnounce = [&session]() {
+            // Both call sites are inside `inGameplayWorld` branches, so the read is non-null there.
+            coop::net_pump::MaybeRequestReAnnounce(session, ue_wrap::world_identity::CurrentWorld());
         };
         if (reaped >= kReseedPurge) {
             if (!coop::prop_element_tracker::InPurgeEpisode()) {

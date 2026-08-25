@@ -51,6 +51,7 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/hot_path_guard.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/walk_timer.h"  // L5: [WALK-TIME] profiling of the reaper World walk + the re-seed census
 #include "ue_wrap/core/sdk_profile.h"
@@ -570,7 +571,13 @@ void Tick(coop::net::Session& session) {
                 // Stamp the world we just announced against; a later re-seed only re-announces if the
                 // current world differs (maybeReAnnounce). Resolved here (rare -- once per real
                 // announce), never per-frame. R/P are the file-scope reflection/profile aliases.
-                g_announcedWorld = R::FindObjectByClass(P::name::WorldClass);
+                // B4 (2026-08-25): the SAME reader the reaper's world gate now uses. These two
+                // are compared against each other in MaybeRequestReAnnounce, so they must not
+                // be two different notions of "the current world" -- and `FindObjectByClass`
+                // answers "a world object exists" (it returned the INCOMING world at 18:47:51
+                // while the player-chain still read null), not "the world the local player is
+                // in", which is the question a re-announce actually asks.
+                g_announcedWorld = ue_wrap::world_identity::CurrentWorld();
                 // v75: a fresh connect replay (this world's EntitySpawns + SnapshotComplete) is
                 // about to arrive -- reset the deferred-adoption per-world state so the new world
                 // re-adopts its save-NPCs + re-sweeps orphans (the ghost sweep itself fires from

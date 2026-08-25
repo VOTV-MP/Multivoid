@@ -26,6 +26,15 @@ namespace {
 std::atomic<void*>    g_currentWorld{nullptr};
 std::atomic<uint32_t> g_generation{1};   // 0 is reserved for "never stamped"
 std::atomic<bool>     g_degraded{false};
+std::atomic<WorldKind> g_worldKind{WorldKind::Unknown};
+
+// The gameplay map's name, as a SUBSTRING. `P::name::GameplayLevel` is the authoritative
+// spelling ("untitled_1") and lives on the version surface; the substring exists because the
+// live UWorld is named "Untitled_1" with a capital U (measured -- the client log prints
+// `menutravel: in gameplay (world='Untitled_1')`), and NameContains is the allocation-free
+// comparison. Everything that is NOT this is `Other`: the menu, preLoad, and the three
+// tutorial maps -- all six of VOTV's worlds are enumerated in mainGamemode's own level array.
+constexpr const wchar_t* kGameplayWorldSubstr = L"ntitled";
 
 // ---- resolution (name-driven; the version surface, per docs/VERSION_MIGRATION) --
 bool    g_resolved         = false;
@@ -172,6 +181,17 @@ void RefreshOnGameThread_() {
     // which is a property we were relying on without saying so (audit 2026-08-23).
     void* world = (pc && R::IsLive(pc)) ? WorldOf(pc) : nullptr;
 
+    // Classify HERE, where `world` is a pointer the engine handed us microseconds ago, not
+    // a cached one. This is the whole reason the answer lives in this module: naming a world
+    // requires dereferencing it, and every consumer is forbidden to. `IsLive` is the same
+    // fresh-pointer contract the `pc` read above uses.
+    WorldKind kind = WorldKind::Unknown;
+    if (world && R::IsLive(world)) {
+        kind = R::NameContains(R::NameOf(world), kGameplayWorldSubstr) ? WorldKind::Gameplay
+                                                                      : WorldKind::Other;
+    }
+    g_worldKind.store(kind, std::memory_order_relaxed);
+
     void* prev = g_currentWorld.exchange(world, std::memory_order_relaxed);
     if (prev != world) {
         g_generation.fetch_add(1, std::memory_order_relaxed);
@@ -253,6 +273,14 @@ void* CurrentWorld() {
 }
 
 uint32_t Generation() { return g_generation.load(std::memory_order_relaxed); }
+
+WorldKind CurrentWorldKind() {
+    // Same shape as CurrentWorld(): the game thread drives the refresh, everyone else reads
+    // the publish. Keeping the drive here means a consumer that only ever asks for the KIND
+    // still keeps the memo warm.
+    if (ue_wrap::game_thread::IsGameThread()) RefreshOnGameThread_();
+    return g_worldKind.load(std::memory_order_relaxed);
+}
 
 bool Degraded() { return g_degraded.load(std::memory_order_relaxed); }
 

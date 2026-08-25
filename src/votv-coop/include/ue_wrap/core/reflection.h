@@ -164,8 +164,10 @@ std::vector<void*> FindObjectsByClass(const wchar_t* className);
 // allocations, identical match semantics to `ToString(name) == expected`.
 bool NameEquals(const FName& name, const wchar_t* expected);
 bool NameStartsWith(const FName& name, const wchar_t* prefix);
-// Substring form (the reaper's world-name checks: "ntitled"/"menu" match the
-// gameplay/menu worlds prefix-case-agnostically). Bounded scan, zero alloc.
+// Substring form. Its one world-name consumer is `world_identity`'s classifier
+// ("ntitled" matches the live UWorld's "Untitled_1" case-agnostically); the reaper
+// used to do this itself and no longer reads a world pointer at all (B4, 2026-08-25).
+// Bounded scan, zero alloc.
 bool NameContains(const FName& name, const wchar_t* needle);
 
 // A discovered object (used by the component/child enumerator).

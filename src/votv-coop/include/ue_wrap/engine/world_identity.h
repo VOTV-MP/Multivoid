@@ -50,6 +50,28 @@ void* CurrentWorld();
 // slot-validated by the caller in the SAME game-thread task (this dereferences it).
 void* WorldOf(void* obj);
 
+// WHICH of VOTV's worlds is current -- the question every world GATE in the tree
+// actually asks, answered by the one reader that a dying world cannot hold alive.
+//
+// It is computed INSIDE the refresh, at the instant the pointer comes out of the
+// engine's own field, because the identity above must never be dereferenced by a
+// consumer. A caller that names the world itself is reading a pointer it was told
+// not to read.
+//
+// `Unknown` is a THIRD value on purpose and never means "left": CurrentWorld() is
+// legitimately null across a travel (measured 2026-08-25: ~1 s for both the boot
+// travel and the quit-to-menu), and a gate that read null as "no longer in the
+// gameplay world" would act on a peer in the middle of a level load -- principle 8.
+// Every consumer must decide explicitly what Unknown means FOR IT: a gate that
+// STARTS something wants positive `Gameplay`, a gate that ENDS something wants
+// positive `Other`, and neither may fire on Unknown.
+enum class WorldKind : uint8_t {
+    Unknown = 0,  // not determinable this instant: boot, mid-travel, or Degraded()
+    Gameplay,     // the untitled_1 map -- every mode; the SAVE selects story vs sandbox
+    Other,        // a world that is not the gameplay map: menu, preLoad, a tutorial map
+};
+WorldKind CurrentWorldKind();
+
 // Bumped every time CurrentWorld() is observed to CHANGE. A cheap staleness token
 // for callers that would rather compare one integer than two pointers. Starts at 1
 // so a zero-initialised stamp is always stale.
