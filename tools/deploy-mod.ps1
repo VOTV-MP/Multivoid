@@ -34,12 +34,23 @@ if ($Remove) {
 }
 
 # The build artifact keeps the versioned release-identity name
-# multivoid-<game>-<build>.dll (WP-4 owns the distribution re-home); pick the
-# newest one in the build dir -- a proto bump renames the output and older
-# artifacts may linger there. It is deployed AS main.dll (the UE4SS mod-folder
-# contract name).
+# multivoid-<game>-<build>.dll (WP-4 owns the distribution re-home); a proto bump
+# renames the output and older artifacts linger beside it. It is deployed AS
+# main.dll (the UE4SS mod-folder contract name).
+#
+# PICK BY DECLARED BUILD NUMBER, NOT BY MTIME (2026-08-25). The old selector was
+# `Sort-Object LastWriteTime -Descending`, which makes the payload a function of
+# which file the filesystem touched last rather than of which build is newest --
+# so a rebuild of an OLD tag, a restored backup, or a `touch` silently ships the
+# wrong DLL, and the only thing standing between that and the user is a hash the
+# operator has to remember to check. The memory index has flagged this twice.
+# The rule here is now the SAME one the xinput proxy applies at load time (scan
+# multivoid-*.dll, take the highest build), so the deployer and the loader can
+# never disagree about which artifact is current.
 $payloadSrc = Get-ChildItem (Join-Path $BuildDir "multivoid-*.dll") -ErrorAction SilentlyContinue |
-    Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    Where-Object { $_.Name -match '^multivoid-.*-(\d+)\.dll$' } |
+    Sort-Object { [int]([regex]::Match($_.Name, '^multivoid-.*-(\d+)\.dll$').Groups[1].Value) } -Descending |
+    Select-Object -First 1
 if (-not $payloadSrc) { throw "no multivoid-*.dll in $BuildDir -- build first: cmake --build build/votv-coop --config Release" }
 
 # Substrate presence check (evidence, not a gate: a deploy before install-ue4ss
