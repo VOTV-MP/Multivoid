@@ -388,10 +388,12 @@ bool StartCoopSession(const coop::net::Config& netCfg) {
         coop::event_feed::SetLocalNickname(coop::text::FromUtf8Lossy(n.data(), n.size()));
     }
     coop::event_feed::OnSessionStart();
+    // v141 A52: rows are per-session (a stale anchor across a restart would read as a teleport), and
+    // this call also runs the ledger's un-gated arithmetic selftest -- see movement_ledger.h.
+    coop::movement_ledger::OnSessionStart();
     // Reset net_pump edge-detector state so a Stop()/Start() cycle on the same process
     // doesn't carry stale "was connected" / "was holding prop" entries into the new
     // session (phantom disconnect edge / suppressed connect replay / stale prop key).
-    coop::movement_ledger::OnSessionStart();   // v141 A52: rows are per-session; a stale anchor across a restart would read as a teleport
     coop::net_pump::OnSessionStart();
     coop::prop_lifecycle::SetSession(&g_session);
     coop::npc_sync::SetSession(&g_session);

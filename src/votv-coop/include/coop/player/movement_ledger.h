@@ -39,6 +39,13 @@
 // host may cheat and we relay it. This runs on the HOST ONLY, over poses arriving on a
 // GNS-authenticated client connection. A client validates nothing. A symmetric validator is a BUG.
 //
+// NOT `PerSlotState<T>`, and this is the deviation stated on purpose. CLAUDE.md 4a-roster says
+// per-slot person state should be declared through `PerSlotState<T>`, which registers its own clear.
+// That primitive is GAME-THREAD-ONLY (`roster_ledger.h`) and these rows are written from the NET
+// thread on every inbound pose, so it does not apply here. What it would have bought -- an automatic
+// clear on occupancy change -- is bought instead by stamping the generation on the row and refusing
+// a mismatch at BOTH the write and the read.
+//
 // THREADING. `OnClientPose` is the NET thread. `PositionTrusted` / `TryGetAcceptedPosition` / `Tick`
 // are the GAME thread. Rows are guarded by this module's own mutex because a row holds correlated
 // fields (position, path length, both clocks, the verdict) that cannot be read a field at a time.
@@ -52,6 +59,15 @@
 // constants below are derived from bytecode, but the only field distribution that exists came from a
 // session that never left a 35 m patch of the base -- no ATV, no noclip, no teleporter, no
 // save-load. Enforcing on that would make the user's first working build its own calibration run.
+//
+// SELF-CHECKED ON EVERY SESSION START, un-gated. The .cpp ends in a selftest that drives the real
+// `ApplyPose` (not a copy of its arithmetic) through the branches a two-peer LAN smoke cannot reach:
+// an unstamped sender, a slot recycled to a new occupant, a 24-bit clock wrap, an inflated clock, a
+// drained receive queue, the subdivided free jump, the debt floor -- and the honest-motion rows
+// (walk / sprint / ATV turbo / noclip diagonal, at both 60 Hz and 10 Hz) whose failure would poison a
+// calibration transcript silently. It logs one line: `movement_ledger selftest: ALL PASS (N checks)`,
+// or `UE_LOGE` per failing row. It costs microseconds and is deliberately impossible to switch off,
+// because a wrong verdict here does not crash -- it merely reads wrong.
 //
 // Design of record: `research/findings/inventory-items/votv-v137-field-defects-DESIGN-2026-08-24.md`
 // section 13 (converged over a 14-round `/qf`; read that section and no earlier copy of it).
@@ -89,6 +105,14 @@ inline constexpr float kMaxTravelSpeedCmS = 10000.0f;
 // Earlier drafts had 20 000, then 1500, then 300. 300 already EXCEEDED the 200 uu reach it was meant
 // to protect, which is what happens when a bound is sized against the noise instead of against the
 // thing it guards.
+//
+// IT CAPS THE CARRY, NOT THE SAMPLE. The quantity bounded is the credit left STANDING from earlier
+// samples -- the part that was not earned during this interval. The interval's own earnings
+// (`kMaxTravelSpeedCmS * elapsed`) are spendable in full on top of it. Capping the sum instead makes
+// 50 cm the largest step ANY sample may take regardless of elapsed time, which refuses the game's own
+// ATV at `speed_turbo` (53 cm between two 60 Hz poses) on its first sample. The first build of this
+// module did exactly that; the selftest in the .cpp is what caught it, and rows 4 of that selftest
+// exist to keep it caught.
 inline constexpr float kUnearnedJumpCm = 50.0f;
 
 // The ceiling on how long ONE unexplained discontinuity withholds trust. THIS IS A POLICY CHOICE,
@@ -104,9 +128,20 @@ inline constexpr float kMaxDebtSeconds = 30.0f;
 // intervals were real. Without a bank, every packet after the first in a clump would be credited
 // almost no time and an ordinary hiccup would read as motion.
 //
-// It cannot be abused: banking time only ever produces CREDIT, and credit is capped at
-// `kUnearnedJumpCm` regardless of how much time is claimed. The two caps are independent and each
-// does exactly one job.
+// WHAT IT BOUNDS, STATED PROPERLY -- an earlier version of this comment said "it cannot be abused,
+// credit is capped at `kUnearnedJumpCm` regardless of how much time is claimed", and that is wrong
+// about the quantity that matters. `kUnearnedJumpCm` bounds the STANDING budget; what ONE packet may
+// spend is `carry + useMs * kMaxTravelSpeedCmS`, so a peer silent for 7 s (under `kClockRebaseGapMs`,
+// so no re-base) banks the full 5 s and may cover 500 m in a single packet. That is INSIDE the
+// sustained rate -- 7 s of real time legitimately buys 700 m, so this cap TIGHTENS the bound rather
+// than loosening it -- and it is not a rate hole. What it IS: silent. Trust never falls, so no
+// DISCONTINUITY line is logged, and the discontinuity record is this build's entire product.
+//
+// THE OPEN QUESTION, deliberately left open. Capping the per-packet credited interval (say 250 ms)
+// would make that jump visible, at the price of refusing an honest peer whose link stalled that long.
+// Which cost is real depends on the receive-gap distribution, which nobody has measured -- so this
+// build MEASURES it (`dt=[min..max]` and `use<=` in the per-slot summary) instead of guessing a
+// constant, and selftest row 10 pins today's behaviour so a later change is deliberate.
 inline constexpr uint32_t kSkewBankMaxMs = 5000;
 
 // A gap longer than this re-bases the sender clock WITHOUT touching the position anchor, the path
@@ -128,17 +163,27 @@ void OnClientPose(coop::net::Session& session, int slot,
 
 // --- game thread -------------------------------------------------------------
 
-// Is this slot's claimed path achievable at the game's own maximum speed? Fail-CLOSED: a slot with
-// no accepted sample is NOT trusted, because a proximity decision needs a body and a body needs a
-// pose. NOTHING CONSUMES THIS YET -- the enforcing build wires it into the intent authorizer.
-bool PositionTrusted(int slot);
+// Is this slot's claimed path achievable at the game's own maximum speed? Fail-CLOSED on every
+// axis: no accepted sample, a departed slot, or a row anchored under a DIFFERENT occupancy
+// generation all answer false, because a proximity decision needs a body and a body needs a pose
+// from the person being asked about.
+//
+// The session argument is not decoration. `peerGenBySlot_` drops to 0 the moment a peer
+// disconnects, and the row keeps the DEPARTED peer's verdict at the DEPARTED peer's position until
+// the next occupant's first pose reaches the net thread -- and a joining peer can send a reliable
+// before it sends a pose. The write path already reads the generation for exactly this reason; a
+// read path that did not would answer a question about Y with a fact about X, which is the
+// attribution failure this module's threading note is about, one API away.
+//
+// NOTHING CONSUMES THIS YET -- the enforcing build wires it into the intent authorizer.
+bool PositionTrusted(coop::net::Session& session, int slot);
 
 // The last position the ledger ACCEPTED for `slot`. This -- not the puppet actor's transform -- is
 // what authorization must consume once it is wired: the puppet is written by the interpolator and
 // SNAPS on a teleport, so reading it would make the validated value and the consumed value two
 // different quantities and would rest authority on a display pipeline's output. It also goes stale
 // OBSERVABLY (the sample count stops advancing), where a puppet transform just keeps standing there.
-bool TryGetAcceptedPosition(int slot, ue_wrap::FVector& out);
+bool TryGetAcceptedPosition(coop::net::Session& session, int slot, ue_wrap::FVector& out);
 
 // Per-tick, host-only. Emits the throttled per-slot summary and samples the wire-vs-actor divergence
 // -- which lives HERE and not in the net-thread write because reading a puppet's transform is an
@@ -147,7 +192,13 @@ void Tick(coop::net::Session& session);
 
 // --- lifecycle ---------------------------------------------------------------
 
+// Wipes every row and runs the selftest. There is deliberately no OnSessionStop counterpart, and
+// the reason is not merely that no subsystem in this tree has one (the project resets on START --
+// `session_runtime.cpp` says so in its own comment beside this call) and that a stop hook with no
+// caller is a stub RULE 2 forbids. It is that a teardown sweep is the WRONG LAYER for staleness: a
+// slot recycles X->Y with no absence in between, so there is no teardown edge to hook in the case
+// that actually matters. Both readers refuse a stale generation instead, which covers the recycle
+// AND the session boundary with one rule.
 void OnSessionStart();
-void OnSessionStop();
 
 }  // namespace coop::movement_ledger

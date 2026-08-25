@@ -833,6 +833,32 @@ def cmd_smoke(args) -> None:
                 "'config-selftest: DONE fail=0' (selftest failed or never ran)")
             sys.exit(8)
         log("config-selftest: DONE fail=0 confirmed in the host log")
+    # v141 (security A52): the movement ledger self-checks its own arithmetic on every
+    # session start, un-gated, on BOTH peers. It is asserted here rather than left to a
+    # human grep because its failure mode is SILENT -- a wrong verdict merely reads wrong,
+    # and the field transcript it produces would be believed. The FIRST build of that
+    # module refused the game's own ATV on its first sample; this is the gate that keeps
+    # that caught.
+    ledger_bad: list[str] = []
+    for lbl, d in (("HOST", HOST_DIR), ("CLIENT", CLIENT_DIR)):
+        try:
+            txt = (d / "multivoid.log").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            txt = ""
+        if "movement_ledger selftest: ALL PASS" not in txt:
+            if "movement_ledger selftest: FAIL" in txt:
+                fails = [ln.strip() for ln in txt.splitlines()
+                         if "movement_ledger selftest: FAIL" in ln]
+                ledger_bad.append(f"{lbl}: {len(fails)} failing check(s): " + " | ".join(fails[:6]))
+            else:
+                ledger_bad.append(f"{lbl}: no 'movement_ledger selftest' line at all "
+                                  "(the selftest never ran -- OnSessionStart not reached?)")
+    if ledger_bad:
+        log("FAIL: movement-ledger selftest did not pass on every peer:")
+        for h in ledger_bad:
+            log(f"  - {h}")
+        sys.exit(11)
+    log("movement_ledger selftest: ALL PASS confirmed on host + client")
     # WP-2 boot-lane assertion: both peers booted via UE4SS start_mod
     # (entry=cppmod, no REFUSE, no retired-proxy line; MISSING log = FAIL).
     lane: list[str] = []

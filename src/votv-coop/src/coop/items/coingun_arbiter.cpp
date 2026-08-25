@@ -112,7 +112,10 @@ std::unordered_map<std::wstring, ue_wrap::CachedObjRef> g_sold;
 //
 // PRECISION CORRECTION (2026-08-25). The line above used to read "AT THE PLAYER", and `mainPlayer.arm`
 // says otherwise: `[V]` `start := GetPlayerCameraManager().K2_GetActorLocation()` and
-// `end := start + CameraForwardVector * (customLength > 0 ? customLength : armLength)`. The trace
+// `end := start + GetActorForwardVector(<that same camera manager>) * (customLength > 0 ?
+// customLength : armLength)`. There is no property called `CameraForwardVector` -- an earlier draft
+// of this very paragraph invented one while correcting a different overstatement, which is the same
+// failure one size down. The trace
 // begins at the PLAYER CAMERA, which follows the player at eye height, not at the actor root that
 // `GetActorLocation` reports. The conclusion is unchanged -- the camera is rigidly the sender's own
 // body -- but the offset is real and is one of the things `kPoseStalenessUU` below absorbs. This lane
