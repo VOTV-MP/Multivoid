@@ -544,6 +544,17 @@ A=0.5. `ExpandableArea.Style.RolloutAnimationSeconds = 0` — instant, no animat
 
 ### 7c. What it will LOOK like (`[V]` for the shape, DESIGN for the layout)
 
+> **HONEST GAP, named by `/qf` round 11 and NOT yet closed: there are no screenshots here, and the
+> palette below was read out of asset JSON — nobody has LOOKED at the two menus.** The standing rule
+> is *where eyes are needed, screenshot and show*
+> (`memory/feedback_show_screens.md`), the user's first verb was «как будет **выглядеть**», and
+> `tools/mp.py` already ships window capture (`_capture_window`, used by the arc-B board shots). So
+> the values in §7b — tints 0.8 / 0.5, `Margin 0.5`, `DrawAs=Box`, the (1, 0.1, 0) text-box
+> foreground — are **structurally sourced and visually unverified**. Capturing `ui_settings` and
+> `ui_saveSlots` and putting them beside this mockup is owed before the style is called agreed;
+> it needs the game running, which is shared with a parallel session, so it is a scheduled step
+> rather than an assumption.
+
 The user's question was «как будет **выглядеть**». The answer is: **like `ui_saveSlots` with our
 columns** — same window frame, same row metrics, same font, same scrollbar as the settings list.
 
@@ -799,10 +810,20 @@ and should not be silently re-opened.
      > clipping, and getting them wrong at the first scroll or non-1.0 UI scale.
      >
      > **`IsHovered()` is correct by construction — Slate already did the hit-test.** The cost worry
-     > that motivated rect math is handled the same way either approach would: `WndProcDetour` runs on
-     > the game thread (`gate3`), so hover is recomputed **only on `WM_MOUSEMOVE` edges**, not per
-     > frame. A per-*frame* sweep over N rows would indeed be the per-tick pattern this project bans;
-     > an on-move sweep is not.
+     > that motivated rect math is handled by edge-gating, but **not inside the WndProc** — corrected
+     > in `/qf` round 11. `imgui_overlay.cpp:323` calls `CallWindowProcW(g_origWndProc, ...)` **last**,
+     > so our detour runs *before* the engine sees the message: on a `WM_MOUSEMOVE`, Slate has not
+     > processed that move yet and `IsHovered()` still answers for the **previous** position.
+     > ("`WndProcDetour` runs on the game thread" was inferred to mean "sees the move"; those are
+     > different claims.) **So the WndProc only sets a moved-flag, and hover is evaluated on the next
+     > game-thread tick** in the observer that already runs — fresh, because Slate has processed the
+     > move by then, and still not per-frame.
+     >
+     > **That also dissolves a re-entrancy risk that was never on the list:** issuing a `ProcessEvent`
+     > UFunction call from inside the window procedure — while the engine is in its message pump, not
+     > its tick — is a class the detour has never exercised (today it touches only ImGui and our own
+     > state), and no existing site proves it safe. Evaluating on the observer tick means **no
+     > `ProcessEvent` is ever issued from the message pump**, so the question does not arise.
      >
      > The row's hit target is its background **`UImage`**, which must be set explicitly to
      > `Visibility = Visible` (a `SelfHitTestInvisible` image answers `IsHovered() == false`) —
@@ -818,8 +839,18 @@ and should not be silently re-opened.
      `BuildTextWidget` widgets come from bare `SpawnObject`, and the only thing that keeps a row
      reachable is the panel's `Slots` — a UPROPERTY `TArray` — so `RemoveChild`/`ClearChildren`
      (already resolved, `engine_widget.cpp:212`) is what makes one collectable. Two consequences:
-     **(a)** our C++ side must hold rows through `CachedObjRef` (world-stamped, reading-order 4j),
-     never raw pointers, or a GC'd row becomes a dangling read; **(b)** a 1 Hz refresh that
+     **(a)** **our C++ side must hold NO row pointers at all** — corrected in `/qf` round 11, because
+     the previous version of this line said to hold them "through `CachedObjRef` (world-stamped)" and
+     **`cached_obj_ref.h:34-46` is a KNOWN GAP box that denies exactly that**: *"UMG widgets are NOT
+     covered … `WorldOf()` answers nullptr for the whole widget surface and the term is silently
+     inert there"*, naming `multiplayer_menu`'s `g_button` and `pos_hud`'s `g_root` as caches that
+     rely on liveness alone; and `:47-51` adds that UE assigns serials **lazily**, so a
+     hand-`SpawnObject`ed row captures serial 0 and *"no caller may assume"* the ABA residual is
+     closed. **So the pool lives in the PANEL, not in our globals**: `GetChildrenCount()` +
+     `GetChildAt(i)` on demand, since the panel's `Slots` is already the authority. No row pointer
+     survives a tick, so there is no ABA surface. One long-lived reference remains — the screen —
+     carrying the *same* residual the shipped `g_button` already carries, i.e. no new exposure.
+     **(b)** a 1 Hz refresh that
      *rebuilds* N rows would churn GC for nothing. **The game already shows the answer**: it keeps
      `TArray<Uuicomp_saveSlot_C*> Slots` and calls `upd(int32)` — **reuse the widgets, update their
      text, and add/remove only when the row COUNT changes.** That is the bounded teardown, and it is
