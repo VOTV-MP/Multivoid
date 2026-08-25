@@ -56,6 +56,40 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   the code under test does not -- if "nothing", it cannot fail.
   `memory/lesson_four_blind_instruments_in_one_design_pass.md`
 
+- **The user's own words live in the session TRANSCRIPTS, not in the doc tree -- and an absence
+  asserted from a search that missed the source is not evidence.** 2026-08-25, B4: I spent four `/qf`
+  rounds on the premise that symptom 3 had no user statement, because the sentence existed only in two
+  files I had written. `[V]` The verbatim report was in `~/.claude/projects/<slug>/a5910741-....jsonl`
+  at `2026-08-24T11:31:35Z` the whole time -- *"клиент нажал выйти в главное меню ... а в игре хоста он
+  всё ещё стоял на месте бесконечно.(HOST + CLIENT_1)"* -- carrying the exit path, the peers, the
+  duration, and the user's own FALSE belief that they had disconnected. My paraphrase had discarded all
+  four. That false absence nearly justified dropping a real, field-observed bug, and it was the FIFTH
+  self-authored line read back as evidence in one investigation (the others: a pawn measurement
+  transferred onto a world; a code comment whose first word is literally "ASSUMPTION", promoted into a
+  licence to delete two tests; and a tracker row nearly cited as a licence to build something already
+  shipped). Three of the five happened AFTER the pattern was named in the same session.
+  *Look FIRST:* filter the project's `*.jsonl` for `type=="user"` and grep `message.content[].text`
+  before writing "the user never said X" or quoting the user at all -- a doc is a paraphrase of
+  testimony, never testimony. And a load-bearing sentence needs a PROVENANCE (measured on what, by
+  whom, on the same object?), not a citation.
+  `memory/lesson_five_self_authored_lines_read_as_evidence.md`
+
+- **A counter downstream of a re-transmitter measures the re-transmitter, not the source.** 2026-08-25:
+  `pose-diag ... fresh=61/s` was read as "the client's producer is running", and a whole host-side
+  design was deleted on it. `[V]` `isNew` (`session_streams.cpp:103`) compares a stamp bumped per
+  ARRIVING PACKET, and `hasLocal_` has NO false path anywhere in the tree (4 hits: set at
+  `session_streams.cpp:44`, cleared only at session Start `session_start.cpp:153`), so the net thread
+  re-sends the last sample forever whether or not the game thread still produces. A live stationary
+  client prints the identical line -- measured in the same session's own smoke,
+  `fresh=61/s targetSpeed=0 trail=0cm`. Two more overloaded numbers bit the same pass: `bank<=1356 ms`
+  in the movement ledger rises on ANY sender-clock lag (a hitch, a level teardown), and a "44+ s"
+  figure measured on a dead PAWN was applied to a dead WORLD.
+  *Look FIRST:* find the line that INCREMENTS the counter and name the mechanism driving it, then ask
+  "what else produces this exact number?" If a re-transmitter sits between source and counter, the
+  answer is "the re-transmitter, indefinitely". Corollary: **a has-data latch with no false path IS a
+  re-transmitter** -- grep the setter's call sites for a `false` argument.
+  `memory/lesson_a_counter_downstream_of_a_retransmitter.md`
+
 - **Grep the field logs before declaring a measurement impossible — then separate the SERIES inside
   them.** 2026-08-25: asked for a distribution of real per-pose deltas, I answered that it "does not
   exist on disk (poses are never logged, by design)" — and in the same pass derived a world diameter
