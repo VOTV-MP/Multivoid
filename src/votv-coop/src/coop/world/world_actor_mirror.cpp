@@ -30,6 +30,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <vector>
@@ -63,6 +64,13 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
     }
     if (payload.className.len == 0 || payload.className.len > 63) {
         UE_LOGW("world-actor[client OnSpawn]: bad className.len=%u -- dropping", payload.className.len);
+        return;
+    }
+    // v143 (B3): re-validate the birth blob's length at the consumer too. The dispatch already checked
+    // it; so did it for className.len, and this function re-checks THAT four lines above -- a receiver
+    // that trusts its caller's range check is one refactor away from not having one.
+    if (payload.birthLen > sizeof(payload.birth)) {
+        UE_LOGW("world-actor[client OnSpawn]: bad birthLen=%u -- dropping", payload.birthLen);
         return;
     }
     std::wstring classW;
@@ -190,6 +198,29 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
     // firing inside FinishSpawning's BeginPlay can identify THIS actor rather than merely observe
     // that some materialization is in progress (audit I-7).
     coop::world_actor_sync::NoteMaterializingActor(spawned);
+    // ---- v143 (B3): seed the birth value BEFORE FinishSpawning runs BeginPlay --------------------
+    // `[V]` `baocoin_C::ReceiveBeginPlay` -> `ExecuteUbergraph_baocoin(1441)` reads `points` and calls
+    // `baocoin.SetMaterial(0, ...)` -- bronze/silver/gold from one int, once, at BeginPlay. `[V]`
+    // `prop_coingun_C::sell` writes that int in exactly this window (BeginDeferred @932 -> SetInt @974
+    // -> Finish @1128). This mirror had nothing here, so every mirrored coin was born at the CDO
+    // default of 5 and painted bronze -- and 5 is also the commonest real denomination, which is why
+    // the field report was "was different" and not "always wrong".
+    //
+    // We set the INPUT and let the game paint. Nothing here touches a material.
+    // CLASS-SCOPED, matching the PrepareCoinMirror idiom below: the coin lane owns the coin specifics.
+    // birthLen == 0 means LEAVE THE CDO ALONE -- writing 0 would be a fail-open that is INVISIBLE
+    // (0 <= 10 paints bronze, exactly like the bug).
+    if (classW == L"baocoin_C" && payload.birthLen != 0) {
+        if (payload.birthLen != sizeof(int32_t)) {
+            UE_LOGW("world-actor[client OnSpawn]: baocoin_C eid=%u birthLen=%u, expected %zu -- "
+                    "dropping the birth value (a wrong length is a protocol violation, not a short "
+                    "coin)", payload.elementId, payload.birthLen, sizeof(int32_t));
+        } else {
+            int32_t pts = 0;
+            std::memcpy(&pts, payload.birth, sizeof(pts));
+            coop::coingun_sync::SeedCoinMirror(spawned, pts);
+        }
+    }
     {
         ParamFrame finish(sp.finishSpawnFn);
         if (!finish.valid()) {
@@ -224,15 +255,29 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
     // the FIRST simulating member of this allowlist; the 18 already-shipped classes are event actors
     // that do not simulate. CLASS-SCOPED on purpose (OPUS section 8: do not widen a seam in the same
     // commit that introduces its first consumer) -- the general invariant is named here, not applied.
-    // A pose-driven mirror must not ALSO simulate. Class-scoped (OPUS section 8: do not widen a seam in
-    // the same commit that introduces its first consumer) -- `[V]` baocoin_C is the first allowlist
-    // member that simulates at all. The coin lane owns the coin specifics; it targets the right
-    // component by name (I-5: the actor-level root helper misses it).
     if (classW == L"baocoin_C") coop::coingun_sync::PrepareCoinMirror(spawned);
     coop::world_actor_sync::NoteMirrorActor(spawned, /*add=*/true);
-    UE_LOGI("world-actor[client OnSpawn]: materialized mirror eid=%u class='%ls' actor=%p loc=(%.0f,%.0f,%.0f) "
-            "scale=(%.2f,%.2f,%.2f)", payload.elementId, classW.c_str(), spawned,
-            payload.locX, payload.locY, payload.locZ, xform.SX, xform.SY, xform.SZ);
+    // THE INSTRUMENT (v143, B3). This line already fires once per mirror, keyed by eid, for every coin
+    // -- 38 of 38 in the last field run, against 19 at the collect seam and 5 on the host's side of it.
+    // So the birth seam is where host and client can be PAIRED. The host logs its own points+material
+    // at HostEnrollExSpawn; both halves read the material because producer and instrument read `points`
+    // through the same offset at the same site, so a wrong read would print AGREEMENT while the coins
+    // still drew differently. The material is independent evidence: the game painted it from the real
+    // value, not from our read.
+    if (classW == L"baocoin_C") {
+        int32_t pts = -1;
+        std::wstring mat;
+        coop::coingun_sync::DescribeCoin(spawned, pts, mat);
+        UE_LOGI("world-actor[client OnSpawn]: materialized mirror eid=%u class='%ls' actor=%p "
+                "loc=(%.0f,%.0f,%.0f) scale=(%.2f,%.2f,%.2f) birthLen=%u points=%d mat='%ls'",
+                payload.elementId, classW.c_str(), spawned, payload.locX, payload.locY, payload.locZ,
+                xform.SX, xform.SY, xform.SZ, payload.birthLen, pts,
+                mat.empty() ? L"<unresolved>" : mat.c_str());
+    } else {
+        UE_LOGI("world-actor[client OnSpawn]: materialized mirror eid=%u class='%ls' actor=%p loc=(%.0f,%.0f,%.0f) "
+                "scale=(%.2f,%.2f,%.2f)", payload.elementId, classW.c_str(), spawned,
+                payload.locX, payload.locY, payload.locZ, xform.SX, xform.SY, xform.SZ);
+    }
 }
 
 void OnWorldActorDestroy(const coop::net::EntityDestroyPayload& payload) {

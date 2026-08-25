@@ -30,6 +30,7 @@
 #include <cwchar>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace coop::coingun_sync {
@@ -300,6 +301,97 @@ void PrepareCoinMirror(void* coin) {
     const bool ok = ue_wrap::Call(sphere, f);
     UE_LOGI("coingun[mirror]: coin %p -- Sphere(%p) SetSimulatePhysics(false) dispatch=%d (a pose-driven "
             "mirror must not also simulate)", coin, sphere, ok ? 1 : 0);
+}
+
+// ---- v143 (B3): the coin's birth value ---------------------------------------------------------
+namespace {
+
+// Per-UClass offset caches. The `prop.cpp:377 ResolveChipTypeOffset` idiom: cache the NEGATIVE too,
+// so a class that genuinely lacks the property costs one walk rather than one per actor -- a sale
+// mints ~47 coins and every one of them lands here.
+std::mutex g_birthMu;
+std::unordered_map<void*, int32_t> g_pointsOffByClass;   // UClass* -> `points` offset (-1 = absent)
+std::unordered_map<void*, int32_t> g_meshOffByClass;     // UClass* -> `baocoin` component offset
+void* g_getMaterialFn = nullptr;                          // UPrimitiveComponent::GetMaterial
+bool  g_getMaterialResolveFailed = false;                 // latch the negative (a miss is a full walk)
+
+int32_t PointsOffsetFor(void* cls) {
+    if (!cls) return -1;
+    std::lock_guard<std::mutex> lk(g_birthMu);
+    auto it = g_pointsOffByClass.find(cls);
+    if (it != g_pointsOffByClass.end()) return it->second;
+    const int32_t off = R::FindPropertyOffset(cls, L"points");
+    g_pointsOffByClass[cls] = off;
+    return off;
+}
+
+int32_t MeshOffsetFor(void* cls) {
+    if (!cls) return -1;
+    std::lock_guard<std::mutex> lk(g_birthMu);
+    auto it = g_meshOffByClass.find(cls);
+    if (it != g_meshOffByClass.end()) return it->second;
+    // BY NAME, and the name is `baocoin`. `[V]` the ubergraph says `baocoin.SetMaterial(0, ...)` at all
+    // three branch arms; `collect` is the BP root and `Sphere` is the simulating body. I-5 already paid
+    // for aiming at the wrong component once in this very file.
+    const int32_t off = R::FindPropertyOffset(cls, L"baocoin");
+    g_meshOffByClass[cls] = off;
+    return off;
+}
+
+}  // namespace
+
+int32_t ReadCoinPoints(void* coin) {
+    if (!coin) return -1;
+    const int32_t off = PointsOffsetFor(R::ClassOf(coin));
+    if (off < 0) return -1;
+    return *reinterpret_cast<const int32_t*>(static_cast<const uint8_t*>(coin) + off);
+}
+
+bool SeedCoinMirror(void* coin, int32_t points) {
+    if (!coin) return false;
+    const int32_t off = PointsOffsetFor(R::ClassOf(coin));
+    if (off < 0) {
+        UE_LOGW("coingun[mirror]: cannot resolve baocoin_C::points on this mirror -- it will be born at "
+                "the CDO default and paint the wrong colour. (Resolved off the actor's own class, so "
+                "this is a real reflection failure, not the Install-latch race.)");
+        return false;
+    }
+    *reinterpret_cast<int32_t*>(static_cast<uint8_t*>(coin) + off) = points;
+    return true;
+}
+
+void DescribeCoin(void* coin, int32_t& outPoints, std::wstring& outMaterial) {
+    outPoints = -1;
+    outMaterial.clear();
+    if (!coin) return;
+    outPoints = ReadCoinPoints(coin);
+
+    void* cls = R::ClassOf(coin);
+    const int32_t meshOff = MeshOffsetFor(cls);
+    if (meshOff < 0) return;
+    void* mesh = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(coin) + meshOff);
+    if (!mesh) return;
+
+    {
+        std::lock_guard<std::mutex> lk(g_birthMu);
+        if (!g_getMaterialFn && !g_getMaterialResolveFailed) {
+            // Declared on UPrimitiveComponent; `R::FindFunction` matches the OWNING class exactly and
+            // does not climb SuperStruct, so ask the declarer -- the same correction item 10 applied to
+            // SetSimulatePhysics in this file. Latch the negative: a miss is a full GUObjectArray walk.
+            if (void* primCls = R::FindClass(L"PrimitiveComponent"))
+                g_getMaterialFn = R::FindFunction(primCls, L"GetMaterial");
+            if (!g_getMaterialFn) g_getMaterialResolveFailed = true;
+        }
+        if (!g_getMaterialFn) return;
+    }
+
+    ue_wrap::ParamFrame f(g_getMaterialFn);
+    if (!f.valid()) return;
+    f.Set<int32_t>(L"ElementIndex", 0);
+    if (!ue_wrap::Call(mesh, f)) return;
+    void* mat = f.Get<void*>(L"ReturnValue");
+    if (!mat) return;
+    outMaterial = R::ToString(R::NameOf(mat));
 }
 
 bool IsInCoinGunVerb() {

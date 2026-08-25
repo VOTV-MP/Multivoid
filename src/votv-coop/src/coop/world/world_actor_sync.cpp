@@ -21,6 +21,7 @@
 
 #include "coop/creatures/piramid_sync.h"  // v100 auxYaw: the piramid heading producer/consumer
 
+#include "coop/items/coingun_sync.h"   // v143 (B3): ReadCoinPoints for the birth blob
 #include "coop/element/element_deleter.h"
 #include "coop/element/mirror_manager.h"
 #include "coop/element/mirror_managers.h"  // PropMirrors/NpcMirrors/WaMirrors
@@ -120,6 +121,27 @@ bool IsAllowlistedClassNameW(const std::wstring& nm) {
 // Read the FTransform spawn param into the payload (translation + FQuat->FRotator + v99 Scale3D).
 // Identical math to npc_sync's interceptor (FQuat XYZW @ +0, FVector translation @ +0x10, Scale3D
 // @ +0x20 -- the piramid spawner passes 2.0 here; losing it half-sizes the mirror).
+// ---- v143 (B3): fill the birth blob ------------------------------------------------------------
+// One helper, both producers. `[V]` only `baocoin_C` has a birth value today; the blob is opaque to
+// this lane and every other allowlisted class carries birthLen=0, which the receiver reads as "leave
+// the CDO alone". A class that cannot be read LOGS -- birthLen=0 must never be able to mean both
+// "nothing to carry" and "the read failed", or the mirror silently keeps the wrong value and the
+// instrument prints a benign zero.
+void FillBirthBlob(coop::net::WorldActorSpawnPayload& p, const std::wstring& clsW, void* actor) {
+    p.birthLen = 0;
+    if (clsW != L"baocoin_C" || !actor) return;
+    const int32_t pts = coop::coingun_sync::ReadCoinPoints(actor);
+    if (pts < 0) {
+        UE_LOGW("world-actor: baocoin_C eid=%u -- points UNREADABLE, sending no birth content. The "
+                "mirror will be born at the CDO default and paint the wrong colour; this is a "
+                "reflection failure, not an absent value.", p.elementId);
+        return;
+    }
+    static_assert(sizeof(pts) <= sizeof(p.birth), "the coin's birth value must fit the blob");
+    std::memcpy(p.birth, &pts, sizeof(pts));
+    p.birthLen = static_cast<uint8_t>(sizeof(pts));
+}
+
 void ReadSpawnXform(const void* params, coop::net::WorldActorSpawnPayload& p) {
     if (g_spawnXformParamOff < 0) return;
     const uint8_t* xf = reinterpret_cast<const uint8_t*>(params) + g_spawnXformParamOff;
@@ -548,6 +570,7 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
         p.rotPitch = rot.Pitch; p.rotYaw = rot.Yaw; p.rotRoll = rot.Roll;
         p.scaleX = scl.X; p.scaleY = scl.Y; p.scaleZ = scl.Z;
+        FillBirthBlob(p, R::ToString(R::NameOf(R::ClassOf(actor))), actor);
         if (s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::WorldActorSpawn, &p, sizeof(p)))
             ++sent;
     }
@@ -663,9 +686,26 @@ unsigned int HostEnrollExSpawn(void* actor) {
     p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
     p.rotPitch = rot.Pitch; p.rotYaw = rot.Yaw; p.rotRoll = rot.Roll;
     p.scaleX = scl.X; p.scaleY = scl.Y; p.scaleZ = scl.Z;
-    UE_LOGI("world-actor[host ex-enroll]: '%ls' eid=%u at (%.0f,%.0f,%.0f) scale=(%.2f,%.2f,%.2f) "
-            "(EX_CallMath BeginDeferred, source-gated catch)", clsW.c_str(), eid, loc.X, loc.Y, loc.Z,
-            scl.X, scl.Y, scl.Z);
+    FillBirthBlob(p, clsW, actor);
+    // THE HOST HALF OF THE INSTRUMENT (v143, B3). This line already fires once per enrolled WA, keyed
+    // by eid -- 38 of 38 coins in the last field run -- so it PAIRS with the client's materialize line
+    // for the same eid. Both halves print the MATERIAL as well as `points` on purpose: the producer
+    // and the instrument read `points` through the same offset at the same site, so a wrong read would
+    // print AGREEMENT while the two coins still drew differently. The material is independent evidence
+    // -- the game painted it from the real value, not from our read.
+    if (clsW == L"baocoin_C") {
+        int32_t pts = -1;
+        std::wstring mat;
+        coop::coingun_sync::DescribeCoin(actor, pts, mat);
+        UE_LOGI("world-actor[host ex-enroll]: '%ls' eid=%u at (%.0f,%.0f,%.0f) scale=(%.2f,%.2f,%.2f) "
+                "birthLen=%u points=%d mat='%ls' (EX_CallMath BeginDeferred, source-gated catch)",
+                clsW.c_str(), eid, loc.X, loc.Y, loc.Z, scl.X, scl.Y, scl.Z, p.birthLen, pts,
+                mat.empty() ? L"<unresolved>" : mat.c_str());
+    } else {
+        UE_LOGI("world-actor[host ex-enroll]: '%ls' eid=%u at (%.0f,%.0f,%.0f) scale=(%.2f,%.2f,%.2f) "
+                "(EX_CallMath BeginDeferred, source-gated catch)", clsW.c_str(), eid, loc.X, loc.Y,
+                loc.Z, scl.X, scl.Y, scl.Z);
+    }
     // Broadcast only with peers present -- an alone-host enroll is delivered by the join
     // connect-snapshot instead (a peer-less SendReliable would just WARN-spam).
     if (s->connected() &&

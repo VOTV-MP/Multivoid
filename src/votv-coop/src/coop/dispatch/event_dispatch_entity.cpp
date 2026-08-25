@@ -544,6 +544,14 @@ bool HandleEntityEvent(net::Session& session,
             UE_LOGW("event_feed: WorldActorSpawn className.len=%u > 63 -- dropping", pWa.className.len);
             break;
         }
+        // v143 (B3): the birth blob's own length claim. Checked HERE and re-checked in
+        // OnWorldActorSpawn, matching what this lane already does for className.len -- a length that
+        // over-runs its own buffer is a protocol violation, not a long payload.
+        if (pWa.birthLen > sizeof(pWa.birth)) {
+            UE_LOGW("event_feed: WorldActorSpawn birthLen=%u > %zu -- dropping",
+                    pWa.birthLen, sizeof(pWa.birth));
+            break;
+        }
         net::WorldActorSpawnPayload pWaCopy = pWa;
         ue_wrap::game_thread::Post([pWaCopy] {
             ::coop::world_actor_sync::OnWorldActorSpawn(pWaCopy);

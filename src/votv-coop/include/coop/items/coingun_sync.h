@@ -251,6 +251,43 @@ void OnDisconnect();
 // helper would silently miss it and the mirror would fight the pose drive. Game thread.
 void PrepareCoinMirror(void* coin);
 
+// ---- v143 (B3): the coin's BIRTH VALUE ---------------------------------------------------------
+// `[V]` `baocoin_C::ReceiveBeginPlay` -> `ExecuteUbergraph_baocoin(1441)` reads `points` and calls
+// `baocoin.SetMaterial(0, ...)`: <=10 bronze @1499, >11 && <=25 silver @1725, >26 gold @1820. So the
+// coin's colour is not something we paint -- it is something the GAME paints from one int, at
+// BeginPlay, once. `[V]` `prop_coingun_C::sell` writes that int BETWEEN `BeginDeferredActorSpawn-
+// FromClass` and `FinishSpawningActor` at three of its four mint sites; our client mirror had nothing
+// in that window, so every mirrored coin was born at the CDO default of 5 and painted bronze.
+//
+// THESE THREE RESOLVE OFF `R::ClassOf(coin)`, NOT off the module's `CoinPointsOffset()` global.
+// `Install()` early-returns forever once both lane latches set, and its `points` resolve is guarded on
+// `g_coinClass` being resident -- `baocoin_C` loads on demand with the gun asset, so a session where
+// it was not resident at latch time leaves that global at -1 PERMANENTLY. A producer reading -1 would
+// send birthLen=0, the receiver would correctly leave the CDO alone, and the fix would silently do
+// nothing all session while the log showed a benign "no birth content". The actor is in hand at every
+// call site and its class is definitionally resident, so ask the class.
+
+// Read a live coin's `points`. Returns -1 if the property cannot be resolved -- callers MUST treat
+// that as "unknown, say so loudly", never as a value. Game thread.
+int32_t ReadCoinPoints(void* coin);
+
+// Write `points` onto a freshly BeginDeferred'd mirror, before FinishSpawningActor runs its
+// BeginPlay. This is precisely the sequence `sell` itself performs. Returns false if unresolvable.
+// Game thread, and ONLY valid inside the deferred window -- after FinishSpawning the branch has
+// already run and writing the value would change nothing visible.
+bool SeedCoinMirror(void* coin, int32_t points);
+
+// The instrument: a coin's `points` AND the material its own BeginPlay actually painted, read off the
+// component named `baocoin`. NOT the BP root (`collect`, a USphereComponent declared first) and NOT
+// `Sphere` -- `[V]` the bytecode names `baocoin` at all three SetMaterial sites, and a reader aimed at
+// the root returns null on BOTH peers and therefore AGREES BY CONSTRUCTION, which is an instrument
+// that cannot fail. The material matters because producer and instrument read `points` through the
+// same offset at the same site: a wrong read would print agreement while the coins still drew
+// differently. The material name is INDEPENDENT evidence -- the game painted it from the real value,
+// not from our read -- so a bad read surfaces as `points=5 mat=inst_baocoin_s` on one line.
+// `material` is left empty if the component or the function cannot be resolved. Game thread.
+void DescribeCoin(void* coin, int32_t& outPoints, std::wstring& outMaterial);
+
 // TRUE while this thread is inside a `playerHandUse_LMB` dispatch whose Context is a
 // `prop_coingun_C`. The destroy seam asks this to know that the prop it is watching die is the gun's
 // victim, so it can put `CoinGunSell` in front of its own broadcast. Synchronous, thread-local.
