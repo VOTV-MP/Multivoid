@@ -581,7 +581,13 @@ cell is additionally highlighted on a **two-leg** mismatch — `game != GameTarg
 rows are dimmed. This is ported verbatim from `server_browser.cpp:218-231`, not re-derived.
 
 **Sort** is a header click, resolved in pure C++ over our `std::vector<LobbyRow>` — zero engine cost.
-**Search is v2**: it needs the live-filter path through `UEditableTextBox` and buys less than sort.
+
+**Search — an OPEN PRODUCT QUESTION for the user, not a technical deferral.** This first read
+*"Search is v2: it needs the live-filter path through `UEditableTextBox`"*. **That reason is empty**
+(`/qf` round 9): v1 already carries the Nickname and Direct-IP fields and already resolves
+`SetText`/`GetText` on `UEditableTextBox`, so the path is paid for either way. What actually remains
+is a judgement — *does a search box earn its space before the lobby list is long enough to need
+one?* — and that is the user's call, not the design's.
 
 **The host form** follows `ui_gamemode`'s shape (§7b): mode/option rows plus description-on-hover,
 built from **our** widgets — never the game's classes (§8).
@@ -641,6 +647,17 @@ and should not be silently re-opened.
      focus term **at once** — before any of P2's ~700 LOC. **If it renders nowhere, the screen falls
      back to `AddToViewport` like every other surface we ship, and the 12th-child design goes with
      it.**
+
+     > **This rung is a WRITE, and it must be flagged as one (`/qf` round 9).** O8's delegate bind was
+     > carved onto a throwaway button *because a bind is a write*; this rung `AddChild`s into the
+     > **live shipped `switcher_widgets`** and sets `ActiveWidgetIndex = 11` — into the one
+     > **hands-on-verified** native inject — and I had not applied the same scruple. Worse: per §8's
+     > ESC finding, **at index 11 ESC is a no-op and the throwaway has no `button_back`**, so the
+     > spike as first written could strand the user in a menu with no way out. It therefore: runs
+     > only behind a **dev env gate** (never a shipped path), **reads back the prior
+     > `ActiveWidgetIndex` before clobbering it**, and **restores that index and `RemoveChild`s the
+     > throwaway in the same tick**. A probe that can trap the user is not read-only in any sense
+     > that matters.
    - **O1 — measure FUNCTION resolution, not class names.** Corrected in `/qf` round 8:
      `R::FindFunction` matches `OuterOf(fn) == owningClass` with **no super-walk**
      (`reflection.cpp:493`; `sdk_profile_names.h:414` says so in a comment). So resolving `ScrollBox`
@@ -776,18 +793,38 @@ and should not be silently re-opened.
      `lobby_announcer.cpp:36-39` and the incumbent renderer.)
 5. **P4 — the host form** follows `ui_gamemode`'s shape (§7b): mode/option rows plus
    description-on-hover, built from **our** widgets.
-6. **P5 — retire the ImGui browser and `menu_sfx` (RULE 2).** `menu_sfx` (60 LOC) exists *only*
-   because "ImGui buttons have no native audio" (its own header) and hand-plays the same two
-   SoundWaves a real `UButton` plays from its cloned `FButtonStyle` for free. **It is a deletion, not
-   a port.**
+6. **P5 — retire the ImGui browser. `menu_sfx` SURVIVES.**
+
+   > **CORRECTED (`/qf` round 9).** This step used to say `menu_sfx` was *"a deletion, not a port"*,
+   > on the strength of its own header. **I never censused its callers.** There are **four** —
+   > `boot_warning_dialog`, `config_review_panel`, `connect_failed_dialog`, `server_browser` — and P5
+   > retires exactly **one**. The header sentence I quoted as proof (*"ImGui buttons have no native
+   > audio, so this supplies the same two sounds for our server browser"*) continues **"(and any
+   > future ImGui menu surface)"** — I stopped at the comma. That is `docs/LESSONS.md`'s *read the
+   > clause after the claim*, firing on text I committed the same day I wrote that lesson down.
+   >
+   > So: **`server_browser`'s `menu_sfx` calls go with the browser; the module stays** for the other
+   > three surfaces. It becomes a deletion only if the ImGui substrate itself is retired — exactly
+   > the question this design refuses to bank. A native `UButton` still gets both sounds free from
+   > its cloned `FButtonStyle`; that part was right, and it is why the *chrome* buttons need no
+   > `menu_sfx` equivalent.
 
 **What this does NOT promise.** ImGui is **not** being retired as the mod's UI substrate on the
 strength of this design. Doing so would bank ~3,700 LOC of overlay substrate (`imgui_overlay` 815,
 `overlay_backend_dx12` 792, `_dx12_capture` 405, `fonts` 492, `atlas_watch` 386, `overlay_diag` 209,
 `_dx11` 157, `overlay_backend` 155, `overlay_cursor` 70, `scale` 127, `style` 80), and that is
 **unbankable** until someone measures whether UMG can cover `join_curtain`, `loading_screen` and
-`boot_warning_dialog` — the last armed from the **boot thread** (`boot.cpp:154`) before any world
-exists. **Two substrates permanently is a live possible outcome.** The browser is the experiment that
+`boot_warning_dialog`. **Two substrates permanently is a live possible outcome.**
+
+> **Sharpened (`/qf` round 9): O4 is a question about DRAW time, not ARM time.** This paragraph used
+> to lean on `boot_warning_dialog` being *"armed from the boot thread before any world exists"*. That
+> is true and **irrelevant**: `Arm()` (`boot_warning_dialog.cpp:29-34`) takes a mutex, stores a
+> `std::string` and sets an atomic — nothing world-related — while `Render()` runs from the overlay
+> frame loop (`imgui_overlay.cpp:449`), i.e. at Present time, and at the main menu a world exists.
+> **The real question is whether the game presents frames before the menu world exists** (startup /
+> level transitions), because that is the window UMG structurally cannot draw in and an ImGui
+> Present hook can. **That window has never been measured**, and it — not the arm thread — is what
+> makes the substrate retirement unbankable. The browser is the experiment that
 informs the decision; it is not the decision.
 
 **Worth knowing when that question is taken up:** `docs/OVERLAY_CAPTURE_COEXIST.md` §6 states the root
