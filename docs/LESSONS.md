@@ -1558,6 +1558,24 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   memory**; keep **withdrawals** on the same re-test list as claims ("was that rejected on a ground
   that still holds?"); and know that **a fix which closes a hole is the highest-risk reframe**,
   because it does not feel like a premise change.
+  **SECOND SHAPE 2026-08-25, and it is the worse one: the reframe was a FOUNDATIONAL constraint and
+  the casualty sat in ANOTHER DOC, THREE MONTHS EARLIER.** `MULTIPLAYER_UI.md`'s approach table
+  (2026-05-22) rejected the BPModLoader widget route for exactly one stated reason -- *"ties us to
+  UE4SS"*. On 2026-08-21 the F2/D-3 decision made Multivoid a UE4SS mod **on purpose**, and
+  `BPModLoaderMod` has been installed in the profile ever since; the row still read as a live verdict
+  until the user asked, on 2026-08-25, for the very feature it had deferred. Its neighbour deferred
+  the sibling-pak path *"until a public-server-phase widget (server browser with sortable rows)
+  actually needs it"* -- both halves of that trigger came true and nothing noticed. Why this shape is
+  nastier: the reframe and the casualty are in **different files**, so re-reading either proves
+  nothing and the in-pass `/qf` re-derivation habit cannot reach it; the casualty is phrased as a
+  settled **VERDICT**, which is the last place anyone looks for rot; and a foundational reframe has an
+  unlisted blast radius by definition -- RULE 3 was cited tree-wide as the reason for many small
+  choices, and D-3's ledger tracked only the ones inside its own arc. *Look FIRST:* when a
+  FOUNDATIONAL constraint is reversed, do not just update the doc that owns the decision -- **grep the
+  whole tree for the constraint's own wording** (`ties us to`, `depends on`, `without X`, the rule
+  number) and re-read every verdict citing it, **rejected and deferred rows included**. Deferred rows
+  get their own grep: they carry a *trigger condition*, and a trigger condition is a claim about the
+  future that can quietly come true.
   `memory/lesson_a_reframe_invalidates_answers_that_cite_it.md`
 
 - **A reclassification that leaves the OBSERVABLE unchanged is a relabel, not a dissolution
@@ -3479,6 +3497,25 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   `memory/lesson_every_ue4ss_mod_is_maindll_disambiguate_dumps_by_base.md`
 
 ## 6. Assets, models, geometry
+
+- **2026-08-25 — A converter converts ARTIFACTS, not file extensions.** Asked whether UMG widgets
+  authored in UE5 could be downgraded to the 4.27 the shipped game runs, every surface fact says yes:
+  UE's refusal to load a newer package is a `FPackageFileSummary` **header** check and patching it is
+  a known trick, and third-party *Asset Downgrader* tooling advertises 4.27 and 4.26 as targets. All
+  true, and the conclusion is still wrong — **those convert DATA assets** (meshes, materials,
+  textures), while a `WidgetBlueprint` is a **compiled `UBlueprintGeneratedClass` with bytecode
+  serialized against the compiling engine version**, wrapped around a `UWidgetTree` whose UMG class
+  layouts moved across 4.27 -> 5.x. The shared `.uasset` extension is exactly what makes the wrong
+  answer sound right: the extension is a container, not a type, so *"tool X handles .uasset"* is
+  underspecified in a way that reads as complete. Second trap: the failure arrives **last and
+  silently** — not at conversion, but when the shipped game refuses to mount the pak, after the
+  editor work, the cook and the package are all done. *Look FIRST:* read the converter's list of
+  supported **asset types**, and if it is phrased in extensions that is the smell, not the spec;
+  separate DATA from COMPILED (anything with bytecode, a generated class or a serialized graph is
+  version-tied in a way meshes are not); and **prefer authoring in the target version over converting
+  into it** — here the target engine was already installed with `PythonScriptPlugin` present, so the
+  real gap was an *authoring channel* (no MCP supports 4.27), not a format. Fix the channel, not the
+  format. `memory/lesson_a_converter_converts_artifacts_not_file_extensions.md`
 
 - **Curating GAME assets = census EVERY asset** — games ship broken leftovers. `memory/lesson_game_asset_census_before_curation.md`
 - **`mainPlayer_C` renders TWO overlapping bodies — apply mesh to BOTH slots.** `memory/lesson_attachparent_visibility_two_body.md`

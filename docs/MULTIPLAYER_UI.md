@@ -292,10 +292,24 @@ problem, and no MCP need** — and the art half is exactly what our Python cook 
 That is route B plus art, and it is the cheapest thing that closes the "we look dirty" gap the user
 raised back on 2026-05-25.
 
-**Recommendation: (d) now; spike (c) separately if a designer-authored widget is ever wanted; do not
-build on (b).** One thing to confirm before any of it: the UE 4.27 install was **not found** at
-`C:\Program Files\Epic Games` or the obvious `D:` paths — its location needs to be named before a
-Python-scripting route can be scheduled.
+**USER DECISION 2026-08-25: build via UE 4.27 Python — route (c).** So (c)'s unverified crux above
+is now the blocking measurement rather than a footnote: **spike `WidgetTree` population before
+designing anything on it.** (d) stays the fallback that needs no spike at all; (b) is not built on.
+
+**The engine is located `[V]` 2026-08-25** — the earlier "not found" note is retired. From the Epic
+launcher manifests (`C:\ProgramData\Epic\EpicGamesLauncher\Data\Manifests`) and
+`HKLM:\SOFTWARE\EpicGames\Unreal Engine`:
+
+| build | path |
+|---|---|
+| **UE 4.27** | **`H:\UE_4.27`** — the target |
+| UE 4.25 | `F:\Games\UE_4.25` — present, not ours |
+
+Two things there matter more than the path. `H:\UE_4.27\Engine\Binaries\Win64\` holds
+**`UE4Editor-Cmd.exe`** (the commandlet host), so the spike can run **headless** — scriptable and
+repeatable instead of a hand session in the GUI. And `Engine\Plugins\Experimental\PythonScriptPlugin`
+**is present** in this install, which is the precondition for any of it. Do not assume the invocation
+form: 4.27's Python commandlet switch is itself worth confirming in the same spike.
 
 ## Anchors (from reflection dump, game 0.9.0-n)
 
