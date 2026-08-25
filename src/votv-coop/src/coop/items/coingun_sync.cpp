@@ -268,8 +268,22 @@ void* FindLiveGun() {
     // C-3 (audit): "once per sale" is NOT cold enough -- the sale rate is attacker-controlled, and
     // FindObjectByClass is a full GUObjectArray walk. Cache it and walk only on a miss.
     if (void* cached = g_gunRef.Get()) return cached;
+    // A51 (v140): the POSITIVE result was cached and the NEGATIVE one was not, so a world with no gun
+    // in it re-walked GUObjectArray on every single sale -- and `[V]` prop_coingun is placed in only
+    // 3 of 261 maps, so "no gun" is the ordinary world, not the exotic one. Throttle the miss. 250 ms
+    // collapses a packet burst (the reliable inbox drains unbounded per tick) to one walk while
+    // staying far below the time it takes a human to buy a gun from the laptop and fire it, so a real
+    // sale is never refused for want of a re-walk.
+    using Clock = std::chrono::steady_clock;
+    static Clock::time_point sLastMiss{};
+    const Clock::time_point now = Clock::now();
+    if (sLastMiss.time_since_epoch().count() != 0 &&
+        now - sLastMiss < std::chrono::milliseconds(250)) {
+        return nullptr;
+    }
     void* found = R::FindObjectByClass(kGunClassName);
     if (found) g_gunRef.Set(found);
+    else       sLastMiss = now;
     return found;
 }
 
@@ -460,17 +474,36 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
     // KEY FIRST. This is the whole of B1: v137 resolved the eid alone, and `[V]` a v122 client mints
     // no Element row for its own save-loaded keyed prop, so the eid it sent was 0 for exactly the
     // props a player shoots -- 3 of 3 field sales died right here. The key is the identity that
-    // survives, and ResolveLiveActorByKey is the same primitive the PropDestroy receiver uses.
+    // survives, and the eid stays as the keyless fallback exactly as the PropDestroy receiver does.
+    //
+    // INDEX ONLY (A51, v140). This used to call `ResolveLiveActorByKey`, whose cold fallback is a
+    // full `ue_wrap::prop::FindByKeyString` GUObjectArray walk with a key-string read per prop -- and
+    // an attacker-chosen key is a GUARANTEED miss, so every hostile packet bought one whole walk, on
+    // the host's game thread, at whatever rate the sender likes (the reliable inbox drains with an
+    // unbounded `while (TryGetReliable(msg))` per tick, so they compound inside one frame). The
+    // mitigation was already written 200 lines above in this same file, applied to the OTHER
+    // attacker-steered walk (FindLiveGun): cache, and walk only on a miss. Here the right answer is
+    // stronger -- do not walk at all. A key that is not in the maintained index is not a prop this
+    // peer can legitimately have shot: the client only KNOWS the key because it mirrored the prop
+    // from us, which required us to hold a Prop Element for it, which is precisely what puts it in
+    // the index. "Not indexed" is therefore already the NoSuchProp answer this site gives.
     void* prop = nullptr;
     const wchar_t* how = L"key";
-    if (!keyStr.empty()) prop = coop::prop_element_tracker::ResolveLiveActorByKey(keyStr);
+    if (!keyStr.empty()) prop = coop::prop_element_tracker::FindLiveActorByKey(keyStr);
     if (!prop && p.elementId != 0u) {
-        // The keyless fallback. `[V]` It is NOT reachable through the coin gun today -- the gun's
-        // ubergraph casts the hit actor with `asProp` and returns on failure, while the keyless
-        // families (prop_garbageClump_C / actorChipPile / trashBitsPile) are NOT Aprop_C descendants
-        // (ue_wrap/actors/prop.cpp:145-152 adds them by UNION for exactly that reason). It stays as
-        // the fallback for an Aprop_C whose Key genuinely reads None, and it costs nothing: the 4
-        // bytes sit in alignment padding the payload needs regardless.
+        // The keyless fallback, for an Aprop_C whose Key genuinely reads None. It costs nothing: the
+        // 4 bytes sit in alignment padding the payload needs regardless, and LivePropActor is an O(1)
+        // Registry lookup, not a walk.
+        //
+        // (This comment used to assert the fallback is unreachable through the gun "because the
+        // keyless families are not Aprop_C descendants", citing ue_wrap/actors/prop.cpp's union
+        // predicate. That reasoning was wrong twice over and is corrected here rather than left
+        // standing: `[V]` the gun's gate is NOT class descent -- prop_coingun's ubergraph @792 is
+        // `BooleanAND(DoesImplementInterface(HitActor, int_player_C), NOT IsChildActor)` and
+        // trashBitsPile_C / actorChipPile_C DO implement that interface and DO pass it; they die one
+        // statement later at `IsValid(asProp_return)`, because `prop_C::asProp = EX_Self` is the only
+        // non-null implementation among all 34 implementors. And our own union predicate can only
+        // ever be evidence about our code, never about the game's class tree.)
         prop = coop::element::LivePropActor(static_cast<coop::element::ElementId>(p.elementId));
         how  = L"eid";
     }

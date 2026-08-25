@@ -159,8 +159,20 @@ void Tick();
 //   - it does NOT range-check the eid (the `IsAllowedHostAllocatedEid` idiom 14 other receive sites
 //     obey). An earlier version of this sentence said "fully range-checks the payload" -- FALSE, and
 //     deleted rather than softened. Tracked as an open item in the design doc's §11.4;
-//   - A51 (the key resolve's cold GUObjectArray fallback, walked at attacker rate on the game thread)
-//     is a SEPARATE open row and still blocks deploy on its own.
+// SECURITY A51 -- CLOSED in v140 (2026-08-25). Both attacker-reachable GUObjectArray walks in this
+// lane are gone:
+//   - the key resolve is INDEX ONLY (`FindLiveActorByKey`, not `ResolveLiveActorByKey`). The cold
+//     `FindByKeyString` fallback is a full walk with a key-string read per prop, and an
+//     attacker-chosen key is a guaranteed miss, so every hostile packet bought one whole walk on the
+//     host's game thread -- compounding inside a single frame, because the reliable inbox drains with
+//     an unbounded `while (TryGetReliable(msg))` per tick. A key that is not indexed is not a prop
+//     this peer can legitimately have shot: the client only knows the key because it mirrored the
+//     prop from us, which required a Prop Element, which is what puts it in the index;
+//   - `FindLiveGun` cached only its POSITIVE result, so a world with no gun in it re-walked on every
+//     sale -- and `[V]` prop_coingun is placed in 3 of 261 maps, so that is the ordinary world. The
+//     miss is now throttled to 250 ms.
+// The unbounded per-tick reliable drain itself is NOT fixed here; it is a cross-lane property of
+// event_feed and is recorded as such rather than patched from inside one receiver.
 // Rows + evidence: `docs/security/TRACKER.md` 2026-08-25 block.
 //
 // `senderSlot` names the peer to log and to address the CoinGunResult back to -- it does NOT select a
