@@ -179,6 +179,27 @@ we are upstream of the entire external inline-hook chain (exactly where the engi
 and MTA draw). Then RTSS has nothing of ours to unlink (we no longer patch the function it defends), and
 OBS captures us by default (our pixels are in the backbuffer when the game calls Present).
 
+> **CROSS-LINK added 2026-08-25: there is a SECOND solution to this exact root, and it needs no hook.**
+> The fix above moves our draw *"into the engine's own present path ... exactly where the engine's own
+> UI draws"* — **a native UMG surface simply IS that destination.** The server-browser design
+> (`docs/MULTIPLAYER_UI.md` §8, converged over an 11-round `/qf`) builds native UMG, and if the mod's
+> UI substrate ever moves there wholesale, this arc dissolves rather than shipping: no AOB to
+> re-measure per game recook (`docs/VERSION_MIGRATION.md`'s fragile half), no fail-closed hook install,
+> no DX12 rig needed for phase 2.
+>
+> **This is NOT a reason to stop work here, and the browser does not bank it.** The substrate
+> retirement is unbankable until one measurement lands, and that measurement is now **rung 0 of the
+> browser's probe**: *does the game ever present a frame while `CurrentWorld()` is null?* If it never
+> does, UMG can cover `join_curtain` / `loading_screen` / `boot_warning_dialog` and this arc is RULE-2
+> dead before it is built. If it does, ImGui's Present hook covers a window UMG structurally cannot,
+> **two substrates permanently is the measured answer, and this design ships as written.** Whoever
+> takes up either arc should read the other first.
+>
+> (A related correction from that pass, since this doc's neighbours cite it: the claim that
+> `boot_warning_dialog` is *"armed from the boot thread before any world exists"* is true but
+> irrelevant to the question — `Arm()` stores a string and sets an atomic; `Render()` runs from the
+> overlay frame loop at Present time. The question is DRAW time, not ARM time.)
+
 ---
 
 ## 6b. Measured facts (IDA headless on the shipping exe, 2026-08-22)

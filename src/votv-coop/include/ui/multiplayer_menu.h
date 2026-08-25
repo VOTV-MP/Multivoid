@@ -24,8 +24,22 @@
 // primitive the bind needs is already public here (reflection InternalIndexOf /
 // SlotSerial / EngineAlloc, fname_utils StringToFName, game_thread
 // RegisterInterceptor with its cancel-on-true). The bind has still NEVER RUN --
-// design + the one [RD] link left to measure: docs/MULTIPLAYER_UI.md 6e. The poll
-// stays until that spike is green; when it is, the poll retires whole (RULE 2).
+// design + the one [RD] link left to measure: docs/MULTIPLAYER_UI.md 6e.
+//
+// DECIDED 2026-08-25 by the browser design's converged /qf: the bind is DROPPED
+// FROM v1 and THE POLL IS THE ANSWER, not a placeholder. Two reasons, both
+// measured. (1) Nothing makes the bind NECESSARY: this poll already reads a real
+// UButton with no new primitives, and OPUS section 7 endorses poll-and-diff where
+// dispatch is in doubt. (2) The shape 6e describes needs "a no-param UFunction the
+// engine already provides", and WHICH one was never answered -- RegisterInterceptor
+// keys on the UFUNCTION (game_thread.h:89-91), so borrowing an existing one routes
+// every other caller in the game through our callback, while minting our own means
+// building a UFunction from a DLL that owns no UClass. Dropping it removed the
+// design's last unmeasured leap. The browser's probe still OBSERVES the bind on a
+// throwaway button (a bind is a WRITE, not a read) so the v2 call has evidence.
+// NOTE the arc this serves retires the IMGUI SUBSTRATE, not polling -- and
+// IsHovered() is resolved on UWidget (engine_widget.cpp:214-217), so it answers for
+// ANY UWidget*, not only a UButton. See docs/MULTIPLAYER_UI.md section 8.
 
 #pragma once
 
