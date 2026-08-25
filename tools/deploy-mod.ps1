@@ -47,11 +47,54 @@ if ($Remove) {
 # The rule here is now the SAME one the xinput proxy applies at load time (scan
 # multivoid-*.dll, take the highest build), so the deployer and the loader can
 # never disagree about which artifact is current.
+#
+# THE ORDERING IS TOTAL, and it has to be: the build number is NOT a unique key.
+# `multivoid-0.9.0n-141.dll` and `multivoid-0.9.0o-141.dll` both parse to 141 (a
+# game-target bump without a proto bump leaves both in build/), and Sort-Object
+# is not stable without -Stable -- so a single sort key would pick arbitrarily
+# and hand back exactly the "which DLL actually shipped" ambiguity this selector
+# was written to kill. Mtime returns as the TIE-BREAK only, never as the key.
 $payloadSrc = Get-ChildItem (Join-Path $BuildDir "multivoid-*.dll") -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -match '^multivoid-.*-(\d+)\.dll$' } |
-    Sort-Object { [int]([regex]::Match($_.Name, '^multivoid-.*-(\d+)\.dll$').Groups[1].Value) } -Descending |
+    Sort-Object -Property `
+        @{Expression = { [int]([regex]::Match($_.Name, '^multivoid-.*-(\d+)\.dll$').Groups[1].Value) }; Descending = $true}, `
+        @{Expression = { $_.LastWriteTime }; Descending = $true}, `
+        @{Expression = { $_.Name }; Descending = $true} |
     Select-Object -First 1
 if (-not $payloadSrc) { throw "no multivoid-*.dll in $BuildDir -- build first: cmake --build build/votv-coop --config Release" }
+
+# ...AND THE WINNER MUST BE THE ONE **THIS SOURCE TREE** DECLARES. Highest-build alone answers a
+# different question than the operator is asking: old artifacts are documented to linger in
+# $BuildDir, so checking out an older tag (a bisect, or reproducing a field bug) picks the STALE
+# higher-numbered DLL and deploys code that is not in the working tree -- a case the old mtime rule
+# happened to get right. Both halves of the identity are declared in exactly one place each, so read
+# them and refuse a mismatch instead of trusting an ordering.
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$expectTarget = $null; $expectBuild = $null
+$cml = Join-Path $repoRoot "src/votv-coop/CMakeLists.txt"
+$proto = Join-Path $repoRoot "src/votv-coop/include/coop/net/protocol.h"
+if (Test-Path $cml) {
+    $m = [regex]::Match((Get-Content $cml -Raw), 'set\(VOTVCOOP_GAME_TARGET\s+"([^"]+)"\)')
+    if ($m.Success) { $expectTarget = $m.Groups[1].Value }
+}
+if (Test-Path $proto) {
+    foreach ($ln in (Get-Content $proto)) {
+        $m = [regex]::Match($ln, '^\s*inline constexpr uint16_t kProtocolVersion\s*=\s*(\d+)\s*;')
+        if ($m.Success) { $expectBuild = $m.Groups[1].Value; break }
+    }
+}
+if ($expectTarget -and $expectBuild) {
+    $expectName = "multivoid-$expectTarget-$expectBuild.dll"
+    if ($payloadSrc.Name -ne $expectName) {
+        throw ("payload/source mismatch -- this tree declares $expectName (CMakeLists " +
+               "VOTVCOOP_GAME_TARGET + protocol.h kProtocolVersion) but the newest artifact in " +
+               "$BuildDir is $($payloadSrc.Name). Build this tree before deploying, or delete the " +
+               "stale artifact. Refusing to ship code that is not the code you are looking at.")
+    }
+} else {
+    Write-Host ("  WARN: could not read the declared identity from CMakeLists.txt / protocol.h -- " +
+                "deploying $($payloadSrc.Name) on the build-number rule alone") -ForegroundColor Yellow
+}
 
 # Substrate presence check (evidence, not a gate: a deploy before install-ue4ss
 # is legal, the mod just cannot load until the substrate is there).
