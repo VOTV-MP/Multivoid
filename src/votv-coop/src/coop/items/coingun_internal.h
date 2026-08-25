@@ -59,6 +59,12 @@ bool InVerb(const ue_wrap::vm_dispatch::ActiveVerb& av, const wchar_t* name);
 // first and already retries at ~1 Hz); the collect lane reads it and stays inert until it appears.
 void* CoinClass();
 
+// prop_coingun_C's UClass once resolved, else nullptr. Same resolver, same retry. The ARBITER reads
+// it for its gun lookup; the sale lane reads it for the two ctx gates (`vm_dispatch` matches on the
+// verb NAME and `playerHandUse_LMB` is declared by 146 classes, so a ctx class check is what makes
+// the bracket mean "the coin gun" -- see IsInCoinGunVerb).
+void* GunClass();
+
 // Byte offset of Abaocoin_C::points, or -1 if unresolved. Resolved by NAME beside CoinClass().
 int32_t CoinPointsOffset();
 
@@ -73,6 +79,27 @@ int32_t CoinPointsOffset();
 // Cheap: the held set is one shot's worth of coins for at most one pump interval, and empty
 // otherwise. Any thread (takes the barrier lock).
 bool IsCapturedCoin(void* coin);
+
+// ---- the ARBITER's own lifecycle (coingun_arbiter.cpp) -----------------------------------------
+// The HOST half of the sale: the CoinGunSell receiver plus everything only it uses (the sold-set,
+// the reach check, the gun cache, sellObject/sell). Extracted 2026-08-25 when the A50/A51 work took
+// coingun_sync.cpp to 925 LOC. Driven from the sale lane's Install/Tick/OnDisconnect rather than
+// from subsystems.cpp, for the same reason the collect lane is: one public surface, one concept.
+
+// Resolve the host half's reflection. Called INSIDE the sale lane's ~1 Hz Install throttle, because
+// every resolve is a linear GUObjectArray walk with a name render per entry. Idempotent.
+void InstallArbiter();
+
+// True once sellObject resolved, i.e. the host half can actually price a sale.
+bool ArbiterResolved();
+
+// Dump the host half's session summary and drop its world-scoped state (the sold-set, the cached
+// gun). The resolved UClass / UFunction / CDO pointers are not world-scoped and stay (CLAUDE.md 4j).
+void OnDisconnectArbiter();
+
+// Drop consumed artifacts whose prop has died -- what gives the consumption guard a real lifetime.
+// Called from the sale lane's Tick at ~1 Hz. Cheap when idle; the set is normally empty.
+void SweepSoldSet();
 
 // ---- the COLLECT lane's own lifecycle (coingun_collect.cpp) ------------------------------------
 // Driven from the SALE lane's Install/OnDisconnect rather than from subsystems.cpp: the two lanes
