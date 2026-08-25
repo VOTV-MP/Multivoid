@@ -16,6 +16,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "ue_wrap/engine/umg_build.h"
 
 #include <cstdint>
 #include <cstring>
@@ -452,8 +453,16 @@ bool InjectCanvasButton(void* refButton, const wchar_t* label, void** outButton)
     if (refButton) {
         auto* d = reinterpret_cast<uint8_t*>(button);
         auto* s = reinterpret_cast<uint8_t*>(refButton);
-        std::memcpy(d + P::off::UButton_WidgetStyle, s + P::off::UButton_WidgetStyle,
-                    P::off::FButtonStyle_Size);
+        // Through umg::CloneStyle, which is the ONE brush clone in the tree. This memcpy
+        // used to zero only the two FSlateSound caches below -- but FButtonStyle embeds
+        // FOUR FSlateBrushes (0x08/0x90/0x118/0x1A0), each carrying an unreflected
+        // FSlateResourceHandle (a TSharedPtr) at +0x70, and a raw copy shallow-aliased all
+        // four with no AddRef. Exactly the hazard the sound comment below describes, missed
+        // for the brushes. Harmless on this build -- measured 0/4 handles populated even on
+        // an art-bearing donor, and ui_menu_C's own buttons carry no brush art at all -- but
+        // shipping two brush-clone semantics in one tree is how the next one gets it wrong.
+        ue_wrap::umg::CloneStyle(d, P::off::UButton_WidgetStyle, s, P::off::UButton_WidgetStyle,
+                                 P::off::FButtonStyle_Size, P::off::FButtonStyleBrushes, 4);
         // FButtonStyle's two FSlateSound members each hold an unreflected
         // TSharedPtr<FSlateSoundResource> cache past the ResourceObject; the raw memcpy
         // shallow-aliased that refcounted cache (no AddRef). KEEP the copied ResourceObject
