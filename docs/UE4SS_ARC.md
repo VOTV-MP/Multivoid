@@ -479,7 +479,7 @@ visible: **`0.9.134`** for game target `0.9.0n` + build `134`.
 | component | source | today |
 |---|---|---|
 | `X.Y` | **THEIRS** — the first two dot-separated fields of `VOTVCOOP_GAME_TARGET` (`src/votv-coop/CMakeLists.txt:23`, read via the ONE existing parser `Get-GameTargetFromCMake`, `tools/release/ledger_lib.ps1:160`), with any non-digit characters stripped from each field | `0.9` (from `0.9.0n`) |
-| `Z` | **OURS** — `kProtocolVersion` (`src/votv-coop/include/coop/net/protocol.h:709`), the Paper pair's build half | **`135`** as of 2026-08-24 (was `134` when this table was written; it moved on the WP-6 A5 retirement — see §7.3a item 1, and note the line number moved with it) |
+| `Z` | **OURS** — `kProtocolVersion` (`src/votv-coop/include/coop/net/protocol.h:709`), the Paper pair's build half | **`140`** as of 2026-08-25 (was `134` when this table was written, `135` on the WP-6 A5 retirement, then 136 A34 / 137 A37-A38 / 138 B1 / 139 B2 / 140 A50 — see §7.3a item 1; the line number moves with it, so re-grep rather than trusting `:709`). **The rate this moves at is itself the §7.3a argument**: six bumps in two days, every one of them security work with no player-visible feature, each silently moving the Thunderstore release identity |
 
 Parse rule, stated so it cannot be misread: split the game target on `.`, take fields 1 and 2, strip
 non-digits from each (so a hypothetical `0.9n` still yields `0.9`), and fail closed if either field is

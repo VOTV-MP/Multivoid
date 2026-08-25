@@ -497,6 +497,25 @@ HEAD `29353191`; see the Increment-2 bullet below). A sync-time-context byte rej
   (2) event-end SELF `K2_DestroyActor` never hits the destroy PRE observer → pose-walk **dead-retire**
   in `TickPoseStream` (bound-but-dead ⇒ retire + WorldActorDestroy broadcast) — this closed a latent
   mirror LEAK for every WA class, not just the pyramid. **[V: piramid e2e 2026-07-04 23:19]**
+- **THE MATERIALIZATION WINDOW — the answer to "is this actor a mirror?" BEFORE its row exists**
+  (`world_actor_sync.h`, v137, extended 2026-08-25). **[V]** A mirror's component-bound delegates bind
+  during `BeginPlay`, i.e. INSIDE `FinishSpawningActor`, and the mirror ROW is installed only after
+  Finish returns. So for the whole interval in which a fresh mirror can fire an overlap, a row lookup
+  answers NO for an actor that is unambiguously ours -- and any consumer that trusts the row alone
+  mis-classifies exactly the actors seeded onto a peer standing where the actor lands. The window is
+  published as an RAII scope and carries three reads:
+  `IsMaterializingMirror()` (is a materialization open on THIS thread), `MaterializingEid()` (the eid
+  being installed) and `MaterializingActor()` (the actor, published between `BeginDeferred` and
+  `FinishSpawningActor`).
+  **USE THE ACTOR, NOT THE WINDOW ALONE, AND THIS IS THE TRAP:** the first two take no actor, so
+  `IsMirroredActor(a) || IsMaterializingMirror()` really asks "is a is mirror, OR is SOME mirror being
+  born right now" -- and registering the new actor's collision fires delegates on OTHER actors it lands
+  on, so during any materialization an unrelated coin, prop or pile a player touches answers YES and
+  then resolves under the WRONG actor's eid. The correct predicate is
+  `IsMirroredActor(a) || MaterializingActor() == a`, and the eid fallback must carry the same identity
+  test. Both halves of that were shipped one at a time and the gap between them was a live defect
+  (v140, audit I-7) -- the header had warned about it for the eid and the first fix applied the warning
+  only to the eid, not to the predicate the eid hangs off. **[V: read 2026-08-25]**
 - `piramid2_C` additionally gets a choreography lane (`coop/creatures/piramid_sync`: client brain
   suppression + PyramidGather replay) — docs/events/piramid.md. **[AS-BUILT; walk at true scale V live
   2026-07-05; facing v100 pending 0s-FACING2]**

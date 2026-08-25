@@ -3019,6 +3019,16 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 
 ## 5. Engine / UE4 facts
 
+- **2026-08-25 — A default-on-failure return is FAIL-OPEN whenever the default is a LEGAL value.**
+  `E::GetActorLocation` returns a default `FVector` on every failure path and cannot signal it -- and
+  `(0,0,0)` is the WORLD ORIGIN, an ordinary reachable position. Inside the coin gun's reach gate (a
+  function whose own comment said FAIL-CLOSED) a failed read therefore authorized anything near the
+  origin and falsely refused everything else. Same shape one level up: `E::GetActorBounds` returns
+  `true` for *the dispatch succeeded*, not *the box is meaningful* -- an actor with no colliding
+  components yields `Origin=(0,0,0) Extent=(0,0,0)` with a `true` return. Fixed at the WRAPPER
+  (`E::TryGetActorLocation`), not the call site. *Look FIRST:* in any authorization gate, open every
+  accessor it reads and ask what it returns on failure; grep `ue_wrap/engine` for `Type Get...()`
+  returning by value. `memory/lesson_a_default_return_is_fail_open_when_the_default_is_legal.md`
 - **2026-08-23 — An instance index without BOTH a CDO filter and a world filter silently indexes
   the CLASS DEFAULT OBJECT.** turbine_sync (the one scan consumer with no `Default__` skip) had a
   phantom 5th "placed turbine" — the CDO — for its whole life: IsInstance matches the CDO
@@ -3411,6 +3421,18 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 
 ## 7. Performance
 
+- **2026-08-25 — a ctx GATE belongs in a hot callback; a ctx RESOLVE does not.** Obeying
+  `[[lesson-vm-dispatch-verb-name-is-not-the-gate]]` ("check `av.ctx`'s class") put
+  `if (!g_gunClass) g_gunClass = R::FindClass(...)` inside a `vm_dispatch` entry callback. `R::FindClass`
+  is an **uncached, negative-unlatched walk of ~237k objects with a name render per object**, and
+  `prop_coingun_C`'s UClass is not resident in the ordinary world (`[V]` the gun is in 3 of 261 maps),
+  so the resolve FAILED and re-walked on **every left click of all 146 `playerHandUse_LMB` classes**.
+  `Install` was already retrying the identical resolve inside a ~1 Hz throttle. The fix is
+  `if (!g_x) return;` -- compare in the callback, produce in the installer. *Look FIRST:* grep
+  `FindClass|FindFunction|FindObjectByClass` inside anything reached per-frame / per-ProcessEvent /
+  per-overlap / per-0x45-verb / per-packet, and ask what it costs in the world where the feature is
+  ABSENT -- an unlatched NEGATIVE turns a memo into a loop.
+  `memory/lesson_a_ctx_gate_belongs_in_a_hot_callback_a_ctx_resolve_does_not.md`
 - **`GetActorLocation`/`GetComponentLocation` are UFunction DISPATCHES, not raw reads** — never bulk-call
   per-tick over thousands of actors (invisible on a fresh save, hitches the host on a mature world);
   throttle / pre-filter / read the raw transform. *Look FIRST:* `engine.cpp GetActorLocation`. `memory/lesson_getactorlocation_is_a_ufunction_dispatch.md`
