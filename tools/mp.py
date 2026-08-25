@@ -2929,14 +2929,40 @@ def cmd_nativeui(args) -> None:
         # probe settles on the real main menu.
         "VOTVCOOP_MENU_PROCEED": "1",
     }
+    scenario = "menu"
+    set_role = False
+    if args.travel:
+        # O4 mode. The menu-only run cannot answer "does the game present frames during a
+        # LEVEL TRANSITION" because it never has one. This rides the existing menutravel
+        # probe, which boots into gameplay (travel #1: the boot load) and then calls
+        # AmainGamemode_C::transition("/Game/menu") (travel #2: quit-to-menu) -- two real
+        # transitions in one process, which is the sample RUNG 0 needs.
+        #
+        # NO_BYPASS=1 is not optional here. The default menutravel arms a 300 s TRANSPARENT
+        # BYPASS that puts our ProcessEvent detour dormant -- and GT::Post tasks drain
+        # inside that detour, so with the bypass on, the world memo would never refresh
+        # again and every frame after the transition would count as stale. The no-bypass
+        # path is also the honest one: it is the shape of a player's own in-game exit.
+        env["VOTVCOOP_RUN_MENUTRAVEL_PROBE"] = "1"
+        env["VOTVCOOP_MENUTRAVEL_NO_BYPASS"] = "1"
+        env["VOTVCOOP_MENUTRAVEL_MENU_S"] = "20"
+        scenario = "play"
+        args.no_write = True  # never write into the switcher during a travel run
+        # SpawnEnvGatedTests -- which is what actually starts the menutravel worker -- sits
+        # INSIDE harness.cpp's `if (netEnabled)` branch, so a launch with no net role never
+        # spawns it. The first travel attempt lost 3.5 minutes to exactly that: two
+        # WorldKind edges, zero `menutravel:` lines, and a FAIL that read as "the
+        # transition hung".
+        set_role = True
+        log("--- O4 TRAVEL MODE: boot -> gameplay -> transition(/Game/menu), no bypass ---")
     if not args.no_write:
         env["VOTVCOOP_NATIVE_UI_PROBE_WRITE"] = "1"
 
-    log("--- HOST LAUNCH (solo native-UI probe, MENU scenario) ---")
+    log(f"--- HOST LAUNCH (solo native-UI probe, {scenario.upper()} scenario) ---")
     host_pid = launch_peer("host", args.port, "Host", peer=None,
                            res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
                            memory_limit_gb=args.memory_limit_gb,
-                           set_net_role=False, set_scenario="menu", extra_env=env)
+                           set_net_role=set_role, set_scenario=scenario, extra_env=env)
     host_log = HOST_DIR / "multivoid.log"
 
     t0 = time.time()
@@ -2959,10 +2985,10 @@ def cmd_nativeui(args) -> None:
             if _capture_window(host_pid, p):
                 shot = p
                 log(f"  rung-1 shot: {p.name}")
-    lines = []
+    lines, all_lines = [], []
     try:
-        lines = [ln for ln in host_log.read_text(errors="ignore").splitlines()
-                 if "[native_ui_probe]" in ln]
+        all_lines = host_log.read_text(errors="ignore").splitlines()
+        lines = [ln for ln in all_lines if "[native_ui_probe]" in ln]
     except Exception:
         pass
     log("--- KILLING ---")
@@ -2978,8 +3004,42 @@ def cmd_nativeui(args) -> None:
                 return ln
         return None
 
+    def find_any(needle: str) -> str | None:
+        # `lines` is pre-filtered to our own tag, so anything logged by ANOTHER subsystem
+        # is structurally invisible to find(). The travel assert searched `lines` for
+        # "menutravel: MENU-SHOT READY" and could never have matched -- it reported the
+        # transition as hung through two runs in which the transition worked.
+        for ln in all_lines:
+            if needle in ln:
+                return ln
+        return None
+
     log("--- NATIVEUI VERDICT ---")
     fails = []
+    if args.travel:
+        # In travel mode the whole point is the EDGE lines: a run with no kind change never
+        # travelled, and its RUNG0 totals would be a menu-only sample wearing an O4 label.
+        edges = [ln for ln in lines if "RUNG0 EDGE" in ln]
+        for ln in edges:
+            log(f"EDGE: {ln.strip()}")
+        if len(edges) < 2:
+            fails.append(f"only {len(edges)} WorldKind edge(s) -- the run did not travel twice; "
+                         "RUNG0 has no transition in its sample")
+        if not find_any("menutravel: MENU-SHOT READY"):
+            fails.append("menutravel never reached the menu (transition failed / hung)")
+        boot = [ln for ln in edges if "Unknown -> " in ln]
+        if not boot:
+            fails.append("no Unknown -> * edge: the boot window was never bounded")
+        summary = [ln for ln in lines if "RUNG0 periodic" in ln]
+        if summary:
+            log(f"FINAL: {summary[-1].strip()}")
+        if not summary:
+            fails.append("no RUNG0 report at all")
+        for f in fails:
+            log(f"FAIL: {f}")
+        if not fails:
+            log("ALL PASS -- two travels in the sample; read the EDGE lines above.")
+        sys.exit(0 if not fails else 2)
     if not find("STAGE A done"):
         fails.append("STAGE A never ran (no ui_menu_C tick? read the tail)")
     o1 = find("O1 SUMMARY")
@@ -3910,6 +3970,9 @@ def main() -> None:
                             help="seconds to hold at the menu while the probe runs")
     p_nativeui.add_argument("--no-write", action="store_true",
                             help="reads only -- skip RUNG 1 (the switcher write)")
+    p_nativeui.add_argument("--travel", action="store_true",
+                            help="O4 mode: boot -> gameplay -> transition to menu (two real level "
+                                 "travels) so RUNG 0 has a transition in its sample. Implies --no-write")
     p_nativeui.add_argument("--memory-limit-gb", type=float, default=12.0,
                             help="per-process commit cap in GB (0 = disabled)")
     for flag, kw in host_res: p_nativeui.add_argument(flag, **kw)

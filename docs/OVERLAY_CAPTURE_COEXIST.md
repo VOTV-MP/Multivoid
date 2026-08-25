@@ -187,13 +187,20 @@ OBS captures us by default (our pixels are in the backbuffer when the game calls
 > re-measure per game recook (`docs/VERSION_MIGRATION.md`'s fragile half), no fail-closed hook install,
 > no DX12 rig needed for phase 2.
 >
-> **This is NOT a reason to stop work here, and the browser does not bank it.** The substrate
-> retirement is unbankable until one measurement lands, and that measurement is now **rung 0 of the
-> browser's probe**: *does the game ever present a frame while `CurrentWorld()` is null?* If it never
-> does, UMG can cover `join_curtain` / `loading_screen` / `boot_warning_dialog` and this arc is RULE-2
-> dead before it is built. If it does, ImGui's Present hook covers a window UMG structurally cannot,
-> **two substrates permanently is the measured answer, and this design ships as written.** Whoever
-> takes up either arc should read the other first.
+> **MEASURED 2026-08-25, AND IT RESOLVED AGAINST THE UMG ROUTE. THIS DESIGN SHIPS AS WRITTEN.**
+> The paragraph that stood here said the substrate retirement was unbankable until rung 0 of the
+> browser's probe answered *"does the game ever present a frame while `CurrentWorld()` is null?"*. It
+> ran three times (`tools/mp.py nativeui --travel`, `docs/MULTIPLAYER_UI.md` §8a): **at every launch
+> the game presents ~540 frames over ~11.4 s during which the world is `Unknown` AND our game-thread
+> task pump does not advance** — so a UMG widget can be neither created (every UFunction needs a
+> game-thread task) nor attached (no world, no `UGameViewportClient`), while ImGui's Present hook drew
+> all 540. Outside that window `UNKNOWN-AND-FRESH` was **0 across 11,298 frames**, and a level travel
+> presents **one frame** in either direction.
+>
+> **So the ~3,700 LOC substrate is NOT retirable, this arc does not dissolve, and it needs its own
+> `FD3D11Viewport::PresentChecked` seam exactly as designed above.** The cheap escape is measured
+> shut; do not re-derive it. (The native UMG destination remains real for surfaces that live *inside*
+> a world — it is only the boot-time ones this closes.)
 >
 > (A related correction from that pass, since this doc's neighbours cite it: the claim that
 > `boot_warning_dialog` is *"armed from the boot thread before any world exists"* is true but

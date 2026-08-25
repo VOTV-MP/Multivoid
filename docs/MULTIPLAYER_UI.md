@@ -633,7 +633,7 @@ built from **our** widgets — never the game's classes (§8).
 | **O8** | `UButton::OnClicked` layout | **`+0x3C8`, `num=1`**, entry = `BndEvt__button_NewGame_K2Node_ComponentBoundEvent_0_OnButtonClickedEvent__DelegateSignature` | the v2 retire-the-poll decision now has evidence; v1 still polls |
 | **A5** | which sub-screen sits at which switcher index? | measured, table below | placement indices are no longer guesses |
 | **RUNG 1** | does a hand-wired, never-`Initialize()`d `UUserWidget` render inside `UWidgetSwitcher`? | **RENDERS.** `AddChild` 11→12 children, index 0→11, `GetDesiredSize` (0,0)→**(623,39)**, screenshot confirms the magenta text on screen, index restored to 0 and `RemoveChild` back to 11 | **the 12th-child placement HOLDS** |
-| **RUNG 0** | frames presented while no world exists? | 1103 frames, 571 `Unknown` — **but all 571 were STALE and `fresh=0`** | **O4 IS STILL OPEN** — see below |
+| **RUNG 0** | frames presented while no world exists? | boot: **~540 frames / 11.4 s with our task pump frozen**; a level travel presents **1 frame**; `UNKNOWN-AND-FRESH=0` over 11,298 frames | **O4 IS ANSWERED: two substrates, permanently.** ImGui is not retirable — see below |
 
 **`switcher_widgets` child map `[V]`** — 11 children, `ActiveWidgetIndex=0` at the main menu:
 
@@ -678,19 +678,56 @@ above comes from `ui_saveSlots_C.button_back`, which does. **This is also a fact
 inject worth keeping: `ui_menu_C`'s own menu buttons carry no brush art**, which is why
 `InjectCanvasButton`'s clone produces a native-looking button without ever loading a texture.
 
-**RUNG 0 DID NOT SETTLE O4, and this is the honest reading.** 571 of 1103 presented frames read
-`Unknown`, and **every one of them was a STALE sample** (`fresh=0`): they were presented before the
-game thread had run a single one of the probe's refresh tasks, because `world_identity`'s memo is
-refreshed only by a game-thread caller and `GT::Post` needs `ProcessEvent` traffic to drain. So the
-measured statement is *"the game presents ~571 frames before the mod can determine whether a world
-exists"* — **not** *"571 frames were presented with no world"*. Those are different claims and only
-the second one is evidence about what UMG could have drawn. What is settled: **after the world
-resolves, zero world-less frames were observed at the menu**, and the level-transition case — the
-other half of O4 — **was never exercised**, because this run never left the menu. **The ~3,700 LOC
-substrate retirement stays unbankable**, now for a measured reason rather than an unmeasured one.
-The next O4 run must (a) boot→gameplay→quit-to-menu so a transition is in the sample, and (b) find
-a way to keep the memo fresh across a blocked game thread, or accept that the boot window is
-structurally unattributable and say so.
+**RUNG 0 — O4 IS ANSWERED, AND THE ANSWER IS "TWO SUBSTRATES, PERMANENTLY" `[V]`.** Three runs
+(`python tools/mp.py nativeui --travel`), the last of them `ALL PASS`, boot -> gameplay ->
+`AmainGamemode_C::transition("/Game/menu")` -> menu, i.e. **two real level travels in one process**:
+
+```
+RUNG0 EDGE Unknown  -> Other    after  540 frames / 11391 ms  (pumpFrozen 539, stale 1, fresh 0)
+RUNG0 EDGE Other    -> Gameplay after    1 frame  /  6687 ms  (pumpFrozen 0, stale 0, fresh 1)
+RUNG0 EDGE Gameplay -> Other    after    1 frame  /  4625 ms  (pumpFrozen 0, stale 1, fresh 0)
+RUNG0 periodic: frames=11298 | unknown=540 gameplay=1 other=10757
+                | PUMP-FROZEN frames=539 (longest run 539 frames / 10297 ms) stale=3 fresh=10756
+                | UNKNOWN-AND-FRESH=0 | tasksRun=3685 degraded=0
+```
+
+Three facts, and each one is load-bearing:
+
+1. **A LEVEL TRANSITION PRESENTS ONE FRAME.** Measured in both directions — 1 frame across 6.7 s
+   entering the map, 1 frame across 4.6 s leaving it. There is nothing to draw into during a
+   travel, for **any** substrate, so the transition window — the thing this run was built to
+   sample — turns out not to be the question at all.
+2. **THE BOOT WINDOW IS THE QUESTION, AND IT IS ~540 FRAMES OVER ~11.4 s** (longest contiguous
+   frozen run 539 frames / **10 297 ms**), reproducible at 478 / 527 / 540 frames across three
+   runs. Throughout it the world reads `Unknown` **and** `GT::TasksRun()` does not advance:
+   the game is presenting at ~46 fps while our game-thread task pump is not draining at all.
+3. **`UNKNOWN-AND-FRESH = 0` across 11,298 frames.** Outside boot, the game never presented a
+   single frame with a *current* reading of "no world". The whole phenomenon is the boot window.
+
+**Why that closes O4 rather than merely describing it.** Every UFunction this mod calls —
+`SpawnObject` included — reaches the engine through `GT::Post`, which drains inside our
+ProcessEvent detour. In a pump-frozen window we therefore **cannot create or drive a UMG widget
+at all**, and independently there is no world, so no `UGameViewportClient` to `AddToViewport`
+into. For ~10.3 seconds and ~540 presented frames at every launch, a native UMG surface is
+unreachable from our layer in two ways at once, while ImGui's Present hook — which lives on the
+render thread and needs neither — drew every one of those frames. `boot_warning_dialog` is
+exactly a surface that must appear there.
+
+**So: the ~3,700 LOC of overlay substrate is NOT retirable, and "two substrates permanently" stops
+being a live possibility and becomes the measured answer.** The browser can be native without that
+being a step toward retiring ImGui, and the two facts are now independent.
+
+**One nuance kept on purpose, because it bounds the claim.** The pump being frozen does not mean
+the *engine's* game thread is blocked — it fed the render thread 540 frames, and VOTV's own
+loading screen is UMG and animates. What is frozen is **ProcessEvent dispatch**, which is what our
+substrate is parasitic on. So the honest statement is *"WE cannot reach UMG during boot"*, not
+*"UMG cannot draw during boot"*. For the decision it makes no difference — we are the ones who
+would have to build the widget — but a future attempt to shrink that window should aim at reaching
+the game thread without ProcessEvent, not at UMG.
+
+**A consequence outside this doc:** `docs/OVERLAY_CAPTURE_COEXIST.md` §6's arc cannot resolve for
+free by moving the draw to a native UMG surface. That option is now measured shut, and the RTSS/OBS
+fix needs its own `FD3D11Viewport::PresentChecked` seam as originally designed.
 
 **What P1 did NOT answer**, and is still owed before or during P2: whether a bare `UImage` with
 `Visibility=Visible` answers `IsHovered()` for a pointer over it (RUNG 1's root reported
@@ -983,14 +1020,20 @@ load-bearing and should not be silently re-opened.
    > its cloned `FButtonStyle`; that part was right, and it is why the *chrome* buttons need no
    > `menu_sfx` equivalent.
 
-**What this does NOT promise.** ImGui is **not** being retired as the mod's UI substrate on the
-strength of this design. Doing so would bank ~3,700 LOC of overlay substrate (`imgui_overlay` 815,
+**What this does NOT promise — and it is now MEASURED rather than deferred (see §8a).** ImGui is
+**not** being retired as the mod's UI substrate, and after the 2026-08-25 RUNG 0 travel runs that is
+a finding rather than a caution: the boot window is ~540 presented frames over ~11.4 s in which our
+task pump does not advance and no world exists, so a native UMG surface is unreachable there in two
+independent ways. The paragraph below is the pre-measurement reasoning, kept because it is what the
+measurement was run against. Doing so would bank ~3,700 LOC of overlay substrate (`imgui_overlay` 815,
 `overlay_backend_dx12` 792, `_dx12_capture` 405, `fonts` 492, `atlas_watch` 386, `overlay_diag` 209,
 `_dx11` 157, `overlay_backend` 155, `overlay_cursor` 70, `scale` 127, `style` 80), and that is
 **unbankable** until someone measures whether UMG can cover `join_curtain`, `loading_screen` and
-`boot_warning_dialog`. **Two substrates permanently is a live possible outcome.**
+`boot_warning_dialog`. ~~Two substrates permanently is a live possible outcome.~~ **-> MEASURED
+2026-08-25: two substrates permanently is the ANSWER, not a possibility (§8a).**
 
-> **Sharpened (`/qf` round 9): O4 is a question about DRAW time, not ARM time.** This paragraph used
+> **ANSWERED 2026-08-25 — see §8a. The framing below was right and is kept as the question the
+> measurement was aimed at.** Sharpened (`/qf` round 9): O4 is a question about DRAW time, not ARM time. This paragraph used
 > to lean on `boot_warning_dialog` being *"armed from the boot thread before any world exists"*. That
 > is true and **irrelevant**: `Arm()` (`boot_warning_dialog.cpp:29-34`) takes a mutex, stores a
 > `std::string` and sets an atomic — nothing world-related — while `Render()` runs from the overlay

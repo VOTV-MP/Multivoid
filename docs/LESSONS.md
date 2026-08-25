@@ -58,8 +58,27 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   post cadence so a blocked game thread does not accumulate a task per frame; the ran stamp is
   staleness), and a zero-initialised stamp is *never refreshed*, not "0 ms ago". *Look FIRST:* any
   predicate read across threads is a memo — ask who writes it, on which thread, and what stops that
-  writer during the window that matters; then bucket staleness beside the value.
+  writer during the window that matters; then bucket staleness beside the value. **SEQUEL, same day:**
+  the first fix bucketed "we had not started yet" on `GT::TasksRun() == 0` and read **zero** while 478
+  frames sat stale, because boot drains tasks before the first present — **HAS-EVER-RUN and
+  IS-RUNNING-NOW are different questions and only the second describes a window.** Keyed on the
+  counter's ADVANCE instead, the window resolved at once and became the answer to the whole rung:
+  `[V]` **~540 frames over ~11.4 s at every launch with the pump not advancing at all.** A monotonic
+  counter's VALUE answers "ever"; its DELTA answers "now". Liveness is always a delta.
   `memory/lesson_a_counter_over_a_cross_thread_memo_counts_the_refresh.md`
+
+- **A list narrowed for DISPLAY, reused as a PREDICATE, fails closed and reads as a finding.**
+  2026-08-25: `mp.py`'s nativeui verdict built `lines = [ln for ln in log if "[native_ui_probe]" in ln]`
+  so it could echo the probe's own output, then defined `find(needle)` over that same list and asserted
+  `find("menutravel: MENU-SHOT READY")`. `menutravel:` is another subsystem's tag, so the needle was
+  structurally absent and the branch was a constant — it reported *"transition failed / hung"* through
+  two runs whose logs plainly showed `MENU-SHOT READY` and `DONE`. Cost two 4-minute runs and sent the
+  investigation at a launch-argument theory. The narrowing was written for a good reason, in a
+  different part of the function, behind a helper whose name says nothing about its corpus. *Look
+  FIRST:* two corpora, two helpers (`find` vs `find_any`); **any assert whose needle does not contain
+  the filter's own token is a bug by construction** — a mechanical check, not a judgement; and confirm
+  a runner's reported failure in the RAW artifact before acting on it.
+  `memory/lesson_a_list_narrowed_for_display_reused_as_a_predicate.md`
 
 - **Your own memory file can silently EDIT the plan of record, and you will read it back as the plan.**
   2026-08-25: on "go next" I was one call from implementing a security root (A54). `[V]` The design doc
