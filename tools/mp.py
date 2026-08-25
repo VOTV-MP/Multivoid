@@ -3076,6 +3076,29 @@ def cmd_nativeui(args) -> None:
         # switcher pointing at a throwaway.
         if find("RUNG1 HOLD BEGIN") and not (find("RUNG1 restore") or find("RUNG1 ABORTED")):
             fails.append("RUNG1 held but never restored -- THE SWITCHER WAS LEFT ON OUR INDEX")
+        # RUNG 2 -- the two questions that GATE the browser's ~520 LOC. Both verdicts are
+        # three-valued in the DLL, and this asserts the LINE EXISTS rather than that it is
+        # positive: an INCONCLUSIVE hover verdict is a real answer ("do not build on it"),
+        # and turning it into a runner FAIL would hide which of the two it was.
+        hov = find("RUNG2 HOVER VERDICT")
+        if not hov:
+            fails.append("no RUNG2 HOVER VERDICT line -- the hit-test question is UNANSWERED")
+        else:
+            log(f"HOVER: {hov.strip()}")
+            if "INCONCLUSIVE" in hov:
+                log("NOTE: hover verdict INCONCLUSIVE -- foreground or an unrun phase, not a "
+                    "negative. Re-run with the window focused before concluding anything.")
+            elif "ALWAYS-TRUE" in hov or "NEVER TRUE" in hov:
+                fails.append("RUNG2 hover says IsHovered() does not discriminate -- section 8's "
+                             "row hit-test design is FALSIFIED, do not write P2")
+        gc = find("RUNG2 GC VERDICT")
+        if not gc:
+            fails.append("no RUNG2 GC VERDICT line -- subtree survival across a purge is UNMEASURED")
+        else:
+            log(f"GC: {gc.strip()}")
+            if "DID NOT SURVIVE" in gc:
+                fails.append("RUNG2 GC says the hand-built subtree did NOT survive a forced purge "
+                             "-- the pool-in-the-panel design is FALSIFIED, do not write P2")
     if shot:
         log(f"screenshot: {shot}")
     for f in fails:
@@ -3966,8 +3989,12 @@ def main() -> None:
                                 help="SOLO menu-time probe for the native server browser (P1): UMG "
                                      "resolve census + donor residency + switcher map + world-less "
                                      "frame count, and RUNG 1's one write")
-    p_nativeui.add_argument("--duration", type=int, default=45,
-                            help="seconds to hold at the menu while the probe runs")
+    p_nativeui.add_argument("--duration", type=int, default=120,
+                            help="seconds to hold at the menu while the probe runs. Counted from "
+                                 "LAUNCH, not from the menu -- boot alone is ~50 s here, and the "
+                                 "old default of 45 s killed the game mid-RUNG-2 (its verdicts and "
+                                 "its restore never ran, which the runner then reported as four "
+                                 "separate failures)")
     p_nativeui.add_argument("--no-write", action="store_true",
                             help="reads only -- skip RUNG 1 (the switcher write)")
     p_nativeui.add_argument("--travel", action="store_true",

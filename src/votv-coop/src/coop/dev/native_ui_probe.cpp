@@ -459,9 +459,50 @@ void RunStageA(void* menu) {
 enum class Rung1 : uint8_t { Idle, Held, Done, Failed };
 Rung1 g_rung1 = Rung1::Idle;
 
-constexpr unsigned long long kHoldMs   = 2200;  // several presented frames + one screenshot
+// RUNG 2 (2026-08-26) rides the SAME hold. RUNG 1 asked "does a hand-wired UUserWidget
+// render inside the switcher" and answered RENDERS; that is banked, so the throwaway is
+// now allowed to be a DEEPER tree and to answer the two questions section 8a left open --
+// both of which gate the browser's ~520 LOC and neither of which has a plan B:
+//
+//   HOVER  does a bare `UImage` with Visibility=Visible answer `IsHovered()`? That single
+//          bit is the hit-test authority for every row, every chrome button, and the
+//          scrim's click absorption. RUNG 1 reported rootHovered=1 on every sample, which
+//          is suspicious rather than confirming: a full-bleed widget under an unmoved
+//          cursor cannot distinguish "hit-testing works" from "always true". So RUNG 2
+//          uses a BOUNDED target and tests BOTH directions -- cursor ON it, cursor OFF it.
+//   GC     does the subtree survive a purge? The UPROPERTY chain (UUserWidget::WidgetTree
+//          @0x1D8 -> UWidgetTree::RootWidget @0x28 -> UPanelWidget::Slots @0x108 ->
+//          UPanelSlot::Content @0x30, all reflected) says it is reachable from the live
+//          switcher, so AddToRoot would be WRONG here -- but RUNG 1 lived about one tick
+//          and never met a collection. `ForceGarbageCollection()` already ships, so the
+//          reachability argument becomes a measurement for one line of code.
+//
+// The hold is longer because it is now a PHASE MACHINE, and every phase still exits
+// through the same single restore path.
+// THE MOVE AND THE SAMPLE ARE SEPARATE PHASES, and the first version of this file got
+// that wrong -- measured on the 2026-08-26 run. Sampling `IsHovered()` in the SAME tick
+// that moved the cursor read the PREVIOUS position every time: hover-ON sampled 0 while
+// the five following periodic samples all read 1, and hover-OFF sampled 1 while the five
+// following all read 0. Slate processes the mouse move later in the frame than our
+// observer runs, so the answer is always one tick stale.
+//
+// That is the SAME fact section 8 reasoned its way to for the WndProc ("our detour runs
+// before the engine sees the message, so IsHovered() still answers for the previous
+// position") -- and I reproduced the mistake in the instrument built to check it. The
+// design's "evaluate hover on the next game-thread tick" is now MEASURED, not argued.
+constexpr unsigned long long kHoldMs   = 5800;  // phases below + slack, then restore
 constexpr unsigned long long kShotAtMs = 700;
 constexpr unsigned long long kSampleMs = 250;
+constexpr unsigned long long kHoverOnMoveMs   = 1400;  // cursor -> inside the bounded image
+constexpr unsigned long long kHoverOnSampleMs = 2000;  // ...read it SEVERAL ticks later
+constexpr unsigned long long kHoverOffMoveMs   = 2800;  // cursor -> client centre (outside it)
+constexpr unsigned long long kHoverOffSampleMs = 3400;
+constexpr unsigned long long kGcAtMs     = 4200;  // ForceGarbageCollection, then re-assert
+constexpr unsigned long long kGcCheckMs  = 5000;
+// The bounded hit-test target, in Slate units at the switcher's top-left. Bounded ON
+// PURPOSE: a full-bleed target makes a true reading unfalsifiable.
+constexpr float kProbeImgW = 400.f;
+constexpr float kProbeImgH = 64.f;   // the native row height (section 7b), so this is the real case
 // SETTLE before the write. At boot the menu opens on the content-warning screen -- itself
 // one of the switcher's children -- and the sub-screens are still being constructed. A
 // rung that fired on the very first main-menu tick would be measuring a half-built menu
@@ -470,13 +511,70 @@ constexpr unsigned long long kSettleMs = 3000;
 unsigned long long g_firstMainTickMs = 0;  // stamped on the first isPause==false tick
 
 void* g_throwRoot    = nullptr;  // our UUserWidget (never Initialize()d)
-void* g_throwText    = nullptr;  // its UTextBlock root
+void* g_throwText    = nullptr;  // a UTextBlock -- the VISUAL proof, kept from RUNG 1
+void* g_throwOverlay = nullptr;  // the root widget: a UOverlay (RUNG 2's deeper tree)
+void* g_throwImage   = nullptr;  // the bounded UImage -- RUNG 2's hit-test SUBJECT
+void* g_throwSizeBox = nullptr;  // bounds the image (also exercises the bOverride bitfield)
 void* g_heldSwitcher = nullptr;
 int32_t g_priorIndex = -1;
 int32_t g_ourIndex   = -1;
 unsigned long long g_holdStartMs  = 0;
 unsigned long long g_lastSampleMs = 0;
 bool g_shotTaken = false;
+// RUNG 2 phase latches + results. `-1` = not sampled, so an UNRUN phase can never be
+// read as a negative answer (the section-8a trap: an instrument blind to the phenomenon
+// always passes, and its mirror -- a phase that never ran reported as "false" -- would
+// kill a correct design).
+int  g_hoverOnImg = -1, g_hoverOnText = -1, g_hoverOnRoot = -1;
+int  g_hoverOffImg = -1, g_hoverOffRoot = -1;
+int  g_hoverFgOn = -1, g_hoverFgOff = -1;   // was OUR window foreground at each sample
+bool g_didHoverOnMove = false, g_didHoverOffMove = false;
+bool g_didHoverOn = false, g_didHoverOff = false, g_didGc = false, g_didGcCheck = false;
+int  g_gcChildCount = -1;
+ue_wrap::FVector2D g_gcRootSize{0.f, 0.f}, g_gcImgSize{0.f, 0.f};
+
+// The game's own top-level window, found from the GAME THREAD (which created it, and
+// which is also where WndProcDetour runs -- measured 2026-07-31). EnumThreadWindows is
+// deterministic here in a way that "the foreground window" is not: an unattended lab run
+// can legitimately have another window focused, and we must be able to tell that apart
+// from a hit-test failure.
+BOOL CALLBACK PickThreadWindow(HWND h, LPARAM lp) {
+    if (!::IsWindowVisible(h)) return TRUE;
+    RECT rc{};
+    if (!::GetClientRect(h, &rc) || rc.right - rc.left < 64 || rc.bottom - rc.top < 64) return TRUE;
+    *reinterpret_cast<HWND*>(lp) = h;
+    return FALSE;  // first match wins
+}
+HWND GameWindow() {
+    HWND found = nullptr;
+    ::EnumThreadWindows(::GetCurrentThreadId(), &PickThreadWindow,
+                        reinterpret_cast<LPARAM>(&found));
+    return found;
+}
+
+// Move the OS cursor to a CLIENT-space point and verify it landed. Write-then-verify for
+// the same reason overlay_cursor.cpp does it: SetCursorPos is silently clamped by whatever
+// ClipCursor rect is live, and we do not own that rect -- an unverified move would turn a
+// clamp into a false "not hovered".
+bool MoveCursorClient(HWND hwnd, int cx, int cy, const char* why) {
+    if (!hwnd) return false;
+    POINT p{cx, cy};
+    if (!::ClientToScreen(hwnd, &p)) return false;
+    ::SetCursorPos(p.x, p.y);
+    POINT got{};
+    ::GetCursorPos(&got);
+    const bool ok = (got.x == p.x && got.y == p.y);
+    UE_LOGI("[native_ui_probe] RUNG2 cursor %s -> client(%d,%d) screen(%ld,%ld) got(%ld,%ld) %s",
+            why, cx, cy, p.x, p.y, got.x, got.y, ok ? "OK" : "CLAMPED -- reading is UNTRUSTED");
+    return ok;
+}
+
+bool HoveredOf(void* w) {
+    if (!w || !g_fnIsHovered) return false;
+    ue_wrap::ParamFrame f(g_fnIsHovered);
+    if (!Call(w, f)) return false;
+    return f.Get<bool>(L"ReturnValue");
+}
 
 void Rung1Restore(const char* why) {
     if (!g_heldSwitcher) return;
@@ -504,6 +602,9 @@ void Rung1Restore(const char* why) {
     g_heldSwitcher = nullptr;
     g_throwRoot    = nullptr;
     g_throwText    = nullptr;
+    g_throwOverlay = nullptr;
+    g_throwImage   = nullptr;
+    g_throwSizeBox = nullptr;
 }
 
 void Rung1Begin(void* menu) {
@@ -519,19 +620,78 @@ void Rung1Begin(void* menu) {
     // question in one obvious place while it is attached.
     void* root = E::SpawnUObject(R::FindClass(P::name::UserWidgetClass), g_switcher);
     void* tree = root ? E::SpawnUObject(R::FindClass(P::name::WidgetTreeClass), root) : nullptr;
-    void* txt  = tree ? E::SpawnUObject(R::FindClass(P::name::TextBlockClass), tree) : nullptr;
-    if (!root || !tree || !txt) {
-        UE_LOGE("[native_ui_probe] RUNG1 SpawnObject failed (root=%p tree=%p txt=%p)", root, tree,
-                txt);
+    // RUNG 2: the root widget is a UOverlay, not the bare UTextBlock RUNG 1 used. The
+    // browser's real tree is Overlay -> [scrim UImage, content], so if a DEEPER hand-built
+    // tree fails to lay out, that is itself the finding -- and RUNG 1's answer is already
+    // banked, so the extra structure confounds nothing.
+    void* ovl  = tree ? E::SpawnUObject(R::FindClass(L"Overlay"), tree) : nullptr;
+    void* sbox = ovl ? E::SpawnUObject(R::FindClass(L"SizeBox"), ovl) : nullptr;
+    void* img  = sbox ? E::SpawnUObject(R::FindClass(L"Image"), sbox) : nullptr;
+    void* txt  = ovl ? E::SpawnUObject(R::FindClass(P::name::TextBlockClass), ovl) : nullptr;
+    if (!root || !tree || !ovl || !sbox || !img || !txt) {
+        UE_LOGE("[native_ui_probe] RUNG1/2 SpawnObject failed (root=%p tree=%p overlay=%p "
+                "sizeBox=%p image=%p txt=%p)", root, tree, ovl, sbox, img, txt);
         g_rung1 = Rung1::Failed;
         return;
     }
     *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(root) + P::off::UUserWidget_WidgetTree) =
         tree;
     *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(tree) + P::off::UWidgetTree_RootWidget) =
-        txt;
-    E::SetWidgetText(txt, L"MULTIVOID NATIVE UMG PROBE -- RUNG 1");
+        ovl;
+    E::SetWidgetText(txt, L"MULTIVOID NATIVE UMG PROBE -- RUNG 1/2");
     E::SetTextBlockColor(txt, ue_wrap::FLinearColor{1.f, 0.f, 1.f, 1.f});  // magenta: unmistakable
+
+    // ---- RUNG 2's hit-test subject -------------------------------------------------
+    // A UImage with NO ResourceObject and only a tint DRAWS A SOLID RECT -- measured on
+    // the game's own screen: ui_saveSlots_C's first child `Image_302` is exactly that
+    // (full-screen, tint (0,0,0,0.5)) and it visibly dims the menu. So this needs no
+    // donor and no texture, which is also why the browser's scrim needs neither.
+    {
+        auto* b = reinterpret_cast<uint8_t*>(img) + P::off::UImage_Brush;
+        *reinterpret_cast<ue_wrap::FLinearColor*>(b + P::off::FSlateBrush_TintColor) =
+            ue_wrap::FLinearColor{0.f, 0.9f, 0.9f, 0.85f};  // cyan, clearly ours
+        *(b + P::off::FSlateBrush_TintColor + P::off::FSlateColor_ColorUseRule) = 0;  // Specified
+    }
+    // BOUND it. A full-bleed target cannot falsify a hover reading -- that is precisely
+    // why RUNG 1's rootHovered=1 said nothing. SetHeightOverride/SetWidthOverride are
+    // driven as UFUNCTIONS on purpose: the values live at +0x134/+0x130 but the
+    // bOverride_* bits are a BITFIELD at +0x150, so a raw write would silently do nothing.
+    if (void* sbCls = R::FindClass(L"SizeBox")) {
+        if (void* fnH = R::FindFunction(sbCls, L"SetHeightOverride")) {
+            ue_wrap::ParamFrame f(fnH); f.Set<float>(L"InHeightOverride", kProbeImgH); Call(sbox, f);
+        }
+        if (void* fnW = R::FindFunction(sbCls, L"SetWidthOverride")) {
+            ue_wrap::ParamFrame f(fnW); f.Set<float>(L"InWidthOverride", kProbeImgW); Call(sbox, f);
+        }
+    }
+    if (void* cwCls = R::FindClass(P::name::ContentWidgetClass)) {
+        if (void* fnSet = R::FindFunction(cwCls, P::name::SetContentFn)) {
+            ue_wrap::ParamFrame f(fnSet); f.Set<void*>(L"Content", img); Call(sbox, f);
+        }
+    }
+    // Both overlay children are pinned TOP-LEFT / BOTTOM-LEFT so the image occupies a
+    // known rect and the text cannot sit on top of it. EHorizontalAlignment Left=1;
+    // EVerticalAlignment Top=1, Bottom=3.
+    if (void* ovlCls = R::FindClass(L"Overlay")) {
+        if (void* fnAdd = R::FindFunction(ovlCls, L"AddChildToOverlay")) {
+            auto place = [&](void* child, uint8_t h, uint8_t v) {
+                ue_wrap::ParamFrame f(fnAdd);
+                f.Set<void*>(L"Content", child);
+                if (!Call(ovl, f)) return;
+                if (void* slot = f.Get<void*>(L"ReturnValue")) {
+                    auto* s = reinterpret_cast<uint8_t*>(slot);
+                    *(s + P::off::UOverlaySlot_HAlign) = h;
+                    *(s + P::off::UOverlaySlot_VAlign) = v;
+                }
+            };
+            place(sbox, 1, 1);  // Left / Top   -- the bounded hit-test target
+            place(txt,  1, 3);  // Left / Bottom-- the visual proof, clear of the target
+        }
+    }
+    // Visibility::Visible (0) is REQUIRED for the image to answer IsHovered(): a
+    // SelfHitTestInvisible image reads false, which would look exactly like a failure of
+    // the whole approach. Stated as a probe input, not assumed.
+    E::SetWidgetVisibility(img, 0);
 
     // Baseline BEFORE attachment: a widget Slate has never taken has DesiredSize (0,0),
     // because UWidget::GetDesiredSize reads the underlying SWidget and answers zero when
@@ -563,6 +723,11 @@ void Rung1Begin(void* menu) {
     g_heldSwitcher = g_switcher;
     g_throwRoot    = root;
     g_throwText    = txt;
+    // Published only AFTER a successful attach, so a failed add cannot leave the RUNG 2
+    // phase machine holding pointers to a tree the restore path will never see.
+    g_throwOverlay = ovl;
+    g_throwImage   = img;
+    g_throwSizeBox = sbox;
     {
         ue_wrap::ParamFrame f(g_fnSetActiveIdx);
         f.Set<int32_t>(L"Index", g_ourIndex);
@@ -595,19 +760,93 @@ void Rung1Tick() {
     if (now - g_lastSampleMs >= kSampleMs) {
         g_lastSampleMs = now;
         const ue_wrap::FVector2D dRoot = DesiredSizeOf(g_throwRoot);
-        const ue_wrap::FVector2D dTxt  = DesiredSizeOf(g_throwText);
-        bool hovered = false;
-        if (g_fnIsHovered && g_throwRoot) {
-            ue_wrap::ParamFrame f(g_fnIsHovered);
-            if (Call(g_throwRoot, f)) hovered = f.Get<bool>(L"ReturnValue");
-        }
-        UE_LOGI("[native_ui_probe] RUNG1 hold %4llums: root desiredSize=(%.1f,%.1f) text "
-                "desiredSize=(%.1f,%.1f) rootHovered=%d | input_owner gameOwnsText=%d "
+        const ue_wrap::FVector2D dImg  = DesiredSizeOf(g_throwImage);
+        UE_LOGI("[native_ui_probe] RUNG1 hold %4llums: root desiredSize=(%.1f,%.1f) image "
+                "desiredSize=(%.1f,%.1f) rootHovered=%d imgHovered=%d | input_owner gameOwnsText=%d "
                 "overlayOwnsText=%d foreground=%d",
-                held, dRoot.X, dRoot.Y, dTxt.X, dTxt.Y, hovered ? 1 : 0,
+                held, dRoot.X, dRoot.Y, dImg.X, dImg.Y, HoveredOf(g_throwRoot) ? 1 : 0,
+                HoveredOf(g_throwImage) ? 1 : 0,
                 coop::input::input_owner::GameOwnsText() ? 1 : 0,
                 coop::input::input_owner::OverlayOwnsText() ? 1 : 0,
                 coop::input::input_owner::IsForeground() ? 1 : 0);
+    }
+
+    // ---- RUNG 2 phases -------------------------------------------------------------
+    // Each fires ONCE, in order, and none of them can end the hold early -- the single
+    // restore at the deadline below stays the only exit, so a phase that throws off the
+    // timing can never strand the throwaway on screen.
+    if (held >= kHoverOnMoveMs && !g_didHoverOnMove) {
+        g_didHoverOnMove = true;
+        HWND hwnd = GameWindow();
+        if (hwnd) {
+            // Inside the bounded image: its rect is the switcher's top-left corner, and
+            // the switcher fills the screen (measured from ui_menu's CanvasPanelSlot:
+            // Anchors (0,0)-(1,1), offsets 0). Aim a quarter into it so a DPI scale other
+            // than 1.0 still lands inside.
+            ::SetForegroundWindow(hwnd);
+            MoveCursorClient(hwnd, static_cast<int>(kProbeImgW / 4),
+                             static_cast<int>(kProbeImgH / 4), "ON the image");
+        } else {
+            UE_LOGW("[native_ui_probe] RUNG2 hover-ON: no game window found -- phase UNRUN");
+        }
+    }
+    if (held >= kHoverOnSampleMs && !g_didHoverOn) {
+        g_didHoverOn  = true;
+        g_hoverFgOn   = coop::input::input_owner::IsForeground() ? 1 : 0;
+        g_hoverOnImg  = HoveredOf(g_throwImage) ? 1 : 0;
+        g_hoverOnText = HoveredOf(g_throwText) ? 1 : 0;
+        g_hoverOnRoot = HoveredOf(g_throwRoot) ? 1 : 0;
+        UE_LOGW("[native_ui_probe] RUNG2 hover-ON sample (%llums after the move): image=%d text=%d "
+                "root=%d foreground=%d",
+                kHoverOnSampleMs - kHoverOnMoveMs, g_hoverOnImg, g_hoverOnText, g_hoverOnRoot,
+                g_hoverFgOn);
+    }
+    if (held >= kHoverOffMoveMs && !g_didHoverOffMove) {
+        g_didHoverOffMove = true;
+        HWND hwnd = GameWindow();
+        RECT cr{};
+        if (hwnd && ::GetClientRect(hwnd, &cr)) {
+            MoveCursorClient(hwnd, (cr.right - cr.left) / 2, (cr.bottom - cr.top) / 2,
+                             "OFF the image (client centre)");
+        } else {
+            UE_LOGW("[native_ui_probe] RUNG2 hover-OFF: no game window found -- phase UNRUN");
+        }
+    }
+    if (held >= kHoverOffSampleMs && !g_didHoverOff) {
+        g_didHoverOff  = true;
+        g_hoverFgOff   = coop::input::input_owner::IsForeground() ? 1 : 0;
+        g_hoverOffImg  = HoveredOf(g_throwImage) ? 1 : 0;
+        g_hoverOffRoot = HoveredOf(g_throwRoot) ? 1 : 0;
+        UE_LOGW("[native_ui_probe] RUNG2 hover-OFF sample (%llums after the move): image=%d root=%d "
+                "foreground=%d",
+                kHoverOffSampleMs - kHoverOffMoveMs, g_hoverOffImg, g_hoverOffRoot, g_hoverFgOff);
+    }
+    if (held >= kGcAtMs && !g_didGc) {
+        g_didGc = true;
+        // The subtree is reachable ONLY through UPROPERTYs from the live switcher (no
+        // AddToRoot -- see the RUNG 2 header). This is where that argument stops being an
+        // argument. A 40 s lab run can otherwise miss UE's ~61 s periodic purge entirely.
+        const bool ran = E::ForceGarbageCollection();
+        UE_LOGW("[native_ui_probe] RUNG2 GC: ForceGarbageCollection ran=%d -- re-asserting in %llums",
+                ran ? 1 : 0, kGcCheckMs - kGcAtMs);
+    }
+    if (held >= kGcCheckMs && !g_didGcCheck) {
+        g_didGcCheck  = true;
+        g_gcChildCount = CallIntNoArg(g_heldSwitcher, g_fnChildCount);
+        g_gcRootSize   = DesiredSizeOf(g_throwRoot);
+        g_gcImgSize    = DesiredSizeOf(g_throwImage);
+        const bool survived = (g_gcChildCount == g_ourIndex + 1) &&
+                              (g_gcRootSize.X > 0.f || g_gcRootSize.Y > 0.f);
+        if (survived)
+            UE_LOGW("[native_ui_probe] RUNG2 GC VERDICT: SURVIVED. children=%d root=(%.1f,%.1f) "
+                    "image=(%.1f,%.1f) -- the UPROPERTY chain from the switcher roots the whole "
+                    "subtree; AddToRoot is NOT needed and would be wrong.",
+                    g_gcChildCount, g_gcRootSize.X, g_gcRootSize.Y, g_gcImgSize.X, g_gcImgSize.Y);
+        else
+            UE_LOGE("[native_ui_probe] RUNG2 GC VERDICT: DID NOT SURVIVE. children=%d (expected %d) "
+                    "root=(%.1f,%.1f) -- the browser's subtree needs an explicit GC pin + a paired "
+                    "un-root (reflection.h:109), and the pool-in-the-panel design is WRONG.",
+                    g_gcChildCount, g_ourIndex + 1, g_gcRootSize.X, g_gcRootSize.Y);
     }
     if (held < kHoldMs) return;
 
@@ -625,6 +864,40 @@ void Rung1Tick() {
                 "the widget (desiredSize still zero after %llu ms active). The 12th-child placement "
                 "is DEAD; the browser falls back to AddToViewport like every other surface we ship.",
                 kHoldMs);
+
+    // ---- RUNG 2's hover verdict, THREE-VALUED on purpose ---------------------------
+    // A phase that never ran, or a sample taken while another application owned the
+    // foreground, is INCONCLUSIVE -- never a negative. ImGui's own cursor probe learned
+    // this the expensive way (tools/cursor_probe.py:8-12: an unattended run "shows no
+    // cursor whether or not the bug exists"), and reporting UNRUN as false here would
+    // kill a correct design on no evidence at all.
+    if (g_hoverOnImg < 0 || g_hoverOffImg < 0) {
+        UE_LOGE("[native_ui_probe] RUNG2 HOVER VERDICT: INCONCLUSIVE -- a phase did not run "
+                "(on=%d off=%d). The browser's hit-test design is UNMEASURED; do not build on it.",
+                g_hoverOnImg, g_hoverOffImg);
+    } else if (g_hoverFgOn != 1 || g_hoverFgOff != 1) {
+        UE_LOGE("[native_ui_probe] RUNG2 HOVER VERDICT: INCONCLUSIVE -- our window was not "
+                "foreground at sample time (fgOn=%d fgOff=%d, image on=%d off=%d). Slate only "
+                "tracks the pointer for the active application, so this says nothing either way.",
+                g_hoverFgOn, g_hoverFgOff, g_hoverOnImg, g_hoverOffImg);
+    } else if (g_hoverOnImg == 1 && g_hoverOffImg == 0) {
+        UE_LOGW("[native_ui_probe] RUNG2 HOVER VERDICT: IsHovered() ANSWERS. A bare UImage with "
+                "Visibility=Visible read hovered=1 with the cursor inside its %.0fx%.0f rect and "
+                "hovered=0 with the cursor outside it (root on=%d off=%d, text on=%d). The "
+                "browser's row / chrome / scrim hit-test holds.",
+                kProbeImgW, kProbeImgH, g_hoverOnRoot, g_hoverOffRoot, g_hoverOnText);
+    } else if (g_hoverOnImg == 1 && g_hoverOffImg == 1) {
+        UE_LOGE("[native_ui_probe] RUNG2 HOVER VERDICT: ALWAYS-TRUE. The image read hovered=1 both "
+                "inside AND outside its rect -- IsHovered() is not discriminating here, exactly the "
+                "suspicion RUNG 1's rootHovered=1 raised. The browser CANNOT hit-test by IsHovered; "
+                "it needs a measured alternative before any of P2 is written.");
+    } else {
+        UE_LOGE("[native_ui_probe] RUNG2 HOVER VERDICT: NEVER TRUE (on=%d off=%d). A bare UImage "
+                "does not answer IsHovered() even with the cursor inside it and Visibility=Visible. "
+                "The row hit-test needs a UButton (or another mechanism) -- section 8's 'no row "
+                "button' rejection must be re-opened before P2 is written.",
+                g_hoverOnImg, g_hoverOffImg);
+    }
     g_rung1 = Rung1::Done;
 }
 

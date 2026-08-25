@@ -60,9 +60,20 @@ bool Armed() {
 //
 //  1. The current-world pointer is MEMOISED and refreshed only by a GAME-THREAD caller
 //     (world_identity.cpp: `if (IsGameThread()) RefreshOnGameThread_()`), at a 100 ms
-//     cadence. At the main menu with no session up, nothing else in the tree calls it, so
-//     the memo would sit at its boot value forever and this counter would be measuring
-//     the probe's own staleness. So the probe posts its OWN refresh at ~10 Hz while armed.
+//     cadence. The probe posts its OWN refresh at ~10 Hz while armed, and stamps WHEN THAT
+//     TASK RAN -- which is what makes the STALE class a measurement instead of an
+//     assumption. Without a stamp of our own there is no way to say how old the sample
+//     backing a given frame actually was.
+//
+//     CORRECTED 2026-08-26: the first version of this note justified the refresh by
+//     claiming that "at the main menu with no session up, nothing else in the tree calls
+//     it, so the memo would sit at its boot value forever". THAT IS FALSE, and it is worth
+//     leaving the correction here because a critic reading it built a whole question on it.
+//     `imgui_overlay.cpp:541-548` posts `input_owner::TickGameThread` every 100 ms from
+//     PresentDetour, and that function's FIRST statement is `CurrentWorld()` under a
+//     comment naming itself "THE REFRESH FLOOR ... 10 Hz, ungated, game thread, alive at
+//     the menu with no session" (input_owner.cpp:294-312). So the memo IS warm here; the
+//     probe's refresh is redundant AS A REFRESH and is kept only for the stamp above.
 //  2. `GT::Post` tasks drain inside our ProcessEvent detour, so the pump needs both the
 //     detour installed AND ProcessEvent traffic. The detour installs early, but BP dispatch
 //     traffic is near zero during the boot load -- which is exactly what the PUMP-FROZEN

@@ -195,6 +195,63 @@ inline constexpr size_t FButtonStyle_HoveredSlateSound = 0x260;  // FSlateSound 
 inline constexpr size_t FSlateSound_Size = 0x18;                 // SlateCore.hpp:324
 inline constexpr size_t FSlateSound_CacheStart = 0x08;           // trailing TSharedPtr cache (zero only this, keep ResourceObject @ 0x00)
 
+// ---- FSlateBrush and the style structs that embed it (native server browser, P2) ------
+//
+// FSlateBrush is 0x88 and carries an UNREFLECTED FSlateResourceHandle -- a TSharedPtr --
+// in the 16 bytes at +0x70: its reflected members END at ImageType @0x6F and its bitfield
+// bools RESUME at 0x80 (SlateCore.hpp FSlateBrush). Any raw copy of a brush therefore
+// shallow-aliases a refcounted pointer with no AddRef, exactly as the FSlateSound cache
+// above did -- so EVERY brush clone in the tree goes through ONE helper that zeroes the
+// handle, and these tables are what it is given. Slate rebuilds the handle lazily from
+// ResourceObject, so zeroing is free.
+//
+// Measured 2026-08-25: 0/4 handles were populated on ui_saveSlots_C.button_back (3 of
+// whose 4 brushes DO carry a ResourceObject), so there is no live bug on this build --
+// the zeroing is structural correctness, not a fix, and it is applied uniformly rather
+// than being gated on a measurement that only covers one donor.
+inline constexpr size_t FSlateBrush_Size           = 0x88;
+inline constexpr size_t FSlateBrush_ResourceHandle = 0x70;  // UNREFLECTED TSharedPtr, 0x70..0x7F
+inline constexpr size_t FSlateBrush_HandleSize     = 0x10;
+inline constexpr size_t FSlateBrush_ResourceObject = 0x48;  // UObject* -- the art the handle caches
+inline constexpr size_t FSlateBrush_TintColor      = 0x20;  // FSlateColor (0x28); rule byte @ +0x10
+// FButtonStyle (0x278): four brushes, then two FMargins, then the two FSlateSounds above.
+inline constexpr size_t FButtonStyleBrushes[4] = {0x08, 0x90, 0x118, 0x1A0};
+// FScrollBarStyle (0x4D0): NINE brushes. A blind WidgetBarStyle copy aliases all nine.
+inline constexpr size_t FScrollBarStyle_Size = 0x4D0;
+inline constexpr size_t FScrollBarStyleBrushes[9] = {0x08, 0x90, 0x118, 0x1A0, 0x228,
+                                                    0x2B0, 0x338, 0x3C0, 0x448};
+// FEditableTextBoxStyle (0x7F8): four brushes + a nested FScrollBarStyle @0x328 = 13.
+inline constexpr size_t FEditableTextBoxStyle_Size        = 0x7F8;
+inline constexpr size_t FEditableTextBoxStyle_ScrollBarStyle = 0x328;
+
+// The UMG widgets the browser builds. UMG.hpp: UImage:695-721, UScrollBox:1173-1214,
+// USizeBox:1227-1262, UEditableTextBox, and the panel slots.
+inline constexpr size_t UImage_Brush            = 0x0108;  // FSlateBrush
+inline constexpr size_t UImage_ColorAndOpacity  = 0x01A0;  // FLinearColor
+inline constexpr size_t UEditableTextBox_WidgetStyle = 0x0130;  // FEditableTextBoxStyle (0x7F8)
+inline constexpr size_t UEditableTextBox_Font        = 0x0958;  // FSlateFontInfo (0x58)
+inline constexpr size_t UEditableTextBox_ForegroundColor = 0x09B0;  // FLinearColor
+inline constexpr size_t UScrollBox_WidgetBarStyle     = 0x0348;  // FScrollBarStyle (0x4D0)
+inline constexpr size_t UScrollBox_ScrollbarThickness = 0x082C;  // FVector2D
+inline constexpr size_t UScrollBox_AlwaysShowScrollbar= 0x0844;  // bool
+// USizeBox::HeightOverride is @0x134, but bOverride_HeightOverride is a BITFIELD at
+// 0x150 -- a raw write to 0x134 leaves the override bit clear and does NOTHING. Always
+// drive it through the SetHeightOverride UFunction; the offset is here for diagnosis only.
+inline constexpr size_t USizeBox_HeightOverride = 0x0134;
+inline constexpr size_t UOverlaySlot_Padding = 0x0040;
+inline constexpr size_t UOverlaySlot_HAlign  = 0x0050;
+inline constexpr size_t UOverlaySlot_VAlign  = 0x0051;
+inline constexpr size_t UHorizontalBoxSlot_Padding = 0x0040;
+inline constexpr size_t UHorizontalBoxSlot_Size    = 0x0050;  // FSlateChildSize (0x8)
+inline constexpr size_t UHorizontalBoxSlot_HAlign  = 0x0058;
+inline constexpr size_t UHorizontalBoxSlot_VAlign  = 0x0059;
+inline constexpr size_t UScrollBoxSlot_Padding = 0x0038;
+inline constexpr size_t UScrollBoxSlot_HAlign  = 0x0048;
+inline constexpr size_t UScrollBoxSlot_VAlign  = 0x0049;
+inline constexpr size_t UWidgetSwitcherSlot_Padding = 0x0040;
+inline constexpr size_t UWidgetSwitcherSlot_HAlign  = 0x0050;
+inline constexpr size_t UWidgetSwitcherSlot_VAlign  = 0x0051;
+
 // UStruct / UFunction / FField / FProperty layout (UE4.27, 4.25+ FField system).
 // Derived from the shipping UObject::ProcessEvent decompile (rva 0x1465930):
 // it allocs PropertiesSize, memcpy's ParmsSize from the caller params, walks the
