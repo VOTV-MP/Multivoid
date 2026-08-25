@@ -149,7 +149,7 @@ The menu must (a) look native/integrated, (b) not edit VOTV's menu asset
 |---|---|---|---|---|
 | **Runtime UMG widget via reflection** (our C++ mod constructs a `UUserWidget`, adds a Multiplayer button + panels, adds to the menu/viewport) | yes | no | none (works with or without UE4SS) | **chosen** |
 | BP mod via UE4SS BPModLoader (cooked widget .pak loaded through UE4SS's BPModLoader Lua mod) | yes | adds a new asset (allowed) but needs UE4.27 editor + cook | yes (BPModLoader) | ~~rejected — ties us to UE4SS~~ **VERDICT VOID 2026-08-25: the premise died on 2026-08-21.** F2/D-3 makes Multivoid a UE4SS mod, and `BPModLoaderMod` is already in the r2modman profile (measured). The only remaining cost is AUTHORING — see "Native server browser" below |
-| Sibling-pak hybrid (cooked widget .pak mounted via UE4's NATIVE auto-mount of `Content/Paks/`) | yes | adds a new asset | **no** (revisited 2026-05-25 — see note below) | ~~deferred — toolchain cost not justified~~ **COST PREMISE VOID 2026-08-25: the user HAS UE 4.27 installed.** The 80 GB objection is spent; what remains is whether a BP graph is worth authoring at all |
+| Sibling-pak hybrid (cooked widget .pak mounted via UE4's NATIVE auto-mount of `Content/Paks/`) | yes | adds a new asset | **no** (revisited 2026-05-25 — see note below) | ~~deferred — toolchain cost not justified~~ ~~**COST PREMISE VOID 2026-08-25: the user HAS UE 4.27 installed.**~~ **RE-DECLINED 2026-08-25 (post-`/qf`), on NEED rather than cost — see §8.** The editor being installed is no longer the question: the palette is **cloned from resident native widgets at runtime** (§7b/§8), so there is no art to author, cook or ship. **This decline is CONDITIONAL and names its trigger: if the probe's donor-residency check (§8 step 2, O7) comes back donor-null, this reason is VOID and this row re-opens.** Recorded that way so it cannot rot the way "ties us to UE4SS" did |
 | ImGui overlay | no (debug look) | no | OUR vendored ImGui (RULE 3 — the "UE4SS's ImGui" option is retired; DX11 + DX12 backends as of 2026-07-26) | rejected for the menu — fine for dev/debug overlays only |
 
 **2026-05-25 update (revisited after the user pushed back on "VT mod looks natural; we look dirty"):** the original rejection conflated BPModLoader-dependent paks (which DO require UE4SS) with all paks. UE4 itself auto-mounts every `.pak` it finds under `Content/Paks/` at engine startup — independently of UE4SS. So a sibling `votv-coop-content.pak` we author and ship alongside our DLL would mount cleanly without ANY mod-framework dependency (RULE 3 preserved). VOTV also ships `UPakLoaderLibrary` (Rama's PakLoader) + `URyRuntimePakHelpers` as Blueprint libraries already callable through our existing `ParamFrame` infrastructure, providing explicit `MountPakFile` if we want non-auto-mounted paks. See:
@@ -157,7 +157,7 @@ The menu must (a) look native/integrated, (b) not edit VOTV's menu asset
 - `research/findings/architecture-audits/votv-mp-pak-mount-feasibility-2026-05-25.md` — implementation feasibility (FEASIBLE without UE4SS via auto-mount or UPakLoaderLibrary). *(In the local-only research corpus since 2026-08-23 — the local-only docs-arc note. Left as a path, not a link, so it does not read as a broken one.)*
 - Architectural + reality-check verdicts (stay all-DLL for now, revisit the public-server phase; the perceived polish gap closes with programmatic outline + shadow + UBorder): recorded in this section — the planned standalone `hybrid-pak-architecture` / `hybrid-pak-reality-check` finding files were never filed (dead links removed 2026-07-12).
 
-~~The "chosen" row remains correct for the current scope. The "rejected" row's reasoning is preserved (BPModLoader specifically does tie us to UE4SS).~~ **RETIRED 2026-08-25 — both halves are false now: D-3 ties us to UE4SS deliberately, and the user has the editor.** A new "deferred" row replaces a small fraction of the rejected row's blast radius — the sibling-pak path is technically clean per RULE 3. ~~but the 80 GB UE4.27-editor toolchain cost isn't justified until a the public-server phase widget (server browser with sortable rows, etc.) actually needs it.~~ **2026-08-25: that moment ARRIVED and the cost is spent — the user asked for the sortable-row browser and has the editor.** For now, polish via programmatic UMG (text outline + drop shadow already shipped 2026-05-25; UBorder background panel queued).
+~~The "chosen" row remains correct for the current scope. The "rejected" row's reasoning is preserved (BPModLoader specifically does tie us to UE4SS).~~ **RETIRED 2026-08-25 — both halves are false now: D-3 ties us to UE4SS deliberately, and the user has the editor.** A new "deferred" row replaces a small fraction of the rejected row's blast radius — the sibling-pak path is technically clean per RULE 3. ~~but the 80 GB UE4.27-editor toolchain cost isn't justified until a the public-server phase widget (server browser with sortable rows, etc.) actually needs it.~~ ~~**2026-08-25: that moment ARRIVED and the cost is spent — the user asked for the sortable-row browser and has the editor.**~~ **SUPERSEDED THE SAME DAY by the USER's decision (§5 box) and by the converged `/qf` (§8): the editor route is CANCELLED and everything is built in C++.** The sortable-row widget the old text was waiting for is exactly what §8 now builds — natively, with its style **cloned from resident widgets** rather than authored, so arriving at that moment removed the need for the pak instead of triggering it. **§5 and §6's decision boxes GOVERN this table; where a cell and a box disagree, the box wins.** Polish via programmatic UMG (text outline + drop shadow shipped 2026-05-25; a `UBorder` background panel is still the right shape for a framed panel — one content child — though NOT for a list ROW, which stacks three children and needs a `UOverlay`, §8).
 
 So: our C++ mod hooks the menu's construction (`ui_menu_C` BeginPlay /
 construct), creates our own widget tree at runtime via reflection, and
@@ -248,11 +248,14 @@ the one surface that matters most.
 
 **Recommendation (pre-decision, now the decision): B, or the B+art hybrid in §6.** A's loading half became free with D-3 and its
 80 GB half is now paid, so the only thing still standing between us and A is HOW a widget gets
-authored — §6. The missing pieces for B are a scroll container
-and per-row buttons — both are UMG classes we resolve the same way we already resolve `Button`,
-`VerticalBox` and `TextBlock`; none of it needs a new substrate. **DESIGN, not built** — nothing here
-has been implemented, and the `/qf` this project requires before non-trivial implementation has not
-been run.
+authored — §6. ~~The missing pieces for B are a scroll container and per-row buttons~~ — **counted
+precisely 2026-08-25: SEVEN new UMG classes** (`ScrollBox`, `Overlay`, `SizeBox`, `Image`,
+`HorizontalBox`, `EditableTextBox`, `CanvasPanel`) on top of the five the mod resolves today
+(`TextBlock`, `UserWidget`, `WidgetTree`, `VerticalBox`, `Button`); none of it needs a new substrate.
+**DESIGN, not built** — nothing here has been implemented. ~~and the `/qf` this project requires
+before non-trivial implementation has not been run.~~ **The `/qf` RAN to convergence on 2026-08-25 —
+six rounds, every one of which removed or corrected something. Its output is §7b (the style
+reference), §7c (the look) and §8 (the build plan).**
 
 ### 6. The authoring channel — USER 2026-08-25: "UE 4.27 is downloaded, but there is no official MCP; maybe I get UE5/UE6, we build widgets over MCP, and you convert them down to 4.27"
 
@@ -364,14 +367,29 @@ UFunction, and **discriminate by the `self` pointer in the callback** — interc
 UFunction, and the callback receives `self`, so **N sink objects share ONE function name and stay
 distinguishable**. Cancel in the callback if the borrowed body would do anything.
 
-**Why this matters more than the click itself:** the same mechanism reaches
+~~**Why this matters more than the click itself:** the same mechanism reaches
 `UEditableTextBox::OnTextChanged` / `OnTextCommitted`, which **dissolves the input half's risk**
 (§8 step 2b) — the one part of the runtime route that was measured-hard, via the
-`HasKeyboardFocus`-is-an-exact-widget-test trap in `coop/input/input_owner.h:64-69`.
+`HasKeyboardFocus`-is-an-exact-widget-test trap in `coop/input/input_owner.h:64-69`.~~
+**That risk turned out not to need this.** Measured 2026-08-25: `input_owner.cpp:379` filters its
+focus walk by `DerivesFromUserWidget` **only**, not by "is a game class" — so our own `UUserWidget`
+taking user-0 focus already flips `GameOwnsText` and the WndProc swallow already backs off.
+**Typing into a native surface works with no new input code and no delegate.** `UEditableTextBox` is
+a real Slate widget that owns keyboard, caret and IME itself; its value is read with `GetText()`.
 
-**STATUS: `[RD]`, NOT `[V]`. Every LINK is measured; the COMPOSITION has never run.** That is
-precisely what the spike in §8 step 1 now is — a C++ spike binding ONE button, not an editor one.
-If the bind works, the poll retires whole (RULE 2), including `WidgetIsHovered`'s click role.
+**STATUS: `[RD]`, NOT `[V]`. Every LINK is measured; the COMPOSITION has never run.**
+
+> **SCOPE, decided by the converged `/qf` (round 3, 2026-08-25): the bind is OUT of v1.**
+> This section proves binding is **possible**; nothing makes it **necessary**. The shipped
+> release-edge poll (`multiplayer_menu.cpp:244-262`) already reads a real `UButton` with no new
+> primitives, and OPUS §7 endorses poll-and-diff where dispatch is in doubt. Dropping it removed the
+> design's **last unmeasured leap** — the shape above needs "a no-param UFunction the engine already
+> provides", and *which* one was never answered: interceptors key on the **UFunction**, so borrowing
+> any existing one routes every other caller in the game through our callback, while minting our own
+> means building a `UFunction` from a DLL that owns no `UClass`.
+> **§8's probe still measures it** (on a throwaway button we spawn and never attach — a bind is a
+> WRITE, not a read), so the v2 decision to retire the poll is made on evidence rather than by
+> default. The arc this browser serves retires the **ImGui substrate**, not polling.
 
 ### 7. Should the EXISTING main-menu elements move to the pak too? NO — measured, and a pak would make them WORSE
 
@@ -436,102 +454,281 @@ Roboto / centered / white default — the 'wrong font, indented, wrong colour' b
 > **CLONE anything the game already has an equivalent of. Use the PAK only for art the game has no
 > equivalent of.**
 
-The main menu is entirely the first case. The browser's interior is entirely the second: a row
+The main menu is entirely the first case. ~~The browser's interior is entirely the second: a row
 background with zebra/hover/selected states, a scrollbar, a column header, and status icons
 (locked / version-mismatch / mic / ping) have **no counterpart in `ui_menu_C` to clone**. That is
 precisely where hand-built UMG looks thin — which is the user's own 2026-05-25 complaint (*"VT mod
-looks natural; we look dirty"*) — and precisely where authored art earns the toolchain.
+looks natural; we look dirty"*) — and precisely where authored art earns the toolchain.~~
 
-### 8. Build plan for the native server browser (for the next session to start from)
+> **CORRECTED 2026-08-25 by §7b's measurement — and this correction is why the pak was re-declined.**
+> The browser's interior is ALSO the first case. The claim above scoped its search to **`ui_menu_C`**
+> and concluded "no counterpart exists"; the counterparts were one level down, in the sub-screens
+> `ui_menu_C` owns. Measured: the row background + its hover/selected states are
+> `uicomp_saveSlot.Image_background` (the row's own `UButton` is *invisible* — `DrawAs: NoDrawType`
+> on all three states — so the tint IS the state); the scrollbar is `ui_settings.scrollboxRoot`'s
+> `WidgetBarStyle` on `inst_uiScroll`; the column-header bar is `inst_uiButtonDown` (what the
+> settings `UExpandableArea` headers use); and the status icons have slots waiting for them —
+> `uicomp_saveSlot` carries `Image_img` and `img_mid` beside its five text blocks.
+> **Everything the browser's interior needs already exists in the game and can be cloned.**
+> A search that stops at the parent widget is not a search for "does the game have this".
 
-**Status: DESIGN. Nothing here is built, and `/qf` is owed before implementation** (the project rule
-requires it for non-trivial work; this qualifies).
+### 7b. The two native menus, dissected — the STYLE REFERENCE (`[V]` 2026-08-25)
 
-**Reuse, do not rebuild — all of this already ships:**
+The user asked for this directly: *"Полезно разобрать нативное меню настроек игры и меню создания
+игры. Стиль такой же будет и у нас."* Both were dissected from the CXXHeaderDump **and** from the
+cooked assets (`tools/bp_reflect.py` -> UAssetAPI export JSON), because the header gives structure
+and only the asset gives style values.
 
-- `ue_wrap::engine::InjectCanvasButton` / `InjectTextRowAbove` — style-cloning injectors (§7).
-- The **click poll**: `WidgetIsHovered()` (`engine.h:566-569`) paired with a global `VK_LBUTTON` edge
-  in `coop::multiplayer_menu`. **This is the pattern for every clickable row** — we never bind a UMG
-  delegate, because binding a multicast delegate from raw reflection needs a UFunction on a UObject
-  we own, which we never solved and do not need to.
-- `engine_widget.cpp` (604 LOC) — `SpawnObject` -> `UUserWidget` -> `WidgetTree` -> `UTextBlock` /
-  `UVerticalBox`, `AddToViewport`, `SetPositionInViewport`, `SetAlignmentInViewport`,
-  `SetVisibility`, `SetIsEnabled`, `SetRenderOpacity`; and `font_ui` resolution
-  (`engine_widget.cpp:206`).
-- **The DATA model is already right and does not change.** `ui/server_browser.cpp` (277 LOC) carries
-  the row model ported from MTA's `CServerListItem` (name / players cur-max / version / world /
-  locked, heartbeat age instead of a pre-connect ping) fed by `coop::session_manager`. **Only the
-  RENDERER is being replaced** — keep the model, keep the `session_manager` calls, keep the
-  Connect / Host / Direct-IP actions.
+**Note on «меню создания игры»: it is TWO screens, and reading it as one was an error caught in
+`/qf` round 3.** `Uui_saveSlots_C` is the new-slot FORM (name / days / map / rules);
+`Uui_gamemode_C` is the mode PICKER. Both are dissected below.
 
-**The order, cheapest-first, each step independently useful:**
+#### The structural vocabulary
 
-0. **PRECEDENT, and it decides the shape `[V]` 2026-08-25.** MTA's own server browser —
-   `reference/mtasa-blue/Client/core/ServerBrowser/CServerBrowser.cpp`, **3,400 LOC** — constructs
-   **every widget in C++** (`CreateLabel` / `CreateButton` / `SetPosition` / `SetSize`), and there is
-   **not one `.layout` file anywhere in the MTA tree**. The project's standing rule is to default to
-   the shape MTA shipped at scale; for this exact feature that shape is CODE, not an authored asset.
-   The one place we diverge is binding: MTA binds handlers (`SetClickHandler(GUI_CALLBACK(...))`,
-   `CServerBrowser.cpp:473,489-490,506`) because CEGUI is their own toolkit and they own the objects.
-   Ours is UMG — see §6e for how we get an equivalent, and put a one-line citation comment at the
-   divergence per the MTA rule.
-1. **SPIKE (blocking, a measurement not a build) — REPLACED 2026-08-25.** It used to be *"can a
-   `UWidgetTree` be populated from 4.27 Python"*; the editor route is out (§6's superseded box), so
-   that question is closed as **not asked**, and its written script was never run. **The spike is now
-   §6e's: bind ONE delegate from C++.** Point `OnClicked` on the live MULTIPLAYER button at a sink
-   object + a no-param UFunction, register an interceptor, and see the call arrive with the right
-   `self`. **Also measure the `[RD]` row in §6e's table** — that `FScriptDelegate` really is
-   `{TWeakObjectPtr, FName}` at 16 B — because it is the one link taken from engine knowledge rather
-   than from this build. If it works, the click poll retires whole (RULE 2) and step 2b collapses.
-2. **Build the browser's TREE at runtime** (no pak): a `UBorder` panel + a scroll container + N row
-   widgets, each row a `UHorizontalBox` of `UTextBlock`s, clicks polled per §7's pattern. This is
-   pure `engine_widget.cpp` extension and needs **nothing from the editor**. **`[V]` measured
-   2026-08-25: the ONLY UMG classes we resolve today are `TextBlock`, `VerticalBox` and `Button`
-   (`sdk_profile_names.h:384,405,432`) — `ScrollBox`, `HorizontalBox`, `Border`, `Image` and `SizeBox`
-   appear NOWHERE in the tree.** They should resolve by FName the same way (they are ordinary UMG
-   `UClass`es), but that is an **inference, not a measurement** — confirm each one resolves before
-   planning around it, and expect the per-class *slot* offsets (`UScrollBoxSlot`, `UBorderSlot`,
-   `UHorizontalBoxSlot`) to need the same treatment `UVerticalBoxSlot_LayoutSize` already gets in
-   `sdk_profile.h`.
-2b. **The INPUT half — measured 2026-08-25, and step 2's list undercounted it.** The ImGui browser
-   is not a list, it is a **form**: `server_browser.cpp` uses **three `InputText` fields** (nick :118,
-   host name :126, direct IP :144 with `EnterReturnsTrue`), **one `Checkbox`** (Locked :128), a
-   `Selectable` row with **double-click** (:193-195) and five buttons. A native port therefore needs
-   **`UEditableTextBox`** — a fourth unresolved UMG class — plus real **keyboard focus routing**, and
-   that is the part with a measured trap already on file: `coop/input/input_owner.h:64-69` —
-   **`UWidget::HasKeyboardFocus()` is an EXACT-widget test and reads FALSE on a live on-screen
-   `UEditableTextBox`**, even right after the engine's own `SetKeyboardFocus()`; it reads TRUE on the
-   owning USER WIDGET, which is the shipped invariant. There is a standing probe for exactly this
-   (`coop/dev/input_focus_probe.cpp` — it already resolves `EditableTextBox`,
-   `MultiLineEditableText`, `MultiLineEditableTextBox`, `HasKeyboardFocus`, `SetKeyboardFocus`), so
-   **run the probe before designing the form**, and expect our own `input_owner` swallow to need a
-   term for the browser (today T is swallowed unless a VOTV user widget owns focus — our own
-   runtime-built widget is not one of those). **Cheapest de-risk: split the work — ship the LIST
-   natively (read-only, clicks polled, Connect/Refresh/Close as `UButton`s) and keep the three text
-   fields on the ImGui panel until the focus question is answered.** That contradicts step 4's
-   RULE-2 retirement only if both renderers draw the SAME thing; a list and a form are not the same
-   thing, and the split is the ordering, not a parallel implementation.
-   **— REVISED the same day: if §6e's spike lands, most of this step evaporates.** Binding
-   `OnTextChanged` / `OnTextCommitted` reaches typed text through the engine's own dispatch, so the
-   focus predicate stops being load-bearing and the list/form split stops being necessary. Keep the
-   split only as the fallback for a RED spike. `UEditableTextBox` still has to resolve and still has
-   to be constructible at runtime — that part is unchanged and unmeasured.
+| screen | what it is |
+|---|---|
+| `Uui_menu_C` | owns **13** sub-screens as child `UUserWidget`s. Three switchers: `screenSwi @0x350` (2: screen/loading), `switcher_1 @0x358` (3: a slideshow), **`switcher_widgets @0x360` (11: every sub-screen)**. `[V]` measured from `WidgetSwitcherSlot` parentage in the cooked asset, not from the field name. |
+| `Uui_saveSlots_C` | structurally a server browser already: `UScrollBox ScrollBox_list @0x380`, `TArray<Uuicomp_saveSlot_C*> Slots @0x400`, `selected @0x420`, `ETB_slotName @0x330`, `cbox_sboxLevel @0x318` (map), `checkbox_dontShow @0x320`, `Owner @0x5A8`, buttons play/launch/updatelist/back/delete/duplicate/createNew |
+| `Uuicomp_saveSlot_C` | ONE ROW as its own `UUserWidget` (0x330): an **invisible** `UButton button_select` (`DrawAs: NoDrawType` on Normal AND Hovered AND Pressed), a separate `UImage Image_background` carrying the state tint, **5 `UTextBlock`s + `Image_img` + `img_mid`**, `Parent`, `ID`, `upd(int32)`. **Row height 64 px.** |
+| `Uui_settings_C` | `UScrollBox scrollboxRoot` + 6 `UExpandableArea` + ~200 named `Uuicomp_settingsSlot_C*` + `URichTextBlock rtb_desc` (the hover-description sink) |
+| `Uuicomp_settingsSlot_C` | ONE **polymorphic** row (0x34C): a `UWidgetSwitcher` picks checkbox / combo / 2 sliders / 2 textboxes / button by an int `variableType`; `Button_hover` is a full-row invisible button whose `OnButtonHoverEvent` pushes `Description` into the parent's description pane |
+| `Uui_gamemode_C` | the create-a-game screen (0x580): 8 mode buttons, `UScrollBox helpbox_desc` + `tex_desc` driven by `setDesc(int32)` on hover, and **three `TArray<Uuicomp_settingsSlot_C*>` (`sliders`/`v_slots`/`s_slots`) + `Fstruct_settings1 settingsCopy`** — i.e. **the game reuses the settings ROW inside a non-settings screen.** That is the shape of our host-a-lobby form. |
 
-3. **Add the ART from the pak** once step 1 says how: brush textures for the row/hover/selected
-   states, the scrollbar, the status icons. If step 1 failed, ship these as `UTexture2D` assets
-   (which our Python cook chain *can* already emit) and set them on runtime-built `UImage`/`UBorder`
-   brushes — the art lands, the tree stays ours, and no Blueprint graph is ever needed.
-4. **Retire the ImGui browser whole** (RULE 2 — no parallel old + new renderer) once the native one
-   reaches parity on the columns listed above. `server_browser.cpp`'s model code moves; its ImGui
-   drawing goes.
+Three idioms worth copying, each measured in more than one screen:
+
+1. **Description-on-hover** — settings' `rtb_desc`, saveSlots' rule description, gamemode's `tex_desc`.
+   A house idiom, not a one-off.
+2. **The whole row is an invisible button over a tinted background image** — not a styled button.
+3. **Every native interaction is a BOUND DELEGATE** (`BndEvt__..._OnButtonClickedEvent__DelegateSignature`);
+   the assets carry a `ComponentDelegateBinding` export. See §6e — and see §8 for why we still poll in v1.
+
+#### The palette `[V]` — 9 materials, 2 textures, 2 fonts, 2 sounds
+
+All under `/Game/`. **This list is the union of BOTH menus; a census of `ui_saveSlots` alone
+undercounts it by three assets and one font**, which is how it was first got wrong.
+
+| asset | role | seen in |
+|---|---|---|
+| `textures/ui/inst_uiBackground` | panel fill | saveSlots + settings |
+| `textures/ui/inst_uiBackgroundUp` | raised fill | saveSlots |
+| `textures/ui/inst_uiBorder` | window border | saveSlots + settings |
+| `textures/ui/inst_uiButton` | button, all 3 states | saveSlots + settings |
+| `textures/ui/inst_uiButtonDown` | **ExpandableArea header**, tint 0.6 (29 uses) | settings |
+| `textures/ui/inst_uiDrag` | **slider handle** | settingsSlot |
+| `textures/ui/inst_uiScroll` | **scrollbar thumb**, 16x16 | settings |
+| `textures/ui/inst_uiSelectbox` | combo box | saveSlots + settingsSlot |
+| `textures/ui/inst_uiTextbox` | editable text box | saveSlots + settingsSlot |
+| `textures/ui/ui_checkbox_check` / `_uncheck` | checkbox, 32x32 | settings |
+| `main/fonts/font_ui` | **12** (settings rows) / 16 (labels) / 20 / 24 (slot name) | all |
+| `main/fonts/font_terminal` | a **second** face | settingsSlot |
+| `audio/ui/buttonclick`, `audio/ui/buttonrollover` | press + hover | all |
+
+Brushes are `DrawAs = Box` with `Margin 0.5` (9-slice). State tints: hover **0.8** grey, pressed
+**0.5**; checkbox hover 0.6 / press 0.3; ExpandableArea header 0.6. Colours: text-box foreground
+**(1, 0.1, 0)**, heading yellow (1,1,0), destructive red (1,0,0), orange (1,0.5,0), scrim black
+A=0.5. `ExpandableArea.Style.RolloutAnimationSeconds = 0` — instant, no animation.
+
+**Scrollbar: the two menus differ, and the browser takes the settings treatment.**
+`ui_saveSlots.scrollbox_list` sets no style at all; `ui_settings.scrollboxRoot` sets
+`WidgetBarStyle` (Normal/Hovered/Dragged thumb -> `inst_uiScroll`, ImageSize 16x16),
+`ScrollbarThickness (16,16)`, `AlwaysShowScrollbar true`. A server list is the long-list case.
+
+> **A trap that cost real time here, recorded so it is not repeated.** Every `FSlateBrush` in the
+> asset JSON carries BOTH `ResourceObject` (an import index) and `ResourceName` (a string). Several
+> sub-brushes read `ResourceName = "../../../Engine/Content/Slate/Common/Button.png"` **while**
+> `ResourceObject` points at `/Game/textures/ui/inst_uiButton`. Reading `ResourceName` concludes
+> "VOTV uses stock engine Slate art" — **false**. `ResourceObject` wins at runtime.
+
+### 7c. What it will LOOK like (`[V]` for the shape, DESIGN for the layout)
+
+The user's question was «как будет **выглядеть**». The answer is: **like `ui_saveSlots` with our
+columns** — same window frame, same row metrics, same font, same scrollbar as the settings list.
+
+```
++--------------------------------------------------------------------+  <- UCanvasPanel frame
+|  MULTIPLAYER                                          [ Refresh ]  |     inst_uiBackground
+|--------------------------------------------------------------------|     + inst_uiBorder
+|  Name                   Players  Version        World      Age    ||  <- header row (sortable)
+|--------------------------------------------------------------------||
+| [#] Pelmentor's server     3/8    0.9.0n b143   Meadow      2s    |#|  <- 64 px rows
+| [#] LAN test               1/4    0.9.0n b143   Meadow     11s    |#|     UScrollBox +
+| [*] locked lobby           5/8    0.9.0n b143   Meadow      4s    |#|     inst_uiScroll thumb
+| [!] old build              2/8    0.9.0n b122   Meadow      7s    | |     (16x16, always shown)
++--------------------------------------------------------------------+
+|  Nickname [____________]              [ Host Game ]  [ Connect ]   |
+|  Direct   [____________]                             [  Back   ]   |
++--------------------------------------------------------------------+
+```
+
+**Columns — the five `UTextBlock`s, mapped from `coop::net::lobby::LobbyRow`:**
+
+| # | column | field | note |
+|---|---|---|---|
+| 1 | Name | `name` | widest, left-justified, `font_ui` 16 |
+| 2 | Players | `playersCur` / `playersMax` | `3/8` |
+| 3 | Version | `game` + `" b"` + `proto` | the Paper pair, e.g. `0.9.0n b143`. **`version` is a LEGACY fallback used only when `game` is empty** (a pre-field host) — the producer stopped sending it when the mod-semver axis was retired (`lobby_announcer.cpp:36-39`) |
+| 4 | World | `world` | |
+| 5 | Age | `ageSec` | **heartbeat age, not ping** — by design; ping is measured post-connect via GNS and MTA's ASE-UDP pre-query was deliberately dropped |
+
+**Not columns.** `lobbyId` is internal and never rendered. `locked` and `direct` are **icons**, which
+is why the native row carries `Image_img` and `img_mid` beside its five text blocks — the shape fits
+without being bent. **`proto` is NOT demoted to a tint — it is IN column 3's text** (the `b143`). The version
+cell is additionally highlighted on a **two-leg** mismatch — `game != GameTarget()` **OR**
+`proto != kProtocolVersion` — drawn amber `(1.00, 0.78, 0.35)` with a `(!)` suffix, while matching
+rows are dimmed. This is ported verbatim from `server_browser.cpp:218-231`, not re-derived.
+
+**Sort** is a header click, resolved in pure C++ over our `std::vector<LobbyRow>` — zero engine cost.
+**Search is v2**: it needs the live-filter path through `UEditableTextBox` and buys less than sort.
+
+**The host form** follows `ui_gamemode`'s shape (§7b): mode/option rows plus description-on-hover,
+built from **our** widgets — never the game's classes (§8).
+
+### 8. Build plan for the native server browser — CONVERGED `/qf`, 2026-08-25
+
+**Status: DESIGN.** Nothing here is built. The `/qf` this project requires ran to convergence over
+six rounds; **every round removed or corrected something**, so the rejections below are load-bearing
+and should not be silently re-opened.
+
+**What the `/qf` took OUT (each a concession, not a plan):**
+
+- **A reusable native-widget LAYER — DROPPED.** `OPUS_48_DISCIPLINE.md:196-197` bars new frameworks
+  before **N>=3** working cases. The browser is built **concretely**. Candidates #2/#3 are
+  `host_save_picker` (227 LOC), `world_rules_panel` (109), `config_review_panel` (195) —
+  **candidates, not commitments.**
+- **The DELEGATE bind — DROPPED FROM v1** (see §6e: it is *possible*; nothing makes it *necessary*).
+  `multiplayer_menu.cpp:244-262` already reads a real `UButton`'s release edge with no new
+  primitives, and OPUS §7 endorses poll-and-diff. Dropping it removed the design's last unmeasured
+  leap — minting a `UFunction` from a DLL that owns no `UClass`. **One probe line still measures it**
+  so the v2 decision to retire the poll is made on evidence rather than by default; the bind is a
+  WRITE, so it runs on a throwaway button we spawn and never attach, never on a live native one.
+- **Reusing the game's row class — DEAD TWICE.** (a) `uicomp_saveSlot_C::upd()` (201 B) dereferences
+  `parent->selected` typed `Uui_saveSlots_C*`, and its 2,813 B ubergraph is save semantics
+  end-to-end (`getSaveObject`, `lastSavedDate`, `BytesToImage(save->preview)`). (b) `SpawnObject` is
+  `UGameplayStatics::SpawnObject` = bare `NewObject`, so the row's members would be **null**; the only
+  populate path is `UWidgetBlueprintLibrary::Create` (`UMG.hpp:1939`), which runs `Initialize` ->
+  `Construct` -> the bound events = **a live BP brain on a mirror** (`OPUS_48_DISCIPLINE.md:56`).
+  **We take the SHAPE, never the class.**
+- **A new `input_owner` axis — DEMOTED to a comment.** It changes nothing observable:
+  `input_owner.cpp:379` filters its focus walk by `DerivesFromUserWidget` **only**, so our own
+  `UUserWidget` taking user-0 focus already flips `GameOwnsText` and the WndProc swallow already backs
+  off — **typing works with no new input code.** Shipping an axis with one consumer would violate the
+  same N>=3 bar that killed the layer. The comment records that the class-agnostic filter is
+  deliberate and that our native widgets depend on it.
+- **Loading the palette by `/Game` path — REPLACED by cloning resident brushes** (step 4).
+
+**The order — and note the doc and the measurement both come before any edit.**
+
+1. **The DOC (this section + §7b/§7c) — FIRST, and done.** `:151`/`:160` were live false statements
+   ("the moment ARRIVED... the user has the editor") contradicting §5/§6's cancellation boxes ~100
+   lines below; a parallel session sharing this repo could read them as a verdict. Fixed in place.
+2. **P1 — one read-only boot probe**, one log line per fact:
+   - **O1**: does `R::FindClass` resolve the **7 new** UMG classes? Today the mod resolves only five
+     (`TextBlock`:384, `UserWidget`:398, `WidgetTree`:399, `VerticalBox`:405, `Button`:432); v1 adds
+     `ScrollBox`, `Overlay`, `SizeBox`, `Image`, `HorizontalBox`, `EditableTextBox`, `CanvasPanel`.
+     A miss must **fail loud at resolve time**, never draw a broken screen — names survive a recook,
+     offsets do not (`docs/VERSION_MIGRATION.md`).
+   - **O5**: is the donor's `FSlateResourceHandle` (the 16 unreflected bytes at `FSlateBrush`+0x70)
+     **populated** at inject time? This gates step 3 and nothing else.
+   - **O7**: donor residency per donor (step 4's table), including the row-instance donor.
+   - the delegate observation above, and the `input_owner` assertion.
+3. **P0 — the brush-handle fix, GATED on O5.** `FSlateBrush` is 0x88: reflected fields end at
+   `ImageType` @0x6F and the bitfield bools resume @0x80, so **the 16 bytes at +0x70 are an
+   unreflected `FSlateResourceHandle` (a `TSharedPtr`)**. `FButtonStyle` is four brushes at
+   0x08/0x90/0x118/0x1A0 (`SlateCore.hpp:12-15`), and `InjectCanvasButton`'s 0x278 `memcpy` covers all
+   four while zeroing only the two `FSlateSound` tails (`engine_widget.cpp:454-458`). If the handle is
+   populated we copy a refcounted pointer without `AddRef`. **The consequence is INFERRED, not
+   measured — hence the gate.** If armed: zero the four handles exactly as `sdk_profile.h:193-196`
+   already does for sound, then re-check visually that the button still draws its background (the same
+   proof that settled the sound case). **If O5 returns null there is no bug and the one
+   hands-on-verified inject is not touched at all.**
+4. **P2 — build `ui/server_browser_native.{h,cpp}`, concretely.**
+   - **Where it lives.** A screen `UUserWidget` added as the **12th child of `switcher_widgets`
+     @0x360**. Safe by an *enumerated* invariant, not a guess: exactly two `ui_menu` functions touch
+     that switcher (`ExecuteUbergraph_ui_menu` 8,283 B and `OnKeyDown` 538 B), and **nothing in
+     `ui_menu` iterates the child list** — zero hits for `GetAllChildren` / `GetChildAt` /
+     `GetChildrenCount` / `GetNumWidgets` / `GetWidgetAtIndex`. The switcher is only ever
+     read/written as `ActiveWidgetIndex`, plus a DynamicCast of **the active** widget to
+     `int_widgets`. **A 12th child is inert unless we make it active.**
+   - **Back/ESC.** An explicit `button_back`. `int_widgets` is an *interface* (`Iint_widgets_C`:
+     `triggerRandom`/`getSearchName`/`setIndex`/`resume`), and **`ui_saveSlots` and `ui_gamemode` —
+     the two screens we model on — do not implement it**; their cast fails today and the game is
+     fine, so a failed cast is a normal exercised path. We need no interface, and could not implement
+     one without owning a `UClass`.
+   - **Lifecycle** exactly per `multiplayer_menu.cpp:222-227`: inject once per menu instance,
+     self-heal on `!Alive()` (`CachedObjRef`, world-stamped), 1/s throttle, everything else
+     edge-applied. That is the one **hands-on-verified** native inject we have.
+   - **The row.** `USizeBox(HeightOverride = 64)` -> **`UOverlay`** holding a `UImage` background +
+     a `UHorizontalBox` of five `UTextBlock`s + an invisible `UButton`. **Not a `UBorder`** — that is
+     a `UContentWidget` (`SetContent`/`GetContent`, single child) and a row stacks three things.
+     **Not a `UUserWidget`** either: rows would then land in `GUObjectArray` for `input_owner`'s 1 Hz
+     focus walk and churn on every refresh. (A `UBorder` *is* right for a framed background panel —
+     one content child. Choose by child count, not by habit.) The game uses `UCanvasPanel` + explicit
+     offsets here; `UOverlay` is a deliberate divergence (alignment-driven, no offset math) and owes
+     a one-line comment saying so.
+   - **Style — CLONE, do not author.** Copy the 0x88 `FSlateBrush` from a resident native widget and
+     zero the handle at +0x70. `DrawAs` and `Margin` live *inside* the brush, so a clone carries the
+     9-slice for free and `SetBrushDrawAs`/`SetBrushMargin` — which do **not** exist in this build —
+     never come up. **Donors are read FAIL-CLOSED.** `tex_btnStart` taught us a donor's *offset*
+     resolves while "the pointed-to widget isn't bound yet"
+     (`lesson_umg_injected_menu_button_native_parity.md` fact 1), so **any null donor means: do not
+     build, retry on the 1/s self-heal — never fall back to a default style.** That fallback is
+     exactly the Roboto/centered/white bug.
+
+     | brush | donor |
+     |---|---|
+     | panel fill | `ui_saveSlots.Image_0` |
+     | border | `ui_saveSlots.image_border_*` |
+     | button — 3 states **and both sounds** | any `ui_saveSlots.button_*` |
+     | text box | `ui_saveSlots.ETB_slotName` |
+     | scrollbar | `ui_settings.scrollboxRoot` |
+     | row background | `uicomp_saveSlot.Image_background` — **a row instance, not a menu member; the strictest precondition** |
+
+   - **Hover** (needed for §7b's description idiom): `UWidgetLayoutLibrary::GetMousePositionOnViewport`
+     (`UMG.hpp:2090`) + `GetViewportScale` (`:2087`) is **one** call, and the row rects are ours, so
+     hit-testing is pure C++ **independent of N**. `WndProcDetour` runs on the game thread (`gate3`),
+     so hover recomputes on `WM_MOUSEMOVE` for **zero** UFunction calls in the common case. A
+     per-frame `IsHovered()` sweep over N rows is exactly the per-tick pattern this project bans.
+   - **Clicks**: the release-edge poll — **re-derived, not inherited.** Its comment gives two reasons;
+     the "ImGui swallows `WM_LBUTTONUP`" reason **dies with the ImGui browser**, and only "let the
+     `UButton` finish its own press->release visual" survives. Rewrite the comment to say so — a
+     comment citing a dead cause is how a false comment is born. `multiplayer_menu.cpp:228-241`'s
+     `HitTestInvisible` block **dies entirely**; its only cause was ImGui capture.
+   - **Unchanged**: `coop::net::lobby::LobbyRow` and every `coop::session_manager` call. Only the
+     renderer is replaced.
+   - **PORT THE INCUMBENT'S CORRECTNESS, do not re-derive it.** The 277 LOC being retired encodes
+     details the struct's field names do not: the version cell is `game` + `" b" + proto` with
+     `version` as a legacy-only fallback, and the mismatch has **two** legs. Diff the new cells
+     against `server_browser.cpp:218-231` **before** deleting it. (Caught in `/qf` round 6 — the first
+     draft of §7c got this wrong by reading `lobby_client.h`'s field names instead of the producer
+     `lobby_announcer.cpp:36-39` and the incumbent renderer.)
+5. **P4 — the host form** follows `ui_gamemode`'s shape (§7b): mode/option rows plus
+   description-on-hover, built from **our** widgets.
+6. **P5 — retire the ImGui browser and `menu_sfx` (RULE 2).** `menu_sfx` (60 LOC) exists *only*
+   because "ImGui buttons have no native audio" (its own header) and hand-plays the same two
+   SoundWaves a real `UButton` plays from its cloned `FButtonStyle` for free. **It is a deletion, not
+   a port.**
+
+**What this does NOT promise.** ImGui is **not** being retired as the mod's UI substrate on the
+strength of this design. Doing so would bank ~3,700 LOC of overlay substrate (`imgui_overlay` 815,
+`overlay_backend_dx12` 792, `_dx12_capture` 405, `fonts` 492, `atlas_watch` 386, `overlay_diag` 209,
+`_dx11` 157, `overlay_backend` 155, `overlay_cursor` 70, `scale` 127, `style` 80), and that is
+**unbankable** until someone measures whether UMG can cover `join_curtain`, `loading_screen` and
+`boot_warning_dialog` — the last armed from the **boot thread** (`boot.cpp:154`) before any world
+exists. **Two substrates permanently is a live possible outcome.** The browser is the experiment that
+informs the decision; it is not the decision.
+
+**Worth knowing when that question is taken up:** `docs/OVERLAY_CAPTURE_COEXIST.md` §6 states the root
+of the whole RTSS/OBS arc as *"we draw from an inline hook ON `IDXGISwapChain::Present`"*, and its fix
+as moving the draw *"into the engine's own present path ... exactly where the engine's own UI draws."*
+**A native UMG surface IS that destination**, with no hook at all — so if the substrate question ever
+resolves toward UMG, that arc resolves with it rather than needing its own AOB.
 
 **Two things that must not be re-derived:**
 
 - **Do not touch the main-menu button or the version line** (§7). They are done, and correctly.
-- **The pak's home is contested**: a mod-manager install puts our pak under
-  `LogicMods/<Author>-Multivoid/`, and `skin_registry.cpp:114` hardcodes `LogicMods/multivoid`.
-  `docs/UE4SS_ARC.md` §7.7 must land before ANY pak we ship is readable — it is already a hard
-  precondition for the skins, and step 3 inherits it.
+- **MTA decides the shape**: `CServerBrowser.cpp` is **3,400 LOC of C++** and the MTA tree contains
+  **zero `.layout` files** — the browser is built in code, not authored. The one divergence (they bind
+  handlers, we poll) owes a one-line citation comment at the site, per the MTA rule.
 
 ## Anchors (from reflection dump, game 0.9.0-n)
 
