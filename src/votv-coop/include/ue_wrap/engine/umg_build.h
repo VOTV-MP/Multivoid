@@ -89,6 +89,21 @@ bool SetImageTintRaw(void* image, const FLinearColor& tint);
 bool SetSizeBoxHeight(void* sizeBox, float height);
 bool SetSizeBoxWidth(void* sizeBox, float width);
 
+// Style a freshly-spawned UTextBlock as one of VOTV's own menu labels: font_ui at the
+// given size, the colour with FSlateColor's rule forced to UseColor_Specified, no outline,
+// and the native (2,2) opaque-black drop shadow (measured from ui_menu's tex_btnStart --
+// see InjectCanvasButton, which sets exactly these constants and does NOT clone a donor
+// text style, because that donor is null at some inject timings and the fallback is the
+// Roboto/centred/white bug). `justify` is ETextJustify: Left=0 Center=1 Right=2.
+// Raw writes -- call BEFORE the block is attached, or follow with a dispatch setter.
+bool StyleTextBlock(void* textBlock, int32_t fontSize, const FLinearColor& color,
+                    uint8_t justify);
+
+// UWidget::SetClipping. EWidgetClipping: Inherit=0, ClipToBounds=1. A text block in a
+// weighted HorizontalBox slot OVERFLOWS its column by default -- the slot bounds the
+// LAYOUT, not the painting -- so a long world name paints straight over the next column.
+bool SetClipping(void* widget, uint8_t clipping);
+
 // Slot alignment, written raw at the offsets in sdk_profile.h. EHorizontalAlignment:
 // Fill=0 Left=1 Center=2 Right=3; EVerticalAlignment: Fill=0 Top=1 Center=2 Bottom=3.
 bool SetSlotAlign(void* slot, size_t hAlignOff, size_t vAlignOff, uint8_t h, uint8_t v);

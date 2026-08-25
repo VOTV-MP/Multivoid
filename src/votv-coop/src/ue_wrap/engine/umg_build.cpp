@@ -51,6 +51,7 @@ FnCache g_swGetIdx   {L"WidgetSwitcher", L"GetActiveWidgetIndex", nullptr, false
 FnCache g_imgTint    {L"Image",          L"SetBrushTintColor",    nullptr, false};
 FnCache g_sbHeight   {L"SizeBox",        L"SetHeightOverride",    nullptr, false};
 FnCache g_sbWidth    {L"SizeBox",        L"SetWidthOverride",     nullptr, false};
+FnCache g_setClip    {L"Widget",         L"SetClipping",          nullptr, false};
 
 }  // namespace
 
@@ -166,6 +167,37 @@ bool SetSizeBoxWidth(void* sizeBox, float width) {
     ParamFrame f(fn);
     f.Set<float>(L"InWidthOverride", width);
     return Call(sizeBox, f);
+}
+
+bool SetClipping(void* widget, uint8_t clipping) {
+    void* fn = Resolve(g_setClip);
+    if (!widget || !fn) return false;
+    ParamFrame f(fn);
+    f.Set<uint8_t>(L"InClipping", clipping);
+    return Call(widget, f);
+}
+
+bool StyleTextBlock(void* textBlock, int32_t fontSize, const FLinearColor& color,
+                    uint8_t justify) {
+    if (!textBlock) return false;
+    static void* sFont = nullptr;
+    if (!sFont) sFont = R::FindObject(P::name::MenuFontName, P::name::FontClassName);
+    auto* d = reinterpret_cast<uint8_t*>(textBlock);
+    auto* font = d + P::off::UTextBlock_Font;
+    // font_ui is loaded whenever the menu is up; if it somehow is not, leave whatever the
+    // block already has rather than falling back to a different face -- a wrong font is a
+    // visible defect, a default one is a silent one.
+    if (sFont) *reinterpret_cast<void**>(font) = sFont;
+    *reinterpret_cast<int32_t*>(font + P::off::FSlateFontInfo_Size) = fontSize;
+    *reinterpret_cast<int32_t*>(font + P::off::FSlateFontInfo_OutlineSettings +
+                                P::off::FFontOutlineSettings_OutlineSize) = 0;
+    *reinterpret_cast<FLinearColor*>(d + P::off::UTextBlock_ColorAndOpacity) = color;
+    *(d + P::off::UTextBlock_ColorAndOpacity + P::off::FSlateColor_ColorUseRule) = 0;
+    *(d + P::off::UTextLayoutWidget_Justification) = justify;
+    *reinterpret_cast<FVector2D*>(d + P::off::UTextBlock_ShadowOffset) = FVector2D{2.f, 2.f};
+    *reinterpret_cast<FLinearColor*>(d + P::off::UTextBlock_ShadowColorAndOpacity) =
+        FLinearColor{0.f, 0.f, 0.f, 1.f};
+    return true;
 }
 
 bool SetSlotAlign(void* slot, size_t hAlignOff, size_t vAlignOff, uint8_t h, uint8_t v) {

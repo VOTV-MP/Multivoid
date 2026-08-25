@@ -248,6 +248,16 @@ inline constexpr size_t UHorizontalBoxSlot_VAlign  = 0x0059;
 inline constexpr size_t UScrollBoxSlot_Padding = 0x0038;
 inline constexpr size_t UScrollBoxSlot_HAlign  = 0x0048;
 inline constexpr size_t UScrollBoxSlot_VAlign  = 0x0049;
+// UVerticalBoxSlot's individual members (the LayoutStart/LayoutSize block above clones
+// the whole region; these are for writing one field). UMG.hpp:1705-1710.
+inline constexpr size_t UVerticalBoxSlot_Size    = 0x0038;  // FSlateChildSize (0x8)
+inline constexpr size_t UVerticalBoxSlot_Padding = 0x0040;  // FMargin (0x10)
+inline constexpr size_t UVerticalBoxSlot_HAlign  = 0x0058;
+inline constexpr size_t UVerticalBoxSlot_VAlign  = 0x0059;
+// FSlateChildSize: { float Value @0x00; TEnumAsByte<ESlateSizeRule> SizeRule @0x04 }.
+// ESlateSizeRule: Automatic = 0, Fill = 1.
+inline constexpr size_t FSlateChildSize_Value    = 0x00;
+inline constexpr size_t FSlateChildSize_SizeRule = 0x04;
 inline constexpr size_t UWidgetSwitcherSlot_Padding = 0x0040;
 inline constexpr size_t UWidgetSwitcherSlot_HAlign  = 0x0050;
 inline constexpr size_t UWidgetSwitcherSlot_VAlign  = 0x0051;

@@ -3108,6 +3108,110 @@ def cmd_nativeui(args) -> None:
     sys.exit(0 if not fails else 2)
 
 
+def cmd_browser(args) -> None:
+    """SOLO MENU-TIME lab run for the NATIVE server browser (docs/MULTIPLAYER_UI.md
+    section 8, P2). Launches ONE instance in the `menu` scenario with [dev]
+    browser_native=1 + browser_autoopen=1, waits for the screen to be shown, captures
+    the window, and asserts on the LOG.
+
+    IT ASSERTS ON LINES, and it fails on an ABSENT line as loudly as on a wrong one --
+    the same rule the nativeui probe follows, for the same reason: an instrument nobody
+    has seen fail passes by construction.
+    """
+    shots_dir = Path(__file__).resolve().parent.parent / "research" / "browser_shots"
+    shots_dir.mkdir(parents=True, exist_ok=True)
+    if kill_all() > 0:
+        log("note: pre-existing VotV instances killed before browser")
+    deploy_all()
+
+    env = {
+        "VOTVCOOP_BROWSER_NATIVE": "1",
+        "VOTVCOOP_BROWSER_AUTOOPEN": "1",
+        # The content-warning screen is itself a switcher child; advance past it so the
+        # browser is built against the real main menu.
+        "VOTVCOOP_MENU_PROCEED": "1",
+    }
+    log("--- HOST LAUNCH (solo native-browser lab, MENU scenario) ---")
+    host_pid = launch_peer("host", args.port, "Host", peer=None,
+                           res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
+                           memory_limit_gb=args.memory_limit_gb,
+                           set_net_role=False, set_scenario="menu", extra_env=env)
+    host_log = HOST_DIR / "multivoid.log"
+
+    t0 = time.time()
+    shot = None
+    saw_shown = False
+    while time.time() - t0 < args.duration:
+        time.sleep(3)
+        if not list_votv():
+            log("  (no VotV process -- exited/crashed)")
+            break
+        try:
+            text = host_log.read_text(errors="ignore")
+        except Exception:
+            text = ""
+        if not saw_shown and "server_browser_native: shown" in text:
+            saw_shown = True
+            log(f"  t+{int(time.time()-t0)}s browser shown -- capturing")
+            time.sleep(2)   # let Slate lay the screen out and present a frame with it
+            p = shots_dir / "browser_native.png"
+            if _capture_window(host_pid, p):
+                shot = p
+                log(f"  shot: {p.name}")
+    all_lines = []
+    try:
+        all_lines = host_log.read_text(errors="ignore").splitlines()
+    except Exception:
+        pass
+    lines = [ln for ln in all_lines if "server_browser_native" in ln]
+    log("--- KILLING ---")
+    kill_all()
+
+    log("--- NATIVE BROWSER OUTPUT ---")
+    for ln in lines:
+        print(ln)
+
+    def find(needle: str):
+        for ln in lines:
+            if needle in ln:
+                return ln
+        return None
+
+    log("--- BROWSER VERDICT ---")
+    fails = []
+    if not find("screen built"):
+        fails.append("the screen was never BUILT -- a donor was missing (read the O7 rule: "
+                     "fail-closed means retry, and after 15 tries the user is told)")
+    if find("donors still absent"):
+        fails.append("donors never appeared -- boot_warning_dialog was armed")
+    if not find("shown ("):
+        fails.append("the screen was built but never SHOWN (autoopen intent not consumed?)")
+    if find("open intent EXPIRED"):
+        fails.append("the open intent expired without a main-menu tick")
+    if find("the switcher moved off our index"):
+        log("NOTE: the switcher moved off our index during the run (reconcile fired)")
+    scrim = find("SCRIM SELFTEST")
+    if not scrim:
+        fails.append("no SCRIM SELFTEST verdict -- whether a stray click is absorbed is UNMEASURED")
+    else:
+        log(f"SCRIM: {scrim.strip()}")
+        if "FAIL" in scrim:
+            fails.append("the scrim does not cover the screen: a click that misses the window "
+                         "reaches VOTV's own menu buttons underneath")
+    errs = [ln for ln in all_lines if "[Error]" in ln and "server_browser_native" in ln]
+    for ln in errs:
+        log(f"ERROR LINE: {ln.strip()}")
+    if shot:
+        log(f"screenshot: {shot}")
+    else:
+        fails.append("no window capture -- nothing to look at")
+    for f in fails:
+        log(f"FAIL: {f}")
+    if not fails:
+        log("ALL PASS -- built, shown, captured. LOOK AT THE SHOT: a log line is not a layout.")
+    sys.exit(0 if not fails else 2)
+
+
 def cmd_menushot(args) -> None:
     """SOLO screenshot proof of the Dear ImGui F1 menu. Launches ONE host with
     VOTVCOOP_MENU_OPEN=1 so the menu starts visible (an autonomous run can't press
@@ -4004,6 +4108,16 @@ def main() -> None:
                             help="per-process commit cap in GB (0 = disabled)")
     for flag, kw in host_res: p_nativeui.add_argument(flag, **kw)
     p_nativeui.set_defaults(func=cmd_nativeui)
+
+    p_browser = sub.add_parser("browser",
+                               help="SOLO menu-time lab run for the NATIVE server browser (P2): "
+                                    "builds it, shows it, screenshots it, asserts the log")
+    p_browser.add_argument("--duration", type=int, default=140,
+                           help="seconds from LAUNCH (boot alone is ~50 s here)")
+    p_browser.add_argument("--memory-limit-gb", type=float, default=12.0,
+                           help="per-process commit cap in GB (0 = disabled)")
+    for flag, kw in host_res: p_browser.add_argument(flag, **kw)
+    p_browser.set_defaults(func=cmd_browser)
 
     p_menushot = sub.add_parser("menushot",
                                 help="SOLO: screenshot proof the Dear ImGui F1 menu renders over the game (VOTVCOOP_MENU_OPEN=1)")

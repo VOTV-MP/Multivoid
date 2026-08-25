@@ -14,6 +14,7 @@
 #include "coop/session/join_progress.h"
 #include "coop/session/session_manager.h"  // RefreshLatestVersion + LatestVersionLine (native version label)
 #include "ui/server_browser.h"
+#include "ui/server_browser_native.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/game_thread.h"
@@ -44,6 +45,8 @@ void* g_tickFn = nullptr;               // ui_menu_C::Tick (observer anchor)
 int32_t g_buttonStartOff = -1;          // ui_menu_C -> button_start (UButton*, NEW GAME)
 int32_t g_isPauseOff = -1;              // ui_menu_C -> isPause (bool)
 int32_t g_txtVersionOff = -1;           // ui_menu_C -> txt_version (UTextBlock*, the version label)
+int32_t g_switcherOff = -1;             // ui_menu_C -> switcher_widgets (UWidgetSwitcher*, the
+                                        // sub-screen layer the NATIVE browser becomes a child of)
 
 // Injected-button tracking (game-thread only -- touched solely in the Tick observer).
 void* g_injectedMenu = nullptr;         // the menu instance we last injected into (compared, never deref'd)
@@ -218,6 +221,12 @@ void OnMenuTickPost(void* self, void* /*function*/, void* /*params*/) {
         }
     }
 
+    // Drive the NATIVE server browser (docs/MULTIPLAYER_UI.md section 8). It uses THIS
+    // observer rather than registering a second one on the same UFunction: this is the one
+    // hands-on-verified native inject, and one owner of the menu tick is the point. No-ops
+    // entirely unless [dev] browser_native=1, so the shipped path is untouched.
+    ui::server_browser_native::OnMenuTick(self, ReadPtr(self, g_switcherOff));
+
     // Inject once per menu instance; self-heal if VOTV ever tore our button out
     // (throttled to 1 attempt/s so a persistent failure never hammers SpawnObject).
     const bool needInject = (self != g_injectedMenu) || !g_button.Alive();
@@ -279,6 +288,11 @@ bool TryInstall() {
     // txt_version is the anchor for the native coop version label (non-fatal if absent --
     // the label just won't inject; the button + fade still work).
     g_txtVersionOff  = R::FindPropertyOffset(uiMenuCls, prof::name::UiMenuTxtVersionProp);
+    // switcher_widgets: non-fatal if absent -- only the (dev-gated) native browser needs it.
+    g_switcherOff    = R::FindPropertyOffset(uiMenuCls, L"switcher_widgets");
+    if (g_switcherOff < 0)
+        UE_LOGW("multiplayer_menu: switcher_widgets offset unresolved -- the native browser "
+                "cannot be built this session");
     if (g_txtVersionOff < 0)
         UE_LOGW("multiplayer_menu: txt_version offset unresolved -- native version label disabled");
     // button_start is the only field the inject NEEDS (we derive its VerticalBox +

@@ -339,3 +339,12 @@ CFG_FLAG(native_ui_probe_write, "native_ui_probe_write", "dev", false,
     "live ui_menu widget switcher, shows it for ~2 s, then restores the previous "
     "active index and removes it. Main menu only, never with a session up. Requires "
     "native_ui_probe=1.")
+// The NATIVE server browser (docs/MULTIPLAYER_UI.md section 8, P2). Built dark: while
+// this is off the screen is never constructed and the shipped ImGui browser is the only
+// browser, so there is never a moment when two of them serve the same button.
+CFG_FLAG(browser_native, "browser_native", "dev", false, "VOTVCOOP_BROWSER_NATIVE",
+    "Build the native UMG server browser into the main menu's widget switcher. Off "
+    "ships the ImGui browser unchanged; this is the in-progress native replacement.")
+CFG_FLAG(browser_autoopen, "browser_autoopen", "dev", false, "VOTVCOOP_BROWSER_AUTOOPEN",
+    "Show the native browser as soon as it is built, without a click -- an autonomous "
+    "run cannot press the MULTIPLAYER button. Requires browser_native=1.")
