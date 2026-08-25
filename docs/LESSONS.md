@@ -1794,6 +1794,24 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   unsourced.
   `memory/lesson_a_v_tag_without_a_citation_deletes_its_own_fact.md`
 
+- **Before asking "what INSTRUMENT would settle this?", ask "does any decision depend on it?" —
+  a measurement nobody's decision needs is a shelf with extra steps** (2026-08-25). The user closed
+  the hands-on route (*"When im on pc i wont test it either"*), so I wrote a standing rule: never end
+  a plan on a hands-on, the design owes an instrument. I then answered my own rule literally and
+  designed a movement-calibration harness. A critic killed it on four independent counts: the gap
+  distribution it would collect was **already printed unconditionally in every existing smoke log**
+  (`dt=[11..24] ms use<=77 bank<=69`); its teleport regime would have measured a schedule *I* wrote;
+  a loopback distribution on one box is structurally not the field's, so those constants are
+  un-calibratable by **any** autonomous run; and the one genuinely un-derived constant was labelled
+  **"THIS IS A POLICY CHOICE, NOT A MEASUREMENT" in its own header** — a product question at zero
+  build cost. The user answered it in two words and the measurement problem evaporated, taking two
+  successive "blockers" with it.
+  LOOK HERE FIRST: the ladder is (a) does a decision depend on this? (b) is the answer already in a
+  log or dump I have? (c) is it a POLICY question a human should just answer? (d) only then build an
+  instrument. Jumping to (d) is the same shelf the rule was written to prevent, one level up — and a
+  constant whose own comment says "policy choice, not a measurement" is (c) by its own admission.
+  `memory/feedback_autonomous_evidence_is_the_ceiling.md`
+
 ### 1b. Standing working agreements (previously indexed NOWHERE)
 
 Measured 2026-07-27 by a full pairing sweep of `memory/` against this file: **all 194 `lesson_*`
