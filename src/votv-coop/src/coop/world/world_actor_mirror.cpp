@@ -30,6 +30,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -90,10 +91,32 @@ void OnWorldActorSpawn(const coop::net::EntitySpawnPayload& payload) {
                 classW.c_str(), payload.elementId);
         return;
     }
-    // Duplicate-eid guard.
-    if (WaMirrors().Get(payload.elementId) != nullptr) {
-        UE_LOGW("world-actor[client OnSpawn]: eid=%u already mirrored -- dropping duplicate", payload.elementId);
-        return;
+    // Duplicate-eid guard. A ROW WHOSE ACTOR IS DEAD IS NOT A DUPLICATE, IT IS A STALE ROW
+    // (2026-08-25, the v137 field pass' R28 finding). This used to test row PRESENCE alone, and a
+    // mirror row outlives its actor by design -- the death-watch retires the row on a LATER tick, and
+    // an actor can die under us at any point in between. So a legitimate RE-ANNOUNCE of a live host
+    // actor was answered "already mirrored", dropped, and that actor stayed permanently invisible on
+    // that peer with the only trace being this WARN. The guard tests the ACTOR now: a live one is a
+    // real duplicate and still drops; a dead one is drained here and the spawn below re-materialises
+    // it. The drain must go through the SAME two steps OnDestroy uses -- Take() the row AND
+    // NoteMirrorActor(add=false) -- because dropping the row alone leaks the stale pointer into
+    // g_mirrorActors forever, where a recycled allocation makes an unrelated actor read as a mirror
+    // and its pickup gets cancelled (audit I-3's "permanently uncollectable AND ghosted" end).
+    if (coop::element::WorldActor* existing = WaMirrors().Get(payload.elementId)) {
+        void* prevActor = existing->GetActor();
+        if (prevActor && R::IsLiveByIndex(prevActor, existing->GetInternalIdx())) {
+            UE_LOGW("world-actor[client OnSpawn]: eid=%u already mirrored by a LIVE actor=%p -- "
+                    "dropping duplicate", payload.elementId, prevActor);
+            return;
+        }
+        UE_LOGW("world-actor[client OnSpawn]: eid=%u held a STALE row (actor=%p, not live) -- draining "
+                "it and re-materialising rather than dropping this announce as a duplicate. A live "
+                "host actor would otherwise have stayed invisible on this peer forever.",
+                payload.elementId, prevActor);
+        std::unique_ptr<coop::element::WorldActor> stale = WaMirrors().Take(payload.elementId);
+        coop::world_actor_sync::NoteMirrorActor(prevActor, /*add=*/false);
+        // stale's dtor fires here -> Registry::UnregisterMirror(eid), which is what frees the eid for
+        // the RegisterMirror the materialisation below performs.
     }
     const D::SpawnPath sp = D::GetSpawnPath();
     if (!sp.spawnFn || !sp.finishSpawnFn || !sp.gsCdo || sp.returnParamOff < 0) {

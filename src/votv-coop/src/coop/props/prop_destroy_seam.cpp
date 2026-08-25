@@ -178,10 +178,24 @@ void DestroySeamBody(void* self) {
     // v137 (A37/A38): if this prop is dying inside the coin gun's verb bracket, author the SALE
     // FIRST, on this same lane. FIFO then delivers it while the host's copy is still alive -- which
     // the mint REQUIRES, because `[V]` `sell` positions its coins from the SOLD PROP's component.
-    // The destroy below is deliberately UNCHANGED: a sale the host refuses degrades to exactly
-    // today's behaviour, so nothing new is lost and no heal lane exists to get wrong. This sits
-    // AFTER every gate above, so the world-load episode and the R-4a reconcile window are inherited
-    // and a joining client's loadObjects churn can never author a sale (principle 8).
+    // This sits AFTER every gate above, so the world-load episode and the R-4a reconcile window are
+    // inherited and a joining client's loadObjects churn can never author a sale (principle 8).
+    //
+    // WHAT THIS COMMENT USED TO CLAIM, AND WHY IT WAS WRONG (v138 B1; the header at
+    // coop/items/coingun_sync.h was corrected for this on 2026-08-24 and its CALL SITE -- here --
+    // was not, which is the whole reason it is worth writing out). It said: "a sale the host refuses
+    // degrades to exactly today's behaviour, so nothing new is lost". FALSE BY CONSTRUCTION: the
+    // capture of the client's own coins is UNCONDITIONAL (it keys on the verb bracket alone) while
+    // the authorization is CONDITIONAL and decided LATER and ELSEWHERE, so a refusal takes the local
+    // coins too. The missing invariant is named in the header: a local artifact must not be
+    // suppressed until the authoritative one is CONFIRMED, and this lane does not yet hold it.
+    // What IS true, stated without the overreach: the destroy below is deliberately unchanged, so a
+    // refusal costs the ITEM -- and pre-A37 lost that same item while the client's phantom credit
+    // was erased by the host's next balance broadcast anyway, so the ECONOMIC outcome matches. No
+    // heal lane exists to get wrong. Since v138 the refusal is no longer SILENT: the host answers
+    // with CoinGunResult and the seller is told, because a prop that vanishes with no coins and no
+    // explanation is letter-for-letter the bug the field reported.
+    //
     // v138 (B1): the sale carries the SAME identity pair this destroy does -- key first, eid as the
     // keyless fallback. v137 passed the eid alone and `[V]` a v122 client mints no Element row for
     // its own save-loaded keyed prop, so it was 0 for exactly the props a player shoots and the
