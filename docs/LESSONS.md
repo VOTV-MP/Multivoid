@@ -33,6 +33,29 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 1. How to work (process / working agreements)
 
+- **Your own memory file can silently EDIT the plan of record, and you will read it back as the plan.**
+  2026-08-25: on "go next" I was one call from implementing a security root (A54). `[V]` The design doc
+  of record ordered `A52 -> B3 -> B4 -> checklist`; A52 had shipped, so B3 was next -- and B3/B4 are the
+  user's own two remaining reported symptoms. The only thing putting A54 next was a memory entry I wrote
+  in the previous session, which promoted it to position 2 **without ever saying it was displacing
+  anything**. A memory NEXT feels identical to the plan's NEXT, because carrying NEXT is exactly what
+  memory is for. *Look FIRST:* when memory and the design doc both say what is next, the DOC wins and
+  the disagreement is itself the finding; and when WRITING a memory NEXT that reorders, say that it
+  reorders. If the displaced items are things the user reported and can still SEE, the burden is
+  entirely on the reordering. `memory/lesson_your_own_memory_file_can_edit_the_plan_of_record.md`
+- **An instrument can be blind FOUR different ways in one design pass, and reasoning catches none of
+  them.** 2026-08-25, B3: (1) a seam the module's own header records as never having fired; (2) a seam
+  field-counted at 5 host vs 19 client lines over DISJOINT entities; (3) a reader that shares its offset
+  with the code under test, so a wrong read prints AGREEMENT; (4) a read off the actor's ROOT component
+  when the bytecode names a different one -- null on both peers, agreeing by construction. Three are one
+  root (sampling the wrong population); the fourth is "the instrument is a mirror". The bitter part:
+  `coingun_collect.cpp:317` cites the parent lesson BY NAME, and instrument #1 would have gone four
+  lines below it -- a lesson filed as a fact about one seam does not fire as a question about a new one.
+  *Look FIRST:* `grep -c` the seam in a real log on BOTH peers before instrumenting it (0 = never fires;
+  differing counts = ask whether they cover the same entities); then ask what the instrument reads that
+  the code under test does not -- if "nothing", it cannot fail.
+  `memory/lesson_four_blind_instruments_in_one_design_pass.md`
+
 - **Grep the field logs before declaring a measurement impossible — then separate the SERIES inside
   them.** 2026-08-25: asked for a distribution of real per-pose deltas, I answered that it "does not
   exist on disk (poses are never logged, by design)" — and in the same pass derived a world diameter
