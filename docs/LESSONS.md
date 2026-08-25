@@ -33,6 +33,27 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 1. How to work (process / working agreements)
 
+- **AN EQUIVALENCE INSTRUMENT THAT STRIPS COMMENTS CANNOT SEE A COMMENT DELETED — AND YOUR OWN
+  MUTATE CONTROLS WILL NOT TELL YOU.** 2026-08-25, the `a290a466` coingun extraction. `[MEASURED]`
+  The commit claimed all three moved bodies *"line-for-line identical modulo four substitutions"* and
+  cited four mutate controls shown RED first. An independent re-diff found **six** differences,
+  including a **3-line comment DELETION** in `OnCollectPre` and a 2->3-line structural rewrite. The
+  normalizer did `ln.split('//')[0]` then dropped now-empty lines, so a deleted comment was invisible
+  BY CONSTRUCTION — and all four controls were CODE mutations (flip a gate, neuter a check, delete a
+  code line, change a constant), i.e. exactly the class the normalizer was built to keep. Controls and
+  normalizer came from the same head in the same ten minutes, so the blindness could not be discovered
+  by the controls. No behavioural difference existed; the overclaim is the defect, in a lane whose
+  defining failure is false comments.
+  **LOOK HERE FIRST:** (1) never write "line-for-line identical" about a NORMALIZED compare — state the
+  blind set in the commit ("compares CODE only; comment/whitespace changes are invisible"); (2) write
+  one control **per normalizer rule**, not per failure you imagine — every strip/replace/regex is a
+  blindness you chose and owes a control that proves it is no wider than intended; (3) for a pure move
+  also run a raw `diff -u` and read the hunks, which needs no normalizer and is what actually finds a
+  dropped comment; (4) a third party re-running your comparison beats another control you write
+  yourself — brief them "report ANY difference, including ones the substitutions would explain; I want
+  your list, not my list".
+  `memory/lesson_a_diff_instrument_that_ignores_comments.md`
+
 - **A VERDICT THAT ALREADY PASSES ON THE BROKEN BUILD MEASURES NOTHING — two of four did, and it took
   27 rounds to notice.** 2026-08-24, `/qf` rounds 42-44. `[MEASURED]` Verdict 2 was *"a client picks up
   a host coin and the HOST's balance moves by that coin's denomination"* — satisfied by the **unfixed**
@@ -1711,6 +1732,27 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   the triggered phase): `world_load_episode` reconcile window +
   `votv-r4a-end-condition-DESIGN-2026-08-23.md`.
   `memory/lesson_a_window_closed_by_the_latch_that_starts_the_next_phase.md`
+
+- **A ZERO FROM AN ACCESSOR MEANS "NOT IN MY HALF", NOT "DOES NOT EXIST" — and that wrong root
+  survived ~47 `/qf` rounds because it predicted the symptom perfectly.** 2026-08-25. `[MEASURED]`
+  Four sessions carried *"a v122 client mints no Element row for its own save-loaded keyed prop, so the
+  eid is 0"* into a design doc, a header, a protocol comment and a commit message. The client HAD the
+  row: `CLIENT_1 …:18589` `CreateOrAdoptPropMirror: eid=4196 bound to actor=…0x…1C80
+  key='xTy31ERNFExrbjG1NzOkVg'`, six minutes before `…:35483` broadcast that same actor with `eid=0`.
+  The 0 comes from `prop_element_tracker.cpp:457-469`, which re-imposes a **LOCALS-ONLY contract** —
+  `if (!el || el->IsMirror()) return kInvalidId;` — and names its own twin in the same comment
+  (`ResolveMirrorEidByActor`, `remote_prop.h:110`), which would have returned 4196. Two things outlived
+  the wrong root: the eid was documented as "unreachable, riding in alignment padding" when it is the
+  HOST's own number and obtainable, and the fix resolves **key-first** while the sibling `PropDestroy`
+  receiver resolves **eid-first** with an MTA `Packet_EntityRemove` citation saying so in capitals
+  (`remote_prop_destroy.cpp:129-146`).
+  **LOOK HERE FIRST:** `kInvalidId` and "no row" are the same value — before writing "X has no id",
+  open the accessor that returned it and read its CONTRACT; nearly every reverse index in this tree is
+  halved (locals/mirrors, host band/peer band, keyed/keyless) and a zero from one half says nothing
+  about the other. Grep the log for the IDENTITY (the actor pointer, the key), not only for the
+  failure line. And when citing a sibling lane as precedent, read its resolve ORDER, not just which
+  primitive it calls.
+  `memory/lesson_an_accessor_with_a_locals_only_contract.md`
 
 - **ON A v122 CLIENT THE ELEMENT REGISTRY HOLDS ONLY HOST-BOUND MIRRORS — "local props" must be
   selected by keyed-interactable + NO element bound.** Measured 2026-08-23 (the R-4a-end drill's

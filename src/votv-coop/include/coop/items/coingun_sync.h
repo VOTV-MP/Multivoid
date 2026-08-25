@@ -138,10 +138,27 @@ void Install(coop::net::Session* session);
 // instead of the claim v137's comment made about a map that was erased nowhere. Cheap when idle.
 void Tick();
 
-// HOST ingest for `ReliableKind::CoinGunSell`. Fully range-checks the payload and no-ops off the
-// host. `senderSlot` names the peer to log and to address the CoinGunResult back to -- it does NOT
-// select a gun instance (FindLiveGun takes no argument and there is nothing to prefer; v137's
-// comment here claimed otherwise and was false).
+// HOST ingest for `ReliableKind::CoinGunSell`. No-ops off the host.
+//
+// *** SECURITY A50 / A51 (2026-08-25) -- THIS RECEIVER IS NOT DEPLOYABLE AS WRITTEN. ***
+// It checks the payload SIZE and clamps the key, and that is the whole of its input validation:
+//   - it does NOT range-check the eid (the `IsAllowedHostAllocatedEid` idiom 14 other receive sites
+//     obey). An earlier version of this sentence said "fully range-checks the payload" -- FALSE, and
+//     deleted rather than softened;
+//   - it does NOT bind the named artifact to `senderSlot` in any way, so ANY peer can name ANY prop
+//     in the host's world and be paid for it (A50);
+//   - the host does NOT destroy the prop it pays for -- `[V]` the sold prop's destroy lives in the
+//     GUN's ubergraph @1730, not in `sell` -- so the cost half of the transaction is delegated to the
+//     client's own PropDestroy, i.e. to the attacker's goodwill (A50);
+//   - the key resolve takes `ResolveLiveActorByKey`, whose cold fallback is a full GUObjectArray scan,
+//     at attacker-controlled rate on the game thread (A51).
+// Fix of record: `docs/security/TRACKER.md` 2026-08-25 block. The arbiter must perform the WHOLE
+// transaction (host destroys, client's destroy becomes a suppressed echo) AND carry the §2b proximity
+// check; neither alone closes it.
+//
+// `senderSlot` names the peer to log and to address the CoinGunResult back to -- it does NOT select a
+// gun instance (FindLiveGun takes no argument and there is nothing to prefer; v137's comment here
+// claimed otherwise and was false).
 void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot);
 
 // CLIENT ingest for `ReliableKind::CoinGunResult`. Renders one feed line telling the seller what
@@ -150,10 +167,21 @@ void OnReliableResult(const uint8_t* payload, int len);
 
 // HOST ingest for `ReliableKind::CoinCollect` (v139, B2). A client collected a coin that mirrors one
 // of ours; perform the collect on the authoritative coin by dispatching its OWN `actionOptionIndex`,
-// so the game's native credit and self-destroy run. Fully range-checks the payload, fail-closed on
-// both the Element TYPE and the actor's CLASS, and no-ops off the host. `localPlayer` is the host's
-// own mainPlayer, passed as the verb's `player` argument (see the call site for why that is the
-// truthful value and why nothing on the credit path can depend on it). Game thread.
+// so the game's native credit and self-destroy run. Checks the payload SIZE, then fails closed on the
+// Element TYPE and the actor's CLASS. No-ops off the host.
+//
+// IT DOES **NOT** RANGE-CHECK THE EID (owed, 2026-08-25 audit; an earlier version of this sentence
+// said "fully range-checks the payload" and that was false). The consequence is not only idiom: the
+// no-resolve branch logs "the coin is already gone" as POSITIVE KNOWLEDGE, and without a range gate
+// that claim also swallows a client-band eid, an out-of-range eid and pure garbage -- the fact that
+// the number was never a host eid is discarded before it is read. `IsAllowedHostAllocatedEid` first;
+// the coin's eid is host-issued by construction.
+//
+// `localPlayer` is the host's own mainPlayer, passed as the verb's `player` argument. `[V]` (upgraded
+// from `[RD]` 2026-08-25 by direct bytecode read) block @441 is `addPoints(points, self)` + format +
+// `addHint` + `K2_DestroyActor`; `K2Node_Event_player` appears nowhere in it, so the value cannot
+// change the outcome -- and a client cannot steer it, since it comes from `event_feed::Update` and
+// never off the wire. Not null-guarded. Game thread.
 void OnCoinCollect(const uint8_t* payload, int len, uint8_t senderSlot, void* localPlayer);
 
 // Session teardown. Dumps the lane's counters (a session that ends having measured nothing is the
