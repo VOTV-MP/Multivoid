@@ -168,6 +168,10 @@ inline bool CaptureActive() {
 // so the single real OS cursor tracks the mouse instead of snapping to the center.
 BOOL WINAPI SetCursorPosDetour(int x, int y) {
     ui::overlay_diag::NoteSetCursorPos(x, y);
+    // BEFORE the swallow, deliberately: a suppressed write still proves the game is
+    // mouselooking, and that -- not `CaptureActive()` -- is what decides whether a
+    // capture transition has any pointer ownership to hand back (ui/overlay_cursor.h).
+    ui::overlay_cursor::NoteGameCursorWrite();
     if (CaptureActive()) return TRUE;
     return g_origSetCursorPos(x, y);
 }
