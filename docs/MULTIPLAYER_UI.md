@@ -311,6 +311,96 @@ repeatable instead of a hand session in the GUI. And `Engine\Plugins\Experimenta
 **is present** in this install, which is the precondition for any of it. Do not assume the invocation
 form: 4.27's Python commandlet switch is itself worth confirming in the same spike.
 
+### 7. Should the EXISTING main-menu elements move to the pak too? NO — measured, and a pak would make them WORSE
+
+USER 2026-08-25: *"кнопки в главном меню (MULTIPLAYER, Multivoid in left upper corner) будет лучше
+заменить на нативный из нашего будущего pak? Или не стоит? Они хуже чем нативные через .pak?"*
+
+**They are not worse. They are already the maximally-native form, and the pak version would be a
+downgrade.** Both existing elements do not merely *look* like the game — they are the game's own
+widget classes carrying the game's own style, **read off the live menu at runtime**:
+
+| element | how it is built | what it clones, from where |
+|---|---|---|
+| **MULTIPLAYER button** | `engine::InjectCanvasButton(refButton, label, &out)` (`engine.h:549`) | a real `UButton` whose `FButtonStyle` is cloned from the live `button_start` ("NEW GAME") |
+| **the version / update line** (the upper-left "Multivoid …" text) | `engine::InjectTextRowAbove(refText, ...)` (`engine.h:551-564`) | VOTV's own `txt_version` — its **text style** (font/colour/shadow/justification) **and** its row's **slot layout** (padding/alignment), inserted as one more row in the same `UVerticalBox` |
+
+Three concrete reasons a pak-authored replacement would be worse, not equal:
+
+1. **A clone tracks the game; an authored asset freezes it.** The style is copied from the live
+   reference widget *on every menu entrance*. If VOTV recooks its menu — a new font, a new button
+   brush, a palette change — our button follows automatically. A pak widget carries a **snapshot of
+   the style taken at authoring time** and would silently drift out of match on exactly the game
+   update we are otherwise adapting to (`docs/VERSION_MIGRATION.md`'s whole subject).
+2. **The version line is a CHILD of the menu, so lifetime is free.** Because it is inserted into the
+   menu's own `UVerticalBox`, it auto show/hides with the menu — the header of `InjectTextRowAbove`
+   states it: *"a child of the menu, so it auto show/hides with the menu (no viewport add/remove, no
+   per-frame gating)"*. A pak widget added to the viewport needs that gating **written and
+   maintained by us**, which is new code that can be wrong.
+3. **There is nothing for a pak to add here.** A pak buys *custom art*. For these two elements we do
+   not want custom art — we want to be indistinguishable from `button_start` and `txt_version`, which
+   is what cloning literally guarantees.
+
+**So the rule this section establishes, and it is the one to build by:**
+
+> **CLONE anything the game already has an equivalent of. Use the PAK only for art the game has no
+> equivalent of.**
+
+The main menu is entirely the first case. The browser's interior is entirely the second: a row
+background with zebra/hover/selected states, a scrollbar, a column header, and status icons
+(locked / version-mismatch / mic / ping) have **no counterpart in `ui_menu_C` to clone**. That is
+precisely where hand-built UMG looks thin — which is the user's own 2026-05-25 complaint (*"VT mod
+looks natural; we look dirty"*) — and precisely where authored art earns the toolchain.
+
+### 8. Build plan for the native server browser (for the next session to start from)
+
+**Status: DESIGN. Nothing here is built, and `/qf` is owed before implementation** (the project rule
+requires it for non-trivial work; this qualifies).
+
+**Reuse, do not rebuild — all of this already ships:**
+
+- `ue_wrap::engine::InjectCanvasButton` / `InjectTextRowAbove` — style-cloning injectors (§7).
+- The **click poll**: `WidgetIsHovered()` (`engine.h:566-569`) paired with a global `VK_LBUTTON` edge
+  in `coop::multiplayer_menu`. **This is the pattern for every clickable row** — we never bind a UMG
+  delegate, because binding a multicast delegate from raw reflection needs a UFunction on a UObject
+  we own, which we never solved and do not need to.
+- `engine_widget.cpp` (604 LOC) — `SpawnObject` -> `UUserWidget` -> `WidgetTree` -> `UTextBlock` /
+  `UVerticalBox`, `AddToViewport`, `SetPositionInViewport`, `SetAlignmentInViewport`,
+  `SetVisibility`, `SetIsEnabled`, `SetRenderOpacity`; and `font_ui` resolution
+  (`engine_widget.cpp:206`).
+- **The DATA model is already right and does not change.** `ui/server_browser.cpp` (277 LOC) carries
+  the row model ported from MTA's `CServerListItem` (name / players cur-max / version / world /
+  locked, heartbeat age instead of a pre-connect ping) fed by `coop::session_manager`. **Only the
+  RENDERER is being replaced** — keep the model, keep the `session_manager` calls, keep the
+  Connect / Host / Direct-IP actions.
+
+**The order, cheapest-first, each step independently useful:**
+
+1. **SPIKE (blocking, and it is a measurement not a build):** can a `UWidgetTree` be populated from
+   4.27 Python, headless via `UE4Editor-Cmd.exe`? §6 — `[?]` unverified, and everything designed on
+   top of it is worthless until it answers. **If it fails, §6(d) is the fallback and step 2 is
+   unaffected either way.**
+2. **Build the browser's TREE at runtime** (no pak): a `UBorder` panel + a scroll container + N row
+   widgets, each row a `UHorizontalBox` of `UTextBlock`s, clicks polled per §7's pattern. This is
+   pure `engine_widget.cpp` extension and needs **nothing from the editor**. New UMG classes to
+   resolve by name, the same way `Button` / `VerticalBox` / `TextBlock` already are: `ScrollBox`,
+   `HorizontalBox`, `Border`, `Image`, `SizeBox`.
+3. **Add the ART from the pak** once step 1 says how: brush textures for the row/hover/selected
+   states, the scrollbar, the status icons. If step 1 failed, ship these as `UTexture2D` assets
+   (which our Python cook chain *can* already emit) and set them on runtime-built `UImage`/`UBorder`
+   brushes — the art lands, the tree stays ours, and no Blueprint graph is ever needed.
+4. **Retire the ImGui browser whole** (RULE 2 — no parallel old + new renderer) once the native one
+   reaches parity on the columns listed above. `server_browser.cpp`'s model code moves; its ImGui
+   drawing goes.
+
+**Two things that must not be re-derived:**
+
+- **Do not touch the main-menu button or the version line** (§7). They are done, and correctly.
+- **The pak's home is contested**: a mod-manager install puts our pak under
+  `LogicMods/<Author>-Multivoid/`, and `skin_registry.cpp:114` hardcodes `LogicMods/multivoid`.
+  `docs/UE4SS_ARC.md` §7.7 must land before ANY pak we ship is readable — it is already a hard
+  precondition for the skins, and step 3 inherits it.
+
 ## Anchors (from reflection dump, game 0.9.0-n)
 
 - Menu widget: `ui_menu_C` (buttons: NewGame, Resume, Save, Settings, Exit,
