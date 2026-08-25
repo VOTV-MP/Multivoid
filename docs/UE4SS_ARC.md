@@ -907,6 +907,33 @@ fetch a whole package per version — every build bump re-downloads all of it. S
 size budget, not as an argument against the decision; several paks are suspiciously equal at ~4.28 MB,
 so a single archive may dedupe/compress meaningfully better than the sum.
 
+> **RE-MEASURED 2026-08-25 `[V]` — the estimate above verifies, and the "~4 skins" set now has a
+> concrete candidate.** The 14 paks live in `models/` (13) + `research/pak_re/` (1) and total
+> **33,884,614 B = 32.3 MB**; the extremes are `ship_dr_freemanw_v2sc` 579,540 B and `skeleton2_v1sc`
+> 4,630,346 B, so this section's `570 KB … 4,522 KB / ≈32 MB` was right.
+> **What is new: the HOST install already carries a chosen set of FIVE**, hand-placed rather than
+> deployed (`deploy-all.ps1:48` copies only `hl_einstein_v1sc.pak`) — `hl_einstein_v1sc`,
+> `luther_v1sc`, `rvi_scientist_v1sc`, `sci_v1sc`, `walter_v1sc` = **14,929,010 B = 14.2 MB** as
+> five separate paks, plus ~119 KB of `<name>.png` preview tiles and the 342 KB `dr_kel.png`
+> native-kel tile. That is the best available evidence for which skins the base pack is drawn from.
+> Note `rvi_scientist_v1sc.pak` is **not** in `models/` — it comes from
+> `tools/client_model/_rvi_scientist_v1sc/`, so the base pack draws from two source trees today.
+>
+> **USER 2026-08-25, and it is a SHAPE decision, not just a count: "4 скина в итоге будут внутри
+> `scientists.pak`" — FOUR skins inside ONE pak file.** Two consequences that must not be lost:
+> - **The size cannot be predicted by summing four of the five above.** Each standalone pak carries
+>   its own UE4 pak header + index, and the shared/duplicated assets across scientist skins are
+>   exactly what a single archive would collapse — which is the "may dedupe meaningfully better than
+>   the sum" hypothesis this section already raised, now load-bearing. The sum of any four of the
+>   measured five (**~10.1 MB … ~13.8 MB** depending on the choice) is therefore an **upper bound,
+>   not an estimate**. The real number is unmeasured until `scientists.pak` is built, and it should
+>   be measured before it is quoted anywhere.
+> - **One pak is precisely what §7.7 says the registry cannot read.** `skin_registry.cpp:159` derives
+>   the skin's display name from the pak's **stem**, so a single `scientists.pak` enumerates as ONE
+>   entry called "scientists" no matter how many skins are inside. This decision does not merely
+>   *benefit* from the §7.7/§7.7b rework — it is **unusable without it**. That makes §7.7 a hard
+>   precondition of WP-9, not a parallel task.
+
 **Part 2 is mostly free after §7.7.** Once the scan walks `LogicMods/` subdirectories, a user pack
 installed by r2modman lands in its own `<Author>-<Name>/` folder and is enumerated automatically. The
 subdirectory name is then also the **package identity** — useful for part 3.
@@ -1087,15 +1114,36 @@ have to hand our packaging to a third-party action to use one — we build the z
    a cooked template extracted from the game's own paks and a Valve source model, neither of which has
    ever been in git (§7.8), and neither of which can be.
    **The DISTRIBUTION half is decided** (§7.7c part 1, re-confirmed by the user 2026-08-25: one zip,
-   base `scientists.pak` inside, ~4 skins). What is still open is narrower and purely mechanical:
-   **how the base pak's bytes reach a CI runner that cannot rebuild them.** The candidates, so this is
-   not re-derived from scratch: (a) commit the built `scientists.pak` — it is a *product* of the
-   ignored inputs, not the inputs themselves, and `.gitignore:6`'s blanket `*.pak` would need one
-   explicit negation with a written why; (b) attach it once to a GitHub release and have the
-   packaging step download it by pinned sha256; (c) keep it maintainer-side and accept that the
-   Thunderstore zip is assembled locally, which forfeits everything else §7.9 establishes.
-   **This is a decision for the user, not a design fork for Claude** — it turns on whether a
-   Valve-derived binary sits in a public git history, which is the §7.6/§7.8 question one level down.
+   base `scientists.pak` inside, **four skins in one pak**). The remaining question was purely
+   mechanical — how the pak's bytes reach a CI runner that cannot rebuild them — and the user
+   answered it the same day.
+
+   > **USER DIRECTION 2026-08-25 (stated as a leaning, "скорее всего", so treat it as the working
+   > answer rather than a closed record): `scientists.pak` goes IN THE PUBLIC REPO.** It is the
+   > mod's default skin pack and ships with the mod, so it is a build input like any other, and
+   > committing it is what makes the whole publish hands-off. Of the three candidates that were on
+   > the table — (a) commit it, (b) attach it to a release and fetch by pinned sha256, (c) keep it
+   > maintainer-side — this is **(a)**. (c) is dead: it forfeits everything else §7.9 establishes.
+
+   **What (a) mechanically requires, measured 2026-08-25** — none of it is hard, but all of it is
+   easy to discover too late:
+   - **The bytes must move to a tracked path first.** Every current source folder is ignored:
+     `models/` (`.gitignore:174`), `research/pak_re/` (`:144` and `:273`), and
+     `tools/client_model/_*/` (`:200`, where `rvi_scientist_v1sc` lives). The pak's new home has to
+     be somewhere none of those cover.
+   - **`.gitignore:6` is a blanket `*.pak`** and needs exactly one negation, scoped to this file,
+     with the reason written next to it — the rule's own header says it exists to keep copyrighted
+     binaries out, so a silent exception is the wrong shape.
+   - **The preview tiles come too.** §7.2a's package shape carries `<model>.png` beside each pak (the
+     F1 browser reads them), and those live in the same ignored folders.
+   - **Git history is additive and permanent, and this is the one cost worth stating once.** A blob
+     committed to a public `main` is in every clone forever, and `docs/DOCS_ARC.md` records the
+     user's ruling that **history is not rewritten**. So the number that matters is not the pak's
+     size but its size **× the number of times it is ever rebuilt** — and
+     `docs/VERSION_MIGRATION.md` says a game recook is a recurring event. If the pak turns out to be
+     ~10 MB, five recooks over the mod's life is ~50 MB that every future clone pays for. Candidate
+     (b) exists specifically to avoid that and stays available if the number comes in high — which is
+     the reason §7.7c's "measure it before quoting it" line is now load-bearing.
 2. **`fingerprint.json`** — a human commits the toolchain dump from a cacheless run
    (`docs/RELEASE.md:99-104`); a mismatch is a hard refusal (`fingerprint.ps1:56-60`). By design.
 3. **The build number, `LEDGER.tsv`, `notes/b<N>.md`, the tag push** — human by design; `LEDGER.tsv`
