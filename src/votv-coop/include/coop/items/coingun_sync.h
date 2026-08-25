@@ -259,13 +259,25 @@ void PrepareCoinMirror(void* coin);
 // FromClass` and `FinishSpawningActor` at three of its four mint sites; our client mirror had nothing
 // in that window, so every mirrored coin was born at the CDO default of 5 and painted bronze.
 //
-// THESE THREE RESOLVE OFF `R::ClassOf(coin)`, NOT off the module's `CoinPointsOffset()` global.
-// `Install()` early-returns forever once both lane latches set, and its `points` resolve is guarded on
-// `g_coinClass` being resident -- `baocoin_C` loads on demand with the gun asset, so a session where
-// it was not resident at latch time leaves that global at -1 PERMANENTLY. A producer reading -1 would
-// send birthLen=0, the receiver would correctly leave the CDO alone, and the fix would silently do
-// nothing all session while the log showed a benign "no birth content". The actor is in hand at every
-// call site and its class is definitionally resident, so ask the class.
+// THESE THREE RESOLVE OFF `R::ClassOf(coin)`. The actor is in hand at every call site and its own
+// class is definitionally resident -- we just spawned it, or we are about to read it -- so no caller
+// depends on another function's latch ordering to have run first.
+//
+// A CORRECTION, KEPT SO IT IS NOT RE-DERIVED (post-ship audit, 2026-08-25): an earlier draft of this
+// paragraph justified the choice with a failure that CANNOT OCCUR -- "Install() early-returns forever
+// once its latches set, so a session where baocoin_C was not resident at latch time leaves the global
+// at -1 permanently". `[V]` It cannot: `Install()` resolves `g_offCoinPoints` at :586 under the same
+// `g_coinClass` guard that gates `g_installed` at :611, EARLIER IN THE SAME CALL, so the latch cannot
+// be set while the class is absent. The design stands; the dramatic reason for it was false, and this
+// project has paid repeatedly for comments that justify a design with an impossibility.
+
+// Is this UClass the coin? A pointer compare against the module's resolved class, falling back to a
+// name compare when Install has not resolved it yet. Exists so callers that already hold the UClass do
+// not render its name to compare a string -- on the connect snapshot that cost one engine FString
+// alloc+free PER WorldActor element (audit IMPORTANT-2). It is also the "does this class carry a birth
+// value" predicate for the WA lane: today those are the same question, and when they stop being the
+// same question this is the one place that has to change.
+bool IsCoinClass(void* cls);
 
 // Read a live coin's `points`. Returns -1 if the property cannot be resolved -- callers MUST treat
 // that as "unknown, say so loudly", never as a value. Game thread.

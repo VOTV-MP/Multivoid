@@ -62,7 +62,6 @@ void* g_coinClass     = nullptr;
 void* g_gunClass      = nullptr;   // prop_coingun_C -- the Context gate (C-1); shared with the arbiter
 int32_t g_offCoinSphere  = -1;   // Abaocoin_C::Sphere -- the SIMULATING component (NOT the root)
 void* g_setSimFn      = nullptr;   // UPrimitiveComponent::SetSimulatePhysics
-int32_t g_offCoinPoints  = -1;   // Abaocoin_C::points  (@0x0240 in the dump; resolved by NAME)
 // (g_libCdo / g_sellObjectFn / g_sellFn / g_offPropMesh / g_gunRef / g_salesRefused / g_sold moved
 //  to coingun_arbiter.cpp with the receiver, 2026-08-25 -- they are HOST-only and were read nowhere
 //  else. See coingun_internal.h for the cut.)
@@ -133,7 +132,6 @@ bool InVerb(const vm::ActiveVerb& av, const wchar_t* name) {
 }
 
 void*   CoinClass()        { return g_coinClass; }
-int32_t CoinPointsOffset() { return g_offCoinPoints; }
 
 bool IsCapturedCoin(void* coin) {
     if (!coin) return false;
@@ -315,6 +313,25 @@ std::unordered_map<void*, int32_t> g_meshOffByClass;     // UClass* -> `baocoin`
 void* g_getMaterialFn = nullptr;                          // UPrimitiveComponent::GetMaterial
 bool  g_getMaterialResolveFailed = false;                 // latch the negative (a miss is a full walk)
 
+// The declaring class, resolved ONCE for this file. `PrepareCoinMirror` kept its own latch for
+// `SetSimulatePhysics` and this function grew a second one for `GetMaterial`; on a client's FIRST
+// mirrored coin both fired back to back, so ONE class name cost TWO full GUObjectArray walks
+// (audit M-4, 2026-08-25). Positive and negative both latched -- an unlatched miss is how a memo
+// becomes a loop in exactly the world where the feature is absent.
+void* g_primCompCls = nullptr;
+bool  g_primCompResolveFailed = false;
+
+void* PrimitiveComponentClass() {
+    if (g_primCompCls || g_primCompResolveFailed) return g_primCompCls;
+    g_primCompCls = R::FindClass(L"PrimitiveComponent");
+    if (!g_primCompCls) {
+        g_primCompResolveFailed = true;
+        UE_LOGW("coingun: UPrimitiveComponent unresolved -- the mirror park and the birth instrument "
+                "are both disabled for this session. Latched: this walk is not repeated per coin.");
+    }
+    return g_primCompCls;
+}
+
 int32_t PointsOffsetFor(void* cls) {
     if (!cls) return -1;
     std::lock_guard<std::mutex> lk(g_birthMu);
@@ -340,15 +357,32 @@ int32_t MeshOffsetFor(void* cls) {
 
 }  // namespace
 
+// The class precondition, owned HERE rather than by the four external `classW == L"baocoin_C"` gates
+// (audit M-7). These take a bare `void*` and resolve `points` by NAME, so without this a caller could
+// read -- and `SeedCoinMirror` could WRITE -- the `points` of any other class that happens to declare
+// one. Four correct external gates are a convention; this is the invariant.
+bool IsCoinClass(void* cls) {
+    if (!cls) return false;
+    return cls == g_coinClass || R::NameEquals(R::NameOf(cls), kCoinClassName);
+}
+
+bool IsCoinActor_(void* actor) {
+    return actor && IsCoinClass(R::ClassOf(actor));
+}
+
 int32_t ReadCoinPoints(void* coin) {
-    if (!coin) return -1;
+    if (!IsCoinActor_(coin)) return -1;
+    // NOTE the spelling: `[V]` the property is declared `Points` (capital P) in the CXX dump, and this
+    // asks for `points`. It resolves ONLY because `FindPropertyOffset` compares with `_wcsicmp`
+    // (`reflection_props.cpp:92`). That is load-bearing, not decorative -- a future case-sensitive
+    // resolver would silently return -1 here and every mirrored coin would go back to bronze.
     const int32_t off = PointsOffsetFor(R::ClassOf(coin));
     if (off < 0) return -1;
     return *reinterpret_cast<const int32_t*>(static_cast<const uint8_t*>(coin) + off);
 }
 
 bool SeedCoinMirror(void* coin, int32_t points) {
-    if (!coin) return false;
+    if (!IsCoinActor_(coin)) return false;
     const int32_t off = PointsOffsetFor(R::ClassOf(coin));
     if (off < 0) {
         UE_LOGW("coingun[mirror]: cannot resolve baocoin_C::points on this mirror -- it will be born at "
@@ -363,7 +397,7 @@ bool SeedCoinMirror(void* coin, int32_t points) {
 void DescribeCoin(void* coin, int32_t& outPoints, std::wstring& outMaterial) {
     outPoints = -1;
     outMaterial.clear();
-    if (!coin) return;
+    if (!IsCoinActor_(coin)) return;
     outPoints = ReadCoinPoints(coin);
 
     void* cls = R::ClassOf(coin);
@@ -372,20 +406,36 @@ void DescribeCoin(void* coin, int32_t& outPoints, std::wstring& outMaterial) {
     void* mesh = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(coin) + meshOff);
     if (!mesh) return;
 
+    // Declared on UPrimitiveComponent; `R::FindFunction` matches the OWNING class EXACTLY and does not
+    // climb SuperStruct, so ask the declarer -- the same correction v140 item 10 applied to
+    // SetSimulatePhysics in this file. The resolve happens OUTSIDE the lock (audit M-2: it is a full
+    // GUObjectArray walk and it is idempotent, so holding a mutex across it buys nothing), and the
+    // result is READ into a local under the lock (audit M-1: `g_getMaterialFn` is a plain void* and
+    // reading it unlocked while another thread may write it is UB by the letter, benign only because
+    // every caller today is on the game thread).
+    void* getMatFn = nullptr;
     {
         std::lock_guard<std::mutex> lk(g_birthMu);
-        if (!g_getMaterialFn && !g_getMaterialResolveFailed) {
-            // Declared on UPrimitiveComponent; `R::FindFunction` matches the OWNING class exactly and
-            // does not climb SuperStruct, so ask the declarer -- the same correction item 10 applied to
-            // SetSimulatePhysics in this file. Latch the negative: a miss is a full GUObjectArray walk.
-            if (void* primCls = R::FindClass(L"PrimitiveComponent"))
-                g_getMaterialFn = R::FindFunction(primCls, L"GetMaterial");
-            if (!g_getMaterialFn) g_getMaterialResolveFailed = true;
-        }
-        if (!g_getMaterialFn) return;
+        getMatFn = g_getMaterialFn;
     }
+    if (!getMatFn) {
+        void* primCls = PrimitiveComponentClass();
+        void* resolved = primCls ? R::FindFunction(primCls, L"GetMaterial") : nullptr;
+        std::lock_guard<std::mutex> lk(g_birthMu);
+        if (!g_getMaterialFn) {
+            g_getMaterialFn = resolved;
+            if (!resolved && !g_getMaterialResolveFailed) {
+                g_getMaterialResolveFailed = true;
+                UE_LOGW("coingun[birth]: UPrimitiveComponent::GetMaterial unresolved -- the birth "
+                        "instrument will print mat='<unresolved>' for the rest of this session. "
+                        "Latched: this walk is not repeated per coin. (audit M-3)");
+            }
+        }
+        getMatFn = g_getMaterialFn;
+    }
+    if (!getMatFn) return;
 
-    ue_wrap::ParamFrame f(g_getMaterialFn);
+    ue_wrap::ParamFrame f(getMatFn);
     if (!f.valid()) return;
     f.Set<int32_t>(L"ElementIndex", 0);
     if (!ue_wrap::Call(mesh, f)) return;
@@ -582,8 +632,6 @@ void Install(coop::net::Session* session) {
 
     if (!g_coinClass)     g_coinClass     = R::FindClass(kCoinClassName);
     if (!g_gunClass)      g_gunClass      = R::FindClass(kGunClassName);
-    if (g_offCoinPoints < 0 && g_coinClass)
-        g_offCoinPoints = R::FindPropertyOffset(g_coinClass, L"points");
     internal::InstallArbiter();   // the HOST half's own resolves, inside this same 1 Hz throttle
     if (!g_finishSpawnFn) g_finishSpawnFn = R::FindFunction(R::FindClass(L"GameplayStatics"),
                                                             L"FinishSpawningActor");

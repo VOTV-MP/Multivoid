@@ -211,10 +211,10 @@ bool OnCollectPre(void* self, void* params) {
     if (params) other = *reinterpret_cast<void**>(static_cast<uint8_t*>(params) + sizeof(void*));
 
     if (s->role() == coop::net::Role::Host) {
-        int32_t pts = -1;
-        const int32_t off = I::CoinPointsOffset();
-        if (off >= 0)
-            pts = *reinterpret_cast<const int32_t*>(static_cast<const uint8_t*>(self) + off);
+        // v143: through the module's ONE reader. This used to hand-roll the offset read off the
+        // `CoinPointsOffset()` global, which left two independent readers of the same property
+        // compiled together once the birth lane added its own (RULE 2, audit I-3b).
+        const int32_t pts = ReadCoinPoints(self);
         UE_LOGI("coingun[host collect]: coin=%p points=%d TRIPPED BY actor=%p class='%ls' -- the "
                 "native credit runs, balance_sync will broadcast the new total",
                 self, pts, other, other ? R::ClassNameOf(other).c_str() : L"<null>");

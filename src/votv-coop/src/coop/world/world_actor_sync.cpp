@@ -42,6 +42,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstring>   // v143: FillBirthBlob is this file's first std::memcpy
 #include <memory>
 #include <mutex>
 #include <string>
@@ -118,18 +119,27 @@ bool IsAllowlistedClassNameW(const std::wstring& nm) {
     return false;
 }
 
-// Read the FTransform spawn param into the payload (translation + FQuat->FRotator + v99 Scale3D).
-// Identical math to npc_sync's interceptor (FQuat XYZW @ +0, FVector translation @ +0x10, Scale3D
-// @ +0x20 -- the piramid spawner passes 2.0 here; losing it half-sizes the mirror).
 // ---- v143 (B3): fill the birth blob ------------------------------------------------------------
-// One helper, both producers. `[V]` only `baocoin_C` has a birth value today; the blob is opaque to
-// this lane and every other allowlisted class carries birthLen=0, which the receiver reads as "leave
-// the CDO alone". A class that cannot be read LOGS -- birthLen=0 must never be able to mean both
-// "nothing to carry" and "the read failed", or the mirror silently keeps the wrong value and the
+// One helper, both producers. The blob is opaque to this lane -- the receiving class decodes its own
+// bytes -- and a class with nothing to carry ships birthLen=0, which the receiver reads as "leave the
+// CDO alone". A class that cannot be READ logs instead: birthLen=0 must never be able to mean both
+// "nothing to carry" and "the read failed", or the mirror silently keeps the wrong value while the
 // instrument prints a benign zero.
-void FillBirthBlob(coop::net::WorldActorSpawnPayload& p, const std::wstring& clsW, void* actor) {
+//
+// WHAT THIS CARRIES, STATED HONESTLY (audit I-1, 2026-08-25). An earlier draft of this comment said
+// `[V]` "only baocoin_C has a birth value today", which CONTRADICTED protocol.h's own `[V]` in the
+// same commit and was the more reachable of the two. The truth: `baocoin_C.points` is the only birth
+// value this lane CARRIES. `[V]` `piramid2_C.spawner` (piramidSpawner uber @983, an Object ref) and
+// soltomiaCleaning_C's `doorJam2`/`doorJam3` (trigger_eventer uber @7446/@7480) are known
+// deferred-window writes that are NOT carried, and whose consequence for those mirrors is UNMEASURED.
+// A confident comment there would close a question nobody has opened.
+//
+// Takes the UClass, not a rendered name (audit IMPORTANT-2 / M-5): both call sites already hold the
+// class, and rendering it cost one engine FString alloc+free plus a std::wstring PER ELEMENT on the
+// connect snapshot -- which `coingun_collect.cpp:490` re-fires at 0.5 Hz per slot on the repair path.
+void FillBirthBlob(coop::net::WorldActorSpawnPayload& p, void* cls, void* actor) {
     p.birthLen = 0;
-    if (clsW != L"baocoin_C" || !actor) return;
+    if (!actor || !coop::coingun_sync::IsCoinClass(cls)) return;
     const int32_t pts = coop::coingun_sync::ReadCoinPoints(actor);
     if (pts < 0) {
         UE_LOGW("world-actor: baocoin_C eid=%u -- points UNREADABLE, sending no birth content. The "
@@ -142,6 +152,9 @@ void FillBirthBlob(coop::net::WorldActorSpawnPayload& p, const std::wstring& cls
     p.birthLen = static_cast<uint8_t>(sizeof(pts));
 }
 
+// Read the FTransform spawn param into the payload (translation + FQuat->FRotator + v99 Scale3D).
+// Identical math to npc_sync's interceptor (FQuat XYZW @ +0, FVector translation @ +0x10, Scale3D
+// @ +0x20 -- the piramid spawner passes 2.0 here; losing it half-sizes the mirror).
 void ReadSpawnXform(const void* params, coop::net::WorldActorSpawnPayload& p) {
     if (g_spawnXformParamOff < 0) return;
     const uint8_t* xf = reinterpret_cast<const uint8_t*>(params) + g_spawnXformParamOff;
@@ -242,6 +255,19 @@ bool WorldActorSuppress_Interceptor(void* self, void* params) {
         if (!actorClass || !IsAllowlistedClass(actorClass)) return false;  // not a WA; let it run
 
         coop::net::WorldActorSpawnPayload p{};
+        // v143 (B3): this producer is PRE-BeginDeferred -- it holds `params` and the actor CLASS, never
+        // an actor -- so it CANNOT carry a birth value, and `p{}` leaves birthLen=0. That is correct
+        // and unfixable here: even the matching POST fires before `FinishSpawningActor`, and the value
+        // is written in between. `[V]` No birth-carrying class reaches this path today (sell's
+        // BeginDeferred is EX_CallMath, invisible to a PE interceptor; 38 of 38 field coins came
+        // through HostEnrollExSpawn and zero through here). But that invariant lived only in a commit
+        // message, which meant birthLen=0 could quietly mean two things at exactly one site (audit
+        // I-2). Make it say so itself, so a SECOND birth-carrying class cannot regress in silence.
+        if (coop::coingun_sync::IsCoinClass(actorClass)) {
+            UE_LOGE("world-actor[host PRE]: a birth-value class reached the PE author, which cannot "
+                    "carry its birth value -- this mirror will be born at the CDO default and render "
+                    "wrong. A spawn path exists that the EX_CallMath census missed.");
+        }
         ReadSpawnXform(params, p);
         const std::wstring cls = R::ToString(R::NameOf(actorClass));
         p.className.len = 0;
@@ -570,7 +596,18 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
         p.rotPitch = rot.Pitch; p.rotYaw = rot.Yaw; p.rotRoll = rot.Roll;
         p.scaleX = scl.X; p.scaleY = scl.Y; p.scaleZ = scl.Z;
-        FillBirthBlob(p, R::ToString(R::NameOf(R::ClassOf(actor))), actor);
+        FillBirthBlob(p, R::ClassOf(actor), actor);
+        // The late-join half of the birth instrument (audit M-4). Without it this leg printed on the
+        // CLIENT only, so a joiner's coins had no host-side value to be paired against -- and
+        // principle 8 makes late join a first-class path, not an edge case.
+        if (coop::coingun_sync::IsCoinClass(R::ClassOf(actor))) {
+            int32_t pts = -1;
+            std::wstring mat;
+            coop::coingun_sync::DescribeCoin(actor, pts, mat);
+            UE_LOGI("world-actor[host snapshot]: baocoin_C eid=%u birthLen=%u points=%d mat='%ls' "
+                    "-> slot %d", p.elementId, p.birthLen, pts,
+                    mat.empty() ? L"<unresolved>" : mat.c_str(), peerSlot);
+        }
         if (s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::WorldActorSpawn, &p, sizeof(p)))
             ++sent;
     }
@@ -686,7 +723,7 @@ unsigned int HostEnrollExSpawn(void* actor) {
     p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
     p.rotPitch = rot.Pitch; p.rotYaw = rot.Yaw; p.rotRoll = rot.Roll;
     p.scaleX = scl.X; p.scaleY = scl.Y; p.scaleZ = scl.Z;
-    FillBirthBlob(p, clsW, actor);
+    FillBirthBlob(p, cls, actor);
     // THE HOST HALF OF THE INSTRUMENT (v143, B3). This line already fires once per enrolled WA, keyed
     // by eid -- 38 of 38 coins in the last field run -- so it PAIRS with the client's materialize line
     // for the same eid. Both halves print the MATERIAL as well as `points` on purpose: the producer

@@ -264,7 +264,10 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
     // through the same offset at the same site, so a wrong read would print AGREEMENT while the coins
     // still drew differently. The material is independent evidence: the game painted it from the real
     // value, not from our read.
-    if (classW == L"baocoin_C") {
+    // `R::IsLive` guarded (audit M-5): this runs AFTER FinishSpawning executed the coin's own
+    // ReceiveBeginPlay, and DescribeCoin derefs the actor and dispatches on its component. The same
+    // function already guards its failure branches this way two dozen lines above.
+    if (classW == L"baocoin_C" && R::IsLive(spawned)) {
         int32_t pts = -1;
         std::wstring mat;
         coop::coingun_sync::DescribeCoin(spawned, pts, mat);

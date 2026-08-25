@@ -64,7 +64,6 @@ void* CoinClass();
 //  was dead the day it was written and is deleted per RULE 2 rather than left as a false promise.)
 
 // Byte offset of Abaocoin_C::points, or -1 if unresolved. Resolved by NAME beside CoinClass().
-int32_t CoinPointsOffset();
 
 // Is `coin` one of OUR OWN coins, captured inside our gun bracket and still held at the barrier?
 //
