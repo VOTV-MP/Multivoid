@@ -5,7 +5,10 @@ in-game multiplayer UI.
 
 **Status (updated 2026-07-04): BUILT.** The menu shell + flows have shipped as
 runtime-UMG built by our C++ mod (the "chosen" approach below) — see the `ui/`
-modules: `server_browser.cpp` (the "future" browser below SHIPPED long since:
+modules. **PARTLY: corrected 2026-08-25 — the MULTIPLAYER button is native UMG, but
+`server_browser.cpp` is an ImGui modal, which is the row the table below REJECTED for
+player-facing menus. See "Native server browser — RESEARCH 2026-08-25".**
+`server_browser.cpp` (the "future" browser below SHIPPED long since:
 master-server lobby list + Direct Connect), `host_save_picker.cpp`,
 `roster.cpp`, `scoreboard.cpp`, `dev_menu.cpp`, `moderation.cpp`, `hud.cpp`,
 `skins_panel.cpp` (2026-07-02: the F1 > Cosmetics > Skins model browser —
@@ -164,6 +167,86 @@ designer asset, but substrate-agnostic and asset-clean).
 
 Dev/debug overlays (connection stats, entity inspector) stay ImGui — that's
 tooling, not the player-facing menu.
+
+## Native server browser — RESEARCH 2026-08-25 (USER: "very very soon"), and one rejection reason has EXPIRED
+
+The user asked for a **native** server-browser window and pointed at
+`modestimpala/VotVMods` (SmartTV et al.) as the look to study. Three measurements, then the fork.
+
+### 1. What SmartTV actually is `[V]`
+
+`SmartTV.pak` (2,994,989 B, 238 entries, listed with `repak`) is **pure Blueprint — no DLL at all**:
+
+```
+VotV/Content/Mods/SmartTV/
+    ModActor.uasset            <- the BPModLoader entry point (spawned into the world)
+    smarttvmap.umap
+    Assets/Widgets/**          <- 18 WidgetBlueprints, authored in the UE EDITOR
+        ui_smartTV, ui_mediaPlayer, ui_Settings, ui_LogViewer, ui_projector,
+        listEntry_mediaPlayer, listEntry_ytRequest, screen_smartTV, screen_chatMonitor, ...
+    Assets/Textures/UI/**      <- cog, x, trashcan, eyeopen/closed, media_buttons sprites
+    Assets/{Actors,Enums,Functions,Materials,Meshes,Sounds,Structs}
+```
+
+`AntiRagdoll` in the same repo ships its editor sources (`src/ue/Content/Mods/AntiRagdoll/*.uasset`
++ `.umap`), which confirms the workflow: **author UMG in the editor -> cook -> pak ->
+`Content/Mods/<Name>/ModActor.uasset` -> UE4SS's BPModLoader spawns it.** Note the `listEntry_*`
+widgets — that is exactly the sortable-row browser shape this doc's decision table deferred.
+
+### 2. **The "rejected — ties us to UE4SS" verdict has EXPIRED** `[V]`
+
+The table above rejected the BPModLoader route on 2026-05-22 for one reason: it would tie us to
+UE4SS. **The F2/D-3 decision of 2026-08-21 makes Multivoid a UE4SS mod** (`docs/UE4SS_ARC.md`), and
+`BPModLoaderMod` + `BPML_GenericFunctions` are already installed in the r2modman profile — measured.
+So that rejection's premise is gone, and the cost of the route collapses to **authoring** only.
+What is still real, and unchanged: our pak toolchain (`tools/client_model/`, `ue_cook.py`) cooks
+**skeletal meshes** in Python; it cannot emit a compiled Blueprint graph. Producing WidgetBlueprints
+means the UE4.27 editor (~80 GB, which the user rejected in `docs/COOP_CLIENT_MODEL.md:497`).
+
+### 3. What we can ALREADY do, and it is more than the doc implies `[V]`
+
+The interactive-native-widget mechanism is **shipping today**, in the live main menu:
+
+- We inject a real `UButton` at the top of `ui_menu_C`'s VerticalBox, **cloning `button_start`'s
+  style** (`sdk_profile.h:162-190`: `UButtonSlot` padding/HAlign/VAlign, `FButtonStyle` @ `0x0128`,
+  `ColorAndOpacity`, `BackgroundColor`), injected by a POST observer on `ui_menu_C::Tick` and
+  re-injected on the death-menu (`net_pump.cpp:140-154`).
+- **Clicks are POLLED, not delegate-bound** — `UWidget::IsHovered()` plus our own mouse state
+  (`engine.h:540,566`; `engine_widget.cpp:484` forces Visible so the hover/click poll sees it).
+  **This is the fact that makes the runtime route viable**: binding a UMG multicast delegate from
+  raw reflection needs a UFunction on a UObject we own, and we never solved that — we sidestepped it.
+- We build widget trees at runtime with no cooked asset: `SpawnObject` -> `UUserWidget` ->
+  `WidgetTree` -> `UTextBlock` / `UVerticalBox` (`AddChildToVerticalBox`), plus `AddToViewport`,
+  `SetPositionInViewport`, `SetAlignmentInViewport`, `SetVisibility`, `SetIsEnabled`,
+  `SetRenderOpacity` (`sdk_profile_names.h:396-450`, `engine_widget.cpp` 604 LOC).
+- We know the game's own menu font: **`font_ui`** (Share Tech Mono, `/Game/main/fonts/font_ui`),
+  which `ui_menu` labels use at size 16.
+- We already drive a cooked VOTV widget: `spawn_menu.cpp` finds the live `ui_spawnmenu_C` and opens
+  it via `ExecuteUbergraph`.
+
+### 4. Correcting this doc about itself
+
+This file's header says the menu shipped as runtime UMG *"see the `ui/` modules:
+`server_browser.cpp`"*. **`server_browser.cpp:3` says it is "rendered as an ImGui modal over VOTV's
+main menu"** — i.e. the browser landed on the row the table marked *"rejected for the menu — fine for
+dev/debug overlays only"*. The MULTIPLAYER **button** is native; the **panel it opens is not**. The
+user's request is therefore not a new direction — it is this document's own decision, un-executed for
+the one surface that matters most.
+
+### 5. The fork, with the honest costs
+
+| route | look | new toolchain | reaches "very soon"? |
+|---|---|---|---|
+| **B — extend the runtime-UMG we already ship** (scroll box + per-row `UButton`s, styled from `button_start`, clicks polled) | good, hand-styled; same font/style as the game | **none** | **yes** — the gap is composition, in our own code, not mechanism |
+| **A — cooked WidgetBlueprints in a pak** (SmartTV's way) | best; designer-authored | UE4.27 editor ~80 GB + a cook path our Python chain does not have | no |
+| C — keep ImGui, restyle | foreign either way | none | yes, but it does not answer the ask |
+
+**Recommendation: B.** A's loading half became free with D-3, but its authoring half is the 80 GB the
+user already declined, and "very soon" rules it out. The missing pieces for B are a scroll container
+and per-row buttons — both are UMG classes we resolve the same way we already resolve `Button`,
+`VerticalBox` and `TextBlock`; none of it needs a new substrate. **DESIGN, not built** — nothing here
+has been implemented, and the `/qf` this project requires before non-trivial implementation has not
+been run.
 
 ## Anchors (from reflection dump, game 0.9.0-n)
 
