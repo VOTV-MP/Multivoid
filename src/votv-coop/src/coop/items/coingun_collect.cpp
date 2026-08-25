@@ -37,6 +37,7 @@
 
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
+#include "coop/player/players_registry.h"   // v140: IsLocal / IsPuppet -- WHO tripped the coin
 #include "coop/net/session.h"
 #include "coop/world/world_actor_sync.h"
 
@@ -91,6 +92,19 @@ std::atomic<unsigned long long> g_performed{0};
 std::atomic<unsigned long long> g_unresolved{0};
 std::atomic<unsigned long long> g_noCredit{0};
 
+// ---- ONE QUESTION, ONE ANSWER (v140) -----------------------------------------------------------
+// "Is this coin the host's?" had TWO predicates in v139 and they disagreed: OnCollectPre asked
+// `IsMirroredActor || IsMaterializingMirror` (which world_actor_sync.h explicitly documents as THE
+// test) while ForwardCollectToHost asked `IsMirroredActor` alone. A coin collected inside its own
+// materialization window -- shoot a prop at your own feet and the coins land on you, and a mirror's
+// delegates bind during BeginPlay INSIDE FinishSpawning, before the row is installed -- was therefore
+// SUPPRESSED by the first and NOT FORWARDED by the second. Neither peer credited it. Two predicates
+// for one question is the shape (`[[feedback-recurring-bug-is-architectural]]`); this is the one.
+bool IsHostOwnedCoin(void* coin) {
+    return coop::world_actor_sync::IsMirroredActor(coin) ||
+           coop::world_actor_sync::IsMaterializingMirror();
+}
+
 // ---- the CLIENT half: forward -----------------------------------------------------------------
 // Called from BOTH entries. Returns true iff a forward was actually sent, so the overlap entry can
 // log honestly about what it cancelled.
@@ -99,20 +113,32 @@ bool ForwardCollectToHost(void* coin, const wchar_t* entry) {
     if (!s || !s->connected() || s->role() != coop::net::Role::Client) return false;
     if (!I::IsCoinActor(coin)) return false;
 
-    // MIRROR-SCOPED. A NON-mirror coin is one of the two cooked maps' placed instances -- level
-    // content on both peers, never enrolled, never the host's. Forwarding it would name an eid the
-    // host does not have; leaving it native keeps today's behaviour (residual A13, see the header).
-    if (!coop::world_actor_sync::IsMirroredActor(coin)) return false;
+    // MIRROR-SCOPED, through the ONE predicate. A NON-mirror coin is one of the two cooked maps'
+    // placed instances -- level content on both peers, never enrolled, never the host's. Forwarding
+    // it would name an eid the host does not have; leaving it native keeps today's behaviour
+    // (residual A13, see the header).
+    if (!IsHostOwnedCoin(coin)) return false;
 
-    const coop::element::ElementId eid = coop::element::Registry::Get().EidForActor(coin);
+    // ONE IDENTITY SOURCE, in the right order. The actor's own row first; the materialization
+    // window's eid ONLY as the fallback, because the window belongs to the actor being SPAWNED and
+    // registering its collision can fire delegates on OTHER, already-mirrored actors it lands on --
+    // and those have rows of their own, so asking the actor first is what keeps the fallback honest.
+    coop::element::ElementId eid = coop::element::Registry::Get().EidForActor(coin);
+    const wchar_t* idFrom = L"row";
     if (eid == coop::element::kInvalidId || eid == 0u) {
-        // Loud: a mirror with no eid means the actor->eid reverse and the mirror set disagree, which
-        // is an identity fault, not a routine miss. Without this the collect would silently do
-        // nothing and look exactly like the bug this lane exists to fix.
-        UE_LOGE("coingun[collect seam]: %ls entry on MIRROR coin=%p that has NO element id -- cannot "
-                "forward. The mirror set and the actor->eid reverse disagree about this actor; the "
-                "credit will stay local and be erased by the host's next balance broadcast.",
-                entry, coin);
+        if (const unsigned int born = coop::world_actor_sync::MaterializingEid()) {
+            eid    = static_cast<coop::element::ElementId>(born);
+            idFrom = L"materializing";
+        }
+    }
+    if (eid == coop::element::kInvalidId || eid == 0u) {
+        // Loud: a mirror with no eid AND no open window means the actor->eid reverse and the mirror
+        // set disagree, which is an identity fault, not a routine miss. Without this the collect
+        // would silently do nothing and look exactly like the bug this lane exists to fix.
+        UE_LOGE("coingun[collect seam]: %ls entry on MIRROR coin=%p that has NO element id and no "
+                "open materialization window -- cannot forward. The mirror set and the actor->eid "
+                "reverse disagree about this actor; the credit will stay local and be erased by the "
+                "host's next balance broadcast.", entry, coin);
         return false;
     }
 
@@ -122,9 +148,9 @@ bool ForwardCollectToHost(void* coin, const wchar_t* entry) {
     g_forwarded.fetch_add(1, std::memory_order_relaxed);
     // THE PROOF LINE. Greppable on purpose: a re-run's verdict is a one-line grep for
     // "coingun[collect seam]" rather than a judgement call about whether a seam fired.
-    UE_LOGI("coingun[collect seam] entry=%ls ctx=%p forwarding eid=%u -- the host performs the "
-            "collect on its own coin; our local credit (if the entry allowed one) is a phantom the "
-            "balance broadcast corrects", entry, coin, p.elementId);
+    UE_LOGI("coingun[collect seam] entry=%ls ctx=%p forwarding eid=%u (id from %ls) -- the host "
+            "performs the collect on its own coin; our local credit (if the entry allowed one) is a "
+            "phantom the balance broadcast corrects", entry, coin, p.elementId, idFrom);
     return true;
 }
 
@@ -162,16 +188,53 @@ bool OnCollectPre(void* self, void* params) {
 
     // ---- client ----
     g_seenOverlap.fetch_add(1, std::memory_order_relaxed);
-    const bool isMirror = coop::world_actor_sync::IsMirroredActor(self) ||
-                          coop::world_actor_sync::IsMaterializingMirror();
-    if (isMirror) {
+
+    // WHO TRIPPED IT decides what we may do, and the authority for that question is the GAME's own
+    // gate, not ours. `[V]` the coin's overlap path is BndEvt -> ExecuteUbergraph_baocoin @1871
+    // `cast<mainPlayer_C>(OtherActor)` -> IFNOT POP: a non-player overlap credits NOBODY natively.
+    // Our interceptor runs BEFORE that cast, so without mirroring it we were answering a broader
+    // question than the game asks -- and a sale spawns ~47 coins in one spot, so coin-on-coin
+    // overlaps are not hypothetical.
+    const bool byLocal  = other && coop::players::Registry::Get().IsLocal(other);
+    const bool byPuppet = other && coop::players::Registry::Get().IsPuppet(other);
+
+    if (!byLocal && !byPuppet) {
+        // Not a player at all. The native path bails at the cast, so there is nothing to suppress and
+        // nothing to forward -- cancelling here would be us INVENTING behaviour the game does not
+        // have. Leave it entirely alone.
+        return false;
+    }
+
+    if (IsHostOwnedCoin(self)) {
+        if (byPuppet) {
+            // Another peer's body tripped OUR mirror of the host's coin. Suppress -- a puppet IS a
+            // mainPlayer_C, so the native path would credit THIS client for someone else's pickup --
+            // but do NOT forward: that peer's own client forwards its own collect (or, if the puppet
+            // is the host's, the host already credited natively). Forwarding here would make one
+            // pickup arrive at the host from every peer that can see it.
+            UE_LOGI("coingun[client collect]: SUPPRESSED on mirror coin=%p tripped by PUPPET %p -- no "
+                    "forward: the collecting peer authors its own. Cancelled because a puppet is a "
+                    "mainPlayer_C and the native cast would otherwise credit US for their pickup.",
+                    self, other);
+            return true;
+        }
         // FORWARD FIRST, THEN CANCEL -- after `return true` there is no seam left.
         const bool fwd = ForwardCollectToHost(self, L"overlap");
-        UE_LOGI("coingun[client collect]: SUPPRESSED on mirror coin=%p (tripped by %p), forwarded=%d. "
-                "The local credit is cancelled outright on THIS entry (unlike the E-press, which is "
-                "EX_LocalVirtualFunction and uncancellable); the host performs the collect on its own "
-                "coin.", self, other, fwd ? 1 : 0);
+        UE_LOGI("coingun[client collect]: SUPPRESSED on mirror coin=%p (tripped by LOCAL %p), "
+                "forwarded=%d. The local credit is cancelled outright on THIS entry (unlike the "
+                "E-press, which is EX_LocalVirtualFunction and uncancellable); the host performs the "
+                "collect on its own coin.", self, other, fwd ? 1 : 0);
         return true;                             // cancel: no local addPoints, no local destroy
+    }
+
+    if (byPuppet) {
+        // A map-placed coin tripped by someone else's body. Native would credit us for their pickup,
+        // which is wrong for the same reason as above and is not the A13 residual (that one is about
+        // OUR OWN pickup of level content). Suppress, forward nothing.
+        UE_LOGI("coingun[client collect]: SUPPRESSED on NON-mirror coin=%p tripped by PUPPET %p -- a "
+                "map-placed coin is level content on both peers, and their body picking it up is "
+                "their event, not ours.", self, other);
+        return true;
     }
 
     UE_LOGW("coingun[client collect]: NON-MIRROR coin=%p collected locally (a map-placed coin -- `[V]` "

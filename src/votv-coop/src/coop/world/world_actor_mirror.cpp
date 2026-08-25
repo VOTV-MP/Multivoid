@@ -150,8 +150,10 @@ void OnWorldActorSpawn(const coop::net::EntitySpawnPayload& payload) {
     // know "is this actor a mirror?", the row can never be the sole discriminator. A coin seeded onto
     // a joiner standing where it lies would otherwise fire its collect overlap in this window, be
     // judged a non-mirror, and credit that client locally. Publish the window; coop/items/coingun_sync
-    // tests `mirror OR materializing`.
-    coop::world_actor_sync::MaterializeScope materializeScope;
+    // tests `mirror OR materializing`. v140: the window also carries the EID we are installing, so a
+    // consumer that must NAME the actor being born (the collect lane's forward) has one identity
+    // source instead of hunting for a row that does not exist yet.
+    coop::world_actor_sync::MaterializeScope materializeScope(payload.elementId);
 
     // Bypass our own client interceptor for THIS spawn, then BeginDeferred + FinishSpawning the mirror.
     D::SetIncomingClass(actorClass);

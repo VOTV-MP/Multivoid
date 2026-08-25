@@ -108,12 +108,30 @@ void ClearMirrorActors();
 // which is exactly the window in which a mirror's BeginPlay runs and its delegates bind.
 bool IsMaterializingMirror();
 
-// RAII publisher for that window. Constructed by the mirror path around its spawn pair.
+// The element id of the mirror THIS THREAD is materializing right now, or 0 outside the window.
+//
+// v140: knowing the window is open is not enough for a consumer that must NAME the actor being born.
+// The collect lane learned this the expensive way -- it suppressed a pickup on `mirror OR
+// materializing` and then tried to forward it on `mirror` alone, so a coin collected inside its own
+// materialization was cancelled and never forwarded: neither peer credited it. One question must have
+// one answer, so the window now carries the identity the mirror path already has in hand.
+//
+// USE IT AS A FALLBACK, NEVER AS THE FIRST ANSWER: the window belongs to the actor being SPAWNED, and
+// registering that actor's collision can fire delegates on OTHER, already-mirrored actors it lands
+// on. Ask the actor for its own eid first; reach for this only when the actor has none AND the window
+// is open, which is precisely the not-yet-installed case.
+unsigned int MaterializingEid();
+
+// RAII publisher for that window. Constructed by the mirror path around its spawn pair, with the eid
+// it is about to install.
 struct MaterializeScope {
-    MaterializeScope();
+    explicit MaterializeScope(unsigned int eid);
     ~MaterializeScope();
     MaterializeScope(const MaterializeScope&) = delete;
     MaterializeScope& operator=(const MaterializeScope&) = delete;
+
+private:
+    unsigned int prevEid_ = 0;
 };
 
 }  // namespace coop::world_actor_sync

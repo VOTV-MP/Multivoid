@@ -591,8 +591,21 @@ void NoteMirrorActor(void* actor, bool add) {
 
 bool IsMaterializingMirror() { return t_materializeDepth > 0; }
 
-MaterializeScope::MaterializeScope()  { ++t_materializeDepth; }
-MaterializeScope::~MaterializeScope() { --t_materializeDepth; }
+// Thread-local alongside the depth, and saved/restored rather than assigned, so a nested
+// materialization (a mirror spawn re-entering the mirror path) cannot leave the outer scope naming
+// the inner one's eid on the way out.
+thread_local unsigned int t_materializeEid = 0;
+
+unsigned int MaterializingEid() { return t_materializeDepth > 0 ? t_materializeEid : 0u; }
+
+MaterializeScope::MaterializeScope(unsigned int eid) : prevEid_(t_materializeEid) {
+    ++t_materializeDepth;
+    t_materializeEid = eid;
+}
+MaterializeScope::~MaterializeScope() {
+    --t_materializeDepth;
+    t_materializeEid = prevEid_;
+}
 
 unsigned int HostEnrollExSpawn(void* actor) {
     // HOSTING-gated, not connected-gated (RULE 1 root fix 2026-07-05): a WA spawned while
