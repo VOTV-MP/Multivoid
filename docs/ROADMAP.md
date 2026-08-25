@@ -223,7 +223,10 @@ context proven, RemotePlayer puppet visible + driven on LAN.
        `multivoid-<game>-<build>.dll` (was `votv-coop.dll`).
 - ☑ Standalone proxy loader: **`xinput1_3.dll`** scans + auto-loads the
        highest-build `multivoid-*.dll` on game start (duplicate installs ->
-       in-game popup); UE4SS absent. `tools/deploy-loader.ps1` installs it.
+       in-game popup); UE4SS absent. ~~`tools/deploy-loader.ps1` installs it.~~
+       **Re-cited 2026-08-25: that script does not exist — `tools/deploy-mod.ps1`
+       (via `deploy-all.ps1`) superseded it. The proxy lane itself retires whole at
+       WP-2 commit 3; see `docs/UE4SS_ARC.md` §6 item 4.**
 - ☑ Standalone reflection (no UE4SS): AOB-resolved `GUObjectArray` +
        `FName::ToString` + `ProcessEvent`. Health check on boot:
        reflection-resolves every primitive, FUNCTIONALLY validates them,
