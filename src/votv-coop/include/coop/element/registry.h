@@ -249,10 +249,19 @@ private:
     void RefillFreeStacks_();
 };
 
-// eid -> live Prop actor, or nullptr (wrong type, unbound, or the engine slot
-// was recycled -- IsLiveByIndex-checked). THE canonical resolve idiom for wire
-// receivers; promoted 2026-07-18 from three byte-identical module-local copies
-// (drive_sync/floppybox_sync/laptop_sync). GT-only (touches engine object state).
-void* LivePropActor(ElementId eid);
+// eid -> live actor OF THAT ELEMENT TYPE, or nullptr (wrong type, unbound, or
+// the engine slot was recycled -- IsLiveByIndex-checked). THE canonical resolve
+// idiom for wire receivers; promoted 2026-07-18 from three byte-identical
+// module-local copies (drive_sync/floppybox_sync/laptop_sync) and generalized
+// off Prop 2026-08-25, when the coin-collect lane needed the same resolve for a
+// WorldActor. The TYPE argument is not decoration: it is the fail-closed half --
+// an eid naming an Element of another kind must resolve to nullptr, not to that
+// other kind's actor. GT-only (touches engine object state).
+void* LiveActorOfType(ElementId eid, ElementType type);
+
+// The Prop spelling, kept because it is the idiom ~a dozen wire receivers read.
+inline void* LivePropActor(ElementId eid) {
+    return LiveActorOfType(eid, ElementType::Prop);
+}
 
 }  // namespace coop::element

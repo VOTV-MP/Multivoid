@@ -148,6 +148,11 @@ inline Lane LaneForKind(ReliableKind k) {
     // sale would refuse with eid-unresolved. Same hazard class the trash-intent comment at :54
     // records. If PropDestroy ever moves lane, this MUST move with it.
     case ReliableKind::CoinGunSell:    return Lane::Bulk;
+    // v139 (B2): CoinCollect rides Bulk with the rest of the coin family. It races the coin's own
+    // WorldActorDestroy, which is what the host's performed collect produces -- sharing PropDestroy's
+    // lane keeps this forward in the same FIFO stream as the destroy traffic it is interleaved with,
+    // for the same reason CoinGunSell is pinned here. If PropDestroy ever moves lane, this moves too.
+    case ReliableKind::CoinCollect:    return Lane::Bulk;
     // v138 (B1): CoinGunResult is host->one-client and is deliberately NOT pinned. It is ordered
     // against nothing -- the sale it answers travelled the other direction, and the coins it
     // describes arrive on their own WorldActorSpawn lane whose ordering relative to a text line is

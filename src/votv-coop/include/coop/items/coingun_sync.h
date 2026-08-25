@@ -148,6 +148,14 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot);
 // its sale did -- the price the host used, or why nothing was minted. No-ops on the host.
 void OnReliableResult(const uint8_t* payload, int len);
 
+// HOST ingest for `ReliableKind::CoinCollect` (v139, B2). A client collected a coin that mirrors one
+// of ours; perform the collect on the authoritative coin by dispatching its OWN `actionOptionIndex`,
+// so the game's native credit and self-destroy run. Fully range-checks the payload, fail-closed on
+// both the Element TYPE and the actor's CLASS, and no-ops off the host. `localPlayer` is the host's
+// own mainPlayer, passed as the verb's `player` argument (see the call site for why that is the
+// truthful value and why nothing on the credit path can depend on it). Game thread.
+void OnCoinCollect(const uint8_t* payload, int len, uint8_t senderSlot, void* localPlayer);
+
 // Session teardown. Dumps the lane's counters (a session that ends having measured nothing is the
 // failure `[[lesson-your-own-session-end-summary-is-a-free-measurement]]` exists to prevent), then
 // drops every piece of WORLD-scoped state: the sold-set, the barrier queue and the cached gun.

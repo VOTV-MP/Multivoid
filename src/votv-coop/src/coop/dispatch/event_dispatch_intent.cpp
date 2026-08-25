@@ -32,7 +32,8 @@ namespace coop::event_feed {
 bool HandleIntentEvent(net::Session& session,
                        const net::Session::ReliableMessage& msg,
                        void* localPlayer) {
-    (void)localPlayer;  // symmetric family signature; current cases resolve targets by key/eid
+    // v139: CoinCollect is the family's first consumer of `localPlayer` -- the host passes its own
+    // mainPlayer into the coin's `actionOptionIndex`. Every other case resolves targets by key/eid.
     switch (msg.kind) {
     case net::ReliableKind::OrderRequest: {
         // v49 (2026-06-09): delivery-drone ECONOMY -- a CLIENT forwards a laptop shop order to the
@@ -69,6 +70,23 @@ bool HandleIntentEvent(net::Session& session,
         }
         coop::coingun_sync::OnReliable(msg.payload, static_cast<int>(msg.payloadLen),
                                        static_cast<uint8_t>(msg.senderPeerSlot));
+        break;
+    }
+    case net::ReliableKind::CoinCollect: {
+        // v139 (coingun_sync -- B2): a CLIENT collected a coin that mirrors one of the host's, and
+        // forwards it because it cannot perform the collect itself (`lib_C::addPoints` is
+        // EX_LocalVirtualFunction -- no peer but the owner may author a credit). The host runs the
+        // coin's own `actionOptionIndex`, so the native credit and self-destroy are the game's.
+        // HOST-TERMINAL -- never relayed; the consequence reaches the other peers as the coin's
+        // ordinary WorldActorDestroy.
+        // CLIENT->HOST: slot 0 is the host, which never forwards its own collect.
+        if (msg.senderPeerSlot < 1 || msg.senderPeerSlot >= net::kMaxPeers) {
+            UE_LOGW("event_feed: CoinCollect from invalid senderPeerSlot=%d -- dropping",
+                    msg.senderPeerSlot);
+            break;
+        }
+        coop::coingun_sync::OnCoinCollect(msg.payload, static_cast<int>(msg.payloadLen),
+                                          static_cast<uint8_t>(msg.senderPeerSlot), localPlayer);
         break;
     }
     case net::ReliableKind::CoinGunResult: {

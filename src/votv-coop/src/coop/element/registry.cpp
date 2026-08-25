@@ -297,10 +297,10 @@ size_t Registry::SnapshotActorsByType(ElementType t,
     return out.size();
 }
 
-void* LivePropActor(ElementId eid) {
+void* LiveActorOfType(ElementId eid, ElementType type) {
     if (!eid) return nullptr;
     Element* e = Registry::Get().Get(eid);
-    if (!e || e->GetType() != ElementType::Prop) return nullptr;
+    if (!e || e->GetType() != type) return nullptr;
     void* a = e->GetActor();
     if (!a || !ue_wrap::reflection::IsLiveByIndex(a, e->GetInternalIdx())) return nullptr;
     return a;
