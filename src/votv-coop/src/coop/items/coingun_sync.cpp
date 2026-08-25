@@ -1,6 +1,10 @@
-// coop/items/coingun_sync.cpp -- see coop/items/coingun_sync.h for the design and WHY.
+// coop/items/coingun_sync.cpp -- THE SALE LANE: a client shoots a prop, the HOST prices and mints.
+// See coop/items/coingun_sync.h for the design and WHY, and coingun_internal.h for the 2026-08-25
+// cut that moved the COLLECT lane (both pickup entries + the host's perform) to coingun_collect.cpp.
 
 #include "coop/items/coingun_sync.h"
+
+#include "coingun_internal.h"   // co-located private header (src tree, not include/)
 
 #include "coop/comms/peer_action_feed.h"
 #include "coop/element/registry.h"
@@ -41,37 +45,15 @@ namespace E  = ue_wrap::engine;
 namespace GT = ue_wrap::game_thread;
 namespace vm = ue_wrap::vm_dispatch;
 
-// THE TWO VERBS THIS MODULE WATCHES, AND WHY THE NAME IS THE HANDLE (2026-08-25, B2).
-// `vm_dispatch`'s active-verb window is ONE global thread-local, so a verb id is a PROJECT-WIDE
-// namespace and a CALLER-CHOSEN tag inside it: `[V]` container_contents_sync's kVerbDirty,
-// meadow_db_sync's kVerbMark and drive_sync's kVerbPutDriveIn are all 1. `av.active` is worse still
-// -- it is true for ANY registered verb on this thread. The header (`ue_wrap/core/vm_dispatch.h`)
-// states the contract: GATE ON `verbName`, never on `active`, never on `verbId`. These reads used to
-// test the id, which was safe only by luck; converting them is a PRECONDITION for this module
-// registering a second verb, since otherwise being inside `actionOptionIndex` would satisfy a test
-// meaning "inside the gun". The id survives only as the Bracket tag the callback switches on, which
-// is scoped by construction.
-constexpr const wchar_t* kVerbNameGunUse  = L"playerHandUse_LMB";
-constexpr const wchar_t* kVerbNameCollect = L"actionOptionIndex";
-constexpr int kVerbCoinGunUse = 6;
-constexpr int kVerbCoinCollect = 7;
+}  // namespace
 
-constexpr const wchar_t* kGunClassName  = L"prop_coingun_C";
-constexpr const wchar_t* kCoinClassName = L"baocoin_C";
+// The two verb NAMES both lanes key on. Definitions for the `extern` declarations in
+// coingun_internal.h -- see that header for the cut, and vm_dispatch.h's contract box for why the
+// NAME is the handle and never the id or `active`.
+const wchar_t* const kVerbNameGunUse  = L"playerHandUse_LMB";
+const wchar_t* const kVerbNameCollect = L"actionOptionIndex";
 
-// `[V]` The one option `baocoin_C::getActionOptions` offers, read off its bytecode: stmt[0] is
-// `EX_SetArray(K2Node_MakeArray_Array, [EX_ByteConst 7])` -- a single compile-time constant, no
-// branch anywhere in the 8-statement function, identical for every coin.
-//
-// AND `[V]` IT IS INERT. The whole of `actionOptionIndex` is 4 `EX_LetValueOnPersistentFrame`
-// param stashes + `ExecuteUbergraph_baocoin(441)` + return: no branch on `action`, no branch at all.
-// The design pass specified deriving this at runtime from `getActionOptions` "so it is not
-// hardcoded"; that is WITHDRAWN on this measurement. Deriving it would cost a ProcessEvent dispatch
-// per collect plus a leaked engine-allocated TArray (ParamFrame has no destructor for those), to
-// compute a value the callee provably never reads -- a fix whose radius exceeds its defect's
-// (`[[feedback-a-converged-fix-should-shrink-not-grow]]`). It is a named constant citing the
-// bytecode instead, which is what "not a magic number" actually buys.
-constexpr uint8_t kCoinCollectAction = 7;
+namespace {
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 inline coop::net::Session* LoadSession() { return g_session.load(std::memory_order_acquire); }
@@ -81,13 +63,11 @@ std::atomic<bool> g_verbRegistered{false};
 
 // Resolved once at Install.
 void* g_finishSpawnFn = nullptr;
-void* g_collectFn     = nullptr;   // Abaocoin_C's collect BndEvt (the PE-visible pickup)
 void* g_libCdo        = nullptr;   // Default__lib_C -- sellObject's context
 void* g_sellObjectFn  = nullptr;
 void* g_coinClass     = nullptr;
 void* g_gunClass      = nullptr;   // prop_coingun_C -- the Context gate (C-1) and the mint executor
 void* g_sellFn        = nullptr;   // prop_coingun_C::sell -- cached (M-5: was re-resolved per sale)
-void* g_actionOptFn   = nullptr;   // baocoin_C::actionOptionIndex -- the host's collect executor
 int32_t g_offCoinSphere  = -1;   // Abaocoin_C::Sphere -- the SIMULATING component (NOT the root)
 void* g_setSimFn      = nullptr;   // UPrimitiveComponent::SetSimulatePhysics
 ue_wrap::CachedObjRef g_gunRef;     // a live gun instance, world-stamped (C-3: was a walk per sale)
@@ -100,17 +80,6 @@ std::atomic<unsigned long long> g_barrierDestroyed{0};
 std::atomic<unsigned long long> g_anomalyBirths{0};
 std::atomic<unsigned long long> g_salesSent{0};
 std::atomic<unsigned long long> g_salesRefused{0};
-// B2: the collect lane. `collectSeen*` are per-ENTRY so the log can answer the question v137 could
-// not -- which of the two entries actually fires in play. `[V]` v137's overlap interceptor printed
-// ZERO lines across six real credits, and a seam never observed firing is indistinguishable from a
-// broken one, so counting them separately is the whole point.
-std::atomic<unsigned long long> g_collectSeenPress{0};    // the E-press / 0x45 entry
-std::atomic<unsigned long long> g_collectSeenOverlap{0};  // the BndEvt overlap entry
-std::atomic<unsigned long long> g_collectForwarded{0};
-std::atomic<unsigned long long> g_collectPerformed{0};
-std::atomic<unsigned long long> g_collectUnresolved{0};
-std::atomic<unsigned long long> g_collectNoCredit{0};
-
 // ---- THE BARRIER QUEUE -------------------------------------------------------------------------
 // Client-side coins captured inside the gun bracket, destroyed at the next net-pump Tick. These are
 // world-scoped engine objects crossing a frame boundary, so they are CachedObjRef (CLAUDE.md 4j: a
@@ -151,22 +120,37 @@ std::wstring ArtifactName(const std::wstring& key, uint32_t eid) {
     return L"#" + std::to_wstring(static_cast<unsigned long>(eid));
 }
 
+}  // namespace
+
+// ---- the four reads the COLLECT lane shares (declared in coingun_internal.h) -------------------
+namespace internal {
+
+coop::net::Session* Session() { return LoadSession(); }
+
 bool IsCoinActor(void* actor) {
     if (!actor) return false;
     if (g_coinClass) return R::ClassOf(actor) == g_coinClass;
     return R::ClassNameOf(actor) == kCoinClassName;   // pre-resolution fallback
 }
 
-// Am I inside THIS verb? The ONE ambient-window read this module makes -- see the kVerbName block
-// above for why it is the name and not the id or `active`. Pointer-compares first because both
-// callers pass a literal this module itself registered (so `RegisterVirtualVerb`'s static-lifetime
-// requirement makes the pointers identical), then falls back to a compare for robustness.
+// Am I inside THIS verb? The ONE ambient-window read either lane makes -- see vm_dispatch.h's
+// contract box for why it is the NAME and not the id or `active`. Pointer-compares first because
+// every caller passes a literal this module registered (RegisterVirtualVerb requires static
+// lifetime, so the pointers are identical), then falls back to a compare for robustness.
 bool InVerb(const vm::ActiveVerb& av, const wchar_t* name) {
     if (!av.active || !av.verbName) return false;
     return av.verbName == name || std::wcscmp(av.verbName, name) == 0;
 }
 
-bool ForwardCollectToHost(void* coin, const wchar_t* entry);   // section 4, below
+void*   CoinClass()        { return g_coinClass; }
+int32_t CoinPointsOffset() { return g_offCoinPoints; }
+
+}  // namespace internal
+
+namespace {
+
+using internal::IsCoinActor;
+using internal::InVerb;
 
 // ---- 1. COIN BIRTH (client) --------------------------------------------------------------------
 // Func-thunk POST on FinishSpawningActor. Fires MID-BYTECODE inside the gun's still-open bracket:
@@ -209,103 +193,14 @@ void OnFinishSpawnPost(void* /*context*/, void* /*sourceObject*/, void* spawned)
             "and diverge.", spawned);
 }
 
-// ---- 2. THE COLLECT SEAM -----------------------------------------------------------------------
-// One PE interceptor serving both roles.
-//   HOST: never cancels. Observes so the log can distinguish "no overlap ever fired" from "overlap
-//         fired, credit refused" -- without that a null result in the client-collect test cells is
-//         uninterpretable.
-//   CLIENT: cancels for a MIRROR (or a coin still materializing -- the collect delegate binds during
-//         BeginPlay, i.e. INSIDE FinishSpawning, before the lane installs the mirror row, so the row
-//         can never be the sole discriminator). Leaves a NON-mirror coin native: the two maps' placed
-//         coins would otherwise become permanently uncollectable AND ghosted, a new loss.
-bool OnCollectPre(void* self, void* params) {
-    if (!IsCoinActor(self)) return false;
-
-    auto* s = LoadSession();
-    if (!s || !s->connected()) return false;     // solo: the native path is correct
-
-    // The delegate signature is (UPrimitiveComponent* Overlapped, AActor* OtherActor, ...), so the
-    // tripping actor is the second pointer-sized param.
-    void* other = nullptr;
-    if (params) other = *reinterpret_cast<void**>(static_cast<uint8_t*>(params) + sizeof(void*));
-
-    if (s->role() == coop::net::Role::Host) {
-        int32_t pts = -1;
-        if (g_offCoinPoints >= 0)
-            pts = *reinterpret_cast<const int32_t*>(static_cast<const uint8_t*>(self) + g_offCoinPoints);
-        UE_LOGI("coingun[host collect]: coin=%p points=%d TRIPPED BY actor=%p class='%ls' -- the "
-                "native credit runs, balance_sync will broadcast the new total",
-                self, pts, other, other ? R::ClassNameOf(other).c_str() : L"<null>");
-        return false;                            // observe only; the host credits natively
-    }
-
-    // ---- client ----
-    g_collectSeenOverlap.fetch_add(1, std::memory_order_relaxed);
-    const bool isMirror = coop::world_actor_sync::IsMirroredActor(self) ||
-                          coop::world_actor_sync::IsMaterializingMirror();
-    if (isMirror) {
-        // B2: FORWARD FIRST, THEN CANCEL. v137 cancelled and stopped there, which is why "a client
-        // never credits" was true and "the host credits" was not: nothing told the host anything.
-        // The player's own body tripping a mirror is a real collect and must reach the authoritative
-        // coin. Forwarding BEFORE the cancel matters -- after `return true` there is no seam left.
-        const bool fwd = ForwardCollectToHost(self, L"overlap");
-        UE_LOGI("coingun[client collect]: SUPPRESSED on mirror coin=%p (tripped by %p), forwarded=%d. "
-                "The local credit is cancelled outright on THIS entry (unlike the E-press, which is "
-                "EX_LocalVirtualFunction and uncancellable); the host performs the collect on its own "
-                "coin.", self, other, fwd ? 1 : 0);
-        return true;                             // cancel: no local addPoints, no local destroy
-    }
-
-    UE_LOGW("coingun[client collect]: NON-MIRROR coin=%p collected locally (a map-placed coin -- `[V]` "
-            "two cooked maps carry them, and they are level content on both peers, never enrolled). "
-            "This credits THIS CLIENT only. If this player's puppet also trips the host's copy, the "
-            "host's broadcast overwrites the number shortly; if it does not, this number is wrong "
-            "until the host's balance next moves. Pre-existing (A13), deliberately not cancelled.",
-            self);
-    return false;
-}
-
-// ---- 3. THE VERBS ------------------------------------------------------------------------------
-// ONE callback for both registrations; the Bracket's id is scoped by construction (it is the tag
-// this module handed the substrate for THIS registration), so switching on it here is safe in a way
-// the ambient read is not -- see the kVerbName block at the top.
+// ---- 3. THE GUN VERB ---------------------------------------------------------------------------
+// The COLLECT verb (`actionOptionIndex`) has its own registration and its own callback in
+// coingun_collect.cpp -- `vm_dispatch` is one callback per NAME, and the names differ, so neither
+// lane needs the other's entry point.
 void OnVerbEntry(const vm::Bracket& b) {
-    if (b.verbId == kVerbCoinGunUse) {
-        // The gun. Nothing to do at entry -- the work keys off CurrentThreadVerb() in the birth and
-        // destroy seams. Kept so a missing bracket is visible in vm_dispatch's stats.
-        return;
-    }
-    if (b.verbId != kVerbCoinCollect) return;
-
-    // THE E-PRESS COLLECT (B2). `actionOptionIndex` is the interaction entry point of MANY classes,
-    // and `vm_dispatch` matches on NAME alone and says so in its header: "any further class/authority
-    // discrimination is the CONSUMER's job". The ctx class check IS that discrimination -- without it
-    // every radial/E interaction in the world would land here.
-    if (!IsCoinActor(b.ctx)) return;
-
-    auto* s = LoadSession();
-    if (!s || !s->connected()) return;            // solo: the native credit is correct
-    if (s->role() == coop::net::Role::Host) {
-        // The host's own press. Observe only -- the native credit is authoritative and already runs.
-        // This is the POSITIVE CONTROL for the client's silence: without a line that fires where the
-        // observer is EXPECTED to fire, a quiet client log is indistinguishable from a dead hook
-        // (`[[lesson-an-instrument-blind-to-the-phenomenon-always-passes]]`, which is exactly how
-        // v137's overlap interceptor passed review while never having fired).
-        g_collectSeenPress.fetch_add(1, std::memory_order_relaxed);
-        UE_LOGI("coingun[collect seam] entry=press HOST ctx=%p -- native credit runs here; this line "
-                "proves the 0x45 bracket is live in this session", b.ctx);
-        return;
-    }
-
-    g_collectSeenPress.fetch_add(1, std::memory_order_relaxed);
-    // WE CANNOT CANCEL THIS. `[V]` `actionOptionIndex` is reached as EX_LocalVirtualFunction from
-    // mainPlayer's ubergraph @1022, and a script UFunction dispatched that way never reads
-    // UFunction::Func -- so neither ProcessEvent nor a Func patch can intercept it, and the `0x45`
-    // substrate observes without a cancel primitive. The local credit and the local self-destroy of
-    // our mirror WILL happen. Forward-and-reconcile is FORCED here, not chosen: the phantom credit
-    // is corrected by the host's balance broadcast, and the mirror's disappearance is corrected by
-    // the host's own WorldActorDestroy (or, if the host refuses, by the stale-row re-materialise).
-    ForwardCollectToHost(b.ctx, L"press");
+    // Nothing to do at entry -- the work keys off CurrentThreadVerb() in the birth and destroy
+    // seams. Kept so a missing bracket is visible in vm_dispatch's stats.
+    (void)b;
 }
 
 // ---- host helpers ------------------------------------------------------------------------------
@@ -355,50 +250,6 @@ const wchar_t* ResultText(coop::net::CoinGunResultCode code) {
             return L"could not sell that: the host hit an internal error";
     }
     return L"could not sell that";
-}
-
-// ---- 4. THE COLLECT FORWARD (client) -----------------------------------------------------------
-// B2. A client cannot perform a collect: the credit is `lib_C::addPoints`, `EX_LocalVirtualFunction`,
-// which no peer but the owner may author. So it forwards the coin's identity and the HOST runs the
-// coin's own verb -- act-as-host, and the intent names WHICH coin, never what it is worth.
-//
-// Called from BOTH entries. `[V]` TWO of them reach the credit block `ExecuteUbergraph_baocoin:441`:
-// the overlap BndEvt (which we CAN cancel, and do) and `actionOptionIndex` (which we cannot -- see
-// the header). v137 knew about one, and the field's six real credits produced zero lines from it.
-//
-// Returns true iff a forward was actually sent, so the overlap entry can log honestly.
-bool ForwardCollectToHost(void* coin, const wchar_t* entry) {
-    auto* s = LoadSession();
-    if (!s || !s->connected() || s->role() != coop::net::Role::Client) return false;
-    if (!IsCoinActor(coin)) return false;
-
-    // MIRROR-SCOPED. A NON-mirror coin is one of the two cooked maps' placed instances -- level
-    // content on both peers, never enrolled, never the host's. Forwarding it would name an eid the
-    // host does not have; leaving it native keeps today's behaviour (residual A13, see the header).
-    if (!coop::world_actor_sync::IsMirroredActor(coin)) return false;
-
-    const coop::element::ElementId eid = coop::element::Registry::Get().EidForActor(coin);
-    if (eid == coop::element::kInvalidId || eid == 0u) {
-        // Loud: a mirror with no eid means the actor->eid reverse and the mirror set disagree, which
-        // is an identity fault, not a routine miss. Without this the collect would silently do
-        // nothing and look exactly like the bug B2 exists to fix.
-        UE_LOGE("coingun[collect seam]: %ls entry on MIRROR coin=%p that has NO element id -- cannot "
-                "forward. The mirror set and the actor->eid reverse disagree about this actor; the "
-                "credit will stay local and be erased by the host's next balance broadcast.",
-                entry, coin);
-        return false;
-    }
-
-    coop::net::CoinCollectPayload p{};
-    p.elementId = static_cast<uint32_t>(eid);
-    s->SendReliable(coop::net::ReliableKind::CoinCollect, &p, sizeof(p));
-    g_collectForwarded.fetch_add(1, std::memory_order_relaxed);
-    // THE PROOF LINE. Greppable on purpose: the user's re-run is a one-line grep for
-    // "coingun[collect seam]" rather than a judgement call about whether a seam fired.
-    UE_LOGI("coingun[collect seam] entry=%ls ctx=%p forwarding eid=%u -- the host performs the "
-            "collect on its own coin; our local credit (if the entry allowed one) is a phantom the "
-            "balance broadcast corrects", entry, coin, p.elementId);
-    return true;
 }
 
 }  // namespace
@@ -691,125 +542,6 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
             senderSlot, artifact.c_str(), how, propNameStr.c_str(), points, gun, meshComp);
 }
 
-void OnCoinCollect(const uint8_t* payload, int len, uint8_t senderSlot, void* localPlayer) {
-    auto* s = LoadSession();
-    if (!s || s->role() != coop::net::Role::Host) {
-        UE_LOGW("coingun[host]: CoinCollect received off the HOST -- dropping");
-        return;
-    }
-    if (!payload || len < static_cast<int>(sizeof(coop::net::CoinCollectPayload))) {
-        UE_LOGW("coingun[host]: CoinCollect payload too small (len=%d) -- dropping", len);
-        return;
-    }
-    coop::net::CoinCollectPayload p{};
-    std::memcpy(&p, payload, sizeof(p));
-
-    // Resolve against OUR OWN registry, fail-closed on TYPE. `LiveActorOfType` refuses an eid naming
-    // an Element of any other kind, so a client cannot address, say, a Prop through this lane.
-    void* coin = coop::element::LiveActorOfType(
-        static_cast<coop::element::ElementId>(p.elementId), coop::element::ElementType::WorldActor);
-    if (!coin) {
-        // POSITIVE KNOWLEDGE, NOT ABSENCE OF EVIDENCE: the host's WorldActor registry is
-        // authoritative for its OWN eids, so "no live actor under this eid" means the coin is
-        // genuinely gone -- somebody already collected it, and this forward lost the race. That is
-        // the ordinary outcome of two players reaching for one coin, so it is INFO, not a warning.
-        g_collectUnresolved.fetch_add(1, std::memory_order_relaxed);
-        UE_LOGI("coingun[host collect]: slot=%u eid=%u does not resolve to a live WorldActor -- the "
-                "coin is already gone (collected by someone else, or destroyed). Nothing to do.",
-                senderSlot, p.elementId);
-        return;
-    }
-    // CLASS gate. The eid resolving is not enough: a WorldActor eid could name a piramid or a wisp,
-    // and dispatching `actionOptionIndex` on one of those would run an unrelated interaction.
-    if (!IsCoinActor(coin)) {
-        UE_LOGW("coingun[host collect]: slot=%u eid=%u resolves to a '%ls', not a baocoin_C -- "
-                "REFUSING. A collect intent may only name a coin.",
-                senderSlot, p.elementId, R::ClassNameOf(coin).c_str());
-        return;
-    }
-    if (!g_actionOptFn) g_actionOptFn = R::FindFunction(R::ClassOf(coin), kVerbNameCollect);
-    if (!g_actionOptFn) {
-        UE_LOGE("coingun[host collect]: slot=%u eid=%u -- baocoin_C::actionOptionIndex unresolved, "
-                "cannot perform the collect", senderSlot, p.elementId);
-        return;
-    }
-
-    // Read the balance around the dispatch. This is the ONLY way to know the collect actually took:
-    // `[V]` the credit is `lib_C::addPoints`, EX_LocalVirtualFunction, so there is no return value
-    // and no seam to observe -- and a silent no-op here would leave the client's mirror destroyed
-    // (the E-press entry is uncancellable) while the host's coin lives on: invisible but real.
-    int32_t before = 0;
-    const bool haveBefore = ue_wrap::economy::ReadPoints(&before);
-
-    ue_wrap::ParamFrame f(g_actionOptFn);
-    if (!f.valid()) {
-        UE_LOGE("coingun[host collect]: slot=%u eid=%u -- actionOptionIndex frame invalid",
-                senderSlot, p.elementId);
-        return;
-    }
-    // `player`: the HOST's own mainPlayer. `[RD]` the credit block cannot depend on it -- block 441
-    // is reached from the overlap BndEvt too, and that entry never writes K2Node_Event_player, so a
-    // block reading it would break the game's own overlap pickup. But the truthful value is correct
-    // under either answer, and act-as-host says the HOST is the one performing this, so we pass the
-    // host's player rather than null. Same reasoning for leaving `hit` zeroed (ParamFrame zeroes the
-    // frame) and `lookAtComponent` null: neither is available to the overlap entry either.
-    // `action` is `[V]` provably inert -- see kCoinCollectAction.
-    f.Set<void*>(L"player", localPlayer);
-    f.Set<uint8_t>(L"action", kCoinCollectAction);
-    const bool dispatched = ue_wrap::Call(coin, f);
-
-    int32_t after = 0;
-    const bool haveAfter = ue_wrap::economy::ReadPoints(&after);
-    const bool credited  = haveBefore && haveAfter && after != before;
-
-    if (dispatched && credited) {
-        g_collectPerformed.fetch_add(1, std::memory_order_relaxed);
-        UE_LOGI("coingun[host collect]: PERFORMED slot=%u eid=%u coin=%p -- balance %d -> %d (+%d). "
-                "The coin's own verb ran, so its native credit and self-destroy are the game's, not "
-                "ours; the WorldActorDestroy that follows removes every peer's mirror.",
-                senderSlot, p.elementId, coin, before, after, after - before);
-        return;
-    }
-
-    // (c) THE COIN IS LIVE AND SOMETHING WENT WRONG. The forwarding client has already destroyed its
-    // own mirror on the E-press path (that entry is uncancellable), so leaving this alone makes the
-    // host's coin permanently invisible to that peer -- a NEW loss, authored by the fix.
-    g_collectNoCredit.fetch_add(1, std::memory_order_relaxed);
-
-    if (!haveBefore || !haveAfter) {
-        // WE DO NOT KNOW, AND NOT KNOWING IS NOT THE SAME AS "NO CREDIT". Treating an unreadable
-        // balance as a failed collect would (a) act on absence of evidence -- the fail-open family
-        // this whole pass keeps catching, inverted -- and (b) fire a full world re-announce on EVERY
-        // collect for as long as the read stays broken, turning a diagnostic into a burst storm.
-        UE_LOGE("coingun[host collect]: slot=%u eid=%u coin=%p dispatch=%d -- the balance was NOT "
-                "readable (before=%d after=%d), so whether this credited is UNKNOWN. Taking no "
-                "repair action: acting on an unreadable value would be inventing a verdict.",
-                senderSlot, p.elementId, coin, dispatched ? 1 : 0, haveBefore ? 1 : 0,
-                haveAfter ? 1 : 0);
-        return;
-    }
-
-    // Known: the coin lives, the balance did not move. Re-announce the world to that slot so the
-    // mirror comes back. The stale-row guard in world_actor_mirror is what lets that announce LAND
-    // on a row whose actor the client already killed -- without it this repair is dropped as a
-    // duplicate. Throttled per slot: QueueConnectBroadcastForSlot re-announces EVERY world actor,
-    // so an error that repeats must not multiply into a burst.
-    static std::unordered_map<uint8_t, long long> s_lastRepairMs;
-    const long long nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now().time_since_epoch()).count();
-    auto& last = s_lastRepairMs[senderSlot];
-    const bool repair = (nowMs - last) >= 2000;
-    UE_LOGE("coingun[host collect]: slot=%u eid=%u coin=%p dispatch=%d -- the coin is LIVE and the "
-            "balance did NOT move (%d -> %d). The client's mirror is already gone on its side, so "
-            "%s.", senderSlot, p.elementId, coin, dispatched ? 1 : 0, before, after,
-            repair ? "re-announcing world actors to that slot"
-                   : "SKIPPING the re-announce (one fired for this slot < 2 s ago)");
-    if (repair) {
-        last = nowMs;
-        coop::world_actor_sync::QueueConnectBroadcastForSlot(static_cast<int>(senderSlot));
-    }
-}
-
 void OnReliableResult(const uint8_t* payload, int len) {
     auto* s = LoadSession();
     if (!s || s->role() == coop::net::Role::Host) {
@@ -848,21 +580,15 @@ void OnDisconnect() {
     // The free measurement: a session that ends having measured nothing is the failure
     // `[[lesson-your-own-session-end-summary-is-a-free-measurement]]` exists to prevent. One grep
     // of this line answers "did this lane do anything at all this run" without reading the body.
-    UE_LOGI("coingun: SESSION SUMMARY -- sales{sent=%llu refused=%llu} coins{captured=%llu "
-            "barrierDestroyed=%llu anomalyBirths=%llu} collect{seenPress=%llu seenOverlap=%llu "
-            "forwarded=%llu performed=%llu unresolved=%llu noCredit=%llu} soldSet=%zu pendingKill=%zu",
+    UE_LOGI("coingun[sale]: SESSION SUMMARY -- sales{sent=%llu refused=%llu} coins{captured=%llu "
+            "barrierDestroyed=%llu anomalyBirths=%llu} soldSet=%zu pendingKill=%zu",
             g_salesSent.load(std::memory_order_relaxed),
             g_salesRefused.load(std::memory_order_relaxed),
             g_capturedCoins.load(std::memory_order_relaxed),
             g_barrierDestroyed.load(std::memory_order_relaxed),
             g_anomalyBirths.load(std::memory_order_relaxed),
-            g_collectSeenPress.load(std::memory_order_relaxed),
-            g_collectSeenOverlap.load(std::memory_order_relaxed),
-            g_collectForwarded.load(std::memory_order_relaxed),
-            g_collectPerformed.load(std::memory_order_relaxed),
-            g_collectUnresolved.load(std::memory_order_relaxed),
-            g_collectNoCredit.load(std::memory_order_relaxed),
             g_sold.size(), g_pendingKill.size());
+    internal::OnDisconnectCollect();   // the collect lane dumps its own half
 
     // Every WORLD-scoped thing goes. v137 had no OnDisconnect at all, so a reconnecting peer carried
     // a stale sold-set and a pending-kill list of actors belonging to a dead world into the new one.
@@ -878,7 +604,11 @@ void OnDisconnect() {
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
-    if (g_installed.load(std::memory_order_acquire)) return;
+    // BOTH lanes must be done before this stops running. The two have DIFFERENT dependencies -- the
+    // sale lane needs FinishSpawningActor + sellObject, the collect lane the coin's overlap BndEvt --
+    // so either can resolve first, and gating on the sale lane's latch alone would silently strand
+    // the collect lane forever on any tick where its own resolve had not landed yet.
+    if (g_installed.load(std::memory_order_acquire) && internal::CollectInstalled()) return;
     // C-4 (audit 2026-08-24). This runs at the 125 Hz pump rate, and every resolve below is a linear
     // GUObjectArray walk with a name render per entry. The g_installed latch only helps AFTER success;
     // in a world where baocoin_C's UClass is not resident (it loads on demand with the gun asset) this
@@ -897,36 +627,33 @@ void Install(coop::net::Session* session) {
         g_sellObjectFn = R::FindFunction(R::ClassOf(g_libCdo), L"sellObject");
     if (!g_finishSpawnFn) g_finishSpawnFn = R::FindFunction(R::FindClass(L"GameplayStatics"),
                                                             L"FinishSpawningActor");
-    if (!g_collectFn && g_coinClass)
-        g_collectFn = R::FindFunction(g_coinClass,
-            L"BndEvt__baocoin_collect_K2Node_ComponentBoundEvent_1_ComponentBeginOverlapSignature__DelegateSignature");
-
-    // The verbs resolve their FNames on the game thread; drive the pump every Install.
-    // BOTH must register or NEITHER counts as done -- a half-registration would leave the E-press
-    // collect blind while everything else looked installed.
+    // The gun verb resolves its FName on the game thread; drive the pump every Install. The COLLECT
+    // verb has its own registration in the collect lane (one vm_dispatch callback per NAME).
     if (!g_verbRegistered.load(std::memory_order_acquire)) {
-        const bool a1 = vm::RegisterVirtualVerb(kVerbNameGunUse,  kVerbCoinGunUse,  &OnVerbEntry);
-        const bool a2 = vm::RegisterVirtualVerb(kVerbNameCollect, kVerbCoinCollect, &OnVerbEntry);
-        if (a1 && a2) {
+        if (vm::RegisterVirtualVerb(kVerbNameGunUse, kVerbCoinGunUse, &OnVerbEntry)) {
             g_verbRegistered.store(true, std::memory_order_release);
-            UE_LOGI("coingun: registered the 0x45 verbs '%ls' (id=%d) + '%ls' (id=%d)",
-                    kVerbNameGunUse, kVerbCoinGunUse, kVerbNameCollect, kVerbCoinCollect);
+            UE_LOGI("coingun[sale]: registered the 0x45 verb '%ls' (id=%d)",
+                    kVerbNameGunUse, kVerbCoinGunUse);
         }
     }
     vm::TickResolvePending();
 
-    if (!g_coinClass || !g_finishSpawnFn || !g_collectFn || !g_sellObjectFn) return;  // retry next tick
+    // Drive the collect lane's own install AFTER our class resolve above (it reads CoinClass()) and
+    // OUTSIDE our early-return below, so a sale-lane resolve that never lands cannot silently keep
+    // the collect lane -- a different subsystem with different dependencies -- from installing.
+    internal::InstallCollect();
 
-    const bool a = ue_wrap::ufunction_hook::InstallPostHook(g_finishSpawnFn, &OnFinishSpawnPost);
-    const bool b = GT::RegisterInterceptor(g_collectFn, &OnCollectPre);
-    if (!a || !b) {
-        UE_LOGE("coingun: seam install FAILED (finishSpawnPost=%d collectPre=%d) -- coin sync DISABLED",
-                a ? 1 : 0, b ? 1 : 0);
+    if (g_installed.load(std::memory_order_acquire)) return;          // sale lane already done
+    if (!g_coinClass || !g_finishSpawnFn || !g_sellObjectFn) return;  // retry next tick
+
+    if (!ue_wrap::ufunction_hook::InstallPostHook(g_finishSpawnFn, &OnFinishSpawnPost)) {
+        UE_LOGE("coingun[sale]: FinishSpawningActor POST install FAILED -- the client-coin barrier is "
+                "DISABLED, so a client's own coins would survive its shot");
         return;
     }
     g_installed.store(true, std::memory_order_release);
-    UE_LOGI("coingun: installed -- verb bracket + FinishSpawningActor POST + collect interceptor. "
-            "baocoin_C is on the WorldActor allowlist and prop_coingun_C on the EX-spawn source list.");
+    UE_LOGI("coingun[sale]: installed -- verb bracket + FinishSpawningActor POST. baocoin_C is on the "
+            "WorldActor allowlist and prop_coingun_C on the EX-spawn source list.");
 }
 
 }  // namespace coop::coingun_sync

@@ -1,0 +1,79 @@
+// coop/items/coingun_internal.h -- the shared substrate of the two coin-gun lanes.
+//
+// SRC-TREE PRIVATE (not under include/): only coingun_sync.cpp and coingun_collect.cpp include it.
+// The established pattern in this tree -- npc_sync_internal.h, puppet_internal.h,
+// coop/props/remote_prop/internal.h -- for an extraction that splits one concept's file without
+// splitting the concept itself (the folder-per-domain-concept rule: `coop/items/` still owns "the
+// coin gun and its coins" whole; this is the modular FILE-SIZE rule's remedy, not a re-homing).
+//
+// THE CUT. Two distinct subsystems shared one file until it passed the 800-LOC soft cap:
+//   - THE SALE (coingun_sync.cpp)     -- a client shoots a prop; the host prices and mints.
+//     Owns: CoinGunSell / CoinGunResult, the `playerHandUse_LMB` verb, the client-coin barrier,
+//     the sold-set, PrepareCoinMirror.
+//   - THE COLLECT (coingun_collect.cpp) -- somebody picks a coin up; the host performs the credit.
+//     Owns: CoinCollect, the `actionOptionIndex` verb, the overlap interceptor, the host perform.
+// They meet only here, on four reads: which session, is this actor a coin, am I inside verb X, and
+// where does a coin keep its `points`. Everything else in each lane is private to its own TU.
+//
+// The two lanes register SEPARATE verbs with SEPARATE callbacks -- `vm_dispatch` is one callback per
+// NAME, and the names differ -- so neither TU needs the other's entry point. That is what made the
+// cut clean; a shared dispatcher would have forced the collect lane's guts back into this header.
+//
+// Game thread unless a function says otherwise.
+
+#pragma once
+
+#include <cstdint>
+
+namespace coop::net { class Session; }
+namespace ue_wrap::vm_dispatch { struct ActiveVerb; }
+
+namespace coop::coingun_sync {
+
+// The two 0x45 verb registrations. The NAME is the handle, never the id: `vm_dispatch`'s active-verb
+// window is ONE global thread-local, so an id is a caller-chosen tag in a project-wide namespace
+// (`[V]` container_contents_sync, meadow_db_sync and drive_sync all publish 1) and `active` is true
+// for ANY registered verb. See ue_wrap/core/vm_dispatch.h's contract box.
+extern const wchar_t* const kVerbNameGunUse;    // prop_coingun_C::playerHandUse_LMB -- the shot
+extern const wchar_t* const kVerbNameCollect;   // baocoin_C::actionOptionIndex     -- the E-press
+inline constexpr int kVerbCoinGunUse  = 6;
+inline constexpr int kVerbCoinCollect = 7;
+
+inline constexpr const wchar_t* kGunClassName  = L"prop_coingun_C";
+inline constexpr const wchar_t* kCoinClassName = L"baocoin_C";
+
+namespace internal {
+
+// The session both lanes were installed with, or nullptr. Lock-free; any thread.
+coop::net::Session* Session();
+
+// Is `actor` a baocoin_C? Falls back to a name compare before the class resolves.
+bool IsCoinActor(void* actor);
+
+// Is this thread inside a 0x45 dispatch of the verb called `name`? The ONE ambient-window read
+// either lane makes. Pointer-compares first (both lanes pass a literal they registered themselves,
+// and RegisterVirtualVerb requires static lifetime, so the pointers are identical), then wcscmp.
+bool InVerb(const ue_wrap::vm_dispatch::ActiveVerb& av, const wchar_t* name);
+
+// Abaocoin_C's UClass once resolved, else nullptr. Resolution is the SALE lane's Install (it runs
+// first and already retries at ~1 Hz); the collect lane reads it and stays inert until it appears.
+void* CoinClass();
+
+// Byte offset of Abaocoin_C::points, or -1 if unresolved. Resolved by NAME beside CoinClass().
+int32_t CoinPointsOffset();
+
+// ---- the COLLECT lane's own lifecycle (coingun_collect.cpp) ------------------------------------
+// Driven from the SALE lane's Install/OnDisconnect rather than from subsystems.cpp: the two lanes
+// are one public surface (`coop/items/coingun_sync.h`) and one concept, and the collect lane's
+// resolve depends on the sale lane's class resolution having run. Both are idempotent + retrying.
+void InstallCollect();
+void OnDisconnectCollect();
+
+// True once BOTH collect entries are live. The sale lane's Install reads it so its own success latch
+// cannot stop driving this lane's retry -- the two have DIFFERENT dependencies (the sale lane needs
+// FinishSpawningActor + sellObject; this one needs the coin's BndEvt), so either can resolve first
+// and neither may latch the other out.
+bool CollectInstalled();
+
+}  // namespace internal
+}  // namespace coop::coingun_sync
