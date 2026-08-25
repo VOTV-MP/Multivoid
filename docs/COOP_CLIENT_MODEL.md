@@ -494,7 +494,12 @@ originally deferred.
 ## 9. Rejected approaches (RULE 2 — don't revisit)
 - **RealTimeImport → ProceduralMesh + per-frame CPU skinning:** static geometry; animating
   it in our tick = crutch (violates principle 7). Rejected.
-- **UE 4.27 editor cook:** ~80 GB; user rejected. We cook in Python.
+- **UE 4.27 editor cook:** ~~~80 GB; user rejected.~~ We cook in Python. **UPDATED 2026-08-25: the
+  user HAS UE 4.27 installed, so the disk objection is spent.** This row STILL STANDS for the
+  client MODEL though, for a different reason than the one it was written for: the Python chain
+  already cooks skeletal meshes end-to-end and works, so there is nothing to gain by moving it
+  into the editor. Where the change DOES matter is anything the Python chain cannot emit —
+  a compiled Blueprint graph — i.e. WidgetBlueprints; see `docs/MULTIPLAYER_UI.md` §6.
 - **Runtime USkeletalMesh build from glTF (glTFRuntime-style):** fragile, 5000+ LOC.
 - **kel_lmao (6-bone) as the target:** a stick placeholder, not the client skin.
 - **Manual per-model Blender repose:** was v1's plan; now automated (§5). The manual step

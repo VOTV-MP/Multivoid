@@ -148,8 +148,8 @@ The menu must (a) look native/integrated, (b) not edit VOTV's menu asset
 | Approach | Native look | Edits assets? | UE4SS dependency | Verdict |
 |---|---|---|---|---|
 | **Runtime UMG widget via reflection** (our C++ mod constructs a `UUserWidget`, adds a Multiplayer button + panels, adds to the menu/viewport) | yes | no | none (works with or without UE4SS) | **chosen** |
-| BP mod via UE4SS BPModLoader (cooked widget .pak loaded through UE4SS's BPModLoader Lua mod) | yes | adds a new asset (allowed) but needs UE4.27 editor + cook | yes (BPModLoader) | rejected — ties us to UE4SS |
-| Sibling-pak hybrid (cooked widget .pak mounted via UE4's NATIVE auto-mount of `Content/Paks/`) | yes | adds a new asset | **no** (revisited 2026-05-25 — see note below) | deferred to the public-server phase — toolchain cost not justified for current scope |
+| BP mod via UE4SS BPModLoader (cooked widget .pak loaded through UE4SS's BPModLoader Lua mod) | yes | adds a new asset (allowed) but needs UE4.27 editor + cook | yes (BPModLoader) | ~~rejected — ties us to UE4SS~~ **VERDICT VOID 2026-08-25: the premise died on 2026-08-21.** F2/D-3 makes Multivoid a UE4SS mod, and `BPModLoaderMod` is already in the r2modman profile (measured). The only remaining cost is AUTHORING — see "Native server browser" below |
+| Sibling-pak hybrid (cooked widget .pak mounted via UE4's NATIVE auto-mount of `Content/Paks/`) | yes | adds a new asset | **no** (revisited 2026-05-25 — see note below) | ~~deferred — toolchain cost not justified~~ **COST PREMISE VOID 2026-08-25: the user HAS UE 4.27 installed.** The 80 GB objection is spent; what remains is whether a BP graph is worth authoring at all |
 | ImGui overlay | no (debug look) | no | OUR vendored ImGui (RULE 3 — the "UE4SS's ImGui" option is retired; DX11 + DX12 backends as of 2026-07-26) | rejected for the menu — fine for dev/debug overlays only |
 
 **2026-05-25 update (revisited after the user pushed back on "VT mod looks natural; we look dirty"):** the original rejection conflated BPModLoader-dependent paks (which DO require UE4SS) with all paks. UE4 itself auto-mounts every `.pak` it finds under `Content/Paks/` at engine startup — independently of UE4SS. So a sibling `votv-coop-content.pak` we author and ship alongside our DLL would mount cleanly without ANY mod-framework dependency (RULE 3 preserved). VOTV also ships `UPakLoaderLibrary` (Rama's PakLoader) + `URyRuntimePakHelpers` as Blueprint libraries already callable through our existing `ParamFrame` infrastructure, providing explicit `MountPakFile` if we want non-auto-mounted paks. See:
@@ -157,7 +157,7 @@ The menu must (a) look native/integrated, (b) not edit VOTV's menu asset
 - `research/findings/architecture-audits/votv-mp-pak-mount-feasibility-2026-05-25.md` — implementation feasibility (FEASIBLE without UE4SS via auto-mount or UPakLoaderLibrary). *(In the local-only research corpus since 2026-08-23 — the local-only docs-arc note. Left as a path, not a link, so it does not read as a broken one.)*
 - Architectural + reality-check verdicts (stay all-DLL for now, revisit the public-server phase; the perceived polish gap closes with programmatic outline + shadow + UBorder): recorded in this section — the planned standalone `hybrid-pak-architecture` / `hybrid-pak-reality-check` finding files were never filed (dead links removed 2026-07-12).
 
-The "chosen" row remains correct for the current scope. The "rejected" row's reasoning is preserved (BPModLoader specifically does tie us to UE4SS). A new "deferred" row replaces a small fraction of the rejected row's blast radius — the sibling-pak path is technically clean per RULE 3 but the 80 GB UE4.27-editor toolchain cost isn't justified until a the public-server phase widget (server browser with sortable rows, etc.) actually needs it. For now, polish via programmatic UMG (text outline + drop shadow already shipped 2026-05-25; UBorder background panel queued).
+~~The "chosen" row remains correct for the current scope. The "rejected" row's reasoning is preserved (BPModLoader specifically does tie us to UE4SS).~~ **RETIRED 2026-08-25 — both halves are false now: D-3 ties us to UE4SS deliberately, and the user has the editor.** A new "deferred" row replaces a small fraction of the rejected row's blast radius — the sibling-pak path is technically clean per RULE 3. ~~but the 80 GB UE4.27-editor toolchain cost isn't justified until a the public-server phase widget (server browser with sortable rows, etc.) actually needs it.~~ **2026-08-25: that moment ARRIVED and the cost is spent — the user asked for the sortable-row browser and has the editor.** For now, polish via programmatic UMG (text outline + drop shadow already shipped 2026-05-25; UBorder background panel queued).
 
 So: our C++ mod hooks the menu's construction (`ui_menu_C` BeginPlay /
 construct), creates our own widget tree at runtime via reflection, and
@@ -201,7 +201,7 @@ UE4SS. **The F2/D-3 decision of 2026-08-21 makes Multivoid a UE4SS mod** (`docs/
 So that rejection's premise is gone, and the cost of the route collapses to **authoring** only.
 What is still real, and unchanged: our pak toolchain (`tools/client_model/`, `ue_cook.py`) cooks
 **skeletal meshes** in Python; it cannot emit a compiled Blueprint graph. Producing WidgetBlueprints
-means the UE4.27 editor (~80 GB, which the user rejected in `docs/COOP_CLIENT_MODEL.md:497`).
+means the UE4.27 editor — **which the user HAS installed as of 2026-08-25**, so the ~80 GB objection recorded in `docs/COOP_CLIENT_MODEL.md` §9 is spent. What is NOT solved is the authoring channel: no MCP supports 4.27 (UE 5.5+ minimum on every implementation checked), so see §6 below.
 
 ### 3. What we can ALREADY do, and it is more than the doc implies `[V]`
 
@@ -238,15 +238,64 @@ the one surface that matters most.
 | route | look | new toolchain | reaches "very soon"? |
 |---|---|---|---|
 | **B — extend the runtime-UMG we already ship** (scroll box + per-row `UButton`s, styled from `button_start`, clicks polled) | good, hand-styled; same font/style as the game | **none** | **yes** — the gap is composition, in our own code, not mechanism |
-| **A — cooked WidgetBlueprints in a pak** (SmartTV's way) | best; designer-authored | UE4.27 editor ~80 GB + a cook path our Python chain does not have | no |
+| **A — cooked WidgetBlueprints in a pak** (SmartTV's way) | best; designer-authored | editor: **HAVE IT**; cook path our Python chain does not have; authoring channel unsolved (§6) | **maybe — see §6** |
 | C — keep ImGui, restyle | foreign either way | none | yes, but it does not answer the ask |
 
-**Recommendation: B.** A's loading half became free with D-3, but its authoring half is the 80 GB the
-user already declined, and "very soon" rules it out. The missing pieces for B are a scroll container
+**Recommendation: B, or the B+art hybrid in §6.** A's loading half became free with D-3 and its
+80 GB half is now paid, so the only thing still standing between us and A is HOW a widget gets
+authored — §6. The missing pieces for B are a scroll container
 and per-row buttons — both are UMG classes we resolve the same way we already resolve `Button`,
 `VerticalBox` and `TextBlock`; none of it needs a new substrate. **DESIGN, not built** — nothing here
 has been implemented, and the `/qf` this project requires before non-trivial implementation has not
 been run.
+
+### 6. The authoring channel — USER 2026-08-25: "UE 4.27 is downloaded, but there is no official MCP; maybe I get UE5/UE6, we build widgets over MCP, and you convert them down to 4.27"
+
+Three things measured in reply, because the third leg of that plan is the one that breaks.
+
+**(a) No MCP supports UE 4.27.** Every Unreal MCP implementation found targets UE5 — the most
+complete one documents **UE 5.5+** as its minimum. The gap the user named is real.
+
+**(b) The "convert down" leg is the wrong bet FOR WIDGETS, and this is the load-bearing finding.**
+Downgrading assets is not impossible in general: UE refuses to load a package saved by a newer engine
+(a deliberate `FPackageFileSummary` version check), but third-party *Asset Downgrader* tooling exists
+that patches `.uasset` headers down to 4.27, and hand hex-editing the version block is a known trick.
+**Both target static meshes, materials and textures — data assets.** A `WidgetBlueprint` is the worst
+possible case for that path: it is a **compiled `UBlueprintGeneratedClass` carrying version-tied
+bytecode**, wrapped around a `UWidgetTree` of UMG objects whose class layouts and property sets
+changed across 4.27 -> 5.x. The downgrade tools' own copy says newer-version features "can't be
+ported". Betting the server browser on round-tripping a compiled BP graph across a major version is
+the kind of dependency this project should not take, and it would be **untestable until the very end**
+— the failure shows up as an asset the shipped 4.27 game silently refuses to mount.
+
+**(c) The premise the plan was built on has already dissolved.** The reason to reach for UE5 at all
+was that 4.27 has no MCP. But **MCP is not the only authoring channel — UE 4.27 ships Python editor
+scripting**, and a script is strictly better here than an MCP session: I can write it, it lives in
+the repo, it is reviewable, re-runnable and diffable, and it produces the asset in the RIGHT engine
+version with no conversion step at all. Creating the asset is documented for 4.27:
+
+```python
+tools = unreal.AssetToolsHelpers.get_asset_tools()
+wb = tools.create_asset("ui_serverBrowser", "/Game/Mods/Multivoid",
+                        unreal.WidgetBlueprint, unreal.WidgetBlueprintFactory())
+```
+
+`[?] UNVERIFIED and it is the crux:` **populating the `WidgetTree` from Python in 4.27** is reported
+as not straightforward — `UWidgetTree` is poorly exposed to the 4.27 Python API. That needs a spike
+before anything is planned on it. Do not treat this route as costed until it is run.
+
+**(d) The route that needs none of the above.** Our tree is already built at runtime by shipping code
+(§3), so the pak does not have to carry a widget at all — it can carry **only art**: textures for the
+row/scrollbar/button brushes, a `UBorder` background, an icon set, and VOTV's `font_ui` is already on
+disk. No Blueprint graph means **no compiled class, so no downgrade problem, no Python `WidgetTree`
+problem, and no MCP need** — and the art half is exactly what our Python cook chain already does.
+That is route B plus art, and it is the cheapest thing that closes the "we look dirty" gap the user
+raised back on 2026-05-25.
+
+**Recommendation: (d) now; spike (c) separately if a designer-authored widget is ever wanted; do not
+build on (b).** One thing to confirm before any of it: the UE 4.27 install was **not found** at
+`C:\Program Files\Epic Games` or the obvious `D:` paths — its location needs to be named before a
+Python-scripting route can be scheduled.
 
 ## Anchors (from reflection dump, game 0.9.0-n)
 
