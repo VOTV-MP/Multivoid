@@ -860,54 +860,198 @@ cannot judge. So this lane has two halves and they are not interchangeable: the 
 machine-asserted and must stand on its own, and the FEEL half is the user's verdict. The exception
 covers feel only; it does not license shipping the rest unmeasured.
 
-#### 8c.-1 THE PERFORMANCE APPROACH IS `/qf`-GATED (USER, 2026-08-26)
+#### 8c.-1 THE PERFORMANCE DESIGN — `/qf` RUN AND CONVERGED, 2026-08-26 `[V]`
 
 > **USER:** *"How to do this properly and not eat performance too much deserve a qf in the next
-> session."*
+> session."* Then, answering the one policy question this design put to them: *"5 seconds is good."*
 
-So the cost design is **not** to be improvised while building the harness. The `/qf` runs first,
-next session, and this block exists so it starts from facts instead of from zero.
+**THIS SECTION REPLACES THE PRE-`/qf` COST MODEL WHOLE.** The text that stood here until 2026-08-26
+said the per-sync cost was "≈9 reflected calls" per row and "a few percent of dispatch volume". Both
+are **wrong**, and so was the arithmetic built on them. The `/qf` ran **nine rounds** and every one
+of them overturned something; the corrections are recorded below rather than quietly patched,
+because four of them were things this doc — or a message to the user — had already asserted as fact.
 
-**WHAT IS ACTUALLY KNOWN (and what is NOT).** The per-sync cost below is a **CALL COUNT read off
-the code, not a measured time** — nobody has timed `SyncRows`. Do not let the `/qf` treat it as a
-measurement; the first cheap move is to make it one.
+##### The cost model, corrected `[V]`
 
-- `SyncRows()` runs at 1 Hz unconditionally while the screen is shown
-  (`server_browser_native.cpp`, `kRefreshMs`).
-- Per row it calls `RowPartsAt`, which re-derives the widgets from the panel every time:
-  `GetChildAt` + `GetContent` + 2 x `GetChildAt` + 5 x `GetChildAt` ≈ **9 reflected calls**, and
-  then writes 5 cells (`SetText` via `Conv_StringToText`, plus `SetTextBlockColor`) whether or not
-  a single string changed.
-- At the user's 200 rows that is on the order of **3 000-4 000 ProcessEvent dispatches per second**
-  on the GAME THREAD, at the menu. For scale, a measured gameplay frame in this build runs
-  `PE=75 859/s`, so this is a few percent of dispatch volume — but concentrated in one 1 Hz spike,
-  which is the shape that produces a visible HITCH rather than a background cost.
+**The dispatch count was never the problem. An uncached full-array walk was.**
 
-**THE MEASUREMENT THAT SHOULD EXIST BEFORE THE `/qf` ARGUES ANYTHING.** `coop/dev/perf_probe.h`
-already provides exactly this: a `Bucket` enum, a `Scope` RAII timer, and a 1 Hz report that prints
-`[perf] subsystems ms: netPumpTick=0.52/fr(14.9/s) ... overlayPresent=0.06/fr(1.9/s)`. Adding a
-`browserSync` bucket is a two-line change and turns "≈ 9 calls a row" into ms/frame at 50 / 100 /
-200 rows. The existing `[HITCH]` line (`frame = 43 ms`) is the second instrument and needs nothing.
+`RowPartsAt` resolves `R::FindFunction(cw, L"GetContent")` **per row, per sync**
+(`server_browser_native.cpp:209`), and `R::FindFunction` (`reflection.cpp:485-497`) has **no result
+cache** — it walks the entire `GUObjectArray` on every call. Its sibling `R::FindClass` was *given*
+that cache one day earlier (`ca1cd5e4`, 2026-08-25, the coin-gun fix); `FindFunction` never was.
+`BuildRow` and the window build resolve `SetContent` the same uncached way (`:188`, `:361`) —
+**once per row BUILT**, which is the growth burst.
 
-**Candidate directions, listed so the `/qf` can attack them — NOT a decision.** Recorded because
-the round should start by choosing between measured options, not by inventing them:
+One such walk is priced by the project's own instrument, in a real log from this build:
 
-1. **Edge-apply per cell.** Keep the last string per cell and skip an unchanged one. The project's
-   idiom everywhere else; turns a steady list into ~zero writes.
-2. **Cache the row parts.** `RowPartsAt`'s 9 reflected calls per row exist only to re-find widgets
-   we created. §8b's rule is "we hold NO row pointers" and it has a real reason (`cached_obj_ref.h`
-   says the world stamp is inert for UMG and serials are lazy), so any cache has to answer that
-   rule rather than ignore it — which is precisely a `/qf` question.
-3. **Update only what is VISIBLE.** A `UScrollBox` showing ~9 of 200 rows still pays for all 200.
-   `GetScrollOffset` is resolved and unused; row height is fixed at 64.
-4. **Decouple the fetch from the paint.** `sm::Refresh()` (a network call) and `SyncRows()` (the
-   paint) share one 1 Hz timer today; they are different problems with different natural rates.
-5. **Do nothing yet.** If the measurement says 200 rows costs 0.2 ms/frame, the honest answer is
-   that this is not a problem and the complexity is not earned.
+```
+[WALK-TIME] sync:event_cue = 2317 us      <- a Tick whose own comment says its "only cost is
+[WALK-TIME] sync:event_cue = 3220 us         the FindObjectsByClass GUObjectArray walk" (x2)
+```
 
-**The `/qf` must also answer the question the harness raises but the browser does not:** whether
-the row cap stays (raised, and LOGGING its truncation) or goes, and what the real ceiling is —
-because "100 random servers" only means something if 100 is what renders.
+**≈1.1–1.6 ms per full walk** at `NumObjects=182767` (same log). For scale, the whole dispatch cost
+this design was originally built around is ~0.6 ms **per second** (`detour self avg=157 ns`, and note
+that figure is **detour self-time, engine-excluded** — the full cost of a `ProcessEvent` dispatch
+remains **unmeasured**).
+
+##### `kMaxRows = 64` bounds the whole loop, not just the display `[V]`
+
+`want = min(rows, 64)`, the grow loop is bounded by `want`, and `total = ChildCount` therefore never
+exceeds 64 (`:247-266`). Consequences, in order of how badly each was mis-stated before:
+
+| condition | walks per sync | cost |
+|---|---|---|
+| today (~2 live lobbies) | ~2 | ~2–3 ms — **invisible, which is why nobody has seen this** |
+| the current code's ceiling (64 rows) | 64 | **70–100 ms**, 576 UWidgets |
+| the user's 100 / 200 | — | **cannot occur until the cap is raised** |
+
+So the walk fix is a **prerequisite for raising the cap**, not an optimisation beside it. And
+`kMaxRows`' own comment — *"the master caps its list well below this"* — is **FALSE**: `build_rows`
+(`master.rs:531-553`) emits every listed lobby, unbounded. 100 servers would render 64, silently.
+
+##### It is a SINGLE-FRAME STALL, not a background tax `[V]`
+
+`SyncRows` runs inside one `ui_menu_C::Tick` post-observer, so every walk in a pass lands in **one
+frame**. Quoting this as "70–100 ms/s" (as an earlier draft of this section and two messages to the
+user did) understates it: it is **one frame at ~100 ms among neighbours at ~8.5 ms**. A visible
+once-per-second hitch. **The deciding metric is therefore max frame interval / p99, never mean FPS.**
+
+##### The instruments named in the old text do not work here `[V]`
+
+- `perf_probe::Sample()` and `[HITCH]` both live in `net_pump::Tick` (`net_pump.cpp:437`, `:416`),
+  which `session_runtime.cpp:652` gates on `running || idleInGameplay`. **Neither runs at the menu.**
+  "Adding a `browserSync` bucket is a two-line change" yields a bucket nobody prints.
+- `worldless_frames.cpp:136` stamps frames with `::GetTickCount64()` (**~15.6 ms granularity**) while
+  `perf_probe.cpp:73` already uses QPC. At 117 fps a frame is ~8.5 ms — **below the clock's
+  resolution**, so a p99 built on that counter is quantisation, not measurement.
+- `pe_detour.cpp:104-110` (`RecordCbBodyNs`) *does* already bracket matched observer bodies and keep
+  worst + `UFunction*`, and `SyncRows` runs inside one such body. The instrument is not missing; the
+  **printer is unreachable at the menu**.
+
+##### The list has no stable order, and that is a correctness defect `[V]`
+
+`master.rs:534` iterates `state.lobbies` (a `HashMap`) with no sort, nothing sorts client-side, and
+`SyncRows` writes **by position**. So "then add another 100 servers" **reshuffles the list under a
+scrolling hand** — unusable at scale, independent of any performance question. The header's
+invariant 1 (row identity is the `lobbyId`) protects the *click* from resolving to the wrong server;
+it does nothing about the visual reshuffle.
+
+**MTA's precedent is explicit** (`CServerBrowser.cpp:1402-1410`): every column carries a sort key,
+each suffixed with `strTieBreakSortKey` — a deliberate **total** order so equal values cannot
+reshuffle — and `:1411` comments *"The row index could change at any point here if list sorting is
+enabled"*, writing by handle rather than index. `:2583` adds a persistent iterator + a 250/frame cap
++ a **33 ms frame budget**; `:2641` a per-server content revision.
+
+**Sort on a STABLE key** (`name`, tie-broken by `lobbyId`) — **never** on mutable `playersCur` /
+`ageSec`. A server gaining a player must not jump. A deterministic reshuffle is still a reshuffle,
+and the invariant a user feels is *"nothing moves under my pointer"*. A "freeze reordering while
+hovering" layer was designed and **dropped**: with a stable key it suppresses a symptom whose cause
+is already fixed.
+
+##### The native idiom, and where it does NOT transfer `[V]`
+
+The game's own list screen (`research/pak_re/ui_saveSlots.json`) is a `ScrollBox` with one
+`uicomp_saveSlot` widget per row (`AddChild` x9), refreshed by an explicit `button_updatelist` ->
+`updateList`, **not a timer**. So **widget-per-row IS the native idiom** and our divergence is the
+repaint, not the shape.
+
+**But the precedent does not transfer to discovery.** A save list changes only by user action; a
+server list changes externally, and seeing a server that came up while you are looking is what a
+browser is *for*. An earlier draft deleted the background fetch entirely on this precedent and
+rationalised it as idiom fidelity — that was an over-correction. **Cadence of record: fetch on open
++ explicit Refresh + a 5 s background refresh (USER-SET, 2026-08-26).** The 1 Hz full re-fetch goes:
+an HTTP GET per second per client against the production master is indefensible on its own.
+
+##### The plan, ordered, with pre-registered thresholds
+
+Each step is gated on the previous. Thresholds are written down **before** the runs, so
+"the complexity is not earned" stays a reachable outcome rather than a courtesy.
+
+| # | step | gate |
+|---|---|---|
+| **T1** | **The X (+ Back)** via the shipped release-edge poll (`multiplayer_menu.cpp:253-271`) + a cloned `UButton`. `Close()`'s cross-thread path gets a driven test **shown RED first** — its first caller must not be its first proof. | none |
+| **T2a** | **The instrument**: re-clock the menu frame counter to QPC; frame-interval max/p99; call `perf_probe::Sample()` at the menu; a `Scope` around `SyncRows`; a MENU-TICK-vs-PRESENT counter. Behaviour-neutral. **Shown RED by an injected stall** before it is trusted. | none |
+| **T2b** | **The rig**: raise `kMaxRows` + LOG truncation; the section-8c seeder; scroll drive. | none |
+| **T2c** | **BASELINE** at 50 / 100 / 200 rows. | — |
+| **T3** | **READS -> RAW** (`Slots@+0x0108` / `Content@+0x0030`) + **WRITES -> FnCache** (`GetContent`, `SetContent` into `umg_build.cpp`'s table). Re-measure. | **not earned if** at 50 rows the baseline max frame interval < 20 ms AND the `SyncRows` Scope < 2 ms |
+| **T4a** | **Ungated**: stable order; scroll-offset preservation across structural change (`GetScrollOffset`/`SetScrollOffset`, both resolved, both unused today — section 8c.3 ceiling #4); the 5 s cadence. These ship on their own merits. | none |
+| **T4b** | **The content diff** keyed on `lobbyId` + locally-derived age (coarsened or visible-only). | **not earned if** after T3 the `SyncRows` Scope at 50 rows < 1 ms |
+| **T5** | **The full section-8c harness**: phases A–G incl. D (shrink), E (shuffle at constant count), G (GC), plus section 8c.4's un-gated id-reconcile selftest **shown RED first**. | — |
+| **T6** | **Decide the row model.** Outcomes: keep widget-per-row (**live**), viewport pool (~9 widgets / 81 UWidgets vs 576), or `UListView` (a spike — see below). | T5's machine verdict |
+| **T7** | **Row input** against the decided model. | T6 |
+
+**Instrument-to-question mapping** (without this, a T4b re-measure passes on a broken build, because
+the post-T3 residue of ~0.5–1.5 ms sits *under* what a frame statistic can resolve against 8.5 ms
+frames):
+
+| instrument | answers | gates |
+|---|---|---|
+| `SyncRows` Scope (QPC, µs) | is **our code** cheap | T3, T4b |
+| frame-interval max/p99 | does the **list** cost frames | T6 |
+
+**The verdict is MACHINE, and it is two-part.** Per `[[feedback-autonomous-evidence-is-the-ceiling]]`
+(USER 2026-08-25: *"When im on pc i wont test it either"*), section 8c's scoped feel-exception does
+**not** license making T6 *depend* on a hands-on. Correctness = the un-gated id-reconcile selftest +
+phases D/E/G. Performance = max/p99 + the `SyncRows` attribution. **Feel corroborates; it never
+gates.**
+
+**The product requirement is "no perceptible cost at REALISTIC loads"** — tens of lobbies, which is
+what the master will plausibly serve. The user's 100/200 is a **robustness assertion**, not a ship
+gate. That is what keeps "keep widget-per-row" a live and possibly winning outcome of T6.
+
+##### Open, and honestly so
+
+- **Nobody has confirmed the mouse wheel scrolls this widget.** Nothing in the file touches a scroll
+  API and no wheel event has ever reached it. `[V]` de-risked but not proven: `WM_MOUSEWHEEL` is
+  swallowed **only** under `CaptureActive()` (`imgui_overlay.cpp:316-320`) and
+  `server_browser_native` appears **nowhere** in that file, so the wheel reaches the game while our
+  screen is the only surface up. **T5's first assertion.**
+- **HAZARD, filed as a BLOCKER on the day the MULTIPLAYER button is flipped to native:** pressing F1
+  while the browser is open flips `CaptureActive()` true and **the list stops scrolling**. Deleting
+  the ImGui browser removes `BrowserOpen()` from that predicate but not `MenuOpen()`, so the hazard
+  survives the deletion and needs its own answer.
+- **Whether a viewport pool feels right while scrolling** is unmeasured. `SListView` re-points inside
+  the layout pass; we would re-point from `ui_menu_C::Tick`. Note the pump rate (~0.34 tasks/frame at
+  the menu, from the P1 probe data) is the **wrong proxy** — we run from a ProcessEvent post-observer,
+  not a posted task — and **nothing measures menu-tick-vs-present**, which is why T2a adds that counter.
+- **`USlateBlueprintLibrary` is unresolved.** `FGeometry` has no reflected members (empty, size 0x38),
+  so click-by-arithmetic needs it; `IsHovered`-per-row is the measured alternative. Note the release-edge
+  poll makes `IsHovered` trivial for **clicks** (once per click) — it is **hover highlight** (per frame,
+  per row) that this actually gates.
+- **`http_client.cpp:153` caps a response at 1 MiB**, logs on hit, and returns `ok=true` with a
+  truncated body — surfacing as *"master sent a malformed list"* rather than "too large". At ~340 B/row
+  worst case that is ~3000 rows, so **not a ceiling at 200**; the misleading surface is a separate
+  small finding.
+
+##### Filed separately, deliberately not smuggled into this lane
+
+**`R::FindFunction` has no result cache, and 476 call sites depend on callers remembering to latch.**
+This is the **second instance in two days** (`ca1cd5e4` cached `FindClass` on 2026-08-25), which per
+`[[feedback-recurring-bug-is-architectural]]` means the level is wrong. **Precision, so the next
+reader does not overclaim it:** `BeginClassWalk` memoises the class being *searched for*, not the
+*result* — `FindObjectByClass` / `FindObjectsByClass` / `FindActorsByClass` all still walk, and
+`FindClass` caches a result only because its result *is* a class. So a `FindFunction` result cache
+would be a **new** cache, not parity with its siblings. It needs its own measurement and its own
+commit.
+
+##### Rejected, with reasons, so they are not re-derived
+
+- **Filter or paginate instead of rendering N rows.** What real browsers do; dissolves the cost
+  question. **Rejected on the ask** — the user explicitly wants to *scroll* 100 servers and judge feel.
+- **Render the list as one multi-line text block.** O(1) widgets. **Rejected** — destroys per-row
+  hit-testing and hover.
+- **Cancel the native browser, keep ImGui** (which clips 1000 rows trivially). **Rejected** — reverses
+  a decision settled and measured in sections 8 / 6e; the native route's justification was visual
+  integration, not capability.
+- **`UListView`** (the engine's virtualised list, `UMG.hpp:769`, `EntryWidgetPool` @ `UListViewBase`
+  +0x0140). **`[V]` VOTV uses it NOWHERE** — zero hits across the whole reflected BP set — so there is
+  no donor `EntryWidgetClass`, no in-game precedent, and whether `UListViewBase` accepts a foreign
+  entry class at runtime without a `check()` is unknown. **A spike, not a plan**; T5's run probes it.
+- **A second seeding mechanism** (a local test master via `VOTVCOOP_MASTER_URL`, which env-beats every
+  other layer, `config.cpp:481`). Designed, then **dropped**: the section-8c harness IS the instrument,
+  and standing up a parallel seeder was two implementations of one concept (RULE 2). The env override
+  remains the right tool if a *parse-path* measurement is ever wanted, and the schemeless-means-TLS
+  grammar means a local plaintext server must be addressed `http://127.0.0.1:PORT`.
 
 #### 8c.0 The blocker the user named, and it is worse than a missing button `[V]`
 
@@ -976,17 +1120,22 @@ These are known defects in what is already committed, not predictions:
 1. **`kMaxRows = 64`** (`server_browser_native.cpp:40`). The user's "100 random servers" would
    silently display **64**, with no log line. The cap must be raised and, more importantly, must
    LOG when it truncates — a silent ceiling in a stress harness invalidates the whole run.
-2. **`SyncRows()` is unconditional — there is no edge-apply.** Per row per second it walks the
-   panel to re-find the widgets (`RowPartsAt` ≈ 9 reflected calls: `GetChildAt`, `GetContent`, then
-   five more) and then issues 5 `SetText` plus colour writes. At 200 rows that is **thousands of
-   ProcessEvent dispatches per second** whether or not a single cell changed. Edge-applying (skip a
-   cell whose string is unchanged; cache the row's parts) is the project's own idiom everywhere
-   else, and phase B is what will force it.
+   **Now step T2b**, and section 8c.-1 measured why it cannot be raised *first*: it bounds the whole
+   sync loop, so raising it before the walk fix converts a latent defect into a 110–320 ms stall.
+2. **`SyncRows()` is unconditional — there is no edge-apply.** **The cost model that stood here is
+   SUPERSEDED by section 8c.-1 — read that, not this.** It said "≈9 reflected calls" and "thousands
+   of ProcessEvent dispatches per second"; the `/qf` measured the real cost to be an **uncached
+   `R::FindFunction` full `GUObjectArray` walk per row per sync** (`:209`), ≈1.1–1.6 ms each, landing
+   in **one frame** — three orders of magnitude past the dispatch count, which is itself ~0.6 ms/s.
+   Edge-apply is still wanted (step T4b) but it is not the root, and it is gated on a measurement.
 3. **`sm::Refresh()` fires a real network fetch every second** (`:559`). The harness must seed
    synthetically and BYPASS the master — hammering the production master 200 rows deep for a UI
-   test is not acceptable, and the numbers would be polluted by fetch latency anyway.
+   test is not acceptable, and the numbers would be polluted by fetch latency anyway. The 1 Hz
+   re-fetch itself is retired in T4a (fetch on open + Refresh + a 5 s background, USER-SET).
 4. **Nothing preserves the scroll offset across a sync.** `GetScrollOffset`/`SetScrollOffset` are
-   resolved (O1) and unused. Phase B is where that shows up.
+   resolved (O1) and unused. **Now step T4a, ungated** — and note the 5 s cadence makes a reset
+   RARER AND MORE STARTLING, not better; the content diff makes it rarer still but does **not**
+   dissolve it for the GROWTH case, which is the user's exact scenario.
 
 #### 8c.4 The half that needs no game at all
 
