@@ -119,7 +119,11 @@ if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
 Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zipPath -CompressionLevel Optimal
 
 # --- Verify the WRITTEN zip, not the staged tree ---------------------------
-$violations = @(Test-PackageZip -ZipPath $zipPath)
+# The payload sha is handed in so the check is EXACT: a presence-by-name gate cannot
+# tell a real DLL from a truncated one, and 7.9 records this project shipping wrong
+# bytes once already (post-ship audit 2026-08-26, CRITICAL).
+$payloadSha = (Get-FileHash -Algorithm SHA256 $PayloadDll).Hash.ToLowerInvariant()
+$violations = @(Test-PackageZip -ZipPath $zipPath -ExpectedPayloadSha256 $payloadSha)
 if ($violations.Count -gt 0) {
     throw ("package zip FAILED its own tree check:`n  " + ($violations -join "`n  "))
 }

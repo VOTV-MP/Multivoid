@@ -347,7 +347,10 @@ function New-PackageManifest {
 #   - the payload is at mod/dlls/, never at the root. A root-level dlls/ matches no
 #     route and silently never loads (trap 1).
 function Test-PackageZip {
-    param([Parameter(Mandatory)][string]$ZipPath)
+    param(
+        [Parameter(Mandatory)][string]$ZipPath,
+        [string]$ExpectedPayloadSha256 = ''   # exact check when the caller knows the bytes
+    )
     $bad = New-Object System.Collections.Generic.List[string]
     if (-not (Test-Path -LiteralPath $ZipPath)) { $bad.Add("zip not found: $ZipPath"); return $bad }
     Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
@@ -356,7 +359,7 @@ function Test-PackageZip {
         $names = @($zip.Entries | ForEach-Object { $_.FullName.Replace([char]92, [char]47) })
         $required = @('manifest.json', 'icon.png', 'README.md', 'mod/enabled.txt', 'mod/dlls/main.dll')
         foreach ($r in $required) {
-            if ($names -notcontains $r) { $bad.Add("missing required entry: $r") }
+            if ($names -cnotcontains $r) { $bad.Add("missing required entry: $r") }
         }
         # Every top-level segment must be a route r2modman knows, or a root file.
         $routes = @('mod', 'pak', 'cfg', 'overlay')
@@ -364,23 +367,67 @@ function Test-PackageZip {
             if ($n.EndsWith([char]47)) { continue }     # directory entries carry no payload
             $seg = $n.Split([char]47)
             if ($seg.Count -eq 1) { continue }          # a root file is always fine
-            if ($routes -notcontains $seg[0]) {
+            if ($routes -cnotcontains $seg[0]) {
                 $bad.Add("entry '$n' sits under top-level '$($seg[0])', which matches no r2modman route -- it would be recursed into and scattered")
             }
         }
+        # THE PAYLOAD'S BYTES, not just its name (post-ship audit 2026-08-26, CRITICAL).
+        # Every other check here is presence-by-name, so a zero-byte or garbage
+        # main.dll satisfied all of them and still reported PACKAGE OK -- which is
+        # the exact class 7.9 records this project having already shipped once
+        # ("wrong bytes from a payload picked by mtime"). The header of this very
+        # function calls an "empty zip" the thing it exists to refuse; until now
+        # "empty" was asserted about the SHAPE and never measured about the payload.
+        # No arbitrary size floor: a threshold is a guess, and a truncated download
+        # still starts with MZ. So the always-on legs are non-empty + the PE magic,
+        # and an EXACT sha256 is checked whenever the caller knows what it handed in.
+        $pe = $zip.Entries | Where-Object { $_.FullName -ceq 'mod/dlls/main.dll' } | Select-Object -First 1
+        if ($pe) {
+            if ($pe.Length -eq 0) {
+                $bad.Add('mod/dlls/main.dll is ZERO BYTES -- the package would install a mod that cannot load')
+            } else {
+                $ms = New-Object System.IO.MemoryStream
+                $es = $pe.Open()
+                try { $es.CopyTo($ms) } finally { $es.Dispose() }
+                $bytes = $ms.ToArray(); $ms.Dispose()
+                if ($bytes.Length -lt 2 -or $bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
+                    $bad.Add("mod/dlls/main.dll does not begin with the PE magic 'MZ' -- it is not a DLL")
+                }
+                if ($ExpectedPayloadSha256) {
+                    $sha = [System.Security.Cryptography.SHA256]::Create()
+                    try { $got = ([BitConverter]::ToString($sha.ComputeHash($bytes)) -replace '-', '').ToLowerInvariant() }
+                    finally { $sha.Dispose() }
+                    if ($got -cne $ExpectedPayloadSha256.ToLowerInvariant()) {
+                        $bad.Add("mod/dlls/main.dll sha256 $got != expected $($ExpectedPayloadSha256.ToLowerInvariant()) -- the zip does not carry the payload it was given")
+                    }
+                }
+            }
+        }
+
         # The manifest must parse and carry a well-formed identity.
-        $me = $zip.Entries | Where-Object { $_.FullName -eq 'manifest.json' } | Select-Object -First 1
+        $me = $zip.Entries | Where-Object { $_.FullName -ceq 'manifest.json' } | Select-Object -First 1
         if ($me) {
             $sr = New-Object System.IO.StreamReader($me.Open())
             try { $json = $sr.ReadToEnd() } finally { $sr.Dispose() }
             $m = $null
             try { $m = $json | ConvertFrom-Json } catch { $bad.Add('manifest.json does not parse as JSON') }
             if ($m) {
-                if ($m.name -notmatch '^[A-Za-z0-9_]{1,128}$') { $bad.Add("manifest name '$($m.name)' breaks the [A-Za-z0-9_] rule") }
-                if ($m.version_number -notmatch '^\d+\.\d+\.\d+$') { $bad.Add("manifest version_number '$($m.version_number)' is not a suffix-free semver triple") }
-                if ($m.description.Length -gt 250) { $bad.Add("manifest description is $($m.description.Length) chars, max 250") }
-                if ($null -eq $m.PSObject.Properties['website_url']) { $bad.Add('manifest is missing the website_url KEY (it may be empty but must exist)') }
-                if ($null -eq $m.PSObject.Properties['dependencies']) { $bad.Add('manifest is missing dependencies') }
+                # StrictMode is LIVE here (set at the top of this file, and dot-sourcing
+                # runs in the caller's scope), so touching an ABSENT property throws
+                # PropertyNotFoundException instead of reporting a violation -- measured
+                # 2026-08-26. The .PSObject.Properties guard was already used for two of
+                # the five fields; the other three were reached directly, so a manifest
+                # merely MISSING a key crashed the gate rather than failing it, and the
+                # next natural drill arm would have taken the whole drill down with it.
+                $has = { param($k) $null -ne $m.PSObject.Properties[$k] }
+                if (-not (& $has 'name')) { $bad.Add('manifest is missing the name KEY') }
+                elseif ($m.name -notmatch '^[A-Za-z0-9_]{1,128}$') { $bad.Add("manifest name '$($m.name)' breaks the [A-Za-z0-9_] rule") }
+                if (-not (& $has 'version_number')) { $bad.Add('manifest is missing the version_number KEY') }
+                elseif ($m.version_number -notmatch '^\d+\.\d+\.\d+$') { $bad.Add("manifest version_number '$($m.version_number)' is not a suffix-free semver triple") }
+                if (-not (& $has 'description')) { $bad.Add('manifest is missing the description KEY') }
+                elseif ($m.description.Length -gt 250) { $bad.Add("manifest description is $($m.description.Length) chars, max 250") }
+                if (-not (& $has 'website_url')) { $bad.Add('manifest is missing the website_url KEY (it may be empty but must exist)') }
+                if (-not (& $has 'dependencies')) { $bad.Add('manifest is missing dependencies') }
             }
         }
     } finally { $zip.Dispose() }

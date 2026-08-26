@@ -21,13 +21,13 @@ New-Item -ItemType Directory -Path $tmp -Force | Out-Null
 
 $fails = 0
 function Arm {
-    param([string]$Name, [scriptblock]$Build, [bool]$ExpectViolation, [string]$Because)
+    param([string]$Name, [scriptblock]$Build, [bool]$ExpectViolation, [string]$Because, [string]$Sha = '')
     $stage = Join-Path $tmp $Name
     New-Item -ItemType Directory -Path $stage -Force | Out-Null
     & $Build $stage
     $zip = Join-Path $tmp "$Name.zip"
     Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -Force
-    $v = @(Test-PackageZip -ZipPath $zip)
+    $v = @(Test-PackageZip -ZipPath $zip -ExpectedPayloadSha256 $Sha)
     $caught = $v.Count -gt 0
     if ($caught -eq $ExpectViolation) {
         $verdict = if ($ExpectViolation) { "RED  caught" } else { "GREEN clean" }
@@ -67,9 +67,12 @@ Arm 'red-wrapped' { param($r)
     Seed $inner
 } $true 'a wrapping folder makes every route unreachable -- 7.2a: an unmatched top-level dir is RECURSED INTO'
 
+# NARROWED after the 2026-08-26 audit: this used to delete the whole mod/ tree, which
+# conflated trap 1 with "enabled.txt is missing" and gave the arm blast radius its own
+# name did not describe. Only the payload moves now.
 Arm 'red-root-dlls' { param($r)
     Seed $r
-    Remove-Item (Join-Path $r 'mod') -Recurse -Force
+    Remove-Item (Join-Path $r 'mod/dlls') -Recurse -Force
     New-Item -ItemType Directory -Path (Join-Path $r 'dlls') -Force | Out-Null
     Set-Content (Join-Path $r 'dlls/main.dll') 'MZfake' -NoNewline
 } $true '7.2a trap 1: a root-level dlls/ matches no route and silently never loads'
@@ -87,6 +90,45 @@ Arm 'red-payload-at-mod-root' { param($r)
     Remove-Item (Join-Path $r 'mod/dlls') -Recurse -Force
     Set-Content (Join-Path $r 'mod/main.dll') 'MZfake' -NoNewline
 } $true 'UE4SS loads dlls/main.dll -- a payload at mod/ root is never enumerated'
+
+# ISOLATES THE ROUTING CHECK. Every other RED arm is over-determined: the audit traced
+# that red-wrapped and red-root-dlls each trip the required-entry check AND the routing
+# check, so deleting the routing loop entirely would leave both still reporting "caught"
+# and the regression would be invisible. This is the one shape where the routing check
+# fires ALONE -- a complete, correct tree plus one stray file under an unknown folder.
+Arm 'red-stray-toplevel' { param($r)
+    Seed $r
+    New-Item -ItemType Directory -Path (Join-Path $r 'junk') -Force | Out-Null
+    Set-Content (Join-Path $r 'junk/extra.txt') 'x' -NoNewline
+} $true 'a top-level folder matching no route is recursed into and its files scattered'
+
+# THE PAYLOAD'S BYTES. Presence-by-name passed all of these before 2026-08-26.
+Arm 'red-empty-dll' { param($r)
+    Seed $r
+    Set-Content (Join-Path $r 'mod/dlls/main.dll') '' -NoNewline
+} $true 'a zero-byte main.dll installs a mod that cannot load'
+
+Arm 'red-not-a-dll' { param($r)
+    Seed $r
+    Set-Content (Join-Path $r 'mod/dlls/main.dll') 'not a PE at all' -NoNewline
+} $true 'content without the MZ magic is not a DLL, whatever the filename says'
+
+Arm 'red-wrong-payload-sha' { param($r) Seed $r } $true 'an exact sha mismatch means the zip does not carry the payload it was handed' -Sha 'deadbeef'
+
+# ISOLATES THE StrictMode-SAFE PROPERTY ACCESS. Before the fix this arm did not report
+# FAIL -- it threw PropertyNotFoundException out of Test-PackageZip and took every
+# arm after it down with the script.
+Arm 'red-manifest-missing-key' { param($r)
+    Seed $r
+    $m = [ordered]@{ name = 'Multivoid'; version_number = '0.9.143'; website_url = ''; dependencies = @() }
+    Set-Content (Join-Path $r 'manifest.json') ($m | ConvertTo-Json -Depth 4) -NoNewline
+} $true 'a manifest merely MISSING description must FAIL the gate, never crash it'
+
+Arm 'red-miscased-entry' { param($r)
+    Seed $r
+    Remove-Item (Join-Path $r 'mod/dlls/main.dll') -Force
+    Set-Content (Join-Path $r 'mod/dlls/Main.DLL') 'MZfake' -NoNewline
+} $true 'THUNDERSTORE.md:39 -- root files are case-SENSITIVE; PS -notcontains is not'
 
 Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ""
