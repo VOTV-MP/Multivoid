@@ -48,9 +48,27 @@ Contract, from tools/coop-server-rs/src/bin/master.rs:531-553 and 761:
     GET /v1/lobbies[?version=X]  ->  200 {"lobbies": [ {row}, ... ]}
     row = lobbyId name version game proto world locked players_cur players_max age conn
 
+CONTROL CHANNEL -- this is what makes it a harness fixture rather than a static
+page. Section 8c.2's phases C (grow), D (shrink) and E (shuffle at CONSTANT
+count) each need the row set to CHANGE while the game is looking at it, and E is
+the phase that would have caught the HashMap-order defect. The first revision of
+this file claimed "mutate instantly" in its docstring while assigning the row
+list exactly once, which is a documentation claim the code flatly contradicted.
+
+    GET /control/count?n=200   grow (append; existing rows untouched) or shrink
+                               (keep a prefix, so surviving ids are stable)
+    GET /control/shuffle       reorder, SET HELD CONSTANT -- phase E
+    GET /control/state         count, order fingerprint, request + mutation counts
+
+The fingerprint is an ORDER-SENSITIVE digest of the lobbyId sequence: a count or
+a set hash cannot see a reorder, which is precisely the defect phase E exists to
+catch.
+
 Usage:
     python tools/fake_master.py --port 18080 --count 20
     python tools/fake_master.py --port 18080 --count 100 --mismatch-every 7
+    curl "http://127.0.0.1:18080/control/count?n=200"   # phase C
+    curl  http://127.0.0.1:18080/control/shuffle        # phase E
 """
 
 from __future__ import annotations
@@ -58,15 +76,39 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 
-# Must match the build under test or every row renders amber "(!)" and the
-# version-tint leg of the browser is untested. src/votv-coop/CMakeLists.txt:23
-# and include/coop/net/protocol.h:710.
-GAME_TARGET = "0.9.0n"
-PROTO = 143
+# The build identity is PARSED from the same sources CMakeLists.txt:23/29 uses --
+# NOT hand-copied. A hand-copied proto that drifts one release is a SILENT
+# failure of exactly the wrong kind: every row renders amber "(!)", the perf
+# numbers stay clean because the cost is identical, and the tester's feel verdict
+# is quietly delivered about the wrong screen. So this parses, and it EXITS if it
+# cannot -- a fixture that guesses its own contract is worse than no fixture.
+_REPO = Path(__file__).resolve().parent.parent
+_PROTOCOL_H = _REPO / "src" / "votv-coop" / "include" / "coop" / "net" / "protocol.h"
+_CMAKELISTS = _REPO / "src" / "votv-coop" / "CMakeLists.txt"
+
+
+def _parse_or_die(path: Path, pattern: str, what: str) -> str:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        raise SystemExit(f"fake_master: cannot read {path} to learn {what}: {e}")
+    m = re.search(pattern, text)
+    if not m:
+        raise SystemExit(f"fake_master: cannot find {what} in {path} -- the pattern moved. "
+                         f"Fix this rather than hard-coding, or every row renders amber and the "
+                         f"run measures the wrong screen.")
+    return m.group(1)
+
+
+GAME_TARGET = _parse_or_die(_CMAKELISTS, r'set\(VOTVCOOP_GAME_TARGET\s+"([^"]+)"\)', "the game target")
+PROTO = int(_parse_or_die(_PROTOCOL_H,
+                          r"kProtocolVersion\s*=\s*(\d+)", "kProtocolVersion"))
 
 WORDS = [
     "Kerfur", "Signal", "Meadow", "Static", "Dish", "Base", "Void", "Tape",
@@ -76,6 +118,8 @@ WORDS = [
 _state_lock = threading.Lock()
 _rows: list[dict] = []
 _hits = 0
+_mutations = 0
+_cfg = {"mismatch_every": 0, "seed": 1234}
 
 
 def make_rows(count: int, mismatch_every: int, seed: int) -> list[dict]:
@@ -106,6 +150,15 @@ def make_rows(count: int, mismatch_every: int, seed: int) -> list[dict]:
     return rows
 
 
+def _fingerprint(rows: list[dict]) -> str:
+    """Order-SENSITIVE digest of the lobbyId sequence. Phase E mutates order while
+    holding the set constant, so a test needs a value that changes on reorder --
+    a count or a set hash cannot see the defect E exists to catch."""
+    import hashlib
+    h = hashlib.sha1("|".join(r["lobbyId"] for r in rows).encode("utf-8"))
+    return h.hexdigest()[:12]
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -116,9 +169,19 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def _json(self, code: int, obj) -> None:
+        self._send(code, json.dumps(obj).encode("utf-8"))
+
     def do_GET(self) -> None:  # noqa: N802 (stdlib naming)
-        global _hits
-        path = self.path.split("?", 1)[0]
+        global _hits, _rows, _mutations
+        raw = self.path
+        path, _, query = raw.partition("?")
+        args = {}
+        for part in query.split("&"):
+            if "=" in part:
+                k, v = part.split("=", 1)
+                args[k] = v
+
         if path == "/v1/lobbies":
             with _state_lock:
                 _hits += 1
@@ -128,6 +191,51 @@ class Handler(BaseHTTPRequestHandler):
             print(f"  [fake_master] GET /v1/lobbies -> {n} rows, {len(body)} B (request #{hits})",
                   flush=True)
             return
+
+        # ---- control channel: the harness phases (8c.2 C / D / E) -------------
+        # A fixture whose row set never changes cannot drive grow, shrink or
+        # shuffle -- and shuffle is the phase that would have caught the
+        # HashMap-order defect. An earlier revision of this file claimed
+        # "mutate instantly" in its docstring while assigning _rows exactly once.
+        if path == "/control/count":
+            try:
+                n = int(args.get("n", ""))
+            except ValueError:
+                self._json(400, {"error": "n must be an integer"}); return
+            if n < 0 or n > 5000:
+                self._json(400, {"error": "n out of range 0..5000"}); return
+            with _state_lock:
+                cur = len(_rows)
+                if n <= cur:
+                    _rows = _rows[:n]            # SHRINK keeps a prefix, so ids are stable
+                else:
+                    extra = make_rows(n, _cfg["mismatch_every"], _cfg["seed"] + 1)[cur:n]
+                    _rows = _rows + extra        # GROW appends; existing rows untouched
+                _mutations += 1
+                out = {"count": len(_rows), "fingerprint": _fingerprint(_rows)}
+            print(f"  [fake_master] control: count {cur} -> {out['count']}  fp={out['fingerprint']}",
+                  flush=True)
+            self._json(200, out); return
+
+        if path == "/control/shuffle":
+            with _state_lock:
+                before = _fingerprint(_rows)
+                rng = random.Random(_cfg["seed"] + _mutations + 1)
+                rng.shuffle(_rows)
+                _mutations += 1
+                after = _fingerprint(_rows)
+                out = {"count": len(_rows), "before": before, "after": after,
+                       "changed": before != after}
+            print(f"  [fake_master] control: SHUFFLE (set constant) {before} -> {after}", flush=True)
+            self._json(200, out); return
+
+        if path == "/control/state":
+            with _state_lock:
+                self._json(200, {"count": len(_rows), "fingerprint": _fingerprint(_rows),
+                                 "requests": _hits, "mutations": _mutations,
+                                 "game": GAME_TARGET, "proto": PROTO})
+            return
+
         if path == "/healthz":
             self._send(200, b'{"ok":true}')
             return
@@ -154,6 +262,8 @@ def main() -> None:
     args = ap.parse_args()
 
     global _rows
+    _cfg["mismatch_every"] = args.mismatch_every
+    _cfg["seed"] = args.seed
     _rows = make_rows(args.count, args.mismatch_every, args.seed)
 
     srv = HTTPServer(("127.0.0.1", args.port), Handler)

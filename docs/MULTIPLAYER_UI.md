@@ -1136,7 +1136,7 @@ feels" is not a runnable instruction.
 | # | phase | what it actually tests |
 |---|---|---|
 | **A** | seed **100** synthetic rows, user scrolls | build cost at scale; scroll smoothness; scrollbar thumb; wheel feel |
-| **B** | let the 1 Hz refresh run, then press Refresh, **while scrolled down** | does the scroll POSITION survive a sync; does the row text flicker; `[HITCH]` lines |
+| **B** | let the **background refresh** run (5 s as of T2b — NOT the 1 Hz this row used to name), then press Refresh, **while scrolled down** | does the scroll POSITION survive a sync; does the row text flicker; stall count / max frame interval |
 | **C** | grow **100 → 200** | pool growth mid-scroll; does the view jump; does the scrollbar rescale |
 | **D** | shrink **200 → 50** | surplus rows are COLLAPSED, not detached — do they take zero space in the ScrollBox |
 | **E** | **shuffle at CONSTANT count** | the invariant the whole design rests on: the id a row was RENDERED with, not its index. This is the phase that would have caught the `HashMap`-order defect, and it is the one the user's own sequence does not include |
@@ -1165,7 +1165,9 @@ These are known defects in what is already committed, not predictions:
 3. **`sm::Refresh()` fires a real network fetch every second** (`:559`). The harness must seed
    synthetically and BYPASS the master — hammering the production master 200 rows deep for a UI
    test is not acceptable, and the numbers would be polluted by fetch latency anyway. The 1 Hz
-   re-fetch itself is retired in T4a (fetch on open + Refresh + a 5 s background, USER-SET).
+   re-fetch itself is retired in **T2b** (fetch on open + Refresh + a 5 s background, USER-SET) —
+   **it moved there from T4a** because the frame metric is cadence-sensitive and a baseline taken at
+   1 Hz would let the cadence change alone pay for T4b's gate.
 4. **Nothing preserves the scroll offset across a sync.** `GetScrollOffset`/`SetScrollOffset` are
    resolved (O1) and unused. **Now step T4a, ungated** — and note the 5 s cadence makes a reset
    RARER AND MORE STARTLING, not better; the content diff makes it rarer still but does **not**
