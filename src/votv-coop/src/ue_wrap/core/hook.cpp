@@ -20,6 +20,24 @@ namespace {
 // so Enable's post-enable re-read cannot miss a teardown that started mid-call.
 std::atomic<bool> g_live{false};
 
+// RETIREMENT LATCH -- one-way, never cleared (post-ship audit 2026-08-26).
+//
+// g_live was answering TWO different questions at once: "has MH_Initialize
+// succeeded" and "may a new patch arm". Those genuinely diverge after a teardown,
+// because Shutdown deliberately never calls MH_Uninitialize -- MinHook IS still
+// initialized, and we have still retired. Init() therefore answered the first
+// question with YES, which turned `if (!g_live && !Init())` in Install into a
+// RESURRECTION: it set g_live back to true and armed a fresh patch that nothing
+// would ever lift, because DoShutdown's own latch means hook::Shutdown never runs
+// a second time. The live path is not hypothetical -- dx12_capture's EclHookThread
+// is an un-joined thread that calls Install from outside the shutdown ordering
+// entirely, and DoShutdown does not wait for it.
+//
+// Two flags, but they cannot disagree harmfully: this is a monotonic LATCH, not a
+// mirror of g_live. That is what makes it different from the two-mutable-flags
+// design rejected while building the teardown fix, where neither would be authority.
+std::atomic<bool> g_retired{false};
+
 const char* StatusName(MH_STATUS s) { return MH_StatusToString(s); }
 
 // WP-2 (2026-08-22): follow-jmp-immune relay rewrite -- the root-cause fix for
@@ -90,6 +108,10 @@ bool MakeRelayFollowJmpImmune(void* trampoline, void* detour) {
 }  // namespace
 
 bool Init() {
+    // Retirement outranks MinHook's own opinion: MH_Initialize will happily report
+    // ALREADY_INITIALIZED forever, and that is exactly the answer that used to undo
+    // a completed Shutdown.
+    if (g_retired) return false;
     if (g_live) return true;
     const MH_STATUS s = MH_Initialize();
     // MH_ERROR_ALREADY_INITIALIZED is SUCCESS here, not an error. Shutdown clears
@@ -136,6 +158,16 @@ bool Install(void* target, void* detour, void** trampoline, bool followJmpImmune
         MH_RemoveHook(target);
         return false;
     }
+    // COMPARE-AFTER-ACT -- the same contract Enable documents below, and the reason
+    // this exists at all: the entry guard is check-then-act, Install is reachable
+    // from threads that never synchronise with the game thread, and an arm that
+    // lands after Shutdown's blanket disable would survive with no second teardown
+    // to lift it. Teardown wins in every interleaving.
+    if (g_retired) {
+        MH_DisableHook(target);
+        UE_LOGW("hook: install of %p raced Shutdown -- lifted again (teardown wins)", target);
+        return false;
+    }
     UE_LOGI("hook: installed on %p (trampoline %p)", target, *trampoline);
     return true;
 }
@@ -162,12 +194,13 @@ bool Enable(void* target) {
     // reachable from the RENDER thread (overlay_backend_dx12 -> dx12_capture::Rearm)
     // while the game thread is inside Shutdown, so a teardown can begin between the
     // guard and MH_EnableHook and we would re-arm a patch Shutdown had just lifted.
-    // Shutdown clears g_live BEFORE its blanket disable, so re-reading it here catches
-    // every interleaving: either we see the clear and lift our own patch, or Shutdown's
-    // blanket runs after our enable and lifts it. Both orders end disabled.
+    // Shutdown sets g_retired BEFORE its blanket disable, so re-reading it here catches
+    // every interleaving: either we see the latch and lift our own patch, or Shutdown's
+    // blanket runs after our enable and lifts it. Both orders end disabled -- and since
+    // 2026-08-26 that is true of Install too, which had this guard missing.
     // Lock-free on purpose -- Shutdown is reachable from DLL_PROCESS_DETACH under the
     // loader lock, where a mutex owned by a thread Windows already killed never unlocks.
-    if (!g_live) {
+    if (g_retired) {
         MH_DisableHook(target);
         UE_LOGW("hook: re-arm of %p raced Shutdown -- lifted again (teardown wins)", target);
         return false;
@@ -177,9 +210,14 @@ bool Enable(void* target) {
 }
 
 void Shutdown() {
-    if (!g_live.exchange(false)) return;   // one-way; also the Enable race's answer
-    // Clearing g_live FIRST is the whole ordering contract (see Enable): a re-arm that
-    // slips past its own guard re-reads the flag after MinHook returns and undoes itself.
+    // The LATCH goes first and unconditionally -- before the early return, so a
+    // Shutdown that arrives before anything was ever installed still retires the
+    // facade, and before the blanket disable, so a concurrent arm re-reads it.
+    g_retired = true;
+    if (!g_live.exchange(false)) return;   // one-way; also the double-Shutdown guard
+    // Latching retirement FIRST is the whole ordering contract (see Enable and
+    // Install): an arm that slips past its own entry guard re-reads the latch after
+    // MinHook returns and undoes itself.
     //
     // Lift every patch, free NOTHING. No MH_RemoveHook, no MH_Uninitialize: both free
     // trampoline slots, and `[V]` minhook/src/buffer.c:282 writes a linked-list pointer

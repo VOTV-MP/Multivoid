@@ -68,7 +68,5 @@ void DestroyTexture(void* id);
 // log-only, no behavior change on any RHI.
 void InstallCreationProbe();
 
-// Tear down everything this backend owns. rendererWasLive mirrors the
-// overlay's g_imguiReady latch (renderer-backend Shutdown only if Init ran).
 
 }  // namespace ui::overlay_backend

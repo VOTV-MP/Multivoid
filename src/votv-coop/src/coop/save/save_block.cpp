@@ -29,7 +29,13 @@ using SaveGameToSlotFn = bool(__fastcall*)(void* saveGameObject, void* slotNameF
                                            int32_t userIndex);
 
 // Trampoline to the un-hooked SaveGameToSlot (call to perform a real save).
-SaveGameToSlotFn g_original = nullptr;
+// NAMED *Trampoline since 2026-08-26: this is MinHook's 64-byte slot, not the
+// engine's function ([V] minhook/src/hook.c:634). The old name was the one this
+// project's rename census MISSED -- the twelfth of twelve hook::Install
+// out-params -- because that census keyed on the NAME g_orig* instead of
+// enumerating the CALL SITES it claimed to. Freeing this slot corrupts it in
+// place; see hook.h "Retirement".
+SaveGameToSlotFn g_saveGameToSlotTrampoline = nullptr;
 
 // The world-save container UClass (saveSlot_C), resolved once at install. Only
 // saves whose USaveGame IS-A this class are blocked; save_main_C (meta save:
@@ -84,7 +90,7 @@ bool DetourImpl(void* saveGameObject, void* slotNameFStr, int32_t userIndex) {
         cls && g_saveSlotClass && R::IsDescendantOfAny(cls, &g_saveSlotClass, 1);
     if (!isWorldSave) {
         // Meta/settings save (save_main_C) or an unrecognized container -> allow.
-        return g_original(saveGameObject, slotNameFStr, userIndex);
+        return g_saveGameToSlotTrampoline(saveGameObject, slotNameFStr, userIndex);
     }
     // World save on a coop client -> cancel the write. Return false = "the save
     // did not happen" (honest; the BP save flow treats it as a failed save,
@@ -147,7 +153,7 @@ void Install(coop::net::Session* session) {
     ue_wrap::hook::Init();  // idempotent
     if (!ue_wrap::hook::Install(reinterpret_cast<void*>(addr),
                                 reinterpret_cast<void*>(&SaveGameToSlotDetour),
-                                reinterpret_cast<void**>(&g_original))) {
+                                reinterpret_cast<void**>(&g_saveGameToSlotTrampoline))) {
         UE_LOGE("save_block: MinHook install on SaveGameToSlot@%p FAILED -- client "
                 "world-save block NOT active", reinterpret_cast<void*>(addr));
         g_saveSlotClass = nullptr;
