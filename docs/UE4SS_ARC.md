@@ -1346,6 +1346,87 @@ remaining question standing between WP-9 and a fully hands-off publish.
 
 ---
 
+## 8. What happens to the GitHub workflow (USER-RAISED 2026-08-26)
+
+The user asked directly: *"Что будет со старым github workflow тоже в ue4ss арку надо задокументить."*
+It is a fair question and the arc did not answer it anywhere — §7.4c decided the ARTIFACT, §7.9
+decided that CI CAN produce it, and nothing said what happens to the four YAML files in between.
+Measured 2026-08-26.
+
+### 8.1 What the chain IS today `[V]`
+
+| file | role | trigger |
+|---|---|---|
+| `release-trampoline.yml` | the only entry point | `push: tags: v*` |
+| `release-core.yml` | reusable; judge → cacheless rebuild → publish | `workflow_call` |
+| `build-core.yml` | reusable; compile + collect + upload artifact | `workflow_call` |
+| `build.yml` | manual wrapper for a cacheless build smoke | `workflow_dispatch` |
+
+`[V]` `build-core.yml:208` is a plain `cmake --build --config Release` — **it never names a target**,
+so it builds whatever `CMakeLists.txt` declares. `[V]` `:216` then collects `Release/*.dll` by GLOB,
+which today sweeps up **both** the payload and `xinput1_3.dll` and uploads them as one artifact.
+
+### 8.2 What commit 3 does to it — and the important part is what does NOT break
+
+**The two workflow files need no change at all, and that is a measured claim, not an assumption.**
+`[V]` Nothing in `build-core.yml` names the proxy: the build step names no target and the collect
+step is a glob. Delete `add_library(xinput1_3)` and the same YAML produces a one-DLL artifact with no
+edit. The `if ($dlls.Count -eq 0) { throw 'no DLLs produced' }` guard still holds.
+
+**What breaks is entirely in the PowerShell the workflows call** — which is why round 1's census hole
+mattered and why "the workflow" is the wrong unit to reason about:
+
+| site | today | after commit 3 |
+|---|---|---|
+| `publish.ps1:25,27` | `throw "expected xinput1_3.dll in $ArtifactDir"` | **HARD FAILURE.** The release cannot be cut at all. |
+| `publish.ps1:24,26,35` | demands exactly one `multivoid-<game>-<N>.dll` | becomes a demand for **one zip**, per §7.4c |
+| `ledger_lib.ps1:231` | *"You need **both** files below … + `xinput1_3.dll` (the loader)"* in EVERY release body | a false sentence in every future release |
+| `ledger_lib.ps1:149` | `$InstallFolderAnchor = 'WindowsNoEditor\VotV\Binaries\Win64'` | **has no true value** — two lanes, two paths (§8.4) |
+| `ledger_lint.ps1:64-65` | asserts both anchors appear VERBATIM in `docs/INSTALL.md` | keeps CI **GREEN over the false body**, because it checks that two documents AGREE, never that either is TRUE |
+| `tag_regex_selftest.ps1:58` | fixture map contains `xinput1_3.dll` | stale fixture |
+
+### 8.3 What it BECOMES
+
+§7.4c already decided the output: **ONE zip**, in the §7.2a r2modman layout, taken by both lanes. So
+the release lane's shape changes from *"upload two loose DLLs"* to *"assemble one zip, upload it"*.
+
+`[V]` **The precedent is already vendored in our own tree, written by the people whose loader we
+target:** `reference/unreal-shimloader/.github/workflows/release.yml:79-97` stages `icon.png` +
+`README.md` + the payload, heredocs `manifest.json` **with the version interpolated** (which is
+exactly §7.3's "generated, never hand-edited" requirement, satisfied structurally), runs
+`7z a -tzip`, and calls `gh release create` with the zip. Entirely on `windows-latest`, no
+maintainer machine. We do not need to invent this step.
+
+**The one genuinely open input is the `.pak`** (§7.9 item 1): `[V]` zero `.pak` files are tracked and
+`.gitignore:6` excludes them, so a zip assembled on the runner cannot contain one today. Note the
+scope precisely — this is about how the bytes REACH the runner, not about whether CI can zip them.
+And per the user 2026-08-26 the bundled **`scientists.pak` is a DEBT** and out of this pass, which
+means the first zip can ship without it and the pak lane rejoins later.
+
+### 8.4 The `$InstallFolderAnchor` gate does not survive, and re-typing it is not the fix
+
+This is round 2's residual and §8.2's fifth row, and it is the one place where the honest answer is
+that we do not yet have the replacement. After the weld there are two install lanes with two
+different destinations — `Binaries\Win64\Mods\Multivoid\` for the manual lane, and whatever
+r2modman's shimloader VFS decides for the managed one — so **a single anchor string has no true
+value**, and updating it to a new literal reproduces the same defect one release later.
+
+The defect is the gate's SHAPE: it certifies that the release body and `INSTALL.md` agree. Two
+documents can agree perfectly and both be wrong, which is exactly what would ship the day after
+commit 3. §7.4b specifies a zip-tree fail-closed check as the replacement — **but that is a PLAN,
+not code** (`[V]` `publish.ps1` contains no zip-tree check of any kind), and this doc has already
+been caught citing its own plan as if it were the tree. Recorded as OPEN, not as answered.
+
+### 8.5 `wire-d` / `wire-e` — cited as live, and they do not exist
+
+`[V]` `UE4SS_ARC.md:667` refers to "tripwire wire-e" as if it were a live runtime watch.
+`[V]` `VERSION_MIGRATION.md:473` says wire-d (the C loading contract) and wire-e (the safety
+premises) **"remain OWED at WP-6"**. Both statements are in this project's own docs and they
+contradict each other. Marked here as DEBT rather than quietly built, and the `:667` citation is the
+kind of sentence a future session will read as evidence.
+
+---
+
 Related: `[[project-wp2-realistic-env-test-2026-08-22]]`,
 `[[project-wp2-precut-and-trampoline-crash-2026-08-22]]`,
 `[[project-f2-ue4ss-switch-decision-2026-08-21]]`,
