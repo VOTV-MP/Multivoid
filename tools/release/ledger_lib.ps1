@@ -250,3 +250,139 @@ function Get-ReleaseBodySource {
     $m = [regex]::Match($Body, '(?m)^source:\s*([0-9a-f]{40})\s*$')
     if ($m.Success) { $m.Groups[1].Value } else { $null }
 }
+
+# --- Package identity + shape (WP-9; docs/UE4SS_ARC.md 7.2a / 7.3) ---------
+# These five are the packaging half of this library. They live HERE and not in
+# package.ps1 because publish.ps1 must re-run the identical tree predicate on the
+# artifact it downloads back -- two copies of a fail-closed check is two checks that
+# can disagree, which is the failure the one-parser rule already exists to prevent.
+
+# kProtocolVersion in the WORKING TREE -- the sibling of Get-ProtoAtCommit, which
+# reads it at a commit. Same UNREADABLE tri-state discipline as the game half: a
+# parse miss THROWS rather than returning $null into a comparison.
+function Get-ProtoFromWorktree {
+    param([string]$RepoRoot = '.')
+    $p = Join-Path $RepoRoot $script:ProtocolHeaderPath
+    if (-not (Test-Path -LiteralPath $p)) { throw "UNREADABLE build number: $p not found" }
+    foreach ($ln in (Get-Content -LiteralPath $p)) {
+        $m = [regex]::Match($ln, '^\s*inline constexpr uint16_t kProtocolVersion\s*=\s*(\d+)\s*;')
+        if ($m.Success) { return [int]$m.Groups[1].Value }
+    }
+    throw "UNREADABLE build number: kProtocolVersion not found in $p"
+}
+
+# 7.3's mapping, stated there so it cannot be misread: split the game target on '.',
+# take fields 1 and 2, strip non-digits from each (so a hypothetical 0.9n still
+# yields 0.9), and FAIL CLOSED if either is empty after stripping. The target's
+# third field and letter suffix are deliberately unused -- the build number already
+# disambiguates them, and the full Paper pair stays exact in the description.
+function ConvertTo-PackageVersion {
+    param([Parameter(Mandatory)][string]$GameTarget, [Parameter(Mandatory)][int]$Proto)
+    $f = $GameTarget.Split('.')
+    if ($f.Count -lt 2) { throw "UNREADABLE game target '$GameTarget': fewer than two dot-separated fields" }
+    $major = ($f[0] -replace '\D', '')
+    $minor = ($f[1] -replace '\D', '')
+    if (-not $major) { throw "UNREADABLE game target '$GameTarget': major field has no digits" }
+    if (-not $minor) { throw "UNREADABLE game target '$GameTarget': minor field has no digits" }
+    if ($Proto -le 0) { throw "UNREADABLE build number '$Proto': must be a positive integer" }
+    "$major.$minor.$Proto"
+}
+
+# PNG IHDR width/height. Thunderstore requires icon.png to be EXACTLY 256x256 and the
+# pre-flight checklist says to re-measure rather than trust the filename -- this is
+# that measurement, not a name check.
+function Get-PngDimensions {
+    param([Parameter(Mandatory)][string]$Path)
+    $b = [System.IO.File]::ReadAllBytes($Path)
+    if ($b.Length -lt 24) { throw "not a PNG (too short): $Path" }
+    $sig = @(137, 80, 78, 71, 13, 10, 26, 10)
+    for ($i = 0; $i -lt 8; $i++) {
+        if ($b[$i] -ne $sig[$i]) { throw "not a PNG (bad signature): $Path" }
+    }
+    # IHDR width/height are big-endian uint32 at offsets 16 and 20.
+    # MEASURED 2026-08-26: PowerShell -shl follows the LEFT operand WIDTH, so
+    # [byte]1 -shl 8 is 0, not 256. Widen to [int] first or every dimension reads 0.
+    $w = ([int]$b[16] -shl 24) -bor ([int]$b[17] -shl 16) -bor ([int]$b[18] -shl 8) -bor [int]$b[19]
+    $h = ([int]$b[20] -shl 24) -bor ([int]$b[21] -shl 16) -bor ([int]$b[22] -shl 8) -bor [int]$b[23]
+    [pscustomobject]@{ Width = $w; Height = $h }
+}
+
+# manifest.json, GENERATED (7.3 HARD REQUIREMENT). Field rules are the wiki's, with
+# our values recorded in docs/THUNDERSTORE.md section 3:
+#   name           no spaces, [A-Za-z0-9_] only
+#   version_number semver X.Y.Z, whole numbers, NO suffix
+#   description    max 250 chars (it is also the gallery subtitle)
+#   dependencies   {team}-{package}-{version}; the shimloader IS the UE4SS delivery
+#   website_url    optional VALUE, but the KEY must exist -- use "" if unused
+# 'author' is deliberately absent: it is not required and the namespace comes from
+# the uploading Team, not the file (3 of 5 field packages omit it entirely).
+function New-PackageManifest {
+    param(
+        [Parameter(Mandatory)][string]$Version,
+        [Parameter(Mandatory)][string]$GameTarget,
+        [Parameter(Mandatory)][int]$Build
+    )
+    # The Paper pair stays EXACT here -- this is the destination 7.3 names for the
+    # information the X.Y mapping drops (the game target's letter suffix).
+    $desc = "Co-op multiplayer for Voices of the Void. Host or join a session with friends. " +
+            "Multivoid $GameTarget b$Build. Modifies no game files."
+    if ($desc.Length -gt 250) { throw "manifest description is $($desc.Length) chars, max is 250" }
+    $obj = [ordered]@{
+        name           = 'Multivoid'
+        version_number = $Version
+        website_url    = 'https://multivoid.dev'
+        description    = $desc
+        dependencies   = @('Thunderstore-unreal_shimloader-1.1.7')
+    }
+    ($obj | ConvertTo-Json -Depth 4)
+}
+
+# The fail-closed tree check 7.4b requires: "an empty or mis-rooted zip is a silently
+# broken release, and this project has shipped one silently-broken artifact before."
+# Returns a list of violations (empty when the zip is well-formed).
+#
+# It asserts the two traps 7.2a measured off r2modman's own rule engine:
+#   - NO wrapping folder. A top-level directory matching no route is RECURSED INTO
+#     and its files are classified individually, so a wrapped zip scatters.
+#   - the payload is at mod/dlls/, never at the root. A root-level dlls/ matches no
+#     route and silently never loads (trap 1).
+function Test-PackageZip {
+    param([Parameter(Mandatory)][string]$ZipPath)
+    $bad = New-Object System.Collections.Generic.List[string]
+    if (-not (Test-Path -LiteralPath $ZipPath)) { $bad.Add("zip not found: $ZipPath"); return $bad }
+    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+    $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $ZipPath).Path)
+    try {
+        $names = @($zip.Entries | ForEach-Object { $_.FullName.Replace([char]92, [char]47) })
+        $required = @('manifest.json', 'icon.png', 'README.md', 'mod/enabled.txt', 'mod/dlls/main.dll')
+        foreach ($r in $required) {
+            if ($names -notcontains $r) { $bad.Add("missing required entry: $r") }
+        }
+        # Every top-level segment must be a route r2modman knows, or a root file.
+        $routes = @('mod', 'pak', 'cfg', 'overlay')
+        foreach ($n in $names) {
+            if ($n.EndsWith([char]47)) { continue }     # directory entries carry no payload
+            $seg = $n.Split([char]47)
+            if ($seg.Count -eq 1) { continue }          # a root file is always fine
+            if ($routes -notcontains $seg[0]) {
+                $bad.Add("entry '$n' sits under top-level '$($seg[0])', which matches no r2modman route -- it would be recursed into and scattered")
+            }
+        }
+        # The manifest must parse and carry a well-formed identity.
+        $me = $zip.Entries | Where-Object { $_.FullName -eq 'manifest.json' } | Select-Object -First 1
+        if ($me) {
+            $sr = New-Object System.IO.StreamReader($me.Open())
+            try { $json = $sr.ReadToEnd() } finally { $sr.Dispose() }
+            $m = $null
+            try { $m = $json | ConvertFrom-Json } catch { $bad.Add('manifest.json does not parse as JSON') }
+            if ($m) {
+                if ($m.name -notmatch '^[A-Za-z0-9_]{1,128}$') { $bad.Add("manifest name '$($m.name)' breaks the [A-Za-z0-9_] rule") }
+                if ($m.version_number -notmatch '^\d+\.\d+\.\d+$') { $bad.Add("manifest version_number '$($m.version_number)' is not a suffix-free semver triple") }
+                if ($m.description.Length -gt 250) { $bad.Add("manifest description is $($m.description.Length) chars, max 250") }
+                if ($null -eq $m.PSObject.Properties['website_url']) { $bad.Add('manifest is missing the website_url KEY (it may be empty but must exist)') }
+                if ($null -eq $m.PSObject.Properties['dependencies']) { $bad.Add('manifest is missing dependencies') }
+            }
+        }
+    } finally { $zip.Dispose() }
+    $bad
+}
