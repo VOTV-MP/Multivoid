@@ -78,7 +78,7 @@ BUILT. Evidence `HO`=hands-on · `log` · `ST`=selftest/e2e · `code` · `inf` �
 | **Grime** | decrease-only min | 2 | 2U | code | CO | snapshot |
 | **Window-cleaning** | decrease-only min | 1 | 1W | ST | CO | snapshot |
 | **Garbage-chute** | client suppress | 2 | 2U | code | PP/HA | none |
-| **ATV** | occupant pose | 4 | 4U | code | CA/HA | snapshot |
+| **ATV** | occupant pose | 5 | 5U | code | CA/HA | snapshot |
 | **Shop-order** | client→host commit | 1 | 1U | code | **ARB** | watermark-prime |
 | **Appliance** | 1-bit channel | 1 | 1U | code | CO | snapshot |
 | **Weather** (§5) | field-state | 5 | 1W · 1B · 3U | log | HA | snapshot |
@@ -164,6 +164,7 @@ a take-4 bug that a later unverified fix addressed stays at its last-measured `B
 | ATV | authority-release / throw | U | code | CA | `OnAtvRelease` | none |
 | ATV | purchased spawn | U | code | HA | `OnAtvSpawn` | snapshot (synth key) |
 | ATV | purchased destroy | U | code | HA | `OnAtvDestroy` | n/a |
+| ATV | seat contention (mount deny) | U | code | CA | PR #9 `ca89cc1e` + `c4aabe15`: `occupantSlot` per indexed ATV; the deny is a client-side PRODUCER suppression at `device_occupancy::OnUseInputPre` (`ClearAimForDispatch`), and a simultaneous mount is settled by LOWER SLOT WINS in `atv_sync::OnReliable`. Build + smoke only -- the smoke does NOT put two peers on one ATV, so the tie-break has never been observed firing | snapshot (adopt=1 carries `e.occupantSlot`, so a joiner inherits the active driver) |
 | Shop-order | new order forward | HO | code+drill | ARB | v136 `afcbff39`: the intent is a `list_store` ROW NAME only; the host PRICES it from its own table, checks its own balance, rolls its own ETA, confirms an `OrderCount()` +1 edge, then charges (`order_sync::ResolveOne`). GREEN+RED drill on DLL `899E80EDE468AEC1`; NOT hands-on | watermark-prime |
 | Appliance | on/off bool (6 classes) | U | code | CO | `g_applianceAdapter` | snapshot |
 | Container (device) | open/closed state | U | code | CO | `interactable_sync` `g_container` (`ReliableKind::ContainerState`) | snapshot |

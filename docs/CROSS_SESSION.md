@@ -31,6 +31,20 @@ that had no technical cause at all.
   simultaneously. A `git add tools/mp.py` from either one would have swept the other's uncommitted
   work into an unrelated commit.
 
+  **This HAPPENED on 2026-08-26, and the direction matters: it is not only a risk you create, it is
+  one you are exposed to.** Session A wrote three lesson rows into `docs/LESSONS.md` and left them
+  uncommitted while finishing a build; session B ran its own `/documentize`, staged `docs/LESSONS.md`,
+  and committed `941a796f` — which therefore contains session A's rows under session B's commit
+  message. Nothing was lost and nothing conflicted, so neither session noticed until A's own
+  `git diff --cached --stat` came back at 6 lines where ~50 were expected. **That diffstat is the
+  detector**: if the number of staged lines does not match the change you believe you made, stop and
+  ask who else touched the file. The cost here was only misattributed authorship in one commit; the
+  same mechanism with overlapping edits is a lost hunk.
+
+  Practical consequence: `docs/LESSONS.md`, `MEMORY.md` and the topic docs are the MOST shared files
+  in the tree, because `/documentize` writes all of them and both sessions run it. Treat them like
+  `tools/mp.py` — stage your own hunks, and check the diffstat before committing.
+
 ---
 
 ## 2. Three channels, three jobs — do not collapse them
