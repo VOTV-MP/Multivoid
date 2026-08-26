@@ -869,7 +869,11 @@ covers feel only; it does not license shipping the rest unmeasured.
 said the per-sync cost was "≈9 reflected calls" per row and "a few percent of dispatch volume". Both
 are **wrong**, and so was the arithmetic built on them. The `/qf` ran **twelve rounds** and every one of
 them overturned something; the corrections are recorded below rather than quietly patched, because
-six of them were things this doc — or a message to the user — had already asserted as fact.
+**ten** of them were things this doc — or a message to the user — had already asserted as fact: the
+"9 reflected calls" cost model, "200 rows / 1800 UWidgets", the "ms/s" framing, the 157 ns unit
+cost, a players-desc sort default, deleting the background fetch, "mp.py builds and overwrites the
+DLL", p99 as the metric, T0 as a zero-code probe, and the Rejected list's claim that a local test
+master duplicated the harness seeder.
 
 **STATUS, stated rather than implied:** the *measurements* below are `[V]` and cited. The *plan* is
 `[RD]` — nothing in T0–T8 is built, and no number in it has been produced by a run. The loop had not
@@ -890,7 +894,8 @@ predicted 0.5–1.5 ms residue.
    before the baseline is taken** (hence 5 s in T2b, not T4a) — otherwise the cadence change alone
    pays for T4b's gate and the diff looks unnecessary for a reason that has nothing to do with it.
 2. **A percentile cannot see a rare stall.** One stalled frame per sync is 0.17% of frames at 5 s —
-   an order of magnitude below the p99 cut, so p99 reports a normal frame either way. Use **max** and
+   roughly a SIXTH of the 1% p99 cut (not "an order of magnitude", as an earlier draft of this
+   very sentence said), so p99 reports a normal frame either way. Use **max** and
    a **count of frames over 2x the median**. An earlier draft specified p99 and would have measured
    nothing.
 
