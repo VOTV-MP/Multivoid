@@ -18,6 +18,7 @@
 #include <windows.h>
 
 #include <atomic>
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -40,6 +41,10 @@ using Row = coop::net::lobby::LobbyRow;
 constexpr float kWindowW  = 980.f;
 constexpr float kWindowH  = 620.f;
 constexpr float kRowH     = 64.f;
+// Frame + spacing, from the native windows (style doc section 3).
+constexpr float kBorderPx = 2.f;
+constexpr float kPadPx    = 6.f;
+constexpr float kRowGapPx = 2.f;
 // BOUNDS THE WHOLE SYNC LOOP, not just the display: `want` clamps to this, the grow
 // loop is bounded by `want`, and `total = ChildCount` therefore never exceeds it. So
 // this is a COMPUTE ceiling that happens to look like a display one.
@@ -50,20 +55,44 @@ constexpr float kRowH     = 64.f;
 // section 8c.-1, which measures why the uncached walk per row must go first --
 // raising the cap before that converts a latent defect into a 110-320 ms stall.
 constexpr int   kMaxRows  = 64;
-// A lone FSlateBrush copied on its own is still a brush: its unreflected resource handle
-// sits at +0x70 of the copy, i.e. offset 0 in the table CloneStyle takes.
-constexpr size_t kOneBrush[1] = {0};
-
 // EHorizontalAlignment / EVerticalAlignment: Fill=0 Left=1/Top=1 Center=2 Right=3/Bottom=3.
 constexpr uint8_t kFill = 0, kLeft = 1, kCenter = 2;
 // ETextJustify: Left=0 Center=1 Right=2.
 constexpr uint8_t kJustLeft = 0, kJustCenter = 1;
 
-const FLinearColor kText  {0.86f, 0.90f, 0.94f, 1.f};
-const FLinearColor kDim   {0.55f, 0.60f, 0.66f, 1.f};
-const FLinearColor kAccent{0.00f, 1.00f, 1.00f, 1.f};  // the coop cyan, as on the menu button
-const FLinearColor kAmber {1.00f, 0.78f, 0.35f, 1.f};  // version mismatch -- ported from the incumbent
-const FLinearColor kOwn   {0.62f, 0.92f, 0.70f, 1.f};
+// ---- the palette ------------------------------------------------------------------
+// docs/VOTV_UI_STYLE.md section 2. Every value is SAMPLED from the game's own menus by
+// histogram, and the set is a designed ramp rather than an accumulation -- #1A1A1A /
+// #313131 / #404040 step evenly, and #400040 (selected) and #400000 (destructive) are one
+// 0x40 component moved between channels. A colour that is not in that table is a mistake.
+//
+// THE sRGB CONVERSION IS NOT OPTIONAL. Those are sRGB byte values; FLinearColor is LINEAR,
+// and the framebuffer converts back on the way out. Writing 0x31/255 = 0.192 as a linear
+// tint puts sRGB 0.48 on screen -- #7B, more than double the intended #31 -- so the whole
+// palette would render washed out and no amount of re-picking values would fix it. This is
+// the same transform UE's FLinearColor::FromSRGBColor applies.
+inline FLinearColor Srgb(int r, int g, int b, float a = 1.f) {
+    auto f = [](int v) {
+        const float c = static_cast<float>(v) / 255.f;
+        return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f);
+    };
+    return FLinearColor{f(r), f(g), f(b), a};
+}
+
+const FLinearColor kPanel  = Srgb(0x1A, 0x1A, 0x1A);        // window fill
+const FLinearColor kBorder = Srgb(0x64, 0x64, 0x64);        // every frame in the game's menus
+const FLinearColor kRowBg  = Srgb(0x31, 0x31, 0x31);        // a list row at rest
+const FLinearColor kRowSel = Srgb(0x40, 0x00, 0x40);        // ...and selected. Fill, not text.
+const FLinearColor kText   = Srgb(0xFF, 0xFF, 0xFF);        // the default: most text is white
+const FLinearColor kAccent = Srgb(0xFF, 0x7C, 0x00);        // orange -- the interactive accent
+const FLinearColor kHover  = Srgb(0xFF, 0xFF, 0x00);        // hover is a TEXT colour, see section 4
+const FLinearColor kAmber  = Srgb(0xFF, 0xBC, 0x00);        // value emphasis; the mismatch tint
+const FLinearColor kDim    = Srgb(0xA5, 0xA5, 0xA5);        // secondary text (measured, not guessed)
+// Multivoid's own identity colour. It appears in ZERO native VOTV menus -- style doc section
+// 6 -- and whether to drop it is a PRODUCT call that belongs to the user, not a measurement.
+// It is deliberately confined to the title until they answer.
+const FLinearColor kCoopCyan{0.00f, 1.00f, 1.00f, 1.f};
+const FLinearColor kOwn    = Srgb(0x9E, 0xEA, 0xB3);        // "your server" row
 
 // ---- state (GAME THREAD ONLY unless marked) --------------------------------------
 void* g_menu     = nullptr;   // the ui_menu_C we built into (compared, never dereferenced)
@@ -79,6 +108,14 @@ void* g_backBtn  = nullptr;   // BACK, bottom-right beside the status line
 // OPENED the screen cannot be read as a click on the X sitting under the cursor.
 bool  g_prevLmb   = false;
 bool  g_lmbPrimed = false;
+
+// ---- row state (style doc section 4: hover and selection are DIFFERENT channels) ----
+// Hover recolours the row's TEXT; selection recolours the row's FILL. Both are applied on
+// a CHANGE, never per frame.
+int         g_hoverRow   = -1;   // index into the live rows, or -1
+std::string g_selectedId;        // the SELECTED LOBBY, keyed by id and not by index
+POINT       g_lastCursor{-1, -1};
+bool        g_hoverPending = false;   // one settling pass is owed after motion stops
 // ESC edge state. Primed on the first tick a screen is shown so a key already held when it
 // opens cannot synthesize a close -- the same guard multiplayer_menu's click poll uses.
 bool  g_prevEsc   = false;
@@ -100,7 +137,6 @@ bool     g_toldTheUser   = false;
 // Cross-thread: the deferred open intent and the pointer-moved flag.
 std::atomic<uint64_t> g_wantOpenMs{0};   // 0 = no intent
 std::atomic<bool>     g_wantClose{false};
-std::atomic<bool>     g_pointerMoved{false};
 constexpr uint64_t kIntentTtlMs  = 20000;  // a join that never returns to a menu must expire
 constexpr uint64_t kRefreshMs    = 1000;
 
@@ -161,6 +197,41 @@ void* AddText(void* panel, const wchar_t* initial, int32_t size, const FLinearCo
         pad[0] = 0.f; pad[1] = 0.f; pad[2] = 18.f; pad[3] = 0.f;
     }
     return t;
+}
+
+// THE FRAME. Every panel, row, header strip and value cell in VOTV's menus is a bordered
+// box with sharp corners (style doc section 3), and nothing in the game's UI floats
+// unboxed. Two stacked UImages give exactly that: an outer one carrying the border colour
+// and an inner one inset by the border width carrying the fill. A UImage with no
+// ResourceObject and only a tint draws a solid rect, which is how the game's own
+// full-screen scrim works -- so this needs no donor and no art.
+//
+// Returns the OVERLAY the caller should put content in; content lands above the fill.
+void* AddFramedBox(void* parent, const FLinearColor& fill, float borderPx) {
+    void* box = Spawn(L"Overlay", parent);
+    if (!box) return nullptr;
+    void* edge = Spawn(L"Image", box);
+    void* face = Spawn(L"Image", box);
+    if (!edge || !face) return nullptr;
+    U::SetImageTintRaw(edge, kBorder);
+    U::SetImageTintRaw(face, fill);
+    // ESlateVisibility: Visible=0 Collapsed=1 HIDDEN=2 HitTestInvisible=3
+    // SelfHitTestInvisible=4. The first version of this wrote 2 meaning "chrome, not a hit
+    // target" and got HIDDEN -- so the frame and the panel fill never drew AT ALL, and the
+    // screenshot's apparent "window" was nothing but the rows' own backgrounds stacked up
+    // with the title and footer floating outside them. 3 is the one that means what 2 was
+    // meant to mean: it draws, and it never eats a click.
+    E::SetWidgetVisibility(edge, 3);
+    E::SetWidgetVisibility(face, 3);
+    if (void* s = U::AddChild(box, edge))
+        U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign, kFill, kFill);
+    if (void* s = U::AddChild(box, face)) {
+        U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign, kFill, kFill);
+        auto* pad = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(s) +
+                                             P::off::UOverlaySlot_Padding);
+        pad[0] = pad[1] = pad[2] = pad[3] = borderPx;
+    }
+    return box;
 }
 
 // A chrome UButton with a text label, styled from a donor UButton.
@@ -232,7 +303,7 @@ void* BuildRow(void* parent) {
     // The background carries the row's state tint AND is the hit target, so it must be
     // Visible -- a SelfHitTestInvisible image answers IsHovered() == false, which would
     // look exactly like the whole approach failing.
-    U::SetImageTintRaw(bg, FLinearColor{1.f, 1.f, 1.f, 0.05f});
+    U::SetImageTintRaw(bg, kRowBg);
     E::SetWidgetVisibility(bg, 0);  // ESlateVisibility::Visible
     if (void* s = U::AddChild(ovl, bg))
         U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign, kFill, kFill);
@@ -290,11 +361,113 @@ std::wstring VersionCell(const Row& r, bool& mismatch) {
     return std::wstring(cell.begin(), cell.end());
 }
 
+// A row's five text colours, from its data and its hover state. ONE owner: the sync pass
+// and the hover edge both come through here, so "what colour is the version cell" is
+// answered in exactly one place and un-hovering cannot restore the wrong base.
+void ApplyRowTextColors(const RowParts& rp, const Row& r, bool isOwn, bool mismatch,
+                        bool hovered) {
+    // Style doc section 4: hovering turns the LABEL yellow and leaves the fill alone.
+    // That is the opposite of the ImGui incumbent, which paints behind the row.
+    const FLinearColor name = hovered ? kHover : (isOwn ? kOwn : kText);
+    const FLinearColor body = hovered ? kHover : kText;
+    const FLinearColor dim  = hovered ? kHover : kDim;
+    const FLinearColor ver  = hovered ? kHover : (mismatch ? kAmber : kDim);
+    if (rp.text[0]) E::SetTextBlockColor(rp.text[0], name);
+    if (rp.text[1]) E::SetTextBlockColor(rp.text[1], body);
+    if (rp.text[2]) E::SetTextBlockColor(rp.text[2], ver);
+    if (rp.text[3]) E::SetTextBlockColor(rp.text[3], dim);
+    if (rp.text[4]) E::SetTextBlockColor(rp.text[4], dim);
+    (void)r;
+}
+
 void SetRowText(void* block, const std::string& utf8, const FLinearColor& col) {
     if (!block) return;
     const std::wstring w(utf8.begin(), utf8.end());
     E::SetWidgetText(block, w.c_str());
     E::SetTextBlockColor(block, col);
+}
+
+// Repaint every row's FILL from the current selection. Cheap (one tint per row, no
+// reflection walk) and only ever called on a selection change.
+void RepaintRowFills() {
+    const int total = U::ChildCount(g_list);
+    for (int i = 0; i < total; ++i) {
+        RowParts rp;
+        if (!RowPartsAt(i, rp) || !rp.bg) continue;
+        const bool sel = !g_selectedId.empty() &&
+                         i < static_cast<int>(g_rowIds.size()) &&
+                         g_rowIds[static_cast<size_t>(i)] == g_selectedId;
+        U::SetImageTint(rp.bg, sel ? kRowSel : kRowBg);
+    }
+}
+
+// WHICH ROW IS UNDER THE CURSOR, evaluated ONLY when the cursor has actually moved.
+//
+// There is no cheaper way to ask. `FGeometry` has no reflected members (size 0x38, empty),
+// so the rows' screen rects are not readable and hit-testing has to go through Slate's own
+// IsHovered(). That is a UFunction dispatch per row, which is precisely the per-row cost
+// the open perf lane is about -- so it is gated twice: once on the cursor having moved at
+// all, and once on the LIST being hovered, which is a single dispatch that answers "no"
+// for every frame the pointer is anywhere else on the screen. The walk also stops at the
+// first hit. A stationary cursor costs zero dispatches.
+//
+// `NotePointerMoved()` used to exist for this and was never wired to anything -- no
+// caller, no consumer. GetCursorPos here is one syscall, needs no edit to the overlay's
+// input path, and sees movement regardless of how the message was routed; the dead seam is
+// retired with it (RULE 2).
+void UpdateHover() {
+    POINT c{};
+    if (!::GetCursorPos(&c)) return;
+    const bool moved = (c.x != g_lastCursor.x || c.y != g_lastCursor.y);
+    g_lastCursor = c;
+
+    // INVARIANT 2 (this module's header, measured): Slate's hover state is one tick behind
+    // the pointer, so a reading taken in the same tick as the move describes where the
+    // cursor WAS. Evaluating only on the moving tick would therefore leave the highlight
+    // permanently one move behind -- and, worse, STUCK there: the next tick sees no delta,
+    // skips the pass, and nothing ever corrects it.
+    //
+    // So evaluate on every moving tick AND on one settling tick after motion stops. During
+    // a sweep the highlight trails by a frame, which is 8.5 ms and invisible; when the
+    // cursor stops, the settling pass lands it on the final row.
+    if (!moved && !g_hoverPending) return;   // stationary and already settled: free
+    g_hoverPending = moved;
+
+    int hit = -1;
+    if (g_list && E::WidgetIsHovered(g_list)) {
+        const int total = U::ChildCount(g_list);
+        // THE PREVIOUS ROW IS PROBED FIRST, and that is what makes this affordable. Slate
+        // gives us no readable geometry (FGeometry has no reflected members), so the only
+        // hit-test is a UFunction per row -- the exact per-row cost the open perf lane is
+        // about. During a sweep the cursor is still on the SAME row on most frames, so one
+        // dispatch answers; the full walk with its early exit is the fallback.
+        if (g_hoverRow >= 0 && g_hoverRow < total) {
+            RowParts rp;
+            if (RowPartsAt(g_hoverRow, rp) && rp.bg && E::WidgetIsHovered(rp.bg))
+                hit = g_hoverRow;
+        }
+        for (int i = 0; hit < 0 && i < total; ++i) {
+            if (i == g_hoverRow) continue;   // already probed
+            RowParts rp;
+            if (!RowPartsAt(i, rp) || !rp.bg) continue;
+            if (E::WidgetIsHovered(rp.bg)) { hit = i; break; }
+        }
+    }
+    if (hit == g_hoverRow) return;
+
+    const int prev = g_hoverRow;
+    g_hoverRow = hit;
+    // Edge-applied: only the two rows that changed are recoloured.
+    for (int i : {prev, hit}) {
+        if (i < 0 || i >= static_cast<int>(g_rows.size())) continue;
+        RowParts rp;
+        if (!RowPartsAt(i, rp)) continue;
+        const Row& r = g_rows[static_cast<size_t>(i)];
+        const std::string own = sm::OwnLobbyId();
+        bool mismatch = false;
+        (void)VersionCell(r, mismatch);
+        ApplyRowTextColors(rp, r, !own.empty() && r.lobbyId == own, mismatch, i == hit);
+    }
 }
 
 // THE SINGLE WRITER of both the children's text and g_rowIds. Nothing else touches either,
@@ -312,9 +485,19 @@ void SyncRows() {
     for (int i = have; i < want; ++i) {
         void* row = BuildRow(g_list);
         if (!row) break;
-        if (void* s = U::AddChild(g_list, row))
+        if (void* s = U::AddChild(g_list, row)) {
             U::SetSlotAlign(s, P::off::UScrollBoxSlot_HAlign, P::off::UScrollBoxSlot_VAlign,
                             kFill, kCenter);
+            // ROW SEPARATION WITHOUT A PER-ROW BORDER, and this is a stated trade. Native
+            // rows each carry their own frame; reproducing that costs one more UImage per
+            // row, and this list's per-row cost is the exact subject of the open perf lane
+            // (MULTIPLAYER_UI section 8c.-1). A gap that lets the darker panel show through
+            // reads as a boxed row at zero extra widgets. If T6 lands a viewport pool, the
+            // widget budget stops mattering and the real frame can replace this.
+            auto* pad = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(s) +
+                                                 P::off::UScrollBoxSlot_Padding);
+            pad[0] = 0.f; pad[1] = 0.f; pad[2] = 0.f; pad[3] = kRowGapPx;
+        }
     }
     const int total = U::ChildCount(g_list);
     g_rowIds.assign(total < 0 ? 0 : total, std::string());
@@ -333,15 +516,21 @@ void SyncRows() {
         bool mismatch = false;
         const std::wstring ver = VersionCell(r, mismatch);
 
-        SetRowText(rp.text[0], isOwn ? r.name + "   (your server)" : r.name, isOwn ? kOwn : kText);
+        SetRowText(rp.text[0], isOwn ? r.name + "   (your server)" : r.name, kText);
         SetRowText(rp.text[1], std::to_string(r.playersCur) + "/" + std::to_string(r.playersMax),
                    kText);
-        if (rp.text[2]) {
-            E::SetWidgetText(rp.text[2], ver.c_str());
-            E::SetTextBlockColor(rp.text[2], mismatch ? kAmber : kDim);
-        }
+        if (rp.text[2]) E::SetWidgetText(rp.text[2], ver.c_str());
         SetRowText(rp.text[3], r.world, kDim);
         SetRowText(rp.text[4], std::to_string(r.ageSec) + "s", kDim);
+        ApplyRowTextColors(rp, r, isOwn, mismatch, i == g_hoverRow);
+        // SELECTION IS KEYED ON THE LOBBY, NOT THE ROW INDEX. The master returns lobbies
+        // from a HashMap and nothing sorts them (MULTIPLAYER_UI section 8c.-1), so a
+        // refresh can put a different server at index N -- an index-keyed selection would
+        // silently move to whatever landed there, which is how a player joins a server
+        // they did not pick.
+        if (rp.bg)
+            U::SetImageTint(rp.bg, (!g_selectedId.empty() && r.lobbyId == g_selectedId)
+                                       ? kRowSel : kRowBg);
         // The id is captured HERE, in the same pass as the text above it, so a click
         // resolves to the server the user was LOOKING at even if the master reorders.
         g_rowIds[static_cast<size_t>(i)] = r.lobbyId;
@@ -405,22 +594,25 @@ bool BuildScreen(void* switcher) {
 
     // (2) The WINDOW: a centred SizeBox holding a fill image and the content column.
     void* winBox = Spawn(L"SizeBox", ovl);
-    void* winOvl = winBox ? Spawn(L"Overlay", winBox) : nullptr;
-    void* winFill = winOvl ? Spawn(L"Image", winOvl) : nullptr;
+    // THE WINDOW IS A FRAMED BOX, not a cloned 9-slice. Until 2026-08-26 this cloned
+    // ui_saveSlots.Image_0's brush, which gave a soft borderless panel -- and every window
+    // in VOTV's own menus is a 2 px #646464 frame around a #1A1A1A fill with sharp corners
+    // (docs/VOTV_UI_STYLE.md section 3). The clone was the closest thing available before
+    // anyone had measured the real treatment; now it is measured, so we author it.
+    // `fillDonor` stays REQUIRED -- see the donor guard above; it is the canary for "did
+    // this menu's class layout move", and dropping the check would trade a loud failure
+    // for a silent one.
+    void* winOvl = winBox ? AddFramedBox(winBox, kPanel, kBorderPx) : nullptr;
     void* col    = winOvl ? Spawn(L"VerticalBox", winOvl) : nullptr;
-    if (!winBox || !winOvl || !winFill || !col) return false;
+    if (!winBox || !winOvl || !col) return false;
     U::SetSizeBoxWidth(winBox, kWindowW);
     U::SetSizeBoxHeight(winBox, kWindowH);
-    // CLONE, do not author: DrawAs and Margin live INSIDE the brush, so a clone carries the
-    // 9-slice for free and SetBrushDrawAs/SetBrushMargin (which do not exist in this build)
-    // never come up. The handle at +0x70 is zeroed by CloneStyle.
-    U::CloneStyle(winFill, P::off::UImage_Brush, fillDonor, P::off::UImage_Brush,
-                  P::off::FSlateBrush_Size, kOneBrush, 1);
-    E::SetWidgetVisibility(winFill, 0);
-    if (void* s = U::AddChild(winOvl, winFill))
+    if (void* s = U::AddChild(winOvl, col)) {
         U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign, kFill, kFill);
-    if (void* s = U::AddChild(winOvl, col))
-        U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign, kFill, kFill);
+        auto* pad = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(s) +
+                                             P::off::UOverlaySlot_Padding);
+        pad[0] = pad[1] = pad[2] = pad[3] = kPadPx;
+    }
     if (void* cw = R::FindClass(P::name::ContentWidgetClass)) {
         if (void* fn = R::FindFunction(cw, P::name::SetContentFn)) {
             ue_wrap::ParamFrame f(fn);
@@ -436,16 +628,33 @@ bool BuildScreen(void* switcher) {
     // The title row is a BOX, not a lone text block, so the X has somewhere to sit. Until
     // 2026-08-26 this screen had no chrome at all and ESC was the only way out -- the
     // user's words were "I don't even see the X to close server browser window".
-    if (void* titleRow = Spawn(L"HorizontalBox", col)) {
-        const std::string title = "MULTIPLAYER  -  " + sm::DisplayVersion();
-        const std::wstring wtitle(title.begin(), title.end());
-        g_title    = AddText(titleRow, wtitle.c_str(), 24, kAccent, kJustLeft, 1.f);
-        g_closeBtn = BuildButton(titleRow, backDonor, L"X", 20);
-        U::AddChild(col, titleRow);
+    // THE TITLE STRIP. Native windows put a centred white title on its own bordered strip
+    // (style doc section 3), so the title gets a frame of its own rather than floating.
+    // The X rides in the same strip at the right.
+    if (void* titleBox = AddFramedBox(col, kPanel, kBorderPx)) {
+        if (void* titleRow = Spawn(L"HorizontalBox", titleBox)) {
+            const std::string title = "MULTIPLAYER  -  " + sm::DisplayVersion();
+            const std::wstring wtitle(title.begin(), title.end());
+            // The one cyan left on this screen, and it is deliberate: it is Multivoid's
+            // identity, it appears in NO native VOTV menu, and whether to drop it is a
+            // product call for the user (style doc section 6) -- not something to decide
+            // by quietly restyling it while doing everything else.
+            g_title    = AddText(titleRow, wtitle.c_str(), 24, kCoopCyan, kJustCenter, 1.f);
+            g_closeBtn = BuildButton(titleRow, backDonor, L"X", 20);
+            if (void* s = U::AddChild(titleBox, titleRow))
+                U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
+                                kFill, kCenter);
+        }
+        if (void* s = U::AddChild(col, titleBox)) {
+            auto* pad = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(s) +
+                                                 P::off::UVerticalBoxSlot_Padding);
+            pad[0] = pad[1] = pad[2] = 0.f; pad[3] = kPadPx;
+        }
     }
+    // Column headers are a SECTION HEADER, and those are orange in every native window.
     void* head = Spawn(L"HorizontalBox", col);
     if (head) {
-        for (const Column& c : kColumns) AddText(head, c.title, 16, kDim, kJustLeft, c.weight);
+        for (const Column& c : kColumns) AddText(head, c.title, 16, kAccent, kJustLeft, c.weight);
         U::AddChild(col, head);
     }
     g_list = Spawn(L"ScrollBox", col);
@@ -465,10 +674,28 @@ bool BuildScreen(void* switcher) {
     // The footer mirrors the title row: the status line takes the slack, BACK sits at the
     // right. Two exits, because the game's own sub-screens carry a button_back and a
     // player who does not think to press ESC should not be stranded.
-    if (void* footRow = Spawn(L"HorizontalBox", col)) {
-        g_status  = AddText(footRow, L"", 16, kDim, kJustLeft, 1.f);
-        g_backBtn = BuildButton(footRow, backDonor, L"BACK", 18);
-        U::AddChild(col, footRow);
+    // THE FOOTER STRIP, and BACK sits at its LEFT.
+    //
+    // That placement is not a preference. Every native window that has both puts Back
+    // bottom-LEFT and its actions bottom-RIGHT -- Settings is `Back | Reset all Apply`,
+    // Keybinds is `Back | Hard reset`, the save browser is `Back` alone at the left. Our
+    // first version put BACK bottom-right, which is the CONFIRM position, so a cancel
+    // control sat where the game trains players to expect a commit (style doc section 5,
+    // gap S7). Connect/Join will land at the right when T7 adds it, and then the row reads
+    // the way every other VOTV window does.
+    if (void* footBox = AddFramedBox(col, kPanel, kBorderPx)) {
+        if (void* footRow = Spawn(L"HorizontalBox", footBox)) {
+            g_backBtn = BuildButton(footRow, backDonor, L"BACK", 18);
+            g_status  = AddText(footRow, L"", 16, kText, kJustLeft, 1.f);
+            if (void* s = U::AddChild(footBox, footRow))
+                U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
+                                kFill, kCenter);
+        }
+        if (void* s = U::AddChild(col, footBox)) {
+            auto* pad = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(s) +
+                                                 P::off::UVerticalBoxSlot_Padding);
+            pad[0] = pad[1] = pad[3] = 0.f; pad[2] = kPadPx;
+        }
     }
 
     g_root  = root;
@@ -533,7 +760,6 @@ void Close() {
 
 bool IsOpen() { return g_shown; }
 
-void NotePointerMoved() { g_pointerMoved.store(true, std::memory_order_relaxed); }
 
 void OnMenuTick(void* menu, void* switcher) {
     if (!Armed() || !menu || !switcher) return;
@@ -648,8 +874,20 @@ void OnMenuTick(void* menu, void* switcher) {
         if (releaseEdge && ui::input_focus::IsOurWindowForeground()) {
             if (g_closeBtn && E::WidgetIsHovered(g_closeBtn)) { Hide("X"); return; }
             if (g_backBtn  && E::WidgetIsHovered(g_backBtn))  { Hide("BACK"); return; }
+            // A click on a hovered row SELECTS it. The row under the cursor is already
+            // known from the hover pass, so this costs no extra dispatch.
+            if (g_hoverRow >= 0 && g_hoverRow < static_cast<int>(g_rowIds.size())) {
+                const std::string& id = g_rowIds[static_cast<size_t>(g_hoverRow)];
+                if (!id.empty() && id != g_selectedId) {
+                    g_selectedId = id;
+                    RepaintRowFills();
+                    UE_LOGI("server_browser_native: row selected (%s)", id.c_str());
+                }
+            }
         }
     }
+
+    UpdateHover();
 
     const uint64_t now = ::GetTickCount64();
     if (now - g_lastRefreshMs >= kRefreshMs) {

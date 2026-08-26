@@ -71,8 +71,5 @@ bool IsOpen();
 // no-ops and retries next tick). Builds once per menu instance, fail-closed on donors.
 void OnMenuTick(void* menu, void* switcher);
 
-// The WndProc's only contribution: the pointer moved. See invariant 2 -- the detour runs
-// before the engine sees the message, so it may not evaluate hover itself.
-void NotePointerMoved();
 
 }  // namespace ui::server_browser_native

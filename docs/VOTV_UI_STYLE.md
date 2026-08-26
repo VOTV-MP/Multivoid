@@ -128,20 +128,34 @@ per-cell text colour for hover, and row fill for selection.
 As of `95d18cc5` the browser is structurally right and stylistically foreign. The gap, in the order
 it should close:
 
-| # | gap | target |
-|---|---|---|
-| S1 | No panel border. The window is a cloned 9-slice from `ui_saveSlots.Image_0` with no frame. | 2 px `#646464` frame, `#1A1A1A` fill |
-| S2 | Title is cyan and left-aligned, on no strip. | white, centred, own bordered header strip |
-| S3 | Rows have a flat `rgba(1,1,1,0.05)` tint and no border. | `#313131` fill, thin border, per-row box |
-| S4 | **No hover.** The user's report. | label cells → `#FFFF00` on hover |
-| S5 | **No selection.** No selected row exists yet at all. | row fill → `#400040` |
-| S6 | Column headers are dim grey. | orange `#FF7C00`, matching a section header |
-| S7 | The X / BACK buttons carry a cloned `button_back` style but authored white labels. | orange `#FF7C00` labels; BACK belongs bottom-**LEFT**, not bottom-right |
-| S8 | Version-mismatch tint is amber `#FFBC00`-ish by accident. | keep, but say so deliberately — amber is in the palette |
-| S9 | Status line is dim grey, free-floating. | white, in a bordered footer strip |
+**STATUS 2026-08-26: S1-S7 and S9 are BUILT** (`mp.py browser --fake-master 30` ALL PASS, and the
+capture shows the frames). S8 was already correct. What remains open is listed under the table.
 
-**S7 contains a real inversion**: our BACK is bottom-RIGHT, and every native window puts Back
-bottom-LEFT with the actions on the right. That reads as "confirm" placement for a cancel action.
+| # | gap | target | state |
+|---|---|---|---|
+| S1 | No panel border. The window is a cloned 9-slice from `ui_saveSlots.Image_0` with no frame. | 2 px `#646464` frame, `#1A1A1A` fill | **DONE** — `AddFramedBox` |
+| S2 | Title is cyan and left-aligned, on no strip. | white, centred, own bordered header strip | **DONE** |
+| S3 | Rows have a flat `rgba(1,1,1,0.05)` tint and no border. | `#313131` fill, thin border, per-row box | **DONE** (fill; see below) |
+| S4 | **No hover.** The user's report. | label cells → `#FFFF00` on hover | **DONE** — `UpdateHover` |
+| S5 | **No selection.** No selected row exists yet at all. | row fill → `#400040` | **DONE** — keyed on `lobbyId` |
+| S6 | Column headers are dim grey. | orange `#FF7C00`, matching a section header | **DONE** |
+| S7 | The X / BACK buttons carry a cloned `button_back` style but authored white labels. | orange `#FF7C00` labels; BACK belongs bottom-**LEFT**, not bottom-right | **DONE** — BACK moved LEFT |
+| S8 | Version-mismatch tint is amber `#FFBC00`-ish by accident. | keep, but say so deliberately — amber is in the palette | **DONE** — kept, deliberately |
+| S9 | Status line is dim grey, free-floating. | white, in a bordered footer strip | **DONE** |
+
+**S7 contained a real inversion** and is fixed: BACK was bottom-RIGHT, the CONFIRM position in
+every native window, for a cancel action. It is now bottom-LEFT; Connect/Join takes the right when
+T7 adds it.
+
+**Still open after S1-S9:**
+
+* **Per-row borders.** Native rows each carry their own frame; ours get separation from a 2 px gap
+  that lets the darker panel show through. A real frame costs one more `UImage` per row, and this
+  list's per-row cost is the exact subject of the open perf lane (`MULTIPLAYER_UI.md` §8c.-1). If T6
+  lands a viewport pool the widget budget stops mattering and the frame can replace the gap.
+* **The list's first row sits tight under the column header** — visible in the capture. Cosmetic,
+  measured, not yet chased.
+* **The expander / two-column idiom** (§6) — not adopted, on purpose.
 
 ---
 

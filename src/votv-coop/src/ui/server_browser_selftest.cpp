@@ -8,6 +8,7 @@
 #include "ui/server_browser_selftest.h"
 
 #include "ui/server_browser_native.h"   // IsOpen()/Open() -- the click phases drive the real screen
+#include "ui/input_focus.h"            // synthesized input only lands in a FOREGROUND window
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/sdk_profile.h"
@@ -148,26 +149,33 @@ void LogWheelFields(void* list) {
 // pointer position (measured 2026-08-26 -- the probe made exactly that mistake).
 void Tick(void* scrim, void* list, void* closeBtn) {
     if (g_selfCheckStep < 0 || !scrim) return;
-    // A NULL ACTIVE WINDOW IS A WAIT, NOT A FAULT -- and never a SILENT one.
+    // WE DRIVE INPUT, SO WE MUST OWN THE FOREGROUND -- and this is the root of every
+    // intermittency this instrument showed on 2026-08-26.
     //
-    // `GetActiveWindow()` reports the active window OF THE CALLING THREAD, and it reads
-    // null transiently while the menu is still being constructed. This used to disarm the
-    // instrument outright on the first null, printing nothing, so the whole self-check
-    // vanished and the run reported every verdict as "never ran" -- which reads as a
-    // missing feature rather than as a probe that gave up. MEASURED 2026-08-26: the run at
-    // 13:24 passed all four verdicts and the one at 13:27 logged not a single phase, from
-    // the same binary path, differing only in when the first tick landed. Moving this call
-    // above the `!g_shown` return (so the click phases can re-open the screen) is what
-    // widened that window.
-    HWND hwnd = ::GetActiveWindow();
+    // `keybd_event` and `mouse_event` inject into the SYSTEM input queue; they land in
+    // whatever window is foreground at that instant, not in ours. So a run where the game
+    // is not foreground silently sends ESC and the click somewhere else and then reports
+    // "the screen did not close" -- an accusation against the feature for something the
+    // harness did. That is exactly what happened: ESC failed at 13:24 and passed at 13:32,
+    // the X click failed at 13:47 and passed at 13:32, and the wheel failed at 13:47 and
+    // passed at 13:44, all on code paths that could not tell those pairs apart.
+    //
+    // `GetActiveWindow()` was the wrong question twice over: it reports the active window
+    // of the CALLING THREAD (null transiently while the menu is still being built) and it
+    // says nothing about who will receive injected input. `GetForegroundWindow()` plus the
+    // existing ownership predicate answers the question we actually have. Not ours is a
+    // bounded WAIT, and a LOUD disarm -- never a silent one, which is how the whole
+    // self-check once vanished from a run and read as a missing feature.
+    HWND hwnd = ::GetForegroundWindow();
     RECT cr{};
-    if (!hwnd || !::GetClientRect(hwnd, &cr)) {
+    if (!hwnd || !ui::input_focus::IsOurWindowForeground() || !::GetClientRect(hwnd, &cr)) {
         if (!g_windowWaitStartMs) g_windowWaitStartMs = ::GetTickCount64();
         if (::GetTickCount64() - g_windowWaitStartMs >= kWindowWaitMs) {
-            UE_LOGE("server_browser_native: SELFTEST DISARMED -- no active window for this "
-                    "thread after %llu ms (hwnd=%p), so no phase can run. Every verdict "
-                    "below will be reported as ABSENT; that is this line's fault, not the "
-                    "feature's.",
+            UE_LOGE("server_browser_native: SELFTEST DISARMED -- our window was not the "
+                    "FOREGROUND window for %llu ms (fg=%p), so any key or click this test "
+                    "synthesizes would land in someone else's window. Every verdict below "
+                    "is ABSENT because the harness stood down, not because the feature is "
+                    "missing. Give the game focus and re-run.",
                     static_cast<unsigned long long>(kWindowWaitMs), hwnd);
             g_selfCheckStep = -1;
         }
