@@ -867,7 +867,7 @@ covers feel only; it does not license shipping the rest unmeasured.
 
 **THIS SECTION REPLACES THE PRE-`/qf` COST MODEL WHOLE.** The text that stood here until 2026-08-26
 said the per-sync cost was "≈9 reflected calls" per row and "a few percent of dispatch volume". Both
-are **wrong**, and so was the arithmetic built on them. The `/qf` ran **eleven rounds** and every one of
+are **wrong**, and so was the arithmetic built on them. The `/qf` ran **twelve rounds** and every one of
 them overturned something; the corrections are recorded below rather than quietly patched, because
 six of them were things this doc — or a message to the user — had already asserted as fact.
 
@@ -997,7 +997,7 @@ Each step is gated on the previous. Thresholds are written down **before** the r
 
 | # | step | gate |
 |---|---|---|
-| **T0** | **DOES IT SCROLL AT ALL.** Everything below assumes yes: T2b builds a scroll drive, T4a preserves a scroll offset, and T6 decides a question that is *entirely* about scrolling. **If the answer is NO there is currently no step that prices "make it scroll"** — that work would have to be added here, ahead of everything. **It needs ROWS, which is why the first draft of this row was wrong**: at the live master's ~2 lobbies the list does not overflow the 7.6-row viewport, so there is nothing to scroll and no scrollbar to grab. **Zero-code route:** point `VOTVCOOP_MASTER_URL` (env beats every layer, `config.cpp:481`) at a throwaway local server serving ~20 lobbies — under `kMaxRows`, over the viewport — run `mp.py browser`, wheel, diff two screenshots. No mod change and no log line required. This is the ONE justified use of the local-master seeder rejected below: as a **pre-build probe** it duplicates nothing, because the harness it would otherwise duplicate does not exist yet. Caveat: `mp.py` deploys, so it overwrites whatever DLL is installed. | none |
+| **T0** | **DOES IT SCROLL AT ALL.** Everything below assumes yes: T2b builds a scroll drive, T4a preserves a scroll offset, and T6 decides a question that is *entirely* about scrolling. **If the answer is NO there is currently no step that prices "make it scroll"** — that work would have to be added here, ahead of everything. **It needs ROWS**: at the live master's ~2 lobbies the list does not overflow the viewport, so there is nothing to scroll and no scrollbar to grab — seed it with `tools/fake_master.py` (see below) via `VOTVCOOP_MASTER_URL`. **AND IT NEEDS A POSITIVE CONTROL, FIRST.** An unchanged screenshot is three-way ambiguous — *the wheel never arrived* / *the ScrollBox does not scroll* / *the capture beat Slate's layout* — which is the exact shape of the ESC selftest that reported ALL PASS on a total failure. So: drive `SetScrollOffset` directly (a dev hook; both it and `GetScrollOffset` are already resolved and unused), prove the capture CAN show a scrolled list, and only then does a wheel result mean anything. **This makes T0 a small code change, not the zero-code probe an earlier draft claimed.** | none |
 | **T1** | **The X (+ Back)** via the shipped release-edge poll (`multiplayer_menu.cpp:253-271`) + a cloned `UButton`. `Close()`'s cross-thread path gets a driven test **shown RED first** — its first caller must not be its first proof. | T0 |
 | **T2a** | **The instrument**: re-clock the menu frame counter to QPC; frame-interval **max + stall count** (NOT p99 — see above); call `perf_probe::Sample()` at the menu; a `Scope` around `SyncRows`; a MENU-TICK-vs-PRESENT counter. Behaviour-neutral. **Shown RED by an injected stall** before it is trusted. | none |
 | **T2b** | **The rig**: raise `kMaxRows` + LOG truncation; the section-8c seeder; scroll drive; **and the 5 s cadence, moved here from T4a**. The frame statistic is cadence-SENSITIVE — 5x fewer syncs is 5x fewer stalls — so baselining at 1 Hz and re-reading at 5 s would let the cadence change alone pay for T4b's gate. Do not baseline a cadence you intend to discard. | none |
@@ -1079,11 +1079,8 @@ commit.
   +0x0140). **`[V]` VOTV uses it NOWHERE** — zero hits across the whole reflected BP set — so there is
   no donor `EntryWidgetClass`, no in-game precedent, and whether `UListViewBase` accepts a foreign
   entry class at runtime without a `check()` is unknown. **A spike, not a plan**; T5's run probes it.
-- **A second seeding mechanism** (a local test master via `VOTVCOOP_MASTER_URL`, which env-beats every
-  other layer, `config.cpp:481`). Designed, then **dropped**: the section-8c harness IS the instrument,
-  and standing up a parallel seeder was two implementations of one concept (RULE 2). The env override
-  remains the right tool if a *parse-path* measurement is ever wanted, and the schemeless-means-TLS
-  grammar means a local plaintext server must be addressed `http://127.0.0.1:PORT`.
+- **A second seeding mechanism.** An earlier draft rejected "a local test master" as duplicating the section-8c harness seeder. **That rejection was WRONG and is retracted: they are the SAME artifact.** The harness needs a synthetic row source; a local master IS that source; there was never a second implementation to reject. Shipped as `tools/fake_master.py`.
+  **Why not `tools/coop_master_server.py`, which already serves `/v1/lobbies` and is already wired to the game by `master_fetch_probe.py:77`:** that one is a master EMULATOR carrying the production DoS semantics — `MAX_LOBBIES_PER_IP = 8` (`:103`) and `RL_CREATE` 10 per 60 s (`:108`), with every seed arriving from 127.0.0.1. Eight rows against a ~7.6-row viewport is **0.4 rows of scroll**, which reproduces the two-lobby problem one level down; and relaxing those caps would degrade the fidelity that is the emulator's whole point. A **fixture** (return N rows, mutate instantly, deterministic per seed) and an **emulator** (lobby lifecycle, heartbeats, TTL, rate limits) are different concepts, and section 8c.3 already required the fixture: *"the harness must seed synthetically and BYPASS the master"*.
 
 #### 8c.0 The blocker the user named, and it is worse than a missing button `[V]`
 

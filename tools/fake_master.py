@@ -1,16 +1,40 @@
 #!/usr/bin/env python3
-"""fake_master.py -- a throwaway local master serving a synthetic lobby list.
+"""fake_master.py -- the row FIXTURE for the native server browser: a local master
+serving a synthetic lobby list.
 
-WHY THIS EXISTS. The native server browser has never rendered more than the live
-master's ~2 lobbies, so every cost number in docs/MULTIPLAYER_UI.md section 8c.-1
-is arithmetic over measured unit costs rather than an end-to-end timing, and its
-step T0 ("does the wheel scroll this widget at all") is not even runnable: at 2
-rows the list does not overflow the 7.6-row viewport, so there is no scrollbar
-and nothing to scroll.
+WHAT THIS IS. The seeder that docs/MULTIPLAYER_UI.md section 8c calls for -- *"the
+harness must seed synthetically and BYPASS the master"* (8c.3) -- and the row
+source for step T0. An earlier draft of 8c.-1 rejected "a local test master" as
+DUPLICATING the harness seeder; that was wrong and is retracted in the doc. They
+are the same artifact: the harness needs a synthetic row source, and this is it.
 
-This serves N rows so those questions become answerable WITHOUT touching the mod.
+WHY NOT tools/coop_master_server.py, which already serves /v1/lobbies and is
+already wired to the game by master_fetch_probe.py:77. That one is a master
+EMULATOR and carries the production DoS semantics on purpose -- MAX_LOBBIES_PER_IP
+= 8 (:103) and RL_CREATE 10 per 60 s (:108) -- while every seed here arrives from
+127.0.0.1. Eight rows against a viewport of roughly seven reproduces the very
+problem this exists to escape, and relaxing those caps would degrade the fidelity
+that is the emulator's whole point. A FIXTURE (return N rows, mutate instantly,
+deterministic per seed) and an EMULATOR (lobby lifecycle, heartbeats, TTL, rate
+limits) are different concepts.
+
+WHY IT IS NEEDED AT ALL. The browser has never rendered more than the live
+master's ~2 lobbies, so every cost number in section 8c.-1 is arithmetic over
+measured unit costs rather than an end-to-end timing -- and T0 ("does the wheel
+scroll this widget at all") is not merely unmeasured but UNRUNNABLE, because at
+2 rows the list does not overflow the viewport and there is no scrollbar.
+(The viewport is ~7.6 rows by arithmetic over assumed title/header/status
+heights; it has NOT been measured. 20 rows clears any plausible value.)
+
 `VOTVCOOP_MASTER_URL` beats every other config layer (config.cpp:481), so
 pointing the game at `http://127.0.0.1:<port>` is the whole integration.
+
+NOTE T0 STILL NEEDS A POSITIVE CONTROL that this file cannot provide: an
+unchanged screenshot is ambiguous between "the wheel never arrived", "the
+ScrollBox does not scroll" and "the capture beat Slate's layout". Drive
+SetScrollOffset from a dev hook first and prove the capture CAN show a scrolled
+list, or a green run means nothing -- the ESC selftest reported ALL PASS on a
+total failure for exactly this reason.
 
 SCHEME MATTERS. The master URL grammar is SCHEMELESS = SECURE
 (http_client.cpp:50-72): a bare `host:port` means TLS. A plaintext local server
