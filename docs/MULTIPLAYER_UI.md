@@ -867,9 +867,9 @@ covers feel only; it does not license shipping the rest unmeasured.
 
 **THIS SECTION REPLACES THE PRE-`/qf` COST MODEL WHOLE.** The text that stood here until 2026-08-26
 said the per-sync cost was "≈9 reflected calls" per row and "a few percent of dispatch volume". Both
-are **wrong**, and so was the arithmetic built on them. The `/qf` ran **ten rounds** and every one of
+are **wrong**, and so was the arithmetic built on them. The `/qf` ran **eleven rounds** and every one of
 them overturned something; the corrections are recorded below rather than quietly patched, because
-five of them were things this doc — or a message to the user — had already asserted as fact.
+six of them were things this doc — or a message to the user — had already asserted as fact.
 
 **STATUS, stated rather than implied:** the *measurements* below are `[V]` and cited. The *plan* is
 `[RD]` — nothing in T0–T8 is built, and no number in it has been produced by a run. The loop had not
@@ -877,10 +877,22 @@ returned "that holds" when this was written; an earlier revision of this heading
 converged, which was a status label ahead of its evidence.
 
 **MEASUREMENT PROTOCOL, so a gate is a decision and not a coin flip.** Every threshold below is read
-from **≥5 repeats**, reported as **median and p95**, at each of 0 / 50 / 100 / 200 rows. A gate whose
+from **≥5 repeats**, reported as **median and max**, at each of 0 / 50 / 100 / 200 rows. A gate whose
 threshold falls inside the run-to-run spread is **not decidable** and must be re-cut before it is
 used — the first draft of T4b failed exactly this test, thresholding at 1 ms against its own
 predicted 0.5–1.5 ms residue.
+
+**Two properties of the metrics, each of which invalidated an earlier draft of this section:**
+
+1. **The frame metric is cadence-SENSITIVE; the `Scope` metric is not.** `Scope` asks "does ONE sync
+   push a frame over budget", which is independent of how often syncs happen. Stalls-per-second is
+   not: 5x fewer syncs is 5x fewer stalls. So the cadence must be **fixed at its shipping value
+   before the baseline is taken** (hence 5 s in T2b, not T4a) — otherwise the cadence change alone
+   pays for T4b's gate and the diff looks unnecessary for a reason that has nothing to do with it.
+2. **A percentile cannot see a rare stall.** One stalled frame per sync is 0.17% of frames at 5 s —
+   an order of magnitude below the p99 cut, so p99 reports a normal frame either way. Use **max** and
+   a **count of frames over 2x the median**. An earlier draft specified p99 and would have measured
+   nothing.
 
 ##### The cost model, corrected `[V]`
 
@@ -925,7 +937,12 @@ So the walk fix is a **prerequisite for raising the cap**, not an optimisation b
 `SyncRows` runs inside one `ui_menu_C::Tick` post-observer, so every walk in a pass lands in **one
 frame**. Quoting this as "70–100 ms/s" (as an earlier draft of this section and two messages to the
 user did) understates it: it is **one frame at ~100 ms among neighbours at ~8.5 ms**. A visible
-once-per-second hitch. **The deciding metric is therefore max frame interval / p99, never mean FPS.**
+once-per-second hitch. **The deciding metric is therefore max frame interval + a STALL COUNT,
+never mean FPS and never p99.** A percentile cannot see this: at 117 fps one stalled frame per sync
+is **0.85% of frames at 1 Hz and 0.17% at the shipping 5 s cadence** — both below the p99 cut, so
+p99 reports a normal frame whether or not the defect exists. A rare-but-severe event needs a **max**
+and a **count of frames over 2x the median**; the percentile was chosen before that arithmetic was
+done.
 
 ##### The instruments named in the old text do not work here `[V]`
 
@@ -982,11 +999,11 @@ Each step is gated on the previous. Thresholds are written down **before** the r
 |---|---|---|
 | **T0** | **DOES IT SCROLL AT ALL.** Everything below assumes yes: T2b builds a scroll drive, T4a preserves a scroll offset, and T6 decides a question that is *entirely* about scrolling. **If the answer is NO there is currently no step that prices "make it scroll"** — that work would have to be added here, ahead of everything. **It needs ROWS, which is why the first draft of this row was wrong**: at the live master's ~2 lobbies the list does not overflow the 7.6-row viewport, so there is nothing to scroll and no scrollbar to grab. **Zero-code route:** point `VOTVCOOP_MASTER_URL` (env beats every layer, `config.cpp:481`) at a throwaway local server serving ~20 lobbies — under `kMaxRows`, over the viewport — run `mp.py browser`, wheel, diff two screenshots. No mod change and no log line required. This is the ONE justified use of the local-master seeder rejected below: as a **pre-build probe** it duplicates nothing, because the harness it would otherwise duplicate does not exist yet. Caveat: `mp.py` deploys, so it overwrites whatever DLL is installed. | none |
 | **T1** | **The X (+ Back)** via the shipped release-edge poll (`multiplayer_menu.cpp:253-271`) + a cloned `UButton`. `Close()`'s cross-thread path gets a driven test **shown RED first** — its first caller must not be its first proof. | T0 |
-| **T2a** | **The instrument**: re-clock the menu frame counter to QPC; frame-interval max/p99; call `perf_probe::Sample()` at the menu; a `Scope` around `SyncRows`; a MENU-TICK-vs-PRESENT counter. Behaviour-neutral. **Shown RED by an injected stall** before it is trusted. | none |
-| **T2b** | **The rig**: raise `kMaxRows` + LOG truncation; the section-8c seeder; scroll drive. | none |
+| **T2a** | **The instrument**: re-clock the menu frame counter to QPC; frame-interval **max + stall count** (NOT p99 — see above); call `perf_probe::Sample()` at the menu; a `Scope` around `SyncRows`; a MENU-TICK-vs-PRESENT counter. Behaviour-neutral. **Shown RED by an injected stall** before it is trusted. | none |
+| **T2b** | **The rig**: raise `kMaxRows` + LOG truncation; the section-8c seeder; scroll drive; **and the 5 s cadence, moved here from T4a**. The frame statistic is cadence-SENSITIVE — 5x fewer syncs is 5x fewer stalls — so baselining at 1 Hz and re-reading at 5 s would let the cadence change alone pay for T4b's gate. Do not baseline a cadence you intend to discard. | none |
 | **T2c** | **BASELINE** at 50 / 100 / 200 rows. | — |
 | **T3** | **READS -> RAW** (`Slots@+0x0108` / `Content@+0x0030`) + **WRITES -> FnCache** (`GetContent`, `SetContent` into `umg_build.cpp`'s table). Re-measure. | **not earned if** at 50 rows the `SyncRows` Scope median < 4 ms AND the max frame interval exceeds the 0-row baseline max by < 8 ms |
-| **T4a** | **Ungated**: stable order; scroll-offset preservation across structural change (`GetScrollOffset`/`SetScrollOffset`, both resolved, both unused today — section 8c.3 ceiling #4); the 5 s cadence. These ship on their own merits. | none |
+| **T4a** | **Ungated**: stable order; scroll-offset preservation across structural change (`GetScrollOffset`/`SetScrollOffset`, both resolved, both unused today — section 8c.3 ceiling #4). Ship on their own merits. (The 5 s cadence was here; it moved to T2b as a measurement confound.) | none |
 | **T4b** | **The content diff** keyed on `lobbyId` + locally-derived age (coarsened or visible-only). | **not earned if** after T3 the `SyncRows` Scope median at 50 rows < 4 ms — i.e. one sync cannot push a frame over budget. Read AFTER T4a so the cadence is already 5 s. |
 | **T5** | **The full section-8c harness**: phases A–G incl. D (shrink), E (shuffle at constant count), G (GC), plus section 8c.4's un-gated id-reconcile selftest **shown RED first**. **BLOCKED ON the F1 hazard below** — the MANUAL feel phase hands the user a keyboard, and F1 kills scrolling TODAY. | — |
 | **T6** | **Decide the row model.** Outcomes: keep widget-per-row (**live**), viewport pool (~9 widgets / 81 UWidgets vs 576), or `UListView` (a spike — see below). | T5's machine verdict |
@@ -1000,12 +1017,12 @@ frames):
 | instrument | answers | gates |
 |---|---|---|
 | `SyncRows` Scope (QPC, µs) | is **our code** cheap | T3, T4b |
-| frame-interval max/p99 | does the **list** cost frames | T6 |
+| frame-interval **max + stall count** | does the **list** cost frames | T6 |
 
 **The verdict is MACHINE, and it is two-part.** Per `[[feedback-autonomous-evidence-is-the-ceiling]]`
 (USER 2026-08-25: *"When im on pc i wont test it either"*), section 8c's scoped feel-exception does
 **not** license making T6 *depend* on a hands-on. Correctness = the un-gated id-reconcile selftest +
-phases D/E/G. Performance = max/p99 + the `SyncRows` attribution. **Feel corroborates; it never
+phases D/E/G. Performance = max + stall count + the `SyncRows` attribution. **Feel corroborates; it never
 gates.**
 
 **The product requirement is "no perceptible cost at REALISTIC loads"** — tens of lobbies, which is
