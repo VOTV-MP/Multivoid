@@ -33,6 +33,36 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 1. How to work (process / working agreements)
 
+- **A GATE THAT CHECKS NAMES HAS NOT CHECKED CONTENTS -- and it is loudest about what matters least.**
+  2026-08-26, found by a post-ship audit. `Test-PackageZip` refused wrapped roots, missing manifests,
+  illegal names and suffixed versions -- every check presence-by-NAME -- and **read not one byte of
+  `mod/dlls/main.dll`**, so a zero-byte or non-PE payload passed all of them and the packager printed
+  `PACKAGE OK`. The contrast is inside the same commit: `Get-PngDimensions` was written to re-measure
+  `icon.png` under the comment *"re-MEASURE it, never trust the filename"* -- applied to a 123 KB
+  decoration and not to the 17 MB artifact the package exists to deliver. `[V]` `UE4SS_ARC` §7.9
+  already records this project shipping wrong bytes once, from *"a payload picked by mtime"*. **The
+  blind spot is invisible from inside the gate**: every test you would naturally write against a name
+  check is a test about names, so its drill passed with 7 RED arms, none seeding a bad payload. *Look
+  FIRST:* list what the gate OPENS vs what it merely NAMES -- everything in the second column is an
+  unchecked assumption; and reject the tempting fix, a size floor, because a threshold is a guess and
+  a truncated download still starts with `MZ`. The arbitrary-number-free legs are non-empty + magic
+  bytes, plus an EXACT sha whenever the caller knows what it handed in.
+  `memory/lesson_a_gate_that_checks_names_has_not_checked_contents.md`
+
+- **IF THE ACCEPTANCE TEST *CONSUMES* AN ARTIFACT, THAT ARTIFACT IS A PRECONDITION -- NOT THE
+  DELIVERABLE IT LOOKS LIKE.** 2026-08-26. The user's push gate was "tested manually AND via
+  r2modman"; their ordering words were *"Сначала доделать, потом zip"*, and the first design duly put
+  packaging last. `[V]` But `UE4SS_ARC` §7.8 + `THUNDERSTORE.md`'s checklist define that control as
+  r2modman's **"Import local mod"**, which takes a **ZIP** -- so with no zip the gate could never
+  lift, hands-on being closed left no human path either, and **the plan's last step was the input to
+  the gate that authorised the plan.** Not merely a worse order: unsatisfiable by construction, and
+  invisible from inside the work because every step of it would have succeeded. *Look FIRST:* write
+  the acceptance test's INPUTS down before ordering the work, and read a user gate as a contract with
+  inputs rather than as a milestone. **And look for two referents before overriding anyone** -- "zip"
+  meant both the artifact (a precondition) and the irreversible Thunderstore upload (genuinely last,
+  and the user confirmed it stays last), so splitting the word satisfied both the rule and the request.
+  `memory/lesson_the_acceptance_tests_input_is_a_precondition_not_a_deliverable.md`
+
 - **A STANDING AUDIT RULE OUTRANKS A SESSION-LEVEL AGENT BAN -- WHEN TWO INSTRUCTIONS COLLIDE, THE
   ONE THAT BUYS EVIDENCE WINS.** USER RULE 2026-08-26, verbatim: *"Audit agents for shipped code is
   an exception to the 'don't spawn agents unasked' rule."* Born from a real miss the same day: a
@@ -1507,6 +1537,21 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   anyone cites into?"**, and for a well-cited file the answer is yes for essentially any addition.
   After any such commit, `grep -rn "<basename>:[0-9]" docs/ src/ include/` and re-verify each hit;
   it is mechanical, not a judgement call.
+  **SHARPENED 2026-08-26 -- the trigger "after a submodule bump" is TOO NARROW, and the ratio is the
+  finding.** `docs/LESSONS.md` is an append-ANYWHERE ledger, so a row inserted near its top renumbers
+  every line beneath it: one 17-line insert at `:36` silently invalidated every `LESSONS.md:<N>`
+  citation in the tree, in the same session, with nothing failing. `[V]` The census
+  (`grep -rnoE "LESSONS\.md:[0-9]+"` over `docs/ src/ tools/ CLAUDE.md`) found 5 -- and **3 of the 4
+  live ones were ALREADY wrong before anything was touched**: `DOCS_ARC` cited `:727` for a literal
+  that lives at `:1146`; `movement_ledger.cpp:98` cited `:1019` for a row about something else
+  entirely; `security/TRACKER.md` cited `:1914` likewise. Only `UE4SS_ARC`'s `:240` was correct, and
+  my own edit broke it. The fifth, `input_owner.h:24`, was IMMUNE -- because a previous session had
+  been burned at that exact spot and converted it to a title citation. So this is not an event a bump
+  triggers; it is the steady state of every line-number citation, noticed only when someone follows
+  one. All four converted to TITLE citations. *Look FIRST:* the project had already written the cure
+  a second time and not generalised it -- `[V]` `UE4SS_ARC` says of a thrice-re-cited CMake line
+  **"STOP WRITING THE NUMBER: grep `add_library(xinput1_3`"**. Cite a symbol, a row TITLE, or the grep
+  that finds it; a number survives neither a bump nor an insert.
   `memory/lesson_a_comment_citing_a_dependency_line_number_rots_silently.md`
 
 - **A correction in a NEW SUBSECTION leaves the headline stale — and the headline is what gets quoted.**
@@ -2171,6 +2216,18 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   OPERATION and grep THAT -- if your pattern is a word from your own sentence, it is the wrong key;
   write the AFTER sentence and grep what it falsifies across `src/` + `tools/` + `docs/`, all three;
   and treat a suspiciously tidy census as a warning, not a result.
+  **TWO MORE 2026-08-26, and the second is the worst kind.** (6) I keyed a retire-census on the file
+  EXTENSION `multivoid-*.dll` instead of the name STEM `multivoid-*`, missing 4 sites on
+  `multivoid-*.map` -- `[V]` including `tools/maprva.py:11`, whose `max(glob(...))` **raises on an
+  empty glob**, so the crash symbolizer would have died the moment the DLL was renamed. (7) I keyed
+  the trampoline rename on the NAME `g_orig*` instead of the ASSIGNMENT SITE, missing
+  `save_block.cpp`'s `g_original` -- the **twelfth of twelve** `hook::Install` out-params, whose own
+  comment already said "Trampoline" -- **while the commit message asserted "censused BY ASSIGNMENT
+  SITE"**. That commit was fixing a four-month-old bug whose entire cause was an auditor reading a
+  variable's NAME. *Look FIRST:* knowing the rule and asserting you followed it are both compatible
+  with not having followed it; the only thing that is not is **producing the enumeration**. If a claim
+  says "censused by X", the message should carry the OUTPUT of X --
+  `grep -rn "hook::Install(" -A2 | grep -oE "&g_[A-Za-z_]+"` is twelve lines you either have or do not.
   `memory/lesson-census-by-the-operation-not-by-the-name.md`
 
 ### 1b. Standing working agreements (previously indexed NOWHERE)
@@ -3165,6 +3222,24 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   the causes you happen to own. `memory/lesson_an_entity_death_discriminator_must_be_fail_closed.md`
 
 ## 4. Dispatch, hooks & input seams
+
+- **A FLAG THAT ANSWERS TWO QUESTIONS WILL BE READ WITH THE WRONG ONE -- and an idempotent `Init` can
+  UNDO a completed `Shutdown`.** 2026-08-26, found by the post-ship audit *of the teardown fix
+  itself*. `[V]` `hook::Install` guarded entry with `if (!g_live && !Init())`; `[V]` `Init()` treats
+  `MH_ERROR_ALREADY_INITIALIZED` as success and sets `g_live = true`; `[V]` `Shutdown()` deliberately
+  never uninitializes MinHook (freeing a trampoline corrupts it in place). Compose those and the guard
+  is a **resurrection** -- after a completed teardown it revives the facade and arms a patch nothing
+  will ever lift, since `DoShutdown`'s latch means `hook::Shutdown` never runs twice. `[V]` The live
+  path is `overlay_backend_dx12_capture`'s `EclHookThread`, an un-joined `::CreateThread` that
+  `DoShutdown` does not wait for. It survived the commit that was ABOUT this: that commit gave
+  `Enable()` a compare-after-act and wrote *"Both orders end disabled"* -- true of `Enable`, false of
+  `Install`, one function away. `g_live` was answering "has init succeeded" (yes, after teardown) and
+  "may a patch arm" (no) at once, and they diverge in exactly the state teardown creates. Fixed with a
+  one-way **retirement latch**. *Look FIRST:* say in one sentence what your flag answers -- if it needs
+  an "and", it is two flags; ask specifically what `Init()` does AFTER `Shutdown()`; and note a
+  monotonic LATCH is not a mutable mirror, so the standing objection that "two flags that can disagree
+  leave neither as authority" does not transfer to it.
+  `memory/lesson_one_flag_answering_two_questions_undoes_your_teardown.md`
 
 - **Synthesized input goes to the FOREGROUND window, not to yours — and `GetActiveWindow()` does not
   ask that question.** 2026-08-26: the browser selftest gated `keybd_event`/`mouse_event` on

@@ -26,7 +26,7 @@ first test of this document.
 
 | # | Precondition | State as of 2026-08-25 |
 |---|---|---|
-| 1 | A Thunderstore **Team** exists. The team name becomes the `<Author>` half of `<Author>-Multivoid`, which is load-bearing for the pak path (`UE4SS_ARC` §7.2a trap 4). | **NOT DONE** — account action |
+| 1 | A Thunderstore **Team** exists. The team name becomes the `<Author>` half of `<Author>-Multivoid`, which is load-bearing for the pak path (`UE4SS_ARC` §7.2a trap 4). | **DONE 2026-08-26 (USER): the team is `Multivoid`.** So the package is `Multivoid-Multivoid`, the pak path is `shimloader/pak/Multivoid-Multivoid/`, and the `dependencies` string carries the same pair. Per §5 neither half can be changed later without creating a SECOND package. |
 | 2 | A **service account** + API token, if publishing from CI (`TCLI_AUTH_TOKEN`). | NOT DONE; §7.9 makes this optional — we assemble by hand |
 | 3 | `icon.png`, **exactly 256x256** | **DONE** — `assets/branding/icon.png`, generated from `icon-512.png` |
 | 4 | A UE4SS-lane build actually released | **NOT DONE** — gated on WP-2 commit 3, `UE4SS_ARC` §6 items 4-5 |
@@ -240,7 +240,12 @@ Run top to bottom. Nothing here is satisfied by "the zip built".
 
 1. §1 preconditions 1, 4, 5 are DONE. (2 is optional; 3 and 7 are already done.)
 2. `manifest.json` was **generated**, and `version_number` equals `<game-major>.<game-minor>.<kProtocolVersion>`
-   read from the tree, not typed.
+   read from the tree, not typed. **Satisfied structurally since 2026-08-26** by
+   `tools/release/package.ps1` + `ledger_lib.ps1`'s `New-PackageManifest` / `ConvertTo-PackageVersion`,
+   which read both halves through the tree's one parser each and throw labeled `UNREADABLE` rather
+   than defaulting. Items 3 and 4 are likewise machine-checked now (`Get-PngDimensions` re-measures
+   the icon; `Test-PackageZip` asserts the tree, and its drill has 14 arms). **Item 5 is NOT
+   automated and item 6's managed half has NOT run** — see `UE4SS_ARC` §7.8.
 3. `icon.png` is byte-for-byte 256x256 (re-measure it; do not trust the filename).
 4. The zip's root holds `manifest.json` + `icon.png` + `README.md` with **no wrapping folder**, and
    `mod\dlls\main.dll` is at `mod\dlls\`, not at the root.

@@ -95,7 +95,10 @@ struct Row {
     // Summary accumulators, reset when the summary prints AND on every re-anchor -- they are per
     // OCCUPANT, not per slot. The COUNT is load-bearing: without it "this row saw no poses at all"
     // and "it saw poses that did not move" print the same line, which is the ambiguity
-    // `docs/LESSONS.md:1019` was written about.
+    // `docs/LESSONS.md` "A throttled log line is not an event count" was written about.
+    // (Cited by TITLE: this said `:1019`, which pointed at an unrelated row even before the
+    // 2026-08-26 insert that moved everything -- see
+    // [[lesson-a-comment-citing-a-dependency-line-number-rots-silently]].)
     uint64_t samples = 0;
     uint64_t discontinuities = 0;
     float    maxStepCm = 0.f;

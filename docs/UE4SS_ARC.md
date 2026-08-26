@@ -56,7 +56,7 @@ proxy / dup-dialog retire WHOLE per RULE 2 — no standalone-and-UE4SS dual path
 | **WP-2** | The loader cut: delete `xinput_proxy.cpp` + the proxy deploy path (RULE 2); `cppmod_entry.cpp` in; predecessor detection + mutex; keep EVERYTHING else. | **IN PROGRESS.** Pre-cut LANDED (§2). Fix (**B**, §4) is BUILT + default-ON and its compose is **VERIFIED** (2026-08-22 16:02 real-env byte decode + 16:25 DEV `POLYHOOK-COMPOSED` boot, §4 Proof status). The IsLive/VEH arc is BUILT (D1, 2026-08-22 night, §4 -- run B pending the user). Remaining before the proxy deletion: ~~symbolize the 19:17 dump~~ **RETIRED 2026-08-26 by a hash census, no symbolization needed** (§4 residuals); ~~B's teardown residual~~ **CLOSED 2026-08-26** — the `gracefulexit` scenario (`fe474b86`) made the path walkable and immediately found a LIVE use-after-free that the residual's own wording understated; fixed in `42af8cc0` + `eafb2207`, RED/GREEN in §4c. **Commit 3 is now the only thing left before WP-2 is done**, and it is **welded to §7.3a's release anchors** because the tree cannot cut a release between them (§8.2). |
 | **WP-4** | Fix the stale install/update/uninstall prose + the site + installer for the UE4SS lane. | **PARKED, but now SPECIFIED** — census written (`votv-ue4ss-stale-loader-prose-CENSUS-2026-08-22.md`, ~139 rows); §7 measures the target shape and §7.3 fixes the sequencing (it must not flip before a UE4SS-lane build is released). **+ §7.0 (USER 2026-08-24): the GitHub repo DESCRIPTION and topics are stale prose too and are invisible to the census — they live outside the tree. `description` still says "a standalone C++ DLL"; the `dll-injection` topic goes; `homepageUrl` is empty and is fixable NOW.** |
 | **WP-6** | Distribution re-home (the `multivoid-<game>-<build>.dll` filename + master + release flow onto the mod-folder shape). | **PARKED, now SPECIFIED** — §7.2 + §7.4. |
-| **WP-9** | **Thunderstore publication** (USER 2026-08-23: "надо нам бы стать официальным модом и попасть в магазин thunderstore ... чтобы обычный юзер смог поставить нативно"). Ship Multivoid as a Thunderstore package so r2modman / Thunderstore Mod Manager installs it natively. | **NEW, SPECIFIED, NOT BUILT** — §7. The payload shape is ALREADY correct; what is missing is package metadata, a GENERATED manifest, and a publish step. **The version mapping is DECIDED, not owed** (§7.3, user 2026-08-23: `<game-major>.<game-minor>.<build>`); this row said "a version mapping decision" was missing after §7.3 had already made it. **§7.3a (2026-08-24, user-raised) measures what the versioned DLL name costs today** — it moves on every proto bump including security-only ones (`0.9.135` as of `ca3943e9`), its CMake justification expires with WP-2 commit 3, `deploy-mod.ps1` picks the payload by mtime out of 14 artifacts, and the six anchor sites that must move in one commit are tabulated. **2026-08-25 (user-raised, five real Thunderstore packages): §7.2 was measuring the extracted PROFILE and calling it the ZIP — the real zip has a `mod/` wrapper, and §7.2's tree would have installed cleanly and never loaded. §7.2a is now the authoritative routing rule (from Thunderstore's own ecosystem schema + r2modman's rule engine and test spec), §7.2b is the field survey + the measurement that shows what D-3 bought (field mods import 32/40/130 mangled C++ symbols from `UE4SS.dll`; we import 0), and §7.9 answers "can GitHub produce the package" — yes for everything except the pak, whose blocker is its inputs.** |
+| **WP-9** | **Thunderstore publication** (USER 2026-08-23: "надо нам бы стать официальным модом и попасть в магазин thunderstore ... чтобы обычный юзер смог поставить нативно"). Ship Multivoid as a Thunderstore package so r2modman / Thunderstore Mod Manager installs it natively. | **NEW, SPECIFIED, NOT BUILT** — §7. The payload shape is ALREADY correct; what is missing is package metadata, a GENERATED manifest, and a publish step. **The version mapping is DECIDED, not owed** (§7.3, user 2026-08-23: `<game-major>.<game-minor>.<build>`); this row said "a version mapping decision" was missing after §7.3 had already made it. **§7.3a (2026-08-24, user-raised) measures what the versioned DLL name costs today** — it moves on every proto bump including security-only ones (`0.9.135` as of `ca3943e9`), its CMake justification expires with WP-2 commit 3, `deploy-mod.ps1` picks the payload by mtime out of 14 artifacts, and the six anchor sites that must move in one commit are tabulated. **2026-08-25 (user-raised, five real Thunderstore packages): §7.2 was measuring the extracted PROFILE and calling it the ZIP — the real zip has a `mod/` wrapper, and §7.2's tree would have installed cleanly and never loaded. §7.2a is now the authoritative routing rule (from Thunderstore's own ecosystem schema + r2modman's rule engine and test spec), §7.2b is the field survey + the measurement that shows what D-3 bought (field mods import 32/40/130 mangled C++ symbols from `UE4SS.dll`; we import 0), and §7.9 answers "can GitHub produce the package" — yes for everything except the pak, whose blocker is its inputs.** **THE PACKAGING HALF IS BUILT 2026-08-26** (`2a223362` + `3dd546dd`): `tools/release/package.ps1` assembles the §7.2a zip, `Test-PackageZip` is the fail-closed tree check, the drill is 14 arms all passing, and the Team `Multivoid` now exists. The zip was **hand-installed from the extracted artifact and booted** -- rule B's manual half, evidenced (§7.8). **NOT done:** the `publish.ps1` asset-shape inversion (C3.3), the r2modman managed-import control, and the upload itself -- which the user has explicitly deferred (*"пока не обязательно грузить, сначала проверки локальной установки zip"*). |
 | **WP-7** | The native DEBUG subsystem (USER 2026-08-21: adopt UE4SS's debug tooling / DebugMod ideas). | **PARKED** — scoped in the design finding §3c. |
 | **WP-8** | The hygiene split (USER 2026-08-21: "everything that is a tool, not the mod" moves out). | **PARKED** — scoped in the design finding §3d. |
 | **L-4** | Engine access via UE4SS's own APIs (the "bridge"). | **DEFERRED**, and **permanently PARTIAL** — the ProcessEvent interception path stays ours forever (§4). |
@@ -567,13 +567,35 @@ permanent (`mp.py wirewindow` + `coop/dev/wire_census`). NOT hands-on — run B 
    the measurement found a live use-after-free whose RED arm crashed reading the trampoline's
    own address. **The second half of this row — "drop the `VOTVCOOP_PE_IMMUNE_RELAY=0`
    diagnostic escape" — is NOT done and should not be obeyed as written.** `[V]`
-   `docs/LESSONS.md:240`: *"The knob retires with the mechanism (RULE 2); the RED table is the
-   durable artifact."* No RED table exists for fix B — §4 says the baseline was reproduced
+   `docs/LESSONS.md`, *"When the lab cannot reproduce the field, build the knob that FORCES
+   the field's condition"*: *"The knob retires with the mechanism (RULE 2); the RED table is the
+   durable artifact."* (Cited by TITLE -- this said `:240` until 2026-08-26, when a row inserted
+   17 lines above it silently moved every citation in the tree.) No RED table exists for fix B — §4 says the baseline was reproduced
    2026-08-22 but the evidence is scattered prose. Write the table, THEN retire the knob.
    (§4's own text calls the escape "a RULE-2-exempt diagnostic escape, retired at commit 3" —
    exempt and scheduled for deletion in one parenthesis.)
 4. **Commit 3** — the proxy deletion (RULE 2): `xinput_proxy.cpp` + the loader lane + dup-dialog +
    `inject.ps1` go, fully. Then WP-2 is DONE.
+
+   > **THE ORDER IN THIS LIST IS WRONG AND WAS CORRECTED 2026-08-26 — the zip is a PRECONDITION of
+   > step 4, not a follow-on to it.** The design pass that preceded commit 3 tried the obvious
+   > reading (delete the proxy, ship a loose `main.dll`, zip later) and a critic killed it on a
+   > measurement: `[V]` §7.8 + `THUNDERSTORE.md`'s checklist make rule B's acceptance test
+   > r2modman's **"Import local mod"**, which consumes a **ZIP**. With no zip that test can never
+   > run, so the 18 unpushed commits could never unblock — and hands-on is closed, so no human path
+   > exists either. **A plan that builds the zip last cannot satisfy the gate that unblocks it.**
+   > `[V]` §7.4c also already records the user choosing the zip as THE artifact, and names §7.4b's
+   > loose-file release body as *"the proxy lane"* that retires with it. The packaging step was
+   > therefore built FIRST (`2a223362`); step 4 is still open.
+   >
+   > **A second RULE-2 consequence of step 4, measured and not yet acted on:** `[V]`
+   > `CMakeLists.txt` (grep `load-bearing, not cosmetic`) justifies the versioned
+   > `multivoid-<game>-<build>.dll` OUTPUT_NAME **by the proxy's scan** — delete the scanner and the
+   > justification is gone, which is §7.3a item 2. That retirement also dissolves ~30 lines of
+   > sort-and-guard in `deploy-mod.ps1`, and note `[V]` the filename identity is ALREADY destroyed at
+   > deploy time (it installs **as** `main.dll`), while `[V]` the DLL carries **no VERSIONINFO
+   > resource** — so nothing out-of-band identifies a built or installed DLL today. Whatever replaces
+   > that guard must be chosen with step 4, not after it.
 5. **Release a UE4SS-lane build.** This is the gate §7.4 identifies: until a released build IS the
    mod-folder shape, the player-facing install prose must keep describing the proxy.
 6. **WP-4 + WP-6 + WP-9 as ONE welded change** (§7.4): `docs/INSTALL.md` (both lanes, manager
@@ -1418,9 +1440,27 @@ option is not re-derived from scratch later.
   `https://questwalker.github.io/votv-modding-wiki/` and a Discord invite. Whether uploads pass
   through moderation is **not** expressible in that schema, so it stays open — but it is a question
   for the community's own channels, not a measurement.
-- **STILL OWED, and it is an account action, not a measurement:** Thunderstore team/namespace
-  creation (the namespace becomes the `<Author>` half of `<Author>-Multivoid`, which §7.2a trap 4
-  shows is load-bearing for the pak path), plus the service-account API token that §7.9 needs.
+- **~~STILL OWED~~ HALF DONE 2026-08-26 (USER):** the Thunderstore **Team `Multivoid` EXISTS** —
+  the user created it and said so verbatim (*"Команду я создал уже Multivoid"*). Two consequences to
+  carry, neither reversible: the package identity is fixed at **`Multivoid-Multivoid`**, so §7.2a
+  trap 4's pak path is `shimloader/pak/Multivoid-Multivoid/` and the `dependencies` string bakes the
+  same pair; and changing either half later creates a SECOND package rather than updating this one
+  (`THUNDERSTORE.md` §5). **Still owed:** the service-account API token §7.9 needs — and per the user
+  2026-08-26 it is not needed yet (*"пока не обязательно грузить, сначала проверки локальной
+  установки zip и тд"*), so the automated-publish job (C3.5) is DEFERRED, not blocked.
+- **PARTIAL 2026-08-26 — the MANUAL half of this control has now RUN; the managed half has not.**
+  `[V]` The zip was assembled by the real generator, extracted, and hand-installed into
+  `Game_0.9.0n_HOST/…/Mods/Multivoid/` after wiping that folder entirely — then booted with
+  `mp.py gracefulexit --no-deploy`, i.e. with nothing re-deploying over it: `boot: Multivoid 0.9.0n
+  b143`, `entry=cppmod` at 49 ms, both predecessor legs clean, `POLYHOOK-COMPOSED`, 0 `[Error]`,
+  graceful exit 3.9 s with the full teardown trail. That is rule B's *"ставится вручную"* half,
+  evidenced. **The r2modman half is still owed and is BOUNDED BY A STRUCTURAL LIMIT, not just by
+  effort:** `[V]` `THUNDERSTORE.md` §3 — `author` is not a manifest field and the namespace comes
+  from the Team **at upload time**, so a LOCAL import has no Team and cannot produce the
+  `<Team>-<Name>/` folder. A local-import control therefore CANNOT observe trap 4; that assertion
+  belongs to the first real managed install. `[V]` And reproducing the managed RUNTIME lane means
+  mutating a rig copy — this box's game folders carry UE4SS's own 58,368-byte `dwmapi.dll`, not the
+  profile's 700,488-byte shimloader. Original text follows.
 - **NEWLY OWED 2026-08-25 — the negative control §7.2a could not run.** Everything in §7.2a about
   where files land is `[V]` from three independent sources (the live ecosystem schema, r2modman's
   rule engine + its own test spec, and five real packages measured against this box's profile) — but
@@ -1450,7 +1490,20 @@ a capability.** The blocker is one unshipped asset's *inputs*, not CI.
 **What is missing is one step, and its precedent is already sitting in our own tree.**
 `publish.ps1:24-28` asserts *exactly two loose DLLs* and uploads them individually — there is no zip
 anywhere, and `git ls-files | grep -icE 'thunderstore|manifest\.json|icon\.png'` → **0**, i.e. no
-packaging script exists at all. Meanwhile
+packaging script exists at all.
+
+> **HALF OF THIS IS NOW STALE — BUILT 2026-08-26 (`2a223362`, audited + hardened in `3dd546dd`).**
+> `tools/release/package.ps1` assembles the §7.2a zip and `ledger_lib.ps1` gained the five packaging
+> functions; the tracked count is now **2**, not 0. Identity is READ from the tree
+> (`Get-GameTargetFromCMake` + a new `Get-ProtoFromWorktree`), both throwing labeled `UNREADABLE`
+> rather than defaulting, so §7.3's generated-never-typed requirement is satisfied structurally.
+> `Test-PackageZip` is the fail-closed tree check §7.4b demanded, and it lives in `ledger_lib.ps1`
+> precisely so `publish.ps1` can re-run the identical predicate on the artifact it downloads back.
+> **What is still true in the paragraph above is the `publish.ps1` half** — it still asserts two loose
+> DLLs and still never calls `Test-PackageZip`. That inversion is C3.3, §6 step 4's welded commit.
+> Drill: `tools/release/package_drill.ps1`, **14 arms, all pass** (1 GREEN + 13 RED, one per trap).
+
+Meanwhile
 `reference/unreal-shimloader/.github/workflows/release.yml:79-97` — written by the people whose
 loader we are targeting — does the whole thing on `windows-latest` with no maintainer machine: stage
 `icon.png` + `README.md` + the payload, heredoc `manifest.json` **with the version interpolated**
