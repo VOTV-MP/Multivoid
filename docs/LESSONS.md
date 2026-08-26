@@ -4292,6 +4292,30 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   soft cap is an audit flag, not a blocker (soft 800, hard 1500). *Look FIRST:* the open-thread ledger's
   gate column — if a still-open row names the code you are moving, the shape is provisional.
   `memory/lesson_refactor_equivalence_frozen_digest_instrument.md`
+- **A canonical helper FUSES failure modes its callers may be branching on — so consolidating a
+  hand-rolled duplicate onto it is a behaviour change, not a cleanup** (2026-08-26). `[V]`
+  `element::LiveActorOfType` (`registry.cpp:300-307`) returns `nullptr` for FOUR distinct reasons: eid 0,
+  no Registry row, wrong `ElementType`, or a failed `IsLiveByIndex`. `[V]`
+  `trash_grab_intent.cpp:167-170` hand-rolls the same four-step walk and was on the record as a lazy
+  duplicate to migrate onto it — but it is not one. It keeps `pe` and `pa` as separate live values and the
+  lane branches THREE ways with OPPOSITE remedies: absent row, or a row whose actor is stale-dead → this
+  eid is a ghost, broadcast its destroy so every peer drains the row (and the log prints which of the two,
+  `row=%s actor=%p`); **a LIVE actor of the wrong class → heal instead, and `:194` says why in so many
+  words — *"the identity names a real entity, so NEVER destroy on a class mismatch."*** Consolidating onto
+  the canonical helper folds wrong-TYPE into the same `nullptr` as absent-row, moving every live non-Prop
+  element out of the heal branch and into the destroy branch: a one-line "cleanup" that inverts a
+  documented invariant. Two things generalise. **Fusing is invisible in the diff being written and visible
+  only in an `else` twenty lines below it** — the diff shows three lines becoming one, while the regression
+  lives in a branch that no longer means what it meant. And **a safety property does not transfer with a
+  helper**: `LiveActorOfType`'s header calls its type argument "the fail-closed half", which is right for
+  its 21 callers, yet in THIS lane resolving a wrong-class actor is exactly what keeps a real entity alive.
+  *Look FIRST:* before consolidating, ask what the helper's failure value FUSES, then read every branch the
+  caller takes on it; if the caller distinguishes two of the fused causes, the helper's RETURN TYPE is the
+  blocker, not the call site. And re-check the migration list itself — this one said "two call sites" and
+  `[V]` one of them (`prop_drop_intent.cpp:370-386`) resolves no eid at all (it takes a key, a class and a
+  point, then spawns), so it could never have been migrated onto an eid resolver and the count had never
+  been checked after being written.
+  `memory/lesson_a_canonical_helper_fuses_failure_modes_its_callers_branch_on.md`
 - **A positional resolve table makes a mid-row removal SILENTLY corrupting — and BOTH the literal-diff
   instrument AND the compiler are blind to a missed index shift** (2026-07-19 comp_pane /qf R1: an
   unshifted `FieldPtr(d, 7)` line is an exact HEAD match to a set-diff AND still compiles, so it reads
