@@ -3190,6 +3190,14 @@ def cmd_browser(args) -> None:
         fails.append("the open intent expired without a main-menu tick")
     if find("the switcher moved off our index"):
         log("NOTE: the switcher moved off our index during the run (reconcile fired)")
+    esc = find("hidden (ESC;")
+    if not find("ESC SELFTEST"):
+        fails.append("the ESC selftest never ran -- whether the screen can be CLOSED is UNMEASURED")
+    elif not esc:
+        fails.append("ESC did not close the screen -- with no chrome yet, that STRANDS the player "
+                     "at the menu with no way out")
+    else:
+        log(f"ESC: {esc.strip()}")
     scrim = find("SCRIM SELFTEST")
     if not scrim:
         fails.append("no SCRIM SELFTEST verdict -- whether a stray click is absorbed is UNMEASURED")

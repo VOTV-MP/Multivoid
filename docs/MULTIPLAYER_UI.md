@@ -820,10 +820,12 @@ world reading; it also cannot fire over gameplay, which matters because the harn
 browser from four failure-recovery paths in `session_runtime.cpp`, sometimes before a menu exists.
 
 **STILL OPEN, and named rather than implied:**
-- **Input is not wired.** No hover highlight, no row click, no Connect / Host / Refresh / Back
-  chrome. `NotePointerMoved()` is declared and defined but **called from nowhere**, and
-  `g_pointerMoved` is written and never read -- a write-only flag, kept only because the seam lands
-  in the next commit; if that commit slips, it should be deleted rather than left standing.
+- **Input is MOSTLY not wired.** ESC closes the screen (added 2026-08-26 after the user reported
+  there was no way out -- see §8c.0). There is still no hover highlight, no row click, and no
+  Connect / Host / Refresh / Back chrome. `NotePointerMoved()` is declared and defined but **called
+  from nowhere**, and `g_pointerMoved` is written and never read -- a write-only flag, kept only
+  because the seam lands in the next commit; if that commit slips, it should be deleted rather than
+  left standing.
 - **The retire is not done.** `ui/server_browser.{h,cpp}` still ships. Its seam census is bigger
   than a name grep found: besides the nine `server_browser::` call sites, `imgui_overlay.cpp:721-724`
   opens it from `VOTVCOOP_BROWSER_OPEN` and logs `"server browser starts visible"`, `:796` closes it
@@ -835,6 +837,117 @@ browser from four failure-recovery paths in `session_runtime.cpp`, sometimes bef
 - **§7c's style gap is unchanged**: nobody has captured `ui_settings` / `ui_saveSlots` themselves.
 - Cosmetic: the window has no border (only the fill donor is used), and column widths are fixed
   weights with an 18 px gutter + `ClipToBounds` rather than measured.
+
+---
+
+### 8c. The STRESS HARNESS — REQUESTED 2026-08-26, DESIGN, sequenced after C2
+
+> **USER REQUEST, verbatim:** *"Need a stress test functionality for the native browser, where we
+> test robustness in different areas, for example filling in the list with 100 random servers and me
+> as a tester scrolling there, getting how it feels, then update, then add another 100 servers to
+> the list. But after we build it properly (for now i dont even see the X to close server browser
+> window)."*
+>
+> **Two things in that, and the order is the user's:** the harness is wanted, and it is explicitly
+> gated behind the browser being finished — which the missing close control is the evidence for.
+
+**A SCOPED EXCEPTION TO A STANDING RULE, recorded because it contradicts one.**
+`memory/feedback_autonomous_evidence_is_the_ceiling.md` says a plan that ends at "the user will
+test it" is a shelf. Here the user has **volunteered as the tester for FEEL** — *"me as a tester
+scrolling there, getting how it feels"* — and feel is the one axis an autonomous run genuinely
+cannot judge. So this lane has two halves and they are not interchangeable: the ROBUSTNESS half is
+machine-asserted and must stand on its own, and the FEEL half is the user's verdict. The exception
+covers feel only; it does not license shipping the rest unmeasured.
+
+#### 8c.0 The blocker the user named, and it is worse than a missing button `[V]`
+
+**`server_browser_native::Close()` HAS NO CALLERS** (grep, 2026-08-26). With `[dev]
+browser_native=1` + `browser_autoopen=1` there is no way to dismiss the screen from inside the
+game: no X, no Back, and **ESC is a measured no-op at our switcher index** (§8's `OnKeyDown`
+disassembly — the interface cast fails and the `ActiveWidgetIndex == 0` test fails). The
+reconcile-on-index only fires if something ELSE moves the index, and nothing will.
+
+So the screen **stranded the player at the menu**. This is precisely the hazard §8 wrote down for
+the RUNG 1 probe — *"a probe that can trap the user is not read-only in any sense that matters"* —
+which is why that probe got a hold deadline and an auto-restore. The browser got neither. It is
+dev-gated and off by default so no shipping player could reach it, but anyone who turned the flag on
+to look at the screen was trapped, which is exactly what happened.
+
+> **FIXED the same day (2026-08-26). `[V]` ESC now closes the screen**, polled in the observer that
+> already runs (`GetAsyncKeyState`, press edge, primed on show so a held key at open cannot close
+> it). Deliberately not swallowed: the game's own handler still runs and is a no-op at our index, or
+> navigates away on a stale `widgetEnter`, which the reconcile then observes — either path ends
+> closed. Kept inside this TU: no edit to the overlay's input path or to the one hands-on-verified
+> inject. Evidence: `hidden (ESC; index was 11, ours 11)` in a real `mp.py browser` run, with the
+> index restored.
+>
+> **AND THE FIRST VERSION OF THAT SELFTEST LIED ALL-PASS, twice over, which is the part worth
+> keeping.** (1) It synthesized `keybd_event` down+up back-to-back in one tick — invisible to a
+> per-tick poll, because the key is released before the next tick samples it. The hatch did nothing
+> and the run was green. (2) The assert searched the log for `hidden (ESC` — and the selftest's own
+> instruction line contained the literal string `'hidden (ESC...)'`, **so the assertion matched the
+> sentence describing what it was looking for.** A predicate that can match its own instrumentation
+> is not a predicate. Both fixed: the key is held across several ticks, the instruction line no
+> longer quotes its expected output, and the assert keys on `hidden (ESC;`.
+
+#### 8c.1 What must exist first (C2), because the harness cannot be driven without it
+
+Chrome as real `UButton`s cloned from `ui_saveSlots.button_back` (they get both native sounds free
+from the cloned `FButtonStyle`): **Back / close**, Refresh, Connect, Host. Plus hover highlight and
+row click. Until a human can close the window and press Refresh, "scroll it and tell me how it
+feels" is not a runnable instruction.
+
+#### 8c.2 The phases — the user's sequence, plus what it should also cover
+
+| # | phase | what it actually tests |
+|---|---|---|
+| **A** | seed **100** synthetic rows, user scrolls | build cost at scale; scroll smoothness; scrollbar thumb; wheel feel |
+| **B** | let the 1 Hz refresh run, then press Refresh, **while scrolled down** | does the scroll POSITION survive a sync; does the row text flicker; `[HITCH]` lines |
+| **C** | grow **100 → 200** | pool growth mid-scroll; does the view jump; does the scrollbar rescale |
+| **D** | shrink **200 → 50** | surplus rows are COLLAPSED, not detached — do they take zero space in the ScrollBox |
+| **E** | **shuffle at CONSTANT count** | the invariant the whole design rests on: the id a row was RENDERED with, not its index. This is the phase that would have caught the `HashMap`-order defect, and it is the one the user's own sequence does not include |
+| **F** | hostile strings: 64-byte names, non-ASCII (the repertoire/fold path), empty `game`/`world` | clipping + gutter; the UTF-8 boundary; the legacy `version` fallback |
+| **G** | `ForceGarbageCollection()` mid-scroll | the subtree survives (RUNG 2 proved it for 12 children, not for 200 + collapsed) |
+
+**Two modes, same seed.** MANUAL (the user drives; phases advance on a dev hotkey) for feel;
+AUTONOMOUS (`python tools/mp.py browserstress`, timed phases, screenshots, log asserts) so the
+robustness half is reproducible and survives without a human.
+
+#### 8c.3 Four ceilings the harness will hit before it tests anything `[V]`
+
+These are known defects in what is already committed, not predictions:
+
+1. **`kMaxRows = 64`** (`server_browser_native.cpp:40`). The user's "100 random servers" would
+   silently display **64**, with no log line. The cap must be raised and, more importantly, must
+   LOG when it truncates — a silent ceiling in a stress harness invalidates the whole run.
+2. **`SyncRows()` is unconditional — there is no edge-apply.** Per row per second it walks the
+   panel to re-find the widgets (`RowPartsAt` ≈ 9 reflected calls: `GetChildAt`, `GetContent`, then
+   five more) and then issues 5 `SetText` plus colour writes. At 200 rows that is **thousands of
+   ProcessEvent dispatches per second** whether or not a single cell changed. Edge-applying (skip a
+   cell whose string is unchanged; cache the row's parts) is the project's own idiom everywhere
+   else, and phase B is what will force it.
+3. **`sm::Refresh()` fires a real network fetch every second** (`:559`). The harness must seed
+   synthetically and BYPASS the master — hammering the production master 200 rows deep for a UI
+   test is not acceptable, and the numbers would be polluted by fetch latency anyway.
+4. **Nothing preserves the scroll offset across a sync.** `GetScrollOffset`/`SetScrollOffset` are
+   resolved (O1) and unused. Phase B is where that shows up.
+
+#### 8c.4 The half that needs no game at all
+
+The id-reconcile invariant is pure logic over a `std::vector<LobbyRow>` and should get an
+**un-gated selftest** in the project's own shape (`movement_ledger`'s 29-check selftest,
+`drive_selftest`): feed it grow / shrink / shuffle sequences and assert that the id recorded for a
+position is the id whose text was written there. Shown RED against a deliberately index-based
+implementation, then GREEN. That makes the correctness half independent of anyone scrolling, and
+leaves the interactive harness to do what only a human can: say whether it feels right.
+
+#### 8c.5 Acceptance
+
+- Machine: every phase asserts (rows built == rows requested; scroll offset preserved; the
+  post-shuffle id matches the rendered text; no `[Error]`; RSS flat; GC survived) and the run ends
+  ALL PASS with screenshots per phase.
+- Human: the user's verdict on scroll feel at 100 and 200 rows, and on whether a refresh is
+  visible as a flicker.
 
 ---
 

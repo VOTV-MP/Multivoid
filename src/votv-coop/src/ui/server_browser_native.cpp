@@ -64,6 +64,10 @@ void* g_scrimW   = nullptr;   // the full-screen scrim -- the thing that absorbs
 int   g_selfCheckStep     = -1;  // -1 = idle; the dev scrim self-check's phase counter
 int   g_scrimOutside      = -1;  // -1 = not sampled, never a negative (an unrun phase is not a NO)
 int   g_scrimInsideWindow = -1;
+// ESC edge state. Primed on the first tick a screen is shown so a key already held when it
+// opens cannot synthesize a close -- the same guard multiplayer_menu's click poll uses.
+bool  g_prevEsc   = false;
+bool  g_escPrimed = false;
 int32_t g_ourIndex   = -1;
 int32_t g_priorIndex = -1;
 bool    g_shown      = false;
@@ -410,6 +414,7 @@ void Show() {
     // would churn GC for no reason. Only the index moves.
     U::SwitcherSetIndex(g_switcher, g_ourIndex);
     g_shown = true;
+    g_escPrimed = false;   // re-prime: an ESC held while the screen opens must not close it
     SyncRows();
     UE_LOGI("server_browser_native: shown (index %d -> %d)", g_priorIndex, g_ourIndex);
 }
@@ -467,6 +472,27 @@ void SelfCheckTick() {
                         "scrim does NOT cover the screen, so a click that misses the window "
                         "reaches VOTV's own menu buttons underneath.",
                         g_scrimOutside, g_scrimInsideWindow);
+            break;
+        case 24:
+            // ESC SELFTEST. Until the chrome exists ESC is the ONLY way out, and an escape
+            // hatch nobody has seen work is not an escape hatch. Synthesize a real key so
+            // the production poll (GetAsyncKeyState in OnMenuTick) is what answers -- not a
+            // direct Hide() call, which would prove only that Hide() compiles.
+            // PRESS and hold. Down+up back-to-back in one tick is invisible to a per-tick
+            // GetAsyncKeyState poll -- the key is already released before the next tick
+            // samples it -- which is exactly how the first version of this selftest
+            // "passed" while the hatch did nothing. A human holds a key for tens of ms,
+            // i.e. several ticks; the synthesis has to do the same.
+            //
+            // NOTE the wording of this line: it deliberately does NOT contain the string
+            // the runner asserts on. The first version quoted its own expected output, so
+            // the runner's find() matched THIS line and reported ALL PASS on a failure.
+            UE_LOGW("server_browser_native: ESC SELFTEST -- holding VK_ESCAPE for several ticks; "
+                    "the close line below is the only evidence that counts");
+            ::keybd_event(VK_ESCAPE, 0, 0, 0);
+            break;
+        case 30:
+            ::keybd_event(VK_ESCAPE, 0, KEYEVENTF_KEYUP, 0);
             g_selfCheckStep = -1;
             return;
         default:
@@ -549,6 +575,32 @@ void OnMenuTick(void* menu, void* switcher) {
         g_shown = false;
         UE_LOGI("server_browser_native: the switcher moved off our index -- treating as closed");
         return;
+    }
+
+    // ESC CLOSES THE SCREEN, and until the chrome exists this is the ONLY way out.
+    //
+    // The game's own ESC cannot help us: `ui_menu_C::OnKeyDown` casts `widgetEnter` to
+    // int_widgets and then tests `ActiveWidgetIndex == 0`, and at our index BOTH fail, so
+    // it is a measured no-op (section 8). That is fine for ui_saveSlots, which has a
+    // button_back -- it was NOT fine here, where Close() had no callers at all and the
+    // screen stranded the player at the menu with nothing to press. Exactly the hazard
+    // section 8 wrote down for the RUNG 1 probe, which got a deadline and an auto-restore;
+    // this got neither until 2026-08-26.
+    //
+    // Polled here rather than in the WndProc detour: this observer already runs every menu
+    // tick, the poll costs one GetAsyncKeyState, and it keeps the change inside this TU --
+    // no edit to the overlay's input path or to the one hands-on-verified inject. We do
+    // not swallow the key; the game's handler runs too and is a no-op at our index (or
+    // navigates away on a stale widgetEnter, which the reconcile below then observes).
+    {
+        const bool esc = (::GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
+        if (!g_escPrimed) { g_escPrimed = true; g_prevEsc = esc; }
+        const bool pressEdge = esc && !g_prevEsc;
+        g_prevEsc = esc;
+        if (pressEdge) {
+            Hide("ESC");
+            return;
+        }
     }
 
     SelfCheckTick();
