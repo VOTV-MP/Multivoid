@@ -97,9 +97,15 @@ This is the question the whole arc turns on, and it is answered.
 **Two conclusions:**
 
 1. **DebugMod does not arm UE4SS's PolyHook ProcessEvent detour, so it cannot reproduce the
-   double-detour crash class** (`UE4SS_ARC.md` §3). That section already concluded this for the
-   realistic stack, but by INDUCTION ("no stock mod calls it"); this is the same conclusion measured
-   directly from DebugMod's own import table. `[V]`, not `[RD]`.
+   double-detour crash class** (`UE4SS_ARC.md` §3).
+   **These are two DIFFERENT classes of evidence and must not be filed as one.** §4 reached
+   "no stock mod arms it" by INDUCTION over a mod population it cannot enumerate — that is a PRIOR,
+   and a strong one, but it can never become a fact. An absent import is a FACT about this binary,
+   at this version. So this measurement does not re-prove the induction and must not be cited as
+   confirming it: it **removes DebugMod from the set the induction still has to cover**, and leaves
+   every other mod exactly where it was. (Framing owed to the parallel session, 2026-08-26.)
+   Note the scope carefully — it is a fact about **5.0.3**, and §1 already records that we cannot
+   see this mod's source or diff its versions.
 2. **DebugMod drives the game THROUGH ProcessEvent, which is the seam Multivoid owns.** So its
    actions are, in principle, VISIBLE to our detour — the opposite of the `lib_C::addPoints` case,
    where `[V]` all 19 credit sites dispatch `EX_LocalVirtualFunction` and are structurally
@@ -231,6 +237,63 @@ mods installed. `[?]` all.
   relay actually happened.
 - Local package copy: `ignore_folder/thunderstore_mod_examples/acitulen-DebugMod-5.0.3.zip`.
 - Nothing built. No lane touched. No boot has been run with both mods present yet.
+
+## 6a. THE FIRST DUAL-MOD BOOT — RAN 2026-08-26, AND IT DID NOT TEST COEXISTENCE
+
+`mp.py smoke` PASSED (both peers stable, client connected slot 1, movement_ledger + intent_authority
+selftests ALL PASS, `[V]` 0 `[ERROR]` / 0 `HotPathGuard` in either log). **That PASS is a pass for
+Multivoid ALONE, because DebugMod never ran.**
+
+`[V]` Both peers:
+```
+Failed to load dll <...\Mods\Acitulen-DebugMod\dlls\main.dll> ... error code: 0x7f
+Was unable to install mod 'Acitulen-DebugMod' for unknown reasons. Mod is not installable.
+```
+`0x7f` = 127 = `ERROR_PROC_NOT_FOUND` — a required import was missing.
+
+**ROOT: a UE4SS ABI mismatch, and it is confirmed DISCRIMINATIVELY, not by correlation.**
+
+| | UE4SS.dll | md5 | DebugMod |
+|---|---|---|---|
+| coop rig (4 installs) | 16 263 680 B, Feb 14 2024 = the **pinned 3.0.1** | `4c177b9e…` | **fails `0x7f`** |
+| `Desktop09n` (r2modman launches it) | 16 228 864 B = the **experimental** build | `8a78269b…` | **starts** |
+
+`[V]` The SAME DebugMod binary is logged starting under the experimental build:
+`Mod 'acitulen-DebugMod' has enabled.txt, starting mod.` So it is the UE4SS version, not the install
+layout, the pak, or our presence.
+
+**THIS IS D-3'S CENTRAL DESIGN CHOICE, CONFIRMED BY A LIVE COUNTER-EXAMPLE ON THE SAME MACHINE.**
+`UE4SS_ARC.md` §0 rejected the `CppUserModBase` C++ vtable as "ABI-unstable across UE4SS builds"
+and took the C-ABI (`start_mod`/`uninstall_mod`) instead. `[V]` DebugMod uses `CppUserModBase` and
+imports UE4SS's C++ symbols — and it does not load on a different UE4SS build. `[V]` Multivoid
+imports ZERO UE4SS symbols and is logged starting on BOTH builds. Same game, same day, same box.
+
+**A SECOND, INDEPENDENT BLOCKER, found in the same logs** — it would have bitten even with the ABI
+fixed, and it is worth knowing because it splits the mod in half:
+`[V]` DebugMod's pak is mounted not by DebugMod but by **`BPModLoaderMod`** (a Lua mod):
+`[Lua] DebugMod == table:` / `AssetPath == /Game/Mods/DebugMod/ModActor`. `[V]` The rig's HOST does
+not have `BPModLoaderMod` at all; CLIENT_1/2/3 do.
+
+**So the rig currently holds THREE states, none of which is "DebugMod working":**
+
+| install | C++ half | BP half (pak) |
+|---|---|---|
+| HOST | fails `0x7f` | never mounted — no `BPModLoaderMod` |
+| CLIENT_1 | fails `0x7f` | **MOUNTED** `[V]` — a real PARTIAL-LOAD state |
+| CLIENT_2 / CLIENT_3 | absent by design | absent by design |
+
+CLIENT_1's split state is itself a finding: a DebugMod whose Blueprint content is live in the world
+while its native half is absent is a configuration a real user can reach, and nothing warns anybody.
+
+**THE FORK THIS OPENS, and it is the arc's real first question — bigger than "can we see its calls":**
+`[V]` Multivoid runs on 3.0.1 AND on experimental; DebugMod runs only on experimental. So **a real
+user who wants both must be on the experimental build**, and our pin to 3.0.1 (a deliberate choice
+recorded in `UE4SS_ARC` §0) is what stands between them. Three exits — **none chosen**:
+(a) move the rig (and the pin) to the experimental build — matches where DebugMod's users already
+are, but changes our substrate and re-opens whatever the pin was protecting;
+(b) do this arc's research inside the `a09n` / r2modman install, which already runs both — but it is
+a single-instance setup and two-peer scenarios are the entire point;
+(c) obtain a 3.0.1-compatible DebugMod, which we cannot build (no sources) and can only request.
 
 ## 7. Next
 
