@@ -79,6 +79,12 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   the filter's own token is a bug by construction** — a mechanical check, not a judgement; and confirm
   a runner's reported failure in the RAW artifact before acting on it.
   `memory/lesson_a_list_narrowed_for_display_reused_as_a_predicate.md`
+  **SECOND INSTANCE 2026-08-26:** an assert searched for `hidden (ESC` and the selftest's OWN
+  instruction line contained the literal `'hidden (ESC...)'` -- **the predicate matched the
+  sentence describing what it was looking for**, and printed ALL PASS while the feature did
+  nothing. It hid a second bug: `keybd_event` down+up in ONE tick is invisible to a per-tick
+  `GetAsyncKeyState` poll. Never let a log line quote the string its own assert searches for;
+  hold a synthesized key across ticks; and distrust a selftest that passes on its first run.
 
 - **Your own memory file can silently EDIT the plan of record, and you will read it back as the plan.**
   2026-08-25: on "go next" I was one call from implementing a security root (A54). `[V]` The design doc
