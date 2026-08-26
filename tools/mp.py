@@ -281,18 +281,48 @@ def deploy_all() -> None:
 
 
 def list_votv() -> list[dict]:
-    rc, out, _ = run_ps(
-        "Get-Process VotV-Win64-Shipping -ErrorAction SilentlyContinue | "
-        "ForEach-Object { [PSCustomObject]@{PID=$_.Id; RSS_MB=[math]::Round($_.WorkingSet64/1MB,1); "
-        "Title=$_.MainWindowTitle; Path=$_.Path} } | ConvertTo-Json -Compress"
+    """Live VotV processes.
+
+    THE @() IS LOAD-BEARING. Without it a pipeline over zero processes prints
+    NOTHING, so empty stdout meant BOTH "no game is running" and "the PowerShell
+    query itself failed" -- and the caller could not tell them apart. Wrapping in
+    an array subexpression makes zero processes emit a literal `[]`, which leaves
+    empty output meaning exactly one thing: the query did not run.
+
+    That ambiguity was not theoretical. 2026-08-26: two consecutive `mp.py
+    browser` runs reported "(no VotV process -- exited/crashed)" three seconds
+    after launch and abandoned the run, while `kill_all()` moments later found
+    the process alive and warned about it -- the harness declared a crash that
+    had not happened and threw away the measurement. So a failed query now
+    RETRIES rather than being read as an answer.
+    """
+    # -InputObject, NOT a pipe. Piping an empty array sends ZERO objects downstream, so
+    # `@() | ConvertTo-Json` prints nothing and the ambiguity survives the @(). Passing the
+    # array as an argument is what makes zero processes serialise to a literal `[]`
+    # (verified at the prompt before this was trusted).
+    script = (
+        "ConvertTo-Json -Compress -Depth 3 -InputObject @(Get-Process VotV-Win64-Shipping "
+        "-ErrorAction SilentlyContinue | ForEach-Object { [PSCustomObject]@{PID=$_.Id; "
+        "RSS_MB=[math]::Round($_.WorkingSet64/1MB,1); Title=$_.MainWindowTitle; "
+        "Path=$_.Path} })"
     )
-    out = out.strip()
-    if not out:
-        return []
-    data = json.loads(out)
-    if isinstance(data, dict):
-        data = [data]
-    return data
+    for attempt in range(3):
+        _rc, out, _err = run_ps(script)
+        out = out.strip()
+        if out:
+            try:
+                data = json.loads(out)
+            except json.JSONDecodeError:
+                data = None
+            if data is not None:
+                if isinstance(data, dict):
+                    data = [data]
+                return data
+        if attempt < 2:
+            time.sleep(0.5)
+    log("WARN: could not query VotV processes after 3 attempts -- reporting none, "
+        "which may be wrong; treat a 'crashed' verdict from this run with suspicion")
+    return []
 
 
 def kill_all() -> int:
