@@ -579,8 +579,11 @@ Symmetric to §9, on the facts in §6c.c:
    no confirmation window, no swapchain-creation probe.
 4. **RULE 2 — `overlay_backend_dx12_capture.cpp` retires WHOLE** (**378 LOC, measured at `26674b21`**): the ECL hook, the per-queue
    tally, the candidate/confirmation state machine, `Rearm()`, and the creation probe. Its public seam
-   (`Device()` / `TryConfirmQueue()` / `InstallCreationProbe()` / `Rearm()` / `Shutdown()` in
-   `overlay_backend_internal.h`) collapses to a single "resolve the queue from the viewport" call. No
+   (`Device()` / `TryConfirmQueue()` / `InstallCreationProbe()` / `Rearm()` / ~~`Shutdown()`~~ in
+   `overlay_backend_internal.h`) collapses to a single "resolve the queue from the viewport" call.
+   **(2026-08-26: `Shutdown()` is ALREADY GONE — deleted in `eafb2207` as part of a teardown subtree
+   that `[V]` had zero reachable callers and never executed once. Do not go looking for it. The rest
+   of this seam list still stands.)** No
    dual path: the ECL route does not survive behind a flag.
 5. **Fail-CLOSED validation** before first use, SEH-guarded: the swapchain pointer must
    `QueryInterface(IID_IDXGISwapChain)`; the queue pointer must `QueryInterface(IID_ID3D12CommandQueue)`

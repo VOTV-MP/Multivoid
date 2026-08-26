@@ -44,8 +44,17 @@ calls, a BP self-destroy, and native C++ internal calls. **[RD: pass-1 RE §1.2]
 
 ## Our hook seams (what each can/can't see)
 
-All in `ue_wrap/game_thread.{h,cpp}`. Per-dispatch order: drain task pump → **FireInterceptors** (PRE-cancel)
-→ **FireObservers(PRE)** → `g_originalPE` → **FireObservers(POST)**. **[V: game_thread.cpp:650-688]**
+Declared in `ue_wrap/core/game_thread.h`; the detour itself lives in `ue_wrap/core/pe_detour.cpp`
+(**it moved — `game_thread.cpp` is 529 lines, so an older citation of `game_thread.cpp:650-688` cannot
+resolve; re-verified 2026-08-26**). Per-dispatch order: drain task pump →
+**`FireInterceptors`** (PRE-cancel; `return` on true) → **`FirePreObservers`** → `FireNameDiagnostics`
+→ **`g_peTrampoline`** → **POST observers**.
+**[V: `pe_detour.cpp` `ProcessEventDetourImpl`, 2026-08-26]**
+
+> `g_peTrampoline` was called `g_originalPE` until 2026-08-26. The rename is not cosmetic and the old
+> name should not come back: it is **MinHook's trampoline slot**, not the engine's ProcessEvent, and a
+> 2026-05-27 audit cleared a real use-after-free by reading the old name and believing it. See
+> `docs/UE4SS_ARC.md` §4c.
 
 | Seam | Fires | Multiple/fn? | Thread | Use / blind spot |
 |---|---|---|---|---|

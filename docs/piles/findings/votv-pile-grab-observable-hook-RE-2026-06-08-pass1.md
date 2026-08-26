@@ -79,6 +79,9 @@ NOT `EX_FinalFunction`).** I traced the VM handling of these opcodes in IDA:
 - Confirmed our detour sits on **`UObject::ProcessEvent` ONLY**: `g_processEvent` is
   AOB-resolved (`reflection.cpp:52-54`, sig `P::kSigProcessEvent` → 0x141465930) and
   MinHook-detoured by `game_thread.cpp` (`ProcessEventDetour` → `g_originalPE` trampoline).
+  *(2026-08-26: both names have moved — the detour lives in `ue_wrap/core/pe_detour.cpp` and the
+  pointer is now `g_peTrampoline`. Kept verbatim as the point-in-time record; the mechanism is
+  unchanged.)*
   The detour is NOT on `CallFunction`, `ProcessInternal`, or `sub_14146BC40`. And
   `UObject_ProcessEvent` itself *calls* `ProcessInternal` (xref @0x141465c10) — confirming
   ProcessInternal is the layer *below* our hook, so anything entering at ProcessInternal is

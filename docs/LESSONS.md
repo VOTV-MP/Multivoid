@@ -2142,6 +2142,20 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   A quoted artifact owes its owner's name in the same breath.
   `memory/lesson_a_doc_that_specifies_reads_as_a_doc_that_records.md`
 
+- **2026-08-26 -- A CENSUS IS ONLY AS GOOD AS ITS KEY, and one session picked the wrong key FIVE
+  times.** All the same mistake with five faces: grepped the PAYLOAD's name not the PROXY's (missed a
+  hard `throw` that blocks every release mid-arc); used `git log -S"sym"` as evidence of no callers
+  (it measures whether that STRING was ever written, a different question); stopped the census at
+  `src/` and missed `tools/mp.py` pinning a log literal -- in an instrument committed HOURS earlier;
+  grepped PROSE ("remove", "uninitialize") instead of CALLS (`MH_RemoveHook(`) and so missed a third
+  call in the very file being rewritten; and grouped identifiers by NAME (`g_orig*`) instead of by
+  ASSIGNMENT SITE, where 4 of 15 were not trampolines at all and renaming them would have authored the
+  INVERSE of the lie being fixed. Every one was caught by a critic, never by me. LOOK FIRST: name the
+  OPERATION and grep THAT -- if your pattern is a word from your own sentence, it is the wrong key;
+  write the AFTER sentence and grep what it falsifies across `src/` + `tools/` + `docs/`, all three;
+  and treat a suspiciously tidy census as a warning, not a result.
+  `memory/lesson-census-by-the-operation-not-by-the-name.md`
+
 ### 1b. Standing working agreements (previously indexed NOWHERE)
 
 Measured 2026-07-27 by a full pairing sweep of `memory/` against this file: **all 194 `lesson_*`
@@ -3732,6 +3746,36 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   NEVER RUN. `docs/MULTIPLAYER_UI.md` 6e.
   `memory/lesson_a_cannot_in_a_comment_is_a_snapshot_of_what_was_tried.md`
 
+- **2026-08-26 -- A HOOKING LIBRARY'S "original function" OUT-PARAM IS ITS TRAMPOLINE, AND FREEING
+  IT CORRUPTS BEFORE IT UNMAPS.** `[V]` `minhook/src/hook.c:634` `*ppOriginal = pHook->pTrampoline`;
+  `[V]` `buffer.c:43-50` MEMORY_SLOT UNIONs its free-list link with the trampoline bytes, so
+  `buffer.c:282`'s `pSlot->pNext = ...` writes eight bytes AT OFFSET 0 of the slot -- inside
+  `MH_RemoveHook` (`hook.c:702`), i.e. the corruption is IN PLACE and the later `VirtualFree` is a
+  SECOND hazard. A 2026-05-27 audit cleared the resulting use-after-free by reading the variable's
+  NAME (`g_originalPE`) and concluding it aimed at a process-lifetime engine entry point -- which is
+  how `hook.h:45-48` ("Disable is the ONLY safe retirement") sat FIVE LINES from `hook.h:56`
+  ("...uninitialize. Safe to call once at shutdown") for four months. Also false: "we have ~12 hooks
+  so the block stays alive" -- MinHook allocates near the target, so ProcessEvent's trampoline had
+  its OWN block and removing that one hook released the page. LOOK FIRST: any `void**` out-param
+  from a hooking library is memory the LIBRARY owns -- find the assignment in ITS source, never
+  reason from the name your code gave it; use Disable, never Remove, for a detour anything may be
+  entering; and a crash whose faulting ADDRESS equals a logged `trampoline <base>` line IS this bug
+  (second such match in this project -- see the 2026-08-22 row in section 8).
+  Fixed `42af8cc0`; gate `tools/hooks/minhook_free_gate.ps1`; account `docs/UE4SS_ARC.md` section 4c.
+  `memory/lesson-the-trampoline-is-not-the-original-function.md`
+
+- **2026-08-26 -- AN UNTESTABLE PATH HIDES MORE THAN THE RESIDUAL YOU KNOW ABOUT.** `[V]` `mp.py`'s
+  `kill_all()` was `Stop-Process -Force` = TerminateProcess, so no `WM_CLOSE` and no
+  `DLL_PROCESS_DETACH` -- the whole shutdown path had NEVER executed under any automated scenario, on
+  any build. The instrument built to falsify ONE known residual instead found, on its first two runs:
+  that the rig composes with UE4SS's PolyHook unprompted (a doc had been read for days as saying the
+  opposite), a 3-second window to DETACH, and a LIVE use-after-free unrelated to the residual. A path
+  no test walks accumulates claims nobody can check -- its comments are un-refuted, not true. LOOK
+  FIRST: ask "has this path ever executed in a test?" before estimating its risk, and read HOW the rig
+  terminates (a forced kill silently deletes every teardown path from coverage); build the instrument
+  BEFORE the fix and give it a RED arm; and budget for it finding something else.
+  `memory/lesson-an-untestable-path-hides-more-than-its-residual.md`
+
 ## 5. Engine / UE4 facts
 
 - **A UMG getter may read back YOUR OWN REQUEST, not the engine's state.** `[V]` 2026-08-26, twice:
@@ -4143,7 +4187,12 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   groups identical crashes across runs; a green drill can hide a crashed boot.** The WP-2 UE4SS-lane
   boot flake was attributed by hash identity (3 crashes, one SILENT during the 08-21 spike evening)
   plus a byte-exact match of the dump's faulting IP against our own logged `trampoline <base>` line
-  (fault = ProcessEvent trampoline +0x14). The install-dir `VotV/Saved/` does NOT exist -- mp.py's
+  (fault = ProcessEvent trampoline +0x14). **SECOND INSTANCE 2026-08-26, and the technique settled a
+  DIFFERENT defect: the faulting ADDRESS (not the IP) matched the trampoline base exactly --
+  `AV reading 0x00007ff6e7cf0fc0` against a drill line reading `trampoline 00007FF6E7CF0FC0` -- which
+  is a use-after-free of the slot, not a corrupted relay. Two crash families, one address-matching
+  method; see `docs/UE4SS_ARC.md` section 4c and
+  [[lesson-the-trampoline-is-not-the-original-function]].** The install-dir `VotV/Saved/` does NOT exist -- mp.py's
   `_game_log()` fatal-scan reads a path that never has data (open defect). LOOK FIRST: list the
   Crashes dir by mtime and compare PCallStackHash BEFORE theorizing; decode with python
   minidump+capstone (recipe in the lesson). **UPDATE 2026-08-22 pm:** the default dump is a TRIAGE
