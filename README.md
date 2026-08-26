@@ -301,10 +301,16 @@ Three "no-compromise" rules govern day-to-day work:
 
 ## Credits
 
-Multivoid is written by one person (Pelmentor) with heavy use of AI coding
-tools — direction, architecture, testing and every release decision are mine;
-much of the code was written with Claude. The full commit history is public, so
-you can judge the process as well as the result.
+Multivoid is written and directed by one person (Pelmentor) with heavy use of
+AI coding tools — direction, architecture, testing and every release decision
+are mine; much of the code was written with Claude. The full commit history is
+public, so you can judge the process as well as the result.
+
+Outside contributions are welcome, and they are credited here:
+
+| Contributor | Contribution |
+|--|--|
+| [arigalit](https://github.com/arigalit) | ATV seat contention ([#9](https://github.com/VOTV-MP/Multivoid/pull/9)) — a peer walking up to an ATV somebody else is already driving is now denied at the input seam, instead of both engines running vehicle physics and fighting over the body. Also reported the join-time prop-count divergence with paired host/client logs. |
 
 Prior art this project learned from, with thanks:
 

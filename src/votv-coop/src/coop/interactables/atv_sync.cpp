@@ -8,10 +8,18 @@
 // blueprint). The index/poll/connect-snapshot shape follows the keyed-interactable modules
 // (power_sync/keypad_sync); the per-ATV LerpWindow interp follows element::Npc's pose drive.
 //
-// Seat Contention / Double-Mount Prevention:
-// Each ATV entry tracks occupantSlot (0xFF = unoccupied). Authority is claimed only if the seat
-// is free or already owned by the local peer. If a remote peer is driving, local mount attempts
-// are blocked / disregarded so two players cannot seat simultaneously or fight for pose authority.
+// SEAT CONTENTION (PR #9, arigalit). Each entry tracks `occupantSlot` (0xFF = free). A peer takes
+// pose authority only while the seat is free or already its own, so a second peer walking up to an
+// ATV someone is driving is denied at the INPUT seam (device_occupancy) and never runs the native
+// seating logic. That is a client-side PRODUCER suppression, not a receive gate -- COOP_SYNCER_MODEL
+// section 2b's required shape.
+//
+// The seat is SELF-ELECTED, not arbitrated, and that has one consequence worth naming: if two peers
+// mount inside the same round-trip, neither has heard the other yet, so both elect themselves. The
+// deny gate cannot see it (each reads occupantSlot 0xFF). LOWER SLOT WINS resolves it in OnReliable
+// below -- a total order both peers already agree on, costing nothing on the wire. It is a tie-break,
+// NOT authority: a peer that lies about its slot is not defeated by it, which is why the real fix is
+// an arbitrated seat claim (act-as-host, COOP_SYNCER_MODEL section 2b) and this is not that.
 
 #include "coop/interactables/atv_sync.h"
 
@@ -179,8 +187,8 @@ bool IsLocalGrabber(void* actor, void* localPlayer) {
 // THIS peer is the single authority for `actor` -- it must STREAM it, not mirror it -- iff its
 // local player is the validated driver OR the grav-hand grabber. The two are mutually exclusive.
 bool IsLocalAuthority(void* actor, void* localPlayer, uint8_t occupantSlot, uint8_t localSlot) {
-    const bool isDriver = CanClaimOrIsDriver(actor, localPlayer, occupantSlot, localSlot);
-    return isDriver || (!isDriver && IsLocalGrabber(actor, localPlayer));
+    return CanClaimOrIsDriver(actor, localPlayer, occupantSlot, localSlot) ||
+           IsLocalGrabber(actor, localPlayer);
 }
 
 // Fill an AtvStatePayload from a live ATV read. False if the transform read fails. `grabbed` marks
@@ -408,6 +416,21 @@ void OnReliable(const coop::net::AtvStatePayload& payload, uint8_t /*senderPeerS
     void* localPlayer = coop::players::Registry::Get().Local();
     const uint8_t localSlot = coop::players::Registry::Get().LocalPeerId();
 
+    // SIMULTANEOUS-MOUNT TIE-BREAK -- this MUST precede the authority early-return below, which reads
+    // e.occupantSlot. Two peers mounting inside one round-trip both see a free seat and both elect
+    // themselves; each then treats the other's stream as an echo to ignore, and the double-drive the
+    // seat gate exists to prevent becomes PERMANENT. Lower slot wins: a total order both peers already
+    // hold, no wire cost, deterministic. Only a genuine claim (not 0xFF) can take the seat, and only
+    // from a peer we outrank -- so this can never demote us to a peer that is merely echoing.
+    if (payload.occupantSlot != 0xFF && payload.occupantSlot < localSlot &&
+        IsLocalOccupant(e.actor, localPlayer) &&
+        (e.occupantSlot == 0xFF || e.occupantSlot == localSlot)) {
+        UE_LOGI("atv: seat contention on '%ls' -- slot %u outranks local slot %u; yielding pose authority",
+                key.c_str(), static_cast<unsigned>(payload.occupantSlot),
+                static_cast<unsigned>(localSlot));
+        e.occupantSlot = payload.occupantSlot;   // we are now a mirror; Tick's authority-lost edge fires
+    }
+
     // If WE are the legitimate authority of this ATV (driving OR grav-hand grabbing it), ignore the incoming
     // pose so a relayed/echoed copy can't fight our live driving/carrying.
     if (IsLocalAuthority(e.actor, localPlayer, e.occupantSlot, localSlot)) return;
@@ -577,7 +600,15 @@ void Tick() {
         // bug. This makes an idle ATV physics-ON + grabbable on every peer (the proven prop-release
         // model). The final pose streamed last tick rides the same Normal lane, so GNS delivers
         // pose-then-release in order -- no settle delay needed.
-        if (e.wasAuthority && !authority) {
+        // Authority can now be lost TWO ways, and they need opposite handling. A DISMOUNT (or ungrab)
+        // means the seat is genuinely free -- clear it and tell receivers to re-enable physics. A YIELD
+        // (the OnReliable tie-break above: still physically seated, but outranked by a lower slot) means
+        // the seat is taken by SOMEONE ELSE. Clearing the slot there would erase the winner's claim, and
+        // since IsLocalOccupant is still true we would re-claim on the very next tick and flap; sending
+        // AtvRelease there would un-freeze the ATV underneath the peer that just won it.
+        const bool yielded = IsLocalOccupant(e.actor, localPlayer) &&
+                             e.occupantSlot != 0xFF && e.occupantSlot != localSlot;
+        if (e.wasAuthority && !authority && !yielded) {
             e.occupantSlot = 0xFF;  // unseat / release slot reservation
             FVector lin{}, ang{};
             ue_wrap::engine::GetActorRootPhysicsVelocity(e.actor, lin, ang);  // best-effort; zero on fail
@@ -643,6 +674,7 @@ void OnDisconnect() {
 // Check if an ATV actor is occupied by a remote peer (used to block local mount interactions).
 bool IsOccupiedByOther(void* actor, uint8_t* outOccupantSlot) {
     if (!actor) return false;
+    if (!IndexCurrent()) return false;   // stale-gen index holds another world's ATVs (audit W-2 class)
     const uint8_t localSlot = coop::players::Registry::Get().LocalPeerId();
     for (const auto& kv : g_atvs) {
         if (kv.second.actor == actor) {
