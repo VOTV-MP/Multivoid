@@ -33,6 +33,23 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 1. How to work (process / working agreements)
 
+- **A STANDING AUDIT RULE OUTRANKS A SESSION-LEVEL AGENT BAN -- WHEN TWO INSTRUCTIONS COLLIDE, THE
+  ONE THAT BUYS EVIDENCE WINS.** USER RULE 2026-08-26, verbatim: *"Audit agents for shipped code is
+  an exception to the 'don't spawn agents unasked' rule."* Born from a real miss the same day: a
+  session shipped a **live use-after-free** fix in the teardown path (`42af8cc0`) and handed off with
+  the post-ship audit *flagged as not run*, reasoning that the session instruction *"Do not call the
+  AgentTool unless the user requested it"* forbade it. The reasoning was symmetrical and wrong --
+  `[[feedback-post-ship-audit]]` IS the user asking, once, as a project rule, so an audit agent on
+  shipped code is never "unasked". Flagging beat skipping silently, but the resolution still cost the
+  riskiest change of the session its only independent reviewer. **The asymmetry: an unaudited ship
+  has no observer at all, so the failure is invisible rather than loud** -- the same shape as
+  `[[lesson-an-untestable-path-hides-more-than-its-residual]]`. *Look FIRST:* when a session-level
+  restriction appears to forbid a standing project rule, ask which instruction PRODUCES EVIDENCE and
+  which merely withholds it, and do not treat "do less" as automatically the conservative choice. And
+  note the exception NAMES ITS BOUNDARY: it covers agents reviewing built/committed/deployed code
+  only -- **design agents stay forbidden** (`[[feedback-no-design-architect-agents]]`), and
+  `Workflow`/deep-research stay opt-in. `memory/feedback_post_ship_audit.md`
+
 - **AN ESTIMATE USED TO *DECLINE* WORK IS A MEASUREMENT YOU OWE.** 2026-08-26, twice in one design
   pass and in OPPOSITE directions, each time as the reason to build the second-best option. (1) I
   called separating the connection routing key from the player seat *"a tree-wide signature change --
