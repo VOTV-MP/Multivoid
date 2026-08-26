@@ -860,16 +860,27 @@ cannot judge. So this lane has two halves and they are not interchangeable: the 
 machine-asserted and must stand on its own, and the FEEL half is the user's verdict. The exception
 covers feel only; it does not license shipping the rest unmeasured.
 
-#### 8c.-1 THE PERFORMANCE DESIGN — `/qf` RUN AND CONVERGED, 2026-08-26 `[V]`
+#### 8c.-1 THE PERFORMANCE DESIGN — `/qf` RUN, 2026-08-26 `[V]` measurements / `[RD]` plan
 
 > **USER:** *"How to do this properly and not eat performance too much deserve a qf in the next
 > session."* Then, answering the one policy question this design put to them: *"5 seconds is good."*
 
 **THIS SECTION REPLACES THE PRE-`/qf` COST MODEL WHOLE.** The text that stood here until 2026-08-26
 said the per-sync cost was "≈9 reflected calls" per row and "a few percent of dispatch volume". Both
-are **wrong**, and so was the arithmetic built on them. The `/qf` ran **nine rounds** and every one
-of them overturned something; the corrections are recorded below rather than quietly patched,
-because four of them were things this doc — or a message to the user — had already asserted as fact.
+are **wrong**, and so was the arithmetic built on them. The `/qf` ran **ten rounds** and every one of
+them overturned something; the corrections are recorded below rather than quietly patched, because
+five of them were things this doc — or a message to the user — had already asserted as fact.
+
+**STATUS, stated rather than implied:** the *measurements* below are `[V]` and cited. The *plan* is
+`[RD]` — nothing in T0–T8 is built, and no number in it has been produced by a run. The loop had not
+returned "that holds" when this was written; an earlier revision of this heading claimed it had
+converged, which was a status label ahead of its evidence.
+
+**MEASUREMENT PROTOCOL, so a gate is a decision and not a coin flip.** Every threshold below is read
+from **≥5 repeats**, reported as **median and p95**, at each of 0 / 50 / 100 / 200 rows. A gate whose
+threshold falls inside the run-to-run spread is **not decidable** and must be re-cut before it is
+used — the first draft of T4b failed exactly this test, thresholding at 1 ms against its own
+predicted 0.5–1.5 ms residue.
 
 ##### The cost model, corrected `[V]`
 
@@ -969,16 +980,18 @@ Each step is gated on the previous. Thresholds are written down **before** the r
 
 | # | step | gate |
 |---|---|---|
-| **T1** | **The X (+ Back)** via the shipped release-edge poll (`multiplayer_menu.cpp:253-271`) + a cloned `UButton`. `Close()`'s cross-thread path gets a driven test **shown RED first** — its first caller must not be its first proof. | none |
+| **T0** | **DOES IT SCROLL AT ALL.** One `GetScrollOffset` log line in the existing observer + the existing `mp.py browser` run + a wheel. Costs one run and **needs nothing built**. Everything below assumes the answer is yes: T2b builds a scroll drive, T4a preserves a scroll offset, and T6 decides a question that is *entirely* about scrolling. **If the answer is NO there is currently no step that prices "make it scroll"** — that work would have to be added here, ahead of everything. | none |
+| **T1** | **The X (+ Back)** via the shipped release-edge poll (`multiplayer_menu.cpp:253-271`) + a cloned `UButton`. `Close()`'s cross-thread path gets a driven test **shown RED first** — its first caller must not be its first proof. | T0 |
 | **T2a** | **The instrument**: re-clock the menu frame counter to QPC; frame-interval max/p99; call `perf_probe::Sample()` at the menu; a `Scope` around `SyncRows`; a MENU-TICK-vs-PRESENT counter. Behaviour-neutral. **Shown RED by an injected stall** before it is trusted. | none |
 | **T2b** | **The rig**: raise `kMaxRows` + LOG truncation; the section-8c seeder; scroll drive. | none |
 | **T2c** | **BASELINE** at 50 / 100 / 200 rows. | — |
-| **T3** | **READS -> RAW** (`Slots@+0x0108` / `Content@+0x0030`) + **WRITES -> FnCache** (`GetContent`, `SetContent` into `umg_build.cpp`'s table). Re-measure. | **not earned if** at 50 rows the baseline max frame interval < 20 ms AND the `SyncRows` Scope < 2 ms |
+| **T3** | **READS -> RAW** (`Slots@+0x0108` / `Content@+0x0030`) + **WRITES -> FnCache** (`GetContent`, `SetContent` into `umg_build.cpp`'s table). Re-measure. | **not earned if** at 50 rows the `SyncRows` Scope median < 4 ms AND the max frame interval exceeds the 0-row baseline max by < 8 ms |
 | **T4a** | **Ungated**: stable order; scroll-offset preservation across structural change (`GetScrollOffset`/`SetScrollOffset`, both resolved, both unused today — section 8c.3 ceiling #4); the 5 s cadence. These ship on their own merits. | none |
-| **T4b** | **The content diff** keyed on `lobbyId` + locally-derived age (coarsened or visible-only). | **not earned if** after T3 the `SyncRows` Scope at 50 rows < 1 ms |
-| **T5** | **The full section-8c harness**: phases A–G incl. D (shrink), E (shuffle at constant count), G (GC), plus section 8c.4's un-gated id-reconcile selftest **shown RED first**. | — |
+| **T4b** | **The content diff** keyed on `lobbyId` + locally-derived age (coarsened or visible-only). | **not earned if** after T3 the `SyncRows` Scope median at 50 rows < 4 ms — i.e. one sync cannot push a frame over budget. Read AFTER T4a so the cadence is already 5 s. |
+| **T5** | **The full section-8c harness**: phases A–G incl. D (shrink), E (shuffle at constant count), G (GC), plus section 8c.4's un-gated id-reconcile selftest **shown RED first**. **BLOCKED ON the F1 hazard below** — the MANUAL feel phase hands the user a keyboard, and F1 kills scrolling TODAY. | — |
 | **T6** | **Decide the row model.** Outcomes: keep widget-per-row (**live**), viewport pool (~9 widgets / 81 UWidgets vs 576), or `UListView` (a spike — see below). | T5's machine verdict |
 | **T7** | **Row input** against the decided model. | T6 |
+| **T8** | **RULE 2's paired end**: flip the MULTIPLAYER button to native and **delete `ui/server_browser.{h,cpp}` whole** — in the same commit retargeting `tools/cursor_probe.py` and `tools/master_fetch_probe.py` (both BLOCK on the ImGui browser's log line), removing `BrowserOpen()` from `AnyOpen()`/`CaptureActive()`, the SEH `Close()`, `harness.cpp:37`'s include, and `multiplayer_menu`'s dead `g_buttonInputBlocked`. `menu_sfx` STAYS (three other callers). | T7 |
 
 **Instrument-to-question mapping** (without this, a T4b re-measure passes on a broken build, because
 the post-T3 residue of ~0.5–1.5 ms sits *under* what a frame statistic can resolve against 8.5 ms
@@ -1006,10 +1019,12 @@ gate. That is what keeps "keep widget-per-row" a live and possibly winning outco
   swallowed **only** under `CaptureActive()` (`imgui_overlay.cpp:316-320`) and
   `server_browser_native` appears **nowhere** in that file, so the wheel reaches the game while our
   screen is the only surface up. **T5's first assertion.**
-- **HAZARD, filed as a BLOCKER on the day the MULTIPLAYER button is flipped to native:** pressing F1
-  while the browser is open flips `CaptureActive()` true and **the list stops scrolling**. Deleting
-  the ImGui browser removes `BrowserOpen()` from that predicate but not `MenuOpen()`, so the hazard
-  survives the deletion and needs its own answer.
+- **HAZARD, and it blocks T5, not T8.** Pressing F1 while the browser is open flips `CaptureActive()`
+  true (`imgui_overlay.cpp:162` — the predicate includes `MenuOpen()`) and **the list stops
+  scrolling, today**. This was first filed as a blocker on flip day; that was wrong by four steps —
+  **T5's MANUAL phase hands the user a keyboard and asks them how scrolling feels**, so the hazard
+  bites there first. And deleting the ImGui browser removes `BrowserOpen()` from that predicate but
+  **not** `MenuOpen()`, so the hazard survives T8 and needs its own answer regardless.
 - **Whether a viewport pool feels right while scrolling** is unmeasured. `SListView` re-points inside
   the layout pass; we would re-point from `ui_menu_C::Tick`. Note the pump rate (~0.34 tasks/frame at
   the menu, from the P1 probe data) is the **wrong proxy** — we run from a ProcessEvent post-observer,
