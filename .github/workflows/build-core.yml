@@ -101,6 +101,20 @@ jobs:
           pwsh -File tools/net/peerconn_gate.ps1
           exit $LASTEXITCODE
 
+      - name: MinHook free-call gate (nothing may free a trampoline the process still calls)
+        # Same family as the gates above: a cheap text scan with its own injected must-fire
+        # control, run before the toolchain so a violation fails fast. Guards the property
+        # that ue_wrap/core/hook.h states in prose and that PROSE ALONE DID NOT HOLD -- the
+        # header contradicted itself five lines apart for four months and a 2026-05-27 audit
+        # cleared the resulting use-after-free by trusting a variable name. -Drill also runs
+        # the INVERSE control, so a decorative allowlist cannot pass as a working one.
+        shell: pwsh
+        run: |
+          pwsh -File tools/hooks/minhook_free_gate.ps1 -Drill -Quiet
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -File tools/hooks/minhook_free_gate.ps1
+          exit $LASTEXITCODE
+
       - name: Atlas regime gate (the ImGui lazy atlas is on, watched, and bounded)
         # Same family: positive census, fail-closed on an empty or unexpected one,
         # with -Drill's injected must-fire controls run first so a green is

@@ -3922,16 +3922,19 @@ def cmd_puppetshot(args) -> None:
 # ---------------------------------------------------------------------------------------------
 # WHY THIS EXISTS. `kill_all()` above is `Stop-Process -Force`, i.e. TerminateProcess. It sends no
 # WM_CLOSE, our wndproc therefore never runs, and a forced kill delivers no DLL_PROCESS_DETACH
-# either. So `coop::shutdown::DoShutdown()` -> `ue_wrap::hook::Shutdown()` ->
-# `MH_DisableHook(MH_ALL_HOOKS)` + `MH_Uninitialize()` -- our ENTIRE teardown -- had never
-# executed in this rig's history, on any build, in any scenario. Measured 2026-08-26;
+# either. So `coop::shutdown::DoShutdown()` -> `ue_wrap::hook::Shutdown()` -- our ENTIRE teardown --
+# had never executed under an AUTOMATED SCENARIO, on any build. (It HAS run under a human close on
+# the proxy lane: docs/piles/test-evidence/handson-s31/s32 carry the marker. What had never happened
+# is a teardown with a co-resident PolyHook composed onto our relay.) Measured 2026-08-26;
 # docs/UE4SS_ARC.md section 4a.
 #
-# That was blocking. The UE4SS-lane fix B (the followJmp-immune relay) leaves one honest residual:
-# with UE4SS's PolyHook composed onto our relay, PolyHook holds a restore-pointer INTO the 64-byte
-# MinHook trampoline slot that `MH_Uninitialize()` frees. Shipping a fix for that without this
-# scenario would be a change to code no test runs -- unfalsifiable by construction. This makes the
-# path observable FIRST, so the fix can be shown RED and then GREEN.
+# That was blocking, and what it was hiding turned out to be bigger than the residual it was built
+# for: `[V]` removing a MinHook hook CORRUPTS its trampoline in place -- MH_RemoveHook -> FreeBuffer
+# writes a linked-list pointer over the slot's first eight bytes, i.e. over the stolen prologue a
+# thread may be about to return through -- and MH_Uninitialize then unmaps it, both while the process
+# is still running. Shipping a fix for that without this scenario would be a change to code no test
+# runs -- unfalsifiable by construction. This makes the path observable FIRST, so the fix can be
+# shown RED and then GREEN.
 #
 # It is deliberately ADDITIVE. `kill_all()` is untouched and every other scenario still tears down
 # exactly the way it always has; nothing here changes an existing verdict.
@@ -3946,7 +3949,7 @@ _WM_CLOSE = 0x0010
 _TEARDOWN_TRAIL = [
     ("close-signal", "shutdown: close-signal received on HWND=", "coop/session/shutdown.cpp CoopWndProc"),
     ("begin",        "shutdown: BEGIN cleanup",                  "coop/session/shutdown.cpp DoShutdown"),
-    ("minhook",      "hook: MinHook shut down",                  "ue_wrap/core/hook.cpp Shutdown"),
+    ("minhook",      "hook: all patches lifted",                 "ue_wrap/core/hook.cpp Shutdown"),
     ("end",          "shutdown: END cleanup",                    "coop/session/shutdown.cpp DoShutdown"),
 ]
 # Emitted from DllMain's DLL_PROCESS_DETACH arm -- present iff the process really unloaded us

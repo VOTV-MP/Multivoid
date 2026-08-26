@@ -108,8 +108,8 @@ using PresentFn = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT);
 using ResizeBuffersFn = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT, UINT,
                                                     DXGI_FORMAT, UINT);
 
-PresentFn       g_origPresent = nullptr;
-ResizeBuffersFn g_origResize  = nullptr;
+PresentFn       g_presentTrampoline = nullptr;
+ResizeBuffersFn g_resizeTrampoline  = nullptr;
 void*           g_presentTarget = nullptr;
 void*           g_resizeTarget  = nullptr;
 
@@ -117,7 +117,7 @@ void*           g_resizeTarget  = nullptr;
 // while the menu is visible (otherwise the OS cursor is snapped back to the window
 // center every frame and can't track the mouse over the menu).
 using SetCursorPosFn = BOOL(WINAPI*)(int, int);
-SetCursorPosFn  g_origSetCursorPos  = nullptr;
+SetCursorPosFn  g_setCursorPosTrampoline  = nullptr;
 void*           g_setCursorPosTarget = nullptr;
 
 HWND    g_hwnd    = nullptr;
@@ -173,7 +173,7 @@ BOOL WINAPI SetCursorPosDetour(int x, int y) {
     // capture transition has any pointer ownership to hand back (ui/overlay_cursor.h).
     ui::overlay_cursor::NoteGameCursorWrite();
     if (CaptureActive()) return TRUE;
-    return g_origSetCursorPos(x, y);
+    return g_setCursorPosTrampoline(x, y);
 }
 
 // The gate state the key trace reports. These predicates are file-local, so the
@@ -476,8 +476,8 @@ void RenderFrameGuarded(IDXGISwapChain* sc) {
 
         // Cursor OWNERSHIP transition (MTA CLocalGUI::Draw shape) -- before the probe,
         // so the probe observes the state the frame will actually draw with.
-        ui::overlay_cursor::FrameTransition(g_hwnd, CaptureActive(), g_origSetCursorPos);
-        ui::overlay_diag::CursorFrame(g_hwnd, CaptureActive(), g_origSetCursorPos);
+        ui::overlay_cursor::FrameTransition(g_hwnd, CaptureActive(), g_setCursorPosTrampoline);
+        ui::overlay_diag::CursorFrame(g_hwnd, CaptureActive(), g_setCursorPosTrampoline);
         ImGui::Render();
         overlay_backend::RenderDrawData(sc);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -527,7 +527,7 @@ HRESULT STDMETHODCALLTYPE PresentDetour(IDXGISwapChain* sc, UINT sync, UINT flag
     // up to -- but excluding -- the engine's own Present. Accumulated into the
     // OverlayPresent bucket (render thread; AddTicks is a relaxed fetch_add).
     // Cannot use perf_probe::Scope here: its destructor would fire AFTER
-    // g_origPresent returns and swallow the present/vsync wait.
+    // g_presentTrampoline returns and swallow the present/vsync wait.
     const bool perfOn = coop::dev::perf_probe::Armed();
     const unsigned long long perfT0 = perfOn ? coop::dev::perf_probe::NowTicks() : 0;
     // The input probe must sample even with NO surface open (that is the state in which
@@ -575,13 +575,13 @@ HRESULT STDMETHODCALLTYPE PresentDetour(IDXGISwapChain* sc, UINT sync, UINT flag
         coop::dev::perf_probe::AddTicks(coop::dev::perf_probe::Bucket::OverlayPresent,
                                         coop::dev::perf_probe::NowTicks() - perfT0);
     }
-    return g_origPresent(sc, sync, flags);
+    return g_presentTrampoline(sc, sync, flags);
 }
 
 HRESULT STDMETHODCALLTYPE ResizeBuffersDetour(IDXGISwapChain* sc, UINT bufCount, UINT w,
                                               UINT h, DXGI_FORMAT fmt, UINT flags) {
     overlay_backend::OnResizeRelease();  // the backbuffer is about to be recreated
-    const HRESULT hr = g_origResize(sc, bufCount, w, h, fmt, flags);
+    const HRESULT hr = g_resizeTrampoline(sc, bufCount, w, h, fmt, flags);
     if (SUCCEEDED(hr) && g_imguiReady.load(std::memory_order_acquire)) {
         overlay_backend::OnResizeRecreate(sc);
         // Resizes are rare (a window/resolution/fullscreen change), so one line
@@ -654,9 +654,9 @@ bool Init() {
         return false;
     }
     const bool p = ue_wrap::hook::Install(g_presentTarget, &PresentDetour,
-                                          reinterpret_cast<void**>(&g_origPresent));
+                                          reinterpret_cast<void**>(&g_presentTrampoline));
     const bool r = ue_wrap::hook::Install(g_resizeTarget, &ResizeBuffersDetour,
-                                          reinterpret_cast<void**>(&g_origResize));
+                                          reinterpret_cast<void**>(&g_resizeTrampoline));
     if (!p || !r) {
         UE_LOGE("imgui_overlay: MinHook Install failed (present=%d resize=%d)", p ? 1 : 0, r ? 1 : 0);
         return false;
@@ -668,7 +668,7 @@ bool Init() {
         g_setCursorPosTarget = reinterpret_cast<void*>(::GetProcAddress(u32, "SetCursorPos"));
         if (g_setCursorPosTarget &&
             ue_wrap::hook::Install(g_setCursorPosTarget, &SetCursorPosDetour,
-                                   reinterpret_cast<void**>(&g_origSetCursorPos))) {
+                                   reinterpret_cast<void**>(&g_setCursorPosTrampoline))) {
             UE_LOGI("imgui_overlay: SetCursorPos hook installed (@%p) -- UE4 cursor recenter is "
                     "neutralized while the menu is up so the OS cursor tracks the mouse", g_setCursorPosTarget);
         } else {
@@ -790,36 +790,14 @@ bool Init() {
 bool IsVisible() { return g_visible.load(std::memory_order_relaxed); }
 void SetVisible(bool visible) { g_visible.store(visible, std::memory_order_relaxed); }
 
-void Shutdown() {
-    if (!g_installed.exchange(false)) return;
-    // Stop new ImGui work + remove the hooks so no new Present/WndProc routes to us.
-    g_visible.store(false, std::memory_order_relaxed);
-    g_scoreboard.store(false, std::memory_order_relaxed);
-    g_scoreboardForced.store(false, std::memory_order_relaxed);
-    ui::voice_panel::Close();
-    ui::server_browser::Close();
-    ui::host_save_picker::Close();
-    ui::loading_screen::Close();
-    ui::console::Close();
-    ui::console::Shutdown();  // unregister the logger sink so no post-teardown log re-enters it
-    const bool wasReady = g_imguiReady.exchange(false);
-    if (g_presentTarget) ue_wrap::hook::Uninstall(g_presentTarget);
-    if (g_resizeTarget)  ue_wrap::hook::Uninstall(g_resizeTarget);
-    if (g_setCursorPosTarget) { ue_wrap::hook::Uninstall(g_setCursorPosTarget); g_setCursorPosTarget = nullptr; }
-    // Wait out any render-thread frame in flight before tearing down the context
-    // (MinHook re-arms the original but does not join in-flight detour calls).
-    for (int i = 0; i < 200 && g_inFrame.load(std::memory_order_acquire); ++i) ::Sleep(1);
-    if (wasReady && g_hwnd && g_origWndProc)
-        ::SetWindowLongPtrW(g_hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(g_origWndProc));
-    // Backend teardown (renderer-backend Shutdown + render target + device refs),
-    // then the platform half. Deviation vs pre-extraction order: the RTV/device
-    // are now released BEFORE DestroyContext instead of after -- independent
-    // objects, no ordering dependency.
-    overlay_backend::Shutdown(wasReady);
-    if (wasReady) {
-        ImGui_ImplWin32_Shutdown();
-        ImGui::DestroyContext();
-    }
-}
+// ---- process-exit retirement -------------------------------------------------
+// RULE 2, 2026-08-26: a full `Shutdown()` lived here and `[V]` had ZERO callers
+// tree-wide for its entire life -- as did every function it called, down to
+// dx12_capture::Shutdown. It was also wrong twice: `hook::Uninstall` corrupts the
+// trampoline in place, and its 200 ms g_inFrame wait is the in-flight counter
+// hook.h:45-48 rejects, placed AFTER that free. A dying process needs one thing --
+// stop new detour entries -- and hook::Shutdown's blanket disable does it for all
+// three patches; `[V]` it has always been the only thing that ever lifted them.
+// Do not re-add a teardown here. Full account: docs/UE4SS_ARC.md section 4c.
 
 }  // namespace ui::imgui_overlay

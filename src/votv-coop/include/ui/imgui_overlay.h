@@ -36,7 +36,5 @@ void SetVisible(bool visible);
 // Image-file -> ImTextureID decoding lives in ui/overlay_backend.h
 // (overlay_backend::CreateTextureFromImageFile) -- it is RHI-specific.
 
-// Disable + remove the hooks and tear down ImGui. Safe at shutdown.
-void Shutdown();
 
 }  // namespace ui::imgui_overlay

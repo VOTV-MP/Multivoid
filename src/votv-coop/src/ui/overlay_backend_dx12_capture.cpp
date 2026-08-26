@@ -59,7 +59,7 @@ bool g_reseed = false;
 int  g_presents = 0;
 
 using EclFn = void(STDMETHODCALLTYPE*)(ID3D12CommandQueue*, UINT, ID3D12CommandList* const*);
-EclFn g_origEcl = nullptr;
+EclFn g_eclTrampoline = nullptr;
 void* g_eclTarget = nullptr;
 
 // CreateSwapChain probes (installed at boot from imgui_overlay::Init).
@@ -69,8 +69,8 @@ using CreateSwapChainForHwndFn = HRESULT(STDMETHODCALLTYPE*)(IDXGIFactory2*, IUn
                                                              const DXGI_SWAP_CHAIN_DESC1*,
                                                              const DXGI_SWAP_CHAIN_FULLSCREEN_DESC*,
                                                              IDXGIOutput*, IDXGISwapChain1**);
-CreateSwapChainFn        g_origCreateSc     = nullptr;
-CreateSwapChainForHwndFn g_origCreateScHwnd = nullptr;
+CreateSwapChainFn        g_createScTrampoline     = nullptr;
+CreateSwapChainForHwndFn g_createScHwndTrampoline = nullptr;
 void* g_createScTarget     = nullptr;
 void* g_createScHwndTarget = nullptr;
 
@@ -140,7 +140,7 @@ void STDMETHODCALLTYPE EclDetour(ID3D12CommandQueue* q, UINT numLists,
         if (s->desc.Type == D3D12_COMMAND_LIST_TYPE_DIRECT && s->deviceMatch)
             g_lastDirectSameDev.store(q, std::memory_order_relaxed);
     }
-    g_origEcl(q, numLists, lists);
+    g_eclTrampoline(q, numLists, lists);
 }
 
 // ---- creation probes ---------------------------------------------------------
@@ -159,7 +159,7 @@ void LogCreationDevice(const char* which, IUnknown* pDevice) {
 HRESULT STDMETHODCALLTYPE CreateScDetour(IDXGIFactory* self, IUnknown* pDevice,
                                          DXGI_SWAP_CHAIN_DESC* desc, IDXGISwapChain** out) {
     LogCreationDevice("CreateSwapChain", pDevice);
-    return g_origCreateSc(self, pDevice, desc, out);
+    return g_createScTrampoline(self, pDevice, desc, out);
 }
 
 HRESULT STDMETHODCALLTYPE CreateScHwndDetour(IDXGIFactory2* self, IUnknown* pDevice, HWND hwnd,
@@ -167,7 +167,7 @@ HRESULT STDMETHODCALLTYPE CreateScHwndDetour(IDXGIFactory2* self, IUnknown* pDev
                                              const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* fs,
                                              IDXGIOutput* restrict_, IDXGISwapChain1** out) {
     LogCreationDevice("CreateSwapChainForHwnd", pDevice);
-    return g_origCreateScHwnd(self, pDevice, hwnd, desc, fs, restrict_, out);
+    return g_createScHwndTrampoline(self, pDevice, hwnd, desc, fs, restrict_, out);
 }
 
 // Off the render thread: make a throwaway D3D12 device + DIRECT queue purely
@@ -199,7 +199,7 @@ DWORD WINAPI EclHookThread(LPVOID) {
         void** vtbl = *reinterpret_cast<void***>(dummyQ);
         g_eclTarget = vtbl[10];  // ID3D12CommandQueue::ExecuteCommandLists
         if (ue_wrap::hook::Install(g_eclTarget, reinterpret_cast<void*>(&EclDetour),
-                                   reinterpret_cast<void**>(&g_origEcl))) {
+                                   reinterpret_cast<void**>(&g_eclTrampoline))) {
             g_eclHookInstalled.store(true, std::memory_order_release);  // after the hook is live
             UE_LOGI("imgui_overlay: dx12 capture: ExecuteCommandLists hook armed (@%p)",
                     g_eclTarget);
@@ -369,12 +369,12 @@ void InstallCreationProbe() {
     }
     fac->Release();
     if (!ue_wrap::hook::Install(g_createScTarget, reinterpret_cast<void*>(&CreateScDetour),
-                                reinterpret_cast<void**>(&g_origCreateSc)))
+                                reinterpret_cast<void**>(&g_createScTrampoline)))
         g_createScTarget = nullptr;
     if (g_createScHwndTarget &&
         !ue_wrap::hook::Install(g_createScHwndTarget,
                                 reinterpret_cast<void*>(&CreateScHwndDetour),
-                                reinterpret_cast<void**>(&g_origCreateScHwnd)))
+                                reinterpret_cast<void**>(&g_createScHwndTrampoline)))
         g_createScHwndTarget = nullptr;
     UE_LOGI("imgui_overlay: swapchain-creation probe armed (CreateSwapChain=%p ForHwnd=%p)",
             g_createScTarget, g_createScHwndTarget);

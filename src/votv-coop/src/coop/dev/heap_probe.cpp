@@ -28,10 +28,10 @@ using malloc_t  = void*(__cdecl*)(size_t);
 using free_t    = void (__cdecl*)(void*);
 using realloc_t = void*(__cdecl*)(void*, size_t);
 using calloc_t  = void*(__cdecl*)(size_t, size_t);
-malloc_t  g_origMalloc  = nullptr;
-free_t    g_origFree    = nullptr;
-realloc_t g_origRealloc = nullptr;
-calloc_t  g_origCalloc  = nullptr;
+malloc_t  g_mallocTrampoline  = nullptr;
+free_t    g_freeTrampoline    = nullptr;
+realloc_t g_reallocTrampoline = nullptr;
+calloc_t  g_callocTrampoline  = nullptr;
 
 // ---- our DLL's address range (allocation-site attribution filter) ----
 uintptr_t g_modBase = 0;
@@ -51,19 +51,19 @@ void ResolveModuleRange() {
 
 // ---- a raw allocator that routes THROUGH the saved trampoline, so the probe's
 // own bookkeeping containers never re-enter the detoured malloc (no recursion,
-// no TLS guard needed). g_origMalloc is set before any detour goes live.
+// no TLS guard needed). g_mallocTrampoline is set before any detour goes live.
 template <class T>
 struct RawAlloc {
     using value_type = T;
     RawAlloc() = default;
     template <class U> RawAlloc(const RawAlloc<U>&) noexcept {}
     T* allocate(std::size_t n) {
-        void* p = g_origMalloc ? g_origMalloc(n * sizeof(T)) : std::malloc(n * sizeof(T));
+        void* p = g_mallocTrampoline ? g_mallocTrampoline(n * sizeof(T)) : std::malloc(n * sizeof(T));
         if (!p) throw std::bad_alloc();
         return static_cast<T*>(p);
     }
     void deallocate(T* p, std::size_t) noexcept {
-        if (g_origFree) g_origFree(p); else std::free(p);
+        if (g_freeTrampoline) g_freeTrampoline(p); else std::free(p);
     }
     template <class U> bool operator==(const RawAlloc<U>&) const noexcept { return true; }
     template <class U> bool operator!=(const RawAlloc<U>&) const noexcept { return false; }
@@ -152,22 +152,22 @@ void Unrecord(void* p) {
 }
 
 void* __cdecl Hk_malloc(size_t n) {
-    void* p = g_origMalloc(n);
+    void* p = g_mallocTrampoline(n);
     Record(p, n);
     return p;
 }
 void __cdecl Hk_free(void* p) {
     Unrecord(p);
-    g_origFree(p);
+    g_freeTrampoline(p);
 }
 void* __cdecl Hk_realloc(void* p, size_t n) {
     Unrecord(p);
-    void* q = g_origRealloc(p, n);
+    void* q = g_reallocTrampoline(p, n);
     Record(q, n);
     return q;
 }
 void* __cdecl Hk_calloc(size_t count, size_t size) {
-    void* p = g_origCalloc(count, size);
+    void* p = g_callocTrampoline(count, size);
     Record(p, count * size);
     return p;
 }
@@ -185,13 +185,13 @@ void InstallHooks() {
     void* pRealloc = reinterpret_cast<void*>(static_cast<realloc_t>(&std::realloc));
     void* pCalloc  = reinterpret_cast<void*>(static_cast<calloc_t>(&std::calloc));
 
-    // malloc FIRST so g_origMalloc (used by RawAlloc) is live before any record;
-    // free LAST so g_origFree is ready for the first Unrecord.
+    // malloc FIRST so g_mallocTrampoline (used by RawAlloc) is live before any record;
+    // free LAST so g_freeTrampoline is ready for the first Unrecord.
     bool ok = true;
-    ok &= ue_wrap::hook::Install(pMalloc,  reinterpret_cast<void*>(&Hk_malloc),  reinterpret_cast<void**>(&g_origMalloc));
-    ok &= ue_wrap::hook::Install(pRealloc, reinterpret_cast<void*>(&Hk_realloc), reinterpret_cast<void**>(&g_origRealloc));
-    ok &= ue_wrap::hook::Install(pCalloc,  reinterpret_cast<void*>(&Hk_calloc),  reinterpret_cast<void**>(&g_origCalloc));
-    ok &= ue_wrap::hook::Install(pFree,    reinterpret_cast<void*>(&Hk_free),    reinterpret_cast<void**>(&g_origFree));
+    ok &= ue_wrap::hook::Install(pMalloc,  reinterpret_cast<void*>(&Hk_malloc),  reinterpret_cast<void**>(&g_mallocTrampoline));
+    ok &= ue_wrap::hook::Install(pRealloc, reinterpret_cast<void*>(&Hk_realloc), reinterpret_cast<void**>(&g_reallocTrampoline));
+    ok &= ue_wrap::hook::Install(pCalloc,  reinterpret_cast<void*>(&Hk_calloc),  reinterpret_cast<void**>(&g_callocTrampoline));
+    ok &= ue_wrap::hook::Install(pFree,    reinterpret_cast<void*>(&Hk_free),    reinterpret_cast<void**>(&g_freeTrampoline));
     if (!ok) UE_LOGE("[heap_probe] one or more static-CRT hooks failed to install");
     UE_LOGW("[heap_probe] hooked static-CRT malloc/free/realloc/calloc; our module [%p, %p) -- "
             "reporting OUR-module CRT live bytes every %llds (engine allocator is NOT counted)",

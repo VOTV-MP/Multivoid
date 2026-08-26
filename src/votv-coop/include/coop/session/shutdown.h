@@ -17,10 +17,15 @@
 //      BEFORE the engine starts its teardown PE calls.
 //   2) Shutdown order: set g_shuttingDown -> stop the net session
 //      (joins NetThread) -> sleep ~100 ms so polling worker loops fall
-//      through their Sleep + observe the flag and exit -> uninstall the
-//      PE detour (game_thread::Uninstall) so subsequent teardown PE
-//      calls hit the ORIGINAL engine code, not our trampoline ->
-//      MH_Uninitialize (hook::Shutdown).
+//      through their Sleep + observe the flag and exit -> DISABLE the
+//      PE patch (game_thread::Uninstall) so subsequent teardown PE calls
+//      hit the ORIGINAL engine code -> lift every remaining patch
+//      (hook::Shutdown).
+//      NOTHING IS FREED on this path, deliberately: MinHook is never
+//      uninitialized and no hook is ever removed, because both free the
+//      trampoline a thread may still be returning through -- and the free
+//      writes over its first bytes in place. See ue_wrap/core/hook.h,
+//      "Retirement".
 //   3) Every infinite worker loop in the project polls IsShuttingDown()
 //      via `while (!coop::shutdown::IsShuttingDown()) { ... Sleep(N); }`.
 //
@@ -59,9 +64,11 @@ void Install(coop::net::Session* session);
 // Role::Host (bug observed 2026-05-26).
 void UpdateWindowTitle();
 
-// Run the cleanup sequence: flag -> session.Stop -> sleep -> uninstall PE
-// hook -> MH_Uninitialize. Idempotent (subsequent calls no-op). Safe to
-// call from any thread; the internal mutex serializes.
+// Run the cleanup sequence: flag -> session.Stop -> sleep -> DISABLE the PE
+// patch -> lift every remaining patch. Frees nothing (hook.h, "Retirement").
+// Idempotent (subsequent calls no-op) -- which is why the DLL_PROCESS_DETACH
+// call is normally a no-op: on a graceful close the wndproc latches first.
+// Safe to call from any thread; the internal mutex serializes.
 void DoShutdown();
 
 }  // namespace coop::shutdown

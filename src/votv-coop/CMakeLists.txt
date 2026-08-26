@@ -222,6 +222,7 @@ add_library(votv-coop SHARED
     src/ue_wrap/core/asset_load.cpp
     src/ue_wrap/core/engine_heap.cpp
     src/ue_wrap/core/hook.cpp
+    src/ue_wrap/core/hook_drill.cpp
     src/ue_wrap/core/game_thread.cpp
     src/ue_wrap/core/pe_detour.cpp
     src/ue_wrap/engine/spawn_gate.cpp

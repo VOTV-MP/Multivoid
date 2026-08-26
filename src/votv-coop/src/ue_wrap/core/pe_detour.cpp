@@ -14,6 +14,7 @@
 #include "game_thread_detail.h"
 
 #include "ue_wrap/core/hook.h"
+#include "ue_wrap/core/hook_drill.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 
@@ -34,7 +35,7 @@ namespace D = detail;
 // ProcessEvent's signature (x64 ABI). Matches reflection's ProcessEventFn.
 using ProcessEventFn = void(__fastcall*)(void* self, void* function, void* params);
 
-ProcessEventFn g_originalPE = nullptr;  // trampoline to the real ProcessEvent
+ProcessEventFn g_peTrampoline = nullptr;  // trampoline to the real ProcessEvent
 void* g_hookTarget = nullptr;
 bool g_installed = false;
 
@@ -66,7 +67,7 @@ long long NowMs() {
 // g_peCountOn gates the per-dispatch counter: OFF (default/shipping) the detour
 // pays a single relaxed bool load; ON it adds one relaxed XADD per dispatch.
 // g_peSelfOn additionally arms the sampled self-timer (1 dispatch in
-// kSelfSampleMask+1) that brackets the detour body EXCLUDING g_originalPE -- i.e.
+// kSelfSampleMask+1) that brackets the detour body EXCLUDING g_peTrampoline -- i.e.
 // OUR per-dispatch overhead only. All totals are monotonic; perf_probe diffs them
 // per second. Defined here (before SafeCall*/the detour) so all users see it.
 std::atomic<bool> g_peCountOn{false};
@@ -368,7 +369,7 @@ void __fastcall ProcessEventDetourImpl(void* self, void* function, void* params)
     }
 
     if (sampleSelf) ::QueryPerformanceCounter(&t1);
-    g_originalPE(self, function, params);
+    g_peTrampoline(self, function, params);
     if (sampleSelf) ::QueryPerformanceCounter(&t2);
 
     // POST-observers: fire AFTER the original. Used to read state the BP just
@@ -434,7 +435,7 @@ void __fastcall ProcessEventDetour(void* self, void* function, void* params) {
                     "(menu world up) -- detour normal again");
             // fall through to the normal detour below
         } else if (NowMs() < until) {
-            if (g_originalPE) g_originalPE(self, function, params);
+            if (g_peTrampoline) g_peTrampoline(self, function, params);
             return;
         } else {
             g_bypassUntilMs.store(0, std::memory_order_relaxed);   // ceiling hit -> resume
@@ -571,7 +572,7 @@ const char* JmpKind(const uint8_t* p) {
 void LogHookChainSnapshot(const char* when) {
     auto* pe    = reinterpret_cast<uint8_t*>(reflection::ProcessEventAddr());
     auto* det   = reinterpret_cast<uint8_t*>(&ProcessEventDetour);
-    auto* tramp = reinterpret_cast<uint8_t*>(g_originalPE);
+    auto* tramp = reinterpret_cast<uint8_t*>(g_peTrampoline);
     UE_LOGI("pe_diag[%-9s] PE      %p : %s | first=%s", when, (void*)pe,
             pe ? HexBytes(pe, 16).c_str() : "(null)", pe ? JmpKind(pe) : "?");
     UE_LOGI("pe_diag[%-9s] detour  %p : %s | first=%s", when, (void*)det,
@@ -709,7 +710,7 @@ bool Install() {
             immuneRelay = false;
     }
     if (!hook::Install(pe, reinterpret_cast<void*>(&ProcessEventDetour),
-                       reinterpret_cast<void**>(&g_originalPE), immuneRelay)) {
+                       reinterpret_cast<void**>(&g_peTrampoline), immuneRelay)) {
         return false;
     }
     UE_LOGW("game_thread: PE relay %s", immuneRelay
@@ -738,22 +739,30 @@ void Uninstall() {
     if (!g_installed) return;
     ClearAllObservers();
     detail::ClearAllInterceptors();
-    hook::Uninstall(g_hookTarget);
+    // DISABLE, never remove. This line used to be `hook::Uninstall`, and that
+    // function no longer exists -- see hook.h "Retirement" for why. Disable lifts
+    // the patch at ProcessEvent so no NEW dispatch enters us, while the trampoline
+    // stays allocated and intact for whoever is already inside.
+    hook_drill::SampleTrampoline("pre-disable", 0, reinterpret_cast<void*>(g_peTrampoline));
+    hook::Disable(g_hookTarget);
+    hook_drill::SampleTrampoline("post-disable", 0, reinterpret_cast<void*>(g_peTrampoline));
     g_installed = false;
     g_hookTarget = nullptr;
-    // Audit C3 (2026-05-27): DO NOT null g_originalPE here. A worker thread
-    // already inside ProcessEventDetour when MinHook ran Uninstall above is
-    // racing with us -- it loaded g_originalPE before the unhook, but if the
-    // store below lands BEFORE its load completes (out-of-order via cache),
-    // it dereferences null. After hook::Uninstall the original UE4 PE has
-    // been restored at the call site, so ProcessEventDetour is no longer
-    // being entered for new dispatches; the field is no longer read once
-    // in-flight workers drain. Leaving the pointer non-null is harmless
-    // (UAF is not possible because g_originalPE points at the engine's PE,
-    // a process-lifetime entry point that is never unloaded). Add a tiny
-    // drain Sleep so any in-flight detour body finishes before we tear
-    // down g_hookTarget. SC_CLOSE's 100ms worker drain reduces the window
-    // but doesn't close it; this is belt-and-braces.
+    // WHAT THE 2026-05-27 AUDIT (C3) GOT WRONG -- it cleared a live UAF by writing
+    // "UAF is not possible because g_originalPE points at the engine's PE, a
+    // process-lifetime entry point that is never unloaded". Two falsifications:
+    //   OBJECT -- `[V]` minhook/hook.c:634 `*ppOriginal = pHook->pTrampoline`. It is
+    //     MinHook's slot, not the engine's function. The audit read the NAME; the
+    //     name lied. Renamed g_peTrampoline so it cannot be written again.
+    //   MECHANISM+TIMELINE -- the old hook::Uninstall called MH_RemoveHook, and
+    //     `[V]` hook.c:702 -> buffer.c:282 writes `pSlot->pNext` over the slot (a
+    //     MEMORY_SLOT UNIONs that link with the bytes, `[V]` buffer.c:43-50), so the
+    //     prologue was clobbered at offset 0 on the line ABOVE, and the Sleep offered
+    //     as mitigation ran after the damage. Window ZERO, at ~250k dispatches/s.
+    // With Disable: prologue restored so no new dispatch enters, trampoline intact so
+    // an in-flight worker calls through live memory. The pointer is still deliberately
+    // NOT nulled (a racing load could read the null) -- that part of C3 was right; the
+    // Sleep stays as a drain before g_hookTarget goes. Full account: UE4SS_ARC 4c.
     ::Sleep(50);
 }
 
