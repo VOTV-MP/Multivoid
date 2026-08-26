@@ -44,6 +44,8 @@ Then, if you are going to touch code:
 | **[THUNDERSTORE.md](THUNDERSTORE.md)** | How a release becomes a Thunderstore package: the manifest, the upload, and the rules that cannot be undone (a version is immutable; an author cannot delete a package) |
 | **[VERSION_MIGRATION.md](VERSION_MIGRATION.md)** | What happens when VOTV updates: the measured version surface and the port runbook |
 | **[MULTIPLAYER_UI.md](MULTIPLAYER_UI.md)** | The menus, the server browser, the master/signaling servers behind them |
+| **[VOTV_UI_STYLE.md](VOTV_UI_STYLE.md)** | The game's own widget style, measured — binding for anything we draw in VOTV's UI |
+| **[CROSS_SESSION.md](CROSS_SESSION.md)** | Two Claude sessions, one game rig: the lock and the working protocol |
 
 **Before writing any entity-sync, hook or spawn-catch code, read these two first.** They exist
 because not knowing them cost a three-iteration rework and two review agents giving opposite answers:

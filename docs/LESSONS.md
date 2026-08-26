@@ -111,6 +111,54 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   the disagreement is itself the finding; and when WRITING a memory NEXT that reorders, say that it
   reorders. If the displaced items are things the user reported and can still SEE, the burden is
   entirely on the reordering. `memory/lesson_your_own_memory_file_can_edit_the_plan_of_record.md`
+- **A THROTTLED LOG LINE IS NOT AN EVENT COUNT.** 2026-08-26, triaging an outside report:
+  `grep -c 'DESTROY native level-pile twin'` gave **12** against 871 spawned proxies, and I reported
+  "859 duplicates survive" -- a headline defect in a core join mechanism. `[V]`
+  `pile_spawn_bind.cpp:151` emits under `if (g_pileBindCount < 8 || (g_pileBindCount % 200) == 0)`,
+  so twelve lines is events 1-8 plus #200/#400/#600/#800; the same line's own tail
+  (`%zu native(s) left in index`) shows the index walking **871 -> 70**, i.e. ~801 consumed. The
+  trap is structural: throttling is added exactly to the burst lines that are worth counting, so the
+  emitters most likely to be counted are the most likely to be throttled -- and 12 is *plausible*
+  enough not to prompt a re-check. It also cost a second wrong theory built on top of the false
+  number. *Look FIRST:* open the emitter and read its guard before `grep -c` (ours throttle with
+  `count < N || count % M == 0`, one-shot `static bool`, and dedup-on-change); prefer a number the
+  line CARRIES (a monotonic counter, an "N left" tail, a before/after census) over the number of
+  lines; and if line count is all you have, write `>= N lines (emitter may be throttled)`, never
+  `N events`. Sibling of the four-blind-instruments row above -- that one is writing an instrument
+  that cannot see, this one is mis-reading one that can.
+  `memory/lesson_a_throttled_log_line_is_not_an_event_count.md`
+- **PIN AN OUTSIDE REPORTER'S BUILD TO A COMMIT BEFORE YOU DIAGNOSE THEIR LOG.** 2026-08-26, the
+  project's first external bug report (excellent paired host/client logs, 28k lines). I censused,
+  traced and built two theories before reading the build banner: `b134, compiled Aug 23 15:45:38`,
+  PR base `63eb699c`. `[V]` `git merge-base --is-ancestor 65fccd70 63eb699c` = **NO** -- their build
+  predates the commit whose message reads "client eid-only clump broadcasts 871 -> 0" and cites "940
+  in the field". Their log has **956** of those broadcasts and **zero** post-fix `suppressed
+  eid-only` markers: their log IS the field log that fix was written against. Internally this never
+  bites because you built the DLL you are debugging; the moment outside reports arrive, every log
+  comes from an unknown point in history, and the best reports come from users who build from
+  source. Pinning the build is also what SEPARATED the already-fixed half from the still-open half
+  (host 3256 vs client 4293 live keyed props, `claimed only 0` on a snapshot that arrived COMPLETE --
+  not explained by that fix); without it both would have shipped as one finding and the fixed half
+  would have discredited the open one. *Look FIRST:* banner -> pin to a commit -> `git log
+  <base>..main -- <subsystem>` -> for each candidate fix find its POST-FIX MARKER in their log (its
+  ABSENCE is the proof, and it beats reasoning about dates across timezones -- theirs +0300, mine
+  +0600, the naive comparison said the fix was in) -> only then diagnose.
+  `memory/lesson_reconcile_the_reporters_build_before_diagnosing.md`
+- **A NEW WAY TO ENTER OR LEAVE A STATE OWES A CENSUS OF EVERYTHING THAT READS THE TRANSITION.**
+  2026-08-26, fixing a contributor's ATV seat gate: I added a tie-break where the higher slot YIELDS
+  pose authority while still seated. Two lines, local, no new state. `[V]` `atv_sync.cpp`'s existing
+  authority-lost edge assumed the only way to lose authority was to dismount, so it cleared
+  `occupantSlot` and broadcast `AtvRelease` -- against a yield BOTH are wrong: clearing the slot
+  erases the winner's claim and `IsLocalOccupant` is still true, so we re-claim next tick and flap
+  permanently; and the release re-enables physics on the ATV the winner is driving. My "safe two-line
+  fix" would have shipped a WORSE defect than the one it fixed. Review cannot catch it: the broken
+  code is UNCHANGED and never appears in the diff -- the defect exists only in the composition.
+  *Look FIRST:* when a change adds a new way for an ownership/authority predicate to flip, grep every
+  read of that predicate AND of the fields the transition touches, and ask per site "does this code
+  assume WHY it flipped?" If yes it needs the REASON, not the edge -- give it a discriminator rather
+  than letting one edge mean two things. Then hand-trace one full tick of the new path; that is what
+  found this.
+  `memory/lesson_a_new_way_to_lose_a_state_owes_a_census_of_its_readers.md`
 - **An instrument can be blind FOUR different ways in one design pass, and reasoning catches none of
   them.** 2026-08-25, B3: (1) a seam the module's own header records as never having fired; (2) a seam
   field-counted at 5 host vs 19 client lines over DISJOINT entities; (3) a reader that shares its offset
@@ -3026,6 +3074,26 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 
 ## 4. Dispatch, hooks & input seams
 
+- **Synthesized input goes to the FOREGROUND window, not to yours — and `GetActiveWindow()` does not
+  ask that question.** 2026-08-26: the browser selftest gated `keybd_event`/`mouse_event` on
+  `::GetActiveWindow()` being non-null, treating it as "the game is there". That call reports the
+  active window OF THE CALLING THREAD and says nothing about who receives injected input, which the
+  OS routes to whatever holds the foreground. `[V]` The result was a set of pairs no code difference
+  explains: ESC closing the screen failed 13:24 / passed 13:32, the X click failed 13:47 / passed
+  13:32 and 13:55, the wheel failed 13:47 / passed 13:44, 13:51, 13:55 — every one of them blaming
+  the feature for the harness's fault. Fix: `::GetForegroundWindow()` **plus**
+  `ui::input_focus::IsOurWindowForeground()` (which already existed for this exact class of
+  question), with "not ours" a bounded WAIT. **The general shape is the lesson**: an instrument that
+  answers a NARROWER question than the one you asked returns a *plausible* answer, so it reads as a
+  real finding rather than as a broken measurement. Two more the same day — the same null check
+  disarmed the probe SILENTLY, so a focus-less run logged not one phase and reported every verdict as
+  "never ran" (indistinguishable from a missing feature), and a log line emitted under `< 8 || % 200`
+  was counted as 12 events when its own counter showed ~801 fired. *Look FIRST:* if an input-driving
+  test is flaky, suspect focus before the feature; write down the question you are asking and the
+  question the API answers and check they are the same sentence; make "the probe stood down" a
+  different string from "the verdict is absent".
+  `memory/lesson_an_instrument_may_answer_a_narrower_question.md`
+
 - **A MODULE HEADER IS NOT THE CAPABILITY MAP — a whole design cascade was built on one sentence in
   `ufunction_hook.h` while `COOP_DISPATCH_VISIBILITY.md:88` stated the opposite IN BOLD.** 2026-08-24,
   `/qf` rounds 34-35. `[SRC]` `ue_wrap/core/ufunction_hook.h` says a BP-internal call — listing
@@ -3604,6 +3672,38 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   `memory/lesson_a_cannot_in_a_comment_is_a_snapshot_of_what_was_tried.md`
 
 ## 5. Engine / UE4 facts
+
+- **A UMG getter may read back YOUR OWN REQUEST, not the engine's state.** `[V]` 2026-08-26, twice:
+  `UScrollBox::GetScrollOffset` returns Slate's `DesiredScrollOffset` — the value last *asked for*,
+  unclamped. `SetScrollOffset(1000000)` then `GetScrollOffset()` returns **1000000.0**, on an EMPTY
+  box AND on one holding 30 rows with 1391 units of real overflow. So a Set/Get round-trip through it
+  is a tautology that **cannot fail**, and a positive control built on it passes on a widget that does
+  not scroll at all. Read `GetViewOffsetFraction` (the scrollbar's distance-from-top — physical
+  post-layout state) for "did it move", and `GetScrollOffsetOfEnd` (content minus viewport — real
+  geometry, and its arithmetic closes independently) for "is there anywhere to go". Same API, second
+  trap: an **empty** `UScrollBox` reports `GetScrollOffsetOfEnd() = 1.0`, so a precondition written
+  `offsetOfEnd > 0` — which reads like "there is content" — opens on a box holding nothing. *Look
+  FIRST:* before reading a getter to confirm a write landed, ask whether it reads back your own
+  request; prefer the getter that names a RENDERED quantity over the one that mirrors the setter's
+  noun; never threshold a layout float at `> 0`. Wrappers: `ue_wrap/engine/umg_build.{h,cpp}`.
+  `memory/lesson_a_umg_getter_may_echo_your_own_request.md`
+- **In UI code a wrong constant does not error — it renders wrong, often invisibly.** `[V]`
+  2026-08-26, two in one restyle. `ESlateVisibility` is
+  `Visible=0 Collapsed=1 HIDDEN=2 HitTestInvisible=3 SelfHitTestInvisible=4`; writing `2` meaning
+  "chrome, draws but is not a hit target" gets **Hidden**, and a whole window frame, panel fill, title
+  strip and footer strip silently did not draw — the capture's apparent "window" was the rows' own
+  backgrounds stacked with the title floating outside them, which reads as a LAYOUT bug and got
+  debugged as one. (`multiplayer_menu.cpp` already carried the correct mapping in a comment.) And
+  `FLinearColor` is **LINEAR** while colours sampled from a screenshot are **sRGB**: writing
+  `0x31/255 = 0.192` as a tint puts sRGB `#7B` on screen, more than double, so the whole palette
+  renders washed out and re-picking values cannot fix it because the error is in the units. Related:
+  a palette read by EYE off a downscaled render invents colours the game does not use — two of mine
+  did (a header read as green sampled `#FFFFFF`, 650 px with no green in its top three; a size read
+  as cyan sampled `#A5A5A5`). *Look FIRST:* grep for an existing comment/wrapper naming an enum before
+  writing it as a bare int; convert sRGB → linear (`Srgb()` in `server_browser_native.cpp`) rather
+  than dividing by 255; sample full-size PNGs with a histogram; and when a UI change looks
+  mis-LAID-OUT, first check everything you expected to DRAW actually drew.
+  `memory/lesson_a_wrong_ui_constant_does_not_error_it_renders_wrong.md`
 
 - **Slate's hit-test answers the PREVIOUS pointer position** — `IsHovered()` sampled in the SAME
   game-thread tick that moved the cursor read the old position EVERY time, and inverted both

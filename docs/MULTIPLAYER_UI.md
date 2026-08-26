@@ -819,14 +819,34 @@ RECONCILES against the live switcher index every tick instead of trusting its ow
 world reading; it also cannot fire over gameplay, which matters because the harness reopens the
 browser from four failure-recovery paths in `session_runtime.cpp`, sometimes before a menu exists.
 
+**INPUT IS NOW MOSTLY WIRED (2026-08-26, `95d18cc5` + `ea378daf`).** This paragraph used to say the
+opposite and is rewritten rather than patched:
+
+- **Chrome: BUILT.** An `X` in the title strip and `BACK` at the footer's left, both real `UButton`s
+  cloning `ui_saveSlots_C.button_back`'s style (so they carry the game's press/hover sounds). Driven
+  proof, not assumption: the self-check re-opens the screen after its ESC phase and synthesizes a
+  press-release over the X, asserting through the public `IsOpen()` -- real log,
+  `CLOSE BUTTON PASS ... (hovered=1)`.
+- **Hover: BUILT.** `UpdateHover()` recolours the hovered row's TEXT to `#FFFF00`
+  (`VOTV_UI_STYLE.md` §4 -- the native treatment is a text change, not a background one).
+- **Row click / selection: BUILT.** A click on the hovered row sets `g_selectedId` and the row's FILL
+  becomes `#400040`. Keyed on the LOBBY ID, never the index -- the master returns lobbies from a
+  `HashMap` and nothing sorts them, so an index-keyed selection silently follows whatever lands at
+  that position.
+- **`NotePointerMoved()` is GONE** (`ea378daf`, RULE 2). It was declared and defined and called from
+  nowhere, with `g_pointerMoved` written and never read. `UpdateHover` uses a `GetCursorPos` delta
+  instead: one syscall, no edit to the overlay's input path, and it sees movement regardless of how
+  the message was routed. **Do not go looking for that symbol -- this doc named it as live until this
+  sweep.**
+
 **STILL OPEN, and named rather than implied:**
-- **Input is MOSTLY not wired.** ESC closes the screen (added 2026-08-26 after the user reported
-  there was no way out -- see §8c.0), but it calls the INTERNAL `Hide()`; the public `Close()` and
-  its cross-thread `g_wantClose` path still have **zero callers and have never run**. There is still no hover highlight, no row click, and no
-  Connect / Host / Refresh / Back chrome. `NotePointerMoved()` is declared and defined but **called
-  from nowhere**, and `g_pointerMoved` is written and never read -- a write-only flag, kept only
-  because the seam lands in the next commit; if that commit slips, it should be deleted rather than
-  left standing.
+- **`Close()` has zero callers and has never run** -- re-verified against the code this sweep
+  (`grep server_browser_native::Close` over `src/` returns nothing as of `23481e3c`; the definition
+  stands at `server_browser_native.cpp:767`). ESC and the X both call the INTERNAL `Hide()`. So the
+  cross-thread `g_wantClose` path is still unproven, and T1's "its first caller must not be its first
+  proof" is still owed.
+- **Connect / Host / Refresh are absent.** Selection exists and nothing consumes it yet; wiring
+  Connect to `g_selectedId` is the next thing the screen needs to be usable end-to-end.
 - **The retire is not done.** `ui/server_browser.{h,cpp}` still ships. Its seam census is bigger
   than a name grep found: besides the nine `server_browser::` call sites, `imgui_overlay.cpp:721-724`
   opens it from `VOTVCOOP_BROWSER_OPEN` and logs `"server browser starts visible"`, `:796` closes it
@@ -1039,7 +1059,7 @@ Each step is gated on the previous. Thresholds are written down **before** the r
 | # | step | gate |
 |---|---|---|
 | **T0** | **DONE 2026-08-26 — THE ANSWER IS YES `[V]`.** The wheel reaches this widget and scrolls it: view fraction 0.0000 → 0.0667 over four notches (one row = 0.0460), after a forced-offset control passed 0.0000 → 0.7245 against a 1391-unit maximum. User-confirmed hands-on. Two things this row got wrong before it ran, kept because both are traps: the probe was NOT zero-code (it needed the fixture AND a positive control), and its first PRECONDITION was `offsetOfEnd > 0`, which **an empty ScrollBox satisfies by reporting 1.0** — so the whole control ran against a box holding nothing. The gate now takes two terms, rows AND a full row of overflow, and neither is an epsilon test. | none |
-| **T1** | **The X (+ Back)** via the shipped release-edge poll (`multiplayer_menu.cpp:253-271`) + a cloned `UButton`. `Close()`'s cross-thread path gets a driven test **shown RED first** — its first caller must not be its first proof. | T0 |
+| **T1** | **DONE 2026-08-26 (`95d18cc5`) -- the X and BACK exist and a driven click proves the X closes the screen** (`CLOSE BUTTON PASS`, hovered=1, real log). Real `UButton`s cloning `ui_saveSlots_C.button_back`, so they carry the game's press/hover sounds; the clone has ONE owner now (`umg::CloneButtonStyle`, extracted from `InjectCanvasButton` under RULE 2). BACK sits at the footer's LEFT -- it was first built bottom-RIGHT, which is the CONFIRM position in every native window. **`Close()`'s cross-thread test is NOT done**: ESC and the X both call the internal `Hide()`, so the public path still has no caller and no proof. | T0 |
 | **T2a** | **The instrument**: re-clock the menu frame counter to QPC; frame-interval **max + stall count** (NOT p99 — see above); call `perf_probe::Sample()` at the menu; a `Scope` around `SyncRows`; a MENU-TICK-vs-PRESENT counter. Behaviour-neutral. **Shown RED by an injected stall** before it is trusted. | none |
 | **T2b** | **The rig**: raise `kMaxRows` + LOG truncation; the section-8c seeder; scroll drive; **and the 5 s cadence, moved here from T4a**. The frame statistic is cadence-SENSITIVE — 5x fewer syncs is 5x fewer stalls — so baselining at 1 Hz and re-reading at 5 s would let the cadence change alone pay for T4b's gate. Do not baseline a cadence you intend to discard. | none |
 | **T2c** | **BASELINE** at 50 / 100 / 200 rows. | — |

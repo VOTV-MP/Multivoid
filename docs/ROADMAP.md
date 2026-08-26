@@ -321,13 +321,18 @@ LAN (two-machine + same-box-two-instance both confirmed).
        §8a the measurement pass, §8 the plan. It is shipped DARK behind
        `[dev] browser_native=0`: the ImGui panel above is still the only browser
        and still what the MULTIPLAYER button opens. The native screen draws the
-       live master's lobby list with the version-mismatch tint; INPUT is MOSTLY
-       NOT wired -- ESC closes the screen (2026-08-26, after the user turned the
-       flag on and found no way out), but hover, row click and the
-       Connect/Host/Back chrome are absent, and the PUBLIC `Close()` still has
-       zero callers and has never run. Retiring the ImGui browser also has to
-       retarget `tools/cursor_probe.py` + `tools/master_fetch_probe.py`, which
-       block on its log line.**
+       live master's lobby list with the version-mismatch tint. **INPUT AND STYLE
+       ARE NOW BUILT (2026-08-26, `95d18cc5` + `ea378daf` + `23481e3c`)**: an X
+       and a BACK button (driven click proven, `CLOSE BUTTON PASS`), hover
+       (row text -> `#FFFF00`) and click-to-select (row fill -> `#400040`, keyed
+       on lobbyId not index), and the whole screen restyled to the game's own
+       palette per the new `docs/VOTV_UI_STYLE.md`. The wheel SCROLLS the list --
+       measured, and the user confirmed by hand. **Still absent: Connect / Host /
+       Refresh**, so selection exists and nothing consumes it; and the PUBLIC
+       `Close()` still has zero callers and has never run (re-verified this
+       sweep -- ESC and the X both call the internal `Hide()`). Retiring the
+       ImGui browser also has to retarget `tools/cursor_probe.py` +
+       `tools/master_fetch_probe.py`, which block on its log line.**
        **The PERFORMANCE approach is designed and is `MULTIPLAYER_UI.md`
        section 8c.-1 (13-round `/qf`, 2026-08-26; DESIGN, nothing built).** Its
        root finding is measured and reorders the lane: `RowPartsAt` resolves an
