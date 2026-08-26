@@ -876,9 +876,45 @@ DLL", p99 as the metric, T0 as a zero-code probe, and the Rejected list's claim 
 master duplicated the harness seeder.
 
 **STATUS, stated rather than implied:** the *measurements* below are `[V]` and cited. The *plan* is
-`[RD]` — nothing in T0–T8 is built, and no number in it has been produced by a run. The loop had not
-returned "that holds" when this was written; an earlier revision of this heading claimed it had
-converged, which was a status label ahead of its evidence.
+`[RD]` — nothing in T1–T8 is built, and no number in those rows has been produced by a run. The loop
+had not returned "that holds" when this was written; an earlier revision of this heading claimed it
+had converged, which was a status label ahead of its evidence.
+
+**T0 IS THE EXCEPTION: IT RAN 2026-08-26 AND THE ANSWER IS YES `[V]`.** Four synthesized wheel
+notches moved the list's **view fraction 0.0000 → 0.0667** against a one-row threshold of 0.0460,
+with the positive control passing first (a forced offset moved it **0.0000 → 0.7245** over a
+1391-unit maximum). Screenshots corroborate — scrollbar thumb at the top before, at the bottom
+after — and **the user confirmed it by hand during the run** (*"скроллится нормально"*), which is the
+evidence class that outranks the instrument. Commit `a2879d7a`; instrument
+`ui/server_browser_selftest.cpp`, driven by `python tools/mp.py browser --fake-master 30`.
+
+**So T2b, T4a and T6 keep their premise, and the "no step prices making it scroll" hole never had to
+be filled.** What T0 also produced is a UMG fact worth more than its own row — see the box below.
+
+**THE UMG FACT T0 PRODUCED, and the reason it outlives this lane `[V]`.**
+`UScrollBox::GetScrollOffset` **is an echo**: it returns Slate's `DesiredScrollOffset` — what was
+last *asked for*, unclamped. Ask for 1 000 000 and it returns 1 000 000, measured on an empty box
+*and* on 30 rows carrying 1391 units of real overflow. A Set/Get round-trip through it is a tautology
+and **cannot fail**, which is the one property an instrument must not have; the first version of T0's
+control failed the entire probe on exactly this, a true observation aimed at the wrong question.
+
+Read these instead:
+
+| call | what it actually reports | trust for |
+|---|---|---|
+| `GetViewOffsetFraction` | the scrollbar's own distance-from-top, 0..1 — physical post-layout state | **"did it move"** |
+| `GetScrollOffsetOfEnd` | content extent minus viewport extent — real geometry (1391.0 against 30×64 rows in a ~529 px viewport; the arithmetic closes) | **"is there anywhere to go"** |
+| `GetScrollOffset` | the last requested offset. Not a measurement of anything. | context only |
+
+The generalisation, and it is not confined to scroll: **before reading a UMG getter to confirm a
+write landed, check whether it is reading back your own request.** All three are wrapped in
+`ue_wrap/engine/umg_build.{h,cpp}`.
+
+**A LOOSE END, stated rather than hidden:** the passing run reported `hovered=0` — the wheel scrolled
+the box while `IsHovered()` on it read false. The verdict is movement, so this does not touch the
+YES, but the "the notches went somewhere else" branch that leans on that reading **would have
+misfired had the answer been NO**. RUNG 2 measured `IsHovered` as answering on a bounded `UImage`;
+whether a `UScrollBox` behaves the same is now an open question, and T7 depends on it.
 
 **MEASUREMENT PROTOCOL, so a gate is a decision and not a coin flip.** Every threshold below is read
 from **≥5 repeats**, reported as **median and max**, at each of 0 / 50 / 100 / 200 rows. A gate whose
@@ -1002,7 +1038,7 @@ Each step is gated on the previous. Thresholds are written down **before** the r
 
 | # | step | gate |
 |---|---|---|
-| **T0** | **DOES IT SCROLL AT ALL.** Everything below assumes yes: T2b builds a scroll drive, T4a preserves a scroll offset, and T6 decides a question that is *entirely* about scrolling. **If the answer is NO there is currently no step that prices "make it scroll"** — that work would have to be added here, ahead of everything. **It needs ROWS**: at the live master's ~2 lobbies the list does not overflow the viewport, so there is nothing to scroll and no scrollbar to grab — seed it with `tools/fake_master.py` (see below) via `VOTVCOOP_MASTER_URL`. **AND IT NEEDS A POSITIVE CONTROL, FIRST.** An unchanged screenshot is three-way ambiguous — *the wheel never arrived* / *the ScrollBox does not scroll* / *the capture beat Slate's layout* — which is the exact shape of the ESC selftest that reported ALL PASS on a total failure. So: drive `SetScrollOffset` directly (a dev hook; both it and `GetScrollOffset` are already resolved and unused), prove the capture CAN show a scrolled list, and only then does a wheel result mean anything. **This makes T0 a small code change, not the zero-code probe an earlier draft claimed.** | none |
+| **T0** | **DONE 2026-08-26 — THE ANSWER IS YES `[V]`.** The wheel reaches this widget and scrolls it: view fraction 0.0000 → 0.0667 over four notches (one row = 0.0460), after a forced-offset control passed 0.0000 → 0.7245 against a 1391-unit maximum. User-confirmed hands-on. Two things this row got wrong before it ran, kept because both are traps: the probe was NOT zero-code (it needed the fixture AND a positive control), and its first PRECONDITION was `offsetOfEnd > 0`, which **an empty ScrollBox satisfies by reporting 1.0** — so the whole control ran against a box holding nothing. The gate now takes two terms, rows AND a full row of overflow, and neither is an epsilon test. | none |
 | **T1** | **The X (+ Back)** via the shipped release-edge poll (`multiplayer_menu.cpp:253-271`) + a cloned `UButton`. `Close()`'s cross-thread path gets a driven test **shown RED first** — its first caller must not be its first proof. | T0 |
 | **T2a** | **The instrument**: re-clock the menu frame counter to QPC; frame-interval **max + stall count** (NOT p99 — see above); call `perf_probe::Sample()` at the menu; a `Scope` around `SyncRows`; a MENU-TICK-vs-PRESENT counter. Behaviour-neutral. **Shown RED by an injected stall** before it is trusted. | none |
 | **T2b** | **The rig**: raise `kMaxRows` + LOG truncation; the section-8c seeder; scroll drive; **and the 5 s cadence, moved here from T4a**. The frame statistic is cadence-SENSITIVE — 5x fewer syncs is 5x fewer stalls — so baselining at 1 Hz and re-reading at 5 s would let the cadence change alone pay for T4b's gate. Do not baseline a cadence you intend to discard. | none |
@@ -1012,7 +1048,7 @@ Each step is gated on the previous. Thresholds are written down **before** the r
 | **T4b** | **The content diff** keyed on `lobbyId` + locally-derived age (coarsened or visible-only). | **not earned if** after T3 the `SyncRows` Scope median at 50 rows < 4 ms — i.e. one sync cannot push a frame over budget. Read AFTER T4a so the cadence is already 5 s. |
 | **T5** | **The full section-8c harness**: phases A–G incl. D (shrink), E (shuffle at constant count), G (GC), plus section 8c.4's un-gated id-reconcile selftest **shown RED first**. **BLOCKED ON the F1 hazard below** — the MANUAL feel phase hands the user a keyboard, and F1 kills scrolling TODAY. | — |
 | **T6** | **Decide the row model.** Outcomes: keep widget-per-row (**live**), viewport pool (~9 widgets / 81 UWidgets vs 576), or `UListView` (a spike — see below). | T5's machine verdict |
-| **T7** | **Row input** against the decided model. | T6 |
+| **T7** | **Row input and row FEEDBACK** against the decided model. **USER, 2026-08-26, after scrolling the native list by hand:** *"скроллится нормально, правда выделения нету у позиций в списке как у imgui браузера"* — it scrolls fine, but **rows have no highlight**, which the ImGui browser does have. That incumbent gets both halves free from one call: `ImGui::Selectable(label, g_selected == i, SpanAllColumns)` (`server_browser.cpp:193-196`) draws `HeaderHovered` under the cursor AND `Header` on the selected row. The native side already owns the surface to paint — every row carries a `bg` `UImage` at overlay child 0 (`RowPartsAt`), today a flat tint — so this is a tint-per-state, not new geometry. It needs a per-row hover read, which is exactly what the `hovered=0` loose end above puts in doubt: settle that FIRST, on a row box, before designing the feedback. | T6 |
 | **T8** | **RULE 2's paired end**: flip the MULTIPLAYER button to native and **delete `ui/server_browser.{h,cpp}` whole** — in the same commit retargeting `tools/cursor_probe.py` and `tools/master_fetch_probe.py` (both BLOCK on the ImGui browser's log line), removing `BrowserOpen()` from `AnyOpen()`/`CaptureActive()`, the SEH `Close()`, `harness.cpp:37`'s include, and `multiplayer_menu`'s dead `g_buttonInputBlocked`. `menu_sfx` STAYS (three other callers). | T7 |
 
 **Instrument-to-question mapping** (without this, a T4b re-measure passes on a broken build, because
