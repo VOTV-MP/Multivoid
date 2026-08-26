@@ -581,6 +581,7 @@ add_library(votv-coop SHARED
     src/ui/link_format.cpp
     src/ui/server_browser.cpp
     src/ui/server_browser_native.cpp
+    src/ui/server_browser_selftest.cpp
     src/ui/boot_warning_dialog.cpp
     src/ui/config_review_panel.cpp
     src/ui/connect_failed_dialog.cpp
