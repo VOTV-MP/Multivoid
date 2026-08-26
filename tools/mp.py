@@ -3917,6 +3917,223 @@ def cmd_puppetshot(args) -> None:
     sys.exit(0 if captured else 2)
 
 
+# ---------------------------------------------------------------------------------------------
+# GRACEFUL EXIT -- the shutdown path, made observable for the first time (2026-08-26)
+# ---------------------------------------------------------------------------------------------
+# WHY THIS EXISTS. `kill_all()` above is `Stop-Process -Force`, i.e. TerminateProcess. It sends no
+# WM_CLOSE, our wndproc therefore never runs, and a forced kill delivers no DLL_PROCESS_DETACH
+# either. So `coop::shutdown::DoShutdown()` -> `ue_wrap::hook::Shutdown()` ->
+# `MH_DisableHook(MH_ALL_HOOKS)` + `MH_Uninitialize()` -- our ENTIRE teardown -- had never
+# executed in this rig's history, on any build, in any scenario. Measured 2026-08-26;
+# docs/UE4SS_ARC.md section 4a.
+#
+# That was blocking. The UE4SS-lane fix B (the followJmp-immune relay) leaves one honest residual:
+# with UE4SS's PolyHook composed onto our relay, PolyHook holds a restore-pointer INTO the 64-byte
+# MinHook trampoline slot that `MH_Uninitialize()` frees. Shipping a fix for that without this
+# scenario would be a change to code no test runs -- unfalsifiable by construction. This makes the
+# path observable FIRST, so the fix can be shown RED and then GREEN.
+#
+# It is deliberately ADDITIVE. `kill_all()` is untouched and every other scenario still tears down
+# exactly the way it always has; nothing here changes an existing verdict.
+
+_SC_CLOSE = 0xF060
+_WM_SYSCOMMAND = 0x0112
+_WM_CLOSE = 0x0010
+
+# The teardown trail, in the order the code emits it. Cited by GREP TEXT, not by line number:
+# this project has re-cited the same moved line three times, so the literal IS the citation and a
+# rename breaks the scenario loudly instead of passing silently.
+_TEARDOWN_TRAIL = [
+    ("close-signal", "shutdown: close-signal received on HWND=", "coop/session/shutdown.cpp CoopWndProc"),
+    ("begin",        "shutdown: BEGIN cleanup",                  "coop/session/shutdown.cpp DoShutdown"),
+    ("minhook",      "hook: MinHook shut down",                  "ue_wrap/core/hook.cpp Shutdown"),
+    ("end",          "shutdown: END cleanup",                    "coop/session/shutdown.cpp DoShutdown"),
+]
+# Emitted from DllMain's DLL_PROCESS_DETACH arm -- present iff the process really unloaded us
+# rather than being shot.
+_DETACH_MARKER = "cppmod: final dispatch tally"
+
+
+def _crash_dump_names() -> set:
+    """Names of the engine crash-report directories written so far.
+
+    A graceful exit must not produce one. Compared before/after rather than counted, so a
+    concurrently-pruned directory cannot read as a new crash.
+    """
+    base = Path(os.environ.get("LOCALAPPDATA", "")) / "VotV" / "Saved" / "Crashes"
+    if not base.is_dir():
+        return set()
+    try:
+        return {p.name for p in base.iterdir()}
+    except OSError:
+        return set()
+
+
+def _post_close(pid: int, signal: str, label: str) -> bool:
+    """Post a real user-close signal to a peer's window.
+
+    `sysclose` (the default) is what an X-click and Alt+F4 ACTUALLY generate: DefWindowProc turns
+    WM_NCLBUTTONDOWN on the close box into WM_SYSCOMMAND/SC_CLOSE, and shutdown.cpp's own comment
+    records (hands-on 2026-05-26) that UE4.27's FWindowsApplication::ProcessMessage acts on that
+    and bypasses WM_CLOSE entirely. `wmclose` posts the canonical WM_CLOSE instead -- kept as a
+    second arm so the two lanes can be TOLD APART rather than assumed equivalent.
+    """
+    u32 = ctypes.WinDLL("user32", use_last_error=True)
+    hwnd = _peer_hwnd(pid)
+    if not hwnd:
+        log(f"  {label}: no visible window for pid {pid} -- cannot post a close signal")
+        return False
+    if signal == "wmclose":
+        ok = u32.PostMessageW(hwnd, _WM_CLOSE, 0, 0)
+        log(f"  {label}: posted WM_CLOSE to HWND={hwnd} (PostMessageW rc={ok})")
+    else:
+        ok = u32.PostMessageW(hwnd, _WM_SYSCOMMAND, _SC_CLOSE, 0)
+        log(f"  {label}: posted WM_SYSCOMMAND/SC_CLOSE to HWND={hwnd} (PostMessageW rc={ok})")
+    return bool(ok)
+
+
+def cmd_gracefulexit(args) -> None:
+    """Launch a solo host, close it the way a PLAYER closes it, and read the teardown trail.
+
+    PASS requires all four of:
+      1. the process actually exits within --exit-timeout (a hang is the failure this guards),
+      2. `shutdown: BEGIN cleanup` AND `shutdown: END cleanup` both appear -- our cleanup ran to
+         COMPLETION rather than faulting somewhere in the middle,
+      3. no new engine crash-report directory,
+      4. no [Error] line at or after BEGIN.
+
+    Deliberately NOT gated on the individual MinHook line: which sub-steps the teardown performs
+    is exactly what the leak-at-death fix changes, so gating on it would make the instrument
+    contradict the fix it exists to test. The full trail is REPORTED either way.
+
+    --control-terminate is the MUST-FAIL arm: same run, but torn down with Stop-Process -Force
+    like every other scenario. It INVERTS the verdict and requires the trail to be ABSENT, which
+    is what proves these markers discriminate the close path instead of appearing on every run.
+    """
+    if kill_all() > 0:
+        log("note: pre-existing VotV instances killed before gracefulexit")
+
+    if not args.no_deploy:
+        deploy_all()
+
+    dumps_before = _crash_dump_names()
+    host_log = HOST_DIR / "multivoid.log"
+
+    log("--- HOST LAUNCH (solo) ---")
+    host_pid = launch_peer("host", args.port, "Host",
+                           peer=None, res_x=args.res_x, res_y=args.res_y,
+                           monitor=1, center=True)
+
+    log(f"waiting up to {args.boot_timeout}s for host to bind UDP {args.port}...")
+    bound = False
+    for i in range(args.boot_timeout):
+        time.sleep(1)
+        if host_owns_udp(host_pid, args.port):
+            log(f"host bound UDP {args.port} after {i+1}s")
+            bound = True
+            break
+        if not any(p["PID"] == host_pid for p in list_votv()):
+            log(f"HOST DIED before binding UDP (PID {host_pid} gone)")
+            tail_log(host_log, 30, "HOST")
+            sys.exit(1)
+    if not bound:
+        log(f"FAIL: host did NOT bind UDP within {args.boot_timeout}s")
+        tail_log(host_log, 30, "HOST")
+        kill_all()
+        sys.exit(1)
+
+    # Settle. The PE detour is installed during boot, but a co-resident PolyHook composes onto our
+    # relay only once UE4SS has started its own mods, and the post-init pe_diag census runs later
+    # still -- so closing the instant UDP binds would measure a teardown with nothing composed on
+    # it, which is the case the residual is NOT about.
+    log(f"settling {args.settle}s before the close signal (lets any co-resident PE hooker compose)...")
+    time.sleep(args.settle)
+
+    pre_len = len(_read_text(host_log))
+
+    log("--- CLOSING ---")
+    t_close = time.time()
+    if args.control_terminate:
+        log("  CONTROL ARM: tearing down with Stop-Process -Force (the way every other scenario does)")
+        run_ps("Get-Process VotV-Win64-Shipping -ErrorAction SilentlyContinue | Stop-Process -Force")
+    else:
+        if not _post_close(host_pid, args.signal, "HOST"):
+            log("FAIL: could not post a close signal -- nothing was measured")
+            kill_all()
+            sys.exit(2)
+
+    exited = False
+    for i in range(args.exit_timeout):
+        time.sleep(1)
+        if not any(p["PID"] == host_pid for p in list_votv()):
+            exited = True
+            log(f"host process gone after {i+1}s")
+            break
+    elapsed = time.time() - t_close
+    if not exited:
+        log(f"host STILL ALIVE {args.exit_timeout}s after the close signal -- killing")
+        kill_all()
+
+    # Give the file a moment: the last lines are written on the dying thread.
+    time.sleep(1)
+    text = _read_text(host_log)
+    tail = text[pre_len:]
+
+    log("--- TEARDOWN TRAIL (log written AFTER the close signal) ---")
+    seen = {}
+    for key, needle, where in _TEARDOWN_TRAIL:
+        hit = needle in tail
+        seen[key] = hit
+        log(f"  [{'X' if hit else ' '}] {key:<13} {needle!r}  ({where})")
+    detached = _DETACH_MARKER in tail
+    log(f"  [{'X' if detached else ' '}] {'detach':<13} {_DETACH_MARKER!r}  (bootstrap/dllmain.cpp DLL_PROCESS_DETACH)")
+    log(f"  new log bytes after the signal: {len(tail)}")
+    if tail.strip():
+        for line in tail.strip().splitlines()[-25:]:
+            log(f"    | {line}")
+
+    dumps_new = _crash_dump_names() - dumps_before
+    if dumps_new:
+        log(f"  NEW crash report(s): {sorted(dumps_new)}")
+
+    errors = [ln for ln in tail.splitlines() if "[Error]" in ln or "[ERROR]" in ln]
+
+    log("--- GRACEFULEXIT VERDICT ---")
+    if args.control_terminate:
+        # Inverted: a forced kill must produce NO teardown trail. If it does, these markers are
+        # not measuring the close path and every GREEN this scenario ever prints is worthless.
+        if seen["begin"] or seen["end"]:
+            log("CONTROL FAILED: the teardown trail appeared under Stop-Process -Force.")
+            log("  The markers do not discriminate the close path -- do NOT trust this scenario.")
+            sys.exit(2)
+        log("CONTROL PASS: Stop-Process -Force produced no teardown trail, as it must.")
+        log(f"  (exit took {elapsed:.1f}s; this arm asserts nothing about cleanliness)")
+        sys.exit(0)
+
+    probs = []
+    if not exited:
+        probs.append(f"process did not exit within {args.exit_timeout}s of the close signal")
+    if not seen["begin"]:
+        probs.append("no 'shutdown: BEGIN cleanup' -- the teardown never started")
+    if not seen["end"]:
+        probs.append("no 'shutdown: END cleanup' -- the teardown started and did NOT finish")
+    if dumps_new:
+        probs.append(f"{len(dumps_new)} new crash report(s) written during the exit")
+    if errors:
+        probs.append(f"{len(errors)} [Error] line(s) after the close signal")
+
+    if probs:
+        for p in probs:
+            log(f"FAIL: {p}")
+        sys.exit(1)
+
+    lane = "wndproc (close-signal seen)" if seen["close-signal"] else \
+           ("DLL_PROCESS_DETACH only" if detached else "unattributed")
+    log(f"PASS: graceful exit in {elapsed:.1f}s, teardown ran to completion, no crash report.")
+    log(f"  lane: {lane}   MinHook shutdown line: {'present' if seen['minhook'] else 'ABSENT'}")
+    sys.exit(0)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="VOTV coop orchestrator")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -4362,6 +4579,27 @@ def main() -> None:
     p_puppetshot.add_argument("--memory-limit-gb", type=float, default=12.0, help="per-process commit cap in GB (0 = disabled)")
     for flag, kw in host_res: p_puppetshot.add_argument(flag, **kw)
     p_puppetshot.set_defaults(func=cmd_puppetshot)
+
+    p_gexit = sub.add_parser("gracefulexit",
+                             help="SOLO SHUTDOWN drill: close the host the way a PLAYER closes it "
+                                  "(WM_SYSCOMMAND/SC_CLOSE) and read the teardown trail -- the path "
+                                  "Stop-Process -Force has never let this rig walk")
+    p_gexit.add_argument("--boot-timeout", type=int, default=90, help="seconds to wait for host UDP bind")
+    p_gexit.add_argument("--settle", type=int, default=20,
+                         help="seconds to hold the world open before closing (lets a co-resident "
+                              "PE hooker compose onto our relay)")
+    p_gexit.add_argument("--exit-timeout", type=int, default=90,
+                         help="seconds to wait for the process to die after the close signal")
+    p_gexit.add_argument("--signal", choices=["sysclose", "wmclose"], default="sysclose",
+                         help="sysclose = what an X-click/Alt+F4 really send (default); wmclose = the "
+                              "canonical WM_CLOSE, kept so the two lanes can be told apart")
+    p_gexit.add_argument("--control-terminate", action="store_true",
+                         help="MUST-FAIL control: tear down with Stop-Process -Force instead; the run "
+                              "REQUIRES the teardown trail to be ABSENT")
+    p_gexit.add_argument("--no-deploy", action="store_true",
+                         help="skip deploy-all (measure the bytes already on disk)")
+    for flag, kw in host_res: p_gexit.add_argument(flag, **kw)
+    p_gexit.set_defaults(func=cmd_gracefulexit)
 
     args = ap.parse_args()
 
