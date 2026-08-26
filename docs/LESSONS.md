@@ -86,6 +86,21 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   `GetAsyncKeyState` poll. Never let a log line quote the string its own assert searches for;
   hold a synthesized key across ticks; and distrust a selftest that passes on its first run.
 
+- **2026-08-26 — test the assumption the whole plan rests on FIRST, not last.** An eight-step browser
+  plan built a scroll drive, preserved a scroll offset and decided a row model -- three steps that are
+  *entirely* about scrolling -- while scheduling *"does the wheel scroll this widget at all"* LAST,
+  inside the harness. `[V]` nothing in `ui/server_browser_native.cpp` touches a scroll API and no wheel
+  event has ever reached it; and **no step anywhere priced "make it scroll" if the answer was no**. The
+  plan was ordered by BUILD DEPENDENCY, which is reasonable and which structurally cannot see BLAST
+  RADIUS. Two aggravators: the test as first written **could not run** (at ~2 live lobbies the list does
+  not overflow the viewport, so there is no scrollbar), and it lacked the **positive control** three
+  other steps had -- an unchanged screenshot is three-way ambiguous between *the wheel never arrived*,
+  *the ScrollBox does not scroll* and *the capture beat Slate's layout*. *Look FIRST:* order steps by
+  "how many later steps become waste if this is false", not by convenience; if the answer being NO has
+  no step, say so IN the plan; check the cheap test is RUNNABLE before calling it cheap; and when some
+  steps say "shown RED first", ask which ones do not -- that asymmetry is the visible symptom.
+  `memory/lesson_test_the_assumption_the_plan_rests_on_first.md`
+
 - **Your own memory file can silently EDIT the plan of record, and you will read it back as the plan.**
   2026-08-25: on "go next" I was one call from implementing a security root (A54). `[V]` The design doc
   of record ordered `A52 -> B3 -> B4 -> checklist`; A52 had shipped, so B3 was next -- and B3/B4 are the
@@ -4015,9 +4030,37 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   `Install` was already retrying the identical resolve inside a ~1 Hz throttle. The fix is
   `if (!g_x) return;` -- compare in the callback, produce in the installer. *Look FIRST:* grep
   `FindClass|FindFunction|FindObjectByClass` inside anything reached per-frame / per-ProcessEvent /
-  per-overlap / per-0x45-verb / per-packet, and ask what it costs in the world where the feature is
-  ABSENT -- an unlatched NEGATIVE turns a memo into a loop.
+  per-overlap / per-0x45-verb / per-packet / **per-ROW of any list you paint**, and ask what it costs
+  in the world where the feature is ABSENT -- an unlatched NEGATIVE turns a memo into a loop.
+  **SECOND INSTANCE, 2026-08-26, and the vocabulary above is what missed it:** the native server
+  browser's `RowPartsAt` resolves `R::FindFunction(cw, L"GetContent")` **per row, per sync**
+  (`server_browser_native.cpp:209`; `:188`/`:361` do the same for `SetContent` per row BUILT). That is
+  not per-frame or per-packet, so a grep of this row's own list would not have caught it -- it is
+  per-ROW-per-second, and the loop is bounded only by the row count. **`R::FindFunction` has NO result
+  cache at all** (`reflection.cpp:485-497`): unlike `FindClass`, which `ca1cd5e4` fixed one day
+  earlier, every call walks `NumObjects()` with an `OuterOf` test per object. `[V]` a full walk is
+  ~1.1-1.6 ms (`[WALK-TIME] sync:event_cue = 2317/3220 us`, two walks, `NumObjects=182767`), and they
+  all land in ONE frame -- so the shape is a **single-frame stall**, and quoting it per-second (as an
+  earlier draft did) understates it. **Precision so nobody overclaims the fix:** `BeginClassWalk`
+  memoises the class SEARCHED FOR, not the RESULT -- `FindObjectByClass` / `FindObjectsByClass` /
+  `FindActorsByClass` all still walk, and `FindClass` caches a result only because its result IS a
+  class. A `FindFunction` result cache would be a NEW cache across 476 call sites, not parity with its
+  siblings. Design of record: `docs/MULTIPLAYER_UI.md` section 8c.-1.
   `memory/lesson_a_ctx_gate_belongs_in_a_hot_callback_a_ctx_resolve_does_not.md`
+
+- **2026-08-26 — a statistic has to be able to SEE the event you chose it to detect.** THREE blind
+  metrics in one `/qf`, each blind for a different reason: **p99** for a stall that is 0.17% of frames
+  at the shipping cadence (below the 1% cut, so it reports a normal frame either way); a
+  **frame-interval p99 on a `GetTickCount64` counter** (~15.6 ms granularity against ~8.5 ms frames --
+  quantisation, `worldless_frames.cpp:136` vs `perf_probe.cpp:73`'s QPC); and a **max/p99 on an
+  instrument that produces neither** (`worldless_frames` counts frames per segment; its `g_maxFrozenMs`
+  is about the TASK PUMP). A blind statistic does not error -- it prints a healthy number with the
+  authority of a measurement, and the gate built on it passes on a broken build. *Look FIRST:* before
+  writing a threshold, answer in order -- how OFTEN is the event as a fraction of samples (rarer than
+  the percentile's cut => use `max` + a count over threshold); how BIG against the TIMEBASE's
+  resolution (grep the counter for its clock); and does the instrument actually PRODUCE this quantity
+  (a counter of events is not a distribution of intervals). Then show it RED with an injected fault.
+  `memory/lesson_a_statistic_must_be_able_to_see_its_own_event.md`
 - **`GetActorLocation`/`GetComponentLocation` are UFunction DISPATCHES, not raw reads** — never bulk-call
   per-tick over thousands of actors (invisible on a fresh save, hitches the host on a mature world);
   throttle / pre-filter / read the raw transform. *Look FIRST:* `engine.cpp GetActorLocation`. `memory/lesson_getactorlocation_is_a_ufunction_dispatch.md`

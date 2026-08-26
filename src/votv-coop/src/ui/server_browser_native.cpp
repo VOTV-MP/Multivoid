@@ -37,7 +37,16 @@ using Row = coop::net::lobby::LobbyRow;
 constexpr float kWindowW  = 980.f;
 constexpr float kWindowH  = 620.f;
 constexpr float kRowH     = 64.f;
-constexpr int   kMaxRows  = 64;    // pool ceiling; the master caps its list well below this
+// BOUNDS THE WHOLE SYNC LOOP, not just the display: `want` clamps to this, the grow
+// loop is bounded by `want`, and `total = ChildCount` therefore never exceeds it. So
+// this is a COMPUTE ceiling that happens to look like a display one.
+// The comment that stood here -- "the master caps its list well below this" -- was
+// FALSE (2026-08-26): `build_rows` (master.rs:531-553) emits every listed lobby,
+// unbounded, so 100 servers render 64 and nothing logs the truncation.
+// Raising it is step T2b and it CANNOT come first: see docs/MULTIPLAYER_UI.md
+// section 8c.-1, which measures why the uncached walk per row must go first --
+// raising the cap before that converts a latent defect into a 110-320 ms stall.
+constexpr int   kMaxRows  = 64;
 // A lone FSlateBrush copied on its own is still a brush: its unreflected resource handle
 // sits at +0x70 of the copy, i.e. offset 0 in the table CloneStyle takes.
 constexpr size_t kOneBrush[1] = {0};

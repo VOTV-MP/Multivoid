@@ -321,10 +321,25 @@ LAN (two-machine + same-box-two-instance both confirmed).
        §8a the measurement pass, §8 the plan. It is shipped DARK behind
        `[dev] browser_native=0`: the ImGui panel above is still the only browser
        and still what the MULTIPLAYER button opens. The native screen draws the
-       live master's lobby list with the version-mismatch tint; INPUT (hover,
-       row click, the Connect/Host/Back chrome) is NOT wired, and retiring the
-       ImGui browser also has to retarget `tools/cursor_probe.py` +
-       `tools/master_fetch_probe.py`, which block on its log line.** Two results from that pass bind other
+       live master's lobby list with the version-mismatch tint; INPUT is MOSTLY
+       NOT wired -- ESC closes the screen (2026-08-26, after the user turned the
+       flag on and found no way out), but hover, row click and the
+       Connect/Host/Back chrome are absent, and the PUBLIC `Close()` still has
+       zero callers and has never run. Retiring the ImGui browser also has to
+       retarget `tools/cursor_probe.py` + `tools/master_fetch_probe.py`, which
+       block on its log line.**
+       **The PERFORMANCE approach is designed and is `MULTIPLAYER_UI.md`
+       section 8c.-1 (13-round `/qf`, 2026-08-26; DESIGN, nothing built).** Its
+       root finding is measured and reorders the lane: `RowPartsAt` resolves an
+       UNCACHED `R::FindFunction` per row per sync and that walks the whole
+       `GUObjectArray` (~1.1-1.6 ms each), so the cost is a SINGLE-FRAME stall,
+       not dispatch volume. Two defects fall out that are not about speed at
+       all: `kMaxRows = 64` bounds the whole sync loop (so "100 servers" renders
+       64, silently), and the list has NO STABLE ORDER -- the master iterates a
+       `HashMap`, nothing sorts, and rows are written BY POSITION, so a refresh
+       reshuffles the list under a scrolling hand. Step T0 -- *does the wheel
+       scroll this widget at all* -- has never been tested and everything
+       downstream assumes it. Two results from that pass bind other
        phases: a hand-wired `UUserWidget` RENDERS inside `ui_menu_C`'s live
        `UWidgetSwitcher` (so the placement holds), and **the ImGui overlay
        substrate is NOT retirable** — at every launch the game presents ~540
