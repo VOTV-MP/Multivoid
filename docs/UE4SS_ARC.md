@@ -53,7 +53,7 @@ proxy / dup-dialog retire WHOLE per RULE 2 — no standalone-and-UE4SS dual path
 | WP | What | Status |
 |----|------|--------|
 | **WP-1** | Spike: prove the C-ABI shim boots the one binary as a UE4SS mod; measure the double-PE-detour survivability. | **AS-BUILT** — commit `cddb116c` (2026-08-21 eve). Matrix green ~110 ms; LAN join worked; double-detour "alive" on a SMALL sample (later found to crash ~2/10, see §3). WP-4 spike findings: ini err=3 under VFS; shimloader panics on `xinput1_3.dll`. |
-| **WP-2** | The loader cut: delete `xinput_proxy.cpp` + the proxy deploy path (RULE 2); `cppmod_entry.cpp` in; predecessor detection + mutex; keep EVERYTHING else. | **IN PROGRESS.** Pre-cut LANDED (§2). Fix (**B**, §4) is BUILT + default-ON and its compose is **VERIFIED** (2026-08-22 16:02 real-env byte decode + 16:25 DEV `POLYHOOK-COMPOSED` boot, §4 Proof status). The IsLive/VEH arc is BUILT (D1, 2026-08-22 night, §4 -- run B pending the user). Remaining before the proxy deletion: ~~symbolize the 19:17 dump~~ **RETIRED 2026-08-26 by a hash census, no symbolization needed** (§4 residuals); B's teardown leak-at-death residual, **which cannot be validated today** (§4a); then commit 3, **welded to §7.3a's release anchors** because the tree cannot cut a release between them (§8.2). |
+| **WP-2** | The loader cut: delete `xinput_proxy.cpp` + the proxy deploy path (RULE 2); `cppmod_entry.cpp` in; predecessor detection + mutex; keep EVERYTHING else. | **IN PROGRESS.** Pre-cut LANDED (§2). Fix (**B**, §4) is BUILT + default-ON and its compose is **VERIFIED** (2026-08-22 16:02 real-env byte decode + 16:25 DEV `POLYHOOK-COMPOSED` boot, §4 Proof status). The IsLive/VEH arc is BUILT (D1, 2026-08-22 night, §4 -- run B pending the user). Remaining before the proxy deletion: ~~symbolize the 19:17 dump~~ **RETIRED 2026-08-26 by a hash census, no symbolization needed** (§4 residuals); B's teardown residual — **no longer unfalsifiable**: the `gracefulexit` scenario (`fe474b86`) walks the close path and both arms ran, §4a; then commit 3, **welded to §7.3a's release anchors** because the tree cannot cut a release between them (§8.2). |
 | **WP-4** | Fix the stale install/update/uninstall prose + the site + installer for the UE4SS lane. | **PARKED, but now SPECIFIED** — census written (`votv-ue4ss-stale-loader-prose-CENSUS-2026-08-22.md`, ~139 rows); §7 measures the target shape and §7.3 fixes the sequencing (it must not flip before a UE4SS-lane build is released). **+ §7.0 (USER 2026-08-24): the GitHub repo DESCRIPTION and topics are stale prose too and are invisible to the census — they live outside the tree. `description` still says "a standalone C++ DLL"; the `dll-injection` topic goes; `homepageUrl` is empty and is fixable NOW.** |
 | **WP-6** | Distribution re-home (the `multivoid-<game>-<build>.dll` filename + master + release flow onto the mod-folder shape). | **PARKED, now SPECIFIED** — §7.2 + §7.4. |
 | **WP-9** | **Thunderstore publication** (USER 2026-08-23: "надо нам бы стать официальным модом и попасть в магазин thunderstore ... чтобы обычный юзер смог поставить нативно"). Ship Multivoid as a Thunderstore package so r2modman / Thunderstore Mod Manager installs it natively. | **NEW, SPECIFIED, NOT BUILT** — §7. The payload shape is ALREADY correct; what is missing is package metadata, a GENERATED manifest, and a publish step. **The version mapping is DECIDED, not owed** (§7.3, user 2026-08-23: `<game-major>.<game-minor>.<build>`); this row said "a version mapping decision" was missing after §7.3 had already made it. **§7.3a (2026-08-24, user-raised) measures what the versioned DLL name costs today** — it moves on every proto bump including security-only ones (`0.9.135` as of `ca3943e9`), its CMake justification expires with WP-2 commit 3, `deploy-mod.ps1` picks the payload by mtime out of 14 artifacts, and the six anchor sites that must move in one commit are tabulated. **2026-08-25 (user-raised, five real Thunderstore packages): §7.2 was measuring the extracted PROFILE and calling it the ZIP — the real zip has a `mod/` wrapper, and §7.2's tree would have installed cleanly and never loaded. §7.2a is now the authoritative routing rule (from Thunderstore's own ecosystem schema + r2modman's rule engine and test spec), §7.2b is the field survey + the measurement that shows what D-3 bought (field mods import 32/40/130 mangled C++ symbols from `UE4SS.dll`; we import 0), and §7.9 answers "can GitHub produce the package" — yes for everything except the pak, whose blocker is its inputs.** |
@@ -239,29 +239,58 @@ UE4SS's.** (This corrects an earlier framing that called C "B's eventual retirem
   record whether it survives. Whoever symbolizes the dump should read that doc's §3/§4 first — the
   hooker mechanics (who patches what, in what order) are already written up there.
 
-### 4a. THE TEARDOWN PATH HAS NEVER RUN — measured 2026-08-26, and it blocks B's own residual
+### 4a. THE TEARDOWN PATH, MEASURED — the rig could not walk it, and now it can (2026-08-26)
 
 B's honest residual (above) is *"leak the PE hook at process-close"*, because PolyHook holds a
-restore-pointer into our MinHook slot and `MH_Uninitialize` frees it. **That fix cannot be validated
-today, and the reason is not subtle:**
+restore-pointer into our MinHook slot and `MH_Uninitialize` frees it. That fix could not be
+validated, and the reason was not subtle:
 
-`[V]` `tools/mp.py:328-337` — `kill_all()` is `Get-Process VotV-Win64-Shipping | Stop-Process -Force`.
-That is `TerminateProcess`. No `WM_CLOSE` is ever sent, so our wndproc never runs, and a forced kill
-does not deliver `DLL_PROCESS_DETACH` either. Therefore `ue_wrap/core/hook.cpp:164-169 Shutdown()` →
-`MH_DisableHook(MH_ALL_HOOKS); MH_Uninitialize()` — the exact path the residual lives on — **has never
-executed in this rig's history**, on any build, in any scenario.
+`[V]` `tools/mp.py` `kill_all()` is `Get-Process VotV-Win64-Shipping | Stop-Process -Force`. That is
+`TerminateProcess`. No `WM_CLOSE` is ever sent, so our wndproc never runs, and a forced kill does not
+deliver `DLL_PROCESS_DETACH` either. Therefore `ue_wrap/core/hook.cpp Shutdown()` →
+`MH_DisableHook(MH_ALL_HOOKS); MH_Uninitialize()` — the path the residual lives on — **had never
+executed under an automated scenario**, on any build.
 
-**Consequences, in order of how much they change the plan:**
+> **CORRECTION 2026-08-26, same day, and it matters.** An earlier draft of this section said the path
+> had "never executed in this rig's history, on any build, in any scenario", and the commit message
+> of `fe474b86` repeats that. **Too strong.** `[V]` `docs/piles/test-evidence/handson-s31-doom-HOST.log`
+> and the `handson-s32-strip` pair both contain `hook: MinHook shut down`; their banner reads
+> `votv-coop 0.0.1`, i.e. pre-b122, i.e. **the proxy lane**. So the teardown HAS run — under a human
+> close, before UE4SS was in our runtime. The true statement is narrower and more useful: **it had
+> never run under an automated scenario, and it had never once run with a PolyHook composition on our
+> relay until 2026-08-26 16:14.** The overstatement came from censusing `src/` and not `tools/` or
+> `docs/` — the same alias-vocabulary lesson this project has now paid for three times.
 
-1. **Adding the leak-at-death fix today would be UNFALSIFIABLE** — a change to code no test runs.
-   The instrument comes first: a `graceful_exit()` scenario (`WM_CLOSE`/`CloseMainWindow`) beside
-   `kill_all()`, additive, so the shutdown path becomes observable at all.
-2. **"USER run B" cannot simply be relocated onto the rig.** The acceptance is *one ordinary real-env
-   exit*; the rig does not walk that path, so moving it there without the instrument would be a
-   rename, not a test. (And per the user's 2026-08-25 ruling that hands-on is closed, a plan whose
-   last step is "the user will exit the game" is a shelf.)
-3. **It is bigger than this residual.** Nothing else down there has been exercised either, in a mod
-   that inline-hooks ProcessEvent and DXGI. What the shutdown path does is simply unknown.
+**THE INSTRUMENT IS BUILT (`fe474b86`, additive, `kill_all` untouched).** `python tools/mp.py
+gracefulexit` launches a solo host, waits for the UDP bind, settles, then posts
+`WM_SYSCOMMAND`/`SC_CLOSE` — what an X-click and Alt+F4 actually generate, per `shutdown.cpp`'s own
+hands-on note that UE4.27 acts on `SC_CLOSE` and bypasses `WM_CLOSE` entirely — and reads the log
+written after the signal. It gates on the invariants that survive the coming fix (process exits,
+`BEGIN` and `END cleanup` both present, no new crash report, no `[Error]`) and deliberately NOT on
+which sub-steps the teardown performs, because that is exactly what the fix changes.
+`--control-terminate` is its RED arm.
+
+**Both arms ran 2026-08-26. Four things they measured:**
+
+1. **RED control:** `Stop-Process -Force` produced **0 bytes** of teardown log. Not a partial trail —
+   nothing. So the markers discriminate the close path.
+2. **GREEN:** the full trail in order, process gone in 6.5 s, no crash report:
+   `shutdown: close-signal received on HWND=... msg=0x112 wp=0xF060` → `BEGIN cleanup` →
+   `net: session stopped` → `hook: MinHook shut down` → `END cleanup` → (3 s later)
+   `cppmod: final dispatch tally ... (start_mod x1, uninstall_mod x0)`.
+3. **THIS RIG IS THE COMPOSED CASE, WITH NO ArmPE FIXTURE.** `[V]` same run:
+   `pe_diag[install] RELAY: IMMUNE-RELAY INTACT(UE4SS not armed on it)` at 16:14:21, then
+   `pe_diag[post-init] RELAY: POLYHOOK-COMPOSED(immune relay in-place hooked -- fix working)` at
+   16:14:31. UE4SS 3.0.1 armed its own PolyHook PE detour within 10 s **unprompted**. §5's note that
+   ArmPE is disabled on these installs reads as though the rig does not compose. **It does.**
+4. **There is a 3-second window.** 16:14:54 (`hook: MinHook shut down`) → 16:14:57
+   (`DLL_PROCESS_DETACH`). Everything `MH_Uninitialize` unmaps stays unmapped while the process is
+   still running, and `uninstall_mod x0` confirms UE4SS never tears its own mods down, so our
+   teardown is entirely wndproc- and DETACH-driven exactly as `loader/cppmod_entry.cpp` assumes.
+
+**Consequence for "USER run B":** its acceptance was *one ordinary real-env exit*. That is now a
+scenario, not a request — and per the user's 2026-08-25 ruling that hands-on is closed, it had to
+become one or it was a shelf.
 
 ### 4b. THE 19:17 SYMBOLIZATION IS RETIRED — a hash census answered it for free (2026-08-26)
 
@@ -408,7 +437,10 @@ permanent (`mp.py wirewindow` + `coop/dev/wire_census`). NOT hands-on — run B 
   install whose Win64 has the shimloader `dwmapi.dll` + `ue4ss.dll`, launched via r2modman. The ArmPE
   fixture stays in the PROFILE (the repro rig) but is **DISABLED on the four coop-rig installs**
   (`enabled.txt` → `.off` on HOST/CLIENT_1) — two intermittent client boot fatals rode it (see §4
-  residuals). Run A was attempted (no repro — see §4); run B awaits the user on the D1 build.
+  residuals).
+  **Do NOT read that as "the coop rig does not compose" — it does.** `[V]` 2026-08-26: with ArmPE off,
+  UE4SS 3.0.1 armed its own PolyHook PE detour within 10 s unprompted and `pe_diag[post-init]` printed
+  `POLYHOOK-COMPOSED` (§4a). The fixture FORCES the compose early; its absence does not prevent it. Run A was attempted (no repro — see §4); run B awaits the user on the D1 build.
 - Rollback to the proxy lane if needed: copy `build/votv-coop/Release/xinput1_3.dll` + the versioned
   DLL beside the exe + delete `Mods\Multivoid\enabled.txt` (3 ops).
 - Nothing is pushed; commits are local pending the user's word + the five-axis leak audit.
@@ -418,12 +450,17 @@ permanent (`mp.py wirewindow` + `coop/dev/wire_census`). NOT hands-on — run B 
 1. ~~Confirm B in the real env~~ **DONE 2026-08-22** — see §4 Proof status (real-env byte decode +
    DEV `POLYHOOK-COMPOSED` boot, both crash-free).
 2. ~~Build the IsLive zero-AV arc~~ **DONE 2026-08-22 night** (all 78 sites converted; gate/drill/
-   smoke/differential evidence in §4). Remaining from that arc: **USER run B** (one ordinary real-env
-   exit; acceptance = no CrashContext report resolving into main.dll) and the ad-hoc `{ptr,idx}` pair
+   smoke/differential evidence in §4). Remaining from that arc: ~~**USER run B**~~ — **its acceptance
+   is now a SCENARIO, not a request** (`python tools/mp.py gracefulexit`, `fe474b86`): one ordinary
+   close, asserting no crash report and a teardown that reaches `END cleanup`. Per the user's
+   2026-08-25 ruling that hands-on is closed, a step whose last line was "the user will exit the
+   game" was a shelf; it is now automated (§4a). Also remaining: the ad-hoc `{ptr,idx}` pair
    migration scope (pending user decision, design doc §6; partially done en route — local_streams +
    daynightcycle pairs retired).
-2b. **Symbolize the 19:17 real-env EXEC-at-NULL dump** (§4 residuals): rebuild `275e0f67` for
-   `F71621E0`'s PDB, map the stack offsets, decide the Present-seam multi-hooker hypothesis.
+2b. ~~**Symbolize the 19:17 real-env EXEC-at-NULL dump**~~ **RETIRED 2026-08-26 — §4b.** A hash
+   census of all 102 dumps bought the discrimination this was meant to buy, for free: the two crash
+   families separate by ERROR STRING alone. (This row survived one sweep after §4b retired it; it is
+   the same stale-open class §1's WP-2 row had.)
 3. Add B's teardown leak-at-death (§4 residual), drop the `VOTVCOOP_PE_IMMUNE_RELAY=0` diagnostic escape.
 4. **Commit 3** — the proxy deletion (RULE 2): `xinput_proxy.cpp` + the loader lane + dup-dialog +
    `inject.ps1` go, fully. Then WP-2 is DONE.
