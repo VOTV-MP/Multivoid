@@ -1812,8 +1812,8 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   `memory/feedback_answer_the_proposals_scope_not_its_widest_reading.md`
 
 
-- **The answer was already written down in this repo -- three times in one pass** (2026-08-26, the A54
-  design pass). I presented as new: a design decision `docs/COOP_SYNCER_MODEL.md` sec4b/sec5 had already
+- **The answer was already written down in this repo -- SIX times in one thread, and half of them in
+  files the reading order already names** (2026-08-26, the A54 design pass, rounds 1-12). I presented as new: a design decision `docs/COOP_SYNCER_MODEL.md` sec4b/sec5 had already
   converged (the per-kind default-deny table, in the file CLAUDE.md's reading order names as required
   BEFORE any authority work); a defect the code comments in place (`prop_destroy_seam.cpp:190-197` for
   the loss half, `event_dispatch_entity.cpp:259-264` for the attack half); and TWO tracker rows I
@@ -1822,7 +1822,20 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   than by the thing I had just FOUND (the mechanism)**. FIRST next time: before filing any new row in a
   register you own, grep it for the MECHANISM (`PropDestroy`, `relay`, the function name), never for the
   row you came from -- a duplicate row splits one OPEN finding in two and inflates a register the docs
-  arc treats as an exploit map. `memory/lesson_the_answer_was_already_written_down_in_this_repo.md`
+  arc treats as an exploit map. **Rounds 9-12 added three more, each worse than the last:** I proposed
+  deleting the producer-side pose gate whose purpose I had myself written down the day before
+  (`memory/lesson_the_producer_may_already_suppress_the_phenomenon.md`, about that exact line); I
+  designed a per-kind authority split without opening `docs/COOP_SYNCER_MODEL.md` sec2b, which already
+  names the SYMMETRIC bucket as **finding A4** and act-as-host as the model it "should be promoted to";
+  and I re-derived, over four rounds, a relay-vs-thread-ordering fix the tree had **already shipped
+  twice** -- `ChatMessage` v133 and `EmailAppend`, whose own comment states my conclusion verbatim
+  ("the relay fires on the NET thread at receive time, before the game thread ... so at relay time the
+  order does not yet exist") and forbids the variant I had just picked ("keeping both paths would be
+  two implementations of one concept compiled together (RULE 2)"). SECOND rule, from those three:
+  **when a design question is about AUTHORITY, ordering, or who-may-write, open the reading-order doc
+  BEFORE the code** -- three of the six instances point at files CLAUDE.md already told me to read
+  first, and a shipped precedent is findable by grepping the whitelist you are about to edit for the
+  word NOT. `memory/lesson_the_answer_was_already_written_down_in_this_repo.md`
 
 - **A census row is worth exactly what its citation is worth** (2026-08-26, A54's refuse-vs-LOSS table).
   I traced ONE lane and asserted six; tracing them reversed **two rows in opposite directions** --
