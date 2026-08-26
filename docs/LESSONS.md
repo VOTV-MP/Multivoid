@@ -33,6 +33,26 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 1. How to work (process / working agreements)
 
+- **AN ESTIMATE USED TO *DECLINE* WORK IS A MEASUREMENT YOU OWE.** 2026-08-26, twice in one design
+  pass and in OPPOSITE directions, each time as the reason to build the second-best option. (1) I
+  called separating the connection routing key from the player seat *"a tree-wide signature change --
+  every handler takes a `senderSlot`"*; `[V]` `session.cpp:463` says in its own comment *"HandleMessage
+  has exactly ONE caller (the drain loop below)"* -- the slot is derived at ONE site. (2) I called
+  splitting `kMaxPeers` *"500 uses across 108 files, too big"*; `[V]` classifying those 500 shows 56
+  comments and nearly all the rest are `std::array<T, kMaxPeers>` sizes and `slot >= kMaxPeers` bounds
+  checks that KEEP `kMaxPeers` under a split -- the sites carrying "how many PLAYERS may sit" are
+  **5-8**. A critic demanded the measurement both times and it reversed the decision both times. This
+  is the enforcement gap under *scope is never a reason to hold back*: I was not refusing on scope, I
+  was **mis-measuring** scope and then honestly following my own bad number, and a rule against holding
+  back cannot bite when the size input is invented. **The asymmetry that makes it dangerous: a wrong
+  "too big" is self-concealing, because the build that would have refuted it never happens.** *Look
+  FIRST:* a raw `grep -c` counts mentions, not the refactor -- classify before you cite, and state both
+  ("500 mentions, of which N carry the meaning that changes"); read the tree's own comments before
+  estimating blast radius (both answers were written in the source by a previous session); and prefer a
+  deferral that names a VALUE over one that names a cost -- the seat split was finally deferred because
+  the shipped fix removed its security value, which survives scrutiny, where "500 uses" did not.
+  `memory/feedback_an_estimate_used_to_decline_work_is_a_measurement_you_owe.md`
+
 - **A safety constraint added to a spike can BLIND the measurement, and the resulting PASS/FAIL is a
   fact about the constraint.** 2026-08-25: a `/qf` round correctly noticed that RUNG 1 of the native-UI
   probe WRITES into VOTV's live `ui_menu_C::switcher_widgets` — at our index ESC is a no-op and a
@@ -2556,6 +2576,24 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 
 ## 3. Sync architecture (owners, routers, lifecycle)
 
+- **A HANDSHAKE'S ORDER IS A MEASUREMENT; A KIND'S NAME IS NOT EVIDENCE OF IT.** 2026-08-26. Building
+  the admission gate I made the test "admit when the peer sends a `Join`" -- the message named after
+  joining. `[V]` It DEADLOCKED every honest join, and the host log diagnosed it in one line:
+  `"PENDING 0 sent kind=42 before admission -- dropped"`. `[V]` Kind 42 is `SaveTransferRequest`, and
+  `protocol.h:1798` says exactly what it is: *"a MENU-MODE joining client asks the host for"* the save.
+  **A joining client has no world yet** -- it sits in the main menu and must fetch and LOAD the host's
+  save before it can announce itself, so `Join` is near the END of joining, not the start. Measured
+  order: connect -> `SaveTransferRequest`(42) -> chunks -> `ClientWorldReady`(45) -> `Join`(1). **This
+  reframed a security finding, not just a bug:** TRACKER A57 said a stranger pulls the whole world
+  *"without ever sending Join"*, which framed the save as a privilege skipped ahead to; the measurement
+  says it is the first thing EVERY client asks for, so `PLAN_04` s1's *"before world access"* means
+  before the **SAVE**, and a gate at `Join` is not merely late but structurally incapable. The doc was
+  precise; my reading mapped it onto the wrong message because I inferred order from a name. *Look
+  FIRST:* log one run's inbound kinds in order before gating on "the peer has sent X"; ask what STATE
+  the peer is in at that moment (no world) rather than what the message is called; and always log the
+  KIND you refused, which is what turned a hang into a one-line diagnosis.
+  `memory/lesson_a_handshakes_order_is_measured_not_named.md`
+
 - **Before designing a receiver-side answer to a phenomenon, read the PRODUCER's gate — it may already
   suppress it.** 2026-08-25: A52's design spent four rounds building "forgiveness" rules so a host-side
   movement validator would not punish the join teleport, including a whole source kind
@@ -4306,6 +4344,25 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   `memory/lesson_an_optimization_hoisted_above_the_bound_it_protected.md`
 
 ## 8. Build / deploy / git hygiene
+
+- **AN EARLY RETURN INHERITS EVERYTHING THE BRANCH HAD LEFT TO DO -- AND THE BROKEN CODE IS NOT IN THE
+  DIFF.** 2026-08-26. The admission gate needed the GNS `Connected` branch to stop seating a peer, so I
+  added an early `return` for parked connections and moved the lane-config call I knew about. `[V]` The
+  smoke failed as *"client never reached connected"*, and the two logs together named it: host
+  `"ADMITTED pending conn -> slot 1"`, client **no** `"host assigned us peer slot"` line at all. The
+  host's `AssignPeerSlot` send lives ~50 lines further down the SAME branch I had returned from, after
+  the lanes-configured store and a send-buffer mirror. The peer was admitted, held slot 1, had lanes,
+  and was never told. **An early return is invisible in review as a deletion, because nothing is
+  deleted** -- the diff shows a `return` added and the ~50 lines it now skips are unchanged, so they
+  never appear; and skipping a send is not a type error. Fixed by EXTRACTING
+  `Session::FinishPeerConnected(slot, hConn)` -- one definition, two callers -- because copying the
+  block would have been the same site-list mistake one level down. *Look FIRST:* before adding an early
+  return to an existing branch, read that branch to its END and list what it still does past your
+  return point (each item is now either dead for your case or owed by your new path -- there is no
+  third option); when two paths owe the same trailing work, extract rather than copy; and read a
+  "never connected" failure as possibly *connected but never TOLD* -- an authority-side success line
+  with no acknowledgement on the other side means the information never crossed.
+  `memory/lesson_an_early_return_inherits_the_rest_of_the_branch.md`
 
 - **A DELETION COMMIT OWES A CENSUS IN ITS MESSAGE, NOT JUST THE DELETION.** 2026-08-26, found by a
   `/qf` critic. `docs/security/TRACKER.md` A2 records *"the false comment is DELETED (`6f0c2bf8`)"*,
