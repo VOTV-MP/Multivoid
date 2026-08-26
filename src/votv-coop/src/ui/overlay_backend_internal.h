@@ -35,7 +35,6 @@ void OnResizeRelease();
 void OnResizeRecreate(IDXGISwapChain* sc);
 void* CreateTextureFromImageFile(const wchar_t* path, int* outW, int* outH);
 void DestroyTexture(void* id);
-void Shutdown(bool rendererWasLive);
 
 }  // namespace ui::overlay_backend::dx11
 
@@ -58,7 +57,6 @@ void OnResizeRelease();
 void OnResizeRecreate(IDXGISwapChain* sc);
 void* CreateTextureFromImageFile(const wchar_t* path, int* outW, int* outH);
 void DestroyTexture(void* id);
-void Shutdown(bool rendererWasLive);
 
 }  // namespace ui::overlay_backend::dx12
 
@@ -90,6 +88,5 @@ void InstallCreationProbe();
 void Rearm();
 
 // Disarm the capture hooks + release the device ref.
-void Shutdown();
 
 }  // namespace ui::overlay_backend::dx12_capture

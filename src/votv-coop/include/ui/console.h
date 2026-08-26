@@ -18,7 +18,6 @@ namespace ui::console {
 // (before/around the rest of the UI). Idempotent.
 void Init();
 // Unregister the sink (overlay teardown).
-void Shutdown();
 
 // Draw the console each frame while open (render thread). No-op when closed.
 void Render();

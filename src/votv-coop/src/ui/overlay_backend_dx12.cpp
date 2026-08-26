@@ -768,25 +768,5 @@ void DestroyTexture(void* id) {
         }
 }
 
-void Shutdown(bool rendererWasLive) {
-    dx12_capture::Shutdown();  // disarm the capture hooks + drop its device ref
-    if (!g_live && !g_device) return;
-    WaitGpuIdle("shutdown");
-    for (const Pending& p : g_pending)
-        if (p.res) p.res->Release();
-    g_pending.clear();
-    g_pending.shrink_to_fit();   // Shutdown is not a hot path; give the pages back
-    // OURS only: an Imgui-owned slot's resource belongs to the backend, which
-    // releases it in ImGui_ImplDX12_Shutdown just below.
-    for (UINT i = 1; i <= kTextureSlots; ++i) {
-        if (g_tex[i].owner == TexSlot::Owner::Ours && g_tex[i].res) g_tex[i].res->Release();
-        g_tex[i] = TexSlot{};
-    }
-    if (rendererWasLive && g_live) ImGui_ImplDX12_Shutdown();
-    g_live = false;
-    ReleaseRendererState();
-    if (g_queue) { g_queue->Release(); g_queue = nullptr; }
-    g_device = nullptr;  // owned by dx12_capture
-}
 
 }  // namespace ui::overlay_backend::dx12

@@ -146,12 +146,5 @@ void DestroyTexture(void* id) {
     if (id) static_cast<ID3D11ShaderResourceView*>(id)->Release();
 }
 
-void Shutdown(bool rendererWasLive) {
-    if (rendererWasLive) ImGui_ImplDX11_Shutdown();
-    g_live = false;
-    ReleaseRTV();
-    if (g_context) { g_context->Release(); g_context = nullptr; }
-    if (g_device)  { g_device->Release();  g_device = nullptr; }
-}
 
 }  // namespace ui::overlay_backend::dx11

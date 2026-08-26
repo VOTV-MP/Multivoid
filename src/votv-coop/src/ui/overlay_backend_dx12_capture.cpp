@@ -394,12 +394,5 @@ void Rearm() {
         g_eclHookInstalled.store(true, std::memory_order_release);
 }
 
-void Shutdown() {
-    // No new detour entries while the process tears down. Disable-only: the
-    // trampoline slots stay mapped so a preempted thread returns through live
-    // memory (see ue_wrap/core/hook.h).
-    if (g_eclHookInstalled.exchange(false)) ue_wrap::hook::Disable(g_eclTarget);
-    if (g_device) { g_device->Release(); g_device = nullptr; }
-}
 
 }  // namespace ui::overlay_backend::dx12_capture

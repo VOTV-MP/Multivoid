@@ -70,6 +70,5 @@ void InstallCreationProbe();
 
 // Tear down everything this backend owns. rendererWasLive mirrors the
 // overlay's g_imguiReady latch (renderer-backend Shutdown only if Init ran).
-void Shutdown(bool rendererWasLive);
 
 }  // namespace ui::overlay_backend

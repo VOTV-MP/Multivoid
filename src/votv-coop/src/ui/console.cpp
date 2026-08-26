@@ -81,8 +81,6 @@ void RunCommand(const char* cmd) {
 }  // namespace
 
 void Init() { ue_wrap::log::SetSink(&OnLog); }
-void Shutdown() { ue_wrap::log::SetSink(nullptr); }
-
 // Focus the command field on the first frame after the console opens (the
 // chat-input deferred-focus lesson 2026-07-04). Render thread reads it.
 std::atomic<bool> g_focusPending{false};
