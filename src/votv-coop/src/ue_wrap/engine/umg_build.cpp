@@ -140,6 +140,28 @@ bool ScrollOffsetOfEnd(void* scrollBox, float& out) {
     return true;
 }
 
+void CloneButtonStyle(void* dstButton, void* srcButton) {
+    if (!dstButton || !srcButton) return;
+    auto* d = reinterpret_cast<uint8_t*>(dstButton);
+    auto* s = reinterpret_cast<uint8_t*>(srcButton);
+    // FButtonStyle embeds FOUR FSlateBrushes, each with an unreflected
+    // FSlateResourceHandle at +0x70; CloneStyle zeroes all four.
+    CloneStyle(d, P::off::UButton_WidgetStyle, s, P::off::UButton_WidgetStyle,
+               P::off::FButtonStyle_Size, P::off::FButtonStyleBrushes, 4);
+    // KEEP each FSlateSound's ResourceObject (@ 0x00) so the button plays the native
+    // press + hover sounds; zero ONLY the trailing TSharedPtr cache.
+    std::memset(d + P::off::UButton_WidgetStyle + P::off::FButtonStyle_PressedSlateSound +
+                P::off::FSlateSound_CacheStart, 0,
+                P::off::FSlateSound_Size - P::off::FSlateSound_CacheStart);
+    std::memset(d + P::off::UButton_WidgetStyle + P::off::FButtonStyle_HoveredSlateSound +
+                P::off::FSlateSound_CacheStart, 0,
+                P::off::FSlateSound_Size - P::off::FSlateSound_CacheStart);
+    *reinterpret_cast<FLinearColor*>(d + P::off::UButton_ColorAndOpacity) =
+        *reinterpret_cast<FLinearColor*>(s + P::off::UButton_ColorAndOpacity);
+    *reinterpret_cast<FLinearColor*>(d + P::off::UButton_BackgroundColor) =
+        *reinterpret_cast<FLinearColor*>(s + P::off::UButton_BackgroundColor);
+}
+
 bool ViewOffsetFraction(void* scrollBox, float& out) {
     void* fn = Resolve(g_scrollFrac);
     if (!scrollBox || !fn) return false;

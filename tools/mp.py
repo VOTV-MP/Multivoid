@@ -3301,6 +3301,20 @@ def cmd_browser(args) -> None:
         fails.append("the open intent expired without a main-menu tick")
     if find("the switcher moved off our index"):
         log("NOTE: the switcher moved off our index during the run (reconcile fired)")
+    # T1: the chrome. A button nobody has seen work is not a way out, so this fails on an
+    # ABSENT verdict exactly as loudly as on a wrong one.
+    if find("SELFTEST DISARMED"):
+        fails.append("the selftest DISARMED itself -- every verdict below is absent because "
+                     "the probe gave up, not because the feature is missing")
+    close = find("CLOSE BUTTON ")
+    if not close:
+        fails.append("no CLOSE BUTTON verdict -- whether the X actually closes the screen "
+                     "is UNMEASURED, which is the state T1 exists to leave behind")
+    else:
+        log(f"CLOSE BUTTON: {close.strip()}")
+        if "FAIL" in close or "SKIP" in close:
+            fails.append("the X did not close the screen -- read the verdict, it "
+                         "distinguishes a bad cursor estimate from a dead button")
     esc = find("hidden (ESC;")
     if not find("ESC SELFTEST"):
         fails.append("the ESC selftest never ran -- whether the screen can be CLOSED is UNMEASURED")
@@ -3355,7 +3369,7 @@ def cmd_browser(args) -> None:
     for ln in errs:
         # The T0 verdict lines are Errors BY DESIGN when they report a negative; they are
         # already assessed above, so echoing them here would double-count a known result.
-        if "SCROLL CONTROL" in ln or "WHEEL VERDICT" in ln:
+        if ("SCROLL CONTROL" in ln or "WHEEL VERDICT" in ln or "CLOSE BUTTON" in ln):
             continue
         log(f"ERROR LINE: {ln.strip()}")
     if shot:

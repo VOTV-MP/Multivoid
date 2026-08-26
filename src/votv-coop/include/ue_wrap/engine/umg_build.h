@@ -71,6 +71,22 @@ bool CloneStyle(void* dst, size_t dstOff, void* src, size_t srcOff, size_t style
 // FSlateSound caches it must zero separately.
 void ZeroBrushHandles(void* styleBase, const size_t* brushOffsets, int brushCount);
 
+// A WHOLE UButton's look, from one donor UButton to another: the four-brush FButtonStyle,
+// both FSlateSound ResourceObjects, and the two tint colours.
+//
+// THE SOUNDS ARE THE POINT, not a detail. FButtonStyle's two FSlateSound members each hold
+// an unreflected TSharedPtr cache past the ResourceObject, so a raw copy shallow-aliases a
+// refcounted pointer with no AddRef. Keeping the ResourceObject and zeroing ONLY the cache
+// is what makes a cloned button PLAY the native press and hover sounds -- Slate rebuilds
+// the cache lazily. Get that wrong in either direction and the button either silently
+// aliases a refcount or goes mute.
+//
+// ONE OWNER. This was inline in engine_widget.cpp's InjectCanvasButton, the shipped
+// hands-on-verified menu inject. The native server browser needs the identical operation
+// for its own chrome, and two copies of a clone whose correctness turns on which trailing
+// bytes to zero is precisely the shape that goes wrong on the second edit (RULE 2).
+void CloneButtonStyle(void* dstButton, void* srcButton);
+
 // ---- widget setters -------------------------------------------------------------
 // UImage's brush TINT, via the SetBrushTintColor UFunction rather than a raw write: the
 // image may already be attached to Slate, and a raw property write would not repaint (the

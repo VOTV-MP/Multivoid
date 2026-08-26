@@ -7,6 +7,8 @@
 
 #include "ui/server_browser_selftest.h"
 
+#include "ui/server_browser_native.h"   // IsOpen()/Open() -- the click phases drive the real screen
+
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/engine/engine.h"
@@ -56,6 +58,14 @@ constexpr int kScrimSampleIn  = 69;
 constexpr int kEscPress       = 76;
 constexpr int kEscObserve     = 79;
 constexpr int kEscRelease     = 82;
+// ...then re-open and drive the X, because ESC closing the screen is not evidence that
+// the CHROME closes it, and the chrome is what a player will actually reach for.
+constexpr int kReopen         = 88;
+constexpr int kClickMove      = 100;
+constexpr int kClickHover     = 108;
+constexpr int kClickDown      = 110;
+constexpr int kClickUp        = 114;
+constexpr int kClickVerify    = 124;
 
 // The forced offset for the positive control. Far past any real content extent, so a
 // getter that returns it UNCHANGED has told us it echoes the request rather than reading
@@ -63,6 +73,7 @@ constexpr int kEscRelease     = 82;
 constexpr float    kHugeOffset   = 1.0e6f;
 constexpr uint64_t kRowWaitMs    = 30000;  // rows arrive over HTTP; 30 s covers a cold fetch
 constexpr uint64_t kShotHoldMs   = 6000;   // mp.py polls the log every 3 s
+constexpr uint64_t kWindowWaitMs = 15000;  // how long a null active window is a WAIT, not a fault
 
 // THE PRECONDITION, AND WHY IT TAKES TWO TERMS. The first version of this gate waited on
 // `GetScrollOffsetOfEnd() > 0` alone, on the theory that a positive maximum implies
@@ -88,6 +99,7 @@ int g_scrimInsideWindow = -1;
 // distinguishable from a phase that ran and read zero. Zero is a LEGITIMATE answer to
 // three of these (a list at the top; a list that cannot scroll; a wheel that moved
 // nothing), which is precisely why the sentinel has to be negative.
+uint64_t g_windowWaitStartMs = 0;
 uint64_t g_scrollWaitStartMs = 0;
 uint64_t g_holdUntilMs       = 0;
 float    g_endAtRest         = -1.f;   // GetScrollOffsetOfEnd -- the max offset that exists
@@ -103,6 +115,7 @@ float    g_fracWheelPost     = -1.f;
 int      g_listHovered       = -1;
 int      g_rowsSeen          = -1;
 bool     g_controlPassed     = false;
+int      g_closeHovered      = -1;   // -1 = not sampled; an unrun phase is not a NO
 
 // The four fields that decide whether a wheel event moves a UScrollBox. We HAND-SPAWN the
 // box, so each is whatever the engine CDO carries and none of them has ever been read on
@@ -133,11 +146,34 @@ void LogWheelFields(void* list) {
 // Runs only under [dev] browser_autoopen and only once. The move and the sample are
 // SEPARATE ticks: sampling IsHovered() in the same tick as the move reads the PREVIOUS
 // pointer position (measured 2026-08-26 -- the probe made exactly that mistake).
-void Tick(void* scrim, void* list) {
+void Tick(void* scrim, void* list, void* closeBtn) {
     if (g_selfCheckStep < 0 || !scrim) return;
+    // A NULL ACTIVE WINDOW IS A WAIT, NOT A FAULT -- and never a SILENT one.
+    //
+    // `GetActiveWindow()` reports the active window OF THE CALLING THREAD, and it reads
+    // null transiently while the menu is still being constructed. This used to disarm the
+    // instrument outright on the first null, printing nothing, so the whole self-check
+    // vanished and the run reported every verdict as "never ran" -- which reads as a
+    // missing feature rather than as a probe that gave up. MEASURED 2026-08-26: the run at
+    // 13:24 passed all four verdicts and the one at 13:27 logged not a single phase, from
+    // the same binary path, differing only in when the first tick landed. Moving this call
+    // above the `!g_shown` return (so the click phases can re-open the screen) is what
+    // widened that window.
     HWND hwnd = ::GetActiveWindow();
     RECT cr{};
-    if (!hwnd || !::GetClientRect(hwnd, &cr)) { g_selfCheckStep = -1; return; }
+    if (!hwnd || !::GetClientRect(hwnd, &cr)) {
+        if (!g_windowWaitStartMs) g_windowWaitStartMs = ::GetTickCount64();
+        if (::GetTickCount64() - g_windowWaitStartMs >= kWindowWaitMs) {
+            UE_LOGE("server_browser_native: SELFTEST DISARMED -- no active window for this "
+                    "thread after %llu ms (hwnd=%p), so no phase can run. Every verdict "
+                    "below will be reported as ABSENT; that is this line's fault, not the "
+                    "feature's.",
+                    static_cast<unsigned long long>(kWindowWaitMs), hwnd);
+            g_selfCheckStep = -1;
+        }
+        return;
+    }
+    g_windowWaitStartMs = 0;   // it came back; a later blip starts its own patience
     auto moveTo = [&](int cx, int cy) {
         POINT pt{cx, cy};
         if (::ClientToScreen(hwnd, &pt)) ::SetCursorPos(pt.x, pt.y);
@@ -378,6 +414,59 @@ void Tick(void* scrim, void* list) {
             break;
         case kEscRelease:
             ::keybd_event(VK_ESCAPE, 0, KEYEVENTF_KEYUP, 0);
+            break;
+        case kReopen:
+            // ESC has closed the screen by now. Re-open it through the PUBLIC Open(), the
+            // same call the MULTIPLAYER button makes, so the X gets driven against a
+            // screen that came up the ordinary way rather than one we never let close.
+            if (!closeBtn) {
+                UE_LOGE("server_browser_native: CLOSE BUTTON SKIP -- no X was built, so "
+                        "whether the chrome closes this screen is UNMEASURED");
+                g_selfCheckStep = -1;
+                return;
+            }
+            ui::server_browser_native::Open();
+            break;
+        case kClickMove: {
+            // The X sits at the top-right of a 980x620 window centred in the client area.
+            // This is an ESTIMATE, and the next phase checks it rather than assuming it --
+            // a miss here is "the button is not where we think", which is a different
+            // finding from "the click does not work" and must not be reported as one.
+            const int cx = w / 2 + 980 / 2 - 40;
+            const int cy = h / 2 - 620 / 2 + 34;
+            moveTo(cx, cy);
+            break;
+        }
+        case kClickHover:
+            g_closeHovered = E::WidgetIsHovered(closeBtn) ? 1 : 0;
+            if (!g_closeHovered)
+                UE_LOGW("server_browser_native: the X did not answer IsHovered at its "
+                        "estimated position -- clicking anyway; read the verdict line, "
+                        "which distinguishes a bad estimate from a dead button");
+            break;
+        case kClickDown:
+            // PRESS and hold across ticks. The poll this drives fires on the RELEASE edge
+            // and samples once per tick, so a down+up inside one tick is invisible to it --
+            // the same trap the ESC phase records one screen up.
+            ::mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+            break;
+        case kClickUp:
+            ::mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+            break;
+        case kClickVerify:
+            if (!ui::server_browser_native::IsOpen())
+                UE_LOGW("server_browser_native: CLOSE BUTTON PASS -- a synthesized click "
+                        "on the X closed the screen (hovered=%d). The chrome is a real "
+                        "way out, not just a drawing.", g_closeHovered);
+            else if (g_closeHovered == 0)
+                UE_LOGE("server_browser_native: CLOSE BUTTON FAIL -- the screen is still "
+                        "open, but IsHovered read FALSE at the estimated position, so the "
+                        "click probably missed the X. Fix the estimate before concluding "
+                        "anything about the button.");
+            else
+                UE_LOGE("server_browser_native: CLOSE BUTTON FAIL -- the cursor WAS over "
+                        "the X (hovered=1) and a full press-release was delivered, yet the "
+                        "screen is still open. The button draws but does not close.");
             g_selfCheckStep = -1;
             return;
         default:

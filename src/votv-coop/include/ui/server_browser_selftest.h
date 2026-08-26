@@ -13,9 +13,11 @@
 // happens BEFORE the growth rather than after the cap is breached -- the trigger the
 // modular rule actually describes.
 //
-// THE SEAM IS TWO WIDGET POINTERS, deliberately: the check needs the scrim and the list
-// and nothing else, so the screen exposes no accessors and keeps no probe state. Both are
-// passed per tick, so a rebuilt menu cannot leave this holding a dead pointer.
+// THE SEAM IS THREE WIDGET POINTERS, deliberately: the check needs the scrim, the list and
+// the close button and nothing else, so the screen exposes no accessors and keeps no probe
+// state. All three are passed per tick, so a rebuilt menu cannot leave this holding a dead
+// pointer. (It does reach back for `IsOpen()`, which is already public and is the only
+// question the pointers cannot answer.)
 //
 // GAME THREAD ONLY. Every call reaches the engine through ProcessEvent, and the input
 // synthesis below assumes our window is foreground.
@@ -27,9 +29,12 @@ namespace ui::server_browser_selftest {
 // Start the sequence from phase 0. Called once, when browser_autoopen shows the screen.
 void Arm();
 
-// One menu tick. `scrim` and `list` are the browser's own widgets; either may be null,
-// in which case the phases that need it report a SKIP rather than a failure. A no-op
-// until Arm(), and a no-op again once the sequence has run.
-void Tick(void* scrim, void* list);
+// One menu tick. The three are the browser's own widgets; any may be null, in which case
+// the phases that need it report a SKIP rather than a failure. A no-op until Arm(), and a
+// no-op again once the sequence has run.
+//
+// CALLED WHETHER OR NOT THE SCREEN IS SHOWN. The last phases close it with ESC, RE-OPEN it,
+// and then drive the X -- which is impossible if the caller gates this on visibility.
+void Tick(void* scrim, void* list, void* closeBtn);
 
 }  // namespace ui::server_browser_selftest

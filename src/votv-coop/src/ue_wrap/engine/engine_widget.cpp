@@ -449,35 +449,11 @@ bool InjectCanvasButton(void* refButton, const wchar_t* label, void** outButton)
         std::memset(cs + P::off::UButtonSlot_Padding, 0, 0x10);  // FMargin = 0 (no left indent)
     }
 
-    // Clone the reference button's visual style (brushes + tint) so ours matches.
-    if (refButton) {
-        auto* d = reinterpret_cast<uint8_t*>(button);
-        auto* s = reinterpret_cast<uint8_t*>(refButton);
-        // Through umg::CloneStyle, which is the ONE brush clone in the tree. This memcpy
-        // used to zero only the two FSlateSound caches below -- but FButtonStyle embeds
-        // FOUR FSlateBrushes (0x08/0x90/0x118/0x1A0), each carrying an unreflected
-        // FSlateResourceHandle (a TSharedPtr) at +0x70, and a raw copy shallow-aliased all
-        // four with no AddRef. Exactly the hazard the sound comment below describes, missed
-        // for the brushes. Harmless on this build -- measured 0/4 handles populated even on
-        // an art-bearing donor, and ui_menu_C's own buttons carry no brush art at all -- but
-        // shipping two brush-clone semantics in one tree is how the next one gets it wrong.
-        ue_wrap::umg::CloneStyle(d, P::off::UButton_WidgetStyle, s, P::off::UButton_WidgetStyle,
-                                 P::off::FButtonStyle_Size, P::off::FButtonStyleBrushes, 4);
-        // FButtonStyle's two FSlateSound members each hold an unreflected
-        // TSharedPtr<FSlateSoundResource> cache past the ResourceObject; the raw memcpy
-        // shallow-aliased that refcounted cache (no AddRef). KEEP the copied ResourceObject
-        // (@ 0x00) so the button plays the native press + hover sounds -- the user pressing/
-        // hovering our real UButton drives Slate, which plays them -- and zero ONLY the
-        // trailing cache (SlateCore rebuilds it lazily from ResourceObject).
-        std::memset(d + P::off::UButton_WidgetStyle + P::off::FButtonStyle_PressedSlateSound +
-                    P::off::FSlateSound_CacheStart, 0, P::off::FSlateSound_Size - P::off::FSlateSound_CacheStart);
-        std::memset(d + P::off::UButton_WidgetStyle + P::off::FButtonStyle_HoveredSlateSound +
-                    P::off::FSlateSound_CacheStart, 0, P::off::FSlateSound_Size - P::off::FSlateSound_CacheStart);
-        *reinterpret_cast<FLinearColor*>(d + P::off::UButton_ColorAndOpacity) =
-            *reinterpret_cast<FLinearColor*>(s + P::off::UButton_ColorAndOpacity);
-        *reinterpret_cast<FLinearColor*>(d + P::off::UButton_BackgroundColor) =
-            *reinterpret_cast<FLinearColor*>(s + P::off::UButton_BackgroundColor);
-    }
+    // Clone the reference button's visual style (brushes + tint + the press/hover
+    // sounds) so ours matches. The operation itself lives in umg_build -- the native
+    // browser's chrome needs the identical clone, and its correctness turns on exactly
+    // which trailing bytes get zeroed, which is not a thing to keep two copies of.
+    ue_wrap::umg::CloneButtonStyle(button, refButton);
 
     // Insert at the TOP of the VerticalBox (above NEW GAME) -- shared snapshot ->
     // ClearChildren -> re-add reorder (InsertAtTopOfVBox; falls back to a bottom

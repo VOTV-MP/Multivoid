@@ -6,6 +6,7 @@
 #include "coop/net/protocol.h"          // kProtocolVersion -- the version-cell mismatch tint
 #include "coop/session/session_manager.h"
 #include "ui/boot_warning_dialog.h"     // the loud failure surface for a donor that never appears
+#include "ui/input_focus.h"            // a click only counts while OUR window is foreground
 #include "ui/server_browser_selftest.h"  // the dev phase machine; ships dark
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
@@ -72,6 +73,12 @@ void* g_list     = nullptr;   // the UScrollBox holding the rows
 void* g_status   = nullptr;   // the footer UTextBlock
 void* g_title    = nullptr;
 void* g_scrimW   = nullptr;   // the full-screen scrim -- the thing that absorbs a stray click
+void* g_closeBtn = nullptr;   // the X, top-right of the title row
+void* g_backBtn  = nullptr;   // BACK, bottom-right beside the status line
+// LBUTTON edge state for the chrome poll. Primed on Show() so the very release that
+// OPENED the screen cannot be read as a click on the X sitting under the cursor.
+bool  g_prevLmb   = false;
+bool  g_lmbPrimed = false;
 // ESC edge state. Primed on the first tick a screen is shown so a key already held when it
 // opens cannot synthesize a close -- the same guard multiplayer_menu's click poll uses.
 bool  g_prevEsc   = false;
@@ -154,6 +161,48 @@ void* AddText(void* panel, const wchar_t* initial, int32_t size, const FLinearCo
         pad[0] = 0.f; pad[1] = 0.f; pad[2] = 18.f; pad[3] = 0.f;
     }
     return t;
+}
+
+// A chrome UButton with a text label, styled from a donor UButton.
+//
+// A REAL UButton, not a text block with a click poll, and the reason is the SOUND. Cloning
+// the style carries the game's own press and hover FSlateSounds, so our X clicks like the
+// menu's own controls -- the same thing that makes the shipped MULTIPLAYER inject feel
+// native. It also gets Slate's press visual for free.
+//
+// The LABEL is authored, never cloned. Cloning a donor UTextBlock's style was tried on the
+// menu inject and REVERTED: the donor reads null at some timings and the silent fallback is
+// Roboto/centred/white. StyleTextBlock writes the measured constants instead.
+//
+// The label's PADDING is what gives the button its hit area -- "X" is one glyph, and an
+// unpadded button is a hit target the width of that glyph.
+void* BuildButton(void* parent, void* donorBtn, const wchar_t* label, int32_t fontSize) {
+    void* b = Spawn(P::name::ButtonClass, parent);
+    if (!b) return nullptr;
+    U::CloneButtonStyle(b, donorBtn);
+    if (void* t = Spawn(P::name::TextBlockClass, b)) {
+        U::StyleTextBlock(t, fontSize, kText, kJustCenter);
+        E::SetWidgetText(t, label);
+        if (void* cw = R::FindClass(P::name::ContentWidgetClass)) {
+            if (void* fn = R::FindFunction(cw, P::name::SetContentFn)) {
+                ue_wrap::ParamFrame f(fn);
+                f.Set<void*>(L"Content", t);
+                Call(b, f);
+            }
+        }
+        // SetContent created the UButtonSlot; centre the glyph and pad it out.
+        if (void* cslot = ReadPtr(t, static_cast<int32_t>(P::off::UWidget_Slot))) {
+            auto* cs = reinterpret_cast<uint8_t*>(cslot);
+            *(cs + P::off::UButtonSlot_HAlign) = kCenter;
+            *(cs + P::off::UButtonSlot_VAlign) = kCenter;
+            auto* pad = reinterpret_cast<float*>(cs + P::off::UButtonSlot_Padding);
+            pad[0] = 16.f; pad[1] = 6.f; pad[2] = 16.f; pad[3] = 6.f;
+        }
+    }
+    if (void* s = U::AddChild(parent, b))
+        U::SetSlotAlign(s, P::off::UHorizontalBoxSlot_HAlign,
+                        P::off::UHorizontalBoxSlot_VAlign, kCenter, kCenter);
+    return b;
 }
 
 // The five columns, in the order section 7c fixes them, with their fill weights.
@@ -313,16 +362,23 @@ bool BuildScreen(void* switcher) {
     void* settings  = SwitcherChild(switcher, L"ui_settings_C");
     void* fillDonor = DonorField(saveSlots, L"Image_0");
     void* barDonor  = DonorField(settings,  L"scrollboxRoot");
-    if (!fillDonor || !barDonor) {
+    // button_back joins the REQUIRED set rather than degrading to an unstyled button,
+    // because the chrome it styles is the way OUT of this screen. An unstyled X that
+    // still closes would be tolerable; a missing donor means we do not know what else
+    // moved in this build, and the fail-closed rule exists for exactly that.
+    void* backDonor = DonorField(saveSlots, L"button_back");
+    if (!fillDonor || !barDonor || !backDonor) {
         if (++g_buildAttempts >= 15 && !g_toldTheUser) {
             g_toldTheUser = true;
             UE_LOGE("server_browser_native: donors still absent after %d attempts "
-                    "(ui_saveSlots_C.Image_0=%p ui_settings_C.scrollboxRoot=%p) -- NOT building",
-                    g_buildAttempts, fillDonor, barDonor);
+                    "(ui_saveSlots_C.Image_0=%p ui_settings_C.scrollboxRoot=%p "
+                    "ui_saveSlots_C.button_back=%p) -- NOT building",
+                    g_buildAttempts, fillDonor, barDonor, backDonor);
             ui::boot_warning_dialog::Arm(
                 "Multivoid: the multiplayer screen could not be built.\n"
                 "A required menu element was not found in this game build "
-                "(ui_saveSlots.Image_0 / ui_settings.scrollboxRoot).\n"
+                "(ui_saveSlots.Image_0 / ui_settings.scrollboxRoot / "
+                "ui_saveSlots.button_back).\n"
                 "This usually means the game updated and the mod needs a new release.");
         }
         return false;
@@ -377,10 +433,15 @@ bool BuildScreen(void* switcher) {
                         kCenter, kCenter);
 
     // (3) The content column: title, column headers, the list, the status line.
-    {
+    // The title row is a BOX, not a lone text block, so the X has somewhere to sit. Until
+    // 2026-08-26 this screen had no chrome at all and ESC was the only way out -- the
+    // user's words were "I don't even see the X to close server browser window".
+    if (void* titleRow = Spawn(L"HorizontalBox", col)) {
         const std::string title = "MULTIPLAYER  -  " + sm::DisplayVersion();
         const std::wstring wtitle(title.begin(), title.end());
-        g_title = AddText(col, wtitle.c_str(), 24, kAccent, kJustLeft, 0.f);
+        g_title    = AddText(titleRow, wtitle.c_str(), 24, kAccent, kJustLeft, 1.f);
+        g_closeBtn = BuildButton(titleRow, backDonor, L"X", 20);
+        U::AddChild(col, titleRow);
     }
     void* head = Spawn(L"HorizontalBox", col);
     if (head) {
@@ -401,7 +462,14 @@ bool BuildScreen(void* switcher) {
         U::SetSlotAlign(s, P::off::UVerticalBoxSlot_HAlign, P::off::UVerticalBoxSlot_VAlign,
                         kFill, kFill);
     }
-    g_status = AddText(col, L"", 16, kDim, kJustLeft, 0.f);
+    // The footer mirrors the title row: the status line takes the slack, BACK sits at the
+    // right. Two exits, because the game's own sub-screens carry a button_back and a
+    // player who does not think to press ESC should not be stranded.
+    if (void* footRow = Spawn(L"HorizontalBox", col)) {
+        g_status  = AddText(footRow, L"", 16, kDim, kJustLeft, 1.f);
+        g_backBtn = BuildButton(footRow, backDonor, L"BACK", 18);
+        U::AddChild(col, footRow);
+    }
 
     g_root  = root;
     g_rowIds.clear();
@@ -423,6 +491,7 @@ void Show() {
     U::SwitcherSetIndex(g_switcher, g_ourIndex);
     g_shown = true;
     g_escPrimed = false;   // re-prime: an ESC held while the screen opens must not close it
+    g_lmbPrimed = false;   // ...and the same for the release that OPENED us
     SyncRows();
     UE_LOGI("server_browser_native: shown (index %d -> %d)", g_priorIndex, g_ourIndex);
 }
@@ -474,6 +543,7 @@ void OnMenuTick(void* menu, void* switcher) {
     if (menu != g_menu) {
         g_menu = menu;
         g_root = nullptr; g_list = nullptr; g_status = nullptr; g_title = nullptr;
+        g_closeBtn = nullptr; g_backBtn = nullptr; g_scrimW = nullptr;
         g_ourIndex = -1; g_shown = false; g_buildAttempts = 0; g_toldTheUser = false;
         g_rowIds.clear();
     }
@@ -503,6 +573,14 @@ void OnMenuTick(void* menu, void* switcher) {
             Show();
         }
     }
+
+    // THE SELF-CHECK TICKS WHETHER OR NOT THE SCREEN IS SHOWN, and that is deliberate:
+    // its last phases RE-OPEN the screen after ESC has closed it, so they can then drive
+    // the X. Below the `!g_shown` return it would stop ticking the moment its own ESC
+    // phase succeeded, and the chrome would stay untested forever. Every phase that needs
+    // a visible screen runs before that point, in order.
+    selftest::Tick(g_scrimW, g_list, g_closeBtn);
+
     if (!g_shown) return;
 
     // RECONCILE, do not assert. A sibling screen (or ESC reaching a stale `widgetEnter`,
@@ -531,8 +609,23 @@ void OnMenuTick(void* menu, void* switcher) {
     // navigates away on a stale widgetEnter, which the reconcile below then observes).
     {
         const bool esc = (::GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
+        const bool wasPrimed = g_escPrimed;
+        const bool prevEsc   = g_prevEsc;
         if (!g_escPrimed) { g_escPrimed = true; g_prevEsc = esc; }
         const bool pressEdge = esc && !g_prevEsc;
+        // ONE-SHOT DIAGNOSTIC. ESC has not closed this screen in any run on 2026-08-26,
+        // while the selftest's own GetAsyncKeyState reads the key DOWN at the same moment
+        // -- so the key reaches the process and the EDGE is being eaten somewhere in these
+        // four lines. Print the inputs the first time the key reads down without producing
+        // an edge; that names which of prevEsc / primed did it, which no amount of reading
+        // the code has settled.
+        static bool loggedEatenEdge = false;
+        if (esc && !pressEdge && !loggedEatenEdge) {
+            loggedEatenEdge = true;
+            UE_LOGW("server_browser_native: ESC reads DOWN but produced NO press edge "
+                    "(prevEsc=%d wasPrimed=%d shown=%d) -- this is why the screen did not "
+                    "close", prevEsc ? 1 : 0, wasPrimed ? 1 : 0, g_shown ? 1 : 0);
+        }
         g_prevEsc = esc;
         if (pressEdge) {
             Hide("ESC");
@@ -540,7 +633,23 @@ void OnMenuTick(void* menu, void* switcher) {
         }
     }
 
-    selftest::Tick(g_scrimW, g_list);
+    // THE CHROME CLICK, on the LBUTTON RELEASE edge -- the same shape as the shipped,
+    // hands-on-verified MULTIPLAYER button (multiplayer_menu.cpp:253-271) and for the same
+    // reason: our buttons are real UButtons, so the mouse-DOWN drives Slate's Pressed
+    // visual and acting on the down edge would close the screen out from under a button
+    // that never saw its own release. Releasing lets it complete press->spring-back first.
+    //
+    // IsHovered() is a UFunction and is called ONLY on the release edge, never per frame.
+    {
+        const bool down = (::GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+        if (!g_lmbPrimed) { g_lmbPrimed = true; g_prevLmb = down; }
+        const bool releaseEdge = !down && g_prevLmb;
+        g_prevLmb = down;
+        if (releaseEdge && ui::input_focus::IsOurWindowForeground()) {
+            if (g_closeBtn && E::WidgetIsHovered(g_closeBtn)) { Hide("X"); return; }
+            if (g_backBtn  && E::WidgetIsHovered(g_backBtn))  { Hide("BACK"); return; }
+        }
+    }
 
     const uint64_t now = ::GetTickCount64();
     if (now - g_lastRefreshMs >= kRefreshMs) {
