@@ -1812,8 +1812,9 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   `memory/feedback_answer_the_proposals_scope_not_its_widest_reading.md`
 
 
-- **The answer was already written down in this repo -- SIX times in one thread, and half of them in
-  files the reading order already names** (2026-08-26, the A54 design pass, rounds 1-12). I presented as new: a design decision `docs/COOP_SYNCER_MODEL.md` sec4b/sec5 had already
+- **The answer was already written down in this repo -- NINE times across two passes, and the last
+  three were in MY OWN register, one of them written hours earlier in the same effort** (2026-08-26,
+  the A54 design passes). I presented as new: a design decision `docs/COOP_SYNCER_MODEL.md` sec4b/sec5 had already
   converged (the per-kind default-deny table, in the file CLAUDE.md's reading order names as required
   BEFORE any authority work); a defect the code comments in place (`prop_destroy_seam.cpp:190-197` for
   the loss half, `event_dispatch_entity.cpp:259-264` for the attack half); and TWO tracker rows I
@@ -1835,7 +1836,53 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   **when a design question is about AUTHORITY, ordering, or who-may-write, open the reading-order doc
   BEFORE the code** -- three of the six instances point at files CLAUDE.md already told me to read
   first, and a shipped precedent is findable by grepping the whitelist you are about to edit for the
-  word NOT. `memory/lesson_the_answer_was_already_written_down_in_this_repo.md`
+  word NOT. **Pass 2 added three more, and they are the worst of the nine because the source was my
+  own writing:** (7) I proposed a root that `docs/security/TRACKER.md`'s **A20** row already stated
+  verbatim -- the 17-BOTH count, the RULE-2 citation, "this row's fix is A4's act-as-host arc" -- a
+  row I had personally re-read and upgraded `[A]`->`[V]` *hours earlier the same day*; (8) I briefed
+  a per-payload classification ratchet that **A54's own fix-of-record had already REJECTED on the
+  record** ("generating the whole dispatcher from a per-`ReliableKind` row"); (9) the open question I
+  spent five rounds on -- what makes the check unskippable -- is answered in that same paragraph
+  ("not the classification word ... but the ARGUMENT TYPE: `token.Resolve(eid)` ... skipping it is a
+  missing argument, not a missing line"). THIRD rule: **before designing a fix for a tracker row,
+  read that row's OWN fix-of-record to the end** -- a register whose rows carry a fix section will
+  answer the question you are about to spend a pass on.
+  `memory/lesson_the_answer_was_already_written_down_in_this_repo.md`
+
+- **Classify by the predicate you are ENFORCING, not by a property of the wire** (2026-08-26, security
+  A54, two `/qf` passes). A54 asks "may THIS sender name THIS artifact" -- a question about what a
+  HANDLER does with `senderSlot`. I sized it seven times by WIRE properties and produced seven wrong
+  sets: 11 lanes (assembled, never enumerated) -> 36 payload structs (really 45 structs / 69 fields,
+  16 of them multi-subject) -> 17 relayable-AND-subject-naming -> "17 is the set" (`[V]` `DoorState`
+  is whitelisted and NO client can author it, `interactable_channel.h:154`) -> "so strike DoorState"
+  (backwards -- `OnReliable` has no role gate, so it is a PURE-ATTACKER lane) -> 48 handlers
+  (contaminated: `[V]` 52 exact `if (sender{,Peer}Slot ==/!= 0)` are ROLE tests, so 48 is a LOWER
+  bound). The HANDLER-side question -- *does the sender influence a refusal, or only a log?* -- was
+  one grep and right the first time: `[V]` 102 sender-taking handlers, ~10 genuine authority checks,
+  each bespoke. That measurement **corrected the row's own headline** ("NOTHING owns the question" ->
+  ten do, and they disagree). FIRST next time: **write the predicate as a sentence about a function
+  before counting anything**, then **run the classifier against one case whose answer you already
+  know** -- my first sender-gate scan globbed only `src/**`, missed every send living in a header, and
+  reported the one case I had just measured as its opposite. Wire properties feel like measurement
+  because they are enumerable; cheapness reads as rigour when the output is a table.
+  `memory/lesson_classify_by_the_predicate_you_enforce_not_by_the_wire.md`
+
+- **A gate on the intent path is theatre while a client-authorable TWIN reaches the same state**
+  (2026-08-26, security A54 pass 2). This tree has lanes where a client can EITHER send an intent the
+  host arbitrates OR send the resulting STATE directly. `[V]` The state kinds validate shallowly and
+  carry no sender authority: `DoorState` = length + `action in {0,1}` (its own comment: "SYMMETRIC --
+  any peer can send; the host relays a client-originated edge ... BEFORE THIS DRAIN RUNS");
+  `PropSpawn` = length + finiteness, **no role gate at all**; `PropRelease` = a `senderPeerSlot` RANGE
+  check; `PropConvert` = "finite transform + in-range eids". So a reach term on `OnRequest` refuses
+  **only the honest client**. `[V]` **Promotion does not fix this**: doors ship as
+  `Channel::Mode::HostAuth` WITH an intent path, and `DoorState` is still whitelisted while
+  `CanOpen(void* actor)` still takes no sender -- the promotion suppressed only the honest producer.
+  The two things that matter are REMOVE FROM THE WHITELIST and BIND THE SENDER; `ChatMessage` v133 and
+  `EmailAppend` did the first, doors did neither, so doors is **not** precedent. FIRST next time:
+  **before gating an intent, grep the relay whitelist for the STATE kind that intent produces**; and
+  remember the inverted trap -- **a kind no honest client authors is a PURE-ATTACKER lane (100% of its
+  client traffic is malicious), the strongest case for a gate, not grounds to strike it.**
+  `memory/lesson_a_gate_on_the_intent_path_is_theatre_while_a_twin_exists.md`
 
 - **A census row is worth exactly what its citation is worth** (2026-08-26, A54's refuse-vs-LOSS table).
   I traced ONE lane and asserted six; tracing them reversed **two rows in opposite directions** --
