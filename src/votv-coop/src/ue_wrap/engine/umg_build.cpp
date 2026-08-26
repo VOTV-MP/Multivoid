@@ -52,6 +52,10 @@ FnCache g_imgTint    {L"Image",          L"SetBrushTintColor",    nullptr, false
 FnCache g_sbHeight   {L"SizeBox",        L"SetHeightOverride",    nullptr, false};
 FnCache g_sbWidth    {L"SizeBox",        L"SetWidthOverride",     nullptr, false};
 FnCache g_setClip    {L"Widget",         L"SetClipping",          nullptr, false};
+FnCache g_scrollSet  {L"ScrollBox",      L"SetScrollOffset",      nullptr, false};
+FnCache g_scrollGet  {L"ScrollBox",      L"GetScrollOffset",      nullptr, false};
+FnCache g_scrollEnd  {L"ScrollBox",      L"GetScrollOffsetOfEnd", nullptr, false};
+FnCache g_scrollFrac {L"ScrollBox",      L"GetViewOffsetFraction", nullptr, false};
 
 }  // namespace
 
@@ -105,6 +109,44 @@ bool SwitcherSetIndex(void* switcher, int32_t index) {
     ParamFrame f(fn);
     f.Set<int32_t>(L"Index", index);
     return Call(switcher, f);
+}
+
+// The parameter name is NewScrollOffset, read from the CXXHeaderDump (UMG.hpp:1198) --
+// ParamFrame resolves by name off the live FProperty chain, so a wrong name is a silent
+// no-op write into a zeroed frame, i.e. SetScrollOffset(0) whatever you asked for.
+bool SetScrollOffset(void* scrollBox, float offset) {
+    void* fn = Resolve(g_scrollSet);
+    if (!scrollBox || !fn) return false;
+    ParamFrame f(fn);
+    if (!f.Set<float>(L"NewScrollOffset", offset)) return false;
+    return Call(scrollBox, f);
+}
+
+bool ScrollOffset(void* scrollBox, float& out) {
+    void* fn = Resolve(g_scrollGet);
+    if (!scrollBox || !fn) return false;
+    ParamFrame f(fn);
+    if (!Call(scrollBox, f)) return false;
+    out = f.Get<float>(L"ReturnValue");
+    return true;
+}
+
+bool ScrollOffsetOfEnd(void* scrollBox, float& out) {
+    void* fn = Resolve(g_scrollEnd);
+    if (!scrollBox || !fn) return false;
+    ParamFrame f(fn);
+    if (!Call(scrollBox, f)) return false;
+    out = f.Get<float>(L"ReturnValue");
+    return true;
+}
+
+bool ViewOffsetFraction(void* scrollBox, float& out) {
+    void* fn = Resolve(g_scrollFrac);
+    if (!scrollBox || !fn) return false;
+    ParamFrame f(fn);
+    if (!Call(scrollBox, f)) return false;
+    out = f.Get<float>(L"ReturnValue");
+    return true;
 }
 
 int32_t SwitcherIndex(void* switcher) {

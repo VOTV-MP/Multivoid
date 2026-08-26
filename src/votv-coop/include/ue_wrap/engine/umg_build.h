@@ -104,6 +104,39 @@ bool StyleTextBlock(void* textBlock, int32_t fontSize, const FLinearColor& color
 // LAYOUT, not the painting -- so a long world name paints straight over the next column.
 bool SetClipping(void* widget, uint8_t clipping);
 
+// ---- scroll box -----------------------------------------------------------------
+// UScrollBox's offset, through the UFunctions (UMG.hpp:1198,1211,1212).
+//
+// THREE CALLS, NOT TWO, AND THE THIRD IS THE ONE THAT DISCRIMINATES. `ScrollOffsetOfEnd`
+// is the maximum scrollable offset, i.e. content extent minus viewport extent -- so it
+// answers "is there anything here to scroll at all" DIRECTLY, rather than by inferring it
+// from a row count against an assumed viewport height. A T0 that reads only the current
+// offset cannot tell "the wheel did nothing" from "there was nowhere to go".
+//
+// EACH RETURNS bool AND WRITES THROUGH A REFERENCE, deliberately: 0.f is a LEGITIMATE
+// answer to both getters (a list at the top; a list that does not overflow), so folding
+// a failed call into a sentinel float would make an unresolved UFunction indistinguishable
+// from a measurement. This module's whole job at T0 is to be an instrument that can fail
+// visibly -- see docs/LESSONS.md section 7.
+bool SetScrollOffset(void* scrollBox, float offset);
+bool ScrollOffset(void* scrollBox, float& out);
+bool ScrollOffsetOfEnd(void* scrollBox, float& out);
+
+// WHERE THE VIEW ACTUALLY IS, 0..1 (UMG.hpp:1211). READ THIS, NOT ScrollOffset, WHENEVER
+// THE QUESTION IS "DID IT MOVE".
+//
+// MEASURED 2026-08-26, twice: `GetScrollOffset` ECHOES THE REQUEST. Asked for 1000000 it
+// returns 1000000 -- on an empty box AND on one holding 30 rows with 1391 units of real
+// overflow. It reports Slate's DesiredScrollOffset, i.e. what was last ASKED FOR, and no
+// clamp is applied to it. So a Set/Get round-trip through it is a tautology and can never
+// fail, which is the one property an instrument must not have.
+//
+// GetViewOffsetFraction reads the scrollbar's own distance-from-top, which is physical
+// post-layout state. The pair is what makes a verdict possible: ScrollOffset says what was
+// requested, this says what happened, and OffsetOfEnd (also real geometry -- 1391.0 against
+// 30x64 rows in a ~529 px viewport) says whether there was anywhere to go.
+bool ViewOffsetFraction(void* scrollBox, float& out);
+
 // Slot alignment, written raw at the offsets in sdk_profile.h. EHorizontalAlignment:
 // Fill=0 Left=1 Center=2 Right=3; EVerticalAlignment: Fill=0 Top=1 Center=2 Bottom=3.
 bool SetSlotAlign(void* slot, size_t hAlignOff, size_t vAlignOff, uint8_t h, uint8_t v);

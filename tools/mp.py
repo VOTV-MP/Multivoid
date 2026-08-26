@@ -3163,6 +3163,43 @@ def cmd_nativeui(args) -> None:
     sys.exit(0 if not fails else 2)
 
 
+def _start_fake_master(count: int):
+    """Start tools/fake_master.py on a free port and return (proc, url).
+
+    THE SCHEME IS NOT OPTIONAL. The master URL grammar is SCHEMELESS = SECURE
+    (http_client.cpp:50-72): a bare host:port means TLS, and the fixture serves
+    plaintext, so it MUST be addressed as http://127.0.0.1:<port> with the port
+    spelled out -- the client refuses a URL without one.
+
+    We wait for the fixture to actually ANSWER before returning. A game that
+    starts against a socket nobody is listening on would fetch nothing, the
+    list would stay empty, and T0's row wait would time out reporting "the
+    content does not overflow" -- a true statement about the wrong cause.
+    """
+    import socket
+    import urllib.request
+    with socket.socket() as sk:
+        sk.bind(("127.0.0.1", 0))
+        port = sk.getsockname()[1]
+    script = ROOT / "tools" / "fake_master.py"
+    proc = subprocess.Popen([sys.executable, str(script), "--port", str(port),
+                             "--count", str(count)],
+                            stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
+    url = f"http://127.0.0.1:{port}"
+    for _ in range(40):
+        try:
+            with urllib.request.urlopen(f"{url}/v1/lobbies", timeout=1) as r:
+                if r.status == 200:
+                    log(f"fake_master: serving {count} lobbies at {url}")
+                    return proc, url
+        except Exception:
+            time.sleep(0.25)
+    proc.kill()
+    raise SystemExit(f"fake_master did not answer on {url} -- T0 cannot run without rows")
+
+
 def cmd_browser(args) -> None:
     """SOLO MENU-TIME lab run for the NATIVE server browser (docs/MULTIPLAYER_UI.md
     section 8, P2). Launches ONE instance in the `menu` scenario with [dev]
@@ -3186,6 +3223,11 @@ def cmd_browser(args) -> None:
         # browser is built against the real main menu.
         "VOTVCOOP_MENU_PROCEED": "1",
     }
+    fake = None
+    if args.fake_master > 0:
+        fake, url = _start_fake_master(args.fake_master)
+        # VOTVCOOP_MASTER_URL beats every other config layer (config.cpp:481).
+        env["VOTVCOOP_MASTER_URL"] = url
     log("--- HOST LAUNCH (solo native-browser lab, MENU scenario) ---")
     host_pid = launch_peer("host", args.port, "Host", peer=None,
                            res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
@@ -3196,6 +3238,7 @@ def cmd_browser(args) -> None:
     t0 = time.time()
     shot = None
     saw_shown = False
+    extra_shots: dict = {}
     while time.time() - t0 < args.duration:
         time.sleep(3)
         if not list_votv():
@@ -3213,6 +3256,17 @@ def cmd_browser(args) -> None:
             if _capture_window(host_pid, p):
                 shot = p
                 log(f"  shot: {p.name}")
+        # T0 corroboration. The verdict is the LOG; these two shots exist so a human can
+        # see that a list the getter calls scrolled looks scrolled. Each verdict phase
+        # holds its offset for 6 s, which covers this 3 s poll.
+        for needle, name, seen in (("SCROLL CONTROL ", "browser_scroll_forced.png", "ctl"),
+                                   ("WHEEL VERDICT", "browser_scroll_wheel.png", "whl")):
+            if needle in text and seen not in extra_shots:
+                extra_shots[seen] = shots_dir / name
+                if _capture_window(host_pid, extra_shots[seen]):
+                    log(f"  shot: {name}")
+                else:
+                    extra_shots[seen] = None
     all_lines = []
     try:
         all_lines = host_log.read_text(errors="ignore").splitlines()
@@ -3221,6 +3275,8 @@ def cmd_browser(args) -> None:
     lines = [ln for ln in all_lines if "server_browser_native" in ln]
     log("--- KILLING ---")
     kill_all()
+    if fake is not None:
+        fake.kill()
 
     log("--- NATIVE BROWSER OUTPUT ---")
     for ln in lines:
@@ -3261,8 +3317,46 @@ def cmd_browser(args) -> None:
         if "FAIL" in scrim:
             fails.append("the scrim does not cover the screen: a click that misses the window "
                          "reaches VOTV's own menu buttons underneath")
+    # ---- T0: does the wheel scroll this widget at all -------------------------------
+    # ASSERTS ON ABSENCE AS LOUDLY AS ON A WRONG ANSWER. The whole point of T0 is that
+    # nobody had ever asked; a run that silently fails to ask is the same non-answer.
+    if args.fake_master > 0:
+        fields = find("scroll fields --")
+        if fields:
+            log(f"SCROLL FIELDS: {fields.strip()}")
+        ctl = find("SCROLL CONTROL ")
+        if not ctl:
+            fails.append("no SCROLL CONTROL verdict -- the positive control never ran, so "
+                         "whether this widget scrolls AT ALL is still unmeasured")
+        else:
+            log(f"CONTROL: {ctl.strip()}")
+            if "SKIP" in ctl:
+                fails.append("the scroll control SKIPPED -- with no overflow there is "
+                             "nothing to scroll and T0 was not asked (is the fixture "
+                             "serving enough rows?)")
+            elif "FAIL" in ctl:
+                fails.append("the scroll control FAILED -- either the box does not scroll "
+                             "or GetScrollOffset echoes the request. Read the line: it "
+                             "says which, and both invalidate the wheel result")
+        whl = find("WHEEL VERDICT")
+        if not whl:
+            fails.append("no WHEEL VERDICT -- T0's actual question was never answered")
+        else:
+            log(f"WHEEL: {whl.strip()}")
+            if "NO" in whl or "SKIPPED" in whl:
+                fails.append("THE WHEEL DOES NOT SCROLL THIS WIDGET. Three steps of "
+                             "section 8c.-1 (T2b, T4a, T6) presuppose that it does, and "
+                             "NO step prices making it scroll -- read the T0 row before "
+                             "continuing the lane")
+        for key, label in (("ctl", "forced-offset"), ("whl", "post-wheel")):
+            if extra_shots.get(key):
+                log(f"screenshot ({label}): {extra_shots[key]}")
     errs = [ln for ln in all_lines if "[Error]" in ln and "server_browser_native" in ln]
     for ln in errs:
+        # The T0 verdict lines are Errors BY DESIGN when they report a negative; they are
+        # already assessed above, so echoing them here would double-count a known result.
+        if "SCROLL CONTROL" in ln or "WHEEL VERDICT" in ln:
+            continue
         log(f"ERROR LINE: {ln.strip()}")
     if shot:
         log(f"screenshot: {shot}")
@@ -4175,6 +4269,13 @@ def main() -> None:
     p_browser = sub.add_parser("browser",
                                help="SOLO menu-time lab run for the NATIVE server browser (P2): "
                                     "builds it, shows it, screenshots it, asserts the log")
+    p_browser.add_argument("--fake-master", type=int, default=0, metavar="N",
+                           help="serve N synthetic lobbies from tools/fake_master.py and "
+                                "point the game at it, then run the T0 scroll probe. The "
+                                "live master's ~2 rows do not overflow the viewport, so "
+                                "T0 is UNRUNNABLE without this. 20+ clears any plausible "
+                                "viewport height; stay under kMaxRows=64 to avoid the "
+                                "truncation confound.")
     p_browser.add_argument("--duration", type=int, default=140,
                            help="seconds from LAUNCH (boot alone is ~50 s here)")
     p_browser.add_argument("--memory-limit-gb", type=float, default=12.0,

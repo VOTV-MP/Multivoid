@@ -234,6 +234,16 @@ inline constexpr size_t UEditableTextBox_ForegroundColor = 0x09B0;  // FLinearCo
 inline constexpr size_t UScrollBox_WidgetBarStyle     = 0x0348;  // FScrollBarStyle (0x4D0)
 inline constexpr size_t UScrollBox_ScrollbarThickness = 0x082C;  // FVector2D
 inline constexpr size_t UScrollBox_AlwaysShowScrollbar= 0x0844;  // bool
+// THE FOUR FIELDS THAT DECIDE WHETHER A WHEEL EVENT MOVES THIS WIDGET, read (never
+// written) by the T0 self-check so a "the wheel did nothing" verdict names its cause
+// instead of leaving four candidates open. We hand-spawn the ScrollBox, so every one of
+// these is whatever the engine CDO carries -- unmeasured until T0 prints them.
+//   ConsumeMouseWheel: EConsumeMouseWheel  WhenScrollingPossible=0 Always=1 Never=2
+//   Orientation:       TEnumAsByte<EOrientation>  Horizontal=0 Vertical=1
+inline constexpr size_t UScrollBox_Orientation        = 0x0828;  // TEnumAsByte<EOrientation>
+inline constexpr size_t UScrollBox_ConsumeMouseWheel  = 0x082A;  // EConsumeMouseWheel
+inline constexpr size_t UScrollBox_AnimateWheelScroll = 0x0847;  // bool -- offset lands over frames
+inline constexpr size_t UScrollBox_WheelScrollMult    = 0x0854;  // float -- 0 would eat every notch
 // USizeBox::HeightOverride is @0x134, but bOverride_HeightOverride is a BITFIELD at
 // 0x150 -- a raw write to 0x134 leaves the override bit clear and does NOTHING. Always
 // drive it through the SetHeightOverride UFunction; the offset is here for diagnosis only.
