@@ -4350,7 +4350,44 @@ def main() -> None:
     p_puppetshot.set_defaults(func=cmd_puppetshot)
 
     args = ap.parse_args()
-    args.func(args)
+
+    # --- CROSS-SESSION GAME LOCK (2026-08-26) -------------------------------------------------
+    # Every scenario below begins by killing EVERY VotV process on the box, so two sessions running
+    # concurrently do not interleave -- they destroy each other, and the survivor reports a failure
+    # that reads exactly like a bug in whatever was just changed. The lock is taken HERE, at the one
+    # dispatch point every command passes through, because a protocol that has to be REMEMBERED is
+    # one that gets forgotten under time pressure. See tools/game_lock.py and docs/CROSS_SESSION.md.
+    import game_lock
+    session = os.environ.get("MULTIVOID_SESSION") or f"pid-{os.getpid()}"
+    # Derive the command from the bound handler, not from argv: every sub-parser sets
+    # `func=cmd_<name>`, whereas argv[1] can be a global flag and `args.cmd` only exists if
+    # the sub-parser group declared a dest. (The first version of this line read argv and had
+    # a precedence bug that made it argv-dependent in two different ways.)
+    cmd = getattr(args.func, "__name__", "").removeprefix("cmd_") or "?"
+
+    if cmd == "kill":
+        # `kill` is the CLEANUP path and must never be blocked -- it is what a human runs when a
+        # session died holding the rig. It releases the lock instead of taking one.
+        try:
+            args.func(args)
+        finally:
+            game_lock.release(session, note_line=None)
+        return
+
+    # `host`/`client*` launch a game and RETURN, so the lock must outlive this process. `mp.py kill`
+    # is what drops it.
+    persistent = cmd in ("host", "client", "client2", "client3")
+    if not game_lock.acquire(session, purpose=" ".join(sys.argv[1:]) or cmd,
+                             persistent=persistent):
+        game_lock.status()
+        log("REFUSING to launch: another session holds the game rig (see above).")
+        log("If that session is genuinely gone, delete ignore_folder/_GAME_LOCK.json.")
+        sys.exit(2)
+    try:
+        args.func(args)
+    finally:
+        if not persistent:
+            game_lock.release(session)
 
 
 if __name__ == "__main__":
