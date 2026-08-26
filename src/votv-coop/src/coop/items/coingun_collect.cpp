@@ -35,6 +35,7 @@
 
 #include "coingun_internal.h"   // co-located private header (src tree, not include/)
 
+#include "coop/element/intent_authority.h"   // A54: may this sender name this coin
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
 #include "coop/player/players_registry.h"   // v140: IsLocal / IsPuppet -- WHO tripped the coin
@@ -364,10 +365,31 @@ void OnCoinCollect(const uint8_t* payload, int len, uint8_t senderSlot, void* lo
         return;
     }
 
-    // Resolve against OUR OWN registry, fail-closed on TYPE. `LiveActorOfType` refuses an eid naming
-    // an Element of any other kind, so a client cannot address, say, a Prop through this lane.
-    void* coin = coop::element::LiveActorOfType(
+    // Resolve against OUR OWN registry, fail-closed on TYPE, AND ask the question this lane never
+    // asked (A54, 2026-08-26): may THIS sender name THIS coin? Until now the receiver asked four
+    // questions about the artifact -- band, type, already-collected, class -- and none about the
+    // actor, so any peer could collect any coin anywhere in the world for the price of one packet.
+    //
+    // The reach is `[V]` `mainPlayer.armLength = 200`, the game's own reach for picking a coin up,
+    // not a number invented here. A REFUSAL COSTS A RETRY, NEVER AN ITEM, which is why this lane is
+    // safe to gate and the drop lane is not: the client's local phantom credit is corrected by the
+    // next balance broadcast either way (the file header explains why that credit cannot be
+    // cancelled), and the coin simply stays on the ground for whoever is actually standing near it.
+    constexpr float kCollectReachUU = 200.0f;
+    const auto tok = coop::element::IntentTarget::ForClientIntent(*s, senderSlot, kCollectReachUU);
+    const coop::element::IntentSubject sub = tok.Resolve(
         static_cast<coop::element::ElementId>(p.elementId), coop::element::ElementType::WorldActor);
+    if (sub.outcome == coop::element::IntentOutcome::OutOfReach ||
+        sub.outcome == coop::element::IntentOutcome::NoBody) {
+        UE_LOGW("coingun[host collect]: REFUSED slot=%u eid=%u -- REASON=%s (dist=%.0f allowed=%.0f). "
+                "'no-body' means the sender has no live puppet on the host, so there is no body to "
+                "measure a reach from and we refuse rather than assume one -- the same fail-closed "
+                "answer the sale lane gives. The coin stays where it is.",
+                senderSlot, p.elementId, coop::element::OutcomeName(sub.outcome),
+                sub.distUU, sub.reachUU);
+        return;
+    }
+    void* coin = sub ? sub.actor : nullptr;
     if (!coin) {
         // POSITIVE KNOWLEDGE, NOT ABSENCE OF EVIDENCE: the host's WorldActor registry is
         // authoritative for its OWN eids, so "no live actor under this eid" means the coin is

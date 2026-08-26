@@ -1973,6 +1973,57 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   constant whose own comment says "policy choice, not a measurement" is (c) by its own admission.
   `memory/feedback_autonomous_evidence_is_the_ceiling.md`
 
+- **A concession is not a measurement, and two opposite concessions are not convergence**
+  (2026-08-26, three `/qf` rounds on one design). Asked whether the mechanism I was building could
+  fix a particular register row, I answered **no** in round 1, **yes** in round 2 (and wrote a
+  second-site fix the row itself had already forbidden), and round 3 falsified that fix from code
+  the repo already carried -- the two cases I proposed splitting are fused ON PURPOSE, and I had no
+  measurement that the honest case cannot occur. Three rounds, two reversals, **zero measurements
+  taken in between**; each reversal was me adopting the last thing said to me. The honest end state
+  was "unresolved by this design", which is what shipped and which neither confident answer was.
+  Why it is seductive: a critic's question arrives with evidence attached, so conceding FEELS like
+  updating on evidence -- but the evidence supports the OBJECTION, not the alternative you invent
+  while conceding, which is new, unexamined, and written under social pressure. THE TELL: you are
+  writing "you are right" and proposing a replacement in the same breath.
+  LOOK HERE FIRST: when a round overturns an answer you gave, the next move is a **measurement, not
+  another answer** — name the read that would settle it and take it before writing the replacement.
+  If it is unavailable, "unresolved" is a real answer and costs nothing.
+  `memory/lesson_a_concession_is_not_a_measurement.md`
+
+- **An instrument existing is not the same as its question being answered** (2026-08-26). A module
+  shipped a sampler whose own comment read *"the number that justifies (or refutes) moving X in the
+  enforcing build"*. I was designing that exact move and cited **the sentence** as the
+  justification. A critic asked what a real log line reads: `[V]` the entire corpus across all four
+  installs held **ONE** sample, reading `0`, on a line whose neighbouring fields showed the subject
+  had not moved — the one condition where that quantity is zero by construction. The instrument had
+  never sampled the case it was built for, because no autonomous scenario produced that case. It
+  slipped through because the comment is TRUE and well written: it is phrased in the vocabulary of a
+  measurement and sits at the line the code lives, so the gap between "we built the thing that would
+  tell us" and "it told us" is invisible at the call site. Second-order: a fixed-schedule sampler
+  only sees what the world happens to be doing at that instant — sampling at the **decision site**,
+  once per real event, collects the distribution that matters and costs nothing on a quiet run.
+  LOOK HERE FIRST: when a comment says an instrument answers a question you are about to build on,
+  **grep the logs for its output first**, and check neighbouring fields to confirm the sample was
+  taken where the quantity is meaningful. `n=1` under degenerate conditions is not evidence.
+  `memory/lesson_an_instrument_comment_is_not_its_output.md`
+
+- **A field TYPE is not its ROLE — run the census both ways, the disagreement IS the finding**
+  (2026-08-26). Counting how many wire payloads name a SUBJECT by matching on field TYPE
+  over-counted: one shared serialisable key type carries entity identities AND asset names, so
+  `[V]` a `WireKey` member named `propName` (a content-table row name) scored as a subject. The
+  mirror method failed too — a NAME-based pattern missed two `WireKey` members named unlike
+  anything I searched for. Two further errors pointed opposite ways: several payloads deliberately
+  carry BOTH a key and an element id for the SAME artifact (one artifact, two spellings, receiver
+  falls back), which made each look multi-subject. Correcting all of it took a **carried figure of
+  16** multi-subject structs down to about **5**, several outside the relevant population. This is
+  structural, not careless: a codebase evolves toward one wire primitive carrying identities, asset
+  names, rows and labels, because they all serialise alike.
+  LOOK HERE FIRST: run the census **by type AND by name**, treat the disagreement as the finding
+  rather than noise, then open the declarations they disagree about and read the COMMENT beside each
+  field — that is where the role is written. Never re-quote a carried count without re-deriving it;
+  when publishing one, say which method produced it.
+  `memory/lesson_a_fields_type_is_not_its_role.md`
+
 ### 1b. Standing working agreements (previously indexed NOWHERE)
 
 Measured 2026-07-27 by a full pairing sweep of `memory/` against this file: **all 194 `lesson_*`

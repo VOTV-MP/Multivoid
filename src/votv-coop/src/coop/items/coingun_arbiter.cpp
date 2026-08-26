@@ -26,6 +26,7 @@
 
 #include "coingun_internal.h"   // co-located private header (src tree, not include/)
 
+#include "coop/element/intent_authority.h"   // A54: the shared "may this sender name it" owner
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -123,85 +124,7 @@ std::unordered_map<std::wstring, ue_wrap::CachedObjRef> g_sold;
 // I-3/4/5/6); a comment that is approximately true is the shape that becomes false later.
 constexpr float kGunReachUU = 1000.0f;
 
-// The pose-staleness budget. The host's copy of a client's body is behind reality by the one-way
-// latency + RemotePlayer::kInterpWindowMs (75 ms) + one send interval, and the native trace starts
-// at the player's ARM, which sits above the actor root that GetActorLocation reports. 600 uu covers
-// roughly half a second at a sprint plus the eye-height offset. Deliberately generous: this gate
-// exists to stop WORLD-WIDE enumeration, not to adjudicate centimetres, and a false refusal costs a
-// real player a real sale. Widening it does not re-open A50 -- the arbiter's own destroy does that
-// work; this bound only decides how far a peer may reach to spend the world's props.
-constexpr float kPoseStalenessUU = 600.0f;
 
-// A50 (2026-08-25). Is the named prop within the SENDER'S OWN reach, measured entirely on the HOST's
-// copies of both bodies? Before this existed, `senderSlot` occurred in this file only as a reply
-// address and a printf argument: the receiver asked five questions about the ARTIFACT and none about
-// the ACTOR, so any peer could name any prop in the world.
-//
-// MTA does exactly this for a write it did not witness --
-// `reference/mtasa-blue/Server/mods/deathmatch/logic/CUnoccupiedVehicleSync.cpp:491`, inside
-// `Packet_UnoccupiedVehiclePushSync`: `IsPointNearPoint3D(pVehicle->GetPosition(),
-// pPlayer->GetPosition(), radius)` gating an inbound packet before its state change is honoured.
-// Same shape, same reason, same place in the flow. (A first draft also cited `:244`; that line is in
-// `FindPlayerCloseToVehicle`, the SYNCER-ELECTION path, which validates no write at all and is not a
-// packet handler -- audit I-6, 2026-08-25. Wrong citation, dropped.)
-//
-// FAIL-CLOSED ON THE PUPPET: no live puppet on the host means there is no body to measure a reach
-// from, so the answer is no. A joining client whose puppet has not spawned yet is refused and TOLD
-// (TooFarAway), which is the principle-8 answer for this lane: the sale is the client's to retry, its
-// own prop is gone either way, and inventing a reach for a body we cannot see is the enumeration hole.
-//
-// *** WHAT THIS DOES NOT DO, AND THE HEADER USED TO CLAIM IT DID (audit CRITICAL C-1, 2026-08-25) ***
-// The anchor is the SENDER'S OWN POSITION, and the sender writes it. `[V]` the host applies an
-// inbound pose after `ValidatePose` only, which is a static garbage filter -- finite, |xyz| <= 1e6 cm
-// (TEN KILOMETRES), a SELF-REPORTED speed bound, angle ranges -- with no delta-vs-time check
-// anywhere; and the one place distance is examined, `remote_player.cpp`'s snap limit, ACCEPTS the
-// teleport and scales its own threshold off that self-reported speed. So the A50 enumeration survives
-// at one extra packet per prop: pose to the prop, sell the prop, repeat.
-//
-// This gate is therefore a RATE-AND-EFFORT mitigation, not a closure, and it is deliberately kept
-// because it is the right architecture (it is MTA's) and because it costs an attacker a visible body
-// moving through the world. THE CLOSURE IS A HOST-SIDE MOVEMENT VALIDATOR ON THE POSE LANE -- one
-// fix, at the boundary where the unvalidated value actually enters, benefiting every present and
-// future lane that asks "was this peer near it", instead of a second compensation bolted on here.
-// Tracked as its own row; do not write "A50 closed" until that ships.
-bool SenderMayReach(uint8_t senderSlot, void* prop, float& outDist, float& outAllowed) {
-    outDist = outAllowed = -1.f;
-    coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(senderSlot);
-    void* puppet = (rp && rp->valid()) ? rp->GetActor() : nullptr;
-    if (!puppet) return false;
-
-    // CHECKED READS ONLY (audit I-1, 2026-08-25). The first version of this used
-    // `E::GetActorLocation`, which returns a default FVector on failure -- and (0,0,0) is the WORLD
-    // ORIGIN, an ordinary position -- so a failed read reported the body as standing at the origin
-    // and authorized anything else near it. That is a fail-OPEN inside a function whose own comment
-    // said FAIL-CLOSED, which is this lane's own recurring defect one more time.
-    ue_wrap::FVector body{};
-    if (!E::TryGetActorLocation(puppet, body)) return false;
-
-    // The prop's ORIGIN is not its surface, and the native trace stops at whatever it HITS -- so a
-    // large prop is legitimately sellable from further away than reach-from-origin. Measure the real
-    // bounds instead of inventing a constant fudge for "big things".
-    //
-    // `GetActorBounds` returning true means THE DISPATCH SUCCEEDED, not that the box is meaningful:
-    // `[A]` UE4's AActor::GetActorBounds starts from an empty FBox and expands it per qualifying
-    // component, so an actor with no COLLIDING components (carried, physics off, inside a container)
-    // yields Origin=(0,0,0) Extent=(0,0,0) -- the world origin again, by a second route. A zero
-    // extent is therefore treated as "no bounds", not as "a point-sized prop at the origin".
-    ue_wrap::FVector origin{}, extent{};
-    float propRadius = 0.f;
-    const bool haveBounds = E::GetActorBounds(prop, /*onlyColliding=*/true, origin, extent) &&
-                            !(extent.X == 0.f && extent.Y == 0.f && extent.Z == 0.f);
-    if (haveBounds) {
-        propRadius = std::sqrt(extent.X * extent.X + extent.Y * extent.Y + extent.Z * extent.Z);
-    } else if (!E::TryGetActorLocation(prop, origin)) {
-        return false;   // we cannot say where it is, so we cannot say the sender could reach it
-    }
-
-    const float dx = origin.X - body.X, dy = origin.Y - body.Y, dz = origin.Z - body.Z;
-    outDist    = std::sqrt(dx * dx + dy * dy + dz * dz);
-    outAllowed = kGunReachUU + propRadius + kPoseStalenessUU;
-    return outDist <= outAllowed;
-}
 
 void* FindLiveGun() {
     // `[V]` `sell` reads ZERO gun state and positions coins from the SOLD PROP's component, so ANY
@@ -369,16 +292,26 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
     // FIRST question about the ACTOR, and it comes before every remaining question about the
     // artifact so that a peer probing keys learns nothing it did not already have. Everything above
     // this line is identity resolution; everything below it spends the world's props.
+    // A54 (2026-08-26): this used to be a module-local `SenderMayReach`, the ONE authority check in
+    // a tree of ~10 bespoke ones. It is now the shared `IntentTarget`, and the local copy is retired
+    // whole (RULE 2). Behaviour is preserved deliberately: same 1000 uu producer-derived reach, same
+    // measured-bounds expansion, same staleness budget, same fail-CLOSED answer when the sender has
+    // no live puppet -- what changed is that ONE module now owns the question, and this lane stopped
+    // being the only place that asks it. `Authorize` rather than `Resolve` because this lane already
+    // answered identity by KEY above; `{key, elementId}` are two spellings of one artifact.
     {
-        float dist = -1.f, allowed = -1.f;
-        if (!SenderMayReach(senderSlot, prop, dist, allowed)) {
+        const auto tok = coop::element::IntentTarget::ForClientIntent(*s, senderSlot, kGunReachUU);
+        const coop::element::IntentSubject sub = tok.Authorize(prop);
+        if (!sub) {
             const bool logIt = Refuse(s, senderSlot, coop::net::CoinGunResultCode::TooFarAway);
             if (logIt) UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' -- REASON=too-far-away "
-                    "(dist=%.0f allowed=%.0f; -1 for both means the sender has no live puppet here, "
-                    "so there is no body to measure a reach from and we refuse rather than assume "
-                    "one). The gun `[V]` traces arm(1000.0) from the sender's own camera, so a prop outside that "
-                    "reach was not shot -- naming it is enumeration, not a sale.",
-                    senderSlot, artifact.c_str(), dist, allowed);
+                    "(verdict=%s dist=%.0f allowed=%.0f; 'no-body' with -1 for both means the sender "
+                    "has no live puppet here, so there is no body to measure a reach from and we "
+                    "refuse rather than assume one). The gun `[V]` traces arm(1000.0) from the "
+                    "sender's own camera, so a prop outside that reach was not shot -- naming it is "
+                    "enumeration, not a sale.",
+                    senderSlot, artifact.c_str(), coop::element::OutcomeName(sub.outcome),
+                    sub.distUU, sub.reachUU);
             return;
         }
     }

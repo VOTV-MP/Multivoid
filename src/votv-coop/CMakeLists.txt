@@ -438,6 +438,7 @@ add_library(votv-coop SHARED
     src/coop/element/object_scan_hub.cpp
     src/coop/element/element_deleter.cpp
     src/coop/element/registry.cpp
+    src/coop/element/intent_authority.cpp
     src/coop/element/world_actor.cpp
     src/coop/element/quiescence_drain.cpp
     src/coop/element/identity_create.cpp

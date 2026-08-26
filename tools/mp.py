@@ -859,6 +859,31 @@ def cmd_smoke(args) -> None:
             log(f"  - {h}")
         sys.exit(11)
     log("movement_ledger selftest: ALL PASS confirmed on host + client")
+    # A54 (2026-08-26): the intent authorizer self-checks its reach arithmetic on every session
+    # start, un-gated, on BOTH peers -- same reasoning as the ledger above, and the same failure
+    # mode. A wrong reach verdict does not crash: it either refuses a real player or authorizes the
+    # whole map, and both read as "working" from outside. Generalized rather than copy-pasted,
+    # because a third selftest is coming and three near-identical blocks is how the first one rots.
+    selftest_bad: list[str] = []
+    for lbl, d in (("HOST", HOST_DIR), ("CLIENT", CLIENT_DIR)):
+        try:
+            txt = (d / "multivoid.log").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            txt = ""
+        if "intent_authority selftest: ALL PASS" not in txt:
+            fails = [ln.strip() for ln in txt.splitlines()
+                     if "intent_authority selftest FAIL" in ln]
+            if fails:
+                selftest_bad.append(f"{lbl}: {len(fails)} failing check(s): " + " | ".join(fails[:6]))
+            else:
+                selftest_bad.append(f"{lbl}: no 'intent_authority selftest' line at all "
+                                    "(the selftest never ran -- OnSessionStart not reached?)")
+    if selftest_bad:
+        log("FAIL: intent-authority selftest did not pass on every peer:")
+        for h in selftest_bad:
+            log(f"  - {h}")
+        sys.exit(11)
+    log("intent_authority selftest: ALL PASS confirmed on host + client")
     # WP-2 boot-lane assertion: both peers booted via UE4SS start_mod
     # (entry=cppmod, no REFUSE, no retired-proxy line; MISSING log = FAIL).
     lane: list[str] = []

@@ -685,8 +685,12 @@ void Tick(coop::net::Session& session) {
     // game-thread-only rule outright; and doing it EVERY tick, as the first version of this file
     // did, spends up to three UFunction dispatches per frame -- some 375 per second -- to produce a
     // number that is read at 0.1 Hz. It measures the gap between the value the ledger validated and
-    // the value `SenderMayReach` currently consumes, which is the number that justifies (or refutes)
-    // moving authorization onto the ledger in the enforcing build.
+    // the value the intent authorizer currently consumes, which is the number that justifies (or
+    // refutes) moving authorization onto the ledger. (It named `SenderMayReach` until 2026-08-26,
+    // when that module-local check was promoted whole into `coop/element/intent_authority`; the
+    // authorizer now samples this same divergence at EVERY real intent, because this 0.1 Hz sampler
+    // had produced exactly ONE reading in the whole log corpus and that reading was taken on a
+    // stationary peer, where the divergence is trivially zero.)
     for (int slot = 1; slot < kSlots; ++slot) {
         ue_wrap::FVector wire{};
         {

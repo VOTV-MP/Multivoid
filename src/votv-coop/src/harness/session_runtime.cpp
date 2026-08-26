@@ -19,6 +19,7 @@
 #include "coop/moderation/moderation.h"
 #include "coop/moderation/seen_players.h"
 #include "coop/net/session.h"
+#include "coop/element/intent_authority.h"
 #include "coop/player/movement_ledger.h"
 #include "coop/player/nameplate.h"
 #include "coop/player/players_registry.h"
@@ -391,6 +392,11 @@ bool StartCoopSession(const coop::net::Config& netCfg) {
     // v141 A52: rows are per-session (a stale anchor across a restart would read as a teleport), and
     // this call also runs the ledger's un-gated arithmetic selftest -- see movement_ledger.h.
     coop::movement_ledger::OnSessionStart();
+    // A54: the intent authorizer's un-gated arithmetic selftest -- see
+    // coop/element/intent_authority.h. Pure math, microseconds, deliberately impossible to switch
+    // off, for the same reason the ledger's is: a wrong reach verdict does not crash, it merely
+    // reads wrong, and a gate that reads wrong either refuses a real player or authorizes the map.
+    coop::element::RunSelftest();
     // Reset net_pump edge-detector state so a Stop()/Start() cycle on the same process
     // doesn't carry stale "was connected" / "was holding prop" entries into the new
     // session (phantom disconnect edge / suppressed connect replay / stale prop key).

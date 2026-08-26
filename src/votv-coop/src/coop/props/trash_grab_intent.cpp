@@ -19,6 +19,7 @@
 
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/element/intent_authority.h"   // A54: may this sender name this pile
 #include "coop/element/registry.h"    // Registry::Get(eid) -- resolve the pile to grab (Increment 2)
 #include "coop/player/players_registry.h"    // Puppet(slot) -- the client-grab direction (Increment 2)
 #include "coop/player/puppet_carry_drive.h"  // NotePuppetHeld -- host drives the puppet-held clump pose
@@ -163,13 +164,40 @@ void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint8_t senderSlot) {
         UE_LOGW("[GRAB-INTENT] DENIED eid=%u slot=%u -- puppet not live", eid, senderSlot);
         return;
     }
-    // Resolve eid -> the host's pile actor via the canonical Element Registry. IsLiveByIndex-guarded (the
-    // cached GUObjectArray slot, NOT a deref of a possibly-GC'd pointer -- the [[feedback-islive-unsafe...]]
-    // pattern, same as remote_prop's internal resolver).
-    coop::element::Element* pe = coop::element::Registry::Get().Get(static_cast<coop::element::ElementId>(eid));
-    void* pa   = pe ? pe->GetActor() : nullptr;
-    void* pile = (pa && R::IsLiveByIndex(pa, pe->GetInternalIdx())) ? pa : nullptr;
-    if (!pile) {
+    // Resolve eid -> the host's pile actor AND ask whether this sender may name it (A54, 2026-08-26).
+    // This replaces a module-local inline resolve; the reason it could not simply move onto the
+    // canonical `LiveActorOfType` is the whole reason `IntentTarget` returns an OUTCOME rather than a
+    // pointer: this lane branches THREE ways with OPPOSITE remedies on what a pointer-returning
+    // resolver collapses into one nullptr, and `[V]` its wrong-class branch CONSUMES the actor.
+    //
+    // ORDER IS LOAD-BEARING AND UNCHANGED: the puppet check above still runs FIRST. Reversing it
+    // would let a sender with no live puppet reach the ghost-heal broadcast below, which is a
+    // host-authored `PropDestroy` for a client-named eid -- exactly the confused deputy tracked as
+    // A56. Identity-then-reach inside the token is a different ordering question and does not
+    // disturb this one.
+    //
+    // The reach is `[V]` the 400 cm cone the client-side producer itself suppresses outside. A
+    // refusal here costs a RETRY and never an item -- the pile stays exactly where it is -- which is
+    // what makes this lane safe to gate.
+    constexpr float kGrabReachUU = 400.0f;
+    const auto tok = coop::element::IntentTarget::ForClientIntent(s, senderSlot, kGrabReachUU);
+    const coop::element::IntentSubject sub =
+        tok.Resolve(static_cast<coop::element::ElementId>(eid), coop::element::ElementType::Prop);
+
+    if (sub.outcome == coop::element::IntentOutcome::OutOfReach ||
+        sub.outcome == coop::element::IntentOutcome::NoBody) {
+        // NOT a ghost and NOT a smear: the eid names a real, live pile that this sender simply is
+        // not standing near. There is nothing to heal and nothing to destroy -- broadcasting either
+        // would be answering a reach question with an identity remedy.
+        UE_LOGW("[GRAB-INTENT] DENIED eid=%u slot=%u -- REASON=%s (dist=%.0f allowed=%.0f); the pile "
+                "is real and untouched, the sender is just not near it",
+                eid, senderSlot, coop::element::OutcomeName(sub.outcome), sub.distUU, sub.reachUU);
+        return;
+    }
+
+    void* pile = sub.actor;
+    if (sub.outcome == coop::element::IntentOutcome::NoRow ||
+        sub.outcome == coop::element::IntentOutcome::StaleDead) {
         // The eid is UNRESOLVABLE on the host (no row / stale-dead actor pointer) while the requester
         // still resolves a mirror to it -- a stale-identity ghost. 2026-07-02 wedge: a GC-churned keyed
         // prop left the eid-2947 row pointing at a freed address; a chipPile RECYCLED that address on
@@ -182,16 +210,23 @@ void OnGrabIntent(coop::net::Session& s, uint32_t eid, uint8_t senderSlot) {
         // No transition race: a host-grab-in-flight eid is denied at GATE 1 (g_carry) above, and input
         // dispatch + packet processing are both game-thread-serialized. The host's own corpse row is
         // the reaper's to drain (one owner; this edge only reports the death).
-        UE_LOGW("[GRAB-INTENT] DENIED eid=%u slot=%u -- eid unresolvable on the host (row=%s actor=%p) -> "
+        // The log used to print the stale actor POINTER beside this verdict. It no longer can, and
+        // that is deliberate rather than lost: `Resolve` does not hand a dead actor back to anyone
+        // (see intent_authority.h), and the outcome name now distinguishes 'no-row' from
+        // 'stale-dead' directly, which is what the pointer was being read for.
+        UE_LOGW("[GRAB-INTENT] DENIED eid=%u slot=%u -- eid unresolvable on the host (%s) -> "
                 "broadcasting PropDestroy(eid) so every peer drains its stale ghost row",
-                eid, senderSlot, pe ? "stale-dead" : "absent", pa);
+                eid, senderSlot, coop::element::OutcomeName(sub.outcome));
         coop::net::PropDestroyPayload dp{};
         dp.key.len   = 0;   // eid-only: mirror rows are eid-keyed on every peer
         dp.elementId = eid;
         s.SendPropDestroy(dp);
         return;
     }
-    if (!ue_wrap::prop::IsChipPile(pile)) {
+    // WrongType is checked FIRST and short-circuits: an eid naming a non-Prop Element still names a
+    // REAL entity, and the heal below consumes it. Before this lane used the shared authorizer, such
+    // an eid arrived here as "a live actor that is not a chipPile" and took this same branch.
+    if (sub.outcome == coop::element::IntentOutcome::WrongType || !ue_wrap::prop::IsChipPile(pile)) {
         // A LIVE actor of the wrong class: the identity names a real entity, so NEVER destroy on a
         // class mismatch. But silence leaves the requester WEDGED: its row for this eid resolves a
         // pile-shaped mirror (native hover GUI + aim hit), so it re-sends the same doomed grab
