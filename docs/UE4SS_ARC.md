@@ -53,7 +53,7 @@ proxy / dup-dialog retire WHOLE per RULE 2 — no standalone-and-UE4SS dual path
 | WP | What | Status |
 |----|------|--------|
 | **WP-1** | Spike: prove the C-ABI shim boots the one binary as a UE4SS mod; measure the double-PE-detour survivability. | **AS-BUILT** — commit `cddb116c` (2026-08-21 eve). Matrix green ~110 ms; LAN join worked; double-detour "alive" on a SMALL sample (later found to crash ~2/10, see §3). WP-4 spike findings: ini err=3 under VFS; shimloader panics on `xinput1_3.dll`. |
-| **WP-2** | The loader cut: delete `xinput_proxy.cpp` + the proxy deploy path (RULE 2); `cppmod_entry.cpp` in; predecessor detection + mutex; keep EVERYTHING else. | **IN PROGRESS.** Pre-cut LANDED (§2). Fix (**B**, §4) is BUILT + default-ON and its compose is **VERIFIED** (2026-08-22 16:02 real-env byte decode + 16:25 DEV `POLYHOOK-COMPOSED` boot, §4 Proof status). The IsLive/VEH arc is BUILT (D1, 2026-08-22 night, §4 -- run B pending the user). Remaining before the proxy deletion: symbolize the 19:17 real-env EXEC-at-NULL dump (§4 residuals), B's teardown leak-at-death residual, then commit 3 itself. |
+| **WP-2** | The loader cut: delete `xinput_proxy.cpp` + the proxy deploy path (RULE 2); `cppmod_entry.cpp` in; predecessor detection + mutex; keep EVERYTHING else. | **IN PROGRESS.** Pre-cut LANDED (§2). Fix (**B**, §4) is BUILT + default-ON and its compose is **VERIFIED** (2026-08-22 16:02 real-env byte decode + 16:25 DEV `POLYHOOK-COMPOSED` boot, §4 Proof status). The IsLive/VEH arc is BUILT (D1, 2026-08-22 night, §4 -- run B pending the user). Remaining before the proxy deletion: ~~symbolize the 19:17 dump~~ **RETIRED 2026-08-26 by a hash census, no symbolization needed** (§4 residuals); B's teardown leak-at-death residual, **which cannot be validated today** (§4a); then commit 3, **welded to §7.3a's release anchors** because the tree cannot cut a release between them (§8.2). |
 | **WP-4** | Fix the stale install/update/uninstall prose + the site + installer for the UE4SS lane. | **PARKED, but now SPECIFIED** — census written (`votv-ue4ss-stale-loader-prose-CENSUS-2026-08-22.md`, ~139 rows); §7 measures the target shape and §7.3 fixes the sequencing (it must not flip before a UE4SS-lane build is released). **+ §7.0 (USER 2026-08-24): the GitHub repo DESCRIPTION and topics are stale prose too and are invisible to the census — they live outside the tree. `description` still says "a standalone C++ DLL"; the `dll-injection` topic goes; `homepageUrl` is empty and is fixable NOW.** |
 | **WP-6** | Distribution re-home (the `multivoid-<game>-<build>.dll` filename + master + release flow onto the mod-folder shape). | **PARKED, now SPECIFIED** — §7.2 + §7.4. |
 | **WP-9** | **Thunderstore publication** (USER 2026-08-23: "надо нам бы стать официальным модом и попасть в магазин thunderstore ... чтобы обычный юзер смог поставить нативно"). Ship Multivoid as a Thunderstore package so r2modman / Thunderstore Mod Manager installs it natively. | **NEW, SPECIFIED, NOT BUILT** — §7. The payload shape is ALREADY correct; what is missing is package metadata, a GENERATED manifest, and a publish step. **The version mapping is DECIDED, not owed** (§7.3, user 2026-08-23: `<game-major>.<game-minor>.<build>`); this row said "a version mapping decision" was missing after §7.3 had already made it. **§7.3a (2026-08-24, user-raised) measures what the versioned DLL name costs today** — it moves on every proto bump including security-only ones (`0.9.135` as of `ca3943e9`), its CMake justification expires with WP-2 commit 3, `deploy-mod.ps1` picks the payload by mtime out of 14 artifacts, and the six anchor sites that must move in one commit are tabulated. **2026-08-25 (user-raised, five real Thunderstore packages): §7.2 was measuring the extracted PROFILE and calling it the ZIP — the real zip has a `mod/` wrapper, and §7.2's tree would have installed cleanly and never loaded. §7.2a is now the authoritative routing rule (from Thunderstore's own ecosystem schema + r2modman's rule engine and test spec), §7.2b is the field survey + the measurement that shows what D-3 bought (field mods import 32/40/130 mangled C++ symbols from `UE4SS.dll`; we import 0), and §7.9 answers "can GitHub produce the package" — yes for everything except the pak, whose blocker is its inputs.** |
@@ -239,6 +239,67 @@ UE4SS's.** (This corrects an earlier framing that called C "B's eventual retirem
   record whether it survives. Whoever symbolizes the dump should read that doc's §3/§4 first — the
   hooker mechanics (who patches what, in what order) are already written up there.
 
+### 4a. THE TEARDOWN PATH HAS NEVER RUN — measured 2026-08-26, and it blocks B's own residual
+
+B's honest residual (above) is *"leak the PE hook at process-close"*, because PolyHook holds a
+restore-pointer into our MinHook slot and `MH_Uninitialize` frees it. **That fix cannot be validated
+today, and the reason is not subtle:**
+
+`[V]` `tools/mp.py:328-337` — `kill_all()` is `Get-Process VotV-Win64-Shipping | Stop-Process -Force`.
+That is `TerminateProcess`. No `WM_CLOSE` is ever sent, so our wndproc never runs, and a forced kill
+does not deliver `DLL_PROCESS_DETACH` either. Therefore `ue_wrap/core/hook.cpp:164-169 Shutdown()` →
+`MH_DisableHook(MH_ALL_HOOKS); MH_Uninitialize()` — the exact path the residual lives on — **has never
+executed in this rig's history**, on any build, in any scenario.
+
+**Consequences, in order of how much they change the plan:**
+
+1. **Adding the leak-at-death fix today would be UNFALSIFIABLE** — a change to code no test runs.
+   The instrument comes first: a `graceful_exit()` scenario (`WM_CLOSE`/`CloseMainWindow`) beside
+   `kill_all()`, additive, so the shutdown path becomes observable at all.
+2. **"USER run B" cannot simply be relocated onto the rig.** The acceptance is *one ordinary real-env
+   exit*; the rig does not walk that path, so moving it there without the instrument would be a
+   rename, not a test. (And per the user's 2026-08-25 ruling that hands-on is closed, a plan whose
+   last step is "the user will exit the game" is a shelf.)
+3. **It is bigger than this residual.** Nothing else down there has been exercised either, in a mod
+   that inline-hooks ProcessEvent and DXGI. What the shutdown path does is simply unknown.
+
+### 4b. THE 19:17 SYMBOLIZATION IS RETIRED — a hash census answered it for free (2026-08-26)
+
+§1's WP-2 row listed *"symbolize the 19:17 real-env EXEC-at-NULL dump"* as blocking commit 3. It does
+not, and the discrimination it was meant to buy was available all along:
+
+`[V]` Census of all **102** dumps in `%LOCALAPPDATA%\VotV\Saved\Crashes` by `PCallStackHash`:
+
+- **The largest "cluster" is not one.** 47 dumps share `DA39A3EE5E6B4B0D3255BFEF95601890AFD80709`,
+  which is **SHA-1 of the empty string** (verified: `printf '' | sha1sum`). That is the ABSENCE of a
+  walkable callstack, not 47 identical crashes. Instrument caveat first, conclusion second.
+- **The double-detour cohort is exactly 7 dumps**, hash `3E0EBD39…`, every one reading
+  `EXCEPTION_ACCESS_VIOLATION reading address 0xffffffffffffffff` — precisely the signature §3
+  predicts (non-canonical jump → `#GP` → no CR2 → Windows reports "AV read 0xffff…ffff").
+- **They span 08-21 22:44 → 08-22 13:13 and STOP.** Fix B went default-ON in `bd617056` on 08-22;
+  compose was verified at 16:02 and 16:25 the same day. **Zero recurrence in four days.**
+- Only two dumps exist after the fix, both 08-23, both DIFFERENT hashes; one reads `0x000000…`.
+
+**So the two crash families are discriminable by ERROR STRING alone** — `0xffffffffffffffff` for the
+double-detour, `0x000000…` for the EXEC/read-at-NULL Present-chain family — which is exactly what
+symbolizing one dump was supposed to establish.
+
+**And the proxy's independence is now measured, not argued.** `[V]` `src/loader/xinput_proxy.cpp`
+has ZERO DXGI/Present surface: it is `ParseBuildNumber` → `LoadPayload` → `DllMain`. A grep for
+"Present" returns three hits and all three are the local `legacyPresent` (= "is `votv-coop.dll` on
+disk"), a name collision. Deleting the proxy cannot affect a Present-chain crash.
+
+**Two residuals the census does NOT close, stated so the retirement is not overread:** `[V]` the
+19:17 dump is not in this Crashes directory at all — it came from the separate `Desktop09n`
+r2modman install, so a local census structurally cannot see it. And the 2026-08-25 clean-lab boot
+fatal produced **no dump**, so it is invisible here too. **Note the logical hole this leaves, named
+rather than papered over:** the discriminator lives inside a dump, and the reason the 08-25 fatal
+looks benign is that it produced none — so "not that family" and "that family with an unwalkable
+callstack" are not distinguished for it. It stays unattributed. The right place for its assertion is
+the install tests §7.4's B-gate already requires, which ARE realistic-stack boots: they should assert
+`POLYHOOK-COMPOSED` + `WE-FIRST` per boot (`pe_detour.cpp:632,642`), because on a rig where ArmPE is
+disabled a green boot rate is an instrument blind to the phenomenon.
+
 ### As-built (2026-08-22 — baseline REPRODUCED in the real modded env; compose VERIFIED same day, see Proof status)
 
 - `ue_wrap/core/hook.{h,cpp}` — `Install(..., bool followJmpImmune=false)`; the relay rewrite
@@ -338,8 +399,11 @@ permanent (`mp.py wirewindow` + `coop/dev/wire_census`). NOT hands-on — run B 
 ## 5. State / hands-on warning
 
 - **The r2modman test profile** (`C:\r2modman\...\VotV\profiles\Default`) AND all four `Game_0.9.0n_*`
-  installs carry the D1 build `95B02A826950DDC4` (immune relay + all 78 CachedObjRef conversions +
-  wire_census + the drill; 2026-08-22 night). Multivoid drops as
+  installs carried the D1 build `95B02A826950DDC4` when that line was written (2026-08-22 night).
+  **DO NOT TRUST ANY SHA WRITTEN HERE.** `[V]` This figure has now gone stale three times, and on
+  2026-08-26 a PARALLEL session redeployed between one session's smoke and its own report. The rule
+  that replaces it: **`md5sum` the four `Mods/Multivoid/dlls/main.dll` before trusting any run**, and
+  rebuild before trusting a deploy. (2026-08-26 reading, for scale only: `6b170c7c9023ef3f`.). Multivoid drops as
   `shimloader/mod/multivoid/dlls/main.dll` + `enabled.txt`; the game is a separate `Desktop\a09n`
   install whose Win64 has the shimloader `dwmapi.dll` + `ue4ss.dll`, launched via r2modman. The ArmPE
   fixture stays in the PROFILE (the repro rig) but is **DISABLED on the four coop-rig installs**
@@ -368,7 +432,10 @@ permanent (`mp.py wirewindow` + `coop/dev/wire_census`). NOT hands-on — run B 
 6. **WP-4 + WP-6 + WP-9 as ONE welded change** (§7.4): `docs/INSTALL.md` (both lanes, manager
    first) + `README.md` + the site templates & built `public/` + `ledger_lib.ps1` anchors and
    release-body block + `ledger_lint.ps1` checks + `publish.ps1` asset shape → and the Thunderstore
-   package published. **Blocked on the user's §7.3 `version_number` call** (recommendation: `0.0.<build>`).
+   package published. ~~Blocked on the user's §7.3 `version_number` call~~ **NOT BLOCKED (stale-open, corrected
+   2026-08-26).** `[V]` §7.3's own heading reads *"DECIDED (USER, 2026-08-23)"* and the mapping is
+   `<game-major>.<game-minor>.<build>` -- the block was lifted three days before this line was read,
+   and the `0.0.<build>` "recommendation" it named is not what was chosen.
 7. WP-7 (native debug subsystem) and WP-8 (hygiene split) stay parked.
 
 ---
@@ -692,7 +759,7 @@ visible: **`0.9.134`** for game target `0.9.0n` + build `134`.
 | component | source | today |
 |---|---|---|
 | `X.Y` | **THEIRS** — the first two dot-separated fields of `VOTVCOOP_GAME_TARGET` (`src/votv-coop/CMakeLists.txt:23`, read via the ONE existing parser `Get-GameTargetFromCMake`, `tools/release/ledger_lib.ps1:160`), with any non-digit characters stripped from each field | `0.9` (from `0.9.0n`) |
-| `Z` | **OURS** — `kProtocolVersion` (`src/votv-coop/include/coop/net/protocol.h:709`), the Paper pair's build half | **`140`** as of 2026-08-25 (was `134` when this table was written, `135` on the WP-6 A5 retirement, then 136 A34 / 137 A37-A38 / 138 B1 / 139 B2 / 140 A50 — see §7.3a item 1; the line number moves with it, so re-grep rather than trusting `:709`). **The rate this moves at is itself the §7.3a argument**: six bumps in two days, every one of them security work with no player-visible feature, each silently moving the Thunderstore release identity |
+| `Z` | **OURS** — `kProtocolVersion` (`src/votv-coop/include/coop/net/protocol.h:709`), the Paper pair's build half | **`143`** as of 2026-08-26 (was `140` when this cell was last written) (was `134` when this table was written, `135` on the WP-6 A5 retirement, then 136 A34 / 137 A37-A38 / 138 B1 / 139 B2 / 140 A50 — see §7.3a item 1; the line number moves with it, so re-grep rather than trusting `:709`). **The rate this moves at is itself the §7.3a argument**: six bumps in two days, every one of them security work with no player-visible feature, each silently moving the Thunderstore release identity |
 
 Parse rule, stated so it cannot be misread: split the game target on `.`, take fields 1 and 2, strip
 non-digits from each (so a hypothetical `0.9n` still yields `0.9`), and fail closed if either field is
@@ -736,7 +803,14 @@ consumer inside the mod folder at all — UE4SS's contract name is the fixed `dl
 identity does not disappear; it moves to the zip name, the generated `manifest.json`, and the
 in-game banner (`coop/version.h` + `kProtocolVersion`), none of which need it in the DLL filename.
 
-**3. A live defect, independent of the cutover.** `tools/deploy-mod.ps1:38-43` picks the payload by
+**3. ~~A live defect~~ -- CLOSED 2026-08-25, verified 2026-08-26 at CODE level (not by its comment).**
+`[V]` `deploy-mod.ps1:57-63` now sorts by the PARSED BUILD NUMBER descending and `:87-89` throws on a
+payload/source mismatch against the name the tree declares -- the fail-closed check this item asked for.
+It also handles a case this item never reached: `multivoid-0.9.0n-141.dll` and `multivoid-0.9.0o-141.dll`
+both parse to 141. The original text is kept below because the REASONING is still the standing rule
+("derive it, never guess it"); only its status changed.
+
+**Original (now historical):** `tools/deploy-mod.ps1:38-43` picks the payload by
 globbing `multivoid-*.dll` and taking `Sort-Object LastWriteTime -Descending | Select -First 1`. The
 build directory currently holds **14** such artifacts (`122` through `135`), so the deploy is one
 stale rebuild away from shipping the wrong payload while reporting success. It should compute the
@@ -753,7 +827,7 @@ the same "derive it, never guess it" rule the manifest is held to.
 | `tools/release/ledger_lib.ps1:149-150` | the verbatim INSTALL anchor `delete the old ` + backtick-`multivoid-*.dll` |
 | `tools/release/ledger_lint.ps1:74-77` | INSTALL.md carries no literal build filename, only the placeholder |
 | `tools/release/tag_regex_selftest.ps1:58,78` | fixtures `multivoid-0.9.0n-999.dll` + `xinput1_3.dll` |
-| `src/votv-coop/CMakeLists.txt:678-686` (`add_library(xinput1_3 SHARED)` at `:682`; **re-cited 2026-08-25, was `:675-679`**) | the `xinput1_3` target still BUILDS today; it retires with commit 3 |
+| `src/votv-coop/CMakeLists.txt` (`add_library(xinput1_3 SHARED)`; **`:684-737` / `:688` as of 2026-08-26 -- the third re-cite. STOP WRITING THE NUMBER: grep `add_library(xinput1_3`**) | the `xinput1_3` target still BUILDS today; it retires with commit 3 |
 
 **5. Sequencing is unchanged and already answered by 7.4a** — the flip is allowed locally right now
 because nothing is being pushed; what is forbidden is flipping the prose without re-minting the CI

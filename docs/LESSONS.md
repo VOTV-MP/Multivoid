@@ -951,6 +951,19 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   only instrument that measures the cursor, in the same diff that re-roots cursor behaviour. **A
   retire census must grep the ENV VARS and the LOG STRINGS, and must include `tools/`** -- a Python
   runner coupled to a C++ log line is invisible to every C++ grep.
+  **THIRD INSTANCE 2026-08-26 (the proxy retirement) -- wrong PREDICATE, not wrong PLACE.** I ran
+  `grep -rn "multivoid-" tools/release/` and called the release lane covered. `[V]` It was not:
+  `publish.ps1:25,27` hard-throws `"expected xinput1_3.dll"`, `ledger_lib.ps1:231` bakes
+  "+ `xinput1_3.dll` (the loader)" into EVERY release body. **I opened the right files and asked the
+  wrong question** -- I censused for the thing that SURVIVES (the payload) instead of the thing that
+  DIES. A second round found a third tier: `ledger_lib.ps1:149` pins the install PATH
+  `WindowsNoEditor\VotV\Binaries\Win64`, which no `xinput1_3` grep can reach either, because a
+  retirement changes where the mod LIVES and not only what it is called. **So the vocabulary has
+  three tiers -- its NAME, the things that die WITH it (env vars `MULTIVOID_DUP_FILES`/`MULTIVOID_LOADED`),
+  and the FACTS ABOUT THE WORLD that were true only because it existed** (an install path, a "you need
+  both files" sentence, a fixture map, an artifact's expected count). Write down what the world looks
+  like AFTER, then grep for every sentence that becomes false -- the retired symbol is the one thing
+  you will not forget.
   `memory/lesson_retire_census_alias_vocabulary.md`
 - **A reading taken AT an edge is not a measurement OF the interval** — `everSeen=0` sampled at a
   capture transition became "the game issues ZERO SetCursorPos calls in 18 s of gameplay", written
@@ -2092,6 +2105,22 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   and `git diff` any shared file before staging — stage your own hunks with `git apply --cached`
   after a `--check` dry run.
   `memory/lesson_two_agents_one_machine_resource.md`
+
+- **A doc that SPECIFIES reads, months later, as a doc that RECORDS — and the tell is grammatical.**
+  2026-08-26: in ONE session I cited this project's own plan-of-record as if it were the tree **four
+  times** — a census that asked for the payload's name instead of the retiring proxy's; "no acceptance
+  definition exists" while `THUNDERSTORE.md:237` held a 9-item pre-flight; `UE4SS_ARC:667` citing
+  "tripwire wire-e" as live while `VERSION_MIGRATION:473` says wire-d/wire-e "remain OWED"; and worst,
+  quoting **DebugMod's** `manifest.json` as *"our manifest"* when `git ls-files` finds none at all.
+  A living doc holds two moods in one voice — *"`publish.ps1` MUST fail closed"* (a spec) and
+  *"wire-e"* (a proper noun, which is how we name things that exist) — and both read as indicative
+  later. Status tables do not save you: the tag sits in a section header while the load-bearing
+  citation sits 600 lines away in another file.
+  **LOOK FIRST:** before leaning on a named mechanism, grep for it in the TREE, not the docs — a
+  doc-to-doc citation chain is not evidence. Read the sentence's MOOD ("must/should/will" = a plan).
+  When WRITING, tag it at the point of citation ("wire-e (**OWED**)") — six characters kill the class.
+  A quoted artifact owes its owner's name in the same breath.
+  `memory/lesson_a_doc_that_specifies_reads_as_a_doc_that_records.md`
 
 ### 1b. Standing working agreements (previously indexed NOWHERE)
 
