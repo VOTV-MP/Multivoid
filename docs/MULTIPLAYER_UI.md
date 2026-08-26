@@ -821,7 +821,8 @@ browser from four failure-recovery paths in `session_runtime.cpp`, sometimes bef
 
 **STILL OPEN, and named rather than implied:**
 - **Input is MOSTLY not wired.** ESC closes the screen (added 2026-08-26 after the user reported
-  there was no way out -- see §8c.0). There is still no hover highlight, no row click, and no
+  there was no way out -- see §8c.0), but it calls the INTERNAL `Hide()`; the public `Close()` and
+  its cross-thread `g_wantClose` path still have **zero callers and have never run**. There is still no hover highlight, no row click, and no
   Connect / Host / Refresh / Back chrome. `NotePointerMoved()` is declared and defined but **called
   from nowhere**, and `g_pointerMoved` is written and never read -- a write-only flag, kept only
   because the seam lands in the next commit; if that commit slips, it should be deleted rather than
@@ -859,6 +860,55 @@ cannot judge. So this lane has two halves and they are not interchangeable: the 
 machine-asserted and must stand on its own, and the FEEL half is the user's verdict. The exception
 covers feel only; it does not license shipping the rest unmeasured.
 
+#### 8c.-1 THE PERFORMANCE APPROACH IS `/qf`-GATED (USER, 2026-08-26)
+
+> **USER:** *"How to do this properly and not eat performance too much deserve a qf in the next
+> session."*
+
+So the cost design is **not** to be improvised while building the harness. The `/qf` runs first,
+next session, and this block exists so it starts from facts instead of from zero.
+
+**WHAT IS ACTUALLY KNOWN (and what is NOT).** The per-sync cost below is a **CALL COUNT read off
+the code, not a measured time** — nobody has timed `SyncRows`. Do not let the `/qf` treat it as a
+measurement; the first cheap move is to make it one.
+
+- `SyncRows()` runs at 1 Hz unconditionally while the screen is shown
+  (`server_browser_native.cpp`, `kRefreshMs`).
+- Per row it calls `RowPartsAt`, which re-derives the widgets from the panel every time:
+  `GetChildAt` + `GetContent` + 2 x `GetChildAt` + 5 x `GetChildAt` ≈ **9 reflected calls**, and
+  then writes 5 cells (`SetText` via `Conv_StringToText`, plus `SetTextBlockColor`) whether or not
+  a single string changed.
+- At the user's 200 rows that is on the order of **3 000-4 000 ProcessEvent dispatches per second**
+  on the GAME THREAD, at the menu. For scale, a measured gameplay frame in this build runs
+  `PE=75 859/s`, so this is a few percent of dispatch volume — but concentrated in one 1 Hz spike,
+  which is the shape that produces a visible HITCH rather than a background cost.
+
+**THE MEASUREMENT THAT SHOULD EXIST BEFORE THE `/qf` ARGUES ANYTHING.** `coop/dev/perf_probe.h`
+already provides exactly this: a `Bucket` enum, a `Scope` RAII timer, and a 1 Hz report that prints
+`[perf] subsystems ms: netPumpTick=0.52/fr(14.9/s) ... overlayPresent=0.06/fr(1.9/s)`. Adding a
+`browserSync` bucket is a two-line change and turns "≈ 9 calls a row" into ms/frame at 50 / 100 /
+200 rows. The existing `[HITCH]` line (`frame = 43 ms`) is the second instrument and needs nothing.
+
+**Candidate directions, listed so the `/qf` can attack them — NOT a decision.** Recorded because
+the round should start by choosing between measured options, not by inventing them:
+
+1. **Edge-apply per cell.** Keep the last string per cell and skip an unchanged one. The project's
+   idiom everywhere else; turns a steady list into ~zero writes.
+2. **Cache the row parts.** `RowPartsAt`'s 9 reflected calls per row exist only to re-find widgets
+   we created. §8b's rule is "we hold NO row pointers" and it has a real reason (`cached_obj_ref.h`
+   says the world stamp is inert for UMG and serials are lazy), so any cache has to answer that
+   rule rather than ignore it — which is precisely a `/qf` question.
+3. **Update only what is VISIBLE.** A `UScrollBox` showing ~9 of 200 rows still pays for all 200.
+   `GetScrollOffset` is resolved and unused; row height is fixed at 64.
+4. **Decouple the fetch from the paint.** `sm::Refresh()` (a network call) and `SyncRows()` (the
+   paint) share one 1 Hz timer today; they are different problems with different natural rates.
+5. **Do nothing yet.** If the measurement says 200 rows costs 0.2 ms/frame, the honest answer is
+   that this is not a problem and the complexity is not earned.
+
+**The `/qf` must also answer the question the harness raises but the browser does not:** whether
+the row cap stays (raised, and LOGGING its truncation) or goes, and what the real ceiling is —
+because "100 random servers" only means something if 100 is what renders.
+
 #### 8c.0 The blocker the user named, and it is worse than a missing button `[V]`
 
 **`server_browser_native::Close()` HAS NO CALLERS** (grep, 2026-08-26). With `[dev]
@@ -880,6 +930,12 @@ to look at the screen was trapped, which is exactly what happened.
 > closed. Kept inside this TU: no edit to the overlay's input path or to the one hands-on-verified
 > inject. Evidence: `hidden (ESC; index was 11, ours 11)` in a real `mp.py browser` run, with the
 > index restored.
+>
+> **PRECISELY: the TRAP is fixed, `Close()` is NOT exercised.** ESC calls the internal `Hide()`
+> directly. The PUBLIC `Close()` — and therefore the whole cross-thread path it exists for
+> (`g_wantClose` atomic → consumed on the next menu tick → `Hide`) — **still has zero callers and
+> has never run.** C2 wires it from `host_save_picker` and from the harness's four recovery paths,
+> and must not assume it works because ESC does; they are different code paths.
 >
 > **AND THE FIRST VERSION OF THAT SELFTEST LIED ALL-PASS, twice over, which is the part worth
 > keeping.** (1) It synthesized `keybd_event` down+up back-to-back in one tick — invisible to a
