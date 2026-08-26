@@ -45,6 +45,14 @@ constexpr float kRowH     = 64.f;
 constexpr float kBorderPx = 2.f;
 constexpr float kPadPx    = 6.f;
 constexpr float kRowGapPx = 2.f;
+// The list's height is EXPLICIT, not the VerticalBox's leftover slack.
+//
+// MEASURED 2026-08-26: with a Fill slot the box allotted the ScrollBox 542 px inside a
+// window that only had ~484 px left for it (offsetOfEnd 1438 against 30 rows of 66 px puts
+// the viewport at 542), so the list overflowed UPWARD and its first row was drawn clipped
+// under the column header. Slack arithmetic depends on every sibling's desired size being
+// what you assumed; an override depends on nothing.
+constexpr float kListH    = 470.f;
 // BOUNDS THE WHOLE SYNC LOOP, not just the display: `want` clamps to this, the grow
 // loop is bounded by `want`, and `total = ChildCount` therefore never exceeds it. So
 // this is a COMPUTE ceiling that happens to look like a display one.
@@ -88,10 +96,6 @@ const FLinearColor kAccent = Srgb(0xFF, 0x7C, 0x00);        // orange -- the int
 const FLinearColor kHover  = Srgb(0xFF, 0xFF, 0x00);        // hover is a TEXT colour, see section 4
 const FLinearColor kAmber  = Srgb(0xFF, 0xBC, 0x00);        // value emphasis; the mismatch tint
 const FLinearColor kDim    = Srgb(0xA5, 0xA5, 0xA5);        // secondary text (measured, not guessed)
-// Multivoid's own identity colour. It appears in ZERO native VOTV menus -- style doc section
-// 6 -- and whether to drop it is a PRODUCT call that belongs to the user, not a measurement.
-// It is deliberately confined to the title until they answer.
-const FLinearColor kCoopCyan{0.00f, 1.00f, 1.00f, 1.f};
 const FLinearColor kOwn    = Srgb(0x9E, 0xEA, 0xB3);        // "your server" row
 
 // ---- state (GAME THREAD ONLY unless marked) --------------------------------------
@@ -633,13 +637,18 @@ bool BuildScreen(void* switcher) {
     // The X rides in the same strip at the right.
     if (void* titleBox = AddFramedBox(col, kPanel, kBorderPx)) {
         if (void* titleRow = Spawn(L"HorizontalBox", titleBox)) {
-            const std::string title = "MULTIPLAYER  -  " + sm::DisplayVersion();
-            const std::wstring wtitle(title.begin(), title.end());
-            // The one cyan left on this screen, and it is deliberate: it is Multivoid's
-            // identity, it appears in NO native VOTV menu, and whether to drop it is a
-            // product call for the user (style doc section 6) -- not something to decide
-            // by quietly restyling it while doing everything else.
-            g_title    = AddText(titleRow, wtitle.c_str(), 24, kCoopCyan, kJustCenter, 1.f);
+            // USER 2026-08-26: "The windows title should say something like Multivoid -
+            // Server Browser and be in the style of votv, not the current colors." That
+            // settles style doc section 6's open product call in the direction of the
+            // game: native titles are WHITE, centred and larger, and the coop cyan appears
+            // in no VOTV menu. The build identity the title used to carry is simply GONE
+            // from this screen: the main menu shows "Multivoid <game> b<build>" in its top
+            // left at all times, so a second copy inside the browser was redundant -- the
+            // user said so after seeing it parked in the footer, which is where this first
+            // moved it. The per-row Version column still carries what a player actually
+            // needs here, which is each SERVER's pair, not ours.
+            g_title = AddText(titleRow, L"Multivoid  -  Server Browser", 24, kText,
+                              kJustCenter, 1.f);
             g_closeBtn = BuildButton(titleRow, backDonor, L"X", 20);
             if (void* s = U::AddChild(titleBox, titleRow))
                 U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
@@ -657,20 +666,25 @@ bool BuildScreen(void* switcher) {
         for (const Column& c : kColumns) AddText(head, c.title, 16, kAccent, kJustLeft, c.weight);
         U::AddChild(col, head);
     }
-    g_list = Spawn(L"ScrollBox", col);
-    if (!g_list) return false;
+    void* listBox = Spawn(L"SizeBox", col);
+    g_list = listBox ? Spawn(L"ScrollBox", listBox) : nullptr;
+    if (!listBox || !g_list) return false;
+    U::SetSizeBoxHeight(listBox, kListH);
     // The settings list's scrollbar treatment (section 7b): a server list is the long-list
     // case, and ui_saveSlots' own ScrollBox sets no bar style at all. NINE brushes.
     U::CloneStyle(g_list, P::off::UScrollBox_WidgetBarStyle, barDonor,
                   P::off::UScrollBox_WidgetBarStyle, P::off::FScrollBarStyle_Size,
                   P::off::FScrollBarStyleBrushes, 9);
-    if (void* s = U::AddChild(col, g_list)) {
-        auto* sz = reinterpret_cast<uint8_t*>(s) + P::off::UVerticalBoxSlot_Size;
-        *reinterpret_cast<float*>(sz + P::off::FSlateChildSize_Value) = 1.f;
-        *(sz + P::off::FSlateChildSize_SizeRule) = 1;  // Fill: the list takes the slack
+    if (void* cw = R::FindClass(P::name::ContentWidgetClass)) {
+        if (void* fn = R::FindFunction(cw, P::name::SetContentFn)) {
+            ue_wrap::ParamFrame f(fn);
+            f.Set<void*>(L"Content", g_list);
+            Call(listBox, f);
+        }
+    }
+    if (void* s = U::AddChild(col, listBox))
         U::SetSlotAlign(s, P::off::UVerticalBoxSlot_HAlign, P::off::UVerticalBoxSlot_VAlign,
                         kFill, kFill);
-    }
     // The footer mirrors the title row: the status line takes the slack, BACK sits at the
     // right. Two exits, because the game's own sub-screens carry a button_back and a
     // player who does not think to press ESC should not be stranded.
