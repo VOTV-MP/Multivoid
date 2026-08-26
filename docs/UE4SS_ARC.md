@@ -53,7 +53,7 @@ proxy / dup-dialog retire WHOLE per RULE 2 — no standalone-and-UE4SS dual path
 | WP | What | Status |
 |----|------|--------|
 | **WP-1** | Spike: prove the C-ABI shim boots the one binary as a UE4SS mod; measure the double-PE-detour survivability. | **AS-BUILT** — commit `cddb116c` (2026-08-21 eve). Matrix green ~110 ms; LAN join worked; double-detour "alive" on a SMALL sample (later found to crash ~2/10, see §3). WP-4 spike findings: ini err=3 under VFS; shimloader panics on `xinput1_3.dll`. |
-| **WP-2** | The loader cut: delete `xinput_proxy.cpp` + the proxy deploy path (RULE 2); `cppmod_entry.cpp` in; predecessor detection + mutex; keep EVERYTHING else. | **IN PROGRESS.** Pre-cut LANDED (§2). Fix (**B**, §4) is BUILT + default-ON and its compose is **VERIFIED** (2026-08-22 16:02 real-env byte decode + 16:25 DEV `POLYHOOK-COMPOSED` boot, §4 Proof status). The IsLive/VEH arc is BUILT (D1, 2026-08-22 night, §4 -- run B pending the user). Remaining before the proxy deletion: ~~symbolize the 19:17 dump~~ **RETIRED 2026-08-26 by a hash census, no symbolization needed** (§4 residuals); B's teardown residual — **no longer unfalsifiable**: the `gracefulexit` scenario (`fe474b86`) walks the close path and both arms ran, §4a; then commit 3, **welded to §7.3a's release anchors** because the tree cannot cut a release between them (§8.2). |
+| **WP-2** | The loader cut: delete `xinput_proxy.cpp` + the proxy deploy path (RULE 2); `cppmod_entry.cpp` in; predecessor detection + mutex; keep EVERYTHING else. | **IN PROGRESS.** Pre-cut LANDED (§2). Fix (**B**, §4) is BUILT + default-ON and its compose is **VERIFIED** (2026-08-22 16:02 real-env byte decode + 16:25 DEV `POLYHOOK-COMPOSED` boot, §4 Proof status). The IsLive/VEH arc is BUILT (D1, 2026-08-22 night, §4 -- run B pending the user). Remaining before the proxy deletion: ~~symbolize the 19:17 dump~~ **RETIRED 2026-08-26 by a hash census, no symbolization needed** (§4 residuals); ~~B's teardown residual~~ **CLOSED 2026-08-26** — the `gracefulexit` scenario (`fe474b86`) made the path walkable and immediately found a LIVE use-after-free that the residual's own wording understated; fixed in `42af8cc0` + `eafb2207`, RED/GREEN in §4c. **Commit 3 is now the only thing left before WP-2 is done**, and it is **welded to §7.3a's release anchors** because the tree cannot cut a release between them (§8.2). |
 | **WP-4** | Fix the stale install/update/uninstall prose + the site + installer for the UE4SS lane. | **PARKED, but now SPECIFIED** — census written (`votv-ue4ss-stale-loader-prose-CENSUS-2026-08-22.md`, ~139 rows); §7 measures the target shape and §7.3 fixes the sequencing (it must not flip before a UE4SS-lane build is released). **+ §7.0 (USER 2026-08-24): the GitHub repo DESCRIPTION and topics are stale prose too and are invisible to the census — they live outside the tree. `description` still says "a standalone C++ DLL"; the `dll-injection` topic goes; `homepageUrl` is empty and is fixable NOW.** |
 | **WP-6** | Distribution re-home (the `multivoid-<game>-<build>.dll` filename + master + release flow onto the mod-folder shape). | **PARKED, now SPECIFIED** — §7.2 + §7.4. |
 | **WP-9** | **Thunderstore publication** (USER 2026-08-23: "надо нам бы стать официальным модом и попасть в магазин thunderstore ... чтобы обычный юзер смог поставить нативно"). Ship Multivoid as a Thunderstore package so r2modman / Thunderstore Mod Manager installs it natively. | **NEW, SPECIFIED, NOT BUILT** — §7. The payload shape is ALREADY correct; what is missing is package metadata, a GENERATED manifest, and a publish step. **The version mapping is DECIDED, not owed** (§7.3, user 2026-08-23: `<game-major>.<game-minor>.<build>`); this row said "a version mapping decision" was missing after §7.3 had already made it. **§7.3a (2026-08-24, user-raised) measures what the versioned DLL name costs today** — it moves on every proto bump including security-only ones (`0.9.135` as of `ca3943e9`), its CMake justification expires with WP-2 commit 3, `deploy-mod.ps1` picks the payload by mtime out of 14 artifacts, and the six anchor sites that must move in one commit are tabulated. **2026-08-25 (user-raised, five real Thunderstore packages): §7.2 was measuring the extracted PROFILE and calling it the ZIP — the real zip has a `mod/` wrapper, and §7.2's tree would have installed cleanly and never loaded. §7.2a is now the authoritative routing rule (from Thunderstore's own ecosystem schema + r2modman's rule engine and test spec), §7.2b is the field survey + the measurement that shows what D-3 bought (field mods import 32/40/130 mangled C++ symbols from `UE4SS.dll`; we import 0), and §7.9 answers "can GitHub produce the package" — yes for everything except the pak, whose blocker is its inputs.** |
@@ -154,11 +154,10 @@ UE4SS's.** (This corrects an earlier framing that called C "B's eventual retirem
 
 ### Residuals of B (honest)
 
-- **Teardown:** with B, PolyHook holds a restore-pointer INTO our 64-byte MinHook slot. Today
-  `DoShutdown` → `MH_Uninitialize` frees that slot; if it frees before PolyHook restores, that is a
-  restore-into-freed-page the proxy lane never had. Fix: **leak the PE hook at process-close** (never
-  free it — the process is dying). This touches `MH_Uninitialize`'s all-or-nothing behavior (small
-  blast radius to overlay teardown) — real work, folded into commit 3.
+- ~~**Teardown:**~~ **CLOSED 2026-08-26 — and the residual as written understated it. See §4c.**
+  It said PolyHook holds a restore-pointer into our slot and `MH_Uninitialize` frees it. The real
+  defect needed no third party at all: `MH_RemoveHook` CORRUPTS the trampoline in place before any
+  unmap, and the RED arm crashed reading the trampoline's own address. Fixed in `42af8cc0`.
 - **Second independent inline PE hooker:** another C++ mod that inline-hooks PE with a jmp-following
   engine would still corrupt the chain — but that is an ecosystem property that hits C identically,
   is unobserved, and B makes us strictly better than today (we stop corrupting UE4SS).
@@ -291,6 +290,108 @@ which sub-steps the teardown performs, because that is exactly what the fix chan
 **Consequence for "USER run B":** its acceptance was *one ordinary real-env exit*. That is now a
 scenario, not a request — and per the user's 2026-08-25 ruling that hands-on is closed, it had to
 become one or it was a shelf.
+
+### 4c. THE TEARDOWN USE-AFTER-FREE — found, measured, fixed (2026-08-26, `42af8cc0` + `eafb2207`)
+
+§4a built the instrument. The instrument found something bigger than the residual it was built
+for. **This section is cited from `pe_detour.cpp`, `imgui_overlay.cpp` and `hook.cpp`** — it is the
+long-form account those comments point at.
+
+#### What the code said
+
+`[V]` `ue_wrap/core/pe_detour.cpp`, `Uninstall()`, Audit C3, dated 2026-05-27:
+
+> *"Leaving the pointer non-null is harmless (UAF is not possible because `g_originalPE` points at
+> the engine's PE, a process-lifetime entry point that is never unloaded)."*
+
+#### Why that is false, twice
+
+**The object.** `[V]` `third_party/minhook/src/hook.c:634` — `*ppOriginal = pHook->pTrampoline`.
+The out-param of `hook::Install` is MinHook's 64-byte **trampoline slot**, not the engine's
+function. `[V]` Our own install log has always printed it as `trampoline %p`. The audit read the
+variable's NAME — `g_originalPE` — and the name was the evidence.
+
+**The mechanism and the timeline.** Removing a hook does not merely schedule a later unmap.
+`[V]` `buffer.c:43-50` — `MEMORY_SLOT` is a **union** of a free-list `pNext` and the trampoline
+bytes. `[V]` `buffer.c:282` — `FreeBuffer` does `pSlot->pNext = pBlock->pFree`, writing eight bytes
+**at offset 0 of the trampoline**, over the stolen prologue. `[V]` `hook.c:702` — its caller is
+`MH_RemoveHook`, which `hook::Uninstall` called at `pe_detour.cpp:741`, **one line above** the
+`Sleep(50)` at `:757` that the comment offered as its mitigation. The window was not the three
+seconds §4a measured to `DLL_PROCESS_DETACH`. **It was zero**, and `[V]` ProcessEvent dispatches at
+~250,000/s in normal play.
+
+**And this is how the header could contradict itself unnoticed.** `[V]` `hook.h:45-48` called
+`Disable` *"the ONLY safe retirement for a detour other threads may be entering concurrently (an
+inflight counter cannot prove absence)"*; `[V]` `hook.h:56`, five lines later, called
+remove-and-uninitialize *"Safe to call once at shutdown"*. Both shipped for four months. An audit
+had already looked at the site and cleared it, so nobody re-derived it.
+
+#### The measurement (RED / GREEN, same scenario, same rig)
+
+`ue_wrap/core/hook_drill` samples the trampoline's first eight bytes either side of the teardown.
+It asserts **those bytes, not a crash** — `[V]` the eight bytes written are a heap pointer that may
+or may not fault when executed, and `[V]` `buffer.c:288-296` only `VirtualFree`s at `usedCount == 0`,
+so neither a fault nor an unmap is a guaranteed signal. A control keyed on a crash is a coin flip.
+
+| arm | build | result |
+|---|---|---|
+| **RED** — old `hook::Uninstall` + the drill | `b064a4e1` | baseline sample `trampoline 00007FF6E7CF0FC0 first8=25FF544157565540`, then **no post-disable sample, no `END cleanup`**, and a crash report: `EXCEPTION_ACCESS_VIOLATION reading address 0x00007ff6e7cf0fc0` |
+| **GREEN** — `hook::Disable` + the drill | `3c14bccc` | same address, `25FF544157565540` **before and after**, full trail to `END cleanup`, exit 3.9 s, no crash report |
+
+**The faulting address IS the trampoline, byte for byte.** `25FF544157565540` little-endian is
+`40 55 56 57 41 54 FF 25` — ProcessEvent's stolen prologue, so the drill was reading the right
+memory.
+
+**A correction to my own reasoning, recorded because it was load-bearing while I believed it:** I
+argued the `VirtualFree` would not fire because `usedCount` would not reach 0 with ~12 live hooks.
+It did. MinHook allocates blocks near their target; ProcessEvent lives in the game exe while the
+overlay hooks live near `dxgi.dll`, so the PE trampoline had its **own block** and removing that one
+hook released the whole page. "~12 hooks" was never the relevant number.
+
+#### The fix
+
+- **`hook::Uninstall` deleted.** Its remove IS the corruption. Its four call sites became `Disable`
+  or vanished with the dead function that held them.
+- **`hook::Shutdown` keeps `MH_DisableHook(MH_ALL_HOOKS)`, drops `MH_Uninitialize`.** The blanket is
+  not redundant: `[V]` `ui::imgui_overlay::Shutdown()` had zero callers tree-wide, so the blanket is
+  measurably the ONLY thing that has ever lifted the overlay's three patches.
+- **`Enable` re-reads the live flag AFTER `MH_EnableHook` returns.** The guard alone is
+  check-then-act and `[V]` `overlay_backend_dx12.cpp:506` → `dx12_capture::Rearm()` reaches it from
+  the render thread while the game thread is in `Shutdown`. Lock-free and with **no second flag**:
+  `[V]` `dllmain.cpp:53-60` — `DoShutdown` is reachable from `DLL_PROCESS_DETACH` under the loader
+  lock, where a mutex owned by a thread Windows already terminated never unlocks; and two flags that
+  can disagree leave neither as authority.
+- **The 11 lying identifiers renamed**, censused **by assignment site**: those receiving
+  `hook::Install`'s out-param are now `*Trampoline`. `g_origVirtual`/`g_origFinal` (GNatives table
+  reads) and `g_origProc`/`g_origWndProc` (`SetWindowLongPtr`) keep theirs — renaming those would
+  author the inverse lie.
+- **`tools/hooks/minhook_free_gate.ps1`** (the 7th gate, wired into `build-core.yml`): no
+  `MH_RemoveHook`/`MH_Uninitialize` in `src/` outside one allowlisted line — `hook.cpp`'s
+  enable-failure path, where enable just failed so the target was never patched. Matched as **calls,
+  not prose**; shown RED by injection AND shown not to fire on the allowlisted shape. A gate cannot
+  catch a lying comment, which is why the rename carries that half.
+- **`eafb2207`** then deleted the orphaned subtree (RULE 2): `console::Shutdown`,
+  `overlay_backend::Shutdown`, `dx11`/`dx12::Shutdown`, `dx12_capture::Shutdown` — each reachable
+  only from the one above, none ever executed. Note the sting: `dx12_capture::Shutdown` was the ONE
+  function implementing the Disable-only doctrine correctly, with the rationale written out — and
+  being unreachable it had never protected anything, while the undocumented blanket did the real work.
+
+#### NOT fixed — filed here so it is not mistaken for closed
+
+1. **W1.** Lifting the PE patch restores ProcessEvent's prologue, which a composed PolyHook sits
+   downstream of — so UE4SS's PE dispatch plausibly goes dark for the ~3 s to `DLL_PROCESS_DETACH`.
+   **Unmeasured.** This change stops the corruption and the free; it does not answer that.
+2. **The same question on Present.** Whether restoring a prologue at death harms a co-hooker there
+   is order-dependent, and `pe_diag`'s `WHO-FIRST` line measures ProcessEvent ONLY. `[V]`
+   `NahimicOSD.dll` is a measured co-hooker on this box's present chain (§4). Cheap instrument named:
+   a byte dump at Present install, mirroring `pe_diag`.
+3. **`MH_DisableHook(MH_ALL_HOOKS)` on the loader-lock path.** `[V]` `hook.c:267,348` — it reaches
+   `CreateToolhelp32Snapshot` + `SuspendThread`, and a toolhelp snapshot inside `DllMain` is a
+   documented deadlock risk. **Pre-existing and unchanged by this commit**, and the graceful-close
+   path does not exercise it: `[V]` the wndproc latches `g_shuttingDown` first (`close-signal` at
+   16:14:54, DETACH tally at 16:14:57), so DllMain's call is the idempotent no-op. **No test in the
+   tree has ever run `hook::Shutdown()` under the loader lock.** A `gracefulexit` arm that suppresses
+   the wndproc path would be the first.
 
 ### 4b. THE 19:17 SYMBOLIZATION IS RETIRED — a hash census answered it for free (2026-08-26)
 
@@ -461,7 +562,16 @@ permanent (`mp.py wirewindow` + `coop/dev/wire_census`). NOT hands-on — run B 
    census of all 102 dumps bought the discrimination this was meant to buy, for free: the two crash
    families separate by ERROR STRING alone. (This row survived one sweep after §4b retired it; it is
    the same stale-open class §1's WP-2 row had.)
-3. Add B's teardown leak-at-death (§4 residual), drop the `VOTVCOOP_PE_IMMUNE_RELAY=0` diagnostic escape.
+3. ~~Add B's teardown leak-at-death~~ **DONE 2026-08-26 (`42af8cc0` + `eafb2207`) and it was
+   BIGGER than a leak — see §4c.** The residual said "leak the PE hook at process-close";
+   the measurement found a live use-after-free whose RED arm crashed reading the trampoline's
+   own address. **The second half of this row — "drop the `VOTVCOOP_PE_IMMUNE_RELAY=0`
+   diagnostic escape" — is NOT done and should not be obeyed as written.** `[V]`
+   `docs/LESSONS.md:240`: *"The knob retires with the mechanism (RULE 2); the RED table is the
+   durable artifact."* No RED table exists for fix B — §4 says the baseline was reproduced
+   2026-08-22 but the evidence is scattered prose. Write the table, THEN retire the knob.
+   (§4's own text calls the escape "a RULE-2-exempt diagnostic escape, retired at commit 3" —
+   exempt and scheduled for deletion in one parenthesis.)
 4. **Commit 3** — the proxy deletion (RULE 2): `xinput_proxy.cpp` + the loader lane + dup-dialog +
    `inject.ps1` go, fully. Then WP-2 is DONE.
 5. **Release a UE4SS-lane build.** This is the gate §7.4 identifies: until a released build IS the
