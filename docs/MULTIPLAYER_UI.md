@@ -919,7 +919,7 @@ once-per-second hitch. **The deciding metric is therefore max frame interval / p
 ##### The instruments named in the old text do not work here `[V]`
 
 - `perf_probe::Sample()` and `[HITCH]` both live in `net_pump::Tick` (`net_pump.cpp:437`, `:416`),
-  which `session_runtime.cpp:652` gates on `running || idleInGameplay`. **Neither runs at the menu.**
+  which `session_runtime.cpp:651-653` gates on `running || idleInGameplay`. **Neither runs at the menu.**
   "Adding a `browserSync` bucket is a two-line change" yields a bucket nobody prints.
 - `worldless_frames.cpp:136` stamps frames with `::GetTickCount64()` (**~15.6 ms granularity**) while
   `perf_probe.cpp:73` already uses QPC. At 117 fps a frame is ~8.5 ms — **below the clock's
