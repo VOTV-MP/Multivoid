@@ -34,11 +34,24 @@
 namespace coop::config_registry {
 
 // The default for MY OWN display name everywhere the local player's nick is
-// resolved with nothing configured (env absent, ini absent). The joke is
-// deliberate and user-ruled: a fresh ini SEEDS a visible net.nick=Pelmentor
-// line meant to be seen and replaced ("оно должно не навязываться, игрок
-// поменяет это на свой ник"). Never used for OTHER peers' missing nicks.
-inline constexpr const char* kMyNameDefault = "Pelmentor";
+// resolved with nothing configured (env absent, ini absent). A fresh ini SEEDS
+// a visible net.nick line meant to be SEEN AND REPLACED, per the standing user
+// rule ("оно должно не навязываться, игрок поменяет это на свой ник"), so the
+// value's whole job is to ANNOUNCE ITSELF AS A PLACEHOLDER. It used to be the
+// author's own handle, which read as a name a player might mistake for someone
+// else's rather than as a blank to fill in (USER 2026-08-26). Never used for
+// OTHER peers' missing nicks.
+//
+// Length is not incidental: `[V]` `player_handshake.h:51` caps a nick at
+// kNickMaxChars = 20 codepoints, and the host's arbiter appends a dense
+// smallest-free suffix over the WHOLE requested name as the stem
+// (`nickname_arbiter.cpp:28`). Every fresh install seeds the SAME value, so
+// a full lobby is the collision case by construction, not the rare one: `[V]`
+// kMaxPeers = 4, so the longest name this can produce is PlayerNickname4 at 15
+// of the 20 codepoints. The arbiter also sizes its variants against the cap
+// (`player_handshake.h:46`), so a longer default degrades gracefully rather
+// than silently -- but keep a new default short enough not to rely on that.
+inline constexpr const char* kMyNameDefault = "PlayerNickname";
 
 // Wide twin BUILT from the one narrow constant (ASCII) -- never a second
 // literal (that would be the transcription drift this header exists to kill).
