@@ -1812,7 +1812,7 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   `memory/feedback_answer_the_proposals_scope_not_its_widest_reading.md`
 
 
-- **The answer was already written down in this repo -- NINE times across two passes, and the last
+- **The answer was already written down in this repo -- TEN times across three passes, and the worst
   three were in MY OWN register, one of them written hours earlier in the same effort** (2026-08-26,
   the A54 design passes). I presented as new: a design decision `docs/COOP_SYNCER_MODEL.md` sec4b/sec5 had already
   converged (the per-kind default-deny table, in the file CLAUDE.md's reading order names as required
@@ -1843,9 +1843,17 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   record** ("generating the whole dispatcher from a per-`ReliableKind` row"); (9) the open question I
   spent five rounds on -- what makes the check unskippable -- is answered in that same paragraph
   ("not the classification word ... but the ARGUMENT TYPE: `token.Resolve(eid)` ... skipping it is a
-  missing argument, not a missing line"). THIRD rule: **before designing a fix for a register row,
+  missing argument, not a missing line"). **Instance 10 (2026-08-26) is a PROCEDURE, not a fact, and it had already been
+  EXECUTED once:** mid-way through a pre-push leak audit I reasoned from scratch about whether to rewrite
+  the unpushed commits or scrub only the tip -- while the project's own pre-push-audit feedback file
+  already said "scrubbing unpushed commits = rebuild", gave the command shape, and recorded the
+  second-order cost (a rebuild danglees every SHA already cited in docs/memory -- 9 dangling refs found
+  the previous time). It is the strongest prior art there is and the easiest to grep for: I was running a
+  ritual the file is NAMED for. THIRD rule: **before designing a fix for a register row,
   read that row's OWN fix-of-record to the end** -- a register whose rows carry a fix section will
-  answer the question you are about to spend a pass on.
+  answer the question you are about to spend a pass on. FOURTH rule: **when executing a named ritual --
+  a leak audit, a release checklist, a migration runbook -- grep `memory/` for that ritual's NAME before
+  the first decision inside it**, not after.
   `memory/lesson_the_answer_was_already_written_down_in_this_repo.md`
 
 - **Classify by the predicate you are ENFORCING, not by a property of the wire** (2026-08-26, two `/qf` passes on one
@@ -4397,6 +4405,16 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   docs+memory. *Look FIRST:* `gh repo view --json isPrivate`; grep the diff for service names/hostnames
   near IPs (a leftover hit is OK only as a REMOVAL line: `grep -vE '^[0-9]+:-'` on the hits = empty);
   after any rewrite grep the OLD SHAs across docs/ research/ memory/.
+  **HEAD 3 (2026-08-26): a TIP scrub does not UN-publish, and the split belongs at WRITE time.** The audit
+  failed on a different axis -- three rows in a public ledger reasoned about still-open weaknesses and
+  pointed into a local register -- and the fix was applied to the tip, then pushed. In general that is
+  wrong: the offending blobs live in the intermediate commits and the push publishes them whatever the tip
+  says. (What genuinely differed: a PARALLEL session was committing into the same tree, so a 30-commit
+  rebuild risked clobbering its work -- a real reason to prefer the tip fix, and one to state plainly to
+  the user, including that the rebuild offer stands.) The durable rule: **decide the public/local split in
+  the SAME EDIT that writes the row** -- a row written out of security work is not "public by default,
+  audited later", because the audit at the push gate can only ever be a tip fix. Three rows written across
+  three sessions all failed, and each would have cost one minute at write time.
   `memory/feedback_push_leak_audit_service_ties_and_sha_rewrite.md`
 - **Git-Bash (MSYS2) MANGLES remote `/abs/paths` → `C:/Program Files/Git/...`** — any argv that looks
   like a POSIX absolute path is Windows-ified BEFORE the child sees it, so `vps.py put <local>
