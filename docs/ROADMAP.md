@@ -316,10 +316,15 @@ LAN (two-machine + same-box-two-instance both confirmed).
        panel itself renders in ImGui (in-process overlay), not pure UMG. The
        `mp_host_game.bat` / `mp_client_connect.bat` launchers remain only as
        the autonomous-test entry points.
-       **A NATIVE-UMG replacement for the browser panel is designed and its
-       measurement pass has RUN (2026-08-25) — `docs/MULTIPLAYER_UI.md` §8a/§8,
-       commits `dc846e02` + `7a8c239b`. Nothing native is built yet; the ImGui
-       panel above is still what ships.** Two results from that pass bind other
+       **A NATIVE-UMG replacement for the browser panel is BUILT AND RENDERS
+       (2026-08-26, `fe7e55eb`) — `docs/MULTIPLAYER_UI.md` §8b is the as-built,
+       §8a the measurement pass, §8 the plan. It is shipped DARK behind
+       `[dev] browser_native=0`: the ImGui panel above is still the only browser
+       and still what the MULTIPLAYER button opens. The native screen draws the
+       live master's lobby list with the version-mismatch tint; INPUT (hover,
+       row click, the Connect/Host/Back chrome) is NOT wired, and retiring the
+       ImGui browser also has to retarget `tools/cursor_probe.py` +
+       `tools/master_fetch_probe.py`, which block on its log line.** Two results from that pass bind other
        phases: a hand-wired `UUserWidget` RENDERS inside `ui_menu_C`'s live
        `UWidgetSwitcher` (so the placement holds), and **the ImGui overlay
        substrate is NOT retirable** — at every launch the game presents ~540

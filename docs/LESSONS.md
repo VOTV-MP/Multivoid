@@ -880,7 +880,27 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   first closing negative grep matched nothing INCLUDING its own known-positive because the pattern
   was narrower than the vocabulary. Walk the retired code's outgoing call expressions per-argument
   ("who else passes non-default here?") + grep prose synonyms, then gate on a control that must hit.
+  **SECOND INSTANCE 2026-08-26 (native browser):** a `server_browser::` grep found "nine call sites
+  in four files" and was sold as the set. It missed the ALIAS half entirely -- `VOTVCOOP_BROWSER_OPEN`
+  opens the surface from `imgui_overlay.cpp:721-724`, and **`tools/cursor_probe.py:39,42` +
+  `tools/master_fetch_probe.py:78,89` drive that env var and BLOCK on the literal log line
+  `"server browser starts visible"`**. So the retire commit would have deleted the trigger of the
+  only instrument that measures the cursor, in the same diff that re-roots cursor behaviour. **A
+  retire census must grep the ENV VARS and the LOG STRINGS, and must include `tools/`** -- a Python
+  runner coupled to a C++ log line is invisible to every C++ grep.
   `memory/lesson_retire_census_alias_vocabulary.md`
+- **A reading taken AT an edge is not a measurement OF the interval** — `everSeen=0` sampled at a
+  capture transition became "the game issues ZERO SetCursorPos calls in 18 s of gameplay", written
+  into a shipping header; `cursor_probe.py`'s own counter refuted it minutes later (~120/s). The
+  reading was right at that instant and false about the window, because the signal warms up AFTER
+  the edge. Before asserting an absence, grep for a counter that already counts the thing.
+  `memory/lesson_a_reading_at_an_edge_is_not_a_measurement_of_the_interval.md`
+- **Lengthening an instrument outgrows the harness that runs it** — a probe hold 2.2 s -> 5.2 s
+  silently exceeded `mp.py --duration 45` (counted from LAUNCH; boot alone is ~50 s). The game was
+  killed mid-rung and the runner reported it as FOUR failures, one of which accused the probe of
+  stranding the switcher. A cluster of "no X line" FAILs is a TRUNCATION signature — check whether
+  the log simply stops before debugging any of them.
+  `memory/lesson_lengthening_an_instrument_outgrows_its_harness_timeout.md`
 - **"per rule 1" = full green light** for the root-cause fix in its complete form (incl. hard
   architectural change). Don't scope down, don't ask "is this too big". `memory/feedback_no_crutch_questions_act_autonomously.md`
 - **No design/architect AGENTS** — design yourself from code + docs + MTA; search + audit agents OK. `memory/feedback_no_design_architect_agents.md`
@@ -1785,6 +1805,31 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   defending, **take the premise down to the studs before defending the design on top of it**.
   `memory/feedback_answer_the_proposals_scope_not_its_widest_reading.md`
 
+
+- **The answer was already written down in this repo -- three times in one pass** (2026-08-26, the A54
+  design pass). I presented as new: a design decision `docs/COOP_SYNCER_MODEL.md` sec4b/sec5 had already
+  converged (the per-kind default-deny table, in the file CLAUDE.md's reading order names as required
+  BEFORE any authority work); a defect the code comments in place (`prop_destroy_seam.cpp:190-197` for
+  the loss half, `event_dispatch_entity.cpp:259-264` for the attack half); and TWO tracker rows I
+  proposed re-filing that already exist as **A3** and **A20** in the same 729-line file I had been
+  editing all session. Common cause: **I searched by the thing I was working ON (the finding ID) rather
+  than by the thing I had just FOUND (the mechanism)**. FIRST next time: before filing any new row in a
+  register you own, grep it for the MECHANISM (`PropDestroy`, `relay`, the function name), never for the
+  row you came from -- a duplicate row splits one OPEN finding in two and inflates a register the docs
+  arc treats as an exploit map. `memory/lesson_the_answer_was_already_written_down_in_this_repo.md`
+
+- **A census row is worth exactly what its citation is worth** (2026-08-26, A54's refuse-vs-LOSS table).
+  I traced ONE lane and asserted six; tracing them reversed **two rows in opposite directions** --
+  `CoinCollect` had a shipped heal I assumed absent (`coingun_collect.cpp:472-492`, and it is NOT on the
+  new refusal path: eight early returns precede the balance read that gates it), and
+  `KerfurConvertRequest` had none where I assumed one (`kerfur_convert_host.cpp:262-300`, every deny
+  path a bare `return`). **The table format did the laundering** -- prose hedges, a grid cell does not,
+  so nine rows read as nine measurements. The same defect had been caught one level up two rounds
+  earlier (an untagged LOSS section) and I rebuilt it inside the newly-tagged table. FIRST next time:
+  a cell with no `file:line` gets the word `UNTRACED`, not a verdict; and for "does a refusal cost
+  anything here" the two things to open are the CLIENT-side producer (is the local action cancelled or
+  does it complete?) and every early return above the repair path.
+  `memory/lesson_a_census_row_is_worth_its_citation.md`
 
 - **A targeted grep is not a census, and the claim is about the SET** (2026-08-25, the native-browser
   `/qf` — the same error **five times in one session**, four caught by a critic). Whenever the sentence
@@ -3395,6 +3440,21 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   `memory/lesson_a_cannot_in_a_comment_is_a_snapshot_of_what_was_tried.md`
 
 ## 5. Engine / UE4 facts
+
+- **Slate's hit-test answers the PREVIOUS pointer position** — `IsHovered()` sampled in the SAME
+  game-thread tick that moved the cursor read the old position EVERY time, and inverted both
+  readings (hover-ON 0 while the next five samples read 1; hover-OFF 1 while the next five read 0).
+  Move and sample must be separate ticks. Same run: a bare `UImage` with `Visibility=Visible` DOES
+  answer `IsHovered()` and DISCRIMINATES — but only when the target is BOUNDED; a full-bleed widget
+  answers `1` always and proves nothing.
+  `memory/lesson_slate_hit_test_answers_the_previous_pointer_position.md`
+- **A UMG slot bounds the LAYOUT, not the painting** — a weighted `UHorizontalBoxSlot` lets a long
+  value paint straight over the next column until `SetClipping(ClipToBounds)` plus a gutter. Two
+  more from the same build: a `UImage` with a tint and NO `ResourceObject` draws a SOLID RECT (the
+  game's own sub-screen backdrop is exactly that — a full-screen 50%-black scrim, `Image_302`, so a
+  scrim needs no donor), and `USizeBox::HeightOverride` is INERT unless driven through the UFunction
+  because its `bOverride_*` bit is a separate bitfield at +0x150.
+  `memory/lesson_umg_slot_bounds_layout_not_painting.md`
 
 - **`FindObjectByClass` answers "the FIRST instance", which is not "the LIVE one" — and a
   WidgetBlueprint has a second non-CDO instance to trip on.** 2026-08-25: reading VOTV's style donors

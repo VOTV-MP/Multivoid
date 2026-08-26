@@ -731,11 +731,110 @@ the game thread without ProcessEvent, not at UMG.
 free by moving the draw to a native UMG surface. That option is now measured shut, and the RTSS/OBS
 fix needs its own `FD3D11Viewport::PresentChecked` seam as originally designed.
 
-**What P1 did NOT answer**, and is still owed before or during P2: whether a bare `UImage` with
-`Visibility=Visible` answers `IsHovered()` for a pointer over it (RUNG 1's root reported
-`rootHovered=1` on every sample, which is suspicious rather than confirming — a full-screen
-top-left widget under an unmoved cursor is not a hit-test proof); and the delegate BIND, which
-stays out of v1 by decision.
+**What P1 did NOT answer — ANSWERED 2026-08-26 by RUNG 2 (`12f44b68`), before a line of P2 was
+written.** Both were gating: a false answer to the first invalidates the whole hit-test design with
+no plan B, and the second decides whether the subtree needs a GC pin.
+
+| # | question | answer `[V]` |
+|---|---|---|
+| **HOVER** | does a bare `UImage` with `Visibility=Visible` answer `IsHovered()`? | **YES, and it DISCRIMINATES.** Cursor inside a bounded 400x64 rect -> hovered=**1**; cursor at the client centre, outside it -> hovered=**0**. The root tracked it 1->0; the text block the cursor never touched read 0 both times. RUNG 1's `rootHovered=1` was exactly the full-bleed artefact it was suspected to be. |
+| **GC** | does a hand-built subtree survive a purge? | **SURVIVES.** `ForceGarbageCollection()` mid-hold: children still 12, root still (654,64). The UPROPERTY chain from the live switcher (`UUserWidget::WidgetTree` @0x1D8 -> `UWidgetTree::RootWidget` @0x28 -> `UPanelWidget::Slots` @0x108 -> `UPanelSlot::Content` @0x30, all reflected) roots it, so **`AddToRoot` is NOT used and would be wrong** -- it would outlive the menu and demand a paired un-root (`reflection.h:109`). |
+
+**And the instrument was wrong first, in the exact way section 8 predicted for the WndProc.**
+Sampling `IsHovered()` in the SAME tick that moved the cursor read the PREVIOUS position every
+time -- hover-ON sampled 0 while the five following periodic samples all read 1; hover-OFF sampled
+1 while the five following all read 0. Move and sample are now separate phases 600 ms apart. So
+"evaluate hover on the next game-thread tick, never in the WndProc" is **measured**, not argued.
+
+Still out of v1 by decision: the delegate BIND.
+
+---
+
+### 8b. P2 IS BUILT AND ON SCREEN — AS-BUILT (`[V]` 2026-08-26, `fe7e55eb`)
+
+> **Read this and §8a before §8.** §8 is the plan; this is what exists. Nothing below is
+> hands-on: every claim is a real log or a real screenshot from a lab run.
+
+**Shipped dark.** `[dev] browser_native` defaults to **0**: with it off the screen is never
+constructed and the ImGui browser (`ui/server_browser.cpp`) is still the ONLY browser and still
+what the MULTIPLAYER button opens (`multiplayer_menu.cpp:273`). There is deliberately no moment
+where two browsers serve one button.
+
+**What is built.** `ui/server_browser_native.{h,cpp}` (564 LOC) + `ue_wrap/engine/umg_build.{h,cpp}`
+(the panel/style primitives) + two `[dev]` rows + `python tools/mp.py browser` (the lab run).
+Driven from `multiplayer_menu`'s existing `ui_menu_C::Tick` observer -- deliberately NOT a second
+observer on the same UFunction; that inject is the one hands-on-verified native path we have and
+one owner of the menu tick is the point.
+
+**The evidence.** `mp.py browser` -> ALL PASS, and `research/browser_shots/browser_native.png`
+shows the screen over the live menu with **two real lobbies fetched from the production master**:
+name, `1/4` players, `0.9.0n b133 (!)` in amber (b133 != our b143 -- the two-leg mismatch ported
+verbatim from `server_browser.cpp:218-231`), world, age, and the status line. font_ui throughout;
+window fill cloned from `ui_saveSlots.Image_0`; scrollbar style cloned from
+`ui_settings.scrollboxRoot` (nine brushes).
+
+**The scrim is FUNCTIONAL and is measured as such.** It is what eats a click that misses the
+window, so "it looks dim in the screenshot" is not evidence. A dev self-check moves the cursor
+outside the window and asks Slate: hovered **1** there, **0** inside (the window's own widgets sit
+above it). Two-sided, so a scrim that answered true everywhere would not pass.
+
+**`[V]` THE NATIVE BACKDROP IS A SCRIM, NOT AN OPAQUE PANEL -- §8a's consequence line was
+imprecise and is corrected here.** `ui_saveSlots_C`'s widget-tree root has FOUR children and child
+0 is `Image_302`: a `CanvasPanelSlot` with `Anchors.Maximum (1,1)` and zero offsets (so
+full-screen) carrying `Brush.TintColor.SpecifiedColor = (0, 0, 0, 0.5)` and **no `ResourceObject`
+at all**. So every native sub-screen DIMS the menu rather than hiding it, a tint-only `UImage`
+draws a solid rect (visible directly in the RUNG 2 screenshot as a cyan block), and **the browser's
+backdrop needs no donor** -- which shrinks what a null donor can block.
+
+**`[V]` The placement's layering, measured statically from the cooked asset**
+(`research/bp_reflection/ui_menu_fixed.json`): `switcher_widgets` fills the screen, its container
+`CanvasPanel_101` is index **8** of the `screen` canvas, `canvas_menu` (the title + button list,
+including our injected MULTIPLAYER button) is index **5**, and `imgCur` -- VOTV's own cursor image
+-- is index **12**. So we paint above the chrome and Slate hit-tests us first, while the cursor
+still draws above us. That last fact is why the 12th-child placement beats `AddToViewport`: a
+viewport widget with a Z high enough to clear the menu would draw over the game's own cursor.
+
+**`[V]` The game's own navigation is `SetActiveWidgetIndex(N)` + a refresh call on the screen**
+(`umg_saveSlots->gen()`, `->upd()`, `->start()`) -- decoded from `ExecuteUbergraph_ui_menu`.
+`widgetEnter` is written at exactly FIVE sites (`umg_settings`, `umg_help`, `umg_credits`,
+`umg_achievements`, `umg_stats`) and **never** for `umg_saveSlots` or `umg_gamemode`; `canvMenu` is
+touched once in the whole ubergraph by a `SetRenderOpacity` fade and never by a navigation, and
+`Hidden` never. So not writing `widgetEnter` is the native-faithful choice for our class of screen
+-- **but `OnKeyDown` clears it only on its OWN ESC path**, so leaving Settings by its back button
+leaves a stale pointer and ESC over our screen would run `umg_settings->resume()`. Hence the screen
+RECONCILES against the live switcher index every tick instead of trusting its own flag.
+
+**Two invariants the code enforces, both from `/qf` rounds:**
+
+1. **Row identity is the `lobbyId`, never an index into the network list.** `master.rs:531-553`
+   emits `state.lobbies.values()` from a `HashMap` and `lobby_client.cpp:57-75` never sorts, so one
+   host leaving while another joins gives the SAME COUNT in a DIFFERENT ORDER -- positional
+   identity is invalid by construction, not merely racy. A row remembers the id it was RENDERED
+   with, captured in the same pass as its text by the single writer.
+2. **Rows are never detached.** Nothing roots a detached row -- the panel's `Slots` is the only
+   reference -- so shrinking COLLAPSES surplus rows, keeping them rooted and un-hit-testable.
+
+**`Open()` is a deferred INTENT** with a 20 s TTL, consumed only inside a MAIN-menu tick
+(`isPause == false`). That is a first-hand positive observation and is stronger than any memoised
+world reading; it also cannot fire over gameplay, which matters because the harness reopens the
+browser from four failure-recovery paths in `session_runtime.cpp`, sometimes before a menu exists.
+
+**STILL OPEN, and named rather than implied:**
+- **Input is not wired.** No hover highlight, no row click, no Connect / Host / Refresh / Back
+  chrome. `NotePointerMoved()` is declared and defined but **called from nowhere**, and
+  `g_pointerMoved` is written and never read -- a write-only flag, kept only because the seam lands
+  in the next commit; if that commit slips, it should be deleted rather than left standing.
+- **The retire is not done.** `ui/server_browser.{h,cpp}` still ships. Its seam census is bigger
+  than a name grep found: besides the nine `server_browser::` call sites, `imgui_overlay.cpp:721-724`
+  opens it from `VOTVCOOP_BROWSER_OPEN` and logs `"server browser starts visible"`, `:796` closes it
+  in `Shutdown()`, `harness.cpp:37` includes it, and **`tools/cursor_probe.py:39,42` and
+  `tools/master_fetch_probe.py:78,89` both drive that env var and BLOCK on that literal log line.**
+  They must be retargeted in the same commit -- `cursor_probe`'s subject is ImGui's
+  `RenderMouseCursor` under capture, which the native browser does not hold, so it moves to
+  `VOTVCOOP_MENU_OPEN=1` rather than being renamed.
+- **§7c's style gap is unchanged**: nobody has captured `ui_settings` / `ui_saveSlots` themselves.
+- Cosmetic: the window has no border (only the fill donor is used), and column widths are fixed
+  weights with an 18 px gutter + `ClipToBounds` rather than measured.
 
 ---
 
@@ -840,7 +939,16 @@ load-bearing and should not be silently re-opened.
    - **O7**: donor residency per donor (step 4's table). All donors are now menu members — the row-instance donor was dropped in `/qf` round 7 (see step 4).
    - the delegate observation above, and the `input_owner` assertion.
 3. **P0 — the brush-handle fix, GATED on O5. THE GATE CAME BACK CLOSED (§8a): 0/4 handles
-   populated across 3/4 brushes that carry art, so there is NO handle bug and P0 IS NOT BUILT.**
+   populated across 3/4 brushes that carry art, so there is no live handle bug on this build.
+   SUPERSEDED 2026-08-26 (`fbc7be1c`): P0 is no longer a conditional fix at all.** A `/qf` critic
+   asked the question that dissolves it -- if the browser's new clone helper must ALWAYS zero the
+   handle, then `InjectCanvasButton`'s 0x278 memcpy is wrong by the same construction, since
+   `FButtonStyle` embeds four `FSlateBrush`es and the shipped code zeroed only the two
+   `FSlateSound` caches. So there is now exactly ONE brush clone in the tree
+   (`ue_wrap::umg::CloneStyle`), it takes a brush-offset TABLE (`FScrollBarStyle` has NINE brushes,
+   `FEditableTextBoxStyle` thirteen), and the shipped inject routes through it. Behaviour
+   preservation measured, not asserted: the injected MULTIPLAYER label's cyan glyph mask in the
+   menu screenshot is PIXEL-IDENTICAL before and after -- 489 pixels, same set, zero either side.
    The reasoning is kept because it is what the gate was measured against. `FSlateBrush` is 0x88: reflected fields end at
    `ImageType` @0x6F and the bitfield bools resume @0x80, so **the 16 bytes at +0x70 are an
    unreflected `FSlateResourceHandle` (a `TSharedPtr`)**. `FButtonStyle` is four brushes at
