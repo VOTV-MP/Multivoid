@@ -30,6 +30,8 @@
 
 #include "coop/net/session.h"
 
+#include <chrono>
+
 #include "coop/config/config.h"           // R-4b commit-0: ResolveInt for the wire knobs
 #include "coop/config/config_registry.h"  // rows::net_sendbuf_kb / rows::net_sendrate_kbs
 #include "coop/player/players_registry.h"
@@ -128,6 +130,62 @@ bool AcceptAllowed(ISteamNetworkingSockets* sockets, HSteamNetConnection hConn,
 
 }  // namespace
 
+// --- PENDING (UNADMITTED) CONNECTIONS -- security A2/A57, 2026-08-26 --------
+// See session.h for WHY this is a separate band rather than a per-slot
+// `admitted_` flag: with kMaxPeers == 4 there are three client seats, so an
+// unadmitted peer holding one would let three silent sockets lock the lobby.
+
+int Session::ParkPending(uint32_t hConn) {
+    for (int i = 0; i < kMaxPending; ++i) {
+        uint32_t expected = 0;
+        if (pendingConns_[i].compare_exchange_strong(expected, hConn)) {
+            // steady_clock, not GetTickCount64: this file does not pull in
+            // <windows.h>, and a monotonic stamp is the right primitive for a
+            // net-thread age anyway (wall-clock jumps must not free a seat).
+            const uint64_t nowMs = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count());
+            pendingSinceMs_[i].store(nowMs, std::memory_order_release);
+            return i;
+        }
+    }
+    return -1;  // band full -- caller closes; no seat was ever at risk
+}
+
+void Session::ReleasePending(uint32_t hConn) {
+    if (hConn == 0) return;
+    for (int i = 0; i < kMaxPending; ++i) {
+        uint32_t cur = hConn;
+        if (pendingConns_[i].compare_exchange_strong(cur, 0))
+            pendingSinceMs_[i].store(0, std::memory_order_release);
+    }
+}
+
+int Session::AdmitPending(int pendingIdx, uint32_t hConn) {
+    // THE SEAT IS SPENT HERE AND NOWHERE ELSE. Everything below is what the
+    // accept edge used to do eagerly, in the same order (the generation is
+    // minted BEFORE the peerConns_ store so any observer that can see the
+    // connection can also see who owns it -- session.h documents that order).
+    const int slot = FindFreePeerSlotForClient();
+    if (slot < 0) return -1;  // lobby genuinely full of ADMITTED players
+    auto* sockets = SteamNetworkingSockets();
+    if (!sockets) return -1;
+    sockets->SetConnectionUserData(static_cast<HSteamNetConnection>(hConn), slot);
+    peerGenBySlot_[slot].store(MintPeerGeneration(), std::memory_order_release);
+    peerConns_[slot].store(hConn);
+    // The peer is now entitled to everything a connected peer gets. This is the
+    // moment the Connected callback used to be, for a host's clients.
+    FinishPeerConnected(slot, hConn);
+    if (pendingIdx >= 0 && pendingIdx < kMaxPending) {
+        pendingConns_[pendingIdx].store(0, std::memory_order_release);
+        pendingSinceMs_[pendingIdx].store(0, std::memory_order_release);
+    }
+    if (state_.load() == ConnState::Disconnected) state_.store(ConnState::Handshaking);
+    UE_LOGI("net: ADMITTED pending conn 0x%08x -> slot %d (%d/%d seated)",
+            static_cast<unsigned>(hConn), slot, connectedPeerCount(), kMaxPeers - 1);
+    return slot;
+}
+
 int Session::FindFreePeerSlotForClient() {
     // Host: scan client slots [1..kMaxPeers-1] for the lowest unoccupied one.
     // Slot 0 reserved for "host self" -- never holds a remote connection here.
@@ -186,6 +244,78 @@ int Session::connectedPeerCount() const {
     return n;
 }
 
+// EVERYTHING A PEER GETS THE MOMENT IT IS ENTITLED TO BE A PEER -- lanes, the
+// send-buffer mirror, the lanes-configured flag that IsSlotReady() reads, and
+// the host's AssignPeerSlot. Extracted 2026-08-26 (security A2/A57) because the
+// admission gate created a SECOND caller: on a host the seat is now spent in
+// AdmitPending(), long after the Connected callback has come and gone, so this
+// work no longer coincides with that callback.
+//
+// It is a shared FUNCTION and not a copy on purpose. The first cut of the
+// admission gate left this block in the Connected branch and returned early for
+// a pending peer -- so the peer was admitted, got a slot and lanes, and the host
+// never sent AssignPeerSlot. `[V]` The smoke read exactly that: "ADMITTED
+// pending conn -> slot 1" on the host, and no "host assigned us peer slot" on
+// the client, which the harness reports as "client never reached connected".
+// Duplicating the block would have been the same site-list mistake one level
+// down (TRACKER A57b).
+void Session::FinishPeerConnected(int slot, uint32_t hConn) {
+    ConfigureLanesForPeer(hConn);
+    // R-4b: mirror the buffer size the connection actually runs with --
+    // the backlog drain's D8 reserve gate is computed against it. Same
+    // resolve as ConfigureLanesForPeer's pin (knob or the default).
+    {
+        const long bufKb =
+            coop::config::ResolveInt(coop::config_registry::rows::net_sendbuf_kb);
+        sendBufBytes_ = (bufKb > 0) ? static_cast<int>(bufKb) * 1024
+                                    : kDefaultSendBufBytes;
+    }
+    // Order matters: lanes-configured flag flips ONLY after the
+    // ConfigureConnectionLanes call returns, so IsSlotReady() readers
+    // see the slot as ready only when the per-kind lane mapping is
+    // live on the connection. Acquire/release pair below pairs with
+    // the IsSlotReady() relaxed load (any subsequent send through
+    // SendReliable etc. happens-before consumer dispatch).
+    peerLanesConfigured_[slot].store(true, std::memory_order_release);
+    if (state_.load() != ConnState::Connected) {
+        state_.store(ConnState::Connected);
+    }
+    UE_LOGI("net: peer slot %d CONNECTED (%s, h=0x%08x)",
+            slot, cfg_.role == Role::Host ? "host" : "client",
+            static_cast<unsigned>(hConn));
+    // Host tells the freshly-connected client which peer slot it was
+    // assigned (clients no longer self-stamp peerSessionId=1; the
+    // host is the only authority on slot assignment so two clients
+    // can't silently collide). Status callback runs on the net
+    // thread; SendReliableToSlot is thread-safe via GNS's queue.
+    if (cfg_.role == Role::Host) {
+        AssignPeerSlotPayload p{};
+        p.slot = static_cast<uint8_t>(slot);
+        // v13 (A4 2026-05-29): stamp the host's local Player Element id
+        // so the client can RegisterMirror it in slot 0. Read is from
+        // the net thread (this callback fires off ReceiveMessagesOnPoll
+        // / SteamNetworkingSockets thread), not the game thread; the
+        // host's slot-0 Element is allocated by net_pump.cpp every tick
+        // (idempotent) and stays for the session lifetime, so this read
+        // is well-defined unless the client connects in the
+        // ~tens-of-ms boot window before the first net pump tick --
+        // in which case the read returns kInvalidId, and the client
+        // receiver falls back to non-mirror routing (the field's
+        // contract documents 0/kInvalidId as "sender had no Element").
+        // v16 PR-FOUNDATION-1b: the hostContext byte that v14 added
+        // here is gone; per-peer stale-generation defense moved to the
+        // packet header's senderEpoch, stamped by WriteHeader for this
+        // SendReliableToSlot like every other outbound packet.
+        p.hostElementId = coop::players::Registry::Get().LocalPlayerElementId();
+        if (!SendReliableToSlot(slot, ReliableKind::AssignPeerSlot, &p, sizeof(p))) {
+            UE_LOGW("net: SendReliableToSlot(AssignPeerSlot=%d) failed", slot);
+        } else {
+            UE_LOGI("net: sent AssignPeerSlot slot=%d hostElementId=0x%08x to client",
+                    slot, p.hostElementId);
+        }
+    }
+}
+
 void Session::HandleConnStatusChanged(void* info) {
     auto* cb = static_cast<SteamNetConnectionStatusChangedCallback_t*>(info);
     const HSteamNetConnection hConn = cb->m_hConn;
@@ -207,42 +337,37 @@ void Session::HandleConnStatusChanged(void* info) {
                                      "banned", /*bEnableLinger*/false);
             return;
         }
-        const int slot = FindFreePeerSlotForClient();
-        if (slot < 0) {
-            UE_LOGW("net: host full (%d/%d slots) -- rejecting incoming connection",
-                    kMaxPeers - 1, kMaxPeers - 1);
-            sockets->CloseConnection(hConn, 0, "host full", false);
-            return;
-        }
         const EResult rc = sockets->AcceptConnection(hConn);
         if (rc != k_EResultOK) {
             UE_LOGW("net: AcceptConnection rc=%d", static_cast<int>(rc));
             sockets->CloseConnection(hConn, 0, "accept failed", false);
             return;
         }
-        // Tag the connection with its peer slot so ReceiveMessagesOnPollGroup
-        // can recover the sender in O(1) via msg->m_nConnUserData.
-        sockets->SetConnectionUserData(hConn, slot);
+        // SECURITY A2/A57 (2026-08-26): NO PLAYER SEAT IS SPENT HERE ANY MORE.
+        // This edge used to call FindFreePeerSlotForClient() before a single
+        // byte had been parsed, which meant anyone who opened a socket held one
+        // of the three client seats -- and, because roster_ledger.cpp:310 births
+        // the roster row on IsSlotReady alone, also a player number, a puppet in
+        // everyone's world and the ~20-subsystem person fan-out. The connection
+        // is parked instead; the seat is spent in AdmitPending() and nowhere
+        // else. See session.h's pending band and PLAN_04 s1 Action 2.
+        const int pend = ParkPending(hConn);
+        if (pend < 0) {
+            UE_LOGW("net: pending band full (%d) -- rejecting incoming connection", kMaxPending);
+            sockets->CloseConnection(hConn, 0, "too many pending", false);
+            return;
+        }
+        // Tag with the PENDING id, deliberately outside [1, kMaxPeers): the one
+        // drain site validates that range, so this connection's traffic reaches
+        // the admission handler and nothing else.
+        sockets->SetConnectionUserData(hConn, kPendingTag | pend);
         // Add to the host's PollGroup so we drain all clients with one call.
         const uint32_t hPoll = hPollGroup_.load();
         if (hPoll != 0) {
             sockets->SetConnectionPollGroup(hConn, static_cast<HSteamNetPollGroup>(hPoll));
         }
-        // GEN: mint -- host accept edge. Ordered BEFORE the peerConns_ store so
-        // any observer that can see the connection can also see who owns it.
-        peerGenBySlot_[slot].store(MintPeerGeneration(), std::memory_order_release);
-        peerConns_[slot].store(hConn);
-        // Only demote to Handshaking if currently Disconnected. If peer-1 is
-        // already Connected and peer-2 starts connecting, the aggregate state
-        // must remain Connected -- otherwise pose fan-out to peer-1 pauses,
-        // TryGetRemotePose returns false, event_feed re-sends Join, and
-        // harness teardown can trigger for ~10-200ms of handshake.
-        if (state_.load() == ConnState::Disconnected) {
-            state_.store(ConnState::Handshaking);
-        }
-        UE_LOGI("net: host accepted client at slot %d (h=0x%08x, %d/%d connected)",
-                slot, static_cast<unsigned>(hConn),
-                connectedPeerCount(), kMaxPeers - 1);
+        UE_LOGI("net: host accepted client into PENDING %d (h=0x%08x) -- no seat until admitted",
+                pend, static_cast<unsigned>(hConn));
         return;
     }
 
@@ -255,33 +380,46 @@ void Session::HandleConnStatusChanged(void* info) {
         // happens on host, the slot is unregistered. Late-register here so
         // the connection has a known slot and SetConnectionUserData lands.
         if (slot < 0 && cfg_.role == Role::Host) {
-            // GNS skipped None->Connecting, so the accept-edge ban filter above
-            // never ran for this connection. Re-run it here (Phase 2 audit fix)
-            // -- otherwise a banned IP that hits this rare path would be admitted.
-            if (!AcceptAllowed(sockets, hConn, acceptFilter_)) {
-                UE_LOGW("net: rejecting late-register connection (banned remote IP)");
-                sockets->CloseConnection(hConn, k_ESteamNetConnectionEnd_App_Generic,
-                                         "banned", /*bEnableLinger*/false);
-                return;
+            // SECURITY A2/A57 (2026-08-26): THIS IS THE SECOND ALLOCATION SITE,
+            // and it used to seat the peer. An earlier draft of this fix changed
+            // only the Connecting edge, which would have left every pending
+            // connection taking a seat right here -- the site-list-instead-of-
+            // invariant failure TRACKER A57b names. Both edges now run ONE
+            // policy: park, never seat.
+            //
+            // A connection reaching Connected with no slot is either (a) already
+            // parked at the Connecting edge -- the normal path now -- or (b) one
+            // where GNS skipped None->Connecting entirely (rare; its own header
+            // documents this). Case (b) never met the accept-edge ban filter, so
+            // it is re-run here exactly as before.
+            if (!IsPendingConn(hConn)) {
+                if (!AcceptAllowed(sockets, hConn, acceptFilter_)) {
+                    UE_LOGW("net: rejecting late-register connection (banned remote IP)");
+                    sockets->CloseConnection(hConn, k_ESteamNetConnectionEnd_App_Generic,
+                                             "banned", /*bEnableLinger*/false);
+                    return;
+                }
+                const int pend = ParkPending(hConn);
+                if (pend < 0) {
+                    UE_LOGW("net: pending band full at Connected -- closing h=0x%08x",
+                            static_cast<unsigned>(hConn));
+                    sockets->CloseConnection(hConn, 0, "too many pending", false);
+                    return;
+                }
+                sockets->SetConnectionUserData(hConn, kPendingTag | pend);
+                const uint32_t hPoll = hPollGroup_.load();
+                if (hPoll != 0) {
+                    sockets->SetConnectionPollGroup(hConn, static_cast<HSteamNetPollGroup>(hPoll));
+                }
+                UE_LOGI("net: late-parked PENDING %d (Connecting was skipped, h=0x%08x)",
+                        pend, static_cast<unsigned>(hConn));
             }
-            slot = FindFreePeerSlotForClient();
-            if (slot < 0) {
-                UE_LOGW("net: host full at Connected (Connecting was skipped) -- closing h=0x%08x",
-                        static_cast<unsigned>(hConn));
-                sockets->CloseConnection(hConn, 0, "host full", false);
-                return;
-            }
-            sockets->SetConnectionUserData(hConn, slot);
-            const uint32_t hPoll = hPollGroup_.load();
-            if (hPoll != 0) {
-                sockets->SetConnectionPollGroup(hConn, static_cast<HSteamNetPollGroup>(hPoll));
-            }
-            // GEN: mint -- the late-register accept edge (GNS skipped Connecting).
-            // Same authority moment as the normal accept above.
-            peerGenBySlot_[slot].store(MintPeerGeneration(), std::memory_order_release);
-            peerConns_[slot].store(hConn);
-            UE_LOGI("net: late-registered slot %d (Connecting was skipped, h=0x%08x)",
-                    slot, static_cast<unsigned>(hConn));
+            // Lanes are configured at ADMISSION (AdmitPending), not here: an
+            // unadmitted peer has no seat, and ConfigureLanesForPeer's whole
+            // purpose is per-kind app-traffic mapping it is not entitled to.
+            // The admission exchange itself rides raw SendMessageToConnection,
+            // which needs only the handle.
+            return;
         }
         if (slot < 0) {
             UE_LOGW("net: Connected on unknown connection h=0x%08x (role=%s)",
@@ -289,66 +427,20 @@ void Session::HandleConnStatusChanged(void* info) {
                     cfg_.role == Role::Host ? "host" : "client");
             return;
         }
-        ConfigureLanesForPeer(hConn);
-        // R-4b: mirror the buffer size the connection actually runs with --
-        // the backlog drain's D8 reserve gate is computed against it. Same
-        // resolve as ConfigureLanesForPeer's pin (knob or the default).
-        {
-            const long bufKb =
-                coop::config::ResolveInt(coop::config_registry::rows::net_sendbuf_kb);
-            sendBufBytes_ = (bufKb > 0) ? static_cast<int>(bufKb) * 1024
-                                        : kDefaultSendBufBytes;
-        }
-        // Order matters: lanes-configured flag flips ONLY after the
-        // ConfigureConnectionLanes call returns, so IsSlotReady() readers
-        // see the slot as ready only when the per-kind lane mapping is
-        // live on the connection. Acquire/release pair below pairs with
-        // the IsSlotReady() relaxed load (any subsequent send through
-        // SendReliable etc. happens-before consumer dispatch).
-        peerLanesConfigured_[slot].store(true, std::memory_order_release);
-        if (state_.load() != ConnState::Connected) {
-            state_.store(ConnState::Connected);
-        }
-        UE_LOGI("net: peer slot %d CONNECTED (%s, h=0x%08x)",
-                slot, cfg_.role == Role::Host ? "host" : "client",
-                static_cast<unsigned>(hConn));
-        // Host tells the freshly-connected client which peer slot it was
-        // assigned (clients no longer self-stamp peerSessionId=1; the
-        // host is the only authority on slot assignment so two clients
-        // can't silently collide). Status callback runs on the net
-        // thread; SendReliableToSlot is thread-safe via GNS's queue.
-        if (cfg_.role == Role::Host) {
-            AssignPeerSlotPayload p{};
-            p.slot = static_cast<uint8_t>(slot);
-            // v13 (A4 2026-05-29): stamp the host's local Player Element id
-            // so the client can RegisterMirror it in slot 0. Read is from
-            // the net thread (this callback fires off ReceiveMessagesOnPoll
-            // / SteamNetworkingSockets thread), not the game thread; the
-            // host's slot-0 Element is allocated by net_pump.cpp every tick
-            // (idempotent) and stays for the session lifetime, so this read
-            // is well-defined unless the client connects in the
-            // ~tens-of-ms boot window before the first net pump tick --
-            // in which case the read returns kInvalidId, and the client
-            // receiver falls back to non-mirror routing (the field's
-            // contract documents 0/kInvalidId as "sender had no Element").
-            // v16 PR-FOUNDATION-1b: the hostContext byte that v14 added
-            // here is gone; per-peer stale-generation defense moved to the
-            // packet header's senderEpoch, stamped by WriteHeader for this
-            // SendReliableToSlot like every other outbound packet.
-            p.hostElementId = coop::players::Registry::Get().LocalPlayerElementId();
-            if (!SendReliableToSlot(slot, ReliableKind::AssignPeerSlot, &p, sizeof(p))) {
-                UE_LOGW("net: SendReliableToSlot(AssignPeerSlot=%d) failed", slot);
-            } else {
-                UE_LOGI("net: sent AssignPeerSlot slot=%d hostElementId=0x%08x to client",
-                        slot, p.hostElementId);
-            }
-        }
+        FinishPeerConnected(slot, hConn);
         return;
     }
 
     if (newState == k_ESteamNetworkingConnectionState_ClosedByPeer ||
         newState == k_ESteamNetworkingConnectionState_ProblemDetectedLocally) {
         const int slot = FindPeerSlotForConn(hConn);
+        // SECURITY A2/A57: a pending (unadmitted) connection has NO slot, so
+        // FindPeerSlotForConn returns -1 and the whole `if (slot >= 0)` teardown
+        // below is already a no-op for it -- that guard predates this change and
+        // is why a slotless close needed no other edits. What it cannot do is
+        // free the pending entry, so that happens here. Unconditional: releasing
+        // a handle that was never parked is a no-op by construction.
+        ReleasePending(hConn);
         UE_LOGW("net: peer slot %d closed (oldState=%d reason='%s')",
                 slot, static_cast<int>(oldState), cb->m_info.m_szEndDebug);
         // Client: the host closed OUR connection (kick / ban / host quit / host

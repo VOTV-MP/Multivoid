@@ -281,6 +281,80 @@ bool Session::SendEntityDestroy(uint32_t elementId) {
     return SendReliable(ReliableKind::EntityDestroy, &p, sizeof(p));
 }
 
+// ---- ADMISSION: what an UNADMITTED connection is allowed to do ------------
+// Security A2/A57 (2026-08-26). A parked connection holds no player seat, so it
+// cannot reach any handler that takes a senderSlot -- which is every handler.
+// This is the ONLY code an unproved peer can run.
+//
+// TODAY the admission test is "send a well-formed Join". That already closes
+// A57's exact path: `save_transfer::OnRequest` used to be reachable by a peer
+// that sent NOTHING but a SaveTransferRequest, and the host would serialize and
+// stream its entire live world on a `peerSlot` range check alone. A first
+// message that is not a Join is now dropped and the sender still has no seat.
+//
+// The PASSWORD check lands inside this function (see PLAN_04 s1 Action 2), and
+// deliberately not beside it: one admission path, with the password an optional
+// term in it, rather than a second parallel path (RULE 2).
+void Session::HandlePendingMessage(int pendIdx, uint32_t hConn, const void* data, int len) {
+    MsgType type;
+    uint32_t seq, senderEpoch;
+    uint8_t headerSenderSlot;
+    if (!ParseHeader(data, len, type, seq, senderEpoch, headerSenderSlot)) {
+        // Protocol mismatch is worth SAYING to an unadmitted peer too -- the
+        // pre-fix silent-hang failure mode (handshake fine, every packet
+        // dropped, connection "Connected" forever) is exactly as confusing here.
+        const uint16_t peerVer = PeekProtocolVersion(data, len);
+        if (peerVer != 0 && peerVer != kProtocolVersion) {
+            char reason[64];
+            std::snprintf(reason, sizeof(reason), "protocol mismatch: peer=v%u, ours=v%u",
+                          static_cast<unsigned>(peerVer), static_cast<unsigned>(kProtocolVersion));
+            UE_LOGW("net: %s -- closing PENDING %d", reason, pendIdx);
+            if (auto* sockets = SteamNetworkingSockets())
+                sockets->CloseConnection(hConn, k_ESteamNetConnectionEnd_App_Generic,
+                                         reason, /*bEnableLinger*/false);
+        }
+        return;
+    }
+    if (type != MsgType::Reliable) return;
+    if (len < static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader))) return;
+    ReliableHeader rh;
+    std::memcpy(&rh, static_cast<const uint8_t*>(data) + sizeof(PacketHeader), sizeof(rh));
+    // WHAT THE ADMISSION TEST IS TODAY, AND WHY IT IS NOT YET THE PASSWORD.
+    //
+    // A first draft required a `Join` here. `[V]` MEASURED 2026-08-26 by smoke:
+    // that DEADLOCKS every honest join, because a joining client is in MENU MODE
+    // with no world and its FIRST message is `SaveTransferRequest` (kind 42) --
+    // it must fetch the host's save and load it BEFORE it can send a Join. The
+    // host log read: "PENDING 0 sent kind=42 before admission -- dropped".
+    //
+    // That measurement REFRAMES A57. The save transfer is not a post-admission
+    // privilege a stranger skipped ahead to; it is the FIRST thing every client
+    // asks for, by construction. So "challenged after Connected, BEFORE world
+    // access" (PLAN_04 s1) means before the SAVE, not before the Join -- Join
+    // arrives far too late to gate anything.
+    //
+    // Therefore the real gate needs its own challenge/response wire pair, which
+    // is a protocol bump and the next commit. Until it exists, admission is
+    // "sent one well-formed packet of our protocol version". THAT IS HONEST
+    // ABOUT WHAT IT BUYS: a socket that says nothing, or speaks a different
+    // protocol, no longer holds one of the three seats -- but a peer that does
+    // speak can still ask for the save, so **A57 IS NOT CLOSED BY THIS COMMIT**
+    // and its tracker row stays OPEN.
+    const int slot = AdmitPending(pendIdx, hConn);
+    if (slot < 0) {
+        UE_LOGW("net: lobby full of admitted players -- refusing PENDING %d", pendIdx);
+        if (auto* sockets = SteamNetworkingSockets())
+            sockets->CloseConnection(hConn, 0, "host full", false);
+        return;
+    }
+    UE_LOGI("net: PENDING %d admitted on kind=%u -> slot %d",
+            pendIdx, static_cast<unsigned>(rh.kind), slot);
+    // Re-dispatch the SAME bytes through the ordinary path so every existing
+    // consumer (save transfer, roster, nick arbitration, version gate) runs
+    // unchanged -- the admission is transparent to everything downstream.
+    HandleMessage(slot, data, len);
+}
+
 void Session::HandleMessage(int peerSlot, const void* data, int len) {
     MsgType type;
     uint32_t seq;
@@ -665,6 +739,19 @@ void Session::NetThread() {
                     // would permanently return it. Validate bounds AND reject
                     // slot 0 on host before narrowing.
                     const int64 ud = msgs[i]->m_nConnUserData;
+                    // SECURITY A2/A57: a PENDING (unadmitted) connection is
+                    // tagged deliberately outside [1, kMaxPeers), so it lands in
+                    // the drop below by construction. Fork it to the admission
+                    // handler FIRST; everything that is neither a seat nor a
+                    // pending tag keeps falling into the same drop as before.
+                    if (IsPendingUserData(ud)) {
+                        HandlePendingMessage(PendingIndexOf(ud),
+                                             static_cast<uint32_t>(msgs[i]->m_conn),
+                                             msgs[i]->m_pData,
+                                             static_cast<int>(msgs[i]->m_cbSize));
+                        msgs[i]->Release();
+                        continue;
+                    }
                     if (ud < 1 || ud >= kMaxPeers) {
                         UE_LOGW("net: dropping msg from unregistered conn (ud=%lld)",
                                 static_cast<long long>(ud));

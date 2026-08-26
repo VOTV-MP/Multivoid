@@ -559,6 +559,9 @@ private:
     // came from; on host that's read from msg->m_nConnUserData (set via
     // SetConnectionUserData at AcceptConnection time); on client peerSlot=0.
     void HandleMessage(int peerSlot, const void* data, int len);
+    // Everything a PENDING (unadmitted) connection sends arrives here instead.
+    // NET THREAD ONLY, from the single drain site. Security A2/A57.
+    void HandlePendingMessage(int pendIdx, uint32_t hConn, const void* data, int len);
     // v37 NPC pose batch send/receive (defined in session_npc.cpp). Serialize
     // builds the body (EntityPoseBatchHeader + entries) of the live local batch
     // into `buf` (>= kNpcPoseDatagramMax) leaving the leading PacketHeader for the
@@ -643,6 +646,81 @@ private:
     // by AcceptConnection in FindFreePeerSlotForClient order). On client:
     // peerConns_[0] = the host's connection, rest unused.
     std::array<std::atomic<uint32_t>, kMaxPeers> peerConns_{};
+
+    // --- PENDING (UNADMITTED) CONNECTIONS -- security A2/A57, 2026-08-26 ------
+    // A connection that has been accepted by GNS but has NOT yet proved it may
+    // be here holds NO PLAYER SEAT. It lives here instead, and its
+    // SetConnectionUserData carries `kPendingTag | index` -- deliberately
+    // OUTSIDE [1, kMaxPeers), which is the range the single drain site
+    // (session.cpp:667-674) validates before narrowing to a slot.
+    //
+    // WHY A SEPARATE BAND AND NOT A per-slot `admitted_` FLAG. `[V]` kMaxPeers
+    // is 4, so there are exactly THREE client seats. If an unadmitted peer held
+    // a seat, three sockets that say nothing would hold the entire lobby until a
+    // timeout and re-take it instantly -- a lockout of the host's real friends
+    // that no deadline fixes. Holding no seat makes that impossible rather than
+    // time-bounded.
+    //
+    // WHAT IT BUYS FOR FREE: `[V]` roster_ledger.cpp:310 births the roster row
+    // (and mints the player number, and drives the ~20-subsystem person fan-out)
+    // on `IsSlotReady(slot)` alone, and net_pump.cpp:511 reads the same
+    // predicate for the puppet edge. A peer with NO SLOT is never ready for any
+    // slot, so all ~20 IsSlotReady consumers inherit this gate with ZERO edits.
+    // That is why this is a band and not a new predicate at ~20 call sites.
+    static constexpr int64_t  kPendingTag   = 0x7000'0000LL;
+    static constexpr int      kMaxPending   = 8;  // sockets, not seats
+    std::array<std::atomic<uint32_t>, kMaxPending> pendingConns_{};
+    // Monotonic ms stamp of when each pending entry was accepted; 0 = free.
+    // Bounds how long an un-proved socket may sit, which is a RESOURCE bound --
+    // it is deliberately NOT the security control (holding no seat is).
+    std::array<std::atomic<uint64_t>, kMaxPending> pendingSinceMs_{};
+
+    // True when a drained message's m_nConnUserData names a pending connection
+    // rather than a player seat. The drain site asks this BEFORE its existing
+    // `ud < 1 || ud >= kMaxPeers` drop, so a pending peer's traffic reaches the
+    // admission handler and everything else keeps falling into that drop.
+    static bool IsPendingUserData(int64_t ud) {
+        return (ud & kPendingTag) == kPendingTag &&
+               (ud & ~kPendingTag) >= 0 && (ud & ~kPendingTag) < kMaxPending;
+    }
+    static int  PendingIndexOf(int64_t ud) { return static_cast<int>(ud & ~kPendingTag); }
+
+public:
+    // Park a freshly-accepted connection in the pending band. Returns the
+    // pending index, or -1 when the band is full (caller closes the connection).
+    // NET THREAD ONLY (both accept edges).
+    int  ParkPending(uint32_t hConn);
+    // Promote a pending connection to a real player seat: allocates the lowest
+    // free slot, re-points the connection's user data at it, mints the occupancy
+    // generation and configures lanes -- i.e. everything the accept edge used to
+    // do eagerly. Returns the slot, or -1 if the lobby is full (caller closes).
+    // NET THREAD ONLY.
+    int  AdmitPending(int pendingIdx, uint32_t hConn);
+
+private:
+    // Lanes + send-buffer mirror + the lanes-configured flag + (host) the
+    // AssignPeerSlot send. TWO callers: the Connected callback for a client's
+    // link to the host, and AdmitPending for a host's newly-seated client.
+    void FinishPeerConnected(int slot, uint32_t hConn);
+public:
+    // Drop a pending entry (its connection closed, or it was refused).
+    void ReleasePending(uint32_t hConn);
+    // Is this connection already parked? NET THREAD ONLY.
+    bool IsPendingConn(uint32_t hConn) const {
+        if (hConn == 0) return false;
+        for (int i = 0; i < kMaxPending; ++i)
+            if (pendingConns_[i].load(std::memory_order_acquire) == hConn) return true;
+        return false;
+    }
+    // The pending index for a connection, or -1. NET THREAD ONLY.
+    int PendingIndexForConn(uint32_t hConn) const {
+        if (hConn == 0) return -1;
+        for (int i = 0; i < kMaxPending; ++i)
+            if (pendingConns_[i].load(std::memory_order_acquire) == hConn) return i;
+        return -1;
+    }
+
+private:
     // Set in the Connected callback after ConfigureLanesForPeer; cleared
     // when peerConns_[slot] is zeroed on disconnect. See IsSlotReady().
     std::array<std::atomic<bool>, kMaxPeers> peerLanesConfigured_{};
