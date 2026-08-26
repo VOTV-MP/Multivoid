@@ -1874,7 +1874,9 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 - **Classify by the predicate you are ENFORCING, not by a property of the wire** (2026-08-26, two `/qf` passes on one
   register row). The row asks a question about **what a HANDLER does with `senderSlot`**. I sized it
   seven times by WIRE properties instead and produced seven wrong sets: 11 lanes (assembled, never
-  enumerated) -> 36 payload structs (really 45 structs / 69 fields, 16 of them multi-subject) -> 17
+  enumerated) -> 36 payload structs (corrected then to "45 structs / 69 fields, 16 multi-subject" --
+  **and that correction was itself falsified 2026-08-26: `[V]` 40 / 53 / ~5, because the census counted
+  by field TYPE and `WireKey` carries asset names as well as identities**) -> 17
   by a two-property intersection -> "17 is the set" (falsified by one case I had already measured) ->
   "so strike that case" (backwards, for a reason the wire property could not see) -> 48 handlers
   (contaminated: `[V]` 52 exact `if (sender{,Peer}Slot ==/!= 0)` are ROLE tests, so 48 is a LOWER
@@ -2023,6 +2025,31 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   field — that is where the role is written. Never re-quote a carried count without re-deriving it;
   when publishing one, say which method produced it.
   `memory/lesson_a_fields_type_is_not_its_role.md`
+
+- **Two agents, one machine resource: the lost run is cheap, the FALSE ATTRIBUTION is not**
+  (2026-08-26). Two Claude sessions on the same box destroyed several of each other's game runs --
+  every `mp.py` scenario begins by killing EVERY VotV process. The expensive part was that the
+  survivor reports `FAIL: expected 2 peers at end, got 1`, which is **indistinguishable from a real
+  defect in whatever was just changed**: both sessions debugged their own code, and one sent a
+  confident "your build is a boot-killer" message that took an mtime census across every modified
+  file to retract. Two pieces of that evidence were reasonable and both were wrong — *"zero lines
+  from your subsystem"* did not discriminate (the process died far upstream of where that subsystem
+  initialises, so its silence was consistent with ANY cause), and *"your build was on disk"* was
+  backwards because **whoever ran `deploy-all` last owns the DLL** and neither had run `md5sum`.
+  Third hazard, quieter: a shared file held BOTH sessions' uncommitted work, so one `git add` would
+  have swept the other's away. FIXED as a lock enforced at `mp.py`'s dispatch point
+  (`tools/game_lock.py`, `docs/CROSS_SESSION.md`) rather than a courtesy, because a protocol that
+  must be REMEMBERED gets forgotten under time pressure — the same shape as the argument-type
+  ratchet. The lock's own non-obvious part: staleness is NOT uniform — a scenario's lock is stale on
+  a dead PID, but a launcher that starts a game and EXITS ON PURPOSE has a dead PID by design, and
+  judging both alike handed a held lock straight to the second session (caught by a drill, not by
+  review).
+  LOOK HERE FIRST: when two agents share a machine resource, identify its DESTRUCTIVE operation and
+  assume a concurrent run's failure message will lie about the cause. Before debugging a failure
+  during shared work: check whether anyone else ran, `md5sum` the artifact you think you measured,
+  and `git diff` any shared file before staging — stage your own hunks with `git apply --cached`
+  after a `--check` dry run.
+  `memory/lesson_two_agents_one_machine_resource.md`
 
 ### 1b. Standing working agreements (previously indexed NOWHERE)
 
@@ -4414,6 +4441,10 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   `[V]` one of them (`prop_drop_intent.cpp:370-386`) resolves no eid at all (it takes a key, a class and a
   point, then spawns), so it could never have been migrated onto an eid resolver and the count had never
   been checked after being written.
+  **THE FIX SHIPPED 2026-08-26 (`7de9228c`)**: `coop/element/intent_authority` returns an
+  outcome-carrying result instead of a pointer, so the caller branches on WHY the resolve failed
+  (and gets the actor back on a type mismatch, which the heal branch consumes). The canonical
+  helper is unchanged and still right for the ~19 host-authored sites.
   `memory/lesson_a_canonical_helper_fuses_failure_modes_its_callers_branch_on.md`
 - **A positional resolve table makes a mid-row removal SILENTLY corrupting — and BOTH the literal-diff
   instrument AND the compiler are blind to a missed index shift** (2026-07-19 comp_pane /qf R1: an
