@@ -4278,6 +4278,28 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 
 ## 8. Build / deploy / git hygiene
 
+- **A DELETION COMMIT OWES A CENSUS IN ITS MESSAGE, NOT JUST THE DELETION.** 2026-08-26, found by a
+  `/qf` critic. `docs/security/TRACKER.md` A2 records *"the false comment is DELETED (`6f0c2bf8`)"*,
+  and that commit's own subject reads `+ 2 false comments`. `[V]` A **second live copy of the same
+  false assertion** was still shipping five weeks later: `coop/net/lobby_client.h:41`,
+  `bool locked = false; // passworded (UI hint; gate is the game-layer join-secret)`. `6f0c2bf8`
+  deleted the copy in the Rust master and never touched this one, and `[V]` a tree-wide grep for
+  `join[_]?secret` returns **one hit** -- a future-work marker at `coop/net/session.h:104` -- so the
+  gate both comments asserted has never existed anywhere. The structural problem: **a deletion
+  message names what it REMOVED and cannot report what it MISSED**, so "2 false comments" is
+  unfalsifiable afterwards -- there is no artifact saying what pattern was searched or how many sites
+  it matched. The miss then propagates: A2's status line inherited the commit's scope claim verbatim,
+  so a census nobody ran became a fact in the security tracker. Same family as **W11** (a
+  byte-identical `SanitizeUtf8` copy living inside a file that already included the module claiming
+  sole ownership) and `sdk_profile_names.h:446` (a "not cloned" comment about the wrong object) --
+  three instances of *a completeness claim no one measured, repeated downstream until it read as
+  established*. *Look FIRST:* write the census INTO the message -- `grep -rn '<pattern>' -> 3 hits,
+  2 removed, 1 kept` is falsifiable, "+ 2 false comments" is not; when a doc cites a commit for a
+  completeness claim, treat that as a claim about the commit's SCOPE (the one thing commits do not
+  record) and re-run the search before re-asserting it; and include `--include=*.rs`, because this
+  defect spanned the C++ tree and the Rust master and a C++-only grep would have found only the
+  survivor. `memory/lesson_a_deletion_commit_owes_a_census.md`
+
 
 - **"Ask before push" assumes ONE session owns the push** (2026-08-25, two Claude sessions in one
   working copy). I obeyed the rule exactly — six commits, zero pushes — and three of my commits reached

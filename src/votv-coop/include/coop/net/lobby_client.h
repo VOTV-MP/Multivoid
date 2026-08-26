@@ -38,7 +38,14 @@ struct LobbyRow {
                             // mismatch with an "update your mod" message; 0 = the host
                             // predates the field -- not verifiable, the wire-level
                             // protocol-mismatch close stays the backstop). 2026-06-11.
-    bool locked = false;    // passworded (UI hint; gate is the game-layer join-secret)
+    // A BROWSER BADGE AND NOTHING ELSE -- there is NO admission gate behind it, and a
+    // "locked" lobby is enterable by anyone (security A2). This comment used to assert
+    // "gate is the game-layer join-secret"; no join secret exists anywhere in the tree --
+    // a grep for join[_]?secret returns ONE hit, a future-work comment at session.h:104.
+    // `6f0c2bf8` deleted the MASTER's copy of that same false assertion and missed this
+    // one, which is why its own message ("+ 2 false comments") is now false about its
+    // scope: a deletion owes a CENSUS, not a fix at the site that happened to be read.
+    bool locked = false;
     bool direct = false;    // conn=="direct": a port-forwarded UDP host (browser
                             // badge; join returns ip:port, not ICE creds). 2026-06-11.
 };
