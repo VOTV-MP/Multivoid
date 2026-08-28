@@ -2075,6 +2075,23 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   encodes correctness its data struct's field names do not** — the version cell was
   `game + " b" + proto`, not `game + version`.
   `memory/lesson_a_targeted_grep_is_not_a_census.md`
+- **A signature match is class membership, not attribution — and "exactly N" must be counted over
+  the WHOLE population** (2026-08-28/29, the fix-B RED table). The §4b dump census called hash
+  `3E0EBD39…` "the double-detour cohort, exactly 7 dumps" and the families "discriminable by error
+  string alone"; filing the knob-repro's fresh dump forced a recount, and the hash + error-string
+  pair had **5 more members from 2026-05-25/30 — the proxy era, when the claimed mechanism could
+  not exist** (no PolyHook in-process). The census had read all 102 dumps; the failure was
+  semantics, not scope — "7 in the window my hypothesis is about" was written as "exactly 7",
+  and the signature (`#GP` at a non-canonical address → "AV read 0xffff…ffff") is the CLASS of
+  "call through a garbage pointer", which many roots produce. A future triager matching a dump's
+  hash against the doc would have closed the wrong investigation on it. Attribution rests on the
+  timing bracket + the mechanism decode + the on-demand repro (`UE4SS_ARC.md` §4d); the match is
+  one leg, never the proof.
+  LOOK HERE FIRST: before writing "exactly N" / "unique to X" / "discriminable by Y alone" about
+  any signature (crash hash, error string, log line, AOB), run the matcher over the ENTIRE
+  population and check the complement — one member outside the predicted window demotes the
+  signature from fingerprint to class.
+  `memory/lesson_a_signature_match_is_class_membership_not_attribution.md`
 
 - **A `[V]` with no citation deletes its own fact — and a grep for a VALUE cannot hit a STRUCTURED
   dump** (2026-08-25, A54 design pass). `mainPlayer.armLength = 200.0` carried `[V]` in four places
