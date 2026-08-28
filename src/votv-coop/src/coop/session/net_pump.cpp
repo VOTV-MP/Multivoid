@@ -54,6 +54,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "coop/session/teleport_client.h"  // 2026-08-29: the КПП join-spawn (client pawn-Set edge)
 #include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/core/types.h"
 
@@ -674,7 +675,24 @@ void Tick(coop::net::Session& session) {
     // for the travel so nothing of ours runs to "back it up" anyway.)
 
     if (g_netLocal.Raw() && !g_netLocal.Alive()) { g_netLocal.Reset(); g_netLocalController.Reset(); }
-    if (!g_netLocal.Raw()) g_netLocal.Set(localNow);  // resolved once at the top of this tick
+    if (!g_netLocal.Raw()) {
+        g_netLocal.Set(localNow);  // resolved once at the top of this tick
+        // КПП JOIN SPAWN (2026-08-29, USER RULE): every CLIENT appearance in a coop
+        // world spawns at the КПП start point -- never at the transferred save's
+        // playerTransform (= the HOST's saved position; fresh joiners materialized
+        // inside the host's base / on top of the host). The host alone keeps its
+        // save position. This pawn-Set edge is exactly "a new local body exists":
+        // it fires once per world appearance -- the first join AND every
+        // save-transfer/world-change reload -- while the load screen still covers
+        // the swap. (A save-transfer join runs TWO level loads; both pawns get the
+        // teleport, and the second, final one is the one that matters.)
+        if (localNow && isConnected && !isHost) {
+            coop::teleport_client::ApplyLocally(
+                {ue_wrap::profile::name::kKPPSpawnX, ue_wrap::profile::name::kKPPSpawnY,
+                 ue_wrap::profile::name::kKPPSpawnZ, 0.f, 0.f, 0.f});
+            UE_LOGI("net_pump: CLIENT spawn -> KPP start point (join/world appearance)");
+        }
+    }
     // The `!g_localDeathHandled` gate: the FIRST tick after death this block still runs
     // (it is where death is detected + the synchronous teardown fires), but once handled
     // we STOP all local-send work. Hands-on showed the ragdoll sender kept emitting 1140+

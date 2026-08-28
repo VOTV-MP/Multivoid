@@ -33,6 +33,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -78,6 +79,23 @@ void StoreSkinForSlot(int slot, std::string name) {
     coop::roster_ledger::SetSkin(slot, std::move(name));
     if (RemotePlayer* p = coop::players::Registry::Get().Puppet(static_cast<uint8_t>(slot)))
         p->ApplySkin(coop::roster_ledger::Get(slot).skin);
+}
+
+void TickSkinConverge() {
+    // See the header note. Throttled here so the call site stays a bare call.
+    static uint64_t sLastMs = 0;
+    const uint64_t now = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+    if (now - sLastMs < 2000) return;
+    sLastMs = now;
+    auto& reg = coop::players::Registry::Get();
+    for (int slot = 0; slot < net::kMaxPeers; ++slot) {
+        RemotePlayer* p = reg.Puppet(static_cast<uint8_t>(slot));
+        if (!p) continue;
+        const std::string& skin = coop::roster_ledger::Get(slot).skin;
+        if (!skin.empty()) p->ApplySkin(skin);  // early-out when already applied
+    }
 }
 
 // Parse one [u8 len][ASCII] field. Returns bytes consumed (0 = malformed/absent);

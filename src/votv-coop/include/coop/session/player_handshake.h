@@ -250,4 +250,12 @@ void BroadcastRosterFromHost(coop::net::Session& session,
 bool HandleRosterRow(coop::net::Session& session,
                         const coop::net::Session::ReliableMessage& msg);
 
+// SKIN CONVERGE (2026-08-29): re-assert every live puppet's ledger skin on a
+// ~2 s throttle. RemotePlayer::ApplySkin early-outs when already applied, so a
+// converged slot costs one string compare -- but a puppet whose apply DEFERRED
+// (client_model's atomic mesh+tex gate: the pak was still mounting during the
+// join window) now heals instead of wearing the wrong body for the session.
+// Game thread (subsystems::TickGameplay).
+void TickSkinConverge();
+
 }  // namespace coop::player_handshake

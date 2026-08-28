@@ -37,10 +37,64 @@ constexpr float kMaxDamagePerHit = 1000.f;
 
 bool ValidDamage(float d) { return std::isfinite(d) && d > 0.f && d <= kMaxDamagePerHit; }
 
+// ---- the impact-entry cancel (2026-08-29; header block) ---------------------
+// mainPlayer_C's three native->BP impact events, resolved lazily (the class loads
+// with gameplay). One shared PRE callback; registered once each.
+const wchar_t* const kImpactEntryNames[3] = {
+    L"impactDamage", L"impactDamageCPP", L"impactSquishCPP",
+};
+void*    g_impactFns[3] = {};
+bool     g_impactInterceptorsDone = false;
+uint32_t g_resolveThrottle = 0;
+uint32_t g_canceled = 0;   // rate-latched log counter
+
+// PRE cancel: a physical impact dispatched on a mainPlayer BODY that is NOT the
+// local possessed player (a peer's puppet, or the F1 skin-preview mannequin) must
+// not run the BP body -- it writes the PER-MACHINE saveSlot.health singleton and
+// drained the HOST when lethal contact resolved against a puppet in the host's
+// world (the "kill a player -> the host dies -> server falls" field report). The
+// victim's own machine computes the same contact on its own possessed player
+// (self==local -> pass-through), so nothing is lost -- MTA's victim-authoritative
+// shape, no relay. Coop-session gated: solo SP has only the local body anyway,
+// and an unset registry must never eat solo damage.
+bool OnImpactEntryPre(void* self, void* /*params*/) {
+    if (!g_session || !g_session->connected()) return false;
+    if (!self) return false;
+    if (coop::players::Registry::Get().IsLocal(self)) return false;  // own body: native path
+    const uint32_t n = ++g_canceled;
+    if (n <= 5 || (n % 50) == 0) {
+        UE_LOGI("player_damage: canceled impact entry on NON-LOCAL body %p (#%u) -- "
+                "the hit body's owner computes its own damage", self, n);
+    }
+    return true;  // cancel: the singleton saveSlot write must not run for a foreign body
+}
+
 }  // namespace
 
 void Install(coop::net::Session* session) {
     g_session = session;
+}
+
+void Tick() {
+    if (g_impactInterceptorsDone) return;
+    // FindClass walks GUObjectArray -- ~1 Hz of the pump until mainPlayer_C loads
+    // (the wisp_attack Install throttle shape).
+    if ((g_resolveThrottle++ % 125) != 0) return;
+    void* cls = R::FindClass(L"mainPlayer_C");
+    if (!cls) return;
+    bool all = true;
+    for (int i = 0; i < 3; ++i) {
+        if (!g_impactFns[i]) g_impactFns[i] = R::FindFunction(cls, kImpactEntryNames[i]);
+        if (!g_impactFns[i]) { all = false; continue; }
+        if (!GT::RegisterInterceptor(g_impactFns[i], &OnImpactEntryPre)) all = false;
+    }
+    if (all) {
+        g_impactInterceptorsDone = true;
+        UE_LOGI("player_damage: impact-entry PRE cancels installed (impactDamage=%p "
+                "impactDamageCPP=%p impactSquishCPP=%p) -- non-local bodies never run "
+                "the saveSlot damage body",
+                g_impactFns[0], g_impactFns[1], g_impactFns[2]);
+    }
 }
 
 void OnWireDamage(const coop::net::PlayerDamagePayload& p) {

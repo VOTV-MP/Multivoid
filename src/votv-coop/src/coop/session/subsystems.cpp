@@ -103,6 +103,7 @@
 #include "coop/props/grab_observer.h"
 #include "coop/player/item_activate.h"
 #include "coop/player/player_damage.h"
+#include "coop/session/player_handshake.h"  // TickSkinConverge (2026-08-29)
 #include "coop/player/ko_respawn.h"
 #include "coop/player/skin_preview.h"
 #include "coop/net/session.h"
@@ -533,6 +534,8 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     coop::dev::vitals_keepalive::Tick();     // [dev] long-exposure keepalive (single latched read when off)
     coop::spawn_authority::Tick();           // T1 Inc-1 t1 park driver (client-session gate; cheap when idle)
     coop::ko_respawn::Tick();                // 2026-08: KO-respawn timer + AddPlayerDamage interceptor lazy install
+    coop::player_damage::Tick();             // 2026-08-29: impact-entry PRE cancels lazy install (non-local bodies)
+    coop::player_handshake::TickSkinConverge();  // 2026-08-29: heal a join-window deferred skin apply (~2 s throttle)
     coop::skin_preview::Tick();              // 2026-08: F1-skins live mannequin preview (spawn/apply/position/hide)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:device_occupancy"}; coop::device_occupancy::Tick(); }    // v63 device occupancy: activeInterface edge poll + pending claim retry
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:console_state"}; coop::console_state_sync::Tick(); }  // v64 signal-catcher: host sky poll / client mirror sweep / desk + dish owner streams

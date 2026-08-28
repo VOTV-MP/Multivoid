@@ -303,3 +303,5 @@ docs/security/
 # resolves LOCALLY, none resolves on GitHub, and history is NOT rewritten. Public-facing docs must
 # not link it -- docs/README.md and the other tracked docs were de-linked in the same commit.
 docs/DOCS_ARC.md
+assets/paks/*
+!assets/paks/README.md

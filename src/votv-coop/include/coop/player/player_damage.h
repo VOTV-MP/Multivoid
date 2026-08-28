@@ -19,6 +19,22 @@
 // whose ProcessEvent-vs-ProcessInternal dispatch can't be determined statically), and
 // VOTV enemies don't ambient-spawn. See research/findings/votv-player-vitals-death-
 // RE-2026-05-30.md (Inc3-WIRE design section).
+//
+// 2026-08-29 -- THE IMPACT-ENTRY CANCEL (the "kill a player -> the HOST dies" field
+// report). The deferred probe RAN (VERDICT #6, real 2-peer log 01:11): the DIRECT
+// entries ("Add Player Damage" / addDamage) are possession-guarded no-ops on an
+// unpossessed puppet -- but the IMPACT surface is not those. Physical kills (ATV
+// overrun, thrown props, coins) reach the player via the native impact system
+// DISPATCHING the BP events impactDamage / impactDamageCPP / impactSquishCPP ON THE
+// HIT BODY (native->BP dispatch == ProcessEvent == interceptable), and the BP body
+// writes the PER-MACHINE saveSlot.health singleton no matter which body ran it. So a
+// contact resolving against a PUPPET on the host's world drained the HOST -- lethal
+// contact killed the host and took the server down. The victim's OWN machine computes
+// the same contact against its possessed player natively (field-proven: victims DID
+// die), so the fix is the MTA victim-authoritative shape with NO new wire: a PRE
+// interceptor cancels all three impact entries whenever `self` is NOT the local
+// possessed player (a puppet, or the F1 skin-preview mannequin). Each machine keeps
+// exactly its own player's damage.
 
 #pragma once
 
@@ -27,8 +43,14 @@ namespace coop::net { class Session; struct PlayerDamagePayload; }
 namespace coop::player_damage {
 
 // Store the session pointer for SendPlayerDamage. Idempotent; nullptr disables sends.
-// No observers are installed (detection is deferred). Game thread.
+// Game thread.
 void Install(coop::net::Session* session);
+
+// Game-thread per-tick drive: lazily resolve mainPlayer_C's three impact entries
+// (impactDamage / impactDamageCPP / impactSquishCPP) and register the non-local-body
+// PRE cancel (see the header block above). Throttled internally; cheap once latched.
+// Called from subsystems::TickGameplay.
+void Tick();
 
 // OWNER side (receiver). Validates the payload, then on the game thread verifies it
 // addresses THIS peer (targetElementId == our local Player Element id) and runs

@@ -64,7 +64,11 @@ is deleted to uninstall.
    `WindowsNoEditor\VotV\Binaries\Win64\Mods\Multivoid`
    inside your game install — so that the file
    `...\Mods\Multivoid\dlls\main.dll` exists.
-3. Start the game. The main menu now has a **Multiplayer** entry showing the
+3. If the zip has a `pak\` folder (the player-model skins), copy its **contents**
+   into `WindowsNoEditor\VotV\Content\Paks\LogicMods\multivoid`
+   (create the folder if it does not exist). Without this step other players'
+   scientist models fall back to the stock body on your screen.
+4. Start the game. The main menu now has a **Multiplayer** entry showing the
    Multivoid version — that is how you know the mod loaded.
 
 ## Upgrading from an old (pre-mod-folder) install

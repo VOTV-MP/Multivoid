@@ -5,6 +5,7 @@
 #include "ue_wrap/core/paths.h"  // ExeDir -- the pak folder is derived from the install dir
 #include "ue_wrap/core/log.h"
 
+#include <algorithm>  // std::find -- the cross-subdir stem dedupe
 #include <cwctype>
 #include <filesystem>
 #include <random>   // PickRandomStarterSkin -- one roll per NEW identity (boot path)
@@ -81,22 +82,31 @@ const wchar_t* BuiltinSkinPath(const std::string& name) {
     return nullptr;
 }
 
+std::vector<std::wstring> PakDirs();  // defined below (the LogicMods subdir scan)
+
 std::string PickRandomStarterSkin() {
     // v95 (user 2026-07-02): the curated "coolest" converter skins a NEW peer starts
     // with. Names are pak stems; a name only qualifies when its pak is present here,
     // so a fresh install without the bundle still boots with a loadable body.
+    // 2026-08-29 (USER): the starter set is EXACTLY these four scientists --
+    // "Эти 4 модели становятся дефолтом нашего мода и назначаются случайно
+    // новому юзеру именно что-то из них четырех." (twhl_scientist2/3 dropped
+    // from the roll; they remain installable skins like any other pak.)
     static constexpr const char* kStarterSkins[] = {
-        "walter_v1sc", "sci_v1sc", "rvi_scientist_v1sc",
-        "luther_v1sc", "twhl_scientist2_v1sc", "twhl_scientist3_v1sc",
+        "walter_v1sc", "sci_v1sc", "rvi_scientist_v1sc", "luther_v1sc",
     };
     std::vector<const char*> present;
-    const std::wstring dirW = PakDir();
-    if (!dirW.empty()) {
+    const std::vector<std::wstring> dirs = PakDirs();
+    if (!dirs.empty()) {
         std::error_code ec;
         for (const char* s : kStarterSkins) {
-            fs::path cand = fs::path(dirW) / s;
-            cand += L".pak";
-            if (fs::is_regular_file(cand, ec)) present.push_back(s);
+            bool found = false;
+            for (const std::wstring& dirW : dirs) {
+                fs::path cand = fs::path(dirW) / s;
+                cand += L".pak";
+                if (fs::is_regular_file(cand, ec)) { found = true; break; }
+            }
+            if (found) present.push_back(s);
         }
     }
     if (present.empty()) {
@@ -111,16 +121,32 @@ std::string PickRandomStarterSkin() {
     return pick;
 }
 
-std::wstring PakDir() {
-    // ExeDir = <game>/VotV/Binaries/Win64. The model paks auto-mount from
-    // <game>/VotV/Content/Paks/LogicMods/multivoid.
+std::vector<std::wstring> PakDirs() {
+    // ExeDir = <game>/VotV/Binaries/Win64. Model paks auto-mount from ANY
+    // subdirectory of <game>/VotV/Content/Paks/LogicMods (UE4 mounts the whole
+    // tree at startup). 2026-08-29 (THUNDERSTORE.md blocker row 5): the scan
+    // covers EVERY LogicMods SUBDIRECTORY, not just multivoid/ -- r2modman's
+    // shimloader VFS-maps each package's pak dir to LogicMods\<Author>-<Name>\,
+    // so a managed install lands the skin paks in a subdir we do not name.
+    // The TOP LEVEL of LogicMods is deliberately excluded: that is where
+    // foreign UE4SS BP mods live (DebugMod.pak), and listing those as skins
+    // would offer unloadable garbage. multivoid/ sorts first (the manual-lane
+    // convention + dev deploys) so its entries win the dedupe.
     const std::wstring base = ue_wrap::paths::ExeDir();
     if (base.empty()) return {};
     std::error_code ec;
-    fs::path p = fs::path(base).parent_path().parent_path()
-                 / L"Content" / L"Paks" / L"LogicMods" / L"multivoid";
-    if (!fs::is_directory(p, ec)) return {};
-    return p.wstring();
+    fs::path logic = fs::path(base).parent_path().parent_path()
+                     / L"Content" / L"Paks" / L"LogicMods";
+    if (!fs::is_directory(logic, ec)) return {};
+    std::vector<std::wstring> dirs;
+    fs::path multivoid = logic / L"multivoid";
+    if (fs::is_directory(multivoid, ec)) dirs.push_back(multivoid.wstring());
+    for (const auto& de : fs::directory_iterator(logic, ec)) {
+        if (!de.is_directory(ec)) continue;
+        if (de.path() == multivoid) continue;
+        dirs.push_back(de.path().wstring());
+    }
+    return dirs;
 }
 
 const std::vector<SkinEntry>& Entries(bool rescan) {
@@ -129,61 +155,69 @@ const std::vector<SkinEntry>& Entries(bool rescan) {
     g_entries.clear();
     g_entries.push_back({kNativeSkinName, L""});  // the stock body is always offered
 
-    const std::wstring dirW = PakDir();
+    const std::vector<std::wstring> dirs = PakDirs();
 
     // Builtin kerfur skins: always offered (game assets, no pak). Preview tile =
-    // the same sidecar convention, looked up in the pak dir by skin name.
+    // the same sidecar convention, looked up across the pak dirs by skin name.
     std::error_code ec;
     for (const auto& b : kBuiltinSkins) {
         std::wstring preview;
-        if (!dirW.empty()) {
+        for (const std::wstring& dirW : dirs) {
             for (const wchar_t* pext : {L".png", L".bmp"}) {
                 fs::path cand = fs::path(dirW) / b.name;
                 cand += pext;
                 if (fs::is_regular_file(cand, ec)) { preview = cand.wstring(); break; }
             }
+            if (!preview.empty()) break;
         }
         g_entries.push_back({b.name, std::move(preview)});
     }
 
-    if (dirW.empty()) {
-        UE_LOGW("skin_registry: LogicMods/multivoid pak dir not found -- dr_kel + builtins only");
+    if (dirs.empty()) {
+        UE_LOGW("skin_registry: no LogicMods pak subdirectory found -- dr_kel + builtins only");
         return g_entries;
     }
-    for (const auto& de : fs::directory_iterator(dirW, ec)) {
-        if (!de.is_regular_file(ec)) continue;
-        const fs::path& p = de.path();
-        std::wstring ext = p.extension().wstring();
-        for (wchar_t& c : ext) c = static_cast<wchar_t>(::towlower(c));
-        if (ext != L".pak") continue;
-        const std::wstring stemW = p.stem().wstring();
-        std::string stem;
-        stem.reserve(stemW.size());
-        bool ascii = true;
-        for (wchar_t c : stemW) {
-            if (c > 0x7F) { ascii = false; break; }
-            stem.push_back(static_cast<char>(c));
+    // First dir wins a stem collision (multivoid/ sorts first -- the dev/manual
+    // lane's copy beats a managed duplicate of the same model).
+    std::vector<std::string> seen;
+    for (const std::wstring& dirW : dirs) {
+        for (const auto& de : fs::directory_iterator(dirW, ec)) {
+            if (!de.is_regular_file(ec)) continue;
+            const fs::path& p = de.path();
+            std::wstring ext = p.extension().wstring();
+            for (wchar_t& c : ext) c = static_cast<wchar_t>(::towlower(c));
+            if (ext != L".pak") continue;
+            const std::wstring stemW = p.stem().wstring();
+            std::string stem;
+            stem.reserve(stemW.size());
+            bool ascii = true;
+            for (wchar_t c : stemW) {
+                if (c > 0x7F) { ascii = false; break; }
+                stem.push_back(static_cast<char>(c));
+            }
+            if (!ascii || !IsValidSkinName(stem)) {
+                UE_LOGW("skin_registry: pak '%ls' has a non-portable stem -- skipped (allowed: "
+                        "[A-Za-z0-9_-], <=48 chars)", p.filename().c_str());
+                continue;
+            }
+            if (stem == kNativeSkinName || BuiltinSkinPath(stem)) {
+                UE_LOGW("skin_registry: pak '%ls' shadows a builtin skin name -- skipped "
+                        "(rename the pak)", p.filename().c_str());
+                continue;
+            }
+            if (std::find(seen.begin(), seen.end(), stem) != seen.end()) continue;
+            seen.push_back(stem);
+            // Preview tile = sibling <stem>.png or <stem>.bmp (user convention).
+            std::wstring preview;
+            for (const wchar_t* pext : {L".png", L".bmp"}) {
+                fs::path cand = p; cand.replace_extension(pext);
+                if (fs::is_regular_file(cand, ec)) { preview = cand.wstring(); break; }
+            }
+            g_entries.push_back({std::move(stem), std::move(preview)});
         }
-        if (!ascii || !IsValidSkinName(stem)) {
-            UE_LOGW("skin_registry: pak '%ls' has a non-portable stem -- skipped (allowed: "
-                    "[A-Za-z0-9_-], <=48 chars)", p.filename().c_str());
-            continue;
-        }
-        if (stem == kNativeSkinName || BuiltinSkinPath(stem)) {
-            UE_LOGW("skin_registry: pak '%ls' shadows a builtin skin name -- skipped "
-                    "(rename the pak)", p.filename().c_str());
-            continue;
-        }
-        // Preview tile = sibling <stem>.png or <stem>.bmp (user convention).
-        std::wstring preview;
-        for (const wchar_t* pext : {L".png", L".bmp"}) {
-            fs::path cand = p; cand.replace_extension(pext);
-            if (fs::is_regular_file(cand, ec)) { preview = cand.wstring(); break; }
-        }
-        g_entries.push_back({std::move(stem), std::move(preview)});
     }
-    UE_LOGI("skin_registry: %zu skin(s) catalogued (incl. dr_kel) from %ls",
-            g_entries.size(), dirW.c_str());
+    UE_LOGI("skin_registry: %zu skin(s) catalogued (incl. dr_kel) across %zu LogicMods subdir(s)",
+            g_entries.size(), dirs.size());
     return g_entries;
 }
 

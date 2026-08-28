@@ -95,7 +95,24 @@ Copy-Item $PayloadDll (Join-Path $stage 'mod/dlls/main.dll')
 # the literal "true" inside. Match them rather than shipping an empty file.
 Set-Content -LiteralPath (Join-Path $stage 'mod/enabled.txt') -Value 'true' -Encoding ascii -NoNewline
 
-# --- Optional pak route (7.2a: pak\ -> shimloader\pak\<pkg>\) -----------------
+# --- Pak route (7.2a: pak\ -> shimloader\pak\<pkg>\ -> VFS LogicMods\<pkg>\) --
+# 2026-08-29 (USER: "zip должен содержать scientists.pak" -- the four starter
+# scientists): when -Pak is not given, the default input is assets/paks/ --
+# the staged starter-model paks + their .png preview tiles (the F1 skin
+# browser's sidecar convention). assets/paks is deliberately NOT tracked
+# (public-repo caution for game-derived meshes; the ship decision covers the
+# RELEASE artifact, UE4SS_ARC 7.6) -- so CI assembles a pak-less zip for
+# drills, and a RELEASE zip is assembled where assets/paks exists (7.9's
+# manual-assembly lane). The manual-install step for pak\ lives in INSTALL.md;
+# skin_registry scans every LogicMods subdirectory since 2026-08-29, so both
+# lanes see the models wherever their route lands them.
+if ($Pak.Count -eq 0) {
+    $pakDir = Join-Path $repoRoot 'assets/paks'
+    if (Test-Path -LiteralPath $pakDir) {
+        $Pak = @(Get-ChildItem $pakDir -File | Where-Object { $_.Extension -in '.pak', '.png' } |
+                 ForEach-Object { $_.FullName })
+    }
+}
 if ($Pak.Count -gt 0) {
     New-Item -ItemType Directory -Path (Join-Path $stage 'pak') -Force | Out-Null
     foreach ($f in $Pak) {
@@ -104,7 +121,7 @@ if ($Pak.Count -gt 0) {
     }
     Write-Host "pak: staged $($Pak.Count) file(s)"
 } else {
-    Write-Host 'pak: none (the skin pak is OWED, not dropped -- UE4SS_ARC 7.7c / THUNDERSTORE.md:33)'
+    Write-Host 'pak: NONE STAGED -- a RELEASE zip must carry the starter paks (assets/paks/ on the assembly box); a CI/drill zip may be pak-less'
 }
 
 # --- Zip -------------------------------------------------------------------

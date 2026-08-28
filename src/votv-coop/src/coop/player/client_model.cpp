@@ -8,6 +8,7 @@
 #include "ue_wrap/actors/puppet.h"
 #include "ue_wrap/core/reflection.h"
 
+#include <chrono>
 #include <cstdint>
 #include <map>
 
@@ -15,15 +16,32 @@ namespace coop::client_model {
 
 namespace {
 
-// Per-name asset cache. `tried` remembers a load MISS so a missing pak is not
-// re-probed on every puppet spawn; a HIT is revalidated by GUObjectArray slot
-// (IsLiveByIndex) because a level-change GC can collect a pak asset and recycle
-// its address -- a stale hit re-loads instead of dereferencing an impostor.
+// Per-name asset cache. A load MISS is remembered with a TIMESTAMP: re-probes
+// are throttled (kMissRetryMs), never latched forever -- the forever-latch was
+// the "peer sees my model with the wrong texture" field root (2026-08-29): a
+// skin applied EARLY on a joining machine (world still loading, pak mounting)
+// could miss ONE load, latch `tried`, and render the mesh with no atlas for the
+// whole session while the wearer's own machine (warm world) looked fine. A HIT
+// is revalidated by GUObjectArray slot (IsLiveByIndex) because a level-change
+// GC can collect a pak asset and recycle its address -- a stale hit re-loads
+// instead of dereferencing an impostor.
 struct CachedAsset {
-    void*   ptr = nullptr;
-    int32_t idx = -1;
-    bool    tried = false;
+    void*    ptr = nullptr;
+    int32_t  idx = -1;
+    bool     tried = false;
+    uint64_t lastTryMs = 0;
 };
+
+// A missing asset re-probes at most this often (a burst of puppet spawns costs
+// one LoadObjectByPath per name per window; a transient join-window miss heals
+// on the next apply/converge pass instead of sticking for the session).
+constexpr uint64_t kMissRetryMs = 5000;
+
+uint64_t NowMs() {
+    using namespace std::chrono;
+    return static_cast<uint64_t>(
+        duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
+}
 
 std::map<std::string, CachedAsset> g_meshCache;
 std::map<std::string, CachedAsset> g_texCache;
@@ -42,8 +60,10 @@ void* ResolveCached(std::map<std::string, CachedAsset>& cache, const std::string
         c.ptr = nullptr;
         c.tried = false;  // the asset existed before; re-probe
     }
-    if (c.tried) return nullptr;  // known-missing pak: stay silent per spawn
+    const uint64_t now = NowMs();
+    if (c.tried && (now - c.lastTryMs) < kMissRetryMs) return nullptr;  // known-missing: throttled
     c.tried = true;
+    c.lastTryMs = now;
     c.ptr = ue_wrap::asset_load::LoadObjectByPath(path.c_str());
     if (c.ptr) {
         c.idx = R::InternalIndexOf(c.ptr);
@@ -115,6 +135,17 @@ bool ApplySkinToBody(void* mainPlayerActor, const std::string& name, void* nativ
 
     void* mesh = GetSkinMesh(name);
     if (!mesh) return false;  // pak missing here -- keep the current body (logged in resolver)
+    // ATOMIC pair for pak skins (2026-08-29): a pak skin's mesh without its atlas
+    // texture is the "wrong texture / wrong UV" field report -- the mesh swap
+    // landed and the tex miss cleared the slot-0 override, so the model rendered
+    // in the kel material. Builtins carry their own materials (no tex by design);
+    // for a pak skin, defer the WHOLE apply until both halves resolve -- the
+    // caller keeps the previous body and the throttled retry heals the pair.
+    if (!coop::skins::BuiltinSkinPath(name) && !GetSkinTexture(name)) {
+        UE_LOGW("client_model: skin '%s' mesh ready but atlas tex not yet loadable -- "
+                "deferring the apply (retry heals; no mesh-without-tex render)", name.c_str());
+        return false;
+    }
     int done = 0;
     for (void* comp : comps) {
         if (!comp) continue;
