@@ -93,6 +93,16 @@ STABLE extra (dev releases skip this — `COOP_LATEST_*` is stable-only):
 6. On the master box, edit the master service's env file (the path is in the local-only deploy notes):
    `COOP_LATEST_PROTO=<N>`, `COOP_LATEST_MOD=<game> b<N>`, then
    `systemctl restart coop-master`. (Informational toast only — never gates a join.)
+
+EVERY build that reaches players (dev drops to testers INCLUDED — this one is
+NOT stable-only):
+6b. Bump `COOP_MAX_BUILD=<N>` in the same env file + `systemctl restart coop-master`.
+   This is the /v1/host version gate (2026-08-29): a lobby claiming a build
+   NEWER than the newest actually-distributed one is refused with a clear
+   error ("build bN does not exist"), which is what stopped the field's fake
+   "b148" listing. Forgetting this step blocks NEW-build hosts from listing
+   (they still play; the browser just won't show them) — the gate falls back
+   to `COOP_LATEST_PROTO` when unset, and `COOP_MAX_BUILD=0` disables it.
 7. `tools/release/verify_latest.ps1` — must PASS (it FAILs before step 6 by
    design; fold-aware: reads the newest bare-tag published row).
 

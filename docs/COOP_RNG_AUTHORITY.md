@@ -238,6 +238,15 @@ No shared consequence → forcing host-auth would be gratuitous (rule-1: not a b
 ## PRIOR — already host-authoritative (reference; DONE)
 serverbox (IsBroken + breaker-kill), scheduled/story events (event_fire_sync), join-event registry
 + cues, weather rain/snow/fog/redsky/lightning, world time (TimeScale=0), sky/moon, NPC+kerfur+
+> **redsky/fog/blackfog CORRECTED 2026-08-29 (the arigalit red-mist field report):** "DONE" above
+> was true of the WIRE lanes only — the ORGANIC producer was still per-peer: daynightCycle's newDay
+> handler rolls 1% `spawnRedSky` (+ the fog/blackfog siblings) on EVERY machine via
+> `EX_LocalVirtualFunction`, PE-invisible to the old observers AND to weather_fog's PRE interceptor,
+> so a client could sprout its own red sky the host never had ("то синхронятся то нет"). Now: host
+> detection is a FIELD POLL (`weather_redsky::HostPollEdge`), the client's own rolls die at birth
+> (`coop/world/weather_event_births` at the FinishSpawningActor seam), and the per-joiner weather
+> seed carries an active red sky. Cross-peer ON/OFF proven 2026-08-29. Black fog: client rolls are
+> suppressed the same way; a HOST-rolled black fog has no wire lane yet (open row).
 pyramid AI (allowlist + AI-neutralize + pose one-way), wisp aggro, drone, turbine, garbage-spawner
 bodies, sky-signal generation, balance/wallet, email APPEND (host-gate, 2026-07-09). INTENT: alarm,
 signal-catch, device-occupancy, comp, kerfur-commands, balance-spend. CONVERGENT-by-design: power

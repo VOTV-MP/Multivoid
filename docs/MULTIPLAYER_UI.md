@@ -139,6 +139,15 @@ Main menu
 Host = authoritative (owns save/world/progression). Client sends input +
 receives state. Never the reverse. (Methodology Phase 3.1.)
 
+**The host picker's Connection selector is TRI-STATE since 2026-08-29** (user:
+"LAN which makes the game LAN-ONLY"): **AUTO** (master-brokered P2P/ICE, always
+listed) / **DIRECT** (LanDirect listen + announce with port; optional
+hide-from-browser) / **LAN only** — a LanDirect listen that never contacts the
+master at all (no announce, no heartbeat, no signaling) with an accept-edge
+gate refusing non-private remote addresses (`net::Config::lanOnly`,
+`session_status.cpp` Connecting edge). Friends on the network join via Direct
+Connect to the host's local IP.
+
 ## Approach decision — native UMG, built at runtime by our C++ mod
 
 The menu must (a) look native/integrated, (b) not edit VOTV's menu asset

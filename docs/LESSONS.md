@@ -3284,6 +3284,12 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   test is flaky, suspect focus before the feature; write down the question you are asking and the
   question the API answers and check they are the same sentence; make "the probe stood down" a
   different string from "the verdict is absent".
+  **(2026-08-29 instance, the red-mist root: a selftest whose STIMULUS enters through the fix's own
+  seam certifies the seam, not the feature.** The redsky selftest drove `DebugForce` — a reflected
+  Call = ProcessEvent — while the lane's detectors were PE POST observers; the GAME's own trigger is
+  `EX_LocalVirtualFunction`, PE-invisible, so the observers never fired for one organic red sky in
+  the lane's life while the selftest kept passing. The stimulus must enter the way the game enters,
+  or the test must say it tests the reflected path only.)
   `memory/lesson_an_instrument_may_answer_a_narrower_question.md`
 
 - **A MODULE HEADER IS NOT THE CAPABILITY MAP — a whole design cascade was built on one sentence in
@@ -4727,6 +4733,13 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   job silently skips. Caught live by the double-dispatch drill; fixed `e4c5e503`. *Look FIRST:*
   `.github/workflows/release-core.yml` judge step.
   `memory/lesson_gha_pwsh_step_exits_with_last_child_code.md`
+- **2026-08-29 — A PIPED BUILD'S EXIT CODE IS THE PIPE'S, NOT THE BUILD'S (the bash twin of the row
+  above).** `cmake --build … | tail` and `… | grep` both reported rc 0 while the COMPILE HAD FAILED
+  (tail/grep exit last); the smoke that followed then deployed + green-lit the STALE previous link —
+  a green smoke after a silently-failed build launders old bytes as new. *Look FIRST:* prefix
+  `set -o pipefail;` on every piped build/verify (or read `${PIPESTATUS[0]}`), and require the
+  `→ main.dll` link line / a changed artifact hash before smoking "new" bytes.
+  `memory/lesson_a_piped_builds_exit_code_is_the_pipes.md`
 - **PowerShell defaults are case-INSENSITIVE everywhere** (`-match`, `-eq`, `-contains`,
   `-notcontains`, AND hashtable keys) — three separate instruments bitten in one day (2026-07-25):
   the tag fixture caught `-DEV` matching; the verdict-diff `@{}` collapsed `Player_Guid`/`player_guid`

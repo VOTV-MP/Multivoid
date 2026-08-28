@@ -238,14 +238,18 @@ items.
   LOCAL player keeps using VOTV's real ragdoll (works — possessed). **Death is
   EXCLUDED from the bit** (the `!dead` gate): death uses VOTV's native SP menu flow
   and ends/leaves the session, never a synced recoverable faint.
-  **Death lifecycle (user decision 2026-05-30): permadeath, rejoinable; host
-  death ends the session.** Both host and peer death use VOTV's NATIVE SP
-  death->menu flow (no death->menu intercept). Host death = session ends for all
-  (== host exit; no migration); peer death = that peer disconnects to menu (host
-  runs existing puppet/mirror teardown; client save already blocked) and may
-  REJOIN the host's ongoing world via the existing late-join snapshot. So
-  **respawn/revive (`PlayerRevive`) is CUT (RULE 2)** — no respawn-in-place, no
-  revive. Protocol bump v18->v19. Display: health bar on the existing nameplate;
+  **Death lifecycle (SUPERSEDED 2026-08-29, user directive: "Respawn system
+  сделать... Любая смерть, пира или хоста, ведет к респавну"): KO RESPAWN is
+  the DEFAULT.** Lethal damage becomes a knock-out (native faint ragdoll,
+  `death=false`) + a respawn with full vitals at the КПП start point — the
+  adopted Tarangok `coop/player/ko_respawn` machine (`[death] ko_respawn=1`
+  default ON, `ko_ragdoll_seconds`, `ko_invulnerable_seconds`,
+  `ko_spawn_at_start`; two layers: the AddPlayerDamage lethal-hit interceptor +
+  the net_pump dead=true backstop, so fall/fire/radiation deaths convert too).
+  Any peer's death INCLUDING THE HOST'S respawns — a host death no longer takes
+  the server down. The 2026-05-30 permadeath decision ("host death ends the
+  session; peer death = disconnect to menu, rejoinable") survives ONLY as the
+  `ko_respawn=0` opt-out flow, per-machine. Display: health bar on the existing nameplate;
   ragdoll via the puppet's own `ragdollMode`/`ragdollActor` (narrowed to the
   NON-death faint/sleep/KO states where the player STAYS in the world).
   RULE-3 (no anti-cheat): a peer is authoritative over its own death — a
