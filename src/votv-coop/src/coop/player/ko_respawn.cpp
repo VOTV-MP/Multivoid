@@ -37,7 +37,6 @@ namespace E = ue_wrap::engine;
 namespace V = ue_wrap::vitals;
 namespace P = ue_wrap::profile;
 namespace GT = ue_wrap::game_thread;
-namespace rows = coop::config_registry::rows;
 
 // Cached Session (same atomic pattern as player_damage; the interceptor reads it
 // on every hit, never dereferences a live-null).
@@ -69,10 +68,10 @@ uint64_t NowMs() {
 }
 
 void ReadConfig() {
-    g_enabled = coop::config::ResolveFlag(rows::ko_respawn) != 0;
-    g_ragdollSec = static_cast<int>(coop::config::ResolveInt(rows::ko_ragdoll_seconds));
-    g_invulnSec  = static_cast<int>(coop::config::ResolveInt(rows::ko_invulnerable_seconds));
-    g_spawnAtStart = coop::config::ResolveFlag(rows::ko_spawn_at_start) != 0;
+    g_enabled = coop::config::ResolveFlag(coop::config_registry::rows::ko_respawn) != 0;
+    g_ragdollSec = static_cast<int>(coop::config::ResolveInt(coop::config_registry::rows::ko_ragdoll_seconds));
+    g_invulnSec  = static_cast<int>(coop::config::ResolveInt(coop::config_registry::rows::ko_invulnerable_seconds));
+    g_spawnAtStart = coop::config::ResolveFlag(coop::config_registry::rows::ko_spawn_at_start) != 0;
 }
 
 // Start the KO: drop the player into the native faint ragdoll (NOT death), park
