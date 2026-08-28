@@ -4486,6 +4486,32 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 
 ## 8. Build / deploy / git hygiene
 
+- **CMAKE `if(<var>)` EATS A LEGITIMATE "0" -- AND THE FLAWED GUARD ARRIVED WITH TWO ENDORSEMENTS.**
+  2026-08-28 (WP-2 commit 3 follow-up). The new major/minor parse guard shipped as
+  `if(NOT CMAKE_MATCH_1)`, mirroring the working `kProtocolVersion` guard AND matching the post-ship
+  audit's own suggested fix -- and `[V]` it refused the REAL target: `"0.9.0n"` yields major `"0"`,
+  which CMake truthiness treats as FALSE, so the FATAL_ERROR fired on the value it existed to accept
+  (the sibling never hit this because a build number is never 0). An endorsement count is not
+  evidence; only running the guard on the value it must PASS is. Fixed to
+  `if("${_votvcoop_tgt_mm}" STREQUAL "")`, shown GREEN on `0.9.0n` + RED on `vNEXT` before commit.
+  *Look FIRST:* any new fail-closed guard gets BOTH arms drilled before it is trusted; in CMake a
+  parse-result check must use `STREQUAL`/`MATCHES`, never bare truthiness (`0/OFF/NO/FALSE/N/IGNORE/
+  NOTFOUND/empty` are all falsy). Full note:
+  `memory/lesson_cmake_zero_is_falsy_drill_the_guard_on_the_real_value.md`.
+
+- **A FORMAT FLIP MUST STILL RENDER THE PUBLISHED ERA -- KEY THE ERA ON ARTIFACT DATA, NEVER A FLAG.**
+  2026-08-28 (C3.3 `d693609b`). The release lane's asset shape flipped to ONE zip, but `[V]`
+  `LEDGER.tsv` holds LIVE two-DLL releases (b125..b133) and `notes_regen.ps1` lawfully REBUILDS a
+  live body via the one writer (it backfilled b126/b127 once) -- a zip-only writer would make a
+  regenerated old body describe assets its own page does not have. RULE 2 does NOT apply: the old
+  shape is not a replaced code path, it is the renderer for artifacts already in the wild (same class
+  as the predecessor scan). Shipped: `New-ReleaseBody` decides the era from what the sha map HOLDS
+  (one `*.zip` = zip prose on the live anchors; the DLL pair = FROZEN legacy literals; anything else
+  THROWS), and `tag_regex_selftest` carries fixtures for both eras + a neither-era refusal. *Look
+  FIRST:* before flipping any writer whose output is published, enumerate who can lawfully RE-RUN it
+  over old outputs (writer's callers + the ledger's live eras). Full note:
+  `memory/lesson_a_format_flip_must_still_render_the_published_era.md`.
+
 - **AN EARLY RETURN INHERITS EVERYTHING THE BRANCH HAD LEFT TO DO -- AND THE BROKEN CODE IS NOT IN THE
   DIFF.** 2026-08-26. The admission gate needed the GNS `Connected` branch to stop seating a peer, so I
   added an early `return` for parked connections and moved the lane-config call I knew about. `[V]` The

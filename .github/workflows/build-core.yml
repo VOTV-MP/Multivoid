@@ -240,7 +240,8 @@ jobs:
           pwsh -File tools/release/fingerprint.ps1 -Mode dump | Tee-Object (Join-Path $out 'fingerprint-dump.json')
           "dir=$out" | Out-File -Append $env:GITHUB_OUTPUT
           # Artifact NAME carries the source sha (CI evidence, not distribution);
-          # the DLL filename inside stays canonical (loader contract).
+          # the DLL filename inside stays canonical (main.dll -- the UE4SS
+          # mod-folder contract name; identity rides its VERSIONINFO).
           "name=multivoid-ci-$($head.Substring(0,12))" | Out-File -Append $env:GITHUB_OUTPUT
 
       - name: Upload artifact

@@ -29,7 +29,7 @@ first test of this document.
 | 1 | A Thunderstore **Team** exists. The team name becomes the `<Author>` half of `<Author>-Multivoid`, which is load-bearing for the pak path (`UE4SS_ARC` §7.2a trap 4). | **DONE 2026-08-26 (USER): the team is `Multivoid`.** So the package is `Multivoid-Multivoid`, the pak path is `shimloader/pak/Multivoid-Multivoid/`, and the `dependencies` string carries the same pair. Per §5 neither half can be changed later without creating a SECOND package. |
 | 2 | A **service account** + API token, if publishing from CI (`TCLI_AUTH_TOKEN`). | NOT DONE; §7.9 makes this optional — we assemble by hand |
 | 3 | `icon.png`, **exactly 256x256** | **DONE** — `assets/branding/icon.png`, generated from `icon-512.png` |
-| 4 | A UE4SS-lane build actually released | **NOT DONE** — gated on WP-2 commit 3, `UE4SS_ARC` §6 items 4-5 |
+| 4 | A UE4SS-lane build actually released | **NOT DONE** (re-verified 2026-08-28) — commit 3 LANDED (`1912d229`, §6 item 4 done) and the pipeline is inverted (C3.3); the remaining gate is only §6 item 5, the release itself. The zip exists locally: `Multivoid-Multivoid-0.9.143.zip` |
 | 5 | `skin_registry` walks `LogicMods/` subdirectories | **NOT DONE** — `UE4SS_ARC` §7.7. **Hard blocker:** without it the shipped pak is invisible on both lanes |
 | 6 | The negative control: our own zip imported locally into r2modman and the profile tree diffed against §7.2a's prediction | **NOT DONE** — `UE4SS_ARC` §7.5 |
 | 7 | The game is in the ecosystem schema | **DONE, not by us** — `voices-of-the-void` is listed with `packageLoader: shimloader`; no PR to `ecosystem-schema` is needed. Adding a game requires "pre-existing mod developer interest" and a CLI-generated PR — irrelevant to us, recorded so it is not re-asked |
