@@ -61,8 +61,8 @@ if (-not (Test-Path -LiteralPath $installPath)) {
     Fail 'INSTALL: docs/INSTALL.md missing (release bodies link it)'
 } else {
     $installDoc = Get-Content -LiteralPath $installPath -Raw
-    if (-not $installDoc.Contains($script:InstallFolderAnchor)) { Fail "INSTALL_CONSISTENT: folder anchor '$($script:InstallFolderAnchor)' not found verbatim in docs/INSTALL.md" }
-    if (-not $installDoc.Contains($script:InstallDeleteOldAnchor)) { Fail "INSTALL_CONSISTENT: update-rule anchor '$($script:InstallDeleteOldAnchor)' not found verbatim in docs/INSTALL.md" }
+    if (-not $installDoc.Contains($script:InstallModFolderAnchor)) { Fail "INSTALL_CONSISTENT: manual-lane mod-folder anchor '$($script:InstallModFolderAnchor)' not found verbatim in docs/INSTALL.md" }
+    if (-not $installDoc.Contains($script:InstallDeleteOldAnchor)) { Fail "INSTALL_CONSISTENT: upgrade-from-standalone anchor '$($script:InstallDeleteOldAnchor)' not found verbatim in docs/INSTALL.md" }
     if (-not $installDoc.Contains($gameTarget)) { Fail "INSTALL_STALENESS: docs/INSTALL.md does not name the current game target '$gameTarget' (retarget without doc update?)" }
 }
 foreach ($docRel in @('docs/INSTALL.md', 'README.md')) {

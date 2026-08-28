@@ -145,9 +145,14 @@ $script:Sha256LineRegex = '(?m)^sha256:\s*[0-9a-f]{64}\s\s\S+\s*$'
 
 # Anchor phrases shared VERBATIM between the release-body Install block and
 # docs/INSTALL.md (ledger_lint INSTALL_CONSISTENT asserts they appear in the
-# doc). Reword only both together.
-$script:InstallFolderAnchor    = 'WindowsNoEditor\VotV\Binaries\Win64'
-$script:InstallDeleteOldAnchor = 'delete the old `multivoid-*.dll`'
+# doc). Reword only both together. Re-SHAPED at WP-2 commit 3 (UE4SS_ARC 8.4):
+# a single "install folder" had no true value once there were two lanes, so the
+# folder anchor is now explicitly the MANUAL lane's mod-folder destination (the
+# managed lane's path belongs to r2modman's VFS and is never typed anywhere),
+# and the delete-old anchor is the upgrade-from-standalone rule (pre-b144
+# installs left two DLLs beside the exe; the mod REFUSES to start beside them).
+$script:InstallModFolderAnchor = 'WindowsNoEditor\VotV\Binaries\Win64\Mods\Multivoid'
+$script:InstallDeleteOldAnchor = 'delete the old `multivoid-*.dll` and `xinput1_3.dll`'
 $script:InstallGuideUrl        = 'https://github.com/VOTV-MP/Multivoid/blob/main/docs/INSTALL.md'
 
 # --- Game target (the identity's game half) --------------------------------
@@ -210,14 +215,21 @@ function Get-ReleaseBodyWhatsNew {
 }
 
 # --- The ONE body writer (publish, retro regeneration, recovery republish) --
+# TWO artifact eras, decided by what the sha map actually HOLDS (data, never a
+# flag): the ZIP era (WP-2 commit 3 onward -- exactly one package zip) and the
+# LEGACY two-DLL era (b122..b143 bodies are LIVE on GitHub; notes_regen rebuilds
+# them from their own machine lines, and the Install block must describe THAT
+# page's assets -- zip-era prose over two-DLL assets would lie about its own
+# page). The legacy prose is FROZEN literal text on purpose: INSTALL.md no
+# longer carries it, so it must never ride the live anchors or change again.
 function New-ReleaseBody {
     param([Parameter(Mandatory)][string]$SourceSha,
           [Parameter(Mandatory)][hashtable]$Sha256ByFile,   # filename -> 64-hex
           [Parameter(Mandatory)][string]$NotesContent,      # the b<N>.md content (What's new)
           [switch]$Dev,
           [string[]]$ExtraLines = @())
-    $payload = @($Sha256ByFile.Keys | Where-Object { $_ -clike 'multivoid-*.dll' })
-    if ($payload.Count -ne 1) { throw "New-ReleaseBody: expected exactly one multivoid-*.dll in the sha map, got $($payload.Count)" }
+    $zips   = @($Sha256ByFile.Keys | Where-Object { $_ -clike '*.zip' })
+    $legacy = @($Sha256ByFile.Keys | Where-Object { $_ -clike 'multivoid-*.dll' })
     $lines = @()
     if ($Dev) { $lines += 'Development build -- not hands-on verified.' }
     $lines += $ExtraLines
@@ -228,10 +240,23 @@ function New-ReleaseBody {
     $lines += ''
     $lines += '## Install'
     $lines += ''
-    $lines += "You need **both** files below: ``$($payload[0])`` (the mod) + ``xinput1_3.dll`` (the loader)."
-    $lines += "Drop them into ``$($script:InstallFolderAnchor)`` inside your game install."
-    $lines += "Updating? Replace the mod DLL only -- and $($script:InstallDeleteOldAnchor)."
-    $lines += "Full guide: $($script:InstallGuideUrl)"
+    if ($zips.Count -eq 1 -and $Sha256ByFile.Count -eq 1) {
+        $lines += "One file: ``$($zips[0])`` -- the same zip serves both install lanes."
+        $lines += 'Mod manager (recommended): install from Thunderstore, or r2modman -> Settings -> Profile -> "Import local mod" with this file.'
+        $lines += "Manual: unzip, then copy the CONTENTS of ``mod\`` into ``$($script:InstallModFolderAnchor)`` inside your game install (requires UE4SS -- see the full guide)."
+        $lines += "Upgrading from a pre-b144 standalone install? First $($script:InstallDeleteOldAnchor) beside the game executable."
+        $lines += "Full guide: $($script:InstallGuideUrl)"
+    } elseif ($legacy.Count -eq 1 -and $Sha256ByFile.Count -eq 2 -and
+              (@($Sha256ByFile.Keys) -ccontains 'xinput1_3.dll')) {
+        $lines += "You need **both** files below: ``$($legacy[0])`` (the mod) + ``xinput1_3.dll`` (the loader)."
+        $lines += 'Drop them into `WindowsNoEditor\VotV\Binaries\Win64` inside your game install.'
+        $lines += 'Updating? Replace the mod DLL only -- and delete the old `multivoid-*.dll`.'
+        $lines += "Full guide: $($script:InstallGuideUrl)"
+    } else {
+        throw ("New-ReleaseBody: sha map matches neither artifact era (zip era = exactly one " +
+               "*.zip; legacy era = one multivoid-*.dll + xinput1_3.dll); keys: " +
+               "$(@($Sha256ByFile.Keys | Sort-Object) -join ', ')")
+    }
     $lines += ''
     $lines += '## Build provenance'
     $lines += ''
@@ -286,6 +311,15 @@ function ConvertTo-PackageVersion {
     if (-not $minor) { throw "UNREADABLE game target '$GameTarget': minor field has no digits" }
     if ($Proto -le 0) { throw "UNREADABLE build number '$Proto': must be a positive integer" }
     "$major.$minor.$Proto"
+}
+
+# The one constructor of the package zip's filename (<Team>-<Name>-<version>.zip,
+# UE4SS_ARC 7.2a convention). package.ps1 writes the file; publish.ps1 must
+# PREDICT the name to find and upload it -- two copies of the format string is
+# how a writer and its reader drift apart.
+function Get-PackageZipName {
+    param([Parameter(Mandatory)][string]$Version)
+    "Multivoid-Multivoid-$Version.zip"
 }
 
 # PNG IHDR width/height. Thunderstore requires icon.png to be EXACTLY 256x256 and the

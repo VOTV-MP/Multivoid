@@ -44,7 +44,9 @@ foreach ($m in [regex]::Matches($oldBody, $script:Sha256LineRegex)) {
     $machineLines += $line
     if ($line -cmatch '^sha256:\s*(?<h>[0-9a-f]{64})\s\s(?<f>\S+)$') { $shaMap[$Matches['f']] = $Matches['h'] }
 }
-if ($shaMap.Count -lt 2) { throw "parsed only $($shaMap.Count) sha256 lines from the live body, expected the DLL pair" }
+# Era-aware floor (WP-2 commit 3): legacy bodies (b122..b143) carry the DLL
+# pair; zip-era bodies carry exactly one zip. Zero parsed lines = unparseable.
+if ($shaMap.Count -lt 1) { throw "parsed no sha256 lines from the live body -- reconcile by hand" }
 
 # --- Notes authority ---------------------------------------------------------
 $notesPath = Get-ReleaseNotesPath -N $tag.N
@@ -61,7 +63,11 @@ foreach ($line in $machineLines) {
     if (-not $newBody.Contains($line)) { throw "constructed body lost machine line verbatim: '$line'" }
 }
 if ((Get-ReleaseBodySource $newBody) -cne $sourceSha) { throw 'constructed body: completion parser does not resolve the original sha' }
-$payloadName = @($shaMap.Keys | Where-Object { $_ -clike 'multivoid-*.dll' })[0]
+# The payload artifact is era-dependent: the package zip (WP-2 commit 3 onward)
+# or the legacy versioned DLL (b122..b143 live bodies).
+$payloadCand = @($shaMap.Keys | Where-Object { $_ -clike '*.zip' -or $_ -clike 'multivoid-*.dll' })
+if ($payloadCand.Count -lt 1) { throw 'no payload artifact (a *.zip or multivoid-*.dll) among the preserved sha256 lines' }
+$payloadName = $payloadCand[0]
 if (-not (@($machineLines | Where-Object { $_.Contains($payloadName) }).Count)) { throw "payload name '$payloadName' not present in the preserved sha256 lines" }
 
 $outPath = Join-Path ([System.IO.Path]::GetTempPath()) "multivoid-regen-body-$($tag.N).md"

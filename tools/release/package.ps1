@@ -113,7 +113,7 @@ if ($Pak.Count -gt 0) {
 # (THUNDERSTORE.md section 3), but the GitHub release asset is read by humans and the
 # Paper pair has to stay legible there -- it is the identity's zip-name destination
 # (7.3a item 2).
-$zipName = "Multivoid-Multivoid-$version.zip"
+$zipName = Get-PackageZipName -Version $version
 $zipPath = Join-Path $outAbs $zipName
 if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
 Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zipPath -CompressionLevel Optimal

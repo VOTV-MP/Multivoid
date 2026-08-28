@@ -53,17 +53,29 @@ Assert-Case (@(Test-ReleaseNotesFormat -Content "## What's new`n- x").Count -gt 
 Assert-Case (@(Test-ReleaseNotesFormat -Content "- fine`nsource: 0123456789abcdef0123456789abcdef01234567").Count -gt 0) 'notes: source:-grammar line refused (first-match shadowing)'
 Assert-Case (@(Test-ReleaseNotesFormat -Content ("- fine`nsha256: " + ('a' * 64) + '  x.dll')).Count -gt 0) 'notes: sha256:-grammar line refused'
 
-# --- Body-writer machine-key invariants ------------------------------------
+# --- Body-writer machine-key invariants: BOTH artifact eras ------------------
+# The writer's era switch is data-driven (what the sha map holds), so both eras
+# get fixtures: the zip era is what publish emits from WP-2 commit 3 onward; the
+# legacy two-DLL era is what notes_regen rebuilds for the LIVE b122..b143 bodies.
 $fixtureSha = '0123456789abcdef0123456789abcdef01234567'
-$fixtureMap = @{ 'multivoid-0.9.0n-999.dll' = ('a' * 64); 'xinput1_3.dll' = ('b' * 64) }
+$fixtureMap = @{ 'Multivoid-Multivoid-0.9.999.zip' = ('a' * 64) }
 $fixtureBody = New-ReleaseBody -SourceSha $fixtureSha -Sha256ByFile $fixtureMap -NotesContent '- a change' -Dev
 Assert-Case ((Get-ReleaseBodySource $fixtureBody) -eq $fixtureSha) 'body: completion parser finds the one source: key'
 Assert-Case ([regex]::Matches($fixtureBody, $script:SourceLineRegex).Count -eq 1) 'body: exactly one source:-grammar line'
-Assert-Case ([regex]::Matches($fixtureBody, $script:Sha256LineRegex).Count -eq 2) 'body: sha256-grammar line count == asset count'
+Assert-Case ([regex]::Matches($fixtureBody, $script:Sha256LineRegex).Count -eq 1) 'body: sha256-grammar line count == asset count (one zip)'
 Assert-Case ((Get-NormalizedProse (Get-ReleaseBodyWhatsNew $fixtureBody)) -ceq '- a change') 'body: What''s-new section round-trips ordinal-exact'
-Assert-Case ($fixtureBody.Contains($script:InstallFolderAnchor)) 'body: install block carries the folder anchor'
-Assert-Case ($fixtureBody.Contains($script:InstallDeleteOldAnchor)) 'body: install block carries the delete-old anchor'
+Assert-Case ($fixtureBody.Contains($script:InstallModFolderAnchor)) 'body: install block carries the manual-lane mod-folder anchor'
+Assert-Case ($fixtureBody.Contains($script:InstallDeleteOldAnchor)) 'body: install block carries the upgrade-from-standalone anchor'
 Assert-Case ($null -eq (Get-ReleaseBodyWhatsNew "Development build`nsource: $fixtureSha")) 'body: legacy no-section body -> labeled ABSENT (null), not empty'
+$legacyMap = @{ 'multivoid-0.9.0n-999.dll' = ('a' * 64); 'xinput1_3.dll' = ('b' * 64) }
+$legacyBody = New-ReleaseBody -SourceSha $fixtureSha -Sha256ByFile $legacyMap -NotesContent '- a change' -Dev
+Assert-Case ([regex]::Matches($legacyBody, $script:Sha256LineRegex).Count -eq 2) 'body(legacy): sha256-grammar line count == 2 (DLL pair)'
+Assert-Case ($legacyBody.Contains('You need **both** files below')) 'body(legacy): two-DLL install prose preserved (frozen literals)'
+Assert-Case ($legacyBody.Contains('WindowsNoEditor\VotV\Binaries\Win64')) 'body(legacy): old folder path survives as a frozen literal'
+$eraMissThrew = $false
+try { New-ReleaseBody -SourceSha $fixtureSha -Sha256ByFile @{ 'weird.txt' = ('c' * 64) } -NotesContent '- x' | Out-Null }
+catch { $eraMissThrew = $true }
+Assert-Case $eraMissThrew 'body: a sha map matching neither era is refused (fail-closed, no default prose)'
 
 # --- Install-staleness pattern fixtures (both outcomes through the REAL
 # patterns; the game-target parser-miss tri-state) ---------------------------

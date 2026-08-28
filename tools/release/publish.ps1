@@ -8,7 +8,7 @@
 param(
     [Parameter(Mandatory)][string]$TagName,
     [Parameter(Mandatory)][string]$TagSha,
-    [Parameter(Mandatory)][string]$ArtifactDir,   # downloaded build-core artifact (payload DLL + xinput1_3.dll)
+    [Parameter(Mandatory)][string]$ArtifactDir,   # downloaded build-core artifact (main.dll)
     [string]$Repo = 'VOTV-MP/Multivoid',
     [string[]]$ExtraBodyLines = @()               # e.g. a 'DRILL' marker line (drill matrix, R23)
 )
@@ -20,21 +20,46 @@ $ErrorActionPreference = 'Stop'
 $tag = ConvertFrom-ReleaseTag $TagName
 if (-not $tag) { throw "tag '$TagName' fails the grammar (the judge should have refused)" }
 
-# --- Assets ---------------------------------------------------------------
-$payload = @(Get-ChildItem $ArtifactDir -Filter 'multivoid-*.dll')
-$proxy   = @(Get-ChildItem $ArtifactDir -Filter 'xinput1_3.dll')
-if ($payload.Count -ne 1) { throw "expected exactly one multivoid-*.dll in $ArtifactDir, found $($payload.Count)" }
-if ($proxy.Count -ne 1)   { throw "expected xinput1_3.dll in $ArtifactDir" }
-$assets = @($payload[0], $proxy[0])
+# --- Assets: ONE zip, assembled from the artifact payload (UE4SS_ARC 7.4c/8.3) --
+# The artifact carries the tagged cacheless rebuild's main.dll; the zip is
+# assembled HERE on the main checkout by the one assembler (package.ps1), then
+# the identical fail-closed predicate is re-run on the finished file.
+$payload = @(Get-ChildItem $ArtifactDir -Filter 'main.dll')
+if ($payload.Count -ne 1) { throw "expected exactly one main.dll in $ArtifactDir, found $($payload.Count)" }
+
+# Identity: THREE legs must agree -- the tag, the artifact bytes' own
+# VERSIONINFO (strictly stronger than the retired filename check: it reads the
+# bytes, which survive any rename), and the tree the manifest is stamped from.
+# A proto bump landing on main between tag push and publish makes leg 3
+# disagree; that refusal is CORRECT -- the zip's manifest must match the
+# artifact, so publish from a checkout matching the tag instead.
+$tagPair = "$($tag.Game) b$($tag.N)"
+$dllPair = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($payload[0].FullName).ProductVersion
+if ($null -eq $dllPair) { $dllPair = '' }
+if ($dllPair -cne $tagPair) { throw "artifact main.dll VERSIONINFO says '$dllPair' but the tag declares '$tagPair' -- wrong bytes for this tag" }
+$treeTarget = Get-GameTargetFromCMake
+$treeProto  = Get-ProtoFromWorktree
+$treePair   = "$treeTarget b$treeProto"
+if ($treePair -cne $tagPair) { throw "main-checkout identity '$treePair' != tag '$tagPair' -- the generated manifest would lie; publish from a checkout matching the tag" }
+
+# package.ps1 throws on any failure (ErrorActionPreference=Stop propagates);
+# its internal Test-PackageZip already ran on the written file.
+& (Join-Path $PSScriptRoot 'package.ps1') -PayloadDll $payload[0].FullName
+$repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$zipName  = Get-PackageZipName -Version (ConvertTo-PackageVersion -GameTarget $treeTarget -Proto $treeProto)
+$zipPath  = Join-Path (Join-Path $repoRoot 'build/package') $zipName
+if (-not (Test-Path -LiteralPath $zipPath)) { throw "assembled zip not found where package.ps1 writes it: $zipPath" }
+
+# Re-run the identical predicate on the finished file (7.4b), with the EXACT
+# payload sha this run handed in.
+$payloadSha = (Get-FileHash -Algorithm SHA256 $payload[0].FullName).Hash.ToLowerInvariant()
+$zipViolations = @(Test-PackageZip -ZipPath $zipPath -ExpectedPayloadSha256 $payloadSha)
+if ($zipViolations.Count -gt 0) { throw ("release zip failed the tree check:`n  " + ($zipViolations -join "`n  ")) }
+
+$assets = @(Get-Item -LiteralPath $zipPath)
 $shaMap = @{}
 foreach ($a in $assets) { $shaMap[$a.Name] = (Get-FileHash -Algorithm SHA256 $a.FullName).Hash.ToLowerInvariant() }
 Write-Host "assets: $($assets.Name -join ', ')"
-
-# Filename sanity: the payload DLL must carry the tag's build number (loader
-# ranks by the trailing number; a mismatched artifact is the wrong bytes).
-if ($payload[0].Name -ne "multivoid-$($tag.Game)-$($tag.N).dll") {
-    throw "payload '$($payload[0].Name)' != expected multivoid-$($tag.Game)-$($tag.N).dll"
-}
 
 # --- Stale drafts on this tag are a dead run's scratch: delete ------------
 $existing = @(gh api "repos/$Repo/releases?per_page=100" --paginate | ConvertFrom-Json)
