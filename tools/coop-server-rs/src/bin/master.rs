@@ -330,6 +330,72 @@ fn lobbies_per_ip(state: &MasterState, ip: &str) -> usize {
     state.lobbies.values().filter(|lo| ip_bucket(&lo.ip) == bucket).count()
 }
 
+// ---- version-pair gate (2026-08-29) -----------------------------------------
+//
+// The register endpoint used to swallow ANY self-reported version pair -- a
+// field host was seen advertising "b148" when no such build exists, and the
+// lobby list dutifully rendered it (every real client sees an unjoinable
+// impossible-version row: pure pollution, and it reads as "a newer build
+// exists"). The pair is self-reported and host attestation is a separate arc
+// (docs/security/README.md -- peer certificates), so this gate is deliberately
+// modest: refuse SHAPE-invalid game strings and build numbers NEWER than the
+// newest build the project has actually distributed.
+//
+// `max_build` is DEPLOY CONFIG in the established /v1/latest pattern:
+// COOP_MAX_BUILD (falls back to COOP_LATEST_PROTO), bumped alongside each
+// release / tester distribution; 0 = gate off (the pre-first-release state).
+// COOP_ALLOWED_BUILDS ("133,143") optionally pins the exact released set.
+// proto==0 (legacy pre-v122 hosts) always passes -- they advertise no build.
+
+/// "0.9.0n" shape: three '.'-separated numeric parts (1-2 digits), the last
+/// with an optional 1-2 letter suffix. Hand-rolled -- no regex dependency.
+fn game_shape_ok(game: &str) -> bool {
+    let parts: Vec<&str> = game.split('.').collect();
+    if parts.len() != 3 {
+        return false;
+    }
+    let digits = |s: &str| !s.is_empty() && s.len() <= 2 && s.bytes().all(|b| b.is_ascii_digit());
+    if !digits(parts[0]) || !digits(parts[1]) {
+        return false;
+    }
+    let last = parts[2];
+    let dig_end = last.bytes().take_while(|b| b.is_ascii_digit()).count();
+    let suffix = &last[dig_end..];
+    dig_end >= 1 && dig_end <= 2 && suffix.len() <= 2
+        && suffix.bytes().all(|b| b.is_ascii_lowercase())
+}
+
+/// Pure gate half (env resolved by the caller so this is unit-testable).
+fn version_gate(game: &str, proto: i64, max_build: i64, allowed: &[i64]) -> Result<(), String> {
+    if !game.is_empty() && !game_shape_ok(game) {
+        return Err(format!("bad game version '{}'", game));
+    }
+    if proto > 0 {
+        if max_build > 0 && proto > max_build {
+            return Err(format!(
+                "build b{} does not exist (newest released build is b{})",
+                proto, max_build
+            ));
+        }
+        if !allowed.is_empty() && !allowed.contains(&proto) {
+            return Err(format!("build b{} is not a released build", proto));
+        }
+    }
+    Ok(())
+}
+
+fn version_gate_env(game: &str, proto: i64) -> Result<(), String> {
+    static MAX_BUILD: LazyLock<i64> =
+        LazyLock::new(|| env_int("COOP_MAX_BUILD", env_int("COOP_LATEST_PROTO", 0)));
+    static ALLOWED: LazyLock<Vec<i64>> = LazyLock::new(|| {
+        env_str("COOP_ALLOWED_BUILDS", "")
+            .split(',')
+            .filter_map(|s| s.trim().parse::<i64>().ok())
+            .collect()
+    });
+    version_gate(game, proto, *MAX_BUILD, &ALLOWED)
+}
+
 fn auth_by_session<'a>(state: &'a MasterState, body: &Value) -> Option<&'a Lobby> {
     let sid = as_str(body, "sessionId")?;
     let tok = as_str(body, "token")?;
@@ -361,6 +427,12 @@ fn h_host(state: &mut MasterState, ip: &str, body: &Value) -> (u16, Value) {
     lo.version = clamp_field(body, "version", MAX_VERSION);
     lo.game = clamp_field(body, "game", MAX_GAME);
     lo.proto = as_int(body, "proto", 0).clamp(0, 65535);
+    // Version-pair gate (2026-08-29): shape-invalid game / impossible build
+    // numbers are refused BEFORE the lobby exists -- see the gate block above.
+    if let Err(reason) = version_gate_env(&lo.game, lo.proto) {
+        log(&format!("host REFUSED from {}: {} (name='{}')", ip, reason, lo.name));
+        return (400, json!({"error": reason}));
+    }
     lo.world = clamp_field(body, "world", MAX_WORLD);
     lo.locked = as_bool(body, "locked", false);
     lo.players_max = as_int(body, "players_max", 4).clamp(1, 4);
@@ -929,5 +1001,54 @@ async fn serve_tls(listener: TcpListener, acceptor: tokio_rustls::TlsAcceptor) -
             }
             Err(e) => log(&format!("tls accept error: {e}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{game_shape_ok, version_gate};
+
+    #[test]
+    fn game_shape_accepts_real_votv_versions() {
+        for g in ["0.9.0n", "0.8.1c", "0.7.0", "0.9.0", "1.0.0", "0.9.1pt"] {
+            assert!(game_shape_ok(g), "{g} should pass");
+        }
+    }
+
+    #[test]
+    fn game_shape_refuses_garbage() {
+        for g in ["", "lol", "0.9", "0.9.0.1", "0.9.0N", "0.9.0nnn", "999.9.0n",
+                  "0.9.0n b148", "<script>", "0..0", "0.9.вot"] {
+            assert!(!game_shape_ok(g), "{g} should fail");
+        }
+    }
+
+    #[test]
+    fn gate_refuses_impossible_build() {
+        // The field case that motivated the gate: a host advertising b148 when
+        // the newest distributed build is b143.
+        assert!(version_gate("0.9.0n", 148, 143, &[]).is_err());
+        assert!(version_gate("0.9.0n", 143, 143, &[]).is_ok());
+        assert!(version_gate("0.9.0n", 133, 143, &[]).is_ok());
+    }
+
+    #[test]
+    fn gate_off_and_legacy_pass() {
+        assert!(version_gate("0.9.0n", 9999, 0, &[]).is_ok()); // gate off pre-release
+        assert!(version_gate("", 0, 143, &[]).is_ok());        // legacy pre-v122 host
+        assert!(version_gate("0.9.0n", 0, 143, &[]).is_ok());  // no build advertised
+    }
+
+    #[test]
+    fn allowlist_pins_exact_set() {
+        let allowed = [133i64, 143];
+        assert!(version_gate("0.9.0n", 143, 143, &allowed).is_ok());
+        assert!(version_gate("0.9.0n", 140, 143, &allowed).is_err());
+        assert!(version_gate("0.9.0n", 0, 143, &allowed).is_ok()); // legacy exempt
+    }
+
+    #[test]
+    fn gate_refuses_bad_shape_with_any_proto() {
+        assert!(version_gate("h4x0r edition", 133, 143, &[]).is_err());
     }
 }
