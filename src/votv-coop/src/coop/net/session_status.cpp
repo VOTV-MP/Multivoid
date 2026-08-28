@@ -172,6 +172,7 @@ int Session::AdmitPending(int pendingIdx, uint32_t hConn) {
     if (!sockets) return -1;
     sockets->SetConnectionUserData(static_cast<HSteamNetConnection>(hConn), slot);
     peerGenBySlot_[slot].store(MintPeerGeneration(), std::memory_order_release);
+    // GEN: mint -- the admitted peer takes the slot (the generation store is the line above)
     peerConns_[slot].store(hConn);
     // The peer is now entitled to everything a connected peer gets. This is the
     // moment the Connected callback used to be, for a host's clients.
@@ -610,6 +611,8 @@ void Session::FatalCloseSlot(int slot, const char* reason) {
         std::lock_guard<std::mutex> lk(hostCloseMutex_);
         hostCloseReason_ = reason ? reason : "send backlog fatal";
     }
+    // GEN: none -- CLIENT side: slot 0 is the host LINK handle, not a peer-slot
+    // occupancy (the client owns no roster generations; the flee path tears down whole)
     const uint32_t hConn = peerConns_[0].exchange(0);
     if (hConn == 0) return;
     KickClaimed(0, hConn, reason);
