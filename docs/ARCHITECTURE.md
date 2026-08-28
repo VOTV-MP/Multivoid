@@ -95,9 +95,10 @@ D-3 slim contract (decision 2026-08-21, shipped at WP-2): UE4SS
 LoadLibrary's `main.dll` and calls the two exported C-ABI functions
 (`start_mod` / `uninstall_mod`); everything past that line is Multivoid's
 own code, and the DLL imports **zero** symbols from `UE4SS.dll`
-(machine-checked by `tools/loader/abi_gate.py`; field UE4SS C++ mods
-import 32-130 mangled symbols and break across UE4SS versions — ours
-loads on 3.0.1 and the experimental build alike). UE4SS is also the
+(machine-checked by `tools/loader/abi_gate.py`, run per-push in CI on the
+built artifact with its own must-fire drill since 2026-08-29; field UE4SS
+C++ mods import 32-130 mangled symbols and break across UE4SS versions —
+ours loads on 3.0.1 and the experimental build alike). UE4SS is also the
 everyday development tool (Live View, Lua probes, header dumps, BP
 bytecode inspection — see `docs/RE_WORKFLOW.md`).
 

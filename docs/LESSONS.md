@@ -2007,7 +2007,13 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   read that row's OWN fix-of-record to the end** -- a register whose rows carry a fix section will
   answer the question you are about to spend a pass on. FOURTH rule: **when executing a named ritual --
   a leak audit, a release checklist, a migration runbook -- grep `memory/` for that ritual's NAME before
-  the first decision inside it**, not after.
+  the first decision inside it**, not after. **Instance 11 (2026-08-29) is the tightest radius yet: the
+  answer was in the FILE BEING EDITED, named at `build-core.yml:88` and executed by both sibling gates,
+  and my new step's comment claimed "same family as those gates" while omitting their `$LASTEXITCODE`
+  check** -- so the drill's failure exit was discarded by pwsh's last-command rule and the must-fire
+  control could never fail CI (caught by the post-ship audit, fixed as one combined invocation,
+  `27291108`). FIFTH rule: **"same family/shape as X" in a comment is a CHECKLIST, not a description --
+  diff your step against X's actual body before writing the claim.**
   `memory/lesson_the_answer_was_already_written_down_in_this_repo.md`
 
 - **Classify by the predicate you are ENFORCING, not by a property of the wire** (2026-08-26, two `/qf` passes on one
