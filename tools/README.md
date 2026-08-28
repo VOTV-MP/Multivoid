@@ -72,13 +72,12 @@ runs them frequently:
 - **`capture-window.ps1`** — external Win32 PrintWindow grab of the
   VOTV window (in-process F12 / GDI captures black from the 3D
   swapchain).
-- **`inject.ps1`** — legacy DLL-injection script from the pre-
-  standalone-proxy era. Retained for the rare case of testing a debug
-  build with manual injection. The standalone proxy
-  (`xinput1_3.dll`) is the production load path.
-
 ## Retired / removed
 
+- **`inject.ps1`** — legacy DLL-injection script from the pre-
+  standalone-proxy era, and the standalone `xinput1_3.dll` proxy it
+  yielded to — both deleted at UE4SS_ARC WP-2 commit 3. UE4SS loads
+  the mod as `Mods\Multivoid\dlls\main.dll` (deploy: `deploy-mod.ps1`).
 - **`Game/coop-host.bat` / `Game/coop-client.bat`** — early prototype
   launchers that lived inside the game folder. Superseded by
   `mp_host_game.bat` / `mp_client_connect.bat` at the project root

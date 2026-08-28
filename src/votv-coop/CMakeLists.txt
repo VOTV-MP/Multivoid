@@ -648,12 +648,31 @@ add_library(votv-coop SHARED
 )
 
 target_include_directories(votv-coop PRIVATE include ${CMAKE_CURRENT_BINARY_DIR}/generated)
-# Paper-style versioned artifact name (user 2026-07-19): the payload file IS
-# the release identity -- "multivoid-0.9.0n-122.dll". The xinput proxy scans
-# for multivoid-*.dll (loads the highest build; flags duplicates for the
-# in-game popup), so the filename is load-bearing, not cosmetic.
-set_target_properties(votv-coop PROPERTIES
-    OUTPUT_NAME "multivoid-${VOTVCOOP_GAME_TARGET}-${VOTVCOOP_BUILD}")
+# The UE4SS mod-folder contract name (UE4SS_ARC WP-2 commit 3): the DLL ships
+# as Mods/Multivoid/dlls/main.dll. The versioned multivoid-<game>-<build>.dll
+# OUTPUT_NAME retired WITH its one consumer, the xinput proxy's scan -- the
+# old "load-bearing, not cosmetic" justification was the proxy's sentence
+# (UE4SS_ARC 7.3a item 2). The release identity lives in the zip name + the
+# generated manifest (tools/release/package.ps1), the boot banner
+# (coop/version.h + kProtocolVersion), and -- for the bytes themselves -- the
+# VERSIONINFO resource below, which deploy-mod.ps1 verifies against the tree.
+set_target_properties(votv-coop PROPERTIES OUTPUT_NAME "main")
+
+# Identity IN the bytes: a generated VERSIONINFO resource carrying the Paper
+# pair (ProductVersion "<game> b<build>"). Closes the recorded gap "the DLL
+# carries no VERSIONINFO resource -- nothing out-of-band identifies a built or
+# installed DLL today" (UE4SS_ARC 7.3a), which started to matter exactly when
+# the filename stopped carrying the identity. The numeric FILEVERSION carries
+# the digits (<major>,<minor>,<build>,0); the letter suffix of the game target
+# ("0.9.0n") fits only the string fields, which are the authoritative ones.
+string(REGEX MATCH "^([0-9]+)\\.([0-9]+)" _votvcoop_tgt_mm "${VOTVCOOP_GAME_TARGET}")
+set(VOTVCOOP_TARGET_MAJOR "${CMAKE_MATCH_1}")
+set(VOTVCOOP_TARGET_MINOR "${CMAKE_MATCH_2}")
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/version.rc.in
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/version.rc
+    @ONLY)
+target_sources(votv-coop PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated/version.rc)
 # version.lib: read the running exe's file version in the health check.
 # minhook: our inline-hook substrate (game-thread dispatcher).
 # ws2_32: Winsock for the UDP coop transport (src/coop/net).
@@ -684,16 +703,6 @@ target_include_directories(votv-coop PRIVATE
 # GNS objects naturally. Final votv-coop.dll shrinks accordingly (the unused
 # WebRTC + p2p_ice + steam_messages code paths fall away).
 
-# Standalone shipping loader: a xinput1_3.dll proxy that auto-loads the payload
-# (votv-coop.dll) on game start, replacing the dev-only inject.ps1. VOTV imports
-# only XInputGetState/XInputSetState from xinput1_3.dll; those are forwarded to
-# System32's xinput1_4.dll via the .def. See src/loader/.
-add_library(xinput1_3 SHARED
-    src/loader/xinput_proxy.cpp
-)
-# No "lib" prefix; the file must be named exactly xinput1_3.dll.
-set_target_properties(xinput1_3 PROPERTIES OUTPUT_NAME "xinput1_3" PREFIX "")
-
 # Static CRT so the injected DLL doesn't depend on a runtime the host
 # process may not have loaded.
 if (MSVC)
@@ -719,7 +728,7 @@ if (MSVC)
     # English one -- caught by the arc-D codec selftest, which counted 3 codepoints
     # in a 2-character literal. Silent, machine-dependent, and now impossible.
     target_compile_options(votv-coop PRIVATE /W4 /permissive- /EHa /utf-8)
-    # /MAP emits votv-coop.map (symbol -> RVA) so a faulting IP captured by the
+    # /MAP emits main.map (symbol -> RVA) so a faulting IP captured by the
     # game_thread Pump firewall (absorbed-fault localization) maps to a function
     # name by grep via tools/maprva.py -- no IDA needed. The .map lands in
     # build/ (gitignored); link-time cost is trivial.
@@ -733,11 +742,6 @@ if (MSVC)
 
     # FreeType (the imgui_freetype rasterizer) must match the static CRT too.
     set_property(TARGET freetype PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-
-    set_property(TARGET xinput1_3 PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    target_compile_options(xinput1_3 PRIVATE /W4 /permissive-)
-    # Export forwarders are declared via #pragma comment(linker,"/export:...")
-    # in src/loader/xinput_proxy.cpp.
 endif()
 
 

@@ -1,13 +1,13 @@
 // ui/boot_warning_dialog.h -- the mod-install problem modal (ImGui overlay surface).
 //
-// v122 (2026-07-19, the multivoid versioned-artifact rename): when the xinput
-// proxy finds MORE THAN ONE payload version file beside the exe (a botched
-// manual update -- e.g. multivoid-0.9.0n-120.dll AND multivoid-0.10.0-75.dll,
-// or a stale legacy votv-coop.dll), it loads the highest build and hands the
-// leftover list to the payload via the MULTIVOID_DUP_FILES env var. The boot
-// thread Arm()s this dialog; it renders over whatever surface is up until the
-// user acknowledges. Generic on purpose: any future boot-time install problem
-// can Arm() it too.
+// Born v122 (2026-07-19) as the xinput proxy's duplicate-payload popup; that
+// feeder retired with the proxy lane at UE4SS_ARC WP-2 commit 3 (duplicate
+// installs are now cppmod_entry.cpp's predecessor/dup-mutex REFUSE MessageBox
+// -- a refused instance must never install the overlay this dialog renders
+// from). The dialog stays as the generic boot-time install-problem modal;
+// current feeder: server_browser_native's missing-donor warning ("the game
+// updated and the mod needs a new release"). Arm() renders it over whatever
+// surface is up until the user acknowledges.
 //
 // Threading: Arm() from the boot thread (before the overlay ever presents);
 // IsOpen()/Render() render-thread only. Same ownership shape as

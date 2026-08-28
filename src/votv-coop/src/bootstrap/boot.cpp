@@ -9,7 +9,6 @@
 #include "coop/net/protocol.h"  // kProtocolVersion -- the b<N> build rev in the banner
 #include "coop/version.h"
 #include "harness/harness.h"
-#include "ui/boot_warning_dialog.h"  // v122: the duplicate-DLL install popup
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/paths.h"
@@ -34,7 +33,8 @@ volatile LONG g_bootLatch = 0;
 volatile LONG g_started = 0;
 
 // Milliseconds since THIS process was created (GetProcessTimes creation time),
-// for the proxy-vs-UE4SS load-moment comparison. Wall-clock filetimes, 100ns.
+// for the load-moment marker: how late UE4SS's mod-scan started us relative to
+// process creation. Wall-clock filetimes, 100ns.
 unsigned long long MsSinceProcessStart() {
     FILETIME create{}, exit_{}, kernel{}, user{}, now{};
     if (!::GetProcessTimes(::GetCurrentProcess(), &create, &exit_, &kernel, &user)) return 0;
@@ -69,10 +69,10 @@ void WriteMarker(const char* entryTag) {
     }
 }
 
-// Support telemetry (D-3): which UE4SS host, if any, shares the process. Reads
-// the version RESOURCE of whichever UE4SS module is loaded (the official builds
+// Support telemetry (D-3): which UE4SS host shares the process. Reads the
+// version RESOURCE of whichever UE4SS module is loaded (the official builds
 // ship "UE4SS.dll"; shimloader loads a lowercase "ue4ss.dll"). Boot-time
-// snapshot only -- on the proxy lane UE4SS may legitimately load later.
+// snapshot only.
 void LogUe4ssPresence() {
     // One lookup: GetModuleHandleW is case-insensitive, so this matches the
     // official "UE4SS.dll" and shimloader's lowercase "ue4ss.dll" alike.
@@ -115,9 +115,11 @@ DWORD WINAPI BootThread(LPVOID rawTag) {
     // truth). The exe identity beside kGameTarget makes an install-skew report
     // (mod built for cook X running on exe Y) one-look diagnosable from the log.
     UE_LOGI("boot: compiled %s %s", __DATE__, __TIME__);
-    // D-3 lane + load-moment marker: which loader brought us in, and how late
-    // relative to process creation (proxy = process-init; UE4SS = its mod-scan,
-    // after the sig-scan phase). The spike's timing cells diff this line.
+    // D-3 entry + load-moment marker: which entry point brought us in (the one
+    // live lane is start_mod, entry=cppmod -- mp.py's _lane_check greps it, and
+    // entry=proxy-dllmain appearing here means a PREDECESSOR binary booted),
+    // and how late relative to process creation (UE4SS's mod-scan runs after
+    // its sig-scan phase). The spike's timing cells diff this line.
     UE_LOGI("boot: entry=%s since-process-start=%llums pid=%lu", entryTag,
             MsSinceProcessStart(), ::GetCurrentProcessId());
     LogUe4ssPresence();
@@ -130,28 +132,6 @@ DWORD WINAPI BootThread(LPVOID rawTag) {
                 (static_cast<unsigned long long>(fad.nFileSizeHigh) << 32) | fad.nFileSizeLow;
             UE_LOGI("boot: game exe '%s' size=%llu (mod targets VOTV %s)",
                     exePath, exeSize, coop::version::kGameTarget);
-        }
-    }
-    // Duplicate-install detection (v122 multivoid rename): the xinput proxy scanned
-    // for multivoid-*.dll; if it found MORE than one version file (or a stale legacy
-    // votv-coop.dll), it loaded the highest build and left the leftovers in
-    // MULTIVOID_DUP_FILES. Surface that as an in-game popup (the user asked for a
-    // dialog, not a log line) + a WARN for the log-based triage.
-    {
-        char dup[1024] = {};
-        char loaded[256] = {};
-        const DWORD n = ::GetEnvironmentVariableA("MULTIVOID_DUP_FILES", dup, sizeof(dup));
-        ::GetEnvironmentVariableA("MULTIVOID_LOADED", loaded, sizeof(loaded));
-        if (n > 0 && n < sizeof(dup)) {
-            UE_LOGW("boot: MULTIPLE mod DLL versions found beside the exe -- loaded '%s', "
-                    "leftover(s): %s", loaded, dup);
-            std::string msg =
-                "Several versions of the multivoid mod DLL are installed next to the game.\n\n"
-                "Loaded (newest): " + std::string(loaded[0] ? loaded : "?") + "\n"
-                "Also found: " + std::string(dup) + "\n\n"
-                "Delete the other file(s) from VotV\\Binaries\\Win64 to avoid running "
-                "a mixed install.";
-            ui::boot_warning_dialog::Arm(msg);
         }
     }
     ue_wrap::reflection::RunHealthCheck();

@@ -145,7 +145,7 @@ def check(path: Path, verbose: bool) -> list[str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("dll", nargs="?", help="path to the shipped main.dll / multivoid-*.dll")
+    ap.add_argument("dll", nargs="?", help="path to the shipped main.dll")
     ap.add_argument("--selftest", metavar="VIOLATOR",
                     help="path to a binary that MUST violate the invariant (the RED control). "
                          "A gate that has never been shown failing proves nothing.")

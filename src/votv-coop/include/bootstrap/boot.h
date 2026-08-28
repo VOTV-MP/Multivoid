@@ -1,10 +1,13 @@
-// bootstrap/boot.h -- the ONE boot entry both loader lanes call.
+// bootstrap/boot.h -- the ONE boot entry.
 //
 // D-3 SLIM CONTRACT (votv-ue4ss-f2-migration-DESIGN-2026-08-21.md SS2): the mod
-// has two ways into the process -- the standalone xinput proxy (DllMain of a
-// multivoid-*.dll, dying at WP-2) and UE4SS's C-ABI start_mod() on
-// Mods/Multivoid/dlls/main.dll (src/loader/cppmod_entry.cpp). Both funnel here.
-// StartOnce owns the two cross-cutting guards:
+// enters the process via UE4SS's C-ABI start_mod() on
+// Mods/Multivoid/dlls/main.dll (src/loader/cppmod_entry.cpp), which funnels
+// here. (The second lane -- the standalone xinput proxy booting a versioned
+// multivoid-*.dll from DllMain -- retired whole at UE4SS_ARC WP-2 commit 3;
+// PREDECESSOR binaries in the wild still carry it, which is what the
+// duplicate-mutex's "lane mix" case below and cppmod_entry's predecessor scan
+// exist for.) StartOnce owns the two cross-cutting guards:
 //   - the per-MODULE latch (one boot attempt per module instance, ever; the
 //     project's standard Install() latch shape -- a second call is the UE4SS
 //     "Restart All Mods" re-entry and must NOT re-bootstrap a live session);
@@ -25,7 +28,9 @@ enum class StartResult {
     kRefusedDupMutex,  // another instance of the mod already booted THIS process
 };
 
-// entryTag names the lane for the log/timing markers: "proxy-dllmain" | "cppmod".
+// entryTag names the entry point for the log/timing markers ("cppmod" -- the
+// one live lane; mp.py's _lane_check greps `entry=cppmod` and treats
+// `entry=proxy-dllmain`, which only a predecessor binary can print, as FAIL).
 StartResult StartOnce(const char* entryTag);
 
 // True once any lane ATTEMPTED the latch on THIS module instance (booted OR

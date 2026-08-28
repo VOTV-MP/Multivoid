@@ -1,15 +1,16 @@
 # multivoid (working name: votv-coop) — the mod source
 
-Standalone coop mod DLL for Voices of the Void (UE4.27). Two binaries:
+Coop mod DLL for Voices of the Void (UE4.27). One binary:
 
-- **`xinput1_3.dll`** — proxy loader (`src/loader/xinput_proxy.cpp`).
-  VOTV imports XInputGetState/SetState; we forward them to System32's
-  xinput1_4.dll and side-load the highest-build `multivoid-<game>-<build>.dll`
-  from `DllMain` (a stray legacy `votv-coop.dll` triggers the dup-install
-  warning). No
-  injection. No UE4SS at runtime.
-- **`multivoid-<game>-<build>.dll`** — the payload (e.g. `multivoid-0.9.0n-122.dll`). Self-contained reflection +
-  hooking + transport + replication.
+- **`main.dll`** — the whole mod, shipped as the UE4SS mod folder
+  `Mods\Multivoid\dlls\main.dll` + `enabled.txt` and started via the
+  C-ABI `start_mod()` contract (`src/loader/cppmod_entry.cpp`). All
+  reflection + hooking + transport + replication is our own substrate
+  (D-3 slim contract: zero UE4SS imports); UE4SS is the *loader*.
+  Identity (game target + build) is in the boot banner and the DLL's
+  generated VERSIONINFO (`version.rc.in`), not the filename. (The
+  standalone `xinput1_3.dll` proxy + versioned payload name retired
+  whole at UE4SS_ARC WP-2 commit 3.)
 
 ## Subtrees (principle 7 — see `docs/COOP_METHODOLOGY.md` / `CLAUDE.md`)
 
@@ -22,8 +23,9 @@ include/
              thunks. NO network logic, NO gameplay logic.
 
 src/
-  bootstrap/   dllmain.cpp — entry point, kicks off boot thread.
-  loader/      xinput_proxy.cpp — the standalone xinput1_3.dll proxy.
+  bootstrap/   dllmain.cpp (DETACH backstop) + boot.cpp (the boot thread).
+  loader/      cppmod_entry.cpp — the UE4SS C-ABI start_mod() contract
+               (+ cppmod_stubs.asm, the era-safe vtable stub surface).
   ue_wrap/     Engine-wrapper implementations + MinHook-based
                ProcessEvent detour for game-thread context.
   coop/        Gameplay + network. RemotePlayer, sessions, transport,
@@ -53,11 +55,13 @@ cmake -B build/votv-coop -S src/votv-coop -G "Visual Studio 16 2019" -A x64
 cmake --build build/votv-coop --config Release
 ```
 
-Output: `build/votv-coop/Release/multivoid-<game>-<build>.dll` and
-`build/votv-coop/Release/xinput1_3.dll`.
+Output: `build/votv-coop/Release/main.dll` (VERSIONINFO carries the
+`<game target> b<build>` pair).
 
-Deploy: `tools/deploy-loader.ps1 -Standalone -GameWin64 <path>` is
-idempotent (skip-if-identical) — safe to run while VOTV is loaded.
+Deploy: `tools/deploy-mod.ps1 -GameWin64 <path>` (or `deploy-all.ps1`
+for all four game copies) is idempotent (skip-if-identical) and
+fail-closed on a tree/DLL identity mismatch. The UE4SS substrate is a
+one-time per-copy install: `tools/install-ue4ss.ps1`.
 Both `mp_host_game.bat` and `mp_client_connect.bat` call it before
 launching.
 

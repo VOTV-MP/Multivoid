@@ -33,42 +33,25 @@ if ($Remove) {
     return
 }
 
-# The build artifact keeps the versioned release-identity name
-# multivoid-<game>-<build>.dll (WP-4 owns the distribution re-home); a proto bump
-# renames the output and older artifacts linger beside it. It is deployed AS
-# main.dll (the UE4SS mod-folder contract name).
-#
-# PICK BY DECLARED BUILD NUMBER, NOT BY MTIME (2026-08-25). The old selector was
-# `Sort-Object LastWriteTime -Descending`, which makes the payload a function of
-# which file the filesystem touched last rather than of which build is newest --
-# so a rebuild of an OLD tag, a restored backup, or a `touch` silently ships the
-# wrong DLL, and the only thing standing between that and the user is a hash the
-# operator has to remember to check. The memory index has flagged this twice.
-# The rule here is now the SAME one the xinput proxy applies at load time (scan
-# multivoid-*.dll, take the highest build), so the deployer and the loader can
-# never disagree about which artifact is current.
-#
-# THE ORDERING IS TOTAL, and it has to be: the build number is NOT a unique key.
-# `multivoid-0.9.0n-141.dll` and `multivoid-0.9.0o-141.dll` both parse to 141 (a
-# game-target bump without a proto bump leaves both in build/), and Sort-Object
-# is not stable without -Stable -- so a single sort key would pick arbitrarily
-# and hand back exactly the "which DLL actually shipped" ambiguity this selector
-# was written to kill. Mtime returns as the TIE-BREAK only, never as the key.
-$payloadSrc = Get-ChildItem (Join-Path $BuildDir "multivoid-*.dll") -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -match '^multivoid-.*-(\d+)\.dll$' } |
-    Sort-Object -Property `
-        @{Expression = { [int]([regex]::Match($_.Name, '^multivoid-.*-(\d+)\.dll$').Groups[1].Value) }; Descending = $true}, `
-        @{Expression = { $_.LastWriteTime }; Descending = $true}, `
-        @{Expression = { $_.Name }; Descending = $true} |
-    Select-Object -First 1
-if (-not $payloadSrc) { throw "no multivoid-*.dll in $BuildDir -- build first: cmake --build build/votv-coop --config Release" }
+# The build artifact is main.dll (the UE4SS mod-folder contract name; the
+# versioned multivoid-<game>-<build>.dll OUTPUT_NAME retired with the xinput
+# proxy at UE4SS_ARC WP-2 commit 3). One fixed name means there is nothing to
+# rank -- the whole pick-by-build-number selector this block used to carry
+# dissolved with the name it ranked.
+$payloadSrc = Get-Item (Join-Path $BuildDir "main.dll") -ErrorAction SilentlyContinue
+if (-not $payloadSrc) { throw "no main.dll in $BuildDir -- build first: cmake --build build/votv-coop --config Release" }
 
-# ...AND THE WINNER MUST BE THE ONE **THIS SOURCE TREE** DECLARES. Highest-build alone answers a
-# different question than the operator is asking: old artifacts are documented to linger in
-# $BuildDir, so checking out an older tag (a bisect, or reproducing a field bug) picks the STALE
-# higher-numbered DLL and deploys code that is not in the working tree -- a case the old mtime rule
-# happened to get right. Both halves of the identity are declared in exactly one place each, so read
-# them and refuse a mismatch instead of trusting an ordering.
+# ...BUT THE BYTES MUST STILL BE **THIS SOURCE TREE'S** BYTES. The retired name
+# guard existed because a stale artifact deploys silently while reporting
+# success; that hazard survives the rename (a checkout of an older tag over a
+# fresh build dir, a restored backup). The replacement reads the pair the DLL
+# ITSELF declares -- its generated VERSIONINFO ProductVersion "<game> b<build>"
+# (version.rc.in) -- and refuses a mismatch against the pair this tree declares.
+# Strictly stronger than the filename guard: it checks the bytes, so it also
+# survives the rename to main.dll the deploy itself performs, and an OLD
+# main.dll with no VERSIONINFO at all reads as '' and refuses too. Both halves
+# of the tree identity are declared in exactly one place each, so read them
+# ("derive it, never guess it").
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $expectTarget = $null; $expectBuild = $null
 $cml = Join-Path $repoRoot "src/votv-coop/CMakeLists.txt"
@@ -83,17 +66,19 @@ if (Test-Path $proto) {
         if ($m.Success) { $expectBuild = $m.Groups[1].Value; break }
     }
 }
+$dllPair = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($payloadSrc.FullName).ProductVersion
+if ($null -eq $dllPair) { $dllPair = '' }
 if ($expectTarget -and $expectBuild) {
-    $expectName = "multivoid-$expectTarget-$expectBuild.dll"
-    if ($payloadSrc.Name -ne $expectName) {
-        throw ("payload/source mismatch -- this tree declares $expectName (CMakeLists " +
-               "VOTVCOOP_GAME_TARGET + protocol.h kProtocolVersion) but the newest artifact in " +
-               "$BuildDir is $($payloadSrc.Name). Build this tree before deploying, or delete the " +
-               "stale artifact. Refusing to ship code that is not the code you are looking at.")
+    $expectPair = "$expectTarget b$expectBuild"
+    if ($dllPair -cne $expectPair) {
+        throw ("payload/source mismatch -- this tree declares '$expectPair' (CMakeLists " +
+               "VOTVCOOP_GAME_TARGET + protocol.h kProtocolVersion) but main.dll's VERSIONINFO " +
+               "says '$dllPair'. Build this tree before deploying. Refusing to ship code that " +
+               "is not the code you are looking at.")
     }
 } else {
     Write-Host ("  WARN: could not read the declared identity from CMakeLists.txt / protocol.h -- " +
-                "deploying $($payloadSrc.Name) on the build-number rule alone") -ForegroundColor Yellow
+                "deploying main.dll ('$dllPair') unverified") -ForegroundColor Yellow
 }
 
 # Substrate presence check (evidence, not a gate: a deploy before install-ue4ss
@@ -144,4 +129,4 @@ Remove-Item $marker -ErrorAction SilentlyContinue
 
 $sha = (Get-Sha256Hex $dst).Substring(0, 16)
 $state = if ($copied) { "updated" } else { "up-to-date" }
-"deployed mod ($state) -> $dst  [$($payloadSrc.Name) sha256=$sha]"
+"deployed mod ($state) -> $dst  [main.dll '$dllPair' sha256=$sha]"

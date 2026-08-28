@@ -1,51 +1,21 @@
-// multivoid bootstrap entry -- the LANE DISCRIMINATOR.
+// multivoid bootstrap entry.
 //
-// The mod DLL is loaded two ways (D-3 SLIM CONTRACT, spike 2026-08-21):
-//   - the standalone xinput proxy (src/loader/xinput_proxy.cpp) LoadLibrary's
-//     it under its versioned name multivoid-<game>-<build>.dll and expects it
-//     to boot itself -- the shipping path today, dying whole at WP-2;
-//   - UE4SS LoadLibrary's it as Mods/Multivoid/dlls/main.dll at mod-SCAN time
-//     (for every mod found, enabled or not) and starts ENABLED mods later via
-//     the exported start_mod() (src/loader/cppmod_entry.cpp).
-// The module's OWN FILENAME is the honest discriminator between the two: the
-// proxy/inject lane always maps us as multivoid-*.dll (that is the pattern it
-// scans), the UE4SS lane always as main.dll. Booting from DllMain iff the
-// proxy-era name matches keeps every existing flow (old proxy + new payload
-// included) while honoring UE4SS enablement -- a disabled mod folder is
-// LOADED but never STARTED, so it must not boot from DllMain.
+// The mod DLL has ONE way into the process (UE4SS_ARC WP-2 commit 3 retired
+// the standalone xinput-proxy lane whole, its filename lane-discriminator
+// included): UE4SS LoadLibrary's it as Mods/Multivoid/dlls/main.dll at
+// mod-SCAN time (for every mod found, enabled or not) and starts ENABLED mods
+// later via the exported start_mod() (src/loader/cppmod_entry.cpp). Nothing
+// boots from ATTACH -- a disabled mod folder is LOADED but never STARTED, so
+// DllMain must not boot. DETACH keeps the last-resort teardown backstop.
 
-#include "bootstrap/boot.h"
 #include "coop/session/shutdown.h"
 #include "loader/cppmod_entry.h"
 
 #include <windows.h>
 
-namespace {
-
-bool OwnNameIsProxyEra(HMODULE self) {
-    wchar_t path[MAX_PATH] = {};
-    ::GetModuleFileNameW(self, path, MAX_PATH);
-    const wchar_t* base = path;
-    for (const wchar_t* p = path; *p; ++p) {
-        if (*p == L'\\' || *p == L'/') base = p + 1;
-    }
-    const size_t len = ::wcslen(base);
-    // "multivoid-*.dll", case-insensitive (NTFS is case-preserving).
-    return len > 14 && _wcsnicmp(base, L"multivoid-", 10) == 0 &&
-           _wcsicmp(base + len - 4, L".dll") == 0;
-}
-
-}  // namespace
-
 BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         ::DisableThreadLibraryCalls(module);
-        // Proxy/inject lane boots here; the UE4SS lane (main.dll) waits for
-        // start_mod(). StartOnce does real work off the loader lock (it only
-        // latches + CreateThreads).
-        if (OwnNameIsProxyEra(module)) {
-            bootstrap::StartOnce("proxy-dllmain");
-        }
     } else if (reason == DLL_PROCESS_DETACH) {
         // Final vtable-dispatch tally (one log line; no-op when the cppmod
         // lane never ran). Before DoShutdown so the line lands even if the

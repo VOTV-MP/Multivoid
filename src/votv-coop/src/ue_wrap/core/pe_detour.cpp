@@ -119,7 +119,7 @@ inline void RecordCbBodyNs(void* function, unsigned long long ns) {
 // unpossessed-first-client AV flood -- still can't be pinned without it). These
 // pieces capture the faulting instruction pointer + the access address + the
 // containing module/RVA, so the next absorbed fault names its own site. A
-// payload-DLL RVA maps to a function via the payload .map (multivoid-*.map, /MAP) +
+// payload-DLL RVA maps to a function via the payload .map (main.map, /MAP) +
 // tools/maprva.py; a game-exe hit means the fault is inside a ProcessEvent-
 // dispatched UFunction on a bad object.
 thread_local D::TaskFaultInfo t_lastTaskFault{};

@@ -451,8 +451,9 @@ void RenderFrameGuarded(IDXGISwapChain* sc) {
         // draws under the boot-warning modal (an install problem outranks a
         // settings report) and over the regular surfaces.
         if (ConfigReviewOpen()) ui::config_review_panel::Render();
-        // The boot-warning modal (duplicate multivoid-*.dll install problem): layers
-        // over whatever surface is up until acknowledged. No-ops when nothing pending.
+        // The boot-warning modal (a boot-time install problem, e.g. the native
+        // browser's missing-donor warning): layers over whatever surface is up
+        // until acknowledged. No-ops when nothing pending.
         if (ui::boot_warning_dialog::IsOpen()) ui::boot_warning_dialog::Render();
         if (PickerOpen())  ui::host_save_picker::Render();
         if (ChatOpen() && !PauseMenuOpen()) ui::chat_input::Render();
