@@ -40,7 +40,9 @@ int  g_hostMax = 4;
 // master is a relay game's only rendezvous, so a hidden AUTO game is unjoinable
 // (hide it in-game via the scoreboard once friends are in). g_hideDirect is the
 // DIRECT-only "don't list me" toggle (friends still Direct Connect by IP).
-bool g_direct = false;
+// 2026-08-29: tri-state -- 0 = AUTO, 1 = DIRECT (port forward), 2 = LAN ONLY
+// (no master contact at all + private-address accept gate).
+int  g_connMode = 0;
 bool g_hideDirect = false;
 
 // Slot/display names are ASCII; downconvert wide->narrow for ImGui (non-ASCII -> '?').
@@ -62,7 +64,9 @@ void DoHostExisting(const sb::SaveInfo& info) {
     // DriveHostBootIfPending Reset()s it on session-start/failure; if HostWithSave is
     // rejected (busy) there is no pending boot to Reset, so we must NOT raise it.
     if (!sm::HostWithSave(c, g_hostName, g_hostLocked, g_hostMax,
-                          g_direct, /*hideFromBrowser=*/g_direct && g_hideDirect)) {
+                          /*directConnection=*/g_connMode == 1,
+                          /*hideFromBrowser=*/g_connMode == 1 && g_hideDirect,
+                          /*lanOnly=*/g_connMode == 2)) {
         UE_LOGW("host_save_picker: HOST existing '%s' rejected (busy) -- leaving picker open", c.slot.c_str());
         return;
     }
@@ -84,7 +88,9 @@ void DoHostNew() {
     // of seconds), so the no-feedback window was the worst here -- this is exactly where
     // the user self-joined. Cover the menu the instant the action is accepted.
     if (!sm::HostWithSave(c, g_hostName, g_hostLocked, g_hostMax,
-                          g_direct, /*hideFromBrowser=*/g_direct && g_hideDirect)) {
+                          /*directConnection=*/g_connMode == 1,
+                          /*hideFromBrowser=*/g_connMode == 1 && g_hideDirect,
+                          /*lanOnly=*/g_connMode == 2)) {
         UE_LOGW("host_save_picker: HOST NEW '%s' rejected (busy) -- leaving picker open", g_newName);
         return;
     }
@@ -190,13 +196,19 @@ void Render() {
         ImGui::Separator();
         ImGui::TextUnformatted("Connection:");
         ImGui::SameLine();
-        if (ImGui::RadioButton("AUTO (recommended)", !g_direct)) g_direct = false;
+        if (ImGui::RadioButton("AUTO (recommended)", g_connMode == 0)) g_connMode = 0;
         ImGui::SameLine();
-        if (ImGui::RadioButton("DIRECT (port forward)", g_direct)) g_direct = true;
-        if (g_direct) {
+        if (ImGui::RadioButton("DIRECT (port forward)", g_connMode == 1)) g_connMode = 1;
+        ImGui::SameLine();
+        if (ImGui::RadioButton("LAN only", g_connMode == 2)) g_connMode = 2;
+        if (g_connMode == 1) {
             ImGui::TextDisabled("Requires UDP port 47621 forwarded to this PC. Friends join from");
             ImGui::TextDisabled("the server browser or Direct Connect. Not sure? Use AUTO.");
             ImGui::Checkbox("Hide from server browser (friends Direct Connect by IP)", &g_hideDirect);
+        } else if (g_connMode == 2) {
+            ImGui::TextDisabled("Local network only: nothing is sent to the master server, the game");
+            ImGui::TextDisabled("is not listed anywhere, and connections from the internet are");
+            ImGui::TextDisabled("refused. Friends on your network use Direct Connect to your local IP.");
         } else {
             ImGui::TextDisabled("Connects directly when your network allows it, relays automatically");
             ImGui::TextDisabled("otherwise. Works without any router setup. Always listed -- hide it");

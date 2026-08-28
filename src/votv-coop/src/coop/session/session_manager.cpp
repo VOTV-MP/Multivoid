@@ -322,8 +322,37 @@ void AnnounceEnvHostHidden(const std::string& name, const std::string& world) {
 }
 
 bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked, int playersMax,
-                  bool directConnection, bool hideFromBrowser) {
+                  bool directConnection, bool hideFromBrowser, bool lanOnly) {
     if (g_actionBusy.exchange(true)) { UE_LOGW("session_manager: action busy -- HostWithSave ignored"); return false; }
+    // LAN-ONLY (2026-08-29): a LanDirect listen that never touches the master --
+    // no announce, no heartbeat, no signaling; the accept edge additionally
+    // refuses non-private remote addresses (net::Config::lanOnly). No worker
+    // thread needed: there is no HTTP to wait on.
+    if (lanOnly) {
+        const uint16_t directPort = [&] {
+            net::Config fallback;
+            { std::lock_guard<std::mutex> lk(g_cfgMu); fallback = g_fallbackHostCfg; }
+            return fallback.port ? fallback.port : net::kDefaultPort;
+        }();
+        net::Config cfg;
+        cfg.role = net::Role::Host;
+        cfg.topology = net::Topology::LanDirect;
+        cfg.port = directPort;
+        cfg.lanOnly = true;
+        {
+            std::lock_guard<std::mutex> lk(g_pendHostMu);
+            g_pendingHost.cfg = cfg;
+            g_pendingHost.save = choice;
+            g_pendingHost.listed = false;
+            g_hasPendingHost = true;
+        }
+        g_listedState.store(false, std::memory_order_relaxed);
+        SetHostStatus("Hosting '" + name + "' -- LAN ONLY (not announced; local network only)");
+        UE_LOGI("session_manager: hosting LAN-ONLY '%s' port=%u (no master contact; "
+                "private-address accept gate armed)", name.c_str(), directPort);
+        g_actionBusy.store(false);
+        return true;
+    }
     const std::string masterUrl = MasterUrl();
     net::Config fallback;
     { std::lock_guard<std::mutex> lk(g_cfgMu); fallback = g_fallbackHostCfg; }

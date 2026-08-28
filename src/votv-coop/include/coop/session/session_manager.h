@@ -100,8 +100,14 @@ struct SaveChoice {
 // announce's source ip, and /v1/join hands joiners "ip:port" for a plain UDP
 // connect. `hideFromBrowser` (DIRECT only): announce then immediately hide --
 // heartbeat lives, friends Direct Connect by IP; ignored for AUTO.
+// `lanOnly` (2026-08-29): the third Connection choice -- a LanDirect listen that
+// NEVER contacts the master (no announce, no heartbeat, no signaling; nothing
+// leaves the machine), with the accept edge refusing non-private remote
+// addresses. LAN party semantics: friends on the same network Direct Connect
+// to the host's local IP. Overrides directConnection/hideFromBrowser.
 bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked, int playersMax,
-                  bool directConnection = false, bool hideFromBrowser = false);
+                  bool directConnection = false, bool hideFromBrowser = false,
+                  bool lanOnly = false);
 
 // Join a master lobby by its opaque lobbyId (POST /v1/join on a worker) -> build a P2P
 // client Config + queue a session start. Non-blocking. `displayName` is the lobby's name,

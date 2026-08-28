@@ -337,6 +337,35 @@ void Session::HandleConnStatusChanged(void* info) {
                                      "banned", /*bEnableLinger*/false);
             return;
         }
+        // LAN-ONLY gate (2026-08-29): the host chose "LAN only" -- a remote
+        // address outside loopback / RFC1918 / link-local / ULA is refused at
+        // the Connecting edge (no slot, no handshake), so a forwarded port
+        // cannot quietly turn a LAN party into an internet host.
+        if (cfg_.lanOnly) {
+            const auto& ra = cb->m_info.m_addrRemote;
+            bool lan = ra.IsLocalHost();
+            if (!lan && ra.IsIPv4()) {
+                const uint32_t ip = ra.GetIPv4();  // host byte order
+                const uint8_t o1 = static_cast<uint8_t>(ip >> 24);
+                const uint8_t o2 = static_cast<uint8_t>((ip >> 16) & 0xFF);
+                lan = (o1 == 10) || (o1 == 127) ||
+                      (o1 == 172 && o2 >= 16 && o2 <= 31) ||
+                      (o1 == 192 && o2 == 168) ||
+                      (o1 == 169 && o2 == 254);
+            } else if (!lan) {
+                const uint8_t b0 = ra.m_ipv6[0], b1 = ra.m_ipv6[1];
+                lan = (b0 == 0xFE && (b1 & 0xC0) == 0x80) ||  // fe80::/10 link-local
+                      ((b0 & 0xFE) == 0xFC);                  // fc00::/7 ULA
+            }
+            if (!lan) {
+                char buf[64];
+                ra.ToString(buf, sizeof(buf), /*withPort=*/false);
+                UE_LOGW("net: rejecting incoming connection %s (host is LAN-ONLY)", buf);
+                sockets->CloseConnection(hConn, k_ESteamNetConnectionEnd_App_Generic,
+                                         "lan-only host", /*bEnableLinger*/false);
+                return;
+            }
+        }
         const EResult rc = sockets->AcceptConnection(hConn);
         if (rc != k_EResultOK) {
             UE_LOGW("net: AcceptConnection rc=%d", static_cast<int>(rc));

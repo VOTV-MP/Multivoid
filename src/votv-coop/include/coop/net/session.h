@@ -105,6 +105,14 @@ struct Config {
     // challenge) arrive with the master-server + auth stage -- not needed for
     // the raw ICE transport. See the connectivity-ladder design doc s10.
 
+    // LAN-ONLY host mode (2026-08-29, user: the host picks a connection type
+    // and "LAN makes the game LAN-ONLY"). Host-side, LanDirect topology only:
+    // the session never touched the master (session_manager skips the announce
+    // whole), and the accept edge refuses any remote address that is not
+    // loopback / RFC1918 / link-local -- so a forwarded port cannot quietly
+    // turn a LAN party into an internet host.
+    bool lanOnly = false;
+
     int sendHz = 60;
 };
 
