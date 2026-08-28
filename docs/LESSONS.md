@@ -285,7 +285,9 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   name the knob. And exclude the other side by measurement first -- a hard-killed client PROCESS freed
   the host slot in +11.1 s via GNS's own timeout, retiring a competing hypothesis that had survived
   three rounds of argument. The knob retires with the mechanism (RULE 2); the RED table is the durable
-  artifact.
+  artifact. (Applied end-to-end to fix B's `VOTVCOOP_PE_IMMUNE_RELAY=0` on 2026-08-28: RED table
+  written at `UE4SS_ARC.md` §4d — the knob reproduced the field crash with a byte-identical dump
+  hash — then the knob retired in the same commit.)
   `memory/lesson_force_the_field_condition_the_lab_lacks.md`
 
 - **When a boolean becomes THREE-valued, every `!` is a bug candidate -- and writing the rule in a

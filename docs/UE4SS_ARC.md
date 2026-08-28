@@ -409,13 +409,20 @@ not, and the discrimination it was meant to buy was available all along:
 - **The double-detour cohort is exactly 7 dumps**, hash `3E0EBD39…`, every one reading
   `EXCEPTION_ACCESS_VIOLATION reading address 0xffffffffffffffff` — precisely the signature §3
   predicts (non-canonical jump → `#GP` → no CR2 → Windows reports "AV read 0xffff…ffff").
+  **CORRECTED 2026-08-28 (§4d's recount): "exactly 7" was the 08-21/22 WINDOW, not the hash's whole
+  population** — the same hash + error string also sits on **5 dumps from 2026-05-25/30, the proxy
+  era**, when no PolyHook existed in-process. The signature is the CLASS "non-canonical jump/read",
+  not a double-detour fingerprint; the cohort's attribution rests on the timing bracket + §3's
+  decode + §4d's on-demand knob repro (whose fresh dump carries the identical hash).
 - **They span 08-21 22:44 → 08-22 13:13 and STOP.** Fix B went default-ON in `bd617056` on 08-22;
   compose was verified at 16:02 and 16:25 the same day. **Zero recurrence in four days.**
 - Only two dumps exist after the fix, both 08-23, both DIFFERENT hashes; one reads `0x000000…`.
 
 **So the two crash families are discriminable by ERROR STRING alone** — `0xffffffffffffffff` for the
-double-detour, `0x000000…` for the EXEC/read-at-NULL Present-chain family — which is exactly what
-symbolizing one dump was supposed to establish.
+double-detour class, `0x000000…` for the EXEC/read-at-NULL Present-chain family — which is exactly what
+symbolizing one dump was supposed to establish. (Per the 2026-08-28 correction above: the string
+SEPARATES the two families from each other, but `0xffff…ffff` alone does not PROVE double-detour —
+the May proxy-era members are the counter-example. Separation was all the retirement needed.)
 
 **And the proxy's independence is now measured, not argued.** `[V]` `src/loader/xinput_proxy.cpp`
 has ZERO DXGI/Present surface: it is `ParseBuildNumber` → `LoadPayload` → `DllMain`. A grep for
@@ -430,17 +437,55 @@ rather than papered over:** the discriminator lives inside a dump, and the reaso
 looks benign is that it produced none — so "not that family" and "that family with an unwalkable
 callstack" are not distinguished for it. It stays unattributed. The right place for its assertion is
 the install tests §7.4's B-gate already requires, which ARE realistic-stack boots: they should assert
-`POLYHOOK-COMPOSED` + `WE-FIRST` per boot (`pe_detour.cpp:632,642`), because on a rig where ArmPE is
+`POLYHOOK-COMPOSED` + `WE-FIRST` per boot (`pe_diag.cpp`'s RELAY/WHO-FIRST verdict lines — the
+2026-08-28 extraction moved them out of `pe_detour.cpp`), because on a rig where ArmPE is
 disabled a green boot rate is an instrument blind to the phenomenon.
+
+### 4d. THE FIX-B RED TABLE (2026-08-28) — the A/B record; the escape knob RETIRED with it
+
+`docs/LESSONS.md` (*"build the knob that FORCES the field's condition"*): the knob retires with the
+mechanism (RULE 2); **the RED table is the durable artifact.** This is that table. Both fresh arms
+ran on the SHIPPED b143 bytes (`main.dll` md5 `71410E028036D7F2`, all four installs byte-identical),
+same rig, same scenario (`python tools/mp.py gracefulexit --no-deploy`), same hour, ONE variable.
+
+| arm | forcing | relay verdicts (`pe_diag`, real log) | outcome |
+|---|---|---|---|
+| **RED** 2026-08-28 23:46 | `VOTVCOOP_PE_IMMUNE_RELAY=0` (legacy `FF25` relay) | `[install] LEGACY-RELAY INTACT` — tramp+0x14 holds `ff 25 00 00 00 00` + abs64 `&ProcessEventDetour` (`00007FFB7EA51FD0`, matches the detour line); `[post-init +10s] LEGACY-RELAY CORRUPT(double-detour hit)` — the abs64 POINTER slot at +0x1A now holds an INSTRUCTION (`ff 25 20 f0 07 80 …`): PolyHook's `followJmp` resolved our `FF25`'s operand EA and wrote its patch THERE — §3 step 3, byte for byte | **HOST DIED before binding UDP** (seconds after the corrupt snapshot). New dump `UE4CC-Windows-AFE4129E…`: `EXCEPTION_ACCESS_VIOLATION reading address 0xffffffffffffffff`, `PCallStackHash` **`3E0EBD39…` — byte-identical to the organic field cohort's hash** |
+| **GREEN** 2026-08-28 23:47 | none (immune relay — the shipped default) | `[install] IMMUNE-RELAY INTACT(UE4SS not armed on it)`; `[post-init +10s] POLYHOOK-COMPOSED(immune relay in-place hooked -- fix working)` | **PASS** — graceful exit 3.9 s, teardown to `END cleanup`, `final dispatch tally` present, no crash report |
+
+Historical arms (2026-08-22; the prose is scattered through §4 — consolidated here):
+
+| arm | evidence |
+|---|---|
+| RED, organic (field) | 7 dumps, hash `3E0EBD39…`, spanning 08-21 22:44 → 08-22 13:13 — the UE4SS-lane window — STOPPING at fix-B default-ON (`bd617056`); zero recurrence in six days until today's deliberate knob repro |
+| RED, real env 15:42 | r2modman + experimental UE4SS + ArmPE + fix OFF: `RELAY: LEGACY-RELAY CORRUPT` + `UE4SS.log` reporting "ProcessEvent address" = our trampoline **+0x1A** (the pointer slot!) + UE fatal (`multivoid.baseline-1542.log`) |
+| GREEN, real env 16:02 | fix ON, same stack: raw byte dumps — install `48 B8 <&detour> FF E0`, post-init a foreign `FF 25` in-place hook on our relay; ~80 s session, clean shutdown |
+| GREEN, DEV 16:25 → every rig boot since | `IMMUNE-RELAY INTACT` → `POLYHOOK-COMPOSED` + `WE-FIRST`; UE4SS 3.0.1 arms unprompted within 10 s on this rig (§4a item 3), so **every green boot exercises the compose**, incl. both b143 smokes and the C3 gracefulexit |
+
+**What the fresh RED run additionally bought — a census correction (§4b overclaimed, fixed in
+place):** filing today's dump forced a recount of the WHOLE `Crashes` directory, and the
+hash+error-string pair has **5 additional members from 2026-05-25/30 — the PROXY era**, months
+before any PolyHook existed in-process. So `0xffff…ffff` + `3E0EBD39…` is the **CLASS** "jump/read
+through a non-canonical address → `#GP` → no CR2" — not a fingerprint unique to the double-detour.
+Attribution of the 08-21/22 cohort rests on the timing bracket (starts with the UE4SS lane, stops
+at fix-B default-ON), §3's byte-level decode, and this table's on-demand repro — not on the hash
+alone.
+
+**The knob is RETIRED (same commit, RULE 2).** `pe_detour.cpp` no longer reads
+`VOTVCOOP_PE_IMMUNE_RELAY`; the PE hook installs `followJmpImmune=true` unconditionally and the
+boot line is the fix-on form only. `hook::Install`'s `followJmpImmune` parameter STAYS — it is the
+per-hook mechanism selector (other MinHook sites keep the standard relay), not a legacy escape.
+Reproducing the RED arm now requires checking out a pre-retirement commit; that is the point.
 
 ### As-built (2026-08-22 — baseline REPRODUCED in the real modded env; compose VERIFIED same day, see Proof status)
 
 - `ue_wrap/core/hook.{h,cpp}` — `Install(..., bool followJmpImmune=false)`; the relay rewrite
   (`MakeRelayFollowJmpImmune`) runs between `MH_CreateHook` and `MH_EnableHook` (target unpatched →
   thread-safe), fail-closed if the `FF25` relay signature is not found.
-- `ue_wrap/core/pe_detour.cpp` — the immune relay is now **default ON** (`immuneRelay=true`;
-  `VOTVCOOP_PE_IMMUNE_RELAY=0` forces the LEGACY corruptible relay for an A/B baseline repro — a
-  RULE-2-exempt diagnostic escape, retired at commit 3). Boot logs `PE relay followJmp-immune (fix ON)`.
+- `ue_wrap/core/pe_detour.cpp` — the immune relay is **UNCONDITIONAL since 2026-08-28** (the
+  `VOTVCOOP_PE_IMMUNE_RELAY=0` A/B escape retired with the §4d RED table per RULE 2; it outlived
+  the "retired at commit 3" schedule this line used to carry because no RED table existed yet —
+  §6 step 3). Boot logs `PE relay followJmp-immune`.
   The `VOTVCOOP_PE_DIAG` probe classifies the relay form (LEGACY-INTACT / LEGACY-CORRUPT / IMMUNE-INTACT
   / POLYHOOK-COMPOSED).
 - Committed build `0e14a2ca` = flag-gated **default OFF** (`multivoid-0.9.0n-134.dll` sha `76a8d200`);
@@ -568,15 +613,12 @@ permanent (`mp.py wirewindow` + `coop/dev/wire_census`). NOT hands-on — run B 
 3. ~~Add B's teardown leak-at-death~~ **DONE 2026-08-26 (`42af8cc0` + `eafb2207`) and it was
    BIGGER than a leak — see §4c.** The residual said "leak the PE hook at process-close";
    the measurement found a live use-after-free whose RED arm crashed reading the trampoline's
-   own address. **The second half of this row — "drop the `VOTVCOOP_PE_IMMUNE_RELAY=0`
-   diagnostic escape" — is NOT done and should not be obeyed as written.** `[V]`
-   `docs/LESSONS.md`, *"When the lab cannot reproduce the field, build the knob that FORCES
-   the field's condition"*: *"The knob retires with the mechanism (RULE 2); the RED table is the
-   durable artifact."* (Cited by TITLE -- this said `:240` until 2026-08-26, when a row inserted
-   17 lines above it silently moved every citation in the tree.) No RED table exists for fix B — §4 says the baseline was reproduced
-   2026-08-22 but the evidence is scattered prose. Write the table, THEN retire the knob.
-   (§4's own text calls the escape "a RULE-2-exempt diagnostic escape, retired at commit 3" —
-   exempt and scheduled for deletion in one parenthesis.)
+   own address. **The second half — the `VOTVCOOP_PE_IMMUNE_RELAY=0` escape — is DONE
+   2026-08-28: the RED table was written FIRST (§4d), then the knob retired in the same
+   commit**, per `docs/LESSONS.md` *"build the knob that FORCES the field's condition"* (the
+   knob retires with the mechanism; the RED table is the durable artifact). The fresh RED arm
+   reproduced the field crash on demand on b143 bytes — dump hash byte-identical to the organic
+   cohort — and its recount corrected §4b's "exactly 7" overcount in place.
 4. ~~**Commit 3** — the proxy deletion (RULE 2): `xinput_proxy.cpp` + the loader lane + dup-dialog +
    `inject.ps1` go, fully. Then WP-2 is DONE.~~ **DONE 2026-08-28 (`1912d229`) — WP-2 IS DONE.**
    The RULE-2 chain resolved as the second box below demanded: OUTPUT_NAME → `main`, the identity
