@@ -1,6 +1,6 @@
 # AUTONOMOUS_TESTING — test harness usage
 
-**Living document.** Reflects the current standalone-C++ harness (the
+**Living document.** Reflects the current in-DLL C++ harness (the
 UE4SS Lua `coopTestHarness` it replaced has been retired per RULE №2).
 
 ## Intent
@@ -145,9 +145,10 @@ the auto-memory `[[reference-pile-test-harness]]`.
   via env vars. Same scenario plumbing, just with `VOTVCOOP_SCENARIO=play`.
 
 - **`tools/probe-terminals.ps1`** — Phase 5T terminal probe driver
-  (disables the standalone proxy, deploys the UE4SS Lua probe to the
-  dev copy, sets `scenario.txt` to `probe_terminals:<save>`, launches
-  the game; `-Restore` re-enables the proxy after).
+  (parks the Multivoid mod by renaming its `enabled.txt` →
+  `.probe-disabled`, deploys the UE4SS Lua probe to the dev copy, sets
+  `scenario.txt` to `probe_terminals:<save>`, launches the game;
+  `-Restore` unparks the mod after).
 
 ## What the harness logs
 

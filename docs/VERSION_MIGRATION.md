@@ -158,8 +158,9 @@ The honest bus-factor answer, in the order a stranger would need it:
 6. `tools/` — build, deploy, launch, autonomous tests, `sdk_diff.py`.
 
 What a stranger does NOT need: any part of the author's setup, an AI tool, or
-UE4SS at runtime. What they DO need: a Windows box with the game, Visual Studio,
-CMake, and (for signature work only) IDA.
+any UE4SS *machinery* (the mod imports nothing from it — UE4SS is just the
+loader, installed like any player installs it). What they DO need: a Windows box
+with the game, Visual Studio, CMake, and (for signature work only) IDA.
 
 ## 6. Standing risks, stated honestly
 
@@ -307,7 +308,16 @@ Besides the boot health check, two artifacts ease cross-version porting:
   SDK dumps) and reports what moved, annotated with the `sdk_profile.h` constant
   each change corresponds to. This is §4 step 3's instrument.
 
-## 11. The UE4SS-switch decision record (DECIDED 2026-07-26: F1, keep RULE 3)
+## 11. The UE4SS-switch decision ledger
+
+> **CURRENT STATE (read this before the entries):** F1 (keep RULE 3, stay
+> standalone) was taken 2026-07-26 — the first entry below records it.
+> **OVERTURNED 2026-08-21: F2 taken** (become a UE4SS mod on the D-3 slim
+> contract — the dated entry further down). **F2 SHIPPED 2026-08-28** at
+> UE4SS_ARC WP-2 commit 3: the proxy lane deleted whole, the mod is
+> `Mods\Multivoid\dlls\main.dll`, zero UE4SS imports. The F1 entry directly
+> below is the HISTORICAL record of the first pass, kept per the ledger's
+> append-only rule.
 
 A public critique (§7) argued the substrate should move onto UE4SS's C++ API. The
 question went through a 26-round adversarial /qf pass (fact base:

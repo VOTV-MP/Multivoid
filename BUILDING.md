@@ -1,21 +1,21 @@
 # Building Multivoid
 
-The mod ships as a single standalone DLL plus a proxy loader
-(`xinput1_3.dll`). See [CLAUDE.md](CLAUDE.md) for the seven architectural
-principles; this file is purely how to compile + deploy.
+The mod ships as a single DLL in a UE4SS mod folder
+(`Mods\Multivoid\dlls\main.dll`). See [CLAUDE.md](CLAUDE.md) for the eight
+architectural principles; this file is purely how to compile + deploy.
 
-The payload DLL's **filename is load-bearing**: it is
-`multivoid-<game-target>-<build>.dll` (the Paper-Minecraft pair — e.g.
-`multivoid-0.9.0n-125.dll`). The xinput proxy scans for `multivoid-*.dll`,
-loads the **highest build number** it finds, and pops an in-game
-"MOD INSTALL PROBLEM" dialog on duplicates. Do not rename the output.
+The build output is **`main.dll`** (the UE4SS mod-folder contract name). The
+version identity — the Paper-Minecraft pair `<game target> b<build>` — is not
+in the filename: it is baked into the DLL's own **VERSIONINFO resource**
+(ProductVersion, e.g. `0.9.0n b143`), the boot banner, and the release zip's
+name. `tools/deploy-mod.ps1` refuses to deploy a `main.dll` whose
+VERSIONINFO disagrees with the source tree.
 
-Both halves of the name come out of the source at configure time — the game
+Both halves of the pair come out of the source at configure time — the game
 target from `VOTVCOOP_GAME_TARGET` in `src/votv-coop/CMakeLists.txt`, the
 build number parsed out of `kProtocolVersion` in
-`include/coop/net/protocol.h`. **A protocol bump therefore renames the
-artifact**, and the configure re-runs automatically when `protocol.h`
-changes.
+`include/coop/net/protocol.h`. The configure re-runs automatically when
+`protocol.h` changes.
 
 ## Building via GitHub Actions (no local toolchain)
 
@@ -27,10 +27,11 @@ Visual Studio, CMake, or vcpkg at all:
 2. Actions → **build** → **Run workflow** on the branch you want. The lane is
    manual-only by design (`workflow_dispatch`) — pushing alone builds nothing.
 3. When the run goes green, download the **`multivoid-ci-<sha12>`** artifact
-   from the run page. It contains the versioned payload DLL, `xinput1_3.dll`,
-   and `build-info.txt` with the exact source commit.
-4. Install/deploy those two DLLs exactly like a release pair (see the README
-   quick start, or `tools/deploy-all.ps1` on a dev rig).
+   from the run page. It contains `main.dll` and `build-info.txt` with the
+   exact source commit.
+4. Install it like a manual release install — the DLL goes to
+   `Mods\Multivoid\dlls\main.dll` (see [docs/INSTALL.md](docs/INSTALL.md), or
+   `tools/deploy-all.ps1` on a dev rig).
 
 Notes:
 
@@ -88,8 +89,9 @@ missing one fails the CMake configure, not the link:
 - `src/votv-coop/third_party/minhook` — hook engine (MIT), v1.3.4.
 - `src/votv-coop/third_party/GameNetworkingSockets` — wire layer (BSD-3),
   pinned to **v1.5.1** (`fa489fd`).
-- `src/votv-coop/third_party/imgui` — Dear ImGui (MIT), pinned **v1.91.5**,
-  for the dev menu / server browser. Our own copy, never UE4SS's (RULE 3).
+- `src/votv-coop/third_party/imgui` — Dear ImGui (MIT), pinned **v1.92.9**,
+  for the dev menu / server browser. Our own vendored copy, never UE4SS's
+  (own-substrate rule: the mod imports nothing from its loader).
 - `src/votv-coop/third_party/opus` — libopus (BSD-3), pinned **v1.5.2**, the
   voice codec.
 
@@ -111,7 +113,8 @@ fetch, plus `src/external/abseil` (~39 MB). Budget time for that clone.
 
 ### 2. Install vcpkg (manifest mode)
 
-vcpkg is a **build-time** dependency (not runtime — RULE №3 is preserved).
+vcpkg is a **build-time** dependency only (nothing of it ships or loads at
+runtime).
 The build uses **manifest mode**: `src/votv-coop/vcpkg.json` pins the deps —
 protobuf **3.21.12** (the last pre-abseil release), openssl, and
 nlohmann-json (header-only; parses the master-server JSON in
@@ -161,9 +164,8 @@ Notes on the flags:
 
 - **`CMAKE_TOOLCHAIN_FILE`** — points CMake at vcpkg's
   `find_package(Protobuf)` shim. Required for GNS to find static protobuf.
-- **`VCPKG_TARGET_TRIPLET=x64-windows-static`** — static CRT (`/MT`) match
-  for our standalone DLL. RULE №3: no runtime dep on a vcpkg-installed
-  `.dll`.
+- **`VCPKG_TARGET_TRIPLET=x64-windows-static`** — static CRT (`/MT`): the
+  self-contained mod DLL takes no runtime dep on a vcpkg-installed `.dll`.
 - **`VCPKG_MANIFEST_MODE=ON`** — uses the **top-level** manifest
   `src/votv-coop/vcpkg.json` (the `-S` dir), which pins protobuf to 3.21.12
   (see §2). vcpkg ignores GNS's own nested `vcpkg.json` (it's a subdir, not
@@ -188,10 +190,8 @@ cmake --build build/votv-coop --config Release
 
 Output:
 
-- `build/votv-coop/Release/multivoid-<game>-<build>.dll` — the mod payload
-  (e.g. `multivoid-0.9.0n-125.dll`; see the note at the top of this file —
-  the filename is what the proxy scans for).
-- `build/votv-coop/Release/xinput1_3.dll` — the proxy loader.
+- `build/votv-coop/Release/main.dll` — the whole mod (its VERSIONINFO carries
+  the `<game target> b<build>` pair; see the note at the top of this file).
 
 Expected first clean build: 5-10 min (GNS is ~50k LOC; the protobuf-
 generated `.pb.cc` files also compile). Incremental: under a minute when
@@ -203,16 +203,19 @@ only our sources change.
 .\tools\deploy-all.ps1
 ```
 
-This copies the proxy + payload DLLs into **four** local game copies —
+This deploys `main.dll` into the mod folder
+(`...\Binaries\Win64\Mods\Multivoid\dlls\`) of **four** local game copies —
 `Game_0.9.0n_HOST` (HOST), `_CLIENT_1` (CLIENT), `_CLIENT_2` (CLIENT2), and
-`_CLIENT_3` (DEV, the autonomous-test copy) — each at
-`...\WindowsNoEditor\VotV\Binaries\Win64\`. It also ships the client-puppet
+`_CLIENT_3` (DEV, the autonomous-test copy). It also ships the client-puppet
 mesh pak into `...\Content\Paks\LogicMods\multivoid\`. The deploy is
-idempotent (identical bytes are skipped).
+idempotent (identical bytes are skipped) and refuses a `main.dll` whose
+VERSIONINFO disagrees with the tree. The UE4SS substrate itself is a one-time
+per-copy install: `tools/install-ue4ss.ps1`.
 
 That four-copy layout is this repo's own test rig. If you are just building
-for yourself, copy `xinput1_3.dll` + `multivoid-*.dll` next to `VotV-Win64-Shipping.exe`
-in your own install instead.
+for yourself, install UE4SS once and copy `main.dll` to
+`...\Binaries\Win64\Mods\Multivoid\dlls\main.dll` (+ an `enabled.txt` beside
+`dlls\`) in your own install instead — see [docs/INSTALL.md](docs/INSTALL.md).
 
 For the autonomous LAN smoke (per the pre-deploy checklist in CLAUDE.md):
 

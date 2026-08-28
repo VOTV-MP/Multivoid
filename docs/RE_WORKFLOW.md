@@ -1,22 +1,31 @@
 # RE workflow — how to use UE4SS + tools/probes/ during development
 
-CLAUDE.md RULE 3: the shipping mod is standalone (`xinput1_3.dll` + the versioned `multivoid-<game>-<build>.dll` payload, no UE4SS at runtime; the DLL was named `votv-coop.dll` before 2026-07-19 b122). **However, UE4SS is explicitly approved as a development tool.** This document captures the workflow we use to leverage UE4SS during reverse-engineering, hypothesis-testing, and rapid iteration — without ever shipping it.
+Since the D-3 migration (2026-08-21, shipped at WP-2 commit 3) the mod IS a
+UE4SS mod: every game copy runs the UE4SS substrate (`dwmapi.dll` +
+`UE4SS.dll`, one-time install via `tools/install-ue4ss.ps1`) and the mod loads
+as `Mods\Multivoid\dlls\main.dll`. The own-substrate constraint (RULE 3) is
+about IMPORTS, not presence: the DLL imports nothing from UE4SS. Beyond being
+the loader, **UE4SS is the everyday RE tool** — this document captures the
+workflow for leveraging it during reverse-engineering, hypothesis-testing, and
+rapid iteration.
 
-The standalone constraint is preserved by having **three game copies** (2026-05-25 convention — see `tools/deploy-all.ps1`):
+The **four game copies** (see `tools/deploy-all.ps1`):
 
-| Path | Role | UE4SS? | Used by | Use for |
-|------|------|--------|---------|---------|
-| `Game_0.9.0n_HOST/` | HOST | yes (legacy; coexists with our DLL via the dwmapi.dll.off rename) | user's hands-on host play | user-side hands-on testing as host; running `mp_host_game.bat` |
-| `Game_0.9.0n_CLIENT_1/` | CLIENT | no | user's hands-on client play | user-side hands-on testing as client; running `mp_client_connect.bat` |
-| `Game_0.9.0n_CLIENT_3/` | DEV | yes (UE4SS + dwmapi.dll active) | Claude (autonomous) | `lan-test.ps1` autonomous LAN tests, Live View RE work, Lua probes, BP graph dumping, hypothesis-testing via GUIUFunctionCaller |
+| Path | Role | Used by | Use for |
+|------|------|---------|---------|
+| `Game_0.9.0n_HOST/` | HOST | user's hands-on host play | hands-on testing as host; `mp_host_game.bat` |
+| `Game_0.9.0n_CLIENT_1/` | CLIENT | user's hands-on client play | hands-on testing as client; `mp_client_connect.bat` |
+| `Game_0.9.0n_CLIENT_2/` | CLIENT2 | second hands-on client | 3-peer tests |
+| `Game_0.9.0n_CLIENT_3/` | DEV | Claude (autonomous) | `mp.py` autonomous LAN tests, Live View RE work, Lua probes, BP graph dumping |
 
-Each copy keeps its OWN Saved/ directory (logs, screenshots, save games) so the autonomous LAN test in `_dev/` cannot collide with the user's host or client play state.
+Each copy keeps its OWN Saved/ directory (logs, screenshots, save games) so
+the autonomous LAN test cannot collide with the user's host or client play
+state. The DEV copy additionally carries UE4SS's default Lua mods + our
+`coopTestHarness/` probe + `UE4SS.log` for RE sessions.
 
-The HOST + CLIENT copies have only `xinput1_3.dll` + `multivoid-*.dll` (HOST also has UE4SS files left over from earlier setup but UE4SS is currently inactive there — `dwmapi.dll.off` is the disabled proxy). The DEV copy adds the active `dwmapi.dll` UE4SS proxy + `UE4SS.dll` + the Mods/ tree with default UE4SS Lua mods (ActorDumperMod, BPModLoaderMod, CheatManagerEnablerMod, ConsoleEnablerMod, etc.) + our own `coopTestHarness/` probe + `UE4SS.log`.
-
-**Why two UE4SS-equipped copies (HOST + DEV)?** HOST has UE4SS legacy from earlier setup; it's not actively used during host play (dwmapi.dll.off = disabled). DEV's UE4SS IS active (dwmapi.dll present + active). If we ever want to clean HOST to a pure-standalone state, run `tools/deploy-loader.ps1 -GameWin64 .../Game_0.9.0n_HOST/Win64 -Standalone` which renames dwmapi.dll → dwmapi.dll.off.
-
-**Deploying the DLL across all 3:** `tools/deploy-all.ps1` is the canonical multi-target script. Builds-then-deploys when run after `cmake --build`. The `lan-test.ps1` script auto-deploys to `_dev/` only.
+**Deploying the DLL across all 4:** `tools/deploy-all.ps1` is the canonical
+multi-target script (fail-closed on a tree/DLL VERSIONINFO mismatch). Run it
+after `cmake --build`.
 
 ## What UE4SS gives us for free
 
@@ -83,20 +92,23 @@ We **port** reflection patterns + AOB signatures from UE4SS's open-source repo (
 
 The porting workflow:
 1. Read the relevant UE4SS source (`reference/RE-UE4SS/UE4SS/src/SigScanner/*.cpp` or `reference/RE-UE4SS/UE4SS/src/UnrealVersionedContainer/UnrealVersion.cpp`).
-2. Adapt the algorithm into our standalone `ue_wrap/` style (no UE4SS types, no UE4SS headers).
+2. Adapt the algorithm into our own `ue_wrap/` style (no UE4SS types, no UE4SS headers — the ported code must compile from our tree alone).
 3. Test with a Lua probe in the dev copy to confirm parity.
 4. Comment in our source with `// Algorithm adapted from RE-UE4SS (MIT-licensed); see reference/RE-UE4SS/...`.
 
 ## What we don't borrow
 
-- UE4SS's runtime mod loader — we have our own (proxy DLL → `multivoid-*.dll`).
+- UE4SS's C++ mod API (`CppUserModBase`) — the ABI-fragility the D-3 slim
+  contract exists to avoid; we export the two C-ABI functions its scan calls
+  and import nothing back.
 - UE4SS's BPModLoader pak-mounting — the public-server phase revisit only (see `docs/MULTIPLAYER_UI.md` + the 3 architecture findings docs from 2026-05-25).
-- UE4SS's Lua VM — we don't need scripting in production; if we ever need it for chat commands etc., a tiny embedded interpreter (e.g., MyJS or a custom DSL) keeps the standalone DLL self-contained.
-- UE4SS's UI framework (Dear ImGui via UE4SS) — useful for the future MP menu debug overlay (CLAUDE.md "Mod menu / debug overlay: Dear ImGui (UE4SS ships an ImGui integration)") but that integration is via OUR linked ImGui, not via UE4SS at runtime.
+- UE4SS's Lua VM — production scripting is its own roadmap phase (LuaJIT over
+  our own APIs, docs/ROADMAP.md phases 4-5), never UE4SS's VM.
+- UE4SS's UI framework (Dear ImGui via UE4SS) — our overlay links OUR vendored ImGui, never UE4SS's integration.
 
-## The "three copies" hygiene rule
+## The "four copies" hygiene rule
 
-**Always deploy to all 3 copies via `tools/deploy-all.ps1`** when iterating on the shipping DLL. The script copies the build's xinput1_3.dll + the versioned multivoid payload into all the Win64 directories (and deletes stale/legacy payload names). Without it, the user's hands-on host/client play may run a stale DLL while my dev copy has the new one — confusing.
+**Always deploy to all 4 copies via `tools/deploy-all.ps1`** when iterating on the shipping DLL. The script deploys `main.dll` into every copy's `Mods\Multivoid\dlls\` (and sweeps any retired standalone-lane files). Without it, the user's hands-on host/client play may run a stale DLL while the dev copy has the new one — confusing.
 
 **Never** assume what works in the DEV copy will also work in the user-play copies. UE4SS's presence in DEV changes the load order (UE4SS hooks `ProcessEvent` before we do; the global `GUObjectArray` cache is populated by UE4SS at startup; some classes are loaded earlier because UE4SS forces them). The CLIENT copy is the source of truth for "does our shipping DLL work standalone?".
 

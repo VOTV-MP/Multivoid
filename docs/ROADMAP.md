@@ -145,8 +145,9 @@ independent of it and may interleave.
      target needs the game project). If that ever lands, our DLL needs its own
      port (ELF loading, new AOB signatures).
    - Wine spike parameters, if ever needed: `-nullrhi`, Xvfb if required,
-     `WINEDLLOVERRIDES="xinput1_3=n,b"`; expectation NOT measured (0-10% CPU
-     overhead on a CPU-bound headless load with fsync/ntsync).
+     `WINEDLLOVERRIDES="dwmapi=n,b"` (the UE4SS loader proxy — was
+     `xinput1_3` in the retired standalone lane); expectation NOT measured
+     (0-10% CPU overhead on a CPU-bound headless load with fsync/ntsync).
 8. **Resource infrastructure** — client-side resource download from the
    server (no manual mod-pack installs), Lua sandboxing/security (clients
    execute untrusted server code — mandatory layer), and the server browser
@@ -216,16 +217,23 @@ skeleton committed; UE4SS verified injecting into VOTV 0.9.0-n.
 **Gate met:** standalone DLL injects, reflection works, game-thread
 context proven, RemotePlayer puppet visible + driven on LAN.
 
-### Standalone shipping vehicle (RULE №3) — DONE
+### Standalone shipping vehicle (RULE №3) — DONE, then SUPERSEDED
+
+> **SUPERSEDED 2026-08-28 (UE4SS_ARC WP-2 commit 3):** the standalone proxy
+> lane below retired whole — the mod now ships as the UE4SS mod folder
+> `Mods\Multivoid\dlls\main.dll` (still zero UE4SS imports; the substrate
+> stays our own). This block stays as the historical record of what Phase 2
+> shipped at the time.
 
 - ☑ C++ toolchain + build: the mod DLL (CMake + VS2019, x64, static CRT);
        since 2026-07-19 (b122) the artifact is the Paper-pair-versioned
-       `multivoid-<game>-<build>.dll` (was `votv-coop.dll`).
+       `multivoid-<game>-<build>.dll` (was `votv-coop.dll`; since WP-2
+       commit 3 the pair lives in VERSIONINFO, not the filename).
 - ☑ Standalone proxy loader: **`xinput1_3.dll`** scans + auto-loads the
        highest-build `multivoid-*.dll` on game start (duplicate installs ->
        in-game popup); UE4SS absent. ~~`tools/deploy-loader.ps1` installs it.~~
        **Re-cited 2026-08-25: that script does not exist — `tools/deploy-mod.ps1`
-       (via `deploy-all.ps1`) superseded it. The proxy lane itself retires whole at
+       (via `deploy-all.ps1`) superseded it. The proxy lane itself retired whole at
        WP-2 commit 3; see `docs/UE4SS_ARC.md` §6 item 4.**
 - ☑ Standalone reflection (no UE4SS): AOB-resolved `GUObjectArray` +
        `FName::ToString` + `ProcessEvent`. Health check on boot:

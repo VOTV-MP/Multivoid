@@ -50,7 +50,8 @@ These are mechanical — obeying them requires no intelligence, only discipline:
 
 - RULE 1 no crutches (a filter/skip-if/suppress-X you're adding = STOP, find the root).
 - RULE 2 no migration baggage (replaced code is DELETED same commit).
-- RULE 3 standalone (UE4SS/IDA are dev tools; nothing of them ships).
+- RULE 3 own substrate (the mod ships as a UE4SS mod folder but imports nothing
+  from UE4SS; UE4SS/IDA remain the dev tools).
 - New ReliableKind = THREE places (enum+payload / family dispatcher / event_feed) + a
   kProtocolVersion bump + a COOP_SYNC_MAP row.
 - Mirrors: brains OFF (tick/RNG/fuses/inputs) — a mirrored actor with a live brain

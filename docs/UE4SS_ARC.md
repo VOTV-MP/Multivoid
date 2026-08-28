@@ -53,7 +53,7 @@ proxy / dup-dialog retire WHOLE per RULE 2 — no standalone-and-UE4SS dual path
 | WP | What | Status |
 |----|------|--------|
 | **WP-1** | Spike: prove the C-ABI shim boots the one binary as a UE4SS mod; measure the double-PE-detour survivability. | **AS-BUILT** — commit `cddb116c` (2026-08-21 eve). Matrix green ~110 ms; LAN join worked; double-detour "alive" on a SMALL sample (later found to crash ~2/10, see §3). WP-4 spike findings: ini err=3 under VFS; shimloader panics on `xinput1_3.dll`. |
-| **WP-2** | The loader cut: delete `xinput_proxy.cpp` + the proxy deploy path (RULE 2); `cppmod_entry.cpp` in; predecessor detection + mutex; keep EVERYTHING else. | **IN PROGRESS.** Pre-cut LANDED (§2). Fix (**B**, §4) is BUILT + default-ON and its compose is **VERIFIED** (2026-08-22 16:02 real-env byte decode + 16:25 DEV `POLYHOOK-COMPOSED` boot, §4 Proof status). The IsLive/VEH arc is BUILT (D1, 2026-08-22 night, §4 -- run B pending the user). Remaining before the proxy deletion: ~~symbolize the 19:17 dump~~ **RETIRED 2026-08-26 by a hash census, no symbolization needed** (§4 residuals); ~~B's teardown residual~~ **CLOSED 2026-08-26** — the `gracefulexit` scenario (`fe474b86`) made the path walkable and immediately found a LIVE use-after-free that the residual's own wording understated; fixed in `42af8cc0` + `eafb2207`, RED/GREEN in §4c. **Commit 3 is now the only thing left before WP-2 is done**, and it is **welded to §7.3a's release anchors** because the tree cannot cut a release between them (§8.2). |
+| **WP-2** | The loader cut: delete `xinput_proxy.cpp` + the proxy deploy path (RULE 2); `cppmod_entry.cpp` in; predecessor detection + mutex; keep EVERYTHING else. | **DONE 2026-08-28.** Pre-cut LANDED (§2). Fix (**B**, §4) BUILT + compose VERIFIED (2026-08-22). IsLive/VEH arc BUILT (D1). ~~Symbolize the 19:17 dump~~ RETIRED by hash census; ~~teardown residual~~ CLOSED as the §4c use-after-free fix. **Commit 3 LANDED (`1912d229`)**: proxy source + CMake target + dllmain proxy lane + dup-feeder + inject.ps1 deleted; OUTPUT_NAME → `main`; identity moved into a generated VERSIONINFO with fail-closed deploy/publish compares. The §7.3a anchor weld landed the same day as **C3.3 (`d693609b`)** — publish/ledger_lib/ledger_lint/tag_regex_selftest/notes_regen inverted to the one-zip shape, INSTALL.md flipped with its anchors. Two post-ship audits folded (0 CRIT/0 IMPORTANT + a 6-miss doc census, all fixed). |
 | **WP-4** | Fix the stale install/update/uninstall prose + the site + installer for the UE4SS lane. | **PARKED, but now SPECIFIED** — census written (`votv-ue4ss-stale-loader-prose-CENSUS-2026-08-22.md`, ~139 rows); §7 measures the target shape and §7.3 fixes the sequencing (it must not flip before a UE4SS-lane build is released). **+ §7.0 (USER 2026-08-24): the GitHub repo DESCRIPTION and topics are stale prose too and are invisible to the census — they live outside the tree. `description` still says "a standalone C++ DLL"; the `dll-injection` topic goes; `homepageUrl` is empty and is fixable NOW.** |
 | **WP-6** | Distribution re-home (the `multivoid-<game>-<build>.dll` filename + master + release flow onto the mod-folder shape). | **PARKED, now SPECIFIED** — §7.2 + §7.4. |
 | **WP-9** | **Thunderstore publication** (USER 2026-08-23: "надо нам бы стать официальным модом и попасть в магазин thunderstore ... чтобы обычный юзер смог поставить нативно"). Ship Multivoid as a Thunderstore package so r2modman / Thunderstore Mod Manager installs it natively. | **NEW, SPECIFIED, NOT BUILT** — §7. The payload shape is ALREADY correct; what is missing is package metadata, a GENERATED manifest, and a publish step. **The version mapping is DECIDED, not owed** (§7.3, user 2026-08-23: `<game-major>.<game-minor>.<build>`); this row said "a version mapping decision" was missing after §7.3 had already made it. **§7.3a (2026-08-24, user-raised) measures what the versioned DLL name costs today** — it moves on every proto bump including security-only ones (`0.9.135` as of `ca3943e9`), its CMake justification expires with WP-2 commit 3, `deploy-mod.ps1` picks the payload by mtime out of 14 artifacts, and the six anchor sites that must move in one commit are tabulated. **2026-08-25 (user-raised, five real Thunderstore packages): §7.2 was measuring the extracted PROFILE and calling it the ZIP — the real zip has a `mod/` wrapper, and §7.2's tree would have installed cleanly and never loaded. §7.2a is now the authoritative routing rule (from Thunderstore's own ecosystem schema + r2modman's rule engine and test spec), §7.2b is the field survey + the measurement that shows what D-3 bought (field mods import 32/40/130 mangled C++ symbols from `UE4SS.dll`; we import 0), and §7.9 answers "can GitHub produce the package" — yes for everything except the pak, whose blocker is its inputs.** **THE PACKAGING HALF IS BUILT 2026-08-26** (`2a223362` + `3dd546dd`): `tools/release/package.ps1` assembles the §7.2a zip, `Test-PackageZip` is the fail-closed tree check, the drill is 14 arms all passing, and the Team `Multivoid` now exists. The zip was **hand-installed from the extracted artifact and booted** -- rule B's manual half, evidenced (§7.8). **NOT done:** the `publish.ps1` asset-shape inversion (C3.3), the r2modman managed-import control, and the upload itself -- which the user has explicitly deferred (*"пока не обязательно грузить, сначала проверки локальной установки zip"*). |
@@ -80,9 +80,12 @@ substrate) is in tree, all authored per a 9-round `/qf`:
   (cppmod entry required, proxy line forbidden).
 - `fd4a5b71` installer staging-path fix. `fe6ab1a7` the ~139-row stale-prose census (WP-4 input).
 
-All four installs are CONVERTED: UE4SS 3.0.1 (pinned) + `Mods\Multivoid` mod folder. The proxy files
-were removed from beside the exes, but the proxy SOURCE + loader lane + dup-dialog + inject.ps1 are
-STILL IN TREE — the deletion is commit 3, held until §4's fix is proven.
+All four installs are CONVERTED: UE4SS 3.0.1 (pinned) + `Mods\Multivoid` mod folder.
+**COMMIT 3 LANDED 2026-08-28 (`1912d229`): the proxy SOURCE + loader lane + dup-dialog feeder +
+inject.ps1 are DELETED** (the dialog itself survives on `server_browser_native`'s missing-donor
+feeder); OUTPUT_NAME is the contract name `main` and the Paper pair moved INTO the bytes (a
+generated VERSIONINFO resource, verified fail-closed by `deploy-mod.ps1` and `publish.ps1`).
+C3.3 (`d693609b`) inverted the release pipeline to the one-zip shape the same day.
 
 ---
 
@@ -574,8 +577,14 @@ permanent (`mp.py wirewindow` + `coop/dev/wire_census`). NOT hands-on — run B 
    2026-08-22 but the evidence is scattered prose. Write the table, THEN retire the knob.
    (§4's own text calls the escape "a RULE-2-exempt diagnostic escape, retired at commit 3" —
    exempt and scheduled for deletion in one parenthesis.)
-4. **Commit 3** — the proxy deletion (RULE 2): `xinput_proxy.cpp` + the loader lane + dup-dialog +
-   `inject.ps1` go, fully. Then WP-2 is DONE.
+4. ~~**Commit 3** — the proxy deletion (RULE 2): `xinput_proxy.cpp` + the loader lane + dup-dialog +
+   `inject.ps1` go, fully. Then WP-2 is DONE.~~ **DONE 2026-08-28 (`1912d229`) — WP-2 IS DONE.**
+   The RULE-2 chain resolved as the second box below demanded: OUTPUT_NAME → `main`, the identity
+   moved INTO the bytes (generated VERSIONINFO, `version.rc.in`), `deploy-mod.ps1`'s pick-by-build
+   selector dissolved into a fail-closed VERSIONINFO-vs-tree compare (RED/GREEN drilled), and the
+   dup-dialog's proxy feeder died while the dialog survives on `server_browser_native`'s feeder.
+   Evidence: gracefulexit PASS, LAN smoke PASS (0 [ERROR] both peers), abi_gate PASS, package_drill
+   14/14; two post-ship audits (0 CRITICAL/0 IMPORTANT + a 6-miss census sweep, all folded).
 
    > **THE ORDER IN THIS LIST IS WRONG AND WAS CORRECTED 2026-08-26 — the zip is a PRECONDITION of
    > step 4, not a follow-on to it.** The design pass that preceded commit 3 tried the obvious
@@ -996,7 +1005,7 @@ the same "derive it, never guess it" rule the manifest is held to.
 | `tools/release/ledger_lib.ps1:149-150` | the verbatim INSTALL anchor `delete the old ` + backtick-`multivoid-*.dll` |
 | `tools/release/ledger_lint.ps1:74-77` | INSTALL.md carries no literal build filename, only the placeholder |
 | `tools/release/tag_regex_selftest.ps1:58,78` | fixtures `multivoid-0.9.0n-999.dll` + `xinput1_3.dll` |
-| `src/votv-coop/CMakeLists.txt` (`add_library(xinput1_3 SHARED)`; **`:684-737` / `:688` as of 2026-08-26 -- the third re-cite. STOP WRITING THE NUMBER: grep `add_library(xinput1_3`**) | the `xinput1_3` target still BUILDS today; it retires with commit 3 |
+| `src/votv-coop/CMakeLists.txt` (`add_library(xinput1_3 SHARED)`; **`:684-737` / `:688` as of 2026-08-26 -- the third re-cite. STOP WRITING THE NUMBER: grep `add_library(xinput1_3`**) | ~~the `xinput1_3` target still BUILDS today; it retires with commit 3~~ **RETIRED at commit 3 (`1912d229`) — the grep now finds nothing, which is the point** |
 
 **5. Sequencing is unchanged and already answered by 7.4a** — the flip is allowed locally right now
 because nothing is being pushed; what is forbidden is flipping the prose without re-minting the CI
@@ -1648,7 +1657,10 @@ step is a glob. Delete `add_library(xinput1_3)` and the same YAML produces a one
 edit. The `if ($dlls.Count -eq 0) { throw 'no DLLs produced' }` guard still holds.
 
 **What breaks is entirely in the PowerShell the workflows call** — which is why round 1's census hole
-mattered and why "the workflow" is the wrong unit to reason about:
+mattered and why "the workflow" is the wrong unit to reason about. **(EXECUTED 2026-08-28: every row
+below landed at C3.3 `d693609b` — publish assembles + uploads the ONE zip, the body writer is
+era-aware by sha-map data, the anchors re-shaped, the fixtures cover both eras. The table stays as
+the record of what the weld had to move.)**
 
 | site | today | after commit 3 |
 |---|---|---|
@@ -1687,9 +1699,14 @@ value**, and updating it to a new literal reproduces the same defect one release
 
 The defect is the gate's SHAPE: it certifies that the release body and `INSTALL.md` agree. Two
 documents can agree perfectly and both be wrong, which is exactly what would ship the day after
-commit 3. §7.4b specifies a zip-tree fail-closed check as the replacement — **but that is a PLAN,
-not code** (`[V]` `publish.ps1` contains no zip-tree check of any kind), and this doc has already
-been caught citing its own plan as if it were the tree. Recorded as OPEN, not as answered.
+commit 3. §7.4b specifies a zip-tree fail-closed check as the replacement — ~~but that is a PLAN,
+not code~~ **ANSWERED at C3.3 (`d693609b`, 2026-08-28): `publish.ps1` now runs `Test-PackageZip`
+on the finished zip with the exact payload sha, plus a THREE-leg identity agreement (tag ==
+artifact VERSIONINFO == tree) before assembly. The anchor was re-SHAPED, not re-typed: it is now
+explicitly the MANUAL lane's mod-folder destination (`...\Binaries\Win64\Mods\Multivoid`) — a
+path with a true value — while the managed lane's path belongs to r2modman's VFS and is typed
+nowhere. The truth of the ARTIFACT is certified by the zip-tree check; the anchor gate's residual
+job is only that the body and INSTALL.md name the same manual path.**
 
 ### 8.5 `wire-d` / `wire-e` — cited as live, and they do not exist
 

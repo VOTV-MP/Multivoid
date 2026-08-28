@@ -17,7 +17,9 @@ runs on LOCAL builds.
 > resolves in a working clone and will not resolve on GitHub. This is deliberate.
 
 A RELEASE is: a tag `v<game>-b<N>` (stable) or `v<game>-b<N>-dev` (dev prerelease)
-whose page carries `multivoid-<game>-<N>.dll` + `xinput1_3.dll` + their SHA256.
+whose page carries the ONE package zip (`Multivoid-Multivoid-<version>.zip`,
+assembled by `tools/release/package.ps1` from the tagged build's `main.dll`)
++ its SHA256.
 The body (ONE writer: `New-ReleaseBody`, used by publish, retro regeneration,
 and recovery alike) is: dev disclaimer -> `## What's new` (the content of
 `tools/release/notes/b<N>.md` — the changelog authority, see
@@ -52,9 +54,11 @@ consumes numbers.
    that would look fine to every other check. Both lines are printed at boot, so
    this costs a grep.
    **Trip-wires (2026-07-26):** run `tools/release/tripwires.ps1` and paste its
-   output into the handoff. ADVISORY — a FIRED wire re-opens the UE4SS-switch
-   DECISION per `docs/VERSION_MIGRATION.md` §11 (the decision ledger), it never
-   blocks the release. On FIRED or a 2nd consecutive CHECK-UNREACHABLE: append
+   output into the handoff. ADVISORY — a FIRED wire re-opens the
+   `docs/VERSION_MIGRATION.md` §11 decision ledger, it never blocks the
+   release. (The UE4SS-switch fork those wires were minted for was TAKEN — F2,
+   2026-08-21 — and shipped at WP-2 commit 3; the wires stay as drift watches
+   on the ledger's premises.) On FIRED or a 2nd consecutive CHECK-UNREACHABLE: append
    the dated `TRIPWIRE-DECISION` line + re-freeze in the same commit (§11's
    no-wallpaper rule; the script detects an overdue disposition mechanically).
    Commit the refreshed `tripwires_state.json` with the release flow.
@@ -129,8 +133,13 @@ ENFORCING in every release run; `tools/release/ledger_lint.ps1` local anytime.
   Join-seam wire gate, header backstop. Old cohorts keep playing among
   themselves (per-lobby equality, never latest-only — the Minecraft rule,
   user directive 2026-07-19).
-- The loader scans `multivoid-*.dll`, loads the highest build, and pops the
-  in-game "MOD INSTALL PROBLEM" dialog when several version files coexist.
+- UE4SS loads the fixed contract name `Mods/Multivoid/dlls/main.dll`;
+  `cppmod_entry` REFUSES to start beside a leftover pre-mod-folder install
+  (`multivoid-*.dll` / `votv-coop.dll` next to the exe) with a removal dialog.
+  Artifact identity rides the DLL's own VERSIONINFO pair — `deploy-mod.ps1`
+  and `publish.ps1` both fail closed on a tree/tag mismatch. (The in-game
+  boot-warning modal's live feeder is `server_browser_native`'s missing-donor
+  warning.)
 - `releases/latest` never surfaces a dev prerelease (read-back asserted at
   publish); the in-game "(dev; latest released bN)" line is computed
   relationally, no dev axis exists in the identity.

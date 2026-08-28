@@ -49,8 +49,9 @@ runs them frequently:
   real handshake bugs single-process loopback hid. Flags: `-GrabTest`,
   `-NameplateTest`, etc.
 - **`probe-terminals.ps1`** — one-shot Phase 5T terminal probe
-  launcher. Disables proxy, deploys UE4SS probe, sets scenario,
-  launches dev copy. `-Restore` re-enables proxy after.
+  launcher. Parks the Multivoid mod (renames `enabled.txt` →
+  `.probe-disabled`), deploys the UE4SS probe, sets the scenario,
+  launches the dev copy. `-Restore` unparks the mod after.
 
 ## Probes + RE helpers
 

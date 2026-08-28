@@ -1754,10 +1754,12 @@ The Paper-pair identity (game target + build number; docs/RELEASE.md + the
   which-axis/who-updates wording (`VersionMismatchVerdict`, session_manager.cpp).
 - **Host feed line** `"<nick> was turned away: <reason>"` (deduped 30 s per nick+reason) when the wire
   gate refuses a joiner at the Join seam (`player_handshake_version.cpp`).
-- **Boot-warning modal** `MOD INSTALL PROBLEM` (`ui/boot_warning_dialog.{h,cpp}`, connect_failed's
-  ownership shape + the SEH re-fault guard): armed at boot from `MULTIVOID_DUP_FILES` when the xinput
-  proxy found several `multivoid-*.dll` (or a legacy `votv-coop.dll`) beside the exe; names the loaded
-  file + the leftovers. Dup drill screenshot-proven (s29 `dup_popup.png`).
+- **Boot-warning modal** (`ui/boot_warning_dialog.{h,cpp}`, connect_failed's ownership shape + the
+  SEH re-fault guard): the generic boot-time install-problem surface. Born as the xinput proxy's
+  `MOD INSTALL PROBLEM` duplicate-payload popup (dup drill screenshot-proven, s29 `dup_popup.png`);
+  that feeder retired with the proxy at UE4SS_ARC WP-2 commit 3 — duplicate/predecessor installs are
+  now `cppmod_entry.cpp`'s native `MessageBoxW` REFUSE (a refused instance never installs the
+  overlay this modal renders from). Current feeder: `server_browser_native`'s missing-donor warning.
 
 ## Main-menu version / update line (NATIVE UMG — VERIFIED hands-on 2026-07-16)
 

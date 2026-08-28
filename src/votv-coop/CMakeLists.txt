@@ -23,9 +23,10 @@ project(votv_coop LANGUAGES CXX C ASM_MASM)  # C for the MinHook sources (third_
 set(VOTVCOOP_GAME_TARGET "0.9.0n")
 
 # The BUILD NUMBER (the identity's other half) is kProtocolVersion -- parsed
-# out of protocol.h so the DLL FILENAME carries the Paper-style pair
-# (multivoid-<game>-<build>.dll, like paper-26.1.2-74.jar). The configure
-# depends on protocol.h so a proto bump re-names the output automatically.
+# out of protocol.h so the Paper-style pair lands in the generated
+# coop/version.h and the VERSIONINFO resource (the filename no longer carries
+# it -- the OUTPUT_NAME is the UE4SS contract name main.dll, see below). The
+# configure depends on protocol.h so a proto bump re-stamps both automatically.
 set(VOTVCOOP_PROTOCOL_H ${CMAKE_CURRENT_SOURCE_DIR}/include/coop/net/protocol.h)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${VOTVCOOP_PROTOCOL_H})
 file(READ ${VOTVCOOP_PROTOCOL_H} _votvcoop_proto_h)
@@ -666,6 +667,15 @@ set_target_properties(votv-coop PROPERTIES OUTPUT_NAME "main")
 # the digits (<major>,<minor>,<build>,0); the letter suffix of the game target
 # ("0.9.0n") fits only the string fields, which are the authoritative ones.
 string(REGEX MATCH "^([0-9]+)\\.([0-9]+)" _votvcoop_tgt_mm "${VOTVCOOP_GAME_TARGET}")
+if("${_votvcoop_tgt_mm}" STREQUAL "")
+    # Fail closed like the kProtocolVersion parse above: on a failed match CMake
+    # KEEPS the previous CMAKE_MATCH_* values (documented sharp edge), so without
+    # this guard a non-numeric target would silently stamp a stale quad. Tested
+    # on the WHOLE match via STREQUAL -- `if(NOT CMAKE_MATCH_1)` is wrong here
+    # because a legitimate major of "0" is CMake-falsy (measured: it refused the
+    # real "0.9.0n" target).
+    message(FATAL_ERROR "could not parse major.minor out of VOTVCOOP_GAME_TARGET '${VOTVCOOP_GAME_TARGET}'")
+endif()
 set(VOTVCOOP_TARGET_MAJOR "${CMAKE_MATCH_1}")
 set(VOTVCOOP_TARGET_MINOR "${CMAKE_MATCH_2}")
 configure_file(

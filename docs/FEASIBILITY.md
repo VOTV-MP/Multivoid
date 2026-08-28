@@ -61,8 +61,8 @@ record `research/findings/tooling/votv-imgui-dx12-overlay-DESIGN-2026-07-26.md`)
 The RHI in use is visible in-game: F1 menu > "Graphics API: DX11/DX12", plus a
 bring-up log line. Vulkan is NOT covered (no DXGI swapchain to hook) — an
 overlay there would need its own backend, unbuilt and unscheduled.
-The old "UE4SS's built-in ImGui integration" strategy is RETIRED (RULE 3: no
-UE4SS at runtime).
+The old "UE4SS's built-in ImGui integration" strategy is RETIRED (own-substrate
+rule: the overlay links OUR vendored ImGui, never UE4SS's integration).
 
 ## 0.4 Input API — UE4 enhanced/legacy input + WndProc
 
@@ -70,7 +70,7 @@ UE4 reads input through its own `UPlayerInput` / `UInputComponent`
 pipeline, ultimately fed by the OS message pump. For mod-menu hotkeys and
 synthetic test input we use ~~UE4SS's input handlers~~ / `GetAsyncKeyState`
 (WP15/WP16 — do not gate mod input on engine focus).
-**AS-BUILT (annotated 2026-07-26, RULE 3): no UE4SS input handler ships.** Mod
+**AS-BUILT (annotated 2026-07-26; own-substrate rule): no UE4SS input handler is used.** Mod
 input is our own `SetWindowLongPtrW` WndProc subclass
 (`src/ui/imgui_overlay.cpp:312`, restored at `:679`) plus `GetAsyncKeyState`
 (`src/ui/multiplayer_menu.cpp:242`). For replicating P2,
@@ -101,7 +101,7 @@ VOTV is heavily Blueprint-driven (typical for this game). The "script VM"
 is UE's Blueprint VM; "script commands" are `UFunction`s. We hook
 Blueprint events / functions via ~~UE4SS~~ rather than parsing a custom script
 format.
-**AS-BUILT (annotated 2026-07-26, RULE 3): our own hooks, no UE4SS at runtime** —
+**AS-BUILT (annotated 2026-07-26; own-substrate rule): our own hooks — UE4SS is only the loader since WP-2** —
 a MinHook detour on `ProcessEvent` (`src/ue_wrap/core/pe_detour.cpp`), per-UFunction
 `Func`-pointer patches (`src/ue_wrap/core/ufunction_hook.cpp`), and a `GNatives[0x45]`
 swap for the BP-internal verbs ProcessEvent cannot see

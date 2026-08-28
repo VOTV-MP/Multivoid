@@ -5,18 +5,19 @@ stale — that's what `research/findings/` is for).
 
 ## What this is, architecturally
 
-A **standalone** hook-only mod that runs as an engine-extension layer on
-top of UE4.27 + VOTV. It loads via our own proxy DLL (`xinput1_3.dll`
-forwards XInputGetState/SetState to System32's xinput1_4.dll and
-side-loads the versioned payload `multivoid-<game>-<build>.dll` — the
-Paper-pair artifact, 2026-07-19; the proxy scans `multivoid-*.dll`, loads
-the highest build, and flags duplicate installs for an in-game popup),
-discovers the game's classes/functions
-through UE reflection (resolved standalone via AOB signatures — no
-UE4SS at runtime), and adds a second networked player by driving the
-engine's own `APawn` / `APlayerController` systems. It does not modify
-any original game file (principle 1). It augments single-player; it
-does not replace it (principle 6).
+A hook-only mod that runs as an engine-extension layer on top of UE4.27 +
+VOTV, on its **own substrate**. It ships as a standard UE4SS mod folder
+(`Mods\Multivoid\dlls\main.dll` + `enabled.txt`; UE4SS — or r2modman's
+unreal-shimloader — LoadLibrary's it and starts it via the C-ABI
+`start_mod()` contract, `src/loader/cppmod_entry.cpp`), but UE4SS is the
+*loader only*: the DLL imports nothing from it (the D-3 slim contract).
+The mod discovers the game's classes/functions through UE reflection
+(resolved by its own AOB signatures), and adds a second networked player
+by driving the engine's own `APawn` / `APlayerController` systems. It
+does not modify any original game file (principle 1). It augments
+single-player; it does not replace it (principle 6). (The previous
+standalone `xinput1_3.dll` proxy loader retired whole at UE4SS_ARC WP-2
+commit 3.)
 
 ## Layer stack (top = closest to gameplay)
 
@@ -42,8 +43,8 @@ does not replace it (principle 6).
 │   Reflection access, struct offsets, UFunction thunks.      │
 │   NO network/gameplay/coop state.                           │
 ├─────────────────────────────────────────────────────────────┤
-│ loader/  (xinput_proxy.cpp -> xinput1_3.dll)                │
-│   Scan + auto-load multivoid-<game>-<build>.dll on start.   │
+│ loader/  (cppmod_entry.cpp + cppmod_stubs.asm)              │
+│   The UE4SS C-ABI start_mod() contract + predecessor scan.  │
 ├─────────────────────────────────────────────────────────────┤
 │ third_party/minhook (MIT, MinHook for the game-thread       │
 │   ProcessEvent detour — static-CRT linked)                  │
@@ -59,13 +60,13 @@ engine memory/reflection AND owns network state is a violation — split it
 ## Not an ASI
 
 This mod is **not** an ASI (the GTA/MTA-era native-DLL-via-ASI-loader
-pattern from the methodology's origin). It is a runtime DLL loaded into the
-UE4 process via our own `xinput1_3.dll` proxy (VOTV imports only
-`XInputGetState`/`XInputSetState` from xinput1_3.dll; those are forwarded
-to System32's xinput1_4.dll via `/export:` linker directives, and the
-proxy's `DllMain` side-loads the `multivoid-*.dll` payload). No injection,
-no third-party loader. See `src/loader/xinput_proxy.cpp` for the loader
-source (the scan + highest-build pick + duplicate-install detection).
+pattern from the methodology's origin). It is a runtime DLL loaded into
+the UE4 process by UE4SS's mod scan (`Mods\Multivoid\dlls\main.dll`,
+started via the exported `start_mod()` — `src/loader/cppmod_entry.cpp`,
+which also carries the predecessor scan that refuses to start beside a
+leftover pre-mod-folder install). No injection; the loader is the standard
+one the game's mod ecosystem already uses, and the mod imports nothing
+from it.
 
 ## How far we can reach into the engine
 
@@ -87,32 +88,36 @@ So "can a UE4SS mod reach deep core functions?" — yes, both layers. UE4SS
 just makes the reflected layer convenient; the raw layer is always
 available because we are native code in-process.
 
-## Substrate: standalone (RULE №3 — no UE4SS at runtime)
+## Substrate: our own (RULE №3 — UE4SS is the loader, never the engine layer)
 
-The shipping mod **does not depend on UE4SS**. UE4SS is a development
-tool only (used in the `Game_0.9.0n_dev/` copy for Live View, Lua probe
-scripting, header dumps, and BP bytecode inspection — see
-`docs/RE_WORKFLOW.md`).
+The mod runs *under* UE4SS but **depends on none of its machinery** — the
+D-3 slim contract (decision 2026-08-21, shipped at WP-2): UE4SS
+LoadLibrary's `main.dll` and calls the two exported C-ABI functions
+(`start_mod` / `uninstall_mod`); everything past that line is Multivoid's
+own code, and the DLL imports **zero** symbols from `UE4SS.dll`
+(machine-checked by `tools/loader/abi_gate.py`; field UE4SS C++ mods
+import 32-130 mangled symbols and break across UE4SS versions — ours
+loads on 3.0.1 and the experimental build alike). UE4SS is also the
+everyday development tool (Live View, Lua probes, header dumps, BP
+bytecode inspection — see `docs/RE_WORKFLOW.md`).
 
-What UE4SS used to provide vs how we provide it now:
+What UE4SS could provide vs what the mod uses instead:
 
 | Capability | Shipping mod source |
 |---|---|
-| Injection (`dwmapi.dll` proxy) | **Our own `xinput1_3.dll` proxy** (`src/loader/xinput_proxy.cpp`) |
-| Reflection access (`GUObjectArray`/`GNames` resolved) | **AOB-resolved standalone** (`ue_wrap/sig_scan.cpp` + `ue_wrap/reflection.cpp`); algorithms adapted from RE-UE4SS (MIT) with attribution |
-| `UFunction` hook engine (`ProcessEvent` hook) | **MinHook detour on `ProcessEvent`** (`ue_wrap/hook.cpp` + `ue_wrap/game_thread.cpp`) — same technique UE4SS uses; static-CRT linked |
-| Lua + ImGui + bundled mods | Test tooling only — `tools/probes/`, `Game_0.9.0n_dev/` |
+| Reflection access (`GUObjectArray`/`GNames` resolved) | **AOB-resolved, our own** (`ue_wrap/sig_scan.cpp` + `ue_wrap/reflection.cpp`); algorithms adapted from RE-UE4SS (MIT) with attribution |
+| `UFunction` hook engine (`ProcessEvent` hook) | **MinHook detour on `ProcessEvent`** (`ue_wrap/hook.cpp` + `ue_wrap/pe_detour.cpp`) — with a followJmp-immune relay so it COMPOSES with UE4SS's own PolyHook PE detour (UE4SS_ARC §4) |
+| UE4SS's Lua / C++ mod API / its ImGui | **Not used.** Our own vendored ImGui; the C++ API is the ABI-fragility the slim contract exists to avoid |
 
 **The discipline that makes this clean**: all engine/substrate access
 lives behind `ue_wrap/`. The `coop/` gameplay-network layer never
 touches reflection / GUObjectArray / sig-scan directly. The CXX header
-dump (regenerated per game version) is our standalone SDK — the
-class/offset/signature knowledge we need without UE4SS at runtime.
+dump (regenerated per game version) is our own SDK — the
+class/offset/signature knowledge we need without UE4SS's machinery.
 
-Test tooling (`tools/probes/*`, `Game_0.9.0n_dev/`) MAY depend on UE4SS
-freely — it is not shipped. Only `src/votv-coop` carries the no-UE4SS
-constraint, and that constraint is enforced (no UE4SS-named symbols
-appear in the shipping module).
+The one deliberate exception to "no UE4SS-named symbols" is the loading
+contract itself: `src/loader/cppmod_entry.cpp` exports what UE4SS's mod
+scan calls, and imports nothing back.
 
 ## Networking model (shipped Phase 3 — see `coop/net/`)
 

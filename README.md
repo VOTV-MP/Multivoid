@@ -1,12 +1,12 @@
 # Multivoid
 
 > **Multiplayer for Voices of the Void.**
-> A standalone mod that adds drop-in co-op to a single-player UE4.27 game —
+> A mod that adds drop-in co-op to a single-player UE4.27 game —
 > **no original game files are modified**.
 
 | | |
 |--|--|
-| **Current build** | the newest `multivoid-<game>-<N>.dll` on the [Releases page](https://github.com/VOTV-MP/Multivoid/releases) (dev prereleases; the DLL filename carries the identity) |
+| **Current build** | the newest `Multivoid-Multivoid-<version>.zip` on the [Releases page](https://github.com/VOTV-MP/Multivoid/releases) (dev prereleases; the zip name + the in-game banner carry the identity) |
 | **Game target** | Voices of the Void Alpha **0.9.0n** |
 | **Status** | Alpha — dev prereleases published for testing; no stable release yet |
 | **Players** | up to **4** (host + 3) |
@@ -21,7 +21,7 @@
 The project follows an 8-phase long-term arc (the MTA / gmod trajectory — see
 [Roadmap](#roadmap) below). We are in **Phase 1: functional co-op** — the deep-sync
 phase where VOTV's single-player systems are taken apart one by one and made
-multiplayer-correct on a standalone engine-extension substrate. The multiplayer
+multiplayer-correct on the mod's own engine-extension substrate. The multiplayer
 foundation (transport, sessions, master server, join/save pipeline) is built and
 live; the remaining Phase-1 work is hands-on verification breadth and the tail of
 game systems still to sync.
@@ -92,8 +92,10 @@ signal database. Presser-authored state, one authority per axis, with the
 desk's audio feedback mirrored to observers at the native audio seam.
 
 ### Infrastructure
-- **Standalone loader** — `xinput1_3.dll` proxy + the versioned
-  `multivoid-<game>-<build>.dll` payload
+- **UE4SS-ecosystem mod folder** — ships as `Mods\Multivoid\dlls\main.dll`,
+  loaded by UE4SS (manual installs) or unreal-shimloader (r2modman /
+  Thunderstore), with **zero imports from UE4SS** — the whole substrate
+  (reflection, hooks, transport, UI) is the mod's own
 - **Official master server** — a static Rust binary on our VPS (lobby list,
   update check, signaling); the update check is informational only, never a gate
 - **Kill switch** in the ini for emergency ship lockdown
@@ -102,19 +104,20 @@ desk's audio feedback mirrored to observers at the native audio seam.
 
 ## How it works
 
-VOTV runs on Unreal Engine 4.27. The mod is a single DLL pair:
+VOTV runs on Unreal Engine 4.27. The mod is one DLL living in a standard
+UE4SS mod folder:
 
 ```
-xinput1_3.dll                  -- thin proxy loader (Windows auto-loads it next to the .exe)
-multivoid-<game>-<build>.dll   -- the mod payload (versioned filename; highest build wins)
+Mods\Multivoid\dlls\main.dll   -- the whole mod (UE4SS starts it via the C-ABI start_mod() contract)
+Mods\Multivoid\enabled.txt
 ```
 
-The payload resolves engine primitives (`GUObjectArray` / `GNames` /
-`ProcessEvent`) via AOB signatures, then drives VOTV's own
+UE4SS (or r2modman's unreal-shimloader) is the *loader* only: the DLL imports
+nothing from it. The mod resolves engine primitives (`GUObjectArray` /
+`GNames` / `ProcessEvent`) via its own AOB signatures, then drives VOTV's own
 `UClass` / `UFunction` machinery through reflection — no asset edits,
-no `.pak` repacks, no UE4SS at runtime. Where ProcessEvent can't see
-(Blueprint-internal dispatch), a bytecode-level VM interception substrate
-catches the invisible verbs.
+no `.pak` repacks. Where ProcessEvent can't see (Blueprint-internal dispatch),
+a bytecode-level VM interception substrate catches the invisible verbs.
 
 Transport is **GameNetworkingSockets** (Valve's UDP library) carrying an
 unreliable pose stream plus a reliable ordered channel for events and state.
@@ -135,7 +138,9 @@ The version identity is the pair **(game version, build number)** — there is
 no separate mod semver.
 
 ```
-multivoid-<game>-<build>.dll   ->   e.g. game target 0.9.0n, build <N>
+Multivoid 0.9.0n b<N>   ->   the in-game banner, the release zip's name
+                             (Multivoid-Multivoid-<major>.<minor>.<N>.zip),
+                             and main.dll's own VERSIONINFO all carry it
 ```
 
 - **Game target** (`0.9.0n`) bumps when we adapt to a new VOTV cook
@@ -163,12 +168,13 @@ Source of truth: [`src/votv-coop/CMakeLists.txt`](src/votv-coop/CMakeLists.txt)
 > [Field reports](#field-reports). Full
 > disclaimer and what to attach: **[docs/INSTALL.md](docs/INSTALL.md)**.
 
-Download **both** files from the release page, drop them next to the game
-executable, launch — a **Multiplayer** button appears in the main menu. No port
-forwarding needed. Full steps, updating, and troubleshooting:
-**[docs/INSTALL.md](docs/INSTALL.md)**.
+One zip, two ways to install it: through **r2modman** (recommended — it sets up
+the loader itself) or manually into the game's UE4SS `Mods\` folder. Launch —
+a **Multiplayer** button appears in the main menu. No port forwarding needed.
+Full steps, updating, and troubleshooting: **[docs/INSTALL.md](docs/INSTALL.md)**.
 
-To uninstall, delete the two DLLs. The mod never touches the game's own files.
+To uninstall, remove the mod in the manager (or delete the `Mods\Multivoid`
+folder). The mod never touches the game's own files.
 
 ### For developers
 
@@ -257,7 +263,7 @@ The long-term arc, in order (each phase gates the next — detail in
 
 | # | Phase | Status |
 |--|--|--|
-| 1 | **Functional co-op** — deep sync of VOTV's systems on the standalone substrate | **in progress (current)** |
+| 1 | **Functional co-op** — deep sync of VOTV's systems on the mod's own substrate | **in progress (current)** |
 | 2 | **The arbiter** — per-element authority moves into a separate, engine-free server process; the host's game becomes an ordinary client of it | planned |
 | 3 | **Sandbox mode** — support VOTV's sandbox rules as an explicit, portable "mode" layer | planned |
 | 4 | **LuaJIT embedding** — the scripting substrate over the engine/coop APIs | planned |
@@ -290,12 +296,12 @@ Built on **eight architectural principles** documented in
 Three "no-compromise" rules govern day-to-day work:
 - **RULE 1** — No crutches, no quick fixes. Root cause every time.
 - **RULE 2** — No migration baggage. Old code goes when replaced.
-- **RULE 3** — Standalone mod. UE4SS is a dev tool only; not loaded at runtime.
-  (**DECISION REVERSED 2026-08-21** — Multivoid is migrating into the UE4SS mod
-  ecosystem as a normal UE4SS mod folder; the dated ledger entry with the full
-  reasoning is in [docs/VERSION_MIGRATION.md §11](docs/VERSION_MIGRATION.md).
-  The SHIPPING mod remains standalone exactly as described here until that
-  migration ships.)
+- **RULE 3** — Own substrate. The mod ships as a normal UE4SS mod folder
+  (decision 2026-08-21; the standalone xinput-proxy loader retired whole), but
+  UE4SS is the *loader*, never the engine layer: the DLL imports nothing from
+  it, and all reflection/hooking/transport stays the mod's own. The dated
+  decision ledger is in
+  [docs/VERSION_MIGRATION.md §11](docs/VERSION_MIGRATION.md).
 
 ---
 
@@ -317,14 +323,14 @@ Prior art this project learned from, with thanks:
 | Project | What it gave Multivoid |
 |--|--|
 | [MTA:SA](https://github.com/multitheftauto/mtasa-blue) (GPLv3, vendored read-only) | The architectural precedent: the parallel class hierarchy, per-element syncers, keysync shape, host-authoritative AI. Multivoid follows MTA's shapes deliberately — no MTA code is copied. |
-| [RE-UE4SS](https://github.com/UE4SS-RE/RE-UE4SS) (MIT) | The UE4 modding substrate this project stands on: its reflection algorithms are ported (with attribution in the source), and it remains a development tool here — SDK header dumps, Blueprint dumps, live inspection. It does not ship and is not required to play. |
+| [RE-UE4SS](https://github.com/UE4SS-RE/RE-UE4SS) (MIT) | The UE4 modding substrate this project stands on: its reflection algorithms are ported (with attribution in the source), it is the everyday development tool (SDK header dumps, Blueprint dumps, live inspection) — and since the mod-folder migration it is also the *loader* the shipping mod runs under. The mod still imports nothing from it (the D-3 slim contract): UE4SS starts `main.dll` and everything after that is Multivoid's own code. |
 | [MinHook](https://github.com/TsudaKageyu/minhook) (MIT) | The x64 trampoline hooking engine (vendored). |
 | **VoidTogether** | The first multiplayer attempt for VOTV, and useful to read while designing this one. No VoidTogether code is in Multivoid (it is a JS server; this is a C++ in-process mod), but two things came from studying it and are cited in the source where they are used: the nickname-sanitizer approach ([`player_handshake.cpp`](src/votv-coop/src/coop/session/player_handshake.cpp)) and widget-styling comparisons that shaped the nameplate look ([`engine_widget.cpp`](src/votv-coop/src/ue_wrap/engine/engine_widget.cpp)). |
 | [Dear ImGui](https://github.com/ocornut/imgui) (MIT), [GameNetworkingSockets](https://github.com/ValveSoftware/GameNetworkingSockets) (BSD), [Opus](https://opus-codec.org/) (BSD), [FreeType](https://freetype.org/) (FTL), [miniaudio](https://miniaud.io/) (MIT/public domain) | Vendored libraries — UI, transport, voice, text rendering, audio. |
 
 ## Legal
 
-This is a **hook-only standalone mod**. It contains **no Voices of the Void
+This is a **hook-only mod**. It contains **no Voices of the Void
 code or assets**. You must own a legitimate copy of the game to use it.
 
 Distributed under the same terms as the upstream references it borrows from:

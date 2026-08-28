@@ -301,7 +301,7 @@ Template for an entry:
   pass 2026-05-25.
 
 - **Pak-mounted custom content** — NOT in scope for the coop sync work.
-  All shipping behaviour rides through the standalone DLL; no asset
+  All shipping behaviour rides through the one mod DLL; no asset
   edits, no pak overlays. Revisit the public-server phase ONLY for the multiplayer
   menu polish if needed. See the 3 architecture-decision findings docs
   from 2026-05-25 (votv-mp-pak-mount-feasibility).
