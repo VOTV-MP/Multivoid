@@ -429,6 +429,7 @@ add_library(votv-coop SHARED
     src/coop/world/weather_fog.cpp
     src/coop/world/weather_lightning.cpp
     src/coop/world/weather_rain.cpp
+    src/coop/world/weather_event_births.cpp
     src/coop/world/weather_redsky.cpp
     src/coop/config/config.cpp
     src/coop/text/utf8_codec.cpp

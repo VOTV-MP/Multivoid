@@ -88,4 +88,9 @@ bool HostFogStateChanged(void* cycle);
 // Disconnect hook: clear the echo-suppress flag + the cached host detector state.
 void OnDisconnect();
 
+// True while ApplyFromHost is mid mirror-spawn (the spawnFog echo window).
+// Read by coop/weather_event_births so the wire-commanded fog-controller
+// birth passes the client birth-catch. (2026-08-29)
+bool MirrorEchoActive();
+
 }  // namespace coop::weather_fog

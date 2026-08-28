@@ -139,8 +139,10 @@ DWORD WINAPI WeatherTestThread(LPVOID /*arg*/) {
 //
 // Host-only. After stabilization, fires DebugForceRedSky(true) -- spawns
 // AredSkyEvent_C on the gamemode + the BP swaps the 4 color-curve assets
-// to the "red" set. Host's POST observer on spawnRedSky catches +
-// broadcasts; client invokes the same. Both peers' subsequent
+// to the "red" set. The host's FIELD POLL (weather_redsky::HostPollEdge;
+// the 2026-08-29 reroot -- the old spawnRedSky POST observer was PE-blind
+// to the organic caller and is retired) detects the edge <=500 ms later +
+// broadcasts; the client applies the same chain. Both peers' subsequent
 // screenshots should show the entire sky / ambient lighting in red.
 //
 // 2 phases: ON / OFF (revert). Final state OFF so the next test run

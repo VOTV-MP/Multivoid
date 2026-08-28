@@ -1,17 +1,24 @@
-// coop/weather_redsky.h -- Phase 5W Inc-fix-2 red-sky discrete-event sync.
+// coop/weather_redsky.h -- Phase 5W red-sky discrete-event sync.
 //
 // Red sky is a story event: AmainGamemode_C::spawnRedSky() instantiates an
 // AredSkyEvent_C actor whose .set(bool isred) swaps the world color curves.
-// The visual is the unambiguous weather signal chosen for cross-peer
-// verification (per the 2026-05-27 user finding that rain particles were
-// too subtle to verify cross-peer).
 //
-// Architecture:
-//   HOST observes spawnRedSky POST + redSkyEvent.set POST on the
-//   mainGamemode_C / redSkyEvent_C classes, broadcasts RedSkyPayload.
-//   CLIENT receives the packet (via event_feed) and replays the same
-//   spawn-then-set sequence locally; an echo-suppress flag prevents the
-//   client's own re-broadcast.
+// Architecture (REROOTED 2026-08-29, the arigalit red-mist field report):
+//   The ORGANIC trigger is a 1% roll in daynightCycle's newDay handler that
+//   calls gamemode.spawnRedSky via EX_Context + EX_LocalVirtualFunction --
+//   PE-INVISIBLE (measured in research/bp_reflection/daynightCycle.json; the
+//   docs/COOP_DISPATCH_VISIBILITY.md class). The original POST observers on
+//   spawnRedSky/set therefore NEVER fired for a native red sky (zero
+//   "host broadcast RedSky" lines across every log on disk) -- they observed
+//   only OUR OWN reflected Calls. Retired whole (RULE 2).
+//
+//   HOST now POLLS the state field-level (the proven weather_fog shape, MTA
+//   CBlendedWeather::DoPulse): gamemode.redSky actor liveness + its `isred`
+//   bool, edge -> broadcast RedSkyPayload. Robust regardless of which
+//   dispatch path (or which caller) flipped the state.
+//   CLIENT receives (via event_feed) and replays spawn + set locally, with
+//   an echo-suppress flag; its OWN organic 1% roll is killed at birth by
+//   coop/weather_event_births (the FinishSpawningActor class-catch).
 //
 // Resolution is lazy -- redSkyEvent_C is a content BP class that may not
 // be loaded until first spawn. The set UFunction can resolve later via the
@@ -23,8 +30,8 @@ namespace coop::net { class Session; struct RedSkyPayload; }
 
 namespace coop::weather_redsky {
 
-// Set the session pointer (atomic; reads in the observer callbacks acquire
-// it). Called from weather_sync::Install on every re-entry.
+// Set the session pointer (atomic; read in the poll + Apply). Called from
+// weather_sync::Install on every re-entry.
 void SetSession(coop::net::Session* session);
 
 // Resolve mainGamemode_C CDO + spawnRedSky UFunction + (best-effort)
@@ -33,14 +40,25 @@ void SetSession(coop::net::Session* session);
 // first call via the spawned actor's class).
 bool TryResolve();
 
-// HOST-only: register the POST observers on spawnRedSky + redSkyEvent.set
-// if not already registered AND TryResolve has succeeded for at least
-// spawnRedSky. Safe to call every NetPumpTick.
-bool RegisterHostObservers();
+// HOST poll: read the live gamemode's redSky state (actor live && isred),
+// broadcast RedSkyPayload on an EDGE. Internally throttled (~500 ms);
+// safe to call every NetPumpTick. No-op on a client / no session.
+void HostPollEdge();
+
+// True iff the local world currently has an ACTIVE red sky (live
+// AredSkyEvent_C with isred). Used by the host's per-joiner weather seed
+// (a late joiner must enter an already-red world red -- principle 8).
+// Game thread.
+bool LocalRedSkyActive();
+
+// True while Apply() is mid spawn/set (the echo window). Read by
+// coop/weather_event_births to let the wire-commanded mirror birth pass
+// the client birth-catch.
+bool ApplyEchoActive();
 
 // Receiver-side apply: peer (host) reported a red-sky state change.
-// Spawns the actor on first ON + calls set(state). Validates
-// peerSessionId==0. Game thread only.
+// ON: spawn (if absent) + set(true). OFF: set(false) + destroy the local
+// actor (full mirror of "no red sky"). Game thread only.
 void Apply(const coop::net::RedSkyPayload& payload);
 
 // HOST test entrypoint. Forces red-sky on/off via reflection. ON: spawn
@@ -49,9 +67,8 @@ void Apply(const coop::net::RedSkyPayload& payload);
 // live, or UFunctions unresolved. Game thread only.
 bool DebugForce(bool red);
 
-// Disconnect hook: unregister role-scoped POST observers + clear the
-// echo-suppress flag (paranoia -- it should already be false outside an
-// Apply call). Called from weather_sync::OnDisconnect.
+// Disconnect hook: clear the echo-suppress flag + poll edge memory.
+// Called from weather_sync::OnDisconnect.
 void OnDisconnect();
 
 }  // namespace coop::weather_redsky

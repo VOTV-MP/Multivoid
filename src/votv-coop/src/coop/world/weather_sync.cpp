@@ -8,6 +8,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/config/config.h"
 #include "coop/dev/weather_probe.h"
+#include "coop/world/weather_event_births.h"
 #include "coop/world/weather_fog.h"
 #include "coop/world/weather_lightning.h"
 #include "coop/world/weather_rain.h"
@@ -499,13 +500,12 @@ void Install(coop::net::Session* session) {
     // suppress. Host just needs to OBSERVE the spawn to broadcast the loc.
     // CLIENT skips this registration -- no observer needed for receive
     // (event_feed dispatches LightningStrike packets directly).
-    // Phase 5W Inc-fix-2 red-sky: delegate to coop::weather_redsky module.
+    // Red-sky: delegate to coop::weather_redsky. (2026-08-29 reroot: the old
+    // host POST observers were PE-blind to the organic newDay roll and are
+    // retired; the host edge detector is now the field poll in TickConnect,
+    // so both roles just resolve here.)
     coop::weather_redsky::SetSession(session);
-    if (isHost) {
-        coop::weather_redsky::RegisterHostObservers();
-    } else {
-        coop::weather_redsky::TryResolve();
-    }
+    coop::weather_redsky::TryResolve();
 
     // Phase 5W Inc2 lightning: delegate observer registration + path resolve
     // to coop::weather_lightning. SetSession every re-entry so the observer
@@ -528,6 +528,14 @@ void Install(coop::net::Session* session) {
     // register (table full) or the fog UFunction isn't resolved yet, do NOT latch --
     // retry next NetPumpTick rather than leave the client unsuppressed.
     if (!coop::weather_fog::Install(isHost)) return;
+
+    // The newDay weather-event birth-catch (2026-08-29): a CLIENT's own 1%
+    // rolls (red sky / black fog / rolling fog) are destroyed at
+    // FinishSpawningActor -- the EX_Local caller is invisible to every PE
+    // seam, so birth is the one place the organic roll surfaces. Gate the
+    // latch on it like the fog interceptor: an unsuppressed client is the
+    // exact bug this fixes.
+    if (!coop::weather_event_births::Install(session, isHost)) return;
 
     g_installed = true;
 }
@@ -565,6 +573,17 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     UE_LOGI("weather: connect-broadcast slot=%d sent flags=0x%02X rain=%.2f lc=%.2f dc=%.2f ws=%.2f",
             peerSlot, p.flags, p.rainStrength, p.rainLightningChance,
             p.rainDeactivateChance, p.rainWindSpeed);
+
+    // Red-sky late-join seed (principle 8, 2026-08-29): WeatherStatePayload
+    // does not carry the red-sky bit (its own reliable kind), so a joiner
+    // entering an already-red world needs its own targeted ON. OFF needs no
+    // seed -- a fresh client world has no red sky to clear.
+    if (coop::weather_redsky::LocalRedSkyActive()) {
+        coop::net::RedSkyPayload rp{};
+        rp.state = 1;
+        s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::RedSky, &rp, sizeof(rp));
+        UE_LOGI("weather: connect-broadcast slot=%d RedSky seed state=1 (world is red)", peerSlot);
+    }
 }
 
 void TickConnect() {
@@ -586,6 +605,11 @@ void TickConnect() {
         }
         // else: cycle still loading; retry next tick.
     }
+
+    // HOST red-sky field poll (2026-08-29): the organic spawnRedSky caller is
+    // EX_LocalVirtualFunction (PE-invisible), so the edge is detected at the
+    // FIELD level -- gamemode.redSky liveness + isred, throttled internally.
+    coop::weather_redsky::HostPollEdge();
 
     // HOST fog-edge detector. The rolling-fog actor self-destructs on its Duration
     // via its OWN ReceiveTick -- NO scheduler UFunction fires, so OnSchedulerPost
@@ -689,6 +713,7 @@ void OnDisconnect() {
     coop::weather_lightning::OnDisconnect();
     coop::weather_redsky::OnDisconnect();
     coop::weather_fog::OnDisconnect();
+    coop::weather_event_births::OnDisconnect();
     ue_wrap::directionalwind::OnDisconnect();  // drop the cached wind-actor ptr
     // v50: drop the client gate so the changeWindOrigin interceptor (kept registered for
     // the process lifetime) goes inert -- a disconnected client's local wind resumes its

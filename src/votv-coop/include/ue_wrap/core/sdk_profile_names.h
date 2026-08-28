@@ -851,6 +851,11 @@ inline constexpr const wchar_t* ActorComponent_DeactivateFn     = L"Deactivate";
 inline constexpr const wchar_t* MainGamemode_SpawnRedSkyFn      = L"spawnRedSky";
 inline constexpr const wchar_t* RedSkyEventClass               = L"redSkyEvent_C";
 inline constexpr const wchar_t* RedSkyEvent_SetFn              = L"set";
+// The other two newDay weather-event birth classes (weather_event_births'
+// client birth-catch; class names verified against the bp_reflection dumps
+// 2026-08-29 -- Default__weatherFogController_C / blackFog_C both present).
+inline constexpr const wchar_t* WeatherFogControllerClass      = L"weatherFogController_C";
+inline constexpr const wchar_t* BlackFogClass                  = L"blackFog_C";
 // SetCollisionEnabled lives on UPrimitiveComponent; used by remote_prop::OnSpawn
 // to restore default collision (QueryAndPhysics=3) on wire-converged props
 // whose local copy had collision disabled by a natural-spawn pipeline (e.g.

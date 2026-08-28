@@ -288,6 +288,10 @@ void TickClientReconcile(void* cycle) {
     }
 }
 
+bool MirrorEchoActive() {
+    return g_spawnFogEchoSuppress.load(std::memory_order_acquire);
+}
+
 bool HostFogStateChanged(void* cycle) {
     if (!cycle || !R::IsLive(cycle)) return false;
     // Throttle ~3 Hz: the super-fog check walks GUObjectArray; never per-frame.
