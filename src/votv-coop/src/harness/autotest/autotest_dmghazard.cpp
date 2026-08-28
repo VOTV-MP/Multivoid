@@ -137,7 +137,10 @@ void ProbeDamageHazardOnHost() {
     // Wait for BOTH the slot-1 puppet (client connected) AND the host saveSlot.
     auto puppet = std::make_shared<void*>(nullptr);
     auto before = std::make_shared<float>(-1.f);
-    for (int attempt = 0; attempt < 60 && (!*puppet || *before < 0.f); ++attempt) {
+    // 180 s: the window must survive a cold client boot (+connect) that starts
+    // AFTER the host's own boot armed this probe (the 60 s window expired before
+    // the client ever connected -- 2026-08-29 run).
+    for (int attempt = 0; attempt < 180 && (!*puppet || *before < 0.f); ++attempt) {
         auto done = std::make_shared<std::atomic<int>>(0);
         GT::Post([puppet, before, done] {
             void* p = coop::puppet_drive::Puppet(1).GetActor();
