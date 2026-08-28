@@ -9,6 +9,8 @@
 #include "coop/config/config.h"
 #include "coop/world/weather_rain.h"
 #include "coop/world/weather_redsky.h"
+#include "coop/player/puppet_drive.h"    // Puppet(1) -- the redsky ready-peer wait
+#include "coop/player/remote_player.h"   // RemotePlayer::GetActor (the wait's liveness read)
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 
@@ -155,9 +157,23 @@ void RunAutonomousRedSkyTest() {
                 "(client observes via wire). Returning.");
         return;
     }
-    UE_LOGI("redsky_test: starting autonomous routine on host (waiting "
-            "20 s for stabilization)");
-    ::Sleep(20000);
+    UE_LOGI("redsky_test: starting autonomous routine on host (waiting for a "
+            "WORLD-READY peer -- the broadcast needs a recipient; up to 180 s)");
+    // 2026-08-29: the blind 20 s always beat a cold client's join (double level
+    // load), so every RedSky send failed with zero ready peers and the run
+    // proved nothing. Wait like dmghazard does: the slot-1 puppet existing
+    // means the peer is connected, streaming, and world-ready.
+    for (int attempt = 0; attempt < 180; ++attempt) {
+        auto ready = std::make_shared<std::atomic<int>>(0);
+        GT::Post([ready] {
+            void* p = coop::puppet_drive::Puppet(1).GetActor();
+            ready->store(p ? 1 : -1, std::memory_order_release);
+        });
+        while (ready->load() == 0) ::Sleep(5);
+        if (ready->load() == 1) break;
+        ::Sleep(1000);
+    }
+    ::Sleep(3000);  // small settle past the join seed window
 
     UE_LOGI("redsky_test: phase ON -- DebugForceRedSky(true)");
     auto onDone = std::make_shared<std::atomic<int>>(0);
