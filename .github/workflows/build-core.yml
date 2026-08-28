@@ -221,6 +221,20 @@ jobs:
         shell: pwsh
         run: cmake --build ${{ env.BUILD_DIR }} --config Release
 
+      - name: ABI gate (D-3 -- the built DLL imports NOTHING from UE4SS)
+        # The C-ABI slim contract's whole payoff is a number: 0 imported UE4SS
+        # symbols (field mods import 32-130 mangled ones and stop loading when
+        # the user's UE4SS differs -- docs/UE4SS_ARC.md 7.2b, DebugMod_ARC 6a).
+        # Reads the BUILT artifact's PE import directories, so it runs after the
+        # build, unlike the text gates above. --drill is the injected must-fire
+        # control (a synthesized violator PE), same family as those gates; the
+        # field-shaped RED (--selftest against DebugMod's real binary) needs a
+        # foreign binary and stays a local-rig check.
+        shell: pwsh
+        run: |
+          python tools/loader/abi_gate.py --drill
+          python tools/loader/abi_gate.py "${{ env.BUILD_DIR }}/Release/main.dll"
+
       - name: Collect artifacts + toolchain dump
         id: artname
         shell: pwsh
