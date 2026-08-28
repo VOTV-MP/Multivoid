@@ -560,9 +560,9 @@ void RunAvLatchDrill() {
     t_lastTaskFault.code = 0xC0000005;
     t_lastTaskFault.accessAddr = reinterpret_cast<void*>(0xFFFFFFFFFFFFFFFFull);
     t_lastTaskFault.faultingIP = reinterpret_cast<void*>(0xA000);
-    for (int i = 0; i < 120; ++i) LogObserverAv(fn, reinterpret_cast<void*>(0x1000 + i), "drillA");
+    for (int i = 0; i < 120; ++i) LogObserverAv(fn, reinterpret_cast<void*>(uintptr_t{0x1000} + i), "drillA");
     t_lastTaskFault.faultingIP = reinterpret_cast<void*>(0xB000);
-    for (int i = 0; i < 3; ++i) LogObserverAv(fn, reinterpret_cast<void*>(0x2000 + i), "drillB");
+    for (int i = 0; i < 3; ++i) LogObserverAv(fn, reinterpret_cast<void*>(uintptr_t{0x2000} + i), "drillB");
     UE_LOGW("av_latch_drill: END -- count the [ERROR] lines tagged drillA / drillB above.");
 }
 
