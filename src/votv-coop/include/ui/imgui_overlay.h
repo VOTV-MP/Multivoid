@@ -33,6 +33,13 @@ bool IsVisible();
 // Force visibility (e.g. a future main-menu button opening the server browser).
 void SetVisible(bool visible);
 
+// TEST-ONLY (VOTVCOOP_SCOREBOARD_OPEN via ui/overlay_test_arm.cpp): start the
+// player-list scoreboard visible through the FORCED latch, which survives the
+// host window losing focus to the launching client window (the WM_KILLFOCUS
+// reset only clears the real tilde-key state). No un-force exists on purpose --
+// the latch lives for the screenshot run.
+void ForceScoreboardOpen();
+
 // Image-file -> ImTextureID decoding lives in ui/overlay_backend.h
 // (overlay_backend::CreateTextureFromImageFile) -- it is RHI-specific.
 
