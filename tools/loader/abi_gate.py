@@ -215,10 +215,16 @@ def main() -> int:
     rc = 0
 
     if args.drill:
+        import os
         import tempfile
-        tmp = Path(tempfile.gettempdir()) / "abi_gate_drill_violator.dll"
-        tmp.write_bytes(_synth_violator())
+        # mkstemp, not a fixed name: two concurrent runs on one box (a scenario this
+        # repo explicitly worries about -- docs/CROSS_SESSION.md) would race a fixed
+        # path's unlink against the other's read.
+        fd, tmp_name = tempfile.mkstemp(prefix="abi_gate_drill_", suffix=".dll")
+        tmp = Path(tmp_name)
         try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(_synth_violator())
             bad = check(tmp, args.verbose)
         except PEError as e:
             print(f"DRILL FAIL: parser rejected the synthesized violator: {e}")

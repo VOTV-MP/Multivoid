@@ -229,11 +229,13 @@ jobs:
         # build, unlike the text gates above. --drill is the injected must-fire
         # control (a synthesized violator PE), same family as those gates; the
         # field-shaped RED (--selftest against DebugMod's real binary) needs a
-        # foreign binary and stays a local-rig check.
+        # foreign binary and stays a local-rig check. ONE combined invocation on
+        # purpose: pwsh steps propagate only the LAST command's exit code (the
+        # last-child-code lesson above), and a two-line drill-then-gate sequence
+        # silently discarded the drill's failure -- the script runs the drill
+        # first and returns 2 immediately if it cannot fire.
         shell: pwsh
-        run: |
-          python tools/loader/abi_gate.py --drill
-          python tools/loader/abi_gate.py "${{ env.BUILD_DIR }}/Release/main.dll"
+        run: python tools/loader/abi_gate.py --drill "${{ env.BUILD_DIR }}/Release/main.dll"
 
       - name: Collect artifacts + toolchain dump
         id: artname
