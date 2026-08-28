@@ -321,7 +321,7 @@ NOT SYNCED: CDOWN animated log family (filtered, regenerable); U2 gauge/detector
 ### Dish — `coop/interactables/dish_sync`
 | # | facet | V | E | Auth | cite | mid-join |
 |---|---|---|---|---|---|---|
-| 1 | dish POSE (24 dishes) | B | HO | HA | `ApplyDishRow` **[take-4 R1 4 Hz hard-snap stepping]** | DishSnapshot |
+| 1 | dish POSE (24 dishes) | B | HO | HA | `ApplyDishRow` / `AdvanceDishInterp` **[take-4 R1 4 Hz hard-snap stepping; LerpWindow interp fix unverified]** | DishSnapshot |
 | 2 | download ARM/DISARM | U | code | HA | `OnDishArm` (v113 AS-BUILT) | connect ARM row |
 | 3 | dish calibration | U | code | CO | `OnDishCalib` (symmetric, host relay = total order) | in snapshot |
 | 4 | dish full-state snapshot | U | code | HA | `OnDishSnapshot` | THIS is the seed |

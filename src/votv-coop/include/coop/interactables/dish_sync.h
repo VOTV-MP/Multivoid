@@ -14,11 +14,13 @@
 //    catch detector (signal_catch_sync calls KillOwnPingSlews right after the
 //    catch payload is sent).
 //  - HOST streams DishPose (unreliable 39): movers-only rows at 4 Hz + a
-//    settle-tail (full-24 sweeps 1 Hz x3 after MovingCount hits 0). ONE
-//    applier (stream rows AND the DishSnapshot=100 join seed): wire-shadow ->
-//    K2_SetRelativeRotation both axes -> raw isMoving -> activeDishes -> cue
-//    edges. Guard: skip a dish whose LOCAL loop is live (own-ping pre-kill
-//    window: local isMoving && !shadow).
+//    settle-tail (full-24 sweeps 1 Hz x3 after MovingCount hits 0). A receiver
+//    drives the streamed poses kinematically, interpolated by a coop::LerpWindow
+//    per-frame on Tick to eliminate 4 Hz hard-snap stepping while dishes slew.
+//    ONE applier (stream rows AND the DishSnapshot=100 join seed): wire-shadow ->
+//    raw isMoving -> activeDishes -> cue edges -> target / interp / snap. Guard:
+//    skip a dish whose LOCAL loop is live (own-ping pre-kill window: local
+//    isMoving && !shadow).
 //  - ARM axis has ONE author: the host's 4 Hz raw poll (mesh EDGE | DL signal
 //    FName change | polarity change) -> DishArm=99 {armed, decoded, polarity};
 //    client apply = pre-clear mirrored moving state -> reflected
@@ -44,8 +46,9 @@ namespace coop::dish_sync {
 void Install(coop::net::Session* session);
 
 // Game thread, per pump tick. HOST: the 4 Hz pose sweep (+ settle tail) + the
-// 4 Hz arm poll. CLIENT: drain + apply DishPose batches; the 1 Hz park latch
-// (tickers + the cue reconciler). ALL peers: the 1 Hz calibration diff-poll.
+// 4 Hz arm poll. CLIENT: drain + apply DishPose batches and drive the LerpWindow
+// mirror interp; the 1 Hz park latch (tickers + the cue reconciler). ALL peers:
+// the 1 Hz calibration diff-poll.
 void Tick();
 
 // Reliable appliers (event_dispatch_state).

@@ -2,6 +2,8 @@
 
 #include "coop/interactables/dish_sync.h"
 
+#include "coop/config/config.h"
+#include "coop/element/lerp_window.h"
 #include "coop/net/session.h"
 
 #include "ue_wrap/desk/console_desk.h"
@@ -21,11 +23,37 @@ namespace D = ue_wrap::dish;
 
 using Clock = std::chrono::steady_clock;
 
+uint64_t NowMs() {
+    using namespace std::chrono;
+    return static_cast<uint64_t>(
+        duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
+}
+
+// Shortest-arc delta in degrees, (-180, 180] -- avoids the 359->1 "long way round" spin (MTA).
+float OffsetDegrees(float fromDeg, float toDeg) {
+    float d = std::fmod(toDeg - fromDeg, 360.f);
+    if (d > 180.f)  d -= 360.f;
+    if (d < -180.f) d += 360.f;
+    return d;
+}
+
+bool ProbeLog() {
+    static const bool s_enabled = ::coop::config::ResolveFlag(::coop::config_registry::rows::interactable_log);
+    return s_enabled;
+}
+
 std::atomic<coop::net::Session*> g_session{nullptr};
 
 constexpr auto kPoseInterval = std::chrono::milliseconds(250);   // 4 Hz host sweep + arm poll
 constexpr auto kSlowInterval = std::chrono::milliseconds(1000);  // 1 Hz calib poll + park latch
 constexpr int32_t kSettleSweeps = 3;  // full-24 sweeps after MovingCount hits 0
+
+// The interp window: 1.2x the 250 ms (4 Hz) host pose sweep interval (300 ms).
+// Bridges the 250 ms packet cadence smoothly while providing a 50 ms jitter margin
+// (RemotePlayer/Npc/ATV use 75 ms for 50 ms / 20 Hz = 1.5x; DeskSim uses 150 ms for 100 ms = 1.5x).
+// Using the 75 ms default on a 250 ms stream would interpolate for 75 ms and freeze for 175 ms
+// (the 4 Hz stepping bug).
+constexpr int kInterpWindowMs = 300;
 
 Clock::time_point g_nextPose{};
 Clock::time_point g_nextSlow{};
@@ -61,6 +89,22 @@ uint32_t g_cueWatch = 0;
 // Park latch: the PARKED ticker instances (fresh instances re-park).
 void* g_parkedDisher = nullptr;
 void* g_parkedUncalib = nullptr;
+
+// Per-dish receiver-side interpolation state (game thread only).
+// Mirrors the RemotePlayer / element::Npc MTA LerpWindow shape (pos + angles).
+struct DishInterp {
+    coop::LerpWindow window;
+    float curYaw = 0.f;
+    float curRoll = 0.f;
+    float targetYaw = 0.f;
+    float targetRoll = 0.f;
+    float errorYaw = 0.f;
+    float errorRoll = 0.f;
+    bool  primed = false;
+    bool  dirty = false;
+};
+DishInterp g_dishInterp[coop::net::kMaxDishes] = {};
+
 // ---- shared ----------------------------------------------------------------
 // Calibration diff-poll baseline (all peers; primed by snapshot/wire applies).
 float g_prevCalib[coop::net::kMaxDishes] = {};
@@ -79,6 +123,9 @@ void ResetModuleState() {
     g_parkedDisher = nullptr;
     g_parkedUncalib = nullptr;
     g_haveCalibBaseline = false;
+    for (int32_t i = 0; i < coop::net::kMaxDishes; ++i) {
+        g_dishInterp[i] = DishInterp{};
+    }
 }
 
 // True once per desk-instance change (boot + mid-session level reload).
@@ -97,13 +144,71 @@ uint16_t QuantCalib(float v) {
 }
 float DequantCalib(uint16_t q) { return static_cast<float>(q) / 65535.f; }
 
+// Advance a single dish's interpolation window to `now`. Applies fractional error
+// (MTA linear form). On arrival snaps cur = target exactly. Pushes to engine if dirty.
+void AdvanceDishInterpSingle(int32_t index, uint64_t now) {
+    if (index < 0 || index >= coop::net::kMaxDishes) return;
+    auto& d = g_dishInterp[index];
+    if (!d.primed || !d.window.IsOpen()) return;
+
+    bool arrived = false;
+    const float dAlpha = d.window.Advance(now, &arrived);
+    if (dAlpha > 0.f) {
+        d.curYaw  += d.errorYaw  * dAlpha;
+        d.curRoll += d.errorRoll * dAlpha;
+        d.dirty = true;
+    }
+    if (arrived) {
+        d.curYaw  = d.targetYaw;
+        d.curRoll = d.targetRoll;
+        d.dirty = true;
+    }
+    if (d.dirty) {
+        D::WritePose(index, d.curYaw, d.curRoll);
+        d.dirty = false;
+    }
+}
+
+// Collect live local loop mask for all dishes (own-ping pre-kill window:
+// local isMoving is true while our wire shadow is false).
+void ReadLocalLiveMask(bool localLive[coop::net::kMaxDishes]) {
+    std::memset(localLive, 0, sizeof(bool) * coop::net::kMaxDishes);
+    D::DishRow rows[coop::net::kMaxDishes];
+    const int32_t n = D::ReadAllRows(rows, coop::net::kMaxDishes);
+    for (int32_t i = 0; i < n; ++i) {
+        const int32_t idx = rows[i].index;
+        if (idx >= 0 && idx < coop::net::kMaxDishes)
+            localLive[idx] = rows[i].isMoving && !g_shadowMoving[idx];
+    }
+}
+
+// Per-frame client drive: advance open dish interp windows, respecting the local-loop guard.
+void AdvanceDishInterp() {
+    bool localLive[coop::net::kMaxDishes] = {};
+    ReadLocalLiveMask(localLive);
+    const uint64_t now = NowMs();
+    for (int32_t i = 0; i < coop::net::kMaxDishes; ++i) {
+        if (localLive[i]) {
+            auto& d = g_dishInterp[i];
+            if (d.primed && d.window.IsOpen()) {
+                d.curYaw = d.targetYaw;
+                d.curRoll = d.targetRoll;
+                d.errorYaw = d.errorRoll = 0.f;
+                d.window.Close();
+                d.dirty = false;
+            }
+            continue;
+        }
+        AdvanceDishInterpSingle(i, now);
+    }
+}
+
 // ---- the ONE row applier (stream rows AND snapshot rows) -------------------
-// shadow -> pose -> raw isMoving -> activeDishes -> cue edges. GT only.
-void ApplyDishRow(int32_t index, bool isMoving, float yawZ, float rollY) {
+// shadow -> raw isMoving -> activeDishes -> cue edges -> target / interp / snap. GT only.
+void ApplyDishRow(int32_t index, bool isMoving, float yawZ, float rollY, bool snap = false) {
     if (index < 0 || index >= coop::net::kMaxDishes) return;
     const bool wasShadow = g_shadowMoving[index];
     g_shadowMoving[index] = isMoving;
-    D::WritePose(index, yawZ, rollY);
     D::WriteIsMoving(index, isMoving);
     D::WriteActiveDish(index, isMoving);
     if (isMoving && !wasShadow) {
@@ -116,18 +221,41 @@ void ApplyDishRow(int32_t index, bool isMoving, float yawZ, float rollY) {
         UE_LOGI("[dish] %d '%ls' mirror slew STOP (yaw=%.1f roll=%.1f)",
                 index, D::TechName(index).c_str(), yawZ, rollY);
     }
+
+    auto& d = g_dishInterp[index];
+    const uint64_t now = NowMs();
+
+    // Snap on first packet, explicit snap, or steady rest (was not moving and is still not moving).
+    // Stationary dishes close the window and snap so they do not drift between packets.
+    // Falling edge (!isMoving && wasShadow) glides into the final pose via advance-before-rebase.
+    if (snap || !d.primed || (!isMoving && !wasShadow)) {
+        d.curYaw = d.targetYaw = yawZ;
+        d.curRoll = d.targetRoll = rollY;
+        d.errorYaw = d.errorRoll = 0.f;
+        d.window.Close();
+        d.primed = true;
+        d.dirty = false;
+        D::WritePose(index, yawZ, rollY);
+        return;
+    }
+
+    // Advance-before-rebase (MTA: CClientPed::SetTargetPosition shape, load-bearing):
+    // bring curYaw/curRoll to NOW using the still-open window's cached error BEFORE
+    // overwriting target and recomputing the error.
+    AdvanceDishInterpSingle(index, now);
+
+    d.targetYaw = yawZ;
+    d.targetRoll = rollY;
+    d.errorYaw  = OffsetDegrees(d.curYaw, yawZ);
+    d.errorRoll = OffsetDegrees(d.curRoll, rollY);
+    d.window.Open(now, kInterpWindowMs);
+    d.primed = true;
 }
 
 // Apply one incoming pose batch (client). Skips dishes with a live LOCAL loop.
 void ApplyPoseBatch(const coop::net::DishPoseBody& body) {
-    D::DishRow rows[coop::net::kMaxDishes];
-    const int32_t n = D::ReadAllRows(rows, coop::net::kMaxDishes);
     bool localLive[coop::net::kMaxDishes] = {};
-    for (int32_t i = 0; i < n; ++i) {
-        const int32_t idx = rows[i].index;
-        if (idx >= 0 && idx < coop::net::kMaxDishes)
-            localLive[idx] = rows[i].isMoving && !g_shadowMoving[idx];
-    }
+    ReadLocalLiveMask(localLive);
     static Clock::time_point s_lastSkipLog{};
     for (int32_t i = 0; i < body.count && i < coop::net::kMaxDishes; ++i) {
         const auto& r = body.rows[i];
@@ -362,6 +490,33 @@ void Tick() {
         coop::net::DishPoseBody body{};
         bool isNew = false;
         if (s->TryGetHostDishPose(body, &isNew) && isNew) ApplyPoseBatch(body);
+
+        // Drive the mirror pose interpolation unconditionally every frame.
+        AdvanceDishInterp();
+
+        // Diagnostic probe log (single aggregate line at most once/sec while any dish is moving / interpolating).
+        static Clock::time_point s_nextPoseDiag{};
+        if (ProbeLog() && now >= s_nextPoseDiag) {
+            s_nextPoseDiag = now + std::chrono::seconds(1);
+            int32_t interpolating = 0;
+            int32_t moving = 0;
+            float maxErr = 0.f;
+            for (int32_t i = 0; i < coop::net::kMaxDishes; ++i) {
+                const auto& d = g_dishInterp[i];
+                if (g_shadowMoving[i]) ++moving;
+                if (d.primed && d.window.IsOpen()) {
+                    ++interpolating;
+                    const float errYaw = std::abs(OffsetDegrees(d.curYaw, d.targetYaw));
+                    const float errRoll = std::abs(OffsetDegrees(d.curRoll, d.targetRoll));
+                    if (errYaw > maxErr) maxErr = errYaw;
+                    if (errRoll > maxErr) maxErr = errRoll;
+                }
+            }
+            if (moving > 0 || interpolating > 0) {
+                UE_LOGI("[dish] pose-diag: %d interpolating, %d moving (maxErr=%.1f deg)",
+                        interpolating, moving, maxErr);
+            }
+        }
     }
 
     if (now >= g_nextSlow) {
@@ -392,12 +547,22 @@ void OnDishArm(const coop::net::DishArmPayload& p, uint8_t senderSlot) {
     // WARN here = a gate-bypass arm (design D4 defense-in-depth).
     int32_t cleared = 0;
     for (int32_t i = 0; i < coop::net::kMaxDishes; ++i) {
-        if (!g_shadowMoving[i]) continue;
-        g_shadowMoving[i] = false;
-        D::WriteIsMoving(i, false);
-        D::WriteActiveDish(i, false);
-        D::DeactivateCues(i);
-        ++cleared;
+        if (g_shadowMoving[i]) {
+            g_shadowMoving[i] = false;
+            D::WriteIsMoving(i, false);
+            D::WriteActiveDish(i, false);
+            D::DeactivateCues(i);
+            ++cleared;
+        }
+        auto& d = g_dishInterp[i];
+        if (d.primed && d.window.IsOpen()) {
+            d.curYaw = d.targetYaw;
+            d.curRoll = d.targetRoll;
+            d.errorYaw = d.errorRoll = 0.f;
+            d.window.Close();
+            d.dirty = false;
+            D::WritePose(i, d.curYaw, d.curRoll);
+        }
     }
     if (cleared > 0)
         UE_LOGW("dish_sync: ARM pre-clear wiped %d mirrored mover(s) -- gate-bypass arm?",
@@ -431,7 +596,8 @@ void OnDishSnapshot(const coop::net::DishSnapshotPayload& p, uint8_t senderSlot)
     for (int32_t i = 0; i < n; ++i) {
         const auto& r = p.rows[i];
         ApplyDishRow(i, r.isMoving != 0,
-                     coop::net::DequantDeg(r.yawCdeg), coop::net::DequantDeg(r.rollCdeg));
+                     coop::net::DequantDeg(r.yawCdeg), coop::net::DequantDeg(r.rollCdeg),
+                     /*snap*/ true);
         // Snapshot activeDishes may differ from isMoving mid-transition on the
         // host -- trust the explicit mask over the row-apply default.
         D::WriteActiveDish(i, r.activeDish != 0);
