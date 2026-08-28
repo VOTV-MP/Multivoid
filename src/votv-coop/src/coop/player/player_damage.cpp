@@ -18,6 +18,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/actors/vitals.h"
 
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 
@@ -28,7 +29,7 @@ namespace R = ue_wrap::reflection;
 namespace GT = ue_wrap::game_thread;
 namespace E = ue_wrap::engine;
 
-coop::net::Session* g_session = nullptr;
+std::atomic<coop::net::Session*> g_session{nullptr};  // read in the impact interceptor (any thread)
 
 // Defensive per-hit bound: VOTV max health is ~100, so 1000 is generous headroom for
 // any legitimate big hit while rejecting an absurd/exploit value before it reaches the
@@ -48,6 +49,16 @@ bool     g_impactInterceptorsDone = false;
 uint32_t g_resolveThrottle = 0;
 uint32_t g_canceled = 0;   // rate-latched log counter
 
+// The LOCAL possessed player, published by Tick (game thread) for the
+// interceptor's any-thread compare. Post-ship audit 2026-08-29 (CRITICAL):
+// the first cut called Registry::IsLocal(self) inside the callback --
+// Registry::Local() mutates GT-only cache state, and a ProcessEvent
+// interceptor can fire on a parallel-anim worker (game_thread.h's own
+// contract). A published atomic pointer keeps the CANCEL effective on every
+// dispatching thread with one relaxed load and zero registry access (the
+// wisp interceptor's atomic-snapshot shape).
+std::atomic<void*> g_localPawn{nullptr};
+
 // PRE cancel: a physical impact dispatched on a mainPlayer BODY that is NOT the
 // local possessed player (a peer's puppet, or the F1 skin-preview mannequin) must
 // not run the BP body -- it writes the PER-MACHINE saveSlot.health singleton and
@@ -58,9 +69,12 @@ uint32_t g_canceled = 0;   // rate-latched log counter
 // shape, no relay. Coop-session gated: solo SP has only the local body anyway,
 // and an unset registry must never eat solo damage.
 bool OnImpactEntryPre(void* self, void* /*params*/) {
-    if (!g_session || !g_session->connected()) return false;
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected()) return false;
     if (!self) return false;
-    if (coop::players::Registry::Get().IsLocal(self)) return false;  // own body: native path
+    void* localPawn = g_localPawn.load(std::memory_order_acquire);
+    if (!localPawn) return false;           // pre-resolve boot window: native behavior
+    if (self == localPawn) return false;    // own body: native path
     const uint32_t n = ++g_canceled;
     if (n <= 5 || (n % 50) == 0) {
         UE_LOGI("player_damage: canceled impact entry on NON-LOCAL body %p (#%u) -- "
@@ -72,10 +86,13 @@ bool OnImpactEntryPre(void* self, void* /*params*/) {
 }  // namespace
 
 void Install(coop::net::Session* session) {
-    g_session = session;
+    g_session.store(session, std::memory_order_release);
 }
 
 void Tick() {
+    // Publish the local pawn for the interceptor's any-thread compare (GT here;
+    // Registry::Local() is GT-only and cached).
+    g_localPawn.store(coop::players::Registry::Get().Local(), std::memory_order_release);
     if (g_impactInterceptorsDone) return;
     // FindClass walks GUObjectArray -- ~1 Hz of the pump until mainPlayer_C loads
     // (the wisp_attack Install throttle shape).
@@ -134,7 +151,8 @@ void OnWireDamage(const coop::net::PlayerDamagePayload& p) {
 }
 
 void SendPlayerDamage(int ownerSlot, float damage) {
-    if (!g_session) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s) {
         UE_LOGW("player_damage: SendPlayerDamage but session is unset");
         return;
     }
@@ -156,7 +174,7 @@ void SendPlayerDamage(int ownerSlot, float damage) {
     coop::net::PlayerDamagePayload p{};
     p.targetElementId = el->GetId();
     p.damage = damage;
-    const bool sent = g_session->SendReliableToSlot(
+    const bool sent = s->SendReliableToSlot(
         ownerSlot, coop::net::ReliableKind::PlayerDamage, &p, sizeof(p), /*senderSlot=*/0);
     UE_LOGI("player_damage: sent PlayerDamage(%.1f) to slot=%d (targetEid=%u) -> sent=%d",
             damage, ownerSlot, p.targetElementId, sent ? 1 : 0);

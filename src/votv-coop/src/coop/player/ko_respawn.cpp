@@ -99,6 +99,12 @@ void StartKO(void* mp) {
 // wisp's AddPlayerDamage cancel. Multi-slot interceptor table: coexists with the
 // wisp's cancel on the same UFunction.
 bool OnAddPlayerDamagePre(void* self, void* params) {
+    // Post-ship audit 2026-08-29 (CRITICAL): a ProcessEvent interceptor can fire
+    // on a parallel-anim worker, and everything below (Registry::IsLocal, V::Read,
+    // StartKO -> engine UFunction calls) is game-thread-only. Off-GT the lethal
+    // hit passes NATIVELY and the net_pump dead=true backstop converts it to the
+    // same KO one tick later -- the module's own documented degradation path.
+    if (!GT::IsGameThread()) return false;
     if (!g_enabled) return false;
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->running()) return false;
@@ -154,17 +160,24 @@ void Tick() {
     // net_pump backstop still covers every death, so a failed interceptor degrades
     // to the backstop-only path, never to permadeath.
     if (!g_interceptorInstalled && g_enabled) {
-        void* fn = E::AddPlayerDamageFunctionPtr();
-        if (fn) {
-            g_damageOff = R::FindParamOffset(fn, L"Damage");
-            if (g_damageOff < 0) {
-                UE_LOGW("ko_respawn: AddPlayerDamage 'Damage' param not found -- "
-                        "interceptor cannot read the hit; using the death backstop only");
-                g_interceptorInstalled = true;
-            } else if (GT::RegisterInterceptor(fn, &OnAddPlayerDamagePre)) {
-                g_interceptorInstalled = true;
-                UE_LOGI("ko_respawn: installed AddPlayerDamage PRE interceptor @ %p (Damage@%d)",
-                        fn, g_damageOff);
+        // Post-ship audit 2026-08-29 (IMPORTANT): AddPlayerDamageFunctionPtr walks
+        // GUObjectArray via FindClass until mainPlayer_C loads -- throttle to ~1 Hz
+        // of the pump (the wisp_attack Install shape; a prior audit rated the
+        // unthrottled form CRITICAL there).
+        static uint32_t sResolveN = 0;
+        if ((sResolveN++ % 125) == 0) {  // nested, NOT a return: the KO timer below must keep ticking
+            void* fn = E::AddPlayerDamageFunctionPtr();
+            if (fn) {
+                g_damageOff = R::FindParamOffset(fn, L"Damage");
+                if (g_damageOff < 0) {
+                    UE_LOGW("ko_respawn: AddPlayerDamage 'Damage' param not found -- "
+                            "interceptor cannot read the hit; using the death backstop only");
+                    g_interceptorInstalled = true;
+                } else if (GT::RegisterInterceptor(fn, &OnAddPlayerDamagePre)) {
+                    g_interceptorInstalled = true;
+                    UE_LOGI("ko_respawn: installed AddPlayerDamage PRE interceptor @ %p (Damage@%d)",
+                            fn, g_damageOff);
+                }
             }
         }
     }
