@@ -9,9 +9,11 @@ import json
 import bpy
 
 from . import convert
+from . import decals as decals_mod
 from . import landscape as landscape_mod
 from . import materials as materials_mod
 from . import mesh_build
+from . import spline_mesh
 from . import template_resolver
 from . import umap_import
 
@@ -72,19 +74,56 @@ class _Builder:
         return convert.pos((0.0, 0.0, 0.0))
 
     # -- assets ------------------------------------------------------------
+    def _append_materials(self, me, mesh_pkg_path, mat_paths):
+        base = mesh_pkg_path.rsplit("/", 1)[-1]
+        for mp in mat_paths:
+            mp = materials_mod.resolve_slot(base, mp)
+            me.materials.append(materials_mod.get_material(
+                self.game, mp, self.caches, self.warnings,
+                with_textures=self.opt.get("with_textures", True)))
+
     def ensure_mesh(self, mesh_pkg_path):
         cache = self.caches["mesh"]
         if mesh_pkg_path in cache:
             return cache[mesh_pkg_path]
         me, mat_paths = mesh_build.build_mesh(self.game, mesh_pkg_path, self.warnings)
         if me is not None:
-            hint = mesh_pkg_path.rsplit("/", 1)[-1].lower()
-            for mp in mat_paths:
-                me.materials.append(materials_mod.get_material(
-                    self.game, mp, self.caches, self.warnings,
-                    with_textures=self.opt.get("with_textures", True), mesh_hint=hint))
+            self._append_materials(me, mesh_pkg_path, mat_paths)
         cache[mesh_pkg_path] = me
         return me
+
+    def ensure_spline_mesh(self, mesh_pkg_path, params):
+        cache = self.caches["mesh"]
+        key = (mesh_pkg_path, spline_mesh.cache_key(params))
+        if key in cache:
+            return cache[key]
+        me, mat_paths = mesh_build.build_spline_mesh(
+            self.game, mesh_pkg_path, params, self.warnings)
+        if me is not None:
+            self._append_materials(me, mesh_pkg_path, mat_paths)
+        cache[key] = me
+        return me
+
+    def build_bsp(self, bsp, surf_paths, name):
+        me, unique = mesh_build.build_bsp_mesh(bsp, surf_paths, name, self.warnings)
+        if me is not None:
+            for mp in unique:
+                me.materials.append(materials_mod.get_material(
+                    self.game, mp if mp.startswith("/Game/") else "", self.caches,
+                    self.warnings, with_textures=self.opt.get("with_textures", True)))
+        return me
+
+    def _new_decal_object(self, name, col, matrix, mat_path):
+        me = decals_mod.plane_mesh()
+        if not me.materials:
+            me.materials.append(None)
+        ob = self._new_object(name, me, col, matrix)
+        slot = ob.material_slots[0]
+        slot.link = "OBJECT"
+        slot.material = materials_mod.get_decal_material(
+            self.game, mat_path, self.caches, self.warnings,
+            with_textures=self.opt.get("with_textures", True))
+        return ob
 
     # -- objects -----------------------------------------------------------
     def _new_object(self, name, data, col, matrix):
@@ -153,6 +192,13 @@ class _Builder:
         if self.game and self.opt.get("import_meshes", True) and row.class_path:
             for mesh_path, local_m, kind in self.resolver.spawn_plan(
                     row, self.list_props, seed):
+                if kind == "DECAL":
+                    if self.opt.get("import_decals", True):
+                        self._new_decal_object(label + ".decal", col,
+                                               actor_m @ local_m, mesh_path)
+                        self.counts["meshed"] += 1
+                        placed_mesh = True
+                    continue
                 if umap_import.is_technical(mesh_path, self.opt):
                     continue
                 if kind == "SK":
@@ -199,13 +245,10 @@ class _Builder:
             if i % 50 == 0:
                 self.progress(i, total, "props")
         for i, row in enumerate(self.m.primitives):
-            quat, loc, scale = row.transform
-            pm = convert.matrix(quat, loc, scale)
-            if not self.within(pm.translation):
-                self.counts["culled"] += 1
-                continue
-            self._placeholder(row.class_name.removesuffix("_C") or "pile",
-                              cols["Piles"], pm, "CUBE", 0.08)
+            # primitivesData is load-decisive for int_primitive classes: grime
+            # marks resolve to their class-template DECALS, piles to whatever
+            # visuals the resolver can offer (placeholder empty otherwise)
+            self.place_row(row, cols["Piles"])
             if i % 100 == 0:
                 self.progress(len(rows) + i, total, "piles")
 
@@ -242,7 +285,7 @@ class _Builder:
                 map_col = _get_or_create_collection("Map", master)
                 mcols = {name: _get_or_create_collection(name, map_col)
                          for name in ("Statics", "Landscape", "Foliage", "Lights",
-                                      "Events")}
+                                      "Decals", "Events", "Unplaced")}
                 save_classes = {r.class_name for r in self.m.objects
                                 if r.class_path and r.class_path != "None"}
                 imp = umap_import.MapImporter(self.game, self.resolver, self, self.opt,
@@ -252,6 +295,9 @@ class _Builder:
                 # the game shows them only from their Blueprints at runtime
                 mcols["Events"].hide_viewport = True
                 mcols["Events"].hide_render = True
+                # runtime-arranged ChildActors (dynamicClutter): parked transforms
+                mcols["Unplaced"].hide_viewport = True
+                mcols["Unplaced"].hide_render = True
                 if self.opt.get("import_landscape", True):
                     land_mat = materials_mod.terrain_material(
                         self.opt.get("terrain_style", "GREEN"))

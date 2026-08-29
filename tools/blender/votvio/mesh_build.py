@@ -3,7 +3,7 @@ import numpy as np
 
 import bpy
 
-from . import convert
+from . import convert, spline_mesh
 
 
 def _uv_pair(item, set_index, full_precision):
@@ -31,23 +31,22 @@ def _static_materials(sm):
     return mats
 
 
-def build_mesh(game, mesh_pkg_path, warnings):
-    """-> (bpy.types.Mesh, [material package paths]) or (None, [])."""
+def _lod0(game, mesh_pkg_path, warnings):
     sm = game.find_export(mesh_pkg_path, "StaticMesh")
     lods = getattr(sm, "LODs", ()) if sm is not None else ()
     if not lods:
         if sm is not None:
             warnings.append(f"mesh has no LODs: {mesh_pkg_path}")
-        return None, []
+        return None, None
     lod = lods[0]
     pvb = lod.positionVertexBuffer
     if pvb is None or not getattr(pvb, "Verts", None):
         warnings.append(f"mesh has no positions: {mesh_pkg_path}")
-        return None, []
+        return None, None
+    return sm, lod
 
-    verts = [(v.X * convert.SCALE, -v.Y * convert.SCALE, v.Z * convert.SCALE)
-             for v in pvb.Verts]
 
+def _assemble(name, sm, lod, verts_bl, mesh_pkg_path, warnings):
     idx = lod.indexBuffer
     indices = (getattr(idx, "indices32", None) or getattr(idx, "indices16", None) or []) if idx else []
     # winding reversed: the y-mirror flips handedness
@@ -57,9 +56,8 @@ def build_mesh(game, mesh_pkg_path, warnings):
         warnings.append(f"mesh has no indices: {mesh_pkg_path}")
         return None, []
 
-    name = mesh_pkg_path.rsplit("/", 1)[-1]
     me = bpy.data.meshes.new(name)
-    me.from_pydata(verts, [], faces)
+    me.from_pydata(verts_bl, [], faces)
 
     # UV set 0 (per-vertex in the UE buffer -> per-loop here)
     vb = getattr(lod, "vertexBuffer", None)
@@ -67,9 +65,8 @@ def build_mesh(game, mesh_pkg_path, warnings):
     if uv_items:
         full = bool(getattr(vb, "UseFullPrecisionUVs", True))
         try:
-            per_vertex = [_uv_pair(uv_items[i], 0, full) for i in range(len(verts))]
+            per_vertex = [_uv_pair(uv_items[i], 0, full) for i in range(len(verts_bl))]
             layer = me.uv_layers.new(name="UVMap")
-            flat = np.empty(len(me.loops) * 2, dtype=np.float32)
             loop_verts = np.empty(len(me.loops), dtype=np.int32)
             me.loops.foreach_get("vertex_index", loop_verts)
             uvs = np.asarray(per_vertex, dtype=np.float32)
@@ -94,3 +91,90 @@ def build_mesh(game, mesh_pkg_path, warnings):
     me.validate()
     me.update()
     return me, mat_paths
+
+
+def build_mesh(game, mesh_pkg_path, warnings):
+    """-> (bpy.types.Mesh, [material package paths]) or (None, [])."""
+    sm, lod = _lod0(game, mesh_pkg_path, warnings)
+    if lod is None:
+        return None, []
+    verts = [(v.X * convert.SCALE, -v.Y * convert.SCALE, v.Z * convert.SCALE)
+             for v in lod.positionVertexBuffer.Verts]
+    name = mesh_pkg_path.rsplit("/", 1)[-1]
+    return _assemble(name, sm, lod, verts, mesh_pkg_path, warnings)
+
+
+def build_bsp_mesh(bsp, surf_mat_paths, name, warnings):
+    """Cooked-UModel node soup -> mesh. Per-loop UVs from each surf's texture
+    basis: uv = ((P - Points[pBase]) . Vectors[vTexU|V]) / 128."""
+    points = bsp["points"]
+    vectors = bsp["vectors"]
+    surfs = bsp["surfs"]
+    verts_bl = np.empty_like(points)
+    verts_bl[:, 0] = points[:, 0] * convert.SCALE
+    verts_bl[:, 1] = -points[:, 1] * convert.SCALE
+    verts_bl[:, 2] = points[:, 2] * convert.SCALE
+
+    faces = []
+    face_slot = []
+    loop_uv = []
+    slot_of = {}
+    unique_paths = []
+    npts = len(points)
+    nvec = len(vectors)
+    for i_surf, idxs in bsp["polys"]:
+        path = surf_mat_paths[i_surf] if i_surf < len(surf_mat_paths) else ""
+        if path not in slot_of:
+            slot_of[path] = len(unique_paths)
+            unique_paths.append(path)
+        slot = slot_of[path]
+        _mat, p_base, v_tu, v_tv = surfs[i_surf]
+        if 0 <= p_base < npts and 0 <= v_tu < nvec and 0 <= v_tv < nvec:
+            base = points[p_base]
+            tu = vectors[v_tu]
+            tv = vectors[v_tv]
+        else:
+            base = np.zeros(3)
+            tu = np.array([1.0, 0.0, 0.0])
+            tv = np.array([0.0, 1.0, 0.0])
+
+        def uv(pi):
+            d = points[pi] - base
+            return (float(d @ tu) / 128.0, 1.0 - float(d @ tv) / 128.0)
+
+        n = len(idxs)
+        for k in range(1, n - 1):
+            a, b, c = int(idxs[0]), int(idxs[k + 1]), int(idxs[k])
+            faces.append((a, b, c))
+            face_slot.append(slot)
+            loop_uv.extend((uv(a), uv(b), uv(c)))
+    if not faces:
+        warnings.append("bsp model produced no faces")
+        return None, []
+    me = bpy.data.meshes.new(name)
+    me.from_pydata([tuple(v) for v in verts_bl], [], faces)
+    try:
+        layer = me.uv_layers.new(name="UVMap")
+        layer.data.foreach_set("uv", np.asarray(loop_uv, dtype=np.float32).reshape(-1))
+    except Exception as e:  # noqa: BLE001
+        warnings.append(f"bsp uv failed: {type(e).__name__}")
+    me.polygons.foreach_set("material_index", np.asarray(face_slot, dtype=np.int32))
+    me.validate()
+    me.update()
+    return me, unique_paths
+
+
+def build_spline_mesh(game, mesh_pkg_path, params, warnings):
+    """Spline-deformed copy of a mesh (UE-space Hermite bend, then conversion)."""
+    sm, lod = _lod0(game, mesh_pkg_path, warnings)
+    if lod is None:
+        return None, []
+    verts_ue = np.array([[v.X, v.Y, v.Z] for v in lod.positionVertexBuffer.Verts],
+                        dtype=np.float64)
+    bent = spline_mesh.deform(verts_ue, params)
+    verts = np.empty_like(bent)
+    verts[:, 0] = bent[:, 0] * convert.SCALE
+    verts[:, 1] = -bent[:, 1] * convert.SCALE
+    verts[:, 2] = bent[:, 2] * convert.SCALE
+    name = mesh_pkg_path.rsplit("/", 1)[-1] + ".spline"
+    return _assemble(name, sm, lod, [tuple(v) for v in verts], mesh_pkg_path, warnings)

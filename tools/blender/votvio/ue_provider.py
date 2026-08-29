@@ -14,6 +14,7 @@ from UE4Parse.Provider import DefaultFileProvider  # noqa: E402
 from UE4Parse.Versions import EUEVersion, VersionContainer  # noqa: E402
 from UE4Parse.Assets.Objects.FGuid import FGuid  # noqa: E402
 
+from . import bsp_model  # noqa: E402,F401  (registers the cooked-UModel reader)
 from . import ism_component  # noqa: E402,F401  (registers the instanced-mesh export readers)
 
 

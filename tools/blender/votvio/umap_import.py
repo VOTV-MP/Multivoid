@@ -18,7 +18,7 @@ load-decisive). Everything else is placed as cooked.
 import bpy
 from mathutils import Matrix
 
-from . import convert
+from . import convert, decals, spline_mesh
 
 MESH_COMPS = {
     "StaticMeshComponent",
@@ -100,7 +100,8 @@ class MapImporter:
         self.keep_actors = keep_actors or set()   # keyed fixtures a save row re-expresses
         self.stats = {"placed": 0, "instances": 0, "skipped_saveclass": 0,
                       "no_mesh": 0, "hidden": 0, "lights": 0, "sk_skipped": 0,
-                      "landscape": 0, "culled": 0, "events": 0}
+                      "landscape": 0, "culled": 0, "events": 0, "decals": 0,
+                      "splines": 0, "unplaced": 0}
         self._world_m = {}
         self._actor = {}
         self._save_class = {}
@@ -241,8 +242,8 @@ class MapImporter:
     # ---- run ------------------------------------------------------------
     def run(self, map_path, cols, progress):
         self.dicts = self.game.package_dict(map_path)
-        pkg = self.game.load_package(map_path)
-        self.em = pkg.ExportMap if pkg is not None else []
+        self.pkg = self.game.load_package(map_path)
+        self.em = self.pkg.ExportMap if self.pkg is not None else []
         self.paired = len(self.em) == len(self.dicts)
 
         self.by_actor_name = {}
@@ -254,6 +255,35 @@ class MapImporter:
             self.by_actor_name.setdefault(nm, i)
             self.by_comp[(nm, outer)] = i
 
+        # Runtime-arranged children: the base BP parks ChildActors under its
+        # 'scene_dynamicClutter' scene component and places them from the event
+        # graph at BeginPlay (measured: ladder1..5 + cargoLift_doors CATs all
+        # serialize AT the base origin). Cooked transforms are the parking spot,
+        # not the world truth -> their whole child chains go to the hidden
+        # Unplaced collection.
+        self._unplaced = set()
+        pending = []
+        for i, e in enumerate(self.dicts):
+            if not isinstance(e, dict) or e.get("Type") != "ChildActorComponent":
+                continue
+            p = e.get("Properties") or {}
+            if _ref(p.get("AttachParent"))[0] == "scene_dynamicClutter":
+                tname = _ref(p.get("ChildActor"))[0]
+                if tname:
+                    pending.append(tname)
+        while pending:
+            nm = pending.pop()
+            ai = self.by_actor_name.get(nm)
+            if ai is None or ai in self._unplaced:
+                continue
+            self._unplaced.add(ai)
+            for c in self.dicts:
+                if isinstance(c, dict) and c.get("Type") == "ChildActorComponent" \
+                        and c.get("Outer") == nm:
+                    t2 = _ref((c.get("Properties") or {}).get("ChildActor"))[0]
+                    if t2:
+                        pending.append(t2)
+
         density = max(0.0, min(1.0, self.opt.get("foliage_density", 1.0)))
         total = len(self.dicts)
         for i, e in enumerate(self.dicts):
@@ -264,7 +294,18 @@ class MapImporter:
             ty = e.get("Type", "")
             if ty in LIGHT_COMPS:
                 if self.opt.get("import_lights", True):
-                    self._place_light(i, ty, cols["Lights"])
+                    a = self._actor_of(i)
+                    if a is not None and a in self._unplaced:
+                        self.stats["hidden"] += 1
+                    else:
+                        self._place_light(i, ty, cols["Lights"])
+                continue
+            if ty == "DecalComponent":
+                if self.opt.get("import_decals", True):
+                    self._place_decal(i, cols)
+                continue
+            if ty == "SplineMeshComponent":
+                self._place_spline(i, cols)
                 continue
             if ty == "SkeletalMeshComponent":
                 self.stats["sk_skipped"] += 1
@@ -302,6 +343,7 @@ class MapImporter:
             label = (self.dicts[actor_idx].get("Name") if actor_idx is not None
                      else e.get("Name")) or "map"
             is_event = atype in EVENT_ACTOR_CLASSES
+            is_unplaced = actor_idx in self._unplaced
             if ty in INSTANCED:
                 inst = self._instances_for(i)
                 if inst is None or len(inst) == 0:
@@ -309,24 +351,154 @@ class MapImporter:
                     continue
                 n = len(inst)
                 take = range(n) if density >= 1.0 else range(0, n, max(1, int(1.0 / density)))
-                target = cols["Events"] if is_event else (
-                    cols["Foliage"] if ty == "FoliageInstancedStaticMeshComponent"
-                    else cols["Statics"])
+                target = cols["Unplaced"] if is_unplaced else (
+                    cols["Events"] if is_event else (
+                        cols["Foliage"] if ty == "FoliageInstancedStaticMeshComponent"
+                        else cols["Statics"]))
+                skey = "unplaced" if is_unplaced else ("events" if is_event else "instances")
                 for k in take:
                     m = world @ convert.ue_fmatrix_to_bl(inst[k])
                     if not self.b.within(m.translation):
                         self.stats["culled"] += 1
                         continue
                     self.b._new_object(label, me, target, m)
-                    self.stats["events" if is_event else "instances"] += 1
+                    self.stats[skey] += 1
             else:
                 if not self.b.within(world.translation):
                     self.stats["culled"] += 1
                     continue
-                target = cols["Events"] if is_event else cols["Statics"]
+                target = cols["Unplaced"] if is_unplaced else (
+                    cols["Events"] if is_event else cols["Statics"])
                 self.b._new_object(label, me, target, world)
-                self.stats["events" if is_event else "placed"] += 1
+                self.stats["unplaced" if is_unplaced
+                           else ("events" if is_event else "placed")] += 1
+        self._place_bsp(cols)
         return self.stats
+
+    # ---- level BSP (the alpha bunker's structure) ------------------------
+    def _bsp_material(self, idx):
+        """FPackageIndex (import) -> the material's package path via ImportMap."""
+        try:
+            if idx >= 0:
+                return ""
+            im = self.pkg.ImportMap[-idx - 1]
+            outer = getattr(im.OuterIndex, "Resource", None)
+            if outer is not None:
+                return str(getattr(outer, "ObjectName", ""))
+        except Exception:  # noqa: BLE001
+            pass
+        return ""
+
+    def _place_bsp(self, cols):
+        """The level's own Model = cooked brush geometry (the alpha bunker's
+        walls/floors, keyhole rooms). Brush-ACTOR models are volumes: only the
+        Model outered directly to PersistentLevel renders."""
+        if not self.paired:
+            return
+        for i, e in enumerate(self.dicts):
+            if not isinstance(e, dict) or e.get("Type") != "Model" \
+                    or e.get("Outer") != "PersistentLevel":
+                continue
+            mo = self.em[i].exportObject
+            bsp = getattr(mo, "bsp", None)
+            if not bsp or not bsp["polys"]:
+                continue
+            paths = [self._bsp_material(s[0]) for s in bsp["surfs"]]
+            me = self.b.build_bsp(bsp, paths, e.get("Name", "bsp"))
+            if me is None:
+                continue
+            self.b._new_object(e.get("Name", "bsp"), me, cols["Statics"],
+                               Matrix.Identity(4))
+            self.stats["bsp"] = self.stats.get("bsp", 0) + len(bsp["polys"])
+
+    # ---- decals + spline meshes -----------------------------------------
+    def _actor_gates(self, i):
+        """Common actor-level gates -> (actor_idx, atype, target_kind) or None.
+        target_kind: '' normal, 'events', 'unplaced'; None = skip entirely."""
+        actor_idx = self._actor_of(i)
+        atype = self.dicts[actor_idx].get("Type", "") if actor_idx is not None else ""
+        if atype and actor_idx not in self.keep_actors and self._class_is_save(atype):
+            self.stats["skipped_saveclass"] += 1
+            return None
+        aprops = (self.dicts[actor_idx].get("Properties") or {}) \
+            if actor_idx is not None else {}
+        if aprops.get("bHidden") is True:
+            self.stats["hidden"] += 1
+            return None
+        kind = "unplaced" if actor_idx in self._unplaced else (
+            "events" if atype in EVENT_ACTOR_CLASSES else "")
+        return actor_idx, atype, kind
+
+    def _place_decal(self, i, cols):
+        gates = self._actor_gates(i)
+        if gates is None:
+            return
+        actor_idx, atype, tkind = gates
+        if self._comp_hidden(i):
+            self.stats["hidden"] += 1
+            return
+        p = self.dicts[i].get("Properties") or {}
+        mat = _ref_pkg(p.get("DecalMaterial"))
+        size = _vec(p.get("DecalSize"), (0.0, 0.0, 0.0))
+        if not mat.startswith("/Game/") or size == (0.0, 0.0, 0.0):
+            # a level MID ref (or an inherited field): the class template holds it
+            dt = None
+            if atype.endswith("_C"):
+                pkg = self.game.class_package(atype)
+                if pkg:
+                    dt = self.resolver.tree_info(pkg)["decals"].get(
+                        self.dicts[i].get("Name", ""))
+            if dt is not None:
+                if not mat.startswith("/Game/"):
+                    mat = str(dt["material"])
+                if size == (0.0, 0.0, 0.0):
+                    size = tuple(dt["size"])
+        if size == (0.0, 0.0, 0.0):
+            size = (128.0, 256.0, 256.0)
+        if not mat.startswith("/Game/"):
+            self.stats["no_mesh"] += 1
+            return
+        world = self._world_matrix(i)
+        if not self.b.within(world.translation):
+            self.stats["culled"] += 1
+            return
+        label = (self.dicts[actor_idx].get("Name") if actor_idx is not None
+                 else self.dicts[i].get("Name")) or "decal"
+        target = cols["Unplaced"] if tkind == "unplaced" else (
+            cols["Events"] if tkind == "events" else cols["Decals"])
+        self.b._new_decal_object(label, target, world @ decals.size_matrix(size), mat)
+        self.stats["unplaced" if tkind == "unplaced"
+                   else ("events" if tkind == "events" else "decals")] += 1
+
+    def _place_spline(self, i, cols):
+        gates = self._actor_gates(i)
+        if gates is None:
+            return
+        actor_idx, atype, tkind = gates
+        if self._comp_hidden(i):
+            self.stats["hidden"] += 1
+            return
+        p = self.dicts[i].get("Properties") or {}
+        mesh_path = _ref_pkg(p.get("StaticMesh"))
+        if not mesh_path.startswith("/Game/") or is_technical(mesh_path, self.opt):
+            self.stats["no_mesh"] += 1
+            return
+        params = spline_mesh.parse_params(p)
+        me = self.b.ensure_spline_mesh(mesh_path, params)
+        if me is None:
+            self.stats["no_mesh"] += 1
+            return
+        world = self._world_matrix(i)
+        if not self.b.within(world.translation):
+            self.stats["culled"] += 1
+            return
+        label = (self.dicts[actor_idx].get("Name") if actor_idx is not None
+                 else self.dicts[i].get("Name")) or "spline"
+        target = cols["Unplaced"] if tkind == "unplaced" else (
+            cols["Events"] if tkind == "events" else cols["Statics"])
+        self.b._new_object(label, me, target, world)
+        self.stats["unplaced" if tkind == "unplaced"
+                   else ("events" if tkind == "events" else "splines")] += 1
 
     def _place_light(self, idx, ty, col):
         p = self.dicts[idx].get("Properties") or {}

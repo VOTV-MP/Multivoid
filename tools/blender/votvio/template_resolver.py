@@ -113,6 +113,7 @@ class TemplateResolver:
             return self._info[key]
         templates = {}
         children = {}
+        decal_templates = {}    # base -> {material, size, fields}
         node_tmpl = {}      # SCS node name -> template base
         node_kids = {}      # SCS node name -> [child node names]
         child_nodes = set()
@@ -134,14 +135,26 @@ class TemplateResolver:
                     v = props.get("key")
                     if isinstance(v, str) and v not in ("", "None"):
                         cdo_key = v
-                if ty in ("StaticMeshComponent", "SkeletalMeshComponent",
-                          "SceneComponent") or ty in _INST_TYPES:
+                if ty == "DecalComponent":
+                    base = _strip_gen(nm)
+                    if base not in decal_templates:
+                        d = {"material": _obj_ref_package(props.get("DecalMaterial")),
+                             "size": _vec3(props.get("DecalSize"), (128.0, 256.0, 256.0)),
+                             "fields": set()}
+                        if "DecalMaterial" in props:
+                            d["fields"].add("material")
+                        if "DecalSize" in props:
+                            d["fields"].add("size")
+                        decal_templates[base] = d
+                if ty.endswith("Component"):
+                    # every SceneComponent-derived template carries the rel transform
+                    # the umap deltas omit (the locker door's hinge is an Arrow)
                     base = _strip_gen(nm)
                     if base.startswith("ICH-") or base in templates:
                         continue
                     mesh = _obj_ref_package(props.get("StaticMesh") or props.get("SkeletalMesh"))
                     kind = {"StaticMeshComponent": "SM", "SkeletalMeshComponent": "SK",
-                            "SceneComponent": "SCENE"}.get(ty) or _INST_TYPES[ty]
+                            "SceneComponent": "SCENE"}.get(ty) or _INST_TYPES.get(ty, "OTHER")
                     t = TemplateComp(base, kind, mesh)
                     if "StaticMesh" in props or "SkeletalMesh" in props:
                         t.fields.add("mesh")
@@ -191,6 +204,7 @@ class TemplateResolver:
             if node not in child_nodes:
                 roots.append(tmpl)
         info = {"templates": templates, "children": children, "roots": roots,
+                "decals": decal_templates,
                 "cdo_name": cdo_name, "cdo_key": cdo_key, "ifaces": ifaces}
         if parent_pkg:
             par = self._load(parent_pkg, _depth + 1)
@@ -200,6 +214,15 @@ class TemplateResolver:
                     info["templates"][base] = t
                 else:
                     own.inherit(t)   # child template export is a DELTA vs the parent's
+            for base, pd in par["decals"].items():
+                own = info["decals"].get(base)
+                if own is None:
+                    info["decals"][base] = pd
+                else:
+                    if "material" not in own["fields"] and pd["material"]:
+                        own["material"] = pd["material"]
+                    if "size" not in own["fields"]:
+                        own["size"] = pd["size"]
             for base, kids in par["children"].items():
                 info["children"].setdefault(base, kids)
             have = set(info["templates"])
@@ -299,6 +322,11 @@ class TemplateResolver:
                         out.append((t.mesh, m @ convert.ue_fmatrix_to_bl(inst), "SM"))
                 elif ok:
                     out.append((t.mesh, m, t.kind))
+            dt = info["decals"].get(base)
+            if dt is not None and str(dt["material"]).startswith("/Game/"):
+                dm = m @ Matrix.Diagonal((1.0, float(dt["size"][1]) * 0.01,
+                                          float(dt["size"][2]) * 0.01, 1.0))
+                out.append((dt["material"], dm, "DECAL"))
             for kid in info["children"].get(base, ()):
                 walk(kid, m, depth + 1)
 

@@ -14,7 +14,31 @@ import bpy
 from . import bc_decode
 
 _FALLBACK_RGBA = (0.42, 0.42, 0.46, 1.0)
-_WATER_HINTS = ("mat_water", "inst_water", "water1", "waterriver")
+
+# The game's actual water-surface BASE materials (measured census of materials/
+# named *water*). Family membership = the MIC chain's ROOT is one of these (or
+# the instance carries w_absorb). Never a substring test: "mat_watermelon"
+# contains "mat_water" and the watermelon is not water (2026-08-29 field bug).
+_WATER_ROOTS = {"mat_water", "mat_water2", "mat_waterriver", "mat_frozenwater",
+                "mat_bucketwater", "mat_gldsrcquakewater"}
+
+# Meshes cooked with UE's placeholder in a slot (the game assigns the real
+# material at runtime, unreachable from cook). Curated by measurement:
+# d_window's panes (the base main window) carry WorldGridMaterial in all slots.
+_PLACEHOLDER = "/Engine/EngineMaterials/WorldGridMaterial"
+PLACEHOLDER_SLOT_OVERRIDES = (
+    ("newbaseWindow2_sig2", "/Game/materials/unsorted/inst_glass"),
+)
+
+
+def resolve_slot(mesh_basename, mat_path):
+    """Swap a cooked placeholder slot for the curated runtime material."""
+    if mat_path == _PLACEHOLDER:
+        low = mesh_basename.lower()
+        for prefix, repl in PLACEHOLDER_SLOT_OVERRIDES:
+            if low.startswith(prefix.lower()):
+                return repl
+    return mat_path
 
 
 def _ref_pkg(v):
@@ -82,9 +106,9 @@ def _analyze(game, mat_pkg, cache):
     return info
 
 
-def _family(info, mesh_hint):
-    names = " ".join(info["chain"]).lower() + " " + mesh_hint
-    if "w_absorb" in info["vec"] or any(h in names for h in _WATER_HINTS):
+def _family(info):
+    names = " ".join(info["chain"]).lower()
+    if "w_absorb" in info["vec"] or info["root"] in _WATER_ROOTS:
         return "water"
     if "BLEND_Additive" in info["blend"]:
         return "additive"
@@ -114,8 +138,8 @@ def _image(game, tex_pkg, caches, warnings, non_color=False):
     return img
 
 
-def get_material(game, mat_pkg_path, caches, warnings, with_textures=True, mesh_hint=""):
-    key = (mat_pkg_path or "<none>", "w" in mesh_hint and "water" in mesh_hint)
+def get_material(game, mat_pkg_path, caches, warnings, with_textures=True):
+    key = mat_pkg_path or "<none>"
     if key in caches["mat"]:
         return caches["mat"][key]
     caches.setdefault("mat_info", {})
@@ -133,7 +157,7 @@ def get_material(game, mat_pkg_path, caches, warnings, with_textures=True, mesh_
     info = _analyze(game, mat_pkg_path, caches["mat_info"]) if mat_pkg_path else \
         {"tex": {}, "scal": {}, "vec": {}, "blend": "", "twosided": False,
          "clip": 0.333, "root": "", "chain": []}
-    fam = _family(info, mesh_hint.lower())
+    fam = _family(info)
 
     if fam == "water":
         _build_water(mat, nt, bsdf, info)
@@ -268,6 +292,69 @@ def _set_blended(mat):
         mat.surface_render_method = "BLENDED"
     except AttributeError:
         pass
+
+
+def get_decal_material(game, mat_pkg_path, caches, warnings, with_textures=True):
+    """Alpha-blended quad material for a DecalComponent (grime/graffiti/stains).
+    Base color from the first texture param; alpha = texture alpha x opacity,
+    or the 'mask' texture when the decal carries one (blood family)."""
+    key = ("decal", mat_pkg_path or "<none>")
+    if key in caches["mat"]:
+        return caches["mat"][key]
+    caches.setdefault("mat_info", {})
+    name = "decal_" + (mat_pkg_path.rsplit("/", 1)[-1] if mat_pkg_path else "none")
+    mat = bpy.data.materials.new(name)
+    mat.use_nodes = True
+    nt = mat.node_tree
+    bsdf = nt.nodes.get("Principled BSDF")
+    caches["mat"][key] = mat
+    if bsdf is None:
+        return mat
+    bsdf.inputs["Roughness"].default_value = 0.8
+    _set_blended(mat)
+
+    info = _analyze(game, mat_pkg_path, caches["mat_info"]) if mat_pkg_path else \
+        {"tex": {}, "scal": {}, "vec": {}, "blend": "", "twosided": False,
+         "clip": 0.333, "root": "", "chain": []}
+    tex = info["tex"]
+    base_pkg = tex.get("tex") or tex.get("diffuse") or \
+        (next(iter(tex.values())) if tex else "")
+    img = _image(game, base_pkg, caches, warnings) if (with_textures and base_pkg) else None
+    if img is None:
+        bsdf.inputs["Base Color"].default_value = (0.25, 0.22, 0.20, 1.0)
+        bsdf.inputs["Alpha"].default_value = 0.35
+        return mat
+    timg = nt.nodes.new("ShaderNodeTexImage")
+    timg.image = img
+    timg.location = (-560, 260)
+    color_socket = timg.outputs["Color"]
+    if "color" in info["vec"]:
+        mix = nt.nodes.new("ShaderNodeMix")
+        mix.data_type = "RGBA"
+        mix.blend_type = "MULTIPLY"
+        mix.inputs["Factor"].default_value = 1.0
+        mix.location = (-300, 260)
+        nt.links.new(color_socket, mix.inputs["A"])
+        mix.inputs["B"].default_value = info["vec"]["color"]
+        color_socket = mix.outputs["Result"]
+    nt.links.new(color_socket, bsdf.inputs["Base Color"])
+
+    alpha_socket = timg.outputs["Alpha"]
+    if "mask" in tex and with_textures:
+        mimg = _image(game, tex["mask"], caches, warnings, non_color=True)
+        if mimg is not None:
+            tm = nt.nodes.new("ShaderNodeTexImage")
+            tm.image = mimg
+            tm.location = (-560, -60)
+            alpha_socket = tm.outputs["Color"]
+    op = info["scal"].get("opacity", info["scal"].get("alpha", 1.0))
+    mul = nt.nodes.new("ShaderNodeMath")
+    mul.operation = "MULTIPLY"
+    mul.inputs[1].default_value = min(max(op, 0.0), 1.0)
+    mul.location = (-140, -60)
+    nt.links.new(alpha_socket, mul.inputs[0])
+    nt.links.new(mul.outputs[0], bsdf.inputs["Alpha"])
+    return mat
 
 
 def _build_water(mat, nt, bsdf, info):

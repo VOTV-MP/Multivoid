@@ -40,6 +40,10 @@ class VOTVIO_OT_import_sav(bpy.types.Operator, ImportHelper):
         name="Landscape", description="Rebuild the terrain from its heightmaps", default=True)
     import_lights: bpy.props.BoolProperty(
         name="Lights", description="Point/spot/rect lights from the level", default=True)
+    import_decals: bpy.props.BoolProperty(
+        name="Grime decals",
+        description="The game's decal layer (grime, graffiti, stains) as thin "
+                    "alpha-blended quads", default=True)
     foliage_density: bpy.props.FloatProperty(
         name="Foliage density", description="Fraction of instanced foliage to place",
         default=1.0, min=0.0, max=1.0, subtype="FACTOR")
@@ -107,6 +111,7 @@ class VOTVIO_OT_import_sav(bpy.types.Operator, ImportHelper):
             "import_map": self.import_map,
             "import_landscape": self.import_landscape,
             "import_lights": self.import_lights,
+            "import_decals": self.import_decals,
             "foliage_density": self.foliage_density,
             "terrain_style": self.terrain_style,
             "import_radius": self.import_radius,
