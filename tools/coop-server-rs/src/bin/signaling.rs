@@ -61,7 +61,9 @@
 //! 5s drain timeout — a slow/stalled destination can never head-of-line block a
 //! sender, and memory per destination is bounded by the channel capacity.
 
-use coop_server::common::{ct_eq, env_int, env_str, hex_to_bytes, identity_shape_ok, log, token_hex};
+use coop_server::common::{
+    clamp_str, ct_eq, env_int, env_str, hex_to_bytes, identity_shape_ok, log, token_hex,
+};
 use coop_server::tls;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -176,6 +178,33 @@ fn check_registration_proof(ident: &str, nonce: &str, auth_line: &str) -> Result
         .map_err(|_| "does not hold the key this identity names")
 }
 
+/// The PRE-AUTH pool slot, released exactly once -- on promotion, on return, or on
+/// an UNWIND. It used to be released by a `match` after the `.await`, which a panic
+/// inside `serve` skips: `panic = "unwind"` isolates the task rather than crashing
+/// the process, so the slot would leak SILENTLY, and 128 leaks refuse every later
+/// accept with "pre-auth pool full" until a restart. Latent before, and worth
+/// closing now that this path calls `token_hex`, whose CSPRNG failure is an
+/// `expect` (post-ship audit M1). Only PENDING is guarded: the AUTHED and per-IP
+/// slots are taken only AFTER the proof, downstream of every panic this adds.
+struct PendingSlot {
+    armed: bool,
+}
+
+impl PendingSlot {
+    fn release(&mut self) {
+        if self.armed {
+            self.armed = false;
+            PENDING.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+}
+
+impl Drop for PendingSlot {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
 async fn handle<S: AsyncRead + AsyncWrite + Unpin>(stream: S, ip: String, listener: &'static str) {
     // Admission into the bounded PRE-AUTH pool (an anonymous flood can fill only this
     // small pool; each conn is dropped after GREETING_TIMEOUT).
@@ -184,15 +213,15 @@ async fn handle<S: AsyncRead + AsyncWrite + Unpin>(stream: S, ip: String, listen
         log(&format!("[{ip}] refused: pre-auth pool full"));
         return;
     }
+    let mut pending = PendingSlot { armed: true };
 
     let mut reg: Option<Reg> = None;
-    serve(stream, &ip, listener, &mut reg).await;
+    serve(stream, &ip, listener, &mut pending, &mut reg).await;
 
     // ---- cleanup (exactly mirrors the Python finally block) ----
+    // The None branch is gone: `pending` releases itself on drop, unwind included.
     match reg {
-        None => {
-            PENDING.fetch_sub(1, Ordering::Relaxed);
-        }
+        None => {}
         Some(reg) => {
             AUTHED.fetch_sub(1, Ordering::Relaxed);
             {
@@ -219,6 +248,7 @@ async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
     stream: S,
     ip: &str,
     listener: &str,
+    pending: &mut PendingSlot,
     reg_out: &mut Option<Reg>,
 ) {
     // NOTE: SO_KEEPALIVE is set on the raw TcpStream at accept time (before any
@@ -266,9 +296,15 @@ async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
     // map that its holder did not sign for. An invariant with an exception is a
     // thing you have to re-derive at every call site.
     if !identity_shape_ok(ident) {
+        // clamp_str, because THIS is the one place an identity reaches the log
+        // without having passed identity_shape_ok -- that is what the branch
+        // MEANS. A raw echo lets a greeter embed CR and ANSI and forge a
+        // "registered (key proved)" line in the very log that is the operator's
+        // answer to "is the A59 gate armed" (post-ship audit M2).
         log(&format!(
-            "[{ip}] REFUSED: identity '{ident}' is not a key (`gen:<64 hex>`). A \
-             pre-b145 peer lands here -- that cohort is retired; it must update."
+            "[{ip}] REFUSED: identity '{}' is not a key (`gen:<64 hex>`). A \
+             pre-b145 peer lands here -- that cohort is retired; it must update.",
+            clamp_str(ident, MAX_IDENTITY)
         ));
         return;
     }
@@ -276,6 +312,18 @@ async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
     // answers must occupy the small bounded PENDING pool, which exists for exactly
     // this shape of flood, rather than one of the 512 authed slots.
     {
+        // TEST AFFORDANCE, off by default (0). The ONE ordering no loopback run
+        // can stage: on a real relay the nonce costs an RTT, during which GNS
+        // emits its own rendezvous signals -- and if the client lets one overtake
+        // the proof, we read it as a malformed proof and refuse. Delaying the
+        // nonce reproduces that on loopback. It sits on the RELAY, i.e. the
+        // ENVIRONMENT, never on the gate under test (the client's send ordering) --
+        // the same discipline authdrill uses when it puts its sabotage entirely on
+        // the client side. Bounded by the pre-registration deadline either way.
+        let delay = env_int("COOP_SIGNALING_NONCE_DELAY_MS", 0);
+        if delay > 0 {
+            tokio::time::sleep(Duration::from_millis(delay as u64)).await;
+        }
         let nonce = token_hex(32);
         if wh.write_all(format!("nonce {nonce}\n").as_bytes()).await.is_err() {
             return;
@@ -316,7 +364,7 @@ async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
     }
     // Promotion committed: this connection now owns one AUTHED + one per-IP slot,
     // released exactly once by the handle() cleanup Some-branch.
-    PENDING.fetch_sub(1, Ordering::Relaxed);
+    pending.release();
 
     let identity = ident.to_string();
     let conn_id = CONN_SEQ.fetch_add(1, Ordering::Relaxed);

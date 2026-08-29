@@ -105,6 +105,10 @@ private:
     void CloseSocketLocked();   // caller holds sockMutex_
     void ConnectLocked();       // caller holds sockMutex_ (no DNS -- uses the cached addr)
     void Enqueue(const std::string& line);  // thread-safe; line is '\n'-terminated
+    // Same, but at the FRONT. Only the registration proof uses it: the relay
+    // reads the line after the challenge as the proof, so an ICE signal already
+    // queued must not overtake it.
+    void EnqueueFront(const std::string& line);
 
     // Where this connection is in the registration handshake. Reset to
     // AwaitingChallenge by EVERY ConnectLocked, because a reconnect re-greets and
@@ -152,6 +156,10 @@ private:
     // is generous on purpose: it exists to turn "an old relay never challenged
     // us" into ONE named error line, not to police latency.
     RegState regState_ = RegState::AwaitingChallenge;
+    // Set when the greeting has actually left the socket. It gates BOTH the
+    // fail-closed deadline (before this, silence means "not connected", not "old
+    // relay") and the send gate below.
+    bool greetingSent_ = false;
     std::chrono::steady_clock::time_point challengeDeadline_{};
 };
 

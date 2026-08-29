@@ -56,9 +56,13 @@ import mp  # noqa: E402  -- the shared rig (builds/locates the production relay)
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey  # noqa: E402
 
 # MUST equal REGISTER_TAG in tools/coop-server-rs/src/bin/signaling.rs and
-# kRegisterTag in src/votv-coop/src/coop/net/signaling_client.cpp. Three
-# constants in three languages; this script is what keeps them honest, because a
-# disagreement makes P1 below fail against a real relay.
+# kRegisterTag in src/votv-coop/src/coop/net/signaling_client.cpp.
+#
+# HONEST SCOPE, because an earlier version of this comment overclaimed and a
+# post-ship audit caught it: this file is a THIRD copy, and driving the Rust relay
+# with it proves only that copies 1 and 3 agree. **The C++ constant is not in this
+# loop at all** -- change it and sig_gate still reports 14/14. The only instrument
+# that covers the C++ leg is `p2p_smoke`, whose peers sign with the real client.
 TAG = b"multivoid-signaling-register-v1"
 
 LOG = mp.ROOT / "build" / "sig-gate-relay.log"
@@ -103,26 +107,56 @@ class Conn:
             self.sock = raw
         self.sock.settimeout(10)
         self.buf = b""
+        # The identity a `refused()` probe addresses -- set by greet() to the name
+        # this connection tried to register, so a WRONGLY-registered peer echoes
+        # its own line straight back and the arm fails loudly.
+        self.probe_dest = "gen:" + "0" * 64
 
     def send(self, line: str) -> None:
         self.sock.sendall(line.encode() + b"\n")
 
-    def line(self) -> str | None:
-        """Next line, or None if the peer closed (which is how a refusal reads)."""
+    def outcome(self) -> str:
+        """What the relay did next: a returned line, `"closed"`, or `"hung"`.
+
+        Those last two MUST be distinguishable. An earlier cut of this file scored
+        both as "refused" because it read a timeout as a close -- so every negative
+        arm below would have gone green against a relay that merely stopped
+        answering, and, worse, against one that ACCEPTED a forged proof and said
+        nothing, which is exactly the behaviour A59 describes. A drill whose
+        negatives pass against the defect they exist to catch is worse than none
+        (post-ship audit, 2026-08-29).
+        """
         while b"\n" not in self.buf:
             try:
                 chunk = self.sock.recv(4096)
-            except (socket.timeout, TimeoutError, ConnectionResetError, ssl.SSLError):
-                return None
+            except (socket.timeout, TimeoutError):
+                return "hung"
+            except (ConnectionResetError, ssl.SSLError, OSError):
+                return "closed"
             if not chunk:
-                return None
+                return "closed"
             self.buf += chunk
         line, _, self.buf = self.buf.partition(b"\n")
         return line.decode("utf-8", "replace").rstrip("\r")
 
-    def closed(self) -> bool:
-        """True when the relay dropped us -- a refusal is a close, not a message."""
-        return self.line() is None
+    def line(self) -> str | None:
+        """Next line, or None if the relay closed or hung."""
+        out = self.outcome()
+        return None if out in ("closed", "hung") else out
+
+    def refused(self) -> bool:
+        """The relay refused us: it did NOT route for us, AND it dropped the socket.
+
+        Both halves are load-bearing. Closing alone would also be true of a relay
+        that registered us and then crashed; not-routing alone would also be true of
+        one that is merely slow. A refusal is the conjunction, and the probe is what
+        makes the negative arms discriminate at all.
+        """
+        try:
+            self.send(f"{self.probe_dest} deadbeef")
+        except OSError:
+            return True  # already gone: it closed before we could even probe
+        return self.outcome() == "closed"
 
     def close(self) -> None:
         try:
@@ -134,6 +168,7 @@ class Conn:
 def greet(host: str, port: int, tls: bool, token: str, ident: str) -> tuple[Conn, str | None]:
     """Greet and return (conn, nonce). `nonce` is None when no challenge came."""
     c = Conn(host, port, tls)
+    c.probe_dest = ident
     c.send(f"{token} {ident}")
     first = c.line()
     if first is None or not first.startswith("nonce "):
@@ -173,8 +208,7 @@ def run(host: str, port: int, tls: bool, token: str) -> None:
     # is the arm that fails if the challenge is ever made advisory.
     c1, n1 = greet(host, port, tls, token, victim.ident)
     check(n1 is not None, "N1 (setup) challenged")
-    c1.send(f"{victim.ident} deadbeef")   # skip `auth` entirely
-    check(c1.closed(), "N1 a key identity with NO proof is refused")
+    check(c1.refused(), "N1 a key identity with NO proof is refused")
     c1.close()
 
     # N2 -- THE SQUAT, i.e. A59 itself: an attacker signs with its own key while
@@ -184,7 +218,7 @@ def run(host: str, port: int, tls: bool, token: str) -> None:
     c2, n2 = greet(host, port, tls, token, victim.ident)
     check(n2 is not None, "N2 (setup) challenged")
     c2.send(f"auth {attacker.sign(victim.ident, n2)}")
-    check(c2.closed(), "N2 a proof by the WRONG key is refused (the A59 squat)")
+    check(c2.refused(), "N2 a proof by the WRONG key is refused (the A59 squat)")
     c2.close()
 
     # N3 -- a recording. The nonce is fresh per connection, so a proof captured
@@ -194,7 +228,7 @@ def run(host: str, port: int, tls: bool, token: str) -> None:
     stale = "0" * 64
     check(n3 != stale, "N3 (setup) the live nonce differs from the replayed one")
     c3.send(f"auth {victim.sign(victim.ident, stale)}")
-    check(c3.closed(), "N3 a proof over a DIFFERENT nonce is refused")
+    check(c3.refused(), "N3 a proof over a DIFFERENT nonce is refused")
     c3.close()
 
     # N4 -- one flipped bit. Fails if verification is ever reduced to a length check.
@@ -204,16 +238,27 @@ def run(host: str, port: int, tls: bool, token: str) -> None:
     flipped = sig[:-1] + ("1" if sig[-1] == "0" else "0")
     check(flipped != sig, "N4 (setup) the flip actually changed the signature")
     c4.send(f"auth {flipped}")
-    check(c4.closed(), "N4 a one-bit-corrupt proof is refused")
+    check(c4.refused(), "N4 a one-bit-corrupt proof is refused")
     c4.close()
 
     # N5 -- the retired cohort. A `h<16hex>` name is one the master used to mint;
     # nobody can sign for it, so the relay must refuse it outright rather than
     # register it unproved beside the proved ones.
     c5 = Conn(host, port, tls)
-    c5.send(f"{token} h{secrets.token_hex(8)}")
-    check(c5.closed(), "N5 a legacy non-key identity is refused (b<=133 retired)")
+    legacy = f"h{secrets.token_hex(8)}"
+    c5.probe_dest = legacy
+    c5.send(f"{token} {legacy}")
+    check(c5.refused(), "N5 a legacy non-key identity is refused (b<=133 retired)")
     c5.close()
+
+    # N6 -- the nonce must be FRESH PER CONNECTION. Every arm above would pass
+    # against a relay that returned one constant value, and such a relay is fully
+    # replayable: the recording N3 rejects would start working. Comparing the
+    # nonces we already collected costs nothing and is the only thing here that
+    # can see it.
+    seen = [n for n in (nonce, n1, n2, n3, n4) if n]
+    check(len(seen) == 5 and len(set(seen)) == 5,
+          "N6 every connection got a DIFFERENT nonce (not a constant)")
 
 
 def main() -> int:

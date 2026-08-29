@@ -64,13 +64,21 @@ constexpr auto kReconnectBackoff = std::chrono::seconds(5);
 // line instead of a silent hang. Matches the server's own pre-auth budget.
 constexpr auto kChallengeTimeout = std::chrono::seconds(15);
 
-// MUST equal `REGISTER_TAG` in tools/coop-server-rs/src/bin/signaling.rs. The two
-// are separate constants in separate languages; what keeps them honest is
-// tools/sig_gate.py, which drives a real relay with a real key and fails if the
-// blobs disagree -- not a comment on either side.
+// MUST equal `REGISTER_TAG` in tools/coop-server-rs/src/bin/signaling.rs.
+//
+// An earlier version of this comment said `tools/sig_gate.py` keeps the two
+// honest. It does NOT, and a post-ship audit was right to call that a false
+// reassurance: sig_gate carries its own THIRD copy of the tag and never runs this
+// client, so changing the constant here leaves it at 14/14. The instrument that
+// actually covers this leg is `p2p_smoke`, whose two peers sign with this code and
+// register against the real relay -- if these bytes drift, both peers fail to
+// register and the smoke's verdict goes red.
 constexpr char kRegisterTag[] = "multivoid-signaling-register-v1";
 constexpr char kChallengePrefix[] = "nonce ";
 constexpr size_t kNonceHexLen = 64;
+// `gen:` + 64 hex. The relay's `identity_shape_ok` accepts exactly this width, and
+// it is what makes the un-delimited blob unambiguous.
+constexpr size_t kIdentityLen = 4 + 64;
 
 const char kHexDigit[] = "0123456789abcdef";
 
@@ -305,7 +313,18 @@ void SignalingClient::ConnectLocked() {
     // would time out an unreachable server and blame it for "not challenging us",
     // which is a different fault with a different fix.
     regState_ = RegState::AwaitingChallenge;
+    greetingSent_ = false;
     challengeDeadline_ = std::chrono::steady_clock::time_point{};
+
+    // Drop any proof left over from the PREVIOUS socket. It answers a nonce this
+    // server never issued, so the relay refuses it -- with the same words a SQUAT
+    // produces ("does not hold the key this identity names"), which would make an
+    // own-goal indistinguishable from an attack in the one log that is supposed to
+    // tell them apart. The queue is deliberately preserved across a drop (see
+    // CloseSocketLocked), so this is the one line that must NOT survive.
+    for (auto it = sendQueue_.begin(); it != sendQueue_.end();) {
+        it = (it->rfind("auth ", 0) == 0) ? sendQueue_.erase(it) : it + 1;
+    }
     UE_LOGI("signaling: connecting to %s:%s as '%s'",
             host_.c_str(), service_.c_str(), selfIdentity_.c_str());
 }
@@ -323,6 +342,14 @@ void SignalingClient::Enqueue(const std::string& line) {
         UE_LOGW("signaling: send queue backed up -- discarding oldest signals");
     }
     sendQueue_.push_back(line);
+}
+
+void SignalingClient::EnqueueFront(const std::string& line) {
+    std::lock_guard<std::recursive_mutex> lk(sockMutex_);
+    // No cap trim here: the only caller is the registration proof, exactly one
+    // line per socket, and dropping IT to make room for an ICE signal would be
+    // the wrong way round -- without the proof no signal is deliverable at all.
+    sendQueue_.push_front(line);
 }
 
 // ---------------------------------------------------------------------------
@@ -369,8 +396,18 @@ bool SignalingClient::AnswerChallenge(const char* line, size_t len) {
 
     // blob = tag || identity || nonce, no separators: every field is fixed width
     // by construction (the tag is a literal, our identity is `gen:` + 64 hex, the
-    // nonce is 64), so the concatenation cannot be ambiguous. The server builds
-    // the same bytes; sig_gate proves they agree.
+    // nonce is 64 and checked above), so the concatenation cannot be ambiguous.
+    //
+    // ASSERTED, not assumed. Nothing upstream checks our own identity's WIDTH --
+    // `Create()` only rejects a spaced one -- so "fixed width by construction" was
+    // being enforced solely at the far end (post-ship audit). If it is ever not 68
+    // characters, signing would produce a blob the relay cannot reconstruct, and
+    // the honest failure is here rather than an unexplained refusal there.
+    if (selfIdentity_.size() != kIdentityLen) {
+        UE_LOGE("signaling: our identity is %zu chars, not %zu -- refusing to sign "
+                "a blob the relay cannot rebuild", selfIdentity_.size(), kIdentityLen);
+        return false;
+    }
     std::string blob;
     blob.reserve(sizeof(kRegisterTag) - 1 + selfIdentity_.size() + kNonceHexLen);
     blob.append(kRegisterTag, sizeof(kRegisterTag) - 1);
@@ -388,7 +425,10 @@ bool SignalingClient::AnswerChallenge(const char* line, size_t len) {
         out.push_back(kHexDigit[b & 0xf]);
     }
     out.push_back('\n');
-    Enqueue(out);
+    // FRONT, not back: the relay reads the line after its challenge as the proof,
+    // and by now the queue may already hold ICE signals GNS produced while we were
+    // waiting. Appending would put one of them where the proof belongs.
+    EnqueueFront(out);
     regState_ = RegState::ProofSent;
     // "answered", not "accepted": the relay's verdict is not observable from
     // here. A rejected proof simply closes the socket, which arrives as the
@@ -446,6 +486,16 @@ void SignalingClient::Poll() {
         if (sock_ != kInvalidSock) {
             const SOCKET s = static_cast<SOCKET>(sock_);
             while (!sendQueue_.empty()) {
+                // THE PROOF MUST BE THE SECOND LINE ON THE WIRE. Once the greeting
+                // is out we send NOTHING until the challenge is answered, because
+                // the relay reads whatever comes next as the `auth` line: a queued
+                // ICE signal overtaking it is read as a malformed proof and the
+                // connection is REFUSED. GNS can enqueue one before the nonce
+                // round-trips -- `Create()` and `ConnectP2PCustomSignaling` run
+                // back to back on the same thread -- and on loopback the nonce
+                // always wins that race, which is why every smoke here is blind to
+                // it and only a real-RTT relay would show it. (post-ship audit H1)
+                if (regState_ == RegState::AwaitingChallenge && greetingSent_) break;
                 const std::string& line = sendQueue_.front();
                 const int l = static_cast<int>(line.size());
                 const int r = ::send(s, line.c_str(), l, 0);
@@ -456,8 +506,8 @@ void SignalingClient::Poll() {
                     // the first successful send IS "our greeting reached the
                     // server" -- the moment from which a missing challenge means
                     // the RELAY is old, rather than that we never got through.
-                    if (regState_ == RegState::AwaitingChallenge &&
-                        challengeDeadline_ == std::chrono::steady_clock::time_point{}) {
+                    if (!greetingSent_) {
+                        greetingSent_ = true;
                         challengeDeadline_ = std::chrono::steady_clock::now() + kChallengeTimeout;
                     }
                 } else {

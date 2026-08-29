@@ -41,8 +41,12 @@ HostInfo LobbyAnnouncer::Host(const std::string& masterUrl, const std::string& n
     b["world"] = world;
     // The identity joiners dial. It is this install's durable PUBLIC KEY rendered
     // `gen:<64 hex>` -- the same value the admission challenge proves possession
-    // of, so the rendezvous name and the provable name are one thing (RULE 2; the
-    // master's own per-session mint is the fallback for a host that sends none).
+    // of, so the rendezvous name and the provable name are one thing (RULE 2).
+    // REQUIRED since b145: the master's per-session mint that used to stand in for
+    // a host sending none is DELETED, and `/v1/host` answers a missing or
+    // malformed identity with a named 400. There is no fallback because a minted
+    // name is one the master asserts on our behalf, and the relay now registers
+    // only names their holder signed for (security A59).
     b["identity"] = coop::net::peer_identity::LocalIdentityString();
     b["locked"] = locked;
     b["players_max"] = playersMax;

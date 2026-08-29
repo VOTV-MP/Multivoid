@@ -85,6 +85,11 @@ def parse_args():
     ap.add_argument("--turn-pass", default="")
     ap.add_argument("--ice", default="",
                     help="ICE policy: '' (all) / relay (force TURN) / disable / default")
+    ap.add_argument("--nonce-delay", type=int, default=0,
+                    help="make the LOCAL relay sit on its registration nonce for N ms. "
+                         "Stages the ordering loopback cannot: GNS queues rendezvous "
+                         "signals while the client waits, and a client without a send gate "
+                         "lets one overtake its proof, so the relay refuses. 0 = off.")
     ap.add_argument("--signaling-token", default="localtest",
                     help="shared bearer token the signaling server requires (VPS: its real token)")
     return ap.parse_args()
@@ -109,7 +114,8 @@ def main() -> None:
         mp.log(f"starting LOCAL signaling server on :{sig_port} ({sig_exe.name})")
         sig_out = open(SIG_LOG, "w", encoding="utf-8")
         sig_env = dict(os.environ, COOP_SIGNALING_PORT=str(sig_port),
-                       COOP_SIGNALING_TOKEN=args.signaling_token)
+                       COOP_SIGNALING_TOKEN=args.signaling_token,
+                       COOP_SIGNALING_NONCE_DELAY_MS=str(args.nonce_delay))
         sig = subprocess.Popen([str(sig_exe)], env=sig_env,
                                stdout=sig_out, stderr=subprocess.STDOUT, text=True)
         time.sleep(1.5)
