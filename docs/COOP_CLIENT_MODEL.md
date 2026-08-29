@@ -142,7 +142,7 @@ SHIP: hl_einstein_v1sc.pak deployed to EVERY peer by tools/deploy-all.ps1
       (Content/Paks/LogicMods/multivoid/; the pre-rename scientist.pak is auto-removed).
 RUNTIME (mod):   [v93 SKINS, AS-BUILT 2026-07-02 late evening -- REPLACED the role gate (RULE 2)]
   UE auto-mounts every pak in LogicMods/multivoid → each PLAYER carries a skin NAME
-  (multivoid.ini player_skin=, next to player_guid; a NEW identity rolls a RANDOM starter
+  (multivoid.ini player_skin=; a NEW identity rolls a RANDOM starter
   from the curated 6-list ∩ present paks -- walter/sci/rvi_scientist/luther/twhl2/twhl3,
   fallback hl_einstein_v1sc; `4570180e` -- persisted once like the guid; picked in
   F1 > Cosmetics > Skins) → the name rides the Join payload (after the guid) + PlayerJoined
@@ -194,7 +194,8 @@ LogicMods/multivoid on EVERY peer and it appears in everyone's F1 browser.
 ## 3. RUNTIME: load the pak + apply + TEST  [pak/load/apply mechanics PROVEN 320c0ab4 + 8df26e05; the delivery POLICY is now the v93 SKINS system, AS-BUILT 2026-07-02 late evening]
 
 > **v93 SKINS (the current policy layer, replaced the role gate -- RULE 2):** every player
-> carries a persisted skin NAME (`multivoid.ini player_skin=`, next to `player_guid=`;
+> carries a persisted skin NAME (`multivoid.ini player_skin=`; the `player_guid=` line it used to
+> sit beside was RETIRED in b144 -- the durable identity is a keypair in `multivoid_identity.key`;
 > default `hl_einstein_v1sc`; F1 > Cosmetics > Skins to change, gmod-style tiles). Name =
 > pak stem in `LogicMods/multivoid/` ("dr_kel" = native). Announce: Join field (after
 > guid) + PlayerJoined field (after nick) + live `SkinChange` (kind 82, host-relayed,

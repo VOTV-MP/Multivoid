@@ -79,6 +79,26 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   subject; and prefer a marker naming the EVENT over one naming the mechanism.
   `memory/lesson_a_renamed_log_line_owes_a_census_of_its_observers.md`
 
+- **CLOSING A CONNECTION IS NOT RETIRING ITS STATE -- and the cost is per QUEUED PACKET, not per
+  message.** 2026-08-29, post-ship audit on the b144 admission gate, then reproduced. Three
+  individually-harmless facts multiply: `[V]` GNS delivers NO status callback for a connection YOU
+  close (this project already knew it -- it is the documented reason `KickClaimed` replicates the whole
+  teardown by hand), `[V]` the drain hands you up to 256 messages at once each carrying the user data
+  it had at RECEIVE time, and `[V]` a `UE_LOGW` does a synchronous `fflush` under a lock the game
+  thread shares (`log.cpp:225-227`, whose own comment records ~50/s "visibly tanking FPS"). So four
+  refusal paths that called `CloseConnection` and returned left the band entry live, and every message
+  of that peer already IN the batch re-entered and re-logged: **one junk burst from an unauthenticated
+  peer = up to 256 disk syncs in a ~5 ms pass**, plus a 30 s state leak whose sweep then logged the
+  wrong cause. **The pre-change code could not have this shape** -- the old gate ADMITTED on the first
+  well-formed packet, so the state was consumed by the admission itself; adding a REFUSAL introduced
+  the first path that closes without consuming, and refusal paths are the ones nobody exercises by
+  hand. *Look FIRST:* make close-and-retire ONE function, and guard the handler's top by asking whether
+  the entry still belongs to this connection (that guard also silences a straggler arriving after a
+  SUCCESSFUL admission); when adding a refusal to something that previously only accepted, ask what
+  consumed the state on the ACCEPT path; cost anything pre-auth per BATCH, not per message; and treat
+  the log LEVEL as a performance decision, because a WARN on an attacker-paced path is an I/O
+  amplifier. `memory/lesson_closing_a_connection_is_not_retiring_its_state.md`
+
 - **A LENGTH-PREFIXED WIRE CHAIN HAS MORE THAN ONE WALKER, AND THE ERROR NAMES THE WRONG FIELD.**
   2026-08-29, caught by the smoke. Deleting the guid field from the Join payload broke EVERY join:
   `HandleJoinMessage`'s offsets were updated, but `ExtractJoinVersionFields` -- an independent,
@@ -1211,7 +1231,8 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 - **A destructive UI action correlates by CONTENT, never by a snapshot-time index.** A
   persistent-until-dismissed report ages while it sits on screen; any unrelated write shifts line
   numbers/row ids, and a stale index deletes the WRONG target — or BOTH copies of a duplicate
-  identity key (`player_guid` → orphaned inventory), with `removed==0` guards blind to
+  identity key (the example was `player_guid`, RETIRED in b144 -- `player_skin` is the live
+  CFG_IDENTITY row and carries the same risk → orphaned inventory / lost skin), with `removed==0` guards blind to
   "matched-but-wrong". Carry the VALUE the user clicked, re-validate it exists at act time, refuse +
   re-sweep on a vanish (arc-2 audit CRIT-2, fixed `7f1765ea`; drill G). *Look FIRST:*
   `config_ini_write.cpp RemoveDuplicateKeyLinesAt` — the pattern; grep destructive ops taking

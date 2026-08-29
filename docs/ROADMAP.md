@@ -551,7 +551,11 @@ Each item below is a feature increment series. Cross-referenced in
          master-run CA for six weeks; a 9-round `/qf` on 2026-08-29 measured that design false and
          replaced it with something smaller — the identity IS the peer's own public key, which needs
          no CA, no minting and no master, and therefore covers the LAN-only lane too. The public
-         short version: your peer is identified by a key it must possess, not by a name it claims.)
+         short version: your peer is identified by a key it must possess, not by a name it claims.
+         **BUILT the same day, proto 144** — the keypair, the mutual admission challenge that makes
+         the name mean anything, and a drill that shows it REFUSING; the durable id also replaced the
+         per-session rendezvous name, which is a change with its own new residual, recorded in the
+         local register. Not hands-on.)
          Arcs 3 / 3b / 4 / 5 remain HELD; the `net.master.insecure`
          flag was designed and then dropped — do not build it. Two read-only audits ran the same
          day; their findings, evidence and fix order live in the **local-only** register
