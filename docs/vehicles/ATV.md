@@ -1,4 +1,4 @@
-# ATV (quadbike) — full RE + coop sync status   (STATUS: **RE COMPLETE 2026-08-29** · sync **PARTIAL**: body pose only)
+# ATV (quadbike) — full RE + coop sync status   (STATUS: **RE COMPLETE 2026-08-29** · sync **PARTIAL**: rig pose + velocity, arc 1 of the C1 redesign SHIPPED 2026-08-29 `a2a45fc7` — read §14 before §9)
 
 *[↑ vehicles index](README.md) · [↑ docs index](../README.md)*
 
@@ -506,19 +506,33 @@ PE seam > raw-field poll > VM-bracket) and the `order_sync` reference implementa
 
 Source: `src/votv-coop/src/coop/interactables/atv_sync.cpp` (692 LOC),
 `src/votv-coop/src/ue_wrap/devices/atv.cpp` (223 LOC),
-`include/coop/net/protocol.h` (`AtvStatePayload` **60 B**, `AtvSpawnPayload` 120 B). [V-src]
+`include/coop/net/protocol.h` (`AtvStatePayload` **84 B**, `AtvSpawnPayload` 120 B). [V-src]
+
+> **§9 DESCRIBES b146 (arc 1 commit 1). Everything below the b145 line was REWRITTEN 2026-08-29 —
+> read §14 for the as-built and the two design pillars the runs killed.**
 
 ### 9.1 What is synced
-- **Body pose only**: `x,y,z,pitch,yaw,roll` at ~20 Hz on the reliable Normal lane, keyed by the ATV's
-  wire key. Occupant-**or**-grabber authority (`IsLocalAuthority`), the host relays a client's stream,
-  receivers `PrepareMirror` (physics off, tick off, no rigid-body notify) + a 75 ms `LerpWindow` interp.
-- **`occupantSlot`** — the seat reservation, plus a lower-slot-wins tie-break for a simultaneous mount
-  (PR #9, arigalit) and a client-side producer deny at `device_occupancy::OnUseInputPre`.
-- **`AtvRelease`** — the authority-lost edge: re-enable physics **then** write the inherited linear +
-  angular velocity, so a thrown ATV arcs and lands.
+- **Rig pose + VELOCITY**: `x,y,z,pitch,yaw,roll` plus linear and angular velocity, ~20 Hz on the
+  reliable Normal lane while a peer authors it, keyed by the ATV's wire key. Pose authority is
+  occupant-**or**-grabber (`IsPoseAuthor`) and the host relays a client's stream. **A receiver does
+  NOT freeze it**: the rig runs natively and is CORRECTED — velocity written hard each packet, the
+  position error closed by a bounded corrective velocity, and a cut to the authority's pose (the
+  game's own `teleportVehicle`) past a speed-scaled threshold OR when the error stops shrinking.
+- **An IDLE ATV is synced too**, by the HOST, at 5 Hz gated on change with a 2 s keepalive floor
+  (`CUnoccupiedVehicleSync`'s shape). A parked ATV costs one packet every 2 s.
+- **`occupantSlot`** — the SEAT: the reservation, the lower-slot-wins tie-break for a simultaneous
+  mount (PR #9, arigalit), and the client-side producer deny at `device_occupancy::OnUseInputPre`.
+- **`authorSlot`** — WHO streams it (0xFF elects the host as its idle syncer). Separate from the
+  seat on purpose: a peer merely GRABBING an ATV must not deny a seat nobody is in. A peer may name
+  only ITSELF; only the recorded author may release (client-scoped — slot 0 is exempt).
+- **`AtvRelease`** — the authority-lost edge, and NOTHING else: it clears the author. It carries no
+  velocity and re-enables no physics, because nothing was ever frozen.
+- **The collision guard** — the seven `BndEvt__*ComponentHitSignature` UFunctions are cancelled
+  PRE-dispatch on a peer that does not own the ATV's tick, so only one machine authors
+  impulse-damage / `explode()` / `ejectWheel`. The lane FAILS CLOSED without all seven.
 - **`AtvSpawn` / `AtvDestroy`** — the synthetic-key lane for an ATV that appears after connect.
-- **Connect snapshot** — every indexed ATV with `adopt=1`; `authored` decides whether the joiner
-  freezes it or leaves it physics-on and grabbable.
+- **Connect snapshot** — every indexed ATV with `adopt=1`, carrying pose AND velocity AND
+  `authorSlot`, so an ATV airborne at the join arrives moving and lands.
 
 ### 9.2 What is NOT synced — the complete gap list
 **`modules[]` and all 13 upgrades · `fuel` · `health` · `battery` · `dirt` · `brake` (applied nowhere)
@@ -553,6 +567,12 @@ times a second. The game's own `teleportVehicle` re-places the wheels after ever
 precisely because they do not follow. `vehicleGetParts` / `teleportVehicleAdvanced` (§2.6) is the
 ready-made fix if the measurement confirms it.
 
+**SUPERSEDED 2026-08-29 by arc 1 (§14): `PrepareMirror` and `preparedAsMirror` NO LONGER EXIST, so
+this section's defect cannot occur — a mirror is never kinematic and its wheels are the game's own.
+The paragraph below is kept as the point-in-time record of the b145 lane; do not send anyone to
+`preparedAsMirror`, it is a dead symbol. What is STILL open is narrower and stated in §14.5: no ATV
+has ever been DRIVEN in any run, so the corrector under load is unexercised.**
+
 **STATUS UPDATED 2026-08-29 — half of this section's "never observed" is now false, and the other
 half is still true.** A smoke scenario now DOES drive an ATV (the probe's sit arm, §13), and the rig
 has been instrumented on both peers. What §13 measured is that the client's rig went far outside its
@@ -573,8 +593,8 @@ reads **only** bit3 (`authored`). Bits 0–2 are produced and never consumed; bi
 
 | axis | native writer | rate | who may author | mirror needs | today |
 |---|---|---|---|---|:--:|
-| body pose | PhysX on `mesh` | continuous | occupant / grabber | stream + kinematic apply | **synced** |
-| wheel poses | PhysX on 4 bodies | continuous | same | `teleportVehicleAdvanced` | **no** |
+| body pose | PhysX on `mesh` | continuous | occupant / grabber | stream + **correct a simulating rig** | **synced** |
+| wheel poses | PhysX on 4 bodies | continuous | same | ~~`teleportVehicleAdvanced`~~ **nothing — the rig is never parked, so the wheels are the game's own** | **synced by construction** |
 | `occupantSlot` | `playerSit` / `playerUnsit` | discrete | the mounting peer (self-elected) | seat reservation | **synced** |
 | driver body on the seat | `K2_AttachToActor` + hide | discrete | occupant | attach puppet to `playerHit` | **no** |
 | `modules[]` | install / `takeOffUpgrade` | discrete, persistent | **arbiter** (intent) | write array + `updUpgrades()` | **no** |
@@ -720,3 +740,68 @@ That makes the release path itself a measured divergence SOURCE, which the C1 de
 - The ATV's runtime key reads **`ATV`** (uppercase), not the `atv` this document used in §6. The
   container name is `atv_inventoryContainer|<key>`, so the case matters wherever that string is
   rebuilt.
+
+---
+
+## 14. Arc 1 commit 1 — AS-BUILT (2026-08-29, `070c7d29` + `a2a45fc7`, proto 146)
+
+**Status: AS-BUILT, autonomous evidence only — NOT hands-on.** DLL `405E4F67CB5FEADC`, deployed to
+all four folders, two-peer smoke PASS. Design of record:
+`research/findings/vehicles/votv-ATV-arc1-mirror-model-IMPL-2026-08-29.md` (local-only).
+
+### 14.1 What the lane is now
+A peer that does not author an ATV **runs the rig natively and is corrected toward the authority**.
+The freeze/teleport model is deleted whole (RULE 2), and with it `PrepareMirror`, `ReleaseMirror`,
+`SetBrainEnabled`, `DriveMirrorTransform`, the `LerpWindow` interp, the `authored` wire bit and
+`AtvRelease`'s six velocity floats. What distinguishes a mirror is exactly one thing: it may not
+author COLLISION damage.
+
+| pillar | as-built |
+|---|---|
+| P1 correct, don't teleport | velocity written hard per packet; position error closed by a bounded corrective velocity sized over the MEASURED packet interval; cut to the authority's pose past a speed-scaled distance, past 45 deg on any axis, or when the error stops shrinking for 5 packets |
+| P2 brains off | **RETIRED — see §14.3.** The tick stays ON everywhere |
+| P3 collision guard | 7 `BndEvt__*ComponentHitSignature` interceptors, cancel-on-true when the peer does not own the tick; FAILS CLOSED (lane inert without all seven) |
+| P4 single syncer | `ownsTick` = pose author, else the host. `[V]` host `owns=1` / client `owns=0` in a real log; A4 (one owner per ATV per second) PASS |
+
+### 14.2 The release path DISSOLVED rather than being fixed
+The owed question was *"P1/P4 must answer the release path"*. Under this model there is no release:
+nothing froze, every packet already carried the velocity, and the stream does not stop — `authorSlot
+== 0xFF` hands the ATV to the host's idle syncer. `AtvRelease` now clears the author and does nothing
+else. That deletion IS the fix for §13.4's measured 158 cm/s launch.
+
+### 14.3 `[V]` THE TICK IS NOT THE BRAIN — a pillar the run killed
+"Brains OFF, physics ON" was P2 of the converged design. The first two-peer run refuted it: from a
+byte-identical start the tick-off mirror ended **42.7 cm** away. The bytecode says why —
+`ExecuteUbergraph_ATV @29894` calls `mesh.SetCenterOfMass(VLerp(..., tirescount/4))`
+**unconditionally, every frame**, before any gate. Centre of mass is rig CONFIGURATION re-applied per
+tick, not gameplay logic, so a rig whose tick is off rests somewhere else. And everything tick-off was
+meant to stop is ALREADY single-peer by the game's own gating: `@29949 IFNOT(isDriven) POP` guards
+`applyWheelTorque`, and every battery-drain term at `@33970-@34123` is
+`SelectFloat(x, 0, isDriven|isDrive|lights|turbo)` — all local-only. Measured effect of restoring the
+tick: horizontal agreement **13.2 cm → 0.3 cm**.
+
+### 14.4 `[V]` A NUDGE CANNOT MOVE A BODY AT REST — the second reversal
+Velocity-based correction is right for a moving body and powerless against a resting one (a 20 cm/s
+corrective velocity is erased by gravity in 20 ms). The corrector therefore watches itself: if the
+error stays outside the deadband and refuses to shrink for 5 consecutive packets, it CUTS. It counts
+packets, not seconds, so it is cadence-independent, and it needs no velocity threshold — velocity was
+the quantity lying about whether convergence was possible.
+
+### 14.5 What the runs did NOT establish, stated so it is not over-read
+- **The corrector under LOAD has never run.** The probe's sit arm calls `ATV_C::playerSit(localPlayer)`
+  and the log reads `SIT fired ... (driven now=0)` — the player is never actually seated, so `driven=1`
+  appears in ZERO samples across four runs and the acceptance's A1 arm is INCONCLUSIVE **by its own
+  design**. Fixing the arm is the next instrument job. This also means §9.4's mirrored-wheel question,
+  though it can no longer occur *by construction*, has still never been watched under load.
+- **The collision guard armed 7/7 on both peers but its CANCEL path never fired** — no ATV collided in
+  any run. Armed is not fired (`docs/COOP_DISPATCH_VISIBILITY.md`'s coin-lane row is the precedent).
+- **NOT hands-on.** Everything here is autonomous.
+
+### 14.6 `[V]` A residual that is NOT this lane's defect — the peers' WORLDS differ under the ATV
+Every run ends with the two copies **40.5 cm apart in Z only, exactly constant**. It survives a full
+rig teleport onto the host's pose: the corrector's cut fired **nine times** in one run and the client's
+copy fell back to the same 40.5 cm each time. From an identical save pose the host's ATV settles UP
+3.5 cm and the client's falls 37 cm — so the host has support under it that the client does not. No
+pose lane can hold a mirror where its own world has no floor. `tools/atv_probe_report.py` now
+ATTRIBUTES this instead of blaming the corrector. **File against the world / save-transfer lane, not
+against C1.**

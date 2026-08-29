@@ -453,6 +453,15 @@ Design implications (do NOT build yet; record so the architecture serves it):
 - 2026-05-24 — Added NPC + interactable entity sync to In scope; user. Phase
   5N1 (NPC pose) → 5N2 (spawn/despawn) → 5N3 (interactables / doors / world
   events) → 5N4 (vehicles) → 5N5 (transient events).
+- 2026-08-29 — **5N4 (vehicles) AMENDED and its first arc SHIPPED.** The ATV was in scope as
+  "driver-authoritative pose"; that is now understood to be too narrow, because a vehicle's
+  *persistent configuration* (modules, tires, container) and its *vitals* are what make it a vehicle
+  rather than a moving shape. Arc 1 (`070c7d29` + `a2a45fc7`, proto 146) shipped the MIRROR MODEL: a
+  non-authoring peer runs the rig natively and is corrected, instead of freezing it. Vitals, config
+  and the act-as-host intents remain in scope and unbuilt. Design of record:
+  `research/findings/vehicles/votv-ATV-full-sync-DESIGN-2026-08-29.md`; as-built `docs/vehicles/ATV.md`
+  §14; the crutch this replaces is `docs/CRUTCHES.md` C1. USER ruling 2026-08-29 ("the current ATV
+  implementation is made of crutches — needs proper design and fix").
 - 2026-05-24 — **client inventory is unique/private** (Out of scope; see
   above). World ↔ inventory transitions DO replicate as world events.
 - 2026-05-24 — **whole-map sync, no AOI culling**. NPCs + objects sync

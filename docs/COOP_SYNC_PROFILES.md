@@ -78,7 +78,7 @@ BUILT. Evidence `HO`=hands-on · `log` · `ST`=selftest/e2e · `code` · `inf` �
 | **Grime** | decrease-only min | 2 | 2U | code | CO | snapshot |
 | **Window-cleaning** | decrease-only min | 1 | 1W | ST | CO | snapshot |
 | **Garbage-chute** | client suppress | 2 | 2U | code | PP/HA | none |
-| **ATV** (**CRUTCH C1** -- `docs/CRUTCHES.md`; being redesigned, not extended) | occupant pose | 5 | 5U | code | CA/HA | snapshot |
+| **ATV** (**CRUTCH C1** -- arc 1 commit 1 SHIPPED 2026-08-29 `a2a45fc7`; vitals/config arcs still open) | rig pose + velocity, seat, author, collision guard | 5 | 5U | code | CA/HA | snapshot |
 | **Shop-order** | client→host commit | 1 | 1U | code | **ARB** | watermark-prime |
 | **Appliance** | 1-bit channel | 1 | 1U | code | CO | snapshot |
 | **Weather** (§5) | field-state | 5 | 1W · 1B · 3U | log | HA | snapshot |
@@ -160,8 +160,8 @@ a take-4 bug that a later unverified fix addressed stays at its last-measured `B
 | Window-cleaning | clean wipe (min-wins) | W | ST | CO | `window_sync::ApplyResolved` (+[dev] `window_synth`) | snapshot adopt=1 |
 | Garbage-chute | tick/pickup AV suppress | U | code | PP | `garbage_sync::IsGarbageInstance` (crash-fix) | none |
 | Garbage-chute | spawner suppression | U | code | HA | `InstallSpawnerSuppressors` (host rolls) | none |
-| ATV | body pose (occupant) | U | code | CA | `atv_sync::SetTarget` | snapshot adopt=1 |
-| ATV | authority-release / throw | U | code | CA | `OnAtvRelease` | none |
+| ATV | rig pose + velocity (occupant OR host-idle) | U | code | CA/HA | `atv_sync::ApplyCorrection` (`SetTarget`/`LerpWindow` RETIRED 2026-08-29 -- the mirror simulates and is corrected, it is not interpolated) | snapshot adopt=1 (pose+velocity) |
+| ATV | authority-release (NOT a throw) | U | code | CA | `OnAtvRelease` -- clears `authorSlot` and nothing else since 2026-08-29; the six velocity floats that launched the other peer's copy are DELETED | none |
 | ATV | ~~purchased~~ **mid-session** spawn | U | code | HA | `OnAtvSpawn`. **LABEL CORRECTED 2026-08-29:** no row in the 473-row `list_store` and no craft recipe sells an ATV `[V]`, so the lane's own comment (`atv_sync.cpp:98-101`, "a bought ATV is delivered ONLY on the host") is FALSE. The code's real predicate is `isHost && key not-in g_savePlacedKeys && obj not-in g_savePlacedActors` (`:313-318`) = "an ATV first seen after the baseline window". **Whether ANY such ATV exists is now MEASURED [V] 2026-08-29: YES, and the RULE-2 deletion is CANCELLED** — `list_props` row `atv` has `spawnAsObject = ATV_C`, `hidden = false`, spawned via `lib.PropToObject` -> `spawnPropThroughGamemode` from `ui_spawnmenu` (whole-pak census, `docs/vehicles/ATV.md` §11.4). The lane STAYS; only its comment is wrong | snapshot (synth key) |
 | ATV | ~~purchased~~ **mid-session** destroy | U | code | HA | `OnAtvDestroy`; same corrected premise as the row above | n/a |
 | ATV | seat contention (mount deny) | U | code | CA | PR #9 `ca89cc1e` + `c4aabe15`: `occupantSlot` per indexed ATV; the deny is a client-side PRODUCER suppression at `device_occupancy::OnUseInputPre` (`ClearAimForDispatch`), and a simultaneous mount is settled by LOWER SLOT WINS in `atv_sync::OnReliable`. Build + smoke only -- the smoke does NOT put two peers on one ATV, so the tie-break has never been observed firing | snapshot (adopt=1 carries `e.occupantSlot`, so a joiner inherits the active driver) |

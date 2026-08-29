@@ -2787,6 +2787,21 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   your edit. Staging an explicit path does not save you if the file's own bytes were rewritten.
   `memory/lesson_a_scripted_edit_must_preserve_the_files_newline_convention.md`
 
+- **A COUNTER YOU NEVER PRINT IS NOT AN INSTRUMENT — and a verdict that cannot attribute blames the
+  nearest subsystem.** 2026-08-29, ATV arc 1, two halves of one failure. (1) The corrector shipped with
+  `g_warps`/`g_corrs` and a comment saying "a corrector nobody can see is a corrector nobody can
+  falsify" — incremented, printed **nowhere**, one line below that comment. Three build/deploy/run
+  cycles could not answer *is it running at all*, and two were spent on hypotheses a single log line
+  would have ordered. The moment one line printed, the answer was neither hypothesis. (2) The acceptance
+  arm read "40.5 cm apart -> FAIL" and pointed at the vehicle lane, which was working perfectly; the
+  distinguishing evidence was already in the same log (**repeated cuts at a CONSTANT distance** = the
+  rig WAS teleported onto the authority's pose and fell back = a world-geometry fact, not a pose-lane
+  one). *Look FIRST:* add a counter's PRINT in the same edit or do not add the counter; when an
+  acceptance arm fails, ask what other evidence in the same log separates "my code did not act" from
+  "my code acted and something undid it", and teach the report that; and when chasing a discrepancy
+  across builds the first question is always "did my code run", never "is my algorithm right".
+  `memory/lesson_a_counter_you_never_print_is_not_an_instrument.md`
+
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
 
 - **A WINDOW CLOSED BY THE LATCH THAT STARTS THE NEXT PHASE ENDS BEFORE THAT PHASE — BY
@@ -3633,6 +3648,19 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   destruction, enumerate every killer including the engine's; name the noun your census actually covered
   (reads ≠ deaths); and act on POSITIVE evidence that you are inside the verb, never on the absence of
   the causes you happen to own. `memory/lesson_an_entity_death_discriminator_must_be_fail_closed.md`
+
+- **A CORRECTOR OWES A CONVERGENCE CHECK — a nudge cannot move a body at rest.** 2026-08-29, ATV arc 1.
+  Correcting a simulating mirror by biasing its VELOCITY is right for a moving body and achieves exactly
+  zero against a resting one: a 20 cm/s corrective velocity is erased by gravity in 20 ms, and the error
+  stood unchanged for a whole 150 s run while the correction was applied every packet. Two sizing facts
+  from the same pass: a FIXED correction window oscillates at the wrong cadence (`e' = e*(1 - dt/T)`, so
+  `T = 0.10 s` converges at `dt = 50 ms`, gives **zero decay** at 200 ms and GROWS beyond it — one
+  constant cannot serve two cadences), and the fix that closed it is a **stall detector** counting
+  PACKETS in which the error refused to shrink, escalating to a cut. It needs no velocity threshold,
+  because velocity is the quantity lying about whether convergence is possible. *Look FIRST:* every
+  error-closing loop owes a cheap "packets where the error did not shrink" counter and an escalation —
+  without one, "I applied a correction" and "the correction worked" are indistinguishable from inside
+  the code. `memory/lesson_a_corrector_owes_a_convergence_check.md`
 
 ## 4. Dispatch, hooks & input seams
 
@@ -4770,6 +4798,22 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   the library does not bind them; and read every early return of any checker that both returns a
   verdict and fills a struct. `memory/lesson_a_mechanism_is_only_as_wide_as_the_code_that_consults_it.md`
 
+- **A TICK IS NOT A BRAIN — read what it does before its FIRST branch.** 2026-08-29, ATV arc 1. Parking
+  a mirror's brain is this project's standard move, and it is written into the ATV design as a pillar.
+  It moved the vehicle: from a byte-identical start a tick-off mirror ended **42.7 cm** away and 37 cm
+  lower. `[V]` `ATV_C`'s tick reaches `mesh.SetCenterOfMass(VLerp(..., tirescount/4))`
+  **unconditionally, every frame, before any gate** (`ExecuteUbergraph_ATV @29894`) — a centre of mass
+  is rig CONFIGURATION the BP re-applies per tick, not a decision. And the things the park was meant to
+  stop were already single-peer by the game's own gating: `@29949 IFNOT(isDriven)` guards
+  `applyWheelTorque`, every battery term is `SelectFloat(x, 0, isDriven|isDrive|lights|turbo)`. It
+  prevented nothing and changed the physics; restoring the tick took horizontal agreement 13.2 cm ->
+  0.3 cm. The distinction is not visible in the class name or the property census — only in the
+  bytecode. *Look FIRST:* disassemble `ReceiveTick` to its first branch; anything unconditional there
+  (`SetCenterOfMass`, `SetMassScale`, a constraint re-place, `AddForce`) is configuration. Then check
+  whether what you meant to stop is already locally gated. A mirror that must differ usually needs a
+  NARROW cancel at the authoring seam, not a whole-tick switch.
+  `memory/lesson_a_tick_is_not_a_brain_check_what_it_does_unconditionally.md`
+
 ## 6. Assets, models, geometry
 
 - **2026-08-29 — Cooked UE4 data is DELTA-vs-archetype encoded at every PROPERTY layer; absence
@@ -5092,6 +5136,19 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   any `stat unit`. AND: an instrument in the detour's OUTER frame is OUTSIDE the SEH crash
   firewall -- one placed there hard-crashed the game on its first boot.
   `memory/lesson-an-instrument-that-measures-only-our-code-cannot-see-what-we-provoke.md`
+- **A RATE LIMITER'S CLOCK BELONGS TO THE WINDOW, NOT THE SEND.** 2026-08-29, ATV arc 1, found by the
+  perf audit. `if (window_elapsed && something_changed) { lastSent = now; send(); }` — the `&&` really
+  does short-circuit, which is why it reads fine, but bumping the timestamp only on a SEND means the
+  quiet case never advances the clock, the gate stays **permanently open**, and the "free" branch runs
+  at the pump rate. Measured: the change-gate read is 5 ProcessEvent dispatches + 5 heap allocations,
+  so a PARKED ATV cost ~300/s on the host where the previous code did zero — the branch was cheapest
+  when it sent and most expensive when it did not. `[V]` MTA does not have this bug and the difference
+  is one line's position: `CUnoccupiedVehicleSync::DoPulse:63-68` bumps its clock unconditionally as
+  soon as the window elapses. Invisible to `[WALK-TIME]`, which logs only at >= 1000 us. *Look FIRST:*
+  write it as two nested statements so the clock's ownership is visible, and when porting a limiter
+  diff the timestamp's PLACEMENT specifically — it looks like formatting and is the whole mechanism.
+  `memory/lesson_a_rate_limiters_clock_belongs_to_the_window_not_the_send.md`
+
 ## 8. Build / deploy / git hygiene
 
 - **CMAKE `if(<var>)` EATS A LEGITIMATE "0" -- AND THE FLAWED GUARD ARRIVED WITH TWO ENDORSEMENTS.**
