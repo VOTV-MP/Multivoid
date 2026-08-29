@@ -14,7 +14,7 @@ properties are why this folder exists rather than a row in `docs/items/`.
 
 | Vehicle | Class | Doc | Status |
 |---|---|---|---|
-| ATV / quadbike | `AATV_C` (+ `ATV_Child_C`) | [ATV.md](ATV.md) | RE COMPLETE; sync PARTIAL (pose only) |
+| ATV / quadbike | `AATV_C` (+ `ATV_Child_C`) | [ATV.md](ATV.md) | RE COMPLETE; baseline MEASURED (§13); shipped sync is **CRUTCH C1** — redesign converged, **build not started** |
 
 Cross-cutting contracts stay where they are (link, don't restate):
 

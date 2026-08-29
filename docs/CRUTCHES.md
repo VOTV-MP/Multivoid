@@ -46,7 +46,7 @@ missing work; this register is for work that was *built in the wrong shape*.
 
 | # | Subsystem | Shape of the crutch | Status | Order |
 |---|---|---|---|---|
-| C1 | **ATV** (`coop/interactables/atv_sync`, `ue_wrap/devices/atv`) | The mirror is a frozen corpse; the rig's whole purpose is deleted to make it hold still | **DESIGN CONVERGING** (2026-08-29) | **FIRST** |
+| C1 | **ATV** (`coop/interactables/atv_sync`, `ue_wrap/devices/atv`) | The mirror is a frozen corpse; the rig's whole purpose is deleted to make it hold still | **DESIGN CONVERGED + BASELINE MEASURED** (2026-08-29, `ca64d098`); **build NOT started** | **FIRST** |
 | C2 | **Trash piles / clumps** (`coop/props/trash_proxy`, `native_pile_mirror`, + ~9 sibling modules) | The mirror is a FAKE actor, which broke aim, which grew a parallel aim system; two mirror implementations now coexist | **OPEN** | **SECOND** (user: *"that's on the list after atv"*) |
 
 ---

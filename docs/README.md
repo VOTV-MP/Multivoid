@@ -106,6 +106,12 @@ to spend a day on something, grep it first.
 with the measured evidence and the proper fix for each. Created 2026-08-29 on user directive. It is
 the counterpart to LESSONS.md: that one records what we learned, this one records what we still owe.
 
+**[vehicles/](vehicles/README.md)** — the per-vehicle knowledge base, one doc per driveable
+occupant-carrying multi-body actor. Same discipline as `items/` and `events/`: native behaviour from
+the bytecode, the sync-axis table, and the honest as-built status live in that vehicle's own file.
+Currently one entry, [vehicles/ATV.md](vehicles/ATV.md), whose §13 carries the runtime baseline that
+`CRUTCHES.md` C1 rests on.
+
 [OPUS_48_DISCIPLINE.md](OPUS_48_DISCIPLINE.md) — the working agreement for AI-assisted sessions on
 this codebase. Multivoid is built by one maintainer with Claude, which the project states openly
 rather than hides.

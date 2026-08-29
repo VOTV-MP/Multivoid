@@ -2679,6 +2679,60 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   caught exactly that regression in this row minutes after it was written.
   `memory/lesson_a_lessons_pointer_rots_independently_of_its_takeaway.md`
 
+- **Presence in `GUObjectArray` is NOT presence in the WORLD — and the bad samples are ZEROS, which
+  look like data.** Measured 2026-08-29: a scan-hub consumer received the save-placed ATV for ~15
+  samples (7.5 s) before that actor had a transform. Class matched, every field read cleanly, and the
+  game's own `vehicleGetParts()` **succeeded and returned zeros** — nothing fails, so there is no
+  error to notice. Left in, they turned the probe's headline statistic from `susFR range 2.59 cm /
+  sd 0.34` into `94.98 cm / sd 19.69` — a **20x** error, reading as the *interesting* answer. Object-
+  array membership is an ALLOCATION fact; a placed `RootComponent` is a LEVEL-STREAMING fact, and a
+  cooked map separates them by seconds. LOOK FIRST: give any object-array-fed probe a LIVENESS
+  predicate distinct from existence (a non-zero world transform is the cheap one), and put the guard
+  in the PARSER so no consumer can inherit the bug (`tools/atv_probe_report.py` does, with the reason
+  in a comment). When a spread surprises you, check its MIN is physically possible.
+  `memory/lesson_presence_in_the_object_array_is_not_presence_in_the_world.md`
+- **A result that CONFIRMS your hypothesis is where to look hardest — attribution is the step that
+  feels like it needs no evidence.** Measured 2026-08-29: the ATV probe returned exactly the shape the
+  C1 design predicted (client rig travel 29.58 cm vs the host's 2.32, bodies 109.9 cm apart) and I
+  wrote it up as the pose stream deforming the mirror. Wrong. One line in the same log, seconds away:
+  `atv: OnAtvRelease -- physics re-enabled + launch velocity applied (|lin|=158 cm/s)` — and **every**
+  out-of-band client sample is after it. The client's ATV had been launched and rolled away under its
+  own physics. The measurement was real and correctly computed; only the ATTRIBUTION was wrong. Note
+  the asymmetry that makes this expensive: a result that contradicts you gets audited immediately, so
+  a wrong contradicting result self-corrects — a confirming one is filed, and survives into the design
+  doc as a measured premise. The second half of the trap: I read the log **for my variable** (the
+  `[ATVP]` tag) instead of reading the **window**. LOOK FIRST: grep the timestamp range, not the tag;
+  find the FIRST out-of-band sample and ask what happened immediately before it; name one alternative
+  cause and what would distinguish it; and record the wrong reading AS wrong (`docs/vehicles/ATV.md`
+  §13.4) so the next reader knows the obvious interpretation was tried and failed.
+  `memory/lesson_a_result_that_confirms_your_hypothesis_is_where_to_look_hardest.md`
+- **A lane that only exists under AUTHORITY is invisible at rest — the instrument must CREATE the
+  condition.** Measured 2026-08-29: `atv_sync.cpp:453` releases an unauthored ATV instead of mirroring
+  it, and nothing streams one, so while nobody drives **there is no mirror in existence to measure**.
+  A two-peer smoke with a probe therefore cannot answer "do a mirror's wheels follow its body" no
+  matter how long it runs — it produces no signal and no error, which is indistinguishable from
+  "measured it and it was fine". Worse, the null result READS as reassuring: the peers agreed to
+  0.3 cm because neither was mirroring anything. Fix: a host-only one-shot arm calling the game's own
+  `ATV_C::playerSit(localPlayer)` — the verb, not a synthetic state write. LOOK FIRST: before
+  instrumenting a lane, grep the RECEIVER for the predicate that switches it on (`authored`,
+  `isAuthority`, `preparedAsMirror`, a claim/holder check) and confirm it will be true during the run;
+  if it needs a player action, the instrument owes a separately-gated, host-scoped, one-shot arm. And
+  when a probe reports "the peers agree", ask whether the mechanism worked or never ran.
+  `memory/lesson_a_lane_that_only_exists_under_authority_is_invisible_at_rest.md`
+- **A scripted edit must PRESERVE the file's newline convention, not choose one.** Measured
+  2026-08-29: a 4-line insert into `config_registry_rows.inc` written with `newline="
+"` flipped the
+  whole CRLF file to LF — **763 changed lines** for a 4-line edit. Three things hid it: the same call
+  had been correct on ten other files that session (most of this tree is LF); the per-line diff shows
+  the same text on both sides, reading as noise; and the build plus `registry_gate.ps1` both passed,
+  because nothing mechanical objects to an ending flip. The cost lands hardest exactly here — that
+  `.inc` was **already modified by another live session**, so staging it would have buried their hunks
+  inside mine in a file neither of us could review by eye (`docs/CROSS_SESSION.md`). LOOK FIRST: write
+  with `newline=""` so Python round-trips the existing endings, or restore from `git show HEAD:<path>`
+  and re-apply; then READ `git diff --stat` before staging and check the count matches the size of
+  your edit. Staging an explicit path does not save you if the file's own bytes were rewritten.
+  `memory/lesson_a_scripted_edit_must_preserve_the_files_newline_convention.md`
+
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
 
 - **A WINDOW CLOSED BY THE LATCH THAT STARTS THE NEXT PHASE ENDS BEFORE THAT PHASE — BY

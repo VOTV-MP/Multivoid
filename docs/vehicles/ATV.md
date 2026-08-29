@@ -534,10 +534,15 @@ that are not where the body is.
 ### 9.3 Correction to the shipped identity lane
 `atv_sync.cpp`'s comment says a synth key is minted because *"a bought ATV is delivered ONLY on the
 host"*. §0.3 measured that **no shop row sells an ATV**, so that specific premise is false. The
-mechanism is not wrong — it fires for **any** ATV first seen after a client connected — but its only
-real triggers are non-shop ones (`ufoDropper_car`, an event spawn, a `crafted()` path), all **[?]**.
-It also means the `keysHash` divergence gate that the 2026-06-15 doc made Gap B conditional on has
-never had a purchased ATV to run against.
+mechanism is not wrong — it fires for **any** ATV first seen after a client connected.
+
+**TRIGGER MEASURED 2026-08-29 (§11.4), and it is none of the ones this section speculated.** The
+whole-pak census found **zero** blueprints that spawn `ATV_C` by class constant — so `ufoDropper_car`,
+an event spawn and a `crafted()` path are all ruled OUT, not merely `[?]`. The one real trigger is
+`list_props` row `atv` (`spawnAsObject = ATV_C`, `hidden = false`) reached via `lib.PropToObject` →
+`spawnPropThroughGamemode` from `ui_spawnmenu`. So the lane STAYS and its comment was the only wrong
+part (fixed in `d737321c`). The `keysHash` divergence gate the 2026-06-15 doc made Gap B conditional
+on has still never been run against a runtime-spawned ATV.
 
 ### 9.4 The wheels are not in the mirror — a defect candidate [RD]
 `PrepareMirror` calls `engine::SetActorSimulatePhysics(actor,false)`, which resolves to
@@ -545,10 +550,18 @@ never had a purchased ATV to run against.
 `DriveMirrorTransform` then does `SetActorLocation` + `SetActorRotation` — again the root. The four
 wheel components remain independently simulating bodies constrained to a root that is teleported ~20
 times a second. The game's own `teleportVehicle` re-places the wheels after every actor teleport
-precisely because they do not follow. **Whether the mirrored wheels lag, stretch the constraints, or
-detach has never been observed** — no smoke scenario drives an ATV, and the ATV lane has never been
-hands-on tested. `vehicleGetParts` / `teleportVehicleAdvanced` (§2.6) is the ready-made fix if the
-measurement confirms it.
+precisely because they do not follow. `vehicleGetParts` / `teleportVehicleAdvanced` (§2.6) is the
+ready-made fix if the measurement confirms it.
+
+**STATUS UPDATED 2026-08-29 — half of this section's "never observed" is now false, and the other
+half is still true.** A smoke scenario now DOES drive an ATV (the probe's sit arm, §13), and the rig
+has been instrumented on both peers. What §13 measured is that the client's rig went far outside its
+normal band — but the cause was `AtvRelease` **launching** the client's copy at 158 cm/s, not a
+mirror being deformed by the stream. **Whether the wheels of an actively MIRRORED ATV lag or stretch
+is still `[?]`**: the run never confirmed the client held `preparedAsMirror` during the driven
+window, so the specific claim in this section has not been tested. What it needs is one more arm —
+assert `preparedAsMirror` on the receiver and sample across it. The ATV lane remains never
+hands-on tested.
 
 ### 9.5 Dead wire bits [V-src]
 `ReadPayload` writes `stateBits` bit0 = `isDriven`, bit1 = `brake`, bit2 = `grabbed`. `OnReliable`
