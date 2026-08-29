@@ -100,8 +100,15 @@ landscape, foliage, lights), every saved prop/entity/vehicle/NPC from the save's
 
 ## 5. Residual ledger
 
+> **Session handoff 2026-08-29 (end of build day): the user reviewed the full scene and said
+> "still many things to fix" — the NEXT session opens with their field-fix list.** Working
+> agreement from this session: NO renders — hand over the `.blend`, the user inspects manually
+> (scratchpad `votvio_smoke.blend` is the current full-scene artifact).
+
 | Open | What | Phase |
 |---|---|---|
+| — | the user's field-fix list (pending, next session) | next |
+| — | water: the material family is built, but lake/river SURFACES were never verified present | next |
 | — | **acceptance probe + calibration + machine diff** (the design's own gate) | next |
 | — | gatherer table from the 48 kismet bodies (interim: all int_save level actors skipped) | next |
 | O8 | non-main-map saves (`Level != Untitled_1`) — generic attempt + warning, unvalidated | P3 |
