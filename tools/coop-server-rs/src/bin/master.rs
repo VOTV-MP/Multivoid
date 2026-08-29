@@ -14,7 +14,8 @@
 //! ever held across an await — while still using the multi-thread tokio runtime.
 
 use coop_server::common::{
-    clamp_str, ct_eq, env_int, env_str, log, token_hex, token_urlsafe, turn_creds,
+    clamp_str, ct_eq, env_int, env_str, identity_shape_ok, log, token_hex, token_urlsafe,
+    turn_creds,
 };
 use coop_server::tls;
 use serde_json::{json, Value};
@@ -139,7 +140,11 @@ impl Lobby {
             session_id: token_hex(16),
             lobby_id: token_hex(8),
             token: token_urlsafe(24),
-            host_identity: format!("h{}", token_hex(8)),
+            // Empty until `/v1/host` supplies the host's own public key, which it
+            // must (see h_host). The master no longer mints a routing name: a name
+            // it asserts on a host's behalf is one nobody can prove, and since
+            // 2026-08-29 the relay registers only proved keys.
+            host_identity: String::new(),
             name: String::new(),
             version: String::new(),
             game: String::new(),
@@ -365,21 +370,6 @@ fn game_shape_ok(game: &str) -> bool {
         && suffix.bytes().all(|b| b.is_ascii_lowercase())
 }
 
-/// A peer identity as GNS renders a 32-byte `GenericBytes` one: `gen:` + 64
-/// lowercase hex. Since b144 a host publishes its durable PUBLIC KEY here and
-/// joiners dial exactly this string, so the master's job is to store it verbatim
-/// -- it neither mints it nor can verify it, and it must not silently accept a
-/// shape that would dial nobody. Lowercase is required, not merely preferred:
-/// `[V]` GNS hashes and byte-compares identity strings and its own parser rejects
-/// uppercase prefixes for that reason, so `GEN:AB..` would register under one
-/// spelling and be dialled under another.
-fn identity_shape_ok(id: &str) -> bool {
-    let Some(hex) = id.strip_prefix("gen:") else {
-        return false;
-    };
-    hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-}
-
 /// Pure gate half (env resolved by the caller so this is unit-testable).
 fn version_gate(game: &str, proto: i64, max_build: i64, allowed: &[i64]) -> Result<(), String> {
     if !game.is_empty() && !game_shape_ok(game) {
@@ -448,19 +438,23 @@ fn h_host(state: &mut MasterState, ip: &str, body: &Value) -> (u16, Value) {
         log(&format!("host REFUSED from {}: {} (name='{}')", ip, reason, lo.name));
         return (400, json!({"error": reason}));
     }
-    // The identity joiners dial. A b144+ host publishes its own durable public key
-    // (`gen:<64 hex>`); the minted `h<16hex>` in Lobby::new stays as the fallback
-    // for an already-released host that sends none. A PRESENT-but-malformed value
-    // is refused rather than replaced: falling back would advertise a name the
-    // host is not registered under on the signaling server, and the lobby would
-    // list fine and be unjoinable -- the failure this endpoint exists to prevent.
-    if let Some(id) = as_str(body, "identity") {
-        if !id.is_empty() {
-            if !identity_shape_ok(id) {
-                log(&format!("host REFUSED from {}: bad identity shape", ip));
-                return (400, json!({"error": "bad identity"}));
-            }
-            lo.host_identity = id.to_string();
+    // The identity joiners dial: the host's own durable public key, `gen:<64 hex>`.
+    // REQUIRED since 2026-08-29. It used to be optional, with a minted `h<16hex>`
+    // fallback for an already-released host that sent none -- that fallback is
+    // retired with the b<=133 cohort (user decision), and its retirement is not
+    // cosmetic: a minted name is one the master ASSERTS on a host's behalf, and
+    // the signaling relay now registers nothing that its holder did not sign for.
+    // Advertising a name no peer can be registered under would list a lobby that
+    // is unjoinable, which is the exact failure this endpoint exists to prevent.
+    //
+    // A pre-b145 host therefore gets a 400 here and never reaches the relay, so
+    // its deprecation is a NAMED refusal at the first call rather than a silent
+    // rendezvous failure two hops later.
+    match as_str(body, "identity") {
+        Some(id) if identity_shape_ok(id) => lo.host_identity = id.to_string(),
+        _ => {
+            log(&format!("host REFUSED from {}: missing/bad identity", ip));
+            return (400, json!({"error": "this build is too old to host -- update Multivoid"}));
         }
     }
     lo.world = clamp_field(body, "world", MAX_WORLD);
@@ -618,11 +612,14 @@ fn h_join(state: &mut MasterState, ip: &str, body: &Value) -> (u16, Value) {
     let session_id = lo.session_id.clone();
     let host_identity = lo.host_identity.clone();
     let lobby_id = lo.lobby_id.clone();
-    let peer_identity = format!("c{}", token_hex(8));
-    log(&format!("join {lobby_id} as {peer_identity} from {ip}"));
+    // No `peerIdentity`. The master used to mint a `c<16hex>` here for the joiner
+    // to install with ResetIdentity; a joiner has registered under its OWN durable
+    // key since b144 and stopped reading this field then, and the relay now
+    // registers only keys their holder signed for -- so a minted name is one no
+    // peer could use even if it wanted to. Retired with the b<=133 cohort.
+    log(&format!("join {lobby_id} from {ip}"));
     let mut resp = serde_json::Map::new();
     resp.insert("sessionId".into(), json!(session_id));
-    resp.insert("peerIdentity".into(), json!(peer_identity));
     resp.insert("hostIdentity".into(), json!(host_identity));
     resp.insert("conn".into(), json!("p2p"));
     // TURN cred bound to the joiner's IP bucket (audit M2), not the fresh peer id.
@@ -1036,7 +1033,8 @@ async fn serve_tls(listener: TcpListener, acceptor: tokio_rustls::TlsAcceptor) -
 
 #[cfg(test)]
 mod tests {
-    use super::{game_shape_ok, identity_shape_ok, version_gate};
+    use super::{game_shape_ok, version_gate};
+    use coop_server::common::identity_shape_ok;
 
     #[test]
     fn game_shape_accepts_real_votv_versions() {

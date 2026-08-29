@@ -62,6 +62,24 @@ consumes numbers.
    the dated `TRIPWIRE-DECISION` line + re-freeze in the same commit (§11's
    no-wallpaper rule; the script detects an overdue disposition mechanically).
    Commit the refreshed `tripwires_state.json` with the release flow.
+
+   **BLOCKING requirement — the signaling relay (b145+, security A59, 2026-08-29):**
+   run `python tools/sig_gate.py --remote <deployed-relay> --token <its token>`
+   and paste the verdict. It must be **PASS**. This one BLOCKS, where the
+   trip-wires only advise, and the reason is a flag day: since b145 the mod's
+   signaling client **fails closed** on a relay that does not challenge it, and
+   the relay refuses any name its holder cannot sign for. So the relay redeploy
+   and the release are **one step, not two** — publish the build against an old
+   relay and every install loses P2P at once, with the diagnosis only in a log
+   the player cannot see. The same script is the A59 drill against a locally
+   built relay (no arguments), so a green release gate and a green drill are the
+   same instrument, not two that can disagree.
+
+   Order on the box: redeploy `coop-signaling` **and** `coop-master` (the master
+   now requires a host to publish its own `gen:` key — the `h<16hex>`/`c<16hex>`
+   mints are retired with the b<=133 cohort), run `sig_gate --remote`, THEN
+   publish. A pre-b145 host gets a named 400 from `/v1/host` rather than a silent
+   rendezvous failure, which is the whole point of doing it in that order.
 0.5. **Author the changelog + show it to the user** (2026-07-26): write
    `tools/release/notes/b<N>.md` (format rules in `tools/release/notes/README.md`:
    plain bullets, no heading, verbs are status claims anchored to the consume

@@ -2,11 +2,26 @@
 //
 // Co-located net-internal header (src tree, not include/). Ported from
 // third_party/GameNetworkingSockets/examples/trivial_signaling_client.cpp
-// (BSD-3, Valve) into our namespace. The wire protocol matches that example +
-// trivial_signaling_server.py: a line-oriented TCP stream where the first line
-// is our identity and every subsequent line is "<dest-identity> <hex-payload>\n".
-// The server routes a line to the connection registered under <dest-identity>,
-// rewriting the leading token to the SENDER's identity on the way out.
+// (BSD-3, Valve) into our namespace. The wire is a line-oriented TCP stream:
+// the first line is "<token> <identity>" and every subsequent line is
+// "<dest-identity> <hex-payload>\n". The server routes a line to the connection
+// registered under <dest-identity>, rewriting the leading token to the SENDER's
+// identity on the way out.
+//
+// REGISTRATION IS PROVED (security A59, 2026-08-29). Between the greeting and
+// the relay stream the server sends "nonce <64 hex>" and we answer
+// "auth <128 hex>" -- an Ed25519 signature, by the key our identity NAMES, over
+// a domain-separated blob. Our identity IS that key (b144 made a peer's durable
+// public key its rendezvous name), and until this landed the greeting's only
+// credential was a static bearer every mod user holds, so anyone who had ever
+// played with us could take our permanent name and deny us rendezvous forever.
+//
+// WE FAIL CLOSED. A relay that never challenges us is older than this build, and
+// registering unproved there would silently reopen exactly what the challenge
+// closes -- so we refuse and say so by name. The cost is bounded to P2P: the LAN
+// and direct-IP lanes never touch a relay. What makes fail-closed SAFE is not
+// this code but `tools/sig_gate.py`, which proves the DEPLOYED relay speaks the
+// challenge before a build that requires it may be published (docs/RELEASE.md).
 //
 // One SignalingClient per Session (P2P only). It:
 //   - maintains the TCP connection to the signaling server (auto-reconnect),
@@ -91,12 +106,24 @@ private:
     void ConnectLocked();       // caller holds sockMutex_ (no DNS -- uses the cached addr)
     void Enqueue(const std::string& line);  // thread-safe; line is '\n'-terminated
 
+    // Where this connection is in the registration handshake. Reset to
+    // AwaitingChallenge by EVERY ConnectLocked, because a reconnect re-greets and
+    // the server issues a FRESH nonce -- carrying `ProofSent` across a drop would
+    // make us skip a challenge we were about to be sent.
+    enum class RegState { AwaitingChallenge, ProofSent };
+
+    // Answer the server's "nonce <64 hex>". Returns false when the line is not a
+    // well-formed challenge or we cannot sign it, in which case the caller drops
+    // the connection: there is nothing to be gained by staying on a relay that
+    // will not register us. Net thread; takes sockMutex_ via Enqueue.
+    bool AnswerChallenge(const char* line, size_t len);
+
     const std::string host_;
     const std::string service_;     // port, as a string for getaddrinfo
     const std::string token_;       // shared bearer token sent in the greeting
     ISteamNetworkingSockets* const sockets_;
     std::string selfIdentity_;      // rendered local identity (no newline)
-    std::string greeting_;          // selfIdentity_ + "\n"
+    std::string greeting_;          // "<token> <identity>\n"
     bool wsaStarted_ = false;       // we successfully called WSAStartup
     bool identityOk_ = true;        // false if our identity is invalid/spaced -> Create() returns nullptr
 
@@ -121,6 +148,11 @@ private:
     // after a drop (net-thread-only; no lock). Without it a down signaling
     // server triggers a reconnect attempt every Poll (~200 Hz).
     std::chrono::steady_clock::time_point nextConnectAttempt_{};
+    // Registration handshake state (net-thread only, like inBuf_). The deadline
+    // is generous on purpose: it exists to turn "an old relay never challenged
+    // us" into ONE named error line, not to police latency.
+    RegState regState_ = RegState::AwaitingChallenge;
+    std::chrono::steady_clock::time_point challengeDeadline_{};
 };
 
 }  // namespace coop::net

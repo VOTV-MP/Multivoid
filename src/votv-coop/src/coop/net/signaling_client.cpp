@@ -13,6 +13,7 @@
 
 #include "signaling_client.h"
 
+#include "coop/net/peer_identity.h"
 #include "ue_wrap/core/log.h"
 
 #include <cstring>
@@ -57,6 +58,22 @@ constexpr size_t kMaxInboundBuffer = 64 * 1024;
 // attempt every Poll (~200 Hz) -- pointless socket churn.
 constexpr auto kReconnectBackoff = std::chrono::seconds(5);
 
+// How long we wait for the server's registration challenge after our greeting
+// leaves the socket. Generous on purpose: this deadline is not policing latency,
+// it exists to turn "this relay predates the challenge" into ONE named error
+// line instead of a silent hang. Matches the server's own pre-auth budget.
+constexpr auto kChallengeTimeout = std::chrono::seconds(15);
+
+// MUST equal `REGISTER_TAG` in tools/coop-server-rs/src/bin/signaling.rs. The two
+// are separate constants in separate languages; what keeps them honest is
+// tools/sig_gate.py, which drives a real relay with a real key and fails if the
+// blobs disagree -- not a comment on either side.
+constexpr char kRegisterTag[] = "multivoid-signaling-register-v1";
+constexpr char kChallengePrefix[] = "nonce ";
+constexpr size_t kNonceHexLen = 64;
+
+const char kHexDigit[] = "0123456789abcdef";
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -83,10 +100,9 @@ struct SignalingClient::ConnectionSignaling : ISteamNetworkingConnectionSignalin
         signal.reserve(peerIdentity_.size() + static_cast<size_t>(cbMsg) * 2 + 4);
         signal.append(peerIdentity_);
         signal.push_back(' ');
-        static const char hexdigit[] = "0123456789abcdef";
         for (const uint8_t* p = static_cast<const uint8_t*>(pMsg); cbMsg > 0; --cbMsg, ++p) {
-            signal.push_back(hexdigit[*p >> 4U]);
-            signal.push_back(hexdigit[*p & 0xf]);
+            signal.push_back(kHexDigit[*p >> 4U]);
+            signal.push_back(kHexDigit[*p & 0xf]);
         }
         signal.push_back('\n');
         owner_->Enqueue(signal);
@@ -281,6 +297,15 @@ void SignalingClient::ConnectLocked() {
     if (sendQueue_.empty() || sendQueue_.front() != greeting_) {
         sendQueue_.push_front(greeting_);
     }
+
+    // A reconnect re-greets, so the server will issue a FRESH nonce and we owe a
+    // fresh proof: carrying ProofSent across a drop would make us skip a
+    // challenge we are about to be sent. The deadline is left UNARMED here and
+    // armed only once the greeting actually leaves the socket -- arming it now
+    // would time out an unreachable server and blame it for "not challenging us",
+    // which is a different fault with a different fix.
+    regState_ = RegState::AwaitingChallenge;
+    challengeDeadline_ = std::chrono::steady_clock::time_point{};
     UE_LOGI("signaling: connecting to %s:%s as '%s'",
             host_.c_str(), service_.c_str(), selfIdentity_.c_str());
 }
@@ -310,6 +335,68 @@ ISteamNetworkingConnectionSignaling* SignalingClient::CreateSignalingForConnecti
     // shared_from_this() co-owns the transport from the per-connection object
     // (valid: the object is always managed by the shared_ptr returned by Create).
     return new ConnectionSignaling(shared_from_this(), peerRender.c_str());
+}
+
+// ---------------------------------------------------------------------------
+// Registration proof (security A59): sign the server's nonce with the key our
+// identity NAMES. See the header for why this is load-bearing rather than a
+// ceremony.
+// ---------------------------------------------------------------------------
+bool SignalingClient::AnswerChallenge(const char* line, size_t len) {
+    // Tolerate a trailing CR so a relay behind a line-ending-normalising proxy
+    // does not read as a protocol violation.
+    while (len > 0 && (line[len - 1] == '\r' || line[len - 1] == ' ')) --len;
+
+    constexpr size_t kPrefixLen = sizeof(kChallengePrefix) - 1;
+    if (len != kPrefixLen + kNonceHexLen ||
+        std::memcmp(line, kChallengePrefix, kPrefixLen) != 0) {
+        UE_LOGE("signaling: expected a registration challenge and got a %zu-byte "
+                "line that is not one -- this relay does not speak the "
+                "nonce/auth exchange. REFUSING to register unproved.", len);
+        return false;
+    }
+    const char* nonce = line + kPrefixLen;
+    for (size_t i = 0; i < kNonceHexLen; ++i) {
+        const char c = nonce[i];
+        // Lowercase-only, matching the server's own alphabet: a proof must not be
+        // laxer about its inputs than the name it proves.
+        if (!(('0' <= c && c <= '9') || ('a' <= c && c <= 'f'))) {
+            UE_LOGE("signaling: the registration challenge is not 64 lowercase "
+                    "hex digits -- refusing to sign it");
+            return false;
+        }
+    }
+
+    // blob = tag || identity || nonce, no separators: every field is fixed width
+    // by construction (the tag is a literal, our identity is `gen:` + 64 hex, the
+    // nonce is 64), so the concatenation cannot be ambiguous. The server builds
+    // the same bytes; sig_gate proves they agree.
+    std::string blob;
+    blob.reserve(sizeof(kRegisterTag) - 1 + selfIdentity_.size() + kNonceHexLen);
+    blob.append(kRegisterTag, sizeof(kRegisterTag) - 1);
+    blob.append(selfIdentity_);
+    blob.append(nonce, kNonceHexLen);
+
+    const peer_identity::Sig sig = peer_identity::SignBlob(
+        reinterpret_cast<const uint8_t*>(blob.data()), blob.size());
+
+    std::string out;
+    out.reserve(5 + sig.size() * 2 + 1);
+    out.append("auth ");
+    for (uint8_t b : sig) {
+        out.push_back(kHexDigit[b >> 4U]);
+        out.push_back(kHexDigit[b & 0xf]);
+    }
+    out.push_back('\n');
+    Enqueue(out);
+    regState_ = RegState::ProofSent;
+    // "answered", not "accepted": the relay's verdict is not observable from
+    // here. A rejected proof simply closes the socket, which arrives as the
+    // ordinary "server closed connection" path -- the REASON lives in the relay's
+    // log, which is where a refusal decision belongs.
+    UE_LOGI("signaling: answered the relay's registration challenge as '%s'",
+            selfIdentity_.c_str());
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -365,6 +452,14 @@ void SignalingClient::Poll() {
                 if (r < 0 && IgnoreSockErr(WSAGetLastError())) break;  // would block
                 if (r == l) {
                     sendQueue_.pop_front();
+                    // The greeting is always the first line on a fresh socket, so
+                    // the first successful send IS "our greeting reached the
+                    // server" -- the moment from which a missing challenge means
+                    // the RELAY is old, rather than that we never got through.
+                    if (regState_ == RegState::AwaitingChallenge &&
+                        challengeDeadline_ == std::chrono::steady_clock::time_point{}) {
+                        challengeDeadline_ = std::chrono::steady_clock::now() + kChallengeTimeout;
+                    }
                 } else {
                     UE_LOGW("signaling: send failed (r=%d/%d err=%d) -- reconnecting",
                             r, l, WSAGetLastError());
@@ -372,6 +467,23 @@ void SignalingClient::Poll() {
                     break;
                 }
             }
+        }
+
+        // Fail CLOSED on a relay that never challenges us. Registering unproved
+        // would reopen exactly what the challenge closes (A59), so we drop the
+        // socket instead -- the backoff retries, and each attempt prints the one
+        // line an operator needs. Only P2P is affected; LAN and direct-IP never
+        // reach a relay.
+        if (sock_ != kInvalidSock && regState_ == RegState::AwaitingChallenge &&
+            challengeDeadline_ != std::chrono::steady_clock::time_point{} &&
+            std::chrono::steady_clock::now() > challengeDeadline_) {
+            UE_LOGE("signaling: the relay at %s:%s never sent a registration "
+                    "challenge -- it is older than this build and cannot verify "
+                    "who registers a name. REFUSING to register unproved. Update "
+                    "the signaling server (see docs/RELEASE.md). P2P is "
+                    "unavailable; LAN and direct-IP are unaffected.",
+                    host_.c_str(), service_.c_str());
+            CloseSocketLocked();
         }
     }  // release sockMutex_ BEFORE dispatch -- ReceivedP2PCustomSignal takes a GNS
        // lock that a GNS thread may hold while calling our SendSignal; holding
@@ -385,6 +497,21 @@ void SignalingClient::Poll() {
     for (;;) {
         const size_t nl = inBuf_.find('\n', cursor);
         if (nl == std::string::npos) break;
+
+        // BEFORE REGISTRATION the only line the server may send is its challenge,
+        // and no peer line can arrive at all: the relay routes by looking us up in
+        // its map, and we are not in it until the proof lands. So this branch
+        // needs no disambiguation against a relayed line -- a peer cannot forge a
+        // challenge here because a peer cannot reach us here.
+        if (regState_ == RegState::AwaitingChallenge) {
+            if (!AnswerChallenge(inBuf_.data() + cursor, nl - cursor)) {
+                std::lock_guard<std::recursive_mutex> lk(sockMutex_);
+                CloseSocketLocked();  // clears inBuf_; nothing left to consume
+                return;
+            }
+            cursor = nl + 1;
+            continue;
+        }
 
         // Line is [cursor, nl). Format: "<from-identity> <hexpayload>".
         const size_t spc = inBuf_.find(' ', cursor);

@@ -46,6 +46,7 @@ dependencies = [
  "base64",
  "getrandom",
  "hmac",
+ "ring",
  "rustls-pemfile",
  "serde",
  "serde_json",

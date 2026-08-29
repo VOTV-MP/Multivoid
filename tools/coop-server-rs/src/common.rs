@@ -111,6 +111,48 @@ fn is_display_safe(c: char) -> bool {
     )
 }
 
+/// A peer identity as GNS renders a 32-byte `GenericBytes` one: `gen:` + 64
+/// lowercase hex. Since b144 a host publishes its durable PUBLIC KEY here and
+/// joiners dial exactly this string, so the master's job is to store it verbatim
+/// -- it neither mints it nor can verify it, and it must not silently accept a
+/// shape that would dial nobody. Lowercase is required, not merely preferred:
+/// `[V]` GNS hashes and byte-compares identity strings and its own parser rejects
+/// uppercase prefixes for that reason, so `GEN:AB..` would register under one
+/// spelling and be dialled under another.
+///
+/// Lives here rather than in `bin/master.rs` since 2026-08-29 because the
+/// signaling relay now needs the SAME predicate for a different reason: this
+/// shape means "the identity IS a public key", which is what makes registration
+/// provable (A59). Two copies of one predicate is how the two ends drift into
+/// disagreeing about which names are keys.
+pub fn identity_shape_ok(id: &str) -> bool {
+    let Some(hex) = id.strip_prefix("gen:") else {
+        return false;
+    };
+    hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// Decode an EXACTLY-`N`-byte lowercase-hex string. Returns `None` on any wrong
+/// length, odd length, or non-hex byte -- there is no partial success, because
+/// every caller here is deciding whether to trust a remote peer and a
+/// half-decoded key is not a smaller version of a key.
+pub fn hex_to_bytes<const N: usize>(s: &str) -> Option<[u8; N]> {
+    if s.len() != N * 2 {
+        return None;
+    }
+    let b = s.as_bytes();
+    let mut out = [0u8; N];
+    for i in 0..N {
+        let hi = (b[i * 2] as char).to_digit(16)?;
+        let lo = (b[i * 2 + 1] as char).to_digit(16)?;
+        if b[i * 2].is_ascii_uppercase() || b[i * 2 + 1].is_ascii_uppercase() {
+            return None; // lowercase-only, for the same reason identity_shape_ok is
+        }
+        out[i] = ((hi << 4) | lo) as u8;
+    }
+    Some(out)
+}
+
 /// Constant-time byte compare, matching Python's `hmac.compare_digest` (which is
 /// also length-leaking — an early length mismatch returns fast). Used for the
 /// server-side capability tokens (host bearer, signaling shared bearer).
