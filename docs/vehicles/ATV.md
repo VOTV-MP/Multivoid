@@ -581,7 +581,9 @@ reads **only** bit3 (`authored`). Bits 0–2 are produced and never consumed; bi
 
 ## 11. Open questions (unmeasured — the honest list)
 
-1. **[?] Do mirrored wheels follow the body?** §9.4. One autonomous two-peer observation answers it.
+1. ~~**[?] Do mirrored wheels follow the body?**~~ **MEASURED 2026-08-29 [V]** — see §13, the
+   instrumented baseline. Short answer: **idle, the two peers agree almost exactly; the moment the
+   host authors the ATV they come apart**, and the release path *launches* the other peer's copy.
 2. **[?] Where is `hasGuns` consumed?** Not in `ATV.json`. Candidates: `prop_funGun_atv`, `mainPlayer`.
 3. **[?] Is `tiresTypes[3]` genuinely never applied?** `setWheelsType` reads indices 0, 1, 2 only.
 4. ~~**[?] Is the ATV's key cross-peer stable?**~~ **ANSWERED [V]** — `docs/COOP_SYNC_MAP.md:139`
@@ -630,3 +632,78 @@ reads **only** bit3 (`authored`). Bits 0–2 are produced and never consumed; bi
 - MTA precedent: `Server/…/packets/CVehiclePuresyncPacket.cpp` (pose/rot/vel/turnspeed :122-143,
   damage-gated health :145-171, seat :107-118), `CUnoccupiedVehicleSync.cpp` (single-syncer election
   :59, 99, 144), `CVehicleDamageSyncPacket.*`, `CClientVehicle.{h,cpp}`.
+
+---
+
+## 13. The instrumented baseline (MEASURED 2026-08-29, autonomous two-peer, `[V]`)
+
+Instrument: `coop/dev/atv_probe.cpp` (`[dev] atv_probe=1`), which calls the game's own
+`vehicleGetParts()` every 500 ms on every peer and logs the four rig bodies plus the vitals.
+Reader: `tools/atv_probe_report.py`. Runs: `python tools/mp.py smoke --duration 90` (idle) and
+`--duration 120` with the probe's HOST-only one-shot **sit arm** (`[dev] atv_probe_sit=1`), which
+calls `ATV_C::playerSit(localPlayer)` so the ATV is genuinely AUTHORED — an idle ATV is never
+mirrored (`atv_sync.cpp:453`), so nothing about a mirror is observable without an occupant.
+Both smokes PASS. DLL `436BE41D2A93364A`, b145, proto unchanged.
+
+**The measure is `|wheel - body|`**, which is rotation-invariant, so it isolates suspension travel
+from the body tipping or turning.
+
+### 13.1 The rig's own signature
+
+| state | susFR | susFL | susBK |
+|---|---|---|---|
+| at rest | **93.773** | **93.773** | **71.914** (constant to ~0.001 cm over 80 s) |
+| settling after the save-load drop | 92.39 min | 92.39 min | 70.12 min / 72.26 max |
+| host, while driven | range **2.33** | — | range **2.32** |
+
+So the suspension is real and its normal working travel is **~2-4 cm**. Any number far outside that
+band is not suspension.
+
+### 13.2 Idle: the two peers agree
+
+Over 144 aligned client samples before any authority existed, with both peers running their own
+physics on a resting ATV:
+
+| | host | client |
+|---|---|---|
+| susFR range | 2.72 cm | **2.73 cm** |
+| susBK range | 4.29 cm | **4.29 cm** |
+| body separation | median **0.3 cm** | |
+
+### 13.3 Authored: they come apart
+
+| | host (driving) | client |
+|---|---|---|
+| susFR range | 2.33 cm | **18.79 cm** (8x) |
+| susBK range | 2.32 cm | **29.58 cm** (13x) |
+| susBK excursion | 70.03 .. 72.35 | **58.25 .. 87.83** — 13.7 cm inside and 15.9 cm outside the resting value |
+| fuel | 100.000 -> **99.439** | **100.000** (never burned a drop) |
+| battery | 100.000 -> **99.909** | **100.000** |
+| body separation | | up to **109.9 cm**, 75.2 cm at the last sample |
+
+### 13.4 The mechanism, and one correction to make before reading the table above
+
+**The client's wild numbers are NOT a mirror being deformed by the pose stream** — that was the
+first reading and it is wrong. `atv: OnAtvRelease key='ATV' -- physics re-enabled + launch velocity
+applied (|lin|=158 cm/s)` fires on the client at 19:54:53, and every client sample outside the rig's
+normal band is *after* that line. The client's ATV was **launched at 158 cm/s and rolled away under
+its own physics.** The 18-29 cm of "travel" is a loose vehicle bouncing over terrain, not a
+constraint rig fighting a teleport.
+
+That makes the release path itself a measured divergence SOURCE, which the C1 design must answer:
+`AtvRelease`'s "mirrors un-freeze + inherit" hands the other peer's copy a velocity and lets it go.
+
+### 13.5 What this does NOT establish (stated so it is not over-read)
+
+- The driven window was **19 samples / ~11 s**. It is enough to separate 2.3 cm from 29.6 cm; it is
+  not a characterisation of driving.
+- **The ordering is unexplained and is an open question**: the host logged `authority released` at
+  19:54:53 but its first `driven=1` sample is at **19:54:58**, five seconds LATER, and no sample
+  before the release ever read `driven=1`. So what made the host an authority before it was seated
+  is not established here. `atv_sync.cpp:168` gates authority on `IsDriven && occupant == local`.
+- Whether the client held `preparedAsMirror` during the driven window was **not** instrumented.
+- `playerSit` returned with `driven now=0` at the call site; `isDriven` rose ~86 s later. The seat is
+  evidently not synchronous, and nothing here measured what fills that gap.
+- The ATV's runtime key reads **`ATV`** (uppercase), not the `atv` this document used in §6. The
+  container name is `atv_inventoryContainer|<key>`, so the case matters wherever that string is
+  rebuilt.

@@ -50,6 +50,7 @@
 #include "coop/dev/order_selftest.h"          // A34: exercise host-side order pricing end to end
 #include "coop/dev/native_pile_inert_probe.h"
 #include "coop/dev/client_model_probe.h"  // kel-vs-scientist side-by-side visual check (ini client_model_probe=1)
+#include "coop/dev/atv_probe.h"
 #include "coop/dev/pinecone_probe.h"
 #include "coop/dev/rng_roll_census.h"  // [dev] T1 probe v9
 #include "coop/dev/desk_diag.h"        // [dev] desk/console divergence census
@@ -604,6 +605,8 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     coop::dev::native_pile_inert_probe::Tick(isConnected, isHost);  // spawns 1 rooted runtime chipPile, logs [INERT-PROBE] IsLive/class 60s -> does a live-ubergraph native stay inert?
     coop::dev::client_model_probe::Install();  // kel-vs-scientist side-by-side visual check (ini client_model_probe=1)
     coop::dev::client_model_probe::Tick(isConnected, isHost);  // spawns the comparison pair in front of the player -> one clean look settles the cook verdict
+    coop::dev::atv_probe::Install();  // dev-only ATV rig baseline instrument (ini atv_probe=1)
+    coop::dev::atv_probe::Tick(isHost);  // samples vehicleGetParts + vitals every 500 ms when on
     coop::dev::pinecone_probe::Install();  // dev-only pinecone-scare sync verification (ini pinecone_probe=1)
     coop::dev::pinecone_probe::Tick(isConnected, isHost);  // host force-spawns one pinecone ~5s after a client connects -> confirm it mirrors
     coop::dev::sleep_probe::Install();     // dev-only v71 sleep-gate exerciser (ini sleep_probe=1)

@@ -117,6 +117,21 @@ the fix.
 
 **Never hands-on tested**, with a third-party field report open against it.
 
+**[V] MEASURED 2026-08-29 (autonomous two-peer, `docs/vehicles/ATV.md` §13).** The indictment now has
+numbers, and one of them is not what this entry assumed:
+
+| | host (driving) | client |
+|---|---|---|
+| suspension travel susBK | 2.32 cm | **29.58 cm** |
+| fuel | 100 -> 99.439 | **100.000** |
+| body separation | | up to **109.9 cm** |
+
+But **idle, the two peers agree almost exactly** (susBK range 4.29 vs 4.29, median separation
+0.3 cm), and the client's wild numbers are **not** a mirror deformed by the pose stream -- they are
+its own ATV, **launched at 158 cm/s by `AtvRelease`'s "un-freeze + inherit"** and rolling free. So
+the crutch's worst measured symptom comes from the RELEASE path, which this entry did not name, and
+the "frozen corpse" reading is right about the freeze but wrong about which step does the damage.
+
 ### The proper fix (direction settled 2026-08-29)
 A **vehicle-sync subsystem in MTA's shape**, not more patches to a 692-LOC file: always-simulating
 corrected mirrors (velocity + turn speed + error spread + a sync-time-context staleness gate,
