@@ -4786,6 +4786,26 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   protecting, fix it INSIDE the bound (fairness / rotating start), not upstream of it.
   `memory/lesson_an_optimization_hoisted_above_the_bound_it_protected.md`
 
+- **An instrument that times OUR CODE cannot see the engine work our code PROVOKES.** `[V]`
+  2026-08-29, hunting a 120 -> 70 fps regression: every bucket we own summed to ~0.6 ms of a
+  14 ms frame while the mod cost ~6 ms. Three blind spots, each found by disbelieving a number,
+  not by reading code. (a) The PE detour's self-timer bracketed from INSIDE
+  `ProcessEventDetourImpl`, so the outer frame and the SEH `__try` frame were excluded BY
+  CONSTRUCTION -- it could never falsify "the detour is the missing time" because it was blind
+  to that exact region (the whole-detour timer then EXONERATED it: 255 ns/dispatch). (b) A
+  reflected `CallFunction` returns after the ENGINE has run a whole blueprint on the game
+  thread; the timer sees the call, the frame pays for the script -- the input-ownership scan
+  issued ~9,300/s and appeared in no bucket. (c) A vsync-CAPPED frame makes `stat unit`
+  attribution unfalsifiable: the game thread blocks on the sync and `Game` counts the block, so
+  every capped frame reads "Game is 97% of the frame". The tell was two processes reporting
+  Frame=16.65 ms identical to a hundredth of a millisecond. LOOK FIRST: when our accounting
+  cannot explain a regression, stop refining it and run an A/B that makes us INERT --
+  `game_thread::SetTransparentBypass(ms)` keeps our actors and threads while killing our
+  execution, splitting "what we run" from "what we put in the process" in one 5 s window. Also
+  reusable and free: `r.ScreenPercentage 25` (CPU vs GPU) and `r.VSync 0`+`t.MaxFPS 0` before
+  any `stat unit`. AND: an instrument in the detour's OUTER frame is OUTSIDE the SEH crash
+  firewall -- one placed there hard-crashed the game on its first boot.
+  `memory/lesson-an-instrument-that-measures-only-our-code-cannot-see-what-we-provoke.md`
 ## 8. Build / deploy / git hygiene
 
 - **CMAKE `if(<var>)` EATS A LEGITIMATE "0" -- AND THE FLAWED GUARD ARRIVED WITH TWO ENDORSEMENTS.**
