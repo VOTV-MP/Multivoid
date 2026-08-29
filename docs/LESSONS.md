@@ -2831,6 +2831,24 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   wrong costs them the whole trip.
   `memory/lesson_move_the_thing_before_blaming_the_place.md`
 
+- **2026-08-30 — Two constants from two codebases are not comparable until their UNITS are; a correct
+  citation does not carry them.** `[V]` I put our ATV warp threshold `kWarpBaseCm + kWarpPerSpeedS*|v|`
+  = `200 + 0.5*|v|` **cm** beside MTA's `CClientVehicle::UpdateTargetPosition:3867` `15 + 10*|v|` and
+  published "small base, large speed term — the opposite shape, it tightens as the vehicle speeds up
+  where ours stays flat". Every number was quoted right and the comparison is meaningless: MTA's is
+  `(15 + 10*|v|) * GetGameSpeed() * TICK_RATE / 100` (`CClientVehicle.cpp:77-78`,
+  `CTickRateSettings.h:16` -> factor ≈1) compared against a distance in **GTA world units**, so a
+  15-unit base is ~1500 cm — **7.5x LOOSER than ours, the opposite of the claim** — and MTA's velocity
+  units are established nowhere in the vendored tree, so the speed terms are not commensurable at all.
+  The correction inverted the work: "our threshold is too loose" said retune the warp; what actually
+  holds (`trail ~ 0.0063*speed^1.52`, warp never fired) says the net is a last resort our runs never
+  needed and the trail is the CORRECTOR's convergence rate. *Look FIRST:* read the COMPARISON SITE,
+  not the `#define`, and write down the unit and the quantity each constant is measured against; if
+  either is unknown, stop and say so. Only ours had its unit in its identifier. Prefer dimensionless
+  shapes (a ratio, an exponent) over raw coefficients — the `v^1.52` fit survived because an exponent
+  has no units.
+  `memory/lesson_two_constants_are_not_comparable_until_their_units_are.md`
+
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
 
 - **A WINDOW CLOSED BY THE LATCH THAT STARTS THE NEXT PHASE ENDS BEFORE THAT PHASE — BY

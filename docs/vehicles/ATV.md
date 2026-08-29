@@ -875,22 +875,56 @@ build family, same arm, same 20 s window, a sixth of the trail because the ATV h
 somewhere that let it go a third as far. The arm steers nothing, so route and speed are not controlled
 between runs and **no single run may state a trail figure as a lane property.**
 
-What BOTH runs agree on, and what the number is actually about: `atv_sync.cpp:107-108` warps past
+What BOTH runs agree on: `atv_sync.cpp:107-108` warps past
 `kWarpBaseCm + kWarpPerSpeedS * |v|` = `200 + 0.5*|v|` cm. At 1300 cm/s that is ~850 and the trail
 reached 438 (52% of it); at 780 cm/s it is ~590 and the trail reached 70 (12%). **The warp arm did not
-fire in either run**, and the threshold's shape is why: a 200 cm base with a 0.5 speed coefficient
-barely tightens as the vehicle speeds up. MTA's equivalent
-(`CClientVehicle::UpdateTargetPosition:3867`) is `15 + 10*|v|` — small base, large speed term, the
-opposite shape. That is a claim about a CONSTANT, checkable without another run, and it is the real
-finding here.
+fire in either run.**
+
+> **CORRECTION (same session): the MTA comparison first written here was WRONG, and it was wrong in
+> the way that is hardest to notice — across UNIT SYSTEMS.** I wrote that MTA's
+> `CClientVehicle::UpdateTargetPosition:3867` threshold `15 + 10*|v|` is "small base, large speed
+> term, the opposite shape" to ours. `[V]` from the vendored source: the full expression is
+> `(VEHICLE_INTERPOLATION_WARP_THRESHOLD + VEHICLE_INTERPOLATION_WARP_THRESHOLD_FOR_SPEED *
+> vecVelocity.Length()) * GetGameSpeed() * TICK_RATE / 100` with `15` / `10`
+> (`CClientVehicle.cpp:77-78`) and `TICK_RATE = iPureSync = 100` by default
+> (`CTickRateSettings.h:16`), so the trailing factor is ≈1 — but it is compared against a distance in
+> **GTA world units**, and ours is in **centimetres**. A 15-unit base is 15 m ≈ 1500 cm if a GTA unit
+> is a metre, i.e. **7.5x LOOSER than our 200 cm base, not tighter.** And the speed term cannot be
+> compared at all: MTA's velocity units are not established anywhere in the vendored tree, so
+> `10 * |v|` and `0.5 * |v|` are not commensurable without a fact I do not have. **Both halves of the
+> original claim are withdrawn.** What remains is only about our own lane.
+
+### 15.2a `[V]` What the trail actually does: `trail ≈ 0.0063 * speed^1.52`
+Pooling every driven second from both runs where exactly one peer owned the tick and the author was
+moving faster than 20 cm/s (**n = 19**, log-log fit, **R² = 0.73**):
+
+| author speed (cm/s) | measured trail (median) | fit | our warp threshold |
+|---|---|---|---|
+| 100 | 6 cm | 7 | 250 |
+| 200 | 21 cm | 20 | 300 |
+| 400 | 44 cm | 57 | 400 |
+| 800 | 235 cm | 163 | 600 |
+| 1200 | 351 cm | 302 | 800 |
+| 1600 | 284 cm | 468 | 1000 |
+
+**The trail grows super-linearly (~v^1.5) while the threshold grows linearly**, so headroom narrows
+with speed — 40x at 100 cm/s, ~3.5x at 1600 — but **it never crossed in the measured range.** n=19 over
+two uncontrolled routes is a weak fit and the 1600 row already sits below the line; treat the exponent
+as a shape, not a coefficient.
+
+**This inverts the recommendation the first version of this section implied.** The warp is a
+last-resort net and our runs never needed it; a net that does not fire is not evidence that the net is
+wrong. What produces a 4.4 m trail at 13 m/s is the CORRECTOR's convergence rate, not the warp
+threshold — so **arc-1 commit 2 should look at `kCorrGain` and the packet cadence first, and leave
+`kWarpBaseCm` / `kWarpPerSpeedS` alone until something shows the net failing.**
 
 Graded from now on by acceptance arm **A5** (`TRAIL_MAX_CM = 150`, a stated design ceiling of about
-one vehicle length). **A5's fixed-cm shape inherits the same criticism**: it passed the slow run and
-failed the fast one, so it is partly measuring the route. A speed-scaled ceiling would be the honest
-form; it is not written yet because nothing has measured what trail is ACHIEVABLE at speed.
-**Retuning `kWarpBaseCm` / `kWarpPerSpeedS` is arc-1 commit 2 work and owes a before/after pair on the
-SAME route** — which the arm cannot currently guarantee, so that is an instrument prerequisite, not a
-detail.
+one vehicle length). **A5's fixed-cm shape is known-weak**: it passed the slow run and failed the fast
+one, so it is partly measuring the route. Normalising it by the warp threshold was tried and
+**rejected by measurement** — it only cuts the between-run spread from ~6x to ~4x, because the trail
+grows as v^1.5 and the threshold linearly, so the ratio is still route-dependent. Until a run can hold
+a route, A5 is a tripwire rather than a metric: a FAIL is worth reading, a PASS proves less than it
+looks.
 
 *(Why the DLLs differ: run 1 ran on bytes another session deployed to the shared rig between my deploy
 and my launch — caught only because the run archive records the deployed sha256. Run 2 is a rebuild
