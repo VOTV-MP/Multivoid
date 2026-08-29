@@ -247,11 +247,6 @@ namespace {
 // mints fresh local ones. The full state replay below is idempotent (adopt=1
 // snapshots + RegisterPropMirror dedup), so re-running it is correct. But
 // placing the joiner AT the host is a JOIN-ONCE action: re-running it when a
-// mid-session traveller re-announces would teleport a settled player to the
-// host. Gate ONLY the teleport on this latch; everything else re-runs.
-// GAME-THREAD only (event_feed drain). Reset per slot in DisconnectSlot so a
-// rejoin re-places normally.
-bool g_joinPlaced[coop::players::kMaxPeers] = {};
 }  // namespace
 
 void ConnectReplayForSlot(int slot) {
@@ -313,19 +308,19 @@ void ConnectReplayForSlot(int slot) {
     // ClientWorldReady, AFTER the joiner already loaded its world, so the apply blob would miss
     // the pre-materialize hook. It is driven from the host tick's connect-edge detector instead
     // (player_inventory_sync, fires right after the Join when the guid is known -- pre-world).
-    // v34: spawn the joiner AT THE HOST -- reuse the existing teleport-to-host
-    // pose mechanism (the client applies it on its local player, which is in
-    // world by construction now: WorldReady is what fired this). JOIN-ONCE: a
-    // client re-fires ClientWorldReady on every world-change re-seed (incl.
-    // mid-session cave/level travel), so guard the placement to the first
-    // world-ready per slot -- otherwise a traveller would be yanked back to the
-    // host on every cave exit. Subsequent re-syncs re-deliver state only.
-    if (!g_joinPlaced[slot]) {
-        coop::teleport_client::TeleportSlotToHost(slot);
-        g_joinPlaced[slot] = true;
-    } else {
-        UE_LOGI("net: slot %d re-sync replay -- skipping join teleport (already placed)", slot);
-    }
+    // NO JOIN TELEPORT HERE. The joiner's placement is the CLIENT's own KPP spawn
+    // (net_pump.cpp, USER RULE 2026-08-29: every client appearance in a coop world
+    // spawns at the KPP start point). The v34 behaviour this replaces -- the host
+    // teleporting the joiner ONTO ITSELF at ClientWorldReady -- survived alongside the
+    // new rule and silently WON, because ClientWorldReady arrives AFTER the client has
+    // loaded its world and already placed itself. Measured 2026-08-29: KPP applied at
+    // 17:47:03 to (-37695,69978,6420), then this overwrote it at 17:47:16 with
+    // (-11,-1047,6186) -- the host's own position, i.e. exactly the symptom the KPP
+    // rule exists to prevent. Two placement rules for one event is the RULE-2 shape;
+    // the older one goes.
+    //
+    // TeleportSlotToHost itself STAYS -- moderation.cpp's F1 admin "bring player to
+    // host" is a deliberate operator action, not a join placement.
     // T2-4: catch the new client up to EXISTING peers' current item state.
     coop::item_activate::ReplayPeerStatesToSlot(slot);
     // v105: existing peers' hotbar HAND items -> joiner (display mirrors).
@@ -373,8 +368,6 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     // assemblies + seed brackets must not survive into a recycled occupant.
     coop::signal_sync::OnDisconnectSlot(slot);
     coop::email_sync::OnDisconnectSlot(slot);
-    if (slot >= 0 && slot < static_cast<int>(coop::players::kMaxPeers))
-        g_joinPlaced[slot] = false;  // rejoin re-places the joiner at the host
     // Shut the chat lane's per-slot seed gate: the NEXT occupant's applied range starts
     // empty, so it must get its seed before it hears a single live line.
     coop::chat_sync::OnSlotDisconnected(slot);
