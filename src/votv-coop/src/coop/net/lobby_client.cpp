@@ -162,7 +162,12 @@ JoinInfo LobbyClient::Join(const std::string& masterUrl, const std::string& lobb
     // 80, not 64: a durable identity renders `gen:` + 64 hex = 68 chars, and a cap
     // of 64 would TRUNCATE it into a name that dials nobody -- which reads as "P2P
     // is broken", not as "a string was cut". `peerIdentity` is no longer read at
-    // all (see JoinInfo).
+    // all (see JoinInfo) -- and until 2026-08-29 that sentence was a trap: it is
+    // true of THIS build, but b133's own `lobby_client.cpp:174` made the field
+    // REQUIRED (`info.ok = !info.peerIdentity.empty() && ...`), so retiring it
+    // server-side would have failed every released join outright rather than
+    // degrading. It was retired only once that cohort was, by decision. A field
+    // dead in HEAD can be load-bearing on the wire; census the TAGS, not the tree.
     info.hostIdentity   = J::StrN(j, "hostIdentity", 80);
     info.signalingUrl   = J::StrN(j, "signalingUrl", 128);
     info.signalingToken = J::StrN(j, "signalingToken", 128);

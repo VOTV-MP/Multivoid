@@ -81,12 +81,25 @@ const std::string& LocalGuid();
 // and `StartP2P` installed it with ResetIdentity, which SILENTLY OVERWROTE the
 // durable identity installed at Start() -- so on our primary transport the key
 // identity never reached the wire at all. Keeping both would be two
-// implementations of one concept (RULE 2), and it would also foreclose the only
-// known fix for the relay lane: `PLAN_01` s6's ~6-line GNS fork binds the remote
-// IDENTITY to the cert key, which is meaningless if the identity is a routing
-// token. The cost, stated rather than discovered: the master and the signaling
-// relay now see a value that is stable across sessions, where they previously
-// saw a fresh one each time.
+// implementations of one concept (RULE 2).
+//
+// THIS PARAGRAPH USED TO GIVE A SECOND REASON AND IT WAS FALSE. It said keeping
+// both "would foreclose the only known fix for the relay lane -- `PLAN_01` s6's
+// GNS fork binds the remote IDENTITY to the cert key, which is meaningless if the
+// identity is a routing token". `[V]` That fork cannot be implemented as
+// specified: `SetLocalCertUnsigned` is PER-CONNECTION and mints `key_data` itself
+// (`connections.cpp:1303-1314`), so satisfying it would need an identity that
+// differs per connection AND equals a value GNS chooses. The implementable fork
+// is an accessor on `key_data()`, which is identity-agnostic. So P1 requires
+// neither fusion nor split, and the fusion stands on RULE 2 alone. Corrected
+// 2026-08-29 while fixing A59; see `PLAN_01` s6's correction box.
+//
+// THE COST, stated rather than discovered: the master and the signaling relay now
+// see a value that is stable across sessions, where they previously saw a fresh
+// one each time. That stability is what made security A59 possible -- the relay
+// registered self-asserted names, so a permanent one could be squatted forever.
+// The relay now proves every registration (`ef755e68`); the residual on a
+// PLAINTEXT signaling leg is in `PLAN_01` s6c.
 const std::string& LocalIdentityString();
 
 // Cryptographic random bytes (BCryptGenRandom). Exposed because the admission

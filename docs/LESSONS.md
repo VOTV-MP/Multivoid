@@ -33,6 +33,53 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 1. How to work (process / working agreements)
 
+- **A RULE-2 DELETION CENSUS MUST INCLUDE *RELEASED* BUILDS, NOT JUST THE WORKING TREE.**
+  2026-08-29, caught by a `/qf` critic. `peerIdentity` had **zero** readers in HEAD and a comment
+  saying so, so a sweep called the master's mint stranded dead output. `[V]` b133 -- 1,138
+  downloads, the newest build the public can have -- reads it at `lobby_client.cpp:162` and makes
+  it **required** at `:174` (`info.ok = !info.peerIdentity.empty() && ...`), so the deletion would
+  not have degraded released joins, it would have **failed every one outright**. The grep was
+  right, the comment was right, the conclusion was wrong: both describe *this* build. *Look
+  FIRST:* any "nothing uses X" is a claim about a **set of builds**, and the set that matters is
+  everything still talking to your servers -- `git show <tag>:<path>` for every tag in
+  `gh release list`, and check whether the released consumer treats it as REQUIRED or optional
+  ("loses a feature" vs "cannot connect" are different releases). Make a comment say *where*: "no
+  longer read **by this build**" is the sentence that prompts the tag census.
+  `memory/lesson_a_deletion_census_must_include_released_builds.md`
+
+- **A SPEC YOU *DEFER* TO IS ONE NOBODY HAS TRIED -- its feasibility is unverified by
+  construction.** 2026-08-29. `PLAN_01` §6's P1 fork ("refuse unless the remote identity equals
+  `m_msgCertRemote.key_data()`") was deferred as costly, and meanwhile **cited in
+  `peer_identity.h` as the reason** for a shipped decision. `[V]` It cannot be implemented at all:
+  `SetLocalCertUnsigned` is **per-connection** and mints `key_data` itself
+  (`connections.cpp:1303-1314`), so satisfying it needs an identity that differs per connection
+  AND equals a value we do not choose. Everything that catches a bad spec -- compiler, test,
+  drill -- is downstream of *executing* it, so a deferred plan is never checked and reads more
+  authoritative the longer it sits. It was also the SECOND reason for a decision whose first
+  reason (RULE 2) was sound, so the false half did no visible work and nothing pointed at it.
+  *Look FIRST:* when a comment justifies a live decision by citing a plan, open the plan and check
+  the mechanism is **possible**, not just expensive; read the function that *produces* the value
+  the spec compares against, since feasibility usually fails on the producer's lifetime. And
+  `inferred` in your own brief is an instruction to yourself.
+  `memory/lesson_a_deferred_specs_own_feasibility_is_unchecked.md`
+
+- **A FIXTURE THE RIG TESTS AGAINST DRIFTS FROM PRODUCTION, AND THE RIG REPORTS GREEN WHILE IT
+  DOES.** 2026-08-29. Four scenarios launched `tools/coop_signaling_server.py`, a Python lookalike
+  kept past its cutover because it started without cargo; `[V]` the production Rust binary builds
+  in **9.86 s** from cold, so the reason had expired while the cost had not -- a line-protocol
+  change would have landed in two implementations with the rig proving it against the copy that
+  never ships. Proof it is not hypothetical: pointing the *sibling* `master_smoke` at production
+  produced **five FAILs**, each an assertion encoding the fixture's behaviour where production
+  deliberately differs (three are the TURN credential binding a 2026-07-16 audit moved to IP
+  buckets). Nothing ever fails at the moment of divergence -- the instrument whose job is to
+  notice it is pointed at the wrong side. *Look FIRST:* if a test double implements a wire
+  contract that also has a real implementation, ask what running the real one costs; seconds means
+  the double is liability. Retire it in its OWN commit with before/after evidence on an
+  **unchanged** protocol, then change the protocol -- and read every FAIL from the first
+  production run as a finding, not a porting chore. (A *fixture* that never claimed the contract,
+  like `fake_master.py`, cannot drift and stays.)
+  `memory/lesson_a_fixture_the_rig_tests_drifts_from_production_silently.md`
+
 - **BEFORE A VALUE BECOMES *OURS*, CENSUS WHAT IT ALREADY *IS* -- and grep its WRITERS, not its
   readers.** 2026-08-29. The peer-identity design claimed GNS's process-global identity as "the
   public key" and shipped an `InstallInto` for it, after 13 `/qf` rounds. `[V]` `Session::StartP2P`
