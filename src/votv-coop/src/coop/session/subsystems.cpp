@@ -606,7 +606,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     coop::dev::client_model_probe::Install();  // kel-vs-scientist side-by-side visual check (ini client_model_probe=1)
     coop::dev::client_model_probe::Tick(isConnected, isHost);  // spawns the comparison pair in front of the player -> one clean look settles the cook verdict
     coop::dev::atv_probe::Install();  // dev-only ATV rig baseline instrument (ini atv_probe=1)
-    coop::dev::atv_probe::Tick(isHost);  // samples vehicleGetParts + vitals every 500 ms when on
+    coop::dev::atv_probe::Tick(session, isHost);  // samples vehicleGetParts + vitals every 500 ms when on
     coop::dev::pinecone_probe::Install();  // dev-only pinecone-scare sync verification (ini pinecone_probe=1)
     coop::dev::pinecone_probe::Tick(isConnected, isHost);  // host force-spawns one pinecone ~5s after a client connects -> confirm it mirrors
     coop::dev::sleep_probe::Install();     // dev-only v71 sleep-gate exerciser (ini sleep_probe=1)

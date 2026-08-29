@@ -322,6 +322,38 @@ def deploy_all() -> None:
     log("deploy OK")
 
 
+# --- FOREIGN-PROCESS WITNESS (2026-08-29) -------------------------------------------------
+# "expected 2 peers at end, got 1" is the same sentence whether the peer died because of the
+# change under test or because a CONCURRENT SESSION killed every VotV process on the box. Twice
+# in one evening the second thing happened and the verdict blamed the first, costing ~20 minutes
+# of log forensics to tell them apart. tools/game_lock.py prevents the collision only for
+# launches that pass through mp.py's dispatch; a runner that kills and launches outside it is
+# invisible to the lock, so the run needs a witness of its own.
+#
+# DIAGNOSTIC, never a gate: it records the pids we launched and the pids the box actually had,
+# and prints both at exit when they disagree. It deliberately makes no verdict -- Popen's pid is
+# the pid of the exe WE started, and nothing here has measured whether VotV re-execs itself, so
+# the two sets are reported as what they are rather than equated.
+_LAUNCHED_PIDS: set[int] = set()
+_SEEN_PIDS: set[int] = set()
+
+
+def _witness_banner() -> None:
+    foreign = _SEEN_PIDS - _LAUNCHED_PIDS
+    if not foreign:
+        return
+    log("--- FOREIGN PROCESS WITNESS ---")
+    log(f"  we launched: {sorted(_LAUNCHED_PIDS)}")
+    log(f"  box had    : {sorted(_SEEN_PIDS)}")
+    log(f"  NOT OURS   : {sorted(foreign)}")
+    log("  A VotV process this run did not launch was alive during it. If a peer went missing,")
+    log("  suspect a concurrent session before suspecting the change under test -- see")
+    log("  ignore_folder/_FRIENDLY_SESSION.txt and docs/CROSS_SESSION.md.")
+
+
+atexit.register(_witness_banner)
+
+
 def list_votv() -> list[dict]:
     """Live VotV processes.
 
@@ -359,6 +391,11 @@ def list_votv() -> list[dict]:
             if data is not None:
                 if isinstance(data, dict):
                     data = [data]
+                for _p in data:
+                    try:
+                        _SEEN_PIDS.add(int(_p["PID"]))
+                    except (KeyError, TypeError, ValueError):
+                        pass
                 return data
         if attempt < 2:
             time.sleep(0.5)
@@ -562,6 +599,7 @@ def launch_peer(role: str, port: int, nick: str, peer: str | None,
         close_fds=True,
     )
     log(f"launched PID={proc.pid}")
+    _LAUNCHED_PIDS.add(proc.pid)
     # Apply per-process commit limit via Job Object. The OS will fail
     # further VirtualAlloc once the cap is hit, preventing the runaway
     # growth we hit 2026-05-28 (host with -WinX=0 -WinY=0 ate 18 GB

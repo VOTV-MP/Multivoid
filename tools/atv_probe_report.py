@@ -133,6 +133,77 @@ SETTLE_GAP_CM = 20.0 # end-of-run body gap; baseline was 109.9 cm and PERMANENT
 MIN_MIRROR_SAMPLES = 6
 
 
+ARM_LINE = re.compile(r"\[ATVP\] ARM (?P<phase>[a-z-]+):(?P<rest>.*)")
+ARM_GATES = re.compile(
+    r"driven=(?P<driven>\d) empty=(?P<empty>\d) brake=(?P<brake>\d) broken=(?P<broken>\d) "
+    r"underwater=(?P<uw>\d) batt=(?P<batt>[-\d.]+) fwd=(?P<fwd>\d) torq=(?P<torq>[-\d.]+) "
+    r"speed=(?P<speed>[-\d.]+)")
+
+
+def arm_trace(logs):
+    """Every [ATVP] ARM line across both logs, in file order.
+
+    The arm is the only thing in this rig that can make the run MEAN anything -- an idle
+    ATV is never mirrored -- so when the driven window is empty the arm's own trace is the
+    evidence that says which of its steps did not happen. Without this, a run that fails
+    for four different reasons prints one identical sentence.
+    """
+    out = []
+    for path in logs:
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                for raw in fh:
+                    m = ARM_LINE.search(raw)
+                    if m:
+                        out.append((os.path.basename(os.path.dirname(path)),
+                                    m.group("phase"), m.group("rest").strip()))
+        except OSError:
+            pass
+    return out
+
+
+def arm_diagnosis(logs):
+    """One sentence naming WHY there is no driven window, from the arm's own trace."""
+    trace = arm_trace(logs)
+    phases = {p for _, p, _ in trace}
+    if not trace:
+        return ("the arm left NO trace at all -- either [dev] atv_probe_sit is off on the "
+                "host, or no peer ever reached world-ready (the arm waits for one, because "
+                "a drive window with nobody mirroring measures nothing)")
+    if "sit" in phases and not ({"drive-start", "driving"} & phases):
+        refused = [r for _, p, r in trace if p == "sit"]
+        return ("the seat verb was CALLED and REFUSED ({}) -- actionName('sit') is gated on "
+                "|fallVeloc.Z|<800, empty hands, and an unoccupied playerHit "
+                "[disasm @46420/@46522/@46645]".format("; ".join(refused[-2:])))
+    if "pre-drive" in phases and "driving" not in phases:
+        return "the player was seated but the drive never started -- check the pre-drive gates"
+    return "the arm ran but no sample carried driven=1 -- check the sample cadence vs the window"
+
+
+def arm_torque_note(logs):
+    """If the arm drove, did the throttle actually produce torque? Name the blocker if not."""
+    peak, blockers = 0.0, set()
+    for _, phase, rest in arm_trace(logs):
+        if phase not in ("driving", "drive-start", "drive-stop"):
+            continue
+        m = ARM_GATES.search(rest)
+        if not m:
+            continue
+        peak = max(peak, abs(float(m.group("torq"))))
+        for name, key in (("empty", "empty"), ("brake", "brake"), ("brokenn", "broken"),
+                          ("underwater", "uw")):
+            if m.group(key) == "1":
+                blockers.add(name)
+        if float(m.group("batt")) <= 0.0:
+            blockers.add("battery<=0")
+    if not peak and blockers:
+        return ("the ATV was seated but produced ZERO torque -- the block at uber @34866 bails "
+                "on {}".format(" | ".join(sorted(blockers))))
+    if peak:
+        return "peak torqAlpha while driving = {:.3f}".format(peak)
+    return None
+
+
 def driven_seconds(peers):
     """The set of wall-clock seconds in which SOME peer reported driven=1."""
     out = set()
@@ -151,10 +222,16 @@ def acceptance(names, peers, logs):
     win = driven_seconds(peers)
     if win:
         print("  driven window: {} sample-second(s), {}..{}".format(len(win), min(win), max(win)))
+        tq = arm_torque_note(logs)
+        if tq:
+            print("  arm: " + tq)
+            if tq.startswith("the ATV was seated but produced ZERO torque"):
+                notes.append("A1 caveat: " + tq + " -- the rig was authored but never MOVED, so "
+                             "the corrector was still only exercised at rest")
     else:
-        notes.append("NO driven=1 sample on either peer -- the sit arm never fired, so nothing "
-                     "below tested a MIRROR. An idle ATV is never mirrored (the lane is invisible "
-                     "at rest); this run proves nothing about the corrector.")
+        notes.append("NO driven=1 sample on either peer, so nothing below tested a MIRROR "
+                     "(an idle ATV is never mirrored -- the lane is invisible at rest). "
+                     "WHY: " + arm_diagnosis(logs))
 
     # A1 -- a MIRROR's rig stays inside the native band while someone drives.
     for nm, d in zip(names, peers):

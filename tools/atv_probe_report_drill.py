@@ -73,6 +73,36 @@ def healthy(owns_host=1, owns_client=0, bk_client=93.7, gap=0.3):
 ARMS = []
 
 
+def armline(t, phase, rest):
+    return "[{}] [INFO ] [ATVP] ARM {}: {}\n".format(t, phase, rest)
+
+
+def gates(driven=1, empty=0, brake=0, broken=0, uw=0, batt=100.0, fwd=1, torq=0.0, speed=0.0):
+    return ("driven={} empty={} brake={} broken={} underwater={} batt={:.2f} fwd={} "
+            "torq={:.3f} speed={:.2f}".format(driven, empty, brake, broken, uw, batt,
+                                              fwd, torq, speed))
+
+
+def arm_text(name, expect, rc_and_out, must_say):
+    """Assert the VERDICT and the ATTRIBUTION.
+
+    A run with no driven window is INCONCLUSIVE whatever went wrong, so the return code
+    alone cannot tell "the arm was never enabled" from "the seat verb was refused". These
+    arms exist because the report used to print one identical sentence for both, and a
+    verdict that cannot name a subsystem sends the next session to rewrite working code
+    (docs/LESSONS.md, "a counter you never print is not an instrument").
+    """
+    rc, out = rc_and_out
+    got = {0: "PASS", 1: "FAIL", 2: "INCONCLUSIVE"}.get(rc, "rc=%d" % rc)
+    ok = got == expect and must_say in out
+    ARMS.append((name, expect, got, ok))
+    why = "ok" if ok else ("DRILL FAIL (verdict)" if got != expect else "DRILL FAIL (no attribution)")
+    print("  {:<34} expect {:<12} got {:<12} {}".format(name, expect, got, why))
+    if not ok:
+        print("      | wanted text: {!r}".format(must_say))
+        print("\n".join("      | " + l for l in out.splitlines()[-25:]))
+
+
 def arm(name, expect, rc_and_out):
     rc, out = rc_and_out
     got = {0: "PASS", 1: "FAIL", 2: "INCONCLUSIVE"}.get(rc, "rc=%d" % rc)
@@ -117,12 +147,35 @@ def main():
           for i in range(12)]
     arm("idle run is not a pass", "INCONCLUSIVE", run(hs, cs))
 
+    # ATTRIBUTION 1 -- the seat verb was CALLED and REFUSED. Same verdict as a run where
+    # the arm was never enabled at all; only the sentence distinguishes them, and the
+    # difference decides whether the next session edits the ini or the game's gates.
+    hs = [line(stamp(40 + i), i, "ATV", 0, 1, 100.0, 0.0, 0.0, 93.773, 93.773, 71.914)
+          for i in range(12)]
+    cs = [line(stamp(40 + i), i, "ATV", 0, 0, 100.0, 0.0, 0.0, 93.773, 93.773, 71.914)
+          for i in range(12)]
+    refused = hs + [armline(stamp(52), "sit",
+                            "actionName(local=0x1, 'sit') on atv=0x2 -> called, try 3/3, driven=0")]
+    arm_text("attrib: seat verb REFUSED", "INCONCLUSIVE", run(refused, cs),
+             "the seat verb was CALLED and REFUSED")
+
+    # ATTRIBUTION 2 -- the arm seated and drove, but the handbrake was still on, so the
+    # torque block at @34866 bailed and the rig never moved. Without this the run reads as
+    # a clean PASS while having exercised the corrector at rest -- the exact false-green
+    # the 2026-08-29 baseline already showed (both peers agree to 0.3 cm when parked).
+    hs, cs = healthy()
+    hs = hs + [armline(stamp(52), "driving", gates(brake=1, torq=0.0)),
+               armline(stamp(53), "driving", gates(brake=1, torq=0.0))]
+    arm_text("attrib: seated but ZERO torque", "PASS", run(hs, cs),
+             "produced ZERO torque")
+
     bad = [a for a in ARMS if not a[3]]
     print("\n{}/{} arms behaved as specified.".format(len(ARMS) - len(bad), len(ARMS)))
     if bad:
         print("DRILL FAIL")
         return 1
-    print("DRILL PASS -- the acceptance rejects the b145 baseline on all four axes.")
+    print("DRILL PASS -- the acceptance rejects the b145 baseline on all four axes, "
+          "and names WHY when the arm itself is what failed.")
     return 0
 
 
