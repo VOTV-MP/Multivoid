@@ -377,6 +377,11 @@ def get_decal_material(game, mat_pkg_path, caches, warnings, with_textures=True,
     timg = nt.nodes.new("ShaderNodeTexImage")
     timg.image = img
     timg.location = (-560, 260)
+    # mat_decal_grunge draws UNLIT: the texture's own RGB, straight. The old
+    # x0.5 darkening was calibrated while decals were invisible for OTHER
+    # reasons (inverted receiver normals + coincident duplicate sheets, both
+    # fixed) and turned the game's gray-green grime near-black - field
+    # comparison showed charcoal drips and a mud-brown palette. RULE 2.
     if windowed:
         # decalScale*2/size of the sheet per axis, seeded window origin
         span = 2.0 * float(info["vec"].get("decalscale", (200.0,) * 4)[1]) / \
@@ -393,19 +398,6 @@ def get_decal_material(game, mat_pkg_path, caches, warnings, with_textures=True,
         nt.links.new(coord.outputs["UV"], mapping.inputs["Vector"])
         nt.links.new(mapping.outputs["Vector"], timg.inputs["Vector"])
     color_socket = timg.outputs["Color"]
-    # mat_decal_grunge draws UNLIT (MSM_Unlit translucent, measured): its
-    # light-gray textures read as DARK stains against a lit wall in-game.
-    # The lit-BSDF analog: darken the texture toward the game reference.
-    grungy = info["root"] == "mat_decal_grunge"
-    if grungy:
-        dk = nt.nodes.new("ShaderNodeMix")
-        dk.data_type = "RGBA"
-        dk.blend_type = "MULTIPLY"
-        dk.inputs["Factor"].default_value = 1.0
-        dk.location = (-380, 320)
-        nt.links.new(color_socket, dk.inputs["A"])
-        dk.inputs["B"].default_value = (0.5, 0.47, 0.42, 1.0)
-        color_socket = dk.outputs["Result"]
     if "color" in info["vec"]:
         mix = nt.nodes.new("ShaderNodeMix")
         mix.data_type = "RGBA"
