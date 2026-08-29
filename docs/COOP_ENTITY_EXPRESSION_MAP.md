@@ -68,6 +68,13 @@ stack/rekey corruption the ghost-twin cure rode on). The join sweep's keyed univ
   on both peers** while confirmed registered. Host-side container extracts are, and always were,
   broadcast by `host_spawn_watcher`'s `FinishSpawningActor` seam instead. The file's own header comment
   still calls its observer "the canonical broadcaster for container extracts"; that comment is FALSE.
+  **The `FinishSpawningActor` Func seam gained a FOURTH consumer 2026-08-29 (`4304e04e`):**
+  `coop/world/weather_event_births` — a CLIENT-side birth-catch that destroys uncommanded births of
+  the newDay weather-event classes (`redSkyEvent_C` / `weatherFogController_C` / `blackFog_C`; their
+  organic callers are all `EX_LocalVirtualFunction`, so birth is the one place the roll surfaces).
+  Chains after host_spawn_watcher + prop_drop_intent on the same UFunction; FName-index class match,
+  each weather lane's echo flag passes its own wire-applied mirror spawn **[V runtime: installed both
+  peers; suppression exercised only via the echo-pass path so far]**.
   Retirement of the observer is NOT free — it also maintains the `g_takeObjInFlight` bracket — so it
   needs its own check ([[feedback-verify-before-retiring-a-fix]]).
 - **Identity:** the **BP save Key string** is the cross-peer id (the game mints it via `NewGuid`; we READ it,

@@ -17,15 +17,16 @@
 # is a silently broken release"). Test-PackageZip lives in ledger_lib.ps1 so publish
 # can re-run the identical predicate on the artifact it downloaded back.
 #
-# THE PAK IS OWED, NOT DROPPED -- and -Pak is why this script works in both worlds.
-# 7.7c item 1: "scientists.pak is the BASE pak and ships INSIDE the mod package", and
-# 7.9's USER DIRECTION 2026-08-25 ("zip релиза будет содержать мод и пак") chose manual
-# assembly BECAUSE the pak ships. What the user said 2026-08-26 -- "скин пака пока не
-# делали, это долг" -- is that the ARTIFACT does not exist yet (THUNDERSTORE.md:33: the
-# skin_registry LogicMods walk is a hard blocker), not that it is excluded. So today the
-# zip is pak-less and CI can assemble it unaided; the day the pak exists the SAME script
-# takes -Pak and the assembly may move to a human without the tree forking.
-# A pak-less package is a fully working mod: client_model.cpp:52-53 falls back to the
+# THE PAK SHIPS (2026-08-29; the 7.7c debt is PAID). 7.7c item 1: the base skins ship
+# INSIDE the mod package, and 7.9's USER DIRECTION 2026-08-25 ("zip релиза будет
+# содержать мод и пак") chose manual assembly BECAUSE the pak ships. The user's
+# 2026-08-29 pick is the four starter scientists (walter/sci/rvi_scientist/luther +
+# preview tiles), staged in assets/paks/ (UNTRACKED binaries -- see its README for
+# provenance) and auto-included below when -Pak is not given. CI has no assets/paks,
+# so a CI/drill zip is lawfully pak-less; a RELEASE zip is assembled on a box where
+# the dir is stocked. skin_registry walks every LogicMods subdirectory since the same
+# commit, so both install lanes see the models wherever their route lands them.
+# A pak-less package is still a fully working mod: client_model falls back to the
 # game's own kerfur skin, redistributing nothing.
 
 param(

@@ -1316,6 +1316,22 @@ user-visible difference.
 
 ### 7.7c The skin DISTRIBUTION model (USER 2026-08-23) — base pak + user packs + a missing-pack notice
 
+> **STATUS 2026-08-29 (the overnight batch, `aaf695c4`): part 1 EXECUTED, part 2 PARTIAL, part 3 NOT
+> BUILT.** Part 1: the base set ships in the zip as FOUR separate paks + preview tiles — the user's
+> 2026-08-29 pick is `walter_v1sc / sci_v1sc / rvi_scientist_v1sc / luther_v1sc` (this RESOLVES "the
+> user picks which"; **`hl_einstein_v1sc` is excluded by that pick** and stays a dev-install extra) —
+> staged from the untracked `assets/paks/` (its README carries provenance), auto-included by
+> `package.ps1`, manual-lane step in INSTALL.md. The starter roll is trimmed to exactly those four.
+> Part 2's MECHANICAL half shipped: `skin_registry` now walks EVERY `LogicMods/` subdirectory
+> (top level excluded — foreign BP mods), so a user-published pak package lists and is selectable;
+> the publishing guidance itself is unwritten. Part 3 (the missing-pack chat notice) is NOT built —
+> a missing pak still falls back silently to the native body (log-only).
+> **The `kDefaultSkinName` constraint below is DEFUSED by measurement, not obeyed:** the default is
+> still `hl_einstein_v1sc` (`skin_registry.h:36`), which is NOT in the shipped four — but
+> `ReadPlayerSkin` ROLLS a starter before the default is ever consulted, so the default is reachable
+> only on a pak-LESS install, where ANY name lands on the native-kel fallback anyway. Harmless as
+> built; re-point it at one of the four if it ever becomes reachable again.
+
 **USER DECISION, three parts:**
 1. **`scientists.pak` is the BASE pak and ships INSIDE the mod package** (not separate — this
    supersedes the "ship skins separately" suggestion in §7.6).

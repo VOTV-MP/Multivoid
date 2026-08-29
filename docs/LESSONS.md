@@ -2013,7 +2013,13 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   check** -- so the drill's failure exit was discarded by pwsh's last-command rule and the must-fire
   control could never fail CI (caught by the post-ship audit, fixed as one combined invocation,
   `27291108`). FIFTH rule: **"same family/shape as X" in a comment is a CHECKLIST, not a description --
-  diff your step against X's actual body before writing the claim.**
+  diff your step against X's actual body before writing the claim.** **Instance 12 (2026-08-29): the
+  answer was the FIRST LINE of every sibling** -- two brand-new PE interceptors violated the thread
+  contract written at `game_thread.h:166-170` + `COOP_DISPATCH_VISIBILITY.md:68-71` and followed by
+  ~40 existing interceptor bodies (the `IsGameThread()` gate / atomic-only reads); the standing
+  post-ship audit caught it as its one CRITICAL (`36e74269`). SIXTH rule: **before writing a new
+  callback for an existing hook type, read two existing callbacks of that type and copy their
+  opening gate before the body.**
   `memory/lesson_the_answer_was_already_written_down_in_this_repo.md`
 
 - **Classify by the predicate you are ENFORCING, not by a property of the wire** (2026-08-26, two `/qf` passes on one
@@ -4733,8 +4739,16 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   job silently skips. Caught live by the double-dispatch drill; fixed `e4c5e503`. *Look FIRST:*
   `.github/workflows/release-core.yml` judge step.
   `memory/lesson_gha_pwsh_step_exits_with_last_child_code.md`
-- **2026-08-29 — A PIPED BUILD'S EXIT CODE IS THE PIPE'S, NOT THE BUILD'S (the bash twin of the row
-  above).** `cmake --build … | tail` and `… | grep` both reported rc 0 while the COMPILE HAD FAILED
+- **2026-08-29 — systemd `EnvironmentFile` takes NO inline comments.** Appending
+  `COOP_MAX_BUILD=143  # note` to `/etc/coop-master.env` made the value parse as `"143  # note"` →
+  `env_int` fell back to 0 → the freshly deployed master version gate ran silently DISARMED while
+  `systemctl is-active`, `/healthz` AND the GREEN curl were all green — only re-firing the RED case
+  after restart caught it. *Look FIRST:* env-file comments on their OWN line; verify a deploy-config
+  gate by firing its RED case (`journalctl` shows the refusal line), never by service liveness. Same
+  class as the CMake-falsy-"0" drill rule: drill the arm you deployed.
+  `memory/lesson_systemd_environmentfile_takes_no_inline_comments.md`
+- **2026-08-29 — A PIPED BUILD'S EXIT CODE IS THE PIPE'S, NOT THE BUILD'S (the bash twin of the pwsh
+  last-child row above).** `cmake --build … | tail` and `… | grep` both reported rc 0 while the COMPILE HAD FAILED
   (tail/grep exit last); the smoke that followed then deployed + green-lit the STALE previous link —
   a green smoke after a silently-failed build launders old bytes as new. *Look FIRST:* prefix
   `set -o pipefail;` on every piped build/verify (or read `${PIPESTATUS[0]}`), and require the

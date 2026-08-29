@@ -552,15 +552,18 @@ live gameplay readers — one lane, two different kinds of field. RE:
 
 NOT SYNCED: per-peer sleepCam view; individual dream CONTENT (only the roll authority is gated).
 
-### Player-damage / hazards — `coop/player/player_damage`, `local_streams`, `dev/restore_vitals`
+### Player-damage / hazards — `coop/player/player_damage`, `local_streams`, `dev/restore_vitals`, `coop/player/ko_respawn`
 | # | facet | V | E | Auth | cite | mid-join |
 |---|---|---|---|---|---|---|
-| 1 | enemy damage to a peer's player | U | code | HA | `player_damage::OnWireDamage` | none (edge) |
+| 1 | enemy damage to a peer's player | U | code | HA | `player_damage::OnWireDamage` (the relay half; NO production sender exists — `SendPlayerDamage` has only the autotest driver) | none (edge) |
 | 2 | vitals (health/food/sleep fractions) | W | HO | PO | `remote_player::SetVitals` (display-only, never saveWrite) | current on first pose |
 | 3 | restore vitals (F3 dev refill) | U | code | HA | `restore_vitals::ApplyLocally` | none |
 | 4 | killer-wisp fatal grab/tear | W | HO | HA | (wisp lane, cross-ref) | none |
+| 5 | physical impact damage on a NON-local body (the "kill a player → the HOST dies" class) | W (cancel installed) | log | victim-authoritative (MTA shape) | **2026-08-29 (`aaf695c4`+`36e74269`)**: `player_damage::OnImpactEntryPre` PRE-cancels `impactDamage/impactDamageCPP/impactSquishCPP` when `self` != the atomic local-pawn snapshot — the BP bodies write the per-machine `saveSlot.health` SINGLETON on whatever body ran them (VERDICT #6 probe: the DIRECT entries are possession-guarded no-ops; the impact surface was the leak). Install line log-proven both peers; **the cancel itself has not fired on a real hit yet** | none (stateless) |
+| 6 | death → KO respawn (default lifecycle) | U | code | per-machine | `coop/player/ko_respawn` (adopted Tarangok, `e230d8df` + audit fold): lethal-hit interceptor + net_pump dead=true backstop → faint ragdoll → respawn at КПП, full vitals; `[death] ko_respawn=1` default. **Smoke-booted only — no death has been exercised through it** | KO is transient (≤ ragdoll_seconds); joiner sees pose/ragdoll stream |
 
-NOT SYNCED: local hazard EFFECTS (screen shake, coffeePower); "stamina" is `sleep` (local-only).
+NOT SYNCED: local hazard EFFECTS (screen shake, coffeePower); "stamina" is `sleep` (local-only). The
+2026-05-30 permadeath flow survives only as `ko_respawn=0` (COOP_SCOPE death-lifecycle supersede).
 
 ### Puppet (unpossessed-orphan drive) — `coop/player/puppet_drive`, `puppet_carry_drive`
 | # | facet | V | E | Auth | cite | mid-join |
@@ -855,14 +858,17 @@ would have flattened to one green.
 | # | facet | verdict | evidence | authority | citation (symbol / section) |
 |---|---|---|---|---|---|
 | 1 | rain / snow scalar mirror | **WORKS** | `log` | `host-authored` | client apply line `weather: applied flags 0x1D -> 0x1C ... rain-tx=1 scalars-changed=1` in `docs/piles/test-evidence/handson-s31-doom-CLIENT.log`. This is a REAL matching log, NOT the map `[V]` — see the correction note below |
-| 2 | red sky | **UNKNOWN** | `code` | `host-authored` | `ReliableKind::RedSky` in `weather_redsky.cpp` — the lane exists. NO apply/receive line in any test-evidence CLIENT log (grepped). `COOP_SYNC_MAP.md`'s `[V]` is a MAP verdict, and the readiness pass discredited doc-status parsing (6 vs 2, both directions) — it is not admissible as evidence here |
+| 2 | red sky | **WORKS** (wire leg) | `log` | `host-authored` | **REROOTED 2026-08-29 (`4304e04e`, the arigalit red-mist report):** the organic trigger is daynightCycle newDay's 1% roll via `EX_LocalVirtualFunction` — PE-invisible, so the old POST observers NEVER fired organically (zero broadcast lines in every log on disk; this row's old "lane exists / UNKNOWN" was measuring an INERT lane). Now: host FIELD POLL (`HostPollEdge`, gm.redSky+isred) + client birth-catch (`weather_event_births`, uncommanded `redSkyEvent_C` births destroyed at FinishSpawn) + per-joiner ON seed. Evidence = matching 2-peer logs 2026-08-29 01:37: host `field-poll edge` state=1/0 → client `red-sky Apply set(true)` / `set(false)+destroyed`, same-second, both directions. NOT hands-on (nobody looked at both screens); the ORGANIC-roll suppression leg is `code`-tier (the birth-catch installed both peers; a real 1% roll has not been observed since) |
 | 3 | lightning strike | **UNKNOWN** | `code` | `host-authored` | `ReliableKind::LightningStrike` in `weather_lightning.cpp` — lane exists, host broadcasts strike loc. NO client receive line in the logs (grepped). Same map-`[V]`-inadmissible note |
 | 4 | fog (host-authoritative) | **UNKNOWN** | `code` | `host-authored` | `weather_fog.cpp` — host-clear heartbeat (MTA `CBlendedWeather::DoPulse` precedent), client backstop destroys stray rolling-fog. Built s25, **smoke only** — and per §3 a smoke earns neither `hands-on` NOR `log`; the lane exists, its behaviour is unobserved |
 | 5 | wind | **BROKEN** | `log` | `host-authored` | `changeWindOrigin` PRE-interceptor client-suppresses the gust roll, host streams `windTarget`; `COOP_SYNC_MAP.md` records "wind desync under live probe — INSTRUMENTED, not diagnosed". The verdict is BROKEN from the live probe; the ROOT is undiagnosed |
 | — | **remainder — the list is open** | **UNKNOWN** | — | — | (a) **0 facets found by RUNNING** — but (b) **weather was NEVER exercised under concurrency**; the wind bug came from a live SINGLE-flow probe, not an interleaving. So this 0 is `UNKNOWN completeness`, NOT "nothing missed" — reading it as complete would be the marker-filter's false-negative. weather's RNG knob jitter (`COOP_RNG_AUTHORITY.md:157`) is a MECHANIC input neutralized by the host stream, deliberately not a row |
 
-**Count:** 5 facets — **1 `WORKS`, 1 `BROKEN`, 3 `UNKNOWN`**; by evidence, **0 `hands-on`, 2 `log`,
-3 `code`**.
+**Count (updated 2026-08-29):** 5 facets — **2 `WORKS`, 1 `BROKEN`, 2 `UNKNOWN`**; by evidence,
+**0 `hands-on`, 3 `log`, 2 `code`**. (Red sky flipped UNKNOWN→WORKS on real matching 2-peer logs after
+the reroot; fog's CLIENT-suppression premise was corrected the same night — its PRE interceptor never
+saw the organic EX_Local caller, the 3 s reconcile was the real cleanup, and the new birth-catch now
+kills a client fog roll at spawn.)
 
 **THE CORRECTION IS THE FINDING (round 4).** The first draft of this table read "4 `WORKS`, 1
 `BROKEN`" — I had assigned `WORKS/log` to facets 1-4 from `COOP_SYNC_MAP.md`'s `[V]` markers, which

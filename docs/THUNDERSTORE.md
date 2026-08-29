@@ -30,7 +30,7 @@ first test of this document.
 | 2 | A **service account** + API token, if publishing from CI (`TCLI_AUTH_TOKEN`). | NOT DONE; §7.9 makes this optional — we assemble by hand |
 | 3 | `icon.png`, **exactly 256x256** | **DONE** — `assets/branding/icon.png`, generated from `icon-512.png` |
 | 4 | A UE4SS-lane build actually released | **NOT DONE** (re-verified 2026-08-28) — commit 3 LANDED (`1912d229`, §6 item 4 done) and the pipeline is inverted (C3.3); the remaining gate is only §6 item 5, the release itself. The zip exists locally: `Multivoid-Multivoid-0.9.143.zip` |
-| 5 | `skin_registry` walks `LogicMods/` subdirectories | **NOT DONE** — `UE4SS_ARC` §7.7. **Hard blocker:** without it the shipped pak is invisible on both lanes |
+| 5 | `skin_registry` walks `LogicMods/` subdirectories | **DONE 2026-08-29** (`aaf695c4`) — `PakDirs()` scans EVERY LogicMods subdirectory (multivoid/ first, stems deduped; the TOP level stays excluded — foreign BP mods like DebugMod.pak must not list as skins). The zip now carries `pak/` (4 starter paks + previews) and the manual-lane step is in INSTALL.md |
 | 6 | The negative control: our own zip imported locally into r2modman and the profile tree diffed against §7.2a's prediction | **NOT DONE** — `UE4SS_ARC` §7.5 |
 | 7 | The game is in the ecosystem schema | **DONE, not by us** — `voices-of-the-void` is listed with `packageLoader: shimloader`; no PR to `ecosystem-schema` is needed. Adding a game requires "pre-existing mod developer interest" and a CLI-generated PR — irrelevant to us, recorded so it is not re-asked |
 
