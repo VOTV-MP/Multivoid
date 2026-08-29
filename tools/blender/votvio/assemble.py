@@ -135,12 +135,13 @@ class _Builder:
                     self.warnings, with_textures=self.opt.get("with_textures", True)))
         return me
 
-    def queue_decal(self, name, col, matrix, mat_path, seed=None):
+    def queue_decal(self, name, col, matrix, mat_path, seed=None, alpha_mult=1.0):
         """Decals are projected in one post-pass once the receivers exist.
         `seed` must be per-INSTANCE unique (labels repeat per class): it keys
-        the lift jitter and the dynamicWallDirt window bucket."""
+        the lift jitter and the dynamicWallDirt window bucket. `alpha_mult` =
+        the grime process/maxProcess ratio (a part-mopped stain renders faded)."""
         self.decal_queue.append((name, col, matrix, mat_path,
-                                 seed if seed is not None else name))
+                                 seed if seed is not None else name, alpha_mult))
 
     def _project_decals(self):
         if not self.decal_queue:
@@ -159,7 +160,7 @@ class _Builder:
         deps = bpy.context.evaluated_depsgraph_get()
         scene = bpy.context.scene
         built = []
-        for name, col, matrix, mat_path, seed in self.decal_queue:
+        for name, col, matrix, mat_path, seed, alpha_mult in self.decal_queue:
             sheets = decals_mod.project_decal(scene, deps, matrix,
                                               lift=decals_mod.decal_lift(seed))
             if not sheets:
@@ -189,7 +190,8 @@ class _Builder:
                 pass
             me.materials.append(materials_mod.get_decal_material(
                 self.game, mat_path, self.caches, self.warnings,
-                with_textures=self.opt.get("with_textures", True), seed=seed))
+                with_textures=self.opt.get("with_textures", True), seed=seed,
+                alpha_mult=alpha_mult))
             me.validate()
             built.append((name, me, col, (cx, cy, cz)))
         for c in toggled:
@@ -273,7 +275,10 @@ class _Builder:
                 if kind == "DECAL":
                     if queue_decals and self.opt.get("import_decals", True):
                         self.queue_decal(label + ".decal", col,
-                                         actor_m @ local_m, mesh_path, seed=seed)
+                                         actor_m @ local_m, mesh_path, seed=seed,
+                                         alpha_mult=self.resolver.process_alpha(
+                                             row.package_path,
+                                             getattr(row, "json", "")))
                         self.counts["meshed"] += 1
                         placed_mesh = True
                     continue

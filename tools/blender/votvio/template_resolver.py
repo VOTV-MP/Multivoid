@@ -121,6 +121,7 @@ class TemplateResolver:
         cdo_name = ""
         cdo_key = ""
         cdo_material = ""   # the grime BP's runtime decal material variable
+        cdo_max_process = 0.0   # grime maxProcess (display alpha denominator)
         ifaces = set()
         if _depth < 8:
             for e in self.game.package_dict(key):
@@ -141,6 +142,9 @@ class TemplateResolver:
                         mp = _obj_ref_package(v)
                         if mp.startswith("/Game/"):
                             cdo_material = mp
+                    v = props.get("maxProcess")
+                    if isinstance(v, (int, float)) and v > 0:
+                        cdo_max_process = float(v)
                 if ty == "DecalComponent":
                     base = _strip_gen(nm)
                     if base not in decal_templates:
@@ -211,6 +215,7 @@ class TemplateResolver:
                 roots.append(tmpl)
         info = {"templates": templates, "children": children, "roots": roots,
                 "decals": decal_templates, "cdo_material": cdo_material,
+                "cdo_max_process": cdo_max_process,
                 "cdo_name": cdo_name, "cdo_key": cdo_key, "ifaces": ifaces}
         if parent_pkg:
             par = self._load(parent_pkg, _depth + 1)
@@ -240,6 +245,8 @@ class TemplateResolver:
                 info["cdo_key"] = par["cdo_key"]
             if not info["cdo_material"]:
                 info["cdo_material"] = par["cdo_material"]
+            if not info["cdo_max_process"]:
+                info["cdo_max_process"] = par["cdo_max_process"]
             info["ifaces"] |= par["ifaces"]
         self._info[key] = info
         return info
@@ -255,6 +262,15 @@ class TemplateResolver:
 
     def implements(self, package_path, interface_class_name):
         return interface_class_name in self._load(package_path)["ifaces"]
+
+    def process_alpha(self, package_path, row_json):
+        """Grime display opacity = clamp(saved process / class maxProcess).
+        Measured (probe_v9b): poo persists 50 against its OWN maxProcess=50
+        (full), oil 300 vs inherited 100 (full, just 3x the mopping), a
+        half-mopped stain saves process<max and renders faded."""
+        _v, process = decals_mod.row_variant_process(row_json)
+        denom = self._load(package_path)["cdo_max_process"] or 100.0
+        return min(max(process / denom, 0.0), 1.0)
 
     def templates(self, package_path):
         """Flat base->TemplateComp view (umap per-component fallbacks)."""
@@ -332,11 +348,12 @@ class TemplateResolver:
                     out.append((t.mesh, m, t.kind))
             dt = info["decals"].get(base)
             if dt is not None:
-                # the game's runtime pick: the SAVED variant/size when the row
-                # carries them (primitives json = [variant, sizePct]), then the
+                # the game's runtime pick: the SAVED variant when the row
+                # carries one (primitives json = [variant, process]), then the
                 # per-type variant family, then the CDO 'material' variable,
-                # then the template's own material
-                variant, szscale = decals_mod.row_variant_size(
+                # then the template's own material. json[1] is mop DURABILITY
+                # (probe_v9b) and feeds process_alpha() - never the size.
+                variant, _process = decals_mod.row_variant_process(
                     getattr(row, "json", ""))
                 if variant < 0:
                     variant = decals_mod.poster_index(row)
@@ -349,8 +366,8 @@ class TemplateResolver:
                     spin = decals_mod.grime_spin(row.class_name, pose_seed)
                     if spin is not None:
                         m2 = m @ spin
-                    size = tuple(s * szscale for s in dt["size"])
-                    out.append((dmat, m2 @ decals_mod.size_matrix(size), "DECAL"))
+                    out.append((dmat, m2 @ decals_mod.size_matrix(dt["size"]),
+                                "DECAL"))
             for kid in info["children"].get(base, ()):
                 walk(kid, m, depth + 1)
 

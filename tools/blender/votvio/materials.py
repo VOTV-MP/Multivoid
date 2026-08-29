@@ -336,7 +336,7 @@ def _set_blended(mat):
 
 
 def get_decal_material(game, mat_pkg_path, caches, warnings, with_textures=True,
-                       seed=""):
+                       seed="", alpha_mult=1.0):
     """Alpha-blended quad material for a DecalComponent (grime/graffiti/stains).
     Base color from the first texture param; alpha = texture alpha x opacity,
     or the 'mask' texture when the decal carries one (blood family).
@@ -349,7 +349,8 @@ def get_decal_material(game, mat_pkg_path, caches, warnings, with_textures=True,
          "clip": 0.333, "root": "", "chain": []}
     windowed = info["root"] == "mat_dynamicwalldirt"
     bucket = (_seed_int(seed) % 12) if windowed else 0
-    key = ("decal", mat_pkg_path or "<none>", bucket)
+    alpha_mult = min(max(float(alpha_mult), 0.0), 1.0)
+    key = ("decal", mat_pkg_path or "<none>", bucket, round(alpha_mult, 2))
     if key in caches["mat"]:
         return caches["mat"][key]
     name = "decal_" + (mat_pkg_path.rsplit("/", 1)[-1] if mat_pkg_path else "none")
@@ -361,6 +362,12 @@ def get_decal_material(game, mat_pkg_path, caches, warnings, with_textures=True,
     if bsdf is None:
         return mat
     bsdf.inputs["Roughness"].default_value = 0.8
+    # a deferred decal modulates the receiver's albedo and adds no specular
+    # film of its own; Principled's default specular made every translucent
+    # sheet visible as a glossy plane at glancing angles
+    spec = bsdf.inputs.get("Specular IOR Level")
+    if spec is not None:
+        spec.default_value = 0.0
     _set_blended(mat)
     # two-sided sheet pairs wind toward their own viewer side; culling the
     # backface keeps the far-side sheet from ghosting through thin walls
@@ -417,25 +424,33 @@ def get_decal_material(game, mat_pkg_path, caches, warnings, with_textures=True,
             tm.image = mimg
             tm.location = (-560, -60)
             alpha_socket = tm.outputs["Color"]
-    if info["root"] == "mat_decal_grunge":
-        # the grunge graph runs CheapContrast(opacity_contrast, default 1.0)
-        # over the alpha: saturate(a*(1+2c) - c). Below ~0.33 vanishes - the
-        # game shows only each blob's CORE while the raw alpha renders the
-        # whole soft halo (field report: "looks like a different texture")
-        c = float(info["scal"].get("opacity_contrast", 1.0) or 0.0)
-        if c > 0.001:
-            mad = nt.nodes.new("ShaderNodeMath")
-            mad.operation = "MULTIPLY_ADD"
-            mad.inputs[1].default_value = 1.0 + 2.0 * c
-            mad.inputs[2].default_value = -c
-            mad.use_clamp = True
-            mad.location = (-320, -60)
-            nt.links.new(alpha_socket, mad.inputs[0])
-            alpha_socket = mad.outputs[0]
+    # the game CLIPS decal opacity: every decal chain in the pak carries
+    # BasePropertyOverrides.OpacityMaskClipValue=0.3333 (probe_v9), and the
+    # in-game ground truth agrees - sub-clip texels draw NOTHING (74.7% of the
+    # dyn dirt sheet sits at alpha 0.1..0.33 and the game shows no film there),
+    # so only stain/drip CORES render. Without this, 257 grime_dyn decals were
+    # 2.2m smoky squares plastered over walls, doors and props. v8d's
+    # CheapContrast-over-texture-alpha is retired whole: numerically it
+    # approximated this clip below the threshold, but the material's real
+    # CheapContrasts sit over LinearGradients (FunctionInfos order), not the
+    # texture alpha.
+    clip = float(info.get("clip", 0.3333) or 0.0)
+    if clip > 0.001:
+        gate = nt.nodes.new("ShaderNodeMath")
+        gate.operation = "GREATER_THAN"
+        gate.inputs[1].default_value = clip
+        gate.location = (-320, -180)
+        nt.links.new(alpha_socket, gate.inputs[0])
+        keep = nt.nodes.new("ShaderNodeMath")
+        keep.operation = "MULTIPLY"
+        keep.location = (-320, -60)
+        nt.links.new(alpha_socket, keep.inputs[0])
+        nt.links.new(gate.outputs[0], keep.inputs[1])
+        alpha_socket = keep.outputs[0]
     op = info["scal"].get("opacity", info["scal"].get("alpha", 1.0))
     mul = nt.nodes.new("ShaderNodeMath")
     mul.operation = "MULTIPLY"
-    mul.inputs[1].default_value = min(max(op, 0.0), 1.0)
+    mul.inputs[1].default_value = min(max(op, 0.0), 1.0) * alpha_mult
     mul.location = (-140, -60)
     nt.links.new(alpha_socket, mul.inputs[0])
     nt.links.new(mul.outputs[0], bsdf.inputs["Alpha"])

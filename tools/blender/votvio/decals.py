@@ -83,18 +83,23 @@ def poster_index(row):
     return -1
 
 
-def row_variant_size(row_json):
-    """primitives json '[ variant, sizePct ]' -> (variant, scale). Measured
-    grammar: crack '[ 14, 100 ]', oil '[ -1, 300 ]', poo '[ -1, 50 ]'."""
+def row_variant_process(row_json):
+    """primitives json '[ variant, process ]' -> (variant, process).
+
+    json[1] is the grime BP's `process` var - mop DURABILITY/progress, not a
+    size (probe_v9b: every class's rows persist exactly its CDO default -
+    grime_poo 50 with its OWN maxProcess=50, grime_oil 300 vs inherited 100,
+    grime_dyn 110). Display opacity = clamp(process / maxProcess); cleaning
+    decrements process. The old 'sizePct' reading scaled the oil stain 3x."""
     try:
         v = json.loads(row_json or "")
         if isinstance(v, list) and len(v) >= 2:
-            return int(v[0]), max(float(v[1]), 1.0) / 100.0
+            return int(v[0]), float(v[1])
         if isinstance(v, list) and len(v) == 1:
-            return int(v[0]), 1.0
+            return int(v[0]), 100.0
     except (ValueError, TypeError):
         pass
-    return -1, 1.0
+    return -1, 100.0
 
 
 def grime_spin(class_name, seed):
@@ -122,7 +127,17 @@ def decal_lift(seed):
     overlapping decals never share a depth plane with each other either."""
     return _OFFSET + (_seed_int(str(seed) + ":lift") % 9) * 0.001
 _CELL = 0.12           # target grid cell size (m)
-_EXTRA_DEPTH = 0.15    # placement tolerance beyond the box depth (m)
+_EXTRA_DEPTH = 0.02    # numeric tolerance beyond the box depth (m). The box
+                       # depth itself is authoritative: grime decals ship
+                       # DecalSize.X=5uu = a 5cm reach (probe_v9), and the old
+                       # 15cm tolerance painted doors/screens standing a room
+                       # feature away from the wall the decal belongs to.
+_RESCUE_DEPTH = 0.25   # second-chance reach when the exact box misses: OUR
+                       # receivers are reconstructions (landscape decoded from
+                       # component weightmaps, BSP from the model lump), so a
+                       # decal sitting on the real surface can hover a few cm
+                       # off ours. The game itself needs no rescue - its box
+                       # is exact against its own geometry.
 
 
 def _uv(fy, fz):
@@ -168,16 +183,19 @@ def project_decal(scene, depsgraph, m, lift=_OFFSET):
     y_axis = (R @ Vector((0.0, 1.0, 0.0))).normalized()
     z_axis = (R @ Vector((0.0, 0.0, 1.0))).normalized()
     sx, sy, sz = abs(scale.x), abs(scale.y), abs(scale.z)
-    depth = sx + _EXTRA_DEPTH
     ny = max(3, min(16, int(round(2.0 * sy / _CELL))))
     nz = max(3, min(16, int(round(2.0 * sz / _CELL))))
-    sheets = []
-    for direction in (x_axis, -x_axis):
-        sheet = _project_side(scene, depsgraph, loc, direction, y_axis, z_axis,
-                              sy, sz, ny, nz, depth, lift)
-        if sheet is not None:
-            sheets.append(sheet)
-    return sheets
+    for extra in (_EXTRA_DEPTH, _RESCUE_DEPTH):
+        depth = sx + extra
+        sheets = []
+        for direction in (x_axis, -x_axis):
+            sheet = _project_side(scene, depsgraph, loc, direction, y_axis,
+                                  z_axis, sy, sz, ny, nz, depth, lift)
+            if sheet is not None:
+                sheets.append(sheet)
+        if sheets:
+            return sheets
+    return []
 
 
 def _project_side(scene, depsgraph, loc, direction, y_axis, z_axis, sy, sz,
