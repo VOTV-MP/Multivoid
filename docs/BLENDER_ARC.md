@@ -87,6 +87,58 @@ data with NO save-spawn duplicate; collision shells 0; floaters near base = one 
 saved at Z=83 m (save truth). Full-map smoke: 79,129 objects / 110 s / 0 warnings.
 Плавающие бургеры/сэндвичи — правда сейва (probe5: `prop_burger_C` rows at Z 83–183 m).
 
+**v6 (2026-08-29, same session; commit `31551742`) — six more field reports, each measured:**
+- **Арбуз с материалом воды**: `_family` матчил ПОДСТРОКИ имён ("mat_watermelon" ⊃
+  "mat_water"). Water = корень MIC-цепочки против измеренного набора базовых материалов
+  (`mat_water/2/waterRiver/frozenWater/bucketWater/gldsrcQuakeWater`) или параметр
+  `w_absorb`; mesh_hint-проброс удалён (RULE 2). Никогда не классифицировать ассеты по
+  подстроке имени.
+- **Река без воды**: река = **85 `SplineMeshComponent` у `Landscape_0`**, гнущих
+  `meshes/misc/river` по сплайнам Эрмита — тип, который не читался вовсе. Новый
+  `spline_mesh.py` воспроизводит slice-математику USplineMeshComponent (Hermite
+  pos/tangent + SplineUpDir-фрейм, 2D-скейл, roll, offset) в numpy;
+  `mesh_build.build_spline_mesh` запекает сегменты; материал `Inst_waterRiver` корнем в
+  `mat_waterRiver` → водная семья. Полная карта: 85 сегментов X −404..1032 Y −932..927.
+- **Грайм-декали (пустые кубики)**: VOTV красит грязь `DecalComponent`-ами (992 в umap,
+  936 grime_*-акторов; материал часто через level-MID, чей родитель — на шаблоне класса,
+  наследуется по-свойству через SuperStruct). Декали = тонкие двусторонние квады (±2 см
+  вдоль оси проекции) с alpha-blend материалом. **Грайм-классы — `int_primitive`:
+  их выражает `primitivesData` сейва** — примитивы теперь идут через `place_row`, а
+  `spawn_plan` эмитит DECAL-строки из шаблонов класса (739 DecalGrunge_dirt + 259
+  dynamicWallDirt + кровь/масло в полной сцене); мусорные кучи-примитивы попутно
+  разрешились в меши chipsPile.
+- **Дверцы шкафчиков**: дверь висит на петле-`ArrowComponent`, чей шаблонный rel
+  (+27.9,+47,+132.2) в точности компенсирует смещение двери — а резолвер читал только
+  SM/SK/Scene шаблоны. Теперь читаются шаблоны ВСЕХ `*Component` (kind OTHER, трансформы).
+  19/19 шкафчиков: дверь в 0.00 м от корпуса, закрыта.
+- **Бункер без стен**: альфа-бункер = **BSP уровня** (61 `ModelComponent`, ни одного
+  StaticMesh в боксе комнаты). Новый `bsp_model.py` парсит кукнутый хвост UModel
+  (StripFlags/Bounds/Vectors/Points/Nodes/Surfs/Verts, каждый bulk-заголовок валидируется,
+  offset-самовосстановление ±4/±20); импортёр строит Model уровня одним мешем: 5 568
+  треугольников, 25 материалов через ImportMap, 439 вершин в боксе бункера.
+- **Стекло главного окна**: у панелей `newbaseWindow2_sig2_*` в куке все слоты —
+  плейсхолдер `WorldGridMaterial`, и пакет d_window не ссылается НИ на один материал
+  (рантайм-система мытья/битья) → кураторский слот-оверрайд → `inst_glass`
+  (`PLACEHOLDER_SLOT_OVERRIDES` в materials.py).
+- **Лестницы/дверцы в воздухе в комнате workstation**: ChildActor-цепочки, запаркованные
+  под `scene_dynamicClutter` базы, игра расставляет event-графом в рантайме (измерено:
+  все 5 лестниц + дверцы карголифта сериализованы В ОРИДЖИНЕ базы) → скрытая коллекция
+  **Unplaced**, рекурсивно по цепочке детей.
+Полный смоук: 79 264 объекта / 111 с / 0 предупреждений. verify4 на обоих blend: река 85
+сегментов с Inst_waterRiver; арбуз mat_watermelon (0 водных попаданий); шкафчики 19/19;
+BSP-вершины в боксе 439; панели inst_glass; Unplaced скрыт; лестниц на ориджине в Statics 0.
+
+**v6b (same session, `49454cfb`) — RT-экраны + коллизия class_package.** Белые экраны
+воркстейшна и часов: их кукнутые материалы (`mat_tvScreen`, `mat_analogDS_*`,
+`mat_polarity`, `mat_frequency`, `inst_segmentDigits*`) НЕ несут ни одного текстурного
+параметра — игра рисует их в рантайме (RT/стрелочные шейдеры/7-сегментная логика).
+Честная статика = родной «нет сигнала»: кураторские `_SCREEN_ROOT_PREFIXES` → тёмный
+CRT с бело-шумной эмиссией (у стола 11 экранных слотов). Часы вскрыли дефект
+`class_package`: `clocks_C` коллизится с МЕШ-пакетом `meshes/clocks/clocks` и меш
+побеждал — BP-дом `objects/clocks` не грузился; теперь при коллизии предпочитается
+`/objects/` — одно это разрешило ~110 шаблонных мешей по карте (no_mesh 499→389).
+Полный смоук: 79 353 объекта / 128 с / 0 предупреждений.
+
 ## 1. What it is
 
 A Blender 5.1 **extension** (`extensions/user_default/votvio`, manifest-based, python 3.13 + numpy,
@@ -149,15 +201,17 @@ landscape, foliage, lights), every saved prop/entity/vehicle/NPC from the save's
 | Open | What | Phase |
 |---|---|---|
 | — | ~~база в воздухе / лестница вышки / черновые шеллы~~ **CLOSED v5 `42bb819d`** (§0 v5) | — |
-| — | the user's NEXT field-fix batch on the base150 bench (pending their .blend inspection) | next |
-| — | water: the material family is built, but lake/river SURFACES were never verified present | next |
+| — | ~~река без воды / арбуз-вода / грайм-кубики / дверцы шкафчиков / бункер / стекло / лестницы в воздухе~~ **CLOSED v6 `31551742`** (§0 v6) | — |
+| — | the user's NEXT field-fix batch (pending their .blend inspection) | next |
+| — | lake SURFACE: the river splines cross the lake area (segments up to ~55 m wide) — whether the lake reads as water in the scene is unverified | next |
 | — | **acceptance probe + calibration + machine diff** (the design's own gate) | next |
 | — | gatherer table from the 48 kismet bodies — the v5 keyed-fixture reconcile (row key ↔ level actor at cooked transform) covers the fixture half measurement-driven; the kismet table still owed for loadTransform semantics of rows that MOVED | P3 |
 | O8 | non-main-map saves (`Level != Untitled_1`) — the generic attempt + warning IS built (`import_op.py`), never validated on a real dream/tutorial save | P3 |
-| O12 | ~~MIC vocabulary census~~ **CLOSED `c19662e2`** — full-population census (3,243 materials) + family builder shipped (`materials.py`); residual = fidelity items (triplanar is an approximation; a base Material's non-parameterized default textures are unreachable in cook → grey fallback) | — |
-| O13 | SplineMeshComponent (89) deform — no spline code in `tools/blender/votvio/` as of `42bb819d` | P3 |
-| O14 | grime decal fidelity (grime decals absent; piles largely resolved by v5 keyed reconcile — trashBitsPile placeholders 327→17 bench / 81 full) | P3 |
+| O12 | ~~MIC vocabulary census~~ **CLOSED `c19662e2`** — full-population census (3,243 materials) + family builder shipped (`materials.py`); residual = fidelity items (triplanar is an approximation; a base Material's non-parameterized default textures are unreachable in cook → grey fallback; **placeholder slots get curated overrides — `PLACEHOLDER_SLOT_OVERRIDES`**) | — |
+| O13 | ~~SplineMeshComponent deform~~ **CLOSED v6 `31551742`** — `spline_mesh.py` Hermite slice math; 85/89 map splines are the river, 4 carry no mesh | — |
+| O14 | ~~grime decals~~ **CLOSED v6** as alpha-quads (umap DecalComponents + primitivesData grime rows via spawn_plan DECAL entries); residual: decal quads do not wrap corners (a projected decal on a corner shows as a flat card); trashBitsPile visuals partly resolved (chipsPile template meshes), 81 full-map placeholders remain | P3 |
 | O15 | landscape textures: ~~untextured white~~ styled procedural GREEN/SNOW/DIRT + slope-rock SHIPPED (`c19662e2`); weightmap-TRUE layer blending still open | P3 |
+| — | BSP UV scale is the classic /128 texel guess — bunker wall texture density unverified | P3 |
 | — | prop_C stragglers (44) + prop_barnshelf (23) placeholders | P3 |
 | — | SK geometry port of `ue_skelmesh.py` (NPC bind pose) | P3 |
 
