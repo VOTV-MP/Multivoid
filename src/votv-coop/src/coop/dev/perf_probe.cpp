@@ -32,6 +32,7 @@ namespace R = ue_wrap::reflection;
 bool  g_armed     = false;   // set by Init() from the ini; read by Armed()
 bool  g_selfTime  = false;
 bool  g_initDone  = false;
+int   g_resDropAfterS = 0;   // perf_probe_resdrop: samples before the render-res collapse
 
 // Frame counter (incremented from the ImGui Present detour) + subsystem buckets.
 std::atomic<unsigned long long> g_frames{0};
@@ -99,6 +100,7 @@ void Init() {
     if (!Enabled()) return;
     g_armed = true;
     g_selfTime = coop::config::ResolveFlag(::coop::config_registry::rows::perf_probe_selftime);
+    g_resDropAfterS = static_cast<int>(coop::config::ResolveInt(::coop::config_registry::rows::perf_probe_resdrop));
     GT::SetPerfCounting(true, g_selfTime);
     UE_LOGW("[perf] probe ARMED (perf_probe=1, selftime=%d) -- 1 Hz frame-cost report follows; "
             "this adds per-dispatch counting overhead, turn OFF for real play", g_selfTime ? 1 : 0);
@@ -179,6 +181,27 @@ void Sample() {
                     "read Frame/Game/Draw/GPU from a screenshot. The uncap is what makes those "
                     "numbers a workload measurement rather than a reading of the cap; our own "
                     "buckets can never attribute engine-side cost.");
+        }
+    }
+
+    // CPU-vs-GPU discriminator (perf_probe_resdrop=1). `stat unit` alone cannot settle
+    // which side is the bottleneck: when the GPU is the limiter the game thread BLOCKS
+    // waiting on it, so Game inflates to ~Frame and looks like the culprit -- the same
+    // shape a genuinely CPU-bound frame has. Collapsing the render resolution changes
+    // ONLY the GPU's workload, so it separates them by construction:
+    //   frame time falls a lot  -> GPU-bound  (rendering; our CPU cost is irrelevant)
+    //   frame time barely moves -> CPU-bound  (game thread; rendering is irrelevant)
+    // Fires ~20 s in so there is a full-resolution baseline in the same run, on the same
+    // world, at the same spot -- the comparison is within-run, not against a memory.
+    if (g_resDropAfterS > 0) {
+        static int sSamples = 0;
+        static bool sDropped = false;
+        if (!sDropped && ++sSamples >= g_resDropAfterS) {
+            sDropped = true;
+            ue_wrap::engine::ExecuteConsoleCommand(L"r.ScreenPercentage 25");
+            UE_LOGW("[perf] RES-DROP: r.ScreenPercentage 25 issued after %d samples -- compare "
+                    "Frame/GPU either side of this line. A big drop means GPU-bound; little "
+                    "change means CPU-bound.", sSamples);
         }
     }
 

@@ -732,6 +732,7 @@ unsigned long long PeWholeNsTotal()         { return g_peWholeNs.load(std::memor
 unsigned long long PeEngineNsTotal()        { return g_peEngineNs.load(std::memory_order_relaxed); }
 unsigned long long PeWholeSampleTotal()     { return g_peWholeSamples.load(std::memory_order_relaxed); }
 unsigned long long PeTopLevelCountTotal()   { return g_peWholeOrd.load(std::memory_order_relaxed); }
+
 unsigned long long PeObserverBodyNsTotal()  { return g_obsBodyNs.load(std::memory_order_relaxed); }
 unsigned long long PeObserverWorstNs()      { return g_obsWorstNs.load(std::memory_order_relaxed); }
 void*              PeObserverWorstFn()      { return g_obsWorstFn.load(std::memory_order_relaxed); }
