@@ -90,6 +90,11 @@ void SweepInto(std::vector<Row>& rows) {
                 r.type = Row::Type::Unknown;
                 r.key = key;
                 r.value = g.second.lines.front().value;
+                // A key we RETIRED is not a typo, and telling a player their own
+                // identity line looks like one is the wrong sentence. The row type
+                // stays Unknown so "Tidy up" still offers to remove it.
+                if (const char* note = coop::config_registry::RetiredKeyNote(key.c_str()))
+                    r.reason = note;
                 rows.push_back(r);
                 continue;
             }
@@ -106,8 +111,12 @@ void SweepInto(std::vector<Row>& rows) {
                     r.type = Row::Type::DuplicateDormant;
                     r.key = key;
                     r.dupLines = g.second.lines;
-                    r.identityKey = _stricmp(key.c_str(), "player_guid") == 0 ||
-                                    _stricmp(key.c_str(), "player_skin") == 0;
+                    // player_guid is gone from this list with its row (v144): the
+                    // durable identity is a keypair in multivoid_identity.key now,
+                    // so a leftover `player_guid=` line in an existing ini is
+                    // simply DEAD -- and the sweep already has the right word for
+                    // that, reporting it as an Unknown key one branch above.
+                    r.identityKey = _stricmp(key.c_str(), "player_skin") == 0;
                     rows.push_back(r);
                 }
             }

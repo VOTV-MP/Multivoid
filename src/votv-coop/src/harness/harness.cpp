@@ -21,7 +21,6 @@
 #include "coop/config/config.h"
 #include "coop/config/config_review.h"      // RunBootSweep (T10 settings check, arc 2)
 #include "coop/net/peer_identity.h"        // the durable Ed25519 identity (replaces player_guid=)
-#include "coop/session/player_handshake.h"  // SetLocalGuid (v73 per-player inventory identity)
 #include "coop/player/local_body.h"         // SetInitialSkin (v93 skins: ini player_skin=)
 #include "coop/text/utf8_codec.h"
 #include "coop/session/session_manager.h"
@@ -140,7 +139,6 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         UE_LOGE("harness: no durable identity could be established -- coop sessions "
                 "will refuse to start (see the peer_identity log line above)");
     }
-    coop::player_handshake::SetLocalGuid(coop::net::peer_identity::LocalGuid());
     // v93 skins: the persisted body-skin choice (same ini; a fresh identity is assigned
     // the current scientist). local_body owns it; the Join payload reads it from there.
     coop::local_body::SetInitialSkin(cfg::ReadPlayerSkin());

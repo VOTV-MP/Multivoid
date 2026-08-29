@@ -42,10 +42,6 @@ namespace coop::player_handshake {
 
 namespace {
 
-// v73 per-player inventory identity: OUR guid, which rides our outbound Join.
-// ASCII 32-hex; not displayed.
-std::string g_localGuid;
-
 // ARC A / RULE 2: the FIVE per-slot side-tables that used to live here --
 // g_remoteNickBySlot, g_joinSentBySlot, g_joinAnnouncedBySlot, g_guidBySlot,
 // g_skinBySlot -- are GONE. They were five parallel arrays keyed by peer slot,
@@ -168,7 +164,6 @@ size_t ParseNickColorField(const uint8_t* p, size_t remaining, int slot) {
 // player_handshake_detail.h, so every call site is unchanged.
 
 
-void SetLocalGuid(const std::string& guid) { g_localGuid = guid; }
 
 const std::string& GuidForSlot(int slot) {
     return coop::roster_ledger::Get(slot).guid;  // GT-asserted inside the ledger
@@ -235,12 +230,14 @@ void MaybeSendJoinToSlot(net::Session& session, int slot,
                 slot, RequestedNickname().c_str(), nickUtf8.size());
         joinPayload.push_back(static_cast<uint8_t>(nickUtf8.size()));
         joinPayload.insert(joinPayload.end(), nickUtf8.begin(), nickUtf8.end());
-        // v73 per-player inventory: append [uint8 guidlen][guid ASCII] after the nick. The
-        // HOST keys this peer's inventory file by it. ASCII hex (<=255); absent -> empty.
-        const uint8_t guidLen = static_cast<uint8_t>(g_localGuid.size() > 255 ? 255 : g_localGuid.size());
-        joinPayload.push_back(guidLen);
-        joinPayload.insert(joinPayload.end(), g_localGuid.begin(), g_localGuid.begin() + guidLen);
-        // v93 skins: append [uint8 skinlen][skin ASCII] after the guid -- the at-join
+        // v144: THE GUID FIELD IS GONE FROM THE WIRE (RULE 2). It used to ride here
+        // as [u8 guidlen][guid ASCII] and the HOST keyed this peer's inventory file
+        // by it -- i.e. a peer named its own storage row, and the receive boundary
+        // could only check the SHAPE of the name, never the right to it. The host
+        // now DERIVES it from the public key the peer proved at admission
+        // (Session::ProvedGuidForSlot). Deleting the field rather than ignoring it
+        // is what makes that irreversible: there is no reader left to re-enable.
+        // v93 skins: append [uint8 skinlen][skin ASCII] after the nick -- the at-join
         // skin announce (local_body owns the local choice; validated <=48 chars).
         const std::string& skin = coop::local_body::LocalSkinName();
         const uint8_t skinLen = static_cast<uint8_t>(skin.size() > 48 ? 48 : skin.size());
@@ -375,49 +372,47 @@ bool HandleJoinMessage(net::Session& session,
             if (len > 0) nick = FromUtf8(nickStart + 1, len);
         }
     }
-    // v73 per-player inventory: the GUID follows the nick: [u8 guidlen][guid ASCII]. Tolerate
-    // absence (a peer that sent none -> the row's guid stays empty = first-join/empty inventory).
-    size_t guidFieldLen = 0;  // bytes the guid field occupies (0 if malformed/absent)
-    if (nickFieldLen > 0 && nickFieldLen < nickRemaining) {
-        const uint8_t* guidStart = nickStart + nickFieldLen;
-        const size_t guidRemaining = nickRemaining - nickFieldLen;
-        const int glen = guidStart[0];
-        if (1 + glen <= static_cast<int>(guidRemaining)) {
-            guidFieldLen = 1 + static_cast<size_t>(glen);
-            if (glen > 0) {
-                std::string guid(reinterpret_cast<const char*>(guidStart + 1), static_cast<size_t>(glen));
-                // SECURITY: this GUID becomes a host filesystem path component (coop_players/<guid>.json).
-                // VALIDATE to exactly 32 hex chars at the wire boundary (a peer's config could be
-                // tampered to send "..\\..\\evil") -- reject -> leave empty -> first-join/empty-inventory
-                // path, no host file written outside coop_players. (Adversarial-verify HIGH, 2026-06-14.)
-                if (IsValidGuid(guid))
-                    coop::roster_ledger::SetGuid(senderSlot, std::move(guid));
-                else
-                    UE_LOGW("handshake: slot %d sent a non-hex/oversize GUID (%d bytes) -- rejecting "
-                            "(empty-inventory fallback)", senderSlot, glen);
-            }
+    // v144 per-player inventory identity: THE GUID IS NOT ON THE WIRE ANY MORE.
+    // It is hex(SHA-256(pubkey)[0..16]) of the key this peer PROVED it holds during
+    // admission -- published into the session by the net thread, read here on the
+    // game thread (roster_ledger asserts GT). The validation this field used to
+    // need -- exactly 32 hex chars, because the value becomes a host filesystem
+    // path component in coop_players/<guid>.json -- is now STRUCTURAL: a SHA-256
+    // prefix cannot be "..\..\evil", and no peer can name a row that is not its
+    // own. Only the host can answer this; a client's store is empty and the row
+    // keeps whatever it already had.
+    if (session.role() == coop::net::Role::Host) {
+        const std::string proved = session.ProvedGuidForSlot(senderSlot);
+        if (IsValidGuid(proved)) {
+            coop::roster_ledger::SetGuid(senderSlot, proved);
+        } else {
+            // Unreachable on the admission path -- a seat is spent only after a
+            // verified proof -- so if it ever fires the exchange changed shape and
+            // this peer's stored inventory would silently read as a new player's.
+            UE_LOGW("handshake: slot %d has no PROVED identity guid -- its stored "
+                    "inventory cannot be found (admission changed shape?)", senderSlot);
         }
     }
-    // v93 skins: [u8 skinlen][skin ASCII] follows the guid. Tolerated absent (pre-v93
-    // never reaches here -- ParseHeader rejects -- but a malformed field just leaves the
-    // slot's skin empty = native kel until a SkinChange lands).
+    // v93 skins: [u8 skinlen][skin ASCII] follows the NICK -- the guid field that
+    // used to sit between them is gone from the wire, so this is the whole change
+    // to the tail's offset arithmetic. Tolerated absent (pre-v93 never reaches
+    // here -- ParseHeader rejects -- but a malformed field just leaves the slot's
+    // skin empty = native kel until a SkinChange lands).
     size_t skinFieldLen = 0;
-    if (guidFieldLen > 0 && nickFieldLen + guidFieldLen < nickRemaining) {
+    if (nickFieldLen > 0 && nickFieldLen < nickRemaining) {
         std::string skin;
-        skinFieldLen = ParseSkinField(nickStart + nickFieldLen + guidFieldLen,
-                                      nickRemaining - nickFieldLen - guidFieldLen, &skin);
+        skinFieldLen = ParseSkinField(nickStart + nickFieldLen,
+                                      nickRemaining - nickFieldLen, &skin);
         if (skinFieldLen > 0 && !skin.empty()) {
             StoreSkinForSlot(senderSlot, std::move(skin));
         }
     }
     // v94 display prefs: [u8 flags] follows the skin field (bit0 = nameplate visible).
     // Tolerated absent (malformed upstream fields just leave the defaults = visible).
-    if (skinFieldLen > 0 &&
-        nickFieldLen + guidFieldLen + skinFieldLen < nickRemaining) {
-        StorePrefsFlagsForSlot(senderSlot,
-                               nickStart[nickFieldLen + guidFieldLen + skinFieldLen]);
+    if (skinFieldLen > 0 && nickFieldLen + skinFieldLen < nickRemaining) {
+        StorePrefsFlagsForSlot(senderSlot, nickStart[nickFieldLen + skinFieldLen]);
         // v103 nick color (12f): [u8 has][r][g][b] follows the flags byte.
-        const size_t colorOff = nickFieldLen + guidFieldLen + skinFieldLen + 1;
+        const size_t colorOff = nickFieldLen + skinFieldLen + 1;
         if (colorOff < nickRemaining)
             ParseNickColorField(nickStart + colorOff, nickRemaining - colorOff,
                                 senderSlot);

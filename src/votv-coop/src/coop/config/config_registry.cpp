@@ -287,6 +287,25 @@ const Row* FindRow(const char* key) {
     return nullptr;
 }
 
+const char* RetiredKeyNote(const char* key) {
+    if (!key) return nullptr;
+    struct Retired { const char* key; const char* note; };
+    // Keep the newest first; a line stays here for as long as an ini written by
+    // the build that had the key could still be on someone's disk.
+    static const Retired kRetired[] = {
+        { "player_guid",
+          "retired in b144 -- your player identity moved to the file "
+          "multivoid_identity.key next to this one, which cannot be copied out of "
+          "a screenshot. This line does nothing now and is safe to remove." },
+        { "net.identity",
+          "retired in b144 -- a peer's network name is now its own identity key, "
+          "so there is nothing left to configure. Safe to remove." },
+    };
+    for (const Retired& r : kRetired)
+        if (_stricmp(key, r.key) == 0) return r.note;
+    return nullptr;
+}
+
 bool IsKnownKey(const char* key) {
     // Since arc 3 the ui.font.<role> family are REAL rows -- one lookup.
     return FindRow(key) != nullptr;

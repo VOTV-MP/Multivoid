@@ -16,6 +16,7 @@
 
 #include "coop/config/config.h"           // ResolveInt for the fakelink drill knob
 #include "coop/config/config_registry.h"  // rows::net_fakelink_kbs
+#include "coop/net/peer_admission.h"
 #include "coop/net/peer_identity.h"
 #include "coop/player/nickname_arbiter.h"
 #include "coop/text/case_fold.h"
@@ -431,6 +432,9 @@ bool Session::StartP2P() {
 
 void Session::Stop() {
     if (!running_.exchange(false)) return;
+    // The client's exchange state dies with the session: a stale `proved` flag
+    // would let the NEXT connection's AssignPeerSlot through unchallenged.
+    peer_admission::ClientReset();
     // The linger flush needs RunCallbacks pumping. Closing connections
     // AFTER joining the net thread leaves linger=true inoperative -- no
     // one pumps callbacks once the thread is gone. Sequence is:

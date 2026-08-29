@@ -557,46 +557,6 @@ std::string ReadPlayerSkin() {
     return skin;
 }
 
-std::string ReadPlayerGuid() {
-    // Durable per-INSTALL player identity for the host-side per-player inventory
-    // (coop_players/<guid>.json). Read from multivoid.ini "player_guid="; generate +
-    // persist on first launch / if absent or malformed. 32 lowercase hex chars (128 bits).
-    // Per-install identity is the accepted tradeoff (design 2.3 "go with guid"): a reinstall
-    // or a different PC = a fresh inventory unless the player_guid= line is copied over.
-    IniScan st = IniScan::Ok;
-    std::string guid = ReadLiveIniWithScan("player_guid", st);
-    bool ok = guid.size() == 32;
-    if (ok) {
-        for (char c : guid)
-            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) { ok = false; break; }
-    }
-    if (!ok) {
-        // std::random_device is CSPRNG-backed on MSVC -- ample for a stable identity (no
-        // crypto guarantee needed). 4x32 bits -> 32 hex chars. Avoids a bcrypt include.
-        std::random_device rd;
-        static const char kHex[] = "0123456789abcdef";
-        guid.clear();
-        guid.reserve(32);
-        for (int w = 0; w < 4; ++w) {
-            const uint32_t r = rd();
-            for (int n = 28; n >= 0; n -= 4) guid.push_back(kHex[(r >> n) & 0xF]);
-        }
-        if (st == IniScan::Unreadable) {
-            g_identityNotDurable.store(true, std::memory_order_relaxed);
-            UE_LOGW("config: player_guid unreadable (ini locked/failing) -> temp guid %s "
-                    "SESSION-ONLY; mint gate refuses to write over an unreadable ini "
-                    "(host-side coop_players/<guid>.json from this launch recovers on the "
-                    "first durable persist -- jsons are never deleted)", guid.c_str());
-        } else {
-            const bool persisted = WriteIniValue(config_registry::rows::player_guid, guid.c_str());
-            if (!persisted) g_identityNotDurable.store(true, std::memory_order_relaxed);
-            UE_LOGI("config: generated new player_guid=%s (%s)", guid.c_str(),
-                    persisted ? "persisted to multivoid.ini" : "SESSION-ONLY -- ini write failed");
-        }
-    }
-    return guid;
-}
-
 bool IdentityNotDurable() { return g_identityNotDurable.load(std::memory_order_relaxed); }
 bool IniUnreadableSeen()  { return g_iniUnreadableSeen.load(std::memory_order_relaxed); }
 

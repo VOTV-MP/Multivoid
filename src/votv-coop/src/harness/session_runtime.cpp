@@ -20,6 +20,7 @@
 #include "coop/moderation/seen_players.h"
 #include "coop/net/session.h"
 #include "coop/element/intent_authority.h"
+#include "coop/net/peer_admission.h"
 #include "coop/net/peer_identity.h"
 #include "coop/player/movement_ledger.h"
 #include "coop/player/nameplate.h"
@@ -406,6 +407,12 @@ bool StartCoopSession(const coop::net::Config& netCfg) {
     // digest is wrong, does not crash: it either admits anyone or renames every player,
     // and both read as "working" from outside. See coop/net/peer_identity.h.
     coop::net::peer_identity::RunSelftest();
+    // ...and the decision built ON that primitive. Its arms are the ones no LAN
+    // drill can stage -- a proof replayed in the wrong DIRECTION, a proof aimed at
+    // a THIRD PARTY, a proof for a stale NONCE -- and each of them is a real
+    // admission an over-permissive blob would grant. Un-gated for the same reason:
+    // a challenge that accepts everything looks exactly like one that works.
+    coop::net::peer_admission::RunSelftest();
     // Reset net_pump edge-detector state so a Stop()/Start() cycle on the same process
     // doesn't carry stale "was connected" / "was holding prop" entries into the new
     // session (phantom disconnect edge / suppressed connect replay / stale prop key).

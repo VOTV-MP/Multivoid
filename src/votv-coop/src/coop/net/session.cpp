@@ -49,6 +49,8 @@
 
 #include "coop/dev/wire_census.h"
 #include "coop/element/element.h"
+#include "coop/net/peer_admission.h"   // the identity challenge every peer passes
+#include "coop/net/peer_identity.h"    // GuidForPublicKey -- the proved storage name
 #include "coop/player/players_registry.h"
 #include "session_lanes.h"      // co-located private header (src tree, not include/)
 #include "signaling_client.h"   // co-located: complete type for the shared_ptr<SignalingClient> dtor + Poll()
@@ -226,6 +228,40 @@ bool Session::TrySendReliableToSlot(int peerSlot, ReliableKind kind, const void*
     return true;
 }
 
+bool Session::SendRawReliableToConn(uint32_t hConn, ReliableKind kind,
+                                    const void* payload, int len) {
+    if (hConn == 0 || len < 0 || len > kMaxReliablePayload) return false;
+    auto* sockets = SteamNetworkingSockets();
+    auto* utils = SteamNetworkingUtils();
+    if (!sockets || !utils) return false;
+    const int total = static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader)) + len;
+    SteamNetworkingMessage_t* msg = utils->AllocateMessage(total);
+    if (!msg) return false;
+    // senderSlot 0: the admission exchange predates any slot assignment on both
+    // ends, and the receiver of these three kinds never reads it (the host routes
+    // by the connection's pending tag, the client has exactly one peer).
+    BuildReliableWire_(static_cast<uint8_t*>(msg->m_pData), kind, payload, len,
+                       sendSeq_.fetch_add(1), ownEpoch_, /*senderSlot*/0);
+    msg->m_conn = static_cast<HSteamNetConnection>(hConn);
+    msg->m_nFlags = k_nSteamNetworkingSend_Reliable;
+    // Lane 0 explicitly. ConfigureConnectionLanes has NOT run on this connection
+    // yet -- it is part of finishing the link, which admission gates -- and GNS
+    // gives every connection lane 0 by default.
+    msg->m_idxLane = 0;
+    int64 outMsgNum = 0;
+    sockets->SendMessages(1, &msg, &outMsgNum, /*bDeleteFailedMessages*/true);
+    if (outMsgNum < 0) return false;
+    net_stats::AddSent(static_cast<uint32_t>(total));
+    return true;
+}
+
+void Session::FinishClientLink(uint32_t hConn) {
+    if (cfg_.role != Role::Client) return;
+    if (hConn == 0 || peerConns_[0].load() != hConn) return;
+    if (peerLanesConfigured_[0].load(std::memory_order_acquire)) return;  // idempotent
+    FinishPeerConnected(0, hConn);
+}
+
 bool Session::SendReliable(ReliableKind kind, const void* payload, int len) {
     if (len < 0 || len > kMaxReliablePayload) {
         UE_LOGW("net: SendReliable rejected (len=%d > %d)", len, kMaxReliablePayload);
@@ -282,19 +318,25 @@ bool Session::SendEntityDestroy(uint32_t elementId) {
 }
 
 // ---- ADMISSION: what an UNADMITTED connection is allowed to do ------------
-// Security A2/A57 (2026-08-26). A parked connection holds no player seat, so it
-// cannot reach any handler that takes a senderSlot -- which is every handler.
-// This is the ONLY code an unproved peer can run.
+// Security A2/A57/A15. A parked connection holds no player seat, so it cannot
+// reach any handler that takes a senderSlot -- which is every handler. This is
+// the ONLY code an unproved peer can run.
 //
-// TODAY the admission test is "send a well-formed Join". That already closes
-// A57's exact path: `save_transfer::OnRequest` used to be reachable by a peer
-// that sent NOTHING but a SaveTransferRequest, and the host would serialize and
-// stream its entire live world on a `peerSlot` range check alone. A first
-// message that is not a Join is now dropped and the sender still has no seat.
+// THE ADMISSION TEST IS THE IDENTITY CHALLENGE (v144, 2026-08-29). A peer is
+// seated when, and only when, it has signed our nonce with the private key its
+// GNS identity names -- see coop/net/peer_admission.h for the exchange and for
+// why the library's own checks cannot substitute for it.
 //
-// The PASSWORD check lands inside this function (see PLAN_04 s1 Action 2), and
-// deliberately not beside it: one admission path, with the password an optional
-// term in it, rather than a second parallel path (RULE 2).
+// WHAT THIS REPLACED, AND WHY THE INTERMEDIATE STEP EXISTED. The 2026-08-26 gate
+// admitted on "sent one well-formed packet of our protocol version", which was
+// honest about buying only the SEAT half of A57: a silent socket or a wrong-build
+// socket could no longer hold the lobby shut, but a peer that merely spoke could
+// still pull the host's entire world. `[V]` It could not have been tightened to
+// "send a Join" -- that draft was measured to deadlock every honest join, because
+// a joining client is in MENU MODE with no world and its FIRST message is
+// `SaveTransferRequest` (kind 42); it must fetch the save and load it before it
+// can Join at all. That measurement is why the gate needed its own wire pair
+// UPSTREAM of the save rather than a field on an existing packet.
 void Session::HandlePendingMessage(int pendIdx, uint32_t hConn, const void* data, int len) {
     MsgType type;
     uint32_t seq, senderEpoch;
@@ -319,27 +361,31 @@ void Session::HandlePendingMessage(int pendIdx, uint32_t hConn, const void* data
     if (len < static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader))) return;
     ReliableHeader rh;
     std::memcpy(&rh, static_cast<const uint8_t*>(data) + sizeof(PacketHeader), sizeof(rh));
-    // WHAT THE ADMISSION TEST IS TODAY, AND WHY IT IS NOT YET THE PASSWORD.
-    //
-    // A first draft required a `Join` here. `[V]` MEASURED 2026-08-26 by smoke:
-    // that DEADLOCKS every honest join, because a joining client is in MENU MODE
-    // with no world and its FIRST message is `SaveTransferRequest` (kind 42) --
-    // it must fetch the host's save and load it BEFORE it can send a Join. The
-    // host log read: "PENDING 0 sent kind=42 before admission -- dropped".
-    //
-    // That measurement REFRAMES A57. The save transfer is not a post-admission
-    // privilege a stranger skipped ahead to; it is the FIRST thing every client
-    // asks for, by construction. So "challenged after Connected, BEFORE world
-    // access" (PLAN_04 s1) means before the SAVE, not before the Join -- Join
-    // arrives far too late to gate anything.
-    //
-    // Therefore the real gate needs its own challenge/response wire pair, which
-    // is a protocol bump and the next commit. Until it exists, admission is
-    // "sent one well-formed packet of our protocol version". THAT IS HONEST
-    // ABOUT WHAT IT BUYS: a socket that says nothing, or speaks a different
-    // protocol, no longer holds one of the three seats -- but a peer that does
-    // speak can still ask for the save, so **A57 IS NOT CLOSED BY THIS COMMIT**
-    // and its tracker row stays OPEN.
+    const int payloadLen = len - static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader));
+    const void* payload = static_cast<const uint8_t*>(data) + sizeof(PacketHeader) +
+                          sizeof(ReliableHeader);
+    // The declared length must match what actually arrived before anything reads
+    // the body: this is the one parser an unauthenticated peer can reach.
+    if (payloadLen < 0 || rh.payloadLen != static_cast<uint16_t>(payloadLen)) {
+        UE_LOGW("net: PENDING %d sent a length-inconsistent packet -- closing", pendIdx);
+        if (auto* sockets = SteamNetworkingSockets())
+            sockets->CloseConnection(hConn, k_ESteamNetConnectionEnd_App_Generic,
+                                     "malformed packet", false);
+        return;
+    }
+
+    const auto res = peer_admission::HostOnPendingReliable(
+        *this, pendIdx, hConn, static_cast<ReliableKind>(rh.kind), payload, payloadLen);
+    if (res.verdict == peer_admission::Verdict::Continue) return;
+    if (res.verdict == peer_admission::Verdict::Refuse) {
+        UE_LOGW("net: PENDING %d REFUSED on kind=%u -- %s",
+                pendIdx, static_cast<unsigned>(rh.kind), res.reason);
+        if (auto* sockets = SteamNetworkingSockets())
+            sockets->CloseConnection(hConn, k_ESteamNetConnectionEnd_App_Generic,
+                                     res.reason, false);
+        return;
+    }
+
     const int slot = AdmitPending(pendIdx, hConn);
     if (slot < 0) {
         UE_LOGW("net: lobby full of admitted players -- refusing PENDING %d", pendIdx);
@@ -347,12 +393,17 @@ void Session::HandlePendingMessage(int pendIdx, uint32_t hConn, const void* data
             sockets->CloseConnection(hConn, 0, "host full", false);
         return;
     }
-    UE_LOGI("net: PENDING %d admitted on kind=%u -> slot %d",
-            pendIdx, static_cast<unsigned>(rh.kind), slot);
-    // Re-dispatch the SAME bytes through the ordinary path so every existing
-    // consumer (save transfer, roster, nick arbitration, version gate) runs
-    // unchanged -- the admission is transparent to everything downstream.
-    HandleMessage(slot, data, len);
+    // The peer's storage guid is DERIVED from the key it just proved, and it is
+    // published here -- on the net thread, into a net-owned store -- because the
+    // roster row is game-thread-only (`roster_ledger.cpp:210` asserts it). The
+    // Join handler reads it back on the game thread. This is the whole point of
+    // the arc: the guid that names a player's stored inventory is now a fact about
+    // a key, not a 32-char string the peer asked to be called.
+    const std::string guid = peer_identity::GuidForPublicKey(res.provedKey);
+    SetProvedGuidForSlot(slot, guid);
+    UE_LOGI("net: PENDING %d ADMITTED -> slot %d (identity-bound, guid %s)",
+            pendIdx, slot, guid.c_str());
+    peer_admission::HostForgetPending(pendIdx);
 }
 
 void Session::HandleMessage(int peerSlot, const void* data, int len) {
@@ -509,6 +560,60 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
         }
         if (payloadLen > kMaxReliablePayload) return;
         if (len < static_cast<int>(sizeof(PacketHeader) + sizeof(ReliableHeader)) + payloadLen) return;
+        // --- ADMISSION, CLIENT SIDE (v144) ---------------------------------
+        // Handled HERE, on the net thread, and not through the inbox: a joining
+        // client is in menu mode with no world and its game thread may be inside
+        // a multi-second save load, so an exchange that waited on the game tick
+        // would stall behind the very thing the exchange must precede. It also
+        // touches no engine object, which is what makes that possible.
+        if (cfg_.role == Role::Client && peerSlot == 0) {
+            const uint32_t hostConn = peerConns_[0].load();
+            const void* body = static_cast<const uint8_t*>(data) + sizeof(PacketHeader) +
+                               sizeof(ReliableHeader);
+            const char* closeWhy = nullptr;
+            if (peer_admission::ClientOnReliable(*this, hostConn,
+                                                 static_cast<ReliableKind>(rh.kind),
+                                                 body, payloadLen, &closeWhy)) {
+                if (closeWhy) {
+                    UE_LOGE("net: leaving this host -- %s", closeWhy);
+                    {   std::lock_guard<std::mutex> lk(hostCloseMutex_);
+                        hostCloseReason_ = closeWhy; }
+                    if (auto* sockets = SteamNetworkingSockets())
+                        sockets->CloseConnection(hostConn,
+                                                 k_ESteamNetConnectionEnd_App_Generic,
+                                                 closeWhy, false);
+                }
+                return;  // consumed by the exchange; never reaches the game thread
+            }
+            // THE HOST'S AssignPeerSlot IS THE ADMISSION SIGNAL -- peeked, not
+            // consumed: it still carries the slot + hostElementId the game thread
+            // needs, so it falls through to the inbox below. `[V]`
+            // FinishPeerConnected sends it only when role == Host, and on a host it
+            // runs only from AdmitPending, so its arrival means we were seated.
+            // Refusing it before the host has proved itself is the point: otherwise
+            // an impostor could skip the challenge and seat us anyway.
+            if (static_cast<ReliableKind>(rh.kind) == ReliableKind::AssignPeerSlot) {
+                if (!peer_admission::ClientProvedHost()) {
+                    static const char* kWhy =
+                        "the host tried to seat us without proving its identity";
+                    UE_LOGE("net: %s -- leaving", kWhy);
+                    {   std::lock_guard<std::mutex> lk(hostCloseMutex_);
+                        hostCloseReason_ = kWhy; }
+                    if (auto* sockets = SteamNetworkingSockets())
+                        sockets->CloseConnection(hostConn,
+                                                 k_ESteamNetConnectionEnd_App_Generic,
+                                                 kWhy, false);
+                    return;
+                }
+                FinishClientLink(hostConn);
+            }
+        }
+        // The admission kinds are NET-THREAD-TERMINAL in both directions: the host
+        // answers them in HandlePendingMessage (before a slot exists) and the client
+        // just above. Arriving here means an ALREADY-ADMITTED peer replayed one --
+        // it has no consumer, and letting it reach the inbox costs an event_feed
+        // "unknown ReliableKind" warning per copy.
+        if (IsAdmissionKind(static_cast<ReliableKind>(rh.kind))) return;
         // W3 (docs/security/PLAN_02_WIRE_HARDENING.md): divert the save-blob ANNOUNCE to the net
         // thread too, so it lands on the same thread and in the same lane order as the chunks above.
         // It is small enough for the inbox -- it is diverted for ORDERING, not for size, and both
@@ -646,6 +751,10 @@ void Session::NetThread() {
         // 1) Pump GNS internal timers + dispatch any pending status callbacks
         // (the trampoline runs inline on THIS thread).
         sockets->RunCallbacks();
+
+        // 1b) Close pending sockets that never proved an identity. Eight relaxed
+        // loads; the band's own deadline, finally enforced (see SweepPending).
+        if (cfg_.role == Role::Host) SweepPending();
 
         // 2) Drain inbound messages -- to EMPTY, every iteration. A full batch means
         // more may be queued, so loop the receive until it returns a PARTIAL batch;

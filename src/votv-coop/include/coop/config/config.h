@@ -106,12 +106,16 @@ coop::net::Config ReadP2PHostFallback();
 // my-name default (config_registry::kMyNameDefault).
 std::wstring ReadNickname();
 
-// The local player's durable identity GUID (32 lowercase hex chars) for the host-side
-// per-player inventory file. Read from multivoid.ini "player_guid="; generated + persisted
-// on first launch / if absent/malformed. Per-install identity (design 2.3).
-std::string ReadPlayerGuid();
+// v144: ReadPlayerGuid is RETIRED (RULE 2), and with it the `player_guid=` ini
+// line. The durable identity is now an Ed25519 keypair in multivoid_identity.key
+// beside this file (coop/net/peer_identity.h), and the 32-hex guid every store is
+// keyed by is DERIVED from its public key rather than minted here. The two could
+// not coexist: a random guid in a plaintext ini is a bearer token -- copy the line
+// and you ARE that player -- which is exactly the finding (security A15) the key
+// replaces. The migration cost is stated in PLAN_01 s5: a host's stored inventory
+// rows for VISITING players are orphaned once, at this bump.
 
-// v93 skins: the persisted body-skin choice, stored next to the guid
+// v93 skins: the persisted body-skin choice, stored beside the identity
 // (multivoid.ini "player_skin="). Absent/invalid -> the default (the current
 // scientist, skin_registry::kDefaultSkinName) is assigned + persisted.
 std::string ReadPlayerSkin();

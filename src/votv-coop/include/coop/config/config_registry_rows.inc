@@ -93,9 +93,6 @@ CFG_INT(net_novelty_window_ms, "net.novelty_window_ms", "net", 10000, 100, 36000
     "Length of the novelty budget window, in milliseconds.")
 
 // ---- [player] ---------------------------------------------------------------
-CFG_IDENTITY(player_guid, "player_guid", "player",
-    "Durable per-install player identity (32 hex chars), minted automatically on first "
-    "launch. Copy this line to another install to carry your host-side inventory identity.")
 CFG_IDENTITY(player_skin, "player_skin", "player",
     "Persisted body-skin choice, rolled from the starter list on first launch. Change it "
     "in-game (F1 menu > skins).")

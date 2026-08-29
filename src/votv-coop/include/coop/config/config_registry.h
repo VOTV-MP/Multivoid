@@ -125,6 +125,20 @@ const Row* FindRow(const char* key);
 // real rows, so this is a plain row lookup.)
 bool IsKnownKey(const char* key);
 
+// A key that USED to be a real setting and was retired. Returns the sentence a
+// player should read instead of "typo, or a retired key", or nullptr for a key
+// this build never had.
+//
+// WHY THIS TABLE EXISTS. RULE 2 guarantees keys get retired, and the settings
+// sweep can only ask "is this key in the registry" -- so every retirement
+// presents a player with their own ini line flagged as a probable typo, in a
+// popup, with no explanation. The first one to actually ship that way was
+// `player_guid` (v144), and the user's screenshot of it is why this is a table
+// and not a special case: the NEXT retirement gets the same treatment for one
+// added line. The row stays Unknown so "Tidy up multivoid.ini" still removes it
+// -- what changes is that the panel can say WHERE the setting went.
+const char* RetiredKeyNote(const char* key);
+
 // ---- typed handles (the arc-3 ratchet) --------------------------------------
 
 namespace detail {

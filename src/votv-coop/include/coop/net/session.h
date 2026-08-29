@@ -680,11 +680,29 @@ private:
     // slot, so all ~20 IsSlotReady consumers inherit this gate with ZERO edits.
     // That is why this is a band and not a new predicate at ~20 call sites.
     static constexpr int64_t  kPendingTag   = 0x7000'0000LL;
+
+public:
+    // Public because coop/net/peer_admission.cpp sizes its per-pending exchange
+    // rows to it, and a silent mismatch there would drop the last band entry's
+    // challenge state rather than fail to build.
     static constexpr int      kMaxPending   = 8;  // sockets, not seats
+    // How long an UN-PROVED socket may sit before the sweep closes it. Generous
+    // on purpose: the cost of a pending entry is one socket -- no seat, no lanes,
+    // no parser, no roster row -- while the real bound on the band is
+    // ParkPending's evict-the-oldest. It must clear the slowest legitimate
+    // handshake, and on P2P that includes the whole ICE negotiation between the
+    // host's park edge (Connecting) and the client's own Connected edge, which is
+    // where the client sends its Hello.
+    static constexpr uint64_t kPendingDeadlineMs = 30'000;
+
+private:
     std::array<std::atomic<uint32_t>, kMaxPending> pendingConns_{};
     // Monotonic ms stamp of when each pending entry was accepted; 0 = free.
     // Bounds how long an un-proved socket may sit, which is a RESOURCE bound --
     // it is deliberately NOT the security control (holding no seat is).
+    // READ, at last, by SweepPending(): it was written at three sites and read at
+    // NONE until 2026-08-29, while the sentence above already claimed it bounded
+    // something -- a control that existed only in a comment.
     std::array<std::atomic<uint64_t>, kMaxPending> pendingSinceMs_{};
 
     // True when a drained message's m_nConnUserData names a pending connection
@@ -715,6 +733,35 @@ private:
     // link to the host, and AdmitPending for a host's newly-seated client.
     void FinishPeerConnected(int slot, uint32_t hConn);
 public:
+    // Close every pending entry that has sat longer than kPendingDeadlineMs. Net
+    // thread, once per pump pass; 8 relaxed loads on the idle path.
+    void SweepPending();
+
+    // Send ONE reliable message straight to a connection handle, with no slot, no
+    // lane mapping and no world gate. This is the admission exchange's only send
+    // path and it must stay that way: at exchange time the peer holds no seat, so
+    // SendReliableToSlot cannot address it, and the pre-world gate it applies is
+    // an allowlist keyed on kinds that presuppose a seated peer. Net thread only.
+    bool SendRawReliableToConn(uint32_t hConn, ReliableKind kind,
+                               const void* payload, int len);
+
+    // CLIENT: the host admitted us (its AssignPeerSlot arrived after we proved it),
+    // so finish the link -- lanes, the send-buffer mirror, and the flag every
+    // IsSlotReady consumer waits on. Deliberately NOT done at the Connected edge
+    // any more: an un-proved link that is already "ready" would let the joiner ask
+    // for the world before it knows who is answering. No-op unless `hConn` is
+    // still the connection in slot 0. Net thread only.
+    void FinishClientLink(uint32_t hConn);
+
+    // The guid of the peer in `slot`, DERIVED from the public key that peer proved
+    // it holds at admission (`hex(SHA-256(pub)[0..16])`). Empty when the slot is
+    // free or the occupant never proved one. The game thread reads this into the
+    // roster row: the guid is no longer a field on the Join packet, because a
+    // value the peer chooses cannot name whose stored inventory it is
+    // (`[[lesson-a-gate-anchored-on-a-client-authored-value]]`).
+    void        SetProvedGuidForSlot(int slot, const std::string& guid);
+    std::string ProvedGuidForSlot(int slot) const;
+
     // Drop a pending entry (its connection closed, or it was refused).
     void ReleasePending(uint32_t hConn);
     // Is this connection already parked? NET THREAD ONLY.
@@ -736,6 +783,13 @@ private:
     // Set in the Connected callback after ConfigureLanesForPeer; cleared
     // when peerConns_[slot] is zeroed on disconnect. See IsSlotReady().
     std::array<std::atomic<bool>, kMaxPeers> peerLanesConfigured_{};
+
+    // Per-slot PROVED identity guid (see SetProvedGuidForSlot). Its own mutex
+    // rather than remoteMutex_: that one is taken at 60 Hz by every pose store
+    // and this is written once per admission and read once per Join, so sharing
+    // it would put a rare write behind the hottest lock in the file.
+    mutable std::mutex                     provedGuidMutex_;
+    std::array<std::string, kMaxPeers>     provedGuidBySlot_;
 
     // --- Per-slot OCCUPANCY GENERATION (arc A, T3) --------------------------
     // The authoritative "who is in this slot right now" token, minted HERE (the

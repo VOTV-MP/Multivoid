@@ -57,8 +57,16 @@ void RenderRowsOfType(const std::vector<CR::Row>& rows, CR::Row::Type type) {
                 break;
             case CR::Row::Type::Unknown:
                 ImGui::Bullet();
-                ImGui::TextWrapped("%s = '%s' -- not a known setting (typo, or a retired key).",
-                                   r.key.c_str(), r.value.c_str());
+                if (!r.reason.empty()) {
+                    // A key this build deliberately retired -- say where it went,
+                    // and do not show the VALUE: the one that put this branch here
+                    // was a player identity, and a settings popup is exactly the
+                    // screenshot people paste into a bug report.
+                    ImGui::TextWrapped("%s -- %s", r.key.c_str(), r.reason.c_str());
+                } else {
+                    ImGui::TextWrapped("%s = '%s' -- not a known setting (typo, or a retired key).",
+                                       r.key.c_str(), r.value.c_str());
+                }
                 break;
             case CR::Row::Type::DuplicateDormant: {
                 ImGui::Bullet();

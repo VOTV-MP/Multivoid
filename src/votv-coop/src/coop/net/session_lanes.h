@@ -29,6 +29,19 @@ enum class Lane : int {
     Count = 3,
 };
 
+// The three ADMISSION kinds (v144). They deliberately appear in NONE of the three
+// routers below, and that is not an omission the checklist missed: they never
+// travel through SendReliableToSlot (no slot exists yet -- Session::
+// SendRawReliableToConn pins them to lane 0), they are never relayed (an identity
+// proof is between two endpoints and means nothing forwarded), and they have no
+// pre-world gate because they run BEFORE the gate's whole premise. This predicate
+// exists so the receive path can drop a replay of one from an ALREADY-ADMITTED
+// peer, which otherwise reaches event_feed and warns once per copy.
+inline bool IsAdmissionKind(ReliableKind k) {
+    return k == ReliableKind::AuthHello || k == ReliableKind::AuthChallenge ||
+           k == ReliableKind::AuthProof;
+}
+
 inline Lane LaneForKind(ReliableKind k) {
     switch (k) {
     case ReliableKind::TeleportClient: return Lane::High;

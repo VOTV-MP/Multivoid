@@ -20,7 +20,7 @@
 // State ownership (arc A, 2026-07-27):
 //   - The per-slot identity state -- nickname, guid, skin, the join-announced
 //     latch -- lives in the ROSTER LEDGER (coop/player/roster_ledger.h), not
-//     here. This module owns only g_localNick / g_localGuid (ours) and the
+//     here. This module owns only g_localNick (ours) and the
 //     per-slot Join-sent latch (a property of the LINK, not of the person, so it
 //     is a PerSlotState rather than a row field).
 //   - Teardown is a ledger ROW TRANSITION, not a disconnect callback: this
@@ -85,13 +85,16 @@ const std::wstring& LocalNickname();
 // the Join payload uses it; everything user-visible uses LocalNickname().
 const std::wstring& RequestedNickname();
 
-// v73 (per-player inventory): set the local player's durable identity GUID (32 hex chars
-// from coop::config::ReadPlayerGuid). Seeded once at boot, appended to our Join so the
-// HOST can key this peer's inventory file (coop_players/<guid>.json). ASCII; not displayed.
-void SetLocalGuid(const std::string& guid);
+// v144: SetLocalGuid is RETIRED (RULE 2). A peer no longer names its own storage
+// row -- there is no guid on the Join packet at all, because the host DERIVES it
+// from the public key the peer proved at admission. Nothing sends what nothing
+// reads, and leaving the setter would have kept a value alive that only looked
+// authoritative.
 
-// HOST-side read of the GUID a peer sent in its Join, by peer slot. Empty until that peer's
-// Join lands (or if it sent none -> first-join/empty inventory). Game thread only.
+// HOST-side read of a peer's storage GUID by slot -- hex(SHA-256(pubkey)[0..16])
+// of the key that peer PROVED it holds (Session::ProvedGuidForSlot, copied into
+// the roster row when its Join lands). Empty on a client, and empty on a host
+// until the Join arrives. Game thread only.
 const std::string& GuidForSlot(int slot);
 
 // True iff `guid` is exactly 32 hex chars ([0-9a-fA-F]) -- the durable-identity format. The GUID

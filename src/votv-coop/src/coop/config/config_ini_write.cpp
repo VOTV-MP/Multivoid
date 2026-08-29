@@ -432,7 +432,15 @@ static bool ReformatIniAt(const std::wstring& path, ReformatStats& stats) {
             if (known && g.second.size() > 1) continue;  // dup group: panel buttons own it
             const char* tag = nullptr;
             if (!known) {
-                tag = "; unknown key (tidy): ";
+                // A key WE retired says so, and says which build. The line stays
+                // in the player's file either way; the difference is whether the
+                // comment they find next year reads as a typo they made or as a
+                // setting that moved. Upgrading a b133 ini is the case this is
+                // for -- measured 2026-08-29, exactly two keys changed hands
+                // between b133 and b144, and both are in the retired table.
+                tag = config_registry::RetiredKeyNote(cls[g.second[0]].keySpelling.c_str())
+                          ? "; retired setting (tidy): "
+                          : "; unknown key (tidy): ";
             } else {
                 std::string reason;
                 if (!ValueValidForKey(cls[g.second[0]].keySpelling.c_str(),

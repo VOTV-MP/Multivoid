@@ -139,7 +139,13 @@ void RunConfigSelftest() {
                 if (ok) UE_LOGI("config-selftest: T3 %s ok", what);
                 else { UE_LOGW("config-selftest: T3 FAIL %s", what); ++fail; }
             };
-            // Drill 1: ci-targeting + normalize. inject.ini has Player_Guid=...
+            // Drill 1: ci-targeting + normalize. NOTE the key here is a CORPUS
+            // FIXTURE STRING, not a live registry row -- `player_guid` was retired
+            // in v144 with the ini-minted identity. What is under test is the ini
+            // WRITE primitive's case-insensitive first-occurrence targeting, which
+            // takes a raw key and knows nothing about the registry; the fixture
+            // file supplies both spellings and that is all this needs.
+            // inject.ini has Player_Guid=...
             // ABOVE player_guid=...; writing 'player_guid' must edit the FIRST
             // (case-variant) line in place with canonical spelling -- count
             // stays 2, read-back returns the new value from line 1.

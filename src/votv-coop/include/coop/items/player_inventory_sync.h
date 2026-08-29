@@ -2,7 +2,8 @@
 //
 // Replaces the v56 whole-host-save inventory inheritance with a Minecraft-style per-player
 // inventory persisted on the HOST at SaveGamesDir()/<save_name>/coop_players/<guid>.json,
-// keyed by the client's durable GUID (coop::config::ReadPlayerGuid, carried in the Join).
+// keyed by the client's durable GUID -- hex(SHA-256(pubkey)[0..16]) of the key that
+// peer PROVED at admission (coop/net/peer_identity.h), never a value it sent.
 //
 // Plan: research/findings/inventory-items/votv-inventory-impl-plan-2026-06-14.md. Design (Topic 2):
 // votv-wisp-and-client-inventory-RE-2026-06-12.md.

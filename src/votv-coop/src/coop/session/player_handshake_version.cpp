@@ -26,12 +26,21 @@
 namespace coop::player_handshake {
 namespace {
 
-// Pure pre-pass over the Join payload chain (eid / nick / guid / skin / flags /
-// color / game): extracts the trailing game-target field + the nick (for the
-// host feed line) WITHOUT any side effects. Returns false on a malformed chain
-// (any length prefix overruns the payload) -- fail-closed: a malformed Join is
-// refused, not tolerated (both peers are >=v122 by the header prologue, so the
-// full chain is always present when well-formed).
+// Pure pre-pass over the Join payload chain (eid / nick / skin / flags / color /
+// game): extracts the trailing game-target field + the nick (for the host feed
+// line) WITHOUT any side effects. Returns false on a malformed chain (any length
+// prefix overruns the payload) -- fail-closed: a malformed Join is refused, not
+// tolerated (both peers are >=v122 by the header prologue, so the full chain is
+// always present when well-formed).
+//
+// THIS IS THE SECOND WALKER OF THAT CHAIN, and the two must agree field for
+// field. `HandleJoinMessage` in player_handshake.cpp is the other. Measured
+// 2026-08-29 by the smoke, the hard way: v144 deleted the guid field from the
+// Join and this walker still consumed TWO length-prefixed fields where one
+// remained, so it read the flags byte as a length, ran off the end and refused
+// every Join with "version field missing" -- on BOTH peers, with the pose stream
+// then never starting. A field added or removed here must be changed in both, and
+// the failure is loud but names the wrong field, which is what cost the time.
 bool ExtractJoinVersionFields(const uint8_t* payload, size_t len,
                               std::string* outGame, std::wstring* outNick) {
     size_t off = 4;  // [u32 senderElementId] (caller already checked len >= 4)
@@ -44,8 +53,9 @@ bool ExtractJoinVersionFields(const uint8_t* payload, size_t len,
             *outNick = FromUtf8(payload + off + 1, static_cast<int>(n));
         off += 1 + n;
     }
-    // [u8 guidlen][guid] / [u8 skinlen][skin]
-    for (int i = 0; i < 2; ++i) {
+    // [u8 skinlen][skin] -- v144 deleted the [u8 guidlen][guid] field that used
+    // to precede it (the host derives the guid from the proved key instead).
+    {
         if (off + 1 > len) return false;
         const size_t n = payload[off];
         if (off + 1 + n > len) return false;

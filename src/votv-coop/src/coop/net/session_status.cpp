@@ -34,6 +34,7 @@
 
 #include "coop/config/config.h"           // R-4b commit-0: ResolveInt for the wire knobs
 #include "coop/config/config_registry.h"  // rows::net_sendbuf_kb / rows::net_sendrate_kbs
+#include "coop/net/peer_admission.h"      // the exchange state a pending entry owns
 #include "coop/player/players_registry.h"
 #include "ue_wrap/core/log.h"
 
@@ -135,30 +136,108 @@ bool AcceptAllowed(ISteamNetworkingSockets* sockets, HSteamNetConnection hConn,
 // `admitted_` flag: with kMaxPeers == 4 there are three client seats, so an
 // unadmitted peer holding one would let three silent sockets lock the lobby.
 
+namespace {
+// steady_clock, not GetTickCount64: this file does not pull in <windows.h>, and
+// a monotonic stamp is the right primitive for a net-thread age anyway (a
+// wall-clock jump must not free a seat, nor hold one).
+uint64_t NowMs() {
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+}  // namespace
+
 int Session::ParkPending(uint32_t hConn) {
     for (int i = 0; i < kMaxPending; ++i) {
         uint32_t expected = 0;
         if (pendingConns_[i].compare_exchange_strong(expected, hConn)) {
-            // steady_clock, not GetTickCount64: this file does not pull in
-            // <windows.h>, and a monotonic stamp is the right primitive for a
-            // net-thread age anyway (wall-clock jumps must not free a seat).
-            const uint64_t nowMs = static_cast<uint64_t>(
-                std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now().time_since_epoch()).count());
-            pendingSinceMs_[i].store(nowMs, std::memory_order_release);
+            pendingSinceMs_[i].store(NowMs(), std::memory_order_release);
             return i;
         }
     }
-    return -1;  // band full -- caller closes; no seat was ever at risk
+    // BAND FULL -- EVICT THE OLDEST UN-PROVED ENTRY RATHER THAN REFUSE THE
+    // ARRIVAL. Until 2026-08-29 this returned -1 and the caller closed the
+    // NEWCOMER, which is a policy that refuses the honest party: an un-proved
+    // socket has no standing over an arriving one, and with a multi-message
+    // exchange the band's occupancy is attacker-timed by construction (open eight
+    // sockets, say nothing, and every real friend is turned away until the sweep
+    // deadline). Evicting the oldest makes the band a rolling window instead of a
+    // lockout, and the honest joiner -- who sends its Hello immediately -- is
+    // never the oldest for long.
+    //
+    // A per-remote-address cap was considered instead and rejected on two
+    // measurements: `[V]` `session_runtime.cpp:432-436` installs the IP ban filter
+    // for LanDirect ONLY because the P2P Connecting edge has an empty remote
+    // address, so our main lane has nothing to key on; and one household NAT (or
+    // this project's own 4-peer single-box rig) would be refused by it.
+    int oldest = 0;
+    uint64_t oldestMs = pendingSinceMs_[0].load(std::memory_order_acquire);
+    for (int i = 1; i < kMaxPending; ++i) {
+        const uint64_t t = pendingSinceMs_[i].load(std::memory_order_acquire);
+        if (t < oldestMs) { oldestMs = t; oldest = i; }
+    }
+    const uint32_t victim = pendingConns_[oldest].exchange(hConn);
+    pendingSinceMs_[oldest].store(NowMs(), std::memory_order_release);
+    coop::net::peer_admission::HostForgetPending(oldest);
+    if (victim != 0) {
+        UE_LOGW("net: pending band full -- evicting the OLDEST un-proved socket "
+                "0x%08x (idx %d, %llu ms) to make room for the arrival",
+                static_cast<unsigned>(victim), oldest,
+                static_cast<unsigned long long>(NowMs() - oldestMs));
+        if (auto* sockets = SteamNetworkingSockets())
+            sockets->CloseConnection(static_cast<HSteamNetConnection>(victim),
+                                     k_ESteamNetConnectionEnd_App_Generic,
+                                     "too slow to prove your identity", false);
+    }
+    return oldest;
+}
+
+void Session::SweepPending() {
+    // The deadline the band's own comment has claimed since 2026-08-26 and never
+    // enforced: pendingSinceMs_ was written at three sites and read at none.
+    const uint64_t now = NowMs();
+    for (int i = 0; i < kMaxPending; ++i) {
+        const uint32_t hConn = pendingConns_[i].load(std::memory_order_acquire);
+        if (hConn == 0) continue;
+        const uint64_t since = pendingSinceMs_[i].load(std::memory_order_acquire);
+        if (since == 0 || now - since < kPendingDeadlineMs) continue;
+        UE_LOGW("net: PENDING %d (h=0x%08x) never proved its identity in %llu ms "
+                "-- closing", i, static_cast<unsigned>(hConn),
+                static_cast<unsigned long long>(now - since));
+        pendingConns_[i].store(0, std::memory_order_release);
+        pendingSinceMs_[i].store(0, std::memory_order_release);
+        coop::net::peer_admission::HostForgetPending(i);
+        if (auto* sockets = SteamNetworkingSockets())
+            sockets->CloseConnection(static_cast<HSteamNetConnection>(hConn),
+                                     k_ESteamNetConnectionEnd_App_Generic,
+                                     "identity proof timed out", false);
+    }
 }
 
 void Session::ReleasePending(uint32_t hConn) {
     if (hConn == 0) return;
     for (int i = 0; i < kMaxPending; ++i) {
         uint32_t cur = hConn;
-        if (pendingConns_[i].compare_exchange_strong(cur, 0))
+        if (pendingConns_[i].compare_exchange_strong(cur, 0)) {
             pendingSinceMs_[i].store(0, std::memory_order_release);
+            // The exchange state dies WITH the entry. The band recycles indices,
+            // so a row left open would let the next socket at this index answer
+            // the previous socket's challenge.
+            coop::net::peer_admission::HostForgetPending(i);
+        }
     }
+}
+
+void Session::SetProvedGuidForSlot(int slot, const std::string& guid) {
+    if (slot < 0 || slot >= kMaxPeers) return;
+    std::lock_guard<std::mutex> lk(provedGuidMutex_);
+    provedGuidBySlot_[slot] = guid;
+}
+
+std::string Session::ProvedGuidForSlot(int slot) const {
+    if (slot < 0 || slot >= kMaxPeers) return {};
+    std::lock_guard<std::mutex> lk(provedGuidMutex_);
+    return provedGuidBySlot_[slot];
 }
 
 int Session::AdmitPending(int pendingIdx, uint32_t hConn) {
@@ -381,12 +460,9 @@ void Session::HandleConnStatusChanged(void* info) {
         // everyone's world and the ~20-subsystem person fan-out. The connection
         // is parked instead; the seat is spent in AdmitPending() and nowhere
         // else. See session.h's pending band and PLAN_04 s1 Action 2.
+        // Never fails: a full band evicts its OLDEST un-proved entry rather than
+        // refusing this arrival (see ParkPending).
         const int pend = ParkPending(hConn);
-        if (pend < 0) {
-            UE_LOGW("net: pending band full (%d) -- rejecting incoming connection", kMaxPending);
-            sockets->CloseConnection(hConn, 0, "too many pending", false);
-            return;
-        }
         // Tag with the PENDING id, deliberately outside [1, kMaxPeers): the one
         // drain site validates that range, so this connection's traffic reaches
         // the admission handler and nothing else.
@@ -430,12 +506,6 @@ void Session::HandleConnStatusChanged(void* info) {
                     return;
                 }
                 const int pend = ParkPending(hConn);
-                if (pend < 0) {
-                    UE_LOGW("net: pending band full at Connected -- closing h=0x%08x",
-                            static_cast<unsigned>(hConn));
-                    sockets->CloseConnection(hConn, 0, "too many pending", false);
-                    return;
-                }
                 sockets->SetConnectionUserData(hConn, kPendingTag | pend);
                 const uint32_t hPoll = hPollGroup_.load();
                 if (hPoll != 0) {
@@ -457,7 +527,26 @@ void Session::HandleConnStatusChanged(void* info) {
                     cfg_.role == Role::Host ? "host" : "client");
             return;
         }
-        FinishPeerConnected(slot, hConn);
+        // Reaching here means role == Client and slot == 0: on a HOST every
+        // inbound connection is parked above and gets its slot from AdmitPending,
+        // long after this callback has come and gone.
+        //
+        // THE LINK IS NOT FINISHED HERE ANY MORE. It used to be, and that made a
+        // transport fact ("the socket is up") the trigger for everything
+        // IsSlotReady gates -- including the joiner's own SaveTransferRequest. The
+        // client now opens the admission exchange instead and finishes the link in
+        // FinishClientLink, when the host's AssignPeerSlot proves it was admitted.
+        // Same shape as the host's band, one level down: nothing downstream needed
+        // an edit, because nothing downstream can see a slot that is not ready.
+        if (!peer_admission::ClientOnConnected(*this, hConn)) {
+            {   // Say WHY on the flee-to-menu path; a silent close here reads as
+                // "the host vanished", which is the one thing it is not.
+                std::lock_guard<std::mutex> lk(hostCloseMutex_);
+                hostCloseReason_ = "could not start the identity exchange with this host";
+            }
+            sockets->CloseConnection(hConn, k_ESteamNetConnectionEnd_App_Generic,
+                                     "identity exchange could not start", false);
+        }
         return;
     }
 
@@ -478,8 +567,15 @@ void Session::HandleConnStatusChanged(void* info) {
         // the main menu. Host role ignores this (a client leaving is not us being
         // closed). slot 0 is the host on a client.
         if (cfg_.role == Role::Client && slot == 0) {
-            std::lock_guard<std::mutex> lk(hostCloseMutex_);
-            hostCloseReason_ = cb->m_info.m_szEndDebug;
+            {   std::lock_guard<std::mutex> lk(hostCloseMutex_);
+                // Do not overwrite a reason WE already set (a refused identity
+                // exchange closes the connection itself and names why); GNS's
+                // own m_szEndDebug for a close we initiated is the generic one.
+                if (hostCloseReason_.empty()) hostCloseReason_ = cb->m_info.m_szEndDebug;
+            }
+            // The exchange dies with the link: a `proved` flag surviving into the
+            // next connection would seat us on an unchallenged host.
+            peer_admission::ClientReset();
         }
         if (slot >= 0) {
             // GEN: clear -- deferred to the END of this close path (below, after

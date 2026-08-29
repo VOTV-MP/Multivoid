@@ -54,12 +54,14 @@ $violations = New-Object System.Collections.Generic.List[string]
 $controlFailures = New-Object System.Collections.Generic.List[string]
 
 # ---- WRITE-ONLY allowlist (job 2). Review reason required per entry. -------
-# player_guid / player_skin: Identity rows; product WRITES ride the typed door
-# (config.cpp mints, local_body skin picker) while the READS are the mint
-# machinery's internal string reads inside the config TU by design (the
-# IdentityRow handle is write-only on purpose -- config_registry.h).
+# player_skin: an Identity row; the product WRITE rides the typed door (the
+# local_body skin picker) while the READ is the mint machinery's internal string
+# read inside the config TU by design (the IdentityRow handle is write-only on
+# purpose -- config_registry.h). player_guid was the other entry and is GONE with
+# its row (b144): the durable identity is a keypair in multivoid_identity.key, so
+# nothing mints a guid into the ini any more. The gate caught this leftover
+# itself -- an allowlist entry naming no row is exactly what its reap arm is for.
 $writeOnlyAllow = @{
-    'player_guid' = 'identity mint: read internally by the config TU machinery'
     'player_skin' = 'identity mint + skin picker: read internally by the config TU machinery'
 }
 
