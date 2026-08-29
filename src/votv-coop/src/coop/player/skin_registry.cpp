@@ -64,6 +64,41 @@ constexpr BuiltinSkin kBuiltinSkins[] = {
     { "kerfur_furfur",         L"/Game/meshes/wendussy/kerfurOmega_furfurSkin.kerfurOmega_furfurSkin" },
 };
 
+// Bundle paks: one .pak carrying several skins (2026-08-29, user decision --
+// the four starter scientists ship as ONE scientists.pak). UE mounts every pak
+// under LogicMods and assets resolve by their internal package paths, so the
+// only thing the registry needs from a bundle is WHICH skin names its presence
+// vouches for. The bundle stem itself is never offered as a skin.
+struct SkinBundle { const char* pakStem; const char* members[8]; };
+constexpr SkinBundle kSkinBundles[] = {
+    { "scientists", { "walter_v1sc", "sci_v1sc", "rvi_scientist_v1sc",
+                      "luther_v1sc", nullptr } },
+};
+
+const SkinBundle* BundleForStem(const std::string& stem) {
+    for (const auto& b : kSkinBundles)
+        if (stem == b.pakStem) return &b;
+    return nullptr;
+}
+
+// Is `skin` available via a pak in `dirW` -- either its own <skin>.pak or a
+// bundle pak that lists it as a member?
+bool DirProvidesSkin(const std::wstring& dirW, const char* skin) {
+    std::error_code ec;
+    fs::path own = fs::path(dirW) / skin;
+    own += L".pak";
+    if (fs::is_regular_file(own, ec)) return true;
+    for (const auto& b : kSkinBundles) {
+        for (const char* const* m = b.members; *m; ++m) {
+            if (std::string(*m) != skin) continue;
+            fs::path bp = fs::path(dirW) / b.pakStem;
+            bp += L".pak";
+            if (fs::is_regular_file(bp, ec)) return true;
+        }
+    }
+    return false;
+}
+
 }  // namespace
 
 bool IsValidSkinName(const std::string& name) {
@@ -97,16 +132,9 @@ std::string PickRandomStarterSkin() {
     };
     std::vector<const char*> present;
     const std::vector<std::wstring> dirs = PakDirs();
-    if (!dirs.empty()) {
-        std::error_code ec;
-        for (const char* s : kStarterSkins) {
-            bool found = false;
-            for (const std::wstring& dirW : dirs) {
-                fs::path cand = fs::path(dirW) / s;
-                cand += L".pak";
-                if (fs::is_regular_file(cand, ec)) { found = true; break; }
-            }
-            if (found) present.push_back(s);
+    for (const char* s : kStarterSkins) {
+        for (const std::wstring& dirW : dirs) {
+            if (DirProvidesSkin(dirW, s)) { present.push_back(s); break; }
         }
     }
     if (present.empty()) {
@@ -116,7 +144,7 @@ std::string PickRandomStarterSkin() {
     }
     std::mt19937 rng{std::random_device{}()};
     const char* pick = present[rng() % present.size()];
-    UE_LOGI("skin_registry: new identity rolled starter skin '%s' (%zu of %zu list paks present)",
+    UE_LOGI("skin_registry: new identity rolled starter skin '%s' (%zu of %zu list skins provided by installed paks)",
             pick, present.size(), std::size(kStarterSkins));
     return pick;
 }
@@ -203,6 +231,23 @@ const std::vector<SkinEntry>& Entries(bool rescan) {
             if (stem == kNativeSkinName || BuiltinSkinPath(stem)) {
                 UE_LOGW("skin_registry: pak '%ls' shadows a builtin skin name -- skipped "
                         "(rename the pak)", p.filename().c_str());
+                continue;
+            }
+            // A bundle pak contributes its MEMBER skins, never its own stem.
+            if (const SkinBundle* bundle = BundleForStem(stem)) {
+                for (const char* const* m = bundle->members; *m; ++m) {
+                    std::string member(*m);
+                    if (std::find(seen.begin(), seen.end(), member) != seen.end())
+                        continue;
+                    seen.push_back(member);
+                    std::wstring preview;
+                    for (const wchar_t* pext : {L".png", L".bmp"}) {
+                        fs::path cand = p.parent_path() / member;
+                        cand += pext;
+                        if (fs::is_regular_file(cand, ec)) { preview = cand.wstring(); break; }
+                    }
+                    g_entries.push_back({std::move(member), std::move(preview)});
+                }
                 continue;
             }
             if (std::find(seen.begin(), seen.end(), stem) != seen.end()) continue;

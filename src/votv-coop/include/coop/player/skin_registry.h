@@ -9,6 +9,13 @@
 //     filename stem IS the skin name AND the package name the runtime loads
 //     (/Game/Mods/VOTVCoop/<name>.kerfurOmega_KelSkin -- every pak from
 //     tools/client_model/ splices into that template object).
+//   - BUNDLE paks (2026-08-29, user: "нужен общий пак scientists.pak"): one pak
+//     carrying SEVERAL skins. The loader never keys on the pak filename (assets
+//     are addressed by their internal /Game/Mods/VOTVCoop/<name> paths, all of
+//     which UE mounts at startup), so presence is the only thing a bundle
+//     changes: kSkinBundles maps the pak stem to the member skin names it
+//     provides. Member previews stay sibling files by MEMBER name
+//     (walter_v1sc.png next to scientists.pak).
 // A sibling <name>.png or <name>.bmp in the pak dir is the browser preview tile
 // (user convention 2026-07-02: previews live NEXT to the paks; works for builtin
 // names too -- drop a kerfur_omega.png there).
@@ -64,9 +71,5 @@ const wchar_t* BuiltinSkinPath(const std::string& name);
 // rescan=true re-scans (the browser's Refresh / tab open). RENDER-THREAD ONLY
 // (the F1 browser); other threads use names, not the catalog.
 const std::vector<SkinEntry>& Entries(bool rescan = false);
-
-// <game>/VotV/Content/Paks/LogicMods/multivoid (derived from the DLL's own
-// module dir: Binaries/Win64 -> VotV). Empty on resolve failure.
-std::wstring PakDir();
 
 }  // namespace coop::skins
