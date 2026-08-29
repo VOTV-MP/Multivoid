@@ -9,6 +9,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
+#include "coop/interactables/atv_sync.h"   // OwnsTick -- which SIDE of the mirror this sample is
 #include "ue_wrap/devices/atv.h"
 #include "ue_wrap/engine/engine.h"
 
@@ -121,26 +122,32 @@ void SampleOne(void* atv, size_t idx) {
     const float dirtVel = ReadFloat(atv, g_dirtVelOff);
     const bool  driven  = ue_wrap::atv::IsDriven(atv);
     const void* occ     = ue_wrap::atv::GetOccupantPlayer(atv);
+    // WHICH SIDE OF THE MIRROR is this sample from? The 2026-08-29 run could not say, so
+    // docs/vehicles/ATV.md 11.1 stayed open even though the probe ran perfectly: an idle ATV is
+    // never mirrored, and nothing asserted the receiver was actually mirroring during the driven
+    // window. Read through atv_sync's own published set rather than recomputing the predicate --
+    // an instrument that reimplements the code under test agrees with itself, not with it.
+    const bool  ownsTick = coop::atv_sync::OwnsTick(atv);
 
     if (haveParts) {
         // |wheel - body| is ROTATION-INVARIANT, so it isolates suspension travel from
         // the body tipping/turning. A rigid frozen rig holds these three constant to
         // the bit; a live one breathes. THIS is the frozen-corpse measurement.
         const float dFR = Dist(frL, bodyL), dFL = Dist(flL, bodyL), dBK = Dist(bkL, bodyL);
-        UE_LOGI("[ATVP] n=%u i=%zu key='%ls' driven=%d occ=%p "
+        UE_LOGI("[ATVP] n=%u i=%zu key='%ls' driven=%d owns=%d occ=%p "
                 "body=(%.1f,%.1f,%.1f) rot=(%.1f,%.1f,%.1f) "
                 "susFR=%.3f susFL=%.3f susBK=%.3f "
                 "fuel=%.3f batt=%.3f dirt=%.4f dirtVel=%.4f hp=%.2f",
-                g_sample, idx, key.c_str(), driven ? 1 : 0, occ,
+                g_sample, idx, key.c_str(), driven ? 1 : 0, ownsTick ? 1 : 0, occ,
                 bodyL.X, bodyL.Y, bodyL.Z, bodyR.Pitch, bodyR.Yaw, bodyR.Roll,
                 dFR, dFL, dBK, fuel, battery, dirt, dirtVel, health);
     } else {
         ue_wrap::FVector loc{}; ue_wrap::FRotator rot{};
         ue_wrap::atv::GetRootTransform(atv, loc, rot);
-        UE_LOGI("[ATVP] n=%u i=%zu key='%ls' driven=%d occ=%p "
+        UE_LOGI("[ATVP] n=%u i=%zu key='%ls' driven=%d owns=%d occ=%p "
                 "body=(%.1f,%.1f,%.1f) rot=(%.1f,%.1f,%.1f) NOPARTS "
                 "fuel=%.3f batt=%.3f dirt=%.4f dirtVel=%.4f hp=%.2f",
-                g_sample, idx, key.c_str(), driven ? 1 : 0, occ,
+                g_sample, idx, key.c_str(), driven ? 1 : 0, ownsTick ? 1 : 0, occ,
                 loc.X, loc.Y, loc.Z, rot.Pitch, rot.Yaw, rot.Roll,
                 fuel, battery, dirt, dirtVel, health);
     }

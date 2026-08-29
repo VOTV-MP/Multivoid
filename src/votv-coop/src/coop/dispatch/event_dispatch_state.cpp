@@ -129,9 +129,14 @@ bool HandleStateEvent(net::Session& session,
         }
         net::AtvStatePayload ap{};
         std::memcpy(&ap, msg.payload, sizeof(ap));
+        // v146: the velocity joins the pose in this guard. It reaches
+        // SetActorRootPhysicsVelocity on a body that is now genuinely simulating, so a non-finite
+        // component would not merely misplace a kinematic mirror -- it would poison PhysX.
         if (!std::isfinite(ap.x) || !std::isfinite(ap.y) || !std::isfinite(ap.z) ||
-            !std::isfinite(ap.pitch) || !std::isfinite(ap.yaw) || !std::isfinite(ap.roll)) {
-            UE_LOGW("event_feed: AtvState non-finite pose -- dropping");
+            !std::isfinite(ap.pitch) || !std::isfinite(ap.yaw) || !std::isfinite(ap.roll) ||
+            !std::isfinite(ap.linVelX) || !std::isfinite(ap.linVelY) || !std::isfinite(ap.linVelZ) ||
+            !std::isfinite(ap.angVelX) || !std::isfinite(ap.angVelY) || !std::isfinite(ap.angVelZ)) {
+            UE_LOGW("event_feed: AtvState non-finite pose/velocity -- dropping");
             break;
         }
         const uint8_t senderSlot =
@@ -142,11 +147,12 @@ bool HandleStateEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::AtvRelease: {
-        // v76 (2026-06-15): ATV grab-carry RELEASE/throw edge (companion to AtvState). The peer that
-        // was the grav-hand grabber sends this once when the grab ends; the receiver re-enables the
-        // mirror's physics + inherits the launch velocity (atv_sync gates the apply: a peer that is
-        // itself the authority ignores it). Host relays a client grabber's release to the other
-        // clients (IsClientRelayableReliableKind), same as AtvState.
+        // v76 (2026-06-15) / v146: the authority-lost edge -- "the sender no longer authors this
+        // ATV". It carries the key and nothing else now; the receiver clears the seat and the
+        // author (atv_sync ignores it if this peer is itself the author). The finite-velocity
+        // guard that used to live here went with the six velocity floats: there is no un-freeze to
+        // hand a launch velocity to. Host relays a client's release to the other clients
+        // (IsClientRelayableReliableKind), same as AtvState.
         if (msg.payloadLen < sizeof(net::AtvReleasePayload)) {
             UE_LOGW("event_feed: AtvRelease payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::AtvReleasePayload));
@@ -154,11 +160,6 @@ bool HandleStateEvent(net::Session& session,
         }
         net::AtvReleasePayload arp{};
         std::memcpy(&arp, msg.payload, sizeof(arp));
-        if (!std::isfinite(arp.linVelX) || !std::isfinite(arp.linVelY) || !std::isfinite(arp.linVelZ) ||
-            !std::isfinite(arp.angVelX) || !std::isfinite(arp.angVelY) || !std::isfinite(arp.angVelZ)) {
-            UE_LOGW("event_feed: AtvRelease non-finite velocity -- dropping");
-            break;
-        }
         const uint8_t senderSlot =
             (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
                 ? static_cast<uint8_t>(msg.senderPeerSlot)
@@ -167,8 +168,9 @@ bool HandleStateEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::AtvSpawn: {
-        // v77: HOST->client runtime-ATV announce. The client fresh-spawns a native AATV_C it has no
-        // save-twin of (host-only economy delivery). HOST-AUTHORITATIVE -- trust only slot 0.
+        // v77: HOST->client runtime-ATV announce. The client fresh-spawns a native AATV_C it has
+        // no save-twin of (spawned at runtime from list_props row 'atv' -- NOT purchased; nothing
+        // sells an ATV, docs/vehicles/ATV.md 11.4). HOST-AUTHORITATIVE -- trust only slot 0.
         if (msg.senderPeerSlot != 0) {
             UE_LOGW("event_feed: AtvSpawn from non-host senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
             break;

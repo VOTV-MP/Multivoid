@@ -3,12 +3,18 @@
 // kinematic pose-stream sync through here.
 //
 // AATV_C : APawn is a CUSTOM physics rig (NOT a UWheeledVehicleMovementComponent vehicle):
-// the root Mesh@0x0570 simulates PhysX, the wheels are constraint-driven. There is no movement
-// component to feed input into on a remote -- the body transform is the only ground truth -> we
-// kinematic POSE-STREAM it (like the kerfur/NPC pose stream + held-prop PropPose), NOT input-
-// replication. On the mirror the local physics + tick are disabled (PrepareMirror) so the ATV's
-// own applyWheelTorque/gravity can't fight the streamed transform (the clump/NPC-mirror
-// discipline). Identity = the save-placed Key@0x0618 (cross-peer stable).
+// the root Mesh@0x0570 simulates PhysX, the four wheels are SEPARATE simulating bodies held by
+// UPhysicsConstraintComponents (sus_*/ax_*). Identity = the save-placed Key@0x0618 (cross-peer
+// stable).
+//
+// MIRROR MODEL (arc 1, 2026-08-29 -- REPLACES the freeze/teleport model this file used to
+// describe). A non-authoring peer runs the rig NATIVELY -- physics ON -- and is CORRECTED toward
+// the authority; only its BRAIN is switched off. That inversion is not a preference: the rig's
+// entire visible output IS suspension travel, and a kinematic root teleported 20x/s drags four
+// constrained bodies behind it. Measured native travel is 2-4 cm (docs/vehicles/ATV.md 13); the
+// shipped freeze model put the other peer's copy at 29.58 cm and 1.1 m away. So: no
+// PrepareMirror/ReleaseMirror, no SetActorSimulatePhysics from the sync layer at all.
+// MTA precedent: CClientVehicle::UpdateTargetPosition + CNetAPI::ReadVehiclePuresync.
 //
 // Mesh@0x0570 IS the actor ROOT component, so the actor transform == the physics body transform
 // -- we read/drive at the ACTOR level (GetActorLocation/Rotation/Velocity, SetActorLocation/
@@ -38,9 +44,6 @@ std::wstring GetKeyString(void* atv);
 // False on null/unresolved.
 bool GetRootTransform(void* atv, FVector& loc, FRotator& rot);
 
-// Root body linear velocity (cm/s). The mirror inherits it on a physics re-enable (release).
-bool GetRootVelocity(void* atv, FVector& vel);
-
 // The current driver AmainPlayer_C* (Player@0x05B0), or nullptr if unoccupied. The COOP layer
 // (atv_sync) resolves this raw pointer to a peer slot -- ue_wrap owns no coop state (principle 7).
 void* GetOccupantPlayer(void* atv);
@@ -53,20 +56,34 @@ float GetFuel(void* atv);    // fuel@0x05D4   (0..100)
 float GetHealth(void* atv);  // health@0x05E4 (0..100)
 bool  GetBrake(void* atv);   // Brake@0x05D9  (handbrake)
 
-// CLIENT mirror: snap the root body to the streamed transform (kinematic -- physics is off via
-// PrepareMirror). SetActorLocation(teleport) + SetActorRotation(teleportPhysics). False on failure.
-bool DriveMirrorTransform(void* atv, const FVector& loc, const FRotator& rot);
+// The ATV's BRAIN -- its actor tick, and nothing else. OFF on every peer that does not own this
+// ATV's tick, so the accumulators (fuel/battery/dirt), applyWheelTorque and
+// setFrontWheelsOrientation run on exactly one machine. PHYSICS IS NEVER TOUCHED: the rig keeps
+// simulating, which is the whole point of the mirror model above, and it is also what keeps the
+// ATV grabbable (Aprop pickupObject gates on HitComponent.IsSimulatingPhysics()).
+// The collision half of "brains off" is NOT here -- a ComponentHit delegate is dispatched by the
+// physics scene, not by the tick, so it is cancelled at its seven UFunctions by an
+// authority-gated interceptor in coop::atv_sync (see ResolveHitDelegates). Game thread.
+void SetBrainEnabled(void* atv, bool enabled);
 
-// CLIENT mirror prep (call once when the mirror is first driven): disable the local physics sim +
-// actor tick + root rigid-body-collision notify so the ATV's own rig can't fight the streamed
-// transform (the same discipline the clump/NPC mirrors use). Game thread.
-void PrepareMirror(void* atv);
+// The game's OWN rig-consistent teleport: ATV_C::teleportVehicle(NewLocation, NewRotation) --
+// K2_SetActorLocation(bTeleport=true) + K2_SetActorRotation(bTeleportPhysics=true), and THEN it
+// re-places frontWheel_R onto ax_FR1, frontWheel_L onto ax_FL1 and backWheelRoot onto `back`
+// [V, disasm ATV.teleportVehicle @0..393]. This is the WARP primitive and the only transform the
+// sync layer ever writes: a bare SetActorLocation moves the ROOT only
+// (engine_attach.cpp:74-82) and leaves the constrained wheel bodies behind -- which is exactly
+// why the game ships two teleport forms. False on unresolved/null. Game thread.
+bool TeleportRig(void* atv, const FVector& loc, const FRotator& rot);
 
-// The inverse of PrepareMirror: re-enable physics sim + actor tick + rigid-body notify. Called
-// when a peer that was mirroring an ATV BECOMES its authority (driver/grabber, so its own rig runs
-// again), when an authority releases (the ATV un-freezes to an idle physics-on grabbable state),
-// and on disconnect so a streamed ATV is not left frozen in single-player. Game thread.
-void ReleaseMirror(void* atv);
+// Resolve ATV_C's SEVEN ComponentHitSignature bound-event UFunctions (`mesh`, `car1_Capsule`,
+// `car1_backWheel_R/L`, `car1_frontWheel_R`, `car1_frontWheelRoot`, `car1_backWheelRoot`) into
+// `out`; returns how many resolved. These are the ONLY PE-visible seam for the ATV's
+// collision-authored state: each BndEvt stub just copies its params and jumps into the ubergraph
+// [V, disasm], and the work it reaches -- impulse() -> `health -= |NormalImpulse|/500000 * 2 *
+// getBumperMult()` -> explode() at <=0, and processTire() -> tire durability -> ejectWheel -- is
+// all EX_Local* and therefore invisible one level down. A non-owner that runs them explodes its
+// own copy of a vehicle the authority still has. Game thread.
+int ResolveHitDelegates(void** out, int max);
 
 // v77 runtime-ATV materialization: fresh-spawn an AATV_C-or-subclass (`className`) at `loc`/`rot`
 // via GameplayStatics BeginDeferred + FinishSpawning, leaving physics ON -- the result is a NATIVE

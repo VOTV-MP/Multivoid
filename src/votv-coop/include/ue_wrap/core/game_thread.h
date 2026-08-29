@@ -114,7 +114,14 @@ using UFunctionInterceptor = bool(*)(void* self, void* params);
 // rollback). Capacity is registration-time only: the per-dispatch walk is
 // count-bounded by g_interceptorActive behind the Bloom reject, so headroom
 // costs memory, not hot-path time.
-inline constexpr int kMaxInterceptors = 40;
+// 40 -> 56 (ATV arc 1, 2026-08-29): +7 for the ATV's ComponentHit delegates, and
+// headroom for the same reason as last time. A STATIC census cannot size this --
+// 23 call sites, several of them loops over tables (player_damage's g_impactFns,
+// spawn_authority, garbage_sync) -- so the live count is not knowable by reading
+// the tree, and the ATV guard's failure mode if it cannot register is a mirror
+// that explodes a vehicle its authority still has. 16 B/slot: 256 bytes buys the
+// question away.
+inline constexpr int kMaxInterceptors = 56;
 
 // Register a PRE-dispatch interceptor for `targetUFunction`. Returns false if
 // the table is full or arguments are null. Multiple distinct interceptors may

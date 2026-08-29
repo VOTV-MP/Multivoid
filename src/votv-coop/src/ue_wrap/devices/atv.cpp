@@ -83,12 +83,6 @@ bool GetRootTransform(void* atv, FVector& loc, FRotator& rot) {
     return true;
 }
 
-bool GetRootVelocity(void* atv, FVector& vel) {
-    if (!atv) return false;
-    vel = engine::GetActorVelocity(atv);
-    return true;
-}
-
 void* GetOccupantPlayer(void* atv) {
     if (!atv || g_playerOff < 0) return nullptr;
     return *reinterpret_cast<void* const*>(reinterpret_cast<const char*>(atv) + g_playerOff);
@@ -114,25 +108,56 @@ bool GetBrake(void* atv) {
     return *reinterpret_cast<const bool*>(reinterpret_cast<const char*>(atv) + g_brakeOff);
 }
 
-bool DriveMirrorTransform(void* atv, const FVector& loc, const FRotator& rot) {
-    if (!atv) return false;
-    bool ok = engine::SetActorLocation(atv, loc);
-    ok = engine::SetActorRotation(atv, rot) && ok;
-    return ok;
+void SetBrainEnabled(void* atv, bool enabled) {
+    if (!atv) return;
+    engine::SetActorTickEnabled(atv, enabled);   // ReceiveTick: accumulators, wheel torque, steering
+    // DELIBERATELY absent: SetActorSimulatePhysics (the rig always simulates -- see the header) and
+    // SetActorRootNotifyRigidBodyCollision (it silenced 1 of the 7 hit delegates, so it read as a
+    // guard while six leaked; the interceptor in coop::atv_sync replaces it whole -- RULE 2).
 }
 
-void PrepareMirror(void* atv) {
-    if (!atv) return;
-    engine::SetActorSimulatePhysics(atv, false);          // the rig must not integrate vs the stream
-    engine::SetActorTickEnabled(atv, false);              // suppress the ATV BP ReceiveTick/AI
-    engine::SetActorRootNotifyRigidBodyCollision(atv, false);  // mirror collisions don't fire BP hit events
+bool TeleportRig(void* atv, const FVector& loc, const FRotator& rot) {
+    if (!atv || !EnsureResolved()) return false;
+    static void* sFn = nullptr;
+    if (!sFn) sFn = R::FindFunction(g_cls, L"teleportVehicle");
+    if (!sFn) {
+        static bool sWarned = false;
+        if (!sWarned) { sWarned = true;
+            UE_LOGW("atv: teleportVehicle unresolved -- cannot warp the rig"); }
+        return false;
+    }
+    ParamFrame f(sFn);
+    if (!f.valid()) return false;
+    f.Set<FVector>(L"NewLocation", loc);
+    f.Set<FRotator>(L"NewRotation", rot);
+    return Call(atv, f);
 }
 
-void ReleaseMirror(void* atv) {
-    if (!atv) return;
-    engine::SetActorSimulatePhysics(atv, true);           // restore the local physics rig (this peer drives now)
-    engine::SetActorTickEnabled(atv, true);               // restore the ATV BP tick (its own driving logic)
-    engine::SetActorRootNotifyRigidBodyCollision(atv, true);
+// The seven ComponentHitSignature bound events, by exact UFunction name. Taken verbatim from the
+// class's own function list rather than derived from component names: two of the seven components
+// (`car1_Capsule`, `car1_frontWheelRoot`) are NOT in ATV.uasset's name table at all, so a
+// component-flag guard would silently have covered five of seven -- the same shape as the
+// root-only guard it would have replaced. Function names have no such ambiguity.
+const wchar_t* const kHitDelegateNames[] = {
+    L"BndEvt__mesh_K2Node_ComponentBoundEvent_1_ComponentHitSignature__DelegateSignature",
+    L"BndEvt__car1_Capsule_K2Node_ComponentBoundEvent_6_ComponentHitSignature__DelegateSignature",
+    L"BndEvt__car1_backWheel_R_K2Node_ComponentBoundEvent_5_ComponentHitSignature__DelegateSignature",
+    L"BndEvt__car1_backWheel_L_K2Node_ComponentBoundEvent_1_ComponentHitSignature__DelegateSignature",
+    L"BndEvt__car1_frontWheel_R_K2Node_ComponentBoundEvent_4_ComponentHitSignature__DelegateSignature",
+    L"BndEvt__car1_frontWheelRoot_K2Node_ComponentBoundEvent_3_ComponentHitSignature__DelegateSignature",
+    L"BndEvt__car1_backWheelRoot_K2Node_ComponentBoundEvent_2_ComponentHitSignature__DelegateSignature",
+};
+
+int ResolveHitDelegates(void** out, int max) {
+    if (!out || max <= 0 || !EnsureResolved()) return 0;
+    int n = 0;
+    for (const wchar_t* name : kHitDelegateNames) {
+        if (n >= max) break;
+        void* fn = R::FindFunction(g_cls, name);
+        if (!fn) { UE_LOGW("atv: hit delegate '%ls' unresolved", name); continue; }
+        out[n++] = fn;
+    }
+    return n;
 }
 
 void* SpawnMirror(const std::wstring& className, const FVector& loc, const FRotator& rot) {

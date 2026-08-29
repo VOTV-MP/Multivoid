@@ -17,7 +17,11 @@ design is waiting on:
 
   Q3  Do the two peers' ATVs even agree on WHERE the thing is?  -- body position gap.
 
-It asserts nothing. At this stage we do not know the right answer; that is the point.
+Since v146 it ALSO asserts: an ACCEPTANCE section whose every threshold is set so the
+b145 baseline FAILS it (docs/vehicles/ATV.md 13) -- rig travel inside the native band
+while mirroring, the two copies settling together, the collision guard armed, and at
+most one peer owning a given ATV's tick per second. Exit 0 PASS / 1 FAIL /
+2 INCONCLUSIVE (nobody drove, so no mirror existed to measure).
 
     python tools/atv_probe_report.py                 # default HOST + CLIENT_1
     python tools/atv_probe_report.py <hostlog> <clientlog>
@@ -34,8 +38,11 @@ DEFAULT = [
     os.path.join(ROOT, "Game_0.9.0n_CLIENT_1", _REL),
 ]
 
+STAMP = re.compile(r"^\[(\d\d):(\d\d):(\d\d)\]")
+
 LINE = re.compile(
-    r"\[ATVP\] n=(?P<n>\d+) i=(?P<i>\d+) key='(?P<key>[^']*)' driven=(?P<driven>\d) occ=(?P<occ>\S+) "
+    r"\[ATVP\] n=(?P<n>\d+) i=(?P<i>\d+) key='(?P<key>[^']*)' driven=(?P<driven>\d) "
+    r"owns=(?P<owns>\d) occ=(?P<occ>\S+) "
     r"body=\((?P<bx>[-\d.]+),(?P<by>[-\d.]+),(?P<bz>[-\d.]+)\) "
     r"rot=\((?P<rp>[-\d.]+),(?P<ry>[-\d.]+),(?P<rr>[-\d.]+)\) "
     r"(?:susFR=(?P<fr>[-\d.]+) susFL=(?P<fl>[-\d.]+) susBK=(?P<bk>[-\d.]+) |(?P<noparts>NOPARTS )?)"
@@ -58,6 +65,9 @@ def parse(path):
                    for k, v in d.items() if k not in ("key", "occ", "noparts")}
             rec["key"] = d["key"]
             rec["occ"] = d["occ"]
+            ms = STAMP.match(raw)
+            rec["t"] = (int(ms.group(1)) * 3600 + int(ms.group(2)) * 60 + int(ms.group(3))
+                        if ms else None)
             rec["parts"] = d["noparts"] is None and d["fr"] is not None
             # PRE-PLACEMENT GUARD. The ATV enters GUObjectArray before its components
             # are placed, and those samples read body=(0,0,0) with all three wheel
@@ -113,6 +123,124 @@ def report_peer(name, data):
                 lab, vals[0], vals[-1], vals[-1] - vals[0]))
 
 
+# ---------------------------------------------------------------------------
+# ACCEPTANCE (v146, the simulate-and-correct mirror model). Every threshold below
+# is chosen so the PREVIOUS build FAILS it -- a verdict that passes on the broken
+# build measures nothing. The b145 baseline is the autonomous two-peer run of
+# 2026-08-29 (commit ca64d098), recorded in docs/vehicles/ATV.md 13.
+BAND_CM = 4.0        # native suspension travel is 2-4 cm; baseline mirror hit 29.58
+SETTLE_GAP_CM = 20.0 # end-of-run body gap; baseline was 109.9 cm and PERMANENT
+MIN_MIRROR_SAMPLES = 6
+
+
+def driven_seconds(peers):
+    """The set of wall-clock seconds in which SOME peer reported driven=1."""
+    out = set()
+    for d in peers:
+        for rows in d.values():
+            for r in rows:
+                if r["driven"] and r["t"] is not None:
+                    out.add(r["t"])
+    return out
+
+
+def acceptance(names, peers, logs):
+    print("\n" + "=" * 78)
+    print("ACCEPTANCE vs the b145 baseline (docs/vehicles/ATV.md 13)")
+    fails, notes = [], []
+    win = driven_seconds(peers)
+    if win:
+        print("  driven window: {} sample-second(s), {}..{}".format(len(win), min(win), max(win)))
+    else:
+        notes.append("NO driven=1 sample on either peer -- the sit arm never fired, so nothing "
+                     "below tested a MIRROR. An idle ATV is never mirrored (the lane is invisible "
+                     "at rest); this run proves nothing about the corrector.")
+
+    # A1 -- a MIRROR's rig stays inside the native band while someone drives.
+    for nm, d in zip(names, peers):
+        for key, rows in sorted(d.items()):
+            mir = [r for r in rows if not r["owns"] and r["parts"] and r["t"] in win]
+            if len(mir) < MIN_MIRROR_SAMPLES:
+                notes.append("A1 {}/{}: only {} mirror sample(s) inside the driven window -- "
+                             "not enough to judge".format(nm, key, len(mir)))
+                continue
+            for lab, fld in (("frontR", "fr"), ("frontL", "fl"), ("back", "bk")):
+                sp = spread([r[fld] for r in mir])
+                if sp is None:
+                    continue
+                ok = sp["range"] <= BAND_CM
+                print("  A1 {:<9} {:<6} n={:<4} range={:8.4f} cm  {}".format(
+                    nm, lab, sp["n"], sp["range"], "PASS" if ok else "FAIL"))
+                if not ok:
+                    fails.append("A1 {} {} rig travel {:.2f} cm > {:.1f} cm while mirroring".format(
+                        nm, lab, sp["range"], BAND_CM))
+
+    # A2 -- the two copies END the run together. The baseline's gap was not merely
+    # large, it was PERMANENT: the release launched the mirror and nothing corrected
+    # it again. A settled gap is the direct test of that.
+    if len(peers) > 1:
+        for key in sorted(set(peers[0]) & set(peers[1])):
+            ra, rb = peers[0][key][-1], peers[1][key][-1]
+            dx, dy, dz = ra["bx"] - rb["bx"], ra["by"] - rb["by"], ra["bz"] - rb["bz"]
+            gap = (dx * dx + dy * dy + dz * dz) ** 0.5
+            ok = gap <= SETTLE_GAP_CM
+            print("  A2 settled gap key='{}' {:.3f} cm  {}".format(key, gap, "PASS" if ok else "FAIL"))
+            if not ok:
+                fails.append("A2 key='{}' settled {:.1f} cm apart > {:.1f}".format(
+                    key, gap, SETTLE_GAP_CM))
+
+    # A3 -- the collision guard armed, and whether its CANCEL path was ever exercised.
+    for nm, path in zip(names, logs):
+        try:
+            txt = open(path, encoding="utf-8", errors="replace").read()
+        except OSError:
+            continue
+        armed = "atv: hit guard armed" in txt
+        print("  A3 {:<9} hit guard armed: {}".format(nm, "PASS" if armed else "FAIL"))
+        if not armed:
+            fails.append("A3 {}: the hit guard did not arm (ATV sync stayed inert)".format(nm))
+        m = re.search(r"hit guard: (\d+) cancelled / (\d+) allowed", txt)
+        if m:
+            c, a = int(m.group(1)), int(m.group(2))
+            print("     counters: {} cancelled / {} allowed".format(c, a))
+            if c == 0 and a == 0:
+                notes.append("A3 {}: the guard armed but NEVER FIRED -- no ATV collision happened, "
+                             "so its cancel path is still UNPROVEN by this run".format(nm))
+        for bad in ("explode", "ejectWheel"):
+            if bad in txt:
+                notes.append("A3 {}: log mentions '{}' -- check WHICH peer authored it".format(nm, bad))
+
+    # A4 -- SINGLE SYNCER. At most one peer may own a given ATV's tick in the same second.
+    if len(peers) > 1:
+        owners = {}
+        for nm, d in zip(names, peers):
+            for key, rows in d.items():
+                for r in rows:
+                    if r["owns"] and r["t"] is not None:
+                        owners.setdefault((key, r["t"]), set()).add(nm)
+        clashes = {k: v for k, v in owners.items() if len(v) > 1}
+        print("  A4 single-syncer: {} second(s) with >1 owner  {}".format(
+            len(clashes), "PASS" if not clashes else "FAIL"))
+        if clashes:
+            ex = sorted(clashes.items())[:3]
+            fails.append("A4 two peers owned the same ATV's tick in {} second(s), e.g. {}".format(
+                len(clashes), [(k[0], k[1], sorted(v)) for k, v in ex]))
+
+    print("-" * 78)
+    for n in notes:
+        print("  NOTE: {}".format(n))
+    if fails:
+        for f in fails:
+            print("  FAIL: {}".format(f))
+        print("  ACCEPTANCE: FAIL")
+        return 1
+    if notes and not win:
+        print("  ACCEPTANCE: INCONCLUSIVE (see NOTE)")
+        return 2
+    print("  ACCEPTANCE: PASS")
+    return 0
+
+
 def main():
     paths = sys.argv[1:3] if len(sys.argv) >= 3 else DEFAULT
     names = ["HOST", "CLIENT_1"] if paths == DEFAULT else [p for p in paths]
@@ -143,7 +271,7 @@ def main():
         print("    body     host=({:.1f},{:.1f},{:.1f}) client=({:.1f},{:.1f},{:.1f})  "
               "GAP={:.3f} cm {}".format(ra["bx"], ra["by"], ra["bz"], rb["bx"], rb["by"], rb["bz"],
                                         dist, "" if dist < 1.0 else "  <-- APART"))
-    return 0
+    return acceptance(names, peers, paths)
 
 
 if __name__ == "__main__":

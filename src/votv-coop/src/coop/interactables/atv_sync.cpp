@@ -1,12 +1,33 @@
-// coop/atv_sync.cpp -- see coop/atv_sync.h. ATV/quadbike (AATV_C) Phase 1 body pose sync.
-// Occupant-authoritative keyed pose stream: the seated driver reads its live ATV root transform
-// + throttled-streams it; the host relays a client driver's pose; receivers mirror it
-// kinematically (physics off) with a LerpWindow interp, unless they are the occupant.
+// coop/atv_sync.cpp -- see coop/atv_sync.h. ATV/quadbike (AATV_C) rig sync.
+//
+// THE MIRROR SIMULATES (arc 1, 2026-08-29 -- this REPLACES the freeze/teleport lane, RULE 2).
+// A peer that does not author an ATV leaves its physics ON, switches its BRAIN off, and is
+// CORRECTED toward the authority. It does not freeze, it is not teleported per packet, and there
+// is no un-freeze. Why the inversion, measured rather than argued: AATV_C is a five-body
+// constraint rig (sus_*/ax_*) whose entire visible output is suspension travel, and
+// SetActorLocation moves the ROOT ONLY -- so the old kinematic apply teleported one body 20x/s and
+// dragged four constrained bodies behind it. The autonomous two-peer probe put numbers on it
+// (docs/vehicles/ATV.md 13): native travel 2-4 cm, the shipped lane 29.58 cm and 1.1 m of drift,
+// and the worst of it authored by the RELEASE path, which handed the other peer's copy a 158 cm/s
+// launch from an already-stale pose. That whole path is gone rather than bounded.
+//
+// MTA precedent (RULE 2026-05-28): CNetAPI::ReadVehiclePuresync writes SetMoveSpeed/SetTurnSpeed
+// hard every packet; CClientVehicle::UpdateTargetPosition:3901 warps past a speed-scaled
+// threshold; CUnoccupiedVehicleSync elects a syncer for an unoccupied vehicle and sends it ONLY
+// when it changed. One deliberate divergence, cited at the site: we correct through VELOCITY
+// rather than MTA's per-frame transform nudge, because their vehicle is one rigid body and ours
+// is a rig that a per-frame root nudge would stretch.
+//
+// TWO PREDICATES, NEVER ONE. `IsPoseAuthor` = I drive or carry it. `OwnsTick` = that, OR I am the
+// host and nobody authors it. On the host with nobody driving the first is false and the second
+// is true; fusing them reproduces the PR #9 defect, where losing one meaning fired the other's
+// edge. `occupantSlot` (the SEAT, which device_occupancy's deny reads) and `authorSlot` (who
+// streams) stay two fields for the same reason: a peer GRABBING an ATV must not deny its seat.
 //
 // Keyed by Key@0x0618 (save-placed, cross-peer stable) -- NOT eid/Element (YAGNI for one
 // always-present keyed actor; the grime/window dirt sync made the same divergence vs its element
-// blueprint). The index/poll/connect-snapshot shape follows the keyed-interactable modules
-// (power_sync/keypad_sync); the per-ATV LerpWindow interp follows element::Npc's pose drive.
+// blueprint). The index/connect-snapshot shape follows the keyed-interactable modules
+// (power_sync/keypad_sync).
 //
 // SEAT CONTENTION (PR #9, arigalit). Each entry tracks `occupantSlot` (0xFF = free). A peer takes
 // pose authority only while the seat is free or already its own, so a second peer walking up to an
@@ -23,14 +44,15 @@
 
 #include "coop/interactables/atv_sync.h"
 
-#include "coop/element/lerp_window.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/net/wire_key_util.h"  // WireKeyFromString / StringFromWireKey / FnvKey (shared)
 #include "coop/player/players_registry.h"   // Registry::Local / LocalPeerId / kMaxPeers
+#include "coop/player/roster_ledger.h"      // SubscribeSlotReplaced -- a departed author must not hold an ATV
 
 #include "ue_wrap/devices/atv.h"
-#include "ue_wrap/engine/engine.h"          // ReadMainPlayerGrabState (grabber authority) + Get/SetActorRootPhysicsVelocity (release)
+#include "ue_wrap/engine/engine.h"          // ReadMainPlayerGrabState (grabber authority) + Get/SetActorRootPhysicsVelocity
+#include "ue_wrap/core/game_thread.h"       // RegisterInterceptor -- the collision half of "brains off"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/world_identity.h"     // R-2: gen-stamped index (dead-world guard)
@@ -59,26 +81,47 @@ using coop::net::WireKeyFromString;
 using coop::net::StringFromWireKey;
 using coop::net::FnvKey;
 
-constexpr uint64_t kSendIntervalMs  = 50;   // ~20 Hz occupant stream while seated
-constexpr int      kInterpWindowMs  = 75;   // matches the NPC pose interp window
+constexpr uint64_t kDriveSendMs = 50;   // ~20 Hz while a peer authors it (drives or carries it)
+constexpr uint64_t kIdleSendMs  = 200;  // 5 Hz idle-syncer ceiling -- AND only when it changed
 
-// Per-ATV state: the resolved index (actor/idx) + the receiver-side interp (LerpWindow + cur/
-// target/error for pos + full rotation) + the sender throttle. All game-thread only.
+// The idle-syncer change gate, CUnoccupiedVehicleSync::WriteVehicleInformation:295-350 in our
+// units. A PARKED ATV SENDS NOTHING, which is what makes host-syncs-idle-vehicles free; MTA's own
+// thresholds are FLOAT_EPSILON/0.1 in metres and MIN_ROTATION_DIFF in degrees.
+constexpr float kIdleMovedCm   = 1.0f;
+constexpr float kIdleTurnedDeg = 0.5f;
+constexpr float kIdleMovingCmS = 1.0f;
+
+// The corrector. Warp is speed-scaled after CClientVehicle.cpp:3901 (their 15 + 10*|v| is in GTA
+// units); ours is sized off the measured rig -- the ATV is ~2 m long and its native suspension
+// travel is 2-4 cm (docs/vehicles/ATV.md 13.1), so 2 m plus half a second of travel is "so far
+// apart that closing it smoothly would look worse than a cut".
+constexpr float kWarpBaseCm     = 200.f;
+constexpr float kWarpPerSpeedS  = 0.5f;
+constexpr float kWarpAngleDeg   = 45.f;   // orientation alone can justify a warp: a body can spin
+                                          // in place without ever tripping the distance threshold
+constexpr float kCorrDeadbandCm = 5.f;    // inside this, the wire velocity alone is the correction
+constexpr float kCorrWindowS    = 0.10f;  // close the position error over ~100 ms
+constexpr float kCorrMaxCmS     = 400.f;  // bound the corrective term: it must nudge, never launch
+
+// Per-ATV state. Receiver-side interpolation state is GONE: a mirror is not interpolated toward a
+// pose, it is a simulating body whose velocity we bias at packet arrival. All game-thread only.
 struct AtvEntry {
     void*   actor = nullptr;
     int32_t idx   = -1;
-    coop::LerpWindow window;
-    FVector curPos{}, tgtPos{}, errPos{};
-    float   curPitch = 0.f, tgtPitch = 0.f, errPitch = 0.f;
-    float   curYaw   = 0.f, tgtYaw   = 0.f, errYaw   = 0.f;
-    float   curRoll  = 0.f, tgtRoll  = 0.f, errRoll  = 0.f;
-    uint64_t lastSentMs      = 0;
-    uint8_t  occupantSlot    = 0xFF;     // 0xFF = unseated/free, otherwise peer slot of the active driver
-    bool     hasPose         = false;
-    bool     dirty           = false;
-    bool     preparedAsMirror = false;   // we disabled this ATV's physics/tick to mirror it
-    bool     wasAuthority    = false;    // we were the authority (driver OR grabber) last tick (release-edge detect)
+    uint64_t lastSentMs   = 0;
+    uint8_t  occupantSlot = 0xFF;  // the SEATED driver's peer slot (0xFF = seat free). THE SEAT --
+                                   // device_occupancy::IsOccupiedByOther reads this and denies an
+                                   // E-press from it, so a grabber must never appear here.
+    uint8_t  authorSlot   = 0xFF;  // who STREAMS it (driver or grabber; 0xFF = nobody -> host syncs)
+    bool     brainOn      = true;  // last value we wrote to SetBrainEnabled (latch: engine call only on change)
+    bool     brainKnown   = false; // ...have we written it at all yet
+    bool     wasPoseAuthor = false;// POSE authority last tick -- the release-edge detect, and it is
+                                   // deliberately not the same variable as ownsTick (PR #9)
     bool     isClientSpawnedMirror = false;  // v77: a runtime ATV WE fresh-spawned (AtvSpawn) -> K2 on destroy
+    // idle-syncer change gate
+    FVector  lastSyncPos{};
+    FRotator lastSyncRot{};
+    bool     haveLastSync = false;
 };
 
 std::atomic<coop::net::Session*> g_session{nullptr};
@@ -189,11 +232,20 @@ bool IsLocalGrabber(void* actor, void* localPlayer) {
     return gs.grabbingActor == actor || gs.holdingActor == actor;
 }
 
-// THIS peer is the single authority for `actor` -- it must STREAM it, not mirror it -- iff its
-// local player is the validated driver OR the grav-hand grabber. The two are mutually exclusive.
-bool IsLocalAuthority(void* actor, void* localPlayer, uint8_t occupantSlot, uint8_t localSlot) {
+// POSE AUTHORITY: this peer STREAMS `actor` -- it drives it or carries it. Say which predicate you
+// mean at every site; this one is NOT tick ownership (see OwnsTickFor below).
+bool IsPoseAuthor(void* actor, void* localPlayer, uint8_t occupantSlot, uint8_t localSlot) {
     return CanClaimOrIsDriver(actor, localPlayer, occupantSlot, localSlot) ||
            IsLocalGrabber(actor, localPlayer);
+}
+
+// TICK OWNERSHIP: exactly one peer runs an ATV's brain. The peer that authors it, else the HOST --
+// MTA's CUnoccupiedVehicleSync election. This is a DIFFERENT SET from pose authority: on the host
+// with nobody driving, IsPoseAuthor is false and this is true. Everyone else runs the rig with its
+// brain off, which is what keeps the accumulators, applyWheelTorque and the hit-authored damage on
+// one machine while the physics still runs on all of them.
+bool OwnsTickFor(bool isPoseAuthor, bool isHost, uint8_t authorSlot) {
+    return isPoseAuthor || (isHost && authorSlot == 0xFF);
 }
 
 // Fill an AtvStatePayload from a live ATV read. False if the transform read fails. `grabbed` marks
@@ -201,73 +253,176 @@ bool IsLocalAuthority(void* actor, void* localPlayer, uint8_t occupantSlot, uint
 // actively driving/grabbing this ATV (bit3) -- set on the connect-snapshot so a joiner freezes only
 // authored ATVs and leaves idle ones physics-on + grabbable (a live stream is always from an
 // authority, so passing authored=true there is just consistent).
-bool ReadPayload(void* actor, const std::wstring& key, uint8_t occupantSlot, bool adopt,
-                 coop::net::AtvStatePayload& p, bool grabbed = false, bool authored = false) {
+bool ReadPayload(void* actor, const std::wstring& key, uint8_t occupantSlot, uint8_t authorSlot,
+                 bool adopt, coop::net::AtvStatePayload& p, bool grabbed = false) {
     FVector loc; FRotator rot;
     if (!A::GetRootTransform(actor, loc, rot)) return false;
+    FVector lin{}, ang{};
+    // Best-effort: a failed read leaves zeros, which is the honest value for "we could not measure
+    // it" and is also what a body at rest reports.
+    ue_wrap::engine::GetActorRootPhysicsVelocity(actor, lin, ang);
     std::memset(&p, 0, sizeof(p));
     WireKeyFromString(key, p.key);
     p.x = loc.X; p.y = loc.Y; p.z = loc.Z;
     p.pitch = rot.Pitch; p.yaw = rot.Yaw; p.roll = rot.Roll;
+    p.linVelX = lin.X; p.linVelY = lin.Y; p.linVelZ = lin.Z;
+    p.angVelX = ang.X; p.angVelY = ang.Y; p.angVelZ = ang.Z;
     p.occupantSlot = occupantSlot;
+    p.authorSlot   = authorSlot;
     uint8_t sb = 0;
     if (A::IsDriven(actor)) sb |= 0x1;
     if (A::GetBrake(actor)) sb |= 0x2;
     if (grabbed)            sb |= 0x4;
-    if (authored)           sb |= 0x8;
     p.stateBits = sb;
     p.adopt = adopt ? 1 : 0;
     return true;
 }
 
-// Advance the open interp window to now, applying the cached error fractionally (MTA linear
-// interp). On arrival snaps cur=target exactly.
-void AdvanceInterp(AtvEntry& e) {
-    bool arrived = false;
-    const float dA = e.window.Advance(NowMs(), &arrived);
-    if (dA > 0.f) {
-        e.curPos.X += e.errPos.X * dA;
-        e.curPos.Y += e.errPos.Y * dA;
-        e.curPos.Z += e.errPos.Z * dA;
-        e.curPitch += e.errPitch * dA;
-        e.curYaw   += e.errYaw   * dA;
-        e.curRoll  += e.errRoll  * dA;
-        e.dirty = true;
-    }
-    if (arrived) {
-        e.curPos = e.tgtPos;
-        e.curPitch = e.tgtPitch; e.curYaw = e.tgtYaw; e.curRoll = e.tgtRoll;
-        e.dirty = true;
-    }
-}
+float Len(const FVector& v) { return std::sqrt(v.X * v.X + v.Y * v.Y + v.Z * v.Z); }
 
-// Open a fresh interp window toward `p` (advance-before-rebase: apply the still-open window's
-// remaining error first, the proven interp-starvation fix). `snap` (first pose / connect-snapshot)
-// jumps exactly. Angle errors are shortest-arc (NormalizeAxis).
-void SetTarget(AtvEntry& e, const coop::net::AtvStatePayload& p, bool snap) {
-    if (!e.hasPose || snap) {
-        e.curPos = { p.x, p.y, p.z }; e.tgtPos = e.curPos; e.errPos = {};
-        e.curPitch = e.tgtPitch = p.pitch; e.errPitch = 0.f;
-        e.curYaw   = e.tgtYaw   = p.yaw;   e.errYaw   = 0.f;
-        e.curRoll  = e.tgtRoll  = p.roll;  e.errRoll  = 0.f;
-        e.window.Close();
-        e.hasPose = true; e.dirty = true;
+uint64_t g_warps = 0;   // diagnostic counters -- a corrector nobody can see is a corrector nobody
+uint64_t g_corrs = 0;   // can falsify (the instrument-blindness lesson)
+
+// THE CORRECTOR. Called ONLY on packet arrival for an ATV this peer does not author -- there is no
+// per-frame mirror work at all any more. The body simulates between packets; we bias its velocity
+// so it converges, and cut to the authority's pose when it is too far gone to converge gracefully.
+//
+// MTA shape with one deliberate divergence (RULE 2026-05-28). CNetAPI::ReadVehiclePuresync writes
+// the wire velocity HARD every packet -- we do that. CClientVehicle::UpdateTargetPosition:3896
+// then nudges the TRANSFORM by a per-frame slice of the position error; we bias VELOCITY instead,
+// because their vehicle is one rigid body and AATV_C is a five-body constraint rig: a per-frame
+// root nudge stretches sus_*/ax_* by the slice every frame, which is the same mechanism as the
+// defect this whole model exists to remove. Letting the solver keep the rig rigid and steering it
+// by velocity is the only correction that leaves the suspension free to do its own job.
+void ApplyCorrection(AtvEntry& e, const coop::net::AtvStatePayload& p, bool snap) {
+    FVector cur; FRotator curRot;
+    if (!A::GetRootTransform(e.actor, cur, curRot)) return;
+
+    const FVector wirePos{ p.x, p.y, p.z };
+    const FRotator wireRot{ p.pitch, p.yaw, p.roll };
+    const FVector wireLin{ p.linVelX, p.linVelY, p.linVelZ };
+    const FVector wireAng{ p.angVelX, p.angVelY, p.angVelZ };
+
+    const FVector err{ wirePos.X - cur.X, wirePos.Y - cur.Y, wirePos.Z - cur.Z };
+    const float dist  = Len(err);
+    const float warpD = kWarpBaseCm + kWarpPerSpeedS * Len(wireLin);
+    const float dPitch = std::fabs(ue_wrap::NormalizeAxis(wireRot.Pitch - curRot.Pitch));
+    const float dYaw   = std::fabs(ue_wrap::NormalizeAxis(wireRot.Yaw   - curRot.Yaw));
+    const float dRoll  = std::fabs(ue_wrap::NormalizeAxis(wireRot.Roll  - curRot.Roll));
+    const float dAng   = dPitch > dYaw ? (dPitch > dRoll ? dPitch : dRoll) : (dYaw > dRoll ? dYaw : dRoll);
+
+    // The tests are INVERTED on purpose, MTA's own idiom (CClientVehicle.cpp:3905's comment): a
+    // comparison against NaN is always false, so writing them this way makes a NaN WARP rather
+    // than quietly feed a corrective velocity computed from garbage.
+    if (snap || !(dist <= warpD) || !(dAng <= kWarpAngleDeg)) {
+        A::TeleportRig(e.actor, wirePos, wireRot);
+        ue_wrap::engine::SetActorRootPhysicsVelocity(e.actor, wireLin, wireAng);
+        ++g_warps;
         return;
     }
-    AdvanceInterp(e);
-    e.tgtPos = { p.x, p.y, p.z };
-    e.errPos = { e.tgtPos.X - e.curPos.X, e.tgtPos.Y - e.curPos.Y, e.tgtPos.Z - e.curPos.Z };
-    e.tgtPitch = p.pitch; e.errPitch = ue_wrap::NormalizeAxis(p.pitch - e.curPitch);
-    e.tgtYaw   = p.yaw;   e.errYaw   = ue_wrap::NormalizeAxis(p.yaw   - e.curYaw);
-    e.tgtRoll  = p.roll;  e.errRoll  = ue_wrap::NormalizeAxis(p.roll  - e.curRoll);
-    e.window.Open(NowMs(), kInterpWindowMs);
-    e.dirty = true;
+
+    FVector lin = wireLin;
+    if (dist > kCorrDeadbandCm) {
+        FVector corr{ err.X / kCorrWindowS, err.Y / kCorrWindowS, err.Z / kCorrWindowS };
+        const float mag = Len(corr);
+        if (mag > kCorrMaxCmS) {
+            const float k = kCorrMaxCmS / mag;
+            corr.X *= k; corr.Y *= k; corr.Z *= k;
+        }
+        lin.X += corr.X; lin.Y += corr.Y; lin.Z += corr.Z;
+    }
+    // Rotation gets NO continuous corrective term in this commit: mapping a rotator delta onto an
+    // angular-velocity vector is only exact for small aligned deltas, and an ATV on the ground
+    // takes its orientation from the terrain it is standing on once its position and velocity
+    // agree. Orientation divergence is caught by the kWarpAngleDeg arm above instead -- one
+    // mechanism, measurable, rather than a term whose gain we would be guessing.
+    ue_wrap::engine::SetActorRootPhysicsVelocity(e.actor, lin, wireAng);
+    ++g_corrs;
 }
 
-void ApplyMirror(AtvEntry& e) {
-    if (!e.dirty) return;
-    A::DriveMirrorTransform(e.actor, e.curPos, FRotator{ e.curPitch, e.curYaw, e.curRoll });
-    e.dirty = false;
+// The idle syncer's change gate (CUnoccupiedVehicleSync::WriteVehicleInformation). Returns true
+// iff this ATV is worth a packet -- it moved, turned, or is moving. Updates the baseline when it
+// answers yes, so a slow drift accumulates into a send instead of being repeatedly rounded away.
+bool IdleWorthSending(AtvEntry& e) {
+    FVector loc; FRotator rot;
+    if (!A::GetRootTransform(e.actor, loc, rot)) return false;
+    FVector lin{}, ang{};
+    ue_wrap::engine::GetActorRootPhysicsVelocity(e.actor, lin, ang);
+    bool send = !e.haveLastSync || Len(lin) > kIdleMovingCmS;
+    if (!send) {
+        const FVector d{ loc.X - e.lastSyncPos.X, loc.Y - e.lastSyncPos.Y, loc.Z - e.lastSyncPos.Z };
+        send = Len(d) > kIdleMovedCm ||
+               std::fabs(ue_wrap::NormalizeAxis(rot.Pitch - e.lastSyncRot.Pitch)) > kIdleTurnedDeg ||
+               std::fabs(ue_wrap::NormalizeAxis(rot.Yaw   - e.lastSyncRot.Yaw))   > kIdleTurnedDeg ||
+               std::fabs(ue_wrap::NormalizeAxis(rot.Roll  - e.lastSyncRot.Roll))  > kIdleTurnedDeg;
+    }
+    if (send) { e.lastSyncPos = loc; e.lastSyncRot = rot; e.haveLastSync = true; }
+    return send;
+}
+
+// Write the brain latch only on a real change -- SetActorTickEnabled is a UFunction dispatch, and
+// this runs per ATV per tick.
+void SetBrain(AtvEntry& e, bool on) {
+    if (e.brainKnown && e.brainOn == on) return;
+    A::SetBrainEnabled(e.actor, on);
+    e.brainOn = on;
+    e.brainKnown = true;
+}
+
+// ---- the COLLISION half of "brains off" ---------------------------------------------------
+// SetActorTickEnabled does not reach a ComponentHit delegate: it is dispatched by the physics
+// scene. `[V]` all seven of ATV_C's reach real authored state -- impulse() subtracts
+// |NormalImpulse|/500000*2*getBumperMult() from `health` and calls explode() at <=0, processTire()
+// burns tire durability and ejectWheel()s at 0, and the Capsule one pops a lib_C::addHint at the
+// local player. With the rig now simulating on every peer, a non-owner running them would blow up
+// a vehicle whose authority still has it. So they are cancelled PRE-dispatch on a non-owner.
+//
+// The predicate cannot read g_atvs: the interceptor contract does not promise the game thread.
+// Instead Tick publishes the small set of ATVs THIS peer owns the tick for into an atomic array,
+// and the callback is a pointer scan over it. DEFAULT IS CANCEL, which is the safe direction --
+// a stale/empty set costs the authority some collision damage (a loss, and a quiet one), while
+// the opposite fails toward a mirror destroying itself.
+constexpr int kMaxOwnedPublished = 16;
+std::atomic<void*> g_ownedAtvs[kMaxOwnedPublished];
+std::atomic<bool>  g_guardActive{false};   // false in single-player: the game must keep its damage
+std::atomic<unsigned long long> g_hitCancelled{0};
+std::atomic<unsigned long long> g_hitAllowed{0};
+bool g_hitGuardArmed = false;              // all 7 delegates registered -- else the lane runs INERT
+
+void PublishOwned(void** owned, int n) {
+    for (int i = 0; i < kMaxOwnedPublished; ++i)
+        g_ownedAtvs[i].store(i < n ? owned[i] : nullptr, std::memory_order_release);
+}
+
+bool OnAtvHitPre(void* self, void* /*params*/) {
+    if (!g_guardActive.load(std::memory_order_acquire)) return false;  // not in a session: never suppress
+    for (int i = 0; i < kMaxOwnedPublished; ++i) {
+        void* p = g_ownedAtvs[i].load(std::memory_order_acquire);
+        if (!p) break;
+        if (p == self) { g_hitAllowed.fetch_add(1, std::memory_order_relaxed); return false; }
+    }
+    g_hitCancelled.fetch_add(1, std::memory_order_relaxed);
+    return true;   // cancel-on-true: the BndEvt stub never jumps into the ubergraph
+}
+
+void InstallHitGuard() {
+    if (g_hitGuardArmed) return;
+    void* fns[8] = {};
+    const int n = A::ResolveHitDelegates(fns, 8);
+    int ok = 0;
+    for (int i = 0; i < n; ++i)
+        if (ue_wrap::game_thread::RegisterInterceptor(fns[i], &OnAtvHitPre)) ++ok;
+    if (ok == 7) {
+        g_hitGuardArmed = true;
+        UE_LOGI("atv: hit guard armed -- 7/7 ComponentHit delegates intercepted (a non-owner cannot "
+                "author damage/explode/ejectWheel)");
+    } else {
+        // FAIL CLOSED. Without all seven we will not run the simulate-and-correct model at all:
+        // Tick leaves every ATV's brain ON and mirrors nothing, so peers diverge visibly rather
+        // than one of them silently destroying a vehicle the other still has.
+        UE_LOGE("atv: hit guard NOT armed (%d/7 resolved, %d/7 registered) -- ATV sync stays INERT "
+                "this session; the interceptor table may be full (kMaxInterceptors)", n, ok);
+    }
 }
 
 // ---- R-2 shared-scan hub consumer (design: votv-shared-scan-hub-R2-DESIGN-2026-08-23.md).
@@ -381,6 +536,35 @@ size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
     return g_atvs.size();
 }
 
+// A peer whose seat/authorship we are holding has left (or been REPLACED -- slots recycle
+// lowest-free, so a slot can go X->Y with no absence in between, which is why this hangs off the
+// ledger's row transition and not off any per-slot boolean of ours). Release every ATV they held.
+//
+// This is not tidiness, it is the failure mode this commit INTRODUCES: `authorSlot` is what elects
+// the host as an idle ATV's syncer, so an authorSlot stuck on a departed peer means nobody ever
+// runs that ATV's brain again and nobody corrects it. Before this commit a stuck occupantSlot only
+// blocked mounting.
+void OnSlotReplaced(int slot, const coop::roster_ledger::Row& /*outgoing*/,
+                    const coop::roster_ledger::Row& /*incoming*/) {
+    if (slot < 0 || slot > 0xFE) return;
+    const uint8_t s8 = static_cast<uint8_t>(slot);
+    int freed = 0;
+    for (auto& kv : g_atvs) {
+        AtvEntry& e = kv.second;
+        if (e.occupantSlot == s8) { e.occupantSlot = 0xFF; ++freed; }
+        if (e.authorSlot   == s8) { e.authorSlot   = 0xFF; ++freed; }
+    }
+    if (freed > 0)
+        UE_LOGI("atv: slot %d departed -- freed %d ATV seat/author reservation(s)", slot, freed);
+}
+
+void SubscribeDepartures() {
+    static bool sDone = false;
+    if (sDone) return;
+    sDone = true;
+    coop::roster_ledger::SubscribeSlotReplaced(&OnSlotReplaced);
+}
+
 void RegisterWithScanHub() {
     static bool sDone = false;
     if (sDone) return;
@@ -399,6 +583,8 @@ void Install(coop::net::Session* session) {
     // GUObjectArray + spam the log every tick (the Tick's throttled rebuild owns ongoing indexing).
     if (!g_installed && A::EnsureResolved()) {
         RegisterWithScanHub();  // the hub builds the index on its own cadence
+        InstallHitGuard();      // the seven ComponentHit interceptors -- Tick refuses to run without them
+        SubscribeDepartures();  // a departed author must not hold an ATV hostage
         g_installed = true;
     }
 }
@@ -439,68 +625,45 @@ void OnReliable(const coop::net::AtvStatePayload& payload, uint8_t /*senderPeerS
 
     // If WE are the legitimate authority of this ATV (driving OR grav-hand grabbing it), ignore the incoming
     // pose so a relayed/echoed copy can't fight our live driving/carrying.
-    if (IsLocalAuthority(e.actor, localPlayer, e.occupantSlot, localSlot)) return;
+    if (IsPoseAuthor(e.actor, localPlayer, e.occupantSlot, localSlot)) return;
 
-    // Track the incoming network occupant slot.
+    // Track the incoming seat and author. `authorSlot` is what elects the host as the idle syncer
+    // (0xFF = nobody is driving or carrying it).
     e.occupantSlot = payload.occupantSlot;
+    e.authorSlot   = payload.authorSlot;
 
-    // v77: a connect-snapshot (adopt=1) of an IDLE ATV (bit3 authored clear -- no peer is driving/
-    // grabbing it) must NOT freeze it: place it at the host pose but keep physics ON so the local
-    // player can grab/drive it like a native ATV. (A live stream always comes from an authority, so
-    // it never has this combination -- it always freezes + interps below.) For a save ATV this just
-    // corrects drift; for a fresh runtime-spawned mirror it snaps it to the host pose.
-    const bool authored = (payload.stateBits & 0x8) != 0;
-    if (payload.adopt && !authored) {
-        if (e.preparedAsMirror) { A::ReleaseMirror(e.actor); e.preparedAsMirror = false; }
-        A::DriveMirrorTransform(e.actor, FVector{ payload.x, payload.y, payload.z },
-                                FRotator{ payload.pitch, payload.yaw, payload.roll });
-        e.hasPose = false; e.window.Close(); e.dirty = false;
-        return;
-    }
-    // Mirror an actively-authored ATV: disable the local rig once (so it can't fight the stream),
-    // then open the interp.
-    if (!e.preparedAsMirror) { A::PrepareMirror(e.actor); e.preparedAsMirror = true; }
-    SetTarget(e, payload, /*snap*/ payload.adopt != 0);
+    // A connect-snapshot warps verbatim (the joiner has no business converging smoothly onto a
+    // world it has not seen yet); a live packet corrects. Either way the rig keeps simulating --
+    // there is no freeze branch here any more, and that is the point: the old code's "adopt an
+    // idle ATV" and "mirror an authored ATV" cases needed different physics states, and the state
+    // machine between them is where the release defect lived.
+    ApplyCorrection(e, payload, /*snap*/ payload.adopt != 0);
 }
 
 void OnAtvRelease(const coop::net::AtvReleasePayload& payload, uint8_t /*senderPeerSlot*/) {
     std::wstring key = StringFromWireKey(payload.key);
     if (key.empty()) { UE_LOGW("atv: OnAtvRelease empty key -- dropping"); return; }
     if (!A::EnsureResolved()) return;
-    if (!IndexCurrent()) return;  // audit W-2: never drive velocity writes into a dead-world actor
-    // NaN/Inf guard before the kinematic-off + velocity engine writes (event_feed also guards).
-    if (!std::isfinite(payload.linVelX) || !std::isfinite(payload.linVelY) || !std::isfinite(payload.linVelZ) ||
-        !std::isfinite(payload.angVelX) || !std::isfinite(payload.angVelY) || !std::isfinite(payload.angVelZ)) {
-        UE_LOGW("atv: OnAtvRelease non-finite velocity -- dropping key='%ls'", key.c_str());
-        return;
-    }
+    if (!IndexCurrent()) return;  // audit W-2: a stale-gen index holds another world's ATVs
     auto it = g_atvs.find(key);
-    if (it == g_atvs.end()) return;  // not indexed yet -- nothing to un-freeze
+    if (it == g_atvs.end()) return;  // not indexed yet -- nothing whose author we could clear
     AtvEntry& e = it->second;
     if (!R::IsLiveByIndex(e.actor, e.idx)) return;
 
     void* localPlayer = coop::players::Registry::Get().Local();
     const uint8_t localSlot = coop::players::Registry::Get().LocalPeerId();
 
-    // If WE are the authority (driving OR grabbing this ATV), we own its physics -- ignore a stale
-    // or echoed release so it can't perturb our live carry.
-    if (IsLocalAuthority(e.actor, localPlayer, e.occupantSlot, localSlot)) return;
+    // If WE author it, ignore a stale or echoed release so it cannot perturb our live drive/carry.
+    if (IsPoseAuthor(e.actor, localPlayer, e.occupantSlot, localSlot)) return;
 
-    // Remote peer released the vehicle -> reset the occupant reservation.
+    // THE WHOLE HANDLER. The sender stopped authoring; free the seat and the author. No physics
+    // write, no un-freeze, no inherited velocity -- nothing was ever frozen and every AtvState
+    // already carried the velocity. On the host this election is what makes it the ATV's idle
+    // syncer on the very next tick, so the correction stream continues instead of ending.
     e.occupantSlot = 0xFF;
-
-    // Re-enable physics FIRST, THEN write the launch velocity: a kinematic body (mirror) ignores a
-    // velocity write, so the simulate-on must precede it (the PropRelease apply order). Stop driving
-    // the interp so the ATV's own simulation carries it from here (arc + land).
-    if (e.preparedAsMirror) { A::ReleaseMirror(e.actor); e.preparedAsMirror = false; }
-    e.hasPose = false;
-    e.window.Close();
-    e.dirty = false;
-    const FVector lin{ payload.linVelX, payload.linVelY, payload.linVelZ };
-    const FVector ang{ payload.angVelX, payload.angVelY, payload.angVelZ };
-    ue_wrap::engine::SetActorRootPhysicsVelocity(e.actor, lin, ang);
-    UE_LOGI("atv: OnAtvRelease key='%ls' -- physics re-enabled + launch velocity applied (|lin|=%.0f cm/s)",
-            key.c_str(), std::sqrt(lin.X * lin.X + lin.Y * lin.Y + lin.Z * lin.Z));
+    e.authorSlot   = 0xFF;
+    UE_LOGI("atv: OnAtvRelease key='%ls' -- author cleared (the rig kept simulating throughout)",
+            key.c_str());
 }
 
 void OnAtvSpawn(const coop::net::AtvSpawnPayload& payload, uint8_t /*senderPeerSlot*/) {
@@ -566,13 +729,17 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         // FIRST so the joiner fresh-spawns it. Same Normal lane as AtvState, so the AtvSpawn arrives
         // before the pose below (spawn-then-pose, in order).
         if (IsSynthKey(kv.first)) { SendAtvSpawn(kv.first, e.actor, peerSlot); ++spawns; }
-        // authored = SOME peer is actively driving/grabbing this ATV NOW (host occupant/grabber, or
-        // the host is itself mirroring a client's stream). The joiner freezes only an authored ATV;
-        // an idle one stays physics-on + grabbable. Pass e.occupantSlot so the joiner inherits the active driver.
-        const bool isAuthority = IsLocalAuthority(e.actor, localPlayer, e.occupantSlot, localSlot);
-        const bool authored = isAuthority || e.preparedAsMirror;
+        // The joiner gets pose AND velocity, and warps to it (adopt=1). Nothing is frozen on
+        // either side, so the old "authored" boolean -- which existed only to tell a joiner
+        // whether to freeze -- has no consumer. What the joiner needs is WHO holds it: if the host
+        // itself is the author, that is localSlot; otherwise e.authorSlot already names the peer
+        // (or 0xFF, which makes the host its syncer). Carrying the velocity is a real improvement
+        // for a mid-join: an ATV in the air at the moment someone joins now arrives moving and
+        // lands, instead of hanging where it was.
+        const bool hostAuthors = IsPoseAuthor(e.actor, localPlayer, e.occupantSlot, localSlot);
+        const uint8_t authorSlot = hostAuthors ? localSlot : e.authorSlot;
         coop::net::AtvStatePayload p{};
-        if (!ReadPayload(e.actor, kv.first, e.occupantSlot, /*adopt*/true, p, /*grabbed*/false, /*authored*/authored)) continue;
+        if (!ReadPayload(e.actor, kv.first, e.occupantSlot, authorSlot, /*adopt*/true, p)) continue;
         s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::AtvState, &p, sizeof(p));
         ++sent;
     }
@@ -581,6 +748,15 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
 }
 
 void Tick() {
+    // EVERY early return below means "this module is not currently deciding who owns what", and in
+    // that state the collision guard MUST be inert -- it suppresses damage by DEFAULT, so leaving
+    // it armed against a set we are no longer refreshing would silently make the local ATV
+    // invulnerable. Disarm first; the paths that earn it re-arm at the bottom.
+    struct DisarmUnlessArmed {
+        bool armed = false;
+        ~DisarmUnlessArmed() { if (!armed) g_guardActive.store(false, std::memory_order_release); }
+    } scope;
+
     if (!A::EnsureResolved()) return;
     RegisterWithScanHub();  // safety net for any order where Tick precedes Install
     if (!IndexCurrent()) return;  // index belongs to a dead world -- wait for the hub's next pass
@@ -591,6 +767,15 @@ void Tick() {
     const uint8_t localSlot = coop::players::Registry::Get().LocalPeerId();
     const uint64_t nowMs = NowMs();
 
+    // FAIL CLOSED (the hit guard): without all seven ComponentHit interceptors a non-owner would
+    // author damage on a rig we are about to leave simulating -- so we do not leave it simulating.
+    // Every ATV keeps its brain, nothing is mirrored, and the ERROR line at Install says why.
+    if (!g_hitGuardArmed) return;
+
+    const bool isHost = s->role() == coop::net::Role::Host;
+    void* owned[kMaxOwnedPublished];
+    int   ownedN = 0;
+
     for (auto& kv : g_atvs) {
         AtvEntry& e = kv.second;
         if (!R::IsLiveByIndex(e.actor, e.idx)) continue;
@@ -599,72 +784,82 @@ void Tick() {
         const bool isGrabber = !isDriver && IsLocalGrabber(e.actor, localPlayer);  // mutually exclusive
         const bool authority = isDriver || isGrabber;
 
-        // AUTHORITY-LOST edge (v77, generalizes the grab-release): we were the authority last tick
-        // (driver OR grabber) and are now neither. Tell receivers to re-enable the ATV's physics and
-        // inherit its launch velocity (the un-freeze) -- WITHOUT this the ATV hangs frozen at its
-        // last streamed pose on every mirror, which is exactly the "can't grab an ATV someone drove"
-        // bug. This makes an idle ATV physics-ON + grabbable on every peer (the proven prop-release
-        // model). The final pose streamed last tick rides the same Normal lane, so GNS delivers
-        // pose-then-release in order -- no settle delay needed.
-        // Authority can now be lost TWO ways, and they need opposite handling. A DISMOUNT (or ungrab)
-        // means the seat is genuinely free -- clear it and tell receivers to re-enable physics. A YIELD
-        // (the OnReliable tie-break above: still physically seated, but outranked by a lower slot) means
-        // the seat is taken by SOMEONE ELSE. Clearing the slot there would erase the winner's claim, and
-        // since IsLocalOccupant is still true we would re-claim on the very next tick and flap; sending
-        // AtvRelease there would un-freeze the ATV underneath the peer that just won it.
+        // AUTHORITY-LOST edge: we authored it last tick (driver OR grabber) and no longer do.
+        // Authority can be lost TWO ways and they need opposite handling, so the edge consults the
+        // REASON rather than firing on the transition. A DISMOUNT/UNGRAB genuinely frees the ATV --
+        // clear the seat and the author and say so. A YIELD (the OnReliable tie-break: still
+        // physically seated, but outranked by a lower slot) means someone ELSE now holds it:
+        // clearing the slot there would erase the winner's claim, IsLocalOccupant is still true so
+        // we would re-claim next tick and flap, and the release would hand the ATV's authorship
+        // back to nobody underneath the peer that just won it.
+        // (The v146 release carries no velocity and re-enables no physics -- see OnAtvRelease.)
         const bool yielded = IsLocalOccupant(e.actor, localPlayer) &&
                              e.occupantSlot != 0xFF && e.occupantSlot != localSlot;
-        if (e.wasAuthority && !authority && !yielded) {
-            e.occupantSlot = 0xFF;  // unseat / release slot reservation
-            FVector lin{}, ang{};
-            ue_wrap::engine::GetActorRootPhysicsVelocity(e.actor, lin, ang);  // best-effort; zero on fail
+        if (e.wasPoseAuthor && !authority && !yielded) {
+            e.occupantSlot = 0xFF;
+            e.authorSlot   = 0xFF;
             coop::net::AtvReleasePayload rp{};
             WireKeyFromString(kv.first, rp.key);
-            rp.linVelX = lin.X; rp.linVelY = lin.Y; rp.linVelZ = lin.Z;
-            rp.angVelX = ang.X; rp.angVelY = ang.Y; rp.angVelZ = ang.Z;
             s->SendReliable(coop::net::ReliableKind::AtvRelease, &rp, sizeof(rp));
-            UE_LOGI("atv: authority released key='%ls' -- AtvRelease |linVel|=%.0f cm/s (mirrors un-freeze + inherit)",
-                    kv.first.c_str(),
-                    std::sqrt(lin.X * lin.X + lin.Y * lin.Y + lin.Z * lin.Z));
+            UE_LOGI("atv: authority released key='%ls' -- author cleared; the host now syncs it idle",
+                    kv.first.c_str());
         }
-        e.wasAuthority = authority;
+        e.wasPoseAuthor = authority;
 
         if (authority) {
-            // Claim the occupant slot locally if we are driving.
-            if (isDriver) {
-                e.occupantSlot = localSlot;
-            }
+            if (isDriver) e.occupantSlot = localSlot;   // claim the seat locally
+            e.authorSlot = localSlot;
+        }
 
-            // We own this ATV (driving OR grabbing). If it had been a mirror (physics off), restore
-            // its rig so our local driving/carrying works again -- and stop applying any stale interp.
-            if (e.preparedAsMirror) {
-                A::ReleaseMirror(e.actor);
-                e.preparedAsMirror = false;
-                e.hasPose = false;
-                e.window.Close();
-            }
-            if (nowMs - e.lastSentMs >= kSendIntervalMs) {
+        // TICK OWNERSHIP -- a different question from pose authority, and the only thing that
+        // decides whose machine runs this rig's brain.
+        const bool ownsTick = OwnsTickFor(authority, isHost, e.authorSlot);
+        SetBrain(e, ownsTick);
+        if (ownsTick && ownedN < kMaxOwnedPublished) owned[ownedN++] = e.actor;
+
+        if (authority) {
+            if (nowMs - e.lastSentMs >= kDriveSendMs) {
                 e.lastSentMs = nowMs;
                 coop::net::AtvStatePayload p{};
                 const uint8_t occSlot = isDriver ? localSlot : uint8_t{0xFF};  // grabber: no seated driver
-                if (ReadPayload(e.actor, kv.first, occSlot, /*adopt*/false, p, /*grabbed*/isGrabber))
+                if (ReadPayload(e.actor, kv.first, occSlot, localSlot, /*adopt*/false, p, /*grabbed*/isGrabber))
                     s->SendReliable(coop::net::ReliableKind::AtvState, &p, sizeof(p));
             }
-        } else if (e.hasPose) {
-            // Mirror: drive the interp toward the last streamed pose (no-op when frozen at target).
-            AdvanceInterp(e);
-            ApplyMirror(e);
+        } else if (ownsTick) {
+            // THE IDLE SYNCER (host, nobody driving). MTA's CUnoccupiedVehicleSync: a slower
+            // cadence AND a change gate, so a parked ATV costs literally nothing while one rolling
+            // down a hill still converges on every peer.
+            if (nowMs - e.lastSentMs >= kIdleSendMs && IdleWorthSending(e)) {
+                e.lastSentMs = nowMs;
+                coop::net::AtvStatePayload p{};
+                if (ReadPayload(e.actor, kv.first, e.occupantSlot, /*authorSlot*/0xFF, /*adopt*/false, p))
+                    s->SendReliable(coop::net::ReliableKind::AtvState, &p, sizeof(p));
+            }
         }
+        // A mirror does NOTHING here. It is a simulating body, corrected at packet arrival.
     }
+
+    // Publish BEFORE arming, so the guard never runs against a set we have not refreshed.
+    PublishOwned(owned, ownedN);
+    g_guardActive.store(true, std::memory_order_release);
+    scope.armed = true;
 }
 
 void OnDisconnect() {
+    // Disarm FIRST: from here on nothing publishes an owned set, and a live hit must reach the
+    // game (this peer is back to single-player and owns everything).
+    g_guardActive.store(false, std::memory_order_release);
+    PublishOwned(nullptr, 0);
     for (auto& kv : g_atvs) {
         const bool live = R::IsLiveByIndex(kv.second.actor, kv.second.idx);
         if (kv.second.isClientSpawnedMirror) {
-            if (live) A::DestroyMirror(kv.second.actor);   // a fresh-spawned PURCHASED mirror is a coop artifact -> remove
-        } else if (kv.second.preparedAsMirror && live) {
-            A::ReleaseMirror(kv.second.actor);             // un-freeze a streamed save-ATV mirror back to single-player
+            if (live) A::DestroyMirror(kv.second.actor);   // a fresh-spawned runtime mirror is a coop artifact -> remove
+        } else if (live) {
+            // Give every surviving ATV its brain back, unconditionally. The old code restored only
+            // ATVs it had a `preparedAsMirror` flag for, which is the "missing disconnect restore"
+            // the C1 crutch entry names: the flag was cleared by a release, so an ATV that had been
+            // mirrored and then released was left in single-player with whatever state it had.
+            A::SetBrainEnabled(kv.second.actor, true);
         }
     }
     const size_t n = g_atvs.size();
@@ -674,7 +869,23 @@ void OnDisconnect() {
     g_savePlacedActors.clear();
     g_synthCounter = 0;
     g_installed = false;  // a new session re-indexes via the next Install (latched again)
-    if (n > 0) UE_LOGI("atv: OnDisconnect -- cleared %zu ATV(s) (released save mirrors; destroyed runtime mirrors)", n);
+    if (n > 0)
+        UE_LOGI("atv: OnDisconnect -- cleared %zu ATV(s) (brains restored; runtime mirrors destroyed); "
+                "hit guard: %llu cancelled / %llu allowed this session",
+                n, static_cast<unsigned long long>(g_hitCancelled.load()),
+                static_cast<unsigned long long>(g_hitAllowed.load()));
+}
+
+bool OwnsTick(void* actor) {
+    if (!actor) return false;
+    // Reads the SAME published set the collision guard consults, on purpose: an instrument that
+    // recomputes the predicate would agree with itself while disagreeing with the code under test.
+    for (int i = 0; i < kMaxOwnedPublished; ++i) {
+        void* p = g_ownedAtvs[i].load(std::memory_order_acquire);
+        if (!p) return false;
+        if (p == actor) return true;
+    }
+    return false;
 }
 
 // Check if an ATV actor is occupied by a remote peer (used to block local mount interactions).
