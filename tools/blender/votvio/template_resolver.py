@@ -18,6 +18,12 @@ from . import convert, pose_random
 
 _GEN = "_GEN_VARIABLE"
 
+_INST_TYPES = {
+    "InstancedStaticMeshComponent": "ISM",
+    "HierarchicalInstancedStaticMeshComponent": "ISM",
+    "FoliageInstancedStaticMeshComponent": "ISM",
+}
+
 # Classes whose visuals are runtime-built (UCS/particles) -- curated meshes.
 BUILTIN_SUPPLEMENT = {
     "dirthole_item_C": "/Game/meshes/dirthole2/dirthole2_dirthole_M",
@@ -26,17 +32,44 @@ BUILTIN_SUPPLEMENT = {
 
 class TemplateComp:
     __slots__ = ("name", "kind", "mesh", "rel_loc", "rel_rot", "rel_scale",
-                 "hidden", "has_override_mats")
+                 "hidden", "has_override_mats", "f_hidden", "f_visible",
+                 "f_render_main", "fields")
 
     def __init__(self, name, kind, mesh):
         self.name = name
-        self.kind = kind          # 'SM' | 'SK' | 'SCENE'
+        self.kind = kind          # 'SM' | 'SK' | 'SCENE' | 'ISM'
         self.mesh = mesh
         self.rel_loc = (0.0, 0.0, 0.0)
         self.rel_rot = (0.0, 0.0, 0.0)
         self.rel_scale = (1.0, 1.0, 1.0)
         self.hidden = False
         self.has_override_mats = False
+        self.f_hidden = False       # bHiddenInGame
+        self.f_visible = True       # bVisible
+        self.f_render_main = True   # bRenderInMainPass
+        self.fields = set()         # which props this template export carried itself
+
+    def inherit(self, parent):
+        """A child BP's template export is a DELTA vs the parent class's template
+        (measured: ladder_old_C.segment1 carries no StaticMesh -- the mesh lives on
+        ladder_C.segment1). Fill every field this export did not set itself."""
+        if "mesh" not in self.fields and parent.mesh:
+            self.mesh = parent.mesh
+        if "loc" not in self.fields:
+            self.rel_loc = parent.rel_loc
+        if "rot" not in self.fields:
+            self.rel_rot = parent.rel_rot
+        if "scale" not in self.fields:
+            self.rel_scale = parent.rel_scale
+        if "hidden" not in self.fields:
+            self.f_hidden = parent.f_hidden
+        if "visible" not in self.fields:
+            self.f_visible = parent.f_visible
+        if "render_main" not in self.fields:
+            self.f_render_main = parent.f_render_main
+        if "override" not in self.fields:
+            self.has_override_mats = parent.has_override_mats
+        self.hidden = self.f_hidden or not self.f_visible or not self.f_render_main
 
 
 def _obj_ref_package(v):
@@ -71,6 +104,7 @@ class TemplateResolver:
     def __init__(self, game):
         self.game = game
         self._info = {}   # normalized package path -> class info dict
+        self._inst = {}   # (normalized package path, base) -> instance matrices | None
 
     # ------------------------------------------------------------------ load
     def _load(self, package_path, _depth=0):
@@ -84,6 +118,7 @@ class TemplateResolver:
         child_nodes = set()
         parent_pkg = None
         cdo_name = ""
+        cdo_key = ""
         ifaces = set()
         if _depth < 8:
             for e in self.game.package_dict(key):
@@ -96,19 +131,41 @@ class TemplateResolver:
                     v = props.get("name")
                     if isinstance(v, str) and v not in ("", "None"):
                         cdo_name = v
-                if ty in ("StaticMeshComponent", "SkeletalMeshComponent", "SceneComponent"):
+                    v = props.get("key")
+                    if isinstance(v, str) and v not in ("", "None"):
+                        cdo_key = v
+                if ty in ("StaticMeshComponent", "SkeletalMeshComponent",
+                          "SceneComponent") or ty in _INST_TYPES:
                     base = _strip_gen(nm)
                     if base.startswith("ICH-") or base in templates:
                         continue
                     mesh = _obj_ref_package(props.get("StaticMesh") or props.get("SkeletalMesh"))
                     kind = {"StaticMeshComponent": "SM", "SkeletalMeshComponent": "SK",
-                            "SceneComponent": "SCENE"}[ty]
+                            "SceneComponent": "SCENE"}.get(ty) or _INST_TYPES[ty]
                     t = TemplateComp(base, kind, mesh)
+                    if "StaticMesh" in props or "SkeletalMesh" in props:
+                        t.fields.add("mesh")
+                    if "RelativeLocation" in props:
+                        t.fields.add("loc")
+                    if "RelativeRotation" in props:
+                        t.fields.add("rot")
+                    if "RelativeScale3D" in props:
+                        t.fields.add("scale")
+                    if "bHiddenInGame" in props:
+                        t.fields.add("hidden")
+                    if "bVisible" in props:
+                        t.fields.add("visible")
+                    if "bRenderInMainPass" in props:
+                        t.fields.add("render_main")
+                    if "OverrideMaterials" in props:
+                        t.fields.add("override")
                     t.rel_loc = _vec3(props.get("RelativeLocation"), t.rel_loc)
                     t.rel_rot = _rot3(props.get("RelativeRotation"))
                     t.rel_scale = _vec3(props.get("RelativeScale3D"), t.rel_scale)
-                    t.hidden = bool(props.get("bHiddenInGame", False)) or \
-                        (props.get("bVisible") is False)
+                    t.f_hidden = props.get("bHiddenInGame") is True
+                    t.f_visible = props.get("bVisible") is not False
+                    t.f_render_main = props.get("bRenderInMainPass") is not False
+                    t.hidden = t.f_hidden or not t.f_visible or not t.f_render_main
                     t.has_override_mats = bool(props.get("OverrideMaterials"))
                     templates[base] = t
                 elif ty == "SCS_Node":
@@ -134,11 +191,15 @@ class TemplateResolver:
             if node not in child_nodes:
                 roots.append(tmpl)
         info = {"templates": templates, "children": children, "roots": roots,
-                "cdo_name": cdo_name, "ifaces": ifaces}
+                "cdo_name": cdo_name, "cdo_key": cdo_key, "ifaces": ifaces}
         if parent_pkg:
             par = self._load(parent_pkg, _depth + 1)
             for base, t in par["templates"].items():
-                info["templates"].setdefault(base, t)
+                own = info["templates"].get(base)
+                if own is None:
+                    info["templates"][base] = t
+                else:
+                    own.inherit(t)   # child template export is a DELTA vs the parent's
             for base, kids in par["children"].items():
                 info["children"].setdefault(base, kids)
             have = set(info["templates"])
@@ -146,6 +207,8 @@ class TemplateResolver:
                 info["roots"] + [r for r in par["roots"] if r in have]))
             if not info["cdo_name"]:
                 info["cdo_name"] = par["cdo_name"]
+            if not info["cdo_key"]:
+                info["cdo_key"] = par["cdo_key"]
             info["ifaces"] |= par["ifaces"]
         self._info[key] = info
         return info
@@ -153,6 +216,11 @@ class TemplateResolver:
     # ------------------------------------------------------------- queries
     def cdo_name(self, package_path):
         return self._load(package_path)["cdo_name"]
+
+    def cdo_key(self, package_path):
+        """Class-default int_save key (radiotower_C keys itself 'radiotower' in the
+        CDO; most keyed actors carry a per-instance delta key instead)."""
+        return self._load(package_path)["cdo_key"]
 
     def implements(self, package_path, interface_class_name):
         return interface_class_name in self._load(package_path)["ifaces"]
@@ -162,8 +230,42 @@ class TemplateResolver:
         return self._load(package_path)["templates"]
 
     def tree_info(self, package_path):
-        """{'templates', 'children', 'roots', ...} for tree-first umap assembly."""
+        """{'templates', 'children', 'roots', ...} (save-row spawn planning)."""
         return self._load(package_path)
+
+    def template_instances(self, package_path, base, _depth=0):
+        """Baked per-instance matrices of a class-template ISM component (an umap
+        delta with no native tail inherits these). Walks the SuperStruct chain."""
+        key = (self.game.norm(package_path), base)
+        if key in self._inst:
+            return self._inst[key]
+        result = None
+        dicts = self.game.package_dict(key[0])
+        pkg = self.game.load_package(key[0])
+        em = pkg.ExportMap if pkg is not None else []
+        paired = len(em) == len(dicts)
+        parent_pkg = None
+        for i, e in enumerate(dicts):
+            if not isinstance(e, dict):
+                continue
+            if e.get("Type") == "BlueprintGeneratedClass":
+                p = _obj_ref_package(e.get("SuperStruct") or {})
+                if p.startswith("/Game/"):
+                    parent_pkg = p
+                continue
+            if e.get("Type") not in _INST_TYPES:
+                continue
+            if _strip_gen(str(e.get("Name", ""))) != base:
+                continue
+            if paired:
+                inst = getattr(em[i].exportObject, "instance_matrices", None)
+                if inst is not None and len(inst) > 0:
+                    result = inst
+            break
+        if result is None and parent_pkg and _depth < 8:
+            result = self.template_instances(parent_pkg, base, _depth + 1)
+        self._inst[key] = result
+        return result
 
     # ------------------------------------------------------------- spawning
     def spawn_plan(self, row, list_props_table, pose_seed):
@@ -189,9 +291,13 @@ class TemplateResolver:
             if pose is not None:
                 m = m @ pose
             if t is not None and not t.hidden and t.mesh:
-                if t.mesh.startswith("/Game/"):
-                    out.append((t.mesh, m, t.kind))
-                elif t.mesh.startswith("/Engine/") and t.has_override_mats:
+                ok = t.mesh.startswith("/Game/") or \
+                    (t.mesh.startswith("/Engine/") and t.has_override_mats)
+                if ok and t.kind == "ISM":
+                    ti = self.template_instances(row.package_path, base)
+                    for inst in (ti if ti is not None else ()):
+                        out.append((t.mesh, m @ convert.ue_fmatrix_to_bl(inst), "SM"))
+                elif ok:
                     out.append((t.mesh, m, t.kind))
             for kid in info["children"].get(base, ()):
                 walk(kid, m, depth + 1)

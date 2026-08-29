@@ -36,10 +36,12 @@ class _Builder:
         self.resolver = template_resolver.TemplateResolver(game) if game else None
         self.list_props = game.list_props() if game else {}
         self.counts = {"meshed": 0, "placeholders": 0, "sk_placeholders": 0, "objects": 0,
-                       "culled": 0}
+                       "culled": 0, "level_kept": 0}
         self.unresolved = {}
         self.radius = float(options.get("import_radius", 0.0) or 0.0)
         self.origin = None  # Blender-space Vector, set in run() when radius > 0
+        self.keep_actors = set()   # umap actor idx kept alive by a matching keyed row
+        self._level_keys = {}      # save key -> (actor idx, actor type, UE root loc)
 
     def within(self, loc_bl):
         """Import-radius test (XY, meters). True when no radius is set."""
@@ -98,9 +100,49 @@ class _Builder:
         ob.empty_display_size = size
         return ob
 
-    def place_row(self, row, col):
+    def _build_level_keys(self, save_classes):
+        """key -> keyed LEVEL actor (the game's own gatherDataFromKey identity).
+        A save row matching a level actor's key AT the cooked transform means the
+        actor is a fixture whose state the row carries: keep the cooked components
+        (they hold the exact UCS-built ISM instances the class template lacks)."""
+        map_path = self.game.find_content_package(self.m.level or "untitled_1")
+        if not map_path:
+            return
+        dicts = self.game.package_dict(map_path)
+        by_comp = {}
+        for e in dicts:
+            if isinstance(e, dict):
+                by_comp[(e.get("Name"), e.get("Outer"))] = e
+        for i, e in enumerate(dicts):
+            if not isinstance(e, dict) or e.get("Outer") != "PersistentLevel":
+                continue
+            atype = e.get("Type", "")
+            if atype not in save_classes:
+                continue
+            p = e.get("Properties") or {}
+            key = p.get("key")
+            if not isinstance(key, str) or key in ("", "None"):
+                pkg = self.game.class_package(atype)
+                key = self.resolver.cdo_key(pkg) if pkg else ""
+            if not key:
+                continue
+            root = by_comp.get((str((p.get("RootComponent") or {}).get("ObjectName", "")),
+                                e.get("Name")))
+            rl = ((root or {}).get("Properties") or {}).get("RelativeLocation")
+            loc = (rl.get("X", 0.0), rl.get("Y", 0.0), rl.get("Z", 0.0)) \
+                if isinstance(rl, dict) else None
+            self._level_keys[key] = (i, atype, loc)
+
+    def place_row(self, row, col, allow_level_keep=False):
         label = row.prop_name or row.class_name.removesuffix("_C") or "unknown"
         quat, loc, scale = row.transform
+        if allow_level_keep and row.key not in ("", "None") and self._level_keys:
+            hit = self._level_keys.get(row.key)
+            if hit is not None and hit[1] == row.class_name and hit[2] is not None \
+                    and all(abs(a - b) <= 1.0 for a, b in zip(loc, hit[2])):
+                self.keep_actors.add(hit[0])
+                self.counts["level_kept"] += 1
+                return
         actor_m = convert.matrix(quat, loc, scale)
         if not self.within(actor_m.translation):
             self.counts["culled"] += 1
@@ -145,9 +187,15 @@ class _Builder:
             self.origin = self._find_base_origin()
 
         rows = self.m.objects
+        if self.game and self.opt.get("import_map", True) and \
+                self.opt.get("import_meshes", True):
+            save_classes = {r.class_name for r in rows
+                            if r.class_path and r.class_path != "None"}
+            self._build_level_keys(save_classes)
         total = len(rows) + len(self.m.primitives)
         for i, row in enumerate(rows):
-            self.place_row(row, cols.get(row.category, cols["Props"]))
+            self.place_row(row, cols.get(row.category, cols["Props"]),
+                           allow_level_keep=True)
             if i % 50 == 0:
                 self.progress(i, total, "props")
         for i, row in enumerate(self.m.primitives):
@@ -193,12 +241,17 @@ class _Builder:
             if map_path:
                 map_col = _get_or_create_collection("Map", master)
                 mcols = {name: _get_or_create_collection(name, map_col)
-                         for name in ("Statics", "Landscape", "Foliage", "Lights")}
+                         for name in ("Statics", "Landscape", "Foliage", "Lights",
+                                      "Events")}
                 save_classes = {r.class_name for r in self.m.objects
                                 if r.class_path and r.class_path != "None"}
                 imp = umap_import.MapImporter(self.game, self.resolver, self, self.opt,
-                                              save_classes)
+                                              save_classes, self.keep_actors)
                 self.map_stats = imp.run(map_path, mcols, self.progress)
+                # event-scripted level actors: imported for completeness, hidden --
+                # the game shows them only from their Blueprints at runtime
+                mcols["Events"].hide_viewport = True
+                mcols["Events"].hide_render = True
                 if self.opt.get("import_landscape", True):
                     land_mat = materials_mod.terrain_material(
                         self.opt.get("terrain_style", "GREEN"))
