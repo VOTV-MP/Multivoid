@@ -393,9 +393,12 @@ static void FillP2PFields(coop::net::Config& c) {
     // The host identity a client dials (must equal the host's own rendered
     // identity). Still configurable: a dev dialling a host directly, with no
     // master in the loop, copies the `gen:` line out of the host's log.
-    std::string hostId = ResolveString(config_registry::rows::net_host_identity);
-    if (hostId.empty()) hostId = "votvhost";
-    c.hostIdentity = hostId;
+    // No "votvhost" fallback (RULE 2 residue, removed 2026-08-29): it belonged to
+    // the retired name scheme, and since a dialled identity must now parse as
+    // `gen:<64 hex>` the default could only ever produce "hostIdentity 'votvhost'
+    // is not a parseable identity" -- a dead value whose only effect was to
+    // obscure the real condition, which is that none was configured.
+    c.hostIdentity = ResolveString(config_registry::rows::net_host_identity);
 
     // ICE candidate sources. STUN (rung 2) defaults to a public server so a
     // real cross-NAT test works; for a same-machine test ICE also connects

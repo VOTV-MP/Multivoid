@@ -734,7 +734,8 @@ private:
     void FinishPeerConnected(int slot, uint32_t hConn);
 public:
     // Close every pending entry that has sat longer than kPendingDeadlineMs. Net
-    // thread, once per pump pass; 8 relaxed loads on the idle path.
+    // thread, once per pump pass; 8 acquire loads on the idle path (which is
+    // free on x86-64 -- the ordering is what the band's writers pair with).
     void SweepPending();
 
     // Send ONE reliable message straight to a connection handle, with no slot, no
@@ -761,6 +762,14 @@ public:
     // (`[[lesson-a-gate-anchored-on-a-client-authored-value]]`).
     void        SetProvedGuidForSlot(int slot, const std::string& guid);
     std::string ProvedGuidForSlot(int slot) const;
+
+    // Refuse a pending connection: retire the band entry FIRST, then close, with
+    // `reason` riding to the peer. Retiring first is what makes a refusal cost
+    // O(1) rather than O(packets already dequeued) -- see HandlePendingMessage's
+    // guard. Every refusal path goes through here; a bare CloseConnection would
+    // leave the index live and re-log for every message left in the batch.
+    // NET THREAD ONLY.
+    void RetirePending(int pendIdx, uint32_t hConn, const char* reason);
 
     // Drop a pending entry (its connection closed, or it was refused).
     void ReleasePending(uint32_t hConn);

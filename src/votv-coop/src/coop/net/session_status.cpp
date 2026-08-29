@@ -170,12 +170,25 @@ int Session::ParkPending(uint32_t hConn) {
     // for LanDirect ONLY because the P2P Connecting edge has an empty remote
     // address, so our main lane has nothing to key on; and one household NAT (or
     // this project's own 4-peer single-box rig) would be refused by it.
-    int oldest = 0;
-    uint64_t oldestMs = pendingSinceMs_[0].load(std::memory_order_acquire);
-    for (int i = 1; i < kMaxPending; ++i) {
-        const uint64_t t = pendingSinceMs_[i].load(std::memory_order_acquire);
-        if (t < oldestMs) { oldestMs = t; oldest = i; }
+    // PROGRESS FIRST, AGE SECOND. Plain "oldest" is a policy the attacker times:
+    // an honest joiner's entry becomes the oldest as soon as enough silent sockets
+    // arrive after it, so a flood evicts the one party that was about to prove
+    // itself. Preferring an entry with NO open exchange makes a socket that has
+    // answered the challenge un-evictable by a socket that has said nothing --
+    // which is the honest/dishonest discrimination age alone cannot express. It
+    // does not stop a flood; it makes the attacker complete a real exchange per
+    // socket to hold an entry. Post-ship audit, 2026-08-29.
+    int oldest = -1;
+    uint64_t oldestMs = 0;
+    for (int pass = 0; pass < 2 && oldest < 0; ++pass) {
+        const bool wantSilent = (pass == 0);
+        for (int i = 0; i < kMaxPending; ++i) {
+            if (wantSilent && coop::net::peer_admission::HostHasOpenExchange(i)) continue;
+            const uint64_t t = pendingSinceMs_[i].load(std::memory_order_acquire);
+            if (oldest < 0 || t < oldestMs) { oldestMs = t; oldest = i; }
+        }
     }
+    if (oldest < 0) oldest = 0;  // unreachable: pass 2 considers every entry
     const uint32_t victim = pendingConns_[oldest].exchange(hConn);
     pendingSinceMs_[oldest].store(NowMs(), std::memory_order_release);
     coop::net::peer_admission::HostForgetPending(oldest);
@@ -214,6 +227,23 @@ void Session::SweepPending() {
     }
 }
 
+void Session::RetirePending(int pendIdx, uint32_t hConn, const char* reason) {
+    if (pendIdx >= 0 && pendIdx < kMaxPending) {
+        // Clear by HANDLE, not blindly: between the refusal and this call the band
+        // could in principle have handed the index on. A CAS that fails means the
+        // entry is already someone else's and must not be disturbed.
+        uint32_t expected = hConn;
+        if (pendingConns_[pendIdx].compare_exchange_strong(expected, 0)) {
+            pendingSinceMs_[pendIdx].store(0, std::memory_order_release);
+            coop::net::peer_admission::HostForgetPending(pendIdx);
+        }
+    }
+    if (auto* sockets = SteamNetworkingSockets())
+        sockets->CloseConnection(static_cast<HSteamNetConnection>(hConn),
+                                 k_ESteamNetConnectionEnd_App_Generic,
+                                 reason ? reason : "refused", /*bEnableLinger*/false);
+}
+
 void Session::ReleasePending(uint32_t hConn) {
     if (hConn == 0) return;
     for (int i = 0; i < kMaxPending; ++i) {
@@ -241,6 +271,15 @@ std::string Session::ProvedGuidForSlot(int slot) const {
 }
 
 int Session::AdmitPending(int pendingIdx, uint32_t hConn) {
+    // The band index must still BELONG to this connection. Not reachable today
+    // (ParkPending runs only under RunCallbacks at the top of a pump pass, never
+    // between two messages of one drain batch), so this is hardening: without it a
+    // reassigned index would lose the NEW occupant's band entry -- and with it the
+    // sweep that is the only thing that would ever close it.
+    if (pendingIdx >= 0 && pendingIdx < kMaxPending &&
+        pendingConns_[pendingIdx].load(std::memory_order_acquire) != hConn) {
+        return -1;
+    }
     // THE SEAT IS SPENT HERE AND NOWHERE ELSE. Everything below is what the
     // accept edge used to do eagerly, in the same order (the generation is
     // minted BEFORE the peerConns_ store so any observer that can see the
@@ -614,7 +653,10 @@ void Session::HandleConnStatusChanged(void* info) {
         // deliberately AFTER the inbox erase above (which runs under a DIFFERENT
         // mutex). A reader that observes generation==0 is therefore guaranteed to
         // observe an inbox already drained of this peer.
-        if (slot >= 0) peerGenBySlot_[slot].store(0, std::memory_order_release);
+        if (slot >= 0) {
+            peerGenBySlot_[slot].store(0, std::memory_order_release);
+            SetProvedGuidForSlot(slot, std::string());  // the identity dies with the seat
+        }
 
         // Aggregate state: stay Connected if any peer still up; otherwise
         // downgrade and clear everything.
@@ -752,6 +794,10 @@ bool Session::KickClaimed(int peerSlot, uint32_t hConn, const char* reason) {
     // GEN: clear -- last write of the teardown, after the inbox erase (see the
     // ClosedByPeer path for why the order is load-bearing).
     peerGenBySlot_[peerSlot].store(0, std::memory_order_release);
+    // ...and the PROVED identity with it. session.h promises "empty when the slot
+    // is free"; until 2026-08-29 nothing cleared it, so that sentence was false
+    // and a recycled slot briefly carried its predecessor's storage name.
+    SetProvedGuidForSlot(peerSlot, std::string());
 
     // Aggregate state: stay Connected if any peer remains; otherwise downgrade
     // and clear everything (mirrors the ClosedByPeer branch above).

@@ -92,7 +92,13 @@ struct HostRow {
     uint8_t  nonce[kAuthNonceBytes]{};
     PubKey   remotePub{};
 };
-constexpr int kMaxHostRows = 8;  // == Session::kMaxPending; asserted in the .cpp below
+// DERIVED from the band, not asserted against it. The first cut wrote `= 8` with
+// a comment claiming the mismatch was "asserted in the .cpp below" -- and no such
+// assertion existed, which is the same defect this very arc fixed one level up
+// (`pendingSinceMs_` was a bound that lived only in a comment). Raising
+// kMaxPending now widens this array by construction; there is nothing left to
+// keep in step, so there is nothing to assert. Post-ship audit, 2026-08-29.
+constexpr int kMaxHostRows = Session::kMaxPending;
 HostRow g_host[kMaxHostRows];
 
 // --- CLIENT state -----------------------------------------------------------
@@ -102,6 +108,12 @@ struct ClientRow {
     uint32_t hConn = 0;
     uint8_t  nonce[kAuthNonceBytes]{};
     PubKey   hostPub{};
+    // The drill knob, resolved ONCE when the link opens. `config::ResolveEnum`
+    // opens and line-scans multivoid.ini under a global mutex, and reading it
+    // where it is USED would put blocking file I/O on the net thread between
+    // "verified the host" and "sent our proof" -- on every join, for a knob that
+    // is off by default. Post-ship audit, 2026-08-29.
+    std::string drill;
 };
 ClientRow g_client;
 
@@ -110,6 +122,11 @@ ClientRow g_client;
 // ---------------------------------------------------------------------------
 // HOST
 // ---------------------------------------------------------------------------
+
+bool HostHasOpenExchange(int pendIdx) {
+    if (pendIdx < 0 || pendIdx >= kMaxHostRows) return false;
+    return g_host[pendIdx].open;
+}
 
 void HostForgetPending(int pendIdx) {
     if (pendIdx < 0 || pendIdx >= kMaxHostRows) return;
@@ -244,6 +261,7 @@ bool ClientOnConnected(Session& session, uint32_t hConn) {
                 "(an older build, or something in the middle)");
         return false;
     }
+    g_client.drill = coop::config::ResolveEnum(coop::config_registry::rows::auth_drill);
     AuthHelloPayload hello{};
     if (!peer_identity::RandomBytes(hello.nonce, sizeof(hello.nonce))) {
         UE_LOGE("peer_admission: the OS refused randomness -- cannot open the exchange");
@@ -304,8 +322,7 @@ bool ClientOnReliable(Session& session, uint32_t hConn, ReliableKind kind,
     // THE DRILL, and it lives on this side ONLY. The host's gate has no knob to
     // turn: a bypass there would make the drill's verdict a statement about the
     // bypass. Here it sabotages a real proof travelling the real path.
-    const std::string drill =
-        coop::config::ResolveEnum(coop::config_registry::rows::auth_drill);
+    const std::string& drill = g_client.drill;  // resolved at ClientOnConnected
     if (drill == "silent") {
         UE_LOGW("peer_admission: DRILL 'silent' -- verified the host and then sending "
                 "NO proof. The host must close us on its pending deadline and we must "

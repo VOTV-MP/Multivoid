@@ -338,6 +338,21 @@ bool Session::SendEntityDestroy(uint32_t elementId) {
 // can Join at all. That measurement is why the gate needed its own wire pair
 // UPSTREAM of the save rather than a field on an existing packet.
 void Session::HandlePendingMessage(int pendIdx, uint32_t hConn, const void* data, int len) {
+    // THE BAND IS THE AUTHORITY ON WHETHER THIS INDEX IS STILL LIVE, and this
+    // guard is what makes a refusal cost O(1) instead of O(packets already
+    // queued). GNS hands the drain up to 256 messages at once, each carrying the
+    // user data it had when it was received -- so after we refuse and close a
+    // connection, every message of ITS that was already in the same batch still
+    // routes here. Without this test each one re-ran the refusal: another
+    // `CloseConnection`, and another `UE_LOGW`, and `[V]` a WARN does a
+    // synchronous `fflush` under a lock the game thread shares (`log.cpp:225-227`,
+    // whose own comment records ~50 flushes/sec "visibly tanking FPS"). One junk
+    // burst from an UNAUTHENTICATED peer was therefore 256 disk syncs.
+    // Found by a post-ship audit, 2026-08-29. The pre-arc gate could not have this
+    // shape: it admitted on the first well-formed packet, so a pending connection
+    // logged at most once.
+    if (pendIdx < 0 || pendIdx >= kMaxPending) return;
+    if (pendingConns_[pendIdx].load(std::memory_order_acquire) != hConn) return;
     MsgType type;
     uint32_t seq, senderEpoch;
     uint8_t headerSenderSlot;
@@ -351,9 +366,7 @@ void Session::HandlePendingMessage(int pendIdx, uint32_t hConn, const void* data
             std::snprintf(reason, sizeof(reason), "protocol mismatch: peer=v%u, ours=v%u",
                           static_cast<unsigned>(peerVer), static_cast<unsigned>(kProtocolVersion));
             UE_LOGW("net: %s -- closing PENDING %d", reason, pendIdx);
-            if (auto* sockets = SteamNetworkingSockets())
-                sockets->CloseConnection(hConn, k_ESteamNetConnectionEnd_App_Generic,
-                                         reason, /*bEnableLinger*/false);
+            RetirePending(pendIdx, hConn, reason);
         }
         return;
     }
@@ -368,9 +381,7 @@ void Session::HandlePendingMessage(int pendIdx, uint32_t hConn, const void* data
     // the body: this is the one parser an unauthenticated peer can reach.
     if (payloadLen < 0 || rh.payloadLen != static_cast<uint16_t>(payloadLen)) {
         UE_LOGW("net: PENDING %d sent a length-inconsistent packet -- closing", pendIdx);
-        if (auto* sockets = SteamNetworkingSockets())
-            sockets->CloseConnection(hConn, k_ESteamNetConnectionEnd_App_Generic,
-                                     "malformed packet", false);
+        RetirePending(pendIdx, hConn, "malformed packet");
         return;
     }
 
@@ -380,17 +391,38 @@ void Session::HandlePendingMessage(int pendIdx, uint32_t hConn, const void* data
     if (res.verdict == peer_admission::Verdict::Refuse) {
         UE_LOGW("net: PENDING %d REFUSED on kind=%u -- %s",
                 pendIdx, static_cast<unsigned>(rh.kind), res.reason);
-        if (auto* sockets = SteamNetworkingSockets())
-            sockets->CloseConnection(hConn, k_ESteamNetConnectionEnd_App_Generic,
-                                     res.reason, false);
+        RetirePending(pendIdx, hConn, res.reason);
         return;
+    }
+
+    // SUPERSESSION: one identity, one seat. A peer that has PROVED possession of
+    // the key already sitting in a slot is that person, so the older connection
+    // goes and the new one is seated -- synchronously, here, before the seat is
+    // asked for, or the returning player would be refused by a lobby that its own
+    // ghost is filling.
+    //
+    // THE TRIGGER IS NOT AN ATTACK, IT IS A DROPPED LINK. GNS takes seconds to
+    // tens of seconds to time out a dead connection; a player who rejoins inside
+    // that window used to take a SECOND seat under the same identity -- and `[V]`
+    // `PlayerFilePath` (`player_inventory_sync.cpp:88-102`) keys the stored
+    // inventory by GUID, not by slot, so both seats then marked the same
+    // `coop_players/<slot>/<guid>.json` dirty and persisted it: last writer wins,
+    // silent inventory loss. Found by a post-ship audit, 2026-08-29; PLAN_01 §2.3
+    // specified this and part 2 shipped without it.
+    const std::string guid = peer_identity::GuidForPublicKey(res.provedKey);
+    for (int s = 1; s < kMaxPeers; ++s) {
+        if (peerConns_[s].load() == 0) continue;
+        if (ProvedGuidForSlot(s) != guid) continue;
+        UE_LOGW("net: slot %d already holds identity %s -- superseding it with the "
+                "new connection (the holder proved the same key)", s, guid.c_str());
+        Kick(s, "superseded by a new connection from your own identity");
+        break;  // one seat per identity is the invariant; there cannot be a second
     }
 
     const int slot = AdmitPending(pendIdx, hConn);
     if (slot < 0) {
         UE_LOGW("net: lobby full of admitted players -- refusing PENDING %d", pendIdx);
-        if (auto* sockets = SteamNetworkingSockets())
-            sockets->CloseConnection(hConn, 0, "host full", false);
+        RetirePending(pendIdx, hConn, "host full");
         return;
     }
     // The peer's storage guid is DERIVED from the key it just proved, and it is
@@ -399,7 +431,6 @@ void Session::HandlePendingMessage(int pendIdx, uint32_t hConn, const void* data
     // Join handler reads it back on the game thread. This is the whole point of
     // the arc: the guid that names a player's stored inventory is now a fact about
     // a key, not a 32-char string the peer asked to be called.
-    const std::string guid = peer_identity::GuidForPublicKey(res.provedKey);
     SetProvedGuidForSlot(slot, guid);
     UE_LOGI("net: PENDING %d ADMITTED -> slot %d (identity-bound, guid %s)",
             pendIdx, slot, guid.c_str());

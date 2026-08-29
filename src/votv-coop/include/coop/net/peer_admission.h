@@ -50,6 +50,13 @@
 // pending drain, and the client's status callback. There is no lock, because
 // there is no other thread. It touches no engine object, which is why it can run
 // while a joining client has no world at all.
+//
+// THAT CLAIM IS A CONSTRAINT ON CALLERS, and it was briefly false: `Session::Stop`
+// runs on the GAME thread and called `ClientReset()` BEFORE joining the net
+// thread, which left a ~5-10 ms window racing `ClientOnReliable`. Fixed
+// 2026-08-29 (post-ship audit) by moving the reset after the join. **A new caller
+// must be on the net thread, or after it is joined -- there is no third option
+// here, and nothing in the type system says so.**
 
 #pragma once
 
@@ -84,6 +91,14 @@ struct HostResult {
 // pending band; `kind`/`payload`/`len` are the already-parsed reliable body.
 HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
                                  ReliableKind kind, const void* payload, int len);
+
+// HOST: has this pending index got an exchange IN PROGRESS -- i.e. did the peer
+// send a well-formed AuthHello that we answered? The band's eviction policy asks
+// this so a socket that has said NOTHING is evicted before one that is mid-proof:
+// without it, "evict the oldest" is a policy an attacker times, because an honest
+// joiner's entry becomes the oldest as soon as enough silent sockets arrive after
+// it. NET THREAD ONLY.
+bool HostHasOpenExchange(int pendIdx);
 
 // HOST: drop a pending index's exchange state. Called on admit AND on close, so
 // a recycled index can never inherit a previous peer's nonce.

@@ -432,9 +432,6 @@ bool Session::StartP2P() {
 
 void Session::Stop() {
     if (!running_.exchange(false)) return;
-    // The client's exchange state dies with the session: a stale `proved` flag
-    // would let the NEXT connection's AssignPeerSlot through unchallenged.
-    peer_admission::ClientReset();
     // The linger flush needs RunCallbacks pumping. Closing connections
     // AFTER joining the net thread leaves linger=true inoperative -- no
     // one pumps callbacks once the thread is gone. Sequence is:
@@ -445,6 +442,16 @@ void Session::Stop() {
     // This way queued reliable PropSpawn/ItemActivate/TeleportClient at shutdown
     // get out instead of being silently dropped.
     if (thread_.joinable()) thread_.join();
+
+    // AFTER the join, never before. The client's exchange state dies with the
+    // session -- a stale `proved` flag would let the NEXT connection's
+    // AssignPeerSlot through unchallenged -- but peer_admission owns that state
+    // WITHOUT A LOCK, on the claim that only the net thread touches it. Clearing
+    // it above the join broke exactly that claim: `running_.exchange(false)` does
+    // not stop a pass already in flight, so the ~5-10 ms until the thread exits is
+    // a window where this write races the net thread inside ClientOnReliable.
+    // Found by a post-ship audit, 2026-08-29.
+    peer_admission::ClientReset();
 
     auto* sockets = SteamNetworkingSockets();
     if (sockets) {
