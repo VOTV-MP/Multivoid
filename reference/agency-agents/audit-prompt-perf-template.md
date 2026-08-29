@@ -111,7 +111,15 @@ was **withdrawn the same day**: the 50 fps was the developer machine's own tooli
 bundled Lua mods plus the Blueprint paks `BPModLoaderMod` loads -- and Multivoid measured at no
 detectable cost. Keep the mandate, drop the number; and note the second lesson that episode
 taught, which belongs in any perf audit: **when a cost is claimed by comparing two environments,
-diff the environments before instrumenting either one.**)
+diff the environments before instrumenting either one.**
+
+THAT MANDATE EARNED ITS KEEP THE SAME DAY, TWICE OVER, so it is worth stating what "diff" means
+concretely. The set of mods blamed for the frames turned out to be RUNNING IN THE FAST ENVIRONMENT
+TOO -- its own `UE4SS.log` said so -- which a clean bisect with a negative arm could not reveal,
+because a bisect proves an effect on the rig it runs on and attributes nothing. The difference that
+survived the diff was the LOADER binary, and moving only that file took the same save from 80 fps
+to 106. So: **diff what RAN (the loader's own log lines), not what a config file PERMITS**, and
+treat any component present in BOTH environments as excluded, however clean the bisect was.)
 
 For every function in the table, answer:
 

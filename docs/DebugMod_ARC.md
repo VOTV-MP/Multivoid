@@ -289,11 +289,28 @@ confirm against the loader's own log.
 | CLIENT_1 | fails `0x7f` | **MOUNTED** `[V]` — a real PARTIAL-LOAD state |
 | CLIENT_2 / CLIENT_3 | absent by design | absent by design |
 
-**RIG STATE AS LEFT 2026-08-29:** every `Mods/mods.txt` entry on the HOST is set to `0` (backup
-`mods.txt.bak`) because that set cost ~45 fps — see
-`memory/project-fps-regression-hunt-2026-08-29.md`. **`BPModLoaderMod` is off, so the HOST's BP
-half will NOT mount until the backup is restored.** Restore it before any dual-mod work here, and
-expect ~75 fps rather than ~120 while it is on.
+**RIG STATE AS LEFT 2026-08-29 (evening) -- IT IS NOT THE BASELINE, CHECK BEFORE MEASURING
+ANYTHING ON IT.** Three things on the HOST differ from a clean rig, and the last one invalidates
+any perf number taken without noticing it:
+
+1. `Mods/mods.txt` has FIVE entries enabled, not six -- `CheatManagerEnablerMod` is 0. The full
+   six-mod set is preserved as `mods.txt.bak`. `BPModLoaderMod` IS on, so the HOST's BP half of
+   DebugMod DOES mount again (that was not true earlier in the day).
+2. `[dev] perf_probe=1` is back on in `multivoid.ini`. It emits ~4 WARN lines/second, which is
+   harmless for perf (measured ~0 cost) but MASKS the log-flush behaviour -- every WARN flushes,
+   so a rig with the probe on cannot reproduce a lost-tail log.
+3. **`ue4ss.dll` IS NOT OURS.** It is shimloader's build (Git SHA `e31aaaa6`, 2026-05-07), copied
+   in from the r2modman install for a loader experiment. The rig's original zDEV loader
+   (`d935b5b`, dated 2024-02-14) is preserved beside it as `ue4ss.dll.zdev-backup`.
+
+**THE ~45 fps ATTRIBUTION THIS NOTE USED TO CARRY IS WITHDRAWN.** It said the mod set cost the
+frames. Measured the same evening on one save, one pinned mod DLL, the same window, moving ONLY
+`ue4ss.dll`: zDEV `d935b5b` -> **80 fps median**, shimloader's `e31aaaa6` -> **106**. So most or
+all of the cost may be the LOADER, not the mods it loads. NOT SETTLED: the new loader failed to
+start `CheatManagerEnablerMod` (5 of 6), so the loader and that one mod are confounded, and the
+de-confounding arm (old loader, same five mods) has NOT RUN. See
+`memory/project-fps-regression-hunt-2026-08-29.md` and
+`memory/lesson-a-bisect-proves-its-own-rig-not-the-component.md`.
 
 CLIENT_1's split state is itself a finding: a DebugMod whose Blueprint content is live in the world
 while its native half is absent is a configuration a real user can reach, and nothing warns anybody.

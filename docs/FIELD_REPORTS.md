@@ -70,11 +70,25 @@ launch —
     minus UE4SS's bundled Lua mods (Mods/mods.txt) . ~119 fps
     Multivoid loaded, hosting, its own paks present . ~119 fps
 
-The same machine ran the **same** build at a stable 120 through r2modman, whose
-profile ships no `mods.txt` at all. UE4SS's `BPModLoaderMod` is what loads
-Blueprint paks out of `LogicMods`, so it and the paks are one cost, not two —
-removing Multivoid's own paks appeared to buy 5 fps while it was on, and bought
-exactly nothing once it was off.
+The same machine ran the **same** build at a stable 120 through r2modman.
+
+**WHY, THOUGH, WAS WRONG TWICE, and the second correction is the one to read.** This row first
+said r2modman's profile ships no `mods.txt` at all. `[V]` FALSE: it has one, at
+`shimloader\mod\mods.txt`, enabling the SAME six Lua mods, and that run's own `UE4SS.log` shows
+all six `Starting Lua mod` plus `BPModLoaderMod` mounting the same `DebugMod.pak`. The census that
+missed it was looking in the game folder, where the managed lane keeps nothing.
+
+So the mods were running in the fast environment too, and the bisect above -- which is real, with a
+negative arm -- proves an effect ON THAT RIG without naming its cause. The remaining difference is
+the LOADER: `[V]` `ue4ss.dll` Git SHA `d935b5b` (the zDEV archive, dated 2024-02-14) on the dev rig
+against `e31aaaa6` (2026-05-07) under shimloader, both self-labelled v3.0.1 Beta #0. Swapping ONLY
+that file, same save, same pinned mod DLL, same window: **80 fps median -> 106**.
+
+**NOT SETTLED, and it is not written into the install instructions for that reason:** the new
+loader did not start `CheatManagerEnablerMod` (5 of 6), so the loader and that one mod are
+confounded in the measurement, and the de-confounding arm has not run. Note the uncomfortable
+direction this points: `docs/INSTALL.md` currently tells manual installers to use UE4SS's zDEV
+archive, which is the SLOW binary here.
 
 So Violet's remainder really was separate from the mod. Two things are worth
 keeping from the detour, because they are what made a wrong answer plausible for

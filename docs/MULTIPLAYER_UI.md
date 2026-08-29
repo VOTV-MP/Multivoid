@@ -854,8 +854,21 @@ opposite and is rewritten rather than patched:
   stands at `server_browser_native.cpp:767`). ESC and the X both call the INTERNAL `Hide()`. So the
   cross-thread `g_wantClose` path is still unproven, and T1's "its first caller must not be its first
   proof" is still owed.
-- **Connect / Host / Refresh are absent.** Selection exists and nothing consumes it yet; wiring
-  Connect to `g_selectedId` is the next thing the screen needs to be usable end-to-end.
+- **Connect and Refresh are absent; HOST now EXISTS AS ITS OWN SCREEN but nothing opens it.**
+  Selection exists and nothing consumes it yet; wiring Connect to `g_selectedId` is still the next
+  thing this screen needs to be usable end-to-end.
+  HOST is no longer a missing button but a missing LINK: `ui/host_window_native.{h,cpp}`
+  (`a4e21019`, 2026-08-29, 465 LOC) is a sibling screen in the same switcher -- world picker
+  (New game + the `save_browser` list), the AUTO / DIRECT / LAN ONLY connection choice, HOST/BACK,
+  and a status line that renders `session_manager::HostStatus()` every tick. It authors no hosting
+  logic: it collects a `SaveChoice` and calls the same `HostWithSave` the ImGui picker calls.
+  **STATUS: BUILT AND COMPILES, NEVER SEEN RUNNING.** Its only opener today is
+  `[dev] host_window_autoopen=1`; the browser has no control that reaches it, and the lab run is
+  owed (the rig was held by a parallel session at the time of writing). Two things it deliberately
+  does NOT have: a text field for the server name (whether a hand-built `UEditableTextBox` takes
+  keyboard focus in a never-`Initialize()`d tree is UNMEASURED -- the offsets are in `sdk_profile.h`,
+  so the open question is focus, not layout; v1 derives "<nick>'s game" instead), and a locked/
+  players-max control (both are `HostWithSave` parameters already, just not surfaced).
 - **The retire is not done.** `ui/server_browser.{h,cpp}` still ships. Its seam census is bigger
   than a name grep found: besides the nine `server_browser::` call sites, `imgui_overlay.cpp:721-724`
   opens it from `VOTVCOOP_BROWSER_OPEN` and logs `"server browser starts visible"`, `:796` closes it

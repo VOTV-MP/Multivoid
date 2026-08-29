@@ -33,6 +33,24 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 1. How to work (process / working agreements)
 
+- **A LAB TOOL THAT DEPLOYS FOR YOU SUBSTITUTES THE BYTES UNDER TEST -- PIN, DO NOT CHECK.**
+  2026-08-29. Every `tools/mp.py` scenario calls `deploy_all()` at dispatch and copies whatever sits
+  in `build/votv-coop/Release` AT THAT INSTANT. With a parallel session building in the same tree,
+  *build -> verify the hash -> run the scenario* does not test what it appears to: three verdicts in
+  one evening ran foreign bytes (deployed `57B3D7B5`, build dir `7F77BB0E`, intended `DFAEFDB4`), and
+  each read as a result. One of them produced the session's only `CLOSE BUTTON PASS`, which was then
+  reasoned about for an hour and seeded two further runs chasing a difference that never existed --
+  a flake and a foreign binary are indistinguishable from the log. `CROSS_SESSION.md`'s old advice
+  ("redeploy before a run you intend to trust, and `md5sum` it") checks the WRONG FILE at the WRONG
+  TIME, because the tool re-deploys after you looked. *Look FIRST:* copy your DLL to a named file
+  outside the build tree, place THAT in the rig yourself, re-read the hash FROM THE RIG after the
+  copy, and print it beside the verdicts (`scratchpad/browser_pinned.ps1` is the shape). Never use an
+  `mp.py` scenario for a differential while another session builds. Sibling from the same evening: a
+  build failed with `error C2039` in a file I had never touched, because the other session's
+  UNCOMMITTED `protocol.h` had reshaped a payload mid-edit -- **a broken build in a shared tree is
+  not evidence about your change.**
+  `memory/lesson-a-lab-tool-that-deploys-for-you-substitutes-the-bytes-under-test.md`
+
 - **A CONTROL THAT SHARES YOUR CHANGE IS NOT A CONTROL.** 2026-08-29. An extraction was
   proven by running the browser lab on the pre-extraction DLL and the extracted one: every
   phase matched, `CLOSE BUTTON FAIL` included. The inference -- *identical on both arms,

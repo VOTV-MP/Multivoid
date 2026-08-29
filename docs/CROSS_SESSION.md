@@ -152,11 +152,29 @@ persistent/transient split exists.
 
 ## 5. What this does not solve
 
-- **Concurrent builds.** Both sessions build into `build/votv-coop`. The lock covers the *game*, not
-  the build directory. Two simultaneous `cmake --build` runs there would still collide; in practice
-  they have not, and adding a second lock for it is not justified by any measured failure yet.
-- **Who owns the deployed DLL.** The lock guarantees only one session *runs* at a time, not that the
-  bytes on disk are yours. Rebuild and redeploy before a run you intend to trust, and `md5sum` it.
+- **Concurrent builds. THE "no measured failure yet" CLAIM DIED 2026-08-29.** Both sessions build
+  into `build/votv-coop`, and this file used to say a collision had never actually happened. It has:
+  a build failed with `error C2039: "linVelX" is not a member of AtvReleasePayload` in
+  `event_dispatch_state.cpp` -- a COMMITTED file -- because the other session's UNCOMMITTED
+  `protocol.h` had reshaped that payload mid-edit. Nothing was wrong with either session's work; the
+  tree was simply not consistent at that instant. It cleared on its own a minute later. The lesson is
+  not "add a build lock" but *a broken build in a shared tree is not evidence about YOUR change* --
+  check whether the failing file is one you touched before debugging it.
+- **Who owns the deployed DLL. `md5sum` AFTER `deploy-all` IS NOT ENOUGH, measured 2026-08-29.**
+  The lock guarantees only one session *runs* at a time, not that the bytes on disk are yours -- and
+  the advice that used to stand here ("rebuild and redeploy before a run you intend to trust")
+  silently fails against `mp.py`, because every scenario calls `deploy_all` AT DISPATCH and copies
+  whatever is in the build directory THEN. A rebuild by the other session between your build and your
+  run substitutes the payload after you checked it.
+  It happened THREE TIMES IN ONE EVENING and each time the verdict looked like a result: a browser
+  lab ran `57B3D7B5` while the build dir held `7F77BB0E` and the bytes under test were `DFAEFDB4`.
+  One of those runs produced the session's only `CLOSE BUTTON PASS`, which was then reasoned about
+  for an hour before the hash was checked.
+  **THE FIX IS TO PIN, NOT TO CHECK:** copy your DLL to a named file outside the build tree, place
+  THAT into the rig yourself, re-read the hash FROM THE RIG after the copy, and print it beside the
+  verdicts -- so a run on foreign bytes announces itself instead of reading as evidence.
+  `scratchpad/browser_pinned.ps1` is the worked shape; do not use a `mp.py` scenario for a
+  differential while another session is building.
 - **A shared tree.** Both sessions edit the same working copy. Nothing here prevents one session
   from rebuilding while the other's changes are uncommitted — that is what commits are for.
 
