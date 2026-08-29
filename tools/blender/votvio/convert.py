@@ -46,3 +46,28 @@ def matrix(q_xyzw, loc, scale):
 
 def matrix_from_rotator(rot_pyr, loc, scale):
     return matrix(rotator_to_ue_quat(*rot_pyr), loc, scale)
+
+
+def ue_fmatrix_to_bl(m_rows):
+    """UE FMatrix (4x4, row-vector convention: v' = v @ M, rows 0-2 = basis,
+    row 3 = translation, cm) -> Blender 4x4 Matrix (column convention, m).
+
+    Column form is M^T; the y-mirror conjugates the 3x3 (D @ A @ D) and the
+    translation maps through pos()."""
+    import numpy as np
+
+    a = np.asarray(m_rows, dtype=np.float64)
+    lin = a[:3, :3].T.copy()          # column-major 3x3
+    lin[0, 1] = -lin[0, 1]
+    lin[1, 0] = -lin[1, 0]
+    lin[1, 2] = -lin[1, 2]
+    lin[2, 1] = -lin[2, 1]
+    t = a[3, :3]
+    out = Matrix.Identity(4)
+    for i in range(3):
+        for j in range(3):
+            out[i][j] = lin[i, j]
+    out[0][3] = t[0] * SCALE
+    out[1][3] = -t[1] * SCALE
+    out[2][3] = t[2] * SCALE
+    return out

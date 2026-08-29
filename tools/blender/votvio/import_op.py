@@ -33,6 +33,16 @@ class VOTVIO_OT_import_sav(bpy.types.Operator, ImportHelper):
     placeholders: bpy.props.BoolProperty(
         name="Placeholders for unresolved",
         description="Put an empty where a class has no resolvable mesh yet", default=True)
+    import_map: bpy.props.BoolProperty(
+        name="Static map",
+        description="The persistent level: buildings, placed meshes, foliage", default=True)
+    import_landscape: bpy.props.BoolProperty(
+        name="Landscape", description="Rebuild the terrain from its heightmaps", default=True)
+    import_lights: bpy.props.BoolProperty(
+        name="Lights", description="Point/spot/rect lights from the level", default=True)
+    foliage_density: bpy.props.FloatProperty(
+        name="Foliage density", description="Fraction of instanced foliage to place",
+        default=1.0, min=0.0, max=1.0, subtype="FACTOR")
 
     def invoke(self, context, event):
         if not self.filepath:
@@ -79,6 +89,10 @@ class VOTVIO_OT_import_sav(bpy.types.Operator, ImportHelper):
             "with_textures": self.with_textures,
             "show_contained": self.show_contained,
             "placeholders": self.placeholders,
+            "import_map": self.import_map,
+            "import_landscape": self.import_landscape,
+            "import_lights": self.import_lights,
+            "foliage_density": self.foliage_density,
         }
         wm.progress_begin(0, 100)
         try:

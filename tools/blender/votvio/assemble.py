@@ -9,9 +9,11 @@ import json
 import bpy
 
 from . import convert
+from . import landscape as landscape_mod
 from . import materials as materials_mod
 from . import mesh_build
 from . import template_resolver
+from . import umap_import
 
 
 def _get_or_create_collection(name, parent):
@@ -142,6 +144,24 @@ class _Builder:
             self._placeholder("roach", cols["Piles"], convert.matrix(quat, loc, scale),
                               "SPHERE", 0.03)
 
+        self.map_stats = {}
+        if self.game and self.opt.get("import_map", True):
+            map_path = self.game.find_content_package(self.m.level or "untitled_1")
+            if map_path:
+                map_col = _get_or_create_collection("Map", master)
+                mcols = {name: _get_or_create_collection(name, map_col)
+                         for name in ("Statics", "Landscape", "Foliage", "Lights")}
+                imp = umap_import.MapImporter(self.game, self.resolver, self, self.opt)
+                self.map_stats = imp.run(map_path, mcols, self.progress)
+                if self.opt.get("import_landscape", True):
+                    land_mat = bpy.data.materials.new("votv_landscape")
+                    land_mat.diffuse_color = (0.18, 0.24, 0.12, 1.0)
+                    self.map_stats["landscape"] = landscape_mod.build_landscape(
+                        self.game, map_path, self.game.package_dict(map_path),
+                        mcols["Landscape"], self.warnings, land_mat)
+            else:
+                self.warnings.append(f"map package not found for level {self.m.level!r}")
+
         self._write_manifest_text()
         return self._report()
 
@@ -159,6 +179,7 @@ class _Builder:
                 "roaches": len(self.m.roaches),
             },
             "placed": self.counts,
+            "map": getattr(self, "map_stats", {}),
             "unresolved_classes": dict(sorted(self.unresolved.items(),
                                               key=lambda kv: -kv[1])),
             "non_scene_save_keys": self.m.non_scene_keys,
@@ -172,6 +193,7 @@ class _Builder:
             "rows": len(self.m.objects),
             "primitives": len(self.m.primitives),
             **self.counts,
+            "map": getattr(self, "map_stats", {}),
             "distinct_meshes": len(self.caches["mesh"]),
             "materials": len(self.caches["mat"]),
             "images": len([i for i in self.caches["img"].values() if i]),

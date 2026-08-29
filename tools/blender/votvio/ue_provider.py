@@ -14,6 +14,8 @@ from UE4Parse.Provider import DefaultFileProvider  # noqa: E402
 from UE4Parse.Versions import EUEVersion, VersionContainer  # noqa: E402
 from UE4Parse.Assets.Objects.FGuid import FGuid  # noqa: E402
 
+from . import ism_component  # noqa: E402,F401  (registers the instanced-mesh export readers)
+
 
 class GameSource:
     def __init__(self, paks_dir):
@@ -93,6 +95,12 @@ class GameSource:
         """'door_C' -> 'VotV/Content/objects/door' (basename convention, verified by load)."""
         base = class_name[:-2] if class_name.endswith("_C") else class_name
         for cand in self._base2path.get(base.lower(), []):
+            return cand
+        return None
+
+    def find_content_package(self, basename):
+        """Case-insensitive basename lookup ('Untitled_1' -> 'VotV/Content/maps/untitled_1')."""
+        for cand in self._base2path.get(str(basename).lower(), []):
             return cand
         return None
 

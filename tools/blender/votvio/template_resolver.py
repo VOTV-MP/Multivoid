@@ -59,6 +59,7 @@ class TemplateResolver:
         self.game = game
         self._cache = {}   # package path (normalized) -> {base name: TemplateComp}
         self._cdo_name = {}  # package path -> CDO 'name' property ('' when absent)
+        self._ifaces = {}  # package path -> set of interface class names (incl. inherited)
 
     def templates(self, package_path, _depth=0):
         """All mesh-bearing component templates for the class in `package_path`,
@@ -69,6 +70,7 @@ class TemplateResolver:
         out = {}
         parent_pkg = None
         cdo_name = ""
+        ifaces = set()
         if _depth < 8:
             for e in self.game.package_dict(key):
                 if not isinstance(e, dict):
@@ -99,19 +101,31 @@ class TemplateResolver:
                     pkg = _obj_ref_package(sup)
                     if pkg.startswith("/Game/"):
                         parent_pkg = pkg
+                    for itf in e.get("Interfaces") or []:
+                        inm = str(itf.get("ObjectName", "")) if isinstance(itf, dict) else ""
+                        if inm:
+                            ifaces.add(inm)
             if parent_pkg:
                 for base, t in self.templates(parent_pkg, _depth + 1).items():
                     out.setdefault(base, t)
                 if not cdo_name:
                     cdo_name = self._cdo_name.get(self.game.norm(parent_pkg), "")
+                ifaces |= self._ifaces.get(self.game.norm(parent_pkg), set())
         self._cache[key] = out
         self._cdo_name[key] = cdo_name
+        self._ifaces[key] = ifaces
         return out
 
     def cdo_name(self, package_path):
         """The class's inherited 'name' property (prop_C's list_props discriminator)."""
         self.templates(package_path)
         return self._cdo_name.get(self.game.norm(package_path), "")
+
+    def implements(self, package_path, interface_class_name):
+        """Does the class (or an ancestor) list the interface (e.g. 'int_save_C')?
+        Measured: BlueprintGeneratedClass exports carry Interfaces[]; membership inherits."""
+        self.templates(package_path)
+        return interface_class_name in self._ifaces.get(self.game.norm(package_path), set())
 
     def visible_mesh_templates(self, package_path):
         return [t for t in self.templates(package_path).values()

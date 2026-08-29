@@ -36,7 +36,8 @@ t2 = time.time()
 report = assemble.build_scene(
     manifest, game,
     {"import_meshes": True, "with_textures": True, "show_contained": False,
-     "placeholders": True},
+     "placeholders": True, "import_map": True, "import_landscape": True,
+     "import_lights": True, "foliage_density": 1.0},
 )
 t_build = time.time() - t2
 print(f"[build] {t_build:.1f}s")
