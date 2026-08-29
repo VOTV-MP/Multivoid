@@ -128,6 +128,39 @@ saved at Z=83 m (save truth). Full-map smoke: 79,129 objects / 110 s / 0 warning
 сегментов с Inst_waterRiver; арбуз mat_watermelon (0 водных попаданий); шкафчики 19/19;
 BSP-вершины в боксе 439; панели inst_glass; Unplaced скрыт; лестниц на ориджине в Statics 0.
 
+**v7 (same session) — пять репортов: UV декалей по-движковому, обе стороны, окно по
+inst_newwindow, экраны с настоящим контентом, террейн по weightmap.** Репорты юзера:
+декали «не существуют», muralы растянуты/в стенах/не видны, у главного окна не тот
+diffuse, RT-экраны/часы — white noise (неправильно), террейн далёк от игры. Корни, все
+измерены: (1) **UV декали был повёрнут на 90°** — у бокса baseMural длинная ось Z, арт
+горизонтальный: UE-конвенция U←локальная Z, V←Y (`decals._uv`; D3D-флип V поглощается
+нижним ориджином UV Блендера); (2) проекция шла только вдоль +X — движок красит ОБЕ
+принимающие грани → два прохода ±X, mural получил лист на видимой стороне (578 вершин =
+2 листа; 818/976 декалей двухсторонние), winding по направлению каста; (3) grime-текстуры
+светло-серые (RGB 0.65), а `mat_decal_grunge` рисует их UNLIT (MSM_Unlit, замерено) —
+на лит-стене это тёмные пятна: затемнение ×(0.5,0.47,0.42) + буст альфы ×1.3 (калибровка
+по скрину игры); (4) **`tex_decalWindow` — вовсе не грязь, а нарисованное окно** (PNG);
+настоящий материал панелей — `inst_newwindow` из ImportMap d_window: ThinTranslucent,
+tint (0.611,0.708,0.667), канва мытья `tex_windowDirtDefault` 1645×512 (три панели в
+одной, UV панелей режут её на трети: u 0.25..0.75 у средней), CDO d_window несёт
+дефолт-JPEG и size 1645×512 — `_build_dirty_glass` переписан на эти константы;
+(5) экраны: `CachedExpressionData` хранит дефолты параметров + referenced-текстуры —
+часы = атлас `digits` 1280×128 (родитель `mat_clockMat`: num=0 → «0», цвет КРАСНЫЙ,
+unlit) + `digit_dots`, analogDS_screen = оранжевый (1,0.25,0) по игровому
+`TilingNoise_contrast`, graph = жёлтая трасса, bulbs = зелёный по `noise_mask`,
+polarity/frequency = оранжевые кольца, screenGrid = сетка 8/2, TV = игровая статика
+`tex_hugeNoise`; white-noise нод в экранных материалах НОЛЬ (verify_v7); (6) террейн:
+`Landscape.LandscapeMaterial = /Game/inst_mainLandscape` — слои grass/gravel/dirt/rock/
+sand с текстурами (`tex_pineGrass2` тайл 4096uu=41 м, `tex_gravel2` 2048uu...) и
+weightmap-аллокациями per-component (128×128 B8G8R8A8 в самом umap, канал на компонент,
+перепаковка сабсекций как у heightmap; ScaleBias Z/W = полтексельный сдвиг → ориджин 0;
+`DataLayer` = маска дыр, не краска — скип): `landscape_material` мешает детальные
+текстуры в мировых XY по весам из `ComponentUV`; ценз слоёв: grass 196 комп., +gravel 37,
++dirt/rock/sand единицы. Плюс 6-й инстанс дельта-урока: `_rel_matrix` в umap_import был
+«всё-или-ничего» — частичная дельта зануляла шаблонный поворот; теперь пер-свойство.
+Стенд: 224 с, 976/7 декалей, 4 ландшафт-компонента (grass+gravel+dirt каждый),
+0 предупреждений; verify_v7 зелёный по всем пяти пунктам. НЕ hands-on.
+
 **v6d (same session, `0e37227b`) — декали ПРОЕЦИРУЮТСЯ на приёмники.** Репорт юзера:
 повёрнуты не так + торчат, нет маски поверхности. Свободный квад заменён проекцией:
 декали копятся в очередь и после сборки statics/BSP/ландшафта кастят сетку лучей вдоль
@@ -212,22 +245,25 @@ landscape, foliage, lights), every saved prop/entity/vehicle/NPC from the save's
 
 ## 5. Residual ledger
 
-> **Session handoff 2026-08-29 (end of the v5..v6d bench-fix session, HEAD `34749527`).** The
-> build-day verdict («Полное говно, масса проблем») has been worked down on the radius bench: TEN
-> user field reports fixed across v5/v6/v6b/v6c/v6d (§0 above), addon deployed after each wave.
+> **Session handoff 2026-08-29 (end of the v5..v7 bench-fix session).** The build-day verdict
+> («Полное говно, масса проблем») has been worked down on the radius bench: FIFTEEN user field
+> reports fixed across v5/v6/v6b/v6c/v6d/v7 (§0 above), addon deployed after each wave.
 > **Bench save = `s_test_screens2.sav` (user decision — no event objects)**; bench command:
 > `VOTVIO_SMOKE_RADIUS=150 VOTVIO_SMOKE_BLEND=<path> blender --background --factory-startup
 > --python tools/blender/votvio/tests/smoke.py -- %LOCALAPPDATA%\VotV\Saved\SaveGames\
-> s_test_screens2.sav` (~172 s with decal projection) → scratchpad `votvio_base150.blend`.
+> s_test_screens2.sav` (~224 s with two-sided decal projection) → scratchpad
+> `votvio_base150.blend`.
 > **Working agreement (both USER rules): NO renders — hand over the `.blend`; and the test loop
 > runs the BENCH ONLY — no full-map smokes per fix**
 > ([[feedback-votvio-hand-over-blend-no-renders]]). NOTE: scratchpad `votvio_smoke.blend` (full
-> map) was last rebuilt at v6c — its decals are still pre-projection quads; rebuild on request.
+> map) was last rebuilt at v6c — its decals are still pre-projection quads AND it predates the
+> v7 UV/terrain/screen fixes; rebuild on request.
 
 | Open | What | Phase |
 |---|---|---|
 | — | ~~база в воздухе / лестница вышки / черновые шеллы~~ **CLOSED v5 `42bb819d`** (§0 v5) | — |
 | — | ~~река без воды / арбуз-вода / грайм-кубики / дверцы шкафчиков / бункер / стекло / лестницы в воздухе~~ **CLOSED v6 `31551742`** (§0 v6) | — |
+| — | ~~декали «не существуют» / muralы 90°+в стенах / не тот diffuse окна / white-noise экраны / плоский террейн~~ **CLOSED v7** (§0 v7: UE decal-UV + двусторонняя проекция + UNLIT-затемнение грайма + inst_newwindow + CachedExpressionData-экраны + weightmap-слои) | — |
 | — | the user's NEXT field-fix batch (pending their .blend inspection) | next |
 | — | lake SURFACE: the river splines cross the lake area (segments up to ~55 m wide) — whether the lake reads as water in the scene is unverified | next |
 | — | **acceptance probe + calibration + machine diff** (the design's own gate) | next |
@@ -236,7 +272,7 @@ landscape, foliage, lights), every saved prop/entity/vehicle/NPC from the save's
 | O12 | ~~MIC vocabulary census~~ **CLOSED `c19662e2`** — full-population census (3,243 materials) + family builder shipped (`materials.py`); residual = fidelity items (triplanar is an approximation; a base Material's non-parameterized default textures are unreachable in cook → grey fallback; **placeholder slots get curated overrides — `PLACEHOLDER_SLOT_OVERRIDES`**) | — |
 | O13 | ~~SplineMeshComponent deform~~ **CLOSED v6 `31551742`** — `spline_mesh.py` Hermite slice math; 85/89 map splines are the river, 4 carry no mesh | — |
 | O14 | ~~grime decals~~ **CLOSED v6c+v6d** — variant families + CDO material (`decals.GRIME_FAMILY`, 80 materials) and real PROJECTION (mask/wrap/no-webbing, §0 v6d); residuals: receivers are STRUCTURE only (a decal that sat on a prop projects past it), leaky rusty/wet colour tints live in bytecode, trashBitsPile 81 full-map placeholders | P3 |
-| O15 | landscape textures: ~~untextured white~~ styled procedural GREEN/SNOW/DIRT + slope-rock SHIPPED (`c19662e2`); weightmap-TRUE layer blending still open | P3 |
+| O15 | ~~landscape textures~~ **CLOSED v7** — weightmap-TRUE layer blending shipped (`landscape.py` weight extraction + `materials.landscape_material`, the game's own `inst_mainLandscape` layer textures/tiling); procedural GREEN/SNOW/DIRT stays as the with_textures=False fallback; residual: layer NORMAL/height maps unused, macro variety (grassPatches) unbaked | — |
 | — | BSP UV scale is the classic /128 texel guess — bunker wall texture density unverified | P3 |
 | — | prop_C stragglers (44) + prop_barnshelf (23) placeholders | P3 |
 | — | SK geometry port of `ue_skelmesh.py` (NPC bind pose) | P3 |

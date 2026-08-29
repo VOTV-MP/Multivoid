@@ -137,11 +137,16 @@ class _Builder:
         scene = bpy.context.scene
         built = []
         for name, col, matrix, mat_path in self.decal_queue:
-            res = decals_mod.project_decal(scene, deps, matrix)
-            if res is None:
+            sheets = decals_mod.project_decal(scene, deps, matrix)
+            if not sheets:
                 self.counts["decals_missed"] += 1
                 continue
-            verts, faces, uvs = res
+            verts, faces, uvs = [], [], []
+            for sv, sf, su in sheets:
+                off = len(verts)
+                verts.extend(sv)
+                uvs.extend(su)
+                faces.extend(tuple(i + off for i in f) for f in sf)
             me = bpy.data.meshes.new(name + ".decal")
             me.from_pydata(verts, [], faces)
             try:
@@ -341,11 +346,15 @@ class _Builder:
                 mcols["Unplaced"].hide_viewport = True
                 mcols["Unplaced"].hide_render = True
                 if self.opt.get("import_landscape", True):
-                    land_mat = materials_mod.terrain_material(
-                        self.opt.get("terrain_style", "GREEN"))
+                    # the game's own layer materials (weightmap-blended detail
+                    # textures); the procedural style is the no-texture fallback
+                    fallback = None if self.opt.get("with_textures", True) else \
+                        materials_mod.terrain_material(
+                            self.opt.get("terrain_style", "GREEN"))
                     self.map_stats["landscape"] = landscape_mod.build_landscape(
                         self.game, map_path, self.game.package_dict(map_path),
-                        mcols["Landscape"], self.warnings, land_mat, builder=self)
+                        mcols["Landscape"], self.warnings, builder=self,
+                        fallback_material=fallback, caches=self.caches)
             else:
                 self.warnings.append(f"map package not found for level {self.m.level!r}")
 

@@ -152,19 +152,20 @@ class MapImporter:
         return self.resolver.templates(pkg).get(self.dicts[idx].get("Name", ""))
 
     def _rel_matrix(self, idx):
+        # PER-PROPERTY delta-else-template: a delta export that writes SOME
+        # transform fields still inherits the rest from the class template
+        # (cooked delta-vs-archetype is per field - the all-or-nothing form
+        # zeroed template rotations whenever a delta carried only a location).
         p = self.dicts[idx].get("Properties") or {}
-        if any(k in p for k in ("RelativeLocation", "RelativeRotation", "RelativeScale3D")):
-            m = convert.matrix_from_rotator(
-                _rot(p.get("RelativeRotation")),
-                _vec(p.get("RelativeLocation")),
-                _vec(p.get("RelativeScale3D"), (1.0, 1.0, 1.0)))
-        else:
-            t = self._template_for(idx)
-            if t is not None:
-                m = convert.matrix_from_rotator(t.rel_rot, t.rel_loc, t.rel_scale)
-            else:
-                m = Matrix.Identity(4)
-        return m
+        t = self._template_for(idx)
+        loc = _vec(p.get("RelativeLocation")) if "RelativeLocation" in p else \
+            (t.rel_loc if t is not None else (0.0, 0.0, 0.0))
+        rot = _rot(p.get("RelativeRotation")) if "RelativeRotation" in p else \
+            (t.rel_rot if t is not None else (0.0, 0.0, 0.0))
+        scale = _vec(p.get("RelativeScale3D"), (1.0, 1.0, 1.0)) \
+            if "RelativeScale3D" in p else \
+            (t.rel_scale if t is not None else (1.0, 1.0, 1.0))
+        return convert.matrix_from_rotator(rot, loc, scale)
 
     def _world_matrix(self, idx, depth=0):
         if idx in self._world_m:

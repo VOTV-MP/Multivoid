@@ -73,16 +73,37 @@ _CELL = 0.12           # target grid cell size (m)
 _EXTRA_DEPTH = 0.15    # placement tolerance beyond the box depth (m)
 
 
+def _uv(fy, fz):
+    """UE4 deferred-decal UV: U runs along local Z, V along Y (DeferredDecal.usf
+    DecalVector.zy mapping; Blender's bottom-origin V absorbs the D3D flip).
+    Measured: the baseMural boxes are long in Z with +Y up and the mural art is
+    landscape - the old U-along-Y mapping rendered every decal rotated 90deg."""
+    return ((fz + 1.0) * 0.5, (fy + 1.0) * 0.5)
+
+
+def _wind(verts, faces, direction):
+    """Flip face winding so the sheet's normal faces back along the cast ray."""
+    if not faces:
+        return faces
+    a, b, c = (Vector(verts[i]) for i in faces[0][:3])
+    n = (b - a).cross(c - a)
+    if n.dot(direction) > 0.0:
+        return [tuple(reversed(f)) for f in faces]
+    return faces
+
+
 def project_decal(scene, depsgraph, m):
     """Project one decal box (world matrix incl. half-extent scale) onto the
-    scene. -> (verts, faces, per-vertex uv) in world space, or None if nothing
-    inside the box receives it.
+    scene. -> list of sheets [(verts, faces, per-vertex uv)] in world space,
+    empty when nothing inside the box receives it.
 
-    Two phases: a 3x3 probe first - when every probe hits ONE plane (flat wall/
-    floor, the common case) the full grid is intersected with that plane
-    analytically, zero further rays. Partial hits or bent receivers (corners,
-    surface edges - exactly where the mask matters) fall through to a full
-    per-vertex ray grid."""
+    The engine paints every surface inside the OBB, projecting along local X
+    BOTH ways - a wall inside the box receives the decal on each face. So two
+    passes, one per direction. Per pass, two phases: a 3x3 probe first - when
+    every probe hits ONE plane (flat wall/floor, the common case) the full grid
+    is intersected with that plane analytically, zero further rays. Partial
+    hits or bent receivers (corners, surface edges - exactly where the mask
+    matters) fall through to a full per-vertex ray grid."""
     loc, rot, scale = m.decompose()
     R = rot.to_matrix()
     x_axis = (R @ Vector((1.0, 0.0, 0.0))).normalized()
@@ -92,10 +113,20 @@ def project_decal(scene, depsgraph, m):
     depth = sx + _EXTRA_DEPTH
     ny = max(3, min(16, int(round(2.0 * sy / _CELL))))
     nz = max(3, min(16, int(round(2.0 * sz / _CELL))))
+    sheets = []
+    for direction in (x_axis, -x_axis):
+        sheet = _project_side(scene, depsgraph, loc, direction, y_axis, z_axis,
+                              sy, sz, ny, nz, depth)
+        if sheet is not None:
+            sheets.append(sheet)
+    return sheets
 
+
+def _project_side(scene, depsgraph, loc, direction, y_axis, z_axis, sy, sz,
+                  ny, nz, depth):
     def cast(fy, fz):
-        origin = loc + y_axis * (fy * sy) + z_axis * (fz * sz) - x_axis * depth
-        return scene.ray_cast(depsgraph, origin, x_axis, distance=2.0 * depth)
+        origin = loc + y_axis * (fy * sy) + z_axis * (fz * sz) - direction * depth
+        return scene.ray_cast(depsgraph, origin, direction, distance=2.0 * depth)
 
     # ---- phase A: 3x3 probe ------------------------------------------------
     probes = {}
@@ -116,7 +147,7 @@ def project_decal(scene, depsgraph, m):
             p0 = probes[(0.0, 0.0)][0]
             residual = max(abs((p - p0).dot(nmean)) for p, _n in probes.values())
             planar = residual < 0.015
-        denom = x_axis.dot(nmean)
+        denom = direction.dot(nmean)
         if planar and abs(denom) > 1e-4:
             verts = []
             uvs = []
@@ -126,13 +157,13 @@ def project_decal(scene, depsgraph, m):
                     fz = -1.0 + 2.0 * iz / nz
                     origin = loc + y_axis * (fy * sy) + z_axis * (fz * sz)
                     t = (p0 - origin).dot(nmean) / denom
-                    p = origin + x_axis * t + nmean * _OFFSET
+                    p = origin + direction * t + nmean * _OFFSET
                     verts.append((p.x, p.y, p.z))
-                    uvs.append(((fy + 1.0) * 0.5, (fz + 1.0) * 0.5))
+                    uvs.append(_uv(fy, fz))
             faces = [(iy * (nz + 1) + iz, (iy + 1) * (nz + 1) + iz,
                       (iy + 1) * (nz + 1) + iz + 1, iy * (nz + 1) + iz + 1)
                      for iy in range(ny) for iz in range(nz)]
-            return verts, faces, uvs
+            return verts, _wind(verts, faces, direction), uvs
 
     # ---- phase B: full ray grid -------------------------------------------
     hits = {}
@@ -142,8 +173,7 @@ def project_decal(scene, depsgraph, m):
             fz = -1.0 + 2.0 * iz / nz
             ok, hloc, hnorm, _i, _o, _mw = cast(fy, fz)
             if ok:
-                hits[(iy, iz)] = (hloc + hnorm * _OFFSET,
-                                  ((fy + 1.0) * 0.5, (fz + 1.0) * 0.5))
+                hits[(iy, iz)] = (hloc + hnorm * _OFFSET, _uv(fy, fz))
     if not hits:
         return None
 
@@ -177,4 +207,4 @@ def project_decal(scene, depsgraph, m):
             faces.append(tuple(vid(k) for k in ks))
     if not faces:
         return None
-    return verts, faces, uvs
+    return verts, _wind(verts, faces, direction), uvs
