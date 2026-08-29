@@ -51,7 +51,10 @@ Security baked in (design 10):
     (LRU evict the stalest); lobbies expire at LOBBY_TTL with no heartbeat.
   - /v1/lobbies served from a short cache so a fetch flood does bounded work.
   - bounded async HTTP (header/body caps + read timeout) -- no thread per request,
-    no slowloris pin (mirrors coop_signaling_server.py's posture).
+    no slowloris pin (mirrored coop_signaling_server.py's posture; that file was
+    RETIRED 2026-08-29 -- the rig runs the Rust relay. This master is the last
+    Python fixture standing, and it is condemned by the same argument; see
+    research/findings/network/votv-master-server-RE-and-rust-port-scope-2026-07-16.md).
 
 Config via env:
   COOP_MASTER_PORT           (default 10001)

@@ -166,13 +166,48 @@ direction, not just forward. So if the reporter is standing upright and only FOR
 dead, the suspect list above is incomplete and the next hypothesis has to be
 axis-specific.
 
-**THE ONE QUESTION THAT SPLITS IT, still unanswered after two reports:** do **A, S, D
-and mouse-look** work while W does not?
+**ANSWERED, same day, by the user: "all movements and controls work except the W".**
+So A, S, D and mouse-look are fine and ONLY forward is dead. That is the branch which
+says **every suspect listed above is wrong** -- a KO pin or a repeating teleport blocks
+every direction. The fault is axis-specific, and the page starts over from here.
 
-- *A/S/D work, only W dead* -> not KO, not teleport; something axis-specific, and every
-  suspect currently on this page is wrong.
-- *Nothing moves the character* -> KO pin or teleport, and the log settles which in one
-  grep (`ko_respawn: KO STARTED` with no `RESPAWNED`, vs repeated teleport lines).
+### Cleared by code this session (do not re-check these)
+
+- **The freecam freeze.** `freecam.cpp:FreezePlayerControl` uses `DisableMovement`
+  (MOVE_None), which stops ALL locomotion; a leaked freeze would kill A/S/D too.
+- **Our movement injectors.** `director` / `control_manager` / `proc_walkgrab` are the
+  only things in the tree that call `AddMovementInput`, and every one is spawned behind
+  a `VOTVCOOP_RUN_*` env gate (`autotest_dispatch.cpp:202-212`). None can run on a
+  player's launch.
+- **Our input interceptors.** Census of every `InpActEvt_*` we touch: `use` (73 sites),
+  `Escape`, `drop`, `fire`, `13`, `14`, `flashlight`, `spawnmenu`. Movement in UE is an
+  AXIS (`MoveForward`), not an action event -- we intercept no axis anywhere.
+- **The overlay swallow**, twice over now: cleared by code (F1 / `VK_OEM_3` / T / V /
+  ESC-while-chat only) and by the free-cam observation above.
+
+### The one hypothesis that fits ALL FOUR facts
+
+**Something holds "backward" at the game layer.** W(+1) and a held S(-1) sum to zero, so:
+forward is dead; S alone still reads -1, so backward works; A/D are a different axis and
+are untouched; and our freecam reads keys with `GetAsyncKeyState` (`freecam.cpp:53`),
+which sees only PHYSICAL keys -- so an injected or latched input is invisible to it and
+free-cam forward works. Nothing else proposed so far explains the free-cam half.
+
+It is a hypothesis, not a measurement. Nothing in our tree was found doing it (see the
+cleared list), so the next step is not more reading.
+
+### NEXT: the control test, then the instrument
+
+1. **The 30-second control the whole page hangs on, and only the reporter can run it:**
+   rename `Mods/Multivoid` aside and launch. If W works without the mod, it is ours and
+   a build bisect follows (the report began on b143; b133 is the last public release).
+   If W is dead without the mod too, every suspect here is moot and this is a game/config
+   fault.
+2. **The instrument gap, named so it stops recurring: NOTHING IN THE RIG EVER PRESSES W.**
+   `navprobe` proves locomotion with a reflected `AddMovementInput`, which bypasses the
+   key path entirely -- that is exactly why it passed while the field says forward is
+   dead. A probe that synthesises the KEY and measures pawn displacement (W, then S/A/D
+   as controls) is what would let this rig answer the question without the user at all.
 
 Also still wanted: **which build** (the overnight zip, r2modman, or a dev install) and
 the host `multivoid.log` **copied before the next launch** -- the rig rotates it, and
