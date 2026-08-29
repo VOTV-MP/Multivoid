@@ -26,10 +26,12 @@ most one peer owning a given ATV's tick per second. Exit 0 PASS / 1 FAIL /
     python tools/atv_probe_report.py                 # default HOST + CLIENT_1
     python tools/atv_probe_report.py <hostlog> <clientlog>
 """
+import hashlib
 import os
 import re
 import statistics
 import sys
+import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _REL = os.path.join("WindowsNoEditor", "VotV", "Binaries", "Win64", "multivoid.log")
@@ -128,7 +130,41 @@ def report_peer(name, data):
 # is chosen so the PREVIOUS build FAILS it -- a verdict that passes on the broken
 # build measures nothing. The b145 baseline is the autonomous two-peer run of
 # 2026-08-29 (commit ca64d098), recorded in docs/vehicles/ATV.md 13.
-BAND_CM = 4.0        # native suspension travel is 2-4 cm; baseline mirror hit 29.58
+# A1's thresholds, and WHY they are not the resting band any more.
+#
+# 4.0 cm was measured on a PARKED ATV (docs/vehicles/ATV.md 13). Grading a DRIVEN mirror
+# against it is a category error, and the 2026-08-30 run proved it: over a 20 s driven
+# window the mirror travelled 6.81 / 5.50 / 4.12 cm and "failed", while the AUTHOR's own
+# natively-driven rig -- the thing the mirror is supposed to resemble -- travelled
+# 4.68 / 4.19 / 6.59 cm in the same run. A test the authority itself fails is not a test of
+# the mirror.
+#
+# So A1 asks the two questions that actually matter, against the AUTHOR in the SAME window:
+#   A1a NOT FROZEN  -- the original question (docs/vehicles/ATV.md 11.1). A rigid rig holds
+#                      its wheel offsets to the bit: a resting one measured 0.001 cm, and the
+#                      b145 freeze model produced a corpse. 1.0 cm sits an order of magnitude
+#                      above that and below the 2-4 cm a merely PARKED rig breathes.
+#   A1b SAME REGIME -- the mirror may breathe more than the author (it is being corrected),
+#                      but not unboundedly. 2.5x is a DESIGN threshold, not a fitted one: it
+#                      is stated here so a later run can move it with evidence rather than
+#                      having it quietly track whatever was measured last.
+# A5's ceiling. A2 compares the two copies only at the END of the run, so it is blind to
+# what a watching player would actually see: how far the mirror TRAILS while the thing is
+# moving. Measured 2026-08-30 over a 20 s driven window: mean 129.5 cm, max 437.9 cm.
+#
+# That is not an accident, it is the corrector's own threshold. atv_sync's warp fires past
+# `kWarpBaseCm + kWarpPerSpeedS * |v|` = 200 + 0.5*|v| cm, which at ~480 cm/s is ~440 cm --
+# so a 437.9 cm trail is INSIDE the tolerance and no warp ever fired. MTA's equivalent
+# (CClientVehicle::UpdateTargetPosition:3867) is `15 + 10*|v|`: a small base and a large
+# speed term, i.e. the opposite shape, tightening as the vehicle goes faster where ours
+# stays flat.
+#
+# 150 cm is a stated DESIGN ceiling, not a fitted one: about one vehicle length, the point
+# at which a passenger would see the other player's ATV in the wrong place.
+TRAIL_MAX_CM = 150.0
+FROZEN_FLOOR_CM = 1.0
+REGIME_RATIO_MAX = 2.5
+BAND_CM = 4.0        # RESTING travel only -- reported for context, no longer a gate
 SETTLE_GAP_CM = 20.0 # end-of-run body gap; baseline was 109.9 cm and PERMANENT
 MIN_MIRROR_SAMPLES = 6
 
@@ -233,7 +269,21 @@ def acceptance(names, peers, logs):
                      "(an idle ATV is never mirrored -- the lane is invisible at rest). "
                      "WHY: " + arm_diagnosis(logs))
 
-    # A1 -- a MIRROR's rig stays inside the native band while someone drives.
+    # A1 -- does the MIRROR's rig behave like the AUTHOR's while someone drives?
+    # Both sides of the comparison come from the same run and the same seconds, so a
+    # difference is a statement about the mirror rather than about the terrain, the
+    # throttle, or which build measured the baseline.
+    author = {}   # key -> {wheel: range} measured on whoever OWNED the tick in-window
+    for nm, d in zip(names, peers):
+        for key, rows in d.items():
+            own = [r for r in rows if r["owns"] and r["parts"] and r["t"] in win]
+            if len(own) < MIN_MIRROR_SAMPLES:
+                continue
+            for lab, fld in (("frontR", "fr"), ("frontL", "fl"), ("back", "bk")):
+                sp = spread([r[fld] for r in own])
+                if sp is not None:
+                    author.setdefault(key, {})[lab] = (nm, sp["range"], sp["n"])
+
     for nm, d in zip(names, peers):
         for key, rows in sorted(d.items()):
             mir = [r for r in rows if not r["owns"] and r["parts"] and r["t"] in win]
@@ -245,12 +295,27 @@ def acceptance(names, peers, logs):
                 sp = spread([r[fld] for r in mir])
                 if sp is None:
                     continue
-                ok = sp["range"] <= BAND_CM
-                print("  A1 {:<9} {:<6} n={:<4} range={:8.4f} cm  {}".format(
-                    nm, lab, sp["n"], sp["range"], "PASS" if ok else "FAIL"))
-                if not ok:
-                    fails.append("A1 {} {} rig travel {:.2f} cm > {:.1f} cm while mirroring".format(
-                        nm, lab, sp["range"], BAND_CM))
+                ref = author.get(key, {}).get(lab)
+                frozen = sp["range"] < FROZEN_FLOOR_CM
+                ratio = (sp["range"] / ref[1]) if (ref and ref[1] > 0) else None
+                regime_bad = ratio is not None and ratio > REGIME_RATIO_MAX
+                verdict = "FAIL" if (frozen or regime_bad) else "PASS"
+                print("  A1 {:<9} {:<6} n={:<4} mirror={:7.3f} cm  author={:>9}  {:>7}  {}".format(
+                    nm, lab, sp["n"], sp["range"],
+                    "{:.3f} cm".format(ref[1]) if ref else "(none)",
+                    "x{:.2f}".format(ratio) if ratio is not None else "-", verdict))
+                if frozen:
+                    fails.append("A1 {} {} mirror rig travelled only {:.3f} cm (< {:.1f}) while "
+                                 "the ATV was driven -- a FROZEN rig".format(
+                                     nm, lab, sp["range"], FROZEN_FLOOR_CM))
+                elif regime_bad:
+                    fails.append("A1 {} {} mirror rig travelled {:.2f} cm = {:.2f}x the author's "
+                                 "{:.2f} cm (> {:.1f}x)".format(
+                                     nm, lab, sp["range"], ratio, ref[1], REGIME_RATIO_MAX))
+            if key not in author:
+                notes.append("A1 {}/{}: no peer owned the tick for {}+ samples in the driven "
+                             "window, so there is no author to compare against -- the FROZEN "
+                             "floor still applied".format(nm, key, MIN_MIRROR_SAMPLES))
 
     # A2 -- the two copies END the run together. The baseline's gap was not merely
     # large, it was PERMANENT: the release launched the mirror and nothing corrected
@@ -304,9 +369,54 @@ def acceptance(names, peers, logs):
             if c == 0 and a == 0:
                 notes.append("A3 {}: the guard armed but NEVER FIRED -- no ATV collision happened, "
                              "so its cancel path is still UNPROVEN by this run".format(nm))
+        # A SUBSTRING IS NOT AN EVENT. This scan fired on both peers of the 2026-08-30 run
+        # and neither had exploded: the only line containing either word was OUR OWN
+        # "hit guard armed -- ... (a non-owner cannot author damage/explode/ejectWheel)".
+        # An instrument that reports its own log text as a finding manufactures work, so the
+        # scan now excludes the lines this module writes about itself.
         for bad in ("explode", "ejectWheel"):
-            if bad in txt:
-                notes.append("A3 {}: log mentions '{}' -- check WHICH peer authored it".format(nm, bad))
+            hits = [ln for ln in txt.splitlines()
+                    if bad in ln and "hit guard armed" not in ln]
+            if hits:
+                notes.append("A3 {}: log mentions '{}' ({} line(s), e.g. {!r}) -- check WHICH "
+                             "peer authored it".format(nm, bad, len(hits), hits[0].strip()[:120]))
+
+    # A5 -- TRAIL. How far behind the author is the mirror WHILE THE ATV IS MOVING? A2 looks
+    # only at the last sample, so a mirror that lags metres through the whole drive and then
+    # catches up when everything stops passes it. This is the number a watching player sees.
+    if len(peers) > 1:
+        for key in sorted(set(peers[0]) & set(peers[1])):
+            by_peer = []
+            for d in peers:
+                m = {}
+                for r in d[key]:
+                    if r["t"] is not None and r["t"] in win:
+                        m.setdefault(r["t"], r)
+                by_peer.append(m)
+            secs = sorted(set(by_peer[0]) & set(by_peer[1]))
+            # Only seconds where exactly one side owned the tick: with no author there is no
+            # "behind" to measure, and a handoff second compares two authorities.
+            trails = []
+            for t in secs:
+                a, b = by_peer[0][t], by_peer[1][t]
+                if int(a["owns"]) + int(b["owns"]) != 1:
+                    continue
+                dx, dy, dz = a["bx"] - b["bx"], a["by"] - b["by"], a["bz"] - b["bz"]
+                trails.append((dx * dx + dy * dy + dz * dz) ** 0.5)
+            if len(trails) < MIN_MIRROR_SAMPLES:
+                notes.append("A5 {}: only {} single-author second(s) in the driven window -- "
+                             "no trail measurement".format(key, len(trails)))
+                continue
+            mean = sum(trails) / len(trails)
+            worst = max(trails)
+            ok = worst <= TRAIL_MAX_CM
+            print("  A5 trail key='{}' n={} mean={:.1f} cm  max={:.1f} cm  {}".format(
+                key, len(trails), mean, worst, "PASS" if ok else "FAIL"))
+            if not ok:
+                fails.append("A5 key='{}' the mirror trailed the author by up to {:.0f} cm while "
+                             "driving (mean {:.0f}) > {:.0f} -- atv_sync's warp fires only past "
+                             "kWarpBaseCm + kWarpPerSpeedS*|v|, which at drive speed is wider "
+                             "than this".format(key, worst, mean, TRAIL_MAX_CM))
 
     # A4 -- SINGLE SYNCER. At most one peer may own a given ATV's tick in the same second.
     if len(peers) > 1:
@@ -339,10 +449,58 @@ def acceptance(names, peers, logs):
     return 0
 
 
+def archive(paths, names):
+    """Keep the lines this verdict rests on, because the next run deletes them.
+
+    mp.py unlinks each peer's multivoid.log at launch, so the evidence behind a printed
+    verdict survives only until somebody starts a game -- which on a shared box can be a
+    different session, two minutes later, with no warning. That happened on 2026-08-30: a
+    run's A1 numbers were printed and its host log was gone before they could be examined.
+    A verdict whose evidence cannot be re-read is an anecdote.
+
+    Only the ATV-relevant lines are kept (a full pair is ~2 M lines and mostly unrelated),
+    plus a MANIFEST naming the source files and the deployed DLL, so a later reader can tell
+    which build produced them.
+    """
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    out = os.path.join(ROOT, "research", "atv_runs", stamp)
+    try:
+        os.makedirs(out, exist_ok=True)
+    except OSError as e:
+        print("  (archive skipped: {})".format(e))
+        return None
+    keep = re.compile(r"\[ATVP\]|^\[[\d:]+\] \[\w+ *\] atv[:_]|atv_probe|hit guard")
+    manifest = ["run archived {}".format(stamp), ""]
+    for nm, p in zip(names, paths):
+        dst = os.path.join(out, "{}.log".format(nm.lower()))
+        n = 0
+        try:
+            with open(p, encoding="utf-8", errors="replace") as fh, \
+                 open(dst, "w", encoding="utf-8") as w:
+                for ln in fh:
+                    if keep.search(ln):
+                        w.write(ln)
+                        n += 1
+        except OSError as e:
+            manifest.append("{}: UNREADABLE ({})".format(nm, e))
+            continue
+        manifest.append("{}: {} line(s) kept from {}".format(nm, n, p))
+        dll = os.path.join(os.path.dirname(p), "Mods", "Multivoid", "dlls", "main.dll")
+        if os.path.exists(dll):
+            h = hashlib.sha256(open(dll, "rb").read()).hexdigest()[:16].upper()
+            manifest.append("{}: deployed main.dll sha256[0:16] = {}".format(nm, h))
+    with open(os.path.join(out, "MANIFEST.txt"), "w", encoding="utf-8") as w:
+        w.write("\n".join(manifest) + "\n")
+    print("  archived to research/atv_runs/{}".format(stamp))
+    return out
+
+
 def main():
     paths = sys.argv[1:3] if len(sys.argv) >= 3 else DEFAULT
     names = ["HOST", "CLIENT_1"] if paths == DEFAULT else [p for p in paths]
     peers = [parse(p) for p in paths]
+    if "--no-archive" not in sys.argv:
+        archive(paths, names)
     for nm, p, d in zip(names, paths, peers):
         print("\nsource: {}".format(p))
         report_peer(nm, d)

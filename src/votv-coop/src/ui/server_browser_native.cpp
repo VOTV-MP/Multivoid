@@ -100,7 +100,6 @@ void* g_switcher = nullptr;
 void* g_root     = nullptr;   // our UUserWidget
 void* g_list     = nullptr;   // the UScrollBox holding the rows
 void* g_status   = nullptr;   // the footer UTextBlock
-void* g_title    = nullptr;
 void* g_scrimW   = nullptr;   // the full-screen scrim -- the thing that absorbs a stray click
 void* g_closeBtn = nullptr;   // the X, top-right of the title row
 void* g_backBtn  = nullptr;   // BACK, bottom-right beside the status line
@@ -131,9 +130,12 @@ bool    g_shown      = false;
 std::vector<std::string> g_rowIds;
 std::vector<Row> g_rows;
 uint64_t g_lastRefreshMs = 0;
-// A click's answer holds the footer for this long against the 5 s sync's rewrite.
+// A click's answer holds the footer for this long against the list sync's rewrite.
 constexpr uint64_t kNoticeMs = 6000;
 uint64_t g_noticeUntilMs = 0;
+int      g_visibleRows   = 0;   // rows actually SHOWN, not ChildCount's high-water mark
+float    g_lastScrollFrac  = -1.f;  // the list can move under a stationary cursor
+int      g_lastVisibleRows = -1;
 int      g_buildAttempts = 0;
 bool     g_toldTheUser   = false;
 
@@ -141,7 +143,14 @@ bool     g_toldTheUser   = false;
 std::atomic<uint64_t> g_wantOpenMs{0};   // 0 = no intent
 std::atomic<bool>     g_wantClose{false};
 constexpr uint64_t kIntentTtlMs  = 20000;  // a join that never returns to a menu must expire
-constexpr uint64_t kRefreshMs    = 1000;
+// FIVE SECONDS, WHICH IS WHAT WAS DECIDED. This read 1000 while
+// docs/MULTIPLAYER_UI.md section 8c.-1 recorded "USER 2026-08-26: the re-fetch cadence is
+// 5 s" -- and that section's own arithmetic is computed against 5 s ("one stalled frame
+// per sync is 0.17% of frames at the 5 s cadence"), so at 1 Hz every cost number in the
+// perf lane was understated 5x. It also gates `sm::Refresh()`, which spawns a detached
+// thread and a TLS handshake per fetch, so the old value paid five of those per five
+// seconds for a list that changes on the scale of a person deciding to host.
+constexpr uint64_t kRefreshMs    = 5000;
 
 // The five columns, in the order section 7c fixes them, with their fill weights.
 struct Column { const wchar_t* title; float weight; };
@@ -200,11 +209,20 @@ bool RowPartsAt(int32_t i, RowParts& out) {
     if (!box) return false;
     out.box = box;
     void* ovl = nullptr;
-    if (void* cw = R::FindClass(P::name::ContentWidgetClass)) {
-        if (void* fn = R::FindFunction(cw, L"GetContent")) {
-            ue_wrap::ParamFrame f(fn);
-            if (Call(box, f)) ovl = f.Get<void*>(L"ReturnValue");
-        }
+    // LATCHED. `R::FindFunction` has no result cache and walks the whole GUObjectArray, and
+    // this runs PER ROW inside SyncRows and RepaintRowFills -- 64 rows meant 64 full walks
+    // landing in one frame, every sync. `R::FindClass` beside it has been cached since
+    // `ca1cd5e4`; only this one was not. A UFunction never moves, so one resolve is all
+    // there is. (Post-ship perf audit, 2026-08-29. The general fix -- a cache inside
+    // `FindFunction` for all 476 call sites -- is filed separately and is not this lane.)
+    static void* sGetContent = nullptr;
+    if (!sGetContent) {
+        if (void* cw = R::FindClass(P::name::ContentWidgetClass))
+            sGetContent = R::FindFunction(cw, L"GetContent");
+    }
+    if (sGetContent) {
+        ue_wrap::ParamFrame f(sGetContent);
+        if (Call(box, f)) ovl = f.Get<void*>(L"ReturnValue");
     }
     if (!ovl) return false;
     out.bg = U::ChildAt(ovl, 0);
@@ -268,77 +286,25 @@ void RepaintRowFills() {
     }
 }
 
-// WHICH ROW IS UNDER THE CURSOR, evaluated ONLY when the cursor has actually moved.
+// WHICH ROW IS UNDER THE CURSOR, re-evaluated only when something could have changed it.
 //
-// THE OUTER GATE IS GEOMETRY, NOT `IsHovered`, and the difference is the whole feature.
+// IT DOES NOT ASK SLATE, AT EITHER LEVEL. This used to read "there is no cheaper way to
+// ask: FGeometry has no reflected members (size 0x38, empty), so the rows' screen rects
+// are not readable", and gate a per-row `IsHovered` walk on `IsHovered(g_list)`. Every
+// part of that was wrong: the rects ARE readable (through USlateBlueprintLibrary, never
+// through FGeometry's members), the outer gate is FALSE while the cursor is genuinely over
+// the list, and the row backgrounds do not answer either -- all three measured 2026-08-29.
+// The whole hit test now lives in `native_screen::ChildAtCursor`, which carries the
+// measurement, and the hosting window's world list uses the same one.
 //
-// This used to read "there is no cheaper way to ask: FGeometry has no reflected members
-// (size 0x38, empty), so the rows' screen rects are not readable" -- and gate the walk on
-// `IsHovered(g_list)`. Both halves were wrong. The rects ARE readable, through
-// USlateBlueprintLibrary rather than through FGeometry's own members
-// (`umg::WidgetScreenRect`); and the gate they justified is FALSE while the cursor is
-// genuinely over the list. Measured 2026-08-29 in one run: the wheel scrolled this exact
-// widget -- `WHEEL VERDICT YES`, view fraction 0.0000 -> 0.1000 -- and the same log line
-// records `hovered=0` for it. So Slate routes input to the box while `UWidget::IsHovered`
-// on it answers no; the same reading is true of the SizeBox and the panels above it, and
-// false only of leaves (a UImage scrim and a UButton both answer correctly). The
-// consequence was total rather than partial: the gate never opened, so no row ever
-// highlighted and `g_hoverRow` stayed -1, which is also the value the click path reads --
-// selection could not happen either.
-//
-// So the outer question "is the pointer over the list" is answered by containment against
-// the list's own screen rect, which is three dispatches, independent of row count, and
-// cannot disagree with where the widget actually is. The INNER walk keeps `IsHovered` per
-// row: rows are leaves, and leaves were measured to answer correctly.
-//
-// The cost story is unchanged and slightly better: a stationary cursor still costs zero
-// (the `moved || pending` gate above), and a moving one pays three dispatches plus a walk
-// that stops at the first hit, where before it paid one dispatch that ended the pass.
+// The consequence of the old shape was total rather than partial: the gate never opened,
+// so no row highlighted and `g_hoverRow` stayed -1 -- which is also what the click path
+// reads, so no server could be selected either.
 //
 // `NotePointerMoved()` used to exist for this and was never wired to anything -- no
 // caller, no consumer. GetCursorPos here is one syscall, needs no edit to the overlay's
 // input path, and sees movement regardless of how the message was routed; the dead seam is
 // retired with it (RULE 2).
-bool ListRect(ue_wrap::FVector2D& tl, ue_wrap::FVector2D& sz) {
-    if (!g_list || !U::WidgetScreenRect(g_list, tl, sz)) return false;
-    return sz.X >= 1.f && sz.Y >= 1.f;   // never painted: not under anything
-}
-
-bool Inside(const POINT& c, const ue_wrap::FVector2D& tl, const ue_wrap::FVector2D& sz) {
-    return c.x >= static_cast<long>(tl.X) && c.x < static_cast<long>(tl.X + sz.X) &&
-           c.y >= static_cast<long>(tl.Y) && c.y < static_cast<long>(tl.Y + sz.Y);
-}
-
-// IS THE CURSOR ON ROW `i`, asked of the row's rect rather than of Slate.
-//
-// MEASURED 2026-08-29, and this is the fact that decides the whole approach: a row's
-// background is a `UImage` with Visibility=Visible whose rect CONTAINS the cursor, with
-// every link in its parent chain Visible or SelfHitTestInvisible -- and
-// `UWidget::IsHovered()` on it reads **0**. The X, a `UButton` in the same screen and the
-// same tick, reads 1. The one structural difference is the UScrollBox between them.
-//
-// That falsifies this module's founding claim in the only context that matters here.
-// `server_browser_native.h:19` records "`IsHovered()` ANSWERS on a bare `UImage` with
-// Visibility=Visible: 1 with the cursor inside its rect, 0 outside -- that is the whole
-// hit-test". True, and it was measured on a scrim-shaped image at the ROOT of the tree; the
-// rows are not that, and nobody re-measured them there. The header now says so.
-//
-// So the rows do not ask. `intersected with the list` is not decoration: a row scrolled out
-// of view is not painted, so its cached geometry is whatever it was when it last WAS -- the
-// probe that found this saw rows 0 and 1 reporting positions above the list's top edge --
-// and a stale rect must not be allowed to claim a cursor that is inside the viewport.
-bool RowRectContains(int32_t i, const POINT& c, const ue_wrap::FVector2D& listTl,
-                     const ue_wrap::FVector2D& listSz) {
-    void* box = U::ChildAt(g_list, i);
-    ue_wrap::FVector2D tl{}, sz{};
-    if (!box || !U::WidgetScreenRect(box, tl, sz) || sz.X < 1.f || sz.Y < 1.f) return false;
-    const float top = tl.Y > listTl.Y ? tl.Y : listTl.Y;
-    const float bot = (tl.Y + sz.Y) < (listTl.Y + listSz.Y) ? (tl.Y + sz.Y)
-                                                            : (listTl.Y + listSz.Y);
-    if (bot <= top) return false;   // entirely scrolled out of the viewport
-    return c.y >= static_cast<long>(top) && c.y < static_cast<long>(bot) &&
-           c.x >= static_cast<long>(tl.X) && c.x < static_cast<long>(tl.X + sz.X);
-}
 void UpdateHover() {
     POINT c{};
     if (!::GetCursorPos(&c)) return;
@@ -354,25 +320,23 @@ void UpdateHover() {
     // So evaluate on every moving tick AND on one settling tick after motion stops. During
     // a sweep the highlight trails by a frame, which is 8.5 ms and invisible; when the
     // cursor stops, the settling pass lands it on the final row.
-    if (!moved && !g_hoverPending) return;   // stationary and already settled: free
-    g_hoverPending = moved;
+    // THE POINTER IS NOT THE ONLY THING THAT MOVES A ROW UNDER IT. The wheel scrolls this
+    // list without moving the cursor at all (measured: `WHEEL VERDICT YES`), and the sync
+    // can change how many rows there are. Gating on cursor motion alone left `g_hoverRow`
+    // pointing at whatever index was under the pointer BEFORE the scroll -- so the
+    // highlight rode away with the row, possibly off-screen, and a click then selected a
+    // server the player was not pointing at and could not see. One dispatch per tick buys
+    // the scroll term; the row count is free.
+    float frac = -1.f;
+    U::ViewOffsetFraction(g_list, frac);
+    const bool scrolled = frac != g_lastScrollFrac || g_visibleRows != g_lastVisibleRows;
+    g_lastScrollFrac  = frac;
+    g_lastVisibleRows = g_visibleRows;
 
-    int hit = -1;
-    ue_wrap::FVector2D listTl{}, listSz{};
-    if (ListRect(listTl, listSz) && Inside(c, listTl, listSz)) {
-        const int total = U::ChildCount(g_list);
-        // THE PREVIOUS ROW IS PROBED FIRST, and that is what makes this affordable. During
-        // a sweep the cursor is still on the SAME row on most frames, so ONE rect read
-        // answers; the walk with its early exit is the fallback, and it stops at the first
-        // containment rather than visiting every row.
-        if (g_hoverRow >= 0 && g_hoverRow < total &&
-            RowRectContains(g_hoverRow, c, listTl, listSz))
-            hit = g_hoverRow;
-        for (int i = 0; hit < 0 && i < total; ++i) {
-            if (i == g_hoverRow) continue;   // already probed
-            if (RowRectContains(i, c, listTl, listSz)) hit = i;
-        }
-    }
+    if (!moved && !scrolled && !g_hoverPending) return;   // nothing could have changed: free
+    g_hoverPending = moved || scrolled;
+
+    const int hit = NS::ChildAtCursor(g_list, g_visibleRows, c.x, c.y, g_hoverRow);
     if (hit == g_hoverRow) return;
 
     const int prev = g_hoverRow;
@@ -396,6 +360,13 @@ void SyncRows() {
     sm::CopyRows(g_rows);
     const int want = static_cast<int>(g_rows.size()) > kMaxRows ? kMaxRows
                                                                : static_cast<int>(g_rows.size());
+    // The hover walk reads this instead of ChildCount: rows are GROWN and never
+    // removed (a surplus row is Collapsed below, not destroyed), so ChildCount is a
+    // HIGH-WATER MARK -- once the list has held 64 it reports 64 forever, and the walk
+    // would read the geometry of rows that are not on screen. A collapsed widget is not
+    // arranged, so it keeps its last painted rect, which can still contain the cursor
+    // and win the hover shortcut over the real row beneath it.
+    g_visibleRows = want;
     int have = U::ChildCount(g_list);
     if (have < 0) have = 0;
     // GROW by building; SHRINK by COLLAPSING, never by detaching. Nothing roots a detached
@@ -456,7 +427,7 @@ void SyncRows() {
         g_rowIds[static_cast<size_t>(i)] = r.lobbyId;
     }
     // The footer mirrors the session's own status EXCEPT while a click's answer is still
-    // fresh. Without this the 5 s sync would wipe "Pick a server from the list first."
+    // fresh. Without this the list sync would wipe "Pick a server from the list first."
     // within a few frames of the player reading it, which reads as the button doing nothing.
     if (g_status && ::GetTickCount64() >= g_noticeUntilMs) {
         const std::string s = sm::Status();
@@ -566,7 +537,7 @@ bool BuildScreen(void* switcher) {
             // user said so after seeing it parked in the footer, which is where this first
             // moved it. The per-row Version column still carries what a player actually
             // needs here, which is each SERVER's pair, not ours.
-            g_title = AddText(titleRow, L"Multivoid  -  Server Browser", 24, kText,
+            AddText(titleRow, L"Multivoid  -  Server Browser", 24, kText,
                               kJustCenter, 1.f);
             g_closeBtn = BuildButton(titleRow, backDonor, L"X", 20);
             if (void* s = U::AddChild(titleBox, titleRow))
@@ -695,6 +666,12 @@ void Close() {
     g_wantClose.store(true, std::memory_order_relaxed);
 }
 
+void CloseNow() {
+    g_wantOpenMs.store(0, std::memory_order_relaxed);
+    g_wantClose.store(false, std::memory_order_relaxed);   // performed here, not deferred
+    Hide("replaced by a sibling screen");
+}
+
 bool IsOpen() { return g_shown; }
 
 int HoveredRow() { return g_hoverRow; }
@@ -703,7 +680,7 @@ const char* SelectedRowId() { return g_selectedId.c_str(); }
 bool SelectedRow(coop::net::lobby::LobbyRow& out) {
     if (g_selectedId.empty()) return false;
     // BY ID, never by index -- invariant 1 in this module's header. `g_rows` is refreshed
-    // from the master every 5 s and is not sorted, so the position that was selected is not
+    // from the master on a timer and is not sorted, so the position that was selected is not
     // the position that holds it now, and a positional read would hand a player a different
     // server than the one they clicked.
     for (const Row& r : g_rows) {
@@ -754,7 +731,7 @@ void OnMenuTick(void* menu, void* switcher) {
     // Rebuild on a new menu instance (the old widgets died with it).
     if (menu != g_menu) {
         g_menu = menu;
-        g_root = nullptr; g_list = nullptr; g_status = nullptr; g_title = nullptr;
+        g_root = nullptr; g_list = nullptr; g_status = nullptr;
         g_closeBtn = nullptr; g_backBtn = nullptr; g_scrimW = nullptr;
         ui::server_browser_actions::Forget();
         g_ourIndex = -1; g_shown = false; g_buildAttempts = 0; g_toldTheUser = false;
@@ -822,23 +799,12 @@ void OnMenuTick(void* menu, void* switcher) {
     // navigates away on a stale widgetEnter, which the reconcile below then observes).
     {
         const bool esc = (::GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
-        const bool wasPrimed = g_escPrimed;
-        const bool prevEsc   = g_prevEsc;
         if (!g_escPrimed) { g_escPrimed = true; g_prevEsc = esc; }
         const bool pressEdge = esc && !g_prevEsc;
-        // ONE-SHOT DIAGNOSTIC. ESC has not closed this screen in any run on 2026-08-26,
-        // while the selftest's own GetAsyncKeyState reads the key DOWN at the same moment
-        // -- so the key reaches the process and the EDGE is being eaten somewhere in these
-        // four lines. Print the inputs the first time the key reads down without producing
-        // an edge; that names which of prevEsc / primed did it, which no amount of reading
-        // the code has settled.
-        static bool loggedEatenEdge = false;
-        if (esc && !pressEdge && !loggedEatenEdge) {
-            loggedEatenEdge = true;
-            UE_LOGW("server_browser_native: ESC reads DOWN but produced NO press edge "
-                    "(prevEsc=%d wasPrimed=%d shown=%d) -- this is why the screen did not "
-                    "close", prevEsc ? 1 : 0, wasPrimed ? 1 : 0, g_shown ? 1 : 0);
-        }
+        // (A one-shot 'ESC produced no edge' diagnostic stood here until 2026-08-29. It
+        // was written to find why ESC did not close the screen; the cause turned out to
+        // be that no input reached the game at all while an ImGui surface held capture,
+        // which this could never have shown. RULE 2: it goes with its question.)
         g_prevEsc = esc;
         if (pressEdge) {
             Hide("ESC");

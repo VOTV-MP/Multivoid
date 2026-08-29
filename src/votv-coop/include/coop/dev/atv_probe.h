@@ -26,7 +26,7 @@
 // host-vs-client. It is not a selftest and asserts nothing: at this stage we do not
 // know the right answer, which is the point.
 //
-// THE DRIVE ARM ([dev] atv_probe_sit=1, HOST only, one shot).
+// THE DRIVE ARM ([dev] atv_probe_sit=1, ONE peer, one shot).
 // Sampling an IDLE ATV measures nothing about a MIRROR, because an idle ATV is never
 // mirrored: atv_sync.cpp releases an unauthored one and no peer streams it. So the open
 // question -- docs/vehicles/ATV.md 11.1, do a mirror's wheels follow its body -- needs
@@ -37,7 +37,13 @@
 // So the arm seats and then drives, in three measured steps (all disasm-cited in the
 // .cpp): actionName(player, hit, "sit") -> release the handbrake via the game's own
 // setBrake() -> hold input_forward for 30 s -> dismount(). It is the ONLY write the probe
-// makes, it is off by default, and it is host-only.
+// makes and it is off by default.
+//
+// It runs on whichever peer sets the flag -- NOT host-only. That was measured, not chosen:
+// the seat verb refuses a player whose hands are full, and the host's test save has him
+// holding a prop_coingun_C. Arming the FRESH-booted client instead costs no world mutation
+// and exercises the harder direction (a client-authored ATV mirrored by the host). Set the
+// flag on exactly ONE peer -- two armed peers race for the same rig.
 //
 // It replaces a call to ATV_C::playerSit, which is a DEAD STUB on this build -- it writes
 // a ubergraph variable nothing reads and jumps to a bare EX_PopExecutionFlow. Four runs

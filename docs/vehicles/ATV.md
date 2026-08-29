@@ -614,9 +614,13 @@ reads **only** bit3 (`authored`). Bits 0–2 are produced and never consumed; bi
 
 ## 11. Open questions (unmeasured — the honest list)
 
-1. ~~**[?] Do mirrored wheels follow the body?**~~ **MEASURED 2026-08-29 [V]** — see §13, the
-   instrumented baseline. Short answer: **idle, the two peers agree almost exactly; the moment the
-   host authors the ATV they come apart**, and the release path *launches* the other peer's copy.
+1. ~~**[?] Do mirrored wheels follow the body?**~~ **ANSWERED 2026-08-30 [V] — YES.** The b145
+   baseline (§13) could only say what an IDLE pair did, because no run had ever driven one. The first
+   driven run (§15) measured a mirror's suspension over a 20 s driven window at
+   **1.56 / 2.08 / 5.67 cm** against the author's **2.08 / 2.29 / 2.63 cm** — ratios 0.75 / 0.91 /
+   2.16, i.e. the same regime, and an order of magnitude above the 0.001 cm a rigid rig holds. The
+   mirror is not a corpse. What the same run DID find is a different question the doc had not asked:
+   it TRAILS (§15.2).
 2. **[?] Where is `hasGuns` consumed?** Not in `ATV.json`. Candidates: `prop_funGun_atv`, `mainPlayer`.
 3. **[?] Is `tiresTypes[3]` genuinely never applied?** `setWheelsType` reads indices 0, 1, 2 only.
 4. ~~**[?] Is the ATV's key cross-peer stable?**~~ **ANSWERED [V]** — `docs/COOP_SYNC_MAP.md:139`
@@ -628,7 +632,7 @@ reads **only** bit3 (`authored`). Bits 0–2 are produced and never consumed; bi
 
    | step | method | result |
    |---|---|---|
-   | 1 | byte-scan the 8.17 GB `VotV-WindowsNoEditor.pak` for the FName `ATV_C `, mapping each hit offset to its mounted index entry (20,873 packages) | **104 owners**: 81 `maps/` + **23 non-map** |
+   | 1 | byte-scan the 8.17 GB `VotV-WindowsNoEditor.pak` for the FName `ATV_C` + a NUL terminator (written in words: a literal NUL byte here made git treat this whole doc as BINARY and every diff of it unreadable), mapping each hit offset to its mounted index entry (20,873 packages) | **104 owners**: 81 `maps/` + **23 non-map** |
    | 2 | maps are load-time PLACEMENTS, not runtime spawns | excluded |
    | 3 | of the 23, test for the presence of ANY spawn FName (`BeginDeferredActorSpawnFromClass` / `SpawnActor` / `FinishSpawningActor`) in the package bytes | **10 contain none** → cannot spawn anything |
    | 4 | disassemble the remaining 13 (7 already in the corpus + 6 extracted and run through `kismet-analyzer to-json` this pass) | **0 `ATV_C` spawn sites.** The only ATV-adjacent spawns are the ATV spawning its own parts (`prop_atvWheel_C` x3, `prop_atvcarbattery_C`, `prop_inventoryContainer_atv_C`) and `trigger_eventer` spawning `event_arirFuelsAtv_C` / `_toolbox_C` |
@@ -745,6 +749,11 @@ That makes the release path itself a measured divergence SOURCE, which the C1 de
 
 ## 14. Arc 1 commit 1 — AS-BUILT (2026-08-29, `070c7d29` + `a2a45fc7`, proto 146)
 
+> **READ §15 FIRST.** On 2026-08-30 an ATV was DRIVEN cross-peer for the first time, and that run
+> answered §11.1, proved §14.5's collision-guard cancel path, and **falsified §14.6's attribution
+> in this doc's own words**. §14.5 and §14.6 below carry supersede stamps; where they and §15
+> disagree, §15 is what was measured.
+
 **Status: AS-BUILT, autonomous evidence only — NOT hands-on.** DLL `405E4F67CB5FEADC`, deployed to
 all four folders, two-peer smoke PASS. Design of record:
 `research/findings/vehicles/votv-ATV-arc1-mirror-model-IMPL-2026-08-29.md` (local-only).
@@ -793,11 +802,20 @@ the quantity lying about whether convergence was possible.
   appears in ZERO samples across four runs and the acceptance's A1 arm is INCONCLUSIVE **by its own
   design**. Fixing the arm is the next instrument job. This also means §9.4's mirrored-wheel question,
   though it can no longer occur *by construction*, has still never been watched under load.
-- **The collision guard armed 7/7 on both peers but its CANCEL path never fired** — no ATV collided in
+- ~~**The collision guard armed 7/7 on both peers but its CANCEL path never fired**~~ **CLOSED 2026-08-30 [V] — it fired: 19,399 cancelled / 3,911 allowed on the client and 2,587 / 22,409 on the host, and the ratio is the design (see §15.4).** Original text: no ATV collided in
   any run. Armed is not fired (`docs/COOP_DISPATCH_VISIBILITY.md`'s coin-lane row is the precedent).
 - **NOT hands-on.** Everything here is autonomous.
 
-### 14.6 `[V]` A residual that is NOT this lane's defect — the peers' WORLDS differ under the ATV
+### 14.6 ~~`[V]` A residual that is NOT this lane's defect — the peers' WORLDS differ under the ATV~~
+
+> **SUPERSEDED 2026-08-30 — THE ATTRIBUTION BELOW IS WRONG, and it is kept because being wrong in
+> this particular way is the lesson.** The reasoning was: the gap is constant, it survives a rig
+> teleport, therefore it is the ground. Every one of those observations was true. What was never
+> tested is the one thing that would have separated "the ground here" from "something the lane
+> acquires": **move the ATV and look again.** The first driven run did that. Starting at the same
+> parking spot the two copies were **3.5 cm apart in Z**; after a 20 s drive that ended ~4 km away
+> they were **39.6 cm apart** — the gap is ACQUIRED DURING THE DRIVE and then persists, so it is
+> not a property of the parking spot and not the terrain. See §15.3. Original text follows.
 Every run ends with the two copies **40.5 cm apart in Z only, exactly constant**. It survives a full
 rig teleport onto the host's pose: the corrector's cut fired **nine times** in one run and the client's
 copy fell back to the same 40.5 cm each time. From an identical save pose the host's ATV settles UP
@@ -805,3 +823,77 @@ copy fell back to the same 40.5 cm each time. From an identical save pose the ho
 pose lane can hold a mirror where its own world has no floor. `tools/atv_probe_report.py` now
 ATTRIBUTES this instead of blaming the corrector. **File against the world / save-transfer lane, not
 against C1.**
+
+---
+
+## 15. `[V]` The first DRIVEN cross-peer measurement (2026-08-30, autonomous, NOT hands-on)
+
+Everything in §13 and §14 was measured on an ATV that **nobody ever drove**. That was not a choice:
+the probe's arm called `ATV_C::playerSit`, which is a **dead stub** on this build — it writes
+ubergraph variable `K2Node_Event_player_18`, which has zero readers anywhere in
+`ExecuteUbergraph_ATV`, and jumps to `ExecuteUbergraph_ATV(9122)`, a bare `EX_PopExecutionFlow`
+`[V, disasm]`. Four runs called it, logged "SIT fired", and seated nobody.
+
+**The live seat verb is `actionName(player, hit, name)` with `name == "sit"` → uber `@46046`**, gated
+three deep before the seat body at `@5616` `[V, disasm]`:
+
+| gate | test | else |
+|---|---|---|
+| `@46420` | `abs(player.fallVeloc.Z) < 800` | punched off (`@46870`) |
+| `@46522` | `player.checkEquip()` reports EMPTY hands | `addHint` (`@46753`) |
+| `@46645` | `playerHit` overlaps nothing at index 0 | `addHint` (`@46659`) |
+
+The seat body attaches and teleports the player onto `playerHit`, possesses the ATV and sets
+`isDriven := true` (`@6227`) — **it needs no proximity of its own**, so an instrument may call it from
+wherever the player happens to be. Gate 2 is why the arm no longer runs on the host: the host's test
+save has the player holding a `prop_coingun_C` (`checkEquip.empty=0`, measured), so the arm runs on
+whichever peer sets `[dev] atv_probe_sit=1` and the fresh-booted CLIENT drives — which also exercises
+the harder direction, a client-authored ATV mirrored by the host.
+
+Torque needs `isDriven` (`@29949` gates `applyWheelTorque`) **and** a non-zero `torqAlpha`, whose
+producer bails whole at `@34866` on `empty || brake || brokenn || underwater || battery <= 0`. A
+parked ATV is on its handbrake, so the arm releases it through the game's own `setBrake()`.
+
+### 15.1 The run
+`research/atv_runs/20260830-002246/` (archived — mp.py deletes each peer's log at launch). DLL
+`B1E659B76A0C01A2`, proto 146, two-peer LAN smoke PASS, **20.2 s of continuous driven time, zero
+ejections**. The throttle is PULSED (250 ms on / 750 ms off): at full throttle the rig covered 9.6 m
+in 2.5 s, hit something, and the game **ragdolled the driver out at 600 cm/s** — a base is not a test
+track, so the arm banks cumulative driven time and re-seats after a crash.
+
+### 15.2 `[V]` THE HEADLINE: the mirror TRAILS, and the corrector's own threshold permits it
+Over the driven window the mirror sat **mean 134 cm / max 438 cm** behind the author.
+
+That is not a surprise once the constant is read: `atv_sync.cpp:107-108` warps past
+`kWarpBaseCm + kWarpPerSpeedS * |v|` = `200 + 0.5*|v|` cm, which at the ~480 cm/s the arm reached is
+**~440 cm** — so a 438 cm trail is INSIDE tolerance and **the warp never fired**. MTA's equivalent
+(`CClientVehicle::UpdateTargetPosition:3867`) is `15 + 10*|v|`: a small base and a large speed term,
+the opposite shape — it tightens as the vehicle speeds up where ours stays flat. Graded from now on
+by acceptance arm **A5** (`TRAIL_MAX_CM = 150`, a stated design ceiling of about one vehicle length).
+**Retuning those two constants is arc-1 commit 2 work and owes its own before/after run.**
+
+### 15.3 `[V]` The Z residual is ACQUIRED, not inherent — §14.6 corrected
+| phase | Z gap (host − client) | horizontal |
+|---|---|---|
+| idle, before the drive | **3.5 cm** | 3.4 cm mean |
+| driven | mean −2.7, min −61.8, max +115.2 | mean 129.5, max 437.9 |
+| idle, after the drive (~4 km away) | **39.6 cm, constant** | 3.4 cm mean |
+
+The two copies agree at the parking spot to 3.5 cm and are 39.6 cm apart in Z after the drive. So the
+40 cm is not the terrain under the parking spot; the lane acquires it while driving and the corrector
+never closes it — the stall detector cuts to the authority's pose and the rig settles back. **Open,
+and now correctly scoped to this lane rather than filed against world/save-transfer.**
+
+### 15.4 `[V]` The collision guard's cancel path, proven
+Counters over the run: **client 19,399 cancelled / 3,911 allowed; host 2,587 / 22,409.** The ratio is
+the design, not an anomaly: the client authored the ATV for ~20 s of a ~180 s run, so it cancels for
+most of it, and the host — the idle syncer whenever `authorSlot == 0xFF` — allows for most of it and
+cancels only during the client's authorship. §14.5's "armed but never fired" is closed.
+
+### 15.5 What this run still does NOT establish
+- **NOT hands-on.** Autonomous throughout.
+- **A2 still FAILS** (54.2 cm settled gap) and A5 fails; only A1, A3 and A4 pass.
+- The client-side mirror is unmeasured in the driven window (1 sample): the ATV is authored BY the
+  client, so the host is the only mirror there is. Grading the client's mirror needs a host-driven
+  run, which needs a host save whose player has empty hands.
+- Nothing here measures a THIRD peer, and A4's single-syncer arm has only ever seen two.

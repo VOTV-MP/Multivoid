@@ -56,21 +56,18 @@ void DoConnect() {
 // chosen. It does NOT host anything itself: there is exactly one host action in the tree
 // (`session_manager::HostWithSave`) and that window is what calls it.
 //
-// The browser closes, because the two screens are siblings in the same switcher and both
-// being "open" would mean two of our children fighting over the active index.
+// The browser closes FIRST and SYNCHRONOUSLY, and the order is the whole correctness of
+// this function. Both screens are children of one switcher, and the window records the
+// index it replaces so its Back can restore it -- so the browser must already be gone when
+// the window opens, or the window's Back returns the player to a browser that is no longer
+// listening and cannot be closed. `CloseNow` states that ordering instead of leaving it to
+// which observer happens to tick first; see its declaration for the measurement.
 //
-// ORDER IS LOAD-BEARING AND IT IS ALREADY RIGHT: both calls record a deferred intent, and
-// `multiplayer_menu.cpp:229-232` ticks the browser BEFORE the host window -- so next tick
-// the browser restores the switcher's prior index and only then does the host window claim
-// it. Reversed, the browser's restore would land last and hide the window that had just
-// opened. If a third native screen is ever added, that ordering is what to check first.
-//
-// KNOWN AND DELIBERATE: this is a one-way door. The host window records the index it
-// replaced, which by then is the MAIN MENU, so its Back returns there rather than to the
-// browser -- the same behaviour every native VOTV sub-screen has.
+// KNOWN AND DELIBERATE: this is a one-way door. Back from the hosting window returns to the
+// MAIN MENU, not to the browser -- the same behaviour every native VOTV sub-screen has.
 void DoHost() {
+    SB::CloseNow();
     ui::host_window_native::Open();
-    SB::Close();
 }
 
 void DoRefresh() {

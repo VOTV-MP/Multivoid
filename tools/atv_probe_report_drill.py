@@ -59,14 +59,35 @@ def run(host_rows, client_rows, host_armed=True, client_armed=True, counters=(3,
     return p.returncode, p.stdout + p.stderr
 
 
-def healthy(owns_host=1, owns_client=0, bk_client=93.7, gap=0.3):
-    """A run the v146 build should produce: host drives, client mirrors inside the band."""
+# A DRIVEN rig BREATHES, and the fixture has to say so.
+#
+# Until 2026-08-30 `healthy()` emitted a mirror whose front wheels never moved at all
+# (93.773 every sample) and whose back wheel moved 0.11 cm over the window -- i.e. the
+# frozen corpse the whole mirror model exists to prevent -- and the drill called it the
+# healthy control. It passed because the old A1 only had a CEILING: it could catch a mirror
+# that travelled too much and was blind to one that did not travel at all. The fixture now
+# breathes on both peers, in the same regime, at the amplitude a real driven run measured
+# (2026-08-30: author 4.68/4.19/6.59 cm, mirror 6.81/5.50/4.12 cm over 20 driven seconds).
+import math
+
+
+def breathe(base, amp, i, phase=0.0):
+    return base + amp * math.sin(i * 0.9 + phase)
+
+
+def healthy(owns_host=1, owns_client=0, gap=0.3, mirror_amp=2.4, author_amp=2.2):
+    """A run the v146 build should produce: host drives, client mirrors in the same regime."""
     hs, cs = [], []
     for i in range(12):
         t = stamp(40 + i)
-        hs.append(line(t, i, "ATV", 1, owns_host, 100.0, 0.0, 0.0, 93.773, 93.773, 71.914 + 0.01 * i))
+        hs.append(line(t, i, "ATV", 1, owns_host, 100.0, 0.0, 0.0,
+                       breathe(93.773, author_amp, i),
+                       breathe(93.773, author_amp, i, 0.3),
+                       breathe(71.914, author_amp * 1.4, i, 0.6)))
         cs.append(line(t, i, "ATV", 0, owns_client, 100.0 + gap, 0.0, 0.0,
-                       93.773, 93.773, bk_client + 0.01 * i))
+                       breathe(93.773, mirror_amp, i, 0.15),
+                       breathe(93.773, mirror_amp, i, 0.45),
+                       breathe(71.914, mirror_amp * 1.4, i, 0.75)))
     return hs, cs
 
 
@@ -121,10 +142,20 @@ def main():
     arm("control: healthy run", "PASS", run(*healthy()))
 
     # A1 RED -- the b145 mirror's measured rig travel (29.58 cm over the driven window).
-    hs, cs = healthy()
+    # Under the ratio rule this is ~13x the author's, far past REGIME_RATIO_MAX.
+    hs, _ = healthy()
     cs = [line(stamp(40 + i), i, "ATV", 0, 0, 100.3, 0.0, 0.0,
                93.773, 93.773, 71.914 + 2.69 * i) for i in range(12)]
     arm("A1 RED: b145 rig travel 29.6cm", "FAIL", run(hs, cs))
+
+    # A1 RED -- THE FROZEN CORPSE, which the pre-2026-08-30 acceptance could not detect at
+    # all: a mirror whose wheel offsets never change while the ATV is being driven. This is
+    # the failure docs/vehicles/ATV.md 11.1 was written to ask about, and it was the drill's
+    # own "healthy" fixture until the ratio rule exposed it.
+    hs, _ = healthy()
+    cs = [line(stamp(40 + i), i, "ATV", 0, 0, 100.3, 0.0, 0.0,
+               93.773, 93.773, 71.914) for i in range(12)]
+    arm("A1 RED: mirror is a frozen corpse", "FAIL", run(hs, cs))
 
     # A2 RED -- the b145 settled gap: the release launched the copy and nothing
     # corrected it again.
@@ -138,6 +169,15 @@ def main():
     # A4 RED -- both peers claim the same ATV's tick: the single-syncer invariant broken.
     hs, cs = healthy(owns_client=1)
     arm("A4 RED: two owners in one second", "FAIL", run(hs, cs))
+
+    # A5 RED -- the mirror trails the author by metres while the ATV moves, then catches up.
+    # A2 cannot see this: both copies END together. This is the 2026-08-30 measurement
+    # (max 437.9 cm) turned into a control, and it is the number a watching player sees.
+    hs, cs = healthy()
+    cs = [line(stamp(40 + i), i, "ATV", 0, 0, 100.0 + (0.0 if i >= 10 else 300.0), 0.0, 0.0,
+               breathe(93.773, 2.4, i, 0.15), breathe(93.773, 2.4, i, 0.45),
+               breathe(71.914, 3.4, i, 0.75)) for i in range(12)]
+    arm("A5 RED: mirror trails 3 m while driving", "FAIL", run(hs, cs))
 
     # INCONCLUSIVE -- nobody drove, so no mirror ever existed. This must NOT read as PASS:
     # an idle ATV is never mirrored, so a quiet run proves nothing about the corrector.
@@ -174,8 +214,7 @@ def main():
     if bad:
         print("DRILL FAIL")
         return 1
-    print("DRILL PASS -- the acceptance rejects the b145 baseline on all four axes, "
-          "and names WHY when the arm itself is what failed.")
+    print("DRILL PASS -- the acceptance rejects the b145 baseline on all four axes, catches a\n      FROZEN mirror as well as a wild one, and names WHY when the arm itself failed.")
     return 0
 
 

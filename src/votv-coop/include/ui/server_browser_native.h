@@ -66,6 +66,22 @@ void Open();
 // any pending intent. Safe from any thread.
 void Close();
 
+// Close it RIGHT NOW, on the game thread, restoring the switcher index before returning.
+//
+// `Close()` is a deferred intent and that is wrong for one caller: opening a SIBLING screen.
+// Both screens are children of one switcher, and the hosting window records the index it
+// replaced so its Back can restore it. If the browser is still the active child when the
+// window opens -- which is what a deferred close guarantees, since the window's own tick
+// runs three lines later in the SAME menu tick -- the window records the BROWSER's index,
+// the browser's later Hide sees the index is no longer its own and skips the restore, and
+// Back then lands the player on a browser whose `g_shown` is false: it paints, and every
+// key and click it owns is dead. Stranded until a level travel.
+//
+// Measured 2026-08-29 from the log line `host_window_native: shown (index 11 -> 12)` -- 11
+// is the browser. The self-check could not see it: it asserts the window is up and the
+// browser is closed, and both were true while the chain was corrupt.
+void CloseNow();
+
 // True while our screen is the switcher's active child. Reconciled against the live index
 // every tick, so a sibling screen navigating away is observed rather than assumed.
 bool IsOpen();

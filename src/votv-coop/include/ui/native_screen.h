@@ -101,4 +101,28 @@ void* AddFramedBox(void* parent, const FLinearColor& fill, float borderPx);
 // UButton because that is what carries the game's press and hover sounds.
 void* BuildButton(void* parent, void* donorBtn, const wchar_t* label, int32_t fontSize);
 
+// WHICH CHILD OF `panel` IS UNDER THE CURSOR, by GEOMETRY. -1 for none.
+//
+// This exists because asking Slate does not work here, and the measurement is worth
+// carrying with the function: a row background is a `UImage` with Visibility=Visible whose
+// rect CONTAINS the cursor, with every link in its parent chain Visible or
+// SelfHitTestInvisible -- and `UWidget::IsHovered()` on it reads **0** when it sits inside
+// a `UScrollBox`. A `UButton` outside the ScrollBox in the same screen and the same tick
+// reads 1. Measured 2026-08-29 on the server browser, whose row hover and row SELECTION had
+// therefore never worked; the hosting window shipped the same day with the same construct.
+// Both call this now, which is the only reason it lives in the shared kit rather than in
+// one of them.
+//
+// `count` is how many children are actually SHOWN, not `ChildCount`: screens here grow rows
+// and never remove them (a surplus row is Collapsed), so ChildCount is a high-water mark
+// and a collapsed widget keeps the rect it last painted with -- which can still contain the
+// cursor and win. `hint` is the previously-hovered index, probed first: during a sweep the
+// pointer is on the same row for most frames, so the common case costs ONE rect read.
+//
+// The walk is ordered and stops early: children are stacked top to bottom, so the first one
+// that begins BELOW the cursor proves every later one does too. Without that, a cursor in
+// the empty space under the last row of a short list walked every row, every moving frame,
+// and found nothing -- and a 470 px list showing three servers is more than half empty.
+int32_t ChildAtCursor(void* panel, int32_t count, long cx, long cy, int32_t hint = -1);
+
 }  // namespace ui::native_screen

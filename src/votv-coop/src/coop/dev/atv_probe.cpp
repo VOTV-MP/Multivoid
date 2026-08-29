@@ -36,11 +36,25 @@ std::chrono::steady_clock::time_point g_firstValid{};
 // boot: the ATV is in GUObjectArray with body=(0,0,0) for ~15 samples before its
 // components exist, and seating into a rig that is not there yet proves nothing.
 constexpr int kSitDelayMs = 25000;
-// How long to hold the throttle once seated. The 2026-08-29 baseline
+// How much CUMULATIVE driven time the arm wants. The 2026-08-29 baseline
 // (docs/vehicles/ATV.md 13) measured the two peers agreeing to 0.3 cm AT REST, so a
 // seated-but-stationary ATV re-measures the case that already passes; the corrector is
 // only under load while the rig is actually moving.
-constexpr int kDriveMs = 30000;
+//
+// CUMULATIVE, not contiguous, and that is measured: on the first run that ever drove one
+// (2026-08-30, 00:06:47) the ATV covered 9.6 m in 2.5 s at full throttle, hit something,
+// and the game RAGDOLLED the driver out at 600 cm/s -- `net: RagdollPose emit #1
+// |linVel|=600 cm/s` in the same second the seat emptied. A base full of geometry is not a
+// test track, so an arm that demands one contiguous window measures ~2 s and stops. It
+// re-seats instead, and counts only the time the rig was actually driven.
+constexpr int kDriveMs = 20000;
+// Full throttle saturates torqAlpha (1500) in about a second and the rig is then travelling
+// fast enough that the next thing it meets ends the run. Pulsing keeps it moving -- which is
+// all the corrector needs -- without winding up to crash speed.
+constexpr int kPulseOnMs  = 250;
+constexpr int kPulseOffMs = 750;
+// A crash costs a re-seat; cap them so a rig wedged against a wall cannot loop forever.
+constexpr int kMaxReseats = 6;
 // The seat verb is refused, not queued, when the player is mid-fall (@46420) -- so a
 // refusal is worth retrying a couple of times before the arm gives up and says so.
 constexpr int kSitRetries    = 3;
@@ -75,6 +89,11 @@ Arm g_arm = Arm::Wait;
 int  g_sitTries = 0;
 std::chrono::steady_clock::time_point g_lastSitTry{};
 std::chrono::steady_clock::time_point g_driveStart{};
+std::chrono::steady_clock::time_point g_lastDriveSample{};
+long long g_drivenMs = 0;     // cumulative time the rig was ACTUALLY driven
+int  g_reseats   = 0;
+bool g_pulseOn   = false;
+std::chrono::steady_clock::time_point g_pulseEdge{};
 void* g_armAtv = nullptr;
 
 void* g_actionNameFn = nullptr;  // ATV_C::actionName(player, hit, name)
@@ -245,10 +264,21 @@ void SampleOne(void* atv, size_t idx) {
     }
 }
 
-// A peer whose world is still loading is not a mirror. Slot 0 is us.
+// Is there ANOTHER peer whose world is loaded -- i.e. somebody who can mirror this rig?
+//
+// The scan starts at slot 0 and skips OUR OWN slot, which is the whole subtlety and cost a
+// run to find. `slotWorldReady_` means different things on the two roles [V,
+// subsystems.cpp:356 + event_feed.cpp:236]: a HOST marks a CLIENT slot when that client
+// announces ClientWorldReady, while a CLIENT marks SLOT 0 at its connect edge because "the
+// host always has a world". A loop over slots 1..N is therefore correct on a host and
+// vacuously false on a client -- which is exactly what the drive arm reported for a whole
+// 150 s run once the arm moved to the client ("no peer is world-ready yet", forever).
 bool AnyPeerWorldReady(coop::net::Session& s) {
-    for (int slot = 1; slot < static_cast<int>(coop::net::kMaxPeers); ++slot)
+    const int mine = static_cast<int>(coop::players::Registry::Get().LocalPeerId());
+    for (int slot = 0; slot < static_cast<int>(coop::net::kMaxPeers); ++slot) {
+        if (slot == mine) continue;
         if (s.IsSlotWorldReady(slot)) return true;
+    }
     return false;
 }
 
@@ -260,7 +290,8 @@ void Install() {
         g_enabled  = ::coop::config::ResolveFlag(::coop::config_registry::rows::atv_probe);
         g_sitArmed = ::coop::config::ResolveFlag(::coop::config_registry::rows::atv_probe_sit);
         if (g_enabled) UE_LOGI("atv_probe: ENABLED (ini [dev] atv_probe=1) -- sampling every %d ms "
-                               "(sit arm %s)", kSampleMs, g_sitArmed ? "ARMED" : "off");
+                               "(drive arm %s on THIS peer)", kSampleMs,
+                               g_sitArmed ? "ARMED" : "off");
     }
     if (!g_enabled || g_installed) return;
     g_installed = true;
@@ -379,7 +410,11 @@ void StartDrive(void* atv) {
         }
     }
     WriteBool(atv, g_bInputFwd, true);
-    g_driveStart = std::chrono::steady_clock::now();
+    const auto now = std::chrono::steady_clock::now();
+    g_driveStart = now;
+    g_lastDriveSample = now;
+    g_pulseOn = true;
+    g_pulseEdge = now;
     LogGates(atv, "drive-start");
 }
 
@@ -390,8 +425,9 @@ void StopDrive(void* atv) {
         ue_wrap::ParamFrame pf(g_dismountFn);
         if (pf.valid()) ue_wrap::Call(atv, pf);
     }
-    UE_LOGI("[ATVP] ARM done: dismount %s, driven=%d",
-            g_dismountFn ? "called" : "UNRESOLVED", ue_wrap::atv::IsDriven(atv) ? 1 : 0);
+    UE_LOGI("[ATVP] ARM done: dismount %s, driven=%d, banked %lld ms over %d ejection(s)",
+            g_dismountFn ? "called" : "UNRESOLVED", ue_wrap::atv::IsDriven(atv) ? 1 : 0,
+            g_drivenMs, g_reseats);
 }
 
 void Tick(coop::net::Session& session, bool isHost) {
@@ -410,15 +446,17 @@ void Tick(coop::net::Session& session, bool isHost) {
         if (g_atvs[i]) SampleOne(g_atvs[i], i);
     }
 
+    // WHICH PEER DRIVES IS THE INI'S CALL, not this file's. The arm used to be host-only,
+    // and on 2026-08-29 that made it unrunnable: the seat verb refuses a player whose hands
+    // are full (@46522), and the host's save has him holding a prop_coingun_C -- MEASURED,
+    // gates 1 and 3 passed. The alternatives were to make the arm put the item away (a
+    // world mutation inside a measurement run) or to let the peer with empty hands drive.
+    // The second costs nothing and tests the HARDER direction: a client-authored ATV, with
+    // the host as the mirror, which is the authority path `authorSlot` exists for. So the
+    // arm runs wherever [dev] atv_probe_sit=1 is set -- set it on exactly ONE peer, or two
+    // authors race for the same rig.
+    (void)isHost;
     if (!g_sitArmed || g_arm == Arm::Done || g_atvs.empty()) return;
-    if (!isHost) {
-        static bool s_saidClient = false;
-        if (!s_saidClient) {
-            s_saidClient = true;
-            UE_LOGI("[ATVP] ARM: not this peer -- the arm is host-only");
-        }
-        return;
-    }
 
     // TARGET LATCH, and WHERE it happens is the whole point. g_atvs is rebuilt every scan
     // pass and index 0 is not a stable identity, so the arm must hold ONE actor across the
@@ -485,7 +523,13 @@ void Tick(coop::net::Session& session, bool isHost) {
             return;
         g_lastSitTry = now;
         if (!TrySit(atv)) return;
-        if (!ue_wrap::atv::IsDriven(atv)) { g_arm = Arm::Done; return; }
+        if (!ue_wrap::atv::IsDriven(atv)) {
+            if (g_reseats > 0)
+                UE_LOGW("[ATVP] ARM: could not re-seat after ejection %d -- banked %lld ms "
+                        "of driven time (wanted %d)", g_reseats, g_drivenMs, kDriveMs);
+            g_arm = Arm::Done;
+            return;
+        }
         StartDrive(atv);
         g_arm = Arm::Drive;
         return;
@@ -493,8 +537,46 @@ void Tick(coop::net::Session& session, bool isHost) {
 
     if (g_arm == Arm::Drive) {
         LogGates(atv, "driving");
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - g_driveStart).count() < kDriveMs)
+
+        // Bank only the time the rig was genuinely driven. A crash empties the seat and the
+        // clock must not keep running through the recovery, or the arm would "finish" having
+        // measured two seconds.
+        const long long dt = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - g_lastDriveSample).count();
+        g_lastDriveSample = now;
+        const bool driven = ue_wrap::atv::IsDriven(atv);
+        if (driven) g_drivenMs += dt;
+
+        if (!driven) {
+            // Ejected. Re-seat through the same verb; the seat body teleports the player in,
+            // so it works from wherever the ragdoll came to rest.
+            if (g_reseats >= kMaxReseats) {
+                UE_LOGW("[ATVP] ARM: ejected %d times and out of re-seats -- banked %lld ms "
+                        "of driven time (wanted %d)", g_reseats, g_drivenMs, kDriveMs);
+                StopDrive(atv);
+                g_arm = Arm::Done;
+                return;
+            }
+            WriteBool(atv, g_bInputFwd, false);
+            ++g_reseats;
+            g_sitTries = 0;
+            g_lastSitTry = now;
+            g_arm = Arm::Sit;
+            UE_LOGI("[ATVP] ARM: ejected (crash) -- re-seat %d/%d, banked %lld/%d ms driven",
+                    g_reseats, kMaxReseats, g_drivenMs, kDriveMs);
             return;
+        }
+
+        // Pulse the throttle rather than holding it: see kPulseOnMs.
+        const long long sinceEdge = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - g_pulseEdge).count();
+        if (sinceEdge >= (g_pulseOn ? kPulseOnMs : kPulseOffMs)) {
+            g_pulseOn = !g_pulseOn;
+            g_pulseEdge = now;
+            WriteBool(atv, g_bInputFwd, g_pulseOn);
+        }
+
+        if (g_drivenMs < kDriveMs) return;
         StopDrive(atv);
         g_arm = Arm::Done;
     }

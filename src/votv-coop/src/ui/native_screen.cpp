@@ -184,4 +184,56 @@ void* BuildButton(void* parent, void* donorBtn, const wchar_t* label, int32_t fo
     return b;
 }
 
+namespace {
+
+// Three answers, not two, so the walk can STOP rather than finish.
+enum class RowHit { Miss, Hit, Below };
+
+RowHit Probe(void* panel, int32_t i, long cx, long cy,
+             const ue_wrap::FVector2D& panelTl, const ue_wrap::FVector2D& panelSz) {
+    void* child = U::ChildAt(panel, i);
+    ue_wrap::FVector2D tl{}, sz{};
+    if (!child || !U::WidgetScreenRect(child, tl, sz) || sz.X < 1.f || sz.Y < 1.f)
+        return RowHit::Miss;
+    if (static_cast<long>(std::floor(tl.Y)) > cy) return RowHit::Below;
+    // CLIPPED TO THE PANEL, and it is not decoration: a child scrolled out of view is not
+    // arranged, so its cached geometry is whatever it was when it last WAS -- rows were
+    // observed reporting positions above the list's own top edge -- and a stale rect must
+    // not be allowed to claim a cursor that is inside the viewport.
+    const float top = tl.Y > panelTl.Y ? tl.Y : panelTl.Y;
+    const float bot = (tl.Y + sz.Y) < (panelTl.Y + panelSz.Y) ? (tl.Y + sz.Y)
+                                                              : (panelTl.Y + panelSz.Y);
+    if (bot <= top) return RowHit::Miss;   // entirely scrolled out
+    // floor, not a truncating cast: `static_cast<long>` rounds toward zero, so on a monitor
+    // left of the primary (negative desktop X) it would round the opposite way and eat the
+    // left pixel column of every row.
+    const bool in = cy >= static_cast<long>(std::floor(top)) &&
+                    cy <  static_cast<long>(std::floor(bot)) &&
+                    cx >= static_cast<long>(std::floor(tl.X)) &&
+                    cx <  static_cast<long>(std::floor(tl.X + sz.X));
+    return in ? RowHit::Hit : RowHit::Miss;
+}
+
+}  // namespace
+
+int32_t ChildAtCursor(void* panel, int32_t count, long cx, long cy, int32_t hint) {
+    if (!panel || count <= 0) return -1;
+    ue_wrap::FVector2D tl{}, sz{};
+    if (!U::WidgetScreenRect(panel, tl, sz) || sz.X < 1.f || sz.Y < 1.f) return -1;
+    if (cx < static_cast<long>(std::floor(tl.X)) ||
+        cx >= static_cast<long>(std::floor(tl.X + sz.X)) ||
+        cy < static_cast<long>(std::floor(tl.Y)) ||
+        cy >= static_cast<long>(std::floor(tl.Y + sz.Y)))
+        return -1;
+    if (hint >= 0 && hint < count && Probe(panel, hint, cx, cy, tl, sz) == RowHit::Hit)
+        return hint;
+    for (int32_t i = 0; i < count; ++i) {
+        if (i == hint) continue;   // already probed
+        const RowHit r = Probe(panel, i, cx, cy, tl, sz);
+        if (r == RowHit::Hit) return i;
+        if (r == RowHit::Below) break;
+    }
+    return -1;
+}
+
 }  // namespace ui::native_screen

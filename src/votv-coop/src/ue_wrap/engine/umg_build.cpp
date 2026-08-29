@@ -201,7 +201,22 @@ bool WidgetScreenRect(void* widget, FVector2D& outTopLeft, FVector2D& outSize) {
 
     // The library's functions are static, so they dispatch on the CDO -- the same shape
     // the engine's own BlueprintFunctionLibrary calls take.
-    void* lib = R::FindClassDefaultObject(L"SlateBlueprintLibrary");
+    //
+    // LATCHED, and this is not an optimisation -- it is the difference between a read and a
+    // full-array scan. `FindClassDefaultObject` goes to `FindObject`, which has NO cache and
+    // walks `GUObjectArray` from index 0 rendering EVERY object's name to compare it; each
+    // render allocates and frees an engine buffer. `FindClass` was given a cache on
+    // 2026-08-25 for exactly this reason and `FindObject` never was. This function is called
+    // per ROW per moving frame by the browser's hover pass, so an unlatched resolve here is
+    // a per-frame full-array scan on a per-frame observer -- the precise shape that cost
+    // this project 120 -> 60 fps once already.
+    //
+    // A CDO never moves for the life of the process, so one resolve is all there ever is.
+    // Same pattern as `sFont` in StyleTextBlock below; caught by the post-ship perf audit,
+    // 2026-08-29.
+    static void* sLib = nullptr;
+    if (!sLib) sLib = R::FindClassDefaultObject(L"SlateBlueprintLibrary");
+    void* lib = sLib;
     if (!lib) {
         UE_LOGE("umg: SlateBlueprintLibrary has no CDO -- WidgetScreenRect unavailable");
         return false;
@@ -235,13 +250,33 @@ bool WidgetScreenRect(void* widget, FVector2D& outTopLeft, FVector2D& outSize) {
     // different question -- what the widget ASKED for, not what its parent gave it -- and a
     // button in a fill-weighted row is exactly where those two part company.
     ParamFrame size(sizeFn);
+    // CROSS-CHECK, and it is the only guard against the silent corruption. Two drift modes
+    // are already caught above (LocalCoordinate first -> geomBytes <= 0; geomBytes wider
+    // than the geometry frame). The third is geomBytes too SMALL -- a parameter inserted
+    // before Geometry, or Geometry not first -- and that one does not fail: the blob is a
+    // truncated prefix, the tail of the struct stays zero, and this returns TRUE with a
+    // plausible wrong rect, which downstream means clicking the wrong row. GetLocalSize
+    // returns an FVector2D, so ITS ReturnValue offset must also be the padded size of the
+    // geometry parameter. Two independent frames agreeing is a signature check; one frame's
+    // offset is an assumption.
+    if (size.ParamOffset(L"Geometry") != 0 ||
+        size.ParamOffset(L"ReturnValue") != geomBytes) {
+        UE_LOGE("umg: SlateBlueprintLibrary signature drift -- LocalToAbsolute puts an "
+                "FGeometry at %d bytes but GetLocalSize disagrees (Geometry@%d, "
+                "ReturnValue@%d). Refusing rather than reading a truncated struct.",
+                geomBytes, size.ParamOffset(L"Geometry"), size.ParamOffset(L"ReturnValue"));
+        return false;
+    }
     if (!size.SetRaw(L"Geometry", blob.data(), geomBytes)) return false;
     if (!Call(lib, size)) return false;
-    outSize = size.Get<FVector2D>(L"ReturnValue");
 
     if (!abs.SetRaw(L"Geometry", blob.data(), geomBytes)) return false;
     abs.Set<FVector2D>(L"LocalCoordinate", FVector2D{0.f, 0.f});
     if (!Call(lib, abs)) return false;
+    // BOTH WRITES AFTER THE LAST FAILURE POINT. The header promises the outs are untouched
+    // when this returns false, and writing outSize before the second call broke that -- a
+    // caller that logs a rect it was told not to trust prints a half-updated one.
+    outSize    = size.Get<FVector2D>(L"ReturnValue");
     outTopLeft = abs.Get<FVector2D>(L"ReturnValue");
     return true;
 }

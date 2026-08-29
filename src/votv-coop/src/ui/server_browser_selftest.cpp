@@ -253,13 +253,14 @@ void Tick(void* scrim, void* list, void* closeBtn) {
     // a mounted pak -- while the real one was printing itself in the same log. So this
     // refuses to produce a verdict at all rather than produce a false one, which is the
     // same call the foreground guard above already makes for the same reason.
-    if (const char* owners = ui::imgui_overlay::CaptureOwners()) {
-        if (std::strcmp(owners, "none") != 0) {
+    {
+        const std::string owners = ui::imgui_overlay::CaptureOwners();
+        if (owners != "none") {
             UE_LOGE("server_browser_native: SELFTEST DISARMED -- [%s] owns the mouse, so the "
                     "game receives no pointer messages and cursor writes are swallowed by our "
                     "own detour. Every hover and click verdict below is ABSENT because the "
                     "harness stood down; NONE of it is evidence about this screen. Close that "
-                    "surface (or stop it arming) and re-run.", owners);
+                    "surface (or stop it arming) and re-run.", owners.c_str());
             g_selfCheckStep = -1;
             return;
         }
@@ -570,7 +571,7 @@ void Tick(void* scrim, void* list, void* closeBtn) {
             UE_LOGW("server_browser_native: mouse capture owned by [%s] -- while that is not "
                     "'none', the game receives no mouse messages and cursor writes are "
                     "swallowed, so nothing this screen draws can be hovered or clicked",
-                    ui::imgui_overlay::CaptureOwners());
+                    ui::imgui_overlay::CaptureOwners().c_str());
             break;
         }
         case kCtrlListRead: {

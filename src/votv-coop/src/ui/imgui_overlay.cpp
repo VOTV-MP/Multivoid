@@ -719,16 +719,17 @@ void SetVisible(bool visible) { g_visible.store(visible, std::memory_order_relax
 // launching client window -- the WM_KILLFOCUS reset only clears the real tilde key.
 void ForceScoreboardOpen() { g_scoreboardForced.store(true, std::memory_order_relaxed); }
 
-const char* CaptureOwners() {
-    // Built into a static buffer because every caller is a log line and none of them keeps
-    // it. Mirrors CaptureActive() term for term -- if a term is ever added there and not
+std::string CaptureOwners() {
+    // BY VALUE. The first version returned a pointer into a function-local static, which two
+    // %s in one log line would alias and which no second thread could use safely -- a latent
+    // trap in a function whose whole purpose is to be called from diagnostics written in a
+    // hurry. Mirrors CaptureActive() term for term: if a term is ever added there and not
     // here, this stops naming the surface that is actually holding the mouse, which is the
     // one thing it exists to do.
-    static char buf[256];
-    buf[0] = '\0';
-    auto add = [](const char* n) {
-        if (buf[0]) ::strncat_s(buf, sizeof(buf), "+", _TRUNCATE);
-        ::strncat_s(buf, sizeof(buf), n, _TRUNCATE);
+    std::string buf;
+    auto add = [&buf](const char* n) {
+        if (!buf.empty()) buf += '+';
+        buf += n;
     };
     if (MenuOpen())          add("devMenu(F1)");
     if (BrowserOpen())       add("imguiBrowser");
@@ -741,7 +742,7 @@ const char* CaptureOwners() {
     if (BootWarningOpen())   add("bootWarning");
     if (ConfigReviewOpen())  add("configReview");
     if (ScoreOpen() && ui::scoreboard::LocalIsHost()) add("scoreboard");
-    return buf[0] ? buf : "none";
+    return buf.empty() ? std::string("none") : buf;
 }
 
 // ---- process-exit retirement -------------------------------------------------

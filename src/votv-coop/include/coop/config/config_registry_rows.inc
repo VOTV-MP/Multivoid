@@ -264,7 +264,7 @@ CFG_FLAG(puppet_head_probe, "puppet_head_probe", "dev", false, nullptr,
 CFG_FLAG(atv_probe, "atv_probe", "dev", false, nullptr,
     "Diagnostic probe: the ATV rig baseline (4-body pose, suspension travel, vitals).")
 CFG_FLAG(atv_probe_sit, "atv_probe_sit", "dev", false, nullptr,
-    "ATV probe DRIVE arm (host, one shot): seat the local player, release the brake and hold the throttle so the ATV is authored AND moving.")
+    "ATV probe DRIVE arm (ONE peer, one shot): seat the local player, release the brake and hold the throttle so the ATV is authored AND moving. Set it on one peer only.")
 CFG_FLAG(native_pile_inert_probe, "native_pile_inert_probe", "dev", false, nullptr,
     "Diagnostic probe: native pile inertness on clients.")
 CFG_FLAG(inventory_probe, "inventory_probe", "dev", false, nullptr,

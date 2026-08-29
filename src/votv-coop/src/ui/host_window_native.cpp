@@ -372,9 +372,21 @@ void UpdateHover() {
     const int prevRow = g_hoverRow, prevConn = g_hoverConn;
     g_hoverRow = -2;
     g_hoverConn = -1;
+    // NEW GAME and the connection rows sit in `col`, OUTSIDE the ScrollBox, so Slate's own
+    // hover answers for them and they keep asking it. The SAVE rows are inside `g_list` and
+    // it does NOT: a row background there is a UImage set Visible whose rect contains the
+    // cursor, and `IsHovered()` on it reads 0 (measured 2026-08-29 on the server browser,
+    // which shipped the identical construct the same day and whose row selection had
+    // therefore never worked). Left as it was, the world list could not be clicked at all --
+    // `g_selectedSave` could only ever be -1, so this window could only ever start a NEW
+    // game and the save list beneath it was decoration. Caught by the post-ship audit
+    // before anyone tried it.
     if (g_newGameRow.bg && E::WidgetIsHovered(g_newGameRow.bg)) g_hoverRow = -1;
-    for (int i = 0; g_hoverRow == -2 && i < static_cast<int>(g_saveRows.size()); ++i)
-        if (g_saveRows[i].bg && E::WidgetIsHovered(g_saveRows[i].bg)) g_hoverRow = i;
+    if (g_hoverRow == -2) {
+        const int32_t hit = NS::ChildAtCursor(g_list, static_cast<int32_t>(g_saveRows.size()),
+                                              p.x, p.y);
+        if (hit >= 0) g_hoverRow = hit;
+    }
     for (int i = 0; i < 3; ++i)
         if (g_connRow[i] && E::WidgetIsHovered(g_connRow[i])) g_hoverConn = i;
     if (g_hoverRow != prevRow || g_hoverConn != prevConn) RepaintAll();
@@ -440,10 +452,12 @@ void PollChrome() {
     if (g_newGameRow.bg && E::WidgetIsHovered(g_newGameRow.bg)) {
         g_selectedSave = -1; RepaintAll(); return;
     }
-    for (int i = 0; i < static_cast<int>(g_saveRows.size()); ++i)
-        if (g_saveRows[i].bg && E::WidgetIsHovered(g_saveRows[i].bg)) {
-            g_selectedSave = i; RepaintAll(); return;
-        }
+    // The row under the cursor is already known from the hover pass, which asked geometry
+    // rather than Slate for exactly the reason recorded there. Re-deriving it here would be
+    // a second implementation of the same question, and the two could disagree.
+    if (g_hoverRow >= 0 && g_hoverRow < static_cast<int>(g_saveRows.size())) {
+        g_selectedSave = g_hoverRow; RepaintAll(); return;
+    }
 }
 
 // ============================ lifecycle ==============================================
@@ -508,7 +522,18 @@ void OnMenuTick(void* menu, void* switcher) {
         g_ourIndex = -1; g_shown = false; g_buildAttempts = 0; g_savesRev = 0;
     }
     if (!g_root) {
-        if (!BuildScreen(switcher)) return;
+        if (!BuildScreen(switcher)) {
+            // SAY SO. Since 2026-08-29 the browser's HOST button closes the browser
+            // SYNCHRONOUSLY and then asks for this window, so a build that keeps failing
+            // leaves the player on the main menu with no window, no browser and -- until
+            // this line -- nothing in the log either. `Open()` returns void, so the button
+            // cannot answer; the log is the only place the truth can go.
+            if (g_wantOpenMs.load(std::memory_order_relaxed))
+                UE_LOGE("host_window_native: a HOST request is pending but the screen will "
+                        "not build (attempt %d) -- the player clicked HOST, the browser "
+                        "closed, and nothing opened", g_buildAttempts);
+            return;
+        }
         if (AutoOpenArmed()) {
             UE_LOGW("host_window_native: [dev] host_window_autoopen=1 -- showing without a click");
             Open();
@@ -522,6 +547,13 @@ void OnMenuTick(void* menu, void* switcher) {
         const uint64_t age = ::GetTickCount64() - want;
         g_wantOpenMs.store(0, std::memory_order_relaxed);
         if (age <= kIntentTtlMs) Show();
+        else
+            // The browser's expiry path logs; this one did not, so a HOST click that
+            // arrived while no menu tick was coming vanished without trace.
+            UE_LOGW("host_window_native: a HOST request expired unconsumed after %llu ms "
+                    "(ttl %llu) -- no main-menu tick arrived to show the window",
+                    static_cast<unsigned long long>(age),
+                    static_cast<unsigned long long>(kIntentTtlMs));
     }
     if (!g_shown) return;
 

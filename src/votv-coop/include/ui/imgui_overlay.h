@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include <string>
+
 namespace ui::imgui_overlay {
 
 // Install the DXGI present/resize/wndproc hooks + bring up ImGui lazily on the
@@ -52,7 +54,7 @@ void ForceScoreboardOpen();
 // That combination cost a long hunt: three lab defects, an unexplained close button, and
 // a "the button is not hit-testable" conclusion that was really "the pointer never moved".
 // This exists so the next reading is one log line rather than a bisect.
-const char* CaptureOwners();
+std::string CaptureOwners();
 
 
 }  // namespace ui::imgui_overlay
