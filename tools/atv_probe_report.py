@@ -186,8 +186,29 @@ def acceptance(names, peers, logs):
             ok = gap <= SETTLE_GAP_CM
             print("  A2 settled gap key='{}' {:.3f} cm  {}".format(key, gap, "PASS" if ok else "FAIL"))
             if not ok:
-                fails.append("A2 key='{}' settled {:.1f} cm apart > {:.1f}".format(
-                    key, gap, SETTLE_GAP_CM))
+                # ATTRIBUTE the failure. A gap the corrector never tried to close is a sync
+                # defect; a gap it CUT repeatedly, at a constant distance, is not -- the rig was
+                # teleported onto the authority's exact pose and fell back, which means the two
+                # peers' worlds differ under the vehicle and no pose lane can fix it. Blaming the
+                # wrong subsystem is worse than no verdict.
+                cuts = []
+                for path in logs:
+                    try:
+                        cuts += re.findall(r"correction stalled at ([\d.]+) cm", 
+                                           open(path, encoding="utf-8", errors="replace").read())
+                    except OSError:
+                        pass
+                vals = sorted({round(float(c), 1) for c in cuts})
+                if len(cuts) >= 2 and len(vals) == 1 and abs(vals[0] - gap) < 1.0:
+                    fails.append("A2 key='{}' settled {:.1f} cm apart -- but the corrector CUT to "
+                                 "the authority's pose {} times and it fell back to the same "
+                                 "{:.1f} cm every time. The pose lane is doing its job; the two "
+                                 "peers' WORLDS differ under this vehicle. Not a C1 defect -- "
+                                 "file it against the world/save-transfer lane.".format(
+                                     key, gap, len(cuts), vals[0]))
+                else:
+                    fails.append("A2 key='{}' settled {:.1f} cm apart > {:.1f}".format(
+                        key, gap, SETTLE_GAP_CM))
 
     # A3 -- the collision guard armed, and whether its CANCEL path was ever exercised.
     for nm, path in zip(names, logs):

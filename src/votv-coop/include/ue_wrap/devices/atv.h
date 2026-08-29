@@ -8,8 +8,10 @@
 // stable).
 //
 // MIRROR MODEL (arc 1, 2026-08-29 -- REPLACES the freeze/teleport model this file used to
-// describe). A non-authoring peer runs the rig NATIVELY -- physics ON -- and is CORRECTED toward
-// the authority; only its BRAIN is switched off. That inversion is not a preference: the rig's
+// describe). A non-authoring peer runs the rig NATIVELY -- physics ON, tick ON -- and is CORRECTED
+// toward the authority. The sync layer changes NOTHING about the actor itself; what a mirror may
+// not do is author COLLISION damage, and that is cancelled at the seven UFunctions below rather
+// than by parking anything. That inversion is not a preference: the rig's
 // entire visible output IS suspension travel, and a kinematic root teleported 20x/s drags four
 // constrained bodies behind it. Measured native travel is 2-4 cm (docs/vehicles/ATV.md 13); the
 // shipped freeze model put the other peer's copy at 29.58 cm and 1.1 m away. So: no
@@ -55,16 +57,6 @@ bool IsDriven(void* atv);
 float GetFuel(void* atv);    // fuel@0x05D4   (0..100)
 float GetHealth(void* atv);  // health@0x05E4 (0..100)
 bool  GetBrake(void* atv);   // Brake@0x05D9  (handbrake)
-
-// The ATV's BRAIN -- its actor tick, and nothing else. OFF on every peer that does not own this
-// ATV's tick, so the accumulators (fuel/battery/dirt), applyWheelTorque and
-// setFrontWheelsOrientation run on exactly one machine. PHYSICS IS NEVER TOUCHED: the rig keeps
-// simulating, which is the whole point of the mirror model above, and it is also what keeps the
-// ATV grabbable (Aprop pickupObject gates on HitComponent.IsSimulatingPhysics()).
-// The collision half of "brains off" is NOT here -- a ComponentHit delegate is dispatched by the
-// physics scene, not by the tick, so it is cancelled at its seven UFunctions by an
-// authority-gated interceptor in coop::atv_sync (see ResolveHitDelegates). Game thread.
-void SetBrainEnabled(void* atv, bool enabled);
 
 // The game's OWN rig-consistent teleport: ATV_C::teleportVehicle(NewLocation, NewRotation) --
 // K2_SetActorLocation(bTeleport=true) + K2_SetActorRotation(bTeleportPhysics=true), and THEN it

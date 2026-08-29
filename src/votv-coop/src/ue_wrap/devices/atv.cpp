@@ -108,24 +108,19 @@ bool GetBrake(void* atv) {
     return *reinterpret_cast<const bool*>(reinterpret_cast<const char*>(atv) + g_brakeOff);
 }
 
-void SetBrainEnabled(void* atv, bool enabled) {
-    if (!atv) return;
-    engine::SetActorTickEnabled(atv, enabled);   // ReceiveTick: accumulators, wheel torque, steering
-    // DELIBERATELY absent: SetActorSimulatePhysics (the rig always simulates -- see the header) and
-    // SetActorRootNotifyRigidBodyCollision (it silenced 1 of the 7 hit delegates, so it read as a
-    // guard while six leaked; the interceptor in coop::atv_sync replaces it whole -- RULE 2).
-}
-
 bool TeleportRig(void* atv, const FVector& loc, const FRotator& rot) {
     if (!atv || !EnsureResolved()) return false;
+    // Latch the ATTEMPT, not just the warning: an unresolved name would otherwise re-walk
+    // GUObjectArray on every warp, at up to 20 Hz, for the life of the session.
     static void* sFn = nullptr;
-    if (!sFn) sFn = R::FindFunction(g_cls, L"teleportVehicle");
-    if (!sFn) {
-        static bool sWarned = false;
-        if (!sWarned) { sWarned = true;
-            UE_LOGW("atv: teleportVehicle unresolved -- cannot warp the rig"); }
-        return false;
+    static bool  sTried = false;
+    if (!sTried) {
+        sTried = true;
+        sFn = R::FindFunction(g_cls, L"teleportVehicle");
+        if (!sFn) UE_LOGE("atv: teleportVehicle unresolved -- the rig can never be warped; "
+                          "a mirror that drifts past the threshold will not be re-placed");
     }
+    if (!sFn) return false;
     ParamFrame f(sFn);
     if (!f.valid()) return false;
     f.Set<FVector>(L"NewLocation", loc);

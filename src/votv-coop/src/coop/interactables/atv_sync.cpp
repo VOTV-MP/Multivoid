@@ -1,9 +1,12 @@
 // coop/atv_sync.cpp -- see coop/atv_sync.h. ATV/quadbike (AATV_C) rig sync.
 //
 // THE MIRROR SIMULATES (arc 1, 2026-08-29 -- this REPLACES the freeze/teleport lane, RULE 2).
-// A peer that does not author an ATV leaves its physics ON, switches its BRAIN off, and is
+// A peer that does not author an ATV runs the rig NATIVELY -- physics on, tick on -- and is
 // CORRECTED toward the authority. It does not freeze, it is not teleported per packet, and there
-// is no un-freeze. Why the inversion, measured rather than argued: AATV_C is a five-body
+// is no un-freeze. The ONLY thing that distinguishes a mirror is that it may not author
+// COLLISION damage (the seven-delegate interceptor below); a first attempt also disabled the
+// actor tick and the two-peer run refuted it in one shot -- see the note above the interceptor.
+// Why the inversion, measured rather than argued: AATV_C is a five-body
 // constraint rig (sus_*/ax_*) whose entire visible output is suspension travel, and
 // SetActorLocation moves the ROOT ONLY -- so the old kinematic apply teleported one body 20x/s and
 // dragged four constrained bodies behind it. The autonomous two-peer probe put numbers on it
@@ -83,6 +86,12 @@ using coop::net::FnvKey;
 
 constexpr uint64_t kDriveSendMs = 50;   // ~20 Hz while a peer authors it (drives or carries it)
 constexpr uint64_t kIdleSendMs  = 200;  // 5 Hz idle-syncer ceiling -- AND only when it changed
+// ...but never NOTHING. The change gate asks whether the SENDER's copy moved, and that question
+// is structurally blind to the receiver: with the rig simulating on every peer, a mirror can roll
+// or slide while the host's copy is parked, and a gate that has fallen silent never corrects it.
+// The same blindness makes a DROPPED connect snapshot permanent for an idle ATV. So the gate
+// lowers the rate; this floor keeps it non-zero. 84 bytes every 2 s per ATV.
+constexpr uint64_t kIdleKeepaliveMs = 2000;
 
 // The idle-syncer change gate, CUnoccupiedVehicleSync::WriteVehicleInformation:295-350 in our
 // units. A PARKED ATV SENDS NOTHING, which is what makes host-syncs-idle-vehicles free; MTA's own
@@ -100,8 +109,27 @@ constexpr float kWarpPerSpeedS  = 0.5f;
 constexpr float kWarpAngleDeg   = 45.f;   // orientation alone can justify a warp: a body can spin
                                           // in place without ever tripping the distance threshold
 constexpr float kCorrDeadbandCm = 5.f;    // inside this, the wire velocity alone is the correction
-constexpr float kCorrWindowS    = 0.10f;  // close the position error over ~100 ms
 constexpr float kCorrMaxCmS     = 400.f;  // bound the corrective term: it must nudge, never launch
+// The corrective velocity is sized to close kCorrGain of the remaining error by the time the NEXT
+// packet is due, using the MEASURED interval since the last one. A fixed window cannot do this:
+// this lane has two cadences (50 ms authored, 200 ms idle), and `err / 0.1 s` held for 200 ms
+// travels TWICE the error -- it overshoots to -err and then oscillates at constant amplitude
+// forever, which looks exactly like the jitter this model exists to remove. A gain below 1 over
+// the real interval converges geometrically at any cadence, including a bunched or delayed packet.
+constexpr float kCorrGain     = 0.5f;
+// THE CORRECTOR MUST CONVERGE OR CUT -- measured 2026-08-29, and this arm is why.
+// A velocity nudge is the right correction for a MOVING body and is powerless against a resting
+// one: a client that joined mid-settle had its ATV come to rest 40.5 cm BELOW the host's, both
+// copies then perfectly still, and a 20 cm/s upward corrective velocity is erased by gravity in
+// 20 ms. The error stood for the whole run. So the corrector watches itself: if the distance
+// stops shrinking while it is still outside the deadband, the nudge is not working here and we
+// stop pretending it will. This is cadence-independent by construction -- it counts PACKETS in
+// which the error failed to shrink, not seconds -- and it needs no threshold on velocity, which
+// is exactly the quantity that was lying about whether convergence was possible.
+constexpr float kStallShrinkFrac  = 0.95f;  // "shrank" = at least 5% closer than last packet
+constexpr int   kStallWarpPackets = 5;      // 250 ms on the drive lane, 1 s on the idle one
+constexpr uint64_t kCorrMinDtMs = 20;    // a burst must not manufacture a huge corrective velocity
+constexpr uint64_t kCorrMaxDtMs = 1000;  // a long gap must not manufacture a vanishing one
 
 // Per-ATV state. Receiver-side interpolation state is GONE: a mirror is not interpolated toward a
 // pose, it is a simulating body whose velocity we bias at packet arrival. All game-thread only.
@@ -109,18 +137,20 @@ struct AtvEntry {
     void*   actor = nullptr;
     int32_t idx   = -1;
     uint64_t lastSentMs   = 0;
+    uint64_t lastPktMs    = 0;     // arrival of the last correcting packet -- the corrector's dt
     uint8_t  occupantSlot = 0xFF;  // the SEATED driver's peer slot (0xFF = seat free). THE SEAT --
                                    // device_occupancy::IsOccupiedByOther reads this and denies an
                                    // E-press from it, so a grabber must never appear here.
     uint8_t  authorSlot   = 0xFF;  // who STREAMS it (driver or grabber; 0xFF = nobody -> host syncs)
-    bool     brainOn      = true;  // last value we wrote to SetBrainEnabled (latch: engine call only on change)
-    bool     brainKnown   = false; // ...have we written it at all yet
     bool     wasPoseAuthor = false;// POSE authority last tick -- the release-edge detect, and it is
                                    // deliberately not the same variable as ownsTick (PR #9)
     bool     isClientSpawnedMirror = false;  // v77: a runtime ATV WE fresh-spawned (AtvSpawn) -> K2 on destroy
     // idle-syncer change gate
     FVector  lastSyncPos{};
     FRotator lastSyncRot{};
+    uint64_t lastIdleSendMs = 0;   // last ACTUAL idle send -- the keepalive floor's clock
+    float    lastErrCm    = -1.f;  // the previous packet's position error -- the stall detector
+    int      stallPackets = 0;     // consecutive packets in which the error refused to shrink
     bool     haveLastSync = false;
 };
 
@@ -249,10 +279,9 @@ bool OwnsTickFor(bool isPoseAuthor, bool isHost, uint8_t authorSlot) {
 }
 
 // Fill an AtvStatePayload from a live ATV read. False if the transform read fails. `grabbed` marks
-// the authority as the grav-hand grabber (stateBits bit2). `authored` marks that SOME peer is
-// actively driving/grabbing this ATV (bit3) -- set on the connect-snapshot so a joiner freezes only
-// authored ATVs and leaves idle ones physics-on + grabbable (a live stream is always from an
-// authority, so passing authored=true there is just consistent).
+// the authority as the grav-hand grabber (stateBits bit2). `authorSlot` names WHO holds it
+// (0xFF = nobody, which elects the host as its idle syncer); it replaced v77's `authored` boolean,
+// which existed only to tell a joiner whether to FREEZE the ATV -- and nothing freezes any more.
 bool ReadPayload(void* actor, const std::wstring& key, uint8_t occupantSlot, uint8_t authorSlot,
                  bool adopt, coop::net::AtvStatePayload& p, bool grabbed = false) {
     FVector loc; FRotator rot;
@@ -280,8 +309,22 @@ bool ReadPayload(void* actor, const std::wstring& key, uint8_t occupantSlot, uin
 
 float Len(const FVector& v) { return std::sqrt(v.X * v.X + v.Y * v.Y + v.Z * v.Z); }
 
-uint64_t g_warps = 0;   // diagnostic counters -- a corrector nobody can see is a corrector nobody
-uint64_t g_corrs = 0;   // can falsify (the instrument-blindness lesson)
+// Ceilings for a velocity that arrives over the wire. Sized well above anything the vehicle can
+// legitimately reach (its own speed_turbo is 3200) so a real throw or a fall still lands intact.
+constexpr float kMaxWireLinCmS  = 20000.f;
+constexpr float kMaxWireAngDegS = 3600.f;
+
+FVector ClampVelocity(const FVector& v, float maxMag) {
+    const float m = Len(v);
+    if (!(m > maxMag)) return v;   // inverted: a NaN cannot reach here (guarded upstream) but the
+                                   // idiom keeps the property if that ever changes
+    const float k = maxMag / m;
+    return FVector{ v.X * k, v.Y * k, v.Z * k };
+}
+
+uint64_t g_warps = 0;        // diagnostic counters -- a corrector nobody can see is a corrector
+uint64_t g_corrs = 0;        // nobody can falsify (the instrument-blindness lesson)
+uint64_t g_stallWarps = 0;   // ...and specifically: how often the nudge had to give up
 
 // THE CORRECTOR. Called ONLY on packet arrival for an ATV this peer does not author -- there is no
 // per-frame mirror work at all any more. The body simulates between packets; we bias its velocity
@@ -300,8 +343,11 @@ void ApplyCorrection(AtvEntry& e, const coop::net::AtvStatePayload& p, bool snap
 
     const FVector wirePos{ p.x, p.y, p.z };
     const FRotator wireRot{ p.pitch, p.yaw, p.roll };
-    const FVector wireLin{ p.linVelX, p.linVelY, p.linVelZ };
-    const FVector wireAng{ p.angVelX, p.angVelY, p.angVelZ };
+    // Finite is not the same as sane: these go straight into PhysX. event_dispatch_state rejects
+    // NaN/Inf; this bounds the finite-but-absurd. CLIENT-SCOPED by the standing rule -- a symmetric
+    // clamp would be the bug, because the host is allowed to be authoritative about physics.
+    const FVector wireLin = ClampVelocity({ p.linVelX, p.linVelY, p.linVelZ }, kMaxWireLinCmS);
+    const FVector wireAng = ClampVelocity({ p.angVelX, p.angVelY, p.angVelZ }, kMaxWireAngDegS);
 
     const FVector err{ wirePos.X - cur.X, wirePos.Y - cur.Y, wirePos.Z - cur.Z };
     const float dist  = Len(err);
@@ -309,21 +355,57 @@ void ApplyCorrection(AtvEntry& e, const coop::net::AtvStatePayload& p, bool snap
     const float dPitch = std::fabs(ue_wrap::NormalizeAxis(wireRot.Pitch - curRot.Pitch));
     const float dYaw   = std::fabs(ue_wrap::NormalizeAxis(wireRot.Yaw   - curRot.Yaw));
     const float dRoll  = std::fabs(ue_wrap::NormalizeAxis(wireRot.Roll  - curRot.Roll));
-    const float dAng   = dPitch > dYaw ? (dPitch > dRoll ? dPitch : dRoll) : (dYaw > dRoll ? dYaw : dRoll);
 
-    // The tests are INVERTED on purpose, MTA's own idiom (CClientVehicle.cpp:3905's comment): a
-    // comparison against NaN is always false, so writing them this way makes a NaN WARP rather
-    // than quietly feed a corrective velocity computed from garbage.
-    if (snap || !(dist <= warpD) || !(dAng <= kWarpAngleDeg)) {
-        A::TeleportRig(e.actor, wirePos, wireRot);
+    const uint64_t now = NowMs();
+    const uint64_t rawDt = e.lastPktMs ? (now - e.lastPktMs) : kCorrMaxDtMs;
+    const uint64_t dtMs = rawDt < kCorrMinDtMs ? kCorrMinDtMs
+                                               : (rawDt > kCorrMaxDtMs ? kCorrMaxDtMs : rawDt);
+    e.lastPktMs = now;
+
+    // Every test is INVERTED on purpose, MTA's own idiom (CClientVehicle.cpp:3905's comment): a
+    // comparison against NaN is false, so writing them this way makes a NaN WARP rather than feed
+    // a corrective velocity computed from garbage. THE THREE ANGLES ARE TESTED SEPARATELY, and
+    // that is not style: folding them through a max() first DESTROYS the property, because
+    // `NaN > x` is false, so a nested-ternary max silently returns the finite operand and a
+    // NaN pitch sails through a test written to catch it.
+    if (snap || !(dist <= warpD) ||
+        !(dPitch <= kWarpAngleDeg) || !(dYaw <= kWarpAngleDeg) || !(dRoll <= kWarpAngleDeg)) {
+        // FAIL CLOSED: if the rig could not be re-placed (teleportVehicle unresolved after a game
+        // update), do NOT then write the authority's velocity onto a body still sitting in the
+        // wrong place -- that accelerates the error instead of cutting it.
+        if (!A::TeleportRig(e.actor, wirePos, wireRot)) return;
         ue_wrap::engine::SetActorRootPhysicsVelocity(e.actor, wireLin, wireAng);
         ++g_warps;
         return;
     }
 
+    // Is the correction actually working? Count packets where the error stayed outside the
+    // deadband and refused to shrink; past the limit, cut instead of nudging.
+    if (dist <= kCorrDeadbandCm) {
+        e.stallPackets = 0;
+    } else if (e.lastErrCm >= 0.f && dist >= e.lastErrCm * kStallShrinkFrac) {
+        ++e.stallPackets;
+    } else {
+        e.stallPackets = 0;
+    }
+    e.lastErrCm = dist;
+    if (e.stallPackets >= kStallWarpPackets) {
+        e.stallPackets = 0;
+        e.lastErrCm = -1.f;
+        if (!A::TeleportRig(e.actor, wirePos, wireRot)) return;
+        ue_wrap::engine::SetActorRootPhysicsVelocity(e.actor, wireLin, wireAng);
+        ++g_stallWarps;
+        UE_LOGI("atv: correction stalled at %.1f cm -- cut to the authority's pose "
+                "(a nudge cannot move a body at rest)", dist);
+        return;
+    }
+
     FVector lin = wireLin;
     if (dist > kCorrDeadbandCm) {
-        FVector corr{ err.X / kCorrWindowS, err.Y / kCorrWindowS, err.Z / kCorrWindowS };
+        // Close kCorrGain of the error over the interval we actually observed, NOT over a fixed
+        // window -- see the constant's comment for why a fixed one oscillates on the idle cadence.
+        const float gain = kCorrGain * 1000.f / static_cast<float>(dtMs);
+        FVector corr{ err.X * gain, err.Y * gain, err.Z * gain };
         const float mag = Len(corr);
         if (mag > kCorrMaxCmS) {
             const float k = kCorrMaxCmS / mag;
@@ -360,14 +442,28 @@ bool IdleWorthSending(AtvEntry& e) {
     return send;
 }
 
-// Write the brain latch only on a real change -- SetActorTickEnabled is a UFunction dispatch, and
-// this runs per ATV per tick.
-void SetBrain(AtvEntry& e, bool on) {
-    if (e.brainKnown && e.brainOn == on) return;
-    A::SetBrainEnabled(e.actor, on);
-    e.brainOn = on;
-    e.brainKnown = true;
-}
+// THE TICK IS NOT THE BRAIN -- MEASURED 2026-08-29, and it retired a pillar of this design.
+//
+// The plan was "brains OFF, physics ON": SetActorTickEnabled(false) on every non-owner, so the
+// accumulators and the wheel torque ran on one machine. The first two-peer run refuted it. Both
+// peers start at a byte-identical pose; 100 s later, with the mirror's tick off, they were
+// 42.7 cm apart and the mirror sat 37 cm LOWER, its suspension hanging 2.4 cm further out.
+//
+// The bytecode says why. ATV_C's tick (ReceiveTick -> ExecuteUbergraph_ATV @32947) reaches
+// `@29894: mesh.SetCenterOfMass(VLerp(..., tirescount/4))` UNCONDITIONALLY, every frame, before
+// any gate -- the centre of mass is rig CONFIGURATION, re-applied per tick, not gameplay logic. A
+// rig whose centre of mass is never set rests, rolls and settles somewhere else. Meanwhile the
+// things tick-off was supposed to stop are ALREADY single-peer by the game's own gating:
+// `@29949: IFNOT(isDriven) POP` guards applyWheelTorque, and every battery-drain term at
+// @33970-@34123 is SelectFloat(x, 0, isDriven|isDrive|lights|turbo) -- all local-only state that
+// is false on a machine where nobody is sitting in it.
+//
+// So tick-off prevented nothing and moved the vehicle. It is gone (RULE 2), along with
+// ue_wrap::atv::SetBrainEnabled, which now has no caller. `ownsTick` SURVIVES and keeps both of
+// its real jobs: electing the idle syncer, and telling the collision interceptor whose copy may
+// author damage. The interceptor is now the ONLY thing that makes a mirror differ from a native
+// ATV -- and it has to be, because a ComponentHit delegate is dispatched by the physics scene and
+// was never tick-gated in the first place.
 
 // ---- the COLLISION half of "brains off" ---------------------------------------------------
 // SetActorTickEnabled does not reach a ComponentHit delegate: it is dispatched by the physics
@@ -382,7 +478,12 @@ void SetBrain(AtvEntry& e, bool on) {
 // and the callback is a pointer scan over it. DEFAULT IS CANCEL, which is the safe direction --
 // a stale/empty set costs the authority some collision damage (a loss, and a quiet one), while
 // the opposite fails toward a mirror destroying itself.
-constexpr int kMaxOwnedPublished = 16;
+// Sized for "every ATV a host can own at once", not for the common case: on a host with nobody
+// driving, EVERY ATV is owned, and `list_props` row 'atv' means the spawn menu can make more of
+// them (docs/vehicles/ATV.md 11.4). Overflowing is not a graceful degradation -- the guard's
+// CANCEL default would suppress collisions on the one machine that owns the ATV -- so it also
+// logs once. 8 bytes a slot.
+constexpr int kMaxOwnedPublished = 64;
 std::atomic<void*> g_ownedAtvs[kMaxOwnedPublished];
 std::atomic<bool>  g_guardActive{false};   // false in single-player: the game must keep its damage
 std::atomic<unsigned long long> g_hitCancelled{0};
@@ -513,9 +614,18 @@ size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
         }
         it = g_atvs.erase(it);
     }
-    // Update/add (preserve interp/sender state for an existing wire key -- only actor/idx are touched).
+    // Update/add. A wire key can OUTLIVE its actor -- a save-placed ATV has a deterministic key and
+    // a client join runs two level loads -- and operator[] would then hand the successor the dead
+    // actor's authority, seat, correction clock and change-gate baseline. Keep the entry (the key
+    // is the identity) but reset everything that described the ACTOR.
     for (auto& f : found) {
         AtvEntry& e = g_atvs[f.wireKey];
+        if (e.actor && e.actor != f.obj) {
+            e.occupantSlot = 0xFF; e.authorSlot = 0xFF;
+            e.wasPoseAuthor = false;
+            e.haveLastSync = false; e.lastIdleSendMs = 0; e.lastPktMs = 0;
+            e.lastErrCm = -1.f; e.stallPackets = 0;
+        }
         e.actor = f.obj;
         e.idx   = f.idx;
     }
@@ -553,6 +663,9 @@ void OnSlotReplaced(int slot, const coop::roster_ledger::Row& /*outgoing*/,
         AtvEntry& e = kv.second;
         if (e.occupantSlot == s8) { e.occupantSlot = 0xFF; ++freed; }
         if (e.authorSlot   == s8) { e.authorSlot   = 0xFF; ++freed; }
+        // Re-arm the change gate: the other peers still hold the departed player's claim, and
+        // healing them depends on the host actually sending something.
+        e.haveLastSync = false;
     }
     if (freed > 0)
         UE_LOGI("atv: slot %d departed -- freed %d ATV seat/author reservation(s)", slot, freed);
@@ -589,7 +702,22 @@ void Install(coop::net::Session* session) {
     }
 }
 
-void OnReliable(const coop::net::AtvStatePayload& payload, uint8_t /*senderPeerSlot*/) {
+// A peer may name ITSELF as an ATV's holder, never anyone else. `authorSlot` is not a report,
+// it is what elects the idle syncer and what every other peer's E-press deny reads -- so an
+// unattributed one is an authority ASSERTION, which COOP_SYNCER_MODEL 2b forbids ("authority is
+// assigned and never asserted"). Without this, one 84-byte packet per second from any client
+// pins an empty ATV as occupied for everyone, forever, and stops the host from ever syncing it.
+//
+// The bound is CLIENT-SCOPED on purpose (the standing rule: the host may cheat and we relay it).
+// The HOST legitimately speaks for other peers -- its connect snapshot and its relayed knowledge
+// both carry another slot's authorSlot -- so slot 0 is exempt. The relay preserves the origin
+// slot (session_relay.cpp), so senderSlot is who actually sent it.
+bool SenderMaySpeakFor(uint8_t senderSlot, uint8_t claimedSlot) {
+    if (senderSlot == 0 || senderSlot == 0xFF) return true;  // host, or unattributed local path
+    return claimedSlot == 0xFF || claimedSlot == senderSlot;
+}
+
+void OnReliable(const coop::net::AtvStatePayload& payload, uint8_t senderPeerSlot) {
     std::wstring key = StringFromWireKey(payload.key);
     if (key.empty()) { UE_LOGW("atv: OnReliable empty key -- dropping"); return; }
     if (!A::EnsureResolved()) return;
@@ -620,15 +748,24 @@ void OnReliable(const coop::net::AtvStatePayload& payload, uint8_t /*senderPeerS
         UE_LOGI("atv: seat contention on '%ls' -- slot %u outranks local slot %u; yielding pose authority",
                 key.c_str(), static_cast<unsigned>(payload.occupantSlot),
                 static_cast<unsigned>(localSlot));
-        e.occupantSlot = payload.occupantSlot;   // we are now a mirror; Tick's authority-lost edge fires
+        e.occupantSlot = payload.occupantSlot;   // we are a mirror now -- and note Tick's release
+                                                 // edge deliberately does NOT fire for this: the
+                                                 // `yielded` discriminator exists to suppress it
     }
 
     // If WE are the legitimate authority of this ATV (driving OR grav-hand grabbing it), ignore the incoming
     // pose so a relayed/echoed copy can't fight our live driving/carrying.
     if (IsPoseAuthor(e.actor, localPlayer, e.occupantSlot, localSlot)) return;
 
-    // Track the incoming seat and author. `authorSlot` is what elects the host as the idle syncer
-    // (0xFF = nobody is driving or carrying it).
+    // Track the incoming seat and author -- but only if the sender is entitled to name them.
+    if (!SenderMaySpeakFor(senderPeerSlot, payload.authorSlot) ||
+        !SenderMaySpeakFor(senderPeerSlot, payload.occupantSlot)) {
+        UE_LOGW("atv: slot %u named holder author=%u occ=%u on '%ls' -- refusing (a peer speaks "
+                "only for itself)", static_cast<unsigned>(senderPeerSlot),
+                static_cast<unsigned>(payload.authorSlot),
+                static_cast<unsigned>(payload.occupantSlot), key.c_str());
+        return;
+    }
     e.occupantSlot = payload.occupantSlot;
     e.authorSlot   = payload.authorSlot;
 
@@ -640,7 +777,7 @@ void OnReliable(const coop::net::AtvStatePayload& payload, uint8_t /*senderPeerS
     ApplyCorrection(e, payload, /*snap*/ payload.adopt != 0);
 }
 
-void OnAtvRelease(const coop::net::AtvReleasePayload& payload, uint8_t /*senderPeerSlot*/) {
+void OnAtvRelease(const coop::net::AtvReleasePayload& payload, uint8_t senderPeerSlot) {
     std::wstring key = StringFromWireKey(payload.key);
     if (key.empty()) { UE_LOGW("atv: OnAtvRelease empty key -- dropping"); return; }
     if (!A::EnsureResolved()) return;
@@ -655,6 +792,17 @@ void OnAtvRelease(const coop::net::AtvReleasePayload& payload, uint8_t /*senderP
 
     // If WE author it, ignore a stale or echoed release so it cannot perturb our live drive/carry.
     if (IsPoseAuthor(e.actor, localPlayer, e.occupantSlot, localSlot)) return;
+
+    // Only the peer we RECORD as the author may clear the author (the host excepted, as above).
+    // Otherwise any client could hand itself the idle-syncer election off another peer's ATV, or
+    // un-seat a driver mid-drive.
+    if (senderPeerSlot != 0 && senderPeerSlot != 0xFF &&
+        e.authorSlot != 0xFF && e.authorSlot != senderPeerSlot) {
+        UE_LOGW("atv: slot %u released '%ls' held by slot %u -- refusing",
+                static_cast<unsigned>(senderPeerSlot), key.c_str(),
+                static_cast<unsigned>(e.authorSlot));
+        return;
+    }
 
     // THE WHOLE HANDLER. The sender stopped authoring; free the seat and the author. No physics
     // write, no un-freeze, no inherited velocity -- nothing was ever frozen and every AtvState
@@ -729,6 +877,11 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         // FIRST so the joiner fresh-spawns it. Same Normal lane as AtvState, so the AtvSpawn arrives
         // before the pose below (spawn-then-pose, in order).
         if (IsSynthKey(kv.first)) { SendAtvSpawn(kv.first, e.actor, peerSlot); ++spawns; }
+        // Re-arm the change gate for the JOINER's sake. The snapshot is fire-once and a fresh
+        // joiner is the peer most likely to drop it (its index belongs to a world it is still
+        // loading); with the gate already satisfied from an earlier peer, an idle ATV would then
+        // send nothing until the host's own copy happened to move.
+        e.haveLastSync = false;
         // The joiner gets pose AND velocity, and warps to it (adopt=1). Nothing is frozen on
         // either side, so the old "authored" boolean -- which existed only to tell a joiner
         // whether to freeze -- has no consumer. What the joiner needs is WHO holds it: if the host
@@ -754,7 +907,15 @@ void Tick() {
     // invulnerable. Disarm first; the paths that earn it re-arm at the bottom.
     struct DisarmUnlessArmed {
         bool armed = false;
-        ~DisarmUnlessArmed() { if (!armed) g_guardActive.store(false, std::memory_order_release); }
+        ~DisarmUnlessArmed() {
+            if (armed) return;
+            g_guardActive.store(false, std::memory_order_release);
+            // Clear the SET too, not just the flag. OwnsTick() is a public read the probe's
+            // acceptance keys two of its arms on, and a stale published set would label a mirror
+            // sample as an owner sample -- an instrument agreeing with itself about a lane that
+            // is not running.
+            PublishOwned(nullptr, 0);
+        }
     } scope;
 
     if (!A::EnsureResolved()) return;
@@ -814,8 +975,17 @@ void Tick() {
         // TICK OWNERSHIP -- a different question from pose authority, and the only thing that
         // decides whose machine runs this rig's brain.
         const bool ownsTick = OwnsTickFor(authority, isHost, e.authorSlot);
-        SetBrain(e, ownsTick);
-        if (ownsTick && ownedN < kMaxOwnedPublished) owned[ownedN++] = e.actor;
+        if (ownsTick) {
+            if (ownedN < kMaxOwnedPublished) {
+                owned[ownedN++] = e.actor;
+            } else {
+                static bool sSaturated = false;
+                if (!sSaturated) { sSaturated = true;
+                    UE_LOGE("atv: owned-set saturated at %d -- ATV '%ls' and any beyond it will "
+                            "have their OWN collisions suppressed on the peer that owns them",
+                            kMaxOwnedPublished, kv.first.c_str()); }
+            }
+        }
 
         if (authority) {
             if (nowMs - e.lastSentMs >= kDriveSendMs) {
@@ -829,11 +999,21 @@ void Tick() {
             // THE IDLE SYNCER (host, nobody driving). MTA's CUnoccupiedVehicleSync: a slower
             // cadence AND a change gate, so a parked ATV costs literally nothing while one rolling
             // down a hill still converges on every peer.
-            if (nowMs - e.lastSentMs >= kIdleSendMs && IdleWorthSending(e)) {
+            if (nowMs - e.lastSentMs >= kIdleSendMs) {
+                // MTA bumps its clock unconditionally once the window elapses
+                // (CUnoccupiedVehicleSync::DoPulse:63-68). Bumping it only on a SEND -- which is
+                // what this first shipped as -- leaves it stale for exactly the parked ATV the
+                // gate is meant to make free, so the gate reads open every frame and the branch
+                // runs its five UFunction dispatches at the pump rate instead of at 5 Hz.
                 e.lastSentMs = nowMs;
-                coop::net::AtvStatePayload p{};
-                if (ReadPayload(e.actor, kv.first, e.occupantSlot, /*authorSlot*/0xFF, /*adopt*/false, p))
-                    s->SendReliable(coop::net::ReliableKind::AtvState, &p, sizeof(p));
+                const bool changed   = IdleWorthSending(e);
+                const bool keepalive = nowMs - e.lastIdleSendMs >= kIdleKeepaliveMs;
+                if (changed || keepalive) {
+                    e.lastIdleSendMs = nowMs;
+                    coop::net::AtvStatePayload p{};
+                    if (ReadPayload(e.actor, kv.first, e.occupantSlot, /*authorSlot*/0xFF, /*adopt*/false, p))
+                        s->SendReliable(coop::net::ReliableKind::AtvState, &p, sizeof(p));
+                }
             }
         }
         // A mirror does NOTHING here. It is a simulating body, corrected at packet arrival.
@@ -854,13 +1034,12 @@ void OnDisconnect() {
         const bool live = R::IsLiveByIndex(kv.second.actor, kv.second.idx);
         if (kv.second.isClientSpawnedMirror) {
             if (live) A::DestroyMirror(kv.second.actor);   // a fresh-spawned runtime mirror is a coop artifact -> remove
-        } else if (live) {
-            // Give every surviving ATV its brain back, unconditionally. The old code restored only
-            // ATVs it had a `preparedAsMirror` flag for, which is the "missing disconnect restore"
-            // the C1 crutch entry names: the flag was cleared by a release, so an ATV that had been
-            // mirrored and then released was left in single-player with whatever state it had.
-            A::SetBrainEnabled(kv.second.actor, true);
         }
+        // Nothing to restore: this lane no longer disables an ATV's tick or its physics, so a
+        // session leaves every save ATV exactly as it found it. That closes the C1 crutch entry's
+        // "missing disconnect restore" by DELETING the state that owed one, rather than by
+        // remembering to undo it -- the old code restored only ATVs still carrying a
+        // preparedAsMirror flag, which a release had already cleared.
     }
     const size_t n = g_atvs.size();
     g_atvs.clear();
@@ -871,13 +1050,20 @@ void OnDisconnect() {
     g_installed = false;  // a new session re-indexes via the next Install (latched again)
     if (n > 0)
         UE_LOGI("atv: OnDisconnect -- cleared %zu ATV(s) (brains restored; runtime mirrors destroyed); "
-                "hit guard: %llu cancelled / %llu allowed this session",
+                "hit guard: %llu cancelled / %llu allowed; corrector: %llu nudged / %llu warped "
+                "/ %llu cut-on-stall",
                 n, static_cast<unsigned long long>(g_hitCancelled.load()),
-                static_cast<unsigned long long>(g_hitAllowed.load()));
+                static_cast<unsigned long long>(g_hitAllowed.load()),
+                static_cast<unsigned long long>(g_corrs),
+                static_cast<unsigned long long>(g_warps),
+                static_cast<unsigned long long>(g_stallWarps));
 }
 
 bool OwnsTick(void* actor) {
     if (!actor) return false;
+    // The header promises false whenever the lane is not running, and the published set alone
+    // cannot say that -- every early return in Tick leaves the previous set in place.
+    if (!g_guardActive.load(std::memory_order_acquire)) return false;
     // Reads the SAME published set the collision guard consults, on purpose: an instrument that
     // recomputes the predicate would agree with itself while disagreeing with the code under test.
     for (int i = 0; i < kMaxOwnedPublished; ++i) {

@@ -6,8 +6,8 @@
 //
 // THE MODEL (RULE 1; MTA CNetAPI::ReadVehiclePuresync + CClientVehicle::UpdateTargetPosition +
 // CUnoccupiedVehicleSync). A peer that does not author an ATV does NOT freeze it. It leaves the
-// rig simulating, switches the BRAIN off, and is corrected toward the authority by a velocity
-// write plus a bounded corrective term, warping only past a speed-scaled threshold. That inversion
+// rig running natively and is corrected toward the authority by a velocity write plus a bounded
+// corrective term, warping only past a speed-scaled threshold. That inversion
 // replaces the kinematic freeze/teleport lane whole (RULE 2) because AATV_C is a five-body
 // constraint rig whose visible output IS suspension travel, and the old lane teleported its root
 // alone -- measured at 29.58 cm of travel against a native 2-4 cm, with the release path handing
