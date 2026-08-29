@@ -2704,7 +2704,7 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   anecdote.** Measured 2026-08-29, three stages that each reversed the last: (1) 285 dumped
   blueprints walked for spawn calls naming ATV -> **0 hits**, a clean complete-feeling negative;
   (2) mounting the pak reported **20,873 packages**, so that sample was **1.4%** — the whole-pak
-  byte-scan for the FName `ATV_C ` (uncompressed pak; bisect each hit offset into the sorted
+  byte-scan for the FName `ATV_C` plus its NUL terminator (written in words -- a literal NUL made git treat this whole file as BINARY) (uncompressed pak; bisect each hit offset into the sorted
   `provider.files` span table) found 104 owners, 23 non-map, all of which disassembled clean, still
   "no"; (3) the real answer was in **data** — `list_props` row `atv` carries
   `spawnAsObject = ATV_C`, `hidden = false`, and `lib.PropToObject` does
@@ -5919,6 +5919,8 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   an agent-addressed directive in the stub AND the instruction itself naming both files. Note the
   knock-on: this ledger's 1:1 `memory/` pairing now SPANS two files, so a pairing check that greps one
   reports false violations. `memory/feedback_moving_a_section_out_of_an_agent_read_file.md`
+
+**A shared working tree means ONE git index, so `git add` is a cross-session side effect.** Two sessions on this box; my ten explicitly-named staged paths were swallowed by the other session's `git commit` (no pathspec) in the ~40 s while I wrote my message -- ~700 lines of browser work recorded under an ATV commit. `MEMORY.md`'s "explicit paths, NEVER add -A/-u" was obeyed and did not help: the hazard is not your pathspec, it is that the index is shared at all. **Look here FIRST:** skip the index -- `git commit -F - -- <paths>` commits the working-tree version of exactly those paths and leaves everyone else's index entries alone. If a commit's `--stat` lists files you never touched, suspect this before your own pathspec. [[lesson-a-shared-index-makes-git-add-a-cross-session-side-effect]]
 
 ## 9. Security (threat model, trust boundaries, peer identity)
 
