@@ -49,6 +49,11 @@ class VOTVIO_OT_import_sav(bpy.types.Operator, ImportHelper):
         items=[("GREEN", "Green", "Grass"), ("SNOW", "Snow", "Snowed over"),
                ("DIRT", "Dirt", "Dry ground")],
         default="GREEN")
+    import_radius: bpy.props.FloatProperty(
+        name="Import radius (m)",
+        description="0 = the whole map. Otherwise only things within this many meters "
+                    "of the base (the garage / coordinate-panel building) are imported",
+        default=0.0, min=0.0, soft_max=2000.0, subtype="DISTANCE")
 
     def invoke(self, context, event):
         if not self.filepath:
@@ -100,6 +105,7 @@ class VOTVIO_OT_import_sav(bpy.types.Operator, ImportHelper):
             "import_lights": self.import_lights,
             "foliage_density": self.foliage_density,
             "terrain_style": self.terrain_style,
+            "import_radius": self.import_radius,
         }
         wm.progress_begin(0, 100)
         try:

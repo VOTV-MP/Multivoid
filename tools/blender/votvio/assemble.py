@@ -35,8 +35,39 @@ class _Builder:
         self.caches = {"mat": {}, "img": {}, "mesh": {}}
         self.resolver = template_resolver.TemplateResolver(game) if game else None
         self.list_props = game.list_props() if game else {}
-        self.counts = {"meshed": 0, "placeholders": 0, "sk_placeholders": 0, "objects": 0}
+        self.counts = {"meshed": 0, "placeholders": 0, "sk_placeholders": 0, "objects": 0,
+                       "culled": 0}
         self.unresolved = {}
+        self.radius = float(options.get("import_radius", 0.0) or 0.0)
+        self.origin = None  # Blender-space Vector, set in run() when radius > 0
+
+    def within(self, loc_bl):
+        """Import-radius test (XY, meters). True when no radius is set."""
+        if self.radius <= 0.0 or self.origin is None:
+            return True
+        dx = loc_bl[0] - self.origin[0]
+        dy = loc_bl[1] - self.origin[1]
+        return (dx * dx + dy * dy) <= self.radius * self.radius
+
+    def _find_base_origin(self):
+        """The base (garage / coordinate panels) = the baseBuilding_C actor's root."""
+        map_path = self.game.find_content_package(self.m.level or "untitled_1") \
+            if self.game else None
+        if map_path:
+            dicts = self.game.package_dict(map_path)
+            by_name = {e.get("Name"): e for e in dicts if isinstance(e, dict)}
+            for e in dicts:
+                if isinstance(e, dict) and e.get("Type") == "baseBuilding_C" \
+                        and e.get("Outer") == "PersistentLevel":
+                    root = by_name.get(str(((e.get("Properties") or {}).get("RootComponent")
+                                            or {}).get("ObjectName", "")))
+                    rl = ((root or {}).get("Properties") or {}).get("RelativeLocation")
+                    if isinstance(rl, dict):
+                        return convert.pos((rl.get("X", 0), rl.get("Y", 0), rl.get("Z", 0)))
+        if self.m.player_transform:  # fallback: wherever the save's player is
+            _q, loc, _s = self.m.player_transform
+            return convert.pos(loc)
+        return convert.pos((0.0, 0.0, 0.0))
 
     # -- assets ------------------------------------------------------------
     def ensure_mesh(self, mesh_pkg_path):
@@ -71,6 +102,9 @@ class _Builder:
         label = row.prop_name or row.class_name.removesuffix("_C") or "unknown"
         quat, loc, scale = row.transform
         actor_m = convert.matrix(quat, loc, scale)
+        if not self.within(actor_m.translation):
+            self.counts["culled"] += 1
+            return
         seed = row.key if row.key not in ("", "None") else \
             f"{row.class_name}@{round(loc[0])}:{round(loc[1])}"
         placed_mesh = False
@@ -105,6 +139,9 @@ class _Builder:
         contained_col = _get_or_create_collection("Contained", master)
         player_col = _get_or_create_collection("Player", master)
 
+        if self.radius > 0.0:
+            self.origin = self._find_base_origin()
+
         rows = self.m.objects
         total = len(rows) + len(self.m.primitives)
         for i, row in enumerate(rows):
@@ -113,9 +150,12 @@ class _Builder:
                 self.progress(i, total, "props")
         for i, row in enumerate(self.m.primitives):
             quat, loc, scale = row.transform
+            pm = convert.matrix(quat, loc, scale)
+            if not self.within(pm.translation):
+                self.counts["culled"] += 1
+                continue
             self._placeholder(row.class_name.removesuffix("_C") or "pile",
-                              cols["Piles"], convert.matrix(quat, loc, scale),
-                              "CUBE", 0.08)
+                              cols["Piles"], pm, "CUBE", 0.08)
             if i % 100 == 0:
                 self.progress(len(rows) + i, total, "piles")
 
@@ -141,8 +181,9 @@ class _Builder:
             cam_ob.rotation_euler.x += 1.5708  # look forward, not down
         for t in self.m.roaches:
             quat, loc, scale = t
-            self._placeholder("roach", cols["Piles"], convert.matrix(quat, loc, scale),
-                              "SPHERE", 0.03)
+            rm = convert.matrix(quat, loc, scale)
+            if self.within(rm.translation):
+                self._placeholder("roach", cols["Piles"], rm, "SPHERE", 0.03)
 
         self.map_stats = {}
         if self.game and self.opt.get("import_map", True):
@@ -161,7 +202,7 @@ class _Builder:
                         self.opt.get("terrain_style", "GREEN"))
                     self.map_stats["landscape"] = landscape_mod.build_landscape(
                         self.game, map_path, self.game.package_dict(map_path),
-                        mcols["Landscape"], self.warnings, land_mat)
+                        mcols["Landscape"], self.warnings, land_mat, builder=self)
             else:
                 self.warnings.append(f"map package not found for level {self.m.level!r}")
 

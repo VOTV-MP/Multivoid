@@ -40,7 +40,7 @@ def _decoded_heightmap(pkg, name, cache, warnings):
     return img
 
 
-def build_landscape(game, map_path, dicts, collection, warnings, material):
+def build_landscape(game, map_path, dicts, collection, warnings, material, builder=None):
     pkg = game.load_package(map_path)
 
     # the Landscape actor's root transform (scale is the height/extent unit)
@@ -73,6 +73,16 @@ def build_landscape(game, map_path, dicts, collection, warnings, material):
         rl = p.get("RelativeLocation") or {}
         base_x = float(rl.get("X", p.get("SectionBaseX", 0) or 0))
         base_y = float(rl.get("Y", p.get("SectionBaseY", 0) or 0))
+        if builder is not None and builder.radius > 0.0:
+            # component center, with the component's half-diagonal as slack
+            cx = root_loc[0] + (base_x + csq * 0.5) * root_scale[0]
+            cy = root_loc[1] + (base_y + csq * 0.5) * root_scale[1]
+            center = convert.pos((cx, cy, 0.0))
+            half = csq * root_scale[0] * convert.SCALE * 0.75
+            dx = center[0] - builder.origin[0]
+            dy = center[1] - builder.origin[1]
+            if (dx * dx + dy * dy) ** 0.5 > builder.radius + half:
+                continue
         hm = _decoded_heightmap(pkg, _ref_name(p.get("HeightmapTexture")), hm_cache, warnings)
         if hm is None:
             continue

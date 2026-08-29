@@ -62,7 +62,7 @@ class MapImporter:
         self.save_classes = save_classes or set()
         self.stats = {"placed": 0, "instances": 0, "skipped_saveclass": 0,
                       "no_mesh": 0, "hidden": 0, "lights": 0, "sk_skipped": 0,
-                      "landscape": 0}
+                      "landscape": 0, "culled": 0}
         self._world_m = {}
         self._actor = {}
         self._save_class = {}
@@ -228,10 +228,16 @@ class MapImporter:
                 target = cols["Foliage"] if ty == "FoliageInstancedStaticMeshComponent" \
                     else cols["Statics"]
                 for k in take:
-                    self.b._new_object(label, me, target,
-                                       world @ convert.ue_fmatrix_to_bl(inst[k]))
+                    m = world @ convert.ue_fmatrix_to_bl(inst[k])
+                    if not self.b.within(m.translation):
+                        self.stats["culled"] += 1
+                        continue
+                    self.b._new_object(label, me, target, m)
                     self.stats["instances"] += 1
             else:
+                if not self.b.within(world.translation):
+                    self.stats["culled"] += 1
+                    continue
                 self.b._new_object(label, me, cols["Statics"], world)
                 self.stats["placed"] += 1
         return self.stats
@@ -245,7 +251,11 @@ class MapImporter:
         if isinstance(c, dict):
             ld.color = (c.get("R", 255) / 255.0, c.get("G", 255) / 255.0,
                         c.get("B", 255) / 255.0)
+        m = self._world_matrix(idx)
+        if not self.b.within(m.translation):
+            self.stats["culled"] += 1
+            return
         ob = bpy.data.objects.new(ld.name, ld)
-        ob.matrix_world = self._world_matrix(idx)
+        ob.matrix_world = m
         col.objects.link(ob)
         self.stats["lights"] += 1
