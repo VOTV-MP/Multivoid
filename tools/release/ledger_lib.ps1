@@ -317,9 +317,18 @@ function ConvertTo-PackageVersion {
 # UE4SS_ARC 7.2a convention). package.ps1 writes the file; publish.ps1 must
 # PREDICT the name to find and upload it -- two copies of the format string is
 # how a writer and its reader drift apart.
+#
+# THE TEAM IS `Pelmentor` (USER 2026-08-29, superseding the 2026-08-26 pick of
+# `Multivoid`). On Thunderstore the TEAM is the namespace -- manifest.json carries
+# no author field at all -- so the team half IS the displayed author, and a package
+# named `Multivoid-Multivoid` reads as authored by a project rather than a person.
+# r2modman shows it for a LOCAL import too, derived from this filename, which is how
+# the wrong author surfaced before anything was ever published. Changed while nothing
+# is published: per THUNDERSTORE.md 5 neither half can move afterwards without
+# creating a SECOND package, and an author cannot delete a package.
 function Get-PackageZipName {
     param([Parameter(Mandatory)][string]$Version)
-    "Multivoid-Multivoid-$Version.zip"
+    "Pelmentor-Multivoid-$Version.zip"
 }
 
 # PNG IHDR width/height. Thunderstore requires icon.png to be EXACTLY 256x256 and the

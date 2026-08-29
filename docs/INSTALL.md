@@ -40,7 +40,7 @@ is deleted to uninstall.
 
 - **Voices of the Void 0.9.0n** (each mod build targets one game version; the
   release page and the in-game Multiplayer entry both show the pair).
-- The one `Multivoid-Multivoid-<version>.zip` from the newest entry on the
+- The one `Pelmentor-Multivoid-<version>.zip` from the newest entry on the
   [Releases page](https://github.com/VOTV-MP/Multivoid/releases) — or the
   Thunderstore listing, once published.
 

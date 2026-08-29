@@ -58,7 +58,7 @@ Assert-Case (@(Test-ReleaseNotesFormat -Content ("- fine`nsha256: " + ('a' * 64)
 # get fixtures: the zip era is what publish emits from WP-2 commit 3 onward; the
 # legacy two-DLL era is what notes_regen rebuilds for the LIVE b122..b143 bodies.
 $fixtureSha = '0123456789abcdef0123456789abcdef01234567'
-$fixtureMap = @{ 'Multivoid-Multivoid-0.9.999.zip' = ('a' * 64) }
+$fixtureMap = @{ 'Pelmentor-Multivoid-0.9.999.zip' = ('a' * 64) }
 $fixtureBody = New-ReleaseBody -SourceSha $fixtureSha -Sha256ByFile $fixtureMap -NotesContent '- a change' -Dev
 Assert-Case ((Get-ReleaseBodySource $fixtureBody) -eq $fixtureSha) 'body: completion parser finds the one source: key'
 Assert-Case ([regex]::Matches($fixtureBody, $script:SourceLineRegex).Count -eq 1) 'body: exactly one source:-grammar line'

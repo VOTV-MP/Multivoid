@@ -17,7 +17,7 @@ runs on LOCAL builds.
 > resolves in a working clone and will not resolve on GitHub. This is deliberate.
 
 A RELEASE is: a tag `v<game>-b<N>` (stable) or `v<game>-b<N>-dev` (dev prerelease)
-whose page carries the ONE package zip (`Multivoid-Multivoid-<version>.zip`,
+whose page carries the ONE package zip (`Pelmentor-Multivoid-<version>.zip`,
 assembled by `tools/release/package.ps1` from the tagged build's `main.dll`)
 + its SHA256.
 The body (ONE writer: `New-ReleaseBody`, used by publish, retro regeneration,

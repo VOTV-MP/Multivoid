@@ -6,7 +6,7 @@
 
 | | |
 |--|--|
-| **Current build** | the newest `Multivoid-Multivoid-<version>.zip` on the [Releases page](https://github.com/VOTV-MP/Multivoid/releases) (dev prereleases; the zip name + the in-game banner carry the identity) |
+| **Current build** | the newest `Pelmentor-Multivoid-<version>.zip` on the [Releases page](https://github.com/VOTV-MP/Multivoid/releases) (dev prereleases; the zip name + the in-game banner carry the identity) |
 | **Game target** | Voices of the Void Alpha **0.9.0n** |
 | **Status** | Alpha — dev prereleases published for testing; no stable release yet |
 | **Players** | up to **4** (host + 3) |
@@ -139,7 +139,7 @@ no separate mod semver.
 
 ```
 Multivoid 0.9.0n b<N>   ->   the in-game banner, the release zip's name
-                             (Multivoid-Multivoid-<major>.<minor>.<N>.zip),
+                             (Pelmentor-Multivoid-<major>.<minor>.<N>.zip),
                              and main.dll's own VERSIONINFO all carry it
 ```
 

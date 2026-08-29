@@ -1528,12 +1528,16 @@ option is not re-derived from scratch later.
   `https://questwalker.github.io/votv-modding-wiki/` and a Discord invite. Whether uploads pass
   through moderation is **not** expressible in that schema, so it stays open — but it is a question
   for the community's own channels, not a measurement.
-- **~~STILL OWED~~ HALF DONE 2026-08-26 (USER):** the Thunderstore **Team `Multivoid` EXISTS** —
-  the user created it and said so verbatim (*"Команду я создал уже Multivoid"*). Two consequences to
-  carry, neither reversible: the package identity is fixed at **`Multivoid-Multivoid`**, so §7.2a
-  trap 4's pak path is `shimloader/pak/Multivoid-Multivoid/` and the `dependencies` string bakes the
-  same pair; and changing either half later creates a SECOND package rather than updating this one
-  (`THUNDERSTORE.md` §5). **Still owed:** the service-account API token §7.9 needs — and per the user
+- **~~STILL OWED~~ ~~HALF DONE 2026-08-26~~ SUPERSEDED 2026-08-29 (USER):** the Thunderstore team is
+  **`Pelmentor`**, not `Multivoid`. The 2026-08-26 entry recorded the team `Multivoid` as created
+  (*"Команду я создал уже Multivoid"*) and called the identity irreversible; that was true of the
+  moment AFTER a first publish, and no publish had happened, so the user re-picked on seeing the
+  author render as "Multivoid" in r2modman's local import. **Package identity is now
+  `Pelmentor-Multivoid`**, §7.2a trap 4's pak path is `shimloader/pak/Pelmentor-Multivoid/`, and the
+  zip is `Pelmentor-Multivoid-<version>.zip`. The `dependencies` string was never affected — it names
+  shimloader's team. Changing either half AFTER the first upload still creates a SECOND package
+  rather than updating this one (`THUNDERSTORE.md` §5), and that constraint is now live-in-waiting
+  rather than already spent. **Still owed:** the service-account API token §7.9 needs — and per the user
   2026-08-26 it is not needed yet (*"пока не обязательно грузить, сначала проверки локальной
   установки zip и тд"*), so the automated-publish job (C3.5) is DEFERRED, not blocked.
 - **PARTIAL 2026-08-26 — the MANUAL half of this control has now RUN; the managed half has not.**
