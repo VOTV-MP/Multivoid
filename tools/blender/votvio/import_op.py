@@ -54,6 +54,10 @@ class VOTVIO_OT_import_sav(bpy.types.Operator, ImportHelper):
         description="0 = the whole map. Otherwise only things within this many meters "
                     "of the base (the garage / coordinate-panel building) are imported",
         default=0.0, min=0.0, soft_max=2000.0, subtype="DISTANCE")
+    show_technical: bpy.props.BoolProperty(
+        name="Show technical meshes",
+        description="The game's utility cubes/triggers/imposters (hidden by default)",
+        default=False)
 
     def invoke(self, context, event):
         if not self.filepath:
@@ -106,6 +110,7 @@ class VOTVIO_OT_import_sav(bpy.types.Operator, ImportHelper):
             "foliage_density": self.foliage_density,
             "terrain_style": self.terrain_style,
             "import_radius": self.import_radius,
+            "show_technical": self.show_technical,
         }
         wm.progress_begin(0, 100)
         try:

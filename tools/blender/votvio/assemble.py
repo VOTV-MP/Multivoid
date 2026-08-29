@@ -111,6 +111,8 @@ class _Builder:
         if self.game and self.opt.get("import_meshes", True) and row.class_path:
             for mesh_path, local_m, kind in self.resolver.spawn_plan(
                     row, self.list_props, seed):
+                if umap_import.is_technical(mesh_path, self.opt):
+                    continue
                 if kind == "SK":
                     self._placeholder(label + ".sk", col, actor_m @ local_m, "CUBE", 0.4)
                     self.counts["sk_placeholders"] += 1

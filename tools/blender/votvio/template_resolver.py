@@ -161,6 +161,10 @@ class TemplateResolver:
         """Flat base->TemplateComp view (umap per-component fallbacks)."""
         return self._load(package_path)["templates"]
 
+    def tree_info(self, package_path):
+        """{'templates', 'children', 'roots', ...} for tree-first umap assembly."""
+        return self._load(package_path)
+
     # ------------------------------------------------------------- spawning
     def spawn_plan(self, row, list_props_table, pose_seed):
         """SaveRow -> [(mesh package path, local matrix rel. to the actor, kind)]."""
@@ -172,14 +176,19 @@ class TemplateResolver:
         out = []
 
         def walk(base, parent_m, depth=0):
-            t = info["templates"].get(base)
-            if t is None or depth > 10:
+            if depth > 10:
                 return
-            m = parent_m @ convert.matrix_from_rotator(t.rel_rot, t.rel_loc, t.rel_scale)
+            t = info["templates"].get(base)
+            # a pivot SceneComponent with no overridden defaults has NO template
+            # export at all (dish axis_Z/axis_Y) -- identity rel, keep walking
+            if t is None:
+                m = parent_m
+            else:
+                m = parent_m @ convert.matrix_from_rotator(t.rel_rot, t.rel_loc, t.rel_scale)
             pose = pose_random.pose_rotation(row.class_name, base, pose_seed)
             if pose is not None:
                 m = m @ pose
-            if not t.hidden and t.mesh:
+            if t is not None and not t.hidden and t.mesh:
                 if t.mesh.startswith("/Game/"):
                     out.append((t.mesh, m, t.kind))
                 elif t.mesh.startswith("/Engine/") and t.has_override_mats:

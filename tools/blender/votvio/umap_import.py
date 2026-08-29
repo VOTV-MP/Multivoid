@@ -25,6 +25,23 @@ INSTANCED = {
 LIGHT_COMPS = {"PointLightComponent": "POINT", "SpotLightComponent": "SPOT",
                "RectLightComponent": "AREA"}
 
+# Runtime render-proxy components the game toggles itself (radiotower's 90m 'rend'
+# cube imposter). Named table, grown only with a measured case.
+IMPOSTER_COMPONENTS = {"rend"}
+
+# The game's own utility meshes (trigger volumes, blockers, dev cubes). Hidden by
+# default; the "Show technical meshes" import option brings them back.
+TECHNICAL_MESHES = {
+    "/Game/meshes/misc/cube",
+    "/Game/meshes/misc/qweqwe",
+}
+
+
+def is_technical(mesh_path, opt):
+    if opt.get("show_technical", False):
+        return False
+    return mesh_path in TECHNICAL_MESHES
+
 
 def _ref(v):
     """object-ref dict -> (object name, outer name)."""
@@ -125,15 +142,6 @@ class MapImporter:
                 m = convert.matrix_from_rotator(t.rel_rot, t.rel_loc, t.rel_scale)
             else:
                 m = Matrix.Identity(4)
-        actor_idx = self._actor_of(idx)
-        if actor_idx is not None:
-            atype = self.dicts[actor_idx].get("Type", "")
-            if pose_random.has_pose(atype):
-                pose = pose_random.pose_rotation(
-                    atype, self.dicts[idx].get("Name", ""),
-                    self.dicts[actor_idx].get("Name", ""))
-                if pose is not None:
-                    m = m @ pose
         return m
 
     def _world_matrix(self, idx, depth=0):
@@ -164,6 +172,88 @@ class MapImporter:
             return t.mesh
         return ""
 
+    # ---- tree-first BP actor assembly -----------------------------------
+    def _assemble_bp_actor(self, actor_idx, cols):
+        """The umap holds only DELTA components of a BP actor (measured: radiotower's
+        real mast/top are absent, only its 'rend' cube delta is exported). The true
+        shape = the class template TREE with instance deltas merged on top."""
+        e = self.dicts[actor_idx]
+        atype = e.get("Type", "")
+        pkg = self.game.class_package(atype)
+        if not pkg:
+            return None
+        info = self.resolver.tree_info(pkg)
+        if not info["roots"]:
+            return None
+        aname = e.get("Name", "")
+        # Tree-first ONLY for actors whose exported deltas hold no visible mesh
+        # (radiotower: just the tech cube). Actors with real delta meshes (the base
+        # building, doors, boarded windows) keep their level-authored layout.
+        if actor_idx in self._actors_with_delta_mesh:
+            return None
+        root_name = _ref((e.get("Properties") or {}).get("RootComponent"))[0]
+        root_idx = self.by_comp.get((root_name, aname))
+        if root_idx is None:
+            return None
+        world = self._world_matrix(root_idx)
+        consumed = {root_idx}
+        placed_any = False
+
+        def walk(base, parent_m, depth=0):
+            nonlocal placed_any
+            if depth > 10:
+                return
+            t = info["templates"].get(base)
+            inst_idx = self.by_comp.get((base, aname))
+            ip = (self.dicts[inst_idx].get("Properties") or {}) if inst_idx is not None else {}
+            if any(k in ip for k in ("RelativeLocation", "RelativeRotation",
+                                     "RelativeScale3D")):
+                rel = convert.matrix_from_rotator(
+                    _rot(ip.get("RelativeRotation")), _vec(ip.get("RelativeLocation")),
+                    _vec(ip.get("RelativeScale3D"), (1.0, 1.0, 1.0)))
+            elif t is not None:
+                rel = convert.matrix_from_rotator(t.rel_rot, t.rel_loc, t.rel_scale)
+            else:
+                rel = Matrix.Identity(4)
+            m = parent_m @ rel
+            pose = pose_random.pose_rotation(atype, base, aname)
+            if pose is not None:
+                m = m @ pose
+            inst_ty = self.dicts[inst_idx].get("Type", "") if inst_idx is not None else ""
+            if inst_idx is not None and (
+                    t is not None or inst_ty in ("StaticMeshComponent",
+                                                 "SkeletalMeshComponent", "SceneComponent")):
+                consumed.add(inst_idx)  # lights/audio/ISM nodes stay for the flat pass
+            mesh = _ref_pkg(ip.get("StaticMesh")) or (t.mesh if t is not None else "")
+            hidden = (ip.get("bHiddenInGame") is True or ip.get("bVisible") is False
+                      or (t.hidden if t is not None and "bHiddenInGame" not in ip
+                          and "bVisible" not in ip else False))
+            kind = t.kind if t is not None else "SCENE"
+            if ip.get("SkeletalMesh"):
+                kind = "SK"
+            ok_engine = mesh.startswith("/Engine/") and not mesh.startswith("/Engine/BasicShapes")
+            override = ("OverrideMaterials" in ip) or (t is not None and t.has_override_mats)
+            if kind == "SK" and mesh and not hidden:
+                self.stats["sk_skipped"] += 1
+            if (mesh and not hidden and kind == "SM" and base not in IMPOSTER_COMPONENTS
+                    and not is_technical(mesh, self.opt)
+                    and (mesh.startswith("/Game/") or ok_engine
+                         or (mesh.startswith("/Engine/BasicShapes") and override))):
+                if self.b.within(m.translation):
+                    me = self.b.ensure_mesh(mesh)
+                    if me is not None:
+                        self.b._new_object(aname, me, cols["Statics"], m)
+                        self.stats["placed"] += 1
+                        placed_any = True
+                else:
+                    self.stats["culled"] += 1
+            for kid in info["children"].get(base, ()):
+                walk(kid, m, depth + 1)
+
+        for root in info["roots"]:
+            walk(root, world)
+        return consumed if placed_any or consumed != {root_idx} else consumed
+
     def run(self, map_path, cols, progress):
         self.dicts = self.game.package_dict(map_path)
         pkg = self.game.load_package(map_path)
@@ -179,9 +269,38 @@ class MapImporter:
             self.by_actor_name.setdefault(nm, i)
             self.by_comp[(nm, outer)] = i
 
+        # which actors carry a real (visible, non-technical) delta mesh
+        self._actors_with_delta_mesh = set()
+        for i, e in enumerate(self.dicts):
+            if not isinstance(e, dict) or e.get("Type") != "StaticMeshComponent":
+                continue
+            cp = e.get("Properties") or {}
+            mesh = _ref_pkg(cp.get("StaticMesh"))
+            if (mesh.startswith("/Game/") and not is_technical(mesh, self.opt)
+                    and e.get("Name") not in IMPOSTER_COMPONENTS
+                    and cp.get("bHiddenInGame") is not True
+                    and cp.get("bVisible") is not False):
+                a = self._actor_of(i)
+                if a is not None:
+                    self._actors_with_delta_mesh.add(a)
+
+        # pass 1: tree-first assembly of BP-classed level actors
+        consumed = set()
+        for i, e in enumerate(self.dicts):
+            if not isinstance(e, dict) or e.get("Outer") != "PersistentLevel":
+                continue
+            atype = e.get("Type", "")
+            if not atype.endswith("_C") or self._class_is_save(atype):
+                continue
+            got = self._assemble_bp_actor(i, cols)
+            if got:
+                consumed |= got
+
         density = max(0.0, min(1.0, self.opt.get("foliage_density", 1.0)))
         total = len(self.dicts)
         for i, e in enumerate(self.dicts):
+            if i in consumed:
+                continue
             if i % 2000 == 0:
                 progress(i, total, "map")
             if not isinstance(e, dict):
@@ -200,6 +319,9 @@ class MapImporter:
             if p.get("bHiddenInGame") is True or p.get("bVisible") is False:
                 self.stats["hidden"] += 1
                 continue
+            if e.get("Name") in IMPOSTER_COMPONENTS:
+                self.stats["hidden"] += 1
+                continue
             actor_idx = self._actor_of(i)
             atype = self.dicts[actor_idx].get("Type", "") if actor_idx is not None else ""
             if atype and self._class_is_save(atype):
@@ -208,6 +330,9 @@ class MapImporter:
             mesh_path = self._mesh_path_for(i, ty)
             if not mesh_path.startswith("/Game/"):
                 self.stats["no_mesh"] += 1
+                continue
+            if is_technical(mesh_path, self.opt):
+                self.stats["hidden"] += 1
                 continue
             me = self.b.ensure_mesh(mesh_path)
             if me is None:
