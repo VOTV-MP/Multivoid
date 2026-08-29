@@ -167,7 +167,7 @@ bool HandleStateEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::AtvSpawn: {
-        // v77: HOST->client purchased-ATV announce. The client fresh-spawns a native AATV_C it has no
+        // v77: HOST->client runtime-ATV announce. The client fresh-spawns a native AATV_C it has no
         // save-twin of (host-only economy delivery). HOST-AUTHORITATIVE -- trust only slot 0.
         if (msg.senderPeerSlot != 0) {
             UE_LOGW("event_feed: AtvSpawn from non-host senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
@@ -184,7 +184,7 @@ bool HandleStateEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::AtvDestroy: {
-        // v77: HOST->client purchased-ATV teardown. HOST-AUTHORITATIVE -- trust only slot 0.
+        // v77: HOST->client runtime-ATV teardown. HOST-AUTHORITATIVE -- trust only slot 0.
         if (msg.senderPeerSlot != 0) {
             UE_LOGW("event_feed: AtvDestroy from non-host senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
             break;

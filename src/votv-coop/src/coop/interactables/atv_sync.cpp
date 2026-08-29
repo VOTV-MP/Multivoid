@@ -78,7 +78,7 @@ struct AtvEntry {
     bool     dirty           = false;
     bool     preparedAsMirror = false;   // we disabled this ATV's physics/tick to mirror it
     bool     wasAuthority    = false;    // we were the authority (driver OR grabber) last tick (release-edge detect)
-    bool     isClientSpawnedMirror = false;  // v77: a purchased ATV WE fresh-spawned (AtvSpawn) -> K2 on destroy
+    bool     isClientSpawnedMirror = false;  // v77: a runtime ATV WE fresh-spawned (AtvSpawn) -> K2 on destroy
 };
 
 std::atomic<coop::net::Session*> g_session{nullptr};
@@ -94,16 +94,21 @@ size_t   g_lastLogCount = SIZE_MAX;
 uint64_t g_lastLogHash  = 0;
 bool     g_installed    = false;  // latch the one-time index+log (Install is the per-tick ensure path)
 
-// ---- v77 purchased-ATV identity (GAP B) --------------------------------------------------------
-// A bought ATV is delivered ONLY on the host (order_sync is host-authoritative; the client's mirror
-// drone is reset so its local delivery never spawns), so the other peers have NO save-twin of it.
-// Its OWN int_save Key is minted RANDOM per peer (the kerfur trap) -> useless cross-peer. The host
-// gives each such ATV a SYNTHETIC stable wire key ("coopatv#N") and announces it (AtvSpawn); clients
-// fresh-spawn a native AATV_C under that key. Default SAVE-PLACED ATVs (deterministic key, both peers
-// loaded them) stay on the real-key path untouched.
+// ---- v77 runtime-spawned-ATV identity (GAP B) ---------------------------------------------------
+// PREMISE CORRECTED 2026-08-29 (whole-pak census, docs/vehicles/ATV.md 11.4). This block used to say
+// "a bought ATV is delivered ONLY on the host"; that is FALSE -- nothing sells an ATV (473 list_store
+// rows + 189 craft recipes, zero hits). The code below never depended on it: its predicate is the
+// broader and correct "an ATV first seen after the baseline window", and such an ATV really exists --
+// list_props row 'atv' carries spawnAsObject = ATV_C with hidden = false, resolved by lib.PropToObject
+// and spawned through spawnPropThroughGamemode from ui_spawnmenu. So this lane STAYS (an earlier note
+// gated it for RULE-2 deletion on this census; the census cancelled the deletion, not the lane).
+// Such an ATV has NO save-twin on the other peers, and its OWN int_save Key is minted RANDOM per peer
+// (the kerfur trap) -> useless cross-peer. The host gives each one a SYNTHETIC stable wire key
+// ("coopatv#N") and announces it (AtvSpawn); clients fresh-spawn a native AATV_C under that key.
+// Default SAVE-PLACED ATVs (deterministic key, both peers loaded them) stay on the real-key path.
 std::unordered_set<std::wstring>        g_savePlacedKeys;    // HOST: real keys seen BEFORE any client connected = save-placed (a joiner loads them)
-std::unordered_set<void*>               g_savePlacedActors;  // HOST: ATV ACTORS present before any client connected -- so a save ATV that mints its UCS key LATE (after connect) is recognised by its actor, not misread as a purchase (-> client dupe)
-std::unordered_map<void*, std::wstring> g_synthForActor;     // actor -> synthetic wire key (host purchased + client mirror)
+std::unordered_set<void*>               g_savePlacedActors;  // HOST: ATV ACTORS present before any client connected -- so a save ATV that mints its UCS key LATE (after connect) is recognised by its actor, not misread as a runtime spawn (-> client dupe)
+std::unordered_map<void*, std::wstring> g_synthForActor;     // actor -> synthetic wire key (host runtime-spawned + client mirror)
 uint32_t                                g_synthCounter = 0;  // HOST: monotonic synth-key id
 
 const wchar_t* const kSynthPrefix = L"coopatv#";  // distinguishes synth keys from real ATV keys ("atv"/base64)
@@ -126,8 +131,8 @@ std::wstring WireClassNameToString(const coop::net::WireClassName& in) {
     return s;
 }
 
-// HOST: announce a purchased ATV so clients (that have no save-twin) fresh-spawn a native mirror.
-// slot < 0 -> broadcast to all (a NEW purchased ATV appearing mid-session); slot >= 0 -> send to one
+// HOST: announce a runtime ATV so clients (that have no save-twin) fresh-spawn a native mirror.
+// slot < 0 -> broadcast to all (a NEW ATV appearing mid-session); slot >= 0 -> send to one
 // joiner (connect-snapshot). Reads the actor's class + current pose.
 void SendAtvSpawn(const std::wstring& synthKey, void* actor, int slot) {
     auto* s = g_session.load(std::memory_order_acquire);
@@ -270,7 +275,7 @@ void ApplyMirror(AtvEntry& e) {
 // PRESERVING interp/sender state for keys that persist (only actor/idx are updated), and the
 // v77 identity classification verbatim: a save-placed ATV (real key, both peers loaded it)
 // keeps its real key; a HOST-side mid-session PURCHASED ATV gets a synthetic key + an
-// AtvSpawn announce so clients fresh-spawn it. Note the join edge: a purchase landing inside
+// AtvSpawn announce so clients fresh-spawn it. Note the join edge: a spawn landing inside
 // the <=1-pass (~2 s) index staleness window at a join is announced on the NEXT pass, when
 // the joiner is already connected -- the announce reaches it; no re-announce machinery needed.
 uint32_t g_indexGen = 0;  // world gen of the last completed pass (stale-gen index = EMPTY)
@@ -287,7 +292,7 @@ void HubPassBegin(void*, bool) {
     const bool isHost = g_scanIsHost;
     // Baseline-capture window: before any client is connected, EVERY keyed ATV the host has is
     // save-placed (a joiner will load it from the save). After a client connects, a newly-appearing
-    // key is a runtime purchase. (Accumulated -- not a single-frame latch -- so a default ATV that is
+    // key is a runtime spawn. (Accumulated -- not a single-frame latch -- so a default ATV that is
     // a few seconds slow to mint its UCS key still lands in the save-set before the first joiner.)
     g_scanCapturing = isHost && (!s || !s->connected());
 }
@@ -306,19 +311,20 @@ void HubMatch(void*, void* obj) {
         std::wstring wireKey;
         auto sf = g_synthForActor.find(obj);
         if (sf != g_synthForActor.end()) {
-            wireKey = sf->second;                              // already synth (host purchased / client mirror)
+            wireKey = sf->second;                              // already synth (host runtime-spawn / client mirror)
         } else if (capturing) {
             g_savePlacedKeys.insert(realKey);                 // baseline: a save-placed ATV
             wireKey = realKey;
         } else if (isHost && g_savePlacedKeys.find(realKey) == g_savePlacedKeys.end() &&
                    g_savePlacedActors.find(obj) == g_savePlacedActors.end()) {
-            // HOST: a mid-session ATV not in the save-set = a PURCHASED ATV (host-only delivery). Mint
-            // a synthetic stable wire key + announce so the clients (no save-twin) fresh-spawn a native
-            // mirror. (Its own int_save key is random per peer -- never used cross-peer.)
+            // HOST: a mid-session ATV not in the save-set = a RUNTIME-SPAWNED ATV (spawn menu ->
+            // list_props row 'atv' -> spawnAsObject = ATV_C). Mint a synthetic stable wire key +
+            // announce so the clients (no save-twin) fresh-spawn a native mirror. (Its own int_save
+            // key is random per peer -- never used cross-peer.)
             wireKey = std::wstring(kSynthPrefix) + std::to_wstring(++g_synthCounter);
             g_synthForActor[obj] = wireKey;
             SendAtvSpawn(wireKey, obj, /*slot*/ -1);          // broadcast to all connected clients
-            UE_LOGI("atv: purchased ATV detected -- synthKey='%ls' class='%ls' (host-announced AtvSpawn)",
+            UE_LOGI("atv: runtime-spawned ATV detected -- synthKey='%ls' class='%ls' (host-announced AtvSpawn)",
                     wireKey.c_str(), R::ToString(R::NameOf(R::ClassOf(obj))).c_str());
         } else {
             wireKey = realKey;                                 // save-placed default ATV (both peers have it)
@@ -330,7 +336,7 @@ void HubMatch(void*, void* obj) {
 size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
     const bool isHost = g_scanIsHost;
     auto& found = g_scanFound;
-    // Drop entries whose ATV vanished. A HOST synth (purchased) ATV that's gone -> AtvDestroy so the
+    // Drop entries whose ATV vanished. A HOST synth (runtime) ATV that's gone -> AtvDestroy so the
     // clients tear down their fresh-spawned mirror; clean its synth map entry.
     //   FULL pass: `found` is authoritative (it covered [0,N)) -> drop any entry NOT in `found`.
     //   TAIL pass: `found` is only the new tail -> a persistent live entry is NOT in `found`; prune by
@@ -442,7 +448,7 @@ void OnReliable(const coop::net::AtvStatePayload& payload, uint8_t /*senderPeerS
     // grabbing it) must NOT freeze it: place it at the host pose but keep physics ON so the local
     // player can grab/drive it like a native ATV. (A live stream always comes from an authority, so
     // it never has this combination -- it always freezes + interps below.) For a save ATV this just
-    // corrects drift; for a fresh purchased mirror it snaps it to the host pose.
+    // corrects drift; for a fresh runtime-spawned mirror it snaps it to the host pose.
     const bool authored = (payload.stateBits & 0x8) != 0;
     if (payload.adopt && !authored) {
         if (e.preparedAsMirror) { A::ReleaseMirror(e.actor); e.preparedAsMirror = false; }
@@ -524,7 +530,7 @@ void OnAtvSpawn(const coop::net::AtvSpawnPayload& payload, uint8_t /*senderPeerS
     e.isClientSpawnedMirror = true;
     g_atvs[synthKey] = std::move(e);
     g_synthForActor[spawned] = synthKey;
-    UE_LOGI("atv: spawned purchased-ATV mirror synthKey='%ls' class='%ls' actor=%p loc=(%.0f, %.0f, %.0f)",
+    UE_LOGI("atv: spawned runtime-ATV mirror synthKey='%ls' class='%ls' actor=%p loc=(%.0f, %.0f, %.0f)",
             synthKey.c_str(), className.c_str(), spawned, loc.X, loc.Y, loc.Z);
 }
 
@@ -540,7 +546,7 @@ void OnAtvDestroy(const coop::net::AtvDestroyPayload& payload, uint8_t /*senderP
     if (it->second.isClientSpawnedMirror) A::DestroyMirror(actor);  // K2_DestroyActor our fresh spawn
     if (actor) g_synthForActor.erase(actor);
     g_atvs.erase(it);
-    UE_LOGI("atv: destroyed purchased-ATV mirror synthKey='%ls'", synthKey.c_str());
+    UE_LOGI("atv: destroyed runtime-ATV mirror synthKey='%ls'", synthKey.c_str());
 }
 
 void QueueConnectBroadcastForSlot(int peerSlot) {
@@ -548,7 +554,7 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     if (!s || s->role() != coop::net::Role::Host) return;  // host-only snapshot
     if (peerSlot < 0 || peerSlot >= static_cast<int>(coop::players::kMaxPeers)) return;
     // R-2: the forced sync rebuild is gone -- the hub keeps the index <=1 pass (~2 s) fresh;
-    // a purchase inside that window is announced on the next pass to the (by then connected)
+    // a spawn inside that window is announced on the next pass to the (by then connected)
     // joiner -- see the hub-consumer block note.
     void* localPlayer = coop::players::Registry::Get().Local();
     const uint8_t localSlot = coop::players::Registry::Get().LocalPeerId();
@@ -570,7 +576,7 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::AtvState, &p, sizeof(p));
         ++sent;
     }
-    UE_LOGI("atv: connect-snapshot -- sent %d ATV pose(s) (%d purchased-ATV announce(s)) to slot %d (of %zu indexed)",
+    UE_LOGI("atv: connect-snapshot -- sent %d ATV pose(s) (%d runtime-ATV announce(s)) to slot %d (of %zu indexed)",
             sent, spawns, peerSlot, g_atvs.size());
 }
 
@@ -668,7 +674,7 @@ void OnDisconnect() {
     g_savePlacedActors.clear();
     g_synthCounter = 0;
     g_installed = false;  // a new session re-indexes via the next Install (latched again)
-    if (n > 0) UE_LOGI("atv: OnDisconnect -- cleared %zu ATV(s) (released save mirrors; destroyed purchased mirrors)", n);
+    if (n > 0) UE_LOGI("atv: OnDisconnect -- cleared %zu ATV(s) (released save mirrors; destroyed runtime mirrors)", n);
 }
 
 // Check if an ATV actor is occupied by a remote peer (used to block local mount interactions).

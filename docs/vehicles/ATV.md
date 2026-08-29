@@ -40,7 +40,7 @@ facts, composition not run · **[A]** asserted by an earlier doc, not re-verifie
 |---|---|---|
 | 0.1 | **`modules[]` (a `TArray<enum_physicalModules>`) is the SINGLE source of truth for all 13 upgrades.** Every `has*` bool, every module mesh, the light cone, the top speed, the exhaust FX and the body physical-material are *derived* by one parameterless BP function, `updUpgrades()`. | Upgrade sync is **one array + one call**, not 13 lanes. |
 | 0.2 | **`enum_atvUpgrades` is EMPTY** — it holds only `enum_atvUpgrades_MAX`. The live enum is `enum_physicalModules` (34 values, 13 of them ATV). | Do not build against `enum_atvUpgrades`; it is a dead asset. Closes an `[?]` in `docs/upgrades/README.md` §5. |
-| 0.3 | **The ATV is NOT purchasable.** All 473 `list_store` rows scanned: no row's `object` is `ATV_C`/`ATV_Child_C`. Nor is it in `list_craftRecipes`. Only its *parts* are buyable. | The "purchased ATV" premise behind the 2026-06-15 Gap-B design is **FALSE for the vehicle**. The shipped `AtvSpawn`/`AtvDestroy` synth-key lane still fires for any ATV appearing after connect — §9.3. |
+| 0.3 | **The ATV is NOT purchasable, but it IS runtime-spawnable.** All 473 `list_store` rows scanned: no row's `object` is `ATV_C`/`ATV_Child_C`, nor is it in `list_craftRecipes` — only its *parts* are buyable. **But `list_props` has a row `atv` whose `spawnAsObject` is `ATV_C`, `hidden=false`** [V], reached by `lib.PropToObject` → `spawnPropThroughGamemode` from `ui_spawnmenu`. | The "purchased ATV" premise behind the 2026-06-15 Gap-B design is **FALSE**, but the mechanism it built is **still required** — the shipped `AtvSpawn`/`AtvDestroy` synth-key lane is what covers a runtime ATV, which really can exist. **The RULE-2 deletion is CANCELLED; what is owed is a comment correction.** §11.4. |
 | 0.4 | **`vehicleGetParts()` / `teleportVehicleAdvanced()` are a matched READ/WRITE pair for the FULL 4-body rig pose** (body + front-L + front-R + back-root, each loc+rot). The game ships exactly the primitive a correct vehicle mirror needs. | Our mirror moves **only the actor**; the wheels are separate constrained rigid bodies — §9.4, a defect candidate. |
 | 0.5 | **The install trigger is INVISIBLE.** `mainPlayer` dispatches `playerUsedOn` via `EX_LocalVirtualFunction` [V, `mainPlayer.json`], and the whole install path lives inside `ExecuteUbergraph_ATV`. | Install cannot be hooked. It must be an **act-as-host INTENT naming an artifact** (the held `prop_atvUpgrade_C`) — `COOP_SYNCER_MODEL` §2b step 2, the `order_sync` shape. |
 | 0.6 | **The ATV's inventory container has a DETERMINISTIC key**: `getDefaultContainerName()` = `atv_inventoryContainer\|<atv key>`. | The container is cross-peer addressable for free — no eid machinery. |
@@ -432,17 +432,37 @@ keyed-fixture reconcile lane; it is a normal save-spawned object.
   ATV's key is cross-peer stable (both peers load the same save); a runtime-spawned one mints a
   random key per peer via `lib.assignKey → generateRandomKey` until the next save round-trip
   [A 2026-06-15].
-- **`containerKey`** (FName) — the ATV's inventory container. `createContainer()` [V]:
-  1. if `spawnedContainer` is valid → `containerKey := spawnedContainer.key`;
-  2. else if `containerKey == None` → BeginDeferred-spawn a `prop_inventoryContainer_atv_C` with
-     `name := getDefaultContainerName()`, `static := true`, collision **off**; then
-     `spawnedContainer.key := getDefaultContainerName()`; `containerKey := spawnedContainer.getKey()`;
-  3. else → `gamemode.getObjectFromKey(containerKey)` → cast → `spawnedContainer`.
+- **`containerKey`** (FName) — the ATV's inventory container.
 
   **`getDefaultContainerName()` = `Conv_StringToName("atv_inventoryContainer" + "|" + key)`** [V].
   So the container key is a **pure function of the ATV key** — deterministic across peers whenever the
   ATV key is, with no eid machinery. `prop_inventoryContainer_atv_C : prop_container_C`, so it is an
   ordinary container and rides whatever container-contents lane already exists.
+
+  **`createContainer()` is a FIVE-rung fallback ladder, and the last two rungs are the hazard** [V]
+  (re-measured 2026-08-29 — an earlier revision of this section listed only rungs 1-3 and so omitted
+  the theft; `python research/bp_reflection/_fn.py ATV createContainer`):
+
+  | rung | @off | condition | action |
+  |---|---|---|---|
+  | 1 | `@0` | `IsValid(spawnedContainer)` | `containerKey := spawnedContainer.key` — adopt what we hold |
+  | 2 | `@97` | `containerKey == None` | BeginDeferred-spawn a `prop_inventoryContainer_atv_C`, `name := getDefaultContainerName()`, `static := true`, collision **off**; `spawnedContainer.key := getDefaultContainerName()`; `containerKey := spawnedContainer.getKey()` |
+  | 3 | `@683` | else | `gamemode.getObjectFromKey(containerKey)` → cast → adopt |
+  | 4 | `@840` | rung-3 cast FAILED | `addHint`; **reset** `containerKey := getDefaultContainerName()`; retry `getObjectFromKey` → cast → adopt (`@1177`) |
+  | 5 | `@1201` | rung-4 also failed | `addHint`; **`GetActorOfClass(self, prop_inventoryContainer_atv_C)`** — the FIRST such container **anywhere in the world**, with **no key check** → if valid, `@1454` **`spawnedContainer.setKey(getDefaultContainerName())`** — *re-keys the stolen actor to THIS ATV's name*. If invalid, `@1536` `addHint` and `JUMP @153` (spawn fresh). |
+
+  **Rung 5 is identity theft, and it is not hypothetical** [V]: `_map_untitled_211` declares **two**
+  `ATV_C` exports (`ATV_2`, `ATV2_2`), so a world with >1 ATV exists in the shipped content. When
+  ATV-B reaches rung 5 it takes ATV-A's container actor and renames it — A's `getObjectFromKey`
+  then fails, and A walks the same ladder. The re-key is what makes it theft rather than sharing.
+
+  **Design consequence:** `processKeys()` — the "re-derive everything" seam this design wants a
+  receiver to call — **begins with `createContainer()`**, so calling it on a mirror can reach rung 5
+  and mutate a *different* ATV's container key. `[V]` we do **not** call the ATV's `processKeys` or
+  `createContainer` anywhere today (grep: the only `processKeys` hits in our tree are
+  `keypad_probe.cpp` / `keypad_sync.h`, a different class), so this is a **design input, not a live
+  defect** — the seam owes a guard, or the receiver calls the four `upd*` functions without
+  `createContainer`.
 
 ---
 
@@ -566,12 +586,27 @@ reads **only** bit3 (`authored`). Bits 0–2 are produced and never consumed; bi
 3. **[?] Is `tiresTypes[3]` genuinely never applied?** `setWheelsType` reads indices 0, 1, 2 only.
 4. ~~**[?] Is the ATV's key cross-peer stable?**~~ **ANSWERED [V]** — `docs/COOP_SYNC_MAP.md:139`
    records the shipped lane's build+smoke as *"keysHash equal cross-peer"*. So the save-placed ATV's
-   key IS stable across peers and the key-index path is sound. What remains open is narrower: **does
-   any ATV ever appear at RUNTIME?** Nine BPs import `ATV_C` and none spawns one in the dumped corpus
-   (~250 BPs, a subset of the pak). If the answer is "no", the v77 synthetic-key machinery
+   key IS stable across peers and the key-index path is sound.
+   ~~**[?] Does any ATV ever appear at RUNTIME?**~~ **ANSWERED [V] 2026-08-29 — YES, and the answer
+   CANCELS the RULE-2 deletion this question was gating.** The census (below) is over the whole pak,
+   not the dumped corpus:
+
+   | step | method | result |
+   |---|---|---|
+   | 1 | byte-scan the 8.17 GB `VotV-WindowsNoEditor.pak` for the FName `ATV_C `, mapping each hit offset to its mounted index entry (20,873 packages) | **104 owners**: 81 `maps/` + **23 non-map** |
+   | 2 | maps are load-time PLACEMENTS, not runtime spawns | excluded |
+   | 3 | of the 23, test for the presence of ANY spawn FName (`BeginDeferredActorSpawnFromClass` / `SpawnActor` / `FinishSpawningActor`) in the package bytes | **10 contain none** → cannot spawn anything |
+   | 4 | disassemble the remaining 13 (7 already in the corpus + 6 extracted and run through `kismet-analyzer to-json` this pass) | **0 `ATV_C` spawn sites.** The only ATV-adjacent spawns are the ATV spawning its own parts (`prop_atvWheel_C` x3, `prop_atvcarbattery_C`, `prop_inventoryContainer_atv_C`) and `trigger_eventer` spawning `event_arirFuelsAtv_C` / `_toolbox_C` |
+   | 5 | **the hole step 4 does not cover: a spawn by ROW NAME rather than by class constant** | `list_props` row **`atv`**: `spawnAsObject = Imports[728] = ATV_C (BlueprintGeneratedClass)`, `hidden = false`, `price = 1`, `canHold = true` |
+   | 6 | who consumes it | `lib.PropToObject` @83 — `GetDataTableRowFromName(list_props, prop)` then `IsValidClass(row.spawnAsObject)` → `object := row.spawnAsObject`; `ui_spawnmenu`'s ubergraph reads the same field; both name `spawnPropThroughGamemode` |
+   | 7 | reachability bound | the **spawn menu** (cheats-gated). `ui_console` declares no spawn verb (`sv.cheats/check/eject/hash/ping/request/target/upgrades`) |
+
+   **So a runtime ATV is real.** Its own `int_save` key is minted random per peer, so it has no
+   cross-peer identity — which is exactly what the v77 synthetic-key machinery
    (`g_savePlacedKeys` / `g_savePlacedActors` / `g_synthForActor` / `AtvSpawn` / `AtvDestroy` /
-   `SpawnMirror` / `DestroyMirror` / `isClientSpawnedMirror`) is a lane whose premise §0.3 deleted,
-   and RULE 2 retires it whole. Gate: one runtime ATV census across a session.
+   `SpawnMirror` / `DestroyMirror` / `isClientSpawnedMirror`) exists to give it. **The lane STAYS.**
+   What was actually wrong was only its comment: `atv_sync.cpp:98-101` says *"purchased"* where the
+   code's predicate is *"mid-session, not in the baseline set"* — the broader, and correct, thing.
 5. **[?] Does `event_arirFuelsAtv` run per-peer?** It mutates ATV state from a world event.
 6. **[?] `Fstruct_upgrades`** (`docs/upgrades/SIGNAL_UPGRADES.md`) is the *signal* upgrade store; ATV
    modules live in the ATV's own `getData` bytes. Confirmed disjoint here; whether anything reads both

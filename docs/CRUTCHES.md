@@ -96,10 +96,24 @@ tick-ON, so `fuel` / `battery` / `dirt` accumulate independently on every peer �
 **[V] Three wire bits are produced and never read.** `stateBits` bit0 `isDriven`, bit1 `brake`,
 bit2 `grabbed` are written by `ReadPayload` and consumed nowhere; only bit3 `authored` is read.
 
-**[V] A shipped identity lane rests on a premise that is false.** `atv_sync.cpp:98-101` states *"a
-bought ATV is delivered ONLY on the host"*; no row in the 473-row `list_store`, and no craft recipe,
-sells an ATV. The code's real predicate is *"a mid-session ATV not in the baseline set"* — broader
-than its comment, and gated for RULE-2 deletion pending a runtime census.
+**[V] A shipped identity lane rests on a premise that is false — but the lane itself is NEEDED.**
+`atv_sync.cpp:98-101` states *"a bought ATV is delivered ONLY on the host"*; no row in the 473-row
+`list_store`, and no craft recipe, sells an ATV. The code's real predicate is *"a mid-session ATV not
+in the baseline set"* — broader than its comment, and correct. **The RULE-2 deletion this was gated
+on is CANCELLED** (census 2026-08-29, whole-pak, `docs/vehicles/ATV.md` §11.4): `list_props` row
+`atv` has `spawnAsObject = ATV_C`, `hidden = false`, reached via `lib.PropToObject` →
+`spawnPropThroughGamemode` from `ui_spawnmenu`, so a runtime ATV with a random per-peer key really
+can exist and the synthetic-key lane is what covers it. **This one is a wrong COMMENT, not a crutch**
+— it is listed here because the false premise was read as evidence for deleting a working lane, which
+is the more expensive error. Fix: correct the comment.
+
+**[V] A runtime hazard the lane does NOT cover.** `ATV.createContainer()` rung 5 (`@1201`) calls
+`GetActorOfClass(prop_inventoryContainer_atv_C)` — the first such container **anywhere in the world,
+with no key check** — and then `@1454` **re-keys it** to this ATV's name. `_map_untitled_211` ships
+**two** `ATV_C` placements, so >1 ATV is a shipped configuration. `processKeys()` (the "re-derive
+everything" seam a receiver wants) begins with `createContainer()`, so a mirror calling it can
+mutate a *different* ATV's container key. Not live today (`[V]` we call neither), but it constrains
+the fix.
 
 **Never hands-on tested**, with a third-party field report open against it.
 

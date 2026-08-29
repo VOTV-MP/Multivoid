@@ -2123,20 +2123,22 @@ enum class ReliableKind : uint8_t {
                        //     PropRelease apply pair) so the ATV un-freezes + arcs + lands instead of
                        //     hanging at last pose. Same lane as AtvState (Normal, in-order: last pose
                        //     before release) + relayed to other clients. RE: votv-ATV-grab + the design
-                       //     in research/findings (ATV grab/air-move + purchased-ATV brief 2026-06-15).
-    AtvSpawn = 72,     // 2026-06-15 (v77): HOST->ALL purchased-ATV announce. A bought ATV is delivered
-                       //     by the HOST's order economy ONLY (order_sync is host-authoritative: a
-                       //     client's order is forwarded + re-committed on the host; the client resets
-                       //     its mirror drone so its local delivery never spawns). So the joining/other
-                       //     clients have NO local twin of a purchased ATV -- the host fresh-spawns it
+                       //     in research/findings (ATV grab/air-move + runtime-ATV brief 2026-06-15).
+    AtvSpawn = 72,     // 2026-06-15 (v77): HOST->ALL runtime-ATV announce. Such an ATV is created
+                       //     at RUNTIME on ONE peer. (PREMISE CORRECTED 2026-08-29: this used to say
+                       //     "by the HOST's order economy ONLY"; nothing sells an ATV -- 473 list_store
+                       //     rows + 189 craft recipes. The real source is list_props row 'atv', whose
+                       //     spawnAsObject is ATV_C, reached via lib.PropToObject from ui_spawnmenu --
+                       //     docs/vehicles/ATV.md 11.4.) So the joining/other
+                       //     clients have NO local twin of it -- the host fresh-spawns it
                        //     for them: AtvSpawnPayload{synthKey, className, pose}. The client BeginDeferred
                        //     -spawns the AATV_C (physics ON = a native idle ATV, grabbable by anyone) and
-                       //     registers it under the host-assigned SYNTHETIC wire key (a purchased ATV's
+                       //     registers it under the host-assigned SYNTHETIC wire key (such an ATV's
                        //     own int_save Key is minted RANDOM per peer -- the kerfur trap -- so it is
                        //     NEVER used cross-peer; the synth key is the stable identity). The existing
                        //     AtvState/AtvRelease key-stream then drives it unchanged. Default save-placed
                        //     ATVs (deterministic key, both peers loaded them) stay on the real-key path.
-    AtvDestroy = 73,   // 2026-06-15 (v77): HOST->ALL purchased-ATV teardown. The host's synthetic-keyed
+    AtvDestroy = 73,   // 2026-06-15 (v77): HOST->ALL runtime-ATV teardown. The host's synthetic-keyed
                        //     ATV vanished (sold/removed) -> AtvDestroyPayload{synthKey}; the client
                        //     K2_DestroyActors its fresh-spawned mirror + drops the index entry. Same
                        //     Normal lane as AtvSpawn/AtvState (spawn->pose->destroy in order).
@@ -4093,10 +4095,12 @@ struct AtvStatePayload {
 };
 static_assert(sizeof(AtvStatePayload) == 60, "AtvStatePayload must be 60 bytes");
 
-// v77 (2026-06-15): purchased-ATV host announce (see ReliableKind::AtvSpawn). The host fresh-spawns
-// a bought ATV for the clients that lack a local twin (host-only economy). Carries the className so
-// the client BeginDeferred-spawns the exact AATV_C skin, and the host-assigned synthetic wire key
-// (the purchased ATV's own int_save key is random per peer -> useless cross-peer). coop/atv_sync.
+// v77 (2026-06-15): runtime-spawned-ATV host announce (see ReliableKind::AtvSpawn). The host
+// fresh-spawns it for the clients that lack a local twin. Carries the className so the client
+// BeginDeferred-spawns the exact AATV_C skin, and the host-assigned synthetic wire key (such an
+// ATV's own int_save key is random per peer -> useless cross-peer). coop/atv_sync.
+// PREMISE CORRECTED 2026-08-29: "purchased / bought / host-only economy" was wrong -- nothing sells
+// an ATV; the source is list_props row 'atv' via ui_spawnmenu. docs/vehicles/ATV.md 11.4.
 struct AtvSpawnPayload {
     WireKey       synthKey;   // 32 -- host-assigned stable identity ("coopatv#N")
     WireClassName className;   // 64 -- "ATV_C" or a skin subclass
@@ -4107,7 +4111,7 @@ static_assert(sizeof(AtvSpawnPayload) == 120, "AtvSpawnPayload must be 120 bytes
 static_assert(sizeof(AtvSpawnPayload) <= 256 - 20 - 8,
               "AtvSpawnPayload must fit in one reliable datagram (kMaxReliablePayload)");
 
-// v77 (2026-06-15): purchased-ATV host teardown (ReliableKind::AtvDestroy). coop/atv_sync.
+// v77 (2026-06-15): runtime-ATV host teardown (ReliableKind::AtvDestroy). coop/atv_sync.
 struct AtvDestroyPayload {
     WireKey synthKey;  // 32
 };

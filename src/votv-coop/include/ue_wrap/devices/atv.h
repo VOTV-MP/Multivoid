@@ -68,16 +68,18 @@ void PrepareMirror(void* atv);
 // and on disconnect so a streamed ATV is not left frozen in single-player. Game thread.
 void ReleaseMirror(void* atv);
 
-// v77 purchased-ATV materialization: fresh-spawn an AATV_C-or-subclass (`className`) at `loc`/`rot`
+// v77 runtime-ATV materialization: fresh-spawn an AATV_C-or-subclass (`className`) at `loc`/`rot`
 // via GameplayStatics BeginDeferred + FinishSpawning, leaving physics ON -- the result is a NATIVE
 // idle ATV the local player can grab/drive (NOT a frozen mirror). coop::atv_sync uses this when the
-// host announces a purchased ATV (AtvSpawn) that this client has no save-twin of (the order economy
-// delivers only on the host). `className` is validated to descend from ATV_C (trust boundary -- a
+// host announces a RUNTIME-SPAWNED ATV (AtvSpawn) that this client has no save-twin of. (Premise
+// corrected 2026-08-29: the old text said "purchased ... the order economy delivers only on the
+// host"; nothing sells an ATV. The real source is list_props row 'atv' -> spawnAsObject = ATV_C,
+// reached from ui_spawnmenu -- docs/vehicles/ATV.md 11.4.) `className` is validated to descend from ATV_C (trust boundary -- a
 // peer could send any string). Returns the spawned actor, or nullptr on resolve/spawn failure.
 // Game thread only.
 void* SpawnMirror(const std::wstring& className, const FVector& loc, const FRotator& rot);
 
-// v77: tear down a SpawnMirror'd purchased-ATV mirror (K2_DestroyActor on the actor) when the host
+// v77: tear down a SpawnMirror'd runtime-ATV mirror (K2_DestroyActor on the actor) when the host
 // announces it gone (AtvDestroy) or on disconnect. No-op-safe on null/already-dead. Game thread.
 void DestroyMirror(void* atv);
 

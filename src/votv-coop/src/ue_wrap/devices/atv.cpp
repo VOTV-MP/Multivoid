@@ -162,7 +162,7 @@ void* SpawnMirror(const std::wstring& className, const FVector& loc, const FRota
     if (!sGsCdo || !sBeginFn || !sFinishFn) {
         static bool sWarned = false;
         if (!sWarned) { sWarned = true;
-            UE_LOGW("atv: SpawnMirror -- GameplayStatics BeginDeferred/Finish unresolved; cannot spawn purchased ATV"); }
+            UE_LOGW("atv: SpawnMirror -- GameplayStatics BeginDeferred/Finish unresolved; cannot spawn runtime ATV"); }
         return nullptr;
     }
     void* worldCtx = engine::GetWorldContext();
@@ -214,7 +214,7 @@ void DestroyMirror(void* atv) {
     if (!sK2) {
         static bool sWarned = false;
         if (!sWarned) { sWarned = true;
-            UE_LOGW("atv: K2_DestroyActor unresolved -- cannot tear down purchased-ATV mirror %p", atv); }
+            UE_LOGW("atv: K2_DestroyActor unresolved -- cannot tear down runtime-ATV mirror %p", atv); }
         return;
     }
     R::CallFunction(atv, sK2, nullptr);
