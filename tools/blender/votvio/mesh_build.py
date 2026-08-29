@@ -49,8 +49,13 @@ def _lod0(game, mesh_pkg_path, warnings):
 def _assemble(name, sm, lod, verts_bl, mesh_pkg_path, warnings):
     idx = lod.indexBuffer
     indices = (getattr(idx, "indices32", None) or getattr(idx, "indices16", None) or []) if idx else []
-    # winding reversed: the y-mirror flips handedness
-    faces = [(indices[i], indices[i + 2], indices[i + 1])
+    # NATURAL index order: the y-mirror alone turns UE/D3D's CW-front into
+    # Blender's CCW-front. The old extra (i0,i2,i1) swap double-compensated and
+    # turned every mesh inside-out - invisible to two-sided viewport shading,
+    # but ray_cast returned INWARD hit normals, so decals were projected 13mm
+    # INTO their walls and wound facing the wall cavity (field report: decal
+    # visible only with the camera inside the wall / after flipping it).
+    faces = [(indices[i], indices[i + 1], indices[i + 2])
              for i in range(0, len(indices) - 2, 3)]
     if not faces:
         warnings.append(f"mesh has no indices: {mesh_pkg_path}")
@@ -144,7 +149,8 @@ def build_bsp_mesh(bsp, surf_mat_paths, name, warnings):
 
         n = len(idxs)
         for k in range(1, n - 1):
-            a, b, c = int(idxs[0]), int(idxs[k + 1]), int(idxs[k])
+            # natural fan order, same handedness rule as _assemble
+            a, b, c = int(idxs[0]), int(idxs[k]), int(idxs[k + 1])
             faces.append((a, b, c))
             face_slot.append(slot)
             loop_uv.extend((uv(a), uv(b), uv(c)))

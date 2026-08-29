@@ -4585,6 +4585,19 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   `tools/blender/votvio/screens.py` (the per-root still-frame builders) + `docs/BLENDER_ARC.md` v7.
   `memory/lesson_cooked_material_cachedexpressiondata_keeps_defaults.md`
 
+- **2026-08-29 — an inside-out mesh import surfaces only at a NORMALS CONSUMER, and orientation
+  is proven on a convex mesh, never by looking.** The UE->Blender Y-mirror alone already flips
+  D3D CW-front to Blender CCW-front; `mesh_build`'s extra index swap double-compensated and
+  shipped every static mesh inverted through v1..v7c with zero visual symptom (two-sided
+  shading) — until `ray_cast`-driven decal projection consumed the normals and put every decal
+  13mm INSIDE its wall, facing the cavity (the landscape's independent winding was already
+  up-facing, which hid the class: terrain decals worked). The instrument: build a CONVEX mesh
+  (`meshes/misc/cube`) and assert 100% of `normal.(center_dir) > 0` — inverted reads 0%, instant
+  discriminator; any mirrored-axis importer owes this check before its first normals consumer.
+  *Look FIRST:* `tools/blender/votvio/mesh_build.py` (natural index order + the comment) +
+  scratchpad `probe_winding.py` shape.
+  `memory/lesson_inside_out_import_surfaces_only_at_a_normals_consumer.md`
+
 - **2026-08-29 — pyUE4Parse works on VOTV only with 5 named fixes** (it LOOKS broken at the first
   mesh): unconditional `minMobileLODIdx` read for ≥4.27 misaligns every StaticMesh (CUE4Parse gates it
   on `StaticMesh.KeepMobileMinLODSettingOnDesktop`, default OFF); `USkeletalMesh` is a stub (SK lane =
