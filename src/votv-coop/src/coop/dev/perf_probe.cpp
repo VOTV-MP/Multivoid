@@ -103,6 +103,7 @@ void Init() {
     g_selfTime = coop::config::ResolveFlag(::coop::config_registry::rows::perf_probe_selftime);
     g_resDropAfterS = static_cast<int>(coop::config::ResolveInt(::coop::config_registry::rows::perf_probe_resdrop));
     GT::SetPerfCounting(true, g_selfTime);
+    R::SetCoopCallCensus(true);   // attribute the blueprint calls our polls author
     UE_LOGW("[perf] probe ARMED (perf_probe=1, selftime=%d) -- 1 Hz frame-cost report follows; "
             "this adds per-dispatch counting overhead, turn OFF for real play", g_selfTime ? 1 : 0);
 }
@@ -206,6 +207,41 @@ void Sample() {
         }
     }
 
+    // WHICH of our reflected calls make up the ~135 blueprint dispatches per frame we
+    // author. Cumulative shares, every 10 s (resolving names walks reflection, so it is
+    // deliberately rare). This is the list to cut from: the frame is CPU-bound on the
+    // game thread and each of these runs real VOTV blueprint there.
+    {
+        static int sCallTick = 0;
+        if (++sCallTick % 10 == 0) {
+            struct Row { void* fn; unsigned long long n; };
+            Row top[8] = {};
+            unsigned long long total = 0;
+            for (int i = 0; ; ++i) {
+                void* fn = nullptr; unsigned long long n = 0;
+                if (!R::CoopCallSiteAt(i, &fn, &n)) break;
+                total += n;
+                for (int k = 0; k < 8; ++k) {
+                    if (n > top[k].n) {
+                        for (int j = 7; j > k; --j) top[j] = top[j - 1];
+                        top[k] = {fn, n};
+                        break;
+                    }
+                }
+            }
+            if (total > 0) {
+                std::wstring line;
+                for (int k = 0; k < 8 && top[k].fn; ++k) {
+                    wchar_t buf[200];
+                    std::swprintf(buf, 200, L"%ls=%.1f%%(%llu) ",
+                                  R::ToString(R::NameOf(top[k].fn)).c_str(),
+                                  100.0 * top[k].n / total, top[k].n);
+                    line += buf;
+                }
+                UE_LOGW("[perf] OUR CALLS (cumulative %llu): %ls", total, line.c_str());
+            }
+        }
+    }
     const unsigned long long pe     = GT::PeDispatchCountTotal();
     const unsigned long long peGT   = GT::PeDispatchCountGTTotal();
     const unsigned long long peCoop = GT::PeDispatchCountCoopTotal();

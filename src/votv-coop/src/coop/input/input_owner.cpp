@@ -54,6 +54,8 @@ ue_wrap::CachedObjRef g_lastOwner;
 
 void* g_clsUserWidget = nullptr;
 void* g_fnHasKeyboardFocus = nullptr;
+// Resolved once. Used to reject widget TEMPLATES -- see IsLiveWidgetInstance.
+void* g_clsWidgetBPGC = nullptr;
 void* g_fnHasUserFocusedDescendants = nullptr;
 // The local PlayerController, resolved ONCE per full scan (it costs a UFunction call).
 // Null means we cannot ask the descendant question at all -- and we then do not claim
@@ -72,6 +74,7 @@ void ResolveOnce() {
     void* widgetCls = R::FindClass(L"Widget");
     if (widgetCls) {
         g_fnHasKeyboardFocus = R::FindFunction(widgetCls, L"HasKeyboardFocus");
+        g_clsWidgetBPGC = R::FindClass(L"WidgetBlueprintGeneratedClass");
         g_fnHasUserFocusedDescendants =
             R::FindFunction(widgetCls, L"HasUserFocusedDescendants");
     }
@@ -200,6 +203,27 @@ bool CallBoolNoArgs(void* widget, void* fn) {
 
 // USER-0 Slate focus, on the widget itself OR on anything inside it.
 //
+// A widget TEMPLATE is not a live widget, and asking it about focus is meaningless.
+// Every WidgetBlueprintGeneratedClass stores a template widget tree, and those trees
+// dominate the UserWidget population -- the `Default__` prefix test above does NOT
+// catch them, because a template's immediate Outer is a UWidgetTree exactly like a live
+// instance's is (the same trap input_focus_probe.cpp documents at its IsLiveInstance).
+// The discriminator is one level further up, where a template's chain reaches its
+// generated CLASS and a live widget's reaches a UUserWidget / the World.
+//
+// MEASURED 2026-08-29, and this is why it matters: the 1 Hz scan was issuing ~9,300
+// reflected HasKeyboardFocus dispatches per pass -- 100% of every blueprint call this
+// mod makes -- and they land in ONE frame. Pointer-compares the cached class rather
+// than ClassNameOf, which allocates a wstring per object.
+bool IsLiveWidgetInstance(void* o) {
+    void* outer = R::OuterOf(o);
+    for (int d = 0; outer && d < 8; ++d) {
+        if (R::NameStartsWith(R::NameOf(outer), L"Default__")) return false;
+        if (g_clsWidgetBPGC && R::ClassOf(outer) == g_clsWidgetBPGC) return false;
+        outer = R::OuterOf(outer);
+    }
+    return true;
+}
 // BOTH terms are user-0-scoped, and that is the entire point. `HasKeyboardFocus` is an
 // EXACT-widget test, so it answers true only while focus sits on the user widget itself
 // -- which is what SetInputMode_GameAndUIEx leaves behind when a menu opens and nothing
@@ -382,6 +406,7 @@ void TickGameThread(bool doFullScan) {
         // primitive is the one players_registry and reflection already use here.
         if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;
         if (!R::IsLive(o)) continue;
+        if (!IsLiveWidgetInstance(o)) continue;
         if (OwnsUserZeroFocus(o)) { owns = true; Remember(o); g_lastOwner.Set(o); }
     }
     if (!owns) g_lastOwner.Reset();

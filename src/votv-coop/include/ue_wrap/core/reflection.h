@@ -53,6 +53,13 @@ bool CallFunction(void* object, void* function, void* params);
 // re-arms target game objects).
 bool InCoopDispatch();
 
+// Coop-call attribution census (dev instrument). When armed, CallFunction tallies its
+// TARGET UFunction so the ~135 blueprint dispatches per frame our code authors can be
+// attributed to the polls that produce them. Off by default (one relaxed bool load).
+void SetCoopCallCensus(bool on);
+// Slot i's target UFunction + its cumulative count; false past the last populated slot.
+bool CoopCallSiteAt(int i, void** outFn, unsigned long long* outCount);
+
 // GUObjectArray.ObjObjects.NumElements (count of allocated UObject slots).
 int32_t NumObjects();
 

@@ -85,8 +85,56 @@ struct CoopDispatchScope {
 
 bool InCoopDispatch() { return t_coopDispatchDepth > 0; }
 
+// ---- coop-call attribution (2026-08-29) -------------------------------------
+// WHICH reflected calls make up the ~135 blueprint dispatches per frame that our code
+// authors (measured: 14-16% of the game thread's script load, and the frame is CPU-bound
+// on that thread). Keyed on the TARGET UFunction, because that is what names the polling
+// -- 'GetActorLocation 50x/frame' identifies a per-tick pose poll without needing a
+// stack walk. Only counts when armed, so shipping pays one relaxed bool load.
+//
+// Deliberately here and NOT in the ProcessEvent detour: this choke point runs ~9k/s
+// against the detour's ~171k/s, and it is our own code rather than the engine's hottest
+// path. An instrument placed in the detour's unprotected outer frame crashed the game
+// on 2026-08-29.
+namespace {
+constexpr int kCallSites = 128;
+std::atomic<bool> g_callCensusOn{false};
+struct CallSite {
+    std::atomic<void*> fn{nullptr};
+    std::atomic<unsigned long long> n{0};
+};
+CallSite g_callSites[kCallSites];
+
+void NoteCoopCall(void* fn) {
+    for (int i = 0; i < kCallSites; ++i) {
+        void* cur = g_callSites[i].fn.load(std::memory_order_relaxed);
+        if (cur == fn) { g_callSites[i].n.fetch_add(1, std::memory_order_relaxed); return; }
+        if (!cur) {
+            void* expected = nullptr;
+            if (g_callSites[i].fn.compare_exchange_strong(expected, fn,
+                    std::memory_order_relaxed, std::memory_order_relaxed)) {
+                g_callSites[i].n.fetch_add(1, std::memory_order_relaxed);
+            }
+            // Whether we won or lost the slot, the next loop pass re-reads it; losing a
+            // race must not drop the sample silently.
+            --i;
+        }
+    }
+}
+}  // namespace
+
+void SetCoopCallCensus(bool on) { g_callCensusOn.store(on, std::memory_order_relaxed); }
+
+bool CoopCallSiteAt(int i, void** outFn, unsigned long long* outCount) {
+    if (i < 0 || i >= kCallSites || !outFn || !outCount) return false;
+    *outFn = g_callSites[i].fn.load(std::memory_order_relaxed);
+    *outCount = g_callSites[i].n.load(std::memory_order_relaxed);
+    return *outFn != nullptr;
+}
+
 bool CallFunction(void* object, void* function, void* params) {
     if (!g_processEvent || !object || !function) return false;
+    if (g_callCensusOn.load(std::memory_order_relaxed)) NoteCoopCall(function);
     CoopDispatchScope scope;
     g_processEvent(object, function, params);
     return true;
