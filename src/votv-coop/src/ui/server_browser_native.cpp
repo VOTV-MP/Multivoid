@@ -266,18 +266,42 @@ void RepaintRowFills() {
 
 // WHICH ROW IS UNDER THE CURSOR, evaluated ONLY when the cursor has actually moved.
 //
-// There is no cheaper way to ask. `FGeometry` has no reflected members (size 0x38, empty),
-// so the rows' screen rects are not readable and hit-testing has to go through Slate's own
-// IsHovered(). That is a UFunction dispatch per row, which is precisely the per-row cost
-// the open perf lane is about -- so it is gated twice: once on the cursor having moved at
-// all, and once on the LIST being hovered, which is a single dispatch that answers "no"
-// for every frame the pointer is anywhere else on the screen. The walk also stops at the
-// first hit. A stationary cursor costs zero dispatches.
+// THE OUTER GATE IS GEOMETRY, NOT `IsHovered`, and the difference is the whole feature.
+//
+// This used to read "there is no cheaper way to ask: FGeometry has no reflected members
+// (size 0x38, empty), so the rows' screen rects are not readable" -- and gate the walk on
+// `IsHovered(g_list)`. Both halves were wrong. The rects ARE readable, through
+// USlateBlueprintLibrary rather than through FGeometry's own members
+// (`umg::WidgetScreenRect`); and the gate they justified is FALSE while the cursor is
+// genuinely over the list. Measured 2026-08-29 in one run: the wheel scrolled this exact
+// widget -- `WHEEL VERDICT YES`, view fraction 0.0000 -> 0.1000 -- and the same log line
+// records `hovered=0` for it. So Slate routes input to the box while `UWidget::IsHovered`
+// on it answers no; the same reading is true of the SizeBox and the panels above it, and
+// false only of leaves (a UImage scrim and a UButton both answer correctly). The
+// consequence was total rather than partial: the gate never opened, so no row ever
+// highlighted and `g_hoverRow` stayed -1, which is also the value the click path reads --
+// selection could not happen either.
+//
+// So the outer question "is the pointer over the list" is answered by containment against
+// the list's own screen rect, which is three dispatches, independent of row count, and
+// cannot disagree with where the widget actually is. The INNER walk keeps `IsHovered` per
+// row: rows are leaves, and leaves were measured to answer correctly.
+//
+// The cost story is unchanged and slightly better: a stationary cursor still costs zero
+// (the `moved || pending` gate above), and a moving one pays three dispatches plus a walk
+// that stops at the first hit, where before it paid one dispatch that ended the pass.
 //
 // `NotePointerMoved()` used to exist for this and was never wired to anything -- no
 // caller, no consumer. GetCursorPos here is one syscall, needs no edit to the overlay's
 // input path, and sees movement regardless of how the message was routed; the dead seam is
 // retired with it (RULE 2).
+bool CursorOverList(const POINT& c) {
+    ue_wrap::FVector2D tl{}, sz{};
+    if (!g_list || !U::WidgetScreenRect(g_list, tl, sz)) return false;
+    if (sz.X < 1.f || sz.Y < 1.f) return false;   // never painted: not under anything
+    return c.x >= static_cast<long>(tl.X) && c.x < static_cast<long>(tl.X + sz.X) &&
+           c.y >= static_cast<long>(tl.Y) && c.y < static_cast<long>(tl.Y + sz.Y);
+}
 void UpdateHover() {
     POINT c{};
     if (!::GetCursorPos(&c)) return;
@@ -297,13 +321,11 @@ void UpdateHover() {
     g_hoverPending = moved;
 
     int hit = -1;
-    if (g_list && E::WidgetIsHovered(g_list)) {
+    if (CursorOverList(c)) {
         const int total = U::ChildCount(g_list);
-        // THE PREVIOUS ROW IS PROBED FIRST, and that is what makes this affordable. Slate
-        // gives us no readable geometry (FGeometry has no reflected members), so the only
-        // hit-test is a UFunction per row -- the exact per-row cost the open perf lane is
-        // about. During a sweep the cursor is still on the SAME row on most frames, so one
-        // dispatch answers; the full walk with its early exit is the fallback.
+        // THE PREVIOUS ROW IS PROBED FIRST, and that is what makes this affordable. During
+        // a sweep the cursor is still on the SAME row on most frames, so one dispatch
+        // answers; the full walk with its early exit is the fallback.
         if (g_hoverRow >= 0 && g_hoverRow < total) {
             RowParts rp;
             if (RowPartsAt(g_hoverRow, rp) && rp.bg && E::WidgetIsHovered(rp.bg))
@@ -632,6 +654,29 @@ void Close() {
 }
 
 bool IsOpen() { return g_shown; }
+
+int HoveredRow() { return g_hoverRow; }
+const char* SelectedRowId() { return g_selectedId.c_str(); }
+
+void LogRowHitDiagnostics(int32_t i) {
+    RowParts rp;
+    if (!RowPartsAt(i, rp)) {
+        UE_LOGW("server_browser_native: row %d has no parts -- RowPartsAt failed, so the "
+                "hover walk skips it entirely and its background is never even asked", i);
+        return;
+    }
+    auto dump = [](const char* what, void* w) {
+        if (!w) { UE_LOGW("server_browser_native:   %s is NULL", what); return; }
+        ue_wrap::FVector2D tl{}, sz{};
+        const bool haveRect = U::WidgetScreenRect(w, tl, sz);
+        UE_LOGW("server_browser_native:   %s hovered=%d rect %s(%.0f,%.0f) %.0fx%.0f",
+                what, E::WidgetIsHovered(w) ? 1 : 0, haveRect ? "" : "UNREAD ",
+                tl.X, tl.Y, sz.X, sz.Y);
+        U::LogVisibilityChain(what, w);
+    };
+    dump("row.bg", rp.bg);
+    dump("row.text0", rp.text[0]);
+}
 
 
 void OnMenuTick(void* menu, void* switcher) {

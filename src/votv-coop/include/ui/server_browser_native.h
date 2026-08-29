@@ -49,6 +49,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 namespace ui::server_browser_native {
 
 // Ask for the browser. Safe from any thread and at any time -- including from the harness
@@ -65,6 +67,27 @@ void Close();
 // True while our screen is the switcher's active child. Reconciled against the live index
 // every tick, so a sibling screen navigating away is observed rather than assumed.
 bool IsOpen();
+
+// WHICH ROW THE POINTER IS ON, and WHICH ROW IS CHOSEN. -1 / empty when there is none.
+//
+// Read-only, and it exists because those two facts had no observer outside the pixels.
+// Hover was silently dead for as long as the screen has existed -- the walk was gated on
+// `IsHovered(g_list)`, which reads false while the cursor is genuinely over the list -- and
+// nothing could see it, because a highlight that never appears looks exactly like a cursor
+// that was never there. The self-check asserts on these; the Connect control will read
+// SelectedRowId() as its input.
+int HoveredRow();
+const char* SelectedRowId();
+
+// WHY ROW `i` DID NOT HOVER: dump its parts with their live visibility and hover state.
+//
+// Diagnostic, dev-path only. A row is four widgets deep -- SizeBox, Overlay, the tinted
+// background image, and a HorizontalBox of text blocks -- and exactly one of them wins
+// Slate's hit test. Which one is not guessable from the code: the background is set
+// Visible on purpose to BE the hit target, but anything painted over it that is also
+// hit-testable takes the hit instead and leaves the background reading not-hovered, which
+// is indistinguishable from the whole hit test being broken.
+void LogRowHitDiagnostics(int32_t i);
 
 // Called from coop::multiplayer_menu's ui_menu_C::Tick post-observer, MAIN menu only.
 // `menu` is the live ui_menu_C; `switcher` its switcher_widgets (may be null -- then this

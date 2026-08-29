@@ -69,11 +69,18 @@ constexpr int kCtrlListMove   = 92;   // POSITIVE CONTROL: aim at the list, not 
 constexpr int kCtrlListRead   = 99;
 constexpr int kCtrlNudge      = 100;  // move ONE pixel -- does a fresh event revive hover?
 constexpr int kCtrlReread     = 106;
-constexpr int kClickMove      = 108;
-constexpr int kClickSample    = 116;  // eight ticks after the move -- the scrim's budget
-constexpr int kClickDown      = 118;
-constexpr int kClickUp        = 122;
-constexpr int kClickVerify    = 132;
+// ROW HOVER AND SELECTION, before the X, because a browser whose rows cannot be picked is
+// not a browser -- and neither had ever been asserted by anything.
+constexpr int kRowMove        = 108;
+constexpr int kRowRead        = 116;
+constexpr int kRowDown        = 118;
+constexpr int kRowUp          = 122;
+constexpr int kRowVerify      = 126;
+constexpr int kClickMove      = 132;
+constexpr int kClickSample    = 140;  // eight ticks after the move -- the scrim's budget
+constexpr int kClickDown      = 142;
+constexpr int kClickUp        = 146;
+constexpr int kClickVerify    = 156;
 
 // The forced offset for the positive control. Far past any real content extent, so a
 // getter that returns it UNCHANGED has told us it echoes the request rather than reading
@@ -124,6 +131,13 @@ int      g_listHovered       = -1;
 int      g_rowsSeen          = -1;
 bool     g_controlPassed     = false;
 int      g_closeHovered      = -1;   // -1 = not sampled; an unrun phase is not a NO
+int      g_rowHovered        = -1;   // ...and the same for the row the click phase aims at
+
+// One row's height, mirroring server_browser_native's kRowH. Kept as a constant rather
+// than measured because the aim only has to land INSIDE a row, and the verdict prints the
+// row index it actually got -- so a drift here shows up as a different index, not as a
+// false failure.
+constexpr float kRowPx = 64.f;
 
 // UWidget::GetDesiredSize -- the non-visual instrument the native_ui_probe used to prove a
 // hand-built widget lays out at all (GetDesiredSize (0,0) -> (654,64) was RUNG 1's whole
@@ -603,6 +617,100 @@ void Tick(void* scrim, void* list, void* closeBtn) {
                     "the pointer events had stopped arriving.",
                     E::WidgetIsHovered(list) ? 1 : 0, E::WidgetIsHovered(scrim) ? 1 : 0,
                     E::WidgetIsHovered(closeBtn) ? 1 : 0, cur.x, cur.y);
+            break;
+        }
+        case kRowMove: {
+            // AIM AT THE SECOND ROW, not the first: the first row's top edge is also the
+            // list's top edge, so a rounding error there lands outside the list and the
+            // failure would be the harness's. One and a half rows down is unambiguous.
+            ue_wrap::FVector2D ltl{}, lsz{};
+            if (!U::WidgetScreenRect(list, ltl, lsz) || lsz.Y < kRowPx * 2.f) {
+                UE_LOGE("server_browser_native: ROW HOVER SKIP -- the list is %.0f px tall, "
+                        "too short to hold the two rows this phase aims between", lsz.Y);
+                g_selfCheckStep = kClickMove - 1;   // fall through to the X phases
+                return;
+            }
+            ::SetCursorPos(static_cast<int>(ltl.X + lsz.X * 0.5f),
+                           static_cast<int>(ltl.Y + kRowPx * 1.5f));
+            break;
+        }
+        case kRowRead: {
+            g_rowHovered = ui::server_browser_native::HoveredRow();
+            UE_LOGW("server_browser_native: ROW HOVER -- the pointer is one and a half rows "
+                    "into the list and HoveredRow() reads %d. Anything below zero means the "
+                    "highlight is dead, and with it the only way to choose a server.",
+                    g_rowHovered);
+            if (g_rowHovered < 0) {
+                // TWO LINKS CAN PRODUCE THAT -1 and they need different fixes: the outer
+                // containment gate said the pointer is not over the list, or it said yes and
+                // no row's own hit test answered. Print both, plus the row's rect, so the
+                // next edit lands on the link that is actually failing instead of on the one
+                // that is easier to change.
+                POINT cur{};
+                ::GetCursorPos(&cur);
+                ue_wrap::FVector2D ltl{}, lsz{};
+                const bool haveList = U::WidgetScreenRect(list, ltl, lsz);
+                const bool inList = haveList && cur.x >= ltl.X && cur.x < ltl.X + lsz.X &&
+                                    cur.y >= ltl.Y && cur.y < ltl.Y + lsz.Y;
+                const int32_t kids = U::ChildCount(list);
+                UE_LOGW("server_browser_native:   gate -- cursor (%ld,%ld), list rect "
+                        "%s(%.0f,%.0f) %.0fx%.0f, contains=%d, children=%d",
+                        cur.x, cur.y, haveList ? "" : "UNREAD ", ltl.X, ltl.Y, lsz.X, lsz.Y,
+                        inList ? 1 : 0, kids);
+                // FIND THE ROW THE CURSOR IS ACTUALLY ON, then dump THAT one. The first
+                // version of this printed rows 0-2 and asked whether their SizeBox was
+                // hovered -- two mistakes at once: the cursor was over neither (the wheel
+                // phases leave the list scrolled, so the top rows are off-screen and their
+                // cached geometry is stale), and a SizeBox is SelfHitTestInvisible by
+                // default, so it answers 0 whatever is true. It could not have found
+                // anything.
+                int aimed = -1;
+                for (int32_t i = 0; i < kids; ++i) {
+                    void* kid = U::ChildAt(list, i);
+                    ue_wrap::FVector2D rtl{}, rsz{};
+                    if (!kid || !U::WidgetScreenRect(kid, rtl, rsz)) continue;
+                    // Intersected with the list, because a scrolled-out row's stale rect
+                    // can still contain the cursor and would name the wrong row.
+                    const float top = rtl.Y > ltl.Y ? rtl.Y : ltl.Y;
+                    const float bot = (rtl.Y + rsz.Y) < (ltl.Y + lsz.Y) ? (rtl.Y + rsz.Y)
+                                                                        : (ltl.Y + lsz.Y);
+                    if (cur.y >= top && cur.y < bot && cur.x >= rtl.X &&
+                        cur.x < rtl.X + rsz.X) { aimed = i; break; }
+                }
+                if (aimed < 0)
+                    UE_LOGW("server_browser_native:   no row's rect contains the cursor, so "
+                            "the list is showing a gap there or the rows are laid out "
+                            "somewhere other than where the list says it is");
+                else {
+                    UE_LOGW("server_browser_native:   the cursor is geometrically on row %d "
+                            "-- dumping its parts to find which one wins the hit test",
+                            aimed);
+                    ui::server_browser_native::LogRowHitDiagnostics(aimed);
+                }
+            }
+            break;
+        }
+        case kRowDown:
+            ::mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+            break;
+        case kRowUp:
+            ::mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+            break;
+        case kRowVerify: {
+            const char* sel = ui::server_browser_native::SelectedRowId();
+            const bool picked = sel && *sel;
+            if (picked && g_rowHovered >= 0)
+                UE_LOGW("server_browser_native: ROW SELECT PASS -- hovering row %d and "
+                        "clicking it selected lobby '%s'. A player can choose a server.",
+                        g_rowHovered, sel);
+            else if (g_rowHovered < 0)
+                UE_LOGE("server_browser_native: ROW SELECT FAIL -- no row was hovered, so the "
+                        "click had nothing to select. The hit test over the list is the "
+                        "defect; the click path was never reached.");
+            else
+                UE_LOGE("server_browser_native: ROW SELECT FAIL -- row %d was hovered and a "
+                        "full press-release was delivered, yet nothing is selected. The "
+                        "hover is fine and the CLICK path is the defect.", g_rowHovered);
             break;
         }
         case kClickMove: {
