@@ -128,6 +128,20 @@ saved at Z=83 m (save truth). Full-map smoke: 79,129 objects / 110 s / 0 warning
 сегментов с Inst_waterRiver; арбуз mat_watermelon (0 водных попаданий); шкафчики 19/19;
 BSP-вершины в боксе 439; панели inst_glass; Unplaced скрыт; лестниц на ориджине в Statics 0.
 
+**v6c (same session, `a0a00ad3`) — семейства грайма + CDO-material + грязное стекло.**
+Грайм в сцене был одним тёмным сплаттером (739× `dirt_0`), в игре — трещины/потёки/пятна:
+классы-варианты (crack/leaky/dusty/light/grainy) НЕ несут материала в куке — BP выбирает
+рантаймом из нумерованных семейств пака (`inst_decalCrack_0..16`,
+`inst_DecalGrunge_leak_0..7`, `_dirt_0..34`, `inst_decalLeaves_1..4`).
+`decals.GRIME_FAMILY`: класс → семейство, сид-выбор per-instance + случайный поворот
+вокруг оси проекции (потёки НЕ вертятся — их CDO `randomOrientation=False`). Классы с
+фиксированным материалом (пиво/кофе/вино/бензин) держат его в CDO-переменной `material`,
+а ШАБЛОННЫЙ DecalMaterial у них врёт (родительская кровь) — резолвер читает
+`cdo_material`, он старше шаблона. Стенд: 80 различных декальных материалов (было ~8);
+crack=134 == umap-ценз grime_crack точно. Стекло главного окна — мытьевое ГРЯЗНОЕ:
+оверрайд панелей теперь строит glass + `tex_decalWindow` кайму (цвет/альфа/шершавость от
+грязи), не голый inst_glass.
+
 **v6b (same session, `49454cfb`) — RT-экраны + коллизия class_package.** Белые экраны
 воркстейшна и часов: их кукнутые материалы (`mat_tvScreen`, `mat_analogDS_*`,
 `mat_polarity`, `mat_frequency`, `inst_segmentDigits*`) НЕ несут ни одного текстурного
