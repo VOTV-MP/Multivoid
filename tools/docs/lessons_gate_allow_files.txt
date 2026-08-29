@@ -1,0 +1,18 @@
+# Files docs/LESSONS.md cites that are NOT in this repo. A cite into one of these is
+# not rot, but its LINE NUMBER cannot be checked -- treat those numbers as advisory.
+# One basename (or repo-relative path) per line; '#' starts a comment.
+
+# --- the UE4SS CXX header dump (our SDK; generated, never committed) ---
+UMG.hpp                 # UE4SS CXXHeaderDump -- UMG module
+Engine.hpp              # UE4SS CXXHeaderDump -- Engine module
+PhysicsCore.hpp         # UE4SS CXXHeaderDump -- PhysicsCore module
+prop_container.hpp      # UE4SS CXXHeaderDump -- game BP class header
+
+# --- Unreal Engine 4.27 source (read via IDA/decomp, not vendored) ---
+D3D11Viewport.cpp       # UE4 RHI source, read for the PresentChecked seam
+
+# --- GameNetworkingSockets upstream sources read during the auth arc ---
+# (the submodule vendors headers + a build, not these .cpp files)
+snp.cpp                 # GNS SNP -- read for the reliability layer
+connections.cpp         # GNS connection state machine
+certstore.cpp           # GNS cert store -- the CertStore_CheckCert finding

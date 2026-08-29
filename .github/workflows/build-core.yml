@@ -129,6 +129,20 @@ jobs:
           pwsh -File tools/text/atlas_regime_gate.ps1
           exit $LASTEXITCODE
 
+      - name: Lessons ledger gate (docs/LESSONS.md may not point at a dead symbol or line)
+        # Same family as the gates above, with one structural difference worth knowing:
+        # this one FAILS CLOSED on a missing corpus. Its symbol half needs research/
+        # (gitignored) and the auto-memory dir (outside the repo), neither of which exists
+        # in a CI checkout -- so on CI it runs the CITATION half only and says so, rather
+        # than reporting ~100 game/memory symbols as dead and training everyone to ignore
+        # it. The citation half is exactly the rot that bit twice on 2026-08-29
+        # (hud.cpp:415-419 in a 401-line file; net_pump.cpp:1014 in an 838-line file,
+        # stale since the s23 decomposition). Run it locally for the full gate.
+        shell: pwsh
+        run: |
+          python tools/docs/lessons_gate.py
+          exit $LASTEXITCODE
+
       - name: Read vcpkg pin (builtin-baseline from vcpkg.json)
         id: baseline
         shell: pwsh

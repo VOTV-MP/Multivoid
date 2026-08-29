@@ -724,7 +724,7 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   `memory/lesson_a_bound_at_the_render_site_is_a_site_list.md`
 - **A shared cache is priced by the SUM over live configurations, not by one slice.** 2026-07-30: an
   atlas-capacity discharge priced the glyph set at ONE font size and reported a 3x margin. The atlas is
-  one texture shared across every live size, and its GC is **pressure-triggered** — `DiscardBakes` has
+  one texture shared across every live size, and its GC is **pressure-triggered** — `ImFontAtlasBuildDiscardBakes` has
   exactly two call sites, `MakeSpace` (`imgui_draw.cpp:4244`) and `TextureCompact` (`:4306`) — so the
   resident set is everything drawn since the last pressure event. Re-measured as the sum over the sizes
   that can carry remote text: 0.345x + 0.282x + 0.228x = **0.856x of the ceiling, a 17% margin, not
@@ -1836,9 +1836,9 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   **SECOND INSTANCE 2026-07-30, different root (fixed `c142d077`):** the same scenario failed the same six rows on BYTE-IDENTICAL DLLs — run 1 `FAIL (6)`, run 2 `PASS`, differing only in how long the last client took to join (35 s vs 21 s). The messages were never SENT: `T` is swallowed while any interactive surface owns input, and the gate was a `"Joined "` log line plus a flat 4 s sleep. It cost a detour hunting a font regression from the ImGui port that had landed minutes earlier. *Fix, and the generalisable part:* an instrument that INJECTS a stimulus must confirm the stimulus ARRIVED before judging the response — the sender renders its own chat line, so its own log is a receipt; wait for it and retype. A readiness gate plus a fixed sleep is a guess with a timestamp, and it fails in the direction that looks like a product bug. `memory/lesson_an_instrument_can_fail_the_feature_it_tests.md`
 - **A drill on ONE TERM OF AN `||` is blind unless every other term is false — and a config DEFAULT
   decides that.** Measured 2026-07-29: a design narrowed `chat_feed::HasAny()` to fix an overlay-frame
-  leak and specified four drills; all four would have PASSED on a broken build, because `hud.cpp:415-419`
-  `IsActive()` is a disjunction whose last term is `voice_chat::Enabled()`, and
-  `config_registry_rows.inc:113` defaults `voice.enabled` to **true** (every smoke log shows voice
+  leak and specified four drills; all four would have PASSED on a broken build, because `hud.cpp:319-328`
+  `IsActive()` is a disjunction whose last term is `voice_chat::Enabled()` (`:328`), and
+  `config_registry_rows.inc:135` defaults `voice.enabled` to **true** (every smoke log shows voice
   starting on every peer). The term under test was unreachable; the defect would have shipped, visible
   only to a player who turns voice off. *Look FIRST:* when the change under test is one term of an OR
   (or one guard in a chain), **enumerate the other terms and find each one's DEFAULT before writing the
@@ -2631,6 +2631,53 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   arithmetic imposed, so **the broken build would have passed that session too**. LOOK FIRST: before
   writing "idle" / "stationary" / "solo" / "unattended", check the word against the numbers you are
   already pasting. `memory/lesson_the_number_you_quoted_refutes_the_label_you_gave_it.md`
+- **Disproving a COMMENT does not disprove the CODE — and the disproof inherits the comment's
+  frame.** Measured 2026-08-29: `atv_sync.cpp:98-101` said *"a bought ATV is delivered ONLY on the
+  host"*; 473 `list_store` rows and 189 craft recipes sell no ATV, so the comment is false. I wrote
+  across four docs that the lane it introduces was therefore **"gated for RULE-2 deletion"**. Wrong,
+  and the deletion would have been a regression: the code's predicate (`:313-318`) is
+  `isHost && key not-in g_savePlacedKeys && obj not-in g_savePlacedActors` = *"an ATV first seen
+  after the baseline window"* — broader than the comment and **correct**, because a runtime ATV
+  really exists. The trap is that a false comment feels like a defect in the *lane*, and RULE 2
+  supplies the motive while the false premise supplies what looks like the evidence. The costs are
+  asymmetric: a stale comment misleads a reader, a deleted lane silently breaks a real scenario.
+  Second layer: the comment said "bought", so I censused the SHOP — **a disproof can only tell you
+  the stated reason is wrong, never that no reason exists.** LOOK FIRST: read the predicate the code
+  actually evaluates, census THAT, and write the pair side by side ("comment says X; code tests Y").
+  A predicate broader than its comment is usually the code being right. Then fix the comment — that
+  is the whole defect. `memory/lesson_disproving_a_comment_does_not_disprove_the_code.md`
+- **A census of CODE cannot see a DATA-driven call — and a negative without a denominator is an
+  anecdote.** Measured 2026-08-29, three stages that each reversed the last: (1) 285 dumped
+  blueprints walked for spawn calls naming ATV -> **0 hits**, a clean complete-feeling negative;
+  (2) mounting the pak reported **20,873 packages**, so that sample was **1.4%** — the whole-pak
+  byte-scan for the FName `ATV_C ` (uncompressed pak; bisect each hit offset into the sorted
+  `provider.files` span table) found 104 owners, 23 non-map, all of which disassembled clean, still
+  "no"; (3) the real answer was in **data** — `list_props` row `atv` carries
+  `spawnAsObject = ATV_C`, `hidden = false`, and `lib.PropToObject` does
+  `GetDataTableRowFromName(list_props, prop)` then uses `row.spawnAsObject` as the class. **The
+  spawn site's operand is a table lookup, so no bytecode walk for a class constant could ever find
+  it.** Two independent failures, either alone sufficient: sample-read-as-population (nothing in a
+  corpus announces its own coverage) and code-read-as-behaviour. LOOK FIRST: state the denominator
+  before believing a negative, then grep the DATATABLES for a row whose class field resolves to your
+  target — and resolve the import INDEX, never the name-table text (`ATV_C` is a prefix of
+  `ATV_Child`, so a substring count lies). The pattern to hunt is
+  `GetDataTableRowFromName(<table>, <name>)` feeding a class/target field.
+  `memory/lesson_a_census_of_code_cannot_see_a_data_driven_call.md`
+- **The `lessons_gate` now exists — this ledger is machine-checked.**
+  `python tools/docs/lessons_gate.py` fails on a cited `file.ext:NNN` that does not resolve (or whose
+  line is past EOF) and on a backticked symbol present in **no code corpus** (`src`/`include`/`tools`,
+  the auto-memory, MTA, RE-UE4SS, the dumped game bytecode, vendored third-party). **`docs/` is
+  deliberately NOT a corpus** — a doc mentioning a symbol must never be what proves it exists, or the
+  ledger validates itself. Git SHAs are filtered, a suffix-only cite is reported as PARTIAL rather
+  than failed, and two allowlists carry the legitimately-external cases. Shown RED on each defect
+  class by `tools/docs/lessons_gate_drill.py`. Its first run found three live rot instances in this
+  file -- `hud.cpp` line 415 (the file is 401 lines; live site `hud.cpp:319-328`), `net_pump.cpp`
+  line 1014 (838 lines; live site `net_pump.cpp:766`), and `DiscardBakes` ->
+  `ImFontAtlasBuildDiscardBakes` -- plus the same stale `net_pump` cite in a source comment.
+  **Note the shape of that first list: a dead pointer must never be written in CITATION FORM even
+  as a historical quotation, or the ledger re-introduces the rot it is documenting.** The gate
+  caught exactly that regression in this row minutes after it was written.
+  `memory/lesson_a_lessons_pointer_rots_independently_of_its_takeaway.md`
 
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
 
@@ -3096,7 +3143,7 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   (v110, `2dde3e16`): client stays frozen mirror, clock streams `ClockPose=37`. *Look FIRST:* smooth-sun
   needs advancing `totalTime` through `ReceiveTick` which fires every `newMinute`/`newHour` -> that path
   is gated on enumerating those consumers. `memory/lesson_frozen_mirror_desync_is_transport_not_authority.md`
-- **`subsystems::Install` is called EVERY net_pump tick (idempotent contract)** — net_pump.cpp:1014, "one-
+- **`subsystems::Install` is called EVERY net_pump tick (idempotent contract)** — net_pump.cpp:766, "one-
   shot install ... idempotent"; each sub-Install MUST latch its noisy/expensive work or it re-runs per
   frame (desk_diag ENABLED banner ~37k/session, `2de202ed`). *Look FIRST:* add a `static bool` latch to
   any new Install that logs/allocates/hooks/resolves. `memory/lesson_subsystems_install_runs_every_tick_must_latch.md` (SHARPENED v120: a success-only latch whose FAILED retry re-runs FindClass = a 60 Hz pre-world array-walk bomb — put every resolve retry behind a throttled gate or a cached resolver).

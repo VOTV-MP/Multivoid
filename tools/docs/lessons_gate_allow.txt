@@ -1,0 +1,5 @@
+# Symbols docs/LESSONS.md names that exist in NO code corpus this gate can read.
+# Add an entry only when the symbol is genuinely external -- never to silence rot.
+# One symbol per line; '#' starts the reason.
+
+Abed_C   # a game BlueprintGeneratedClass; only ~695 of the pak's 20,873 packages are dumped to research/bp_reflection, and bed is not among them
