@@ -329,6 +329,15 @@ CFG_INT(atlas_texmax_drill, "atlas_texmax_drill", "dev", 0, 0, 8192,
     "VOTVCOOP_ATLAS_TEXMAX",
     "Override the font atlas size ceiling (0 = the shipped 2048). Set 256 to starve "
     "the packer and prove the pack-failure detector fires.")
+// The admission drill (v144). CLIENT-SIDE ONLY, and that is the whole design:
+// the host's gate has no knob, no dev branch and no env check anywhere, so the
+// drill exercises the REAL refusal or it proves nothing. A knob on the host would
+// make the drill's own pass conditional on a bypass existing in shipped code.
+CFG_ENUM(auth_drill, "auth_drill", "dev", "off", "off|corrupt|silent",
+    "VOTVCOOP_AUTH_DRILL",
+    "Sabotage THIS CLIENT's identity proof, to prove the host refuses it. corrupt = "
+    "send a flipped signature; silent = open the exchange and never answer. Both must "
+    "leave this peer unseated and with no save. Drill only.")
 CFG_FLAG(atlas_no_exclude_drill, "atlas_no_exclude_drill", "dev", false,
     "VOTVCOOP_ATLAS_NO_EXCLUDE",
     "Drop GlyphExcludeRanges from every font source, so the faces bake their whole "

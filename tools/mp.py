@@ -3995,6 +3995,104 @@ def _post_close(pid: int, signal: str, label: str) -> bool:
     return bool(ok)
 
 
+def cmd_authdrill(args) -> None:
+    """NEGATIVE arm of the admission gate (v144, security A15/A2/A57).
+
+    The happy path is proven by every smoke. This proves the other half: that the
+    gate REFUSES. A gate that has never refused anything is an unproven gate, and
+    the only thing that distinguishes it from `return true` is a run like this.
+
+    THE SABOTAGE IS ENTIRELY CLIENT-SIDE (`[dev] auth_drill`). The host's gate has
+    no knob, no dev branch and no env check anywhere -- so what this drills is the
+    shipped refusal, not a test hook. Two arms:
+
+      corrupt -- the client verifies the host, then sends a proof with one bit
+                 flipped. The host must REFUSE and close.
+      silent  -- the client verifies the host and then says nothing. The host must
+                 close it on the pending deadline. Slower by design: the deadline
+                 is 30 s because it must clear the slowest legitimate handshake.
+
+    Asserted, per arm, from the HOST's own log and the CLIENT's:
+      N1 the host REFUSED / swept this connection, naming why
+      N2 the client NEVER took a seat        (no "host assigned us peer slot")
+      N3 the host NEVER served the save      (A57's world half is what this buys)
+      N4 the host's seat count stayed at zero
+
+    CONTROL ARM (--control): the same script with the drill OFF must go GREEN on
+    all four -- otherwise a drill that fails to connect for an unrelated reason
+    reports a refusal it never caused.
+    """
+    if kill_all() > 0:
+        log("note: pre-existing VotV instances killed before authdrill")
+    deploy_all()
+
+    arm = "off" if args.control else args.arm
+    log(f"--- ADMISSION DRILL: arm={arm} "
+        f"({'CONTROL -- every assertion must INVERT' if args.control else 'the gate must refuse'}) ---")
+
+    log("--- HOST LAUNCH ---")
+    host_pid = launch_peer("host", args.port, "Host", peer=None,
+                           res_x=1280, res_y=720, monitor=1, center=True,
+                           extra_env={"VOTVCOOP_VOICE_ENABLED": "0"})
+    host_log = HOST_DIR / "multivoid.log"
+    bound = False
+    for i in range(args.boot_timeout):
+        time.sleep(1)
+        if host_owns_udp(host_pid, args.port):
+            log(f"host bound UDP {args.port} after {i+1}s"); bound = True; break
+        if not any(p["PID"] == host_pid for p in list_votv()):
+            log("HOST DIED before binding UDP"); tail_log(host_log, 30, "HOST"); sys.exit(1)
+    if not bound:
+        log(f"FAIL: host did not bind UDP within {args.boot_timeout}s")
+        tail_log(host_log, 30, "HOST"); kill_all(); sys.exit(1)
+
+    log(f"--- CLIENT LAUNCH (auth_drill={arm}) ---")
+    client_pid = launch_peer("client", args.port, "Client", peer="127.0.0.1",
+                             res_x=1280, res_y=720, peer_slot=1, monitor=2, tile_index=0,
+                             extra_env={"VOTVCOOP_VOICE_ENABLED": "0",
+                                        "VOTVCOOP_AUTH_DRILL": arm})
+    client_log = CLIENT_DIR / "multivoid.log"
+
+    # The refusal is immediate for `corrupt`; `silent` waits out the host deadline.
+    hold = args.hold if arm != "silent" else max(args.hold, 45)
+    log(f"holding {hold}s for the verdict to land in both logs...")
+    time.sleep(hold)
+
+    htext, herr = _read_log_strict(host_log)
+    ctext, cerr = _read_log_strict(client_log)
+    log("--- KILLING ---")
+    kill_all()
+
+    if herr or cerr:
+        log(f"FAIL: log did not decode as strict UTF-8 (host={herr} client={cerr})")
+        sys.exit(1)
+
+    # N1's needle differs per arm because the two refusals are different mechanisms
+    # and conflating them would let the sweep's pass stand in for the verify's.
+    refused = ("identity proof did not verify" in htext) if arm == "corrupt" else               ("never proved its identity" in htext)
+    seated  = "host assigned us peer slot" in ctext
+    # The host's own serve marker (`save_transfer.cpp:523`/`:275`) -- the whole
+    # point of A57's world half is that this line must not appear for an unproved
+    # peer. Matching on "streaming" catches the LIVE and the stale-fallback arms.
+    served  = "save_transfer: slot 1 streaming" in htext
+    admitted = "ADMITTED -> slot" in htext
+
+    want = {"N1 host refused/swept, naming why": (not args.control) == refused,
+            "N2 client took no seat":            args.control == seated,
+            "N3 host served no save":            args.control == served,
+            "N4 no seat was spent":              args.control == admitted}
+    log("--- VERDICT ---")
+    for k, ok in want.items():
+        log(f"  {'PASS' if ok else 'FAIL'}  {k}")
+    if all(want.values()):
+        log(f"AUTH DRILL PASS (arm={arm}{', CONTROL' if args.control else ''})")
+    else:
+        log(f"AUTH DRILL FAIL (arm={arm}{', CONTROL' if args.control else ''})")
+        tail_log(host_log, 25, "HOST")
+        tail_log(client_log, 25, "CLIENT")
+        sys.exit(1)
+
+
 def cmd_gracefulexit(args) -> None:
     """Launch a solo host, close it the way a PLAYER closes it, and read the teardown trail.
 
@@ -4582,6 +4680,22 @@ def main() -> None:
     p_puppetshot.add_argument("--memory-limit-gb", type=float, default=12.0, help="per-process commit cap in GB (0 = disabled)")
     for flag, kw in host_res: p_puppetshot.add_argument(flag, **kw)
     p_puppetshot.set_defaults(func=cmd_puppetshot)
+
+    p_authdrill = sub.add_parser("authdrill",
+                                 help="NEGATIVE arm of the admission gate: a client with a sabotaged "
+                                      "identity proof must be REFUSED and must never receive the save "
+                                      "(the sabotage is client-side only -- the host gate has no knob)")
+    p_authdrill.add_argument("--arm", choices=["corrupt", "silent"], default="corrupt",
+                             help="corrupt = flip a bit of the proof; silent = never answer the challenge")
+    p_authdrill.add_argument("--control", action="store_true",
+                             help="CONTROL: run with the drill OFF -- every assertion must invert, "
+                                  "proving the refusal was caused by the sabotage and not by the rig")
+    p_authdrill.add_argument("--port", type=int, default=DEFAULT_PORT, help="host UDP port")
+    p_authdrill.add_argument("--boot-timeout", type=int, default=90, help="seconds to wait for host UDP bind")
+    p_authdrill.add_argument("--hold", type=int, default=40,
+                             help="seconds to hold before reading the verdict (the silent arm waits "
+                                  "out the host's 30 s pending deadline regardless)")
+    p_authdrill.set_defaults(func=cmd_authdrill)
 
     p_gexit = sub.add_parser("gracefulexit",
                              help="SOLO SHUTDOWN drill: close the host the way a PLAYER closes it "

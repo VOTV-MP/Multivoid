@@ -2,6 +2,8 @@
 
 #include "coop/net/peer_admission.h"
 
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/net/session.h"
 #include "ue_wrap/core/log.h"
 
@@ -298,9 +300,34 @@ bool ClientOnReliable(Session& session, uint32_t hConn, ReliableKind kind,
               ch.nonce);
     const Sig sig = peer_identity::SignBlob(mine, sizeof(mine));
     std::memcpy(out.sig, sig.data(), sig.size());
+
+    // THE DRILL, and it lives on this side ONLY. The host's gate has no knob to
+    // turn: a bypass there would make the drill's verdict a statement about the
+    // bypass. Here it sabotages a real proof travelling the real path.
+    const std::string drill =
+        coop::config::ResolveEnum(coop::config_registry::rows::auth_drill);
+    if (drill == "silent") {
+        UE_LOGW("peer_admission: DRILL 'silent' -- verified the host and then sending "
+                "NO proof. The host must close us on its pending deadline and we must "
+                "never take a seat.");
+        g_client.proved = false;
+        return true;
+    }
+    if (drill == "corrupt") {
+        out.sig[0] ^= 0x01;
+        UE_LOGW("peer_admission: DRILL 'corrupt' -- flipping one bit of our proof. The "
+                "host must REFUSE us and we must never receive the save.");
+    }
+
     if (!session.SendRawReliableToConn(hConn, ReliableKind::AuthProof,
                                        &out, sizeof(out))) {
         *outClose = "could not send the identity proof";
+        return true;
+    }
+    if (drill == "corrupt") {
+        // A corrupted proof must NOT set `proved`: if the host somehow seated us
+        // anyway, the client's own AssignPeerSlot gate must be the second thing
+        // that refuses -- the drill tests both halves or it tests one.
         return true;
     }
     g_client.proved = true;
