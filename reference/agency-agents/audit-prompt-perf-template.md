@@ -100,9 +100,18 @@ subclass actor.
 ### Cost we CAUSE but do not EXECUTE (MANDATORY -- added 2026-08-29)
 
 Every counter this project owns times **our own instructions**. None of them counts the engine
-work our code provokes, and that gap has been measured at roughly an order of magnitude: while
-the instrumented buckets summed to ~0.6 ms of a 14 ms frame, the mod was costing ~6 ms
-(120 -> 70 fps). An audit that only reads our timers will therefore CLEAR a real regression.
+work our code provokes, so an audit that only reads our timers can CLEAR a real regression.
+Measured instance (2026-08-29): the input-ownership focus scan issued **~9,300 reflected
+dispatches per second**, all inside ONE frame, and appeared in **no bucket at all** -- the
+instrumented totals for that build summed to ~0.6 ms of a 14 ms frame while saying nothing
+about it.
+
+(This section first shipped citing a "the mod costs ~6 ms / 120 -> 70 fps" figure. That figure
+was **withdrawn the same day**: the 50 fps was the developer machine's own tooling -- UE4SS's
+bundled Lua mods plus the Blueprint paks `BPModLoaderMod` loads -- and Multivoid measured at no
+detectable cost. Keep the mandate, drop the number; and note the second lesson that episode
+taught, which belongs in any perf audit: **when a cost is claimed by comparing two environments,
+diff the environments before instrumenting either one.**)
 
 For every function in the table, answer:
 

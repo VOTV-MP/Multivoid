@@ -33,6 +33,24 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 1. How to work (process / working agreements)
 
+- **A MIXED-EOL file turns a 3-line edit into a whole-file diff -- and buries a co-worker's
+  hunks.** 2026-08-29: three added rows in `config_registry_rows.inc` staged as **752 changed
+  lines (379+/373-)**, because `git show HEAD:<path> | file -` reports that file as *"CRLF, CR,
+  LF line terminators"* and a normal write normalized all of it. `docs/LESSONS.md` is mixed too
+  (its section 7 is LF while other regions are CRLF -- which is why `
+` string anchors fail
+  there), and the repo has **no `.gitattributes`**, so nothing normalizes on the way in and
+  nothing warns. This matters beyond tidiness because a parallel session is usually editing the
+  same docs: the standing `git diff --cached --stat` foreign-line check is DEFEATED by an EOL
+  rewrite, since every line then looks like yours. *Look FIRST:* when `--cached --stat` shows a
+  line count far larger than your edit, suspect line endings before suspecting yourself --
+  confirm with `git show HEAD:<path> | file -`, then `git checkout HEAD -- <path>` and re-apply
+  in BINARY with the bytes the file already uses. For a shared file, extract only your hunks and
+  `git apply --cached` after a `--check` dry run (done here: 5 hunks present, 1 mine). Matching
+  traps: bash's `/tmp` and a Windows `python` do not share a path (use the scratchpad), and
+  `grep` calls a mixed-EOL file "Binary file ... matches" -- pass `-a`.
+  `memory/lesson-a-mixed-eol-file-turns-a-3-line-edit-into-a-whole-file-diff.md`
+
 - **A RULE-2 DELETION CENSUS MUST INCLUDE *RELEASED* BUILDS, NOT JUST THE WORKING TREE.**
   2026-08-29, caught by a `/qf` critic. `peerIdentity` had **zero** readers in HEAD and a comment
   saying so, so a sweep called the master's mint stranded dead output. `[V]` b133 -- 1,138
@@ -4876,7 +4894,10 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 
 - **An instrument that times OUR CODE cannot see the engine work our code PROVOKES.** `[V]`
   2026-08-29, hunting a 120 -> 70 fps regression: every bucket we own summed to ~0.6 ms of a
-  14 ms frame while the mod cost ~6 ms. Three blind spots, each found by disbelieving a number,
+  14 ms frame and could not have said otherwise whatever the answer was. (The regression was NOT
+  the mod -- it was the dev machine's own tooling; see the diff-the-two-installs row above -- but
+  the blind spots are structural and each rests on its own measurement.) Three of them, each
+  found by disbelieving a number,
   not by reading code. (a) The PE detour's self-timer bracketed from INSIDE
   `ProcessEventDetourImpl`, so the outer frame and the SEH `__try` frame were excluded BY
   CONSTRUCTION -- it could never falsify "the detour is the missing time" because it was blind

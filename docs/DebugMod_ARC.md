@@ -271,16 +271,29 @@ imports ZERO UE4SS symbols and is logged starting on BOTH builds. Same game, sam
 **A SECOND, INDEPENDENT BLOCKER, found in the same logs** — it would have bitten even with the ABI
 fixed, and it is worth knowing because it splits the mod in half:
 `[V]` DebugMod's pak is mounted not by DebugMod but by **`BPModLoaderMod`** (a Lua mod):
-`[Lua] DebugMod == table:` / `AssetPath == /Game/Mods/DebugMod/ModActor`. `[V]` The rig's HOST does
-not have `BPModLoaderMod` at all; CLIENT_1/2/3 do.
+`[Lua] DebugMod == table:` / `AssetPath == /Game/Mods/DebugMod/ModActor`.
 
-**So the rig currently holds THREE states, none of which is "DebugMod working":**
+**CORRECTED 2026-08-29 — the HOST row below used to read "never mounted — no
+`BPModLoaderMod`", and that was wrong.** `[V]` The HOST's `Mods/mods.txt` carried
+`BPModLoaderMod : 1`, its own `UE4SS.log` printed `[Lua] DebugMod == table:`, and removing
+`Content/Paks/LogicMods/DebugMod.pak` from the HOST bought **~14 fps** (~75 -> ~89) — a pak that
+was never mounted cannot cost frames. The earlier claim came from reading `Mods/*/enabled.txt`,
+which is NOT UE4SS 3.0.1's enable list; `Mods/mods.txt` is. Census the loader's real list, and
+confirm against the loader's own log.
+
+**So the rig holds these states, none of which is "DebugMod working":**
 
 | install | C++ half | BP half (pak) |
 |---|---|---|
-| HOST | fails `0x7f` | never mounted — no `BPModLoaderMod` |
+| HOST | fails `0x7f` | **MOUNTED** `[V]` — the same PARTIAL-LOAD state as CLIENT_1 |
 | CLIENT_1 | fails `0x7f` | **MOUNTED** `[V]` — a real PARTIAL-LOAD state |
 | CLIENT_2 / CLIENT_3 | absent by design | absent by design |
+
+**RIG STATE AS LEFT 2026-08-29:** every `Mods/mods.txt` entry on the HOST is set to `0` (backup
+`mods.txt.bak`) because that set cost ~45 fps — see
+`memory/project-fps-regression-hunt-2026-08-29.md`. **`BPModLoaderMod` is off, so the HOST's BP
+half will NOT mount until the backup is restored.** Restore it before any dual-mod work here, and
+expect ~75 fps rather than ~120 while it is on.
 
 CLIENT_1's split state is itself a finding: a DebugMod whose Blueprint content is live in the world
 while its native half is absent is a configuration a real user can reach, and nothing warns anybody.
