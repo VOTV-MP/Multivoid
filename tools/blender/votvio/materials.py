@@ -12,6 +12,7 @@ Emission = tex * ag * emisive_strength * emissioncolor.
 import bpy
 
 from . import bc_decode, screens
+from .decals import _seed_int
 
 _FALLBACK_RGBA = (0.42, 0.42, 0.46, 1.0)
 
@@ -334,14 +335,23 @@ def _set_blended(mat):
         pass
 
 
-def get_decal_material(game, mat_pkg_path, caches, warnings, with_textures=True):
+def get_decal_material(game, mat_pkg_path, caches, warnings, with_textures=True,
+                       seed=""):
     """Alpha-blended quad material for a DecalComponent (grime/graffiti/stains).
     Base color from the first texture param; alpha = texture alpha x opacity,
-    or the 'mask' texture when the decal carries one (blood family)."""
-    key = ("decal", mat_pkg_path or "<none>")
+    or the 'mask' texture when the decal carries one (blood family).
+    mat_dynamicWallDirt samples a WINDOW of its big overlay sheet (measured:
+    size=2048, decalScale=200 half-extents -> a 400/2048 window, anchored by a
+    per-instance runtime offset) - windowed here with a seeded offset bucket."""
+    caches.setdefault("mat_info", {})
+    info = _analyze(game, mat_pkg_path, caches["mat_info"]) if mat_pkg_path else \
+        {"tex": {}, "scal": {}, "vec": {}, "blend": "", "twosided": False,
+         "clip": 0.333, "root": "", "chain": []}
+    windowed = info["root"] == "mat_dynamicwalldirt"
+    bucket = (_seed_int(seed) % 12) if windowed else 0
+    key = ("decal", mat_pkg_path or "<none>", bucket)
     if key in caches["mat"]:
         return caches["mat"][key]
-    caches.setdefault("mat_info", {})
     name = "decal_" + (mat_pkg_path.rsplit("/", 1)[-1] if mat_pkg_path else "none")
     mat = bpy.data.materials.new(name)
     mat.use_nodes = True
@@ -356,9 +366,6 @@ def get_decal_material(game, mat_pkg_path, caches, warnings, with_textures=True)
     # backface keeps the far-side sheet from ghosting through thin walls
     mat.use_backface_culling = True
 
-    info = _analyze(game, mat_pkg_path, caches["mat_info"]) if mat_pkg_path else \
-        {"tex": {}, "scal": {}, "vec": {}, "blend": "", "twosided": False,
-         "clip": 0.333, "root": "", "chain": []}
     tex = info["tex"]
     base_pkg = tex.get("tex") or tex.get("diffuse") or \
         (next(iter(tex.values())) if tex else "")
@@ -370,6 +377,21 @@ def get_decal_material(game, mat_pkg_path, caches, warnings, with_textures=True)
     timg = nt.nodes.new("ShaderNodeTexImage")
     timg.image = img
     timg.location = (-560, 260)
+    if windowed:
+        # decalScale*2/size of the sheet per axis, seeded window origin
+        span = 2.0 * float(info["vec"].get("decalscale", (200.0,) * 4)[1]) / \
+            max(float(info["scal"].get("size", 2048.0) or 2048.0), 1.0)
+        span = min(max(span, 0.02), 1.0)
+        ox = (_seed_int(str(bucket) + ":wx") % 1000) / 1000.0 * (1.0 - span)
+        oy = (_seed_int(str(bucket) + ":wy") % 1000) / 1000.0 * (1.0 - span)
+        coord = nt.nodes.new("ShaderNodeTexCoord")
+        coord.location = (-980, 260)
+        mapping = nt.nodes.new("ShaderNodeMapping")
+        mapping.location = (-780, 260)
+        mapping.inputs["Location"].default_value = (ox, oy, 0.0)
+        mapping.inputs["Scale"].default_value = (span, span, 1.0)
+        nt.links.new(coord.outputs["UV"], mapping.inputs["Vector"])
+        nt.links.new(mapping.outputs["Vector"], timg.inputs["Vector"])
     color_socket = timg.outputs["Color"]
     # mat_decal_grunge draws UNLIT (MSM_Unlit translucent, measured): its
     # light-gray textures read as DARK stains against a lit wall in-game.
@@ -406,19 +428,10 @@ def get_decal_material(game, mat_pkg_path, caches, warnings, with_textures=True)
     op = info["scal"].get("opacity", info["scal"].get("alpha", 1.0))
     mul = nt.nodes.new("ShaderNodeMath")
     mul.operation = "MULTIPLY"
-    mul.inputs[1].default_value = min(max(op * 1.3, 0.0), 1.3) if grungy else \
-        min(max(op, 0.0), 1.0)
+    mul.inputs[1].default_value = min(max(op, 0.0), 1.0)
     mul.location = (-140, -60)
     nt.links.new(alpha_socket, mul.inputs[0])
-    if grungy:
-        cl = nt.nodes.new("ShaderNodeMath")
-        cl.operation = "MINIMUM"
-        cl.inputs[1].default_value = 1.0
-        cl.location = (-20, -60)
-        nt.links.new(mul.outputs[0], cl.inputs[0])
-        nt.links.new(cl.outputs[0], bsdf.inputs["Alpha"])
-    else:
-        nt.links.new(mul.outputs[0], bsdf.inputs["Alpha"])
+    nt.links.new(mul.outputs[0], bsdf.inputs["Alpha"])
     return mat
 
 

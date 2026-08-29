@@ -14,6 +14,7 @@ numbered variant sets (measured: crack/leaky/dusty/light/grainy CDOs carry NO
 material ref while the pak holds the families below).
 """
 import hashlib
+import json
 import math
 
 from mathutils import Matrix, Vector
@@ -22,6 +23,7 @@ _CRACKS = ("/Game/textures/decals/grime/cracks/inst_decalCrack_{}", 0, 17)
 _LEAK = ("/Game/textures/decals/grime/inst_DecalGrunge_leak_{}", 0, 8)
 _DIRT = ("/Game/textures/decals/grime/inst_DecalGrunge_dirt_{}", 0, 35)
 _LEAVES = ("/Game/textures/decals/grime/leaves/inst_decalLeaves_{}", 1, 4)
+_POSTERS = ("/Game/meshes/poster/inst_poster_{}", 0, 9)
 GRIME_FAMILY = {
     "grime_C": _DIRT,
     "grime_crack_C": _CRACKS,
@@ -32,25 +34,50 @@ GRIME_FAMILY = {
     "grime_light_C": _DIRT,
     "grime_grainy_C": _DIRT,
     "grime_fallenLeaves_C": _LEAVES,
+    # poster_c is the CUSTOM poster (the player's own image, not in the pak);
+    # the closest static truth is the game's own poster set. The save stores
+    # its class as 'poster.poster_c' - NO _C suffix (measured).
+    "poster_c": _POSTERS,
+    "poster_c_C": _POSTERS,
+    "poster_C": _POSTERS,
 }
 
 # leak drips must stay vertical (their CDOs set randomOrientation=False);
-# everything else in the grime family gets the game's random spin around the
-# projection axis
-_NO_SPIN = {"grime_leaky_C", "grime_leaky_rusty_C", "grime_leaky_wet_C"}
+# posters hang straight; everything else in the family gets the game's random
+# spin around the projection axis
+_NO_SPIN = {"grime_leaky_C", "grime_leaky_rusty_C", "grime_leaky_wet_C",
+            "poster_c", "poster_c_C", "poster_C"}
 
 
 def _seed_int(seed):
     return int.from_bytes(hashlib.sha1(str(seed).encode()).digest()[:4], "little")
 
 
-def grime_material(class_name, seed):
-    """Stable per-instance variant pick, or None when the class has no family."""
+def grime_material(class_name, seed, variant=-1):
+    """Per-instance variant pick: the SAVED index when the row carries one
+    (primitives json = [variant, sizePct], measured: crack rows persist 1/8/14),
+    else a stable seeded pick. None when the class has no family."""
     fam = GRIME_FAMILY.get(class_name)
     if fam is None:
         return None
     fmt, first, count = fam
+    if isinstance(variant, int) and 0 <= variant < count:
+        return fmt.format(first + variant)
     return fmt.format(first + _seed_int(seed) % count)
+
+
+def row_variant_size(row_json):
+    """primitives json '[ variant, sizePct ]' -> (variant, scale). Measured
+    grammar: crack '[ 14, 100 ]', oil '[ -1, 300 ]', poo '[ -1, 50 ]'."""
+    try:
+        v = json.loads(row_json or "")
+        if isinstance(v, list) and len(v) >= 2:
+            return int(v[0]), max(float(v[1]), 1.0) / 100.0
+        if isinstance(v, list) and len(v) == 1:
+            return int(v[0]), 1.0
+    except (ValueError, TypeError):
+        pass
+    return -1, 1.0
 
 
 def grime_spin(class_name, seed):
@@ -68,8 +95,15 @@ def size_matrix(size_ue):
                             max(float(size_ue[2]), 1.0) * 0.01, 1.0))
 
 
-_OFFSET = 0.013        # lift off the receiver surface (m; USER field test: 6mm
-                       # z-fights away at scene view distances, >=1cm reads)
+_OFFSET = 0.02         # base lift off the receiver surface (m; USER field test:
+                       # 6mm z-fights away at scene view distances, and 13mm
+                       # still fought at long range - 2cm + per-decal jitter)
+
+
+def decal_lift(seed):
+    """Per-decal surface offset: 2.0-2.8cm, jittered by the decal's own name so
+    overlapping decals never share a depth plane with each other either."""
+    return _OFFSET + (_seed_int(str(seed) + ":lift") % 9) * 0.001
 _CELL = 0.12           # target grid cell size (m)
 _EXTRA_DEPTH = 0.15    # placement tolerance beyond the box depth (m)
 
@@ -97,10 +131,12 @@ def _wind(verts, faces, direction):
     return faces
 
 
-def project_decal(scene, depsgraph, m):
+def project_decal(scene, depsgraph, m, lift=_OFFSET):
     """Project one decal box (world matrix incl. half-extent scale) onto the
     scene. -> list of sheets [(verts, faces, per-vertex uv)] in world space,
-    empty when nothing inside the box receives it.
+    empty when nothing inside the box receives it. `lift` = the per-decal
+    surface offset (jittered by the caller so stacked decals never share a
+    depth plane with each other).
 
     The engine paints every surface inside the OBB, projecting along local X
     BOTH ways - a wall inside the box receives the decal on each face. So two
@@ -121,14 +157,14 @@ def project_decal(scene, depsgraph, m):
     sheets = []
     for direction in (x_axis, -x_axis):
         sheet = _project_side(scene, depsgraph, loc, direction, y_axis, z_axis,
-                              sy, sz, ny, nz, depth)
+                              sy, sz, ny, nz, depth, lift)
         if sheet is not None:
             sheets.append(sheet)
     return sheets
 
 
 def _project_side(scene, depsgraph, loc, direction, y_axis, z_axis, sy, sz,
-                  ny, nz, depth):
+                  ny, nz, depth, lift):
     def cast(fy, fz):
         origin = loc + y_axis * (fy * sy) + z_axis * (fz * sz) - direction * depth
         ok, hloc, hnorm, i, o, mw = scene.ray_cast(
@@ -170,7 +206,7 @@ def _project_side(scene, depsgraph, loc, direction, y_axis, z_axis, sy, sz,
                     fz = -1.0 + 2.0 * iz / nz
                     origin = loc + y_axis * (fy * sy) + z_axis * (fz * sz)
                     t = (p0 - origin).dot(nmean) / denom
-                    p = origin + direction * t + nmean * _OFFSET
+                    p = origin + direction * t + nmean * lift
                     verts.append((p.x, p.y, p.z))
                     uvs.append(_uv(fy, fz))
             faces = [(iy * (nz + 1) + iz, (iy + 1) * (nz + 1) + iz,
@@ -186,7 +222,7 @@ def _project_side(scene, depsgraph, loc, direction, y_axis, z_axis, sy, sz,
             fz = -1.0 + 2.0 * iz / nz
             ok, hloc, hnorm, _i, _o, _mw = cast(fy, fz)
             if ok:
-                hits[(iy, iz)] = (hloc + hnorm * _OFFSET, _uv(fy, fz))
+                hits[(iy, iz)] = (hloc + hnorm * lift, _uv(fy, fz))
     if not hits:
         return None
 

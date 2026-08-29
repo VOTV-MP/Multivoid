@@ -32,6 +32,13 @@ t1 = time.time()
 game = ue_provider.open_game(paks)
 print(f"[mount] {time.time()-t1:.1f}s")
 
+# factory-startup ships a default Cube/Light/Camera - drop them so the saved
+# bench holds only imported content (the stray Light also lacked xray)
+import bpy  # noqa: E402
+
+for _ob in [o for o in bpy.data.objects if o.name in ("Cube", "Light", "Camera")]:
+    bpy.data.objects.remove(_ob, do_unlink=True)
+
 t2 = time.time()
 report = assemble.build_scene(
     manifest, game,

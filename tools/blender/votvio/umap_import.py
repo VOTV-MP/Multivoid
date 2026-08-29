@@ -532,5 +532,6 @@ class MapImporter:
             return
         ob = bpy.data.objects.new(ld.name, ld)
         ob.matrix_world = m
+        ob.show_in_front = True   # USER: lights always visible through geometry
         col.objects.link(ob)
         self.stats["lights"] += 1

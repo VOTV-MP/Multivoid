@@ -332,9 +332,14 @@ class TemplateResolver:
                     out.append((t.mesh, m, t.kind))
             dt = info["decals"].get(base)
             if dt is not None:
-                # the game's runtime pick: per-type variant family first, then
-                # the CDO 'material' variable, then the template's own material
-                dmat = decals_mod.grime_material(row.class_name, pose_seed)
+                # the game's runtime pick: the SAVED variant/size when the row
+                # carries them (primitives json = [variant, sizePct]), then the
+                # per-type variant family, then the CDO 'material' variable,
+                # then the template's own material
+                variant, szscale = decals_mod.row_variant_size(
+                    getattr(row, "json", ""))
+                dmat = decals_mod.grime_material(row.class_name, pose_seed,
+                                                 variant)
                 if not dmat:
                     dmat = info["cdo_material"] or str(dt["material"])
                 if dmat.startswith("/Game/"):
@@ -342,7 +347,8 @@ class TemplateResolver:
                     spin = decals_mod.grime_spin(row.class_name, pose_seed)
                     if spin is not None:
                         m2 = m @ spin
-                    out.append((dmat, m2 @ decals_mod.size_matrix(dt["size"]), "DECAL"))
+                    size = tuple(s * szscale for s in dt["size"])
+                    out.append((dmat, m2 @ decals_mod.size_matrix(size), "DECAL"))
             for kid in info["children"].get(base, ()):
                 walk(kid, m, depth + 1)
 
