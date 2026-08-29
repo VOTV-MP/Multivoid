@@ -106,6 +106,8 @@ CFG_STRING(nick_color, "nick_color", "player", "unset", nullptr, false,
 // default -- single source.
 CFG_FLOAT(ui_scale, "ui.scale", "ui", 1.25f, 0.75, 1.75, nullptr,
     "Scale multiplier for the mod's UI panels.")
+CFG_FLAG(warn_perf_mods, "warn.perf_mods", "ui", true, nullptr,
+    "Warn at boot when OTHER mods known to cost frames are loaded (UE4SS Lua mods in Mods/mods.txt, Blueprint paks in Content/Paks/LogicMods). Measured 2026-08-29: that set cost ~75 vs ~120 fps on one machine while Multivoid itself measured at no detectable cost. Set 0 to silence.")
 CFG_FLAG(ui_netstats, "ui.netstats", "ui", false, nullptr,
     "Show the network statistics overlay.")
 CFG_FLAG(ui_chat_peer_actions, "ui.chat.peer_actions", "ui", true, nullptr,
@@ -285,10 +287,14 @@ CFG_FLAG(perf_probe, "perf_probe", "dev", false, nullptr,
     "Performance probe: per-frame subsystem timing lines.")
 CFG_FLAG(perf_probe_selftime, "perf_probe_selftime", "dev", false, nullptr,
     "Performance probe: self-time breakdown variant.")
+CFG_FLAG(perf_probe_dispatch, "perf_probe_dispatch", "dev", false, nullptr,
+    "Performance probe: count every ProcessEvent dispatch (PE/s, game-thread share, our share). OFF by default -- gameplay dispatches ~170k/s across several threads, so this is a shared-atomic RMW on a contended cache line at that rate. Leave it off whenever the number being measured is what the mod itself costs; the 1 Hz fps line does not need it.")
 CFG_INT(perf_probe_resdrop, "perf_probe_resdrop", "dev", 0, 0, 3600, nullptr,
     "Performance probe: after N 1 Hz samples, collapse render resolution (r.ScreenPercentage 25) to separate a GPU-bound frame from a CPU-bound one.")
 CFG_INT(perf_probe_bypass, "perf_probe_bypass", "dev", 0, 0, 3600, nullptr,
     "Performance probe: after N samples, arm the transparent ProcessEvent bypass for 5 s (separates our dispatch-path cost from everything else about our presence).")
+CFG_INT(perf_probe_statunit, "perf_probe_statunit", "dev", 0, 0, 3600, nullptr,
+    "Performance probe: after N samples, issue `stat unit` + r.VSync 0 + t.MaxFPS 0. OFF by default because enabling any UE4 stat turns on FThreadStats collection engine-wide -- an instrument that changes the frame it measures. The delay exists so the samples before it are the uninstrumented baseline and the step across this line IS the instrument's own cost.")
 CFG_FLAG(gnatives_probe, "gnatives_probe", "dev", false, nullptr,
     "Diagnostic probe: GNatives verb dispatch measurement.")
 CFG_FLAG(gnatives_probe_disabled, "gnatives_probe_disabled", "dev", false, nullptr,

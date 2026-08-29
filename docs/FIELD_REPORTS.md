@@ -58,17 +58,31 @@ that remainder was measured — at the time — not to be the mod: Multivoid's o
 per-frame cost came out under a millisecond. The report was still worth every
 hour; none of the five would have been found without it.
 
-**Correction, 2026-08-29.** That "under a millisecond" was true of what the
-measurement could see, and the measurement could not see enough. Every counter
-the mod owns times **its own code**, so none of them counts the engine work that
-code causes — a reflected call returns only after the engine has run a whole
-blueprint on the game thread, and the frame pays for the blueprint. Measured on
-a dev machine since: the mod costs about **120 → 70 fps** (roughly 6 ms/frame)
-in a like-for-like test, of which the instrumented buckets still report ~0.6 ms.
-So the earlier conclusion should be read as "our profiler did not find it",
-which is a weaker statement than the one written here, and the remainder of
-Violet's report may never have been separate from the mod at all. Root cause of
-the 6 ms is still open; details in `docs/LESSONS.md` §7.
+**The conclusion above stands, and it survived a challenge (2026-08-29.)** For
+part of that day this row carried a correction saying the mod had been measured
+at **120 → 70 fps**, roughly 6 ms/frame. That correction was wrong and has been
+withdrawn. The 50 fps was real, but it was not Multivoid: it was the developer
+machine's own tooling. Bisected on one save, one Multivoid build, one windowed
+launch —
+
+    dev rig as found ............................... ~75 fps
+    minus DebugMod.pak (Content/Paks/LogicMods) .... ~89 fps
+    minus UE4SS's bundled Lua mods (Mods/mods.txt) . ~119 fps
+    Multivoid loaded, hosting, its own paks present . ~119 fps
+
+The same machine ran the **same** build at a stable 120 through r2modman, whose
+profile ships no `mods.txt` at all. UE4SS's `BPModLoaderMod` is what loads
+Blueprint paks out of `LogicMods`, so it and the paks are one cost, not two —
+removing Multivoid's own paks appeared to buy 5 fps while it was on, and bought
+exactly nothing once it was off.
+
+So Violet's remainder really was separate from the mod. Two things are worth
+keeping from the detour, because they are what made a wrong answer plausible for
+a day: every counter the mod owns times **its own code**, so none of them can
+price the engine work that code provokes — and a comparison between two installs
+is worthless until you have diffed the installs. Multivoid now ships a boot
+notice naming any frame-costly mods it finds beside it, so no player has to
+repeat this. Details in `docs/LESSONS.md` §7.
 
 ---
 

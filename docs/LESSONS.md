@@ -4767,6 +4767,27 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 
 ## 7. Performance
 
+- **2026-08-29 -- diff the two INSTALLS before instrumenting either one.** A "the mod costs
+  120 -> 70 fps" hunt burned most of a session on new instruments, a bypass A/B and a
+  `stat unit` arc before anyone compared the two installs the two numbers came from.
+  Multivoid cost **nothing**: same save, byte-identical `main.dll`, both windowed --
+  ~75 fps on the dev rig, **~119** once `DebugMod.pak` and the six UE4SS Lua mods in
+  `Mods/mods.txt` were gone, and still ~119 with Multivoid loaded, hosting and its own
+  paks present. Re-enabling `mods.txt` put it back to ~80 (negative arm, so it is causal).
+  Three things hid it: the control `deploy-all.ps1 -Remove` strips only `Mods/Multivoid`,
+  which proves the gap is not explained by removing us but says nothing about which
+  install the 120 came from; **DebugMod's C++ half fails to load (`0x7f`) while its
+  BLUEPRINT half loads fine** via `BPModLoaderMod`, and the UE4SS log said
+  `[Lua] DebugMod == table:` the whole time; and the enabled-mod census read
+  `Mods/*/enabled.txt` when UE4SS 3.0.1's real list is `Mods/mods.txt`. *Look FIRST:*
+  when a perf claim compares two environments, the first artifact is a **diff of the
+  environments** -- hash the game exe, list every mounted `.pak`, diff the loader's
+  settings AND its enable list, and read the loader's own log for what actually loaded.
+  Corollary: a sequential bisect yields only CONDITIONAL deltas -- our own paks "cost
+  5 fps" solely because `BPModLoaderMod` was still there to load them, and zero once it
+  was not, so re-test a step alone before attributing a number to it.
+  `memory/lesson-diff-the-two-installs-before-instrumenting-the-one.md`
+
 - **2026-08-25 — a ctx GATE belongs in a hot callback; a ctx RESOLVE does not.** Obeying
   `[[lesson-vm-dispatch-verb-name-is-not-the-gate]]` ("check `av.ctx`'s class") put
   `if (!g_gunClass) g_gunClass = R::FindClass(...)` inside a `vm_dispatch` entry callback. `R::FindClass`

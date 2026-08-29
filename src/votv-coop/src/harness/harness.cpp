@@ -7,6 +7,7 @@
 #include "coop/config/config.h"
 #include "harness/harness_diag.h"
 #include "harness/screenshot.h"
+#include "harness/mod_environment.h"
 #include "harness/sdk_check.h"
 #include "coop/dev/freecam.h"
 #include "coop/dev/object_overlay.h"
@@ -265,6 +266,10 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         // classes load with the menu/preLoad world -- the checker logs what it
         // can and the per-class consumers all self-retry anyway.)
         Post([] { harness::sdk_check::Run(); });
+        // Census the OTHER mods in this process and warn if the player is paying
+        // frames for them. Pure file-system reads, so it does not need the Post --
+        // but it rides one anyway so a slow disk cannot stall the boot thread.
+        Post([] { harness::mod_environment::Run(); });
         // Coop networking: if multivoid.ini configures net.role, the puppet is
         // network-driven (auto-spawned on the first peer pose) and we send our pose;
         // otherwise the puppet is spawned locally + static (the pre-net behaviour).

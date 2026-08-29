@@ -650,6 +650,7 @@ add_library(votv-coop SHARED
     src/harness/autotest/autotest_saveui.cpp
     src/ui/input_focus.cpp
     src/harness/screenshot.cpp
+    src/harness/mod_environment.cpp
     src/harness/sdk_check.cpp
 )
 

@@ -34,6 +34,8 @@ bool  g_selfTime  = false;
 bool  g_initDone  = false;
 int   g_resDropAfterS = 0;   // perf_probe_resdrop: samples before the render-res collapse
 int   g_bypassAfterS  = 0;   // perf_probe_bypass: samples before the transparent-bypass window
+int   g_statUnitAfterS = 0;  // perf_probe_statunit: samples before `stat unit` (0 = never issue it)
+bool  g_dispatch    = false; // perf_probe_dispatch: arm the per-dispatch counters (not free)
 
 // Frame counter (incremented from the ImGui Present detour) + subsystem buckets.
 std::atomic<unsigned long long> g_frames{0};
@@ -104,10 +106,23 @@ void Init() {
     g_selfTime = coop::config::ResolveFlag(::coop::config_registry::rows::perf_probe_selftime);
     g_resDropAfterS = static_cast<int>(coop::config::ResolveInt(::coop::config_registry::rows::perf_probe_resdrop));
     g_bypassAfterS  = static_cast<int>(coop::config::ResolveInt(::coop::config_registry::rows::perf_probe_bypass));
-    GT::SetPerfCounting(true, g_selfTime);
-    R::SetCoopCallCensus(true);   // attribute the blueprint calls our polls author
-    UE_LOGW("[perf] probe ARMED (perf_probe=1, selftime=%d) -- 1 Hz frame-cost report follows; "
-            "this adds per-dispatch counting overhead, turn OFF for real play", g_selfTime ? 1 : 0);
+    g_statUnitAfterS = static_cast<int>(coop::config::ResolveInt(::coop::config_registry::rows::perf_probe_statunit));
+    // Per-dispatch counting is the probe's own hot path and is now opt-in. The frame
+    // counter and the subsystem buckets ride per-FRAME and per-subsystem-call edges
+    // (single digits per second); the dispatch counters ride ~170k/s across threads and
+    // share one cache line. Keeping them on by default made the cheapest possible
+    // baseline -- "how fast does this run with the probe merely watching" -- cost
+    // something nobody had measured, which is the same defect as the stat-unit one above.
+    g_dispatch = coop::config::ResolveFlag(::coop::config_registry::rows::perf_probe_dispatch);
+    g_selfTime = g_selfTime && g_dispatch;
+    GT::SetPerfCounting(g_dispatch, g_selfTime);
+    R::SetCoopCallCensus(g_dispatch);   // attribute the blueprint calls our polls author
+    UE_LOGW("[perf] probe ARMED (perf_probe=1, dispatch=%d, selftime=%d, statunit=%d) -- 1 Hz "
+            "frame-cost report follows. At dispatch=0/statunit=0 this is a frame counter plus "
+            "subsystem buckets and costs ~nothing; each of those two knobs makes the probe "
+            "change the frame it is measuring, so turn them off for any number that is meant "
+            "to say what the MOD costs.",
+            g_dispatch ? 1 : 0, g_selfTime ? 1 : 0, g_statUnitAfterS);
 }
 
 void NoteFrame() {
@@ -160,16 +175,29 @@ void Sample() {
         }
     }
 
-    // One-shot `stat unit`. Our own buckets can only ever account for OUR code; they
+    // `stat unit`. Our own buckets can only ever account for OUR code; they
     // cannot say whether a lost millisecond went to the game thread, the render thread
     // or the GPU -- and on 2026-08-29 that was exactly the open question (120 fps
     // without the mod vs ~68 with it, while every bucket we own summed to ~1 ms). UE4's
     // own unit graph splits the frame three ways and is the only thing that can point
     // at the right half of the engine. Deferred to Sample() rather than Init() because
     // it needs a world; retried until the call reports success.
-    {
+    //
+    // OPT-IN AND DELAYED (2026-08-29). It used to fire unconditionally the moment a
+    // world existed, on nothing but perf_probe=1. That is an instrument that MUTATES
+    // what it measures: enabling any UE4 stat arms FThreadStats collection across the
+    // whole engine, and r.VSync/t.MaxFPS rewrite the player's own frame pacing. With no
+    // before-baseline its cost was not merely unknown, it was UNMEASURABLE -- and the
+    // probe was left armed in the copy the user plays on, so every frame-rate number
+    // taken that day (a 40 fps reading on a fresh save among them) was read through it.
+    // The delay is the repair: the samples before this line are the uninstrumented
+    // baseline on the same world at the same spot, so the step across it IS this
+    // instrument's own cost, reported rather than assumed.
+    if (g_statUnitAfterS > 0) {
+        static int sSU = 0;
         static bool sStatUnitOn = false;
-        if (!sStatUnitOn && ue_wrap::engine::ExecuteConsoleCommand(L"stat unit")) {
+        if (!sStatUnitOn && ++sSU >= g_statUnitAfterS
+                && ue_wrap::engine::ExecuteConsoleCommand(L"stat unit")) {
             sStatUnitOn = true;
             // UNCAP FIRST, or every number above is a reading of the cap and not of the
             // workload. Measured 2026-08-29: host and client both reported Frame=16.65 ms
@@ -181,10 +209,13 @@ void Sample() {
             // read off a capped frame is unfalsifiable.
             ue_wrap::engine::ExecuteConsoleCommand(L"r.VSync 0");
             ue_wrap::engine::ExecuteConsoleCommand(L"t.MaxFPS 0");
-            UE_LOGW("[perf] `stat unit` enabled + vsync/MaxFPS lifted (r.VSync 0, t.MaxFPS 0) -- "
-                    "read Frame/Game/Draw/GPU from a screenshot. The uncap is what makes those "
-                    "numbers a workload measurement rather than a reading of the cap; our own "
-                    "buckets can never attribute engine-side cost.");
+            UE_LOGW("[perf] STAT-UNIT ARMED after %d samples -- `stat unit` + r.VSync 0 + "
+                    "t.MaxFPS 0 issued. READ THE fps EITHER SIDE OF THIS LINE: the samples "
+                    "above are the uninstrumented baseline on this same world, the ones below "
+                    "carry FThreadStats, so the step down across this line is what this "
+                    "instrument itself costs. Then read Frame/Game/Draw/GPU from a screenshot. "
+                    "NOTE the uncap is a REQUEST, not a fact -- verify fps actually exceeds the "
+                    "old ceiling before calling any number below a workload measurement.", sSU);
         }
     }
 
@@ -293,10 +324,17 @@ void Sample() {
     const double obsMsSec   = (dObs / elapsed) / 1e6;
     const double obsMsFr    = dFr > 0 ? (static_cast<double>(dObs) / dFr) / 1e6 : 0.0;
 
-    UE_LOGW("[perf] PE=%.0f/s (GT=%.0f, OURS=%.0f = %.1f%% of GT) frames=%.0f/s => PE/frame=%.0f (GT=%.0f) | obs post=%d pre=%d intc=%d",
-            pePerSec, dPEGT / elapsed, dCoop / elapsed,
-            dPEGT > 0 ? 100.0 * dCoop / dPEGT : 0.0, frPerSec, pePerFr, peGTPerFr,
+    // The frame rate rides its own line so it is greppable in BOTH probe modes and can
+    // never be read off a line whose other fields are zeroed by dispatch=0.
+    UE_LOGW("[perf] fps=%.0f (frame=%.2f ms) | obs post=%d pre=%d intc=%d",
+            frPerSec, frPerSec > 0 ? 1000.0 / frPerSec : 0.0,
             GT::PostObserverCount(), GT::PreObserverCount(), GT::InterceptorCount());
+
+    if (g_dispatch) {
+        UE_LOGW("[perf] PE=%.0f/s (GT=%.0f, OURS=%.0f = %.1f%% of GT) frames=%.0f/s => PE/frame=%.0f (GT=%.0f)",
+                pePerSec, dPEGT / elapsed, dCoop / elapsed,
+                dPEGT > 0 ? 100.0 * dCoop / dPEGT : 0.0, frPerSec, pePerFr, peGTPerFr);
+    }
 
     if (g_selfTime) {
         UE_LOGW("[perf] detour self avg=%.0f ns/dispatch (%llu samp/s) => ~%.2f ms/frame (~%.1f ms/s)",
