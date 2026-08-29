@@ -1,23 +1,23 @@
-"""Deferred-decal analog: VOTV paints grime/graffiti/stains with DecalComponents
-(992 in the umap; 936 grime_* actors carry one each, material often via a MID
-whose parent sits on the class template). Blender has no projected decals, so
-each decal becomes a thin double-sided quad at the decal's transform: the decal
-box projects along local X, the quad spans local Y/Z at +-2 cm so whichever
-side the receiving surface is on, one face sits just proud of it.
+"""Deferred-decal analog: VOTV paints grime/graffiti/stains with DecalComponents.
+
+A deferred decal exists only where geometry lies inside its box: the engine
+projects it onto receiver surfaces and nothing renders in empty space. The
+Blender analog is a real PROJECTION at import time: each decal casts a grid of
+rays along its local X (through the whole box depth) onto the assembled scene;
+grid cells whose rays miss are dropped (the surface mask), hits become mesh
+vertices lifted a few mm along the hit normal (so the decal hugs walls, wraps
+corners and never sticks out past its receiver). Decals are queued during
+assembly and projected in one post-pass after the statics/BSP/landscape exist.
+
+Grime variant families: the grime BP picks its decal texture at RUNTIME from
+numbered variant sets (measured: crack/leaky/dusty/light/grainy CDOs carry NO
+material ref while the pak holds the families below).
 """
 import hashlib
 import math
 
-import bpy
-from mathutils import Matrix
+from mathutils import Matrix, Vector
 
-_PLANE_NAME = "votvio_decal_plane"
-
-# The grime BP picks its decal texture at RUNTIME from a per-type variant
-# family (measured: the CDOs of crack/leaky/dusty/light/grainy carry NO
-# material ref, and the pak holds numbered variant sets). Class -> (format,
-# first index, count). Classes absent here fall through to the CDO 'material'
-# variable, then the class template's DecalMaterial.
 _CRACKS = ("/Game/textures/decals/grime/cracks/inst_decalCrack_{}", 0, 17)
 _LEAK = ("/Game/textures/decals/grime/inst_DecalGrunge_leak_{}", 0, 8)
 _DIRT = ("/Game/textures/decals/grime/inst_DecalGrunge_dirt_{}", 0, 35)
@@ -61,28 +61,120 @@ def grime_spin(class_name, seed):
     return Matrix.Rotation(ang, 4, "X")
 
 
-def plane_mesh():
-    """Shared unit decal quad (+-1m in Y/Z, two faces at x=+-0.02)."""
-    me = bpy.data.meshes.get(_PLANE_NAME)
-    if me is not None:
-        return me
-    verts = [
-        (0.02, -1, -1), (0.02, 1, -1), (0.02, 1, 1), (0.02, -1, 1),      # +X face
-        (-0.02, -1, -1), (-0.02, -1, 1), (-0.02, 1, 1), (-0.02, 1, -1),  # -X face
-    ]
-    faces = [(0, 1, 2, 3), (4, 5, 6, 7)]
-    me = bpy.data.meshes.new(_PLANE_NAME)
-    me.from_pydata(verts, [], faces)
-    layer = me.uv_layers.new(name="UVMap")
-    for li, loop in enumerate(me.loops):
-        v = verts[loop.vertex_index]
-        layer.data[li].uv = ((v[1] + 1.0) * 0.5, (v[2] + 1.0) * 0.5)
-    me.validate()
-    me.update()
-    return me
-
-
 def size_matrix(size_ue):
-    """DecalSize (UE half-extents, uu) -> local scale for the unit quad."""
-    return Matrix.Diagonal((1.0, max(float(size_ue[1]), 1.0) * 0.01,
+    """DecalSize (UE half-extents, uu) -> local box scale (meters)."""
+    return Matrix.Diagonal((max(float(size_ue[0]), 1.0) * 0.01,
+                            max(float(size_ue[1]), 1.0) * 0.01,
                             max(float(size_ue[2]), 1.0) * 0.01, 1.0))
+
+
+_OFFSET = 0.006        # lift off the receiver surface (m)
+_CELL = 0.12           # target grid cell size (m)
+_EXTRA_DEPTH = 0.15    # placement tolerance beyond the box depth (m)
+
+
+def project_decal(scene, depsgraph, m):
+    """Project one decal box (world matrix incl. half-extent scale) onto the
+    scene. -> (verts, faces, per-vertex uv) in world space, or None if nothing
+    inside the box receives it.
+
+    Two phases: a 3x3 probe first - when every probe hits ONE plane (flat wall/
+    floor, the common case) the full grid is intersected with that plane
+    analytically, zero further rays. Partial hits or bent receivers (corners,
+    surface edges - exactly where the mask matters) fall through to a full
+    per-vertex ray grid."""
+    loc, rot, scale = m.decompose()
+    R = rot.to_matrix()
+    x_axis = (R @ Vector((1.0, 0.0, 0.0))).normalized()
+    y_axis = (R @ Vector((0.0, 1.0, 0.0))).normalized()
+    z_axis = (R @ Vector((0.0, 0.0, 1.0))).normalized()
+    sx, sy, sz = abs(scale.x), abs(scale.y), abs(scale.z)
+    depth = sx + _EXTRA_DEPTH
+    ny = max(3, min(16, int(round(2.0 * sy / _CELL))))
+    nz = max(3, min(16, int(round(2.0 * sz / _CELL))))
+
+    def cast(fy, fz):
+        origin = loc + y_axis * (fy * sy) + z_axis * (fz * sz) - x_axis * depth
+        return scene.ray_cast(depsgraph, origin, x_axis, distance=2.0 * depth)
+
+    # ---- phase A: 3x3 probe ------------------------------------------------
+    probes = {}
+    for fy in (-1.0, 0.0, 1.0):
+        for fz in (-1.0, 0.0, 1.0):
+            ok, hloc, hnorm, _i, _o, _mw = cast(fy, fz)
+            if ok:
+                probes[(fy, fz)] = (hloc, hnorm)
+    if not probes:
+        return None
+    if len(probes) == 9:
+        nmean = Vector((0.0, 0.0, 0.0))
+        for _p, n in probes.values():
+            nmean += n
+        nmean.normalize()
+        planar = all(n.dot(nmean) > 0.995 for _p, n in probes.values())
+        if planar:
+            p0 = probes[(0.0, 0.0)][0]
+            residual = max(abs((p - p0).dot(nmean)) for p, _n in probes.values())
+            planar = residual < 0.015
+        denom = x_axis.dot(nmean)
+        if planar and abs(denom) > 1e-4:
+            verts = []
+            uvs = []
+            for iy in range(ny + 1):
+                fy = -1.0 + 2.0 * iy / ny
+                for iz in range(nz + 1):
+                    fz = -1.0 + 2.0 * iz / nz
+                    origin = loc + y_axis * (fy * sy) + z_axis * (fz * sz)
+                    t = (p0 - origin).dot(nmean) / denom
+                    p = origin + x_axis * t + nmean * _OFFSET
+                    verts.append((p.x, p.y, p.z))
+                    uvs.append(((fy + 1.0) * 0.5, (fz + 1.0) * 0.5))
+            faces = [(iy * (nz + 1) + iz, (iy + 1) * (nz + 1) + iz,
+                      (iy + 1) * (nz + 1) + iz + 1, iy * (nz + 1) + iz + 1)
+                     for iy in range(ny) for iz in range(nz)]
+            return verts, faces, uvs
+
+    # ---- phase B: full ray grid -------------------------------------------
+    hits = {}
+    for iy in range(ny + 1):
+        fy = -1.0 + 2.0 * iy / ny
+        for iz in range(nz + 1):
+            fz = -1.0 + 2.0 * iz / nz
+            ok, hloc, hnorm, _i, _o, _mw = cast(fy, fz)
+            if ok:
+                hits[(iy, iz)] = (hloc + hnorm * _OFFSET,
+                                  ((fy + 1.0) * 0.5, (fz + 1.0) * 0.5))
+    if not hits:
+        return None
+
+    cell_diag = math.hypot(2.0 * sy / ny, 2.0 * sz / nz)
+    max_span = max(cell_diag * 2.5, 0.25)
+    verts = []
+    uvs = []
+    vidx = {}
+
+    def vid(key):
+        i = vidx.get(key)
+        if i is None:
+            i = len(verts)
+            vidx[key] = i
+            p, uv = hits[key]
+            verts.append((p.x, p.y, p.z))
+            uvs.append(uv)
+        return i
+
+    faces = []
+    for iy in range(ny):
+        for iz in range(nz):
+            ks = ((iy, iz), (iy + 1, iz), (iy + 1, iz + 1), (iy, iz + 1))
+            if any(k not in hits for k in ks):
+                continue
+            pts = [hits[k][0] for k in ks]
+            span = max((pts[a] - pts[b]).length
+                       for a in range(4) for b in range(a + 1, 4))
+            if span > max_span:
+                continue  # a web across a gap/depth jump, not a surface
+            faces.append(tuple(vid(k) for k in ks))
+    if not faces:
+        return None
+    return verts, faces, uvs

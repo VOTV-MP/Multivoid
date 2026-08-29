@@ -38,7 +38,9 @@ class _Builder:
         self.resolver = template_resolver.TemplateResolver(game) if game else None
         self.list_props = game.list_props() if game else {}
         self.counts = {"meshed": 0, "placeholders": 0, "sk_placeholders": 0, "objects": 0,
-                       "culled": 0, "level_kept": 0}
+                       "culled": 0, "level_kept": 0, "decals_projected": 0,
+                       "decals_missed": 0}
+        self.decal_queue = []   # (name, collection, world matrix, material path)
         self.unresolved = {}
         self.radius = float(options.get("import_radius", 0.0) or 0.0)
         self.origin = None  # Blender-space Vector, set in run() when radius > 0
@@ -113,17 +115,55 @@ class _Builder:
                     self.warnings, with_textures=self.opt.get("with_textures", True)))
         return me
 
-    def _new_decal_object(self, name, col, matrix, mat_path):
-        me = decals_mod.plane_mesh()
-        if not me.materials:
-            me.materials.append(None)
-        ob = self._new_object(name, me, col, matrix)
-        slot = ob.material_slots[0]
-        slot.link = "OBJECT"
-        slot.material = materials_mod.get_decal_material(
-            self.game, mat_path, self.caches, self.warnings,
-            with_textures=self.opt.get("with_textures", True))
-        return ob
+    def queue_decal(self, name, col, matrix, mat_path):
+        """Decals are projected in one post-pass once the receivers exist."""
+        self.decal_queue.append((name, col, matrix, mat_path))
+
+    def _project_decals(self):
+        if not self.decal_queue:
+            return
+        # receivers = structure only (Statics incl. BSP, Landscape): grime in
+        # the game lands on walls/floors; hiding props/piles/foliage for the
+        # cast shrinks the ray scene ~6x (scene.ray_cast walks every object)
+        toggled = []
+        for c in bpy.data.collections:
+            base = c.name.split(".")[0]
+            if base in ("Props", "NPC", "Vehicles", "Piles", "Foliage",
+                        "Contained", "Player") and not c.hide_viewport:
+                c.hide_viewport = True
+                toggled.append(c)
+        bpy.context.view_layer.update()
+        deps = bpy.context.evaluated_depsgraph_get()
+        scene = bpy.context.scene
+        built = []
+        for name, col, matrix, mat_path in self.decal_queue:
+            res = decals_mod.project_decal(scene, deps, matrix)
+            if res is None:
+                self.counts["decals_missed"] += 1
+                continue
+            verts, faces, uvs = res
+            me = bpy.data.meshes.new(name + ".decal")
+            me.from_pydata(verts, [], faces)
+            try:
+                layer = me.uv_layers.new(name="UVMap")
+                for li, loop in enumerate(me.loops):
+                    layer.data[li].uv = uvs[loop.vertex_index]
+            except Exception:  # noqa: BLE001
+                pass
+            me.materials.append(materials_mod.get_decal_material(
+                self.game, mat_path, self.caches, self.warnings,
+                with_textures=self.opt.get("with_textures", True)))
+            me.validate()
+            built.append((name, me, col))
+        for c in toggled:
+            c.hide_viewport = False
+        # link only after every ray is cast: a linked decal would itself
+        # intercept the next decal's rays
+        for name, me, col in built:
+            ob = bpy.data.objects.new(name, me)
+            col.objects.link(ob)
+            self.counts["objects"] += 1
+            self.counts["decals_projected"] += 1
 
     # -- objects -----------------------------------------------------------
     def _new_object(self, name, data, col, matrix):
@@ -172,7 +212,7 @@ class _Builder:
                 if isinstance(rl, dict) else None
             self._level_keys[key] = (i, atype, loc)
 
-    def place_row(self, row, col, allow_level_keep=False):
+    def place_row(self, row, col, allow_level_keep=False, queue_decals=True):
         label = row.prop_name or row.class_name.removesuffix("_C") or "unknown"
         quat, loc, scale = row.transform
         if allow_level_keep and row.key not in ("", "None") and self._level_keys:
@@ -193,9 +233,9 @@ class _Builder:
             for mesh_path, local_m, kind in self.resolver.spawn_plan(
                     row, self.list_props, seed):
                 if kind == "DECAL":
-                    if self.opt.get("import_decals", True):
-                        self._new_decal_object(label + ".decal", col,
-                                               actor_m @ local_m, mesh_path)
+                    if queue_decals and self.opt.get("import_decals", True):
+                        self.queue_decal(label + ".decal", col,
+                                         actor_m @ local_m, mesh_path)
                         self.counts["meshed"] += 1
                         placed_mesh = True
                     continue
@@ -256,7 +296,9 @@ class _Builder:
             for slot_rows in self.m.gobj_stack:
                 for row in slot_rows:
                     if row.class_path and row.class_path != "None":
-                        self.place_row(row, contained_col)
+                        # no decals for stored items: their transforms are stale
+                        # world coords and the projection would land on nothing
+                        self.place_row(row, contained_col, queue_decals=False)
         contained_col.hide_viewport = not self.opt.get("show_contained", False)
         contained_col.hide_render = True
 
@@ -307,6 +349,7 @@ class _Builder:
             else:
                 self.warnings.append(f"map package not found for level {self.m.level!r}")
 
+        self._project_decals()
         self._write_manifest_text()
         return self._report()
 

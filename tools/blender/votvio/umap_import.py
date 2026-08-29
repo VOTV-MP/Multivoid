@@ -470,7 +470,7 @@ class MapImporter:
             world = world @ spin
         target = cols["Unplaced"] if tkind == "unplaced" else (
             cols["Events"] if tkind == "events" else cols["Decals"])
-        self.b._new_decal_object(label, target, world @ decals.size_matrix(size), mat)
+        self.b.queue_decal(label, target, world @ decals.size_matrix(size), mat)
         self.stats["unplaced" if tkind == "unplaced"
                    else ("events" if tkind == "events" else "decals")] += 1
 

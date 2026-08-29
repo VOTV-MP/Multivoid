@@ -342,9 +342,7 @@ class TemplateResolver:
                     spin = decals_mod.grime_spin(row.class_name, pose_seed)
                     if spin is not None:
                         m2 = m @ spin
-                    dm = m2 @ Matrix.Diagonal((1.0, float(dt["size"][1]) * 0.01,
-                                               float(dt["size"][2]) * 0.01, 1.0))
-                    out.append((dmat, dm, "DECAL"))
+                    out.append((dmat, m2 @ decals_mod.size_matrix(dt["size"]), "DECAL"))
             for kid in info["children"].get(base, ()):
                 walk(kid, m, depth + 1)
 
