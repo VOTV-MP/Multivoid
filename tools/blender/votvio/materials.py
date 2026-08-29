@@ -26,8 +26,12 @@ _WATER_ROOTS = {"mat_water", "mat_water2", "mat_waterriver", "mat_frozenwater",
 # material at runtime, unreachable from cook). Curated by measurement:
 # d_window's panes (the base main window) carry WorldGridMaterial in all slots.
 _PLACEHOLDER = "/Engine/EngineMaterials/WorldGridMaterial"
+DIRTY_GLASS = "votvio://dirty_glass"
+_WINDOW_DIRT_TEX = "/Game/textures/decals/tex_decalWindow"
 PLACEHOLDER_SLOT_OVERRIDES = (
-    ("newbaseWindow2_sig2", "/Game/materials/unsorted/inst_glass"),
+    # the base main window: runtime washable glass; the game's dirt frame is
+    # tex_decalWindow (inst_window256's one texture, measured)
+    ("newbaseWindow2_sig2", DIRTY_GLASS),
 )
 
 # RT/logic-driven screen surfaces: the game draws these at runtime (render
@@ -163,6 +167,9 @@ def get_material(game, mat_pkg_path, caches, warnings, with_textures=True):
     if bsdf is None:
         return mat
     bsdf.inputs["Roughness"].default_value = 0.62
+    if mat_pkg_path == DIRTY_GLASS:
+        _build_dirty_glass(game, mat, nt, bsdf, caches, warnings, with_textures)
+        return mat
 
     info = _analyze(game, mat_pkg_path, caches["mat_info"]) if mat_pkg_path else \
         {"tex": {}, "scal": {}, "vec": {}, "blend": "", "twosided": False,
@@ -368,6 +375,49 @@ def get_decal_material(game, mat_pkg_path, caches, warnings, with_textures=True)
     nt.links.new(alpha_socket, mul.inputs[0])
     nt.links.new(mul.outputs[0], bsdf.inputs["Alpha"])
     return mat
+
+
+def _build_dirty_glass(game, mat, nt, bsdf, caches, warnings, with_textures):
+    """The base main window: clear glass + the game's tex_decalWindow dirt frame
+    (edge grime, streaks); dirt drives color, opacity and roughness."""
+    bsdf.inputs["Base Color"].default_value = (0.62, 0.68, 0.66, 1.0)
+    bsdf.inputs["Roughness"].default_value = 0.08
+    bsdf.inputs["Alpha"].default_value = 0.07
+    _set_blended(mat)
+    img = _image(game, _WINDOW_DIRT_TEX, caches, warnings) if with_textures else None
+    if img is None:
+        return
+    timg = nt.nodes.new("ShaderNodeTexImage")
+    timg.image = img
+    timg.location = (-620, 220)
+    mix = nt.nodes.new("ShaderNodeMix")
+    mix.data_type = "RGBA"
+    mix.blend_type = "MIX"
+    mix.location = (-300, 260)
+    mix.inputs["A"].default_value = (0.62, 0.68, 0.66, 1.0)
+    nt.links.new(timg.outputs["Alpha"], mix.inputs["Factor"])
+    nt.links.new(timg.outputs["Color"], mix.inputs["B"])
+    nt.links.new(mix.outputs["Result"], bsdf.inputs["Base Color"])
+    # alpha = max(clear glass, dirt coverage)
+    scale = nt.nodes.new("ShaderNodeMath")
+    scale.operation = "MULTIPLY"
+    scale.inputs[1].default_value = 0.8
+    scale.location = (-300, -40)
+    nt.links.new(timg.outputs["Alpha"], scale.inputs[0])
+    mx = nt.nodes.new("ShaderNodeMath")
+    mx.operation = "MAXIMUM"
+    mx.inputs[1].default_value = 0.07
+    mx.location = (-140, -40)
+    nt.links.new(scale.outputs[0], mx.inputs[0])
+    nt.links.new(mx.outputs[0], bsdf.inputs["Alpha"])
+    rough = nt.nodes.new("ShaderNodeMapRange")
+    rough.inputs["From Min"].default_value = 0.0
+    rough.inputs["From Max"].default_value = 1.0
+    rough.inputs["To Min"].default_value = 0.08
+    rough.inputs["To Max"].default_value = 0.6
+    rough.location = (-140, -260)
+    nt.links.new(timg.outputs["Alpha"], rough.inputs["Value"])
+    nt.links.new(rough.outputs["Result"], bsdf.inputs["Roughness"])
 
 
 def _build_crt_static(mat, nt, bsdf):

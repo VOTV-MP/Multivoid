@@ -438,21 +438,24 @@ class MapImporter:
             self.stats["hidden"] += 1
             return
         p = self.dicts[i].get("Properties") or {}
-        mat = _ref_pkg(p.get("DecalMaterial"))
+        label = (self.dicts[actor_idx].get("Name") if actor_idx is not None
+                 else self.dicts[i].get("Name")) or "decal"
+        # the game's runtime pick: per-type variant family (seeded per instance)
+        mat = decals.grime_material(atype, label) or ""
         size = _vec(p.get("DecalSize"), (0.0, 0.0, 0.0))
-        if not mat.startswith("/Game/") or size == (0.0, 0.0, 0.0):
-            # a level MID ref (or an inherited field): the class template holds it
-            dt = None
-            if atype.endswith("_C"):
-                pkg = self.game.class_package(atype)
-                if pkg:
-                    dt = self.resolver.tree_info(pkg)["decals"].get(
-                        self.dicts[i].get("Name", ""))
-            if dt is not None:
-                if not mat.startswith("/Game/"):
-                    mat = str(dt["material"])
-                if size == (0.0, 0.0, 0.0):
-                    size = tuple(dt["size"])
+        if not mat.startswith("/Game/"):
+            mat = _ref_pkg(p.get("DecalMaterial"))
+        info = None
+        if (not mat.startswith("/Game/") or size == (0.0, 0.0, 0.0)) \
+                and atype.endswith("_C"):
+            pkg = self.game.class_package(atype)
+            info = self.resolver.tree_info(pkg) if pkg else None
+        if info is not None:
+            dt = info["decals"].get(self.dicts[i].get("Name", ""))
+            if not mat.startswith("/Game/"):
+                mat = info["cdo_material"] or (str(dt["material"]) if dt else "")
+            if size == (0.0, 0.0, 0.0) and dt is not None:
+                size = tuple(dt["size"])
         if size == (0.0, 0.0, 0.0):
             size = (128.0, 256.0, 256.0)
         if not mat.startswith("/Game/"):
@@ -462,8 +465,9 @@ class MapImporter:
         if not self.b.within(world.translation):
             self.stats["culled"] += 1
             return
-        label = (self.dicts[actor_idx].get("Name") if actor_idx is not None
-                 else self.dicts[i].get("Name")) or "decal"
+        spin = decals.grime_spin(atype, label)
+        if spin is not None:
+            world = world @ spin
         target = cols["Unplaced"] if tkind == "unplaced" else (
             cols["Events"] if tkind == "events" else cols["Decals"])
         self.b._new_decal_object(label, target, world @ decals.size_matrix(size), mat)

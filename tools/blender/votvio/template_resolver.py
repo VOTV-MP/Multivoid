@@ -14,7 +14,7 @@ Resolution ladder for a save row (each rung measured):
 """
 from mathutils import Matrix
 
-from . import convert, pose_random
+from . import convert, decals as decals_mod, pose_random
 
 _GEN = "_GEN_VARIABLE"
 
@@ -120,6 +120,7 @@ class TemplateResolver:
         parent_pkg = None
         cdo_name = ""
         cdo_key = ""
+        cdo_material = ""   # the grime BP's runtime decal material variable
         ifaces = set()
         if _depth < 8:
             for e in self.game.package_dict(key):
@@ -135,6 +136,11 @@ class TemplateResolver:
                     v = props.get("key")
                     if isinstance(v, str) and v not in ("", "None"):
                         cdo_key = v
+                    v = props.get("material")
+                    if isinstance(v, dict):
+                        mp = _obj_ref_package(v)
+                        if mp.startswith("/Game/"):
+                            cdo_material = mp
                 if ty == "DecalComponent":
                     base = _strip_gen(nm)
                     if base not in decal_templates:
@@ -204,7 +210,7 @@ class TemplateResolver:
             if node not in child_nodes:
                 roots.append(tmpl)
         info = {"templates": templates, "children": children, "roots": roots,
-                "decals": decal_templates,
+                "decals": decal_templates, "cdo_material": cdo_material,
                 "cdo_name": cdo_name, "cdo_key": cdo_key, "ifaces": ifaces}
         if parent_pkg:
             par = self._load(parent_pkg, _depth + 1)
@@ -232,6 +238,8 @@ class TemplateResolver:
                 info["cdo_name"] = par["cdo_name"]
             if not info["cdo_key"]:
                 info["cdo_key"] = par["cdo_key"]
+            if not info["cdo_material"]:
+                info["cdo_material"] = par["cdo_material"]
             info["ifaces"] |= par["ifaces"]
         self._info[key] = info
         return info
@@ -323,10 +331,20 @@ class TemplateResolver:
                 elif ok:
                     out.append((t.mesh, m, t.kind))
             dt = info["decals"].get(base)
-            if dt is not None and str(dt["material"]).startswith("/Game/"):
-                dm = m @ Matrix.Diagonal((1.0, float(dt["size"][1]) * 0.01,
-                                          float(dt["size"][2]) * 0.01, 1.0))
-                out.append((dt["material"], dm, "DECAL"))
+            if dt is not None:
+                # the game's runtime pick: per-type variant family first, then
+                # the CDO 'material' variable, then the template's own material
+                dmat = decals_mod.grime_material(row.class_name, pose_seed)
+                if not dmat:
+                    dmat = info["cdo_material"] or str(dt["material"])
+                if dmat.startswith("/Game/"):
+                    m2 = m
+                    spin = decals_mod.grime_spin(row.class_name, pose_seed)
+                    if spin is not None:
+                        m2 = m @ spin
+                    dm = m2 @ Matrix.Diagonal((1.0, float(dt["size"][1]) * 0.01,
+                                               float(dt["size"][2]) * 0.01, 1.0))
+                    out.append((dmat, dm, "DECAL"))
             for kid in info["children"].get(base, ()):
                 walk(kid, m, depth + 1)
 
