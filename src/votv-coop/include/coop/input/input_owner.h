@@ -83,6 +83,24 @@ namespace coop::input::input_owner {
 // fast form at ~10 Hz and the full form at ~1 Hz; the full walk at frame rate would be the
 // per-frame full-array scan this project bans. Never called from the WndProc or the
 // render thread.
+//
+// WHAT THE FULL SCAN COSTS, MEASURED 2026-08-29 -- read this before adding a term to it.
+// The full pass is 88% of every blueprint call this mod makes: `HasKeyboardFocus` 44.2% +
+// `HasUserFocusedDescendants` 44.2% of 103,057 sampled coop dispatches, i.e. ~6,500 reflected
+// UFunction dispatches PER SECOND -- and because it is ONE posted task they all land in a
+// SINGLE frame, against a normal frame's ~858 game-thread dispatches. That is the p90 of
+// 8.9 ms/frame against a 0.6 ms median, and the [HITCH] lines with it.
+//
+// It was worse: the scan filtered only the `Default__` prefix, so it also interrogated every
+// widget TEMPLATE inside a WidgetBlueprintGeneratedClass -- objects that can never hold Slate
+// focus. `IsLiveWidgetInstance` now rejects them (~9,300/s -> ~6,500/s). Steady fps did NOT
+// move: this is a 1 Hz spike, not a per-frame tax, so it is a STUTTER defect and was never a
+// candidate for the separate 120 -> 70 fps regression.
+//
+// The proper fix is not a cheaper filter: it is to stop POLLING. The question only matters
+// when one of our four hotkeys arrives, and `gate3` measured that WndProcDetour runs on the
+// GAME THREAD, so it can be answered synchronously there (term 1 already is). Not done --
+// a naive move makes a hotkey press pay the whole scan, so it needs the scan narrowed first.
 void TickGameThread(bool doFullScan);
 
 // Render thread, once per frame, from the overlay: does one of OUR text fields have

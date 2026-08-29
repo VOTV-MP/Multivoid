@@ -54,9 +54,21 @@ symptom pointed at. The triage of her log found:
    row below, which the same work closed.
 
 **The honest part.** After all five, her friend's frame rate was still low, and
-that remainder was **measured not to be the mod**: Multivoid's entire per-frame
-cost came out under a millisecond. The report was still worth every hour — none
-of the five would have been found without it.
+that remainder was measured — at the time — not to be the mod: Multivoid's own
+per-frame cost came out under a millisecond. The report was still worth every
+hour; none of the five would have been found without it.
+
+**Correction, 2026-08-29.** That "under a millisecond" was true of what the
+measurement could see, and the measurement could not see enough. Every counter
+the mod owns times **its own code**, so none of them counts the engine work that
+code causes — a reflected call returns only after the engine has run a whole
+blueprint on the game thread, and the frame pays for the blueprint. Measured on
+a dev machine since: the mod costs about **120 → 70 fps** (roughly 6 ms/frame)
+in a like-for-like test, of which the instrumented buckets still report ~0.6 ms.
+So the earlier conclusion should be read as "our profiler did not find it",
+which is a weaker statement than the one written here, and the remainder of
+Violet's report may never have been separate from the mod at all. Root cause of
+the 6 ms is still open; details in `docs/LESSONS.md` §7.
 
 ---
 

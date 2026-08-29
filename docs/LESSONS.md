@@ -504,7 +504,10 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   the four reported symptoms rested on. **LOOK HERE FIRST:** when adding a read-before-write guard, ask
   what the guard does when the READ FAILS, and make that branch do the guarded ACTION, not skip it —
   the purpose is to park, so failing to park *is* the defect and the read is only an optimisation.
-  Read a bitfield via `FindBoolFieldBits` (`reflection.h:277-290`), never `FindPropertyOffset`.
+  Read a bitfield via **`FindBoolProperty`** (`reflection.h:299`), never `FindPropertyOffset`.
+  *(Pointer corrected 2026-08-29: this row named `FindBoolFieldBits` at `reflection.h:277-290`;
+  that symbol exists NOWHERE in the tree and those lines are `EnumerateStructFields`. The
+  takeaway was always right, the pointer sent the next session at a dead symbol.)*
 
 - **2026-08-24 — STANDING USER RULE: scope is NEVER a reason to hold back.** Verbatim: *"Я даю зеленый
   свет даже на самые радикальные решения, если они окажутся верными и правильными."* This is the
@@ -2401,6 +2404,18 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   says "censused by X", the message should carry the OUTPUT of X --
   `grep -rn "hook::Install(" -A2 | grep -oE "&g_[A-Za-z_]+"` is twelve lines you either have or do not.
   `memory/lesson-census-by-the-operation-not-by-the-name.md`
+
+- **`docs/FIELD_REPORTS.md` records OTHER people's reports, never the maintainer's own.** USER RULE
+  2026-08-29, verbatim: *"you don't need to fill the field reports which are from me (pelmentor),
+  that thing is more for other testers, other people."* The file is a public credit-and-record
+  ledger -- its value is social as much as technical, and it is the source for the README and
+  website tester tables. Padding it with the maintainer's own debugging both dilutes the tester
+  list and misattributes where a finding came from. Applied the same day: a 165-line section on
+  "all peers can't move forward" -- reported by the user mid-test, not by a tester -- was written
+  into it and then removed. LOOK FIRST: ask *whose report is this?* If the answer is "mine", it is
+  not a field report; it belongs in `docs/LESSONS.md` + a `memory/` file, the relevant living doc,
+  and the backlog.
+  `memory/feedback-field-reports-are-for-other-people.md`
 
 ### 1b. Standing working agreements (previously indexed NOWHERE)
 
@@ -4581,7 +4596,11 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   `mat_analogDS_*` their real display colors (orange/yellow/green) — the v6b white-noise stand-ins
   the user rejected were built on the narrow measurement. For any "what does this material actually
   show" question, dump the raw export and read `CachedExpressionData` (Materials) /
-  `CachedReferencedTextures` (MICs) BEFORE declaring content runtime-only. *Look FIRST:*
+  `CachedReferencedTextures` (MICs) BEFORE declaring content runtime-only. Second dividend (v7e):
+  the defaults also expose MEANINGLESS overrides — `mat_object` defaults `ag` to the engine Black
+  texture, so a MIC's `emisive_strength` override glows nothing unless `ag` is overridden too
+  (151/569 bench materials carried cargo-cult strength; ONE had a real mask — gate emission on the
+  MASK, not the scalar). *Look FIRST:*
   `tools/blender/votvio/screens.py` (the per-root still-frame builders) + `docs/BLENDER_ARC.md` v7.
   `memory/lesson_cooked_material_cachedexpressiondata_keeps_defaults.md`
 

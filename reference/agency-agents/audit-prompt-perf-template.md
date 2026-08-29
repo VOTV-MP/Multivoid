@@ -97,6 +97,40 @@ Register the subclass UClass into your routing table anyway (variant
 dispatch) and rely on the PARENT's POST observer firing with `self` =
 subclass actor.
 
+### Cost we CAUSE but do not EXECUTE (MANDATORY -- added 2026-08-29)
+
+Every counter this project owns times **our own instructions**. None of them counts the engine
+work our code provokes, and that gap has been measured at roughly an order of magnitude: while
+the instrumented buckets summed to ~0.6 ms of a 14 ms frame, the mod was costing ~6 ms
+(120 -> 70 fps). An audit that only reads our timers will therefore CLEAR a real regression.
+
+For every function in the table, answer:
+
+1. **Does it call the engine?** A `reflection::CallFunction` returns only after ProcessEvent has
+   run a whole blueprint on the game thread. Our timer sees the call; the frame pays for the
+   script. Count the CALLS PER FRAME, not the microseconds our side spent issuing them.
+   (Real instance: the input-ownership focus scan issued ~9,300 reflected dispatches per second
+   and appeared in NO bucket.)
+2. **Does it spawn or keep an actor/component alive?** The engine ticks, animates and renders it
+   every frame afterwards, attributed to nobody.
+3. **Does it land in ONE frame?** A 1 Hz posted task issuing thousands of dispatches is a
+   periodic STALL, not a steady tax -- it shows as a p90 far above the median and as [HITCH]
+   lines, and fixing it will NOT move steady fps. Say which of the two you are looking at.
+
+**The measurement that settles it, and it should be the FIRST move rather than the last:**
+`game_thread::SetTransparentBypass(ms)` makes our dispatch path inert while leaving our actors
+and threads exactly as they are (`perf_probe_bypass=N` arms it). Comparing fps across that
+window splits *what we run* from *what we put in the process* in one 5 s sample. Two supporting
+discriminators, both console commands with zero hot-path code: `r.ScreenPercentage 25`
+(CPU-bound vs GPU-bound) and `r.VSync 0` + `t.MaxFPS 0`, which MUST precede any `stat unit`
+reading -- on a capped frame the game thread blocks on the sync and `stat unit` counts that
+block inside `Game`, so every capped frame reads "the game thread is the bottleneck".
+
+**And a hard constraint on the instrument itself:** anything added to the ProcessEvent path goes
+INSIDE `ProcessEventDetourImpl`. The outer `ProcessEventDetour` frame sits OUTSIDE the
+`RunDetourSEH` crash firewall; an instrument placed there hard-crashed the game on its first
+boot, with a dump, in a rig that had never produced one.
+
 ### Output format (mandatory)
 
 Provide a table covering every new/modified function:

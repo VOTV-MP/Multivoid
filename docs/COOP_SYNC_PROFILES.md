@@ -628,7 +628,18 @@ NOT SYNCED: host's canonical slot never sent (scratch only); `gameMode` hard-cod
 | # | facet | V | E | Auth | cite | mid-join |
 |---|---|---|---|---|---|---|
 | 1 | teleport all clients to host | U | code | HA | `TeleportClientsToHost` (slot0 + NaN + AABB 1e6) | n/a (action) |
-| 2 | teleport one slot to host | W | HO | HA | `TeleportSlotToHost` | seed = JOIN placement |
+| 2 | teleport one slot to host | W | HO | HA | `TeleportSlotToHost` | n/a (operator action) |
+
+**CORRECTED 2026-08-29 (`204b068b`): row 2 is NO LONGER the join placement.** It said
+"seed = JOIN placement", and that was the v34 behaviour: `subsystems.cpp` teleported a joiner
+ONTO THE HOST at ClientWorldReady. That collided with the USER RULE of 2026-08-29 -- every
+client appearance spawns at the KPP start point (`net_pump.cpp:687`) -- and SILENTLY WON,
+because ClientWorldReady arrives after the client has loaded its world and already placed
+itself. Measured on a real join: KPP applied at 17:47:03 to (-37695,69978,6420), overwritten
+at 17:47:16 with the host's own (-11,-1047,6186). The v34 placement is retired whole (RULE 2);
+`TeleportSlotToHost` now has ONE caller, `moderation.cpp:146` (the F1 admin "bring player to
+host"), which is a deliberate operator action and has no mid-join seed. The joiner's placement
+facet belongs to net_pump's KPP spawn, not here.
 
 NOT SYNCED: no client→host teleport request path (host-only trigger).
 
