@@ -33,6 +33,7 @@ bool  g_armed     = false;   // set by Init() from the ini; read by Armed()
 bool  g_selfTime  = false;
 bool  g_initDone  = false;
 int   g_resDropAfterS = 0;   // perf_probe_resdrop: samples before the render-res collapse
+int   g_bypassAfterS  = 0;   // perf_probe_bypass: samples before the transparent-bypass window
 
 // Frame counter (incremented from the ImGui Present detour) + subsystem buckets.
 std::atomic<unsigned long long> g_frames{0};
@@ -102,6 +103,7 @@ void Init() {
     g_armed = true;
     g_selfTime = coop::config::ResolveFlag(::coop::config_registry::rows::perf_probe_selftime);
     g_resDropAfterS = static_cast<int>(coop::config::ResolveInt(::coop::config_registry::rows::perf_probe_resdrop));
+    g_bypassAfterS  = static_cast<int>(coop::config::ResolveInt(::coop::config_registry::rows::perf_probe_bypass));
     GT::SetPerfCounting(true, g_selfTime);
     R::SetCoopCallCensus(true);   // attribute the blueprint calls our polls author
     UE_LOGW("[perf] probe ARMED (perf_probe=1, selftime=%d) -- 1 Hz frame-cost report follows; "
@@ -240,6 +242,26 @@ void Sample() {
                 }
                 UE_LOGW("[perf] OUR CALLS (cumulative %llu): %ls", total, line.c_str());
             }
+        }
+    }
+    // THE DISCRIMINATOR for what is left. Our measured code is 0.6 ms of a 14 ms frame and
+    // fps does not correlate with it, so the missing time is engine work our presence
+    // provokes. The transparent bypass forwards ProcessEvent straight through -- no
+    // observers, no interceptors, no posted-task pump -- while our threads and every actor
+    // we spawned stay exactly as they are. So it splits the remaining space in half:
+    //   fps recovers  -> the cost is in the dispatch path after all
+    //   fps unchanged -> the cost is what we PUT IN THE WORLD, not what we run
+    // Sample() rides a posted task, so it cannot run DURING the window; the first sample
+    // after it covers the window and its frames/elapsed is the bypassed rate.
+    if (g_bypassAfterS > 0) {
+        static int sB = 0;
+        static bool sArmed = false;
+        if (!sArmed && ++sB >= g_bypassAfterS) {
+            sArmed = true;
+            UE_LOGW("[perf] BYPASS ARMED for 5000 ms -- the NEXT [perf] line's frames/s is the "
+                    "bypassed rate (our dispatch path inert, our actors and threads untouched). "
+                    "Compare it against the lines above.");
+            GT::SetTransparentBypass(5000);
         }
     }
     const unsigned long long pe     = GT::PeDispatchCountTotal();

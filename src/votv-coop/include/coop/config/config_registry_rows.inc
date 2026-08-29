@@ -286,7 +286,9 @@ CFG_FLAG(perf_probe, "perf_probe", "dev", false, nullptr,
 CFG_FLAG(perf_probe_selftime, "perf_probe_selftime", "dev", false, nullptr,
     "Performance probe: self-time breakdown variant.")
 CFG_INT(perf_probe_resdrop, "perf_probe_resdrop", "dev", 0, 0, 3600, nullptr,
-    "Performance probe: after N 1 Hz samples, collapse render resolution (r.ScreenPercentage 25) to separate a GPU-bound frame from a CPU-bound one.")
+    "Performance probe: after N 1 Hz samples, collapse render resolution (r.ScreenPercentage 25) to separate a GPU-bound frame from a CPU-bound one.")
+CFG_INT(perf_probe_bypass, "perf_probe_bypass", "dev", 0, 0, 3600, nullptr,
+    "Performance probe: after N samples, arm the transparent ProcessEvent bypass for 5 s (separates our dispatch-path cost from everything else about our presence).")
 CFG_FLAG(gnatives_probe, "gnatives_probe", "dev", false, nullptr,
     "Diagnostic probe: GNatives verb dispatch measurement.")
 CFG_FLAG(gnatives_probe_disabled, "gnatives_probe_disabled", "dev", false, nullptr,
