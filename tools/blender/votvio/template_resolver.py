@@ -338,6 +338,8 @@ class TemplateResolver:
                 # then the template's own material
                 variant, szscale = decals_mod.row_variant_size(
                     getattr(row, "json", ""))
+                if variant < 0:
+                    variant = decals_mod.poster_index(row)
                 dmat = decals_mod.grime_material(row.class_name, pose_seed,
                                                  variant)
                 if not dmat:

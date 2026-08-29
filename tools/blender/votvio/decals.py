@@ -66,6 +66,23 @@ def grime_material(class_name, seed, variant=-1):
     return fmt.format(first + _seed_int(seed) % count)
 
 
+_POSTER_CLASSES = {"poster_c", "poster_c_C", "poster_C"}
+
+
+def poster_index(row):
+    """A poster save row carries its page in ints[0][0] (measured: 0=I BELIEVE,
+    4=the hang-in-there cat, 8=the dish map; the class CDO default is -1 and the
+    BP applies tex_poster_<index> via SetTextureParameterValue)."""
+    if row is None or getattr(row, "class_name", "") not in _POSTER_CLASSES:
+        return -1
+    ints = getattr(row, "ints", None)
+    if ints and ints[0]:
+        v = ints[0][0]
+        if isinstance(v, int) and 0 <= v < _POSTERS[2]:
+            return v
+    return -1
+
+
 def row_variant_size(row_json):
     """primitives json '[ variant, sizePct ]' -> (variant, scale). Measured
     grammar: crack '[ 14, 100 ]', oil '[ -1, 300 ]', poo '[ -1, 50 ]'."""
