@@ -30,6 +30,16 @@ PLACEHOLDER_SLOT_OVERRIDES = (
     ("newbaseWindow2_sig2", "/Game/materials/unsorted/inst_glass"),
 )
 
+# RT/logic-driven screen surfaces: the game draws these at runtime (render
+# targets, 7-segment digit logic, analog needle shaders) - the cooked material
+# has ZERO texture params, so honest static content is the game's own
+# no-signal look: a dark CRT face with faint noise glow. Measured set:
+# the workstation desk (mat_tvScreen + mat_analogDS_* + mat_polarity/
+# mat_frequency), the clock digits (mat_segmentDigits*), screen-noise mats.
+_SCREEN_ROOT_PREFIXES = ("mat_tvscreen", "mat_analogds_", "mat_segmentdigits",
+                         "mat_screennoise", "mat_uiscreennoise", "matui_screengrid",
+                         "mat_polarity", "mat_frequency")
+
 
 def resolve_slot(mesh_basename, mat_path):
     """Swap a cooked placeholder slot for the curated runtime material."""
@@ -159,6 +169,9 @@ def get_material(game, mat_pkg_path, caches, warnings, with_textures=True):
          "clip": 0.333, "root": "", "chain": []}
     fam = _family(info)
 
+    if info["root"].startswith(_SCREEN_ROOT_PREFIXES):
+        _build_crt_static(mat, nt, bsdf)
+        return mat
     if fam == "water":
         _build_water(mat, nt, bsdf, info)
         return mat
@@ -355,6 +368,31 @@ def get_decal_material(game, mat_pkg_path, caches, warnings, with_textures=True)
     nt.links.new(alpha_socket, mul.inputs[0])
     nt.links.new(mul.outputs[0], bsdf.inputs["Alpha"])
     return mat
+
+
+def _build_crt_static(mat, nt, bsdf):
+    """A powered CRT with no signal: near-black glass + faint green-white noise."""
+    bsdf.inputs["Base Color"].default_value = (0.010, 0.014, 0.011, 1.0)
+    bsdf.inputs["Roughness"].default_value = 0.18
+    noise = nt.nodes.new("ShaderNodeTexWhiteNoise")
+    noise.noise_dimensions = "2D"
+    noise.location = (-560, 260)
+    coord = nt.nodes.new("ShaderNodeTexCoord")
+    coord.location = (-940, 260)
+    mapping = nt.nodes.new("ShaderNodeMapping")
+    mapping.location = (-760, 260)
+    mapping.inputs["Scale"].default_value = (240.0, 240.0, 1.0)
+    nt.links.new(coord.outputs["UV"], mapping.inputs["Vector"])
+    nt.links.new(mapping.outputs["Vector"], noise.inputs["Vector"])
+    mix = nt.nodes.new("ShaderNodeMix")
+    mix.data_type = "RGBA"
+    mix.blend_type = "MULTIPLY"
+    mix.inputs["Factor"].default_value = 1.0
+    mix.location = (-300, 260)
+    nt.links.new(noise.outputs["Value"], mix.inputs["A"])
+    mix.inputs["B"].default_value = (0.55, 0.85, 0.62, 1.0)
+    nt.links.new(mix.outputs["Result"], bsdf.inputs["Emission Color"])
+    bsdf.inputs["Emission Strength"].default_value = 0.55
 
 
 def _build_water(mat, nt, bsdf, info):

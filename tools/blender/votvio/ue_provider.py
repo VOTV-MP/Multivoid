@@ -93,9 +93,15 @@ class GameSource:
             return None
 
     def class_package(self, class_name):
-        """'door_C' -> 'VotV/Content/objects/door' (basename convention, verified by load)."""
+        """'door_C' -> 'VotV/Content/objects/door' (basename convention, verified by load).
+        On a basename collision prefer the BP home (objects/): 'clocks_C' collides
+        with the MESH package meshes/clocks/clocks (measured)."""
         base = class_name[:-2] if class_name.endswith("_C") else class_name
-        for cand in self._base2path.get(base.lower(), []):
+        cands = self._base2path.get(base.lower(), [])
+        for cand in cands:
+            if "/objects/" in cand.lower():
+                return cand
+        for cand in cands:
             return cand
         return None
 
