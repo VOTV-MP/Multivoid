@@ -118,6 +118,37 @@ dropped.
 
 ---
 
+## Testers — "all peers can't move forward (W doesn't work)"
+
+**Channel:** direct, 2026-08-29 mid-test · **Status:** OPEN, not reproduced here, needs a log
+
+Reported during a test of the overnight b143 build: every peer was unable to move
+forward. Three suspects were measured and cleared the same day, so the next attempt
+starts from facts rather than from scratch:
+
+- **The movement path itself is intact.** `tools/mp.py navprobe` on a rig where BOTH
+  peers wore a converter scientist skin on their own body
+  (`client_model: -> skin 'luther_v1sc' (mesh 2/2 slots, atlas tex bound)`) reported
+  `GATE B(AddMovementInput)=PASS`, best displacement 78 060 cm. So swapping the local
+  body to a pak skin does not break locomotion.
+- **We do not take the W key.** The overlay's WndProc consumes exactly F1, `VK_OEM_3`
+  (tilde), `T`, `V` and ESC-while-chat-open (`ui/imgui_overlay.cpp:208-290`). A
+  tree-wide grep for `DisableInput` / `EnableInput` / `SetIgnoreMoveInput` returns
+  nothing.
+- **No spurious knock-out.** Zero `ko_respawn: death backstop fired` lines in either
+  peer's log across the session's smokes.
+
+What would settle it in one step, and what the next session should ask for: whether
+**A/S/D and the mouse** still work (all keys dead points at our `CaptureActive()` — a
+surface stuck open swallows every key; only W dead points at game state, not input),
+**which build** was running (the overnight zip, r2modman, or a dev install), and the
+host + client `multivoid.log` covering the moment. The remaining untested suspects are
+a stuck `ko_respawn` KO pin (it re-ragdolls the player while `g_active`, so a KO that
+never completes reads exactly as "cannot move") and the КПП join teleport firing
+repeatedly if the local-pawn cache flickers.
+
+---
+
 ## Maintenance note
 
 This file and the two short tables move together: a fix that came from a report

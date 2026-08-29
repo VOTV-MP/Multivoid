@@ -943,7 +943,8 @@ inline constexpr uint16_t kProtocolVersion = 143; // v143 (2026-08-25, B3 -- a m
                                                   // nick). Every player carries a persisted body-skin choice
                                                   // (multivoid.ini player_skin=, default hl_einstein_v1sc);
                                                   // the F1 Cosmetics>Skins browser picks from the converter
-                                                  // paks in LogicMods/multivoid/. v92: kerfur retire eid made CROSS-PEER-STABLE. The v91
+                                                  // paks under LogicMods/ (any subfolder; one pak may carry
+                                                  // several skins since 2026-08-29). v92: kerfur retire eid made CROSS-PEER-STABLE. The v91
                                                   // retireOffEid keyed off a save_identity_bind eid that was
                                                   // bound by a LOAD-ORDER CURSOR -- it floated under join-window
                                                   // churn (15:55 regression: retire killed the WRONG kerfur on

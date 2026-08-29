@@ -50,8 +50,10 @@ void Render() {
 
     ImGui::TextWrapped("Your body skin -- what YOU see looking down and what OTHERS see. "
                        "Saved to multivoid.ini; restored on rejoin.");
-    ImGui::TextDisabled("A skin = a converter .pak in Content/Paks/LogicMods/multivoid "
-                        "(preview = <name>.png/.bmp next to it).");
+    ImGui::TextDisabled("Skins come from converter .pak files under Content/Paks/LogicMods "
+                        "(any subfolder). One pak may carry several skins -- the four "
+                        "scientists ship together in scientists.pak.");
+    ImGui::TextDisabled("Preview tile = <skin name>.png/.bmp beside the pak.");
     ImGui::TextDisabled("Peers WITHOUT that pak see the default kel body instead.");
     if (ImGui::Button("Refresh list")) {
         coop::skins::Entries(true);

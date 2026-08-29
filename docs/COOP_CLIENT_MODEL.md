@@ -12,6 +12,14 @@
 > PRESENCE/ENUMERATION layer: a census found **11 surfaces** pinned to one-pak-per-skin (3 logic in
 > `skin_registry.cpp`, 2 player-facing strings, 6 contract comments) — the table is in `UE4SS_ARC.md`
 > §7.7c. Do not implement a new skin from this doc's packaging steps until that lands.
+>
+> **LANDED 2026-08-29 (`b3b81c5a` + the sweep after it).** `scientists.pak` ships with the four
+> starter scientists; `skin_registry` gained `kSkinBundles` (a bundle vouches for its MEMBER names)
+> and `DirProvidesSkin` (presence is asked of the registry, never of `<name>.pak` on disk); the
+> 2 player-facing strings and 6 contract comments this header counted are corrected. Two things the
+> next reader needs: a bundle's own stem is NEVER offered as a skin, and the enumeration is a
+> HARDCODED map — `UE4SS_ARC` §7.7b's ranked-last option — so a third-party BUNDLE still cannot be
+> discovered. Single-skin packs from users work unchanged.
 
 **Read top-to-bottom.** Goal: give every remote CLIENT puppet a custom character
 model (the user's own mesh) while the HOST stays Dr. Kel. First model = a Half-Life 1

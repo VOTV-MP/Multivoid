@@ -1274,6 +1274,25 @@ with no selectable skins.**
 
 ### 7.7b TASK (USER 2026-08-23): one `scientists.pak` holding every scientist skin + previews
 
+> **AS-BUILT 2026-08-29 (`b3b81c5a`) — and it took the option this section RANKED LAST.**
+> The bundle ships: `repak`-rebuilt V11 pak, mount `../../../`, 16 entries, unpack-compare
+> byte-identical to the four sources; the four preview tiles stay sidecars by MEMBER name.
+> LOADING needed no change, exactly as measured below. ENUMERATION took **(iii) a hardcoded
+> list** — `kSkinBundles` in `skin_registry.cpp` maps a bundle's stem to its members — which
+> this section rejects "unless (i)/(ii) both fail", and neither was tried: the section was not
+> read before the work (the user re-asked for the bundle and I re-derived it). Recorded rather
+> than quietly kept, because the cost is real and named right here: **with (iii), nobody else
+> can ship a skin BUNDLE** — a third-party single-skin pak still works, a third-party bundle
+> does not. (ii) — enumerating the mounted packages under `/Game/Mods/VOTVCoop/` — remains the
+> RULE-1 answer and is still unmeasured. Do that before a second bundle exists.
+>
+> The presence half DID honour `docs/LESSONS.md`'s 2026-08-23 row: `PickRandomStarterSkin`
+> now asks whether a pak PROVIDES a skin (`DirProvidesSkin`), not whether `<name>.pak` is a
+> file. The row's other 8 surfaces — 2 player-facing strings + 6 contract comments — were
+> missed by the first commit and swept afterwards (`skins_panel.cpp`, `local_body.cpp`,
+> `skin_registry.h` x4, `protocol.h`), which is the same lesson's "fixing the logic alone
+> ships a build whose own UI lies".
+
 *"Будет задача все скины ученых собрать и их превью и затолкать в один .pak и назвать scientists.pak"* —
 collapse the per-skin paks into ONE `scientists.pak`. Measured against the code, this is **much smaller
 than it looks**, because one half of it already works:
