@@ -4599,8 +4599,10 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   `CachedReferencedTextures` (MICs) BEFORE declaring content runtime-only. Second dividend (v7e):
   the defaults also expose MEANINGLESS overrides — `mat_object` defaults `ag` to the engine Black
   texture, so a MIC's `emisive_strength` override glows nothing unless `ag` is overridden too
-  (151/569 bench materials carried cargo-cult strength; ONE had a real mask — gate emission on the
-  MASK, not the scalar). *Look FIRST:*
+  (151/569 bench materials carried cargo-cult strength) — and the mask is not the last word: the
+  ag-gate survivors all carried the SAME cloned lamp mask; the REAL gate is the
+  `useEmissive` STATIC SWITCH (banana=false, alamp2_on=true; no chain override = off). Scalar <
+  mask < switch — resolve the whole ladder. *Look FIRST:*
   `tools/blender/votvio/screens.py` (the per-root still-frame builders) + `docs/BLENDER_ARC.md` v7.
   `memory/lesson_cooked_material_cachedexpressiondata_keeps_defaults.md`
 

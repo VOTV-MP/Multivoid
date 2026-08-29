@@ -62,8 +62,8 @@ def _analyze(game, mat_pkg, cache):
     """Walk the MIC parent chain; leaf wins. -> info dict."""
     if mat_pkg in cache:
         return cache[mat_pkg]
-    info = {"tex": {}, "scal": {}, "vec": {}, "blend": "", "twosided": False,
-            "clip": 0.3333, "root": "", "chain": []}
+    info = {"tex": {}, "scal": {}, "vec": {}, "switch": {}, "blend": "",
+            "twosided": False, "clip": 0.3333, "root": "", "chain": []}
     cur = mat_pkg
     for _ in range(8):
         if not cur:
@@ -78,6 +78,10 @@ def _analyze(game, mat_pkg, cache):
             if ty not in ("MaterialInstanceConstant", "Material"):
                 continue
             pr = e.get("Properties") or {}
+            for sw in (pr.get("StaticParameters") or {}).get("StaticSwitchParameters") or []:
+                nm = str((sw.get("ParameterInfo") or {}).get("Name", "")).lower()
+                if nm and sw.get("bOverride") and nm not in info["switch"]:
+                    info["switch"][nm] = bool(sw.get("Value"))
             for tv in pr.get("TextureParameterValues") or []:
                 nm = str((tv.get("ParameterInfo") or {}).get("Name", "")).lower()
                 pkg = _ref_pkg(tv.get("ParameterValue"))
@@ -269,33 +273,35 @@ def get_material(game, mat_pkg_path, caches, warnings, with_textures=True):
             tr.location = (-560, -580)
             nt.links.new(tr.outputs["Color"], bsdf.inputs["Roughness"])
 
-    # emissive: ag mask, or plain emiss/glow scalars
+    # emissive: the mat_object family gates emission on the useEmissive
+    # STATIC SWITCH (measured: inst_banana carries ag=tex_ceillampMask +
+    # strength=100 with useEmissive=FALSE - a cargo-cult clone of a lamp MIC
+    # that glows nothing in-game; inst_alamp2_on has useEmissive=TRUE; the
+    # parent default is off - no override anywhere in a chain means dark).
+    # The ag mask requirement stays: the parent's DEFAULT ag is the engine
+    # Black texture, so strength without a mask is equally dead.
     strength = scal.get("emisive_strength", 0.0) or scal.get("emiss", 0.0) or scal.get("glow", 0.0)
-    if strength > 0.01:
-        ecol = vec.get("emissioncolor", (1.0, 1.0, 1.0, 1.0))
-        emis_socket = color_socket
-        if with_textures and "ag" in tex:
-            aimg = _image(game, tex["ag"], caches, warnings, non_color=True)
-            if aimg is not None:
-                ta = nt.nodes.new("ShaderNodeTexImage")
-                ta.image = aimg
-                ta.location = (-560, 560)
-                if color_socket is not None:
-                    mul = nt.nodes.new("ShaderNodeMix")
-                    mul.data_type = "RGBA"
-                    mul.blend_type = "MULTIPLY"
-                    mul.inputs["Factor"].default_value = 1.0
-                    mul.location = (-140, 560)
-                    nt.links.new(color_socket, mul.inputs["A"])
-                    nt.links.new(ta.outputs["Color"], mul.inputs["B"])
-                    emis_socket = mul.outputs["Result"]
-                else:
-                    emis_socket = ta.outputs["Color"]
-        if emis_socket is not None:
+    switch_ok = info["switch"].get("useemissive", False) \
+        if "emisive_strength" in scal else True
+    if strength > 0.01 and switch_ok and with_textures and "ag" in tex:
+        aimg = _image(game, tex["ag"], caches, warnings, non_color=True)
+        if aimg is not None:
+            ta = nt.nodes.new("ShaderNodeTexImage")
+            ta.image = aimg
+            ta.location = (-560, 560)
+            if color_socket is not None:
+                mul = nt.nodes.new("ShaderNodeMix")
+                mul.data_type = "RGBA"
+                mul.blend_type = "MULTIPLY"
+                mul.inputs["Factor"].default_value = 1.0
+                mul.location = (-140, 560)
+                nt.links.new(color_socket, mul.inputs["A"])
+                nt.links.new(ta.outputs["Color"], mul.inputs["B"])
+                emis_socket = mul.outputs["Result"]
+            else:
+                emis_socket = ta.outputs["Color"]
             nt.links.new(emis_socket, bsdf.inputs["Emission Color"])
-        else:
-            bsdf.inputs["Emission Color"].default_value = ecol
-        bsdf.inputs["Emission Strength"].default_value = min(strength * 0.25, 20.0)
+            bsdf.inputs["Emission Strength"].default_value = min(strength * 0.25, 20.0)
 
     if fam in ("masked", "foliage"):
         if alpha_socket is not None:

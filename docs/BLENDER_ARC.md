@@ -208,6 +208,21 @@ I3: >4 слоёв на компонент теперь пишет warning (ра�
 средней нормалью). Урок спарен:
 [[lesson-inside-out-import-surfaces-only-at-a-normals-consumer]]. НЕ hands-on.
 
+**v7e (same session) — ложная эмиссия у 151 из 569 материалов (репорт: curtains_fr,
+prop_cubicle4). Настоящий гейт игры — static switch `useEmissive`.** Раскопано в два слоя:
+(1) `mat_object.CachedExpressionData`: дефолт `emisive_strength`=1.0, дефолт **`ag` = engine
+Black** — strength без маски мёртв (второй дивиденд урока
+[[lesson-cooked-material-cachedexpressiondata-keeps-defaults]]); но у выживших после ag-гейта
+(банан/церковь/подушка/мост, strength=100!) ag оказался ОДНОЙ И ТОЙ ЖЕ маской ЛАМПЫ
+`tex_ceillampMask` — карго-культный клон лампового MIC; (2) дискриминатор:
+**`StaticParameters.StaticSwitchParameters.useEmissive`** — у банана FALSE, у `inst_alamp2_on`
+TRUE (ag=tex_alarmGlow), у `alamp2_off` FALSE; без оверрайда в цепочке = выключено (родительский
+дефолт). Фикс: `_analyze` собирает static-switches по цепочке (leaf-first, только bOverride);
+эмиссив-бранч требует `useemissive`=TRUE (для `emisive_strength`-семейства) + загруженную
+ag-маску. ПОПУТНО: `ensure_mesh` перенесён ЗА радиус-гейт umap-цикла (дальние меши/материалы/
+текстуры не строились зря — сотни zero-user датаблоков) + `orphans_purge` перед сохранением
+стенда. Экраны/цифры/additive не затронуты (свои бранчи).
+
 **v6d (same session, `0e37227b`) — декали ПРОЕЦИРУЮТСЯ на приёмники.** Репорт юзера:
 повёрнуты не так + торчат, нет маски поверхности. Свободный квад заменён проекцией:
 декали копятся в очередь и после сборки statics/BSP/ландшафта кастят сетку лучей вдоль

@@ -336,15 +336,14 @@ class MapImporter:
             if is_technical(mesh_path, self.opt):
                 self.stats["hidden"] += 1
                 continue
-            me = self.b.ensure_mesh(mesh_path)
-            if me is None:
-                self.stats["no_mesh"] += 1
-                continue
             world = self._world_matrix(i)
             label = (self.dicts[actor_idx].get("Name") if actor_idx is not None
                      else e.get("Name")) or "map"
             is_event = atype in EVENT_ACTOR_CLASSES
             is_unplaced = actor_idx in self._unplaced
+            # ensure_mesh only AFTER the radius gate: building meshes (and
+            # their materials/textures) for culled far-map components wasted
+            # bench time and left hundreds of zero-user datablocks
             if ty in INSTANCED:
                 inst = self._instances_for(i)
                 if inst is None or len(inst) == 0:
@@ -352,21 +351,34 @@ class MapImporter:
                     continue
                 n = len(inst)
                 take = range(n) if density >= 1.0 else range(0, n, max(1, int(1.0 / density)))
+                keep = []
+                for k in take:
+                    m = world @ convert.ue_fmatrix_to_bl(inst[k])
+                    if self.b.within(m.translation):
+                        keep.append(m)
+                    else:
+                        self.stats["culled"] += 1
+                if not keep:
+                    continue
+                me = self.b.ensure_mesh(mesh_path)
+                if me is None:
+                    self.stats["no_mesh"] += 1
+                    continue
                 target = cols["Unplaced"] if is_unplaced else (
                     cols["Events"] if is_event else (
                         cols["Foliage"] if ty == "FoliageInstancedStaticMeshComponent"
                         else cols["Statics"]))
                 skey = "unplaced" if is_unplaced else ("events" if is_event else "instances")
-                for k in take:
-                    m = world @ convert.ue_fmatrix_to_bl(inst[k])
-                    if not self.b.within(m.translation):
-                        self.stats["culled"] += 1
-                        continue
+                for m in keep:
                     self.b._new_object(label, me, target, m)
                     self.stats[skey] += 1
             else:
                 if not self.b.within(world.translation):
                     self.stats["culled"] += 1
+                    continue
+                me = self.b.ensure_mesh(mesh_path)
+                if me is None:
+                    self.stats["no_mesh"] += 1
                     continue
                 target = cols["Unplaced"] if is_unplaced else (
                     cols["Events"] if is_event else cols["Statics"])

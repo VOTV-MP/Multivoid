@@ -50,6 +50,9 @@ for w in game.warnings[:15]:
 out = os.environ.get("VOTVIO_SMOKE_BLEND", "")
 if out:
     import bpy
+    # drop zero-user datablocks (meshes/materials/images built for content
+    # that ended up culled) so the saved bench file stays clean
+    bpy.data.orphans_purge(do_recursive=True)
     bpy.ops.wm.save_as_mainfile(filepath=out)
     print(f"[blend] saved {out}")
 print(f"[total] {time.time()-t0:.1f}s  SMOKE-DONE")
