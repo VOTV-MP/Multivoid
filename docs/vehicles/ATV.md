@@ -861,16 +861,40 @@ ejections**. The throttle is PULSED (250 ms on / 750 ms off): at full throttle t
 in 2.5 s, hit something, and the game **ragdolled the driver out at 600 cm/s** — a base is not a test
 track, so the arm banks cumulative driven time and re-seats after a crash.
 
-### 15.2 `[V]` THE HEADLINE: the mirror TRAILS, and the corrector's own threshold permits it
-Over the driven window the mirror sat **mean 134 cm / max 438 cm** behind the author.
+### 15.2 `[V]` The mirror TRAILS, the trail scales with SPEED, and the warp never fires
+**Two runs, and the second one corrected the first — read both before quoting a number.**
 
-That is not a surprise once the constant is read: `atv_sync.cpp:107-108` warps past
-`kWarpBaseCm + kWarpPerSpeedS * |v|` = `200 + 0.5*|v|` cm, which at the ~480 cm/s the arm reached is
-**~440 cm** — so a 438 cm trail is INSIDE tolerance and **the warp never fired**. MTA's equivalent
-(`CClientVehicle::UpdateTargetPosition:3867`) is `15 + 10*|v|`: a small base and a large speed term,
-the opposite shape — it tightens as the vehicle speeds up where ours stays flat. Graded from now on
-by acceptance arm **A5** (`TRAIL_MAX_CM = 150`, a stated design ceiling of about one vehicle length).
-**Retuning those two constants is arc-1 commit 2 work and owes its own before/after run.**
+| run | DLL | driven path | peak speed | trail mean | trail max | `warpD` at that speed | A5 |
+|---|---|---|---|---|---|---|---|
+| `20260830-002246` | `B1E659B76A0C01A2` | 78 m | ~1300 cm/s | 134 cm | **438 cm** | ~850 cm | FAIL |
+| `20260830-003415` | `7E4D7A1D8D75DD03` | 33 m | ~780 cm/s | 20 cm | **70 cm** | ~590 cm | PASS |
+
+The first run's 438 cm was published as "the mirror trails by up to 4.4 m" **as if it were a property
+of the lane. It is not — it is a property of driving at 13 m/s**, and the second run says so: same
+build family, same arm, same 20 s window, a sixth of the trail because the ATV happened to be pointed
+somewhere that let it go a third as far. The arm steers nothing, so route and speed are not controlled
+between runs and **no single run may state a trail figure as a lane property.**
+
+What BOTH runs agree on, and what the number is actually about: `atv_sync.cpp:107-108` warps past
+`kWarpBaseCm + kWarpPerSpeedS * |v|` = `200 + 0.5*|v|` cm. At 1300 cm/s that is ~850 and the trail
+reached 438 (52% of it); at 780 cm/s it is ~590 and the trail reached 70 (12%). **The warp arm did not
+fire in either run**, and the threshold's shape is why: a 200 cm base with a 0.5 speed coefficient
+barely tightens as the vehicle speeds up. MTA's equivalent
+(`CClientVehicle::UpdateTargetPosition:3867`) is `15 + 10*|v|` — small base, large speed term, the
+opposite shape. That is a claim about a CONSTANT, checkable without another run, and it is the real
+finding here.
+
+Graded from now on by acceptance arm **A5** (`TRAIL_MAX_CM = 150`, a stated design ceiling of about
+one vehicle length). **A5's fixed-cm shape inherits the same criticism**: it passed the slow run and
+failed the fast one, so it is partly measuring the route. A speed-scaled ceiling would be the honest
+form; it is not written yet because nothing has measured what trail is ACHIEVABLE at speed.
+**Retuning `kWarpBaseCm` / `kWarpPerSpeedS` is arc-1 commit 2 work and owes a before/after pair on the
+SAME route** — which the arm cannot currently guarantee, so that is an instrument prerequisite, not a
+detail.
+
+*(Why the DLLs differ: run 1 ran on bytes another session deployed to the shared rig between my deploy
+and my launch — caught only because the run archive records the deployed sha256. Run 2 is a rebuild
+from the same tree. The two runs are not a DLL A/B; the measured difference tracks speed, not bytes.)*
 
 ### 15.3 `[V]` The Z residual is ACQUIRED, not inherent — §14.6 corrected
 | phase | Z gap (host − client) | horizontal |
@@ -881,8 +905,13 @@ by acceptance arm **A5** (`TRAIL_MAX_CM = 150`, a stated design ceiling of about
 
 The two copies agree at the parking spot to 3.5 cm and are 39.6 cm apart in Z after the drive. So the
 40 cm is not the terrain under the parking spot; the lane acquires it while driving and the corrector
-never closes it — the stall detector cuts to the authority's pose and the rig settles back. **Open,
-and now correctly scoped to this lane rather than filed against world/save-transfer.**
+never closes it — the stall detector cuts to the authority's pose and the rig settles back.
+
+**Run 2 (`20260830-003415`) reproduces the SHAPE on a different route: settled gap 25.4 cm, again
+dominated by Z.** So "acquired during the drive, then persists" holds across both runs even though the
+magnitude does not — which is the right level to state it at, and is exactly what §15.2's trail figure
+failed to do. **Open, and now correctly scoped to this lane rather than filed against
+world/save-transfer.**
 
 ### 15.4 `[V]` The collision guard's cancel path, proven
 Counters over the run: **client 19,399 cancelled / 3,911 allowed; host 2,587 / 22,409.** The ratio is
@@ -890,9 +919,19 @@ the design, not an anomaly: the client authored the ATV for ~20 s of a ~180 s ru
 most of it, and the host — the idle syncer whenever `authorSlot == 0xFF` — allows for most of it and
 cancels only during the client's authorship. §14.5's "armed but never fired" is closed.
 
+### 15.6 `[?]` A4's double-owner second at the authority handoff
+Run 2 failed A4 with **one second (1920, the claim edge) in which both peers reported owning the
+tick**. Run 1 passed it. That is the shape of an assertion race rather than a bug in either peer's
+predicate: `OwnsTickFor` elects the host whenever `authorSlot == 0xFF`, so between a client seating
+itself and the host receiving `AtvState` with the new `authorSlot` there is a round trip in which both
+sides answer yes. `COOP_SYNCER_MODEL.md` §2b's rule — authority is ASSIGNED, never asserted — says the
+claim should be an intent the host grants, not a fact the client publishes. **Open; sized as arc-1
+commit 2, and A4 already grades it.**
+
 ### 15.5 What this run still does NOT establish
 - **NOT hands-on.** Autonomous throughout.
-- **A2 still FAILS** (54.2 cm settled gap) and A5 fails; only A1, A3 and A4 pass.
+- **A2 FAILS in both runs** (54.2 cm and 25.4 cm settled). A1 and A3 pass in both; A4 passed run 1
+  and failed run 2 (§15.6); A5 failed run 1 and passed run 2 (§15.2), which is the route, not a fix.
 - The client-side mirror is unmeasured in the driven window (1 sample): the ATV is authored BY the
   client, so the host is the only mirror there is. Grading the client's mirror needs a host-driven
   run, which needs a host save whose player has empty hands.

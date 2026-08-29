@@ -2802,6 +2802,35 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   across builds the first question is always "did my code run", never "is my algorithm right".
   `memory/lesson_a_counter_you_never_print_is_not_an_instrument.md`
 
+- **2026-08-30 — A threshold borrowed from another REGIME fails the authority itself; and a
+  one-sided test is blind in the direction it does not check.** `[V]` The ATV acceptance graded a
+  DRIVEN mirror's suspension against `BAND_CM = 4.0`, a figure honestly measured on a **parked** rig.
+  The first driven run "failed" at 6.81/5.50/4.12 cm while the AUTHOR's own natively-driven rig
+  travelled 4.68/4.19/6.59 cm — a test the authority fails is not a test of the mirror. The fix is not
+  a bigger constant but a comparison INSIDE the run: mirror vs author, same window, same seconds.
+  Worse, because the old test had only a CEILING it could not see the failure it existed to detect —
+  the drill's own `healthy()` control emitted a mirror whose front wheels never moved at all, the
+  frozen corpse the mirror model was built to prevent, and nine RED arms had never contradicted it.
+  *Look FIRST:* write down the REGIME a measured constant came from (parked/driven/idle/cold) before
+  reusing it as a threshold, and prefer a same-run comparison to any constant. Ask of every threshold
+  "which side is it on, and what does the other side look like". A fixture is written to pass, so it
+  drifts toward whatever the assertions do not check.
+  `memory/lesson_a_threshold_from_another_regime_fails_the_authority_itself.md`
+
+- **2026-08-30 — When a defect is blamed on a PLACE, move the subject and re-measure; until you have,
+  the attribution is a hypothesis wearing a `[V]`.** `[V]` A constant ~40 cm cross-peer Z gap that
+  SURVIVED a full rig teleport was written into `docs/vehicles/ATV.md` §14.6 as "the peers' worlds
+  differ under the parking spot", and the report was even taught to attribute that signature. Every
+  observation was true; the inference was wrong. One experiment separated them — drive the ATV. The
+  copies start **3.5 cm** apart at the spot and end **39.6 cm** apart 4 km away: the gap is ACQUIRED
+  during the drive, so it is this lane's, not the world's. The confound was that every measurement had
+  been taken at the same place, because nothing could drive the vehicle — a limit of the rig, invisible
+  from inside the reasoning. *Look FIRST:* name the condition you never varied before concluding
+  anything, because the constant you did not vary is what your explanation is secretly about; and hold
+  an attribution that sends the next session to a DIFFERENT subsystem to a higher bar, since being
+  wrong costs them the whole trip.
+  `memory/lesson_move_the_thing_before_blaming_the_place.md`
+
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
 
 - **A WINDOW CLOSED BY THE LATCH THAT STARTS THE NEXT PHASE ENDS BEFORE THAT PHASE — BY
@@ -4815,6 +4844,22 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   whether what you meant to stop is already locally gated. A mirror that must differ usually needs a
   NARROW cancel at the authoring seam, not a whole-tick switch.
   `memory/lesson_a_tick_is_not_a_brain_check_what_it_does_unconditionally.md`
+
+- **2026-08-30 — A BP UFunction can be a DEAD STUB that dispatches perfectly and does nothing.**
+  `[V]` `ATV_C::playerSit` writes ubergraph variable `K2Node_Event_player_18` — which appears exactly
+  twice in the whole `.uasset`, its declaration and that one write, i.e. **zero readers** — then jumps
+  to `ExecuteUbergraph_ATV(9122)`, a bare `EX_PopExecutionFlow`. The compiler kept the event entry
+  after its graph was deleted. It resolves by name, is `BlueprintCallable`, builds a ParamFrame,
+  dispatches, and returns true. **Four runs across two sessions called it, logged "SIT fired", seated
+  nobody**, and the ATV acceptance's whole driven half stayed INCONCLUSIVE for a day because
+  `driven=0` right after the call read as "the seat was refused" rather than "the function is empty".
+  The live verb was `actionName(player, hit, "sit")` -> uber `@46046`. *Look FIRST:* when a BP call is
+  clean and the world does not change, follow `ExecuteUbergraph_<X>(N)` to the statement AT offset N
+  before theorising about gates or timing — a stub is `POP->ret` there, a real event is a block — and
+  census the ubergraph for the variable the stub writes; zero readers is the proof. Find the real verb
+  by grepping for the variable the BODY reads, then MEASURE its gates instead of guessing which
+  refused (two of these three were cheap side-effect-free reads and named the answer in one run).
+  `memory/lesson_a_dead_stub_reports_success.md`
 
 ## 6. Assets, models, geometry
 

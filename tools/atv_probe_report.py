@@ -161,6 +161,14 @@ def report_peer(name, data):
 #
 # 150 cm is a stated DESIGN ceiling, not a fitted one: about one vehicle length, the point
 # at which a passenger would see the other player's ATV in the wrong place.
+#
+# KNOWN-WEAK SHAPE, stated so nobody quotes an A5 verdict as a lane property. A second run
+# the same night trailed max 70 cm and PASSED -- not because anything was fixed, but because
+# the ATV happened to drive 33 m at ~780 cm/s instead of 78 m at ~1300 cm/s. The arm steers
+# nothing, so route and speed are uncontrolled between runs, and a FIXED cm ceiling is partly
+# measuring the route. The honest form is speed-scaled, like the warp it is grading; it is not
+# written because nothing has yet measured what trail is ACHIEVABLE at speed. Until then A5 is
+# a tripwire, not a metric: a FAIL is worth reading, a PASS proves less than it looks.
 TRAIL_MAX_CM = 150.0
 FROZEN_FLOOR_CM = 1.0
 REGIME_RATIO_MAX = 2.5
