@@ -76,10 +76,30 @@ class _Builder:
         return convert.pos((0.0, 0.0, 0.0))
 
     # -- assets ------------------------------------------------------------
+    def _clock_pair(self, k):
+        """k=0 -> the save's hour pair, k=1 -> minutes (savedtime = (H, M, S))."""
+        t = self.m.scalars.get("savedtime")
+        try:
+            h, mnt = int(t[0]) % 24, int(t[1]) % 60
+        except (TypeError, ValueError, IndexError):
+            h, mnt = 0, 0
+        return h if k == 0 else mnt
+
     def _append_materials(self, me, mesh_pkg_path, mat_paths):
         base = mesh_pkg_path.rsplit("/", 1)[-1]
+        digit_k = 0
         for mp in mat_paths:
             mp = materials_mod.resolve_slot(base, mp)
+            leaf = mp.rsplit("/", 1)[-1].lower()
+            if leaf.startswith("inst_segmentdigits") and "dots" not in leaf:
+                # measured (clock2): digit slots run left->right = hours, minutes;
+                # each is ONE quad showing a digit PAIR from the save's own time
+                me.materials.append(materials_mod.get_digit_pair_material(
+                    self.game, self._clock_pair(digit_k), self.caches,
+                    self.warnings,
+                    with_textures=self.opt.get("with_textures", True)))
+                digit_k += 1
+                continue
             me.materials.append(materials_mod.get_material(
                 self.game, mp, self.caches, self.warnings,
                 with_textures=self.opt.get("with_textures", True)))
@@ -147,6 +167,14 @@ class _Builder:
                 verts.extend(sv)
                 uvs.extend(su)
                 faces.extend(tuple(i + off for i in f) for f in sf)
+            # local-space mesh + object at the sheet centroid: EEVEE sorts
+            # BLENDED surfaces by OBJECT origin, and a decal parked at the
+            # world origin sorts against everything wrongly
+            n = float(len(verts))
+            cx = sum(v[0] for v in verts) / n
+            cy = sum(v[1] for v in verts) / n
+            cz = sum(v[2] for v in verts) / n
+            verts = [(v[0] - cx, v[1] - cy, v[2] - cz) for v in verts]
             me = bpy.data.meshes.new(name + ".decal")
             me.from_pydata(verts, [], faces)
             try:
@@ -159,13 +187,14 @@ class _Builder:
                 self.game, mat_path, self.caches, self.warnings,
                 with_textures=self.opt.get("with_textures", True)))
             me.validate()
-            built.append((name, me, col))
+            built.append((name, me, col, (cx, cy, cz)))
         for c in toggled:
             c.hide_viewport = False
         # link only after every ray is cast: a linked decal would itself
         # intercept the next decal's rays
-        for name, me, col in built:
+        for name, me, col, center in built:
             ob = bpy.data.objects.new(name, me)
+            ob.location = center
             col.objects.link(ob)
             self.counts["objects"] += 1
             self.counts["decals_projected"] += 1

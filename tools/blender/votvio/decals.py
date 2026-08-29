@@ -68,7 +68,8 @@ def size_matrix(size_ue):
                             max(float(size_ue[2]), 1.0) * 0.01, 1.0))
 
 
-_OFFSET = 0.006        # lift off the receiver surface (m)
+_OFFSET = 0.013        # lift off the receiver surface (m; USER field test: 6mm
+                       # z-fights away at scene view distances, >=1cm reads)
 _CELL = 0.12           # target grid cell size (m)
 _EXTRA_DEPTH = 0.15    # placement tolerance beyond the box depth (m)
 

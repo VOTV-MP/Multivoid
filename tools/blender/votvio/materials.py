@@ -11,7 +11,7 @@ Emission = tex * ag * emisive_strength * emissioncolor.
 """
 import bpy
 
-from . import bc_decode
+from . import bc_decode, screens
 
 _FALLBACK_RGBA = (0.42, 0.42, 0.46, 1.0)
 
@@ -37,20 +37,8 @@ PLACEHOLDER_SLOT_OVERRIDES = (
     ("newbaseWindow2_sig2", DIRTY_GLASS),
 )
 
-# RT/logic-driven screen surfaces: the game draws these at runtime with
-# dynamic material params. The cooked CachedExpressionData keeps the param
-# DEFAULTS and the referenced textures (measured per material), so each root
-# gets a faithful still frame: the clock's 7-seg digits atlas at num=0, the
-# analog desk displays in their real colors (screen=orange, graph=yellow,
-# bulbs=green), the game's own noise textures for the true static surfaces.
-_SCREEN_ROOT_PREFIXES = ("mat_tvscreen", "mat_analogds_", "mat_segmentdigits",
-                         "mat_screennoise", "mat_uiscreennoise", "matui_screengrid",
-                         "mat_polarity", "mat_frequency", "mat_clockmat")
-_TV_STATIC_TEX = "/Game/textures/misc/tex_hugeNoise"
-_TILING_NOISE_TEX = "/Game/textures/unsorted/TilingNoise_contrast"
-_BULB_NOISE_TEX = "/Game/MSPresets/MSTextures/noise_mask"
-_DIGITS_TEX = "/Game/textures/misc/digits"
-_DIGIT_DOTS_TEX = "/Game/textures/misc/digit_dots"
+# RT/logic-driven screen surfaces live in screens.py (extracted at the 800-LOC
+# soft cap); the root-prefix set + the per-root still-frame builders are there.
 
 
 def resolve_slot(mesh_basename, mat_path):
@@ -160,6 +148,23 @@ def _image(game, tex_pkg, caches, warnings, non_color=False):
     return img
 
 
+def get_digit_pair_material(game, num, caches, warnings, with_textures=True):
+    """A clock digit-pair quad showing the two digits of num (the save's own
+    HH / MM - the game's animated mat_clockMat as a stale frame)."""
+    key = ("digitpair", int(num) % 100)
+    if key in caches["mat"]:
+        return caches["mat"][key]
+    mat = bpy.data.materials.new(f"votv_digits_{key[1]:02d}")
+    mat.use_nodes = True
+    nt = mat.node_tree
+    bsdf = nt.nodes.get("Principled BSDF")
+    caches["mat"][key] = mat
+    if bsdf is not None and with_textures:
+        screens.build_digit_pair(game, mat, nt, bsdf, key[1], caches, warnings,
+                                 _image)
+    return mat
+
+
 def get_material(game, mat_pkg_path, caches, warnings, with_textures=True):
     key = mat_pkg_path or "<none>"
     if key in caches["mat"]:
@@ -184,9 +189,9 @@ def get_material(game, mat_pkg_path, caches, warnings, with_textures=True):
          "clip": 0.333, "root": "", "chain": []}
     fam = _family(info)
 
-    if info["root"].startswith(_SCREEN_ROOT_PREFIXES):
-        _build_screen(game, mat, nt, bsdf, info["root"], name.lower(),
-                      caches, warnings, with_textures)
+    if info["root"].startswith(screens.ROOT_PREFIXES):
+        screens.build_screen(game, mat, nt, bsdf, info["root"], name.lower(),
+                             caches, warnings, with_textures, _image)
         return mat
     if fam == "water":
         _build_water(mat, nt, bsdf, info)
@@ -341,6 +346,9 @@ def get_decal_material(game, mat_pkg_path, caches, warnings, with_textures=True)
         return mat
     bsdf.inputs["Roughness"].default_value = 0.8
     _set_blended(mat)
+    # two-sided sheet pairs wind toward their own viewer side; culling the
+    # backface keeps the far-side sheet from ghosting through thin walls
+    mat.use_backface_culling = True
 
     info = _analyze(game, mat_pkg_path, caches["mat_info"]) if mat_pkg_path else \
         {"tex": {}, "scal": {}, "vec": {}, "blend": "", "twosided": False,
@@ -451,212 +459,6 @@ def _build_dirty_glass(game, mat, nt, bsdf, caches, warnings, with_textures):
     nt.links.new(dirt.outputs[0], rough.inputs["Value"])
     nt.links.new(rough.outputs["Result"], bsdf.inputs["Roughness"])
 
-
-# ------------------------------------------------------------------ screens
-def _dark_face(bsdf):
-    bsdf.inputs["Base Color"].default_value = (0.010, 0.014, 0.011, 1.0)
-    bsdf.inputs["Roughness"].default_value = 0.18
-
-
-def _emit_tex(game, nt, bsdf, tex_pkg, color, strength, caches, warnings,
-              shape=None):
-    """emission = texture (optionally MapRange-shaped) x color."""
-    img = _image(game, tex_pkg, caches, warnings, non_color=True)
-    if img is None:
-        bsdf.inputs["Emission Color"].default_value = color
-        bsdf.inputs["Emission Strength"].default_value = strength * 0.4
-        return
-    timg = nt.nodes.new("ShaderNodeTexImage")
-    timg.image = img
-    timg.location = (-620, 260)
-    src = timg.outputs["Color"]
-    if shape is not None:
-        mr = nt.nodes.new("ShaderNodeMapRange")
-        mr.inputs["From Min"].default_value = shape[0]
-        mr.inputs["From Max"].default_value = shape[1]
-        mr.clamp = True
-        mr.location = (-420, 260)
-        nt.links.new(src, mr.inputs["Value"])
-        src = mr.outputs["Result"]
-    mix = nt.nodes.new("ShaderNodeMix")
-    mix.data_type = "RGBA"
-    mix.blend_type = "MULTIPLY"
-    mix.inputs["Factor"].default_value = 1.0
-    mix.location = (-220, 260)
-    nt.links.new(src, mix.inputs["A"])
-    mix.inputs["B"].default_value = color
-    nt.links.new(mix.outputs["Result"], bsdf.inputs["Emission Color"])
-    bsdf.inputs["Emission Strength"].default_value = strength
-
-
-def _uv_sep(nt):
-    coord = nt.nodes.new("ShaderNodeTexCoord")
-    coord.location = (-1120, 0)
-    sep = nt.nodes.new("ShaderNodeSeparateXYZ")
-    sep.location = (-940, 0)
-    nt.links.new(coord.outputs["UV"], sep.inputs["Vector"])
-    return sep
-
-
-def _grid_line(nt, sock, cells, width_frac):
-    """|fract(x*cells)-0.5| > 0.5-width -> 1 on the lines."""
-    mul = nt.nodes.new("ShaderNodeMath")
-    mul.operation = "MULTIPLY"
-    mul.inputs[1].default_value = cells
-    nt.links.new(sock, mul.inputs[0])
-    frac = nt.nodes.new("ShaderNodeMath")
-    frac.operation = "FRACT"
-    nt.links.new(mul.outputs[0], frac.inputs[0])
-    sub = nt.nodes.new("ShaderNodeMath")
-    sub.operation = "SUBTRACT"
-    sub.inputs[1].default_value = 0.5
-    nt.links.new(frac.outputs[0], sub.inputs[0])
-    ab = nt.nodes.new("ShaderNodeMath")
-    ab.operation = "ABSOLUTE"
-    nt.links.new(sub.outputs[0], ab.inputs[0])
-    gt = nt.nodes.new("ShaderNodeMath")
-    gt.operation = "GREATER_THAN"
-    gt.inputs[1].default_value = 0.5 - width_frac
-    nt.links.new(ab.outputs[0], gt.inputs[0])
-    return gt.outputs[0]
-
-
-def _rings(nt, freq):
-    """Concentric rings mask around UV center."""
-    sep = _uv_sep(nt)
-    dx = nt.nodes.new("ShaderNodeMath")
-    dx.operation = "SUBTRACT"
-    dx.inputs[1].default_value = 0.5
-    nt.links.new(sep.outputs["X"], dx.inputs[0])
-    dy = nt.nodes.new("ShaderNodeMath")
-    dy.operation = "SUBTRACT"
-    dy.inputs[1].default_value = 0.5
-    nt.links.new(sep.outputs["Y"], dy.inputs[0])
-    comb = nt.nodes.new("ShaderNodeCombineXYZ")
-    nt.links.new(dx.outputs[0], comb.inputs["X"])
-    nt.links.new(dy.outputs[0], comb.inputs["Y"])
-    ln = nt.nodes.new("ShaderNodeVectorMath")
-    ln.operation = "LENGTH"
-    nt.links.new(comb.outputs[0], ln.inputs[0])
-    mul = nt.nodes.new("ShaderNodeMath")
-    mul.operation = "MULTIPLY"
-    mul.inputs[1].default_value = 6.2832 * freq * 2.0
-    nt.links.new(ln.outputs["Value"], mul.inputs[0])
-    sin = nt.nodes.new("ShaderNodeMath")
-    sin.operation = "SINE"
-    nt.links.new(mul.outputs[0], sin.inputs[0])
-    ab = nt.nodes.new("ShaderNodeMath")
-    ab.operation = "ABSOLUTE"
-    nt.links.new(sin.outputs[0], ab.inputs[0])
-    gt = nt.nodes.new("ShaderNodeMath")
-    gt.operation = "GREATER_THAN"
-    gt.inputs[1].default_value = 0.92
-    nt.links.new(ab.outputs[0], gt.inputs[0])
-    return gt.outputs[0]
-
-
-def _emit_mask(nt, bsdf, sock, color, strength):
-    mix = nt.nodes.new("ShaderNodeMix")
-    mix.data_type = "RGBA"
-    mix.blend_type = "MULTIPLY"
-    mix.inputs["Factor"].default_value = 1.0
-    nt.links.new(sock, mix.inputs["A"])
-    mix.inputs["B"].default_value = color
-    nt.links.new(mix.outputs["Result"], bsdf.inputs["Emission Color"])
-    bsdf.inputs["Emission Strength"].default_value = strength
-
-
-def _build_digits(game, mat, nt, bsdf, tex_pkg, cell, caches, warnings):
-    """7-seg digit atlas (10 cells): unlit RED glyph, masked. num default = 0."""
-    bsdf.inputs["Base Color"].default_value = (0.0, 0.0, 0.0, 1.0)
-    bsdf.inputs["Roughness"].default_value = 0.4
-    img = _image(game, tex_pkg, caches, warnings, non_color=True)
-    if img is None:
-        return
-    coord = nt.nodes.new("ShaderNodeTexCoord")
-    coord.location = (-1000, 220)
-    mapping = nt.nodes.new("ShaderNodeMapping")
-    mapping.location = (-800, 220)
-    if cell is not None:
-        mapping.inputs["Scale"].default_value = (0.1, 1.0, 1.0)
-        mapping.inputs["Location"].default_value = (cell * 0.1, 0.0, 0.0)
-    nt.links.new(coord.outputs["UV"], mapping.inputs["Vector"])
-    timg = nt.nodes.new("ShaderNodeTexImage")
-    timg.image = img
-    timg.location = (-560, 220)
-    nt.links.new(mapping.outputs["Vector"], timg.inputs["Vector"])
-    _emit_mask(nt, bsdf, timg.outputs["Color"], (1.0, 0.0, 0.0, 1.0), 3.0)
-
-
-def _build_screen(game, mat, nt, bsdf, root, leaf, caches, warnings, with_textures):
-    """Per-root faithful still frame from the material's own cooked defaults."""
-    _dark_face(bsdf)
-    if not with_textures:
-        return
-    if root == "mat_clockmat" or root.startswith("mat_segmentdigits") \
-            or leaf.startswith("inst_segmentdigits"):
-        tex = _DIGIT_DOTS_TEX if "dots" in leaf else _DIGITS_TEX
-        cell = None if "dots" in leaf else 0   # num default = 0 -> '0'
-        _build_digits(game, mat, nt, bsdf, tex, cell, caches, warnings)
-        return
-    if root.startswith("mat_tvscreen"):
-        # tex_static = tex_hugeNoise (the game's own static), brightness 0.5
-        _emit_tex(game, nt, bsdf, _TV_STATIC_TEX, (0.62, 0.68, 0.62, 1.0), 0.4,
-                  caches, warnings)
-        return
-    if root.startswith(("mat_screennoise", "mat_uiscreennoise")):
-        _emit_tex(game, nt, bsdf, _TILING_NOISE_TEX, (0.55, 0.75, 0.58, 1.0), 0.45,
-                  caches, warnings)
-        return
-    if root.startswith("mat_analogds_bulbs"):
-        _emit_tex(game, nt, bsdf, _BULB_NOISE_TEX, (0.0, 1.0, 0.0, 1.0), 1.0,
-                  caches, warnings, shape=(0.35, 0.8))
-        return
-    if root.startswith("mat_analogds_bar"):
-        sep = _uv_sep(nt)
-        lt = nt.nodes.new("ShaderNodeMath")
-        lt.operation = "LESS_THAN"
-        lt.inputs[1].default_value = 0.12   # alpha default 0 -> empty bar stub
-        nt.links.new(sep.outputs["X"], lt.inputs[0])
-        _emit_mask(nt, bsdf, lt.outputs[0], (1.0, 0.25, 0.0, 1.0), 1.2)
-        return
-    if root.startswith("mat_analogds_graph"):
-        # yellow trace line across the middle (color default (1,1,0))
-        sep = _uv_sep(nt)
-        sub = nt.nodes.new("ShaderNodeMath")
-        sub.operation = "SUBTRACT"
-        sub.inputs[1].default_value = 0.5
-        nt.links.new(sep.outputs["Y"], sub.inputs[0])
-        ab = nt.nodes.new("ShaderNodeMath")
-        ab.operation = "ABSOLUTE"
-        nt.links.new(sub.outputs[0], ab.inputs[0])
-        lt = nt.nodes.new("ShaderNodeMath")
-        lt.operation = "LESS_THAN"
-        lt.inputs[1].default_value = 0.015
-        nt.links.new(ab.outputs[0], lt.inputs[0])
-        _emit_mask(nt, bsdf, lt.outputs[0], (1.0, 1.0, 0.0, 1.0), 1.6)
-        return
-    if root.startswith("mat_analogds_screen"):
-        # the orange signal field: game's tiling noise shaped to speckle
-        _emit_tex(game, nt, bsdf, _TILING_NOISE_TEX, (1.0, 0.25, 0.0, 1.0), 1.1,
-                  caches, warnings, shape=(0.42, 0.85))
-        return
-    if root.startswith(("mat_polarity", "mat_frequency")):
-        freq = 2.0 if root.startswith("mat_frequency") else 3.0
-        _emit_mask(nt, bsdf, _rings(nt, freq), (1.0, 0.25, 0.0, 1.0), 1.4)
-        return
-    if root.startswith("matui_screengrid"):
-        # size=8 cells, width=2 (of 64) - soft green grid
-        sep = _uv_sep(nt)
-        lu = _grid_line(nt, sep.outputs["X"], 8.0, 2.0 / 64.0)
-        lv = _grid_line(nt, sep.outputs["Y"], 8.0, 2.0 / 64.0)
-        mx = nt.nodes.new("ShaderNodeMath")
-        mx.operation = "MAXIMUM"
-        nt.links.new(lu, mx.inputs[0])
-        nt.links.new(lv, mx.inputs[1])
-        _emit_mask(nt, bsdf, mx.outputs[0], (0.3, 1.0, 0.5, 1.0), 0.8)
-        return
-    # unknown screen surface: leave the dark CRT face
 
 
 def _build_water(mat, nt, bsdf, info):
