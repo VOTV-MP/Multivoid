@@ -51,6 +51,38 @@ CRITICAL_SECTION g_lock;
 std::once_flag g_lockOnce;
 bool g_opened = false;
 
+// STALENESS BOUND for buffered INFO. Guarded by g_lock (every reader and writer
+// already holds it), so a plain integer is correct here -- no atomic needed.
+//
+// MEASURED 2026-08-29, and it cost a whole diagnosis: a real r2modman session ran
+// for four minutes and left a 65-line log ending mid-boot. Nothing was wrong with
+// the mod -- `multivoid.ini.example` was regenerated at 20:03:38, the very step
+// whose INFO line is missing -- the game simply closed without reaching Shutdown()
+// (no `shutdown: END cleanup` block), and the CRT's ~4 KB buffer died with it.
+// Every INFO line since the last WARN was lost, which is precisely the window a
+// post-mortem needs.
+//
+// The pre-existing answer was ~20 explicit Flush() calls at hand-picked milestones.
+// That is a SITE LIST, and it fails the way site lists fail: it covers the paths
+// someone anticipated, and the session that actually broke was not one of them.
+// The invariant replaces the list -- the log on disk is never more than
+// kFlushIntervalMs behind the process, whatever happens next and whoever writes.
+//
+// It does NOT reintroduce what the 2026-05-27 audit removed. That measured ~50
+// synchronous disk syncs/sec from per-INFO flush (a ~2000-line dedup burst over
+// ~40 s) visibly tanking FPS. This caps the same work at ONE sync/sec regardless
+// of line rate -- 1/50th of the cost that was rejected -- and a quiet log flushes
+// nothing at all, because the check rides an existing write rather than a timer.
+// The per-line cost added is one GetTickCount64(), which reads KUSER_SHARED_DATA
+// with no syscall; its ~15.6 ms granularity is irrelevant against a 1 s interval.
+//
+// RESIDUAL, stated rather than discovered later: a process that dies during a
+// QUIET period still loses the tail written since the last flush, because there is
+// no later write to carry the check. Bounded by "lines written in the final second
+// of activity", not by "everything since the last WARN".
+constexpr ULONGLONG kFlushIntervalMs = 1000;
+ULONGLONG g_lastFlushMs = 0;
+
 // Optional log sink (the in-game console). Atomic so SetSink is lock-free vs Write.
 std::atomic<Sink> g_sink{nullptr};
 
@@ -122,6 +154,7 @@ void Init() {
     ::EnterCriticalSection(&g_lock);
     std::fprintf(g_file, "==== Multivoid log ====\n");
     std::fflush(g_file);
+    g_lastFlushMs = ::GetTickCount64();
     ::LeaveCriticalSection(&g_lock);
 }
 
@@ -141,6 +174,9 @@ void Flush() {
     if (!g_file) return;
     ::EnterCriticalSection(&g_lock);
     std::fflush(g_file);
+    // Keep the staleness stamp coherent: an explicit flush IS a flush, so the
+    // next INFO line must not immediately re-sync as if none had happened.
+    g_lastFlushMs = ::GetTickCount64();
     ::LeaveCriticalSection(&g_lock);
 }
 
@@ -220,10 +256,21 @@ void Write(Level level, const char* fmt, ...) {
     // disk syncs per second on the client, visibly tanking FPS. Flush
     // only on WARN/ERROR (critical messages stay visible immediately);
     // INFO lines ride the CRT stdio buffer (~4 KB) and land on disk in
-    // bursts. Live-tailing INFO is slightly delayed but the perf cost
-    // disappears entirely on the hot path.
+    // bursts.
+    //
+    // ...and INFO is flushed anyway once kFlushIntervalMs has passed, so the
+    // buffer can never outlive the process by more than that. See the constant
+    // for why the site list of explicit Flush() calls was not enough, and why
+    // this is 1/50th of the cost the 2026-05-27 audit rejected.
     if (level != Level::Info) {
         std::fflush(g_file);
+        g_lastFlushMs = ::GetTickCount64();
+    } else {
+        const ULONGLONG now = ::GetTickCount64();
+        if (now - g_lastFlushMs >= kFlushIntervalMs) {
+            std::fflush(g_file);
+            g_lastFlushMs = now;
+        }
     }
     ::LeaveCriticalSection(&g_lock);
 

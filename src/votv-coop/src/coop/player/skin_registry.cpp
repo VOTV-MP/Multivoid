@@ -160,6 +160,12 @@ std::vector<std::wstring> PakDirs() {
     // foreign UE4SS BP mods live (DebugMod.pak), and listing those as skins
     // would offer unloadable garbage. multivoid/ sorts first (the manual-lane
     // convention + dev deploys) so its entries win the dedupe.
+    //
+    // `harness/mod_environment.cpp` reads this SAME directory for the opposite
+    // question ("what is here that is NOT ours") and got it wrong on 2026-08-29 by
+    // assuming the top level was the only place foreign paks sit -- true by hand,
+    // false under shimloader. Keep the two in agreement: foreign BP paks live at
+    // the top level on the manual lane AND one level down on the managed one.
     const std::wstring base = ue_wrap::paths::ExeDir();
     if (base.empty()) return {};
     std::error_code ec;

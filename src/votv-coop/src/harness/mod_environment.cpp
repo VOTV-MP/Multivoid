@@ -10,6 +10,8 @@
 
 #include <windows.h>
 
+#include <cwctype>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -17,6 +19,7 @@ namespace harness::mod_environment {
 namespace {
 
 namespace cfg = coop::config;
+namespace fs  = std::filesystem;
 
 // UE4SS 3.0.1 enable list: one "Name : 0|1" per line, ';' comments. The newer
 // shimloader lane has no mods.txt at all -- that is the CONFIGURATION THAT WAS
@@ -67,25 +70,71 @@ std::vector<std::string> EnabledLuaMods(const std::wstring& exeDir) {
     return out;
 }
 
-// Foreign Blueprint mods: a .pak sitting DIRECTLY in Content/Paks/LogicMods.
-// Ours live one level down in LogicMods\multivoid\, so the flat listing is the
-// discriminator and no name matching is needed (a name test would break the
-// moment someone renames a pak, which is the thing a player is most likely to do).
+std::string Narrow(const std::wstring& w) {
+    if (w.empty()) return {};
+    const int n = ::WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (n <= 1) return {};
+    std::string s(static_cast<size_t>(n - 1), '\0');
+    ::WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, s.data(), n, nullptr, nullptr);
+    return s;
+}
+
+// Is `dirName` the directory OUR OWN paks land in? Both install lanes are covered
+// by one rule because both derive the name from the package name we choose:
+// the manual lane uses LogicMods\multivoid\ (INSTALL.md), and shimloader VFS-maps
+// each package to LogicMods\<Team>-<Name>\, which for us is Pelmentor-Multivoid.
+bool IsOurPakDir(const std::wstring& dirName) {
+    std::wstring lower = dirName;
+    for (wchar_t& c : lower) c = static_cast<wchar_t>(::towlower(c));
+    if (lower == L"multivoid") return true;
+    const std::wstring suffix = L"-multivoid";
+    return lower.size() > suffix.size()
+        && lower.compare(lower.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+// Foreign Blueprint mods: any .pak under Content/Paks/LogicMods that is not ours.
+//
+// CORRECTED 2026-08-29, first run on a real managed install. This used to list the
+// TOP LEVEL only, reasoning that "ours live one level down in LogicMods\multivoid\,
+// so the flat listing is the discriminator and no name matching is needed". That
+// holds for a hand-install and is exactly backwards for r2modman, where shimloader
+// maps EVERY package's paks into LogicMods\<Team>-<Name>\ -- so on the lane where
+// a player is most likely to have other mods, DebugMod.pak sat one level down and
+// the census reported "no foreign paks" while BPModLoaderMod was demonstrably
+// mounting it (the run's own UE4SS.log: "Loading mod: DebugMod").
+//
+// `skin_registry.cpp` already knew this about the SAME directory and says so in
+// its own comment. Two modules reading one directory on opposite assumptions is
+// the actual defect; the shared fact is now written down in both.
+//
+// Naming a directory is not the fragile "name test" the old comment rejected --
+// that was about pak FILEnames, which a player can rename freely. The containing
+// directory is derived from the package identity, which is ours to fix.
 std::vector<std::string> ForeignBpPaks(const std::wstring& exeDir) {
     std::vector<std::string> out;
+    std::error_code ec;
     // exeDir = ...\VotV\Binaries\Win64  ->  ...\VotV\Content\Paks\LogicMods
-    const std::wstring glob = exeDir + L"\\..\\..\\Content\\Paks\\LogicMods\\*.pak";
-    WIN32_FIND_DATAW fd{};
-    HANDLE h = ::FindFirstFileW(glob.c_str(), &fd);
-    if (h == INVALID_HANDLE_VALUE) return out;
-    do {
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
-        char nb[MAX_PATH]{};
-        const int n = ::WideCharToMultiByte(CP_UTF8, 0, fd.cFileName, -1, nb, sizeof(nb) - 1,
-                                            nullptr, nullptr);
-        if (n > 0) out.push_back(std::string(nb));
-    } while (::FindNextFileW(h, &fd));
-    ::FindClose(h);
+    const fs::path logic = fs::path(exeDir).parent_path().parent_path()
+                           / L"Content" / L"Paks" / L"LogicMods";
+    if (!fs::is_directory(logic, ec)) return out;
+
+    for (const auto& de : fs::directory_iterator(logic, ec)) {
+        if (de.is_regular_file(ec)) {
+            // Top level: the hand-install lane's home for foreign BP mods.
+            if (de.path().extension() == L".pak") out.push_back(Narrow(de.path().filename()));
+            continue;
+        }
+        if (!de.is_directory(ec)) continue;
+        const std::wstring dirName = de.path().filename().wstring();
+        if (IsOurPakDir(dirName)) continue;
+        // One level down: the managed lane. Report "<dir>\<pak>" -- the player is
+        // being asked to find these, and the bare filename does not locate them.
+        for (const auto& f : fs::directory_iterator(de.path(), ec)) {
+            if (!f.is_regular_file(ec)) continue;
+            if (f.path().extension() != L".pak") continue;
+            out.push_back(Narrow(dirName + L"\\" + f.path().filename().wstring()));
+        }
+    }
     return out;
 }
 

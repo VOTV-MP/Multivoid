@@ -161,6 +161,18 @@ DWORD WINAPI TimelineThread(LPVOID param) {
     // since VOTV preloads its UMG and the omega widget is gone by then). Each Post
     // runs on the game thread as soon as the pump is live (which is while the omega
     // screen ticks UMG), so these land during the intro.
+    // Census the OTHER mods in this process and warn if the player is paying frames
+    // for them. Pure file-system reads, so it does not need the Post -- but it rides
+    // one anyway so a slow disk cannot stall the boot thread.
+    //
+    // IT LIVES ABOVE THE SCENARIO BRANCH ON PURPOSE (fixed 2026-08-29). It shipped
+    // inside `scenario == "play"`, which is the hands-on AUTOTEST path -- so it never
+    // ran for a single real player, because a native launch is `menu`. The bug was
+    // invisible to its own verification: both arms were exercised under `play`, the
+    // only scenario where the code was reachable. A boot-time census belongs to BOOT,
+    // not to one test scenario, and every scenario reaches this line.
+    Post([] { harness::mod_environment::Run(); });
+
     const bool storyBoot = (scenario == "play");
     const bool menuMode  = (scenario == "menu");
     if (storyBoot) {
@@ -266,10 +278,8 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         // classes load with the menu/preLoad world -- the checker logs what it
         // can and the per-class consumers all self-retry anyway.)
         Post([] { harness::sdk_check::Run(); });
-        // Census the OTHER mods in this process and warn if the player is paying
-        // frames for them. Pure file-system reads, so it does not need the Post --
-        // but it rides one anyway so a slow disk cannot stall the boot thread.
-        Post([] { harness::mod_environment::Run(); });
+        // (the mod-environment census used to sit here -- it now runs above the
+        // scenario branch, because here it was unreachable for every real player)
         // Coop networking: if multivoid.ini configures net.role, the puppet is
         // network-driven (auto-spawned on the first peer pose) and we send our pose;
         // otherwise the puppet is spawned locally + static (the pre-net behaviour).

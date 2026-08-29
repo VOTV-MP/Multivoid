@@ -28,13 +28,19 @@ void Write(Level level, const char* fmt, ...);
 using Sink = void (*)(Level level, const char* msg);
 void SetSink(Sink sink);
 
-// Force the CRT stdio buffer to disk NOW. INFO lines normally ride the ~4 KB
-// buffer (flushed only on WARN/ERROR -- a perf fix so hot-path INFO spam doesn't
-// trigger a synchronous disk sync per line). Call this at a LOW-FREQUENCY boot
-// milestone (e.g. once the boot mode is decided) so the whole boot sequence
-// (banner -> version -> HEALTH -> mode-ready) is visible on disk immediately for
-// live-tailing / post-mortem, WITHOUT re-introducing per-INFO flush cost. Do NOT
-// call on a hot path.
+// THE STANDING GUARANTEE (2026-08-29): the log on disk is never more than one
+// second behind the process. INFO rides the CRT's ~4 KB buffer for the perf
+// reason in log.cpp, but a write that finds the buffer older than that syncs it,
+// so an abnormal exit -- a kill, a crash, a close that misses Shutdown() -- can
+// cost at most the lines written in the final second of activity. You do NOT have
+// to call Flush() to make a post-mortem readable; that used to be true and it is
+// why a four-minute session once left a 65-line log ending mid-boot.
+//
+// Force the CRT stdio buffer to disk NOW, ahead of that bound. Worth it only when
+// something EXTERNAL is about to read the file and cannot wait a second -- a test
+// runner polling for a verdict line, or a boot milestone you want tailable at
+// once. Do NOT call on a hot path: this is a synchronous disk sync, and per-line
+// flushing is exactly what the 2026-05-27 audit removed.
 void Flush();
 
 }  // namespace ue_wrap::log
