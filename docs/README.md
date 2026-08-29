@@ -102,6 +102,10 @@ the local-only docs-arc note (this documentation audit)
 time" pointer. It is long on purpose: it exists so the same hole is not dug twice. If you are about
 to spend a day on something, grep it first.
 
+**[CRUTCHES.md](CRUTCHES.md)** — the standing register of subsystems we shipped in a crutch shape,
+with the measured evidence and the proper fix for each. Created 2026-08-29 on user directive. It is
+the counterpart to LESSONS.md: that one records what we learned, this one records what we still owe.
+
 [OPUS_48_DISCIPLINE.md](OPUS_48_DISCIPLINE.md) — the working agreement for AI-assisted sessions on
 this codebase. Multivoid is built by one maintainer with Claude, which the project states openly
 rather than hides.

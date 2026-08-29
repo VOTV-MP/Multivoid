@@ -105,8 +105,28 @@ mid-activity-join rule (principle 8: a peer joining mid-upgrade / mid-purchase h
    (if an upgrade gates RNG), `docs/COOP_SYNCER_MODEL.md` (the authority model), `docs/COOP_SYNC_MAP.md`.
 
 ## 5. NEXT (the RE work this folder will hold)
-- [?] Extract the real names of `enum_physicalModules` (34) + `enum_atvUpgrades` + the `list_store` rows
-  (uasset string tool / IDA) — the CXX dump left them `NewEnumerator*`.
-- [?] Read `struct_upgrades` / `struct_store` / `struct_storeOrder` field layouts.
-- [?] RE each family's APPLY path (`upgradeTake` → what it mutates) — decides host-auth vs per-player.
-- [?] Design the coop upgrade-sync (OPEN-3) per the syncer model, with the mid-join answer.
+
+**2026-08-29 — the ATV family is DONE. Its RE lives in `docs/vehicles/ATV.md` §3-§5** (one doc, because
+the ATV modules are inseparable from the vehicle that derives them). Three of the four items below were
+closed by it:
+
+- [V] **`enum_physicalModules` named** — 34 values, decoded from the uasset `DisplayNameMap`
+  (`ATV.md` §3.1). The ATV set is ids **{8..19} ∪ {33}** = 13 modules. **`enum_atvUpgrades` is an EMPTY
+  asset** (only `_MAX`) — a dead enum; do not build against it.
+- [V] **`list_store` rows named** — 473 rows read; the ATV block is 11 buyable upgrades + `atvwheel` +
+  `atvcarbattery`, all subcategory "Vehicle", prices in `ATV.md` §3.2. **`guns` and `fly` have no shop
+  row**, and **no row sells the ATV itself**.
+- [V] **The ATV family's APPLY path is RE'd** (`ATV.md` §4): `modules[]` is the sole truth, every
+  `has*` bool and every visual/physical effect is derived by the parameterless `updUpgrades()`, install
+  is `playerUsedOn` + a held `prop_atvUpgrade_C` (consumed), removal is `takeOffUpgrade` (re-spawns the
+  prop into the player's hands). Storage is the ATV's own `getData` **bytes[0]** slot — **disjoint from
+  the save's `Fstruct_upgrades`**, which is the signal/console family.
+- [V] **Dispatch verdict for the ATV family: the trigger is INVISIBLE** (`playerUsedOn` is
+  `EX_LocalVirtualFunction`), so it is an act-as-host INTENT lane, not a hook lane (`ATV.md` §7).
+
+Still open:
+- [?] Read `struct_upgrades` / `struct_store` / `struct_storeOrder` field layouts (the **signal**
+  family's storage; `SIGNAL_UPGRADES.md` has the 18-int shape but not the store structs).
+- [?] RE the **base / console** families' APPLY paths (`upgradeTake` → what it mutates).
+- [?] Design the coop upgrade-sync for the non-ATV families (OPEN-3) per the syncer model, with the
+  mid-join answer. (The ATV family's design is `research/findings/vehicles/votv-ATV-full-sync-DESIGN-2026-08-29.md`.)

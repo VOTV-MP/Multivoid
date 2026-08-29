@@ -19,29 +19,24 @@ Evidence: **[V]** measured from the SDK this session · **[?]** binary/uasset on
 | **int_upgrade interface** | `getUpgradesList(TArray<FName>)` + `upgradeTake(FName)` + `intComs_stuffUpgraded(GM)` — implemented broadly | [V] signatures; `upgradeTake` mutation path [?] | — (the seam every family flows through) | OPEN |
 | **Save storage** | `actor_save` holds the owned upgrade set (getUpgradesList/upgradeTake) | [V] present; `struct_upgrades` fields [?] | HOST-authoritative (the save is the host's) | OPEN |
 | **Store / shop** | buy via drone `sendShop(Fstruct_storeOrder)`; catalog `list_store` datatable | [V] the buy seam; `struct_store`/`struct_storeOrder` fields [?]; row names [?] | INTENT → host validates cost/points → host applies + broadcasts | OPEN |
-| **ATV physical modules** | 13 `prop_atvUpgrade_*_C : Aprop_physModule_C`, attached to the ATV; `enum_physicalModules` (34 slots) | [V] class list; enum names [?] (`NewEnumerator*`) | shared-world SET (host-auth) + ATV's existing sync carries presence | OPEN |
+| **ATV physical modules** | 13 `prop_atvUpgrade_*_C : Aprop_physModule_C`; the ATV's `modules[]` (`TArray<enum_physicalModules>`) is the sole truth, `updUpgrades()` derives everything | **RE'd 2026-08-29** [V] — enum named (ids {8..19}u{33}), shop rows + prices read, install/remove/derive bytecode mapped, save slot located, dispatch measured INVISIBLE | ACT-AS-HOST intent (arbiter owns `modules[]`); mirror = write array + call `updUpgrades()` | **OPEN** (RE `docs/vehicles/ATV.md` §3-§5, §7) |
 | **Object / base upgrades** | `uicomp_objectUpgradeSlot` / `ui_objectUpgrades`; `prop_transformerUpgrade`; `initialServerUpgradeSpawn` | [V] classes; effects [?] | HOST-authoritative (base/world objects) | OPEN |
 | **Console / desk (SIGNAL) upgrades** | `uicomp_upgradeSlot_C` leveled slots; levels persist in `Fstruct_upgrades` (18 int32); parametrize download/ping/coord/comp/radar/detector sims | **RE'd** [V] — 18-level struct + 20 ui slots + effect fields mapped; slot->field wiring [?] (bytecode) | HOST-authoritative: mirror the whole `Fstruct_upgrades` host->client; buying = client intent -> host validates points -> broadcasts | **OPEN** (design in `SIGNAL_UPGRADES.md`) |
 
 ---
 
-## ATV physical-module catalog (13, measured [V] from `prop_atvUpgrade_*.hpp`)
+## ATV physical-module catalog (13) — **superseded by `docs/vehicles/ATV.md` §3.1-§3.2, §4.4**
 
-| Upgrade | Class | Effect (native) | Notes |
-|---|---|---|---|
-| aircontrol | `prop_atvUpgrade_aircontrol_C` | air control while airborne | [?] effect unread |
-| alternator | `prop_atvUpgrade_alternator_C` | power/charge | [?] |
-| belt | `prop_atvUpgrade_belt_C` | drivetrain | [?] |
-| bigLights | `prop_atvUpgrade_bigLights_C` | lighting | [?] |
-| bumper | `prop_atvUpgrade_bumper_C` | collision/protection | [?] |
-| container | `prop_atvUpgrade_container_C` | cargo storage | [?] (an inventory container -> coop container-contents question, cf. take-4 R11) |
-| floaties | `prop_atvUpgrade_floaties_C` | water buoyancy | [?] |
-| fly | `prop_atvUpgrade_fly_C` | flight | [?] |
-| guns | `prop_atvUpgrade_guns_C` | weapons | [?] (spawns projectiles -> host-auth) |
-| map | `prop_atvUpgrade_map_C` | map/nav | [?] |
-| overchargedEngine | `prop_atvUpgrade_overchargedEngine_C` | engine power | [?] |
-| radio | `prop_atvUpgrade_radio_C` | audio | [?] |
-| solar | `prop_atvUpgrade_solar_C` | solar charging | [?] |
+Full table there: module id, display name, prop class, shop row, price, and **every effect
+`updUpgrades()` applies**. Summary: ids **8-19 and 33**; 11 are buyable (150-1500 credits, subcategory
+"Vehicle"); **`guns` and `fly` have no shop row**, and `hasGuns` is read nowhere in `ATV.json`.
+The measured effects are: `bigLights` (light cone/intensity/colour + halves the light battery drain),
+`bumper` (frontal damage multiplier via `getBumperMult`), `solar` (recharge), `belt` (mesh + a kerfur
+branch), `container` (the `atv_inventoryContainer|<key>` container + collision), `floaties`
+(`floater` + `metal_barrel` phys-material), `map` (`digitalMap` child actor), `radio`
+(`prop_radio_atv` + pause/close on removal), `aircontrol` (mid-air steering), `fly` (flight branch),
+`overchargedEngine` (**speed 1500->2000, turbo 2250->5000**, exhaust FX, **doubles battery drain**),
+`alternator` (**zeroes the seat+engine battery draw**), `guns` (**no measured effect in the ATV**).
 
 ---
 
@@ -51,3 +46,9 @@ Evidence: **[V]** measured from the SDK this session · **[?]** binary/uasset on
   (`struct_storeOrder`, drone `sendShop`), 3 upgrade families (ATV 13 modules / object-base / console),
   `enum_physicalModules` (34 slots, unnamed in the dump). NO coop sync exists (OPEN-3). Names of the
   enums + `list_store` rows + the `struct_*` field layouts are the next excavation (binary uasset).
+- **2026-08-29** — **the ATV family is RE COMPLETE.** `enum_physicalModules` decoded from the uasset
+  `DisplayNameMap` (34 names; ATV = ids 8-19 + 33); `enum_atvUpgrades` measured **EMPTY** (dead asset);
+  `list_store` read (473 rows -> 11 ATV upgrade rows + wheel + battery, prices captured; **no ATV
+  vehicle row exists**); install / remove / derive bytecode disassembled; the save slot located
+  (`getData` bytes[0]); `processKeys()` identified as the single re-derive seam; `playerUsedOn`
+  measured `EX_LocalVirtualFunction` (**INVISIBLE**). Written up in `docs/vehicles/ATV.md`.
