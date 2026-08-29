@@ -1,0 +1,25 @@
+schema_version = "1.0.0"
+
+id = "votvio"
+version = "0.1.0"
+name = "VotvIO"
+tagline = "Import a Voices of the Void .sav into a full scene"
+maintainer = "pelmentor"
+type = "add-on"
+website = "https://github.com/VOTV-MP/Multivoid"
+tags = ["Import-Export"]
+blender_version_min = "4.2.0"
+license = [
+  "SPDX:MIT",
+]
+copyright = [
+  "2026 pelmentor",
+  "vendor/UE4Parse: 2021-2026 MinshuG (MIT)",
+]
+
+[build]
+paths_exclude_pattern = [
+  "__pycache__/",
+  ".git*",
+  "*.pyc",
+]

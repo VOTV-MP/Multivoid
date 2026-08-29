@@ -93,6 +93,7 @@ time) · [COOP_MIRROR_IDENTITY_WINDOW_RACE.md](COOP_MIRROR_IDENTITY_WINDOW_RACE.
 
 [UE4SS_ARC.md](UE4SS_ARC.md) (becoming a UE4SS mod) ·
 [OVERLAY_CAPTURE_COEXIST.md](OVERLAY_CAPTURE_COEXIST.md) (coexisting with RTSS and OBS) ·
+[BLENDER_ARC.md](BLENDER_ARC.md) (VotvIO — the Blender addon importing a .sav into a full scene) ·
 the local-only docs-arc note (this documentation audit)
 
 **The ledger**
