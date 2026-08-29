@@ -4053,6 +4053,35 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   BEFORE the fix and give it a RED arm; and budget for it finding something else.
   `memory/lesson-an-untestable-path-hides-more-than-its-residual.md`
 
+- **A shared CONFIG store defeats per-copy isolation, and a persisted loss INCRIMINATES your mod.**
+  `[V]` 2026-08-29: `forward` vanished from the machine's keybind file and presented as "all peers
+  can't move forward". `deploy-all.ps1` promises each game copy its OWN `Saved/`; measured, every
+  copy's `Saved/Config/` is **EMPTY** and the effective config is ONE shared
+  `%LOCALAPPDATA%\VotV\Saved\Config\WindowsNoEditor\` — shared with every other VotV install on the
+  box (a Desktop copy, the r2modman profile) because no launcher passes a user-dir switch. So "ALL
+  peers" was one file with four readers, not a systematic code defect. **The control test made it
+  worse, not better:** removing the mod did not restore W, because the loss was on disk — and a
+  control that cannot clear PERSISTENT state converts an exoneration into an accusation. Free cam
+  kept working throughout (`freecam.cpp:53` reads `GetAsyncKeyState`, the physical key, never the
+  binding table), which was misread as "the key reaches the game, so movement is at fault". LOOK
+  FIRST: for any "input/settings wrong on every peer" report, diff `Input.ini`'s `ActionName=` list
+  against the cooked `DefaultInput.ini` BEFORE reading a line of our code. Two residuals stay open:
+  peer config is not isolated (so no per-peer settings result from this rig is trustworthy), and
+  nothing in the rig ever presses a movement KEY — `navprobe` drives a reflected `AddMovementInput`
+  that bypasses the binding table, which is exactly why it stayed green while forward was dead.
+  `memory/lesson-a-shared-config-store-defeats-per-copy-isolation.md`
+
+- **VOTV's movement is ACTION mappings, not axes — a generic-UE4 clearing did not apply.** `[V]`
+  2026-08-29: the game declares exactly TWO axis mappings in total (`mouseX`, `mouseY`,
+  `DefaultInput.ini:162-163`); `forward`/`back`/`left`/`right`/`jump`/`run` are all ActionMappings.
+  A doc had cleared our `InpActEvt_*` interceptors as movement suspects with "movement in UE is an
+  AXIS, not an action event" — true of UE4 in general, FALSE for this game, so the suspect was never
+  actually cleared. It survives re-clearing only on measured ordinals (ours 38/41/42, 58/59, 13/14,
+  2/3, 0/1 vs movement's 26-37). LOOK FIRST: these are cooked BP names whose
+  `_K2Node_InputActionEvent_<N>` suffix is a GLOBAL node ordinal — a recook that inserts one node
+  renumbers the tail, and a failed resolve is loud while a resolve to the WRONG function is silent.
+  `memory/lesson-a-shared-config-store-defeats-per-copy-isolation.md`
+
 ## 5. Engine / UE4 facts
 
 - **A UMG getter may read back YOUR OWN REQUEST, not the engine's state.** `[V]` 2026-08-26, twice:
