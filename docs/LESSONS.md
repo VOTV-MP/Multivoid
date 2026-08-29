@@ -2022,6 +2022,17 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   opening gate before the body.**
   `memory/lesson_the_answer_was_already_written_down_in_this_repo.md`
 
+  **INSTANCE 13 (2026-08-29) -- a TASK SPEC whose options were already RANKED, and I shipped the one
+  it rejected.** The user re-asked for "one shared `scientists.pak`"; I measured the break from scratch
+  and shipped a hardcoded bundle->members map. `docs/UE4SS_ARC.md` section 7.7b had SPECIFIED that task
+  six days earlier, measured the same break in the same words, ranked three options and rejected the
+  hardcoded list *"unless (i)/(ii) both fail"* -- neither was tried. And a row in THIS file, written the
+  same day, had already counted **eleven** surfaces pinned to one-pak-per-skin and warned that "fixing
+  the logic alone ships a build whose own UI lies"; my commit fixed the 3 logic sites and left the 2
+  player-facing strings and 6 contract comments lying, exactly as predicted. Both were found by the
+  `/documentize` grep, after shipping. SEVENTH rule: **a user RE-ASKING for something is not evidence
+  that nothing is written about it** -- it is often evidence it was specified once and never built, so
+  grep the doc tree for the ARTIFACT's name before designing.
 - **Classify by the predicate you are ENFORCING, not by a property of the wire** (2026-08-26, two `/qf` passes on one
   register row). The row asks a question about **what a HANDLER does with `senderSlot`**. I sized it
   seven times by WIRE properties instead and produced seven wrong sets: 11 lanes (assembled, never
@@ -2879,7 +2890,14 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 - **`subsystems::Install` is called EVERY net_pump tick (idempotent contract)** — net_pump.cpp:1014, "one-
   shot install ... idempotent"; each sub-Install MUST latch its noisy/expensive work or it re-runs per
   frame (desk_diag ENABLED banner ~37k/session, `2de202ed`). *Look FIRST:* add a `static bool` latch to
-  any new Install that logs/allocates/hooks/resolves. `memory/lesson_subsystems_install_runs_every_tick_must_latch.md` (SHARPENED v120: a success-only latch whose FAILED retry re-runs FindClass = a 60 Hz pre-world array-walk bomb — put every resolve retry behind a throttled gate or a cached resolver)
+  any new Install that logs/allocates/hooks/resolves. `memory/lesson_subsystems_install_runs_every_tick_must_latch.md` (SHARPENED v120: a success-only latch whose FAILED retry re-runs FindClass = a 60 Hz pre-world array-walk bomb — put every resolve retry behind a throttled gate or a cached resolver).
+  **THIRD INSTANCE 2026-08-29, and it arrived in an ADOPTED COMMIT:** `ko_respawn::Install` (cherry-picked
+  from a contributor the night before) logged unconditionally — ~30 identical lines per second, measured
+  in the smoke's log diff — and, worse, **cleared its own `g_interceptorInstalled` latch every tick**, so
+  the lazy `RegisterInterceptor` re-entered forever instead of latching once. A contributor cannot know a
+  rule that lives in our memory; **the ADOPTER owes the check.** *Look FIRST:* when cherry-picking a
+  module that defines `Install(Session*)`, diff its first lines against a sibling's before merging —
+  refresh the session pointer, then `if (g_installed) return;`.
 - **One bool latch fusing DISTINCT terminal states (success vs DISABLED) makes some consumer's gate
   wrong for one of them** — pre-s27 kerfur_convert `g_installed=true` meant BOTH "ready" and "module
   disabled", so the request gate PASSED requests in the disabled state (the exact zeroed-frame
@@ -4340,6 +4358,24 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   pointer). LOOK FIRST: `tools/debug/parse_dump.py`; symbolize by rebuilding the
   deployed sha's commit for its PDB.
   `memory/lesson_every_ue4ss_mod_is_maindll_disambiguate_dumps_by_base.md`
+
+- **2026-08-29 — A MECHANISM IS ONLY AS WIDE AS THE CODE THAT CONSULTS IT: three claims died in one
+  pass, each taken from a name or a header instead of from the reader.** (1) A security design six
+  weeks old rested on `IP_AllowWithoutAuth = 0`; `[V]` that convar is consulted by exactly ONE class
+  (`steamnetworkingsockets_udp.cpp:1824-1841`) while the base class allows unsigned certs
+  unconditionally (`connections.cpp:1806-1814`) and the P2P class — our primary transport — does not
+  override it, so the mechanism could never have hardened the lane it was written for. (2) "GNS proves
+  the peer holds the key its cert names" is true and irrelevant: `[V]` `identity_string` and
+  `key_data` are independent fields checked against different things (`:1452-1458` vs `:1497`) and
+  **nothing compares the two**, so a peer can present a victim's key as its identity and pass every
+  library check. (3) `SetCertificate` on a self-issued UNSIGNED cert fails: `[V]`
+  `CertStore_CheckCert` returns at its first line (`certstore.cpp:600-605`) and never reaches the
+  parse below it, so the caller reads an EMPTY out-message and answers "Cert has invalid public key"
+  — an out-parameter filled only on the success path. *Look FIRST:* grep who READS a knob before
+  designing on it (the vendored `src/`, not the `include/`), and check whether YOUR lane's class
+  overrides the virtual that consults it; if you cannot cite one line where two values are compared,
+  the library does not bind them; and read every early return of any checker that both returns a
+  verdict and fills a struct. `memory/lesson_a_mechanism_is_only_as_wide_as_the_code_that_consults_it.md`
 
 ## 6. Assets, models, geometry
 
