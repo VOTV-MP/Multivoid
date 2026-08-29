@@ -78,7 +78,7 @@ BUILT. Evidence `HO`=hands-on · `log` · `ST`=selftest/e2e · `code` · `inf` �
 | **Grime** | decrease-only min | 2 | 2U | code | CO | snapshot |
 | **Window-cleaning** | decrease-only min | 1 | 1W | ST | CO | snapshot |
 | **Garbage-chute** | client suppress | 2 | 2U | code | PP/HA | none |
-| **ATV** | occupant pose | 5 | 5U | code | CA/HA | snapshot |
+| **ATV** (**CRUTCH C1** -- `docs/CRUTCHES.md`; being redesigned, not extended) | occupant pose | 5 | 5U | code | CA/HA | snapshot |
 | **Shop-order** | client→host commit | 1 | 1U | code | **ARB** | watermark-prime |
 | **Appliance** | 1-bit channel | 1 | 1U | code | CO | snapshot |
 | **Weather** (§5) | field-state | 5 | 1W · 1B · 3U | log | HA | snapshot |
@@ -162,14 +162,14 @@ a take-4 bug that a later unverified fix addressed stays at its last-measured `B
 | Garbage-chute | spawner suppression | U | code | HA | `InstallSpawnerSuppressors` (host rolls) | none |
 | ATV | body pose (occupant) | U | code | CA | `atv_sync::SetTarget` | snapshot adopt=1 |
 | ATV | authority-release / throw | U | code | CA | `OnAtvRelease` | none |
-| ATV | purchased spawn | U | code | HA | `OnAtvSpawn` | snapshot (synth key) |
-| ATV | purchased destroy | U | code | HA | `OnAtvDestroy` | n/a |
+| ATV | ~~purchased~~ **mid-session** spawn | U | code | HA | `OnAtvSpawn`. **LABEL CORRECTED 2026-08-29:** no row in the 473-row `list_store` and no craft recipe sells an ATV `[V]`, so the lane's own comment (`atv_sync.cpp:98-101`, "a bought ATV is delivered ONLY on the host") is FALSE. The code's real predicate is `isHost && key not-in g_savePlacedKeys && obj not-in g_savePlacedActors` (`:313-318`) = "an ATV first seen after the baseline window". Whether ANY such ATV exists is UNMEASURED; gated for RULE-2 deletion on a runtime census | snapshot (synth key) |
+| ATV | ~~purchased~~ **mid-session** destroy | U | code | HA | `OnAtvDestroy`; same corrected premise as the row above | n/a |
 | ATV | seat contention (mount deny) | U | code | CA | PR #9 `ca89cc1e` + `c4aabe15`: `occupantSlot` per indexed ATV; the deny is a client-side PRODUCER suppression at `device_occupancy::OnUseInputPre` (`ClearAimForDispatch`), and a simultaneous mount is settled by LOWER SLOT WINS in `atv_sync::OnReliable`. Build + smoke only -- the smoke does NOT put two peers on one ATV, so the tie-break has never been observed firing | snapshot (adopt=1 carries `e.occupantSlot`, so a joiner inherits the active driver) |
 | Shop-order | new order forward | HO | code+drill | ARB | v136 `afcbff39`: the intent is a `list_store` ROW NAME only; the host PRICES it from its own table, checks its own balance, rolls its own ETA, confirms an `OrderCount()` +1 edge, then charges (`order_sync::ResolveOne`). GREEN+RED drill on DLL `899E80EDE468AEC1`; NOT hands-on | watermark-prime |
 | Appliance | on/off bool (6 classes) | U | code | CO | `g_applianceAdapter` | snapshot |
 | Container (device) | open/closed state | U | code | CO | `interactable_sync` `g_container` (`ReliableKind::ContainerState`) | snapshot |
 
-NOT SYNCED (world/misc): client clock never free-runs (TimeScale forced 0); balance HUD repaint is client-local; daily-task leans on save-transfer for JOIN state (no connect snapshot; email gained the ready-edge SEED 2026-08-23 `0676e5a8` -- join-window rows now delivered); unkeyed doors keep native behaviour; door swing is force-snap not animated when far; serverbox break/fix verbs are invisible (state+`check()` mirror); grime/window FAR vanishes ignored (stream-out); calm turbine world goes silent; idle save-ATVs stay per-peer physics until authored; client never mutates its own shop orders; sub-second event cues escape the 1 Hz poll.
+NOT SYNCED (world/misc): client clock never free-runs (TimeScale forced 0); balance HUD repaint is client-local; daily-task leans on save-transfer for JOIN state (no connect snapshot; email gained the ready-edge SEED 2026-08-23 `0676e5a8` -- join-window rows now delivered); unkeyed doors keep native behaviour; door swing is force-snap not animated when far; serverbox break/fix verbs are invisible (state+`check()` mirror); grime/window FAR vanishes ignored (stream-out); calm turbine world goes silent; idle save-ATVs stay per-peer physics until authored -- and **per-peer TICK**, so `fuel`/`battery`/`dirt` accumulate INDEPENDENTLY on every peer (`[V]` 2026-08-29: the accumulators are `ReceiveTick`-only and nothing parks an unauthored mirror's tick) = a live `COOP_WORLD_PROP_DIVERGENCE` instance, not merely a physics-ownership note; client never mutates its own shop orders; sub-second event cues escape the 1 Hz poll.
 
 
 ### Physics props — `coop/props/`

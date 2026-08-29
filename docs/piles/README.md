@@ -10,6 +10,17 @@
 > `init()` export 80): **[11-PROXY-TO-NATIVE-NATIVIZATION-2026-06-30.md](11-PROXY-TO-NATIVE-NATIVIZATION-2026-06-30.md)**
 > · [[project-pile-nativization-2026-06-30]]. (The proxy-centric framing below still describes the CLUMP form.)
 >
+> **BUT THE RESIDUAL IS A CRUTCH -- entry C2 in [`docs/CRUTCHES.md`](../CRUTCHES.md) (USER ruling
+> 2026-08-29: "interaction with piles is as crutchy as atv today - creating a pile object attachmed etc").
+> Next in line after the ATV (C1).** What shipped above is real and hands-on verified; what it did NOT do is
+> finish. Still in the tree: **two mirror implementations for one concept** compile together (bare
+> `AStaticMeshActor` proxy for the clump, rooted native for the pile) -- RULE 2; and the **parallel
+> camera-ray-cone aim** (`EidForAimedPileProxy`) survives, because it exists only to compensate for a proxy
+> that can never be `lookAtActor`. The original reason for the proxy was measured FALSE by the 2026-06-30
+> inertness probe (the mirror's death was **GC (unrooted)**, not the blueprint), which is why the pile form
+> could go native at all -- the clump was left behind as "too live", which is the same brain-parking problem
+> every other lane solves. No design pass has been run on C2.
+>
 > **FOLLOW-ON (updated 2026-07-02, LOCAL commits `de492af8`..HEAD = 19+ ahead, NOT pushed):**
 > - **SOUND-events (pickup + land) = VERIFIED [V hands-on 16:23]** (`8f2b689c`). RE: the chipPile BP has NO
 >   dedicated pickup/land sound — pickup = `use`+`physSound.soft`, land = `physSound.impact`

@@ -2848,6 +2848,52 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   STORE?" and never "what ELSE do these WRITE?". *Look FIRST: a census scoped to one DESTINATION reads as
   a census of the function — enumerate every write target, not every caller.*
   `memory/lesson_census_the_direction_not_only_the_operation.md`
+- **READ THE PAYLOAD'S COMMENT, NOT ONLY ITS FIELDS.** 2026-08-29, ATV design pass.
+  `protocol.h:4086-4090`'s comment on `AtvStatePayload` says verbatim *"idle ones stay physics-on +
+  grabbable"*. I opened that struct in `/qf` round 1 **for its field list**, and "discovered" that same
+  fact in round 8 as a finding that reversed a design decision. A wire struct's field list answers
+  "what is on the wire"; its comment answers **"what the peers DO with it"**, which is the question a
+  sync design is actually asking, and it is often the only written statement of that invariant.
+  *Look FIRST: when you open a struct for its fields, read its comment for its CLAIMS in the same
+  pass and write them beside the field list; if your forming design contradicts one, that is a round-1
+  finding.* Bounded by `[[lesson-a-cannot-in-a-comment]]` (the claim may itself be false -- read it,
+  then verify it). `memory/lesson_read_the_payloads_comment_not_only_its_fields.md`
+- **A LESSON'S POINTER ROTS INDEPENDENTLY OF ITS TAKEAWAY.** 2026-08-29. This ledger's
+  `bSimulatePhysics` row ended *"Read a bitfield via `FindBoolFieldBits` (`reflection.h:277-290`)"* --
+  `[V]` that symbol exists **nowhere in the tree**; the real one is `FindBoolProperty`
+  (`reflection.h:299`), and those lines are `EnumerateStructFields`. The takeaway was still correct;
+  only the pointer had died. It was found **by accident**, because a design argument happened to cite
+  the row. A takeaway is a statement about the engine (stable); a pointer is a statement about OUR
+  tree (moves weekly), and the DIG-RULE makes the next session TRUST the pointer instead of searching
+  -- so a dead one is a WORSE dig than no lesson. *Look FIRST: build a `lessons_gate` that greps every
+  backticked identifier and `file.h:NNN` in this file against the tree (the pattern exists:
+  `registry_gate.ps1`, `nick_gate.ps1`, `minhook_free_gate.ps1`). Until it exists, grep a lesson's
+  symbol at the moment you CITE it -- that is when the rot becomes load-bearing.*
+  `memory/lesson_a_lessons_pointer_rots_independently_of_its_takeaway.md`
+- **PRIOR ART TRANSFERS ONLY WITH ITS PREMISE.** 2026-08-29. MTA's vehicle model was adopted, then
+  rejected, then re-opened inside one pass -- each time on an unmeasured premise about OUR world.
+  `[V]` MTA keeps remote vehicles simulating (`ReadVehiclePuresync`, `UpdateTargetPosition:3867-3907`);
+  `[V]` our prop mirrors are kinematic (`native_pile_mirror.cpp:70`), which seemed to kill the
+  transfer; `[V]` but `atv_sync.cpp` calls `ReleaseMirror` at `:448`/`:489`/`:635`/`:661`, so the ATV
+  mirror **already simulates** whenever idle or released. The precedent's authority attaches to the
+  MECHANISM and silently carries to the PRECONDITION, which is a fact about our tree, not part of the
+  precedent. *Look FIRST: after grepping the MTA equivalent of your PROBLEM, write down the
+  precondition its answer needs and grep OUR tree for it before concluding either way -- and if the
+  precondition is "this project always does X", enumerate the instances, because the exception is
+  usually the entity you are designing for.* `memory/lesson_prior_art_transfers_only_with_its_premise.md`
+- **PARK THE BRAIN; DO NOT REPLACE THE ENGINE ENTITY.** 2026-08-29, the thesis of the new crutch
+  register (`docs/CRUTCHES.md`). Both opening entries are the same move: the ATV mirror **freezes**
+  the engine entity (killing the constraint rig's suspension, and its tick-only steering and torque);
+  the trash clump mirror **replaces** it with a bare `AStaticMeshActor`. In both cases the obstacle
+  was ONE property -- actor tick, and `AddToRoot` (`[V]` the 2026-06-30 probe proved the clump
+  mirror's death was GC, not the blueprint). The diagnostic signature is **a crutch that needs a
+  crutch**: the fake actor *"can never be lookAtActor"*, so a parallel camera-ray-cone aim system was
+  built, and it is still in the tree. *Look FIRST: when a mirrored engine entity misbehaves, ask WHICH
+  BRAIN DO I PARK (tick / bound delegates / LifeSpan / timers / GC-rooting), never "how do I stop
+  being the engine entity". Principle 3 is the test. And when a probe later proves the obstacle was
+  one property, RULE 2 retires the workaround WHOLE, not for the convenient half -- two mirror
+  implementations for one concept compile together today.*
+  `memory/lesson_park_the_brain_do_not_replace_the_engine_entity.md`
 
 ## 3. Sync architecture (owners, routers, lifecycle)
 
