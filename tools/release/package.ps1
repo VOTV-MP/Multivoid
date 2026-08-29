@@ -91,6 +91,10 @@ Set-Content -LiteralPath (Join-Path $stage 'manifest.json') `
             -Encoding utf8 -NoNewline
 Copy-Item $iconPath   (Join-Path $stage 'icon.png')
 Copy-Item $readmePath (Join-Path $stage 'README.md')
+# LICENSE rides in the zip root (MIT, added 2026-08-29); its scope notes carry
+# the pak-assets carve-out, so the archive explains its own licensing.
+$licensePath = Join-Path $repoRoot 'LICENSE'
+if (Test-Path -LiteralPath $licensePath) { Copy-Item $licensePath (Join-Path $stage 'LICENSE') }
 Copy-Item $PayloadDll (Join-Path $stage 'mod/dlls/main.dll')
 # enabled.txt: UE4SS reads the FILE'S PRESENCE, and the field packages ship it with
 # the literal "true" inside. Match them rather than shipping an empty file.

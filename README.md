@@ -330,12 +330,15 @@ Prior art this project learned from, with thanks:
 
 ## Legal
 
-This is a **hook-only mod**. It contains **no Voices of the Void
+This is a **hook-only mod**: the mod's code contains **no Voices of the Void
 code or assets**. You must own a legitimate copy of the game to use it.
 
-Distributed under the same terms as the upstream references it borrows from:
-**MIT** for MinHook and the UE4SS-derived reflection algorithms. Unaffiliated
-with the VOTV authors.
+The repository is licensed under the **MIT License** (see `LICENSE`) — the
+same family as the projects it builds on (MinHook, Dear ImGui, and the
+UE4SS-derived reflection algorithms, all MIT; GameNetworkingSockets and Opus,
+BSD). The optional starter-skin pak bundled with releases (`scientists.pak`)
+is a community conversion of third-party game assets and is **not** covered
+by the MIT license. Unaffiliated with the VOTV authors.
 
 ---
 

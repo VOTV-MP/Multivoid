@@ -35,7 +35,9 @@ multi-instance test sessions).
 Fork, branch, and open a pull request against `main`. Fixes are reviewed
 against the project's engineering rules (`CLAUDE.md` — root-cause fixes only,
 no migration baggage); adopted commits keep your authorship in the history.
-Note the repository currently ships **no license file** — by default that
-means "all rights reserved": contributions are accepted into this project via
-GitHub's inbound=outbound convention, but redistribution of the codebase is
-not otherwise granted. A proper license decision is tracked by the project.
+The repository is licensed under the **MIT License** (see `LICENSE`,
+added 2026-08-29). Contributions are accepted under the same terms
+(GitHub's inbound=outbound convention); contributors keep the copyright on
+their commits — authorship is preserved in the git history. The commits
+adopted before the license file existed are covered by the same convention;
+if any of their authors objects, say so in an issue and it will be honored.
