@@ -33,6 +33,42 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 1. How to work (process / working agreements)
 
+- **A CONTROL THAT SHARES YOUR CHANGE IS NOT A CONTROL.** 2026-08-29. An extraction was
+  proven by running the browser lab on the pre-extraction DLL and the extracted one: every
+  phase matched, `CLOSE BUTTON FAIL` included. The inference -- *identical on both arms,
+  therefore pre-existing* -- named a five-day-old commit (`23481e3c`, which had rewritten the
+  X's own title row) and went into a commit message as fact. **Both DLLs carried a DIFFERENT
+  fix shipped an hour earlier**: the mod-environment census, newly reachable on a native menu
+  launch, armed a MODAL at boot, and the ImGui overlay takes the mouse while a modal is up --
+  so `IsHovered` answered false on either arm. A differential can only see what DIFFERS. What
+  settled it was the SCREENSHOT the same run had already captured (the X plainly visible, a
+  `MOD INSTALL PROBLEM` modal on top of the screen under test), after 70 sweep probes had
+  narrowed *where* the button was while the real answer was *what was over it*. Then
+  `GetDesiredSize` read **(53,48)** -- a real hit area -- and with the trigger removed the
+  sweep found it at client **(1394,246)** on probe 17 and the click closed the screen:
+  `CLOSE BUTTON PASS`. *Look FIRST:* before concluding "not mine", list what shipped between
+  the last RECORDED pass and now, and make sure at least one arm predates ALL of it. And when
+  a hit-test, click or focus query fails EVERYWHERE, look at a frame -- occlusion, a captured
+  pointer and a missing widget are indistinguishable from inside the hit-test.
+  `memory/lesson-a-control-that-shares-your-change-is-not-a-control.md`
+
+- **A BISECT PROVES ITS OWN RIG, NOT THE COMPONENT.** 2026-08-29. Disabling six UE4SS Lua
+  mods took one save from ~75 to ~119 fps on the dev rig **with a negative arm** (re-enabling
+  returned it to ~80) -- real, causal, reproducible, and written up as "those mods are
+  expensive" into a player-facing dialog, INSTALL.md, the audit template and FIELD_REPORTS.
+  Then the control environment was finally READ: `[V]` the user's r2modman `UE4SS.log` shows
+  all six `Starting Lua mod`, and `BPModLoaderMod` mounting the same `DebugMod.pak`, at ~120
+  fps. The "expensive" set was running, unchanged, in the environment that was already fast --
+  so the component is common to both and the RIG is not (`ue4ss.dll` Git SHA `d935b5b` vs
+  `e31aaaa6`, both self-labelled v3.0.1 Beta #0). A negative arm rules out coincidence WITHIN
+  a machine and says nothing about attribution across machines. *Look FIRST:* when a
+  regression is established by comparing two environments, the fast one's config is EVIDENCE
+  -- read it before the bisect and again before the writeup; if it runs the same component,
+  that component is excluded however clean your bisect was. For a loader stack the cheap reads
+  are each side's `UE4SS.log` banner (`Git SHA #...`), its `Starting Lua mod` lines and
+  `BPModLoaderMod`'s mount log -- what RAN, not what a config file permits.
+  `memory/lesson-a-bisect-proves-its-own-rig-not-the-component.md`
+
 - **A MIXED-EOL file turns a 3-line edit into a whole-file diff -- and buries a co-worker's
   hunks.** 2026-08-29: three added rows in `config_registry_rows.inc` staged as **752 changed
   lines (379+/373-)**, because `git show HEAD:<path> | file -` reports that file as *"CRLF, CR,

@@ -123,14 +123,4 @@ executable (all optional — they only store mod settings and logs):
 - **Modded game refuses to start under the manager** — a leftover
   `xinput1_3.dll` next to the game's executable makes the manager's loader
   abort. Delete it (see [Upgrading](#upgrading-from-an-old-pre-mod-folder-install)).
-- **"Frame rate notice" dialog at startup, or the game is slower than you
-  expect** — this is about the *other* mods installed alongside Multivoid, not
-  about Multivoid. UE4SS's own bundled Lua mods (listed in
-  `...\Binaries\Win64\Mods\mods.txt`) and any Blueprint mods in
-  `...\Content\Paks\LogicMods` cost frames whether or not you use them. On one
-  test machine, turning that whole set off took the same save from about 75 fps
-  to about 120, with Multivoid loaded and hosting in both cases. Set the entries
-  in `mods.txt` to `0` for the ones you do not use. If you want those mods, keep
-  them — nothing is broken. Silence the notice with `warn.perf_mods=0` in
-  `multivoid.ini`.
 - Still stuck? Ask in the [Discord](https://discord.gg/bA6tGBvGMN).

@@ -10,6 +10,8 @@
 #include "ui/server_browser_native.h"   // IsOpen()/Open() -- the click phases drive the real screen
 #include "ui/input_focus.h"            // synthesized input only lands in a FOREGROUND window
 
+#include "ue_wrap/core/call.h"
+#include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/engine/engine.h"
@@ -63,7 +65,6 @@ constexpr int kEscRelease     = 82;
 // the CHROME closes it, and the chrome is what a player will actually reach for.
 constexpr int kReopen         = 88;
 constexpr int kClickMove      = 100;
-constexpr int kClickHover     = 108;
 constexpr int kClickDown      = 110;
 constexpr int kClickUp        = 114;
 constexpr int kClickVerify    = 124;
@@ -92,6 +93,10 @@ constexpr int   kMinRows     = 12;
 constexpr float kMinOverflow = 64.f;   // == kRowH: one whole row past the viewport
 
 int g_selfCheckStep     = -1;  // -1 = idle; the dev scrim self-check's phase counter
+// The close-button sweep's own cursor, advanced INSIDE one phase (kClickMove holds
+// until it resolves). -1 = not sweeping. kSettle ticks per candidate: move, then let
+// Slate process it, then sample on the last one.
+int g_sweepIdx          = -1;
 int g_scrimOutside      = -1;  // -1 = not sampled, never a negative (an unrun phase is not a NO)
 int g_scrimInsideWindow = -1;
 
@@ -117,6 +122,24 @@ int      g_listHovered       = -1;
 int      g_rowsSeen          = -1;
 bool     g_controlPassed     = false;
 int      g_closeHovered      = -1;   // -1 = not sampled; an unrun phase is not a NO
+
+// UWidget::GetDesiredSize -- the non-visual instrument the native_ui_probe used to prove a
+// hand-built widget lays out at all (GetDesiredSize (0,0) -> (654,64) was RUNG 1's whole
+// verdict). Resolved lazily: this runs only inside a dev self-check, so paying a
+// FindFunction once there is cheaper than resolving it at build time for every player.
+ue_wrap::FVector2D DesiredSizeOf(void* widget) {
+    ue_wrap::FVector2D v{0.f, 0.f};
+    if (!widget) return v;
+    static void* fn = [] {
+        void* w = ue_wrap::reflection::FindClass(P::name::WidgetClass);
+        return w ? ue_wrap::reflection::FindFunction(w, L"GetDesiredSize") : nullptr;
+    }();
+    if (!fn) return v;
+    ue_wrap::ParamFrame f(fn);
+    if (!Call(widget, f)) return v;
+    f.GetRaw(L"ReturnValue", &v, sizeof(v));
+    return v;
+}
 
 // The four fields that decide whether a wheel event moves a UScrollBox. We HAND-SPAWN the
 // box, so each is whatever the engine CDO carries and none of them has ever been read on
@@ -436,22 +459,91 @@ void Tick(void* scrim, void* list, void* closeBtn) {
             ui::server_browser_native::Open();
             break;
         case kClickMove: {
-            // The X sits at the top-right of a 980x620 window centred in the client area.
-            // This is an ESTIMATE, and the next phase checks it rather than assuming it --
-            // a miss here is "the button is not where we think", which is a different
-            // finding from "the click does not work" and must not be reported as one.
-            const int cx = w / 2 + 980 / 2 - 40;
-            const int cy = h / 2 - 620 / 2 + 34;
-            moveTo(cx, cy);
-            break;
+            // FIND the X. Do not guess where it is.
+            //
+            // This used to move to a hard-coded estimate -- top-right of a 980x620 window,
+            // `w/2 + 490 - 40`, `h/2 - 310 + 34` -- and its own warning admitted a miss
+            // there was ambiguous: "the button is not where we think" is a different
+            // finding from "the click does not work". That ambiguity was not theoretical.
+            // `23481e3c` rewrote the title row (the X's own neighbourhood) and moved the
+            // list into an explicit-height SizeBox; the estimate went stale in the very
+            // next commit after the one that recorded CLOSE BUTTON PASS, and every run
+            // since has reported a failure nobody could act on. Re-tuning the constant
+            // would only re-arm the trap for the next layout change.
+            //
+            // So: SWEEP the top-right region and ask `IsHovered` at each point -- which is
+            // measured to answer on our own widgets, and is the same primitive the rows'
+            // hover uses. Two ticks per candidate (move, then sample) because Slate needs a
+            // frame to process the move before the flag reflects it; that is the same
+            // settle the scrim phases allow. The phase HOLDS (early return) until the
+            // button is found or the region is exhausted.
+            //
+            // The payoff is that both outcomes are now unambiguous: found -> we click the
+            // real thing, so a still-open screen means the BUTTON is dead; not found
+            // anywhere in the region -> the X is not where any player would reach for it,
+            // which is itself the defect and is reported as one.
+            // SETTLE, and it is the whole difference between a reliable sweep and a
+            // coin flip. The first version sampled on the tick AFTER the move -- one
+            // tick -- and this file's own phase-schedule comment says why that is wrong:
+            // "a cursor move and its sample MUST be separate ticks, because IsHovered()
+            // read in the same tick as the move answers about the PREVIOUS pointer
+            // position", and the shipped scrim phases allow EIGHT. One tick produced
+            // exactly what an under-settled probe looks like: a single PASS that found
+            // the X at (1394,246), then reproducible FAILs at the same coordinates on
+            // pinned bytes. Three wrong causes were chased before the instrument itself
+            // was suspected -- a five-day-old commit, my own boot modal, and a mounted
+            // pak, each falsified in turn. Four ticks is half the scrim's budget and
+            // still only ~2.4 s for the whole grid at this menu's ~117 fps.
+            constexpr int kCols = 10, kRows = 7, kStepX = 13, kStepY = 12, kSettle = 4;
+            constexpr int kCandidates = kCols * kRows;
+            if (g_sweepIdx < 0) {
+                // Enter at 0, not at the -1 sentinel: `-1 % 2` is -1 in C++, so the first
+                // pass would SAMPLE before it MOVED -- reading the hover state of wherever
+                // the cursor happened to sit, and reporting that stale point as the find.
+                g_sweepIdx = 0;
+                // ONE measurement before the search, because it can make the search
+                // unnecessary. `GetDesiredSize` is the same non-visual instrument the
+                // native_ui_probe used to prove a hand-built widget lays out at all; a
+                // button with (0,0) has no hit area, which is a different defect from a
+                // button in the wrong place and is not findable by sweeping for it.
+                const ue_wrap::FVector2D szBtn   = DesiredSizeOf(closeBtn);
+                const ue_wrap::FVector2D szScrim = DesiredSizeOf(scrim);
+                UE_LOGW("server_browser_native: X geometry -- button desired (%.0f,%.0f), "
+                        "scrim desired (%.0f,%.0f), client %dx%d. A (0,0) button has no hit "
+                        "area no matter where the cursor goes, which is a different defect "
+                        "from a button in the wrong place.",
+                        szBtn.X, szBtn.Y, szScrim.X, szScrim.Y, w, h);
+            }
+            if (g_sweepIdx >= kCandidates * kSettle) {
+                UE_LOGE("server_browser_native: CLOSE BUTTON FAIL -- swept %d points across "
+                        "the window's top-right %dx%d px and IsHovered never answered on the "
+                        "X. It is not merely mis-estimated: it is not anywhere a player "
+                        "would click. Check that BuildButton's slot still lands it in the "
+                        "title row.",
+                        kCandidates, kCols * kStepX, kRows * kStepY);
+                g_sweepIdx = -1;
+                g_selfCheckStep = -1;
+                return;
+            }
+            const int cand = g_sweepIdx / kSettle;
+            const int x0 = w / 2 + 980 / 2 - (kCols * kStepX + 4);
+            const int y0 = h / 2 - 620 / 2 + 4;
+            const int px = x0 + (cand % kCols) * kStepX;
+            const int py = y0 + (cand / kCols) * kStepY;
+            if ((g_sweepIdx % kSettle) == 0) {
+                moveTo(px, py);
+            } else if ((g_sweepIdx % kSettle) == kSettle - 1 && E::WidgetIsHovered(closeBtn)) {
+                g_closeHovered = 1;
+                UE_LOGW("server_browser_native: the X answers IsHovered at client (%d,%d), "
+                        "found after %d probe(s) -- clicking THERE, so the verdict below is "
+                        "about the button and not about the aim.", px, py, cand + 1);
+                g_sweepIdx = -1;
+                g_selfCheckStep = kClickDown;
+                return;   // hold; the next tick runs kClickDown
+            }
+            ++g_sweepIdx;
+            return;       // hold the phase while the sweep runs
         }
-        case kClickHover:
-            g_closeHovered = E::WidgetIsHovered(closeBtn) ? 1 : 0;
-            if (!g_closeHovered)
-                UE_LOGW("server_browser_native: the X did not answer IsHovered at its "
-                        "estimated position -- clicking anyway; read the verdict line, "
-                        "which distinguishes a bad estimate from a dead button");
-            break;
         case kClickDown:
             // PRESS and hold across ticks. The poll this drives fires on the RELEASE edge
             // and samples once per tick, so a down+up inside one tick is invisible to it --

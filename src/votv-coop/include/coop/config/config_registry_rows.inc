@@ -106,8 +106,6 @@ CFG_STRING(nick_color, "nick_color", "player", "unset", nullptr, false,
 // default -- single source.
 CFG_FLOAT(ui_scale, "ui.scale", "ui", 1.25f, 0.75, 1.75, nullptr,
     "Scale multiplier for the mod's UI panels.")
-CFG_FLAG(warn_perf_mods, "warn.perf_mods", "ui", true, nullptr,
-    "Warn at boot when OTHER mods known to cost frames are loaded (UE4SS Lua mods in Mods/mods.txt, Blueprint paks in Content/Paks/LogicMods). Measured 2026-08-29: that set cost ~75 vs ~120 fps on one machine while Multivoid itself measured at no detectable cost. Set 0 to silence.")
 CFG_FLAG(ui_netstats, "ui.netstats", "ui", false, nullptr,
     "Show the network statistics overlay.")
 CFG_FLAG(ui_chat_peer_actions, "ui.chat.peer_actions", "ui", true, nullptr,

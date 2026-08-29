@@ -2,11 +2,8 @@
 
 #include "harness/mod_environment.h"
 
-#include "coop/config/config.h"
-#include "coop/config/config_registry.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/paths.h"
-#include "ui/boot_warning_dialog.h"
 
 #include <windows.h>
 
@@ -18,7 +15,6 @@
 namespace harness::mod_environment {
 namespace {
 
-namespace cfg = coop::config;
 namespace fs  = std::filesystem;
 
 // UE4SS 3.0.1 enable list: one "Name : 0|1" per line, ';' comments. The newer
@@ -151,7 +147,6 @@ bool g_ran = false;
 void Run() {
     if (g_ran) return;
     g_ran = true;
-    if (!cfg::ResolveFlag(::coop::config_registry::rows::warn_perf_mods)) return;
 
     const std::wstring exeDir = ue_wrap::paths::ExeDir();
     const std::vector<std::string> lua  = EnabledLuaMods(exeDir);
@@ -159,7 +154,7 @@ void Run() {
 
     if (lua.empty() && paks.empty()) {
         UE_LOGI("mod_env: no UE4SS Lua mods enabled and no foreign LogicMods paks -- "
-                "this is the configuration measured at full frame rate (2026-08-29).");
+                "nothing else is loaded beside Multivoid in this install.");
         return;
     }
 
@@ -167,27 +162,28 @@ void Run() {
             lua.empty()  ? "none" : Join(lua).c_str(),
             paks.empty() ? "none" : Join(paks).c_str());
 
-    // The wording states the SET figure and never a per-mod one -- see the header's
-    // HONESTY BOUND. It also says plainly that this is not Multivoid, because the
-    // player's next move otherwise is to blame the mod they just installed.
-    std::string msg =
-        "FRAME RATE NOTICE\n\n"
-        "Other mods are loaded in this game besides Multivoid, and on the machine "
-        "where this was measured they were expensive.\n\n";
-    if (!lua.empty())
-        msg += "UE4SS Lua mods enabled (Binaries\\Win64\\Mods\\mods.txt):\n  " + Join(lua) + "\n\n";
-    if (!paks.empty())
-        msg += "Blueprint mods in Content\\Paks\\LogicMods:\n  " + Join(paks) + "\n\n";
-    msg +=
-        "Measured 2026-08-29, same save and same Multivoid build: turning the whole "
-        "set off took the game from about 75 fps to about 120. Multivoid itself "
-        "measured at no detectable cost in the same test.\n\n"
-        "That figure is for the SET, not for any one mod -- BPModLoaderMod is what "
-        "loads the Blueprint paks, so their costs are not separable. If you want the "
-        "frames back, set the entries in mods.txt to 0. If you want these mods, keep "
-        "them; nothing here is broken.\n\n"
-        "Silence this notice with warn.perf_mods=0 in multivoid.ini.";
-    ui::boot_warning_dialog::Arm(msg);
+    // NO PLAYER-FACING NOTICE, and this is a RETIREMENT rather than a default flip
+    // (2026-08-29, same day it shipped). Two independent reasons, either of which alone
+    // would be enough:
+    //
+    // 1. THE ADVICE IS NOT SUPPORTED. It told the player this set costs frames and to
+    //    switch it off. Measured hours later: the SAME six Lua mods and the SAME
+    //    DebugMod.pak cost nothing detectable on the user's r2modman install (~120 fps)
+    //    while costing ~45 on the dev rig. The rigs differ in their UE4SS build, so the
+    //    suspect is the LOADER, not the mods -- and every Thunderstore player is on the
+    //    lane where the advice did not hold. See the header's second honesty bound.
+    // 2. IT WAS THE WRONG SURFACE. `boot_warning_dialog` is, by its own header, "the
+    //    mod-install problem modal" -- a fixed title that read MOD INSTALL PROBLEM above
+    //    a frame-rate notice, and a modal that must be dismissed before the menu can be
+    //    used at all. It takes the mouse through the ImGui overlay, which is how it was
+    //    caught: the native browser's own close-button self-test started failing, and
+    //    the failure was briefly mis-attributed to a five-day-old commit before a
+    //    screenshot showed the modal sitting on top of the screen under test.
+    //
+    // The CENSUS stays and always logs: it costs one directory read at boot, it is what
+    // a bug report needs, and it is the only reason any of the above was measurable. When
+    // the UE4SS-swap measurement names a real cause, a notice can come back -- on a
+    // surface that does not block the menu, with a claim that survives both lanes.
 }
 
 }  // namespace harness::mod_environment

@@ -47,9 +47,9 @@
 
 namespace harness::mod_environment {
 
-// Census the loader environment, log it, and arm the boot warning modal when
-// something known-costly is present. Idempotent; safe to call once at boot.
-// No-op when `warn.perf_mods` is false.
+// Census the loader environment and LOG it. Idempotent; safe to call once at boot.
+// It raises NOTHING to the player -- see the .cpp for why the notice was retired the
+// same day it shipped. One directory read, once, at boot.
 void Run();
 
 }  // namespace harness::mod_environment
