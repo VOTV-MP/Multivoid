@@ -147,6 +147,37 @@ a stuck `ko_respawn` KO pin (it re-ragdolls the player while `g_active`, so a KO
 never completes reads exactly as "cannot move") and the КПП join teleport firing
 repeatedly if the local-pawn cache flickers.
 
+**NEW EVIDENCE 2026-08-29 (user, direct): free camera moves; the character does not.**
+Verbatim: *"the W forward movement still doesn't work but when host enters free camera
+mode (home button) the forward works and the fly forward control all work correctly"*.
+
+That is a real discriminator, and it settles one suspect by OBSERVATION rather than by
+code reading: **the key reaches the game.** Free cam is driven by the same W, so nothing
+of ours is eating it -- `CaptureActive()` and the WndProc swallow are cleared twice over
+now. It also localises the fault to the CHARACTER's movement, since free cam moves a
+different thing entirely.
+
+**But it fits neither remaining suspect, and that is the useful part.** A stuck
+`ko_respawn` pin re-ragdolls the player every tick while `g_active`
+(`ko_respawn.cpp:206-211`) -- which would read as "cannot move" AND leave the player
+visibly lying down AND block strafing, and would print `KO STARTED` with no matching
+`RESPAWNED`. A repeatedly-firing КПП teleport would snap the player back in every
+direction, not just forward. So if the reporter is standing upright and only FORWARD is
+dead, the suspect list above is incomplete and the next hypothesis has to be
+axis-specific.
+
+**THE ONE QUESTION THAT SPLITS IT, still unanswered after two reports:** do **A, S, D
+and mouse-look** work while W does not?
+
+- *A/S/D work, only W dead* -> not KO, not teleport; something axis-specific, and every
+  suspect currently on this page is wrong.
+- *Nothing moves the character* -> KO pin or teleport, and the log settles which in one
+  grep (`ko_respawn: KO STARTED` with no `RESPAWNED`, vs repeated teleport lines).
+
+Also still wanted: **which build** (the overnight zip, r2modman, or a dev install) and
+the host `multivoid.log` **copied before the next launch** -- the rig rotates it, and
+this session's own smokes have already overwritten the only copies that existed here.
+
 ---
 
 ## Maintenance note
