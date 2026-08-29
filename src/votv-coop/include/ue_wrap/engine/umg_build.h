@@ -163,6 +163,37 @@ bool ScrollOffsetOfEnd(void* scrollBox, float& out);
 // 30x64 rows in a ~529 px viewport) says whether there was anywhere to go.
 bool ViewOffsetFraction(void* scrollBox, float& out);
 
+// ---- geometry -------------------------------------------------------------------
+// WHERE A WIDGET ACTUALLY IS ON SCREEN, in desktop pixels, and how big it actually is.
+//
+// This is the answer to "point the cursor at that button", and it replaces arithmetic.
+// The browser's self-check used to reconstruct the X's position from the window's design
+// constants -- half the window width, minus the padding, plus the border -- which is a
+// SECOND implementation of the layout the engine had already performed, kept in step by
+// hand. It went stale in the commit after the one that proved it, and the failure it then
+// reported ("the click missed") was indistinguishable from the failure it was built to
+// find ("the button is dead"). Slate knows the answer; ask it.
+//
+// `outTopLeft` is in the same space as GetCursorPos/SetCursorPos, so it needs no scaling:
+// Slate's absolute space for a game window IS desktop pixels, which is why the DPI /
+// UI-scale factor never has to appear here. `outSize` is the ALLOTTED size -- what the
+// parent gave the widget -- not GetDesiredSize's "what it asked for".
+//
+// False (and logs) if any link is unresolved; both outs are then untouched. A widget that
+// has never been painted has no cached geometry and legitimately reports a zero rect --
+// that is a real answer, not a failure, and callers must treat it as one.
+bool WidgetScreenRect(void* widget, FVector2D& outTopLeft, FVector2D& outSize);
+
+// WHY A WIDGET TAKES NO HITS: walk it up to the root, logging each link's LIVE visibility.
+//
+// `UWidget::GetVisibility` reads the built SWidget when there is one, so this reports what
+// Slate is actually using rather than what our field says. One HitTestInvisible anywhere
+// in the chain removes the whole subtree below it from the hit grid while leaving it
+// perfectly visible, which is a defect that no screenshot and no click can localise -- the
+// value is one step from SelfHitTestInvisible in the same enum, and only the container's
+// own link tells them apart. Diagnostic; call it from a dev path, not per frame.
+void LogVisibilityChain(const char* tag, void* widget);
+
 // Slot alignment, written raw at the offsets in sdk_profile.h. EHorizontalAlignment:
 // Fill=0 Left=1 Center=2 Right=3; EVerticalAlignment: Fill=0 Top=1 Center=2 Bottom=3.
 bool SetSlotAlign(void* slot, size_t hAlignOff, size_t vAlignOff, uint8_t h, uint8_t v);

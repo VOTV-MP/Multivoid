@@ -176,8 +176,41 @@ void RunBootSweep() {
         g_rows = std::move(rows);
         g_hasRows.store(count != 0, std::memory_order_release);
     }
-    if (count)
+    if (count) {
         UE_LOGI("config_review: sweep found %zu row(s) -- the review panel is armed", count);
+        // NAME THEM. Arming this panel is not a quiet event: it puts an ImGui surface up,
+        // and while any ImGui surface is up the game receives no mouse messages at all
+        // (ui/imgui_overlay.h, CaptureOwners) -- so an armed panel silently makes every
+        // native menu screen, ours and the game's, unclickable until it is dismissed. A
+        // line that says only "armed" leaves the reader of a log with the consequence and
+        // none of the cause; on 2026-08-29 that cost a three-day hunt for a close button
+        // that was never broken. One line per row, so the next reader knows WHICH finding
+        // put it there without opening the game.
+        std::lock_guard<std::mutex> lk(g_mu);
+        for (const Row& r : g_rows) {
+            switch (r.type) {
+                case Row::Type::Rejected:
+                    UE_LOGI("config_review:   REJECTED %s='%s' from %s (%s)", r.key.c_str(),
+                            r.value.c_str(), r.origin.c_str(), r.reason.c_str());
+                    break;
+                case Row::Type::Unknown:
+                    UE_LOGI("config_review:   UNKNOWN key '%s'='%s' -- not in the registry",
+                            r.key.c_str(), r.value.c_str());
+                    break;
+                case Row::Type::DuplicateDormant:
+                    UE_LOGI("config_review:   DUPLICATE '%s' on %zu lines; the first wins",
+                            r.key.c_str(), r.dupLines.size());
+                    break;
+                case Row::Type::IdentityNotDurable:
+                    UE_LOGI("config_review:   IDENTITY NOT DURABLE -- guid/skin are "
+                            "session-only this launch");
+                    break;
+                case Row::Type::IniUnreadable:
+                    UE_LOGI("config_review:   INI UNREADABLE at least once this launch");
+                    break;
+            }
+        }
+    }
 }
 
 void GetSnapshot(std::vector<Row>& out) {

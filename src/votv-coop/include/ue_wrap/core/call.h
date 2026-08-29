@@ -47,6 +47,19 @@ public:
         return value;
     }
 
+    // The frame's total size, and one parameter's offset within it. Both are read from
+    // the live UFunction, so they carry the engine's own alignment and padding.
+    //
+    // These exist so a struct parameter whose LAYOUT we do not know can still be moved
+    // between two frames: the byte span of an FGeometry sitting at offset 0 of one frame
+    // is exactly the offset of whatever parameter follows it in another. Reading a struct
+    // through a hand-written mirror of its fields is the thing this header was written to
+    // avoid ("no hardcoded offsets"), and a struct we never dereference needs no mirror at
+    // all. Both return -1 when the frame is invalid or the name is unknown -- never 0,
+    // which is a legitimate offset for the first parameter.
+    int32_t FrameSize() const { return meta_ ? meta_->frameSize : -1; }
+    int32_t ParamOffset(const wchar_t* name) const { return OffsetOf(name); }
+
     // Internal metadata cache entry shared across every ParamFrame for the
     // same UFunction*. Built lazily on first construction for a given fn,
     // then reused as a read-only pointer by subsequent ParamFrames -- so

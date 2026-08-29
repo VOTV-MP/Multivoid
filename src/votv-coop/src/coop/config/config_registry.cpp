@@ -293,6 +293,10 @@ const char* RetiredKeyNote(const char* key) {
     // Keep the newest first; a line stays here for as long as an ini written by
     // the build that had the key could still be on someone's disk.
     static const Retired kRetired[] = {
+        { "warn.perf_mods",
+          "retired in b146 together with the frame-rate notice it controlled -- the mod "
+          "census now only writes a line to multivoid.log and never interrupts you. This "
+          "line does nothing now and is safe to remove." },
         { "player_guid",
           "retired in b144 -- your player identity moved to the file "
           "multivoid_identity.key next to this one, which cannot be copied out of "

@@ -8,6 +8,7 @@
 #include "ue_wrap/core/sdk_profile.h"
 
 #include <cstring>
+#include <vector>
 
 namespace ue_wrap::umg {
 namespace {
@@ -56,6 +57,11 @@ FnCache g_scrollSet  {L"ScrollBox",      L"SetScrollOffset",      nullptr, false
 FnCache g_scrollGet  {L"ScrollBox",      L"GetScrollOffset",      nullptr, false};
 FnCache g_scrollEnd  {L"ScrollBox",      L"GetScrollOffsetOfEnd", nullptr, false};
 FnCache g_scrollFrac {L"ScrollBox",      L"GetViewOffsetFraction", nullptr, false};
+FnCache g_cachedGeom {L"Widget",         L"GetCachedGeometry",    nullptr, false};
+FnCache g_getVis     {L"Widget",         L"GetVisibility",        nullptr, false};
+FnCache g_getParent  {L"Widget",         L"GetParent",            nullptr, false};
+FnCache g_localSize  {L"SlateBlueprintLibrary", L"GetLocalSize",   nullptr, false};
+FnCache g_localToAbs {L"SlateBlueprintLibrary", L"LocalToAbsolute", nullptr, false};
 
 }  // namespace
 
@@ -160,6 +166,84 @@ void CloneButtonStyle(void* dstButton, void* srcButton) {
         *reinterpret_cast<FLinearColor*>(s + P::off::UButton_ColorAndOpacity);
     *reinterpret_cast<FLinearColor*>(d + P::off::UButton_BackgroundColor) =
         *reinterpret_cast<FLinearColor*>(s + P::off::UButton_BackgroundColor);
+}
+
+void LogVisibilityChain(const char* tag, void* widget) {
+    void* visFn = Resolve(g_getVis);
+    void* parFn = Resolve(g_getParent);
+    if (!widget || !visFn || !parFn) return;
+    // ESlateVisibility, and the two that matter are neighbours in the enum, which is how
+    // this class of bug hides: HitTestInvisible(3) takes the whole subtree out of the hit
+    // grid, SelfHitTestInvisible(4) takes only the widget itself and is what a container
+    // wants. A chain that paints correctly tells you nothing about which one it carries.
+    static const char* kNames[] = {"Visible", "Collapsed", "Hidden",
+                                   "HitTestInvisible", "SelfHitTestInvisible"};
+    void* w = widget;
+    for (int depth = 0; w && depth < 12; ++depth) {
+        uint8_t vis = 255;
+        {
+            ParamFrame f(visFn);
+            if (Call(w, f)) vis = f.Get<uint8_t>(L"ReturnValue");
+        }
+        UE_LOGW("umg: %s chain[%d] %ls '%ls' visibility=%u (%s)", tag, depth,
+                R::ClassNameOf(w).c_str(), R::ToString(R::NameOf(w)).c_str(), vis,
+                vis < 5 ? kNames[vis] : "UNREAD");
+        ParamFrame p(parFn);
+        w = Call(w, p) ? p.Get<void*>(L"ReturnValue") : nullptr;
+    }
+}
+
+bool WidgetScreenRect(void* widget, FVector2D& outTopLeft, FVector2D& outSize) {
+    void* geomFn = Resolve(g_cachedGeom);
+    void* sizeFn = Resolve(g_localSize);
+    void* absFn  = Resolve(g_localToAbs);
+    if (!widget || !geomFn || !sizeFn || !absFn) return false;
+
+    // The library's functions are static, so they dispatch on the CDO -- the same shape
+    // the engine's own BlueprintFunctionLibrary calls take.
+    void* lib = R::FindClassDefaultObject(L"SlateBlueprintLibrary");
+    if (!lib) {
+        UE_LOGE("umg: SlateBlueprintLibrary has no CDO -- WidgetScreenRect unavailable");
+        return false;
+    }
+
+    // How many bytes an FGeometry occupies, asked of the engine rather than declared here.
+    // In LocalToAbsolute's frame the geometry is the first parameter, so the offset of the
+    // one after it IS the padded size of the struct -- and GetCachedGeometry's frame holds
+    // nothing but the returned geometry at offset 0. So the struct crosses from one frame
+    // to the other as an opaque span, and this file never learns a single field of it.
+    ParamFrame abs(absFn);
+    const int32_t geomBytes = abs.ParamOffset(L"LocalCoordinate");
+    if (geomBytes <= 0) {
+        UE_LOGE("umg: LocalToAbsolute has no 'LocalCoordinate' parameter (offset=%d) -- the "
+                "signature is not what this code was written against", geomBytes);
+        return false;
+    }
+
+    ParamFrame geom(geomFn);
+    if (geom.FrameSize() < geomBytes) {
+        UE_LOGE("umg: GetCachedGeometry's frame is %d bytes but an FGeometry parameter is %d "
+                "-- refusing to read past the frame", geom.FrameSize(), geomBytes);
+        return false;
+    }
+    if (!Call(widget, geom)) return false;
+
+    std::vector<uint8_t> blob(static_cast<size_t>(geomBytes), 0);
+    if (!geom.GetRaw(L"ReturnValue", blob.data(), geomBytes)) return false;
+
+    // LOCAL SIZE FIRST, because it is what makes the rect a rect. GetDesiredSize answers a
+    // different question -- what the widget ASKED for, not what its parent gave it -- and a
+    // button in a fill-weighted row is exactly where those two part company.
+    ParamFrame size(sizeFn);
+    if (!size.SetRaw(L"Geometry", blob.data(), geomBytes)) return false;
+    if (!Call(lib, size)) return false;
+    outSize = size.Get<FVector2D>(L"ReturnValue");
+
+    if (!abs.SetRaw(L"Geometry", blob.data(), geomBytes)) return false;
+    abs.Set<FVector2D>(L"LocalCoordinate", FVector2D{0.f, 0.f});
+    if (!Call(lib, abs)) return false;
+    outTopLeft = abs.Get<FVector2D>(L"ReturnValue");
+    return true;
 }
 
 bool ViewOffsetFraction(void* scrollBox, float& out) {

@@ -9,6 +9,7 @@
 
 #include "ui/server_browser_native.h"   // IsOpen()/Open() -- the click phases drive the real screen
 #include "ui/input_focus.h"            // synthesized input only lands in a FOREGROUND window
+#include "ui/imgui_overlay.h"          // CaptureOwners() -- who is eating the mouse
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/reflection.h"
@@ -64,10 +65,15 @@ constexpr int kEscRelease     = 82;
 // ...then re-open and drive the X, because ESC closing the screen is not evidence that
 // the CHROME closes it, and the chrome is what a player will actually reach for.
 constexpr int kReopen         = 88;
-constexpr int kClickMove      = 100;
-constexpr int kClickDown      = 110;
-constexpr int kClickUp        = 114;
-constexpr int kClickVerify    = 124;
+constexpr int kCtrlListMove   = 92;   // POSITIVE CONTROL: aim at the list, not the button
+constexpr int kCtrlListRead   = 99;
+constexpr int kCtrlNudge      = 100;  // move ONE pixel -- does a fresh event revive hover?
+constexpr int kCtrlReread     = 106;
+constexpr int kClickMove      = 108;
+constexpr int kClickSample    = 116;  // eight ticks after the move -- the scrim's budget
+constexpr int kClickDown      = 118;
+constexpr int kClickUp        = 122;
+constexpr int kClickVerify    = 132;
 
 // The forced offset for the positive control. Far past any real content extent, so a
 // getter that returns it UNCHANGED has told us it echoes the request rather than reading
@@ -93,10 +99,6 @@ constexpr int   kMinRows     = 12;
 constexpr float kMinOverflow = 64.f;   // == kRowH: one whole row past the viewport
 
 int g_selfCheckStep     = -1;  // -1 = idle; the dev scrim self-check's phase counter
-// The close-button sweep's own cursor, advanced INSIDE one phase (kClickMove holds
-// until it resolves). -1 = not sweeping. kSettle ticks per candidate: move, then let
-// Slate process it, then sample on the last one.
-int g_sweepIdx          = -1;
 int g_scrimOutside      = -1;  // -1 = not sampled, never a negative (an unrun phase is not a NO)
 int g_scrimInsideWindow = -1;
 
@@ -205,6 +207,40 @@ void Tick(void* scrim, void* list, void* closeBtn) {
         return;
     }
     g_windowWaitStartMs = 0;   // it came back; a later blip starts its own patience
+
+    // THE SECOND PRECONDITION, AND THE ONE THIS FILE WAS MISSING FOR THREE DAYS.
+    //
+    // Owning the foreground is not enough: an ImGui surface that is up ALSO owns the mouse,
+    // and while it does, `WndProcDetour` swallows every mouse message before the game sees
+    // it and `SetCursorPosDetour` returns TRUE without moving the pointer. So this test can
+    // aim perfectly at a widget that is perfectly built, and read `IsHovered() == false` on
+    // all of it, because Slate was never told the pointer moved.
+    //
+    // That is not a hypothesis. MEASURED 2026-08-29: `SetCursorPos` asked for (1280,711),
+    // returned ok=1 with err=0 and no ClipCursor rect in the way, and the pointer stayed at
+    // desktop (320,160) -- client (0,0) -- for the whole run. Everything inside the window
+    // read not-hovered; the full-screen scrim, which covers (0,0), read hovered. The owner
+    // was `config_review`, armed at boot by an ordinary ini finding and never dismissed,
+    // because nothing in an autonomous run clicks it away.
+    //
+    // The cost of not having this guard: every CLOSE BUTTON FAIL since the panel started
+    // arming was an accusation against a button that was never given a pointer. Three
+    // causes were proposed and each falsified -- a five-day-old commit, our own boot modal,
+    // a mounted pak -- while the real one was printing itself in the same log. So this
+    // refuses to produce a verdict at all rather than produce a false one, which is the
+    // same call the foreground guard above already makes for the same reason.
+    if (const char* owners = ui::imgui_overlay::CaptureOwners()) {
+        if (std::strcmp(owners, "none") != 0) {
+            UE_LOGE("server_browser_native: SELFTEST DISARMED -- [%s] owns the mouse, so the "
+                    "game receives no pointer messages and cursor writes are swallowed by our "
+                    "own detour. Every hover and click verdict below is ABSENT because the "
+                    "harness stood down; NONE of it is evidence about this screen. Close that "
+                    "surface (or stop it arming) and re-run.", owners);
+            g_selfCheckStep = -1;
+            return;
+        }
+    }
+
     auto moveTo = [&](int cx, int cy) {
         POINT pt{cx, cy};
         if (::ClientToScreen(hwnd, &pt)) ::SetCursorPos(pt.x, pt.y);
@@ -458,92 +494,200 @@ void Tick(void* scrim, void* list, void* closeBtn) {
             }
             ui::server_browser_native::Open();
             break;
-        case kClickMove: {
-            // FIND the X. Do not guess where it is.
+        case kCtrlListMove: {
+            // THE POSITIVE CONTROL, and the X phases below are uninterpretable without it.
             //
-            // This used to move to a hard-coded estimate -- top-right of a 980x620 window,
-            // `w/2 + 490 - 40`, `h/2 - 310 + 34` -- and its own warning admitted a miss
-            // there was ambiguous: "the button is not where we think" is a different
-            // finding from "the click does not work". That ambiguity was not theoretical.
-            // `23481e3c` rewrote the title row (the X's own neighbourhood) and moved the
-            // list into an explicit-height SizeBox; the estimate went stale in the very
-            // next commit after the one that recorded CLOSE BUTTON PASS, and every run
-            // since has reported a failure nobody could act on. Re-tuning the constant
-            // would only re-arm the trap for the next layout change.
+            // "IsHovered read false on the button" has two completely different causes and
+            // one reading: the button is not hit-testable, or NOTHING inside this window is
+            // and the question was never about the button. The list is the widget that
+            // settles it -- it is in the same hand-built tree, under the same never-
+            // Initialize()d UUserWidget, and it is the one whose place is unambiguous.
             //
-            // So: SWEEP the top-right region and ask `IsHovered` at each point -- which is
-            // measured to answer on our own widgets, and is the same primitive the rows'
-            // hover uses. Two ticks per candidate (move, then sample) because Slate needs a
-            // frame to process the move before the flag reflects it; that is the same
-            // settle the scrim phases allow. The phase HOLDS (early return) until the
-            // button is found or the region is exhausted.
-            //
-            // The payoff is that both outcomes are now unambiguous: found -> we click the
-            // real thing, so a still-open screen means the BUTTON is dead; not found
-            // anywhere in the region -> the X is not where any player would reach for it,
-            // which is itself the defect and is reported as one.
-            // SETTLE, and it is the whole difference between a reliable sweep and a
-            // coin flip. The first version sampled on the tick AFTER the move -- one
-            // tick -- and this file's own phase-schedule comment says why that is wrong:
-            // "a cursor move and its sample MUST be separate ticks, because IsHovered()
-            // read in the same tick as the move answers about the PREVIOUS pointer
-            // position", and the shipped scrim phases allow EIGHT. One tick produced
-            // exactly what an under-settled probe looks like: a single PASS that found
-            // the X at (1394,246), then reproducible FAILs at the same coordinates on
-            // pinned bytes. Three wrong causes were chased before the instrument itself
-            // was suspected -- a five-day-old commit, my own boot modal, and a mounted
-            // pak, each falsified in turn. Four ticks is half the scrim's budget and
-            // still only ~2.4 s for the whole grid at this menu's ~117 fps.
-            constexpr int kCols = 10, kRows = 7, kStepX = 13, kStepY = 12, kSettle = 4;
-            constexpr int kCandidates = kCols * kRows;
-            if (g_sweepIdx < 0) {
-                // Enter at 0, not at the -1 sentinel: `-1 % 2` is -1 in C++, so the first
-                // pass would SAMPLE before it MOVED -- reading the hover state of wherever
-                // the cursor happened to sit, and reporting that stale point as the find.
-                g_sweepIdx = 0;
-                // ONE measurement before the search, because it can make the search
-                // unnecessary. `GetDesiredSize` is the same non-visual instrument the
-                // native_ui_probe used to prove a hand-built widget lays out at all; a
-                // button with (0,0) has no hit area, which is a different defect from a
-                // button in the wrong place and is not findable by sweeping for it.
-                const ue_wrap::FVector2D szBtn   = DesiredSizeOf(closeBtn);
-                const ue_wrap::FVector2D szScrim = DesiredSizeOf(scrim);
-                UE_LOGW("server_browser_native: X geometry -- button desired (%.0f,%.0f), "
-                        "scrim desired (%.0f,%.0f), client %dx%d. A (0,0) button has no hit "
-                        "area no matter where the cursor goes, which is a different defect "
-                        "from a button in the wrong place.",
-                        szBtn.X, szBtn.Y, szScrim.X, szScrim.Y, w, h);
+            // Aim at its centre and sample all three targets. The scrim is included on
+            // purpose: it is a SIBLING of the window box painted UNDERNEATH it, so Slate's
+            // hit path should stop at the list and leave the scrim unhovered. A scrim that
+            // reads hovered here, over the middle of the window, is saying the window's
+            // subtree answered no hit at all.
+            ue_wrap::FVector2D ltl{}, lsz{};
+            if (!U::WidgetScreenRect(list, ltl, lsz) || lsz.X < 1.f || lsz.Y < 1.f) {
+                UE_LOGE("server_browser_native: HITTEST CONTROL SKIP -- no usable rect for "
+                        "the list, so the X verdict below stands alone and cannot separate "
+                        "'the button is dead' from 'this window takes no hits'");
+                break;
             }
-            if (g_sweepIdx >= kCandidates * kSettle) {
-                UE_LOGE("server_browser_native: CLOSE BUTTON FAIL -- swept %d points across "
-                        "the window's top-right %dx%d px and IsHovered never answered on the "
-                        "X. It is not merely mis-estimated: it is not anywhere a player "
-                        "would click. Check that BuildButton's slot still lands it in the "
-                        "title row.",
-                        kCandidates, kCols * kStepX, kRows * kStepY);
-                g_sweepIdx = -1;
+            // WRITE-THEN-VERIFY, IN THE SAME TICK. Every phase in this file has issued a
+            // cursor move and then reasoned about where it landed; the run that produced
+            // this comment found the pointer at client (0,0) after asking for the middle of
+            // the list. Two very different things do that -- the write never reached the OS,
+            // or it reached it and was clamped -- and only reading back immediately, plus
+            // the live ClipCursor rect, tells them apart. `overlay_cursor.cpp:109` already
+            // learned this lesson for the enter-restore; the instrument had not.
+            const int wantX = static_cast<int>(ltl.X + lsz.X * 0.5f);
+            const int wantY = static_cast<int>(ltl.Y + lsz.Y * 0.5f);
+            ::SetLastError(0);
+            const BOOL ok = ::SetCursorPos(wantX, wantY);
+            const DWORD err = ::GetLastError();
+            POINT got{};
+            ::GetCursorPos(&got);
+            RECT clip{};
+            const BOOL haveClip = ::GetClipCursor(&clip);
+            UE_LOGW("server_browser_native: cursor write -- asked (%d,%d) got (%ld,%ld) ok=%d "
+                    "err=%lu; clip rect %s(%ld,%ld)-(%ld,%ld). A got that equals the previous "
+                    "position means the write did not take: either it was swallowed before "
+                    "the OS saw it, or the clip rect below is holding the pointer.",
+                    wantX, wantY, got.x, got.y, static_cast<int>(ok),
+                    static_cast<unsigned long>(err), haveClip ? "" : "UNREAD ",
+                    clip.left, clip.top, clip.right, clip.bottom);
+            // AND WHO OWNS THE MOUSE, on the same tick. `ok=1` with no movement and no clip
+            // is our OWN SetCursorPos detour returning TRUE without calling through, which
+            // it does for exactly as long as some ImGui surface is up -- and the same
+            // condition makes WndProcDetour eat every mouse message before the game sees
+            // it. Printing the owners turns that from a deduction into a name.
+            UE_LOGW("server_browser_native: mouse capture owned by [%s] -- while that is not "
+                    "'none', the game receives no mouse messages and cursor writes are "
+                    "swallowed, so nothing this screen draws can be hovered or clicked",
+                    ui::imgui_overlay::CaptureOwners());
+            break;
+        }
+        case kCtrlListRead: {
+            const int onList  = E::WidgetIsHovered(list)     ? 1 : 0;
+            const int onScrim = E::WidgetIsHovered(scrim)    ? 1 : 0;
+            const int onX     = E::WidgetIsHovered(closeBtn) ? 1 : 0;
+            // WHERE THE CURSOR ACTUALLY IS, because up to here every phase has SET it and
+            // then reasoned about where it set it. SetCursorPos can be undone -- by the
+            // game, by our own overlay's cursor ownership, by a clamp -- and a probe that
+            // never reads the position back cannot tell "the widget refused the hit" from
+            // "the cursor was somewhere else entirely".
+            POINT cur{};
+            ::GetCursorPos(&cur);
+            UE_LOGW("server_browser_native: HITTEST CONTROL -- cursor on the LIST's centre: "
+                    "list=%d scrim=%d X=%d, cursor really at desktop (%ld,%ld). list=1 means "
+                    "this window does take hits and the X phase is a verdict about the X; "
+                    "list=0 with scrim=1 means the whole window subtree is hit-invisible and "
+                    "the X was never the defect.",
+                    onList, onScrim, onX, cur.x, cur.y);
+            if (!onList) {
+                // The control failed, so name the link. One HitTestInvisible container is
+                // enough to produce every symptom this screen has shown, and the chain is
+                // the only thing that says which one -- printed from BOTH branches, because
+                // the scrim is the one widget known to work and the difference between the
+                // two chains is the answer.
+                U::LogVisibilityChain("list", list);
+                U::LogVisibilityChain("scrim", scrim);
+            }
+            break;
+        }
+        case kCtrlNudge: {
+            // IS THE HOVER STATE LIVE, OR JUST OLD? Slate updates bIsHovered when it
+            // PROCESSES a pointer move, so a screen that stopped receiving them keeps
+            // whatever flags it had -- and the scrim, which spans everything and was
+            // hovered before the ESC cycle, would keep reading 1 forever while every
+            // widget that was NOT hovered then keeps reading 0. That is exactly the
+            // pattern this run produced, and it is indistinguishable from a real
+            // hit-test failure without moving the pointer again and looking.
+            //
+            // One pixel, so the cursor stays over the list either way: if hover is live,
+            // nothing changes and the readings stand. If it revives, the readings above
+            // were stale and the defect is in event delivery, not in the widgets.
+            POINT cur{};
+            ::GetCursorPos(&cur);
+            ::SetCursorPos(cur.x + 1, cur.y + 1);
+            break;
+        }
+        case kCtrlReread: {
+            POINT cur{};
+            ::GetCursorPos(&cur);
+            UE_LOGW("server_browser_native: HITTEST RE-READ after a 1 px nudge -- list=%d "
+                    "scrim=%d X=%d at desktop (%ld,%ld). A list that is 1 here and was 0 "
+                    "above means the earlier readings were STALE: the widgets are fine and "
+                    "the pointer events had stopped arriving.",
+                    E::WidgetIsHovered(list) ? 1 : 0, E::WidgetIsHovered(scrim) ? 1 : 0,
+                    E::WidgetIsHovered(closeBtn) ? 1 : 0, cur.x, cur.y);
+            break;
+        }
+        case kClickMove: {
+            // ASK THE ENGINE WHERE THE X IS. Do not compute it, and do not hunt for it.
+            //
+            // Two instruments stood here before, and both were the same mistake at
+            // different sizes. The first moved to a hard-coded estimate -- top-right of a
+            // 980x620 window, `w/2 + 490 - 40`, `h/2 - 310 + 34` -- which is a SECOND
+            // implementation of a layout the engine had already performed, kept in step
+            // with the real one by hand. `23481e3c` rewrote the title row and the estimate
+            // went stale in the very next commit after the one that recorded CLOSE BUTTON
+            // PASS. The second replaced it with a 70-point sweep of that region, asking
+            // IsHovered at each point -- but the region itself was `w/2 + 980/2 - 134`,
+            // the same three constants, so the sweep inherited the guess it was written to
+            // retire and could only ever be wrong over a wider area.
+            //
+            // `WidgetScreenRect` reads Slate's own cached geometry, so it is correct under
+            // any window size, any UI scale, and any future edit to this screen's layout.
+            // The two failure modes stay distinguishable, which is the property both
+            // earlier versions were reaching for: a rect that comes back empty means the
+            // button was never given a place to be, and a good rect whose centre does not
+            // answer IsHovered means the button is there and not hit-testable.
+            ue_wrap::FVector2D tl{}, size{};
+            const bool haveRect = U::WidgetScreenRect(closeBtn, tl, size);
+            const ue_wrap::FVector2D want = DesiredSizeOf(closeBtn);
+            if (!haveRect) {
+                UE_LOGE("server_browser_native: CLOSE BUTTON SKIP -- Slate would not report "
+                        "the X's geometry, so this run cannot say where it is. The link that "
+                        "failed is named in the umg: line above; nothing below is a verdict "
+                        "about the button.");
                 g_selfCheckStep = -1;
                 return;
             }
-            const int cand = g_sweepIdx / kSettle;
-            const int x0 = w / 2 + 980 / 2 - (kCols * kStepX + 4);
-            const int y0 = h / 2 - 620 / 2 + 4;
-            const int px = x0 + (cand % kCols) * kStepX;
-            const int py = y0 + (cand / kCols) * kStepY;
-            if ((g_sweepIdx % kSettle) == 0) {
-                moveTo(px, py);
-            } else if ((g_sweepIdx % kSettle) == kSettle - 1 && E::WidgetIsHovered(closeBtn)) {
-                g_closeHovered = 1;
-                UE_LOGW("server_browser_native: the X answers IsHovered at client (%d,%d), "
-                        "found after %d probe(s) -- clicking THERE, so the verdict below is "
-                        "about the button and not about the aim.", px, py, cand + 1);
-                g_sweepIdx = -1;
-                g_selfCheckStep = kClickDown;
-                return;   // hold; the next tick runs kClickDown
+            // ALLOTTED vs DESIRED, printed together, because the gap between them is the
+            // diagnosis. Equal and non-zero: the row gave the button what it asked for.
+            // Allotted (0,0) against a desired (53,48): it laid out and was then given no
+            // room -- a slot problem, invisible to any amount of clicking.
+            UE_LOGW("server_browser_native: X geometry -- allotted %.0fx%.0f at desktop "
+                    "(%.0f,%.0f), desired %.0fx%.0f, client %dx%d",
+                    size.X, size.Y, tl.X, tl.Y, want.X, want.Y, w, h);
+            // CALIBRATION, and it is not optional. A coordinate is meaningless without the
+            // space it is in, and the first run of this probe put the X at desktop
+            // (1711,396) -- which reads as "261 px outside a 980-wide centred window" only
+            // if absolute space is 1:1 with client pixels. The SCRIM is the ruler: it is
+            // known to span the whole screen (the phase above proves it by hover), so its
+            // rect states the space's extent directly. The LIST is the second reading,
+            // because it is the one widget whose place inside the window is unambiguous.
+            {
+                ue_wrap::FVector2D stl{}, ssz{}, ltl{}, lsz{};
+                const bool haveScrim = U::WidgetScreenRect(scrim, stl, ssz);
+                const bool haveList  = U::WidgetScreenRect(list, ltl, lsz);
+                UE_LOGW("server_browser_native: space calibration -- scrim %s%.0fx%.0f at "
+                        "(%.0f,%.0f), list %s%.0fx%.0f at (%.0f,%.0f). A scrim of exactly "
+                        "the client size means absolute space IS client pixels; anything "
+                        "smaller is the UI scale, and every other number here divides by it.",
+                        haveScrim ? "" : "UNREAD ", ssz.X, ssz.Y, stl.X, stl.Y,
+                        haveList ? "" : "UNREAD ", lsz.X, lsz.Y, ltl.X, ltl.Y);
             }
-            ++g_sweepIdx;
-            return;       // hold the phase while the sweep runs
+            if (size.X < 1.f || size.Y < 1.f) {
+                UE_LOGE("server_browser_native: CLOSE BUTTON FAIL -- the X occupies %.0fx%.0f "
+                        "px, so it has no hit area at all. This is a LAYOUT defect, not a "
+                        "click one: no cursor position can reach it. Check BuildButton's "
+                        "HorizontalBox slot against the title text's fill weight.",
+                        size.X, size.Y);
+                g_selfCheckStep = -1;
+                return;
+            }
+            // Slate's absolute space is desktop pixels, the same space SetCursorPos takes,
+            // so this needs no ClientToScreen and no DPI factor.
+            const int sx = static_cast<int>(tl.X + size.X * 0.5f);
+            const int sy = static_cast<int>(tl.Y + size.Y * 0.5f);
+            ::SetCursorPos(sx, sy);
+            break;
         }
+        case kClickSample:
+            // Sampled a full eight ticks after the move, the interval the scrim phases
+            // already trust: IsHovered read too soon answers about the PREVIOUS pointer
+            // position. Recorded BEFORE the click so the verdict can separate "the cursor
+            // never got there" from "it got there and the button did nothing".
+            g_closeHovered = E::WidgetIsHovered(closeBtn) ? 1 : 0;
+            UE_LOGW("server_browser_native: the X reads IsHovered=%d with the cursor at its "
+                    "own centre (list=%d scrim=%d at the same moment) -- clicking there now",
+                    g_closeHovered, E::WidgetIsHovered(list) ? 1 : 0,
+                    E::WidgetIsHovered(scrim) ? 1 : 0);
+            break;
         case kClickDown:
             // PRESS and hold across ticks. The poll this drives fires on the RELEASE edge
             // and samples once per tick, so a down+up inside one tick is invisible to it --
@@ -560,9 +704,10 @@ void Tick(void* scrim, void* list, void* closeBtn) {
                         "way out, not just a drawing.", g_closeHovered);
             else if (g_closeHovered == 0)
                 UE_LOGE("server_browser_native: CLOSE BUTTON FAIL -- the screen is still "
-                        "open, but IsHovered read FALSE at the estimated position, so the "
-                        "click probably missed the X. Fix the estimate before concluding "
-                        "anything about the button.");
+                        "open, and IsHovered read FALSE with the cursor on the centre of "
+                        "the rect Slate itself reported. The aim is not in question: the X "
+                        "occupies that space and is not HIT-TESTABLE in it. Look at its "
+                        "visibility and at what is painted over it, not at coordinates.");
             else
                 UE_LOGE("server_browser_native: CLOSE BUTTON FAIL -- the cursor WAS over "
                         "the X (hovered=1) and a full press-release was delivered, yet the "

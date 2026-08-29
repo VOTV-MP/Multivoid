@@ -40,8 +40,19 @@ void SetVisible(bool visible);
 // the latch lives for the screenshot run.
 void ForceScoreboardOpen();
 
-// Image-file -> ImTextureID decoding lives in ui/overlay_backend.h
-// (overlay_backend::CreateTextureFromImageFile) -- it is RHI-specific.
+// WHICH SURFACES CURRENTLY CLAIM THE MOUSE, as a short list of names ("none" if the
+// answer is nobody). Diagnostic only.
+//
+// While ANY of them is up, `CaptureActive()` is true, and that has two consequences a
+// reader of this header will not guess: WndProcDetour swallows every mouse message before
+// the game sees it, and the SetCursorPos detour returns TRUE without moving the pointer.
+// So a surface the mod draws OUTSIDE ImGui -- the native server browser, the native host
+// window -- silently receives no mouse input at all whenever an ImGui surface is open at
+// the same time, and any code that positions the cursor gets a success it did not get.
+// That combination cost a long hunt: three lab defects, an unexplained close button, and
+// a "the button is not hit-testable" conclusion that was really "the pointer never moved".
+// This exists so the next reading is one log line rather than a bisect.
+const char* CaptureOwners();
 
 
 }  // namespace ui::imgui_overlay

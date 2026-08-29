@@ -719,6 +719,31 @@ void SetVisible(bool visible) { g_visible.store(visible, std::memory_order_relax
 // launching client window -- the WM_KILLFOCUS reset only clears the real tilde key.
 void ForceScoreboardOpen() { g_scoreboardForced.store(true, std::memory_order_relaxed); }
 
+const char* CaptureOwners() {
+    // Built into a static buffer because every caller is a log line and none of them keeps
+    // it. Mirrors CaptureActive() term for term -- if a term is ever added there and not
+    // here, this stops naming the surface that is actually holding the mouse, which is the
+    // one thing it exists to do.
+    static char buf[256];
+    buf[0] = '\0';
+    auto add = [](const char* n) {
+        if (buf[0]) ::strncat_s(buf, sizeof(buf), "+", _TRUNCATE);
+        ::strncat_s(buf, sizeof(buf), n, _TRUNCATE);
+    };
+    if (MenuOpen())          add("devMenu(F1)");
+    if (BrowserOpen())       add("imguiBrowser");
+    if (PickerOpen())        add("savePicker");
+    if (LoadingOpen())       add("loading");
+    if (ConsoleOpen())       add("console");
+    if (ChatOpen())          add("chat");
+    if (VoiceOpen())         add("voice");
+    if (ConnectFailedOpen()) add("connectFailed");
+    if (BootWarningOpen())   add("bootWarning");
+    if (ConfigReviewOpen())  add("configReview");
+    if (ScoreOpen() && ui::scoreboard::LocalIsHost()) add("scoreboard");
+    return buf[0] ? buf : "none";
+}
+
 // ---- process-exit retirement -------------------------------------------------
 // RULE 2, 2026-08-26: a full `Shutdown()` lived here and `[V]` had ZERO callers
 // tree-wide for its entire life -- as did every function it called, down to
