@@ -49,12 +49,20 @@ is deleted to uninstall.
 1. Install [r2modman](https://thunderstore.io/c/voices-of-the-void/) (or the
    Thunderstore Mod Manager) and select Voices of the Void.
 2. Install Multivoid from the Thunderstore listing — or, for a zip downloaded
-   from the Releases page: Settings → Profile → **Import local mod** and pick
-   the zip.
+   from the Releases page: open **Settings** and click **Import local mod**,
+   then pick the zip. (It is on the Settings screen itself — there is a search
+   box at the top if you do not spot it; type "import".)
 3. Launch the game **through the manager**. The manager installs the loader
    (unreal-shimloader + UE4SS) by itself; nothing else to set up.
 
 ## Install manually (no mod manager)
+
+> Worth knowing before you do this by hand: the **same zip** you downloaded can
+> be handed to r2modman with **Settings → Import local mod** — you do not need a
+> Thunderstore listing, an account, or the manager's own copy of the mod. That
+> route installs the loader for you and is the shorter path even if you normally
+> prefer installing things yourself. The steps below are for keeping the game
+> folder entirely under your own control.
 
 1. Install **UE4SS v3.0.1** into the game: drop the contents of its zDEV
    archive next to `VotV-Win64-Shipping.exe` (the game folder

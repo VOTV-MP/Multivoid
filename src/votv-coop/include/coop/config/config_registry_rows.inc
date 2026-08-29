@@ -380,3 +380,7 @@ CFG_FLAG(browser_native, "browser_native", "dev", false, "VOTVCOOP_BROWSER_NATIV
 CFG_FLAG(browser_autoopen, "browser_autoopen", "dev", false, "VOTVCOOP_BROWSER_AUTOOPEN",
     "Show the native browser as soon as it is built, without a click -- an autonomous "
     "run cannot press the MULTIPLAYER button. Requires browser_native=1.")
+CFG_FLAG(host_window_autoopen, "host_window_autoopen", "dev", false, "VOTVCOOP_HOST_WINDOW_AUTOOPEN",
+    "Show the native HOST GAME window as soon as it is built, without a click -- the same "
+    "reason browser_autoopen exists, for the screen the browser's Host button will open. "
+    "Requires browser_native=1.")

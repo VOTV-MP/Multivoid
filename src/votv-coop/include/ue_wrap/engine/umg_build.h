@@ -115,6 +115,16 @@ bool SetSizeBoxWidth(void* sizeBox, float width);
 bool StyleTextBlock(void* textBlock, int32_t fontSize, const FLinearColor& color,
                     uint8_t justify);
 
+// Recolour an ALREADY-STYLED UTextBlock, touching nothing else.
+//
+// StyleTextBlock is not usable for this: it writes every field unconditionally, so calling
+// it to change one colour also rewrites the font size and the justification -- and the
+// obvious "pass 0 and 255 to mean leave them alone" sets the size to ZERO (invisible text)
+// and the justify enum out of range. Hover is a per-frame-ish TEXT colour change on rows
+// that already carry their layout (docs/VOTV_UI_STYLE.md section 4), so it needs exactly
+// this and nothing more.
+bool SetTextColor(void* textBlock, const FLinearColor& color);
+
 // UWidget::SetClipping. EWidgetClipping: Inherit=0, ClipToBounds=1. A text block in a
 // weighted HorizontalBox slot OVERFLOWS its column by default -- the slot bounds the
 // LAYOUT, not the painting -- so a long world name paints straight over the next column.

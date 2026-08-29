@@ -14,6 +14,7 @@
 #include "coop/session/join_progress.h"
 #include "coop/session/session_manager.h"  // RefreshLatestVersion + LatestVersionLine (native version label)
 #include "ui/server_browser.h"
+#include "ui/host_window_native.h"
 #include "ui/server_browser_native.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/cached_obj_ref.h"
@@ -226,6 +227,9 @@ void OnMenuTickPost(void* self, void* /*function*/, void* /*params*/) {
     // hands-on-verified native inject, and one owner of the menu tick is the point. No-ops
     // entirely unless [dev] browser_native=1, so the shipped path is untouched.
     ui::server_browser_native::OnMenuTick(self, ReadPtr(self, g_switcherOff));
+    // ...and the HOST WINDOW, its sibling in the same switcher. Same observer for the
+    // same reason: one owner of the menu tick. Both no-op unless [dev] browser_native=1.
+    ui::host_window_native::OnMenuTick(self, ReadPtr(self, g_switcherOff));
 
     // Inject once per menu instance; self-heal if VOTV ever tore our button out
     // (throttled to 1 attempt/s so a persistent failure never hammers SpawnObject).
