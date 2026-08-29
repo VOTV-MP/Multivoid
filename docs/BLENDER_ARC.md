@@ -100,10 +100,16 @@ landscape, foliage, lights), every saved prop/entity/vehicle/NPC from the save's
 
 ## 5. Residual ledger
 
-> **Session handoff 2026-08-29 (end of build day): the user reviewed the full scene and said
-> "still many things to fix" — the NEXT session opens with their field-fix list.** Working
-> agreement from this session: NO renders — hand over the `.blend`, the user inspects manually
-> (scratchpad `votvio_smoke.blend` is the current full-scene artifact).
+> **Session handoff 2026-08-29 (end of build day). USER VERDICT on the full scene, verbatim:
+> «Полное говно, масса проблем» — the import RUNS end-to-end but the scene quality is REJECTED.
+> The counters below are throughput facts, not a quality claim.**
+> **NEXT SESSION'S working mode (user decision): iterate on a RADIUS-FILTERED scene — only the BASE
+> plus the base RADIO TOWER (the actor that used to render as the full-height stretched cube) — and
+> fix the problem mass inside that small scope before touching the full map.** The bench already
+> exists: `VOTVIO_SMOKE_RADIUS=150` (env on tests/smoke.py) covers base+tower (tower stands ~60 m
+> from the baseBuilding origin) and produced scratchpad `votvio_base150.blend` in ~80 s.
+> Working agreement: NO renders — hand over the `.blend`, the user inspects manually
+> ([[feedback-votvio-hand-over-blend-no-renders]]).
 
 | Open | What | Phase |
 |---|---|---|
@@ -111,11 +117,11 @@ landscape, foliage, lights), every saved prop/entity/vehicle/NPC from the save's
 | — | water: the material family is built, but lake/river SURFACES were never verified present | next |
 | — | **acceptance probe + calibration + machine diff** (the design's own gate) | next |
 | — | gatherer table from the 48 kismet bodies (interim: all int_save level actors skipped) | next |
-| O8 | non-main-map saves (`Level != Untitled_1`) — generic attempt + warning, unvalidated | P3 |
-| O12 | MIC parameter vocabulary census — the grey "monolith" slab = material without a `tex` param | P3 |
-| O13 | SplineMeshComponent (89) deform | P3 |
+| O8 | non-main-map saves (`Level != Untitled_1`) — the generic attempt + warning IS built (`import_op.py`), never validated on a real dream/tutorial save | P3 |
+| O12 | ~~MIC vocabulary census~~ **CLOSED `c19662e2`** — full-population census (3,243 materials) + family builder shipped (`materials.py`); residual = fidelity items (triplanar is an approximation; a base Material's non-parameterized default textures are unreachable in cook → grey fallback) | — |
+| O13 | SplineMeshComponent (89) deform — no spline code in `tools/blender/votvio/` as of `176fd26d` | P3 |
 | O14 | grime decal fidelity (piles/grime are placeholders/boxes) | P3 |
-| O15 | landscape layer blending (terrain renders untextured white; weightmaps unshaded) | P3 |
+| O15 | landscape textures: ~~untextured white~~ styled procedural GREEN/SNOW/DIRT + slope-rock SHIPPED (`c19662e2`); weightmap-TRUE layer blending still open | P3 |
 | — | trashBitsPile procedural visuals (264 placeholders) + prop_C stragglers (47) | P3 |
 | — | SK geometry port of `ue_skelmesh.py` (NPC bind pose) | P3 |
 

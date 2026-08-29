@@ -33,6 +33,68 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 1. How to work (process / working agreements)
 
+- **BEFORE A VALUE BECOMES *OURS*, CENSUS WHAT IT ALREADY *IS* -- and grep its WRITERS, not its
+  readers.** 2026-08-29. The peer-identity design claimed GNS's process-global identity as "the
+  public key" and shipped an `InstallInto` for it, after 13 `/qf` rounds. `[V]` `Session::StartP2P`
+  then called `ResetIdentity` **again**, 150 lines later, with the master's per-session `h<16hex>`
+  mint -- so on P2P, our PRIMARY transport, the durable identity never reached the wire, silently,
+  because nothing yet READ a remote identity. The design had asked *"can this hold 32 bytes?"*
+  (`[V]` yes) and never *"what is this slot currently FOR?"* -- it was already the signaling
+  rendezvous address. A `/qf` critic cannot catch this: it interrogates the design's frame, and the
+  frame never contained "something else already writes this". **The tell was present and read as
+  trivia:** the plan owed a 64->80 char cap raise on the SIGNALING path, a path the design never
+  mentioned. *Look FIRST:* for a process-global setter, grep the WRITERS (a reader census answers
+  "who sees our value", a writer census answers "is it still there"); treat capacity ("it is exactly
+  32 bytes") as never being evidence a slot is free; and follow any cap/validation/serialiser that
+  turns up on a path your design does not mention. Resolved by MERGING the two systems (RULE 2), not
+  by sequencing the writes -- which also kept `PLAN_01` s6's GNS fork viable.
+  `memory/lesson_before_a_value_becomes_ours_census_what_it_already_is.md`
+
+- **A NEGATIVE ARM'S TWO INPUTS MUST BE *ASSERTED* DIFFERENT, NOT ASSUMED -- or it reports a defect
+  that does not exist.** 2026-08-29. The admission selftest's third-party arm ("a proof for
+  counterparty A must not verify inside a blob naming B") went RED on BOTH peers with a precise,
+  alarming and completely wrong diagnosis. The blob builder was fine: the fixture declared two
+  synthetic counterparties, randomised the PRIVATE halves, and never derived the public ones -- so
+  `pkA == pkB == all zeroes` and the two "different" blobs were byte-identical. **This is the mirror
+  of the familiar failure** (`lesson_an_instrument_never_shown_failing_passes_by_construction`): not
+  silence, but a confident RED pointing at production code, made more convincing by reproducing
+  identically on both peers -- which is exactly what a deterministic broken fixture does and a real
+  crypto bug usually does not. *Look FIRST:* any assertion of the form "X must NOT match Y" owes a
+  preceding `X != Y`; when a negative arm goes red, suspect the FIXTURE before the subject; and fill
+  the value you actually COMPARE, not the one it derives from (zero-init leaves a *valid-looking* 32
+  bytes, which is what makes the class invisible).
+  `memory/lesson_a_negative_arms_two_inputs_must_be_asserted_different.md`
+
+- **A RENAMED LOG LINE OWES A CENSUS OF ITS OBSERVERS -- a log string consumed by tooling is an API
+  with no compiler behind it.** 2026-08-29. `[V]` `"host accepted client at slot"` appeared in **zero
+  source files and seven probe scripts** (`mp.py`'s marker table as a slot-capturing regex, plus six
+  probes). It was renamed by `9d0df17a` (2026-08-26), when a connecting stranger stopped spending a
+  seat and "accepted" and "seated" genuinely stopped being the same event -- so the rename was
+  RIGHT; the census was missing. Every one of those instruments read as "the host never accepted"
+  from that day, and `p2p_smoke` printed a FAIL verdict while its own marker dump showed the client
+  holding a peer slot. The same commit's smoke passed, because it asserts a DIFFERENT marker:
+  coverage by one instrument says nothing about six others watching the same event. *Look FIRST:*
+  `grep -rn "<the exact string>" tools/` before renaming a log line; when a scenario fails on an
+  assertion nobody has exercised recently, verify the NEEDLE exists in `src/` before debugging the
+  subject; and prefer a marker naming the EVENT over one naming the mechanism.
+  `memory/lesson_a_renamed_log_line_owes_a_census_of_its_observers.md`
+
+- **A LENGTH-PREFIXED WIRE CHAIN HAS MORE THAN ONE WALKER, AND THE ERROR NAMES THE WRONG FIELD.**
+  2026-08-29, caught by the smoke. Deleting the guid field from the Join payload broke EVERY join:
+  `HandleJoinMessage`'s offsets were updated, but `ExtractJoinVersionFields` -- an independent,
+  side-effect-free pre-pass over the same bytes in a sibling TU -- still walked TWO length-prefixed
+  fields where one remained, read the flags byte as a length, overran and returned false. Both peers
+  refused with *"malformed join (version field missing)"* and the smoke's verdict was *"client
+  connected but never spawned the host puppet"* -- three symptoms, none naming the guid. **A chain
+  walker only discovers it is lost when it runs out of buffer, which is at the END, so a field
+  deleted in the MIDDLE is always reported as the FINAL field being absent.** *Look FIRST:* when
+  adding/removing a wire FIELD, grep every walker of that payload before editing one (a second one
+  usually lives in a sibling TU split out for a gate or pre-pass); read a "field X missing" error on
+  the last field of a chain as "something earlier moved". Both walkers now name each other in
+  comments -- no compiler can express "these two parse the same bytes". This is the FIELD analogue of
+  `feedback_reliablekind_router_checklist`.
+  `memory/lesson_a_length_prefixed_chain_has_more_than_one_walker.md`
+
 - **A GATE THAT CHECKS NAMES HAS NOT CHECKED CONTENTS -- and it is loudest about what matters least.**
   2026-08-26, found by a post-ship audit. `Test-PackageZip` refused wrapped roots, missing manifests,
   illegal names and suffixed versions -- every check presence-by-NAME -- and **read not one byte of
@@ -4378,6 +4440,30 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   verdict and fills a struct. `memory/lesson_a_mechanism_is_only_as_wide_as_the_code_that_consults_it.md`
 
 ## 6. Assets, models, geometry
+
+- **2026-08-29 — Cooked UE4 data is DELTA-vs-archetype encoded at EVERY layer; absence means
+  "default", never "does not exist".** Three instances bit the VotvIO Blender importer separately,
+  each measured: (1) 5,667/10,024 umap SMComponents carry no `StaticMesh` property (it lives on the
+  SCS/CDO archetype); (2) an SCS pivot with all-default properties has NO template export at all
+  (dish_C `axis_Z`/`axis_Y` exist only as SCS_Node graph refs — a tree walk that aborts on a missing
+  template silently drops the dish head's whole subtree); (3) a placed BP actor exports ONLY its
+  delta components — radiotower's exported shape was one 90m `misc/cube` imposter (`rend`), the real
+  mast/top/comm-panel being template-only and absent from the umap entirely. The trap: delta-only
+  rendering looks MOSTLY right (everything level-arranged carries deltas), so it presents as scattered
+  per-object weirdness, not one encoding rule. *Look FIRST:*
+  `tools/blender/votvio/template_resolver.py` (walk THROUGH missing templates) +
+  `umap_import.py::_assemble_bp_actor` (tree-first + delta merge) + `docs/BLENDER_ARC.md` v4.
+  `memory/lesson_cooked_ue4_is_delta_encoded_at_every_layer.md`
+
+- **2026-08-29 — pyUE4Parse works on VOTV only with 5 named fixes** (it LOOKS broken at the first
+  mesh): unconditional `minMobileLODIdx` read for ≥4.27 misaligns every StaticMesh (CUE4Parse gates it
+  on `StaticMesh.KeepMobileMinLODSettingOnDesktop`, default OFF); `USkeletalMesh` is a stub (SK lane =
+  port `tools/client_model/ue_skelmesh.py`); `FMeshUVHalf.to_mesh_uv_float()` returns RAW half bits
+  (decode via numpy float16 view); the "Could not read StaticMesh" ERROR spam is usually a COSMETIC
+  post-LOD-tail failure (geometry already parsed); the export registry extends without forking via
+  `register_export(cls, Type=...)` (used for the ISM/HISM `instance_matrices` native tail). *Look
+  FIRST:* `tools/blender/votvio/vendor/NOTICE.md` (exact patch list).
+  `memory/lesson_pyue4parse_on_votv_pitfalls.md`
 
 - **2026-08-25 — A converter converts ARTIFACTS, not file extensions.** Asked whether UMG widgets
   authored in UE5 could be downgraded to the 4.27 the shipped game runs, every surface fact says yes:
