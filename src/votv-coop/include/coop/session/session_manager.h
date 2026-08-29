@@ -131,6 +131,14 @@ bool JoinLobby(const std::string& lobbyId, const std::string& displayName, int h
 // should Close); false on a bad address or a busy action (browser stays open).
 bool ConnectDirect(const std::string& hostPort);
 
+// Dial a host BY IDENTITY over signaling, with no master in the loop -- the P2P
+// twin of ConnectDirect. `hostIdentity` is the host's own rendered identity
+// (`gen:<64 hex>`, the `dial=` line in its log); `fallback` supplies the already-
+// resolved signaling/ICE fields (pass the config the caller read, never a second
+// read -- FillP2PFields is their single assembly point). False when either is
+// missing, or an action is already in flight.
+bool ConnectP2PDirect(const std::string& hostIdentity, const coop::net::Config& fallback);
+
 // Kick an async GET /v1/latest. Configure calls it at boot; coop::multiplayer_menu
 // calls it again on EACH main-menu entrance so the native version label refreshes.
 // Self-debounced (no DoS): at most one worker in flight, and a min-interval floor

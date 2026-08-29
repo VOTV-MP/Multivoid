@@ -598,8 +598,12 @@ _MARK = {
     # client: the host assigned us a peer slot == we reached the connected
     # handshake (session_status state=2). The definitive "this client is in".
     "assigned_slot":   re.compile(r"host assigned us peer slot (\d+)"),
-    # host: it accepted a client connection at a slot.
-    "host_accepted":   re.compile(r"host accepted client at slot (\d+)"),
+    # host: it SEATED a client. Renamed 2026-08-26 (9d0df17a): a connecting
+    # stranger is parked and spends no seat, so "accepted" and "seated" stopped
+    # being the same event -- and the old needle ("ADMITTED pending conn")
+    # matched NOTHING from that day until 2026-08-29, in this table and in five
+    # probe scripts, all of which read as "the host never accepted".
+    "host_accepted":   re.compile(r"ADMITTED pending conn 0x[0-9a-f]+ -> slot (\d+)"),
     # THE cross-peer proof: a puppet auto-spawned because a remote pose for
     # slot N arrived. On a client, N != 0 and N != own-slot can ONLY come via
     # the relay (host forwarding another client's pose). The pre-Tier-2 star

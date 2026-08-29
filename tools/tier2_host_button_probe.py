@@ -7,7 +7,7 @@ Drives the EXACT browser paths end-to-end against a LOCAL master + signaling:
   3. CLIENT instance fires session_manager::JoinLobby(lobbyId) (the row-Connect path)
      -> POST /v1/join -> a P2P client session that dials the host via signaling/ICE.
   4. PASS iff the host announced + booted P2P AND the browser client CONNECTED (host
-     "host accepted client at slot" + client "host assigned us peer slot").
+     "ADMITTED pending conn" + client "host assigned us peer slot").
 
 This is p2p_smoke driven through the BROWSER (HostLobby/JoinLobby), not the env config,
 so it answers "is the Host Game button working?" definitively. Same-machine ICE uses
@@ -113,7 +113,7 @@ def main() -> None:
                 time.sleep(3)
                 host_booted = host_booted or grep(host_log, "COOP SESSION START (host / p2p)") > 0
                 connected = grep(client_log, "host assigned us peer slot") > 0
-                accepted = grep(host_log, "host accepted client at slot") > 0
+                accepted = grep(host_log, "ADMITTED pending conn") > 0
                 t = int(time.time() - t0)
                 mp.log(f"  t={t}s host_booted={host_booted} connected={connected} accepted={accepted}")
                 if connected and accepted:

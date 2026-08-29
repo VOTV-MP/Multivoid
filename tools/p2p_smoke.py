@@ -171,7 +171,7 @@ def main() -> None:
             time.sleep(3)
             peers = mp.list_votv()
             assigned = grep(client_log, "host assigned us peer slot")
-            accepted = grep(host_log, "host accepted client at slot")
+            accepted = grep(host_log, "ADMITTED pending conn")
             t = int(time.time() - t0)
             mp.log(f"  t={t}s peers={len(peers)} client_assigned={assigned} host_accepted={accepted}")
             if assigned > 0 and accepted > 0:
@@ -206,7 +206,7 @@ def main() -> None:
             for needle in ("P2P identity set", "ice: applied", "signaling: resolved",
                            "signaling: connecting", "P2P host listening", "P2P client dialing",
                            "signaling: creating signaling session",
-                           "host accepted client at slot", "host assigned us peer slot",
+                           "ADMITTED pending conn", "host assigned us peer slot",
                            "latched senderEpoch",
                            "will reconnect", "getaddrinfo", "WSAStartup failed",
                            "ConnectP2PCustomSignaling", "CreateListenSocketP2P failed",

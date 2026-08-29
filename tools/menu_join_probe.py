@@ -13,7 +13,7 @@ PASS iff:
   * client log "menu-mode client join -- fresh-booting into gameplay before connect"  (new wiring fired)
   * client log "FRESH New Game"                                                        (StartFreshGame ran)
   * client log "host assigned us peer slot"                                            (P2P connected)
-  * host   log "host accepted client at slot"                                          (host accepted)
+  * host   log "ADMITTED pending conn"                                          (host accepted)
   * client mirrored the host's world (RegisterPropMirror / snapshot applied > 0 props)
   * both processes alive + RSS bounded (no balloon)
 
@@ -133,7 +133,7 @@ def main() -> None:
                 freshboot = freshboot or grep(client_log, "menu-mode client join -- fresh-booting") > 0
                 freshgame = freshgame or grep(client_log, "FRESH New Game") > 0
                 connected = grep(client_log, "host assigned us peer slot") > 0
-                accepted = grep(host_log, "host accepted client at slot") > 0
+                accepted = grep(host_log, "ADMITTED pending conn") > 0
                 procs = {p["PID"]: p["RSS_MB"] for p in mp.list_votv()}
                 t = int(time.time() - t0)
                 mp.log(f"  t={t}s c_alive={client_pid in procs}({procs.get(client_pid,'-')}MB) "

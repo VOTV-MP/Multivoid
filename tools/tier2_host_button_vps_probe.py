@@ -120,7 +120,7 @@ def main() -> None:
                 connected = client_log.exists() and \
                     client_log.read_text(errors="replace").count("host assigned us peer slot") > 0
                 accepted = host_log.exists() and \
-                    host_log.read_text(errors="replace").count("host accepted client at slot") > 0
+                    host_log.read_text(errors="replace").count("ADMITTED pending conn") > 0
                 t = int(time.time() - t0)
                 mp.log(f"  t={t}s host_booted={host_booted} connected={connected} accepted={accepted}")
                 if connected and accepted:

@@ -10,7 +10,7 @@ signaling, in MENU mode (the real picker context -- no scenario env):
   3. probe reads the host's lobbyId off the master, launches a CLIENT that JOINs it
      (VOTVCOOP_TEST_JOIN_LOBBY) -> a P2P client that dials the host.
   4. PASS iff the host LOADED the chosen world + booted P2P AND the browser client
-     connected (host "host accepted client at slot" + client "host assigned us peer slot").
+     connected (host "ADMITTED pending conn" + client "host assigned us peer slot").
 
 Same machinery as tier2_host_button_probe, but the host path is HostWithSave (load a
 chosen save first) instead of HostLobby (host on the already-loaded world). Same-machine
@@ -120,7 +120,7 @@ def main() -> None:
             while time.time() - t0 < WATCH_S:
                 time.sleep(3)
                 connected = grep(client_log, "host assigned us peer slot") > 0
-                accepted = grep(host_log, "host accepted client at slot") > 0
+                accepted = grep(host_log, "ADMITTED pending conn") > 0
                 t = int(time.time() - t0)
                 mp.log(f"  t={t}s connected={connected} accepted={accepted}")
                 if connected and accepted:

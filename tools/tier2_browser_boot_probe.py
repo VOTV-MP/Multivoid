@@ -75,7 +75,7 @@ def main() -> None:
             queued = grep(client_log, "queued a browser-path session start") > 0
             booted = grep(client_log, "browser-initiated coop session") > 0
             connected = grep(client_log, "host assigned us peer slot") > 0
-            accepted = grep(host_log, "host accepted client at slot") > 0
+            accepted = grep(host_log, "ADMITTED pending conn") > 0
             t = int(time.time() - t0)
             mp.log(f"  t={t}s alive={alive} queued={queued} booted={booted} "
                    f"connected={connected} accepted={accepted}")

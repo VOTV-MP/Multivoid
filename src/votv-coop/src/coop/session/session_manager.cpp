@@ -605,6 +605,43 @@ bool ConnectDirect(const std::string& hostPort) {
     return ok;
 }
 
+bool ConnectP2PDirect(const std::string& hostIdentity, const net::Config& fallback) {
+    // The P2P twin of ConnectDirect: dial a host BY IDENTITY through a signaling
+    // server, with NO master in the loop. Two callers want exactly this and
+    // neither can use JoinLobby -- the env test client (p2p_smoke, which had no
+    // P2P path at all: `[V]` since 77225106, 2026-06-10, the env client has gone
+    // through ConnectDirect regardless of net.topology, so the P2P CLIENT lane has
+    // been unreachable from the rig for three months) and a dev dialling a host
+    // whose `gen:` line they copied out of its log.
+    //
+    // The signaling/ICE half comes from the ALREADY-RESOLVED config the caller
+    // holds, not from a second read: FillP2PFields is the one place those fields
+    // are assembled, and re-deriving them here is how two paths drift.
+    if (g_actionBusy.exchange(true)) {
+        UE_LOGW("session_manager: action busy -- P2P connect ignored");
+        return false;
+    }
+    bool ok = false;
+    if (hostIdentity.empty()) {
+        UE_LOGW("session_manager: P2P connect needs a host identity (`gen:<64 hex>`)");
+    } else if (fallback.signalingUrl.empty()) {
+        UE_LOGW("session_manager: P2P connect needs a signaling server");
+    } else {
+        net::Config cfg = fallback;
+        cfg.role = net::Role::Client;
+        cfg.topology = net::Topology::P2P;
+        cfg.hostIdentity = hostIdentity;
+        coop::join_progress::BeginConnect(hostIdentity);
+        QueueStart(cfg);
+        UE_LOGI("session_manager: P2P connect queued -> host '%s' via signaling %s "
+                "(session boot = harness Tier 2)",
+                hostIdentity.c_str(), cfg.signalingUrl.c_str());
+        ok = true;
+    }
+    g_actionBusy.store(false);
+    return ok;
+}
+
 // Mirror of the lobby's current listed state for the UI (the scoreboard's
 // Hide-from-browser toggle renders it; HostWithSave seeds it, SetListed flips
 // it). True when no lobby exists (harmless default).

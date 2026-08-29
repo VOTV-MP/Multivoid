@@ -355,12 +355,27 @@ DWORD WINAPI TimelineThread(LPVOID param) {
                 // no harness-side parallel join path. (The autotest-positioning
                 // teleport doesn't run on this path -- the puppetshot/ragdollshot
                 // scenarios need a post-join hook when next used.)
-                char hostPort[64];
-                std::snprintf(hostPort, sizeof(hostPort), "%s:%u",
-                              netCfg.peerIp.empty() ? "127.0.0.1" : netCfg.peerIp.c_str(),
-                              static_cast<unsigned>(netCfg.port));
-                if (!coop::session_manager::ConnectDirect(hostPort)) {
-                    UE_LOGW("harness: env ConnectDirect('%s') rejected", hostPort);
+                // ...and it dials the way its TOPOLOGY says. This branch used to
+                // be ConnectDirect unconditionally, so an env client launched with
+                // net.topology=p2p silently connected over direct IP instead --
+                // which is why tools/p2p_smoke.py has been proving only the HOST
+                // half of the P2P lane since 2026-06-10 (77225106). Both arms go
+                // through the same session_manager door; neither is a harness-side
+                // parallel join path.
+                if (netCfg.topology == coop::net::Topology::P2P) {
+                    if (!coop::session_manager::ConnectP2PDirect(netCfg.hostIdentity,
+                                                                 netCfg)) {
+                        UE_LOGW("harness: env P2P connect to '%s' rejected",
+                                netCfg.hostIdentity.c_str());
+                    }
+                } else {
+                    char hostPort[64];
+                    std::snprintf(hostPort, sizeof(hostPort), "%s:%u",
+                                  netCfg.peerIp.empty() ? "127.0.0.1" : netCfg.peerIp.c_str(),
+                                  static_cast<unsigned>(netCfg.port));
+                    if (!coop::session_manager::ConnectDirect(hostPort)) {
+                        UE_LOGW("harness: env ConnectDirect('%s') rejected", hostPort);
+                    }
                 }
             }
 
