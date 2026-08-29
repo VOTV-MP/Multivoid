@@ -37,7 +37,10 @@ const GREETING_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_PENDING: usize = 128;
 const MAX_AUTHED: usize = 512;
 const MAX_AUTHED_PER_IP: u32 = 32;
-const MAX_IDENTITY: usize = 64; // cap the greeting identity length (audit L10)
+// 80, not 64 (raised 2026-08-29): since b144 a peer registers under its DURABLE
+// identity, which GNS renders as `gen:` + 64 hex = 68 chars. At 64 the greeting
+// was refused outright, which reads as "P2P is down" rather than as a length cap.
+const MAX_IDENTITY: usize = 80;
 // Bounded relay backlog per destination. Worst-case per-dest heap =
 // RELAY_QUEUE * MAX_RELAY_PAYLOAD. Sizing (security audit 2026-07-16, S-1): the
 // prior 1024-deep queue of up-to-MAX_LINE (64 KiB) items let ONE token-holder pin

@@ -302,21 +302,20 @@ bool Session::StartLanDirect() {
 bool Session::StartP2P() {
     auto* sockets = SteamNetworkingSockets();
 
-    // 1) Our concrete signaling identity. P2P requires a non-localhost identity;
-    //    ResetIdentity post-init sets it cleanly without threading identity
-    //    through the latched, process-global GameNetworkingSockets_Init.
-    if (cfg_.localIdentity.empty()) {
-        UE_LOGE("net: P2P requires a non-empty localIdentity");
+    // 1) Our concrete signaling identity -- ALREADY INSTALLED, by Start()'s
+    //    peer_identity::InstallInto. There used to be a second ResetIdentity here
+    //    that installed the master's per-session `c<16hex>` / `h<16hex>` mint, and
+    //    it ran AFTER the durable install and silently replaced it: on P2P, our
+    //    primary transport, the key identity never reached the wire at all, so the
+    //    admission challenge would have had nothing to verify against and every
+    //    P2P join would have failed the moment the challenge shipped. One identity
+    //    now serves both jobs (rendezvous + proof) -- see
+    //    peer_identity::LocalIdentityString() for why that is the right way round
+    //    and what it costs.
+    if (peer_identity::LocalIdentityString().empty()) {
+        UE_LOGE("net: P2P requires the durable identity -- it was not installed");
         return false;
     }
-    SteamNetworkingIdentity self;
-    self.Clear();
-    if (!self.SetGenericString(cfg_.localIdentity.c_str())) {
-        UE_LOGE("net: localIdentity '%s' too long (max 31 chars)", cfg_.localIdentity.c_str());
-        return false;
-    }
-    sockets->ResetIdentity(&self);
-    UE_LOGI("net: P2P identity set to '%s'", cfg_.localIdentity.c_str());
 
     // 2) ICE config (STUN/TURN + which candidate types to share). Global config
     //    values -- one session per process.
@@ -372,7 +371,7 @@ bool Session::StartP2P() {
         hPollGroup_.store(hPoll);
         UE_LOGI("net: P2P host listening as '%s' via signaling %s "
                 "(hListen=0x%08x hPoll=0x%08x), capacity=%d clients",
-                cfg_.localIdentity.c_str(), cfg_.signalingUrl.c_str(),
+                peer_identity::LocalIdentityString().c_str(), cfg_.signalingUrl.c_str(),
                 static_cast<unsigned>(hListen), static_cast<unsigned>(hPoll),
                 kMaxPeers - 1);
     } else {  // Client
@@ -383,8 +382,23 @@ bool Session::StartP2P() {
         }
         SteamNetworkingIdentity hostId;
         hostId.Clear();
-        if (!hostId.SetGenericString(cfg_.hostIdentity.c_str())) {
-            UE_LOGE("net: hostIdentity '%s' too long (max 31 chars)", cfg_.hostIdentity.c_str());
+        // ParseString, not SetGenericString: a host publishes its durable identity
+        // now, which renders as `gen:<64 hex>` -- 68 chars, so SetGenericString
+        // would refuse it outright (its cap is 31) and, if it fit, would dial the
+        // literal text rather than the key.
+        //
+        // NO FALLBACK TO THE LEGACY SHAPE, and that is measured rather than
+        // assumed: `[V]` ParseString's unknown-prefix arm scans for a ':' and
+        // returns false at the terminator when there is none
+        // (`steamnetworkingsockets_shared.cpp:364-387`), so a master-minted
+        // `h<16hex>` does NOT parse. It does not need to -- join compatibility is
+        // byte-EQUALITY on the version pair, so a client of this build only ever
+        // dials a host of this build, and a host of this build always publishes
+        // `gen:`. A compatibility branch here would be dead code for a pairing the
+        // three version gates already refuse (RULE 2).
+        if (!hostId.ParseString(cfg_.hostIdentity.c_str())) {
+            UE_LOGE("net: hostIdentity '%s' is not a parseable identity",
+                    cfg_.hostIdentity.c_str());
             signaling_.reset();
             return false;
         }

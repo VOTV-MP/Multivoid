@@ -365,6 +365,21 @@ fn game_shape_ok(game: &str) -> bool {
         && suffix.bytes().all(|b| b.is_ascii_lowercase())
 }
 
+/// A peer identity as GNS renders a 32-byte `GenericBytes` one: `gen:` + 64
+/// lowercase hex. Since b144 a host publishes its durable PUBLIC KEY here and
+/// joiners dial exactly this string, so the master's job is to store it verbatim
+/// -- it neither mints it nor can verify it, and it must not silently accept a
+/// shape that would dial nobody. Lowercase is required, not merely preferred:
+/// `[V]` GNS hashes and byte-compares identity strings and its own parser rejects
+/// uppercase prefixes for that reason, so `GEN:AB..` would register under one
+/// spelling and be dialled under another.
+fn identity_shape_ok(id: &str) -> bool {
+    let Some(hex) = id.strip_prefix("gen:") else {
+        return false;
+    };
+    hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
 /// Pure gate half (env resolved by the caller so this is unit-testable).
 fn version_gate(game: &str, proto: i64, max_build: i64, allowed: &[i64]) -> Result<(), String> {
     if !game.is_empty() && !game_shape_ok(game) {
@@ -432,6 +447,21 @@ fn h_host(state: &mut MasterState, ip: &str, body: &Value) -> (u16, Value) {
     if let Err(reason) = version_gate_env(&lo.game, lo.proto) {
         log(&format!("host REFUSED from {}: {} (name='{}')", ip, reason, lo.name));
         return (400, json!({"error": reason}));
+    }
+    // The identity joiners dial. A b144+ host publishes its own durable public key
+    // (`gen:<64 hex>`); the minted `h<16hex>` in Lobby::new stays as the fallback
+    // for an already-released host that sends none. A PRESENT-but-malformed value
+    // is refused rather than replaced: falling back would advertise a name the
+    // host is not registered under on the signaling server, and the lobby would
+    // list fine and be unjoinable -- the failure this endpoint exists to prevent.
+    if let Some(id) = as_str(body, "identity") {
+        if !id.is_empty() {
+            if !identity_shape_ok(id) {
+                log(&format!("host REFUSED from {}: bad identity shape", ip));
+                return (400, json!({"error": "bad identity"}));
+            }
+            lo.host_identity = id.to_string();
+        }
     }
     lo.world = clamp_field(body, "world", MAX_WORLD);
     lo.locked = as_bool(body, "locked", false);
@@ -1006,7 +1036,7 @@ async fn serve_tls(listener: TcpListener, acceptor: tokio_rustls::TlsAcceptor) -
 
 #[cfg(test)]
 mod tests {
-    use super::{game_shape_ok, version_gate};
+    use super::{game_shape_ok, identity_shape_ok, version_gate};
 
     #[test]
     fn game_shape_accepts_real_votv_versions() {
@@ -1050,5 +1080,27 @@ mod tests {
     #[test]
     fn gate_refuses_bad_shape_with_any_proto() {
         assert!(version_gate("h4x0r edition", 133, 143, &[]).is_err());
+    }
+
+    #[test]
+    fn identity_shape_accepts_a_real_rendered_key() {
+        let k = format!("gen:{}", "ab01cd23".repeat(8)); // 64 hex chars
+        assert_eq!(k.len(), 68);
+        assert!(identity_shape_ok(&k));
+    }
+
+    #[test]
+    fn identity_shape_refuses_everything_that_would_dial_nobody() {
+        let hex64 = "ab01cd23".repeat(8);
+        // The NEGATIVES are the point: each of these would list a lobby that no
+        // joiner can reach, which is indistinguishable from "P2P is broken".
+        assert!(!identity_shape_ok(""));
+        assert!(!identity_shape_ok("h0123456789abcdef"));       // the legacy mint
+        assert!(!identity_shape_ok(&hex64));                    // no prefix
+        assert!(!identity_shape_ok(&format!("str:{hex64}")));   // wrong type
+        assert!(!identity_shape_ok(&format!("gen:{}", &hex64[..62]))); // short
+        assert!(!identity_shape_ok(&format!("gen:{hex64}0")));  // odd length
+        assert!(!identity_shape_ok(&format!("gen:{}", hex64.to_uppercase()))); // case
+        assert!(!identity_shape_ok(&format!("gen:{} x", &hex64[..62])));       // spaced
     }
 }

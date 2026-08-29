@@ -382,32 +382,17 @@ static void FillP2PFields(coop::net::Config& c) {
     c.signalingUrl = sig;
     c.signalingToken = ResolveString(config_registry::rows::net_signaling_token);
 
-    // This peer's own signaling identity. Defaults give a working 2-peer
-    // test out of the box (host="votvhost", client="votvclient"); a real
-    // lobby with multiple clients MUST issue each client a UNIQUE identity
-    // (the signaling server registers one connection per identity string).
-    std::string ident = ResolveString(config_registry::rows::net_identity);
-    if (ident.empty()) {
-        if (c.role == coop::net::Role::Host) {
-            ident = "votvhost";
-        } else {
-            // Unique per-process default so two un-configured clients don't
-            // COLLIDE on the signaling server -- it registers one connection
-            // per identity string, and a duplicate evicts the incumbent
-            // (silently breaking the first client). The master server issues
-            // real per-peer identities later; this keeps the default safe for
-            // ad-hoc multi-client tests. "votvclient-XXXX" = 15 chars (<= the
-            // 31-char SetGenericString cap).
-            std::random_device rd;
-            char buf[24];
-            std::snprintf(buf, sizeof(buf), "votvclient-%04x",
-                          static_cast<unsigned>(rd() & 0xFFFFu));
-            ident = buf;
-        }
-    }
-    c.localIdentity = ident;
+    // This peer's own signaling identity is NOT configured any more (RULE 2,
+    // 2026-08-29). It is the install's durable public key, rendered by
+    // peer_identity::LocalIdentityString(). The `net.identity` row and its
+    // "votvhost" / "votvclient-XXXX" defaults are retired with it -- their whole
+    // purpose was to hand each peer a name UNIQUE on the signaling server, and a
+    // keypair is unique by construction, so the collision the defaults worked
+    // around cannot arise from an un-configured install.
 
-    // The host identity a client dials (must equal the host's localIdentity).
+    // The host identity a client dials (must equal the host's own rendered
+    // identity). Still configurable: a dev dialling a host directly, with no
+    // master in the loop, copies the `gen:` line out of the host's log.
     std::string hostId = ResolveString(config_registry::rows::net_host_identity);
     if (hostId.empty()) hostId = "votvhost";
     c.hostIdentity = hostId;
@@ -438,8 +423,8 @@ static void FillP2PFields(coop::net::Config& c) {
         if (colon != std::string::npos) host.resize(colon);  // not-name-text: host:port
         return v.rfind(host, 0) == 0 ? std::string("DEFAULT") : v;
     };
-    UE_LOGI("config: P2P fields -- identity='%s' host='%s' signaling='%s' stun='%s'",
-            c.localIdentity.c_str(), c.hostIdentity.c_str(),
+    UE_LOGI("config: P2P fields -- identity=<durable key> host='%s' signaling='%s' stun='%s'",
+            c.hostIdentity.c_str(),
             maskOfficial(c.signalingUrl).c_str(), maskOfficial(c.stunList).c_str());
 }
 

@@ -3,6 +3,7 @@
 #include "coop/net/lobby_announcer.h"
 
 #include "coop/net/http_client.h"
+#include "coop/net/peer_identity.h"  // LocalIdentityString -- the identity joiners dial
 #include "coop/net/protocol.h"  // kProtocolVersion -- announced for the v59 browser join gate
 #include "coop/session/shutdown.h"
 #include "coop/version.h"  // kGameTarget -- the announced identity pair's game half
@@ -38,6 +39,11 @@ HostInfo LobbyAnnouncer::Host(const std::string& masterUrl, const std::string& n
     b["game"] = coop::version::kGameTarget;      // join gate tier 1
     b["proto"] = static_cast<int>(coop::net::kProtocolVersion);  // the build number (tier 2)
     b["world"] = world;
+    // The identity joiners dial. It is this install's durable PUBLIC KEY rendered
+    // `gen:<64 hex>` -- the same value the admission challenge proves possession
+    // of, so the rendezvous name and the provable name are one thing (RULE 2; the
+    // master's own per-session mint is the fallback for a host that sends none).
+    b["identity"] = coop::net::peer_identity::LocalIdentityString();
     b["locked"] = locked;
     b["players_max"] = playersMax;
     if (directPort > 0) {  // DIRECT lobby (see header): master advertises src-ip:port

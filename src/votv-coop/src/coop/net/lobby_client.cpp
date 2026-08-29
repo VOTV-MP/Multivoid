@@ -159,8 +159,11 @@ JoinInfo LobbyClient::Join(const std::string& masterUrl, const std::string& lobb
     // (audit L6): a comma/whitespace there would inject an extra element into GNS's
     // parallel comma-separated TURN user/pass/uri lists and desync them.
     info.sessionId      = J::StrN(j, "sessionId", 64);
-    info.peerIdentity   = J::StrN(j, "peerIdentity", 64);
-    info.hostIdentity   = J::StrN(j, "hostIdentity", 64);
+    // 80, not 64: a durable identity renders `gen:` + 64 hex = 68 chars, and a cap
+    // of 64 would TRUNCATE it into a name that dials nobody -- which reads as "P2P
+    // is broken", not as "a string was cut". `peerIdentity` is no longer read at
+    // all (see JoinInfo).
+    info.hostIdentity   = J::StrN(j, "hostIdentity", 80);
     info.signalingUrl   = J::StrN(j, "signalingUrl", 128);
     info.signalingToken = J::StrN(j, "signalingToken", 128);
     info.stun           = J::StrN(j, "stun", 128);
@@ -170,9 +173,8 @@ JoinInfo LobbyClient::Join(const std::string& masterUrl, const std::string& lobb
         info.turnUser = J::CredField(*turn, "user", 256);
         info.turnPass = J::CredField(*turn, "pass", 256);
     }
-    // The peer identity + the host identity to dial are the minimum to start P2P.
-    info.ok = !info.peerIdentity.empty() && !info.hostIdentity.empty() &&
-              !info.signalingUrl.empty();
+    // The host identity to dial + a signaling endpoint are the minimum to start P2P.
+    info.ok = !info.hostIdentity.empty() && !info.signalingUrl.empty();
     if (!info.ok) {
         UE_LOGW("lobby: join '%s' -- response missing identities/signaling", lobbyId.c_str());
     }

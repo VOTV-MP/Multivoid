@@ -61,11 +61,9 @@ CFG_STRING_GATED(net_signaling, "net.signaling", "net", ::coop::net::kOfficialSi
 CFG_STRING(net_signaling_token, "net.signaling_token", "net", "", "VOTVCOOP_NET_SIGNALING_TOKEN", false,
     "Access token for a self-hosted signaling server. The official flow mints per-session "
     "tokens automatically -- leave empty.")
-CFG_STRING(net_identity, "net.identity", "net", "", "VOTVCOOP_NET_IDENTITY", false,
-    "This peer's signaling identity. Leave empty: unique defaults are generated and the "
-    "master issues real per-session identities.")
 CFG_STRING(net_host_identity, "net.host_identity", "net", "", "VOTVCOOP_NET_HOST_IDENTITY", false,
-    "The host identity a client dials over signaling. Leave empty for the default.")
+    "The host identity a client dials over signaling, copied from the host's own log line. "
+    "Leave empty -- the master hands it to you when you join from the browser.")
 CFG_STRING(net_stun, "net.stun", "net", "stun.l.google.com:19302", "VOTVCOOP_NET_STUN", false,
     "STUN server list for NAT discovery (host:port, comma-separated).")
 CFG_STRING(net_turn, "net.turn", "net", "", "VOTVCOOP_NET_TURN", false,

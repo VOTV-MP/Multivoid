@@ -82,13 +82,17 @@ struct Config {
     // the open internet out of the rendezvous channel). Distributed with the
     // lobby; master-server-issued per-session tokens come later (Stage 6).
     std::string signalingToken;
-    // This peer's OWN signaling identity (<=31 chars, NO spaces -- the trivial
-    // signaling wire protocol is space-delimited). Host and client each carry a
-    // unique one: the host registers it; the client dials the host's.
-    std::string localIdentity;
-    // The HOST's signaling identity the client dials. Client-only; on the host
-    // it is unused (the host listens under localIdentity). Contract: a client's
-    // hostIdentity must equal the host's localIdentity.
+    // There is NO `localIdentity` field any more (RULE 2, 2026-08-29). This peer's
+    // own signaling identity IS its durable public key -- one value, installed
+    // process-wide by peer_identity::InstallInto before any socket exists, read
+    // back with peer_identity::LocalIdentityString(). A config-carried second
+    // identity was how the master's per-session mint came to overwrite the durable
+    // one on the P2P lane; see that function's comment.
+    //
+    // The HOST's identity the client dials, as the host published it to the master
+    // (`gen:<64 hex>`). Client-only. Contract: it must equal the host's
+    // peer_identity::LocalIdentityString(), which is now a fact about the host's
+    // key rather than a convention two config files have to agree on.
     std::string hostIdentity;
     // ICE candidate sources. stunList = rung 2 (hole-punch); turn* = rung 3
     // (coturn relay, short-lived REST creds). Empty string disables that rung.

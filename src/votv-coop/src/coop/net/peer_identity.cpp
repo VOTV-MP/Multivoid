@@ -42,18 +42,12 @@ namespace {
 PubKey      g_pub{};
 uint8_t     g_priv[kPrivKeyBytes]{};
 std::string g_guid;
+std::string g_identityString;
 bool        g_loaded = false;
 
 const char* kKeyFileName = "multivoid_identity.key";
 
 // --- primitives -------------------------------------------------------------
-
-bool RandomBytes(void* out, size_t len) {
-    const NTSTATUS st = ::BCryptGenRandom(nullptr, static_cast<PUCHAR>(out),
-                                          static_cast<ULONG>(len),
-                                          BCRYPT_USE_SYSTEM_PREFERRED_RNG);
-    return st == 0;  // STATUS_SUCCESS
-}
 
 // SHA-256 via the Windows CNG provider. bcrypt is already linked (GNS's
 // USE_CRYPTO=BCrypt backend), so this costs no new dependency and -- unlike
@@ -150,6 +144,13 @@ bool WriteKeyFile(const uint8_t priv[kPrivKeyBytes]) {
 
 // --- public API -------------------------------------------------------------
 
+bool RandomBytes(void* out, size_t len) {
+    const NTSTATUS st = ::BCryptGenRandom(nullptr, static_cast<PUCHAR>(out),
+                                          static_cast<ULONG>(len),
+                                          BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+    return st == 0;  // STATUS_SUCCESS
+}
+
 bool Load() {
     if (g_loaded) return true;
     bool minted = false;
@@ -166,10 +167,18 @@ bool Load() {
         UE_LOGE("peer_identity: could not derive the guid from our own key");
         return false;
     }
+    // The routing form, built HERE rather than at each use so the P2P announce,
+    // the dial and the logs cannot drift from the bytes we sign with. Built by
+    // hand rather than through SteamNetworkingIdentityRender because Load() runs
+    // at boot, long before GNS is initialised; `[V]` the format is fixed at
+    // `steamnetworkingsockets_shared.cpp:234-247` and ParseString round-trips it
+    // at `:335-357`.
+    g_identityString = "gen:" + ToHex(g_pub.data(), g_pub.size());
     if (minted) {
         if (WriteKeyFile(g_priv)) {
-            UE_LOGI("peer_identity: minted a new durable identity %s (saved to %s)",
-                    g_guid.c_str(), kKeyFileName);
+            UE_LOGI("peer_identity: minted a new durable identity %s (saved to %s) "
+                    "-- dial=%s",
+                    g_guid.c_str(), kKeyFileName, g_identityString.c_str());
         } else {
             // Same shape as the retired player_guid's unreadable-ini path: the
             // session still works, the identity just does not survive a restart,
@@ -179,7 +188,11 @@ bool Load() {
                     "again next launch", g_guid.c_str(), kKeyFileName);
         }
     } else {
-        UE_LOGI("peer_identity: loaded durable identity %s", g_guid.c_str());
+        // The `dial=` half is the value a joiner needs when there is no master in
+        // the loop (net.host_identity), so it is printed on the ordinary path and
+        // not only on the mint.
+        UE_LOGI("peer_identity: loaded durable identity %s -- dial=%s",
+                g_guid.c_str(), g_identityString.c_str());
     }
     g_loaded = true;
     return true;
@@ -187,6 +200,7 @@ bool Load() {
 
 const PubKey& LocalPublicKey() { return g_pub; }
 const std::string& LocalGuid()  { return g_guid; }
+const std::string& LocalIdentityString() { return g_identityString; }
 
 std::string GuidForPublicKey(const PubKey& pub) {
     uint8_t digest[32];
@@ -323,6 +337,22 @@ bool RunSelftest() {
         }
         check(GuidForPublicKey(g_pub) == g_guid && g_guid.size() == 32,
               "the derived guid is not stable / not 32 chars");
+
+        // 14-16: the ROUTING form is the same value as the signing form. This is
+        // asserted because the two are produced by different code -- our own hex
+        // in Load(), GNS's in ToString() -- and a divergence would not fail
+        // anything visibly: the joiner would simply dial an identity nobody has
+        // registered, and the lobby would read as "P2P is down".
+        SteamNetworkingIdentity parsed;
+        parsed.Clear();
+        check(!g_identityString.empty() && g_identityString.size() == 68,
+              "the rendered identity is not 68 chars (`gen:` + 64 hex)");
+        const bool round = parsed.ParseString(g_identityString.c_str());
+        check(round, "GNS refused to parse our own rendered identity");
+        check(round && parsed.m_eType == k_ESteamNetworkingIdentityType_GenericBytes &&
+              parsed.m_cbSize == kPubKeyBytes &&
+              std::memcmp(parsed.m_genericBytes, g_pub.data(), kPubKeyBytes) == 0,
+              "our rendered identity does not parse back to our own public key");
     }
 
     if (pass == total) {

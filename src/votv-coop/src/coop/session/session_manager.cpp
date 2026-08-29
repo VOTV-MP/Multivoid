@@ -111,10 +111,9 @@ void Configure(const std::string& masterUrl, const net::Config& fallbackHostCfg)
         std::lock_guard<std::mutex> lk(g_cfgMu);
         g_masterUrl = masterUrl.empty() ? std::string(kDefaultMaster) : masterUrl;
         g_fallbackHostCfg = fallbackHostCfg;
-        UE_LOGI("session_manager: configured -- master='%s' fallback(signaling-set=%d identity='%s')",
+        UE_LOGI("session_manager: configured -- master='%s' fallback(signaling-set=%d)",
                 DisplayMaster(g_masterUrl).c_str(),
-                g_fallbackHostCfg.signalingUrl.empty() ? 0 : 1,
-                g_fallbackHostCfg.localIdentity.c_str());
+                g_fallbackHostCfg.signalingUrl.empty() ? 0 : 1);
     }
     // Version line: kick the first /v1/latest check at boot config time (the native
     // main-menu version label polls LatestVersionLine). It is RE-POLLED on every main-
@@ -267,7 +266,6 @@ void HostLobby(const std::string& name, const std::string& world, bool locked, i
                 net::Config cfg;
                 cfg.role = net::Role::Host;
                 cfg.topology = net::Topology::P2P;
-                cfg.localIdentity = info.hostIdentity;
                 cfg.signalingUrl = info.signalingUrl;
                 cfg.signalingToken = info.signalingToken;
                 cfg.stunList = info.stun;
@@ -392,7 +390,6 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
             } else if (listed) {
                 cfg.role = net::Role::Host;
                 cfg.topology = net::Topology::P2P;
-                cfg.localIdentity = info.hostIdentity;
                 cfg.signalingUrl = info.signalingUrl;
                 cfg.signalingToken = info.signalingToken;
                 cfg.stunList = info.stun;
@@ -442,9 +439,9 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
             } else {
                 SetHostStatus("Hosting -- master server unreachable, lobby NOT listed (LAN/direct only)");
                 UE_LOGW("session_manager: HOST-WITH-SAVE ready (UNLISTED -- master '%s' unreachable) "
-                        "-- hosting via local config (signaling-set=%d identity='%s')",
+                        "-- hosting via local config (signaling-set=%d)",
                         DisplayMaster(masterUrl).c_str(),
-                        cfg.signalingUrl.empty() ? 0 : 1, cfg.localIdentity.c_str());
+                        cfg.signalingUrl.empty() ? 0 : 1);
             }
         } catch (const std::exception& e) {
             UE_LOGW("session_manager: HostWithSave worker exception: %s", e.what());
@@ -556,7 +553,6 @@ bool JoinLobby(const std::string& lobbyId, const std::string& displayName, int h
                     UE_LOGI("session_manager: JOIN ready -- DIRECT lobby (LanDirect dial; session boot = harness Tier 2)");
                 } else {
                 cfg.topology = net::Topology::P2P;
-                cfg.localIdentity = info.peerIdentity;
                 cfg.hostIdentity = info.hostIdentity;
                 cfg.signalingUrl = info.signalingUrl;
                 cfg.signalingToken = info.signalingToken;
@@ -565,8 +561,8 @@ bool JoinLobby(const std::string& lobbyId, const std::string& displayName, int h
                 cfg.turnUser = info.turnUser;
                 cfg.turnPass = info.turnPass;
                 QueueStart(cfg);
-                UE_LOGI("session_manager: JOIN ready -- peer=%s host=%s (session boot = harness Tier 2)",
-                        info.peerIdentity.c_str(), info.hostIdentity.c_str());
+                UE_LOGI("session_manager: JOIN ready -- host=%s (session boot = harness Tier 2)",
+                        info.hostIdentity.c_str());
                 }
             } else if (!info.ok) {
                 UE_LOGW("session_manager: JoinLobby '%s' failed", lobbyId.c_str());

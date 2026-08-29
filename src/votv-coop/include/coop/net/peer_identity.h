@@ -70,18 +70,43 @@ bool Load();
 const PubKey& LocalPublicKey();
 const std::string& LocalGuid();
 
+// Our identity as GNS renders it: `gen:` + 64 lowercase hex = 68 chars. This is
+// the string the P2P lane rendezvouses on -- the host publishes it to the master
+// at /v1/host and a joiner ParseString()s it back into the identity it dials --
+// so it is the SAME value as LocalPublicKey(), not a second name for the same
+// peer. It is empty before a successful Load().
+//
+// WHY THE ROUTING NAME AND THE PROVABLE NAME ARE ONE VALUE. They were two until
+// 2026-08-29: the master minted an ephemeral `h<16hex>` / `c<16hex>` per session
+// and `StartP2P` installed it with ResetIdentity, which SILENTLY OVERWROTE the
+// durable identity installed at Start() -- so on our primary transport the key
+// identity never reached the wire at all. Keeping both would be two
+// implementations of one concept (RULE 2), and it would also foreclose the only
+// known fix for the relay lane: `PLAN_01` s6's ~6-line GNS fork binds the remote
+// IDENTITY to the cert key, which is meaningless if the identity is a routing
+// token. The cost, stated rather than discovered: the master and the signaling
+// relay now see a value that is stable across sessions, where they previously
+// saw a fresh one each time.
+const std::string& LocalIdentityString();
+
+// Cryptographic random bytes (BCryptGenRandom). Exposed because the admission
+// exchange's nonces must come from the same source as the keys, not from a
+// second RNG somebody picks later. Returns false if the OS refused, and a caller
+// that cannot get randomness must FAIL rather than proceed with a weak nonce.
+bool RandomBytes(void* out, size_t len);
+
 // hex(SHA-256(pubkey)[0..16]) -- the canonical short form of ANY identity, used
 // by the host to name a REMOTE peer's stored rows. Pure; 32 lowercase hex chars,
 // or empty if `pub` is not a plausible key.
 std::string GuidForPublicKey(const PubKey& pub);
 
-// Install our identity into GNS for this process: builds a self-issued, unsigned,
-// identity-bearing certificate carrying our private key and calls SetCertificate,
-// which then establishes the local identity FROM the cert (`[V]`
-// `csteamnetworkingsockets.cpp:779-787` accepts `private_key_data` when we hold
-// no key, `:811-816` sets the identity). Must be called after GNS init and before
-// any listen/connect. Returns false on any failure -- the caller must NOT start a
-// session that would then present a different identity than it signs with.
+// Install our identity into GNS for this process, as a `GenericBytes` identity
+// carrying the raw public key (`ResetIdentity`; the .cpp records why it is NOT
+// `SetCertificate`). Must be called after GNS init and before any listen/connect,
+// and NOTHING may ResetIdentity after it -- see LocalIdentityString() for the
+// overwrite that made that sentence necessary. Returns false on any failure --
+// the caller must NOT start a session that would then present a different
+// identity than it signs with.
 bool InstallInto(ISteamNetworkingSockets* sockets);
 
 // Sign / verify a domain-separated challenge blob. `Verify` takes the 32 identity

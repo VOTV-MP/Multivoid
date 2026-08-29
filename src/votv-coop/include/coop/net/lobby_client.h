@@ -59,8 +59,11 @@ struct JoinInfo {
     bool direct = false;
     std::string addr;            // direct only: "ip:port" to ConnectDirect to
     std::string sessionId;
-    std::string peerIdentity;    // our freshly-minted signaling identity
-    std::string hostIdentity;    // the host's identity we dial
+    // No `peerIdentity` (RULE 2, 2026-08-29): a joiner registers on the signaling
+    // server under its OWN durable identity, so the master's per-session mint for
+    // the joining side has no reader left. The master still emits the field for
+    // already-released clients; we simply stop believing it.
+    std::string hostIdentity;    // the host's identity we dial (`gen:<64 hex>`)
     std::string signalingUrl;    // "host:port"
     std::string signalingToken;  // the shared signaling bearer
     std::string stun;            // "host:port" or ""

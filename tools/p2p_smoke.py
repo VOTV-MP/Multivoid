@@ -49,6 +49,27 @@ def is_local(sig_url: str) -> bool:
     return host in ("127.0.0.1", "localhost", "::1")
 
 
+def host_dial_identity(path: Path) -> str:
+    """The host's DIALABLE identity, scraped from its own log.
+
+    Since b144 a peer's signaling identity IS its durable public key, so it can no
+    longer be pinned by env: it is minted per game-install on first launch and the
+    client must dial whatever the host actually has. `peer_identity` prints it as
+    `dial=gen:<64 hex>` on every launch (minted or loaded), which is also the value
+    a human copies into net.host_identity when there is no master in the loop.
+    """
+    try:
+        txt = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    marker = "dial=gen:"
+    idx = txt.rfind(marker)  # rfind: the LAST launch's identity, not a stale one
+    if idx < 0:
+        return ""
+    ident = txt[idx + len("dial="):].split()[0].strip()
+    return ident if len(ident) == 68 else ""
+
+
 def grep(path: Path, needle: str) -> int:
     try:
         return path.read_text(encoding="utf-8", errors="replace").count(needle)
@@ -116,9 +137,7 @@ def main() -> None:
             common["VOTVCOOP_NET_TURN_PASS"] = args.turn_pass
         if args.ice:
             common["VOTVCOOP_NET_ICE"] = args.ice
-        host_env = dict(common, VOTVCOOP_NET_IDENTITY="votvhost")
-        client_env = dict(common, VOTVCOOP_NET_IDENTITY="votvclient",
-                          VOTVCOOP_NET_HOST_IDENTITY="votvhost")
+        host_env = dict(common)
 
         mp.log(f"--- HOST LAUNCH (P2P, signaling={args.signaling} stun={args.stun} "
                f"turn={'yes' if args.turn_url else 'no'}) ---")
@@ -129,6 +148,17 @@ def main() -> None:
         time.sleep(HOST_BOOT_S)
         if not any(p["PID"] == host_pid for p in mp.list_votv()):
             mp.log("HOST DIED during boot (see log below)")
+
+        # The client dials the host's REAL identity. A miss is fatal here rather
+        # than at connect time: dialling an empty/short name would fail as a
+        # generic "never connected", which is the ambiguity this scrape removes.
+        host_ident = host_dial_identity(host_log)
+        if not host_ident:
+            mp.log("FAIL: no `dial=gen:` line in the host log -- the host has no "
+                   "durable identity, so there is nothing for the client to dial")
+            return
+        mp.log(f"host dial identity = {host_ident}")
+        client_env = dict(common, VOTVCOOP_NET_HOST_IDENTITY=host_ident)
 
         mp.log("--- CLIENT LAUNCH (P2P) ---")
         client_pid = mp.launch_peer("client", mp.DEFAULT_PORT, "Client", peer="127.0.0.1",
