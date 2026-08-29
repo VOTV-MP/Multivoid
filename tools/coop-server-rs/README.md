@@ -1,19 +1,27 @@
 # coop-server-rs — VOTV coop master + signaling (Rust)
 
-Rust port of `tools/coop_master_server.py` + `tools/coop_signaling_server.py`.
-**RULE 3: VPS infra, it never ships in the mod.** Wire-compatible with the Python
-originals (identical JSON endpoints, identical signaling line protocol, byte-exact
-coturn TURN credential) so old + new can run in parallel during cutover.
+Rust port of the two Python services. **RULE 3: VPS infra, it never ships in the
+mod.** Wire-compatible with the Python originals (identical JSON endpoints,
+identical signaling line protocol, byte-exact coturn TURN credential) so old + new
+could run in parallel during cutover.
 
-Status: **AS-BUILT + wire-verified against the Python** (differential smoke, 2026-07-16),
-NOT yet deployed to the VPS. coturn stays as-is (not ported).
+Status: **AS-BUILT and DEPLOYED** to the VPS (2026-07-20 TLS arcs 1-2; a redeploy
+is owed for `COOP_MAX_BUILD`). coturn stays as-is (not ported).
+
+`tools/coop_signaling_server.py` was **retired 2026-08-29** (RULE 2): the cutover
+was finished and its last job was to be the local fixture four rig scenarios
+launched, which meant a line-protocol change would have had to land in two
+implementations while the rig proved it against the copy that never ships.
+`tools/mp.py:signaling_exe()` builds and launches `coop-signaling` instead
+(measured 9.86 s from cold on Windows). `coop_master_server.py` is still here --
+it is the rig's master fixture and has not been given the same treatment.
 
 ## Binaries
 
 | bin | replaces | default port | env |
 |---|---|---|---|
 | `coop-master` | `coop_master_server.py` | `COOP_MASTER_PORT` (10001) | `COOP_TURN_SECRET`*, `COOP_SIGNALING_TOKEN`*, `COOP_SIGNALING_URL`, `COOP_STUN_URI`, `COOP_TURN_URI` |
-| `coop-signaling` | `coop_signaling_server.py` | `COOP_SIGNALING_PORT` (10000) | `COOP_SIGNALING_TOKEN`* |
+| `coop-signaling` | `coop_signaling_server.py` (retired) | `COOP_SIGNALING_PORT` (10000) | `COOP_SIGNALING_TOKEN`* |
 
 `*` required — the process refuses to start (exit 1) without it, same as the Python
 `FATAL` guards. All secrets are ENV-only; nothing is hardcoded (keep it that way).

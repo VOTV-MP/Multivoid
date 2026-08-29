@@ -36,8 +36,6 @@ from pathlib import Path
 
 import mp  # reuse the launcher rig
 
-# The production async, token-authed signaling server (replaces the trivial one).
-SIG_SERVER = mp.ROOT / "tools" / "coop_signaling_server.py"
 SIG_LOG = mp.ROOT / "build" / "p2p-signaling-server.log"
 
 HOST_BOOT_S = 22
@@ -107,11 +105,12 @@ def main() -> None:
     sig = None
     sig_out = None
     if local_sig:
-        mp.log(f"starting LOCAL signaling server on :{sig_port} ({SIG_SERVER.name})")
+        sig_exe = mp.signaling_exe()
+        mp.log(f"starting LOCAL signaling server on :{sig_port} ({sig_exe.name})")
         sig_out = open(SIG_LOG, "w", encoding="utf-8")
         sig_env = dict(os.environ, COOP_SIGNALING_PORT=str(sig_port),
                        COOP_SIGNALING_TOKEN=args.signaling_token)
-        sig = subprocess.Popen([sys.executable, str(SIG_SERVER)], env=sig_env,
+        sig = subprocess.Popen([str(sig_exe)], env=sig_env,
                                stdout=sig_out, stderr=subprocess.STDOUT, text=True)
         time.sleep(1.5)
         if sig.poll() is not None:
@@ -203,7 +202,10 @@ def main() -> None:
 
         for label, lp in (("HOST", host_log), ("CLIENT", client_log)):
             mp.log(f"--- {label} P2P markers ---")
-            for needle in ("P2P identity set", "ice: applied", "signaling: resolved",
+            # No "P2P identity set" needle: that line went with StartP2P's
+            # ResetIdentity (b144), and a needle for a line no source emits is a
+            # marker list that documents a lie -- it can only ever print nothing.
+            for needle in ("ice: applied", "signaling: resolved",
                            "signaling: connecting", "P2P host listening", "P2P client dialing",
                            "signaling: creating signaling session",
                            "ADMITTED pending conn", "host assigned us peer slot",

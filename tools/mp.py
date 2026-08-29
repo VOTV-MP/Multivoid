@@ -76,6 +76,48 @@ def log(msg: str) -> None:
     sys.stdout.flush()
 
 
+# --- The signaling relay the rig runs (2026-08-29) --------------------------
+# Scenarios launch the PRODUCTION binary, not a lookalike. There used to be a
+# second implementation -- `tools/coop_signaling_server.py`, 198 LOC of asyncio
+# that four scenarios started -- kept from the Python->Rust cutover so a probe
+# could run a relay without cargo. Measured 2026-08-29: `cargo build --release
+# --bin coop-signaling` finishes on this box in 9.86 s, so the reason it existed
+# was gone, while its cost was not: a change to the line protocol would have had
+# to land in both, and the rig would have kept proving that change against the
+# copy that never ships. RULE 2 -- it was retired whole.
+SERVER_CRATE = ROOT / "tools" / "coop-server-rs"
+SIGNALING_EXE = SERVER_CRATE / "target" / "release" / "coop-signaling.exe"
+
+
+def signaling_exe() -> Path:
+    """Path to the production signaling relay, rebuilt first if it is stale.
+
+    Cargo would decide staleness itself, but a scenario that silently exercises
+    LAST WEEK's relay is the exact failure this function exists to prevent, so
+    the mtime check is ours and the build is unconditional once it fires. A
+    build failure EXITS: a probe that carries on without a relay reports "no
+    rendezvous", which is indistinguishable from a defect in whatever was just
+    changed.
+    """
+    srcs = list((SERVER_CRATE / "src").rglob("*.rs")) + [SERVER_CRATE / "Cargo.toml"]
+    newest = max((p.stat().st_mtime for p in srcs if p.is_file()), default=0.0)
+    if not SIGNALING_EXE.exists() or SIGNALING_EXE.stat().st_mtime < newest:
+        log("building the signaling relay (cargo build --release --bin coop-signaling)")
+        try:
+            r = subprocess.run(["cargo", "build", "--release", "--bin", "coop-signaling"],
+                               cwd=str(SERVER_CRATE), capture_output=True, text=True)
+        except FileNotFoundError:
+            log("FATAL: cargo is not on PATH -- the rig builds the real relay now "
+                "(install Rust, or run the scenario against a remote signaling server)")
+            sys.exit(1)
+        if r.returncode != 0 or not SIGNALING_EXE.exists():
+            log("FATAL: could not build the signaling relay:")
+            for line in (r.stderr or r.stdout).splitlines()[-20:]:
+                log(f"  cargo: {line}")
+            sys.exit(1)
+    return SIGNALING_EXE
+
+
 # --- Monitor enumeration (Win32 EnumDisplayMonitors via ctypes) ---
 # Used to place client windows on the second monitor by default, so the user's
 # primary monitor (host window) stays visually separate from the client(s) in

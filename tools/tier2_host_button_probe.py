@@ -29,7 +29,6 @@ from pathlib import Path
 import mp
 
 MASTER = mp.ROOT / "tools" / "coop_master_server.py"
-SIGNAL = mp.ROOT / "tools" / "coop_signaling_server.py"
 MLOG = mp.ROOT / "build" / "host-button-master.log"
 SLOG = mp.ROOT / "build" / "host-button-signaling.log"
 MPORT = 10001
@@ -58,7 +57,7 @@ def main() -> None:
 
     senv = dict(os.environ, COOP_SIGNALING_PORT=str(SPORT), COOP_SIGNALING_TOKEN=TOKEN)
     slog = open(SLOG, "w", encoding="utf-8")
-    sig = subprocess.Popen([sys.executable, str(SIGNAL)], env=senv, stdout=slog,
+    sig = subprocess.Popen([str(mp.signaling_exe())], env=senv, stdout=slog,
                            stderr=subprocess.STDOUT, text=True)
     menv = dict(os.environ, COOP_MASTER_PORT=str(MPORT), COOP_TURN_SECRET="turn-placeholder",
                 COOP_SIGNALING_TOKEN=TOKEN, COOP_SIGNALING_URL=f"127.0.0.1:{SPORT}",

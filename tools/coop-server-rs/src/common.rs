@@ -1,9 +1,10 @@
 //! Shared helpers for the coop master + signaling binaries.
 //!
 //! RULE 3: this is VPS infra, it never ships in the mod. Ported 1:1 from the
-//! Python originals (`tools/coop_master_server.py`, `tools/coop_signaling_server.py`)
-//! and kept WIRE-COMPATIBLE with them so the old + new services can run in
-//! parallel during cutover. The byte-exact spots (the TURN credential HMAC and the
+//! Python originals and kept WIRE-COMPATIBLE with them so the old + new services
+//! could run in parallel during cutover. `tools/coop_master_server.py` is still
+//! here (it is the rig's master fixture); the signaling half was retired
+//! 2026-08-29 -- see `bin/signaling.rs`. The byte-exact spots (the TURN HMAC and the
 //! identity-string shapes) are called out inline — a mismatch there breaks coturn
 //! auth or the signaling rendezvous silently.
 
