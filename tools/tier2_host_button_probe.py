@@ -34,7 +34,7 @@ MLOG = mp.ROOT / "build" / "host-button-master.log"
 SLOG = mp.ROOT / "build" / "host-button-signaling.log"
 MPORT = 10001
 SPORT = 10000
-TOKEN = "probe-token"
+TOKEN = "token-placeholder"
 HOST_BOOT_S = 35
 WATCH_S = 75
 
@@ -60,7 +60,7 @@ def main() -> None:
     slog = open(SLOG, "w", encoding="utf-8")
     sig = subprocess.Popen([sys.executable, str(SIGNAL)], env=senv, stdout=slog,
                            stderr=subprocess.STDOUT, text=True)
-    menv = dict(os.environ, COOP_MASTER_PORT=str(MPORT), COOP_TURN_SECRET="probe-turn-secret",
+    menv = dict(os.environ, COOP_MASTER_PORT=str(MPORT), COOP_TURN_SECRET="turn-placeholder",
                 COOP_SIGNALING_TOKEN=TOKEN, COOP_SIGNALING_URL=f"127.0.0.1:{SPORT}",
                 COOP_STUN_URI="stun:127.0.0.1:3478", COOP_TURN_URI="turn:127.0.0.1:3478")
     mlog = open(MLOG, "w", encoding="utf-8")

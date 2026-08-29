@@ -37,7 +37,7 @@ SIGNAL = mp.ROOT / "tools" / "coop_signaling_server.py"
 MLOG = mp.ROOT / "build" / "menujoin-master.log"
 SLOG = mp.ROOT / "build" / "menujoin-signaling.log"
 MPORT, SPORT = 10001, 10000
-TOKEN = "probe-token"
+TOKEN = "token-placeholder"
 SLOT = sys.argv[1] if len(sys.argv) > 1 else "s_may2026"
 HOST_BOOT_S = 100
 WATCH_S = 110
@@ -76,7 +76,7 @@ def main() -> None:
     slog = open(SLOG, "w", encoding="utf-8")
     sig = subprocess.Popen([sys.executable, str(SIGNAL)], env=senv, stdout=slog,
                            stderr=subprocess.STDOUT, text=True)
-    menv = dict(os.environ, COOP_MASTER_PORT=str(MPORT), COOP_TURN_SECRET="probe-turn-secret",
+    menv = dict(os.environ, COOP_MASTER_PORT=str(MPORT), COOP_TURN_SECRET="turn-placeholder",
                 COOP_SIGNALING_TOKEN=TOKEN, COOP_SIGNALING_URL=f"127.0.0.1:{SPORT}",
                 COOP_STUN_URI="stun:127.0.0.1:3478", COOP_TURN_URI="turn:127.0.0.1:3478")
     mlog = open(MLOG, "w", encoding="utf-8")

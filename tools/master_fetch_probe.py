@@ -50,7 +50,7 @@ def main() -> None:
 
     MLOG.parent.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, COOP_MASTER_PORT=str(PORT),
-               COOP_TURN_SECRET="probe-turn-secret", COOP_SIGNALING_TOKEN="probe-token",
+               COOP_TURN_SECRET="turn-placeholder", COOP_SIGNALING_TOKEN="token-placeholder",
                COOP_SIGNALING_URL="127.0.0.1:10000", COOP_STUN_URI="stun:127.0.0.1:3478",
                COOP_TURN_URI="turn:127.0.0.1:3478")
     mlog = open(MLOG, "w", encoding="utf-8")
