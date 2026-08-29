@@ -49,6 +49,8 @@
 
 #pragma once
 
+#include "coop/net/lobby_client.h"   // LobbyRow -- what SelectedRow hands back
+
 #include <cstdint>
 
 namespace ui::server_browser_native {
@@ -78,6 +80,21 @@ bool IsOpen();
 // SelectedRowId() as its input.
 int HoveredRow();
 const char* SelectedRowId();
+
+// The chosen row's DATA, false when nothing is chosen. Resolved by lobbyId against the rows
+// this screen last RENDERED, never by index: the master stores lobbies in a HashMap and the
+// client does not sort, so the same count can arrive in a different order and an index would
+// silently connect a player to a different server than the one they clicked (invariant 1
+// above). A selection whose lobby has since vanished from the list answers false.
+bool SelectedRow(coop::net::lobby::LobbyRow& out);
+
+// A sentence for the footer, shown NOW and held against the next list sync.
+//
+// The footer normally mirrors `session_manager::Status()`, which the 5 s sync rewrites -- so
+// a message produced by a click would either not appear until the next sync or be wiped by
+// it. This writes immediately and suppresses that overwrite while it is fresh, which is what
+// makes a button able to answer the player at all.
+void SetNotice(const char* text);
 
 // WHY ROW `i` DID NOT HOVER: dump its parts with their live visibility and hover state.
 //

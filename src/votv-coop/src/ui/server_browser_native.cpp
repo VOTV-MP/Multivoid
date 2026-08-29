@@ -8,6 +8,7 @@
 #include "ui/boot_warning_dialog.h"     // the loud failure surface for a donor that never appears
 #include "ui/input_focus.h"            // a click only counts while OUR window is foreground
 #include "ui/native_screen.h"          // palette + widget primitives, shared with the host window
+#include "ui/server_browser_actions.h"   // CONNECT / HOST / REFRESH, its own TU
 #include "ui/server_browser_selftest.h"  // the dev phase machine; ships dark
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
@@ -130,6 +131,9 @@ bool    g_shown      = false;
 std::vector<std::string> g_rowIds;
 std::vector<Row> g_rows;
 uint64_t g_lastRefreshMs = 0;
+// A click's answer holds the footer for this long against the 5 s sync's rewrite.
+constexpr uint64_t kNoticeMs = 6000;
+uint64_t g_noticeUntilMs = 0;
 int      g_buildAttempts = 0;
 bool     g_toldTheUser   = false;
 
@@ -295,12 +299,45 @@ void RepaintRowFills() {
 // caller, no consumer. GetCursorPos here is one syscall, needs no edit to the overlay's
 // input path, and sees movement regardless of how the message was routed; the dead seam is
 // retired with it (RULE 2).
-bool CursorOverList(const POINT& c) {
-    ue_wrap::FVector2D tl{}, sz{};
+bool ListRect(ue_wrap::FVector2D& tl, ue_wrap::FVector2D& sz) {
     if (!g_list || !U::WidgetScreenRect(g_list, tl, sz)) return false;
-    if (sz.X < 1.f || sz.Y < 1.f) return false;   // never painted: not under anything
+    return sz.X >= 1.f && sz.Y >= 1.f;   // never painted: not under anything
+}
+
+bool Inside(const POINT& c, const ue_wrap::FVector2D& tl, const ue_wrap::FVector2D& sz) {
     return c.x >= static_cast<long>(tl.X) && c.x < static_cast<long>(tl.X + sz.X) &&
            c.y >= static_cast<long>(tl.Y) && c.y < static_cast<long>(tl.Y + sz.Y);
+}
+
+// IS THE CURSOR ON ROW `i`, asked of the row's rect rather than of Slate.
+//
+// MEASURED 2026-08-29, and this is the fact that decides the whole approach: a row's
+// background is a `UImage` with Visibility=Visible whose rect CONTAINS the cursor, with
+// every link in its parent chain Visible or SelfHitTestInvisible -- and
+// `UWidget::IsHovered()` on it reads **0**. The X, a `UButton` in the same screen and the
+// same tick, reads 1. The one structural difference is the UScrollBox between them.
+//
+// That falsifies this module's founding claim in the only context that matters here.
+// `server_browser_native.h:19` records "`IsHovered()` ANSWERS on a bare `UImage` with
+// Visibility=Visible: 1 with the cursor inside its rect, 0 outside -- that is the whole
+// hit-test". True, and it was measured on a scrim-shaped image at the ROOT of the tree; the
+// rows are not that, and nobody re-measured them there. The header now says so.
+//
+// So the rows do not ask. `intersected with the list` is not decoration: a row scrolled out
+// of view is not painted, so its cached geometry is whatever it was when it last WAS -- the
+// probe that found this saw rows 0 and 1 reporting positions above the list's top edge --
+// and a stale rect must not be allowed to claim a cursor that is inside the viewport.
+bool RowRectContains(int32_t i, const POINT& c, const ue_wrap::FVector2D& listTl,
+                     const ue_wrap::FVector2D& listSz) {
+    void* box = U::ChildAt(g_list, i);
+    ue_wrap::FVector2D tl{}, sz{};
+    if (!box || !U::WidgetScreenRect(box, tl, sz) || sz.X < 1.f || sz.Y < 1.f) return false;
+    const float top = tl.Y > listTl.Y ? tl.Y : listTl.Y;
+    const float bot = (tl.Y + sz.Y) < (listTl.Y + listSz.Y) ? (tl.Y + sz.Y)
+                                                            : (listTl.Y + listSz.Y);
+    if (bot <= top) return false;   // entirely scrolled out of the viewport
+    return c.y >= static_cast<long>(top) && c.y < static_cast<long>(bot) &&
+           c.x >= static_cast<long>(tl.X) && c.x < static_cast<long>(tl.X + sz.X);
 }
 void UpdateHover() {
     POINT c{};
@@ -321,21 +358,19 @@ void UpdateHover() {
     g_hoverPending = moved;
 
     int hit = -1;
-    if (CursorOverList(c)) {
+    ue_wrap::FVector2D listTl{}, listSz{};
+    if (ListRect(listTl, listSz) && Inside(c, listTl, listSz)) {
         const int total = U::ChildCount(g_list);
         // THE PREVIOUS ROW IS PROBED FIRST, and that is what makes this affordable. During
-        // a sweep the cursor is still on the SAME row on most frames, so one dispatch
-        // answers; the full walk with its early exit is the fallback.
-        if (g_hoverRow >= 0 && g_hoverRow < total) {
-            RowParts rp;
-            if (RowPartsAt(g_hoverRow, rp) && rp.bg && E::WidgetIsHovered(rp.bg))
-                hit = g_hoverRow;
-        }
+        // a sweep the cursor is still on the SAME row on most frames, so ONE rect read
+        // answers; the walk with its early exit is the fallback, and it stops at the first
+        // containment rather than visiting every row.
+        if (g_hoverRow >= 0 && g_hoverRow < total &&
+            RowRectContains(g_hoverRow, c, listTl, listSz))
+            hit = g_hoverRow;
         for (int i = 0; hit < 0 && i < total; ++i) {
             if (i == g_hoverRow) continue;   // already probed
-            RowParts rp;
-            if (!RowPartsAt(i, rp) || !rp.bg) continue;
-            if (E::WidgetIsHovered(rp.bg)) { hit = i; break; }
+            if (RowRectContains(i, c, listTl, listSz)) hit = i;
         }
     }
     if (hit == g_hoverRow) return;
@@ -420,7 +455,10 @@ void SyncRows() {
         // resolves to the server the user was LOOKING at even if the master reorders.
         g_rowIds[static_cast<size_t>(i)] = r.lobbyId;
     }
-    if (g_status) {
+    // The footer mirrors the session's own status EXCEPT while a click's answer is still
+    // fresh. Without this the 5 s sync would wipe "Pick a server from the list first."
+    // within a few frames of the player reading it, which reads as the button doing nothing.
+    if (g_status && ::GetTickCount64() >= g_noticeUntilMs) {
         const std::string s = sm::Status();
         const std::wstring w(s.begin(), s.end());
         E::SetWidgetText(g_status, w.c_str());
@@ -582,6 +620,10 @@ bool BuildScreen(void* switcher) {
         if (void* footRow = Spawn(L"HorizontalBox", footBox)) {
             g_backBtn = BuildButton(footRow, backDonor, L"BACK", 18);
             g_status  = AddText(footRow, L"", 16, kText, kJustLeft, 1.f);
+            // The status has fill weight 1, so it takes all the slack and pushes these to
+            // the right edge -- Back at the left, actions at the right, which is what every
+            // native VOTV window does (style doc section 5, gap S7).
+            if (!ui::server_browser_actions::Build(footRow, backDonor)) return false;
             if (void* s = U::AddChild(footBox, footRow))
                 U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
                                 kFill, kCenter);
@@ -658,6 +700,32 @@ bool IsOpen() { return g_shown; }
 int HoveredRow() { return g_hoverRow; }
 const char* SelectedRowId() { return g_selectedId.c_str(); }
 
+bool SelectedRow(coop::net::lobby::LobbyRow& out) {
+    if (g_selectedId.empty()) return false;
+    // BY ID, never by index -- invariant 1 in this module's header. `g_rows` is refreshed
+    // from the master every 5 s and is not sorted, so the position that was selected is not
+    // the position that holds it now, and a positional read would hand a player a different
+    // server than the one they clicked.
+    for (const Row& r : g_rows) {
+        if (r.lobbyId == g_selectedId) { out = r; return true; }
+    }
+    // Selected, but the lobby is gone from the latest list: the host quit while the screen
+    // was open. Answering false is right -- the caller has nothing to connect to -- and the
+    // selection is dropped so the highlight stops pointing at a server that is not there.
+    g_selectedId.clear();
+    RepaintRowFills();
+    return false;
+}
+
+void SetNotice(const char* text) {
+    if (!text) return;
+    g_noticeUntilMs = ::GetTickCount64() + kNoticeMs;
+    if (!g_status) return;
+    const std::string s(text);
+    const std::wstring w(s.begin(), s.end());
+    E::SetWidgetText(g_status, w.c_str());
+}
+
 void LogRowHitDiagnostics(int32_t i) {
     RowParts rp;
     if (!RowPartsAt(i, rp)) {
@@ -688,6 +756,7 @@ void OnMenuTick(void* menu, void* switcher) {
         g_menu = menu;
         g_root = nullptr; g_list = nullptr; g_status = nullptr; g_title = nullptr;
         g_closeBtn = nullptr; g_backBtn = nullptr; g_scrimW = nullptr;
+        ui::server_browser_actions::Forget();
         g_ourIndex = -1; g_shown = false; g_buildAttempts = 0; g_toldTheUser = false;
         g_rowIds.clear();
     }
@@ -792,6 +861,10 @@ void OnMenuTick(void* menu, void* switcher) {
         if (releaseEdge && ui::input_focus::IsOurWindowForeground()) {
             if (g_closeBtn && E::WidgetIsHovered(g_closeBtn)) { Hide("X"); return; }
             if (g_backBtn  && E::WidgetIsHovered(g_backBtn))  { Hide("BACK"); return; }
+            // The action bar BEFORE the rows: its buttons sit in the footer, outside the
+            // list, so they cannot both answer -- but returning here is what keeps a click
+            // on CONNECT from also being read as a click on whatever is behind it.
+            if (ui::server_browser_actions::OnReleaseEdge()) return;
             // A click on a hovered row SELECTS it. The row under the cursor is already
             // known from the hover pass, so this costs no extra dispatch.
             if (g_hoverRow >= 0 && g_hoverRow < static_cast<int>(g_rowIds.size())) {

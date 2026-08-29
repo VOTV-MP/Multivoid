@@ -10,6 +10,8 @@
 #include "ui/server_browser_native.h"   // IsOpen()/Open() -- the click phases drive the real screen
 #include "ui/input_focus.h"            // synthesized input only lands in a FOREGROUND window
 #include "ui/imgui_overlay.h"          // CaptureOwners() -- who is eating the mouse
+#include "ui/server_browser_actions.h"  // the HOST button this drives
+#include "ui/host_window_native.h"     // ...and what it must open
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/reflection.h"
@@ -81,6 +83,14 @@ constexpr int kClickSample    = 140;  // eight ticks after the move -- the scrim
 constexpr int kClickDown      = 142;
 constexpr int kClickUp        = 146;
 constexpr int kClickVerify    = 156;
+// ...and LAST, the HOST link, because it is what the user actually asked for: a hosting
+// window they can reach. It runs after the X phases because clicking HOST closes the
+// browser, so nothing about the browser can be asserted after it.
+constexpr int kHostReopen     = 162;
+constexpr int kHostMove       = 170;
+constexpr int kHostDown       = 180;
+constexpr int kHostUp         = 184;
+constexpr int kHostVerify     = 196;
 
 // The forced offset for the positive control. Far past any real content extent, so a
 // getter that returns it UNCHANGED has told us it echoes the request rather than reading
@@ -820,8 +830,50 @@ void Tick(void* scrim, void* list, void* closeBtn) {
                 UE_LOGE("server_browser_native: CLOSE BUTTON FAIL -- the cursor WAS over "
                         "the X (hovered=1) and a full press-release was delivered, yet the "
                         "screen is still open. The button draws but does not close.");
+            break;   // the HOST phases follow; they re-open the screen themselves
+        case kHostReopen:
+            ui::server_browser_native::Open();
+            break;
+        case kHostMove: {
+            void* host = ui::server_browser_actions::HostButton();
+            ue_wrap::FVector2D tl{}, sz{};
+            if (!host || !U::WidgetScreenRect(host, tl, sz) || sz.X < 1.f || sz.Y < 1.f) {
+                UE_LOGE("server_browser_native: HOST LINK SKIP -- the HOST button has no "
+                        "usable rect (built=%d), so whether the hosting window can be "
+                        "reached from the browser is UNMEASURED", host ? 1 : 0);
+                g_selfCheckStep = -1;
+                return;
+            }
+            UE_LOGW("server_browser_native: HOST button at desktop (%.0f,%.0f) %.0fx%.0f "
+                    "-- clicking it", tl.X, tl.Y, sz.X, sz.Y);
+            ::SetCursorPos(static_cast<int>(tl.X + sz.X * 0.5f),
+                           static_cast<int>(tl.Y + sz.Y * 0.5f));
+            break;
+        }
+        case kHostDown:
+            ::mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+            break;
+        case kHostUp:
+            ::mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+            break;
+        case kHostVerify: {
+            // BOTH halves, because either one alone is a broken screen: the hosting window
+            // must be up, and the browser must have got out of the way. They are siblings
+            // in one switcher, so "both open" is not a state that can render.
+            const bool hostUp     = ui::host_window_native::IsOpen();
+            const bool browserOut = !ui::server_browser_native::IsOpen();
+            if (hostUp && browserOut)
+                UE_LOGW("server_browser_native: HOST LINK PASS -- a real click on HOST "
+                        "opened the hosting window and closed the browser. The window "
+                        "shipped 2026-08-29 with no way in but a dev flag; it has one now.");
+            else
+                UE_LOGE("server_browser_native: HOST LINK FAIL -- after a real click on the "
+                        "HOST button: hosting window open=%d, browser closed=%d. Both must "
+                        "be true; they are siblings in one switcher and only one can render.",
+                        hostUp ? 1 : 0, browserOut ? 1 : 0);
             g_selfCheckStep = -1;
             return;
+        }
         default:
             break;
     }

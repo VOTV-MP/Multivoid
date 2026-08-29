@@ -593,6 +593,7 @@ add_library(votv-coop SHARED
     src/ui/server_browser.cpp
     src/ui/native_screen.cpp
     src/ui/host_window_native.cpp
+    src/ui/server_browser_actions.cpp
     src/ui/server_browser_native.cpp
     src/ui/server_browser_selftest.cpp
     src/ui/boot_warning_dialog.cpp
