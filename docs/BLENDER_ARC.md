@@ -28,6 +28,30 @@
   instance data confirmed as 64-byte FMatrix bulk arrays.
 - Renders: scratchpad `votvio_shot.png` / `votvio_wide.png` / `votvio_top.png`.
 
+**v3 same day (user feedback pass):** the resolver now composes the **SCS TREE**
+(SCS_Node graph; flattening it was why dish heads sat buried at the actor origin) and
+`pose_random.py` gives articulated fixtures seeded working poses (dish axis_Z/axis_Y,
+windturbine axis_room/axis_blades, radar rot_Z; measured pivots). Reconcile refined:
+a level int_save actor is skipped only when its CLASS has save rows — watchtowers/
+fences render again, turbines spawn posed from their 4 rows. `materials.py` is the
+census-grounded **family analog of the game's material system** (tex / ag=emissive
+mask / ao / normal / rough, color/emissioncolor, Masked/Translucent/Additive, foliage,
+triplanar box-mapping, built-in water shader from `w_absorb`), plus a **terrain style**
+option (green default / snow / dirt, slope-rock blend) replacing the white ground.
+**Import radius** option: 0 = whole map; else meters around the base (origin =
+`baseBuilding_C` root): at 150 m the scene is 9,544 objects vs 77,209 full.
+
+**v4 (same day, user field pass): the umap holds only DELTA components of a BP actor**
+— radiotower's exported shape was ONE 90 m `misc/cube` imposter named `rend`; its real
+mast/top/comm-panel are template-only and were never rendered. Fix: tree-first assembly
+for level BP actors WITHOUT visible delta meshes (template tree + instance-delta merge
++ pose), while actors with real delta layouts (base building, doors, boarded windows)
+keep the flat path; missing-template pivots (dish `axis_Z/axis_Y` have no export —
+empty delta) walk through as identity, which un-buried the dish farm a second time.
+Named imposter table (`rend`) + **technical meshes hidden by default**
+(`misc/cube`, `misc/qweqwe`; "Show technical meshes" option brings them back).
+Final full-smoke: 75,517 objects / 943 meshes / 703 textures / ~117 s.
+
 ## 1. What it is
 
 A Blender 5.1 **extension** (`extensions/user_default/votvio`, manifest-based, python 3.13 + numpy,
