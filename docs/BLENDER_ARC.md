@@ -5,8 +5,28 @@
 > все ассеты, которые валяются на карте, все модели и все entity, все npc»; precedent bar named by the
 > user: SourceIO — self-contained, no manual export steps). Addon name **VotvIO** (user's pick).
 > Design of record: `research/findings/tooling/votv-blender-sav-importer-DESIGN-2026-08-29.md` (local-only,
-> like all research/ pointers) + its QF transcript sibling. Status: **DESIGN converged (/qf, 7 rounds,
-> "that holds"); NOTHING BUILT yet.**
+> like all research/ pointers) + its QF transcript sibling. Status: **P0+P1+P2 BUILT the same day**
+> (commits `[blender] VotvIO P0+P1` + `P2`), deployed to `extensions/user_default/votvio` and enabled.
+
+## 0. AS-BUILT (2026-08-29, headless smoke on the real s_1234.sav + untitled_1)
+
+- `.sav` (20.3 MB) parses in **0.4 s**; full import **~106 s cold**: **74,492 objects** — 5,091 save
+  props with real meshes, 2,172 map statics, **64,823 ISM/HISM/foliage instances** (native-tail parser,
+  self-validating scan anchored on `NumBuiltInstances`), **256/256 landscape components** from
+  in-package heightmaps, 352 lights; 906 mesh datablocks, 655 decoded textures, 0 assembly warnings.
+- Reconcile (interim v1): level actors implementing `int_save`/`int_primitive` (checked live via the
+  class package `Interfaces[]`, inherited) are skipped — 6,812 skipped; save rows re-express them.
+  The kismet gatherer table (48 classes) is still the P2-polish item; `loadTransform=false` fixtures
+  may sit at row transforms until then.
+- Resolution ladder shipped: SCS templates → **CDO `name` → list_props** (the measured universal
+  mechanism: every prop_C descendant carries `name` in its CDO; potato/coal_s/drive/paper/wbox
+  confirmed) → curated supplement (dirthole mounds). Residual placeholders: 376 (trashBitsPile 264 —
+  procedural pile visuals, prop_C 47, barnshelf 23, small tail).
+- New measured facts vs the design: `FMeshUVHalf.to_mesh_uv_float` returns RAW half bits (decoded
+  ourselves); the "Invalid boolean value" storm on some meshes is a POST-LOD tail failure
+  (occluder/speedtree section) — geometry parses, materials come from the property block; ISM
+  instance data confirmed as 64-byte FMatrix bulk arrays.
+- Renders: scratchpad `votvio_shot.png` / `votvio_wide.png` / `votvio_top.png`.
 
 ## 1. What it is
 
@@ -46,22 +66,27 @@ landscape, foliage, lights), every saved prop/entity/vehicle/NPC from the save's
 
 ## 4. Build plan
 
-- **P0** — extension skeleton + .sav parse + manifest + placeholder boxes (no pak). ← NEXT
-- **P1** — save props with real meshes + `tex` BaseColor materials; decode budget profiled.
-- **P2** — acceptance probe+calibration FIRST, then umap/landscape/foliage/lights + reconcile; diff green.
-- **P3** — NPC SK bind pose, grime decals, splines, UCS supplement, BSP iff the diff shows missing walls.
+- **P0** — extension skeleton + .sav parse + manifest + placeholders. **BUILT.**
+- **P1** — save props with real meshes + `tex` BaseColor materials. **BUILT** (5,091 meshed).
+- **P2** — umap/landscape/foliage/lights + interim reconcile. **BUILT** (see §0). The formal
+  acceptance probe (UE4SS Lua dump + t0/t0+5s calibration + machine diff) is still OWED and remains
+  the verification gate — visual renders are smoke, not acceptance.
+- **P3** — NPC SK bind pose (473 level SK comps + 23 save SK rows currently placeholders), grime
+  decals, splines, gatherer kismet table, UCS supplement growth, BSP iff the diff shows missing walls.
 
 ## 5. Residual ledger
 
 | Open | What | Phase |
 |---|---|---|
-| O8 | non-main-map saves (`Level != Untitled_1`) — generic attempt + warning, unvalidated | P1 |
-| O12 | MIC parameter vocabulary census (normal/roughness names) | P1 |
+| — | **acceptance probe + calibration + machine diff** (the design's own gate) | next |
+| — | gatherer table from the 48 kismet bodies (interim: all int_save level actors skipped) | next |
+| O8 | non-main-map saves (`Level != Untitled_1`) — generic attempt + warning, unvalidated | P3 |
+| O12 | MIC parameter vocabulary census — the grey "monolith" slab = material without a `tex` param | P3 |
 | O13 | SplineMeshComponent (89) deform | P3 |
-| O14 | grime decal fidelity | P3 |
-| O15 | landscape layer blending fidelity | P2/P3 |
-| — | UCS-dynamic supplement (193 comps, ~11 classes) — counts published here when built | P3 |
-| — | door-root-transform inferred row — verified at first acceptance run | P2 |
+| O14 | grime decal fidelity (piles/grime are placeholders/boxes) | P3 |
+| O15 | landscape layer blending (terrain renders untextured white; weightmaps unshaded) | P3 |
+| — | trashBitsPile procedural visuals (264 placeholders) + prop_C stragglers (47) | P3 |
+| — | SK geometry port of `ue_skelmesh.py` (NPC bind pose) | P3 |
 
 ## 6. Dev notes
 
