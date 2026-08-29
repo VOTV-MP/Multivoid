@@ -206,21 +206,23 @@ landscape, foliage, lights), every saved prop/entity/vehicle/NPC from the save's
 - **P2** — umap/landscape/foliage/lights + interim reconcile. **BUILT** (see §0). The formal
   acceptance probe (UE4SS Lua dump + t0/t0+5s calibration + machine diff) is still OWED and remains
   the verification gate — visual renders are smoke, not acceptance.
-- **P3** — NPC SK bind pose (473 level SK comps + 23 save SK rows currently placeholders), grime
-  decals, splines, gatherer kismet table, UCS supplement growth, BSP iff the diff shows missing walls.
+- **P3** — NPC SK bind pose (473 level SK comps + 23 save SK rows currently placeholders),
+  gatherer kismet table, UCS supplement growth. ~~grime decals~~ / ~~splines~~ / ~~BSP~~ —
+  CLOSED by the v6 wave (§0 v6/v6c/v6d: projected decals, the river spline deform, the level Model).
 
 ## 5. Residual ledger
 
-> **Session handoff 2026-08-29 (v5, the base+radiotower bench session).** The 2026-08-29 build-day
-> verdict («Полное говно, масса проблем») stands over the FULL scene; per the user's decision the
-> work moved to the radius bench and the user's first three field reports are FIXED there (v5 §0:
-> base grounded / tower ladder / collision shells; commit `42bb819d`, addon deployed). **The bench
-> save is now `s_test_screens2.sav` (user decision — no event objects in it)**; bench command:
+> **Session handoff 2026-08-29 (end of the v5..v6d bench-fix session, HEAD `34749527`).** The
+> build-day verdict («Полное говно, масса проблем») has been worked down on the radius bench: TEN
+> user field reports fixed across v5/v6/v6b/v6c/v6d (§0 above), addon deployed after each wave.
+> **Bench save = `s_test_screens2.sav` (user decision — no event objects)**; bench command:
 > `VOTVIO_SMOKE_RADIUS=150 VOTVIO_SMOKE_BLEND=<path> blender --background --factory-startup
 > --python tools/blender/votvio/tests/smoke.py -- %LOCALAPPDATA%\VotV\Saved\SaveGames\
-> s_test_screens2.sav` (~90 s) → scratchpad `votvio_base150.blend`. The user inspects the .blend and
-> reports the next problem batch. Working agreement: NO renders — hand over the `.blend`
-> ([[feedback-votvio-hand-over-blend-no-renders]]).
+> s_test_screens2.sav` (~172 s with decal projection) → scratchpad `votvio_base150.blend`.
+> **Working agreement (both USER rules): NO renders — hand over the `.blend`; and the test loop
+> runs the BENCH ONLY — no full-map smokes per fix**
+> ([[feedback-votvio-hand-over-blend-no-renders]]). NOTE: scratchpad `votvio_smoke.blend` (full
+> map) was last rebuilt at v6c — its decals are still pre-projection quads; rebuild on request.
 
 | Open | What | Phase |
 |---|---|---|
@@ -233,7 +235,7 @@ landscape, foliage, lights), every saved prop/entity/vehicle/NPC from the save's
 | O8 | non-main-map saves (`Level != Untitled_1`) — the generic attempt + warning IS built (`import_op.py`), never validated on a real dream/tutorial save | P3 |
 | O12 | ~~MIC vocabulary census~~ **CLOSED `c19662e2`** — full-population census (3,243 materials) + family builder shipped (`materials.py`); residual = fidelity items (triplanar is an approximation; a base Material's non-parameterized default textures are unreachable in cook → grey fallback; **placeholder slots get curated overrides — `PLACEHOLDER_SLOT_OVERRIDES`**) | — |
 | O13 | ~~SplineMeshComponent deform~~ **CLOSED v6 `31551742`** — `spline_mesh.py` Hermite slice math; 85/89 map splines are the river, 4 carry no mesh | — |
-| O14 | ~~grime decals~~ **CLOSED v6** as alpha-quads (umap DecalComponents + primitivesData grime rows via spawn_plan DECAL entries); residual: decal quads do not wrap corners (a projected decal on a corner shows as a flat card); trashBitsPile visuals partly resolved (chipsPile template meshes), 81 full-map placeholders remain | P3 |
+| O14 | ~~grime decals~~ **CLOSED v6c+v6d** — variant families + CDO material (`decals.GRIME_FAMILY`, 80 materials) and real PROJECTION (mask/wrap/no-webbing, §0 v6d); residuals: receivers are STRUCTURE only (a decal that sat on a prop projects past it), leaky rusty/wet colour tints live in bytecode, trashBitsPile 81 full-map placeholders | P3 |
 | O15 | landscape textures: ~~untextured white~~ styled procedural GREEN/SNOW/DIRT + slope-rock SHIPPED (`c19662e2`); weightmap-TRUE layer blending still open | P3 |
 | — | BSP UV scale is the classic /128 texel guess — bunker wall texture density unverified | P3 |
 | — | prop_C stragglers (44) + prop_barnshelf (23) placeholders | P3 |
@@ -242,6 +244,8 @@ landscape, foliage, lights), every saved prop/entity/vehicle/NPC from the save's
 ## 6. Dev notes
 
 - Repo home: `tools/blender/votvio/` + `tools/blender/deploy_addon.ps1` → `extensions/user_default/votvio`.
-- Headless loop: `blender --background --factory-startup --python tools/blender/votvio/tests/smoke.py`.
+- Headless loop: `blender --background --factory-startup --python tools/blender/votvio/tests/smoke.py`
+  — ALWAYS with `VOTVIO_SMOKE_RADIUS=150` (USER rule: tests load base+workstation only, never the
+  whole map).
 - License: MIT (repo license; GPL-compatible per Blender extension rules); vendored pyUE4Parse is MIT with
   attribution; the empirical vendor-patch list is in the design doc §1 (Blender side).

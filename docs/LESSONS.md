@@ -4532,6 +4532,18 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   `docs/BLENDER_ARC.md` v5.
   `memory/lesson_cooked_ue4_is_delta_encoded_at_every_layer.md`
 
+- **2026-08-29 — A runtime-assigned field lives on the CDO VARIABLE (or in bytecode), and the cooked
+  component TEMPLATE can be PRESENT and WRONG.** The inverse of the delta-encoding trap: there an
+  absent field means "default"; here `grime_beer_C`'s template `DecalMaterial` says the PARENT's
+  blood while the CDO variable `material` says `inst_beerSplash` (the BP pushes it into a MID at
+  runtime) — and the variant-family classes (crack/leaky/dusty/light/grainy) carry NO material
+  anywhere: the BP picks from numbered pak families (`inst_decalCrack_0..16`, `_leak_0..7`,
+  `_dirt_0..34`, `_Leaves_1..4`); 739 decals collapsed onto the inherited `dirt_0` before the
+  family table existed. Resolution order that ships: variant family → CDO variable → component
+  template. *Look FIRST:* `tools/blender/votvio/decals.py` (`GRIME_FAMILY`) +
+  `template_resolver.py` (`cdo_material`) + `docs/BLENDER_ARC.md` v6c.
+  `memory/lesson_a_runtime_assigned_field_lives_on_the_cdo_not_the_template.md`
+
 - **2026-08-29 — pyUE4Parse works on VOTV only with 5 named fixes** (it LOOKS broken at the first
   mesh): unconditional `minMobileLODIdx` read for ≥4.27 misaligns every StaticMesh (CUE4Parse gates it
   on `StaticMesh.KeepMobileMinLODSettingOnDesktop`, default OFF); `USkeletalMesh` is a stub (SK lane =
