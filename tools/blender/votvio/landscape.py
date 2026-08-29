@@ -29,20 +29,25 @@ def _ref_name(v):
 def _decoded_tex(pkg, name, cache, warnings, label):
     if name in cache:
         return cache[name]
+    # one name->export index per package (a linear ExportMap scan per texture
+    # is ~300 x tens-of-thousands of str() conversions on the full map)
+    index = cache.get("__index__")
+    if index is None:
+        index = {str(ex.ObjectName): ex for ex in pkg.ExportMap}
+        cache["__index__"] = index
     img = None
-    for ex in pkg.ExportMap:
-        if str(ex.ObjectName) == name:
-            obj = getattr(ex, "exportObject", None)
-            data = getattr(obj, "data", None)
-            if data:
-                pd = data[0]
-                mip = next((m for m in pd.Mips
-                            if getattr(getattr(m, "BulkData", None), "Data", None)), None)
-                if mip is not None:
-                    img = bc_decode.decode_pixels(
-                        pd.PixelFormat.name, bytes(mip.BulkData.Data),
-                        int(mip.SizeX), int(mip.SizeY))
-            break
+    ex = index.get(name)
+    if ex is not None:
+        obj = getattr(ex, "exportObject", None)
+        data = getattr(obj, "data", None)
+        if data:
+            pd = data[0]
+            mip = next((m for m in pd.Mips
+                        if getattr(getattr(m, "BulkData", None), "Data", None)), None)
+            if mip is not None:
+                img = bc_decode.decode_pixels(
+                    pd.PixelFormat.name, bytes(mip.BulkData.Data),
+                    int(mip.SizeX), int(mip.SizeY))
     if img is None:
         warnings.append(f"landscape {label} missing: {name}")
     cache[name] = img
@@ -153,9 +158,10 @@ def build_landscape(game, map_path, dicts, collection, warnings, builder=None,
             me.materials.append(mat)
             uvl = me.uv_layers.new(name="ComponentUV")
             pv = np.stack([(gx + 0.5) / nverts, (gy + 0.5) / nverts],
-                          axis=-1).reshape(-1, 2)
-            for li, loop in enumerate(me.loops):
-                uvl.data[li].uv = pv[loop.vertex_index]
+                          axis=-1).reshape(-1, 2).astype(np.float32)
+            vidx = np.empty(len(me.loops), dtype=np.int32)
+            me.loops.foreach_get("vertex_index", vidx)
+            uvl.data.foreach_set("uv", pv[vidx].ravel())
         me.polygons.foreach_set("use_smooth", np.ones(len(me.polygons), dtype=bool))
         ob = bpy.data.objects.new(me.name, me)
         collection.objects.link(ob)
@@ -183,8 +189,10 @@ def _component_material(game, pkg, p, comp_name, nverts, ssq, csq, tex_cache,
             game, [(layers[0][0], 0)], None, specs, caches, warnings, key)
 
     wt_names = [_ref_name(x) for x in (p.get("WeightmapTextures") or [])]
-    sb = p.get("WeightmapScaleBias") or {}
     n = min(len(layers), 4)
+    if len(layers) > 4:
+        warnings.append(f"landscape {comp_name}: {len(layers)} paint layers, "
+                        f"only 4 blended ({[nm for nm, _t, _c in layers[4:]]} dropped)")
     weights = np.zeros((nverts, nverts, 4), dtype=np.float32)
     got_any = False
     for k, (nm, tidx, chan) in enumerate(layers[:n]):

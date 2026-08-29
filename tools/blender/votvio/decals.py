@@ -83,11 +83,15 @@ def _uv(fy, fz):
 
 
 def _wind(verts, faces, direction):
-    """Flip face winding so the sheet's normal faces back along the cast ray."""
+    """Flip face winding so the sheet's normal faces back along the cast ray.
+    Summed over the leading faces: one degenerate (collinear) face must not
+    decide the whole sheet."""
     if not faces:
         return faces
-    a, b, c = (Vector(verts[i]) for i in faces[0][:3])
-    n = (b - a).cross(c - a)
+    n = Vector((0.0, 0.0, 0.0))
+    for f in faces[:8]:
+        a, b, c = (Vector(verts[i]) for i in f[:3])
+        n += (b - a).cross(c - a)
     if n.dot(direction) > 0.0:
         return [tuple(reversed(f)) for f in faces]
     return faces
@@ -127,7 +131,15 @@ def _project_side(scene, depsgraph, loc, direction, y_axis, z_axis, sy, sz,
                   ny, nz, depth):
     def cast(fy, fz):
         origin = loc + y_axis * (fy * sy) + z_axis * (fz * sz) - direction * depth
-        return scene.ray_cast(depsgraph, origin, direction, distance=2.0 * depth)
+        ok, hloc, hnorm, i, o, mw = scene.ray_cast(
+            depsgraph, origin, direction, distance=2.0 * depth)
+        # ray_cast does not backface-cull: a hit whose normal points ALONG the
+        # ray is the back of a surface the OPPOSITE pass owns - keeping it
+        # built a second, exactly-coincident sheet on every one-sided receiver
+        # (doubled decal opacity; the post-ship audit's C1)
+        if ok and hnorm.dot(direction) > 0.0:
+            return False, hloc, hnorm, i, o, mw
+        return ok, hloc, hnorm, i, o, mw
 
     # ---- phase A: 3x3 probe ------------------------------------------------
     probes = {}
@@ -149,7 +161,7 @@ def _project_side(scene, depsgraph, loc, direction, y_axis, z_axis, sy, sz,
             residual = max(abs((p - p0).dot(nmean)) for p, _n in probes.values())
             planar = residual < 0.015
         denom = direction.dot(nmean)
-        if planar and abs(denom) > 1e-4:
+        if planar and denom < -1e-4:   # front faces only: normal opposes the ray
             verts = []
             uvs = []
             for iy in range(ny + 1):

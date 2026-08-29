@@ -400,7 +400,8 @@ def get_decal_material(game, mat_pkg_path, caches, warnings, with_textures=True)
     op = info["scal"].get("opacity", info["scal"].get("alpha", 1.0))
     mul = nt.nodes.new("ShaderNodeMath")
     mul.operation = "MULTIPLY"
-    mul.inputs[1].default_value = min(max(op * (1.3 if grungy else 1.0), 0.0), 1.3)
+    mul.inputs[1].default_value = min(max(op * 1.3, 0.0), 1.3) if grungy else \
+        min(max(op, 0.0), 1.0)
     mul.location = (-140, -60)
     nt.links.new(alpha_socket, mul.inputs[0])
     if grungy:

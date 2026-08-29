@@ -4573,6 +4573,18 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   `template_resolver.py` (`cdo_material`) + `docs/BLENDER_ARC.md` v6c.
   `memory/lesson_a_runtime_assigned_field_lives_on_the_cdo_not_the_template.md`
 
+- **2026-08-29 — a cooked UMaterial strips its expression GRAPH, but `CachedExpressionData` keeps
+  every runtime parameter's DEFAULT VALUE and the `ReferencedTextures` list.** "These screen
+  materials have ZERO texture params so their content is unreachable" was measured TRUE of the
+  override arrays and FALSE one property over: `mat_clockMat` names the `digits` atlas + num=0 +
+  color=RED, `mat_tvScreen` its static/pixel/content textures + active=1/static=0,
+  `mat_analogDS_*` their real display colors (orange/yellow/green) — the v6b white-noise stand-ins
+  the user rejected were built on the narrow measurement. For any "what does this material actually
+  show" question, dump the raw export and read `CachedExpressionData` (Materials) /
+  `CachedReferencedTextures` (MICs) BEFORE declaring content runtime-only. *Look FIRST:*
+  `tools/blender/votvio/screens.py` (the per-root still-frame builders) + `docs/BLENDER_ARC.md` v7.
+  `memory/lesson_cooked_material_cachedexpressiondata_keeps_defaults.md`
+
 - **2026-08-29 — pyUE4Parse works on VOTV only with 5 named fixes** (it LOOKS broken at the first
   mesh): unconditional `minMobileLODIdx` read for ≥4.27 misaligns every StaticMesh (CUE4Parse gates it
   on `StaticMesh.KeepMobileMinLODSettingOnDesktop`, default OFF); `USkeletalMesh` is a stub (SK lane =
