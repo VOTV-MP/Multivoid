@@ -20,6 +20,7 @@
 #include "coop/moderation/seen_players.h"
 #include "coop/net/session.h"
 #include "coop/element/intent_authority.h"
+#include "coop/net/peer_identity.h"
 #include "coop/player/movement_ledger.h"
 #include "coop/player/nameplate.h"
 #include "coop/player/players_registry.h"
@@ -398,6 +399,13 @@ bool StartCoopSession(const coop::net::Config& netCfg) {
     // off, for the same reason the ledger's is: a wrong reach verdict does not crash, it merely
     // reads wrong, and a gate that reads wrong either refuses a real player or authorizes the map.
     coop::element::RunSelftest();
+    // The durable identity's crypto selftest: SHA-256 + Ed25519 against published
+    // vectors, each with a tamper arm, plus the decision this module exports (a
+    // signature must verify against ITS OWN identity and no other). Un-gated for the
+    // same reason as the two above -- a verifier that accepts everything, or one whose
+    // digest is wrong, does not crash: it either admits anyone or renames every player,
+    // and both read as "working" from outside. See coop/net/peer_identity.h.
+    coop::net::peer_identity::RunSelftest();
     // Reset net_pump edge-detector state so a Stop()/Start() cycle on the same process
     // doesn't carry stale "was connected" / "was holding prop" entries into the new
     // session (phantom disconnect edge / suppressed connect replay / stale prop key).

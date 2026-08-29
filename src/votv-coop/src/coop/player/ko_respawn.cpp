@@ -52,6 +52,9 @@ bool g_spawnAtStart = true;
 // AddPlayerDamage interceptor resolve/install latch (process-lifetime; the resolve
 // retries in Tick until mainPlayer_C loads, then registers once -- the wisp shape).
 bool g_interceptorInstalled = false;
+// One-shot latch for Install(), which the pump calls EVERY TICK (see the comment
+// on Install). Never cleared: the module's per-session re-arm is OnSessionStart.
+bool g_installed = false;
 int32_t g_damageOff = -1;  // "Add Player Damage" param `Damage` float offset
 
 // KO state (game thread only).
@@ -145,7 +148,18 @@ bool HandleLocalDeath(coop::net::Session& session, void* mainPlayer) {
 }
 
 void Install(coop::net::Session* session) {
+    // CALLED EVERY PUMP TICK. `subsystems::Install` (net_pump.cpp:766) re-runs the
+    // whole install list once per tick and calls it "idempotent", so everything
+    // here must be idempotent AND SILENT on re-entry. The first version of this
+    // function was neither: it logged unconditionally (measured at tick rate in a
+    // 2026-08-29 smoke -- ~30 identical lines per second) and, worse, it CLEARED
+    // `g_interceptorInstalled` every tick, so the lazy resolve in Tick() never
+    // stayed latched and `RegisterInterceptor` was re-entered every 125 ticks
+    // forever. The session pointer is still refreshed on every call, because a
+    // Stop()/Start() cycle in one process hands us a different Session.
     g_session.store(session, std::memory_order_release);
+    if (g_installed) return;
+    g_installed = true;
     ReadConfig();
     // The interceptor registers lazily in Tick once mainPlayer_C + the UFunction
     // resolve (AddPlayerDamageFunctionPtr self-gates until the class loads).

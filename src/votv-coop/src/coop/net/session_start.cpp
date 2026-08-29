@@ -16,6 +16,7 @@
 
 #include "coop/config/config.h"           // ResolveInt for the fakelink drill knob
 #include "coop/config/config_registry.h"  // rows::net_fakelink_kbs
+#include "coop/net/peer_identity.h"
 #include "coop/player/nickname_arbiter.h"
 #include "coop/text/case_fold.h"
 #include "coop/text/repertoire.h"
@@ -155,6 +156,18 @@ bool Session::Start(const Config& cfg) {
     hasLocalRagdoll_ = false;
 
     if (!EnsureGnsInit()) return false;
+
+    // Install THIS install's durable identity into GNS before any socket exists.
+    // The public key IS the identity (`[V]` GNS's GenericBytes identity is exactly
+    // 32 bytes), so from here on every connection this process makes or accepts
+    // carries a name that its holder can be asked to prove -- which is what
+    // coop/net/peer_admission does at the Connected edge. A failure here is FATAL
+    // to the session on purpose: starting anyway would present an identity we
+    // cannot sign for, and every peer would rightly refuse us.
+    if (!peer_identity::InstallInto(SteamNetworkingSockets())) {
+        UE_LOGE("net: refusing to start -- the durable identity could not be installed");
+        return false;
+    }
 
     // Machine-assert the link classifier ONCE per process, here rather than at a
     // module Install: this is the first point GNS is initialised, and the two

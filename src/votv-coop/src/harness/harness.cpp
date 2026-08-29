@@ -20,6 +20,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/config/config.h"
 #include "coop/config/config_review.h"      // RunBootSweep (T10 settings check, arc 2)
+#include "coop/net/peer_identity.h"        // the durable Ed25519 identity (replaces player_guid=)
 #include "coop/session/player_handshake.h"  // SetLocalGuid (v73 per-player inventory identity)
 #include "coop/player/local_body.h"         // SetInitialSkin (v93 skins: ini player_skin=)
 #include "coop/text/utf8_codec.h"
@@ -129,9 +130,17 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         // saw it, and every downstream fix looked like it had not worked.
         coop::session_manager::SetNickname(coop::text::ToUtf8(cfg::ReadNickname()));
     }
-    // v73 per-player inventory: seed the durable identity GUID (ini player_guid=, generated
-    // + persisted on first launch). Rides our Join so the host keys our inventory file.
-    coop::player_handshake::SetLocalGuid(cfg::ReadPlayerGuid());
+    // The durable player identity: an Ed25519 keypair whose PUBLIC KEY is our
+    // network identity and whose 32-char guid (used to key the host-side inventory)
+    // is DERIVED from it. This replaced the ini's `player_guid=` -- a value the peer
+    // chose for itself and every host believed -- on 2026-08-29; see
+    // coop/net/peer_identity.h and docs/security/PLAN_01_PEER_AUTH.md. Loading it
+    // here, at boot, means a failure is visible before any session starts.
+    if (!coop::net::peer_identity::Load()) {
+        UE_LOGE("harness: no durable identity could be established -- coop sessions "
+                "will refuse to start (see the peer_identity log line above)");
+    }
+    coop::player_handshake::SetLocalGuid(coop::net::peer_identity::LocalGuid());
     // v93 skins: the persisted body-skin choice (same ini; a fresh identity is assigned
     // the current scientist). local_body owns it; the Join payload reads it from there.
     coop::local_body::SetInitialSkin(cfg::ReadPlayerSkin());
