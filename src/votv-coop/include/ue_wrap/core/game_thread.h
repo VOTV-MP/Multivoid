@@ -233,6 +233,10 @@ bool GetCallTrace();
 void SetPerfCounting(bool countDispatches, bool sampleSelfTime);
 unsigned long long PeDispatchCountTotal();   // dispatches observed (all threads) since counting was armed
 unsigned long long PeDispatchCountGTTotal(); // game-thread subset of the above
+// Subset that originated in OUR code (reflection::CallFunction). Each such dispatch
+// executes real blueprint on the game thread, so this is the share of the engine's
+// per-frame script load that we author -- a cost no bucket of ours can see.
+unsigned long long PeDispatchCountCoopTotal();
 unsigned long long PeSelfNsTotal();          // summed detour self-time (ns) over sampled dispatches
 // WHOLE-detour totals (2026-08-29). PeSelfNsTotal brackets the detour body from inside
 // ProcessEventDetourImpl, so the outer frame + the SEH __try frame are excluded BY

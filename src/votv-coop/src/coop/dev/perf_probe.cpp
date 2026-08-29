@@ -60,6 +60,7 @@ double TicksToMs(unsigned long long ticks) {
 // ---- 1 Hz sampler window state (game-thread only; Sample() runs there) --------
 std::chrono::steady_clock::time_point g_lastSample{};
 bool g_haveBaseline = false;
+unsigned long long g_lastPECoop = 0;
 unsigned long long g_lastPE = 0, g_lastPEGT = 0, g_lastSelfNs = 0, g_lastSelfSamp = 0,
                    g_lastObsNs = 0, g_lastFrames = 0;
 // Whole-detour window state (2026-08-29); see the WHOLE readout in Sample().
@@ -207,6 +208,7 @@ void Sample() {
 
     const unsigned long long pe     = GT::PeDispatchCountTotal();
     const unsigned long long peGT   = GT::PeDispatchCountGTTotal();
+    const unsigned long long peCoop = GT::PeDispatchCountCoopTotal();
     const unsigned long long selfNs = GT::PeSelfNsTotal();
     const unsigned long long selfSm = GT::PeSelfSampleTotal();
     const unsigned long long obsNs  = GT::PeObserverBodyNsTotal();
@@ -214,11 +216,13 @@ void Sample() {
 
     const unsigned long long dPE    = pe - g_lastPE;
     const unsigned long long dPEGT  = peGT - g_lastPEGT;
+    const unsigned long long dCoop  = peCoop - g_lastPECoop;
     const unsigned long long dSelf  = selfNs - g_lastSelfNs;
     const unsigned long long dSamp  = selfSm - g_lastSelfSamp;
     const unsigned long long dObs   = obsNs - g_lastObsNs;
     const unsigned long long dFr    = frames - g_lastFrames;
     g_lastPE = pe; g_lastPEGT = peGT; g_lastSelfNs = selfNs; g_lastSelfSamp = selfSm;
+    g_lastPECoop = peCoop;
     g_lastObsNs = obsNs; g_lastFrames = frames;
 
     const double pePerSec  = dPE / elapsed;
@@ -231,8 +235,9 @@ void Sample() {
     const double obsMsSec   = (dObs / elapsed) / 1e6;
     const double obsMsFr    = dFr > 0 ? (static_cast<double>(dObs) / dFr) / 1e6 : 0.0;
 
-    UE_LOGW("[perf] PE=%.0f/s (GT=%.0f) frames=%.0f/s => PE/frame=%.0f (GT=%.0f) | obs post=%d pre=%d intc=%d",
-            pePerSec, dPEGT / elapsed, frPerSec, pePerFr, peGTPerFr,
+    UE_LOGW("[perf] PE=%.0f/s (GT=%.0f, OURS=%.0f = %.1f%% of GT) frames=%.0f/s => PE/frame=%.0f (GT=%.0f) | obs post=%d pre=%d intc=%d",
+            pePerSec, dPEGT / elapsed, dCoop / elapsed,
+            dPEGT > 0 ? 100.0 * dCoop / dPEGT : 0.0, frPerSec, pePerFr, peGTPerFr,
             GT::PostObserverCount(), GT::PreObserverCount(), GT::InterceptorCount());
 
     if (g_selfTime) {

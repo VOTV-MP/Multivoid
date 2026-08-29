@@ -74,6 +74,14 @@ std::atomic<bool> g_peCountOn{false};
 std::atomic<bool> g_peSelfOn{false};
 std::atomic<unsigned long long> g_peDispatchCount{0};    // all threads
 std::atomic<unsigned long long> g_peDispatchCountGT{0};  // game-thread subset (the per-dispatch substrate cost only applies here)
+// Dispatches that ORIGINATED IN OUR CODE (reflection::CallFunction sets a thread-local
+// depth; InCoopDispatch reads it). The game thread runs ~920 dispatches/frame and every
+// one executes real blueprint, so "is the game thread busy because of us?" reduces to
+// what SHARE of that volume we author. Our detour overhead is measured and small
+// (~0.5 ms/frame); the BP those calls then execute is NOT ours and is invisible to every
+// bucket we own. Counted inside Impl, i.e. under the SEH firewall -- putting an
+// instrument in the unprotected outer frame hard-crashed the game on 2026-08-29.
+std::atomic<unsigned long long> g_peDispatchCountCoop{0};
 std::atomic<unsigned long long> g_peSelfNs{0};
 std::atomic<unsigned long long> g_peSelfSamples{0};
 constexpr unsigned long long kSelfSampleMask = 0xFF;  // sample 1 dispatch in 256
@@ -340,6 +348,8 @@ void __fastcall ProcessEventDetourImpl(void* self, void* function, void* params)
         ord = g_peDispatchCount.fetch_add(1, std::memory_order_relaxed) + 1;
         if (::GetCurrentThreadId() == D::g_gameThreadId.load(std::memory_order_relaxed))
             g_peDispatchCountGT.fetch_add(1, std::memory_order_relaxed);
+        if (reflection::InCoopDispatch())
+            g_peDispatchCountCoop.fetch_add(1, std::memory_order_relaxed);
     }
     bool sampleSelf = countOn && g_peSelfOn.load(std::memory_order_relaxed) &&
                       ((ord & kSelfSampleMask) == 0);
@@ -726,6 +736,7 @@ void SetPerfCounting(bool countDispatches, bool sampleSelfTime) {
 
 unsigned long long PeDispatchCountTotal()   { return g_peDispatchCount.load(std::memory_order_relaxed); }
 unsigned long long PeDispatchCountGTTotal() { return g_peDispatchCountGT.load(std::memory_order_relaxed); }
+unsigned long long PeDispatchCountCoopTotal() { return g_peDispatchCountCoop.load(std::memory_order_relaxed); }
 unsigned long long PeSelfNsTotal()          { return g_peSelfNs.load(std::memory_order_relaxed); }
 unsigned long long PeSelfSampleTotal()      { return g_peSelfSamples.load(std::memory_order_relaxed); }
 unsigned long long PeWholeNsTotal()         { return g_peWholeNs.load(std::memory_order_relaxed); }
