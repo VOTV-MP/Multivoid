@@ -417,6 +417,21 @@ def get_decal_material(game, mat_pkg_path, caches, warnings, with_textures=True,
             tm.image = mimg
             tm.location = (-560, -60)
             alpha_socket = tm.outputs["Color"]
+    if info["root"] == "mat_decal_grunge":
+        # the grunge graph runs CheapContrast(opacity_contrast, default 1.0)
+        # over the alpha: saturate(a*(1+2c) - c). Below ~0.33 vanishes - the
+        # game shows only each blob's CORE while the raw alpha renders the
+        # whole soft halo (field report: "looks like a different texture")
+        c = float(info["scal"].get("opacity_contrast", 1.0) or 0.0)
+        if c > 0.001:
+            mad = nt.nodes.new("ShaderNodeMath")
+            mad.operation = "MULTIPLY_ADD"
+            mad.inputs[1].default_value = 1.0 + 2.0 * c
+            mad.inputs[2].default_value = -c
+            mad.use_clamp = True
+            mad.location = (-320, -60)
+            nt.links.new(alpha_socket, mad.inputs[0])
+            alpha_socket = mad.outputs[0]
     op = info["scal"].get("opacity", info["scal"].get("alpha", 1.0))
     mul = nt.nodes.new("ShaderNodeMath")
     mul.operation = "MULTIPLY"

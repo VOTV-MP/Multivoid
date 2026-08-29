@@ -139,7 +139,8 @@ diffuse, RT-экраны/часы — white noise (неправильно), те
 2 листа; 818/976 декалей двухсторонние), winding по направлению каста; (3) grime-текстуры
 светло-серые (RGB 0.65), а `mat_decal_grunge` рисует их UNLIT (MSM_Unlit, замерено) —
 на лит-стене это тёмные пятна: затемнение ×(0.5,0.47,0.42) + буст альфы ×1.3 (калибровка
-по скрину игры); (4) **`tex_decalWindow` — вовсе не грязь, а нарисованное окно** (PNG);
+по скрину игры) — **ОБА ОТКАЧЕНЫ (буст в v8, затемнение в v8c): калибровались поверх
+невидимости с чужими корнями (v7d нормали + v7c дубль-листы)**; (4) **`tex_decalWindow` — вовсе не грязь, а нарисованное окно** (PNG);
 настоящий материал панелей — `inst_newwindow` из ImportMap d_window: ThinTranslucent,
 tint (0.611,0.708,0.667), канва мытья `tex_windowDirtDefault` 1645×512 (три панели в
 одной, UV панелей режут её на трети: u 0.25..0.75 у средней), CDO d_window несёт
@@ -339,19 +340,22 @@ landscape, foliage, lights), every saved prop/entity/vehicle/NPC from the save's
 
 ## 5. Residual ledger
 
-> **Session handoff 2026-08-29 (end of the v5..v7 bench-fix session).** The build-day verdict
-> («Полное говно, масса проблем») has been worked down on the radius bench: FIFTEEN user field
-> reports fixed across v5/v6/v6b/v6c/v6d/v7 (§0 above), addon deployed after each wave.
-> **Bench save = `s_test_screens2.sav` (user decision — no event objects)**; bench command:
+> **Session handoff 2026-08-29 (end of the v5..v8d bench-fix session).** The build-day verdict
+> («Полное говно, масса проблем») has been worked down on the radius bench: TWENTY-FIVE+ user
+> field reports fixed across v5/v6/v6b-d/v7/v7b-e/v8/v8b-d (§0 above), addon deployed after
+> each wave. **Bench save = `s_test_screens2.sav` (user decision — no event objects)**; bench:
 > `VOTVIO_SMOKE_RADIUS=150 VOTVIO_SMOKE_BLEND=<path> blender --background --factory-startup
 > --python tools/blender/votvio/tests/smoke.py -- %LOCALAPPDATA%\VotV\Saved\SaveGames\
-> s_test_screens2.sav` (~224 s with two-sided decal projection) → scratchpad
-> `votvio_base150.blend`.
+> s_test_screens2.sav` (~155 s) → scratchpad `votvio_base150.blend`.
 > **Working agreement (both USER rules): NO renders — hand over the `.blend`; and the test loop
 > runs the BENCH ONLY — no full-map smokes per fix**
 > ([[feedback-votvio-hand-over-blend-no-renders]]). NOTE: scratchpad `votvio_smoke.blend` (full
-> map) was last rebuilt at v6c — its decals are still pre-projection quads AND it predates the
-> v7 UV/terrain/screen fixes; rebuild on request.
+> map) was last rebuilt at v6c — pre-projection quad decals, inverted mesh normals, white-noise
+> screens, flat terrain; rebuild on request. **NEXT (user, pre-compact): продолжить сравнение
+> декалей с игрой по свежему кадру** — first check whether v8d's CheapContrast alpha shaping
+> closed the "другая текстура" gap on the right wall; if density still diverges, the next
+> suspects are the game's DBuffer angle fade + the dyn-grime progression `alpha` MID, and only
+> then the dusty/light/grainy→family assignment guesses.
 
 | Open | What | Phase |
 |---|---|---|
