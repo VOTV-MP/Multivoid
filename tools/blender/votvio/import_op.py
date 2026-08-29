@@ -43,6 +43,12 @@ class VOTVIO_OT_import_sav(bpy.types.Operator, ImportHelper):
     foliage_density: bpy.props.FloatProperty(
         name="Foliage density", description="Fraction of instanced foliage to place",
         default=1.0, min=0.0, max=1.0, subtype="FACTOR")
+    terrain_style: bpy.props.EnumProperty(
+        name="Terrain",
+        description="Ground shading style (the game offers terrain variants)",
+        items=[("GREEN", "Green", "Grass"), ("SNOW", "Snow", "Snowed over"),
+               ("DIRT", "Dirt", "Dry ground")],
+        default="GREEN")
 
     def invoke(self, context, event):
         if not self.filepath:
@@ -93,6 +99,7 @@ class VOTVIO_OT_import_sav(bpy.types.Operator, ImportHelper):
             "import_landscape": self.import_landscape,
             "import_lights": self.import_lights,
             "foliage_density": self.foliage_density,
+            "terrain_style": self.terrain_style,
         }
         wm.progress_begin(0, 100)
         try:

@@ -6,12 +6,10 @@ the game Phase-A destroys them on load and the save rows re-express them (gather
 fixtures included: their rows carry live transforms). int_primitive classes likewise
 (primitivesData is load-decisive). Everything else is placed as cooked.
 """
-import numpy as np
-
 import bpy
 from mathutils import Matrix
 
-from . import convert
+from . import convert, pose_random
 
 MESH_COMPS = {
     "StaticMeshComponent",
@@ -56,11 +54,12 @@ def _rot(v):
 
 
 class MapImporter:
-    def __init__(self, game, resolver, builder, options):
+    def __init__(self, game, resolver, builder, options, save_classes=None):
         self.game = game
         self.resolver = resolver
         self.b = builder                    # the assemble._Builder (mesh/material caches)
         self.opt = options
+        self.save_classes = save_classes or set()
         self.stats = {"placed": 0, "instances": 0, "skipped_saveclass": 0,
                       "no_mesh": 0, "hidden": 0, "lights": 0, "sk_skipped": 0,
                       "landscape": 0}
@@ -87,14 +86,17 @@ class MapImporter:
         return None
 
     def _class_is_save(self, actor_type):
+        """Skip a level actor iff the SAVE re-expresses its class: rows of this class
+        exist (loadObjects destroys the level copies and respawns from rows), or the
+        class is int_primitive (primitivesData is load-decisive). int_save classes
+        with NO rows visibly persist in-game (gather/skipPreDelete) -> keep them."""
         if actor_type in self._save_class:
             return self._save_class[actor_type]
-        result = False
-        if actor_type.endswith("_C"):
+        result = actor_type in self.save_classes
+        if not result and actor_type.endswith("_C"):
             pkg = self.game.class_package(actor_type)
             if pkg:
-                result = (self.resolver.implements(pkg, "int_save_C")
-                          or self.resolver.implements(pkg, "int_primitive_C"))
+                result = self.resolver.implements(pkg, "int_primitive_C")
         self._save_class[actor_type] = result
         return result
 
@@ -113,14 +115,26 @@ class MapImporter:
     def _rel_matrix(self, idx):
         p = self.dicts[idx].get("Properties") or {}
         if any(k in p for k in ("RelativeLocation", "RelativeRotation", "RelativeScale3D")):
-            return convert.matrix_from_rotator(
+            m = convert.matrix_from_rotator(
                 _rot(p.get("RelativeRotation")),
                 _vec(p.get("RelativeLocation")),
                 _vec(p.get("RelativeScale3D"), (1.0, 1.0, 1.0)))
-        t = self._template_for(idx)
-        if t is not None:
-            return convert.matrix_from_rotator(t.rel_rot, t.rel_loc, t.rel_scale)
-        return Matrix.Identity(4)
+        else:
+            t = self._template_for(idx)
+            if t is not None:
+                m = convert.matrix_from_rotator(t.rel_rot, t.rel_loc, t.rel_scale)
+            else:
+                m = Matrix.Identity(4)
+        actor_idx = self._actor_of(idx)
+        if actor_idx is not None:
+            atype = self.dicts[actor_idx].get("Type", "")
+            if pose_random.has_pose(atype):
+                pose = pose_random.pose_rotation(
+                    atype, self.dicts[idx].get("Name", ""),
+                    self.dicts[actor_idx].get("Name", ""))
+                if pose is not None:
+                    m = m @ pose
+        return m
 
     def _world_matrix(self, idx, depth=0):
         if idx in self._world_m:

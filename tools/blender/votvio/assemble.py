@@ -45,10 +45,11 @@ class _Builder:
             return cache[mesh_pkg_path]
         me, mat_paths = mesh_build.build_mesh(self.game, mesh_pkg_path, self.warnings)
         if me is not None:
+            hint = mesh_pkg_path.rsplit("/", 1)[-1].lower()
             for mp in mat_paths:
                 me.materials.append(materials_mod.get_material(
                     self.game, mp, self.caches, self.warnings,
-                    with_textures=self.opt.get("with_textures", True)))
+                    with_textures=self.opt.get("with_textures", True), mesh_hint=hint))
         cache[mesh_pkg_path] = me
         return me
 
@@ -70,22 +71,21 @@ class _Builder:
         label = row.prop_name or row.class_name.removesuffix("_C") or "unknown"
         quat, loc, scale = row.transform
         actor_m = convert.matrix(quat, loc, scale)
+        seed = row.key if row.key not in ("", "None") else \
+            f"{row.class_name}@{round(loc[0])}:{round(loc[1])}"
         placed_mesh = False
         if self.game and self.opt.get("import_meshes", True) and row.class_path:
-            for mesh_path, tmpl, kind in self.resolver.resolve_row(row, self.list_props):
+            for mesh_path, local_m, kind in self.resolver.spawn_plan(
+                    row, self.list_props, seed):
                 if kind == "SK":
-                    self._placeholder(label + ".sk", col, actor_m, "CUBE", 0.4)
+                    self._placeholder(label + ".sk", col, actor_m @ local_m, "CUBE", 0.4)
                     self.counts["sk_placeholders"] += 1
                     placed_mesh = True
                     continue
                 me = self.ensure_mesh(mesh_path)
                 if me is None:
                     continue
-                m = actor_m
-                if tmpl is not None:
-                    m = actor_m @ convert.matrix_from_rotator(
-                        tmpl.rel_rot, tmpl.rel_loc, tmpl.rel_scale)
-                self._new_object(label, me, col, m)
+                self._new_object(label, me, col, actor_m @ local_m)
                 self.counts["meshed"] += 1
                 placed_mesh = True
         if not placed_mesh:
@@ -151,11 +151,14 @@ class _Builder:
                 map_col = _get_or_create_collection("Map", master)
                 mcols = {name: _get_or_create_collection(name, map_col)
                          for name in ("Statics", "Landscape", "Foliage", "Lights")}
-                imp = umap_import.MapImporter(self.game, self.resolver, self, self.opt)
+                save_classes = {r.class_name for r in self.m.objects
+                                if r.class_path and r.class_path != "None"}
+                imp = umap_import.MapImporter(self.game, self.resolver, self, self.opt,
+                                              save_classes)
                 self.map_stats = imp.run(map_path, mcols, self.progress)
                 if self.opt.get("import_landscape", True):
-                    land_mat = bpy.data.materials.new("votv_landscape")
-                    land_mat.diffuse_color = (0.18, 0.24, 0.12, 1.0)
+                    land_mat = materials_mod.terrain_material(
+                        self.opt.get("terrain_style", "GREEN"))
                     self.map_stats["landscape"] = landscape_mod.build_landscape(
                         self.game, map_path, self.game.package_dict(map_path),
                         mcols["Landscape"], self.warnings, land_mat)
