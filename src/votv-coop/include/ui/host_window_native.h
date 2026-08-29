@@ -64,6 +64,19 @@ bool IsOpen();
 
 // Called from coop::multiplayer_menu's ui_menu_C::Tick post-observer, MAIN menu only.
 // Builds once per menu instance, fail-closed on donors.
+// WHICH WORLD IS CHOSEN (-1 = New game), HOW MANY there are to choose from, and the list
+// widget itself -- read-only, for the self-check to aim at and assert on.
+//
+// The save rows are `UImage`s inside a `UScrollBox`, which is the construct measured dead on
+// 2026-08-29: `IsHovered()` reads 0 on one even when its rect contains the cursor. This
+// window shipped with that hit test, so `SelectedSave()` could only ever be -1 -- the world
+// list was decoration and HOST could only ever start a New game. It was cured by moving to
+// geometry, and a cure that shares a mechanism with something that passed is still not a
+// measurement, which is what these exist to make possible.
+int   SelectedSave();
+int   SaveRowCount();
+void* SaveListWidget();
+
 void OnMenuTick(void* menu, void* switcher);
 
 }  // namespace ui::host_window_native

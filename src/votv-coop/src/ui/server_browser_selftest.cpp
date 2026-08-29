@@ -91,6 +91,15 @@ constexpr int kHostMove       = 170;
 constexpr int kHostDown       = 180;
 constexpr int kHostUp         = 184;
 constexpr int kHostVerify     = 196;
+// ...and finally the WORLD LIST inside that window, which is a different screen's rows in a
+// different ScrollBox. It gets its own phases because it was a CRITICAL of its own: those
+// rows were hit-tested with `IsHovered`, which does not answer inside a ScrollBox, so no
+// world could be picked and HOST could only ever start a New game.
+constexpr int kWorldMove      = 204;
+constexpr int kWorldRead      = 212;
+constexpr int kWorldDown      = 214;
+constexpr int kWorldUp        = 218;
+constexpr int kWorldVerify    = 228;
 
 // The forced offset for the positive control. Far past any real content extent, so a
 // getter that returns it UNCHANGED has told us it echoes the request rather than reading
@@ -142,6 +151,7 @@ int      g_rowsSeen          = -1;
 bool     g_controlPassed     = false;
 int      g_closeHovered      = -1;   // -1 = not sampled; an unrun phase is not a NO
 int      g_rowHovered        = -1;   // ...and the same for the row the click phase aims at
+int      g_worldBefore       = -2;   // -2 = unsampled; -1 is New game, a real value
 
 // One row's height, mirroring server_browser_native's kRowH. Kept as a constant rather
 // than measured because the aim only has to land INSIDE a row, and the verdict prints the
@@ -872,6 +882,48 @@ void Tick(void* scrim, void* list, void* closeBtn) {
                         "HOST button: hosting window open=%d, browser closed=%d. Both must "
                         "be true; they are siblings in one switcher and only one can render.",
                         hostUp ? 1 : 0, browserOut ? 1 : 0);
+            if (!hostUp) { g_selfCheckStep = -1; return; }   // no window: nothing to click in
+            break;
+        }
+        case kWorldMove: {
+            void* saveList = ui::host_window_native::SaveListWidget();
+            const int rows = ui::host_window_native::SaveRowCount();
+            ue_wrap::FVector2D tl{}, sz{};
+            if (rows <= 0 || !saveList || !U::WidgetScreenRect(saveList, tl, sz) ||
+                sz.Y < kRowPx) {
+                UE_LOGE("host_window_native: WORLD LIST SKIP -- %d save row(s), list rect "
+                        "%.0fx%.0f. This rig has no saves to pick, so whether the world list "
+                        "can be clicked is UNMEASURED -- not passing.", rows, sz.X, sz.Y);
+                g_selfCheckStep = -1;
+                return;
+            }
+            // Half a row down: the FIRST save row, which is the one a player reaches for.
+            UE_LOGW("host_window_native: world list has %d row(s) at desktop (%.0f,%.0f) "
+                    "%.0fx%.0f -- aiming at the first", rows, tl.X, tl.Y, sz.X, sz.Y);
+            ::SetCursorPos(static_cast<int>(tl.X + sz.X * 0.5f),
+                           static_cast<int>(tl.Y + kRowPx * 0.5f));
+            break;
+        }
+        case kWorldRead:
+            g_worldBefore = ui::host_window_native::SelectedSave();
+            break;
+        case kWorldDown:
+            ::mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+            break;
+        case kWorldUp:
+            ::mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+            break;
+        case kWorldVerify: {
+            const int now = ui::host_window_native::SelectedSave();
+            if (now >= 0)
+                UE_LOGW("host_window_native: WORLD LIST PASS -- a real click on the first "
+                        "save row selected world %d (was %d). The world list is clickable, "
+                        "so HOST can start something other than a new game.", now,
+                        g_worldBefore);
+            else
+                UE_LOGE("host_window_native: WORLD LIST FAIL -- a real press-release on the "
+                        "first save row left SelectedSave() at %d. The rows draw and cannot "
+                        "be picked, so this window can only ever start a NEW game.", now);
             g_selfCheckStep = -1;
             return;
         }

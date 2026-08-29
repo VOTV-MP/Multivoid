@@ -508,6 +508,10 @@ void Close()  { g_wantOpenMs.store(0, std::memory_order_relaxed);
                 g_wantClose.store(true, std::memory_order_relaxed); }
 bool IsOpen() { return g_shown; }
 
+int   SelectedSave()   { return g_selectedSave; }
+int   SaveRowCount()   { return static_cast<int>(g_saveRows.size()); }
+void* SaveListWidget() { return g_list; }
+
 void OnMenuTick(void* menu, void* switcher) {
     if (!Armed() || !menu || !switcher) return;
     g_switcher = switcher;
