@@ -225,10 +225,10 @@ ag-маску. ПОПУТНО: `ensure_mesh` перенесён ЗА радиу�
 стенда. Экраны/цифры/additive не затронуты (свои бранчи).
 
 **v8 (same session) — json-грамматика примитивов, оконная dyn-грязь, постеры, z-fight,
-лампы xray.** Пять репортов. Измерено: (1) **json примитив-ряда = `[вариант, размер%]`** —
-crack/blood ПЕРСИСТЯТ индекс варианта (`[14,100]`, `[7,100]`; `-1`=случайный), второе число —
-процент размера (oil 300, poo 50): `decals.row_variant_size` + сохранённый вариант побеждает
-seeded-выбор, размер умножает DecalSize; (2) **mat_dynamicWallDirt: size=2048,
+лампы xray.** Пять репортов. Измерено: (1) **json примитив-ряда = `[вариант, N]`** —
+crack/blood ПЕРСИСТЯТ индекс варианта (`[14,100]`, `[7,100]`; `-1`=случайный); N тогда прочли
+как «процент размера» (oil 300, poo 50) — **SUPERSEDED v9: N = `process` (стойкость к мопу),
+НЕ размер** — v8-ное умножение DecalSize ретайрнуто, см. блок v9; (2) **mat_dynamicWallDirt: size=2048,
 decalScale=(200²)** — каждая декаль семплит ОКНО 400/2048≈19.5% большой простыни
 `tex_dirtGrimeOverlay` (DXT5, настоящая альфа 20%) со случайным per-instance offset (рантаймный
 MID `offset`) — мы вжимали все 2048px в каждый квад, отсюда «весь квадрат со швами» и «слишком
@@ -255,6 +255,40 @@ umap-декаль = AttachParent (иерархия трансформа, не п
 не «клеится» — каждый кадр проецируется на всё в своём OBB, трансформ и ЕСТЬ вся информация
 (позиция НА поверхности, локальный X внутрь) — наша ±X-проекция уже воспроизводит именно это;
 единственный источник расхождений — различие геометрии-приёмника (мы прячем пропы при касте).
+
+**v9 (2026-08-29 post-compact, `3191f929`) — ИГРОВОЙ АЛЬФА-КЛИП декалей + точная глубина бокса
++ process-семантика. Корень «много лишнего говна».** Полевые репорты: два угла бок-о-бок
+(в сцене декалей больше/темнее, кляксы на двери и ширмах, которые в игре чистые) + «даже
+прибитая трещина кажет шум по всей плоскости» + догадка юзера «клэмпим альфу не так, как игра»
+— подтверждена измерением. Четыре корня (probe_v9/v9b + числовой ценз отданного blend):
+(1) **на КАЖДОЙ декальной цепочке лежит `BasePropertyOverrides.OpacityMaskClipValue=0.3333`, и
+игра его ЧТИТ на deferred-декалях: тексели ниже трети альфы не рисуются ВООБЩЕ.** У
+`tex_dirtGrimeOverlay` 74.7% пикселей сидят в альфе 0.1–0.33 → сырой градиент рисовал 257
+дымчатых квадратов 2.2 м (числовой ценз: 99% площади каждого dyn-листа видимы, топ-нагрузка
+60.4). Фикс: единый гейт `a·(a>clip)` на всех декальных материалах; v8d-ный
+CheapContrast-по-альфе ретайрнут ЦЕЛИКОМ — числово он имитировал клип ниже порога (потому и
+«работал»), но по FunctionInfos настоящие CheapContrast'ы стоят над LinearGradient'ами, не над
+альфой (мисатрибуция «мешка функций всего графа на вход, на который смотришь»). После фикса
+худший dyn-лист = 17.6% видимой площади, топ-нагрузка 5.5 (лидируют leak-подтёки — как в игре).
+(2) **Глубина проекции: грайм-бокс всего 5uu (`DecalSize.X=5`, ±5 см)** — старый допуск +15 см
+красил приёмники за целый проём (утопленная дверь, ширмы). Фикс: точная глубина бокса +2 см и
+СПАСАТЕЛЬНЫЙ проход 25 см только при полном промахе (наши приёмники — реконструкция:
+ландшафт из weightmap-компонентов, BSP из модели; игре спасение не нужно — её бокс точен к её
+же геометрии). Промахи 9→4. (3) **json[1] = `process` (стойкость к мопу), НЕ размер**: строки
+каждого класса персистят ровно его CDO-дефолт (dyn 110, poo 50 при СОБСТВЕННОМ maxProcess=50 →
+рендер ПОЛНЫЙ, oil 300 при унаследованном 100 → полный, просто оттирать втрое дольше);
+отображение = `clamp(process/maxProcess)` (`resolver.process_alpha`, протянуто пер-инстансно до
+материала), масштаб размера ретайрнут (рисовал oil втрое больше). (4) **Спекуляр декальных
+листов = 0**: deferred-декаль модулирует только альбедо, а дефолтный спекуляр Principled делал
+низко-альфовые плоскости видимыми глянцевой плёнкой под скользящими углами — вторая половина
+«шума по плоскости» трещины (первая — совпадающие dyn-плёнки, убитые клипом). ПОПУТНО измерено:
+ценз приёмников СОШЁЛСЯ с уже существующим исключением (`prop_C.StaticMesh`/chip piles/фолиаж
+несут `bReceivesDecals=False` — а `_project_decals` и так прячет Props/Piles/Foliage на время
+каста; umap-статика принимает); SortOrder измерен (crack 1 < dirt 3 < dyn/blood/grainy 4) — НЕ
+протянут (резидуал; джиттер лифта разводит планы). Стенд ×2 (979/4/0 варнингов, ~150 с),
+verify_v9 PASS (гейт на всех 96 материалах, 0 пережитков v8d, спекуляр 0). НЕ hands-on. Уроки:
+[[lesson-cooked-material-cachedexpressiondata-keeps-defaults]] (4-й дивиденд: BasePropertyOverrides)
++ [[lesson-a-save-rows-field-is-named-by-the-cdo-default]].
 
 **v6d (same session, `0e37227b`) — декали ПРОЕЦИРУЮТСЯ на приёмники.** Репорт юзера:
 повёрнуты не так + торчат, нет маски поверхности. Свободный квад заменён проекцией:
@@ -340,29 +374,33 @@ landscape, foliage, lights), every saved prop/entity/vehicle/NPC from the save's
 
 ## 5. Residual ledger
 
-> **Session handoff 2026-08-29 (end of the v5..v8d bench-fix session).** The build-day verdict
-> («Полное говно, масса проблем») has been worked down on the radius bench: TWENTY-FIVE+ user
-> field reports fixed across v5/v6/v6b-d/v7/v7b-e/v8/v8b-d (§0 above), addon deployed after
-> each wave. **Bench save = `s_test_screens2.sav` (user decision — no event objects)**; bench:
+> **Session handoff 2026-08-29 (v5..v9).** The build-day verdict («Полное говно, масса проблем»)
+> has been worked down on the radius bench: TWENTY-FIVE+ user field reports fixed across
+> v5/v6/v6b-d/v7/v7b-e/v8/v8b-d + **v9** (§0 above), addon deployed after each wave. **Bench
+> save = `s_test_screens2.sav` (user decision — no event objects)**; bench:
 > `VOTVIO_SMOKE_RADIUS=150 VOTVIO_SMOKE_BLEND=<path> blender --background --factory-startup
 > --python tools/blender/votvio/tests/smoke.py -- %LOCALAPPDATA%\VotV\Saved\SaveGames\
-> s_test_screens2.sav` (~155 s) → scratchpad `votvio_base150.blend`.
+> s_test_screens2.sav` (~150 s) → scratchpad `votvio_base150.blend`.
 > **Working agreement (both USER rules): NO renders — hand over the `.blend`; and the test loop
 > runs the BENCH ONLY — no full-map smokes per fix**
-> ([[feedback-votvio-hand-over-blend-no-renders]]). NOTE: scratchpad `votvio_smoke.blend` (full
-> map) was last rebuilt at v6c — pre-projection quad decals, inverted mesh normals, white-noise
-> screens, flat terrain; rebuild on request. **NEXT (user, pre-compact): продолжить сравнение
-> декалей с игрой по свежему кадру** — first check whether v8d's CheapContrast alpha shaping
-> closed the "другая текстура" gap on the right wall; if density still diverges, the next
-> suspects are the game's DBuffer angle fade + the dyn-grime progression `alpha` MID, and only
-> then the dusty/light/grainy→family assignment guesses.
+> ([[feedback-votvio-hand-over-blend-no-renders]]).
+> NOTE: scratchpad `votvio_smoke.blend` (full map) was last rebuilt at v6c — pre-projection quad
+> decals, inverted mesh normals, white-noise screens, flat terrain; rebuild on request.
+> **The post-compact decal-vs-game comparison RAN (v9): the pre-compact suspect list is
+> RESOLVED** — the "DBuffer angle fade" and "dyn alpha MID" guesses dissolved into the measured
+> OpacityMaskClipValue=0.3333 clip (the user's own hunch «клэмпим альфу не так как игра»
+> confirmed); the dusty/light/grainy→family guesses were never reached. **NEXT: user inspects
+> the v9 `votvio_base150.blend` against the same two in-game corner shots** — expected: no smoky
+> films, clean door/screens, drip cores only; residuals if still off: the 12-bucket dyn window
+> repetition, and the un-plumbed SortOrder lift order.
 
 | Open | What | Phase |
 |---|---|---|
 | — | ~~база в воздухе / лестница вышки / черновые шеллы~~ **CLOSED v5 `42bb819d`** (§0 v5) | — |
 | — | ~~река без воды / арбуз-вода / грайм-кубики / дверцы шкафчиков / бункер / стекло / лестницы в воздухе~~ **CLOSED v6 `31551742`** (§0 v6) | — |
 | — | ~~декали «не существуют» / muralы 90°+в стенах / не тот diffuse окна / white-noise экраны / плоский террейн~~ **CLOSED v7** (§0 v7: UE decal-UV + двусторонняя проекция + UNLIT-затемнение грайма + inst_newwindow + CachedExpressionData-экраны + weightmap-слои) | — |
-| — | the user's NEXT field-fix batch (pending their .blend inspection) | next |
+| — | the user's NEXT field-fix batch (pending their .blend inspection of v9) | next |
+| — | decal polish residuals (v9): SortOrder (crack 1 < dirt 3 < dyn 4, measured probe_v9) not plumbed into the lift order; dyn window offsets quantized to 12 seed buckets vs the game's continuous per-instance MID offset | P3 |
 | — | lake SURFACE: the river splines cross the lake area (segments up to ~55 m wide) — whether the lake reads as water in the scene is unverified | next |
 | — | **acceptance probe + calibration + machine diff** (the design's own gate) | next |
 | — | gatherer table from the 48 kismet bodies — the v5 keyed-fixture reconcile (row key ↔ level actor at cooked transform) covers the fixture half measurement-driven; the kismet table still owed for loadTransform semantics of rows that MOVED | P3 |

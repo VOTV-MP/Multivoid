@@ -4713,9 +4713,31 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   (151/569 bench materials carried cargo-cult strength) — and the mask is not the last word: the
   ag-gate survivors all carried the SAME cloned lamp mask; the REAL gate is the
   `useEmissive` STATIC SWITCH (banana=false, alamp2_on=true; no chain override = off). Scalar <
-  mask < switch — resolve the whole ladder. *Look FIRST:*
-  `tools/blender/votvio/screens.py` (the per-root still-frame builders) + `docs/BLENDER_ARC.md` v7.
+  mask < switch — resolve the whole ladder. Third dividend (v8d, CORRECTED by v9): `FunctionInfos`
+  names the shaping functions the stripped graph ran — but it is a BAG for the WHOLE graph with no
+  wiring; v8d pattern-matched its CheapContrast onto the texture alpha while the real
+  CheapContrasts sit over the material's LinearGradients. Fourth dividend (v9): the render-state
+  truth lives OUTSIDE the parameter ladder in `BasePropertyOverrides` — every VOTV decal chain
+  carries `OpacityMaskClipValue=0.3333` on a BLEND_Translucent MIC and the game HONORS it on
+  deferred decals (sub-0.333 alpha draws NOTHING; 74.7% of tex_dirtGrimeOverlay sits there, so the
+  raw ramp rendered 257 smoky films the game never shows). Read BasePropertyOverrides before
+  inventing any alpha treatment. *Look FIRST:*
+  `tools/blender/votvio/screens.py` (the per-root still-frame builders) +
+  `materials.py get_decal_material` (the clip gate) + `docs/BLENDER_ARC.md` v7/v9.
   `memory/lesson_cooked_material_cachedexpressiondata_keeps_defaults.md`
+
+- **2026-08-29 — an anonymous save-row value is NAMED by matching it against the class CDO's
+  defaults, never by the first visual knob that fits two samples.** Grime primitives json
+  `[variant, N]`: N was read as "sizePct" for four waves (oil 300 → drawn 3x, poo 50 → half-size)
+  because 90% of rows carry 100 and the misread was invisible on them. Dumping the CDOs showed
+  every class's rows persist EXACTLY its CDO `process` default (dyn 110, poo 50, oil 300) and the
+  sibling vars hand over the semantics: `process`/`maxProcess`/`cleanParameter:"alpha"` — N is mop
+  durability; display opacity = clamp(process/maxProcess) (poo's OWN maxProcess=50, so 50 renders
+  FULL); size was never encoded. *Look FIRST:* dump the class CDO (+parents) beside sample rows —
+  a row column equal to a CDO property across classes IS that property.
+  `tools/blender/votvio/template_resolver.py` (`process_alpha`) + `decals.py`
+  (`row_variant_process`).
+  `memory/lesson-a-save-rows-field-is-named-by-the-cdo-default.md`
 
 - **2026-08-29 — an inside-out mesh import surfaces only at a NORMALS CONSUMER, and orientation
   is proven on a convex mesh, never by looking.** The UE->Blender Y-mirror alone already flips
