@@ -41,16 +41,51 @@ option (green default / snow / dirt, slope-rock blend) replacing the white groun
 **Import radius** option: 0 = whole map; else meters around the base (origin =
 `baseBuilding_C` root): at 150 m the scene is 9,544 objects vs 77,209 full.
 
-**v4 (same day, user field pass): the umap holds only DELTA components of a BP actor**
-— radiotower's exported shape was ONE 90 m `misc/cube` imposter named `rend`; its real
-mast/top/comm-panel are template-only and were never rendered. Fix: tree-first assembly
-for level BP actors WITHOUT visible delta meshes (template tree + instance-delta merge
-+ pose), while actors with real delta layouts (base building, doors, boarded windows)
-keep the flat path; missing-template pivots (dish `axis_Z/axis_Y` have no export —
-empty delta) walk through as identity, which un-buried the dish farm a second time.
-Named imposter table (`rend`) + **technical meshes hidden by default**
-(`misc/cube`, `misc/qweqwe`; "Show technical meshes" option brings them back).
-Final full-smoke: 75,517 objects / 943 meshes / 703 textures / ~117 s.
+**v4 (same day, user field pass) — SUPERSEDED BY v5, its premise measured FALSE.**
+v4 claimed "the umap holds only DELTA components of a BP actor" and built a tree-first
+assembly pass on it. probe_base1..6 (2026-08-29, next session) measured: the cooked umap
+serializes an export for EVERY component (the attach graph needs them) — only the
+PROPERTIES are delta — and tree-first double-applied the root component's transform
+(`world @ root_rel` where `world` already was the root's world), which floated the whole
+base 61 m up. What v4 got right and what stays: the named imposter table (`rend`) and
+**technical meshes hidden by default** (`misc/cube`, `misc/qweqwe`; "Show technical
+meshes" option). The radiotower monolith's real root was ISM-blind template reading, not
+missing exports.
+
+**v5 (2026-08-29, the base+radiotower bench pass; commit `42bb819d`) — the flat-pass world
+model.** The user's three field reports, each probed to a measured root on `untitled_1`:
+- **База в воздухе**: tree-first's double root transform (above). Tree-first DELETED whole
+  (RULE 2); the flat pass is the one placement path, with per-property template fallbacks
+  (mesh, relative transform, visibility, ISM instances).
+- **Лестница вышки отсутствует**: the ladder is a `ladder_old_C` ChildActor — a `*_CAT_*`
+  actor ALREADY in PersistentLevel at its live transform — whose ISM `segment1..5` carry
+  91 cooked rung instances but no mesh anywhere in `ladder_old`'s own package: the meshes
+  live on the PARENT class `ladder_C` (`newladders/newladder_ladder1..5` + `ladderTop`).
+  A child BP's template export is itself a DELTA vs the parent's template → template
+  inheritance is now per-PROPERTY (`TemplateComp.inherit`). The resolver also reads
+  ISM-typed templates (`kind="ISM"`) and their baked instances (`template_instances`),
+  and the umap pass falls back to them when a delta has no native tail.
+- **«Черновые» меши базы на правильном месте**: `base2_collision_rain` ships
+  `bRenderInMainPass=False`, which was never read. Visibility is now per-flag
+  delta-else-template (`bHiddenInGame`/`bVisible`/`bRenderInMainPass`) + actor-level
+  `bHidden`.
+- **Keyed-fixture reconcile** (the game's own `gatherDataFromKey` identity): a save row
+  whose `key` matches a level actor of the same class at the cooked transform (±1 uu)
+  KEEPS the level actor — exact UCS-built ISM instances (the mast's real segment Zs,
+  25 panel lights, 27 greebles) instead of the class template's stale bake. 2,224/3,385
+  rows of `s_test_screens2` match a level key; 750 kept in the 150 m bench;
+  trashBitsPile placeholders 327→17. Keys resolve delta-first, then class CDO
+  (`radiotower_C` keys itself `'radiotower'` in the CDO).
+- **Events collection** (hidden): event-scripted level actors the game shows only at
+  runtime (`arirShip_tower_C`, `trigger_agrav_C` — cooked data carries no hidden flag,
+  measured). Curated, grown per measured case. The «корабль ариралов над базой» was this
+  actor's `warparrow_appear` mesh; the crushed cars were save rows of the old save (the
+  bench moved to `s_test_screens2`).
+Bench evidence (verify3, console listing): base 75 objects Z 60.7–71.2 (0 above 80);
+ladder 92 rungs Z 60.9–150.9 with the metal meshes; `radiotower_2` complete from umap
+data with NO save-spawn duplicate; collision shells 0; floaters near base = one burger
+saved at Z=83 m (save truth). Full-map smoke: 79,129 objects / 110 s / 0 warnings.
+Плавающие бургеры/сэндвичи — правда сейва (probe5: `prop_burger_C` rows at Z 83–183 m).
 
 ## 1. What it is
 
@@ -100,29 +135,30 @@ landscape, foliage, lights), every saved prop/entity/vehicle/NPC from the save's
 
 ## 5. Residual ledger
 
-> **Session handoff 2026-08-29 (end of build day). USER VERDICT on the full scene, verbatim:
-> «Полное говно, масса проблем» — the import RUNS end-to-end but the scene quality is REJECTED.
-> The counters below are throughput facts, not a quality claim.**
-> **NEXT SESSION'S working mode (user decision): iterate on a RADIUS-FILTERED scene — only the BASE
-> plus the base RADIO TOWER (the actor that used to render as the full-height stretched cube) — and
-> fix the problem mass inside that small scope before touching the full map.** The bench already
-> exists: `VOTVIO_SMOKE_RADIUS=150` (env on tests/smoke.py) covers base+tower (tower stands ~60 m
-> from the baseBuilding origin) and produced scratchpad `votvio_base150.blend` in ~80 s.
-> Working agreement: NO renders — hand over the `.blend`, the user inspects manually
+> **Session handoff 2026-08-29 (v5, the base+radiotower bench session).** The 2026-08-29 build-day
+> verdict («Полное говно, масса проблем») stands over the FULL scene; per the user's decision the
+> work moved to the radius bench and the user's first three field reports are FIXED there (v5 §0:
+> base grounded / tower ladder / collision shells; commit `42bb819d`, addon deployed). **The bench
+> save is now `s_test_screens2.sav` (user decision — no event objects in it)**; bench command:
+> `VOTVIO_SMOKE_RADIUS=150 VOTVIO_SMOKE_BLEND=<path> blender --background --factory-startup
+> --python tools/blender/votvio/tests/smoke.py -- %LOCALAPPDATA%\VotV\Saved\SaveGames\
+> s_test_screens2.sav` (~90 s) → scratchpad `votvio_base150.blend`. The user inspects the .blend and
+> reports the next problem batch. Working agreement: NO renders — hand over the `.blend`
 > ([[feedback-votvio-hand-over-blend-no-renders]]).
 
 | Open | What | Phase |
 |---|---|---|
-| — | the user's field-fix list (pending, next session) | next |
+| — | ~~база в воздухе / лестница вышки / черновые шеллы~~ **CLOSED v5 `42bb819d`** (§0 v5) | — |
+| — | the user's NEXT field-fix batch on the base150 bench (pending their .blend inspection) | next |
 | — | water: the material family is built, but lake/river SURFACES were never verified present | next |
 | — | **acceptance probe + calibration + machine diff** (the design's own gate) | next |
-| — | gatherer table from the 48 kismet bodies (interim: all int_save level actors skipped) | next |
+| — | gatherer table from the 48 kismet bodies — the v5 keyed-fixture reconcile (row key ↔ level actor at cooked transform) covers the fixture half measurement-driven; the kismet table still owed for loadTransform semantics of rows that MOVED | P3 |
 | O8 | non-main-map saves (`Level != Untitled_1`) — the generic attempt + warning IS built (`import_op.py`), never validated on a real dream/tutorial save | P3 |
 | O12 | ~~MIC vocabulary census~~ **CLOSED `c19662e2`** — full-population census (3,243 materials) + family builder shipped (`materials.py`); residual = fidelity items (triplanar is an approximation; a base Material's non-parameterized default textures are unreachable in cook → grey fallback) | — |
-| O13 | SplineMeshComponent (89) deform — no spline code in `tools/blender/votvio/` as of `176fd26d` | P3 |
-| O14 | grime decal fidelity (piles/grime are placeholders/boxes) | P3 |
+| O13 | SplineMeshComponent (89) deform — no spline code in `tools/blender/votvio/` as of `42bb819d` | P3 |
+| O14 | grime decal fidelity (grime decals absent; piles largely resolved by v5 keyed reconcile — trashBitsPile placeholders 327→17 bench / 81 full) | P3 |
 | O15 | landscape textures: ~~untextured white~~ styled procedural GREEN/SNOW/DIRT + slope-rock SHIPPED (`c19662e2`); weightmap-TRUE layer blending still open | P3 |
-| — | trashBitsPile procedural visuals (264 placeholders) + prop_C stragglers (47) | P3 |
+| — | prop_C stragglers (44) + prop_barnshelf (23) placeholders | P3 |
 | — | SK geometry port of `ue_skelmesh.py` (NPC bind pose) | P3 |
 
 ## 6. Dev notes

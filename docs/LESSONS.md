@@ -4462,18 +4462,27 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 
 ## 6. Assets, models, geometry
 
-- **2026-08-29 — Cooked UE4 data is DELTA-vs-archetype encoded at EVERY layer; absence means
-  "default", never "does not exist".** Three instances bit the VotvIO Blender importer separately,
-  each measured: (1) 5,667/10,024 umap SMComponents carry no `StaticMesh` property (it lives on the
-  SCS/CDO archetype); (2) an SCS pivot with all-default properties has NO template export at all
-  (dish_C `axis_Z`/`axis_Y` exist only as SCS_Node graph refs — a tree walk that aborts on a missing
-  template silently drops the dish head's whole subtree); (3) a placed BP actor exports ONLY its
-  delta components — radiotower's exported shape was one 90m `misc/cube` imposter (`rend`), the real
-  mast/top/comm-panel being template-only and absent from the umap entirely. The trap: delta-only
-  rendering looks MOSTLY right (everything level-arranged carries deltas), so it presents as scattered
-  per-object weirdness, not one encoding rule. *Look FIRST:*
-  `tools/blender/votvio/template_resolver.py` (walk THROUGH missing templates) +
-  `umap_import.py::_assemble_bp_actor` (tree-first + delta merge) + `docs/BLENDER_ARC.md` v4.
+- **2026-08-29 — Cooked UE4 data is DELTA-vs-archetype encoded at every PROPERTY layer; absence
+  means "default", never "does not exist".** Five instances bit the VotvIO Blender importer, each
+  measured (instance 3 CORRECTED by v5 `42bb819d` the same day): (1) 5,667/10,024 umap SMComponents
+  carry no `StaticMesh` property (it lives on the SCS/CDO archetype); (2) an SCS pivot with
+  all-default properties has NO template export at all (dish_C `axis_Z`/`axis_Y` exist only as
+  SCS_Node graph refs — a tree walk that aborts on a missing template drops the dish head's
+  subtree); (3) **CORRECTED: "a placed BP actor exports ONLY its delta components" was FALSE** — the
+  umap serializes an export for EVERY component (the attach graph needs them; ChildActor children
+  sit in PersistentLevel as `*_CAT_N` actors at live transforms), only the PROPERTIES are delta; the
+  tree-first pass built on the false premise double-applied the root transform (the base floated
+  61 m) and was deleted whole; (4) a CHILD BP's template export is itself a delta vs the PARENT
+  class's template (`ladder_old_C.segment1` has no mesh anywhere — it lives on `ladder_C.segment1`),
+  so template inheritance must merge per-PROPERTY, not per-component; (5) UCS-built state (ISM
+  instance tails — the tower ladder's 91 rungs) is serialized into the umap deltas, richer than the
+  class template's bake — a keyed save row matching a level actor at the cooked transform should
+  KEEP the level actor. The trap: delta-only rendering looks MOSTLY right, so it presents as
+  scattered per-object weirdness, not one encoding rule — and a wrong layer-3 model produced a whole
+  assembly pass that was itself the next bug. *Look FIRST:*
+  `tools/blender/votvio/template_resolver.py` (`TemplateComp.inherit`, `template_instances`) +
+  `umap_import.py` (one flat pass, per-property fallbacks) + `assemble.py::_build_level_keys` +
+  `docs/BLENDER_ARC.md` v5.
   `memory/lesson_cooked_ue4_is_delta_encoded_at_every_layer.md`
 
 - **2026-08-29 — pyUE4Parse works on VOTV only with 5 named fixes** (it LOOKS broken at the first
