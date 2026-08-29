@@ -4344,6 +4344,8 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   renumbers the tail, and a failed resolve is loud while a resolve to the WRONG function is silent.
   `memory/lesson-a-shared-config-store-defeats-per-copy-isolation.md`
 
+**A harness that owns the input path can deny it to the thing it measures.** The native browser's close button read "not hit-testable" for three days; our own `SetCursorPosDetour` was returning TRUE without calling through, because `CaptureActive()` was held by a `config_review` modal armed from a dead ini key. `SetCursorPos` asked (1280,711), returned `ok=1 err=0` with the clip rect the whole desktop, and the pointer stayed at client (0,0) -- so the full-screen scrim read hovered and everything inside the window did not, which is exactly the signature of a broken hit test. Three causes were proposed and falsified before the write was ever read back. **Look here FIRST:** a test that SYNTHESIZES input must assert it OWNS the input path, not just the foreground -- `imgui_overlay::CaptureOwners()` names the holder in one line; and always write-then-read-back a cursor position in a process that hooks `SetCursorPos`. [[lesson-a-harness-that-owns-the-input-path-can-deny-it-to-what-it-measures]]
+
 ## 5. Engine / UE4 facts
 
 - **A UMG getter may read back YOUR OWN REQUEST, not the engine's state.** `[V]` 2026-08-26, twice:
