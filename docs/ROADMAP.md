@@ -547,9 +547,12 @@ Each item below is a feature increment series. Cross-referenced in
        - 2026-07-20 (later, same day): **the remaining TLS arcs are ON HOLD — a threat model was
          finally written and it reordered the work.** The short public version: the transport is
          already encrypted, so the next thing worth building is **peer IDENTITY**, not more transport
-         encryption — which is why **Tier C dissolves into peer certificates** (GNS ships a CA:
-         certstore + certtool + `SetCertificate`; Ed25519 sign/verify already links into our
-         process). Arcs 3 / 3b / 4 / 5 are HELD pending the CA spike; the `net.master.insecure`
+         encryption — which is why **Tier C dissolved into peer identity**. (It was specified as a
+         master-run CA for six weeks; a 9-round `/qf` on 2026-08-29 measured that design false and
+         replaced it with something smaller — the identity IS the peer's own public key, which needs
+         no CA, no minting and no master, and therefore covers the LAN-only lane too. The public
+         short version: your peer is identified by a key it must possess, not by a name it claims.)
+         Arcs 3 / 3b / 4 / 5 remain HELD; the `net.master.insecure`
          flag was designed and then dropped — do not build it. Two read-only audits ran the same
          day; their findings, evidence and fix order live in the **local-only** register
          (`docs/security/`, untracked since 2026-08-23 — the local-only docs-arc note says why). The

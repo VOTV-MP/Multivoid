@@ -1844,8 +1844,9 @@ ports **10443 (master) / 10442 (signaling)**, running beside the plaintext pair 
 self-hoster without a certificate).
 **Arcs 3 / 3b / 4 / 5 are ON HOLD as of 2026-07-20 (same day)** — a threat model was written and
 reordered the work: the transport is already encrypted, so the next thing worth building is **peer
-IDENTITY**, and **Tier C dissolves into peer certificates** instead of shipping as per-session
-tokens. The
+IDENTITY**, and **Tier C dissolved into peer identity** instead of shipping as per-session tokens —
+re-designed 2026-08-29 so that the identity IS the peer's own public key (no CA, no minting, no
+master dependency, and the LAN-only lane covered). The
 `net.master.insecure` flag discussed in that window was **never built and should not be**; the
 `http://` downgrade grammar above is still what ships today, but it is queued for RULE-2 retirement.
 **Read the local-only security register (`docs/security/`, untracked since 2026-08-23 — see
