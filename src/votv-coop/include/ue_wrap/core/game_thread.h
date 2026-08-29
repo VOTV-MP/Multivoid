@@ -234,6 +234,24 @@ void SetPerfCounting(bool countDispatches, bool sampleSelfTime);
 unsigned long long PeDispatchCountTotal();   // dispatches observed (all threads) since counting was armed
 unsigned long long PeDispatchCountGTTotal(); // game-thread subset of the above
 unsigned long long PeSelfNsTotal();          // summed detour self-time (ns) over sampled dispatches
+// WHOLE-detour totals (2026-08-29). PeSelfNsTotal brackets the detour body from inside
+// ProcessEventDetourImpl, so the outer frame + the SEH __try frame are excluded BY
+// CONSTRUCTION -- it cannot falsify "the detour is the unaccounted per-frame cost",
+// because it is blind to exactly that region. These bracket the OUTER detour and record
+// the engine's own ProcessEvent on the SAME sampled dispatches:
+//     true per-dispatch cost = (PeWholeNsTotal() - PeEngineNsTotal()) / PeWholeSampleTotal()
+// Sampled 1/256 at top level only (nested dispatches are already inside the bracket).
+unsigned long long PeWholeNsTotal();         // outer-detour wall time (ns), sampled dispatches
+unsigned long long PeEngineNsTotal();        // engine ProcessEvent (ns) within those samples
+unsigned long long PeWholeSampleTotal();     // number of whole-detour samples taken
+// TOP-LEVEL dispatch count -- the population the whole-detour samples are drawn from,
+// and the ONLY correct denominator for them. PeDispatchCountTotal counts EVERY dispatch
+// including nested ones, and a top-level dispatch's bracket already contains its whole
+// nested call tree; multiplying a per-top-level figure by the all-dispatch rate mixes
+// two populations and inflates the result by the average nesting factor (measured
+// 2026-08-29: it reported "engine 36352 ns/dispatch", i.e. ~80 ms/frame, which is
+// impossible and is what exposed the bug). Counts only while self-timing is armed.
+unsigned long long PeTopLevelCountTotal();
 unsigned long long PeSelfSampleTotal();      // number of self-time samples taken
 unsigned long long PeObserverBodyNsTotal();  // summed observer+interceptor cb-body time (ns)
 unsigned long long PeObserverWorstNs();      // worst single cb-body call (ns)

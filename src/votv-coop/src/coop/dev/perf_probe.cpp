@@ -9,6 +9,7 @@
 
 #include "coop/config/config.h"
 #include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 
@@ -60,6 +61,8 @@ std::chrono::steady_clock::time_point g_lastSample{};
 bool g_haveBaseline = false;
 unsigned long long g_lastPE = 0, g_lastPEGT = 0, g_lastSelfNs = 0, g_lastSelfSamp = 0,
                    g_lastObsNs = 0, g_lastFrames = 0;
+// Whole-detour window state (2026-08-29); see the WHOLE readout in Sample().
+unsigned long long g_lastWholeNs = 0, g_lastEngineNs = 0, g_lastWholeSamp = 0, g_lastTopLevel = 0;
 std::array<unsigned long long, static_cast<size_t>(Bucket::Count)> g_lastBuckets{};
 
 }  // namespace
@@ -102,6 +105,23 @@ void Init() {
 }
 
 void NoteFrame() {
+    // BOTH Init() and Sample() are driven from net_pump::Tick, which does not run
+    // outside a coop session -- so the probe produced NO data at all for "mod loaded,
+    // not hosting", which is exactly the baseline needed to split the DLL's resident
+    // cost from the coop session's (measured 2026-08-29: 120 fps with no mod vs 75 fps
+    // merely hosting, while every instrumented bucket summed to ~0.6 ms/frame).
+    //
+    // Init must be posted too, not just Sample: Init is the ONLY thing that sets
+    // g_armed, so gating this on g_armed first -- as this function did until the fix --
+    // means the probe can never arm without a session and the baseline stays
+    // unmeasurable. Init self-latches and Sample self-throttles to ~1 Hz, so this is at
+    // most one posted task per second and a no-op whenever net_pump already sampled.
+    static ULONGLONG sNextPost = 0;
+    const ULONGLONG now = ::GetTickCount64();
+    if (now >= sNextPost) {
+        sNextPost = now + 1000;
+        ue_wrap::game_thread::Post([] { Init(); Sample(); });
+    }
     if (!g_armed) return;
     g_frames.fetch_add(1, std::memory_order_relaxed);
 }
@@ -131,6 +151,34 @@ void Sample() {
                 reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pmc), sizeof(pmc))) {
             UE_LOGW("[perf][mem] private(commit)=%.1f MB workingset=%.1f MB -- watch for steady climb (RAM-balloon hunt)",
                     pmc.PrivateUsage / 1048576.0, pmc.WorkingSetSize / 1048576.0);
+        }
+    }
+
+    // One-shot `stat unit`. Our own buckets can only ever account for OUR code; they
+    // cannot say whether a lost millisecond went to the game thread, the render thread
+    // or the GPU -- and on 2026-08-29 that was exactly the open question (120 fps
+    // without the mod vs ~68 with it, while every bucket we own summed to ~1 ms). UE4's
+    // own unit graph splits the frame three ways and is the only thing that can point
+    // at the right half of the engine. Deferred to Sample() rather than Init() because
+    // it needs a world; retried until the call reports success.
+    {
+        static bool sStatUnitOn = false;
+        if (!sStatUnitOn && ue_wrap::engine::ExecuteConsoleCommand(L"stat unit")) {
+            sStatUnitOn = true;
+            // UNCAP FIRST, or every number above is a reading of the cap and not of the
+            // workload. Measured 2026-08-29: host and client both reported Frame=16.65 ms
+            // -- identical to a hundredth of a millisecond across two independent
+            // processes, i.e. 60.06 Hz -- with Game 16.13/16.20 and GPU 16.53/16.73. Under
+            // vsync UE4's game thread BLOCKS on the frame sync and `stat unit` counts that
+            // block inside Game, so "Game is 97% of the frame" is what a capped frame
+            // always looks like and says nothing about who is slow. A bottleneck claim
+            // read off a capped frame is unfalsifiable.
+            ue_wrap::engine::ExecuteConsoleCommand(L"r.VSync 0");
+            ue_wrap::engine::ExecuteConsoleCommand(L"t.MaxFPS 0");
+            UE_LOGW("[perf] `stat unit` enabled + vsync/MaxFPS lifted (r.VSync 0, t.MaxFPS 0) -- "
+                    "read Frame/Game/Draw/GPU from a screenshot. The uncap is what makes those "
+                    "numbers a workload measurement rather than a reading of the cap; our own "
+                    "buckets can never attribute engine-side cost.");
         }
     }
 
@@ -167,6 +215,41 @@ void Sample() {
     if (g_selfTime) {
         UE_LOGW("[perf] detour self avg=%.0f ns/dispatch (%llu samp/s) => ~%.2f ms/frame (~%.1f ms/s)",
                 avgSelfNs, dSamp, detourMsFr, (avgSelfNs * pePerSec) / 1e6);
+        // WHOLE-detour readout. `self` above excludes the outer frame and the SEH
+        // __try frame by construction, so it cannot answer "is the detour the
+        // unaccounted per-frame cost?" -- it is blind to that region. This one
+        // brackets the OUTER detour and subtracts the engine's own ProcessEvent
+        // measured on the SAME dispatches, so nothing we add is excluded.
+        // WHOLE-self is the size of the blind spot; if it is ~0 the detour is
+        // fully accounted for and the missing time is somewhere else entirely.
+        const unsigned long long wholeNsTot = GT::PeWholeNsTotal();
+        const unsigned long long engNsTot   = GT::PeEngineNsTotal();
+        const unsigned long long wSampTot   = GT::PeWholeSampleTotal();
+        const unsigned long long topTot     = GT::PeTopLevelCountTotal();
+        const unsigned long long dWhole  = wholeNsTot - g_lastWholeNs;
+        const unsigned long long dEngine = engNsTot   - g_lastEngineNs;
+        const unsigned long long dWSamp  = wSampTot   - g_lastWholeSamp;
+        const unsigned long long dTop    = topTot     - g_lastTopLevel;
+        g_lastWholeNs = wholeNsTot; g_lastEngineNs = engNsTot;
+        g_lastWholeSamp = wSampTot; g_lastTopLevel = topTot;
+        if (dWSamp > 0 && dTop > 0) {
+            // Per TOP-LEVEL dispatch. `engine` here is a whole nested BP call tree, not
+            // one UFunction body, so it is tens of microseconds and is NOT comparable to
+            // the per-dispatch `self` figure above -- it exists only to be subtracted.
+            const double wholeNs  = static_cast<double>(dWhole)  / dWSamp;
+            const double engineNs = static_cast<double>(dEngine) / dWSamp;
+            const double oursNs   = wholeNs - engineNs;
+            // Scale by the TOP-LEVEL rate, never by pePerSec: the samples are drawn from
+            // top-level dispatches only, and every nested dispatch's cost is already
+            // inside the bracket.
+            const double topPerSec = dTop / elapsed;
+            const double oursMsSec = (oursNs * topPerSec) / 1e6;
+            UE_LOGW("[perf] detour WHOLE top-level=%.0f/s (%.1f%% of PE) | per top-level: whole=%.0f ns "
+                    "engine=%.0f ns OURS=%.0f ns (%llu samp) => OUR TOTAL ~%.2f ms/frame (~%.1f ms/s)",
+                    topPerSec, pePerSec > 0 ? 100.0 * topPerSec / pePerSec : 0.0,
+                    wholeNs, engineNs, oursNs, dWSamp,
+                    frPerSec > 0 ? oursMsSec / frPerSec : 0.0, oursMsSec);
+        }
     }
 
     // Observer/interceptor cb-body total + the single worst body seen (cumulative).

@@ -78,6 +78,30 @@ std::atomic<unsigned long long> g_peSelfNs{0};
 std::atomic<unsigned long long> g_peSelfSamples{0};
 constexpr unsigned long long kSelfSampleMask = 0xFF;  // sample 1 dispatch in 256
 
+// ---- WHOLE-detour timing (2026-08-29) ---------------------------------------
+// g_peSelfNs above brackets the detour body from INSIDE ProcessEventDetourImpl, so
+// three things are excluded BY CONSTRUCTION: the outer ProcessEventDetour frame, the
+// SEH __try frame in RunDetourSEH, and the calls between them. That exclusion is
+// precisely where an unaccounted per-dispatch cost would hide, so a "self" figure can
+// never falsify "the detour is the missing time" -- it is blind to the candidate.
+//
+// Born from a measured gap: 120 fps with no mod vs 75 fps with the mod merely hosting
+// (+5.18 ms/frame) while every instrumented bucket summed to 0.86 ms. The residual is
+// ~2 us per dispatch at ~2,200 dispatches/frame, i.e. exactly the size of a per-dispatch
+// cost nobody was measuring.
+//
+// These brackets the OUTER function and separately records the engine's own
+// ProcessEvent on the SAME sampled dispatches, so (whole - engine) is our true
+// per-dispatch cost with nothing excluded. Sampled only at TOP LEVEL (t_peDepth == 0):
+// a nested dispatch's time is already inside its parent's bracket, so counting it again
+// would inflate the total by the recursion depth.
+std::atomic<unsigned long long> g_peWholeNs{0};      // outer detour wall time, sampled
+std::atomic<unsigned long long> g_peEngineNs{0};     // engine PE within those same samples
+std::atomic<unsigned long long> g_peWholeSamples{0};
+std::atomic<unsigned long long> g_peWholeOrd{0};     // drives the 1/256 pick (armed only)
+thread_local bool t_sampleWhole = false;             // set by the outer at depth 0
+thread_local unsigned long long t_engineNs = 0;      // filled by Impl for that dispatch
+
 // Observer/interceptor CALLBACK-BODY timing. The audit's rank-2 suspect for the
 // 50 ms is not the table WALK but a callback BODY that secretly calls an uncached
 // reflection Find*/CountObjectsByClass (a ~1M-entry GUObjectArray walk + a wstring
@@ -368,9 +392,17 @@ void __fastcall ProcessEventDetourImpl(void* self, void* function, void* params)
         UE_LOGI("trace: PE self=%p func=%ls", self, nameStr.c_str());
     }
 
-    if (sampleSelf) ::QueryPerformanceCounter(&t1);
+    // The engine's own ProcessEvent is bracketed when EITHER timer wants it: `sampleSelf`
+    // subtracts it, and the whole-detour timer needs it to turn a wall-clock outer
+    // measurement into our share. Recorded only at depth 1 (the top-level Impl) -- a
+    // nested dispatch runs INSIDE this bracket, so letting it write t_engineNs would
+    // replace the parent's engine time with a fragment of itself.
+    const bool timeEngine = sampleSelf || t_sampleWhole;
+    if (timeEngine) ::QueryPerformanceCounter(&t1);
     g_peTrampoline(self, function, params);
-    if (sampleSelf) ::QueryPerformanceCounter(&t2);
+    if (timeEngine) ::QueryPerformanceCounter(&t2);
+    if (t_sampleWhole && t_peDepth == 1)
+        t_engineNs = QpcDeltaToNs(t2.QuadPart - t1.QuadPart);
 
     // POST-observers: fire AFTER the original. Used to read state the BP just
     // wrote (e.g. PHC.GrabComponentAtLocation POST reads handle+176 to see
@@ -442,12 +474,43 @@ void __fastcall ProcessEventDetour(void* self, void* function, void* params) {
             g_bypassResumeFn.store(nullptr, std::memory_order_relaxed);
         }
     }
+    // WHOLE-detour sample decision. Taken HERE, outside the SEH frame, because
+    // everything between this point and RunDetourSEH's return is what the inner
+    // self-timer cannot see. Only at top level: t_peDepth is still 0 until Impl's
+    // PeDepthScope runs, so this is the outermost dispatch on this thread.
+    // Nested calls leave t_sampleWhole/t_engineNs ALONE -- clearing them would
+    // clobber the parent's in-flight sample.
+    const bool topLevel = (t_peDepth == 0);
+    bool whole = false;
+    if (topLevel && g_peSelfOn.load(std::memory_order_relaxed)) {
+        whole = (g_peWholeOrd.fetch_add(1, std::memory_order_relaxed) & kSelfSampleMask) == 0;
+        t_sampleWhole = whole;
+        t_engineNs = 0;
+    } else if (topLevel) {
+        t_sampleWhole = false;
+    }
+    LARGE_INTEGER w0{}, w1{};
+    if (whole) ::QueryPerformanceCounter(&w0);
+
     if (RunDetourSEH(self, function, params) != 0) {
         // The Impl crashed somewhere -- recover by logging + returning
         // without forwarding to the original PE (the engine's caller frame
         // expects PE to return; we honor that contract). LogObserverAv
         // already resolves the function name + logs at ERROR level.
         LogObserverAv(function, self, "detour-outer");
+    }
+
+    if (whole) {
+        ::QueryPerformanceCounter(&w1);
+        const long long span = w1.QuadPart - w0.QuadPart;
+        // A crashed Impl leaves t_engineNs at 0, which would report the whole frame as
+        // ours. Drop those samples rather than let a rare fault inflate the verdict.
+        if (span > 0 && t_engineNs > 0) {
+            g_peWholeNs.fetch_add(QpcDeltaToNs(span), std::memory_order_relaxed);
+            g_peEngineNs.fetch_add(t_engineNs, std::memory_order_relaxed);
+            g_peWholeSamples.fetch_add(1, std::memory_order_relaxed);
+        }
+        t_sampleWhole = false;
     }
 }
 
@@ -665,6 +728,10 @@ unsigned long long PeDispatchCountTotal()   { return g_peDispatchCount.load(std:
 unsigned long long PeDispatchCountGTTotal() { return g_peDispatchCountGT.load(std::memory_order_relaxed); }
 unsigned long long PeSelfNsTotal()          { return g_peSelfNs.load(std::memory_order_relaxed); }
 unsigned long long PeSelfSampleTotal()      { return g_peSelfSamples.load(std::memory_order_relaxed); }
+unsigned long long PeWholeNsTotal()         { return g_peWholeNs.load(std::memory_order_relaxed); }
+unsigned long long PeEngineNsTotal()        { return g_peEngineNs.load(std::memory_order_relaxed); }
+unsigned long long PeWholeSampleTotal()     { return g_peWholeSamples.load(std::memory_order_relaxed); }
+unsigned long long PeTopLevelCountTotal()   { return g_peWholeOrd.load(std::memory_order_relaxed); }
 unsigned long long PeObserverBodyNsTotal()  { return g_obsBodyNs.load(std::memory_order_relaxed); }
 unsigned long long PeObserverWorstNs()      { return g_obsWorstNs.load(std::memory_order_relaxed); }
 void*              PeObserverWorstFn()      { return g_obsWorstFn.load(std::memory_order_relaxed); }
