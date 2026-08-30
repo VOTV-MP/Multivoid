@@ -3356,7 +3356,11 @@ def cmd_browser(args) -> None:
         all_lines = host_log.read_text(errors="ignore").splitlines()
     except Exception:
         pass
-    lines = [ln for ln in all_lines if "server_browser_native" in ln]
+    # WIDENED to the whole subsystem, not one TU (2026-08-30, the T6 row extraction). The
+    # screen's row model moved to `server_browser_rows` and logs under its own prefix; a
+    # filter naming one file would have dropped every row verdict the moment the file was
+    # cut. It also picks up `server_browser_actions`, whose errors were invisible here.
+    lines = [ln for ln in all_lines if "server_browser" in ln]
     log("--- KILLING ---")
     kill_all()
     if fake is not None:
@@ -3449,7 +3453,7 @@ def cmd_browser(args) -> None:
         for key, label in (("ctl", "forced-offset"), ("whl", "post-wheel")):
             if extra_shots.get(key):
                 log(f"screenshot ({label}): {extra_shots[key]}")
-    errs = [ln for ln in all_lines if "[Error]" in ln and "server_browser_native" in ln]
+    errs = [ln for ln in all_lines if "[Error]" in ln and "server_browser" in ln]
     for ln in errs:
         # The T0 verdict lines are Errors BY DESIGN when they report a negative; they are
         # already assessed above, so echoing them here would double-count a known result.

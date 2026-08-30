@@ -3,17 +3,15 @@
 #include "ui/server_browser_native.h"
 
 #include "coop/config/config.h"
-#include "coop/net/protocol.h"          // kProtocolVersion -- the version-cell mismatch tint
 #include "coop/session/session_manager.h"
 #include "ui/boot_warning_dialog.h"     // the loud failure surface for a donor that never appears
 #include "ui/input_focus.h"            // a click only counts while OUR window is foreground
 #include "ui/native_screen.h"          // palette + widget primitives, shared with the host window
 #include "ui/server_browser_actions.h"   // CONNECT / HOST / REFRESH, its own TU
+#include "ui/server_browser_rows.h"      // the LIST -- rows, identity, hover, selection
 #include "ui/server_browser_selftest.h"  // the dev phase machine; ships dark
-#include "ue_wrap/core/call.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/umg_build.h"
@@ -22,31 +20,26 @@
 
 #include <atomic>
 #include <string>
-#include <vector>
 
 namespace ui::server_browser_native {
 namespace {
 
-namespace R  = ue_wrap::reflection;
 namespace E  = ue_wrap::engine;
 namespace U  = ue_wrap::umg;
 namespace P  = ue_wrap::profile;
 namespace sm = coop::session_manager;
 namespace selftest = ui::server_browser_selftest;
+namespace rows = ui::server_browser_rows;
 
 using ue_wrap::FLinearColor;
-using Row = coop::net::lobby::LobbyRow;
 
 // ---- layout constants ------------------------------------------------------------
-// Slate units. The row height is the game's own (uicomp_saveSlot_C is 64 px, section 7b),
-// so a row of ours is the same size as a row of theirs.
+// Slate units. The WINDOW's own; the row metrics live with the rows.
 constexpr float kWindowW  = 980.f;
 constexpr float kWindowH  = 620.f;
-constexpr float kRowH     = 64.f;
 // Frame + spacing, from the native windows (style doc section 3).
 constexpr float kBorderPx = 2.f;
 constexpr float kPadPx    = 6.f;
-constexpr float kRowGapPx = 2.f;
 // The list's height is EXPLICIT, not the VerticalBox's leftover slack.
 //
 // MEASURED 2026-08-26: with a Fill slot the box allotted the ScrollBox 542 px inside a
@@ -55,16 +48,6 @@ constexpr float kRowGapPx = 2.f;
 // under the column header. Slack arithmetic depends on every sibling's desired size being
 // what you assumed; an override depends on nothing.
 constexpr float kListH    = 470.f;
-// BOUNDS THE WHOLE SYNC LOOP, not just the display: `want` clamps to this, the grow
-// loop is bounded by `want`, and `total = ChildCount` therefore never exceeds it. So
-// this is a COMPUTE ceiling that happens to look like a display one.
-// The comment that stood here -- "the master caps its list well below this" -- was
-// FALSE (2026-08-26): `build_rows` (master.rs:531-553) emits every listed lobby,
-// unbounded, so 100 servers render 64 and nothing logs the truncation.
-// Raising it is step T2b and it CANNOT come first: see docs/MULTIPLAYER_UI.md
-// section 8c.-1, which measures why the uncached walk per row must go first --
-// raising the cap before that converts a latent defect into a 110-320 ms stall.
-constexpr int   kMaxRows  = 64;
 // ---- the construction kit ----------------------------------------------------------
 // Alignment enums, the palette, and the widget primitives moved to ui/native_screen
 // (2026-08-29) when the hosting window became the second native screen. The names are
@@ -72,11 +55,9 @@ constexpr int   kMaxRows  = 64;
 // MOVE, and a move that rewrites its call sites cannot be diffed against the original.
 namespace NS = ui::native_screen;
 using NS::kFill;
-using NS::kLeft;
 using NS::kCenter;
 using NS::kJustLeft;
 using NS::kJustCenter;
-using NS::ReadPtr;
 using NS::SwitcherChild;
 using NS::DonorField;
 using NS::Spawn;
@@ -84,22 +65,15 @@ using NS::AddText;
 using NS::AddFramedBox;
 using NS::BuildButton;
 
+// Only the WINDOW's colours are here; the row palette moved with the rows.
 const FLinearColor kPanel  = NS::Panel();   // window fill
 const FLinearColor kBorder = NS::Border();  // every frame in the game's menus
-const FLinearColor kRowBg  = NS::RowBg();   // a list row at rest
-const FLinearColor kRowSel = NS::RowSel();  // ...and selected. Fill, not text.
 const FLinearColor kText   = NS::Text();    // the default: most text is white
-const FLinearColor kAccent = NS::Accent();  // orange -- the interactive accent
-const FLinearColor kHover  = NS::Hover();   // hover is a TEXT colour, see section 4
-const FLinearColor kAmber  = NS::Amber();   // value emphasis; the mismatch tint
-const FLinearColor kDim    = NS::Dim();     // secondary text (measured, not guessed)
-const FLinearColor kOwn    = NS::Own();     // "your server" row
 
 // ---- state (GAME THREAD ONLY unless marked) --------------------------------------
 void* g_menu     = nullptr;   // the ui_menu_C we built into (compared, never dereferenced)
 void* g_switcher = nullptr;
 void* g_root     = nullptr;   // our UUserWidget
-void* g_list     = nullptr;   // the UScrollBox holding the rows
 void* g_status   = nullptr;   // the footer UTextBlock
 void* g_scrimW   = nullptr;   // the full-screen scrim -- the thing that absorbs a stray click
 void* g_closeBtn = nullptr;   // the X, top-right of the title row
@@ -109,12 +83,6 @@ void* g_backBtn  = nullptr;   // BACK, bottom-right beside the status line
 bool  g_prevLmb   = false;
 bool  g_lmbPrimed = false;
 
-// ---- row state (style doc section 4: hover and selection are DIFFERENT channels) ----
-// Hover recolours the row's TEXT; selection recolours the row's FILL. Both are applied on
-// a CHANGE, never per frame.
-int         g_hoverRow   = -1;   // index into the live rows, or -1
-NS::HoverTracker g_hover;        // pointer + scroll + settling, one owner
-std::string g_selectedId;        // the SELECTED LOBBY, keyed by id and not by index
 // ESC edge state. Primed on the first tick a screen is shown so a key already held when it
 // opens cannot synthesize a close -- the same guard multiplayer_menu's click poll uses.
 bool  g_prevEsc   = false;
@@ -123,18 +91,10 @@ int32_t g_ourIndex   = -1;
 int32_t g_priorIndex = -1;
 bool    g_shown      = false;
 
-// Row identity. See the header, invariant 1: `g_rowIds[i]` is the lobbyId the child at
-// index i was RENDERED with, written in the same pass as that child's text by the single
-// function that owns the panel. Positional INSIDE this one structure is fine; positional
-// across the network list and the displayed list is the defect this exists to avoid.
-std::vector<std::string> g_rowIds;
-std::vector<Row> g_rows;
 uint64_t g_lastRefreshMs = 0;
-uint64_t g_lastRowsGen   = 0;   // the fetch generation last PAINTED (see OnMenuTick)
 // A click's answer holds the footer for this long against the list sync's rewrite.
 constexpr uint64_t kNoticeMs = 6000;
 uint64_t g_noticeUntilMs = 0;
-int      g_visibleRows   = 0;   // rows actually SHOWN, not ChildCount's high-water mark
 int      g_buildAttempts = 0;
 bool     g_toldTheUser   = false;
 
@@ -151,259 +111,26 @@ constexpr uint64_t kIntentTtlMs  = 20000;  // a join that never returns to a men
 // seconds for a list that changes on the scale of a person deciding to host.
 constexpr uint64_t kRefreshMs    = 5000;
 
-// The five columns, in the order section 7c fixes them, with their fill weights.
-struct Column { const wchar_t* title; float weight; };
-constexpr Column kColumns[5] = {
-    {L"Name",    0.44f},
-    {L"Players", 0.12f},
-    {L"Version", 0.20f},
-    {L"World",   0.14f},
-    {L"Age",     0.10f},
-};
-
-// ---- the screen -------------------------------------------------------------------
-
-// Build one row: USizeBox(64) -> UOverlay -> [ UImage background (the HIT TARGET),
-// UHorizontalBox of five UTextBlocks ]. NO UButton: the native row's own `button_select`
-// draws nothing in all three states, `IsHovered()` is owned by UWidget so a bare UImage
-// answers it (measured), and a UButton would add a press visual we would then suppress.
-void* BuildRow(void* parent) {
-    void* box = Spawn(L"SizeBox", parent);
-    if (!box) return nullptr;
-    U::SetSizeBoxHeight(box, kRowH);
-    void* ovl = Spawn(L"Overlay", box);
-    void* bg  = ovl ? Spawn(L"Image", ovl) : nullptr;
-    void* hb  = ovl ? Spawn(L"HorizontalBox", ovl) : nullptr;
-    if (!ovl || !bg || !hb) return nullptr;
-    // The background carries the row's state tint AND is the hit target, so it must be
-    // Visible -- a SelfHitTestInvisible image answers IsHovered() == false, which would
-    // look exactly like the whole approach failing.
-    U::SetImageTintRaw(bg, kRowBg);
-    E::SetWidgetVisibility(bg, 0);  // ESlateVisibility::Visible
-    if (void* s = U::AddChild(ovl, bg))
-        U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign, kFill, kFill);
-    if (void* s = U::AddChild(ovl, hb))
-        U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign, kFill, kFill);
-    for (const Column& c : kColumns)
-        AddText(hb, L"", 16, kText, kJustLeft, c.weight);
-    // SizeBox is a UContentWidget: its single child goes through SetContent.
-    U::SetContent(box, ovl);
-    return box;
-}
-
-// A row's parts, re-derived from the panel on demand. We hold NO row pointers across ticks
-// (cached_obj_ref.h:34-46 -- the world stamp is inert for UMG, and UE assigns serials
-// lazily, so a hand-spawned widget captures serial 0 and the ABA residual is not closed).
-// The panel's `Slots` is the authority; this walks it.
-struct RowParts { void* box; void* bg; void* text[5]; };
-bool RowPartsAt(int32_t i, RowParts& out) {
-    out = RowParts{};
-    void* box = U::ChildAt(g_list, i);
-    if (!box) return false;
-    out.box = box;
-    void* ovl = nullptr;
-    // LATCHED. `R::FindFunction` has no result cache and walks the whole GUObjectArray, and
-    // this runs PER ROW inside SyncRows and RepaintRowFills -- 64 rows meant 64 full walks
-    // landing in one frame, every sync. `R::FindClass` beside it has been cached since
-    // `ca1cd5e4`; only this one was not. A UFunction never moves, so one resolve is all
-    // there is. (Post-ship perf audit, 2026-08-29. The general fix -- a cache inside
-    // `FindFunction` for all 476 call sites -- is filed separately and is not this lane.)
-    // ONCE, INCLUDING ON FAILURE. The first version latched only success, so a miss re-walked
-    // the whole GUObjectArray on every call -- and this runs per ROW inside SyncRows and
-    // RepaintRowFills, so the failure path was 64 full walks per frame. A UFunction, unlike
-    // an asset, either exists at process start or never does, so a permanent negative latch
-    // is not merely safe here, it is correct.
-    static void* const sGetContent = [] {
-        void* cw = R::FindClass(P::name::ContentWidgetClass);
-        return cw ? R::FindFunction(cw, P::name::GetContentFn) : nullptr;
-    }();
-    if (sGetContent) {
-        ue_wrap::ParamFrame f(sGetContent);
-        if (Call(box, f)) ovl = f.Get<void*>(L"ReturnValue");
-    }
-    if (!ovl) return false;
-    out.bg = U::ChildAt(ovl, 0);
-    void* hb = U::ChildAt(ovl, 1);
-    if (!hb) return false;
-    for (int c = 0; c < 5; ++c) out.text[c] = U::ChildAt(hb, c);
-    return true;
-}
-
-// The version cell, PORTED from the incumbent rather than re-derived (server_browser.cpp:
-// 218-231). `game` is the host's VOTV target and `version` is a LEGACY-ONLY fallback that
-// only a pre-field host still sends; the mismatch has TWO legs and amber always means
-// "the join gate will refuse this".
-std::wstring VersionCell(const Row& r, bool& mismatch) {
-    const bool gameMismatch = !r.game.empty() && r.game != sm::GameTarget();
-    mismatch = gameMismatch ||
-               (r.proto > 0 && r.proto != static_cast<int>(coop::net::kProtocolVersion));
-    std::string cell = !r.game.empty() ? r.game : r.version;
-    if (r.proto > 0) cell += " b" + std::to_string(r.proto);
-    if (mismatch) cell += " (!)";
-    return std::wstring(cell.begin(), cell.end());
-}
-
-// A row's five text colours, from its data and its hover state. ONE owner: the sync pass
-// and the hover edge both come through here, so "what colour is the version cell" is
-// answered in exactly one place and un-hovering cannot restore the wrong base.
-void ApplyRowTextColors(const RowParts& rp, const Row& r, bool isOwn, bool mismatch,
-                        bool hovered) {
-    // Style doc section 4: hovering turns the LABEL yellow and leaves the fill alone.
-    // That is the opposite of the ImGui incumbent, which paints behind the row.
-    const FLinearColor name = hovered ? kHover : (isOwn ? kOwn : kText);
-    const FLinearColor body = hovered ? kHover : kText;
-    const FLinearColor dim  = hovered ? kHover : kDim;
-    const FLinearColor ver  = hovered ? kHover : (mismatch ? kAmber : kDim);
-    if (rp.text[0]) E::SetTextBlockColor(rp.text[0], name);
-    if (rp.text[1]) E::SetTextBlockColor(rp.text[1], body);
-    if (rp.text[2]) E::SetTextBlockColor(rp.text[2], ver);
-    if (rp.text[3]) E::SetTextBlockColor(rp.text[3], dim);
-    if (rp.text[4]) E::SetTextBlockColor(rp.text[4], dim);
-    (void)r;
-}
-
-void SetRowText(void* block, const std::string& utf8, const FLinearColor& col) {
-    if (!block) return;
-    const std::wstring w(utf8.begin(), utf8.end());
-    E::SetWidgetText(block, w.c_str());
-    E::SetTextBlockColor(block, col);
-}
-
-// Repaint every row's FILL from the current selection. Cheap (one tint per row, no
-// reflection walk) and only ever called on a selection change.
-void RepaintRowFills() {
-    const int total = g_visibleRows;   // shown, not ChildCount's high-water mark
-    for (int i = 0; i < total; ++i) {
-        RowParts rp;
-        if (!RowPartsAt(i, rp) || !rp.bg) continue;
-        const bool sel = !g_selectedId.empty() &&
-                         i < static_cast<int>(g_rowIds.size()) &&
-                         g_rowIds[static_cast<size_t>(i)] == g_selectedId;
-        U::SetImageTint(rp.bg, sel ? kRowSel : kRowBg);
-    }
-}
-
-// WHICH ROW IS UNDER THE CURSOR, re-evaluated only when something could have changed it.
+// The footer mirrors the session's own status EXCEPT while a click's answer is still
+// fresh. Without this the list sync would wipe "Pick a server from the list first."
+// within a few frames of the player reading it, which reads as the button doing nothing.
 //
-// IT DOES NOT ASK SLATE, AT EITHER LEVEL. This used to read "there is no cheaper way to
-// ask: FGeometry has no reflected members (size 0x38, empty), so the rows' screen rects
-// are not readable", and gate a per-row `IsHovered` walk on `IsHovered(g_list)`. Every
-// part of that was wrong: the rects ARE readable (through USlateBlueprintLibrary, never
-// through FGeometry's members), the outer gate is FALSE while the cursor is genuinely over
-// the list, and the row backgrounds do not answer either -- all three measured 2026-08-29.
-// The whole hit test now lives in `native_screen::ChildAtCursor`, which carries the
-// measurement, and the hosting window's world list uses the same one.
-//
-// The consequence of the old shape was total rather than partial: the gate never opened,
-// so no row highlighted and `g_hoverRow` stayed -1 -- which is also what the click path
-// reads, so no server could be selected either.
-//
-// `NotePointerMoved()` used to exist for this and was never wired to anything -- no
-// caller, no consumer. GetCursorPos here is one syscall, needs no edit to the overlay's
-// input path, and sees movement regardless of how the message was routed; the dead seam is
-// retired with it (RULE 2).
-void UpdateHover() {
-    // The tracker owns the pointer, the scroll and the settling pass together; this screen
-    // used to own all three itself, and its sibling owned a broken copy of them.
-    if (!g_hover.Poll(g_list, g_visibleRows)) return;
-    const int hit = g_hover.Index();
-    if (hit == g_hoverRow) return;
-
-    const int prev = g_hoverRow;
-    g_hoverRow = hit;
-    // Edge-applied: only the two rows that changed are recoloured.
-    for (int i : {prev, hit}) {
-        if (i < 0 || i >= static_cast<int>(g_rows.size())) continue;
-        RowParts rp;
-        if (!RowPartsAt(i, rp)) continue;
-        const Row& r = g_rows[static_cast<size_t>(i)];
-        const std::string own = sm::OwnLobbyId();
-        bool mismatch = false;
-        (void)VersionCell(r, mismatch);
-        ApplyRowTextColors(rp, r, !own.empty() && r.lobbyId == own, mismatch, i == hit);
-    }
-}
-
-// THE SINGLE WRITER of both the children's text and g_rowIds. Nothing else touches either,
-// which is what makes the positional pairing safe (header, invariant 1).
-void SyncRows() {
-    g_lastRowsGen = sm::CopyRows(g_rows);
-    const int want = static_cast<int>(g_rows.size()) > kMaxRows ? kMaxRows
-                                                               : static_cast<int>(g_rows.size());
-    // The hover walk reads this instead of ChildCount: rows are GROWN and never
-    // removed (a surplus row is Collapsed below, not destroyed), so ChildCount is a
-    // HIGH-WATER MARK -- once the list has held 64 it reports 64 forever, and the walk
-    // would read the geometry of rows that are not on screen. A collapsed widget is not
-    // arranged, so it keeps its last painted rect, which can still contain the cursor
-    // and win the hover shortcut over the real row beneath it.
-    g_visibleRows = want;
-    int have = U::ChildCount(g_list);
-    if (have < 0) have = 0;
-    // GROW by building; SHRINK by COLLAPSING, never by detaching. Nothing roots a detached
-    // row -- the panel's Slots is the only reference -- so a detached free-list would be a
-    // use-after-free waiting for the next GC. A collapsed row stays rooted, is not
-    // hit-testable, and a regrow just un-collapses it.
-    for (int i = have; i < want; ++i) {
-        void* row = BuildRow(g_list);
-        if (!row) break;
-        if (void* s = U::AddChild(g_list, row)) {
-            U::SetSlotAlign(s, P::off::UScrollBoxSlot_HAlign, P::off::UScrollBoxSlot_VAlign,
-                            kFill, kCenter);
-            // ROW SEPARATION WITHOUT A PER-ROW BORDER, and this is a stated trade. Native
-            // rows each carry their own frame; reproducing that costs one more UImage per
-            // row, and this list's per-row cost is the exact subject of the open perf lane
-            // (MULTIPLAYER_UI section 8c.-1). A gap that lets the darker panel show through
-            // reads as a boxed row at zero extra widgets. If T6 lands a viewport pool, the
-            // widget budget stops mattering and the real frame can replace this.
-            auto* pad = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(s) +
-                                                 P::off::UScrollBoxSlot_Padding);
-            pad[0] = 0.f; pad[1] = 0.f; pad[2] = 0.f; pad[3] = kRowGapPx;
-        }
-    }
-    const int total = U::ChildCount(g_list);
-    g_rowIds.assign(total < 0 ? 0 : total, std::string());
-
-    const std::string own = sm::OwnLobbyId();
-    for (int i = 0; i < total; ++i) {
-        RowParts rp;
-        if (!RowPartsAt(i, rp)) continue;
-        if (i >= want) {
-            E::SetWidgetVisibility(rp.box, 1);  // ESlateVisibility::Collapsed
-            continue;
-        }
-        E::SetWidgetVisibility(rp.box, 0);
-        const Row& r = g_rows[static_cast<size_t>(i)];
-        const bool isOwn = !own.empty() && r.lobbyId == own;
-        bool mismatch = false;
-        const std::wstring ver = VersionCell(r, mismatch);
-
-        SetRowText(rp.text[0], isOwn ? r.name + "   (your server)" : r.name, kText);
-        SetRowText(rp.text[1], std::to_string(r.playersCur) + "/" + std::to_string(r.playersMax),
-                   kText);
-        if (rp.text[2]) E::SetWidgetText(rp.text[2], ver.c_str());
-        SetRowText(rp.text[3], r.world, kDim);
-        SetRowText(rp.text[4], std::to_string(r.ageSec) + "s", kDim);
-        ApplyRowTextColors(rp, r, isOwn, mismatch, i == g_hoverRow);
-        // SELECTION IS KEYED ON THE LOBBY, NOT THE ROW INDEX. The master returns lobbies
-        // from a HashMap and nothing sorts them (MULTIPLAYER_UI section 8c.-1), so a
-        // refresh can put a different server at index N -- an index-keyed selection would
-        // silently move to whatever landed there, which is how a player joins a server
-        // they did not pick.
-        if (rp.bg)
-            U::SetImageTint(rp.bg, (!g_selectedId.empty() && r.lobbyId == g_selectedId)
-                                       ? kRowSel : kRowBg);
-        // The id is captured HERE, in the same pass as the text above it, so a click
-        // resolves to the server the user was LOOKING at even if the master reorders.
-        g_rowIds[static_cast<size_t>(i)] = r.lobbyId;
-    }
-    // The footer mirrors the session's own status EXCEPT while a click's answer is still
-    // fresh. Without this the list sync would wipe "Pick a server from the list first."
-    // within a few frames of the player reading it, which reads as the button doing nothing.
+// It sits BESIDE the list sync rather than inside it (2026-08-30, the row extraction): the
+// footer is window chrome and the rows are the list, and the only reason they were one
+// function is that both were wanted at the same two moments.
+void RefreshStatusLine() {
     if (g_status && ::GetTickCount64() >= g_noticeUntilMs) {
         const std::string s = sm::Status();
         const std::wstring w(s.begin(), s.end());
         E::SetWidgetText(g_status, w.c_str());
     }
+}
+
+// Pull the list and then the footer, in that order -- which is the order the one function
+// they used to share performed them in.
+void SyncRows() {
+    rows::Sync();
+    RefreshStatusLine();
 }
 
 // Build the screen once per menu instance. FAIL-CLOSED: a null donor means DO NOT BUILD
@@ -514,22 +241,19 @@ bool BuildScreen(void* switcher) {
             pad[0] = pad[1] = pad[2] = 0.f; pad[3] = kPadPx;
         }
     }
-    // Column headers are a SECTION HEADER, and those are orange in every native window.
-    void* head = Spawn(L"HorizontalBox", col);
-    if (head) {
-        for (const Column& c : kColumns) AddText(head, c.title, 16, kAccent, kJustLeft, c.weight);
-        U::AddChild(col, head);
-    }
+    // The column header is the LIST's, not the window's: it must agree with the row fill
+    // weights or the columns do not line up, so one module owns both.
+    rows::BuildHeader(col);
     void* listBox = Spawn(L"SizeBox", col);
-    g_list = listBox ? Spawn(L"ScrollBox", listBox) : nullptr;
-    if (!listBox || !g_list) return false;
+    void* list    = listBox ? Spawn(L"ScrollBox", listBox) : nullptr;
+    if (!listBox || !list) return false;
     U::SetSizeBoxHeight(listBox, kListH);
     // The settings list's scrollbar treatment (section 7b): a server list is the long-list
     // case, and ui_saveSlots' own ScrollBox sets no bar style at all. NINE brushes.
-    U::CloneStyle(g_list, P::off::UScrollBox_WidgetBarStyle, barDonor,
+    U::CloneStyle(list, P::off::UScrollBox_WidgetBarStyle, barDonor,
                   P::off::UScrollBox_WidgetBarStyle, P::off::FScrollBarStyle_Size,
                   P::off::FScrollBarStyleBrushes, 9);
-    U::SetContent(listBox, g_list);
+    U::SetContent(listBox, list);
     if (void* s = U::AddChild(col, listBox))
         U::SetSlotAlign(s, P::off::UVerticalBoxSlot_HAlign, P::off::UVerticalBoxSlot_VAlign,
                         kFill, kFill);
@@ -565,9 +289,11 @@ bool BuildScreen(void* switcher) {
     }
 
     g_root  = root;
-    g_rowIds.clear();
+    // Hand the list to its owner, which also drops every row identity from the menu
+    // instance that just died -- those two effects are always wanted together.
+    rows::Attach(list);
     UE_LOGI("server_browser_native: screen built (root=%p list=%p) after %d attempt(s)",
-            root, g_list, g_buildAttempts + 1);
+            root, list, g_buildAttempts + 1);
     return true;
 }
 
@@ -642,25 +368,12 @@ void CloseNow() {
 
 bool IsOpen() { return g_shown; }
 
-int HoveredRow() { return g_hoverRow; }
-const char* SelectedRowId() { return g_selectedId.c_str(); }
-
-bool SelectedRow(coop::net::lobby::LobbyRow& out) {
-    if (g_selectedId.empty()) return false;
-    // BY ID, never by index -- invariant 1 in this module's header. `g_rows` is refreshed
-    // from the master on a timer and is not sorted, so the position that was selected is not
-    // the position that holds it now, and a positional read would hand a player a different
-    // server than the one they clicked.
-    for (const Row& r : g_rows) {
-        if (r.lobbyId == g_selectedId) { out = r; return true; }
-    }
-    // Selected, but the lobby is gone from the latest list: the host quit while the screen
-    // was open. Answering false is right -- the caller has nothing to connect to -- and the
-    // selection is dropped so the highlight stops pointing at a server that is not there.
-    g_selectedId.clear();
-    RepaintRowFills();
-    return false;
-}
+// The three list questions are the LIST's to answer; this screen only forwards them, so
+// that a caller who already holds `server_browser_native.h` need not learn a second header
+// to ask what is selected.
+int HoveredRow() { return rows::HoveredRow(); }
+const char* SelectedRowId() { return rows::SelectedId(); }
+bool SelectedRow(coop::net::lobby::LobbyRow& out) { return rows::Selected(out); }
 
 void SetNotice(const char* text) {
     if (!text) return;
@@ -671,25 +384,7 @@ void SetNotice(const char* text) {
     E::SetWidgetText(g_status, w.c_str());
 }
 
-void LogRowHitDiagnostics(int32_t i) {
-    RowParts rp;
-    if (!RowPartsAt(i, rp)) {
-        UE_LOGW("server_browser_native: row %d has no parts -- RowPartsAt failed, so it has "
-                "no background to tint and no text to recolour", i);
-        return;
-    }
-    auto dump = [](const char* what, void* w) {
-        if (!w) { UE_LOGW("server_browser_native:   %s is NULL", what); return; }
-        ue_wrap::FVector2D tl{}, sz{};
-        const bool haveRect = U::WidgetScreenRect(w, tl, sz);
-        UE_LOGW("server_browser_native:   %s hovered=%d rect %s(%.0f,%.0f) %.0fx%.0f",
-                what, E::WidgetIsHovered(w) ? 1 : 0, haveRect ? "" : "UNREAD ",
-                tl.X, tl.Y, sz.X, sz.Y);
-        U::LogVisibilityChain(what, w);
-    };
-    dump("row.bg", rp.bg);
-    dump("row.text0", rp.text[0]);
-}
+void LogRowHitDiagnostics(int32_t i) { rows::LogRowHitDiagnostics(i); }
 
 
 void OnMenuTick(void* menu, void* switcher) {
@@ -699,11 +394,11 @@ void OnMenuTick(void* menu, void* switcher) {
     // Rebuild on a new menu instance (the old widgets died with it).
     if (menu != g_menu) {
         g_menu = menu;
-        g_root = nullptr; g_list = nullptr; g_status = nullptr;
+        g_root = nullptr; g_status = nullptr;
         g_closeBtn = nullptr; g_backBtn = nullptr; g_scrimW = nullptr;
         ui::server_browser_actions::Forget();
         g_ourIndex = -1; g_shown = false; g_buildAttempts = 0; g_toldTheUser = false;
-        g_rowIds.clear();
+        rows::Attach(nullptr);   // the panel died with the menu; drop it and the row ids
     }
     if (!g_root) {
         if (!BuildScreen(switcher)) return;
@@ -737,7 +432,7 @@ void OnMenuTick(void* menu, void* switcher) {
     // the X. Below the `!g_shown` return it would stop ticking the moment its own ESC
     // phase succeeded, and the chrome would stay untested forever. Every phase that needs
     // a visible screen runs before that point, in order.
-    selftest::Tick(g_scrimW, g_list, g_closeBtn);
+    selftest::Tick(g_scrimW, rows::Panel(), g_closeBtn);
 
     if (!g_shown) return;
 
@@ -801,18 +496,11 @@ void OnMenuTick(void* menu, void* switcher) {
             if (ui::server_browser_actions::OnReleaseEdge()) return;
             // A click on a hovered row SELECTS it. The row under the cursor is already
             // known from the hover pass, so this costs no extra dispatch.
-            if (g_hoverRow >= 0 && g_hoverRow < static_cast<int>(g_rowIds.size())) {
-                const std::string& id = g_rowIds[static_cast<size_t>(g_hoverRow)];
-                if (!id.empty() && id != g_selectedId) {
-                    g_selectedId = id;
-                    RepaintRowFills();
-                    UE_LOGI("server_browser_native: row selected (%s)", id.c_str());
-                }
-            }
+            rows::ClickSelect();
         }
     }
 
-    UpdateHover();
+    rows::UpdateHover();
 
     // FETCH ON A TIMER, PAINT ON AN ARRIVAL -- two questions, and they used to share one
     // gate. With paint coupled to the fetch tick, a lobby that arrived at t=0.3 s was not
@@ -826,7 +514,7 @@ void OnMenuTick(void* menu, void* switcher) {
         g_lastRefreshMs = now;
         sm::Refresh();
     }
-    if (sm::RowsGeneration() != g_lastRowsGen) SyncRows();
+    if (sm::RowsGeneration() != rows::PaintedGeneration()) SyncRows();
 }
 
 }  // namespace ui::server_browser_native
