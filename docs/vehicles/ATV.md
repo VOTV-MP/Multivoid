@@ -1490,9 +1490,44 @@ and cross that threshold at different moments — or only one crosses it. The do
 class is the same one §17.5 arrives at from the identity side: **the host owns the progression**.
 Two independent routes to one answer is the strongest signal available here.
 
-**What is NOT yet mapped and is owed before building:** `putTire` (the inverse verb — who may
-re-mount, and does it consume the keyed wheel prop), `updSpareTire`, and whether `tiresTypes[]` /
-`tiresFixes[]` ride any existing wire lane. `§2.5`'s table lists them; their bytecode is unread.
+**The inverse half, mapped the same day — and both halves change the design for the better.**
+
+```
+putTire(index, wheelObject)   (15 stmts)
+    if (index < 0)      -> addHint, return
+    if (tires[index])   -> addHint, return        // slot already occupied
+    tires[index]          = true
+    tiresDurability[index] = wheelObject.durability
+    tiresDirt[index]       = wheelObject.dirt
+    tiresFixes[index]      = wheelObject.fixes
+    updTires()
+    wheelObject.K2_DestroyActor()                 // consumes the keyed prop
+
+updTires()   (204 stmts, 7987 bytes)
+    setWheelsType()
+    per wheel, driven ONLY by tires[i]:
+        frontWheel_R.SetVisibility(tires[0]) / SetCollisionEnabled / SetCollisionResponseToChannel
+        tirePoint_FR.SetCollisionEnabled(...)
+    sus_BR1.BreakConstraint() ... (the rig re-place)
+```
+
+**(c) The wheel prop IS the tire's state carrier.** `ejectWheel` writes `durability` / `dirt` /
+`fixes-1` onto the spawned actor and `putTire` reads exactly those three back into the arrays. The
+game already serialises tire state through the prop, so a sync design does not need to invent a
+transfer format — it needs to make sure ONE peer authors the prop. It also means the destroy half
+already has a wire path: `putTire` ends in `K2_DestroyActor`, the ordinary observable destroy seam,
+not a BP-internal disappearance.
+
+**(d) `updTires()` is a pure REDUCER over `tires[]`, so the rig does not need syncing — the array
+does.** Every visibility, collision and constraint call in those 204 statements is derived from
+`tires[i]`; nothing in it reads a hit, an impulse or a timer. So it is idempotent with respect to the
+array, and two peers holding the same `tires[]` who both call `updTires()` end with the same rig.
+The design consequence is large: **do not mirror `BreakConstraint`/`SetCollisionEnabled` operations
+— mirror the four arrays and call the game's own reconciler.** That is `park the brain, drive the
+entity` in its correct form, and it is the opposite of what the C1 crutch did to this vehicle.
+
+**Still unmapped (small, and not on the critical path):** `updSpareTire`, `diretTire`,
+`setWheelsType`'s type table, and whether `tiresTypes[]` rides any existing wire lane.
 
 ### 17.6 Three things not to re-derive
 1. **Deleting the tick-off (`a2a45fc7`) did not move the number.** All six runs that read 25-40 cm
