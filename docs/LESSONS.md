@@ -5208,15 +5208,30 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   *Look FIRST:* `tools/blender/votvio/vendor/NOTICE.md` (exact patch list).
   `memory/lesson_pyue4parse_on_votv_pitfalls.md`
 
-- **2026-08-30 — N screens can be ONE canvas windowed by mesh UVs — diff embed rects against
-  UV bounds before choosing a model.** All six workstation screen meshes share ONE
-  `mat_tvScreen` on slot "UI", and each mesh's UI-section UV bbox is a window into the single
-  `ui_consolesAtlas` 2000x2000 canvas — the `umg_console` embed's absolute rect is BYTE-EQUAL
-  to the SAT mesh's UV window (U0-.5 V.194-.5). Two plausible models (per-pane RTs; per-device
-  cover toggles) died before that one cheap check settled the routing. *Look FIRST:* compute
-  BOTH sides — widget subtree absolute rects (walk slots to the root) and per-section UV bbox —
-  and diff; consumer `tools/blender/votvio/screens_rt.py` (docstring carries the map).
+- **2026-08-30 — N screens can be ONE canvas — and a face is a SCATTER of UV-island cutouts,
+  never a bbox.** All six workstation screen meshes share ONE `mat_tvScreen` on slot "UI"
+  sampling the single `ui_consolesAtlas` 2000x2000 canvas — the `umg_console` embed's rect is
+  BYTE-EQUAL to the SAT mesh's UV window. Two plausible models (per-pane RTs; per-device cover
+  toggles) died before that check, and a THIRD ("quadrant per face") shipped a whole wave
+  because a UV **bbox is a union** that hides island structure: the v11 island census
+  (union-find over section triangles) showed comp 2 / coords 18 / download 8 / playback 6 /
+  console 1 / radar 5 cutouts, the coords counters cut PER DIGIT (3x5 windows of 35x46), and
+  faces freely windowing neighbor quadrants. The widget bakes in RenderTransform (comp table
+  ROTATED −90, counters shear 7 + LetterSpacing 470/1000 em = the digit-window pitch) and the
+  cutout reads the rotated projection. *Look FIRST:* `tools/blender/votvio/screens_rt.py`
+  docstring (the routing model); census UV ISLANDS, not the bbox, and check RenderTransform
+  before trusting a layout rect.
   `memory/lesson-a-multi-screen-surface-can-be-one-canvas-windowed-by-mesh-uvs.md`
+
+- **2026-08-30 — Cooked FText has TWO shapes: localized dict and culture-invariant PLAIN
+  STRING.** A cooked `Text` property arrives either as `{Namespace,Key,SourceString}` (prose)
+  or as a bare string (numbers, `-`, `0 MB`). The atlas painter accepted only the dict, so
+  every right-column table VALUE was invisible while labels rendered — it read as "idle by
+  design" until the user's in-game shots showed the values present; meanwhile the debug tree
+  walker had its own extractor WITH the fallback, so the walk printed what the painter lost.
+  *Look FIRST:* every consumer of a cooked `Text` handles `dict | str | None`; when a label
+  renders but its value does not, suspect the TEXT SHAPE, not layout.
+  `memory/lesson-cooked-ftext-has-two-shapes-dict-and-plain-string.md`
 
 - **2026-08-30 — Rasterizing cooked UMG: point-anchored slots carry SIZE in Offsets.Right/Bottom,
   paint order = the Slots array, and ScrollBox/RetainerBox CLIP.** The size convention is proven
