@@ -16,6 +16,7 @@ from UE4Parse.Assets.Objects.FGuid import FGuid  # noqa: E402
 
 from . import bsp_model  # noqa: E402,F401  (registers the cooked-UModel reader)
 from . import ism_component  # noqa: E402,F401  (registers the instanced-mesh export readers)
+from . import sk_model  # noqa: E402,F401  (registers the cooked-USkeletalMesh reader)
 
 
 class GameSource:

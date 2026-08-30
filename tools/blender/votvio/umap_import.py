@@ -22,6 +22,7 @@ from . import convert, decals, spline_mesh
 
 MESH_COMPS = {
     "StaticMeshComponent",
+    "SkeletalMeshComponent",
     "InstancedStaticMeshComponent",
     "HierarchicalInstancedStaticMeshComponent",
     "FoliageInstancedStaticMeshComponent",
@@ -63,6 +64,11 @@ EVENT_ACTOR_CLASSES = {
     "arirShipAppear_C",
     "trigger_agrav_C",
     "trigger_lockerLooker_C",
+    # the prying rig: 213 CATs under 60 pryable doors/vents; sk_crowbar is
+    # visible-own on an f_visible=False pivot chain and the game shows it only
+    # during the prying interaction -- at rest none of the ~380 crowbars render
+    # (measured 2026-08-30; no cooked flag encodes this, the BP drives it)
+    "pryingCrowbar_C",
 }
 
 
@@ -109,31 +115,65 @@ class MapImporter:
         self.save_classes = save_classes or set()
         self.keep_actors = keep_actors or set()   # keyed fixtures a save row re-expresses
         self.stats = {"placed": 0, "instances": 0, "skipped_saveclass": 0,
-                      "no_mesh": 0, "hidden": 0, "lights": 0, "sk_skipped": 0,
+                      "no_mesh": 0, "hidden": 0, "lights": 0,
                       "landscape": 0, "culled": 0, "events": 0, "decals": 0,
                       "splines": 0, "unplaced": 0}
         self._world_m = {}
         self._actor = {}
         self._save_class = {}
         self._event_class = {}
+        self._outer_idx = None      # per-export parent EXPORT index (paired only)
+        self._level_idx = None      # the PersistentLevel ULevel export
 
     # ---- graph ----------------------------------------------------------
     def _actor_of(self, idx):
+        """The PersistentLevel actor owning export idx.
+
+        Resolved by EXPORT INDEX (ExportMap OuterIndex), never by name: cooked
+        export NAMES are not unique -- the door_C actors 'door2'/'door3'/'door4'
+        share their names with breakroomCounter_2's ChildActorComponents, and a
+        name walk handed the doors' components to the counter (wrong class ->
+        no template mesh -> the base's automatic doors silently vanished)."""
         if idx in self._actor:
             return self._actor[idx]
-        e = self.dicts[idx]
-        outer = e.get("Outer")
-        cur = self.by_actor_name.get(outer)
-        seen = 0
-        while cur is not None and seen < 8:
-            ce = self.dicts[cur]
-            if ce.get("Outer") == "PersistentLevel":
-                self._actor[idx] = cur
-                return cur
-            cur = self.by_actor_name.get(ce.get("Outer"))
-            seen += 1
-        self._actor[idx] = None
-        return None
+        a = None
+        if self._outer_idx is not None and self._level_idx is not None:
+            cur = idx
+            for _ in range(12):
+                par = self._outer_idx[cur]
+                if par is None:
+                    break
+                if par == self._level_idx:
+                    a = cur
+                    break
+                cur = par
+        else:
+            # unpaired fallback (ExportMap unavailable): the old name walk
+            cur = self.by_actor_name.get(self.dicts[idx].get("Outer"))
+            seen = 0
+            while cur is not None and seen < 8:
+                ce = self.dicts[cur]
+                if ce.get("Outer") == "PersistentLevel":
+                    a = cur
+                    break
+                cur = self.by_actor_name.get(ce.get("Outer"))
+                seen += 1
+        self._actor[idx] = a
+        return a
+
+    def _resolve_comp(self, pname, pouter, near_idx):
+        """Component export by (name, outer name); on a name collision prefer
+        the candidate living on the SAME ACTOR as near_idx."""
+        lst = self.by_comp.get((pname, pouter))
+        if not lst:
+            return None
+        if len(lst) == 1:
+            return lst[0]
+        na = self._actor_of(near_idx)
+        for c in lst:
+            if self._actor_of(c) == na:
+                return c
+        return lst[0]
 
     def _is_event_class(self, actor_type):
         """Event-scripted actor: hidden until its event fires -> the Events
@@ -204,9 +244,9 @@ class MapImporter:
             p = self.dicts[idx].get("Properties") or {}
             pname, pouter = _ref(p.get("AttachParent"))
             if pname:
-                pidx = self.by_comp.get((pname, pouter))
+                pidx = self._resolve_comp(pname, pouter, idx)
                 if pidx is None:
-                    pidx = self.by_comp.get((pname, self.dicts[idx].get("Outer")))
+                    pidx = self._resolve_comp(pname, self.dicts[idx].get("Outer"), idx)
                 if pidx is not None and pidx != idx:
                     m = self._world_matrix(pidx, depth + 1) @ m
         self._world_m[idx] = m
@@ -215,19 +255,28 @@ class MapImporter:
     # ---- per-property template fallbacks --------------------------------
     def _mesh_path_for(self, idx, ty):
         p = self.dicts[idx].get("Properties") or {}
-        sm = p.get("StaticMesh")
+        skeletal = ty == "SkeletalMeshComponent"
+        sm = p.get("SkeletalMesh" if skeletal else "StaticMesh")
         pkg = _ref_pkg(sm)
         if pkg.startswith("/Game/") or pkg.startswith("/Engine/"):
             return pkg
         t = self._template_for(idx)
-        if t is not None and t.kind in ("SM", "ISM") and t.mesh:
+        kinds = ("SK",) if skeletal else ("SM", "ISM")
+        if t is not None and t.kind in kinds and t.mesh:
             return t.mesh
         return ""
 
     def _comp_hidden(self, idx):
-        """Per-flag delta-else-template visibility. Measured cases: fuse drafts
-        (delta bVisible=False), rain-collision shell (delta bRenderInMainPass=False),
-        template-hidden helpers."""
+        """Per-flag delta-else-template visibility, OWN flags only. Measured
+        cases: fuse drafts (delta bVisible=False), rain-collision shell (delta
+        bRenderInMainPass=False), template-hidden helpers.
+
+        Ancestor bVisible does NOT decide runtime state and must not be
+        inherited here: the pryingCrowbar rig rides f_visible=False pivots and
+        is indeed invisible at rest, but the game's grime decal rigs ALSO hang
+        under f_visible=False parents and render fine -- an inherited check
+        killed 947 grime decals (bench 2026-08-30). Runtime-BP-hidden families
+        like the crowbar are routed per class via EVENT_ACTOR_CLASSES."""
         p = self.dicts[idx].get("Properties") or {}
         t = self._template_for(idx)
         hid = p.get("bHiddenInGame", t.f_hidden if t else False)
@@ -277,13 +326,24 @@ class MapImporter:
         self.paired = len(self.em) == len(self.dicts)
 
         self.by_actor_name = {}
-        self.by_comp = {}
+        self.by_comp = {}                 # (name, outer name) -> [indices]
         for i, e in enumerate(self.dicts):
             if not isinstance(e, dict):
                 continue
             nm, outer = e.get("Name"), e.get("Outer")
             self.by_actor_name.setdefault(nm, i)
-            self.by_comp[(nm, outer)] = i
+            self.by_comp.setdefault((nm, outer), []).append(i)
+        if self.paired:
+            self._outer_idx = []
+            for x in self.em:
+                oi = getattr(getattr(x, "OuterIndex", None), "Index", 0)
+                self._outer_idx.append(oi - 1 if oi > 0 else None)
+            for i, e in enumerate(self.dicts):
+                if isinstance(e, dict) and e.get("Name") == "PersistentLevel":
+                    self._level_idx = i
+                    break
+            if self._level_idx is None:
+                self._outer_idx = None    # no level export -> name walk
 
         # Runtime-arranged children: the base BP parks ChildActors under its
         # 'scene_dynamicClutter' scene component and places them from the event
@@ -336,9 +396,6 @@ class MapImporter:
                 continue
             if ty == "SplineMeshComponent":
                 self._place_spline(i, cols)
-                continue
-            if ty == "SkeletalMeshComponent":
-                self.stats["sk_skipped"] += 1
                 continue
             if ty not in MESH_COMPS:
                 continue

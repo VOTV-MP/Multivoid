@@ -99,7 +99,14 @@ def _assemble(name, sm, lod, verts_bl, mesh_pkg_path, warnings):
 
 
 def build_mesh(game, mesh_pkg_path, warnings):
-    """-> (bpy.types.Mesh, [material package paths]) or (None, [])."""
+    """-> (bpy.types.Mesh, [material package paths]) or (None, []).
+
+    One mesh seam for both mesh classes: a package holding a SkeletalMesh
+    (garage door, kerfur units, deer...) builds its bind-pose LOD0 through
+    sk_model's reader; everything else is a UStaticMesh."""
+    ske = game.find_export(mesh_pkg_path, "SkeletalMesh")
+    if ske is not None:
+        return build_sk_mesh(ske, mesh_pkg_path, warnings)
     sm, lod = _lod0(game, mesh_pkg_path, warnings)
     if lod is None:
         return None, []
@@ -107,6 +114,45 @@ def build_mesh(game, mesh_pkg_path, warnings):
              for v in lod.positionVertexBuffer.Verts]
     name = mesh_pkg_path.rsplit("/", 1)[-1]
     return _assemble(name, sm, lod, verts, mesh_pkg_path, warnings)
+
+
+def build_sk_mesh(ske, mesh_pkg_path, warnings):
+    """Cooked USkeletalMesh LOD0 (sk_model reader) -> static bind-pose mesh."""
+    sk = getattr(ske, "sk", None)
+    if not sk:
+        warnings.append(f"skeletal mesh unreadable: {mesh_pkg_path}")
+        return None, []
+    verts = [(v.X * convert.SCALE, -v.Y * convert.SCALE, v.Z * convert.SCALE)
+             for v in sk["positions"]]
+    idx = sk["indices"]
+    # natural index order: the y-mirror alone flips D3D CW-front to Blender
+    # CCW-front (same handedness rule as _assemble)
+    faces = [(idx[i], idx[i + 1], idx[i + 2]) for i in range(0, len(idx) - 2, 3)]
+    if not faces:
+        warnings.append(f"skeletal mesh has no indices: {mesh_pkg_path}")
+        return None, []
+    me = bpy.data.meshes.new(mesh_pkg_path.rsplit("/", 1)[-1])
+    me.from_pydata(verts, [], faces)
+    uv_items = sk["uv_items"]
+    if uv_items:
+        try:
+            per_vertex = [_uv_pair(uv_items[i], 0, sk["full_uv"])
+                          for i in range(len(verts))]
+            layer = me.uv_layers.new(name="UVMap")
+            loop_verts = np.empty(len(me.loops), dtype=np.int32)
+            me.loops.foreach_get("vertex_index", loop_verts)
+            uvs = np.asarray(per_vertex, dtype=np.float32)
+            layer.data.foreach_set("uv", uvs[loop_verts].reshape(-1))
+        except Exception as e:  # noqa: BLE001 - UVs are cosmetic
+            warnings.append(f"sk uv build failed: {mesh_pkg_path}: {type(e).__name__}")
+    poly_mat = np.zeros(len(me.polygons), dtype=np.int32)
+    for slot, first_tri, ntris in sk["sections"]:
+        poly_mat[first_tri:first_tri + ntris] = slot
+    me.polygons.foreach_set("material_index", poly_mat)
+    me.polygons.foreach_set("use_smooth", np.ones(len(me.polygons), dtype=bool))
+    me.validate()
+    me.update()
+    return me, list(sk["mats"])
 
 
 def build_bsp_mesh(bsp, surf_mat_paths, name, warnings):

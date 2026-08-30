@@ -39,7 +39,7 @@ class _Builder:
         self.caches = {"mat": {}, "img": {}, "mesh": {}}
         self.resolver = template_resolver.TemplateResolver(game) if game else None
         self.list_props = game.list_props() if game else {}
-        self.counts = {"meshed": 0, "placeholders": 0, "sk_placeholders": 0, "objects": 0,
+        self.counts = {"meshed": 0, "placeholders": 0, "objects": 0,
                        "culled": 0, "level_kept": 0, "decals_projected": 0,
                        "decals_missed": 0}
         self.decal_queue = []   # (name, collection, world matrix, material path)
@@ -301,11 +301,6 @@ class _Builder:
                         placed_mesh = True
                     continue
                 if umap_import.is_technical(mesh_path, self.opt):
-                    continue
-                if kind == "SK":
-                    self._placeholder(label + ".sk", col, actor_m @ local_m, "CUBE", 0.4)
-                    self.counts["sk_placeholders"] += 1
-                    placed_mesh = True
                     continue
                 me = self.ensure_mesh(mesh_path)
                 if me is None:
