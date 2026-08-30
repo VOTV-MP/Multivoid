@@ -4,6 +4,8 @@
 
 #include "coop/interactables/atv_hit_guard.h"
 
+#include "coop/config/config.h"
+
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -54,6 +56,37 @@ namespace R = ue_wrap::reflection;
 // local player. With the rig now simulating on every peer, a non-owner running them would blow up
 // a vehicle whose authority still has it. So they are cancelled PRE-dispatch on a non-owner.
 //
+// ...BUT NOT ALL SEVEN, AND THE CENSUS ABOVE IS WHY THAT WAS MISSED -- measured 2026-08-30.
+// That census is a list of what each handler AUTHORS. It is accurate and it is not the whole
+// story: the five WHEEL delegates ALSO maintain the rig's own shape. Cancelling them was a broad
+// suppression of a notification that carries two unrelated things, and it took the second one
+// with it (principle 4: patch the site, never the class of call).
+//
+// THE MEASUREMENT, four smoke runs differing in ONE variable each, host authoring and client
+// mirroring one parked ATV (research/atv_runs/20260830-1057..1105):
+//
+//   corrector | this guard | A2 settled gap | the two rigs' SHAPES differ by
+//   ----------+------------+----------------+-------------------------------
+//   ON        | all seven  | 25-40 cm FAIL  | ~40 cm      (six runs, every driven run ever)
+//   OFF       | all seven  | 30.4 cm  FAIL  | 19.05 cm
+//   ON        | none       |  3.0 cm  PASS  |  0.61 cm
+//   OFF       | none       |  5.3 cm  PASS  |  0.12 cm
+//   ON        | BODY ONLY  | 13.6 cm  PASS  |  0.14 cm    <- shipped, and the run DROVE it
+//
+// The pose corrector is innocent: with this guard off it produces the BEST cell of the four. The
+// defect the whole ATV arc has been chasing since 2026-08-29 -- "a mirrored ATV rests 25-40 cm
+// low", blamed in turn on tick-off, on the terrain differing under the vehicle, on kCorrGain, on
+// a velocity write waking a settled body -- was this line, all along. The quantity that makes it
+// visible is RIDE HEIGHT (the body's Z above the mean of its own three rig bodies); susFR/FL/BK
+// could never show it, being 3-D distances over a ~92 cm mostly-horizontal arm, so a 40 cm
+// vertical deformation moves them ~1.1 cm and reads as normal suspension travel.
+//
+// WHAT THIS COSTS, stated rather than hidden: a mirror now runs processTire(), so it burns its
+// own tire durability and can ejectWheel() a tire its author still has. That is a real divergence
+// and it is narrower than the one it replaces -- but the RIGHT fix for it is not to re-suppress
+// the handler, it is to put tire durability on the wire under the author, the way `health`
+// already is. Filed in docs/vehicles/ATV.md 17.
+//
 // The predicate cannot read g_atvs: the interceptor contract does not promise the game thread.
 // Instead Tick publishes the small set of ATVs THIS peer owns the tick for into an atomic array,
 // and the callback is a pointer scan over it. DEFAULT IS CANCEL, which is the safe direction --
@@ -71,6 +104,10 @@ std::atomic<bool>  g_guardActive{false};   // false in single-player: the game m
 std::atomic<unsigned long long> g_hitCancelled{0};
 std::atomic<unsigned long long> g_hitAllowed{0};
 std::atomic<bool>  g_hitGuardArmed{false};              // all 7 delegates registered -- else the lane runs INERT
+// WHICH delegates a non-owner is denied. Read ONCE at install (the interceptor callback runs on
+// whatever thread ProcessEvent is on, and a config read is not something to do per hit at 200 Hz
+// -- run 2 logged 17,638 cancels in 90 s on ONE parked vehicle).
+std::atomic<unsigned> g_cancelMask{0x7F};
 
 }  // namespace
 
@@ -81,16 +118,30 @@ void PublishOwned(void** owned, int n) {
 
 namespace {
 
-bool OnAtvHitPre(void* self, void* /*params*/) {
+// One callback per delegate INDEX, so the guard can deny a subset. The index has to come from
+// somewhere: RegisterInterceptor hands the callback `self` and the params frame but not which
+// UFunction fired, so a single shared callback cannot tell the body's collision from a wheel's --
+// which is exactly the distinction that turned out to matter. A template instantiates seven
+// distinct function pointers around one body rather than seven copies of it.
+bool CancelHit(void* self, unsigned bit) {
     if (!g_guardActive.load(std::memory_order_acquire)) return false;  // not in a session: never suppress
     for (int i = 0; i < kMaxOwned; ++i) {
         void* p = g_ownedAtvs[i].load(std::memory_order_acquire);
         if (!p) break;
         if (p == self) { g_hitAllowed.fetch_add(1, std::memory_order_relaxed); return false; }
     }
+    if (!(g_cancelMask.load(std::memory_order_relaxed) & bit)) {
+        // Deliberately NOT counted as "allowed": that counter means "this peer owns the rig".
+        // Folding a mask-permitted hit into it would make the two arms of the measurement
+        // indistinguishable in the one line anybody reads.
+        return false;
+    }
     g_hitCancelled.fetch_add(1, std::memory_order_relaxed);
     return true;   // cancel-on-true: the BndEvt stub never jumps into the ubergraph
 }
+
+template <unsigned Bit>
+bool OnAtvHitPre(void* self, void* /*params*/) { return CancelHit(self, Bit); }
 
 }  // namespace
 
@@ -98,13 +149,23 @@ void InstallHitGuard() {
     if (g_hitGuardArmed.load(std::memory_order_relaxed)) return;
     void* fns[8] = {};
     const int n = A::ResolveHitDelegates(fns, 8);
+    const unsigned mask = static_cast<unsigned>(
+        ::coop::config::ResolveInt(::coop::config_registry::rows::atv_hit_guard_mask)) & 0x7Fu;
+    g_cancelMask.store(mask, std::memory_order_relaxed);
+    using Cb = bool (*)(void*, void*);
+    // Index order is kHitDelegateNames order, and ResolveHitDelegates walks that same array, so
+    // fns[i] and kCallbacks[i] name the same delegate by construction rather than by agreement.
+    static const Cb kCallbacks[7] = {
+        &OnAtvHitPre<1u << 0>, &OnAtvHitPre<1u << 1>, &OnAtvHitPre<1u << 2>, &OnAtvHitPre<1u << 3>,
+        &OnAtvHitPre<1u << 4>, &OnAtvHitPre<1u << 5>, &OnAtvHitPre<1u << 6>,
+    };
     int ok = 0;
-    for (int i = 0; i < n; ++i)
-        if (ue_wrap::game_thread::RegisterInterceptor(fns[i], &OnAtvHitPre)) ++ok;
+    for (int i = 0; i < n && i < 7; ++i)
+        if (ue_wrap::game_thread::RegisterInterceptor(fns[i], kCallbacks[i])) ++ok;
     if (ok == 7) {
         g_hitGuardArmed.store(true, std::memory_order_relaxed);
-        UE_LOGI("atv: hit guard armed -- 7/7 ComponentHit delegates intercepted (a non-owner cannot "
-                "author damage/explode/ejectWheel)");
+        UE_LOGI("atv: hit guard armed -- 7/7 ComponentHit delegates intercepted, cancel mask 0x%02X "
+                "(a non-owner cannot author damage/explode/ejectWheel on the masked ones)", mask);
     } else {
         // FAIL CLOSED. Without all seven we will not run the simulate-and-correct model at all:
         // Tick leaves every ATV's brain ON and mirrors nothing, so peers diverge visibly rather

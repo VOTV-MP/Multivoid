@@ -4,6 +4,7 @@
 
 #include "coop/interactables/atv_corrector.h"
 
+#include "coop/config/config.h"
 #include "coop/net/protocol.h"
 
 #include "ue_wrap/core/log.h"
@@ -169,6 +170,15 @@ void LogWire(const char* what, const AtvEntry& e, float dist,
 // defect this whole model exists to remove. Letting the solver keep the rig rigid and steering it
 // by velocity is the only correction that leaves the suspension free to do its own job.
 void ApplyCorrection(AtvEntry& e, const coop::net::AtvStatePayload& p, bool snap) {
+    // THE CONTROL ARM. Resolved once -- a config read per packet on a lane that runs at 20 Hz per
+    // vehicle is not free, and the value cannot change mid-session anyway. When it is off this
+    // function is the ONLY thing that stops happening: the rig still simulates, still receives
+    // vitals, still runs its own tick. That is what makes the two arms a single-variable
+    // comparison rather than "coop on vs coop off".
+    static const bool sEnabled =
+        ::coop::config::ResolveFlag(::coop::config_registry::rows::atv_corrector);
+    if (!sEnabled) return;
+
     FVector cur; FRotator curRot;
     if (!A::GetRootTransform(e.actor, cur, curRot)) return;
 
