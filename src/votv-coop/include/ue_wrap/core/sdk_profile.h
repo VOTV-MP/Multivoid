@@ -115,6 +115,47 @@ inline constexpr const char* kSigD3D11ViewportPresentChecked =
 // (QueryInterface IID_IDXGISwapChain); a drift trips the overlay's fail-closed path.
 inline constexpr size_t kD3D11Viewport_SwapChain = 0x70;
 
+// FD3D11Viewport::Resize(uint32,uint32,bool,EPixelFormat) -- the engine's OWN resize
+// bracket, and the seam that fixes a LIVE SHIPPED CRASH (docs/OVERLAY_CAPTURE_COEXIST.md
+// section 6d.b). This is the function whose `SwapChain->ResizeBuffers(...)` call at
+// D3D11Viewport.cpp:298 returns DXGI_ERROR_INVALID_CALL when ANY reference to the back
+// buffers is still outstanding -- and UE turns that into a Fatal. Our render target view
+// is exactly such a reference. Until now the release bracket hung off an inline hook on
+// IDXGISwapChain::ResizeBuffers, which RTSS UNLINKS (measured: the first resize logged our
+// bracket, the second logged nothing and the game died), so the one thing standing between
+// a player and a hard crash was a hook a third party removes at will.
+//
+// Hooking the ENGINE side instead puts the bracket somewhere no external overlay patches,
+// so it runs whether or not RTSS is in the process. Match == function address.
+//
+// DERIVED FROM THE SHIPPING PE, 2026-08-30, and uniqueness counted AFTER masking -- which
+// is the rule `tools/debug/ida_aob_derive.py` got wrong for THIS EXACT FUNCTION (it
+// recommended len=24 at occ=2; masking the /GS displacement had destroyed the uniqueness
+// the unmasked window had). Measured here: occ=2 at 16 and at 24, first unique at 26; 32
+// is shipped for margin. The wildcard is the four-byte rip displacement of the /GS cookie
+// load `mov rax,[rip+disp32]` at +14 -- the only build-variable field in the window; the
+// rest is stack-frame setup and a struct store. IDA sub_141703750 (image+0x1703750).
+inline constexpr const char* kSigD3D11ViewportResize =
+    "4C 8B DC 57 48 81 EC C0 00 00 00 48 8B 05 ?? ?? ?? ?? 48 33 "
+    "C4 48 89 84 24 80 00 00 00 49 89 5B";
+
+// FD3D12Viewport::Resize -- the DX12 twin of the above. Same bracket, same reason; the
+// DX12 backend AddRefs up to 8 back buffers behind the same single release, so it is
+// structurally MORE exposed than DX11, not less.
+//
+// DERIVED THE SAME WAY: occ=6 at 16, first unique at 20 with NO wildcards at all (the
+// window is `mov rax,rsp; push rbp/rdi; lea rbp,[rax-5Fh]; sub rsp,98h; mov [rax+20h],rbx`
+// -- pure frame setup, no rip-relative operand). 32 shipped for margin; the first
+// build-variable byte in this body is a `call rel32` at +50, well past the window.
+// IDA sub_14177E8B0 (image+0x177E8B0).
+inline constexpr const char* kSigD3D12ViewportResize =
+    "48 8B C4 55 57 48 8D 68 A1 48 81 EC 98 00 00 00 48 89 58 20 "
+    "BA 03 00 00 00 48 89 70 E8 48 8B D9";
+
+// FD3D12Viewport::SwapChain (IDXGISwapChain*), the DX12 twin of
+// kD3D11Viewport_SwapChain. Same runtime QueryInterface validation before any use.
+inline constexpr size_t kD3D12Viewport_SwapChain = 0x60;
+
 // ---- struct offsets (stable within UE4.27; re-check on an engine bump) ----
 namespace off {
 inline constexpr size_t UObject_InternalIndex = 0x0C;  // int32 -- slot in GUObjectArray (O(1) liveness check)

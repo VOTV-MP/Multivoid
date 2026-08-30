@@ -106,14 +106,14 @@ namespace ui::imgui_overlay {
 namespace {
 
 using PresentFn = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT);
-// IDXGISwapChain::ResizeBuffers(BufferCount, Width, Height, NewFormat, SwapChainFlags).
-using ResizeBuffersFn = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT, UINT,
-                                                    DXGI_FORMAT, UINT);
+// RULE 2, 2026-08-30: `ResizeBuffersFn`, `g_resizeTrampoline` and `g_resizeTarget` were
+// deleted with the IDXGISwapChain::ResizeBuffers hook they served. The resize bracket
+// lives on the engine's own FD3D11Viewport::Resize / FD3D12Viewport::Resize now (see
+// EngineResizeBracket below and docs/OVERLAY_CAPTURE_COEXIST.md section 9c commit 1) --
+// there is ONE bracket, and it is not on a function RTSS unlinks.
 
 PresentFn       g_presentTrampoline = nullptr;
-ResizeBuffersFn g_resizeTrampoline  = nullptr;
 void*           g_presentTarget = nullptr;
-void*           g_resizeTarget  = nullptr;
 
 // user32!SetCursorPos -- hooked so we can no-op UE4's per-tick cursor recentering
 // while the menu is visible (otherwise the OS cursor is snapped back to the window
@@ -581,28 +581,101 @@ HRESULT STDMETHODCALLTYPE PresentDetour(IDXGISwapChain* sc, UINT sync, UINT flag
     return g_presentTrampoline(sc, sync, flags);
 }
 
-HRESULT STDMETHODCALLTYPE ResizeBuffersDetour(IDXGISwapChain* sc, UINT bufCount, UINT w,
-                                              UINT h, DXGI_FORMAT fmt, UINT flags) {
-    overlay_backend::OnResizeRelease();  // the backbuffer is about to be recreated
-    const HRESULT hr = g_resizeTrampoline(sc, bufCount, w, h, fmt, flags);
-    if (SUCCEEDED(hr) && g_imguiReady.load(std::memory_order_acquire)) {
-        overlay_backend::OnResizeRecreate(sc);
-        // Resizes are rare (a window/resolution/fullscreen change), so one line
-        // each is not spam -- and without it a drill cannot tell whether this
-        // path ran at all (2026-07-26: the DX12 resize drill was unmeasurable
-        // because only the FAILURE branch logged).
-        UE_LOGI("imgui_overlay: swapchain resized (%ux%u, %u buffer(s), fmt=%d) -- render "
-                "target rebuilt on %s", w, h, bufCount, static_cast<int>(fmt),
-                overlay_backend::Kind() ? overlay_backend::Kind() : "?");
-        ue_wrap::log::Flush();
-    } else if (FAILED(hr)) {
-        UE_LOGW("imgui_overlay: ResizeBuffers failed (hr=0x%08lX) -- RTV left null", hr);
+// THE RESIZE BRACKET, ON THE ENGINE'S OWN SEAM (docs/OVERLAY_CAPTURE_COEXIST.md section
+// 9c commit 1). It replaces an inline hook on IDXGISwapChain::ResizeBuffers, and the
+// replacement is not a refactor -- it fixes a live shipped crash.
+//
+// WHAT WENT WRONG WITH THE OLD SEAM. `IDXGISwapChain::ResizeBuffers` fails with
+// DXGI_ERROR_INVALID_CALL unless every reference to the back buffers has been released
+// first, and UE turns that failure into a Fatal (D3D11Viewport.cpp:298). Our render target
+// view is such a reference, and the ONLY thing that released it was a detour on the very
+// DXGI function RTSS unlinks. MEASURED 2026-08-23: with RTSS armed the first resize logged
+// our bracket and the second logged NOTHING -- and killed the game.
+//
+// The engine's `FD3D11Viewport::Resize` is the caller of that ResizeBuffers, it is private
+// to the game binary, and section 6c.b measured that nobody else patches it. So the bracket
+// now runs whether or not a third-party overlay is in the process.
+//
+// THE SWAPCHAIN IS RE-READ AFTER THE ORIGINAL, NEVER CACHED. A fullscreen transition can
+// replace the swapchain object entirely, so the pointer we release against and the pointer
+// we re-create against are not assumed to be the same one. (Cross-cutting rule, section 9c;
+// the shipped DX12 backend already states it at overlay_backend_dx12.cpp:488.)
+//
+// ATTRIBUTION IS STILL `[?]`. RTSS holds its own back-buffer references and its own
+// ResizeBuffers hook was in the same unlinked state, so the outstanding reference may have
+// been RTSS's rather than ours; the falsifier that would settle it (resize twice with RTSS
+// armed BEFORE our bring-up) has not run. This bracket is correct either way -- releasing
+// our own reference before a resize is right regardless of who else holds one -- but the
+// arc may NOT claim the crash is cured until that runs.
+using EngineResizeFn = void(__fastcall*)(void* viewport, uint32_t sizeX, uint32_t sizeY,
+                                         uint8_t bFullscreen, int32_t pixelFormat);
+EngineResizeFn g_d3d11ResizeTrampoline = nullptr;
+EngineResizeFn g_d3d12ResizeTrampoline = nullptr;
+
+// Read `viewport + off` and prove it is a swapchain before handing it to the backend.
+// A drifted offset must fail CLOSED (no re-create) rather than hand a garbage pointer to
+// D3D; QueryInterface is the cheapest proof that survives a struct-layout change.
+IDXGISwapChain* ViewportSwapChain(void* viewport, size_t off) {
+    if (!viewport) return nullptr;
+    IDXGISwapChain* sc = nullptr;
+    __try {
+        sc = *reinterpret_cast<IDXGISwapChain**>(reinterpret_cast<uint8_t*>(viewport) + off);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return nullptr;
     }
-    return hr;
+    if (!sc) return nullptr;
+    IDXGISwapChain* probe = nullptr;
+    if (FAILED(sc->QueryInterface(__uuidof(IDXGISwapChain), reinterpret_cast<void**>(&probe))) ||
+        !probe)
+        return nullptr;
+    probe->Release();
+    return sc;
 }
 
-// Read IDXGISwapChain::Present (vtbl[8]) + ResizeBuffers (vtbl[13]) by spinning up a
-// throwaway DX11 device + swapchain on a hidden window. Fills g_presentTarget/g_resizeTarget.
+void EngineResizeBracket(const char* which, EngineResizeFn orig, size_t scOff, void* viewport,
+                         uint32_t sizeX, uint32_t sizeY, uint8_t bFullscreen,
+                         int32_t pixelFormat) {
+    overlay_backend::OnResizeRelease();   // the back buffers are about to be recreated
+    orig(viewport, sizeX, sizeY, bFullscreen, pixelFormat);
+    IDXGISwapChain* sc = ViewportSwapChain(viewport, scOff);
+    if (sc && g_imguiReady.load(std::memory_order_acquire)) {
+        overlay_backend::OnResizeRecreate(sc);
+        // Resizes are rare (a window/resolution/fullscreen change), so one line each is not
+        // spam -- and without it a drill cannot tell whether this path ran at all
+        // (2026-07-26: the DX12 resize drill was unmeasurable because only the FAILURE
+        // branch logged). It is also the ONE line that says the bracket survived a run with
+        // RTSS armed, which is the whole point of moving it.
+        UE_LOGI("imgui_overlay: %s::Resize (%ux%u fullscreen=%u fmt=%d) -- render target "
+                "rebuilt on %s", which, sizeX, sizeY, bFullscreen, pixelFormat,
+                overlay_backend::Kind() ? overlay_backend::Kind() : "?");
+        ue_wrap::log::Flush();
+    } else if (!sc) {
+        // FAIL CLOSED, LOUDLY. No re-create means the overlay draws nothing until the next
+        // resize; that is strictly better than drawing through a pointer we could not prove.
+        UE_LOGE("imgui_overlay: %s::Resize -- the swapchain at viewport+0x%zX did not "
+                "QueryInterface as IDXGISwapChain. The offset has drifted for this build; "
+                "the render target is NOT rebuilt (docs/OVERLAY_CAPTURE_COEXIST.md).",
+                which, scOff);
+        ue_wrap::log::Flush();
+    }
+}
+
+void __fastcall D3D11ResizeDetour(void* viewport, uint32_t sizeX, uint32_t sizeY,
+                                  uint8_t bFullscreen, int32_t pixelFormat) {
+    EngineResizeBracket("FD3D11Viewport", g_d3d11ResizeTrampoline,
+                        ue_wrap::profile::kD3D11Viewport_SwapChain, viewport, sizeX, sizeY,
+                        bFullscreen, pixelFormat);
+}
+
+void __fastcall D3D12ResizeDetour(void* viewport, uint32_t sizeX, uint32_t sizeY,
+                                  uint8_t bFullscreen, int32_t pixelFormat) {
+    EngineResizeBracket("FD3D12Viewport", g_d3d12ResizeTrampoline,
+                        ue_wrap::profile::kD3D12Viewport_SwapChain, viewport, sizeX, sizeY,
+                        bFullscreen, pixelFormat);
+}
+
+// Read IDXGISwapChain::Present (vtbl[8]) by spinning up a
+// throwaway DX11 device + swapchain on a hidden window. Fills g_presentTarget.
 bool ResolveSwapChainVtable() {
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);
@@ -634,8 +707,9 @@ bool ResolveSwapChainVtable() {
     if (SUCCEEDED(hr) && sc) {
         void** vtbl = *reinterpret_cast<void***>(sc);
         g_presentTarget = vtbl[8];   // IDXGISwapChain::Present
-        g_resizeTarget  = vtbl[13];  // IDXGISwapChain::ResizeBuffers
-        ok = (g_presentTarget != nullptr && g_resizeTarget != nullptr);
+        // vtbl[13] (ResizeBuffers) is NO LONGER READ: its hook retired whole when the
+        // resize bracket moved to the engine seam (RULE 2 -- one bracket, not two).
+        ok = (g_presentTarget != nullptr);
     } else {
         UE_LOGW("imgui_overlay: dummy D3D11CreateDeviceAndSwapChain failed (hr=0x%08lX)", hr);
     }
@@ -658,11 +732,57 @@ bool Init() {
     }
     const bool p = ue_wrap::hook::Install(g_presentTarget, &PresentDetour,
                                           reinterpret_cast<void**>(&g_presentTrampoline));
-    const bool r = ue_wrap::hook::Install(g_resizeTarget, &ResizeBuffersDetour,
-                                          reinterpret_cast<void**>(&g_resizeTrampoline));
-    if (!p || !r) {
-        UE_LOGE("imgui_overlay: MinHook Install failed (present=%d resize=%d)", p ? 1 : 0, r ? 1 : 0);
+    if (!p) {
+        UE_LOGE("imgui_overlay: MinHook Install failed on IDXGISwapChain::Present");
         return false;
+    }
+    // THE RESIZE BRACKET LIVES ON THE ENGINE'S OWN Resize, not on
+    // IDXGISwapChain::ResizeBuffers (docs/OVERLAY_CAPTURE_COEXIST.md section 9c commit 1).
+    // Both RHIs are installed unconditionally: which one the game presents with is not
+    // known at Init time, the other signature simply will not resolve in a single-RHI
+    // build, and a bracket that is only armed for the RHI we guessed is a bracket that is
+    // missing on the other one -- where the crash it prevents is worse (the DX12 backend
+    // AddRefs up to 8 back buffers behind the same single release).
+    //
+    // NOT FATAL IF A SIGNATURE IS STALE. Failing the whole overlay here would trade a
+    // crash-on-resize for no UI at all on every recook; the honest degradation is to keep
+    // drawing and say loudly that resizes are now unprotected.
+    {
+        struct Seam { const char* name; const char* sig; void* detour; void** tramp; };
+        const Seam seams[] = {
+            {"FD3D11Viewport::Resize", ue_wrap::profile::kSigD3D11ViewportResize,
+             reinterpret_cast<void*>(&D3D11ResizeDetour),
+             reinterpret_cast<void**>(&g_d3d11ResizeTrampoline)},
+            {"FD3D12Viewport::Resize", ue_wrap::profile::kSigD3D12ViewportResize,
+             reinterpret_cast<void*>(&D3D12ResizeDetour),
+             reinterpret_cast<void**>(&g_d3d12ResizeTrampoline)},
+        };
+        int armed = 0;
+        for (const Seam& sm : seams) {
+            const uintptr_t at = ue_wrap::FindPattern(sm.sig);
+            if (!at) {
+                UE_LOGW("imgui_overlay: %s signature NOT found -- its resize bracket is "
+                        "ABSENT this run. A window resize on that RHI can leave our render "
+                        "target referencing a back buffer the engine is about to recreate, "
+                        "which UE reports as a Fatal (docs/OVERLAY_CAPTURE_COEXIST.md).",
+                        sm.name);
+                continue;
+            }
+            if (ue_wrap::hook::Install(reinterpret_cast<void*>(at), sm.detour, sm.tramp)) {
+                ++armed;
+                UE_LOGI("imgui_overlay: %s resize bracket armed @%p (image+0x%llX)", sm.name,
+                        reinterpret_cast<void*>(at),
+                        static_cast<unsigned long long>(
+                            at - reinterpret_cast<uintptr_t>(::GetModuleHandleW(nullptr))));
+            } else {
+                UE_LOGE("imgui_overlay: %s resolved but MinHook Install FAILED -- resizes "
+                        "are unprotected on that RHI", sm.name);
+            }
+        }
+        if (armed == 0)
+            UE_LOGE("imgui_overlay: NEITHER engine resize seam armed. Every window resize "
+                    "this run is a crash candidate; re-derive the signatures per "
+                    "docs/VERSION_MIGRATION.md.");
     }
     // Hook user32!SetCursorPos so we can neutralize UE4's per-tick cursor recenter
     // while the menu is visible (non-fatal if it can't hook -- the menu still works,
@@ -708,8 +828,8 @@ bool Init() {
     // browser-path session scenarios) -- ui/overlay_test_arm.cpp. Inert unless a
     // VOTVCOOP_* test variable is set, so a normal player boot does nothing here.
     ui::overlay_test_arm::ArmFromEnv();
-    UE_LOGI("imgui_overlay: present hook installed (present=%p resize=%p) -- ImGui brings up "
-            "on the first frame; press F1 in-game for the menu", g_presentTarget, g_resizeTarget);
+    UE_LOGI("imgui_overlay: present hook installed (present=%p) -- ImGui brings up "
+            "on the first frame; press F1 in-game for the menu", g_presentTarget);
     return true;
 }
 
