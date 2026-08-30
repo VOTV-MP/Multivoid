@@ -3440,6 +3440,10 @@ def cmd_browser(args) -> None:
                                    # failure mode leaves that verdict green. A names the
                                    # three states in one frame, B is the precedence rule
                                    # (selected + hovered must still read selected).
+                                   # C FIRST in the schedule: it is the click-moment
+                                   # frame, the only one taken before the cursor moves
+                                   # and healed the state it is meant to show.
+                                   ("ROW SKIN SHOT C", "browser_row_skin_c.png", "sknc"),
                                    ("ROW SKIN SHOT A", "browser_row_skin_a.png", "skna"),
                                    ("ROW SKIN SHOT B", "browser_row_skin_b.png", "sknb")):
             if needle in text and seen not in extra_shots:

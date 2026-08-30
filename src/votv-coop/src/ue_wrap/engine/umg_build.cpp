@@ -424,17 +424,6 @@ bool StyleTextBlock(void* textBlock, int32_t fontSize, const FLinearColor& color
     return true;
 }
 
-// Colour only -- see the header for why StyleTextBlock cannot stand in for this.
-bool SetTextColor(void* textBlock, const FLinearColor& color) {
-    if (!textBlock) return false;
-    auto* d = reinterpret_cast<uint8_t*>(textBlock);
-    *reinterpret_cast<FLinearColor*>(d + P::off::UTextBlock_ColorAndOpacity) = color;
-    // FSlateColor carries a RULE beside the value; without forcing UseColor_Specified the
-    // block keeps resolving through the style's foreground and the write is a no-op.
-    *(d + P::off::UTextBlock_ColorAndOpacity + P::off::FSlateColor_ColorUseRule) = 0;
-    return true;
-}
-
 bool SetSlotAlign(void* slot, size_t hAlignOff, size_t vAlignOff, uint8_t h, uint8_t v) {
     if (!slot) return false;
     auto* s = reinterpret_cast<uint8_t*>(slot);

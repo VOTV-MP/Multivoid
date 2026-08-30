@@ -123,15 +123,16 @@ bool SetSizeBoxWidth(void* sizeBox, float width);
 bool StyleTextBlock(void* textBlock, int32_t fontSize, const FLinearColor& color,
                     uint8_t justify);
 
-// Recolour an ALREADY-STYLED UTextBlock, touching nothing else.
-//
-// StyleTextBlock is not usable for this: it writes every field unconditionally, so calling
-// it to change one colour also rewrites the font size and the justification -- and the
-// obvious "pass 0 and 255 to mean leave them alone" sets the size to ZERO (invisible text)
-// and the justify enum out of range. Hover is a per-frame-ish TEXT colour change on rows
-// that already carry their layout (docs/VOTV_UI_STYLE.md section 4), so it needs exactly
-// this and nothing more.
-bool SetTextColor(void* textBlock, const FLinearColor& color);
+// RETIRED 2026-08-30 (RULE 2): `SetTextColor` lived here and was a RAW write to
+// UTextBlock::ColorAndOpacity -- mechanically identical to `engine::SetTextBlockColor`,
+// which is a second implementation of one concept compiled beside it. Its documented
+// purpose made the duplication worse rather than harmless: it existed to recolour an
+// ALREADY-STYLED, already-attached block on hover, which is exactly the case a raw write
+// cannot serve. UMG bakes properties into the Slate widget at attach, so every one of its
+// five call sites in the hosting window wrote a field nothing read, and that window's
+// hover highlight had never drawn. Use `engine::SetTextBlockColorDispatch` (the setter
+// UFunction) for anything already in a constructed tree; `StyleTextBlock` below still owns
+// the BUILD-time styling, where a raw write does land.
 
 // UWidget::SetClipping. EWidgetClipping: Inherit=0, ClipToBounds=1. A text block in a
 // weighted HorizontalBox slot OVERFLOWS its column by default -- the slot bounds the

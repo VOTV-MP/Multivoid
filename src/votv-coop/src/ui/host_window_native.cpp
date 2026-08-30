@@ -206,19 +206,24 @@ std::vector<Row> g_saveRows;
 void SetText(void* block, const std::wstring& t, const FLinearColor& col) {
     if (!block) return;
     E::SetWidgetText(block, t.c_str());
-    U::SetTextColor(block, col);
+    E::SetTextBlockColorDispatch(block, col);
 }
 
+// RUNTIME repaint, so every write here must DISPATCH. Both raw variants -- the text
+// colour and the image tint -- write a property that UMG already baked into the Slate
+// widget at attach, so they change nothing on screen; that is why this window's hover
+// highlight had never drawn (post-ship audit, 2026-08-30, found via the browser's own
+// identical defect). `...Raw` stays correct at BUILD time, before the widget is attached.
 void PaintRow(const Row& r, bool selected, bool hovered) {
     if (!r.bg) return;
-    U::SetImageTintRaw(r.bg, selected ? kRowSel : kRowBg);
+    U::SetImageTint(r.bg, selected ? kRowSel : kRowBg);
     // Style doc section 4: hover is a TEXT colour and selection is a FILL. Two channels,
     // applied independently -- porting ImGui's HeaderHovered here would look foreign.
     const FLinearColor main = hovered ? kHover : kText;
     const FLinearColor sub  = hovered ? kHover : kDim;
-    U::SetTextColor(r.a, main);
-    U::SetTextColor(r.b, sub);
-    U::SetTextColor(r.c, sub);
+    E::SetTextBlockColorDispatch(r.a, main);
+    E::SetTextBlockColorDispatch(r.b, sub);
+    E::SetTextBlockColorDispatch(r.c, sub);
 }
 
 void RepaintAll() {
@@ -228,8 +233,8 @@ void RepaintAll() {
                  g_hoverRow == static_cast<int>(i));
     for (int i = 0; i < 3; ++i) {
         if (!g_connRow[i]) continue;
-        U::SetImageTintRaw(g_connRow[i], g_connMode == i ? kRowSel : kRowBg);
-        U::SetTextColor(g_connLabel[i], g_hoverConn == i ? kHover : kText);
+        U::SetImageTint(g_connRow[i], g_connMode == i ? kRowSel : kRowBg);
+        E::SetTextBlockColorDispatch(g_connLabel[i], g_hoverConn == i ? kHover : kText);
     }
 }
 

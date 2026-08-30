@@ -741,6 +741,20 @@ void Tick(void* scrim, void* list, void* closeBtn) {
                 UE_LOGE("server_browser_native: ROW SELECT FAIL -- row %d was hovered and a "
                         "full press-release was delivered, yet nothing is selected. The "
                         "hover is fine and the CLICK path is the defect.", g_rowHovered);
+            // THE CLICK-MOMENT SHOT, AND IT IS THE ONE THAT MATTERS MOST -- the cursor is
+            // NOT moved. Shots A and B below both move it first, and a move REPAINTS the
+            // row it leaves and the row it lands on, which HEALS exactly the defect this
+            // window contains. A post-ship audit found that the selection repaint updated
+            // the fill and the frame but not the TEXT, so a just-clicked row sat purple
+            // with yellow glyphs until the pointer happened to move -- invisible to both
+            // shots, because both begin by moving. The hold starts here and the next phase
+            // waits it out, so no renumbering of the ladder was needed to insert it.
+            UE_LOGW("server_browser_native: ROW SKIN SHOT C -- the click has just landed on "
+                    "row %d and the cursor has NOT moved. That row must read PURPLE with a "
+                    "grey frame and NO yellow anywhere, glyphs included: it is selected, and "
+                    "a selected row ignores the pointer that is still sitting on it.",
+                    g_rowHovered);
+            g_holdUntilMs = nowMs + kShotHoldMs;
             break;
         }
         case kSkinAimOther:
@@ -749,17 +763,24 @@ void Tick(void* scrim, void* list, void* closeBtn) {
             // row that was actually clicked: 1.5 rows in. The other aim is 4.5 rows in --
             // three rows lower, still inside the ~470 px list at any window size this rig
             // runs, and far enough that the two are never the same row.
+            if (nowMs < g_holdUntilMs) return;   // HOLDING: the click-moment shot's window
             const bool self = (g_selfCheckStep == kSkinAimSelf);
             // NEVER handed straight to %s: SelectedRowId returns the raw pointer of a
             // std::string that is empty when nothing is selected, and a null would be UB
             // in the logger's vsnprintf. The caller two phases up already guards it.
             const char* selId = ui::server_browser_native::SelectedRowId();
             if (!selId) selId = "(none)";
+            // BOTH TERMS, and the first version had only the second. A pixel height says
+            // the list is tall enough to CONTAIN five rows; it does not say five rows
+            // EXIST. With three lobbies the box is still 470 px, the aim lands in empty
+            // space, nothing is hovered -- and the shot would be archived under a line
+            // asserting a yellow highlight that is not in it. (Post-ship audit, 2026-08-30.)
             ue_wrap::FVector2D ltl{}, lsz{};
-            if (!U::WidgetScreenRect(list, ltl, lsz) || lsz.Y < kRowPx * 5.f) {
+            const int32_t rows = U::ChildCount(list);
+            if (!U::WidgetScreenRect(list, ltl, lsz) || lsz.Y < kRowPx * 5.f || rows < 5) {
                 UE_LOGE("server_browser_native: ROW SKIN SHOT SKIP -- the list is %.0f px "
-                        "tall, too short to hold the two rows these shots compare. Whether "
-                        "the hover and selection tints DRAW is UNMEASURED.", lsz.Y);
+                        "tall with %d row(s); these shots need five. Whether the hover and "
+                        "selection tints DRAW is UNMEASURED -- not passing.", lsz.Y, rows);
                 g_selfCheckStep = kClickMove - 1;
                 return;
             }
@@ -776,8 +797,10 @@ void Tick(void* scrim, void* list, void* closeBtn) {
                 UE_LOGW("server_browser_native: ROW SKIN SHOT A -- the cursor is three rows "
                         "BELOW the selected one (lobby '%s'). The frame should show that row "
                         "purple with a grey border, the row under the cursor with a YELLOW "
-                        "border and yellow text, and the rest idle.",
-                        selId);
+                        "border and yellow text, and the rest idle. (HoveredRow reads %d one "
+                        "tick later; below zero means the aim missed and the shot asserts "
+                        "nothing.)",
+                        selId, ui::server_browser_native::HoveredRow());
             g_holdUntilMs = nowMs + kShotHoldMs;
             break;
         }

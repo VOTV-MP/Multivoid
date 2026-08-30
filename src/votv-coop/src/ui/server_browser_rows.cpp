@@ -62,8 +62,13 @@ constexpr float kRowBorderPx = 2.f;
 // RAISING IT IS STEP T2b, AND ITS STATED BLOCKER IS GONE -- which does not make it free.
 // The old reason was the uncached `FindFunction` walk per row; that is latched now, and
 // the surplus-row branch no longer derives seven parts to collapse one. What remains is
-// ~21 ProcessEvent dispatches per PAINTED row, all landing in one frame, so 200 rows is
-// ~4,200 dispatches in a single sync. That is arithmetic, not a measurement: T2a's
+// ~28 ProcessEvent dispatches per PAINTED row (10 to derive the parts, 10 to write five
+// texts, 2 for the frame's two images, 5 to dispatch their colours, 1 visibility), all
+// landing in one frame, so 200 rows is ~5,600 dispatches in a single sync. The figure was
+// 21 until 2026-08-30, when the per-row frame added one image and the text colours became
+// setter DISPATCHES instead of raw writes that never reached the screen; a post-ship audit
+// caught this line still quoting the old number, which is the number T2b would be priced
+// on. That is arithmetic, not a measurement: T2a's
 // instrument and T2c's baseline have not run, and this project's own rule is that a walk
 // cost without its denominator on the same line is not a number. Raise it after the
 // baseline, not before.
@@ -179,7 +184,7 @@ bool RowPartsAt(int32_t i, RowParts& out) {
     out.box = box;
     void* ovl = nullptr;
     // LATCHED. `R::FindFunction` has no result cache and walks the whole GUObjectArray, and
-    // this runs PER ROW inside Sync and RepaintRowSkins -- 64 rows meant 64 full walks
+    // this runs PER ROW inside Sync -- 64 rows meant 64 full walks
     // landing in one frame, every sync. `R::FindClass` beside it has been cached since
     // `ca1cd5e4`; only this one was not. A UFunction never moves, so one resolve is all
     // there is. (Post-ship perf audit, 2026-08-29. The general fix -- a cache inside
@@ -371,56 +376,56 @@ void CheckOrderStable(int shown) {
     sHave = true;
 }
 
-// JUST the two frame images of row `i`. Four dispatches instead of `RowPartsAt`'s nine.
-//
-// The skin repaint wants two pointers and was paying for all seven: `RowPartsAt` resolves
-// the box, the overlay and five text blocks, and a selection change discarded six of them
-// per row -- 576 wasted dispatches on a 64-row list, in the frame the player clicked.
-// (Post-ship perf audit, 2026-08-30, finding F3.) The `text` members are left NULL, which
-// `ApplyRowSkin` reads as "not mine to touch" -- so a partial fill is a first-class value
-// here and not a half-built object.
-bool RowSkinAt(int32_t i, RowParts& out) {
-    out = RowParts{};
-    // The overlay walk is shared with RowPartsAt and is where the one dispatch lives; the
-    // saving is in not asking for the five text blocks.
-    void* box = U::ChildAt(g_list, i);
-    if (!box) return false;
-    out.box = box;
-    static void* const sGetContent = [] {
-        void* cw = R::FindClass(P::name::ContentWidgetClass);
-        return cw ? R::FindFunction(cw, P::name::GetContentFn) : nullptr;
-    }();
-    if (!sGetContent) return false;
-    ue_wrap::ParamFrame f(sGetContent);
-    if (!Call(box, f)) return false;
-    void* ovl = f.Get<void*>(L"ReturnValue");
-    if (!ovl) return false;
-    out.edge = U::ChildAt(ovl, 0);
-    out.face = U::ChildAt(ovl, 1);
-    return out.edge || out.face;
-}
-
 // Is row `i` the selected one? The one place that answers it, because it is asked from
-// three (the sync pass, the selection repaint, the click).
+// more than one.
 bool RowIsSelected(int i) {
     return !g_selectedId.empty() && i >= 0 && i < static_cast<int>(g_rowIds.size()) &&
            g_rowIds[static_cast<size_t>(i)] == g_selectedId;
 }
 
-// Repaint every row's SKIN from the current selection and hover. Only ever called on a
-// SELECTION change -- four dispatches per row, no text work.
+// Repaint the rows whose SELECTION STATE CHANGED -- ALL THREE CHANNELS, and never more
+// than two rows.
 //
-// IT MUST REPAINT THE FRAME TOO, NOT ONLY THE FILL, and that is the whole reason this
-// function grew a second channel. A click lands on the row the pointer is ON, so the newly
-// selected row is by construction the hovered one -- and a selected row is deaf to hover.
-// Repainting only the fill would leave that row purple AND yellow-framed, which is the one
-// combination the rule says cannot exist, until the pointer happened to move away.
-void RepaintRowSkins() {
+// IT REPAINTS THE TEXT, AND THE FIRST VERSION DID NOT. That version repainted the fill and
+// the frame and stopped, on the reasoning -- written out in this very spot -- that a click
+// lands on the row the pointer is ON, so the newly selected row is by construction the
+// hovered one and would otherwise be left purple AND yellow-framed. Every word of that is
+// true of the THIRD channel too, and it did not carry: hover paints the frame and the FIVE
+// TEXT BLOCKS together, so a fill+frame repaint left the just-clicked row purple with a
+// grey frame and YELLOW GLYPHS -- the exact combination `PointerLit` exists to forbid,
+// visible on every single click, until the pointer moved off the row or the next 5 s fetch
+// happened to land. Caught by a post-ship audit, 2026-08-30; neither self-check shot could
+// see it, because both of them move the cursor first and the move heals it.
+//
+// The lesson one level up, and the reason this is now a PAIR walk rather than a full one:
+// "repaint the changed state" is only correct if it enumerates every channel that state
+// drives. Two of three is not a partial fix, it is a new inconsistency.
+//
+// TWO ROWS, NOT ALL OF THEM. Only the row that lost the selection and the row that gained
+// it changed anything; every other row's answer to `PointerLit` and to `selected` is what
+// it already was. The scan over `g_rowIds` is pure string compares and costs no dispatch,
+// so this is ~30 dispatches instead of the ~380 a full-list skin walk cost -- cheaper than
+// the version it replaces AND correct, which is why `RowSkinAt` (a cut-down parts reader
+// that only the full walk needed) is retired with it rather than kept for a caller that no
+// longer exists.
+void RepaintSelectionChange(const std::string& wasId) {
+    if (wasId == g_selectedId) return;   // nothing changed hands
+    // Hoisted: it takes a mutex and copies a string, and this loop can body twice.
+    const std::string own = sm::OwnLobbyId();
     const int total = g_visibleRows;   // shown, not ChildCount's high-water mark
-    for (int i = 0; i < total; ++i) {
+    for (int i = 0; i < total && i < static_cast<int>(g_rowIds.size()); ++i) {
+        const std::string& id = g_rowIds[static_cast<size_t>(i)];
+        if (id.empty() || (id != wasId && id != g_selectedId)) continue;
+        if (i >= static_cast<int>(g_rows.size())) continue;
         RowParts rp;
-        if (!RowSkinAt(i, rp)) continue;
-        ApplyRowSkin(rp, i == g_hoverRow, RowIsSelected(i));
+        if (!RowPartsAt(i, rp)) continue;
+        const Row& r = g_rows[static_cast<size_t>(i)];
+        bool mismatch = false;
+        (void)VersionCell(r, mismatch);
+        const bool sel = (id == g_selectedId);
+        ApplyRowSkin(rp, i == g_hoverRow, sel);
+        ApplyRowTextColors(rp, r, !own.empty() && r.lobbyId == own, mismatch,
+                           i == g_hoverRow, sel);
     }
 }
 
@@ -608,8 +613,11 @@ void Sync() {
         // there, which is how a player joins a server they did not pick.
         //
         // Read from `r.lobbyId` and NOT through `RowIsSelected(i)`: that helper reads
-        // `g_rowIds[i]`, which this very loop is in the middle of rewriting, so at this
-        // point it still holds the PREVIOUS pass's id for row i.
+        // `g_rowIds[i]`, and the `assign` above CLEARED every entry to an empty string
+        // before this loop began refilling them -- so the helper would answer `false` for
+        // every row and no selection would ever paint. (The first version of this comment
+        // said it 'still holds the PREVIOUS pass's id', which is the wrong mechanism for
+        // the right conclusion; a post-ship audit read the `assign` and caught it.)
         const bool sel = !g_selectedId.empty() && r.lobbyId == g_selectedId;
         ApplyRowSkin(rp, i == g_hoverRow, sel);
         ApplyRowTextColors(rp, r, isOwn, mismatch, i == g_hoverRow, sel);
@@ -701,8 +709,9 @@ bool ClickSelect() {
     if (g_hoverRow < 0 || g_hoverRow >= static_cast<int>(g_rowIds.size())) return false;
     const std::string& id = g_rowIds[static_cast<size_t>(g_hoverRow)];
     if (id.empty() || id == g_selectedId) return false;
+    const std::string was = g_selectedId;   // read BEFORE the assignment; the repaint needs it
     g_selectedId = id;
-    RepaintRowSkins();
+    RepaintSelectionChange(was);
     UE_LOGI("server_browser_rows: row selected (%s)", id.c_str());
     return true;
 }
@@ -724,8 +733,9 @@ bool Selected(coop::net::lobby::LobbyRow& out) {
     // Selected, but the lobby is gone from the latest list: the host quit while the screen
     // was open. Answering false is right -- the caller has nothing to connect to -- and the
     // selection is dropped so the highlight stops pointing at a server that is not there.
+    const std::string was = g_selectedId;
     g_selectedId.clear();
-    RepaintRowSkins();
+    RepaintSelectionChange(was);
     return false;
 }
 
