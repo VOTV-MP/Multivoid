@@ -3207,6 +3207,31 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   otherwise dense with `[V]` measurements, which lends its unmeasured parts borrowed credibility.
   `memory/lesson-a-hand-written-inventory-is-a-list-not-a-census.md`
 
+- **A TEST ENDS WHEN ITS EVIDENCE IS COLLECTED — the windows die immediately (USER RULE
+  2026-08-30).** Verbatim: *"они раз отстреляли свой тест то рубить их нахуй сразу надо, зачем им
+  висеть."* A fixed `--duration` is a time envelope around variable-time evidence, and everything
+  after evidence-complete is pure exposure: hung windows, the drive arm wandering into the river,
+  a KO-respawn hang eating the verdict minutes after the equality evidence was banked (run A,
+  2026-08-30 19:03). Machinery: instruments announce their own completion in ONE log line
+  (`[ATV-PROBE] DONE`), and `mp.py smoke` kills on `--done-marker` / ends INCONCLUSIVE on
+  `--dead-marker` / fail-fasts on a dead session (`b66dc0db`, `e60d516f`). *Look FIRST:* a new
+  test lane is not done until its done-line and marker invocation exist; fixed duration is only
+  for steady-state/soak runs where time itself is the evidence.
+  `memory/feedback-a-test-ends-when-its-evidence-is-collected.md`
+
+- **A COUNTDOWN ANCHORED AT FIRST-ELIGIBILITY FIRES INTO A LAPSE.** 2026-08-30: the eject
+  drill armed "fire in 45 s" at the first moment of client authority; the drive arm banks its
+  20 s and DISMOUNTS, so the fire moment evaluated `eligible=false` and silently never shot —
+  no marker, and the run idled out its full duration (the user watched the hung windows). The
+  countdown and the gate were each correct; the defect is their COMPOSITION — time flows while
+  the predicate does not. The post-ship audit had NAMED it (MINOR-7) and it shipped
+  noted-not-fixed: **an audit finding on an INSTRUMENT is a scheduled run failure, not a backlog
+  item.** Fixed `e60d516f`: the anchor resets on lapse, and the delay must FIT INSIDE the
+  measured lifetime of the condition it depends on. *Look FIRST:* any one-shot keyed on a
+  transient condition (authority/seated/connected/world-ready) — does the anchor reset, and does
+  the delay fit the condition's real lifetime?
+  `memory/lesson-a-countdown-anchored-at-first-eligibility-fires-into-a-lapse.md`
+
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
 
 - **A WINDOW CLOSED BY THE LATCH THAT STARTS THE NEXT PHASE ENDS BEFORE THAT PHASE — BY
@@ -6497,6 +6522,8 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 **Extracting an operation without its INVALIDATION ships the bug twice.** I moved a row hit test into a shared kit so two screens could share it, and left the settling pass, the scroll term and the shown-row count duplicated per screen -- then fixed only one copy. The other kept a cursor-motion-only gate over a scrollable list, where the stored index chooses which WORLD to load: wheel one notch without moving the mouse, click, host the wrong save. My own commit message described the defect in full while writing it about the other file. **Look here FIRST:** when you extract an operation, list what the original call site does AROUND the call -- anything that is not that screen's own business is part of the operation. The fix shape is one object owning both (`native_screen::HoverTracker`). Same day, one layer down: a resolve latched in the reader and left unlatched in the two writers, and the latches that were added latched only SUCCESS, so their failure path was the full-array scan they removed. [[lesson-extracting-the-operation-without-its-invalidation-ships-the-bug-twice]]
 
 **A NUL byte mid-stream flips grep into binary mode and it silently swallows the rest — so a census over `git log -p` fails toward "clean".** The pre-push audit over 226 commits reported 3x `127.0.0.1` and zero identifier hits; with `-a`, the same range holds 10 IP lines and 4 benign hits. Four NUL bytes — sitting in Markdown PROSE (pasted terminal artifacts in two doc waves), in a range where git's own `--numstat` classifies zero files as binary — flipped GNU grep at the poison point; everything matched BEFORE it still printed, so the output read as a complete, plausible census. `git log` emits newest-first: the suppressed tail is the OLDEST commits, exactly where vendor drops land. A sibling session's independent census caught the miss — and the comparison cut both ways, because a NET census (`git diff A..B`, `--name-only` included) drops added-then-deleted material that a push still publishes permanently. **Look here FIRST:** every grep stage over a git stream carries `-a`; every push census — content AND paths — runs in per-commit replay shape (`git log -p` / `git log --pretty=format: --name-only`), with `comm -23` against the net listing to prove nothing was added-then-deleted; when a zero looks too clean, count NULs first (`| tr -cd '\0' | wc -c`) or plant a known token past the suspect point. Convergence after both instruments were fixed: identical counts on every axis from two independent pipelines, and 471 replay paths == 471 net. [[lesson-a-nul-byte-mid-stream-makes-grep-silently-swallow-the-rest]]
+
+**A worktree build of this repo needs three non-obvious inputs.** 2026-08-30, three failed configures before the fourth built (needed because the SHARED tree was mid-edit unbuildable while an acceptance run needed known bytes): (1) a SHORT worktree path — MSBuild FileTracker dies with FTK1011 on MAX_PATH `.tlog` paths under the deep session-scratchpad dir, surfacing as a misleading late `MSB1009`; (2) the vcpkg toolchain trio, reusing the MAIN tree's already-materialized store — `-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/.../vcpkg.cmake -DVCPKG_INSTALLED_DIR=<main>/build/votv-coop/vcpkg_installed -DVCPKG_TARGET_TRIPLET=x64-windows-static -DVCPKG_MANIFEST_INSTALL=OFF` (else Protobuf is not found); (3) `--recursive` on the GameNetworkingSockets submodule (nested abseil fails `check_submodule` otherwise). Companion facts: the boot banner's compiled-stamp does NOT identify a relink (`__DATE__` lives in one banner TU — verify a binary by hash or by a BEHAVIOR only the new code emits), and `mp.py smoke --no-deploy` (`f45827a8`) is how a run keeps its provenance when the shared build slot changes hands. **Look here FIRST:** the verbatim recipe block in `memory/lesson-a-worktree-build-of-this-repo-needs-three-non-obvious-inputs.md`. [[lesson-a-worktree-build-of-this-repo-needs-three-non-obvious-inputs]]
 
 ## 9. Security (threat model, trust boundaries, peer identity)
 
