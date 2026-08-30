@@ -1371,9 +1371,10 @@ is the control arm that acquitted the corrector; both are diagnostics, RULE-2 ex
   which **`BreakConstraint()`s all eight constraints and re-places `sus_*` from
   `defaultTireLocations()`** — a constraint-rig rebuild, on the mirror, i.e. the same class of event
   as the deformation this whole section is about.
-  **THE GATING MEASUREMENT IS ANSWERED — 2026-08-30, `[RD]` from bytecode, NOT yet runtime-confirmed.
-  A runtime-spawned `prop_atvWheel_C` DOES carry a Key, and it is minted PER PEER AND AT RANDOM,
-  which makes the defect worse than the "ejected twice" I wrote below it.** The chain, every link
+  **THE GATING MEASUREMENT IS ANSWERED — 2026-08-30. `[V]`: a runtime-spawned `prop_atvWheel_C`
+  DOES carry a Key, and it is minted PER PEER AND AT RANDOM, which makes the defect worse than the
+  "ejected twice" I wrote below it.** The mechanism is `[RD]` from bytecode (the table below); the
+  FACT is `[V]` from a real field log (the box at the end of this bullet).** The chain, every link
   disassembled with `research/bp_reflection/_fn.py`:
 
   | step | evidence |
@@ -1409,9 +1410,33 @@ is the control arm that acquitted the corrector; both are diagnostics, RULE-2 ex
   lane for tire ejection** (`COOP_SYNCER_MODEL.md` §2b) — the mirror's `ejectWheel` must not spawn,
   the author's must, and its `prop_atvWheel_C` must be the only one. What the measurement adds is
   *why nothing cheaper works*: with per-peer random keys there is no dedupe to fall back on.
-  **Runtime confirmation still owed** (it is `[RD]`, not `[V]`): eject a wheel on each peer and log
-  the spawned actor's key on both. Blocked 2026-08-30 only by the cross-session game lock.
-  The fence collision above is exactly the event that exercises this.
+  **RUNTIME-CONFIRMED THE SAME DAY, `[V]`, and it needed no new run — the evidence was already on
+  disk in a field report.** `ignore_folder/arigalit_red_mist_desync/multivoid_host.log`
+  (**b143**, `compiled Aug 27 2026`) carries the exact event, 47 times:
+
+  ```
+  grab_hook[Aprop.Init POST]: HOST broadcasting SPAWN cls='prop_atvWheel_C'
+      key='a3sABSN08tUFHU_4LTC2JA' loc=(-2328.6,-1550.1,6103.8) heavy=0 frozen=0
+  ```
+
+  **7 distinct wheel keys** in that session, every one a 22-char base64 GUID
+  (`a3sABSN08tUFHU_4LTC2JA`, `fx3UaihcpoZhTjy9DJm1hg`, `gqk_ifh3itHph-0si8vlNg`, ...) — which is
+  `generateRandomKey` output, so the bytecode chain above is confirmed at runtime. The paired client
+  log carries **the same 7 keys and not one key absent from the host's set**, so the host-authored
+  eject path broadcasts and adopts correctly, 7 for 7. (The client's higher line count is `hand_item`
+  slot-0 mirror spawns — wheels get carried — not extra spawns.)
+
+  **What that log CANNOT test, and why the distinction matters.** b143 was compiled two days BEFORE
+  arc 1 (`070c7d29`+`a2a45fc7`, 2026-08-29), i.e. while a mirrored ATV was still frozen and
+  teleported rather than simulated. A client mirror on b143 therefore could not run `processTire()`
+  at all, so a client-side `ejectWheel` was **structurally impossible** in that build. The absence of
+  a client-minted wheel key there is not evidence the divergence does not happen — it is evidence
+  that the window did not exist yet.
+
+  **So this residual is a REGRESSION arc 1 introduced on 2026-08-29, and no released build carries
+  it**: the field build is b143 and the current tree is b146, unpushed. It can be fixed before it
+  ever ships, which is the reason to do the intent lane now rather than after a release.
+  The fence collision above is exactly the event that exercises it.
 - **§16.6's hook boundary is untouched and still unmeasured**: a player can tie physics props to
   the ATV with `hook_C`, whose lane has zero symbols in this tree.
 

@@ -33,6 +33,16 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 1. How to work (process / working agreements)
 
+- **OUTWARD-FACING COPY GETS AN AI-MARKER PASS BEFORE IT SHIPS (USER, twice 2026-08-30).**
+  SUPPORT.md and the whole multivoid.dev copy both came back with «слишком ai вайбы»; the pass
+  that satisfied both reviews strips: em-dash-as-default-connector, corporate jargon in player
+  prose ("single source of truth", "zero X", "sync lanes", "substrate", "posture"), the "X, not
+  Y" contrast tic, fragment openers ("The way in." / "Straight answer."), rhetorical CTA
+  questions, most rule-of-three parallels, a signature noun-list repeated across sections, and
+  chiasmus flourishes. Concrete beats abstract; the lore/terminal lines are voice, keep them.
+  *Look FIRST:* `memory/feedback-outward-copy-gets-an-ai-marker-pass.md` (the full list);
+  the applied diff is site repo `dfd0040`.
+
 - **A LAB TOOL THAT DEPLOYS FOR YOU SUBSTITUTES THE BYTES UNDER TEST -- PIN, DO NOT CHECK.**
   2026-08-29. Every `tools/mp.py` scenario calls `deploy_all()` at dispatch and copies whatever sits
   in `build/votv-coop/Release` AT THAT INSTANT. With a parallel session building in the same tree,
@@ -3085,6 +3095,18 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   and classify identity as DERIVED (deterministic, matchable) or MINTED (random, per-process); that
   one fact picks the lane's shape and costs about four `_fn.py` calls. And when a chain has two gates
   for related-sounding properties, assume the named one is not the one you want.
+  **AND THE RUNTIME CONFIRMATION COST TWO GREPS, NOT A TEST RUN:** with the chain tagged `[RD]` the
+  obvious move was to take the shared game lock, re-instrument the probe, build, deploy and drive an
+  ATV into something — but `ignore_folder/arigalit_red_mist_desync/multivoid_host.log`, a PLAYER'S
+  FIELD REPORT, already held the event 47 times with 7 distinct 22-char base64-GUID keys, and the
+  paired client log had the same 7 and none the host lacked. This project keeps a directory of real
+  two-peer sessions (`ignore_folder/*_report/`, `research/atv_runs/`) containing events no scripted
+  scenario reproduces, because people played them: **grep those before building an instrument or
+  taking the lock.** Then read the build banner, because that is what makes the evidence honest —
+  that log is b143, compiled two days before the change whose residual was under investigation, so it
+  could confirm the key fact (the game's own BP, version-stable) while being STRUCTURALLY UNABLE to
+  test the divergence (the mirror did not simulate yet). "Not observed in the logs" and "the window
+  did not exist in that build" are different findings and only the banner separates them.
   `memory/lesson-a-per-peer-random-identity-mint-forecloses-every-dedupe-plan.md`
 
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
@@ -5571,6 +5593,17 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   `memory/lesson_a_rate_limiters_clock_belongs_to_the_window_not_the_send.md`
 
 ## 8. Build / deploy / git hygiene
+
+- **HEADLESS-CHROME SCREENSHOTS: THE RIG LIES BELOW 500px, ON vh, ON file:// AND ON #anchor.**
+  2026-08-30 (the site Download redesign). Old-headless `--screenshot` lays pages out at a
+  ~500px MINIMUM window width and crops the PNG to the requested 400 -- a clean page reads as
+  "cut off on the right" and an hour went into DPR/nav/table theories before a 500px control
+  shot settled it; a tall `--window-size` inflates every vh-sized section (the hero ate ~13k
+  px); `file://` drops root-absolute `/css/...` (unstyled white page); `#anchor` does not
+  scroll. And the preview `http.server` holding `public/` fails `zola build` with os error 32.
+  The recipe that works: cut the section out of the BUILT page, wrap it standalone with a
+  viewport meta + a localhost stylesheet link, shoot at the real viewport; kill the server
+  before building. *Look FIRST:* `memory/lesson-headless-chrome-screenshot-rig-pitfalls.md`.
 
 - **CMAKE `if(<var>)` EATS A LEGITIMATE "0" -- AND THE FLAWED GUARD ARRIVED WITH TWO ENDORSEMENTS.**
   2026-08-28 (WP-2 commit 3 follow-up). The new major/minor parse guard shipped as
