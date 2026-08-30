@@ -1616,11 +1616,48 @@ the root rather than at its one irreversible side effect. It is named here rathe
 radical mandate makes its size a non-reason. It is not proposed for THIS lane because destroy-at-birth
 is complete for the observable defect and the swap is HALT-gated on a spike this lane does not gate.
 
-**Still owed:** (2) a sample from `research/atv_runs/` where a MIRROR actually reaches `sev > 1.0`
-(`|impulse|/mass > 150`) against 100 starting durability — **the defect is derived from bytecode and
-has never been observed**, which is the weakest link in the whole case; (3) `putTire`'s intent shape
-against `COOP_SYNCER_MODEL` §2b; (4) whether destroy-at-birth needs to suppress the mirror's
-`sound_tireDamage` too, or whether a phantom pop is acceptable.
+### 17.9 THE DEFECT IS OBSERVED (2026-08-30, `[V]`, two-peer autonomous run)
+
+Everything above was derived from bytecode. **It has now been seen.** Instrument:
+`coop/dev/atv_tire_probe` (commit `169ef5ab`), which reads the four tire arrays off both peers
+because the verb that mutates them (`processTire`, `EX_LocalVirtualFunction` at all five sites) can
+never be hooked — the observable is the STATE, not the call. Run: `mp.py smoke --duration 300`,
+DLL `910684F20C866FBE`, b146; the client is the author (`atv_probe_sit=1`), the host holds the
+mirror. 264 `[ATVT]` samples on the host, 168 on the client.
+
+**The two peers' tire arrays end the run disagreeing, and not by a rounding margin — they damaged
+DIFFERENT TIRES:**
+
+| slot | HOST (mirror) | CLIENT (author) |
+|---|---|---|
+| 0 | 98.22 | 98.52 |
+| 1 | **100.00** | **97.86** |
+| 2 | **100.00** | **98.73** |
+| 3 | **98.48** | **100.00** |
+
+The host wore slots 0 and 3; the client wore 0, 1 and 2. Only slot 0 moved on both, and by different
+amounts. `tiresDirt[]` disagrees the same way (`0.00,0.00,0.01,0.01` vs `0.00,0.00,0.00,0.01`) —
+and dirt accumulates in the **else** branch of that same `processTire`, so the divergence is not
+merely of a value: **it is direct evidence that `processTire` executes on the mirror**, which is the
+claim the whole design rests on. No wire lane for `tiresDurability` exists anywhere in the tree, so
+each of those eight numbers is its own peer's physics and nothing reconciles them.
+
+The `-1` / `0xFFFFFFFF` sentinels fired exactly twice, on the teardown samples where the actor was
+going away, and stayed distinguishable from zero — the reads are sound.
+
+**What the run did NOT reach:** `tires` stayed `0xF` on both peers throughout, so no tire hit zero
+and `ejectWheel` never fired. The ACCUMULATOR divergence — the root — is proven; the irreversible
+half (the per-peer random-keyed wheel prop, §17.5) is still only derived. Given the wear rate seen
+here (~2 points over a five-minute drive) reaching zero needs either a much longer run or a
+deliberate hard impact, so a purpose-built arm is the honest way to get it rather than a longer smoke.
+
+**Field context, from the user watching this run:** the arm drove the ATV into the river, drowned,
+and the peer was disconnected. That is what ended the window, and it is filed separately — a drowning
+peer losing its connection is not part of this lane.
+
+**Still owed:** (3) `putTire`'s intent shape against `COOP_SYNCER_MODEL` §2b; (4) whether
+destroy-at-birth needs to suppress the mirror's `sound_tireDamage`, or whether a phantom pop is
+acceptable; (5) the eject half, per the paragraph above.
 
 ### 17.6 Three things not to re-derive
 1. **Deleting the tick-off (`a2a45fc7`) did not move the number.** All six runs that read 25-40 cm
