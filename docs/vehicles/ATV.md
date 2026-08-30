@@ -1433,9 +1433,15 @@ is the control arm that acquitted the corrector; both are diagnostics, RULE-2 ex
   a client-minted wheel key there is not evidence the divergence does not happen — it is evidence
   that the window did not exist yet.
 
-  **So this residual is a REGRESSION arc 1 introduced on 2026-08-29, and no released build carries
-  it**: the field build is b143 and the current tree is b146, unpushed. It can be fixed before it
-  ever ships, which is the reason to do the intent lane now rather than after a release.
+  **CORRECTED the same day by `/qf` round 1 — the attribution below was wrong, and the commit that
+  published it (`a7770193`) is wrong with it.** I wrote that arc 1 introduced this residual on
+  2026-08-29. `[V]` `git show 8cd0ac25^:src/votv-coop/include/coop/config/config_registry_rows.inc`
+  has **no `atv_hit_guard_mask` row at all**: before today the guard cancelled all seven ComponentHit
+  delegates unconditionally, so a mirror's wheel hit never dispatched and **`processTire` could not
+  run on a mirror at any point between arc 1 and now**. Arc 1 made the mirror SIMULATE; the guard
+  kept the damage lane shut anyway. **The window was opened by `8cd0ac25` — my own commit, today.**
+  That makes it live in the tree rather than historical, and still unreleased (field b143, tree
+  b146, unpushed), so it can be fixed before it ships — which is the reason to do the lane now.
   The fence collision above is exactly the event that exercises it.
 - **§16.6's hook boundary is untouched and still unmeasured**: a player can tie physics props to
   the ATV with `hook_C`, whose lane has zero symbols in this tree.
@@ -1445,6 +1451,18 @@ is the control arm that acquitted the corrector; both are diagnostics, RULE-2 ex
 Written before designing the intent lane, because a design brief for a sync defect is worthless
 until every event the action emits is mapped on both peers. All offsets from
 `research/bp_reflection/` (`_fn.py ATV <fn>`, `ATV_cfg/ATV.txt` for the ubergraph).
+
+**CORRECTED by `/qf` round 1: there are FIVE `processTire` sites, not four, and the fifth is on a
+delegate this project CANCELS.** `[V]` `ATV_cfg/ATV.txt` dispatches `processTire` at @15037, @14864,
+@9168, @9123 and **@8639**. The fifth reads `K2Node_ComponentBoundEvent_HitComponent_6` /
+`NormalImpulse_6`, which by `ue_wrap/devices/atv.cpp:138` is
+`BndEvt__car1_Capsule_..._ComponentBoundEvent_6_...` — **`car1_Capsule`, delegate bit 1, one of the
+two BODY bits `g_cancelMask` still cancels.** It picks its index with `SelectInt(2, 3, dot > 0)` and
+its component with an `EX_SwitchValue` over `backWheel_R`/`backWheel_L`, i.e. a capsule impact is
+attributed to a REAR tire. So the shipped guard already suppresses one of the five damage paths on a
+mirror, and §5 / §17's description of the two BODY cancels as covering "impulse-damage and
+`explode()`" is incomplete — they also cut a tire-damage path. **Four paths remain live on a
+mirror**, not five.
 
 ```
 ComponentHit on a WHEEL  ->  ubergraph wheel segment (four copies, e.g. @14864 idx3, @15037 idx2)
@@ -1528,6 +1546,49 @@ entity` in its correct form, and it is the opposite of what the C1 crutch did to
 
 **Still unmapped (small, and not on the critical path):** `updSpareTire`, `diretTire`,
 `setWheelsType`'s type table, and whether `tiresTypes[]` rides any existing wire lane.
+
+### 17.8 `/qf` round 1 killed the first design, and the replacement is cheaper (2026-08-30)
+
+The design taken into the round was: suppress the damage lane INSIDE
+`processTire`/`damageWheel` on a non-author, push four arrays, make eject/put intents.
+**Pillar 1 is unbuildable and the round proved it in one line.**
+
+**`[V]` every one of the five `processTire` sites is `EX_LocalVirtualFunction`, and `damageWheel` is
+an ubergraph thunk.** Neither is visible to our ProcessEvent detour (`COOP_DISPATCH_VISIBILITY.md`
+— the `init()`-is-BP-internal trap, which CLAUDE.md's own reading order exists to prevent). The only
+substrate that sees `EX_Local*` is the `0x45` GNatives swap in `COOP_VM_DISPATCH_PLAN.md`, which is
+HALT-gated and unbuilt. A design cannot name a suppression point we have no way to reach.
+
+**The replacement inverts it: do not suppress the accumulation at all.** A mirror accumulating its
+own `tiresDurability[]` is harmless *if it is continuously overwritten*, and §17.7(d) already
+measured that `updTires()` is a pure reducer over plain array properties — so the author's on-change
+push simply corrects the mirror, no interception required. The ONLY irreversible act is
+`ejectWheel`'s spawn, and that one IS reachable: `BeginDeferredActorSpawnFromClass` issued from a BP
+ubergraph is `EX_CallMath` (invisible to PE) but is **caught by the shipped `UFunction::Func` thunk
+patch** (`ue_wrap/ufunction_hook`, `d19ae4d4`), already proven on the pile morph, the 32-wisp swarm
+and `piramidSpawner_C`. **One measurement gates this and is NOT done: can that thunk patch CANCEL a
+call, or only observe it?** Until that is answered the replacement is a sketch, not a design.
+
+**The authority fork is resolved, and not by the doc I was following.** I reached for
+`COOP_WORLD_PROP_DIVERGENCE`'s "the host owns the progression" after classifying tires as a
+self-simulating prop — i.e. I searched prior art by the mechanism I had assumed rather than by the
+problem, the exact failure `[[lesson-search-prior-art-by-problem-not-by-assumed-mechanism]]` is named
+for. Grepping MTA for *vehicle tyre damage* instead: `CDeathmatchVehicle::SyncDamageModel:43-120` is
+this design's step 2 verbatim (per-wheel change-edge diff feeding `SetWheelStatus`), and
+`CClientVehicle::CalcAndUpdateTyresCanBurstFlag:1252-1270` settles the ownership question as
+**`local driver || syncing-unoccupied`, never the server**. Per RULE 2026-05-28 that outranks the
+world-prop doc's answer: **the ATV's syncer owns tyre damage, not the host.**
+
+MTA's *mechanism* does NOT port, and that is measured rather than assumed: it suppresses bursting by
+setting a native capability flag (`SetTyresDontBurst`) instead of hooking anything, and a census of
+`ATV_C`'s **1,527 distinct properties** finds no equivalent — no burst, invulnerability or
+tire-capability flag exists on this class (`ignoreFallDamage` is the nearest and is unrelated). So
+the shape ports and the trick does not.
+
+**Owed before this becomes a design:** (1) can the `Func` thunk cancel; (2) a sample from
+`research/atv_runs/` showing a MIRROR actually reaching `sev > 1.0` (`|impulse|/mass > 150`) against
+100 starting durability — the defect is so far derived, never observed; (3) `putTire`'s intent shape
+against `COOP_SYNCER_MODEL` §2b.
 
 ### 17.6 Three things not to re-derive
 1. **Deleting the tick-off (`a2a45fc7`) did not move the number.** All six runs that read 25-40 cm
