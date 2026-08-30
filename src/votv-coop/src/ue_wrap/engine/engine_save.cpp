@@ -16,6 +16,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "ue_wrap/engine/world_identity.h"
 
 #include <cstdint>
 #include <cstring>
@@ -195,6 +196,105 @@ void ValidateCachedSaveForCampaign(const wchar_t* slot, void* curWorld) {
         g_storySaveIdx = -1;
     }
 }
+// ---------------------------------------------------------------------------
+// REJOIN FIX (2026-08-28) -- the boot poll's two "where are we?" reads, ONE owner
+// for LoadStorySave + StartFreshGame (they were two verbatim copies of the same
+// unguarded reads). Fixes the SirWilliam field row ("rejoining requires a full
+// game relaunch", docs/CREDITS.md).
+//
+// AUTHOR: archhn0madd (github.com/archhn0madd/Multifoid, commit feae7730),
+// adopted 2026-08-31. Only the doc pointer above was retargeted -- this tree
+// keeps field reports in CREDITS.md, not in a FIELD_REPORTS.md.
+//
+// THE BUG. After a death-flee (or any quit-to-menu), the DYING gameplay world and
+// its ragdolled mainPlayer_C corpse stay in GUObjectArray until the GC purge --
+// measured 44+ s ([[lesson-dying-world-actors-not-killflagged-at-menu]]); the kill
+// FLAGS can lag GC too (LESSONS 2026-08-25: 311 dying-world piles "passed IsLive's
+// kill-flag check" AT the menu). Both old checks then answered from the dead world:
+//   (a) FindObjectByClass(mainPlayer_C) found the CORPSE, non-origin position
+//       -> "in gameplay" while the process sat at the MENU. The join "booted" into
+//       a world that was never loaded: ClientWorldReady never announced (its
+//       Registry::Local() gate is world-stamped and correctly answers null there),
+//       the host never streamed, and the only way out was a relaunch.
+//   (b) FindObjectByClass(World) returned the dying gameplay world (lower
+//       GUObjectArray index than the menu world), name still contains "ntitled"
+//       -> "already loading, wait" -> the `open` was never issued.
+//   The same two lies also stranded a HOST at the menu after a death-flee: its
+//   re-host polls could neither see the old world gone nor issue the new open.
+//
+// THE FIX -- the 2026-08-23 world-identity lesson verbatim ("world gates must key
+// on WORLD IDENTITY / travel-start signals, never per-object liveness"):
+//   - the current world comes from world_identity (GameInstance -> LocalPlayers[0]
+//     -> PlayerController -> OwningWorld), which a dying world cannot hold alive;
+//   - the pawn must be LIVE (fresh-pointer guard BEFORE the WorldOf deref) AND
+//     WorldOf(lp) == the current world -- both terms, per the lesson's "carry both";
+//   - "gameplay loading?" keys on CurrentWorldKind(): Gameplay -> wait; Other
+//     (menu/preLoad) -> boot; Unknown (the ~1 s mid-travel window, or a Degraded
+//     chain) -> the legacy first-World scan = the pre-fix behaviour inside exactly
+//     the one window where the chain cannot answer;
+//   - Degraded() keeps the legacy path (fail-open): a recook that broke the chain
+//     must not additionally break the boot.
+struct BootWorldView {
+    bool inGameplay;       // (a): a LIVE mainPlayer_C of the CURRENT world, off-origin
+    bool gameplayLoading;  // (b): a gameplay world is up/loading -> never re-open, wait
+    void* curWorld;        // the world phase (c) stamps as the campaign's polling world
+};
+BootWorldView SurveyBootWorld(const char* who) {
+    BootWorldView v{false, false, nullptr};
+    const bool readerUp = !ue_wrap::world_identity::Degraded();
+    v.curWorld = readerUp ? ue_wrap::world_identity::CurrentWorld() : nullptr;
+
+    // (a) Already in gameplay? mainPlayer_C placed in the real level (non-origin).
+    if (void* lp = R::FindObjectByClass(P::name::MainPlayerClass)) {
+        const bool pawnLive = R::IsLive(lp);  // fresh-pointer guard BEFORE the WorldOf deref
+        void* pawnWorld = (pawnLive && readerUp) ? ue_wrap::world_identity::WorldOf(lp) : nullptr;
+        const bool currentWorldPawn =
+            pawnLive && (!readerUp || (pawnWorld != nullptr && pawnWorld == v.curWorld));
+        if (currentWorldPawn) {
+            const FVector p = GetActorLocation(lp);
+            if (std::abs(p.X) + std::abs(p.Y) + std::abs(p.Z) > 100.f) {
+                UE_LOGI("engine: %s -- in gameplay (mainPlayer @ %.0f,%.0f,%.0f)",
+                        who, p.X, p.Y, p.Z);
+                v.inGameplay = true;
+                return v;
+            }
+            // A live current-world pawn parked at origin = pre-placement; fall
+            // through to (b) exactly like the pre-fix code did.
+        } else {
+            // Throttle: the boot poll re-runs every ~1.5 s and hits the SAME corpse
+            // every time -- first 3 + a periodic heartbeat, not one line per poll.
+            static unsigned sStaleSkips = 0;
+            ++sStaleSkips;
+            if (sStaleSkips <= 3 || sStaleSkips % 16 == 0) {
+                UE_LOGW("engine: %s -- mainPlayer_C %p is a STALE other-world actor "
+                        "(live=%d itsWorld=%p current=%p readerUp=%d) -- the quit-to-menu "
+                        "corpse window; ignoring it, continuing the boot (skip #%u)",
+                        who, lp, pawnLive ? 1 : 0, pawnWorld, v.curWorld,
+                        readerUp ? 1 : 0, sStaleSkips);
+            }
+        }
+    }
+    // (b) Gameplay map already loading? The gameplay world is "Untitled" (map
+    // untitled_1); preLoad/menu are other worlds. If we're in/loading it, DON'T
+    // re-open -- just wait for the player to spawn.
+    const ue_wrap::world_identity::WorldKind kind =
+        readerUp ? ue_wrap::world_identity::CurrentWorldKind()
+                 : ue_wrap::world_identity::WorldKind::Unknown;
+    if (kind == ue_wrap::world_identity::WorldKind::Gameplay) {
+        v.gameplayLoading = true;
+    } else if (kind == ue_wrap::world_identity::WorldKind::Unknown) {
+        // Mid-travel (or Degraded): the chain cannot answer -- legacy reader, kept
+        // verbatim. In the travel window the dying gameplay world is the CORRECT
+        // "wait" answer.
+        v.curWorld = R::FindObjectByClass(P::name::WorldClass);
+        if (v.curWorld &&
+            R::ToString(R::NameOf(v.curWorld)).find(L"ntitled") != std::wstring::npos)
+            v.gameplayLoading = true;
+    }
+    // kind == Other (menu/preLoad): fall through -- the open must be (re)issued.
+    return v;
+}
+
 }  // namespace
 
 bool GetSavePrefix(uint8_t mode, std::wstring& out) {
@@ -236,25 +336,16 @@ int DeriveModeFromSlot(const wchar_t* slot) {
 bool LoadStorySave(const wchar_t* slot, int forceGameMode) {
     if (!slot || !*slot) return false;
 
-    // (a) Already in gameplay? mainPlayer_C placed in the real level (non-origin).
-    if (void* lp = R::FindObjectByClass(P::name::MainPlayerClass)) {
-        const FVector p = GetActorLocation(lp);
-        if (std::abs(p.X) + std::abs(p.Y) + std::abs(p.Z) > 100.f) {
-            UE_LOGI("engine: LoadStorySave -- in gameplay (mainPlayer @ %.0f,%.0f,%.0f)", p.X, p.Y, p.Z);
-            return true;
-        }
-    }
-    // (b) Gameplay map already loading? The gameplay world is "Untitled" (map
-    // untitled_1); preLoad/menu are other worlds. If we're in/loading it, DON'T
-    // re-open -- just wait for the player to spawn.
-    void* curWorld = R::FindObjectByClass(P::name::WorldClass);
-    if (curWorld && R::ToString(R::NameOf(curWorld)).find(L"ntitled") != std::wstring::npos)
-        return false;
+    // (a)+(b): the world-aware boot survey -- ONE owner shared with StartFreshGame
+    // (see SurveyBootWorld above for the rejoin root cause it fixes).
+    const BootWorldView w = SurveyBootWorld("LoadStorySave");
+    if (w.inGameplay) return true;
+    if (w.gameplayLoading) return false;  // in/loading the gameplay world -> wait, no re-open
 
     // (c) Still at preLoad / OMEGA / menu: register the save (once per campaign)
     // + (re)issue open. Campaign scope FIRST -- a re-host (second load in one
     // process) must never reuse the previous campaign's save object.
-    ValidateCachedSaveForCampaign(slot, curWorld);
+    ValidateCachedSaveForCampaign(slot, w.curWorld);
     auto makeFStr = [](std::wstring& b) {
         R::FString fs{};
         fs.Data = b.data();
@@ -365,23 +456,16 @@ bool StartFreshGame(bool storyMode) {
         return fs;
     };
 
-    // (a) Already in gameplay? mainPlayer_C placed in the real level (non-origin).
-    if (void* lp = R::FindObjectByClass(P::name::MainPlayerClass)) {
-        const FVector p = GetActorLocation(lp);
-        if (std::abs(p.X) + std::abs(p.Y) + std::abs(p.Z) > 100.f) {
-            UE_LOGI("engine: StartFreshGame -- in gameplay (mainPlayer @ %.0f,%.0f,%.0f)", p.X, p.Y, p.Z);
-            return true;
-        }
-    }
-    // (b) Gameplay map already loading? Don't re-open; wait for the player to spawn.
-    void* curWorld = R::FindObjectByClass(P::name::WorldClass);
-    if (curWorld && R::ToString(R::NameOf(curWorld)).find(L"ntitled") != std::wstring::npos)
-        return false;
+    // (a)+(b): the world-aware boot survey -- ONE owner shared with LoadStorySave
+    // (see SurveyBootWorld above for the rejoin root cause it fixes).
+    const BootWorldView w = SurveyBootWorld("StartFreshGame");
+    if (w.inGameplay) return true;
+    if (w.gameplayLoading) return false;  // in/loading the gameplay world -> wait, no re-open
 
     // (c) Still at preLoad / menu: create a blank saveSlot + register + travel.
     // Campaign scope FIRST (shared cache with LoadStorySave): a fresh-boot
     // campaign after any prior load must never reuse the old save object.
-    ValidateCachedSaveForCampaign(kFreshSlotName, curWorld);
+    ValidateCachedSaveForCampaign(kFreshSlotName, w.curWorld);
     if (!g_storyGsCdo) g_storyGsCdo = R::FindClassDefaultObject(P::name::GameplayStaticsClass);
     void* gi = R::FindObjectByClass(P::name::GameInstanceClass);
     if (!g_storyGsCdo || !gi) {
