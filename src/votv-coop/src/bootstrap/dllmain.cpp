@@ -21,15 +21,22 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
         // lane never ran). Before DoShutdown so the line lands even if the
         // logger is torn down there someday.
         loader::cppmod::FinalDump();
-        // Last-resort cleanup if WM_CLOSE never reached us (engine quit
-        // via console / fatal-error path). DoShutdown is idempotent --
-        // if our wndproc already ran it, this is a no-op. CRITICAL: do
-        // NOT join any threads or post GT::Post lambdas here (we're
-        // under the loader lock; that deadlocks). DoShutdown only sets
-        // a flag + uninstalls our PE detour, both safe under the lock.
-        // The detached worker threads observe g_shuttingDown and exit
-        // on their own; we don't wait for them.
-        coop::shutdown::DoShutdown();
+        // PERSIST ONLY. This used to call coop::shutdown::DoShutdown() under a
+        // comment claiming it "only sets a flag + uninstalls our PE detour, both
+        // safe under the lock" -- and BOTH halves of that were false. It reached
+        // a thread join, a 200 ms network linger loop, a socket close with
+        // WSACleanup, two sleeps and two MinHook thread-freezes (a documented
+        // loader-lock deadlock risk that hook.cpp:229-235 already had on file).
+        // The comment described the intent; nobody had re-read the body.
+        //
+        // `[V]` the module is PINNED at start_mod (cppmod_entry.cpp:318-325), so
+        // FreeLibrary cannot unload us and this branch is ALWAYS process exit --
+        // where every other thread is already dead, which makes all of that
+        // quiescing work meaningless as well as dangerous. What still matters is
+        // the durable write, so that is all we do.
+        //
+        // Found by an external source review of the public tree, 2026-08-30.
+        coop::shutdown::PersistAtProcessExit();
     }
     return TRUE;
 }

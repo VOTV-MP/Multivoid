@@ -213,4 +213,28 @@ void DoShutdown() {
     UE_LOGI("shutdown: END cleanup");
 }
 
+void PersistAtProcessExit() {
+    // See the header for the full census of what this deliberately does NOT do
+    // and why. Everything here must be safe under the loader lock with every
+    // other thread already terminated: no mutex, no join, no socket, no hook
+    // teardown, no sleep.
+    //
+    // The flag first, and via the same atomic DoShutdown uses -- it costs
+    // nothing and it means any thread that somehow survived stops on its next
+    // check. It is NOT used to gate the flush below.
+    g_shuttingDown.store(true, std::memory_order_release);
+
+    // The flush is the whole point. Lock-free, writes the game-thread snapshot
+    // captured in OnReliable, self-guards on each slot's dirty bit -- so a
+    // second flush after the wndproc path already ran is a cheap no-op rather
+    // than a hazard, which is why this is not gated on g_didShutdown.
+    coop::player_inventory_sync::FlushAllToDisk();
+
+    // One line, then flush the log: on this path there is no later opportunity,
+    // and the line is the only evidence the branch ran at all.
+    UE_LOGI("shutdown: process-exit persist done (inventory flushed; teardown "
+            "deliberately skipped -- loader lock)");
+    ue_wrap::log::Flush();
+}
+
 }  // namespace coop::shutdown

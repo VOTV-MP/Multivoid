@@ -66,9 +66,51 @@ void UpdateWindowTitle();
 
 // Run the cleanup sequence: flag -> session.Stop -> sleep -> DISABLE the PE
 // patch -> lift every remaining patch. Frees nothing (hook.h, "Retirement").
-// Idempotent (subsequent calls no-op) -- which is why the DLL_PROCESS_DETACH
-// call is normally a no-op: on a graceful close the wndproc latches first.
-// Safe to call from any thread; the internal mutex serializes.
+// Idempotent (subsequent calls no-op). Safe to call from any thread; the
+// internal mutex serializes.
+//
+// NOT callable from DLL_PROCESS_DETACH -- see PersistAtProcessExit below.
 void DoShutdown();
+
+// The ONLY teardown work DLL_PROCESS_DETACH may do: write the host's per-peer
+// inventory to disk, and nothing else.
+//
+// WHY IT EXISTS (external source review of the public tree, 2026-08-30, then
+// three rounds of measurement). DllMain's detach branch used to call
+// DoShutdown() under a comment asserting that "DoShutdown only sets a flag +
+// uninstalls our PE detour, both safe under the lock". Both halves of that were
+// false. It does far more, and SEVEN of the operations it reaches are hostile
+// under the loader lock:
+//   1. takes g_slowMu -- at process exit the owner may be a thread Windows has
+//      already terminated, and such a mutex never unlocks. hook.cpp:201 is
+//      deliberately lock-free for exactly this reason, two frames down.
+//   2. Session::Stop -> thread_.join()  (session_start.cpp:444)
+//   3. Session::Stop -> CloseConnection + a 20 x 10 ms RunCallbacks/Poll linger
+//      loop -- network I/O (:463-477)
+//   4. Session::Stop -> signaling_.reset() -> socket close + WSACleanup (:500)
+//   5. ::Sleep(100)
+//   6. game_thread::Uninstall -> hook::Disable -> MinHook Freeze ->
+//      CreateToolhelp32Snapshot + SuspendThread, plus ::Sleep(50)
+//   7. hook::Shutdown -> MH_DisableHook(MH_ALL_HOOKS) -> the same freeze, which
+//      hook.cpp:229-235 already records as "a documented deadlock risk" on this
+//      exact path (filed docs/UE4SS_ARC.md 4c)
+//
+// None of that work is even USEFUL here. `[V]` cppmod_entry.cpp:318-325 pins the
+// module (GET_MODULE_HANDLE_EX_FLAG_PIN) before anything else, so FreeLibrary
+// can never unload us and this branch runs ONLY at process exit -- where Windows
+// has already terminated every other thread. Quiescing waits on the dead;
+// persisting does not.
+//
+// So: persist, and get out of the way. Deliberately NOT gated on the shutdown
+// latch -- if the wndproc path latched and was then terminated mid-teardown,
+// its flush may never have happened, and re-flushing is free (FlushSlot
+// self-guards on its dirty bit). The flush path takes no locks at all
+// (g_hostBySlot has no mutex) and writes a game-thread snapshot, so it is
+// loader-lock-clean by construction.
+//
+// This is NOT the whole answer to durability: a hard crash or TerminateProcess
+// delivers no DLL_PROCESS_DETACH at all, so the standing <=15 s write window
+// (player_inventory_sync kWriteRate) is a SEPARATE defect and is tracked as one.
+void PersistAtProcessExit();
 
 }  // namespace coop::shutdown
