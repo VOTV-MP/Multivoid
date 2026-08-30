@@ -90,6 +90,12 @@ bool  g_lmbPrimed = false;
 bool  g_prevEsc   = false;
 bool  g_escPrimed = false;
 int32_t g_ourIndex   = -1;
+// How long the DEV autoopen waits after building before it shows the screen. It exists to
+// make the lab reproduce a player's timing -- long enough for the forced collection to run
+// and for the unreferenced-tree bug to bite if it is ever reintroduced. ~60 menu ticks is
+// half a second at this menu's measured frame rate; the whole browser scenario budgets 140.
+constexpr int kAutoOpenDelayTicks = 60;
+int g_autoOpenIn = 0;
 int32_t g_priorIndex = -1;
 bool    g_shown      = false;
 
@@ -311,6 +317,38 @@ bool BuildScreen(void* switcher) {
     // Hand the list to its owner, which also drops every row identity from the menu
     // instance that just died -- those two effects are always wanted together.
     rows::Attach(list);
+
+    // ATTACH NOW, NOT AT FIRST Show(). NOTHING ELSE REFERENCES THIS TREE.
+    //
+    // The attach used to live in `Show()`, so between building the screen and the player's
+    // first click the whole subtree was an unreferenced UObject graph -- and UE's garbage
+    // collector took it. `AddChild` then returned null on a dead object, and before the
+    // index was proven that produced a switch to one of the GAME's own screens (the user
+    // clicked MULTIPLAYER and got VOTV's Stats panel); after it was proven, the button went
+    // dead instead. Same root, two faces.
+    //
+    // WHY NO LAB RUN EVER SAW IT: every automated scenario sets `browser_autoopen=1`, which
+    // calls Show() on the SAME TICK as the build. The gap the bug lives in is exactly the
+    // gap a human takes to move the mouse. (MEASURED 2026-08-30 -- `AddChild
+    // slot=0000000000000000` in a hands-on log carrying 41 GC lines in the same window.)
+    //
+    // Attaching here is also what the code already claimed to do: Show()'s own comment says
+    // "the screen stays ATTACHED for the menu's life". It just did not become true until the
+    // first open. `AddToRoot` is the wrong tool -- a switcher child is reachable from the
+    // menu, which is the reference we actually want (RUNG 2 measured that a hand-built
+    // subtree survives a forced GC once it is IN the tree).
+    {
+        void* slot = U::AddChild(g_switcher, g_root);
+        g_ourIndex = U::IndexOfChild(g_switcher, g_root);
+        if (g_ourIndex < 0) {
+            UE_LOGE("server_browser_native: built the server browser but could NOT place it in the menu switcher "
+                    "(AddChild slot=%p, GetChildIndex=-1). The screen cannot be shown this "
+                    "menu; it will be rebuilt on the next one.", slot);
+            ue_wrap::log::Flush();
+            g_root = nullptr;   // force a rebuild rather than keep an unreachable tree
+            return false;
+        }
+    }
     UE_LOGI("server_browser_native: screen built (root=%p list=%p) after %d attempt(s)",
             root, list, g_buildAttempts + 1);
     return true;
@@ -318,33 +356,9 @@ bool BuildScreen(void* switcher) {
 
 void Show() {
     if (!g_switcher || !g_root || g_shown) return;
+    // The index was proven when the screen was BUILT and attached; if that had failed,
+    // `g_root` was cleared and we never get here.
     g_priorIndex = U::SwitcherIndex(g_switcher);
-    if (g_ourIndex < 0) {
-        // ASK THE PANEL WHERE OUR WIDGET IS. Do not infer it from the child count.
-        //
-        // This was `AddChild(...); g_ourIndex = ChildCount(...) - 1;` -- correct only while
-        // two things hold that nothing checks: that the add SUCCEEDED, and that nothing is
-        // appended after us. `AddChild`'s return value was discarded, so a failed add left
-        // `g_ourIndex` naming the LAST OF THE GAME'S OWN SCREENS, cached for the menu's
-        // life. MEASURED 2026-08-30, hands-on: clicking MULTIPLAYER opened VOTV's Stats
-        // panel, and the log said `shown (index 0 -> 10)` where a healthy run says 11.
-        //
-        // Two screens of ours now add to this one switcher, so "last child" is an assumption
-        // about a container we no longer own alone. `GetChildIndex` answers the question
-        // that was actually being asked, and answers it about OUR widget.
-        void* slot = U::AddChild(g_switcher, g_root);
-        g_ourIndex = U::IndexOfChild(g_switcher, g_root);
-        if (g_ourIndex < 0) {
-            // FAIL CLOSED. Activating an index we cannot prove is ours means showing one of
-            // the game's screens from our button -- which is worse than doing nothing,
-            // because it looks like the menu is broken rather than like we are.
-            UE_LOGE("%s: could not place %s in the menu switcher (AddChild slot=%p, "
-                    "GetChildIndex=-1). NOT switching: activating an unproven index would "
-                    "open one of the game's own screens.", "server_browser_native", "the server browser", slot);
-            ue_wrap::log::Flush();
-            return;
-        }
-    }
     // The screen stays ATTACHED for the menu's life -- a switcher renders only its active
     // child, so an inactive 12th child costs nothing, and rebuilding N rows on every open
     // would churn GC for no reason. Only the index moves.
@@ -445,10 +459,31 @@ void OnMenuTick(void* menu, void* switcher) {
     if (!g_root) {
         if (!BuildScreen(switcher)) return;
         if (AutoOpenArmed()) {
-            UE_LOGW("server_browser_native: [dev] browser_autoopen=1 -- showing without a click");
-            Open();
-            selftest::Arm();
+            // THE AUTOOPEN DELIBERATELY DOES **NOT** OPEN ON THIS TICK, AND THAT IS THE
+            // WHOLE POINT OF THE DELAY.
+            //
+            // It used to call Open() here, in the same tick that built the screen -- which
+            // made every automated run take a path no player can take, and hid a real bug
+            // for days: the tree was attached to the switcher lazily on first Show, so
+            // between the build and a human's click it was an unreferenced UObject graph
+            // that GC collected. Opening immediately left no gap for GC, so the lab was
+            // green while the shipped button opened VOTV's Stats panel and then, once the
+            // index was proven, did nothing at all.
+            //
+            // So the dev path now walks the same shape a person does: build, force a
+            // collection, let ticks pass, THEN open. An instrument that only exercises the
+            // privileged timing is an instrument blind to the phenomenon, and this project
+            // has a lesson by that name.
+            UE_LOGW("server_browser_native: [dev] browser_autoopen=1 -- forcing a GC and "
+                    "opening in %d ticks, so the lab walks the same build-then-click gap a "
+                    "player does", kAutoOpenDelayTicks);
+            E::ForceGarbageCollection();
+            g_autoOpenIn = kAutoOpenDelayTicks;
         }
+    }
+    if (g_autoOpenIn > 0 && --g_autoOpenIn == 0) {
+        Open();
+        selftest::Arm();
     }
     g_menu = menu;
 
