@@ -123,7 +123,28 @@ bool WriteBool(void* obj, const BoolField& f, bool v) {
 int32_t g_batteryOff = -1;
 int32_t g_dirtOff    = -1;
 int32_t g_dirtVelOff = -1;
+// THE VALUE THE TICK GATES ITS SUSPENSION ON -- and the one nothing had ever read.
+// ExecuteUbergraph_ATV expr 1228-1229 is `Array_Contains(wheelsOnSurface, ..)` -> EX_JumpIfNot
+// guarding expr 1230-1237, which ends in `mesh.AddForce(GetUpVector * ..)`; the same test at
+// 1198-1202 picks the SelectFloat that becomes SetMassScale on backWheelRoot/frontWheel_L/R.
+// The array is written from inside the WHEEL ComponentHit segments (exprs 366-379 and 577-586,
+// beside processTire and checkAirtime) -- i.e. by the very delegates atv_hit_guard cancels on
+// every non-owner. If a mirror's count is 0 while its author's is not, the mirror is a rig
+// whose suspension WE switched off, and every pose correction this lane makes is being applied
+// to a vehicle that is already sitting wrong.
+int32_t g_wheelsOnSurfaceOff = -1;   // TArray: Num is the int32 at +8
+int32_t g_airtimeOff         = -1;
+int32_t g_tirescountOff      = -1;
 bool    g_offsResolved = false;
+
+// TArray<T>::Num without caring about T: {void* Data; int32 Num; int32 Max}. -1 = unreadable,
+// which MUST print differently from 0 -- "identical on both peers" and "unreadable on both
+// peers" are the two readings a census like this most easily confuses (a bare 0 would read as
+// the finding we are looking for even when the offset failed to resolve).
+int32_t ArrayNum(void* obj, int32_t off) {
+    if (!obj || off < 0) return -1;
+    return *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(obj) + off + 8);
+}
 
 void* g_partsFn = nullptr;   // ATV_C::vehicleGetParts (8 out-params, no in-params)
 
@@ -143,6 +164,9 @@ bool ResolveOffsets() {
     g_batteryOff = R::FindPropertyOffset(cls, L"battery");
     g_dirtOff    = R::FindPropertyOffset(cls, L"dirt");
     g_dirtVelOff = R::FindPropertyOffset(cls, L"dirtVel");
+    g_wheelsOnSurfaceOff = R::FindPropertyOffset(cls, L"wheelsOnSurface");
+    g_airtimeOff         = R::FindPropertyOffset(cls, L"airtime");
+    g_tirescountOff      = R::FindPropertyOffset(cls, L"tirescount");
     g_partsFn    = R::FindFunction(cls, L"vehicleGetParts");
     g_torqOff    = R::FindPropertyOffset(cls, L"torqAlpha");
     g_speedOff   = R::FindPropertyOffset(cls, L"speed");
@@ -292,6 +316,14 @@ void SampleOne(void* atv, size_t idx) {
 
     CensusRigComponents(atv);
 
+    // wos: how many wheels the rig believes are touching a surface (the suspension gate).
+    // mass: the root body's, so a "the mirror is configured differently" reading is available
+    // in the same line rather than needing a second run.
+    const int32_t wos      = ArrayNum(atv, g_wheelsOnSurfaceOff);
+    const float   airtime  = ReadFloat(atv, g_airtimeOff);
+    const float   tirescnt = ReadFloat(atv, g_tirescountOff);
+    const float   mass     = ue_wrap::engine::GetActorRootMass(atv);
+
     const float fuel    = ue_wrap::atv::GetFuel(atv);
     const float health  = ue_wrap::atv::GetHealth(atv);
     const float battery = ReadFloat(atv, g_batteryOff);
@@ -314,13 +346,22 @@ void SampleOne(void* atv, size_t idx) {
         UE_LOGI("[ATVP] n=%u i=%zu key='%ls' driven=%d owns=%d occ=%p "
                 "body=(%.1f,%.1f,%.1f) rot=(%.1f,%.1f,%.1f) "
                 "vel=(%.1f,%.1f,%.1f) angv=(%.1f,%.1f,%.1f) "
-                "partZ=(%.1f,%.1f,%.1f) "
+                "partZ=(%.1f,%.1f,%.1f) rideH=%.2f "
+                "wos=%d airtime=%.2f tirescnt=%.1f mass=%.1f "
                 "susFR=%.3f susFL=%.3f susBK=%.3f "
                 "fuel=%.3f batt=%.3f dirt=%.4f dirtVel=%.4f hp=%.2f",
                 g_sample, idx, key.c_str(), driven ? 1 : 0, ownsTick ? 1 : 0, occ,
                 bodyL.X, bodyL.Y, bodyL.Z, bodyR.Pitch, bodyR.Yaw, bodyR.Roll,
                 velL.X, velL.Y, velL.Z, velA.X, velA.Y, velA.Z,
                 frL.Z, flL.Z, bkL.Z,
+                // RIDE HEIGHT: the body's Z above the mean of its own three rig bodies. This is
+                // the term susFR/FL/BK cannot express -- they are 3-D distances over a ~92 cm
+                // mostly-HORIZONTAL arm, so a 40 cm VERTICAL deformation moves them by ~1.1 cm,
+                // inside the "2-4 cm of normal travel" band the acceptance arm is built on. The
+                // lane graded itself green on a quantity ~36x blind to the only axis that ever
+                // failed. Computed here, in the sample, so no consumer can forget it.
+                bodyL.Z - (frL.Z + flL.Z + bkL.Z) / 3.f,
+                wos, airtime, tirescnt, mass,
                 dFR, dFL, dBK, fuel, battery, dirt, dirtVel, health);
     } else {
         ue_wrap::FVector loc{}; ue_wrap::FRotator rot{};
@@ -328,10 +369,12 @@ void SampleOne(void* atv, size_t idx) {
         UE_LOGI("[ATVP] n=%u i=%zu key='%ls' driven=%d owns=%d occ=%p "
                 "body=(%.1f,%.1f,%.1f) rot=(%.1f,%.1f,%.1f) "
                 "vel=(%.1f,%.1f,%.1f) angv=(%.1f,%.1f,%.1f) NOPARTS "
+                "wos=%d airtime=%.2f tirescnt=%.1f mass=%.1f "
                 "fuel=%.3f batt=%.3f dirt=%.4f dirtVel=%.4f hp=%.2f",
                 g_sample, idx, key.c_str(), driven ? 1 : 0, ownsTick ? 1 : 0, occ,
                 loc.X, loc.Y, loc.Z, rot.Pitch, rot.Yaw, rot.Roll,
                 velL.X, velL.Y, velL.Z, velA.X, velA.Y, velA.Z,
+                wos, airtime, tirescnt, mass,
                 fuel, battery, dirt, dirtVel, health);
     }
 }

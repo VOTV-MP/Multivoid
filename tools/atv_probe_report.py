@@ -53,6 +53,13 @@ LINE = re.compile(
     # partZ = the four rig bodies' world Z. Also optional: pre-2026-08-30 runs have none.
     r"(?:angv=\((?P<ax>[-\d.]+),(?P<ay>[-\d.]+),(?P<az>[-\d.]+)\) )?"
     r"(?:partZ=\((?P<pfr>[-\d.]+),(?P<pfl>[-\d.]+),(?P<pbk>[-\d.]+)\) )?"
+    # RIDE HEIGHT and the rig-config census, added 2026-08-30. Optional for the same reason as
+    # the two groups above -- and adding them WITHOUT this the first time made every sample of a
+    # fresh run unparseable, which this script then reported as "probe off, no ATV found": a
+    # format change to a log line owes a census of its readers, and this file is one.
+    r"(?:rideH=(?P<ride>[-\d.]+) )?"
+    r"(?:wos=(?P<wos>-?\d+) airtime=(?P<air>[-\d.]+) tirescnt=(?P<tcnt>[-\d.]+) "
+    r"mass=(?P<mass>[-\d.]+) )?"
     r"(?:susFR=(?P<fr>[-\d.]+) susFL=(?P<fl>[-\d.]+) susBK=(?P<bk>[-\d.]+) |(?P<noparts>NOPARTS )?)"
     r"fuel=(?P<fuel>[-\d.]+) batt=(?P<batt>[-\d.]+) dirt=(?P<dirt>[-\d.]+) "
     r"dirtVel=(?P<dv>[-\d.]+) hp=(?P<hp>[-\d.]+)")
@@ -562,6 +569,61 @@ def acceptance(names, peers, logs):
                     if r["owns"] and r["t"] is not None:
                         owners.setdefault((key, r["t"]), set()).add(nm)
         clashes = {k: v for k, v in owners.items() if len(v) > 1}
+        # ---- A7: RIDE HEIGHT, the term susFR/FL/BK cannot express ----------------------------
+        # susFR/FL/BK are 3-D distances from a wheel to the body over a ~92 cm mostly-HORIZONTAL
+        # arm, so a 40 cm VERTICAL deformation moves them ~1.1 cm -- inside the "2-4 cm of normal
+        # suspension travel" band A1 grades against. The lane passed A1 on every run in which A2
+        # failed, on the same rig, for exactly that reason. Ride height is body Z above the mean of
+        # the rig's own three bodies: purely local, so it is comparable across peers even where they
+        # disagree about the world, and it is signed, so "the body is UNDER its own wheels" is a
+        # number rather than an interpretation.
+        # GRADE THE DIFFERENCE BETWEEN PEERS, NOT AN ABSOLUTE BAND. The first version of this arm
+        # asserted 8..26 cm because a settled author had read +16.8..+18.0 -- and then four
+        # single-variable runs read +19.2, +16.8, +4.2 and -0.3 for a HEALTHY author, because the
+        # rig's parked attitude differs per run. An absolute band on a quantity that legitimately
+        # varies needs a guard against honest variation, and the guard is what hides the case the
+        # arm exists for: exactly the lesson A6 was rewritten for one day earlier, repeated here
+        # one arm later. The DEFECT is the two copies of ONE vehicle holding different shapes, and
+        # that subtracts the variation out.
+        RIDE_GAP_MAX = 8.0   # measured: 0.12 / 0.61 cm when nothing deforms the mirror;
+                             # 19.05 / 40.52 cm when the collision guard does.
+        rides = {}
+        for nm, peer in zip(names, peers):
+            for key, rows in sorted(peer.items()):
+                def still(x):
+                    # The sample's OWN root velocity, not the ARM line's speed= (a different
+                    # regex, a different record). Absent on a pre-2026-08-30 archive, in which
+                    # case the sample cannot be judged and is skipped rather than assumed still.
+                    if x.get("vx") is None:
+                        return False
+                    return (x["vx"] ** 2 + x["vy"] ** 2 + x["vz"] ** 2) ** 0.5 < 5.0
+                settled = [s for s in rows[-12:] if s.get("ride") is not None and still(s)]
+                if len(settled) < 4:
+                    continue
+                ride = sorted(s["ride"] for s in settled)[len(settled) // 2]
+                rides.setdefault(key, []).append((nm, int(settled[-1]["owns"]), ride))
+        for key, seen in sorted(rides.items()):
+            for nm, owns, ride in seen:
+                print("  A7 ride height {} key='{}' owns={} median={:+.2f} cm".format(
+                    nm, key, owns, ride))
+            if len(seen) < 2:
+                notes.append("A7 {}: only one peer reported a settled ride height -- the arm "
+                             "compares the two copies, so it cannot judge".format(key))
+                continue
+            lo = min(r for _, _, r in seen)
+            hi = max(r for _, _, r in seen)
+            gap = hi - lo
+            print("  A7 rig-shape agreement key='{}' spread={:.2f} cm  {}".format(
+                key, gap, "PASS" if gap <= RIDE_GAP_MAX else "FAIL"))
+            if gap > RIDE_GAP_MAX:
+                fails.append(
+                    "A7 key='{}' the two copies of one vehicle hold DIFFERENT SHAPES: their bodies "
+                    "sit {:.2f} cm apart relative to their own wheel planes ({}) > {:.0f}. A pose "
+                    "lane cannot fix a rig that is the wrong shape -- whatever deformed it is "
+                    "upstream of every correction.".format(
+                        key, gap, ", ".join("{}={:+.2f}".format(n, r) for n, _, r in seen),
+                        RIDE_GAP_MAX))
+
         print("  A4 single-syncer: {} second(s) with >1 owner  {}".format(
             len(clashes), "PASS" if not clashes else "FAIL"))
         if clashes:
@@ -604,7 +666,13 @@ def archive(paths, names):
     except OSError as e:
         print("  (archive skipped: {})".format(e))
         return None
-    keep = re.compile(r"\[ATVP\]|^\[[\d:]+\] \[\w+ *\] atv[:_]|atv_probe|hit guard")
+    # WHAT AN ARCHIVE IS FOR: being readable after the live log is gone. This filter dropped every
+    # [ATVC] line for its whole life -- the corrector instrument added 2026-08-30, the one that
+    # records the value this lane WRITES -- because the alternation only admits a message starting
+    # `atv:`/`atv_` or containing [ATVP], and `[ATVC] NUDGE ...` is neither. All seven archives on
+    # disk have zero of them, so 16's quoted wire velocities were reproducible only from a live log
+    # that the next run overwrites. Match the instrument TAGS as a family, not one of them by name.
+    keep = re.compile(r"\[ATV[A-Z]\]|^\[[\d:]+\] \[\w+ *\] atv[:_]|atv_probe|hit guard")
     manifest = ["run archived {}".format(stamp), ""]
     for nm, p in zip(names, paths):
         dst = os.path.join(out, "{}.log".format(nm.lower()))

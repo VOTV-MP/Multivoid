@@ -26,12 +26,26 @@ HDR = "==== Multivoid log ====\n"
 ARMED = "[19:54:40] [INFO ] atv: hit guard armed -- 7/7 ComponentHit delegates intercepted\n"
 
 
-def line(t, n, key, driven, owns, x, y, z, fr, fl, bk):
+def line(t, n, key, driven, owns, x, y, z, fr, fl, bk, ride=None):
+    """`ride` opts the sample into the A7 (ride-height) arm.
+
+    Left None the sample carries no vel=/partZ=/rideH= at all, which is what every archive
+    before 2026-08-30 looks like -- and A7 must SKIP those rather than judge them, so the
+    default here is also a negative control for that.
+    """
+    extra = ""
+    if ride is not None:
+        # A7 reads the sample's own velocity to decide "settled", so a still rig must say so.
+        wheel_z = z - ride
+        extra = ("vel=(0.0,0.0,0.0) angv=(0.0,0.0,0.0) "
+                 "partZ=({0:.1f},{0:.1f},{0:.1f}) rideH={1:.2f} "
+                 "wos=4 airtime=0.00 tirescnt=0.0 mass=2000.0 ").format(wheel_z, ride)
     return ("[{}] [INFO ] [ATVP] n={} i=0 key='{}' driven={} owns={} occ=0x1 "
             "body=({:.1f},{:.1f},{:.1f}) rot=(0.0,0.0,0.0) "
+            "{}"
             "susFR={:.3f} susFL={:.3f} susBK={:.3f} "
             "fuel=100.000 batt=100.000 dirt=0.0000 dirtVel=0.0000 hp=100.00\n"
-            ).format(t, n, key, driven, owns, x, y, z, fr, fl, bk)
+            ).format(t, n, key, driven, owns, x, y, z, extra, fr, fl, bk)
 
 
 def write(path, rows, armed=True, counters=None):
@@ -256,6 +270,37 @@ def main():
     hs, cs = healthy()
     hs = hs + [armline(stamp(52), "driving", gates(brake=1, torq=0.0)),
                armline(stamp(53), "driving", gates(brake=1, torq=0.0))]
+    # ---- A7 ------------------------------------------------------------------------------
+    # THE ARM THAT WOULD HAVE CAUGHT IT. Every archived run in which A2 failed also had the
+    # mirror's body sitting UNDER its own wheel plane, and A1 -- which grades the same rig from
+    # susFR/FL/BK, 3-D distances over a ~92 cm mostly-horizontal arm -- called it normal
+    # breathing, because a 40 cm vertical deformation moves those by ~1.1 cm. A1 passing while
+    # A2 failed, on the same vehicle, for six runs, is what an instrument blind to the failing
+    # axis looks like from the inside.
+    def rig(ride_host, ride_client):
+        hs, cs = [], []
+        for i in range(12):
+            t = stamp(40 + i)
+            hs.append(line(t, i, "ATV", 0, 1, 100.0, 0.0, 500.0,
+                           93.773, 93.773, 71.914, ride=ride_host))
+            cs.append(line(t, i, "ATV", 0, 0, 100.3, 0.0, 500.0 - (ride_host - ride_client),
+                           93.773, 93.773, 71.914, ride=ride_client))
+        return hs, cs
+
+    arm("A7 RED: mirror's body is UNDER its own wheels", "FAIL",
+        run(*rig(16.81, -23.71)))
+    arm_text("A7 RED names the deformation, not the gap", "FAIL",
+             run(*rig(16.81, -23.71)), "hold DIFFERENT SHAPES")
+    # The overall verdict on this fixture is INCONCLUSIVE (it has no driven=1 sample, so the
+    # mirror arms cannot judge) -- which is the honest verdict and NOT what this arm is about.
+    # Assert the A7 LINE instead: a rig at the natural ride height must not be called deformed.
+    arm_text("A7 guard: a rig at the natural ride height is not deformed", "INCONCLUSIVE",
+             run(*rig(16.81, 16.60)), "rig-shape agreement key='ATV' spread=0.21 cm  PASS")
+    # A run with no rideH at all is EVERY archive before 2026-08-30. A7 must stay silent on it
+    # rather than read a missing field as zero -- a 0.00 would look exactly like a collapsed rig.
+    arm_text("A7 skips a pre-2026-08-30 archive", "PASS",
+             run(*healthy()), "A1 ")
+
     arm_text("attrib: seated but ZERO torque", "PASS", run(hs, cs),
              "produced ZERO torque")
 
