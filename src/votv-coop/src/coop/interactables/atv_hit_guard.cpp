@@ -84,8 +84,10 @@ namespace R = ue_wrap::reflection;
 // WHAT THIS COSTS, stated rather than hidden: a mirror now runs processTire(), so it burns its
 // own tire durability and can ejectWheel() a tire its author still has. That is a real divergence
 // and it is narrower than the one it replaces -- but the RIGHT fix for it is not to re-suppress
-// the handler, it is to put tire durability on the wire under the author, the way `health`
-// already is. Filed in docs/vehicles/ATV.md 17.
+// the handler, it is to put tire durability on the wire under the author. (This comment used to
+// end "the way `health` already is" -- FALSE when written: no ATV health ever rode the wire,
+// atv_sync had zero health mentions. v147's condition block now carries BOTH, which is the fix
+// the sentence was gesturing at.) Filed in docs/vehicles/ATV.md 17; built as 17.17.
 //
 // The predicate cannot read g_atvs: the interceptor contract does not promise the game thread.
 // Instead Tick publishes the small set of ATVs THIS peer owns the tick for into an atomic array,

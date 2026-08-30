@@ -47,6 +47,8 @@
 
 #include "coop/interactables/atv_sync.h"
 #include "coop/interactables/atv_corrector.h"
+#include "coop/dev/atv_eject_drill.h"
+#include "coop/interactables/atv_condition_sync.h"
 #include "coop/interactables/atv_hit_guard.h"
 #include "coop/interactables/atv_sync_internal.h"
 
@@ -91,7 +93,7 @@ constexpr uint64_t kIdleSendMs  = 200;  // 5 Hz idle-syncer ceiling -- AND only 
 // is structurally blind to the receiver: with the rig simulating on every peer, a mirror can roll
 // or slide while the host's copy is parked, and a gate that has fallen silent never corrects it.
 // The same blindness makes a DROPPED connect snapshot permanent for an idle ATV. So the gate
-// lowers the rate; this floor keeps it non-zero. 84 bytes every 2 s per ATV.
+// lowers the rate; this floor keeps it non-zero. 148 bytes every 2 s per ATV (v147).
 constexpr uint64_t kIdleKeepaliveMs = 2000;
 
 // The idle-syncer change gate, CUnoccupiedVehicleSync::WriteVehicleInformation:295-350 in our
@@ -262,6 +264,10 @@ bool ReadPayload(void* actor, const std::wstring& key, uint8_t occupantSlot, uin
     if (grabbed)            sb |= 0x4;
     p.stateBits = sb;
     p.adopt = adopt ? 1 : 0;
+    // v147: the condition block (tires/spare/dirt/fuel/health). ONE fill site by design --
+    // authority, idle syncer and adopt seed all pass through here, so the lane cannot fork.
+    // On a failed read the block stays memset-zero with tiresValid=0 (receivers touch nothing).
+    coop::atv_condition_sync::FillPayload(actor, p);
     return true;
 }
 
@@ -459,6 +465,10 @@ void Install(coop::net::Session* session) {
     // GUObjectArray + spam the log every tick (the Tick's throttled rebuild owns ongoing indexing).
     if (!g_installed && A::EnsureResolved()) {
         RegisterWithScanHub();  // the hub builds the index on its own cadence
+        // Audit MINOR-5: warm the condition layout HERE (ATV_C is proven resident by the
+        // EnsureResolved above), so the one-shot resolve -- 4 uncached FindFunction walks,
+        // ~5-7 ms -- lands at session setup instead of inside the first 20 Hz apply frame.
+        ue_wrap::atv_condition::Resolve();
         coop::atv_hit_guard::InstallHitGuard();      // the seven ComponentHit interceptors -- Tick refuses to run without them
         SubscribeDepartures();  // a departed author must not hold an ATV hostage
         g_installed = true;
@@ -468,7 +478,7 @@ void Install(coop::net::Session* session) {
 // A peer may name ITSELF as an ATV's holder, never anyone else. `authorSlot` is not a report,
 // it is what elects the idle syncer and what every other peer's E-press deny reads -- so an
 // unattributed one is an authority ASSERTION, which COOP_SYNCER_MODEL 2b forbids ("authority is
-// assigned and never asserted"). Without this, one 84-byte packet per second from any client
+// assigned and never asserted"). Without this, one 148-byte packet per second from any client
 // pins an empty ATV as occupied for everyone, forever, and stops the host from ever syncing it.
 //
 // The bound is CLIENT-SCOPED on purpose (the standing rule: the host may cheat and we relay it).
@@ -538,6 +548,11 @@ void OnReliable(const coop::net::AtvStatePayload& payload, uint8_t senderPeerSlo
     // idle ATV" and "mirror an authored ATV" cases needed different physics states, and the state
     // machine between them is where the release defect lived.
     coop::atv_corrector::ApplyCorrection(e, payload, /*snap*/ payload.adopt != 0);
+    // v147: the condition block applies AFTER the pose correction, behind the same gates
+    // (the author early-return above means an author never applies; SenderMaySpeakFor has
+    // already refused impostors). Presence consumption is further gated inside on
+    // senderPeerSlot == 0 -- see atv_condition_sync.h for why that split is load-bearing.
+    coop::atv_condition_sync::ApplyPayload(e, payload, senderPeerSlot);
 }
 
 void OnAtvRelease(const coop::net::AtvReleasePayload& payload, uint8_t senderPeerSlot) {
@@ -738,6 +753,8 @@ void Tick() {
         // TICK OWNERSHIP -- a different question from pose authority, and the only thing that
         // decides whose machine runs this rig's brain.
         const bool ownsTick = OwnsTickFor(authority, isHost, e.authorSlot);
+        // v147 acceptance instrument (env-gated, once per process, RULE-2-exempt diagnostic).
+        coop::atv_eject_drill::MaybeFire(e.actor, kv.first.c_str(), nowMs, isHost, authority, ownsTick);
         if (ownsTick) {
             if (ownedN < coop::atv_hit_guard::kMaxOwned) {
                 owned[ownedN++] = e.actor;
@@ -755,8 +772,10 @@ void Tick() {
                 e.lastSentMs = nowMs;
                 coop::net::AtvStatePayload p{};
                 const uint8_t occSlot = isDriver ? localSlot : uint8_t{0xFF};  // grabber: no seated driver
-                if (ReadPayload(e.actor, kv.first, occSlot, localSlot, /*adopt*/false, p, /*grabbed*/isGrabber))
+                if (ReadPayload(e.actor, kv.first, occSlot, localSlot, /*adopt*/false, p, /*grabbed*/isGrabber)) {
                     s->SendReliable(coop::net::ReliableKind::AtvState, &p, sizeof(p));
+                    coop::atv_condition_sync::NoteSent(e, p);  // keep the idle gate's baseline fresh across a drive->idle handoff
+                }
             }
         } else if (ownsTick) {
             // THE IDLE SYNCER (host, nobody driving). MTA's CUnoccupiedVehicleSync: a slower
@@ -769,13 +788,18 @@ void Tick() {
                 // gate is meant to make free, so the gate reads open every frame and the branch
                 // runs its five UFunction dispatches at the pump rate instead of at 5 Hz.
                 e.lastSentMs = nowMs;
+                // v147: the payload is built BEFORE the gate so the CONDITION block can vote.
+                // Pose-only gating would make a parked host eject (mask flip, zero motion)
+                // wait out the 2 s keepalive -- qf round 1's IdleWorthSending finding.
+                coop::net::AtvStatePayload p{};
+                const bool readable  = ReadPayload(e.actor, kv.first, e.occupantSlot, /*authorSlot*/0xFF, /*adopt*/false, p);
                 const bool changed   = IdleWorthSending(e);
+                const bool condMoved = readable && coop::atv_condition_sync::CondChangedSinceLastSend(e, p);
                 const bool keepalive = nowMs - e.lastIdleSendMs >= kIdleKeepaliveMs;
-                if (changed || keepalive) {
+                if (readable && (changed || condMoved || keepalive)) {
                     e.lastIdleSendMs = nowMs;
-                    coop::net::AtvStatePayload p{};
-                    if (ReadPayload(e.actor, kv.first, e.occupantSlot, /*authorSlot*/0xFF, /*adopt*/false, p))
-                        s->SendReliable(coop::net::ReliableKind::AtvState, &p, sizeof(p));
+                    s->SendReliable(coop::net::ReliableKind::AtvState, &p, sizeof(p));
+                    coop::atv_condition_sync::NoteSent(e, p);
                 }
             }
         }

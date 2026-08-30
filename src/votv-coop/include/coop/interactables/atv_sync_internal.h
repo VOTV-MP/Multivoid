@@ -8,6 +8,7 @@
 #pragma once
 
 #include "ue_wrap/core/types.h"
+#include "ue_wrap/devices/atv_condition.h"
 
 #include <chrono>
 #include <cmath>
@@ -40,6 +41,18 @@ struct AtvEntry {
                                    // pose, so the very next packet is the one most likely to be
                                    // in band, which zeroes the count. Measured 2026-08-30: the
                                    // "bounded at three" give-up fired three times in 46 s.
+    // ---- v147 condition lane (atv_condition_sync.cpp mutates these on ONE entry) ----
+    // The LAST-EXPRESSED baseline: the condition state as of the last time each reducer verb
+    // ran (or the actor's own state at the first apply -- seeded from the ACTOR, never zero:
+    // a zero seed would fire updTires' BreakConstraint x8 on a settled correct rig, and a
+    // baseline advanced per packet would starve updDirt forever on slow drift; qf rounds 3-4).
+    ue_wrap::atv_condition::Snapshot condExpressed{};
+    bool  condExpressedSeeded = false;
+    void* condExpressedActor  = nullptr;  // reseed when the entry repoints to a new actor
+    // Idle-syncer change gate, condition half: the payload's condition block as of the last
+    // ACTUAL send. Pose-only gating would make a parked host eject wait out the 2 s keepalive.
+    uint8_t lastSentCond[64] = {};
+    bool    haveLastSentCond = false;
     int      restReplaces = 0;     // re-places of a mirror whose author is at rest, WITHIN one
                                    // episode (see lastRestPlaceMs).
                                    // A corrector owes a convergence check on EVERY arm it has

@@ -11,6 +11,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
+#include "coop/interactables/atv_condition_sync.h"
 #include "coop/interactables/atv_corrector.h"
 #include "coop/interactables/atv_hit_guard.h"
 #include "coop/interactables/atv_sync.h"   // OwnsTick -- which SIDE of the mirror this sample is
@@ -624,6 +625,19 @@ void Tick(coop::net::Session& session, bool isHost) {
                 static_cast<unsigned long long>(cc.warps),
                 static_cast<unsigned long long>(cc.stallWarps),
                 static_cast<unsigned long long>(cc.restPlaces));
+        // v147 condition lane -- the acceptance arms' counters ((b)/(b2)/(d) read exactly
+        // these; they are OUR apply-site counts, blind to the game's own reducer callers).
+        const auto cd = coop::atv_condition_sync::ReadCounters();
+        UE_LOGI("[ATVP] condition applied=%llu verbs tires=%llu dirt=%llu spare=%llu health=%llu "
+                "presence-skipped-differing=%llu deferred=%llu invalid-blocks=%llu",
+                static_cast<unsigned long long>(cd.applied),
+                static_cast<unsigned long long>(cd.updTiresCalled),
+                static_cast<unsigned long long>(cd.updDirtCalled),
+                static_cast<unsigned long long>(cd.updSpareCalled),
+                static_cast<unsigned long long>(cd.updHealthCalled),
+                static_cast<unsigned long long>(cd.presenceSkippedDiffering),
+                static_cast<unsigned long long>(cd.deferred),
+                static_cast<unsigned long long>(cd.invalidBlocks));
     }
 
     // WHICH PEER DRIVES IS THE INI'S CALL, not this file's. The arm used to be host-only,
