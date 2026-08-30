@@ -144,6 +144,15 @@ constexpr int kWorldRead      = 236;
 constexpr int kWorldDown      = 238;
 constexpr int kWorldUp        = 242;
 constexpr int kWorldVerify    = 252;
+// ...and LAST, the hosting window's OWN X. Nothing had ever driven it, and on 2026-08-30
+// the user hit exactly that hole by hand: "нажал на host и там потом это окно закрыть на
+// крестик даже не смог". The browser's X got a phase on 2026-08-26 and was found broken
+// the moment it had one; its sibling kept the same untested chrome for four days. A window
+// a player cannot leave is worse than one that draws wrong.
+constexpr int kHostXMove      = 258;
+constexpr int kHostXDown      = 266;
+constexpr int kHostXUp        = 270;
+constexpr int kHostXVerify    = 278;
 
 // The forced offset for the positive control. Far past any real content extent, so a
 // getter that returns it UNCHANGED has told us it echoes the request rather than reading
@@ -1039,6 +1048,39 @@ void Tick(void* scrim, void* list, void* closeBtn) {
                         "first save row left SelectedSave() at %d (was %d). The rows draw "
                         "and cannot be picked, so this window can only ever start a NEW "
                         "game.", now, g_worldBefore);
+            g_selfCheckStep = kHostXMove - 1;   // on to the hosting window's own X
+            return;
+        }
+        case kHostXMove: {
+            void* x = ui::host_window_native::CloseButton();
+            ue_wrap::FVector2D tl{}, sz{};
+            if (!x || !U::WidgetScreenRect(x, tl, sz) || sz.X < 1.f) {
+                UE_LOGE("host_window_native: HOST X SKIP -- the close button %s, so whether "
+                        "a player can leave this window is UNMEASURED. That is not a pass.",
+                        x ? "has no readable rect" : "does not exist");
+                g_selfCheckStep = -1;
+                return;
+            }
+            PlaceCursorOnAbsolute(tl.X + sz.X * 0.5f, tl.Y + sz.Y * 0.5f);
+            UE_LOGW("host_window_native: HOST X at desktop (%.0f,%.0f) %.0fx%.0f -- clicking it",
+                    tl.X, tl.Y, sz.X, sz.Y);
+            break;
+        }
+        case kHostXDown:
+            ::mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+            break;
+        case kHostXUp:
+            ::mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+            break;
+        case kHostXVerify: {
+            if (!ui::host_window_native::IsOpen())
+                UE_LOGW("host_window_native: HOST X PASS -- a real click on the X closed the "
+                        "hosting window. A player who opens it can leave it.");
+            else
+                UE_LOGE("host_window_native: HOST X FAIL -- the window is STILL OPEN after a "
+                        "real press-release on the centre of the rect Slate reported for its "
+                        "close button. That is the 2026-08-30 field report reproduced: the "
+                        "only way out is ESC, and nothing on screen says so.");
             g_selfCheckStep = -1;
             return;
         }

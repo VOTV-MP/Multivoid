@@ -62,6 +62,11 @@ void Close();
 // every tick rather than assumed.
 bool IsOpen();
 
+// The window's own X, for the selftest to aim at. A seam rather than a guess at its
+// screen position: nothing had ever driven this button, and on 2026-08-30 a player found
+// out by hand that they could not leave the window with it.
+void* CloseButton();
+
 // Called from coop::multiplayer_menu's ui_menu_C::Tick post-observer, MAIN menu only.
 // Builds once per menu instance, fail-closed on donors.
 // WHICH WORLD IS CHOSEN (-1 = New game), HOW MANY there are to choose from, and the list

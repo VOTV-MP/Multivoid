@@ -3,6 +3,7 @@
 #include "ui/server_browser_native.h"
 
 #include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/session/session_manager.h"
 #include "coop/text/utf8_codec.h"       // the ONE owner of text encoding -- the footer
                                         // carries status text and click answers, both of
@@ -12,7 +13,7 @@
 #include "ui/native_screen.h"          // palette + widget primitives, shared with the host window
 #include "ui/server_browser_actions.h"   // CONNECT / HOST / REFRESH, its own TU
 #include "ui/server_browser_rows.h"      // the LIST -- rows, identity, hover, selection
-#include "ui/native_text_field.h"        // a focused field owns Escape
+#include "ui/native_text_field.h"        // AnyFocused() -- a focused field owns Escape
 #include "coop/dev/native_text_probe.h"   // the HALT rung: can a native field take text?
 #include "ui/server_browser_selftest.h"  // the dev phase machine; ships dark
 #include "ue_wrap/core/game_thread.h"
@@ -268,6 +269,12 @@ bool BuildScreen(void* switcher) {
             pad[0] = pad[1] = pad[2] = 0.f; pad[3] = kPadPx;
         }
     }
+    // NO TEXT INPUT ON THIS SCREEN (USER, 2026-08-30). A "Your name" box shipped here for
+    // one build alongside the address box, and the user cut both: "не нужен прям в нем
+    // ввод - это дизайн говно у сервер браузера". The nickname is still a real parity gap
+    // against the fallback surface; where it belongs is part of the browser redesign they
+    // deferred to the next session, and the parity gate carries it as a DECLARED
+    // divergence rather than letting it go quiet.
     // The column header is the LIST's, not the window's: it must agree with the row fill
     // weights or the columns do not line up, so one module owns both.
     rows::BuildHeader(col);
@@ -521,9 +528,7 @@ void OnMenuTick(void* menu, void* switcher) {
     // answer about a different tree.
     coop::dev::native_text_probe::Tick(rows::Panel());
 
-    // The action bar's own per-tick work (the address box's caret + its Enter edge).
-    // Above the `!g_shown` return so the field settles with the screen it lives on.
-    ui::server_browser_actions::Tick();
+
 
     if (!g_shown) return;
 
@@ -585,6 +590,10 @@ void OnMenuTick(void* menu, void* switcher) {
         const bool releaseEdge = !down && g_prevLmb;
         g_prevLmb = down;
         if (releaseEdge && ui::input_focus::IsOurWindowForeground()) {
+            // IsHovered, and it is RIGHT here: these are real UButtons and they answer.
+            // Converting them to geometry on 2026-08-30 turned a passing X into
+            // CLOSE BUTTON FAIL in one run -- the clearest possible evidence that the
+            // two widget kinds need the two different questions.
             if (g_closeBtn && E::WidgetIsHovered(g_closeBtn)) { Hide("X"); return; }
             if (g_backBtn  && E::WidgetIsHovered(g_backBtn))  { Hide("BACK"); return; }
             // The action bar BEFORE the rows: its buttons sit in the footer, outside the

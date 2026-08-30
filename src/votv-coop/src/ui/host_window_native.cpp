@@ -506,6 +506,15 @@ void PollChrome() {
     g_prevLmb = lmb;
     if (!released) return;
 
+    // TWO MECHANISMS, BECAUSE THERE ARE TWO KINDS OF WIDGET -- measured, after I got
+    // this wrong in both directions on 2026-08-30.
+    //
+    // A real UButton ANSWERS `IsHovered`; a hand-built UImage does not. I unified them
+    // on geometry believing the browser's passing X verdict (which printed `hovered=0`)
+    // proved IsHovered dead for buttons too. It did not -- that 0 is the selftest's own
+    // advisory read taken at a different instant -- and the unification turned a PASSING
+    // X into `CLOSE BUTTON FAIL`. Reverted here; the rows and the image targets keep
+    // geometry, which is the only thing that works for THEM.
     if (g_closeBtn && E::WidgetIsHovered(g_closeBtn)) { Hide("X"); return; }
     if (g_backBtn  && E::WidgetIsHovered(g_backBtn))  { Hide("BACK"); return; }
     if (g_hostBtn  && E::WidgetIsHovered(g_hostBtn))  { DoHost(); return; }
@@ -586,6 +595,8 @@ void Open()   { g_wantOpenMs.store(::GetTickCount64(), std::memory_order_relaxed
 void Close()  { g_wantOpenMs.store(0, std::memory_order_relaxed);
                 g_wantClose.store(true, std::memory_order_relaxed); }
 bool IsOpen() { return g_shown; }
+
+void* CloseButton() { return g_closeBtn; }
 
 int   SelectedSave()   { return SlotIndex(); }
 int   SaveRowCount()   { return g_visibleSaves; }   // shown, not the row vector's high-water mark

@@ -41,10 +41,6 @@ bool Build(void* footRow, void* donorBtn);
 // The release edge, not the press, for the reason the chrome uses it: these are real
 // UButtons, so the press drives Slate's own pressed visual and acting on the down edge
 // would tear the screen away from a button that never saw its own release.
-// Per-tick work the action bar owns: the address box's caret, its click-to-focus, and
-// the Enter edge that connects. Cheap when no field exists.
-void Tick();
-
 bool OnReleaseEdge();
 
 // Drop every widget pointer. Called when the menu instance dies, exactly like the browser's

@@ -72,17 +72,45 @@ void Repaint(Field* f) {
 
 Field* Create(void* parent, const wchar_t* hint, int32_t maxLen, float widthPx) {
     if (!parent) return nullptr;
-    void* box = NS::AddFramedBox(parent, NS::RowBg(), 2.f);
+
+    // A REAL SizeBox CARRIES THE WIDTH, and the frame goes INSIDE it.
+    //
+    // The first version called `SetSizeBoxWidth` on what `AddFramedBox` returns -- which
+    // is an OVERLAY, as its own comment says. That writes a float at a SizeBox's property
+    // offset into an object that has no such property, and the game paid for it three
+    // frames later: `PE detour-outer-callback AV caught -- function='SpawnObject' ...
+    // 0xC0000005` three times over, then the whole action bar failing to build
+    // (`refresh=0 host=0 connect=0`) because the next spawns landed in corrupted memory.
+    // The crash was NOT at the write; a wrong-offset write never is.
+    void* sizer = NS::Spawn(L"SizeBox", parent);
+    if (!sizer) return nullptr;
+    if (widthPx > 0.f) U::SetSizeBoxWidth(sizer, widthPx);
+
+    void* box = NS::AddFramedBox(sizer, NS::RowBg(), 2.f);
     if (!box) return nullptr;
     // The frame is the hit target, so it must be a real Visible widget rather than the
     // HitTestInvisible chrome AddFramedBox gives its two images.
     E::SetWidgetVisibility(box, 0);
     void* tb = NS::AddText(box, hint ? hint : L"", NS::kBtnFontPx, NS::Dim(), NS::kLeft, 0.f);
     if (!tb) return nullptr;
-    if (widthPx > 0.f) U::SetSizeBoxWidth(box, widthPx);
+    // CLIP TO THE BOX. `AddText` only sets clipping for a FILL slot, and this one is
+    // auto-sized, so a value longer than the field painted straight out of its own frame
+    // and across whatever sat beside it. The user saw exactly that on the first build that
+    // shipped a field: "ебаный текст в ебаное окно ввода ip не помещается".
+    // EWidgetClipping::ClipToBounds = 1.
+    U::SetClipping(tb, 1);
+
+    // ATTACH, and attach at BIRTH. `AddFramedBox` spawns with `parent` as the OUTER but
+    // does not add the widget to it -- every other caller in this tree does its own
+    // AddChild, and the first version of this function did not. An unattached widget tree
+    // is GC food: it renders until the next collection and then vanishes, which this
+    // project has already paid for once with the MULTIPLAYER button
+    // (`[[lesson-an-unattached-widget-tree-is-gc-food]]`).
+    U::SetContent(sizer, box);
+    if (!U::AddChild(parent, sizer)) return nullptr;
 
     auto* f = new Field();
-    f->box    = box;
+    f->box    = sizer;   // the OUTERMOST widget -- what attaches, and what must be removed
     f->parent = parent;
     f->text   = tb;
     f->hint   = hint ? hint : L"";
@@ -213,7 +241,14 @@ bool RunSelftest() {
         if (!cond) { ++failed; UE_LOGE("native_text_field selftest FAIL: %s", what); }
     };
 
-    Field f;                      // no widgets: Repaint no-ops, the logic is untouched
+    // STATIC, not a stack local, and the reason is a real hazard rather than style:
+    // `Focus()` publishes this pointer into `g_focus`, which the WndProc detour reads from
+    // the GAME thread. A stack object would leave that global pointing at a dead frame the
+    // moment this function returned -- the window is microseconds and the detour is not
+    // even installed this early in boot, so it has probably never fired, but "probably
+    // never" is not a lifetime argument. A function-local static cannot dangle, and the
+    // final check below still proves the focus was released.
+    static Field f;               // no widgets: Repaint no-ops, the logic is untouched
     f.maxLen = 5;
     Focus(&f);
     ok(AnyFocused(), "focus is taken");

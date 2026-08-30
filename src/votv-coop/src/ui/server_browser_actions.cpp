@@ -5,7 +5,6 @@
 #include "ui/server_browser_native.h"   // the selection these act on, and the notice line
 #include "ui/host_window_native.h"      // what HOST opens
 #include "ui/native_screen.h"
-#include "ui/native_text_field.h"
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"           // BuildButton + the palette
@@ -25,7 +24,6 @@ namespace sm = coop::session_manager;
 namespace SB = ui::server_browser_native;
 
 void* g_connect = nullptr;
-ui::native_text_field::Field* g_addr = nullptr;   // the direct-IP box (MTA's per-tab address edit)
 void* g_host    = nullptr;
 void* g_refresh = nullptr;
 
@@ -40,31 +38,6 @@ const char* g_lastOutcome = "";
 // game's own, so their disabled appearance is whatever the donor happens to carry rather
 // than something we chose. Saying it in the footer costs one line and answers the question.
 void DoConnect() {
-    // AN ADDRESS BEATS A SELECTION, and the two share one button on purpose -- MTA wires
-    // its address edit and its Connect button to the SAME `OnConnectClick`
-    // (`CServerBrowser.cpp:489`). A second button would ask the player which kind of
-    // connecting they are doing, which is not a question they have.
-    //
-    // This is the door the user reported missing: "нету возможности нигде по айпи
-    // подключиться - НИГДЕ" (2026-08-30). `ConnectDirect` has always worked; it was
-    // reachable only from the ImGui browser, which stopped being the default that day.
-    if (g_addr) {
-        const std::string addr = ui::native_text_field::Text(g_addr);
-        if (!addr.empty()) {
-            // Remembered across launches, the same row the ImGui browser has always
-            // written -- so a player who used one surface finds their address in the other.
-            coop::config::WriteIniValue(::coop::config_registry::rows::browser_lastdirect,
-                                        addr.c_str());
-            if (sm::ConnectDirect(addr)) {
-                g_lastOutcome = "connect:direct";
-                SB::Close();
-            } else {
-                g_lastOutcome = "connect:badaddr";
-                SB::SetNotice("That address could not be used -- expected host or host:port.");
-            }
-            return;
-        }
-    }
     coop::net::lobby::LobbyRow row;
     if (!SB::SelectedRow(row)) {
         g_lastOutcome = "connect:none";
@@ -129,22 +102,18 @@ bool Build(void* footRow, void* donorBtn) {
     // "Duplicate save slot", "Back", "Save", "Reset". Ours shouted, which is the
     // single loudest way our chrome read as foreign. User report 2026-08-30:
     // "No caps at buttons ever."
-    // THE ADDRESS BOX FIRST, at the left of the actions: a player reads it before the
-    // buttons that act on it. It carries its own input because Slate will not deliver
-    // keystrokes into this tree -- measured, see ui/native_text_field.h.
-    g_addr = ui::native_text_field::Create(footRow, L"Enter an address [IP:Port]", 64, 300.f);
-    if (g_addr) {
-        // Seed from the remembered address so the common case -- reconnecting to the same
-        // friend -- is one click rather than one retype.
-        const std::string last =
-            coop::config::ResolveString(::coop::config_registry::rows::browser_lastdirect);
-        if (!last.empty() && last != "127.0.0.1:7777")
-            ui::native_text_field::SetText(g_addr, last);
-    } else {
-        UE_LOGW("server_browser_actions: the address field would not build -- direct-IP "
-                "connect is unreachable on this surface again, which is the exact defect "
-                "the 2026-08-30 report named. The list still works.");
-    }
+    // NO TEXT INPUT ON THIS SCREEN (USER, 2026-08-30). An address box shipped here for
+    // one build and the user cut it the moment they saw it: "ебаный текст в ебаное окно
+    // ввода ip не помещается - и нахуй оно там нужно вообще - это дизайн говно у сервер
+    // браузера - не нужен прям в нем ввод". Two separate things, and both stand: the field
+    // CLIPPED its own text (a real defect, fixed in the module), and a browser is not where
+    // connecting by address belongs. The second is a product call and it is theirs.
+    //
+    // DIRECT-IP CONNECT IS NOT CANCELLED, only evicted from here. `ConnectDirect` works and
+    // the fallback surface still reaches it; where the default surface offers it is part of
+    // the server-browser redesign the user deferred to the next session ("revise the design
+    // - в следующей сессии ... нужен дизайн сервер браузера как у людей без костылей").
+    // The parity gate carries it as a DECLARED divergence so it cannot be forgotten.
     g_refresh = NS::BuildButton(footRow, donorBtn, L"Refresh", NS::kBtnFontPx);
     g_host    = NS::BuildButton(footRow, donorBtn, L"Host",    NS::kBtnFontPx);
     g_connect = NS::BuildButton(footRow, donorBtn, L"Connect", NS::kBtnFontPx);
@@ -157,19 +126,12 @@ bool Build(void* footRow, void* donorBtn) {
     return true;
 }
 
-// Per-tick, from the browser's own observer. Drives the address box's caret and its
-// click-to-focus, and turns Enter into the same action the Connect button performs --
-// MTA's `SetTextAcceptedHandler(OnConnectClick)` shape, where committing the text and
-// pressing the button are one path rather than two that can drift.
-void Tick() {
-    if (!g_addr) return;
-    ui::native_text_field::Tick(g_addr);
-    if (ui::native_text_field::ConsumeSubmit(g_addr)) DoConnect();
-}
-
 bool OnReleaseEdge() {
     // Order matches nothing in particular -- the three rects do not overlap, so at most one
     // can answer. First hit wins and stops.
+    // IsHovered on real UButtons -- see the note in server_browser_native's chrome poll.
+    // These passed on IsHovered before and after a brief geometry conversion; the X did
+    // not survive it, so the mechanism stays split by WIDGET KIND, not by screen.
     if (g_connect && E::WidgetIsHovered(g_connect)) { DoConnect(); return true; }
     if (g_host    && E::WidgetIsHovered(g_host))    { DoHost();    return true; }
     if (g_refresh && E::WidgetIsHovered(g_refresh)) { DoRefresh(); return true; }
@@ -177,11 +139,6 @@ bool OnReleaseEdge() {
 }
 
 void Forget() {
-    // The field owns a heap handle and a slot in the focus registry, so it is DESTROYED
-    // rather than forgotten -- dropping the pointer would leak it and leave a dead entry
-    // that the WndProc seam still walks.
-    ui::native_text_field::Destroy(g_addr);
-    g_addr = nullptr;
     g_connect = g_host = g_refresh = nullptr;
 }
 

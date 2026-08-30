@@ -159,7 +159,7 @@ capture shows the frames). S8 was already correct. What remains open is listed u
 | S4 | **No hover.** The user's report. | label cells → `#FFFF00` on hover | **DONE** — `UpdateHover`; 2026-08-30 the row's FRAME turns `#FFFF00` too, see 5b |
 | S5 | **No selection.** No selected row exists yet at all. | row fill → `#400040` | **DONE** — keyed on `lobbyId`; 2026-08-30 it OUTRANKS hover, see 5b |
 | S6 | Column headers are dim grey. | orange `#FF7C00`, matching a section header | **DONE** |
-| S7 | The X / BACK buttons carry a cloned `button_back` style but authored white labels. | orange `#FF7C00` labels; BACK belongs bottom-**LEFT**, not bottom-right | **DONE** — BACK moved LEFT |
+| S7 | The X / BACK buttons carry a cloned `button_back` style but authored white labels. | orange `#FF7C00` labels; BACK belongs bottom-**LEFT**, not bottom-right | **DONE 2026-08-30** — both halves. BACK moved LEFT on 2026-08-26; the ORANGE half did not ship until now, while this row said DONE. The user found the residue by eye — *"кнопки какие-то жирные, совсем не как нативный votv"* — and it was never weight: `measured` from the captures, every native button label is the accent (`Hide all`, `Language`, `Binds`, `Back`, `Reset all`, `Apply`, `Fix mailbox`, every gamemode tab) and WHITE is reserved for the window title and body text. Scaled for capture size our glyphs carry LESS ink than the game's (114 vs 144 lit px); white on near-black is simply maximum contrast, so it reads bold. |
 | S8 | Version-mismatch tint is amber `#FFBC00`-ish by accident. | keep, but say so deliberately — amber is in the palette | **DONE** — kept, deliberately |
 | S9 | Status line is dim grey, free-floating. | white, in a bordered footer strip | **DONE** |
 

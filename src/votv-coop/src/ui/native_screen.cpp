@@ -199,7 +199,22 @@ void* BuildButton(void* parent, void* donorBtn, const wchar_t* label, int32_t fo
         }
     }
     if (void* t = Spawn(P::name::TextBlockClass, b)) {
-        U::StyleTextBlock(t, fontSize, Text(), kJustCenter);
+        // ORANGE, NOT WHITE, and this is the whole of "our buttons look bold".
+        //
+        // `measured` 2026-08-30 by sampling the user's own native captures: every button
+        // label in VOTV is the accent orange -- `Hide all`, `Language`, `Binds`, `Back`,
+        // `Reset all`, `Apply`, `Fix mailbox` on the Settings screen, and every gamemode
+        // tab -- while WHITE is reserved for the window TITLE and body text. The ink
+        // samples `#FF8900` off a compressed PNG against the palette's recorded `#FF7C00`;
+        // the palette wins, because inventing a shade from one crop is exactly the mistake
+        // VOTV_UI_STYLE.md section 7 already records against my own eye.
+        //
+        // The user read the difference as WEIGHT ("кнопки какие-то жирные"), and it is not:
+        // scaled for the capture sizes our glyphs carry LESS ink than the game's (114 vs
+        // 144 lit pixels over a comparable label). Pure white on near-black is simply the
+        // maximum contrast the panel can hold, so it reads heavy. Nothing about the face
+        // or the size changed here -- only the colour that made them shout.
+        U::StyleTextBlock(t, fontSize, Accent(), kJustCenter);
         E::SetWidgetText(t, label);
         U::SetContent(b, t);
         // SetContent created the UButtonSlot; centre the glyph and pad it out.
