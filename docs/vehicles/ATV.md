@@ -1659,6 +1659,53 @@ peer losing its connection is not part of this lane.
 destroy-at-birth needs to suppress the mirror's `sound_tireDamage`, or whether a phantom pop is
 acceptable; (5) the eject half, per the paragraph above.
 
+### 17.10 A TIRE lane is the wrong granularity (USER, 2026-08-30)
+
+Verbatim: *"atv состоит из многих вещей, которые еще не имеют своих sync lanes"* — the ATV is made of many
+things that do not have sync lanes yet. This is a reframe, and §10's own facet table settles it
+against everything §17.7-17.9 was heading toward.
+
+**Of the 16 facets that table lists, 3 are synced and 13 are not.** Tires are one row of the
+thirteen. But the count is not the argument — the *wire shape* column is:
+
+| facet | wire shape the table already specifies |
+|---|---|
+| `modules[]` | write array + `updUpgrades()` |
+| `battery` | poke + `updBattery()` |
+| `health` | poke + `updHealth()` |
+| `lights` / `brake` / `turbo` | poke + `Upd Lights()` / `setBrake()` |
+| `dirt`, `tiresDirt[]` | poke + `updDirt()` |
+| `tires[]`, `tiresDurability/Fixes/Types[]` | poke arrays + `updTires()` |
+| spare-tire trio | poke + `updSpareTire()` |
+| `fuel` | poke field |
+| `brokenn`, `empty`, `isDrive` | poke, or re-derive |
+| `trap`, `zapped`, `underwater` | poke |
+
+**Ten of the thirteen are "write the property, then (usually) call the game's own `upd*` reducer".**
+That is exactly the mechanism §17.7(d) measured for `updTires()` and reported as a find — and it was
+never a tire find. It is the shape of the whole class. The three that differ are the driver-body
+attach, the container (which already has its own lane), and `explode` (VFX only).
+
+**So the rule-of-three question I raised in §17.8 was asked at the wrong level.** I wrote that tires
+would be the second instance of `COOP_WORLD_PROP_DIVERGENCE`'s class with the first
+(`concreteBucket`) never built, and therefore that a generic channel was still forbidden. Within
+**one vehicle** there are seven reducer-backed instances plus three bare pokes. Building a
+tire-only lane is building one thirteenth of a mechanism our own documentation already describes as
+uniform, and then repeating it twelve times — which is the "same bug at the wrong level" smell
+`[[feedback-recurring-bug-is-architectural]]` names.
+
+**What this does NOT invalidate**, and it matters, because the measurements stand on their own:
+§17.9's observed divergence is real and is the first hard evidence any of this rests on; §17.5's
+per-peer random key mint still forecloses dedupe for any spawned prop; §17.8's finding that
+`processTire` is unhookable still forbids suppression-based designs. What changes is the UNIT of
+work: not "a tire lane" but **one ATV state lane carrying a curated property set, each entry naming
+its reducer**, with the discrete/persistent rows (tires, modules, spare, container) riding
+act-as-host intents on top of it.
+
+**Not designed yet, and deliberately not designed here.** The next `/qf` pass takes the vehicle-wide
+lane as its subject, not the tire row — and its brief must open with the facet table above rather
+than with `ejectWheel`.
+
 ### 17.6 Three things not to re-derive
 1. **Deleting the tick-off (`a2a45fc7`) did not move the number.** All six runs that read 25-40 cm
    are post-deletion; the pre-arc-1 measurement recorded in `atv_hit_guard.cpp` read 37 cm. Two
