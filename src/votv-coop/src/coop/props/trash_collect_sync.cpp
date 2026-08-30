@@ -309,6 +309,15 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
     std::wstring keyStr = ue_wrap::prop::GetInteractableKeyString(heldActor);
     if (!keyStr.empty() && keyStr != L"None" &&
         PT::GetPropElementIdForActor(heldActor) != coop::element::kInvalidId) {
+        // [ROCK-DROP DIAG 2026-07-08, RULE-2-exempt] "pose stream suffices" is a promise
+        // that ONLY holds while the prop is ACTIVELY held+streamed. A caller expressing a
+        // no-longer-streamed prop (a just-released/E-grab-then-idle prop) gets a false
+        // promise here -- nothing re-arms the stream. Log key+eid so a repro can tell a
+        // tracker-known DECLINE (this) from a never-received (client-spawn skip elsewhere).
+        UE_LOGI("[ROCK-DROP] EnsureHeldItemBroadcast DECLINE (tracker-known): cls='%ls' key='%ls' eid=%u "
+                "-- 'pose stream suffices' assumes an active stream; false if the prop is no longer held",
+                R::ClassNameOf(heldActor).c_str(), keyStr.c_str(),
+                static_cast<unsigned>(PT::GetPropElementIdForActor(heldActor)));
         return false;  // keyed AND tracker-known: the peer has it; pose stream suffices
     }
 
