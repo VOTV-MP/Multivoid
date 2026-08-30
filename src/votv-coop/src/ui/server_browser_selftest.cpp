@@ -194,6 +194,24 @@ int      g_listHovered       = -1;
 int      g_rowsSeen          = -1;
 bool     g_controlPassed     = false;
 int      g_closeHovered      = -1;   // -1 = not sampled; an unrun phase is not a NO
+// PLACE THE OS CURSOR ON A WIDGET, converting out of the widget's space first.
+//
+// `WidgetScreenRect` reports CLIENT pixels (Slate's LocalToAbsolute); `SetCursorPos`
+// takes DESKTOP pixels. SIX sites in this file handed the former straight to the
+// latter, under a comment asserting "Slate's absolute space is desktop pixels, the
+// same space SetCursorPos takes, so this needs no ClientToScreen and no DPI factor".
+// That was false -- and it is why every browser run passed for days while a player
+// could not click anything: production's hit test made the SAME mistake, so the two
+// errors cancelled and the instrument could not see the defect it existed to catch.
+// Measured 2026-08-30: client origin (320,180) on the lab rig, a whole list-height.
+// The seventh site (the X button) already converted, which is why the close-button
+// phase was the one that behaved.
+void PlaceCursorOnClient(float clientX, float clientY) {
+    POINT pt{static_cast<long>(clientX), static_cast<long>(clientY)};
+    if (HWND hwnd = ::GetActiveWindow()) ::ClientToScreen(hwnd, &pt);
+    ::SetCursorPos(pt.x, pt.y);
+}
+
 int      g_rowHovered        = -1;   // ...and the same for the row the click phase aims at
 int      g_worldBefore       = -2;   // -2 = unsampled; -1 is New game, a real value
 
@@ -602,8 +620,8 @@ void Tick(void* scrim, void* list, void* closeBtn) {
             }
             UE_LOGW("server_browser_native: %s at desktop (%.0f,%.0f) %.0fx%.0f -- clicking it",
                     what, tl.X, tl.Y, sz.X, sz.Y);
-            ::SetCursorPos(static_cast<int>(tl.X + sz.X * 0.5f),
-                           static_cast<int>(tl.Y + sz.Y * 0.5f));
+            PlaceCursorOnClient(tl.X + sz.X * 0.5f,
+                                tl.Y + sz.Y * 0.5f);
             break;
         }
         case kActRefDown:
@@ -660,8 +678,8 @@ void Tick(void* scrim, void* list, void* closeBtn) {
                 g_selfCheckStep = kClickMove - 1;   // fall through to the X phases
                 return;
             }
-            ::SetCursorPos(static_cast<int>(ltl.X + lsz.X * 0.5f),
-                           static_cast<int>(ltl.Y + kRowPx * 1.5f));
+            PlaceCursorOnClient(ltl.X + lsz.X * 0.5f,
+                                ltl.Y + kRowPx * 1.5f);
             break;
         }
         case kRowRead: {
@@ -784,8 +802,8 @@ void Tick(void* scrim, void* list, void* closeBtn) {
                 g_selfCheckStep = kClickMove - 1;
                 return;
             }
-            ::SetCursorPos(static_cast<int>(ltl.X + lsz.X * 0.5f),
-                           static_cast<int>(ltl.Y + kRowPx * (self ? 1.5f : 4.5f)));
+            PlaceCursorOnClient(ltl.X + lsz.X * 0.5f,
+                                ltl.Y + kRowPx * (self ? 1.5f : 4.5f));
             // The needle mp.py captures on. It names what the frame should show, so the
             // shot is falsifiable by looking at it rather than merely archived.
             if (self)
@@ -873,11 +891,10 @@ void Tick(void* scrim, void* list, void* closeBtn) {
                 g_selfCheckStep = -1;
                 return;
             }
-            // Slate's absolute space is desktop pixels, the same space SetCursorPos takes,
-            // so this needs no ClientToScreen and no DPI factor.
-            const int sx = static_cast<int>(tl.X + size.X * 0.5f);
-            const int sy = static_cast<int>(tl.Y + size.Y * 0.5f);
-            ::SetCursorPos(sx, sy);
+            // Slate reports CLIENT pixels; SetCursorPos takes DESKTOP. The comment that
+            // stood here claimed they were one space and that no ClientToScreen was
+            // needed -- measured FALSE 2026-08-30 (client origin 320,180).
+            PlaceCursorOnClient(tl.X + size.X * 0.5f, tl.Y + size.Y * 0.5f);
             break;
         }
         case kClickSample:
@@ -931,8 +948,8 @@ void Tick(void* scrim, void* list, void* closeBtn) {
             }
             UE_LOGW("server_browser_native: HOST button at desktop (%.0f,%.0f) %.0fx%.0f "
                     "-- clicking it", tl.X, tl.Y, sz.X, sz.Y);
-            ::SetCursorPos(static_cast<int>(tl.X + sz.X * 0.5f),
-                           static_cast<int>(tl.Y + sz.Y * 0.5f));
+            PlaceCursorOnClient(tl.X + sz.X * 0.5f,
+                                tl.Y + sz.Y * 0.5f);
             break;
         }
         case kHostDown:
@@ -978,8 +995,8 @@ void Tick(void* scrim, void* list, void* closeBtn) {
             // browser's are 64. Half of 64 still landed inside row 0 -- by margin, not by
             // construction, which is exactly the kind of aim that goes wrong silently the
             // day a layout constant moves.
-            ::SetCursorPos(static_cast<int>(tl.X + sz.X * 0.5f),
-                           static_cast<int>(tl.Y + kHostRowPx * 0.5f));
+            PlaceCursorOnClient(tl.X + sz.X * 0.5f,
+                                tl.Y + kHostRowPx * 0.5f);
             break;
         }
         case kWorldRead:

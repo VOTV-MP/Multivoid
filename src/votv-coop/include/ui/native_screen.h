@@ -123,6 +123,12 @@ void* BuildButton(void* parent, void* donorBtn, const wchar_t* label, int32_t fo
 // that begins BELOW the cursor proves every later one does too. Without that, a cursor in
 // the empty space under the last row of a short list walked every row, every moving frame,
 // and found nothing -- and a 470 px list showing three servers is more than half empty.
+// `cx`/`cy` ARE CLIENT PIXELS, not desktop. Slate's `LocalToAbsolute` -- which is what
+// `WidgetScreenRect` composes, and what every rect compared here comes from -- reports in
+// the window's client space. This took `GetCursorPos` output directly until 2026-08-30,
+// so it agreed with the rects only while the window sat at the desktop origin: correct in
+// fullscreen, and off by the entire client origin in a window. Measured at 320x180 on the
+// lab rig, which is a whole list-height of error. Convert before calling.
 int32_t ChildAtCursor(void* panel, int32_t count, long cx, long cy, int32_t hint = -1);
 
 // THE HIT TEST PLUS THE THING THAT SAYS WHEN TO REDO IT -- one object, because shipping
