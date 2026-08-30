@@ -140,15 +140,21 @@ The version identity is the pair **(game version, build number)** — there is
 no separate mod semver.
 
 ```
-Multivoid 0.9.0n b<N>   ->   the in-game banner, the release zip's name
-                             (Pelmentor-Multivoid-<major>.<minor>.<N>.zip),
-                             and main.dll's own VERSIONINFO all carry it
+Multivoid 0.9.0n b<N>   ->   the in-game banner, main.dll's own VERSIONINFO
+                             and the release tag (v0.9.0n-b<N>[-dev])
+                             carry the pair verbatim
 ```
 
 - **Game target** (`0.9.0n`) bumps when we adapt to a new VOTV cook
   (reflection offsets and BP layouts shift between game versions).
 - **Build number** (`b<N>`) is the wire-protocol revision — it bumps with every
   release and every wire-format change.
+- **The zip's `x.y.z` is the same pair, encoded — not a third version axis.**
+  Mod managers require a strictly numeric `major.minor.patch`, so the zip is
+  named `Pelmentor-Multivoid-<game major>.<game minor>.<N>.zip` — for the
+  `0.9.0n` target that is `Pelmentor-Multivoid-0.9.<N>.zip`. The game target's
+  third field and letter don't fit that grammar and are deliberately dropped;
+  the build number alone already identifies a release exactly.
 - **Join compatibility is byte-equality on the pair, per lobby.** When VOTV
   0.10.0 ships we adapt immediately, but 0.9.0n cohorts keep playing among
   themselves on their old builds — updates are never forced. The server browser
