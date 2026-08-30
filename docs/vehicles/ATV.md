@@ -1799,6 +1799,66 @@ array-overwriting un-spawns it. That half remains an act-as-host intent and is t
 whole thread that still needs designing. It has also **never been observed** — `tires` stayed `0xF`
 on both peers for the entire §17.9 run.
 
+### 17.13 DESIGN #5, and it costs zero wire bytes: ZERO THE IMPULSE, do not cancel the notification
+
+Round 3 of the `/qf` (the user asked *"ты уверен с выводом"* — are you sure) killed design #4 and
+handed back an option **I had ruled out three designs earlier by never considering it**. I had been
+choosing between CANCEL the delegate and PERMIT it. There is a third: **MUTATE ITS PARAMETERS.**
+
+**Every link measured, this hour:**
+
+| link | evidence |
+|---|---|
+| our interceptor is PRE-dispatch with a **writable** frame | `[V]` `ue_wrap/core/game_thread.h:109`: `using UFunctionInterceptor = bool(*)(void* self, void* params)` — `params` is a non-const `void*`, consulted before the call |
+| the delegate stub is nothing but parameter copies | `[V]` `BndEvt__car1_backWheel_R_..._5` is 8 statements: five `UBER[K2Node_ComponentBoundEvent_*_2] := <param>` then `ExecuteUbergraph_ATV(15037)` |
+| the impulse reaches the damage math and nothing else | `[V]` `@15037` passes `NormalImpulse_2` to `processTire`, whose `sev = VSize(impact / mesh.GetMass()) / 100 / 1.5`; the else branch also scales dirt by `impact / mass` |
+| the rig-shape write does NOT depend on it | `[V]` `@15037` sets `wheelsOnSurface[2]` from `EX_True` — a literal constant, independent of the impulse |
+
+So on a non-owner, writing a zero vector over `NormalImpulse` in the params frame yields `sev = 0`,
+which fails `> 1.0`, so **`damageWheel` is never called** — no durability decrement, therefore no
+`ejectWheel`, therefore no orphan wheel prop, ever — while the dirt branch computes zero and
+`wheelsOnSurface[i] = true` still runs, **preserving exactly the rig shape `8cd0ac25` bought**.
+
+**What this is better than, on every axis that matters:**
+
+- vs **#4 (four arrays in `AtvStatePayload`)**: zero wire bytes, no protocol bump, and hole (a)
+  cannot occur — there is no race between an overwrite and an irreversible act, because the mirror
+  never accumulates damage at all. Hole (b) dissolves with it: no client authors a persistent saved
+  value, because no new value crosses the wire.
+- vs **reverting `8cd0ac25`**: the same enforcement is restored WITHOUT reinstating the 25-40 cm sag,
+  because the effect being suppressed is now the damage MAGNITUDE rather than the whole notification.
+- vs **#1/#2/#3**: it needs no unhookable seam, no cancel the `Func` patch cannot give, and no
+  destroy-after-the-fact.
+
+**It also generalises to the two delegates that are currently CANCELLED.** `impulse()` scales its
+`health` subtraction by `|NormalImpulse|`, and the capsule delegate carries the fifth `processTire`
+site (§17.8). Zeroing rather than cancelling would suppress the damage on all seven while letting
+every other effect run — which retires `g_cancelMask` and the whole cancel/permit split, and is what
+`[[lesson-a-notification-carries-more-than-the-effect-you-are-suppressing]]` argues for: do not
+cancel a notification to stop one of the things it carries.
+
+**And it is the RULE-1 shape** — the fix lands on the quantity that actually drives the defect, not
+on a filter over the messenger.
+
+**Owed before building (none of it is a leap, but none of it is done):**
+1. the byte offset of `NormalImpulse` inside the `ComponentHitSignature` params frame, read by
+   reflection off the delegate signature rather than assumed;
+2. a check that nothing else in the five wheel segments consumes the impulse (`checkAirtime` takes no
+   parameters, so the dump says no — but say it after reading all five, not one);
+3. the same for the two body segments before extending the treatment to them;
+4. an acceptance run: the §17.9 comparison re-run, expecting the two peers' `dur=` to stay equal.
+
+**What round 3 was RIGHT about beyond this, and is not superseded:** design #3 (destroy-at-birth) was
+never disproven — it was dropped, and #4 was #3 with its failure branch removed, which
+`feedback_a_converged_fix_should_shrink_not_grow`'s counter-case names as a fix that has stopped
+modelling failure rather than converged. #5 does not remove that branch, it removes its CAUSE, which
+is the difference. And #4's "call `updTires()` only when the mask changed" was underspecified in a
+way where both readings fail; it is moot now, and recorded so it is not revived unexamined.
+
+**Still open and NOT closed by #5:** an ATV whose tire genuinely reaches zero on its AUTHOR must
+still put the resulting wheel prop on the wire, and that remains an act-as-host intent (§17.5). #5
+guarantees only that a MIRROR never authors one. And the eject half has still never been observed.
+
 ### 17.6 Three things not to re-derive
 1. **Deleting the tick-off (`a2a45fc7`) did not move the number.** All six runs that read 25-40 cm
    are post-deletion; the pre-arc-1 measurement recorded in `atv_hit_guard.cpp` read 37 cm. Two
