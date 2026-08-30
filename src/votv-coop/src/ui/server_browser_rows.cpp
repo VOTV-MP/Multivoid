@@ -192,6 +192,55 @@ void SetRowText(void* block, const std::string& utf8, const FLinearColor& col) {
     E::SetTextBlockColor(block, col);
 }
 
+// THE ORDER INVARIANT, WATCHED RATHER THAN ASSUMED.
+//
+// The list is sorted at its one producer (lobby_client.cpp, at the parse site) so that the
+// SAME SET of lobbies always renders in the SAME ORDER. That is a property of code the
+// browser does not own and cannot see -- and the failure it prevents is silent, because a
+// permuted list looks exactly like a list that changed.
+//
+// So the rows keep two digests of what they rendered: one over the id SEQUENCE, one over
+// the id SET. Same set + different sequence is the defect, and it is the only combination
+// that is. A changed set says nothing (a lobby came or went, and rows are allowed to move).
+//
+// It watches production, not a fixture: this fires against the live master too, so a future
+// change that reintroduces a mutable sort key -- ordering by player count is the tempting
+// one -- announces itself instead of being felt as rows twitching under the hand.
+struct OrderDigest { uint64_t sequence = 0; uint64_t set = 0; };
+
+OrderDigest DigestIds(const std::vector<std::string>& ids, int count) {
+    OrderDigest d;
+    d.sequence = 1469598103934665603ull;   // FNV-1a offset basis
+    for (int i = 0; i < count && i < static_cast<int>(ids.size()); ++i) {
+        uint64_t one = 1469598103934665603ull;
+        for (unsigned char c : ids[static_cast<size_t>(i)]) {
+            one ^= c; one *= 1099511628211ull;
+            d.sequence ^= c; d.sequence *= 1099511628211ull;
+        }
+        d.sequence ^= 0xFF; d.sequence *= 1099511628211ull;   // separator: order matters here
+        d.set ^= one;                                          // XOR: order does NOT matter here
+    }
+    return d;
+}
+
+void CheckOrderStable(int shown) {
+    static OrderDigest sPrev;
+    static bool sHave = false;
+    const OrderDigest now = DigestIds(g_rowIds, shown);
+    if (sHave && now.set == sPrev.set && now.sequence != sPrev.sequence) {
+        UE_LOGE("server_browser_rows: THE SAME %d LOBBIES RENDERED IN A DIFFERENT ORDER "
+                "(set digest %016llx unchanged, sequence %016llx -> %016llx). Rows move "
+                "under the player's hand and a scroll position means nothing. The order is "
+                "imposed at the one producer -- lobby_client.cpp's sort at the parse site "
+                "-- so this fires only if that sort was removed or given a key that MOVES",
+                shown, static_cast<unsigned long long>(now.set),
+                static_cast<unsigned long long>(sPrev.sequence),
+                static_cast<unsigned long long>(now.sequence));
+    }
+    sPrev = now;
+    sHave = true;
+}
+
 // Repaint every row's FILL from the current selection. Cheap (one tint per row, no
 // reflection walk) and only ever called on a selection change.
 void RepaintRowFills() {
@@ -223,6 +272,11 @@ void Attach(void* listPanel) {
 }
 
 void* Panel() { return g_list; }
+
+void OnShown() {
+    g_hover.Reset();
+    g_hoverRow = -1;   // Sync paints THIS row hovered, so a stale one survives the reset
+}
 
 uint64_t PaintedGeneration() { return g_lastRowsGen; }
 
@@ -268,6 +322,41 @@ void Sync() {
     g_lastRowsGen = sm::CopyRows(g_rows);
     const int want = static_cast<int>(g_rows.size()) > kMaxRows ? kMaxRows
                                                                : static_cast<int>(g_rows.size());
+    // THE TRUNCATION IS NO LONGER SILENT. `kMaxRows` bounds the whole sync loop, so a
+    // master serving 100 lobbies renders 64 and the player has no way to learn that the
+    // server they are looking for is one of the 36 that were dropped. Logged on a CHANGE,
+    // not per sync, so a steady over-cap list costs one line and not one per 5 seconds.
+    //
+    // The cap itself is NOT raised here. Raising it is step T2b and it wants the baseline
+    // T2c takes against it; what does not need a measurement is admitting when it bites.
+    {
+        static int sLastTruncated = 0;
+        const int dropped = static_cast<int>(g_rows.size()) - want;
+        if (dropped != sLastTruncated) {
+            sLastTruncated = dropped;
+            if (dropped > 0)
+                UE_LOGW("server_browser_rows: the master listed %d servers and the list "
+                        "renders %d -- %d are NOT SHOWN (kMaxRows). Raising the cap is "
+                        "MULTIPLAYER_UI section 8c.-1 step T2b, which wants a baseline "
+                        "first", static_cast<int>(g_rows.size()), want, dropped);
+        }
+    }
+    // SCROLL POSITION SURVIVES A STRUCTURAL CHANGE.
+    //
+    // Rows are grown and collapsed as the list changes size, which changes the content
+    // height under a view that is holding an offset -- so a lobby appearing or vanishing
+    // while the player is scrolled down moves the rows they were reading. Saved before the
+    // change and written back after, and ONLY when the shown count actually changes, so a
+    // sync that merely rewrites the same rows costs nothing.
+    //
+    // `GetScrollOffset` reports Slate's DesiredScrollOffset -- what was last ASKED FOR,
+    // measured 2026-08-26 to echo an unclamped request. That is the right value to carry
+    // across: a wheel scroll goes through the same field, and a restore past the new end
+    // is clamped by the next layout rather than by us guessing the new maximum.
+    const int  hadRows    = g_visibleRows;   // read BEFORE the assignment below overwrites it
+    const bool structural = (want != hadRows);
+    float keepOffset = 0.f;
+    const bool haveOffset = structural && hadRows > 0 && U::ScrollOffset(g_list, keepOffset);
     // The hover walk reads this instead of ChildCount: rows are GROWN and never
     // removed (a surplus row is Collapsed below, not destroyed), so ChildCount is a
     // HIGH-WATER MARK -- once the list has held 64 it reports 64 forever, and the walk
@@ -333,6 +422,20 @@ void Sync() {
         // The id is captured HERE, in the same pass as the text above it, so a click
         // resolves to the server the user was LOOKING at even if the master reorders.
         g_rowIds[static_cast<size_t>(i)] = r.lobbyId;
+    }
+
+    // Every id this pass rendered is now in g_rowIds, so the order invariant can be checked
+    // against what is actually ON SCREEN rather than against the network list.
+    CheckOrderStable(want);
+
+    // Put the view back where the player left it. The log line is the MEASUREMENT this
+    // ships with: nothing has ever observed whether a grow/collapse actually moves this
+    // box, so the restore reports the one case that proves it was needed -- a structural
+    // change while the list was scrolled away from the top.
+    if (haveOffset && keepOffset > 0.f) {
+        U::SetScrollOffset(g_list, keepOffset);
+        UE_LOGI("server_browser_rows: rows %d -> %d while scrolled to %.1f -- offset "
+                "restored", hadRows, want, keepOffset);
     }
 }
 

@@ -50,6 +50,16 @@ void Attach(void* listPanel);
 // The panel, for the callers that must pass it on (the self-check drives it directly).
 void* Panel();
 
+// THE SCREEN IS BEING PRESENTED: forget where the pointer was.
+//
+// The hover answer is only re-evaluated when something could have CHANGED it -- the
+// pointer moved, the list scrolled, the row count changed. None of those happen when a
+// screen is closed and reopened with a still hand, so without this the list comes back
+// highlighting whatever row was under the cursor last time, over a list that has since
+// been refetched -- and that index is what a click reads. Found 2026-08-30 during the row
+// extraction: the sibling hosting window has always called this and the browser never did.
+void OnShown();
+
 // ---- the list -----------------------------------------------------------------------
 
 // THE SINGLE WRITER of the rows' text, their tints and their id pairing. Pulls the current

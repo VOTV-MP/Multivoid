@@ -3308,8 +3308,10 @@ def cmd_browser(args) -> None:
         "VOTVCOOP_MENU_PROCEED": "1",
     }
     fake = None
+    fake_url = ""
     if args.fake_master > 0:
         fake, url = _start_fake_master(args.fake_master)
+        fake_url = url
         # VOTVCOOP_MASTER_URL beats every other config layer (config.cpp:481).
         env["VOTVCOOP_MASTER_URL"] = url
     log("--- HOST LAUNCH (solo native-browser lab, MENU scenario) ---")
@@ -3322,6 +3324,7 @@ def cmd_browser(args) -> None:
     t0 = time.time()
     shot = None
     saw_shown = False
+    t4a_mutated = False   # did the fixture actually shuffle+resize? see the T4a block below
     extra_shots: dict = {}
     while time.time() - t0 < args.duration:
         time.sleep(3)
@@ -3340,6 +3343,45 @@ def cmd_browser(args) -> None:
             if _capture_window(host_pid, p):
                 shot = p
                 log(f"  shot: {p.name}")
+        # ---- T4a: drive the fixture so the ORDER and the SCROLL claims are exercised ----
+        #
+        # Both of T4a's fixes are invisible on a list that never changes: the sort holds an
+        # order nothing has permuted, and the scroll restore fires only when the row count
+        # moves under a scrolled view. So the fixture is mutated ONCE, here, right after
+        # the wheel phase -- which is the only moment in the run when the list is both
+        # populated AND scrolled away from the top.
+        #
+        # THE TWO MUTATIONS FIRE AT DIFFERENT MOMENTS, and that is forced by the clock, not
+        # a preference. The whole self-check runs in ~13 s from `shown` while the browser's
+        # re-fetch cadence is 5 s, so there is room for about two fetches inside the window
+        # where the screen is up -- and sleeping between the mutations here would spend the
+        # window rather than use it. They also want different list states:
+        #
+        #   SHUFFLE  -> on `shown`, at a CONSTANT SET. That is the exact shape of the defect
+        #               (the master's HashMap yielding the same lobbies in a new order), and
+        #               the next sync must render it identically. It must be a fetch of its
+        #               OWN: if the set changed in the same fetch, the order detector is
+        #               correctly silent and the check proves nothing.
+        #   COUNT    -> on `WHEEL VERDICT`, which is the one moment the list is populated
+        #               AND scrolled away from the top -- the only state in which the
+        #               scroll restore can fire at all. It has ~7 s before the HOST phase
+        #               closes the screen, against a 5 s cadence.
+        if args.fake_master > 0 and fake_url:
+            base = fake_url.rsplit("/v1/", 1)[0] if "/v1/" in fake_url else fake_url
+            shrink_to = max(4, args.fake_master - 8)
+            for key, needle, ctl in (
+                    ("t4a_shuffle", "server_browser_native: shown", f"{base}/control/shuffle"),
+                    ("t4a_count",   "WHEEL VERDICT", f"{base}/control/count?n={shrink_to}")):
+                if needle not in text or key in extra_shots:
+                    continue
+                extra_shots[key] = None    # once each
+                import urllib.request as _ur   # module-local, as _start_fake_master does
+                try:
+                    with _ur.urlopen(ctl, timeout=5) as r:
+                        log(f"  T4a fixture: {ctl.split('/control/')[1]} -> {r.read().decode()}")
+                    t4a_mutated = t4a_mutated or key == "t4a_shuffle"
+                except Exception as exc:                      # noqa: BLE001
+                    log(f"  T4a fixture control FAILED ({ctl}): {exc}")
         # T0 corroboration. The verdict is the LOG; these two shots exist so a human can
         # see that a list the getter calls scrolled looks scrolled. Each verdict phase
         # holds its offset for 6 s, which covers this 3 s poll.
@@ -3440,6 +3482,30 @@ def cmd_browser(args) -> None:
                 fails.append("the scroll control FAILED -- either the box does not scroll "
                              "or GetScrollOffset echoes the request. Read the line: it "
                              "says which, and both invalidate the wheel result")
+        # ---- T4a: the order invariant, and the scroll that survives a shrink ----------
+        #
+        # ASSERTS ON ABSENCE, like everything else here. The order detector is a NEGATIVE
+        # check -- it logs only when the invariant BREAKS -- so silence is the pass, and
+        # silence is also what a fixture that was never mutated produces. The mutation's
+        # own log line is therefore what makes the silence mean anything.
+        if not t4a_mutated:
+            fails.append("the T4a fixture mutations never ran, so 'the order did not "
+                         "change' is VACUOUS -- nothing asked the list to change")
+        elif find("DIFFERENT ORDER"):
+            fails.append("THE ORDER INVARIANT BROKE -- the same set of lobbies rendered in "
+                         "a different order after the fixture shuffled them. The sort at "
+                         "lobby_client.cpp's parse site is the thing that was supposed to "
+                         "prevent exactly this")
+        else:
+            log("ORDER: the fixture shuffled a constant set and the rendered order did NOT "
+                "change -- the sort holds")
+        restored = find("offset restored")
+        if restored:
+            log(f"SCROLL RESTORE: {restored.strip()}")
+        else:
+            log("NOTE: no scroll-restore line -- the row count changed while the list was "
+                "at the top, or GetScrollOffset did not read. The path is BUILT and this "
+                "run did not exercise it; do not record it as measured.")
         whl = find("WHEEL VERDICT")
         if not whl:
             fails.append("no WHEEL VERDICT -- T0's actual question was never answered")

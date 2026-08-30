@@ -6,6 +6,7 @@
 #include "json_util.h"  // internal, co-located in src/coop/net/ (not a public API header)
 #include "ue_wrap/core/log.h"
 
+#include <algorithm>
 #include <thread>
 #include <utility>
 
@@ -74,6 +75,41 @@ void LobbyClient::RefreshAsync(const std::string& masterUrl, const std::string& 
                     r.direct     = (J::Str(e, "conn") == "direct");  // 2026-06-11 direct lobbies
                     if (!r.lobbyId.empty()) parsed.push_back(std::move(r));
                 }
+                // A TOTAL ORDER, IMPOSED HERE, BECAUSE THE LIST ARRIVES WITH NONE.
+                //
+                // The master stores lobbies in a `HashMap` and emits
+                // `state.lobbies.values()` (master.rs:531-553) -- so two fetches of the
+                // SAME lobbies can arrive in different orders, and both browsers render
+                // by position. A player reading down a list, or scrolling one, has the
+                // rows permute under their eyes every 5 seconds. That is a correctness
+                // defect on its own, independent of the perf lane it was found in
+                // (docs/MULTIPLAYER_UI.md section 8c.-1, step T4a).
+                //
+                // HERE, not in the browser: this is the ONE place the list is produced,
+                // and both surfaces read `rows_` -- the native browser and the ImGui one
+                // that stays as the fallback. Sorting in one of them would leave the
+                // other with the defect, which is the "same bug twice" shape the project
+                // treats as the level being wrong. It also costs once per FETCH on this
+                // worker thread rather than once per SYNC on the game thread.
+                //
+                // THE KEY IS `name`, THEN `lobbyId`, AND IT MAY NOT BE ANYTHING ELSE
+                // THAT MOVES. Sorting by player count -- the obvious "useful" choice --
+                // reorders the list every time somebody joins or leaves a server the
+                // player is not even looking at, which is the same defect wearing a
+                // reason. `lobbyId` breaks ties so two servers sharing a name still hold
+                // a fixed order.
+                //
+                // Byte-wise on UTF-8, which IS codepoint order. It is deliberately NOT
+                // case-folded: a correct fold needs the repertoire table
+                // (coop/text/case_fold.h), and the ASCII-only `tolower` that suggests
+                // itself here is the exact hand-rolled casing rule that header exists to
+                // have retired. If case-insensitive ordering is wanted it is that table's
+                // job, not a second rule invented in the net layer.
+                std::sort(parsed.begin(), parsed.end(),
+                          [](const LobbyRow& a, const LobbyRow& b) {
+                              if (a.name != b.name) return a.name < b.name;
+                              return a.lobbyId < b.lobbyId;
+                          });
                 st = std::to_string(parsed.size()) +
                      (parsed.size() == 1 ? " server" : " servers");
             } else {

@@ -79,7 +79,7 @@ import random
 import re
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 # The build identity is PARSED from the same sources CMakeLists.txt:23/29 uses --
@@ -266,7 +266,16 @@ def main() -> None:
     _cfg["seed"] = args.seed
     _rows = make_rows(args.count, args.mismatch_every, args.seed)
 
-    srv = HTTPServer(("127.0.0.1", args.port), Handler)
+    # THREADING, AND THE CONTROL ENDPOINTS DO NOT WORK WITHOUT IT (measured 2026-08-30).
+    #
+    # `HTTPServer` serves one request at a time, and `protocol_version = "HTTP/1.1"` above
+    # means the game's connection is KEEP-ALIVE -- so `serve_forever` sits inside
+    # handle_one_request waiting for that socket's next request and never accepts another.
+    # Every /control/* call from the harness timed out, silently, for as long as a game was
+    # attached: the mutation endpoints written for phases C/D/E were unreachable in exactly
+    # the scenario they exist for, and the docstring's `curl .../control/shuffle` example
+    # only ever worked with no client connected.
+    srv = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     print(f"[fake_master] serving {args.count} lobbies on http://127.0.0.1:{args.port}/v1/lobbies")
     print(f"[fake_master] point the game at it with "
           f"VOTVCOOP_MASTER_URL=http://127.0.0.1:{args.port}   (the http:// is REQUIRED -- "

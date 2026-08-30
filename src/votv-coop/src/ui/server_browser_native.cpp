@@ -311,6 +311,7 @@ void Show() {
     g_shown = true;
     g_escPrimed = false;   // re-prime: an ESC held while the screen opens must not close it
     g_lmbPrimed = false;   // ...and the same for the release that OPENED us
+    rows::OnShown();       // ...and the hover, for the same reason: nothing else re-asks
     SyncRows();
     UE_LOGI("server_browser_native: shown (index %d -> %d)", g_priorIndex, g_ourIndex);
 }
