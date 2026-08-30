@@ -12,10 +12,12 @@
 #include <atomic>
 #include <cstdint>
 
-// No anonymous namespace here on purpose: the moved definitions of InstallHitGuard and
-// PublishOwned ARE the ones the header declares, so wrapping them would mean either renaming
-// inside the moved text (no longer verbatim) or a forwarder that recurses into itself. The file's
-// other symbols stay confined by coop::atv_hit_guard.
+// InstallHitGuard and PublishOwned sit at namespace scope because they ARE the definitions the
+// header declares -- wrapping them would mean renaming inside moved text or a forwarder that
+// recurses. Everything the header does NOT name is in the anonymous namespace below: an audit
+// (2026-08-30) pointed out that "confined by coop::atv_hit_guard" is not confinement at all --
+// those six symbols had external linkage, so the state this cut was meant to un-share by
+// proximity was merely re-shared by linkage.
 namespace coop::atv_hit_guard {
 
 namespace A = ue_wrap::atv;
@@ -62,21 +64,26 @@ namespace R = ue_wrap::reflection;
 // them (docs/vehicles/ATV.md 11.4). Overflowing is not a graceful degradation -- the guard's
 // CANCEL default would suppress collisions on the one machine that owns the ATV -- so it also
 // logs once. 8 bytes a slot.
-constexpr int kMaxOwnedPublished = 64;
-std::atomic<void*> g_ownedAtvs[kMaxOwnedPublished];
+namespace {
+
+std::atomic<void*> g_ownedAtvs[kMaxOwned];
 std::atomic<bool>  g_guardActive{false};   // false in single-player: the game must keep its damage
 std::atomic<unsigned long long> g_hitCancelled{0};
 std::atomic<unsigned long long> g_hitAllowed{0};
-bool g_hitGuardArmed = false;              // all 7 delegates registered -- else the lane runs INERT
+std::atomic<bool>  g_hitGuardArmed{false};              // all 7 delegates registered -- else the lane runs INERT
+
+}  // namespace
 
 void PublishOwned(void** owned, int n) {
-    for (int i = 0; i < kMaxOwnedPublished; ++i)
+    for (int i = 0; i < kMaxOwned; ++i)
         g_ownedAtvs[i].store(i < n ? owned[i] : nullptr, std::memory_order_release);
 }
 
+namespace {
+
 bool OnAtvHitPre(void* self, void* /*params*/) {
     if (!g_guardActive.load(std::memory_order_acquire)) return false;  // not in a session: never suppress
-    for (int i = 0; i < kMaxOwnedPublished; ++i) {
+    for (int i = 0; i < kMaxOwned; ++i) {
         void* p = g_ownedAtvs[i].load(std::memory_order_acquire);
         if (!p) break;
         if (p == self) { g_hitAllowed.fetch_add(1, std::memory_order_relaxed); return false; }
@@ -85,15 +92,17 @@ bool OnAtvHitPre(void* self, void* /*params*/) {
     return true;   // cancel-on-true: the BndEvt stub never jumps into the ubergraph
 }
 
+}  // namespace
+
 void InstallHitGuard() {
-    if (g_hitGuardArmed) return;
+    if (g_hitGuardArmed.load(std::memory_order_relaxed)) return;
     void* fns[8] = {};
     const int n = A::ResolveHitDelegates(fns, 8);
     int ok = 0;
     for (int i = 0; i < n; ++i)
         if (ue_wrap::game_thread::RegisterInterceptor(fns[i], &OnAtvHitPre)) ++ok;
     if (ok == 7) {
-        g_hitGuardArmed = true;
+        g_hitGuardArmed.store(true, std::memory_order_relaxed);
         UE_LOGI("atv: hit guard armed -- 7/7 ComponentHit delegates intercepted (a non-owner cannot "
                 "author damage/explode/ejectWheel)");
     } else {
@@ -105,17 +114,14 @@ void InstallHitGuard() {
     }
 }
 
-static_assert(kMaxOwned == kMaxOwnedPublished,
-              "the header's cap and the published array must be the same size");
-
 void SetActive(bool active) { g_guardActive.store(active, std::memory_order_release); }
 
-bool Armed() { return g_hitGuardArmed; }
+bool Armed() { return g_hitGuardArmed.load(std::memory_order_relaxed); }
 
 bool Owns(void* actor) {
     if (!actor) return false;
     if (!g_guardActive.load(std::memory_order_acquire)) return false;
-    for (int i = 0; i < kMaxOwnedPublished; ++i) {
+    for (int i = 0; i < kMaxOwned; ++i) {
         void* p = g_ownedAtvs[i].load(std::memory_order_acquire);
         if (!p) return false;
         if (p == actor) return true;
@@ -124,7 +130,8 @@ bool Owns(void* actor) {
 }
 
 Counters ReadCounters() {
-    return Counters{ g_hitCancelled.load(), g_hitAllowed.load(), g_hitGuardArmed };
+    return Counters{ g_hitCancelled.load(), g_hitAllowed.load(),
+                     g_hitGuardArmed.load(std::memory_order_relaxed) };
 }
 
 }  // namespace coop::atv_hit_guard

@@ -25,6 +25,12 @@ void InstallHitGuard();
 // Publish the set of ATVs whose tick THIS peer owns. A hit on anything not in this set is
 // cancelled. Called from atv_sync's Tick each pass. Game thread to call; read on the physics
 // dispatch, hence the atomics inside.
+//
+// NOT ATOMIC AS A SET (pre-existing, stated here because it is an API now): a concurrent hit can
+// observe a half-updated array for one publish window -- a new slot 0 beside a stale slot 2 -- so
+// a single collision may be allowed on an ATV just un-owned, or cancelled on one just gained. The
+// window is one Tick and the consequence is one hit, which is why it is documented rather than
+// locked: a lock on the physics dispatch would cost more than the defect.
 void PublishOwned(void** owned, int n);
 
 // How many the published set holds. atv_sync sizes its scratch buffer with this, so the cap lives
@@ -44,11 +50,16 @@ bool Owns(void* actor);
 void SetActive(bool active);
 
 // Did all seven delegates register? A lane that never armed runs INERT by design.
+// Callable from either context: the flag is atomic so that `Armed()` and `ReadCounters()` carry
+// the same contract as their siblings. It was a plain bool when this module was carved out of
+// atv_sync.cpp, which was safe only because all three of its sites happened to be game-thread --
+// an accident the header would have invited a reader to break.
 bool Armed();
 
 // Session totals, for the teardown log. `armed` says whether all seven registered -- a guard that
 // never armed and a guard that armed but never fired look identical in a counter alone, and the
-// 2026-08-30 run needed to tell them apart.
+// 2026-08-30 run needed to tell them apart. atv_sync's OnDisconnect PRINTS it; a field this
+// comment justifies and nothing reads is the failure the same run's lessons are about.
 struct Counters {
     unsigned long long cancelled = 0;
     unsigned long long allowed   = 0;

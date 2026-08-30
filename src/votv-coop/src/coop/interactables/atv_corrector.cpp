@@ -4,6 +4,8 @@
 
 #include "coop/interactables/atv_corrector.h"
 
+#include "coop/net/protocol.h"
+
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/devices/atv.h"

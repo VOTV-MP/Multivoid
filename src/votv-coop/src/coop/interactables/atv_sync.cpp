@@ -58,7 +58,6 @@
 
 #include "ue_wrap/devices/atv.h"
 #include "ue_wrap/engine/engine.h"          // ReadMainPlayerGrabState (grabber authority) + Get/SetActorRootPhysicsVelocity
-#include "ue_wrap/core/game_thread.h"       // RegisterInterceptor -- the collision half of "brains off"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/engine/world_identity.h"     // R-2: gen-stamped index (dead-world guard)
@@ -66,7 +65,6 @@
 #include "ue_wrap/core/types.h"           // FVector, FRotator, NormalizeAxis
 
 #include <atomic>
-#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -806,9 +804,10 @@ void OnDisconnect() {
     const auto hg = coop::atv_hit_guard::ReadCounters();
     if (n > 0)
         UE_LOGI("atv: OnDisconnect -- cleared %zu ATV(s) (brains restored; runtime mirrors destroyed); "
-                "hit guard: %llu cancelled / %llu allowed; corrector: %llu nudged / %llu warped "
+                "hit guard: %s, %llu cancelled / %llu allowed; corrector: %llu nudged / %llu warped "
                 "/ %llu cut-on-stall",
-                n, static_cast<unsigned long long>(hg.cancelled),
+                n, hg.armed ? "armed" : "NEVER ARMED",
+                static_cast<unsigned long long>(hg.cancelled),
                 static_cast<unsigned long long>(hg.allowed),
                 static_cast<unsigned long long>(c.corrections),
                 static_cast<unsigned long long>(c.warps),

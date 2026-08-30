@@ -17,7 +17,10 @@
 #pragma once
 
 #include "coop/interactables/atv_sync_internal.h"
-#include "coop/net/protocol.h"
+
+// Forward-declared rather than including protocol.h: this header needs only the NAME for a
+// by-const-ref parameter, and protocol.h is the tree's largest constants header.
+namespace coop::net { struct AtvStatePayload; }
 
 #include <cstdint>
 
