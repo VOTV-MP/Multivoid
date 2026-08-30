@@ -55,7 +55,14 @@ def run(host_rows, client_rows, host_armed=True, client_armed=True, counters=(3,
     h, c = os.path.join(d, "h.log"), os.path.join(d, "c.log")
     write(h, host_rows, host_armed, counters)
     write(c, client_rows, client_armed, counters)
-    p = subprocess.run([sys.executable, REPORT, h, c], capture_output=True, text=True)
+    # --no-archive OR THE DRILL POISONS THE EVIDENCE. Without it every arm files its
+    # 14-line synthetic fixture into research/atv_runs/ under a timestamp indistinguishable
+    # from a real two-peer run: on 2026-08-30 four of the seven directories there were this
+    # drill, and the only thing separating them from the runs the ATV design cites was a
+    # tempdir path inside a MANIFEST nobody opens. An archive you cannot trust by its name
+    # is not an archive.
+    p = subprocess.run([sys.executable, REPORT, h, c, "--no-archive"],
+                       capture_output=True, text=True)
     return p.returncode, p.stdout + p.stderr
 
 
@@ -178,6 +185,37 @@ def main():
                breathe(93.773, 2.4, i, 0.15), breathe(93.773, 2.4, i, 0.45),
                breathe(71.914, 3.4, i, 0.75)) for i in range(12)]
     arm("A5 RED: mirror trails 3 m while driving", "FAIL", run(hs, cs))
+
+    # A6 RED -- the client authors, releases, and its OWN copy sinks 24 cm where it stands.
+    # This is the 2026-08-30 measurement (23.3 / 24.2 / 39.8 cm across three runs) turned into
+    # a control. A2 alone cannot produce this arm: A2 asks whether the copies END apart, and a
+    # lane could pass it by drifting back together while still dropping the rig at every
+    # handoff -- which is the shape a corrector that cuts every 10 s actually has. Asserted by
+    # TEXT, because this fixture also fails A2 and a bare rc=1 would not prove A6 saw anything.
+    def handoff(z_after_client, x_step=0.0, z_step=0.0):
+        hs = [line(stamp(40 + i), i, "ATV", 0, 0 if i < 6 else 1,
+                   100.0 + x_step * i, 0.0, 400.0 - z_step * i,
+                   breathe(93.773, 2.2, i), breathe(93.773, 2.2, i, 0.3),
+                   breathe(71.914, 3.1, i, 0.6)) for i in range(12)]
+        cs = [line(stamp(40 + i), i, "ATV", 1 if i < 6 else 0, 1 if i < 6 else 0,
+                   100.3 + x_step * i, 0.0,
+                   400.0 - z_step * i - (0.0 if i < 6 else z_after_client),
+                   breathe(93.773, 2.4, i, 0.15), breathe(93.773, 2.4, i, 0.45),
+                   breathe(71.914, 3.4, i, 0.75)) for i in range(12)]
+        return hs, cs
+
+    arm_text("A6 RED: mirror sinks 24cm at handoff", "FAIL", run(*handoff(24.0)),
+             "lost authority and its own copy sank")
+
+    # A6 REST GUARD -- the same `owns` 1->0 edge, but the ATV is being DRIVEN AWAY down a
+    # slope, so its Z change is the terrain and not a defect. Both copies stay together, so
+    # every other arm passes and only the guard is under test: 15 cm per sample over the 3 s
+    # window is a 45 cm "sag" that WOULD fail A6 outright, and 120 cm per sample of horizontal
+    # travel is what tells the arm this is a peer driving off rather than a parked handoff.
+    # Without the guard A6 would fail every run in which somebody mounts and drives away.
+    arm_text("A6 guard: driving away is not a sag", "PASS",
+             run(*handoff(0.0, x_step=120.0, z_step=15.0)),
+             "skipped -- the ATV travelled")
 
     # INCONCLUSIVE -- nobody drove, so no mirror ever existed. This must NOT read as PASS:
     # an idle ATV is never mirrored, so a quiet run proves nothing about the corrector.

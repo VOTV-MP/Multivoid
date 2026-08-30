@@ -73,6 +73,24 @@ uint64_t g_warps = 0;        // diagnostic counters -- a corrector nobody can se
 uint64_t g_corrs = 0;        // nobody can falsify (the instrument-blindness lesson)
 uint64_t g_stallWarps = 0;   // ...and specifically: how often the nudge had to give up
 
+// THE VALUE THE LANE ACTS ON, WHICH NOTHING HAS EVER RECORDED. Three driven runs measured a
+// mirror sinking 23-40 cm the moment it stopped authoring, and the archive cannot say why,
+// because no instrument sampled `p.linVel*` -- the velocity we write onto the mirror -- at the
+// instant we write it. The probe samples each peer's OWN root velocity every 500 ms, which is a
+// different quantity at a different time. A design that turns on whether the author's reported
+// velocity is ~0 at the handoff cannot be decided from a log that never contains it.
+// Rate-limited to ~1 Hz for the routine case; every CUT logs unconditionally, because the cut is
+// the instant in question.
+uint64_t g_lastSampleLogMs = 0;
+constexpr uint64_t kSampleLogMs = 1000;
+
+void LogWire(const char* what, const AtvEntry& e, float dist,
+             const FVector& wireLin, const FVector& cur, const FVector& wirePos) {
+    UE_LOGI("[ATVC] %s dist=%.1f cur.z=%.1f wire.z=%.1f wireLin=(%.1f,%.1f,%.1f) |v|=%.1f "
+            "stall=%d", what, dist, cur.Z, wirePos.Z,
+            wireLin.X, wireLin.Y, wireLin.Z, Len(wireLin), e.stallPackets);
+}
+
 }  // namespace
 
 // THE CORRECTOR. Called ONLY on packet arrival for an ATV this peer does not author -- there is no
@@ -122,6 +140,7 @@ void ApplyCorrection(AtvEntry& e, const coop::net::AtvStatePayload& p, bool snap
         // FAIL CLOSED: if the rig could not be re-placed (teleportVehicle unresolved after a game
         // update), do NOT then write the authority's velocity onto a body still sitting in the
         // wrong place -- that accelerates the error instead of cutting it.
+        LogWire("WARP", e, dist, wireLin, cur, wirePos);
         if (!A::TeleportRig(e.actor, wirePos, wireRot)) return;
         ue_wrap::engine::SetActorRootPhysicsVelocity(e.actor, wireLin, wireAng);
         ++g_warps;
@@ -141,6 +160,7 @@ void ApplyCorrection(AtvEntry& e, const coop::net::AtvStatePayload& p, bool snap
     if (e.stallPackets >= kStallWarpPackets) {
         e.stallPackets = 0;
         e.lastErrCm = -1.f;
+        LogWire("CUT", e, dist, wireLin, cur, wirePos);
         if (!A::TeleportRig(e.actor, wirePos, wireRot)) return;
         ue_wrap::engine::SetActorRootPhysicsVelocity(e.actor, wireLin, wireAng);
         ++g_stallWarps;
@@ -167,6 +187,10 @@ void ApplyCorrection(AtvEntry& e, const coop::net::AtvStatePayload& p, bool snap
     // takes its orientation from the terrain it is standing on once its position and velocity
     // agree. Orientation divergence is caught by the kWarpAngleDeg arm above instead -- one
     // mechanism, measurable, rather than a term whose gain we would be guessing.
+    if (now - g_lastSampleLogMs >= kSampleLogMs) {
+        g_lastSampleLogMs = now;
+        LogWire(dist > kCorrDeadbandCm ? "NUDGE" : "INBAND", e, dist, wireLin, cur, wirePos);
+    }
     ue_wrap::engine::SetActorRootPhysicsVelocity(e.actor, lin, wireAng);
     ++g_corrs;
 }

@@ -47,6 +47,11 @@ LINE = re.compile(
     r"owns=(?P<owns>\d) occ=(?P<occ>\S+) "
     r"body=\((?P<bx>[-\d.]+),(?P<by>[-\d.]+),(?P<bz>[-\d.]+)\) "
     r"rot=\((?P<rp>[-\d.]+),(?P<ry>[-\d.]+),(?P<rr>[-\d.]+)\) "
+    # OPTIONAL on purpose: the seven runs archived before 2026-08-30 have no vel= field, and a
+    # required group would make every one of them unparseable -- silently, as zero samples.
+    r"(?:vel=\((?P<vx>[-\d.]+),(?P<vy>[-\d.]+),(?P<vz>[-\d.]+)\) )?"
+    # partZ = the four rig bodies' world Z. Also optional: pre-2026-08-30 runs have none.
+    r"(?:partZ=\((?P<pfr>[-\d.]+),(?P<pfl>[-\d.]+),(?P<pbk>[-\d.]+)\) )?"
     r"(?:susFR=(?P<fr>[-\d.]+) susFL=(?P<fl>[-\d.]+) susBK=(?P<bk>[-\d.]+) |(?P<noparts>NOPARTS )?)"
     r"fuel=(?P<fuel>[-\d.]+) batt=(?P<batt>[-\d.]+) dirt=(?P<dirt>[-\d.]+) "
     r"dirtVel=(?P<dv>[-\d.]+) hp=(?P<hp>[-\d.]+)")
@@ -174,6 +179,16 @@ FROZEN_FLOOR_CM = 1.0
 REGIME_RATIO_MAX = 2.5
 BAND_CM = 4.0        # RESTING travel only -- reported for context, no longer a gate
 SETTLE_GAP_CM = 20.0 # end-of-run body gap; baseline was 109.9 cm and PERMANENT
+# A6's ceiling. MEASURED 2026-08-30: at the authority handoff the peer that LOSES
+# authority drops 23.3 / 24.2 / 39.8 cm of Z within one 500 ms sample, in all three
+# driven runs, while the peer that GAINS it rises ~6 cm. 10 cm fails all three and is
+# still four times the rig's own 2-4 cm suspension travel, so a PASS means the drop is
+# gone rather than merely smaller.
+HANDOFF_SAG_CM = 10.0
+# ...and A6 only grades a handoff of a PARKED ATV. 50 cm is far above the few cm a
+# resting rig creeps in 3 s and far below the tens of metres a driven one covers, so
+# the two cases never touch.
+HANDOFF_REST_CM = 50.0
 MIN_MIRROR_SAMPLES = 6
 
 
@@ -330,17 +345,40 @@ def acceptance(names, peers, logs):
     # it again. A settled gap is the direct test of that.
     if len(peers) > 1:
         for key in sorted(set(peers[0]) & set(peers[1])):
-            ra, rb = peers[0][key][-1], peers[1][key][-1]
+            # TIME-ALIGN THE PAIR. Taking each peer's own last sample compares two DIFFERENT
+            # instants: on 2026-08-30 the client's log ended 70 s before the host's while the
+            # host's ATV crept 0.27 cm/s the whole time, so the reported gap included drift the
+            # client could never have mirrored. Cut both sides at the last second they share.
+            ta, tb = peers[0][key][-1]["t"], peers[1][key][-1]["t"]
+            if ta is None or tb is None:
+                notes.append("A2 key='{}': unstamped samples -- cannot time-align, skipped"
+                             .format(key))
+                continue
+            tEnd = min(ta, tb)
+            pick = []
+            for side in (peers[0][key], peers[1][key]):
+                cand = [r for r in side if r["t"] is not None and r["t"] <= tEnd]
+                pick.append(cand[-1] if cand else None)
+            if pick[0] is None or pick[1] is None or \
+               abs(pick[0]["t"] - tEnd) > 3 or abs(pick[1]["t"] - tEnd) > 3:
+                notes.append("A2 key='{}': no sample pair within 3 s of the shared end t={} -- "
+                             "one peer stopped logging early, skipped".format(key, tEnd))
+                continue
+            ra, rb = pick[0], pick[1]
             dx, dy, dz = ra["bx"] - rb["bx"], ra["by"] - rb["by"], ra["bz"] - rb["bz"]
             gap = (dx * dx + dy * dy + dz * dz) ** 0.5
             ok = gap <= SETTLE_GAP_CM
             print("  A2 settled gap key='{}' {:.3f} cm  {}".format(key, gap, "PASS" if ok else "FAIL"))
             if not ok:
-                # ATTRIBUTE the failure. A gap the corrector never tried to close is a sync
-                # defect; a gap it CUT repeatedly, at a constant distance, is not -- the rig was
-                # teleported onto the authority's exact pose and fell back, which means the two
-                # peers' worlds differ under the vehicle and no pose lane can fix it. Blaming the
-                # wrong subsystem is worse than no verdict.
+                # ATTRIBUTE the failure. RETRACTED 2026-08-30: this branch used to conclude that
+                # a gap the corrector CUT repeatedly, at a constant distance, meant "the two
+                # peers' WORLDS differ under the vehicle and no pose lane can fix it". That was
+                # measured FALSE. The logs show the cut LANDING -- run 1 client, 00:21:06, body
+                # Z 5405.2 -> 5430.5 the instant after the cut -- and the rig falling back to the
+                # identical Z within the next 500 ms sample, every time. The mirror is pulled
+                # back down by this lane's own per-packet root-velocity write, not held down by
+                # its world. A repeated cut at a constant distance is therefore evidence FOR a
+                # lane defect, not against one. See A6, which names the moment it starts.
                 cuts = []
                 for path in logs:
                     try:
@@ -350,15 +388,59 @@ def acceptance(names, peers, logs):
                         pass
                 vals = sorted({round(float(c), 1) for c in cuts})
                 if len(cuts) >= 2 and len(vals) == 1 and abs(vals[0] - gap) < 1.0:
-                    fails.append("A2 key='{}' settled {:.1f} cm apart -- but the corrector CUT to "
-                                 "the authority's pose {} times and it fell back to the same "
-                                 "{:.1f} cm every time. The pose lane is doing its job; the two "
-                                 "peers' WORLDS differ under this vehicle. Not a C1 defect -- "
-                                 "file it against the world/save-transfer lane.".format(
-                                     key, gap, len(cuts), vals[0]))
+                    fails.append("A2 key='{}' settled {:.1f} cm apart, and the corrector CUT to "
+                                 "the authority's pose {} times, each time landing and each time "
+                                 "falling back to the same {:.1f} cm. The cut works; something in "
+                                 "THIS lane pulls the mirror back down after it. Read A6."
+                                 .format(key, gap, len(cuts), vals[0]))
                 else:
                     fails.append("A2 key='{}' settled {:.1f} cm apart > {:.1f}".format(
                         key, gap, SETTLE_GAP_CM))
+
+    # A6 -- THE AUTHORITY HANDOFF MUST NOT DROP THE MIRROR. A2 says the two copies end the
+    # run apart; this says WHEN the gap is born, which is the half A2 cannot see. MEASURED
+    # 2026-08-30 across all three driven runs: the instant a peer stops owning the tick its own
+    # copy drops 23-40 cm of Z, within one 500 ms sample, while the peer that TAKES ownership
+    # rises ~6 cm. Both peers lose the occupant at that same moment, so occupancy cannot explain
+    # opposite signs -- the variable whose sign tracks the direction is which peer is being
+    # corrected. Without this arm a fix would be graded only by A2, and A2 cannot tell a lane
+    # that stopped sagging from a route that happened to end on flatter ground.
+    for nm, data in zip(names, peers):
+        for key, rows in sorted(data.items()):
+            for i in range(1, len(rows)):
+                if not (rows[i - 1]["owns"] and not rows[i]["owns"]):
+                    continue
+                t0, z0 = rows[i - 1]["t"], rows[i - 1]["bz"]
+                if t0 is None:
+                    continue
+                after = [r for r in rows[i:] if r["t"] is not None and r["t"] - t0 <= 3]
+                if not after:
+                    notes.append("A6 {}/{}: authority released at t={} but no sample within 3 s "
+                                 "-- handoff unmeasured".format(nm, key, t0))
+                    continue
+                # REST GUARD. A6 asks what happens to a copy that stops being authored while
+                # the vehicle is PARKED. The other handoff -- a peer mounting and driving away
+                # -- also flips `owns`, and there the copy moves tens of metres for reasons that
+                # have nothing to do with this defect: run 1's host "sagged" -20.2 cm at t=1234
+                # purely because the client drove the ATV up a slope. Grading that would make the
+                # arm measure the route, which is exactly the weakness A5 already has.
+                span = max(((r["bx"] - rows[i - 1]["bx"]) ** 2 +
+                            (r["by"] - rows[i - 1]["by"]) ** 2) ** 0.5 for r in after)
+                if span > HANDOFF_REST_CM:
+                    notes.append("A6 {}/{}: handoff at t={} skipped -- the ATV travelled {:.0f} cm "
+                                 "horizontally in the window, so this is a peer driving away, not "
+                                 "a parked handoff".format(nm, key, t0, span))
+                    continue
+                zEnd = after[-1]["bz"]
+                sag = z0 - zEnd
+                ok = sag <= HANDOFF_SAG_CM
+                print("  A6 handoff {}/{} released at t={}  Z {:.1f} -> {:.1f}  sag={:+.1f} cm  {}"
+                      .format(nm, key, t0, z0, zEnd, sag, "PASS" if ok else "FAIL"))
+                if not ok:
+                    fails.append("A6 {} key='{}' lost authority and its own copy sank {:.1f} cm "
+                                 "(Z {:.1f} -> {:.1f}) within 3 s > {:.1f}. The rig was correct "
+                                 "while it authored and wrong the moment it became a mirror."
+                                 .format(nm, key, sag, z0, zEnd, HANDOFF_SAG_CM))
 
     # A3 -- the collision guard armed, and whether its CANCEL path was ever exercised.
     for nm, path in zip(names, logs):

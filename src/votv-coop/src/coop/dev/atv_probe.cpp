@@ -170,6 +170,58 @@ bool ResolveOffsets() {
     return true;
 }
 
+// CAN WE WRITE THE WHOLE RIG, OR ONLY ITS ROOT?
+//
+// The lane's live question (docs/vehicles/ATV.md 0.4 / 9.4): every write we make to a mirrored
+// ATV addresses ONE of its five bodies. `TeleportRig` escapes that because the game's own
+// `teleportVehicle` re-places the wheels; our velocity write does not, because
+// SetActorRootPhysicsVelocity resolves to UPrimitiveComponent::SetPhysicsLinearVelocity on the
+// ROOT component only (engine_attach.cpp:182-196), and the four wheels are separate COMPONENTS,
+// not extra bodies inside the root -- so `SetAllPhysicsLinearVelocity` would not reach them
+// either. A rig-wide write therefore needs the component pointers, and nothing has ever checked
+// that they are reachable. This census answers exactly that, once, from a live ATV: which of the
+// rig's component properties exist on ATV_C, which are non-null on an instance, and what class
+// each is. If they resolve, the class fix is buildable; if they do not, the invariant "never
+// author a five-body rig from one body" needs a different instrument and we learn that BEFORE
+// designing around it rather than after.
+//
+// Names are the components the seven ComponentHit delegates are bound to (atv.cpp
+// kHitDelegateNames), plus `car1_frontWheel_L`, which appears in no delegate name and may
+// therefore not exist -- a NOT-FOUND on it is data, not a failure.
+const wchar_t* const kRigComponentNames[] = {
+    L"mesh",
+    L"car1_Capsule",
+    L"car1_frontWheel_R",
+    L"car1_frontWheel_L",
+    L"car1_frontWheelRoot",
+    L"car1_backWheel_R",
+    L"car1_backWheel_L",
+    L"car1_backWheelRoot",
+};
+
+bool g_rigCensusDone = false;
+
+void CensusRigComponents(void* atv) {
+    if (g_rigCensusDone || !atv) return;
+    g_rigCensusDone = true;
+    void* cls = R::ClassOf(atv);
+    if (!cls) { UE_LOGW("[ATVP] rig census: ClassOf(atv) null"); return; }
+    for (const wchar_t* nm : kRigComponentNames) {
+        const int32_t off = R::FindPropertyOffset(cls, nm);
+        if (off < 0) {
+            UE_LOGI("[ATVP] rig component '%ls': NOT A PROPERTY on this class", nm);
+            continue;
+        }
+        void* comp = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(atv) + off);
+        if (!comp) {
+            UE_LOGI("[ATVP] rig component '%ls': off=0x%X but NULL on this instance", nm, off);
+            continue;
+        }
+        UE_LOGI("[ATVP] rig component '%ls': off=0x%X ptr=%p class='%ls'",
+                nm, off, comp, R::ClassNameOf(comp).c_str());
+    }
+}
+
 float ReadFloat(void* obj, int32_t off) {
     if (!obj || off < 0) return -1.f;
     return *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(obj) + off);
@@ -226,6 +278,17 @@ void SampleOne(void* atv, size_t idx) {
         }
     }
 
+    // THE QUANTITY THE CORRECTOR WRITES, and the one nothing has ever measured. Three driven
+    // runs showed a mirror sinking 23-40 cm the instant it stopped authoring, and the archive
+    // could not say whether the lane wrote a downward velocity onto it or ratcheted it down over
+    // many packets, because no sample carried a velocity at all. A verdict about a value the
+    // instrument never records is a guess with a citation. Root body only -- the same body
+    // SetActorRootPhysicsVelocity writes, so the two are comparable by construction.
+    ue_wrap::FVector velL{}, velA{};
+    ue_wrap::engine::GetActorRootPhysicsVelocity(atv, velL, velA);
+
+    CensusRigComponents(atv);
+
     const float fuel    = ue_wrap::atv::GetFuel(atv);
     const float health  = ue_wrap::atv::GetHealth(atv);
     const float battery = ReadFloat(atv, g_batteryOff);
@@ -247,19 +310,25 @@ void SampleOne(void* atv, size_t idx) {
         const float dFR = Dist(frL, bodyL), dFL = Dist(flL, bodyL), dBK = Dist(bkL, bodyL);
         UE_LOGI("[ATVP] n=%u i=%zu key='%ls' driven=%d owns=%d occ=%p "
                 "body=(%.1f,%.1f,%.1f) rot=(%.1f,%.1f,%.1f) "
+                "vel=(%.1f,%.1f,%.1f) "
+                "partZ=(%.1f,%.1f,%.1f) "
                 "susFR=%.3f susFL=%.3f susBK=%.3f "
                 "fuel=%.3f batt=%.3f dirt=%.4f dirtVel=%.4f hp=%.2f",
                 g_sample, idx, key.c_str(), driven ? 1 : 0, ownsTick ? 1 : 0, occ,
                 bodyL.X, bodyL.Y, bodyL.Z, bodyR.Pitch, bodyR.Yaw, bodyR.Roll,
+                velL.X, velL.Y, velL.Z,
+                frL.Z, flL.Z, bkL.Z,
                 dFR, dFL, dBK, fuel, battery, dirt, dirtVel, health);
     } else {
         ue_wrap::FVector loc{}; ue_wrap::FRotator rot{};
         ue_wrap::atv::GetRootTransform(atv, loc, rot);
         UE_LOGI("[ATVP] n=%u i=%zu key='%ls' driven=%d owns=%d occ=%p "
-                "body=(%.1f,%.1f,%.1f) rot=(%.1f,%.1f,%.1f) NOPARTS "
+                "body=(%.1f,%.1f,%.1f) rot=(%.1f,%.1f,%.1f) "
+                "vel=(%.1f,%.1f,%.1f) NOPARTS "
                 "fuel=%.3f batt=%.3f dirt=%.4f dirtVel=%.4f hp=%.2f",
                 g_sample, idx, key.c_str(), driven ? 1 : 0, ownsTick ? 1 : 0, occ,
                 loc.X, loc.Y, loc.Z, rot.Pitch, rot.Yaw, rot.Roll,
+                velL.X, velL.Y, velL.Z,
                 fuel, battery, dirt, dirtVel, health);
     }
 }
