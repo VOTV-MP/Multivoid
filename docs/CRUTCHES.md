@@ -56,14 +56,33 @@ missing work; this register is for work that was *built in the wrong shape*.
 **RE of record:** `docs/vehicles/ATV.md`. **Design in progress:**
 `research/findings/vehicles/votv-ATV-full-sync-DESIGN-2026-08-29.md`.
 
-### What ships today
-A mirrored ATV is `PrepareMirror`'d — `SetSimulatePhysics(false)` **on the root only**,
-`SetActorTickEnabled(false)`, `SetActorRootNotifyRigidBodyCollision(false)` — and then
-`DriveMirrorTransform`'d with `SetActorLocation` + `SetActorRotation`, again root-only, from a
-**reliable** ~20 Hz `AtvState` stream interpolated by a `LerpWindow`. Pose is the *only* thing
-synced.
+### What ships today — REWRITTEN 2026-08-30 (the paragraph below this block described the
+### freeze model that arc 1 DELETED; it is kept further down as the dated indictment)
+Since arc 1 (`070c7d29`, 2026-08-29) a mirrored ATV **SIMULATES natively** — physics ON, tick ON,
+no PrepareMirror/freeze anywhere — and is *corrected* toward the authority (`atv_corrector`), with
+collision damage authorship denied by the **impulse NEUTER** (`28a958e8`: a non-owner's seven
+`ComponentHit` delegates dispatch with a ZEROED `NormalImpulse` — the notification runs whole, only
+the damage magnitude dies). Since v147 (2026-08-30) the author's **CONDITION travels**: tire
+durability/dirt/fixes/types, the spare trio, body dirt, fuel and health ride `AtvStatePayload`, a
+mirror is overwritten and re-derives visuals through the game's own reducers on change edges
+(`atv_condition_sync`; ATV.md 17.17). First cross-peer equality measured 2026-08-30: host and
+client ended a driven run with `dur=(100.00, 96.51, 100.00, 98.63)` **byte-equal**.
 
-### Why it is a crutch, not just an incomplete feature
+**THE REMAINING CRUTCH SURFACE, named (2026-08-30):**
+1. **Client-authored tire-eject PRESENCE is REFUSED by the arbiter** — deliberate, and the register
+   exists for exactly this row. A client-author eject ships `tires[i]=false` whose paired
+   `prop_atvWheel_C` birth structurally cannot travel (the express seam is host-only, the wheel key
+   is a per-peer random mint — no dedupe can ever exist), so consuming the mask would convert a
+   retained-wheel divergence into host-PERSISTED item loss. Until the act-as-host tire-eject INTENT
+   lane (ATV.md 17.5) exists, that direction stays divergent-as-today: host retains the wheel, the
+   `presence-skipped-differing` counter counts it, and the (b2) acceptance arm ASSERTS the
+   divergence so no all-green sheet hides it. The proper fix is the filed intent lane, not a wider
+   apply.
+2. **The pose stream is still the RELIABLE stopgap transport** (the Phase-1 doc's "acceptable only
+   as a stopgap"); the unreliable-sequenced datagram remains owed.
+3. `stateBits` bit0-2 are still produced and never read.
+
+### Why it WAS a crutch — the dated indictment of the RETIRED freeze model (kept as record)
 
 **[V] It deletes the reason the entity exists.** `AATV_C` is a constraint rig: four wheels as
 independent rigid bodies on `sus_FL1/FR1/BL1/BR1` suspension and `ax_*` axle constraints. Freezing
@@ -89,9 +108,13 @@ option 2, marked **"acceptable only as a stopgap"**. The stopgap shipped. MTA se
 vehicle puresync as `PACKET_RELIABILITY_UNRELIABLE_SEQUENCED` `[V]` (`CNetAPI.cpp:338,350`), and this
 codebase already has that lane (`PropPose=8`, `EntityPose=32`, `OwnerEntityPose=95`).
 
-**[V] Idle ATVs diverge in shipped code.** On receivers an unauthored ATV is physics-ON *and*
+**[V] Idle ATVs diverge in shipped code.** ~~On receivers an unauthored ATV is physics-ON *and*
 tick-ON, so `fuel` / `battery` / `dirt` accumulate independently on every peer — the exact
-`COOP_WORLD_PROP_DIVERGENCE` shape, in the one lane that never got its progression owner.
+`COOP_WORLD_PROP_DIVERGENCE` shape, in the one lane that never got its progression owner.~~
+**CLOSED 2026-08-30 by v147:** the lane HAS its progression owner now — the syncer's condition
+block overwrites every receiver (fuel divergence was the measured symptom, §13: 99.439 vs
+100.000; run-A equality is the closing evidence). `battery` is deliberately out — it is an
+inserted PROP's charge, the prop lane's row.
 
 **[V] Three wire bits are produced and never read.** `stateBits` bit0 `isDriven`, bit1 `brake`,
 bit2 `grabbed` are written by `ReadPayload` and consumed nowhere; only bit3 `authored` is read.
@@ -132,7 +155,7 @@ its own ATV, **launched at 158 cm/s by `AtvRelease`'s "un-freeze + inherit"** an
 the crutch's worst measured symptom comes from the RELEASE path, which this entry did not name, and
 the "frozen corpse" reading is right about the freeze but wrong about which step does the damage.
 
-### The proper fix (direction settled 2026-08-29)
+### The proper fix (direction settled 2026-08-29) — LEDGER UPDATED 2026-08-30
 A **vehicle-sync subsystem in MTA's shape**, not more patches to a 692-LOC file: always-simulating
 corrected mirrors (velocity + turn speed + error spread + a sync-time-context staleness gate,
 `CNetAPI::ReadVehiclePuresync`), single-syncer election covering the idle case
@@ -141,6 +164,13 @@ mid-join seed and reliable discrete edges, host-canonical arrays for config
 (`CVehicleUpgrades` ships `count + slot states` on join), and syncer-authored vitals with the arbiter
 owning discrete writes. The decisive argument is not fidelity: **it deletes the freeze/unfreeze state
 machine**, and nearly every defect found in this lane lives in that machine's transitions.
+
+**Landed so far:** the freeze machine is DELETED and mirrors always simulate + correct (arc 1);
+the release-path launch velocity is DELETED (v146); single-syncer election incl. idle (v146
+`authorSlot`); syncer-authored vitals + host-canonical condition arrays with arbiter-gated
+presence (v147); `AtvRelease` carries nothing to un-freeze. **Still owed:** the
+unreliable-sequenced pose datagram; the act-as-host tire-eject/putTire intent lane (the register's
+row 1 above); the hook_C boundary (ATV.md 16.6) remains unmeasured.
 
 ---
 

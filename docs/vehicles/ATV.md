@@ -204,7 +204,9 @@ Per-wheel state is four **index-parallel arrays**: `tires[i]` (mounted), `tiresD
 - `updSpareTire()` — `spareTire` visibility/collision from `hasSpareTire`; material from
   `lib_converters.getTireDamage(spareTire_fixes)`; `SetCustomPrimitiveDataFloat(0, spareTire_dirt)`;
   then `updDirt()`.
-- `updDirt()` — early-returns unless `skipTireUpdate`; `mesh.SetCustomPrimitiveDataFloat(0, dirt)`
+- `updDirt()` — early-returns when `skipTireUpdate` is TRUE (polarity CORRECTED 2026-08-30 by
+  disasm — `@5 IFNOT(skipTireUpdate) JUMP @20`, i.e. the verb RUNS on the default FALSE; the flag
+  is writer-less with no CDO override, so it is permanently open); `mesh.SetCustomPrimitiveDataFloat(0, dirt)`
   and per wheel the damage material + dirt float. `diretTire(wheel)` accumulates `dirt += dirt/5000`
   (clamped 0..1) on both the wheel and the body when a downward line trace hits ground.
 - `setWheelsType()` — if `april1st`, square wheels; else `wheelTypeToMesh(tiresTypes[i], i)` for
@@ -1571,6 +1573,74 @@ meaningful once both halves ship.
 the elected idle syncer whenever nobody drives — `OwnsTickFor`), and was a non-owner for 70. The
 before/after contrast is what carries the verdict, not the sample split: in §17.9 the host
 accumulated wear under the same arm and the same ownership churn, and now it does not.
+
+### 17.17 `[V]` #4 IS BUILT — the CONDITION lane (proto 147, 2026-08-30, autonomous, NOT hands-on)
+
+**The pair is closed: 17.9's symptom is gone.** Run A (19:03, `mp.py smoke 300`, client drove):
+both peers ended with `dur=(100.00, 96.51, 100.00, 98.63)` — **byte-equal**, dirt/fixes/tires
+equal, against 17.9's four-way disagreement and 17.16's author-worn/mirror-pristine split.
+
+**What shipped** (6-round `/qf` "that holds"; design v6 = the transcript in the session's
+qf_thread): `AtvStatePayload` 84 → **148 B** — tiresDurability/tiresDirt f32[4], bodyDirt,
+spareDurability, spareDirt, **fuel, health** (13.3's measured fuel divergence made the payload a
+census, not a list), tiresMask, **tiresValid** (mask 0 is the LEGAL all-ejected state, so
+"producer could not read" carries its own bit — the v143 birthLen rule), hasSpare,
+spareFixes/tiresFixes **int8** (countdown, −1 legal via `ejectWheel`'s uncapped `fixes-1`, and
+`getTireDamage`'s input IS fixes — a uint8 wrap would render material(255)), tiresTypes u8[4].
+New TUs: `ue_wrap/devices/atv_condition` (layout + verbs) and `coop/interactables/
+atv_condition_sync` (policy). ONE fill site (`ReadPayload`) covers authority 20 Hz, idle syncer,
+and the adopt seed; the idle change gate gained a condition-block memcmp term.
+
+**The receive rules, each measured:** ACCUMULATORS apply from any legitimate author;
+**PRESENCE (tiresMask, hasSpare) is consumed only from host-authored packets** — a client-author
+eject ships a mask bit whose paired wheel-prop birth structurally cannot travel (host-only express
+seam + per-peer random key mint), so consuming it would persist an item loss on the host. That
+refused direction is REGISTERED (CRUTCHES.md C1 row 1) pending the act-as-host intent lane (17.5).
+Verbs fire on change edges vs a **LAST-EXPRESSED baseline seeded from the ACTOR** (zero-seed would
+BreakConstraint×8 a settled rig; per-packet baselines starve updDirt forever — both qf catches):
+updSpareTire / updTires (both chain updDirt, measured) / updDirt (ε 0.01) / updHealth (ε 0.5,
+pure smoke visual). `runout()` is the engine-death verb and is never called by the sync; battery
+is an inserted PROP's charge — the prop lane's row. Non-finite floats refuse the whole block
+(symmetric garbage filter); domain clamps are CLIENT-SCOPED per the host-may-cheat rule.
+
+**Acceptance, per arm (all autonomous; archives `research/atv_runs/20260830-19*-v147-*`):**
+- **(a) equality** `[V]` — run A above. Its smoke verdict FAIL was the pre-existing KO-respawn
+  hang (driver died organically in a crash at 19:05:35, "respawn in 5 s" never completed,
+  death-backstop spam at frame rate, session stop 16 s later — the backlog rows «KO-респавн RSS» /
+  «хост-авторитативный респавн», now with strong evidence).
+- **(b) live host eject** `[V]` — dedicated run 19:25: drill (roster-gated) fired `damageWheel(2,
+  200)` on the host at 19:26:38 → the native transaction ran whole: the wheel prop (key
+  `iZAiac9fG49qpEdeR20K-A`) broadcast and adopted by the mirror the same second, mask
+  0xF→0xB, **mirror updTires-called == 1** (applied=263, dirt=0, spare=0, health=0,
+  presence-skipped=0, deferred=0, invalid=0). En route it also witnessed the authority model
+  exactly: the client was DRIVING at eject time and correctly ignored incoming presence for a
+  vehicle it authored; the flip landed on its first applied packet after dismount.
+- **(e) mid-join** `[V]` — run 19:17 (`--rejoin`): the rejoined client came back byte-equal
+  including the ejected wheel (`tires=0xB`, dur[2] matching), **verbs tires=0** — the transferred
+  save already carried the state and the actor seed made group A silent (the updTires==0 branch;
+  the ≤1 branch exists for a snapshot-lag join and is asserted by mask equality either way).
+- **(c)** `[V]` UNRESOLVED == 0 in every run.
+- **(d) starvation assert** `[?]` — updTires==0 in no-eject windows is `[V]` (run A), but no run's
+  dirt ever crossed the product threshold (dirt stayed 0.00 throughout), so "author dirt growth
+  ⇒ mirror updDirt ≥ 1" has NOT been witnessed yet.
+- **(b2) client-eject twin** — **UNRUN.** Its run was stopped twice from outside the session; the
+  drill's client arm, the presence-skipped>0 assertion and the host-retains-the-wheel census are
+  built and waiting. **The KNOWN-BROKEN direction it witnesses is therefore documented but not yet
+  measured live.**
+
+**Post-ship audit (0 CRITICAL) folded before any field exposure:** finite-gate + client-scoped
+clamps (MAJOR-1), the hasSpare expression leak on non-host packets (MAJOR-3), seed-failure
+once-WARN, the dead defer flag retired, Resolve warmed at install, two stale 84-byte comments.
+MAJOR-2 is a REPO fact: commit `34ca25bc` (another session's, via the shared index) carries this
+lane's three CMakeLists rows without its files — HEAD was unbuildable until this lane's own commit
+landed; that commit is permanently unbisectable.
+
+**Open after 17.17:** the b2 witness run; one unattributed client boot Fatal (ONE occurrence,
+19:35, on the audit-folds build whose twin HOST booted fine; my diff is boot-inert by
+construction — suspect set includes `34ca25bc`'s boot-time selftest, unproven, no dump written);
+`[?]` what the game keeps in an ejected slot's `tiresDurability[i]` (0.00 in one run, 100.00 in
+another — peers agree with EACH OTHER in every run, so the sync invariant holds regardless);
+the act-as-host eject/putTire intent lane (17.5); steering/input (17.15); A5's window; A4.
 
 ### 17.7 The tire lane, mapped end to end (2026-08-30, `[RD]` bytecode)
 
