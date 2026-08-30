@@ -10,6 +10,8 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
+#include "coop/interactables/atv_corrector.h"
+#include "coop/interactables/atv_hit_guard.h"
 #include "coop/interactables/atv_sync.h"   // OwnsTick -- which SIDE of the mirror this sample is
 #include "ue_wrap/devices/atv.h"
 #include "ue_wrap/engine/engine.h"
@@ -137,13 +139,39 @@ int32_t g_airtimeOff         = -1;
 int32_t g_tirescountOff      = -1;
 bool    g_offsResolved = false;
 
-// TArray<T>::Num without caring about T: {void* Data; int32 Num; int32 Max}. -1 = unreadable,
-// which MUST print differently from 0 -- "identical on both peers" and "unreadable on both
-// peers" are the two readings a census like this most easily confuses (a bare 0 would read as
-// the finding we are looking for even when the offset failed to resolve).
-int32_t ArrayNum(void* obj, int32_t off) {
+// THE VALUES, NOT THE LENGTH -- and the first version of this read got that wrong.
+// `wheelsOnSurface` is a TArray<bool> whose CDO default ALREADY has four elements
+// [false,false,false,false] (ATV.json Exports[246]/Data[8]), so its Num is 4 BY CONSTRUCTION and
+// answers nothing. The tick's gate is `Array_Contains(wheelsOnSurface, <a wheel>)`, which tests
+// the four VALUES. Reading Num printed `wos=4` on both peers in every run -- including on an
+// actor whose transform did not exist yet -- and that non-answer was then written into
+// docs/vehicles/ATV.md 17.3 as evidence that the array "is not the live contact set". It was
+// evidence of nothing. Caught by the post-ship audit of the very commit whose thesis was "the
+// instrument was blind to the axis that failed".
+//
+// Layout: FScriptArray = {void* Data; int32 Num; int32 Max} (the dump's ElementSize 16 confirms
+// it). A TArray<bool> stores one BYTE per element -- it is not TBitArray. Returns a 4-bit mask,
+// or -1 for unreadable, which must stay distinguishable from 0 ("no wheel is on a surface").
+int32_t WheelsOnSurfaceMask(void* obj, int32_t off) {
     if (!obj || off < 0) return -1;
-    return *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(obj) + off + 8);
+    uint8_t* arr = reinterpret_cast<uint8_t*>(obj) + off;
+    void* data = *reinterpret_cast<void**>(arr);
+    const int32_t num = *reinterpret_cast<int32_t*>(arr + 8);
+    if (!data || num < 1 || num > 64) return -1;   // torn/garbage read, not a finding
+    int32_t mask = 0;
+    const int32_t n = num < 4 ? num : 4;
+    for (int32_t i = 0; i < n; ++i)
+        if (reinterpret_cast<uint8_t*>(data)[i]) mask |= (1 << i);
+    return mask;
+}
+
+// tirescount is an IntProperty (ATV.json: SerializedType=IntProperty, ElementSize 4). Reading it
+// with ReadFloat type-punned 4 into 5.6e-45, which "%.1f" prints as a perfectly plausible 0.0 --
+// on both peers, in every run. The -1 sentinel could not fire because the offset RESOLVES; the
+// failure mode is a third one the sentinel was never designed for: read, wrong type, plausible.
+int32_t ReadInt(void* obj, int32_t off) {
+    if (!obj || off < 0) return -1;
+    return *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(obj) + off);
 }
 
 void* g_partsFn = nullptr;   // ATV_C::vehicleGetParts (8 out-params, no in-params)
@@ -156,6 +184,16 @@ std::chrono::steady_clock::time_point g_lastSample{};
 uint32_t g_sample = 0;
 
 constexpr int kSampleMs = 500;
+// THE COUNTERS HAVE TO REACH A LOG THE ARCHIVE HAS. atv_sync prints the hit-guard and corrector
+// tallies exactly once, from OnDisconnect -- and every autonomous scenario KILLS both peers
+// rather than disconnecting, so that line is absent from all 18 archived runs. The acceptance
+// arm that reads them (A3's "armed but NEVER FIRED" check) has therefore never been able to fire
+// on real evidence, and the 2026-08-30 mask change -- five delegates per non-owner that now
+// dispatch instead of being cancelled -- was invisible to every counter in the tree. Emitting
+// them from the probe costs three relaxed atomic loads every 10 s and puts them where the
+// evidence store already looks.
+constexpr int kCounterLogMs = 10000;
+std::chrono::steady_clock::time_point g_lastCounterLog{};
 
 bool ResolveOffsets() {
     if (g_offsResolved) return true;
@@ -185,9 +223,11 @@ bool ResolveOffsets() {
 
     g_offsResolved = true;
     UE_LOGI("atv_probe: resolved battery=%d dirt=%d dirtVel=%d torqAlpha=%d speed=%d "
+            "wheelsOnSurface=%d airtime=%d tirescount=%d "
             "vehicleGetParts=%p actionName=%p dismount=%p setBrake=%p "
             "input_forward=%d/%02x brake=%d/%02x empty=%d broken=%d underwater=%d",
             g_batteryOff, g_dirtOff, g_dirtVelOff, g_torqOff, g_speedOff,
+            g_wheelsOnSurfaceOff, g_airtimeOff, g_tirescountOff,
             g_partsFn, g_actionNameFn, g_dismountFn, g_setBrakeFn,
             g_bInputFwd.off, g_bInputFwd.mask, g_bBrake.off, g_bBrake.mask,
             g_bEmpty.off, g_bBroken.off, g_bUnderwater.off);
@@ -319,9 +359,9 @@ void SampleOne(void* atv, size_t idx) {
     // wos: how many wheels the rig believes are touching a surface (the suspension gate).
     // mass: the root body's, so a "the mirror is configured differently" reading is available
     // in the same line rather than needing a second run.
-    const int32_t wos      = ArrayNum(atv, g_wheelsOnSurfaceOff);
-    const float   airtime  = ReadFloat(atv, g_airtimeOff);
-    const float   tirescnt = ReadFloat(atv, g_tirescountOff);
+    const int32_t wos      = WheelsOnSurfaceMask(atv, g_wheelsOnSurfaceOff);
+    const float   airtime  = ReadFloat(atv, g_airtimeOff);      // FloatProperty [V]
+    const int32_t tirescnt = ReadInt(atv, g_tirescountOff);     // IntProperty  [V]
     const float   mass     = ue_wrap::engine::GetActorRootMass(atv);
 
     const float fuel    = ue_wrap::atv::GetFuel(atv);
@@ -347,7 +387,7 @@ void SampleOne(void* atv, size_t idx) {
                 "body=(%.1f,%.1f,%.1f) rot=(%.1f,%.1f,%.1f) "
                 "vel=(%.1f,%.1f,%.1f) angv=(%.1f,%.1f,%.1f) "
                 "partZ=(%.1f,%.1f,%.1f) rideH=%.2f "
-                "wos=%d airtime=%.2f tirescnt=%.1f mass=%.1f "
+                "wos=0x%X airtime=%.2f tirescnt=%d mass=%.1f "
                 "susFR=%.3f susFL=%.3f susBK=%.3f "
                 "fuel=%.3f batt=%.3f dirt=%.4f dirtVel=%.4f hp=%.2f",
                 g_sample, idx, key.c_str(), driven ? 1 : 0, ownsTick ? 1 : 0, occ,
@@ -369,7 +409,7 @@ void SampleOne(void* atv, size_t idx) {
         UE_LOGI("[ATVP] n=%u i=%zu key='%ls' driven=%d owns=%d occ=%p "
                 "body=(%.1f,%.1f,%.1f) rot=(%.1f,%.1f,%.1f) "
                 "vel=(%.1f,%.1f,%.1f) angv=(%.1f,%.1f,%.1f) NOPARTS "
-                "wos=%d airtime=%.2f tirescnt=%.1f mass=%.1f "
+                "wos=0x%X airtime=%.2f tirescnt=%d mass=%.1f "
                 "fuel=%.3f batt=%.3f dirt=%.4f dirtVel=%.4f hp=%.2f",
                 g_sample, idx, key.c_str(), driven ? 1 : 0, ownsTick ? 1 : 0, occ,
                 loc.X, loc.Y, loc.Z, rot.Pitch, rot.Yaw, rot.Roll,
@@ -559,6 +599,24 @@ void Tick(coop::net::Session& session, bool isHost) {
 
     for (size_t i = 0; i < g_atvs.size(); ++i) {
         if (g_atvs[i]) SampleOne(g_atvs[i], i);
+    }
+
+    if (g_lastCounterLog.time_since_epoch().count() == 0 ||
+        std::chrono::duration_cast<std::chrono::milliseconds>(now - g_lastCounterLog).count()
+            >= kCounterLogMs) {
+        g_lastCounterLog = now;
+        const auto hg = coop::atv_hit_guard::ReadCounters();
+        const auto cc = coop::atv_corrector::ReadCounters();
+        UE_LOGI("[ATVP] counters hitguard=%s %llu cancelled / %llu allowed / %llu permitted  "
+                "corrector=%llu nudged / %llu warped / %llu cut / %llu parked-replace",
+                hg.armed ? "armed" : "NEVER-ARMED",
+                static_cast<unsigned long long>(hg.cancelled),
+                static_cast<unsigned long long>(hg.allowed),
+                static_cast<unsigned long long>(hg.permitted),
+                static_cast<unsigned long long>(cc.corrections),
+                static_cast<unsigned long long>(cc.warps),
+                static_cast<unsigned long long>(cc.stallWarps),
+                static_cast<unsigned long long>(cc.restPlaces));
     }
 
     // WHICH PEER DRIVES IS THE INI'S CALL, not this file's. The arm used to be host-only,

@@ -804,11 +804,13 @@ void OnDisconnect() {
     const auto hg = coop::atv_hit_guard::ReadCounters();
     if (n > 0)
         UE_LOGI("atv: OnDisconnect -- cleared %zu ATV(s) (brains restored; runtime mirrors destroyed); "
-                "hit guard: %s, %llu cancelled / %llu allowed; corrector: %llu nudged / %llu warped "
+                "hit guard: %s, %llu cancelled / %llu allowed / %llu permitted; "
+                "corrector: %llu nudged / %llu warped "
                 "/ %llu cut-on-stall / %llu parked-replace",
                 n, hg.armed ? "armed" : "NEVER ARMED",
                 static_cast<unsigned long long>(hg.cancelled),
                 static_cast<unsigned long long>(hg.allowed),
+                static_cast<unsigned long long>(hg.permitted),
                 static_cast<unsigned long long>(c.corrections),
                 static_cast<unsigned long long>(c.warps),
                 static_cast<unsigned long long>(c.stallWarps),

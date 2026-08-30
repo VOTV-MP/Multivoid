@@ -58,7 +58,14 @@ LINE = re.compile(
     # fresh run unparseable, which this script then reported as "probe off, no ATV found": a
     # format change to a log line owes a census of its readers, and this file is one.
     r"(?:rideH=(?P<ride>[-\d.]+) )?"
-    r"(?:wos=(?P<wos>-?\d+) airtime=(?P<air>[-\d.]+) tirescnt=(?P<tcnt>[-\d.]+) "
+    # NOPARTS comes BEFORE the census group in the other format string (atv_probe.cpp's second
+    # branch prints `... angv=(..) NOPARTS wos=.. mass=.. fuel=..`), so the alternation has to
+    # admit it on either side. The first version of this regex did not, and every sample of a run
+    # whose `vehicleGetParts` was unresolved would have been dropped SILENTLY -- reported as
+    # "probe off, no ATV found", which is precisely the failure this file already carries a
+    # comment about. Caught by a post-ship audit, one branch away from the one I had just fixed.
+    r"(?P<noparts0>NOPARTS )?"
+    r"(?:wos=(?P<wos>-?(?:0x)?[0-9A-Fa-f]+) airtime=(?P<air>[-\d.]+) tirescnt=(?P<tcnt>-?[\d.]+) "
     r"mass=(?P<mass>[-\d.]+) )?"
     r"(?:susFR=(?P<fr>[-\d.]+) susFL=(?P<fl>[-\d.]+) susBK=(?P<bk>[-\d.]+) |(?P<noparts>NOPARTS )?)"
     r"fuel=(?P<fuel>[-\d.]+) batt=(?P<batt>[-\d.]+) dirt=(?P<dirt>[-\d.]+) "
@@ -76,14 +83,23 @@ def parse(path):
             if not m:
                 continue
             d = m.groupdict()
+            # wos prints as 0x<hex> since 2026-08-30 (it is a 4-bit wheel mask, not a count);
+            # older archives have a decimal. int(x, 0) reads both, and it must not go through
+            # float() or "0x3" raises and takes the whole sample with it.
+            if d.get("wos") is not None:
+                try:
+                    d["wos"] = str(int(d["wos"], 0))
+                except ValueError:
+                    d["wos"] = None
             rec = {k: (float(v) if v is not None else None)
-                   for k, v in d.items() if k not in ("key", "occ", "noparts")}
+                   for k, v in d.items() if k not in ("key", "occ", "noparts", "noparts0")}
             rec["key"] = d["key"]
             rec["occ"] = d["occ"]
             ms = STAMP.match(raw)
             rec["t"] = (int(ms.group(1)) * 3600 + int(ms.group(2)) * 60 + int(ms.group(3))
                         if ms else None)
-            rec["parts"] = d["noparts"] is None and d["fr"] is not None
+            rec["parts"] = (d["noparts"] is None and d["noparts0"] is None
+                            and d["fr"] is not None)
             # PRE-PLACEMENT GUARD. The ATV enters GUObjectArray before its components
             # are placed, and those samples read body=(0,0,0) with all three wheel
             # distances 0. Measured 2026-08-29: samples 1..15 of a 173-sample run. They

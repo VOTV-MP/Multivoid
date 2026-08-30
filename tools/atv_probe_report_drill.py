@@ -26,13 +26,26 @@ HDR = "==== Multivoid log ====\n"
 ARMED = "[19:54:40] [INFO ] atv: hit guard armed -- 7/7 ComponentHit delegates intercepted\n"
 
 
-def line(t, n, key, driven, owns, x, y, z, fr, fl, bk, ride=None):
+def line(t, n, key, driven, owns, x, y, z, fr, fl, bk, ride=None, noparts=False):
     """`ride` opts the sample into the A7 (ride-height) arm.
 
     Left None the sample carries no vel=/partZ=/rideH= at all, which is what every archive
     before 2026-08-30 looks like -- and A7 must SKIP those rather than judge them, so the
     default here is also a negative control for that.
     """
+    if noparts:
+        # THE SECOND FORMAT STRING. atv_probe.cpp prints this branch when vehicleGetParts is
+        # unresolved or fails, and it puts NOPARTS BEFORE the census group -- the opposite order
+        # to the parts branch. No fixture reached it until 2026-08-30, so a regex that admitted
+        # only one of the two orders passed a 16/16 drill while silently dropping every sample of
+        # any run whose parts call failed. An acceptance arm no fixture exercises is untested, and
+        # that applies to the drill's own coverage of the FORMAT, not only of the verdicts.
+        return ("[{}] [INFO ] [ATVP] n={} i=0 key='{}' driven={} owns={} occ=0x1 "
+                "body=({:.1f},{:.1f},{:.1f}) rot=(0.0,0.0,0.0) "
+                "vel=(0.0,0.0,0.0) angv=(0.0,0.0,0.0) NOPARTS "
+                "wos=0xF airtime=0.00 tirescnt=4 mass=2000.0 "
+                "fuel=100.000 batt=100.000 dirt=0.0000 dirtVel=0.0000 hp=100.00\n"
+                ).format(t, n, key, driven, owns, x, y, z)
     extra = ""
     if ride is not None:
         # A7 reads the sample's own velocity to decide "settled", so a still rig must say so.
@@ -300,6 +313,14 @@ def main():
     # rather than read a missing field as zero -- a 0.00 would look exactly like a collapsed rig.
     arm_text("A7 skips a pre-2026-08-30 archive", "PASS",
              run(*healthy()), "A1 ")
+
+    # The NOPARTS format must PARSE. A regex that drops it reports "probe off, no ATV found",
+    # which reads as a rig failure rather than an instrument one.
+    nh = [line(stamp(40 + i), i, "ATV", 0, 1, 100.0, 0.0, 500.0, 0, 0, 0, noparts=True)
+          for i in range(12)]
+    nc = [line(stamp(40 + i), i, "ATV", 0, 0, 100.3, 0.0, 500.0, 0, 0, 0, noparts=True)
+          for i in range(12)]
+    arm_text("NOPARTS samples still parse", "INCONCLUSIVE", run(nh, nc), "fuel     host=")
 
     arm_text("attrib: seated but ZERO torque", "PASS", run(hs, cs),
              "produced ZERO torque")

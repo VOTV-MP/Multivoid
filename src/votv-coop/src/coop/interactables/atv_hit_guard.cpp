@@ -108,6 +108,12 @@ std::atomic<bool>  g_hitGuardArmed{false};              // all 7 delegates regis
 // whatever thread ProcessEvent is on, and a config read is not something to do per hit at 200 Hz
 // -- run 2 logged 17,638 cancels in 90 s on ONE parked vehicle).
 std::atomic<unsigned> g_cancelMask{0x7F};
+// AND WHAT THE MASK LETS THROUGH. The whole behavioural change of 2026-08-30 is five delegates
+// per non-owner that now DISPATCH instead of being cancelled -- and the first version counted
+// them nowhere, deliberately, so as not to blur `g_hitAllowed` ("this peer owns the rig"). The
+// audit's verdict on that reasoning: a cost we CAUSE but do not EXECUTE is still ours, and an
+// unobservable one cannot be regression-tested. Three counters, three distinct questions.
+std::atomic<unsigned long long> g_hitPermitted{0};
 
 }  // namespace
 
@@ -131,9 +137,10 @@ bool CancelHit(void* self, unsigned bit) {
         if (p == self) { g_hitAllowed.fetch_add(1, std::memory_order_relaxed); return false; }
     }
     if (!(g_cancelMask.load(std::memory_order_relaxed) & bit)) {
-        // Deliberately NOT counted as "allowed": that counter means "this peer owns the rig".
-        // Folding a mask-permitted hit into it would make the two arms of the measurement
-        // indistinguishable in the one line anybody reads.
+        // NOT folded into `allowed` -- that counter means "this peer OWNS the rig". This is the
+        // other thing: a non-owner whose hit we deliberately let through, which is the entire
+        // behavioural change and was invisible to every counter in the tree until the audit.
+        g_hitPermitted.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
     g_hitCancelled.fetch_add(1, std::memory_order_relaxed);
@@ -147,25 +154,44 @@ bool OnAtvHitPre(void* self, void* /*params*/) { return CancelHit(self, Bit); }
 
 void InstallHitGuard() {
     if (g_hitGuardArmed.load(std::memory_order_relaxed)) return;
+    // LATCH THE ATTEMPT, NOT ONLY THE SUCCESS. Below this line are seven GUObjectArray walks and
+    // a mutexed full read of multivoid.ini from disk; `g_hitGuardArmed` is false on every failure
+    // path, so a session in which the delegates do not resolve would redo all of it on every
+    // call. Today the only thing preventing that is `g_installed` in atv_sync.cpp -- a latch in
+    // ANOTHER FILE, guarding a function this file's own header calls idempotent. That is the
+    // Install()-in-a-pump shape the project's audit template exists for, and it is one line to
+    // stop depending on somebody else's early-out.
+    static std::atomic<bool> sTried{false};
+    if (sTried.exchange(true, std::memory_order_acq_rel)) return;
     void* fns[8] = {};
     const int n = A::ResolveHitDelegates(fns, 8);
     const unsigned mask = static_cast<unsigned>(
         ::coop::config::ResolveInt(::coop::config_registry::rows::atv_hit_guard_mask)) & 0x7Fu;
     g_cancelMask.store(mask, std::memory_order_relaxed);
     using Cb = bool (*)(void*, void*);
-    // Index order is kHitDelegateNames order, and ResolveHitDelegates walks that same array, so
-    // fns[i] and kCallbacks[i] name the same delegate by construction rather than by agreement.
+    // Index order is kHitDelegateNames order and ResolveHitDelegates writes POSITIONALLY (it was
+    // changed to, 2026-08-30; it used to COMPACT and this same comment was written over it), so
+    // fns[i] and kCallbacks[i] name the same delegate by construction and not by agreement.
+    // fns[i] may be NULL on a miss -- registration is skipped and `ok` then falls short of 7,
+    // which fails the whole lane closed below.
     static const Cb kCallbacks[7] = {
         &OnAtvHitPre<1u << 0>, &OnAtvHitPre<1u << 1>, &OnAtvHitPre<1u << 2>, &OnAtvHitPre<1u << 3>,
         &OnAtvHitPre<1u << 4>, &OnAtvHitPre<1u << 5>, &OnAtvHitPre<1u << 6>,
     };
     int ok = 0;
-    for (int i = 0; i < n && i < 7; ++i)
-        if (ue_wrap::game_thread::RegisterInterceptor(fns[i], kCallbacks[i])) ++ok;
+    for (int i = 0; i < 7; ++i)
+        if (fns[i] && ue_wrap::game_thread::RegisterInterceptor(fns[i], kCallbacks[i])) ++ok;
     if (ok == 7) {
         g_hitGuardArmed.store(true, std::memory_order_relaxed);
+        // WHAT THIS LINE MAY CLAIM. It used to read "a non-owner cannot author damage/explode/
+        // ejectWheel", which sounds like a security property and is not one: `health` is not on
+        // the wire, so a peer that edits the mask in its own ini desynchronises only ITS OWN
+        // copy. This is a local-consistency control, never an anti-cheat one, and a log line that
+        // implies otherwise is how a guarantee nobody built gets cited later as if it existed.
         UE_LOGI("atv: hit guard armed -- 7/7 ComponentHit delegates intercepted, cancel mask 0x%02X "
-                "(a non-owner cannot author damage/explode/ejectWheel on the masked ones)", mask);
+                "(bit0 mesh, bit1 Capsule, bits2-6 the wheels; a non-owner's MASKED hits are "
+                "dropped so it cannot damage or explode its own mirror -- local consistency, "
+                "not anti-cheat)", mask);
     } else {
         // FAIL CLOSED. Without all seven we will not run the simulate-and-correct model at all:
         // Tick leaves every ATV's brain ON and mirrors nothing, so peers diverge visibly rather
@@ -191,7 +217,7 @@ bool Owns(void* actor) {
 }
 
 Counters ReadCounters() {
-    return Counters{ g_hitCancelled.load(), g_hitAllowed.load(),
+    return Counters{ g_hitCancelled.load(), g_hitAllowed.load(), g_hitPermitted.load(),
                      g_hitGuardArmed.load(std::memory_order_relaxed) };
 }
 
