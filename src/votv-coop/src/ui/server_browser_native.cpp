@@ -11,6 +11,7 @@
 #include "ui/server_browser_actions.h"   // CONNECT / HOST / REFRESH, its own TU
 #include "ui/server_browser_selftest.h"  // the dev phase machine; ships dark
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
@@ -112,9 +113,8 @@ bool  g_lmbPrimed = false;
 // Hover recolours the row's TEXT; selection recolours the row's FILL. Both are applied on
 // a CHANGE, never per frame.
 int         g_hoverRow   = -1;   // index into the live rows, or -1
+NS::HoverTracker g_hover;        // pointer + scroll + settling, one owner
 std::string g_selectedId;        // the SELECTED LOBBY, keyed by id and not by index
-POINT       g_lastCursor{-1, -1};
-bool        g_hoverPending = false;   // one settling pass is owed after motion stops
 // ESC edge state. Primed on the first tick a screen is shown so a key already held when it
 // opens cannot synthesize a close -- the same guard multiplayer_menu's click poll uses.
 bool  g_prevEsc   = false;
@@ -130,12 +130,11 @@ bool    g_shown      = false;
 std::vector<std::string> g_rowIds;
 std::vector<Row> g_rows;
 uint64_t g_lastRefreshMs = 0;
+uint64_t g_lastRowsGen   = 0;   // the fetch generation last PAINTED (see OnMenuTick)
 // A click's answer holds the footer for this long against the list sync's rewrite.
 constexpr uint64_t kNoticeMs = 6000;
 uint64_t g_noticeUntilMs = 0;
 int      g_visibleRows   = 0;   // rows actually SHOWN, not ChildCount's high-water mark
-float    g_lastScrollFrac  = -1.f;  // the list can move under a stationary cursor
-int      g_lastVisibleRows = -1;
 int      g_buildAttempts = 0;
 bool     g_toldTheUser   = false;
 
@@ -188,13 +187,7 @@ void* BuildRow(void* parent) {
     for (const Column& c : kColumns)
         AddText(hb, L"", 16, kText, kJustLeft, c.weight);
     // SizeBox is a UContentWidget: its single child goes through SetContent.
-    if (void* cw = R::FindClass(P::name::ContentWidgetClass)) {
-        if (void* fn = R::FindFunction(cw, P::name::SetContentFn)) {
-            ue_wrap::ParamFrame f(fn);
-            f.Set<void*>(L"Content", ovl);
-            Call(box, f);
-        }
-    }
+    U::SetContent(box, ovl);
     return box;
 }
 
@@ -215,11 +208,15 @@ bool RowPartsAt(int32_t i, RowParts& out) {
     // `ca1cd5e4`; only this one was not. A UFunction never moves, so one resolve is all
     // there is. (Post-ship perf audit, 2026-08-29. The general fix -- a cache inside
     // `FindFunction` for all 476 call sites -- is filed separately and is not this lane.)
-    static void* sGetContent = nullptr;
-    if (!sGetContent) {
-        if (void* cw = R::FindClass(P::name::ContentWidgetClass))
-            sGetContent = R::FindFunction(cw, L"GetContent");
-    }
+    // ONCE, INCLUDING ON FAILURE. The first version latched only success, so a miss re-walked
+    // the whole GUObjectArray on every call -- and this runs per ROW inside SyncRows and
+    // RepaintRowFills, so the failure path was 64 full walks per frame. A UFunction, unlike
+    // an asset, either exists at process start or never does, so a permanent negative latch
+    // is not merely safe here, it is correct.
+    static void* const sGetContent = [] {
+        void* cw = R::FindClass(P::name::ContentWidgetClass);
+        return cw ? R::FindFunction(cw, P::name::GetContentFn) : nullptr;
+    }();
     if (sGetContent) {
         ue_wrap::ParamFrame f(sGetContent);
         if (Call(box, f)) ovl = f.Get<void*>(L"ReturnValue");
@@ -275,7 +272,7 @@ void SetRowText(void* block, const std::string& utf8, const FLinearColor& col) {
 // Repaint every row's FILL from the current selection. Cheap (one tint per row, no
 // reflection walk) and only ever called on a selection change.
 void RepaintRowFills() {
-    const int total = U::ChildCount(g_list);
+    const int total = g_visibleRows;   // shown, not ChildCount's high-water mark
     for (int i = 0; i < total; ++i) {
         RowParts rp;
         if (!RowPartsAt(i, rp) || !rp.bg) continue;
@@ -306,37 +303,10 @@ void RepaintRowFills() {
 // input path, and sees movement regardless of how the message was routed; the dead seam is
 // retired with it (RULE 2).
 void UpdateHover() {
-    POINT c{};
-    if (!::GetCursorPos(&c)) return;
-    const bool moved = (c.x != g_lastCursor.x || c.y != g_lastCursor.y);
-    g_lastCursor = c;
-
-    // INVARIANT 2 (this module's header, measured): Slate's hover state is one tick behind
-    // the pointer, so a reading taken in the same tick as the move describes where the
-    // cursor WAS. Evaluating only on the moving tick would therefore leave the highlight
-    // permanently one move behind -- and, worse, STUCK there: the next tick sees no delta,
-    // skips the pass, and nothing ever corrects it.
-    //
-    // So evaluate on every moving tick AND on one settling tick after motion stops. During
-    // a sweep the highlight trails by a frame, which is 8.5 ms and invisible; when the
-    // cursor stops, the settling pass lands it on the final row.
-    // THE POINTER IS NOT THE ONLY THING THAT MOVES A ROW UNDER IT. The wheel scrolls this
-    // list without moving the cursor at all (measured: `WHEEL VERDICT YES`), and the sync
-    // can change how many rows there are. Gating on cursor motion alone left `g_hoverRow`
-    // pointing at whatever index was under the pointer BEFORE the scroll -- so the
-    // highlight rode away with the row, possibly off-screen, and a click then selected a
-    // server the player was not pointing at and could not see. One dispatch per tick buys
-    // the scroll term; the row count is free.
-    float frac = -1.f;
-    U::ViewOffsetFraction(g_list, frac);
-    const bool scrolled = frac != g_lastScrollFrac || g_visibleRows != g_lastVisibleRows;
-    g_lastScrollFrac  = frac;
-    g_lastVisibleRows = g_visibleRows;
-
-    if (!moved && !scrolled && !g_hoverPending) return;   // nothing could have changed: free
-    g_hoverPending = moved || scrolled;
-
-    const int hit = NS::ChildAtCursor(g_list, g_visibleRows, c.x, c.y, g_hoverRow);
+    // The tracker owns the pointer, the scroll and the settling pass together; this screen
+    // used to own all three itself, and its sibling owned a broken copy of them.
+    if (!g_hover.Poll(g_list, g_visibleRows)) return;
+    const int hit = g_hover.Index();
     if (hit == g_hoverRow) return;
 
     const int prev = g_hoverRow;
@@ -357,7 +327,7 @@ void UpdateHover() {
 // THE SINGLE WRITER of both the children's text and g_rowIds. Nothing else touches either,
 // which is what makes the positional pairing safe (header, invariant 1).
 void SyncRows() {
-    sm::CopyRows(g_rows);
+    g_lastRowsGen = sm::CopyRows(g_rows);
     const int want = static_cast<int>(g_rows.size()) > kMaxRows ? kMaxRows
                                                                : static_cast<int>(g_rows.size());
     // The hover walk reads this instead of ChildCount: rows are GROWN and never
@@ -507,13 +477,7 @@ bool BuildScreen(void* switcher) {
                                              P::off::UOverlaySlot_Padding);
         pad[0] = pad[1] = pad[2] = pad[3] = kPadPx;
     }
-    if (void* cw = R::FindClass(P::name::ContentWidgetClass)) {
-        if (void* fn = R::FindFunction(cw, P::name::SetContentFn)) {
-            ue_wrap::ParamFrame f(fn);
-            f.Set<void*>(L"Content", winOvl);
-            Call(winBox, f);
-        }
-    }
+    U::SetContent(winBox, winOvl);
     if (void* s = U::AddChild(ovl, winBox))
         U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
                         kCenter, kCenter);
@@ -565,13 +529,7 @@ bool BuildScreen(void* switcher) {
     U::CloneStyle(g_list, P::off::UScrollBox_WidgetBarStyle, barDonor,
                   P::off::UScrollBox_WidgetBarStyle, P::off::FScrollBarStyle_Size,
                   P::off::FScrollBarStyleBrushes, 9);
-    if (void* cw = R::FindClass(P::name::ContentWidgetClass)) {
-        if (void* fn = R::FindFunction(cw, P::name::SetContentFn)) {
-            ue_wrap::ParamFrame f(fn);
-            f.Set<void*>(L"Content", g_list);
-            Call(listBox, f);
-        }
-    }
+    U::SetContent(listBox, g_list);
     if (void* s = U::AddChild(col, listBox))
         U::SetSlotAlign(s, P::off::UVerticalBoxSlot_HAlign, P::off::UVerticalBoxSlot_VAlign,
                         kFill, kFill);
@@ -667,6 +625,16 @@ void Close() {
 }
 
 void CloseNow() {
+    // ENFORCED, not merely documented. It sits one declaration below `Close()`, whose header
+    // says "safe from any thread", and it reaches ProcessEvent through SwitcherSetIndex --
+    // so the difference between them is exactly the kind a caller reads past. Off-thread it
+    // degrades to the deferred close rather than touching the engine.
+    if (!ue_wrap::game_thread::IsGameThread()) {
+        UE_LOGW("server_browser_native: CloseNow off the game thread -- deferring instead "
+                "(it drives the switcher through ProcessEvent)");
+        Close();
+        return;
+    }
     g_wantOpenMs.store(0, std::memory_order_relaxed);
     g_wantClose.store(false, std::memory_order_relaxed);   // performed here, not deferred
     Hide("replaced by a sibling screen");
@@ -706,8 +674,8 @@ void SetNotice(const char* text) {
 void LogRowHitDiagnostics(int32_t i) {
     RowParts rp;
     if (!RowPartsAt(i, rp)) {
-        UE_LOGW("server_browser_native: row %d has no parts -- RowPartsAt failed, so the "
-                "hover walk skips it entirely and its background is never even asked", i);
+        UE_LOGW("server_browser_native: row %d has no parts -- RowPartsAt failed, so it has "
+                "no background to tint and no text to recolour", i);
         return;
     }
     auto dump = [](const char* what, void* w) {
@@ -846,12 +814,19 @@ void OnMenuTick(void* menu, void* switcher) {
 
     UpdateHover();
 
+    // FETCH ON A TIMER, PAINT ON AN ARRIVAL -- two questions, and they used to share one
+    // gate. With paint coupled to the fetch tick, a lobby that arrived at t=0.3 s was not
+    // drawn until t=5 s, and REFRESH called `sm::Refresh()` with no repaint at all, so the
+    // button showed "Refreshing..." over an unchanged list and read as dead. `CopyRows`
+    // already returns a generation that increments per completed fetch and `SyncRows` was
+    // throwing it away; the sibling window has used exactly this shape (`g_savesRev`) since
+    // it was written.
     const uint64_t now = ::GetTickCount64();
     if (now - g_lastRefreshMs >= kRefreshMs) {
         g_lastRefreshMs = now;
         sm::Refresh();
-        SyncRows();
     }
+    if (sm::RowsGeneration() != g_lastRowsGen) SyncRows();
 }
 
 }  // namespace ui::server_browser_native

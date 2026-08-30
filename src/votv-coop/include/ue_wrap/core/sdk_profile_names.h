@@ -433,6 +433,7 @@ inline constexpr const wchar_t* ButtonClass = L"Button";                      //
 inline constexpr const wchar_t* PanelWidgetClass = L"PanelWidget";            // UPanelWidget (owns Slots/ClearChildren; base of CanvasPanel/HBox/VBox)
 inline constexpr const wchar_t* ContentWidgetClass = L"ContentWidget";        // UContentWidget (owns SetContent; UButton is-a ContentWidget)
 inline constexpr const wchar_t* SetContentFn = L"SetContent";                 // UContentWidget::SetContent(UWidget*)->UPanelSlot*
+inline constexpr const wchar_t* GetContentFn = L"GetContent";                 // ...and its reader. Both belong to the version surface (docs/VERSION_MIGRATION.md); the getter was a hardcoded literal at one call site until 2026-08-30.
 inline constexpr const wchar_t* WidgetIsHoveredFn = L"IsHovered";             // UWidget::IsHovered()->bool ReturnValue
 inline constexpr const wchar_t* ClearChildrenFn = L"ClearChildren";           // UPanelWidget::ClearChildren() -- detach all children (objects survive); for the insert-at-top reorder
 

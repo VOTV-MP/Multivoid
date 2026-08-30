@@ -114,12 +114,12 @@ void SetNotice(const char* text);
 
 // WHY ROW `i` DID NOT HOVER: dump its parts with their live visibility and hover state.
 //
-// Diagnostic, dev-path only. A row is four widgets deep -- SizeBox, Overlay, the tinted
-// background image, and a HorizontalBox of text blocks -- and exactly one of them wins
-// Slate's hit test. Which one is not guessable from the code: the background is set
-// Visible on purpose to BE the hit target, but anything painted over it that is also
-// hit-testable takes the hit instead and leaves the background reading not-hovered, which
-// is indistinguishable from the whole hit test being broken.
+// Diagnostic, dev-path only, and it now reports a signal PRODUCTION NO LONGER CONSUMES:
+// it prints each part's `IsHovered`, which is what the hover walk used to ask before the
+// walk moved to geometry. That is deliberate -- the question it answers is "does Slate
+// agree with the rects", and the answer being NO inside a ScrollBox is the measurement the
+// whole row model now rests on. Read it as a comparison against geometry, not as the thing
+// the screen uses.
 void LogRowHitDiagnostics(int32_t i);
 
 // Called from coop::multiplayer_menu's ui_menu_C::Tick post-observer, MAIN menu only.

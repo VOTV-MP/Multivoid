@@ -62,8 +62,29 @@ FnCache g_getVis     {L"Widget",         L"GetVisibility",        nullptr, false
 FnCache g_getParent  {L"Widget",         L"GetParent",            nullptr, false};
 FnCache g_localSize  {L"SlateBlueprintLibrary", L"GetLocalSize",   nullptr, false};
 FnCache g_localToAbs {L"SlateBlueprintLibrary", L"LocalToAbsolute", nullptr, false};
+FnCache g_setContent {L"ContentWidget",  L"SetContent",           nullptr, false};
 
 }  // namespace
+
+// UContentWidget::SetContent -- the ONE owner, and it is latched.
+//
+// This existed as SEVEN copies of the same six-line resolve-then-call, none of them latched,
+// and `R::FindFunction` has no result cache: it walks the whole GUObjectArray. Two of the
+// seven sat inside `BuildRow`, i.e. once PER ROW -- so filling a 64-row list did 64 full
+// array walks in a single frame, and opening the hosting window did 24 on the frame the
+// player pressed the button. The post-ship perf audit priced that at 70-102 ms and 26-38 ms
+// respectively, against an 8.5 ms budget.
+//
+// The bitter part: a previous fix had already latched `GetContent` in the same file and left
+// `SetContent` alone -- the reader was cured and the two writers were not. One function with
+// one cache is the shape that cannot rot that way.
+bool SetContent(void* contentWidget, void* child) {
+    void* fn = Resolve(g_setContent);
+    if (!contentWidget || !child || !fn) return false;
+    ParamFrame f(fn);
+    f.Set<void*>(L"Content", child);
+    return Call(contentWidget, f);
+}
 
 void* AddChild(void* panel, void* child) {
     void* fn = Resolve(g_addChild);
@@ -212,10 +233,13 @@ bool WidgetScreenRect(void* widget, FVector2D& outTopLeft, FVector2D& outSize) {
     // this project 120 -> 60 fps once already.
     //
     // A CDO never moves for the life of the process, so one resolve is all there ever is.
-    // Same pattern as `sFont` in StyleTextBlock below; caught by the post-ship perf audit,
-    // 2026-08-29.
-    static void* sLib = nullptr;
-    if (!sLib) sLib = R::FindClassDefaultObject(L"SlateBlueprintLibrary");
+    // A DYNAMIC-INITIALISER STATIC, so the resolve runs exactly ONCE -- including when it
+    // FAILS. Written first as `if (!sLib) sLib = ...`, which latches only success: a null
+    // resolve re-walked on every call, and this is called once per row per moving frame, so
+    // the failure path WAS the per-frame full-array scan the latch was added to remove --
+    // with an unthrottled UE_LOGE beside it, and log.cpp fflushes every non-INFO line. The
+    // fix for a slow path must not be a fast path with a slow failure mode.
+    static void* const sLib = [] { return R::FindClassDefaultObject(L"SlateBlueprintLibrary"); }();
     void* lib = sLib;
     if (!lib) {
         UE_LOGE("umg: SlateBlueprintLibrary has no CDO -- WidgetScreenRect unavailable");
@@ -363,8 +387,25 @@ bool SetClipping(void* widget, uint8_t clipping) {
 bool StyleTextBlock(void* textBlock, int32_t fontSize, const FLinearColor& color,
                     uint8_t justify) {
     if (!textBlock) return false;
+    // BOUNDED RETRY, not a plain `if (!sFont)` and not a hard once-latch, because a FONT is
+    // neither a CDO nor a UFunction: it is an ASSET, and an asset can be absent on one call
+    // and present on a later one. So the negative cannot be latched forever the way `sLib`'s
+    // is -- but it must not be retried freely either. `R::FindObject` is an uncached walk of
+    // the whole GUObjectArray that RENDERS every object's name to compare it, and this
+    // function runs FIVE TIMES PER ROW through AddText, so an unbounded retry on a 64-row
+    // list is ~320 full walks in a single frame. Sixteen attempts spans several frames of
+    // widget-building -- long enough for a late-loading font, short enough to be free -- and
+    // then says so once instead of paying that cost forever.
     static void* sFont = nullptr;
-    if (!sFont) sFont = R::FindObject(P::name::MenuFontName, P::name::FontClassName);
+    static int   sFontTries = 0;
+    if (!sFont && sFontTries < 16) {
+        sFont = R::FindObject(P::name::MenuFontName, P::name::FontClassName);
+        if (!sFont && ++sFontTries == 16)
+            UE_LOGW("umg: font '%ls' not found after %d attempts -- text blocks keep whatever "
+                    "face they already carry, and this stops looking (the lookup is a full "
+                    "object-array walk and runs 5x per row)",
+                    P::name::MenuFontName, sFontTries);
+    }
     auto* d = reinterpret_cast<uint8_t*>(textBlock);
     auto* font = d + P::off::UTextBlock_Font;
     // font_ui is loaded whenever the menu is up; if it somehow is not, leave whatever the

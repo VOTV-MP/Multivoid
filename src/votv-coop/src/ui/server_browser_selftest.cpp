@@ -67,10 +67,12 @@ constexpr int kEscRelease     = 82;
 // ...then re-open and drive the X, because ESC closing the screen is not evidence that
 // the CHROME closes it, and the chrome is what a player will actually reach for.
 constexpr int kReopen         = 88;
-constexpr int kCtrlListMove   = 92;   // POSITIVE CONTROL: aim at the list, not the button
-constexpr int kCtrlListRead   = 99;
-constexpr int kCtrlNudge      = 100;  // move ONE pixel -- does a fresh event revive hover?
-constexpr int kCtrlReread     = 106;
+// (Four phases stood here until 2026-08-30: aim at the list, read hover, nudge one pixel,
+// re-read. They existed to discriminate 'this widget is dead' from 'no input is reaching
+// the game at all', and they did their job -- the answer is now permanent knowledge in
+// native_screen::ChildAtCursor's header and in the DISARMED guard above, and production no
+// longer asks Slate about a row at all. Kept running, they re-proved a known negative every
+// run and printed an eight-line visibility chain to do it. RULE 2.)
 // ROW HOVER AND SELECTION, before the X, because a browser whose rows cannot be picked is
 // not a browser -- and neither had ever been asserted by anything.
 constexpr int kRowMove        = 108;
@@ -105,7 +107,7 @@ constexpr int kWorldVerify    = 228;
 // getter that returns it UNCHANGED has told us it echoes the request rather than reading
 // Slate -- which is the one failure mode that would let a green T0 mean nothing.
 constexpr float    kHugeOffset   = 1.0e6f;
-constexpr uint64_t kRowWaitMs    = 30000;  // rows arrive over HTTP; 30 s covers a cold fetch
+constexpr uint64_t kRowWaitMs    = 30000;  // rows arrive over HTTP; 30 s covers a cold fetch at the 5 s cadence
 constexpr uint64_t kShotHoldMs   = 6000;   // mp.py polls the log every 3 s
 constexpr uint64_t kWindowWaitMs = 15000;  // how long a null active window is a WAIT, not a fault
 
@@ -158,6 +160,10 @@ int      g_worldBefore       = -2;   // -2 = unsampled; -1 is New game, a real v
 // row index it actually got -- so a drift here shows up as a different index, not as a
 // false failure.
 constexpr float kRowPx = 64.f;
+
+// ...and the HOSTING WINDOW's rows are 56. Two screens, two row heights; using one
+// constant for both landed inside row 0 only by margin.
+constexpr float kHostRowPx = 56.f;
 
 // UWidget::GetDesiredSize -- the non-visual instrument the native_ui_probe used to prove a
 // hand-built widget lays out at all (GetDesiredSize (0,0) -> (654,64) was RUNG 1's whole
@@ -529,117 +535,6 @@ void Tick(void* scrim, void* list, void* closeBtn) {
             }
             ui::server_browser_native::Open();
             break;
-        case kCtrlListMove: {
-            // THE POSITIVE CONTROL, and the X phases below are uninterpretable without it.
-            //
-            // "IsHovered read false on the button" has two completely different causes and
-            // one reading: the button is not hit-testable, or NOTHING inside this window is
-            // and the question was never about the button. The list is the widget that
-            // settles it -- it is in the same hand-built tree, under the same never-
-            // Initialize()d UUserWidget, and it is the one whose place is unambiguous.
-            //
-            // Aim at its centre and sample all three targets. The scrim is included on
-            // purpose: it is a SIBLING of the window box painted UNDERNEATH it, so Slate's
-            // hit path should stop at the list and leave the scrim unhovered. A scrim that
-            // reads hovered here, over the middle of the window, is saying the window's
-            // subtree answered no hit at all.
-            ue_wrap::FVector2D ltl{}, lsz{};
-            if (!U::WidgetScreenRect(list, ltl, lsz) || lsz.X < 1.f || lsz.Y < 1.f) {
-                UE_LOGE("server_browser_native: HITTEST CONTROL SKIP -- no usable rect for "
-                        "the list, so the X verdict below stands alone and cannot separate "
-                        "'the button is dead' from 'this window takes no hits'");
-                break;
-            }
-            // WRITE-THEN-VERIFY, IN THE SAME TICK. Every phase in this file has issued a
-            // cursor move and then reasoned about where it landed; the run that produced
-            // this comment found the pointer at client (0,0) after asking for the middle of
-            // the list. Two very different things do that -- the write never reached the OS,
-            // or it reached it and was clamped -- and only reading back immediately, plus
-            // the live ClipCursor rect, tells them apart. `overlay_cursor.cpp:109` already
-            // learned this lesson for the enter-restore; the instrument had not.
-            const int wantX = static_cast<int>(ltl.X + lsz.X * 0.5f);
-            const int wantY = static_cast<int>(ltl.Y + lsz.Y * 0.5f);
-            ::SetLastError(0);
-            const BOOL ok = ::SetCursorPos(wantX, wantY);
-            const DWORD err = ::GetLastError();
-            POINT got{};
-            ::GetCursorPos(&got);
-            RECT clip{};
-            const BOOL haveClip = ::GetClipCursor(&clip);
-            UE_LOGW("server_browser_native: cursor write -- asked (%d,%d) got (%ld,%ld) ok=%d "
-                    "err=%lu; clip rect %s(%ld,%ld)-(%ld,%ld). A got that equals the previous "
-                    "position means the write did not take: either it was swallowed before "
-                    "the OS saw it, or the clip rect below is holding the pointer.",
-                    wantX, wantY, got.x, got.y, static_cast<int>(ok),
-                    static_cast<unsigned long>(err), haveClip ? "" : "UNREAD ",
-                    clip.left, clip.top, clip.right, clip.bottom);
-            // AND WHO OWNS THE MOUSE, on the same tick. `ok=1` with no movement and no clip
-            // is our OWN SetCursorPos detour returning TRUE without calling through, which
-            // it does for exactly as long as some ImGui surface is up -- and the same
-            // condition makes WndProcDetour eat every mouse message before the game sees
-            // it. Printing the owners turns that from a deduction into a name.
-            UE_LOGW("server_browser_native: mouse capture owned by [%s] -- while that is not "
-                    "'none', the game receives no mouse messages and cursor writes are "
-                    "swallowed, so nothing this screen draws can be hovered or clicked",
-                    ui::imgui_overlay::CaptureOwners().c_str());
-            break;
-        }
-        case kCtrlListRead: {
-            const int onList  = E::WidgetIsHovered(list)     ? 1 : 0;
-            const int onScrim = E::WidgetIsHovered(scrim)    ? 1 : 0;
-            const int onX     = E::WidgetIsHovered(closeBtn) ? 1 : 0;
-            // WHERE THE CURSOR ACTUALLY IS, because up to here every phase has SET it and
-            // then reasoned about where it set it. SetCursorPos can be undone -- by the
-            // game, by our own overlay's cursor ownership, by a clamp -- and a probe that
-            // never reads the position back cannot tell "the widget refused the hit" from
-            // "the cursor was somewhere else entirely".
-            POINT cur{};
-            ::GetCursorPos(&cur);
-            UE_LOGW("server_browser_native: HITTEST CONTROL -- cursor on the LIST's centre: "
-                    "list=%d scrim=%d X=%d, cursor really at desktop (%ld,%ld). list=1 means "
-                    "this window does take hits and the X phase is a verdict about the X; "
-                    "list=0 with scrim=1 means the whole window subtree is hit-invisible and "
-                    "the X was never the defect.",
-                    onList, onScrim, onX, cur.x, cur.y);
-            if (!onList) {
-                // The control failed, so name the link. One HitTestInvisible container is
-                // enough to produce every symptom this screen has shown, and the chain is
-                // the only thing that says which one -- printed from BOTH branches, because
-                // the scrim is the one widget known to work and the difference between the
-                // two chains is the answer.
-                U::LogVisibilityChain("list", list);
-                U::LogVisibilityChain("scrim", scrim);
-            }
-            break;
-        }
-        case kCtrlNudge: {
-            // IS THE HOVER STATE LIVE, OR JUST OLD? Slate updates bIsHovered when it
-            // PROCESSES a pointer move, so a screen that stopped receiving them keeps
-            // whatever flags it had -- and the scrim, which spans everything and was
-            // hovered before the ESC cycle, would keep reading 1 forever while every
-            // widget that was NOT hovered then keeps reading 0. That is exactly the
-            // pattern this run produced, and it is indistinguishable from a real
-            // hit-test failure without moving the pointer again and looking.
-            //
-            // One pixel, so the cursor stays over the list either way: if hover is live,
-            // nothing changes and the readings stand. If it revives, the readings above
-            // were stale and the defect is in event delivery, not in the widgets.
-            POINT cur{};
-            ::GetCursorPos(&cur);
-            ::SetCursorPos(cur.x + 1, cur.y + 1);
-            break;
-        }
-        case kCtrlReread: {
-            POINT cur{};
-            ::GetCursorPos(&cur);
-            UE_LOGW("server_browser_native: HITTEST RE-READ after a 1 px nudge -- list=%d "
-                    "scrim=%d X=%d at desktop (%ld,%ld). A list that is 1 here and was 0 "
-                    "above means the earlier readings were STALE: the widgets are fine and "
-                    "the pointer events had stopped arriving.",
-                    E::WidgetIsHovered(list) ? 1 : 0, E::WidgetIsHovered(scrim) ? 1 : 0,
-                    E::WidgetIsHovered(closeBtn) ? 1 : 0, cur.x, cur.y);
-            break;
-        }
         case kRowMove: {
             // AIM AT THE SECOND ROW, not the first: the first row's top edge is also the
             // list's top edge, so a rounding error there lands outside the list and the
@@ -890,7 +785,7 @@ void Tick(void* scrim, void* list, void* closeBtn) {
             const int rows = ui::host_window_native::SaveRowCount();
             ue_wrap::FVector2D tl{}, sz{};
             if (rows <= 0 || !saveList || !U::WidgetScreenRect(saveList, tl, sz) ||
-                sz.Y < kRowPx) {
+                sz.Y < kHostRowPx) {
                 UE_LOGE("host_window_native: WORLD LIST SKIP -- %d save row(s), list rect "
                         "%.0fx%.0f. This rig has no saves to pick, so whether the world list "
                         "can be clicked is UNMEASURED -- not passing.", rows, sz.X, sz.Y);
@@ -900,8 +795,12 @@ void Tick(void* scrim, void* list, void* closeBtn) {
             // Half a row down: the FIRST save row, which is the one a player reaches for.
             UE_LOGW("host_window_native: world list has %d row(s) at desktop (%.0f,%.0f) "
                     "%.0fx%.0f -- aiming at the first", rows, tl.X, tl.Y, sz.X, sz.Y);
+            // kHostRowPx, NOT the browser's kRowPx: this window's rows are 56 px and the
+            // browser's are 64. Half of 64 still landed inside row 0 -- by margin, not by
+            // construction, which is exactly the kind of aim that goes wrong silently the
+            // day a layout constant moves.
             ::SetCursorPos(static_cast<int>(tl.X + sz.X * 0.5f),
-                           static_cast<int>(tl.Y + kRowPx * 0.5f));
+                           static_cast<int>(tl.Y + kHostRowPx * 0.5f));
             break;
         }
         case kWorldRead:
@@ -915,15 +814,20 @@ void Tick(void* scrim, void* list, void* closeBtn) {
             break;
         case kWorldVerify: {
             const int now = ui::host_window_native::SelectedSave();
-            if (now >= 0)
+            // A CHANGE, not merely a non-negative value. Asserting `now >= 0` alone would
+            // report PASS on a run where something was already selected and the click did
+            // nothing -- silence dressed as success, which is the one thing this file is
+            // written not to do.
+            if (now >= 0 && now != g_worldBefore)
                 UE_LOGW("host_window_native: WORLD LIST PASS -- a real click on the first "
                         "save row selected world %d (was %d). The world list is clickable, "
                         "so HOST can start something other than a new game.", now,
                         g_worldBefore);
             else
                 UE_LOGE("host_window_native: WORLD LIST FAIL -- a real press-release on the "
-                        "first save row left SelectedSave() at %d. The rows draw and cannot "
-                        "be picked, so this window can only ever start a NEW game.", now);
+                        "first save row left SelectedSave() at %d (was %d). The rows draw "
+                        "and cannot be picked, so this window can only ever start a NEW "
+                        "game.", now, g_worldBefore);
             g_selfCheckStep = -1;
             return;
         }

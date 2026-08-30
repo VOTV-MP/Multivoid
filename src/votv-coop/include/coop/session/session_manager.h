@@ -62,6 +62,11 @@ void SetNickname(const std::string& nick);
 // Async GET /v1/lobbies -> the row snapshot (read via CopyRows). Non-blocking.
 void Refresh();
 uint64_t CopyRows(std::vector<coop::net::lobby::LobbyRow>& out);
+
+// The fetch generation ALONE -- for a screen that repaints only when new rows have actually
+// landed. Asking that question every tick must not cost a full copy of up to 64 rows of
+// strings, which is what using CopyRows for it would mean.
+uint64_t RowsGeneration();
 std::string Status();
 
 // Host a lobby on the ALREADY-LOADED world (POST /v1/host on a worker -> P2P host Config

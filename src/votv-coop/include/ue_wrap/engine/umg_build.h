@@ -41,6 +41,14 @@ int32_t ChildCount(void* panel);
 void*   ChildAt(void* panel, int32_t index);
 int32_t IndexOfChild(void* panel, void* child);
 
+// UContentWidget::SetContent -- a SizeBox/Button/Border's single child.
+//
+// LATCHED, which is the whole reason it is here rather than open-coded at each call site.
+// It was seven copies of an unlatched `FindFunction` resolve, two of them per-row, and
+// `FindFunction` walks the entire GUObjectArray -- so a 64-row list cost 64 full walks in
+// one frame. False (and logs once) if the class or function cannot be resolved.
+bool    SetContent(void* contentWidget, void* child);
+
 // ---- widget switcher ------------------------------------------------------------
 bool    SwitcherSetIndex(void* switcher, int32_t index);
 int32_t SwitcherIndex(void* switcher);

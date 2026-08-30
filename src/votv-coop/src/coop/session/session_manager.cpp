@@ -250,6 +250,7 @@ void Refresh() {
 }
 
 uint64_t CopyRows(std::vector<lobby::LobbyRow>& out) { return Client().CopyRows(out); }
+uint64_t RowsGeneration() { return Client().Generation(); }
 std::string Status() { return Client().Status(); }
 
 void HostLobby(const std::string& name, const std::string& world, bool locked, int playersMax) {

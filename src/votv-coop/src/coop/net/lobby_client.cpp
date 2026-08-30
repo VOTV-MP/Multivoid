@@ -105,6 +105,11 @@ uint64_t LobbyClient::CopyRows(std::vector<LobbyRow>& out) const {
     return generation_;
 }
 
+uint64_t LobbyClient::Generation() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    return generation_;
+}
+
 std::string LobbyClient::Status() const {
     std::lock_guard<std::mutex> lk(mu_);
     return status_;

@@ -12,6 +12,8 @@
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/umg_build.h"
 
+#include <windows.h>   // GetCursorPos -- HoverTracker reads the real pointer
+
 #include <cmath>
 
 namespace ui::native_screen {
@@ -162,13 +164,7 @@ void* BuildButton(void* parent, void* donorBtn, const wchar_t* label, int32_t fo
     if (void* t = Spawn(P::name::TextBlockClass, b)) {
         U::StyleTextBlock(t, fontSize, Text(), kJustCenter);
         E::SetWidgetText(t, label);
-        if (void* cw = R::FindClass(P::name::ContentWidgetClass)) {
-            if (void* fn = R::FindFunction(cw, P::name::SetContentFn)) {
-                ue_wrap::ParamFrame f(fn);
-                f.Set<void*>(L"Content", t);
-                Call(b, f);
-            }
-        }
+        U::SetContent(b, t);
         // SetContent created the UButtonSlot; centre the glyph and pad it out.
         if (void* cslot = ReadPtr(t, static_cast<int32_t>(P::off::UWidget_Slot))) {
             auto* cs = reinterpret_cast<uint8_t*>(cslot);
@@ -234,6 +230,40 @@ int32_t ChildAtCursor(void* panel, int32_t count, long cx, long cy, int32_t hint
         if (r == RowHit::Below) break;
     }
     return -1;
+}
+
+void HoverTracker::Reset() {
+    lastX_ = lastY_ = -1;
+    lastFrac_  = -2.f;
+    lastCount_ = -1;
+    index_     = -1;
+    pending_   = false;
+}
+
+bool HoverTracker::Poll(void* panel, int32_t shownCount) {
+    POINT c{};
+    if (!::GetCursorPos(&c)) return false;
+    const bool moved = (c.x != lastX_ || c.y != lastY_);
+    lastX_ = c.x; lastY_ = c.y;
+
+    // THE POINTER IS NOT THE ONLY THING THAT MOVES A ROW UNDER IT. A wheel scroll moves the
+    // rows while the cursor is still, and a sync can change how many there are. On failure
+    // the fraction is left as it was rather than written to a sentinel, so an unreadable
+    // scroll degrades to cursor-only rather than to a permanent re-evaluation.
+    float frac = lastFrac_;
+    U::ViewOffsetFraction(panel, frac);
+    const bool scrolled = (frac != lastFrac_) || (shownCount != lastCount_);
+    lastFrac_  = frac;
+    lastCount_ = shownCount;
+
+    if (!moved && !scrolled && !pending_) return false;
+    // One settling pass is owed after motion stops: during a sweep the answer trails by a
+    // frame, and without this it would stay trailing -- the next tick sees no delta, skips,
+    // and nothing ever corrects it.
+    pending_ = moved || scrolled;
+
+    index_ = ChildAtCursor(panel, shownCount, c.x, c.y, index_);
+    return true;
 }
 
 }  // namespace ui::native_screen

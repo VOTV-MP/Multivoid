@@ -125,4 +125,43 @@ void* BuildButton(void* parent, void* donorBtn, const wchar_t* label, int32_t fo
 // and found nothing -- and a 470 px list showing three servers is more than half empty.
 int32_t ChildAtCursor(void* panel, int32_t count, long cx, long cy, int32_t hint = -1);
 
+// THE HIT TEST PLUS THE THING THAT SAYS WHEN TO REDO IT -- one object, because shipping
+// them apart is a defect this project has now made twice in one day.
+//
+// `ChildAtCursor` above was extracted so two screens could share the hit test. The sharing
+// stopped there, and everything that makes the hit test CORRECT stayed duplicated per
+// screen: the settling pass, the scroll term, the count of rows that are actually shown.
+// Only one copy got fixed. The other kept a cursor-motion-only gate over a scrollable list,
+// which means the wheel slides a row out from under a stationary pointer while the stored
+// index stays put -- and on that screen the stored index chooses which WORLD to load.
+// Same bug twice is the level being wrong (docs/LESSONS.md), so the level moved here.
+//
+// Hold one per scrolling list. `Poll` returns true on a tick the caller should act on --
+// the pointer moved, the list scrolled, the row count changed, or it is the settling tick
+// owed after motion stops (Slate's hover reads one tick behind the pointer, so evaluating
+// only on the moving tick leaves the answer permanently one move stale). A tick where
+// nothing could have changed costs one dispatch and returns false.
+class HoverTracker {
+public:
+    // `shownCount` MUST be the number of children actually displayed. Passing ChildCount is
+    // the documented mistake: rows are grown and never removed, so it is a high-water mark,
+    // and a collapsed child keeps the rect it last painted with.
+    bool Poll(void* panel, int32_t shownCount);
+
+    // The child under the cursor, or -1. Valid after Poll.
+    int32_t Index() const { return index_; }
+
+    // Forget everything. Call when the screen is SHOWN and when its widgets are rebuilt:
+    // the pointer has not moved, so nothing else would re-evaluate, and a hover index
+    // remembered across a hide/show points into a list that may have been rebuilt under it.
+    void Reset();
+
+private:
+    long    lastX_ = -1, lastY_ = -1;
+    float   lastFrac_  = -2.f;   // -1 is a legitimate 'unreadable'; the sentinel must differ
+    int32_t lastCount_ = -1;
+    int32_t index_     = -1;
+    bool    pending_   = false;
+};
+
 }  // namespace ui::native_screen

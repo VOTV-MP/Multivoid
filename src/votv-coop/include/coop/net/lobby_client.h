@@ -97,6 +97,11 @@ public:
     // data from a re-read.
     uint64_t CopyRows(std::vector<LobbyRow>& out) const;
 
+    // The same generation WITHOUT copying the rows. A screen that repaints only on new
+    // data has to ask this every tick, and CopyRows is a full vector copy of up to 64 rows
+    // of strings -- the question "is there anything new" must not cost the answer.
+    uint64_t Generation() const;
+
     // A short human status for the browser footer ("Refreshing...", "4 servers",
     // "master unreachable").
     std::string Status() const;
