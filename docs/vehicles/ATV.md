@@ -1585,10 +1585,42 @@ setting a native capability flag (`SetTyresDontBurst`) instead of hooking anythi
 tire-capability flag exists on this class (`ignoreFallDamage` is the nearest and is unrelated). So
 the shape ports and the trick does not.
 
-**Owed before this becomes a design:** (1) can the `Func` thunk cancel; (2) a sample from
-`research/atv_runs/` showing a MIRROR actually reaching `sev > 1.0` (`|impulse|/mass > 150`) against
-100 starting durability — the defect is so far derived, never observed; (3) `putTire`'s intent shape
-against `COOP_SYNCER_MODEL` §2b.
+**MEASUREMENT (1) RAN THE SAME HOUR AND KILLED THE REPLACEMENT AS STATED. `[V]` the `Func` patch
+cannot cancel — it is POST-ONLY BY CONSTRUCTION.** `ue_wrap/core/ufunction_hook.h:59` types the
+callback `using PostNativeCallback = void(*)(void*, void*, void*)` — a `void` return, so there is no
+value with which to refuse — and the header states the forwarder "forwards to the original Func
+(which steps the params ... + runs the impl + writes `*Result`), THEN reads `*Result`". The original
+always runs. There is no pre-hook and no skip in the facility at all.
+
+That same header carries a warning worth repeating here, because it independently confirms the
+finding that killed pillar 1 and describes a failure that would have looked like success: a Func
+patch on a **script** UFunction reached via `EX_Local*` **installs successfully, logs "patched", and
+never fires** (`Func` = `ProcessInternal`, non-null, so it passes the null guard). Both dispatch
+handlers branch on `FUNC_Native`; only a native callee reads `Func`. `processTire` is script.
+
+**So the third design of this pass, and the first one every link of which is measured: DESTROY AT
+BIRTH, ONE TICK LATER.** `BeginDeferredActorSpawnFromClass` and `FinishSpawningActor` are NATIVE, so
+the Func patch does fire for them and hands the callback `sourceObject` (= `FFrame::Object`, the ATV
+whose ubergraph is executing) and `spawnedResult` (= the new wheel). If that ATV is not ours, the
+wheel is ours to remove. It must NOT be removed inside the callback: `ejectWheel` continues after
+`FinishSpawningActor` to call `SetPhysicsLinearVelocity` / `SetPhysicsAngularVelocityInDegrees` on
+the spawned actor's `StaticMesh`, so destroying mid-BP hands the rest of the function a dead actor.
+Defer by one tick — which is exactly the precedent `host_spawn_watcher::DrainPendingSpawns` already
+sets and already explains ("the callback only ENQUEUES; DrainPendingSpawns adopts ~1 tick later, once
+the whole BP call ... has completed"). The local `tires[i] = false` and `updTires()` still run on the
+mirror and are corrected by the author's array push, which the lane needs anyway.
+
+**The general answer for the whole class remains the `0x45` GNatives swap** (`COOP_VM_DISPATCH_PLAN`),
+which would make `processTire` and every other `EX_Local*` verb interceptable and close this defect at
+the root rather than at its one irreversible side effect. It is named here rather than dismissed: the
+radical mandate makes its size a non-reason. It is not proposed for THIS lane because destroy-at-birth
+is complete for the observable defect and the swap is HALT-gated on a spike this lane does not gate.
+
+**Still owed:** (2) a sample from `research/atv_runs/` where a MIRROR actually reaches `sev > 1.0`
+(`|impulse|/mass > 150`) against 100 starting durability — **the defect is derived from bytecode and
+has never been observed**, which is the weakest link in the whole case; (3) `putTire`'s intent shape
+against `COOP_SYNCER_MODEL` §2b; (4) whether destroy-at-birth needs to suppress the mirror's
+`sound_tireDamage` too, or whether a phantom pop is acceptable.
 
 ### 17.6 Three things not to re-derive
 1. **Deleting the tick-off (`a2a45fc7`) did not move the number.** All six runs that read 25-40 cm
