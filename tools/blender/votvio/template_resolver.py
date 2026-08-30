@@ -123,6 +123,7 @@ class TemplateResolver:
         cdo_material = ""   # the grime BP's runtime decal material variable
         cdo_max_process = 0.0   # grime maxProcess (display alpha denominator)
         ifaces = set()
+        ancestors = set()   # class names up the SuperStruct chain (self included)
         if _depth < 8:
             for e in self.game.package_dict(key):
                 if not isinstance(e, dict):
@@ -198,6 +199,7 @@ class TemplateResolver:
                     node_kids[nm] = kids
                     child_nodes.update(kids)
                 elif ty == "BlueprintGeneratedClass":
+                    ancestors.add(nm)
                     sup = e.get("SuperStruct") or {}
                     pkg = _obj_ref_package(sup)
                     if pkg.startswith("/Game/"):
@@ -216,7 +218,8 @@ class TemplateResolver:
         info = {"templates": templates, "children": children, "roots": roots,
                 "decals": decal_templates, "cdo_material": cdo_material,
                 "cdo_max_process": cdo_max_process,
-                "cdo_name": cdo_name, "cdo_key": cdo_key, "ifaces": ifaces}
+                "cdo_name": cdo_name, "cdo_key": cdo_key, "ifaces": ifaces,
+                "ancestors": ancestors}
         if parent_pkg:
             par = self._load(parent_pkg, _depth + 1)
             for base, t in par["templates"].items():
@@ -248,6 +251,7 @@ class TemplateResolver:
             if not info["cdo_max_process"]:
                 info["cdo_max_process"] = par["cdo_max_process"]
             info["ifaces"] |= par["ifaces"]
+            info["ancestors"] |= par["ancestors"]
         self._info[key] = info
         return info
 
@@ -262,6 +266,11 @@ class TemplateResolver:
 
     def implements(self, package_path, interface_class_name):
         return interface_class_name in self._load(package_path)["ifaces"]
+
+    def is_descendant(self, package_path, class_name):
+        """True when the BP class (or an ancestor up the SuperStruct chain)
+        is named class_name."""
+        return class_name in self._load(package_path)["ancestors"]
 
     def process_alpha(self, package_path, row_json):
         """Grime display opacity = clamp(saved process / class maxProcess).

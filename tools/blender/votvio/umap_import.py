@@ -45,14 +45,17 @@ TECHNICAL_MESHES = {
     "/Game/meshes/misc/qweqwe",
 }
 
-# Level actors that exist only for scripted events (parked in the world, shown by
-# their Blueprints at runtime -- cooked data carries no hidden flag, measured on
-# arirShip_tower_C: CDO and actor delta both clean; trigger_agrav_C's template
-# warparrow ships visible). Routed into the hidden "Events" collection.
-# Curated: grown only with a measured case.
+# Level actors that exist only for scripted events (parked in the world, shown
+# by their Blueprints at runtime -- cooked data carries no hidden flag). The
+# WHOLE trigger family descends from triggerBase_C (measured: spawnProp/agrav/
+# tpChamberSpawn/box/... all chain there) and their meshes are designer
+# previews: trigger_spawnProp carries a `prop` list_props key + a save `key`,
+# and the REAL object arrives as a SAVE row once the event fires (the obelisk
+# is an ordinary keyed prop from that moment on). The family is matched by
+# CLASS HIERARCHY (resolver.is_descendant); this curated set only lists
+# event actors OUTSIDE the family, grown with a measured case each.
 EVENT_ACTOR_CLASSES = {
     "arirShip_tower_C",
-    "trigger_agrav_C",
 }
 
 
@@ -105,6 +108,7 @@ class MapImporter:
         self._world_m = {}
         self._actor = {}
         self._save_class = {}
+        self._event_class = {}
 
     # ---- graph ----------------------------------------------------------
     def _actor_of(self, idx):
@@ -123,6 +127,19 @@ class MapImporter:
             seen += 1
         self._actor[idx] = None
         return None
+
+    def _is_event_class(self, actor_type):
+        """Event-scripted actor: hidden until its event fires -> the Events
+        collection. The triggerBase_C family by hierarchy + the curated set."""
+        r = self._event_class.get(actor_type)
+        if r is None:
+            r = actor_type in EVENT_ACTOR_CLASSES
+            if not r and actor_type.endswith("_C"):
+                pkg = self.game.class_package(actor_type)
+                if pkg:
+                    r = self.resolver.is_descendant(pkg, "triggerBase_C")
+            self._event_class[actor_type] = r
+        return r
 
     def _class_is_save(self, actor_type):
         """Skip a level actor iff the SAVE re-expresses its class: rows of this class
@@ -339,7 +356,7 @@ class MapImporter:
             world = self._world_matrix(i)
             label = (self.dicts[actor_idx].get("Name") if actor_idx is not None
                      else e.get("Name")) or "map"
-            is_event = atype in EVENT_ACTOR_CLASSES
+            is_event = self._is_event_class(atype)
             is_unplaced = actor_idx in self._unplaced
             # ensure_mesh only AFTER the radius gate: building meshes (and
             # their materials/textures) for culled far-map components wasted
@@ -439,7 +456,7 @@ class MapImporter:
             self.stats["hidden"] += 1
             return None
         kind = "unplaced" if actor_idx in self._unplaced else (
-            "events" if atype in EVENT_ACTOR_CLASSES else "")
+            "events" if self._is_event_class(atype) else "")
         return actor_idx, atype, kind
 
     def _place_decal(self, i, cols):
