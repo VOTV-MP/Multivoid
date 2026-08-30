@@ -36,19 +36,18 @@
 //     chrome (`canvas_menu`) is index 5 -- so we paint ABOVE the chrome and Slate hit-tests
 //     us first, while VOTV's own cursor image (index 12) still draws above us.
 //
-// TWO INVARIANTS THAT ARE EASY TO BREAK:
+// WHAT THIS FILE NO LONGER OWNS (2026-08-30). The LIST -- the row widgets, the network rows
+// behind them, the lobbyId pairing, hover and selection -- moved to
+// `ui/server_browser_rows.h`, and the invariants that govern it moved WITH it rather than
+// being restated here. Two headers describing one concept is how they drift. This file owns
+// the WINDOW: the scrim, the frame, the title strip, the footer, the switcher lifecycle, and
+// the ESC and chrome-click polls. `HoveredRow` / `SelectedRowId` / `SelectedRow` below are
+// forwards, kept so a caller holding this header need not learn a second one.
 //
-//  1. ROW IDENTITY IS THE `lobbyId`, NEVER AN INDEX INTO THE NETWORK LIST. The master
-//     stores lobbies in a `HashMap` and emits `state.lobbies.values()` (master.rs:531-553),
-//     and the client never sorts -- so one host leaving while another joins gives the SAME
-//     COUNT in a DIFFERENT ORDER. A row therefore remembers the id it was RENDERED with,
-//     captured in the same pass as its text, and a click resolves against THAT, never
-//     against a fresher copy. `g_rowIds[i]` is positional only INSIDE this one structure,
-//     which a single writer updates together with the child's text.
-//
-//  2. HOVER IS EVALUATED ON A LATER TICK THAN THE POINTER MOVED. Measured: sampling
-//     IsHovered() in the same tick as the move reads the PREVIOUS position every time.
-//     The WndProc detour runs BEFORE CallWindowProcW, so it may only set a moved-flag.
+// THE INVARIANT THAT IS STILL THIS FILE'S: HOVER IS EVALUATED ON A LATER TICK THAN THE
+// POINTER MOVED. Measured: sampling in the same tick as the move reads the PREVIOUS position
+// every time. The WndProc detour runs BEFORE CallWindowProcW, so it may only set a flag --
+// which is why `native_screen::HoverTracker` owes a settling tick after motion stops.
 //
 // Threading: everything here is GAME THREAD, driven from coop::multiplayer_menu's existing
 // ui_menu_C::Tick observer -- the one hands-on-verified native inject we have. Open() is
@@ -106,10 +105,11 @@ int HoveredRow();
 const char* SelectedRowId();
 
 // The chosen row's DATA, false when nothing is chosen. Resolved by lobbyId against the rows
-// this screen last RENDERED, never by index: the master stores lobbies in a HashMap and the
-// client does not sort, so the same count can arrive in a different order and an index would
-// silently connect a player to a different server than the one they clicked (invariant 1
-// above). A selection whose lobby has since vanished from the list answers false.
+// this screen last RENDERED, never by index: the client sorts, so the order is stable for a
+// given SET, but the set churns and one host leaving shifts every row after it -- an index
+// would silently connect a player to a different server than the one they clicked. The full
+// statement of that invariant lives with the code that keeps it, in
+// `ui/server_browser_rows.h`. A selection whose lobby has since vanished answers false.
 bool SelectedRow(coop::net::lobby::LobbyRow& out);
 
 // A sentence for the footer, shown NOW and held against the next list sync.

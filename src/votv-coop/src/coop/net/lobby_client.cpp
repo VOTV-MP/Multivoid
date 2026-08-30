@@ -110,6 +110,24 @@ void LobbyClient::RefreshAsync(const std::string& masterUrl, const std::string& 
                               if (a.name != b.name) return a.name < b.name;
                               return a.lobbyId < b.lobbyId;
                           });
+                // BOUNDED, and the bound belongs HERE rather than in a renderer.
+                //
+                // Every field is length-capped (the L4/L5 audit) but the ROW COUNT never
+                // was, and `CopyRows` is a deep copy of five std::strings per row taken
+                // under the mutex -- which the ImGui browser performs EVERY FRAME
+                // (server_browser.cpp:75) and then renders unbounded. A master that is
+                // hostile, on-path, or merely large therefore buys a multi-megabyte copy
+                // per frame on the render thread. `kMaxRows` in the native browser bounds
+                // its DISPLAY loop and never bounded this.
+                //
+                // Truncating AFTER the sort is what makes it defensible: the kept subset is
+                // deterministic rather than "whichever ones the HashMap yielded first".
+                constexpr size_t kMaxLobbies = 512;
+                if (parsed.size() > kMaxLobbies) {
+                    UE_LOGW("lobby: the master listed %zu lobbies -- keeping the first %zu "
+                            "after sorting and dropping the rest", parsed.size(), kMaxLobbies);
+                    parsed.resize(kMaxLobbies);
+                }
                 st = std::to_string(parsed.size()) +
                      (parsed.size() == 1 ? " server" : " servers");
             } else {

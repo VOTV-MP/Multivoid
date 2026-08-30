@@ -40,7 +40,18 @@ std::atomic<bool> g_justOpened{false};   // Open() -> Render triggers one auto-r
 
 // Render-thread-only UI state.
 std::vector<Row> g_rows;
-int  g_selected = -1;
+// THE SELECTION IS A LOBBY ID, NOT A ROW INDEX.
+//
+// This was an `int g_selected` until 2026-08-30, re-clamped for SIZE every frame and
+// read positionally by the footer's Connect -- so a lobby appearing or leaving between
+// the click and the press shifted every later row and the player joined a server they
+// did not pick. The native browser has carried the id-keyed invariant since it was
+// written (`ui/server_browser_rows.h`); this surface did not, and a post-ship audit
+// found it on the day the native one became the default and this one became the
+// permanent FALLBACK -- which is exactly why it is worth fixing rather than leaving to
+// die. Sorting the list at the producer narrowed the window; it did not close it, and a
+// narrower silent defect is a harder one to notice.
+std::string g_selectedId;
 char g_directIp[64] = "127.0.0.1:7777";
 char g_hostName[64] = "My VOTV Server";
 char g_nick[64] = {};   // local display name; ALWAYS loaded from session_manager on open
@@ -73,7 +84,13 @@ void Render() {
     }
     // Pull the latest fetched rows (cheap copy of a small list; render thread only).
     sm::CopyRows(g_rows);
-    if (g_selected >= static_cast<int>(g_rows.size())) g_selected = -1;
+    // Drop a selection whose lobby has left the list: the host quit while the browser
+    // was open and there is nothing to connect to. No index clamp is needed or correct.
+    if (!g_selectedId.empty()) {
+        bool still = false;
+        for (const Row& r : g_rows) if (r.lobbyId == g_selectedId) { still = true; break; }
+        if (!still) g_selectedId.clear();
+    }
 
     const ImGuiIO& io = ImGui::GetIO();
 
@@ -190,10 +207,10 @@ void Render() {
                 // your OWN server (you host it: visible here so you know it's up, but not joinable).
                 const std::string label = isOwn ? (r.name + "   (your server)") : r.name;
                 if (isOwn) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.62f, 0.92f, 0.70f, 1.0f));
-                if (ImGui::Selectable(label.c_str(), g_selected == i,
+                if (ImGui::Selectable(label.c_str(), g_selectedId == r.lobbyId,
                                       ImGuiSelectableFlags_SpanAllColumns |
                                       ImGuiSelectableFlags_AllowDoubleClick)) {
-                    g_selected = i;
+                    g_selectedId = r.lobbyId;
                     if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                         if (isOwn) sm::SetHostStatus("That's your own server -- you're hosting it.");
                         else if (sm::JoinLobby(r.lobbyId, r.name, r.proto, r.game)) Close();
@@ -236,13 +253,17 @@ void Render() {
 
         // Footer: selection-aware Connect (join the selected master lobby) + status.
         // The host's OWN selected server shows a disabled "Your server" instead of Connect.
-        const bool hasSel = g_selected >= 0 && g_selected < static_cast<int>(g_rows.size());
-        const bool selOwn = hasSel && !ownLobby.empty() && g_rows[g_selected].lobbyId == ownLobby;
-        const bool canConnect = hasSel && !selOwn;
+        // Resolved BY ID against the rows this frame is drawing -- the same resolution
+        // `server_browser_rows::Selected()` performs, so the two surfaces cannot mean
+        // two different things by "the selected server".
+        const Row* sel = nullptr;
+        if (!g_selectedId.empty())
+            for (const Row& r : g_rows) if (r.lobbyId == g_selectedId) { sel = &r; break; }
+        const bool selOwn = sel && !ownLobby.empty() && sel->lobbyId == ownLobby;
+        const bool canConnect = sel && !selOwn;
         if (!canConnect) ImGui::BeginDisabled();
         if (ui::menu_sfx::Button(selOwn ? "Your server" : "Connect", ImVec2(S(120.0f), 0.0f)) && canConnect)
-            if (sm::JoinLobby(g_rows[g_selected].lobbyId, g_rows[g_selected].name,
-                              g_rows[g_selected].proto, g_rows[g_selected].game)) Close();
+            if (sm::JoinLobby(sel->lobbyId, sel->name, sel->proto, sel->game)) Close();
         if (!canConnect) ImGui::EndDisabled();
         ImGui::SameLine();
         if (ui::menu_sfx::Button("Close", ImVec2(S(90.0f), 0.0f))) open = false;

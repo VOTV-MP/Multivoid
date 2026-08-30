@@ -4,6 +4,9 @@
 
 #include "coop/config/config.h"
 #include "coop/session/session_manager.h"
+#include "coop/text/utf8_codec.h"       // the ONE owner of text encoding -- the footer
+                                        // carries status text and click answers, both of
+                                        // which can name a server
 #include "ui/boot_warning_dialog.h"     // the loud failure surface for a donor that never appears
 #include "ui/input_focus.h"            // a click only counts while OUR window is foreground
 #include "ui/native_screen.h"          // palette + widget primitives, shared with the host window
@@ -121,7 +124,7 @@ constexpr uint64_t kRefreshMs    = 5000;
 void RefreshStatusLine() {
     if (g_status && ::GetTickCount64() >= g_noticeUntilMs) {
         const std::string s = sm::Status();
-        const std::wstring w(s.begin(), s.end());
+        const std::wstring w = coop::text::FromUtf8Lossy(s.data(), s.size());
         E::SetWidgetText(g_status, w.c_str());
     }
 }
@@ -138,6 +141,23 @@ void SyncRows() {
 // white bug. After enough attempts the user is TOLD, because a silent forever-retry is the
 // same defect one level quieter.
 bool BuildScreen(void* switcher) {
+    // BACKED OFF ONCE THE USER HAS BEEN TOLD, because the retry is not free and the thing
+    // it waits for is not coming.
+    //
+    // Each failed attempt costs two `SwitcherChild` walks (a ChildCount plus a ClassNameOf
+    // per child -- an engine alloc and a wstring EACH) and three `DonorField` lookups that
+    // render a name per property while climbing SuperStruct. At ~117 menu ticks a second
+    // that is tens of thousands of engine allocations per second, forever, on the exact
+    // path a version migration lands on -- and the boot dialog is already up telling the
+    // player the screen could not be built. Once we have said so, once a second is plenty.
+    // (Post-ship perf audit 2026-08-30, F4. It matters more since the native browser became
+    // the default: this now runs for every player, not only behind a dev flag.)
+    if (g_toldTheUser) {
+        static uint64_t sNextTryMs = 0;
+        const uint64_t now = ::GetTickCount64();
+        if (now < sNextTryMs) return false;
+        sNextTryMs = now + 1000;
+    }
     void* saveSlots = SwitcherChild(switcher, L"ui_saveSlots_C");
     void* settings  = SwitcherChild(switcher, L"ui_settings_C");
     void* fillDonor = DonorField(saveSlots, L"Image_0");
@@ -381,7 +401,7 @@ void SetNotice(const char* text) {
     g_noticeUntilMs = ::GetTickCount64() + kNoticeMs;
     if (!g_status) return;
     const std::string s(text);
-    const std::wstring w(s.begin(), s.end());
+    const std::wstring w = coop::text::FromUtf8Lossy(s.data(), s.size());
     E::SetWidgetText(g_status, w.c_str());
 }
 
@@ -496,8 +516,10 @@ void OnMenuTick(void* menu, void* switcher) {
             // on CONNECT from also being read as a click on whatever is behind it.
             if (ui::server_browser_actions::OnReleaseEdge()) return;
             // A click on a hovered row SELECTS it. The row under the cursor is already
-            // known from the hover pass, so this costs no extra dispatch.
-            rows::ClickSelect();
+            // known from the hover pass, so this costs no extra dispatch. Returning on a
+            // handled click matches the two lines above it -- the chrome and the action bar
+            // both stop here -- so nothing below can read the same release a second time.
+            if (rows::ClickSelect()) return;
         }
     }
 

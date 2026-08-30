@@ -21,10 +21,14 @@
 // THE INVARIANT THIS MODULE EXISTS TO HOLD (the browser header's invariant 1, moved here
 // with the code that keeps it): A ROW'S IDENTITY IS ITS `lobbyId`, NEVER ITS INDEX. The
 // master stores lobbies in a `HashMap` and emits `state.lobbies.values()`
-// (master.rs:531-553); the client does not sort. So one host leaving while another joins
-// gives the SAME COUNT in a DIFFERENT ORDER. A row remembers the id it was RENDERED with,
-// captured in the same pass as its text by the single writer (`Sync`), and every click
-// resolves against THAT -- never against a fresher copy of the network list.
+// (master.rs:531-553), so the wire order is arbitrary. Since 2026-08-30 the client imposes
+// a total order at the parse site (`lobby_client.cpp`), which makes the order STABLE FOR A
+// GIVEN SET -- and that is all it makes stable. THE SET STILL CHURNS: one host leaving while
+// another joins gives the SAME COUNT with different members, and every row after the
+// departure shifts. So an index still cannot identify a row across a refresh. A row
+// remembers the id it was RENDERED with, captured in the same pass as its text by the single
+// writer (`Sync`), and every click resolves against THAT -- never against a fresher copy of
+// the network list.
 //
 // THREADING: game thread only. Every function here spawns UObjects or calls UFunctions.
 

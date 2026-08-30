@@ -4,6 +4,7 @@
 
 #include "coop/net/protocol.h"          // kProtocolVersion -- the version-cell mismatch tint
 #include "coop/session/session_manager.h"
+#include "coop/text/utf8_codec.h"       // the ONE owner of text encoding (CLAUDE.md 4a-names)
 #include "ui/native_screen.h"           // palette + widget primitives, shared with the host window
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
@@ -163,7 +164,7 @@ std::wstring VersionCell(const Row& r, bool& mismatch) {
     std::string cell = !r.game.empty() ? r.game : r.version;
     if (r.proto > 0) cell += " b" + std::to_string(r.proto);
     if (mismatch) cell += " (!)";
-    return std::wstring(cell.begin(), cell.end());
+    return coop::text::FromUtf8Lossy(cell.data(), cell.size());
 }
 
 // A row's five text colours, from its data and its hover state. ONE owner: the sync pass
@@ -185,9 +186,17 @@ void ApplyRowTextColors(const RowParts& rp, const Row& r, bool isOwn, bool misma
     (void)r;
 }
 
+// DECODED, NOT WIDENED. `std::wstring(s.begin(), s.end())` copies each BYTE into a wchar,
+// so a Cyrillic or accented server name -- which arrives from the master as UTF-8 --
+// renders as one garbage glyph per byte. This screen shipped with that widening and
+// became the DEFAULT browser on 2026-08-30, which turned a lab defect into every
+// non-ASCII player's server name. `coop/text/utf8_codec.h` is the project's single owner
+// of text encoding (CLAUDE.md 4a-names); the lossy decode is the right one here because a
+// browser row must still DRAW when a hostile master sends ill-formed bytes -- refusing
+// the field whole is the receive boundary's job, not the renderer's.
 void SetRowText(void* block, const std::string& utf8, const FLinearColor& col) {
     if (!block) return;
-    const std::wstring w(utf8.begin(), utf8.end());
+    const std::wstring w = coop::text::FromUtf8Lossy(utf8.data(), utf8.size());
     E::SetWidgetText(block, w.c_str());
     E::SetTextBlockColor(block, col);
 }
@@ -212,7 +221,13 @@ OrderDigest DigestIds(const std::vector<std::string>& ids, int count) {
     OrderDigest d;
     d.sequence = 1469598103934665603ull;   // FNV-1a offset basis
     for (int i = 0; i < count && i < static_cast<int>(ids.size()); ++i) {
-        uint64_t one = 1469598103934665603ull;
+        // THE INDEX IS MIXED IN, and only for the SET term. Two rows whose RowPartsAt
+        // failed both carry an EMPTY id, and two identical hashes XOR to zero -- so a
+        // pair of paint failures would silently erase itself from the set digest and
+        // the detector would go quiet for a reason that has nothing to do with order.
+        // Seeding with the index makes every slot distinct; the SEQUENCE term below is
+        // already positional by construction. (Post-ship audit 2026-08-30, F6.)
+        uint64_t one = 1469598103934665603ull ^ static_cast<uint64_t>(i);
         for (unsigned char c : ids[static_cast<size_t>(i)]) {
             one ^= c; one *= 1099511628211ull;
             d.sequence ^= c; d.sequence *= 1099511628211ull;
@@ -241,17 +256,39 @@ void CheckOrderStable(int shown) {
     sHave = true;
 }
 
-// Repaint every row's FILL from the current selection. Cheap (one tint per row, no
-// reflection walk) and only ever called on a selection change.
+// JUST the background image of row `i`. Three dispatches instead of `RowPartsAt`'s nine.
+//
+// The fill repaint wants one pointer and was paying for all seven: `RowPartsAt` resolves
+// the box, the overlay and five text blocks, and a selection change discarded six of them
+// per row -- 576 wasted dispatches on a 64-row list, in the frame the player clicked.
+// (Post-ship perf audit, 2026-08-30, finding F3.)
+void* RowBgAt(int32_t i) {
+    // The overlay walk is shared with RowPartsAt and is where the one dispatch lives; the
+    // saving is in not asking for the five text blocks.
+    void* box = U::ChildAt(g_list, i);
+    if (!box) return nullptr;
+    static void* const sGetContent = [] {
+        void* cw = R::FindClass(P::name::ContentWidgetClass);
+        return cw ? R::FindFunction(cw, P::name::GetContentFn) : nullptr;
+    }();
+    if (!sGetContent) return nullptr;
+    ue_wrap::ParamFrame f(sGetContent);
+    if (!Call(box, f)) return nullptr;
+    void* ovl = f.Get<void*>(L"ReturnValue");
+    return ovl ? U::ChildAt(ovl, 0) : nullptr;
+}
+
+// Repaint every row's FILL from the current selection. Only ever called on a selection
+// change, and only the background is touched -- three dispatches per row, no text work.
 void RepaintRowFills() {
     const int total = g_visibleRows;   // shown, not ChildCount's high-water mark
     for (int i = 0; i < total; ++i) {
-        RowParts rp;
-        if (!RowPartsAt(i, rp) || !rp.bg) continue;
+        void* bg = RowBgAt(i);
+        if (!bg) continue;
         const bool sel = !g_selectedId.empty() &&
                          i < static_cast<int>(g_rowIds.size()) &&
                          g_rowIds[static_cast<size_t>(i)] == g_selectedId;
-        U::SetImageTint(rp.bg, sel ? kRowSel : kRowBg);
+        U::SetImageTint(bg, sel ? kRowSel : kRowBg);
     }
 }
 
@@ -303,13 +340,14 @@ void UpdateHover() {
 
     const int prev = g_hoverRow;
     g_hoverRow = hit;
+    // Hoisted: it takes a mutex and copies a string, and the loop below runs it twice.
+    const std::string own = sm::OwnLobbyId();
     // Edge-applied: only the two rows that changed are recoloured.
     for (int i : {prev, hit}) {
         if (i < 0 || i >= static_cast<int>(g_rows.size())) continue;
         RowParts rp;
         if (!RowPartsAt(i, rp)) continue;
         const Row& r = g_rows[static_cast<size_t>(i)];
-        const std::string own = sm::OwnLobbyId();
         bool mismatch = false;
         (void)VersionCell(r, mismatch);
         ApplyRowTextColors(rp, r, !own.empty() && r.lobbyId == own, mismatch, i == hit);
@@ -349,21 +387,22 @@ void Sync() {
     // change and written back after, and ONLY when the shown count actually changes, so a
     // sync that merely rewrites the same rows costs nothing.
     //
-    // `GetScrollOffset` reports Slate's DesiredScrollOffset -- what was last ASKED FOR,
-    // measured 2026-08-26 to echo an unclamped request. That is the right value to carry
-    // across: a wheel scroll goes through the same field, and a restore past the new end
-    // is clamped by the next layout rather than by us guessing the new maximum.
+    // `GetScrollOffset` reports Slate's DesiredScrollOffset -- what was last ASKED FOR. A
+    // wheel scroll goes through that same field, so it is the right value to CARRY; what it
+    // is not is a value that can be written back unchecked. See the clamp at the restore.
     const int  hadRows    = g_visibleRows;   // read BEFORE the assignment below overwrites it
     const bool structural = (want != hadRows);
     float keepOffset = 0.f;
     const bool haveOffset = structural && hadRows > 0 && U::ScrollOffset(g_list, keepOffset);
+    if (structural && hadRows > 0 && !haveOffset)
+        UE_LOGW("server_browser_rows: rows %d -> %d but the scroll offset would not read "
+                "-- the view drops to the top rather than holding position", hadRows, want);
     // The hover walk reads this instead of ChildCount: rows are GROWN and never
     // removed (a surplus row is Collapsed below, not destroyed), so ChildCount is a
     // HIGH-WATER MARK -- once the list has held 64 it reports 64 forever, and the walk
     // would read the geometry of rows that are not on screen. A collapsed widget is not
     // arranged, so it keeps its last painted rect, which can still contain the cursor
     // and win the hover shortcut over the real row beneath it.
-    g_visibleRows = want;
     int have = U::ChildCount(g_list);
     if (have < 0) have = 0;
     // GROW by building; SHRINK by COLLAPSING, never by detaching. Nothing roots a detached
@@ -387,17 +426,34 @@ void Sync() {
             pad[0] = 0.f; pad[1] = 0.f; pad[2] = 0.f; pad[3] = kRowGapPx;
         }
     }
+    // What the pointer was on BEFORE this pass rewrote the ids -- see the invalidation
+    // check after the loop.
+    const std::string hoveredIdBefore =
+        (g_hoverRow >= 0 && g_hoverRow < static_cast<int>(g_rowIds.size()))
+            ? g_rowIds[static_cast<size_t>(g_hoverRow)] : std::string();
     const int total = U::ChildCount(g_list);
+    // AFTER the grow loop, and clamped to what exists. The grow loop can `break` when
+    // BuildRow fails, so assigning `want` up front could promise more shown rows than
+    // there are children -- and the hover walk and the fill repaint both iterate this.
+    // `native_screen.h` states the contract as 'children actually SHOWN'; over-reporting
+    // breaks it from the other side, exactly as ChildCount broke it from the first.
+    g_visibleRows = (total >= 0 && total < want) ? total : want;
     g_rowIds.assign(total < 0 ? 0 : total, std::string());
 
     const std::string own = sm::OwnLobbyId();
     for (int i = 0; i < total; ++i) {
-        RowParts rp;
-        if (!RowPartsAt(i, rp)) continue;
+        // THE SURPLUS BRANCH COMES FIRST. A row past `want` needs exactly one thing --
+        // its box, to collapse it -- and deriving all seven parts to get it cost ten
+        // dispatches per surplus row on every sync, forever, for rows nobody can see.
+        // Rows are grown and never removed, so on a list that has ever been long the
+        // surplus is most of the loop. (Post-ship perf audit 2026-08-30, F1.)
         if (i >= want) {
-            E::SetWidgetVisibility(rp.box, 1);  // ESlateVisibility::Collapsed
+            if (void* box = U::ChildAt(g_list, i))
+                E::SetWidgetVisibility(box, 1);  // ESlateVisibility::Collapsed
             continue;
         }
+        RowParts rp;
+        if (!RowPartsAt(i, rp)) continue;
         E::SetWidgetVisibility(rp.box, 0);
         const Row& r = g_rows[static_cast<size_t>(i)];
         const bool isOwn = !own.empty() && r.lobbyId == own;
@@ -411,17 +467,42 @@ void Sync() {
         SetRowText(rp.text[3], r.world, kDim);
         SetRowText(rp.text[4], std::to_string(r.ageSec) + "s", kDim);
         ApplyRowTextColors(rp, r, isOwn, mismatch, i == g_hoverRow);
-        // SELECTION IS KEYED ON THE LOBBY, NOT THE ROW INDEX. The master returns lobbies
-        // from a HashMap and nothing sorts them (MULTIPLAYER_UI section 8c.-1), so a
-        // refresh can put a different server at index N -- an index-keyed selection would
-        // silently move to whatever landed there, which is how a player joins a server
-        // they did not pick.
+        // SELECTION IS KEYED ON THE LOBBY, NOT THE ROW INDEX. The client now sorts, so the
+        // order is stable for a given SET -- but the SET churns, and one host leaving
+        // shifts every row after it. A refresh can therefore still put a different server
+        // at index N, and an index-keyed selection would silently move to whatever landed
+        // there, which is how a player joins a server they did not pick.
         if (rp.bg)
             U::SetImageTint(rp.bg, (!g_selectedId.empty() && r.lobbyId == g_selectedId)
                                        ? kRowSel : kRowBg);
         // The id is captured HERE, in the same pass as the text above it, so a click
         // resolves to the server the user was LOOKING at even if the master reorders.
         g_rowIds[static_cast<size_t>(i)] = r.lobbyId;
+    }
+
+    // THE PAINT INVALIDATES THE HOVER, AND NOTHING ELSE CAN SEE THAT.
+    //
+    // `HoverTracker` re-evaluates when the pointer moves, the list scrolls, or the count
+    // changes. A re-sync that keeps the SAME count while the membership shifts is none of
+    // those, and the tick order is ClickSelect -> UpdateHover -> Sync, so a sync at tick k
+    // rewrites g_rowIds AFTER that tick's hover was decided -- and the click at k+1 reads
+    // g_rowIds[g_hoverRow], now naming a different server. Narrow (one frame, and a fetch
+    // must land in it) and still the exact wrong-server-selected defect the id pairing
+    // exists to prevent.
+    //
+    // This is the project's own lesson one level up: `HoverTracker` was extracted so the
+    // hit test had one owner, and the OTHER thing that invalidates a hover -- the repaint
+    // -- stayed behind. Dropping the index is right rather than re-deriving it: the
+    // pointer has not moved, so the next real motion answers correctly, and until then a
+    // click selects nothing instead of selecting the wrong thing.
+    if (g_hoverRow >= 0) {
+        const bool gone = g_hoverRow >= g_visibleRows ||
+                          g_hoverRow >= static_cast<int>(g_rowIds.size()) ||
+                          g_rowIds[static_cast<size_t>(g_hoverRow)] != hoveredIdBefore;
+        if (gone) {
+            g_hoverRow = -1;
+            g_hover.Reset();   // or the tracker reports 'unchanged' and never re-asks
+        }
     }
 
     // Every id this pass rendered is now in g_rowIds, so the order invariant can be checked
@@ -433,9 +514,46 @@ void Sync() {
     // box, so the restore reports the one case that proves it was needed -- a structural
     // change while the list was scrolled away from the top.
     if (haveOffset && keepOffset > 0.f) {
-        U::SetScrollOffset(g_list, keepOffset);
-        UE_LOGI("server_browser_rows: rows %d -> %d while scrolled to %.1f -- offset "
-                "restored", hadRows, want, keepOffset);
+        // CLAMPED, AND THE CLAMP IS THE WHOLE CORRECTNESS OF THIS.
+        //
+        // `GetScrollOffset` ECHOES the last request and applies NO clamp of its own
+        // (`umg_build.h:159-171`, measured twice on 2026-08-26: asked for 1000000 it
+        // returns 1000000, on an empty box and on one with 1391 units of real overflow).
+        // So writing back an offset the SHRUNKEN list cannot honour does not merely
+        // over-scroll for a frame -- it STORES a number that the next structural change
+        // reads back as though it were a real position, and the view then jumps that far
+        // away from a player who was reading the top. An earlier version of this comment
+        // asserted the layout would clamp it for us; that is exactly the claim the kit's
+        // own header had already measured false, and the post-ship audit caught it.
+        //
+        // The bound is COMPUTED, not read back: `GetScrollOffsetOfEnd` reports the extent
+        // Slate arranged LAST frame, and this runs in the same tick as the visibility
+        // writes that change it. The rows' own metrics are the honest source -- the module
+        // that decides how tall a row is can say how far a list of them scrolls.
+        ue_wrap::FVector2D ltl{}, lsz{};
+        float target = keepOffset;
+        if (U::WidgetScreenRect(g_list, ltl, lsz) && lsz.Y > 0.f) {
+            const float content = static_cast<float>(want) * (kRowH + kRowGapPx);
+            const float maxOff  = content > lsz.Y ? content - lsz.Y : 0.f;
+            if (target > maxOff) target = maxOff;
+        }
+        if (target > 0.f) {
+            U::SetScrollOffset(g_list, target);
+            if (target < keepOffset)
+                UE_LOGI("server_browser_rows: rows %d -> %d while scrolled to %.1f -- "
+                        "offset restored, CLAMPED to %.1f (the shorter list cannot hold "
+                        "the old position)", hadRows, want, keepOffset, target);
+            else
+                UE_LOGI("server_browser_rows: rows %d -> %d while scrolled to %.1f -- "
+                        "offset restored", hadRows, want, keepOffset);
+        } else {
+            // The new list fits entirely in the viewport: there is no position to hold,
+            // and writing 0 is what "back to the top" means.
+            U::SetScrollOffset(g_list, 0.f);
+            UE_LOGI("server_browser_rows: rows %d -> %d while scrolled to %.1f -- the "
+                    "shorter list no longer overflows, so the view returns to the top",
+                    hadRows, want, keepOffset);
+        }
     }
 }
 
@@ -458,9 +576,10 @@ const char* SelectedId() { return g_selectedId.c_str(); }
 bool Selected(coop::net::lobby::LobbyRow& out) {
     if (g_selectedId.empty()) return false;
     // BY ID, never by index -- this module's header invariant. `g_rows` is refreshed from
-    // the master on a timer and is not sorted, so the position that was selected is not the
-    // position that holds it now, and a positional read would hand a player a different
-    // server than the one they clicked.
+    // the master on a timer and its MEMBERSHIP changes, so the position that was selected is
+    // not necessarily the position that holds it now -- the sort fixes the order, not the
+    // set -- and a positional read would hand a player a different server than the one they
+    // clicked.
     for (const Row& r : g_rows) {
         if (r.lobbyId == g_selectedId) { out = r; return true; }
     }
