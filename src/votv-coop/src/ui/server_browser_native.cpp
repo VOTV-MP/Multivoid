@@ -70,7 +70,6 @@ using NS::BuildButton;
 
 // Only the WINDOW's colours are here; the row palette moved with the rows.
 const FLinearColor kPanel  = NS::Panel();   // window fill
-const FLinearColor kBorder = NS::Border();  // every frame in the game's menus
 const FLinearColor kText   = NS::Text();    // the default: most text is white
 
 // ---- state (GAME THREAD ONLY unless marked) --------------------------------------

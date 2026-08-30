@@ -3329,7 +3329,13 @@ def cmd_browser(args) -> None:
     t0 = time.time()
     shot = None
     saw_shown = False
-    t4a_mutated = False   # did the fixture actually shuffle+resize? see the T4a block below
+    # T4a bookkeeping. `t4a_mutated` means the fixture reported the SHUFFLE actually moved
+    # rows; `t4a_resynced` means the client then re-fetched. The ORDER verdict needs BOTH,
+    # because its pass condition is the ABSENCE of a failure line.
+    t4a_fired: set = set()
+    t4a_mutated = False
+    t4a_resynced = False
+    t4a_reqs_at_shuffle = -1
     extra_shots: dict = {}
     while time.time() - t0 < args.duration:
         time.sleep(3)
@@ -3374,19 +3380,54 @@ def cmd_browser(args) -> None:
         if args.fake_master > 0 and fake_url:
             base = fake_url.rsplit("/v1/", 1)[0] if "/v1/" in fake_url else fake_url
             shrink_to = max(4, args.fake_master - 8)
+            import urllib.request as _ur   # module-local, as _start_fake_master does
+
+            def _ctl(url: str):
+                with _ur.urlopen(url, timeout=5) as r:
+                    return json.loads(r.read().decode())
+
             for key, needle, ctl in (
                     ("t4a_shuffle", "server_browser_native: shown", f"{base}/control/shuffle"),
                     ("t4a_count",   "WHEEL VERDICT", f"{base}/control/count?n={shrink_to}")):
-                if needle not in text or key in extra_shots:
+                if needle not in text or key in t4a_fired:
                     continue
-                extra_shots[key] = None    # once each
-                import urllib.request as _ur   # module-local, as _start_fake_master does
+                # A SET, not the screenshot dict: two concepts sharing one container is how
+                # a future screenshot key silently disables a control. And the marker goes
+                # in AFTER the call, so a transient failure is retried on the next 3 s poll
+                # rather than condemning the run.
                 try:
-                    with _ur.urlopen(ctl, timeout=5) as r:
-                        log(f"  T4a fixture: {ctl.split('/control/')[1]} -> {r.read().decode()}")
-                    t4a_mutated = t4a_mutated or key == "t4a_shuffle"
+                    body = _ctl(ctl)
+                    log(f"  T4a fixture: {ctl.split('/control/')[1]} -> {body}")
+                    t4a_fired.add(key)
+                    if key == "t4a_shuffle":
+                        # THE FIXTURE'S OWN ANSWER, not our assumption: a shuffle of one row
+                        # is a no-op, and asserting against a shuffle that did not move
+                        # anything would be the same vacuity one level down.
+                        if not body.get("changed"):
+                            log("  T4a NOTE: the shuffle did not change the order (too few "
+                                "rows?) -- the ORDER assertion below cannot mean anything")
+                        else:
+                            t4a_mutated = True
+                            t4a_reqs_at_shuffle = _ctl(f"{base}/control/state").get("requests", -1)
                 except Exception as exc:                      # noqa: BLE001
                     log(f"  T4a fixture control FAILED ({ctl}): {exc}")
+
+        # DID THE CLIENT ACTUALLY RE-FETCH THE SHUFFLED LIST? Silence from the order
+        # detector is the PASS, and silence is also what a client that never re-fetched
+        # produces -- so the pass needs a positive term, and the client cannot supply it:
+        # a correctly-sorted re-sync is BYTE-IDENTICAL to no re-sync, which is the entire
+        # point of the fix. The only witness is the fixture, which knows it shuffled and
+        # counts what it served. Non-blocking: the poll loop comes back every 3 s and the
+        # screen-open window is only ~13 s, so waiting here would spend it.
+        if t4a_mutated and not t4a_resynced and t4a_reqs_at_shuffle >= 0:
+            try:
+                now_reqs = _ctl(f"{base}/control/state").get("requests", -1)
+                if now_reqs > t4a_reqs_at_shuffle:
+                    t4a_resynced = True
+                    log(f"  T4a: the client re-fetched after the shuffle "
+                        f"(fixture served {t4a_reqs_at_shuffle} -> {now_reqs})")
+            except Exception:                                  # noqa: BLE001
+                pass
         # T0 corroboration. The verdict is the LOG; these two shots exist so a human can
         # see that a list the getter calls scrolled looks scrolled. Each verdict phase
         # holds its offset for 6 s, which covers this 3 s poll.
@@ -3489,21 +3530,29 @@ def cmd_browser(args) -> None:
                              "says which, and both invalidate the wheel result")
         # ---- T4a: the order invariant, and the scroll that survives a shrink ----------
         #
-        # ASSERTS ON ABSENCE, like everything else here. The order detector is a NEGATIVE
-        # check -- it logs only when the invariant BREAKS -- so silence is the pass, and
-        # silence is also what a fixture that was never mutated produces. The mutation's
-        # own log line is therefore what makes the silence mean anything.
+        # ASSERTS ON ABSENCE, and that needs TWO positive terms before the absence means
+        # anything. The order detector is a NEGATIVE check -- it logs only when the
+        # invariant BREAKS -- so the pass is silence, and silence is equally what you get
+        # from a fixture that never shuffled, or a client that never re-fetched. The client
+        # cannot supply the missing term: a correctly-sorted re-sync is BYTE-IDENTICAL to no
+        # re-sync, which is the whole point of the fix. So the fixture is the witness on
+        # both counts -- it reports whether the shuffle moved anything, and it counts what
+        # it served.
         if not t4a_mutated:
-            fails.append("the T4a fixture mutations never ran, so 'the order did not "
-                         "change' is VACUOUS -- nothing asked the list to change")
+            fails.append("the T4a shuffle never moved the list, so 'the order did not "
+                         "change' is VACUOUS -- nothing asked it to change")
+        elif not t4a_resynced:
+            fails.append("the fixture shuffled but the client never re-fetched, so the "
+                         "shuffled list was never PAINTED -- the silence below is the "
+                         "absence of a test, not a pass")
         elif find("DIFFERENT ORDER"):
             fails.append("THE ORDER INVARIANT BROKE -- the same set of lobbies rendered in "
                          "a different order after the fixture shuffled them. The sort at "
                          "lobby_client.cpp's parse site is the thing that was supposed to "
                          "prevent exactly this")
         else:
-            log("ORDER: the fixture shuffled a constant set and the rendered order did NOT "
-                "change -- the sort holds")
+            log("ORDER: the fixture shuffled a constant set, the client re-fetched it, and "
+                "the rendered order did NOT change -- the sort holds")
         restored = find("offset restored")
         if restored:
             log(f"SCROLL RESTORE: {restored.strip()}")

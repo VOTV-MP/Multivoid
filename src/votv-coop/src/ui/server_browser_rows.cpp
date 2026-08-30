@@ -222,6 +222,13 @@ void SetRowText(void* block, const std::string& utf8, const FLinearColor& col) {
 // It watches production, not a fixture: this fires against the live master too, so a future
 // change that reintroduces a mutable sort key -- ordering by player count is the tempting
 // one -- announces itself instead of being felt as rows twitching under the hand.
+//
+// KNOWN BLIND SPOT, and it is the case the truncation log proves exists: above `kMaxRows`
+// the VISIBLE set is a window onto a longer list, so the window's membership changes
+// whenever the list does and the same-set precondition simply never holds. The detector
+// cannot see a reorder it would otherwise catch there. Raising the cap (T2b) removes the
+// window; digesting the whole network list instead of the rendered one would not, because
+// the claim this makes is about what the PLAYER saw.
 struct OrderDigest { uint64_t sequence = 0; uint64_t set = 0; };
 
 OrderDigest DigestIds(const std::vector<std::string>& ids, int count) {
