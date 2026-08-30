@@ -44,6 +44,61 @@ constexpr const char* kDefaultMaster = coop::net::kOfficialMasterUrl;
 lobby::LobbyClient& Client() { static auto* c = new lobby::LobbyClient(); return *c; }
 lobby::LobbyAnnouncer& Announcer() { static auto* a = new lobby::LobbyAnnouncer(); return *a; }
 
+// ---- The announce a HIDDEN lobby does NOT make -------------------------------
+//
+// "Hidden" was implemented as ANNOUNCE-THEN-UNLIST: POST /v1/host with the name,
+// world, lock flag, player cap, listen port and identity -- against which the
+// master records the source IP it resolved -- and only THEN POST /v1/visibility
+// to clear the list bit, with the heartbeat refreshing the record every 30 s for
+// the lobby's life. So "unlisted" was implemented and "the master never hears of
+// you" was not, while a player ticking a box labelled "Hide from server browser"
+// reasonably reads the second.
+//
+// The fix is not to un-list harder. For a DIRECT lobby the announce buys nothing
+// else: the returned signaling/STUN/TURN credentials are consumed only on the
+// P2P branch, and the Direct branch builds its Config from the listen port
+// alone. The whole round trip existed to make a LATER un-hide instant. That is
+// what this state keeps instead -- the announce is DEFERRED, and the scoreboard's
+// "Show in server browser" performs it the moment the player asks.
+//
+// P2P/AUTO is deliberately NOT covered: there the master IS the rendezvous, so a
+// lobby that never announces is unjoinable. Hiding one stays a visibility flag.
+struct DeferredAnnounce {
+    bool armed = false;       // a DIRECT lobby is live that the master has not been told of
+    std::string masterUrl;
+    std::string name;
+    std::string world;
+    bool locked = false;
+    int playersMax = 4;
+    int directPort = 0;
+};
+std::mutex g_deferredMu;
+DeferredAnnounce g_deferred;
+
+// True while the live lobby is DIRECT. Read by SetListed to decide whether
+// un-ticking can honestly RETRACT the lobby (/v1/leave) or must settle for the
+// visibility flag because the master is this lobby's only rendezvous.
+std::atomic<bool> g_hostIsDirect{false};
+
+void ArmDeferredAnnounce(const std::string& masterUrl, const std::string& name,
+                         const std::string& world, bool locked, int playersMax,
+                         int directPort) {
+    std::lock_guard<std::mutex> lk(g_deferredMu);
+    g_deferred = DeferredAnnounce{true, masterUrl, name, world, locked, playersMax, directPort};
+}
+
+void DisarmDeferredAnnounce() {
+    std::lock_guard<std::mutex> lk(g_deferredMu);
+    g_deferred.armed = false;
+}
+
+bool PeekDeferredAnnounce(DeferredAnnounce& out) {
+    std::lock_guard<std::mutex> lk(g_deferredMu);
+    if (!g_deferred.armed) return false;
+    out = g_deferred;
+    return true;
+}
+
 // Config pushed from the harness at boot (Configure): the master URL + the host
 // fallback Config (used when the master announce fails). g_hostStatus is the last
 // host-action result the browser surfaces. All under g_cfgMu (low contention --
@@ -115,11 +170,29 @@ void Configure(const std::string& masterUrl, const net::Config& fallbackHostCfg)
                 DisplayMaster(g_masterUrl).c_str(),
                 g_fallbackHostCfg.signalingUrl.empty() ? 0 : 1);
     }
-    // Version line: kick the first /v1/latest check at boot config time (the native
-    // main-menu version label polls LatestVersionLine). It is RE-POLLED on every main-
-    // menu entrance (coop::multiplayer_menu) -- RefreshLatestVersion debounces so rapid
-    // menu re-entry can't DoS the master.
-    RefreshLatestVersion();
+    // NO /v1/latest HERE ANY MORE (2026-08-30).
+    //
+    // This used to kick the first update check at boot config time, and
+    // multiplayer_menu re-polled it on every main-menu entrance. Neither is
+    // something the player asked for, and between them they meant the master
+    // learned every player's source IP AT GAME LAUNCH -- before any multiplayer
+    // decision existed. That made a promise we ship in player-facing text false
+    // at the moment it is displayed: the host window's LAN ONLY row reads
+    // "Never contacts any Multivoid server" (host_window_native.cpp:76).
+    //
+    // The check now fires from ui::server_browser_surface::Open(), because
+    // opening the browser IS a request to talk to the master -- the same trigger
+    // /v1/lobbies already has. Everything else the mod sends is a consequence of
+    // an action the player took (Host, the visibility tick, clicking a server).
+    //
+    // Measured cost, not assumed: `multiplayer_menu.cpp:117-123` falls back to
+    // DisplayVersion() when no check has landed, so the label is never empty --
+    // a player who never opens the browser sees their own version with no update
+    // verdict. The update check is documented informational-only, never a gate.
+    //
+    // Reported by an external source review of the public tree; the reviewer's
+    // question was literally "can I run a server without sending my IP to the
+    // master server".
 }
 
 std::string MasterUrl() {
@@ -352,6 +425,41 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
         g_actionBusy.store(false);
         return true;
     }
+    // HIDDEN DIRECT: the same shape, and for the same reason -- nothing leaves the
+    // machine. The old path announced FIRST (name, world, lock flag, cap, listen
+    // port, identity, and the source IP the master resolves) and only then asked
+    // to be un-listed, so a player who chose "hide" was registered for the lobby's
+    // life with a heartbeat keeping the record warm. The announce is stashed
+    // instead; the scoreboard's "Show in server browser" performs it if and when
+    // they ask. No worker thread and no HTTP, exactly like LAN ONLY -- a DIRECT
+    // Config is built from the listen port alone, so there is nothing in the
+    // announce's reply this branch would have used.
+    if (directConnection && hideFromBrowser) {
+        net::Config fallbackCfg;
+        { std::lock_guard<std::mutex> lk(g_cfgMu); fallbackCfg = g_fallbackHostCfg; }
+        const uint16_t directPort = fallbackCfg.port ? fallbackCfg.port : net::kDefaultPort;
+        net::Config cfg;
+        cfg.role = net::Role::Host;
+        cfg.topology = net::Topology::LanDirect;
+        cfg.port = directPort;
+        {
+            std::lock_guard<std::mutex> lk(g_pendHostMu);
+            g_pendingHost.cfg = cfg;
+            g_pendingHost.save = choice;
+            g_pendingHost.listed = false;
+            g_hasPendingHost = true;
+        }
+        g_listedState.store(false, std::memory_order_relaxed);
+        g_hostIsDirect.store(true, std::memory_order_relaxed);
+        ArmDeferredAnnounce(MasterUrl(), name, choice.newGame ? choice.newName : choice.slot,
+                            locked, playersMax, static_cast<int>(directPort));
+        SetHostStatus("Hosting '" + name + "' DIRECT (hidden) -- friends use Direct Connect");
+        UE_LOGI("session_manager: hosting DIRECT/HIDDEN '%s' port=%u -- NOT announced (the "
+                "master is never told; the scoreboard's Show-in-browser tick announces it "
+                "later if the host asks)", name.c_str(), directPort);
+        g_actionBusy.store(false);
+        return true;
+    }
     const std::string masterUrl = MasterUrl();
     net::Config fallback;
     { std::lock_guard<std::mutex> lk(g_cfgMu); fallback = g_fallbackHostCfg; }
@@ -406,32 +514,36 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
                 std::lock_guard<std::mutex> lk(g_pendHostMu);
                 g_pendingHost.cfg = cfg;
                 g_pendingHost.save = choice;
-                g_pendingHost.listed = listed && !(directConnection && hideFromBrowser);
+                g_pendingHost.listed = listed;
                 g_hasPendingHost = true;
             }
-            g_listedState.store(listed && !(directConnection && hideFromBrowser),
-                                std::memory_order_relaxed);  // seed the scoreboard mirror
+            // Seed the scoreboard mirror. No hidden term any more: a hidden DIRECT
+            // lobby never reaches this worker (it returns above without announcing).
+            g_listedState.store(listed, std::memory_order_relaxed);
+            g_hostIsDirect.store(directConnection, std::memory_order_relaxed);
             if (listed) {
                 SetOwnLobbyId(info.lobbyId);  // FIX 3: never list/join our own lobby
-                if (directConnection && hideFromBrowser) {
-                    // Hidden DIRECT lobby: heartbeat lives (creds fresh), the
-                    // browser never lists it; friends Direct Connect by IP. The
-                    // scoreboard's Hide toggle can re-list it any time. AUTO
-                    // games are deliberately NOT hideable at host time -- the
-                    // master is a relay game's ONLY rendezvous, a hidden one is
-                    // unjoinable (user design call 2026-06-11).
-                    Announcer().SetListed(false);
-                    SetHostStatus("Hosting '" + name + "' DIRECT (hidden) -- friends use Direct Connect");
-                    UE_LOGI("session_manager: HOST-WITH-SAVE ready (DIRECT/hidden, port %u) -- lobby=%s",
-                            static_cast<unsigned>(directPort), info.lobbyId.c_str());
-                } else {
-                    SetHostStatus(directConnection
-                        ? "Hosting '" + name + "' DIRECT -- listed (UDP port must be forwarded!)"
-                        : "Hosting '" + name + "' -- lobby listed");
-                    UE_LOGI("session_manager: HOST-WITH-SAVE ready (LISTED, %s) -- lobby=%s %s='%s'",
-                            directConnection ? "DIRECT" : "P2P",
-                            info.lobbyId.c_str(), choice.newGame ? "newGame" : "slot", world.c_str());
-                }
+                // The announce-then-unlist branch that used to live here is GONE
+                // (RULE 2). A hidden DIRECT lobby returns from HostWithSave before
+                // this worker exists, so there is no longer any path that tells the
+                // master about a lobby the player asked to hide. AUTO stays
+                // un-hideable at host time for the reason it always was: the master
+                // is a relay game's only rendezvous, so a hidden one is unjoinable
+                // (user design call 2026-06-11).
+                // ARM THE DEFERRAL EVEN THOUGH WE JUST ANNOUNCED. Hiding a DIRECT
+                // lobby now RETRACTS it (/v1/leave) rather than clearing a flag, so
+                // without this a Hide->Show cycle would have nothing to re-announce
+                // from and the second tick would silently do nothing. Found by
+                // re-reading my own Show path, not by a test.
+                if (directConnection)
+                    ArmDeferredAnnounce(masterUrl, name, world, locked, playersMax,
+                                        static_cast<int>(directPort));
+                SetHostStatus(directConnection
+                    ? "Hosting '" + name + "' DIRECT -- listed (UDP port must be forwarded!)"
+                    : "Hosting '" + name + "' -- lobby listed");
+                UE_LOGI("session_manager: HOST-WITH-SAVE ready (LISTED, %s) -- lobby=%s %s='%s'",
+                        directConnection ? "DIRECT" : "P2P",
+                        info.lobbyId.c_str(), choice.newGame ? "newGame" : "slot", world.c_str());
             } else if (directConnection) {
                 SetHostStatus("Hosting DIRECT -- master unreachable, NOT listed; friends use "
                               "Direct Connect with your IP");
@@ -648,9 +760,84 @@ bool ConnectP2PDirect(const std::string& hostIdentity, const net::Config& fallba
 // it). True when no lobby exists (harmless default).
 std::atomic<bool> g_listedState{true};
 
+// Serialises listing TRANSITIONS. Every branch below either blocks (Announcer::Host
+// is an 8 s round trip; Announcer::Stop joins the heartbeat thread and POSTs
+// /v1/leave) or depends on `Announcer().active()`, so they must not interleave.
+//
+// The first version of this decided the branch on the CALLING thread and dispatched
+// the work asynchronously -- which meant an untick followed quickly by a re-tick read
+// `active()` as still true, because the retract had not run yet, and took the
+// visibility-flag branch against a lobby that was about to be retracted out from
+// under it. Deciding INSIDE the worker, under this mutex, is what removes that: each
+// transition sees the state the previous one actually left.
+std::mutex g_listingMu;
+
 void SetListed(bool listed) {
-    g_listedState.store(listed, std::memory_order_relaxed);
-    Announcer().SetListed(listed);
+    g_listedState.store(listed, std::memory_order_relaxed);  // the UI mirror, immediately
+    // Everything else on a worker: the scoreboard calls this from its click handler on
+    // the game thread, and `lobby_announcer.h` says Stop() must not run there.
+    std::thread([listed] {
+        if (coop::shutdown::IsShuttingDown()) return;
+        std::lock_guard<std::mutex> lk(g_listingMu);
+        try {
+            // SHOW. If nothing was ever announced (a hidden DIRECT host), the tick IS
+            // the announce -- there is no listing to flip, because there is no record
+            // at all, and /v1/visibility would post against a lobby the master has
+            // never heard of.
+            if (listed && !Announcer().active()) {
+                DeferredAnnounce d;
+                if (!PeekDeferredAnnounce(d)) {
+                    UE_LOGW("session_manager: Show ticked but nothing is armed to announce "
+                            "-- no lobby is being hosted");
+                    return;
+                }
+                const lobby::HostInfo info = Announcer().Host(
+                    d.masterUrl, d.name, d.world, d.locked, d.playersMax, 8000, d.directPort);
+                if (!info.ok) {
+                    UE_LOGW("session_manager: deferred announce FAILED (master unreachable) "
+                            "-- the lobby stays hidden and joinable by IP");
+                    g_listedState.store(false, std::memory_order_relaxed);
+                    SetHostStatus("Could not list the game -- master unreachable. "
+                                  "Friends can still Direct Connect by IP.");
+                    return;
+                }
+                // A re-announce mints a FRESH sessionId/token/lobbyId, so the self-join
+                // guard has to be re-pointed at the new one or it would still be
+                // guarding the retracted lobby's id (FIX 3 would silently regress).
+                SetOwnLobbyId(info.lobbyId);
+                UE_LOGI("session_manager: deferred announce done -- lobby=%s is now listed "
+                        "(the master learns this host's address at THIS moment, not at host "
+                        "time)", info.lobbyId.c_str());
+                return;
+            }
+
+            // HIDE. Which endpoint tells the truth depends on the topology, and choosing
+            // wrong is what made this tick a ONE-WAY DOOR for the host's address:
+            // /v1/visibility clears a flag while the heartbeat keeps the record -- and
+            // the IP in it -- alive and refreshed every 30 s. A DIRECT lobby can be
+            // properly RETRACTED instead, and re-armed so a later tick announces afresh.
+            // A P2P lobby cannot: the master is its only rendezvous, so leaving would
+            // cut it off from every future joiner, and the flag is the honest limit of
+            // what "hide" can mean there.
+            if (!listed && g_hostIsDirect.load(std::memory_order_relaxed) &&
+                Announcer().active()) {
+                DeferredAnnounce d;
+                const bool rearm = PeekDeferredAnnounce(d);
+                Announcer().Stop();       // POST /v1/leave + stop the heartbeat: record GOES
+                SetOwnLobbyId(std::string());
+                if (rearm) ArmDeferredAnnounce(d.masterUrl, d.name, d.world, d.locked,
+                                               d.playersMax, d.directPort);
+                UE_LOGI("session_manager: DIRECT lobby retracted (/v1/leave) -- the master no "
+                        "longer holds a record for it%s",
+                        rearm ? "; re-armed for a later Show" : "");
+                return;
+            }
+
+            Announcer().SetListed(listed);
+        } catch (const std::exception& e) {
+            UE_LOGW("session_manager: listing transition worker exception: %s", e.what());
+        }
+    }).detach();
 }
 
 bool ListedState() { return g_listedState.load(std::memory_order_relaxed); }
@@ -671,6 +858,9 @@ void EndHostedLobby() {
     }
     SetOwnLobbyId(std::string());  // no longer hosting -> clear the own-lobby self-join guard
     g_listedState.store(true, std::memory_order_relaxed);  // back to the no-lobby default
+    g_hostIsDirect.store(false, std::memory_order_relaxed);
+    DisarmDeferredAnnounce();  // the lobby is over; a stale deferral must not outlive it
+                               // and re-announce a world nobody is hosting any more
     Announcer().Stop();  // POST /v1/leave + stop the heartbeat thread (kills the listing)
     UE_LOGI("session_manager: EndHostedLobby -- lobby retired (/leave + heartbeat stopped)");
 }

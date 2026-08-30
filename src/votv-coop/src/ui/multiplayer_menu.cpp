@@ -186,18 +186,18 @@ void OnMenuTickPost(void* self, void* /*function*/, void* /*params*/) {
         g_pauseTickMs.store(::GetTickCount64(), std::memory_order_relaxed);
         return;
     }
-    // Reached only on the MAIN menu (isPause==false). Detect a fresh ENTRANCE: the menu
-    // stops ticking during gameplay, so a >500 ms gap since the last main-menu tick means
-    // the player just (re)entered the title screen -> re-poll /v1/latest so the version
-    // label reflects the newest release. RefreshLatestVersion is self-debounced (one
-    // fetch in flight + an 8 s floor between starts), so a stutter or rapid re-entry can't
-    // DoS the master. Fires on first boot too (g_lastMainTickMs == 0).
-    {
-        const uint64_t now = ::GetTickCount64();
-        if (g_lastMainTickMs == 0 || now - g_lastMainTickMs > 500)
-            coop::session_manager::RefreshLatestVersion();
-        g_lastMainTickMs = now;
-    }
+    // THE PER-ENTRANCE /v1/latest RE-POLL IS GONE (2026-08-30, RULE 2 -- deleted,
+    // not flagged off). Entering the title screen is not a request to talk to the
+    // master, and this fired on every entrance including the very first, so
+    // between this and the boot check the master learned the player's source IP
+    // before they had made any multiplayer decision at all. The check now rides
+    // ui::server_browser_surface::Open(), which IS such a request. Full reasoning
+    // at the deleted boot call site (session_manager::Configure).
+    //
+    // The label below still renders every tick; it just shows the local identity
+    // until a check has landed (VersionLine falls back to DisplayVersion), so
+    // nothing here needs to know whether one ever will.
+    //
     // Inject / drive the native version label (sibling of txt_version). Auto show/hides
     // with the menu (it's a child), so no viewport add/remove or visibility gating.
     UpdateVersionLabel(self);

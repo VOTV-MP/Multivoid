@@ -72,8 +72,16 @@ constexpr ConnMode kConnModes[3] = {
      L"Uses the Multivoid server to introduce you. Works behind almost any router."},
     {L"DIRECT  (port forward)",
      L"Friends connect straight to you. You must forward the port yourself."},
+    // "Never contacts any Multivoid server" was FALSE as written, and measurably so:
+    // `server_browser_actions.cpp:80` is the only door to this window, so every player
+    // who can read this row has already opened the browser, which fetches the lobby
+    // list and the update check. The sentence is about the GAME being hosted, not
+    // about whether the process ever spoke to the master, and it now says that. The
+    // real closure is a Host door that does not route through the browser -- that is
+    // UI work and belongs with the host-window rework, not with a text fix.
     {L"LAN ONLY",
-     L"Never contacts any Multivoid server. Same-network friends connect by your local IP."},
+     L"Nothing about your game is sent to any Multivoid server. Same-network friends "
+     L"connect by your local IP."},
 };
 
 // ---- state (GAME THREAD ONLY unless marked) ----------------------------------------
