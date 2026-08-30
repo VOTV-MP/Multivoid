@@ -46,16 +46,23 @@ TECHNICAL_MESHES = {
 }
 
 # Level actors that exist only for scripted events (parked in the world, shown
-# by their Blueprints at runtime -- cooked data carries no hidden flag). The
-# WHOLE trigger family descends from triggerBase_C (measured: spawnProp/agrav/
-# tpChamberSpawn/box/... all chain there) and their meshes are designer
-# previews: trigger_spawnProp carries a `prop` list_props key + a save `key`,
-# and the REAL object arrives as a SAVE row once the event fires (the obelisk
-# is an ordinary keyed prop from that moment on). The family is matched by
-# CLASS HIERARCHY (resolver.is_descendant); this curated set only lists
-# event actors OUTSIDE the family, grown with a measured case each.
+# by their Blueprints at runtime -- cooked data carries no hidden flag).
+# triggerBase_C is VOTV's base for ALL trigger-driven gameplay actors -- doors,
+# ceiling lamps, light switches, password locks and the garage gate descend
+# from it too (full-level census 2026-08-30) -- so hierarchy alone CANNOT mark
+# an event actor (v13 first shipped that way and hid every base door). The
+# measured discriminator: a WORLD class carries its mesh in its own template
+# chain (door_C, ceilingLamp_C, garage_C...), while a spawner MARKER's mesh
+# arrives only as an umap instance delta -- the designer preview of what the
+# event will spawn (trigger_spawnProp: `prop` list_props key + save `key`; the
+# real object arrives as a SAVE row once the event fires). This curated set
+# lists the event actors that DO template meshes (ships, the agrav warparrow,
+# the locker jumpscare), grown with a measured case each.
 EVENT_ACTOR_CLASSES = {
     "arirShip_tower_C",
+    "arirShipAppear_C",
+    "trigger_agrav_C",
+    "trigger_lockerLooker_C",
 }
 
 
@@ -130,14 +137,19 @@ class MapImporter:
 
     def _is_event_class(self, actor_type):
         """Event-scripted actor: hidden until its event fires -> the Events
-        collection. The triggerBase_C family by hierarchy + the curated set."""
+        collection. Curated set + triggerBase_C descendants WITHOUT a template
+        mesh (their instance-delta meshes are spawner previews); a triggerBase
+        class that templates its own mesh is a world object (doors, lamps,
+        the garage gate -- see EVENT_ACTOR_CLASSES comment)."""
         r = self._event_class.get(actor_type)
         if r is None:
             r = actor_type in EVENT_ACTOR_CLASSES
             if not r and actor_type.endswith("_C"):
                 pkg = self.game.class_package(actor_type)
-                if pkg:
-                    r = self.resolver.is_descendant(pkg, "triggerBase_C")
+                if pkg and self.resolver.is_descendant(pkg, "triggerBase_C"):
+                    tmpl = self.resolver.templates(pkg)
+                    r = not any(t.kind in ("SM", "SK") and t.mesh
+                                for t in tmpl.values())
             self._event_class[actor_type] = r
         return r
 
