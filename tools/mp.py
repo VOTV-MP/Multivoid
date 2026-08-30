@@ -3449,12 +3449,18 @@ def cmd_browser(args) -> None:
             text = ""
         # STOP WHEN THE WORK IS DONE, NOT WHEN THE CLOCK RUNS OUT (2026-08-30, user:
         # "он сделал что надо было и продолжил тупо висеть тратя время"). The selftest
-        # finishes in ~40 s; --duration is 140, so every run burned ~100 s holding a
-        # window open with nothing left to observe. HOST LINK is the last phase, so its
-        # verdict -- pass or fail -- means the run has produced everything it can.
-        if "HOST LINK" in text:
-            log(f"  t+{int(time.time()-t0)}s selftest complete (HOST LINK verdict in) -- "
-                "stopping instead of idling out the clock")
+        # finishes well inside --duration=140, so every run burned ~100 s holding a window
+        # open with nothing left to observe.
+        #
+        # THE MARKER IS `WORLD LIST`, NOT `HOST LINK`. It was HOST LINK for exactly one
+        # run, which cut the world-list phases off: they run AFTER it (kWorldVerify=252 vs
+        # kHostVerify=220), inside the hosting window HOST LINK opens. An early exit keyed
+        # on the wrong phase does not read as truncation -- it reads as a clean run whose
+        # last verdicts are simply absent, which is the failure mode this scenario's own
+        # "an ABSENT line fails as loudly as a wrong one" rule exists to catch.
+        if "WORLD LIST" in text:
+            log(f"  t+{int(time.time()-t0)}s selftest complete (WORLD LIST verdict in, the "
+                "last phase) -- stopping instead of idling out the clock")
             break
         if not saw_shown and "server_browser_native: shown" in text:
             saw_shown = True

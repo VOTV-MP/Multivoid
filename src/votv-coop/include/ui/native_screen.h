@@ -127,17 +127,36 @@ void* BuildButton(void* parent, void* donorBtn, const wchar_t* label, int32_t fo
 // cursor and win. `hint` is the previously-hovered index, probed first: during a sweep the
 // pointer is on the same row for most frames, so the common case costs ONE rect read.
 //
-// The walk is ordered and stops early: children are stacked top to bottom, so the first one
-// that begins BELOW the cursor proves every later one does too. Without that, a cursor in
-// the empty space under the last row of a short list walked every row, every moving frame,
-// and found nothing -- and a 470 px list showing three servers is more than half empty.
-// `cx`/`cy` ARE CLIENT PIXELS, not desktop. Slate's `LocalToAbsolute` -- which is what
-// `WidgetScreenRect` composes, and what every rect compared here comes from -- reports in
-// the window's client space. This took `GetCursorPos` output directly until 2026-08-30,
-// so it agreed with the rects only while the window sat at the desktop origin: correct in
-// fullscreen, and off by the entire client origin in a window. Measured at 320x180 on the
-// lab rig, which is a whole list-height of error. Convert before calling.
+// The walk is UNORDERED and complete. It used to stop at the first child beginning below
+// the cursor, on the reasoning that children are stacked top to bottom -- but a scrolled-out
+// child is not arranged and keeps a stale rect, and the rows are rebuilt on every sync, so
+// one out-of-order child ended the walk and returned "no row" for the whole list. The cost
+// of dropping it is at most `count` rect reads on a list bounded by kMaxRows, on a poll that
+// runs only when the pointer or the scroll moved.
+//
+// `cx`/`cy` ARE DESKTOP PIXELS -- the space `GetCursorPos` reports, unconverted.
+//
+// THIS COMMENT SAID THE OPPOSITE FOR ONE DAY AND IT COST THREE RUNS. It claimed client
+// pixels, on the theory that `LocalToAbsolute` reports in client space; the harness was
+// changed to match, which double-counted the client origin and aimed every cursor a whole
+// origin low. `measured` 2026-08-30 from the probe's own child table: with the client area
+// at desktop (320,180), the list panel reports (796,496) and its live rows span desktop
+// y 496..752 -- the same numbers `GetCursorPos` returns for a pointer on them. Absolute IS
+// desktop here. If a future build introduces a viewport UI scale, do not re-derive this by
+// hand a third time: call `umg::CursorToWidgetAbsolute`, which is Slate's own inverse, and
+// let both sides of the comparison come from one source.
 int32_t ChildAtCursor(void* panel, int32_t count, long cx, long cy, int32_t hint = -1);
+
+// IS THE POINTER OVER THIS ONE WIDGET -- by GEOMETRY, never by `IsHovered()`.
+//
+// The engine's own `IsHovered()` is not usable on the widgets we build: measured 0 across
+// this tree on 2026-08-29 and again on 2026-08-30, on a UImage set Visible whose reported
+// rect plainly contains the cursor, both inside a ScrollBox and outside one. Screens that
+// asked it got a control that never lit and never clicked. Real `UButton`s are exempt --
+// Slate delivers their clicks itself -- but every hand-built row, tile or image target must
+// come through here so there is ONE hit-test mechanism in the native screens rather than
+// two that disagree.
+bool CursorOverWidget(void* w);
 
 // THE HIT TEST PLUS THE THING THAT SAYS WHEN TO REDO IT -- one object, because shipping
 // them apart is a defect this project has now made twice in one day.

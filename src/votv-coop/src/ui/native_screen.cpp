@@ -295,6 +295,18 @@ int32_t ChildAtCursor(void* panel, int32_t count, long cx, long cy, int32_t hint
     return -1;
 }
 
+bool CursorOverWidget(void* w) {
+    if (!w) return false;
+    POINT c{};
+    if (!::GetCursorPos(&c)) return false;
+    ue_wrap::FVector2D tl{}, sz{};
+    if (!U::WidgetScreenRect(w, tl, sz) || sz.X < 1.f || sz.Y < 1.f) return false;
+    return c.x >= static_cast<long>(std::floor(tl.X)) &&
+           c.x <  static_cast<long>(std::floor(tl.X + sz.X)) &&
+           c.y >= static_cast<long>(std::floor(tl.Y)) &&
+           c.y <  static_cast<long>(std::floor(tl.Y + sz.Y));
+}
+
 void HoverTracker::Reset() {
     lastX_ = lastY_ = -1;
     lastFrac_  = -2.f;

@@ -446,10 +446,10 @@ void UpdateHover() {
     // cursor, and `IsHovered()` on it reads 0 (measured 2026-08-29 on the server browser,
     // which shipped the identical construct the same day). Left as it was, the world list
     // could not be clicked at all -- this window could only ever start a NEW game.
-    if (g_newGameRow.bg && E::WidgetIsHovered(g_newGameRow.bg)) g_hoverRow = -1;
+    if (g_newGameRow.bg && NS::CursorOverWidget(g_newGameRow.bg)) g_hoverRow = -1;
     if (g_hoverRow == -2 && g_hover.Index() >= 0) g_hoverRow = g_hover.Index();
     for (int i = 0; i < 3; ++i)
-        if (g_connRow[i] && E::WidgetIsHovered(g_connRow[i])) { g_hoverConn = i; break; }
+        if (g_connRow[i] && NS::CursorOverWidget(g_connRow[i])) { g_hoverConn = i; break; }
     if (g_hoverRow != prevRow || g_hoverConn != prevConn) RepaintAll();
 }
 
@@ -510,8 +510,8 @@ void PollChrome() {
     if (g_backBtn  && E::WidgetIsHovered(g_backBtn))  { Hide("BACK"); return; }
     if (g_hostBtn  && E::WidgetIsHovered(g_hostBtn))  { DoHost(); return; }
     for (int i = 0; i < 3; ++i)
-        if (g_connRow[i] && E::WidgetIsHovered(g_connRow[i])) { g_connMode = i; RepaintAll(); return; }
-    if (g_newGameRow.bg && E::WidgetIsHovered(g_newGameRow.bg)) {
+        if (g_connRow[i] && NS::CursorOverWidget(g_connRow[i])) { g_connMode = i; RepaintAll(); return; }
+    if (g_newGameRow.bg && NS::CursorOverWidget(g_newGameRow.bg)) {
         g_selectedSlot.clear(); RepaintAll(); return;
     }
     // The row under the cursor is already known from the hover pass, which asked geometry
