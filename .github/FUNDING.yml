@@ -1,10 +1,12 @@
 # The Sponsor button GitHub draws at the top of the repo and in the sidebar.
 #
 # `custom` takes up to four URLs. Only one is listed on purpose: Boosty is the author's page
-# and the only rail that exists today. If a second one is ever added for backers outside
-# Russia -- where Boosty card payments largely do not work -- it goes here beside this one,
-# and the README and the site footer must be updated in the same change or the three
-# surfaces disagree about how to give.
+# and the only rail that exists today. Boosty DOES accept foreign-issued cards -- checked
+# 2026-08-30, after an earlier version of this comment claimed the opposite and was wrong.
+# The failures that occur are issuer-side declines rather than a platform block, so a second
+# rail is worth adding when real backers report real checkout failures, and not before. If
+# one is ever added it goes here beside this one, AND in the README and the site footer in
+# the same change, or the three surfaces disagree about how to give.
 #
 # Multivoid is free and always will be. This covers the master-server VPS and the tooling
 # the mod is built with; no feature is behind it and none ever will be.
