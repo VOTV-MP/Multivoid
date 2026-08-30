@@ -13,6 +13,7 @@ from . import decals as decals_mod
 from . import landscape as landscape_mod
 from . import materials as materials_mod
 from . import mesh_build
+from . import screens_rt
 from . import spline_mesh
 from . import template_resolver
 from . import umap_import
@@ -87,10 +88,19 @@ class _Builder:
 
     def _append_materials(self, me, mesh_pkg_path, mat_paths):
         base = mesh_pkg_path.rsplit("/", 1)[-1]
+        powered_screen = base.lower() in screens_rt.SCREEN_MESHES \
+            and self.opt.get("screens_powered", True)
         digit_k = 0
         for mp in mat_paths:
             mp = materials_mod.resolve_slot(base, mp)
             leaf = mp.rsplit("/", 1)[-1].lower()
+            if powered_screen and leaf.startswith(("mat_tvscreen", "inst_tvscreen")) \
+                    and self.opt.get("with_textures", True):
+                # powered-on workstation screen: the one shared atlas raster
+                # through the native CRT chain, windowed by the mesh's raw UVs
+                me.materials.append(screens_rt.get_powered_material(
+                    self.game, self.caches, self.warnings, materials_mod._image))
+                continue
             if leaf.startswith("inst_segmentdigits") and "dots" not in leaf:
                 # measured (clock2): digit slots run left->right = hours, minutes;
                 # each is ONE quad showing a digit PAIR from the save's own time
