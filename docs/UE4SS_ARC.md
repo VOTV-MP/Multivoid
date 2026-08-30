@@ -992,7 +992,9 @@ compares components numerically, `kProtocolVersion` never resets and only increa
 version's numeric prefix never decreases; so `0.9.134` -> `0.10.135` -> `1.0.140` all order correctly.
 The only information lost is the game target's letter suffix (`0.9.0n` and a later `0.9.1a` both map
 to `0.9`), which the build number already disambiguates and which the full Paper pair — displayed in
-the package `description` and README — still states exactly.
+the package `description` and README — still states exactly. (Since 2026-08-30 the package README is
+the dedicated `tools/release/README_thunderstore.md`, not the repo README; `package.ps1` fails closed
+if it stops naming the current game target, so the suffix cannot rot out of it.)
 
 **HARD REQUIREMENT: the manifest is GENERATED, never hand-edited.** A hand-kept version string that
 rots unbumped is precisely the failure that got mod semver deleted in the first place (2026-07-19);
