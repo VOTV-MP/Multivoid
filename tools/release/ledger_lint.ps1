@@ -81,6 +81,58 @@ foreach ($docRel in @('docs/INSTALL.md', 'README.md')) {
     }
 }
 
+# README_COUNTS: the README states how many wire lanes exist. Those two numbers
+# are a CLAIM about protocol.h, and nothing checked them -- so they rotted in
+# silence: an external source review of the public tree (2026-08-30) found the
+# README saying 113 reliable kinds against an enum that had grown to 121, and
+# the pose/state count was one out too. Correcting the numbers without adding
+# this gate would just restart the same clock. Same reasoning for the version
+# EXAMPLE: it read `b125` while the tree shipped b146.
+$protoHeaderPath = Join-Path $repoRoot $script:ProtocolHeaderPath
+if (-not (Test-Path -LiteralPath $protoHeaderPath)) {
+    Fail "README_COUNTS: $($script:ProtocolHeaderPath) missing -- cannot check the README's wire-lane counts"
+} else {
+    $protoSrc = Get-Content -LiteralPath $protoHeaderPath -Raw
+    # Count enumerators of one `enum class <name>` body: lines of the form
+    # `  Something = <n>`. Explicit values are the house style in this header.
+    function Get-EnumeratorCount {
+        param([Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$EnumName)
+        $start = $Source.IndexOf("enum class $EnumName")
+        if ($start -lt 0) { return $null }
+        $end = $Source.IndexOf("`n};", $start)
+        if ($end -lt 0) { return $null }
+        ([regex]::Matches($Source.Substring($start, $end - $start),
+                          '(?m)^\s{2,}[A-Za-z_][A-Za-z0-9_]*\s*=\s*\d+')).Count
+    }
+    $reliableCount = Get-EnumeratorCount -Source $protoSrc -EnumName 'ReliableKind'
+    $streamCount   = Get-EnumeratorCount -Source $protoSrc -EnumName 'MsgType'
+    $readmePath    = Join-Path $repoRoot 'README.md'
+    $readmeSrc     = Get-Content -LiteralPath $readmePath -Raw
+    if ($null -eq $reliableCount -or $null -eq $streamCount) {
+        Fail 'README_COUNTS: could not count ReliableKind/MsgType enumerators (header shape changed?)'
+    } else {
+        $claim = [regex]::Match($readmeSrc, '\((\d+)\s+reliable message kinds \+ (\d+) pose/state streams')
+        if (-not $claim.Success) {
+            Fail 'README_COUNTS: README no longer states the wire-lane counts in the expected phrasing (update this gate with it)'
+        } else {
+            if ([int]$claim.Groups[1].Value -ne $reliableCount) {
+                Fail "README_COUNTS: README says $($claim.Groups[1].Value) reliable message kinds; ReliableKind has $reliableCount"
+            }
+            if ([int]$claim.Groups[2].Value -ne $streamCount) {
+                Fail "README_COUNTS: README says $($claim.Groups[2].Value) pose/state streams; MsgType has $streamCount"
+            }
+        }
+    }
+    $protoNow = Get-ProtoFromWorktree -RepoRoot $repoRoot
+    if ($null -ne $protoNow) {
+        foreach ($m in [regex]::Matches($readmeSrc, "$([regex]::Escape($gameTarget))\s+b(\d+)")) {
+            if ([int]$m.Groups[1].Value -ne $protoNow) {
+                Fail "README_COUNTS: README names build 'b$($m.Groups[1].Value)' as the version example; the tree ships b$protoNow"
+            }
+        }
+    }
+}
+
 # --- API cross-checks (drift detection) ----------------------------------
 if ($SkipApi) {
     Write-Host 'LINT SKIP: API cross-checks (offline run)'

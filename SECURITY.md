@@ -42,9 +42,17 @@ would rather stay anonymous. If a report shows people are actively at risk, it j
 Being straight about this matters more than sounding secure.
 
 **What holds:** peer traffic runs over GameNetworkingSockets and is **encrypted** (AES-256-GCM), so
-someone sniffing the network between two players does not read the session. Traffic with the master
-and signaling servers runs over TLS. The mod never touches original game files and needs no
-elevated privileges.
+someone sniffing the network between two players does not read the session. Traffic with the
+**master server** (the lobby list, the update check, hosting a lobby) runs over TLS. The mod never
+touches original game files and needs no elevated privileges.
+
+**One exception, stated rather than glossed:** the **signaling** leg — the short rendezvous
+conversation that swaps connection candidates before two peers link up — is **not yet encrypted**.
+It carries no game traffic and no chat: peer sessions are encrypted end to end regardless. What it
+does mean is that someone positioned on the network path between you and the signaling server can
+see, and interfere with, that rendezvous. Registration itself is signed (a peer must prove it holds
+the key it registers under), but a signature over a plaintext channel can be relayed by an on-path
+attacker. Encrypting this leg is the next transport-security item on the list.
 
 **What does not hold, and you should plan around it:**
 

@@ -122,25 +122,37 @@ scan calls, and imports nothing back.
 
 ## Networking model (shipped Phase 3 — see `coop/net/`)
 
-- **Transport**: custom UDP, pure I/O at the bottom (`coop/net/transport.cpp`).
-  Host-authoritative, LAN-first.
-- **Sessions, not connections**: a host listening on a port + zero/one
-  client (`coop/net/session.cpp`). Per-session sequence counter +
-  session-token + peer-lock; bounded drain; NaN/AABB validate; RFC1982
-  sequence numbering.
+- **Transport**: **GameNetworkingSockets** (Valve's UDP library, vendored),
+  entered at `coop/net/session_start.cpp`. Host-authoritative. Two topologies
+  over the same session code: `LanDirect` (a plain UDP listen on a port) and
+  `P2P` (NAT traversal via the master's signaling + TURN).
+  *(Superseded: this bullet described a hand-rolled `coop/net/transport.cpp`
+  with its own stop-and-wait ARQ in `coop/net/reliable_channel.cpp`. Both files
+  are gone — the transport moved onto GNS, which brings encryption, ICE and its
+  own reliability layer. RULE 2: the old text is replaced, not kept beside.)*
+- **Sessions, not connections**: a host plus up to three clients
+  (`kMaxPeers = 4`, `coop/net/session.cpp`). Per-session token + peer-lock;
+  bounded drain; NaN/AABB validation at the receive boundary. Peers are
+  admitted only after a mutual Ed25519 challenge (`coop/net/peer_admission.cpp`),
+  and a peer's durable identity IS its public key.
 - **3-layer split**: transport (bytes) → serialization (struct↔bytes) →
   application (route packets to handlers). Principle 7 applied to network.
 - **Wire format is semantic** (FName string keys, vec3 positions — never
   UE memory addresses or vtable pointers; anti-pattern A7).
-- **Two channels on one socket** (RULE 1 — one socket, two channels
-  by reliability class, not a second transport):
-  - **Unreliable pose stream**: 60 Hz `PoseSnapshot` + receiver-side
-    50 ms LERP interpolation pump. Newest-wins, freely dropped.
-  - **Reliable channel** (`coop/net/reliable_channel.cpp`):
-    stop-and-wait ARQ + sequence space distinct from the pose stream;
-    250 ms RTO. Carries: Join / Bye / Chat / RestoreVitals /
-    TeleportClient / PropSpawn / PropDestroy / EntityDestroy / (future)
-    DoorState / LightState.
+- **Two channels on one connection** (RULE 1 — one transport, two channels
+  by reliability class, not a second transport). Both are GNS send flags now,
+  not our own ARQ:
+  - **Unreliable pose/state streams** (`k_nSteamNetworkingSend_UnreliableNoDelay`):
+    `PoseSnapshot` plus the other per-tick streams, with receiver-side
+    interpolation. Newest-wins, freely dropped. 14 stream kinds (`MsgType`).
+  - **Reliable ordered channel** (`k_nSteamNetworkingSend_Reliable`): every
+    discrete event and state change, routed by `ReliableKind` — 121 kinds at
+    this build, from Join / Bye / Chat through prop, container, signal-desk,
+    laptop and ATV lanes. Routing is `coop/dispatch/`: `event_feed.cpp` drains
+    and dispatches, chaining five family routers
+    (`event_dispatch_{entity,state,signal,intent,world}.cpp`), each of which
+    returns true iff it owns the kind. The checklist for adding one is in
+    `docs/COOP_SYNC_MAP.md`.
 - **Replicate authoritative state; re-derive the rest locally.** The
   receiving UE engine plays the streamed pose onto the puppet (a
   `mainPlayer_C` orphan with AutoPossess disabled) so anim, IK, weapon,

@@ -37,8 +37,8 @@ system** — is the main coverage document:
 master table of ~67 co-op systems (~215 facets), each carrying a verdict
 (works / broken / unknown / not-built), an evidence tier, and who owns the
 write, followed by a per-system catalog with a "what we do NOT sync" line for
-each. Start there. Every wire lane in the game is accounted for in it (113
-reliable message kinds + 13 pose/state streams, all cross-checked); facet-level
+each. Start there. Every wire lane in the game is accounted for in it (121
+reliable message kinds + 14 pose/state streams, all cross-checked); facet-level
 completeness is deliberately never claimed — the honest output is a count with a
 named residual, not a checkmark.
 
@@ -60,7 +60,7 @@ honest, are recorded in the project's research corpus, which is kept privately.
   built-in **server browser** backed by the official master server
   (NAT traversal via signaling + TURN)
 - **Version identity + join gate** — lobbies advertise `game + build`
-  (e.g. `0.9.0n b125`); mismatched peers are refused pre-flight with a clear popup
+  (e.g. `0.9.0n b146`); mismatched peers are refused pre-flight with a clear popup
   instead of desyncing mid-game. Old cohorts keep playing together forever —
   updates are never forced
 - **Visible remote players** — full body, legs, IK feet, per-player skins,
@@ -101,7 +101,9 @@ desk's audio feedback mirrored to observers at the native audio seam.
   (reflection, hooks, transport, UI) is the mod's own
 - **Official master server** — a static Rust binary on our VPS (lobby list,
   update check, signaling); the update check is informational only, never a gate
-- **Kill switch** in the ini for emergency ship lockdown
+- **Menu kill switch** in the ini (`multiplayer_menu_off`) — hides the
+  Multiplayer button so a build ships without an entry point. It removes the
+  door, not the mod: the DLL stays loaded and its hooks stay installed
 
 ---
 
@@ -304,7 +306,7 @@ it gets a row.
 
 | Who | Kind | Contribution | Landed |
 |--|--|--|--|
-| **Pelmentor** | code | Architecture, direction, releases — the whole mod | 464 commits |
+| **Pelmentor** | code | Architecture, direction, releases — the whole mod | 474 commits |
 | **Claude** (Anthropic) | code | Implementation, across the whole mod | 1,368 commits |
 | **Tarangok** | code | KO respawn, live skin preview, held-prop visibility, container extraction | 10 commits |
 | **hediiiqq** | code | Dish mirror interpolation | 4 commits |
