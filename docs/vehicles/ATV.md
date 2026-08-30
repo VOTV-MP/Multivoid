@@ -1249,8 +1249,30 @@ inside the "2-4 cm of normal suspension travel" band §13 established and A1 ass
 a quantity ~36x blind to the only axis that ever failed.
 
 ### 17.2 `[V]` The four-cell experiment
-Four autonomous smoke runs, one variable each, host authoring and client mirroring one parked ATV.
-Archives `research/atv_runs/20260830-1057*` / `-1059*` / `-1102*` / `-1105*`, DLL `51893CE9`.
+Four autonomous smoke runs, host authoring and client mirroring one parked ATV. Archives
+`research/atv_runs/20260830-1057*` / `-1059*` / `-1102*` / `-1105*`, all on DLL
+**`1407CAF5B2DE6C91`**.
+
+> **CORRECTED 2026-08-30 by the post-ship audit — read this before the table.** Four things in the
+> first version of this section were wrong, and the reader should know which:
+>
+> 1. **It cited DLL `51893CE9`. That is the hash of `20260830-105103`, a BROKEN run** whose client
+>    never logged `hit guard armed` and which produces no acceptance section at all. The four cited
+>    archives are internally consistent on `1407CAF5B2DE6C91`, so the experiment is not confounded
+>    by mixed binaries — the citation simply pointed at the discarded run.
+> 2. **Row 1 is not a cell of this experiment.** There is no `corrector ON + guard all seven` run on
+>    `1407CAF5`; the 25-40 cm band is a historical range across **seven different binaries** spanning
+>    a week of changes. The nearest same-binary candidate, `-1052`, reads A2 = 29.5 FAIL but A7 could
+>    not judge it. So the honest claim is a **1×2 pair, not a 2×2**: `-1059` (guard on) vs `-1057`
+>    (guard off), same binary, corrector off in both — A2 30.4 → 5.3, rig shape 19.05 → 0.12. That
+>    pair alone carries the conclusion, and it carries it cleanly.
+> 3. **The row marked "shipped" ran the OLD mask on the host** (`-1105`: host `0x7F`, client `0x03`).
+>    It is a valid measurement of a client mirror under mask 3; it is not the shipped configuration.
+>    The shipped configuration is `-1111` / `-1113` / `-1140`, both peers `0x03`.
+> 4. **The corrector ON/OFF column is recorded in NO log line anywhere.** Its only corroboration is
+>    that the claimed-OFF runs have zero client `[ATVC]` lines and the claimed-ON runs have some.
+>    That is indirect, and the experiment's headline variable is therefore not archivable. Owed: a
+>    one-line `atv: corrector <on|off>` at install.
 
 | corrector | collision guard | A2 settled gap | the two rigs' SHAPES differ by |
 |---|---|---|---|
@@ -1277,9 +1299,17 @@ The bytecode corroborates without settling the mechanism. In `ExecuteUbergraph_A
 ends in `mesh.AddForce(GetUpVector * ..)`; the same test at 1198-1202 selects the `SetMassScale`
 applied to `backWheelRoot` / `frontWheel_L` / `frontWheel_R`; and `wheelsOnSurface` is written from
 inside the wheel-hit segments (exprs 366-379, 577-586, beside `processTire` and `checkAirtime`).
-**But `wos` reads 4 on BOTH peers at runtime**, including on a not-yet-placed actor — so the array
-is not the live contact set that story needs, and the exact path from "delegate cancelled" to "body
-40 cm low" is still `[?]`. The four-cell result does not depend on it.
+~~**But `wos` reads 4 on BOTH peers at runtime**, including on a not-yet-placed actor — so the array
+is not the live contact set that story needs.~~ **RETRACTED 2026-08-30 by the post-ship audit: that
+was an INSTRUMENT DEFECT, not a finding.** `wheelsOnSurface` is a `TArray<bool>` whose CDO default
+already has four elements, and the probe was reading its **Num** — 4 by construction — rather than
+the four values the tick's `Array_Contains` actually tests. Corrected, it reads `wos=0xF` on a
+parked ATV: all four wheels on a surface. A `[?]` was minted in this document by the same commit
+whose thesis was "the instrument was blind to the axis that failed".
+
+The exact path from "delegate cancelled" to "body 40 cm low" remains `[?]` — the corrected `wos` has
+not yet been read on a DEFORMED mirror, which is the one sample that would settle it. **The four-cell
+result does not depend on it.**
 
 ### 17.4 What shipped (`8cd0ac25`, proto 146 unchanged — no wire change)
 The two **body** delegates (`mesh`, `car1_Capsule`) stay cancelled on a non-owner, so damage
@@ -1287,14 +1317,29 @@ authorship and `explode()` are still denied. The five **wheel** delegates run ev
 `[dev] atv_hit_guard_mask` (default 3) keeps the experiment re-runnable and `[dev] atv_corrector`
 is the control arm that acquitted the corrector; both are diagnostics, RULE-2 exempt.
 
+> **CORRECTED 2026-08-30 by the post-ship audit: the "never" and "always" below were FALSE, and
+> the run that falsifies them is one I documented myself the day before.**
+> `research/atv_runs/20260830-092139` is a **driven** run with **all seven** delegates cancelled on
+> both peers, and it is **the only `ACCEPTANCE: PASS` on disk** — A2 **7.0 cm**, A6 PASS on both
+> peers, A5 115.5 cm, A4 clean. So "A2 never passed on a driven run" is false, "A6 was always FAIL"
+> is false, and "every driven run" is false: nine archived driven all-seven runs read A2 = 40.2 /
+> 25.4 / 30.5 / 38.9 / 36.6 / **7.0** / 39.7 / 29.5 / 30.4 — eight of nine, not nine of nine.
+>
+> That run already has a lesson written about it, twenty-four hours earlier, saying a single green
+> run after a red streak is not a result. Writing "never passed" is the same error inverted: I
+> excluded the archived green run because it did not fit, and then used a two-run green streak as
+> VERIFIED. **The fix's conclusion does not depend on any of this** — the `-1059`/`-1057` pair does
+> — but the magnitude of the improvement is overstated by any "never".
+
 `[V]` Two consecutive verification runs on the shipped default (DLL `2F9A559D`), archives
-`-1111*` and `-1113*`, **both of which drove the ATV**:
+`-1111*` and `-1113*`, **both of which drove the ATV** (a third, `-1140` on `3A4C2C2A`, reads A2
+**1.83 cm** and rig-shape **0.00 cm**, but was not driven):
 
 | arm | run 1 | run 2 | before |
 |---|---|---|---|
 | A1 rig travel | x0.95 / x1.00 / x1.23 | x0.90 / x0.59 / x2.11 | x2.30 / x2.68 / x1.69 |
-| A2 settled gap | 9.59 cm PASS | 3.77 cm PASS | never passed on a driven run |
-| A6 handoff | +6.8 / -19.6 PASS | +4.5 / +0.7 PASS | always FAIL |
+| A2 settled gap | 9.59 cm PASS | 3.77 cm PASS | 8 of 9 driven runs FAIL (25-40 cm); one passed at 7.0 |
+| A6 handoff | +6.8 / -19.6 PASS | +4.5 / +0.7 PASS | failed in some runs, passed in others |
 | A7 rig shape | 2.43 cm PASS | 0.44 cm PASS | (arm did not exist) |
 | A3 guard armed | 7/7 both peers | 7/7 both peers | 7/7 |
 
@@ -1314,10 +1359,24 @@ is the control arm that acquitted the corrector; both are diagnostics, RULE-2 ex
   base is not a test track — it pulses the throttle and re-seats after a crash, `atv_probe.cpp:44-55`
   — but nothing downstream distinguishes moving from wedged.)
 - **A4** — a one-second ownership overlap at the handoff, in both verification runs.
-- **The residual this fix creates, stated rather than hidden:** a mirror now runs `processTire()`,
-  so it burns its own tire durability and can `ejectWheel()` a tire its author still has. The right
-  fix is **tire durability on the wire under the author**, the way `health` already is — not
-  re-suppressing the handler. The fence collision above is exactly the event that exercises it.
+- **The residual this fix creates — and the audit found it is bigger than I stated.** A mirror now
+  runs `processTire()`, so it burns its own tire durability and can `ejectWheel()` a tire its author
+  still has. I called the fix "tire durability on the wire under the author". That covers the
+  `tiresDurability[]` value and **not** the two other things `ejectWheel` does (§2.5): it
+  **BeginDeferred-spawns a real `prop_atvWheel_C`** and FinishSpawns it, and it calls `updTires()`,
+  which **`BreakConstraint()`s all eight constraints and re-places `sus_*` from
+  `defaultTireLocations()`** — a constraint-rig rebuild, on the mirror, i.e. the same class of event
+  as the deformation this whole section is about.
+  **The cross-peer half `[RD]`, and it is the thing to measure next:** `coop/props/host_spawn_watcher.cpp`
+  Func-patches `FinishSpawningActor` precisely to catch `EX_CallMath` dispatches, and
+  `DrainPendingSpawns` expresses such spawns into a `PropSpawn` broadcast, **host-only**. So a wheel
+  knocked off a *client-driven* ATV could be ejected twice — once locally by the client author, once
+  by the **host's mirror**, whose copy is broadcast to everyone. Unconfirmed link: whether a
+  runtime-spawned `prop_atvWheel_C` carries a Key and so passes `IsKeyedInteractable`. It derives
+  from `prop_C` (§?), which makes it likely. So the proper root is **an act-as-host intent lane for
+  tire ejection** (`COOP_SYNCER_MODEL.md` §2b) — the mirror's `ejectWheel` must not spawn; the
+  author's must, and its `prop_atvWheel_C` must be the only one. The fence collision above is exactly
+  the event that exercises this.
 - **§16.6's hook boundary is untouched and still unmeasured**: a player can tie physics props to
   the ATV with `hook_C`, whose lane has zero symbols in this tree.
 
