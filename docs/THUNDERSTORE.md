@@ -51,17 +51,20 @@ pak\scientists.pak     (+ the <name>.png preview tiles)
 - **README.md:** UTF-8, markdown "closely but not exactly" GitHub-flavoured. Thunderstore has a
   preview tool; use it rather than assuming GitHub's renderer. This file **is** the package page.
 
-  **AND IT IS THE REPO ROOT README, VERBATIM** (2026-08-30): `tools/release/package.ps1:77` takes
-  `$repoRoot/README.md` and `:93` copies it into the zip root. There is no package-specific
-  template, so anything added to the repo README lands on the Thunderstore page — which is how
-  the Boosty support badge and the Support row got there with no second file to keep in sync. It
-  cuts the other way too: anything GitHub-only in that README (a CI badge, a relative link into
-  the repo tree) renders on the store page as well, and relative links there are broken.
+  **ITS SOURCE IS `tools/release/README_thunderstore.md` — a DEDICATED store page, NOT the repo
+  README** (USER 2026-08-30; the one-day-old repo-README-verbatim scheme is retired). The store
+  page is a short player-facing text without the repo README's developer sections or the
+  author's note, and it carries ABSOLUTE links only — the repo README's relative links (docs/,
+  src/) render broken on the store page. `package.ps1` stages it into the zip root as
+  `README.md` and FAILS CLOSED if the file is missing or does not mention the current game
+  target (a hand-written pair in a page nobody regenerates is how version strings rot). The
+  Boosty support badge lives in BOTH this file and the repo README — a support-rail change
+  touches both, or the two pages disagree about how to give.
 
   **Consequence for the FIRST upload, and it is one-shot:** a published version is IMMUTABLE
   (§5), so a README change costs a whole new version number. Anything that belongs on the store
-  page — the support link included — must be in the README *before* `package.ps1` runs for the
-  first published version, or it waits for the next one.
+  page — the support link included — must be in `README_thunderstore.md` *before* `package.ps1`
+  runs for the first published version, or it waits for the next one.
 - **CHANGELOG.md** is optional (3 of the 5 field packages ship one).
 - **Size ceiling: 5 242 880 000 bytes (~5 GB).** Our one-zip package is ~32 MB at the outside
   (§7.7c). Not a constraint.

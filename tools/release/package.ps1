@@ -74,8 +74,20 @@ if ($iconDim.Width -ne 256 -or $iconDim.Height -ne 256) {
            "$($iconDim.Width)x$($iconDim.Height). Re-run the downscale in assets/branding/README.md.")
 }
 
-$readmePath = Join-Path $repoRoot 'README.md'
-if (-not (Test-Path -LiteralPath $readmePath)) { throw "README.md missing at the repo root" }
+# --- Store page: the package README is ITS OWN FILE, not the repo README ----
+# USER 2026-08-30: the Thunderstore page wants a short player-facing text without the
+# repo README's developer sections or the author's note -- and the repo README's
+# relative links (docs/, src/) render BROKEN on the store page, which only absolute
+# links survive (THUNDERSTORE.md section 2). README_thunderstore.md is the page
+# source and lands in the zip root as README.md. Its game target is re-checked
+# against the tree so the hand-written pair in it cannot rot unbumped -- the exact
+# failure that got mod semver deleted (2026-07-19).
+$readmePath = Join-Path $PSScriptRoot 'README_thunderstore.md'
+if (-not (Test-Path -LiteralPath $readmePath)) { throw "store-page source missing: $readmePath" }
+if ((Get-Content -LiteralPath $readmePath -Raw) -notmatch [regex]::Escape($gameTarget)) {
+    throw ("README_thunderstore.md does not mention the current game target '$gameTarget' -- " +
+           'update the store page before packaging (a hand-written pair must not rot unbumped)')
+}
 
 # --- Stage the 7.2a tree ---------------------------------------------------
 # The zip ROOT holds manifest/icon/README with NO wrapping folder, and the mod's

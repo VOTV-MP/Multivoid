@@ -5,8 +5,9 @@
 # 2026-08-30, after an earlier version of this comment claimed the opposite and was wrong.
 # The failures that occur are issuer-side declines rather than a platform block, so a second
 # rail is worth adding when real backers report real checkout failures, and not before. If
-# one is ever added it goes here beside this one, AND in the README and the site footer in
-# the same change, or the three surfaces disagree about how to give.
+# one is ever added it goes here beside this one, AND in the README, the Thunderstore store
+# page (tools/release/README_thunderstore.md) and the site footer in the same change, or the
+# four surfaces disagree about how to give.
 #
 # Multivoid is free and always will be. This covers the master-server VPS and the tooling
 # the mod is built with; no feature is behind it and none ever will be.
