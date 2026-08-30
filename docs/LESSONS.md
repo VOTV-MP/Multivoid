@@ -2943,6 +2943,15 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   experience what you are excluding — if they do, subtract instead of excluding. Same trap as
   [[lesson-a-threshold-from-another-regime-fails-the-authority-itself]], same instrument, five days
   apart; a drilled guard that encodes the wrong distinction is still the wrong distinction.
+  **RECURRED ONE DAY LATER, ONE ARM LATER, IN THE SAME FILE.** A7 (ride height) shipped asserting an
+  absolute band of `8..26 cm`, calibrated on a settled author reading `+16.8..+18.0`. Four
+  single-variable runs then read `+19.2 / +16.8 / +4.2 / -0.3` for a **healthy** author, because the
+  ATV's parked attitude differs per run — so the arm failed BOTH peers on two of the four cells while
+  their rigs agreed to 0.12 cm. Rewritten to grade the SPREAD between the two copies: 0.12 / 0.14 /
+  0.44 / 0.61 cm when nothing deforms the mirror, 19.05 / 40.52 cm when something does. Knowing the
+  lesson and having written it the previous day did not prevent writing the absolute band first;
+  what would have is asking, before the constant, **"does this quantity legitimately vary run to
+  run?"** — and if yes, there is a differential to take.
   `memory/lesson_measure_the_differential_and_the_guard_disappears.md`
 
 - **2026-08-30 — One green run after a red streak is not a result, and the archive it would be quoted
@@ -2958,6 +2967,57 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   what you think produced it. A harness sharing an output path with the evidence store contaminates it
   invisibly.
   `memory/lesson_one_green_run_after_a_red_streak_is_not_a_result.md`
+
+- **2026-08-30 — When a defect tracks ONE variable, every subsystem keyed on that variable is a
+  suspect; two days went to the visible one.** `[V]` A mirrored ATV settled 25-40 cm below its
+  author, and ride height was a **pure function of `owns`** — flipping within ~2 s in both
+  directions at every handoff, identically signed across six runs. Two things key on `owns`: the
+  pose **corrector** (runs only on a non-author) and the **collision guard** (cancels `ComponentHit`
+  only on a non-owner). Every fix, both retracted mechanisms and three shipped changes went to the
+  corrector, because it was the new, actively-edited code while the guard was `[V]`-documented and
+  felt settled. A **four-cell experiment** — two `[dev]` flags, four smoke runs, ~20 minutes —
+  acquitted it outright: with the guard off, corrector ON is the *best* of the four cells (A2
+  **3.0 cm**), and corrector OFF with the guard on still FAILS at 30.4. *Look FIRST:* a perfect
+  correlation with a boolean is evidence about the BOOLEAN, not about any particular consumer of it
+  — so enumerate every consumer (here a grep: `OwnsTick` had exactly two, both named in a header
+  comment) and put a kill-switch on each BEFORE designing. N flags and 2^N short runs beat any
+  amount of mechanism reasoning, and each cell is falsifiable in a way an argument is not. Corollary:
+  the subsystem you have been editing is the one you will suspect, which is backwards — recently
+  changed code is *better* understood than untouched code.
+  `memory/lesson_two_subsystems_keyed_on_one_variable_need_an_n_cell_experiment.md`
+
+- **2026-08-30 — Cancelling a notification cancels everything it carried, not the one effect you
+  meant; and a census of what a call AUTHORS is not a census of what it DOES.** `[V]` The ATV
+  collision guard cancels `ComponentHit` PRE-dispatch on a non-owner so a mirror cannot author
+  damage or `explode()` a vehicle its authority still has. It cancelled **all seven** delegates —
+  and the five **wheel** ones also maintain the rig's own shape, so the mirror's body sat under its
+  own wheel plane in every run ever measured. Cancelling only the two **body** delegates keeps the
+  protection and the rig (`8cd0ac25`). The suppression was built on a careful, accurate, `[V]`
+  census — *"impulse() subtracts ... from `health` and calls explode() at <=0, processTire() burns
+  tire durability and ejectWheel()s at 0, and the Capsule one pops a lib_C::addHint"* — every clause
+  of which is true, and all of which enumerate **authored state**. The two lists differ by exactly
+  what a handler does for its OWN machine: bookkeeping, rig maintenance, contact tracking. *Look
+  FIRST:* before cancelling or filtering a dispatched callback, write TWO lists — what it does to
+  shared state, and what it does for its own peer. If you are stopping the first and the second is
+  non-empty, you are about to suppress the second as collateral; split the target or find a narrower
+  site (principle 4). A `[V]` tag certifies the observations, never that the right question was asked.
+  `memory/lesson_a_notification_carries_more_than_the_effect_you_are_suppressing.md`
+
+- **2026-08-30 — An acceptance arm built on a quantity blind to the failing axis passes forever, and
+  confidently.** `[V]` The ATV arm A1 grades rig deformation from `susFR/susFL/susBK` =
+  `Dist(wheel, body)`, an arm that is ~92 cm horizontal and ~17 cm vertical. The defect was a 40 cm
+  **vertical** displacement: `sqrt(92^2+16.8^2)=93.5` vs `sqrt(92^2+23.7^2)=95.0`, so it moved the
+  graded number by **1.14 cm** — inside the "2-4 cm of normal suspension travel" band A1 asserts. A1
+  therefore passed on all six runs in which A2 failed, **on the same vehicle, in the same second**.
+  The quantity was not sloppy: it was introduced deliberately as *"|wheel - body| is
+  ROTATION-INVARIANT ... THIS is the frozen-corpse measurement"*, which is correct for the question
+  it was born for (is the rig frozen?) and silently wrong for the one it was later asked (is the rig
+  the wrong SHAPE?). *Look FIRST:* when one arm keeps failing while a neighbouring arm on the SAME
+  subject keeps passing, the passing arm is a suspect, not corroboration — compute, arithmetically,
+  what a defect of the observed magnitude would do to its number, and if the answer is under its own
+  tolerance the arm cannot see this class at all. The disagreement between the two arms WAS the
+  finding.
+  `memory/lesson_an_instrument_blind_to_the_failing_axis_grades_itself_green.md`
 
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
 

@@ -1039,7 +1039,18 @@ thing arc-1 commit 2 should aim at along with the convergence rate.
 
 ---
 
-## 16. `[V]` A MIRRORED PARKED ATV FREE-FALLS — the root, measured 2026-08-30 (autonomous, NOT hands-on)
+## 16. ~~`[V]` A MIRRORED PARKED ATV FREE-FALLS — the root~~ — SUPERSEDED BY §17 (same day)
+
+> **READ §17 FIRST. The ROOT stated below is wrong; the MEASUREMENTS in it are not.** §16 held
+> that a mirrored ATV sinks because assigning a velocity to a settled rig wakes it. A four-cell
+> single-variable experiment the same evening acquitted the pose corrector entirely: with the
+> COLLISION GUARD disabled the corrector produces the *best* result of the four cells (A2 = 3.0 cm).
+> What survives from §16: the `[ATVC]` instrument and its wire-velocity readings, §16.4's component
+> census, §16.6's hook boundary, and the at-rest write rule (which is still correct, just not the
+> cure it was believed to be). What does NOT survive: "the write is the only thing left that can be
+> causing the fall" — the guard was the other thing, and it was never in the frame.
+
+## 16-orig. `[V]` A MIRRORED PARKED ATV FREE-FALLS — the root as understood on 2026-08-30 morning
 
 Four driven runs, four A2 failures. This section replaces the attribution in §14.6 and §15.3, both
 of which are now retracted, and withdraws §15.2a's and §15.5's "tune `kCorrGain`" recommendation.
@@ -1214,3 +1225,101 @@ Note this is what MTA's asymmetric epsilon is about — `bSyncVelocity`'s Z test
 `FLOAT_EPSILON` for X/Y (`CUnoccupiedVehicleSync.cpp:311`). They widen exactly the axis this
 defect lives on. Not ported, not yet designed; the next step is to measure the author's settling
 transient (the probe now logs `angv=` as well as `vel=`, F8) rather than to guess a constant.
+
+
+---
+
+## 17. `[V]` THE SAG WAS OUR OWN COLLISION GUARD — measured 2026-08-30 (autonomous, NOT hands-on)
+
+Since 2026-08-29 a mirrored ATV has settled 25-40 cm below its author in **every run ever
+measured**. It was blamed, in order, on the mirror's tick being off (§14 era), on the two peers'
+terrain differing under the vehicle (§14.6), on the corrector's gain (§15.2a, §15.5), and on a
+velocity write waking a settled body (§16). All four are wrong. It was
+`coop::atv_hit_guard` cancelling all seven `ComponentHit` delegates on a non-owner.
+
+### 17.1 The quantity that made it visible
+**Ride height** = the body's Z above the mean of its own three rig bodies (`vehicleGetParts`).
+Local to one peer, so it survives the peers disagreeing about the world; signed, so "the body is
+UNDER its own wheels" is a number rather than an interpretation.
+
+`susFR/susFL/susBK` **cannot express it.** They are 3-D distances from a wheel body to the body
+over a ~92 cm *mostly horizontal* arm, so a 40 cm *vertical* deformation moves them by ~1.1 cm —
+inside the "2-4 cm of normal suspension travel" band §13 established and A1 asserts. That is why
+**A1 passed on six runs in which A2 failed, on the same vehicle**. The lane graded itself green on
+a quantity ~36x blind to the only axis that ever failed.
+
+### 17.2 `[V]` The four-cell experiment
+Four autonomous smoke runs, one variable each, host authoring and client mirroring one parked ATV.
+Archives `research/atv_runs/20260830-1057*` / `-1059*` / `-1102*` / `-1105*`, DLL `51893CE9`.
+
+| corrector | collision guard | A2 settled gap | the two rigs' SHAPES differ by |
+|---|---|---|---|
+| ON | all seven | 25-40 cm **FAIL** | ~40 cm (six runs, every driven run ever) |
+| OFF | all seven | 30.4 cm **FAIL** | 19.05 cm |
+| ON | none | 3.0 cm **PASS** | 0.61 cm |
+| OFF | none | 5.3 cm **PASS** | 0.12 cm |
+| ON | **body delegates only** | 13.6 cm **PASS** | 0.14 cm |
+
+**The pose corrector is INNOCENT** — with the guard off it produces the best cell of the four. Two
+days of fixes were aimed at the wrong subsystem, and the reason it looked guilty is that it is the
+only *other* thing keyed on authority.
+
+### 17.3 Why the guard did it
+The census `atv_hit_guard.cpp` was built on is a list of what each of the seven handlers
+**authors** — `impulse()` health and `explode()`, `processTire()` durability and `ejectWheel()`, a
+`lib_C::addHint`. It is accurate, and it is not the whole story: the five **wheel** delegates also
+maintain the rig's own shape. Cancelling them suppressed a notification carrying two unrelated
+things in order to stop one of them, and took the other with it — principle 4, patch the site and
+never the class of call.
+
+The bytecode corroborates without settling the mechanism. In `ExecuteUbergraph_ATV`, expr
+1228-1229 is `Array_Contains(wheelsOnSurface, ..)` -> `EX_JumpIfNot` guarding expr 1230-1237, which
+ends in `mesh.AddForce(GetUpVector * ..)`; the same test at 1198-1202 selects the `SetMassScale`
+applied to `backWheelRoot` / `frontWheel_L` / `frontWheel_R`; and `wheelsOnSurface` is written from
+inside the wheel-hit segments (exprs 366-379, 577-586, beside `processTire` and `checkAirtime`).
+**But `wos` reads 4 on BOTH peers at runtime**, including on a not-yet-placed actor — so the array
+is not the live contact set that story needs, and the exact path from "delegate cancelled" to "body
+40 cm low" is still `[?]`. The four-cell result does not depend on it.
+
+### 17.4 What shipped (`8cd0ac25`, proto 146 unchanged — no wire change)
+The two **body** delegates (`mesh`, `car1_Capsule`) stay cancelled on a non-owner, so damage
+authorship and `explode()` are still denied. The five **wheel** delegates run everywhere.
+`[dev] atv_hit_guard_mask` (default 3) keeps the experiment re-runnable and `[dev] atv_corrector`
+is the control arm that acquitted the corrector; both are diagnostics, RULE-2 exempt.
+
+`[V]` Two consecutive verification runs on the shipped default (DLL `2F9A559D`), archives
+`-1111*` and `-1113*`, **both of which drove the ATV**:
+
+| arm | run 1 | run 2 | before |
+|---|---|---|---|
+| A1 rig travel | x0.95 / x1.00 / x1.23 | x0.90 / x0.59 / x2.11 | x2.30 / x2.68 / x1.69 |
+| A2 settled gap | 9.59 cm PASS | 3.77 cm PASS | never passed on a driven run |
+| A6 handoff | +6.8 / -19.6 PASS | +4.5 / +0.7 PASS | always FAIL |
+| A7 rig shape | 2.43 cm PASS | 0.44 cm PASS | (arm did not exist) |
+| A3 guard armed | 7/7 both peers | 7/7 both peers | 7/7 |
+
+### 17.5 What is STILL open
+- **A5** — the mirror trails the author by up to 209-324 cm while driving. **USER, watching the
+  run 2026-08-30: the drive arm leaves the garage and then hits a wooden fence.** So A5's peak is a
+  collision artefact and the route must be fixed before A5 is judged at all. Same caveat on A1's
+  one x2.11 cell.
+- **A4** — a one-second ownership overlap at the handoff, in both verification runs.
+- **The residual this fix creates, stated rather than hidden:** a mirror now runs `processTire()`,
+  so it burns its own tire durability and can `ejectWheel()` a tire its author still has. The right
+  fix is **tire durability on the wire under the author**, the way `health` already is — not
+  re-suppressing the handler. The fence collision above is exactly the event that exercises it.
+- **§16.6's hook boundary is untouched and still unmeasured**: a player can tie physics props to
+  the ATV with `hook_C`, whose lane has zero symbols in this tree.
+
+### 17.6 Three things not to re-derive
+1. **Deleting the tick-off (`a2a45fc7`) did not move the number.** All six runs that read 25-40 cm
+   are post-deletion; the pre-arc-1 measurement recorded in `atv_hit_guard.cpp` read 37 cm. Two
+   different mechanisms, one identical outcome, because the guard shipped *with* arc 1 and was
+   never in the frame. The attribution of that 37 cm to a skipped `SetCenterOfMass` is **falsified**.
+2. **The corrector's give-up WARN named the wrong causes.** It blamed the terrain under the vehicle
+   or an unseen constraint such as a hook. The wheels of the two copies agree to <=1 mm at the same
+   XY, so the terrain is identical, and the real cause was in our own process.
+3. **The archive filter dropped every `[ATVC]` line** for its whole life, so §16's quoted wire
+   velocities were only ever reproducible from a live log the next run overwrites — and one of them
+   is now permanently gone (another session overwrote the host log at 09:45). Archive a run the
+   moment it ends.
