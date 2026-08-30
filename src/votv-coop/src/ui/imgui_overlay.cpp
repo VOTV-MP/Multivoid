@@ -89,7 +89,6 @@
 #include "ue_wrap/core/sdk_profile.h"  // kSigD3D11ViewportPresentChecked (docs/OVERLAY_CAPTURE_COEXIST.md)
 
 #include <windows.h>
-#include <d3d11.h>  // the throwaway device/swapchain used ONLY to read the DXGI vtable
 #include <dxgi.h>
 
 #include <atomic>
@@ -132,7 +131,6 @@ std::atomic<bool> g_imguiReady{false};  // first-present init done (backend live
 std::atomic<bool> g_visible{false};        // F1 dev menu shown
 std::atomic<bool> g_scoreboard{false};     // player-list scoreboard shown (real tilde key)
 std::atomic<bool> g_scoreboardForced{false};  // VOTVCOOP_SCOREBOARD_OPEN test override (survives focus reset)
-std::atomic<bool> g_inFrame{false};        // render-thread inside the ImGui pass (shutdown waits on this)
 
 // ---- surface state -----------------------------------------------------------
 // Two surfaces share this overlay: the F1 dev menu (always interactive) and the
@@ -534,13 +532,28 @@ IDXGISwapChain* RawViewportSwapChain(void* viewport, size_t off) {
     }
 }
 
+// THE GUARD MUST COVER THE QueryInterface, NOT ONLY THE LOAD -- and the first version did
+// not, while its own commit message said it did.
+//
+// `QueryInterface` is a VTABLE DISPATCH through the very pointer this exists to distrust: it
+// reads `*(void***)sc` and calls through it. Guarding only the read of `viewport+off` guards
+// the step that was never in doubt. The case the whole design is built to survive is a game
+// recook that moves the swapchain field: the AOB still matches (the prologue is unchanged),
+// `[viewport+0x70]` now holds a float or an FString*, it is NON-NULL so the null check
+// passes, and the dispatch faults -- an access violation on the render thread, on the first
+// frame, every launch, exactly instead of the one-line complaint this path exists to
+// produce. (Post-ship audit, 2026-08-30.)
 bool QiIsSwapChain(IDXGISwapChain* sc) {
-    IDXGISwapChain* probe = nullptr;
-    if (FAILED(sc->QueryInterface(__uuidof(IDXGISwapChain), reinterpret_cast<void**>(&probe))) ||
-        !probe)
+    __try {
+        IDXGISwapChain* probe = nullptr;
+        if (FAILED(sc->QueryInterface(__uuidof(IDXGISwapChain),
+                                      reinterpret_cast<void**>(&probe))) || !probe)
+            return false;
+        probe->Release();
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
-    probe->Release();
-    return true;
+    }
 }
 
 // THE SWAPCHAIN, RE-READ EVERY CALL AND QI-VALIDATED ON CHANGE (cross-cutting rule,
@@ -641,10 +654,11 @@ void OverlayFrame(IDXGISwapChain* sc) {
     // purely visual + non-interactive.
     if (g_imguiReady.load(std::memory_order_acquire) &&
         (AnyOpen() || ui::hud::IsActive() || coop::join_curtain::IsActive())) {
-        g_inFrame.store(true, std::memory_order_release);
+        // RULE 2, 2026-08-30: `g_inFrame` was two release-ordered atomic stores per rendered
+        // frame maintaining a flag with ZERO readers -- its only consumer was a `Shutdown()`
+        // deleted long ago, while its declaration still named that caller. Gone.
         overlay_backend::EnsureTarget(sc);  // recreate the render target after a resize
         RenderFrameGuarded(sc);
-        g_inFrame.store(false, std::memory_order_release);
     }
     if (perfOn) {
         coop::dev::perf_probe::AddTicks(coop::dev::perf_probe::Bucket::OverlayPresent,
@@ -733,16 +747,32 @@ uintptr_t __fastcall D3D12PresentInternalDetour(void* viewport, int32_t syncInte
 // armed BEFORE our bring-up) has not run. This bracket is correct either way -- releasing
 // our own reference before a resize is right regardless of who else holds one -- but the
 // arc may NOT claim the crash is cured until that runs.
-using EngineResizeFn = void(__fastcall*)(void* viewport, uint32_t sizeX, uint32_t sizeY,
-                                         uint8_t bFullscreen, int32_t pixelFormat);
-EngineResizeFn g_d3d11ResizeTrampoline = nullptr;
-EngineResizeFn g_d3d12ResizeTrampoline = nullptr;
+// TWO SIGNATURES, BECAUSE THE TWO SEAMS ARE NOT THE SAME FUNCTION -- the first version
+// declared one, which made the DX12 log line print numbers it could not know.
+//
+// DX11's `FD3D11Viewport::Resize(uint32,uint32,bool,EPixelFormat)` does take the four. The
+// DX12 seam at image+0x177E8B0 is `FD3D12Viewport::ResizeInternal()`, which takes ONLY
+// `this`: disassembled, its seventh instruction is `mov edx,3` -- it DESTROYS the register a
+// second argument would arrive in -- and it reads the extent from a member
+// (`mov edx,[rbx+0x90]`). Its own caller at image+0x1777110 is the real four-argument
+// `Resize`, which stores those arguments to members and calls this with `mov rcx,rbp` and
+// nothing else. (Post-ship audit, 2026-08-30, disassembled from the shipping PE.)
+//
+// The HOOKED FUNCTION is still the right one -- ResizeInternal IS the function that calls
+// IDXGISwapChain::ResizeBuffers, so the bracket is if anything tighter than DX11's. Only its
+// NAME and its ARITY were wrong.
+using D3D11ResizeFn = void(__fastcall*)(void* viewport, uint32_t sizeX, uint32_t sizeY,
+                                        uint8_t bFullscreen, int32_t pixelFormat);
+using D3D12ResizeInternalFn = void(__fastcall*)(void* viewport);
+D3D11ResizeFn         g_d3d11ResizeTrampoline = nullptr;
+D3D12ResizeInternalFn g_d3d12ResizeTrampoline = nullptr;
 
-void EngineResizeBracket(const char* which, EngineResizeFn orig, size_t scOff,
-                         IDXGISwapChain*& lastOk, void* viewport, uint32_t sizeX,
-                         uint32_t sizeY, uint8_t bFullscreen, int32_t pixelFormat) {
-    overlay_backend::OnResizeRelease();   // the back buffers are about to be recreated
-    orig(viewport, sizeX, sizeY, bFullscreen, pixelFormat);
+// The half both seams share: re-derive the render target after the engine has resized. The
+// CALL to the original stays with the caller, because the two originals do not take the same
+// arguments -- and `sizeNote` is a pre-formatted string rather than four values for exactly
+// that reason: only one of the two seams is given any.
+void EngineResizeBracket(const char* which, size_t scOff, IDXGISwapChain*& lastOk,
+                         void* viewport, const char* sizeNote) {
     IDXGISwapChain* sc = ValidatedSwapChain(viewport, scOff, which, lastOk);
     if (sc && g_imguiReady.load(std::memory_order_acquire)) {
         overlay_backend::OnResizeRecreate(sc);
@@ -751,8 +781,7 @@ void EngineResizeBracket(const char* which, EngineResizeFn orig, size_t scOff,
         // (2026-07-26: the DX12 resize drill was unmeasurable because only the FAILURE
         // branch logged). It is also the ONE line that says the bracket survived a run with
         // RTSS armed, which is the whole point of moving it.
-        UE_LOGI("imgui_overlay: %s::Resize (%ux%u fullscreen=%u fmt=%d) -- render target "
-                "rebuilt on %s", which, sizeX, sizeY, bFullscreen, pixelFormat,
+        UE_LOGI("imgui_overlay: %s%s -- render target rebuilt on %s", which, sizeNote,
                 overlay_backend::Kind() ? overlay_backend::Kind() : "?");
         ue_wrap::log::Flush();
     }
@@ -763,16 +792,22 @@ void EngineResizeBracket(const char* which, EngineResizeFn orig, size_t scOff,
 
 void __fastcall D3D11ResizeDetour(void* viewport, uint32_t sizeX, uint32_t sizeY,
                                   uint8_t bFullscreen, int32_t pixelFormat) {
-    EngineResizeBracket("FD3D11Viewport::Resize", g_d3d11ResizeTrampoline,
-                        ue_wrap::profile::kD3D11Viewport_SwapChain, g_lastOkSc11, viewport,
-                        sizeX, sizeY, bFullscreen, pixelFormat);
+    overlay_backend::OnResizeRelease();   // the back buffers are about to be recreated
+    g_d3d11ResizeTrampoline(viewport, sizeX, sizeY, bFullscreen, pixelFormat);
+    char note[96];
+    _snprintf_s(note, sizeof(note), _TRUNCATE, " (%ux%u fullscreen=%u fmt=%d)", sizeX, sizeY,
+                bFullscreen, pixelFormat);
+    EngineResizeBracket("FD3D11Viewport::Resize", ue_wrap::profile::kD3D11Viewport_SwapChain,
+                        g_lastOkSc11, viewport, note);
 }
 
-void __fastcall D3D12ResizeDetour(void* viewport, uint32_t sizeX, uint32_t sizeY,
-                                  uint8_t bFullscreen, int32_t pixelFormat) {
-    EngineResizeBracket("FD3D12Viewport::Resize", g_d3d12ResizeTrampoline,
-                        ue_wrap::profile::kD3D12Viewport_SwapChain, g_lastOkSc12, viewport,
-                        sizeX, sizeY, bFullscreen, pixelFormat);
+void __fastcall D3D12ResizeDetour(void* viewport) {
+    overlay_backend::OnResizeRelease();
+    g_d3d12ResizeTrampoline(viewport);
+    // NO SIZE IN THE LINE, deliberately: ResizeInternal takes only `this` and reads the new
+    // extent from a member, so four numbers here would be four numbers of register residue.
+    EngineResizeBracket("FD3D12Viewport::ResizeInternal",
+                        ue_wrap::profile::kD3D12Viewport_SwapChain, g_lastOkSc12, viewport, "");
 }
 
 // RULE 2, 2026-08-30: `ResolveSwapChainVtable` -- the throwaway DX11 device + hidden
@@ -813,7 +848,7 @@ bool Init() {
             {"FD3D11Viewport::Resize", ue_wrap::profile::kSigD3D11ViewportResize,
              reinterpret_cast<void*>(&D3D11ResizeDetour),
              reinterpret_cast<void**>(&g_d3d11ResizeTrampoline), false},
-            {"FD3D12Viewport::Resize", ue_wrap::profile::kSigD3D12ViewportResize,
+            {"FD3D12Viewport::ResizeInternal", ue_wrap::profile::kSigD3D12ViewportResizeInternal,
              reinterpret_cast<void*>(&D3D12ResizeDetour),
              reinterpret_cast<void**>(&g_d3d12ResizeTrampoline), false},
         };

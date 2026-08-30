@@ -139,16 +139,24 @@ inline constexpr const char* kSigD3D11ViewportResize =
     "4C 8B DC 57 48 81 EC C0 00 00 00 48 8B 05 ?? ?? ?? ?? 48 33 "
     "C4 48 89 84 24 80 00 00 00 49 89 5B";
 
-// FD3D12Viewport::Resize -- the DX12 twin of the above. Same bracket, same reason; the
-// DX12 backend AddRefs up to 8 back buffers behind the same single release, so it is
-// structurally MORE exposed than DX11, not less.
+// FD3D12Viewport::ResizeInternal() -- the DX12 resize bracket. Same reason as the DX11
+// twin; the DX12 backend AddRefs up to 8 back buffers behind the same single release, so it
+// is structurally MORE exposed than DX11, not less.
 //
-// DERIVED THE SAME WAY: occ=6 at 16, first unique at 20 with NO wildcards at all (the
-// window is `mov rax,rsp; push rbp/rdi; lea rbp,[rax-5Fh]; sub rsp,98h; mov [rax+20h],rbx`
-// -- pure frame setup, no rip-relative operand). 32 shipped for margin; the first
-// build-variable byte in this body is a `call rel32` at +50, well past the window.
-// IDA sub_14177E8B0 (image+0x177E8B0).
-inline constexpr const char* kSigD3D12ViewportResize =
+// IT TAKES ONLY `this`, AND THIS COMMENT USED TO SAY OTHERWISE. It was named
+// "FD3D12Viewport::Resize" and its window was called "pure frame setup" -- both wrong, and
+// the second wrong about a byte that is IN the shipped pattern. Disassembled from the
+// shipping PE 2026-08-30: the seventh instruction is `mov edx,3`, which DESTROYS the
+// register a second argument would arrive in, and the extent is read from a member
+// (`mov edx,[rbx+0x90]`). The real four-argument `Resize` is its single caller at
+// image+0x1777110, which stores those arguments to members and calls this with `mov rcx,rbp`
+// and nothing else. Hooking HERE is still right -- ResizeInternal is what calls
+// IDXGISwapChain::ResizeBuffers -- but a detour must declare ONE parameter, not five.
+//
+// DERIVED THE SAME WAY: occ=6 at 16, first unique at 20 with NO wildcards (no rip-relative
+// operand in the window). 32 shipped for margin; the first build-variable byte in this body
+// is a `call rel32` at +50, well past it. IDA sub_14177E8B0 (image+0x177E8B0).
+inline constexpr const char* kSigD3D12ViewportResizeInternal =
     "48 8B C4 55 57 48 8D 68 A1 48 81 EC 98 00 00 00 48 89 58 20 "
     "BA 03 00 00 00 48 89 70 E8 48 8B D9";
 
