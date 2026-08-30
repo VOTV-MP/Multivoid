@@ -25,6 +25,7 @@ Usage:
   python tools/bp_reflect.py --list garbageClump                     # just show matching pak paths
 """
 import glob
+import hashlib
 import json
 import os
 import subprocess
@@ -42,6 +43,72 @@ OUT = os.path.join(ROOT, "research", "bp_reflection")
 REPAK_URL = "https://github.com/trumank/repak/releases/download/v0.2.3/repak_cli-x86_64-pc-windows-msvc.zip"
 KA_URL = "https://github.com/trumank/kismet-analyzer/releases/download/latest/kismet-analyzer-e8982e9-win-x64.zip"
 
+# SHA-256 of each archive, checked BEFORE extraction; a mismatch aborts.
+#
+# WHY (external source review of the public tree, 2026-08-30): this script
+# downloads two archives and then `subprocess.run`s the .exe files inside them,
+# on a developer's machine with their privileges, and nothing verified a byte of
+# it. Every third-party action in .github/workflows/ is SHA-pinned; this was the
+# one place that wasn't.
+#
+# The review also suggested pinning KA_URL to a real tag instead of the mutable
+# `latest`. MEASURED 2026-08-30: that is not available -- kismet-analyzer
+# publishes exactly ONE release ("Development Build", tag `latest`, prerelease),
+# so there is no immutable tag upstream to point at. That makes this hash the
+# ONLY integrity control on that archive rather than a second one, which is why
+# it fails closed.
+#
+# Honest about what this does and does not buy: these two values were taken from
+# the copies already on disk, the ones every finding in research/bp_reflection/
+# was produced with. So it pins REPRODUCIBILITY -- from here on, everyone gets
+# the bytes this project's RE was done against, and a silent substitution
+# upstream becomes a loud stop. It is NOT a claim that those bytes were ever
+# audited. Updating a hash is deliberately a human decision, not a retry: read
+# the abort message, confirm upstream really did rebuild, then edit this table.
+TOOL_SHA256 = {
+    REPAK_URL: "6720d602144d75df477a99d5bedb6ea780997546afc335901d4937cafeaa73fa",
+    KA_URL: "12df3d6eb9d19e7de7aab1eaf0d43fee6955457671af38b9f1d0ad28fe57cc88",
+}
+
+
+def _fetch_verified(url, dest):
+    """Download `url` to `dest`, abort unless it matches its recorded SHA-256."""
+    expected = TOOL_SHA256.get(url)
+    if not expected:
+        sys.exit(f"FATAL: no SHA-256 recorded for {url} -- add one to TOOL_SHA256 "
+                 f"before this script will run it")
+    urllib.request.urlretrieve(url, dest)
+    h = hashlib.sha256()
+    with open(dest, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    got = h.hexdigest()
+    if got != expected:
+        os.remove(dest)  # never leave an unverified archive where a later run may trust it
+        sys.exit(f"FATAL: checksum mismatch for {url}\n"
+                 f"  expected {expected}\n"
+                 f"  got      {got}\n"
+                 f"This archive is downloaded and then EXECUTED, so it is not extracted.\n"
+                 f"`latest` is a mutable tag, so upstream rebuilding it is the benign\n"
+                 f"explanation -- but confirm that yourself before updating TOOL_SHA256.")
+
+
+def _safe_extract(zip_path, dest_dir):
+    """Extract `zip_path` into `dest_dir`, refusing entries that escape it.
+
+    `ZipFile.extractall` honours absolute paths and `..` in member names (zip
+    slip), and these archives are fetched over the network, so the member names
+    are as untrusted as the bytes.
+    """
+    dest_root = os.path.realpath(dest_dir)
+    with zipfile.ZipFile(zip_path) as zf:
+        for member in zf.namelist():
+            target = os.path.realpath(os.path.join(dest_root, member))
+            if target != dest_root and not target.startswith(dest_root + os.sep):
+                sys.exit(f"FATAL: refusing to extract '{member}' from {zip_path} -- "
+                         f"it resolves outside {dest_root}")
+        zf.extractall(dest_root)
+
 
 def _find(pattern):
     hits = glob.glob(pattern, recursive=True)
@@ -54,17 +121,15 @@ def ensure_tools():
     if not repak:
         print("  downloading repak ...")
         z = os.path.join(TOOLS, "repak.zip")
-        urllib.request.urlretrieve(REPAK_URL, z)
-        with zipfile.ZipFile(z) as zf:
-            zf.extractall(TOOLS)
+        _fetch_verified(REPAK_URL, z)
+        _safe_extract(z, TOOLS)
         repak = _find(os.path.join(TOOLS, "**", "repak.exe"))
     ka = _find(os.path.join(TOOLS, "**", "kismet-analyzer.exe"))
     if not ka:
         print("  downloading kismet-analyzer ...")
         z = os.path.join(TOOLS, "ka.zip")
-        urllib.request.urlretrieve(KA_URL, z)
-        with zipfile.ZipFile(z) as zf:
-            zf.extractall(os.path.join(TOOLS, "kismet-analyzer"))
+        _fetch_verified(KA_URL, z)
+        _safe_extract(z, os.path.join(TOOLS, "kismet-analyzer"))
         ka = _find(os.path.join(TOOLS, "**", "kismet-analyzer.exe"))
     if not repak or not ka:
         sys.exit("FATAL: could not obtain repak/kismet-analyzer")
