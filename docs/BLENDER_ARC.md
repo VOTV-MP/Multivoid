@@ -488,8 +488,9 @@ landscape, foliage, lights), every saved prop/entity/vehicle/NPC from the save's
   (772 spawner previews) + 193-comp curated supplement; ledger balances exactly.
 - Gatherer census (corrected): **48** classes override `gatherDataFromKey`; the 45 `…KeyT` classes are the
   separate trigger lane (doors etc. — never destroyed on load, stay as-cooked).
-- NPC: kerfurOmega rows live in `objectsData` with transforms; SK geometry via the proven
-  `ue_skelmesh.py` port (self-run: 102 bones / 4,332 verts, round-trip OK).
+- NPC: kerfurOmega rows live in `objectsData` with transforms; SK geometry: the design-time
+  plan was a `ue_skelmesh.py` port — v15 built `sk_model.py` from scratch instead (reader-API
+  walk of the 4.27 cooked layout, hex-fit pinned, 27/27 sweep; §0 v15).
 - Blender assembly measured trivial (20k objects 1.49 s); cold import ~2–4 min grounded, warm < 1 min.
 
 ## 3. Decisions (with dates)
