@@ -245,8 +245,11 @@ source file that uses them.
 found and fixed the same day — `docs/FEASIBILITY.md` still announced "Chosen
 approach: UE4SS + reflection" (reversed the next day by RULE No.3) and still
 described the overlay as riding "UE4SS's built-in ImGui" months after the mod
-hand-rolled its own DXGI present hook. Hostile review is cheap QA; treat it that
-way. See `memory/lesson_stale_planning_docs_are_public_ammunition.md`.
+hand-rolled its own DXGI present hook. Outside review is cheap QA; treat it that
+way. (The adjective here was "hostile" until 2026-08-30. It was wrong on the
+facts -- this was critique offered in good faith, and it was right -- and once
+the reviewer is named above, publishing it under his name would be a second
+error on top of the first.) See `memory/lesson_stale_planning_docs_are_public_ammunition.md`.
 
 ## 8. Migration history
 
