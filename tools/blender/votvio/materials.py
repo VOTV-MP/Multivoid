@@ -11,7 +11,7 @@ Emission = tex * ag * emisive_strength * emissioncolor.
 """
 import bpy
 
-from . import bc_decode, screens
+from . import bc_decode, convert, screens
 from .decals import _seed_int
 
 _FALLBACK_RGBA = (0.42, 0.42, 0.46, 1.0)
@@ -220,7 +220,9 @@ def get_material(game, mat_pkg_path, caches, warnings, with_textures=True):
             coord.location = (-980, 200)
             mapping = nt.nodes.new("ShaderNodeMapping")
             mapping.location = (-780, 200)
-            s = scal.get("scale_x") or 0.02
+            # Object coords are world-scaled: divide by the import Scale so the
+            # texture covers the same game-world area at any scene size
+            s = (scal.get("scale_x") or 0.02) / convert.factor()
             mapping.inputs["Scale"].default_value = (s, s, s)
             nt.links.new(coord.outputs["Object"], mapping.inputs["Vector"])
             nt.links.new(mapping.outputs["Vector"], timg.inputs["Vector"])
@@ -525,9 +527,10 @@ _LANDSCAPE_MIC = "/Game/inst_mainLandscape"
 
 
 def landscape_layer_specs(game, caches):
-    """layer name -> (detail texture pkg, repeat meters), read from the game's
-    own landscape MIC (inst_mainLandscape: tex_<layer> + size_<layer> params,
-    measured: grass=tex_pineGrass2 @ 4096uu, gravel=tex_gravel2 @ 2048uu...)."""
+    """layer name -> (detail texture pkg, repeat in Blender units), read from the
+    game's own landscape MIC (inst_mainLandscape: tex_<layer> + size_<layer>
+    params, measured: grass=tex_pineGrass2 @ 4096uu, gravel=tex_gravel2 @
+    2048uu...)."""
     caches.setdefault("mat_info", {})
     info = _analyze(game, _LANDSCAPE_MIC, caches["mat_info"])
     specs = {}
@@ -535,7 +538,7 @@ def landscape_layer_specs(game, caches):
         tex = info["tex"].get("tex_" + name)
         if tex:
             size_uu = info["scal"].get("size_" + name) or 4096.0
-            specs[name] = (tex, max(float(size_uu), 64.0) * 0.01)
+            specs[name] = (tex, max(float(size_uu), 64.0) * convert.SCALE)
     return specs
 
 

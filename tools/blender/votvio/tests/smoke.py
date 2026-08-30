@@ -46,7 +46,8 @@ report = assemble.build_scene(
      "placeholders": True, "import_map": True, "import_landscape": True,
      "import_lights": True, "import_decals": True, "foliage_density": 1.0,
      "terrain_style": "GREEN",
-     "import_radius": float(os.environ.get("VOTVIO_SMOKE_RADIUS", "0") or 0)},
+     "import_radius": float(os.environ.get("VOTVIO_SMOKE_RADIUS", "0") or 0),
+     "scale": float(os.environ.get("VOTVIO_SMOKE_SCALE", "1") or 1)},
 )
 t_build = time.time() - t2
 print(f"[build] {t_build:.1f}s")

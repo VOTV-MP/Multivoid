@@ -19,6 +19,8 @@ import math
 
 from mathutils import Matrix, Vector
 
+from . import convert
+
 _CRACKS = ("/Game/textures/decals/grime/cracks/inst_decalCrack_{}", 0, 17)
 _LEAK = ("/Game/textures/decals/grime/inst_DecalGrunge_leak_{}", 0, 8)
 _DIRT = ("/Game/textures/decals/grime/inst_DecalGrunge_dirt_{}", 0, 35)
@@ -111,28 +113,32 @@ def grime_spin(class_name, seed):
 
 
 def size_matrix(size_ue):
-    """DecalSize (UE half-extents, uu) -> local box scale (meters)."""
-    return Matrix.Diagonal((max(float(size_ue[0]), 1.0) * 0.01,
-                            max(float(size_ue[1]), 1.0) * 0.01,
-                            max(float(size_ue[2]), 1.0) * 0.01, 1.0))
+    """DecalSize (UE half-extents, uu) -> local box scale (Blender units)."""
+    return Matrix.Diagonal((max(float(size_ue[0]), 1.0) * convert.SCALE,
+                            max(float(size_ue[1]), 1.0) * convert.SCALE,
+                            max(float(size_ue[2]), 1.0) * convert.SCALE, 1.0))
 
 
-_OFFSET = 0.02         # base lift off the receiver surface (m; USER field test:
-                       # 6mm z-fights away at scene view distances, and 13mm
-                       # still fought at long range - 2cm + per-decal jitter)
+# All decal-projection distances are world-space and live in UU (game cm),
+# multiplied by convert.SCALE at use - so projection quality (grid density,
+# tolerances, lift) is identical at any import Scale.
+_OFFSET_UU = 2.0       # base lift off the receiver surface (uu; USER field
+                       # test: 6mm z-fights away at scene view distances, and
+                       # 13mm still fought at long range - 2cm + per-decal
+                       # jitter)
 
 
 def decal_lift(seed):
     """Per-decal surface offset: 2.0-2.8cm, jittered by the decal's own name so
     overlapping decals never share a depth plane with each other either."""
-    return _OFFSET + (_seed_int(str(seed) + ":lift") % 9) * 0.001
-_CELL = 0.12           # target grid cell size (m)
-_EXTRA_DEPTH = 0.02    # numeric tolerance beyond the box depth (m). The box
+    return (_OFFSET_UU + (_seed_int(str(seed) + ":lift") % 9) * 0.1) * convert.SCALE
+_CELL_UU = 12.0        # target grid cell size (uu)
+_EXTRA_DEPTH_UU = 2.0  # numeric tolerance beyond the box depth (uu). The box
                        # depth itself is authoritative: grime decals ship
                        # DecalSize.X=5uu = a 5cm reach (probe_v9), and the old
                        # 15cm tolerance painted doors/screens standing a room
                        # feature away from the wall the decal belongs to.
-_RESCUE_DEPTH = 0.25   # second-chance reach when the exact box misses: OUR
+_RESCUE_DEPTH_UU = 25.0  # second-chance reach when the exact box misses: OUR
                        # receivers are reconstructions (landscape decoded from
                        # component weightmaps, BSP from the model lump), so a
                        # decal sitting on the real surface can hover a few cm
@@ -163,7 +169,7 @@ def _wind(verts, faces, direction):
     return faces
 
 
-def project_decal(scene, depsgraph, m, lift=_OFFSET):
+def project_decal(scene, depsgraph, m, lift=None):
     """Project one decal box (world matrix incl. half-extent scale) onto the
     scene. -> list of sheets [(verts, faces, per-vertex uv)] in world space,
     empty when nothing inside the box receives it. `lift` = the per-decal
@@ -177,16 +183,19 @@ def project_decal(scene, depsgraph, m, lift=_OFFSET):
     is intersected with that plane analytically, zero further rays. Partial
     hits or bent receivers (corners, surface edges - exactly where the mask
     matters) fall through to a full per-vertex ray grid."""
+    if lift is None:
+        lift = _OFFSET_UU * convert.SCALE
     loc, rot, scale = m.decompose()
     R = rot.to_matrix()
     x_axis = (R @ Vector((1.0, 0.0, 0.0))).normalized()
     y_axis = (R @ Vector((0.0, 1.0, 0.0))).normalized()
     z_axis = (R @ Vector((0.0, 0.0, 1.0))).normalized()
     sx, sy, sz = abs(scale.x), abs(scale.y), abs(scale.z)
-    ny = max(3, min(16, int(round(2.0 * sy / _CELL))))
-    nz = max(3, min(16, int(round(2.0 * sz / _CELL))))
-    for extra in (_EXTRA_DEPTH, _RESCUE_DEPTH):
-        depth = sx + extra
+    cell = _CELL_UU * convert.SCALE
+    ny = max(3, min(16, int(round(2.0 * sy / cell))))
+    nz = max(3, min(16, int(round(2.0 * sz / cell))))
+    for extra_uu in (_EXTRA_DEPTH_UU, _RESCUE_DEPTH_UU):
+        depth = sx + extra_uu * convert.SCALE
         sheets = []
         for direction in (x_axis, -x_axis):
             sheet = _project_side(scene, depsgraph, loc, direction, y_axis,
@@ -230,7 +239,7 @@ def _project_side(scene, depsgraph, loc, direction, y_axis, z_axis, sy, sz,
         if planar:
             p0 = probes[(0.0, 0.0)][0]
             residual = max(abs((p - p0).dot(nmean)) for p, _n in probes.values())
-            planar = residual < 0.015
+            planar = residual < 1.5 * convert.SCALE  # 1.5cm of surface waviness
         denom = direction.dot(nmean)
         if planar and denom < -1e-4:   # front faces only: normal opposes the ray
             verts = []
@@ -262,7 +271,7 @@ def _project_side(scene, depsgraph, loc, direction, y_axis, z_axis, sy, sz,
         return None
 
     cell_diag = math.hypot(2.0 * sy / ny, 2.0 * sz / nz)
-    max_span = max(cell_diag * 2.5, 0.25)
+    max_span = max(cell_diag * 2.5, 25.0 * convert.SCALE)
     verts = []
     uvs = []
     vidx = {}

@@ -45,17 +45,20 @@ class _Builder:
         self.decal_queue = []   # (name, collection, world matrix, material path)
         self.unresolved = {}
         self.radius = float(options.get("import_radius", 0.0) or 0.0)
+        # the radius is game-world meters (1 m = 100 uu); the comparisons run in
+        # Blender space, so the same world subset imports at any Scale
+        self.radius_bl = self.radius * 100.0 * convert.SCALE
         self.origin = None  # Blender-space Vector, set in run() when radius > 0
         self.keep_actors = set()   # umap actor idx kept alive by a matching keyed row
         self._level_keys = {}      # save key -> (actor idx, actor type, UE root loc)
 
     def within(self, loc_bl):
-        """Import-radius test (XY, meters). True when no radius is set."""
+        """Import-radius test (XY, Blender units). True when no radius is set."""
         if self.radius <= 0.0 or self.origin is None:
             return True
         dx = loc_bl[0] - self.origin[0]
         dy = loc_bl[1] - self.origin[1]
-        return (dx * dx + dy * dy) <= self.radius * self.radius
+        return (dx * dx + dy * dy) <= self.radius_bl * self.radius_bl
 
     def _find_base_origin(self):
         """The base (garage / coordinate panels) = the baseBuilding_C actor's root."""
@@ -234,7 +237,7 @@ class _Builder:
     def _placeholder(self, name, col, matrix, kind="PLAIN_AXES", size=0.15):
         ob = self._new_object(name, None, col, matrix)
         ob.empty_display_type = kind
-        ob.empty_display_size = size
+        ob.empty_display_size = size * convert.factor()  # size = meters at Scale 1
         return ob
 
     def _build_level_keys(self, save_classes):
@@ -365,9 +368,11 @@ class _Builder:
             m = convert.matrix(quat, loc, scale)
             self._placeholder("Player", player_col, m, "ARROWS", 0.5)
             cam = bpy.data.cameras.new("PlayerCam")
+            cam.clip_start *= convert.factor()
+            cam.clip_end *= convert.factor()
             cam_ob = self._new_object("PlayerCam", cam, player_col, m)
             cam_ob.matrix_world = m
-            cam_ob.location.z += 0.65
+            cam_ob.location.z += 65.0 * convert.SCALE  # eye height above the root
             cam_ob.rotation_mode = "XYZ"
             cam_ob.rotation_euler.x += 1.5708  # look forward, not down
         for t in self.m.roaches:
@@ -451,4 +456,6 @@ class _Builder:
 
 
 def build_scene(manifest, game, options, progress=None):
+    # unit scale FIRST: every convert.* call and UU-based constant below reads it
+    convert.set_scale(options.get("scale", 1.0))
     return _Builder(manifest, game, options, progress).run()

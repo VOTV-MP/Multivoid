@@ -60,10 +60,16 @@ class VOTVIO_OT_import_sav(bpy.types.Operator, ImportHelper):
         items=[("GREEN", "Green", "Grass"), ("SNOW", "Snow", "Snowed over"),
                ("DIRT", "Dirt", "Dry ground")],
         default="GREEN")
+    scale: bpy.props.FloatProperty(
+        name="Scale",
+        description="Uniform scene scale. 1.0 = real-world size (1 game unit = 1 cm "
+                    "= 0.01 Blender units); 100 = one Blender unit per game unit",
+        default=1.0, min=0.001, soft_min=0.01, soft_max=100.0)
     import_radius: bpy.props.FloatProperty(
         name="Import radius (m)",
         description="Only things within this many meters of the base (the garage / "
-                    "coordinate-panel building) are imported. Set 0 for the whole map",
+                    "coordinate-panel building) are imported, measured in game-world "
+                    "meters (unaffected by Scale). Set 0 for the whole map",
         default=150.0, min=0.0, soft_max=2000.0, subtype="DISTANCE")
     show_technical: bpy.props.BoolProperty(
         name="Show technical meshes",
@@ -122,6 +128,7 @@ class VOTVIO_OT_import_sav(bpy.types.Operator, ImportHelper):
             "screens_powered": self.screens_powered,
             "foliage_density": self.foliage_density,
             "terrain_style": self.terrain_style,
+            "scale": self.scale,
             "import_radius": self.import_radius,
             "show_technical": self.show_technical,
         }

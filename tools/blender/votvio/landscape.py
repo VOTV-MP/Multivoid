@@ -144,7 +144,7 @@ def build_landscape(game, map_path, dicts, collection, warnings, builder=None,
             half = csq * root_scale[0] * convert.SCALE * 0.75
             dx = center[0] - builder.origin[0]
             dy = center[1] - builder.origin[1]
-            if (dx * dx + dy * dy) ** 0.5 > builder.radius + half:
+            if (dx * dx + dy * dy) ** 0.5 > builder.radius_bl + half:
                 continue
         hm = _decoded_tex(pkg, _ref_name(p.get("HeightmapTexture")), tex_cache,
                           warnings, "heightmap")

@@ -1,15 +1,33 @@
 """UE4 <-> Blender space conversion.
 
 UE: left-handed, Z-up, X-forward, centimeters. Blender: right-handed, Z-up, meters.
-Conversion = mirror across the XZ plane (y -> -y) + 0.01 scale.
+Conversion = mirror across the XZ plane (y -> -y) + the unit scale.
 Under that mirror a rotation (axis a, angle t) becomes (Ma, -t), which in quaternion
 terms is (x, y, z, w) -> (-x, +y, -z, w). Triangle winding flips (handled in mesh_build).
+
+SCALE is the single authority on "Blender units per UE centimeter". Its native value
+is 0.01 (real-world meters); the import operator's Scale option multiplies it via
+set_scale(), once per import, before any geometry is built. Every world-space constant
+in the addon is therefore expressed in UU (game cm) and multiplied by SCALE at the use
+site - never as a meter literal, which would silently pin it to the default scale.
 """
 import math
 
 from mathutils import Matrix, Quaternion, Vector
 
-SCALE = 0.01
+BASE_SCALE = 0.01   # Blender meters per UE centimeter at Scale = 1.0
+SCALE = BASE_SCALE  # the live value; set_scale() installs the import's choice
+
+
+def set_scale(user_factor):
+    """Install this import's unit scale (operator Scale option; 1.0 = real size)."""
+    global SCALE
+    SCALE = BASE_SCALE * max(float(user_factor or 1.0), 1e-6)
+
+
+def factor():
+    """The user's Scale multiplier (SCALE relative to the native mapping)."""
+    return SCALE / BASE_SCALE
 
 
 def pos(v):

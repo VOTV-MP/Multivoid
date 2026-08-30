@@ -607,7 +607,9 @@ class MapImporter:
         p = self.dicts[idx].get("Properties") or {}
         ld = bpy.data.lights.new(self.dicts[idx].get("Name", "light"), LIGHT_COMPS[ty])
         intensity = float(p.get("Intensity", 5000.0) or 5000.0)
-        ld.energy = max(1.0, intensity * 0.01)
+        # x factor^2: watts follow the inverse-square law, so a scaled scene
+        # keeps the same lit look (distances x f -> power x f^2)
+        ld.energy = max(1.0, intensity * 0.01) * convert.factor() ** 2
         c = p.get("LightColor")
         if isinstance(c, dict):
             ld.color = (c.get("R", 255) / 255.0, c.get("G", 255) / 255.0,
