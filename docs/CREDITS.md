@@ -33,12 +33,13 @@ from `git shortlog -sne` and fold each person's identity variants together.
 | **hediiiqq** | code | Dish mirror interpolation | 4 commits |
 | **arigalit** | code · report | ATV seat contention ([#9](https://github.com/VOTV-MP/Multivoid/pull/9)); join-time prop-count divergence | 2 commits |
 | **huoyan1231** | code · report | CI and automated builds; the b125 host-log pack | 2 commits · b134 |
+| [**archhn0madd**](https://github.com/archhn0madd) | code | Rejoin without a relaunch — the boot poll answered from the dying world | 1 commit |
 | **Moddy** | review | The architecture and documentation review that became the UE4SS move | b122 · b143 |
 | **SentientYeet** | review | The substrate critique that re-opened the loader decision | b143 |
 | **Violet** | report | ~9 FPS for a friend joining on Linux — five separate defects behind it | b134 |
 | **decodinatorX** | report | Couldn't type at the SAT console — `T` kept opening chat | b133 |
 | **gediao** | report | The b125 host-log pack, with huoyan1231 | b134 |
-| **SirWilliam** | report | Rejoining a session requires a full relaunch | queued |
+| **SirWilliam** | report | Rejoining a session requires a full relaunch | fixed, unreleased |
 
 ---
 
@@ -71,6 +72,19 @@ Community commits are adopted with their **original authorship preserved**
 
 ### huoyan1231
 - CI and automated builds (`.github/workflows`).
+
+### archhn0madd
+- **Rejoin without a full relaunch** — the fix for SirWilliam's report below.
+  After a quit-to-menu the dying world and its ragdolled `mainPlayer_C` stay in
+  `GUObjectArray` until the GC purge, and both of the boot poll's "where are we?"
+  reads answered from that dead world: the corpse read as *in gameplay*, so a join
+  booted into a world that was never loaded, and the dying world's `untitled` name
+  read as *already loading*, so the `open` was never issued. Both reads now go
+  through `world_identity` — the module that exists precisely because a dying
+  world's actors outlive it — under one owner, `SurveyBootWorld`. It also
+  un-strands a host trying to re-host after a death-flee.
+  Contributed on the fork [Multifoid](https://github.com/archhn0madd/Multifoid);
+  adopted as `engine_save.cpp`'s `SurveyBootWorld` with authorship preserved.
 
 ---
 
@@ -205,11 +219,26 @@ added to one role only is a defect in the other role wearing a different name.**
 ### SirWilliam — rejoining requires a full game relaunch
 
 **Channel:** Discord · **Reported:** after leaving a session, rejoining does not
-work until the game is fully restarted · **Status:** filed, not yet fixed
+work until the game is fully restarted · **Status:** fixed, unreleased —
+`0288ff88`, by **archhn0madd** (see the code section above)
 
-Filed as a session-lifecycle row from the same b125 triage map. Reproduction and
-fix are queued; the row stays here, openly unfixed, rather than being quietly
-dropped.
+Filed as a session-lifecycle row from the same b125 triage map, and it sat here
+openly unfixed for long enough that someone else fixed it: archhn0madd forked the
+repo, rooted it, and pushed the fix on their own fork.
+
+The root was one the project had already written down and then failed to apply
+here. A dying world's actors are not kill-flagged until the GC purge — measured at
+44+ seconds — which is the entire reason `world_identity` exists. But the boot
+poll predated it and still asked `FindObjectByClass` directly, so after a
+quit-to-menu it found the previous session's ragdolled corpse and concluded the
+player was in gameplay, and found the dying world's `untitled` name and concluded
+the map was already loading. The join then "succeeded" into a world that had never
+loaded: `ClientWorldReady` was never announced, the host never streamed, and the
+only way out was the relaunch SirWilliam reported.
+
+The report was worth more than its two lines suggest: the same two lies also
+stranded a **host** trying to re-host after a death-flee, which nobody had
+reported.
 
 ---
 
