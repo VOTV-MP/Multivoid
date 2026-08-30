@@ -3624,14 +3624,23 @@ def cmd_menushot(args) -> None:
                            memory_limit_gb=args.memory_limit_gb)
     host_log = HOST_DIR / "multivoid.log"
     shot = None
-    if _wait_for_log(host_log, "imgui_overlay: DX11 bring-up OK", args.probe_timeout, "HOST"):
+    # RHI-AGNOSTIC, AND IT WAS NOT. This waited on the literal string
+    # "imgui_overlay: DX11 bring-up OK", so on DX12 -- where the overlay logs
+    # "DX12 bring-up OK" -- it timed out after the full probe window and refused to
+    # capture, while the overlay had in fact come up seconds after launch. The one
+    # scenario that proves the F1 menu DRAWS could therefore never produce evidence
+    # about the DX12 half of the render backend, and its own WARN blamed the RHI for
+    # what was the harness's own blind spot. Measured 2026-08-30 during the overlay
+    # seam move, where DX12 is exactly the arm that needed proving.
+    if _wait_for_log(host_log, "bring-up OK", args.probe_timeout, "HOST"):
         time.sleep(3)  # let a few menu frames render
         p = shots_dir / "host_menu.png"
         if _capture_window(host_pid, p):
             shot = p
             log(f"  menu shot: {p.name}")
     else:
-        log("WARN: never saw 'imgui_overlay: DX11 bring-up OK' -- DX12 RHI or a hook failure; see tail")
+        log("WARN: never saw an overlay 'bring-up OK' on EITHER RHI within the probe "
+            "window -- a hook failure, not an RHI choice; see the tail")
     tail_log(host_log, 30, "HOST")
     log("--- KILLING ---")
     kill_all()
@@ -3640,7 +3649,7 @@ def cmd_menushot(args) -> None:
         log(f"Inspect {shot}: it should show the 'VOTV Coop  -  Menu (F1)' window with the "
             "nested category tree (Player/Game/Network/Cosmetics) over the game.")
     else:
-        log("No screenshot -- overlay didn't bring up (DX12 RHI, or a hook fault -- read the tail).")
+        log("No screenshot -- the overlay never brought up on either RHI (hook fault -- read the tail).")
     sys.exit(0 if shot else 2)
 
 
