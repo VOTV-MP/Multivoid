@@ -19,17 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-Scope notes (informative, not part of the MIT terms above):
-
-- This license covers the code and documentation tracked in this repository.
-- Git submodules under reference/ and src/votv-coop/third_party/ are separate
-  projects distributed under their own licenses (RE-UE4SS: MIT; mtasa-blue:
-  GPLv3, used as read-only architectural reference, no code copied; MinHook:
-  BSD-2; GameNetworkingSockets: BSD-3; Dear ImGui: MIT; Opus: BSD-3).
-- Release archives may additionally contain model paks (e.g. scientists.pak)
-  that are community conversions of third-party game assets. Those assets are
-  NOT covered by this license and remain the property of their respective
-  owners.

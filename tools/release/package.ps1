@@ -103,10 +103,17 @@ Set-Content -LiteralPath (Join-Path $stage 'manifest.json') `
             -Encoding utf8 -NoNewline
 Copy-Item $iconPath   (Join-Path $stage 'icon.png')
 Copy-Item $readmePath (Join-Path $stage 'README.md')
-# LICENSE rides in the zip root (MIT, added 2026-08-29); its scope notes carry
-# the pak-assets carve-out, so the archive explains its own licensing.
-$licensePath = Join-Path $repoRoot 'LICENSE'
-if (Test-Path -LiteralPath $licensePath) { Copy-Item $licensePath (Join-Path $stage 'LICENSE') }
+# LICENSE (bare MIT since 2026-08-30 -- the scope notes moved out so GitHub's
+# license detection reads it) + THIRD-PARTY-NOTICES.md (the statically-linked/
+# embedded components' verbatim license texts, the pak-assets carve-out, and
+# the FreeType/CC-BY credits the BINARY distribution owes) both ride in the
+# zip root. Fail CLOSED on either: a zip without them is a release that strips
+# the notices its own licenses require.
+foreach ($legal in 'LICENSE', 'THIRD-PARTY-NOTICES.md') {
+    $legalPath = Join-Path $repoRoot $legal
+    if (-not (Test-Path -LiteralPath $legalPath)) { throw "legal file missing: $legalPath" }
+    Copy-Item $legalPath (Join-Path $stage $legal)
+}
 Copy-Item $PayloadDll (Join-Path $stage 'mod/dlls/main.dll')
 # enabled.txt: UE4SS reads the FILE'S PRESENCE, and the field packages ship it with
 # the literal "true" inside. Match them rather than shipping an empty file.
@@ -170,5 +177,5 @@ Write-Host "PACKAGE OK  $zipName" -ForegroundColor Green
 Write-Host "  path   : $zipPath"
 Write-Host "  sha256 : $sha"
 Write-Host "  payload: $PayloadDll"
-Write-Host "  tree   : manifest.json, icon.png, README.md, mod/enabled.txt, mod/dlls/main.dll"
+Write-Host "  tree   : manifest.json, icon.png, README.md, LICENSE, THIRD-PARTY-NOTICES.md, mod/enabled.txt, mod/dlls/main.dll"
 if ($Pak.Count -gt 0) { Write-Host "           + pak/ ($($Pak.Count) file(s))" }

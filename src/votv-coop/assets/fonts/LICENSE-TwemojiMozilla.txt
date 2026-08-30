@@ -24,5 +24,7 @@ in Mozilla's COLR container:
   Licensed under the Apache License, Version 2.0:
   http://www.apache.org/licenses/LICENSE-2.0
 
-The CC-BY 4.0 attribution requirement is satisfied by this file shipping beside
-the font in the source tree and by the credit in docs/MULTIPLAYER_UI.md.
+The CC-BY 4.0 attribution requirement is satisfied in the source tree by this
+file shipping beside the font, and in the binary distribution by
+THIRD-PARTY-NOTICES.md (which reproduces this file verbatim) shipping in the
+release archive.
