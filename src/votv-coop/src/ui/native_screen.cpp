@@ -323,7 +323,38 @@ bool HoverTracker::Poll(void* panel, int32_t shownCount) {
     // the origin being (0,0) -- that is a second cause and still open.
     POINT cli = c;
     if (HWND hwnd = ::GetActiveWindow()) ::ScreenToClient(hwnd, &cli);
-    index_ = ChildAtCursor(panel, shownCount, cli.x, cli.y, index_);
+
+    // ...AND THEN ASK SLATE, because the client origin was only half of it. After
+    // the conversion above shipped, the same user reported the offset AGAIN and in
+    // the OTHER direction (the top row selecting only with the cursor dragged well
+    // down the widget). Two hand-derived corrections, two wrong answers: the
+    // remaining term is the viewport's UI scale, and this file is not the place to
+    // reconstruct Slate's transform from parts. `CursorToWidgetAbsolute` runs
+    // Slate's own inverse, so both sides of the comparison come from one source
+    // whatever the scale and wherever the window sits.
+    ue_wrap::FVector2D abs{};
+    const bool converted = U::CursorToWidgetAbsolute(
+        ue_wrap::FVector2D{static_cast<float>(cli.x), static_cast<float>(cli.y)}, abs);
+    const long hx = converted ? static_cast<long>(abs.X) : cli.x;
+    const long hy = converted ? static_cast<long>(abs.Y) : cli.y;
+
+    // ALWAYS-ON, first three hovers per process, at WARN so it FLUSHES. The user's
+    // own run left no evidence at all last time -- INFO is buffered and a killed
+    // process never writes it -- so a field report on this arrived with nothing to
+    // read. Three lines is the price of never asking them to re-run with a flag.
+    static int sTold = 0;
+    if (moved && sTold < 3) {
+        ++sTold;
+        ue_wrap::FVector2D ptl{}, psz{};
+        const bool haveP = U::WidgetScreenRect(panel, ptl, psz);
+        UE_LOGW("native_screen[hit] desktop=(%ld,%ld) client=(%ld,%ld) slateAbs=%s(%.1f,%.1f) "
+                "panel %s(%.0f,%.0f) %.0fx%.0f -> row=%d",
+                c.x, c.y, cli.x, cli.y, converted ? "" : "UNCONVERTED ", abs.X, abs.Y,
+                haveP ? "" : "UNREAD ", ptl.X, ptl.Y, psz.X, psz.Y,
+                ChildAtCursor(panel, shownCount, hx, hy, -1));
+    }
+
+    index_ = ChildAtCursor(panel, shownCount, hx, hy, index_);
     return true;
 }
 

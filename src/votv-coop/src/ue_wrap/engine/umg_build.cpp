@@ -6,6 +6,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "ue_wrap/engine/engine.h"  // GetWorldContext -- the Slate library calls are static
 
 #include <cstring>
 #include <vector>
@@ -62,6 +63,7 @@ FnCache g_getVis     {L"Widget",         L"GetVisibility",        nullptr, false
 FnCache g_getParent  {L"Widget",         L"GetParent",            nullptr, false};
 FnCache g_localSize  {L"SlateBlueprintLibrary", L"GetLocalSize",   nullptr, false};
 FnCache g_localToAbs {L"SlateBlueprintLibrary", L"LocalToAbsolute", nullptr, false};
+FnCache g_screenToAbs{L"SlateBlueprintLibrary", L"ScreenToWidgetAbsolute", nullptr, false};
 FnCache g_setContent {L"ContentWidget",  L"SetContent",           nullptr, false};
 
 }  // namespace
@@ -212,6 +214,57 @@ void LogVisibilityChain(const char* tag, void* widget) {
         ParamFrame p(parFn);
         w = Call(w, p) ? p.Get<void*>(L"ReturnValue") : nullptr;
     }
+}
+
+// THE CURSOR, IN THE SAME SPACE THE RECTS ARE IN -- asked of Slate, not derived.
+//
+// WHY IT IS NOT A SUBTRACTION. `WidgetScreenRect` returns whatever
+// `LocalToAbsolute` returns, and the relationship between that and the OS cursor
+// is not a fact this file gets to assume: it involves the window's client origin
+// AND the viewport's UI scale, and this project has now been wrong about it twice
+// in one day in OPPOSITE directions -- first comparing desktop pixels to the rects
+// directly (measured off by the client origin, 320x180 on the lab rig), then
+// subtracting only the origin, after which a user still reported an offset and in
+// the other direction. Two hand-derived corrections and two wrong answers is the
+// point at which you stop deriving and ask the engine.
+//
+// `ScreenToWidgetAbsolute` is Slate's own inverse of the transform that produced
+// those rects, so whatever the scale and wherever the window sits, both sides of
+// the comparison come from the same source. `screenPos` is VIEWPORT/client pixels
+// (do the ScreenToClient first); `bIncludeWindowPosition=false` because the rects
+// we compare against are the plain LocalToAbsolute ones.
+//
+// Returns false if the function or the context is unavailable, leaving `out`
+// untouched -- the caller decides what a missing conversion means rather than
+// silently receiving an unconverted point.
+bool CursorToWidgetAbsolute(const FVector2D& screenPos, FVector2D& out) {
+    void* fn = Resolve(g_screenToAbs);
+    if (!fn) return false;
+    static void* const sLib = [] { return R::FindClassDefaultObject(L"SlateBlueprintLibrary"); }();
+    if (!sLib) return false;
+    void* ctx = ue_wrap::engine::GetWorldContext();
+    if (!ctx) return false;
+
+    ParamFrame f(fn);
+    // Named, never positional: a signature change must fail loudly rather than
+    // write a bool into a float pair.
+    if (f.ParamOffset(L"ScreenPosition") < 0 || f.ParamOffset(L"AbsoluteCoordinate") < 0) {
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            UE_LOGE("umg: ScreenToWidgetAbsolute has an unexpected signature (ScreenPosition@%d "
+                    "AbsoluteCoordinate@%d) -- refusing to guess the frame layout",
+                    f.ParamOffset(L"ScreenPosition"), f.ParamOffset(L"AbsoluteCoordinate"));
+        }
+        return false;
+    }
+    f.Set<void*>(L"WorldContextObject", ctx);
+    f.Set<FVector2D>(L"ScreenPosition", screenPos);
+    if (f.ParamOffset(L"bIncludeWindowPosition") >= 0)
+        f.Set<bool>(L"bIncludeWindowPosition", false);
+    if (!Call(sLib, f)) return false;
+    out = f.Get<FVector2D>(L"AbsoluteCoordinate");
+    return true;
 }
 
 bool WidgetScreenRect(void* widget, FVector2D& outTopLeft, FVector2D& outSize) {

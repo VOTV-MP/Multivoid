@@ -205,6 +205,14 @@ bool ViewOffsetFraction(void* scrollBox, float& out);
 // that is a real answer, not a failure, and callers must treat it as one.
 bool WidgetScreenRect(void* widget, FVector2D& outTopLeft, FVector2D& outSize);
 
+
+// The OS cursor, converted into the SAME space WidgetScreenRect reports in, by
+// Slate's own inverse transform rather than by arithmetic here. `screenPos` is
+// VIEWPORT/client pixels (ScreenToClient first). False = unavailable, `out`
+// untouched. See the .cpp for why this is not a subtraction: two hand-derived
+// corrections in one day produced two wrong answers in opposite directions.
+bool CursorToWidgetAbsolute(const FVector2D& screenPos, FVector2D& out);
+
 // WHY A WIDGET TAKES NO HITS: walk it up to the root, logging each link's LIVE visibility.
 //
 // `UWidget::GetVisibility` reads the built SWidget when there is one, so this reports what
