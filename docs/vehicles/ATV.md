@@ -1440,6 +1440,60 @@ is the control arm that acquitted the corrector; both are diagnostics, RULE-2 ex
 - **§16.6's hook boundary is untouched and still unmeasured**: a player can tie physics props to
   the ATV with `hook_C`, whose lane has zero symbols in this tree.
 
+### 17.7 The tire lane, mapped end to end (2026-08-30, `[RD]` bytecode)
+
+Written before designing the intent lane, because a design brief for a sync defect is worthless
+until every event the action emits is mapped on both peers. All offsets from
+`research/bp_reflection/` (`_fn.py ATV <fn>`, `ATV_cfg/ATV.txt` for the ubergraph).
+
+```
+ComponentHit on a WHEEL  ->  ubergraph wheel segment (four copies, e.g. @14864 idx3, @15037 idx2)
+    1. processTire(index, HitComponent, NormalImpulse)
+    2. checkAirtime()
+    3. wheelsOnSurface[index] = true
+    4. RetriggerableDelay(0.1s) -> latent -> wheelsOnSurface[index] = false
+
+processTire  (42 stmts)
+    sev := VSize(impact / mesh.GetMass()) / 100 / 1.5
+    if (sev > 1.0)  -> damageWheel(index, sev, component)
+    else            -> the dirt branch (dirtVel lerp, accumulates tire dirt)
+
+damageWheel  ->  ExecuteUbergraph_ATV(15210)  ->  switch on index, four blocks
+                 (@15479 / @15840 / @16160 / @16470)
+    tiresDurability[index] -= damage        (VictoryFloatMinusEquals -> FloatOut)
+    tiresDurability[index]  = FMax(FloatOut, 0)
+    if (FloatOut <= 0)  ->  ejectWheel(index, component)   @15653
+    sound_tireDamage(component)                            @15685
+
+ejectWheel   ->  BeginDeferred(prop_atvWheel_C) + durability/dirt/fixes-1 + FinishSpawning
+                 + copy the wheel component's lin/ang velocity onto the spawned mesh
+                 + tires[index] = false + updTires()  (BreakConstraint x8, re-place sus_*)
+```
+
+**Two things this map settles.**
+
+**(a) It confirms the collision-guard mechanism, which §17 had only by correlation.** §17 shipped
+"the five WHEEL delegates also keep the rig's SHAPE" on a measured pairing (`-1059` vs `-1057`)
+without naming the path. It is step 3 above: a wheel `ComponentHit` is the ONLY writer of
+`wheelsOnSurface[index]`, and `wheelsOnSurface` is what gates the ubergraph's suspension `AddForce`
+(exprs 1228-1237) and `SetMassScale` (1198-1202). Cancel the wheel delegates on a mirror and that
+array never goes true, so the up-force never runs and the body settles under its own wheel plane —
+exactly the 25-40 cm sag. Correlation upgraded to mechanism; the shipped fix is right for the reason
+now written down.
+
+**(b) The tire lane is not a new problem — it is `docs/COOP_WORLD_PROP_DIVERGENCE.md` applied to a
+vehicle.** Its shape is that doc's shape exactly: the INPUT is a physics impulse (per-peer, and the
+two peers' impulses are not equal), the ACCUMULATOR is a plain local float array
+(`tiresDurability[]`) mutated over time, and the OUTPUT is a THRESHOLD crossing (`<= 0`) with an
+irreversible side effect. Since arc 1 the mirror simulates, so both peers accumulate independently
+and cross that threshold at different moments — or only one crosses it. The documented root for that
+class is the same one §17.5 arrives at from the identity side: **the host owns the progression**.
+Two independent routes to one answer is the strongest signal available here.
+
+**What is NOT yet mapped and is owed before building:** `putTire` (the inverse verb — who may
+re-mount, and does it consume the keyed wheel prop), `updSpareTire`, and whether `tiresTypes[]` /
+`tiresFixes[]` ride any existing wire lane. `§2.5`'s table lists them; their bytecode is unread.
+
 ### 17.6 Three things not to re-derive
 1. **Deleting the tick-off (`a2a45fc7`) did not move the number.** All six runs that read 25-40 cm
    are post-deletion; the pre-arc-1 measurement recorded in `atv_hit_guard.cpp` read 37 cm. Two
