@@ -12,14 +12,19 @@ then emit it through the same CRT chain (content x brightness x RGB pixel
 mask).
 
 Routing (measured, and it is ONE texture for everything): ui_consolesAtlas is
-ONE 2000x2000 canvas and EVERY screen mesh's "UI" material slot windows its
-region of it by raw UV -- the four desk monitors take the four 1000x1000
-quadrants (TL=download+detector, TR=playback, BL=coords with the embedded
-ui_coordinates, BR=comp), the SAT console face windows exactly the embedded
-umg_console rect (U0-.5 V.194-.5, byte-equal to its mesh UVs), the radar face
-the embedded umg_radar region. The per-device cover layer (CanvasPanel_76)
-and the 14 deathscreen overlays ship Collapsed and stay skipped by their own
-cooked Visibility. So: ONE raster, ONE material, six meshes, raw UV.
+ONE 2000x2000 canvas whose quadrants only GROUP the content; each screen
+mesh's "UI" section is a SCATTER of rectangular cutouts, each windowing its
+own atlas rect by raw UV (UV-island census: comp 2, coords 18 -- including
+five PER-DIGIT windows per counter row -- download 8, playback 6, console 1,
+radar 5). The widget leans on RenderTransform: the comp table and the desk
+logs bake in ROTATED (+-90) and the cutouts read the rotated projection; the
+unit face geometry turns them upright again. The SAT console face windows
+exactly the embedded umg_console rect (byte-equal to its mesh UVs), the radar
+face the embedded umg_radar region. The per-device cover layer
+(CanvasPanel_76) and the 14 deathscreen overlays ship Collapsed and stay
+skipped by their own cooked Visibility. So: ONE raster, ONE material, six
+meshes, raw UV. The faces' NON-RT analog sections (dials, mini scopes, LED
+row, compass) are screens_hw's job.
 
 PIL does the rasterizing (bundled with Blender 5.1); everything degrades to
 the existing dark-CRT face when PIL, the pak, or a widget is missing.
@@ -44,19 +49,33 @@ _ATLAS_PKG = "VotV/Content/test/ui_consolesAtlas"
 _RUNTIME_IMG_WIDGETS = ("img_object", "img_signal", "img_visualizer")
 _RUNTIME_MATS = ("mat_spectr", "instt_distort", "mat_pingwave", "inst_radarheighmap",
                  "mat_radarpath", "mat_radarcut", "mat_screenwarp", "panelstestatlas",
-                 "mat_analogds_bar", "mat_uiscreennoise")
+                 "mat_analogds_bar")
 # Procedural UI materials the game draws in-shader: reproduce, not sample.
 _BORDER_MATS = ("mat_squareborder", "inst_squareborder")
 _LINE_MATS = ("inst_coordline", "mat_coordline")
 _GRID_MATS = ("mat_coordspacegrid",)
-# The coords space view: in game a SceneCaptureComponent2D (FOV 45) films an
-# EditorSkySphere painted with mat_space and the widget shows that RT through
-# mattT_space. The still frame samples the sphere's own star texture
-# (mat_space -> spacehdr2) -- the game's art, a plausible capture window.
 _SPACE_MATS = ("mattt_space",)
-_SPACE_TEX = "/Game/textures/ui/spacehdr2"
-_SPACE_WINDOW = 0.5  # central crop fraction imitating the capture's FOV window
-_FONT_FILE = "VotV/Content/main/FSEX300.ufont"
+# mattT_space's cooked texture is the space2 Milky Way panorama (4096x2048
+# equirect), stretched over the whole pannable canvas_spaceSigns surface; the
+# retainer clip then shows a window of it -- exactly the grainy field with
+# dark dust lanes in the reference shots. The widget shader lifts it hard.
+_SPACE_TEX = "/Game/textures/ui/space2"
+_SPACE_GAIN = 3.5
+# The screen-noise underlay (mat_uiScreenNoise): the game's shader animates a
+# grain field; the coords space view tints it (1,0.5,0). A still frame keeps a
+# faint deterministic grain instead of skipping it to pure black.
+_NOISE_MATS = ("mat_uiscreennoise",)
+# UMG Font assets -> the .ufont face payload backing them (measured via the
+# Font packages' import maps: font_terminal -> FSEX300, font_analogue -> the
+# 7-segment "taximeter" face used by the azimuth counters + filter readouts).
+_FONT_FACES = {
+    "terminal": "VotV/Content/main/FSEX300.ufont",
+    "analogue": "VotV/Content/main/taximeter.ufont",
+}
+# The game's square/multi border shaders draw in a fixed orange; the color is
+# baked into the material node graph (no vector params, no widget tint), so it
+# is reproduced as a constant sampled from the in-game reference shots.
+_BORDER_RGB = (205, 125, 45)
 _PIXEL_TEX = "/Game/textures/misc/tex_rgbPixel"
 # mat_tvScreen cooked defaults: brightness 0.5, CRT grid 352x288
 _BRIGHTNESS = 0.5
@@ -72,17 +91,22 @@ _HIDDEN = ("ESlateVisibility::Hidden", "ESlateVisibility::Collapsed")
 _TEXT_OVERRIDES = {
     "txt_vol": "100",             # playback volume readout
     "text_playSignalText": "",    # playback text pane: empty until a signal plays
+    "richtxt_consoleLog": "",     # '-1 console begin' x14: design-time filler
+    "RichTextBlock_coordLog": ">coordinates log",  # the log's real idle line
+    "tex_consoleName": "",        # 'NAME': the unit name arrives at runtime
 }
 _FAKE_NUM = re.compile(r"9{3,}|8{4,}|7{4,}")
 
 
 def _init_text(name, txt):
-    if name in _TEXT_OVERRIDES:
-        return _TEXT_OVERRIDES[name]
     if _FAKE_NUM.search(txt):
-        # zero every number, keeping its printed shape (-999.99 -> 0.00)
-        txt = re.sub(r"-?\d+\.\d+", "0.00", txt)
-        txt = re.sub(r"-?\d{3,}", "0", txt)
+        # zero every number KEEPING ITS LENGTH: the coords counters are shown
+        # through per-DIGIT mesh cutouts (5 windows per row, measured), so
+        # '99999' must stay 5 glyphs ('00000'), and '-999.99' -> '000.00'.
+        txt = re.sub(r"-?\d+\.\d+",
+                     lambda m: re.sub(r"\d", "0", m.group()).lstrip("-"), txt)
+        txt = re.sub(r"-?\d{3,}",
+                     lambda m: "0" * len(m.group().lstrip("-")), txt)
     return txt
 
 
@@ -202,33 +226,37 @@ class Raster:
         self.warnings = warnings
         self._tex = {}
         self._fonts = {}
-        self._font_bytes = self._load_font_bytes()
+        self._font_bytes = {k: self._load_font_bytes(v)
+                            for k, v in _FONT_FACES.items()}
+        self._in_scroll = 0
 
     # -- assets ------------------------------------------------------------
-    def _load_font_bytes(self):
+    def _load_font_bytes(self, path):
         try:
-            rd = self.game.provider.get_reader(_FONT_FILE)
+            rd = self.game.provider.get_reader(path)
             if rd is None:
                 raise RuntimeError("no reader")
             data = rd.read() if hasattr(rd, "read") else rd.base_stream.read()
             if data:
                 return bytes(data)
         except Exception as e:  # noqa: BLE001
-            self.warnings.append(f"screen font extract failed: {type(e).__name__} {e}")
+            self.warnings.append(f"screen font extract failed ({path}): "
+                                 f"{type(e).__name__} {e}")
         return None
 
-    def font(self, px):
+    def font(self, px, face="terminal"):
         px = max(6, int(round(px)))
-        f = self._fonts.get(px)
+        blob = self._font_bytes.get(face) or self._font_bytes.get("terminal")
+        f = self._fonts.get((face, px))
         if f is None:
             try:
-                if self._font_bytes:
-                    f = self.PFont.truetype(io.BytesIO(self._font_bytes), px)
+                if blob:
+                    f = self.PFont.truetype(io.BytesIO(blob), px)
                 else:
                     f = self.PFont.load_default()
             except Exception:  # noqa: BLE001
                 f = self.PFont.load_default()
-            self._fonts[px] = f
+            self._fonts[(face, px)] = f
         return f
 
     def texture(self, pkg):
@@ -328,33 +356,99 @@ class Raster:
     def _paint(self, img, tree, w, rect, depth):
         if w is None or depth > 12:
             return
-        nm = str(w.get("Name") or "")
         p = w.get("Properties") or {}
         if str(p.get("Visibility") or "") in _HIDDEN:
             return
+        rt = p.get("RenderTransform")
+        if isinstance(rt, dict) and rt:
+            # UMG RenderTransform (scale -> shear -> rotate -> translate around
+            # the pivot): the atlas leans on it hard -- the comp table bakes in
+            # ROTATED -90 and the mesh cutout reads the rotated projection.
+            layer = self.PImage.new("RGBA", img.size, (0, 0, 0, 0))
+            self._paint_inner(layer, tree, w, p, rect, depth)
+            layer = self._apply_render_transform(layer, p, rt, rect)
+            img.alpha_composite(layer)
+        else:
+            self._paint_inner(img, tree, w, p, rect, depth)
+
+    def _apply_render_transform(self, layer, p, rt, rect):
+        import math
+        x, y, wd, ht = rect
+        s = self.scale
+        piv = rt.get("Pivot") or p.get("RenderTransformPivot") or {}
+        pvx = (x + float(piv.get("X", 0.5)) * wd) * s
+        pvy = (y + float(piv.get("Y", 0.5)) * ht) * s
+        tr = rt.get("Translation") or {}
+        tx, ty = float(tr.get("X", 0.0)) * s, float(tr.get("Y", 0.0)) * s
+        sc = rt.get("Scale") or {}
+        sx, sy = float(sc.get("X", 1.0)), float(sc.get("Y", 1.0))
+        sh = rt.get("Shear") or {}
+        shx = math.tan(math.radians(float(sh.get("X", 0.0))))
+        shy = math.tan(math.radians(float(sh.get("Y", 0.0))))
+        th = math.radians(float(rt.get("Angle", 0.0)))
+        c, sn = math.cos(th), math.sin(th)
+        # forward M = R @ Sh @ Sc (scale, then shear, then rotate; Y-down
+        # screen space, positive Angle = clockwise -- validated against the
+        # comp table's -90 cutout). Shear leans the glyph TOPS rightward.
+        m00, m01 = sx, -shx * sy
+        m10, m11 = shy * sx, sy
+        r00, r01 = c * m00 - sn * m10, c * m01 - sn * m11
+        r10, r11 = sn * m00 + c * m10, sn * m01 + c * m11
+        det = r00 * r11 - r01 * r10
+        if abs(det) < 1e-9:
+            return layer
+        i00, i01 = r11 / det, -r01 / det
+        i10, i11 = -r10 / det, r00 / det
+        ox, oy = pvx + tx, pvy + ty
+        coeffs = (i00, i01, pvx - i00 * ox - i01 * oy,
+                  i10, i11, pvy - i10 * ox - i11 * oy)
+        return layer.transform(layer.size, self.PImage.AFFINE, coeffs,
+                               resample=self.PImage.BILINEAR)
+
+    def _paint_inner(self, img, tree, w, p, rect, depth):
+        nm = str(w.get("Name") or "")
         t = str(w.get("Type") or "")
         if t == "Image":
             if not nm.startswith(_RUNTIME_IMG_WIDGETS):
                 self._paint_image(img, p, rect)
         elif t == "TextBlock":
             self._paint_text(img, p, rect, nm)
-        elif t in ("RichTextBlock", "Spacer", "ProgressBar", "ScrollBoxSlot"):
-            pass  # empty at idle (logs / lists / runtime bars)
+        elif t == "RichTextBlock":
+            # rich logs render their idle line (color comes from a style
+            # DataTable; the desk logs read terminal green in the reference
+            # shots) -- design-time filler is blanked via _TEXT_OVERRIDES
+            self._paint_text(img, p, rect, nm, default_col=(64, 255, 64, 255))
+        elif t in ("Spacer", "ProgressBar", "ScrollBoxSlot"):
+            pass  # empty at idle (runtime bars / spacing)
         elif t in ("VerticalBox", "HorizontalBox"):
             kids = tree.children(w)
             if not kids:
                 return
             x, y, wd, ht = rect
             if t == "VerticalBox":
-                # natural row heights, clipped at the box bottom (a scrollbox
-                # shows its top rows; compressing rows overlaps them instead)
-                cy = y
-                for _se, cw_ in kids:
-                    h = self._desired_h(tree, cw_)
-                    if ht > 1 and cy + h > y + ht + 1:
-                        break
-                    self._paint(img, tree, cw_, (x, cy, wd, h), depth + 1)
-                    cy += h
+                if self._in_scroll or ht <= 1:
+                    # scroll content is unbounded (Fill has nothing to split):
+                    # natural row heights, clipped at the box bottom
+                    cy = y
+                    for _se, cw_ in kids:
+                        h = self._desired_h(tree, cw_)
+                        if ht > 1 and cy + h > y + ht + 1:
+                            break
+                        self._paint(img, tree, cw_, (x, cy, wd, h), depth + 1)
+                        cy += h
+                else:
+                    # bounded box: this cook's slots are Fill shares (measured
+                    # by the coords counters' per-digit cutouts: rows at
+                    # 1519/1603/1688 = 250/3 spacing, and the comp table shows
+                    # ALL rows in its cutout, which natural heights would clip)
+                    shares = [float((((se.get("Properties") or {}).get("Size"))
+                                     or {}).get("Value", 1.0)) for se, _c in kids]
+                    total = sum(shares) or 1.0
+                    cy = y
+                    for (se, cw_), shr in zip(kids, shares):
+                        h = ht * shr / total
+                        self._paint(img, tree, cw_, (x, cy, wd, h), depth + 1)
+                        cy += h
             else:
                 step = wd / len(kids)
                 for i, (_se, cw_) in enumerate(kids):
@@ -362,16 +456,27 @@ class Raster:
         elif t in ("ScrollBox", "RetainerBox"):
             # Both CLIP to their own box (a retainer renders its subtree into
             # its own RT -- the coords space view pans an 11840x5920 sky
-            # surface inside one; unclipped it floods the whole canvas)
+            # surface inside one; unclipped it floods the whole canvas).
+            # Layout rects can spill past the quadrant that owns the content
+            # (ui_coordinates builds oversized), while the unit faces' cutouts
+            # never show a neighbor quadrant's pixels (reference shots), so
+            # the clip is also held inside the quadrant of the box center.
             x, y, wd, ht = self._px(rect)
             if wd <= 2 or ht <= 2:
                 return
             tmp = self.PImage.new("RGBA", img.size, (0, 0, 0, 0))
+            self._in_scroll += (t == "ScrollBox")
             for _se, cw_ in tree.children(w):
                 self._paint(tmp, tree, cw_, rect, depth + 1)
+            self._in_scroll -= (t == "ScrollBox")
             clipped = self.PImage.new("RGBA", img.size, (0, 0, 0, 0))
             box = (max(0, x), max(0, y),
                    min(img.size[0], x + wd), min(img.size[1], y + ht))
+            half = int(round(1000.0 * self.scale))
+            qx = 0 if (x + wd / 2.0) < half else half
+            qy = 0 if (y + ht / 2.0) < half else half
+            box = (max(box[0], qx), max(box[1], qy),
+                   min(box[2], qx + half), min(box[3], qy + half))
             if box[2] > box[0] and box[3] > box[1]:
                 clipped.paste(tmp.crop(box), (box[0], box[1]))
                 img.alpha_composite(clipped)
@@ -383,12 +488,24 @@ class Raster:
                 self._paint(img, tree, cw_, _slot_rect(se, rect), depth + 1)
         elif t.endswith("_C"):
             # embedded user widget (ui_coordinates_C, ui_atlasDishesStatus_C,
-            # ui_radar_C, ...): rasterize ITS package tree into this rect
+            # ui_radar_C, ...): rasterize ITS package tree into this rect.
+            # An embed's design spills past its quadrant (ui_coordinates
+            # builds oversized) while the unit cutouts never show a neighbor
+            # quadrant's pixels, so the whole embed is clipped to the
+            # quadrant of its slot center.
             sub_pkg = self.game.class_package(t)
             if sub_pkg:
                 sub = _Tree(self.game, sub_pkg, self.warnings)
                 if sub.root and sub.widget(sub.root) is not None:
-                    self._paint(img, sub, sub.widget(sub.root), rect, depth + 1)
+                    lay = self.PImage.new("RGBA", img.size, (0, 0, 0, 0))
+                    self._paint(lay, sub, sub.widget(sub.root), rect, depth + 1)
+                    x, y, wd, ht = self._px(rect)
+                    half = int(round(1000.0 * self.scale))
+                    qx = 0 if (x + wd / 2.0) < half else half
+                    qy = 0 if (y + ht / 2.0) < half else half
+                    keep = self.PImage.new("RGBA", img.size, (0, 0, 0, 0))
+                    keep.paste(lay.crop((qx, qy, qx + half, qy + half)), (qx, qy))
+                    img.alpha_composite(keep)
 
     def _px(self, rect):
         s = self.scale
@@ -412,25 +529,53 @@ class Raster:
         leaf = (str(_ref(ro) or "")).lower()
         layer = self.PImage.new("RGBA", img.size, (0, 0, 0, 0))
         d = self.PDraw.Draw(layer)
+        if leaf.startswith(_NOISE_MATS):
+            # the analog grain underlay: a faint deterministic noise field in
+            # the widget's tint (the coords space view tints it (1,0.5,0))
+            rng = np.random.default_rng(1973)
+            g = rng.integers(0, 256, (max(1, h // 2), max(1, w // 2)),
+                             dtype=np.uint8)
+            fld = np.stack([g * (tint[0] / 255.0), g * (tint[1] / 255.0),
+                            g * (tint[2] / 255.0),
+                            np.full_like(g, int(0.35 * tint[3]))], axis=-1)
+            noise = self.PImage.fromarray(fld.astype(np.uint8), "RGBA")
+            noise = noise.resize((w, h), self.PImage.NEAREST)
+            layer.paste(noise, (x, y))
+            img.alpha_composite(layer)
+            return
         if leaf.startswith(_RUNTIME_MATS):
             return  # runtime-painted effect surface: black at idle
         if leaf.startswith(_SPACE_MATS):
-            # the sky sphere's own star texture, tiled at ~native density (the
-            # game's capture films the sphere; the pannable surface is 11840
-            # design px wide, so one stretched copy would smear the stars)
+            # the Milky Way panorama stretched over the whole pannable sky
+            # surface (the retainer clip shows a window of it), lifted toward
+            # the reference shots' exposure
             tex = self.texture(_SPACE_TEX)
             if tex is not None:
-                ts = max(64, int(round(tex.size[0] * self.scale)))
-                tile = tex.resize((ts, ts), self.PImage.BILINEAR)
-                for ty0 in range(y, y + h, ts):
-                    for tx0 in range(x, x + w, ts):
-                        layer.paste(tile, (tx0, ty0), tile)  # paste allows negative dest
+                tt = np.asarray(tex, dtype=np.float32)
+                tt[..., :3] = np.clip(tt[..., :3] * _SPACE_GAIN, 0, 255)
+                lifted = self.PImage.fromarray(tt.astype(np.uint8), "RGBA")
+                piece = lifted.resize((max(1, w), max(1, h)), self.PImage.BILINEAR)
+                layer.paste(piece, (x, y))  # paste allows a negative dest
                 img.alpha_composite(layer)
             return
-        if leaf.startswith(_BORDER_MATS):
-            # the game's shader border box -> a thin outline in the tint
+        if leaf.startswith(_BORDER_MATS) or leaf.startswith("inst_multiborder"):
+            # the game's border shaders draw a fixed orange (baked in the node
+            # graph); the widget tint modulates it. inst_multiborder_1xN adds
+            # N-1 row separators inside the box.
+            col = (_BORDER_RGB[0] * tint[0] // 255, _BORDER_RGB[1] * tint[1] // 255,
+                   _BORDER_RGB[2] * tint[2] // 255, tint[3])
             bw = max(1, int(round(3.0 * self.scale)))
-            d.rectangle([x, y, x + w - 1, y + h - 1], outline=tint, width=bw)
+            d.rectangle([x, y, x + w - 1, y + h - 1], outline=col, width=bw)
+            m = re.search(r"multiborder_(\d+)x(\d+)", leaf)
+            if m:
+                nx, ny = max(1, int(m.group(1))), max(1, int(m.group(2)))
+                lw = max(1, int(round(2.0 * self.scale)))
+                for i in range(1, ny):
+                    gy = y + h * i // ny
+                    d.rectangle([x, gy - lw // 2, x + w - 1, gy + (lw - 1) // 2], fill=col)
+                for i in range(1, nx):
+                    gx = x + w * i // nx
+                    d.rectangle([gx - lw // 2, y, gx + (lw - 1) // 2, y + h - 1], fill=col)
             img.alpha_composite(layer)
             return
         if leaf.startswith(_LINE_MATS):
@@ -499,35 +644,70 @@ class Raster:
                     dx[i], dy[j], dx[i + 1], dy[j + 1])
         return out
 
-    def _paint_text(self, img, p, rect, name=""):
-        txt = ((p.get("Text") or {}).get("SourceString")
-               if isinstance(p.get("Text"), dict) else None)
-        if txt:
+    def _paint_text(self, img, p, rect, name="", default_col=None):
+        t_ = p.get("Text")
+        # localized prose cooks as a dict (SourceString); culture-invariant
+        # numbers cook as a PLAIN STRING
+        if isinstance(t_, dict):
+            txt = t_.get("SourceString") or t_.get("CultureInvariantString")
+        else:
+            txt = t_ if isinstance(t_, str) else None
+        if name in _TEXT_OVERRIDES:
+            txt = _TEXT_OVERRIDES[name]
+        elif txt:
             txt = _init_text(name, str(txt))
         if not txt:
             return
         f = p.get("Font") or {}
         size = float(f.get("Size", 24.0)) * _SLATE_PX * self.scale
-        font = self.font(size)
-        col = _srgb8(_color(p.get("ColorAndOpacity")))
+        face = "terminal"
+        if "analogue" in str(_ref(f.get("FontObject")) or "").lower():
+            face = "analogue"  # the 7-segment taximeter face
+        font = self.font(size, face)
+        if default_col is not None and not p.get("ColorAndOpacity"):
+            col = default_col
+        else:
+            col = _srgb8(_color(p.get("ColorAndOpacity")))
         x, y, w, h = self._px(rect)
         layer = self.PImage.new("RGBA", img.size, (0, 0, 0, 0))
         d = self.PDraw.Draw(layer)
         just = str(p.get("Justification") or "")
         try:
-            tl = d.textlength(txt, font=font)
+            asc, dsc = font.getmetrics()
         except Exception:  # noqa: BLE001
-            tl = len(txt) * size * 0.55
-        tx = x
-        if just.endswith("Center"):
-            tx = x + (w - tl) / 2.0
-        elif just.endswith("Right"):
-            tx = x + w - tl
-        d.text((tx, y), txt, font=font, fill=col)
-        rt = p.get("RenderTransform") or {}
-        ang = float(rt.get("Angle", 0.0)) if isinstance(rt, dict) else 0.0
-        if ang:
-            layer = layer.rotate(-ang, center=(x, y), resample=self.PImage.BILINEAR)
+            asc, dsc = int(size), 0
+        lines = str(txt).replace("\r\n", "\n").split("\n")
+        line_h = asc + dsc
+        ty = y
+        if h > line_h * len(lines) * 1.35:
+            # a Fill row much taller than the text: the glyphs sit centered
+            # (measured by the coords counters' per-digit cutouts)
+            ty = y + (h - line_h * len(lines)) / 2.0
+        # Slate LetterSpacing is 1/1000 em of the rendered size
+        spacing = float(f.get("LetterSpacing", 0.0)) / 1000.0 * size
+        for ln in lines:
+            if ln:
+                try:
+                    tl = d.textlength(ln, font=font)
+                except Exception:  # noqa: BLE001
+                    tl = len(ln) * size * 0.55
+                tl += spacing * max(0, len(ln) - 1)
+                tx = x
+                if just.endswith("Center"):
+                    tx = x + (w - tl) / 2.0
+                elif just.endswith("Right"):
+                    tx = x + w - tl
+                if spacing > 0.5:
+                    cx2 = tx
+                    for ch in ln:
+                        d.text((cx2, ty), ch, font=font, fill=col)
+                        try:
+                            cx2 += d.textlength(ch, font=font) + spacing
+                        except Exception:  # noqa: BLE001
+                            cx2 += size * 0.55 + spacing
+                else:
+                    d.text((tx, ty), ln, font=font, fill=col)
+            ty += line_h
         img.alpha_composite(layer)
 
 

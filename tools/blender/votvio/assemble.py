@@ -13,6 +13,7 @@ from . import decals as decals_mod
 from . import landscape as landscape_mod
 from . import materials as materials_mod
 from . import mesh_build
+from . import screens_hw
 from . import screens_rt
 from . import spline_mesh
 from . import template_resolver
@@ -100,6 +101,13 @@ class _Builder:
                 # through the native CRT chain, windowed by the mesh's raw UVs
                 me.materials.append(screens_rt.get_powered_material(
                     self.game, self.caches, self.warnings, materials_mod._image))
+                continue
+            if powered_screen and self.opt.get("with_textures", True) \
+                    and screens_hw.section_kind(leaf):
+                # the face's ANALOG instrument sections (dials, mini scopes,
+                # LED row, compass) -- shader-driven in game, painted stills here
+                me.materials.append(screens_hw.get_section_material(
+                    self.game, self.caches, self.warnings, leaf, materials_mod._image))
                 continue
             if leaf.startswith("inst_segmentdigits") and "dots" not in leaf:
                 # measured (clock2): digit slots run left->right = hours, minutes;

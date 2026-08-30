@@ -353,6 +353,47 @@ UI-шум) — ЧЁРНЫЕ как на idle. Дизайн-тайм фейки (
 Резидуалы: вертикальные колонки-указатели торчат выше окна спейс-вью; VBox-раскладка
 аппроксимация (равные/desired строки); RichTextBlock/списки пусты как на idle.
 
+**v11 (2026-08-30) — СВЕРКА С ЖИВОЙ ИГРОЙ + АНАЛОГОВЫЕ СЕКЦИИ.** Юзер закрыл долг референса
+пятью скриншотами (`ignore_folder/workstation/`: coords / download / playback x2 / comp) и
+спросил структуру: «морда юнита — не один плоский RT; может, полосы-планы с RT-материалом».
+ОТВЕТ ИЗМЕРЕН (UV-остров-ценз всех шести мешей, `uv_islands.py`): **UI-секция каждой морды —
+РОССЫПЬ прямоугольных вырезов**, каждый — своё окно атласа по сырому UV (comp 2, coords 18,
+download 8, playback 6, console 1, radar 5). Жемчужина: **счётчики coords вырезаны ПО-ЦИФРЕ**
+(3 ряда x 5 окошек 35x46 в атласе (6..203, 1519..1734) — металлические перегородки между
+цифрами на фото = 3D-морда). v10-фраза «4 монитора = 4 квадранта» УТОЧНЕНА: квадранты лишь
+ГРУППИРУЮТ контент; download-морда, например, окнует и «чужую» BR-зону 1500..2000/1000..1250
+(его 7-сег дисплеи фильтров). Помимо RT: **не-RT секции меша** (download: `mat_polarity`/
+`mat_frequency` — два круглых циферблата-шейдера; comp: `inst_analogDS_screen_0/1` +
+`mat_analogDS_graph` + `mat_analogDS_bulbs`; radar: `inst_scanLines_compass` с реальной
+`tex_compassScr`; корпуса — `inst_ads_<unit>` с росписью tex_new*Final), **партиклы**
+(`eff_coordbulb_*` — цветные лампы coords) и RectLight-подсветка. Фиксы растеризатора по
+фото-сверке, все измерены до правки: (1) **generic RenderTransform-движок** (scale->shear->
+rotate->translate вокруг пивота; comp-таблица кукнута ПОВЁРНУТОЙ -90 и вырез читает поворот —
+разгадка «DATA: не может влезть в вырез»; крутятся и логи +-90, бары 180, счётчики Shear 7);
+(2) **7-сег шрифт**: `font_analogue -> FontFace taximeter` (импорт-мапа Font-пакета) +
+**LetterSpacing** (1/1000 em; 470 у счётчиков — ровно шаг по-цифровых окошек); (3) зануление
+фейков СОХРАНЯЕТ ДЛИНУ («99999»->«00000» — 5 глифов в 5 окошек); (4) **VBox: Fill-делёж**
+вне ScrollBox (вырезы счётчиков дали шаг 250/3, и comp-таблица влезает вся — natural резал
+«Target level», который на фото есть); (5) **culture-invariant Text кукается ПЛОСКОЙ СТРОКОЙ**
+(не dict!) — все правые значения таблиц («000.00%»/«0 MB») не рисовались вовсе; (6) рамки:
+цвет ЗАШИТ в шейдере (нет ни vector-параметров, ни тинтов) — оранжевая константа с фото, у
+`inst_multiborder_1xN` сетка N ячеек; (7) **космо-фон = `space2`** (панорама Млечного Пути
+4096x2048 — кукнутая текстура mattT_space; v10-модель «тайл spacehdr2» ОТОЗВАНА: куб — редкие
+точки, а фото-зерно — панорама, растянутая на весь pannable-слой, gain 3.5); (8) шум-подложка
+(1,0.5,0) слабым зерном; (9) RichTextBlock рисует idle-строку («>coordinates log»); (10)
+**клип по квадранту центра** для ретейнеров/скроллов И embedded-виджетов (ui_coordinates
+строится ШИРЕ квадранта; фото unit 4 сверху чист — соседний вырез чужих пикселей не видит).
+НОВЫЙ `screens_hw.py` (180 LOC): powered-материалы аналоговых секций — PIL-рисованные
+циферблаты (паутина + жёлтый сектор/синус), мини-скопы, LED-ряд, компас с родной текстурой.
+Свидетельства: пофейсовые симуляции вырезов против фото (comp-таблица 1:1: подписи слева,
+красное значение DATA, «0 MB», все строки; download-таблица+NO SIGNAL+7-сег 1:1; счётчики
+0-цифры в окошках), бенч radius-150 x2 + VERIFY-PASS расширенный (hw-материалы + оба
+циферблата на download-морде). `screens_rt.py` 791 LOC — У КАПА: следующая волна режет
+(кандидат: вынести Raster._paint_image ветки в painters-модуль). Резидуалы: bar-метры
+(mat_analogDS_bar) скипаются (шкала-арт на корпусе морды); визуализатор/списки/лог пусты как
+idle; спейс-окно снизу недокрыто ~65px; «>pc console log» частично виден (в игре срезан
+вырезом на 7px точнее); SAT-консоль фото не сверена.
+
 ## 1. What it is
 
 A Blender 5.1 **extension** (`extensions/user_default/votvio`, manifest-based, python 3.13 + numpy,
@@ -422,16 +463,16 @@ landscape, foliage, lights), every saved prop/entity/vehicle/NPC from the save's
 > films, clean door/screens, drip cores only; residuals if still off: the 12-bucket dyn window
 > repetition, and the un-plumbed SortOrder lift order.
 >
-> **v10 handoff (2026-08-30, `7ded462e`): powered-on screens shipped** — §0 v10; checkbox
-> `screens_powered` default ON, ONE atlas raster windowed by every screen mesh's raw UVs, the
-> game's own FSEX300 font + spacehdr2 star cube. Bench x2 (136.5 s, 0 warnings) + VERIFY-PASS
-> (votv_rt_screen on 6/6 ADS_1_* meshes, atlas packed, emission linked). **NEXT (user), two
-> comparisons in one .blend look:** the v9 decal verdict (the ask above, still standing) AND
-> the v10 screens vs the live game — one in-game shot of the DESK is the missing reference
-> (the autonomous capture run spawned in the garage, desk out of frame; freecam is
-> keyboard-only). Eyeball targets: star density/brightness on coords, the console command
-> column, the vert-pointer columns poking above the space window (known), VBox row spacing
-> (approximated).
+> **v11 handoff (2026-08-30): the in-game reference ARRIVED and the comparison RAN** — the
+> user's five unit shots (`ignore_folder/workstation/`) closed the v10 reference debt and drove
+> a fix wave (§0 v11): the cutout/RenderTransform routing model, the taximeter 7-seg font +
+> LetterSpacing, Fill rows, plain-string Text values, orange borders, the space2 panorama, and
+> NEW screens_hw analog sections (dials/mini scopes/LED/compass). Face sims of the measured
+> cutouts now match the shots structurally 1:1 (comp table, download table + NO SIGNAL +
+> filter readouts, per-digit counters). Bench radius-150 + extended VERIFY-PASS on the final
+> bytes. **NEXT (user), one .blend look:** the v9 decal verdict (the ask above, still
+> standing) AND the v11 screens on the unit faces in 3D (the sims prove the raster; the blend
+> shows it through the real meshes). SAT console has no reference shot yet (no photo of it).
 
 | Open | What | Phase |
 |---|---|---|
