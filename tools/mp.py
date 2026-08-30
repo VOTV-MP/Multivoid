@@ -38,6 +38,7 @@ import atexit
 import ctypes
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -862,9 +863,34 @@ def cmd_smoke(args) -> None:
             return False
         return True
 
+    rejoined = False
     while time.time() - t0 < args.duration:
         if not sample_once():
             break
+        # v147 acceptance arm (e): a MID-RUN client rejoin, so the condition lane's
+        # principle-8 row has a witness (the joiner save-loads the host world, its actor
+        # already matches host canon, and the adopt apply must fire NO reducer verb).
+        # Kill the CLIENT only, relaunch it, and let the ordinary join-grace machinery
+        # cover the second save-transfer.
+        if getattr(args, "rejoin", False) and not rejoined and time.time() - t0 >= args.duration * 0.5:
+            log("--- REJOIN ARM (v147 (e)): killing CLIENT for a mid-run rejoin ---")
+            # Archive life 1's log BEFORE the kill: a Force-kill skips the boot-time rotation,
+            # so the relaunch OVERWRITES it -- run 19:18's (b)-arm evidence died exactly this
+            # way (the third instance of the archive-immediately lesson, this time authored
+            # by the harness itself).
+            try:
+                shutil.copyfile(CLIENT_DIR / "multivoid.log",
+                                CLIENT_DIR / "multivoid.rejoin-life1.log")
+                log("  life-1 client log archived -> multivoid.rejoin-life1.log")
+            except OSError as e:
+                log(f"  WARN: life-1 log archive failed: {e}")
+            run_ps(f"Stop-Process -Id {client_pid} -Force -ErrorAction SilentlyContinue")
+            time.sleep(4)
+            client_pid = launch_peer("client", args.port, "Client",
+                                     peer="127.0.0.1", res_x=1280, res_y=720,
+                                     monitor=2, tile_index=0)
+            log(f"--- REJOIN ARM: client relaunched (PID {client_pid}) ---")
+            rejoined = True
 
     # Join-aware grace (2026-06-12, cold-cache flake). The menu-mode
     # save-transfer join (client boot + connect + ~18 MB download + save load +
@@ -4668,6 +4694,9 @@ def main() -> None:
                          help="seconds the host runs SOLO after binding UDP before the client launches "
                               "(default 0 = unchanged). Use a pre-connect window for a host-drift scenario "
                               "(VOTVCOOP_RUN_PILE_DRIFT) so the host can diverge its world before the snapshot.")
+    p_smoke.add_argument("--rejoin", action="store_true",
+                         help="v147 arm (e): kill + relaunch the CLIENT at half --duration so the "
+                              "run witnesses a mid-session rejoin (the condition lane's mid-join row)")
     for flag, kw in host_res: p_smoke.add_argument(flag, **kw)
     p_smoke.set_defaults(func=cmd_smoke)
 
