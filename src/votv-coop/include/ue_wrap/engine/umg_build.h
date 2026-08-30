@@ -38,6 +38,18 @@ namespace ue_wrap::umg {
 void*   AddChild(void* panel, void* child);
 bool    RemoveChild(void* panel, void* child);
 int32_t ChildCount(void* panel);
+
+// UPanelWidget::GetChildIndex -- WHERE IS THIS WIDGET, asked of the panel rather than
+// inferred. -1 if the child is not in the panel (or the call does not resolve), and that
+// answer is the point: a screen that adds itself to a shared container must ACTIVATE the
+// index of its own widget, never `ChildCount - 1`. Two screens got that wrong -- the count
+// is the right answer only if the add SUCCEEDED and nothing was appended after it, and when
+// it is wrong it silently names one of the GAME's screens (measured 2026-08-30: clicking
+// MULTIPLAYER opened VOTV's Stats panel).
+//
+// The implementation predates this declaration by months; it was written, left undeclared,
+// and therefore unreachable, while both callers hand-rolled the count arithmetic instead.
+int32_t IndexOfChild(void* panel, void* child);
 void*   ChildAt(void* panel, int32_t index);
 int32_t IndexOfChild(void* panel, void* child);
 

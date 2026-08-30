@@ -320,8 +320,30 @@ void Show() {
     if (!g_switcher || !g_root || g_shown) return;
     g_priorIndex = U::SwitcherIndex(g_switcher);
     if (g_ourIndex < 0) {
-        U::AddChild(g_switcher, g_root);
-        g_ourIndex = U::ChildCount(g_switcher) - 1;
+        // ASK THE PANEL WHERE OUR WIDGET IS. Do not infer it from the child count.
+        //
+        // This was `AddChild(...); g_ourIndex = ChildCount(...) - 1;` -- correct only while
+        // two things hold that nothing checks: that the add SUCCEEDED, and that nothing is
+        // appended after us. `AddChild`'s return value was discarded, so a failed add left
+        // `g_ourIndex` naming the LAST OF THE GAME'S OWN SCREENS, cached for the menu's
+        // life. MEASURED 2026-08-30, hands-on: clicking MULTIPLAYER opened VOTV's Stats
+        // panel, and the log said `shown (index 0 -> 10)` where a healthy run says 11.
+        //
+        // Two screens of ours now add to this one switcher, so "last child" is an assumption
+        // about a container we no longer own alone. `GetChildIndex` answers the question
+        // that was actually being asked, and answers it about OUR widget.
+        void* slot = U::AddChild(g_switcher, g_root);
+        g_ourIndex = U::IndexOfChild(g_switcher, g_root);
+        if (g_ourIndex < 0) {
+            // FAIL CLOSED. Activating an index we cannot prove is ours means showing one of
+            // the game's screens from our button -- which is worse than doing nothing,
+            // because it looks like the menu is broken rather than like we are.
+            UE_LOGE("%s: could not place %s in the menu switcher (AddChild slot=%p, "
+                    "GetChildIndex=-1). NOT switching: activating an unproven index would "
+                    "open one of the game's own screens.", "server_browser_native", "the server browser", slot);
+            ue_wrap::log::Flush();
+            return;
+        }
     }
     // The screen stays ATTACHED for the menu's life -- a switcher renders only its active
     // child, so an inactive 12th child costs nothing, and rebuilding N rows on every open
