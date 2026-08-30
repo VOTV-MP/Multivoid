@@ -1510,6 +1510,68 @@ to a player, which is seeing the same tyres as the person driving.
 (§17.12) and not built. The acceptance test for the pair is the §17.9 comparison with **both**
 shipped, and only then does "the two peers' `dur=` agree" become a criterion the design can meet.
 
+### 17.15 THE FACET TABLE IS A LIST, NOT A CENSUS (USER, 2026-08-30)
+
+Verbatim: *"we currently dont even sync wheel steer, brake state etc"*. Measured on the spot, and
+the user is right on both counts — one of the two is not even in the inventory §17.10 argued from.
+
+| what the user named | status, measured now |
+|---|---|
+| **wheel steer** | `[V]` the visible steering is `handleAxis.K2_SetRelativeRotation(MakeRotator(0, 20, Lerp(0, x, rotAlpha)))` at uber `@38413-38444` — a **locally computed per-tick visual**. Nothing carries it: it is not physics the pose stream reproduces, and **§10's facet table has no steering row at all**. On a mirror the handlebars simply do not turn. |
+| **brake** | `brake` is a `BoolProperty`; §10 DOES list it (with `lights`/`turbo`, wire shape "poke + `Upd Lights()`/`setBrake()`") and its status is already **no**. |
+| (`turnForce`) | not a visual — `[V]` a steering-torque multiplier read at uber `@28823`/`@29119` in the `isDriven`-gated force region. A mirror never applies it, so it is not the thing an observer sees. |
+
+**The consequence for §17.10, and it is a real one.** I argued from "16 facets, 3 synced, 13 not" as
+though it were a census. It is a hand-written list, and the very first facet a player-facing eye
+landed on — steering — is absent from it. So the DENOMINATOR is unknown: "ten of thirteen share one
+shape" describes ten of thirteen ROWS SOMEBODY WROTE DOWN, not ten of thirteen facets that exist.
+§17.11 already softened that argument for having no runtime evidence; this weakens it again for a
+different reason, and the two compound.
+
+**This also names a fourth class the three-way classification of §17.11 does not cover.** That split
+was *double-simulates* / *goes stale* / *already gated off*, all framed around STATE that mutates.
+Steering is none of them: it is a **derived per-frame visual with no stored state to diverge**, whose
+mirror value is simply never computed because the input that drives it is absent. It cannot be
+"corrected" by pushing a value the game recomputes next frame — it needs the INPUT synced, or the
+output re-derived from something that is. That is a different mechanism from everything above, and
+it is closer to the keysync MTA does for a player than to any prop-state lane.
+
+**Owed:** a real census of ATV_C's player-visible state, replacing §10's list — which cannot be done
+by reading a table, only by walking the class's properties against what a passenger would see.
+
+### 17.16 `[V]` #5 VERIFIED — the mirror stopped inventing wear, and the peers still disagree
+
+Re-run after the no-verdict one, DLL `E29D6FEB43225EC5`. **Both logs are this run** (boot 16:15:01 /
+16:15:18, both ending 16:20:19), both peers connected, 563 host + 506 client `[ATVT]` samples —
+checked before the values were read, because the previous attempt's client log was an hour stale and
+would have read as a pass.
+
+| | BEFORE (§17.9, DLL `910684F20C866FBE`) | AFTER (this run) |
+|---|---|---|
+| HOST `dur=` | `(98.22, 100.00, 100.00, 98.48)` | **`(100.00, 100.00, 100.00, 100.00)`** — every one of 559 valid samples |
+| CLIENT `dur=` | `(98.52, 97.86, 98.73, 100.00)` | `(96.24, 98.70, 100.00, 98.49)` |
+
+Same scenario, same arm, same rig: **before, BOTH peers invented their own wear; now only the one
+that actually drove has any.** A before/after pair on one instrument, which is the strongest form
+this lane has produced.
+
+Counters corroborate the mechanism rather than just the outcome: `neutered` reached **86,557** (the
+guard fires continuously — a resting rig generates contact at pump rate), `allowed` **3,896** (the
+owner's own hits, untouched), and **`UNRESOLVED = 0`** — the sentinel added specifically to make a
+silent fall-through visible stayed at zero, so all seven offsets resolved and no hit slipped through
+intact.
+
+**The peers still disagree (100.00 vs 96.24), and that is the predicted result, not a failure.** #5
+removes FALSE wear; it does not deliver TRUE wear, because it puts nothing on the wire. §17.14 wrote
+that down before this run, so it is a confirmed prediction rather than a rationalised outcome. **#4
+remains necessary** and its own acceptance criterion — the two peers' `dur=` agreeing — only becomes
+meaningful once both halves ship.
+
+**One honesty note on this run's ownership:** the host held `owns=1` for 489 of its samples (it is
+the elected idle syncer whenever nobody drives — `OwnsTickFor`), and was a non-owner for 70. The
+before/after contrast is what carries the verdict, not the sample split: in §17.9 the host
+accumulated wear under the same arm and the same ownership churn, and now it does not.
+
 ### 17.7 The tire lane, mapped end to end (2026-08-30, `[RD]` bytecode)
 
 Written before designing the intent lane, because a design brief for a sync defect is worthless
