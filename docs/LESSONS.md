@@ -2842,9 +2842,13 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   units are established nowhere in the vendored tree, so the speed terms are not commensurable at all.
   The correction inverted the work: "our threshold is too loose" said retune the warp; what actually
   holds (`trail ~ 0.0063*speed^1.52`, warp never fired) says the net is a last resort our runs never
-  needed and the trail is the CORRECTOR's convergence rate. *Look FIRST:* read the COMPARISON SITE,
-  not the `#define`, and write down the unit and the quantity each constant is measured against; if
-  either is unknown, stop and say so. Only ours had its unit in its identifier. Prefer dimensionless
+  needed and the trail is the CORRECTOR's convergence rate. **The units fact was already in our tree**:
+  `atv_sync.cpp:103-104`, three lines above the constant I quoted, says *"their 15 + 10*|v| is in GTA
+  units"* — whoever ported the number did the conversion and wrote it down, and I read MTA's file
+  without reading our own four lines around the value. *Look FIRST:* read the comment around YOUR OWN
+  constant before comparing it to prior art; then read the COMPARISON SITE, not the `#define`, and
+  write down the unit and the quantity each constant is measured against; if either is unknown, stop
+  and say so. Only ours had its unit in its identifier. Prefer dimensionless
   shapes (a ratio, an exponent) over raw coefficients — the `v^1.52` fit survived because an exponent
   has no units.
   `memory/lesson_two_constants_are_not_comparable_until_their_units_are.md`
@@ -5984,6 +5988,8 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   reports false violations. `memory/feedback_moving_a_section_out_of_an_agent_read_file.md`
 
 **A shared working tree means ONE git index, so `git add` is a cross-session side effect.** Two sessions on this box; my ten explicitly-named staged paths were swallowed by the other session's `git commit` (no pathspec) in the ~40 s while I wrote my message -- ~700 lines of browser work recorded under an ATV commit. `MEMORY.md`'s "explicit paths, NEVER add -A/-u" was obeyed and did not help: the hazard is not your pathspec, it is that the index is shared at all. **Look here FIRST:** skip the index -- `git commit -F - -- <paths>` commits the working-tree version of exactly those paths and leaves everyone else's index entries alone. If a commit's `--stat` lists files you never touched, suspect this before your own pathspec. [[lesson-a-shared-index-makes-git-add-a-cross-session-side-effect]]
+
+**Extracting an operation without its INVALIDATION ships the bug twice.** I moved a row hit test into a shared kit so two screens could share it, and left the settling pass, the scroll term and the shown-row count duplicated per screen -- then fixed only one copy. The other kept a cursor-motion-only gate over a scrollable list, where the stored index chooses which WORLD to load: wheel one notch without moving the mouse, click, host the wrong save. My own commit message described the defect in full while writing it about the other file. **Look here FIRST:** when you extract an operation, list what the original call site does AROUND the call -- anything that is not that screen's own business is part of the operation. The fix shape is one object owning both (`native_screen::HoverTracker`). Same day, one layer down: a resolve latched in the reader and left unlatched in the two writers, and the latches that were added latched only SUCCESS, so their failure path was the full-array scan they removed. [[lesson-extracting-the-operation-without-its-invalidation-ships-the-bug-twice]]
 
 ## 9. Security (threat model, trust boundaries, peer identity)
 
