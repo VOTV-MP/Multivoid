@@ -270,15 +270,6 @@ CFG_FLAG(atv_corrector, "atv_corrector", "dev", true, "VOTVCOOP_ATV_CORRECTOR",
     "CONTROL arm for 'does the mirror settle wrong on its own, or do we settle it wrong'. The "
     "mirror still simulates and still receives state; only the position/velocity correction is "
     "withheld, so the two arms differ in exactly one thing.")
-CFG_INT(atv_hit_guard_mask, "atv_hit_guard_mask", "dev", 3, 0, 127, "VOTVCOOP_ATV_HIT_GUARD_MASK",
-    "ATV collision guard: which of the seven ComponentHit delegates are cancelled on a NON-OWNER, "
-    "as a bitmask in ue_wrap::atv::kHitDelegateNames order (bit0 mesh, bit1 car1_Capsule, bit2 "
-    "backWheel_R, bit3 backWheel_L, bit4 frontWheel_R, bit5 frontWheelRoot, bit6 backWheelRoot). "
-    "3 = the two BODY delegates = shipped. 127 = all seven = what shipped until 2026-08-30, and "
-    "the reason a mirrored ATV settled 25-40 cm below its author in every run ever measured: the "
-    "five WHEEL delegates are not only damage, they are how the rig keeps its shape, and denying "
-    "them left the mirror's body sitting under its own wheel plane. Kept as a row so the four-cell "
-    "experiment that established that is re-runnable.")
 CFG_FLAG(native_pile_inert_probe, "native_pile_inert_probe", "dev", false, nullptr,
     "Diagnostic probe: native pile inertness on clients.")
 CFG_FLAG(inventory_probe, "inventory_probe", "dev", false, nullptr,

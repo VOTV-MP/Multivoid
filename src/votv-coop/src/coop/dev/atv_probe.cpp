@@ -614,12 +614,12 @@ void Tick(coop::net::Session& session, bool isHost) {
         g_lastCounterLog = now;
         const auto hg = coop::atv_hit_guard::ReadCounters();
         const auto cc = coop::atv_corrector::ReadCounters();
-        UE_LOGI("[ATVP] counters hitguard=%s %llu cancelled / %llu allowed / %llu permitted  "
+        UE_LOGI("[ATVP] counters hitguard=%s %llu neutered / %llu allowed / %llu UNRESOLVED  "
                 "corrector=%llu nudged / %llu warped / %llu cut / %llu parked-replace",
                 hg.armed ? "armed" : "NEVER-ARMED",
-                static_cast<unsigned long long>(hg.cancelled),
+                static_cast<unsigned long long>(hg.neutered),
                 static_cast<unsigned long long>(hg.allowed),
-                static_cast<unsigned long long>(hg.permitted),
+                static_cast<unsigned long long>(hg.unresolved),
                 static_cast<unsigned long long>(cc.corrections),
                 static_cast<unsigned long long>(cc.warps),
                 static_cast<unsigned long long>(cc.stallWarps),

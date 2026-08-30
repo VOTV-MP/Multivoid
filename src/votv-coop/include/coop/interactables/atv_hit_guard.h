@@ -61,13 +61,14 @@ bool Armed();
 // 2026-08-30 run needed to tell them apart. atv_sync's OnDisconnect PRINTS it; a field this
 // comment justifies and nothing reads is the failure the same run's lessons are about.
 struct Counters {
-    unsigned long long cancelled = 0;   // a non-owner's hit on a MASKED delegate: dropped
-    unsigned long long allowed   = 0;   // this peer OWNS the rig, so the hit is its business
-    unsigned long long permitted = 0;   // a non-owner's hit the mask deliberately lets through --
-                                        // the five wheel delegates since 2026-08-30, i.e. the
-                                        // entire behavioural change, which nothing counted at all
-                                        // until the post-ship audit asked what it costs
-    bool               armed     = false;
+    unsigned long long neutered   = 0;  // a non-owner's hit, dispatched with a ZEROED NormalImpulse
+    unsigned long long allowed    = 0;  // this peer OWNS the rig, so the hit is its business
+    unsigned long long unresolved = 0;  // a hit we could not neuter (offset missing) and therefore
+                                        // let through INTACT. Must stay 0 -- install refuses to
+                                        // arm without all seven offsets -- but a silent
+                                        // fall-through is exactly the hole this lane exists to
+                                        // close, so it is counted rather than assumed impossible.
+    bool               armed      = false;
 };
 Counters ReadCounters();
 

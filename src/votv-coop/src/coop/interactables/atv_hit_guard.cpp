@@ -101,19 +101,19 @@ namespace {
 
 std::atomic<void*> g_ownedAtvs[kMaxOwned];
 std::atomic<bool>  g_guardActive{false};   // false in single-player: the game must keep its damage
-std::atomic<unsigned long long> g_hitCancelled{0};
+std::atomic<unsigned long long> g_hitNeutered{0};
 std::atomic<unsigned long long> g_hitAllowed{0};
 std::atomic<bool>  g_hitGuardArmed{false};              // all 7 delegates registered -- else the lane runs INERT
-// WHICH delegates a non-owner is denied. Read ONCE at install (the interceptor callback runs on
-// whatever thread ProcessEvent is on, and a config read is not something to do per hit at 200 Hz
-// -- run 2 logged 17,638 cancels in 90 s on ONE parked vehicle).
-std::atomic<unsigned> g_cancelMask{0x7F};
-// AND WHAT THE MASK LETS THROUGH. The whole behavioural change of 2026-08-30 is five delegates
-// per non-owner that now DISPATCH instead of being cancelled -- and the first version counted
-// them nowhere, deliberately, so as not to blur `g_hitAllowed` ("this peer owns the rig"). The
-// audit's verdict on that reasoning: a cost we CAUSE but do not EXECUTE is still ours, and an
-// unobservable one cannot be regression-tested. Three counters, three distinct questions.
-std::atomic<unsigned long long> g_hitPermitted{0};
+// Byte offset of `NormalImpulse` inside each delegate's params frame, resolved ONCE at install by
+// reflection (never assumed, and never derived from another delegate's: they are seven distinct
+// UFunction objects even though they share one signature). -1 = unresolved, which is why the
+// counter below exists.
+int32_t g_impulseOff[7] = {-1, -1, -1, -1, -1, -1, -1};
+// A hit we could NOT neuter because its offset never resolved. Should be permanently 0: the
+// install refuses to arm without all seven. It is counted anyway because the alternative is a
+// silent fall-through to "let the mirror author damage", which is the defect this lane exists to
+// stop, and an unobservable hole is the exact failure the 2026-08-30 audit was about.
+std::atomic<unsigned long long> g_hitUnresolved{0};
 
 }  // namespace
 
@@ -129,26 +129,53 @@ namespace {
 // UFunction fired, so a single shared callback cannot tell the body's collision from a wheel's --
 // which is exactly the distinction that turned out to matter. A template instantiates seven
 // distinct function pointers around one body rather than seven copies of it.
-bool CancelHit(void* self, unsigned bit) {
-    if (!g_guardActive.load(std::memory_order_acquire)) return false;  // not in a session: never suppress
+// NEUTER THE IMPULSE; DO NOT CANCEL THE NOTIFICATION (design #5, 2026-08-30).
+//
+// The delegate carries TWO things and we only ever wanted to stop one. `[V]` the BndEvt stub is
+// eight statements -- five `UBER[K2Node_ComponentBoundEvent_*] := <param>` then
+// `ExecuteUbergraph_ATV(<seg>)` -- and inside the segment the impulse reaches ONLY the damage
+// math: five sites pass it to `processTire` (`sev = VSize(impact/mesh.GetMass())/100/1.5`, whose
+// else-branch also scales dirt by `impact/mass`) and two pass it to `impulse()` (which subtracts
+// |NormalImpulse|/500000*2*getBumperMult() from `health` and calls `explode()` at <=0). Meanwhile
+// `wheelsOnSurface[index] = true` is written from `EX_True` -- a literal, independent of the
+// impulse -- and THAT is what gates the suspension `AddForce` (uber 1228-1237) and `SetMassScale`
+// (1198-1202).
+//
+// So writing a zero vector over `NormalImpulse` before dispatch gives a non-owner: no tire wear,
+// no dirt, no health loss, no `explode()`, and -- because durability can no longer reach 0 -- no
+// `ejectWheel`, hence never an orphan wheel prop whose per-process random key nothing could ever
+// reconcile. And it keeps the rig shape, which is what cancelling those five delegates cost us
+// (the 25-40 cm sag of ATV.md 17). Cancelling was the coarse instrument;
+// [[lesson-a-notification-carries-more-than-the-effect-you-are-suppressing]] argued for this and
+// the lane applied it by halves twice before getting here.
+//
+// Zero wire bytes, no protocol change, and no race: the mirror never accumulates at all, so there
+// is no window in which it could cross zero between two corrections.
+bool NeuterHit(void* self, void* params, int idx) {
+    if (!g_guardActive.load(std::memory_order_acquire)) return false;  // not in a session: never touch
     for (int i = 0; i < kMaxOwned; ++i) {
         void* p = g_ownedAtvs[i].load(std::memory_order_acquire);
         if (!p) break;
         if (p == self) { g_hitAllowed.fetch_add(1, std::memory_order_relaxed); return false; }
     }
-    if (!(g_cancelMask.load(std::memory_order_relaxed) & bit)) {
-        // NOT folded into `allowed` -- that counter means "this peer OWNS the rig". This is the
-        // other thing: a non-owner whose hit we deliberately let through, which is the entire
-        // behavioural change and was invisible to every counter in the tree until the audit.
-        g_hitPermitted.fetch_add(1, std::memory_order_relaxed);
+    const int32_t off = g_impulseOff[idx];
+    if (!params || off < 0) {
+        // Cannot neuter. Do NOT cancel as a fallback: that reinstates the measured 25-40 cm sag,
+        // trading a damage divergence for a geometry one. Let it through, loudly countable.
+        g_hitUnresolved.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
-    g_hitCancelled.fetch_add(1, std::memory_order_relaxed);
-    return true;   // cancel-on-true: the BndEvt stub never jumps into the ubergraph
+    // FVector = three floats. Written, not skipped: the ubergraph reads this local unconditionally.
+    float* v = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(params) + off);
+    v[0] = 0.f; v[1] = 0.f; v[2] = 0.f;
+    g_hitNeutered.fetch_add(1, std::memory_order_relaxed);
+    return false;  // ALWAYS dispatch: the handler's other effects are the ones we are keeping
 }
 
-template <unsigned Bit>
-bool OnAtvHitPre(void* self, void* /*params*/) { return CancelHit(self, Bit); }
+// One callback per delegate INDEX -- RegisterInterceptor hands `self` and the params frame but
+// not which UFunction fired, and each delegate has its own resolved offset.
+template <int Idx>
+bool OnAtvHitPre(void* self, void* params) { return NeuterHit(self, params, Idx); }
 
 }  // namespace
 
@@ -165,9 +192,16 @@ void InstallHitGuard() {
     if (sTried.exchange(true, std::memory_order_acq_rel)) return;
     void* fns[8] = {};
     const int n = A::ResolveHitDelegates(fns, 8);
-    const unsigned mask = static_cast<unsigned>(
-        ::coop::config::ResolveInt(::coop::config_registry::rows::atv_hit_guard_mask)) & 0x7Fu;
-    g_cancelMask.store(mask, std::memory_order_relaxed);
+    // Resolve each delegate's own `NormalImpulse` param offset. Seven distinct UFunctions share
+    // one signature, so the offsets will agree -- resolved per function anyway, because "they
+    // share a signature therefore they share an offset" is an inference and this is a raw memory
+    // write into an engine frame.
+    int offsOk = 0;
+    for (int i = 0; i < 7; ++i) {
+        if (!fns[i]) continue;
+        g_impulseOff[i] = R::FindParamOffset(fns[i], L"NormalImpulse");
+        if (g_impulseOff[i] >= 0) ++offsOk;
+    }
     using Cb = bool (*)(void*, void*);
     // Index order is kHitDelegateNames order and ResolveHitDelegates writes POSITIONALLY (it was
     // changed to, 2026-08-30; it used to COMPACT and this same comment was written over it), so
@@ -175,29 +209,32 @@ void InstallHitGuard() {
     // fns[i] may be NULL on a miss -- registration is skipped and `ok` then falls short of 7,
     // which fails the whole lane closed below.
     static const Cb kCallbacks[7] = {
-        &OnAtvHitPre<1u << 0>, &OnAtvHitPre<1u << 1>, &OnAtvHitPre<1u << 2>, &OnAtvHitPre<1u << 3>,
-        &OnAtvHitPre<1u << 4>, &OnAtvHitPre<1u << 5>, &OnAtvHitPre<1u << 6>,
+        &OnAtvHitPre<0>, &OnAtvHitPre<1>, &OnAtvHitPre<2>, &OnAtvHitPre<3>,
+        &OnAtvHitPre<4>, &OnAtvHitPre<5>, &OnAtvHitPre<6>,
     };
     int ok = 0;
     for (int i = 0; i < 7; ++i)
         if (fns[i] && ue_wrap::game_thread::RegisterInterceptor(fns[i], kCallbacks[i])) ++ok;
-    if (ok == 7) {
+    if (ok == 7 && offsOk == 7) {
         g_hitGuardArmed.store(true, std::memory_order_relaxed);
         // WHAT THIS LINE MAY CLAIM. It used to read "a non-owner cannot author damage/explode/
         // ejectWheel", which sounds like a security property and is not one: `health` is not on
         // the wire, so a peer that edits the mask in its own ini desynchronises only ITS OWN
         // copy. This is a local-consistency control, never an anti-cheat one, and a log line that
         // implies otherwise is how a guarantee nobody built gets cited later as if it existed.
-        UE_LOGI("atv: hit guard armed -- 7/7 ComponentHit delegates intercepted, cancel mask 0x%02X "
-                "(bit0 mesh, bit1 Capsule, bits2-6 the wheels; a non-owner's MASKED hits are "
-                "dropped so it cannot damage or explode its own mirror -- local consistency, "
-                "not anti-cheat)", mask);
+        UE_LOGI("atv: hit guard armed -- 7/7 ComponentHit delegates intercepted, NormalImpulse @+%d "
+                "(bit0 mesh, bit1 Capsule, bits2-6 the wheels). A non-owner's hits DISPATCH with a "
+                "ZEROED impulse: no wear, no dirt, no health loss, no explode, no ejectWheel -- "
+                "while wheelsOnSurface still sets, so the rig keeps its shape. Local consistency, "
+                "not anti-cheat: `health` is not on the wire, so editing this locally desyncs only "
+                "your own copy.", g_impulseOff[0]);
     } else {
         // FAIL CLOSED. Without all seven we will not run the simulate-and-correct model at all:
         // Tick leaves every ATV's brain ON and mirrors nothing, so peers diverge visibly rather
         // than one of them silently destroying a vehicle the other still has.
-        UE_LOGE("atv: hit guard NOT armed (%d/7 resolved, %d/7 registered) -- ATV sync stays INERT "
-                "this session; the interceptor table may be full (kMaxInterceptors)", n, ok);
+        UE_LOGE("atv: hit guard NOT armed (%d/7 delegates resolved, %d/7 registered, %d/7 impulse "
+                "offsets) -- ATV sync stays INERT this session; the interceptor table may be full "
+                "(kMaxInterceptors), or NormalImpulse moved in the params frame", n, ok, offsOk);
     }
 }
 
@@ -217,7 +254,7 @@ bool Owns(void* actor) {
 }
 
 Counters ReadCounters() {
-    return Counters{ g_hitCancelled.load(), g_hitAllowed.load(), g_hitPermitted.load(),
+    return Counters{ g_hitNeutered.load(), g_hitAllowed.load(), g_hitUnresolved.load(),
                      g_hitGuardArmed.load(std::memory_order_relaxed) };
 }
 

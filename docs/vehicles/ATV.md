@@ -1446,6 +1446,70 @@ is the control arm that acquitted the corrector; both are diagnostics, RULE-2 ex
 - **§16.6's hook boundary is untouched and still unmeasured**: a player can tie physics props to
   the ATV with `hook_C`, whose lane has zero symbols in this tree.
 
+### 17.6 Three things not to re-derive
+1. **Deleting the tick-off (`a2a45fc7`) did not move the number.** All six runs that read 25-40 cm
+   are post-deletion; the pre-arc-1 measurement recorded in `atv_hit_guard.cpp` read 37 cm. Two
+   different mechanisms, one identical outcome, because the guard shipped *with* arc 1 and was
+   never in the frame. The attribution of that 37 cm to a skipped `SetCenterOfMass` is **falsified**.
+2. **The corrector's give-up WARN named the wrong causes.** It blamed the terrain under the vehicle
+   or an unseen constraint such as a hook. The wheels of the two copies agree to <=1 mm at the same
+   XY, so the terrain is identical, and the real cause was in our own process.
+3. **The archive filter dropped every `[ATVC]` line** for its whole life, so §16's quoted wire
+   velocities were only ever reproducible from a live log the next run overwrites — and one of them
+   is now permanently gone (another session overwrote the host log at 09:45). Archive a run the
+   moment it ends.
+
+### 17.14 §17.13 IS BUILT — and reading its first acceptance run corrected the design AGAIN
+
+**BUILT AND DEPLOYED 2026-08-30**, DLL `E29D6FEB43225EC5`, b146, **protocol unchanged** (no wire
+change, which was the point). `coop/interactables/atv_hit_guard.cpp`: `CancelHit` becomes
+`NeuterHit` — on a non-owner it writes a zero `FVector` over `NormalImpulse` in the params frame
+and **always returns false**, so the notification dispatches whole and only the magnitude is
+suppressed. Each delegate's offset is resolved separately by `R::FindParamOffset` (they share a
+signature, but "therefore they share an offset" is an inference and this is a raw write into an
+engine frame). `g_cancelMask` and the `atv_hit_guard_mask` config row are **retired whole**
+(RULE 2) — the cancel/permit split is gone and all seven delegates are treated alike. Counters are
+now `neutered` / `allowed` / **`unresolved`**, the last of which must stay 0 (install refuses to arm
+without all seven offsets) and is counted anyway rather than assumed impossible. **There is
+deliberately no fall-back to cancelling** when an offset is missing: that would trade a damage
+divergence for the measured 25-40 cm geometry one. `registry_gate` PASS.
+
+**THE FIRST ACCEPTANCE RUN PRODUCED NO VERDICT, and saying so is the point.** The host log is this
+run (boot 16:05:49) and shows a pristine `dur=(100,100,100,100)`; the CLIENT log's newest line is
+**15:05:59, an hour old, from the previous run**, and `assigned peer slot` appears 0 times. The
+smoke's own host leg took the persistent lock (`pid-16640`) and its own client leg then refused to
+launch against it, so **one peer ran and nobody drove**. The host's pristine tires mean "nothing
+happened", not "the fix works". The client's `dur=(98.52,97.86,98.73,100.00)` is byte-identical to
+§17.9's because it IS §17.9's — the same stale lines. Caught only by checking timestamps before
+reading values, which is the whole of
+`[[lesson-one-green-run-after-a-red-streak-is-not-a-result]]`.
+
+**AND THE CRITERION ITSELF WAS WRONG — §17.13 stated an acceptance test its own design cannot
+pass.** I wrote "expecting the two peers' `dur=` to stay equal". **#5 cannot deliver that and was
+never going to.** It stops a mirror from INVENTING damage; it does not replicate the author's REAL
+damage, because it puts nothing on the wire — that being its headline virtue. So the expected
+post-#5 state is **author damaged, mirror pristine**: still a disagreement, merely a deterministic
+and one-directional one instead of a random one.
+
+**Therefore #5 is NECESSARY AND NOT SUFFICIENT, and the answer is #5 AND #4, not #5 instead of
+#4.** They are the two halves of one fix and each is unsafe alone:
+
+| | what it does | what it cannot do alone |
+|---|---|---|
+| **#5** neuter the impulse | the mirror never invents wear, never reaches 0, so it can never `ejectWheel` an orphan wheel whose per-process random key nothing could reconcile | never shows the author's real wear |
+| **#4** push the four arrays in `AtvStatePayload` | the mirror displays the author's true tire state, and `adopt` gives mid-join for free | ALONE it races the irreversible act — the mirror can cross zero between two packets and spawn the orphan anyway (§17.13's hole (a)) |
+
+**#5 is exactly what makes #4 safe**, because with the mirror's accumulation held at zero the race
+hole (a) described has no window to occur in. That is what round 3's first question was pointing at
+when it observed that #4 was #3 with its failure branch deleted: the correct move was never to drop
+a half, it was to remove the *cause* of the failure the other half was exposed to. I dropped #4 an
+hour ago calling #5 "better on every axis". It is better on every axis except the one that matters
+to a player, which is seeing the same tyres as the person driving.
+
+**Status:** #5 built, deployed, and UNVERIFIED (its one run produced no verdict). #4 designed
+(§17.12) and not built. The acceptance test for the pair is the §17.9 comparison with **both**
+shipped, and only then does "the two peers' `dur=` agree" become a criterion the design can meet.
+
 ### 17.7 The tire lane, mapped end to end (2026-08-30, `[RD]` bytecode)
 
 Written before designing the intent lane, because a design brief for a sync defect is worthless
@@ -1859,15 +1923,3 @@ way where both readings fail; it is moot now, and recorded so it is not revived 
 still put the resulting wheel prop on the wire, and that remains an act-as-host intent (§17.5). #5
 guarantees only that a MIRROR never authors one. And the eject half has still never been observed.
 
-### 17.6 Three things not to re-derive
-1. **Deleting the tick-off (`a2a45fc7`) did not move the number.** All six runs that read 25-40 cm
-   are post-deletion; the pre-arc-1 measurement recorded in `atv_hit_guard.cpp` read 37 cm. Two
-   different mechanisms, one identical outcome, because the guard shipped *with* arc 1 and was
-   never in the frame. The attribution of that 37 cm to a skipped `SetCenterOfMass` is **falsified**.
-2. **The corrector's give-up WARN named the wrong causes.** It blamed the terrain under the vehicle
-   or an unseen constraint such as a hook. The wheels of the two copies agree to <=1 mm at the same
-   XY, so the terrain is identical, and the real cause was in our own process.
-3. **The archive filter dropped every `[ATVC]` line** for its whole life, so §16's quoted wire
-   velocities were only ever reproducible from a live log the next run overwrites — and one of them
-   is now permanently gone (another session overwrote the host log at 09:45). Archive a run the
-   moment it ends.
