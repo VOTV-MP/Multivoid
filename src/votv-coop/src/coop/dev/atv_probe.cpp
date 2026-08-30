@@ -1,6 +1,7 @@
 // coop/dev/atv_probe.cpp -- see header.
 
 #include "coop/dev/atv_probe.h"
+#include "coop/dev/atv_tire_probe.h"
 
 #include "coop/config/config.h"
 #include "coop/element/object_scan_hub.h"
@@ -377,6 +378,12 @@ void SampleOne(void* atv, size_t idx) {
     // window. Read through atv_sync's own published set rather than recomputing the predicate --
     // an instrument that reimplements the code under test agrees with itself, not with it.
     const bool  ownsTick = coop::atv_sync::OwnsTick(atv);
+
+    // The TIRE state rides its own line and its own TU (coop/dev/atv_tire_probe): the four
+    // arrays are the only OBSERVABLE of a defect whose verb (`processTire`) is dispatched
+    // EX_LocalVirtualFunction and therefore cannot be hooked at all. Emitted before the
+    // parts branch so an [ATVT] line exists even on a sample that has no rig read.
+    coop::atv_tire_probe::Sample(atv, idx, key.c_str(), ownsTick, g_sample);
 
     if (haveParts) {
         // |wheel - body| is ROTATION-INVARIANT, so it isolates suspension travel from
