@@ -249,19 +249,27 @@ void ApplyCorrection(AtvEntry& e, const coop::net::AtvStatePayload& p, bool snap
         // which is why "it fell back, so the worlds differ" could never be told apart from "it
         // fell back because we pushed it". This branch is the experiment as well as the fix.
         if (e.restReplaces >= kRestMaxReplaces) {
-            // NAMES THE CLASS, NOT A SUBSYSTEM. A verdict that blames the nearest lane sends
-            // the next session to rewrite working code, and there is more than one thing that
-            // can hold a mirrored ATV off the authority's pose. Terrain is one. A HOOK is
-            // another and is entirely invisible to the other peer: a player can tie arbitrary
-            // physics props to a vehicle with prop_hook_C, the deployed hook_C carries its own
-            // A<->B PhysicsConstraint, and the hook lane has NO implementation in this tree at
-            // all (docs/items/hook.md 2 -- every row is a GAP), so one peer's ATV can be coupled
-            // to a crate the other peer does not know exists. Under that, this rig is not five
-            // bodies but five plus however many somebody tied on.
+            // NAMES THE CLASS, NOT A SUBSYSTEM -- and the first version of this line got the
+            // class WRONG, which is why the wording is now what it is. It used to say "terrain
+            // under the vehicle, or a constraint the other peer cannot see, e.g. a hook. Not
+            // the pose stream". It fired four times in one run, and BOTH named causes were
+            // false: the two copies' wheel bodies agreed to <=1 mm at the same XY, so the
+            // terrain is identical, and the real cause was in this process -- our own collision
+            // guard cancelling the wheel ComponentHit delegates and taking the rig's SHAPE with
+            // them (docs/vehicles/ATV.md 17). A verdict that points outward when the cause is
+            // ours costs more than no verdict: it sends the next session to measure the world.
+            //
+            // So the line now points at the CHEAPEST DISCRIMINATOR first. Ride height -- the
+            // body's Z above the mean of its own three rig bodies, in the probe's [ATVP] line --
+            // separates "this rig is the wrong SHAPE" (ours, always) from "this rig is in the
+            // wrong PLACE" (possibly the world's). A pose lane can only ever fix the second.
             UE_LOGW("atv: a parked mirror would not stay on the authority's pose after %d "
-                    "re-places (last error %.1f cm) -- something local to THIS peer is holding "
-                    "the rig off it (terrain under the vehicle, or a constraint the other peer "
-                    "cannot see, e.g. a hook). Not the pose stream", kRestMaxReplaces, dist);
+                    "re-places (last error %.1f cm). CHECK THE RIG'S SHAPE BEFORE THE WORLD: "
+                    "compare rideH in [ATVP] on both peers ([dev] atv_probe=1). If they differ, "
+                    "the mirror is DEFORMED and no pose correction can fix it -- last time that "
+                    "was our own collision guard. Only if the shapes agree is this about the "
+                    "world (terrain, or a hook coupling the rig to a prop the author cannot see)",
+                    kRestMaxReplaces, dist);
         }
         return;
     }
