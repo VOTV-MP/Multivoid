@@ -1300,9 +1300,19 @@ is the control arm that acquitted the corrector; both are diagnostics, RULE-2 ex
 
 ### 17.5 What is STILL open
 - **A5** — the mirror trails the author by up to 209-324 cm while driving. **USER, watching the
-  run 2026-08-30: the drive arm leaves the garage and then hits a wooden fence.** So A5's peak is a
-  collision artefact and the route must be fixed before A5 is judged at all. Same caveat on A1's
-  one x2.11 cell.
+  run 2026-08-30: the drive arm leaves the garage and then hits a wooden fence.** That does NOT
+  make the number an artefact to discard — it tells us what the number IS, and the corrected
+  reading is worse than "noise": `[V]` the author's last 12 driven samples of run `-111354` sit at
+  `body=(-3628.., -2155..)` moving at 0.7-5 cm/s — **wedged against the fence with `driven=1` still
+  true and the arm still pulsing the throttle**. So A5's window mixes real driving with a long
+  stretch in which the author is not moving at all, and a 200 cm gap measured *there* is not a
+  trail: it is a STATIC error the corrector should have closed and did not, which A2 cannot see
+  because A2 only reads the settled tail after the arm ends. Before A5 is judged, its window must
+  be narrowed to samples where the author is actually in motion — and the wedged stretch deserves
+  its own arm, because "the mirror sits 2 m from a stationary author" is a distinct defect from
+  "the mirror lags a moving one". Same caveat on A1's one x2.11 cell. (The arm already knows the
+  base is not a test track — it pulses the throttle and re-seats after a crash, `atv_probe.cpp:44-55`
+  — but nothing downstream distinguishes moving from wedged.)
 - **A4** — a one-second ownership overlap at the handoff, in both verification runs.
 - **The residual this fix creates, stated rather than hidden:** a mirror now runs `processTire()`,
   so it burns its own tire durability and can `ejectWheel()` a tire its author still has. The right
