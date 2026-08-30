@@ -1318,7 +1318,7 @@ result does not depend on it.**
 ### 17.4 What shipped (`8cd0ac25`, proto 146 unchanged — no wire change)
 The two **body** delegates (`mesh`, `car1_Capsule`) stay cancelled on a non-owner, so damage
 authorship and `explode()` are still denied. The five **wheel** delegates run everywhere.
-`[dev] atv_hit_guard_mask` (default 3) keeps the experiment re-runnable and `[dev] atv_corrector`
+`[dev] atv_hit_guard_mask` kept the experiment re-runnable (**DELETED 2026-08-30 by `28a958e8`, which retired cancelling altogether -- see §17.13; do not cite this flag**) and `[dev] atv_corrector`
 is the control arm that acquitted the corrector; both are diagnostics, RULE-2 exempt.
 
 > **CORRECTED 2026-08-30 by the post-ship audit: the "never" and "always" below were FALSE, and

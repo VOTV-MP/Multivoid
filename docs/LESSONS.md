@@ -3064,7 +3064,15 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   damage or `explode()` a vehicle its authority still has. It cancelled **all seven** delegates —
   and the five **wheel** ones also maintain the rig's own shape, so the mirror's body sat under its
   own wheel plane in every run ever measured. Cancelling only the two **body** delegates keeps the
-  protection and the rig (`8cd0ac25`). The suppression was built on a careful, accurate, `[V]`
+  protection and the rig (`8cd0ac25`). **AND THE LESSON HAS A SECOND HALF, LEARNED THE SAME DAY
+  (`28a958e8`): the fix was still the wrong SHAPE.** Cancel-vs-permit is a false binary; a PRE-dispatch
+  interceptor gets a WRITABLE params frame (`game_thread.h:109`, `bool(*)(void*, void* params)`), so
+  the third option is to **mutate the parameter the unwanted effect scales with**. Zeroing
+  `NormalImpulse` kills wear, dirt, health loss and `explode()` while the handler still runs and still
+  writes `wheelsOnSurface` from its `EX_True` literal. Cancelling is now retired entirely and so is the
+  mask. *Look FIRST:* when one notification carries two effects, before you reach for cancel-vs-permit,
+  ask which PARAMETER the unwanted effect is a function of -- suppressing a magnitude is often
+  available where suppressing a call is not, and it costs no wire bytes. The suppression was built on a careful, accurate, `[V]`
   census — *"impulse() subtracts ... from `health` and calls explode() at <=0, processTire() burns
   tire durability and ejectWheel()s at 0, and the Capsule one pops a lib_C::addHint"* — every clause
   of which is true, and all of which enumerate **authored state**. The two lists differ by exactly
@@ -3165,6 +3173,39 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   test the divergence (the mirror did not simulate yet). "Not observed in the logs" and "the window
   did not exist in that build" are different findings and only the banner separates them.
   `memory/lesson-a-per-peer-random-identity-mint-forecloses-every-dedupe-plan.md`
+
+- **2026-08-30 — An acceptance criterion must name what the DESIGN changes, not what you wish were
+  true.** `[V]` The ATV impulse fix (`28a958e8`) stops a MIRROR inventing collision damage, and its
+  headline virtue is that it **puts nothing on the wire**. I wrote its acceptance test as "expecting
+  the two peers' `dur=` to stay equal" — **a test that design cannot pass**, because peers can only
+  agree about wear if something SENDS it. Its correct outcome is *author damaged, mirror pristine*:
+  still a disagreement, merely a deterministic one. The verified run showed exactly that (mirror
+  `100/100/100/100` vs `98.22/100/100/98.48` before; author `96.24/98.70/100/98.49`). The wrong
+  criterion hid a real conclusion — that the fix is **half** of one, the other half being the state
+  push dropped an hour earlier as "superseded" because the new fix was "better on every axis". It is
+  better on every axis except the one a player experiences. *Look FIRST:* write the criterion in the
+  same breath as the design and make it a sentence about the DELTA — what will be different in the
+  log because of THIS change. If it names a value the change does not produce, transmit or compute,
+  it is grading somebody else's work, and the answer is not a weaker test but "what is the missing
+  half?"
+  `memory/lesson-an-acceptance-criterion-must-name-what-the-design-changes.md`
+
+- **2026-08-30 — A hand-written inventory is a LIST, not a census; do not do arithmetic on its
+  denominator.** `[V]` A design was argued from `docs/vehicles/ATV.md` §10's facet table — *"16
+  facets, 3 synced, 13 not, and ten of the thirteen share one wire shape"* — and the ratio used to
+  choose a vehicle-wide lane over a per-facet one. The user answered in one line: *"we currently dont
+  even sync wheel steer, brake state etc"*. `brake` is in the table; **steering is not in it at all**
+  (`[V]` the visible steering is `handleAxis.K2_SetRelativeRotation(MakeRotator(0,20,Lerp(0,x,
+  rotAlpha)))` at uber `@38413`, a locally computed per-tick visual). The numerator was fine and the
+  **denominator was unknown**. It also exposed a class the three-way split (*double-simulates* /
+  *goes stale* / *gated off*) could not hold: a derived per-frame visual with **no stored state to
+  diverge**, whose mirror value is never computed because the INPUT is absent — closer to MTA
+  keysync than to any prop-state lane. *Look FIRST:* before using an inventory's COUNT in an
+  argument, ask how it was built — enumerated mechanically against the thing itself, or accumulated
+  as things came up? Only the first has a denominator; the second's honest form is "of the facets we
+  have listed". A sixteen-row table with a status column LOOKS like a census, and sits in a document
+  otherwise dense with `[V]` measurements, which lends its unmeasured parts borrowed credibility.
+  `memory/lesson-a-hand-written-inventory-is-a-list-not-a-census.md`
 
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
 
