@@ -11,6 +11,7 @@
 
 #include "ui/imgui_overlay.h"
 #include "ui/server_browser.h"
+#include "ui/server_browser_surface.h"  // WHICH browser this session uses
 #include "coop/session/join_progress.h"
 #include "coop/session/session_manager.h"
 #include "ue_wrap/core/log.h"
@@ -43,7 +44,7 @@ void ArmFromEnv() {
     char brEnv[8] = {};
     if (::GetEnvironmentVariableA("VOTVCOOP_BROWSER_OPEN", brEnv, sizeof(brEnv)) > 0 &&
         brEnv[0] == '1') {
-        ui::server_browser::Open();
+        ui::server_browser_surface::Open();
         UE_LOGI("imgui_overlay: VOTVCOOP_BROWSER_OPEN=1 -- server browser starts visible (screenshot test)");
     }
     // VOTVCOOP_TEST_CONNECT_DIRECT=<host:port> autonomously simulates a browser

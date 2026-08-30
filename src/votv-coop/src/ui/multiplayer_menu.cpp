@@ -14,6 +14,7 @@
 #include "coop/session/join_progress.h"
 #include "coop/session/session_manager.h"  // RefreshLatestVersion + LatestVersionLine (native version label)
 #include "ui/server_browser.h"
+#include "ui/server_browser_surface.h"  // WHICH browser this session uses
 #include "ui/host_window_native.h"
 #include "ui/server_browser_native.h"
 #include "ue_wrap/engine/engine.h"
@@ -270,11 +271,15 @@ void OnMenuTickPost(void* self, void* /*function*/, void* /*params*/) {
     const bool releaseEdge = !down && g_prevLmb;
     g_prevLmb = down;
     void* clickBtn = releaseEdge ? g_button.Get() : nullptr;
-    if (clickBtn && !ui::server_browser::IsOpen() &&
+    // EITHER browser counts as already-open, and WHICH one this click opens is not decided
+    // here -- `ui::server_browser_surface` is the one owner of both questions, because the
+    // four recovery paths in session_runtime ask them too (2026-08-30, when the native
+    // browser became the permanent default).
+    if (clickBtn && !ui::server_browser_surface::IsOpen() &&
         !coop::join_progress::Active() &&  // suppress while connecting (the menu is hidden)
         ui::input_focus::IsOurWindowForeground() && E::WidgetIsHovered(clickBtn)) {
         UE_LOGI("multiplayer_menu: MULTIPLAYER clicked -> opening server browser");
-        ui::server_browser::Open();
+        ui::server_browser_surface::Open();
     }
 }
 

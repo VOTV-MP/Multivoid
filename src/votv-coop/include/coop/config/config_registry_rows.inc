@@ -292,7 +292,7 @@ CFG_FLAG(perf_probe_selftime, "perf_probe_selftime", "dev", false, nullptr,
 CFG_FLAG(perf_probe_dispatch, "perf_probe_dispatch", "dev", false, nullptr,
     "Performance probe: count every ProcessEvent dispatch (PE/s, game-thread share, our share). OFF by default -- gameplay dispatches ~170k/s across several threads, so this is a shared-atomic RMW on a contended cache line at that rate. Leave it off whenever the number being measured is what the mod itself costs; the 1 Hz fps line does not need it.")
 CFG_INT(perf_probe_resdrop, "perf_probe_resdrop", "dev", 0, 0, 3600, nullptr,
-    "Performance probe: after N 1 Hz samples, collapse render resolution (r.ScreenPercentage 25) to separate a GPU-bound frame from a CPU-bound one.")
+    "Performance probe: after N 1 Hz samples, collapse render resolution (r.ScreenPercentage 25) to separate a GPU-bound frame from a CPU-bound one.")
 CFG_INT(perf_probe_bypass, "perf_probe_bypass", "dev", 0, 0, 3600, nullptr,
     "Performance probe: after N samples, arm the transparent ProcessEvent bypass for 5 s (separates our dispatch-path cost from everything else about our presence).")
 CFG_INT(perf_probe_statunit, "perf_probe_statunit", "dev", 0, 0, 3600, nullptr,
@@ -371,12 +371,24 @@ CFG_FLAG(native_ui_probe_write, "native_ui_probe_write", "dev", false,
     "live ui_menu widget switcher, shows it for ~2 s, then restores the previous "
     "active index and removes it. Main menu only, never with a session up. Requires "
     "native_ui_probe=1.")
-// The NATIVE server browser (docs/MULTIPLAYER_UI.md section 8, P2). Built dark: while
-// this is off the screen is never constructed and the shipped ImGui browser is the only
-// browser, so there is never a moment when two of them serve the same button.
-CFG_FLAG(browser_native, "browser_native", "dev", false, "VOTVCOOP_BROWSER_NATIVE",
-    "Build the native UMG server browser into the main menu's widget switcher. Off "
-    "ships the ImGui browser unchanged; this is the in-progress native replacement.")
+// THE NATIVE SERVER BROWSER IS THE DEFAULT, PERMANENTLY (USER DECISION 2026-08-30:
+// "делаем нативный браузер дефолтом вечным"). This row is no longer a dev flag and no
+// longer a trial: it is the user-facing FALLBACK SWITCH that plan step T8 said it would
+// become. ON (the default) means the MULTIPLAYER button opens the native UMG screen, which
+// is drawn inside the game's own menu, obeys its palette and carries its button sounds.
+//
+// OFF is the deliberate way back to the ImGui browser, which STAYS -- an explicit RULE-2
+// exception on the user's own call (2026-08-26: "пусть imgui server browser пока живёт,
+// даже когда он уйдёт на пенсию, пусть будет как запасной вариант"). It is a product
+// decision about what they want, not a HOW that RULE 1 could override.
+//
+// KNOWN LIMIT OF THE FALLBACK, and it is not fixed by this row: reaching it costs an ini
+// edit plus a RESTART, so a player whose native browser breaks cannot fall back during the
+// session that broke. What «запасной вариант» should mean -- feature-equal, or
+// last-resort-connect -- is still the user's to answer (MULTIPLAYER_UI section 8c.-1, T8).
+CFG_FLAG(browser_native, "browser_native", "ui", true, "VOTVCOOP_BROWSER_NATIVE",
+    "Use the native in-game server browser (drawn inside VOTV's own menu). Turn this off "
+    "to fall back to the older overlay browser; the change needs a restart.")
 CFG_FLAG(browser_autoopen, "browser_autoopen", "dev", false, "VOTVCOOP_BROWSER_AUTOOPEN",
     "Show the native browser as soon as it is built, without a click -- an autonomous "
     "run cannot press the MULTIPLAYER button. Requires browser_native=1.")

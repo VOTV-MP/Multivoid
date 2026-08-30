@@ -48,13 +48,28 @@ bool OnReleaseEdge();
 // pointer becomes a fault.
 void Forget();
 
-// The HOST button, for the self-check to AIM at. Null before Build.
+// The three buttons, for the self-check to AIM at. Null before Build.
 //
-// A pointer rather than a "click it for me" helper on purpose: a test that calls DoHost()
+// Pointers rather than "click it for me" helpers on purpose: a test that calls DoConnect()
 // directly proves the function runs and nothing else, while the defect this screen has
 // actually suffered is a control that draws and cannot be reached. The self-check reads
-// this widget's screen rect, puts the real cursor on it and delivers a real press-release,
+// each widget's screen rect, puts the real cursor on it and delivers a real press-release,
 // so what passes is the whole path -- layout, hit test, routing -- and not just the tail.
 void* HostButton();
+void* ConnectButton();
+void* RefreshButton();
+
+// WHAT THE LAST CLICK DECIDED, as a short stable token. Empty until one is handled.
+//
+// It exists because every one of CONNECT's outcomes is a SENTENCE IN THE FOOTER, and a
+// sentence is not observable to anything but a human reading the screen -- so "the button
+// is wired" and "the button did nothing" produce identical evidence. That is exactly the
+// state the browser's row hover sat in for three days.
+//
+// Tokens: "connect:none" (nothing selected) / "connect:self" (your own server) /
+// "connect:started" / "connect:busy" / "host" / "refresh". They are TOKENS, not the
+// player-facing text: the sentences are free to be reworded and translated, and an
+// assertion must not break when they are.
+const char* LastOutcome();
 
 }  // namespace ui::server_browser_actions

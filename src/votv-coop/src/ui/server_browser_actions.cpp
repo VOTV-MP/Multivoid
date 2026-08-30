@@ -24,6 +24,10 @@ void* g_connect = nullptr;
 void* g_host    = nullptr;
 void* g_refresh = nullptr;
 
+// The last decision a handled click reached -- see the header. A pointer to a string
+// LITERAL, so it needs no storage and cannot dangle.
+const char* g_lastOutcome = "";
+
 // CONNECT, and every way it can decline.
 //
 // The decline paths are sentences, not disabled buttons. A greyed-out control tells a
@@ -33,23 +37,28 @@ void* g_refresh = nullptr;
 void DoConnect() {
     coop::net::lobby::LobbyRow row;
     if (!SB::SelectedRow(row)) {
+        g_lastOutcome = "connect:none";
         SB::SetNotice("Pick a server from the list first.");
         return;
     }
     // A host cannot join itself. `JoinLobby` refuses this too, so this is the message
     // rather than the guard -- the guard lives at the one place that can enforce it.
     if (!row.lobbyId.empty() && row.lobbyId == sm::OwnLobbyId()) {
+        g_lastOutcome = "connect:self";
         SB::SetNotice("That's your own server -- you're already hosting it.");
         return;
     }
     // The version pair rides along so the EQUALITY gate can refuse HERE, with the
     // connect-failed popup, rather than letting the wire gate drop the player later
     // (the "show normally, reject on Join" policy, session_manager.h:118).
-    if (sm::JoinLobby(row.lobbyId, row.name, row.proto, row.game))
+    if (sm::JoinLobby(row.lobbyId, row.name, row.proto, row.game)) {
+        g_lastOutcome = "connect:started";
         SB::Close();   // accepted: the loading screen owns the player from here
-    else
+    } else {
+        g_lastOutcome = "connect:busy";
         SB::SetNotice("Could not start that connection -- another action is already "
                       "in flight.");
+    }
 }
 
 // HOST opens the native host window, which is where the world and the connection type are
@@ -66,11 +75,13 @@ void DoConnect() {
 // KNOWN AND DELIBERATE: this is a one-way door. Back from the hosting window returns to the
 // MAIN MENU, not to the browser -- the same behaviour every native VOTV sub-screen has.
 void DoHost() {
+    g_lastOutcome = "host";
     SB::CloseNow();
     ui::host_window_native::Open();
 }
 
 void DoRefresh() {
+    g_lastOutcome = "refresh";
     sm::Refresh();
     SB::SetNotice("Refreshing the server list...");
 }
@@ -105,6 +116,10 @@ bool OnReleaseEdge() {
 
 void Forget() { g_connect = g_host = g_refresh = nullptr; }
 
-void* HostButton() { return g_host; }
+void* HostButton()    { return g_host; }
+void* ConnectButton() { return g_connect; }
+void* RefreshButton() { return g_refresh; }
+
+const char* LastOutcome() { return g_lastOutcome; }
 
 }  // namespace ui::server_browser_actions

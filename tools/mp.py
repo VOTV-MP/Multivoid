@@ -3301,7 +3301,12 @@ def cmd_browser(args) -> None:
     deploy_all()
 
     env = {
-        "VOTVCOOP_BROWSER_NATIVE": "1",
+        # VOTVCOOP_BROWSER_NATIVE IS DELIBERATELY NOT SET (2026-08-30). The native browser is
+        # the default now, so forcing the flag would have this scenario assert against a value
+        # it supplied itself -- and the one thing the flip needs proven is that a player who
+        # sets nothing gets the native screen. "screen built" appearing below IS that proof:
+        # `server_browser_native::Armed()` resolves the same config row, so the screen cannot
+        # be constructed at all unless the default resolved ON.
         "VOTVCOOP_BROWSER_AUTOOPEN": "1",
         # The content-warning screen is itself a switcher child; advance past it so the
         # browser is built against the real main menu.

@@ -43,6 +43,7 @@
 #include "coop/session/teleport_client.h"
 #include "coop/session/world_load_episode.h"
 #include "ui/server_browser.h"
+#include "ui/server_browser_surface.h"  // WHICH browser this session uses
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/save_browser.h"
 #include "ue_wrap/core/game_thread.h"
@@ -292,7 +293,7 @@ void DriveMenuModeJoinWorldBoot() {
         UE_LOGI("harness: menu-mode join aborted during the save transfer");
         if (g_session.running() && g_session.role() == coop::net::Role::Client) g_session.Stop();
         coop::join_progress::Reset();
-        ui::server_browser::Open();
+        ui::server_browser_surface::Open();
         ue_wrap::log::Flush();
         return;
     }
@@ -536,7 +537,7 @@ void DriveHostBootIfPending() {
             coop::session_manager::SetHostStatus(
                 b->ph.save.newGame ? "Host failed: could not create the new save"
                                    : "Host failed: could not load that save");
-            if (!coop::shutdown::IsShuttingDown()) ui::server_browser::Open();
+            if (!coop::shutdown::IsShuttingDown()) ui::server_browser_surface::Open();
             return;
         }
         ::Sleep(1500);  // throttle LoadStorySave's `open` re-issue (matches BootStorySaveBlocking)
@@ -546,7 +547,7 @@ void DriveHostBootIfPending() {
         coop::session_manager::EndHostedLobby();  // HIGH-1: don't leave a phantom lobby on timeout
         coop::join_progress::Reset();        // drop the host cover
         coop::session_manager::SetHostStatus("Host failed: the world did not load in time");
-        ui::server_browser::Open();
+        ui::server_browser_surface::Open();
     }
 }
 
@@ -590,7 +591,7 @@ void RunPlayLoop(bool idleInGameplay) {
                 UE_LOGI("harness: join aborted -- stopping the client session + reopening the browser");
                 g_session.Stop();            // -> running->stopped edge -> FleeToMainMenu (-> main menu)
                 coop::join_progress::Reset();
-                ui::server_browser::Open();
+                ui::server_browser_surface::Open();
             } else {
                 // Host session running, or nothing running: a stale client-abort. Clear the
                 // cover only -- do NOT Stop the host and do NOT pop the browser over gameplay.

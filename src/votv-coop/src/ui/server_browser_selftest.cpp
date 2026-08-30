@@ -73,35 +73,53 @@ constexpr int kReopen         = 88;
 // native_screen::ChildAtCursor's header and in the DISARMED guard above, and production no
 // longer asks Slate about a row at all. Kept running, they re-proved a known negative every
 // run and printed an eight-line visibility chain to do it. RULE 2.)
+// THE ACTION BAR, and it runs HERE -- after the re-open, BEFORE any row is selected --
+// because that is the only window in which CONNECT's decline branch is reachable, and the
+// decline branch is the one that can be driven without starting a real join and tearing the
+// rest of the run out from under itself.
+//
+// WHY IT NEEDED ITS OWN PHASES AT ALL. Every outcome of CONNECT is a SENTENCE IN THE FOOTER,
+// and a sentence is observable to a human and to nothing else -- so "the button is wired"
+// and "the button does nothing" produced identical evidence. That is precisely the state row
+// hover sat in for three days while looking fine. `server_browser_actions::LastOutcome()`
+// exists to end that, and these phases are what read it.
+constexpr int kActRefMove     = 90;
+constexpr int kActRefDown     = 98;
+constexpr int kActRefUp       = 102;
+constexpr int kActRefVerify   = 106;
+constexpr int kActConnMove    = 112;
+constexpr int kActConnDown    = 120;
+constexpr int kActConnUp      = 124;
+constexpr int kActConnVerify  = 128;
 // ROW HOVER AND SELECTION, before the X, because a browser whose rows cannot be picked is
 // not a browser -- and neither had ever been asserted by anything.
-constexpr int kRowMove        = 108;
-constexpr int kRowRead        = 116;
-constexpr int kRowDown        = 118;
-constexpr int kRowUp          = 122;
-constexpr int kRowVerify      = 126;
-constexpr int kClickMove      = 132;
-constexpr int kClickSample    = 140;  // eight ticks after the move -- the scrim's budget
-constexpr int kClickDown      = 142;
-constexpr int kClickUp        = 146;
-constexpr int kClickVerify    = 156;
+constexpr int kRowMove        = 132;
+constexpr int kRowRead        = 140;
+constexpr int kRowDown        = 142;
+constexpr int kRowUp          = 146;
+constexpr int kRowVerify      = 150;
+constexpr int kClickMove      = 156;
+constexpr int kClickSample    = 164;  // eight ticks after the move -- the scrim's budget
+constexpr int kClickDown      = 166;
+constexpr int kClickUp        = 170;
+constexpr int kClickVerify    = 180;
 // ...and LAST, the HOST link, because it is what the user actually asked for: a hosting
 // window they can reach. It runs after the X phases because clicking HOST closes the
 // browser, so nothing about the browser can be asserted after it.
-constexpr int kHostReopen     = 162;
-constexpr int kHostMove       = 170;
-constexpr int kHostDown       = 180;
-constexpr int kHostUp         = 184;
-constexpr int kHostVerify     = 196;
+constexpr int kHostReopen     = 186;
+constexpr int kHostMove       = 194;
+constexpr int kHostDown       = 204;
+constexpr int kHostUp         = 208;
+constexpr int kHostVerify     = 220;
 // ...and finally the WORLD LIST inside that window, which is a different screen's rows in a
 // different ScrollBox. It gets its own phases because it was a CRITICAL of its own: those
 // rows were hit-tested with `IsHovered`, which does not answer inside a ScrollBox, so no
 // world could be picked and HOST could only ever start a New game.
-constexpr int kWorldMove      = 204;
-constexpr int kWorldRead      = 212;
-constexpr int kWorldDown      = 214;
-constexpr int kWorldUp        = 218;
-constexpr int kWorldVerify    = 228;
+constexpr int kWorldMove      = 228;
+constexpr int kWorldRead      = 236;
+constexpr int kWorldDown      = 238;
+constexpr int kWorldUp        = 242;
+constexpr int kWorldVerify    = 252;
 
 // The forced offset for the positive control. Far past any real content extent, so a
 // getter that returns it UNCHANGED has told us it echoes the request rather than reading
@@ -535,6 +553,78 @@ void Tick(void* scrim, void* list, void* closeBtn) {
             }
             ui::server_browser_native::Open();
             break;
+        // ---- the action bar: REFRESH, then CONNECT's decline branch ------------------
+        //
+        // One helper drives both, because a button is a button: read the rect Slate cached
+        // for it, put the real cursor on its centre, and let the production release-edge
+        // poll route the click. Nothing here calls DoConnect or DoRefresh directly -- the
+        // defect this screen has actually suffered is a control that draws and cannot be
+        // reached, and a test that calls the handler proves only the tail of the path.
+        case kActRefMove:
+        case kActConnMove: {
+            void* btn = (g_selfCheckStep == kActRefMove) ? ui::server_browser_actions::RefreshButton()
+                                              : ui::server_browser_actions::ConnectButton();
+            const char* what = (g_selfCheckStep == kActRefMove) ? "REFRESH" : "CONNECT";
+            ue_wrap::FVector2D tl{}, sz{};
+            if (!btn || !U::WidgetScreenRect(btn, tl, sz) || sz.X < 1.f || sz.Y < 1.f) {
+                UE_LOGE("server_browser_native: ACTION BAR SKIP -- %s reports no usable "
+                        "geometry (btn=%p %.0fx%.0f). Whether the action bar can be reached "
+                        "at all is UNMEASURED; the row phases below still run.",
+                        what, btn, sz.X, sz.Y);
+                // Fall through to the row phases rather than aborting: the action bar is
+                // not a precondition for anything below it.
+                g_selfCheckStep = (g_selfCheckStep == kActRefMove) ? kActConnMove - 1 : kRowMove - 1;
+                return;
+            }
+            UE_LOGW("server_browser_native: %s at desktop (%.0f,%.0f) %.0fx%.0f -- clicking it",
+                    what, tl.X, tl.Y, sz.X, sz.Y);
+            ::SetCursorPos(static_cast<int>(tl.X + sz.X * 0.5f),
+                           static_cast<int>(tl.Y + sz.Y * 0.5f));
+            break;
+        }
+        case kActRefDown:
+        case kActConnDown:
+            ::mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+            break;
+        case kActRefUp:
+        case kActConnUp:
+            ::mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+            break;
+        case kActRefVerify: {
+            const char* out = ui::server_browser_actions::LastOutcome();
+            if (out && std::strcmp(out, "refresh") == 0)
+                UE_LOGW("server_browser_native: REFRESH PASS -- a real click on REFRESH "
+                        "reached the handler (outcome '%s'). The list can be re-fetched on "
+                        "demand and not only on the 5 s timer.", out);
+            else
+                UE_LOGE("server_browser_native: REFRESH FAIL -- the click did not reach the "
+                        "handler (outcome '%s'). Either the button is not hit-testable or "
+                        "the release-edge poll is not routing to the action bar.",
+                        out ? out : "(null)");
+            break;
+        }
+        case kActConnVerify: {
+            const char* out = ui::server_browser_actions::LastOutcome();
+            // WITH NOTHING SELECTED, and that is the assertion. "connect:none" is the one
+            // outcome that proves the whole path -- layout, hit test, routing, and
+            // SelectedRow() answering honestly -- without starting a join that would tear
+            // the rest of this run down. The ACCEPT branch differs by one line: it calls
+            // `session_manager::JoinLobby`, the same entry point the hands-on-verified
+            // ImGui browser calls, with a row `ROW SELECT PASS` below proves is the one the
+            // player clicked. That line is NOT exercised here and the doc says so.
+            const bool open = ui::server_browser_native::IsOpen();
+            if (out && std::strcmp(out, "connect:none") == 0 && open)
+                UE_LOGW("server_browser_native: CONNECT PASS -- a real click on CONNECT with "
+                        "nothing selected reached the handler and DECLINED (outcome '%s', "
+                        "screen still open). The button is wired; the accept branch is one "
+                        "call to the shared JoinLobby and is not driven here.", out);
+            else
+                UE_LOGE("server_browser_native: CONNECT FAIL -- outcome '%s', screen open=%d. "
+                        "Expected 'connect:none' with the screen still up. If the outcome is "
+                        "empty the click never reached the action bar at all.",
+                        out ? out : "(null)", open ? 1 : 0);
+            break;
+        }
         case kRowMove: {
             // AIM AT THE SECOND ROW, not the first: the first row's top edge is also the
             // list's top edge, so a rounding error there lands outside the list and the
