@@ -87,15 +87,35 @@ Rules that hold across all eleven captures:
    pane. There is no free-floating text anywhere in the game's menus.
 2. **Sharp corners.** No rounding, anywhere.
 3. **Monospace throughout** — the game's `font_ui`. No proportional text in a menu.
-4. **The title is centred and white**, on its own bordered strip, larger than body text.
-5. **`Back` is bottom-LEFT. Confirming/destructive actions are bottom-RIGHT.** (`Back` /
+   **`[V]` 2026-08-30, read off the game's own widget** rather than sampled from a
+   render: the label on `ui_saveSlots_C.button_back` carries `font='font_ui'
+   size=20 outline=0` (`native_screen[fontprobe]`). One asset, and a button's
+   label size is **20** — ours were 18, which is now the measured constant
+   `native_screen::kBtnFontPx`.
+   **`[?]` The one thing this does NOT settle:** a 2026-08-30 user report reads the
+   game's OUTER buttons (`Back`) and its INNER ones (`Save`/`Reset`, inside the
+   rules panel) as two different faces. The probe read the outer donor only. If
+   they do differ it is size or outline, not asset — but that is unmeasured, and
+   the inner kind has no consumer in our chrome yet.
+4. **NEVER ALL-CAPS on a button.** `[V]` across the whole capture corpus VOTV
+   uppercases no button label anywhere: *Play game*, *Delete save slot*, *Create
+   new save slot*, *Open save data reset menu*, *Update list*, *Duplicate save
+   slot*, *Open save directory*, *Convert Save System*, *Back*, *Save*, *Reset*.
+   Sentence case, always.
+   This is worth its own numbered rule because breaking it is not a subtle miss:
+   ours shipped `BACK` / `REFRESH` / `HOST` / `CONNECT`, and combined with the
+   two-point size error above it read to the user as *a different, pixelated
+   font* — caps thickens a monospace block and the smaller size coarsens it.
+   Two wrong constants presented as a wrong typeface. Fixed `7d0fb7df`.
+5. **The title is centred and white**, on its own bordered strip, larger than body text.
+6. **`Back` is bottom-LEFT. Confirming/destructive actions are bottom-RIGHT.** (`Back` /
    `Reset all` `Apply`; `Back` / `Hard reset`.) This is consistent in every window that has both.
-6. **Collapsible sections** use a small triangle `▷` collapsed, `▾` expanded, at the LEFT of an
+7. **Collapsible sections** use a small triangle `▷` collapsed, `▾` expanded, at the LEFT of an
    orange header, with children indented one step.
-7. **Two-column rows**: white label at the left, the interactive part right-aligned in its own
+8. **Two-column rows**: white label at the left, the interactive part right-aligned in its own
    inset cell. The keybinds window (`_5`) is the clearest case — label `#FFFFFF`, bind value
    `#FF7C00` inside a `#404040` cell.
-8. **The scrollbar lives inside the panel border**, not outside it.
+9. **The scrollbar lives inside the panel border**, not outside it.
 
 ---
 

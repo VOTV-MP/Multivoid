@@ -2490,6 +2490,14 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   with not having followed it; the only thing that is not is **producing the enumeration**. If a claim
   says "censused by X", the message should carry the OUTPUT of X --
   `grep -rn "hook::Install(" -A2 | grep -oE "&g_[A-Za-z_]+"` is twelve lines you either have or do not.
+  **AN EIGHTH, 2026-08-30, and it answered a SECURITY question wrong.** An external reviewer asked
+  *"can I run a server without sending my IP to the master server?"*. I censused over the NAME of a
+  helper (`http::Post`/`http::Get`) and got the tidy answer "seven endpoints, exhaustively" -- `[V]`
+  missing two whole classes, because the key was *what learns my IP*, not *what calls our HTTP
+  function*: `signaling_client.cpp:298` opens a RAW socket and `ice_config.cpp:50-61` hands GNS a
+  STUN list plus our own coturn credentials. FOUR classes, not one. The gate that now holds the fix
+  is built around the operations for exactly this reason -- a gate grepping `http::` would have
+  reproduced the blind spot and felt like coverage (`tools/net/master_contact_gate.py`).
   `memory/lesson-census-by-the-operation-not-by-the-name.md`
 
 - **`docs/CREDITS.md` (was `FIELD_REPORTS.md`) records OTHER people's input, never the maintainer's own.** USER RULE
@@ -2513,6 +2521,55 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 - **2026-08-30 -- a keep-alive client monopolises a single-threaded test server, and the symptom is a TIMEOUT, not an error.** `measured` `tools/fake_master.py`'s `/control/count|shuffle|state` had NEVER answered while a game was attached: `protocol_version = "HTTP/1.1"` turns on keep-alive and `HTTPServer` serves one connection at a time, so `serve_forever` parked on the game's socket. The mutation endpoints written for harness phases C/D/E were unreachable in exactly the scenario they exist for -- and the docstring's `curl` example only ever worked with no client connected. `ThreadingHTTPServer` fixed it; the read path already held the state lock. **Look here FIRST:** any fixture serving the system under test AND the harness is a two-client server, and `http.server`'s default is one; check `protocol_version` and the server class together. A control that TIMES OUT rather than 404s means suspect OCCUPANCY before existence. [[lesson-a-keep-alive-client-monopolises-a-single-threaded-test-server]]
 
 - **2026-08-30 -- flipping a surface to DEFAULT re-scopes every defect it already carried.** Making the native browser the default changed no line of it and changed what three of its properties mean: `measured` non-ASCII server names were mangled (`std::wstring(s.begin(), s.end())` widens BYTES, so a Cyrillic name renders one garbage glyph per byte -- harmless dark, a REGRESSION against the ImGui incumbent once on); `BuildScreen` retried every menu tick forever on a missing donor; and CONNECT had never been clicked by anything. **Reviewing the flip's DIFF finds none of it** -- that diff is a boolean and a routing function. **Look here FIRST:** before flipping any dev flag to a shipped default, grep every caller that names the OLD path literally (five did here, including four failure-recovery paths that would have handed the player the other surface); read the new surface end to end for text encoding, unbounded loops and un-latched retries -- the three things a dark surface is never punished for; and prove the ONE user action it exists for actually runs. [[lesson-flipping-a-surface-to-default-rescopes-every-defect-it-carries]]
+
+- **An instrument that shares the defect CANCELS it -- worse than a blind one.** 2026-08-30: the
+  native browser's row hit test compared `GetCursorPos` (DESKTOP) to `WidgetScreenRect` (Slate
+  CLIENT pixels), off by the window's client origin. `[V]` 1008 probe lines: `cursor
+  desktop=(1282,718) client=(962,538) clientOrigin=(320,180) panel (796,496) 968x470 ->
+  hit(desktop)=-1 hit(client)=0` -- the pointer physically on a row, the shipped comparison finding
+  nothing. **Every automated run passed anyway**, because `server_browser_selftest.cpp` placed its
+  cursor by handing widget rects STRAIGHT to `SetCursorPos` at six of its seven sites, under a
+  comment asserting *"Slate's absolute space is desktop pixels, the same space SetCursorPos takes,
+  so this needs no ClientToScreen and no DPI factor"*. The harness aimed at `rect` and production
+  tested against `rect`: they agreed perfectly while both were 180 px from the pixels a human sees.
+  `ROW SELECT PASS` was a true statement about the harness and a false one about the product. (The
+  seventh site, the X button, DID convert -- which is why the close-button phase was the one
+  behaving.) *Look FIRST:* when a test and the code under test perform the SAME conversion, the test
+  proves consistency, never correctness -- ask what its ground truth is, and if the answer is "the
+  same function the product calls", there is none. For anything spatial the external reference is
+  the human or the OS. And log BOTH candidate answers on one line so a single run picks the
+  direction: mine had the sign backwards, which is why the probe shipped in its own commit.
+  `memory/lesson-an-instrument-that-shares-the-defect-cancels-it.md`
+
+- **Two corrections in OPPOSITE directions mean the derivation is the defect.** Same hit test,
+  2026-08-30: corrected once for the client origin (hit zone above the drawing), and the user
+  reported it again the other way -- *"the upper row got selected only when I lowered my cursor so
+  much towards the center"*. The cursor-to-`LocalToAbsolute` relationship is not one term but at
+  least two, the client origin AND the viewport UI scale, and they behave differently: an origin is
+  a constant shift, a scale is proportional and grows down a list. The third attempt derives
+  nothing -- `umg::CursorToWidgetAbsolute` runs Slate's own inverse
+  (`USlateBlueprintLibrary::ScreenToWidgetAbsolute`), correct whether or not the scale reading is
+  right. *Look FIRST:* the trigger is the SECOND correction, not the second bug. When a framework
+  produced a value it can usually un-produce it; reconstructing its transform from `GetCursorPos`
+  plus arithmetic is the harder and unverifiable route. And a correction that only holds on the rig
+  you tested (origin is 0 in fullscreen, scale is 1 at 100% UI) is not a fix.
+  `memory/lesson-two-corrections-in-opposite-directions-mean-stop-deriving.md`
+
+- **A census gate's printed COUNT catches what its verdict cannot.** 2026-08-30, building
+  `tools/net/master_contact_gate.py`: three defects in the gate, and the verdict caught one.
+  (a) `connect\s*\(` flagged five files whose only sin was English -- `// connect (client log ...)`
+  and `"for connect (opacity..."`; a C call has no space there. (b) Stripping string literals to fix
+  (a) ALSO stripped the endpoints, which live in literals -- the gate reported **0 FAIL while
+  counting 2 endpoints instead of 7**, green and measuring almost nothing. (c) `/v1/lobbies` reaches
+  `http::Get` as a VARIABLE, so a literal-only pattern counted six where there are seven -- the
+  original census's blind spot one level down. Only (a) was a failure; (b) and (c) were visible ONLY
+  because the gate prints `N endpoints across M files` and N was checkable against a hand census.
+  *Look FIRST:* a census gate has TWO properties -- does it fail on the bad thing, and does it SEE
+  what it claims to cover -- and RED-arm drills only test the first (a mutation in a file the
+  scanner now skips is simply not seen). Print the census, check the cardinality once against an
+  independent count, and give two rules that read the same input for opposite reasons two views
+  rather than one shared "clean" one.
+  `memory/lesson-a-gates-printed-count-catches-what-its-verdict-cannot.md`
 
 ### 1b. Standing working agreements (previously indexed NOWHERE)
 
