@@ -47,6 +47,7 @@
 
 #include "coop/interactables/atv_sync.h"
 #include "coop/interactables/atv_corrector.h"
+#include "coop/interactables/atv_hit_guard.h"
 #include "coop/interactables/atv_sync_internal.h"
 
 #include "coop/net/protocol.h"
@@ -278,89 +279,6 @@ bool IdleWorthSending(AtvEntry& e) {
     return send;
 }
 
-// THE TICK IS NOT THE BRAIN -- MEASURED 2026-08-29, and it retired a pillar of this design.
-//
-// The plan was "brains OFF, physics ON": SetActorTickEnabled(false) on every non-owner, so the
-// accumulators and the wheel torque ran on one machine. The first two-peer run refuted it. Both
-// peers start at a byte-identical pose; 100 s later, with the mirror's tick off, they were
-// 42.7 cm apart and the mirror sat 37 cm LOWER, its suspension hanging 2.4 cm further out.
-//
-// The bytecode says why. ATV_C's tick (ReceiveTick -> ExecuteUbergraph_ATV @32947) reaches
-// `@29894: mesh.SetCenterOfMass(VLerp(..., tirescount/4))` UNCONDITIONALLY, every frame, before
-// any gate -- the centre of mass is rig CONFIGURATION, re-applied per tick, not gameplay logic. A
-// rig whose centre of mass is never set rests, rolls and settles somewhere else. Meanwhile the
-// things tick-off was supposed to stop are ALREADY single-peer by the game's own gating:
-// `@29949: IFNOT(isDriven) POP` guards applyWheelTorque, and every battery-drain term at
-// @33970-@34123 is SelectFloat(x, 0, isDriven|isDrive|lights|turbo) -- all local-only state that
-// is false on a machine where nobody is sitting in it.
-//
-// So tick-off prevented nothing and moved the vehicle. It is gone (RULE 2), along with
-// ue_wrap::atv::SetBrainEnabled, which now has no caller. `ownsTick` SURVIVES and keeps both of
-// its real jobs: electing the idle syncer, and telling the collision interceptor whose copy may
-// author damage. The interceptor is now the ONLY thing that makes a mirror differ from a native
-// ATV -- and it has to be, because a ComponentHit delegate is dispatched by the physics scene and
-// was never tick-gated in the first place.
-
-// ---- the COLLISION half of "brains off" ---------------------------------------------------
-// SetActorTickEnabled does not reach a ComponentHit delegate: it is dispatched by the physics
-// scene. `[V]` all seven of ATV_C's reach real authored state -- impulse() subtracts
-// |NormalImpulse|/500000*2*getBumperMult() from `health` and calls explode() at <=0, processTire()
-// burns tire durability and ejectWheel()s at 0, and the Capsule one pops a lib_C::addHint at the
-// local player. With the rig now simulating on every peer, a non-owner running them would blow up
-// a vehicle whose authority still has it. So they are cancelled PRE-dispatch on a non-owner.
-//
-// The predicate cannot read g_atvs: the interceptor contract does not promise the game thread.
-// Instead Tick publishes the small set of ATVs THIS peer owns the tick for into an atomic array,
-// and the callback is a pointer scan over it. DEFAULT IS CANCEL, which is the safe direction --
-// a stale/empty set costs the authority some collision damage (a loss, and a quiet one), while
-// the opposite fails toward a mirror destroying itself.
-// Sized for "every ATV a host can own at once", not for the common case: on a host with nobody
-// driving, EVERY ATV is owned, and `list_props` row 'atv' means the spawn menu can make more of
-// them (docs/vehicles/ATV.md 11.4). Overflowing is not a graceful degradation -- the guard's
-// CANCEL default would suppress collisions on the one machine that owns the ATV -- so it also
-// logs once. 8 bytes a slot.
-constexpr int kMaxOwnedPublished = 64;
-std::atomic<void*> g_ownedAtvs[kMaxOwnedPublished];
-std::atomic<bool>  g_guardActive{false};   // false in single-player: the game must keep its damage
-std::atomic<unsigned long long> g_hitCancelled{0};
-std::atomic<unsigned long long> g_hitAllowed{0};
-bool g_hitGuardArmed = false;              // all 7 delegates registered -- else the lane runs INERT
-
-void PublishOwned(void** owned, int n) {
-    for (int i = 0; i < kMaxOwnedPublished; ++i)
-        g_ownedAtvs[i].store(i < n ? owned[i] : nullptr, std::memory_order_release);
-}
-
-bool OnAtvHitPre(void* self, void* /*params*/) {
-    if (!g_guardActive.load(std::memory_order_acquire)) return false;  // not in a session: never suppress
-    for (int i = 0; i < kMaxOwnedPublished; ++i) {
-        void* p = g_ownedAtvs[i].load(std::memory_order_acquire);
-        if (!p) break;
-        if (p == self) { g_hitAllowed.fetch_add(1, std::memory_order_relaxed); return false; }
-    }
-    g_hitCancelled.fetch_add(1, std::memory_order_relaxed);
-    return true;   // cancel-on-true: the BndEvt stub never jumps into the ubergraph
-}
-
-void InstallHitGuard() {
-    if (g_hitGuardArmed) return;
-    void* fns[8] = {};
-    const int n = A::ResolveHitDelegates(fns, 8);
-    int ok = 0;
-    for (int i = 0; i < n; ++i)
-        if (ue_wrap::game_thread::RegisterInterceptor(fns[i], &OnAtvHitPre)) ++ok;
-    if (ok == 7) {
-        g_hitGuardArmed = true;
-        UE_LOGI("atv: hit guard armed -- 7/7 ComponentHit delegates intercepted (a non-owner cannot "
-                "author damage/explode/ejectWheel)");
-    } else {
-        // FAIL CLOSED. Without all seven we will not run the simulate-and-correct model at all:
-        // Tick leaves every ATV's brain ON and mirrors nothing, so peers diverge visibly rather
-        // than one of them silently destroying a vehicle the other still has.
-        UE_LOGE("atv: hit guard NOT armed (%d/7 resolved, %d/7 registered) -- ATV sync stays INERT "
-                "this session; the interceptor table may be full (kMaxInterceptors)", n, ok);
-    }
-}
 
 // ---- R-2 shared-scan hub consumer (design: votv-shared-scan-hub-R2-DESIGN-2026-08-23.md).
 // The per-module walk is RETIRED; the hub's shared sliced pass drives these callbacks --
@@ -532,7 +450,7 @@ void Install(coop::net::Session* session) {
     // GUObjectArray + spam the log every tick (the Tick's throttled rebuild owns ongoing indexing).
     if (!g_installed && A::EnsureResolved()) {
         RegisterWithScanHub();  // the hub builds the index on its own cadence
-        InstallHitGuard();      // the seven ComponentHit interceptors -- Tick refuses to run without them
+        coop::atv_hit_guard::InstallHitGuard();      // the seven ComponentHit interceptors -- Tick refuses to run without them
         SubscribeDepartures();  // a departed author must not hold an ATV hostage
         g_installed = true;
     }
@@ -745,12 +663,12 @@ void Tick() {
         bool armed = false;
         ~DisarmUnlessArmed() {
             if (armed) return;
-            g_guardActive.store(false, std::memory_order_release);
+            coop::atv_hit_guard::SetActive(false);
             // Clear the SET too, not just the flag. OwnsTick() is a public read the probe's
             // acceptance keys two of its arms on, and a stale published set would label a mirror
             // sample as an owner sample -- an instrument agreeing with itself about a lane that
             // is not running.
-            PublishOwned(nullptr, 0);
+            coop::atv_hit_guard::PublishOwned(nullptr, 0);
         }
     } scope;
 
@@ -767,10 +685,10 @@ void Tick() {
     // FAIL CLOSED (the hit guard): without all seven ComponentHit interceptors a non-owner would
     // author damage on a rig we are about to leave simulating -- so we do not leave it simulating.
     // Every ATV keeps its brain, nothing is mirrored, and the ERROR line at Install says why.
-    if (!g_hitGuardArmed) return;
+    if (!coop::atv_hit_guard::Armed()) return;
 
     const bool isHost = s->role() == coop::net::Role::Host;
-    void* owned[kMaxOwnedPublished];
+    void* owned[coop::atv_hit_guard::kMaxOwned];
     int   ownedN = 0;
 
     for (auto& kv : g_atvs) {
@@ -812,14 +730,14 @@ void Tick() {
         // decides whose machine runs this rig's brain.
         const bool ownsTick = OwnsTickFor(authority, isHost, e.authorSlot);
         if (ownsTick) {
-            if (ownedN < kMaxOwnedPublished) {
+            if (ownedN < coop::atv_hit_guard::kMaxOwned) {
                 owned[ownedN++] = e.actor;
             } else {
                 static bool sSaturated = false;
                 if (!sSaturated) { sSaturated = true;
                     UE_LOGE("atv: owned-set saturated at %d -- ATV '%ls' and any beyond it will "
                             "have their OWN collisions suppressed on the peer that owns them",
-                            kMaxOwnedPublished, kv.first.c_str()); }
+                            coop::atv_hit_guard::kMaxOwned, kv.first.c_str()); }
             }
         }
 
@@ -856,16 +774,16 @@ void Tick() {
     }
 
     // Publish BEFORE arming, so the guard never runs against a set we have not refreshed.
-    PublishOwned(owned, ownedN);
-    g_guardActive.store(true, std::memory_order_release);
+    coop::atv_hit_guard::PublishOwned(owned, ownedN);
+    coop::atv_hit_guard::SetActive(true);
     scope.armed = true;
 }
 
 void OnDisconnect() {
     // Disarm FIRST: from here on nothing publishes an owned set, and a live hit must reach the
     // game (this peer is back to single-player and owns everything).
-    g_guardActive.store(false, std::memory_order_release);
-    PublishOwned(nullptr, 0);
+    coop::atv_hit_guard::SetActive(false);
+    coop::atv_hit_guard::PublishOwned(nullptr, 0);
     for (auto& kv : g_atvs) {
         const bool live = R::IsLiveByIndex(kv.second.actor, kv.second.idx);
         if (kv.second.isClientSpawnedMirror) {
@@ -884,31 +802,23 @@ void OnDisconnect() {
     g_savePlacedActors.clear();
     g_synthCounter = 0;
     g_installed = false;  // a new session re-indexes via the next Install (latched again)
-    const auto c = coop::atv_corrector::ReadCounters();
+    const auto c  = coop::atv_corrector::ReadCounters();
+    const auto hg = coop::atv_hit_guard::ReadCounters();
     if (n > 0)
         UE_LOGI("atv: OnDisconnect -- cleared %zu ATV(s) (brains restored; runtime mirrors destroyed); "
                 "hit guard: %llu cancelled / %llu allowed; corrector: %llu nudged / %llu warped "
                 "/ %llu cut-on-stall",
-                n, static_cast<unsigned long long>(g_hitCancelled.load()),
-                static_cast<unsigned long long>(g_hitAllowed.load()),
+                n, static_cast<unsigned long long>(hg.cancelled),
+                static_cast<unsigned long long>(hg.allowed),
                 static_cast<unsigned long long>(c.corrections),
                 static_cast<unsigned long long>(c.warps),
                 static_cast<unsigned long long>(c.stallWarps));
 }
 
 bool OwnsTick(void* actor) {
-    if (!actor) return false;
-    // The header promises false whenever the lane is not running, and the published set alone
-    // cannot say that -- every early return in Tick leaves the previous set in place.
-    if (!g_guardActive.load(std::memory_order_acquire)) return false;
-    // Reads the SAME published set the collision guard consults, on purpose: an instrument that
-    // recomputes the predicate would agree with itself while disagreeing with the code under test.
-    for (int i = 0; i < kMaxOwnedPublished; ++i) {
-        void* p = g_ownedAtvs[i].load(std::memory_order_acquire);
-        if (!p) return false;
-        if (p == actor) return true;
-    }
-    return false;
+    // The set, the active latch and the answer all live with the collision guard now -- see
+    // atv_hit_guard::Owns for why this reads the guard's set rather than recomputing anything.
+    return coop::atv_hit_guard::Owns(actor);
 }
 
 // Check if an ATV actor is occupied by a remote peer (used to block local mount interactions).
