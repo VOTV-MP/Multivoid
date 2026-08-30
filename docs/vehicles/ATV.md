@@ -621,6 +621,10 @@ reads **only** bit3 (`authored`). Bits 0–2 are produced and never consumed; bi
    2.16, i.e. the same regime, and an order of magnitude above the 0.001 cm a rigid rig holds. The
    mirror is not a corpse. What the same run DID find is a different question the doc had not asked:
    it TRAILS (§15.2).
+   *(Items 2, 3, 5, 6, 7 re-checked against the tree at `18edd22a` on 2026-08-30: `hasGuns`,
+   `tiresTypes`, `event_arirFuelsAtv` and `mediaPlayer` each appear in **zero** files under
+   `src/votv-coop/src/`, so nothing has shipped for any of them. They are STILL OPEN, not
+   stale-open.)*
 2. **[?] Where is `hasGuns` consumed?** Not in `ATV.json`. Candidates: `prop_funGun_atv`, `mainPlayer`.
 3. **[?] Is `tiresTypes[3]` genuinely never applied?** `setWheelsType` reads indices 0, 1, 2 only.
 4. ~~**[?] Is the ATV's key cross-peer stable?**~~ **ANSWERED [V]** — `docs/COOP_SYNC_MAP.md:139`
@@ -646,6 +650,15 @@ reads **only** bit3 (`authored`). Bits 0–2 are produced and never consumed; bi
    `SpawnMirror` / `DestroyMirror` / `isClientSpawnedMirror`) exists to give it. **The lane STAYS.**
    What was actually wrong was only its comment: `atv_sync.cpp:123` says *"purchased"* where the
    code's predicate is *"mid-session, not in the baseline set"* — the broader, and correct, thing.
+4b. ~~**[?] Can we write the whole rig's velocity, or only its root?**~~ **ANSWERED 2026-08-30 [V] —
+   ONLY THE ROOT, by this route.** A live census of the ATV's component PROPERTIES
+   (`[ATVP] rig component`, `coop/dev/atv_probe.cpp`) found `mesh` at `off=0x570`
+   (`StaticMeshComponent`) and **all seven** of `car1_Capsule`, `car1_frontWheel_R`,
+   `car1_frontWheel_L`, `car1_frontWheelRoot`, `car1_backWheel_R`, `car1_backWheel_L`,
+   `car1_backWheelRoot` reported **NOT A PROPERTY on this class**. They are SCS components,
+   reachable only through the actor's component array — and `SetAllPhysicsLinearVelocity` would not
+   reach them either, since it addresses the bodies WITHIN one component and these are separate
+   components. So the "write all five bodies" fix is not buildable as designed. See §16.4.
 5. **[?] Does `event_arirFuelsAtv` run per-peer?** It mutates ATV state from a world event.
 6. **[?] `Fstruct_upgrades`** (`docs/upgrades/SIGNAL_UPGRADES.md`) is the *signal* upgrade store; ATV
    modules live in the ATV's own `getData` bytes. Confirmed disjoint here; whether anything reads both
@@ -813,7 +826,9 @@ the quantity lying about whether convergence was possible.
 > a supersede stamp pointing at a withdrawn finding leaves nothing standing. What §16 measured is
 > that the conclusion here (*"the host has support under it that the client does not"*) was
 > **untestable at the time it was written**, because both cut paths write a velocity onto the rig
-> IMMEDIATELY after teleporting it (`atv_corrector.cpp:125-126`, `:144-145`) — so the "nine cuts
+> IMMEDIATELY after teleporting it (as of `18edd22a`, `atv_corrector.cpp:214-216` and `:273-275`,
+> both now routed through `WriteMirrorVelocity`; the lines first cited here, `:125-126`/`:144-145`,
+> moved the same day the citation was written) — so the "nine cuts
 > that fell back" were nine teleport-**and-push** events and not one teleport-and-let-rest. The
 > experiment that separates ground from lane had never been run. §16 runs it.
 >

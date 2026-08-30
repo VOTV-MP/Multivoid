@@ -2869,9 +2869,84 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   `file:453` still passes on anything. When writing a row, quote the line you cite: the quote is what
   makes a citation checkable. And read any gate's PASS sentence as its literal specification — the
   words are usually exactly right and narrower than the reassurance they give.
+  **AND THE NAMED RESIDUAL LANDED WITHIN 24 HOURS, in the same file, from the same cause
+  (2026-08-30):** this row's own advice says *"a bare `file:453` still passes on anything"*, and the
+  very next day `ATV.md`'s §14.6 box cited `atv_corrector.cpp:125-126` for the claim that both cut
+  paths write a velocity right after the teleport — true when written, and moved out from under the
+  citation hours later by the fix that section was introducing. A2 could not see it because the row
+  cites without QUOTING. So the residual is not theoretical and the remedy is not the gate: **quote
+  the line, or expect the citation to rot silently.**
   `memory/lesson_a_line_number_is_a_position_the_claim_is_about_content.md`
 
 **A correct mechanism is what makes a wrong conclusion feel solid.** I stated that foreign cards cannot pay a Russian donation platform and built a recommendation on it; the user called it, and ninety seconds of checking showed the platform officially accepts them (failures are issuer-side, not a wall). The mechanism I reasoned from was TRUE -- Visa/MC cut cross-border processing with Russian banks in 2022 -- and the leap from "how this class of thing works" to "how THIS service's checkout works today" was unearned. Sound reasoning leaves no moment of doubt to catch. **Look here FIRST:** a claim about the OUTSIDE world is still a claim, and the check is usually one search. Three tells -- you are asserting an external service's current behaviour from a general mechanism plus a date; it is trivially checkable and you did not check; and you are recommending WORK on the strength of it. When corrected, fix it at every place you wrote it, not only the one in front of the user. [[lesson-a-correct-mechanism-is-what-makes-a-wrong-conclusion-feel-solid]]
+
+- **2026-08-30 — Assigning a physics velocity is a WAKE, not just a write.** `[V]` A mirrored
+  `AATV_C` free-fell 46 cm in a second while its author held one Z to the decimal and reported
+  `|v| = 0.0` (`[ATVC]` lines, `coop/interactables/atv_corrector.cpp`); the peer being written to
+  fell, the peer not being written to did not. `SetPhysicsLinearVelocity(bAddToCurrent=false)` on the
+  ROOT body of a five-body constraint rig wakes a body that had gone to sleep on its contacts, once
+  per packet, and writing the same value it already had is not a no-op. Two mechanisms were proposed
+  FIRST and both were wrong — a per-packet ratchet (a ratchet oscillates; this rig was dead flat for
+  100+ samples) and a downward velocity over the wire (`|v| = 0.0` kills it) — though the second is
+  alive in a different regime, a still-SETTLING author whose real `-40.9` Z we mirror onto a copy that
+  has already landed. *Look FIRST:* when a mirrored physics body drifts and the correction looks
+  right, do not tune the correction — log the value at the instant it is written and check the peer
+  you are NOT writing to. MTA reached the same rule from the other end (`bSyncVelocity`,
+  `CUnoccupiedVehicleSync.cpp:194`/`:311`, server `:315-321`).
+  `memory/lesson_assigning_a_velocity_is_a_wake_not_just_a_write.md`
+
+- **2026-08-30 — A bound cleared by its own success is not a bound.** `[V]` A give-up arm written to
+  re-place a mirror "at most 3 times, then say so" logged its terminal WARN **three times in 46 s**:
+  the counter counted CONSECUTIVE failures and cleared on any packet that found the rig in band — and
+  a re-place puts the rig exactly on target, so the next packet is the one MOST likely to be in band.
+  The reset condition was the expected RESULT of the action being bounded. The mirror image was in the
+  same code: where the error re-crosses the deadband every other packet the counter never reaches 3,
+  the diagnostic is never emitted, and the action runs forever. *Look FIRST:* for any retry/give-up/
+  backoff counter ask what clears it and whether that is a consequence of what it counts; a bound
+  needs a clock or an episode boundary the action cannot itself produce. And grep your own WARN in the
+  run log and COUNT it — a once-per-episode line appearing N times is the bound failing.
+  `memory/lesson_a_bound_cleared_by_its_own_success_is_not_a_bound.md`
+
+- **2026-08-30 — A rule at ONE BRANCH is bypassed by every path above it (and by the half of a
+  compound gate you did not mean).** `[V]` "Do not write a velocity onto a mirror whose author is at
+  rest" shipped as a single early-return, and two paths went around it: the WARP arm sits earlier in
+  the function and still did `TeleportRig` + write, unbounded; and the gate was `linAtRest &&
+  angAtRest`, so a parked-but-ROCKING author (`wireLin |v| = 4.63`, under the band) took the full
+  write path and the mirror gained **+51 cm/s of Z** — in the very run reported as the fix's evidence.
+  The angular constant that did it had no measured provenance; it was 5 by symmetry. Fixed by one rule
+  per quantity applied at the WRITE SITE (`WriteMirrorVelocity`), not at a branch some paths skip.
+  *Look FIRST:* after writing "do not do X when Y", grep the function for every X and confirm each is
+  downstream of the test; then ask which quantity actually causes the harm — the others belong in
+  their own gate or in none. Invariant-not-a-site-list, pointed inward at one function.
+  `memory/lesson_a_rule_at_one_branch_is_bypassed_by_every_path_above_it.md`
+
+- **2026-08-30 — When a measurement needs a guard to exclude honest variation, measure the
+  DIFFERENTIAL instead and the guard disappears.** `[V]` A new acceptance arm graded one peer's Z
+  across an authority handoff and needed a guard to skip the handoff where a peer drives away (that Z
+  change is terrain). The guard — "skip if it travelled >50 cm", sized from the few cm a SETTLED rig
+  creeps — then skipped the case the arm existed for, because a rig coasting to a stop rolled 68 cm.
+  The fix was a better QUANTITY, not a better threshold: grading the change in the GAP BETWEEN THE TWO
+  COPIES makes terrain, slope and coasting common-mode, so a peer driving away scores ~0 with **no
+  guard at all** (release handoffs +35.5/+31.2/+10.3/+19.6, acquire handoffs negative, four runs).
+  *Look FIRST:* before adding a guard to an acceptance arm, ask whether both sides of the comparison
+  experience what you are excluding — if they do, subtract instead of excluding. Same trap as
+  [[lesson-a-threshold-from-another-regime-fails-the-authority-itself]], same instrument, five days
+  apart; a drilled guard that encodes the wrong distinction is still the wrong distinction.
+  `memory/lesson_measure_the_differential_and_the_guard_disappears.md`
+
+- **2026-08-30 — One green run after a red streak is not a result, and the archive it would be quoted
+  into may not be runs.** `[V]` After five red acceptance runs a fix produced the ATV lane's first
+  ever `ACCEPTANCE: PASS` (A2 **7.0 cm** vs a 20 cm criterion, every arm green); the immediate re-run,
+  same build, same scenario, failed at **39.7 cm** — and contained the evidence for a SECOND cause the
+  passing run did not. A result that flips a streak is the one that most needs repeating, because a
+  deterministic effect would not have produced a streak. Separately: the drill invoked the report tool
+  without `--no-archive`, so **four of seven directories in `research/atv_runs/` were 14-line
+  synthetic fixtures**, told apart from real two-peer runs only by a tempdir path inside a MANIFEST —
+  while the design doc's tables had been built by reading those directory names. *Look FIRST:* before
+  writing a verdict into a doc, run it twice, and confirm every directory you quote was produced by
+  what you think produced it. A harness sharing an output path with the evidence store contaminates it
+  invisibly.
+  `memory/lesson_one_green_run_after_a_red_streak_is_not_a_result.md`
 
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
 
