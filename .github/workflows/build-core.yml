@@ -101,6 +101,20 @@ jobs:
           pwsh -File tools/net/peerconn_gate.ps1
           exit $LASTEXITCODE
 
+      - name: Master-contact gate (nothing tells an outside server where a player is, unasked)
+        # Censuses by OPERATION, not by helper name -- which is the whole point. The
+        # first hand census of this surface was taken over `http::Post`/`http::Get` and
+        # MISSED two classes: the signaling leg opens a raw socket, and ice_config hands
+        # GNS a STUN list and our own TURN credentials. A gate grepping for `http::`
+        # would have reproduced that blind spot exactly. It also holds the b349de42 fix
+        # in place: /v1/latest must have exactly one caller, the browser surface, because
+        # it used to fire at boot and on every main-menu entrance -- so the master learned
+        # the player's address before they had asked it anything.
+        shell: pwsh
+        run: |
+          python tools/net/master_contact_gate.py
+          exit $LASTEXITCODE
+
       - name: MinHook free-call gate (nothing may free a trampoline the process still calls)
         # Same family as the gates above: a cheap text scan with its own injected must-fire
         # control, run before the toolchain so a violation fails fast. Guards the property
