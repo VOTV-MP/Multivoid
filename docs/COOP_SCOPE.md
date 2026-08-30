@@ -107,6 +107,11 @@ items.
   first. Privacy: opt-in only (default OFF); no host is listed without the
   explicit checkbox. The server-browser UI is the already-in-scope multiplayer
   menu's "server browser (future)" element, now given a backing source.
+  **SURFACE UPDATE 2026-08-30 (`b90b261d`, USER):** the browser the MULTIPLAYER button
+  opens is now the NATIVE UMG screen (`ui/server_browser_rows` + `ui/server_browser_native`),
+  not the ImGui one cited above. The feature and its backing source are unchanged -- same
+  `lobby_client`, same master -- only the renderer moved. `ui/server_browser.cpp` stays as
+  the fallback (`browser_native=0`), by the user's own decision.
 
 - **Physics-object pickup / drag (E-press interaction)** — sync the
   player's E-press lift/drag of physics props (the ~540 classes derived

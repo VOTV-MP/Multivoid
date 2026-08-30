@@ -324,41 +324,57 @@ LAN (two-machine + same-box-two-instance both confirmed).
        panel itself renders in ImGui (in-process overlay), not pure UMG. The
        `mp_host_game.bat` / `mp_client_connect.bat` launchers remain only as
        the autonomous-test entry points.
-       **A NATIVE-UMG replacement for the browser panel is BUILT AND RENDERS
-       (2026-08-26, `fe7e55eb`) — `docs/MULTIPLAYER_UI.md` §8b is the as-built,
-       §8a the measurement pass, §8 the plan. It is shipped DARK behind
-       `[dev] browser_native=0`: the ImGui panel above is still the only browser
-       and still what the MULTIPLAYER button opens. The native screen draws the
-       live master's lobby list with the version-mismatch tint. **INPUT AND STYLE
-       ARE NOW BUILT (2026-08-26, `95d18cc5` + `ea378daf` + `23481e3c`)**: an X
-       and a BACK button (driven click proven, `CLOSE BUTTON PASS`), hover
-       (row text -> `#FFFF00`) and click-to-select (row fill -> `#400040`, keyed
-       on lobbyId not index), and the whole screen restyled to the game's own
-       palette per the new `docs/VOTV_UI_STYLE.md`. The wheel SCROLLS the list --
-       measured, and the user confirmed by hand. **Still absent: Connect / Host /
-       Refresh**, so selection exists and nothing consumes it; and the PUBLIC
-       `Close()` still has zero callers and has never run (re-verified this
-       sweep -- ESC and the X both call the internal `Hide()`). Retiring the
-       ImGui browser also has to retarget `tools/cursor_probe.py` +
-       `tools/master_fetch_probe.py`, which block on its log line.**
-       **The PERFORMANCE approach is designed and is `MULTIPLAYER_UI.md`
-       section 8c.-1 (13-round `/qf`, 2026-08-26; DESIGN, nothing built).** Its
-       root finding is measured and reorders the lane: `RowPartsAt` resolves an
-       UNCACHED `R::FindFunction` per row per sync and that walks the whole
-       `GUObjectArray` (~1.1-1.6 ms each), so the cost is a SINGLE-FRAME stall,
-       not dispatch volume. Two defects fall out that are not about speed at
-       all: `kMaxRows = 64` bounds the whole sync loop (so "100 servers" renders
-       64, silently), and the list has NO STABLE ORDER -- the master iterates a
-       `HashMap`, nothing sorts, and rows are written BY POSITION, so a refresh
-       reshuffles the list under a scrolling hand. Step T0 -- *does the wheel
-       scroll this widget at all* -- has never been tested and everything
-       downstream assumes it. Two results from that pass bind other
-       phases: a hand-wired `UUserWidget` RENDERS inside `ui_menu_C`'s live
-       `UWidgetSwitcher` (so the placement holds), and **the ImGui overlay
-       substrate is NOT retirable** — at every launch the game presents ~540
-       frames over ~11.4 s in which no world exists and our game-thread task
-       pump does not advance, so a UMG surface cannot be created or attached
-       there. Two substrates is the measured end state, not a transition.
+       **THE NATIVE-UMG BROWSER IS THE DEFAULT, PERMANENTLY (USER 2026-08-30,
+       `b90b261d`: *"делаем нативный браузер дефолтом вечным"*).** The paragraph
+       above describes what the MULTIPLAYER button used to open; it now opens the
+       native UMG screen, and the ImGui panel is the FALLBACK, reachable by
+       setting `browser_native=0` in `multivoid.ini` (a restart-scoped `ui`
+       setting, no longer a dev flag). `ui::server_browser_surface` is the one
+       owner of which surface a session uses -- five places decided it
+       independently the moment the default flipped. **The ImGui browser is NOT
+       deleted and nothing was retargeted**: `tools/cursor_probe.py` and
+       `tools/master_fetch_probe.py` keep working unchanged. As-built:
+       `docs/MULTIPLAYER_UI.md` section 8b, plus the T-table in section 8c.-1
+       (T0/T1/T1b/T1c/T4a/T6/T8 are DONE rows carrying their evidence).
+       **What is PROVEN, all by the autonomous `mp.py browser --fake-master N`
+       scenario and NOT hands-on:** the screen builds with nothing set (which is
+       the flip's proof), the wheel scrolls it, the scrim absorbs a stray click,
+       ESC and the X close it, a row can be hovered and selected by a real
+       cursor, HOST opens the hosting window, REFRESH and CONNECT reach their
+       handlers, the order survives a shuffle the client provably re-fetched, and
+       the scroll position survives a row-count change.
+       **STILL OPEN, verified against the code this sweep:** CONNECT's ACCEPT
+       branch is not driven by any test (one line, calling the shared
+       `session_manager::JoinLobby`); `Close()` HAS callers since `9f8140b3`
+       (`ui/server_browser_actions.cpp:56` calls it, `:79` calls `CloseNow()`)
+       but its own BODY has never run in a test and both callers are on the game
+       thread, so "safe from any thread" stays an unexercised claim; and
+       `src/ui/server_browser_selftest.cpp` is 932 LOC, past the soft cap, with
+       the cut proposed by two audits.
+       **PERFORMANCE: the design is `MULTIPLAYER_UI.md` section 8c.-1 and its
+       ROOT FINDING IS NOW FIXED, not pending.** That section's headline was an
+       uncached `R::FindFunction` per row per sync walking the whole
+       `GUObjectArray`; it is latched (`ui/server_browser_rows.cpp:147`), and the
+       surplus-row branch no longer derives seven widget parts to collapse one.
+       So the old "raising `kMaxRows` costs 110-320 ms" figure is WITHDRAWN; the
+       replacement is ~21 ProcessEvent dispatches per PAINTED row (~4,200 at 200
+       rows), which is arithmetic and not a measurement -- T2a's instrument and
+       T2c's baseline have not run, and raising the cap still waits on them.
+       Of the two defects that were never about speed: the list HAD no stable
+       order and now has one, imposed at the single producer
+       (`coop/net/lobby_client.cpp`, key `name` then `lobbyId`; `playersCur` is
+       explicitly refused because a mutable key reorders rows under a reading
+       hand), watched by a same-set/different-sequence detector shown RED before
+       it was trusted; and `kMaxRows = 64` still truncates, but no longer
+       SILENTLY. Step T0 -- *does the wheel scroll this widget* -- was answered
+       YES on 2026-08-26 and is re-asserted every run.
+       Two results from that pass still bind other phases: a hand-wired
+       `UUserWidget` RENDERS inside `ui_menu_C`'s live `UWidgetSwitcher` (so the
+       placement holds), and **the ImGui overlay substrate is NOT retirable** --
+       at every launch the game presents ~540 frames over ~11.4 s in which no
+       world exists and our game-thread task pump does not advance, so a UMG
+       surface cannot be created or attached there. Two substrates is the
+       measured end state, not a transition.
 
 ## Phase 4 — Replication layers (the bulk) ◐
 

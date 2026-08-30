@@ -164,8 +164,15 @@ T7 adds it.
 * **The coop cyan.** `#00FFFF` is Multivoid's identity colour — it is the MULTIPLAYER menu item, the
   title, the accent everywhere. It appears in **zero** native VOTV menus. Dropping it makes us look
   native; keeping it makes us look like *us*. That is a product call, not a style measurement, and it
-  goes to the user. **Until they answer, do not silently do either** — the browser keeps cyan for the
-  title and this row stays open.
+  goes to the user. **PARTLY ANSWERED 2026-08-26, and only for one surface.** The user settled the
+  BROWSER's title directly -- *"The windows title should say something like Multivoid - Server
+  Browser and be in the style of votv, not the current colors"* -- so that title is WHITE
+  (`ui/server_browser_native.cpp:250`, `kText`), and the sentence that stood here saying "the
+  browser keeps cyan for the title" was already false when it was written. **What is still open is
+  everything OUTSIDE the browser**: the injected MULTIPLAYER menu item and the version/update line
+  are still cyan (`ui/multiplayer_menu.cpp:81` `kVersionCyan`), and those live on the game's own
+  main menu rather than inside a window of ours. Do not silently drop or keep them; that half is
+  still the user's call.
 * **Whether to match the section/expander idiom.** The server list is flat; VOTV's lists are
   collapsible trees. Adopting `▷`/`▾` for a flat list would be cargo-culting the shape without the
   content.
