@@ -1644,6 +1644,82 @@ def _peer_hwnd(pid: int):
     return found[0] if found else None
 
 
+def _force_foreground(pid: int, label: str = "", quiet: bool = False) -> bool:
+    """Make `pid`'s game window the FOREGROUND window, and REPORT whether it worked.
+
+    Why this exists (2026-08-30): three consecutive `mp.py browser` runs produced no
+    verdicts at all, each ending in
+
+        SELFTEST DISARMED -- our window was not the FOREGROUND window for 15000 ms
+
+    That refusal is CORRECT and must stay: the selftest synthesizes clicks and key
+    presses, and input synthesized while another window is foreground lands in that
+    window -- a lab that types into the user's editor is worse than a lab that fails.
+    The defect was on this side: mp.py launched the game and simply HOPED it would be
+    foreground, with no line of code anywhere that tried to make it so. Windows will
+    not let a freshly-launched process steal focus from the active one, so whenever the
+    run was started from a terminal that kept focus, the harness could not create the
+    single precondition it required of itself.
+
+    `AttachThreadInput` is the documented way out: a thread attached to the foreground
+    thread's input queue is permitted to call `SetForegroundWindow`. Attach to BOTH the
+    current foreground thread and the target's, move the window, then detach -- leaving
+    the queues attached would make this process share input state with the game.
+
+    Returns the VERIFIED result (a fresh `GetForegroundWindow` read), never the return
+    of `SetForegroundWindow`, which reports that the call was permitted rather than that
+    the window actually came forward.
+    """
+    import ctypes
+    from ctypes import wintypes
+    u32 = ctypes.WinDLL("user32", use_last_error=True)
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    # HWNDs are pointers; ctypes defaults every restype to c_int, which TRUNCATES them
+    # on win64 and would silently compare two different windows as equal.
+    u32.GetForegroundWindow.restype = wintypes.HWND
+    u32.SetForegroundWindow.argtypes = [wintypes.HWND]
+    u32.SetForegroundWindow.restype = wintypes.BOOL
+    u32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.c_void_p]
+    u32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    u32.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
+    u32.AttachThreadInput.restype = wintypes.BOOL
+    u32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    u32.BringWindowToTop.argtypes = [wintypes.HWND]
+
+    hwnd = _peer_hwnd(pid)
+    if not hwnd:
+        if label and not quiet:
+            log(f"  {label}: no window for pid {pid} yet -- cannot take foreground")
+        return False
+    hwnd = wintypes.HWND(hwnd)
+    fg = u32.GetForegroundWindow()
+    # Already there? Nothing to do, and nothing to log.
+    if fg and u32.GetWindowThreadProcessId(fg, None) == u32.GetWindowThreadProcessId(hwnd, None):
+        return True
+
+    cur_tid = k32.GetCurrentThreadId()
+    fg_tid = u32.GetWindowThreadProcessId(fg, None) if fg else 0
+    tgt_tid = u32.GetWindowThreadProcessId(hwnd, None)
+    attached = []
+    for tid in (fg_tid, tgt_tid):
+        if tid and tid != cur_tid and u32.AttachThreadInput(cur_tid, tid, True):
+            attached.append(tid)
+    try:
+        u32.ShowWindow(hwnd, 9)          # SW_RESTORE -- also un-minimises
+        u32.BringWindowToTop(hwnd)
+        u32.SetForegroundWindow(hwnd)
+    finally:
+        for tid in attached:
+            u32.AttachThreadInput(cur_tid, tid, False)
+
+    now = u32.GetForegroundWindow()
+    ok = bool(now and u32.GetWindowThreadProcessId(now, None) == tgt_tid)
+    if label and not quiet:
+        log(f"  {label}: foreground {'TAKEN' if ok else 'REFUSED by Windows'} "
+            f"(attached {len(attached)} input queue(s))")
+    return ok
+
+
 def _press_vk(pid: int, vk: int, label: str = "") -> bool:
     """One down+up of a virtual key into a peer's window."""
     import ctypes
@@ -3311,6 +3387,9 @@ def cmd_browser(args) -> None:
         # The content-warning screen is itself a switcher child; advance past it so the
         # browser is built against the real main menu.
         "VOTVCOOP_MENU_PROCEED": "1",
+        # Lift the hit probe's player-sized cap of 3: this run spends all three before
+        # the ROW phase, which is the only phase whose failure is still unexplained.
+        "VOTVCOOP_HIT_PROBE": "80",
     }
     fake = None
     fake_url = ""
@@ -3325,6 +3404,23 @@ def cmd_browser(args) -> None:
                            memory_limit_gb=args.memory_limit_gb,
                            set_net_role=False, set_scenario="menu", extra_env=env)
     host_log = HOST_DIR / "multivoid.log"
+
+    # THE SELFTEST REQUIRES FOREGROUND, SO THE HARNESS MUST ARRANGE IT (2026-08-30).
+    # Before this, nothing in mp.py ever called SetForegroundWindow, and three runs in a
+    # row died on `SELFTEST DISARMED -- our window was not the FOREGROUND window`, which
+    # reads like a product failure and is not one. The window does not exist the instant
+    # launch_peer returns, so poll for it rather than racing it.
+    fg_ok = False
+    for _ in range(20):
+        if _force_foreground(host_pid, quiet=True):
+            fg_ok = True
+            break
+        time.sleep(1)
+    if fg_ok:
+        log("  foreground: game is frontmost")
+    else:
+        log("  foreground: COULD NOT take foreground -- the selftest will stand down; "
+            "close whatever is holding focus and re-run")
 
     t0 = time.time()
     shot = None
@@ -3342,10 +3438,24 @@ def cmd_browser(args) -> None:
         if not list_votv():
             log("  (no VotV process -- exited/crashed)")
             break
+        # Hold focus for the whole arming window. Something else grabbing it mid-run
+        # (a notification, an installer, the editor regaining it) disarms the selftest
+        # just as effectively as never having it, and costs the entire run.
+        if not saw_shown or time.time() - t0 < 60:
+            _force_foreground(host_pid, quiet=True)
         try:
             text = host_log.read_text(errors="ignore")
         except Exception:
             text = ""
+        # STOP WHEN THE WORK IS DONE, NOT WHEN THE CLOCK RUNS OUT (2026-08-30, user:
+        # "он сделал что надо было и продолжил тупо висеть тратя время"). The selftest
+        # finishes in ~40 s; --duration is 140, so every run burned ~100 s holding a
+        # window open with nothing left to observe. HOST LINK is the last phase, so its
+        # verdict -- pass or fail -- means the run has produced everything it can.
+        if "HOST LINK" in text:
+            log(f"  t+{int(time.time()-t0)}s selftest complete (HOST LINK verdict in) -- "
+                "stopping instead of idling out the clock")
+            break
         if not saw_shown and "server_browser_native: shown" in text:
             saw_shown = True
             log(f"  t+{int(time.time()-t0)}s browser shown -- capturing")

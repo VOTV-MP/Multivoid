@@ -206,10 +206,25 @@ int      g_closeHovered      = -1;   // -1 = not sampled; an unrun phase is not 
 // Measured 2026-08-30: client origin (320,180) on the lab rig, a whole list-height.
 // The seventh site (the X button) already converted, which is why the close-button
 // phase was the one that behaved.
-void PlaceCursorOnClient(float clientX, float clientY) {
-    POINT pt{static_cast<long>(clientX), static_cast<long>(clientY)};
-    if (HWND hwnd = ::GetActiveWindow()) ::ClientToScreen(hwnd, &pt);
-    ::SetCursorPos(pt.x, pt.y);
+// PLACE THE POINTER AT A POINT EXPRESSED IN SLATE'S ABSOLUTE SPACE -- which is DESKTOP
+// pixels, so this is a straight `SetCursorPos` and every caller may hand it a rect from
+// `WidgetScreenRect` unchanged.
+//
+// IT DID A `ClientToScreen` FOR ONE DAY, AND THAT WAS A REGRESSION I INTRODUCED. On
+// 2026-08-30 the row hit test was found comparing the cursor against these rects and
+// "corrected" on the theory that the rects were CLIENT pixels; the harness was changed to
+// match. The theory was wrong in the harness's direction too: adding the client origin
+// here moved every aim by exactly that origin -- `measured`, the row phase asked for
+// (1280,592) and the pointer landed at (1600,772) on a rig whose client area starts at
+// (320,180) -- which put the cursor BELOW the last live row, where -1 is the correct
+// answer. Three runs then reported ROW SELECT FAIL for a hit test that was working.
+//
+// The comment this replaced said Slate's absolute space is desktop pixels and needs no
+// conversion. I deleted it as false. It was true, and the run that proved it is the child
+// table in `native_screen`'s probe: rows at desktop y 496..752 with the panel at (796,496),
+// i.e. the same space `GetCursorPos` reports.
+void PlaceCursorOnAbsolute(float absX, float absY) {
+    ::SetCursorPos(static_cast<long>(absX), static_cast<long>(absY));
 }
 
 int      g_rowHovered        = -1;   // ...and the same for the row the click phase aims at
@@ -620,7 +635,7 @@ void Tick(void* scrim, void* list, void* closeBtn) {
             }
             UE_LOGW("server_browser_native: %s at desktop (%.0f,%.0f) %.0fx%.0f -- clicking it",
                     what, tl.X, tl.Y, sz.X, sz.Y);
-            PlaceCursorOnClient(tl.X + sz.X * 0.5f,
+            PlaceCursorOnAbsolute(tl.X + sz.X * 0.5f,
                                 tl.Y + sz.Y * 0.5f);
             break;
         }
@@ -678,7 +693,7 @@ void Tick(void* scrim, void* list, void* closeBtn) {
                 g_selfCheckStep = kClickMove - 1;   // fall through to the X phases
                 return;
             }
-            PlaceCursorOnClient(ltl.X + lsz.X * 0.5f,
+            PlaceCursorOnAbsolute(ltl.X + lsz.X * 0.5f,
                                 ltl.Y + kRowPx * 1.5f);
             break;
         }
@@ -802,7 +817,7 @@ void Tick(void* scrim, void* list, void* closeBtn) {
                 g_selfCheckStep = kClickMove - 1;
                 return;
             }
-            PlaceCursorOnClient(ltl.X + lsz.X * 0.5f,
+            PlaceCursorOnAbsolute(ltl.X + lsz.X * 0.5f,
                                 ltl.Y + kRowPx * (self ? 1.5f : 4.5f));
             // The needle mp.py captures on. It names what the frame should show, so the
             // shot is falsifiable by looking at it rather than merely archived.
@@ -894,7 +909,7 @@ void Tick(void* scrim, void* list, void* closeBtn) {
             // Slate reports CLIENT pixels; SetCursorPos takes DESKTOP. The comment that
             // stood here claimed they were one space and that no ClientToScreen was
             // needed -- measured FALSE 2026-08-30 (client origin 320,180).
-            PlaceCursorOnClient(tl.X + size.X * 0.5f, tl.Y + size.Y * 0.5f);
+            PlaceCursorOnAbsolute(tl.X + size.X * 0.5f, tl.Y + size.Y * 0.5f);
             break;
         }
         case kClickSample:
@@ -948,7 +963,7 @@ void Tick(void* scrim, void* list, void* closeBtn) {
             }
             UE_LOGW("server_browser_native: HOST button at desktop (%.0f,%.0f) %.0fx%.0f "
                     "-- clicking it", tl.X, tl.Y, sz.X, sz.Y);
-            PlaceCursorOnClient(tl.X + sz.X * 0.5f,
+            PlaceCursorOnAbsolute(tl.X + sz.X * 0.5f,
                                 tl.Y + sz.Y * 0.5f);
             break;
         }
@@ -995,7 +1010,7 @@ void Tick(void* scrim, void* list, void* closeBtn) {
             // browser's are 64. Half of 64 still landed inside row 0 -- by margin, not by
             // construction, which is exactly the kind of aim that goes wrong silently the
             // day a layout constant moves.
-            PlaceCursorOnClient(tl.X + sz.X * 0.5f,
+            PlaceCursorOnAbsolute(tl.X + sz.X * 0.5f,
                                 tl.Y + kHostRowPx * 0.5f);
             break;
         }

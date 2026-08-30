@@ -16,6 +16,7 @@
 #include <windows.h>   // GetCursorPos -- HoverTracker reads the real pointer
 
 #include <cmath>
+#include <cstdlib>   // the hit probe's raisable cap reads one env var
 
 namespace ui::native_screen {
 namespace {
@@ -218,16 +219,18 @@ void* BuildButton(void* parent, void* donorBtn, const wchar_t* label, int32_t fo
 
 namespace {
 
-// Three answers, not two, so the walk can STOP rather than finish.
-enum class RowHit { Miss, Hit, Below };
-
-RowHit Probe(void* panel, int32_t i, long cx, long cy,
-             const ue_wrap::FVector2D& panelTl, const ue_wrap::FVector2D& panelSz) {
+// TWO answers. There used to be a third -- `Below`, meaning "this child starts under the
+// cursor, so stop walking" -- and the walk that consumed it is gone (see ChildAtCursor):
+// it rested on child order matching arranged top-to-bottom order, which a rebuilt or
+// scrolled-out list does not honour, and one violation returned "no row" for the whole
+// list. The early-out below survives as what it always was underneath: a cheap Miss.
+bool Probe(void* panel, int32_t i, long cx, long cy,
+           const ue_wrap::FVector2D& panelTl, const ue_wrap::FVector2D& panelSz) {
     void* child = U::ChildAt(panel, i);
     ue_wrap::FVector2D tl{}, sz{};
     if (!child || !U::WidgetScreenRect(child, tl, sz) || sz.X < 1.f || sz.Y < 1.f)
-        return RowHit::Miss;
-    if (static_cast<long>(std::floor(tl.Y)) > cy) return RowHit::Below;
+        return false;
+    if (static_cast<long>(std::floor(tl.Y)) > cy) return false;
     // CLIPPED TO THE PANEL, and it is not decoration: a child scrolled out of view is not
     // arranged, so its cached geometry is whatever it was when it last WAS -- rows were
     // observed reporting positions above the list's own top edge -- and a stale rect must
@@ -235,7 +238,7 @@ RowHit Probe(void* panel, int32_t i, long cx, long cy,
     const float top = tl.Y > panelTl.Y ? tl.Y : panelTl.Y;
     const float bot = (tl.Y + sz.Y) < (panelTl.Y + panelSz.Y) ? (tl.Y + sz.Y)
                                                               : (panelTl.Y + panelSz.Y);
-    if (bot <= top) return RowHit::Miss;   // entirely scrolled out
+    if (bot <= top) return false;   // entirely scrolled out
     // floor, not a truncating cast: `static_cast<long>` rounds toward zero, so a negative
     // coordinate would round the opposite way and eat the left pixel column of every row.
     // (The original note said "on a monitor left of the primary (negative desktop X)" --
@@ -246,7 +249,7 @@ RowHit Probe(void* panel, int32_t i, long cx, long cy,
                     cy <  static_cast<long>(std::floor(bot)) &&
                     cx >= static_cast<long>(std::floor(tl.X)) &&
                     cx <  static_cast<long>(std::floor(tl.X + sz.X));
-    return in ? RowHit::Hit : RowHit::Miss;
+    return in;
 }
 
 }  // namespace
@@ -260,13 +263,34 @@ int32_t ChildAtCursor(void* panel, int32_t count, long cx, long cy, int32_t hint
         cy < static_cast<long>(std::floor(tl.Y)) ||
         cy >= static_cast<long>(std::floor(tl.Y + sz.Y)))
         return -1;
-    if (hint >= 0 && hint < count && Probe(panel, hint, cx, cy, tl, sz) == RowHit::Hit)
+    if (hint >= 0 && hint < count && Probe(panel, hint, cx, cy, tl, sz))
         return hint;
     for (int32_t i = 0; i < count; ++i) {
         if (i == hint) continue;   // already probed
-        const RowHit r = Probe(panel, i, cx, cy, tl, sz);
-        if (r == RowHit::Hit) return i;
-        if (r == RowHit::Below) break;
+        // NO EARLY BREAK ON `Below` (2026-08-30). This loop used to stop at the first
+        // child whose top edge sits under the cursor, on the reasoning that children of
+        // a vertical list are ordered top-to-bottom, so everything after it is further
+        // down. That ordering is an ASSUMPTION about arranged geometry, and it is not
+        // one this code is entitled to make:
+        //
+        //   * a child scrolled out of view is not arranged, so its rect is whatever it
+        //     was when it last WAS -- the Probe above already documents rows "reporting
+        //     positions above the list's own top edge", and a stale rect can just as
+        //     easily read far BELOW;
+        //   * the rows are rebuilt on every sync (12 -> 4 -> 12 in one lab run), and
+        //     nothing in that path promises child order survives a rebuild.
+        //
+        // One out-of-order child therefore did not cost one row -- it ended the walk and
+        // returned -1, i.e. NO row hovered anywhere, which is total rather than partial:
+        // the selection path reads the same value, so no server could be picked either.
+        // `measured` 2026-08-30: cursor (1600,772) sits inside child 6's own reported
+        // rect (796,752) 955x64 -- all four bounds satisfied by hand -- while this
+        // function returned -1, so the walk provably never reached it.
+        //
+        // The cost of correctness here is at most `count` rect reads on a list bounded
+        // by kMaxRows, on a poll that only runs when the pointer or the scroll actually
+        // moved. That is the right trade against losing the hit test outright.
+        if (Probe(panel, i, cx, cy, tl, sz)) return i;
     }
     return -1;
 }
@@ -342,16 +366,54 @@ bool HoverTracker::Poll(void* panel, int32_t shownCount) {
     // own run left no evidence at all last time -- INFO is buffered and a killed
     // process never writes it -- so a field report on this arrived with nothing to
     // read. Three lines is the price of never asking them to re-run with a flag.
+    //
+    // THE CAP IS RAISABLE FOR THE LAB (2026-08-30). Three lines are the right budget
+    // for a player, and exactly the wrong one for the selftest: the browser run spends
+    // all three before the ROW phase begins, so the one moment the lane needs to see --
+    // the cursor placed on a row, the hit test's own answer for it -- was the moment
+    // the probe had already fallen silent. `VOTVCOOP_HIT_PROBE=N` lifts it; the lab
+    // sets it, and nothing a player runs does.
+    static const int sCap = [] {
+        if (const char* v = std::getenv("VOTVCOOP_HIT_PROBE")) {
+            const int n = std::atoi(v);
+            if (n > 0) return n;
+        }
+        return 3;
+    }();
     static int sTold = 0;
-    if (moved && sTold < 3) {
+    if (moved && sTold < sCap) {
         ++sTold;
         ue_wrap::FVector2D ptl{}, psz{};
         const bool haveP = U::WidgetScreenRect(panel, ptl, psz);
+        const int32_t hit = ChildAtCursor(panel, shownCount, hx, hy, -1);
         UE_LOGW("native_screen[hit] desktop=(%ld,%ld) client=(%ld,%ld) slateAbs=%s(%.1f,%.1f) "
                 "panel %s(%.0f,%.0f) %.0fx%.0f -> row=%d",
                 c.x, c.y, cli.x, cli.y, converted ? "" : "UNCONVERTED ", abs.X, abs.Y,
-                haveP ? "" : "UNREAD ", ptl.X, ptl.Y, psz.X, psz.Y,
-                ChildAtCursor(panel, shownCount, hx, hy, -1));
+                haveP ? "" : "UNREAD ", ptl.X, ptl.Y, psz.X, psz.Y, hit);
+        // A MISS INSIDE THE PANEL IS THE ONLY INTERESTING MISS, and it is the one that
+        // has now survived two hand-derived fixes. Both were reasoned from the ONE rect
+        // the selftest happened to dump; neither author had ever seen the other eleven.
+        // So when the cursor is inside the list and no child claims it, print the whole
+        // child table -- index, rect, and whether the rect was readable at all -- because
+        // the answer is a COMPARISON across children, and no single-row dump can carry it.
+        if (hit < 0 && haveP && sCap > 3 &&
+            hx >= static_cast<long>(ptl.X) && hx < static_cast<long>(ptl.X + psz.X) &&
+            hy >= static_cast<long>(ptl.Y) && hy < static_cast<long>(ptl.Y + psz.Y)) {
+            UE_LOGW("native_screen[hit]   MISS INSIDE THE PANEL -- %d child(ren) follow",
+                    shownCount);
+            for (int32_t i = 0; i < shownCount && i < 64; ++i) {
+                void* ch = U::ChildAt(panel, i);
+                ue_wrap::FVector2D ctl{}, csz{};
+                const bool haveC = ch && U::WidgetScreenRect(ch, ctl, csz);
+                UE_LOGW("native_screen[hit]     child %2d %ls %s(%.0f,%.0f) %.0fx%.0f%s",
+                        i, ch ? R::ClassNameOf(ch).c_str() : L"(null)",
+                        haveC ? "" : "UNREAD ", ctl.X, ctl.Y, csz.X, csz.Y,
+                        (haveC && hx >= static_cast<long>(ctl.X) &&
+                         hx < static_cast<long>(ctl.X + csz.X) &&
+                         hy >= static_cast<long>(ctl.Y) &&
+                         hy < static_cast<long>(ctl.Y + csz.Y)) ? "  <== CONTAINS CURSOR" : "");
+            }
+        }
     }
 
     index_ = ChildAtCursor(panel, shownCount, hx, hy, index_);
