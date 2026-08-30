@@ -5,19 +5,19 @@
 // RivaTuner/MSI-Afterburner is running (RTSS's hook-integrity control restores its
 // own bytes over ours and unlinks our detour), and OBS game-capture cannot see it
 // (OBS copies the backbuffer at the top of ITS Present detour, before ours draws).
-// The converged fix moves our draw UP to FD3D11Viewport::PresentChecked -- upstream
-// of the whole external inline-hook chain -- and retires the Present + ResizeBuffers
-// hooks whole (RULE 2). READ docs/OVERLAY_CAPTURE_COEXIST.md BEFORE changing anything
-// about where/how this file draws. Built so far: only the AOB + the log-only resolve
-// probe in Init() (verify-before-retire); the seam-move itself is NOT built yet, so
-// everything below is still live and still carries both defects.
+// SHIPPED 2026-08-30. Our draw now happens inside FD3D11Viewport::PresentChecked (and
+// FD3D12Viewport::PresentInternal) -- the engine's own private callers of the swapchain
+// Present, upstream of the whole external inline-hook chain -- and the
+// IDXGISwapChain::Present + ResizeBuffers hooks and the dummy-swapchain vtable resolve
+// they needed are RETIRED WHOLE (RULE 2). READ docs/OVERLAY_CAPTURE_COEXIST.md BEFORE
+// changing anything about where or how this file draws.
 //
 // Standard "overlay over a game's DXGI swapchain" technique:
-//   1. Init(): make a throwaway DX11 device + swapchain on a hidden window ONLY to
-//      read the IDXGISwapChain vtable, then MinHook Present (vtable[8]) +
-//      ResizeBuffers (vtable[13]). The vtable is shared by every swapchain, so
-//      hooking the dummy's entry hooks the game's real swapchain too.
-//   2. PresentDetour: on the FIRST real present, the game's device + window already
+//   1. Init(): AOB-resolve FOUR engine-private functions and MinHook them -- the two
+//      per-RHI present choke points (the DRAW seam) and the two per-RHI viewport
+//      Resize functions (the render-target release bracket). No DXGI vtable entry is
+//      patched, which is the entire point: those are the bytes RTSS restores.
+//   2. The draw seam: on the FIRST real present, the game's device + window already
 //      exist -- capture them, bring up ImGui + the RHI render backend + a WndProc
 //      hook, then each frame run the ImGui pass and draw the active UI surface.
 //      Everything that touches a concrete D3D device lives behind
@@ -105,15 +105,17 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 namespace ui::imgui_overlay {
 namespace {
 
-using PresentFn = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT);
 // RULE 2, 2026-08-30: `ResizeBuffersFn`, `g_resizeTrampoline` and `g_resizeTarget` were
 // deleted with the IDXGISwapChain::ResizeBuffers hook they served. The resize bracket
 // lives on the engine's own FD3D11Viewport::Resize / FD3D12Viewport::Resize now (see
 // EngineResizeBracket below and docs/OVERLAY_CAPTURE_COEXIST.md section 9c commit 1) --
 // there is ONE bracket, and it is not on a function RTSS unlinks.
+//
+// `PresentFn`, `g_presentTrampoline`, `g_presentTarget` and `ResolveSwapChainVtable` went
+// the same way, with the IDXGISwapChain::Present hook: the draw seam is
+// FD3D11Viewport::PresentChecked / FD3D12Viewport::PresentInternal now.
 
-PresentFn       g_presentTrampoline = nullptr;
-void*           g_presentTarget = nullptr;
+int g_seamsArmed = 0;   // how many of the four engine seams installed (for the boot line)
 
 // user32!SetCursorPos -- hooked so we can no-op UE4's per-tick cursor recentering
 // while the menu is visible (otherwise the OS cursor is snapped back to the window
@@ -522,15 +524,85 @@ bool BringUpGuarded(IDXGISwapChain* sc) {
     }
 }
 
-HRESULT STDMETHODCALLTYPE PresentDetour(IDXGISwapChain* sc, UINT sync, UINT flags) {
+// Read `viewport + off`, SEH-guarded: a drifted offset must not fault the render thread.
+IDXGISwapChain* RawViewportSwapChain(void* viewport, size_t off) {
+    if (!viewport) return nullptr;
+    __try {
+        return *reinterpret_cast<IDXGISwapChain**>(reinterpret_cast<uint8_t*>(viewport) + off);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return nullptr;
+    }
+}
+
+bool QiIsSwapChain(IDXGISwapChain* sc) {
+    IDXGISwapChain* probe = nullptr;
+    if (FAILED(sc->QueryInterface(__uuidof(IDXGISwapChain), reinterpret_cast<void**>(&probe))) ||
+        !probe)
+        return false;
+    probe->Release();
+    return true;
+}
+
+// THE SWAPCHAIN, RE-READ EVERY CALL AND QI-VALIDATED ON CHANGE (cross-cutting rule,
+// docs/OVERLAY_CAPTURE_COEXIST.md section 9c). Two halves, and they answer different
+// questions:
+//
+//   RE-READ EVERY CALL, because a fullscreen transition REPLACES the object. Caching the
+//   pointer would keep drawing into a swapchain the engine has abandoned -- the shipped
+//   DX12 backend already says so at overlay_backend_dx12.cpp:488 and re-compares every
+//   call for the same reason.
+//
+//   QI ONLY ON CHANGE, because this runs on the present path at ~120 Hz and QueryInterface
+//   is a COM call. What it proves is that our OFFSET is still the swapchain field, and an
+//   offset does not drift between two frames of one process -- it drifts between BUILDS.
+//   So the honest cadence is "prove each distinct pointer once", not "prove the same
+//   pointer 120 times a second".
+//
+// FAILS CLOSED: an unprovable pointer yields null and the caller skips its work rather
+// than handing D3D something we could not identify. The complaint is rate-limited to the
+// pointer that caused it, so a permanently drifted offset costs one line, not one a frame.
+IDXGISwapChain* ValidatedSwapChain(void* viewport, size_t off, const char* which,
+                                   IDXGISwapChain*& lastOk) {
+    IDXGISwapChain* sc = RawViewportSwapChain(viewport, off);
+    if (!sc) return nullptr;
+    if (sc == lastOk) return sc;
+    if (!QiIsSwapChain(sc)) {
+        static const void* sComplainedAbout = nullptr;
+        if (sComplainedAbout != sc) {
+            sComplainedAbout = sc;
+            UE_LOGE("imgui_overlay: %s -- the pointer at viewport+0x%zX (%p) does not "
+                    "QueryInterface as IDXGISwapChain. The offset has drifted for this "
+                    "build; the overlay draws NOTHING rather than through an unidentified "
+                    "pointer (docs/OVERLAY_CAPTURE_COEXIST.md, re-derive per "
+                    "docs/VERSION_MIGRATION.md).", which, off, static_cast<void*>(sc));
+            ue_wrap::log::Flush();
+        }
+        return nullptr;
+    }
+    lastOk = sc;
+    return sc;
+}
+
+// ONE FRAME OF OVERLAY WORK, and it no longer knows what called it.
+//
+// This body used to BE the `IDXGISwapChain::Present` detour. It is unchanged except that
+// the swapchain now arrives as a parameter instead of being the hooked function's first
+// argument -- the whole seam move is "who calls this and with what", not "what it does".
+// docs/OVERLAY_CAPTURE_COEXIST.md section 9c commit 3.
+void OverlayFrame(IDXGISwapChain* sc) {
     // Perf probe: count every presented frame (the frame anchor for ms/frame).
     // Cheap relaxed increment when armed; a single bool load when off.
+    //
+    // IT IS ALSO THE S1 INSTRUMENT, which is why it stays on this path. `fps=0` sustained
+    // while every other subsystem ticks is how RTSS's unlink was measured, and it is the
+    // ONLY reading that can say whether the seam move worked -- so the commit that takes
+    // work off the present path must move this counter, never delete it.
     coop::dev::perf_probe::NoteFrame();
     // R-3 passive #2: time our WHOLE detour body (input publish + ImGui render)
     // up to -- but excluding -- the engine's own Present. Accumulated into the
     // OverlayPresent bucket (render thread; AddTicks is a relaxed fetch_add).
     // Cannot use perf_probe::Scope here: its destructor would fire AFTER
-    // g_presentTrampoline returns and swallow the present/vsync wait.
+    // the engine's own present returns and swallow the present/vsync wait.
     const bool perfOn = coop::dev::perf_probe::Armed();
     const unsigned long long perfT0 = perfOn ? coop::dev::perf_probe::NowTicks() : 0;
     // The input probe must sample even with NO surface open (that is the state in which
@@ -578,7 +650,61 @@ HRESULT STDMETHODCALLTYPE PresentDetour(IDXGISwapChain* sc, UINT sync, UINT flag
         coop::dev::perf_probe::AddTicks(coop::dev::perf_probe::Bucket::OverlayPresent,
                                         coop::dev::perf_probe::NowTicks() - perfT0);
     }
-    return g_presentTrampoline(sc, sync, flags);
+}
+
+// THE DRAW SEAM -- the whole fix for S1 and S2, in two functions.
+//
+// We used to inline-patch `IDXGISwapChain::Present`. That is the exact byte region RTSS
+// runtime-disassembles and RESTORES: it lets us install, then unlinks us, and the overlay
+// dies after a frame or two (measured `fps=0` sustained against a `120/s` control, and the
+// user watching it "appear for a second and disappear"). It is also BELOW the point OBS's
+// default game-capture copies the backbuffer, which is the same defect wearing the other
+// symptom.
+//
+// So we no longer patch it. `FD3D11Viewport::PresentChecked` and
+// `FD3D12Viewport::PresentInternal` are the engine's own private functions that CALL that
+// swapchain Present -- census-proven single once-per-frame choke points. Drawing there puts
+// our pixels in the backbuffer BEFORE the engine hands it to DXGI, i.e. upstream of the
+// entire external inline-hook chain. RTSS has nothing of ours to unlink (it has no
+// knowledge of a private engine function), its OSD still composites on top when the
+// original runs, and OBS copies a backbuffer we are already in.
+//
+// WE DRAW UNCONDITIONALLY. `PresentChecked` has three non-presenting exits (the
+// CustomPresent gate, a null swapchain, and a fullscreen-state mismatch). Pre-checking them
+// would mean re-implementing the engine's conditions inside our detour -- a site list that
+// breaks silently the day those conditions change. On a non-presenting exit our draw is
+// wasted, not harmful.
+//
+// THE RETURN VALUE IS FORWARDED AS AN OPAQUE REGISTER-WIDTH INTEGER, deliberately. UE4.27
+// declares both of these `bool`, but the DX12 one TAIL-JUMPS to IDXGISwapChain::Present
+// (`48 FF 60 40`), whose return is an HRESULT -- so the two readings of "what is really in
+// RAX" disagree, and this file does not need to settle it. Declaring the trampoline's
+// return as an integer of register width forwards whatever the original produced,
+// byte-exact, under either reading. Guessing `bool` and being wrong would hand the engine
+// a truncated verdict about its own present.
+using EnginePresentFn = uintptr_t(__fastcall*)(void* viewport, int32_t syncInterval);
+EnginePresentFn g_d3d11PresentTrampoline = nullptr;
+EnginePresentFn g_d3d12PresentTrampoline = nullptr;
+// ONE proven-pointer cache per RHI, shared by that RHI's present seam and its resize
+// bracket: they read the SAME field of the SAME viewport, so proving it twice proves
+// nothing extra, and two caches could disagree about which pointer is current.
+IDXGISwapChain* g_lastOkSc11 = nullptr;
+IDXGISwapChain* g_lastOkSc12 = nullptr;
+
+uintptr_t __fastcall D3D11PresentCheckedDetour(void* viewport, int32_t syncInterval) {
+    if (IDXGISwapChain* sc = ValidatedSwapChain(viewport, ue_wrap::profile::kD3D11Viewport_SwapChain,
+                                                "FD3D11Viewport::PresentChecked",
+                                                g_lastOkSc11))
+        OverlayFrame(sc);
+    return g_d3d11PresentTrampoline(viewport, syncInterval);
+}
+
+uintptr_t __fastcall D3D12PresentInternalDetour(void* viewport, int32_t syncInterval) {
+    if (IDXGISwapChain* sc = ValidatedSwapChain(viewport, ue_wrap::profile::kD3D12Viewport_SwapChain,
+                                                "FD3D12Viewport::PresentInternal",
+                                                g_lastOkSc12))
+        OverlayFrame(sc);
+    return g_d3d12PresentTrampoline(viewport, syncInterval);
 }
 
 // THE RESIZE BRACKET, ON THE ENGINE'S OWN SEAM (docs/OVERLAY_CAPTURE_COEXIST.md section
@@ -612,32 +738,12 @@ using EngineResizeFn = void(__fastcall*)(void* viewport, uint32_t sizeX, uint32_
 EngineResizeFn g_d3d11ResizeTrampoline = nullptr;
 EngineResizeFn g_d3d12ResizeTrampoline = nullptr;
 
-// Read `viewport + off` and prove it is a swapchain before handing it to the backend.
-// A drifted offset must fail CLOSED (no re-create) rather than hand a garbage pointer to
-// D3D; QueryInterface is the cheapest proof that survives a struct-layout change.
-IDXGISwapChain* ViewportSwapChain(void* viewport, size_t off) {
-    if (!viewport) return nullptr;
-    IDXGISwapChain* sc = nullptr;
-    __try {
-        sc = *reinterpret_cast<IDXGISwapChain**>(reinterpret_cast<uint8_t*>(viewport) + off);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return nullptr;
-    }
-    if (!sc) return nullptr;
-    IDXGISwapChain* probe = nullptr;
-    if (FAILED(sc->QueryInterface(__uuidof(IDXGISwapChain), reinterpret_cast<void**>(&probe))) ||
-        !probe)
-        return nullptr;
-    probe->Release();
-    return sc;
-}
-
-void EngineResizeBracket(const char* which, EngineResizeFn orig, size_t scOff, void* viewport,
-                         uint32_t sizeX, uint32_t sizeY, uint8_t bFullscreen,
-                         int32_t pixelFormat) {
+void EngineResizeBracket(const char* which, EngineResizeFn orig, size_t scOff,
+                         IDXGISwapChain*& lastOk, void* viewport, uint32_t sizeX,
+                         uint32_t sizeY, uint8_t bFullscreen, int32_t pixelFormat) {
     overlay_backend::OnResizeRelease();   // the back buffers are about to be recreated
     orig(viewport, sizeX, sizeY, bFullscreen, pixelFormat);
-    IDXGISwapChain* sc = ViewportSwapChain(viewport, scOff);
+    IDXGISwapChain* sc = ValidatedSwapChain(viewport, scOff, which, lastOk);
     if (sc && g_imguiReady.load(std::memory_order_acquire)) {
         overlay_backend::OnResizeRecreate(sc);
         // Resizes are rare (a window/resolution/fullscreen change), so one line each is not
@@ -649,93 +755,41 @@ void EngineResizeBracket(const char* which, EngineResizeFn orig, size_t scOff, v
                 "rebuilt on %s", which, sizeX, sizeY, bFullscreen, pixelFormat,
                 overlay_backend::Kind() ? overlay_backend::Kind() : "?");
         ue_wrap::log::Flush();
-    } else if (!sc) {
-        // FAIL CLOSED, LOUDLY. No re-create means the overlay draws nothing until the next
-        // resize; that is strictly better than drawing through a pointer we could not prove.
-        UE_LOGE("imgui_overlay: %s::Resize -- the swapchain at viewport+0x%zX did not "
-                "QueryInterface as IDXGISwapChain. The offset has drifted for this build; "
-                "the render target is NOT rebuilt (docs/OVERLAY_CAPTURE_COEXIST.md).",
-                which, scOff);
-        ue_wrap::log::Flush();
     }
+    // A null `sc` needs no line here: ValidatedSwapChain already complained, once, about
+    // the pointer that caused it. The consequence -- no re-create, so the overlay draws
+    // nothing until the next resize -- is stated there.
 }
 
 void __fastcall D3D11ResizeDetour(void* viewport, uint32_t sizeX, uint32_t sizeY,
                                   uint8_t bFullscreen, int32_t pixelFormat) {
-    EngineResizeBracket("FD3D11Viewport", g_d3d11ResizeTrampoline,
-                        ue_wrap::profile::kD3D11Viewport_SwapChain, viewport, sizeX, sizeY,
-                        bFullscreen, pixelFormat);
+    EngineResizeBracket("FD3D11Viewport::Resize", g_d3d11ResizeTrampoline,
+                        ue_wrap::profile::kD3D11Viewport_SwapChain, g_lastOkSc11, viewport,
+                        sizeX, sizeY, bFullscreen, pixelFormat);
 }
 
 void __fastcall D3D12ResizeDetour(void* viewport, uint32_t sizeX, uint32_t sizeY,
                                   uint8_t bFullscreen, int32_t pixelFormat) {
-    EngineResizeBracket("FD3D12Viewport", g_d3d12ResizeTrampoline,
-                        ue_wrap::profile::kD3D12Viewport_SwapChain, viewport, sizeX, sizeY,
-                        bFullscreen, pixelFormat);
+    EngineResizeBracket("FD3D12Viewport::Resize", g_d3d12ResizeTrampoline,
+                        ue_wrap::profile::kD3D12Viewport_SwapChain, g_lastOkSc12, viewport,
+                        sizeX, sizeY, bFullscreen, pixelFormat);
 }
 
-// Read IDXGISwapChain::Present (vtbl[8]) by spinning up a
-// throwaway DX11 device + swapchain on a hidden window. Fills g_presentTarget.
-bool ResolveSwapChainVtable() {
-    WNDCLASSEXW wc{};
-    wc.cbSize = sizeof(wc);
-    wc.lpfnWndProc = ::DefWindowProcW;
-    wc.hInstance = ::GetModuleHandleW(nullptr);
-    wc.lpszClassName = L"VOTVCoopImguiDummyWnd";
-    ::RegisterClassExW(&wc);
-    HWND dummy = ::CreateWindowW(wc.lpszClassName, L"", WS_OVERLAPPEDWINDOW, 0, 0, 64, 64,
-                                 nullptr, nullptr, wc.hInstance, nullptr);
-    if (!dummy) { ::UnregisterClassW(wc.lpszClassName, wc.hInstance); return false; }
-
-    DXGI_SWAP_CHAIN_DESC sd{};
-    sd.BufferCount = 1;
-    sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    sd.OutputWindow = dummy;
-    sd.SampleDesc.Count = 1;
-    sd.Windowed = TRUE;
-    sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
-
-    IDXGISwapChain* sc = nullptr;
-    ID3D11Device* dev = nullptr;
-    ID3D11DeviceContext* ctx = nullptr;
-    D3D_FEATURE_LEVEL fl{};
-    const D3D_FEATURE_LEVEL want[] = { D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_0 };
-    HRESULT hr = ::D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
-                                                 want, 2, D3D11_SDK_VERSION, &sd, &sc, &dev, &fl, &ctx);
-    bool ok = false;
-    if (SUCCEEDED(hr) && sc) {
-        void** vtbl = *reinterpret_cast<void***>(sc);
-        g_presentTarget = vtbl[8];   // IDXGISwapChain::Present
-        // vtbl[13] (ResizeBuffers) is NO LONGER READ: its hook retired whole when the
-        // resize bracket moved to the engine seam (RULE 2 -- one bracket, not two).
-        ok = (g_presentTarget != nullptr);
-    } else {
-        UE_LOGW("imgui_overlay: dummy D3D11CreateDeviceAndSwapChain failed (hr=0x%08lX)", hr);
-    }
-    if (sc)  sc->Release();
-    if (ctx) ctx->Release();
-    if (dev) dev->Release();
-    ::DestroyWindow(dummy);
-    ::UnregisterClassW(wc.lpszClassName, wc.hInstance);
-    return ok;
-}
+// RULE 2, 2026-08-30: `ResolveSwapChainVtable` -- the throwaway DX11 device + hidden
+// window + swapchain spun up ONLY to read the DXGI vtable -- is DELETED with the
+// `IDXGISwapChain::Present` hook it existed to find. Nothing in this file patches a
+// DXGI vtable entry any more; both seams are engine-private functions found by AOB.
+//
+// The trade is stated rather than hidden: that resolve was VERSION-IMMUNE (a vtable
+// index is fixed by the DXGI contract) and the two AOBs are not. It is the price of
+// not standing on a function RTSS restores, and it is the same price every other core
+// capability in this mod already pays -- ProcessEvent rides an AOB too.
 
 }  // namespace
 
 bool Init() {
     if (g_installed.load(std::memory_order_acquire)) return true;
     if (!ue_wrap::hook::Init()) { UE_LOGE("imgui_overlay: hook::Init failed"); return false; }
-    if (!ResolveSwapChainVtable()) {
-        UE_LOGE("imgui_overlay: could not resolve the IDXGISwapChain vtable -- overlay disabled");
-        return false;
-    }
-    const bool p = ue_wrap::hook::Install(g_presentTarget, &PresentDetour,
-                                          reinterpret_cast<void**>(&g_presentTrampoline));
-    if (!p) {
-        UE_LOGE("imgui_overlay: MinHook Install failed on IDXGISwapChain::Present");
-        return false;
-    }
     // THE RESIZE BRACKET LIVES ON THE ENGINE'S OWN Resize, not on
     // IDXGISwapChain::ResizeBuffers (docs/OVERLAY_CAPTURE_COEXIST.md section 9c commit 1).
     // Both RHIs are installed unconditionally: which one the game presents with is not
@@ -748,41 +802,56 @@ bool Init() {
     // crash-on-resize for no UI at all on every recook; the honest degradation is to keep
     // drawing and say loudly that resizes are now unprotected.
     {
-        struct Seam { const char* name; const char* sig; void* detour; void** tramp; };
+        struct Seam { const char* name; const char* sig; void* detour; void** tramp; bool draws; };
         const Seam seams[] = {
+            {"FD3D11Viewport::PresentChecked", ue_wrap::profile::kSigD3D11ViewportPresentChecked,
+             reinterpret_cast<void*>(&D3D11PresentCheckedDetour),
+             reinterpret_cast<void**>(&g_d3d11PresentTrampoline), true},
+            {"FD3D12Viewport::PresentInternal", ue_wrap::profile::kSigD3D12ViewportPresentInternal,
+             reinterpret_cast<void*>(&D3D12PresentInternalDetour),
+             reinterpret_cast<void**>(&g_d3d12PresentTrampoline), true},
             {"FD3D11Viewport::Resize", ue_wrap::profile::kSigD3D11ViewportResize,
              reinterpret_cast<void*>(&D3D11ResizeDetour),
-             reinterpret_cast<void**>(&g_d3d11ResizeTrampoline)},
+             reinterpret_cast<void**>(&g_d3d11ResizeTrampoline), false},
             {"FD3D12Viewport::Resize", ue_wrap::profile::kSigD3D12ViewportResize,
              reinterpret_cast<void*>(&D3D12ResizeDetour),
-             reinterpret_cast<void**>(&g_d3d12ResizeTrampoline)},
+             reinterpret_cast<void**>(&g_d3d12ResizeTrampoline), false},
         };
-        int armed = 0;
+        int drawArmed = 0;
         for (const Seam& sm : seams) {
             const uintptr_t at = ue_wrap::FindPattern(sm.sig);
             if (!at) {
-                UE_LOGW("imgui_overlay: %s signature NOT found -- its resize bracket is "
-                        "ABSENT this run. A window resize on that RHI can leave our render "
-                        "target referencing a back buffer the engine is about to recreate, "
-                        "which UE reports as a Fatal (docs/OVERLAY_CAPTURE_COEXIST.md).",
-                        sm.name);
+                // Expected for the RHI this cook does not contain. What is NOT acceptable
+                // is zero DRAW seams, which is checked after the loop.
+                UE_LOGW("imgui_overlay: %s signature NOT found -- that seam is ABSENT this "
+                        "run (docs/OVERLAY_CAPTURE_COEXIST.md).", sm.name);
                 continue;
             }
             if (ue_wrap::hook::Install(reinterpret_cast<void*>(at), sm.detour, sm.tramp)) {
-                ++armed;
-                UE_LOGI("imgui_overlay: %s resize bracket armed @%p (image+0x%llX)", sm.name,
+                ++g_seamsArmed;
+                if (sm.draws) ++drawArmed;
+                UE_LOGI("imgui_overlay: %s %s armed @%p (image+0x%llX)", sm.name,
+                        sm.draws ? "DRAW seam" : "resize bracket",
                         reinterpret_cast<void*>(at),
                         static_cast<unsigned long long>(
                             at - reinterpret_cast<uintptr_t>(::GetModuleHandleW(nullptr))));
             } else {
-                UE_LOGE("imgui_overlay: %s resolved but MinHook Install FAILED -- resizes "
-                        "are unprotected on that RHI", sm.name);
+                UE_LOGE("imgui_overlay: %s resolved but MinHook Install FAILED", sm.name);
             }
         }
-        if (armed == 0)
-            UE_LOGE("imgui_overlay: NEITHER engine resize seam armed. Every window resize "
-                    "this run is a crash candidate; re-derive the signatures per "
-                    "docs/VERSION_MIGRATION.md.");
+        // FAIL CLOSED ON THE DRAW SEAM, AND ONLY ON IT. With no draw seam there is no
+        // overlay at all -- no chat, no scoreboard, no F1 -- so this returns false and says
+        // why, rather than installing a WndProc hook that swallows keys for a UI that can
+        // never appear. A missing RESIZE bracket is a degradation, not an absence, and is
+        // already reported above.
+        if (drawArmed == 0) {
+            UE_LOGE("imgui_overlay: NO DRAW SEAM. Neither FD3D11Viewport::PresentChecked nor "
+                    "FD3D12Viewport::PresentInternal resolved, so the overlay cannot draw and "
+                    "is DISABLED for this run. This is what a game recook looks like from "
+                    "here -- re-derive the signatures per docs/VERSION_MIGRATION.md.");
+            ue_wrap::log::Flush();
+            return false;
+        }
     }
     // Hook user32!SetCursorPos so we can neutralize UE4's per-tick cursor recenter
     // while the menu is visible (non-fatal if it can't hook -- the menu still works,
@@ -799,26 +868,6 @@ bool Init() {
             g_setCursorPosTarget = nullptr;
         }
     }
-    // Overlay coexistence (docs/OVERLAY_CAPTURE_COEXIST.md), verify-before-retire:
-    // confirm the FD3D11Viewport::PresentChecked draw-seam resolves on THIS running
-    // exe BEFORE the seam-move retires the swapchain-Present + ResizeBuffers hooks.
-    // LOG-ONLY this build -- the working overlay is unchanged; the hook moves here
-    // next. Expected on the 0.9.0-n exe: image+0x16F4BA0.
-    {
-        const uintptr_t pc = ue_wrap::FindPattern(ue_wrap::profile::kSigD3D11ViewportPresentChecked);
-        if (pc) {
-            const uintptr_t base = reinterpret_cast<uintptr_t>(::GetModuleHandleW(nullptr));
-            UE_LOGI("imgui_overlay: FD3D11Viewport::PresentChecked draw-seam resolved @%p "
-                    "(image+0x%llX) -- coexistence seam candidate, log-only this build "
-                    "(docs/OVERLAY_CAPTURE_COEXIST.md)",
-                    reinterpret_cast<void*>(pc),
-                    static_cast<unsigned long long>(pc - base));
-        } else {
-            UE_LOGW("imgui_overlay: FD3D11Viewport::PresentChecked signature NOT found -- "
-                    "kSigD3D11ViewportPresentChecked stale for this build? (overlay coexistence "
-                    "seam-move blocked; docs/OVERLAY_CAPTURE_COEXIST.md)");
-        }
-    }
     // DX12 stage-1: the swapchain-creation timing probe (log-only; measures
     // whether our boot precedes the game's swapchain creation -- see the DX12
     // overlay design of record). No behavior change on any RHI.
@@ -828,8 +877,9 @@ bool Init() {
     // browser-path session scenarios) -- ui/overlay_test_arm.cpp. Inert unless a
     // VOTVCOOP_* test variable is set, so a normal player boot does nothing here.
     ui::overlay_test_arm::ArmFromEnv();
-    UE_LOGI("imgui_overlay: present hook installed (present=%p) -- ImGui brings up "
-            "on the first frame; press F1 in-game for the menu", g_presentTarget);
+    UE_LOGI("imgui_overlay: draw seam installed on the ENGINE present path (%d of 4 "
+            "engine seams armed) -- ImGui brings up on the first frame; press F1 "
+            "in-game for the menu", g_seamsArmed);
     return true;
 }
 

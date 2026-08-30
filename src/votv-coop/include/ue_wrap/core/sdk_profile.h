@@ -156,6 +156,23 @@ inline constexpr const char* kSigD3D12ViewportResize =
 // kD3D11Viewport_SwapChain. Same runtime QueryInterface validation before any use.
 inline constexpr size_t kD3D12Viewport_SwapChain = 0x60;
 
+// FD3D12Viewport::PresentInternal(int32 SyncInterval) -- the DX12 twin of the draw seam
+// kSigD3D11ViewportPresentChecked above, and the reason DX12 is in v1 rather than a later
+// phase: the seam move RETIRES the IDXGISwapChain::Present hook whole, so a DX12 left on
+// the old seam would mean either keeping that hook (a parallel path, RULE 2, and it would
+// not fix S1 because the RTSS-defended surface would still be in the process) or shipping
+// DX12 users no overlay at all. 109 bytes, exactly one caller (FD3D12Viewport::Present,
+// reached only past the CustomPresent->NeedsNativePresent() gate); reads the swapchain at
+// viewport+0x60 and tail-jumps to IDXGISwapChain::Present at vtbl[8].
+//
+// This pattern was recorded in docs/OVERLAY_CAPTURE_COEXIST.md before it was ever compiled;
+// re-deriving it from the shipping PE on 2026-08-30 reproduced it BYTE FOR BYTE, which is
+// what makes it trustworthy here rather than merely copied. Unique with NO wildcards from
+// 18 bytes; 32 shipped for margin. IDA sub_14177E0E0 (image+0x177E0E0).
+inline constexpr const char* kSigD3D12ViewportPresentInternal =
+    "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 20 33 DB 8B F2 48 "
+    "8B F9 85 D2 75 10 38 59 54 75 0B 38";
+
 // ---- struct offsets (stable within UE4.27; re-check on an engine bump) ----
 namespace off {
 inline constexpr size_t UObject_InternalIndex = 0x0C;  // int32 -- slot in GUObjectArray (O(1) liveness check)
