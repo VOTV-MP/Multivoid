@@ -494,24 +494,26 @@ landscape, foliage, lights), every saved prop/entity/vehicle/NPC from the save's
 > films, clean door/screens, drip cores only; residuals if still off: the 12-bucket dyn window
 > repetition, and the un-plumbed SortOrder lift order.
 >
-> **v11 handoff (2026-08-30): the in-game reference ARRIVED and the comparison RAN** — the
-> user's five unit shots (`ignore_folder/workstation/`) closed the v10 reference debt and drove
-> a fix wave (§0 v11): the cutout/RenderTransform routing model, the taximeter 7-seg font +
-> LetterSpacing, Fill rows, plain-string Text values, orange borders, the space2 panorama, and
-> NEW screens_hw analog sections (dials/mini scopes/LED/compass). Face sims of the measured
-> cutouts now match the shots structurally 1:1 (comp table, download table + NO SIGNAL +
-> filter readouts, per-digit counters). Bench radius-150 + extended VERIFY-PASS on the final
-> bytes. **NEXT (user), one .blend look:** the v9 decal verdict (the ask above, still
-> standing) AND the v11 screens on the unit faces in 3D (the sims prove the raster; the blend
-> shows it through the real meshes). SAT console has no reference shot yet (no photo of it).
+> **v13 handoff (2026-08-30): screens ACCEPTED, three field waves shipped.** The user's five
+> unit shots closed the v10 reference debt, drove the v11 fix wave (§0 v11), and the user
+> accepted the result in the blend («Screens look great»). Their next two reports shipped as
+> v12 (§0: the streaky Model_0 was OUR FBspSurf field shift — the NORMAL sat in the U-basis
+> slot; landscape holes carved from the DataLayer mask) and v13 (§0: trigger-family event
+> previews → the hidden Events collection; the real object arrives as a save row when the
+> event fires). Import radius now DEFAULTS to 150 m (USER; 0 = whole map). Bench + verify
+> PASS per wave on deployed bytes; `votvio_base150.blend` is v13-fresh. **NEXT (user), one
+> .blend look:** the v9 decal verdict (the ask above, STILL UNANSWERED — the user reviewed
+> screens, not decals) + eyeball v12 (bunker/tower concrete, the entrance hole) and v13
+> (no event objects in Statics; the Events collection holds them). SAT console still has no
+> reference shot.
 
 | Open | What | Phase |
 |---|---|---|
 | — | ~~база в воздухе / лестница вышки / черновые шеллы~~ **CLOSED v5 `42bb819d`** (§0 v5) | — |
 | — | ~~река без воды / арбуз-вода / грайм-кубики / дверцы шкафчиков / бункер / стекло / лестницы в воздухе~~ **CLOSED v6 `31551742`** (§0 v6) | — |
 | — | ~~декали «не существуют» / muralы 90°+в стенах / не тот diffuse окна / white-noise экраны / плоский террейн~~ **CLOSED v7** (§0 v7: UE decal-UV + двусторонняя проекция + UNLIT-затемнение грайма + inst_newwindow + CachedExpressionData-экраны + weightmap-слои) | — |
-| — | the user's NEXT field-fix batch (pending their .blend inspection of v9 decals + v10 screens) | next |
-| — | v10 screens: the in-game reference shot is OWED (desk/SAT/radar vs the raster) — s_test_screens2 spawns in the GARAGE and freecam is keyboard-only, so autonomous capture needs a file-trigger teleport probe (a DLL deploy on the shared rig) or one manual user shot. Sub-residuals: vert-pointer columns above the space window; VBox rows approximated; RichText/lists empty as at idle | next |
+| — | the v9 DECAL verdict (pending the user's .blend inspection — screens were accepted v11, decals never reviewed) | next |
+| — | ~~v10 screens: the in-game reference shot is OWED~~ **CLOSED v11** (the user's five unit shots; comparison ran, fixes shipped, screens ACCEPTED). Remaining screen sub-residuals: SAT console has no reference photo; signal lists/visualizer/logs render idle-empty (save content not injected); the space window undercovers ~65px at its bottom edge; vert-pointer columns not re-checked after the v11 quadrant clip | P3 |
 | — | decal polish residuals (v9): SortOrder (crack 1 < dirt 3 < dyn 4, measured probe_v9) not plumbed into the lift order; dyn window offsets quantized to 12 seed buckets vs the game's continuous per-instance MID offset | P3 |
 | — | lake SURFACE: the river splines cross the lake area (segments up to ~55 m wide) — whether the lake reads as water in the scene is unverified | next |
 | — | **acceptance probe + calibration + machine diff** (the design's own gate) | next |
@@ -521,7 +523,7 @@ landscape, foliage, lights), every saved prop/entity/vehicle/NPC from the save's
 | O13 | ~~SplineMeshComponent deform~~ **CLOSED v6 `31551742`** — `spline_mesh.py` Hermite slice math; 85/89 map splines are the river, 4 carry no mesh | — |
 | O14 | ~~grime decals~~ **CLOSED v6c+v6d** — variant families + CDO material (`decals.GRIME_FAMILY`, 80 materials) and real PROJECTION (mask/wrap/no-webbing, §0 v6d); residuals: receivers are STRUCTURE only (a decal that sat on a prop projects past it), leaky rusty/wet colour tints live in bytecode, trashBitsPile 81 full-map placeholders | P3 |
 | O15 | ~~landscape textures~~ **CLOSED v7** — weightmap-TRUE layer blending shipped (`landscape.py` weight extraction + `materials.landscape_material`, the game's own `inst_mainLandscape` layer textures/tiling); procedural GREEN/SNOW/DIRT stays as the with_textures=False fallback; residual: layer NORMAL/height maps unused, macro variety (grassPatches) unbaked | — |
-| — | BSP UV scale is the classic /128 texel guess — bunker wall texture density unverified | P3 |
+| — | BSP UV: v12 fixed the basis fields (normal was in the U slot) and the /128 formula agrees with the scale-bearing basis vectors (|tu|~0.2); texture DENSITY vs the game is still not photo-verified | P3 |
 | — | prop_C stragglers (44) + prop_barnshelf (23) placeholders | P3 |
 | — | SK geometry port of `ue_skelmesh.py` (NPC bind pose) | P3 |
 

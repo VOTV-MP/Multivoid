@@ -5223,6 +5223,20 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   before trusting a layout rect.
   `memory/lesson-a-multi-screen-surface-can-be-one-canvas-windowed-by-mesh-uvs.md`
 
+- **2026-08-30 — Streaky 1D textures = a degenerate UV axis; on a cooked struct parser
+  suspect a FIELD SHIFT putting the NORMAL in a texture-basis slot.** The level BSP
+  (`Model_0`) textured every surface in grey stripes: `FBspSurf` was unpacked as five ints
+  and field [3] — the NORMAL (`Material, PolyFlags, pBase, vNormal, vTextureU, vTextureV,
+  ...` = 56 B) — served as the U basis; projection onto the normal is constant per face.
+  The convicting probe is `dot(poly normal, Vectors[field])` = 1.000; the real basis dots
+  ~0 and carries the texture scale in its LENGTH (~0.2, `/128` stays on unnormalized
+  vectors). Streaks read as "wrong material" and the material census confirms plausible
+  names — the eye hunts the resolver while the defect is one field earlier. *Look FIRST:*
+  test per-face UV span on WIDE faces (thin fan slivers legally span ~0 — gate on world
+  span, `verify_v12.py`), then dot the basis field against the normal;
+  `tools/blender/votvio/bsp_model.py` carries the field list.
+  `memory/lesson-streaky-textures-mean-a-degenerate-uv-axis.md`
+
 - **2026-08-30 — Cooked FText has TWO shapes: localized dict and culture-invariant PLAIN
   STRING.** A cooked `Text` property arrives either as `{Namespace,Key,SourceString}` (prose)
   or as a bare string (numbers, `-`, `0 MB`). The atlas painter accepted only the dict, so
