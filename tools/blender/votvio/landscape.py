@@ -10,7 +10,8 @@ sub*(ssq+1) + (x - sub*ssq), plus the component's HeightmapScaleBias UV offset.
 Weightmaps ride the same packing (128x128 B8G8R8A8 exports, WeightmapScaleBias
 Z/W is a half-texel center offset -> block origin 0): each WeightmapLayerAllocation
 names (LayerInfo, texture index, channel). Census: grass everywhere, gravel/dirt/
-rock/sand patches; 'DataLayer' is the landscape hole mask, not paint - skipped.
+rock/sand patches; 'DataLayer' is the landscape hole (visibility) mask - its
+quads are CARVED from the grid (the bunker entrance stairwell), never painted.
 The layer detail textures + world tiling come from inst_mainLandscape via
 materials.landscape_layer_specs.
 """
@@ -68,6 +69,29 @@ def _layer_name(alloc_entry):
     if nm.endswith("_LayerInfo"):
         nm = nm[:-len("_LayerInfo")]
     return nm.lower()
+
+
+def _hole_mask(pkg, p, nverts, ssq, csq, tex_cache, warnings):
+    """The 'DataLayer' weightmap allocation is the landscape VISIBILITY mask:
+    where it reads high the game carves the quad out (the bunker entrance
+    stairwell). Returns a (csq, csq) bool grid of carved quads, or None."""
+    for a in p.get("WeightmapLayerAllocations") or []:
+        if _layer_name(a) != "datalayer":
+            continue
+        wt_names = [_ref_name(x) for x in (p.get("WeightmapTextures") or [])]
+        tidx = int(a.get("WeightmapTextureIndex", 0) or 0)
+        chan = int(a.get("WeightmapTextureChannel", 0) or 0)
+        if tidx >= len(wt_names):
+            return None
+        wm = _decoded_tex(pkg, wt_names[tidx], tex_cache, warnings, "hole mask")
+        if wm is None:
+            return None
+        tr, tc = _block_indices(nverts, ssq, csq, 0, 0, wm.shape[1], wm.shape[0])
+        w = wm[np.ix_(tr, tc)][:, :, min(chan, 3)]
+        quad = (w[:-1, :-1] + w[1:, :-1] + w[:-1, 1:] + w[1:, 1:]) * 0.25
+        hole = quad > 0.5
+        return hole if hole.any() else None
+    return None
 
 
 def build_landscape(game, map_path, dicts, collection, warnings, builder=None,
@@ -145,6 +169,9 @@ def build_landscape(game, map_path, dicts, collection, warnings, builder=None,
 
         i = (gy[:-1, :-1] * nverts + gx[:-1, :-1]).ravel()
         faces = np.stack([i, i + nverts, i + nverts + 1, i + 1], axis=-1)  # mirrored winding
+        hole = _hole_mask(pkg, p, nverts, ssq, csq, tex_cache, warnings)
+        if hole is not None:
+            faces = faces[~hole.ravel()]
 
         me = bpy.data.meshes.new(f"landscape_{e.get('Name')}")
         me.from_pydata(verts.tolist(), [], faces.tolist())

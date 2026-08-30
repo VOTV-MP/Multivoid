@@ -7,8 +7,9 @@ UModel::Serialize (4.27, cooked) after the property block:
   Vectors  BulkSerialize (esz 12)   -- texture basis vectors
   Points   BulkSerialize (esz 12)   -- world-space positions
   Nodes    BulkSerialize (esz 64)   -- FBspNode: polygon fan per node
-  Surfs    TArray (count + 56/each) -- FBspSurf: Material FPackageIndex + pBase,
-                                       vTextureU, vTextureV (UV mapping basis)
+  Surfs    TArray (count + 56/each) -- FBspSurf: Material, PolyFlags, pBase,
+                                       vNormal, vTextureU, vTextureV, iBrushPoly,
+                                       Actor, Plane, LightMapScale, iLightmassIndex
   Verts    BulkSerialize (esz 24)   -- FVert: pVertex point index
 Every bulk header is validated (ElementSize must match); a mismatch aborts the
 parse with geometry=None rather than guessing.
@@ -70,7 +71,13 @@ def _parse_model_tail(raw):
     surfs = []
     for si in range(scount):
         so = o + si * 56
-        mat_idx, _flags, p_base, v_texu, v_texv = struct.unpack_from("<iiiii", raw, so)
+        # FBspSurf: Material, PolyFlags, pBase, vNormal, vTextureU, vTextureV,
+        # iBrushPoly, Actor, Plane(16), LightMapScale, iLightmassIndex = 56.
+        # Field 3 is the NORMAL (probe: dot(poly normal, Vectors[f3]) = 1.000);
+        # reading the U basis there degenerated every surface's U to a constant
+        # and textured the whole model in streaks.
+        mat_idx, _flags, p_base, _v_norm, v_texu, v_texv = \
+            struct.unpack_from("<iiiiii", raw, so)
         surfs.append((mat_idx, p_base, v_texu, v_texv))
     o += scount * 56
     do, dn, o = _bulk(raw, o, 24)            # Verts
