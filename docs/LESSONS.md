@@ -4519,6 +4519,24 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   request; prefer the getter that names a RENDERED quantity over the one that mirrors the setter's
   noun; never threshold a layout float at `> 0`. Wrappers: `ue_wrap/engine/umg_build.{h,cpp}`.
   `memory/lesson_a_umg_getter_may_echo_your_own_request.md`
+- **A surface can be half-dead in a way that is invisible BECAUSE its other half is correct.** `[V]`
+  2026-08-30: **no runtime text colour on the native server browser had ever applied.** Glyph-body
+  histogram off the self-check's own capture — hovered row frame `#FFFF00` x77 px but its text
+  `#FFFFFF` x216; World/Age cells specified `#A5A5A5` reading `#FFFFFF`. So hover yellow, the dim
+  columns, the green "your server" and the **amber version-mismatch cue** (the signal that the join
+  gate will refuse that server — a correctness defect, not a cosmetic one) were all dead for four
+  days. Cause: `ApplyRowTextColors` called the RAW `engine::SetTextBlockColor`, whose own
+  declaration says IN CAPITALS it "never propagates" to a block in a **constructed UMG/Slate tree**
+  (UMG bakes properties into the Slate widget at attach); `SetTextBlockColorDispatch` is the setter
+  variant, and `ui/multiplayer_menu.cpp:155` already used it for this exact reason. **Why nobody
+  saw it: the column headers are `#FF7C00` and always were — they are coloured at BUILD time,
+  before attach, where a raw write DOES land.** It also survived a green self-check, because
+  `ROW SELECT PASS` / `HoveredRow()` assert STATE, never pixels. *Look FIRST:* when a UI property
+  "does not take", check raw-write vs setter-dispatch before anything else (the same split governs
+  `SetImageTint`/`...Raw` and `SetSizeBoxHeight`'s `bOverride_*` bitfield); and treat
+  **build-time-correct + runtime-dead** as a shape — if a screen has both paths, the runtime one is
+  the one with no witness. `coop/dev/native_ui_probe.cpp:642` has the same raw call and is
+  UNVERIFIED. `memory/lesson-a-surface-can-be-half-dead-because-its-other-half-is-correct.md`
 - **In UI code a wrong constant does not error — it renders wrong, often invisibly.** `[V]`
   2026-08-26, two in one restyle. `ESlateVisibility` is
   `Visible=0 Collapsed=1 HIDDEN=2 HitTestInvisible=3 SelfHitTestInvisible=4`; writing `2` meaning

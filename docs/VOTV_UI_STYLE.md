@@ -205,7 +205,7 @@ precedence is enforced by suppressing hover at the source rather than by paintin
 
 ---
 
-## 7. Two places where looking at the screenshots gave the WRONG answer `[V]`
+## 7. Three places where looking gave the WRONG answer `[V]`
 
 Recorded because it is the reason this file insists on sampling.
 
@@ -218,6 +218,23 @@ Both misreadings came from viewing a downscaled render. A palette taken by eye o
 screenshot invents colours the game does not use, and then those colours get *shipped*. Sample the
 source PNG at full size, over glyph bodies, with a histogram.
 
+3. **2026-08-30, and this one was OUR screen, not the game's.** I looked at the browser's own
+   capture and read it as a screen whose colours work. Sampled, **no runtime text colour on it had
+   ever applied**: the hovered row's frame was `#FFFF00` (77 px) while its glyphs were `#FFFFFF`
+   (216 px), and the World/Age cells specified `#A5A5A5` were `#FFFFFF` too — so hover yellow, the
+   dim secondary columns, the green "your server" name and the **amber version-mismatch cue** were
+   all dead. `ApplyRowTextColors` was calling the RAW `SetTextBlockColor`, which `engine.h:516-531`
+   states in capitals does not propagate to a constructed UMG tree.
+
+   What makes this the sharpest of the three: **the screen looked right because the part that works
+   is the part set at BUILD time.** The column headers are `#FF7C00` and always were — coloured
+   before the widget is attached, where a raw write does land. A surface can be half-dead in a way
+   that is invisible precisely because its other half is correct, so "the capture looks right" is
+   not evidence about any *particular* colour. Sample the one you claim.
+
+   The same rule the first two teach, one level up: it is not enough to sample instead of squinting
+   at a game's screenshot — sample your own output too, per property, against the value you wrote.
+
 ---
 
 ## 8. Provenance
@@ -228,4 +245,5 @@ source PNG at full size, over glyph bodies, with a histogram.
   Credits.
 * Sampling: `PIL`, dominant-colour histogram; 6×6 patches for fills, glyph-body histograms with a
   background reject for text.
-* This file is DESIGN + measurement. **Nothing in §5 is built yet.**
+* This file is DESIGN + measurement. **§5's S1-S9 and its per-row-border item are BUILT**
+  (2026-08-30); §5b is built; §6's cyan question outside the browser is still open.
