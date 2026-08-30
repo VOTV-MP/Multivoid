@@ -421,13 +421,25 @@ landscape, foliage, lights), every saved prop/entity/vehicle/NPC from the save's
 > the v9 `votvio_base150.blend` against the same two in-game corner shots** — expected: no smoky
 > films, clean door/screens, drip cores only; residuals if still off: the 12-bucket dyn window
 > repetition, and the un-plumbed SortOrder lift order.
+>
+> **v10 handoff (2026-08-30, `7ded462e`): powered-on screens shipped** — §0 v10; checkbox
+> `screens_powered` default ON, ONE atlas raster windowed by every screen mesh's raw UVs, the
+> game's own FSEX300 font + spacehdr2 star cube. Bench x2 (136.5 s, 0 warnings) + VERIFY-PASS
+> (votv_rt_screen on 6/6 ADS_1_* meshes, atlas packed, emission linked). **NEXT (user), two
+> comparisons in one .blend look:** the v9 decal verdict (the ask above, still standing) AND
+> the v10 screens vs the live game — one in-game shot of the DESK is the missing reference
+> (the autonomous capture run spawned in the garage, desk out of frame; freecam is
+> keyboard-only). Eyeball targets: star density/brightness on coords, the console command
+> column, the vert-pointer columns poking above the space window (known), VBox row spacing
+> (approximated).
 
 | Open | What | Phase |
 |---|---|---|
 | — | ~~база в воздухе / лестница вышки / черновые шеллы~~ **CLOSED v5 `42bb819d`** (§0 v5) | — |
 | — | ~~река без воды / арбуз-вода / грайм-кубики / дверцы шкафчиков / бункер / стекло / лестницы в воздухе~~ **CLOSED v6 `31551742`** (§0 v6) | — |
 | — | ~~декали «не существуют» / muralы 90°+в стенах / не тот diffuse окна / white-noise экраны / плоский террейн~~ **CLOSED v7** (§0 v7: UE decal-UV + двусторонняя проекция + UNLIT-затемнение грайма + inst_newwindow + CachedExpressionData-экраны + weightmap-слои) | — |
-| — | the user's NEXT field-fix batch (pending their .blend inspection of v9) | next |
+| — | the user's NEXT field-fix batch (pending their .blend inspection of v9 decals + v10 screens) | next |
+| — | v10 screens: the in-game reference shot is OWED (desk/SAT/radar vs the raster) — s_test_screens2 spawns in the GARAGE and freecam is keyboard-only, so autonomous capture needs a file-trigger teleport probe (a DLL deploy on the shared rig) or one manual user shot. Sub-residuals: vert-pointer columns above the space window; VBox rows approximated; RichText/lists empty as at idle | next |
 | — | decal polish residuals (v9): SortOrder (crack 1 < dirt 3 < dyn 4, measured probe_v9) not plumbed into the lift order; dyn window offsets quantized to 12 seed buckets vs the game's continuous per-instance MID offset | P3 |
 | — | lake SURFACE: the river splines cross the lake area (segments up to ~55 m wide) — whether the lake reads as water in the scene is unverified | next |
 | — | **acceptance probe + calibration + machine diff** (the design's own gate) | next |

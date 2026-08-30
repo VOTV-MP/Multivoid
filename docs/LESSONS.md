@@ -5079,15 +5079,39 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   scratchpad `probe_winding.py` shape.
   `memory/lesson_inside_out_import_surfaces_only_at_a_normals_consumer.md`
 
-- **2026-08-29 — pyUE4Parse works on VOTV only with 5 named fixes** (it LOOKS broken at the first
+- **2026-08-29 — pyUE4Parse works on VOTV only with 6 named fixes** (it LOOKS broken at the first
   mesh): unconditional `minMobileLODIdx` read for ≥4.27 misaligns every StaticMesh (CUE4Parse gates it
   on `StaticMesh.KeepMobileMinLODSettingOnDesktop`, default OFF); `USkeletalMesh` is a stub (SK lane =
   port `tools/client_model/ue_skelmesh.py`); `FMeshUVHalf.to_mesh_uv_float()` returns RAW half bits
   (decode via numpy float16 view); the "Could not read StaticMesh" ERROR spam is usually a COSMETIC
   post-LOD-tail failure (geometry already parsed); the export registry extends without forking via
-  `register_export(cls, Type=...)` (used for the ISM/HISM `instance_matrices` native tail). *Look
-  FIRST:* `tools/blender/votvio/vendor/NOTICE.md` (exact patch list).
+  `register_export(cls, Type=...)` (used for the ISM/HISM `instance_matrices` native tail); and
+  (v10) `find_export("Texture2D")` MISSES TextureCube — fall back by type and slice the mip's
+  BulkData to `raw[:len//6]` for face 0, while RAW files (`.ufont`) read via
+  `provider.get_reader(<full path WITH extension>)` though the file-list keys are extensionless.
+  *Look FIRST:* `tools/blender/votvio/vendor/NOTICE.md` (exact patch list).
   `memory/lesson_pyue4parse_on_votv_pitfalls.md`
+
+- **2026-08-30 — N screens can be ONE canvas windowed by mesh UVs — diff embed rects against
+  UV bounds before choosing a model.** All six workstation screen meshes share ONE
+  `mat_tvScreen` on slot "UI", and each mesh's UI-section UV bbox is a window into the single
+  `ui_consolesAtlas` 2000x2000 canvas — the `umg_console` embed's absolute rect is BYTE-EQUAL
+  to the SAT mesh's UV window (U0-.5 V.194-.5). Two plausible models (per-pane RTs; per-device
+  cover toggles) died before that one cheap check settled the routing. *Look FIRST:* compute
+  BOTH sides — widget subtree absolute rects (walk slots to the root) and per-section UV bbox —
+  and diff; consumer `tools/blender/votvio/screens_rt.py` (docstring carries the map).
+  `memory/lesson-a-multi-screen-surface-can-be-one-canvas-windowed-by-mesh-uvs.md`
+
+- **2026-08-30 — Rasterizing cooked UMG: point-anchored slots carry SIZE in Offsets.Right/Bottom,
+  paint order = the Slots array, and ScrollBox/RetainerBox CLIP.** The size convention is proven
+  by the atlas root slot (point anchors + R=2000/B=2000 = the canvas); slot identity is
+  (name, OUTER panel) — CanvasPanelSlot_0 repeats. RetainerBox reads like an effect wrapper but
+  CLIPS like a scrollbox: the coords space view pans an 11840x5920 sky surface inside one —
+  skipped, the space view vanished; recursed unclipped, it FLOODED the whole canvas (both wrong
+  states looked fine in crops — verify containers on the FULL canvas). PIL: `alpha_composite`
+  refuses negative dest, `paste(im, xy, mask)` allows it. *Look FIRST:*
+  `tools/blender/votvio/screens_rt.py` `_slot_rect` + `_paint` container branches.
+  `memory/lesson-rasterizing-cooked-umg-slots-carry-size-and-retainers-clip.md`
 
 - **2026-08-25 — A converter converts ARTIFACTS, not file extensions.** Asked whether UMG widgets
   authored in UE5 could be downgraded to the 4.27 the shipped game runs, every surface fact says yes:
