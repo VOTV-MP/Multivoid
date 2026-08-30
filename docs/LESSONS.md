@@ -4771,6 +4771,8 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 
 ## 5. Engine / UE4 facts
 
+- **A wrong-offset reflected write NEVER faults where you wrote it.** `SetSizeBoxWidth` was called on what `AddFramedBox` returns — an **Overlay**, not a SizeBox, as that helper's own header says one line above the call. The float landed at a foreign property offset, nothing faulted there, and the game died three frames later in another subsystem: `PE detour-outer-callback AV caught function='SpawnObject' 0xC0000005` three times, with the first readable symptom being an action bar whose three buttons were all null. Reflection-driven writes have no call-site type check by construction — the offset comes from a NAME on a class you never asserted. **Look here FIRST:** a crash inside an engine function your change never touched, in a session that added a reflected `Set*`, IS that write until proven otherwise — list every one you added and check its RECEIVER type against what the producing helper actually returns, before reading the faulting function at all. [[lesson-a-wrong-offset-write-never-faults-where-you-wrote-it]]
+
 - **A UMG getter may read back YOUR OWN REQUEST, not the engine's state.** `[V]` 2026-08-26, twice:
   `UScrollBox::GetScrollOffset` returns Slate's `DesiredScrollOffset` — the value last *asked for*,
   unclamped. `SetScrollOffset(1000000)` then `GetScrollOffset()` returns **1000000.0**, on an EMPTY
@@ -5290,6 +5292,8 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 
 ## 6. Assets, models, geometry
 
+- **A perceived WEIGHT difference is usually CONTRAST — sample the ink before touching a font property.** The user called our native buttons *"жирные ... совсем не как нативный votv"*. Sampling the label ink in their own captures against ours: native `#FF8900`, ours `#FFFFFF` — and corrected for capture scale our glyphs carry LESS ink (114 vs 144 lit px), on the same face, size and outline. The screen was not bolder, it was at maximum contrast; VOTV puts orange on its buttons and reserves white for the window TITLE. "Bold" is a font word, so the search starts at the font and finds nothing there. Also: one mis-placed crop returned grey and would have supported a false "idle is grey, hover is orange" — the fix was to sample a frame with SEVEN buttons visible, not to sample harder. **Look here FIRST:** normalise for capture scale before comparing ink counts, use a frame with many instances to separate per-state colour from global colour, and never adopt a shade sampled off a compressed PNG when a measured palette exists. [[lesson-a-perceived-weight-difference-is-usually-contrast]]
+
 - **2026-08-29 — Cooked UE4 data is DELTA-vs-archetype encoded at every PROPERTY layer; absence
   means "default", never "does not exist".** Five instances bit the VotvIO Blender importer, each
   measured (instance 3 CORRECTED by v5 `42bb819d` the same day): (1) 5,667/10,024 umap SMComponents
@@ -5705,6 +5709,8 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   `memory/lesson_a_rate_limiters_clock_belongs_to_the_window_not_the_send.md`
 
 ## 8. Build / deploy / git hygiene
+
+- **A gate that reads the WORKING TREE cannot see unstaged — a green verdict can rest on code that is not in the commit.** The browser parity gate printed `[ok] locked-lobby marker ... (server_browser_rows.cpp)` and that file was not in the pathspec of the commit that shipped the gate: true about my disk, false about the repository. It compounds with a fact this project has now been bitten by three times in one day — **`git commit -- <path>` commits the WORKING TREE state and BYPASSES the index**, so careful `git apply --cached` staging is silently discarded, and another session's lines in the same file ride along. **Look here FIRST:** run `git status` before believing a source-scanning gate's PASS (a green gate plus a dirty tree is not a green gate), and verify a pathspec commit with `git show --stat HEAD` rather than trusting the list you typed. [[lesson-a-gate-that-reads-the-working-tree-cannot-see-unstaged]]
 
 - **HEADLESS-CHROME SCREENSHOTS: THE RIG LIES BELOW 500px, ON vh, ON file:// AND ON #anchor.**
   2026-08-30 (the site Download redesign). Old-headless `--screenshot` lays pages out at a

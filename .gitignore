@@ -323,3 +323,6 @@ assets/paks/*
 # Same terms as its siblings above: the file stays ON DISK and every local pointer to it
 # resolves; none resolves on GitHub.
 SUPPORT.md
+
+# Local-only: the server-browser redesign brief (USER 2026-08-30: "server_browser_arc не публикуем в паблик").
+docs/SERVER_BROWSER_ARC.md
