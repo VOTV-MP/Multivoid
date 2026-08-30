@@ -3923,6 +3923,24 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 
 ## 4. Dispatch, hooks & input seams
 
+- **A detour declares the CALLEE's arity, not the arity of the function whose NAME you gave it.**
+  `[V]` 2026-08-30, disassembled from the shipping PE: the overlay's DX12 resize seam at
+  `image+0x177E8B0` was recorded as "FD3D12Viewport::Resize" and hooked with a five-argument
+  detour. It is `FD3D12Viewport::ResizeInternal()` and takes **only `this`** -- its seventh
+  instruction is `mov edx,3`, which DESTROYS the register a second argument would arrive in, and
+  it reads the extent from a member (`mov edx,[rbx+0x90]`). Its single caller at
+  `image+0x1777110` is the real four-argument `Resize`, which stores them to members and calls
+  the seam with `mov rcx,rbp` and nothing else. **It did not crash**, which is why it survived:
+  the surplus arguments were never read. What broke was the INSTRUMENT -- the bracket's log line
+  printed the four values from caller register residue, and the design calls that line the one
+  thing proving the bracket survived RTSS. *Look FIRST:* read the prologue for which of
+  RCX/RDX/R8/R9 is consumed before it is clobbered, and open ONE call site -- `mov rcx,<this>`
+  and nothing else settles arity in seconds and also tells you whether you hooked the wrapper or
+  the worker. Hooking the right function and knowing its contract are different claims. Return
+  types deserve the same suspicion: the DX12 present seam is `bool` in UE but TAIL-JUMPS to an
+  HRESULT, so it is forwarded as an opaque register-width integer.
+  `memory/lesson-a-detour-declares-the-callees-arity-not-the-name-you-gave-it.md`
+
 - **A FLAG THAT ANSWERS TWO QUESTIONS WILL BE READ WITH THE WRONG ONE -- and an idempotent `Init` can
   UNDO a completed `Shutdown`.** 2026-08-26, found by the post-ship audit *of the teardown fix
   itself*. `[V]` `hook::Install` guarded entry with `if (!g_live && !Init())`; `[V]` `Init()` treats
@@ -4621,6 +4639,21 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   request; prefer the getter that names a RENDERED quantity over the one that mirrors the setter's
   noun; never threshold a layout float at `> 0`. Wrappers: `ue_wrap/engine/umg_build.{h,cpp}`.
   `memory/lesson_a_umg_getter_may_echo_your_own_request.md`
+- **A hand-built widget tree that is not ATTACHED is unreferenced, and GC takes it.** `[V]`
+  2026-08-30, hands-on: both native screens built a full `UUserWidget` subtree in `BuildScreen`
+  and attached it lazily in `Show()`, so between building the menu screen and the player's click
+  nothing referenced it. The user's log: `AddChild slot=0000000000000000, GetChildIndex=-1` with
+  **41 GC lines in the same window**. It had two faces and the first hid the second -- while the
+  index was `ChildCount - 1`, a failed add named the last of the GAME's screens and MULTIPLAYER
+  opened VOTV's Stats panel; once the index was PROVEN the same failure gave an honest -1 and the
+  button went dead. **No automated run could ever see it**: `browser_autoopen=1` calls `Show()` on
+  the SAME TICK as the build, so the lab took a route with no gap for GC. *Look FIRST:* attach in
+  the function that BUILDS (a switcher child is reachable from the menu -- that is the reference
+  you want; `AddToRoot` is the wrong tool, and RUNG 2's "survives a forced GC" was measured on an
+  ATTACHED subtree, which is exactly the window it does not cover); never discard `AddChild`'s
+  returned `UPanelSlot*`; and when a bug reproduces for a human and never in the lab on the SAME
+  code path, diff what the harness does to the CLOCK, not the code.
+  `memory/lesson-an-unattached-widget-tree-is-gc-food.md`
 - **A surface can be half-dead in a way that is invisible BECAUSE its other half is correct.** `[V]`
   2026-08-30: **no runtime text colour on the native server browser had ever applied.** Glyph-body
   histogram off the self-check's own capture — hovered row frame `#FFFF00` x77 px but its text

@@ -24,11 +24,14 @@ doc touches the subject, it links here; it does not re-state.
     **and on DX12** (`VOTVCOOP_RHI=dx12`, `Graphics API: DX12`, 61.0 FPS, no crash) -- the
     `-dx12` run this doc had owed since 2026-08-23. The user confirmed DX12 by hand
     independently: *"работает и с dx12"*.
-  - **S2 IS NOT VERIFIED HERE, BY DIVISION OF LABOUR.** USER 2026-08-30: *"obs я сам буду
-    тестить потом, от тебя ничего не требуется по взаимодействию с обс"*. The mechanism is the
-    same root and the same fix -- our pixels are in the back buffer before the engine calls
-    Present, which is above where OBS's default game-capture copies -- but a DWM window grab is
-    blind to that (section 9), so it stays `[?]` until the user runs it.
+  - **S2 IS FIXED, AND THE USER VERIFIED IT HANDS-ON THE SAME DAY.** They had taken that arm
+    (*"obs я сам буду тестить потом, от тебя ничего не требуется по взаимодействию с обс"*) --
+    because a DWM window grab is structurally blind to what OBS's Present-hook capture sees, so
+    nothing here could have proved it. Their verdict, verbatim: *"obs issue is gone (imgui gets
+    captured in all modes possible)"*. That closes the SECOND of the two originating symptoms,
+    by the only instrument that could, and it closes it exactly where the mechanism predicted:
+    our pixels are in the back buffer before the engine calls Present, which is above the point
+    OBS's default game-capture copies from.
   - **THE CRASH IS NOT CLAIMED FIXED.** Commit 1's bracket is correct either way, but
     attribution of the outstanding back-buffer reference to OUR render target is still `[?]`:
     RTSS holds its own and its own hook was unlinked in the same window. The falsifier (resize

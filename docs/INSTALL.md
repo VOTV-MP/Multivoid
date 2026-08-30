@@ -32,37 +32,56 @@
 > Testers who send good reports get credited, permanently.
 
 Multivoid is a co-op mod for **Voices of the Void**. It does not modify any
-game files. It ships as **one zip** that works for both install methods below;
-the mod runs as a [UE4SS](https://github.com/UE4SS-RE/RE-UE4SS) mod folder and
-is deleted to uninstall.
+game files. It ships as **one zip** that every route below installs -- the
+Thunderstore listing serves that same file -- and the mod runs as a
+[UE4SS](https://github.com/UE4SS-RE/RE-UE4SS) mod folder that is deleted to
+uninstall.
 
 ## What you need
 
 - **Voices of the Void 0.9.0n** (each mod build targets one game version; the
   release page and the in-game Multiplayer entry both show the pair).
-- The one `Pelmentor-Multivoid-<version>.zip` from the newest entry on the
-  [Releases page](https://github.com/VOTV-MP/Multivoid/releases) — or the
-  Thunderstore listing, once published.
+- A mod manager -- [r2modman](https://thunderstore.io/c/voices-of-the-void/) or
+  the Thunderstore Mod Manager. Every route below except the last one uses it,
+  and it installs the loader for you.
+- Nothing else, if you install from the Thunderstore listing. For the other two
+  routes you also want the one `Pelmentor-Multivoid-<version>.zip` from the
+  newest entry on the
+  [Releases page](https://github.com/VOTV-MP/Multivoid/releases).
 
-## Install with a mod manager (recommended)
+## Install from Thunderstore (recommended)
+
+This is the way in. The manager installs the loader, keeps the mod updated, and
+never touches your game folder by hand.
 
 1. Install [r2modman](https://thunderstore.io/c/voices-of-the-void/) (or the
    Thunderstore Mod Manager) and select Voices of the Void.
-2. Install Multivoid from the Thunderstore listing — or, for a zip downloaded
-   from the Releases page: open **Settings** and click **Import local mod**,
-   then pick the zip. (It is on the Settings screen itself — there is a search
-   box at the top if you do not spot it; type "import".)
-3. Launch the game **through the manager**. The manager installs the loader
-   (unreal-shimloader + UE4SS) by itself; nothing else to set up.
+2. Find **Multivoid** in the manager's browser and install it.
+3. Launch the game **through the manager**. It sets up the loader
+   (unreal-shimloader + UE4SS) by itself; there is nothing else to configure.
 
-## Install manually (no mod manager)
+## Install a downloaded zip through the manager
 
-> Worth knowing before you do this by hand: the **same zip** you downloaded can
-> be handed to r2modman with **Settings → Import local mod** — you do not need a
-> Thunderstore listing, an account, or the manager's own copy of the mod. That
-> route installs the loader for you and is the shorter path even if you normally
-> prefer installing things yourself. The steps below are for keeping the game
-> folder entirely under your own control.
+Same manager, same result, one extra step -- use this when you want a build that
+is newer than the listing, since dev builds land on the Releases page first.
+
+1. Download the one `Pelmentor-Multivoid-<version>.zip` from the
+   [Releases page](https://github.com/VOTV-MP/Multivoid/releases).
+2. In r2modman, open **Settings** and click **Import local mod**, then pick the
+   zip. (It is on the Settings screen itself -- there is a search box at the top
+   if you do not spot it; type "import".)
+3. Launch the game **through the manager**, as above.
+
+You do not need a Thunderstore account for this, and the zip is the same file
+the listing serves.
+
+## Install by hand (LEAST PREFERRED)
+
+Only if you keep your game folder entirely under your own control. It is listed
+last for a reason: it is the only route where **you** install and maintain the
+loader, and the manager route above takes the very same zip. If you are here
+because you did not want a mod manager -- the import step above needs no account
+and no listing, and it is shorter than what follows.
 
 1. Install **UE4SS v3.0.1** into the game: drop the contents of its zDEV
    archive next to `VotV-Win64-Shipping.exe` (the game folder
@@ -70,14 +89,14 @@ is deleted to uninstall.
    this step.
 2. Unzip the Multivoid zip. Copy the **contents** of its `mod\` folder into
    `WindowsNoEditor\VotV\Binaries\Win64\Mods\Multivoid`
-   inside your game install — so that the file
+   inside your game install -- so that the file
    `...\Mods\Multivoid\dlls\main.dll` exists.
 3. If the zip has a `pak\` folder (the player-model skins), copy its **contents**
    into `WindowsNoEditor\VotV\Content\Paks\LogicMods\multivoid`
    (create the folder if it does not exist). Without this step other players'
    scientist models fall back to the stock body on your screen.
 4. Start the game. The main menu now has a **Multiplayer** entry showing the
-   Multivoid version — that is how you know the mod loaded.
+   Multivoid version -- that is how you know the mod loaded.
 
 ## Upgrading from an old (pre-mod-folder) install
 
