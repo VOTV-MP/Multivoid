@@ -221,6 +221,17 @@ bool IsPoseAuthor(void* actor, void* localPlayer, uint8_t occupantSlot, uint8_t 
 // with nobody driving, IsPoseAuthor is false and this is true. Everyone else runs the rig with its
 // brain off, which is what keeps the accumulators, applyWheelTorque and the hit-authored damage on
 // one machine while the physics still runs on all of them.
+//
+// THAT SENTENCE IS STALE AND IT MISLED A DESIGN PASS ON 2026-08-30 -- corrected here rather than
+// deleted, because the phrase "brain off" is what a reader searches for. There is no brain-off:
+// tick-parking was measured useless and RETIRED on 2026-08-29 together with
+// ue_wrap::atv::SetBrainEnabled (see atv_hit_guard.cpp's header: SetCenterOfMass runs
+// UNCONDITIONALLY per tick, so parking the tick moved the vehicle 37 cm and prevented nothing;
+// applyWheelTorque and every battery term were ALREADY single-peer by the game's own
+// isDriven/isDrive gates). What actually keeps hit-authored damage on one machine is the
+// COLLISION INTERCEPTOR and nothing else -- and since 8cd0ac25 it holds only the two BODY
+// delegates, so processTire now runs on every peer. `ownsTick`'s two real jobs are electing the
+// idle syncer and feeding that interceptor's owned set.
 bool OwnsTickFor(bool isPoseAuthor, bool isHost, uint8_t authorSlot) {
     return isPoseAuthor || (isHost && authorSlot == 0xFF);
 }

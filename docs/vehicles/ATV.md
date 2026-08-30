@@ -1717,14 +1717,26 @@ opening the file the lane lives in.** `[V]` `atv_sync.cpp:224`:
 whose own comment already names it **"MTA's `CUnoccupiedVehicleSync` election"**, with
 `SubscribeSlotReplaced` freeing a departed author's slot. My brief called this "undefined here".
 
-**And its next sentence re-diagnoses the whole defect:** *"Everyone else runs the rig with its brain
-off, which is what keeps the accumulators, `applyWheelTorque` and the hit-authored damage on one
-machine while the physics still runs on all of them."* So a mechanism for exactly this **already
-exists and already intends to hold the accumulators on one peer**. §17.9's observed tire divergence
-is therefore **not a missing lane — it is a HOLE in a shipped one**: `processTire` is reached from a
-`ComponentHit` delegate, not from the brain tick, so it walks straight past brain-off. That is a much
-smaller and much better-aimed problem than "the ATV needs a state lane", and it is the first thing
-the next design must address.
+**Its next sentence appears to re-diagnose the whole defect — and it is STALE PROSE that cost me an
+hour. CORRECTED WITHIN THE HOUR, and the code comment is fixed too.** That sentence reads *"Everyone
+else runs the rig with its brain off, which is what keeps the accumulators, `applyWheelTorque` and
+the hit-authored damage on one machine"*, and I built §17.11's first finding on it. **There is no
+brain-off.** `atv_hit_guard.cpp:30-49` records that tick-parking was measured useless and **RETIRED
+on 2026-08-29** along with `ue_wrap::atv::SetBrainEnabled`: `SetCenterOfMass` runs UNCONDITIONALLY
+every tick, so parking the tick moved the mirror 37 cm and prevented nothing, while
+`applyWheelTorque` (`@29949 IFNOT(isDriven)`) and every battery term
+(`SelectFloat(x,0,isDriven|...)`) were ALREADY single-peer by the game's own gates. That same header
+states it outright: **"The interceptor is now the ONLY thing that makes a mirror differ from a native
+ATV."**
+
+So §17.9's divergence is not a hole in a mechanism — **the mechanism is the interceptor, and I
+removed five sevenths of it in `8cd0ac25` to fix the rig-shape sag.** The trade was right (the wheel
+delegates also write `wheelsOnSurface`, which gates the suspension force) and its cost was named in
+§17 as "narrower than what it replaces"; what nobody noticed is that the thing being traded away was
+the *whole* enforcement for hit-authored damage. The wheel `ComponentHit` carries two effects and we
+need one without the other — which is
+`[[lesson-a-notification-carries-more-than-the-effect-you-are-suppressing]]` a second time on the
+same delegate.
 
 **(2) The evidence base is one facet, and I opened its window myself.** The only runtime divergence
 measured is `tiresDurability`/`tiresDirt` (§17.9), and §17.5's correction records that the window it
@@ -1760,9 +1772,32 @@ reducer calls in `ue_wrap/devices/atv.cpp` (which already exists), the wire in
 onto anything.
 
 **Net effect on §17.10:** the reframe's DIRECTION survives (a tire-only lane is the wrong unit) but
-its SIZE does not. The next step is not a vehicle-wide lane design — it is the three-way facet
-classification in (3), plus closing the brain-off hole in (1), both of which may leave very little
-lane to build.
+its SIZE does not.
+
+### 17.12 And the answer is not a lane at all — it is four arrays in a message that already ships
+
+Since the two effects cannot be separated at the delegate (`processTire` is `EX_Local*`, §17.8) and
+cannot be cancelled after it (`Func` is POST-only, §17.8), the remaining move is to let the mirror
+mis-accumulate and **overwrite it from the author**. That needs no new lane, because the lane is
+already there:
+
+`[V]` `AtvStatePayload` (`protocol.h:4107`) is **84 bytes, reliable, keyed**, already sent by the
+author every `kDriveSendMs` while driven and by the elected idle syncer every `kIdleSendMs`
+(`atv_sync.cpp:742-760`), and already carries an **`adopt` flag for the host connect-snapshot** —
+so **principle 8's mid-join answer comes for free**: a joiner gets the tire state in the same
+warp-verbatim message it already gets the pose in.
+
+The addition is a ~41-byte block: a 4-bit `tires` mask, `tiresDurability[4]` and `tiresDirt[4]` as
+floats, `tiresFixes[4]` and `tiresTypes[4]` as bytes. The receiver writes them and calls
+`updTires()` **once, only when the mask changed** — §17.7(d) measured that reducer is pure over
+`tires[]`, so the rig follows without mirroring one `BreakConstraint`. A wire change, so it bumps
+the protocol.
+
+**What this does NOT cover, and must not be quietly folded in:** an actual `ejectWheel` on a mirror
+still spawns a real, keyed, registered wheel prop that reaches nobody (§17.5), and no amount of
+array-overwriting un-spawns it. That half remains an act-as-host intent and is the only part of this
+whole thread that still needs designing. It has also **never been observed** — `tires` stayed `0xF`
+on both peers for the entire §17.9 run.
 
 ### 17.6 Three things not to re-derive
 1. **Deleting the tick-off (`a2a45fc7`) did not move the number.** All six runs that read 25-40 cm
