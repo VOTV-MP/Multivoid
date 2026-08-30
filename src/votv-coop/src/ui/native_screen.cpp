@@ -7,6 +7,7 @@
 #include "ui/native_screen.h"
 
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/log.h"   // the hit-space probe's one line
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/engine/engine.h"
@@ -262,7 +263,42 @@ bool HoverTracker::Poll(void* panel, int32_t shownCount) {
     // and nothing ever corrects it.
     pending_ = moved || scrolled;
 
-    index_ = ChildAtCursor(panel, shownCount, c.x, c.y, index_);
+    // WHICH SPACE IS THE RECT IN? (probe; RULE 2 exempt. 2026-08-30, user field report:
+    // "их хитбокс находится не там где визуал, приходится курсор чуть ниже двигать" --
+    // every button and save row on the native surfaces is missed until the cursor is moved.)
+    //
+    // `GetCursorPos` is DESKTOP space. `WidgetScreenRect` composes Slate's own
+    // `LocalToAbsolute`, and Slate ABSOLUTE is not desktop space in general. The two have
+    // been compared directly since this hit test was written, which is only correct when
+    // the client origin is (0,0) and the DPI factor is 1.
+    //
+    // I am NOT guessing the direction: the report says the hit zone sits BELOW the visual,
+    // and the client-origin hypothesis predicts ABOVE, so at least one of my assumptions is
+    // wrong and a measurement decides it. This logs BOTH candidate answers plus the origin
+    // and the panel rect, once per armed run, so one hover settles which space to use.
+    // Inert unless [dev] hit_space_probe / VOTVCOOP_HIT_SPACE_PROBE is set.
+    static const bool kProbe = [] {
+        char v[8] = {};
+        return ::GetEnvironmentVariableA("VOTVCOOP_HIT_SPACE_PROBE", v, sizeof(v)) > 0 &&
+               v[0] == '1';
+    }();
+    const int32_t desktopHit = ChildAtCursor(panel, shownCount, c.x, c.y, index_);
+    if (kProbe && moved) {
+        POINT cli = c;
+        HWND hwnd = ::GetActiveWindow();
+        if (hwnd) ::ScreenToClient(hwnd, &cli);
+        const int32_t clientHit = ChildAtCursor(panel, shownCount, cli.x, cli.y, -1);
+        ue_wrap::FVector2D ptl{}, psz{};
+        const bool haveP = U::WidgetScreenRect(panel, ptl, psz);
+        POINT org{0, 0};
+        if (hwnd) ::ClientToScreen(hwnd, &org);
+        UE_LOGW("native_screen[hitprobe] cursor desktop=(%ld,%ld) client=(%ld,%ld) "
+                "clientOrigin=(%ld,%ld) panel %s(%.0f,%.0f) %.0fx%.0f -> "
+                "hit(desktop)=%d hit(client)=%d",
+                c.x, c.y, cli.x, cli.y, org.x, org.y, haveP ? "" : "UNREAD ",
+                ptl.X, ptl.Y, psz.X, psz.Y, desktopHit, clientHit);
+    }
+    index_ = desktopHit;
     return true;
 }
 
