@@ -135,9 +135,9 @@ capture shows the frames). S8 was already correct. What remains open is listed u
 |---|---|---|---|
 | S1 | No panel border. The window is a cloned 9-slice from `ui_saveSlots.Image_0` with no frame. | 2 px `#646464` frame, `#1A1A1A` fill | **DONE** — `AddFramedBox` |
 | S2 | Title is cyan and left-aligned, on no strip. | white, centred, own bordered header strip | **DONE** |
-| S3 | Rows have a flat `rgba(1,1,1,0.05)` tint and no border. | `#313131` fill, thin border, per-row box | **DONE** (fill; see below) |
-| S4 | **No hover.** The user's report. | label cells → `#FFFF00` on hover | **DONE** — `UpdateHover` |
-| S5 | **No selection.** No selected row exists yet at all. | row fill → `#400040` | **DONE** — keyed on `lobbyId` |
+| S3 | Rows have a flat `rgba(1,1,1,0.05)` tint and no border. | `#313131` fill, thin border, per-row box | **DONE** — fill `95d18cc5`, the per-row FRAME 2026-08-30 (`AddFramedBox`) |
+| S4 | **No hover.** The user's report. | label cells → `#FFFF00` on hover | **DONE** — `UpdateHover`; 2026-08-30 the row's FRAME turns `#FFFF00` too, see 5b |
+| S5 | **No selection.** No selected row exists yet at all. | row fill → `#400040` | **DONE** — keyed on `lobbyId`; 2026-08-30 it OUTRANKS hover, see 5b |
 | S6 | Column headers are dim grey. | orange `#FF7C00`, matching a section header | **DONE** |
 | S7 | The X / BACK buttons carry a cloned `button_back` style but authored white labels. | orange `#FF7C00` labels; BACK belongs bottom-**LEFT**, not bottom-right | **DONE** — BACK moved LEFT |
 | S8 | Version-mismatch tint is amber `#FFBC00`-ish by accident. | keep, but say so deliberately — amber is in the palette | **DONE** — kept, deliberately |
@@ -149,13 +149,37 @@ T7 adds it.
 
 **Still open after S1-S9:**
 
-* **Per-row borders.** Native rows each carry their own frame; ours get separation from a 2 px gap
-  that lets the darker panel show through. A real frame costs one more `UImage` per row, and this
-  list's per-row cost is the exact subject of the open perf lane (`MULTIPLAYER_UI.md` §8c.-1). If T6
-  lands a viewport pool the widget budget stops mattering and the frame can replace the gap.
+* ~~**Per-row borders.**~~ **DONE 2026-08-30**, on the user's direct instruction — *"чтобы из списка
+  серверы не сливались, у каждого свои границы в стиле votv нативный визуал максимально"*. Every row
+  is now a `native_screen::AddFramedBox` (the same primitive as the panel, the header strip and the
+  footer): a `#646464` edge with a `#313131` face inset 2 px, INSIDE the existing 64 px row, so no
+  layout arithmetic moved. The 2 px slot gap **stays** — two adjacent frames with no gap read as one
+  4 px rule, which is the blending the change exists to end. `[V]` `research/browser_shots/browser_native.png`.
+
+  The deferral this replaces was priced on the widget budget (one more `UImage` per row against the
+  open perf lane, `MULTIPLAYER_UI.md` §8c.-1). That reasoning was not wrong and is not resolved — T2a
+  and T2c still have not run — it was **outranked**: a list whose rows blend into one slab is a
+  defect the player sees, and an unmeasured cost is not a reason to ship one. The row's per-paint
+  cost is now 4 dispatches for the skin (was 3) and the same 21 for a full paint.
 * **The list's first row sits tight under the column header** — visible in the capture. Cosmetic,
   measured, not yet chased.
 * **The expander / two-column idiom** (§6) — not adopted, on purpose.
+
+### 5b. The one place we deliberately exceed the measurement `[V]` measured, `[A]` extended
+
+§4's table is what the captures show. The browser's rows do **one thing more than that**, added
+2026-08-30 on the user's instruction, and it is recorded here rather than folded into §4 so the
+measurement and the extension never blur:
+
+| channel | native (measured) | the browser's rows | why |
+|---|---|---|---|
+| hover | label → `#FFFF00` | label → `#FFFF00` **and the row's frame → `#FFFF00`** | native hover was measured on SETTINGS rows — one label, one value. A server row is five columns across ~640 px, and recolouring the glyphs alone is a change the eye does not find. The colour is the measured one, applied at row scale; nothing new enters the palette. |
+| selection | row fill → `#400040` | unchanged | |
+| **both at once** | not observable in any capture (native lists have no persistent selection) | **selection wins outright: a selected row ignores hover in every channel** | the user's rule, verbatim: *"если сервер из списка кликнут, то выделение держится только на нем, а hover игнорится"*. Implemented as one predicate (`PointerLit`), so the frame painter and the text painter cannot disagree about it. |
+
+The structural consequence is worth keeping: hover owns the **frame and the text**, selection owns
+the **fill**. They are writes to different widgets, so they can never fight over a pixel, and the
+precedence is enforced by suppressing hover at the source rather than by painting over it.
 
 ---
 

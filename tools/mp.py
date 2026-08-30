@@ -3432,7 +3432,16 @@ def cmd_browser(args) -> None:
         # see that a list the getter calls scrolled looks scrolled. Each verdict phase
         # holds its offset for 6 s, which covers this 3 s poll.
         for needle, name, seen in (("SCROLL CONTROL ", "browser_scroll_forced.png", "ctl"),
-                                   ("WHEEL VERDICT", "browser_scroll_wheel.png", "whl")):
+                                   ("WHEEL VERDICT", "browser_scroll_wheel.png", "whl"),
+                                   # THE ROW STATE CHANNELS, and these two are not
+                                   # corroboration -- they are the ONLY evidence that hover
+                                   # and selection DRAW. `ROW SELECT PASS` proves the state
+                                   # changed; the tints are UImage writes whose every
+                                   # failure mode leaves that verdict green. A names the
+                                   # three states in one frame, B is the precedence rule
+                                   # (selected + hovered must still read selected).
+                                   ("ROW SKIN SHOT A", "browser_row_skin_a.png", "skna"),
+                                   ("ROW SKIN SHOT B", "browser_row_skin_b.png", "sknb")):
             if needle in text and seen not in extra_shots:
                 extra_shots[seen] = shots_dir / name
                 if _capture_window(host_pid, extra_shots[seen]):

@@ -98,6 +98,30 @@ constexpr int kRowRead        = 140;
 constexpr int kRowDown        = 142;
 constexpr int kRowUp          = 146;
 constexpr int kRowVerify      = 150;
+// ...and then HOLD STILL TWICE, so a human can see what the two state channels drew.
+//
+// WHY A LOG LINE CANNOT CLOSE THIS. `ROW SELECT PASS` above proves the STATE changed --
+// `SelectedRowId()` returns a lobby. It says nothing about PIXELS. The row skin is two
+// UImage tints written through UFunctions, and every failure mode of that (the wrong child
+// index, a raw write that does not repaint, a colour built in the wrong space) leaves the
+// state verdict green and the screen unchanged. mp.py's own closing line is the standing
+// warning: "a log line is not a layout".
+//
+// TWO SHOTS, because the property the user asked for is a RELATION between rows and one
+// frame cannot hold both halves of it:
+//   A -- the cursor parked on a row that is NOT the selected one. That frame carries all
+//        three states at once: the selected row purple with an ordinary grey frame, the
+//        hovered row with a yellow frame and yellow text, and five idle rows between them.
+//   B -- the cursor moved back ONTO the selected row. This is the user's rule itself
+//        ("выделение держится только на нем, а hover игнорится"): the row must still be
+//        purple and must NOT have gained a yellow frame. A green A with a yellow B is
+//        precedence not working, and nothing else distinguishes those two outcomes.
+// Each holds for kShotHoldMs, the same 6 s window the scroll verdicts already use to cover
+// mp.py's 3 s capture poll.
+constexpr int kSkinAimOther   = 151;
+constexpr int kSkinHoldOther  = 152;  // HOLDING -- wall clock
+constexpr int kSkinAimSelf    = 153;
+constexpr int kSkinHoldSelf   = 154;  // HOLDING -- wall clock
 constexpr int kClickMove      = 156;
 constexpr int kClickSample    = 164;  // eight ticks after the move -- the scrim's budget
 constexpr int kClickDown      = 166;
@@ -719,6 +743,48 @@ void Tick(void* scrim, void* list, void* closeBtn) {
                         "hover is fine and the CLICK path is the defect.", g_rowHovered);
             break;
         }
+        case kSkinAimOther:
+        case kSkinAimSelf: {
+            // Aim by the SAME arithmetic kRowMove used, so "the selected row" here is the
+            // row that was actually clicked: 1.5 rows in. The other aim is 4.5 rows in --
+            // three rows lower, still inside the ~470 px list at any window size this rig
+            // runs, and far enough that the two are never the same row.
+            const bool self = (g_selfCheckStep == kSkinAimSelf);
+            // NEVER handed straight to %s: SelectedRowId returns the raw pointer of a
+            // std::string that is empty when nothing is selected, and a null would be UB
+            // in the logger's vsnprintf. The caller two phases up already guards it.
+            const char* selId = ui::server_browser_native::SelectedRowId();
+            if (!selId) selId = "(none)";
+            ue_wrap::FVector2D ltl{}, lsz{};
+            if (!U::WidgetScreenRect(list, ltl, lsz) || lsz.Y < kRowPx * 5.f) {
+                UE_LOGE("server_browser_native: ROW SKIN SHOT SKIP -- the list is %.0f px "
+                        "tall, too short to hold the two rows these shots compare. Whether "
+                        "the hover and selection tints DRAW is UNMEASURED.", lsz.Y);
+                g_selfCheckStep = kClickMove - 1;
+                return;
+            }
+            ::SetCursorPos(static_cast<int>(ltl.X + lsz.X * 0.5f),
+                           static_cast<int>(ltl.Y + kRowPx * (self ? 1.5f : 4.5f)));
+            // The needle mp.py captures on. It names what the frame should show, so the
+            // shot is falsifiable by looking at it rather than merely archived.
+            if (self)
+                UE_LOGW("server_browser_native: ROW SKIN SHOT B -- the cursor is back on the "
+                        "SELECTED row (lobby '%s'). It must still be PURPLE and must NOT "
+                        "have a yellow frame: a selected row ignores hover.",
+                        selId);
+            else
+                UE_LOGW("server_browser_native: ROW SKIN SHOT A -- the cursor is three rows "
+                        "BELOW the selected one (lobby '%s'). The frame should show that row "
+                        "purple with a grey border, the row under the cursor with a YELLOW "
+                        "border and yellow text, and the rest idle.",
+                        selId);
+            g_holdUntilMs = nowMs + kShotHoldMs;
+            break;
+        }
+        case kSkinHoldOther:
+        case kSkinHoldSelf:
+            if (nowMs < g_holdUntilMs) return;   // HOLDING: give the capture poll a window
+            break;
         case kClickMove: {
             // ASK THE ENGINE WHERE THE X IS. Do not compute it, and do not hunt for it.
             //

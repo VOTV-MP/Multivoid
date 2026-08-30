@@ -39,6 +39,18 @@ using NS::Spawn;
 // so a row of ours is the same size as a row of theirs.
 constexpr float kRowH     = 64.f;
 constexpr float kRowGapPx = 2.f;
+// EVERY ROW CARRIES ITS OWN FRAME. `docs/VOTV_UI_STYLE.md` section 3 rule 1: nothing in
+// VOTV's UI floats unboxed, and section 5 listed per-row borders as the last open style
+// gap -- deferred at the time on the widget budget, because a frame costs one more UImage
+// per row and that cost is the subject of the open perf lane. The user asked for it
+// directly on 2026-08-30 ("чтобы из списка серверы не сливались, у каждого свои границы"),
+// which settles the trade: a list where adjacent rows blend into one slab is not a list.
+//
+// The frame is INSIDE the 64 px row, so it changes no layout arithmetic -- the scroll
+// clamp's `want * (kRowH + kRowGapPx)` still describes the content height. The 2 px slot
+// gap STAYS: two adjacent 2 px frames with no gap read as one 4 px rule between rows,
+// which is the blending this is meant to end.
+constexpr float kRowBorderPx = 2.f;
 // BOUNDS THE WHOLE SYNC LOOP, not just the display: `want` clamps to this, the grow
 // loop is bounded by `want`, and `total = ChildCount` therefore never exceeds it. So
 // this is a COMPUTE ceiling that happens to look like a display one.
@@ -59,9 +71,10 @@ constexpr int   kMaxRows  = 64;
 
 const FLinearColor kRowBg  = NS::RowBg();   // a list row at rest
 const FLinearColor kRowSel = NS::RowSel();  // ...and selected. Fill, not text.
+const FLinearColor kBorder = NS::Border();  // #646464 -- every frame in the game's menus
 const FLinearColor kText   = NS::Text();    // the default: most text is white
 const FLinearColor kAccent = NS::Accent();  // orange -- the interactive accent
-const FLinearColor kHover  = NS::Hover();   // hover is a TEXT colour, see section 4
+const FLinearColor kHover  = NS::Hover();   // #FFFF00 -- hover, on the text AND the frame
 const FLinearColor kAmber  = NS::Amber();   // value emphasis; the mismatch tint
 const FLinearColor kDim    = NS::Dim();     // secondary text (measured, not guessed)
 const FLinearColor kOwn    = NS::Own();     // "your server" row
@@ -69,9 +82,31 @@ const FLinearColor kOwn    = NS::Own();     // "your server" row
 // ---- state (GAME THREAD ONLY) -----------------------------------------------------
 void* g_list = nullptr;   // the UScrollBox holding the rows
 
-// Style doc section 4: hover and selection are DIFFERENT channels. Hover recolours the
-// row's TEXT; selection recolours the row's FILL. Both are applied on a CHANGE, never per
-// frame.
+// HOVER AND SELECTION ARE DIFFERENT CHANNELS, AND SELECTION OUTRANKS HOVER.
+//
+// Style doc section 4, measured: native hover is a TEXT colour change to #FFFF00 and
+// native selection is a row FILL change to #400040 -- the fill is identical on hovered and
+// unhovered native rows, which is why porting ImGui's paint-behind-the-row look would read
+// as foreign. Both channels are applied on a CHANGE, never per frame.
+//
+// TWO THINGS ARE ADDED HERE ON TOP OF THAT MEASUREMENT, both on the user's 2026-08-30
+// instruction, and both are deliberate rather than discovered:
+//
+//   * HOVER ALSO YELLOWS THE ROW'S FRAME. Native's text-only hover was measured on
+//     SETTINGS rows -- one label and one value. Ours is a five-column data row roughly 640
+//     px wide, where recolouring the glyphs alone is a change the eye does not find; the
+//     user's word for what they wanted is "выделение", a highlight. The frame is the same
+//     #FFFF00 the measurement produced, applied at row scale, so nothing here invents a
+//     colour -- section 2's rule is that a value not in the palette is a mistake, and this
+//     is not a new value.
+//   * A SELECTED ROW IGNORES HOVER ENTIRELY. Verbatim: "если сервер из списка кликнут, то
+//     выделение держится только на нем, а hover игнорится". So the pointer moving over the
+//     row a player already chose changes nothing about it -- neither its frame nor its
+//     text. The purple says "this is the one", and nothing transient is allowed to argue.
+//
+// The consequence worth stating: hover and selection can never fight over one pixel. Hover
+// owns the FRAME and the TEXT, selection owns the FILL, and where both would apply,
+// selection wins by suppressing hover at the source rather than by painting over it.
 int              g_hoverRow = -1;   // index into the live rows, or -1
 NS::HoverTracker g_hover;           // pointer + scroll + settling, one owner
 std::string      g_selectedId;      // the SELECTED LOBBY, keyed by id and not by index
@@ -95,25 +130,34 @@ constexpr Column kColumns[5] = {
     {L"Age",     0.10f},
 };
 
-// Build one row: USizeBox(64) -> UOverlay -> [ UImage background (the HIT TARGET),
-// UHorizontalBox of five UTextBlocks ]. NO UButton: the native row's own `button_select`
-// draws nothing in all three states, and a UButton would add a press visual we would then
-// suppress.
+// Build one row: USizeBox(64) -> UOverlay -> [ UImage EDGE, UImage FACE inset by the
+// border, UHorizontalBox of five UTextBlocks ]. NO UButton: the native row's own
+// `button_select` draws nothing in all three states, and a UButton would add a press
+// visual we would then suppress.
+//
+// THE FRAME COMES FROM THE SHARED KIT, not from a second implementation here. The two
+// images plus the inset are exactly `native_screen::AddFramedBox`, which already draws
+// every panel, header strip and footer on this screen and on the hosting window; a copy
+// of it in the row builder is the drift this project has paid for twice in one day (the
+// kit's own header says so). It returns the OVERLAY, so the text row is simply the third
+// child of what it built.
+//
+// THE FRAME IMAGES ARE HIT-TEST-INVISIBLE, and that is safe HERE for a reason worth
+// writing down. The comment this replaces said the row background "is the hit target, so
+// it must be Visible". That WAS true of the hover implementation it was written for, which
+// asked Slate `IsHovered` on the background image. It is not true of the one that shipped
+// on 2026-08-29: `native_screen::ChildAtCursor` -> `Probe` reads the rect of
+// `ChildAt(panel, i)` -- the row's SIZEBOX -- and never touches the images at all
+// (`native_screen.cpp:188-210`). Nothing else asks either image a hit-test question. So
+// the images owe only their pixels, and hit-testing is the SizeBox's job, which `Sync`
+// already sets Visible explicitly.
 void* BuildRow(void* parent) {
     void* box = Spawn(L"SizeBox", parent);
     if (!box) return nullptr;
     U::SetSizeBoxHeight(box, kRowH);
-    void* ovl = Spawn(L"Overlay", box);
-    void* bg  = ovl ? Spawn(L"Image", ovl) : nullptr;
+    void* ovl = NS::AddFramedBox(box, kRowBg, kRowBorderPx);
     void* hb  = ovl ? Spawn(L"HorizontalBox", ovl) : nullptr;
-    if (!ovl || !bg || !hb) return nullptr;
-    // The background carries the row's state tint AND is the hit target, so it must be
-    // Visible -- a HitTestInvisible image is not arranged the same way, and the geometry
-    // walk reads the rect Slate cached for it.
-    U::SetImageTintRaw(bg, kRowBg);
-    E::SetWidgetVisibility(bg, 0);  // ESlateVisibility::Visible
-    if (void* s = U::AddChild(ovl, bg))
-        U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign, kFill, kFill);
+    if (!ovl || !hb) return nullptr;
     if (void* s = U::AddChild(ovl, hb))
         U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign, kFill, kFill);
     for (const Column& c : kColumns)
@@ -127,7 +171,7 @@ void* BuildRow(void* parent) {
 // (cached_obj_ref.h:34-46 -- the world stamp is inert for UMG, and UE assigns serials
 // lazily, so a hand-spawned widget captures serial 0 and the ABA residual is not closed).
 // The panel's `Slots` is the authority; this walks it.
-struct RowParts { void* box; void* bg; void* text[5]; };
+struct RowParts { void* box; void* edge; void* face; void* text[5]; };
 bool RowPartsAt(int32_t i, RowParts& out) {
     out = RowParts{};
     void* box = U::ChildAt(g_list, i);
@@ -135,7 +179,7 @@ bool RowPartsAt(int32_t i, RowParts& out) {
     out.box = box;
     void* ovl = nullptr;
     // LATCHED. `R::FindFunction` has no result cache and walks the whole GUObjectArray, and
-    // this runs PER ROW inside Sync and RepaintRowFills -- 64 rows meant 64 full walks
+    // this runs PER ROW inside Sync and RepaintRowSkins -- 64 rows meant 64 full walks
     // landing in one frame, every sync. `R::FindClass` beside it has been cached since
     // `ca1cd5e4`; only this one was not. A UFunction never moves, so one resolve is all
     // there is. (Post-ship perf audit, 2026-08-29. The general fix -- a cache inside
@@ -153,8 +197,13 @@ bool RowPartsAt(int32_t i, RowParts& out) {
         if (Call(box, f)) ovl = f.Get<void*>(L"ReturnValue");
     }
     if (!ovl) return false;
-    out.bg = U::ChildAt(ovl, 0);
-    void* hb = U::ChildAt(ovl, 1);
+    // The overlay's children, in BuildRow's order: the frame's edge, the frame's face, the
+    // text row. The first two are AddFramedBox's, so if that kit function ever reorders
+    // them this reads the wrong image -- which is why the row builder uses the kit rather
+    // than hand-rolling a frame whose order only this file knows.
+    out.edge = U::ChildAt(ovl, 0);
+    out.face = U::ChildAt(ovl, 1);
+    void* hb = U::ChildAt(ovl, 2);
     if (!hb) return false;
     for (int c = 0; c < 5; ++c) out.text[c] = U::ChildAt(hb, c);
     return true;
@@ -174,22 +223,68 @@ std::wstring VersionCell(const Row& r, bool& mismatch) {
     return coop::text::FromUtf8Lossy(cell.data(), cell.size());
 }
 
-// A row's five text colours, from its data and its hover state. ONE owner: the sync pass
+// DOES THE POINTER GET TO CHANGE THIS ROW AT ALL. The single expression of the user's
+// rule, so the three painters below cannot disagree about it: a SELECTED row is deaf to
+// hover, in every channel. Written once and called, rather than repeated as `hovered &&
+// !selected` at each site -- the same `&& !` copied three times is how one of them ends up
+// missing the negation.
+bool PointerLit(bool hovered, bool selected) { return hovered && !selected; }
+
+// A row's TWO FILL CHANNELS, from its state. ONE owner, for the reason the text colours
+// have one: the sync pass, the hover edge and the selection repaint all come through here,
+// so "what colour is this row's frame" is answered in exactly one place.
+//
+// FILL says CHOSEN (#400040, persistent, set by a click). FRAME says POINTED AT (#FFFF00,
+// transient, set by the cursor) and falls back to the ordinary #646464 every native box
+// carries. They are independent writes to independent widgets, so neither can clobber the
+// other; the precedence lives entirely in `PointerLit`.
+void ApplyRowSkin(const RowParts& rp, bool hovered, bool selected) {
+    // SetImageTint, not ...Raw: these images are already attached to Slate, and a raw
+    // property write does not repaint (umg_build.h:99-108).
+    if (rp.face) U::SetImageTint(rp.face, selected ? kRowSel : kRowBg);
+    if (rp.edge) U::SetImageTint(rp.edge, PointerLit(hovered, selected) ? kHover : kBorder);
+}
+
+// A row's five text colours, from its data and its state. ONE owner: the sync pass
 // and the hover edge both come through here, so "what colour is the version cell" is
 // answered in exactly one place and un-hovering cannot restore the wrong base.
 void ApplyRowTextColors(const RowParts& rp, const Row& r, bool isOwn, bool mismatch,
-                        bool hovered) {
-    // Style doc section 4: hovering turns the LABEL yellow and leaves the fill alone.
-    // That is the opposite of the ImGui incumbent, which paints behind the row.
-    const FLinearColor name = hovered ? kHover : (isOwn ? kOwn : kText);
-    const FLinearColor body = hovered ? kHover : kText;
-    const FLinearColor dim  = hovered ? kHover : kDim;
-    const FLinearColor ver  = hovered ? kHover : (mismatch ? kAmber : kDim);
-    if (rp.text[0]) E::SetTextBlockColor(rp.text[0], name);
-    if (rp.text[1]) E::SetTextBlockColor(rp.text[1], body);
-    if (rp.text[2]) E::SetTextBlockColor(rp.text[2], ver);
-    if (rp.text[3]) E::SetTextBlockColor(rp.text[3], dim);
-    if (rp.text[4]) E::SetTextBlockColor(rp.text[4], dim);
+                        bool hovered, bool selected) {
+    // Style doc section 4: hovering turns the LABEL yellow and leaves the FILL alone. That
+    // is the opposite of the ImGui incumbent, which paints behind the row. A selected row
+    // keeps its data colours on the purple -- section 4 measured that selection leaves the
+    // content white -- and the pointer does not override that.
+    const bool lit = PointerLit(hovered, selected);
+    const FLinearColor name = lit ? kHover : (isOwn ? kOwn : kText);
+    const FLinearColor body = lit ? kHover : kText;
+    const FLinearColor dim  = lit ? kHover : kDim;
+    const FLinearColor ver  = lit ? kHover : (mismatch ? kAmber : kDim);
+    // ...Dispatch, NEVER the raw variant, AND EVERY COLOUR ON THIS SCREEN DEPENDED ON IT.
+    //
+    // `SetTextBlockColor` is a raw property write, and its own declaration says in capitals
+    // that it "never propagates" to a block living in a CONSTRUCTED UMG/Slate tree, because
+    // UMG bakes the property into the Slate widget at attach; it survives only for the
+    // WidgetComponent nameplates, which re-render from properties every frame
+    // (`engine.h:516-531`). These rows are a constructed tree.
+    //
+    // MEASURED 2026-08-30, by sampling glyph pixels out of the self-check's own capture --
+    // not inferred. On the hovered row the frame read #FFFF00 (77 px) and its text read
+    // #FFFFFF (216 px); the World and Age cells, which are supposed to be #A5A5A5, read
+    // #FFFFFF too. So NOTHING this function has ever written reached the screen: not hover,
+    // not the dim secondary columns, not the green "your server" name, and not the AMBER
+    // VERSION MISMATCH -- which is the cue that the join gate will refuse that server, and
+    // is therefore the one that was a correctness defect rather than a cosmetic one.
+    //
+    // Why it went unnoticed for four days: the COLUMN HEADERS are orange and always were
+    // (#FF7C00, 165 px in the same capture). They are coloured at BUILD time, before the
+    // widget is attached, where a raw write does land -- so the screen looked like a screen
+    // whose colours work. `multiplayer_menu.cpp:155` already used the dispatch variant, for
+    // exactly this reason, on exactly this kind of tree.
+    if (rp.text[0]) E::SetTextBlockColorDispatch(rp.text[0], name);
+    if (rp.text[1]) E::SetTextBlockColorDispatch(rp.text[1], body);
+    if (rp.text[2]) E::SetTextBlockColorDispatch(rp.text[2], ver);
+    if (rp.text[3]) E::SetTextBlockColorDispatch(rp.text[3], dim);
+    if (rp.text[4]) E::SetTextBlockColorDispatch(rp.text[4], dim);
     (void)r;
 }
 
@@ -201,11 +296,17 @@ void ApplyRowTextColors(const RowParts& rp, const Row& r, bool isOwn, bool misma
 // of text encoding (CLAUDE.md 4a-names); the lossy decode is the right one here because a
 // browser row must still DRAW when a hostile master sends ill-formed bytes -- refusing
 // the field whole is the receive boundary's job, not the renderer's.
-void SetRowText(void* block, const std::string& utf8, const FLinearColor& col) {
+//
+// TEXT ONLY -- the colour is NOT set here. It used to be, and the write was dead twice
+// over: dead because it was the raw variant (see ApplyRowTextColors), and redundant
+// because `ApplyRowTextColors` runs a few lines later in the same pass and is documented
+// as the ONE owner of a row's five colours. Two writers for one property is how a base
+// colour comes back wrong after an un-hover; removing this one also pays for the dispatch
+// the other one now has to make.
+void SetRowText(void* block, const std::string& utf8) {
     if (!block) return;
     const std::wstring w = coop::text::FromUtf8Lossy(utf8.data(), utf8.size());
     E::SetWidgetText(block, w.c_str());
-    E::SetTextBlockColor(block, col);
 }
 
 // THE ORDER INVARIANT, WATCHED RATHER THAN ASSUMED.
@@ -270,39 +371,56 @@ void CheckOrderStable(int shown) {
     sHave = true;
 }
 
-// JUST the background image of row `i`. Three dispatches instead of `RowPartsAt`'s nine.
+// JUST the two frame images of row `i`. Four dispatches instead of `RowPartsAt`'s nine.
 //
-// The fill repaint wants one pointer and was paying for all seven: `RowPartsAt` resolves
+// The skin repaint wants two pointers and was paying for all seven: `RowPartsAt` resolves
 // the box, the overlay and five text blocks, and a selection change discarded six of them
 // per row -- 576 wasted dispatches on a 64-row list, in the frame the player clicked.
-// (Post-ship perf audit, 2026-08-30, finding F3.)
-void* RowBgAt(int32_t i) {
+// (Post-ship perf audit, 2026-08-30, finding F3.) The `text` members are left NULL, which
+// `ApplyRowSkin` reads as "not mine to touch" -- so a partial fill is a first-class value
+// here and not a half-built object.
+bool RowSkinAt(int32_t i, RowParts& out) {
+    out = RowParts{};
     // The overlay walk is shared with RowPartsAt and is where the one dispatch lives; the
     // saving is in not asking for the five text blocks.
     void* box = U::ChildAt(g_list, i);
-    if (!box) return nullptr;
+    if (!box) return false;
+    out.box = box;
     static void* const sGetContent = [] {
         void* cw = R::FindClass(P::name::ContentWidgetClass);
         return cw ? R::FindFunction(cw, P::name::GetContentFn) : nullptr;
     }();
-    if (!sGetContent) return nullptr;
+    if (!sGetContent) return false;
     ue_wrap::ParamFrame f(sGetContent);
-    if (!Call(box, f)) return nullptr;
+    if (!Call(box, f)) return false;
     void* ovl = f.Get<void*>(L"ReturnValue");
-    return ovl ? U::ChildAt(ovl, 0) : nullptr;
+    if (!ovl) return false;
+    out.edge = U::ChildAt(ovl, 0);
+    out.face = U::ChildAt(ovl, 1);
+    return out.edge || out.face;
 }
 
-// Repaint every row's FILL from the current selection. Only ever called on a selection
-// change, and only the background is touched -- three dispatches per row, no text work.
-void RepaintRowFills() {
+// Is row `i` the selected one? The one place that answers it, because it is asked from
+// three (the sync pass, the selection repaint, the click).
+bool RowIsSelected(int i) {
+    return !g_selectedId.empty() && i >= 0 && i < static_cast<int>(g_rowIds.size()) &&
+           g_rowIds[static_cast<size_t>(i)] == g_selectedId;
+}
+
+// Repaint every row's SKIN from the current selection and hover. Only ever called on a
+// SELECTION change -- four dispatches per row, no text work.
+//
+// IT MUST REPAINT THE FRAME TOO, NOT ONLY THE FILL, and that is the whole reason this
+// function grew a second channel. A click lands on the row the pointer is ON, so the newly
+// selected row is by construction the hovered one -- and a selected row is deaf to hover.
+// Repainting only the fill would leave that row purple AND yellow-framed, which is the one
+// combination the rule says cannot exist, until the pointer happened to move away.
+void RepaintRowSkins() {
     const int total = g_visibleRows;   // shown, not ChildCount's high-water mark
     for (int i = 0; i < total; ++i) {
-        void* bg = RowBgAt(i);
-        if (!bg) continue;
-        const bool sel = !g_selectedId.empty() &&
-                         i < static_cast<int>(g_rowIds.size()) &&
-                         g_rowIds[static_cast<size_t>(i)] == g_selectedId;
-        U::SetImageTint(bg, sel ? kRowSel : kRowBg);
+        RowParts rp;
+        if (!RowSkinAt(i, rp)) continue;
+        ApplyRowSkin(rp, i == g_hoverRow, RowIsSelected(i));
     }
 }
 
@@ -356,7 +474,9 @@ void UpdateHover() {
     g_hoverRow = hit;
     // Hoisted: it takes a mutex and copies a string, and the loop below runs it twice.
     const std::string own = sm::OwnLobbyId();
-    // Edge-applied: only the two rows that changed are recoloured.
+    // Edge-applied: only the two rows that changed are repainted -- the one the pointer
+    // left and the one it arrived on. Both channels the pointer owns, the frame and the
+    // text, so a row cannot keep a yellow frame after the cursor has gone.
     for (int i : {prev, hit}) {
         if (i < 0 || i >= static_cast<int>(g_rows.size())) continue;
         RowParts rp;
@@ -364,7 +484,9 @@ void UpdateHover() {
         const Row& r = g_rows[static_cast<size_t>(i)];
         bool mismatch = false;
         (void)VersionCell(r, mismatch);
-        ApplyRowTextColors(rp, r, !own.empty() && r.lobbyId == own, mismatch, i == hit);
+        const bool sel = RowIsSelected(i);
+        ApplyRowSkin(rp, i == hit, sel);
+        ApplyRowTextColors(rp, r, !own.empty() && r.lobbyId == own, mismatch, i == hit, sel);
     }
 }
 
@@ -474,21 +596,23 @@ void Sync() {
         bool mismatch = false;
         const std::wstring ver = VersionCell(r, mismatch);
 
-        SetRowText(rp.text[0], isOwn ? r.name + "   (your server)" : r.name, kText);
-        SetRowText(rp.text[1], std::to_string(r.playersCur) + "/" + std::to_string(r.playersMax),
-                   kText);
+        SetRowText(rp.text[0], isOwn ? r.name + "   (your server)" : r.name);
+        SetRowText(rp.text[1], std::to_string(r.playersCur) + "/" + std::to_string(r.playersMax));
         if (rp.text[2]) E::SetWidgetText(rp.text[2], ver.c_str());
-        SetRowText(rp.text[3], r.world, kDim);
-        SetRowText(rp.text[4], std::to_string(r.ageSec) + "s", kDim);
-        ApplyRowTextColors(rp, r, isOwn, mismatch, i == g_hoverRow);
+        SetRowText(rp.text[3], r.world);
+        SetRowText(rp.text[4], std::to_string(r.ageSec) + "s");
         // SELECTION IS KEYED ON THE LOBBY, NOT THE ROW INDEX. The client now sorts, so the
         // order is stable for a given SET -- but the SET churns, and one host leaving
         // shifts every row after it. A refresh can therefore still put a different server
         // at index N, and an index-keyed selection would silently move to whatever landed
         // there, which is how a player joins a server they did not pick.
-        if (rp.bg)
-            U::SetImageTint(rp.bg, (!g_selectedId.empty() && r.lobbyId == g_selectedId)
-                                       ? kRowSel : kRowBg);
+        //
+        // Read from `r.lobbyId` and NOT through `RowIsSelected(i)`: that helper reads
+        // `g_rowIds[i]`, which this very loop is in the middle of rewriting, so at this
+        // point it still holds the PREVIOUS pass's id for row i.
+        const bool sel = !g_selectedId.empty() && r.lobbyId == g_selectedId;
+        ApplyRowSkin(rp, i == g_hoverRow, sel);
+        ApplyRowTextColors(rp, r, isOwn, mismatch, i == g_hoverRow, sel);
         // The id is captured HERE, in the same pass as the text above it, so a click
         // resolves to the server the user was LOOKING at even if the master reorders.
         g_rowIds[static_cast<size_t>(i)] = r.lobbyId;
@@ -578,7 +702,7 @@ bool ClickSelect() {
     const std::string& id = g_rowIds[static_cast<size_t>(g_hoverRow)];
     if (id.empty() || id == g_selectedId) return false;
     g_selectedId = id;
-    RepaintRowFills();
+    RepaintRowSkins();
     UE_LOGI("server_browser_rows: row selected (%s)", id.c_str());
     return true;
 }
@@ -601,7 +725,7 @@ bool Selected(coop::net::lobby::LobbyRow& out) {
     // was open. Answering false is right -- the caller has nothing to connect to -- and the
     // selection is dropped so the highlight stops pointing at a server that is not there.
     g_selectedId.clear();
-    RepaintRowFills();
+    RepaintRowSkins();
     return false;
 }
 
@@ -621,7 +745,8 @@ void LogRowHitDiagnostics(int32_t i) {
                 tl.X, tl.Y, sz.X, sz.Y);
         U::LogVisibilityChain(what, w);
     };
-    dump("row.bg", rp.bg);
+    dump("row.edge", rp.edge);
+    dump("row.face", rp.face);
     dump("row.text0", rp.text[0]);
 }
 
