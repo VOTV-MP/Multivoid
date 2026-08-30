@@ -51,6 +51,7 @@ LINE = re.compile(
     # required group would make every one of them unparseable -- silently, as zero samples.
     r"(?:vel=\((?P<vx>[-\d.]+),(?P<vy>[-\d.]+),(?P<vz>[-\d.]+)\) )?"
     # partZ = the four rig bodies' world Z. Also optional: pre-2026-08-30 runs have none.
+    r"(?:angv=\((?P<ax>[-\d.]+),(?P<ay>[-\d.]+),(?P<az>[-\d.]+)\) )?"
     r"(?:partZ=\((?P<pfr>[-\d.]+),(?P<pfl>[-\d.]+),(?P<pbk>[-\d.]+)\) )?"
     r"(?:susFR=(?P<fr>[-\d.]+) susFL=(?P<fl>[-\d.]+) susBK=(?P<bk>[-\d.]+) |(?P<noparts>NOPARTS )?)"
     r"fuel=(?P<fuel>[-\d.]+) batt=(?P<batt>[-\d.]+) dirt=(?P<dirt>[-\d.]+) "
@@ -449,7 +450,11 @@ def acceptance(names, peers, logs):
                         if not p:
                             return False
                         q = p[-1]
-                        return ((r["bx"] - q["bx"]) ** 2 + (r["by"] - q["by"]) ** 2) ** 0.5 < 5.0
+                        # ALL THREE AXES. XY alone called a copy in FREE FALL "still" -- and a
+                        # Z drop is the entire defect this arm grades, so the after-sample could
+                        # be taken mid-fall and score whatever the fall had reached by then.
+                        return ((r["bx"] - q["bx"]) ** 2 + (r["by"] - q["by"]) ** 2
+                                + (r["bz"] - q["bz"]) ** 2) ** 0.5 < 5.0
 
                     after_self = after_o = None
                     for r in rows[i:]:

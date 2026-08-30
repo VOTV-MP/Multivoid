@@ -961,6 +961,9 @@ bool SetActorRootNotifyRigidBodyCollision(void* actor, bool notify);
 // false on failure. Game thread only.
 bool GetActorRootPhysicsVelocity(void* actor, FVector& outLin, FVector& outAng);
 bool SetActorRootPhysicsVelocity(void* actor, const FVector& lin, const FVector& ang);
+// Angular only -- for a mirror whose author is TURNING but not translating. Writing the linear
+// component of a resting rig wakes it and it sinks (docs/vehicles/ATV.md 16).
+bool SetActorRootPhysicsAngularVelocity(void* actor, const FVector& ang);
 
 // `actor`'s root primitive mass in kg (UPrimitiveComponent::GetMass on the root). 0 on failure /
 // non-simulating body. Used by the native LMB throw formula (speed scales as 15000/max(mass,10)).

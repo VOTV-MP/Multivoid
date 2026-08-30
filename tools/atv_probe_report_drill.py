@@ -213,11 +213,21 @@ def main():
     # window is a 45 cm "sag" that WOULD fail A6 outright, and 120 cm per sample of horizontal
     # travel is what tells the arm this is a peer driving off rather than a parked handoff.
     # Without the guard A6 would fail every run in which somebody mounts and drives away.
-    # The pair-gap form needs no distance guard: a peer driving away moves BOTH copies, so the
-    # gap barely changes. This arm proves the arm is silent there rather than scoring it.
-    arm_text("A6 guard: driving away is not a sag", "PASS",
-             run(*handoff(0.0, x_step=120.0, z_step=15.0)),
-             "never both came to rest")
+    # The pair-gap form needs no distance guard: a peer driving away moves BOTH copies down the
+    # same slope, so the gap CANCELS. The fixture drives for the first half of the window and
+    # then STOPS, so the arm actually reaches a settled pair and SCORES it -- the previous
+    # version passed because the fixture never settled at all, i.e. because the handoff was
+    # unmeasured, which asserts nothing about the cancellation it claims to prove.
+    hs = [line(stamp(40 + i), i, "ATV", 0, 0 if i < 6 else 1,
+               100.0 + 120.0 * min(i, 8), 0.0, 400.0 - 15.0 * min(i, 8),
+               breathe(93.773, 2.2, i), breathe(93.773, 2.2, i, 0.3),
+               breathe(71.914, 3.1, i, 0.6)) for i in range(14)]
+    cs = [line(stamp(40 + i), i, "ATV", 1 if i < 6 else 0, 1 if i < 6 else 0,
+               100.3 + 120.0 * min(i, 8), 0.0, 400.0 - 15.0 * min(i, 8),
+               breathe(93.773, 2.4, i, 0.15), breathe(93.773, 2.4, i, 0.45),
+               breathe(71.914, 3.4, i, 0.75)) for i in range(14)]
+    arm_text("A6 guard: driving away is not a sag", "PASS", run(hs, cs),
+             "pair dZ")
 
     # INCONCLUSIVE -- nobody drove, so no mirror ever existed. This must NOT read as PASS:
     # an idle ATV is never mirrored, so a quiet run proves nothing about the corrector.

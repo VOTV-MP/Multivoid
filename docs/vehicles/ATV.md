@@ -1154,3 +1154,48 @@ route. Not attributed.
 **NEXT, in order:** fix A6's before-sample; then find what holds a mirrored rig low — the four rig
 bodies' world Z is now logged (`partZ=`) and has not been read yet, and it distinguishes "the whole
 rig is low" (support) from "the body hangs in its suspension" (rig state).
+
+### 16.8 `[V]` The audit folded, and the fall has TWO sources — one closed, one open
+Post-ship audit (2026-08-30): no CRITICAL, 1 HIGH, 3 MEDIUM. **Three of §16.5's stated properties
+did not hold, and two were visible in the run §16.7 reported as evidence.**
+
+| # | what was claimed | what was true |
+|---|---|---|
+| F1 | — | `restReplaces` was missing from the actor-succession reset (`atv_sync.cpp:374-380`), whose own comment names the reachable path ("a client join runs two level loads"). A successor actor could inherit an exhausted budget and never be corrected again. |
+| F2 | "bounded at three re-places, then say so" | Not a bound. The counter cleared on any in-band packet, and a teleport lands the rig exactly in band — so the give-up fired **three times in 46 s** in the shipped run. Now bounded per 10 s EPISODE, and landing in band no longer clears it. |
+| F3 | the mirror is not written to when the author is at rest | Defeated by the ANGULAR term alone. `[ATVC] wireLin \|v\|=4.63` — under the linear band — but angular over it routed the packet onto the full write path and the mirror gained **+51 cm/s of Z**. The exact mechanism the fix claimed to remove, live in the run that shipped it. |
+| F4 | — | The WARP arm sits ABOVE the at-rest test and still did `TeleportRig` + write, unbounded; and its log line was emitted BEFORE the teleport, so it claimed warps that never happened when `teleportVehicle` was unresolved. |
+
+**The fold made it one rule at every write site instead of one branch.** `WriteMirrorVelocity` skips
+the LINEAR component when the author is linearly at rest and writes angular regardless (new
+`engine::SetActorRootPhysicsAngularVelocity`) — two quantities, two gates, one place. The
+corrective term is governed by the linear gate too, since it is a linear push.
+
+**Two runs on the folded build (`10F32B157948EFCE`), and they disagree:**
+
+| run | A2 | A6 (release) | verdict |
+|---|---|---|---|
+| 1 | **7.0 cm** | −4.5 (gap closed) | **ACCEPTANCE: PASS** — every arm green, the first time |
+| 2 | 39.7 cm | +37.3 | FAIL |
+
+**So the fix is NOT the whole defect, and one green run would have been a false claim.** The
+failing run names the second source:
+
+```
+[ATVC] NUDGE dist=6.7 cur.z=5482.1 wire.z=5475.5 wireLin=(-2.5,-6.2,-40.9) |v|=41.5
+```
+
+The AUTHOR is falling at 41.5 cm/s (Z −40.9) at the moment the client releases. `linAtRest` is
+correctly false, so we write that descent onto a mirror that has **already landed**, and a second
+later it is 39 cm down. The fall therefore has two sources in two regimes:
+
+- **parked author, `|v| = 0.0`** — our write woke a settled rig. **CLOSED** by the rule above.
+- **settling author, `|v| = 41.5` mostly −Z** — we faithfully mirror a real velocity whose effect
+  the author has already finished by the time the packet lands. **OPEN.** This is the mechanism
+  round 1 proposed and §16.3 recorded as dead: it *is* dead for a parked author and alive for a
+  settling one. Recorded so the retraction is not over-read.
+
+Note this is what MTA's asymmetric epsilon is about — `bSyncVelocity`'s Z test is `0.1` against
+`FLOAT_EPSILON` for X/Y (`CUnoccupiedVehicleSync.cpp:311`). They widen exactly the axis this
+defect lives on. Not ported, not yet designed; the next step is to measure the author's settling
+transient (the probe now logs `angv=` as well as `vel=`, F8) rather than to guess a constant.

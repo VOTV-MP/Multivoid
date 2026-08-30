@@ -90,6 +90,13 @@ constexpr float kRestAngDegS = 5.f;
 // it. Three is enough to distinguish "it settled" from "it cannot settle here"; past that the
 // difference is under the vehicle, not in this lane, and saying so beats teleporting forever.
 constexpr int   kRestMaxReplaces = 3;
+// ...within THIS long. A rest episode is a stretch of packets in which the author does not move;
+// counting consecutive ones cannot bound it, because a re-place puts the rig exactly on the
+// author's pose and the next packet is therefore the one most likely to be in band, which resets
+// the count. Measured 2026-08-30: "bounded at three re-places" gave up three times in 46 s, and
+// in the mirror-image regime -- error re-crossing the deadband every other packet -- it would
+// never reach three and the diagnostic would never be emitted while the teleports ran forever.
+constexpr uint64_t kRestEpisodeMs = 10000;
 
 constexpr uint64_t kCorrMinDtMs = 20;    // a burst must not manufacture a huge corrective velocity
 constexpr uint64_t kCorrMaxDtMs = 1000;  // a long gap must not manufacture a vanishing one
@@ -122,6 +129,24 @@ uint64_t g_restPlaces = 0;   // ...and how often a PARKED author's pose had to b
 // the instant in question.
 uint64_t g_lastSampleLogMs = 0;
 constexpr uint64_t kSampleLogMs = 1000;
+
+// THE ONE WRITE RULE, at every site that writes a velocity onto a mirror.
+//
+// The defect this lane shipped on 2026-08-30 was not "the corrector writes too hard", it was that
+// assigning a LINEAR velocity to one body of a settled constraint rig wakes it and it sinks. So
+// the rule is about the linear component alone, and it is applied HERE rather than at one branch:
+// the first version gated a whole early-return on both components, which (a) let the warp arm
+// above it keep writing a linear velocity onto a resting mirror, unbounded, and (b) was defeated
+// entirely by a parked-but-ROCKING author, whose angular velocity exceeded the band and routed the
+// packet onto the full write path -- measured in the very run that shipped it (wireLin |v|=4.63,
+// mirror then gained +51 cm/s of Z). Two quantities, two gates, one place.
+void WriteMirrorVelocity(void* actor, const FVector& lin, const FVector& ang, bool linAtRest) {
+    if (linAtRest) {
+        ue_wrap::engine::SetActorRootPhysicsAngularVelocity(actor, ang);
+        return;
+    }
+    ue_wrap::engine::SetActorRootPhysicsVelocity(actor, lin, ang);
+}
 
 void LogWire(const char* what, const AtvEntry& e, float dist,
              const FVector& wireLin, const FVector& cur, const FVector& wirePos) {
@@ -162,6 +187,10 @@ void ApplyCorrection(AtvEntry& e, const coop::net::AtvStatePayload& p, bool snap
     const float dYaw   = std::fabs(ue_wrap::NormalizeAxis(wireRot.Yaw   - curRot.Yaw));
     const float dRoll  = std::fabs(ue_wrap::NormalizeAxis(wireRot.Roll  - curRot.Roll));
 
+    // The two gates, computed once and read by every write site below.
+    const bool linAtRest = Len(wireLin) <= kRestLinCmS;
+    const bool angAtRest = Len(wireAng) <= kRestAngDegS;
+
     const uint64_t now = NowMs();
     const uint64_t rawDt = e.lastPktMs ? (now - e.lastPktMs) : kCorrMaxDtMs;
     const uint64_t dtMs = rawDt < kCorrMinDtMs ? kCorrMinDtMs
@@ -179,9 +208,12 @@ void ApplyCorrection(AtvEntry& e, const coop::net::AtvStatePayload& p, bool snap
         // FAIL CLOSED: if the rig could not be re-placed (teleportVehicle unresolved after a game
         // update), do NOT then write the authority's velocity onto a body still sitting in the
         // wrong place -- that accelerates the error instead of cutting it.
-        LogWire("WARP", e, dist, wireLin, cur, wirePos);
+        // LOG AFTER THE TELEPORT SUCCEEDS. Logging before it claimed a warp per packet that
+        // never happened whenever teleportVehicle was unresolved -- an instrument reporting an
+        // action it did not take is worse than no instrument.
         if (!A::TeleportRig(e.actor, wirePos, wireRot)) return;
-        ue_wrap::engine::SetActorRootPhysicsVelocity(e.actor, wireLin, wireAng);
+        LogWire("WARP", e, dist, wireLin, cur, wirePos);
+        WriteMirrorVelocity(e.actor, wireLin, wireAng, linAtRest);
         ++g_warps;
         return;
     }
@@ -189,15 +221,17 @@ void ApplyCorrection(AtvEntry& e, const coop::net::AtvStatePayload& p, bool snap
     // THE AUTHOR IS PARKED: mirror its POSE, never its velocity, and then leave the rig alone.
     // Falling through to the code below would write a zero velocity onto a settled body every
     // packet, which is the measured cause of A6 (see kRestLinCmS above).
-    if (Len(wireLin) <= kRestLinCmS && Len(wireAng) <= kRestAngDegS) {
+    if (linAtRest && angAtRest) {
         e.stallPackets = 0;
         e.lastErrCm    = -1.f;
-        if (dist <= kCorrDeadbandCm) {
-            e.restReplaces = 0;
-            return;                       // in band and nobody is moving it: touch NOTHING
-        }
+        if (dist <= kCorrDeadbandCm) return;  // in band, nobody moving it: touch NOTHING. The
+                                              // episode counter is NOT cleared here -- landing
+                                              // in band is the expected RESULT of a re-place,
+                                              // so clearing on it is what unbounded the bound.
+        if (now - e.lastRestPlaceMs > kRestEpisodeMs) e.restReplaces = 0;  // a new episode
         if (e.restReplaces >= kRestMaxReplaces) return;   // already said our piece, below
         ++e.restReplaces;
+        e.lastRestPlaceMs = now;
         if (!A::TeleportRig(e.actor, wirePos, wireRot)) return;
         ++g_restPlaces;
         // NO velocity write after the teleport. Both existing cut paths write one immediately
@@ -221,7 +255,7 @@ void ApplyCorrection(AtvEntry& e, const coop::net::AtvStatePayload& p, bool snap
         }
         return;
     }
-    e.restReplaces = 0;
+    if (!linAtRest) e.restReplaces = 0;   // the episode ended because the author moved
 
     // Is the correction actually working? Count packets where the error stayed outside the
     // deadband and refused to shrink; past the limit, cut instead of nudging.
@@ -236,9 +270,9 @@ void ApplyCorrection(AtvEntry& e, const coop::net::AtvStatePayload& p, bool snap
     if (e.stallPackets >= kStallWarpPackets) {
         e.stallPackets = 0;
         e.lastErrCm = -1.f;
-        LogWire("CUT", e, dist, wireLin, cur, wirePos);
         if (!A::TeleportRig(e.actor, wirePos, wireRot)) return;
-        ue_wrap::engine::SetActorRootPhysicsVelocity(e.actor, wireLin, wireAng);
+        LogWire("CUT", e, dist, wireLin, cur, wirePos);
+        WriteMirrorVelocity(e.actor, wireLin, wireAng, linAtRest);
         ++g_stallWarps;
         UE_LOGI("atv: correction stalled at %.1f cm -- cut to the authority's pose "
                 "(a nudge cannot move a body at rest)", dist);
@@ -246,7 +280,9 @@ void ApplyCorrection(AtvEntry& e, const coop::net::AtvStatePayload& p, bool snap
     }
 
     FVector lin = wireLin;
-    if (dist > kCorrDeadbandCm) {
+    // The corrective term is a LINEAR push and is therefore governed by the linear gate too: a
+    // parked-but-rocking author reaches here, and pushing its resting mirror is the defect.
+    if (dist > kCorrDeadbandCm && !linAtRest) {
         // Close kCorrGain of the error over the interval we actually observed, NOT over a fixed
         // window -- see the constant's comment for why a fixed one oscillates on the idle cadence.
         const float gain = kCorrGain * 1000.f / static_cast<float>(dtMs);
@@ -267,7 +303,7 @@ void ApplyCorrection(AtvEntry& e, const coop::net::AtvStatePayload& p, bool snap
         g_lastSampleLogMs = now;
         LogWire(dist > kCorrDeadbandCm ? "NUDGE" : "INBAND", e, dist, wireLin, cur, wirePos);
     }
-    ue_wrap::engine::SetActorRootPhysicsVelocity(e.actor, lin, wireAng);
+    WriteMirrorVelocity(e.actor, lin, wireAng, linAtRest);
     ++g_corrs;
 }
 

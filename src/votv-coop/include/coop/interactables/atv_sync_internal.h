@@ -34,7 +34,14 @@ struct AtvEntry {
     float    lastErrCm    = -1.f;  // the previous packet's position error -- the stall detector
     int      stallPackets = 0;     // consecutive packets in which the error refused to shrink
     bool     haveLastSync = false;
-    int      restReplaces = 0;     // consecutive re-places of a mirror whose author is at rest.
+    uint64_t lastRestPlaceMs = 0;  // when the last one happened -- the episode's clock, not the
+                                   // send's. Counting CONSECUTIVE re-places does not bound
+                                   // anything: a teleport lands the rig exactly on the author's
+                                   // pose, so the very next packet is the one most likely to be
+                                   // in band, which zeroes the count. Measured 2026-08-30: the
+                                   // "bounded at three" give-up fired three times in 46 s.
+    int      restReplaces = 0;     // re-places of a mirror whose author is at rest, WITHIN one
+                                   // episode (see lastRestPlaceMs).
                                    // A corrector owes a convergence check on EVERY arm it has
                                    // (docs/LESSONS.md); this is the at-rest arm's. If putting the
                                    // rig on the author's pose and then leaving it alone still does

@@ -376,7 +376,7 @@ size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
             e.occupantSlot = 0xFF; e.authorSlot = 0xFF;
             e.wasPoseAuthor = false;
             e.haveLastSync = false; e.lastIdleSendMs = 0; e.lastPktMs = 0;
-            e.lastErrCm = -1.f; e.stallPackets = 0;
+            e.lastErrCm = -1.f; e.stallPackets = 0; e.restReplaces = 0; e.lastRestPlaceMs = 0;
         }
         e.actor = f.obj;
         e.idx   = f.idx;

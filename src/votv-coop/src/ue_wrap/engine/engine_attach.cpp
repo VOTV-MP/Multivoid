@@ -196,6 +196,21 @@ bool SetActorRootPhysicsVelocity(void* actor, const FVector& lin, const FVector&
     return true;
 }
 
+// Angular WITHOUT touching linear. Born 2026-08-30: assigning a linear velocity to a settled
+// constraint rig wakes it and it sinks (docs/vehicles/ATV.md 16), so the ATV mirror must be able
+// to follow an author that is TURNING while parked without being pushed. Two quantities, two
+// gates -- a single call that writes both forces the caller to choose one rule for both.
+bool SetActorRootPhysicsAngularVelocity(void* actor, const FVector& ang) {
+    void* root = RootComponentOf(actor);
+    if (!root) return false;
+    void* setAng = PrimFn(&g_setAngFn, L"SetPhysicsAngularVelocityInDegrees");
+    if (!setAng) return false;
+    ParamFrame f(setAng);
+    f.Set<FVector>(L"NewAngVel", ang);
+    f.Set<bool>(L"bAddToCurrent", false);
+    return Call(root, f);
+}
+
 float GetActorRootMass(void* actor) {
     void* root = RootComponentOf(actor);
     if (!root) return 0.f;

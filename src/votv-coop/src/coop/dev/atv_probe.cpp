@@ -284,6 +284,9 @@ void SampleOne(void* atv, size_t idx) {
     // many packets, because no sample carried a velocity at all. A verdict about a value the
     // instrument never records is a guess with a citation. Root body only -- the same body
     // SetActorRootPhysicsVelocity writes, so the two are comparable by construction.
+    // BOTH components. velA was filled and discarded until 2026-08-30, and it is the one
+    // quantity that explains why a parked author still routed packets onto the write path --
+    // measured and thrown away is the same blindness as not measured at all.
     ue_wrap::FVector velL{}, velA{};
     ue_wrap::engine::GetActorRootPhysicsVelocity(atv, velL, velA);
 
@@ -310,13 +313,13 @@ void SampleOne(void* atv, size_t idx) {
         const float dFR = Dist(frL, bodyL), dFL = Dist(flL, bodyL), dBK = Dist(bkL, bodyL);
         UE_LOGI("[ATVP] n=%u i=%zu key='%ls' driven=%d owns=%d occ=%p "
                 "body=(%.1f,%.1f,%.1f) rot=(%.1f,%.1f,%.1f) "
-                "vel=(%.1f,%.1f,%.1f) "
+                "vel=(%.1f,%.1f,%.1f) angv=(%.1f,%.1f,%.1f) "
                 "partZ=(%.1f,%.1f,%.1f) "
                 "susFR=%.3f susFL=%.3f susBK=%.3f "
                 "fuel=%.3f batt=%.3f dirt=%.4f dirtVel=%.4f hp=%.2f",
                 g_sample, idx, key.c_str(), driven ? 1 : 0, ownsTick ? 1 : 0, occ,
                 bodyL.X, bodyL.Y, bodyL.Z, bodyR.Pitch, bodyR.Yaw, bodyR.Roll,
-                velL.X, velL.Y, velL.Z,
+                velL.X, velL.Y, velL.Z, velA.X, velA.Y, velA.Z,
                 frL.Z, flL.Z, bkL.Z,
                 dFR, dFL, dBK, fuel, battery, dirt, dirtVel, health);
     } else {
@@ -324,11 +327,11 @@ void SampleOne(void* atv, size_t idx) {
         ue_wrap::atv::GetRootTransform(atv, loc, rot);
         UE_LOGI("[ATVP] n=%u i=%zu key='%ls' driven=%d owns=%d occ=%p "
                 "body=(%.1f,%.1f,%.1f) rot=(%.1f,%.1f,%.1f) "
-                "vel=(%.1f,%.1f,%.1f) NOPARTS "
+                "vel=(%.1f,%.1f,%.1f) angv=(%.1f,%.1f,%.1f) NOPARTS "
                 "fuel=%.3f batt=%.3f dirt=%.4f dirtVel=%.4f hp=%.2f",
                 g_sample, idx, key.c_str(), driven ? 1 : 0, ownsTick ? 1 : 0, occ,
                 loc.X, loc.Y, loc.Z, rot.Pitch, rot.Yaw, rot.Roll,
-                velL.X, velL.Y, velL.Z,
+                velL.X, velL.Y, velL.Z, velA.X, velA.Y, velA.Z,
                 fuel, battery, dirt, dirtVel, health);
     }
 }
