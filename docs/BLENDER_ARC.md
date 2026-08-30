@@ -38,8 +38,9 @@ census-grounded **family analog of the game's material system** (tex / ag=emissi
 mask / ao / normal / rough, color/emissioncolor, Masked/Translucent/Additive, foliage,
 triplanar box-mapping, built-in water shader from `w_absorb`), plus a **terrain style**
 option (green default / snow / dirt, slope-rock blend) replacing the white ground.
-**Import radius** option: 0 = whole map; else meters around the base (origin =
-`baseBuilding_C` root): at 150 m the scene is 9,544 objects vs 77,209 full.
+**Import radius** option: meters around the base (origin = `baseBuilding_C`
+root), **default 150 m (USER 2026-08-30)**; 0 = whole map: at 150 m the scene
+is 9,544 objects vs 77,209 full.
 
 **v4 (same day, user field pass) — SUPERSEDED BY v5, its premise measured FALSE.**
 v4 claimed "the umap holds only DELTA components of a BP actor" and built a tree-first
