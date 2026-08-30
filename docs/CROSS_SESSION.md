@@ -144,6 +144,31 @@ persistent/transient split exists.
   ```
   `--cached` touches only the index, so the other session's working tree is untouched. Verify with
   `git diff --cached --stat` that the line count matches *your* change, not the file's total.
+- **DO NOT STAGE AT ALL. `git commit -F - -- <paths>` is the form that has no window.**
+  (2026-08-30, the second instance of this, and the rule above did not prevent it.) The advice
+  directly above is about a SHARED file. The failure this time had nothing shared about it: ten
+  files that were entirely one session's own, staged with every path named explicitly — and the
+  other session's ordinary `git commit` with no pathspec took all ten, because the index is one
+  file and a pathspec-less commit means *everything staged, by anyone*. The window was the ~40
+  seconds spent writing a commit message.
+
+  So the guard is not "stage carefully", it is **skip the index**:
+  ```
+  git commit -F - -- src/a.cpp src/b.h        # commits the WORKING TREE version of exactly these
+  git diff -- src/a.cpp                       # review without staging
+  ```
+  With a pathspec, `git commit` leaves every other index entry untouched, so it can neither pick
+  up a neighbour's work nor lose your own. `MEMORY.md`'s existing wording ("explicit paths, NEVER
+  `add -A/-u`") guards the wrong half: the pathspec that protects you is the one on **commit**.
+
+- **HEAD moves under you too, so do NOT rewrite history here.** The repair proposed for the above
+  was `git reset --soft HEAD~1` + re-stage. That operation is only safe if HEAD is what you last
+  read, and it is not: between the proposal and the reset, the other session committed, so the
+  reset dropped the WRONG commit (recovered from the reflog within a minute). Nothing was pushed,
+  so the cost of leaving a mis-attributed commit is one ugly message; the cost of the fix is a
+  lost commit. **Leave it and describe it** — the follow-up commit that says what is really in
+  the odd one is the cheap, safe repair. [[lesson-a-shared-index-makes-git-add-a-cross-session-side-effect]]
+
 - **Use `SendMessage` for anything time-sensitive or corrective** — "I'm taking the rig", "your
   claim about my build is wrong, here is the mtime census". The log is where it gets written down;
   the message is how it arrives in time to matter.

@@ -16,9 +16,17 @@
 //     the live switcher (UUserWidget::WidgetTree -> UWidgetTree::RootWidget ->
 //     UPanelWidget::Slots -> UPanelSlot::Content), so `AddToRoot` is NOT used here and
 //     would be wrong -- it would outlive the menu and demand a paired un-root;
-//   * `IsHovered()` ANSWERS on a bare `UImage` with Visibility=Visible: 1 with the cursor
-//     inside its rect, 0 outside. That is the whole hit-test, and it is why rows carry no
-//     UButton (the native row's own `button_select` draws nothing in all three states);
+//   * `IsHovered()` answers on a bare `UImage` with Visibility=Visible AT THE ROOT OF THE
+//     TREE -- 1 with the cursor inside its rect, 0 outside. **SCOPE CORRECTED 2026-08-30,
+//     and the uncorrected version of this line cost the screen its row selection for as
+//     long as it existed: inside a `UScrollBox` the same widget answers 0 while the cursor
+//     is provably within its rect.** Measured -- row bg (796,540) 955x64 against a cursor
+//     at (1280,572), every parent link Visible or SelfHitTestInvisible, IsHovered = 0,
+//     with the X (a UButton outside the ScrollBox) reading 1 in the same tick. So this is
+//     NOT the whole hit-test: rows hit-test by GEOMETRY through
+//     `native_screen::ChildAtCursor`, and only chrome outside the list still asks Slate.
+//     Rows still carry no UButton, for the separate reason that the native row's own
+//     `button_select` draws nothing in all three states;
 //   * a `UImage` with a TINT and NO ResourceObject draws a SOLID RECT -- the game's own
 //     `ui_saveSlots_C.Image_302` is exactly that (full-screen, tint (0,0,0,0.5)) and it is
 //     what dims the menu behind every native sub-screen. Our scrim copies it and needs no

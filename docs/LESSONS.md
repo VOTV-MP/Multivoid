@@ -2871,6 +2871,8 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   words are usually exactly right and narrower than the reassurance they give.
   `memory/lesson_a_line_number_is_a_position_the_claim_is_about_content.md`
 
+**A correct mechanism is what makes a wrong conclusion feel solid.** I stated that foreign cards cannot pay a Russian donation platform and built a recommendation on it; the user called it, and ninety seconds of checking showed the platform officially accepts them (failures are issuer-side, not a wall). The mechanism I reasoned from was TRUE -- Visa/MC cut cross-border processing with Russian banks in 2022 -- and the leap from "how this class of thing works" to "how THIS service's checkout works today" was unearned. Sound reasoning leaves no moment of doubt to catch. **Look here FIRST:** a claim about the OUTSIDE world is still a claim, and the check is usually one search. Three tells -- you are asserting an external service's current behaviour from a general mechanism plus a date; it is trivially checkable and you did not check; and you are recommending WORK on the strength of it. When corrected, fix it at every place you wrote it, not only the one in front of the user. [[lesson-a-correct-mechanism-is-what-makes-a-wrong-conclusion-feel-solid]]
+
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
 
 - **A WINDOW CLOSED BY THE LATCH THAT STARTS THE NEXT PHASE ENDS BEFORE THAT PHASE — BY

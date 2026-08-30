@@ -50,6 +50,18 @@ pak\scientists.pak     (+ the <name>.png preview tiles)
   first frame renders in some contexts — do not ship one.
 - **README.md:** UTF-8, markdown "closely but not exactly" GitHub-flavoured. Thunderstore has a
   preview tool; use it rather than assuming GitHub's renderer. This file **is** the package page.
+
+  **AND IT IS THE REPO ROOT README, VERBATIM** (2026-08-30): `tools/release/package.ps1:77` takes
+  `$repoRoot/README.md` and `:93` copies it into the zip root. There is no package-specific
+  template, so anything added to the repo README lands on the Thunderstore page — which is how
+  the Boosty support badge and the Support row got there with no second file to keep in sync. It
+  cuts the other way too: anything GitHub-only in that README (a CI badge, a relative link into
+  the repo tree) renders on the store page as well, and relative links there are broken.
+
+  **Consequence for the FIRST upload, and it is one-shot:** a published version is IMMUTABLE
+  (§5), so a README change costs a whole new version number. Anything that belongs on the store
+  page — the support link included — must be in the README *before* `package.ps1` runs for the
+  first published version, or it waits for the next one.
 - **CHANGELOG.md** is optional (3 of the 5 field packages ship one).
 - **Size ceiling: 5 242 880 000 bytes (~5 GB).** Our one-zip package is ~32 MB at the outside
   (§7.7c). Not a constraint.
