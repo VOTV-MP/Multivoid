@@ -98,6 +98,14 @@ long long g_drivenMs = 0;     // cumulative time the rig was ACTUALLY driven
 int  g_reseats   = 0;
 bool g_pulseOn   = false;
 std::chrono::steady_clock::time_point g_pulseEdge{};
+// USER 2026-08-30: a run must END when its evidence is collected -- the fixed --duration
+// left the driver parked near water for minutes after the arm finished ("игрок всё равно
+// умирает когда... заезжаешь в реку"), and the windows sat until the timer. The probe now
+// ANNOUNCES completion: Arm::Done + a settle window (A2 reads the settled tail, ATV.md 17.1)
+// -> ONE `[ATV-PROBE] DONE` line that mp.py's --done-marker kills the run on.
+constexpr int kDoneSettleMs = 30000;
+std::chrono::steady_clock::time_point g_armDoneAt{};
+bool g_doneAnnounced = false;
 void* g_armAtv = nullptr;
 
 void* g_actionNameFn = nullptr;  // ATV_C::actionName(player, hit, name)
@@ -638,6 +646,20 @@ void Tick(coop::net::Session& session, bool isHost) {
                 static_cast<unsigned long long>(cd.presenceSkippedDiffering),
                 static_cast<unsigned long long>(cd.deferred),
                 static_cast<unsigned long long>(cd.invalidBlocks));
+    }
+
+    // Evidence-complete announce (see the constants block): once the drive arm is Done and
+    // the settle window has passed, say so ONCE -- mp.py --done-marker ends the run on this
+    // line instead of idling out --duration next to a river.
+    if (g_sitArmed && g_arm == Arm::Done && !g_doneAnnounced) {
+        if (g_armDoneAt.time_since_epoch().count() == 0) {
+            g_armDoneAt = now;
+        } else if (std::chrono::duration_cast<std::chrono::milliseconds>(now - g_armDoneAt).count()
+                       >= kDoneSettleMs) {
+            g_doneAnnounced = true;
+            UE_LOGI("[ATV-PROBE] DONE -- drive target banked (%lld ms) + %d s settle; evidence "
+                    "complete, the run may end", g_drivenMs, kDoneSettleMs / 1000);
+        }
     }
 
     // WHICH PEER DRIVES IS THE INI'S CALL, not this file's. The arm used to be host-only,
