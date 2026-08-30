@@ -159,6 +159,59 @@ def resolve_cite(path):
     return None, hits
 
 
+# A citation followed closely by a QUOTE of the cited text. Conservative on purpose: it fires
+# only when the ledger actually quotes what the line says, which is where the strongest claims
+# live and where a silent move does the most damage.
+QUOTED_CITE = re.compile(
+    r"`(?P<path>[A-Za-z0-9_./\\-]+\.(?:cpp|h|hpp|inc|py|ps1|rs|md|json|txt)):(?P<line>\d+)"
+    r"(?:-\d+)?`"                       # file:line or file:line-line
+    # ONLY the explicit quote-the-line form: `file:line` says/reads/states "...".
+    # A looser gap matched prose that merely CONTAINED a quotation and produced six
+    # false positives on the first run -- and a gate people learn to ignore is worse than
+    # no gate. Narrow beats noisy: this fires on the rows making the strongest claims.
+    r"\s+(?:says|said|reads|states|carries|records)\s+"
+    r"[*_]{0,2}[\"“](?P<quote>[^\"”\n]{20,160})[\"”]")
+
+
+def norm(t):
+    return " ".join(t.split()).lower()
+
+
+def check_quoted_cites(text):
+    """-> (moved, dead) where each entry is (path, cited_line, quote, found_line_or_None).
+
+    THE HOLE THIS CLOSES. Check A verifies only that a cited line is INSIDE the file, so any
+    citation whose target moves but stays in the same file passes forever. On 2026-08-30 an
+    extraction moved five cited facts out of atv_sync.cpp -- two of them into a different file
+    entirely -- and the gate reported PASS on all five, in the same run that created the rot.
+    A line number is a POSITION; the claim is about CONTENT, and only content can check it.
+    """
+    moved, dead = [], []
+    for m in QUOTED_CITE.finditer(text):
+        path, lineno, quote = m.group("path"), int(m.group("line")), m.group("quote")
+        resolved, hits = resolve_cite(path)
+        cand = resolved or (hits[0] if hits else None)
+        if not cand:
+            continue                      # check A already reports a dead path
+        try:
+            lines = io.open(cand, encoding="utf-8", errors="replace").read().split("\n")
+        except OSError:
+            continue
+        # Match on a distinctive prefix: the ledger often elides the tail with "..." or trims.
+        needle = norm(quote)[:48]
+        if len(needle) < 20:
+            continue
+        window = range(max(0, lineno - 26), min(len(lines), lineno + 25))
+        if any(needle in norm(lines[i]) for i in window):
+            continue                      # still where the ledger says it is
+        elsewhere = [i + 1 for i, l in enumerate(lines) if needle in norm(l)]
+        if elsewhere:
+            moved.append((path, lineno, quote[:60], elsewhere[0]))
+        else:
+            dead.append((path, lineno, quote[:60], None))
+    return moved, dead
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--report", action="store_true", help="list findings, always exit 0")
@@ -209,6 +262,9 @@ def main():
             dead_cites.append((path, lineno, ["line past EOF in {}; longest is {} lines".format(
                 "all {} candidates".format(len(counts)) if len(counts) > 1 else "the file",
                 max(counts))]))
+
+    # ---- check A2: a QUOTED citation must still find its quote near the line ----------
+    moved_q, dead_q = check_quoted_cites(text)
 
     # ---- check B: backticked symbols -------------------------------------------------
     # A git SHA is not a symbol. The ledger cites commits constantly and they are all
@@ -271,6 +327,21 @@ def main():
         for path, lineno, why in dead_cites:
             print("   {}:{}   {}".format(path, lineno,
                                          why[0] if why else "file does not exist"))
+    if moved_q or dead_q:
+        bad = True
+        print("")
+        print("MOVED/ROTTED QUOTED CITATIONS ({}) -- the line is inside the file, but what the"
+              .format(len(moved_q) + len(dead_q)))
+        print("ledger QUOTES is no longer there. Check A cannot see this: a line number is a")
+        print("POSITION and the claim is about CONTENT.")
+        for path, lineno, quote, found in moved_q:
+            print("   {}:{}  -> now at :{}   \"{}...\"".format(path, lineno, found, quote))
+        for path, lineno, quote, _ in dead_q:
+            print("   {}:{}  -> NOT IN THAT FILE AT ALL   \"{}...\"".format(path, lineno, quote))
+        print("")
+        print("   A `-> now at :N` is the corrected line: re-cite it. A `NOT IN THAT FILE`")
+        print("   means the fact moved to another file or is gone -- find it before re-citing.")
+
     if dead_syms:
         bad = True
         print("")
@@ -290,7 +361,8 @@ def main():
             print("lessons_gate: PASS (citations only) -- every cited file:line resolves. "
                   "The symbol check did not run.")
         else:
-            print("lessons_gate: PASS -- every cited file:line resolves and every symbol exists.")
+            print("lessons_gate: PASS -- every cited file:line resolves, every quoted "
+                  "citation still says what the ledger claims, and every symbol exists.")
         return 0
     if args.report:
         print("")

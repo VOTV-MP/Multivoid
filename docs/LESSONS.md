@@ -2686,7 +2686,7 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   writing "idle" / "stationary" / "solo" / "unattended", check the word against the numbers you are
   already pasting. `memory/lesson_the_number_you_quoted_refutes_the_label_you_gave_it.md`
 - **Disproving a COMMENT does not disprove the CODE — and the disproof inherits the comment's
-  frame.** Measured 2026-08-29: `atv_sync.cpp:98-101` said *"a bought ATV is delivered ONLY on the
+  frame.** Measured 2026-08-29: `atv_sync.cpp:123` said *"a bought ATV is delivered ONLY on the
   host"*; 473 `list_store` rows and 189 craft recipes sell no ATV, so the comment is false. I wrote
   across four docs that the lane it introduces was therefore **"gated for RULE-2 deletion"**. Wrong,
   and the deletion would have been a regression: the code's predicate (`:313-318`) is
@@ -2761,7 +2761,7 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   §13.4) so the next reader knows the obvious interpretation was tried and failed.
   `memory/lesson_a_result_that_confirms_your_hypothesis_is_where_to_look_hardest.md`
 - **A lane that only exists under AUTHORITY is invisible at rest — the instrument must CREATE the
-  condition.** Measured 2026-08-29: `atv_sync.cpp:453` releases an unauthored ATV instead of mirroring
+  condition.** Measured 2026-08-29: `atv_sync.cpp:717` releases an unauthored ATV instead of mirroring
   it, and nothing streams one, so while nobody drives **there is no mirror in existence to measure**.
   A two-peer smoke with a probe therefore cannot answer "do a mirror's wheels follow its body" no
   matter how long it runs — it produces no signal and no error, which is indistinguishable from
@@ -2843,7 +2843,7 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   The correction inverted the work: "our threshold is too loose" said retune the warp; what actually
   holds (`trail ~ 0.0063*speed^1.52`, warp never fired) says the net is a last resort our runs never
   needed and the trail is the CORRECTOR's convergence rate. **The units fact was already in our tree**:
-  `atv_sync.cpp:103-104`, three lines above the constant I quoted, says *"their 15 + 10*|v| is in GTA
+  `atv_corrector.cpp:28-29` (moved there by the 2026-08-30 extraction; it was `atv_sync.cpp:103-104` when I quoted it), three lines above the constant, says *"their 15 + 10*|v| is in GTA
   units"* — whoever ported the number did the conversion and wrote it down, and I read MTA's file
   without reading our own four lines around the value. *Look FIRST:* read the comment around YOUR OWN
   constant before comparing it to prior art; then read the COMPARISON SITE, not the `#define`, and
@@ -2852,6 +2852,24 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   shapes (a ratio, an exponent) over raw coefficients — the `v^1.52` fit survived because an exponent
   has no units.
   `memory/lesson_two_constants_are_not_comparable_until_their_units_are.md`
+
+- **2026-08-30 — A line number is a POSITION; the claim is about CONTENT, and only content can check
+  it.** `[V]` An extraction moved five cited facts out of `atv_sync.cpp` and `lessons_gate` printed
+  *"PASS -- every cited file:line resolves"* in the same session that created the rot: three of the
+  five were lesson rows I had written hours earlier, `atv_sync.cpp:103-104` had become **blank lines**
+  (the fact was now `atv_corrector.cpp:28-29`), and `:453` had become `g_installed = true`. The gate
+  was not broken — `check A` verifies the path resolves and the line is not past EOF
+  (`lessons_gate.py:185-211`), and a 841-line file swallows every one of those numbers. **Length is
+  exactly what a refactor preserves.** FIXED: check A2 — where a row QUOTES the cited line
+  (`` `file:line` says "..." ``), the quote must still be within ±25 lines, and the gate prints the
+  corrected line when it moved or says so when it left the file. Narrow on purpose (the first cut
+  matched any nearby quotation → six false positives; a gate people ignore is worse than none), and
+  drilled RED then GREEN. *Look FIRST:* after any extraction/move/rename, grep the doc tree for
+  `<movedfile>:[0-9]` and check hits by CONTENT — A2 covers only citations that QUOTE, so a bare
+  `file:453` still passes on anything. When writing a row, quote the line you cite: the quote is what
+  makes a citation checkable. And read any gate's PASS sentence as its literal specification — the
+  words are usually exactly right and narrower than the reassurance they give.
+  `memory/lesson_a_line_number_is_a_position_the_claim_is_about_content.md`
 
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
 

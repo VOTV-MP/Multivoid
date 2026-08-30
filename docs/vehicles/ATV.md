@@ -644,7 +644,7 @@ reads **only** bit3 (`authored`). Bits 0–2 are produced and never consumed; bi
    cross-peer identity — which is exactly what the v77 synthetic-key machinery
    (`g_savePlacedKeys` / `g_savePlacedActors` / `g_synthForActor` / `AtvSpawn` / `AtvDestroy` /
    `SpawnMirror` / `DestroyMirror` / `isClientSpawnedMirror`) exists to give it. **The lane STAYS.**
-   What was actually wrong was only its comment: `atv_sync.cpp:98-101` says *"purchased"* where the
+   What was actually wrong was only its comment: `atv_sync.cpp:123` says *"purchased"* where the
    code's predicate is *"mid-session, not in the baseline set"* — the broader, and correct, thing.
 5. **[?] Does `event_arirFuelsAtv` run per-peer?** It mutates ATV state from a world event.
 6. **[?] `Fstruct_upgrades`** (`docs/upgrades/SIGNAL_UPGRADES.md`) is the *signal* upgrade store; ATV
@@ -679,7 +679,7 @@ Instrument: `coop/dev/atv_probe.cpp` (`[dev] atv_probe=1`), which calls the game
 Reader: `tools/atv_probe_report.py`. Runs: `python tools/mp.py smoke --duration 90` (idle) and
 `--duration 120` with the probe's HOST-only one-shot **sit arm** (`[dev] atv_probe_sit=1`), which
 calls `ATV_C::playerSit(localPlayer)` so the ATV is genuinely AUTHORED — an idle ATV is never
-mirrored (`atv_sync.cpp:453`), so nothing about a mirror is observable without an occupant.
+mirrored (`atv_sync.cpp:717`), so nothing about a mirror is observable without an occupant.
 Both smokes PASS. DLL `436BE41D2A93364A`, b145, proto unchanged.
 
 **The measure is `|wheel - body|`**, which is rotation-invariant, so it isolates suspension travel
@@ -737,7 +737,7 @@ That makes the release path itself a measured divergence SOURCE, which the C1 de
 - **The ordering is unexplained and is an open question**: the host logged `authority released` at
   19:54:53 but its first `driven=1` sample is at **19:54:58**, five seconds LATER, and no sample
   before the release ever read `driven=1`. So what made the host an authority before it was seated
-  is not established here. `atv_sync.cpp:168` gates authority on `IsDriven && occupant == local`.
+  is not established here. `atv_sync.cpp:188` gates authority on `IsDriven && occupant == local`.
 - Whether the client held `preparedAsMirror` during the driven window was **not** instrumented.
 - `playerSit` returned with `driven now=0` at the call site; `isDriven` rose ~86 s later. The seat is
   evidently not synchronous, and nothing here measured what fills that gap.
@@ -875,7 +875,7 @@ build family, same arm, same 20 s window, a sixth of the trail because the ATV h
 somewhere that let it go a third as far. The arm steers nothing, so route and speed are not controlled
 between runs and **no single run may state a trail figure as a lane property.**
 
-What BOTH runs agree on: `atv_sync.cpp:107-108` warps past
+What BOTH runs agree on: `atv_corrector.cpp:32-33` warps past
 `kWarpBaseCm + kWarpPerSpeedS * |v|` = `200 + 0.5*|v|` cm. At 1300 cm/s that is ~850 and the trail
 reached 438 (52% of it); at 780 cm/s it is ~590 and the trail reached 70 (12%). **The warp arm did not
 fire in either run.**
@@ -895,7 +895,7 @@ fire in either run.**
 > withdrawn.** What remains is only about our own lane.
 >
 > **And the units fact was already in this repo, three lines above the constant I quoted.**
-> `atv_sync.cpp:103-104`: *"Warp is speed-scaled after CClientVehicle.cpp:3901 (their 15 + 10\*|v| is
+> `atv_corrector.cpp:28-29`: *"Warp is speed-scaled after CClientVehicle.cpp:3901 (their 15 + 10\*|v| is
 > in GTA units); ours is sized off the measured rig"*. Whoever ported the number did the conversion
 > and wrote it down. I opened MTA's file and read MTA's line, and never read our own four lines
 > wrapped around the value I was comparing it against.
@@ -983,9 +983,14 @@ Combined with §15.3's before/after pair this is the lane's one reproducible def
 thing arc-1 commit 2 should aim at along with the convergence rate.
 
 ### 15.5 What this run still does NOT establish
-- **NOT hands-on.** Autonomous throughout.
-- **A2 FAILS in both runs** (54.2 cm and 25.4 cm settled). A1 and A3 pass in both; A4 passed run 1
-  and failed run 2 (§15.6); A5 failed run 1 and passed run 2 (§15.2), which is the route, not a fix.
+- **NOT hands-on.** Autonomous throughout, all three runs.
+- **The corrector's own convergence is UNTUNED.** §15.2a says the trail is the corrector's rate rather
+  than the warp net, and nothing has changed `kCorrGain` or the packet cadence -- that is arc-1
+  commit 2, and it now has a home to change: `coop/interactables/atv_corrector.cpp` (extracted
+  2026-08-30 for exactly this, `f802104e`).
+- **A2 FAILS in all three driven runs** (54.2 / 25.4 / 30.5 cm settled) -- §15.7. A1 and A3 pass in
+  all three; A4 passed runs 1 and 3 and failed run 2 (§15.6); A5 failed run 1 and passed runs 2 and 3
+  (§15.2), which is the route, not a fix.
 - The client-side mirror is unmeasured in the driven window (1 sample): the ATV is authored BY the
   client, so the host is the only mirror there is. Grading the client's mirror needs a host-driven
   run, which needs a host save whose player has empty hands.

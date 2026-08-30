@@ -97,7 +97,7 @@ tick-ON, so `fuel` / `battery` / `dirt` accumulate independently on every peer �
 bit2 `grabbed` are written by `ReadPayload` and consumed nowhere; only bit3 `authored` is read.
 
 **[V] A shipped identity lane rests on a premise that is false — but the lane itself is NEEDED.**
-`atv_sync.cpp:98-101` states *"a bought ATV is delivered ONLY on the host"*; no row in the 473-row
+`atv_sync.cpp:123` states *"a bought ATV is delivered ONLY on the host"*; no row in the 473-row
 `list_store`, and no craft recipe, sells an ATV. The code's real predicate is *"a mid-session ATV not
 in the baseline set"* — broader than its comment, and correct. **The RULE-2 deletion this was gated
 on is CANCELLED** (census 2026-08-29, whole-pak, `docs/vehicles/ATV.md` §11.4): `list_props` row
