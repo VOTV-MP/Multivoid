@@ -465,7 +465,8 @@ f_visible=False родителями и В ИГРЕ ВИДИМЫ (декали 9
 кукнутая истина; механизм остаётся кураторским списком. Приёмка: бенч placed 1194 -> 1209,
 events 22 -> 406 (+384 монтировки), grime 979 без изменений, warnings 0; verify_v15
 **ALL PASS (20)** — 14/14 дверей, гаражная 1002 поли / 8.24 м / inst_garDoor, SK-набор на
-месте, ноль монтировок в Statics.
+месте, ноль монтировок в Statics. **HANDS-ON ПОДТВЕРЖДЕНО (юзер, 2026-08-30): «все двери
+на месте отлично вау».**
 
 ## 1. What it is
 
@@ -556,6 +557,8 @@ landscape, foliage, lights), every saved prop/entity/vehicle/NPC from the save's
 > resolution (door2/3/4 vs breakroomCounter's CAT components — identity is now the ExportMap
 > index) and the big door being a SKELETAL mesh, unread until v15's own USkeletalMesh reader
 > (§0 v15). All 15 in the blend now; crowbar prying rigs (~384) routed to hidden Events.
+> **USER CONFIRMED hands-on 2026-08-30 («все двери на месте отлично вау») — the doors item
+> is CLOSED; still owed to the user's eye: the v9 decal verdict, v12 bunker/holes, v13 Events.**
 
 | Open | What | Phase |
 |---|---|---|
