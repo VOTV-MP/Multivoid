@@ -409,6 +409,21 @@ idle; спейс-окно снизу недокрыто ~65px; «>pc console log
 дырами (~295 квадов; LandscapeComponent_135 у бункера — 190). Приёмка: бенч radius-150 +
 verify_v12 (Model_0 UV-спан по обеим осям + carved-компоненты в бленде).
 
+**v13 (2026-08-30, `d9b0b7d8`) — событийные спавнеры уходят из мира (семья triggerBase_C).**
+Юзер: аддон грузит trigger_obeliskObj / trigger_paperalien_*, хотя ивенты в сейве не происходили.
+Замерено: это акторы `trigger_spawnProp_C` (51 в уровне) — маркеры с Billboard-корнем, чей
+инстансный StaticMesh (obelisk, paperalien1) — дизайнерское ПРЕВЬЮ; актор несёт `prop`-ключ
+list_props + сейв-`key`, при ивенте игра спавнит ОБЫЧНЫЙ keyed-проп, который дальше живёт в
+сейве сам (вытащенный обелиск — просто проп с новым трансформом; спавнер повторно не
+срабатывает). Save-строки аддон уже грузит — реальный объект после ивента придёт своим путём.
+Правило — ИЕРАРХИЯ, не список имён: вся trigger-семья наследует triggerBase_C (замерено:
+spawnProp/agrav/tpChamberSpawn/box/teleporter). template_resolver копит имена предков по
+SuperStruct-цепи (`is_descendant`), umap_import маршрутизирует мешевые компоненты любых
+наследников в скрытую коллекцию Events; кураторский EVENT_ACTOR_CLASSES сжат до внесемейного
+arirShip_tower_C (agrav теперь кроется семьёй). Приёмка: бенч (events 2 -> 109, placed
+1214 -> 1107, 0 предупреждений) + verify_v13 PASS (все trigger-объекты в Events(hidden),
+obeliskObj + paperalien'ы включительно; Statics чист).
+
 ## 1. What it is
 
 A Blender 5.1 **extension** (`extensions/user_default/votvio`, manifest-based, python 3.13 + numpy,
