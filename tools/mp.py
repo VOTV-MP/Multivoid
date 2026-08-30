@@ -794,7 +794,16 @@ def cmd_smoke(args) -> None:
     if kill_all() > 0:
         log("note: pre-existing VotV instances killed before smoke")
 
-    deploy_all()
+    # --no-deploy: run on the bytes ALREADY deployed to the rigs. The build slot is shared
+    # between sessions (CROSS_SESSION: "whoever ran deploy-all last owns the DLL"), and on
+    # 2026-08-30 it changed hands FOUR times in one evening -- an acceptance run that
+    # deploys-at-start silently takes whatever binary the slot holds at that second. With
+    # --no-deploy the deploy is an explicit, separate step and the run's provenance is
+    # whatever `md5sum` said when YOU shipped it.
+    if getattr(args, "no_deploy", False):
+        log("--no-deploy: skipping deploy; running on the rigs' current bytes")
+    else:
+        deploy_all()
 
     log("--- HOST LAUNCH ---")
     # Host: 1920x1080 centered on the primary monitor. center=True avoids
@@ -4760,6 +4769,10 @@ def main() -> None:
                          help="substring meaning 'the phenomenon window is OVER' (e.g. "
                               "'[ATVP] ARM done'); if --done-marker has not arrived within "
                               "--done-grace of this, the run ends INCONCLUSIVE immediately")
+    p_smoke.add_argument("--no-deploy", action="store_true",
+                         help="do NOT deploy at start; run on the rigs' current bytes "
+                              "(the shared build slot changes hands between sessions -- "
+                              "deploy explicitly, verify the hash, then run with this)")
     for flag, kw in host_res: p_smoke.add_argument(flag, **kw)
     p_smoke.set_defaults(func=cmd_smoke)
 
