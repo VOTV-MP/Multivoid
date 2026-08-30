@@ -5223,6 +5223,20 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   before trusting a layout rect.
   `memory/lesson-a-multi-screen-surface-can-be-one-canvas-windowed-by-mesh-uvs.md`
 
+- **2026-08-30 — A hierarchy rule generalizes exactly as far as the family is HOMOGENEOUS —
+  census the ancestor's WHOLE descendant set before hanging behavior on it.** The v13 rule
+  "every `triggerBase_C` descendant -> hidden Events" was built from a census of `trigger_*`
+  NAMES (homogeneous markers), but VOTV bases ALL interactive actors on that class: `door_C`
+  x53, `ceilingLamp_C` x41, `lightswitch_C` x42, `passwordLock_C` x14, the garage gate —
+  one rule hid every base door. The real discriminator, measured across the family: a WORLD
+  class templates its own mesh; a spawner MARKER's mesh arrives only as an umap instance
+  delta (the preview of what it will spawn). Second trap: a probe printed each class's OWN
+  `Interfaces[]` (empty) while the ACCUMULATED chain carries `int_ttrigger_C` for everyone —
+  measure interfaces up the SuperStruct chain. *Look FIRST:* run the descendant census over
+  the level before any `is_descendant(X)` rule; `umap_import._is_event_class` + the
+  EVENT_ACTOR_CLASSES comment carry the as-built.
+  `memory/lesson-a-hierarchy-rule-is-only-as-good-as-the-familys-homogeneity.md`
+
 - **2026-08-30 — Streaky 1D textures = a degenerate UV axis; on a cooked struct parser
   suspect a FIELD SHIFT putting the NORMAL in a texture-basis slot.** The level BSP
   (`Model_0`) textured every surface in grey stripes: `FBspSurf` was unpacked as five ints

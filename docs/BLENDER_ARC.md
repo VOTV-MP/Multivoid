@@ -425,6 +425,20 @@ arirShip_tower_C (agrav теперь кроется семьёй). Приёмк�
 1214 -> 1107, 0 предупреждений) + verify_v13 PASS (все trigger-объекты в Events(hidden),
 obeliskObj + paperalien'ы включительно; Statics чист).
 
+**v14 (2026-08-30, `72ad290d`) — двери базы вернулись: triggerBase_C — НЕ база событийных
+маркеров.** Юзер: «на базе все автоматические двери пропали» — регрессия v13. Полный ценз
+наследников по уровню: от triggerBase_C наследуют И ВСЕ интерактивные акторы — door_C x53,
+door_pryable x4, ceilingLamp x41, lightOut x10, lightswitch x42, passwordLock x14, garage,
+buttons, powerControl — v13-правило спрятало их всех (юзер заметил двери). Измеренный
+дискриминатор по всей семье: МИРОВОЙ класс несёт меш в СВОЁМ шаблоне (door/ceilingLamp/
+garage...), у МАРКЕРА меш приходит только инстансной дельтой умапа (превью спавнера).
+`_is_event_class`: triggerBase-наследник -> Events ТОЛЬКО без SM/SK в шаблонной цепи;
+события С шаблон-мешами — кураторские 4 (arirShip_tower, arirShipAppear, trigger_agrav,
+trigger_lockerLooker; tpChamberSpawn сам скрыт шаблонным bHiddenInGame). Приёмка: бенч
+events 109 -> 22, placed 1107 -> 1194; verify_v14 PASS (78 дверей/ламп/выключателей/замков
+в Statics, ни одного в Events; превью обелиска/алиенов остались в Events). Урок спарен:
+[[lesson-a-hierarchy-rule-is-only-as-good-as-the-familys-homogeneity]].
+
 ## 1. What it is
 
 A Blender 5.1 **extension** (`extensions/user_default/votvio`, manifest-based, python 3.13 + numpy,
@@ -505,7 +519,9 @@ landscape, foliage, lights), every saved prop/entity/vehicle/NPC from the save's
 > .blend look:** the v9 decal verdict (the ask above, STILL UNANSWERED — the user reviewed
 > screens, not decals) + eyeball v12 (bunker/tower concrete, the entrance hole) and v13
 > (no event objects in Statics; the Events collection holds them). SAT console still has no
-> reference shot.
+> reference shot. **v14 same evening: the v13 rule over-reached** — triggerBase_C also
+> bases doors/lamps/switches/locks; the discriminator is now "template mesh = world,
+> instance-delta-only mesh = spawner preview" (§0 v14), doors back in Statics.
 
 | Open | What | Phase |
 |---|---|---|
