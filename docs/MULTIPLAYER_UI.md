@@ -1,5 +1,16 @@
 # MULTIPLAYER_UI — coop menu design
 
+> **THE BROWSER'S DESIGN WAS REJECTED WHOLE ON 2026-08-30 AND IS BEING REDESIGNED.** Read
+> **`docs/SERVER_BROWSER_ARC.md` FIRST** -- it is the brief the redesign session starts from.
+> The user's words: *"это дизайн говно у сервер браузера ... нужен дизайн сервер браузера как
+> у людей блять без костылей"*, and the revision is explicitly deferred to a NEW session.
+> Everything below stays as the long-form HISTORY of how the current screen was built and
+> what was measured on the way -- it is not a plan, and two of its recorded controls (the
+> direct-IP address box and the nickname box) were built and then CUT by the user the same
+> day. Do not extend the current layout to close a gap; the arc doc carries the five declared
+> parity divergences the redesign inherits.
+
+
 **Living document.** Captures the user's vision + the approach decision for the
 in-game multiplayer UI.
 
