@@ -4,6 +4,8 @@
 > A mod that adds drop-in co-op to a single-player UE4.27 game —
 > **no original game files are modified**.
 
+[![Support on Boosty](https://img.shields.io/badge/Boosty-support%20the%20project-FF7C00?style=for-the-badge)](https://boosty.to/pelmentor)
+
 | | |
 |--|--|
 | **Current build** | the newest `Pelmentor-Multivoid-<version>.zip` on the [Releases page](https://github.com/VOTV-MP/Multivoid/releases) (dev prereleases; the zip name + the in-game banner carry the identity) |
@@ -13,6 +15,7 @@
 | **Platform** | Windows · UE4.27 · LAN + Internet |
 | **Website** | [multivoid.dev](https://multivoid.dev) |
 | **Community** | [Discord](https://discord.gg/bA6tGBvGMN) — chat about the project, ask questions, report bugs |
+| **Support** | [Boosty](https://boosty.to/pelmentor) — **the mod is free and always will be**; this covers the master-server VPS and the tooling bill |
 
 ---
 

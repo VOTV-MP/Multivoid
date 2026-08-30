@@ -305,3 +305,21 @@ docs/security/
 docs/DOCS_ARC.md
 assets/paks/*
 !assets/paks/README.md
+
+# SUPPORT.md -- the Boosty working doc (2026-08-30, USER DIRECTIVE: gitignore it).
+#
+# It is the SOURCE the public donation copy is cut from: the page text in both languages, the
+# tier ladder with its art direction, the placement plan, and the cost arithmetic behind the
+# suggested prices. The arithmetic is the reason it stays local -- '26,000 roubles a month, so
+# 29 backers at 900' is a useful number for the author and reads as a QUOTA on a public page,
+# which turns a gift into a debt. What ships is a subset, pasted into Boosty, the README, the
+# site and the Thunderstore README.
+#
+# NOTE the filename is not neutral: GitHub gives a TRACKED SUPPORT.md a native link from the
+# repo's community profile and the new-issue page. Ignored, that link does not appear -- which
+# is the intended trade here, not an oversight. If that link is wanted later, it should be a
+# second SHORT tracked file, not this one.
+#
+# Same terms as its siblings above: the file stays ON DISK and every local pointer to it
+# resolves; none resolves on GitHub.
+SUPPORT.md
