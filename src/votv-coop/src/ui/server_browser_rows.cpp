@@ -601,7 +601,21 @@ void Sync() {
         bool mismatch = false;
         const std::wstring ver = VersionCell(r, mismatch);
 
-        SetRowText(rp.text[0], isOwn ? r.name + "   (your server)" : r.name);
+        // THE LOCK MARKER, and it says the same letter the other surface says.
+        //
+        // A locked lobby rendered identically to an open one is not a cosmetic gap: a
+        // player picks it, waits through a connect, and is refused -- and the browser gave
+        // them nothing to have chosen differently on. The ImGui browser has drawn an "L"
+        // in its first column since it was written; the native one drew nothing, which the
+        // parity gate (tools/ui/browser_parity_gate.py) now fails on.
+        //
+        // It is a NAME PREFIX rather than a sixth column because the row is five text
+        // blocks wide by construction and "(your server)" already establishes the idiom of
+        // qualifying the name in place. Same letter as the fallback deliberately: two
+        // surfaces describing one lobby differently is the drift this lane exists to end.
+        SetRowText(rp.text[0],
+                   std::string(r.locked ? "L  " : "") +
+                   (isOwn ? r.name + "   (your server)" : r.name));
         SetRowText(rp.text[1], std::to_string(r.playersCur) + "/" + std::to_string(r.playersMax));
         if (rp.text[2]) E::SetWidgetText(rp.text[2], ver.c_str());
         SetRowText(rp.text[3], r.world);
