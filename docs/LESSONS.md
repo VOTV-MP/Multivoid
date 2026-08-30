@@ -2965,7 +2965,8 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   while the design doc's tables had been built by reading those directory names. *Look FIRST:* before
   writing a verdict into a doc, run it twice, and confirm every directory you quote was produced by
   what you think produced it. A harness sharing an output path with the evidence store contaminates it
-  invisibly.
+  invisibly. **AND IT CAME BACK THE NEXT DAY FROM A DIFFERENT CALLER** — see the row below; the fix
+  applied here was `--no-archive` at the one known offender, which left the behaviour intact.
   `memory/lesson_one_green_run_after_a_red_streak_is_not_a_result.md`
 
 - **2026-08-30 — When a defect tracks ONE variable, every subsystem keyed on that variable is a
@@ -3018,6 +3019,43 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   tolerance the arm cannot see this class at all. The disagreement between the two arms WAS the
   finding.
   `memory/lesson_an_instrument_blind_to_the_failing_axis_grades_itself_green.md`
+
+- **2026-08-30 — Patch the BEHAVIOUR, not the caller, or the same defect returns from a different
+  one.** `[V]` `tools/atv_probe_report.py` archives whatever it just read into the evidence store.
+  2026-08-29: the acceptance drill invoked it on synthetic fixtures, so **four of seven directories
+  in `research/atv_runs/` were fixtures** while a design doc's tables cited those directory names —
+  fixed by passing `--no-archive` **from the drill**. 2026-08-30, next day: re-grading an archived
+  run (`report.py <host.log> <client.log>`) reached the same `archive()` from a different caller;
+  with explicit paths `names` becomes the paths themselves, so the destination was
+  `<newdir>/<whole source path>.log`, every copy failed, and each invocation left a directory
+  holding **nothing but a MANIFEST of `UNREADABLE` lines** — **eight of them among 26**, found only
+  because a closing sweep counted directories. One defect both times: a tool that writes to the
+  evidence store on every invocation regardless of what it was asked to do. The real fix is three
+  words at the decision point (`and paths == DEFAULT`), because archiving means "preserve the LIVE
+  logs", which is a property of the INPUT. *Look FIRST:* when a tool damages shared state and you
+  reach for a flag at the call site, ask what property of the INPUT should have decided it and
+  whether the function can test that itself — if it can, the flag is a workaround wearing a fix's
+  clothes (RULE 1). And when the damaged thing is an EVIDENCE STORE, put the census in the closing
+  sweep: count the directories, check each holds the artifacts its name implies.
+  `memory/lesson_patch_the_behaviour_not_the_caller_or_it_returns_from_another_one.md`
+
+- **2026-08-30 — An "unreadable" sentinel guards the failure you IMAGINED, not the one you get; the
+  dangerous read is the one that succeeds with the wrong type and prints something plausible.**
+  `[V]` The ATV probe's commit guaranteed *"a missing read prints -1, never 0 — 'identical on both
+  peers' and 'unreadable on both peers' are the two readings a census like this most easily
+  confuses."* Both were guarded. A third was not: `tirescount` is an `IntProperty`
+  (`research/bp_reflection/ATV.json`, `SerializedType=IntProperty`) read with `ReadFloat`, so `4`
+  became `5.6e-45` and `%.1f` printed **`0.0`** — on both peers, in every run, for the field's whole
+  life. The sentinel could not fire because the offset RESOLVES; nothing failed. Same commit, same
+  shape a second time: `wos` read `TArray::Num` on a `TArray<bool>` whose CDO default already holds
+  four elements, printing `4` even on an actor with no world transform — and that non-answer was
+  written into a design doc as a finding. The commit was titled *"the instrument was blind to the
+  only axis that ever failed"*. *Look FIRST:* before a raw-memory read of a reflected property, look
+  up its declared `SerializedType` in the dump — one grep — and never infer it from the field's name
+  or from what the value looks like. Then check the first sample against something known
+  independently (an ATV has four tires). A value constant across peers, across runs, and across a
+  state change that should have moved it is not agreement; it is a hint the read never reached it.
+  `memory/lesson_a_sentinel_guards_the_failure_you_imagined_not_the_one_you_get.md`
 
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
 

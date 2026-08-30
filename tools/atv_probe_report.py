@@ -718,7 +718,16 @@ def main():
     paths = sys.argv[1:3] if len(sys.argv) >= 3 else DEFAULT
     names = ["HOST", "CLIENT_1"] if paths == DEFAULT else [p for p in paths]
     peers = [parse(p) for p in paths]
-    if "--no-archive" not in sys.argv:
+    # ARCHIVE ONLY THE LIVE LOGS. Pointed at explicit paths -- which is how every RE-GRADE of an
+    # already-archived run is invoked -- `names` becomes the paths themselves, so archive() wrote
+    # its destination as `<newdir>/<the whole source path>.log`, failed on every one, and left a
+    # directory holding nothing but a MANIFEST of UNREADABLE lines. Eight of those accumulated in
+    # research/atv_runs/ during one afternoon of re-grading, indistinguishable at a glance from
+    # real runs in a store whose directory NAMES are what design docs cite. Same class as the
+    # 2026-08-29 defect where the drill archived its own fixtures; that was patched at the ONE
+    # caller with --no-archive, and it came back from a different caller the next day, which is
+    # what patching a caller instead of the behaviour buys.
+    if "--no-archive" not in sys.argv and paths == DEFAULT:
         archive(paths, names)
     for nm, p, d in zip(names, paths, peers):
         print("\nsource: {}".format(p))

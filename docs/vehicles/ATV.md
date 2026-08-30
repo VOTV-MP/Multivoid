@@ -527,9 +527,13 @@ Source: `src/votv-coop/src/coop/interactables/atv_sync.cpp` (692 LOC),
   only ITSELF; only the recorded author may release (client-scoped — slot 0 is exempt).
 - **`AtvRelease`** — the authority-lost edge, and NOTHING else: it clears the author. It carries no
   velocity and re-enables no physics, because nothing was ever frozen.
-- **The collision guard** — the seven `BndEvt__*ComponentHitSignature` UFunctions are cancelled
-  PRE-dispatch on a peer that does not own the ATV's tick, so only one machine authors
-  impulse-damage / `explode()` / `ejectWheel`. The lane FAILS CLOSED without all seven.
+- **The collision guard** — all seven `BndEvt__*ComponentHitSignature` UFunctions are INTERCEPTED,
+  and since 2026-08-30 (`8cd0ac25`) only the **two BODY ones** (`mesh`, `car1_Capsule`) are
+  CANCELLED on a peer that does not own the ATV's tick, so only one machine authors impulse-damage
+  and `explode()`. The five WHEEL delegates run everywhere: cancelling them cost the mirror its rig
+  SHAPE (§17), and the residual — a mirror burning its own tire durability and able to
+  `ejectWheel` — is narrower than what it replaces. The lane still FAILS CLOSED unless all seven
+  RESOLVE, which is now a capability check rather than a policy one.
 - **`AtvSpawn` / `AtvDestroy`** — the synthetic-key lane for an ATV that appears after connect.
 - **Connect snapshot** — every indexed ATV with `adopt=1`, carrying pose AND velocity AND
   `authorSlot`, so an ATV airborne at the join arrives moving and lands.
