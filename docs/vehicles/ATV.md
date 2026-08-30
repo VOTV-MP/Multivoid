@@ -1079,7 +1079,7 @@ off the class, and `SetAllPhysicsLinearVelocity` would not reach them either (it
 bodies WITHIN one component; these are separate components). The "write all five bodies" fix is
 not buildable the way it was designed. The invariant it came from still stands and is §16.6.
 
-### 16.5 The fix (BUILT 2026-08-30, NOT deployed, NOT run)
+### 16.5 The fix (BUILT + RUN 2026-08-30, `FBE271E87BABE8F0`, autonomous, NOT hands-on)
 `atv_corrector.cpp`: when the AUTHOR's reported linear and angular velocity are below
 `kRestLinCmS`/`kRestAngDegS`, the mirror is **not written to at all** — no wire velocity, no
 corrective term. Out of band, `TeleportRig` once and leave it; bounded at `kRestMaxReplaces = 3`,
@@ -1119,3 +1119,38 @@ to a crate the other peer does not know exists, and:
 
 None of this is measured against a real hooked ATV. It is recorded because the ATV design has been
 reasoning about a closed five-body rig and the game does not guarantee one.
+
+### 16.7 `[V]` THE RUN: the fix removed the write, and the residual SURVIVED it
+Deployed `FBE271E87BABE8F0`, 150 s two-peer smoke, driven arm fired (peak torqAlpha 1035.8).
+
+**The at-rest branch fires, and it is the experiment §14.6 needed.** Three times in one run the
+mirror was placed on the author's pose and LEFT THERE — no velocity write after the teleport, the
+first time that has ever happened in this lane — and three times it would not hold:
+
+```
+atv: a parked mirror would not stay on the authority's pose after 3 re-places
+     (last error 40.5 cm) -- something local to THIS peer is holding the rig off it
+```
+
+So the residual is **not** our velocity write. Waking the rig every packet was real and is gone;
+what is left is something on the receiving peer that holds the rig 25-40 cm off the author's pose
+even when nothing is pushing it. **That makes §14.6's original reading the supported one** — earned
+by the experiment this time rather than assumed from a cut that was always followed by a push.
+
+**A2 still FAILS: 36.6 cm.** The pair is 3.5 cm apart parked before the drive (identical to every
+prior run) and 23.3 cm apart at the release. Unchanged in shape.
+
+**A6 passed both handoffs this run (−13.2 / −17.6) and that is NOT evidence the fix worked.** Its
+"before" sample is taken at the release instant, when the rig may still be coasting — here the pair
+was already 45.6 cm apart at that moment for drive-related reasons, so the arm measured a gap
+CLOSING. The `still()` guard covers the AFTER sample only. **Known weakness, not fixed:** A6's
+baseline needs to be the last instant both copies were at rest BEFORE the claim, not the release
+edge. Until then a green A6 means less than a red one.
+
+**A1 back FAILED for the first time** (mirror 6.13 cm vs author 2.10, x2.92 over the 2.5 ceiling).
+One sample of one route; it could be the mirror now being free to move at rest, or it could be the
+route. Not attributed.
+
+**NEXT, in order:** fix A6's before-sample; then find what holds a mirrored rig low — the four rig
+bodies' world Z is now logged (`partZ=`) and has not been read yet, and it distinguishes "the whole
+rig is low" (support) from "the body hangs in its suspension" (rig state).
