@@ -370,6 +370,13 @@ CFG_FLAG(native_ui_probe, "native_ui_probe", "dev", false, "VOTVCOOP_NATIVE_UI_P
     "Diagnostic probe (READ-ONLY): UMG class/function resolution census, donor "
     "residency, the ui_menu switcher child map, and the count of frames presented "
     "while no world exists (decides whether the ImGui overlay substrate is retirable).")
+CFG_FLAG(native_text_probe, "native_text_probe", "dev", false, "VOTVCOOP_NATIVE_TEXT_PROBE",
+    "Diagnostic probe, and it WRITES: adds a UEditableTextBox to the live native "
+    "browser panel, focuses it, POSTS characters into the game window, reads the "
+    "field's own Text back, and removes it. Answers the one fact every native "
+    "text-entry design forks on -- whether Slate routes keystrokes into a hand-wired, "
+    "never-Initialize()d widget tree. Asserts on the TEXT, never on HasKeyboardFocus, "
+    "which the 2026-07-31 input-ownership finding measured as lying about a live field.")
 CFG_FLAG(native_ui_probe_write, "native_ui_probe_write", "dev", false,
     "VOTVCOOP_NATIVE_UI_PROBE_WRITE",
     "RUNG 1 of native_ui_probe, and it WRITES: adds a throwaway UUserWidget to the "

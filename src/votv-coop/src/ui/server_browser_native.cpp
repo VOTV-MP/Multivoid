@@ -12,6 +12,7 @@
 #include "ui/native_screen.h"          // palette + widget primitives, shared with the host window
 #include "ui/server_browser_actions.h"   // CONNECT / HOST / REFRESH, its own TU
 #include "ui/server_browser_rows.h"      // the LIST -- rows, identity, hover, selection
+#include "coop/dev/native_text_probe.h"   // the HALT rung: can a native field take text?
 #include "ui/server_browser_selftest.h"  // the dev phase machine; ships dark
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
@@ -512,6 +513,12 @@ void OnMenuTick(void* menu, void* switcher) {
     // phase succeeded, and the chrome would stay untested forever. Every phase that needs
     // a visible screen runs before that point, in order.
     selftest::Tick(g_scrimW, rows::Panel(), g_closeBtn);
+
+    // THE HALT RUNG (2026-08-30). Dev-gated and latched; does nothing for a player.
+    // It rides this tick because it needs the browser's own panel, which is the tree
+    // whose behaviour is in question -- a probe against a tree nobody ships would
+    // answer about a different tree.
+    coop::dev::native_text_probe::Tick(rows::Panel());
 
     if (!g_shown) return;
 
