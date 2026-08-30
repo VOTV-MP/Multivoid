@@ -6529,6 +6529,24 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 
 **A worktree build of this repo needs three non-obvious inputs.** 2026-08-30, three failed configures before the fourth built (needed because the SHARED tree was mid-edit unbuildable while an acceptance run needed known bytes): (1) a SHORT worktree path — MSBuild FileTracker dies with FTK1011 on MAX_PATH `.tlog` paths under the deep session-scratchpad dir, surfacing as a misleading late `MSB1009`; (2) the vcpkg toolchain trio, reusing the MAIN tree's already-materialized store — `-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/.../vcpkg.cmake -DVCPKG_INSTALLED_DIR=<main>/build/votv-coop/vcpkg_installed -DVCPKG_TARGET_TRIPLET=x64-windows-static -DVCPKG_MANIFEST_INSTALL=OFF` (else Protobuf is not found); (3) `--recursive` on the GameNetworkingSockets submodule (nested abseil fails `check_submodule` otherwise). Companion facts: the boot banner's compiled-stamp does NOT identify a relink (`__DATE__` lives in one banner TU — verify a binary by hash or by a BEHAVIOR only the new code emits), and `mp.py smoke --no-deploy` (`f45827a8`) is how a run keeps its provenance when the shared build slot changes hands. **Look here FIRST:** the verbatim recipe block in `memory/lesson-a-worktree-build-of-this-repo-needs-three-non-obvious-inputs.md`. [[lesson-a-worktree-build-of-this-repo-needs-three-non-obvious-inputs]]
 
+**A fork's fix is verified COMMIT BY COMMIT against your current tree, because a fork branches at a
+point in time.** 2026-08-31, adopting from `archhn0madd/Multifoid` (a fork of this repo, 2 unique
+commits, based 254 commits back): the first was a live root-cause fix — the boot poll's two world
+reads still answered from the DYING world on our main (`engine_save.cpp:243/251` + `:372/378`), patch
+applied clean. The second annotated `FatalCloseSlot`'s `peerConns_` write `GEN: clear` — and main had
+already resolved that exact site as `GEN: none -- CLIENT side: slot 0 is the host LINK handle, not a
+peer-slot` (`session_status.cpp:752`), with `peerconn_gate` PASS. Both were true about the snapshot
+they branched from; one was still true about main. Adopting the pair wholesale would have been
+SILENT — the gate passes either way, so a measured rationale would have been swapped for a different
+one with nothing to flag it. **Look here FIRST:** diff against your CURRENT main
+(`git log --oneline ours/main..theirs/main`, `git merge-base` for the staleness), test-apply each
+commit separately, and READ each target site on your own tree — a clean `git apply --check` proves the
+context lines match, never that the change is still wanted. Treat the contributor's commit message as a
+handed-down measurement taken on a different tree; here the fix's own comment pointed at a
+`docs/FIELD_REPORTS.md` this tree does not have. Preserve authorship with `git commit --author=` — the
+one case where the standing "author field is pelmentor" rule does not apply, as `docs/CREDITS.md`
+itself states. [[lesson-a-forks-fix-is-verified-commit-by-commit-against-your-tree]]
+
 ## 9. Security (threat model, trust boundaries, peer identity)
 
 > **READING THIS FILE AS AN AGENT (`/qf` critic, auditor, reviewer): OPEN
