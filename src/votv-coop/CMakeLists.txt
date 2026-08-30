@@ -350,6 +350,7 @@ add_library(votv-coop SHARED
     src/coop/world/sky_sync.cpp
     src/coop/interactables/power_sync.cpp
     src/coop/interactables/atv_sync.cpp
+    src/coop/interactables/atv_corrector.cpp
     src/coop/interactables/drone_sync.cpp
     src/coop/items/coingun_sync.cpp
     src/coop/items/coingun_arbiter.cpp
