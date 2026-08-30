@@ -3061,6 +3061,32 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   state change that should have moved it is not agreement; it is a hint the read never reached it.
   `memory/lesson_a_sentinel_guards_the_failure_you_imagined_not_the_one_you_get.md`
 
+- **2026-08-30 — A per-peer RANDOM identity mint forecloses every dedupe plan; find out which kind
+  of identity an object has BEFORE choosing the lane's shape.** `[RD]` Chasing whether a
+  runtime-spawned `prop_atvWheel_C` carries a Key, the whole mint chain disassembled:
+  `ATV.ejectWheel` @107-427 BeginDeferred-spawns it writing only `durability`/`dirt`/`fixes` and no
+  key at all -> `prop.UserConstructionScript` @128 calls `init()` -> `prop.init` @1265 `getKey` ->
+  `prop.getKey` @11 `lib_C::assignKey` -> **`lib.assignKey` @81-133: `if (keyIn == None) keyIn :=
+  generateRandomKey()`**, then the pair is registered into `gamemode.keyObj_key`/`keyObj_obj`. So
+  **every** `Aprop_C` a Blueprint spawns at runtime is keyed by the UCS, in the spawning process, at
+  RANDOM — the whole prop family, not just wheels. Two peers running the same spawn therefore mint
+  two DIFFERENT keys for one logical object, the identity layer keys on that string, and **no
+  after-the-fact reconciliation exists** (no dedupe pass, no fuzzy match, no host-wins merge — there
+  is no shared value to match on). Any lane where two peers can spawn the same object must be an
+  **act-as-host intent lane** (`COOP_SYNCER_MODEL.md` §2b); "we will clean up duplicates later" is
+  dead before it is written. **The trap:** searching for "where is the key checked" leads to
+  `ue_wrap::prop::IsKeyedInteractable`, which does NOT test the key — it is
+  `IsClassKeyedInteractable(R::ClassOf(obj))` (`prop.cpp:154`), a pure LINEAGE test that passes on
+  class alone; the real instance-key gate is an anonymous inline `keyStr.empty() || keyStr ==
+  L"None"` in `GrabObserver_Aprop_Init_POST_Body` (`prop_lifecycle.cpp:276`). The identity-sounding
+  NAME sat on the weaker check and the decisive check had none, and a conclusion had already been
+  written off the name before the body was opened — the opposite of the truth. *Look FIRST:* before
+  designing any cross-peer lane for a runtime-spawnable object, disassemble its key path to the mint
+  and classify identity as DERIVED (deterministic, matchable) or MINTED (random, per-process); that
+  one fact picks the lane's shape and costs about four `_fn.py` calls. And when a chain has two gates
+  for related-sounding properties, assume the named one is not the one you want.
+  `memory/lesson-a-per-peer-random-identity-mint-forecloses-every-dedupe-plan.md`
+
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
 
 - **A WINDOW CLOSED BY THE LATCH THAT STARTS THE NEXT PHASE ENDS BEFORE THAT PHASE — BY

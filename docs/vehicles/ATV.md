@@ -1371,16 +1371,47 @@ is the control arm that acquitted the corrector; both are diagnostics, RULE-2 ex
   which **`BreakConstraint()`s all eight constraints and re-places `sus_*` from
   `defaultTireLocations()`** — a constraint-rig rebuild, on the mirror, i.e. the same class of event
   as the deformation this whole section is about.
-  **The cross-peer half `[RD]`, and it is the thing to measure next:** `coop/props/host_spawn_watcher.cpp`
-  Func-patches `FinishSpawningActor` precisely to catch `EX_CallMath` dispatches, and
-  `DrainPendingSpawns` expresses such spawns into a `PropSpawn` broadcast, **host-only**. So a wheel
-  knocked off a *client-driven* ATV could be ejected twice — once locally by the client author, once
-  by the **host's mirror**, whose copy is broadcast to everyone. Unconfirmed link: whether a
-  runtime-spawned `prop_atvWheel_C` carries a Key and so passes `IsKeyedInteractable`. It derives
-  from `prop_C` (§?), which makes it likely. So the proper root is **an act-as-host intent lane for
-  tire ejection** (`COOP_SYNCER_MODEL.md` §2b) — the mirror's `ejectWheel` must not spawn; the
-  author's must, and its `prop_atvWheel_C` must be the only one. The fence collision above is exactly
-  the event that exercises this.
+  **THE GATING MEASUREMENT IS ANSWERED — 2026-08-30, `[RD]` from bytecode, NOT yet runtime-confirmed.
+  A runtime-spawned `prop_atvWheel_C` DOES carry a Key, and it is minted PER PEER AND AT RANDOM,
+  which makes the defect worse than the "ejected twice" I wrote below it.** The chain, every link
+  disassembled with `research/bp_reflection/_fn.py`:
+
+  | step | evidence |
+  |---|---|
+  | `ATV.ejectWheel` @107-427 | `BeginDeferredActorSpawnFromClass(prop_atvWheel_C)` → writes ONLY `durability`, `dirt`, `fixes` → `FinishSpawningActor`. **No key write, no `loadData`.** |
+  | `prop.UserConstructionScript` @63-128 | resolves the gamemode, then calls `init()` (the `resetKey` branch instead sets `key = None`) |
+  | `prop.init` @1265-1288 | `getKey(out)` → `key := out` |
+  | `prop.getKey` @11-75 | `lib_C::assignKey(key, self, self, out)` → `key := out` |
+  | **`lib.assignKey` @81-133** | **`if (keyIn == None) keyIn := generateRandomKey()`**, then @234-771 registers the pair into `gamemode.keyObj_key` / `keyObj_obj` |
+
+  So the UCS mints a key at construction, on whichever peer ran the spawn, before
+  `FinishSpawningActor` returns — which is exactly why the seam's drain "adopts ~1 tick later, once
+  the whole BP call has completed".
+
+  **Two corrections to what this bullet used to say.** (1) *"carries a Key and so passes
+  `IsKeyedInteractable`"* conflated two different gates. `ue_wrap::prop::IsKeyedInteractable` is a
+  **CLASS** test — `IsClassKeyedInteractable(R::ClassOf(obj))`, `prop.cpp:154` — so the wheel passes
+  it on lineage alone whether or not it holds a key. The instance-key gate is a **separate**
+  `keyStr.empty() || keyStr == L"None"` check further down `GrabObserver_Aprop_Init_POST_Body`
+  (`prop_lifecycle.cpp:276`), and passing the first tells you nothing about the second. I nearly
+  wrote the opposite conclusion off the function's NAME.
+  (2) The failure is not "the same wheel ejected twice". Because `generateRandomKey` runs
+  independently in each process, **two peers ejecting the same tire mint two DIFFERENT keys** — so
+  the identity layer cannot recognise them as one object, and no after-the-fact reconciliation is
+  possible. Worse in the ordinary case: the express seam is **host-only**
+  (`prop_lifecycle` returns on `role() != Host`), so a client mirror's `ejectWheel` spawns a real,
+  keyed, registered wheel that is **broadcast nowhere** — a keyed prop existing on exactly one peer,
+  plus a `tires[index] = false` and an `updTires()` constraint-rig rebuild the other peer never sees.
+  Neither seam catches it from the other side either: `kAmbientPropSpawnMirrorClasses` is exactly
+  three classes (`prop_food_pinecone_C`, `prop_stick_C`, `prop_crystal_C`) and the wheel is not one.
+
+  This CONFIRMS the prescription rather than changing it: the proper root is **an act-as-host intent
+  lane for tire ejection** (`COOP_SYNCER_MODEL.md` §2b) — the mirror's `ejectWheel` must not spawn,
+  the author's must, and its `prop_atvWheel_C` must be the only one. What the measurement adds is
+  *why nothing cheaper works*: with per-peer random keys there is no dedupe to fall back on.
+  **Runtime confirmation still owed** (it is `[RD]`, not `[V]`): eject a wheel on each peer and log
+  the spawned actor's key on both. Blocked 2026-08-30 only by the cross-session game lock.
+  The fence collision above is exactly the event that exercises this.
 - **§16.6's hook boundary is untouched and still unmeasured**: a player can tie physics props to
   the ATV with `hook_C`, whose lane has zero symbols in this tree.
 
