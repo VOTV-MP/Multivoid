@@ -1508,9 +1508,11 @@ a half, it was to remove the *cause* of the failure the other half was exposed t
 hour ago calling #5 "better on every axis". It is better on every axis except the one that matters
 to a player, which is seeing the same tyres as the person driving.
 
-**Status:** #5 built, deployed, and UNVERIFIED (its one run produced no verdict). #4 designed
-(§17.12) and not built. The acceptance test for the pair is the §17.9 comparison with **both**
-shipped, and only then does "the two peers' `dur=` agree" become a criterion the design can meet.
+**Status:** ~~#5 built, deployed, and UNVERIFIED (its one run produced no verdict). #4 designed
+(§17.12) and not built.~~ **SUPERSEDED the same day, twice: §17.16 verified #5, and §17.17 BUILT
+AND WITNESSED #4 (proto 147, `dcdf665c`) — the §17.9 comparison ran with both halves shipped and
+the two peers' `dur=` agreed byte-for-byte.** The paragraph above stands as the dated record of
+the moment the pair was recognised as a pair.
 
 ### 17.15 THE FACET TABLE IS A LIST, NOT A CENSUS (USER, 2026-08-30)
 
@@ -1992,8 +1994,12 @@ the protocol.
 **What this does NOT cover, and must not be quietly folded in:** an actual `ejectWheel` on a mirror
 still spawns a real, keyed, registered wheel prop that reaches nobody (§17.5), and no amount of
 array-overwriting un-spawns it. That half remains an act-as-host intent and is the only part of this
-whole thread that still needs designing. It has also **never been observed** — `tires` stayed `0xF`
-on both peers for the entire §17.9 run.
+whole thread that still needs designing. ~~It has also **never been observed** — `tires` stayed `0xF`
+on both peers for the entire §17.9 run.~~ **OBSERVED 2026-08-30, same day (§17.17): the eject drill
+fired the native path three times on live sessions** — a HOST-authored eject broadcasts its wheel
+(key `GEJCfgfjV44i63LjcVR0aA` / `iZAiac9fG49qpEdeR20K-A`, adopted by the mirror the same second),
+which is the canonical direction working; the CLIENT-authored direction stays the filed intent lane
+and its (b2) witness run is still owed (arc paused).
 
 ### 17.13 DESIGN #5, and it costs zero wire bytes: ZERO THE IMPULSE, do not cancel the notification
 
@@ -2053,5 +2059,7 @@ way where both readings fail; it is moot now, and recorded so it is not revived 
 
 **Still open and NOT closed by #5:** an ATV whose tire genuinely reaches zero on its AUTHOR must
 still put the resulting wheel prop on the wire, and that remains an act-as-host intent (§17.5). #5
-guarantees only that a MIRROR never authors one. And the eject half has still never been observed.
+guarantees only that a MIRROR never authors one. ~~And the eject half has still never been
+observed.~~ (Observed later the same day — §17.17's drill runs; the HOST direction is complete,
+the client direction is the filed lane.)
 
