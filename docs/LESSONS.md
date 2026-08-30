@@ -2903,7 +2903,7 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   the line, or expect the citation to rot silently.**
   `memory/lesson_a_line_number_is_a_position_the_claim_is_about_content.md`
 
-**A correct mechanism is what makes a wrong conclusion feel solid.** I stated that foreign cards cannot pay a Russian donation platform and built a recommendation on it; the user called it, and ninety seconds of checking showed the platform officially accepts them (failures are issuer-side, not a wall). The mechanism I reasoned from was TRUE -- Visa/MC cut cross-border processing with Russian banks in 2022 -- and the leap from "how this class of thing works" to "how THIS service's checkout works today" was unearned. Sound reasoning leaves no moment of doubt to catch. **Look here FIRST:** a claim about the OUTSIDE world is still a claim, and the check is usually one search. Three tells -- you are asserting an external service's current behaviour from a general mechanism plus a date; it is trivially checkable and you did not check; and you are recommending WORK on the strength of it. When corrected, fix it at every place you wrote it, not only the one in front of the user. **SECOND INSTANCE 2026-08-30, and it SHIPPED a bug:** I wrote that a restored scroll offset "is clamped by the next layout" -- Slate does clamp what it ARRANGES with, so the mechanism was real -- while `GetScrollOffset` reports `DesiredScrollOffset` and applies no clamp, so the over-large value is STORED and the next structural change reads it back as a real position. The measurement was already in the header of the function I was calling, IN CAPITALS (`ue_wrap/engine/umg_build.h:159-171`, measured twice on 2026-08-26); an audit quoted it back at me. **Fourth tell: you are about to state how a CALLEE behaves and you have not opened its declaration** -- in this project the measured fact is usually there, put there by someone already burned. [[lesson-a-correct-mechanism-is-what-makes-a-wrong-conclusion-feel-solid]]
+**A correct mechanism is what makes a wrong conclusion feel solid.** I stated that foreign cards cannot pay a Russian donation platform and built a recommendation on it; the user called it, and ninety seconds of checking showed the platform officially accepts them (failures are issuer-side, not a wall). The mechanism I reasoned from was TRUE -- Visa/MC cut cross-border processing with Russian banks in 2022 -- and the leap from "how this class of thing works" to "how THIS service's checkout works today" was unearned. Sound reasoning leaves no moment of doubt to catch. **Look here FIRST:** a claim about the OUTSIDE world is still a claim, and the check is usually one search. Three tells -- you are asserting an external service's current behaviour from a general mechanism plus a date; it is trivially checkable and you did not check; and you are recommending WORK on the strength of it. When corrected, fix it at every place you wrote it, not only the one in front of the user. **SECOND INSTANCE 2026-08-30, and it SHIPPED a bug:** I wrote that a restored scroll offset "is clamped by the next layout" -- Slate does clamp what it ARRANGES with, so the mechanism was real -- while `GetScrollOffset` reports `DesiredScrollOffset` and applies no clamp, so the over-large value is STORED and the next structural change reads it back as a real position. The measurement was already in the header of the function I was calling, IN CAPITALS (`ue_wrap/engine/umg_build.h:159-171`, measured twice on 2026-08-26); an audit quoted it back at me. **Fourth tell: you are about to state how a CALLEE behaves and you have not opened its declaration** -- in this project the measured fact is usually there, put there by someone already burned. **THIRD INSTANCE 2026-08-30 (VotvIO v15), with the antidote:** I asserted "UE inherits bVisible down the attach chain" from ONE family that fit (the prying-crowbar rig, invisible in game under f_visible=False pivots) and generalised it into a hidden-check -- the game's grime rigs also hang under f_visible=False parents and RENDER, so the check killed 947 of 979 projected decals. **Fifth tell: one family fitting a mechanism is correlation on that family; before generalising, run the check against a DIFFERENT family that must not change** (the bench's full report diff was the one-run falsifier; the revert landed the honest curated-class mechanism instead). [[lesson-a-correct-mechanism-is-what-makes-a-wrong-conclusion-feel-solid]]
 
 - **2026-08-30 — Assigning a physics velocity is a WAKE, not just a write.** `[V]` A mirrored
   `AATV_C` free-fell 46 cm in a second while its author held one Z to the decimal and reported
@@ -5282,8 +5282,9 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 
 - **2026-08-29 — pyUE4Parse works on VOTV only with 6 named fixes** (it LOOKS broken at the first
   mesh): unconditional `minMobileLODIdx` read for ≥4.27 misaligns every StaticMesh (CUE4Parse gates it
-  on `StaticMesh.KeepMobileMinLODSettingOnDesktop`, default OFF); `USkeletalMesh` is a stub (SK lane =
-  port `tools/client_model/ue_skelmesh.py`); `FMeshUVHalf.to_mesh_uv_float()` returns RAW half bits
+  on `StaticMesh.KeepMobileMinLODSettingOnDesktop`, default OFF); `USkeletalMesh` is a stub — bounds +
+  materials only (CLOSED v15: `votvio/sk_model.py` registry-replaces it with a full LOD0 reader);
+  `FMeshUVHalf.to_mesh_uv_float()` returns RAW half bits
   (decode via numpy float16 view); the "Could not read StaticMesh" ERROR spam is usually a COSMETIC
   post-LOD-tail failure (geometry already parsed); the export registry extends without forking via
   `register_export(cls, Type=...)` (used for the ISM/HISM `instance_matrices` native tail); and
@@ -5321,6 +5322,19 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   the level before any `is_descendant(X)` rule; `umap_import._is_event_class` + the
   EVENT_ACTOR_CLASSES comment carry the as-built.
   `memory/lesson-a-hierarchy-rule-is-only-as-good-as-the-familys-homogeneity.md`
+
+- **2026-08-30 — A cooked export NAME is not an identity; the ONLY identity is the ExportMap
+  index.** The base's door_C actors `door2`/`door3`/`door4` share their names with
+  `breakroomCounter_2`'s ChildActorComponents, which sit EARLIER in the export map — a
+  name-keyed `by_actor_name` + name-walk `_actor_of` handed the doors' components to the
+  counter (wrong class → no template mesh → `no_mesh`), and three of the base's automatic
+  doors vanished SILENTLY for ten waves (a collision fails as "asset has no mesh", not as an
+  error). `ExportMap[i].OuterIndex` (FPackageIndex, Index>0 → export Index−1) climbed to the
+  PersistentLevel export is exact; `by_comp[(name, outer-name)]` is ambiguous the same way —
+  keep every candidate and prefer the one on the same actor. *Look FIRST:* on any
+  "resolves wrong/nothing" symptom in a cooked package, print EVERY export with that name in
+  index order (door_probe5 shape); `umap_import._actor_of`/`_resolve_comp` carry the as-built.
+  `memory/lesson-a-cooked-export-name-is-not-an-identity.md`
 
 - **2026-08-30 — Streaky 1D textures = a degenerate UV axis; on a cooked struct parser
   suspect a FIELD SHIFT putting the NORMAL in a texture-basis slot.** The level BSP

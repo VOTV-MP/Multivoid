@@ -439,6 +439,34 @@ events 109 -> 22, placed 1107 -> 1194; verify_v14 PASS (78 дверей/ламп
 в Statics, ни одного в Events; превью обелиска/алиенов остались в Events). Урок спарен:
 [[lesson-a-hierarchy-rule-is-only-as-good-as-the-familys-homogeneity]].
 
+**v15 (2026-08-30, `1163bed9`) — 4 пропавшие автоматические двери: идентичность актора =
+ИНДЕКС ExportMap, и свой ридер кукнутого USkeletalMesh.** Юзер: «аддон забывает 4
+автоматических двери — 3 в гараже (включая большую гаражную) и балконную». Два корня, оба
+измерены. (1) Акторы door_C зовутся `door2`/`door3`/`door4` — И ТАК ЖЕ зовутся
+ChildActorComponent'ы breakroomCounter_2, стоящие РАНЬШЕ в ExportMap; `by_actor_name`
+отдавал первый экспорт, `_actor_of` по именам приписывал компоненты дверей стойке (не тот
+класс -> шаблонный меш не резолвится -> no_mesh). Идентичность теперь через
+`ExportMap[i].OuterIndex` (подъём по индексам до PersistentLevel; имя-обход остался только
+как fallback непарного пакета); `by_comp` хранит ВСЕХ кандидатов на (имя, outer), а
+AttachParent-резолв предпочитает кандидата ТОГО ЖЕ актора. Урок:
+[[lesson-a-cooked-export-name-is-not-an-identity]]. (2) Большая гаражная дверь
+(garage_C/garage_2) рисуется SkeletalMeshComponent'ом — а SK скипался целиком
+(sk_skipped=473 на радиусе-150). Новый `sk_model.py` замещает vendor'ский
+USkeletalMesh (тот читал только bounds+materials) по рецепту bsp_model и парсит кук 4.27
+до буферов LOD0; раскладка ПРИШПИЛЕНА hex-подгонкой (FDuplicatedVerticesBuffer — два
+count-first TArray, НЕ bulk; маска RecomputeTangent-байта есть) и свипом **27/27 PASS** по
+всем SK карты. `mesh_build.build_mesh` диспатчит по типу экспорта -> и путь строк сейва
+(spawn_plan SK-шаблоны) получил настоящие меши: фигура в автоматах x2, бобины wallunit,
+warpbox, эри в морозилке; кубы-плейсхолдеры .sk и обе sk_* статистики ретайрнуты (RULE 2).
+`pryingCrowbar_C` -> кураторский EVENT_ACTOR_CLASSES (213 CAT'ов на 60 pryable-точках,
+видимы только в интеракции). **Проба «bVisible наследуется по attach-цепи» ОПРОВЕРГНУТА
+бенчем и откачена**: монтировке она подошла, но грайм-риги игры тоже висят под
+f_visible=False родителями и В ИГРЕ ВИДИМЫ (декали 979 -> 32) — предковая видимость не
+кукнутая истина; механизм остаётся кураторским списком. Приёмка: бенч placed 1194 -> 1209,
+events 22 -> 406 (+384 монтировки), grime 979 без изменений, warnings 0; verify_v15
+**ALL PASS (20)** — 14/14 дверей, гаражная 1002 поли / 8.24 м / inst_garDoor, SK-набор на
+месте, ноль монтировок в Statics.
+
 ## 1. What it is
 
 A Blender 5.1 **extension** (`extensions/user_default/votvio`, manifest-based, python 3.13 + numpy,
@@ -522,6 +550,11 @@ landscape, foliage, lights), every saved prop/entity/vehicle/NPC from the save's
 > reference shot. **v14 same evening: the v13 rule over-reached** — triggerBase_C also
 > bases doors/lamps/switches/locks; the discriminator is now "template mesh = world,
 > instance-delta-only mesh = spawner preview" (§0 v14), doors back in Statics.
+> **v15 (same day): the user counted the doors — 4 of 15 still missing** (2 regular garage +
+> balcony + the BIG garage door). Different roots than v13/v14: a NAME COLLISION in actor
+> resolution (door2/3/4 vs breakroomCounter's CAT components — identity is now the ExportMap
+> index) and the big door being a SKELETAL mesh, unread until v15's own USkeletalMesh reader
+> (§0 v15). All 15 in the blend now; crowbar prying rigs (~384) routed to hidden Events.
 
 | Open | What | Phase |
 |---|---|---|
@@ -541,7 +574,7 @@ landscape, foliage, lights), every saved prop/entity/vehicle/NPC from the save's
 | O15 | ~~landscape textures~~ **CLOSED v7** — weightmap-TRUE layer blending shipped (`landscape.py` weight extraction + `materials.landscape_material`, the game's own `inst_mainLandscape` layer textures/tiling); procedural GREEN/SNOW/DIRT stays as the with_textures=False fallback; residual: layer NORMAL/height maps unused, macro variety (grassPatches) unbaked | — |
 | — | BSP UV: v12 fixed the basis fields (normal was in the U slot) and the /128 formula agrees with the scale-bearing basis vectors (|tu|~0.2); texture DENSITY vs the game is still not photo-verified | P3 |
 | — | prop_C stragglers (44) + prop_barnshelf (23) placeholders | P3 |
-| — | SK geometry port of `ue_skelmesh.py` (NPC bind pose) | P3 |
+| — | ~~SK geometry port (NPC bind pose)~~ **CLOSED v15 `1163bed9`** — own cooked-USkeletalMesh reader (`sk_model.py`, registry-replaces the vendor's materials-only class; 27/27 sweep over every map-referenced SK) + `build_mesh` dispatch, so the map lane AND the save-row lane (spawn_plan SK templates) build real bind-pose geometry; the `.sk` cube placeholder crutch retired. Residuals: no armature/pose (bind pose only, by design); `cookier_C`/`NewBlueprint7_C` carry NO template mesh (runtime-assigned) and stay unrendered | — |
 
 ## 6. Dev notes
 
