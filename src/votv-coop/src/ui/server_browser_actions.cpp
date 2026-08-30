@@ -93,9 +93,15 @@ bool Build(void* footRow, void* donorBtn) {
     // Order left-to-right, and it is the order a player moves through them: refresh the
     // list, host your own, or join the one you picked. CONNECT is last so it sits at the
     // right edge, which is the CONFIRM position in every native VOTV window.
-    g_refresh = NS::BuildButton(footRow, donorBtn, L"REFRESH", 18);
-    g_host    = NS::BuildButton(footRow, donorBtn, L"HOST",    18);
-    g_connect = NS::BuildButton(footRow, donorBtn, L"CONNECT", 18);
+    // SENTENCE CASE, NEVER CAPS. Measured across the whole style corpus
+    // (ignore_folder/votv_widgets_style/): VOTV uppercases NO button label,
+    // anywhere -- "Play game", "Delete save slot", "Open save data reset menu",
+    // "Duplicate save slot", "Back", "Save", "Reset". Ours shouted, which is the
+    // single loudest way our chrome read as foreign. User report 2026-08-30:
+    // "No caps at buttons ever."
+    g_refresh = NS::BuildButton(footRow, donorBtn, L"Refresh", NS::kBtnFontPx);
+    g_host    = NS::BuildButton(footRow, donorBtn, L"Host",    NS::kBtnFontPx);
+    g_connect = NS::BuildButton(footRow, donorBtn, L"Connect", NS::kBtnFontPx);
     if (!g_refresh || !g_host || !g_connect) {
         UE_LOGE("server_browser_actions: could not build the action bar "
                 "(refresh=%p host=%p connect=%p) -- the footer would ship with a hole",

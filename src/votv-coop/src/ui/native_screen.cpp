@@ -162,6 +162,41 @@ void* BuildButton(void* parent, void* donorBtn, const wchar_t* label, int32_t fo
     void* b = Spawn(P::name::ButtonClass, parent);
     if (!b) return nullptr;
     U::CloneButtonStyle(b, donorBtn);
+    // WHAT DOES THE DONOR'S OWN LABEL ACTUALLY CARRY? (probe; RULE 2 exempt.)
+    //
+    // User report 2026-08-30, comparing our chrome to VOTV's: "the outer buttons
+    // ('Back') are just colored and normal font, but the buttons which sit inside
+    // the widget are pixelated font ('Reset' and 'Save')". `VOTV_UI_STYLE.md:89`
+    // records the opposite -- "Monospace throughout, the game's font_ui. No
+    // proportional text in a menu" -- so either the doc is one font short or the
+    // difference is size/outline rather than face, and I am not going to settle
+    // that by looking at a screenshot (that doc's own section 7 is a list of three
+    // times looking gave the wrong answer here).
+    //
+    // We clone the donor's FButtonStyle but AUTHOR the label, so this reads what
+    // the game itself put on the same button and logs it once per donor. One
+    // armed run turns "two faces or one" into a measurement.
+    static int sReported = 0;
+    if (donorBtn && sReported < 4) {
+        // A UButton is a UContentWidget, i.e. a panel with exactly one child.
+        if (void* dt = U::ChildAt(donorBtn, 0)) {
+            auto* d = reinterpret_cast<uint8_t*>(dt) + P::off::UTextBlock_Font;
+            void* face = *reinterpret_cast<void**>(d);
+            const int32_t sz = *reinterpret_cast<int32_t*>(d + P::off::FSlateFontInfo_Size);
+            const int32_t ol = *reinterpret_cast<int32_t*>(
+                d + P::off::FSlateFontInfo_OutlineSettings + P::off::FFontOutlineSettings_OutlineSize);
+            UE_LOGW("native_screen[fontprobe] donor '%ls' label class=%ls font='%ls' size=%d "
+                    "outline=%d -- ours will be font_ui size=%d outline=0",
+                    R::ToString(R::NameOf(donorBtn)).c_str(), R::ClassNameOf(dt).c_str(),
+                    face ? R::ToString(R::NameOf(face)).c_str() : L"<null>", sz, ol, fontSize);
+            ++sReported;
+        } else {
+            UE_LOGW("native_screen[fontprobe] donor '%ls' has no content widget -- cannot read "
+                    "the face the game gives its own buttons",
+                    R::ToString(R::NameOf(donorBtn)).c_str());
+            ++sReported;
+        }
+    }
     if (void* t = Spawn(P::name::TextBlockClass, b)) {
         U::StyleTextBlock(t, fontSize, Text(), kJustCenter);
         E::SetWidgetText(t, label);

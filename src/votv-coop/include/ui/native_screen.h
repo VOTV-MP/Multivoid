@@ -99,6 +99,14 @@ void* AddFramedBox(void* parent, const FLinearColor& fill, float borderPx);
 
 // A chrome UButton with an authored text label, styled from a donor UButton -- a REAL
 // UButton because that is what carries the game's press and hover sounds.
+// THE DONOR'S OWN SIZE, MEASURED, not a number that looked right. The game gives
+// `button_back`'s label font_ui at size 20 (native_screen[fontprobe], 2026-08-30);
+// ours were 18. Two points on a monospace pixel face is exactly the "different
+// font" a player sees -- which, with the ALL-CAPS labels that shipped beside it,
+// is what the 2026-08-30 report was describing. Same asset, same outline, wrong
+// size and wrong case.
+inline constexpr int32_t kBtnFontPx = 20;
+
 void* BuildButton(void* parent, void* donorBtn, const wchar_t* label, int32_t fontSize);
 
 // WHICH CHILD OF `panel` IS UNDER THE CURSOR, by GEOMETRY. -1 for none.

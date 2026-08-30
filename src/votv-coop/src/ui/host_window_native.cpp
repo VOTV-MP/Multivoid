@@ -340,9 +340,11 @@ bool BuildScreen(void* switcher) {
     // position in every native window), HOST at the right, status between them.
     if (void* footBox = NS::AddFramedBox(col, kPanel, kBorderPx)) {
         if (void* footRow = NS::Spawn(L"HorizontalBox", footBox)) {
-            g_backBtn = NS::BuildButton(footRow, backDonor, L"BACK", 18);
+            // Sentence case: VOTV uppercases no button label anywhere (measured
+            // across the style corpus; user report 2026-08-30 "No caps at buttons ever").
+            g_backBtn = NS::BuildButton(footRow, backDonor, L"Back", NS::kBtnFontPx);
             g_status  = NS::AddText(footRow, L"", 16, kText, NS::kJustLeft, 1.f);
-            g_hostBtn = NS::BuildButton(footRow, backDonor, L"HOST", 18);
+            g_hostBtn = NS::BuildButton(footRow, backDonor, L"Host", NS::kBtnFontPx);
             if (void* s = U::AddChild(footBox, footRow))
                 U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
                                 NS::kFill, NS::kCenter);

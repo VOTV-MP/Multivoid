@@ -296,7 +296,9 @@ bool BuildScreen(void* switcher) {
     // the way every other VOTV window does.
     if (void* footBox = AddFramedBox(col, kPanel, kBorderPx)) {
         if (void* footRow = Spawn(L"HorizontalBox", footBox)) {
-            g_backBtn = BuildButton(footRow, backDonor, L"BACK", 18);
+            // Sentence case: VOTV uppercases no button label anywhere (measured
+            // across the style corpus; user report 2026-08-30 "No caps at buttons ever").
+            g_backBtn = BuildButton(footRow, backDonor, L"Back", ui::native_screen::kBtnFontPx);
             g_status  = AddText(footRow, L"", 16, kText, kJustLeft, 1.f);
             // The status has fill weight 1, so it takes all the slack and pushes these to
             // the right edge -- Back at the left, actions at the right, which is what every
