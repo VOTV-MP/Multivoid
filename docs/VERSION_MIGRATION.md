@@ -177,9 +177,19 @@ with the game, Visual Studio, CMake, and (for signature work only) IDA.
 ## 7. Appendix — the maintenance critique, and the measured answers
 
 A public exchange in the VOTV modding community (2026-07-26) put the maintenance
-question sharply. It is recorded here without names because the ARGUMENTS are
-worth keeping and the personalities are not. The critic was right about several
-things; where the answer is a measurement, the measurement is given.
+question sharply. The critic was **Moddy**, author of the VOTV mods
+`Moddy-CrashContext` and `Moddy-PBMovement`. He was right about several things;
+where the answer is a measurement, the measurement is given.
+
+> **DE-ANONYMISED 2026-08-30.** This appendix was written the same day as the
+> exchange and withheld the name, on the stated ground that "the ARGUMENTS are
+> worth keeping and the personalities are not". That did not survive contact with
+> the rest of the tree: a month later the tripwire ledger named **SentientYeet**
+> as the cause of the substrate switch (§11, 2026-08-21) — and the two critics
+> were making the SAME argument. Naming the critic whose argument we adopted while
+> anonymising the one we refuted is not a neutral editorial policy; it is a
+> flattering one. Moddy is named here for the same reason SentientYeet is named
+> there.
 
 **Claim: "the thing being owned is ~144k lines directed but not written."**
 Measured: 146,347 lines of first-party code, 734 files. The line count is
@@ -205,14 +215,25 @@ by a team."** Measured: the part UE4SS could replace — loader, reflection, hoo
 engine, AOB scan (`ue_wrap/core`) — is **7,174 lines of 146,347, about 5%**, and
 that is an upper bound (not all of `ue_wrap/core` is UE4SS-shaped). The other 95%
 is co-op logic, per-class VOTV wrappers, UI and the test harness, none of which
-any framework ships. The reason we do not take the 5% is stated in RULE No.3:
-the shipping mod must not require players to install and version-match a second
-loader. That is a deliberate trade — it costs us that 5% and buys install
-simplicity and independence from another project's release cadence. UE4SS remains
-a development dependency we actively use (SDK dumps, Blueprint dumps, ground-truth
-addresses for signature work) — the refusal is about the RUNTIME, not the tool.
-(This claim later went through a full 26-round adversarial pass and became a
-recorded decision with re-open trip-wires — see §11.)
+any framework ships. The reason we did not take the 5% was stated in RULE
+No.3: the shipping mod must not require players to install and version-match a
+second loader. That was a deliberate trade — it cost us that 5% and bought install
+simplicity and independence from another project's release cadence.
+
+> **OVERTURNED 2026-08-21 → F2. THE CLAIM WAS UPHELD AND THE ANSWER ABOVE IS THE
+> LOSING SIDE OF IT.** Multivoid ships as a UE4SS mod
+> (`Mods/Multivoid/dlls/main.dll`, pinned to stable v3.0.1; WP-2 commit 3
+> `1912d229`), so the refusal this paragraph defends no longer describes the mod.
+> Decision record: §11's `human-door 2026-08-21` entry; the arc: `docs/UE4SS_ARC.md`.
+> The answer is kept rather than deleted because this appendix is a record of what
+> was argued, and deleting the losing half would destroy it. Two things the
+> reversal did *not* concede, both still measured: the **5% figure stands** — what
+> UE4SS replaced is the *loader*, while the reflection, the ProcessEvent detour and
+> the transport remain ours, and the shipping DLL imports **zero** symbols from
+> UE4SS under a machine-checked gate (`tools/loader/abi_gate.py`); and RULE No.3's
+> install-simplicity concern was **answered by the mod manager**, not refuted.
+> What broke the standing decision was not a better argument on this page — it was
+> a 5-round re-audit that found two of the refusal's own premises unsound (§11).
 
 **Claim: "VoidTogether deserves credit."** Agreed and done (README Credits + the
 site Q&A), stated accurately: no VoidTogether code is in Multivoid — it is a JS

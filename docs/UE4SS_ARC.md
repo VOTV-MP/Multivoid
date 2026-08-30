@@ -36,7 +36,11 @@ Three load-bearing choices, all DECIDED:
    **permanently PARTIAL** (see §4: our ProcessEvent detour can never move onto UE4SS's PE callback,
    because that callback cannot intercept).
 
-**Why the switch.** Triggered by VOTV dev SentientYeet's public critique of a standalone-loader mod.
+**Why the switch.** Triggered by VOTV dev **SentientYeet**'s public critique of a standalone-loader
+mod (2026-08-21). **The same argument had been made four weeks earlier by Moddy** (author of
+`Moddy-CrashContext` / `Moddy-PBMovement`) in the VOTV Discord, and was refuted on this project's own
+measurements — `VERSION_MIGRATION.md` §7 records both his claim and the losing answer. The argument is
+Moddy's; the trigger that re-opened it was SentientYeet's.
 A 5-round `/qf` re-audit broke the previous "keep RULE 3 / stay standalone" record (F1) twice — its
 LOC premise and the F2 blocker's "public-clone reproducibility" leg both turned out Claude-authored
 and were dropped per `[[feedback-drop-my-requirement-if-it-blocks-rule-1]]`. The user took F2 on

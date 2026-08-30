@@ -168,7 +168,7 @@ Source of truth: [`src/votv-coop/CMakeLists.txt`](src/votv-coop/CMakeLists.txt)
 > [Releases page](https://github.com/VOTV-MP/Multivoid/releases) is a dev build,
 > and everyone playing one is a tester.** Expect bugs, and please report them on
 > [Discord](https://discord.gg/bA6tGBvGMN) — good reports get credited in
-> [Field reports](#field-reports). Full
+> [Credits](#credits). Full
 > disclaimer and what to attach: **[docs/INSTALL.md](docs/INSTALL.md)**.
 
 One zip, two ways to install it: through **r2modman** (recommended — it sets up
@@ -218,23 +218,6 @@ detect it automatically. The autonomous two-peer test harness lives in `tools/`.
 It's the fastest way to reach the author, follow development as it happens, and find
 people to test co-op with. Bug reports and feedback are welcome there or in
 [GitHub issues](https://github.com/VOTV-MP/Multivoid/issues).
-
-## Field reports
-
-Multivoid is tested in the field by the people playing it, and their reports
-drive real fixes. Every tester whose report changed the mod is credited here.
-
-| Tester | Reported | Build |
-|--|--|--|
-| **Violet** (Discord) | ~9 FPS for a friend joining on Linux — the triage behind it found five separate defects | b134 |
-| **decodinatorX** ([issue #5](https://github.com/VOTV-MP/Multivoid/issues/5)) | Couldn't type `sv.request` at the SAT console — `T` kept opening chat | b133 |
-| **huoyan1231** + **gediao** (Discord) | A full host log from a real b125 session — became a ten-row triage map | b134 |
-| **SirWilliam** (Discord) | Rejoining a session requires fully relaunching the game | queued |
-
-**Full reports — what each one turned out to be and what shipped:
-[docs/FIELD_REPORTS.md](docs/FIELD_REPORTS.md).**
-
----
 
 ## Ecosystem
 
@@ -315,11 +298,28 @@ AI coding tools — direction, architecture, testing and every release decision
 are mine; much of the code was written with Claude. The full commit history is
 public, so you can judge the process as well as the result.
 
-Outside contributions are welcome, and they are credited here:
+**Everything else in it came from outside, in one of three forms — code,
+reports, and review.** The rule is the same for all three: if it changed the mod,
+it gets a row.
 
-| Contributor | Contribution |
-|--|--|
-| [arigalit](https://github.com/arigalit) | ATV seat contention ([#9](https://github.com/VOTV-MP/Multivoid/pull/9)) — a peer walking up to an ATV somebody else is already driving is now denied at the input seam, instead of both engines running vehicle physics and fighting over the body. Also reported the join-time prop-count divergence with paired host/client logs. |
+| Who | Kind | Contribution | Landed |
+|--|--|--|--|
+| **Pelmentor** | code | Architecture, direction, releases — the whole mod | 464 commits |
+| **Claude** (Anthropic) | code | Implementation, across the whole mod | 1,368 commits |
+| **Tarangok** | code | KO respawn, live skin preview, held-prop visibility, container extraction | 10 commits |
+| **hediiiqq** | code | Dish mirror interpolation | 4 commits |
+| [**arigalit**](https://github.com/arigalit) | code · report | ATV seat contention ([#9](https://github.com/VOTV-MP/Multivoid/pull/9)); join-time prop-count divergence | 2 commits |
+| [**huoyan1231**](https://github.com/huoyan1231) | code · report | CI and automated builds; the b125 host-log pack | 2 commits · b134 |
+| **Moddy** (Discord) | review | The architecture and documentation review that became the UE4SS move | b122 · b143 |
+| **SentientYeet** | review | The substrate critique that re-opened the loader decision | b143 |
+| **Violet** (Discord) | report | ~9 FPS for a friend joining on Linux — five separate defects behind it | b134 |
+| **decodinatorX** ([#5](https://github.com/VOTV-MP/Multivoid/issues/5)) | report | Couldn't type `sv.request` at the SAT console — `T` kept opening chat | b133 |
+| **gediao** (Discord) | report | The b125 host-log pack, with huoyan1231 | b134 |
+| **SirWilliam** (Discord) | report | Rejoining a session requires fully relaunching the game | queued |
+
+**What each one turned out to be and what shipped:
+[docs/CREDITS.md](docs/CREDITS.md).** Pull requests and reports are both welcome
+— [how to contribute](CONTRIBUTORS.md).
 
 Prior art this project learned from, with thanks:
 

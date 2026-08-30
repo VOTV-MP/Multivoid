@@ -73,7 +73,7 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 - **A BISECT PROVES ITS OWN RIG, NOT THE COMPONENT.** 2026-08-29. Disabling six UE4SS Lua
   mods took one save from ~75 to ~119 fps on the dev rig **with a negative arm** (re-enabling
   returned it to ~80) -- real, causal, reproducible, and written up as "those mods are
-  expensive" into a player-facing dialog, INSTALL.md, the audit template and FIELD_REPORTS.
+  expensive" into a player-facing dialog, INSTALL.md, the audit template and CREDITS.md.
   Then the control environment was finally READ: `[V]` the user's r2modman `UE4SS.log` shows
   all six `Starting Lua mod`, and `BPModLoaderMod` mounting the same `DebugMod.pak`, at ~120
   fps. The "expensive" set was running, unchanged, in the environment that was already fast --
@@ -2482,7 +2482,7 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   `grep -rn "hook::Install(" -A2 | grep -oE "&g_[A-Za-z_]+"` is twelve lines you either have or do not.
   `memory/lesson-census-by-the-operation-not-by-the-name.md`
 
-- **`docs/FIELD_REPORTS.md` records OTHER people's reports, never the maintainer's own.** USER RULE
+- **`docs/CREDITS.md` (was `FIELD_REPORTS.md`) records OTHER people's input, never the maintainer's own.** USER RULE
   2026-08-29, verbatim: *"you don't need to fill the field reports which are from me (pelmentor),
   that thing is more for other testers, other people."* The file is a public credit-and-record
   ledger -- its value is social as much as technical, and it is the source for the README and
@@ -2491,7 +2491,11 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   "all peers can't move forward" -- reported by the user mid-test, not by a tester -- was written
   into it and then removed. LOOK FIRST: ask *whose report is this?* If the answer is "mine", it is
   not a field report; it belongs in `docs/LESSONS.md` + a `memory/` file, the relevant living doc,
-  and the backlog.
+  and the backlog. **SHARPENED 2026-08-30**, when contributors and testers merged into one ledger
+  (`docs/CREDITS.md`, three kinds: `code` / `report` / `review`): the rule binds the **report** and
+  **review** kinds ONLY. The `code` rows legitimately carry the maintainer and Claude -- an
+  authorship list is not a report list -- so "no maintainer rows in that file" is the wrong reading
+  of it, and deleting them would be a regression, not an application of the rule.
   `memory/feedback-field-reports-are-for-other-people.md`
 
 - **2026-08-30 -- when the pass condition is "nothing changed", the SUBJECT cannot witness it.** The browser's order verdict passed on SILENCE from a detector that logs only on failure -- and silence is equally what a client that never re-fetched produces. `measured` a correctly-sorted re-sync is BYTE-IDENTICAL to no re-sync, which is the definition of the fix working, so no log line the subject could emit distinguishes the two. The witness must be whatever DEMANDED the change: the fixture reports whether its shuffle moved anything and counts what it served, and both are now required before silence reads as a pass. **Look here FIRST:** three tells -- the pass branch is `not find(<failure line>)` and nothing else; the property is a NEGATIVE; and you cannot name the line that would have appeared had the test actually run. The fix is never "make the subject louder". Show the guard RED by disabling the receipt. [[lesson-when-the-pass-is-nothing-changed-the-subject-cannot-witness-it]]

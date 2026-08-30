@@ -52,7 +52,7 @@ forced: old versions keep playing together on their own builds.
 There is no stable release yet — expect rough edges. Report what you hit on
 [Discord](https://discord.gg/bA6tGBvGMN) or in
 [GitHub issues](https://github.com/VOTV-MP/Multivoid/issues); reports that change
-the mod get credited in the project's field-reports ledger.
+the mod get credited in the project's public credit ledger.
 
 ## Legal
 
