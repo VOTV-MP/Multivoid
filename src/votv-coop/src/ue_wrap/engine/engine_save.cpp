@@ -263,7 +263,20 @@ BootWorldView SurveyBootWorld(const char* who) {
         } else {
             // Throttle: the boot poll re-runs every ~1.5 s and hits the SAME corpse
             // every time -- first 3 + a periodic heartbeat, not one line per poll.
+            //
+            // Keyed on the corpse's IDENTITY, not on a bare count (post-ship audit,
+            // 2026-08-31). This static is ONE instance shared by both callers and is
+            // out of ResetCachedSave's scope, so a plain counter would carry across
+            // campaigns: the SECOND stale corpse in one process would lose its
+            // opening burst and log only every 16th skip -- muting exactly the field
+            // diagnosability this fix exists to provide, in the rejoin case, which is
+            // by definition the second world of the process.
+            static void* sLastStaleActor = nullptr;
             static unsigned sStaleSkips = 0;
+            if (lp != sLastStaleActor) {
+                sLastStaleActor = lp;
+                sStaleSkips = 0;
+            }
             ++sStaleSkips;
             if (sStaleSkips <= 3 || sStaleSkips % 16 == 0) {
                 UE_LOGW("engine: %s -- mainPlayer_C %p is a STALE other-world actor "

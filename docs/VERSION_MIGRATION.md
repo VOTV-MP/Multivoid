@@ -73,6 +73,7 @@ read after a game update, because it tells you the signatures are now suspect.
 | Everything resolves, but one system is dead / reads garbage | A **game blueprint offset** moved (the 29) or a name changed | `tools/sdk_diff.py` against the previous dump |
 | A hooked BP function never fires | The function was renamed, or its dispatch changed | `docs/COOP_DISPATCH_VISIBILITY.md` + the fresh dump |
 | Save load/transfer misbehaves | The game's own save format changed | `docs/` save-transfer docs; both peers must run the same game version anyway |
+| **Rejoining a session needs a full game relaunch again** (SirWilliam's b125 symptom, fixed in `0288ff88`) | `ue_wrap::world_identity::Degraded()` — one of `OwningWorld` / `LocalPlayers` / `PlayerController` moved, so the world-identity chain cannot answer | `world_identity.h` §"Degraded". **This is a SILENT return of a fixed defect and the reason it is in this table:** `SurveyBootWorld` fails OPEN by design (`engine_save.cpp` — under `Degraded()` both of its reads degrade to byte-identical pre-fix behaviour), which is the correct trade-off (fail-closed would reject a legitimately in-gameplay pawn forever and re-issue `open` against a live game) but leaves no symptom except the original bug. **After any recook where `Degraded()` fires, re-test the rejoin path explicitly** — leave a session and rejoin WITHOUT restarting the process |
 
 ## 3. The instrument that tells you: the boot HealthCheck
 
