@@ -1706,6 +1706,64 @@ act-as-host intents on top of it.
 lane as its subject, not the tire row — and its brief must open with the facet table above rather
 than with `ejectWheel`.
 
+### 17.11 `/qf` on the vehicle-wide lane: the design SHRANK, and two of its premises were false
+
+Four questions, all four verified in-tree. The result is smaller than what went in, and two pieces
+of it turn out to be already built.
+
+**(1) The unoccupied-authority "fork" does not exist — it is shipped, and I asserted a gap without
+opening the file the lane lives in.** `[V]` `atv_sync.cpp:224`:
+`OwnsTickFor(isPoseAuthor, isHost, authorSlot) = isPoseAuthor || (isHost && authorSlot == 0xFF)`,
+whose own comment already names it **"MTA's `CUnoccupiedVehicleSync` election"**, with
+`SubscribeSlotReplaced` freeing a departed author's slot. My brief called this "undefined here".
+
+**And its next sentence re-diagnoses the whole defect:** *"Everyone else runs the rig with its brain
+off, which is what keeps the accumulators, `applyWheelTorque` and the hit-authored damage on one
+machine while the physics still runs on all of them."* So a mechanism for exactly this **already
+exists and already intends to hold the accumulators on one peer**. §17.9's observed tire divergence
+is therefore **not a missing lane — it is a HOLE in a shipped one**: `processTire` is reached from a
+`ComponentHit` delegate, not from the brain tick, so it walks straight past brain-off. That is a much
+smaller and much better-aimed problem than "the ATV needs a state lane", and it is the first thing
+the next design must address.
+
+**(2) The evidence base is one facet, and I opened its window myself.** The only runtime divergence
+measured is `tiresDurability`/`tiresDirt` (§17.9), and §17.5's correction records that the window it
+was measured through was opened by `8cd0ac25` — my own unpushed commit from the same day. **For the
+other twelve facets there is zero runtime evidence of divergence.** Extrapolating one self-inflicted
+observation to thirteen rows is not a measurement, and §17.10's reframe must be read with that
+limit attached.
+
+**(3) The thirteen are not one population, and two shipped gates already thin them.** `[V]` on a
+mirror `@29949: IFNOT(isDriven) POP` gates `applyWheelTorque`, and the battery terms are
+`SelectFloat(x, 0, isDriven|isDrive|lights|turbo)` — several facets **cannot diverge on a
+non-driving mirror at all**. Nothing in §17.10 classified them. The owed work is a three-way
+classification of each facet — *double-simulates* / *merely goes stale* / *already gated off* —
+before any lane is designed, because only the first class needs one. Further,
+`COOP_WORLD_PROP_DIVERGENCE`'s ANCHOR section forks `fuel`/`battery`/`dirt` off the poke+reducer
+shape entirely: a time-rate accumulator is **anchored** (one stamp, one formula, late-join solved for
+free), not streamed — and that doc names measuring **the input set of each accumulator's RATE** as
+its own cheapest undone measurement. So §17.10's "ten of thirteen share one shape" conflates *how a
+value is applied* with *what mechanism should carry it*.
+
+**(4) The "mint a shared primitive" fork dissolves, and the critic's premise for it was half wrong.**
+It is true that `console_state_sync.cpp` contains no field offsets, no engine calls and no `upd*`
+invocations — but that is not because the pattern is unbuilt; it is principle 7 working. A census of
+the shipped tree finds **fourteen native `upd*` reducers already invoked from `ue_wrap`**:
+`updText` / `updToggles` / `updPolarity` / `updVolume` + four light reducers
+(`console_desk.cpp:86-93`), `updComp` (`comp_pane.cpp:63`), `updCursorLocations`
+(`coords_panel.cpp:61`), `updPhysMods` (`phys_mods.cpp:54`), `updIsOn` (`appliance.cpp:40`),
+`updButton` / `updFloppy` (`laptop.cpp:111-113`). So "write the property, then call the game's
+reducer" is built many times over — at the wrapper layer, which is where it belongs. **The ATV
+needs no new primitive: it needs the desk's existing two-layer convention** — the field table and
+reducer calls in `ue_wrap/devices/atv.cpp` (which already exists), the wire in
+`coop/interactables/atv_sync.cpp`. That also answers fork 1 without refactoring `console_state_sync`
+onto anything.
+
+**Net effect on §17.10:** the reframe's DIRECTION survives (a tire-only lane is the wrong unit) but
+its SIZE does not. The next step is not a vehicle-wide lane design — it is the three-way facet
+classification in (3), plus closing the brain-off hole in (1), both of which may leave very little
+lane to build.
+
 ### 17.6 Three things not to re-derive
 1. **Deleting the tick-off (`a2a45fc7`) did not move the number.** All six runs that read 25-40 cm
    are post-deletion; the pre-arc-1 measurement recorded in `atv_hit_guard.cpp` read 37 cm. Two
