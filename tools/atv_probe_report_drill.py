@@ -205,7 +205,7 @@ def main():
         return hs, cs
 
     arm_text("A6 RED: mirror sinks 24cm at handoff", "FAIL", run(*handoff(24.0)),
-             "lost authority and its own copy sank")
+             "the two copies went from")
 
     # A6 REST GUARD -- the same `owns` 1->0 edge, but the ATV is being DRIVEN AWAY down a
     # slope, so its Z change is the terrain and not a defect. Both copies stay together, so
@@ -213,9 +213,11 @@ def main():
     # window is a 45 cm "sag" that WOULD fail A6 outright, and 120 cm per sample of horizontal
     # travel is what tells the arm this is a peer driving off rather than a parked handoff.
     # Without the guard A6 would fail every run in which somebody mounts and drives away.
+    # The pair-gap form needs no distance guard: a peer driving away moves BOTH copies, so the
+    # gap barely changes. This arm proves the arm is silent there rather than scoring it.
     arm_text("A6 guard: driving away is not a sag", "PASS",
              run(*handoff(0.0, x_step=120.0, z_step=15.0)),
-             "skipped -- the ATV travelled")
+             "never both came to rest")
 
     # INCONCLUSIVE -- nobody drove, so no mirror ever existed. This must NOT read as PASS:
     # an idle ATV is never mirrored, so a quiet run proves nothing about the corrector.

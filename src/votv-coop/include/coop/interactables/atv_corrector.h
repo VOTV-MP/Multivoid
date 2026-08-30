@@ -38,6 +38,7 @@ struct Counters {
     uint64_t corrections = 0;
     uint64_t warps       = 0;
     uint64_t stallWarps  = 0;
+    unsigned long long restPlaces = 0;  // parked-author pose re-places (the A6 arm)
 };
 Counters ReadCounters();
 

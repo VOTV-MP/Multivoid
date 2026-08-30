@@ -53,6 +53,44 @@ constexpr float kCorrGain     = 0.5f;
 // is exactly the quantity that was lying about whether convergence was possible.
 constexpr float kStallShrinkFrac  = 0.95f;  // "shrank" = at least 5% closer than last packet
 constexpr int   kStallWarpPackets = 5;      // 250 ms on the drive lane, 1 s on the idle one
+// AT REST, DO NOT TOUCH IT AT ALL -- measured 2026-08-30, and this arm is the whole of A6.
+//
+// WHAT WAS MEASURED. The [ATVC] instrument logs the RECEIVED wire velocity at the instant the
+// corrector acts. On a parked ATV the author reports |v| = 0.0 and holds one Z to the decimal,
+// while the MIRROR falls: cur.z 6282.5 -> 6272.5 -> 6236.6 over about a second, which is free
+// fall. It comes to rest 25-40 cm low and stays. Cutting it back to the author's pose lands
+// (5405.2 -> 5430.5 the sample after) and it falls again within 500 ms, every time, in four
+// driven runs. The only thing this lane does to a mirror between packets is write its root's
+// physics velocity -- and writing velocity WAKES the body, every packet, for a rig that had
+// settled.
+//
+// WHY A VELOCITY TEST HERE IS NOT THE ONE ARC 1 REJECTED. The comment on kStallShrinkFrac says
+// the stall arm "needs no threshold on velocity, which is exactly the quantity that was lying
+// about whether convergence was possible" -- and that stands: it is about whether a NUDGE can
+// close a gap, where the mirror's own velocity says nothing. This asks a different question of
+// a different value: is the AUTHOR moving? If it is not, there is no velocity to mirror, the
+// corrective term is meaningless by 14.4 (a nudge cannot move a body at rest), and the write is
+// the only thing left that can be causing the fall. The worry that the branch might not be
+// TAKEN at the handoff -- because the author's own copy is settling and reports a downward
+// velocity -- was measured and did not happen: |v| = 0.0 at exactly those packets.
+//
+// MTA SHAPE (RULE 2026-05-28). CUnoccupiedVehicleSync carries `bSyncVelocity : 1` and sets it
+// only when the velocity is non-negligible (Client/.../CUnoccupiedVehicleSync.cpp:311, server
+// clears it again at :315-321), and the receiver calls SetMoveSpeed ONLY under that flag (:194).
+// MTA never writes velocity onto a resting mirrored vehicle either. DELIBERATE DIVERGENCE: they
+// spend a wire bit, we test the received value -- our payload is fixed-layout so the bit costs
+// more than the test, and a value cannot be lied about independently of the pose it comes with.
+// Their threshold is NOT ported: MTA's 0.1 is in units the vendored tree establishes nowhere,
+// and porting a bare constant across unit systems is this project's most recent lesson.
+// Ours comes from our own logs: a parked author reports 0.0, a coasting one 27 / 8.2 / 2.6 /
+// 1.0 / 0.2 cm/s, a driven one 780-1500.
+constexpr float kRestLinCmS  = 5.f;
+constexpr float kRestAngDegS = 5.f;
+// How many times we will re-place a resting mirror before admitting the pose lane cannot hold
+// it. Three is enough to distinguish "it settled" from "it cannot settle here"; past that the
+// difference is under the vehicle, not in this lane, and saying so beats teleporting forever.
+constexpr int   kRestMaxReplaces = 3;
+
 constexpr uint64_t kCorrMinDtMs = 20;    // a burst must not manufacture a huge corrective velocity
 constexpr uint64_t kCorrMaxDtMs = 1000;  // a long gap must not manufacture a vanishing one
 
@@ -72,6 +110,7 @@ FVector ClampVelocity(const FVector& v, float maxMag) {
 uint64_t g_warps = 0;        // diagnostic counters -- a corrector nobody can see is a corrector
 uint64_t g_corrs = 0;        // nobody can falsify (the instrument-blindness lesson)
 uint64_t g_stallWarps = 0;   // ...and specifically: how often the nudge had to give up
+uint64_t g_restPlaces = 0;   // ...and how often a PARKED author's pose had to be re-placed
 
 // THE VALUE THE LANE ACTS ON, WHICH NOTHING HAS EVER RECORDED. Three driven runs measured a
 // mirror sinking 23-40 cm the moment it stopped authoring, and the archive cannot say why,
@@ -147,6 +186,43 @@ void ApplyCorrection(AtvEntry& e, const coop::net::AtvStatePayload& p, bool snap
         return;
     }
 
+    // THE AUTHOR IS PARKED: mirror its POSE, never its velocity, and then leave the rig alone.
+    // Falling through to the code below would write a zero velocity onto a settled body every
+    // packet, which is the measured cause of A6 (see kRestLinCmS above).
+    if (Len(wireLin) <= kRestLinCmS && Len(wireAng) <= kRestAngDegS) {
+        e.stallPackets = 0;
+        e.lastErrCm    = -1.f;
+        if (dist <= kCorrDeadbandCm) {
+            e.restReplaces = 0;
+            return;                       // in band and nobody is moving it: touch NOTHING
+        }
+        if (e.restReplaces >= kRestMaxReplaces) return;   // already said our piece, below
+        ++e.restReplaces;
+        if (!A::TeleportRig(e.actor, wirePos, wireRot)) return;
+        ++g_restPlaces;
+        // NO velocity write after the teleport. Both existing cut paths write one immediately
+        // after TeleportRig, so in four runs the rig was never once put down and left to rest --
+        // which is why "it fell back, so the worlds differ" could never be told apart from "it
+        // fell back because we pushed it". This branch is the experiment as well as the fix.
+        if (e.restReplaces >= kRestMaxReplaces) {
+            // NAMES THE CLASS, NOT A SUBSYSTEM. A verdict that blames the nearest lane sends
+            // the next session to rewrite working code, and there is more than one thing that
+            // can hold a mirrored ATV off the authority's pose. Terrain is one. A HOOK is
+            // another and is entirely invisible to the other peer: a player can tie arbitrary
+            // physics props to a vehicle with prop_hook_C, the deployed hook_C carries its own
+            // A<->B PhysicsConstraint, and the hook lane has NO implementation in this tree at
+            // all (docs/items/hook.md 2 -- every row is a GAP), so one peer's ATV can be coupled
+            // to a crate the other peer does not know exists. Under that, this rig is not five
+            // bodies but five plus however many somebody tied on.
+            UE_LOGW("atv: a parked mirror would not stay on the authority's pose after %d "
+                    "re-places (last error %.1f cm) -- something local to THIS peer is holding "
+                    "the rig off it (terrain under the vehicle, or a constraint the other peer "
+                    "cannot see, e.g. a hook). Not the pose stream", kRestMaxReplaces, dist);
+        }
+        return;
+    }
+    e.restReplaces = 0;
+
     // Is the correction actually working? Count packets where the error stayed outside the
     // deadband and refused to shrink; past the limit, cut instead of nudging.
     if (dist <= kCorrDeadbandCm) {
@@ -196,7 +272,7 @@ void ApplyCorrection(AtvEntry& e, const coop::net::AtvStatePayload& p, bool snap
 }
 
 Counters ReadCounters() {
-    return Counters{ g_corrs, g_warps, g_stallWarps };
+    return Counters{ g_corrs, g_warps, g_stallWarps, g_restPlaces };
 }
 
 }  // namespace coop::atv_corrector

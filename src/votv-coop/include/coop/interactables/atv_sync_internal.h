@@ -34,6 +34,13 @@ struct AtvEntry {
     float    lastErrCm    = -1.f;  // the previous packet's position error -- the stall detector
     int      stallPackets = 0;     // consecutive packets in which the error refused to shrink
     bool     haveLastSync = false;
+    int      restReplaces = 0;     // consecutive re-places of a mirror whose author is at rest.
+                                   // A corrector owes a convergence check on EVERY arm it has
+                                   // (docs/LESSONS.md); this is the at-rest arm's. If putting the
+                                   // rig on the author's pose and then leaving it alone still does
+                                   // not hold, the difference is not something a pose lane can
+                                   // close and the lane must say so instead of teleporting for
+                                   // the rest of the session.
 };
 
 // Vector length. Shared rather than duplicated: the corrector measures the position error with

@@ -102,6 +102,15 @@ RE pass 2026-07-06, fully static (kismet-analyzer bytecode; no live probe yet). 
    `processKeys`: re-resolve actors from keys via `gamemode.getObjectFromKey`,
    `getComponentObjectByName`, retry via `frameDelay` loop until valid, re-attach.
 
+> **THE HOOK CAN BE TIED TO THE ATV, AND THAT MAKES IT A VEHICLE-SYNC PROBLEM TOO (user,
+> 2026-08-30).** The flight trace uses the `statDynPhysVeh` object set and `attach_a` rejects only
+> Characters, child actors and other hooks — so a vehicle is a valid anchor by design, and a player
+> can tie physics props to a moving ATV. Because every row below is a GAP, one peer's ATV can be
+> coupled through an A↔B `PhysicsConstraint` to a prop the other peer does not know exists. The ATV
+> corrector teleports a mirrored rig to the authority's pose, which on that peer drags whatever is
+> hooked to it, and a hooked mirror can be held off the authority's pose by a force the author
+> cannot see. Recorded in `docs/vehicles/ATV.md` §16.6; not measured against a real hooked ATV.
+
 ## 2. Sync-axis table
 
 | axis | owner (who simulates) | peers need | carried by |

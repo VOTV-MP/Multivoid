@@ -808,6 +808,15 @@ the quantity lying about whether convergence was possible.
 
 ### 14.6 ~~`[V]` A residual that is NOT this lane's defect — the peers' WORLDS differ under the ATV~~
 
+> **STATUS 2026-08-30 (SECOND REVISION — read §16, not this box and not §15.3).** This section was
+> superseded by §15.3, and §15.3 has since been RETRACTED, so the chain below no longer resolves:
+> a supersede stamp pointing at a withdrawn finding leaves nothing standing. What §16 measured is
+> that the conclusion here (*"the host has support under it that the client does not"*) was
+> **untestable at the time it was written**, because both cut paths write a velocity onto the rig
+> IMMEDIATELY after teleporting it (`atv_corrector.cpp:125-126`, `:144-145`) — so the "nine cuts
+> that fell back" were nine teleport-**and-push** events and not one teleport-and-let-rest. The
+> experiment that separates ground from lane had never been run. §16 runs it.
+>
 > **SUPERSEDED 2026-08-30 — THE ATTRIBUTION BELOW IS WRONG, and it is kept because being wrong in
 > this particular way is the lesson.** The reasoning was: the gap is constant, it survives a rig
 > teleport, therefore it is the ground. Every one of those observations was true. What was never
@@ -918,6 +927,12 @@ with speed — 40x at 100 cm/s, ~3.5x at 1600 — but **it never crossed in the 
 two uncontrolled routes is a weak fit and the 1600 row already sits below the line; treat the exponent
 as a shape, not a coefficient.
 
+> **RETRACTED 2026-08-30 (§16): the recommendation below — "arc-1 commit 2 should look at
+> `kCorrGain` and the packet cadence first" — is WITHDRAWN.** The corrector's convergence rate is
+> not the defect. The cut lands and the rig returns to the same Z within 500 ms; the [ATVC]
+> instrument shows the author reporting `|v| = 0.0` while the mirror free-falls. A gain has
+> nothing to act on. The half of this section that stands is the measured trail fit itself.
+
 **This inverts the recommendation the first version of this section implied.** The warp is a
 last-resort net and our runs never needed it; a net that does not fire is not evidence that the net is
 wrong. What produces a 4.4 m trail at 13 m/s is the CORRECTOR's convergence rate, not the warp
@@ -936,7 +951,14 @@ looks.
 and my launch — caught only because the run archive records the deployed sha256. Run 2 is a rebuild
 from the same tree. The two runs are not a DLL A/B; the measured difference tracks speed, not bytes.)*
 
-### 15.3 `[V]` The Z residual is ACQUIRED, not inherent — §14.6 corrected
+### 15.3 ~~`[V]` The Z residual is ACQUIRED, not inherent — §14.6 corrected~~
+
+> **RETRACTED 2026-08-30 (§16). The gap is not acquired by DRIVING; it is the resting state of a
+> MIRRORED ATV, and driving one temporarily CLOSES it.** Time-aligned across four runs the pair's
+> Z gap goes 3.5 cm parked → ~5 cm while driven → 25-40 cm parked again, and the change happens in
+> the single sample where authority moves. The numbers in the table below are real and the
+> before/after pair is real; the word "acquired" and the causal story attached to it are not. The
+> "39.6 cm at 4 km" row is additionally the run whose ATV ended UNDERWATER (§15.2's run 1).
 | phase | Z gap (host − client) | horizontal |
 |---|---|---|
 | idle, before the drive | **3.5 cm** | 3.4 cm mean |
@@ -984,14 +1006,116 @@ thing arc-1 commit 2 should aim at along with the convergence rate.
 
 ### 15.5 What this run still does NOT establish
 - **NOT hands-on.** Autonomous throughout, all three runs.
-- **The corrector's own convergence is UNTUNED.** §15.2a says the trail is the corrector's rate rather
+- **(RETRACTED 2026-08-30, §16 — the convergence rate is not the defect and this bullet sent the
+  next session at the wrong knob.)** ~~The corrector's own convergence is UNTUNED.~~ §15.2a says the trail is the corrector's rate rather
   than the warp net, and nothing has changed `kCorrGain` or the packet cadence -- that is arc-1
   commit 2, and it now has a home to change: `coop/interactables/atv_corrector.cpp` (extracted
   2026-08-30 for exactly this, `f802104e`).
-- **A2 FAILS in all three driven runs** (54.2 / 25.4 / 30.5 cm settled) -- §15.7. A1 and A3 pass in
+- **A2 FAILS in all four driven runs** (40.2 / 25.4 / 30.5 / 38.9 cm settled -- run 1's figure
+  is 40.2, not the 54.2 first published: A2 was comparing each peer's own last sample and the
+  client's log ended 70 s before the host's) -- §15.7. A1 and A3 pass in
   all three; A4 passed runs 1 and 3 and failed run 2 (§15.6); A5 failed run 1 and passed runs 2 and 3
   (§15.2), which is the route, not a fix.
 - The client-side mirror is unmeasured in the driven window (1 sample): the ATV is authored BY the
   client, so the host is the only mirror there is. Grading the client's mirror needs a host-driven
   run, which needs a host save whose player has empty hands.
 - Nothing here measures a THIRD peer, and A4's single-syncer arm has only ever seen two.
+
+
+---
+
+## 16. `[V]` A MIRRORED PARKED ATV FREE-FALLS — the root, measured 2026-08-30 (autonomous, NOT hands-on)
+
+Four driven runs, four A2 failures. This section replaces the attribution in §14.6 and §15.3, both
+of which are now retracted, and withdraws §15.2a's and §15.5's "tune `kCorrGain`" recommendation.
+
+### 16.1 What the instrument had never recorded
+Nothing sampled the value this lane WRITES. The probe logs each peer's own root velocity every
+500 ms; the corrector acts on the RECEIVED `AtvStatePayload` velocity at packet arrival — a
+different quantity at a different instant. `coop/interactables/atv_corrector.cpp` now logs `[ATVC]`
+on every cut and once a second otherwise, and the first run with it says:
+
+```
+[ATVC] NUDGE dist=10.0 cur.z=6272.5 wire.z=6282.5 wireLin=(-0.0,0.0,-0.0) |v|=0.0 stall=1
+[ATVC] NUDGE dist=45.9 cur.z=6236.6 wire.z=6282.5 wireLin=(-0.0,-0.0,-0.0) |v|=0.0 stall=2
+```
+
+**The author holds one Z to the decimal and reports zero velocity. The mirror falls 46 cm in about
+a second — free fall.** It comes to rest 25-40 cm low and stays there, dead flat, for a hundred
+samples. Cutting it back lands (run 1 client, 00:21:06: body Z 5405.2 → 5430.5 the sample after)
+and it falls again within 500 ms, every time.
+
+### 16.2 It is not the ground, and the evidence is the authority flip
+The same peer's own rig, at the same XY (4.3 cm of horizontal movement across the handoff), rested
+at Z 6176.7 while it authored and at 6153.4 twenty seconds later while it mirrored. Time-aligned,
+the pair's Z gap across a run runs **3.5 cm parked → ~5 cm while driven → 25-40 cm parked again**,
+and the whole change lands in the single sample where authority moves. Both peers lose the occupant
+at that same instant and move in OPPOSITE directions, so occupancy cannot explain the sign; the
+only variable that tracks it is which peer is running the corrector.
+
+### 16.3 Two mechanisms were proposed and both were wrong
+Stated so neither is re-derived. **(a) A per-packet ratchet** — the constraint solver fighting a
+root-only velocity assignment, position ratcheting down between packets. Killed by the data: a
+ratchet oscillates at the sample rate and this rig is dead flat after the fall. **(b) A downward
+velocity handed over the wire** — the author's own copy settling after its cut, its sampled
+velocity biased downward, written onto the mirror. Killed by the [ATVC] lines above: `|v| = 0.0`.
+
+What is left is the write itself. `SetActorRootPhysicsVelocity` resolves to
+`UPrimitiveComponent::SetPhysicsLinearVelocity` on the root component with `bAddToCurrent=false`
+(`engine_attach.cpp:182-196`), and assigning a velocity WAKES a body. We were waking a settled rig
+every packet. **The precise PhysX consequence is still `[?]`** — what is `[V]` is that the peer
+being written to falls and the peer not being written to does not.
+
+### 16.4 `[V]` A rig-wide velocity write is NOT reachable by property
+The census (`[ATVP] rig component`) resolved the ATV's component properties on a live instance:
+
+| property | result |
+|---|---|
+| `mesh` | `off=0x570`, non-null, `StaticMeshComponent` |
+| `car1_Capsule`, `car1_frontWheel_R`, `car1_frontWheel_L`, `car1_frontWheelRoot`, `car1_backWheel_R`, `car1_backWheel_L`, `car1_backWheelRoot` | **NOT A PROPERTY on this class** — all seven |
+
+So the wheels are SCS components reachable only through the actor's component array, not by name
+off the class, and `SetAllPhysicsLinearVelocity` would not reach them either (it addresses the
+bodies WITHIN one component; these are separate components). The "write all five bodies" fix is
+not buildable the way it was designed. The invariant it came from still stands and is §16.6.
+
+### 16.5 The fix (BUILT 2026-08-30, NOT deployed, NOT run)
+`atv_corrector.cpp`: when the AUTHOR's reported linear and angular velocity are below
+`kRestLinCmS`/`kRestAngDegS`, the mirror is **not written to at all** — no wire velocity, no
+corrective term. Out of band, `TeleportRig` once and leave it; bounded at `kRestMaxReplaces = 3`,
+after which it says so rather than teleporting forever (a corrector owes a convergence check on
+every arm it has, and this is the at-rest arm's).
+
+MTA's shape (`CUnoccupiedVehicleSync.cpp:194/311`, server `:315-321`): `bSyncVelocity` is set only
+when the velocity is non-negligible and the receiver writes velocity only under that flag — MTA
+never writes velocity onto a resting mirrored vehicle either. Divergence, cited in source: they
+spend a wire bit, we test the received value. **Their constant is NOT ported** — MTA's `0.1` is in
+units the vendored tree establishes nowhere. Ours: parked author 0.0, coasting 27 / 8.2 / 2.6 / 1.0
+/ 0.2 cm/s, driven 780-1500.
+
+**This branch is also the experiment §14.6 needed.** Both existing cut paths write a velocity
+immediately after `TeleportRig`, so in four runs the rig was never once put down and left to rest.
+If it still will not hold, the difference really is under the vehicle — and the bounded arm says
+that in one line instead of asserting it.
+
+### 16.6 `[?]` The residual, and the rig's boundary is NOT fixed
+The class is *every write this lane makes to a mirrored rig addresses one of its bodies*. §16.5
+removes the instance where that measures 25-40 cm; the moving-mirror instance (4.8 cm, one sample)
+survives it and nothing grades it — A5 grades horizontal trail only.
+
+And the rig is not five bodies. **A player can tie arbitrary physics props to the ATV with the
+hook** (`prop_hook_C` fires a `hook_C` carrying its own A↔B `PhysicsConstraint`; its flight trace
+uses the `statDynPhysVeh` object set, so a vehicle is a target by design, and `attach_a` rejects
+only Characters, child actors and other hooks). **The hook lane has NO implementation in this tree
+— zero symbols, every row of `docs/items/hook.md` §2 is a GAP** — so one peer's ATV can be coupled
+to a crate the other peer does not know exists, and:
+
+- a mirrored ATV can be held off the authority's pose by a constraint the author cannot see, which
+  is why §16.5's give-up line names the CLASS ("something local to this peer") instead of blaming
+  the terrain;
+- `TeleportRig` on a hooked ATV yanks whatever is tied to it, on that peer only;
+- the seven ComponentHit interceptors guard the ATV's own components and say nothing about a
+  coupled prop's.
+
+None of this is measured against a real hooked ATV. It is recorded because the ATV design has been
+reasoning about a closed five-body rig and the game does not guarantee one.

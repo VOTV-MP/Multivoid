@@ -185,10 +185,9 @@ SETTLE_GAP_CM = 20.0 # end-of-run body gap; baseline was 109.9 cm and PERMANENT
 # still four times the rig's own 2-4 cm suspension travel, so a PASS means the drop is
 # gone rather than merely smaller.
 HANDOFF_SAG_CM = 10.0
-# ...and A6 only grades a handoff of a PARKED ATV. 50 cm is far above the few cm a
-# resting rig creeps in 3 s and far below the tens of metres a driven one covers, so
-# the two cases never touch.
-HANDOFF_REST_CM = 50.0
+# How long after the release the pair is allowed to take to settle. The coast-down measured
+# 2026-08-30 was under 3 s; 8 s leaves room without reaching the next event.
+HANDOFF_SETTLE_S = 20
 MIN_MIRROR_SAMPLES = 6
 
 
@@ -397,50 +396,91 @@ def acceptance(names, peers, logs):
                     fails.append("A2 key='{}' settled {:.1f} cm apart > {:.1f}".format(
                         key, gap, SETTLE_GAP_CM))
 
-    # A6 -- THE AUTHORITY HANDOFF MUST NOT DROP THE MIRROR. A2 says the two copies end the
-    # run apart; this says WHEN the gap is born, which is the half A2 cannot see. MEASURED
-    # 2026-08-30 across all three driven runs: the instant a peer stops owning the tick its own
-    # copy drops 23-40 cm of Z, within one 500 ms sample, while the peer that TAKES ownership
-    # rises ~6 cm. Both peers lose the occupant at that same moment, so occupancy cannot explain
-    # opposite signs -- the variable whose sign tracks the direction is which peer is being
-    # corrected. Without this arm a fix would be graded only by A2, and A2 cannot tell a lane
-    # that stopped sagging from a route that happened to end on flatter ground.
-    for nm, data in zip(names, peers):
-        for key, rows in sorted(data.items()):
-            for i in range(1, len(rows)):
-                if not (rows[i - 1]["owns"] and not rows[i]["owns"]):
-                    continue
-                t0, z0 = rows[i - 1]["t"], rows[i - 1]["bz"]
-                if t0 is None:
-                    continue
-                after = [r for r in rows[i:] if r["t"] is not None and r["t"] - t0 <= 3]
-                if not after:
-                    notes.append("A6 {}/{}: authority released at t={} but no sample within 3 s "
-                                 "-- handoff unmeasured".format(nm, key, t0))
-                    continue
-                # REST GUARD. A6 asks what happens to a copy that stops being authored while
-                # the vehicle is PARKED. The other handoff -- a peer mounting and driving away
-                # -- also flips `owns`, and there the copy moves tens of metres for reasons that
-                # have nothing to do with this defect: run 1's host "sagged" -20.2 cm at t=1234
-                # purely because the client drove the ATV up a slope. Grading that would make the
-                # arm measure the route, which is exactly the weakness A5 already has.
-                span = max(((r["bx"] - rows[i - 1]["bx"]) ** 2 +
-                            (r["by"] - rows[i - 1]["by"]) ** 2) ** 0.5 for r in after)
-                if span > HANDOFF_REST_CM:
-                    notes.append("A6 {}/{}: handoff at t={} skipped -- the ATV travelled {:.0f} cm "
-                                 "horizontally in the window, so this is a peer driving away, not "
-                                 "a parked handoff".format(nm, key, t0, span))
-                    continue
-                zEnd = after[-1]["bz"]
-                sag = z0 - zEnd
-                ok = sag <= HANDOFF_SAG_CM
-                print("  A6 handoff {}/{} released at t={}  Z {:.1f} -> {:.1f}  sag={:+.1f} cm  {}"
-                      .format(nm, key, t0, z0, zEnd, sag, "PASS" if ok else "FAIL"))
-                if not ok:
-                    fails.append("A6 {} key='{}' lost authority and its own copy sank {:.1f} cm "
-                                 "(Z {:.1f} -> {:.1f}) within 3 s > {:.1f}. The rig was correct "
-                                 "while it authored and wrong the moment it became a mirror."
-                                 .format(nm, key, sag, z0, zEnd, HANDOFF_SAG_CM))
+    # A6 -- THE AUTHORITY HANDOFF MUST NOT OPEN A GAP. A2 says the two copies end the run
+    # apart; this says WHEN the gap is born, which is the half A2 cannot see.
+    #
+    # MEASURED 2026-08-30, four driven runs: the instant a peer stops owning the tick its own
+    # copy drops 23-40 cm of Z within one 500 ms sample while the peer that TAKES ownership
+    # rises ~6 cm. Both peers lose the occupant at that same moment, so occupancy cannot
+    # explain opposite signs -- the variable whose sign tracks the direction is which peer is
+    # being corrected.
+    #
+    # WHAT THIS MEASURES, AND WHY IT IS THE PAIR AND NOT ONE COPY. The first version of this
+    # arm graded one peer's own Z before vs after, and needed a guard to skip the handoff where
+    # a peer mounts and drives away -- because there the Z change is the terrain being crossed.
+    # That guard then SKIPPED the case the arm exists for: a rig coasting to a stop travelled
+    # 68 cm, over a 50 cm threshold picked from the few cm a SETTLED rig creeps. A threshold
+    # fitted between two observed regimes is the same mistake as A1's old resting band.
+    # Grading the DIFFERENCE BETWEEN THE TWO COPIES removes the whole question: terrain,
+    # coasting and slope move both copies together and cancel, so a peer driving away scores
+    # ~0 with no guard at all, and what is left is exactly the divergence the handoff opens.
+    if len(peers) > 1:
+        for key in sorted(set(peers[0]) & set(peers[1])):
+            for side in (0, 1):
+                rows = peers[side][key]
+                other = peers[1 - side][key]
+                for i in range(1, len(rows)):
+                    if not (rows[i - 1]["owns"] and not rows[i]["owns"]):
+                        continue
+                    t0 = rows[i - 1]["t"]
+                    if t0 is None:
+                        continue
+
+                    def at(seq, t):
+                        c = [r for r in seq if r["t"] is not None and r["t"] <= t]
+                        return c[-1] if c else None
+
+                    before_o = at(other, t0)
+                    if before_o is None:
+                        notes.append("A6 {}/{}: handoff at t={} unmeasured -- the other peer has "
+                                     "no sample before it".format(names[side], key, t0))
+                        continue
+
+                    # SETTLE, THEN MEASURE. The pair gap is a lane fact only once both copies
+                    # have stopped; while the ATV coasts or is driven away it varies for honest
+                    # reasons. So walk FORWARD to the first instant both are still rather than
+                    # sampling at a fixed offset -- a fixed offset makes the verdict depend on
+                    # how long that particular rig took to roll to a halt. And "still" is a
+                    # state at measurement time, not a distance travelled since: the first
+                    # version of this guard skipped a handoff because the rig coasted 68 cm,
+                    # which is the very case the arm exists for.
+                    def still(seq, r):
+                        p = [x for x in seq if x["t"] is not None and x["t"] < r["t"]]
+                        if not p:
+                            return False
+                        q = p[-1]
+                        return ((r["bx"] - q["bx"]) ** 2 + (r["by"] - q["by"]) ** 2) ** 0.5 < 5.0
+
+                    after_self = after_o = None
+                    for r in rows[i:]:
+                        if r["t"] is None or r["t"] - t0 > HANDOFF_SETTLE_S:
+                            break
+                        o = at(other, r["t"])
+                        if o is None or o["t"] < t0:
+                            continue
+                        if still(rows, r) and still(other, o):
+                            after_self, after_o = r, o
+                            break
+                    if after_self is None:
+                        notes.append("A6 {}/{}: handoff at t={} unmeasured -- the two copies "
+                                     "never both came to rest within {} s, so the pair gap is "
+                                     "not yet a lane fact"
+                                     .format(names[side], key, t0, HANDOFF_SETTLE_S))
+                        continue
+                    gap0 = abs(rows[i - 1]["bz"] - before_o["bz"])
+                    gap1 = abs(after_self["bz"] - after_o["bz"])
+                    opened = gap1 - gap0
+                    ok = opened <= HANDOFF_SAG_CM
+                    print("  A6 handoff {}/{} at t={}  pair dZ {:.1f} -> {:.1f} cm  "
+                          "opened={:+.1f}  {}".format(names[side], key, t0, gap0, gap1,
+                                                      opened, "PASS" if ok else "FAIL"))
+                    if not ok:
+                        fails.append("A6 {} key='{}' released authority at t={} and the two "
+                                     "copies went from {:.1f} cm apart in Z to {:.1f} cm "
+                                     "({:+.1f}) within {} s > {:.1f}. The rigs agreed while one "
+                                     "of them authored and diverged the moment it became a "
+                                     "mirror.".format(names[side], key, t0, gap0, gap1, opened,
+                                                      HANDOFF_SETTLE_S, HANDOFF_SAG_CM))
 
     # A3 -- the collision guard armed, and whether its CANCEL path was ever exercised.
     for nm, path in zip(names, logs):
