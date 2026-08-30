@@ -6,6 +6,7 @@
 
 #include "bootstrap/boot.h"
 
+#include "bootstrap/refuse_dialog.h"  // the stand-down modal (never the overlay's dialog)
 #include "coop/net/protocol.h"  // kProtocolVersion -- the b<N> build rev in the banner
 #include "coop/version.h"
 #include "harness/harness.h"
@@ -134,7 +135,58 @@ DWORD WINAPI BootThread(LPVOID rawTag) {
                     exePath, exeSize, coop::version::kGameTarget);
         }
     }
-    ue_wrap::reflection::RunHealthCheck();
+    // THE VERDICT IS A DECISION, NOT A LOG LINE.
+    //
+    // This is the one place in the process that knows whether our offsets match
+    // the running game. Until 2026-08-30 it returned void and boot continued
+    // unconditionally -- installing the ProcessEvent detour and driving VOTV's
+    // UFunctions through offsets the check had just called wrong. The hazard is
+    // NOT a null pointer (`game_thread::Install` refuses one at pe_detour.cpp:645);
+    // it is an AOB that matched the WRONG SITE, which is non-null and only the
+    // functional round-trips can catch. Continuing past that means writing through
+    // wrong offsets into a live game -- i.e. a corrupted save, which is a far worse
+    // outcome for a player than "the mod did not load".
+    //
+    // So we stand down, and we SAY SO on a surface that exists: the Win32 modal,
+    // never `ui::boot_warning_dialog`, because that renders from an overlay this
+    // path must not install (same reasoning as the loader's duplicate-install
+    // refusal -- they share bootstrap::ShowRefuseDialog).
+    int healthFails = ue_wrap::reflection::RunHealthCheck();
+    {
+        // DRILL ARM (probe; RULE 2 exempt). A refusal path that never executes is
+        // a claim, not a behaviour -- and this one can only fire on a game build
+        // we do not have. `VOTVCOOP_FORCE_HEALTH_FAIL=<n>` makes boot react as if
+        // the check had failed n times, WITHOUT touching the check itself, so the
+        // stand-down and its modal can be shown RED on a healthy install. Inert
+        // unless set.
+        char v[16] = {};
+        if (::GetEnvironmentVariableA("VOTVCOOP_FORCE_HEALTH_FAIL", v, sizeof(v)) > 0) {
+            const int forced = ::atoi(v);
+            if (forced > 0) {
+                UE_LOGW("boot: HEALTH-FAIL drill armed -- reacting as if %d check(s) failed "
+                        "(the real verdict was %d)", forced, healthFails);
+                healthFails = forced;
+            }
+        }
+    }
+    if (healthFails > 0) {
+        UE_LOGE("boot: STANDING DOWN -- %d SDK health check(s) failed. The mod targets "
+                "VOTV %s; this game build does not match it, so ProcessEvent will NOT "
+                "be hooked and no session can start. Re-derive sdk_profile.h "
+                "(docs/VERSION_MIGRATION.md).", healthFails, coop::version::kGameTarget);
+        ue_wrap::log::Flush();
+        bootstrap::ShowRefuseDialog(
+            L"Multivoid -- unsupported game build",
+            L"Multivoid did not start.\n\n"
+            L"It could not find the parts of the game it needs, which means this "
+            L"version of Voices of the Void is not the one this build of Multivoid "
+            L"targets.\n\n"
+            L"The game itself is unaffected and will keep running normally -- "
+            L"Multivoid simply stood down instead of guessing.\n\n"
+            L"Check for a Multivoid update built for your game version. Details are "
+            L"in multivoid.log (look for 'HEALTH: FAIL').");
+        return 0;
+    }
 
     // Establish a game-thread execution context: hook ProcessEvent so we have a
     // guaranteed game-thread callback to drive UFunction calls from (ProcessEvent
@@ -216,11 +268,21 @@ StartResult StartOnce(const char* entryTag) {
         return StartResult::kRefusedDupMutex;
     }
 
-    ::InterlockedExchange(&g_started, 1);
-    if (HANDLE t = ::CreateThread(nullptr, 0, BootThread,
-                                  const_cast<char*>(entryTag), 0, nullptr)) {
-        ::CloseHandle(t);
+    // LATCH AFTER THE SPAWN, NOT BEFORE. `Started()` means "the boot thread
+    // exists", not "we intended to make one" -- and the old order made a failed
+    // CreateThread indistinguishable from a successful boot, at every caller and
+    // in the log. `Started()` is only ever read on RE-ENTRY (cppmod_entry.cpp:320),
+    // long after this call returns, so there is no window to race here.
+    const HANDLE t = ::CreateThread(nullptr, 0, BootThread,
+                                    const_cast<char*>(entryTag), 0, nullptr);
+    if (!t) {
+        UE_LOGE("boot: REFUSE reason=thread-spawn-failed entry=%s (CreateThread gle=%lu) -- "
+                "nothing is running; this instance stays refused", entryTag, ::GetLastError());
+        ue_wrap::log::Flush();
+        return StartResult::kRefusedThreadSpawn;
     }
+    ::CloseHandle(t);
+    ::InterlockedExchange(&g_started, 1);
     return StartResult::kStarted;
 }
 

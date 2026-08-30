@@ -26,6 +26,14 @@ enum class StartResult {
     kStarted,          // this call won the latch and spawned BootThread
     kAlreadyBooted,    // benign re-entry: this module instance already booted
     kRefusedDupMutex,  // another instance of the mod already booted THIS process
+    // CreateThread failed -- nothing is running and nothing ever will on this
+    // instance. Added 2026-08-30: `kStarted` used to be returned unconditionally
+    // and `g_started` was latched BEFORE the spawn, so a failed CreateThread
+    // reported a successful boot to every caller and to `Started()`, and the mod
+    // was silently, totally dead with no line saying so. The `g_bootLatch` is
+    // already taken by then, so re-entry correctly reads this instance as
+    // previously-refused (`AlreadyBooted() && !Started()`).
+    kRefusedThreadSpawn,
 };
 
 // entryTag names the entry point for the log/timing markers ("cppmod" -- the

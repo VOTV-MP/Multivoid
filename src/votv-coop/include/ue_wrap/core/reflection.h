@@ -327,6 +327,17 @@ void* EngineAlloc(size_t size, uint32_t align = 0);
 // (name round-trip, known-class lookups) and print a PASS/FAIL verdict. On a new
 // game build this is the fast path to "what broke" -- it pinpoints the failing
 // signature/offset instead of crashing later.
-void RunHealthCheck();
+//
+// RETURNS the number of FAILED checks; 0 means the profile matches this build.
+//
+// It used to return void, so the one place in the process that knows our
+// offsets do not match the running game told nobody but the log, and boot
+// proceeded to detour ProcessEvent and drive the game through them anyway
+// (found by an external source review of the public tree, 2026-08-30). The
+// danger is not a null pointer -- `game_thread::Install` already refuses one --
+// it is an AOB that matched the WRONG SITE: non-null, wrong, and only the
+// functional checks below can see it. Callers are expected to ACT on a
+// non-zero result rather than log it again.
+int RunHealthCheck();
 
 }  // namespace ue_wrap::reflection

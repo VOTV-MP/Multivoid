@@ -696,7 +696,7 @@ void LogGameVersion() {
 
 }  // namespace
 
-void RunHealthCheck() {
+int RunHealthCheck() {
     int fails = 0;
     auto check = [&](bool ok, const char* what) {
         if (ok) {
@@ -767,6 +767,7 @@ void RunHealthCheck() {
         UE_LOGE("==== HEALTH: FAIL (%d issue(s)) -- sdk_profile.h likely needs "
                 "re-derivation for this build ====", fails);
     }
+    return fails;
 }
 
 }  // namespace ue_wrap::reflection

@@ -27,6 +27,7 @@
 #include "loader/cppmod_entry.h"
 
 #include "bootstrap/boot.h"
+#include "bootstrap/refuse_dialog.h"
 #include "ue_wrap/core/log.h"
 
 #include <windows.h>
@@ -194,34 +195,11 @@ bool ScanLivePredecessors(std::wstring& outList) {
     return found;
 }
 
-// Refusal dialog on its own detached thread: start_mod must return promptly
-// (no UE4SS thread ever blocks on the modal), and the PIN taken before any of
-// this guarantees the thread's code cannot be unloaded under it. NOT the
-// in-game boot_warning_dialog -- that renders from our overlay, which a
-// refused instance must never install.
-DWORD WINAPI RefuseDialogThread(LPVOID raw) {
-    std::wstring* msg = static_cast<std::wstring*>(raw);
-    // The up/dismissed lines are the headless drills' evidence that the dialog
-    // REALLY showed (a window-probe from outside proved unreliable; the log is
-    // authoritative and kill-safe because both lines flush).
-    UE_LOGI("cppmod: refuse dialog up (tid=%lu)", ::GetCurrentThreadId());
-    ue_wrap::log::Flush();
-    ::MessageBoxW(nullptr, msg->c_str(), L"Multivoid -- old install found",
-                  MB_OK | MB_ICONWARNING | MB_TOPMOST | MB_SETFOREGROUND);
-    UE_LOGI("cppmod: refuse dialog dismissed");
-    ue_wrap::log::Flush();
-    delete msg;
-    return 0;
-}
-
-void ShowRefuseDialog(const std::wstring& body) {
-    auto* msg = new std::wstring(body);
-    if (HANDLE t = ::CreateThread(nullptr, 0, RefuseDialogThread, msg, 0, nullptr)) {
-        ::CloseHandle(t);
-    } else {
-        delete msg;
-    }
-}
+// The refusal dialog MOVED to bootstrap/refuse_dialog.{h,cpp} (2026-08-30).
+// It grew a second caller -- boot's SDK-health refusal, which needs the same
+// "the overlay must never come up, so a Win32 modal is the only surface"
+// property this lane needed -- and two copies of one concept is RULE 2. The
+// title, which used to be baked in here, is now the caller's to name.
 
 // ---- dispatch census watcher ------------------------------------------------
 // 1 Hz; prints the census line when the SET of nonzero slots changes (bounded:
@@ -374,17 +352,26 @@ extern "C" __declspec(dllexport) void* start_mod() {
             L"To finish updating, delete from VotV\\Binaries\\Win64:\n  " +
             (disk.empty() ? live : disk) +
             L"\n\nThen restart the game.";
-        loader::cppmod::ShowRefuseDialog(body);
+        bootstrap::ShowRefuseDialog(L"Multivoid -- old install found", body);
         return nullptr;  // measured era-safe: m_is_started=false, all fire_* null-guard
     }
 
     const bootstrap::StartResult r = bootstrap::StartOnce("cppmod");
     if (r == bootstrap::StartResult::kRefusedDupMutex) {
         ue_wrap::log::Flush();
-        loader::cppmod::ShowRefuseDialog(
+        bootstrap::ShowRefuseDialog(
+            L"Multivoid -- old install found",
             L"Multivoid is installed twice (two mod copies in this game's mod "
             L"folders).\n\nOnly the first copy started. Remove the duplicate "
             L"Multivoid mod folder, then restart the game.");
+        return nullptr;
+    }
+    if (r == bootstrap::StartResult::kRefusedThreadSpawn) {
+        // Nothing is running. Refusing (nullptr) is the honest answer to UE4SS --
+        // returning a dummy would leave it firing callbacks into a mod that never
+        // booted. No modal: an OS that cannot spawn one thread will not do better
+        // with a second, and the log line carries the reason.
+        ue_wrap::log::Flush();
         return nullptr;
     }
     if (r == bootstrap::StartResult::kStarted) {

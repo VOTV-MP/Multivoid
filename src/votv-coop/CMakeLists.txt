@@ -213,6 +213,7 @@ find_package(nlohmann_json CONFIG REQUIRED)
 add_library(votv-coop SHARED
     src/bootstrap/dllmain.cpp
     src/bootstrap/boot.cpp
+    src/bootstrap/refuse_dialog.cpp
     src/loader/cppmod_entry.cpp
     src/loader/cppmod_stubs.asm
     src/ue_wrap/core/log.cpp
