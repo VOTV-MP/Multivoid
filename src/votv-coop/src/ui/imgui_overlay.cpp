@@ -49,6 +49,7 @@
 // are in ui/overlay_test_arm.cpp on the same argument (2026-08-28).
 
 #include "ui/imgui_overlay.h"
+#include "ui/native_text_field.h"   // a focused native field claims the key first
 
 #include "ui/overlay_backend.h"
 
@@ -324,6 +325,34 @@ LRESULT CALLBACK WndProcDetour(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
             }
         }
     }
+    // A FOCUSED NATIVE TEXT FIELD TAKES THE KEY, and this is the only place it can.
+    //
+    // The native screens are hand-wired, never-`Initialize()`d widget trees, and Slate
+    // does not route keystrokes into one: `[V]` 2026-08-30, a UEditableTextBox that
+    // spawned, attached, rendered, took programmatic text and took a SetKeyboardFocus
+    // call read its own Text back EMPTY after two WM_CHARs were posted
+    // (`coop/dev/native_text_probe`). So the engine gives those screens pixels and
+    // geometry but not the keyboard, and a field on one has to claim it here.
+    //
+    // It sits BELOW the CaptureActive block on purpose: while an ImGui surface holds
+    // capture, ImGui owns typing and has already returned above. This runs in the gap
+    // that block leaves -- a native screen up, no ImGui surface -- which used to pass
+    // straight to the game.
+    //
+    // Escape is only HALF handled by swallowing it: the browser reads Escape with
+    // GetAsyncKeyState, which sees the physical key whatever we do here, so that poll
+    // defers to `native_text_field::AnyFocused()` on its own edge. Both halves are
+    // required; neither works alone.
+    if (msg == WM_CHAR && ui::native_text_field::OnChar(static_cast<wchar_t>(wParam))) {
+        ProbeKeyMsg(msg, wParam, "SWALLOWED by a native text field");
+        return 1;
+    }
+    if ((msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) &&
+        ui::native_text_field::OnKeyDown(static_cast<int>(wParam))) {
+        ProbeKeyMsg(msg, wParam, "SWALLOWED by a native text field");
+        return 1;
+    }
+
     if (msg == WM_KEYDOWN || msg == WM_KEYUP || msg == WM_CHAR ||
         msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP)
         ProbeKeyMsg(msg, wParam, "passed to the GAME");

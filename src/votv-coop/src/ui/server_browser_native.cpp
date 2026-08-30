@@ -12,6 +12,7 @@
 #include "ui/native_screen.h"          // palette + widget primitives, shared with the host window
 #include "ui/server_browser_actions.h"   // CONNECT / HOST / REFRESH, its own TU
 #include "ui/server_browser_rows.h"      // the LIST -- rows, identity, hover, selection
+#include "ui/native_text_field.h"        // a focused field owns Escape
 #include "coop/dev/native_text_probe.h"   // the HALT rung: can a native field take text?
 #include "ui/server_browser_selftest.h"  // the dev phase machine; ships dark
 #include "ue_wrap/core/game_thread.h"
@@ -520,6 +521,10 @@ void OnMenuTick(void* menu, void* switcher) {
     // answer about a different tree.
     coop::dev::native_text_probe::Tick(rows::Panel());
 
+    // The action bar's own per-tick work (the address box's caret + its Enter edge).
+    // Above the `!g_shown` return so the field settles with the screen it lives on.
+    ui::server_browser_actions::Tick();
+
     if (!g_shown) return;
 
     // RECONCILE, do not assert. A sibling screen (or ESC reaching a stale `widgetEnter`,
@@ -555,6 +560,12 @@ void OnMenuTick(void* menu, void* switcher) {
         // be that no input reached the game at all while an ImGui surface held capture,
         // which this could never have shown. RULE 2: it goes with its question.)
         g_prevEsc = esc;
+        // A FOCUSED TEXT FIELD OWNS ESCAPE, and this poll is why the field cannot claim it
+        // by swallowing the message: GetAsyncKeyState reads the PHYSICAL key, so consuming
+        // WM_KEYDOWN in the detour would still leave this edge firing -- one press would
+        // blur the field AND close the screen. The field's own handler turns Escape into
+        // "leave the field"; this defers to it for exactly that press.
+        if (pressEdge && ui::native_text_field::AnyFocused()) return;
         if (pressEdge) {
             Hide("ESC");
             return;

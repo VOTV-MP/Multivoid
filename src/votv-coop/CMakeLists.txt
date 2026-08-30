@@ -253,6 +253,7 @@ add_library(votv-coop SHARED
     src/ue_wrap/devices/appliance.cpp
     src/ue_wrap/devices/power_control.cpp
     src/ue_wrap/devices/atv.cpp
+    src/ue_wrap/devices/atv_condition.cpp
     src/ue_wrap/devices/drone.cpp
     src/ue_wrap/devices/windturbine.cpp
     src/ue_wrap/devices/door_box.cpp
@@ -351,6 +352,7 @@ add_library(votv-coop SHARED
     src/coop/world/sky_sync.cpp
     src/coop/interactables/power_sync.cpp
     src/coop/interactables/atv_sync.cpp
+    src/coop/interactables/atv_condition_sync.cpp
     src/coop/interactables/atv_corrector.cpp
     src/coop/interactables/atv_hit_guard.cpp
     src/coop/interactables/drone_sync.cpp
@@ -546,6 +548,7 @@ add_library(votv-coop SHARED
     src/coop/dev/gnatives_probe.cpp
     src/coop/dev/native_pile_inert_probe.cpp
     src/coop/dev/client_model_probe.cpp
+    src/coop/dev/atv_eject_drill.cpp
     src/coop/dev/atv_probe.cpp
     src/coop/dev/atv_tire_probe.cpp
     src/coop/dev/pinecone_probe.cpp
@@ -597,6 +600,7 @@ add_library(votv-coop SHARED
     src/ui/link_format.cpp
     src/ui/server_browser.cpp
     src/ui/native_screen.cpp
+    src/ui/native_text_field.cpp
     src/ui/host_window_native.cpp
     src/ui/server_browser_actions.cpp
     src/ui/server_browser_native.cpp

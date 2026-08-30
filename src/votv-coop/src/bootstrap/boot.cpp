@@ -7,6 +7,7 @@
 #include "bootstrap/boot.h"
 
 #include "bootstrap/refuse_dialog.h"  // the stand-down modal (never the overlay's dialog)
+#include "ui/native_text_field.h"   // its un-gated editing selftest
 #include "coop/net/protocol.h"  // kProtocolVersion -- the b<N> build rev in the banner
 #include "coop/version.h"
 #include "harness/harness.h"
@@ -151,6 +152,14 @@ DWORD WINAPI BootThread(LPVOID rawTag) {
     // never `ui::boot_warning_dialog`, because that renders from an overlay this
     // path must not install (same reasoning as the loader's duplicate-install
     // refusal -- they share bootstrap::ShowRefuseDialog).
+    // THE NATIVE TEXT FIELD'S EDITING RULES, checked at BOOT and not at session start.
+    // It lives at the MENU -- the server browser's address box -- so a player can use it
+    // without a session ever existing. Its first home was beside the session-start
+    // selftests and it therefore never ran once: the browser scenario is menu-only, and
+    // the run came back with no verdict at all rather than a failing one. Un-gated, pure
+    // logic, microseconds.
+    ui::native_text_field::RunSelftest();
+
     int healthFails = ue_wrap::reflection::RunHealthCheck();
     {
         // DRILL ARM (probe; RULE 2 exempt). A refusal path that never executes is
