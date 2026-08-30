@@ -62,9 +62,9 @@ class VOTVIO_OT_import_sav(bpy.types.Operator, ImportHelper):
         default="GREEN")
     import_radius: bpy.props.FloatProperty(
         name="Import radius (m)",
-        description="0 = the whole map. Otherwise only things within this many meters "
-                    "of the base (the garage / coordinate-panel building) are imported",
-        default=0.0, min=0.0, soft_max=2000.0, subtype="DISTANCE")
+        description="Only things within this many meters of the base (the garage / "
+                    "coordinate-panel building) are imported. Set 0 for the whole map",
+        default=150.0, min=0.0, soft_max=2000.0, subtype="DISTANCE")
     show_technical: bpy.props.BoolProperty(
         name="Show technical meshes",
         description="The game's utility cubes/triggers/imposters (hidden by default)",
