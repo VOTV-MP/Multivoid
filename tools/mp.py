@@ -864,9 +864,60 @@ def cmd_smoke(args) -> None:
         return True
 
     rejoined = False
+    early_end = False
+    done_hit_at: float | None = None
+    dead_hit_at: float | None = None
+
+    def logs_contain(needle: str) -> bool:
+        """Substring search over BOTH peers' mod logs (cheap at the 5 s cadence)."""
+        for d in (HOST_DIR, CLIENT_DIR):
+            try:
+                if needle in (d / "multivoid.log").read_text(encoding="utf-8", errors="ignore"):
+                    return True
+            except OSError:
+                pass
+        return False
+
     while time.time() - t0 < args.duration:
         if not sample_once():
             break
+        # USER 2026-08-30: a test that has fired its shot must DIE, not sit in a window
+        # ("раз отстреляли свой тест то рубить их нахуй сразу"). --done-marker = the
+        # instrument's own evidence-complete line; when it appears in either log the run
+        # ends after --done-grace seconds instead of idling out --duration (which is also
+        # what parked the driver next to the river long enough to drown).
+        dm = getattr(args, "done_marker", None)
+        if dm and done_hit_at is None and logs_contain(dm):
+            log(f"--- DONE MARKER seen ({dm!r}); ending in {args.done_grace}s ---")
+            done_hit_at = time.time()
+        if done_hit_at is not None and time.time() - done_hit_at >= args.done_grace:
+            log("--- EVIDENCE COMPLETE -- ending the run early, killing windows now ---")
+            early_end = True
+            break
+        # Fail-fast twin: if a peer's SESSION died mid-run (KO-respawn hang, quit to menu),
+        # a marker-gated run has nothing left to measure -- do not idle out the clock.
+        if dm and not getattr(args, "rejoin", False) and done_hit_at is None \
+                and logs_contain("net: session stopped"):
+            log("--- SESSION STOPPED on a peer before the marker -- nothing left to "
+                "measure; ending early (evidence-so-far stands) ---")
+            early_end = True
+            break
+        # --dead-marker: the instrument itself says the phenomenon WINDOW is over (e.g. the
+        # drive arm dismounted). If the done marker still has not arrived after the grace,
+        # it never will -- end INCONCLUSIVE and kill the windows instead of holding them
+        # hostage to a broken/mistimed instrument (2026-08-30 19:49: a drill that could no
+        # longer fire kept two windows on screen for the full timer).
+        ddm = getattr(args, "dead_marker", None)
+        if dm and ddm and done_hit_at is None:
+            if dead_hit_at is None and logs_contain(ddm):
+                log(f"--- DEAD MARKER seen ({ddm!r}); done marker has {args.done_grace}s to "
+                    "arrive or the run ends INCONCLUSIVE ---")
+                dead_hit_at = time.time()
+            elif dead_hit_at is not None and time.time() - dead_hit_at >= args.done_grace:
+                log("--- INCONCLUSIVE: phenomenon window closed without the done marker; "
+                    "ending early, killing windows now ---")
+                early_end = True
+                break
         # v147 acceptance arm (e): a MID-RUN client rejoin, so the condition lane's
         # principle-8 row has a witness (the joiner save-loads the host world, its actor
         # already matches host canon, and the adopt apply must fire NO reducer verb).
@@ -902,7 +953,7 @@ def cmd_smoke(args) -> None:
     # alive and under the RAM cap, keep sampling up to --join-grace extra
     # seconds; once the marker appears, run one more fixed steady-state stretch
     # so the verdict still covers post-join stability, not just the join.
-    if not kill_reason and len(last_peers) == 2:
+    if not kill_reason and not early_end and len(last_peers) == 2:
         client_log = CLIENT_DIR / "multivoid.log"
         if 0 not in parse_log_markers(client_log)["puppet_slots"]:
             log(f"--- JOIN GRACE: host puppet not up at budget end; extending up to {args.join_grace}s ---")
@@ -4697,6 +4748,18 @@ def main() -> None:
     p_smoke.add_argument("--rejoin", action="store_true",
                          help="v147 arm (e): kill + relaunch the CLIENT at half --duration so the "
                               "run witnesses a mid-session rejoin (the condition lane's mid-join row)")
+    p_smoke.add_argument("--done-marker", type=str, default=None,
+                         help="substring; when it appears in EITHER peer's multivoid.log the run "
+                              "ends --done-grace seconds later and the windows are killed "
+                              "immediately (a test that fired its shot must not sit in a window). "
+                              "E.g. '[ATV-PROBE] DONE' or 'skipped by the authority rule'.")
+    p_smoke.add_argument("--done-grace", type=int, default=8,
+                         help="seconds to keep sampling after --done-marker hits (one more "
+                              "counters line lands) before the early kill")
+    p_smoke.add_argument("--dead-marker", type=str, default=None,
+                         help="substring meaning 'the phenomenon window is OVER' (e.g. "
+                              "'[ATVP] ARM done'); if --done-marker has not arrived within "
+                              "--done-grace of this, the run ends INCONCLUSIVE immediately")
     for flag, kw in host_res: p_smoke.add_argument(flag, **kw)
     p_smoke.set_defaults(func=cmd_smoke)
 
