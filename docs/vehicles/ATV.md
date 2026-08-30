@@ -891,8 +891,14 @@ fire in either run.**
 > **GTA world units**, and ours is in **centimetres**. A 15-unit base is 15 m ≈ 1500 cm if a GTA unit
 > is a metre, i.e. **7.5x LOOSER than our 200 cm base, not tighter.** And the speed term cannot be
 > compared at all: MTA's velocity units are not established anywhere in the vendored tree, so
-> `10 * |v|` and `0.5 * |v|` are not commensurable without a fact I do not have. **Both halves of the
-> original claim are withdrawn.** What remains is only about our own lane.
+> `10 * |v|` and `0.5 * |v|` are not commensurable. **Both halves of the original claim are
+> withdrawn.** What remains is only about our own lane.
+>
+> **And the units fact was already in this repo, three lines above the constant I quoted.**
+> `atv_sync.cpp:103-104`: *"Warp is speed-scaled after CClientVehicle.cpp:3901 (their 15 + 10\*|v| is
+> in GTA units); ours is sized off the measured rig"*. Whoever ported the number did the conversion
+> and wrote it down. I opened MTA's file and read MTA's line, and never read our own four lines
+> wrapped around the value I was comparing it against.
 
 ### 15.2a `[V]` What the trail actually does: `trail ≈ 0.0063 * speed^1.52`
 Pooling every driven second from both runs where exactly one peer owned the tick and the author was
@@ -961,6 +967,20 @@ itself and the host receiving `AtvState` with the new `authorSlot` there is a ro
 sides answer yes. `COOP_SYNCER_MODEL.md` §2b's rule — authority is ASSIGNED, never asserted — says the
 claim should be an intent the host grants, not a fact the client publishes. **Open; sized as arc-1
 commit 2, and A4 already grades it.**
+
+### 15.7 `[V]` A2 is REPRODUCIBLE, and it is the lane's one standing failure
+Three driven runs now, three different routes, three different builds:
+
+| run | settled gap | dominated by |
+|---|---|---|
+| `20260830-002246` | 54.2 cm | Z |
+| `20260830-003415` | 25.4 cm | Z |
+| post-extraction (`C67CEC72AD2E31C3`) | 30.5 cm | Z |
+
+A1, A3, A4 and A5 pass in the post-extraction run (A5 at 48 cm — a slow route again, see
+§15.2). **A2 has failed in every driven run**, always Z-dominated, magnitude varying with the route.
+Combined with §15.3's before/after pair this is the lane's one reproducible defect, and it is the
+thing arc-1 commit 2 should aim at along with the convergence rate.
 
 ### 15.5 What this run still does NOT establish
 - **NOT hands-on.** Autonomous throughout.
