@@ -1,7 +1,10 @@
 # MULTIPLAYER_UI — coop menu design
 
 > **THE BROWSER'S DESIGN WAS REJECTED WHOLE ON 2026-08-30 AND IS BEING REDESIGNED.** Read
-> **`docs/SERVER_BROWSER_ARC.md` FIRST** -- it is the brief the redesign session starts from.
+> **`docs/SERVER_BROWSER_ARC.md` FIRST** -- and since 2026-08-30 its **section 7 is the
+> CONVERGED DESIGN OF RECORD** (12-round /qf; BUILD NOT STARTED, five product forks pending
+> the user). Section 7.10 lists every idea that pass KILLED -- read it before re-deriving
+> anything about this screen. Sections 1-6 remain the measured brief underneath it.
 > The user's words: *"это дизайн говно у сервер браузера ... нужен дизайн сервер браузера как
 > у людей блять без костылей"*, and the revision is explicitly deferred to a NEW session.
 > Everything below stays as the long-form HISTORY of how the current screen was built and
