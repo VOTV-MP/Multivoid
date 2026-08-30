@@ -59,7 +59,11 @@ pak\scientists.pak     (+ the <name>.png preview tiles)
   `README.md` and FAILS CLOSED if the file is missing or does not mention the current game
   target (a hand-written pair in a page nobody regenerates is how version strings rot). The
   Boosty support badge lives in BOTH this file and the repo README — a support-rail change
-  touches both, or the two pages disagree about how to give.
+  touches both, or the two pages disagree about how to give. **(Temporarily one-sided since
+  `7ebc2554`, 2026-08-30: the repo-README badge + `FUNDING.yml` are PULLED until the Boosty
+  page is ready — restore = revert that commit; the checklist lives in the local `SUPPORT.md`
+  top box. The badge HERE stays because this page is not live until the first upload; if
+  Boosty is still not ready at that moment, pull it here too before `package.ps1` runs.)**
 
   **Consequence for the FIRST upload, and it is one-shot:** a published version is IMMUTABLE
   (§5), so a README change costs a whole new version number. Anything that belongs on the store
