@@ -91,7 +91,6 @@ void* g_root     = nullptr;
 void* g_scrimW   = nullptr;
 void* g_list     = nullptr;   // UScrollBox of save rows
 void* g_status   = nullptr;
-void* g_closeBtn = nullptr;
 void* g_backBtn  = nullptr;
 void* g_hostBtn  = nullptr;
 void* g_connRow[3]   = {nullptr, nullptr, nullptr};   // the clickable background images
@@ -304,7 +303,6 @@ bool BuildScreen(void* switcher) {
     if (void* titleBox = NS::AddFramedBox(col, kPanel, kBorderPx)) {
         if (void* titleRow = NS::Spawn(L"HorizontalBox", titleBox)) {
             NS::AddText(titleRow, L"Multivoid  -  Host Game", 24, kText, NS::kJustCenter, 1.f);
-            g_closeBtn = NS::BuildButton(titleRow, backDonor, L"X", 20);
             if (void* s = U::AddChild(titleBox, titleRow))
                 U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
                                 NS::kFill, NS::kCenter);
@@ -515,7 +513,6 @@ void PollChrome() {
     // advisory read taken at a different instant -- and the unification turned a PASSING
     // X into `CLOSE BUTTON FAIL`. Reverted here; the rows and the image targets keep
     // geometry, which is the only thing that works for THEM.
-    if (g_closeBtn && E::WidgetIsHovered(g_closeBtn)) { Hide("X"); return; }
     if (g_backBtn  && E::WidgetIsHovered(g_backBtn))  { Hide("BACK"); return; }
     if (g_hostBtn  && E::WidgetIsHovered(g_hostBtn))  { DoHost(); return; }
     for (int i = 0; i < 3; ++i)
@@ -596,7 +593,7 @@ void Close()  { g_wantOpenMs.store(0, std::memory_order_relaxed);
                 g_wantClose.store(true, std::memory_order_relaxed); }
 bool IsOpen() { return g_shown; }
 
-void* CloseButton() { return g_closeBtn; }
+void* BackButton() { return g_backBtn; }
 
 int   SelectedSave()   { return SlotIndex(); }
 int   SaveRowCount()   { return g_visibleSaves; }   // shown, not the row vector's high-water mark
@@ -609,7 +606,7 @@ void OnMenuTick(void* menu, void* switcher) {
     if (menu != g_menu) {
         g_menu = menu;
         g_root = nullptr; g_list = nullptr; g_status = nullptr; g_scrimW = nullptr;
-        g_closeBtn = nullptr; g_backBtn = nullptr; g_hostBtn = nullptr;
+        g_backBtn = nullptr; g_hostBtn = nullptr;
         g_newGameRow = Row{};
         g_saveRows.clear();
         for (int i = 0; i < 3; ++i) { g_connRow[i] = nullptr; g_connLabel[i] = nullptr; }

@@ -144,15 +144,27 @@ constexpr int kWorldRead      = 236;
 constexpr int kWorldDown      = 238;
 constexpr int kWorldUp        = 242;
 constexpr int kWorldVerify    = 252;
-// ...and LAST, the hosting window's OWN X. Nothing had ever driven it, and on 2026-08-30
-// the user hit exactly that hole by hand: "нажал на host и там потом это окно закрыть на
-// крестик даже не смог". The browser's X got a phase on 2026-08-26 and was found broken
-// the moment it had one; its sibling kept the same untested chrome for four days. A window
-// a player cannot leave is worse than one that draws wrong.
-constexpr int kHostXMove      = 258;
-constexpr int kHostXDown      = 266;
-constexpr int kHostXUp        = 270;
-constexpr int kHostXVerify    = 278;
+// ...and LAST, the hosting window's EXITS. Both windows lost their X on 2026-08-30 (USER:
+// "не надо крестиков значит. Пусть окна закрывает юзер также как и нативные
+// менюшки votv" -- no native VOTV window has one), so Back and ESC are the only ways
+// out and they are what has to be driven. The deleted X was measured WORKING hours before
+// it went (`HOST X PASS`, 23:43): it was removed for FIDELITY, not because it failed.
+//
+// BOTH exits get a phase, because they fail INDEPENDENTLY. Back goes through the same
+// `E::WidgetIsHovered` predicate the X used, one line from where the X's sat
+// (host_window_native.cpp:518-519), so it inherits every failure mode the X had --
+// including the capture-starved pointer that makes every native widget read not-hovered
+// at once (SERVER_BROWSER_ARC section 8.1). ESC is a `GetAsyncKeyState` poll and is the
+// only exit that survives that. Proving one says nothing about the other.
+constexpr int kHostBackMove   = 258;
+constexpr int kHostBackDown   = 266;
+constexpr int kHostBackUp     = 270;
+constexpr int kHostBackVerify = 278;
+constexpr int kHostEscReopen  = 286;
+constexpr int kHostEscPress   = 292;
+constexpr int kHostEscHold    = 298;
+constexpr int kHostEscRelease = 302;
+constexpr int kHostEscVerify  = 308;
 
 // The forced offset for the positive control. Far past any real content extent, so a
 // getter that returns it UNCHANGED has told us it echoes the request rather than reading
@@ -296,7 +308,7 @@ void LogWheelFields(void* list) {
 // Runs only under [dev] browser_autoopen and only once. The move and the sample are
 // SEPARATE ticks: sampling IsHovered() in the same tick as the move reads the PREVIOUS
 // pointer position (measured 2026-08-26 -- the probe made exactly that mistake).
-void Tick(void* scrim, void* list, void* closeBtn) {
+void Tick(void* scrim, void* list, void* exitBtn) {
     if (g_selfCheckStep < 0 || !scrim) return;
     // WE DRIVE INPUT, SO WE MUST OWN THE FOREGROUND -- and this is the root of every
     // intermittency this instrument showed on 2026-08-26.
@@ -347,7 +359,7 @@ void Tick(void* scrim, void* list, void* closeBtn) {
     // was `config_review`, armed at boot by an ordinary ini finding and never dismissed,
     // because nothing in an autonomous run clicks it away.
     //
-    // The cost of not having this guard: every CLOSE BUTTON FAIL since the panel started
+    // The cost of not having this guard: every BROWSER BACK FAIL since the panel started
     // arming was an accusation against a button that was never given a pointer. Three
     // causes were proposed and each falsified -- a five-day-old commit, our own boot modal,
     // a mounted pak -- while the real one was printing itself in the same log. So this
@@ -611,8 +623,8 @@ void Tick(void* scrim, void* list, void* closeBtn) {
             // ESC has closed the screen by now. Re-open it through the PUBLIC Open(), the
             // same call the MULTIPLAYER button makes, so the X gets driven against a
             // screen that came up the ordinary way rather than one we never let close.
-            if (!closeBtn) {
-                UE_LOGE("server_browser_native: CLOSE BUTTON SKIP -- no X was built, so "
+            if (!exitBtn) {
+                UE_LOGE("server_browser_native: BROWSER BACK SKIP -- no X was built, so "
                         "whether the chrome closes this screen is UNMEASURED");
                 g_selfCheckStep = -1;
                 return;
@@ -858,7 +870,7 @@ void Tick(void* scrim, void* list, void* closeBtn) {
             // 980x620 window, `w/2 + 490 - 40`, `h/2 - 310 + 34` -- which is a SECOND
             // implementation of a layout the engine had already performed, kept in step
             // with the real one by hand. `23481e3c` rewrote the title row and the estimate
-            // went stale in the very next commit after the one that recorded CLOSE BUTTON
+            // went stale in the very next commit after the one that recorded BROWSER BACK
             // PASS. The second replaced it with a 70-point sweep of that region, asking
             // IsHovered at each point -- but the region itself was `w/2 + 980/2 - 134`,
             // the same three constants, so the sweep inherited the guess it was written to
@@ -871,10 +883,10 @@ void Tick(void* scrim, void* list, void* closeBtn) {
             // button was never given a place to be, and a good rect whose centre does not
             // answer IsHovered means the button is there and not hit-testable.
             ue_wrap::FVector2D tl{}, size{};
-            const bool haveRect = U::WidgetScreenRect(closeBtn, tl, size);
-            const ue_wrap::FVector2D want = DesiredSizeOf(closeBtn);
+            const bool haveRect = U::WidgetScreenRect(exitBtn, tl, size);
+            const ue_wrap::FVector2D want = DesiredSizeOf(exitBtn);
             if (!haveRect) {
-                UE_LOGE("server_browser_native: CLOSE BUTTON SKIP -- Slate would not report "
+                UE_LOGE("server_browser_native: BROWSER BACK SKIP -- Slate would not report "
                         "the X's geometry, so this run cannot say where it is. The link that "
                         "failed is named in the umg: line above; nothing below is a verdict "
                         "about the button.");
@@ -907,7 +919,7 @@ void Tick(void* scrim, void* list, void* closeBtn) {
                         haveList ? "" : "UNREAD ", lsz.X, lsz.Y, ltl.X, ltl.Y);
             }
             if (size.X < 1.f || size.Y < 1.f) {
-                UE_LOGE("server_browser_native: CLOSE BUTTON FAIL -- the X occupies %.0fx%.0f "
+                UE_LOGE("server_browser_native: BROWSER BACK FAIL -- the X occupies %.0fx%.0f "
                         "px, so it has no hit area at all. This is a LAYOUT defect, not a "
                         "click one: no cursor position can reach it. Check BuildButton's "
                         "HorizontalBox slot against the title text's fill weight.",
@@ -926,7 +938,7 @@ void Tick(void* scrim, void* list, void* closeBtn) {
             // already trust: IsHovered read too soon answers about the PREVIOUS pointer
             // position. Recorded BEFORE the click so the verdict can separate "the cursor
             // never got there" from "it got there and the button did nothing".
-            g_closeHovered = E::WidgetIsHovered(closeBtn) ? 1 : 0;
+            g_closeHovered = E::WidgetIsHovered(exitBtn) ? 1 : 0;
             UE_LOGW("server_browser_native: the X reads IsHovered=%d with the cursor at its "
                     "own centre (list=%d scrim=%d at the same moment) -- clicking there now",
                     g_closeHovered, E::WidgetIsHovered(list) ? 1 : 0,
@@ -943,17 +955,17 @@ void Tick(void* scrim, void* list, void* closeBtn) {
             break;
         case kClickVerify:
             if (!ui::server_browser_native::IsOpen())
-                UE_LOGW("server_browser_native: CLOSE BUTTON PASS -- a synthesized click "
-                        "on the X closed the screen (hovered=%d). The chrome is a real "
+                UE_LOGW("server_browser_native: BROWSER BACK PASS -- a synthesized click "
+                        "on Back closed the screen (hovered=%d). The chrome is a real "
                         "way out, not just a drawing.", g_closeHovered);
             else if (g_closeHovered == 0)
-                UE_LOGE("server_browser_native: CLOSE BUTTON FAIL -- the screen is still "
+                UE_LOGE("server_browser_native: BROWSER BACK FAIL -- the screen is still "
                         "open, and IsHovered read FALSE with the cursor on the centre of "
                         "the rect Slate itself reported. The aim is not in question: the X "
                         "occupies that space and is not HIT-TESTABLE in it. Look at its "
                         "visibility and at what is painted over it, not at coordinates.");
             else
-                UE_LOGE("server_browser_native: CLOSE BUTTON FAIL -- the cursor WAS over "
+                UE_LOGE("server_browser_native: BROWSER BACK FAIL -- the cursor WAS over "
                         "the X (hovered=1) and a full press-release was delivered, yet the "
                         "screen is still open. The button draws but does not close.");
             break;   // the HOST phases follow; they re-open the screen themselves
@@ -1048,39 +1060,69 @@ void Tick(void* scrim, void* list, void* closeBtn) {
                         "first save row left SelectedSave() at %d (was %d). The rows draw "
                         "and cannot be picked, so this window can only ever start a NEW "
                         "game.", now, g_worldBefore);
-            g_selfCheckStep = kHostXMove - 1;   // on to the hosting window's own X
+            g_selfCheckStep = kHostBackMove - 1;   // on to the hosting window's exits
             return;
         }
-        case kHostXMove: {
-            void* x = ui::host_window_native::CloseButton();
+        case kHostBackMove: {
+            void* b = ui::host_window_native::BackButton();
             ue_wrap::FVector2D tl{}, sz{};
-            if (!x || !U::WidgetScreenRect(x, tl, sz) || sz.X < 1.f) {
-                UE_LOGE("host_window_native: HOST X SKIP -- the close button %s, so whether "
-                        "a player can leave this window is UNMEASURED. That is not a pass.",
-                        x ? "has no readable rect" : "does not exist");
+            if (!b || !U::WidgetScreenRect(b, tl, sz) || sz.X < 1.f) {
+                UE_LOGE("host_window_native: HOST BACK SKIP -- the Back button %s, so whether "
+                        "a player can leave this window is UNMEASURED. That is not a pass, and "
+                        "with the X gone it is the only POINTER exit there is.",
+                        b ? "has no readable rect" : "does not exist");
                 g_selfCheckStep = -1;
                 return;
             }
             PlaceCursorOnAbsolute(tl.X + sz.X * 0.5f, tl.Y + sz.Y * 0.5f);
-            UE_LOGW("host_window_native: HOST X at desktop (%.0f,%.0f) %.0fx%.0f -- clicking it",
+            UE_LOGW("host_window_native: HOST BACK at desktop (%.0f,%.0f) %.0fx%.0f -- clicking it",
                     tl.X, tl.Y, sz.X, sz.Y);
             break;
         }
-        case kHostXDown:
+        case kHostBackDown:
             ::mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
             break;
-        case kHostXUp:
+        case kHostBackUp:
             ::mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
             break;
-        case kHostXVerify: {
+        case kHostBackVerify: {
             if (!ui::host_window_native::IsOpen())
-                UE_LOGW("host_window_native: HOST X PASS -- a real click on the X closed the "
-                        "hosting window. A player who opens it can leave it.");
+                UE_LOGW("host_window_native: HOST BACK PASS -- a real click on Back closed the "
+                        "hosting window. With the X gone this is the pointer exit, and it answers.");
             else
-                UE_LOGE("host_window_native: HOST X FAIL -- the window is STILL OPEN after a "
-                        "real press-release on the centre of the rect Slate reported for its "
-                        "close button. That is the 2026-08-30 field report reproduced: the "
-                        "only way out is ESC, and nothing on screen says so.");
+                UE_LOGE("host_window_native: HOST BACK FAIL -- the window is STILL OPEN after a "
+                        "real press-release on the centre of the rect Slate reported for Back. "
+                        "The X was deleted on the premise that this button answers; it does not, "
+                        "so the window is pointer-inescapable and the deletion must revert.");
+            break;
+        }
+        case kHostEscReopen:
+            // ESC IS A SEPARATE EXIT AND OWES A SEPARATE MEASUREMENT. It is the one that
+            // survives a capture-starved pointer -- the leading candidate for the user's
+            // "cannot close it" report -- so a green Back says nothing about the case that
+            // actually bit them.
+            ui::host_window_native::Open();
+            UE_LOGW("host_window_native: HOST ESC -- reopened the window to drive its keyboard exit");
+            break;
+        case kHostEscPress:
+            ::keybd_event(VK_ESCAPE, 0, 0, 0);
+            break;
+        case kHostEscHold:
+            UE_LOGW("host_window_native: HOST ESC held -- GetAsyncKeyState(VK_ESCAPE) reads %s at "
+                    "this tick, which is what the production poll sees",
+                    (::GetAsyncKeyState(VK_ESCAPE) & 0x8000) ? "DOWN" : "UP");
+            break;
+        case kHostEscRelease:
+            ::keybd_event(VK_ESCAPE, 0, KEYEVENTF_KEYUP, 0);
+            break;
+        case kHostEscVerify: {
+            if (!ui::host_window_native::IsOpen())
+                UE_LOGW("host_window_native: HOST ESC PASS -- a real VK_ESCAPE press-release "
+                        "closed the hosting window. Both of its exits are now measured.");
+            else
+                UE_LOGE("host_window_native: HOST ESC FAIL -- the window is STILL OPEN after a "
+                        "real VK_ESCAPE press-release. With the X gone and this dead, a player "
+                        "whose pointer is starved of mouse messages cannot leave at all.");
             g_selfCheckStep = -1;
             return;
         }

@@ -81,7 +81,6 @@ void* g_switcher = nullptr;
 void* g_root     = nullptr;   // our UUserWidget
 void* g_status   = nullptr;   // the footer UTextBlock
 void* g_scrimW   = nullptr;   // the full-screen scrim -- the thing that absorbs a stray click
-void* g_closeBtn = nullptr;   // the X, top-right of the title row
 void* g_backBtn  = nullptr;   // BACK, bottom-right beside the status line
 // LBUTTON edge state for the chrome poll. Primed on Show() so the very release that
 // OPENED the screen cannot be read as a click on the X sitting under the cursor.
@@ -238,9 +237,14 @@ bool BuildScreen(void* switcher) {
                         kCenter, kCenter);
 
     // (3) The content column: title, column headers, the list, the status line.
-    // The title row is a BOX, not a lone text block, so the X has somewhere to sit. Until
-    // 2026-08-26 this screen had no chrome at all and ESC was the only way out -- the
-    // user's words were "I don't even see the X to close server browser window".
+    // NO X, ON EITHER WINDOW (USER 2026-08-30: "не надо крестиков значит. Пусть окна
+    // закрывает юзер также как и нативные менюшки votv"). No native VOTV window has one,
+    // and MTA's own frame X is enabled with NO handler behind it
+    // (CServerBrowser.cpp -- SetCloseClickHandler is called nowhere in their core), so
+    // both precedents point the same way. It went for FIDELITY, not because it failed:
+    // `CLOSE BUTTON PASS` and the sibling's `HOST X PASS` were both measured on
+    // 2026-08-30 at 23:43, hours before it was removed. What replaces it is Back and ESC,
+    // and those are what the self-check now drives.
     // THE TITLE STRIP. Native windows put a centred white title on its own bordered strip
     // (style doc section 3), so the title gets a frame of its own rather than floating.
     // The X rides in the same strip at the right.
@@ -258,7 +262,6 @@ bool BuildScreen(void* switcher) {
             // needs here, which is each SERVER's pair, not ours.
             AddText(titleRow, L"Multivoid  -  Server Browser", 24, kText,
                               kJustCenter, 1.f);
-            g_closeBtn = BuildButton(titleRow, backDonor, L"X", 20);
             if (void* s = U::AddChild(titleBox, titleRow))
                 U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
                                 kFill, kCenter);
@@ -462,7 +465,7 @@ void OnMenuTick(void* menu, void* switcher) {
     if (menu != g_menu) {
         g_menu = menu;
         g_root = nullptr; g_status = nullptr;
-        g_closeBtn = nullptr; g_backBtn = nullptr; g_scrimW = nullptr;
+        g_backBtn = nullptr; g_scrimW = nullptr;
         ui::server_browser_actions::Forget();
         g_ourIndex = -1; g_shown = false; g_buildAttempts = 0; g_toldTheUser = false;
         rows::Attach(nullptr);   // the panel died with the menu; drop it and the row ids
@@ -520,7 +523,7 @@ void OnMenuTick(void* menu, void* switcher) {
     // the X. Below the `!g_shown` return it would stop ticking the moment its own ESC
     // phase succeeded, and the chrome would stay untested forever. Every phase that needs
     // a visible screen runs before that point, in order.
-    selftest::Tick(g_scrimW, rows::Panel(), g_closeBtn);
+    selftest::Tick(g_scrimW, rows::Panel(), g_backBtn);
 
     // THE HALT RUNG (2026-08-30). Dev-gated and latched; does nothing for a player.
     // It rides this tick because it needs the browser's own panel, which is the tree
@@ -594,7 +597,6 @@ void OnMenuTick(void* menu, void* switcher) {
             // Converting them to geometry on 2026-08-30 turned a passing X into
             // CLOSE BUTTON FAIL in one run -- the clearest possible evidence that the
             // two widget kinds need the two different questions.
-            if (g_closeBtn && E::WidgetIsHovered(g_closeBtn)) { Hide("X"); return; }
             if (g_backBtn  && E::WidgetIsHovered(g_backBtn))  { Hide("BACK"); return; }
             // The action bar BEFORE the rows: its buttons sit in the footer, outside the
             // list, so they cannot both answer -- but returning here is what keeps a click

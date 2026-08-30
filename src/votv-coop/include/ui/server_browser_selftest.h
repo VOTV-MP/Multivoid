@@ -35,6 +35,6 @@ void Arm();
 //
 // CALLED WHETHER OR NOT THE SCREEN IS SHOWN. The last phases close it with ESC, RE-OPEN it,
 // and then drive the X -- which is impossible if the caller gates this on visibility.
-void Tick(void* scrim, void* list, void* closeBtn);
+void Tick(void* scrim, void* list, void* exitBtn);
 
 }  // namespace ui::server_browser_selftest

@@ -3538,14 +3538,18 @@ def cmd_browser(args) -> None:
         # finishes well inside --duration=140, so every run burned ~100 s holding a window
         # open with nothing left to observe.
         #
-        # THE MARKER IS `WORLD LIST`, NOT `HOST LINK`. It was HOST LINK for exactly one
-        # run, which cut the world-list phases off: they run AFTER it (kWorldVerify=252 vs
-        # kHostVerify=220), inside the hosting window HOST LINK opens. An early exit keyed
-        # on the wrong phase does not read as truncation -- it reads as a clean run whose
-        # last verdicts are simply absent, which is the failure mode this scenario's own
-        # "an ABSENT line fails as loudly as a wrong one" rule exists to catch.
-        if "WORLD LIST" in text:
-            log(f"  t+{int(time.time()-t0)}s selftest complete (WORLD LIST verdict in, the "
+        # THE MARKER IS THE LAST PHASE, AND IT HAS MOVED TWICE. It was HOST LINK for one
+        # run, which cut the world-list phases off; then WORLD LIST, which on 2026-08-30
+        # cut off the hosting window's EXIT phases the same way -- they run after it
+        # (kHostEscVerify=308 vs kWorldVerify=252), and the run reported "selftest
+        # complete" while the two verdicts that matter most had not been produced.
+        #
+        # An early exit keyed on the wrong phase never reads as truncation: it reads as a
+        # clean run whose last verdicts are simply absent. So the marker is now the LAST
+        # phase by construction -- the hosting window's ESC verdict, which is the final
+        # case in the switch and the one that sets step -1.
+        if "HOST ESC PASS" in text or "HOST ESC FAIL" in text:
+            log(f"  t+{int(time.time()-t0)}s selftest complete (HOST ESC verdict in, the "
                 "last phase) -- stopping instead of idling out the clock")
             break
         if not saw_shown and "server_browser_native: shown" in text:
@@ -3663,7 +3667,13 @@ def cmd_browser(args) -> None:
     # screen's row model moved to `server_browser_rows` and logs under its own prefix; a
     # filter naming one file would have dropped every row verdict the moment the file was
     # cut. It also picks up `server_browser_actions`, whose errors were invisible here.
-    lines = [ln for ln in all_lines if "server_browser" in ln]
+    # BOTH MODULES, because the exit verdicts live in the SIBLING window. Scoping this
+    # list to "server_browser" made the 2026-08-30 run report "no HOST BACK verdict" and
+    # "no HOST ESC verdict" while both PASS lines sat in the log -- the parser could not
+    # see the module that produced them, and the run's own stop marker (which reads the
+    # streamed text, not this list) had already fired on one of them. Two readers with
+    # two scopes is how an instrument reports a hole that is not there.
+    lines = [ln for ln in all_lines if "server_browser" in ln or "host_window_native" in ln]
     log("--- KILLING ---")
     kill_all()
     if fake is not None:
@@ -3697,15 +3707,36 @@ def cmd_browser(args) -> None:
     if find("SELFTEST DISARMED"):
         fails.append("the selftest DISARMED itself -- every verdict below is absent because "
                      "the probe gave up, not because the feature is missing")
-    close = find("CLOSE BUTTON ")
-    if not close:
-        fails.append("no CLOSE BUTTON verdict -- whether the X actually closes the screen "
-                     "is UNMEASURED, which is the state T1 exists to leave behind")
-    else:
-        log(f"CLOSE BUTTON: {close.strip()}")
-        if "FAIL" in close or "SKIP" in close:
-            fails.append("the X did not close the screen -- read the verdict, it "
-                         "distinguishes a bad cursor estimate from a dead button")
+    # THE EXITS. Both windows lost their X on 2026-08-30 (USER: no native VOTV window has
+    # one), so what has to be measured is what REPLACED it -- the browser's Back, the
+    # hosting window's Back, and the hosting window's ESC. Each is asserted separately
+    # because they fail independently: the two Back buttons share the IsHovered predicate
+    # the X used, while ESC is a GetAsyncKeyState poll and is the only exit that survives a
+    # capture-starved pointer.
+    for label, needle, absent in (
+        ("BROWSER BACK", "BROWSER BACK ",
+         "whether the browser's Back closes the screen is UNMEASURED -- with the X gone it "
+         "is the only pointer exit that screen has"),
+        ("HOST BACK", "HOST BACK ",
+         "whether the hosting window's Back closes it is UNMEASURED -- with the X gone a "
+         "player could be pointer-trapped in it"),
+        ("HOST ESC", "HOST ESC ",
+         "whether the hosting window's ESC closes it is UNMEASURED -- that is the exit that "
+         "survives a capture-starved pointer, i.e. the field report's own case"),
+    ):
+        # MATCH THE VERDICT, NOT THE PHASE. Every one of these phases logs an AIMING line
+        # ("HOST BACK at desktop ... clicking it") before its verdict, and a prefix search
+        # returns that one first -- so a FAIL run would have been reported with a line that
+        # contains neither PASS nor FAIL, i.e. a false green. Caught 2026-08-30 by reading
+        # a passing run's own output.
+        line = (find(needle + "PASS") or find(needle + "FAIL") or find(needle + "SKIP"))
+        if not line:
+            fails.append(f"no {label} verdict -- {absent}")
+        else:
+            log(f"{label}: {line.strip()}")
+            if "FAIL" in line or "SKIP" in line:
+                fails.append(f"{label} did not close its window -- read the verdict; the X "
+                             "was deleted on the premise that this exit answers")
     esc = find("hidden (ESC;")
     if not find("ESC SELFTEST"):
         fails.append("the ESC selftest never ran -- whether the screen can be CLOSED is UNMEASURED")
@@ -3792,7 +3823,8 @@ def cmd_browser(args) -> None:
     for ln in errs:
         # The T0 verdict lines are Errors BY DESIGN when they report a negative; they are
         # already assessed above, so echoing them here would double-count a known result.
-        if ("SCROLL CONTROL" in ln or "WHEEL VERDICT" in ln or "CLOSE BUTTON" in ln):
+        if ("SCROLL CONTROL" in ln or "WHEEL VERDICT" in ln or "BROWSER BACK" in ln
+                or "HOST BACK" in ln or "HOST ESC" in ln):
             continue
         log(f"ERROR LINE: {ln.strip()}")
     if shot:
