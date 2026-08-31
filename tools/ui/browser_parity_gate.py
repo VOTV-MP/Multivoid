@@ -153,15 +153,19 @@ CAPABILITIES = [
         name="locked-lobby toggle when hosting",
         symptom="cannot host a locked game from this surface",
         operation=r"g_hostLocked|\blocked\b.*Checkbox|Checkbox.*\blocked\b",
-        divergence="CLOSED AS A PARITY MATTER 2026-08-31, and the gap it named is now shared "
-                   "rather than gone. The native flow's second window "
-                   "(`ui/host_session_settings`) offers the lock AND mints the password the "
-                   "ImGui checkbox never had, so neither surface is behind the other. What "
-                   "this entry warned about -- 'porting a control that does nothing would be "
-                   "worse than the gap' -- is now TRUE OF BOTH SURFACES and is security A2, "
-                   "not a parity defect: `locked` is announced and drawn, and no joiner is "
-                   "asked for anything. Delete this entry when the admission half lands; "
-                   "until then it is the register that says so.",
+        divergence="DECLARED 2026-08-31, and the direction has REVERSED -- the fallback is now "
+                   "the one that is behind. The native flow settles the lock and mints the "
+                   "password (`ui/host_session_settings`) and the gate behind it is built and "
+                   "drilled (security A2, proto 148), so what this entry warned against -- "
+                   "'porting a control that does nothing' -- is no longer true of either "
+                   "surface when HOSTING: the ImGui checkbox now uses the same password, and "
+                   "`HostWithSave` hosts OPEN and says so rather than announcing a lock it "
+                   "cannot enforce. WHAT REMAINS IS THE JOIN HALF: the fallback browser has no "
+                   "password prompt, so it can host a locked lobby but cannot join one. That is "
+                   "deliberate under the user's 2026-08-26 policy that the ImGui surface is an "
+                   "EMERGENCY one and ships no new features -- an emergency surface that can "
+                   "still reach every OPEN server is the capability it is kept for. Revisit only "
+                   "if that policy changes.",
     ),
 ]
 

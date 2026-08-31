@@ -33,16 +33,22 @@ CFG_STRING(net_nick, "net.nick", "net", kMyNameDefault, "VOTVCOOP_NET_NICK", tru
 // flow's second window (`ui/host_session_settings`), which mints one the moment the player
 // chooses "Password required" and leaves it editable.
 //
-// NO ENV TWIN, deliberately: an env var is visible to every process on the box and lands in
-// crash dumps and shell history. The one path in is the window.
+// IT HAS AN ENV TWIN, AND THE FIRST VERSION OF THIS COMMENT ARGUED IT SHOULD NOT. That
+// argument was "an env var is visible to every process on the box"; it is true and it is
+// also true of the ini line directly above it, so the exclusion bought nothing an attacker
+// who can already run code as this user would notice. What it DID buy was an untestable
+// lane -- the drill that proves a wrong password is refused has no other way to configure
+// the two peers -- and an untestable path hides more than its residual. `net.signaling_token`
+// is the same shape and already carries one.
 //
 // NOT SEEDED. A generated value written into the ini at first boot would mint a password
 // for every player who never hosts, and a value in a config file that nothing produced is
 // exactly the kind of thing that gets pasted into a bug report.
-CFG_STRING(net_lobby_password, "net.lobby_password", "net", "", nullptr, false,
+CFG_STRING(net_lobby_password, "net.lobby_password", "net", "", "VOTVCOOP_NET_LOBBY_PASSWORD",
+    false,
     "Password for sessions you host with the lock on. Generated for you when you first turn "
     "the lock on; change it to anything you like. Only players you give it to can join.")
-CFG_FLAG(net_lobby_locked, "net.lobby_locked", "net", false, nullptr,
+CFG_FLAG(net_lobby_locked, "net.lobby_locked", "net", false, "VOTVCOOP_NET_LOBBY_LOCKED",
     "Whether the sessions you host require the password above. Set from the hosting window; "
     "remembered so your next session starts the way your last one did.")
 CFG_ENUM(net_role, "net.role", "net", "", "host|client", "VOTVCOOP_NET_ROLE",

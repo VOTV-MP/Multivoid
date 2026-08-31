@@ -304,6 +304,7 @@ add_library(votv-coop SHARED
     src/ue_wrap/actors/vitals.cpp
     src/ue_wrap/world/game_rules.cpp
     src/ue_wrap/engine/spawn_menu.cpp
+    src/ue_wrap/engine/level_travel.cpp
     src/coop/player/movement_ledger.cpp
     src/coop/player/remote_player.cpp
     src/coop/player/remote_player_ragdoll.cpp
@@ -378,6 +379,7 @@ add_library(votv-coop SHARED
     src/coop/player/item_activate.cpp
     src/coop/player/player_damage.cpp
     src/coop/player/ragdoll_gate.cpp
+    src/coop/player/death_revive.cpp
     src/coop/player/skin_preview.cpp
     src/coop/player/flashlight_click_sound.cpp
     src/coop/props/prop_sound.cpp
@@ -456,6 +458,7 @@ add_library(votv-coop SHARED
     src/coop/element/identity_destroy.cpp
     src/ue_wrap/core/component_calls.cpp
     src/coop/net/peer_admission.cpp
+    src/coop/net/lobby_password.cpp
     src/coop/net/peer_identity.cpp
     src/coop/net/session.cpp
     src/coop/net/session_streams.cpp

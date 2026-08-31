@@ -20,6 +20,7 @@
 #include "coop/moderation/seen_players.h"
 #include "coop/net/session.h"
 #include "coop/element/intent_authority.h"
+#include "coop/net/lobby_password.h"
 #include "coop/net/peer_admission.h"
 #include "coop/net/peer_identity.h"
 #include "coop/player/movement_ledger.h"
@@ -413,6 +414,13 @@ bool StartCoopSession(const coop::net::Config& netCfg) {
     // admission an over-permissive blob would grant. Un-gated for the same reason:
     // a challenge that accepts everything looks exactly like one that works.
     coop::net::peer_admission::RunSelftest();
+    // ...and the lobby password that rides inside it. Same reason a third time, and
+    // it is the sharpest instance: if the SALT were ignored, every locked lobby in
+    // the world would open to one table, and the only observable difference from a
+    // working build is that joins keep succeeding. The negatives are the test --
+    // one password under two host keys must NOT collide, an empty password must
+    // refuse to derive at all, and a tag must not verify against another nonce.
+    coop::net::lobby_password::RunSelftest();
     // Reset net_pump edge-detector state so a Stop()/Start() cycle on the same process
     // doesn't carry stale "was connected" / "was holding prop" entries into the new
     // session (phantom disconnect edge / suppressed connect replay / stale prop key).

@@ -57,7 +57,20 @@ struct Screen {
     std::string lastStatus;
 };
 
-Screen  g_screen[2];                 // indexed by Kind
+Screen  g_screen[3];                 // indexed by Kind
+
+// WHICH LOBBY THE PASSWORD PROMPT IS FOR. Captured when CONNECT was pressed, not read
+// back from the selection when OK is clicked: the list re-fetches every 5 s and a refresh
+// re-sorts it, so the highlighted row after a few seconds of typing may be a different
+// server -- and joining the wrong one with the right password is a worse outcome than
+// either failure it replaces.
+struct PendingJoin {
+    std::string lobbyId;
+    std::string displayName;
+    int         hostProto = 0;
+    std::string hostGame;
+};
+PendingJoin g_pendingJoin;
 void*   g_menu     = nullptr;
 void*   g_switcher = nullptr;
 int     g_open     = -1;             // which Kind is showing, or -1
@@ -73,7 +86,18 @@ std::atomic<bool>     g_wantClose{false};
 std::atomic<uint64_t> g_wantAtMs{0};
 constexpr uint64_t kIntentTtlMs = 20000;
 
-int Idx(Kind k) { return k == Kind::DirectConnect ? 0 : 1; }
+// THE INVERSE OF `Idx`, and it exists because the two call sites that needed it were
+// open-coded ternaries reading `g_open == 0 ? DirectConnect : ChangeName`. Adding a third
+// screen would have made both of them silently confirm the WRONG one -- a password typed
+// into a box that then set the player's nickname.
+Kind KindOf(int idx) {
+    return idx == 0 ? Kind::DirectConnect
+                    : (idx == 1 ? Kind::ChangeName : Kind::LobbyPassword);
+}
+
+int Idx(Kind k) {
+    return k == Kind::DirectConnect ? 0 : (k == Kind::ChangeName ? 1 : 2);
+}
 
 // What each screen SAYS. Kept in one table so the two cannot drift into different idioms
 // for the same window.
@@ -84,9 +108,13 @@ struct Spec {
     const wchar_t* confirm;
     int32_t        maxLen;
 };
-const Spec kSpec[2] = {
+const Spec kSpec[3] = {
     {L"Multivoid  -  Direct connect", L"Server address", L"host or host:port", L"Connect", 64},
     {L"Multivoid  -  Change name",    L"Your name",      L"your name",         L"OK",      24},
+    // The cap is 64 CODEPOINTS and not the generated length: a host may replace the
+    // generated value with anything they can say out loud, and a limit sized to what WE
+    // mint would silently truncate what THEY chose.
+    {L"Multivoid  -  Password",       L"Server password", L"password",         L"Join",    64},
 };
 
 void SetStatus(Screen& s, const std::string& utf8, const FLinearColor& col) {
@@ -164,6 +192,29 @@ void Hide(const char* why);
 void Confirm(Kind kind) {
     Screen& s = g_screen[Idx(kind)];
     const std::string value = TF::Text(s.field);
+    if (kind == Kind::LobbyPassword) {
+        if (value.empty()) {
+            SetStatus(s, "Type the password this server was locked with.", kBad);
+            return;
+        }
+        // HANDED OVER, NEVER STORED. `SetJoinPassword` holds it for exactly one join
+        // attempt and nothing writes it to the ini -- it is a secret the player was
+        // lent, and the ini is the file people paste into bug reports.
+        sm::SetJoinPassword(value);
+        if (!sm::JoinLobby(g_pendingJoin.lobbyId, g_pendingJoin.displayName,
+                           g_pendingJoin.hostProto, g_pendingJoin.hostGame)) {
+            // The password is dropped on a refusal so it cannot ride along into a
+            // different connection the player makes next.
+            sm::SetJoinPassword("");
+            SetStatus(s, "Could not start that connection -- another action is already "
+                         "in flight.", kBad);
+            return;
+        }
+        UE_LOGI("browser_input_screens: join with a password accepted -- join_progress "
+                "owns the player from here");
+        Hide("joining");
+        return;
+    }
     if (kind == Kind::ChangeName) {
         if (value.empty()) {
             SetStatus(s, "Type a name first.", kBad);
@@ -220,10 +271,16 @@ void Show(Kind kind) {
     // PREFILLED FROM THE ROW IT WRITES. Both values are things the player already has, and
     // retyping a known address to change one digit is the kind of friction a field exists
     // to remove.
-    TF::SetText(s.field,
-                kind == Kind::DirectConnect
-                    ? coop::config::ResolveString(::coop::config_registry::rows::browser_lastdirect)
-                    : sm::Nickname());
+    // PREFILLED FROM THE ROW IT WRITES -- except the password, which opens EMPTY on
+    // purpose. Both of the others are values the player already owns and retyping them
+    // is friction; a password is somebody else's, is not stored anywhere, and a box
+    // pre-filled with the LAST server's secret would be a small privacy leak between
+    // two lobbies and a confusing failure when it did not work.
+    if (kind == Kind::LobbyPassword)      TF::SetText(s.field, std::string());
+    else if (kind == Kind::DirectConnect)
+        TF::SetText(s.field,
+                    coop::config::ResolveString(::coop::config_registry::rows::browser_lastdirect));
+    else                                  TF::SetText(s.field, sm::Nickname());
     // FOCUSED ON OPEN. This window exists for one field; making the player click it first
     // would be a step with no decision in it.
     TF::Focus(s.field);
@@ -272,7 +329,7 @@ void PollChrome() {
     // ends typing is the one that acts -- which is what every text field a player has ever
     // used does, and what makes the confirm button optional rather than required.
     if (TF::ConsumeSubmit(s.field)) {
-        Confirm(g_open == 0 ? Kind::DirectConnect : Kind::ChangeName);
+        Confirm(KindOf(g_open));
         return;
     }
 
@@ -287,7 +344,7 @@ void PollChrome() {
         // widget KIND).
         if (s.backBtn && E::WidgetIsHovered(s.backBtn)) { BackToBrowser(); return; }
         if (s.okBtn && E::WidgetIsHovered(s.okBtn)) {
-            Confirm(g_open == 0 ? Kind::DirectConnect : Kind::ChangeName);
+            Confirm(KindOf(g_open));
             return;
         }
     }
@@ -298,6 +355,21 @@ void PollChrome() {
 void Open(Kind kind) {
     g_wantOpen.store(Idx(kind), std::memory_order_relaxed);
     g_wantAtMs.store(::GetTickCount64(), std::memory_order_relaxed);
+}
+
+void OpenPasswordPrompt(const std::string& lobbyId, const std::string& displayName,
+                        int hostProto, const std::string& hostGame) {
+    // The row travels WITH the request; see PendingJoin for why re-reading the
+    // selection when OK is pressed would be a different server by then.
+    //
+    // Written before the intent is published, and read only on the game thread after
+    // the intent is consumed -- the same ordering the other two screens rely on, with
+    // one writer and one reader and a full tick between them.
+    g_pendingJoin.lobbyId     = lobbyId;
+    g_pendingJoin.displayName = displayName;
+    g_pendingJoin.hostProto   = hostProto;
+    g_pendingJoin.hostGame    = hostGame;
+    Open(Kind::LobbyPassword);
 }
 
 void Close() {
@@ -335,7 +407,7 @@ void OnMenuTick(void* menu, void* switcher) {
         g_buildAttempts = 0;
     }
 
-    if (!g_screen[0].root || !g_screen[1].root) {
+    if (!g_screen[0].root || !g_screen[1].root || !g_screen[2].root) {
         // BACKED OFF, because the retry is not free. Each attempt costs a `SwitcherChild`
         // walk (a ChildCount plus a ClassNameOf per child -- an engine call and a wstring
         // EACH, ~13 children here) plus a `DonorField` lookup, and at ~117 menu ticks a
@@ -372,8 +444,12 @@ void OnMenuTick(void* menu, void* switcher) {
             if (++g_buildAttempts >= 15) g_toldTheUser = true;
             return;
         }
-        UE_LOGI("browser_input_screens: both input windows built (direct=%d name=%d)",
-                g_screen[0].index, g_screen[1].index);
+        if (!g_screen[2].root && !BuildOne(switcher, Kind::LobbyPassword, backDonor)) {
+            if (++g_buildAttempts >= 15) g_toldTheUser = true;
+            return;
+        }
+        UE_LOGI("browser_input_screens: input windows built (direct=%d name=%d password=%d)",
+                g_screen[0].index, g_screen[1].index, g_screen[2].index);
     }
 
     if (g_wantClose.exchange(false, std::memory_order_relaxed)) Hide("requested");
@@ -386,7 +462,7 @@ void OnMenuTick(void* menu, void* switcher) {
             // that opens on top of a live browser makes the browser's index the one this
             // window will restore.
             SB::CloseNow();
-            Show(want == 0 ? Kind::DirectConnect : Kind::ChangeName);
+            Show(KindOf(want));
         } else {
             UE_LOGW("browser_input_screens: an open request expired unconsumed after %llu ms",
                     static_cast<unsigned long long>(age));
