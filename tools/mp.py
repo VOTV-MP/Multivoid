@@ -4612,6 +4612,11 @@ def cmd_authdrill(args) -> None:
       silent  -- the client verifies the host and then says nothing. The host must
                  close it on the pending deadline. Slower by design: the deadline
                  is 30 s because it must clear the slowest legitimate handshake.
+      mismatch-- the client is told it was sent to a DIFFERENT host than the one
+                 that answered, and must refuse ITSELF before emitting anything
+                 (security A65). The only arm whose refusal is the client's, so
+                 N1 reads the CLIENT's log; the host merely sweeps a socket that
+                 never spoke.
 
     Asserted, per arm, from the HOST's own log and the CLIENT's:
       N1 the host REFUSED / swept this connection, naming why
@@ -4668,9 +4673,21 @@ def cmd_authdrill(args) -> None:
         log(f"FAIL: log did not decode as strict UTF-8 (host={herr} client={cerr})")
         sys.exit(1)
 
-    # N1's needle differs per arm because the two refusals are different mechanisms
-    # and conflating them would let the sweep's pass stand in for the verify's.
-    refused = ("identity proof did not verify" in htext) if arm == "corrupt" else               ("never proved its identity" in htext)
+    # N1's needle differs per arm because the refusals are different mechanisms and
+    # conflating them would let the sweep's pass stand in for the verify's.
+    #
+    # ...AND THE `mismatch` ARM IS READ FROM THE CLIENT'S LOG, NOT THE HOST'S. It is
+    # the only arm whose refusal is OURS: the client discovers that the key on the
+    # socket is not the identity it was sent to and stops before sending anything at
+    # all, so the host never sees an AuthHello and has nothing to refuse. Pointing
+    # this needle at the host's log would have graded a working gate FAIL -- an
+    # instrument reading the wrong side of the very boundary it exists to check.
+    if arm == "corrupt":
+        refused = "identity proof did not verify" in htext
+    elif arm == "silent":
+        refused = "never proved its identity" in htext
+    else:  # mismatch -- and the control arm, which must NOT contain it
+        refused = "is NOT the host we were sent to" in ctext
     seated  = "host assigned us peer slot" in ctext
     # The host's own serve marker (`save_transfer.cpp:523`/`:275`) -- the whole
     # point of A57's world half is that this line must not appear for an unproved
@@ -5319,8 +5336,10 @@ def main() -> None:
                                  help="NEGATIVE arm of the admission gate: a client with a sabotaged "
                                       "identity proof must be REFUSED and must never receive the save "
                                       "(the sabotage is client-side only -- the host gate has no knob)")
-    p_authdrill.add_argument("--arm", choices=["corrupt", "silent"], default="corrupt",
-                             help="corrupt = flip a bit of the proof; silent = never answer the challenge")
+    p_authdrill.add_argument("--arm", choices=["corrupt", "silent", "mismatch"], default="corrupt",
+                             help="corrupt = flip a bit of the proof; silent = never answer the "
+                                  "challenge; mismatch = the host that answers is not the one we "
+                                  "were sent to, which THIS peer must refuse itself (A65)")
     p_authdrill.add_argument("--control", action="store_true",
                              help="CONTROL: run with the drill OFF -- every assertion must invert, "
                                   "proving the refusal was caused by the sabotage and not by the rig")

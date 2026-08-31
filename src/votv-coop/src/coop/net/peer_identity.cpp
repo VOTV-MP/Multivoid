@@ -202,6 +202,17 @@ const PubKey& LocalPublicKey() { return g_pub; }
 const std::string& LocalGuid()  { return g_guid; }
 const std::string& LocalIdentityString() { return g_identityString; }
 
+bool PublicKeyFromIdentityString(const std::string& identity, PubKey& out) {
+    // The prefix is checked rather than skipped: `<64 hex>` on its own is not an
+    // identity this build ever renders, and accepting it would make the caller's
+    // comparison depend on a spelling nothing produces.
+    static constexpr char kPrefix[] = "gen:";
+    static constexpr size_t kPrefixLen = sizeof(kPrefix) - 1;
+    if (identity.size() != kPrefixLen + kPubKeyBytes * 2) return false;
+    if (identity.compare(0, kPrefixLen, kPrefix) != 0) return false;
+    return FromHex(identity.substr(kPrefixLen), out.data(), out.size());
+}
+
 std::string GuidForPublicKey(const PubKey& pub) {
     uint8_t digest[32];
     if (!Sha256(pub.data(), pub.size(), digest)) return {};

@@ -102,6 +102,18 @@ const std::string& LocalGuid();
 // PLAINTEXT signaling leg is in `PLAN_01` s6c.
 const std::string& LocalIdentityString();
 
+// THE INVERSE OF THE ABOVE: `gen:<64 hex>` -> the 32 key bytes it names. False for
+// anything that is not exactly that form, so a caller cannot end up comparing
+// against a half-parsed key.
+//
+// It lives HERE, beside the renderer, because a second hex codec somewhere else is
+// the drift class this project keeps paying for -- and its one caller compares the
+// result BYTE-WISE against the key on a socket. Never compare the STRINGS: GNS
+// renders an identity in its own way, `GuidForPublicKey` is a DIFFERENT value
+// entirely, and a string comparison would silently answer "not equal" for two
+// spellings of the same key.
+bool PublicKeyFromIdentityString(const std::string& identity, PubKey& out);
+
 // Cryptographic random bytes (BCryptGenRandom). Exposed because the admission
 // exchange's nonces must come from the same source as the keys, not from a
 // second RNG somebody picks later. Returns false if the OS refused, and a caller
