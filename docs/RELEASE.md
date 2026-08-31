@@ -116,8 +116,8 @@ binary ignores it (`24418b66`), so it was dead input — but left in place it is
 config file, and it would silently re-arm the tester-denying ceiling on any rollback to the old
 binary. `/etc/coop-master.env.bak-20260831` holds the previous file.
 
-**What is still owed on the box:** `COOP_LATEST_*` (below — the one knob deliberately not set yet,
-because it must name a release that exists).
+**Nothing is owed on the box any more.** `COOP_LATEST_*` was the last item and it is SET (below) —
+ahead of any release, on the user's call.
 
 **A trap in our own gate, and it is PYTHON-specific — not the box.** `sig_gate --remote` over TLS
 dies with `CERTIFICATE_VERIFY_FAILED: certificate has expired`, while `verify_latest.ps1` reaches
@@ -128,22 +128,36 @@ schannel finds the valid one. So the fix is a `--cafile` (or `certifi`) in `sig_
 machine repair. Until then the only way to run the BLOCKING gate here is `--plaintext` against port
 10000. Do not discover this at the tag.
 
-**`COOP_LATEST_*` IS THE ONE THING THE CUTOVER COULD NOT DO EARLY, AND IT IS NOW THE ONLY NOTICE
-THE CUT-OFF COHORT WILL EVER GET.** It stays commented out in `/etc/coop-master.env` (so
-`/v1/latest` serves `proto 0` and the in-game check is silent) for one reason only: it must name a
-release that exists, and none does yet. Everything else about the retirement already happened.
+**`COOP_LATEST_*` IS SET, BEFORE ANY RELEASE EXISTS — AND THAT IS DELIBERATE (2026-08-31).**
+User's call: *"релиза нету, да, но мы же уже отрезали b133, так что пусть и сообщение показывает
+в углу что update есть"*. The cohort is already cut off by the cutover, so the choice was between
+telling them and saying nothing; the recommendation to set it anyway was accepted.
 
-So as of 2026-08-31 a b133 player is refused at `/v1/host` with *"this build is too old to host —
-update Multivoid"* **and the game points them nowhere.** That is the live state, not a risk.
-Setting this at publish time is what ends it.
+| var | value | why this value |
+|---|---|---|
+| `COOP_LATEST_PROTO` | `134` | only has to EXCEED 133 to light the b133 label; kept **≤ our own dev build (149)** so our builds show the informational `(dev; latest released b134)` line instead of nagging themselves |
+| `COOP_LATEST_MOD` | `Multivoid` | free text, set ON PURPOSE — an empty `mod` makes the client render `b<proto>`, i.e. it would name a build number that does not exist. This renders `UPDATE Multivoid AVAILABLE: <url>` |
+| `COOP_LATEST_URL` | `github.com/VOTV-MP/Multivoid/releases` | the **schemeless** form the client compiles as its own fallback (`net::kReleasesUrl`), so the one-line menu label stays short. The master's built-in default carries `https://` and is 8 chars longer |
 
-**Recommendation, unchanged and now more pointed: set `COOP_LATEST_PROTO` / `COOP_LATEST_MOD`
-anyway, this once**, even though the release is a dev prerelease. Ritual step 6 calls the knob
-stable-only, but `[V]` that is a convention of this checklist and not a property of the code
-(step 7) — the rule exists to stop dev builds nagging stable users, and there are no stable users.
-On the one day a cohort is cut off, telling them where to go is the whole job. Still the user's
-call; if the answer is no, the refusal string is the only notice a player gets and the release
-notes + Discord have to carry the rest.
+`[V]` differential on the live master: `{"mod":"","proto":0,...}` before the restart →
+`{"mod":"Multivoid","proto":134,"url":"github.com/VOTV-MP/Multivoid/releases"}` after, on the
+plaintext **and** TLS legs from outside the box. A restart is required and it is required twice
+over: the handler resolves the three through a `LazyLock` (`master.rs:907`, once per process) and
+systemd's `EnvironmentFile` is itself a start-time snapshot.
+
+What a b133 player now gets, traced through their OWN shipped code (`v0.9.0n-b133-dev`, not HEAD):
+`FetchLatest` sets `ok` because `proto > 0`; `RefreshLatestVersion` passes the `info.proto > 0`
+guard; `134 > 133` takes the outdated branch; the native menu label turns amber and reads
+**`Multivoid 0.9.0n b133 -- UPDATE Multivoid AVAILABLE: github.com/VOTV-MP/Multivoid/releases`**.
+It re-polls on boot and on every main-menu entrance, so no mod update is needed to see it.
+
+**TWO CONSEQUENCES TO CARRY TO THE RELEASE.**
+1. **`verify_latest.ps1` now FAILS BY DESIGN** and will keep failing until step 6 replaces these
+   with the real numbers — the master advertises b134 while the ledger's newest published row is
+   b133. That is not a regression to investigate; it is this decision's price, and the reason step
+   6 stops being optional.
+2. **Replace all three at the release** (step 6), including `COOP_LATEST_MOD` — leaving
+   `Multivoid` there once a real build exists would hide the build number the player needs.
 
 ### Before the day — free, and worth doing
 
@@ -193,15 +207,17 @@ Ritual steps in brackets.
    `tripwires.ps1`, `ledger_lint.ps1`. **The "for a stable: hands-on verified" clause is
    superseded** by the user's standing position that autonomous evidence is the ceiling
    (`[[feedback-autonomous-evidence-is-the-ceiling]]`); do not park the release on it.
-2. Two forks are **DECIDED (user, 2026-08-31)**: this release is a **dev prerelease**, and the
-   live Boosty buttons stay **pulled**. Two remain: the store-page badge in
-   `README_thunderstore.md` (one-shot — see first #5) and `COOP_LATEST_*` (below — and being a
-   dev release is exactly what makes it bite).
+2. Three forks are **DECIDED (user, 2026-08-31)**: this release is a **dev prerelease**, the live
+   Boosty buttons stay **pulled**, and `COOP_LATEST_*` was **set ahead of the release** (above).
+   **ONE remains:** the store-page badge in `README_thunderstore.md` (one-shot — see first #5).
 3. Tag + consume row + one atomic leak-audited push [1-3].
 4. Watch the run green; confirm the release page shows the zip + SHA256 [4]. Append `published` [5].
-5. **`COOP_LATEST_*` in `/etc/coop-master.env` + `systemctl restart coop-master`** [6] →
-   `verify_latest.ps1 -AllowDev` [7]. This is the only VPS work the day still carries, and the
-   only thing that tells the retired cohort where to go.
+5. **REPLACE `COOP_LATEST_*` in `/etc/coop-master.env` with the REAL numbers +
+   `systemctl restart coop-master`** [6] → `verify_latest.ps1 -AllowDev` [7]. Not a fresh set:
+   the three are already populated with the pre-release stand-in (`134` / `Multivoid` /
+   schemeless URL — see the VPS section), so **all three must move, `MOD` included**, or the
+   label hides the build number the player needs. `verify_latest.ps1` is RED until this step
+   runs, by design.
 6. **Re-confirm the two server gates on the released build** — `sig_gate --remote` **PASS**
    [0's blocking gate] and `/v1/join` on a DIRECT lobby → `hostIdentity` [6c]. Both passed in
    production on 2026-08-31; this is a re-confirmation after the step-5 restart, not a first look.
