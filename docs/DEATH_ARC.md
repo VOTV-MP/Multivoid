@@ -808,7 +808,56 @@ over the following seconds. It is inside D7's 500 cm tolerance and it looks like
 gravity settling at that spawn point -- the same thing a joining client's KPP teleport
 would do -- but WHY has not been measured, so it is written down rather than called nothing.
 
-### 11.3a THE RED SCREEN: what it was, and the two hours it cost
+### 11.3a THE RED SCREEN -- RETRACTED WHOLE 2026-08-31, and what it really was
+
+> **THIS SECTION'S CONCLUSION WAS WRONG, AND SO WAS EVERY ROW OF ITS NEGATIVE-EVIDENCE
+> TABLE. The red is the DAMAGE SCREEN EFFECT -- exactly what the user said from the
+> first message. There was never a second, world-level, unexplained red.**
+>
+> **The error was an INSTRUMENT ARTIFACT, not a reasoning slip.** `mp.py`'s
+> `_shot_before_and_after` waited for the log line `death_test: ALIVE control window`
+> before capturing what it named `A_prehit`. Measured from a preserved log
+> (`scratchpad/death_run_180149.log`, lines 10373-10374):
+>
+> ```
+> 18:01:24  death_test: ALIVE control window -- ...
+> 18:01:24  death_test: delivered Add Player Damage(200, blood=true)   <- THE LETHAL HIT
+> 18:01:25  A_prehit_33988.png written                                 <- the "pre-hit" shot
+> ```
+>
+> Those two log lines are ADJACENT and land in the SAME SECOND, so the poll always fired
+> after the hit. **Every `A_prehit` frame this instrument ever produced was a POST-hit
+> frame.** The table's first row then paired that PNG with `health=100.00` from the
+> `pre-hit state` line logged ELEVEN SECONDS EARLIER, and concluded "the tint is present
+> at full health, therefore not the death". Two different instants, read as one.
+>
+> **What the red actually is**, all measured in the same run: all four
+> `damage_{up,down,left,right}` quadrants at **8.00** (the all-quadrant branch -- the
+> synthetic hit has `damageLocation == (0,0,0)`), `dmg_tunnel` at alpha **1.0**
+> (`1 - health/100` with health 0), and the `blood=true` `effect_bloodLoss_C`
+> post-process. "I'm too injured" in the frame is the damage reaction line.
+>
+> **The falsifying controls** (`mp.py hudtint`, `coop/dev`-style probe in
+> `harness/autotest_hud_tint.cpp`), each a real captured frame at `health=100.00`:
+> a New Game is **NOT red**; `s_test_screens2` -- the save every death run loads, the one
+> this section blamed -- is **NOT red**; sessionless is **NOT red**; and **not red even
+> with `VOTVCOOP_RUN_DEATH_TEST` armed**, pre-hit. The instrument now waits for
+> `death_test: pre-hit state` (~11 s before the hit) and its frame is clean.
+>
+> So these rows are RETRACTED specifically: "the arc itself -- not the death" (it IS the
+> death), "the save -- a New Game is equally red" (a New Game is not red at all), and the
+> whole "AND THE SOURCE IS NAMED ... it is VOTV's own BAD SUN" paragraph. The Bad Sun
+> reading was already self-retracted at the bottom of this section; it is now moot.
+>
+> **What still stands, and is the real defect this dig found:** `ui_damageIndicator_C`'s
+> Tick death branch does `@2292 dmg_full.SetVisibility(Visible)` while `dmg_full` is
+> authored `Collapsed`, and the ALIVE path never writes that field -- a ONE-WAY LATCH
+> vanilla never has to undo because it always tears the world down. We keep the world, so
+> a revived player keeps a full-screen red image forever. See 11.3b.
+>
+> Lesson: `[[lesson-a-screenshot-and-a-log-line-are-two-instants]]`.
+
+### 11.3a-orig (superseded) THE RED SCREEN: what it was, and the two hours it cost
 
 The user watched a run and reported the revived player standing at the KPP with the whole
 screen washed red. Four successive investigations followed, each finding a real thing, each

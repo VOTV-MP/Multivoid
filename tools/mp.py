@@ -2977,9 +2977,18 @@ def cmd_death(args) -> None:
         shots = ROOT / "research" / "death_shots"
         shots.mkdir(parents=True, exist_ok=True)
         deadline = time.time() + 120
+        # WAIT FOR `pre-hit state`, NOT `ALIVE control window`. Measured 2026-08-31 from a
+        # preserved log: the control-window line and `delivered Add Player Damage(200,
+        # blood=true)` are logged in the SAME SECOND (adjacent lines), and this poll fires
+        # after it -- the PNG landed at 18:01:25, one second AFTER the lethal hit. So every
+        # "A_prehit" frame this instrument ever produced was a POST-hit frame, and pairing it
+        # with the `health=100.00` from the pre-hit line 11 s earlier is what produced
+        # DEATH_ARC 11.3a's "the tint is present at full health, therefore not the death" --
+        # a conclusion built on two different instants. `pre-hit state` is ~11 s before the
+        # hit and is a real baseline.
         while time.time() < deadline:
             try:
-                if "death_test: ALIVE control window" in host_log.read_text(errors="ignore"):
+                if "death_test: pre-hit state" in host_log.read_text(errors="ignore"):
                     break
             except Exception:
                 pass
@@ -3317,6 +3326,77 @@ def cmd_fogprobe(args) -> None:
         "The 'VERDICT cleared=1' line proves destroy-actors+SetFogDensity is the host-auth clear.")
     log(f"DONE: {len(shots)} screenshot(s) -> {shots_dir}")
     sys.exit(0 if len(shots) >= 1 else 2)
+
+
+def cmd_hudtint(args) -> None:
+    """SOLO SP HUD RED-TINT discriminator. Launches ONE host instance (New Game by
+    default) with VOTVCOOP_RUN_HUD_TINT_PROBE=1 and captures FOUR screenshots:
+
+      A baseline | B whole umg_damageIndicator collapsed | C dmg_tunnel only | D dmg_full only
+
+    WHY A NEW GAME: docs/DEATH_ARC.md 11.3a measured the red present at health=100.00,
+    dead=0, on a New Game, on both RHIs -- so a fresh save removes save state as a
+    variable and reproduces the unexplained red in its simplest form.
+
+    HOW TO READ IT, and read A vs B FIRST: if B is still red, the whole damage indicator
+    is EXCLUDED and the red is somewhere this probe does not reach -- that is a real
+    result, not a failed run. If B is clean, C says whether the always-on `dmg_tunnel`
+    (drawing mat_tunnel at alpha = 1 - health/100) is the source. D should change nothing
+    on a live player -- dmg_full is authored Collapsed and only the death branch shows it;
+    a visible change in D would mean it was latched without a death, which is worth
+    knowing on its own. The per-arm live numbers are in the log tail."""
+    shots_dir = Path(__file__).resolve().parent.parent / "research" / "hud_tint_shots"
+    shots_dir.mkdir(parents=True, exist_ok=True)
+
+    if kill_all() > 0:
+        log("note: pre-existing VotV instances killed before hudtint")
+    deploy_all()
+
+    os.environ["VOTVCOOP_RUN_HUD_TINT_PROBE"] = "1"
+    if getattr(args, "with_death", False):
+        os.environ["VOTVCOOP_RUN_DEATH_TEST"] = "1"
+
+    log("--- HOST LAUNCH (solo HUD tint probe%s%s%s) ---" % (
+        ", New Game" if args.fresh else "",
+        ", SESSIONLESS" if args.sessionless else "",
+        ", +death test" if getattr(args, "with_death", False) else ""))
+    host_pid = launch_peer("host", args.port, "Host", peer=None,
+                           res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
+                           memory_limit_gb=args.memory_limit_gb,
+                           host_fresh=args.fresh,
+                           set_net_role=not args.sessionless)
+
+    host_log = HOST_DIR / "multivoid.log"
+    arms = [("A-BASELINE", "A_baseline"), ("B-NOINDICATOR", "B_no_indicator"),
+            ("C-NOTUNNEL", "C_no_tunnel"), ("D-NOFULL", "D_no_full")]
+    shots: list[Path] = []
+    # The first arm has to survive the whole boot into gameplay; the rest follow ~2.5 s apart.
+    timeout = args.probe_timeout
+    for marker, fname in arms:
+        if not _wait_for_log(host_log, f"HUDTINT {marker} READY", timeout, "HOST"):
+            log(f"WARN: never saw HUDTINT {marker} READY")
+            break
+        timeout = 30
+        time.sleep(1.0)  # let the frame settle after the visibility write
+        p = shots_dir / f"host_{fname}.png"
+        if _capture_window(host_pid, p):
+            shots.append(p)
+            log(f"  {marker} shot: {p.name}")
+
+    _wait_for_log(host_log, "hudtint: DONE", 40, "HOST")
+    tail_log(host_log, 40, "HOST")
+
+    log("--- KILLING ---")
+    kill_all()
+
+    log("--- HUDTINT VERDICT ---")
+    for p in shots:
+        log(f"  screenshot: {p}")
+    log("Compare A vs B FIRST. B still red => the damage indicator is EXCLUDED (a real "
+        "result). B clean => C decides whether dmg_tunnel is the source. D should be a "
+        "no-op on a live player.")
+    log(f"DONE: {len(shots)}/4 screenshot(s) -> {shots_dir}")
+    sys.exit(0 if len(shots) == 4 else 2)
 
 
 def cmd_nativeui(args) -> None:
@@ -5379,6 +5459,24 @@ def main() -> None:
                             help="per-process commit cap in GB (0 = disabled)")
     for flag, kw in host_res: p_fogprobe.add_argument(flag, **kw)
     p_fogprobe.set_defaults(func=cmd_fogprobe)
+
+    p_hudtint = sub.add_parser("hudtint",
+                               help="SOLO SP probe: collapse the damage indicator / dmg_tunnel / dmg_full one arm at a time and shoot a frame each -- settles what paints the red wash")
+    p_hudtint.add_argument("--probe-timeout", type=int, default=180,
+                           help="seconds to wait for the FIRST arm marker (covers boot into gameplay)")
+    p_hudtint.add_argument("--fresh", action="store_true", default=True,
+                           help="boot a New Game (default; matches the DEATH_ARC 11.3a condition)")
+    p_hudtint.add_argument("--no-fresh", dest="fresh", action="store_false",
+                           help="load the usual save instead of a New Game")
+    p_hudtint.add_argument("--sessionless", action="store_true",
+                           help="launch WITHOUT a net role, exactly as `mp.py death` does -- the one "
+                                "launch difference between a red death run and a clean hudtint run")
+    p_hudtint.add_argument("--with-death", action="store_true",
+                           help="also arm VOTVCOOP_RUN_DEATH_TEST so the arms fire inside a death run")
+    p_hudtint.add_argument("--memory-limit-gb", type=float, default=12.0,
+                           help="per-process commit cap in GB (0 = disabled)")
+    for flag, kw in host_res: p_hudtint.add_argument(flag, **kw)
+    p_hudtint.set_defaults(func=cmd_hudtint)
 
     p_nativeui = sub.add_parser("nativeui",
                                 help="SOLO menu-time probe for the native server browser (P1): UMG "
