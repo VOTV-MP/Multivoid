@@ -97,6 +97,52 @@ that rots unbumped is the exact failure that got mod semver deleted in 2026-07-1
 typed `version_number` recreates it one layer out. Emit at package time from `VOTVCOOP_GAME_TARGET`
 + `kProtocolVersion`, and fail closed if either parse misses.
 
+## 3a. The support link — allowed, first-class, and only half of it is immutable
+
+**Asked by the user 2026-08-31 ("а так можно?"), answered by measurement, not by assumption.**
+
+**It is allowed, and Thunderstore has a built-in field for it.** `[V]` every package object in the
+public API (`https://thunderstore.io/c/voices-of-the-void/api/v1/package/`) carries a
+**`donation_link`** key, beside `owner` / `is_deprecated` / `categories`. It is **not** in
+`manifest.json` (§3 lists every field) and **not** on the version object — so it is set on the
+website at PACKAGE level, which means, unlike anything in §5, **it can be changed later without
+burning a version number.**
+
+`[V]` **Measured across the live VOTV catalog, 2026-08-31: 51 of 188 packages publish one** —
+ko-fi 42, patreon 5, **boosty.to 1**, plus three one-offs. Including `ebkr-r2modman` itself, the
+mod manager, which links a charity.
+
+`[V]` **Boosty specifically already has a precedent in this exact community**:
+`Antoha256M-Manual_Russian_Translation` (a Russian manual translation) links
+`boosty.to/antoha256m` — live, **not deprecated**, 4,973 downloads, rating 11. So the platform
+is not merely tolerated in the abstract; it is in use, in this community, unflagged.
+
+**The one rule that touches this** is the spam clause in the global rules — *"packages that exist
+primarily to advertise an outside platform or service"* are not allowed. That is aimed at a package
+whose REASON is the advert; a working mod with a support link is not it. The global rules say
+**nothing** about donations, paywalls, paid mods, or link shorteners
+(`wiki.thunderstore.io/moderation/global-rules`, re-read 2026-08-31 — note the old
+`thunderstore.io/wiki/...` path now 404s).
+
+**So the link goes in two places, and they cost differently:**
+
+| surface | mutable after publish? | consequence |
+|---|---|---|
+| package `donation_link` (website setting) | **YES** | change it any time; a wrong or dead URL is a five-second fix |
+| the badge in `README_thunderstore.md` | **NO** — baked into the version (§5) | a change costs a whole new version number |
+
+The field is what the site renders as a support button; the badge is what a reader sees in the page
+text. Decide the README half *before* `package.ps1` runs and treat the field as the recoverable one.
+
+**Status, 2026-08-31 — none of this is live, and that is a decision, not a gap.** The repo README
+badge, the Support row and `.github/FUNDING.yml` stay **pulled** (`7ebc2554`; restored in
+`1aca131b` and pulled again in `c18003aa` — **USER: "No dont restore"**, after the page itself was
+confirmed live at `https://boosty.to/pelmentor`). *The page existing and the buttons going live are
+two different decisions and only the user makes the second one.*
+`tools/release/README_thunderstore.md` still carries its badge and is still not live until the
+first upload — so whether it survives into the zip is an open call that must be made before
+`package.ps1` runs. `donation_link` is not set and cannot be until the package exists.
+
 ## 4. First upload
 
 1. Zip the tree in §2. **The files must be at the zip root — not nested inside an extra folder.**
