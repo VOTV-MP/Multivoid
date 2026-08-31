@@ -27,8 +27,9 @@
 //
 // SHAPE OF THE EXCHANGE (three messages; the host proves itself FIRST).
 //   C->H  AuthHello     { clientNonce }
-//   H->C  AuthChallenge { hostNonce, sigHost(blob[HOST, hostPub, clientPub, clientNonce]) }
-//   C->H  AuthProof     { sigClient(blob[CLIENT, hostPub, clientPub, hostNonce]) }
+//   H->C  AuthChallenge { hostNonce, flags, sigHost(blob[...clientNonce]) }
+//   C->H  AuthProof     { sigClient(blob[...hostNonce]), hasPw, pwTag }
+// where blob[...n] = [dir, proto, hostPub, clientPub, n, flags, hostNonce]
 // then the host admits, and its EXISTING `AssignPeerSlot` is the client's signal
 // that it may begin. There is deliberately no fourth message: `[V]`
 // FinishPeerConnected sends AssignPeerSlot only on a host, and on a host it runs
@@ -38,13 +39,27 @@
 // rides a DIFFERENT lane than the proof and could overtake it.
 //
 // THE BLOB IS DOMAIN-SEPARATED AND NAMES BOTH ENDS. A signature carries a fixed
-// tag, a direction byte, the protocol version, both public keys and the
-// verifier's nonce. Both identities are in it so a signature harvested from one
-// session cannot be replayed toward a THIRD party, and the direction byte is
-// what stops the host's own challenge being reflected back as the client's proof.
-// Each side takes the counterparty's key from ITS OWN connection and never from
-// the message -- a blob built from an attacker-supplied key would verify against
-// that key and prove nothing.
+// tag, a direction byte, the protocol version, both public keys, the verifier's
+// nonce, the challenge FLAGS and the host's own nonce (159 bytes, tag
+// `multivoid-peer-admission-v2`). Both identities are in it so a signature
+// harvested from one session cannot be replayed toward a THIRD party, and the
+// direction byte is what stops the host's own challenge being reflected back as
+// the client's proof. Each side takes the counterparty's key from ITS OWN
+// connection and never from the message -- a blob built from an attacker-supplied
+// key would verify against that key and prove nothing.
+//
+// THE LAST TWO FIELDS WERE ADDED 2026-08-31 BY A POST-SHIP AUDIT, and the reason
+// belongs here rather than only at the layout: `flags` is what tells a joiner a
+// password is wanted, and while it sat OUTSIDE the signature a relay could set it
+// on an OPEN lobby's challenge -- a bound client would then derive and emit a real
+// password tag to a host that never asked, turning P1's impersonation residual
+// into a tag-harvesting oracle. Two negative selftest arms hold both fields in.
+//
+// THE LOBBY PASSWORD RIDES THIS EXCHANGE (security A2, built 2026-08-31). The tag
+// is a SEPARATE `AuthProof` field and deliberately NOT inside the signed blob --
+// see `coop/net/lobby_password.h` for the rule that forbids it, which is the one
+// thing about this module a future edit is most likely to get wrong. A client
+// sends `hasPw = 0` unless it BOUND the host to its advertised identity.
 //
 // THREADING. Everything here runs on the NET thread: both hosts' park edges, the
 // pending drain, and the client's status callback. There is no lock, because

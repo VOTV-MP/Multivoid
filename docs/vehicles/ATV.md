@@ -2063,3 +2063,38 @@ guarantees only that a MIRROR never authors one. ~~And the eject half has still 
 observed.~~ (Observed later the same day — §17.17's drill runs; the HOST direction is complete,
 the client direction is the filed lane.)
 
+
+---
+
+## 18. `[V]` THE PROBE FAULTS IN A NORMAL SMOKE — observed 2026-08-31, NOT diagnosed
+
+**Not an ATV-arc finding; a live signal from the arc's own instrument, recorded here because it
+has nowhere else to go and would otherwise be lost.** Seen while running `mp.py smoke` on an
+unrelated build (the lobby-password work, proto 149, DLL `fc00ec60`), on a rig where the ATV
+probe is armed and sampling every 500 ms.
+
+Both peers logged absorbed access violations inside the probe's own read:
+
+```
+[ERROR] game_thread: PE detour-outer-callback AV caught -- function='vehicleGetParts'
+[ERROR] game_thread: posted task FAULT code=0xC0000005 ip=... [main.dll+0x31A2A3]
+```
+
+3 on the host, 8 on the client, in a ~90 s two-peer smoke that otherwise PASSED (both peers
+stable, client seated in slot 1, no RAM breach). The SEH guard caught every one, so nothing
+crashed and no player could be harmed by it — `coop/dev/atv_probe.cpp` is a dev diagnostic.
+
+**Why it is worth a row rather than a shrug.** `vehicleGetParts` is the READ half of the
+matched read/write pair §0.4 names as "exactly the primitive a correct vehicle mirror needs" —
+so the same call a future mirror would depend on is faulting today, under the guard, silently.
+§13's own instrument is the thing throwing.
+
+**What is NOT known and was NOT investigated:** whether it faults on a particular ATV state
+(the smoke's ATV is parked, `driven=0`, `occ=0`), whether the 8-out-param signature is being
+called with a stale `self`, whether it predates the v147 condition lane, or whether it is
+reachable at all with the probe off. The arc is PAUSED by the user and this was found by a
+smoke belonging to another lane, so it was flagged rather than chased.
+
+**Look here FIRST when the ATV arc resumes:** run `mp.py smoke` with the probe armed, read the
+host and client logs for `vehicleGetParts`, and answer the cheap question before any other —
+does the fault survive with `atv_probe` OFF? If it does, it is not the probe.

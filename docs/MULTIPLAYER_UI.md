@@ -1641,7 +1641,7 @@ resolves toward UMG, that arc resolves with it rather than needing its own AOB.
   **zero `.layout` files** — the browser is built in code, not authored. The one divergence (they bind
   handlers, we poll) owes a one-line citation comment at the site, per the MTA rule.
 
-### 8d. HOSTING IS TWO WINDOWS, AND THE LOCK HAS A GATE BEHIND IT (AS-BUILT 2026-08-31, `3ac1c922` + `094df495`, proto 148, lab-driven NOT hands-on)
+### 8d. HOSTING IS TWO WINDOWS, AND THE LOCK HAS A GATE BEHIND IT (AS-BUILT 2026-08-31, `3ac1c922` + `094df495` + `1de6e84f`, proto 149, lab-driven NOT hands-on)
 
 **USER DECISION** (verbatim): *"когда он выбрал сейв или new game, далее юзеру покажем еще
 одно окно, где уже будет настройка сессии, пароль замок и тд ... и только после этого он
