@@ -336,10 +336,16 @@ void RefreshLatestVersion() {
                     line = DisplayVersion() + " (latest)";
                 } else if (info.proto > ours) {
                     outdated = true;
-                    line = DisplayVersion() + " -- UPDATE " +
-                           (info.mod.empty() ? ("b" + std::to_string(info.proto)) : info.mod) +
-                           " AVAILABLE: " +
-                           (info.url.empty() ? net::kReleasesUrl : info.url);
+                    // NO URL (user 2026-08-31: "url не надо показывать, это длинно,
+                    // достаточно лаконичного текста что обнова доступна"). It used to
+                    // append the release page, which cost ~37 characters on a ONE-LINE
+                    // main-menu label to deliver a string nobody can act on: the label is
+                    // a UTextBlock, not a hyperlink, so the address was only ever
+                    // retypeable, never clickable. What stays is the part that IS
+                    // actionable -- WHICH build supersedes yours; a player who knows they
+                    // are behind already knows where they got the mod.
+                    line = DisplayVersion() + " -- UPDATE AVAILABLE: " +
+                           (info.mod.empty() ? ("b" + std::to_string(info.proto)) : info.mod);
                 } else {
                     // We are NEWER than the master's latest (a dev build) -- informational.
                     line = DisplayVersion() + " (dev; latest released b" +

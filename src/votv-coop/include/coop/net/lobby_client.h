@@ -86,11 +86,17 @@ struct JoinInfo {
 // The master's "latest released mod" record (GET /v1/latest, v59 launch toast).
 // ok=false when the master is unreachable / pre-v59 (404) -- the caller stays
 // silent in that case (never nag an offline player).
+// The /v1/latest verdict. The master ALSO serves a `url` (the release page) and we
+// deliberately do not parse it: since 2026-08-31 the version label prints no address
+// (user: the one-line label had no room for ~37 characters nobody can click), so a
+// field with no reader is retired rather than kept warm (RULE 2). The one place the
+// mod still names a download -- the version-mismatch line on a refused join -- uses
+// the compiled `net::kReleasesUrl`, not a server-supplied string, so nothing here
+// regressed. Re-add the parse only together with a surface that renders it.
 struct LatestInfo {
     bool ok = false;
     int proto = 0;     // latest released kProtocolVersion
     std::string mod;   // human tag, e.g. "0.9.0-n"
-    std::string url;   // release page (github)
 };
 
 class LobbyClient {

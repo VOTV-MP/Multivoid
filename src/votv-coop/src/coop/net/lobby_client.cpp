@@ -224,7 +224,9 @@ LatestInfo LobbyClient::FetchLatest(const std::string& masterUrl, int timeoutMs)
     if (!J::ParseObject(resp.body, j)) { UE_LOGW("lobby: /v1/latest -- malformed response"); return info; }
     info.proto = J::Int(j, "proto");
     info.mod   = J::Str(j, "mod");
-    info.url   = J::Str(j, "url");
+    // `url` is served by the master and deliberately NOT parsed -- see LatestInfo's
+    // header. Ignoring an extra response field is forward-compatible, so this needs
+    // no wire-format change and no protocol bump.
     info.ok    = info.proto > 0;
     return info;
 }
