@@ -65,10 +65,17 @@ row is **b133-dev (2026-07-31)**; 134-148 were never released and the sequence k
 4. **First site deploy.** `site/NOTES.md:74` gates it: do not deploy until `releases_url` carries a
    PUBLISHED (non-draft) release with exactly one zip. So the site goes out **after** the GitHub
    release, never with it.
-5. **First support-rail decision.** The Boosty buttons are pulled (`7ebc2554`) until the page
-   exists. The store README is immutable after upload, so the badge is **in or out before
-   `package.ps1` runs** — restoring it afterwards costs a version number. Checklist: the local
-   `SUPPORT.md` top box.
+5. **First support-rail decision.** The live buttons (repo README badge + Support row +
+   `.github/FUNDING.yml`) are **pulled and staying pulled** — `7ebc2554`, restored in `1aca131b`
+   and pulled again in `c18003aa` on the user's word, *after* `https://boosty.to/pelmentor` was
+   confirmed live. The page existing is not the same decision as the buttons going live.
+   **Still open and it is one-shot:** `tools/release/README_thunderstore.md` keeps its badge, and
+   the store README is immutable after upload — so the badge is **in or out before `package.ps1`
+   runs**, and putting it back later costs a whole version number. The *other* half is cheap and
+   should not be confused with it: Thunderstore's package-level `donation_link` is a website
+   setting, not a manifest field, so it can be set or changed at any time after publish
+   (`docs/THUNDERSTORE.md` §3a — allowed, first-class, 51 of 188 VOTV packages use one, one of
+   them a Boosty link).
 
 ### The VPS work — the part with no step of its own until now
 
@@ -95,13 +102,16 @@ Windows trust store carries an **expired cross-signed `ISRG Root X2`**. The scri
 `--cafile`, so today the only way to run the BLOCKING gate here is `--plaintext` against port
 10000. Fix the script or the store before the day; do not discover this at the tag.
 
-**The update notice is stable-only, and that collides with the cutoff.** `COOP_LATEST_*` is
-commented out in `/etc/coop-master.env`, so `/v1/latest` serves `proto 0` and the in-game check
-stays silent. Ritual step 6 sets it *for stable releases only*. If this ships as a **dev**
-prerelease, a b133 player is refused with "update Multivoid" and the game never points them
-anywhere. **Recommendation: set `COOP_LATEST_PROTO` / `COOP_LATEST_MOD` for this release
-regardless of dev/stable** — the rule exists to stop dev builds nagging stable users, and on the
-one day we cut a cohort off, telling them where to go is the whole job. User's call.
+**The update notice is stable-only, and this release IS a dev prerelease — so the collision is
+live, not hypothetical.** `COOP_LATEST_*` is commented out in `/etc/coop-master.env`, so
+`/v1/latest` serves `proto 0` and the in-game check stays silent. Ritual step 6 sets it *for
+stable releases only*. With the user's 2026-08-31 decision that b<N> ships as **dev**, a b133
+player is refused at `/v1/host` with *"this build is too old to host — update Multivoid"* and the
+game never points them anywhere. **Recommendation: set `COOP_LATEST_PROTO` / `COOP_LATEST_MOD`
+anyway, this once** — the stable-only rule exists to stop dev builds nagging stable users, and
+there are no stable users; on the one day we cut a cohort off, telling them where to go is the
+whole job. Still the user's call. If the answer is no, the refusal string is the only notice the
+player gets, and the release notes + Discord have to carry the rest.
 
 ### Before the day — free, and worth doing
 
@@ -125,7 +135,10 @@ Ritual steps in brackets.
    `tripwires.ps1`, `ledger_lint.ps1`. **The "for a stable: hands-on verified" clause is
    superseded** by the user's standing position that autonomous evidence is the ceiling
    (`[[feedback-autonomous-evidence-is-the-ceiling]]`); do not park the release on it.
-2. Decide the three forks: dev vs stable · Boosty badge in or out · `COOP_LATEST_*` yes/no.
+2. Two forks are **DECIDED (user, 2026-08-31)**: this release is a **dev prerelease**, and the
+   live Boosty buttons stay **pulled**. Two remain: the store-page badge in
+   `README_thunderstore.md` (one-shot — see first #5) and `COOP_LATEST_*` (below — and being a
+   dev release is exactly what makes it bite).
 3. Tag + consume row + one atomic leak-audited push [1-3].
 4. **While CI builds (~40 min):** rebuild the two Rust binaries on the box from the tagged source,
    back up the live ones, but **do not restart yet**.
