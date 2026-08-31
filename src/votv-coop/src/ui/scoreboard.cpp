@@ -3,7 +3,7 @@
 #include "ui/scoreboard.h"
 
 #include "coop/moderation/moderation.h"
-#include "coop/session/session_manager.h"  // ListedState / SetListed (the host hide toggle)
+#include "coop/session/session_manager.h"  // ListedState (read-only session info)
 #include "coop/player/nick_color.h"
 #include "coop/player/roster.h"
 #include "coop/voice/voice_chat.h"
@@ -361,19 +361,26 @@ void Render() {
         ImGui::PopStyleColor(2);  // TableRowBgAlt + TableBorderLight
         if (s.count == 0) ImGui::TextDisabled("No players.");
 
-        // Host-only "Hide from server browser" toggle (user 2026-06-11). This is
-        // where an AUTO/relay host hides the lobby ONCE friends are in -- hiding at
-        // host time would make it unjoinable (the master is the only rendezvous), so
-        // it lives here, not in the Host-Game picker. Posts /v1/visibility async;
-        // the session stays live. Mirrors the master state via ListedState().
+        // HOST-ONLY SESSION INFO. READ ONLY -- a session is configured when it is
+        // CREATED and not afterwards (user, 2026-08-31: "в тильда меню забрать
+        // редактирование сессии у хоста в mid coop session, пусть там просто
+        // информация сервера/сессии"; and on the settings generally, "раз создает хост
+        // сессию и всё, с этим и живёт ... надо пусть пересоздает").
+        //
+        // The "Show in server browser" CHECKBOX that stood here is retired with that
+        // rule. What it bought is stated rather than quietly lost: for a DIRECT lobby
+        // the same choice is made at host time and is unaffected, but for an AUTO/relay
+        // lobby hiding was ONLY possible here -- the master is that lobby's sole
+        // rendezvous, so hiding it at creation would make it unjoinable. An AUTO host
+        // therefore can no longer hide once friends are in; the way to stop being listed
+        // is to end the session. That consequence is the user's call and is recorded
+        // here rather than in a commit message nobody re-reads.
         if (host) {
             ImGui::Separator();
-            bool listed = coop::session_manager::ListedState();
-            if (ImGui::Checkbox("Show in server browser", &listed))
-                coop::session_manager::SetListed(listed);
-            ImGui::SameLine();
-            ImGui::TextDisabled(listed ? "(others can find your game)"
-                                       : "(hidden -- friends join by invite/IP)");
+            ImGui::TextDisabled(
+                coop::session_manager::ListedState()
+                    ? "Listed in the server browser -- others can find this game."
+                    : "Not listed -- friends join by invite or IP.");
         }
 
         // Permanent-ban confirmation modal (shared across rows; g_banConfirmSlot
