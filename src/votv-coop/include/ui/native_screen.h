@@ -46,6 +46,16 @@ namespace ui::native_screen {
 
 using ue_wrap::FLinearColor;
 
+// THE RENDERED WIDTH OF ONE FRAME RING, in Slate units.
+//
+// `[V]` the game's 9-slice `inst_uiBorder` draws a 2 px light band and a 2 px dark one per
+// edge, measured on both a native capture and our own. Every distance that has to line a
+// nested frame up with its parent's is THIS, not the 2 px `borderPx` the flat fallback insets
+// its fill by -- those are different quantities and spelling both `2.f` at different call
+// sites is how the second ring merged into the first (`919191x4`, a light run the game never
+// produces).
+inline constexpr float kNativeRingPx = 4.f;
+
 // ---- alignment enums, spelled out so call sites read as prose -----------------------
 // EHorizontalAlignment / EVerticalAlignment: Fill=0 Left=1/Top=1 Center=2 Right=3/Bottom=3.
 inline constexpr uint8_t kFill = 0, kLeft = 1, kCenter = 2, kRight = 3;

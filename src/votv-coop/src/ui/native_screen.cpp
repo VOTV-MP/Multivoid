@@ -237,7 +237,7 @@ bool BuildWindowShell(void* switcher, float widthPx, float heightPx, const wchar
     //
     // Being a slot offset rather than a screen-pixel constant, it tracks DPI the way the game's
     // own borders do.
-    constexpr float kPadPx    = 4.f;
+    constexpr float kPadPx    = kNativeRingPx;
 
     void* root = Spawn(P::name::UserWidgetClass, switcher);
     void* tree = root ? Spawn(P::name::WidgetTreeClass, root) : nullptr;
@@ -312,6 +312,33 @@ void* g_borderDonor = nullptr;
 bool  g_borderDonorTried = false;
 
 void SetBorderDonor(void* donorImage) {
+    // A DONOR WHOSE BRUSH CARRIES NO ART IS REFUSED, so that "we built a framed box" and
+    // "this box looks framed" are ONE fact instead of two that happen to agree.
+    //
+    // `AddFramedBox` chooses its child order from whether a donor exists; `FramedBoxParts`
+    // works out which child is which by reading the border's `ResourceObject`. Those were
+    // different predicates, and a donor that resolved but carried no art would have built the
+    // framed order and been classified flat -- every server row's fill and border swapped,
+    // silently, with no log line and no rect difference to reveal it. Not a hypothetical
+    // shape here: `[V]` on `ui_saveSlots_C.button_back` only three of four brushes carry a
+    // ResourceObject, and which ones do is exactly the kind of fact a recook moves.
+    //
+    // Refusing here collapses the two predicates: a published donor ALWAYS clones a brush with
+    // art (`ZeroBrushHandles` clears only the resource HANDLE at +0x70, never the object at
+    // +0x48), so the classification cannot disagree with the construction. The failure mode is
+    // the one this donor already documents as tolerable -- the flat frame -- rather than an
+    // inverted one.
+    if (donorImage) {
+        void* art = ReadPtr(donorImage, static_cast<int32_t>(P::off::UImage_Brush +
+                                                             P::off::FSlateBrush_ResourceObject));
+        if (!art) {
+            UE_LOGW("native_screen: frame donor %p has no brush art (ResourceObject is null) -- "
+                    "REFUSED; windows keep the flat border rather than a mis-ordered frame",
+                    donorImage);
+            g_borderDonorTried = true;
+            return;
+        }
+    }
     g_borderDonor = donorImage;
     g_borderDonorTried = true;
 }
@@ -334,6 +361,17 @@ bool FramedBoxParts(void* overlay, FramedParts& out) {
     void* c0 = U::ChildAt(overlay, 0);
     void* c1 = U::ChildAt(overlay, 1);
     if (!c0 || !c1) return false;
+    // BOTH children must actually be UImages. The header has always promised this function
+    // returns false for an overlay that "does not look like a framed box", and until now it
+    // promised it without checking: two children of any class were enough, and the read below
+    // would then interpret an arbitrary widget's bytes at +0x150 as a brush pointer. In bounds
+    // for any UWidget, so no fault -- just a confident wrong answer, which is the same shape as
+    // the defect this whole function exists to prevent. `NameEquals` is allocation-free and
+    // case-insensitive; `ClassNameOf` would mint two wstrings per row per sync.
+    if (!R::NameEquals(R::NameOf(R::ClassOf(c0)), P::name::ImageClass) ||
+        !R::NameEquals(R::NameOf(R::ClassOf(c1)), P::name::ImageClass)) {
+        return false;
+    }
     out.content = n >= 3 ? U::ChildAt(overlay, 2) : nullptr;
     // WHICH of the two images is the border is decided by READING one, not by counting them.
     //
