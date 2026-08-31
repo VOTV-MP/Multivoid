@@ -746,6 +746,19 @@ public:
     bool SendRawReliableToConn(uint32_t hConn, ReliableKind kind,
                                const void* payload, int len);
 
+    // CLIENT: the host identity we were TOLD to dial (`gen:<64 hex>`), empty on a
+    // host or when nothing advertised one.
+    //
+    // It exists for exactly one caller and one question -- `peer_admission` asking
+    // "is the key on this socket the key I came here for". Without it the client
+    // read the host's key off the socket, verified the host against THAT, and
+    // reported failure as "the host did not prove the identity it advertised". It
+    // advertised nothing; any host that answers passes a challenge it named itself
+    // (security A65, found 2026-08-31). Narrow rather than a `Cfg()` accessor: this
+    // is the only field of the config the net-thread exchange has any business
+    // reading, and a general one invites the rest.
+    const std::string& AdvertisedHostIdentity() const { return cfg_.hostIdentity; }
+
     // CLIENT: the host admitted us (its AssignPeerSlot arrived after we proved it),
     // so finish the link -- lanes, the send-buffer mirror, and the flag every
     // IsSlotReady consumer waits on. Deliberately NOT done at the Connected edge

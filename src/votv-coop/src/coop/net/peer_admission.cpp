@@ -105,6 +105,11 @@ HostRow g_host[kMaxHostRows];
 struct ClientRow {
     bool     open = false;
     bool     proved = false;
+    // Did the key on the socket MATCH the identity we were sent to dial? False on a
+    // lane that advertises no identity (LAN, plain UDP), where there is nothing to
+    // match against -- which is a different thing from a mismatch, and the reason
+    // this is a fact and not a verdict. See ClientOnConnected.
+    bool     bound = false;
     uint32_t hConn = 0;
     uint8_t  nonce[kAuthNonceBytes]{};
     PubKey   hostPub{};
@@ -261,7 +266,66 @@ bool ClientOnConnected(Session& session, uint32_t hConn) {
                 "(an older build, or something in the middle)");
         return false;
     }
+
+    // THE BINDING, AND WITHOUT IT THE WHOLE EXCHANGE PROVES NOTHING ON THIS SIDE
+    // (security A65, fixed 2026-08-31).
+    //
+    // The key above comes off the SOCKET. Verifying the host against it -- which is
+    // all this module used to do -- asks "does whoever answered hold the key
+    // whoever answered presented", and every host on earth passes that. The failure
+    // message even said "the host did not prove the identity it ADVERTISED", while
+    // nothing advertised reached the verifier: `hostIdentity` appeared nowhere in
+    // this file. It is the project's own false-security-comment class, in security
+    // code.
+    //
+    // What we came here for is `cfg.hostIdentity` -- the `gen:<64 hex>` the master
+    // returned from /v1/join, or the one a friend put in a direct invite. Compared
+    // BYTE-WISE after parsing, never as strings.
+    //
+    // AN EMPTY ADVERTISED IDENTITY IS NOT A FAILURE and must not become one: the LAN
+    // and plain-UDP lanes dial an address, not a name, and there is nothing to bind
+    // to. Those lanes are exactly where a password's own binding has to carry the
+    // weight instead, which is why this returns a fact rather than a verdict.
     g_client.drill = coop::config::ResolveEnum(coop::config_registry::rows::auth_drill);
+
+    const std::string& advertised = session.AdvertisedHostIdentity();
+    peer_identity::PubKey want{};
+    bool haveWant = false;
+    if (g_client.drill == "mismatch") {
+        // SYNTHESIZED, because the drill must be runnable on the lane the rig
+        // actually uses. `mp.py authdrill` is a LAN run and LAN advertises no
+        // identity at all, so an arm that only fired when one was present would be
+        // green on every rig we own -- an instrument blind to the axis it grades.
+        // One flipped bit is a key that provably is not the one on this socket.
+        want = g_client.hostPub;
+        want[0] ^= 0x01;
+        haveWant = true;
+        UE_LOGW("peer_admission: DRILL 'mismatch' -- pretending we were sent to a "
+                "different host than the one that answered. THIS peer must refuse, "
+                "before it sends anything at all.");
+    } else if (!advertised.empty()) {
+        if (!peer_identity::PublicKeyFromIdentityString(advertised, want)) {
+            UE_LOGE("peer_admission: the advertised host identity is not a key identity "
+                    "(%zu chars) -- refusing to join rather than dialling something this "
+                    "build cannot name", advertised.size());
+            return false;
+        }
+        haveWant = true;
+    }
+    if (haveWant) {
+        if (want != g_client.hostPub) {
+            UE_LOGE("peer_admission: the host on this socket is NOT the host we were sent "
+                    "to. Advertised guid %s, answered %s -- refusing.",
+                    peer_identity::GuidForPublicKey(want).c_str(),
+                    peer_identity::GuidForPublicKey(g_client.hostPub).c_str());
+            return false;
+        }
+        g_client.bound = true;
+    } else {
+        UE_LOGW("peer_admission: no advertised host identity on this lane -- the exchange "
+                "can prove the host holds its own key, but not that it is the host you "
+                "meant. Nothing password-derived may be sent to it.");
+    }
     AuthHelloPayload hello{};
     if (!peer_identity::RandomBytes(hello.nonce, sizeof(hello.nonce))) {
         UE_LOGE("peer_admission: the OS refused randomness -- cannot open the exchange");
@@ -307,7 +371,16 @@ bool ClientOnReliable(Session& session, uint32_t hConn, ReliableKind kind,
     Sig hostSig{};
     std::memcpy(hostSig.data(), ch.sig, hostSig.size());
     if (!peer_identity::VerifyBlob(g_client.hostPub, blob, sizeof(blob), hostSig)) {
-        *outClose = "the host did not prove the identity it advertised";
+        // TWO REASONS, because they are two different events and telling them apart
+        // is the whole of A65. BOUND means we already checked this key IS the one we
+        // were sent to, so a bad signature here is a host that cannot back its own
+        // advertised name. UNBOUND means nobody advertised anything, so all this
+        // could ever have shown is that the answerer holds the key it presented --
+        // which is what the old, single message claimed either way.
+        *outClose = g_client.bound
+                        ? "the host did not prove the identity it advertised"
+                        : "the host did not prove the key it presented (no identity was "
+                          "advertised on this lane, so there was nothing to bind to)";
         return true;
     }
 

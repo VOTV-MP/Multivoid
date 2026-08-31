@@ -351,11 +351,14 @@ CFG_INT(atlas_texmax_drill, "atlas_texmax_drill", "dev", 0, 0, 8192,
 // the host's gate has no knob, no dev branch and no env check anywhere, so the
 // drill exercises the REAL refusal or it proves nothing. A knob on the host would
 // make the drill's own pass conditional on a bypass existing in shipped code.
-CFG_ENUM(auth_drill, "auth_drill", "dev", "off", "off|corrupt|silent",
+CFG_ENUM(auth_drill, "auth_drill", "dev", "off", "off|corrupt|silent|mismatch",
     "VOTVCOOP_AUTH_DRILL",
     "Sabotage THIS CLIENT's identity proof, to prove the host refuses it. corrupt = "
     "send a flipped signature; silent = open the exchange and never answer. Both must "
-    "leave this peer unseated and with no save. Drill only.")
+    "leave this peer unseated and with no save. mismatch = pretend we were sent to a "
+    "DIFFERENT host than the one that answered, which THIS peer must refuse itself "
+    "(security A65) -- it is the only arm whose refusal is ours, not the host's. "
+    "Drill only.")
 CFG_FLAG(atlas_no_exclude_drill, "atlas_no_exclude_drill", "dev", false,
     "VOTVCOOP_ATLAS_NO_EXCLUDE",
     "Drop GlyphExcludeRanges from every font source, so the faces bake their whole "
