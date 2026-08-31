@@ -145,6 +145,13 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // (for the client-death flee-to-menu fix). No connection needed.
     SpawnIf("VOTVCOOP_RUN_MENUTRAVEL_PROBE", "menu-travel probe", &MenuTravelProbeThread, role);
 
+    // Re-load churn probe: solo, sessionless. gameplay -> menu -> re-load, N times,
+    // censusing every live UWorld's PersistentLevel/WorldSettings chain at each step.
+    // The NEGATIVE CONTROL for the 2026-08-31 rejoin crash (a null AWorldSettings in
+    // UEngine::LoadMap): it answers whether the second in-process map load faults with
+    // no coop layer in the picture at all.
+    SpawnIf("VOTVCOOP_RUN_RELOAD_CHURN", "re-load churn probe", &ReloadChurnProbeThread, role);
+
     // CachedObjRef zero-AV drill: solo, engine-independent (fake decommitted-page
     // object). Proves legacy IsLive faults exactly once (absorbed) while
     // CachedObjRef::Alive() answers with zero AVs. DEV smoke lane only.

@@ -2762,6 +2762,147 @@ def cmd_menutravel(args) -> None:
     sys.exit(0)
 
 
+def cmd_reloadchurn(args) -> None:
+    """SOLO NEGATIVE CONTROL for the 2026-08-31 rejoin crash.
+
+    The report: a client joined, left to the menu, joined again, and died two seconds
+    into the SECOND world load with EXCEPTION_ACCESS_VIOLATION reading 0x268. The
+    minidump resolved (statically, against the shipped exe) to
+    UGameInstance::CreateGameModeForURL dereferencing a NULL AWorldSettings returned by
+    UWorld::GetWorldSettings() -- AWorldSettings::DefaultGameMode sits at exactly 0x268.
+
+    Multivoid is nowhere in that stack and names neither PersistentLevel nor
+    WorldSettings anywhere in the tree, so before any coop-side digging this run asks
+    the cheaper question: does the SECOND in-process map load fault with NO coop session
+    at all? One peer, no client, no connection. The probe drives gameplay -> menu ->
+    re-load N times and censuses every live UWorld's PersistentLevel / WorldSettings /
+    DefaultGameMode chain at each step.
+
+    Verdict terms (all three, so a green run cannot hide a defect in the other two):
+      * the process must survive every cycle,
+      * every cycle must log 'SURVIVED the re-load',
+      * no census frame may report nullWorldSettings > 0 -- that IS the crash condition,
+        observed one load before it is fatal.
+    """
+    if kill_all() > 0:
+        log("note: pre-existing VotV instances killed before reloadchurn")
+    deploy_all()
+
+    probe_env = {
+        "VOTVCOOP_RUN_RELOAD_CHURN": "1",
+        "VOTVCOOP_RELOAD_CYCLES": str(args.cycles),
+        "VOTVCOOP_RELOAD_DWELL_S": str(args.dwell),
+        "VOTVCOOP_RELOAD_MENU_S": str(args.menu_dwell),
+    }
+
+    if args.rejoin:
+        # The COOP arm: the probe rides the CLIENT and re-loads the map by rejoining,
+        # which is the reported flow. The host is an ordinary peer with no probe.
+        log("--- HOST LAUNCH (plain host; the client carries the probe) ---")
+        host_pid = launch_peer("host", args.port, "Host", peer=None,
+                               res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
+                               memory_limit_gb=args.memory_limit_gb,
+                               extra_env={"VOTVCOOP_VOICE_ENABLED": "0"})
+        host_log = HOST_DIR / "multivoid.log"
+        bound = False
+        for i in range(args.boot_timeout):
+            time.sleep(1)
+            if host_owns_udp(host_pid, args.port):
+                log(f"host bound UDP {args.port} after {i+1}s"); bound = True; break
+            if not any(p["PID"] == host_pid for p in list_votv()):
+                log("HOST DIED before binding UDP"); tail_log(host_log, 30, "HOST"); kill_all(); sys.exit(1)
+        if not bound:
+            log(f"FAIL: host did not bind UDP within {args.boot_timeout}s")
+            tail_log(host_log, 30, "HOST"); kill_all(); sys.exit(1)
+
+        log(f"--- CLIENT LAUNCH (rejoin churn, {args.cycles} cycle(s)) ---")
+        probe_env["VOTVCOOP_RELOAD_REJOIN"] = "1"
+        probe_env["VOTVCOOP_VOICE_ENABLED"] = "0"
+        watch_pid = launch_peer("client", args.port, "Client", peer="127.0.0.1",
+                                res_x=1280, res_y=720, monitor=2, tile_index=0,
+                                memory_limit_gb=args.memory_limit_gb,
+                                extra_env=probe_env)
+        watch_log = CLIENT_DIR / "multivoid.log"
+        watch_name = "CLIENT"
+    else:
+        log(f"--- HOST LAUNCH (solo re-load churn, {args.cycles} cycle(s), "
+            f"{'FRESH new game' if args.host_fresh else 'save'}) ---")
+        watch_pid = launch_peer("host", args.port, "Host", peer=None,
+                                res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
+                                memory_limit_gb=args.memory_limit_gb,
+                                host_fresh=args.host_fresh,
+                                extra_env=probe_env)
+        watch_log = HOST_DIR / "multivoid.log"
+        watch_name = "HOST"
+
+    t0 = time.time()
+    died = False
+    done = False
+    while time.time() - t0 < args.probe_timeout:
+        time.sleep(3)
+        if not any(p["PID"] == watch_pid for p in list_votv()):
+            died = True
+            log(f"  {watch_name} PROCESS GONE at t+{int(time.time()-t0)}s -- the crash REPRODUCED")
+            break
+        try:
+            text = watch_log.read_text(errors="ignore")
+        except Exception:
+            text = ""
+        if "reloadchurn: DONE" in text:
+            done = True
+            log(f"  probe DONE at t+{int(time.time()-t0)}s")
+            break
+
+    # Read the log BEFORE killing: a killed process discards its buffered INFO tail.
+    try:
+        text = watch_log.read_text(errors="ignore")
+    except Exception:
+        text = ""
+    host_log = watch_log
+    kill_all()
+
+    survived = len(re.findall(r"reloadchurn: cycle \d+ SURVIVED the re-load", text))
+    nulls = [(m.group(1), int(m.group(2)))
+             for m in re.finditer(r"reloadchurn\[([a-z-]+) c\d+\]: VERDICT nullWorldSettings=(\d+)", text)]
+    worst = max((n for _, n in nulls), default=0)
+    offending = sorted({tag for tag, n in nulls if n > 0})
+
+    log("--- RELOADCHURN VERDICT ---")
+    log(f"  cycles requested   : {args.cycles}")
+    log(f"  re-loads SURVIVED  : {survived}")
+    log(f"  census frames      : {len(nulls)}")
+    log(f"  worst nullWorldSettings : {worst}"
+        + (f"  (at: {', '.join(offending)})" if offending else ""))
+    log(f"  process died       : {died}")
+    for line in text.splitlines():
+        if "WORLDSETTINGS IS NULL" in line:
+            log(f"  ! {line.strip()}")
+
+    fails = []
+    if died:
+        fails.append("the process CRASHED -- " +
+                     ("the rejoin reproduces it" if args.rejoin else
+                      "the fault reproduces with NO coop session, so it is the second "
+                      "in-process map load, not the rejoin"))
+    if not done and not died:
+        fails.append(f"probe never reached DONE within {args.probe_timeout}s")
+    if survived < args.cycles and not died:
+        fails.append(f"only {survived}/{args.cycles} re-loads survived")
+    if worst > 0:
+        fails.append(f"a census saw {worst} world(s) with a NULL WorldSettings -- the crash "
+                     f"condition is present at: {', '.join(offending)}")
+    if not nulls:
+        fails.append("no census frames at all -- the probe never ran (check the offsets line)")
+
+    if fails:
+        for f in fails:
+            log(f"  FAIL: {f}")
+        tail_log(host_log, 40, "HOST")
+        sys.exit(1)
+    log("  ALL PASS -- solo re-load churn is clean; the crash needs something this arm lacks")
+    sys.exit(0)
+
+
 def cmd_wirewindow(args) -> None:
     """2-PEER D2 wire-window probe (islive-zeroav DESIGN 2026-08-22 section 6).
 
@@ -5423,6 +5564,31 @@ def main() -> None:
                               help="per-process commit cap in GB (0 = disabled)")
     for flag, kw in host_res: p_menutravel.add_argument(flag, **kw)
     p_menutravel.set_defaults(func=cmd_menutravel)
+
+    p_reload = sub.add_parser("reloadchurn",
+                              help="SOLO NEGATIVE CONTROL for the rejoin crash: gameplay -> menu -> "
+                                   "re-load, N cycles, censusing every live UWorld's "
+                                   "PersistentLevel/WorldSettings chain (the null AWorldSettings "
+                                   "that killed LoadMap)")
+    p_reload.add_argument("--cycles", type=int, default=3,
+                          help="how many gameplay -> menu -> re-load cycles to drive")
+    p_reload.add_argument("--dwell", type=int, default=15,
+                          help="seconds to dwell in gameplay before travelling out")
+    p_reload.add_argument("--menu-dwell", type=int, default=12,
+                          help="seconds to dwell at the menu (lets a pending GC purge run) before re-loading")
+    p_reload.add_argument("--host-fresh", action="store_true",
+                          help="boot a FRESH New Game instead of the fixed test save")
+    p_reload.add_argument("--rejoin", action="store_true",
+                          help="COOP ARM: launch a host too and let the CLIENT re-load the map by "
+                               "REJOINING (the reported flow) instead of loading its own save")
+    p_reload.add_argument("--boot-timeout", type=int, default=90,
+                          help="seconds to wait for the host to bind UDP (rejoin arm only)")
+    p_reload.add_argument("--probe-timeout", type=int, default=600,
+                          help="seconds to wait for 'reloadchurn: DONE'")
+    p_reload.add_argument("--memory-limit-gb", type=float, default=12.0,
+                          help="per-process commit cap in GB (0 = disabled)")
+    for flag, kw in host_res: p_reload.add_argument(flag, **kw)
+    p_reload.set_defaults(func=cmd_reloadchurn)
 
     p_wirewin = sub.add_parser("wirewindow",
                                help="2-PEER D2 probe: does a client exiting to menu with the layer "
