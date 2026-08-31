@@ -285,6 +285,20 @@ DWORD WINAPI RagdollSpawnProbeThread(LPVOID arg);
 void RunMenuTravelProbe();
 DWORD WINAPI MenuTravelProbeThread(LPVOID arg);
 
+// RE-LOAD CHURN probe (2026-08-31, harness/autotest_reloadchurn.cpp). The user's
+// rejoin crash resolved to `UGameInstance::CreateGameModeForURL` dereferencing a NULL
+// `AWorldSettings` -- `UWorld::GetWorldSettings()` returned null, so the world about to
+// be given a GameMode had no `PersistentLevel->WorldSettings`. Multivoid appears
+// nowhere in that stack and never names either field, so this probe's first arm is a
+// NEGATIVE CONTROL: solo, sessionless, it drives gameplay -> menu -> re-load N times
+// and censuses every live UWorld's PersistentLevel / WorldSettings / DefaultGameMode
+// chain at each step. The decisive frame is AT THE MENU: a resident Untitled_1 world
+// with a null WorldSettings is the crash condition, one load early and survivable, so
+// the failing link gets NAMED instead of inferred from a fault address. Env
+// VOTVCOOP_RUN_RELOAD_CHURN=1; launch via `mp.py reloadchurn`.
+void RunReloadChurnProbe();
+DWORD WINAPI ReloadChurnProbeThread(LPVOID arg);
+
 // Deterministic zero-AV drill for the CachedObjRef discipline (islive-zeroav
 // design section 4.2, harness/autotest_islive_drill.cpp): decommitted-page fake
 // object; legacy bare IsLive must fault exactly once (absorbed by its SEH),
