@@ -53,13 +53,20 @@ constexpr float kPadPx    = 6.f;
 // a Fill slot allots more than the window has left, and the list then overflows UPWARD
 // under the header. An override depends on nothing.
 //
-// AND EVERYTHING ELSE IN THIS COLUMN COMES OUT OF IT. At 300 the column asked for more
-// than the window has and the FOOTER was arranged past the bottom edge -- Back and Host
-// hung outside the frame, in both corners, which is what the user saw twice ("кнопки в
-// host меню расходятся", "в левом и правом нижних углах"). The budget, all of it:
-// title 40 + WORLD header 22 + the New-game row 56 + this + CONNECTION header 22 + three
-// 56 px mode rows + footer 54 + the shell's own 12 = the 640 above. 240 leaves ~28 spare,
-// which is the margin a font that measures differently on another machine needs.
+// IT IS A MINIMUM, NOT A BUDGET -- and the difference is the fix.
+//
+// At 300, with every child Automatic, the column asked for more than the window has and the
+// FOOTER was arranged past the bottom edge: Back and Host hung outside the frame in both
+// corners, which is what the user saw twice ("кнопки в host меню расходятся", "в левом и
+// правом нижних углах"). The first fix was to shrink this number until the sum fit -- and
+// the audit that followed showed the arithmetic behind it was wrong anyway (it omitted the
+// title's and the footer's own 6 px slot padding, so the "~28 px spare" it claimed was
+// ~14, inside the uncertainty of a cloned button's style padding).
+//
+// So the real fix is not a better number. The list's slot is now FILL (see its AddVFill
+// below), which makes it the column's slack absorber: this value is what the SizeBox asks
+// for, the slot gives it whatever is left, and no sibling can be arranged off the frame at
+// any font metric. That is the shape the browser's column always had.
 constexpr float kListH    = 240.f;
 // Bounds the whole sync loop, not just the display. A player with more saves than this
 // sees the newest ones (save_browser sorts by last-played), and the cap is stated rather
@@ -107,6 +114,10 @@ void* g_root     = nullptr;
 void* g_scrimW   = nullptr;
 void* g_list     = nullptr;   // UScrollBox of save rows
 void* g_status   = nullptr;
+// The status string last WRITTEN to g_status. MODULE-level and reset with the widget on
+// the menu-instance edge -- see the writer in OnMenuTick for why a function-local static
+// left this line permanently blank on the second visit.
+std::string g_lastStatus;
 void* g_backBtn  = nullptr;
 void* g_hostBtn  = nullptr;
 void* g_connRow[3]   = {nullptr, nullptr, nullptr};   // the clickable background images
@@ -302,7 +313,19 @@ bool BuildScreen(void* switcher) {
     if (!listBox || !g_list) return false;
     U::SetSizeBoxHeight(listBox, kListH);
     U::SetContent(listBox, g_list);
-    U::AddChild(col, listBox);
+    // THE ONE FILL CHILD IN THIS COLUMN, and that is what makes the window structurally
+    // safe rather than arithmetically lucky.
+    //
+    // Every child here was Automatic, so the column was a fixed stack: the moment any
+    // desired size grew past the budget, the footer was arranged OUTSIDE the window and
+    // Back/Host became unclickable -- the defect the user saw twice today, fixed then by
+    // re-tuning `kListH`. Re-tuning a constant by eye is not a fix; it is the same defect
+    // waiting for a different font. With the list absorbing the slack, `kListH` is a
+    // DESIRED MINIMUM and no sibling can ever be pushed off the frame.
+    //
+    // The browser's column has had exactly this shape since it was built, which is why it
+    // could not overflow and this one could (post-ship correctness audit, 2026-08-31).
+    NS::AddVFill(col, listBox, 1.f, NS::kFill, NS::kFill);
 
     NS::AddText(col, L"CONNECTION", 16, kAccent, NS::kJustLeft, 0.f);
     for (int i = 0; i < 3; ++i) {
@@ -547,11 +570,9 @@ void Show() {
     SyncSaves();
     // EDGE-GATED. This rewrote an FText every tick -- two dispatches plus a wstring and an
     // FText per frame for a string that changes when a host attempt finishes.
-    {
-        static std::string sLast;
-        std::string cur = sm::HostStatus();
-        if (cur != sLast) { sLast = cur; SetStatus(Widen(cur)); }
-    }
+    // The status is written by the ONE edge-gated writer in OnMenuTick, which runs on this
+    // same tick. A second writer here needed a second cache, and two caches for one widget
+    // is the shape that made this line go permanently blank -- see g_lastStatus.
     UE_LOGI("host_window_native: shown (index %d -> %d)", g_priorIndex, g_ourIndex);
 }
 
@@ -602,6 +623,7 @@ void OnMenuTick(void* menu, void* switcher) {
         g_saveRows.clear();
         for (int i = 0; i < 3; ++i) { g_connRow[i] = nullptr; g_connLabel[i] = nullptr; }
         g_ourIndex = -1; g_shown = false; g_buildAttempts = 0; g_savesRev = 0;
+        g_lastStatus.clear();   // the widget it cached is gone with the menu
     }
     if (!g_root) {
         if (!BuildScreen(switcher)) {
@@ -665,9 +687,15 @@ void OnMenuTick(void* menu, void* switcher) {
     // EDGE-GATED. This rewrote an FText every tick -- two dispatches plus a wstring and an
     // FText per frame -- for a string that only changes when a host attempt finishes.
     if (g_status) {
-        static std::string sLastStatus;
+        // MODULE-LEVEL, AND CLEARED WITH THE WIDGET. This was a function-level `static`
+        // with PROCESS lifetime while `g_status` is rebuilt (empty) on every menu
+        // instance -- so once a status had been rendered on menu N, reopening the window
+        // on menu N+1 found the string unchanged, wrote nothing, and the line stayed
+        // permanently BLANK until the status happened to change again. That line exists
+        // because the user was "nothing told about the session being DEAD"; after a failed
+        // host, quit to menu and reopen, the reason was gone (post-ship audit 2026-08-31).
         std::string cur = sm::HostStatus();
-        if (cur != sLastStatus) { sLastStatus = cur; SetStatus(Widen(cur)); }
+        if (cur != g_lastStatus) { g_lastStatus = cur; SetStatus(Widen(cur)); }
     }
 }
 

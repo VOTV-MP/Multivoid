@@ -93,14 +93,25 @@ void UpdateWindowing(Field* f) {
     if (!f || !f->text || !f->box) return;
     if (f->remeasureIn < 0) return;
     if (f->remeasureIn-- > 0) return;   // the deferred tick has not arrived yet
-    f->measuredLen = f->value.size();
     ue_wrap::FVector2D desired{}, topLeft{}, allotted{};
-    if (!U::WidgetDesiredSize(f->text, desired)) return;
-    if (!U::WidgetScreenRect(f->box, topLeft, allotted)) return;
+    // THE GUARDS RUN BEFORE `measuredLen` IS CLAIMED, and the order is the fix.
+    //
+    // It used to record "measured at this length" FIRST and then bail on any of these, so a
+    // measurement that never happened still disarmed the retry -- and `MarkValueChanged`
+    // re-arms only on a LENGTH change. A screen shown with an over-long PREFILL (Slate has
+    // not arranged it yet, so the rect is legitimately zero) therefore kept Left alignment
+    // and hid its own tail until the player typed a character, which is the exact defect
+    // the flip exists to prevent. Re-arming means the next tick tries again.
+    // (Post-ship correctness audit, 2026-08-31.)
+    auto retry = [f] { f->remeasureIn = 1; };
+    if (!U::WidgetDesiredSize(f->text, desired)) { retry(); return; }
+    if (!U::WidgetScreenRect(f->box, topLeft, allotted)) { retry(); return; }
     const float inner = allotted.X - 2.f * kFrameBorderPx - kTextGutterPx;
     // A widget Slate has never laid out reports a zero rect, and that is a real answer
-    // rather than a failure (umg_build.h) -- but it is not one this can act on.
-    if (inner <= 0.f || desired.X <= 0.f) return;
+    // rather than a failure (umg_build.h) -- but it is not one this can act on, so ask
+    // again next tick rather than pretending this length was measured.
+    if (inner <= 0.f || desired.X <= 0.f) { retry(); return; }
+    f->measuredLen = f->value.size();
     const bool want = desired.X > inner;
     if (want == f->alignRight) return;
     f->alignRight = want;
@@ -237,6 +248,17 @@ Field* Create(void* parent, const wchar_t* hint, int32_t maxLen, float widthPx) 
     return f;
 }
 
+// Everything teardown does EXCEPT touching the engine. See the header: a caller running on
+// a dead menu instance must not dispatch into its widgets.
+void Release(Field* f) {
+    if (!f) return;
+    Field* expect = f;
+    g_focus.compare_exchange_strong(expect, nullptr);
+    for (size_t i = 0; i < g_live.size(); ++i)
+        if (g_live[i] == f) { g_live.erase(g_live.begin() + static_cast<long>(i)); break; }
+    delete f;
+}
+
 void Destroy(Field* f) {
     if (!f) return;
     // Clear focus FIRST: the detour reads g_focus without a lock, so the window in which
@@ -248,8 +270,6 @@ void Destroy(Field* f) {
     if (f->box && f->parent) U::RemoveChild(f->parent, f->box);
     delete f;
 }
-
-void* Widget(const Field* f) { return f ? f->box : nullptr; }
 
 void Focus(Field* f) {
     if (!f) return;

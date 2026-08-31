@@ -137,6 +137,7 @@ int      g_visibleRows  = 0;   // rows actually SHOWN, not ChildCount's high-wat
 // the true age is `ageSec + (now - this)`. Stamped only when the GENERATION moves, so a
 // repaint of unchanged rows does not pretend they got younger.
 uint64_t g_fetchedAtMs  = 0;
+uint64_t g_lastDataGen  = 0;   // the DATA generation the stamp above was taken at
 
 // THREE CELLS, NOT FIVE COLUMNS, AND NO HEADER STRIP ABOVE THEM.
 //
@@ -568,12 +569,22 @@ void UpdateHover() {
 // THE SINGLE WRITER of both the children's text and g_rowIds. Nothing else touches either,
 // which is what makes the positional pairing safe (header invariant).
 void Sync() {
-    const uint64_t prevGen = g_lastRowsGen;
     g_lastRowsGen = sm::CopyRows(g_rows);
-    // A NEW FETCH RESETS THE AGE CLOCK; A REPAINT OF THE SAME ROWS DOES NOT. Without the
-    // guard every repaint would make a silent server look freshly seen, and the dim -- the
-    // only signal that a listed host has stopped answering -- could never arrive.
-    if (g_lastRowsGen != prevGen || g_fetchedAtMs == 0) g_fetchedAtMs = ::GetTickCount64();
+    // A SUCCESSFUL FETCH RESETS THE AGE CLOCK. NOTHING ELSE DOES -- not a repaint, and
+    // NOT A FAILED FETCH.
+    //
+    // This keyed on the repaint generation until 2026-08-31 and the pair was wrong. That
+    // generation moves on a failed attempt too (correctly -- the status line changed), so
+    // every 5 s the master stayed down re-stamped "last fetched": the rows never aged, the
+    // stale-dim could not fire while the master was down, which is the only time it means
+    // anything, and the status pane printed "updated just now" directly under "Cannot
+    // reach the server list." Caught by the post-ship audit, and the fix is at the
+    // PRODUCER -- it now answers the two questions with two counters instead of one.
+    const uint64_t dataGen = sm::RowsDataGeneration();
+    if (dataGen != g_lastDataGen || g_fetchedAtMs == 0) {
+        g_lastDataGen = dataGen;
+        g_fetchedAtMs = ::GetTickCount64();
+    }
     const int want = static_cast<int>(g_rows.size()) > kMaxRows ? kMaxRows
                                                                : static_cast<int>(g_rows.size());
     // THE TRUNCATION IS NO LONGER SILENT. `kMaxRows` bounds the whole sync loop, so a

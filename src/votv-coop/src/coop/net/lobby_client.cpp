@@ -151,15 +151,22 @@ void LobbyClient::RefreshAsync(const std::string& masterUrl, const std::string& 
             if (ok) {
                 rows_ = std::move(parsed);
                 consecutiveFailures_ = 0;
+                // ONLY HERE. This is the "the rows are new" signal the age clock keys on;
+                // see DataGeneration() for the defect that separating it fixed.
+                ++dataGeneration_;
             } else if (consecutiveFailures_ < 1000000) {
                 ++consecutiveFailures_;
             }
             // THE GENERATION MOVES ON EVERY COMPLETED ATTEMPT, success or not. It is the
             // "something happened, repaint" signal the browser polls, and after a failure
-            // there IS something to repaint -- the rows' ages advanced and the status line
-            // changed. Bumping it only on success would freeze the screen's clock at the
-            // last good fetch, which is the opposite of what a player needs to see when the
-            // master has gone quiet.
+            // there IS something to repaint -- the status line changed and the rows on
+            // screen got a second older. Bumping it only on success would freeze the
+            // screen's clock at the last good fetch.
+            //
+            // IT IS NOT THE AGE CLOCK, and that distinction is `dataGeneration_` above.
+            // Answering both questions with this counter meant a failed fetch re-stamped
+            // "last fetched", which pinned every row's age and made the stale-dim
+            // unreachable -- caught by the post-ship audit, 2026-08-31.
             ++generation_;
             status_ = st;  // keep st for the log line below
         }
@@ -171,6 +178,9 @@ void LobbyClient::RefreshAsync(const std::string& masterUrl, const std::string& 
         std::lock_guard<std::mutex> lk(mu_);
         status_ = "refresh error";
         if (consecutiveFailures_ < 1000000) ++consecutiveFailures_;
+        // A THROWN attempt is a completed attempt: without this the browser never
+        // repaints and the player reads a status line from before the failure.
+        ++generation_;
       }
       inFlight_.store(false);  // ALWAYS clear (the latch that gates the next refresh)
     }).detach();
@@ -190,6 +200,11 @@ uint64_t LobbyClient::Generation() const {
 std::string LobbyClient::Status() const {
     std::lock_guard<std::mutex> lk(mu_);
     return status_;
+}
+
+uint64_t LobbyClient::DataGeneration() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    return dataGeneration_;
 }
 
 int LobbyClient::ConsecutiveFailures() const {

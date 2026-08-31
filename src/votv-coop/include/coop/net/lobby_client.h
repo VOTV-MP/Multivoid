@@ -102,6 +102,21 @@ public:
     // of strings -- the question "is there anything new" must not cost the answer.
     uint64_t Generation() const;
 
+    // HOW MANY TIMES THE ROWS THEMSELVES CHANGED -- which is NOT the same question as
+    // `Generation()`, and conflating them shipped a real defect.
+    //
+    // `Generation()` means "an attempt COMPLETED, repaint": it moves on a failure too,
+    // because the status line and the ages on screen did change. A consumer that also uses
+    // it to answer "when were these rows last FETCHED" therefore re-stamps its age clock
+    // every time the master fails to answer -- so the rows never age, the stale-dim never
+    // fires, and the pane prints "updated just now" directly under "Cannot reach the server
+    // list". Both halves were individually reasonable and the pair was wrong (post-ship
+    // audit, 2026-08-31).
+    //
+    // This one moves ONLY when `rows_` was replaced. Age and freshness key on this;
+    // repainting keys on the other.
+    uint64_t DataGeneration() const;
+
     // A short human status for the browser footer ("Refreshing...", "4 servers",
     // "master unreachable").
     std::string Status() const;
@@ -123,7 +138,8 @@ public:
 private:
     mutable std::mutex mu_;
     std::vector<LobbyRow> rows_;
-    uint64_t generation_ = 0;
+    uint64_t generation_ = 0;      // completed attempts -- "repaint"
+    uint64_t dataGeneration_ = 0;  // successful attempts -- "the rows changed"
     std::string status_ = "Not refreshed yet.";
     int consecutiveFailures_ = 0;
     std::atomic<bool> inFlight_{false};

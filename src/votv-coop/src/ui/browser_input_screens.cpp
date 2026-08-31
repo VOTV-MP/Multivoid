@@ -63,6 +63,7 @@ void*   g_switcher = nullptr;
 int     g_open     = -1;             // which Kind is showing, or -1
 int32_t g_priorIndex = -1;
 int     g_buildAttempts = 0;
+bool    g_toldTheUser   = false;   // stop hammering the donor lookup once it is hopeless
 
 bool g_prevLmb = false, g_lmbPrimed = false;
 bool g_prevEsc = false, g_escPrimed = false;
@@ -135,11 +136,20 @@ bool BuildOne(void* switcher, Kind kind, void* backDonor) {
 
     s.root = shell.root;
     s.scrim = shell.scrim;
-    U::AddChild(switcher, s.root);
+    // THE ADD'S RETURN IS CHECKED. Ignoring it is how `IndexOfChild` returns -1 for a
+    // reason the log cannot name -- and the browser's own builder checks it.
+    void* slot = U::AddChild(switcher, s.root);
     s.index = U::IndexOfChild(switcher, s.root);
     if (s.index < 0) {
         UE_LOGE("browser_input_screens: built '%ls' but could NOT place it in the menu "
-                "switcher -- it cannot be shown this menu", spec.title);
+                "switcher (AddChild slot=%p, GetChildIndex=-1) -- it cannot be shown this "
+                "menu", spec.title, slot);
+        // AND THE FIELD GOES WITH IT. Clearing `s.root` alone left the heap `Field` alive
+        // and in `g_live`, so the next tick rebuilt everything and leaked another one --
+        // ~117 leaked Fields and ~2,800 UObject spawns per second, forever (post-ship perf
+        // audit, 2026-08-31). Release, not Destroy: the tree we just built is orphaned.
+        TF::Release(s.field);
+        s.field = nullptr;
         s.root = nullptr;
         return false;
     }
@@ -297,17 +307,28 @@ void Close() {
 
 bool IsOpen() { return g_open >= 0; }
 
+// Both windows exist only as doors OFF the native browser, so they follow its flag.
+// Without this they were built into every menu instance even with `browser_native=0` --
+// two full UUserWidget trees that no code path can reach, on the deliberate ImGui-fallback
+// lane (both post-ship audits, 2026-08-31).
+bool Armed() {
+    static const bool s = coop::config::ResolveFlag(::coop::config_registry::rows::browser_native);
+    return s;
+}
+
 void OnMenuTick(void* menu, void* switcher) {
-    if (!menu || !switcher) return;
+    if (!Armed() || !menu || !switcher) return;
     g_switcher = switcher;
 
     if (menu != g_menu) {
         g_menu = menu;
         for (Screen& s : g_screen) {
-            // The widgets died with the menu instance. Destroy() unhooks the field from the
-            // focus registry first, which is the one thing that must not be left pointing
-            // into a dead tree (the WndProc detour reads it).
-            TF::Destroy(s.field);
+            // RELEASE, NOT DESTROY. The widgets died with the menu instance, so the field
+            // must unhook its focus and free its handle WITHOUT dispatching RemoveChild
+            // into a tree that no longer exists -- which is what `Destroy` does, and what
+            // this line did until the post-ship audit read it (2026-08-31). Both sibling
+            // screens drop their pointers and touch nothing on this edge; now so does this.
+            TF::Release(s.field);
             s = Screen{};
         }
         g_open = -1;
@@ -315,19 +336,42 @@ void OnMenuTick(void* menu, void* switcher) {
     }
 
     if (!g_screen[0].root || !g_screen[1].root) {
+        // BACKED OFF, because the retry is not free. Each attempt costs a `SwitcherChild`
+        // walk (a ChildCount plus a ClassNameOf per child -- an engine call and a wstring
+        // EACH, ~13 children here) plus a `DonorField` lookup, and at ~117 menu ticks a
+        // second that is well over a thousand dispatches and allocations per second,
+        // forever, on exactly the path a version migration lands on. The browser's own
+        // builder was given this backoff by the 2026-08-30 perf audit and this one was
+        // written without it (2026-08-31 audit, finding F4 reintroduced).
+        if (g_toldTheUser) {
+            static uint64_t sNextTryMs = 0;
+            const uint64_t now = ::GetTickCount64();
+            if (now < sNextTryMs) return;
+            sNextTryMs = now + 1000;
+        }
         void* saveSlots = NS::SwitcherChild(switcher, L"ui_saveSlots_C");
         void* backDonor = NS::DonorField(saveSlots, L"button_back");
         if (!backDonor) {
             // Fail CLOSED and retry. The browser owns the loud player-facing alarm for a
             // missing donor; these screens are reached THROUGH it, so a second dialog would
             // only stack on the first.
-            if (++g_buildAttempts == 15)
+            if (++g_buildAttempts == 15) {
+                g_toldTheUser = true;
                 UE_LOGE("browser_input_screens: ui_saveSlots_C.button_back absent after %d "
                         "attempts -- NOT building the input windows", g_buildAttempts);
+            }
             return;
         }
-        if (!g_screen[0].root && !BuildOne(switcher, Kind::DirectConnect, backDonor)) return;
-        if (!g_screen[1].root && !BuildOne(switcher, Kind::ChangeName, backDonor)) return;
+        // A FAILED BUILD COUNTS, so a build that fails for a reason other than a missing
+        // donor also backs off instead of re-spawning ~14 UObjects every tick forever.
+        if (!g_screen[0].root && !BuildOne(switcher, Kind::DirectConnect, backDonor)) {
+            if (++g_buildAttempts >= 15) g_toldTheUser = true;
+            return;
+        }
+        if (!g_screen[1].root && !BuildOne(switcher, Kind::ChangeName, backDonor)) {
+            if (++g_buildAttempts >= 15) g_toldTheUser = true;
+            return;
+        }
         UE_LOGI("browser_input_screens: both input windows built (direct=%d name=%d)",
                 g_screen[0].index, g_screen[1].index);
     }

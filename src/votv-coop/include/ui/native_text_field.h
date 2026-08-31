@@ -21,10 +21,15 @@
 // focusable native field is measured". It has now been measured, and the answer was no,
 // so the field is built rather than waited for.
 //
-// WHAT IT DELIBERATELY IS NOT: a general text editor. No selection, no clipboard, no
-// mouse caret placement, no IME. It is an address/name box. Those are real omissions and
-// they are listed here rather than discovered later; a player who needs to paste will
-// notice, and that is the next increment, not a hidden defect.
+// WHAT IT DELIBERATELY IS NOT: a general text editor. No selection, no mouse caret
+// placement, no IME. It is an address/name box. Those are real omissions and they are
+// listed here rather than discovered later.
+//
+// CLIPBOARD PASTE WAS ON THAT LIST AND IS NOW BUILT (2026-08-31): Ctrl+V, entry-trimmed,
+// control characters dropped, appended, capped. The sentence that used to stand here --
+// "a player who needs to paste will notice, and that is the next increment" -- was left
+// beside the code that closed it, which is the one failure an honest omission list can
+// have. A list is only worth keeping while it stays true.
 //
 // CASE AND STYLE come from `docs/VOTV_UI_STYLE.md`: the frame is the game's `#646464`
 // border over `#313131`, the text is `font_ui` at the donor's own size, and labels are
@@ -50,17 +55,27 @@ Field* Create(void* parent, const wchar_t* hint, int32_t maxLen, float widthPx);
 // Tear down: removes the widgets from the parent and releases the handle. Safe on null.
 // A destroyed field is removed from the focus registry first, so a WM_CHAR arriving in
 // the same tick cannot reach freed memory.
+//
+// ONLY WHILE THE PARENT IS ALIVE -- `RemoveChild` is a ProcessEvent dispatch. Use
+// `Release` below on the menu-instance death edge.
 void Destroy(Field* f);
+
+// EVERYTHING `Destroy` DOES EXCEPT TOUCHING THE ENGINE: unhook the focus, drop the
+// registry row, free the handle. For a tree that died with its `ui_menu_C` instance.
+//
+// The distinction is not theoretical. `browser_input_screens` called `Destroy` on the
+// menu-instance death edge -- two lines under its own comment saying "the widgets died
+// with the menu instance" -- so it dispatched `RemoveChild` into a freed tree, and
+// `reflection::CallFunction` has no liveness check. A reused GUObjectArray slot makes that
+// a call against an unrelated object rather than a clean fault, which is this project's
+// "a wrong-offset write never faults where you wrote it" class. Both sibling screens
+// already drop their pointers and touch nothing on that edge; this is what lets a field do
+// the same. Found by the post-ship correctness audit, 2026-08-31.
+void Release(Field* f);
 
 // OUR focus, not Slate's -- `HasKeyboardFocus()` is the predicate the input-ownership
 // finding measured as lying about a live field, and the probe above read it as 0 on a
 // field it had just successfully focused. Exactly one field in the process holds focus.
-// THE FIELD'S OUTERMOST WIDGET -- the SizeBox `Create` attached to the parent. Exposed so
-// a caller can configure the SLOT it landed in (fill it to the column, pad it, align it):
-// the field owns what is inside its frame, the screen owns where the frame sits, and
-// without this the screen has no handle on its own layout.
-void* Widget(const Field* f);
-
 void Focus(Field* f);
 void Blur(Field* f);
 bool Focused(const Field* f);
