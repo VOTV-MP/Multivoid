@@ -1812,3 +1812,95 @@ Related: `[[project-wp2-realistic-env-test-2026-08-22]]`,
 `[[project-f2-ue4ss-switch-decision-2026-08-21]]`,
 `[[lesson-veh-crash-reporter-preempts-our-seh-guard]]`,
 `[[lesson-double-detour-crash-is-config-dependent-needs-pe-callback-arm]]`.
+
+---
+
+## 9. The UE4SS BUILD is worth ~48 fps — MEASURED 2026-08-31, and it closes the 2026-08-29 open question
+
+**Status: `[V]` VERIFIED by a 3-arm controlled measurement on the dev rig. NOT hands-on-confirmed by
+the user beyond their own unprompted "fps is so good" while arm B was on screen.**
+
+The 2026-08-29 fps hunt ended with a confound it could not resolve and wrote down that it must not
+reach the install instructions: the fast loader also failed to start `CheatManagerEnablerMod`, so
+"the loader is the cause" was a hypothesis, not a result. **The de-confounding arm has now run.**
+
+### 9.1 The three arms
+
+One save (`s_test_screens2`, set by `mp.py`), one mod build (b149), one install (`Game_0.9.0n_HOST`),
+one resolution, solo host, unattended. Only the named variable moved.
+
+| arm | `UE4SS.dll` | Lua mods that STARTED | in-world fps (median) | n |
+|---|---|---|---|---|
+| A | `4c177b9e` — v3.0.1 stable, 2024-02-14 (our pinned zip) | 6 | **70** | 134 |
+| B | `8a78269b` — shimloader 1.1.7's build, 2026-05-07 | 5 | **118** | 70 |
+| C | `4c177b9e` (old) + `CheatManagerEnablerMod : 0` | 5 | **75** | 55 |
+
+**C ≈ A, not ≈ B.** Dropping the un-started Lua mod on the old loader buys ~5 fps; changing the
+loader buys ~48. **The LOADER is the cause.** `CheatManagerEnablerMod` is exonerated, and the
+2026-08-29 note that the advice "set your `mods.txt` entries to 0" does not survive the evidence is
+now settled: that advice would have bought a player ~5 fps out of ~48.
+
+Every arm's log was asserted to belong to the PID we launched (see 9.4). Arm B is `[V]` also the
+only arm the user saw live, and their unprompted reaction was *"fps is so good"*.
+
+### 9.2 The two builds, and a name reconciled
+
+`[V]` The binary the 2026-08-29 note calls Git SHA **`e31aaaa6`** is md5 **`8a78269b`** — proven by
+`Game_0.9.0n_HOST/.../UE4SS.dll.shimloader-e31aaaa6`, the copy that session parked, hashing to
+exactly that. The two identifiers name ONE file; do not chase them as two candidates.
+
+`[V]` The two builds differ in more than a date: the shimloader build carries AOB signature files
+the pinned release does not (`CallFunctionByNameWithArguments`, `ConsoleManager`, `GameEngineTick`,
+`GNatives`, `GUObjectHashTables`, `ProcessInternal`) and drops two it had (`FText_Constructor`,
+`StaticConstructObject`). Sizes 16,228,864 vs 16,263,680.
+
+### 9.3 What the new loader COSTS — a real functional loss, priced
+
+`[V]` On VOTV 0.9.0n the new build does NOT start `CheatManagerEnablerMod`. The reason is in its own
+log, not inferred: `Failed to find ConsoleManagerSingleton: ConsoleManagerSingleton: found 2 unique
+values [7FF6089EE570, 7FF609A95920]` — its AOB is AMBIGUOUS on this exe and it bails. The other five
+(`ConsoleCommandsMod`, `ConsoleEnablerMod`, `BPModLoaderMod`, `BPML_GenericFunctions`, `Keybinds`)
+all start. Arm C prices that loss at ~5 fps, so it is cheap in frames — but it is a real capability
+loss for any dev workflow that reaches the cheat manager, and it is silent.
+
+**This also falsifies a tempting cross-lane inference.** The 2026-08-29 note records all SIX mods
+starting under the same binary on the user's r2modman lane. Same DLL, different result — so the
+discriminator is the GAME EXE the AOB scans, not the loader alone. Do not assume our rig's mod set
+equals the r2modman lane's.
+
+### 9.4 Two instrument defects this measurement had to fix first
+
+Both produced a confident wrong answer before being caught, and both are the kind that grade
+themselves green:
+
+1. **The phase classifier defined "in-world" as `fps < 110`** — the OLD loader's performance baked
+   into the instrument. Under the new loader the world runs at 118, so every in-world frame was
+   filed as "menu" and the run reported `world=0`: the effect erased itself. It now keys on an
+   independent gameplay-only witness, the `atv_probe` heartbeat (`[V]` 0 lines/min across the 120fps
+   menu stretch, 121-126 lines/min across the 57-75 world stretch of the same log).
+2. **The runner graded another session's log as its own.** `mp.py` kills every VotV process on the
+   box, so a second session starting a scenario replaces the game under you and leaves ITS log at
+   your path. The runner now records the PID `mp.py` reports and refuses the arm unless
+   `boot: entry=cppmod ... pid=<N>` matches (`*** INVALID ARM ***`, exit 3) — it fired twice for
+   real. It also kills only its own PID, never `mp.py kill`, and aborts instead of sleeping when a
+   launch is refused (the first version would have destroyed the other session's run).
+
+Instruments: `scratchpad/ue4ss/{arm.sh,fps3.py}` (session-local, not in the tree).
+
+### 9.5 What this does NOT decide, and what it changes
+
+- **The pin is NOT changed by this section.** `tools/install-ue4ss.ps1` still pins `v3.0.1` (`:44`)
+  and `docs/INSTALL.md:86` still tells manual installers to drop in **v3.0.1's zDEV** contents —
+  i.e. the lane we hand to manual installers is the arm measured at 70, while every Thunderstore /
+  r2modman player already gets the arm measured at 118 (shimloader delivers it). That asymmetry is
+  now MEASURED rather than suspected. Changing the pin is a decision for the user, not a doc fix:
+  it is the D-3 pinned-substrate contract.
+- **Not measured:** whether the genuinely newest upstream helps more. `experimental-latest` was
+  rebuilt 2026-08-30 (asset `UE4SS_v3.0.1-1106-g3a2d2bc1.zip`, md5 `491f8836`, 20,390,400 bytes) and
+  relocates the tree — `dwmapi.dll` at the Win64 root, `UE4SS.dll` under `ue4ss/`, no `Mods/` in the
+  zip — so our `Mods\Multivoid\dlls\main.dll` would not be where that build looks. That is an
+  install-SHAPE change touching `install-ue4ss.ps1`, `deploy-mod.ps1` and the Thunderstore package,
+  not a file swap.
+- **Rig state:** all four copies now run `8a78269b`, each with its predecessor kept beside it as
+  `UE4SS.dll.v301-stable`. Revert is one copy. This DIVERGES from the committed installer's pin, so
+  a `install-ue4ss.ps1 -Force` would silently put the slow binary back.

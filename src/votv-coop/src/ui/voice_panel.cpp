@@ -95,9 +95,27 @@ void Render() {
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.45f),
                             ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(S(380.0f), 0.0f), ImGuiCond_Always);
-    // Begin's close-X needs a plain bool*; bridge the atomic through a local
-    // and write back the X-close at the end (both early-out and tail paths).
+    // Begin's close-X needs a plain bool*, so the atomic is bridged through a
+    // local -- and the local has to be written BACK, or the X does nothing.
+    //
+    // That write-back used to be hand-written at each exit, and the TAIL path
+    // did not have it. Only the `!s.enabled` early-out did. So with voice
+    // enabled -- the normal case, and the only one a player ever sees -- the X
+    // set `open=false`, nothing consumed it, `g_open` stayed true, and the next
+    // frame called Begin with a fresh `open=true`: the window came straight
+    // back and the X was dead. V worked because it drives `g_open` directly.
+    // (User report, 2026-08-31.) The comment that stood here asserted both
+    // paths wrote back; the comment was the only place that was true.
+    //
+    // A destructor cannot be forgotten by a branch someone adds later, which
+    // is why this is a guard and not a third copy of the same line.
     bool open = true;
+    struct CloseOnX {
+        const bool& open;
+        ~CloseOnX() {
+            if (!open) g_open.store(false, std::memory_order_relaxed);
+        }
+    } closeOnX{open};
     if (ImGui::Begin("Voice chat###coop_voice_panel", &open,
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize |
                          ImGuiWindowFlags_NoSavedSettings)) {
@@ -105,8 +123,7 @@ void Render() {
             ImGui::TextWrapped("Voice chat is turned off (voice.enabled=0 in multivoid.ini). "
                                "Set it to 1 and restart the game to use voice.");
             ImGui::End();
-            if (!open) g_open.store(false, std::memory_order_relaxed);
-            return;
+            return;  // closeOnX writes the X back on the way out
         }
         if (!s.captureOk)
             ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f),
