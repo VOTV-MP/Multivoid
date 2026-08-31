@@ -4812,15 +4812,30 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   chain** -- the undo re-arms the thing it is undoing. *Look FIRST:* before designing any
   detect-and-revert, disassemble the transition and ask **"is this a flag or an armed chain?"** If
   a `Delay` / `RetriggerableDelay` / timer / montage appears anywhere in it, undo is off the table
-  and the only correct shape is PREVENTION -- find the earliest instruction that can REFUSE the
-  transition (here `ragdollMode`'s own `IFNOT(canRagdoll) POP`, the single choke point every death
-  path in the game must pass, needing no site list and no dispatch visibility). Corollary that cost
-  the same bug twice over: the lane's other layer was a ProcessEvent interceptor on
+  **while the chain is in flight** -- but see the correction below before concluding what to do
+  instead. Corollary that cost the same bug twice over: the lane's other layer was a ProcessEvent interceptor on
   `Add Player Damage`, and all seven of its ubergraph call sites are `EX_LocalVirtualFunction` --
   **INVISIBLE** -- so both layers were dead and the feature could not have worked on any build,
   which nothing caught because no test had ever killed a player. Full chain:
   `research/findings/world-systems/votv-player-death-chain-RE-2026-08-31.md`.
   [[lesson-a-latent-chain-cannot-be-undone-by-clearing-its-flag]]
+
+- **A chain does not end where it leaves the class you are reading -- and a latent chain's END is
+  where undo becomes LEGAL.** `[V]` 2026-08-31, the same death chain, hours later. The map stopped at
+  `@4277 lib_C::loadLevel('menu')` because that is where the flow exits `mainPlayer_C`, and from that
+  stopping point the conclusion looked forced: every hop is `EX_Local*`, nothing is hookable,
+  therefore the only shape is to PREVENT the death. **Both halves were wrong.** Following it three
+  assets further -- `lib.loadLevel` -> `mainGamemode::transition` -> uber `@92640` -> **`@7160
+  OpenLevel(...)`** -- lands on a NATIVE call, the one hop an ordinary `UFunction::Func` patch takes,
+  so no VM-interception substrate and no bytecode patch were ever needed. And the second half is the
+  one that inverts the design: **by the time the last hop runs, both `RetriggerableDelay`s have fired
+  and been consumed**, so the latent state that made an undo impossible mid-chain is spent -- a revive
+  is legal at the END and illegal five seconds earlier. *Look FIRST:* when a chain leaves the asset
+  you are disassembling, that is the middle of the map, not the end of it -- keep going until you
+  reach a NATIVE frame or a true terminal, and only then choose the cut. "No seam exists" is a claim
+  about how far you read. Costs of stopping early here: a whole design shipped on a suppressive gate
+  (crutch C3), three HIGH defects, and a CI gate turned red.
+  [[lesson-a-chain-does-not-end-where-it-leaves-your-class]]
 
 - **A wrong-offset reflected write NEVER faults where you wrote it.** `SetSizeBoxWidth` was called on what `AddFramedBox` returns — an **Overlay**, not a SizeBox, as that helper's own header says one line above the call. The float landed at a foreign property offset, nothing faulted there, and the game died three frames later in another subsystem: `PE detour-outer-callback AV caught function='SpawnObject' 0xC0000005` three times, with the first readable symptom being an action bar whose three buttons were all null. Reflection-driven writes have no call-site type check by construction — the offset comes from a NAME on a class you never asserted. **Look here FIRST:** a crash inside an engine function your change never touched, in a session that added a reflected `Set*`, IS that write until proven otherwise — list every one you added and check its RECEIVER type against what the producing helper actually returns, before reading the faulting function at all. [[lesson-a-wrong-offset-write-never-faults-where-you-wrote-it]]
 
@@ -5144,7 +5159,7 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   a weak ref exists), so naive serial capture does not close it either. **CONVERTED WHOLE 2026-08-22
   night (`f675de11`..`712fa33b`): the discipline is now a TYPE** — `ue_wrap::CachedObjRef` (+ one-root
   accessors `Element::LiveActor()` / `ActiveDrive::LiveActor()`), policed by
-  `tools/reflection/islive_gate.ps1` (CI PASS = 0 bare-IsLive-on-static) + the deterministic decommit
+  `tools/reflection/islive_gate.ps1` (CI PASS = 0 bare-IsLive-on-static -- **RED since `74c48694`, 2026-08-31: 1 hit, `ragdoll_gate.cpp:104 g_pawn`; see crutch C3**) + the deterministic decommit
   drill (`VOTVCOOP_RUN_ISLIVE_DRILL=1`). LOOK FIRST now: `ue_wrap/core/cached_obj_ref.h` + the design
   doc's Appendix B fill-site table.
   `memory/lesson_islive_recycled_slot_blind_use_by_index.md`

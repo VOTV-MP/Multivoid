@@ -2,6 +2,38 @@
 // out instead of running VOTV's stock permadeath (death -> 10 s -> the main
 // menu, with no way back into the session).
 //
+// ===========================================================================
+// SUPERSEDED 2026-08-31, the same day it shipped. READ `docs/DEATH_ARC.md`
+// BEFORE CHANGING ANYTHING HERE.
+//
+// USER DECISION: the player must FEEL the whole native death -- the sound, the
+// `dead` flag, the ten seconds, the black screen -- and the mod intervenes only
+// at the very end, where the game reaches for the level travel, and WRITES NEW
+// STATE there. This module does the opposite: it holds the game's own
+// `canRagdoll` gate shut so the death is never authored at all. It is
+// registered as crutch C3 in `docs/CRUTCHES.md`.
+//
+// The measurement that decided it: the death chain does not end at
+// `loadLevel` -- it continues `lib.loadLevel` -> `mainGamemode::transition` ->
+// uber `@7160 OpenLevel(...)`, which is NATIVE and takes the ordinary
+// `UFunction::Func` seam; and by the time it runs, both `RetriggerableDelay`s
+// have fired and been consumed, so a revive is legal there and illegal
+// earlier. No suppression and no bytecode patch are needed.
+//
+// THREE HIGH DEFECTS ARE LIVE IN THIS LANE AS SHIPPED (each hand-verified):
+//   H1 `ragdoll_gate::ReleaseAll()` has ZERO call sites and the only release
+//      path needs a peer to have actually connected -- a CANCELLED OR FAILED
+//      JOIN leaves `canRagdoll = false` for the rest of the process, taking
+//      the player's ragdoll, fall knockdown, faint AND death away.
+//   H2 the immunity pin at Tick's `:201` writes health AFTER `hp` was sampled
+//      at `:191`, and the trigger at `:210` reads the stale value -- the
+//      immunity does not protect against the hit it exists for.
+//   H3 `tools/reflection/islive_gate.ps1` exits 1 on `ragdoll_gate.cpp:104`
+//      (`g_pawn`): a bare cached pointer we WRITE A BYTE INTO after a world
+//      dies.
+// Decide first: retire this lane with the arc, or fix H1/H2/H3 in place.
+// ===========================================================================
+//
 // [death] section config: ko_respawn (on/off), ko_ragdoll_seconds,
 // ko_invulnerable_seconds, ko_spawn_at_start.
 //

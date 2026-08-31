@@ -207,6 +207,14 @@ Everything in §1 up to `@4277` is left strictly alone. That is the point.
 
 ## 5. What this supersedes
 
+**Provenance first: the KO lane is a COMMUNITY contribution.** `e230d8df` is
+Tarangok's (`docs/CREDITS.md`), and the rework this arc supersedes (`74c48694`)
+is ours. The idea -- that VOTV's kick-to-menu permadeath is unacceptable in coop
+-- is theirs and is what the user is now doubling down on. Nothing here is a
+criticism of that contribution; the measurements below are about the mechanism,
+which nobody could have checked without disassembling the chain.
+
+
 **`74c48694` ("KO respawn: a death cannot be undone, so stop the death instead")
 is superseded whole.** It holds `canRagdoll` shut for the session so the death is
 never authored -- the exact opposite of the instruction in §0. Per RULE 2 it does

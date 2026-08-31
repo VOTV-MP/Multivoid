@@ -24,7 +24,7 @@ From `CLAUDE.md` RULE 1: *"When you find yourself adding a workaround (filter, s
 catch-and-ignore), STOP. That is a crutch. Identify the root cause and fix it at the point where the
 actual problem is."*
 
-This register uses a slightly wider test, because the two entries below are not `skip-if` lines —
+This register uses a slightly wider test, because the entries below are not `skip-if` lines —
 they are **architectures** that were shaped by an obstacle instead of by the problem:
 
 1. **It neutralises or replaces the engine entity instead of driving it.** Principle 3 says our class
@@ -48,6 +48,7 @@ missing work; this register is for work that was *built in the wrong shape*.
 |---|---|---|---|---|
 | C1 | **ATV** (`coop/interactables/atv_sync`, `ue_wrap/devices/atv`) | The mirror is a frozen corpse; the rig's whole purpose is deleted to make it hold still | **ARC 1 COMMIT 1 SHIPPED 2026-08-29** (`070c7d29` + `a2a45fc7`, proto 146): the freeze/teleport lane is DELETED — the mirror simulates and is corrected, and `AtvRelease`'s launch velocity went with it. The crutch is RETIRED at its root; what remains of C1's gap list is the VITALS and CONFIG arcs, not the corpse. **UPDATED 2026-08-30 (`8cd0ac25`): the 25-40 cm sag was a SECOND crutch in the same lane, and it was the collision guard, not the pose lane.** `coop::atv_hit_guard` cancelled ALL SEVEN `ComponentHit` delegates on a non-owner to stop a mirror authoring damage; the five WHEEL delegates also keep the rig's SHAPE, so the mirror's body sat under its own wheel plane. A four-cell single-variable experiment ACQUITTED the pose corrector outright (with the guard off it is the best of the four cells). Shipped `8cd0ac25`: only the two BODY delegates are cancelled. **THEN `28a958e8` RETIRED THE SUPPRESSION SHAPE ITSELF -- the crutch's last piece is gone.** Nothing is cancelled: all seven delegates are NEUTERED (a zero `FVector` over `NormalImpulse` pre-dispatch; the handler dispatches whole and only the magnitude dies), so the mirror keeps every side effect it needs -- above all `wheelsOnSurface`, whose loss WAS the sag -- and authors no damage at all. `g_cancelMask` and the `atv_hit_guard_mask` row are deleted (RULE 2). `[V]` verified on the same arm: mirror wear 98.22/100/100/98.48 -> **100/100/100/100**, `UNRESOLVED=0`. `[V]` two driven verification runs, A1 x0.95/x1.00/x1.23 and x0.90/x0.59/x2.11 (was x2.3-x2.7), A2 9.6 and 3.8 cm PASS, A6 both PASS, rig-shape spread 0.44-2.43 cm; a third undriven run reads A2 1.83 / spread 0.00. **A post-ship audit corrected the framing: "A2 never passed driven" was FALSE** (`20260830-092139`, driven, all seven cancelled, is the only ACCEPTANCE: PASS on disk at A2 7.0 cm), and the claimed 2x2 is honestly a 1x2 pair on one binary (`-1059` vs `-1057`, A2 30.4 -> 5.3, shape 19.05 -> 0.12) -- which is what carries the conclusion. **The §16 causes above are SUPERSEDED -- read `docs/vehicles/ATV.md` §17.** Residual: a mirror now runs `processTire()` and can eject a tire its author still has -- the fix is tire durability on the wire, not re-suppression. Still open: A5 and A4 (1 s ownership overlap). A5's 209-324 cm peak is NOT noise: `[V]` the author's last 12 driven samples sit still at 0.7-5 cm/s with `driven=1` still true -- it is wedged against a fence -- so A5's window mixes real driving with a stationary author, and 200 cm measured there is a STATIC error the corrector never closed, which A2 cannot see because it reads only the settled tail | **IN PROGRESS** |
 | C2 | **Trash piles / clumps** (`coop/props/trash_proxy`, `native_pile_mirror`, + ~9 sibling modules) | The mirror is a FAKE actor, which broke aim, which grew a parallel aim system; two mirror implementations now coexist | **OPEN** | **SECOND** (user: *"that's on the list after atv"*) |
+| C3 | **KO respawn** (`coop/player/ko_respawn`, the `Holder::KoRespawn` hold in `coop/player/ragdoll_gate`) | The game's own death mechanism is NEUTRALISED -- `canRagdoll` is held shut for the whole session so `ragdollMode` early-outs -- instead of the death being allowed to run and then answered | **OPEN, and it is the design of record that is superseded, not just the shape.** USER 2026-08-31: the player must FEEL the native death; the mod intervenes only at the travel. Proper fix designed in `docs/DEATH_ARC.md`; nothing built. **Three HIGH defects are LIVE in the shipped build** -- see the section below | **THIRD** |
 
 ---
 
@@ -222,10 +223,80 @@ the way every other lane parks a brain), then **retire the proxy and its paralle
 
 ---
 
-## 2. The pattern both entries share
+## C3 — KO respawn (the `canRagdoll` gate)
 
-Both crutches are the same move: **the engine entity was inconvenient, so it was neutralised or
-replaced, instead of being kept and driven.** The ATV freezes it into a corpse; the clump swaps it
+**Design of record: `docs/DEATH_ARC.md`.** Chain RE:
+`research/findings/world-systems/votv-player-death-chain-RE-2026-08-31.md`.
+Shipped `74c48694`, 2026-08-31, same day it was registered here.
+
+### What ships today
+
+`ko_respawn::Tick` takes `Holder::KoRespawn` on `coop::ragdoll_gate` for the whole session and holds
+`mainPlayer_C::canRagdoll` FALSE. `ragdollMode`'s first instruction is `IFNOT(canRagdoll) POP`, so
+every ragdoll cause on the local pawn early-outs — **including the death**, which is the point, and
+including the manual ragdoll key, fall knockdowns and the exhaustion faint, which is the cost. The
+lane then polls `saveSlot.health <= 0`, borrows its own gate for one
+`ragdollMode(true, passOut=true, death=false)`, waits `ko_ragdoll_seconds`, `forceWakeup()`s and
+teleports.
+
+### Why it is a crutch
+
+It is §2's pattern exactly, one level below the entity: **the game's own mechanism was inconvenient,
+so it was switched off, instead of being kept and answered.** The declared cost was written into the
+header and the config row as if declaring it settled it — and the user's answer when they saw the
+design was that the cost is not acceptable and not necessary:
+
+> *"Я хочу чтобы игрок ощущал нативную смерть, но без выкидывания в главное меню... момент когда игра
+> захочет отослать игрока в главное меню и выгрузить карту и сломать весь мир - тут наш мод вступает и
+> НОВОЕ ИЗМЕНЕННОЕ СОСТОЯНИЕ ПИШЕТ."*
+
+The measurement that settles it: the death chain's last hop is a **NATIVE** `OpenLevel`
+(`mainGamemode` uber `@7160`), interceptable by the ordinary `UFunction::Func` seam, and by the time
+it runs both `RetriggerableDelay`s have been consumed — so the death can be allowed to happen in full
+and answered at the end, with no suppression anywhere.
+
+### Three HIGH defects are LIVE in the shipped build `[V]` 2026-08-31
+
+Found by a post-ship audit and each re-verified by hand this session:
+
+* **H1 — a cancelled or failed join strands the player permanently.** `ragdoll_gate::ReleaseAll()`
+  has **zero call sites** (`grep`: declaration + definition only), and the only release path,
+  `ko_respawn::OnDisconnect`, is reached solely via `subsystems::DisconnectAll()` from
+  `net_pump.cpp:269`/`:612` — both of which require a peer to have actually connected. So a player who
+  opens the browser, clicks a lobby and cancels keeps `canRagdoll = false` **for the rest of the
+  process**: no ragdoll key, no fall knockdown, no faint, and no death either. Both the module header
+  and the code comment promise this cannot happen.
+* **H2 — the post-respawn immunity does not protect against the hit it exists for.** `ko_respawn.cpp`
+  reads `hp` at `:191`, the immunity pin writes health back to 100 at `:201`, and the KO trigger at
+  `:210` then evaluates the **stale** `hp` — so a >=100 damage hit inside the window pins health AND
+  fires `StartKO` anyway. With `ko_spawn_at_start = 0` that is a permanent KO loop.
+* **H3 — a CI gate is RED and the underlying write is a known-dangerous class.** `[V]`
+  `tools/reflection/islive_gate.ps1` exits 1: `ragdoll_gate.cpp:104  g_pawn`. `g_pawn` is a bare
+  `void*` cached across ticks that we **write a byte into** after probing it with bare `IsLive` — the
+  measured 2026-08-23 dying-world shape, where a dead world's actors stay unflagged for 44+ seconds.
+  `docs/UE4SS_ARC.md` and `docs/LESSONS.md` both still assert "CI PASS = 0 bare-IsLive-on-static
+  tree-wide"; that claim is false as of `74c48694`.
+
+**So on one axis the shipped lane is worse than the bug it replaced** (H1 can take a single-player's
+ragdoll away for good). Whoever picks this up decides first: retire the lane with the arc, or fix
+H1/H2/H3 in place while the arc is built. Nothing else in the arc should start before that call.
+
+### The proper fix
+
+`docs/DEATH_ARC.md` in full. In one line: let the whole native death run, intercept the NATIVE
+`OpenLevel` when the local pawn has `dead == true` (fail CLOSED), and write the revive in the game's
+own verbs — `dead := false`, remove `blackScreen_C`, `forceWakeup()`,
+`teleportWObackrooms(spawnLocation, true, false)`. The `ragdoll_gate` MODULE stays: `wisp_attack_sync`
+has a real, pre-existing need for it. Only `ko_respawn`'s hold goes.
+
+---
+
+## 2. The pattern all three entries share
+
+All three are the same move: **the thing the game already does was inconvenient, so it was
+neutralised or replaced, instead of being kept and answered.** C1 and C2 do it to an ENTITY; C3 does
+it to a MECHANISM (a boolean the game reads before every ragdoll), which is why it did not look like
+the same mistake while it was being made. The ATV freezes it into a corpse; the clump swaps it
 for a fake. In both cases the compensating machinery (interp over a dead rig; a camera-ray aim
 system) is larger than the fix would have been, and in both cases the original obstacle turned out to
 be one property — actor tick for the ATV, `AddToRoot` for the pile.

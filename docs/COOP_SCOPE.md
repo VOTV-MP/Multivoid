@@ -214,9 +214,14 @@ items.
   vitals** — each peer computes its OWN health (host-run enemy hits are
   delivered as a reliable `PlayerDamage` EVENT to the hit peer, which feeds it
   to its LOCAL SP `Add Player Damage` BP so its own armor/FX/health-decrement
-  run) and STREAMS the resulting health for others' puppet display. Death is a
-  reliable, self-attested event from the dying peer (the only peer that
-  authoritatively knows it died). Self-damage (fall/fire/radiation) is computed
+  run) and STREAMS the resulting health for others' puppet display.
+  **CORRECTED 2026-08-31: "Death is a reliable, self-attested event from the
+  dying peer" was a DESIGN aspiration and is NOT built.** `[V]` there is no death
+  wire kind in `protocol.h`, which says so itself at `:229` ("excluding death --
+  death = native SP menu flow, ends the session"): a peer's death is visible to
+  others only as its streamed health reaching zero and its pose stream stopping.
+  What death DOES today is `net_pump`'s local policy (tear down, then flee to the
+  menu), and the arc that replaces it is `docs/DEATH_ARC.md`. Self-damage (fall/fire/radiation) is computed
   locally and shows up in the streamed health with no event. Owner: per-peer
   for the health number + death; host for enemy hit DELIVERY (host runs the
   AI/hit per enemies-target-both above, then tells the hit peer). Wire:
