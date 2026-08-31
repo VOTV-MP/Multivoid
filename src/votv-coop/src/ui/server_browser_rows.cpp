@@ -195,7 +195,10 @@ bool IsStale(const Row& r) { return AgeNowSec(r) > kStaleSec; }
 // images plus the inset are exactly `native_screen::AddFramedBox`, which already draws
 // every panel, header strip and footer on this screen and on the hosting window; a copy
 // of it in the row builder is the drift this project has paid for twice in one day (the
-// kit's own header says so). It returns the OVERLAY, so the text row is simply the third
+// kit's own header says so). It returns the OVERLAY, and the text row's INDEX in it is the
+// kit's business, not this file's -- ask NS::FramedBoxParts. (This used to say "simply the third
+// child"; the native-border frame added a ring and made that false, which is how index 2 became a
+// UImage and GetChildAt read a brush vtable as a slot array.) It was the third
 // child of what it built.
 //
 // THE FRAME IMAGES ARE HIT-TEST-INVISIBLE, and that is safe HERE for a reason worth
