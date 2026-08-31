@@ -248,14 +248,17 @@ DWORD WINAPI DmgHazardTestThread(LPVOID arg);
 void RunAutonomousPlayerDamageTest();
 DWORD WINAPI PlayerDamageTestThread(LPVOID arg);
 
-// KO-RESPAWN acceptance test (2026-08-31, harness/autotest_korespawn.cpp). SOLO --
-// the lane under test is entirely local. Delivers a LETHAL `Add Player Damage` and
-// asserts, in this order, that the ragdoll gate took (canRagdoll read back false),
-// the damage actually landed (health <= 0 -- the falsifier without which "did not
-// die" proves nothing), `dead` NEVER became true, the KO engaged, and the respawn
-// restored the player with `dead` still false. Gated by env
-// VOTVCOOP_RUN_KORESPAWN_TEST="1". Ends with a "korespawn_test: DONE" line.
-DWORD WINAPI KoRespawnTestThread(LPVOID arg);
+// NATIVE DEATH CHAIN instrument (2026-08-31, harness/autotest_death.cpp). SOLO and
+// SESSIONLESS: launched with no net role so net_pump's local-death flee never fires
+// and VOTV's own death plays out. Delivers a LETHAL `Add Player Damage`, then reports
+// TWO things -- an OBSERVATION (the measured timeline dead/ragdoll/blackScreen/travel
+// against the bytecode RE's 0/5 s/10 s prediction, plus M0: the dead window's RSS
+// slope against an equally long ALIVE control, re-measuring net_pump's inherited
+// "~165 MB/s possessed-ragdoll leak" claim) and an ACCEPTANCE verdict against
+// docs/DEATH_ARC.md's contract (the travel is cancelled and the player revived).
+// The acceptance half is EXPECTED RED until the arc lands -- that is deliberate.
+// Gated by env VOTVCOOP_RUN_DEATH_TEST="1". Ends with a "death_test: DONE" line.
+DWORD WINAPI DeathTestThread(LPVOID arg);
 
 // Xray-ragdoll feasibility PROBE (2026-06-01, harness/autotest_ragdoll_spawn_probe.cpp).
 // SINGLE instance, role-agnostic (plain single-player; NO connection). Answers, by

@@ -129,10 +129,12 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // applies it to its own player; the streamed health drop flashes the host's slot-1
     // puppet -- proving the full reliable host->owner damage relay (no real enemy).
     SpawnIf("VOTVCOOP_RUN_PLAYERDMG_TEST", "PlayerDamage relay e2e", &PlayerDamageTestThread, role);
-    // KO-respawn acceptance: SOLO. Delivers a lethal Add Player Damage and asserts the
-    // player survives it (gate took / damage landed / dead never set / KO engaged /
-    // respawn completed). The one test that can tell a working KO lane from a silent one.
-    SpawnIf("VOTVCOOP_RUN_KORESPAWN_TEST", "KO-respawn acceptance", &KoRespawnTestThread, role);
+    // Native death chain: SOLO + SESSIONLESS. Delivers a lethal Add Player Damage, lets
+    // the whole native death run, and measures it (timeline + the dead-window memory
+    // differential). Its ACCEPTANCE arms are docs/DEATH_ARC.md's contract and stay RED
+    // until that arc lands -- an instrument that cannot fail on the unfixed build cannot
+    // certify the fix.
+    SpawnIf("VOTVCOOP_RUN_DEATH_TEST", "native death chain", &DeathTestThread, role);
     // Xray-ragdoll feasibility probe: SINGLE instance (plain SP, role-agnostic).
     // Spawns playerRagdoll_C MANUALLY (no ragdollMode) + dumps it vs a real
     // ragdollMode body -- decides whether the manual spawn is visible/simulating
