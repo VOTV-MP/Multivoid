@@ -566,7 +566,7 @@ resolving into main.dll, no popup) — necessary-not-sufficient; the determinist
 zero-AV proof.
 
 **D1 BUILT (2026-08-22 night, commits `f675de11`..`712fa33b`): all 78 census sites converted.**
-Evidence: `tools/reflection/islive_gate.ps1` CI-mode PASS (0 bare-IsLive-on-static tree-wide) **at the time this was written -- the gate is RED as of `74c48694` (2026-08-31), 1 hit at `ragdoll_gate.cpp:104 g_pawn`; see `docs/CRUTCHES.md` C3 / H3**; the
+Evidence: `tools/reflection/islive_gate.ps1` CI-mode PASS (0 bare-IsLive-on-static tree-wide) **and STILL PASSING: it went RED at `74c48694` (2026-08-31) and green again at `33008d87` the same day, when `g_pawn` became a `CachedObjRef` (`ragdoll_gate.cpp:24`). Re-run 2026-08-31, tree-wide PASS**; the
 deterministic decommit drill (`VOTVCOOP_RUN_ISLIVE_DRILL=1`) PASS on pre- AND post-conversion bytes
 (legacy = exactly 1 absorbed AV with caller attribution; `CachedObjRef::Alive()` = 0 AVs); the
 differential no-bypass menutravel bracket PASS around the prime-suspect commit; LAN smoke PASS on the
