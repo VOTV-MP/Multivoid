@@ -49,9 +49,10 @@ Community commits are adopted with their **original authorship preserved**
 (`git log --author=<name>` shows exactly what each person wrote).
 
 ### Tarangok
-- **KO respawn** (`death.ko_respawn`, on by default): lethal damage becomes a
-  knock-out and a respawn at the КПП start instead of the stock kick-to-menu
-  permadeath — the foundation of the mod's respawn system.
+- **KO respawn** (`death.ko_respawn`): the death lane — the config surface, the
+  KO/respawn shape, and the first attempt at answering VOTV's kick-to-menu
+  permadeath. The mechanism has been reworked twice since (see
+  `docs/DEATH_ARC.md` for where it is going); the lane and the idea are theirs.
 - **Live mannequin skin preview**: hovering a skin in the F1 menu shows it on a
   real in-world mannequin.
 - Cross-peer held-prop visibility (clients now see props carried by other
