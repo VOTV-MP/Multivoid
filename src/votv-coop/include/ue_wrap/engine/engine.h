@@ -829,6 +829,14 @@ bool SetMainPlayerRagdollMode(void* mainPlayer, bool ragdoll, bool passOut, bool
 // relies on can't run on a tickless orphan).
 bool ForceMainPlayerGetUp(void* mainPlayer);
 
+// AmainPlayer_C::forceWakeup() -- the UNCONDITIONAL stand-up (uber @25800:
+// movement mode, capsule collision, camera re-attach, EnableInput, ragdoll mesh
+// detach; reads no gate). Prefer this over ForceMainPlayerGetUp when the caller
+// must not inherit a condition or a latent delay -- see the note on
+// MainPlayerForceWakeupFn. Returns false on null/dead pawn or unresolved
+// UFunction. POSSESSED-player only. Game thread.
+bool ForceMainPlayerWakeup(void* mainPlayer);
+
 // AmainPlayer_C::canRagdoll (@0x0D10) -- ragdollMode()'s own pre-condition: false
 // early-outs EVERY ragdoll cause on this pawn. The Killer Wisp false-grab window
 // forces it false on the HOST (the grab montage's d1/drop notifies write
@@ -837,6 +845,11 @@ bool ForceMainPlayerGetUp(void* mainPlayer);
 // the window's falling edge. Raw masked write of a plain setter-less BP bool.
 // Returns false on null/dead pawn or if the bool can't be resolved. Game thread.
 bool SetMainPlayerCanRagdoll(void* mainPlayer, bool allowed);
+
+// Read back the same bool. Exists so a test can ASSERT the death gate actually
+// took rather than assuming the write landed -- a gate you cannot observe is a
+// gate you cannot prove. Returns false on null/dead pawn or unresolved bool.
+bool ReadMainPlayerCanRagdoll(void* mainPlayer, bool& allowed);
 
 // AmainPlayer_C::"Add Player Damage"(Damage, damageLocation, fullBody, blood, Source)
 // -- the primary player-damage entry. vitals Inc3-WIRE: the OWNER peer invokes this on

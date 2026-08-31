@@ -162,18 +162,28 @@ CFG_FLAG(voice_loopback, "voice.loopback", "voice", false, "VOTVCOOP_VOICE_LOOPB
     "Dev: play your own transmitted voice back locally.")
 
 // ---- [death] ----------------------------------------------------------------
-// KO RESPAWN (2026-08): instead of the stock permadeath (death -> kick to the main
-// menu -> rejoin), lethal damage knocks the player out (a faint/ragdoll) and, after
-// ko_ragdoll_seconds, respawns them with full vitals. Items are kept. The lethal hit
-// is intercepted at AddPlayerDamage; fall/fire/radiation deaths that bypass it are
-// caught by the net_pump death backstop and converted the same way.
+// KO RESPAWN (2026-08): instead of the stock permadeath (death -> the main menu,
+// with no way back into the session), lethal damage knocks the player out and,
+// after ko_ragdoll_seconds, respawns them with full vitals. The INVENTORY is kept
+// (nothing about the save is touched); a HELD or grabbed actor is dropped, because
+// the native faint we ride does that itself (ragdollMode uber @672 `simulateDrop`
+// + @689 `dropGrabObject`) -- that is the game's own behaviour, not ours.
+// The mechanism is PREVENTION, not a conversion: VOTV's death is a one-way latent
+// chain no flag can cancel, so we hold the game's own `canRagdoll` gate shut (the
+// first instruction of `ragdollMode`, and the single choke point every death path
+// must pass) and author the knock-out ourselves off a health poll. Full measured
+// rationale in coop/player/ko_respawn.h. DECLARED COST: while this is on, the
+// local player cannot ragdoll from the game's own causes either -- no manual
+// ragdoll key, no fall knockdown, no exhaustion faint.
 CFG_FLAG(ko_respawn, "death.ko_respawn", "death", true, "VOTVCOOP_KO_RESPAWN",
     "Lethal damage knocks the player out instead of killing them (KO ragdoll, then a "
-    "respawn with full vitals). 0 = the stock permadeath flow (kick to the main menu).")
+    "respawn with full vitals). Side effect while on: the player cannot ragdoll at all "
+    "(no ragdoll key, no fall knockdown, no faint). 0 = the stock permadeath flow "
+    "(kick to the main menu).")
 CFG_INT(ko_ragdoll_seconds, "death.ko_ragdoll_seconds", "death", 5, 1, 30, "VOTVCOOP_KO_RAGDOLL_SECONDS",
     "How long a KO'd player lies ragdolled before the respawn fires.")
 CFG_INT(ko_invulnerable_seconds, "death.ko_invulnerable_seconds", "death", 3, 0, 60, "VOTVCOOP_KO_INVULNERABLE_SECONDS",
-    "Damage immunity after a KO respawn (all damage is canceled during it).")
+    "Damage immunity after a KO respawn (health is pinned full for the window).")
 CFG_FLAG(ko_spawn_at_start, "death.ko_spawn_at_start", "death", true, "VOTVCOOP_KO_SPAWN_AT_START",
     "Respawn at the КПП start point. 0 = get up where the player fell.")
 

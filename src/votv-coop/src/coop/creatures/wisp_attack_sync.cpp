@@ -12,6 +12,7 @@
 #include "coop/net/session.h"
 #include "coop/creatures/npc_sync.h"
 #include "coop/player/players_registry.h"
+#include "coop/player/ragdoll_gate.h"
 #include "coop/player/remote_player.h"
 #include "coop/creatures/wisp_grab_hold.h"
 #include "coop/creatures/wisp_tear_mirror.h"
@@ -479,10 +480,15 @@ void Tick() {
         }
         // canRagdoll belt: block EVERY ragdoll cause on the host for the window (see the
         // g_canRagdollForced comment -- the montage's own notifies would ragdoll-kill it).
+        // Routed through coop::ragdoll_gate since 2026-08-31: `ko_respawn` holds the SAME
+        // flag shut for the whole session, and this lane's window-close used to write it
+        // back to true unconditionally -- re-opening the KO lane's death gate. The gate
+        // refcounts, so neither lane can free the other's hold.
         if (!g_canRagdollForced) {
             void* local = coop::players::Registry::Get().Local();
-            if (local && R::IsLive(local) &&
-                ue_wrap::engine::SetMainPlayerCanRagdoll(local, false)) {
+            if (local && R::IsLive(local)) {
+                coop::ragdoll_gate::Hold(coop::ragdoll_gate::Holder::WispFalseGrab);
+                coop::ragdoll_gate::Tick(local);
                 g_canRagdollForced = true;
                 UE_LOGI("wisp_attack: canRagdoll=false forced on the host for the false-grab window");
             }
@@ -490,9 +496,7 @@ void Tick() {
     } else if (g_haveHostHp || g_canRagdollForced) {
         g_haveHostHp = false;
         if (g_canRagdollForced) {
-            void* local = coop::players::Registry::Get().Local();
-            if (local && R::IsLive(local))
-                ue_wrap::engine::SetMainPlayerCanRagdoll(local, true);
+            coop::ragdoll_gate::Release(coop::ragdoll_gate::Holder::WispFalseGrab);
             g_canRagdollForced = false;
             UE_LOGI("wisp_attack: canRagdoll restored on the host (false-grab window over)");
         }
@@ -518,9 +522,9 @@ void OnDisconnect() {
     if (g_canRagdollForced) {
         // Never strand the local player un-ragdollable past the session (a mid-window
         // teardown would otherwise block every future ragdoll cause incl. real deaths).
-        void* local = coop::players::Registry::Get().Local();
-        if (local && ue_wrap::reflection::IsLive(local))
-            ue_wrap::engine::SetMainPlayerCanRagdoll(local, true);
+        // Release only OUR hold: ko_respawn::OnDisconnect drops its own, and the gate
+        // restores the flag once the last holder is gone.
+        coop::ragdoll_gate::Release(coop::ragdoll_gate::Holder::WispFalseGrab);
         g_canRagdollForced = false;
     }
     g_aggro.clear();

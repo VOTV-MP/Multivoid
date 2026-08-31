@@ -92,15 +92,17 @@ void ResolveSpotConeFns() {
 // Cached ragdoll UFunctions (Inc2b). Both owned by mainPlayer_C. Resolved on
 // first successful call; mainPlayer_C loads with gameplay so by the time any
 // puppet exists these resolve.
-void* g_ragdollModeFn = nullptr;
-void* g_forceGetUpFn  = nullptr;
+void* g_ragdollModeFn  = nullptr;
+void* g_forceGetUpFn   = nullptr;
+void* g_forceWakeupFn  = nullptr;
 
 void ResolveRagdollFns() {
-    if (g_ragdollModeFn && g_forceGetUpFn) return;
+    if (g_ragdollModeFn && g_forceGetUpFn && g_forceWakeupFn) return;
     void* cls = R::FindClass(P::name::MainPlayerClass);
     if (!cls) return;
-    if (!g_ragdollModeFn) g_ragdollModeFn = R::FindFunction(cls, P::name::MainPlayerRagdollModeFn);
-    if (!g_forceGetUpFn)  g_forceGetUpFn  = R::FindFunction(cls, P::name::MainPlayerForceGetUpFn);
+    if (!g_ragdollModeFn)  g_ragdollModeFn  = R::FindFunction(cls, P::name::MainPlayerRagdollModeFn);
+    if (!g_forceGetUpFn)   g_forceGetUpFn   = R::FindFunction(cls, P::name::MainPlayerForceGetUpFn);
+    if (!g_forceWakeupFn)  g_forceWakeupFn  = R::FindFunction(cls, P::name::MainPlayerForceWakeupFn);
 }
 
 // vitals Inc3-WIRE: cached "Add Player Damage" UFunction (resolves once mainPlayer_C
@@ -468,17 +470,28 @@ bool ForceMainPlayerGetUp(void* mainPlayer) {
     return Call(mainPlayer, f);
 }
 
-bool SetMainPlayerCanRagdoll(void* mainPlayer, bool allowed) {
+bool ForceMainPlayerWakeup(void* mainPlayer) {
     if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
-    // canRagdoll @0x0D10 (mainPlayer.hpp:278) -- ragdollMode()'s own pre-condition
-    // early-out. The Killer Wisp false-grab belt forces it FALSE for the grab window:
-    // the grab montage's d1 notify writes playerDamaged inline (bytecode -- the
-    // AddPlayerDamage PRE-cancel cannot see it) and the drop notify ends the montage
-    // with an unconditional ragdollMode(true,false,true) -- an HP pin cannot stop a
-    // ragdoll-DEATH, this flag can, and it is the game's own gate. Plain BP bool with
-    // no setter (inline EX_LetBool writes) -- the masked write IS the game's own
-    // mechanism. Byte+mask cached once: property LAYOUT is stable for a game build
-    // (only class POINTERS go stale across level travel; none is cached here).
+    ResolveRagdollFns();
+    if (!g_forceWakeupFn) return false;
+    ParamFrame f(g_forceWakeupFn);  // no params
+    return Call(mainPlayer, f);
+}
+
+namespace {
+// canRagdoll @0x0D10 (mainPlayer.hpp:278) -- ragdollMode()'s own pre-condition
+// early-out, and the single choke point for every ragdoll cause on a pawn,
+// DEATH INCLUDED: `dead := true` (uber @37412) is reachable only via
+// `fallen(true)`, reachable only from `ragdollMode`, whose first instruction is
+// `IFNOT(canRagdoll) POP`. Two lanes hold it shut -- the Killer Wisp false-grab
+// belt (the drop notify fires an unconditional `ragdollMode(true,false,true)`
+// from bytecode we cannot intercept; an HP pin cannot stop a ragdoll-DEATH, this
+// flag can) and the KO-respawn death gate. Plain BP bool with no setter (inline
+// EX_LetBool writes) and ZERO write sites in mainPlayer_C's own bytecode
+// (measured 2026-08-31), so nothing in the game fights our value. Byte+mask
+// cached once: property LAYOUT is stable for a game build (only class POINTERS
+// go stale across level travel; none is cached here).
+bool ResolveCanRagdoll(void* mainPlayer, uint8_t*& byteOut, uint8_t& maskOut) {
     static int32_t sCanRagByte = -1;
     static uint8_t sCanRagMask = 0;
     if (sCanRagByte < 0) {
@@ -489,8 +502,25 @@ bool SetMainPlayerCanRagdoll(void* mainPlayer, bool allowed) {
         }
         sCanRagByte = b; sCanRagMask = m;
     }
-    uint8_t* p = reinterpret_cast<uint8_t*>(mainPlayer) + sCanRagByte;
-    if (allowed) *p |= sCanRagMask; else *p &= static_cast<uint8_t>(~sCanRagMask);
+    byteOut = reinterpret_cast<uint8_t*>(mainPlayer) + sCanRagByte;
+    maskOut = sCanRagMask;
+    return true;
+}
+}  // namespace
+
+bool SetMainPlayerCanRagdoll(void* mainPlayer, bool allowed) {
+    if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
+    uint8_t* p = nullptr; uint8_t mask = 0;
+    if (!ResolveCanRagdoll(mainPlayer, p, mask)) return false;
+    if (allowed) *p |= mask; else *p &= static_cast<uint8_t>(~mask);
+    return true;
+}
+
+bool ReadMainPlayerCanRagdoll(void* mainPlayer, bool& allowed) {
+    if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
+    uint8_t* p = nullptr; uint8_t mask = 0;
+    if (!ResolveCanRagdoll(mainPlayer, p, mask)) return false;
+    allowed = (*p & mask) != 0;
     return true;
 }
 

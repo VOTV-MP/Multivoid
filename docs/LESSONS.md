@@ -4800,6 +4800,28 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 
 ## 5. Engine / UE4 facts
 
+- **A one-way LATENT chain cannot be undone by clearing the flag it also sets.** `[V]` bytecode
+  2026-08-31: VOTV's player death is `dead := true` **plus** `RetriggerableDelay(5 s)` -> black
+  screen -> `RetriggerableDelay(5 s)` -> `loadLevel('menu')` (uber `@37412` / `@4353` / `@4277`).
+  The flag is a SYMPTOM the chain leaves behind; the chain is armed in the latent-action manager
+  and **neither delay ever re-reads it**. A KO-respawn lane shipped on the claim "the same function
+  that set `dead` clears it" -- `ragdollMode` never writes `dead` at all (one writer in the whole
+  class, and `dead := false` **exists nowhere**: the game has no revive). Worse, the "conversion"
+  call was a no-op on an already-ragdolled player, and on the path where it *did* execute,
+  `fallen(false)` reaches `@39685`, re-reads `dead`, finds it set, and **jumps back into the death
+  chain** -- the undo re-arms the thing it is undoing. *Look FIRST:* before designing any
+  detect-and-revert, disassemble the transition and ask **"is this a flag or an armed chain?"** If
+  a `Delay` / `RetriggerableDelay` / timer / montage appears anywhere in it, undo is off the table
+  and the only correct shape is PREVENTION -- find the earliest instruction that can REFUSE the
+  transition (here `ragdollMode`'s own `IFNOT(canRagdoll) POP`, the single choke point every death
+  path in the game must pass, needing no site list and no dispatch visibility). Corollary that cost
+  the same bug twice over: the lane's other layer was a ProcessEvent interceptor on
+  `Add Player Damage`, and all seven of its ubergraph call sites are `EX_LocalVirtualFunction` --
+  **INVISIBLE** -- so both layers were dead and the feature could not have worked on any build,
+  which nothing caught because no test had ever killed a player. Full chain:
+  `research/findings/world-systems/votv-player-death-chain-RE-2026-08-31.md`.
+  [[lesson-a-latent-chain-cannot-be-undone-by-clearing-its-flag]]
+
 - **A wrong-offset reflected write NEVER faults where you wrote it.** `SetSizeBoxWidth` was called on what `AddFramedBox` returns — an **Overlay**, not a SizeBox, as that helper's own header says one line above the call. The float landed at a foreign property offset, nothing faulted there, and the game died three frames later in another subsystem: `PE detour-outer-callback AV caught function='SpawnObject' 0xC0000005` three times, with the first readable symptom being an action bar whose three buttons were all null. Reflection-driven writes have no call-site type check by construction — the offset comes from a NAME on a class you never asserted. **Look here FIRST:** a crash inside an engine function your change never touched, in a session that added a reflected `Set*`, IS that write until proven otherwise — list every one you added and check its RECEIVER type against what the producing helper actually returns, before reading the faulting function at all. [[lesson-a-wrong-offset-write-never-faults-where-you-wrote-it]]
 
 - **A UMG getter may read back YOUR OWN REQUEST, not the engine's state.** `[V]` 2026-08-26, twice:
