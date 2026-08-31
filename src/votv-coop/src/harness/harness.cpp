@@ -394,9 +394,6 @@ DWORD WINAPI TimelineThread(LPVOID param) {
                 }
             }
 
-            // Autonomous autotest dispatch: spawn each VOTVCOOP_RUN_*_TEST worker
-            // thread whose env flag is set (each self-gates on role internally).
-            harness::autotest::SpawnEnvGatedTests(netCfg.role);
         } else if (coop::config::ResolveFlag(::coop::config_registry::rows::static_2nd_player)) {
             // Opt-in dev aid ([dev] static_2nd_player=1): a static slot-1 puppet for solo
             // visual tests. OFF by default (audit P1) -- it would collide with a browser-
@@ -407,6 +404,22 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             // installs the solo observers regardless.
             session_runtime::SpawnSecondPlayerWhenReady();
         }
+
+        // Autonomous autotest dispatch: spawn each VOTVCOOP_RUN_*_TEST worker thread whose
+        // env flag is set (each self-gates on role internally).
+        //
+        // OUTSIDE the net-role branch since 2026-08-31, and that is a fix, not a widening.
+        // It used to sit inside it, so an env-gated test could only ever run in a launch
+        // that ALSO set VOTVCOOP_NET_ROLE -- i.e. with a session started. Several of these
+        // routines are documented SOLO and mean it: autotest_menutravel_probe says "SP-solo",
+        // autotest_ragdoll_spawn_probe says "plain single-player; NO connection", and
+        // autotest_death has to run sessionless or net_pump's local-death flee (gated on a
+        // live session) pre-empts the very chain it measures. Every one of them was silently
+        // unreachable in a true solo launch: the flag was read, nothing spawned, and the
+        // scenario reported INCONCLUSIVE with no line saying why. Role is still passed and
+        // still self-gated inside, so nothing that was spawning stops.
+        harness::autotest::SpawnEnvGatedTests(netCfg.role);
+
         UE_LOGI("harness: ==== PLAY READY ====");
         ue_wrap::log::Flush();  // boot-ready milestone: land the boot sequence on disk now
         // Unified play loop (env- or browser-driven). Replaces the two prior per-branch

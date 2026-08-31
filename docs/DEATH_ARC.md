@@ -1,7 +1,12 @@
 # DEATH ARC -- native death, without losing the world
 
-**Status: DESIGN + RE. Nothing in this doc is built.** The KO lane that *is* built
-(`74c48694`) is SUPERSEDED by it -- see §5.
+**Status: DESIGN + RE, with §6 MEASURED (2026-08-31 afternoon). Nothing of the arc
+is built yet.** The KO lane that used to be built is **RETIRED** (`33008d87`) -- see
+§5 -- and the instrument that replaces its test is in the tree and expected RED.
+**Read §6a before §3 and §4: it closes six of §6's eight items, and two of its
+findings change what the arc has to write.** §9 (M0) -- the one measurement that could
+have killed the design -- **RAN, and cleared it**: the inherited "~165 MB/s
+possessed-ragdoll leak" measures **+2.32 MB/s** against its own alive control.
 
 **Read this before touching anything that prevents, delays, undoes, detects or
 survives the local player's death.** It is the living doc for the arc; the
@@ -129,9 +134,9 @@ Needed because a revive that clears the flag must know what it re-enables.
 | uber @39685 | the `fallen` branch | -- |
 | **uber @56667** | **health regen `saveSlot.health += dt/6`, suppressed only by `dead`** | resumes -- see 6.2 |
 
-The census is complete **inside `mainPlayer_C`** and has NOT been run outside it:
-another asset may read `player.dead` through its own `EX_InstanceVariable`, and
-only `mainPlayer.json` has been scanned. Treat "no external readers" as UNKNOWN.
+The census is complete **inside `mainPlayer_C`**. The outside-the-class half is
+now measured too -- see §6a item 6; it is one achievement gate and five hazard/UI
+readers, and every one of them wants the LIVING value the revive writes.
 
 ---
 
@@ -158,10 +163,63 @@ there and illegal five seconds earlier.
 
 `[V]` `@7160: OpenLevel(self, K2Node_CustomEvent_LevelName, true, '')` in the
 `mainGamemode` ubergraph is the single verb that unloads the world. It is a
-**native** `UFunction`, so unlike every BP hop above it, it is interceptable by
-the seam this project already uses for native targets -- the `UFunction::Func`
-patch (precedent: `AudioComponent::Play`, `ActorComponent::SetActive/Activate`,
-shipped v115). **No bytecode patch is required anywhere in this design.**
+**native** `UFunction`, so unlike every BP hop above it, it is interceptable.
+**No bytecode patch is required anywhere in this design.**
+
+**THE SEAM IS A MINHOOK DETOUR ON THE C++ FUNCTION, NOT A `UFunction::Func` PATCH.**
+This is a correction to the first draft, and the reason is mechanical rather than
+aesthetic. IDA, 2026-08-31 (`VotV-Win64-Shipping.exe`, imagebase `0x140000000`):
+
+| symbol | address | how it was found |
+|---|---|---|
+| `UGameplayStatics::execOpenLevel` | `0x1430114A0` | `FNameNativePtrPair{"OpenLevel", ptr}` at `0x14419BC60`; decompiles to the UHT thunk (4 `FFrame::Step`s: object, FName, bool, FString) |
+| `UGameplayStatics::OpenLevel` | `0x142B530B0` | the call the thunk ends in (`0x143011614`) |
+
+A `Func` patch replaces the **thunk**, whose job is to walk the caller's bytecode
+and pull the four parameters off it. To CANCEL there, we would have to consume
+those parameter expressions ourselves -- otherwise the interpreter resumes in the
+middle of an argument and executes it as a statement. That means reimplementing
+`FFrame::Step` against a scratch buffer, destroying the `FString` we made it
+build, and owning that for every future game build. Detouring `0x142B530B0`
+instead gets the parameters already parsed, in registers, by the engine's own
+untouched thunk, and cancelling is `return;`.
+
+`[V]` The body is small and self-contained -- `GetWorldFromContextObject` (null ->
+early out), `GetWorldContextFromWorldChecked`, `FName::ToString`, optional
+`"?" + Options`, an `FURL` built against `WorldContext.LastURL`, a
+`MakeSureMapNameIsValid` log check, then **`UEngine::SetClientTravel(World, Cmd,
+TravelType)`** and the temporaries freed. `SetClientTravel` is the whole effect:
+it assigns `FWorldContext::TravelURL`, which `TickWorldTravel` acts on next tick.
+So not calling the original means no travel is ever *requested* -- there is no
+half-started teardown to unwind, which is exactly what §6.1 item 2 asked.
+
+Two consequences worth writing down:
+
+* `[V]` `OpenLevelBySoftObjectPtr` (`0x142B53350`) calls the same C++ function, so
+  ONE detour covers both entry points. Nothing else in the image calls it.
+* the detour owns the by-value `FString Options` (MSVC destroys by-value class
+  parameters in the CALLEE -- visible in the decompile as `if (*a4) Free(*a4)` on
+  every return path). On the death path `Options` is the empty literal, so its
+  data pointer is null and there is nothing to free; a general cancel must still
+  free it rather than leak.
+
+COST: one new AOB signature in `sdk_profile.h` (the project has six) and a row in
+`docs/VERSION_MIGRATION.md`'s version surface. **The signature is derived and
+proven UNIQUE (occ=1) on this build** -- prologue through `mov rsi, rax`, with the
+`GS`-style rip-relative `GEngine` load and the `GetWorldFromContextObject` rel32
+wildcarded:
+
+```
+48 89 54 24 10 55 53 56 41 56 48 8D 6C 24 C1 48 81 EC E8 00 00 00 41 0F B6 D8
+48 8B D1 48 8B 0D ?? ?? ?? ?? 41 B8 01 00 00 00 4D 8B F1 E8 ?? ?? ?? ?? 48 89
+45 9F 48 8B F0
+```
+
+ABI for the detour (MSVC x64, confirmed against the decompile): `RCX` =
+`WorldContextObject`, `RDX` = `FName LevelName` by value (8 bytes, POD), `R8B` =
+`bAbsolute`, `R9` = `FString* Options`. The alternative -- reflection gives
+the thunk address for free via `UFunction::Func`, no AOB -- was rejected above on
+the cancel mechanics, not on the resolution.
 
 ### 3.1 The discriminator
 
@@ -195,11 +253,11 @@ wherever one exists. Order matters.
 | # | write | why / provenance |
 |---|---|---|
 | 1 | `dead := false` | the game never clears it; a plain BP bool. Until this, `wakeup` refuses (@26584) and regen stays off (@56667). |
-| 2 | remove the `blackScreen_C` widget | created at `@4353` with `AddToViewport(0)`. Asset: `research/pak_re/extracted/VotV/Content/umg/blackScreen.uasset`. **Its lifecycle is UNMEASURED** -- it may animate and self-remove. §6. |
+| 2 | remove the `blackScreen_C` widget | created at `@4353` with `AddToViewport(0)`. **MEASURED (§6a item 4): it can never remove itself.** The asset's whole name table is `CanvasPanel` + `Image` + `SlateBrush` + anchors -- no function export, no ubergraph, no animation. Today the level travel takes it away; cancel the travel and it is a permanent black screen. `RemoveFromParent` is MANDATORY, not conditional. |
 | 3 | `forceWakeup()` | uber `@25800`, UNCONDITIONAL: movement mode, capsule collision, camera re-attach, `EnableInput`, ragdoll mesh detach, physics off. Not `forceGetUp()` (0.2 s latent delay, and lands in `@39685` which re-reads `dead`), not `wakeup()` (refuses while dead). |
 | 4 | restore vitals | `saveSlot.health` must be > 0 or `Add Player Damage` re-kills on the next hit. The game's own regen (`+dt/6`, @56667) then runs unaided. |
-| 5 | reposition | the game's own respawn verb is `teleportWObackrooms(<transform>, true, false)`. `spawnLocation` (set at level start, uber `@34642`) is what the game's own below-Z rescue uses (`@3907 forceWakeup(); @3921 teleportWObackrooms(spawnLocation, true, false)`). **Prefer that pair -- it is literally the game's existing revive.** |
-| 6 | undo `loadLevel`'s menu prep | it already ran: `GameInstance.subArea := None`, `NewVar_1 := option`, `pause_mainMenu.canvas_loading.SetVisibility(b0)`, `pause_mainMenu.screenSwi.SetActiveWidgetIndex(0)`. Whether any of those is visible to a player who never reaches the menu is UNMEASURED. §6. |
+| 5 | reposition | the game's own respawn verb is `teleportWObackrooms(<transform>, true, false)`, and the game's own below-Z rescue is exactly `@3907 forceWakeup(); @3921 teleportWObackrooms(spawnLocation, true, false)`. **Prefer that pair -- it is literally the game's existing revive.** But know what `spawnLocation` IS: `[V]` uber `@34642` sets it to `GetTransform()` once in the level-start block (beside `gamemode`, `ragdollComponent`, `lastWalk`, `lastLoc`), so it is **wherever the pawn stood when this level loaded** -- the save's position on a loaded game, the PlayerStart on a new one. It is not a fixed КПП, and after a long session it can be kilometres from the corpse. §10 asks the user which they want. |
+| 6 | undo `loadLevel`'s menu prep | **MEASURED (§6a item 5), and two of the four are real.** `pause_mainMenu` is added to the viewport ONCE at gamemode init (`gm` uber `@59352 AddToViewport(3)`, then `@59577 SetVisibility(Collapsed)`) and lives there for the session -- so `canvas_loading.SetVisibility(Visible)` and `screenSwi.SetActiveWidgetIndex(0)` are writes to a widget that is still on the player's screen tree, merely collapsed. `ui_menu`'s ubergraph writes `canvas_loading` **nowhere**, and `enterPause` only un-collapses the menu itself -- so a player who cancels the travel and later presses ESC gets a LOADING SCREEN where the pause menu should be. Both must be restored (index back to 1, which is what `ui_menu`'s own in-game Construct sets; `canvas_loading` back to the value read off it while the player was alive, not to a guessed constant). The other two are benign: `GameInstance.subArea := None` is written by `mainPlayer` itself at uber `@4489`/`@5264` in ordinary play, and `NewVar_1` is overwritten by the next real `loadLevel`. |
 
 Everything in §1 up to `@4277` is left strictly alone. That is the point.
 
@@ -216,13 +274,27 @@ which nobody could have checked without disassembling the chain.
 
 
 **`74c48694` ("KO respawn: a death cannot be undone, so stop the death instead")
-is superseded whole.** It holds `canRagdoll` shut for the session so the death is
-never authored -- the exact opposite of the instruction in §0. Per RULE 2 it does
-not get to sit beside this; when the arc is built, the standing gate goes.
+is superseded whole, and as of `33008d87` it is RETIRED, not merely superseded.**
+It held `canRagdoll` shut for the session so the death was never authored -- the
+exact opposite of the instruction in §0. Per RULE 2 it does not get to sit beside
+this, and the retire went FIRST rather than last for two reasons: fixing H1/H2/H3
+would have been work on code scheduled for deletion, and H1 was live on the
+deployed build. The decision the previous session left open ("retire the lane with
+the arc, or fix H1/H2/H3 in place") is therefore answered: retired.
 
-Do NOT delete it blindly: `coop/player/ragdoll_gate` is also held by
+**Interim behaviour, stated plainly:** until the seam lands, a local death is
+VANILLA -- ten seconds, then the main menu -- with `net_pump`'s flee still in
+front of it. That is a step back from what the KO lane *claimed* to do and a step
+forward from what it *cost* (no ragdoll key, no fall knockdown, no faint, and H1
+made that permanent after a cancelled join). Reverting is one `git revert` away if
+§9 kills the arc.
+
+The gate MODULE stayed, as planned: `coop/player/ragdoll_gate` is also held by
 `wisp_attack_sync` for the Killer Wisp false-grab window, which is a real,
-pre-existing need. The gate MODULE stays; `ko_respawn`'s hold on it goes.
+pre-existing need and releases on its own teardown. What went with the lane:
+`Holder::KoRespawn`, `ScopedOpen`, `ReleaseAll` and `Holds`, all caller-less
+afterwards. H3 was fixed on the way past -- `g_pawn` is a `CachedObjRef`, so
+`Hold`/`Release` re-apply through a world-stamped slot read.
 
 **The shipped build has live defects that outlive the design change** (post-ship
 audit, 2026-08-31, verified against `74c48694`):
@@ -247,9 +319,9 @@ audit, 2026-08-31, verified against `74c48694`):
   `UE_LOGW` on a 125 Hz path (125 synchronous `fflush`/s), and a NaN health
   passing `!(hp > 0.f)`.
 
-**Until this arc lands, the shipped build is worse than the plain bug on one
-axis** (H1 can take a single-player's ragdoll away permanently). Either retire it
-or fix H1/H2/H3 first -- that is a decision for the session that picks this up.
+All of the above died with `33008d87`. They are kept written down because H1 is
+the shape to watch for in the arc's own code: a safety that is only released on a
+path that assumes the happy case ran.
 
 Also retired by this design: the health poll as the KO trigger. It raced the
 game's own regen (§6.2) and won by ordering accident.
@@ -295,6 +367,40 @@ The user is launching IDA for this. In priority order:
 
 ---
 
+## 6a. MEASURED, 2026-08-31 afternoon
+
+Six of §6's eight items are answered. Every row is `[V]` -- IDA on the shipped
+`VotV-Win64-Shipping.exe`, the kismet dumps in `research/bp_reflection/`, and the
+extracted pak. §6 above is kept as the question list; this is the answer sheet.
+
+| # | question | answer |
+|---|---|---|
+| 6.1.1 | resolve `OpenLevel`, decide the seam | `execOpenLevel` `0x1430114A0`, `UGameplayStatics::OpenLevel` `0x142B530B0`. **The seam moved from a `Func` patch to a MinHook detour on the C++ function** -- §3 carries the reasoning and the decompiled body. `LevelName` is available as a second discriminator (parameter 2, an `FName` by value). |
+| 6.1.2 | is cancelling clean? | **Yes.** The function's only engine-visible effect is its last call, `UEngine::SetClientTravel(World, Cmd, TravelType)`, which assigns `FWorldContext::TravelURL` for `TickWorldTravel` to act on next tick. Returning before it means the travel is never *requested*. Upstream, `transition`'s whole body is `SetGamePaused(self,false)` + `Delay(0.0)` (`gm` uber `@92640`) -- and the game is not paused during a death, so that is a no-op -- and `loadLevel`'s four writes are itemised in §4 row 6. Nothing has begun a teardown. |
+| 6.1.3 | is `@7160` the only travel? | **Yes, in the game.** `OpenLevel` appears in exactly ONE of the 301 disassembled assets (`mainGamemode`), and `OpenLevelBySoftObjectPtr` / `ServerTravel` / `ClientTravel` / `RestartLevel` / `LoadStreamLevel` appear in NONE. `ExecuteConsoleCommand` exists in 7 assets but never issues an `open`. On the engine side the only caller of `0x142B530B0` is `OpenLevelBySoftObjectPtr` (`0x142B53350`), so one detour covers both. |
+| 6.2.4 | `blackScreen_C`'s lifecycle | **It has none.** The asset's name table is `CanvasPanel`/`Image`/`SlateBrush`/`LinearColor`/anchors and contains **no function or ubergraph export at all** (`.uexp` is 894 bytes). It is a static full-screen black image that is destroyed only with the world. Cancel the travel and it stays forever -- §4 row 2 is mandatory. |
+| 6.2.5 | regen vs the death window | unchanged from §1.2: `saveSlot.health += dt/6` at uber `@56667`, suppressed only by `dead`. Restated here because it is the reason a `health <= 0` trigger is unusable -- the value leaves zero within a frame. |
+| 6.2.6 | external readers of `dead` | **COMPLETE, and it is a complete census, not a sample.** Scanning every `.uasset` in the game for the name-table entry `"dead"` gives **9 assets in the whole 8.17 GB pak**, and the same scan over the 3,050 extracted assets gives the same 9 -- so the extraction contains all of them and the list is closed: `main/mainPlayer` (the owner), `objects/fossilhound`, `objects/rufus`, `objects/components/comp_disintegrate`, `objects/misc/basevoid`, `objects/misc/laserEmitter`, `umg/components/ui_damageIndicator` (all six cast to `Main_Player`), plus `objects/prop_fish` and `objects/dogshaite51/base51` (own variables, no cast). The one disassembled reader is `fossilhound`: `IFNOT(AsMain_Player.dead) POP` -> `progressAchievement('deadFossil')` -- an achievement gate, the same shape as the in-class `drown` one. **The risk direction is benign**: the revive writes the LIVING value, which is what every reader already expects of a live player. |
+| 6.2.7 | what `spawnLocation` is | `[V]` uber `@34642`: `spawnLocation := GetTransform()`, once, in the level-start block. See §4 row 5 -- it is the pawn's transform at level load, not a fixed КПП. |
+| RUNTIME | does the game do what the bytecode says? | **YES, confirmed 2026-08-31 12:31** (§9.1): `dead` 0 ms, `isRagdoll` 0 ms, `blackScreen_C` 5 125 ms, level travel 10 672 ms, against 0 / 5 000 / 10 000 predicted from the disassembly alone. |
+| 6.3.8 | the client's chain | still OPEN. Everything above is per-machine BP so the chain is structurally identical, but no run has ever put a client through it. The instrument in §8 is deliberately SOLO first. |
+
+### 6a.1 What the measurements changed
+
+Three things, and they are the reason this section is above §3/§4 in the reading
+order rather than an appendix:
+
+1. **The seam is a plain function detour, not the `Func` patch the first draft
+   named.** Cancelling a native thunk means owning the caller's bytecode cursor;
+   cancelling the C++ function means `return;`.
+2. **The black screen is not "probably self-removing".** It is provably inert, so
+   removing it is part of the revive, not a contingency.
+3. **The menu prep is not cosmetic.** `pause_mainMenu` is a live, permanently
+   viewport-resident widget; leaving `canvas_loading` visible hands the player a
+   loading screen the next time they press ESC.
+
+---
+
 ## 7. Coop
 
 ### 7.1 Authority
@@ -327,15 +433,30 @@ fixed, only bypassed, and the fail-safe still needs to route somewhere sane.
 
 ## 8. Acceptance
 
-The existing instrument (`python tools/mp.py korespawn`,
-`harness/autotest_korespawn.cpp`) has the right shape -- falsifier-first arms,
-its own `DONE` line, non-zero exit on FAIL -- and it already caught two real
-defects before passing. It must be re-aimed:
+**BUILT (`33008d87`): `python tools/mp.py death`, `harness/autotest_death.cpp`.**
+It is the old KO test re-aimed (`git mv`, so `--follow` still reaches its
+history), SOLO and **SESSIONLESS** -- launched with `set_net_role=False`, which is
+what keeps `net_pump`'s flee (gated on a live session) from pre-empting the very
+thing being measured. No dev flag and no suppression were needed to get the
+window.
 
-* **First artifact: make it go RED on the currently deployed build.** It passes
-  today while H1/H2/H3 are live. A harness that cannot fail on the known-broken
-  build cannot certify the replacement (this is the round-2 critic's point and it
-  is correct).
+It prints two halves, and only one of them can fail:
+
+* **OBSERVATION** (never fails): the timeline `dead` / `isRagdoll` /
+  `blackScreen_C` / level-travel in ms after the hit, against the RE's prediction
+  of 0 / 5 000 / 10 000; plus §9's memory differential.
+* **ACCEPTANCE** (fails): D1 the death ran, D2 the ritual played (a black screen
+  appeared), D3 the world survived, D4 `dead` went false again, D5 the player is
+  standing with health, D6 no balloon. **D3/D4/D5 are EXPECTED RED and `mp.py
+  death` exits non-zero until the seam lands.** That is §8's own requirement met:
+  the instrument being replaced passed 5/5 while three HIGH defects were live in
+  the lane it certified, so this one is built to fail on the build that lacks the
+  fix.
+
+D1 and D2 are the falsifiers. Without them "the world survived" would go green on
+a run where the hit simply never landed -- which is exactly how the old test's
+first run failed (a 1000-damage hit vanished into `startInvinc` and the verdict
+could not say why). The pre-hit state line names every early-out term.
 * New arms this arc needs: the full native death is allowed to run (assert the
   black screen appeared and ~10 s elapsed); `OpenLevel` was reached and
   cancelled; `dead` went true and then false; the player is standing, has
@@ -347,11 +468,112 @@ defects before passing. It must be re-aimed:
 
 ---
 
-## 9. Open product questions for the user
+## 9. M0 -- the one measurement that can still kill this design
 
-* **Single-player.** The `OpenLevel` interception is process-wide and does not
-  depend on a session, so a solo player would get the revive too. Wanted?
-* **Where does the revive place the player?** The game's own `spawnLocation`
-  (level-start transform) or the coop KPP start point.
-* **Does anything mark the death?** Right now a revived player is
-  indistinguishable from one who never died. A chat line, a stat, a cost?
+**Nothing above matters if a dead player standing in the gameplay world leaks
+memory, because keeping them there is the whole arc.**
+
+`src/votv-coop/src/coop/session/net_pump.cpp` has asserted since 2026-06-01, from
+"4 hands-on + an autonomous probe arc", that:
+
+> *"The balloon is VOTV's OWN possessed-ragdoll leak in the GAMEPLAY world
+> (~165 MB/s to OOM). VOTV's native death never leaves the world -- it just
+> leaves you ragdolling. So the cure is to LEAVE the gameplay world."*
+
+At 165 MB/s the arc's own ten-second window costs ~1.6 GB before the revive even
+runs, and if the rate does not stop at the revive it is unbounded. So this is a
+gate, not a footnote.
+
+**The claim is inherited, not measured, and one half of it is already false.**
+"VOTV's native death never leaves the world" is contradicted by §1: the chain
+reaches `loadLevel('menu')` at +10 s. The most likely explanation is that nobody
+ever saw those ten seconds -- our own flee fires within one pump tick of `dead`
+going true, so the observed window was ours, not the game's. The other half (the
+rate) has **no surviving finding doc anywhere in `docs/` or `research/`**; it
+exists only in that comment and in `autotest_menutravel_probe.cpp`'s header. It
+also predates the v122 no-passive-mint root fix, which removed ~2,200 zombie
+element rows per join -- exactly the shape of thing that produces a per-tick
+balloon. And it cannot be a pure-VOTV effect at that magnitude without vanilla
+single-player players noticing a 1.6 GB spike on every death.
+
+So it is re-measured before anything is built on it, and as a DIFFERENTIAL rather
+than an absolute (`[[lesson-measure-the-differential-and-the-guard-disappears]]`):
+the instrument samples RSS across a 10 s window with the player ALIVE and standing
+still, then across the dead window, same process, same save, same cadence. Shared
+drift cancels; `D6 no-balloon` fails if the dead window exceeds the alive control
+by more than 20 MB/s -- an order of magnitude under the claim and an order of
+magnitude over ordinary streaming churn, so neither answer is a coin flip.
+
+### 9.1 RUN, 2026-08-31 12:31, and the claim does not survive it
+
+`python tools/mp.py death`, solo + sessionless, fresh save, DLL built at 12:20:09.
+Verbatim from `Game_0.9.0n_HOST/.../multivoid.log`:
+
+```
+death_test: pre-hit state -- havePawn=1 canRagdoll=1(read=1) health=100.00
+            startInvinc=0(read=1) immortal=0(read=1) dead=0 inGameplay=1 rss=3312.7 MB
+death_test: ALIVE control window -- 3312.7 -> 3290.5 MB over 10000 ms (-2.21 MB/s, peak 3313.1)
+death_test: delivered Add Player Damage(1000) (health was 100.00, invoke=ok)
+death_test: TIMELINE (ms after the hit) -- dead=0 ragdoll=0 blackScreen=5125 travel=10672
+            [RE predicts dead~0, blackScreen~5000, travel~10000]
+death_test: DEAD window memory -- 3289.3 -> 3290.5 MB over 10672 ms (0.11 MB/s, peak 3308.3);
+            ALIVE control -2.21 MB/s; DIFFERENTIAL 2.32 MB/s
+death_test: D1 death-ran PASS / D2 ritual-played PASS
+death_test: D3 world-survived FAIL / D4 revived FAIL / D5 standing FAIL   (expected)
+death_test: D6 no-balloon PASS
+death_test: VERDICT FAIL (3 pass / 3 fail)
+```
+
+**M0: the dead window grew 1.2 MB in 10.7 seconds.** Differential against the
+alive control: **+2.32 MB/s**, against an inherited claim of ~165 MB/s -- about
+**1.4% of it**, and the absolute slope inside the dead window (`+0.11 MB/s`) is
+noise. There is no possessed-ragdoll balloon. **The arc is cleared on the one risk
+that could have killed it.**
+
+Two things that measurement does NOT say, and both matter:
+
+* It falsifies the claim **as written** -- *"VOTV's OWN possessed-ragdoll leak in
+  the gameplay world"*. It does not prove no balloon exists with a **coop session
+  running**, because this run had none by design (that is what let the death play
+  out). If a session-scoped balloon does exist it is OURS -- puppets, element
+  mirrors, prop shadows -- which makes it a root to fix, not a reason to leave the
+  world. That re-run is owed once the seam lands and the arms can run in a lobby.
+* The window is 10.7 s because the travel ended it. After the revive the player is
+  an ordinary living player again, so the dead window IS the interval at risk --
+  but a long-soak arm after a revive is cheap and should exist.
+
+**And the bytecode RE is now confirmed at runtime.** `dead` at 0 ms, `isRagdoll` at
+0 ms, `blackScreen_C` at 5 125 ms, the level travel at 10 672 ms -- against
+predictions of 0 / 5 000 / 10 000 from the disassembly alone, at a 250 ms sample
+interval. §1's chain is not a reading of bytecode any more; it is a description of
+what the game does.
+
+A third, quieter data point: the travel ran with our ProcessEvent detour fully
+live and no bypass armed, the teardown completed, and RSS fell 3290 -> 2948 MB at
+the menu. `net_pump`'s "our detour HANGS the 50k-actor teardown" is about the
+session path and is not re-opened here, but nothing on this path reproduced it.
+
+---
+
+## 10. Open product questions for the user
+
+These three are genuinely the user's -- each changes WHAT the mod does, not how.
+A recommendation is attached to each so that none of them blocks building.
+
+* **Single-player.** The `OpenLevel` detour is process-wide and does not depend on
+  a session, so a solo player would get the revive too -- which changes vanilla
+  VOTV's balance for someone who never asked for coop. *Recommendation: gate the
+  revive on a live coop session, plus a `[death]` config row so a solo player can
+  opt in.* Building it session-gated costs nothing and is reversible in one line.
+* **Where does the revive place the player?** `spawnLocation` is the game's own
+  answer and is measured (§4 row 5): the pawn's transform at level load, which
+  after a long session can be kilometres from where they fell. The alternatives
+  are the coop КПП start point, or in place. *Recommendation: `spawnLocation` via
+  the game's own `forceWakeup` + `teleportWObackrooms` pair, because it is
+  literally the game's existing revive and it keeps death costing something --
+  reviving in place makes dying free.*
+* **Does anything mark the death?** Right now a revived player would be
+  indistinguishable from one who never died. *Recommendation: one activity-feed /
+  chat line ("<Nick> died"), which the existing `peer_action_feed` grammar already
+  supports, and nothing else -- no stat, no penalty -- until the user asks for a
+  cost.*

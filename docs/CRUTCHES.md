@@ -48,7 +48,7 @@ missing work; this register is for work that was *built in the wrong shape*.
 |---|---|---|---|---|
 | C1 | **ATV** (`coop/interactables/atv_sync`, `ue_wrap/devices/atv`) | The mirror is a frozen corpse; the rig's whole purpose is deleted to make it hold still | **ARC 1 COMMIT 1 SHIPPED 2026-08-29** (`070c7d29` + `a2a45fc7`, proto 146): the freeze/teleport lane is DELETED — the mirror simulates and is corrected, and `AtvRelease`'s launch velocity went with it. The crutch is RETIRED at its root; what remains of C1's gap list is the VITALS and CONFIG arcs, not the corpse. **UPDATED 2026-08-30 (`8cd0ac25`): the 25-40 cm sag was a SECOND crutch in the same lane, and it was the collision guard, not the pose lane.** `coop::atv_hit_guard` cancelled ALL SEVEN `ComponentHit` delegates on a non-owner to stop a mirror authoring damage; the five WHEEL delegates also keep the rig's SHAPE, so the mirror's body sat under its own wheel plane. A four-cell single-variable experiment ACQUITTED the pose corrector outright (with the guard off it is the best of the four cells). Shipped `8cd0ac25`: only the two BODY delegates are cancelled. **THEN `28a958e8` RETIRED THE SUPPRESSION SHAPE ITSELF -- the crutch's last piece is gone.** Nothing is cancelled: all seven delegates are NEUTERED (a zero `FVector` over `NormalImpulse` pre-dispatch; the handler dispatches whole and only the magnitude dies), so the mirror keeps every side effect it needs -- above all `wheelsOnSurface`, whose loss WAS the sag -- and authors no damage at all. `g_cancelMask` and the `atv_hit_guard_mask` row are deleted (RULE 2). `[V]` verified on the same arm: mirror wear 98.22/100/100/98.48 -> **100/100/100/100**, `UNRESOLVED=0`. `[V]` two driven verification runs, A1 x0.95/x1.00/x1.23 and x0.90/x0.59/x2.11 (was x2.3-x2.7), A2 9.6 and 3.8 cm PASS, A6 both PASS, rig-shape spread 0.44-2.43 cm; a third undriven run reads A2 1.83 / spread 0.00. **A post-ship audit corrected the framing: "A2 never passed driven" was FALSE** (`20260830-092139`, driven, all seven cancelled, is the only ACCEPTANCE: PASS on disk at A2 7.0 cm), and the claimed 2x2 is honestly a 1x2 pair on one binary (`-1059` vs `-1057`, A2 30.4 -> 5.3, shape 19.05 -> 0.12) -- which is what carries the conclusion. **The §16 causes above are SUPERSEDED -- read `docs/vehicles/ATV.md` §17.** Residual: a mirror now runs `processTire()` and can eject a tire its author still has -- the fix is tire durability on the wire, not re-suppression. Still open: A5 and A4 (1 s ownership overlap). A5's 209-324 cm peak is NOT noise: `[V]` the author's last 12 driven samples sit still at 0.7-5 cm/s with `driven=1` still true -- it is wedged against a fence -- so A5's window mixes real driving with a stationary author, and 200 cm measured there is a STATIC error the corrector never closed, which A2 cannot see because it reads only the settled tail | **IN PROGRESS** |
 | C2 | **Trash piles / clumps** (`coop/props/trash_proxy`, `native_pile_mirror`, + ~9 sibling modules) | The mirror is a FAKE actor, which broke aim, which grew a parallel aim system; two mirror implementations now coexist | **OPEN** | **SECOND** (user: *"that's on the list after atv"*) |
-| C3 | **KO respawn** (`coop/player/ko_respawn`, the `Holder::KoRespawn` hold in `coop/player/ragdoll_gate`) | The game's own death mechanism is NEUTRALISED -- `canRagdoll` is held shut for the whole session so `ragdollMode` early-outs -- instead of the death being allowed to run and then answered | **OPEN, and it is the design of record that is superseded, not just the shape.** USER 2026-08-31: the player must FEEL the native death; the mod intervenes only at the travel. Proper fix designed in `docs/DEATH_ARC.md`; nothing built. **Three HIGH defects are LIVE in the shipped build** -- see the section below | **THIRD** |
+| C3 | **KO respawn** (`coop/player/ko_respawn`, the `Holder::KoRespawn` hold in `coop/player/ragdoll_gate`) | The game's own death mechanism was NEUTRALISED -- `canRagdoll` held shut for the whole session so `ragdollMode` early-outs -- instead of the death being allowed to run and then answered | **CLOSED BY RETIREMENT, `33008d87` 2026-08-31.** The lane is deleted whole (RULE 2) rather than fixed, because the arc that replaces it inverts its mechanism; H1/H2/H3 died with it and H3's underlying write was converted to `CachedObjRef` on the way out. The replacement (`docs/DEATH_ARC.md`) is DESIGNED + measured, NOT built -- so the current behaviour is vanilla permadeath, which is not a crutch, just the unsolved problem | **CLOSED** |
 
 ---
 
@@ -225,9 +225,13 @@ the way every other lane parks a brain), then **retire the proxy and its paralle
 
 ## C3 — KO respawn (the `canRagdoll` gate)
 
+**CLOSED BY RETIREMENT 2026-08-31 (`33008d87`), the same day it shipped and the same day it was
+registered. The lane is gone from the tree; this entry is kept as the record.** Everything below
+describes what USED to ship, and is written in the past tense only where it would otherwise mislead.
+
 **Design of record: `docs/DEATH_ARC.md`.** Chain RE:
 `research/findings/world-systems/votv-player-death-chain-RE-2026-08-31.md`.
-Shipped `74c48694`, 2026-08-31, same day it was registered here.
+Shipped `74c48694`, retired `33008d87`.
 
 ### What ships today
 
@@ -251,9 +255,11 @@ design was that the cost is not acceptable and not necessary:
 > НОВОЕ ИЗМЕНЕННОЕ СОСТОЯНИЕ ПИШЕТ."*
 
 The measurement that settles it: the death chain's last hop is a **NATIVE** `OpenLevel`
-(`mainGamemode` uber `@7160`), interceptable by the ordinary `UFunction::Func` seam, and by the time
-it runs both `RetriggerableDelay`s have been consumed — so the death can be allowed to happen in full
-and answered at the end, with no suppression anywhere.
+(`mainGamemode` uber `@7160`), and by the time it runs both `RetriggerableDelay`s have been consumed
+— so the death can be allowed to happen in full and answered at the end, with no suppression
+anywhere. (This paragraph used to name the `UFunction::Func` seam. IDA, 2026-08-31: the seam is a
+MinHook detour on `UGameplayStatics::OpenLevel` at `0x142B530B0` instead, because cancelling the
+exec THUNK would mean consuming the caller's parameter bytecode ourselves. `DEATH_ARC.md` §3.)
 
 ### Three HIGH defects are LIVE in the shipped build `[V]` 2026-08-31
 
@@ -277,9 +283,11 @@ Found by a post-ship audit and each re-verified by hand this session:
   `docs/UE4SS_ARC.md` and `docs/LESSONS.md` both still assert "CI PASS = 0 bare-IsLive-on-static
   tree-wide"; that claim is false as of `74c48694`.
 
-**So on one axis the shipped lane is worse than the bug it replaced** (H1 can take a single-player's
-ragdoll away for good). Whoever picks this up decides first: retire the lane with the arc, or fix
-H1/H2/H3 in place while the arc is built. Nothing else in the arc should start before that call.
+**So on one axis the shipped lane was worse than the bug it replaced** (H1 could take a
+single-player's ragdoll away for good). **That call was made on 2026-08-31: retire.** Fixing three
+defects in code the arc deletes is work with no destination, and H1 was live on the deployed build,
+so the retire went first rather than last. All three died with `33008d87`; H3's `g_pawn` became a
+`CachedObjRef` in the same commit, because the gate module survives.
 
 ### The proper fix
 
