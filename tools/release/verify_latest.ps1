@@ -7,7 +7,12 @@
 
 param(
     [string]$LedgerPath = (Join-Path $PSScriptRoot 'LEDGER.tsv'),
-    [string]$MasterLatestUrl = ''   # default: derived from kOfficialMasterUrl in protocol.h
+    [string]$MasterLatestUrl = '',  # default: derived from kOfficialMasterUrl in protocol.h
+    # Pass when the master's COOP_LATEST_* was deliberately pointed at a DEV
+    # prerelease. Without it this script asserts the stable contract above and
+    # would call a dev-advertising master an "unrecorded release" -- a false
+    # accusation, which is worse than no check. See Get-NewestPublished.
+    [switch]$AllowDev
 )
 
 Set-StrictMode -Version Latest
@@ -23,7 +28,8 @@ if (-not $MasterLatestUrl) {
     $MasterLatestUrl = "https://$($m.Groups[1].Value)/v1/latest"
 }
 
-$expected = Get-NewestStablePublished -Rows (Read-Ledger -Path $LedgerPath).Rows
+$kind = if ($AllowDev) { 'published (dev admitted)' } else { 'published stable' }
+$expected = Get-NewestPublished -Rows (Read-Ledger -Path $LedgerPath).Rows -IncludeDev:$AllowDev
 
 Write-Host "verify_latest: querying $MasterLatestUrl"
 $resp = $null
@@ -36,17 +42,18 @@ if ($resp -and ($resp.PSObject.Properties.Name -contains 'proto')) { $masterProt
 
 if ($null -eq $expected) {
     if ($masterProto -le 0) {
-        Write-Host 'verify_latest: OK_EMPTY -- no stable published in the ledger; master has no released record (proto<=0)'
+        Write-Host "verify_latest: OK_EMPTY -- no $kind in the ledger; master has no released record (proto<=0)"
         exit 0
     }
-    Write-Host "verify_latest: FAIL -- master reports proto=$masterProto but the ledger has NO published stable (unrecorded release?)"
+    $hint = if ($AllowDev) { '' } else { ' -- if the master was deliberately pointed at a DEV prerelease, re-run with -AllowDev' }
+    Write-Host "verify_latest: FAIL -- master reports proto=$masterProto but the ledger has NO $kind (unrecorded release?)$hint"
     exit 1
 }
 
-Write-Host "verify_latest: ledger newest stable = N=$($expected.N) game=$($expected.Game) tag=$($expected.TagName)"
+Write-Host "verify_latest: ledger newest $kind = N=$($expected.N) game=$($expected.Game) tag=$($expected.TagName)"
 Write-Host "verify_latest: master reports proto=$masterProto mod='$($resp.mod)'"
 if ($masterProto -ne $expected.N) {
-    Write-Host "verify_latest: FAIL -- master proto $masterProto != ledger stable N $($expected.N) (env constants not updated / stale?)"
+    Write-Host "verify_latest: FAIL -- master proto $masterProto != ledger N $($expected.N) from the newest $kind (env constants not updated / stale?)"
     exit 1
 }
 Write-Host 'verify_latest: PASS'

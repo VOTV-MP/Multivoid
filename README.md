@@ -57,7 +57,7 @@ honest, are recorded in the project's research corpus, which is kept privately.
   built-in **server browser** backed by the official master server
   (NAT traversal via signaling + TURN)
 - **Version identity + join gate** — lobbies advertise `game + build`
-  (e.g. `0.9.0n b146`); mismatched peers are refused pre-flight with a clear popup
+  (e.g. `0.9.0n b<N>`); mismatched peers are refused pre-flight with a clear popup
   instead of desyncing mid-game. Old cohorts keep playing together forever —
   updates are never forced
 - **Visible remote players** — full body, legs, IK feet, per-player skins,

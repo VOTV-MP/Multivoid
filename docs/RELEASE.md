@@ -96,11 +96,14 @@ answered *"this build is too old to host — update Multivoid"*. That is the int
 retirement (user decision 2026-08-29) — the point is only that it must not happen while the
 update it names does not exist. Three lobbies were live when this was measured.
 
-**A trap in our own gate:** `sig_gate --remote` over TLS fails on this dev box with
-`CERTIFICATE_VERIFY_FAILED: certificate has expired` — the served chain is valid to Oct 18; the
-Windows trust store carries an **expired cross-signed `ISRG Root X2`**. The script has no
-`--cafile`, so today the only way to run the BLOCKING gate here is `--plaintext` against port
-10000. Fix the script or the store before the day; do not discover this at the tag.
+**A trap in our own gate, and it is PYTHON-specific — not the box.** `sig_gate --remote` over TLS
+dies with `CERTIFICATE_VERIFY_FAILED: certificate has expired`, while `verify_latest.ps1` reaches
+the *same* host over TLS fine (measured 2026-08-31, both against `master.multivoid.dev`). The
+served chain is valid to Oct 18; the Windows store carries an **expired cross-signed
+`ISRG Root X2`**, and OpenSSL — which Python uses — builds a path through it and stops, where
+schannel finds the valid one. So the fix is a `--cafile` (or `certifi`) in `sig_gate.py`, **not** a
+machine repair. Until then the only way to run the BLOCKING gate here is `--plaintext` against port
+10000. Do not discover this at the tag.
 
 **The update notice is stable-only, and this release IS a dev prerelease — so the collision is
 live, not hypothetical.** `COOP_LATEST_*` is commented out in `/etc/coop-master.env`, so
@@ -294,7 +297,13 @@ NOT stable-only):
    `COOP_*_PORT` overridden and `COOP_REQUIRE_TLS=0`, tunnel the relay port, gate it.
    (`pkill -f stage-coop-master` also matches the shell running it -- kill by PID.)
 7. `tools/release/verify_latest.ps1` — must PASS (it FAILs before step 6 by
-   design; fold-aware: reads the newest bare-tag published row).
+   design; fold-aware: reads the newest bare-tag published row). **`-AllowDev`**
+   admits dev prereleases, for the case where step 6's env was deliberately
+   pointed at one; without it the script asserts the stable contract and calls a
+   dev-advertising master an "unrecorded release". `[V]` the CLIENT has no
+   dev/stable axis at all (`session_manager.cpp:334-347` compares `proto` to
+   `kProtocolVersion` and nothing else), so "`COOP_LATEST_*` is stable-only" is a
+   convention of THIS checklist, never a property of the code.
 
 ## When something goes wrong
 
