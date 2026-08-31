@@ -41,6 +41,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from ctypes import wintypes
 from pathlib import Path
@@ -2958,6 +2959,47 @@ def cmd_death(args) -> None:
                 memory_limit_gb=args.memory_limit_gb, set_net_role=bool(args.session))
 
     host_log = HOST_DIR / "multivoid.log"
+    # LOOK AT THE FRAME. Three targeted probes in a row each measured their own target clear
+    # while the user was still seeing a red screen -- so the run now captures the host window
+    # a few seconds after the revive would have run, and the PNG is the evidence a property
+    # read cannot be. Autonomous scenario, so a window capture is allowed here (the ban is on
+    # HighResShot during hands-on, which pops a toast).
+    def _shot_before_and_after() -> None:
+        # TWO frames from ONE run, because "is it red" is meaningless without a baseline.
+        # Four probes in a row measured their own target clear while the user still saw red,
+        # which is the signature of comparing against an assumption instead of against a
+        # frame. If the PRE-hit frame is already tinted, the death is innocent entirely.
+        shots = ROOT / "research" / "death_shots"
+        shots.mkdir(parents=True, exist_ok=True)
+        deadline = time.time() + 120
+        while time.time() < deadline:
+            try:
+                if "death_test: ALIVE control window" in host_log.read_text(errors="ignore"):
+                    break
+            except Exception:
+                pass
+            time.sleep(0.5)
+        for p in list_votv():
+            _capture_window(p["PID"], shots / f"A_prehit_{p['PID']}.png")
+        _shot_after_revive()
+
+    def _shot_after_revive() -> None:
+        # the lethal hit lands ~35 s in and the revive ~10 s after it; +8 s of settle
+        deadline = time.time() + 90
+        while time.time() < deadline:
+            try:
+                if "death_revive: REVIVE" in host_log.read_text(errors="ignore"):
+                    break
+            except Exception:
+                pass
+            time.sleep(0.5)
+        time.sleep(8)
+        shots = ROOT / "research" / "death_shots"
+        shots.mkdir(parents=True, exist_ok=True)
+        for p in list_votv():
+            _capture_window(p["PID"], shots / f"B_postrevive_{p['PID']}.png")
+
+    threading.Thread(target=_shot_before_and_after, daemon=True).start()
     saw_done = _wait_for_log(host_log, "death_test: DONE", args.probe_timeout, "HOST")
     time.sleep(1)
     tail_log(host_log, 40, "HOST")

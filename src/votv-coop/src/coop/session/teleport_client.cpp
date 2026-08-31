@@ -70,11 +70,11 @@ void SetSession(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
 }
 
-void ApplyLocally(const ApplyArgs& args) {
+bool ApplyLocally(const ApplyArgs& args) {
     void* local = coop::players::Registry::Get().Local();
     if (!local) {
         UE_LOGW("teleport_client: no local mainPlayer_C found (not in gameplay?)");
-        return;
+        return false;
     }
     const ue_wrap::FVector  loc{args.locX, args.locY, args.locZ};
     const ue_wrap::FRotator rot{args.rotPitch, args.rotYaw, args.rotRoll};
@@ -99,9 +99,11 @@ void ApplyLocally(const ApplyArgs& args) {
     // Fallback path: K2_TeleportTo (large-distance-aware but can be reverted
     // by VOTV constraints), then SetActorLocation as last resort.
     if (!moved) {
-        if (!E::TeleportTo(local, loc, rot)) {
+        if (E::TeleportTo(local, loc, rot)) {
+            moved = true;
+        } else {
             UE_LOGW("teleport_client: TeleportTo failed too -- using SetActorLocation");
-            E::SetActorLocation(local, loc);
+            moved = E::SetActorLocation(local, loc);
         }
     }
     // Always update the actor + controller rotation. Without the controller
@@ -115,6 +117,7 @@ void ApplyLocally(const ApplyArgs& args) {
     UE_LOGI("teleport_client: applied (local=%p path=%s loc=(%.0f,%.0f,%.0f) rot=(p=%.1f y=%.1f r=%.1f))",
             local, fn ? (moved ? "teleportWObackrooms" : "fallback") : "fallback-noFn",
             args.locX, args.locY, args.locZ, args.rotPitch, args.rotYaw, args.rotRoll);
+    return moved;
 }
 
 namespace {

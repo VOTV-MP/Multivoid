@@ -859,7 +859,13 @@ bool ReadMainPlayerCanRagdoll(void* mainPlayer, bool& allowed);
 // location/fullBody/blood/Source params zero-init. SAFE on a puppet by accident -- the
 // BP early-outs on an unpossessed pawn (#6 probe). Returns false on null/dead pawn or
 // unresolved UFunction. Game thread only.
-bool InvokeAddPlayerDamage(void* mainPlayer, float damage);
+// `blood` is the BP parameter of the same name, and it is NOT cosmetic bookkeeping: `[V]`
+// `Add Player Damage` @2784 gates a whole block on it (`IFNOT(blood) POP`) whose body ends in
+// `lib_C::addEffect('bloodLoss', ...)` -- the screen-washing effect actor. A synthetic hit that
+// leaves it false therefore produces a death the game itself would never produce, and any test
+// arm aimed at blood loss is green for nothing. Default false = the historical behaviour of
+// every existing caller.
+bool InvokeAddPlayerDamage(void* mainPlayer, float damage, bool blood = false);
 
 // The mainPlayer_C "Add Player Damage" UFunction pointer (resolved on demand). Exposed so
 // the Killer Wisp host-neutralize can install a ProcessEvent PRE-interceptor that zeroes the

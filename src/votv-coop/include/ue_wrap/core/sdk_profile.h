@@ -181,6 +181,48 @@ inline constexpr const char* kSigD3D12ViewportPresentInternal =
     "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 20 33 DB 8B F2 48 "
     "8B F9 85 D2 75 10 38 59 54 75 0B 38";
 
+// UGameplayStatics::OpenLevel(const UObject* WorldContextObject, FName LevelName,
+// bool bAbsolute, FString Options) -- THE LEVEL-TRAVEL SEAM (docs/DEATH_ARC.md section 3).
+// It is the single verb that unloads the world, and it is the ONE hop of VOTV's death
+// chain that is interceptable at all: every hop above it (`kill` -> `ragdollMode` ->
+// `fallen` -> `loadLevel` -> `transition`) is EX_LocalVirtualFunction / EX_Context and
+// therefore invisible to our ProcessEvent detour (COOP_DISPATCH_VISIBILITY). This one is
+// NATIVE, so no bytecode patch is needed anywhere in the arc.
+//
+// WE DETOUR THE C++ FUNCTION, NOT THE `UFunction::Func` THUNK, and the reason is
+// mechanical. A Func patch replaces `execOpenLevel` (0x1430114A0), whose job is to walk
+// the CALLER's bytecode and pull four parameters off it; cancelling there means consuming
+// those parameter expressions ourselves or the interpreter resumes mid-argument and
+// executes it as a statement. Detouring the C++ function gets them already parsed, in
+// registers, by the engine's own untouched thunk -- and cancelling is `return;`.
+//
+// `[V]` The body is small and self-contained: GetWorldFromContextObject (null -> early
+// out), GetWorldContextFromWorldChecked, FName::ToString, optional "?" + Options, an FURL
+// built against WorldContext.LastURL, MakeSureMapNameIsValid, then
+// UEngine::SetClientTravel(World, Cmd, TravelType) and the temporaries freed.
+// SetClientTravel IS the whole effect -- it assigns FWorldContext::TravelURL for
+// TickWorldTravel to act on next tick -- so not calling the original means no travel is
+// ever REQUESTED and there is no half-started teardown to unwind.
+//
+// `[V]` OpenLevelBySoftObjectPtr (0x142B53350) calls the same C++ function, so ONE detour
+// covers both entry points; nothing else in the image calls it. `[V]` In the GAME,
+// `OpenLevel` appears in exactly ONE of 301 disassembled assets (mainGamemode uber @7160)
+// and ServerTravel / ClientTravel / RestartLevel / LoadStreamLevel appear in NONE.
+//
+// ABI (MSVC x64, confirmed against the decompile): RCX = WorldContextObject, RDX = FName
+// LevelName BY VALUE (8 bytes, POD), R8B = bAbsolute, R9 = FString* Options. The by-value
+// FString is destroyed IN THE CALLEE (visible as `if (*a4) Free(*a4)` on every return
+// path), so a cancel must free it rather than leak -- and must NOT free it when it calls
+// the trampoline, which would be a double free.
+//
+// DERIVED 2026-08-31 from the shipping PE and RE-VERIFIED THE SAME WAY the day it was
+// consumed: prologue through `mov rsi, rax`, with the rip-relative GEngine load and the
+// GetWorldFromContextObject rel32 wildcarded. occ=1, matching at 0x142B530B0 exactly.
+inline constexpr const char* kSigOpenLevel =
+    "48 89 54 24 10 55 53 56 41 56 48 8D 6C 24 C1 48 81 EC E8 00 00 00 41 0F B6 D8 "
+    "48 8B D1 48 8B 0D ?? ?? ?? ?? 41 B8 01 00 00 00 4D 8B F1 E8 ?? ?? ?? ?? 48 89 "
+    "45 9F 48 8B F0";
+
 // ---- struct offsets (stable within UE4.27; re-check on an engine bump) ----
 namespace off {
 inline constexpr size_t UObject_InternalIndex = 0x0C;  // int32 -- slot in GUObjectArray (O(1) liveness check)
