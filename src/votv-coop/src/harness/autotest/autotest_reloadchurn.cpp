@@ -252,6 +252,26 @@ ue_wrap::world_identity::WorldKind WaitForWorldKind(
     return k;
 }
 
+// FORCE A COLLECTION, on the game thread.
+//
+// `[V]` `UKismetSystemLibrary::CollectGarbage` is reflected on this build; in 4.27 its body is
+// `GEngine->ForceGarbageCollection(true)`, so it ARMS a collection for the end of the frame
+// rather than running one inline -- the caller must give it a frame before censusing.
+//
+// This is the arm that separates the two live readings of the husk. If a forced collection
+// clears the dead world and the rejoin then survives, the fault is that the coop travel leaves
+// the collection UNFINISHED and the next LoadMap adopts what it left behind. If the husk
+// survives a forced collection, something still REFERENCES it and no amount of collecting will
+// help.
+bool ForceGcGT() {
+    void* cdo = R::FindClassDefaultObject(L"KismetSystemLibrary");
+    if (!cdo) { UE_LOGW("reloadchurn: KismetSystemLibrary CDO not resolved"); return false; }
+    void* fn = R::FindFunction(R::ClassOf(cdo), L"CollectGarbage");
+    if (!fn) { UE_LOGW("reloadchurn: CollectGarbage not resolved"); return false; }
+    ue_wrap::ParamFrame f(fn);
+    return f.valid() && ue_wrap::Call(cdo, f);
+}
+
 // VOTV's own travel verb, called inline on the game thread. Same primitive the
 // menu-travel probe found and the death arc ships on -- a bare engine "open" does not
 // travel here.
@@ -384,6 +404,18 @@ void RunProbe() {
             PostCensus("menu-dwell", c, offs);
         }
         PostCensus("menu-settled", c, offs);
+
+        // The GC ARM. Off by default: the run that has to reproduce the field crash must not
+        // also be the run that tries to prevent it.
+        if (coop::config::ReadEnv("VOTVCOOP_RELOAD_GC") == "1") {
+            auto done = std::make_shared<std::atomic<int>>(0);
+            auto ok   = std::make_shared<int>(0);
+            GT::Post([done, ok] { if (ForceGcGT()) *ok = 1; done->store(1); });
+            WaitDone(done, 8000);
+            UE_LOGI("reloadchurn: cycle %d forced CollectGarbage dispatched=%d", c, *ok);
+            ::Sleep(4000);   // ForceGarbageCollection arms the collection for end-of-frame
+            PostCensus("post-gc", c, offs);
+        }
 
         const void* menuWorld = WorldPtrGT();
         UE_LOGI("reloadchurn: cycle %d RE-LOADING the world (%s) -- menu world @%p",
