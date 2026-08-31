@@ -1134,3 +1134,35 @@ measured LEAVES, so the restore VALUE and the restore-vs-leave POLICY stay human
 effects nothing disposes of (ragdoll, drop, position, NPC animation) and are **NOT yet
 classified** -- that classification, and the other death variants, are the next step, not a
 completed census.
+
+### 11.6 THE POST-REVIVE DRIFT -- measured 2026-08-31, and the KPP lane is DEFERRED
+
+**USER DECISION 2026-08-31: the client KPP spawn is deferred** ("КПП для клиентов оставляем на
+будущее"). This section exists so the measurement that fell out of the write-diff work is not
+lost when it resumes.
+
+**`[V]` The revive's teleport lands EXACTLY, and the player then drifts HORIZONTALLY.** D7 was
+changed to print the delta vector rather than a scalar distance, and it paid for itself on the
+first run:
+
+| moment | reading |
+|---|---|
+| `death_revive: REVIVE OK ... readback` | `distKPP=0 cm` |
+| D7, ~12 s later, run A | `2669 cm -- delta (?, ?, -0), vert -0` |
+| D7, ~12 s later, run B | `532 cm -- delta (-62,-529,-0), horiz 532, vert -0` |
+
+**Vertical is ZERO in both.** So it is not a fall, not a slope, not physics settling onto
+ground -- something carries the pawn HORIZONTALLY after the teleport has already succeeded.
+5.3 m over ~12 s in one run, 26.7 m in the other. Residual velocity surviving `forceWakeup` is
+the obvious first suspect and is NOT yet measured.
+
+**Why this matters beyond the drill.** It FALSIFIES the recorded hypothesis for the client-spawn
+lane as a complete explanation. That hypothesis was "we teleport at pawn birth and the game
+overwrites us at the load tail (`gm loadObjects -> transformToPlayer`)". A revive has **no load
+tail at all**, and the player still ends up off the KPP -- so there is at least a second,
+independent mechanism, and whichever lane resumes first should measure the pawn's VELOCITY
+across the teleport before designing anything.
+
+D7 is intermittent (1 failure in 4 runs) and is **not** caused by the write-diff work: it passed
+on the identical binary in the other arm. Its 500 cm tolerance is why a 532 cm run reads as a
+failure while a 400 cm one would not -- the tolerance is not the finding, the vector is.
