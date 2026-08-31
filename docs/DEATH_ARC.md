@@ -127,7 +127,7 @@ Needed because a revive that clears the flag must know what it re-enables.
 |---|---|---|
 | `Add Player Damage` @659 | early-out, no damage while dead | damage applies again -- correct |
 | `kill` @0 | early-out | correct |
-| uber @21701 | interaction deny-sound (`isDreaming\|\|isSleep\|\|!inBox\|\|dead\|\|isRagdoll`) | `isRagdoll` still gates it while down |
+| uber @21701 | **the PAUSE-MENU gate**, not a generic interaction deny (corrected 2026-08-31): `IFNOT(isDreaming\|\|isSleep\|\|!IsPointInBox(camera)\|\|dead\|\|isRagdoll) JUMP @21852 enterPause()`; any term true -> `PlaySound2D(use_deny)` and return | **a dead player cannot open the pause menu at all** -- so no player-authored quit can ever travel with `dead == true`, which is what bounds §3.1's discriminator |
 | uber @26584 | `wakeup()` refuses while dead | **the revive NEEDS this cleared** |
 | uber @26904 | the `drown` achievement | fires only for a real drown death |
 | uber @37412 | the write | -- |
@@ -253,8 +253,8 @@ wherever one exists. Order matters.
 | # | write | why / provenance |
 |---|---|---|
 | 1 | `dead := false` | the game never clears it; a plain BP bool. Until this, `wakeup` refuses (@26584) and regen stays off (@56667). |
-| 2 | remove the `blackScreen_C` widget | created at `@4353` with `AddToViewport(0)`. **MEASURED (§6a item 4): it can never remove itself.** The asset's whole name table is `CanvasPanel` + `Image` + `SlateBrush` + anchors -- no function export, no ubergraph, no animation. Today the level travel takes it away; cancel the travel and it is a permanent black screen. `RemoveFromParent` is MANDATORY, not conditional. |
-| 3 | `forceWakeup()` | uber `@25800`, UNCONDITIONAL: movement mode, capsule collision, camera re-attach, `EnableInput`, ragdoll mesh detach, physics off. Not `forceGetUp()` (0.2 s latent delay, and lands in `@39685` which re-reads `dead`), not `wakeup()` (refuses while dead). |
+| 2 | remove the `blackScreen_C` widget | created at `@4353` with `AddToViewport(0)`. **MEASURED (§6a item 4): it can never remove itself** -- the asset's whole name table is `CanvasPanel` + `Image` + `SlateBrush` + anchors, no function export, no ubergraph, no animation. Today the level travel takes it away; cancel the travel and it is a permanent black screen. **AND THE REMOVAL ITSELF IS NOW MEASURED WORKING (§9.2):** `found=1 removeFn=1 viewportFn=1 inViewport 1 -> 0`. Resolve `RemoveFromParent` off the ENGINE `Widget` class (exact-owner) and `IsInViewport` off `UserWidget`. **`stillFindable=1` is CORRECT and it corrects this design**: `RemoveFromParent` DETACHES, it does not destroy, so `FindObjectByClass` still finds the object -- the completion conjunction must therefore use `IsInViewport`, never "is a `blackScreen_C` findable". |
+| 3 | `forceWakeup()` | uber `@25800`, UNCONDITIONAL: movement mode, capsule collision, camera re-attach, `SetSimulatePhysics(false)`, `bUsePawnControlRotation`, `EnableInput`, mesh re-attach, **`isRagdoll := false` (`@26497` -- this row omitted it until 2026-08-31; it is what re-opens the `@21777` pause gate after a revive)**, `SetControlRotation`. `[V]` it never calls `fallen()`, so it cannot re-arm the chain. Not `forceGetUp()` (0.2 s latent delay, and lands in `@39685` which re-reads `dead`), not `wakeup()` (refuses while dead). |
 | 4 | restore vitals | `saveSlot.health` must be > 0 or `Add Player Damage` re-kills on the next hit. The game's own regen (`+dt/6`, @56667) then runs unaided. |
 | 5 | reposition | the game's own respawn verb is `teleportWObackrooms(<transform>, true, false)`, and the game's own below-Z rescue is exactly `@3907 forceWakeup(); @3921 teleportWObackrooms(spawnLocation, true, false)`. **Prefer that pair -- it is literally the game's existing revive.** But know what `spawnLocation` IS: `[V]` uber `@34642` sets it to `GetTransform()` once in the level-start block (beside `gamemode`, `ragdollComponent`, `lastWalk`, `lastLoc`), so it is **wherever the pawn stood when this level loaded** -- the save's position on a loaded game, the PlayerStart on a new one. It is not a fixed КПП, and after a long session it can be kilometres from the corpse. §10 asks the user which they want. |
 | 6 | undo `loadLevel`'s menu prep | **MEASURED (§6a item 5), and two of the four are real.** `pause_mainMenu` is added to the viewport ONCE at gamemode init (`gm` uber `@59352 AddToViewport(3)`, then `@59577 SetVisibility(Collapsed)`) and lives there for the session -- so `canvas_loading.SetVisibility(Visible)` and `screenSwi.SetActiveWidgetIndex(0)` are writes to a widget that is still on the player's screen tree, merely collapsed. `ui_menu`'s ubergraph writes `canvas_loading` **nowhere**, and `enterPause` only un-collapses the menu itself -- so a player who cancels the travel and later presses ESC gets a LOADING SCREEN where the pause menu should be. Both must be restored (index back to 1, which is what `ui_menu`'s own in-game Construct sets; `canvas_loading` back to the value read off it while the player was alive, not to a guessed constant). The other two are benign: `GameInstance.subArea := None` is written by `mainPlayer` itself at uber `@4489`/`@5264` in ordinary play, and `NewVar_1` is overwritten by the next real `loadLevel`. |
@@ -555,7 +555,92 @@ session path and is not re-opened here, but nothing on this path reproduced it.
 
 ---
 
-## 10. Open product questions for the user
+### 9.2 The second measurement pass, 2026-08-31 13:56-13:58 (`58a13231`)
+
+Three of the design's remaining unknowns needed the GAME rather than another round of
+critique. `mp.py death` gained a second configuration, because the two exclude each
+other: the flee is gated on a live session, so a run that HAS one never sees the
+native chain, and a run that LACKS one never reaches the veto the design turns on.
+
+| | sessionless (`mp.py death`) | solo host (`mp.py death --session`) |
+|---|---|---|
+| `sessionRunning` | 0 | **1** -- a zero-client host satisfies the gate at RUNTIME, not just per `session_start.cpp:234` |
+| `dead` / `ragdoll` | 0 / 0 ms | 235 / 235 ms |
+| `blackScreen` | 5 125 ms | **-1 (NEVER APPEARS)** |
+| travel | 10 703 ms | **4 469 ms** |
+| verdict | FAIL 3/3 | FAIL 2/4 (D2 also fails) |
+
+**1. `RemoveFromParent` works on a widget the game owns** -- the last unmeasured step
+of the revive. `found=1 removeFn=1 viewportFn=1 inViewport 1 -> 0, stillFindable=1`.
+Two corrections came out of it, both from the probe reporting more than one fact:
+`stillFindable=1` is correct (detach is not destroy), so **the completion conjunction
+must key on `IsInViewport`, not on findability**; and removing the widget did NOT
+perturb the chain -- the travel still landed at 10 703 ms against 10 672 ms in the run
+where it stayed, so the black screen is not load-bearing and the revive may dispose of
+it first.
+
+**2. The flee pre-emption is OBSERVED, and it is worse than the design assumed.** With
+a live session the black screen NEVER APPEARS and the world is gone at 4.5 s. So in
+coop today the player is not merely thrown to the menu -- they are yanked out **less
+than halfway through the death**, before the ritual §0 asks us to keep even begins.
+That is the sharpest available statement of what this arc fixes, and until now it was
+read out of `net_pump` and never watched. (Prediction corrected: §6a said the travel
+stamp would read ~8 ms. It reads 4 469 because the instrument stamps the WORLD CHANGE,
+not the travel REQUEST -- the request goes out ~1 s after the hit and the teardown plus
+menu load takes the rest. ~8 ms was the flee's reaction latency to observing `dead`;
+two different quantities.)
+
+**3. The grab question is NOT answered, and the instrument says so.** `grabbing_actor`
+resolves, but nothing was grabbed in either run, so `grabCleared=235` means "was
+already clear" and the post-sample's `haveGrab=0` is a READ FAILURE (no pawn after the
+travel), not a grab state. Whether `dropGrabObject` reliably clears it before a revive
+teleports needs an arm that GRABS FIRST; a passive sample structurally cannot answer
+it. Left open rather than counted.
+
+**M0, third and fourth points, and a correction to the metric.** Dead-window slopes
+0.06 and 0.00 MB/s. But the DIFFERENTIAL moved 2.32 -> 3.78 purely because the alive
+control drifted more negative (-2.21 -> -3.72) while the dead window's own slope stayed
+~0.1 -- so **the stable number is the dead-window slope, not the differential**; the
+control subtracts a drift that is not constant. Against a claimed 165 MB/s either
+framing is decisive, but the larger one is the flatterier one.
+
+---
+
+## 10. The three product decisions -- ANSWERED (USER, 2026-08-31)
+
+All three came back the same afternoon they were asked. They are decisions about WHAT the mod does,
+so they are recorded verbatim-in-substance and are not re-litigated by the design.
+
+1. **SINGLE-PLAYER IS NOT TOUCHED, AND "SINGLE-PLAYER" IS DEFINED.** *"Gate of course, we only work
+   in coop, single player games are not touched by us."* Refined the same day, when the `/qf` pass
+   asked whether a lone host counts: *"Solo host in a session a a coop session and revive should
+   work there. Single player is when playing solo game in solo save, no session."* So the term is
+   **`Session::running()`** and nothing more -- a HOST with zero clients IS a coop session and gets
+   the revive; single-player means no session exists, and that path is untouched because the gate's
+   first term is false. No peer-count term, no opt-in row. **The detour is still installed
+   process-wide** (it has to be -- it is a function detour), so the SESSION TEST BELONGS IN THE
+   VETO, and with no session the veto returns "let it travel" on the cheapest possible path.
+   This also keeps the acceptance rig honest: `running_.store(true)` fires at `Start()` with
+   `state_ = Handshaking` (`session_start.cpp:234`), so a solo host satisfies the gate and commit A
+   stays provable in ONE process.
+2. **THE КПП, not `spawnLocation`.** *"Кпп"*. The revive teleports to the coop start landmark, the
+   same point the client is teleported to after a load under the user's 2026-05-23 "spawn remote on
+   КПП" rule -- `P::name::kKPPSpawnX/Y/Z` = `(-37695, 69978, 6420)`, which survives the KO lane's
+   retirement because it lives in `sdk_profile_names.h`. `spawnLocation` is NOT used. **Known
+   fragility, flagged not hidden:** that constant is a hardcoded world position derived from one save
+   and its own comment says "Re-derive per game version" -- so the arc inherits a
+   version-and-save-shaped assumption that `spawnLocation` would not have had. It is the same
+   constant the retired lane used and the same one the client teleport uses today, so the arc adds no
+   NEW fragility; it does mean a bad constant now costs a revive, not just a spawn offset.
+3. **THE DEATH IS ANNOUNCED IN CHAT.** *"В чат пишем"* -- a chat line, not the activity feed and not
+   a silent revive. So the revive authors one chat message. That makes the revive's last step a
+   NETWORK write, which nothing else in the revive is: everything else is local state on the dying
+   peer's own machine (§7.1). Ordering and authorship of that line are the design's problem, not the
+   user's.
+
+---
+
+## 10a. Superseded: the questions as they were asked
 
 These three are genuinely the user's -- each changes WHAT the mod does, not how.
 A recommendation is attached to each so that none of them blocks building.
