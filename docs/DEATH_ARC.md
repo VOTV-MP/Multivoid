@@ -857,6 +857,69 @@ would do -- but WHY has not been measured, so it is written down rather than cal
 >
 > Lesson: `[[lesson-a-screenshot-and-a-log-line-are-two-instants]]`.
 
+### 11.3b THE DEATH EPISODE'S ONE-WAY WRITES -- the census, and the two it owed
+
+**Why a census and not another fix.** 11.2 item 7 records that the quadrant clear was added
+*after* the first runs, "found by the USER LOOKING AT THE SCREEN". 11.3a records the same shape
+a second time. Appending one more named field each time a red artifact is noticed is a list, not
+an invariant (`[[lesson-a-hand-written-inventory-is-a-list-not-a-census]]`), so the third pass
+enumerated the whole class instead.
+
+**The class is "every persistent write the death EPISODE performs", not "every latch among
+`dead` readers".** 6.2.6's 9-asset `dead`-reader census is a real census of the wrong axis: it
+found `ui_damageIndicator` (which does latch) but it structurally cannot see
+`gameInstance.subArea` or `gameInstance.NewVar_1`, which are keyed on nothing. 6.2.6's closing
+sentence -- *"the risk direction is benign: the revive writes the LIVING value, which is what
+every reader already expects"* -- is therefore **RETRACTED**: a census of who BRANCHES on a flag
+does not tell you whose branch left a LATCH.
+
+Method: every function of the episode disassembled from the cooked pak (`tools/bp_reflect.py`)
+and every persistent write enumerated -- `Add Player Damage`, `ragdollMode`, the ubergraph death
+chain, `lib_C::loadLevel`, and `ui_damageIndicator_C`'s Tick.
+
+| # | write | site `[V]` | disposed by |
+|---|---|---|---|
+| 1 | `gamemode.saveSlot.health` | `Add Player Damage` @972 / @1148 | revive (`Health := maxHealth`) |
+| 2 | `umg_damageIndicator.damage_{up,down,left,right}` | `Add Player Damage` @1538/@1889/@2240/@2591/@4269 | revive (`ClearDamageIndicator`) + native decay `dt/7.5` |
+| 3 | `addEffect('bloodLoss')` | `Add Player Damage` @3414 | revive (`ExpireBloodLoss`) |
+| 4 | ragdoll state (`isRagdoll`, `playermodel`, `Mesh` hidden, collision, movement mode, ...) | `ragdollMode(true)` @250-@2463 | **NATIVE, bidirectional** -- `ragdollMode(false)` @512 -> `wakeup()`; revive calls `forceWakeup` |
+| 5 | `dead := true` | uber @37412 | revive (`dead := false`, last) |
+| 6 | `blackScreen_C` created + `AddToViewport` | uber @4353 / @4406 | revive (`RemoveFromParent`, retried, not a gate) |
+| 7 | `pause_mainMenu.canvas_loading.SetVisibility(Visible)` | `lib::loadLevel` @219 | revive (menu prep restore) |
+| 8 | `pause_mainMenu.screenSwi.SetActiveWidgetIndex(0)` | `lib::loadLevel` @333 | revive (menu prep restore) |
+| 9 | `SetGamePaused(false)` | `mainGamemode::transition` uber @92640 | benign -- unpausing a revived player is correct |
+| 10 | `dmg_tunnel` alpha := 1.0 ; quadrant alphas := 0 | `ui_damageIndicator` Tick death branch @2330 / @2092 | **self-heals** -- the alive path recomputes both from `health` every tick |
+| **11** | **`dmg_full.SetVisibility(Visible)`** | Tick death branch **@2292** | **WAS OWED -- now `ReconcileCancelledTravel()`** |
+| **12** | **`gameInstance.NewVar_1 := 'PQXYyeofZ8cr5rJD4YXLVw'`** | `lib::loadLevel` **@138** | **WAS OWED -- now `ReconcileCancelledTravel()`** |
+| 13 | `gameInstance.subArea := name'None'` | uber @4489 + `lib::loadLevel` @52 | **deliberately LEFT** -- see below |
+
+**#11, the red screen.** `dmg_full`'s EXPORT authors it `ESlateVisibility::Collapsed`; the death
+branch writes `Visible`; the ALIVE path never writes that field at all. One tick of `dead` and a
+full-screen `inst_dmg_center` (parent `mat_dmgInd`, `MSM_Unlit`, `BLEND_Translucent`, scalar
+`alpha` 1.0) draws over everything for the life of the widget. Vanilla never needs an undo
+because the travel destroys the HUD. **This, and only this, is the part of the user's report that
+survives a revive.**
+
+**#12, the death signal.** `lib_C::loadLevel('menu', 'PQXYyeofZ8cr5rJD4YXLVw', ...)` stores that
+option **on the GameInstance**, which outlives every level. `mainGamemode` uber @12232 compares
+it against that exact literal and @13245 clears it -- it is how the next level learns the
+transition was a DEATH. Our veto means it is armed and never consumed, and @12322's branch off it
+reaches `lib_C::end(self)` while the game is paused. Clearing it to `""` is exactly what the
+travel would have caused. **Nothing on screen would ever have revealed this one** -- it is the
+return on doing a census rather than fixing the artifact.
+
+**#13, why `subArea` is left alone.** The revive teleports the player to the KPP, which is
+OUTDOORS, so `None` is the CORRECT sub-area for where they now are, and the game's own trigger
+volumes re-establish it at the next building. Restoring the pre-death value would be the bug.
+
+**Evidence:** `mp.py death --session` **12/12 PASS**, with `dmg_full -> Collapsed ok=1` and
+`gameInstance.NewVar_1 cleared ok=1` in the same run, and `B_postrevive` showing the revived
+player at the KPP with **no tint** -- the same capture that was a uniform red wash before the
+fix. `mp.py death` (sessionless) 6/6, single player untouched. NOT hands-on.
+
+**Residual:** this census is against VOTV 0.9.0n. A new game build needs it re-run -- it is a
+property of the game's bytecode, not of our code.
+
 ### 11.3a-orig (superseded) THE RED SCREEN: what it was, and the two hours it cost
 
 The user watched a run and reported the revived player standing at the KPP with the whole
