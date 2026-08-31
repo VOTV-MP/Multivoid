@@ -156,7 +156,10 @@ bool BuildOne(void* switcher, Kind kind, void* backDonor) {
         void* gap  = NS::Spawn(L"Spacer", footRow);
         if (gap) NS::AddHFill(footRow, gap, 1.f, NS::kFill, NS::kFill);
         s.okBtn = NS::BuildButton(footRow, backDonor, spec.confirm, NS::kBtnFontPx);
-        if (!s.backBtn || !s.okBtn) return false;
+        // RELEASE HERE TOO -- the next tick rebuilds and mints a second Field, stranding
+        // this one in the module's live list forever. The index-failure path below was
+        // hardened against exactly this and this one was not.
+        if (!s.backBtn || !s.okBtn) { TF::Release(s.field); s.field = nullptr; return false; }
         NS::SetHSlot(NS::SlotOf(s.backBtn), 0.f, NS::kLeft, NS::kCenter);
         NS::SetHSlot(NS::SlotOf(s.okBtn), 0.f, NS::kRight, NS::kCenter);
         NS::AddVFill(col, footRow, 0.f, NS::kFill, NS::kBottom);
@@ -235,6 +238,12 @@ void Confirm(Kind kind) {
     // `ConnectDirect` OWNS the refusal. It parses the address and answers false for a bad
     // one, so this does not re-implement the parse -- a second parser is a second opinion
     // about what a valid address is, and the one that matters is the one that dials.
+    // NOT A LOCKED-ROW JOIN, so nothing typed for a previous server may ride along.
+    // `TakeJoinPassword` consumes the transient now, but a value set by the prompt and
+    // then abandoned (the player pressed Back) would still be sitting there, and
+    // `ConnectDirect` reads it. The browser's own unlocked-row path clears for exactly
+    // this reason and this door did not (post-ship audit, 2026-08-31).
+    sm::SetJoinPassword("");
     if (!sm::ConnectDirect(value)) {
         SetStatus(s, "Could not connect to that address -- check it, or another action is "
                      "already in flight.", kBad);
@@ -315,12 +324,16 @@ void PollChrome() {
     // ESC. A FOCUSED FIELD OWNS IT FIRST -- the field turns Escape into "leave the field",
     // and this poll reads the PHYSICAL key (GetAsyncKeyState), so swallowing the message in
     // the detour would not stop this edge. One press must not both blur and close.
+    // ASK THE FIELD, not `AnyFocused()`: it blurs on WM_KEYDOWN, so by any edge this poll
+    // can take, focus is already gone and the guard could never fire -- one Escape both
+    // left the field and closed the window, discarding what was typed. Drained
+    // unconditionally so the latch cannot survive into the next press.
+    const bool fieldAteEscape = TF::ConsumeEscape(s.field);
     const bool esc = (::GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
     if (!g_escPrimed) { g_escPrimed = true; g_prevEsc = esc; }
     const bool escEdge = esc && !g_prevEsc;
     g_prevEsc = esc;
-    if (escEdge) {
-        if (TF::AnyFocused()) return;
+    if (escEdge && !fieldAteEscape) {
         BackToBrowser();
         return;
     }

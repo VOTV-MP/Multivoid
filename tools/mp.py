@@ -4725,7 +4725,11 @@ def cmd_authdrill(args) -> None:
         # sabotage for this arm is the VALUE, not a code path -- there is no branch in
         # the client that knows it is being drilled, which is what makes the refusal the
         # shipped one.
-        client_env["VOTVCOOP_NET_LOBBY_PASSWORD"] = (
+        # THE JOIN ROW, NOT THE LOBBY ROW. They were one row until the post-ship audit
+        # split them: `net.lobby_password` is the secret THIS peer's own hosted sessions
+        # require, and a client falling back to it offered its own lobby's password to
+        # strangers. A joiner configures `net.join_password`.
+        client_env["VOTVCOOP_NET_JOIN_PASSWORD"] = (
             "correct-horse-battery" if args.control else "wrong-horse-battery")
         # ...AND THE CLIENT MUST KNOW WHICH HOST IT IS DIALLING, or it refuses to send
         # anything password-derived at all and this arm measures the BINDING gate

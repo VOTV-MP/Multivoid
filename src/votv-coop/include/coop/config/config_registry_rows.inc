@@ -48,6 +48,24 @@ CFG_STRING(net_lobby_password, "net.lobby_password", "net", "", "VOTVCOOP_NET_LO
     false,
     "Password for sessions you host with the lock on. Generated for you when you first turn "
     "the lock on; change it to anything you like. Only players you give it to can join.")
+// THE PASSWORD YOU OFFER WHEN JOINING SOMEONE ELSE'S LOCKED SESSION -- a DIFFERENT
+// secret from the one above, and separating them closes a real leak.
+//
+// They were one row for half a day. `TakeJoinPassword` fell back to `net.lobby_password`
+// when no prompt had been filled in, and that row holds the password the player's OWN
+// hosted sessions require -- so a player who had ever hosted a locked lobby offered THEIR
+// OWN lobby's secret to any locked host they reached on the direct/LAN/scripted lanes.
+// The binding gate stops a stranger grinding it, but carrying the wrong secret to the
+// right host is not something binding was ever meant to cover (post-ship audit,
+// 2026-08-31).
+//
+// Normal play never touches this: the browser's password prompt supplies the value for
+// the one join it was typed for and it is cleared on use. This row exists for the client
+// that has no prompt -- a scripted, LAN or dedicated joiner.
+CFG_STRING(net_join_password, "net.join_password", "net", "", "VOTVCOOP_NET_JOIN_PASSWORD",
+    false,
+    "Password to offer when you join a locked server, for setups with no UI to type it in. "
+    "Leave empty -- the server browser asks you when you click Connect on a locked server.")
 CFG_FLAG(net_lobby_locked, "net.lobby_locked", "net", false, "VOTVCOOP_NET_LOBBY_LOCKED",
     "Whether the sessions you host require the password above. Set from the hosting window; "
     "remembered so your next session starts the way your last one did.")

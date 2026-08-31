@@ -4,6 +4,8 @@
 
 #include "ui/server_browser.h"
 #include "coop/session/join_progress.h"
+#include "coop/config/config.h"
+#include "coop/config/config_registry.h"
 #include "coop/session/session_manager.h"
 #include "ui/scale.h"
 #include "ue_wrap/core/log.h"
@@ -20,6 +22,15 @@ namespace ui::host_save_picker {
 namespace {
 
 namespace sm = coop::session_manager;
+
+// THE FALLBACK SURFACE HAS NO PASSWORD FIELD, so its `locked` checkbox uses whatever the
+// native hosting flow last stored. Empty means the session is hosted OPEN and says so --
+// `HostWithSave` downgrades rather than announcing a lock nothing can enforce. Keeping the
+// checkbox working at all is the emergency-surface policy; giving it its own editor is the
+// new feature that policy forbids.
+std::string HostPassword() {
+    return coop::config::ResolveString(::coop::config_registry::rows::net_lobby_password);
+}
 namespace sb = ue_wrap::save_browser;
 using ui::scale::S;
 
@@ -63,7 +74,7 @@ void DoHostExisting(const sb::SaveInfo& info) {
     // world loads, and gives "Starting your server -- loading <world>" feedback.
     // DriveHostBootIfPending Reset()s it on session-start/failure; if HostWithSave is
     // rejected (busy) there is no pending boot to Reset, so we must NOT raise it.
-    if (!sm::HostWithSave(c, g_hostName, g_hostLocked, g_hostMax,
+    if (!sm::HostWithSave(c, g_hostName, g_hostLocked, HostPassword(), g_hostMax,
                           /*directConnection=*/g_connMode == 1,
                           /*hideFromBrowser=*/g_connMode == 1 && g_hideDirect,
                           /*lanOnly=*/g_connMode == 2)) {
@@ -87,7 +98,7 @@ void DoHostNew() {
     // A brand-new game's load is the SLOWEST host boot (the save isn't loadable for tens
     // of seconds), so the no-feedback window was the worst here -- this is exactly where
     // the user self-joined. Cover the menu the instant the action is accepted.
-    if (!sm::HostWithSave(c, g_hostName, g_hostLocked, g_hostMax,
+    if (!sm::HostWithSave(c, g_hostName, g_hostLocked, HostPassword(), g_hostMax,
                           /*directConnection=*/g_connMode == 1,
                           /*hideFromBrowser=*/g_connMode == 1 && g_hideDirect,
                           /*lanOnly=*/g_connMode == 2)) {

@@ -130,7 +130,15 @@ struct SaveChoice {
 // leaves the machine), with the accept edge refusing non-private remote
 // addresses. LAN party semantics: friends on the same network Direct Connect
 // to the host's local IP. Overrides directConnection/hideFromBrowser.
-bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked, int playersMax,
+// `password` is the secret this session will REQUIRE, and it is passed rather than
+// re-read from the ini for a measured reason: the caller holds the exact string the
+// player is looking at, and a round trip through `WriteIniValue` -> `ResolveString` can
+// come back DIFFERENT (an unchecked write to a read-only ini, an env var that outranks
+// the file, or a value with edge whitespace the ini parser trims). Any of those read back
+// empty, and an empty password silently DOWNGRADES the session to open while the screen
+// still shows a lit padlock (post-ship audit, 2026-08-31). Empty here means open.
+bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked,
+                  const std::string& password, int playersMax,
                   bool directConnection = false, bool hideFromBrowser = false,
                   bool lanOnly = false);
 
