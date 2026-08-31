@@ -536,6 +536,12 @@ def launch_peer(role: str, port: int, nick: str, peer: str | None,
         except PermissionError:
             log(f"WARN: {log_file} locked (another VotV still holds it?)")
     env = os.environ.copy()
+    # A DRILL SWITCH MUST NOT RIDE THE AMBIENT ENVIRONMENT INTO EVERY OTHER SCENARIO.
+    # VOTVCOOP_DEATH_NO_RECONCILE suppresses the death arc's reconcile; exported in a shell it
+    # would follow `play` / the LAN smoke / `browser` and quietly change their behaviour. Only
+    # cmd_death re-sets it, immediately before launching.
+    env.pop("VOTVCOOP_DEATH_NO_RECONCILE", None)
+    env.pop("VOTVCOOP_DEATH_DEEP_FLOOR", None)
     # set_scenario=None -> NO VOTVCOOP_SCENARIO -> the harness boots to the MENU (the
     # real native-launch / save-picker context). Default "play" auto-loads the ini save.
     if set_scenario:
@@ -2958,14 +2964,21 @@ def cmd_death(args) -> None:
     # Set explicitly rather than inherited from the caller's shell: an env-gated arm that is
     # only reachable by remembering to export something is an arm that silently does not run
     # (`[[lesson-an-env-gated-test-can-be-unreachable-by-its-own-launcher]]`).
-    os.environ["VOTVCOOP_DEATH_NO_RECONCILE"] = "1" if getattr(args, "no_reconcile", False) else "0"
+    # launch_peer STRIPS this from the inherited environment unconditionally (a developer who
+    # exported it in their shell would otherwise silently disable the reconcile in `play`, the
+    # LAN smoke and every other scenario), so it is handed over as extra_env instead -- the one
+    # explicit place that puts it back, for this scenario only.
+    no_reconcile = "1" if getattr(args, "no_reconcile", False) else "0"
+    deep_floor = "1" if getattr(args, "deep_floor", False) else "0"
 
     mode = "SOLO HOST (live session)" if args.session else "solo, sessionless"
     log(f"--- LAUNCH ({mode}, native death chain) ---")
     launch_peer("host", args.port, "Host", peer=None,
                 res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
                 memory_limit_gb=args.memory_limit_gb, set_net_role=bool(args.session),
-                host_fresh=bool(getattr(args, "fresh", False)))
+                host_fresh=bool(getattr(args, "fresh", False)),
+                extra_env={"VOTVCOOP_DEATH_NO_RECONCILE": no_reconcile,
+                           "VOTVCOOP_DEATH_DEEP_FLOOR": deep_floor})
 
     host_log = HOST_DIR / "multivoid.log"
     # LOOK AT THE FRAME. Three targeted probes in a row each measured their own target clear
@@ -5423,6 +5436,11 @@ def main() -> None:
                               "writes the instrument most needs to re-find, so the RED arm is "
                               "what gives the diff meaning. The travel is still refused and the "
                               "player is still revived -- this arm is dirty, never unsurvivable")
+    p_death.add_argument("--deep-floor", action="store_true",
+                         help="spend an EXTRA 26 s standing still to widen the write-diff's "
+                              "noise floor so it covers the whole graded span. OFF by default "
+                              "because it is 26 s of dead wall clock in every run; turn it on "
+                              "only when actually classifying the death-attributable residual")
     for flag, kw in host_res: p_death.add_argument(flag, **kw)
     p_death.set_defaults(func=cmd_death)
 
