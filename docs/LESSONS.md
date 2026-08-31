@@ -3283,6 +3283,42 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   "armed" line at the spawn point is the cheapest discriminator.
   `memory/lesson-an-env-gated-test-can-be-unreachable-by-its-own-launcher.md`
 
+- **AN ASSERTED LIMITATION IS A CLAIM — TEST IT BEFORE DESIGNING AROUND IT.** 2026-08-31, twice in
+  one session, opposite subject matter, same shape. (1) `docs/RELEASE.md` step 6 said
+  "`COOP_LATEST_*` is stable-only", so I wrote up a real product gap — a dev release cannot use the
+  in-game update notice, so the cohort we cut off gets told "update Multivoid" and pointed nowhere —
+  and offered the user a fork. The user's *"maybe we can cheat and set coop latest to the dev
+  release"* sent me to the code, where there is **no constraint at all**: `[V]`
+  `session_manager.cpp:334-347` compares `info.proto` to `kProtocolVersion` and nothing else, and
+  `[V]` b133 carries the identical branch. "Stable-only" was a **convention of our own checklist**,
+  whose stated reason (dev builds should not nag stable users) *inverts* when a dev release is what
+  retires a cohort. (2) `sig_gate --remote` failed `CERTIFICATE_VERIFY_FAILED` and I wrote "TLS
+  fails on this dev box" into the release doc — then `verify_latest.ps1` reached the same host over
+  TLS fine. Same store, different consumer: OpenSSL walks into an expired cross-signed
+  `ISRG Root X2`, schannel finds the valid path. A one-script `--cafile`, not a machine repair.
+  *Look FIRST:* ask **where the constraint LIVES** — a branch/type/API that refuses, or prose we
+  wrote? Only the first is a constraint. And **a failure blamed on "the environment" needs a SECOND
+  CLIENT** before you believe it; one tool failing is a claim about that tool. The tell for (1) is a
+  rule stated with its own rationale in parentheses — when the rationale stops applying, check
+  whether the rule was ever more than the rationale.
+  [[lesson-an-asserted-limitation-is-a-claim-test-it-before-designing-around-it]]
+
+- **A MET PRECONDITION IS NOT THE DECISION IT GATES.** 2026-08-31. The Boosty buttons were pulled
+  on the user's call, with the restore condition recorded in the imperative ("restore = revert
+  `7ebc2554`, once the page is ready"). The user wrote *"Boosty я настроил"*; I verified the page
+  live (HTTP 200) and reverted. Answer: **"No dont restore,"** — undone in `c18003aa`. The fact was
+  right and the checklist did say restore; what was wrong is that **"the blocker is gone" and "do
+  it" are two different events, and only the second was theirs to signal.** A status report about
+  their own work ("I set it up") is not an instruction. The note I had written recorded the
+  CONDITION, not the CONSENT — a reminder not to forget, never a standing authorisation that fires
+  by itself. *Look FIRST:* when a doc says "do X once Y is true" and Y becomes true, **ask if X is
+  outward-facing** (a support rail, a published page, anything strangers see) — one line beats a
+  revert pair. This does NOT loosen the standing act-autonomously rule; the boundary is
+  outward-facing, not internal. Also: split a pulled feature into its reversible half (Thunderstore's
+  `donation_link` is a website setting, changeable any time) and its one-shot half (a badge inside an
+  immutable published version) — only the second needs deciding up front.
+  [[feedback-a-met-precondition-is-not-the-decision-it-gates]]
+
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
 
 - **A WINDOW CLOSED BY THE LATCH THAT STARTS THE NEXT PHASE ENDS BEFORE THAT PHASE — BY
@@ -6646,6 +6682,41 @@ handed-down measurement taken on a different tree; here the fix's own comment po
 `docs/FIELD_REPORTS.md` this tree does not have. Preserve authorship with `git commit --author=` — the
 one case where the standing "author field is pelmentor" rule does not apply, as `docs/CREDITS.md`
 itself states. [[lesson-a-forks-fix-is-verified-commit-by-commit-against-your-tree]]
+
+- **A FIX IN THE TREE IS NOT A FIX IN THE FIELD.** 2026-08-31. `docs/security/TRACKER.md` A59 had
+  read **MITIGATED** for two days — *"the relay now challenges every registrant"* — and every word
+  was true **of the repository**. `[V]` the DEPLOYED relay binary dated from 2026-07-20 (six weeks
+  older than the fix) and `python tools/sig_gate.py --remote <relay> --plaintext` returned
+  **FAIL C: it does not challenge at all**, so in production A59 was exactly as open as the day it
+  was found — and worse, since b145 the client **fails closed** on an unchallenging relay, so the
+  shipped code and the deployed relay were in a state where *neither* worked. The failure is
+  invisible from inside the repo: `git log` shows the fix, the unit tests pass, and the drill passes
+  **against a locally built relay, which is the same source**. *Look FIRST:* any finding whose fix
+  lives on a server owes **two** states in two columns — `fixed-in-source <sha>` and
+  `running-in-field <date> <evidence>`; if the row cannot express the second, the row's FORMAT is the
+  defect. Before writing MITIGATED/CLOSED on anything server-side, run the remote arm — and if the
+  instrument has only a local arm, that is the finding. `ls -la` on the deployed binary against the
+  fix commit's date costs ten seconds and caught this. Corollary: a hardening that fails closed makes
+  its own redeploy **BLOCKING**, which `docs/RELEASE.md` step 0 already knew while the tracker row
+  did not. [[lesson-a-fix-in-the-tree-is-not-a-fix-in-the-field]]
+
+- **A RELATIVE PATHSPEC RESOLVES AGAINST A CWD YOU DID NOT SET.** 2026-08-31. I concluded the whole
+  `coop-server-rs` crate — the master server I was about to deploy — was untracked, on four
+  corroborating readings: `git ls-files tools/coop-server-rs` → 0, twice, in two different shells;
+  `git ls-tree -r HEAD -- <path>` → nothing; and `git check-ignore -v` naming a matching `bin/` rule.
+  All false. The shell cwd had drifted **into** the crate (an earlier `cd x && ...`), so every
+  relative pathspec resolved to `tools/coop-server-rs/tools/coop-server-rs`. It survived four checks
+  because **git prints NOTHING for a pathspec matching nothing** — byte-identical to "tracked nothing
+  here", with no "no such path" error — while a *tree-ish* argument (`HEAD:tools/...`) resolves from
+  the repo root, so `cat-file -p` worked and read as an inconsistency in git rather than a clue about
+  me; and `check-ignore` was TRUE but irrelevant (a file can be both ignored and tracked). The only
+  tell was one warning naming the doubled path, on the fifth command. *Look FIRST:* when git says a
+  path has nothing in it, **print `pwd` before believing it**; prefer `git -C <root>` or absolute
+  pathspecs in any command whose ANSWER IS AN ABSENCE (presence is self-validating, absence is not);
+  never `cd x && ...` in a tool call here, because the cwd persists across calls and surfaces in an
+  unrelated one later. Verify a "not tracked / missing / not built" conclusion from the other
+  direction — `git log --stat` on the commit that should have touched it cannot be fooled by cwd.
+  [[lesson-a-relative-pathspec-resolves-against-a-cwd-you-did-not-set]]
 
 ## 9. Security (threat model, trust boundaries, peer identity)
 
