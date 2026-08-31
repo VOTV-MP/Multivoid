@@ -276,12 +276,17 @@ Found by a post-ship audit and each re-verified by hand this session:
   reads `hp` at `:191`, the immunity pin writes health back to 100 at `:201`, and the KO trigger at
   `:210` then evaluates the **stale** `hp` — so a >=100 damage hit inside the window pins health AND
   fires `StartKO` anyway. With `ko_spawn_at_start = 0` that is a permanent KO loop.
-* **H3 — a CI gate is RED and the underlying write is a known-dangerous class.** `[V]`
-  `tools/reflection/islive_gate.ps1` exits 1: `ragdoll_gate.cpp:104  g_pawn`. `g_pawn` is a bare
-  `void*` cached across ticks that we **write a byte into** after probing it with bare `IsLive` — the
-  measured 2026-08-23 dying-world shape, where a dead world's actors stay unflagged for 44+ seconds.
-  `docs/UE4SS_ARC.md` and `docs/LESSONS.md` both still assert "CI PASS = 0 bare-IsLive-on-static
-  tree-wide"; that claim is false as of `74c48694`.
+* **H3 — CLOSED THE SAME DAY IT WAS OPENED (2026-08-31).** `[V]` re-measured at `33008d87`:
+  `g_pawn` is a `ue_wrap::CachedObjRef` (`ragdoll_gate.cpp:24`), read through `.Get()` at `:76`
+  and `:84`, and `tools/reflection/islive_gate.ps1` prints *"islive_gate PASS: no bare IsLive on
+  a static cached pointer"* tree-wide. The row is kept rather than deleted because the ORIGINAL
+  hazard is the durable part and is why the fix has the shape it does: a bare `void*` cached
+  across ticks and written into after a bare `IsLive` probe is the measured 2026-08-23
+  dying-world shape, where a dead world's actors stay unflagged for 44+ seconds.
+  ~~`docs/UE4SS_ARC.md` and `docs/LESSONS.md` both still assert "CI PASS ... tree-wide"; that
+  claim is false as of `74c48694`.~~ — both were re-cited on 2026-08-31 and the assertion is
+  true again; the citation this row carried (`:104`) is past EOF in the current 94-line file,
+  which is what `lessons_gate` caught.
 
 **So on one axis the shipped lane was worse than the bug it replaced** (H1 could take a
 single-player's ragdoll away for good). **That call was made on 2026-08-31: retire.** Fixing three
