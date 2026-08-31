@@ -155,6 +155,11 @@ int  g_hoverWho = -1;
 std::wstring g_lastStatus;
 FLinearColor g_lastStatusColor{};
 bool         g_haveStatus = false;
+// ...and the same discipline for the hint's cache: MODULE-level, cleared with the widget
+// on the menu-instance edge. A function-local static would outlive the UTextBlock it
+// caches for and leave the hint permanently blank on the second visit -- which is the
+// defect recorded three lines above, and the reason it is not repeated here.
+int          g_hintFor = -2;
 
 bool g_prevLmb = false, g_lmbPrimed = false;
 bool g_prevEsc = false, g_escPrimed = false;
@@ -287,7 +292,13 @@ void RepaintChoices() {
     // The alternative was a per-lane exception ("LAN is trusted enough"), which is the
     // shape RULE 1 exists to refuse: the uniform rule plus a working escape is better
     // than a rule with a hole in it.
-    if (g_pwHint) {
+    // WRITTEN ON CHANGE ONLY. It depends solely on `g_connMode`, which cannot move while
+    // this window is open, yet `RepaintChoices` runs on every hover transition -- so this
+    // was two dispatches and a ~230-character wstring per mouse sweep, and it ran even
+    // while the block was Collapsed. `SetStatus` five lines up is edge-gated; its
+    // neighbour was not.
+    if (g_pwHint && g_hintFor != g_connMode) {
+        g_hintFor = g_connMode;
         const bool brokered = (g_connMode == 0);
         SetText(g_pwHint,
                 brokered
@@ -394,7 +405,10 @@ bool BuildScreen(void* switcher) {
     void* pwRow = NS::Spawn(L"HorizontalBox", g_pwBlock);
     if (!pwRow) return false;
     NS::AddVFill(g_pwBlock, pwRow, 0.f, NS::kFill, NS::kTop);
-    g_pwField = TF::Create(pwRow, L"password", 48, kFieldW);
+    // 64, MATCHING THE JOIN PROMPT. It was 48 here and 64 there, so the AUTHORING side
+    // was the one that truncated -- a host who typed a 60-character passphrase hosted
+    // with 48 of it, silently, and their friends' correct password never matched.
+    g_pwField = TF::Create(pwRow, L"password", 64, kFieldW);
     if (!g_pwField) return false;
     g_pwHint = NS::AddText(g_pwBlock, L"", 15, kDim, NS::kJustLeft, 0.f);
     if (g_pwHint) U::SetAutoWrapText(g_pwHint, true);
@@ -415,7 +429,12 @@ bool BuildScreen(void* switcher) {
         g_backBtn = NS::BuildButton(footRow, backDonor, L"Back", NS::kBtnFontPx);
         g_status  = NS::AddText(footRow, L"", 16, kText, NS::kJustCenter, 1.f);
         g_hostBtn = NS::BuildButton(footRow, backDonor, L"Host", NS::kBtnFontPx);
-        if (!g_backBtn || !g_hostBtn) return false;
+        // RELEASE ON THIS PATH TOO. Returning false here leaves `g_root` null, so the
+        // next tick rebuilds the whole screen and `TF::Create` mints a SECOND Field --
+        // the first one stranded in the module's live list forever. The index-failure
+        // path forty lines below was hardened against exactly this and this one was not
+        // (post-ship audit, 2026-08-31).
+        if (!g_backBtn || !g_hostBtn) { TF::Release(g_pwField); g_pwField = nullptr; return false; }
         NS::SetHSlot(NS::SlotOf(g_backBtn), 0.f, NS::kLeft,  NS::kCenter);
         NS::SetHSlot(NS::SlotOf(g_hostBtn), 0.f, NS::kRight, NS::kCenter);
         if (void* s = NS::AddVFill(col, footRow, 0.f, NS::kFill, NS::kBottom))
@@ -471,10 +490,18 @@ void DoHost() {
     // whether or not this particular start succeeds -- and so the next session opens with
     // the lock the way they left it ("Generate for them on first, then they can change it to
     // whatever they want at any moment").
-    cfg::WriteIniValue(::coop::config_registry::rows::net_lobby_password, pw.c_str());
+    // THE PASSWORD IS ONLY WRITTEN WHEN THERE IS ONE. Writing `pw` unconditionally meant
+    // hosting once with "Anyone can join" ERASED the remembered password -- the exact
+    // opposite of what this window's header promises, and of what the lock's own
+    // mint-only-when-empty rule is for (post-ship audit, 2026-08-31).
+    if (g_locked) cfg::WriteIniValue(::coop::config_registry::rows::net_lobby_password, pw.c_str());
     cfg::WriteIniValue(::coop::config_registry::rows::net_lobby_locked, g_locked ? "1" : "0");
 
-    const bool accepted = sm::HostWithSave(g_choice, g_name, g_locked, /*playersMax=*/4,
+    // THE STRING, NOT THE ROW WE JUST WROTE. The ini is where it is REMEMBERED; it is not
+    // the channel by which it reaches the host call. A write that failed, an env var that
+    // outranks the file, or edge whitespace the parser trims would all read back empty and
+    // silently downgrade this session to open while the padlock stays lit on screen.
+    const bool accepted = sm::HostWithSave(g_choice, g_name, g_locked, pw, /*playersMax=*/4,
                                            /*directConnection=*/g_connMode == 1,
                                            /*hideFromBrowser=*/false,
                                            /*lanOnly=*/g_connMode == 2);
@@ -514,12 +541,20 @@ void PollChrome() {
     // ESC. A FOCUSED FIELD OWNS IT FIRST -- the field turns Escape into "leave the field",
     // and this poll reads the PHYSICAL key, so swallowing the message at the WndProc seam
     // would not stop this edge. One press must not both blur and go back.
+    // THE FIELD IS ASKED WHETHER THE ESCAPE WAS ITS OWN, and it is asked FIRST -- before
+    // the edge below, and unconditionally, so the latch is drained on the tick it was set
+    // rather than surviving into the next press.
+    //
+    // This used to be `if (TF::AnyFocused()) return;` inside the edge, and it could never
+    // fire: the field blurs on WM_KEYDOWN and this poll takes the key-UP, so focus was
+    // always already gone. One Escape both left the field AND closed the window, throwing
+    // away a password the player had just typed (post-ship audit, 2026-08-31).
+    const bool fieldAteEscape = TF::ConsumeEscape(g_pwField);
     const bool esc = (::GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
     if (!g_escPrimed) { g_escPrimed = true; g_prevEsc = esc; }
     const bool escEdge = g_prevEsc && !esc;
     g_prevEsc = esc;
-    if (escEdge) {
-        if (TF::AnyFocused()) return;
+    if (escEdge && !fieldAteEscape) {
         BackToHostWindow();
         return;
     }
@@ -545,6 +580,26 @@ void PollChrome() {
 }
 
 void UpdateHover() {
+    // GATED ON THE POINTER, because each `CursorOverWidget` is expensive in a way its
+    // name does not suggest: it reaches `GetWorldContext()` -> `FindObjectByClass`, a full
+    // GUObjectArray walk with no result cache, plus four ProcessEvent dispatches and a
+    // heap allocation for the rect. Two rows, every menu tick, at ~117 Hz -- the exact
+    // per-frame-full-array-scan pattern CLAUDE.md names, shipped by me and caught by the
+    // post-ship audit.
+    //
+    // `HoverTracker` is the shared answer for a LIST and does not fit here: it maps the
+    // CHILDREN of one panel by index, and these are two named widgets in a mixed column.
+    // What it supplies that matters -- do not re-evaluate unless the pointer moved, and
+    // owe one SETTLING pass after it stops -- is what this reproduces, and nothing more.
+    static long sLastX = -1, sLastY = -1;
+    static bool sSettlePending = false;
+    POINT p{};
+    if (!::GetCursorPos(&p)) return;
+    const bool moved = (p.x != sLastX || p.y != sLastY);
+    if (!moved && !sSettlePending) return;
+    sLastX = p.x; sLastY = p.y;
+    sSettlePending = moved;   // one more pass after motion stops, then quiet
+
     const int prev = g_hoverWho;
     g_hoverWho = -1;
     // These rows sit in the content column, OUTSIDE any ScrollBox, but they are still
@@ -661,6 +716,8 @@ void OnMenuTick(void* menu, void* switcher) {
         for (int i = 0; i < 2; ++i) { g_whoBg[i] = nullptr; g_whoTitle[i] = nullptr; }
         g_ourIndex = -1; g_shown = false; g_buildAttempts = 0;
         g_lastStatus.clear();   // the widget it cached is gone with the menu
+        g_haveStatus = false;
+        g_hintFor = -2;
     }
 
     if (!g_root) {
@@ -729,6 +786,23 @@ void OnMenuTick(void* menu, void* switcher) {
     if (g_locked) TF::Tick(g_pwField);
     UpdateHover();
     PollChrome();
+
+    // WHY THE HOST'S OWN FAILURE MESSAGE IS READ HERE. `HostWithSave` announces, loads a
+    // world and starts a session on WORKER threads, so it can only fail long after it
+    // returned true -- and its reason goes to `session_manager::HostStatus()`.
+    //
+    // Step one polled it, and the comment beside that poll says why: the user reported
+    // "nothing told about the session being DEAD". Moving the host call into step two
+    // left the poll behind on a window `CloseNow()` has already hidden, so every
+    // asynchronous host failure became invisible again -- the player sits on "Starting..."
+    // forever while the reason is written to a string nothing draws. Reopened by the
+    // split, caught by the post-ship audit (2026-08-31).
+    //
+    // Edge-gated against `g_lastStatus` by `SetStatus`, so a steady string costs nothing.
+    if (g_status) {
+        const std::string cur = sm::HostStatus();
+        if (!cur.empty()) SetStatus(Widen(cur), kText);
+    }
 }
 
 }  // namespace ui::host_session_settings

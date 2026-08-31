@@ -31,6 +31,11 @@ struct Field {
     int32_t      maxLen  = 64;
     bool         focused = false;
     bool         submit  = false;     // Enter edge, consumed by the owner
+    // Escape edge, consumed by the owner. See the VK_ESCAPE branch: the screens used to
+    // ask `AnyFocused()` on their own key-UP edge, which is always false by then because
+    // the blur happens on key-DOWN. This is the same question asked in a way that cannot
+    // race.
+    bool         ateEscape = false;
     bool         dirty   = true;      // repaint owed
     bool         wasDown = false;     // left button edge, for click-to-focus
     uint64_t     caretAt = 0;         // tick count of the last caret phase flip
@@ -342,6 +347,12 @@ void Tick(Field* f) {
     UpdateWindowing(f);
 }
 
+bool ConsumeEscape(Field* f) {
+    if (!f || !f->ateEscape) return false;
+    f->ateEscape = false;
+    return true;
+}
+
 bool ConsumeSubmit(Field* f) {
     if (!f || !f->submit) return false;
     f->submit = false;
@@ -447,8 +458,13 @@ bool RunSelftest() {
     ok(Text(&f) == "keep", "an all-whitespace paste changes nothing");
     f.maxLen = 8;
 
+    ok(!ConsumeEscape(&f), "no escape edge before Escape");
     ok(OnKeyDown(VK_ESCAPE), "Escape is consumed");
     ok(!AnyFocused(), "Escape leaves the field");
+    // THE LATCH SURVIVES THE BLUR, which is the whole point -- the owner asks AFTER the
+    // field has already let go, and `AnyFocused()` cannot answer for it by then.
+    ok(ConsumeEscape(&f), "the escape edge is readable after the blur");
+    ok(!ConsumeEscape(&f), "and it is consumed exactly once");
     ok(!OnChar(L'x'), "an unfocused module refuses the key so the game still gets it");
 
     // Blur() cleared g_focus; the local Field is about to die, so nothing may still point
@@ -492,10 +508,17 @@ bool OnKeyDown(int vk) {
             return true;
         case VK_ESCAPE:
             // Escape LEAVES THE FIELD, it does not close the screen. Swallowing the
-            // message is NOT enough to make that true: the browser reads Escape with
-            // GetAsyncKeyState, which sees the physical key whatever the detour does, so
-            // the screen defers to `AnyFocused()` on its own poll edge. Both halves are
-            // required and neither works alone.
+            // message is NOT enough to make that true: the screens read Escape with
+            // GetAsyncKeyState, which sees the physical key whatever the detour does.
+            //
+            // AND `AnyFocused()` WAS THE WRONG QUESTION FOR THEM TO ASK. This runs on
+            // WM_KEYDOWN, which strictly precedes the key-UP the screens take their edge
+            // on -- so by the time they asked, the field had already blurred and the
+            // guard could NEVER fire. A player who pressed Escape to stop editing lost
+            // the window and the password they had typed (post-ship audit, 2026-08-31).
+            // The latch below is the deterministic answer: it says "an Escape was MINE",
+            // and it cannot race, because it is set by the same event that consumed it.
+            f->ateEscape = true;
             Blur(f);
             return true;
         default:

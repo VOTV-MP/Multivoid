@@ -642,6 +642,18 @@ void OnMenuTick(void* menu, void* switcher) {
         g_lastStatus.clear();   // the widget it cached is gone with the menu
     }
     if (!g_root) {
+        // BACKED OFF once it is hopeless, like both siblings. Without this a persistent
+        // donor failure re-ran `SwitcherChild` (a ChildCount plus a ClassNameOf per child
+        // -- an engine call and a wstring EACH) plus `DonorField` on EVERY menu tick, at
+        // ~117 Hz, forever, on exactly the path a version migration lands on. Both sibling
+        // files carry the fix and name it; this one never got it (post-ship audit,
+        // 2026-08-31).
+        if (g_buildAttempts >= 15) {
+            static uint64_t sNextTryMs = 0;
+            const uint64_t nowTry = ::GetTickCount64();
+            if (nowTry < sNextTryMs) return;
+            sNextTryMs = nowTry + 1000;
+        }
         if (!BuildScreen(switcher)) {
             // SAY SO. Since 2026-08-29 the browser's HOST button closes the browser
             // SYNCHRONOUSLY and then asks for this window, so a build that keeps failing

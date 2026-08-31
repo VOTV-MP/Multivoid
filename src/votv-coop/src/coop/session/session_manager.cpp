@@ -137,26 +137,32 @@ std::atomic<bool> g_actionBusy{false};
 std::mutex  g_joinPwMu;
 std::string g_joinPassword;
 
-// THE ONE PLACE A JOINER'S PASSWORD IS RESOLVED, and it has two sources in a fixed
-// order rather than four call sites each picking one.
+// THE ONE PLACE A JOINER'S PASSWORD IS RESOLVED, and it TAKES -- the transient is
+// consumed, not merely read.
 //
-// The PROMPT wins: it is what the player typed for the server in front of them. The ini
-// row is the fallback, and it is not a convenience -- it is the only way a scripted,
-// dedicated or LAN-configured client can offer a password at all, since those never see
-// a prompt. Without it `ConnectDirect` built a fresh Config, took the empty transient
-// value, and the host refused with "this server needs a password" while the password sat
-// in the client's own config (measured 2026-08-31 by the password drill, which is exactly
-// the same shape as the `hostIdentity` defect the same run found one layer up).
+// The PROMPT wins: it is what the player typed for the server in front of them, and it is
+// cleared here so it can never ride along into the NEXT connection they make. Leaving it
+// set was a real leak, not a tidiness point: connect to locked lobby A with password P,
+// then Direct-connect to server B, and B (if locked, and if we bound to it) received a tag
+// over P -- carrying the right secret to the wrong host, which is not something the
+// binding gate was ever meant to cover.
 //
-// A cleared transient falling through to the row is harmless and deliberate: the host
-// only ASKS when it is locked, and the client only sends when asked, so an unlocked
-// server never sees either value.
+// THE FALLBACK IS `net.join_password` AND NOT `net.lobby_password`, and that distinction
+// is the other half of the same finding. `net.lobby_password` is what the player's OWN
+// hosted sessions require; falling back to it meant anyone who had ever hosted a locked
+// lobby offered their own lobby's secret to every locked host they reached. Two secrets,
+// two rows. The fallback exists for the client with no prompt -- scripted, LAN, dedicated.
+// (Both found by the post-ship audit, 2026-08-31.)
 std::string TakeJoinPassword() {
     {
         std::lock_guard<std::mutex> lk(g_joinPwMu);
-        if (!g_joinPassword.empty()) return g_joinPassword;
+        if (!g_joinPassword.empty()) {
+            std::string taken;
+            taken.swap(g_joinPassword);
+            return taken;
+        }
     }
-    return ::coop::config::ResolveString(::coop::config_registry::rows::net_lobby_password);
+    return ::coop::config::ResolveString(::coop::config_registry::rows::net_join_password);
 }
 
 void QueueStart(const net::Config& cfg) {
@@ -436,7 +442,8 @@ void AnnounceEnvHostHidden(const std::string& name, const std::string& world) {
     }).detach();
 }
 
-bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked, int playersMax,
+bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked,
+                  const std::string& password, int playersMax,
                   bool directConnection, bool hideFromBrowser, bool lanOnly) {
     if (g_actionBusy.exchange(true)) { UE_LOGW("session_manager: action busy -- HostWithSave ignored"); return false; }
     // THE SECRET THIS SESSION WILL REQUIRE, resolved ONCE and carried into whichever
@@ -448,9 +455,8 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
     // It is read HERE rather than in `peer_admission` because the config layer opens
     // and line-scans the ini under a global mutex, and that is file I/O on the net
     // thread otherwise.
-    std::string lobbyPw =
-        locked ? ::coop::config::ResolveString(::coop::config_registry::rows::net_lobby_password)
-               : std::string();
+    // THE CALLER'S STRING, not a re-read of the row it wrote. See the header.
+    std::string lobbyPw = locked ? password : std::string();
     // A LOCK WITH NO SECRET IS DOWNGRADED, NOT ANNOUNCED. The padlock in the browser is
     // a promise, and announcing one we cannot keep is precisely the badge-with-no-gate
     // this lane exists to retire -- so if there is nothing to check, the session is
@@ -737,6 +743,19 @@ bool JoinLobby(const std::string& lobbyId, const std::string& displayName, int h
                     cfg.peerIp = host;
                     cfg.port = port;
                     cfg.lobbyPassword = TakeJoinPassword();
+                    // THE MASTER ALREADY TOLD US WHICH HOST IS AT THAT ADDRESS, and this
+                    // branch was throwing it away while the P2P branch six lines below
+                    // kept it. `lobby_client.cpp:284` makes `info.ok` require a non-empty
+                    // hostIdentity, so it is guaranteed present here.
+                    //
+                    // Without it a joiner is unbound, and an unbound joiner may not send a
+                    // password proof -- so a LOCKED lobby hosted in DIRECT mode refused
+                    // every browser join even with the correct password typed. That is the
+                    // exact defect the commit before this one claimed to have fixed: the
+                    // fix landed in `ConnectDirect` and `ReadNetConfig` and missed the one
+                    // path that never needed a fallback because it had the value in hand
+                    // (post-ship audit, 2026-08-31).
+                    cfg.hostIdentity = info.hostIdentity;
                     QueueStart(cfg);
                     UE_LOGI("session_manager: JOIN ready -- DIRECT lobby (LanDirect dial; session boot = harness Tier 2)");
                 } else {

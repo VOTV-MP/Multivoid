@@ -90,6 +90,16 @@ void SetText(Field* f, const std::string& utf8);
 // `native_screen::CursorOverWidget` -- the one hit-test mechanism these screens have).
 void Tick(Field* f);
 
+// True ONCE after Escape was pressed while this field held focus -- meaning the field
+// ATE that Escape to leave itself, and the owning screen must NOT also act on it.
+//
+// The owner used to ask `AnyFocused()` instead, and it could never work: the blur happens
+// on WM_KEYDOWN and the screens take their edge on the key-UP, so the field had always
+// let go by the time they asked. One press both blurred the field AND closed the window,
+// discarding whatever had been typed (post-ship audit, 2026-08-31). This latch is set by
+// the same event that consumes the key, so there is no ordering to get wrong.
+bool ConsumeEscape(Field* f);
+
 // True ONCE after Enter was pressed while this field held focus. The caller connects,
 // saves, or whatever Enter means to it. MTA wires the same edge:
 // `CServerBrowser.cpp:489` `SetTextAcceptedHandler(OnConnectClick)`.

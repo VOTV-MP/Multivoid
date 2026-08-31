@@ -28,8 +28,17 @@ constexpr size_t kTagLen = sizeof(kTag) - 1;
 
 }  // namespace
 
-bool DeriveKey(const std::string& password, const peer_identity::PubKey& hostPub,
-               std::array<uint8_t, 32>& outKey) {
+// The derivation, with the round count as a parameter. Production always uses
+// `kIterations`; the SELFTEST uses a cheap count for the arms that only need to show
+// which INPUTS reach the KDF, and one full-cost run for the constant we ship.
+//
+// WHY: `RunSelftest` derived four times at 200k rounds, un-gated, on the session-bringup
+// thread that also loads the world -- about 400 ms added to EVERY host and EVERY join, on
+// both peers, on every smoke. The commit that shipped it listed "16 checks, un-gated" as
+// evidence and never priced them (post-ship audit, 2026-08-31). The negatives are worth
+// keeping; paying full price four times to learn that a salt is a salt is not.
+static bool DeriveKeyAt(const std::string& password, const peer_identity::PubKey& hostPub,
+                        uint32_t iterations, std::array<uint8_t, 32>& outKey) {
     outKey.fill(0);
     // AN EMPTY PASSWORD DERIVES NOTHING. PBKDF2 would happily stretch a zero-length
     // input into a perfectly good key, and that key would produce a tag a host
@@ -54,7 +63,7 @@ bool DeriveKey(const std::string& password, const peer_identity::PubKey& hostPub
         // same password do not share a derived key.
         reinterpret_cast<PUCHAR>(const_cast<uint8_t*>(hostPub.data())),
         static_cast<ULONG>(hostPub.size()),
-        kIterations,
+        iterations,
         outKey.data(), static_cast<ULONG>(outKey.size()), 0);
     ::BCryptCloseAlgorithmProvider(alg, 0);
     if (st != kOk) {
@@ -64,6 +73,11 @@ bool DeriveKey(const std::string& password, const peer_identity::PubKey& hostPub
         return false;
     }
     return true;
+}
+
+bool DeriveKey(const std::string& password, const peer_identity::PubKey& hostPub,
+               std::array<uint8_t, 32>& outKey) {
+    return DeriveKeyAt(password, hostPub, kIterations, outKey);
 }
 
 bool ComputeTag(const std::array<uint8_t, 32>& key, const peer_identity::PubKey& hostPub,
@@ -138,23 +152,37 @@ bool RunSelftest() {
         nonce2[i] = static_cast<uint8_t>(i + 1);
     }
 
-    std::array<uint8_t, 32> kA{}, kA2{}, kB{}, kOther{}, kEmpty{};
-    check(DeriveKey("hunter2", hostA, kA), "the derivation must succeed");
-    check(DeriveKey("hunter2", hostA, kA2), "the derivation must be deterministic");
+    // CHEAP ROUNDS FOR THE INPUT ARMS. What these prove is WHICH INPUTS reach the KDF --
+    // that the salt is the host key, that a one-character change lands, that an empty
+    // password refuses. None of that depends on the round count, and paying the shipped
+    // 200k four times cost ~400 ms on every session start, on the thread that also loads
+    // the world (post-ship audit). ONE full-cost derivation below keeps the production
+    // constant itself exercised.
+    constexpr uint32_t kCheap = 1;
+    std::array<uint8_t, 32> kA{}, kA2{}, kB{}, kOther{}, kEmpty{}, kReal{};
+    check(DeriveKeyAt("hunter2", hostA, kCheap, kA), "the derivation must succeed");
+    check(DeriveKeyAt("hunter2", hostA, kCheap, kA2), "the derivation must be deterministic");
     check(kA == kA2, "the same password and host must derive the same key");
 
     // THE EMPTY PASSWORD. It must REFUSE rather than derive, or "no password" is a
     // valid proof of knowing one.
-    check(!DeriveKey("", hostA, kEmpty), "an empty password must not derive a key");
+    check(!DeriveKeyAt("", hostA, kCheap, kEmpty), "an empty password must not derive a key");
     check(kEmpty == std::array<uint8_t, 32>{}, "a refused derivation must leave no key behind");
 
     // THE SALT MUST ACTUALLY BE THE HOST KEY. If this passed while the salt were
     // ignored, one table would open every locked lobby in the world.
-    check(DeriveKey("hunter2", hostB, kB), "derivation under a second host");
+    check(DeriveKeyAt("hunter2", hostB, kCheap, kB), "derivation under a second host");
     check(kA != kB, "the same password under two hosts must NOT collide");
 
-    check(DeriveKey("hunter3", hostA, kOther), "derivation of a near-miss password");
+    check(DeriveKeyAt("hunter3", hostA, kCheap, kOther), "derivation of a near-miss password");
     check(kA != kOther, "a one-character difference must not collide");
+
+    // THE SHIPPED CONSTANT, once. A round count that had drifted to something absurd (or
+    // to zero) would sail through every arm above, since they all pass kCheap -- so the
+    // production path owes one real run, and the round count must MATTER.
+    check(DeriveKey("hunter2", hostA, kReal), "the production derivation must succeed");
+    check(kReal != kA, "kIterations is not reaching the KDF -- 200k rounds produced the "
+                       "same key as 1");
 
     Tag t1{}, t1b{}, t2{}, tOtherKey{};
     check(ComputeTag(kA, hostA, client, nonce1, t1), "the tag must compute");

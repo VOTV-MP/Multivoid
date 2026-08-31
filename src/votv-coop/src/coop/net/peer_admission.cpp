@@ -36,7 +36,21 @@ using peer_identity::Sig;
 //   [30..61]   the HOST's public key
 //   [62..93]   the CLIENT's public key
 //   [94..125]  the VERIFIER's nonce
-constexpr char kTag[] = "multivoid-peer-admission-v1";
+//   [126]      the challenge FLAGS
+//   [127..158] the HOST's own nonce
+//
+// THE LAST TWO WERE ADDED 2026-08-31 AND THEY ARE NOT COSMETIC. `AuthChallengePayload`
+// carries the flag that tells a joiner a password is wanted, and it was OUTSIDE the
+// host's signature -- so a relay (the acknowledged P1 residual) could set
+// `kAuthFlagPasswordRequired` on an OPEN lobby's challenge, with a nonce of its own
+// choosing, and a bound client would derive and emit a real tag for a host that never
+// asked. Today P1 buys impersonation; unsigned, it also bought a tag-harvesting oracle
+// against a legitimate host. Being inside an existing residual is not a reason to widen
+// it. (Post-ship audit.)
+//
+// Tampering the other way -- clearing the flag, or altering the host's nonce -- only
+// denies: the host verifies the client's proof against the nonce IT stored.
+constexpr char kTag[] = "multivoid-peer-admission-v2";
 constexpr size_t kTagLen = sizeof(kTag) - 1;  // 27, terminator excluded
 static_assert(kTagLen == 27, "the tag width is part of the blob layout");
 
@@ -44,13 +58,14 @@ constexpr uint8_t kDirHost   = 0x01;  // the host proving itself to the client
 constexpr uint8_t kDirClient = 0x02;  // the client proving itself to the host
 
 constexpr size_t kBlobBytes = kTagLen + 1 + 2 + peer_identity::kPubKeyBytes * 2 +
-                              kAuthNonceBytes;
-static_assert(kBlobBytes == 126, "blob layout changed -- bump the tag, not just the code");
+                              kAuthNonceBytes + 1 + kAuthNonceBytes;
+static_assert(kBlobBytes == 159, "blob layout changed -- bump the tag, not just the code");
 
 using Blob = uint8_t[kBlobBytes];
 
 void BuildBlob(Blob out, uint8_t dir, const PubKey& hostPub, const PubKey& clientPub,
-               const uint8_t nonce[kAuthNonceBytes]) {
+               const uint8_t nonce[kAuthNonceBytes], uint8_t flags,
+               const uint8_t hostNonce[kAuthNonceBytes]) {
     size_t o = 0;
     std::memcpy(out + o, kTag, kTagLen);                       o += kTagLen;
     out[o++] = dir;
@@ -63,6 +78,8 @@ void BuildBlob(Blob out, uint8_t dir, const PubKey& hostPub, const PubKey& clien
     std::memcpy(out + o, hostPub.data(), hostPub.size());      o += hostPub.size();
     std::memcpy(out + o, clientPub.data(), clientPub.size());  o += clientPub.size();
     std::memcpy(out + o, nonce, kAuthNonceBytes);              o += kAuthNonceBytes;
+    out[o++] = flags;
+    std::memcpy(out + o, hostNonce, kAuthNonceBytes);          o += kAuthNonceBytes;
     (void)o;  // == kBlobBytes; asserted by the static_assert above
 }
 
@@ -87,12 +104,22 @@ bool RemoteKeyOf(uint32_t hConn, PubKey& out) {
 // The remote's ADDRESS, as the 16-byte form GNS stores (IPv4 arrives mapped).
 // The PORT is deliberately excluded: a retrying attacker gets a fresh source port
 // on every connection, so a bucket keyed on the pair would be a bucket of one.
+// FALSE WHEN THERE IS NO USABLE ADDRESS, AND THAT IS THE COMMON CASE ON OUR MAIN LANE.
+// The vendored header says so in as many words (`steamnetworkingtypes.h:690-692`):
+// *"Remote address. Might be all 0's if we don't know it, or if this is N/A. (E.g.
+// Basically everything except direct UDP connection.)"* -- and this tree had already
+// written that fact down THREE times, including at `session_status.cpp:168-172`, where
+// this very arc's own audit REJECTED a per-remote-address cap because *"the P2P
+// Connecting edge has an empty remote address, so our main lane has nothing to key on"*.
+// I keyed on it anyway. See the bound below for what that cost.
 bool RemoteAddrOf(uint32_t hConn, uint8_t out[16]) {
     auto* sockets = SteamNetworkingSockets();
     if (!sockets) return false;
     SteamNetConnectionInfo_t info{};
     if (!sockets->GetConnectionInfo(static_cast<HSteamNetConnection>(hConn), &info))
         return false;
+    static const uint8_t kZero[16] = {};
+    if (std::memcmp(info.m_addrRemote.m_ipv6, kZero, 16) == 0) return false;
     std::memcpy(out, info.m_addrRemote.m_ipv6, 16);
     return true;
 }
@@ -117,24 +144,34 @@ struct HostPasswordCache {
 };
 HostPasswordCache g_hostPw;
 
-// THE GUESS BOUND, AND IT LIVES HERE BECAUSE THIS IS WHERE ALL THREE LANES MEET.
+// THE GUESS BOUND -- AND WHAT IT CAN AND CANNOT BOUND, PER LANE.
 //
-// `[V]` the master's `RL_JOIN` (60 s / 20 per IP bucket) bounds only AUTO/P2P: a
-// DIRECT joiner gets `ip:port` from ONE /v1/join and retries go straight at the
-// host, and LAN never contacts the master at all. Host-side there was only
-// `kMaxPending = 8` plus a 30 s deadline, and a refused socket closes at once --
-// hundreds of guesses a minute. A bound at one lane is not a bound
-// (`[[lesson-a-guess-bound-at-one-lane-is-not-a-bound]]`).
+// IT SHIPPED WRONG AND THE POST-SHIP AUDIT CAUGHT IT (2026-08-31). It keyed on the
+// remote address, which on our MAIN lane is all zeros (see RemoteAddrOf above) -- so
+// every P2P joiner shared ONE bucket. Ten junk attempts from one attacker, each with a
+// free throwaway keypair, then locked out every honest joiner for a minute; repeat
+// forever and a locked lobby is permanently unjoinable. **A gate whose failure mode is
+// denying legitimate users is worse than no gate**, because an attacker still has to
+// produce a correct tag either way. The comment here used to price the "CGNAT
+// collateral" as if the bucket were per-attacker; it was per-EVERYONE.
 //
-// KEYED ON THE ADDRESS, NOT THE IDENTITY: a fresh keypair costs an attacker
-// nothing, so an identity bucket bounds only the honest.
+// SO THE RULE IS NOW: this bounds only where it CAN, and where it cannot it steps aside
+// instead of refusing.
 //
-// THE CGNAT COLLATERAL IS REAL AND IS PRICED RATHER THAN DENIED. Players behind
-// one carrier NAT share a bucket. Ten failures a minute is far above what typing
-// costs an honest group (each of them gets it right or wrong once) and far below
-// what a search of a 50-bit generated password would need -- at ten a minute that
-// is 10^11 years -- so the number is chosen from BOTH ends rather than from the
-// attacker's alone.
+//   * REAL address (direct UDP / LAN): bucketed as below. Ten wrong guesses in 60 s and
+//     that address is refused. A shared NAT shares the bucket -- that IS the priced
+//     collateral, and it is bounded to the people behind one address.
+//   * NO usable address (P2P/ICE, and a relayed path where the address is the RELAY's):
+//     NOT bucketed. The bound on that lane is the master's own `RL_JOIN` (60 s, 20 per
+//     IP bucket, `master.rs:57,583`), because every P2P attempt costs a `/v1/join`.
+//     Different mechanism per lane is fine; an UNBOUNDED lane would not be.
+//
+// AND EXHAUSTION OF THE TABLE NO LONGER REFUSES. It used to fail CLOSED, on the
+// reasoning that a full table is what a flood produces -- but failing open here does not
+// admit anybody: the tag is still checked, and a wrong one is still refused. All the
+// attacker wins by filling the table is that we stop COUNTING. Fail-closed is correct
+// when failing open would ADMIT; here it only ever denied honest players, which is the
+// same defect as the shared bucket one level down.
 struct GuessBucket {
     uint8_t  ip[16]{};
     bool     used = false;
@@ -181,6 +218,10 @@ struct HostRow {
     bool     open = false;
     uint32_t hConn = 0;
     uint8_t  nonce[kAuthNonceBytes]{};
+    // The flags we SENT. Kept because they are inside both signatures now, so verifying
+    // the client's proof means rebuilding the blob we challenged with -- from what we
+    // sent, never from anything that comes back.
+    uint8_t  flags = 0;
     PubKey   remotePub{};
 };
 // DERIVED from the band, not asserted against it. The first cut wrote `= 8` with
@@ -276,11 +317,12 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
             return r;
         }
         std::memcpy(row.nonce, out.nonce, sizeof(row.nonce));
+        row.flags = out.flags;
 
         // We prove ourselves FIRST, over the CLIENT's nonce.
         Blob blob;
         BuildBlob(blob, kDirHost, peer_identity::LocalPublicKey(), row.remotePub,
-                  hello.nonce);
+                  hello.nonce, out.flags, out.nonce);
         const Sig sig = peer_identity::SignBlob(blob, sizeof(blob));
         std::memcpy(out.sig, sig.data(), sig.size());
 
@@ -320,7 +362,7 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
 
         Blob blob;
         BuildBlob(blob, kDirClient, peer_identity::LocalPublicKey(), row.remotePub,
-                  row.nonce);
+                  row.nonce, row.flags, row.nonce);
         if (!peer_identity::VerifyBlob(row.remotePub, blob, sizeof(blob), sig)) {
             r.reason = "identity proof did not verify";
             return r;
@@ -339,23 +381,14 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
                 r.reason = "this server needs a password";
                 return r;
             }
-            // THE BOUND IS CHECKED BEFORE THE HMAC, so a flood costs us the
-            // comparison and not the crypto.
+            // THE BOUND, WHERE ONE EXISTS. Checked before the HMAC so a flood costs
+            // the comparison and not the crypto -- but a MISSING bucket (no usable
+            // address, or a full table) is not a refusal: see the contract above.
+            // Both of those used to deny honest joiners while admitting nobody.
             uint8_t ip[16]{};
             const uint64_t nowMs = ::GetTickCount64();
-            if (!RemoteAddrOf(hConn, ip)) {
-                r.reason = "could not read the remote address";
-                return r;
-            }
-            GuessBucket* bucket = BucketFor(ip, nowMs);
-            if (!bucket) {
-                // FAIL CLOSED. A full table is the state a flood produces, and
-                // failing open there would hand an attacker the whole mechanism by
-                // making him fill it first.
-                r.reason = "too many password attempts right now -- try again shortly";
-                return r;
-            }
-            if (bucket->fails >= kMaxGuesses) {
+            GuessBucket* bucket = RemoteAddrOf(hConn, ip) ? BucketFor(ip, nowMs) : nullptr;
+            if (bucket && bucket->fails >= kMaxGuesses) {
                 UE_LOGW("peer_admission: password attempts from this address are rate "
                         "limited (%d in the last %llu s) -- refusing without checking",
                         bucket->fails,
@@ -388,10 +421,12 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
             lobby_password::Tag got{};
             std::memcpy(got.data(), proof.pwTag, got.size());
             if (!lobby_password::TagsEqual(expect, got)) {
-                ++bucket->fails;
+                if (bucket) ++bucket->fails;
                 UE_LOGW("peer_admission: WRONG PASSWORD from a peer that proved its "
-                        "identity (attempt %d of %d from this address)",
-                        bucket->fails, kMaxGuesses);
+                        "identity (attempt %d of %d from this address%s)",
+                        bucket ? bucket->fails : 0, kMaxGuesses,
+                        bucket ? "" : "; UNBOUNDED lane -- the master's RL_JOIN is the "
+                                      "bound here, not this table");
                 r.reason = "wrong password";
                 return r;
             }
@@ -534,7 +569,7 @@ bool ClientOnReliable(Session& session, uint32_t hConn, ReliableKind kind,
     // Verify the HOST over OUR nonce, against the identity bytes on this socket.
     Blob blob;
     BuildBlob(blob, kDirHost, g_client.hostPub, peer_identity::LocalPublicKey(),
-              g_client.nonce);
+              g_client.nonce, ch.flags, ch.nonce);
     Sig hostSig{};
     std::memcpy(hostSig.data(), ch.sig, hostSig.size());
     if (!peer_identity::VerifyBlob(g_client.hostPub, blob, sizeof(blob), hostSig)) {
@@ -555,7 +590,7 @@ bool ClientOnReliable(Session& session, uint32_t hConn, ReliableKind kind,
     AuthProofPayload out{};
     Blob mine;
     BuildBlob(mine, kDirClient, g_client.hostPub, peer_identity::LocalPublicKey(),
-              ch.nonce);
+              ch.nonce, ch.flags, ch.nonce);
     const Sig sig = peer_identity::SignBlob(mine, sizeof(mine));
     std::memcpy(out.sig, sig.data(), sig.size());
 
@@ -670,7 +705,7 @@ bool RunSelftest() {
 
     // POSITIVE: we sign as the client, and a host holding our identity accepts.
     Blob asClient;
-    BuildBlob(asClient, kDirClient, pkA, mine, nonce1);
+    BuildBlob(asClient, kDirClient, pkA, mine, nonce1, kAuthFlagPasswordRequired, nonce1);
     const Sig sigClient = peer_identity::SignBlob(asClient, sizeof(asClient));
     check(peer_identity::VerifyBlob(mine, asClient, sizeof(asClient), sigClient),
           "a well-formed client proof did not verify");
@@ -679,7 +714,7 @@ bool RunSelftest() {
     // the client's proof. Only the direction byte differs, so this is the arm that
     // fails if the direction is ever dropped from the blob.
     Blob asHost;
-    BuildBlob(asHost, kDirHost, pkA, mine, nonce1);
+    BuildBlob(asHost, kDirHost, pkA, mine, nonce1, kAuthFlagPasswordRequired, nonce1);
     check(!peer_identity::VerifyBlob(mine, asHost, sizeof(asHost), sigClient),
           "a proof verified in the WRONG DIRECTION (the direction byte is not "
           "reaching the blob)");
@@ -688,16 +723,33 @@ bool RunSelftest() {
     // naming a different counterparty; this is what stops a proof given to host A
     // being relayed into host B's exchange.
     Blob otherHost;
-    BuildBlob(otherHost, kDirClient, pkB, mine, nonce1);
+    BuildBlob(otherHost, kDirClient, pkB, mine, nonce1, kAuthFlagPasswordRequired, nonce1);
     check(!peer_identity::VerifyBlob(mine, otherHost, sizeof(otherHost), sigClient),
           "a proof verified against a DIFFERENT counterparty (both identities are "
           "not reaching the blob)");
 
     // NEGATIVE 3 -- FRESHNESS. A recorded proof must not answer a new challenge.
     Blob otherNonce;
-    BuildBlob(otherNonce, kDirClient, pkA, mine, nonce2);
+    BuildBlob(otherNonce, kDirClient, pkA, mine, nonce2, kAuthFlagPasswordRequired, nonce1);
     check(!peer_identity::VerifyBlob(mine, otherNonce, sizeof(otherNonce), sigClient),
           "a proof verified against a DIFFERENT nonce (the exchange is replayable)");
+
+    // NEGATIVE 5 -- THE FLAGS ARE SIGNED. This is the arm that fails if the challenge's
+    // flag byte ever leaves the blob again. Unsigned, a relay could set "password
+    // required" on an OPEN lobby's challenge and a bound client would derive and emit a
+    // real tag for a host that never asked for one -- turning an impersonation residual
+    // into a tag-harvesting oracle (post-ship audit, 2026-08-31).
+    Blob otherFlags;
+    BuildBlob(otherFlags, kDirClient, pkA, mine, nonce1, 0, nonce1);
+    check(!peer_identity::VerifyBlob(mine, otherFlags, sizeof(otherFlags), sigClient),
+          "a proof verified with DIFFERENT challenge flags (the flag byte is not "
+          "reaching the blob -- a relay can ask an open host's joiner for a password)");
+
+    // NEGATIVE 6 -- and so is the host's own nonce.
+    Blob otherHostNonce;
+    BuildBlob(otherHostNonce, kDirClient, pkA, mine, nonce1, kAuthFlagPasswordRequired, nonce2);
+    check(!peer_identity::VerifyBlob(mine, otherHostNonce, sizeof(otherHostNonce), sigClient),
+          "a proof verified against a DIFFERENT host nonce");
 
     // NEGATIVE 4 -- WRONG SIGNER. The decision the whole module exports: a
     // signature made by us must not verify against somebody else's identity.

@@ -483,10 +483,24 @@ coop::net::Config ReadNetConfig(bool& enabled) {
     // not lock a session the player did not mean to lock; a client offers whatever it
     // has, and a host that wants nothing ignores it.
     if (c.role == coop::net::Role::Host) {
-        if (ResolveFlag(config_registry::rows::net_lobby_locked))
+        if (ResolveFlag(config_registry::rows::net_lobby_locked)) {
             c.lobbyPassword = ResolveString(config_registry::rows::net_lobby_password);
+            // THE SAME DOWNGRADE `HostWithSave` DOES, for the same reason: a lock with no
+            // secret cannot be enforced, and this path had no such check at all -- so an
+            // ini saying `locked=1` with an empty password produced a host that REQUIRED a
+            // password while announcing itself open. It is the scripted/dedicated lane, so
+            // there is nobody at a screen to notice (post-ship audit, 2026-08-31).
+            if (c.lobbyPassword.empty())
+                UE_LOGW("config: net.lobby_locked=1 but net.lobby_password is empty -- "
+                        "hosting OPEN. A lock with no secret refuses everyone while the "
+                        "browser shows an unlocked server.");
+        }
     } else {
-        c.lobbyPassword = ResolveString(config_registry::rows::net_lobby_password);
+        // A CLIENT OFFERS `net.join_password`, NEVER `net.lobby_password`. The second is
+        // the secret this player's OWN hosted sessions require, and reading it here meant
+        // anyone who had ever hosted a locked lobby offered their own lobby's password to
+        // every locked host they reached (post-ship audit, 2026-08-31).
+        c.lobbyPassword = ResolveString(config_registry::rows::net_join_password);
     }
 
     return c;
