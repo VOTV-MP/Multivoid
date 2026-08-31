@@ -87,6 +87,15 @@ and no listing, and it is shorter than what follows.
    archive next to `VotV-Win64-Shipping.exe` (the game folder
    `WindowsNoEditor\VotV\Binaries\Win64`). UE4SS's own install guide covers
    this step.
+
+   > **Note on frame rate (measured 2026-08-31).** The v3.0.1 release is the
+   > build Multivoid is pinned to, and it is the SLOWER of the two UE4SS builds
+   > in circulation. On one dev machine, moving only `UE4SS.dll` to the newer
+   > build that the mod manager ships took the in-game frame rate from 70 to
+   > 118 fps, with everything else held identical. If you install by hand you
+   > get the 70 arm; anyone using the mod manager route above already gets the
+   > faster one. This is a measurement on one machine, not a promise about
+   > yours -- and the pin has not changed. See `docs/UE4SS_ARC.md` section 9.
 2. Unzip the Multivoid zip. Copy the **contents** of its `mod\` folder into
    `WindowsNoEditor\VotV\Binaries\Win64\Mods\Multivoid`
    inside your game install -- so that the file
