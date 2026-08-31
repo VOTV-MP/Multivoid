@@ -36,7 +36,6 @@
 #include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
 #include "coop/session/player_handshake.h"
 #include "coop/player/players_registry.h"
-#include "coop/player/ko_respawn.h"      // 2026-08: KO-respawn death backstop (death.ko_respawn)
 #include "coop/player/roster_ledger.h"
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_snapshot.h"
@@ -728,20 +727,15 @@ void Tick(coop::net::Session& session) {
         if (!g_localDeathHandled && sessionLiveForDeath) {
             bool isRagdoll = false, dead = false;
             if (ue_wrap::engine::ReadMainPlayerRagdollState(g_netLocal.Raw(), isRagdoll, dead) && dead) {
-                // KO RESPAWN (death.ko_respawn) FAIL-SAFE. Since 2026-08-31 this lane
-                // PREVENTS the death (it holds `canRagdoll` shut, so `dead` can never be
-                // set) rather than converting one after the fact -- the conversion was
-                // measured impossible: `dead := false` exists nowhere in mainPlayer_C and
-                // the two latent delays to the main menu never re-read the flag. So
-                // reaching this line at all means the gate did not take, and
-                // HandleLocalDeath now returns FALSE on purpose: it logs the failure and
-                // lets the legacy permadeath flee below run, because there is genuinely
-                // nothing left to save. See coop/player/ko_respawn.h.
-                if (coop::ko_respawn::HandleLocalDeath(session, g_netLocal.Raw())) {
-                    UE_LOGW("net: LOCAL PLAYER DIED -- KO RESPAWN handled it (staying in the "
-                            "world; respawn pending)");
-                    return;
-                }
+                // THIS FLEE IS THE INCUMBENT, AND IT IS WHAT docs/DEATH_ARC.md REPLACES.
+                // The KO-respawn lane that used to get first refusal here is RETIRED
+                // (2026-08-31, RULE 2): it worked by holding the game's own `canRagdoll`
+                // gate shut so a death was never authored at all, which is the exact
+                // opposite of the user's decision -- the whole native death is supposed
+                // to RUN, and the mod is supposed to step in at the very end, where the
+                // game reaches for the level travel, and write new state there. Until
+                // that seam (`UGameplayStatics::OpenLevel`) lands, a local death travels
+                // and this flee is what makes the travel survivable for our layer.
                 g_localDeathHandled = true;
                 UE_LOGW("net: LOCAL PLAYER DIED -- tearing down coop state synchronously + fleeing "
                         "to the main menu (role=%s; permadeath-rejoinable)",

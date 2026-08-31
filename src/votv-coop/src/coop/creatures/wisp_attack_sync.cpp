@@ -480,10 +480,10 @@ void Tick() {
         }
         // canRagdoll belt: block EVERY ragdoll cause on the host for the window (see the
         // g_canRagdollForced comment -- the montage's own notifies would ragdoll-kill it).
-        // Routed through coop::ragdoll_gate since 2026-08-31: `ko_respawn` holds the SAME
-        // flag shut for the whole session, and this lane's window-close used to write it
-        // back to true unconditionally -- re-opening the KO lane's death gate. The gate
-        // refcounts, so neither lane can free the other's hold.
+        // Routed through coop::ragdoll_gate since 2026-08-31 rather than writing the raw
+        // bool: the flag is process-wide, and a second lane that also held it had its hold
+        // silently freed by this lane's unconditional window-close. The gate refcounts, so
+        // a future holder cannot be freed by us (and we cannot be freed by it).
         if (!g_canRagdollForced) {
             void* local = coop::players::Registry::Get().Local();
             if (local && R::IsLive(local)) {
@@ -522,8 +522,7 @@ void OnDisconnect() {
     if (g_canRagdollForced) {
         // Never strand the local player un-ragdollable past the session (a mid-window
         // teardown would otherwise block every future ragdoll cause incl. real deaths).
-        // Release only OUR hold: ko_respawn::OnDisconnect drops its own, and the gate
-        // restores the flag once the last holder is gone.
+        // Release only OUR hold; the gate restores the flag once the last holder is gone.
         coop::ragdoll_gate::Release(coop::ragdoll_gate::Holder::WispFalseGrab);
         g_canRagdollForced = false;
     }

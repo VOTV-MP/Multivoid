@@ -2918,32 +2918,36 @@ def cmd_navprobe(args) -> None:
     sys.exit(0)
 
 
-def cmd_korespawn(args) -> None:
-    """SOLO KO-RESPAWN acceptance. Launches ONE host with VOTVCOOP_RUN_KORESPAWN_TEST=1
-    and lets the in-game test deliver a LETHAL `Add Player Damage` to the local player.
-    In stock VOTV that starts a 10-second march to the main menu; with the ragdoll gate
-    held the player must instead survive, drop into a knock-out, and respawn.
+def cmd_death(args) -> None:
+    """SOLO + SESSIONLESS native-death instrument. Launches ONE game copy with NO net
+    role (set_net_role=False) so no coop session exists -- which is what keeps
+    net_pump's local-death flee, gated on a live session, from pre-empting the very
+    thing being measured -- and with VOTVCOOP_RUN_DEATH_TEST=1 so the in-game
+    instrument delivers a LETHAL `Add Player Damage` and watches what the game does.
+
+    It prints an OBSERVATION half (the timeline dead/ragdoll/blackScreen/travel, and
+    the dead-window RSS slope against an alive control -- M0) and an ACCEPTANCE half
+    (docs/DEATH_ARC.md's contract). The acceptance half is EXPECTED RED until the arc
+    lands, so a non-zero exit here is the designed baseline, not a regression: read the
+    OBSERVATION lines, which never fail.
 
     The scenario ends when the evidence is collected -- the test prints
-    'korespawn_test: DONE' and we kill immediately (no fixed duration). It also FAILS
-    the process on 'korespawn_test: VERDICT FAIL' so a regression cannot pass silently,
-    and on the absence of a verdict entirely (a run that never reached gameplay is
-    inconclusive, not green)."""
+    'death_test: DONE' and we kill immediately (no fixed duration)."""
     if kill_all() > 0:
-        log("note: pre-existing VotV instances killed before korespawn")
+        log("note: pre-existing VotV instances killed before death")
     deploy_all()
 
-    os.environ["VOTVCOOP_RUN_KORESPAWN_TEST"] = "1"
+    os.environ["VOTVCOOP_RUN_DEATH_TEST"] = "1"
 
-    log("--- HOST LAUNCH (solo KO-respawn acceptance) ---")
+    log("--- LAUNCH (solo, sessionless, native death chain) ---")
     launch_peer("host", args.port, "Host", peer=None,
                 res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
-                memory_limit_gb=args.memory_limit_gb)
+                memory_limit_gb=args.memory_limit_gb, set_net_role=False)
 
     host_log = HOST_DIR / "multivoid.log"
-    saw_done = _wait_for_log(host_log, "korespawn_test: DONE", args.probe_timeout, "HOST")
+    saw_done = _wait_for_log(host_log, "death_test: DONE", args.probe_timeout, "HOST")
     time.sleep(1)
-    tail_log(host_log, 30, "HOST")
+    tail_log(host_log, 40, "HOST")
     log("--- KILLING ---")
     kill_all()
 
@@ -2951,9 +2955,13 @@ def cmd_korespawn(args) -> None:
         txt = host_log.read_text(errors="ignore")
     except Exception:
         txt = ""
-    verdict = [ln for ln in txt.splitlines() if "korespawn_test: VERDICT" in ln]
+    for ln in txt.splitlines():
+        if ("death_test: TIMELINE" in ln or "death_test: DEAD window" in ln
+                or "death_test: ALIVE control" in ln):
+            log("OBSERVED: " + ln.strip())
+    verdict = [ln for ln in txt.splitlines() if "death_test: VERDICT" in ln]
     if not saw_done:
-        log("RESULT: INCONCLUSIVE -- never saw 'korespawn_test: DONE'")
+        log("RESULT: INCONCLUSIVE -- never saw 'death_test: DONE'")
         sys.exit(2)
     if not verdict:
         log("RESULT: INCONCLUSIVE -- DONE with no VERDICT line")
@@ -5090,14 +5098,14 @@ def main() -> None:
     for flag, kw in host_res: p_navprobe.add_argument(flag, **kw)
     p_navprobe.set_defaults(func=cmd_navprobe)
 
-    p_korespawn = sub.add_parser("korespawn",
-        help="SOLO acceptance: a LETHAL hit must leave the player alive, KO'd, then respawned")
-    p_korespawn.add_argument("--probe-timeout", type=int, default=240,
-                             help="seconds to wait for 'korespawn_test: DONE' (covers boot into gameplay + the KO timer)")
-    p_korespawn.add_argument("--memory-limit-gb", type=float, default=12.0,
-                             help="host RSS ceiling")
-    for flag, kw in host_res: p_korespawn.add_argument(flag, **kw)
-    p_korespawn.set_defaults(func=cmd_korespawn)
+    p_death = sub.add_parser("death",
+        help="SOLO+SESSIONLESS: run VOTV's native death chain, measure its timeline + memory, and grade it against docs/DEATH_ARC.md (RED until the arc lands)")
+    p_death.add_argument("--probe-timeout", type=int, default=300,
+                         help="seconds to wait for 'death_test: DONE' (boot into gameplay + a 10 s alive control + a 22 s dead window)")
+    p_death.add_argument("--memory-limit-gb", type=float, default=12.0,
+                         help="host RSS ceiling")
+    for flag, kw in host_res: p_death.add_argument(flag, **kw)
+    p_death.set_defaults(func=cmd_death)
 
     p_ctakeprobe = sub.add_parser("ctakeprobe",
                                   help="SOLO Phase-2 HALT gate (bot-director): walk to a placed non-empty container + drive the faithful take chain (openContainer->pressButton->em_take), measure if the take executed")
