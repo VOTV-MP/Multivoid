@@ -16,6 +16,7 @@
 #include "ui/server_browser.h"
 #include "ui/server_browser_surface.h"  // WHICH browser this session uses
 #include "ui/browser_input_screens.h"
+#include "ui/host_session_settings.h"
 #include "ui/host_window_native.h"
 #include "ui/server_browser_native.h"
 #include "ue_wrap/engine/engine.h"
@@ -232,6 +233,12 @@ void OnMenuTickPost(void* self, void* /*function*/, void* /*params*/) {
     // ...and the HOST WINDOW, its sibling in the same switcher. Same observer for the
     // same reason: one owner of the menu tick. Both no-op unless [dev] browser_native=1.
     ui::host_window_native::OnMenuTick(self, ReadPtr(self, g_switcherOff));
+    // ...and SESSION SETTINGS, step two of hosting, IMMEDIATELY AFTER step one -- the order
+    // is load-bearing, not alphabetical. Pressing Next raises this window's intent from
+    // inside the hosting window's own click poll, and ticking step two next consumes it in
+    // the SAME tick; the reverse order would leave the player looking at the window they
+    // just left until the next one arrived.
+    ui::host_session_settings::OnMenuTick(self, ReadPtr(self, g_switcherOff));
     // ...and the two small INPUT windows (variant A of the input fork -- the address and
     // the name typed in their own sub-windows, VOTV's Language-window shape). Same
     // observer, same reason. They build unconditionally and are only ever SHOWN by the

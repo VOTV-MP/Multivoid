@@ -153,11 +153,15 @@ CAPABILITIES = [
         name="locked-lobby toggle when hosting",
         symptom="cannot host a locked game from this surface",
         operation=r"g_hostLocked|\blocked\b.*Checkbox|Checkbox.*\blocked\b",
-        divergence="DECLARED 2026-08-30: the lobby PASSWORD does not exist in the tree at "
-                   "all (security A2 is open -- what shipped is the exchange it will ride, "
-                   "not the secret), so the ImGui checkbox sets a flag with no enforcement "
-                   "behind it. Porting a control that does nothing would be worse than the "
-                   "gap. Revisit WITH A2, not before.",
+        divergence="CLOSED AS A PARITY MATTER 2026-08-31, and the gap it named is now shared "
+                   "rather than gone. The native flow's second window "
+                   "(`ui/host_session_settings`) offers the lock AND mints the password the "
+                   "ImGui checkbox never had, so neither surface is behind the other. What "
+                   "this entry warned about -- 'porting a control that does nothing would be "
+                   "worse than the gap' -- is now TRUE OF BOTH SURFACES and is security A2, "
+                   "not a parity defect: `locked` is announced and drawn, and no joiner is "
+                   "asked for anything. Delete this entry when the admission half lands; "
+                   "until then it is the register that says so.",
     ),
 ]
 

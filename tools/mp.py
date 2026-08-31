@@ -3609,7 +3609,13 @@ def cmd_browser(args) -> None:
         # shot the marker announces was taken -- the file would simply be missing, with a
         # "selftest complete" line above it saying everything went fine. The stop is now
         # `done_marker`, tested after the capture block.
-        done_marker = "INPUT NAME PASS" in text or "INPUT NAME FAIL" in text
+        # MOVED 2026-08-31 when the hosting flow gained its second window. It named the
+        # change-name phase, which stopped being last the moment SESSION BACK was appended --
+        # and the run that proved it looked completely clean: every older verdict green, the
+        # four new phases simply absent, "selftest complete" printed over them. That is the
+        # failure mode the paragraph above describes, committed by the same hand that wrote
+        # it. The marker must be the phase that sets step -1, and today that is this one.
+        done_marker = "SESSION BACK PASS" in text or "SESSION BACK FAIL" in text
         if not saw_shown and "server_browser_native: shown" in text:
             saw_shown = True
             log(f"  t+{int(time.time()-t0)}s browser shown -- capturing")
@@ -3718,7 +3724,14 @@ def cmd_browser(args) -> None:
                                    # picture can judge -- its last defect was found by eye.
                                    ("WORLD LIST PASS", "browser_host_window.png", "hw"),
                                    ("INPUT DIRECT PASS", "browser_input_direct.png", "ind"),
-                                   ("INPUT NAME PASS", "browser_input_name.png", "inn")):
+                                   ("INPUT NAME PASS", "browser_input_name.png", "inn"),
+                                   # STEP TWO of hosting, in BOTH of its states -- the
+                                   # unlocked one it opens in, and the locked one with the
+                                   # generated password on screen. Two shots because the
+                                   # whole feature is a block that appears; one frame
+                                   # cannot show a thing appearing.
+                                   ("SESSION PASS", "browser_session_open.png", "ses"),
+                                   ("LOCK PASS", "browser_session_locked.png", "lock")):
             if needle in text and seen not in extra_shots:
                 extra_shots[seen] = shots_dir / name
                 if _capture_window(host_pid, extra_shots[seen]):
@@ -3744,7 +3757,31 @@ def cmd_browser(args) -> None:
     # see the module that produced them, and the run's own stop marker (which reads the
     # streamed text, not this list) had already fired on one of them. Two readers with
     # two scopes is how an instrument reports a hole that is not there.
-    lines = [ln for ln in all_lines if "server_browser" in ln or "host_window_native" in ln]
+    #
+    # ...AND IT HAPPENED A THIRD TIME, ON THE COMMIT THAT ADDED `host_session_settings`
+    # (2026-08-31). All three of its phases logged PASS and this scan reported all three as
+    # UNMEASURED, because the module was not in the list. Two corrections in the same
+    # direction mean the LIST is the defect, not its contents (docs/LESSONS.md), so the
+    # contents are widened AND the instrument is given a way to notice its own blindness --
+    # see the orphan check below. A name list cannot be kept correct by remembering to
+    # update it; that is the whole failure mode.
+    scopes = ("server_browser", "host_window_native", "host_session_settings",
+              "browser_input_screens", "native_text_field")
+    lines = [ln for ln in all_lines if any(s in ln for s in scopes)]
+    # THE INSTRUMENT CHECKS ITSELF: any verdict line in the log that this scan cannot see.
+    # A PASS/FAIL/SKIP is this scenario's verdict vocabulary, so one outside `lines` is a
+    # module the filter does not know about -- exactly the state that produced three false
+    # "no verdict" reports today and two on 2026-08-30. It prints rather than fails: the
+    # orphan may belong to another scenario's subsystem entirely, and a false alarm here
+    # would be the same mistake in the other direction.
+    orphans = [ln for ln in all_lines
+               if (" PASS --" in ln or " FAIL --" in ln or " SKIP --" in ln) and ln not in lines]
+    if orphans:
+        log(f"[mp] NOTE: {len(orphans)} verdict line(s) in the log are OUTSIDE this scan's "
+            "module scope -- if any belong to the browser flow, add the module to `scopes` "
+            "or this run is reporting a hole that is not there:")
+        for ln in orphans[:8]:
+            log(f"[mp]   orphan: {ln.strip()}")
     log("--- KILLING ---")
     kill_all()
     if fake is not None:
@@ -3807,6 +3844,22 @@ def cmd_browser(args) -> None:
         ("HOST ESC", "HOST ESC ",
          "whether the hosting window's ESC closes it is UNMEASURED -- that is the exit that "
          "survives a capture-starved pointer, i.e. the field report's own case"),
+        # STEP TWO of hosting (2026-08-31). It is the ONLY caller of HostWithSave, so an
+        # unreachable one means nothing can be hosted at all -- which makes "did Next open
+        # it" a harder verdict than any exit on this list.
+        # The needle is the PREFIX, not the verdict: the loop appends PASS/FAIL/SKIP itself.
+        # "SESSION " matches this phase's three outcomes and NOT "SESSION BACK PASS", which
+        # is a different row below.
+        ("SESSION", "SESSION ",
+         "whether Next opens the session-settings window is UNMEASURED -- that window is "
+         "the only thing in the tree that hosts, so unreachable means unhostable"),
+        # ...and the one thing that window is FOR. A lock that does not mint is a padlock
+        # that lies to the host, and this is the only place that can catch it.
+        ("LOCK", "LOCK ",
+         "whether clicking the lock turns it on AND mints a password is UNMEASURED"),
+        ("SESSION BACK", "SESSION BACK ",
+         "whether Back returns from step two to step one is UNMEASURED -- a one-way flow "
+         "would make a player redo the world choice to change one setting"),
     ):
         # MATCH THE VERDICT, NOT THE PHASE. Every one of these phases logs an AIMING line
         # ("HOST BACK at desktop ... clicking it") before its verdict, and a prefix search

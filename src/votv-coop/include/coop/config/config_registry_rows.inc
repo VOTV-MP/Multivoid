@@ -28,6 +28,23 @@
 // ---- [net] ------------------------------------------------------------------
 CFG_STRING(net_nick, "net.nick", "net", kMyNameDefault, "VOTVCOOP_NET_NICK", true,
     "Your display name, shown to other players (nameplates, chat, the scoreboard).")
+// THE LOBBY PASSWORD, remembered between sessions so a host who has told their friends one
+// value does not have to tell them a new one every time they host. Written by the hosting
+// flow's second window (`ui/host_session_settings`), which mints one the moment the player
+// chooses "Password required" and leaves it editable.
+//
+// NO ENV TWIN, deliberately: an env var is visible to every process on the box and lands in
+// crash dumps and shell history. The one path in is the window.
+//
+// NOT SEEDED. A generated value written into the ini at first boot would mint a password
+// for every player who never hosts, and a value in a config file that nothing produced is
+// exactly the kind of thing that gets pasted into a bug report.
+CFG_STRING(net_lobby_password, "net.lobby_password", "net", "", nullptr, false,
+    "Password for sessions you host with the lock on. Generated for you when you first turn "
+    "the lock on; change it to anything you like. Only players you give it to can join.")
+CFG_FLAG(net_lobby_locked, "net.lobby_locked", "net", false, nullptr,
+    "Whether the sessions you host require the password above. Set from the hosting window; "
+    "remembered so your next session starts the way your last one did.")
 CFG_ENUM(net_role, "net.role", "net", "", "host|client", "VOTVCOOP_NET_ROLE",
     "Auto-start role for the LAN test framework. Leave unset for normal play -- the in-game "
     "Multiplayer menu handles hosting and joining.")

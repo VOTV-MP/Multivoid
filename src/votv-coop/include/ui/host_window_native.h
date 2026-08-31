@@ -12,11 +12,18 @@
 // since `8238539e` -- but only on the ImGui surface. The native browser has no Host at
 // all, so finishing that lane means bringing the choice with it.
 //
-// ONE ACTION, TWO VIEWS. This window authors NO hosting logic. It collects a
-// `session_manager::SaveChoice` plus the connection mode and calls the same
-// `session_manager::HostWithSave(...)` the ImGui picker calls. A second host
-// implementation would be the RULE-2 violation this note exists to forbid; if a rule
-// about hosting needs to change, it changes in `session_manager`, once.
+// IT NO LONGER HOSTS ANYTHING, AND THAT IS THE POINT (2026-08-31). This window is step
+// ONE of two: it settles WHICH WORLD and HOW TO CONNECT, and its confirm button is
+// **Next**, which hands both to `ui/host_session_settings` -- step two, where WHO MAY JOIN
+// is settled and the single `HostWithSave` call is made. The user asked for exactly that
+// split: *"когда он выбрал сейв или new game, далее юзеру покажем еще одно окно, где уже
+// будет настройка сессии, пароль замок и тд ... и только после этого он может уже хост
+// кнопку нажать."*
+//
+// So the RULE-2 note this paragraph used to carry is now stronger, not weaker: there is
+// still exactly ONE host action in the tree, and it is no longer here. A second one -- a
+// "quick host" door that skips step two -- would be the violation. If a rule about hosting
+// needs to change, it changes in `session_manager`, once.
 //
 // THE CONNECTION MODES, and what each one actually costs the player (the wording is the
 // product surface, so it is fixed here rather than invented at each call site):
@@ -31,14 +38,17 @@
 //              signaling; nothing leaves the machine -- and the accept edge refuses
 //              non-private remote addresses.
 //
-// NO TEXT ENTRY IN v1, DELIBERATELY. The kit can build panels, images, text blocks and
-// real buttons; it cannot yet build a focusable `UEditableTextBox`, and whether a
-// hand-built one takes keyboard focus inside a never-`Initialize()`d widget tree is
-// UNMEASURED (its offsets are already in sdk_profile.h, so the question is focus, not
-// layout). Rather than block the window on that, v1 hosts under the same default name the
-// ImGui surface uses and leaves renaming to that surface. The measurement, and then either
-// a native box or our own WndProc-driven field, is the next step -- `WndProcDetour` runs
-// on the GAME THREAD (measured 2026-07-31), which is what makes the second option cheap.
+// NO TEXT ENTRY HERE, AND THE REASON IS NO LONGER THE ONE THIS NOTE USED TO GIVE. It said
+// the kit "cannot yet build a focusable `UEditableTextBox`" and that focus was UNMEASURED.
+// It has been measured since (2026-08-30, `coop/dev/native_text_probe`): Slate does not
+// route keystrokes into a hand-wired, never-`Initialize()`d tree at all, so the answer was
+// no, and `ui/native_text_field` owns its input at the WndProc seam instead. Two shipped
+// screens use it.
+//
+// This window still does not name the world, because nothing here is a name: the session's
+// NAME is derived from the player's nick (`<nick>'s game`), which is what tells another
+// player in the browser who is hosting. Renaming is `browser_input_screens`' Change-name
+// window, one door away, and it changes the nick -- one value, one owner.
 //
 // FAILURE IS THE POINT, NOT AN EDGE CASE. The user's report that opened this lane was
 // *"nothing told about the session being DEAD"*. `session_manager::HostStatus()` already
@@ -58,6 +68,18 @@ void Open();
 // pending intent. Safe from any thread.
 void Close();
 
+// THE SAME CLOSE, PERFORMED NOW -- for a sibling screen that is about to take our place in
+// the switcher. GAME THREAD ONLY; off-thread it degrades to the deferred `Close()`.
+//
+// A sibling MUST call this before showing itself, and the ordering is the whole
+// correctness of the hand-over rather than a nicety: both screens are children of one
+// switcher, and each records the index it replaces so its own Back can restore it. Open a
+// sibling on top of a live one and the sibling records OUR index -- so its Back returns the
+// player to a window that has already reconciled itself closed and is no longer listening.
+// The browser learned this first (`server_browser_native::CloseNow`); the hosting flow
+// gained a second hop on 2026-08-31 and needed the same rule.
+void CloseNow();
+
 // True while our screen is the switcher's active child, reconciled against the live index
 // every tick rather than assumed.
 bool IsOpen();
@@ -71,6 +93,12 @@ bool IsOpen();
 // this, not the control we removed. Note the X was measured WORKING the same day it was
 // deleted (`HOST X PASS`, 23:43) -- it went for fidelity, not because it was broken.
 void* BackButton();
+
+// ...and the button that ADVANCES, for the same reason. It used to say "Host" and to BE the
+// host action; it is now the door to step two, so what a self-check must drive is whether
+// that door opens -- a claim nothing could make before, because the only way into the
+// second window would otherwise be a dev flag.
+void* NextButton();
 
 // Called from coop::multiplayer_menu's ui_menu_C::Tick post-observer, MAIN menu only.
 // Builds once per menu instance, fail-closed on donors.

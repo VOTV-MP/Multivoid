@@ -12,6 +12,7 @@
 #include "ui/imgui_overlay.h"          // CaptureOwners() -- who is eating the mouse
 #include "ui/server_browser_actions.h"  // the HOST button this drives
 #include "ui/browser_input_screens.h"  // the input windows the last phases drive
+#include "ui/host_session_settings.h"  // ...and what NEXT must open, one step further
 #include "ui/host_window_native.h"     // ...and what it must open
 
 #include "ue_wrap/core/call.h"
@@ -180,6 +181,28 @@ constexpr int kInputDirectHold = 315;
 constexpr int kInputNameOpen   = 322;
 constexpr int kInputNameShot   = 328;
 constexpr int kInputNameHold   = 329;
+// SESSION SETTINGS -- step two of hosting, which since 2026-08-31 is the ONLY thing that
+// calls `HostWithSave`. It is reached by pressing Next on the hosting window and by nothing
+// else (there is deliberately no dev auto-open for it: a lab door that skips the real one
+// is how a lab result lies), so these phases drive the real path.
+//
+// The Host button itself is NEVER pressed here. It starts a game, loads a world and
+// announces a lobby; a self-check that did that would leave the rig hosting.
+constexpr int kSessOpen       = 336;
+constexpr int kSessNextMove   = 344;
+constexpr int kSessNextDown   = 350;
+constexpr int kSessNextUp     = 354;
+constexpr int kSessVerify     = 362;
+constexpr int kSessShotHold   = 363;
+constexpr int kSessLockMove   = 370;
+constexpr int kSessLockDown   = 376;
+constexpr int kSessLockUp     = 380;
+constexpr int kSessLockVerify = 388;
+constexpr int kSessLockHold   = 389;
+constexpr int kSessBackMove   = 396;
+constexpr int kSessBackDown   = 402;
+constexpr int kSessBackUp     = 406;
+constexpr int kSessBackVerify = 414;
 
 // The forced offset for the positive control. Far past any real content extent, so a
 // getter that returns it UNCHANGED has told us it echoes the request rather than reading
@@ -1223,8 +1246,147 @@ void Tick(void* scrim, void* list, void* exitBtn) {
         }
         case kInputNameHold:
             if (nowMs < g_holdUntilMs) return;
+            // Put the input window away and re-open STEP ONE, so the phases below have a
+            // real Next button to press. Close() is deferred; Open() is too, and the two
+            // land on the same tick in the order they were asked for.
+            ui::browser_input_screens::Close();
+            break;
+        case kSessOpen:
+            ui::host_window_native::Open();
+            UE_LOGW("host_session_settings: SESSION -- reopened the hosting window to drive "
+                    "Next, the only door into step two");
+            break;
+        case kSessNextMove: {
+            void* n = ui::host_window_native::NextButton();
+            ue_wrap::FVector2D tl{}, sz{};
+            if (!ui::host_window_native::IsOpen() || !n ||
+                !U::WidgetScreenRect(n, tl, sz) || sz.X < 1.f) {
+                UE_LOGE("host_session_settings: SESSION SKIP -- the hosting window is %s and "
+                        "its Next button %s, so whether step two can be REACHED is "
+                        "UNMEASURED. That is not a pass: step two is the only caller of "
+                        "HostWithSave, so an unreachable one means nothing can be hosted.",
+                        ui::host_window_native::IsOpen() ? "open" : "CLOSED",
+                        n ? "has no readable rect" : "does not exist");
+                g_selfCheckStep = -1;
+                return;
+            }
+            PlaceCursorOnAbsolute(tl.X + sz.X * 0.5f, tl.Y + sz.Y * 0.5f);
+            UE_LOGW("host_session_settings: NEXT at desktop (%.0f,%.0f) %.0fx%.0f -- clicking it",
+                    tl.X, tl.Y, sz.X, sz.Y);
+            break;
+        }
+        case kSessNextDown:
+            ::mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+            break;
+        case kSessNextUp:
+            ::mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+            break;
+        case kSessVerify: {
+            // BOTH halves, like the HOST LINK phase: step two must be up AND step one must
+            // have got out of the way. They are siblings in one switcher, so "both open" is
+            // not a state that can render -- and if step one were still showing, its Back
+            // would restore an index that is now ours.
+            const bool up   = ui::host_session_settings::IsOpen();
+            const bool gone = !ui::host_window_native::IsOpen();
+            if (up && gone)
+                UE_LOGW("host_session_settings: SESSION PASS -- a real click on Next opened "
+                        "the session-settings window and closed the hosting one. The two-step "
+                        "hosting flow the user asked for is walkable end to end.");
+            else
+                UE_LOGE("host_session_settings: SESSION FAIL -- after a real click on Next: "
+                        "settings open=%d, hosting window closed=%d. Both must be true.",
+                        up ? 1 : 0, gone ? 1 : 0);
+            if (!up) { g_selfCheckStep = -1; return; }
+            g_holdUntilMs = nowMs + kShotHoldMs;
+            break;
+        }
+        case kSessShotHold:
+            if (nowMs < g_holdUntilMs) return;
+            break;
+        case kSessLockMove: {
+            void* row = ui::host_session_settings::LockRow();
+            ue_wrap::FVector2D tl{}, sz{};
+            if (!row || !U::WidgetScreenRect(row, tl, sz) || sz.Y < 1.f) {
+                UE_LOGE("host_session_settings: LOCK SKIP -- the \"Password required\" row %s, "
+                        "so whether the lock can be turned on is UNMEASURED",
+                        row ? "has no readable rect" : "does not exist");
+                g_selfCheckStep = -1;
+                return;
+            }
+            PlaceCursorOnAbsolute(tl.X + sz.X * 0.5f, tl.Y + sz.Y * 0.5f);
+            UE_LOGW("host_session_settings: LOCK row at desktop (%.0f,%.0f) %.0fx%.0f "
+                    "(locked=%d before) -- clicking it", tl.X, tl.Y, sz.X, sz.Y,
+                    ui::host_session_settings::Locked() ? 1 : 0);
+            break;
+        }
+        case kSessLockDown:
+            ::mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+            break;
+        case kSessLockUp:
+            ::mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+            break;
+        case kSessLockVerify: {
+            // TWO CLAIMS, because the row lighting up is not the feature. The user asked for
+            // "если жмет на замок то пароль сразу появляется сгенерированный" -- so the
+            // measurement is that the click both SET the lock and MINTED a value, and a
+            // padlock with an empty box behind it fails here rather than in front of a
+            // player. The LENGTH is asserted, never the characters (see PasswordLength).
+            const bool locked = ui::host_session_settings::Locked();
+            const int  len    = ui::host_session_settings::PasswordLength();
+            if (locked && len >= 8)
+                UE_LOGW("host_session_settings: LOCK PASS -- a real click on \"Password "
+                        "required\" turned the lock on and minted a %d-character password on "
+                        "the spot. The host never has to invent one.", len);
+            else
+                UE_LOGE("host_session_settings: LOCK FAIL -- after a real press-release on the "
+                        "lock row: locked=%d, password length=%d. A lock with no secret behind "
+                        "it is a padlock that lies to the host.", locked ? 1 : 0, len);
+            g_holdUntilMs = nowMs + kShotHoldMs;
+            break;
+        }
+        case kSessLockHold:
+            if (nowMs < g_holdUntilMs) return;
+            break;
+        case kSessBackMove: {
+            void* b = ui::host_session_settings::BackButton();
+            ue_wrap::FVector2D tl{}, sz{};
+            if (!b || !U::WidgetScreenRect(b, tl, sz) || sz.X < 1.f) {
+                UE_LOGE("host_session_settings: SESSION BACK SKIP -- the Back button %s. With "
+                        "no X on any of these windows it is the only POINTER way out, so this "
+                        "is not a pass.", b ? "has no readable rect" : "does not exist");
+                g_selfCheckStep = -1;
+                return;
+            }
+            PlaceCursorOnAbsolute(tl.X + sz.X * 0.5f, tl.Y + sz.Y * 0.5f);
+            break;
+        }
+        case kSessBackDown:
+            ::mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+            break;
+        case kSessBackUp:
+            ::mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+            break;
+        case kSessBackVerify: {
+            // BACK GOES TO STEP ONE, not to the main menu, and that is the whole claim. A
+            // Back that dropped the player out of the flow would make them redo the world
+            // choice to change one connection mode -- and restoring the switcher index is
+            // NOT enough on its own, because the hosting window tracks its own shown flag
+            // and reconciled itself closed when we took the switcher. This asserts the flag
+            // and the index agree again.
+            const bool ours = ui::host_session_settings::IsOpen();
+            const bool back = ui::host_window_native::IsOpen();
+            if (!ours && back)
+                UE_LOGW("host_session_settings: SESSION BACK PASS -- Back closed step two and "
+                        "returned to step one, which is live again (not merely re-indexed).");
+            else
+                UE_LOGE("host_session_settings: SESSION BACK FAIL -- settings still open=%d, "
+                        "hosting window live=%d. Back must land the player back on step one "
+                        "with that window listening, or the flow is one-way.",
+                        ours ? 1 : 0, back ? 1 : 0);
+            ui::host_window_native::Close();
             g_selfCheckStep = -1;
             return;
+        }
         default:
             break;
     }
