@@ -40,6 +40,15 @@ coop::voice::Playback g_playback;
 // access is game-thread; the implicit seq_cst ops are fine on these paths.
 std::atomic<bool> g_enabled{false};
 std::atomic<bool> g_started{false};  // devices opened this session
+// Install's OWN idempotency latch, separate from g_started on purpose. g_started means
+// "the capture/playback devices are open" and four other readers depend on that meaning
+// (the HUD icon, Enabled(), the state snapshot, OnDisconnect's device stop), so it cannot
+// double as "Install has already decided". It never could: with voice.enabled=0 Install
+// returned BEFORE setting g_started, so every tick of subsystems::Install re-entered the
+// whole body -- re-resolving the config, clearing every peer's WireState, resetting
+// g_sendSeq, and printing "voice_chat: disabled" dozens of times a second (measured
+// 2026-08-31: it was the single most frequent line in a client log).
+bool g_installed = false;
 bool g_loopback = false;
 int  g_muteVk = 0;
 bool g_muteKeyWasDown = false;
@@ -152,7 +161,10 @@ void PublishUiSnapshot(coop::net::Session* s) {
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
-    if (g_started) return;  // idempotent per session (Install is the session-start edge)
+    // The session pointer is re-published every call (it can move); everything below is
+    // session-START work and runs exactly once, whichever way the enabled decision goes.
+    if (g_installed) return;
+    g_installed = true;
 
     g_enabled = CFG::ResolveFlag(coop::config_registry::rows::voice_enabled);
     g_installAt = Clock::now();
@@ -306,6 +318,7 @@ void OnDisconnect() {
     g_capture.Stop();
     g_playback.Stop();
     g_started = false;
+    g_installed = false;   // the next session's Install must decide again
     g_sentOnce = false;
     g_sendSeq = 0;
     for (auto& st : g_peerState) st = WireState{};
