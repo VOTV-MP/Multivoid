@@ -326,13 +326,16 @@ bool RowPartsAt(int32_t i, RowParts& out) {
         if (Call(box, f)) ovl = f.Get<void*>(L"ReturnValue");
     }
     if (!ovl) return false;
-    // The overlay's children, in BuildRow's order: the frame's edge, the frame's face, the
-    // text row. The first two are AddFramedBox's, so if that kit function ever reorders
-    // them this reads the wrong image -- which is why the row builder uses the kit rather
-    // than hand-rolling a frame whose order only this file knows.
-    out.edge = U::ChildAt(ovl, 0);
-    out.face = U::ChildAt(ovl, 1);
-    void* hb = U::ChildAt(ovl, 2);
+    // THE KIT OWNS ITS OWN CHILD ORDER. This used to read slots 0/1/2 by literal index, with
+    // a comment saying what would happen if AddFramedBox ever reordered them. It did -- the
+    // native-material frame put the fill first and added a second ring -- and index 2 became a
+    // UImage, which is not a harmless mismatch: `[V]` UPanelWidget::Slots and UImage::Brush are
+    // both at 0x108, so GetChildAt on it reads the brush's vtable as the slot array.
+    NS::FramedParts fp;
+    if (!NS::FramedBoxParts(ovl, fp)) return false;
+    out.edge = fp.edge;
+    out.face = fp.face;
+    void* hb = fp.content;
     if (!hb) return false;
     // Child 0 of the text row is the LOCK cell; the three text cells follow it.
     out.lock = U::ChildAt(hb, 0);

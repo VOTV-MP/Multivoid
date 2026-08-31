@@ -177,13 +177,27 @@ bool BuildScreen(void* switcher) {
     // carries the material `inst_uiBorder` as a 9-slice box with Margin 0.5 -- the thing our
     // flat rectangle was imitating and could not match, because each native edge has its own
     // pair of greys. Set before ANY AddFramedBox call below.
-    void* borderDonor = NS::DonorChild(settings, L"image_border");
-    NS::SetBorderDonor(borderDonor);
-    if (!borderDonor)
-        UE_LOGW("server_browser_native: frame donor ui_settings.image_border NOT found -- "
-                "windows fall back to the flat border (cosmetic, not fatal)");
+    // ONCE PER MENU INSTANCE, not once per retry tick. DonorChild costs a full GUObjectArray
+    // walk, and BuildScreen re-runs on EVERY menu tick until the screen builds -- so an
+    // unlatched resolve here is a ~117 Hz array walk for as long as anything else is failing.
+    if (!NS::BorderDonorResolved()) {
+        if (void* borderDonor = NS::DonorChild(settings, L"image_border")) {
+            // Only a NON-NULL donor is published. Setting it unconditionally meant one tick
+            // where `settings` was momentarily unresolved overwrote a good donor with null for
+            // every sibling screen, permanently for that menu instance.
+            NS::SetBorderDonor(borderDonor);
+        } else if (!g_toldTheUser) {
+            // WARN once, not per tick: log.cpp fflushes every non-INFO line synchronously, and
+            // this sits on a path re-entered until the screen builds.
+            UE_LOGW("server_browser_native: frame donor ui_settings.image_border NOT found -- "
+                    "windows fall back to the flat border (cosmetic, not fatal)");
+        }
+    }
     if (!fillDonor || !barDonor || !backDonor) {
-        if (++g_buildAttempts >= 15 && !g_toldTheUser) {
+        // The caller counts the attempt now (every failure path, not just this one), so this
+        // only READS the counter. Incrementing here too would double-count this path and arm
+        // the dialog at 8 attempts instead of 15.
+        if (g_buildAttempts >= 15 && !g_toldTheUser) {
             g_toldTheUser = true;
             UE_LOGE("server_browser_native: donors still absent after %d attempts "
                     "(ui_saveSlots_C.Image_0=%p ui_settings_C.scrollboxRoot=%p "
@@ -436,8 +450,19 @@ void OnMenuTick(void* menu, void* switcher) {
         panels::Forget();
         g_ourIndex = -1; g_shown = false; g_buildAttempts = 0; g_toldTheUser = false;
         rows::Attach(nullptr);   // the panel died with the menu; drop it and the row ids
+        // The frame donor is a UImage owned by the OLD menu's ui_settings. Kept across the
+        // rebuild, CloneStyle would memcpy 0x88 bytes out of a destroyed widget -- and every
+        // other per-instance pointer beside it was already being dropped here.
+        NS::ForgetBorderDonor();
     }
     if (!g_root) {
+        // COUNT THE ATTEMPT IN THE CALLER. BuildScreen increments only inside its
+        // missing-donor guard, so its ~13 other `return false` paths -- including the AddChild
+        // failure measured live on 2026-08-30, which deliberately clears g_root to force a
+        // rebuild -- retried at menu-tick rate with no backoff and never armed the dialog.
+        // host_window_native does this in its caller and its comment claims both siblings do;
+        // that claim was false for this one.
+        ++g_buildAttempts;
         if (!BuildScreen(switcher)) return;
         if (AutoOpenArmed()) {
             // THE AUTOOPEN DELIBERATELY DOES **NOT** OPEN ON THIS TICK, AND THAT IS THE
