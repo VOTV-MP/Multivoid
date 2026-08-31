@@ -1053,3 +1053,84 @@ pass rather than discovered afterwards:
 2. **A FAILED revive still ends the lobby.** The failure path is `FleeToMainMenu`, whose
    `Stop()` is what lets the second travel through our own veto. So the fork above governs
    only the happy path: revive succeeds -> lobby lives; revive fails -> lobby still ends.
+
+### 11.5 THE CENSUS IS NOW MEASURED, NOT TRUSTED -- the write-diff instrument (2026-08-31, `6ccbb509`)
+
+**Why.** 11.3b's census is correct for VOTV 0.9.0n and **rots silently on a game update**: a
+fourteenth one-way write would fail nothing, and the user would find it the way they found the
+last two -- by looking at the screen. The user's instruction was to fix `dmg_full` *"for real"*
+under a per-RULE-1 green light. This section records what that turned out to mean, and the two
+designs measurement KILLED on the way.
+
+**What was killed, and this is the part not to re-derive.**
+
+*The recorded plan was to rebuild `ui_UI`* -- "vanilla's disposal IS the rebuild, so destroy and
+recreate the widget and inherit VOTV's own disposal, free, forever, no census". `[V]` It does not
+hold. `ui_UI` has **47 functions and no `Destruct`**; its `Construct` (uber `@11606`) does
+`BINDDELEGATE heavyObjDrop + ADDDELEGATE`, `BINDDELEGATE heavyObjPull + ADDDELEGATE` onto *other*
+objects' multicast delegates, and `K2_SetTimerDelegate(timeDsplay, 0.5, looping=true)`. Nothing
+ever unbinds them, and `RemoveFromParent` DETACHES rather than destroys
+(`[[lesson-removefromparent-detaches-a-widget-it-does-not-destroy-it]]`). So a mid-level rebuild
+leaves the old widget reachable through those delegate lists and that repeating timer: a
+permanent double-dispatch plus a leak that grows once per death. **Vanilla's disposal is the
+LEVEL TRAVEL destroying the world and its timer manager -- not anything widget-local -- so there
+is nothing for one widget to inherit.** (`Construct` was separately checked for a self-loop:
+`@11946` is the stub's ENTRY offset and the ONLY reference to `11606` in the whole ubergraph, so
+it runs once per widget and the `Delay(3.0)` at `@11891` is one branch of a flow-stack fan.)
+
+*And the whole family above it is disqualified in principle.* Rebuild, archetype-reset and
+"restore the authored default" all borrow one premise -- that the game's fresh state is the
+correct state. But **vanilla has no undo-a-death semantics at all, because its disposal ends the
+session**; there is no authored answer to "what should this HUD look like after a *survived*
+death". `[V]` `ui_UI` holds player state nothing re-drives (`compassLocation`, written by
+`ui_console::enterCommand` and `ui_radar::OnKeyDown`; `selec`; `stacking`; `hideInterface`;
+`umg_carmap->beacons`; runtime-added children under `umg_subtitles->list` and
+`VerticalBox_achievements`), so "fresh" is measurably WRONG for a resumed session. See
+`[[lesson-a-cancelled-destruction-has-no-authored-undo-to-inherit]]`.
+
+**What shipped instead: `coop/dev/death_write_diff`.** Not a fix -- an instrument. It snapshots
+every field of every live `UUserWidget` descendant plus the GameInstance, the gamemode and the
+local pawn, diffs after the revive, and prints the raw delta. A diff needs BYTES, not typed
+reads, so it is `memcmp` over `EnumerateStructFields` + `SuperStructOf`. Scope came from where
+11.3b's writes actually land (five owners) -- **a `ui_UI`-only scope would have missed four of
+the thirteen, two of them among the three that were owed.**
+
+**The negative control is mandatory**, not optional: with `ReconcileCancelledTravel()` enabled our
+own fix hides the two writes the instrument most needs to re-find. `mp.py death --no-reconcile`
+(`VOTVCOOP_DEATH_NO_RECONCILE=1`) is the RED arm; it gates the reconcile only, so the travel is
+still refused and the player still revived.
+
+**Three of its own defects were found by reading its output, each having already manufactured a
+false result** -- recorded because a future differ will meet all three:
+
+| defect | what it produced | fix |
+|---|---|---|
+| noise key on the DECLARING class | `Widget.Visibility` is ONE key for every widget, so a flickering clock colon would have suppressed `dmg_full` -- the one cell the module exists to find. It survived run 1 by luck. | key on the object's own name with the trailing `_<digits>` instance suffix stripped |
+| a byte-wise cell over a packed bool | one change reported once per flag in the byte, all mis-named -- **`ui_UI_C.Hidden 00 -> 01` read as an unhandled HUD write until a bytecode search found NOTHING writes `ui_UI_C.Hidden`** | compare only the real `{byte, mask}` from `FindBoolProperty` |
+| value printed from byte 0 | a 136-byte struct changing in its tail rendered `906C... -> 906C...` -- two identical-looking values on a line that exists only because they differ | print from the first DIFFERING byte |
+
+Both are instances of `[[lesson-a-comparison-unit-coarser-than-the-finding-erases-it]]`.
+
+**The result `[V]`** (four runs, both arms, autonomous, NOT hands-on). The noise floor is learned
+from the harness's own 10 s alive control window, which is the same cadence and frame load as the
+dead window by construction. With all three defects fixed:
+
+```
+OFF-only, i.e. EXACTLY what the reconcile disposes -- 2 keys:
+    dmg_full.Visibility          0xC3   01 -> 00
+    mainGameInstance_C.NewVar_1  0x308  null -> alloc
+ON-only -- 3 keys, all obvious run churn (an NPC anim flag, a TArray realloc, a mesh anim flag)
+```
+
+So the instrument **re-derived the shipped census's footprint with nobody naming it**, and D13
+goes red exactly when the reconcile is off (12 pass/1 fail vs 13/0). That is the honest answer to
+"is it real": the fix disposes of exactly what it claims, no more and no less.
+
+**What this does NOT settle, stated plainly.** A diff says WHICH cells moved; it cannot say what
+a cell SHOULD be, nor whether to restore it at all -- `subArea` and `SetGamePaused(false)` are
+measured LEAVES, so the restore VALUE and the restore-vs-leave POLICY stay human. And one run is
+**one sample of one death variant**: there are seven `Add Player Damage` call sites plus a direct
+`kill()`, and drowning has its own branch. The **~79 cells changing in BOTH arms** are death
+effects nothing disposes of (ragdoll, drop, position, NPC animation) and are **NOT yet
+classified** -- that classification, and the other death variants, are the next step, not a
+completed census.
