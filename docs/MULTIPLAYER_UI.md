@@ -1641,6 +1641,52 @@ resolves toward UMG, that arc resolves with it rather than needing its own AOB.
   **zero `.layout` files** — the browser is built in code, not authored. The one divergence (they bind
   handlers, we poll) owes a one-line citation comment at the site, per the MTA rule.
 
+### 8d. HOSTING IS TWO WINDOWS, AND THE LOCK HAS A GATE BEHIND IT (AS-BUILT 2026-08-31, `3ac1c922` + `094df495`, proto 148, lab-driven NOT hands-on)
+
+**USER DECISION** (verbatim): *"когда он выбрал сейв или new game, далее юзеру покажем еще
+одно окно, где уже будет настройка сессии, пароль замок и тд ... и только после этого он
+может уже хост кнопку нажать."* And the requirement they dropped, which improved the design:
+*"может раз создает хост сессию и всё, с этим и живёт? А надо пусть пересоздает."*
+
+`server_browser` → **HOST** → `host_window_native` (which world, how to connect) → **Next**
+→ `ui/host_session_settings` (who may join) → **Host**.
+
+* Step one's confirm is **Next** and it hosts nothing — `DoHost` became `DoNext` and took
+  its hard-coded `locked=false` with it. There is still exactly ONE `HostWithSave` call in
+  the tree; it moved to step two.
+* Three siblings now share one switcher, so the hand-over rule needed a third participant:
+  **`host_window_native::CloseNow()`**. Back from step two calls `HW::Open()` rather than
+  only restoring the index — step one tracks its own `g_shown` and considers itself closed
+  the moment we take the switcher.
+* **Settled at creation, not editable mid-session, and that is why the dropped requirement
+  was worth dropping:** `[V]` `/v1/heartbeat` carries `players_cur` and `listed` and has
+  NEVER carried `locked` (`master.rs:518-535`), so mid-session editing needed a new master
+  field plus a window in which the browser shows a lock the host already removed. The
+  plumbing built for it was reverted rather than left dark (RULE 2), and the tilde menu gave
+  up session editing in the same pass — hiding is the one declared exception.
+* **The lock MINTS on the click** and the value is editable and remembered
+  (`net.lobby_password`). Alphabet has no `I l 1 O 0` and no lower case because it is read
+  aloud and typed back; 10 chars = 50 bits; 32 divides 256 so the modulo is exactly uniform.
+  If the system RNG refuses, **the lock does not go on** — a guessable password is worse
+  than an open lobby, because the padlock still tells the host they are protected.
+* **A locked row's CONNECT opens a password prompt** (a third `browser_input_screens`
+  window), carrying the lobby BY VALUE: the list re-fetches every 5 s and re-sorts, so the
+  highlighted row can be a different server by the time OK is pressed.
+* **`locked` is no longer a badge** — the proof rides inside the existing admission
+  exchange. Details, including the rule that killed the first construction, are local-only
+  (`docs/security/TRACKER.md` A2); the mechanism's own header is `coop/net/lobby_password.h`.
+
+**Driven proof** on the real path (deliberately NO dev auto-open for step two — a lab door
+that skips the player's door is how a lab result lies): `SESSION PASS`, `LOCK PASS`,
+`SESSION BACK PASS`, plus `authdrill --arm password` and its control. Host is never pressed
+by the harness; it would leave the rig hosting.
+
+**Known and declared:** the ImGui fallback can HOST a locked lobby but cannot JOIN one (no
+password prompt — the emergency-surface policy, declared in
+`tools/ui/browser_parity_gate.py`), and on **DIRECT / LAN** a joiner needs the host's `gen:`
+identity as well as the address, because binding is what makes the proof safe and those
+lanes have no master to supply it. The session-settings hint turns amber and says so.
+
 ## Anchors (from reflection dump, game 0.9.0-n)
 
 - Menu widget: `ui_menu_C` (buttons: NewGame, Resume, Save, Settings, Exit,
