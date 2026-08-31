@@ -53,6 +53,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "coop/player/death_revive.h"
 #include "coop/session/teleport_client.h"  // 2026-08-29: the КПП join-spawn (client pawn-Set edge)
 #include "ue_wrap/engine/world_identity.h"
 #include "ue_wrap/core/types.h"
@@ -313,6 +314,7 @@ void OnSessionStart() {
     g_wasConnectedBySlot.fill(false);
     g_localDeathHandled = false;
     g_fleeing = false;  // re-arm the one-shot flee for this new session
+    coop::death_revive::OnSessionStart();  // the travel veto's arm + per-death latches
     coop::registry_reaper::OnSessionStart();  // the been-in-gameplay latch (menu guard)
     coop::local_streams::OnSessionStart();  // held-prop + ragdoll edge detectors
 }
@@ -715,6 +717,13 @@ void Tick(coop::net::Session& session) {
     // dead window is the forced-menu backstop above.
     // Raw() below: validated by the Alive()/Reset/Set block just above, THIS tick.
     if (g_netLocal.Raw() && !g_localDeathHandled) {
+        // THE PUMP BARRIER FOR THE DEATH ARC (docs/DEATH_ARC.md). This publishes the
+        // OpenLevel veto's inputs from the pawn this tick already validated, arms on the
+        // `dead` rising edge, and RUNS a revive the detour has requested. It is here, and
+        // not in the detour, because the detour runs inside a native call inside the BP VM
+        // where a UFunction dispatch re-enters our own ProcessEvent detour and fires every
+        // interceptor and observer; the pump task is where engine calls are ordinary.
+        coop::death_revive::Tick(session, g_netLocal.Raw());
         // DEATH POLICY (2026-06-01 client-death OOM fix, hardened after hands-on). On
         // local death, SYNCHRONOUSLY tear down ALL coop game-side state on THIS frame,
         // then Stop the session. Hands-on proved Session::Stop() alone is insufficient:
@@ -742,32 +751,53 @@ void Tick(coop::net::Session& session) {
         if (!g_localDeathHandled && sessionLiveForDeath) {
             bool isRagdoll = false, dead = false;
             if (ue_wrap::engine::ReadMainPlayerRagdollState(g_netLocal.Raw(), isRagdoll, dead) && dead) {
-                // THIS FLEE IS THE INCUMBENT, AND IT IS WHAT docs/DEATH_ARC.md REPLACES.
-                // The KO-respawn lane that used to get first refusal here is RETIRED
-                // (2026-08-31, RULE 2): it worked by holding the game's own `canRagdoll`
-                // gate shut so a death was never authored at all, which is the exact
-                // opposite of the user's decision -- the whole native death is supposed
-                // to RUN, and the mod is supposed to step in at the very end, where the
-                // game reaches for the level travel, and write new state there. Until
-                // that seam (`UGameplayStatics::OpenLevel`) lands, a local death travels
-                // and this flee is what makes the travel survivable for our layer.
-                g_localDeathHandled = true;
-                UE_LOGW("net: LOCAL PLAYER DIED -- tearing down coop state synchronously + fleeing "
-                        "to the main menu (role=%s; permadeath-rejoinable)",
-                        session.role() == coop::net::Role::Host ? "HOST (ends session)" : "CLIENT");
-                // Per-slot teardown (puppet actors + slot state) + the aggregate
-                // session-wide drains -- shared with the native quit-to-menu path.
-                TearDownCoopStateForSessionEnd(session);
-                // Flee to the MAIN MENU and HOLD our layer dormant (shared with the
-                // host-close eject). The balloon is VOTV's own possessed-ragdoll leak in
-                // the GAMEPLAY world (only cure: leave it); FleeToMainMenu resets the edge
-                // detectors + Stops, then arms the bypass BEFORE travelling so our detour
-                // doesn't HANG the 50k-actor untitled_1 teardown and our per-tick logic
-                // can't resume on stale gameplay shadows at the menu (RSS flat + trending
-                // down, probe: 160 s). Travel uses VOTV's own verb (works for a DEAD/
-                // ragdolling player, no pause needed).
-                FleeToMainMenu(session, "LOCAL PLAYER DIED");
-                return;
+                // THE DEATH ARC OWNS THIS EDGE FIRST (docs/DEATH_ARC.md). The user's
+                // decision is that the WHOLE native death runs -- sound, `dead := true`,
+                // ten seconds, black screen -- and the mod steps in only at the very end,
+                // where the game reaches for the level travel, and writes new state there.
+                // This flee is the exact opposite of that: it fires within one pump tick
+                // of `dead` and yanks the player out at ~4.5 s, before the ritual even
+                // begins (measured 2026-08-31: with a live session the black screen NEVER
+                // APPEARS and the world is gone at 4 469 ms).
+                //
+                // So when `death_revive` has ARMED this death -- which means the seam is
+                // installed, every revive verb resolved, and a session is live -- the flee
+                // stands down and the native chain plays. The arm decision is deliberately
+                // the SAME decision as this one, made at the same instant, because a death
+                // whose flee was skipped and whose revive then turned out impossible would
+                // tear the world down with our coop state still in it. That is H1's shape,
+                // and it is the reason the two answers are one answer.
+                //
+                // When it is NOT armed (stale signature, verbs unresolved) this flee is the
+                // fallback that keeps a death survivable for our layer, exactly as before.
+                //
+                // An armed death FALLS THROUGH rather than returning: the pump must keep
+                // running for the whole ten seconds, because it is the pump that performs
+                // the revive. And g_localDeathHandled is deliberately NOT set -- it is
+                // SHARED with the host-close arm below, and latching it here would stop
+                // this very block from ticking. `death_revive` owns its own per-death
+                // state.
+                if (!coop::death_revive::ArmedForThisDeath()) {
+                    g_localDeathHandled = true;
+                    UE_LOGW("net: LOCAL PLAYER DIED -- tearing down coop state synchronously + fleeing "
+                            "to the main menu (role=%s; permadeath-rejoinable)",
+                            session.role() == coop::net::Role::Host ? "HOST (ends session)" : "CLIENT");
+                    // Per-slot teardown (puppet actors + slot state) + the aggregate
+                    // session-wide drains -- shared with the native quit-to-menu path.
+                    TearDownCoopStateForSessionEnd(session);
+                    // Flee to the MAIN MENU and HOLD our layer dormant (shared with the
+                    // host-close eject). NOTE the balloon this used to cite as the REASON is
+                    // measured false (see the death-policy comment at the top of this file:
+                    // 0.00-0.11 MB/s, not ~165); what survives is the TEARDOWN rationale --
+                    // FleeToMainMenu resets the edge
+                    // detectors + Stops, then arms the bypass BEFORE travelling so our detour
+                    // doesn't HANG the 50k-actor untitled_1 teardown and our per-tick logic
+                    // can't resume on stale gameplay shadows at the menu (RSS flat + trending
+                    // down, probe: 160 s). Travel uses VOTV's own verb (works for a DEAD/
+                    // ragdolling player, no pause needed).
+                    FleeToMainMenu(session, "LOCAL PLAYER DIED");
+                    return;
+                }
             }
         }
         // Re-resolve the controller only when missing or invalidated; the

@@ -525,12 +525,15 @@ bool ReadMainPlayerCanRagdoll(void* mainPlayer, bool& allowed) {
 }
 
 
-bool InvokeAddPlayerDamage(void* mainPlayer, float damage) {
+bool InvokeAddPlayerDamage(void* mainPlayer, float damage, bool blood) {
     if (!mainPlayer || !R::IsLive(mainPlayer)) return false;
     ResolveAddPlayerDamageFn();
     if (!g_addPlayerDamageFn) return false;
     ParamFrame f(g_addPlayerDamageFn);
-    f.Set<float>(L"Damage", damage);  // damageLocation/fullBody/blood/Source zero-init
+    f.Set<float>(L"Damage", damage);  // damageLocation/fullBody/Source zero-init
+    // `[V]` @2784 `IFNOT(blood) POP` guards the block ending in `lib_C::addEffect('bloodLoss',
+    // ...)`. Leaving it false makes a synthetic hit unlike any hit the game produces.
+    if (blood) f.Set<bool>(L"blood", true);
     return Call(mainPlayer, f);
 }
 

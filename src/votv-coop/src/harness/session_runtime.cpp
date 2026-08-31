@@ -34,6 +34,7 @@
 #include "coop/save/save_guard.h"
 #include "coop/save/save_transfer.h"
 #include "coop/session/join_progress.h"
+#include "coop/player/death_revive.h"
 #include "coop/session/net_pump.h"
 #include "coop/session/player_handshake.h"
 #include "coop/text/utf8_codec.h"
@@ -102,6 +103,19 @@ bool BanAcceptFilter(const char* remoteIp) {
 void TickShutdownHooks() {
     coop::shutdown::Install(&g_session);
     coop::shutdown::UpdateWindowTitle();
+    // The level-travel seam (docs/DEATH_ARC.md). Armed HERE -- unconditionally, alongside
+    // the other install that must work before anything else is ready -- and NOT from
+    // net_pump's tick, for a reason a run caught rather than a preference: installing it
+    // lazily from the pump means it only ever exists when a session is running, so the
+    // single-player guarantee would rest on the hook's ABSENCE instead of on the veto's own
+    // session test, and the negative-control run that is supposed to prove the guarantee
+    // would be grading a hook that was never there ([[lesson-an-instrument-blind-to-the-
+    // phenomenon-always-passes]]). The detour is a pure pass-through until a death arms it,
+    // so arming it always costs one atomic load on a function that fires a handful of times
+    // per session. Idempotent; safe off the game thread (an AOB scan and a MinHook install).
+    coop::death_revive::Install(&g_session);
+    // ...and the watchdog that covers a failure OF the pump (see its header comment).
+    coop::death_revive::Watchdog();
 }
 
 // NetPumpTick body extracted to coop/net_pump.cpp (PR-4.13). Harness call

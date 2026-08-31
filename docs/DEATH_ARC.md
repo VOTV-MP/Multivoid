@@ -1,12 +1,16 @@
 # DEATH ARC -- native death, without losing the world
 
-**Status: DESIGN + RE, with §6 MEASURED (2026-08-31 afternoon). Nothing of the arc
-is built yet.** The KO lane that used to be built is **RETIRED** (`33008d87`) -- see
-§5 -- and the instrument that replaces its test is in the tree and expected RED.
-**Read §6a before §3 and §4: it closes six of §6's eight items, and two of its
-findings change what the arc has to write.** §9 (M0) -- the one measurement that could
-have killed the design -- **RAN, and cleared it**: the inherited "~165 MB/s
-possessed-ragdoll leak" measures **+2.32 MB/s** against its own alive control.
+**Status: COMMIT A IS BUILT AND GREEN (2026-08-31). The travel seam, the veto and the
+revive all ship; the announcement lane (commit B) does not.** The whole native death now
+plays out in coop -- sound, `dead := true`, ten seconds, the black screen at +5 s -- and
+`UGameplayStatics::OpenLevel` is REFUSED, with a revive written in its place. Evidence is
+in section 11 (real runs, both configurations). The KO lane that used to be built is
+**RETIRED** (`33008d87`) -- see section 5.
+
+**Read section 11 (AS-BUILT) before section 3 and section 4** -- it is what shipped, and its
+11.2 records SIX things the design text below did not settle, two of which are writes the
+revive needs that section 4 does not list. Then section 6a, which closes six of section 6's
+eight measurement items.
 
 **Read this before touching anything that prevents, delays, undoes, detects or
 survives the local player's death.** It is the living doc for the arc; the
@@ -259,7 +263,17 @@ wherever one exists. Order matters.
 | 5 | reposition | the game's own respawn verb is `teleportWObackrooms(<transform>, true, false)`, and the game's own below-Z rescue is exactly `@3907 forceWakeup(); @3921 teleportWObackrooms(spawnLocation, true, false)`. **Prefer that pair -- it is literally the game's existing revive.** But know what `spawnLocation` IS: `[V]` uber `@34642` sets it to `GetTransform()` once in the level-start block (beside `gamemode`, `ragdollComponent`, `lastWalk`, `lastLoc`), so it is **wherever the pawn stood when this level loaded** -- the save's position on a loaded game, the PlayerStart on a new one. It is not a fixed КПП, and after a long session it can be kilometres from the corpse. §10 asks the user which they want. |
 | 6 | undo `loadLevel`'s menu prep | **MEASURED (§6a item 5), and two of the four are real.** `pause_mainMenu` is added to the viewport ONCE at gamemode init (`gm` uber `@59352 AddToViewport(3)`, then `@59577 SetVisibility(Collapsed)`) and lives there for the session -- so `canvas_loading.SetVisibility(Visible)` and `screenSwi.SetActiveWidgetIndex(0)` are writes to a widget that is still on the player's screen tree, merely collapsed. `ui_menu`'s ubergraph writes `canvas_loading` **nowhere**, and `enterPause` only un-collapses the menu itself -- so a player who cancels the travel and later presses ESC gets a LOADING SCREEN where the pause menu should be. Both must be restored (index back to 1, which is what `ui_menu`'s own in-game Construct sets; `canvas_loading` back to the value read off it while the player was alive, not to a guessed constant). The other two are benign: `GameInstance.subArea := None` is written by `mainPlayer` itself at uber `@4489`/`@5264` in ordinary play, and `NewVar_1` is overwritten by the next real `loadLevel`. |
 
+| 7 | zero `umg_damageIndicator.damage_{up,down,left,right}` | **ADDED AFTER THE FIRST RUNS -- section 4 as designed did not have it, and the omission was found by the USER LOOKING AT THE SCREEN.** `[V]` `Add Player Damage` @4269 accumulates `damage/maxHealth*4` into one of four UMG quadrant floats and nothing in the game clears them. Best-effort; see 11.2. |
+| 8 | expire `effect_bloodLoss_C` (`time := 0`) | **ALSO ADDED AFTER THE FACT, same discovery.** `[V]` @3414 spawns a `bloodLoss` effect actor whose PostProcess + `ui_bloodLossBlur` wash the WORLD red, and @2838 pins its duration at the 120 s cap for any lethal hit. Not cosmetic: full health plus active blood loss is incoherent. Best-effort; see 11.2. |
+
 Everything in §1 up to `@4277` is left strictly alone. That is the point.
+
+**Rows 7 and 8 are the honest lesson of this section.** The six writes above were derived
+from the death chain's CONTROL FLOW -- what `kill` -> `ragdollMode` -> `fallen` -> the two
+delays actually do. Neither red is on that chain: both are authored by `Add Player Damage`
+BEFORE the chain starts, as side effects of the damage rather than of the death. A revive
+designed by walking the chain therefore could not see them, and no amount of further /qf on
+the chain would have found them -- only rendering a frame did.
 
 ---
 
@@ -662,3 +676,199 @@ A recommendation is attached to each so that none of them blocks building.
   chat line ("<Nick> died"), which the existing `peer_action_feed` grammar already
   supports, and nothing else -- no stat, no penalty -- until the user asks for a
   cost.*
+
+---
+
+## 11. AS-BUILT -- commit A, 2026-08-31
+
+Three source changes and one instrument change. Everything in this section is `[V]` from a
+real log; nothing here is a plan.
+
+### 11.1 What shipped
+
+| # | file | what it is |
+|---|---|---|
+| 1 | `ue_wrap/engine/level_travel.{h,cpp}` | the seam. AOB-resolves `UGameplayStatics::OpenLevel` (`profile::kSigOpenLevel`, occ=1, re-verified against the shipping PE the day it was consumed) and MinHook-detours it. Offers `SetVeto`; with no veto published it is a pure pass-through. Owns the by-value `FString Options` free on the cancel path ONLY -- freeing it AND calling the trampoline would be a double free. SEH-wrapped around the callback, failing OPEN. |
+| 2 | `coop/player/death_revive.{h,cpp}` | the gameplay half. Publishes the veto's inputs from the pump, ARMS on the `dead` rising edge, and runs the six-write revive on the pump task after the detour refuses a travel. |
+| 3 | `net_pump.cpp` | the death edge now asks `death_revive::ArmedForThisDeath()` FIRST. Armed -> the flee stands down and the block FALLS THROUGH (the pump must keep ticking; it is what performs the revive). Not armed -> the flee is unchanged. |
+| 4 | `teleport_client::ApplyLocally` | returns `bool` now. It reports that a call was dispatched, NOT that the player moved -- the revive verifies the position separately. |
+| 5 | `harness/autotest_death.cpp` + `mp.py death` | config-aware acceptance (11.3). |
+
+### 11.2 Eight things the implementation settled that the design text did not
+
+1. **THE SEAM IS ARMED UNCONDITIONALLY, AT THE TIMELINE TICK -- not from the pump.** The
+   first build installed it lazily from `net_pump::Tick`, which only runs with a live
+   session. The sessionless negative control then passed while reporting `installed=0`:
+   it was grading a hook that had never been created, so "the seam refused nothing outside
+   coop" was true for the wrong reason and the single-player guarantee rested on the hook's
+   ABSENCE rather than on the veto's own session test. Installing it always (a pass-through
+   until a death arms it) is what makes the negative control mean anything.
+   `[[lesson-an-instrument-blind-to-the-phenomenon-always-passes]]`.
+2. **The instrument's mutating BLACKSCREEN PROBE is RETIRED (RULE 2).** Its question --
+   does `RemoveFromParent` work on a widget the GAME owns -- was answered on 2026-08-31, and
+   once the revive performed that removal for real the probe STOLE the step: it removed the
+   black screen at +5.7 s, so at +10 s the revive found nothing and its own black-screen term
+   graded a no-op. The replacement is a passive arm (D9) that watches the widget reach the
+   viewport and leave it.
+3. **THE DEATH LEAVES TWO INDEPENDENT REDS ON THE SCREEN, AND SECTION 4 LISTED NEITHER.**
+   Both were found by the USER LOOKING AT A RUN, not by any arm -- the design's six writes had
+   been reasoned about entirely from the death chain's control flow, and neither red is on it.
+   They are the same CLASS as the black screen (an artifact the level travel used to dispose
+   of) and they are two different mechanisms:
+   * `[V]` `Add Player Damage` @4269 does `VictoryFloatPlusEquals(gamemode.playerInterface
+     .umg_damageIndicator.damage_{up,down,left,right}, damage/maxHealth*4)` -- it ACCUMULATES
+     into one of four UMG quadrant floats, chosen by the hit's direction. Nothing in the game
+     clears them.
+   * `[V]` @3414 also calls `lib_C::addEffect('bloodLoss', ...)` -> `mainGamemode::addEffect`,
+     which SPAWNS an `effect_bloodLoss_C` (its own `PostProcessComponent` + a
+     `ui_bloodLossBlur_C` widget) and tracks it in `gamemode.effects`/`effects_names`. @2838:
+     `time = FClamp(Lerp(10,5,maxHealth/100) * (dmg/5 + 0.01) * 1.5, 0, 120)`, so **any**
+     lethal hit pins it at the **120 second cap** at strength 1.0. That one is NOT cosmetic:
+     a revive that writes full health and leaves the player BLEEDING OUT is incoherent.
+   The revive now zeroes the four quadrants and writes `time := 0` on live
+   `effect_bloodLoss_C` actors -- deliberately NOT calling the actor's own `destroy`, whose
+   body has not been read; writing the countdown to zero makes the effect's own `ReceiveTick`
+   run the expiry path it runs every time an effect ends naturally, so the gamemode's two
+   parallel arrays cannot desynchronise. Scope is `bloodLoss` ONLY: the death adds exactly
+   that one effect, and clearing food poisoning / LSD / sleepiness would be the revive helping
+   itself to state it did not author. Both are BEST-EFFORT at runtime (a red screen is not
+   worth fleeing to the menu over) and both are ASSERTED by the instrument (D10, D11) -- the
+   runtime's give-up threshold and the test's bar are different questions and may differ.
+4. **THE INSTRUMENT'S LETHAL HIT WAS 10x MAX HEALTH, AND THAT WAS ITS OWN DEFECT.** It made
+   the first red catastrophic (40 units instead of 8) and read as a bug in the arc. `[V]` the
+   only scaling anywhere on the damage path is `SelectFloat(0.75, 1.0, isStrong)` (@856) --
+   damage is NEVER scaled UP -- so 2x is lethal with a 100% margin. A synthetic trigger has to
+   stay inside the range the game itself produces, or it measures its own exaggeration.
+5. **`dead` is resolved through `FindBoolProperty` (byte + MASK), not the plain-byte read the
+   sender path uses.** We WRITE it, and a masked bool shares its byte with its neighbours.
+6. **THE CONJUNCTION IS ABOUT THE PLAYER, NOT ABOUT THE SCREEN -- and getting that backwards
+   cost a run.** `blackCleared` was a conjunction TERM as first built. On 1 run in 4 the
+   same-frame `IsInViewport` read after `RemoveFromParent` still came back TRUE, the
+   conjunction refused, and the revive fell back to `FleeToMainMenu` -- so the player was
+   ejected to the MAIN MENU, and on a host the LOBBY ENDED, because a widget had not detached
+   yet. That trade is upside down: a black screen on a living player is bad; being thrown out
+   of the world is the exact failure this arc exists to remove. The three screen artifacts
+   (black screen, damage quadrants, bloodLoss) are now RETRIED on the following pump ticks
+   (`TickScreenCleanup`, up to 120, stopping the moment all three read clear) and the
+   conjunction keeps only terms that mean THE PLAYER IS ALIVE AND PLAYABLE: `dead` cleared,
+   not ragdolling, health > 0, at the KPP, and the four calls that reported success. A
+   cleanup that never finishes now logs a warning and leaves the player in the world.
+7. **THE INSTRUMENT'S HIT PASSED `blood=false`, SO THE BLOOD-LOSS ARM WAS GREEN FOR NOTHING.**
+   `[V]` `Add Player Damage` @2784 gates the whole `addEffect('bloodLoss', ...)` block on its
+   `blood` parameter, and `E::InvokeAddPlayerDamage` set only `Damage` -- so the synthetic
+   death never created the effect at all and D11 reported "0 live effect_bloodLoss_C" as a
+   PASS on the very run that was added to catch it. The wrapper now takes `blood` (defaulting
+   false, so every existing caller is unchanged) and the instrument passes true. This is the
+   second instrument-blindness in this section and the third in this arc; see 11.2 item 1.
+8. **`ArmedForThisDeath()` does NOT latch `g_localDeathHandled`.** That flag is SHARED with
+   the host-close arm, and latching it would stop the very block that has to keep ticking
+   through the death window. `death_revive` owns its own per-death state.
+
+### 11.3 The acceptance, and why there are two runs
+
+`python tools/mp.py death --session` (SOLO HOST) is the acceptance; `python tools/mp.py
+death` (SESSIONLESS) is the **negative control**, and it is not a lesser run -- without it a
+fix that cancelled EVERY travel would pass. The user's decision is that single player is
+untouched, so a sessionless death must still travel and the armed seam must refuse nothing.
+
+**Run 1 -- `mp.py death --session`, 14:56, VERDICT PASS (9 pass / 0 fail).** Verbatim:
+
+```
+level_travel: seam INSTALLED (UGameplayStatics::OpenLevel@00007FF60A3E30B0; pass-through
+              until a veto is published)
+death_revive: revive verbs resolved (remove=... inViewport=... setVis=... setIdx=...
+              pause_mainMenu=0x4A8 canvas_loading=0x320 screenSwi=0x350)
+death_revive: local death ARMED -- the native death runs to completion
+death_revive: level travel REFUSED at UGameplayStatics::OpenLevel -- the world is kept
+death_revive: REVIVE OK -- black=1 vitals=1 wake=1 tele=1 menu=1 deadClr=1
+              | readback: ragdoll=0 dead=0 hp=100.0 distKPP=0 cm (tol 300)
+death_test: SEAM -- installed=1 travelsRefused=1 lastReviveOk=1 sessionRunning=1
+death_test: TIMELINE (ms after the hit) -- dead=0 ragdoll=0 blackScreen=5141
+            blackGone=10266 travel=-1 grabCleared=0
+death_test: D1 death-ran PASS / D2 ritual-played PASS / D3 world-survived PASS
+            D4 revived PASS / D5 standing PASS / D7 at-KPP PASS (259 cm)
+            D8 menu-restored PASS (screenSwi=1 canvas_loading vis=1)
+            D9 black-screen-cleared PASS (viewport 5141 ms -> gone 10266 ms) / D6 PASS
+```
+
+The timeline is the arc's whole claim in one line: the ritual played to +5 141 ms, the
+travel reads **-1** (it never happened), and the black screen left at **10 266 ms** -- about
+125 ms after the refusal, which is the revive removing it.
+
+**Run 2 -- `mp.py death`, 14:55, VERDICT PASS (6 pass / 0 fail), on the same bytes.**
+`sessionRunning=0`, `travel=10718` (vanilla: ten seconds, black screen, main menu), and
+critically `installed=1 travelsRefused=0` -- the seam IS armed and DECLINES. That is the
+single-player guarantee proven rather than assumed, and it is only meaningful because of
+11.2 item 1.
+
+**ONE UNEXPLAINED RESIDUAL, stated rather than smoothed over.** The revive's own read-back
+reports `distKPP=0 cm` at the instant it completes, but the acceptance sample 11 s later
+reads **259 cm**. So the player lands exactly on the KPP and then settles or slides ~2.6 m
+over the following seconds. It is inside D7's 500 cm tolerance and it looks like ordinary
+gravity settling at that spawn point -- the same thing a joining client's KPP teleport
+would do -- but WHY has not been measured, so it is written down rather than called nothing.
+
+### 11.3a THE RED SCREEN: what it was, and the two hours it cost
+
+The user watched a run and reported the revived player standing at the KPP with the whole
+screen washed red. Four successive investigations followed, each finding a real thing, each
+measuring its own target clean, and each followed by "still red":
+
+1. `umg_damageIndicator.damage_{up,down,left,right}` -- REAL, and the revive now clears them.
+2. `effect_bloodLoss_C` and its 120 s PostProcess -- REAL, and the revive now expires it.
+3. `ui_bloodLossBlur_C` -- measured gone at 10 203 ms with the actor's own teardown.
+4. A full enumeration: every viewport widget, every `effect_C` descendant,
+   `gamemode.effects_names.Num=0`. All clean.
+
+**Then one screenshot taken during the ALIVE CONTROL WINDOW -- before the test's own lethal
+hit, player at full health, `dead == false` -- came back FULLY RED.** The tint is a property of
+the WORLD in the save these runs load (day 324, `gamerule_permfog`), present before the death,
+during it and after it. `research/death_shots/A_prehit_*.png` and `B_postrevive_*.png` are the
+pair, from one run.
+
+So the reported symptom was never the arc. Items 1 and 2 above are still real defects and still
+worth the fix -- a revive that writes full health while leaving the player bleeding out is
+incoherent whatever else is on screen -- but they were not what the user was looking at, and
+the user's first screenshot was those items STACKED ON the world's own red (which is also why
+it looked opaque: `[V]` @1234 branches on `damageLocation == (0,0,0)` and the synthetic hit
+takes the ALL-FOUR-QUADRANTS path, so the instrument was painting a 360-degree indicator no
+real directional hit produces).
+
+**The process lesson is the expensive one and it is written up separately**
+(`[[lesson-a-symptom-needs-a-baseline-before-it-needs-a-hypothesis]]`): after the SECOND clean
+probe with the symptom unchanged, the frame of reference is what is wrong, not the hypothesis.
+The baseline capture cost one minute and would have been correct in the first.
+
+### 11.4 What commit A does NOT do
+
+* **No announcement.** The user asked for a chat line ("В чат пишем"); chat is HOST-AUTHORED
+  since v133, so a client cannot author one. That is ReliableKind 128, two directions
+  (client intent -> host state + line), with the per-slot death state SEEDED ON JOIN per
+  principle 8. Commit B, and it bumps the protocol.
+* **No two-peer witness.** Section 7.2 (what other peers see of a dead player) and section
+  6.3.8 (does a CLIENT's chain run identically) are still unobserved. Both need a two-peer
+  run, which is commit B's acceptance.
+* **The death's DROP is still unanswered.** Section 7.3: every death runs `dropGrabObject()`,
+  and `[V]` the drop reaches `BeginDeferredActorSpawnFromClass` -> `FinishSpawningActor`, the
+  exact seam `prop_drop_intent` hooks -- but only for keys in that client's park set. Both
+  runs had nothing grabbed (`grabValid=0` pre-hit), so the arm that would answer it has never
+  run. It needs a run that GRABS FIRST; a passive sample structurally cannot answer it.
+* **M0 in a real lobby.** Both runs are one process. The differential measured 6.11 and 1.83
+  MB/s -- and the coop run's window is now 22 s covering 10 s dead plus 11 s REVIVED, which
+  is the post-revive soak section 9.1 said was owed. A multi-peer re-take is still owed.
+
+### 11.5 Two product consequences the user should know
+
+Both follow from the flee moving off the death edge, and both were raised during the design
+pass rather than discovered afterwards:
+
+1. **"HOST DEATH ENDS SESSION" no longer happens on the happy path.** That is a recorded USER
+   DECISION (2026-05-30, `votv-player-vitals-death-RE-2026-05-30.md` 4.5), and it was
+   mechanically produced by `session.Stop()` inside `FleeToMainMenu`. A host that dies and is
+   revived never calls `Stop()`, so the session simply continues. This is almost certainly
+   what the 2026-08-31 instruction wants -- the whole point is not losing the world -- and it
+   closes a known-open item. But it IS a product change, so it is written here rather than
+   discovered later.
+2. **A FAILED revive still ends the lobby.** The failure path is `FleeToMainMenu`, whose
+   `Stop()` is what lets the second travel through our own veto. So the fork above governs
+   only the happy path: revive succeeds -> lobby lives; revive fails -> lobby still ends.

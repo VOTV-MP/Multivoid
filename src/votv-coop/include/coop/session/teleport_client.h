@@ -40,6 +40,11 @@ struct ApplyArgs {
     float locX, locY, locZ;
     float rotPitch, rotYaw, rotRoll;
 };
-void ApplyLocally(const ApplyArgs& args);
+// Returns whether a teleport call REPORTED success (the primary teleportWObackrooms, or
+// one of the two fallbacks). It is a report about the CALL, not about where the player
+// ended up: the three-tier fallback means "something was dispatched", and VOTV constraints
+// can still revert a K2_TeleportTo. A caller that needs to know the player actually MOVED
+// must read the position back (coop::death_revive's revive conjunction does exactly that).
+bool ApplyLocally(const ApplyArgs& args);
 
 }  // namespace coop::teleport_client
