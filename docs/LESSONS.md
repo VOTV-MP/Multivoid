@@ -6699,7 +6699,17 @@ itself states. [[lesson-a-forks-fix-is-verified-commit-by-commit-against-your-tr
   instrument has only a local arm, that is the finding. `ls -la` on the deployed binary against the
   fix commit's date costs ten seconds and caught this. Corollary: a hardening that fails closed makes
   its own redeploy **BLOCKING**, which `docs/RELEASE.md` step 0 already knew while the tracker row
-  did not. [[lesson-a-fix-in-the-tree-is-not-a-fix-in-the-field]]
+  did not. **RESOLVED the same day (`f4e3ed2c`, cutover on the user's instruction) — and the
+  resolution taught two more things.** (1) **THE DIFFERENTIAL IS THE EVIDENCE, NOT THE AFTER-READING:**
+  a staged `PASS 14/14` from hours earlier, on a binary byte-identical to the one installed, proves
+  something about a FILE and nothing about a DEPLOYMENT; what settles it is `FAIL C` on the old binary
+  and `PASS 14/14` on the new one, same instrument/tunnel/token, minutes apart — so **take the BEFORE
+  arm before you swap**, or you are left arguing from a hash. (2) **A LONG REGISTER STATES ONE FACT IN
+  SEVERAL PLACES, IN SEVERAL WORDINGS:** reconciling the tracker I corrected A2's *"pending the master
+  REDEPLOY"* and considered the row done; a later grep found *"the master half is UNDEPLOYED"* — a
+  different sentence, same fact, **same row**. Grep the CLAIM in every phrasing across the whole file;
+  re-reading the sentence you happened to be editing is not reconciliation.
+  [[lesson-a-fix-in-the-tree-is-not-a-fix-in-the-field]]
 
 - **A RELATIVE PATHSPEC RESOLVES AGAINST A CWD YOU DID NOT SET.** 2026-08-31. I concluded the whole
   `coop-server-rs` crate — the master server I was about to deploy — was untracked, on four

@@ -100,6 +100,12 @@ source was confirmed equal to `HEAD:tools/coop-server-rs` file-by-file modulo li
 Both TLS legs verified from **outside** the box afterwards: `https://…:10443/healthz` → 200,
 signaling `:10442` → TLS 1.2 handshake OK.
 
+`[V]` **step 6b's retirement is live too, measured on the deployed binary with its negative
+control**: a `proto 9999` host is **ADMITTED** (the old ceiling would have refused it) while
+`game: "<script>x"` is still refused with `bad game version` — so the version POLICY is gone and
+the PARSING check survived, which is exactly the split `24418b66` intended. Every check lobby was
+torn down; `healthz` reports 0.
+
 **The cohort retirement is real and immediate** — within seconds of the restart the relay log
 carried three separate real IPs refused by name (*"identity 'str:h…' is not a key… that cohort is
 retired; it must update"*), and the one listed lobby (`gogofast`, proto 133) was dropped. This was
@@ -159,6 +165,20 @@ notes + Discord have to carry the rest.
     at the normal production endpoints. The whole staged-pair + `ufw allow 10010/tcp` dance this
     bullet used to prescribe is **deleted**, not deferred: the staged listeners are down and the
     ports were never opened.
+- **THE FINGERPRINT IS STALE AND THE RELEASE RUN WILL REFUSE — re-measured 2026-08-31, and this
+  is the one blocker that is NOT on the box.** `[V]` computed exactly as `fingerprint.ps1` does
+  (`Get-FileHash -Algorithm SHA256` on `.github/workflows/build-core.yml`):
+  committed `1707b4b8…` vs live **`69f48b15…`** → `FINGERPRINT: FAIL`, the same step that stopped
+  the b133 run (`30610396964`). The workflow has moved AGAIN since that runbook was written —
+  `04c7ce23`, not `0d84cc5a` — so this is now two build-path changes stale.
+  **It cannot be fixed by hand here.** `msvc_toolset` / `windows_sdk` are facts about the CI
+  RUNNER, not this machine, so the only correct fix is to run the cacheless CI-bytes smoke, take
+  its `fingerprint-dump.json` artifact (90-day retention) and commit that. Editing the JSON to
+  match a local hash defeats the gate's entire purpose — the check exists to assert the build
+  PATH did not silently move. Procedure + the explicit "do not commit the dump without the smoke"
+  warning: `research/handson_runbook_2026-07-31_b133_release_resume.md`.
+  b133 shipped from locally built bytes as a declared process exception rather than clear this;
+  doing that twice would make the exception the process.
 - **Push.** Dozens of commits were unpushed when this was written and the backlog only grows; the
   tag must be reachable on origin. Check with `git log --oneline origin/main..HEAD | wc -l`, and
   run the 5-axis leak audit per commit before asking.
@@ -240,18 +260,27 @@ and a retracted N never republishes), or a site deploy (redeploy the previous bu
    and paste the verdict. It must be **PASS**. This one BLOCKS, where the
    trip-wires only advise, and the reason is a flag day: since b145 the mod's
    signaling client **fails closed** on a relay that does not challenge it, and
-   the relay refuses any name its holder cannot sign for. So the relay redeploy
-   and the release are **one step, not two** — publish the build against an old
-   relay and every install loses P2P at once, with the diagnosis only in a log
-   the player cannot see. The same script is the A59 drill against a locally
-   built relay (no arguments), so a green release gate and a green drill are the
-   same instrument, not two that can disagree.
+   the relay refuses any name its holder cannot sign for. Publish the build
+   against an old relay and every install loses P2P at once, with the diagnosis
+   only in a log the player cannot see. The same script is the A59 drill against a
+   locally built relay (no arguments), so a green release gate and a green drill
+   are the same instrument, not two that can disagree.
 
-   Order on the box: redeploy `coop-signaling` **and** `coop-master` (the master
-   now requires a host to publish its own `gen:` key — the `h<16hex>`/`c<16hex>`
-   mints are retired with the b<=133 cohort), run `sig_gate --remote`, THEN
-   publish. A pre-b145 host gets a named 400 from `/v1/host` rather than a silent
-   rendezvous failure, which is the whole point of doing it in that order.
+   **THE REDEPLOY THIS STEP USED TO ORDER IS ALREADY DONE (2026-08-31, `f4e3ed2c`),
+   so the gate is now a CHECK rather than a coupled step.** Both services run the
+   current source and `sig_gate --remote` was **PASS 14/14** against the live relay
+   (the binary it replaced was **FAIL C**). The step stays BLOCKING and stays here,
+   because it re-breaks silently on any rollback, rebuild, or box migration — and
+   because a gate that is only run when someone remembers the coupling is not a
+   gate. **Run it anyway, on the day, and paste the verdict.**
+
+   If a redeploy IS needed again: redeploy `coop-signaling` **and** `coop-master`
+   together (the master requires a host to publish its own `gen:` key — the
+   `h<16hex>`/`c<16hex>` mints are retired with the b<=133 cohort), run
+   `sig_gate --remote`, THEN publish. A pre-b145 host gets a named 400 from
+   `/v1/host` rather than a silent rendezvous failure, which is the whole point of
+   doing it in that order. Full recipe (the CRLF trap, `ETXTBSY`, taking the
+   BEFORE arm): step 6c.
 0.5. **Author the changelog + show it to the user** (2026-07-26): write
    `tools/release/notes/b<N>.md` (format rules in `tools/release/notes/README.md`:
    plain bullets, no heading, verbs are status claims anchored to the consume
