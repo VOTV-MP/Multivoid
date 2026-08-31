@@ -7,6 +7,7 @@
 #include "ui/native_screen.h"
 
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/log.h"   // the hit-space probe's one line
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
@@ -78,6 +79,58 @@ void* DonorField(void* owner, const wchar_t* field) {
     if (!owner) return nullptr;
     const int32_t off = R::FindPropertyOffset(R::ClassOf(owner), field);
     return ReadPtr(owner, off);
+}
+
+void* DonorChild(void* userWidget, const wchar_t* name) {
+    // WHY NOT DonorField. `DonorField` reads a UPROPERTY, and a UMG widget only HAS one when
+    // the designer ticked "Is Variable". `[V]` `ui_settings.image_border` has
+    // `bIsVariable = False` (its sibling `scrollboxRoot` is True, which is why THAT donor
+    // resolves), so the property does not exist and a field read returns null forever -- which
+    // is exactly what the first attempt at the frame clone did, silently, leaving the flat
+    // rectangle in place with nothing in the log to say so.
+    //
+    // `UUserWidget::GetWidgetFromName` searches the WidgetTree BY NAME and does not care about
+    // bIsVariable, so it reaches every authored widget rather than the subset someone exposed.
+    if (!userWidget) return nullptr;
+
+    // PATH 1: the engine's own lookup.
+    void* uwCls = R::FindClass(P::name::UserWidgetClass);
+    // FindFunction is EXACT-OWNER (no SuperStruct climb), and GetWidgetFromName is declared on
+    // UUserWidget -- so it must be looked up on that class, never on the instance's own.
+    void* fn = uwCls ? R::FindFunction(uwCls, L"GetWidgetFromName") : nullptr;
+    void* viaFn = nullptr;
+    bool called = false, framed = false;
+    if (fn) {
+        auto fname = ue_wrap::fname_utils::StringToFName(name);
+        ue_wrap::ParamFrame f(fn);
+        framed = f.valid() && f.SetRaw(L"Name", &fname, sizeof(fname));
+        if (framed) {
+            called = ue_wrap::Call(userWidget, f);
+            if (called) viaFn = f.Get<void*>(L"ReturnValue");
+        }
+    }
+    if (viaFn) return viaFn;
+
+    // PATH 2: walk the tree by OUTER. `[V]` the donor is a direct child of the user widget's
+    // own `WidgetTree` (`image_border` -> WidgetTree -> ui_settings_C), and UMG Outers every
+    // authored widget to that tree -- so this reaches it with no UFunction, no parameter frame
+    // and no dependence on a reflected name.
+    //
+    // Two mechanisms is deliberate, not belt-and-braces for its own sake: path 1 failed in the
+    // field and the single "not found" line could not say WHICH step failed, so this build logs
+    // each one AND carries an independent route. A diagnostic that cannot distinguish its own
+    // failure modes is the thing that cost the last two cycles.
+    void* found = nullptr;
+    for (const auto& c : R::ChildObjectsOf(userWidget)) {
+        if (c.className != L"WidgetTree") continue;
+        for (const auto& w : R::ChildObjectsOf(c.object)) {
+            if (w.name == name) { found = w.object; break; }
+        }
+        if (found) break;
+    }
+    UE_LOGI("native_screen: DonorChild('%ls') -- fn=%p framed=%d called=%d viaFn=%p "
+            "viaOuterWalk=%p", name, fn, framed ? 1 : 0, called ? 1 : 0, viaFn, found);
+    return found;
 }
 
 void* Spawn(const wchar_t* cls, void* outer) {
@@ -238,13 +291,38 @@ bool BuildWindowShell(void* switcher, float widthPx, float heightPx, const wchar
     return true;
 }
 
+// The outer ring's rendered thickness: two 2 px bands, measured off a native
+// 1885 px capture. The inner ring is inset by exactly this so the two sit flush,
+// which is how the native frame reads.
+constexpr float kNativeRingStepPx = 4.f;
+
+void* g_borderDonor = nullptr;
+
+void SetBorderDonor(void* donorImage) { g_borderDonor = donorImage; }
+
 void* AddFramedBox(void* parent, const FLinearColor& fill, float borderPx) {
     void* box = Spawn(L"Overlay", parent);
     if (!box) return nullptr;
     void* edge = Spawn(L"Image", box);
     void* face = Spawn(L"Image", box);
     if (!edge || !face) return nullptr;
-    U::SetImageTintRaw(edge, Border());
+    // THE FRAME IS THE GAME'S OWN, not a rectangle we tint. `image_border`'s brush is the
+    // material `inst_uiBorder` as a 9-slice box, which is why the native frame has a
+    // different pair of greys on each of its four edges (a bevel lit top-left) and why our
+    // single-colour rectangle read as foreign no matter which grey it used. See
+    // native_screen.h's SetBorderDonor for the sampled values.
+    //
+    // The brush is 0x88 bytes and its FSlateResourceHandle at +0x70 is UNREFLECTED -- a
+    // TSharedPtr that a raw copy would shallow-alias with no AddRef -- so this goes through
+    // CloneStyle, which zeroes the handle and lets Slate rebuild it. Exactly the treatment
+    // the button and scrollbar clones already get.
+    bool framed = false;
+    if (g_borderDonor) {
+        static constexpr size_t kOneBrush[1] = {0};
+        framed = U::CloneStyle(edge, P::off::UImage_Brush, g_borderDonor, P::off::UImage_Brush,
+                               P::off::FSlateBrush_Size, kOneBrush, 1);
+    }
+    if (!framed) U::SetImageTintRaw(edge, Border());
     U::SetImageTintRaw(face, fill);
     // ESlateVisibility: Visible=0 Collapsed=1 HIDDEN=2 HitTestInvisible=3
     // SelfHitTestInvisible=4. The first version of this wrote 2 meaning "chrome, not a hit
@@ -254,13 +332,62 @@ void* AddFramedBox(void* parent, const FLinearColor& fill, float borderPx) {
     // meant to mean: it draws, and it never eats a click.
     E::SetWidgetVisibility(edge, 3);
     E::SetWidgetVisibility(face, 3);
-    if (void* s = U::AddChild(box, edge))
-        U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign, kFill, kFill);
-    if (void* s = U::AddChild(box, face)) {
-        U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign, kFill, kFill);
-        auto* pad = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(s) +
-                                             P::off::UOverlaySlot_Padding);
-        pad[0] = pad[1] = pad[2] = pad[3] = borderPx;
+    // ORDER MATTERS, AND IT DIFFERS BY WHICH FRAME WE GOT.
+    //
+    // CLONED (the 9-slice material): fill UNDERNEATH at full size, border ON TOP at full size,
+    // NO inset. The first attempt kept the old inset and produced `#919191 x2` straight into
+    // the fill where native has `#919191 x2` then `#646464 x2` -- our own fill was painted OVER
+    // the brush's inner bands, clipping the bevel to its outermost step. That is also why the
+    // user sees "many bevels" natively and one band from us: a 9-slice SCALES, so at their
+    // resolution the border is several steps wide and an inset sized to our old 2 px flat
+    // rectangle eats all but the first.
+    //
+    // FLAT fallback (no donor): the old order, because a flat edge drawn on top at full size
+    // would cover the whole box rather than ring it.
+    if (framed) {
+        if (void* s = U::AddChild(box, face))
+            U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
+                            kFill, kFill);
+        if (void* s = U::AddChild(box, edge))
+            U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
+                            kFill, kFill);
+        // THE SECOND RING -- this is the "много скосов" the user pointed at.
+        //
+        // `[V]` A native window at 1885 px samples `919191 919191 646464 646464` TWICE,
+        // back to back, where the 546 px reference capture shows the pattern ONCE. The second
+        // pair is a byte-for-byte repeat of the first, not a wider gradient -- so it is a
+        // SECOND RING of the same brush, not one thicker one, which is consistent with
+        // `ui_settings` carrying `image_border` AND `image_border_3`.
+        //
+        // The inset is the outer ring's own rendered thickness, MEASURED at 4 px (two 2 px
+        // bands) and named so it reads as the measurement it is. It is the one constant left
+        // in this frame -- the STEPS themselves come from the material and scale with it --
+        // and it is what a UI-scale change would invalidate first.
+        if (void* e2 = Spawn(L"Image", box)) {
+            static constexpr size_t kOneBrush[1] = {0};
+            if (U::CloneStyle(e2, P::off::UImage_Brush, g_borderDonor, P::off::UImage_Brush,
+                              P::off::FSlateBrush_Size, kOneBrush, 1)) {
+                E::SetWidgetVisibility(e2, 3);
+                if (void* s = U::AddChild(box, e2)) {
+                    U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
+                                    kFill, kFill);
+                    auto* pad = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(s) +
+                                                         P::off::UOverlaySlot_Padding);
+                    pad[0] = pad[1] = pad[2] = pad[3] = kNativeRingStepPx;
+                }
+            }
+        }
+    } else {
+        if (void* s = U::AddChild(box, edge))
+            U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
+                            kFill, kFill);
+        if (void* s = U::AddChild(box, face)) {
+            U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
+                            kFill, kFill);
+            auto* pad = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(s) +
+                                                 P::off::UOverlaySlot_Padding);
+            pad[0] = pad[1] = pad[2] = pad[3] = borderPx;
+        }
     }
     return box;
 }
