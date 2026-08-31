@@ -3599,8 +3599,7 @@ def cmd_browser(args) -> None:
         # shot the marker announces was taken -- the file would simply be missing, with a
         # "selftest complete" line above it saying everything went fine. The stop is now
         # `done_marker`, tested after the capture block.
-        done_marker = ("INPUT NAME SHOT" in text or "INPUT SHOT SKIP" in text
-                       or "INPUT NAME FAIL" in text)
+        done_marker = "INPUT NAME PASS" in text or "INPUT NAME FAIL" in text
         if not saw_shown and "server_browser_native: shown" in text:
             saw_shown = True
             log(f"  t+{int(time.time()-t0)}s browser shown -- capturing")
@@ -3701,12 +3700,12 @@ def cmd_browser(args) -> None:
                                    ("ROW SKIN SHOT C", "browser_row_skin_c.png", "sknc"),
                                    ("ROW SKIN SHOT A", "browser_row_skin_a.png", "skna"),
                                    ("ROW SKIN SHOT B", "browser_row_skin_b.png", "sknb"),
-                                   # THE INPUT FORK. Not verdicts -- the two designs the
-                                   # user asked to see side by side before choosing one.
-                                   # Both SKIP in variant B, whose fields are already in
-                                   # the browser's own capture.
-                                   ("INPUT DIRECT SHOT", "browser_input_direct.png", "ind"),
-                                   ("INPUT NAME SHOT", "browser_input_name.png", "inn")):
+                                   # THE TWO INPUT WINDOWS. The browser has no text entry
+                                   # of its own (user decision), so these windows ARE the
+                                   # address and nickname capabilities -- their verdicts
+                                   # are asserted below and these are what they look like.
+                                   ("INPUT DIRECT PASS", "browser_input_direct.png", "ind"),
+                                   ("INPUT NAME PASS", "browser_input_name.png", "inn")):
             if needle in text and seen not in extra_shots:
                 extra_shots[seen] = shots_dir / name
                 if _capture_window(host_pid, extra_shots[seen]):
@@ -3714,8 +3713,8 @@ def cmd_browser(args) -> None:
                 else:
                     extra_shots[seen] = None
         if done_marker:
-            log(f"  t+{int(time.time()-t0)}s selftest complete (the input-fork shot is in, "
-                "and it is the last phase) -- stopping instead of idling out the clock")
+            log(f"  t+{int(time.time()-t0)}s selftest complete (the change-name verdict is "
+                "in, and it is the last phase) -- stopping instead of idling out the clock")
             break
     all_lines = []
     try:

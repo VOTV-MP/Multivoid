@@ -3,8 +3,7 @@
 #include "ui/server_browser_actions.h"
 
 #include "ui/server_browser_native.h"   // the selection these act on, and the notice line
-#include "ui/browser_input_screens.h"   // variant A: where the two doors lead
-#include "ui/server_browser_inline_input.h"  // variant B: the field the same cell dials
+#include "ui/browser_input_screens.h"   // where the two input doors lead
 #include "ui/host_window_native.h"      // what HOST opens
 #include "ui/native_screen.h"
 
@@ -34,18 +33,8 @@ namespace SB = ui::server_browser_native;
 void* g_connect = nullptr;
 void* g_host    = nullptr;
 void* g_refresh = nullptr;
-// Variant A only -- null when the browser is running with inline input.
 void* g_direct  = nullptr;
 void* g_rename  = nullptr;
-
-// WHICH INPUT DESIGN IS IN FORCE. Latched: it decides which buttons EXIST, so a value that
-// changed mid-session would leave the grid disagreeing with the click router. The row's own
-// text tells the player the change needs a restart.
-bool InlineInput() {
-    static const bool s =
-        coop::config::ResolveFlag(::coop::config_registry::rows::browser_inline_input);
-    return s;
-}
 
 // The last decision a handled click reached -- see the header. A pointer to a string
 // LITERAL, so it needs no storage and cannot dangle.
@@ -109,8 +98,16 @@ void DoRefresh() {
     SB::SetNotice("Refreshing the server list...");
 }
 
-// VARIANT A's two doors. They author nothing themselves -- the sibling window owns the
-// value, the validation and the ini write -- so a click here is only navigation.
+// THE TWO INPUT DOORS. They author nothing themselves -- the sibling window owns the value,
+// the validation and the ini write -- so a click here is only navigation.
+//
+// THE BROWSER ITSELF HAS NO TEXT ENTRY, and that is the user's call, stated three times
+// and finally without conditions: "не нужен прям в нем ввод", then "your name and connect
+// by address don't belong on the right panel with the server info - that takes too much
+// space", then "не нужны эти панели ввода внизу сервер браузера". An inline strip was
+// built as the competing candidate and DELETED under RULE 2 the same session
+// (`ui/server_browser_inline_input`, recoverable from history). The browser lists servers
+// and acts on one; typing happens in its own window.
 void DoDirect() {
     g_lastOutcome = "direct";
     ui::browser_input_screens::Open(ui::browser_input_screens::Kind::DirectConnect);
@@ -122,42 +119,12 @@ void DoRename() {
 
 }  // namespace
 
-// VARIANT B'S "Direct connect": there is no window to open, so the same cell DIALS the
-// address the player has already typed into the browser's own field.
-//
-// ONE HANDLER, TWO CALLERS: this cell and the field's own Enter edge. An address typed and
-// confirmed with the keyboard must do exactly what the button does, and two copies of
-// "validate then dial then remember" is two places the persistence rule can drift.
-void ConnectToAddress() {
-    const std::string addr = ui::server_browser_inline_input::Address();
-    if (addr.empty()) {
-        g_lastOutcome = "direct:none";
-        SB::SetNotice("Type an address first -- host or host:port.");
-        return;
-    }
-    // `ConnectDirect` OWNS the refusal: it parses the address and answers false for a bad
-    // one. A second parser here would be a second opinion about what a valid address is,
-    // and the one that matters is the one that dials.
-    if (!sm::ConnectDirect(addr)) {
-        g_lastOutcome = "direct:bad";
-        SB::SetNotice("Could not connect to that address -- check it, or another action is "
-                      "already in flight.");
-        return;
-    }
-    // AFTER THE ACCEPT GATE, never before: `browser.lastdirect` means "the last address
-    // that was actually tried and accepted", so a typo cannot overwrite a known-good one
-    // (SERVER_BROWSER_ARC section 7.8). Variant A's window writes it at the same point.
-    coop::config::WriteIniValue(::coop::config_registry::rows::browser_lastdirect,
-                                addr.c_str());
-    g_lastOutcome = "direct:started";
-    SB::Close();
-}
-
 bool BuildConnect(void* parent, void* donorBtn) {
     if (!parent) return false;
-    // ONE BUTTON, UNDER THE PANEL THAT DESCRIBES WHAT IT WILL DO. It is the CONFIRM of this
-    // screen, so it is the widest and it sits alone -- the details panel names a server and
-    // this is the sentence's verb.
+    // ONE BUTTON, UNDER THE PANEL THAT DESCRIBES WHAT IT WILL DO (USER 2026-08-31: "it
+    // makes more sense for the Connect button to appear somewhere in the right panel under
+    // server info"). It is the CONFIRM of this screen, so it is the widest and it sits
+    // alone -- the details panel names a server and this is the sentence's verb.
     void* rowBox = NS::Spawn(L"SizeBox", parent);
     void* row    = rowBox ? NS::Spawn(L"HorizontalBox", rowBox) : nullptr;
     if (!rowBox || !row) return false;
@@ -192,28 +159,18 @@ bool Build(void* parent, void* donorBtn) {
     // single loudest way our chrome read as foreign. User report 2026-08-30:
     // "No caps at buttons ever."
     //
-    // TWO OF THE SIX CELLS BELONG TO THE INPUT FORK, and they appear only in VARIANT A.
-    // The user's answer to fork P1 was to BUILD BOTH input designs and choose by eye
-    // ("попробуем разные дизайны и что лучше будет то и оставим"), so where the address
-    // and the name are typed is exactly what is being compared: variant A gives them cells
-    // here that open sibling windows, variant B puts the input in the browser's own
-    // layout. `ui.browser_inline_input` picks, and RULE 2 deletes the loser with the row.
+    // CONNECT is not here -- it acts on the selected row and lives under the panel that
+    // describes it (BuildConnect above, USER 2026-08-31). What is left is everything that
+    // is true regardless of which server is picked.
     struct Cell { const wchar_t* label; void** out; };
-    const Cell cellsA[] = {
+    const Cell cells[] = {
         {L"Direct connect", &g_direct},
         {L"Host game",      &g_host},
         {L"Change name",    &g_rename},
         {L"Update list",    &g_refresh},
     };
-    const Cell cellsB[] = {
-        {L"Direct connect", &g_direct},
-        {L"Host game",      &g_host},
-        {L"Update list",    &g_refresh},
-    };
-    const bool inlineInput = InlineInput();
-    const Cell* cells = inlineInput ? cellsB : cellsA;
-    const int   cellCount = static_cast<int>(inlineInput ? sizeof(cellsB) / sizeof(cellsB[0])
-                                                         : sizeof(cellsA) / sizeof(cellsA[0]));
+    const int cellCount = static_cast<int>(sizeof(cells) / sizeof(cells[0]));
+
     // THE ROW WIDTH DIVIDES THE CELLS EVENLY, it is not a constant. At a fixed 3 per row,
     // four cells render as a row of three and then ONE button stretched across the whole
     // width -- which reads as a mistake rather than as a grid (measured by eye,
@@ -266,14 +223,7 @@ bool OnReleaseEdge() {
     if (g_connect && E::WidgetIsHovered(g_connect)) { DoConnect(); return true; }
     if (g_host    && E::WidgetIsHovered(g_host))    { DoHost();    return true; }
     if (g_refresh && E::WidgetIsHovered(g_refresh)) { DoRefresh(); return true; }
-    // Null in variant B, so these two cost one null test each and can never fire for a
-    // grid that does not contain them.
-    if (g_direct && E::WidgetIsHovered(g_direct)) {
-        // SAME CELL, DIFFERENT MEANING, and that IS the fork: variant A opens a window
-        // to type an address in, variant B dials the one already typed beside the list.
-        if (InlineInput()) ConnectToAddress(); else DoDirect();
-        return true;
-    }
+    if (g_direct  && E::WidgetIsHovered(g_direct))  { DoDirect();  return true; }
     if (g_rename  && E::WidgetIsHovered(g_rename))  { DoRename();  return true; }
     return false;
 }

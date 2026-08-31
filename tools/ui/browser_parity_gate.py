@@ -58,13 +58,10 @@ NATIVE = [
     "server_browser_rows.cpp",
     "server_browser_actions.cpp",
     "native_text_field.cpp",
-    # BOTH INPUT VARIANTS COUNT AS THE DEFAULT SURFACE, because both ARE it -- the config
-    # row `ui.browser_inline_input` decides which one a given launch shows, and a
-    # capability that only one of them provides is a gap either way. Listing both is also
-    # what makes the RULE-2 delete safe: when the user picks, the loser's file goes and
-    # the gate immediately re-checks every capability against the survivor alone.
-    "browser_input_screens.cpp",        # variant A -- the two sibling windows
-    "server_browser_inline_input.cpp",  # variant B -- the bottom strip
+    # The two input WINDOWS. The browser itself has NO text entry (user decision,
+    # 2026-08-31), so the address and nickname capabilities are proven here and nowhere
+    # else -- which is exactly why the gate has to look at this file.
+    "browser_input_screens.cpp",
 ]
 
 
