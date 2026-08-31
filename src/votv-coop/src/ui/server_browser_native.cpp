@@ -9,7 +9,6 @@
 #include "ui/input_focus.h"            // a click only counts while OUR window is foreground
 #include "ui/native_screen.h"          // palette + widget primitives, shared with the host window
 #include "ui/server_browser_actions.h"   // CONNECT / HOST / REFRESH, its own TU
-#include "ui/server_browser_inline_input.h" // variant B of the input fork
 #include "ui/server_browser_panels.h"    // the details panel + the black status pane
 #include "ui/server_browser_rows.h"      // the LIST -- rows, identity, hover, selection
 #include "ui/native_text_field.h"        // AnyFocused() -- a focused field owns Escape
@@ -36,7 +35,6 @@ namespace sm = coop::session_manager;
 namespace selftest = ui::server_browser_selftest;
 namespace rows = ui::server_browser_rows;
 namespace panels = ui::server_browser_panels;
-namespace inline_input = ui::server_browser_inline_input;
 
 using ue_wrap::FLinearColor;
 
@@ -53,19 +51,14 @@ constexpr float kPadPx    = 6.f;
 // window that only had ~484 px left for it (offsetOfEnd 1438 against 30 rows of 66 px puts
 // the viewport at 542), so the list overflowed UPWARD and its first row was drawn clipped
 // under the column header. Slack arithmetic depends on every sibling's desired size being
-// what you assumed; an override depends on nothing. Lowered from 470 to 440 when the action
-// GRID moved under the list (it is inside the same left column, and the slack it needs came
-// from here rather than from a taller window).
-constexpr float kListH    = 440.f;
-// ...MINUS THE INPUT STRIP, when variant B is the one running. The strip sits under both
-// columns and takes its height from the body, and the list's height is an OVERRIDE rather
-// than slack -- so if the override is not reduced by the same amount the left column
-// simply overflows the window, which is the failure the override exists to prevent in the
-// other direction. One subtraction, stated where the constant is.
-constexpr float kInputStripH = 72.f;
-float ListHeight() {
-    return ui::server_browser_inline_input::Armed() ? kListH - kInputStripH : kListH;
-}
+// what you assumed; an override depends on nothing.
+//
+// EVERYTHING IN THE LEFT COLUMN COMES OUT OF THIS NUMBER, and there are three of them now:
+// 470 originally, 440 when the action grid moved under the list, 396 when BACK joined them
+// there (which is what let the right column's status pane run to the window's bottom edge
+// instead of stopping above a full-width footer row). Two grid rows at 46 plus their gaps
+// plus Back at 48 plus two 6 px separations is ~160; the body is ~564.
+constexpr float kListH    = 396.f;
 // The two columns of the body. The list is the subject and takes most of the width; the
 // panels beside it hold prose, not a table, so they need enough to spell a sentence and no
 // more. The save browser this mirrors splits about the same way.
@@ -245,7 +238,7 @@ bool BuildScreen(void* switcher) {
     void* listBox = Spawn(L"SizeBox", leftCol);
     void* list    = listBox ? Spawn(L"ScrollBox", listBox) : nullptr;
     if (!listBox || !list) return false;
-    U::SetSizeBoxHeight(listBox, ListHeight());
+    U::SetSizeBoxHeight(listBox, kListH);
     // The settings list's scrollbar treatment (section 7b): a server list is the long-list
     // case, and ui_saveSlots' own ScrollBox sets no bar style at all. NINE brushes.
     U::CloneStyle(list, P::off::UScrollBox_WidgetBarStyle, barDonor,
@@ -263,6 +256,28 @@ bool BuildScreen(void* switcher) {
         return false;
     }
 
+    // BACK, ALONE AT THE BOTTOM LEFT -- INSIDE THE LEFT COLUMN, not in a row beneath both.
+    //
+    // The placement itself is not a preference: every native window that has both puts Back
+    // bottom-LEFT and its actions bottom-RIGHT -- Settings is `Back | Reset all Apply`, the
+    // save browser is `Back` ALONE at the left (style doc section 5, gap S7).
+    //
+    // WHICH CONTAINER it sits in is what changed, and the user found the reason by eye: a
+    // full-width footer row under the body ended both columns above it, so the whole band
+    // to the RIGHT of Back was empty -- "под правой панелью внизу неиспользуемое место
+    // пустое" (2026-08-31, with the region circled). Putting Back in the left column makes
+    // the body the only thing between the title and the window's bottom edge, so the status
+    // pane's Fill slot runs all the way down and there is no dead band to leave.
+    if (void* footRow = Spawn(L"HorizontalBox", leftCol)) {
+        // Sentence case: VOTV uppercases no button label anywhere (measured across the
+        // style corpus; user report 2026-08-30 "No caps at buttons ever").
+        g_backBtn = BuildButton(footRow, backDonor, L"Back", ui::native_screen::kBtnFontPx);
+        if (!g_backBtn) return false;
+        NS::SetHSlot(NS::SlotOf(g_backBtn), 0.f, NS::kLeft, kCenter);
+        if (void* s = NS::AddVFill(leftCol, footRow, 0.f, NS::kLeft, kBottom))
+            NS::SetSlotPadding(s, P::off::UVerticalBoxSlot_Padding, 0.f, kPadPx, 0.f, 0.f);
+    }
+
     void* rightCol = Spawn(L"VerticalBox", body);
     if (!rightCol) return false;
     NS::AddHFill(body, rightCol, kPanelsWeight, kFill, kFill);
@@ -272,36 +287,6 @@ bool BuildScreen(void* switcher) {
     // are the ones that do not depend on which row is chosen.
     if (!ui::server_browser_actions::BuildConnect(rightCol, backDonor)) return false;
     if (!panels::BuildStatus(rightCol)) return false;
-
-    // (4b) VARIANT B of the input fork: a full-width strip under both columns. A no-op
-    // returning true when the config picks variant A (the sibling windows), so this line
-    // reads the same either way and neither variant is the special case.
-    //
-    // NOT IN THE RIGHT-HAND COLUMN, which is where it first went and where the user cut it:
-    // "your name and connect by address don't belong on the right panel with the server
-    // info - that takes too much space" (2026-08-31). Across the whole window the two
-    // fields have ~950 px and cost only their own band; in a ~330 px column they were
-    // squeezing a pane whose entire job is to be read.
-    if (!inline_input::Build(col, backDonor)) return false;
-
-    // (5) BACK, ALONE AT THE BOTTOM LEFT, IN ITS OWN SMALL BOX.
-    //
-    // That placement is not a preference. Every native window that has both puts Back
-    // bottom-LEFT and its actions bottom-RIGHT -- Settings is `Back | Reset all Apply`,
-    // Keybinds is `Back | Hard reset`, the save browser is `Back` ALONE at the left (style
-    // doc section 5, gap S7). Ours is the save browser's case exactly now that the actions
-    // have their own block under the list, and the full-width footer STRIP went with them:
-    // a bordered bar running the width of the window with one small button at one end is a
-    // frame around empty space, and the game draws no such thing.
-    if (void* footRow = Spawn(L"HorizontalBox", col)) {
-        // Sentence case: VOTV uppercases no button label anywhere (measured across the
-        // style corpus; user report 2026-08-30 "No caps at buttons ever").
-        g_backBtn = BuildButton(footRow, backDonor, L"Back", ui::native_screen::kBtnFontPx);
-        if (!g_backBtn) return false;
-        NS::SetHSlot(NS::SlotOf(g_backBtn), 0.f, NS::kLeft, kCenter);
-        if (void* s = NS::AddVFill(col, footRow, 0.f, NS::kLeft, kBottom))
-            NS::SetSlotPadding(s, P::off::UVerticalBoxSlot_Padding, 0.f, kPadPx, 0.f, 0.f);
-    }
 
     g_root  = root;
     // Hand the list to its owner, which also drops every row identity from the menu
@@ -439,7 +424,6 @@ void OnMenuTick(void* menu, void* switcher) {
         g_backBtn = nullptr; g_scrimW = nullptr;
         ui::server_browser_actions::Forget();
         panels::Forget();
-        inline_input::Forget();
         g_ourIndex = -1; g_shown = false; g_buildAttempts = 0; g_toldTheUser = false;
         rows::Attach(nullptr);   // the panel died with the menu; drop it and the row ids
     }
@@ -588,12 +572,6 @@ void OnMenuTick(void* menu, void* switcher) {
     }
 
     rows::UpdateHover();
-    // Variant B's fields drive themselves (caret, click-to-focus, the name's commit); the
-    // ADDRESS's Enter edge is an ACTION and is answered by the same handler the grid's
-    // Direct connect cell calls, so it is routed rather than handled here. No-ops entirely
-    // in variant A.
-    inline_input::Tick();
-    if (inline_input::ConsumeAddressSubmit()) ui::server_browser_actions::ConnectToAddress();
 
     // FETCH ON A TIMER, PAINT ON AN ARRIVAL -- two questions, and they used to share one
     // gate. With paint coupled to the fetch tick, a lobby that arrived at t=0.3 s was not

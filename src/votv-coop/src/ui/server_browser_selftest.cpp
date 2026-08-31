@@ -11,8 +11,7 @@
 #include "ui/input_focus.h"            // synthesized input only lands in a FOREGROUND window
 #include "ui/imgui_overlay.h"          // CaptureOwners() -- who is eating the mouse
 #include "ui/server_browser_actions.h"  // the HOST button this drives
-#include "ui/browser_input_screens.h"
-#include "ui/server_browser_inline_input.h"
+#include "ui/browser_input_screens.h"  // the input windows the last phases drive
 #include "ui/host_window_native.h"     // ...and what it must open
 
 #include "ue_wrap/core/call.h"
@@ -167,11 +166,11 @@ constexpr int kHostEscPress   = 292;
 constexpr int kHostEscHold    = 298;
 constexpr int kHostEscRelease = 302;
 constexpr int kHostEscVerify  = 308;
-// THE INPUT FORK'S TWO SHOTS, last in the schedule because they are the only phases that
-// leave a window OTHER than the browser on screen. They assert nothing about behaviour --
-// they exist so the user can look at both input designs and pick one, which is the method
-// they chose over an argument ("попробуем разные дизайны и что лучше будет то и оставим").
-// In variant B there are no windows to open and both phases SKIP with a line saying so.
+// THE TWO INPUT WINDOWS, last in the schedule because they are the only phases that leave
+// a window OTHER than the browser on screen. They assert that each one OPENS -- which is
+// the whole of "can a player reach the address box at all" now that the browser itself
+// has no text entry -- and hold it long enough to be photographed, because the rest of
+// what makes a window right is a thing to look at.
 constexpr int kInputDirectShot = 314;
 constexpr int kInputDirectHold = 315;
 constexpr int kInputNameOpen   = 322;
@@ -1162,11 +1161,9 @@ void Tick(void* scrim, void* list, void* exitBtn) {
                 UE_LOGE("host_window_native: HOST ESC FAIL -- the window is STILL OPEN after a "
                         "real VK_ESCAPE press-release. With the X gone and this dead, a player "
                         "whose pointer is starved of mouse messages cannot leave at all.");
-            // VARIANT A ONLY: ask for the direct-connect window so the shot below has
-            // something to take. Deferred through Open(), like every other consumer.
-            if (!ui::server_browser_inline_input::Armed())
-                ui::browser_input_screens::Open(
-                    ui::browser_input_screens::Kind::DirectConnect);
+            // Ask for the direct-connect window so the phase below has something to
+            // measure. Deferred through Open(), like every other consumer.
+            ui::browser_input_screens::Open(ui::browser_input_screens::Kind::DirectConnect);
             // BREAK, NOT RETURN. The step counter is incremented by the `++` after this
             // switch, so a `return` from a case is how a phase repeats itself forever --
             // which is exactly what this one did on its first run, logging HOST ESC PASS
@@ -1175,23 +1172,16 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             break;
         }
         case kInputDirectShot: {
-            if (ui::server_browser_inline_input::Armed()) {
-                UE_LOGW("server_browser_native: INPUT SHOT SKIP -- inline input is armed, so "
-                        "there is no separate window to photograph. Variant B's fields are in "
-                        "the browser's own capture.");
-                g_selfCheckStep = -1;
-                return;
-            }
             if (!ui::browser_input_screens::IsOpen()) {
                 UE_LOGE("server_browser_native: INPUT DIRECT FAIL -- the direct-connect window "
-                        "did not open. Variant A cannot be compared against variant B if half "
-                        "of it does not appear.");
+                        "did not open, so there is no way to connect by address at all. With "
+                        "no text entry in the browser this window IS the capability.");
                 g_selfCheckStep = -1;
                 return;
             }
-            UE_LOGW("server_browser_native: INPUT DIRECT SHOT -- the direct-connect window is "
-                    "up, prefilled and focused. This is variant A's address input; variant B "
-                    "puts the same field in the browser's right-hand column.");
+            UE_LOGW("server_browser_native: INPUT DIRECT PASS -- the direct-connect window "
+                    "opened, prefilled and focused. This is where an address is typed; the "
+                    "browser itself has no text entry, by the user's decision.");
             g_holdUntilMs = nowMs + kShotHoldMs;
             break;
         }
@@ -1213,9 +1203,9 @@ void Tick(void* scrim, void* list, void* exitBtn) {
                 g_selfCheckStep = -1;
                 return;
             }
-            UE_LOGW("server_browser_native: INPUT NAME SHOT -- the change-name window is up. "
-                    "Variant A's second window; in variant B this is a labelled field under "
-                    "the status pane instead.");
+            UE_LOGW("server_browser_native: INPUT NAME PASS -- the change-name window opened. "
+                    "The nickname is set here, which is the parity gap the browser used to "
+                    "carry against the fallback surface.");
             g_holdUntilMs = nowMs + kShotHoldMs;
             break;
         }

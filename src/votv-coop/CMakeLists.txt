@@ -605,7 +605,6 @@ add_library(votv-coop SHARED
     src/ui/host_window_native.cpp
     src/ui/browser_input_screens.cpp
     src/ui/server_browser_actions.cpp
-    src/ui/server_browser_inline_input.cpp
     src/ui/server_browser_native.cpp
     src/ui/server_browser_panels.cpp
     src/ui/server_browser_rows.cpp

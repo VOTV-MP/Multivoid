@@ -146,6 +146,15 @@ bool StyleTextBlock(void* textBlock, int32_t fontSize, const FLinearColor& color
 // UFunction) for anything already in a constructed tree; `StyleTextBlock` below still owns
 // the BUILD-time styling, where a raw write does land.
 
+// UTextBlock::SetAutoWrapText -- WRAP A LINE INSTEAD OF CUTTING IT OFF.
+//
+// Clipping is the right answer for a table CELL, where a long value must not paint over
+// its neighbour and the column is the point. It is the wrong answer for PROSE: a status
+// pane's sentences are the whole content, and "Pick a server from the list fi" tells the
+// player less than the sentence and also less than nothing, because it looks like a
+// rendering fault. Through the UFunction, so it lands on a constructed tree too.
+bool SetAutoWrapText(void* textBlock, bool wrap);
+
 // UWidget::SetClipping. EWidgetClipping: Inherit=0, ClipToBounds=1. A text block in a
 // weighted HorizontalBox slot OVERFLOWS its column by default -- the slot bounds the
 // LAYOUT, not the painting -- so a long world name paints straight over the next column.

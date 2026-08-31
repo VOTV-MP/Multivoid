@@ -46,11 +46,6 @@ bool Build(void* parent, void* donorBtn);
 // panel worth reading before pressing it.
 bool BuildConnect(void* parent, void* donorBtn);
 
-// DIAL THE ADDRESS THE PLAYER TYPED (variant B only). The same handler the inline field's
-// Enter edge routes to, so the keyboard and the button cannot mean two different things --
-// including about when `browser.lastdirect` is written, which is AFTER the accept gate.
-void ConnectToAddress();
-
 // Handle a left-button RELEASE while the browser is open. Returns true if one of these
 // buttons was under the cursor and consumed the click, so the caller stops -- in
 // particular, so a click on CONNECT is not ALSO read as a click on the row behind it.

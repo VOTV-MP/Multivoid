@@ -132,10 +132,17 @@ void* SectionBody(void* parent, const FLinearColor& fill, const wchar_t* title,
 // BORN COLLAPSED, because it is born EMPTY and `Line::Set` only toggles visibility on the
 // emptiness EDGE -- a line that starts blank and stays blank would never reach that edge and
 // would hold a line height of nothing forever.
-void* DetailLine(void* col, int32_t size, const FLinearColor& c) {
+//
+// `wrap` decides which of the two failure modes a too-long line takes. A DETAIL is a
+// labelled value in a narrow pane and clips (a wrapped "World: some-very-long-name" would
+// push every line under it down and make the pane jump); a STATUS line is a SENTENCE and
+// wraps, because "Pick a server from the list fi" reads as a rendering fault rather than as
+// an instruction (user, 2026-08-31, with the pane circled).
+void* DetailLine(void* col, int32_t size, const FLinearColor& c, bool wrap = false) {
     void* t = NS::AddText(col, L"", size, c, NS::kJustLeft, 0.f);
     if (t) {
-        U::SetClipping(t, 1);   // a 40-char world name must not paint over the list
+        if (wrap) U::SetAutoWrapText(t, true);
+        else      U::SetClipping(t, 1);
         E::SetWidgetVisibility(t, 1);   // ESlateVisibility::Collapsed
     }
     return t;
@@ -146,12 +153,16 @@ std::string Sec(int s) { return std::to_string(s) + "s ago"; }
 }  // namespace
 
 bool BuildDetails(void* parent) {
-    // Sized for the full set: the "Server info:" header at 18 plus six body lines at 16,
-    // their leading, and the box's own 8 px top and bottom padding. 190 was measured too
-    // tight by one line's descender -- "Last seen: 13s ago" touched the frame
-    // (browser_row_skin_a.png, 2026-08-31).
-    constexpr float kDetailsH = 204.f;
-    void* col = SectionBody(parent, kPanel, L"Server info:", 0.f, kDetailsH);
+    // EQUAL HALVES WITH THE STATUS PANE (user, 2026-08-31: "box server info меньше места
+    // занимает - сделаем поровну"). Both take Fill weight 1, so the column splits whatever
+    // is left after the Connect button between them and neither is sized by a constant.
+    //
+    // That also RETIRES the fixed height this used to carry. The fixed height existed
+    // because the panel's line COUNT changes with the selection -- two lines when nothing
+    // is chosen, seven when something is -- and an auto-sized box would have slid the pane
+    // below it up and down on every click. A Fill slot cannot do that: its height comes
+    // from the column, not from its content.
+    void* col = SectionBody(parent, kPanel, L"Server info:", 1.f, 0.f);
     if (!col) return false;
     // The NAME is the panel's own subject and gets the emphasis the row gives it.
     g_dName    = Line{DetailLine(col, 20, kText), {}};
@@ -180,9 +191,10 @@ bool BuildStatus(void* parent) {
     // (browser_row_skin_a.png, 2026-08-31) -- and it would clip differently for every count
     // and every elapsed value. Two facts, two lines, and neither can crowd the other out.
     g_sFresh  = Line{DetailLine(col, 16, kDim), {}};
-    g_sAlarm  = Line{DetailLine(col, 16, kBad), {}};
-    g_sNotice = Line{DetailLine(col, 16, kAmber), {}};
-    g_sUpdate = Line{DetailLine(col, 16, kAmber), {}};
+    // These three are SENTENCES and wrap; the two around them are short facts.
+    g_sAlarm  = Line{DetailLine(col, 16, kBad,   true), {}};
+    g_sNotice = Line{DetailLine(col, 16, kAmber, true), {}};
+    g_sUpdate = Line{DetailLine(col, 16, kAmber, true), {}};
     g_sNick   = Line{DetailLine(col, 16, kDim), {}};
     if (!g_sCount.w || !g_sFresh.w || !g_sAlarm.w || !g_sNotice.w || !g_sUpdate.w ||
         !g_sNick.w) {

@@ -485,6 +485,18 @@ bool SetSlotAlign(void* slot, size_t hAlignOff, size_t vAlignOff, uint8_t h, uin
     return true;
 }
 
+bool SetAutoWrapText(void* textBlock, bool wrap) {
+    if (!textBlock) return false;
+    static void* const sFn = [] {
+        void* c = R::FindClass(P::name::TextBlockClass);
+        return c ? R::FindFunction(c, L"SetAutoWrapText") : nullptr;
+    }();
+    if (!sFn) return false;
+    ParamFrame f(sFn);
+    f.Set<bool>(L"InAutoTextWrap", wrap);
+    return Call(textBlock, f);
+}
+
 bool SetSlotHAlignLive(void* slot, uint8_t h) {
     if (!slot) return false;
     void* cls = R::ClassOf(slot);
