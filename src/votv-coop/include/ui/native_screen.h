@@ -91,10 +91,13 @@ void* SwitcherChild(void* switcher, const wchar_t* className);
 // Read a UPROPERTY pointer field by NAME off a live object.
 void* DonorField(void* owner, const wchar_t* field);
 
-// Find a widget inside a live UUserWidget's tree BY NAME, via UUserWidget::GetWidgetFromName.
-// Use this instead of DonorField whenever the donor might not be a designer VARIABLE: a UMG
-// widget only gets a UPROPERTY when "Is Variable" is ticked, and `[V]` the frame donor
-// `ui_settings.image_border` has bIsVariable = False, so a field read returns null forever.
+// Find a widget inside a live UUserWidget's tree BY NAME. Use this instead of DonorField
+// whenever the donor might not be a designer VARIABLE: a UMG widget only gets a UPROPERTY when
+// "Is Variable" is ticked, and `[V]` the frame donor `ui_settings.image_border` has
+// bIsVariable = False, so a field read returns null forever -- silently.
+//
+// COSTS ONE GUObjectArray WALK. Resolve once per menu instance and latch it; do NOT call this
+// from a per-tick retry (see BorderDonorResolved).
 void* DonorChild(void* userWidget, const wchar_t* name);
 
 // NewObject<cls>(outer). Null if the class does not resolve.
@@ -155,7 +158,36 @@ void SetSlotPadding(void* slot, size_t padOff, float l, float t, float r, float 
 // whether a screen is usable at all. Losing the bevel is not that.
 void SetBorderDonor(void* donorImage);
 
+// Drop the cached donor on a MENU-INSTANCE edge. The donor belongs to that menu's
+// `ui_settings`; carried across a rebuild it would have CloneStyle read a destroyed widget.
+void ForgetBorderDonor();
+
+// Has SetBorderDonor been called for this menu instance (whatever the outcome)? Lets a builder
+// resolve the donor ONCE rather than paying a GUObjectArray walk on every retry tick.
+bool BorderDonorResolved();
+
 void* AddFramedBox(void* parent, const FLinearColor& fill, float borderPx);
+
+// THE FRAMED BOX'S PARTS, resolved BY THE KIT rather than guessed by the caller.
+//
+// `AddFramedBox`'s child order is not one thing: flat it is {edge, face, content}, framed it is
+// {face, edge, ring2, content}. `server_browser_rows.cpp` used to read those slots by literal
+// index, and its own comment said what would happen -- *"if that kit function ever reorders
+// them this reads the wrong image"*. Adding the second ring did exactly that, and the failure
+// was not cosmetic: index 2 became a UImage, and `[V]` `UPanelWidget::Slots` and
+// `UImage::Brush` sit at the SAME offset 0x108, so `GetChildAt` on it reads the brush's vtable
+// pointer as the slot array's data. Either an absorbed AV that kills the rest of the menu
+// tick, or every row silently blank.
+//
+// So the order lives in ONE place -- here, next to the code that creates it. `content` is the
+// child the caller added after the box was built (null if it added none). Returns false if the
+// overlay does not look like a framed box at all.
+struct FramedParts {
+    void* edge    = nullptr;  // the border image (the 9-slice ring when a donor was cloned)
+    void* face    = nullptr;  // the fill image
+    void* content = nullptr;  // whatever the caller put in
+};
+bool FramedBoxParts(void* overlay, FramedParts& out);
 
 // A chrome UButton with an authored text label, styled from a donor UButton -- a REAL
 // UButton because that is what carries the game's press and hover sounds.

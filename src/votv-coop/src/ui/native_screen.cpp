@@ -89,48 +89,33 @@ void* DonorChild(void* userWidget, const wchar_t* name) {
     // is exactly what the first attempt at the frame clone did, silently, leaving the flat
     // rectangle in place with nothing in the log to say so.
     //
-    // `UUserWidget::GetWidgetFromName` searches the WidgetTree BY NAME and does not care about
-    // bIsVariable, so it reaches every authored widget rather than the subset someone exposed.
+    // The WidgetTree holds every authored widget regardless of bIsVariable, so walking it
+    // reaches the ones nobody exposed as a variable.
     if (!userWidget) return nullptr;
 
-    // PATH 1: the engine's own lookup.
-    void* uwCls = R::FindClass(P::name::UserWidgetClass);
-    // FindFunction is EXACT-OWNER (no SuperStruct climb), and GetWidgetFromName is declared on
-    // UUserWidget -- so it must be looked up on that class, never on the instance's own.
-    void* fn = uwCls ? R::FindFunction(uwCls, L"GetWidgetFromName") : nullptr;
-    void* viaFn = nullptr;
-    bool called = false, framed = false;
-    if (fn) {
-        auto fname = ue_wrap::fname_utils::StringToFName(name);
-        ue_wrap::ParamFrame f(fn);
-        framed = f.valid() && f.SetRaw(L"Name", &fname, sizeof(fname));
-        if (framed) {
-            called = ue_wrap::Call(userWidget, f);
-            if (called) viaFn = f.Get<void*>(L"ReturnValue");
-        }
-    }
-    if (viaFn) return viaFn;
-
-    // PATH 2: walk the tree by OUTER. `[V]` the donor is a direct child of the user widget's
-    // own `WidgetTree` (`image_border` -> WidgetTree -> ui_settings_C), and UMG Outers every
-    // authored widget to that tree -- so this reaches it with no UFunction, no parameter frame
-    // and no dependence on a reflected name.
+    // `UUserWidget::GetWidgetFromName` WAS tried here and is DELETED, not kept as a fallback:
+    // `[V]` it does not resolve in this build (`fn=0`), it is the more expensive of the two
+    // routes (an uncached `FindFunction` is a full GUObjectArray walk, and a MISS costs the
+    // whole walk every call), and the route below works. RULE 2 -- a measured-dead path is
+    // baggage, not insurance.
     //
-    // Two mechanisms is deliberate, not belt-and-braces for its own sake: path 1 failed in the
-    // field and the single "not found" line could not say WHICH step failed, so this build logs
-    // each one AND carries an independent route. A diagnostic that cannot distinguish its own
-    // failure modes is the thing that cost the last two cycles.
-    void* found = nullptr;
-    for (const auto& c : R::ChildObjectsOf(userWidget)) {
-        if (c.className != L"WidgetTree") continue;
-        for (const auto& w : R::ChildObjectsOf(c.object)) {
-            if (w.name == name) { found = w.object; break; }
-        }
-        if (found) break;
+    // ONE TARGETED WALK, no vectors, no name renders. `R::ChildObjectsOf` would materialise
+    // the entire tree as `std::vector<ObjectRef>` with two std::wstring per entry before the
+    // caller matches a single name, and it is a full walk PER CALL -- two of them here. This
+    // walks once and compares with `R::NameEquals`, which is allocation-free AND
+    // case-INSENSITIVE: `reflection.cpp` states the rule and the scar (a lookup returned null
+    // for a whole session because another package had registered the name with different
+    // casing first).
+    void* tree = DonorField(userWidget, L"WidgetTree");
+    if (!tree) return nullptr;
+    const int32_t n = R::NumObjects();
+    for (int32_t i = 0; i < n; ++i) {
+        void* o = R::ObjectAt(i);
+        if (!o || !R::IsLiveByIndex(o, i)) continue;
+        if (R::OuterOf(o) != tree) continue;
+        if (R::NameEquals(R::NameOf(o), name)) return o;
     }
-    UE_LOGI("native_screen: DonorChild('%ls') -- fn=%p framed=%d called=%d viaFn=%p "
-            "viaOuterWalk=%p", name, fn, framed ? 1 : 0, called ? 1 : 0, viaFn, found);
-    return found;
+    return nullptr;
 }
 
 void* Spawn(const wchar_t* cls, void* outer) {
@@ -291,14 +276,59 @@ bool BuildWindowShell(void* switcher, float widthPx, float heightPx, const wchar
     return true;
 }
 
-// The outer ring's rendered thickness: two 2 px bands, measured off a native
-// 1885 px capture. The inner ring is inset by exactly this so the two sit flush,
-// which is how the native frame reads.
+// VOTV'S OWN AUTHORED BORDER OFFSET -- not a pixel guess, and not "the outer ring's
+// thickness" as this comment first claimed.
+//
+// `[V]` in the cooked widgets, SEVEN of eleven border slots across ui_settings and
+// ui_saveSlots carry a slot offset of 4 (`image_border_3`, `image_border_2`, `_3`, `_4`, `_5`
+// at -4/-4/-4/-4). And `ui_saveSlots.image_border_6` / `image_border_7` are a genuine NESTED
+// pair on parent-and-child canvases exactly 4 apart -- the construction this reproduces.
+//
+// Because it is the same KIND of value the game uses (a slot offset, which scales with the
+// layout transform) rather than a screen-pixel constant, our frame drifts under DPI exactly as
+// the game's does. Deriving it from the brush instead would be WORSE: Margin 0.5 x ImageSize
+// 32 is a 16 px 9-slice margin, which is not the 4 the game offsets by.
 constexpr float kNativeRingStepPx = 4.f;
 
 void* g_borderDonor = nullptr;
+bool  g_borderDonorTried = false;
 
-void SetBorderDonor(void* donorImage) { g_borderDonor = donorImage; }
+void SetBorderDonor(void* donorImage) {
+    g_borderDonor = donorImage;
+    g_borderDonorTried = true;
+}
+
+void ForgetBorderDonor() {
+    // Called on the MENU-INSTANCE edge. The donor is a UImage owned by that menu's
+    // `ui_settings`; keeping it across a rebuild would have `CloneStyle` memcpy 0x88 bytes out
+    // of a widget belonging to a destroyed instance. Nothing cleared it before -- the browser
+    // reset `g_root`/`g_backBtn`/`g_scrimW` and not this.
+    g_borderDonor = nullptr;
+    g_borderDonorTried = false;
+}
+
+bool BorderDonorResolved() { return g_borderDonorTried; }
+
+bool FramedBoxParts(void* overlay, FramedParts& out) {
+    if (!overlay) return false;
+    const int32_t n = U::ChildCount(overlay);
+    // Discriminated by COUNT, because that is what the two layouts differ in and it needs no
+    // name or class lookup. Framed adds the second ring, so it carries one more child than flat
+    // at the same stage. See the header for why this must not be re-derived by callers.
+    if (n >= 4) {                       // framed: face, edge, ring2, [content]
+        out.face    = U::ChildAt(overlay, 0);
+        out.edge    = U::ChildAt(overlay, 1);
+        out.content = U::ChildAt(overlay, 3);
+        return true;
+    }
+    if (n >= 2) {                       // flat: edge, face, [content]
+        out.edge    = U::ChildAt(overlay, 0);
+        out.face    = U::ChildAt(overlay, 1);
+        out.content = n >= 3 ? U::ChildAt(overlay, 2) : nullptr;
+        return true;
+    }
+    return false;
+}
 
 void* AddFramedBox(void* parent, const FLinearColor& fill, float borderPx) {
     void* box = Spawn(L"Overlay", parent);
@@ -356,8 +386,13 @@ void* AddFramedBox(void* parent, const FLinearColor& fill, float borderPx) {
         // `[V]` A native window at 1885 px samples `919191 919191 646464 646464` TWICE,
         // back to back, where the 546 px reference capture shows the pattern ONCE. The second
         // pair is a byte-for-byte repeat of the first, not a wider gradient -- so it is a
-        // SECOND RING of the same brush, not one thicker one, which is consistent with
-        // `ui_settings` carrying `image_border` AND `image_border_3`.
+        // SECOND RING of the same brush, not one thicker one.
+        //
+        // The asset that proves it is `ui_saveSlots.image_border_6` / `image_border_7`: a
+        // nested pair on parent-and-child canvases, 4 apart. (An earlier version of this
+        // comment cited `ui_settings`'s `image_border` + `image_border_3` -- WRONG, those two
+        // have different parents and frame different panels. The conclusion held; the evidence
+        // did not.)
         //
         // The inset is the outer ring's own rendered thickness, MEASURED at 4 px (two 2 px
         // bands) and named so it reads as the measurement it is. It is the one constant left
@@ -365,8 +400,12 @@ void* AddFramedBox(void* parent, const FLinearColor& fill, float borderPx) {
         // and it is what a UI-scale change would invalidate first.
         if (void* e2 = Spawn(L"Image", box)) {
             static constexpr size_t kOneBrush[1] = {0};
-            if (U::CloneStyle(e2, P::off::UImage_Brush, g_borderDonor, P::off::UImage_Brush,
-                              P::off::FSlateBrush_Size, kOneBrush, 1)) {
+            // Unchecked on purpose: CloneStyle only fails on a null argument or a zero size,
+            // and neither is possible inside this branch. A guard that cannot fire reads as a
+            // check and is not one.
+            U::CloneStyle(e2, P::off::UImage_Brush, g_borderDonor, P::off::UImage_Brush,
+                          P::off::FSlateBrush_Size, kOneBrush, 1);
+            {
                 E::SetWidgetVisibility(e2, 3);
                 if (void* s = U::AddChild(box, e2)) {
                     U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
