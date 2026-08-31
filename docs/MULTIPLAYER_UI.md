@@ -845,11 +845,17 @@ browser from four failure-recovery paths in `session_runtime.cpp`, sometimes bef
 **INPUT IS NOW MOSTLY WIRED (2026-08-26, `95d18cc5` + `ea378daf`).** This paragraph used to say the
 opposite and is rewritten rather than patched:
 
-- **Chrome: BUILT.** An `X` in the title strip and `BACK` at the footer's left, both real `UButton`s
-  cloning `ui_saveSlots_C.button_back`'s style (so they carry the game's press/hover sounds). Driven
-  proof, not assumption: the self-check re-opens the screen after its ESC phase and synthesizes a
-  press-release over the X, asserting through the public `IsOpen()` -- real log,
-  `CLOSE BUTTON PASS ... (hovered=1)`.
+- **Chrome: BUILT, and the X was REMOVED again on 2026-08-30 (`b7b11978`).** What ships is `BACK`
+  at the footer's left, a real `UButton` cloning `ui_saveSlots_C.button_back`'s style (so it carries
+  the game's press/hover sounds). **The X went for FIDELITY, not because it failed** -- no native
+  VOTV window has one, and MTA's own frame X is enabled with no handler behind it (USER: *"не надо
+  крестиков"*). It had been PROVEN working first: `CLOSE BUTTON PASS ... (hovered=1)` and the
+  never-before-run `HOST X PASS`, both at 23:43 that night.
+  **The exits are Back and ESC, and both are driven-proven on current bytes**: `[V] BROWSER BACK
+  PASS`, `[V] HOST BACK PASS`, `[V] HOST ESC PASS`, `[V]` browser ESC. Note what that pair costs:
+  Back rides the same `E::WidgetIsHovered` predicate the X used, so it inherits every failure mode
+  the X had -- including the capture-starved pointer that makes every native widget read
+  not-hovered at once -- and **ESC (a `GetAsyncKeyState` poll) is the only exit that survives that**.
 - **Hover: BUILT.** `UpdateHover()` recolours the hovered row's TEXT to `#FFFF00`
   (`VOTV_UI_STYLE.md` §4 -- the native treatment is a text change, not a background one).
 - **Row click / selection: BUILT.** A click on the hovered row sets `g_selectedId` and the row's FILL
