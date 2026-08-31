@@ -227,4 +227,27 @@ void LogVisibilityChain(const char* tag, void* widget);
 // Fill=0 Left=1 Center=2 Right=3; EVerticalAlignment: Fill=0 Top=1 Center=2 Bottom=3.
 bool SetSlotAlign(void* slot, size_t hAlignOff, size_t vAlignOff, uint8_t h, uint8_t v);
 
+// THE SAME ALIGNMENT, BUT AFTER THE TREE IS LIVE -- through the slot's own
+// `SetHorizontalAlignment` UFunction rather than the raw field.
+//
+// The raw write above is correct at BUILD time and a no-op afterwards, for the reason
+// `SetTextBlockColorDispatch` exists: UMG copies slot properties into the Slate slot when
+// the panel constructs, so a later property write changes a value nothing reads. Every
+// slot type declares its own `SetHorizontalAlignment` (UOverlaySlot, UHorizontalBoxSlot,
+// ...), and `R::FindFunction` matches the OWNING class with no super-walk, so this resolves
+// against the slot's RUNTIME class and caches per class.
+//
+// The consumer is the text field's overflow fix: a value wider than its box is windowed by
+// flipping its slot to Right, which makes Slate clip the HEAD and leaves the tail -- and
+// the caret -- visible. That flip has to happen while the player types.
+bool SetSlotHAlignLive(void* slot, uint8_t h);
+
+// UWidget::GetDesiredSize -- WHAT THE WIDGET ASKED FOR, as opposed to WidgetScreenRect's
+// "what the parent gave it". The pair is what makes "does this text fit in its box"
+// answerable: desired > allotted IS the overflow.
+//
+// Zero is a legitimate answer (a widget Slate has never laid out), which is why this
+// returns bool and writes through a reference rather than folding failure into a sentinel.
+bool WidgetDesiredSize(void* widget, FVector2D& out);
+
 }  // namespace ue_wrap::umg

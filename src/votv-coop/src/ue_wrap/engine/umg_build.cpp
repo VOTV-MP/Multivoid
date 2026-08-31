@@ -485,4 +485,45 @@ bool SetSlotAlign(void* slot, size_t hAlignOff, size_t vAlignOff, uint8_t h, uin
     return true;
 }
 
+bool SetSlotHAlignLive(void* slot, uint8_t h) {
+    if (!slot) return false;
+    void* cls = R::ClassOf(slot);
+    if (!cls) return false;
+    // Cached per slot CLASS, not globally: a screen mixes overlay slots and box slots, and
+    // each declares its own setter. One entry is the steady state (the text field only ever
+    // asks about overlay slots), so a two-entry linear scan is the whole structure this
+    // needs -- and it never grows past the number of slot types in the tree.
+    struct Entry { void* cls; void* fn; };
+    static Entry sCache[8] = {};
+    static int   sCount = 0;
+    void* fn = nullptr;
+    bool  known = false;
+    for (int i = 0; i < sCount; ++i)
+        if (sCache[i].cls == cls) { fn = sCache[i].fn; known = true; break; }
+    if (!known) {
+        fn = R::FindFunction(cls, L"SetHorizontalAlignment");
+        if (sCount < 8) sCache[sCount++] = Entry{cls, fn};
+        if (!fn)
+            UE_LOGW("umg: %ls has no SetHorizontalAlignment -- a live alignment flip on it "
+                    "will not take", R::ClassNameOf(slot).c_str());
+    }
+    if (!fn) return false;
+    ParamFrame f(fn);
+    f.Set<uint8_t>(L"InHorizontalAlignment", h);
+    return Call(slot, f);
+}
+
+bool WidgetDesiredSize(void* widget, FVector2D& out) {
+    if (!widget) return false;
+    static void* const sFn = [] {
+        void* w = R::FindClass(P::name::WidgetClass);
+        return w ? R::FindFunction(w, L"GetDesiredSize") : nullptr;
+    }();
+    if (!sFn) return false;
+    ParamFrame f(sFn);
+    if (!Call(widget, f)) return false;
+    out = f.Get<FVector2D>(L"ReturnValue");
+    return true;
+}
+
 }  // namespace ue_wrap::umg

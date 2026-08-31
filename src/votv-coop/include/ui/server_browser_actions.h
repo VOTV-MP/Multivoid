@@ -24,15 +24,19 @@
 
 namespace ui::server_browser_actions {
 
-// Build CONNECT / HOST / REFRESH into `footRow` (the footer HorizontalBox), styled from
-// `donorBtn` (the game's own `ui_saveSlots_C.button_back`, so they carry its press and
-// hover sounds). Call once per screen build, AFTER the status text, so the status's fill
-// weight pushes these to the right edge -- Back at the left and actions at the right is
-// what every native VOTV window does (docs/VOTV_UI_STYLE.md section 5).
+// Build the ACTION GRID into `parent` (a UVerticalBox), styled from `donorBtn` (the game's
+// own `ui_saveSlots_C.button_back`, so the buttons carry its press and hover sounds).
+//
+// A GRID UNDER THE LIST, NOT A ROW IN THE FOOTER. The footer bar was the table layout's
+// shape; the redesign mirrors VOTV's save browser, which puts a block of large framed
+// action buttons directly beneath the list it acts on and leaves the footer to `Back`
+// alone (docs/SERVER_BROWSER_ARC.md section 7.2). The cell table lives in the .cpp and the
+// grid renders however many cells there are, so the input-variant fork can add its two
+// without reshaping anything here.
 //
 // Returns false if any button could not be built; the caller treats that as a build
-// failure rather than shipping a footer with a hole in it.
-bool Build(void* footRow, void* donorBtn);
+// failure rather than shipping a grid with a hole in it.
+bool Build(void* parent, void* donorBtn);
 
 // Handle a left-button RELEASE while the browser is open. Returns true if one of these
 // buttons was under the cursor and consumed the click, so the caller stops -- in

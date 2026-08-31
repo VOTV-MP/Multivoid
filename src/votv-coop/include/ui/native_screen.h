@@ -39,6 +39,7 @@
 
 #include "ue_wrap/core/types.h"
 
+#include <cstddef>
 #include <cstdint>
 
 namespace ui::native_screen {
@@ -47,9 +48,10 @@ using ue_wrap::FLinearColor;
 
 // ---- alignment enums, spelled out so call sites read as prose -----------------------
 // EHorizontalAlignment / EVerticalAlignment: Fill=0 Left=1/Top=1 Center=2 Right=3/Bottom=3.
-inline constexpr uint8_t kFill = 0, kLeft = 1, kCenter = 2;
+inline constexpr uint8_t kFill = 0, kLeft = 1, kCenter = 2, kRight = 3;
+inline constexpr uint8_t kTop = 1, kBottom = 3;
 // ETextJustify: Left=0 Center=1 Right=2.
-inline constexpr uint8_t kJustLeft = 0, kJustCenter = 1;
+inline constexpr uint8_t kJustLeft = 0, kJustCenter = 1, kJustRight = 2;
 
 // ---- the palette -------------------------------------------------------------------
 // docs/VOTV_UI_STYLE.md section 2. Every value is SAMPLED from the game's own menus by
@@ -71,6 +73,11 @@ FLinearColor Hover();    // #FFFF00 hover is a TEXT colour, never a fill
 FLinearColor Amber();    // #FFBC00 value emphasis; the mismatch tint
 FLinearColor Dim();      // #A5A5A5 secondary text (measured, not guessed)
 FLinearColor Own();      // #9EEAB3 "your server"
+FLinearColor Bad();      // #FF0000 the game's own destructive/old-version red (style doc
+                         // section 2: "Delete save slot", "Hard reset", and the red `0.7.0!`
+                         // an out-of-date save shows -- which is exactly our version mismatch)
+FLinearColor Black();    // #000000 -- the status pane's fill; the ONE place the game goes
+                         // fully black behind text (the save browser's bottom-right pane)
 
 // ---- primitives ---------------------------------------------------------------------
 
@@ -91,6 +98,34 @@ void* Spawn(const wchar_t* cls, void* outer);
 // horizontal-box slot (clipped, with a right gutter); 0 leaves the slot auto-sized.
 void* AddText(void* panel, const wchar_t* initial, int32_t size, const FLinearColor& col,
               uint8_t justify, float fillWeight);
+
+// ADD A CHILD TO A BOX AND GIVE ITS SLOT A FILL WEIGHT. Returns the slot, or null.
+//
+// These exist because a two-COLUMN screen cannot be built without them and every call site
+// would otherwise repeat the same four raw writes against `FSlateChildSize` -- the same
+// shape `AddText` already carries privately for its own weighted cells. A weight of 0 means
+// ESlateSizeRule::Automatic (the child's desired size); anything above 0 is Fill.
+//
+// The two are separate functions rather than one with an offset parameter because the
+// horizontal and vertical slot layouts are DIFFERENT structures that merely happen to agree
+// on three of four member offsets today (Size@0x38 vs 0x50). Passing the wrong one writes a
+// float into a neighbouring field and the failure appears nowhere near the call
+// (docs/LESSONS.md: a wrong-offset write never faults where you wrote it).
+void* AddHFill(void* hbox, void* child, float weight, uint8_t h, uint8_t v);
+void* AddVFill(void* vbox, void* child, float weight, uint8_t h, uint8_t v);
+
+// The same layout write on a slot that ALREADY EXISTS. `BuildButton` attaches its own
+// button (and centres it), so a caller who wants that button to FILL its grid cell has to
+// reconfigure the slot rather than create one.
+void SetHSlot(void* slot, float weight, uint8_t h, uint8_t v);
+void SetVSlot(void* slot, float weight, uint8_t h, uint8_t v);
+
+// The slot a widget currently occupies (UWidget::Slot), or null if it is unattached.
+void* SlotOf(void* widget);
+
+// Set a slot's FMargin padding {left, top, right, bottom}. `padOff` is the slot type's own
+// Padding offset -- again per box type, for the reason above.
+void SetSlotPadding(void* slot, size_t padOff, float l, float t, float r, float b);
 
 // THE FRAME: an outer bordered UImage plus an inner fill inset by `borderPx`. Every panel,
 // row, header strip and value cell in VOTV's menus is a bordered box with sharp corners

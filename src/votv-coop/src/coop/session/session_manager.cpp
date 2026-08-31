@@ -326,6 +326,8 @@ uint64_t CopyRows(std::vector<lobby::LobbyRow>& out) { return Client().CopyRows(
 uint64_t RowsGeneration() { return Client().Generation(); }
 std::string Status() { return Client().Status(); }
 
+int FetchFailures() { return Client().ConsecutiveFailures(); }
+
 void HostLobby(const std::string& name, const std::string& world, bool locked, int playersMax) {
     if (g_actionBusy.exchange(true)) { UE_LOGW("session_manager: action busy -- Host ignored"); return; }
     const std::string masterUrl = MasterUrl();

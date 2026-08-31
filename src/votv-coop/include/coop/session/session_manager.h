@@ -69,6 +69,11 @@ uint64_t CopyRows(std::vector<coop::net::lobby::LobbyRow>& out);
 uint64_t RowsGeneration();
 std::string Status();
 
+// How many list fetches in a row have failed (0 once one succeeds) -- the browser's
+// "cannot reach the master" alarm keys on this, never on elapsed time since a success.
+// See LobbyClient::ConsecutiveFailures for why those are different claims.
+int FetchFailures();
+
 // Host a lobby on the ALREADY-LOADED world (POST /v1/host on a worker -> P2P host Config
 // + queue an immediate session start + heartbeat). Non-blocking. This is the
 // host-current-world primitive -- DISTINCT from HostWithSave (which loads a CHOSEN save

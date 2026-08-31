@@ -13,12 +13,16 @@
 #include "coop/session/session_manager.h"
 
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/engine/engine.h"
+#include "ue_wrap/engine/umg_build.h"
 
 namespace ui::server_browser_actions {
 namespace {
 
 namespace E  = ue_wrap::engine;
+namespace U  = ue_wrap::umg;
+namespace P  = ue_wrap::profile;
 namespace NS = ui::native_screen;
 namespace sm = coop::session_manager;
 namespace SB = ui::server_browser_native;
@@ -91,37 +95,66 @@ void DoRefresh() {
 
 }  // namespace
 
-bool Build(void* footRow, void* donorBtn) {
-    if (!footRow) return false;
-    // Order left-to-right, and it is the order a player moves through them: refresh the
-    // list, host your own, or join the one you picked. CONNECT is last so it sits at the
-    // right edge, which is the CONFIRM position in every native VOTV window.
+bool Build(void* parent, void* donorBtn) {
+    if (!parent) return false;
+    // THE CELL TABLE. Left to right, top to bottom, in the order a player moves through
+    // them: join the one you picked, open your own, refresh what you are looking at.
+    //
     // SENTENCE CASE, NEVER CAPS. Measured across the whole style corpus
     // (ignore_folder/votv_widgets_style/): VOTV uppercases NO button label,
     // anywhere -- "Play game", "Delete save slot", "Open save data reset menu",
     // "Duplicate save slot", "Back", "Save", "Reset". Ours shouted, which is the
     // single loudest way our chrome read as foreign. User report 2026-08-30:
     // "No caps at buttons ever."
-    // NO TEXT INPUT ON THIS SCREEN (USER, 2026-08-30). An address box shipped here for
-    // one build and the user cut it the moment they saw it: "ебаный текст в ебаное окно
-    // ввода ip не помещается - и нахуй оно там нужно вообще - это дизайн говно у сервер
-    // браузера - не нужен прям в нем ввод". Two separate things, and both stand: the field
-    // CLIPPED its own text (a real defect, fixed in the module), and a browser is not where
-    // connecting by address belongs. The second is a product call and it is theirs.
     //
-    // DIRECT-IP CONNECT IS NOT CANCELLED, only evicted from here. `ConnectDirect` works and
-    // the fallback surface still reaches it; where the default surface offers it is part of
-    // the server-browser redesign the user deferred to the next session ("revise the design
-    // - в следующей сессии ... нужен дизайн сервер браузера как у людей без костылей").
-    // The parity gate carries it as a DECLARED divergence so it cannot be forgotten.
-    g_refresh = NS::BuildButton(footRow, donorBtn, L"Refresh", NS::kBtnFontPx);
-    g_host    = NS::BuildButton(footRow, donorBtn, L"Host",    NS::kBtnFontPx);
-    g_connect = NS::BuildButton(footRow, donorBtn, L"Connect", NS::kBtnFontPx);
-    if (!g_refresh || !g_host || !g_connect) {
-        UE_LOGE("server_browser_actions: could not build the action bar "
-                "(refresh=%p host=%p connect=%p) -- the footer would ship with a hole",
-                g_refresh, g_host, g_connect);
-        return false;
+    // TWO CELLS ARE MISSING ON PURPOSE, and they are the ones the input-variant fork owns:
+    // "Direct connect" and "Change name". The user's answer to fork P1 was to BUILD BOTH
+    // input designs and choose by eye ("попробуем разные дизайны и что лучше будет то и
+    // оставим"), so where those two live is exactly what is being compared -- variant A
+    // gives them cells here that open sibling screens, variant B puts the input in the
+    // browser itself. A dead button that says "not built yet" would be neither, and this
+    // project does not ship those.
+    struct Cell { const wchar_t* label; void** out; };
+    const Cell cells[] = {
+        {L"Connect",     &g_connect},
+        {L"Host game",   &g_host},
+        {L"Update list", &g_refresh},
+    };
+    constexpr int   kPerRow = 3;
+    constexpr float kRowH   = 46.f;   // large, the way the save browser's action block is
+    void* row = nullptr;
+    const int n = static_cast<int>(sizeof(cells) / sizeof(cells[0]));
+    for (int i = 0; i < n; ++i) {
+        if (i % kPerRow == 0) {
+            // THE HEIGHT IS THE ROW'S, NOT EACH CELL'S. A SizeBox per button would mean
+            // handing `BuildButton` a SizeBox as its parent -- and BuildButton attaches its
+            // own child and then writes UHorizontalBoxSlot offsets into whatever slot it
+            // got, which on a USizeBoxSlot is a wrong-offset write into a neighbouring
+            // field (docs/LESSONS.md: it never faults where you wrote it). One SizeBox
+            // around the row gives every button in it the same height for free.
+            void* rowBox = NS::Spawn(L"SizeBox", parent);
+            row = rowBox ? NS::Spawn(L"HorizontalBox", rowBox) : nullptr;
+            if (!rowBox || !row) return false;
+            U::SetSizeBoxHeight(rowBox, kRowH);
+            U::SetContent(rowBox, row);
+            if (void* s = NS::AddVFill(parent, rowBox, 0.f, NS::kFill, NS::kTop))
+                NS::SetSlotPadding(s, P::off::UVerticalBoxSlot_Padding, 0.f, 0.f, 0.f, 4.f);
+        }
+        void* btn = NS::BuildButton(row, donorBtn, cells[i].label, NS::kBtnFontPx);
+        if (!btn) {
+            UE_LOGE("server_browser_actions: could not build the '%ls' action -- the grid "
+                    "would ship with a hole", cells[i].label);
+            return false;
+        }
+        // BuildButton centres its button in an auto-sized slot, which is right for a footer
+        // bar and wrong for a grid: the cells must be equal and must fill the row. Its slot
+        // is reconfigured rather than re-created -- the widget is already attached.
+        void* s = NS::SlotOf(btn);
+        NS::SetHSlot(s, 1.f, NS::kFill, NS::kFill);
+        NS::SetSlotPadding(s, P::off::UHorizontalBoxSlot_Padding,
+                           0.f, 0.f, (i % kPerRow == kPerRow - 1 || i == n - 1) ? 0.f : 4.f,
+                           0.f);
+        *cells[i].out = btn;
     }
     return true;
 }

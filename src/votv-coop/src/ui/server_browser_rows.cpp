@@ -13,6 +13,8 @@
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/umg_build.h"
 
+#include <windows.h>   // GetTickCount64 -- how long ago the rows we hold were fetched
+
 #include <string>
 #include <vector>
 
@@ -32,6 +34,7 @@ using Row = coop::net::lobby::LobbyRow;
 using NS::kFill;
 using NS::kCenter;
 using NS::kJustLeft;
+using NS::kJustRight;
 using NS::AddText;
 using NS::Spawn;
 
@@ -83,6 +86,11 @@ const FLinearColor kHover  = NS::Hover();   // #FFFF00 -- hover, on the text AND
 const FLinearColor kAmber  = NS::Amber();   // value emphasis; the mismatch tint
 const FLinearColor kDim    = NS::Dim();     // secondary text (measured, not guessed)
 const FLinearColor kOwn    = NS::Own();     // "your server" row
+const FLinearColor kBad    = NS::Bad();     // #FF0000 -- the join gate will refuse this one
+// A STALE ROW IS THE SAME COLOURS AT HALF ALPHA, never a different hue. MTA dims rather
+// than recolours (`bMaybeOffline`), and a new colour would mean a new palette entry for a
+// state that is not a category but a confidence.
+FLinearColor Faded(const FLinearColor& c) { return FLinearColor{c.R, c.G, c.B, 0.40f}; }
 
 // ---- state (GAME THREAD ONLY) -----------------------------------------------------
 void* g_list = nullptr;   // the UScrollBox holding the rows
@@ -124,16 +132,58 @@ std::vector<std::string> g_rowIds;
 std::vector<Row> g_rows;
 uint64_t g_lastRowsGen  = 0;   // the fetch generation last PAINTED
 int      g_visibleRows  = 0;   // rows actually SHOWN, not ChildCount's high-water mark
+// WHEN THE ROWS WE ARE HOLDING WERE FETCHED, in local ticks. `ageSec` is the master's
+// seconds-since-heartbeat AT THAT MOMENT, so it stops being true the instant it arrives;
+// the true age is `ageSec + (now - this)`. Stamped only when the GENERATION moves, so a
+// repaint of unchanged rows does not pretend they got younger.
+uint64_t g_fetchedAtMs  = 0;
 
-// The five columns, in the order section 7c fixes them, with their fill weights.
-struct Column { const wchar_t* title; float weight; };
-constexpr Column kColumns[5] = {
-    {L"Name",    0.44f},
-    {L"Players", 0.12f},
-    {L"Version", 0.20f},
-    {L"World",   0.14f},
-    {L"Age",     0.10f},
+// THREE CELLS, NOT FIVE COLUMNS, AND NO HEADER STRIP ABOVE THEM.
+//
+// The five-column table (Name/Players/Version/World/Age) and the orange header strip that
+// labelled it were a SPREADSHEET, and VOTV has no spreadsheet anywhere in its menus: the
+// save browser -- the game's own "browse things and act on one" screen, which this screen
+// now mirrors -- gives each row a title and one right-hand fact, and puts every other
+// detail in a panel beside the list. The user's verdict on the table version was
+// unambiguous ("это дизайн говно у сервер браузера"), and the redesign's root
+// (SERVER_BROWSER_ARC section 7.1) is that screen.
+//
+// So: the NAME takes the row, "Players: c/m" sits at the right, and the middle cell is a
+// RED mismatch mark that is empty on every joinable server. World, the full version pair,
+// the connection type and the last-seen age all moved to the details panel, which can spell
+// them out instead of abbreviating them into a column 130 px wide.
+//
+// THE MARK IS ITS OWN CELL BECAUSE A UTextBlock HAS ONE COLOUR. Appending "!b146" to the
+// name would paint it the name's orange, and the whole point of the game's `0.7.0!` idiom
+// (style doc section 2) is that the red is what carries the meaning.
+// THE WEIGHTS ARE MEASURED AGAINST THE LONGEST STRING EACH CELL CAN HOLD, not guessed.
+// The first build gave the player count 0.24, which is 144 px of a 606 px list -- and
+// "Players: 2/4" is 12 monospace glyphs plus AddText's own 18 px gutter, so the cell CLIPPED
+// ITS OWN HEAD and every row read "'layers: 2/4" (visible in browser_native.png, 2026-08-31).
+// A right-aligned cell clips at the LEFT, which is exactly why the field fix in section 7.4
+// uses that alignment on purpose -- and exactly why it must not be applied by accident.
+struct Cell { float weight; };
+constexpr Cell kCells[3] = {
+    {0.58f},   // name        -- accent orange, left
+    {0.14f},   // mismatch    -- #FF0000, left, EMPTY unless the join gate would refuse
+    {0.28f},   // "Players: n/m" -- white, right
 };
+constexpr int kCellName = 0, kCellFlag = 1, kCellPlayers = 2;
+
+// A ROW GOES DIM WHEN ITS HOST HAS STOPPED CHECKING IN.
+//
+// `ageSec` is the master's own seconds-since-heartbeat at FETCH time, so a row's true age is
+// that plus however long ago we fetched. The master reaps a silent host at a MEASURED
+// 111-116 s (three nominal 30 s heartbeats plus slack, master.rs:40), so a row that has gone
+// quiet for more than one missed heartbeat cycle is a server that is probably already gone
+// -- and this is the same thing MTA does rather than an invention: `CServerListItem` keeps
+// a stale item in the list and dims it (`bMaybeOffline`) instead of deleting it, because
+// removing rows under a reading hand is worse than showing one that may not answer.
+constexpr int kStaleSec = 65;
+
+// `AgeNowSec` itself is PUBLIC (the details panel reads it too) and is defined below with
+// the rest of the exported surface; this is only the predicate the painters use.
+bool IsStale(const Row& r) { return AgeNowSec(r) > kStaleSec; }
 
 // Build one row: USizeBox(64) -> UOverlay -> [ UImage EDGE, UImage FACE inset by the
 // border, UHorizontalBox of five UTextBlocks ]. NO UButton: the native row's own
@@ -163,10 +213,19 @@ void* BuildRow(void* parent) {
     void* ovl = NS::AddFramedBox(box, kRowBg, kRowBorderPx);
     void* hb  = ovl ? Spawn(L"HorizontalBox", ovl) : nullptr;
     if (!ovl || !hb) return nullptr;
-    if (void* s = U::AddChild(ovl, hb))
+    if (void* s = U::AddChild(ovl, hb)) {
         U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign, kFill, kFill);
-    for (const Column& c : kColumns)
-        AddText(hb, L"", 16, kText, kJustLeft, c.weight);
+        // The row's own inner gutter. The frame is 2 px and the glyphs used to start
+        // against it; every native row insets its text from its box.
+        // Left only: every weighted cell already carries AddText's own 18 px right gutter,
+        // so a right pad here would double-inset the right-aligned player count.
+        NS::SetSlotPadding(s, P::off::UOverlaySlot_Padding, 10.f, 0.f, 0.f, 0.f);
+    }
+    // Sizes and colours are the CELL's, not one shared default: the name is the row's
+    // title (larger, accent) and the two facts beside it are body text.
+    AddText(hb, L"", 20, kAccent, kJustLeft,  kCells[kCellName].weight);
+    AddText(hb, L"", 16, kBad,    kJustLeft,  kCells[kCellFlag].weight);
+    AddText(hb, L"", 16, kText,   kJustRight, kCells[kCellPlayers].weight);
     // SizeBox is a UContentWidget: its single child goes through SetContent.
     U::SetContent(box, ovl);
     return box;
@@ -176,7 +235,7 @@ void* BuildRow(void* parent) {
 // (cached_obj_ref.h:34-46 -- the world stamp is inert for UMG, and UE assigns serials
 // lazily, so a hand-spawned widget captures serial 0 and the ABA residual is not closed).
 // The panel's `Slots` is the authority; this walks it.
-struct RowParts { void* box; void* edge; void* face; void* text[5]; };
+struct RowParts { void* box; void* edge; void* face; void* text[3]; };
 bool RowPartsAt(int32_t i, RowParts& out) {
     out = RowParts{};
     void* box = U::ChildAt(g_list, i);
@@ -210,22 +269,26 @@ bool RowPartsAt(int32_t i, RowParts& out) {
     out.face = U::ChildAt(ovl, 1);
     void* hb = U::ChildAt(ovl, 2);
     if (!hb) return false;
-    for (int c = 0; c < 5; ++c) out.text[c] = U::ChildAt(hb, c);
+    for (int c = 0; c < 3; ++c) out.text[c] = U::ChildAt(hb, c);
     return true;
 }
 
-// The version cell, PORTED from the incumbent rather than re-derived (server_browser.cpp:
-// 218-231). `game` is the host's VOTV target and `version` is a LEGACY-ONLY fallback that
-// only a pre-field host still sends; the mismatch has TWO legs and amber always means
-// "the join gate will refuse this".
-std::wstring VersionCell(const Row& r, bool& mismatch) {
-    const bool gameMismatch = !r.game.empty() && r.game != sm::GameTarget();
-    mismatch = gameMismatch ||
-               (r.proto > 0 && r.proto != static_cast<int>(coop::net::kProtocolVersion));
-    std::string cell = !r.game.empty() ? r.game : r.version;
-    if (r.proto > 0) cell += " b" + std::to_string(r.proto);
-    if (mismatch) cell += " (!)";
-    return coop::text::FromUtf8Lossy(cell.data(), cell.size());
+// WILL THE JOIN GATE REFUSE THIS SERVER, and if so which HALF of the pair disagrees.
+//
+// The predicate is PORTED from the incumbent rather than re-derived (server_browser.cpp:
+// 218-231): `game` is the host's VOTV target and `version` is a LEGACY-ONLY fallback that
+// only a pre-field host still sends, so the mismatch has TWO legs. What changed with the
+// redesign is only what it RENDERS -- a five-column table had room to print the host's whole
+// pair in every row, and a title-plus-one-fact row does not. So the row shows the SHORTEST
+// thing that is still true ("!b146" when only the build differs, "!0.9.0m" when the cook
+// does), and the DETAILS PANEL spells out both sides and says who must update. The mark's
+// job in the list is to be red and to be there.
+std::string MismatchMark(const Row& r) {
+    const bool gameBad = !r.game.empty() && r.game != sm::GameTarget();
+    const bool protoBad = r.proto > 0 && r.proto != static_cast<int>(coop::net::kProtocolVersion);
+    if (gameBad) return "!" + r.game;
+    if (protoBad) return "!b" + std::to_string(r.proto);
+    return {};
 }
 
 // DOES THE POINTER GET TO CHANGE THIS ROW AT ALL. The single expression of the user's
@@ -250,20 +313,24 @@ void ApplyRowSkin(const RowParts& rp, bool hovered, bool selected) {
     if (rp.edge) U::SetImageTint(rp.edge, PointerLit(hovered, selected) ? kHover : kBorder);
 }
 
-// A row's five text colours, from its data and its state. ONE owner: the sync pass
-// and the hover edge both come through here, so "what colour is the version cell" is
+// A row's three text colours, from its data and its state. ONE owner: the sync pass
+// and the hover edge both come through here, so "what colour is the mismatch mark" is
 // answered in exactly one place and un-hovering cannot restore the wrong base.
-void ApplyRowTextColors(const RowParts& rp, const Row& r, bool isOwn, bool mismatch,
+void ApplyRowTextColors(const RowParts& rp, const Row& r, bool isOwn, bool stale,
                         bool hovered, bool selected) {
     // Style doc section 4: hovering turns the LABEL yellow and leaves the FILL alone. That
     // is the opposite of the ImGui incumbent, which paints behind the row. A selected row
     // keeps its data colours on the purple -- section 4 measured that selection leaves the
     // content white -- and the pointer does not override that.
     const bool lit = PointerLit(hovered, selected);
-    const FLinearColor name = lit ? kHover : (isOwn ? kOwn : kText);
-    const FLinearColor body = lit ? kHover : kText;
-    const FLinearColor dim  = lit ? kHover : kDim;
-    const FLinearColor ver  = lit ? kHover : (mismatch ? kAmber : kDim);
+    // The name is the row's TITLE and carries the accent, except when it is our own
+    // announced lobby (green) or the pointer is on it (yellow). The mismatch mark is red
+    // and stays red under the pointer -- yellowing it would erase the one thing it says.
+    FLinearColor name = lit ? kHover : (isOwn ? kOwn : kAccent);
+    FLinearColor body = lit ? kHover : kText;
+    FLinearColor flag = kBad;
+    // STALE LAST, so it fades whatever the state above chose rather than competing with it.
+    if (stale) { name = Faded(name); body = Faded(body); flag = Faded(flag); }
     // ...Dispatch, NEVER the raw variant, AND EVERY COLOUR ON THIS SCREEN DEPENDED ON IT.
     //
     // `SetTextBlockColor` is a raw property write, and its own declaration says in capitals
@@ -285,11 +352,9 @@ void ApplyRowTextColors(const RowParts& rp, const Row& r, bool isOwn, bool misma
     // widget is attached, where a raw write does land -- so the screen looked like a screen
     // whose colours work. `multiplayer_menu.cpp:155` already used the dispatch variant, for
     // exactly this reason, on exactly this kind of tree.
-    if (rp.text[0]) E::SetTextBlockColorDispatch(rp.text[0], name);
-    if (rp.text[1]) E::SetTextBlockColorDispatch(rp.text[1], body);
-    if (rp.text[2]) E::SetTextBlockColorDispatch(rp.text[2], ver);
-    if (rp.text[3]) E::SetTextBlockColorDispatch(rp.text[3], dim);
-    if (rp.text[4]) E::SetTextBlockColorDispatch(rp.text[4], dim);
+    if (rp.text[kCellName])    E::SetTextBlockColorDispatch(rp.text[kCellName], name);
+    if (rp.text[kCellFlag])    E::SetTextBlockColorDispatch(rp.text[kCellFlag], flag);
+    if (rp.text[kCellPlayers]) E::SetTextBlockColorDispatch(rp.text[kCellPlayers], body);
     (void)r;
 }
 
@@ -420,25 +485,19 @@ void RepaintSelectionChange(const std::string& wasId) {
         RowParts rp;
         if (!RowPartsAt(i, rp)) continue;
         const Row& r = g_rows[static_cast<size_t>(i)];
-        bool mismatch = false;
-        (void)VersionCell(r, mismatch);
         const bool sel = (id == g_selectedId);
         ApplyRowSkin(rp, i == g_hoverRow, sel);
-        ApplyRowTextColors(rp, r, !own.empty() && r.lobbyId == own, mismatch,
+        ApplyRowTextColors(rp, r, !own.empty() && r.lobbyId == own, IsStale(r),
                            i == g_hoverRow, sel);
     }
 }
 
 }  // namespace
 
-void BuildHeader(void* parent) {
-    // Column headers are a SECTION HEADER, and those are orange in every native window.
-    void* head = Spawn(L"HorizontalBox", parent);
-    if (head) {
-        for (const Column& c : kColumns) AddText(head, c.title, 16, kAccent, kJustLeft, c.weight);
-        U::AddChild(parent, head);
-    }
-}
+// RETIRED 2026-08-31 (RULE 2): `BuildHeader` drew the orange Name/Players/Version/World/Age
+// strip above the list. The redesign has no columns to label -- see `kCells` -- and a header
+// over a two-fact row would be labelling nothing. It went with its table rather than being
+// left drawing an empty strip; the screen's one call site went in the same commit.
 
 void Attach(void* listPanel) {
     g_list = listPanel;
@@ -453,6 +512,19 @@ void OnShown() {
 }
 
 uint64_t PaintedGeneration() { return g_lastRowsGen; }
+
+int Count() { return static_cast<int>(g_rows.size()); }
+
+uint64_t MsSinceFetch() {
+    if (g_fetchedAtMs == 0) return 0;
+    const uint64_t now = ::GetTickCount64();
+    return now > g_fetchedAtMs ? now - g_fetchedAtMs : 0;
+}
+
+int AgeNowSec(const coop::net::lobby::LobbyRow& r) {
+    if (g_fetchedAtMs == 0) return r.ageSec;
+    return r.ageSec + static_cast<int>(MsSinceFetch() / 1000u);
+}
 
 // WHICH ROW IS UNDER THE CURSOR, re-evaluated only when something could have changed it.
 //
@@ -487,18 +559,21 @@ void UpdateHover() {
         RowParts rp;
         if (!RowPartsAt(i, rp)) continue;
         const Row& r = g_rows[static_cast<size_t>(i)];
-        bool mismatch = false;
-        (void)VersionCell(r, mismatch);
         const bool sel = RowIsSelected(i);
         ApplyRowSkin(rp, i == hit, sel);
-        ApplyRowTextColors(rp, r, !own.empty() && r.lobbyId == own, mismatch, i == hit, sel);
+        ApplyRowTextColors(rp, r, !own.empty() && r.lobbyId == own, IsStale(r), i == hit, sel);
     }
 }
 
 // THE SINGLE WRITER of both the children's text and g_rowIds. Nothing else touches either,
 // which is what makes the positional pairing safe (header invariant).
 void Sync() {
+    const uint64_t prevGen = g_lastRowsGen;
     g_lastRowsGen = sm::CopyRows(g_rows);
+    // A NEW FETCH RESETS THE AGE CLOCK; A REPAINT OF THE SAME ROWS DOES NOT. Without the
+    // guard every repaint would make a silent server look freshly seen, and the dim -- the
+    // only signal that a listed host has stopped answering -- could never arrive.
+    if (g_lastRowsGen != prevGen || g_fetchedAtMs == 0) g_fetchedAtMs = ::GetTickCount64();
     const int want = static_cast<int>(g_rows.size()) > kMaxRows ? kMaxRows
                                                                : static_cast<int>(g_rows.size());
     // THE TRUNCATION IS NO LONGER SILENT. `kMaxRows` bounds the whole sync loop, so a
@@ -598,8 +673,6 @@ void Sync() {
         E::SetWidgetVisibility(rp.box, 0);
         const Row& r = g_rows[static_cast<size_t>(i)];
         const bool isOwn = !own.empty() && r.lobbyId == own;
-        bool mismatch = false;
-        const std::wstring ver = VersionCell(r, mismatch);
 
         // THE LOCK MARKER, and it says the same letter the other surface says.
         //
@@ -609,17 +682,17 @@ void Sync() {
         // in its first column since it was written; the native one drew nothing, which the
         // parity gate (tools/ui/browser_parity_gate.py) now fails on.
         //
-        // It is a NAME PREFIX rather than a sixth column because the row is five text
-        // blocks wide by construction and "(your server)" already establishes the idiom of
+        // It is a NAME PREFIX rather than a column of its own: the redesign's row is a
+        // title plus one fact, and "(your server)" already establishes the idiom of
         // qualifying the name in place. Same letter as the fallback deliberately: two
         // surfaces describing one lobby differently is the drift this lane exists to end.
-        SetRowText(rp.text[0],
+        SetRowText(rp.text[kCellName],
                    std::string(r.locked ? "L  " : "") +
                    (isOwn ? r.name + "   (your server)" : r.name));
-        SetRowText(rp.text[1], std::to_string(r.playersCur) + "/" + std::to_string(r.playersMax));
-        if (rp.text[2]) E::SetWidgetText(rp.text[2], ver.c_str());
-        SetRowText(rp.text[3], r.world);
-        SetRowText(rp.text[4], std::to_string(r.ageSec) + "s");
+        SetRowText(rp.text[kCellFlag], MismatchMark(r));
+        SetRowText(rp.text[kCellPlayers],
+                   "Players: " + std::to_string(r.playersCur) + "/" +
+                   std::to_string(r.playersMax));
         // SELECTION IS KEYED ON THE LOBBY, NOT THE ROW INDEX. The client now sorts, so the
         // order is stable for a given SET -- but the SET churns, and one host leaving
         // shifts every row after it. A refresh can therefore still put a different server
@@ -634,7 +707,7 @@ void Sync() {
         // the right conclusion; a post-ship audit read the `assign` and caught it.)
         const bool sel = !g_selectedId.empty() && r.lobbyId == g_selectedId;
         ApplyRowSkin(rp, i == g_hoverRow, sel);
-        ApplyRowTextColors(rp, r, isOwn, mismatch, i == g_hoverRow, sel);
+        ApplyRowTextColors(rp, r, isOwn, IsStale(r), i == g_hoverRow, sel);
         // The id is captured HERE, in the same pass as the text above it, so a click
         // resolves to the server the user was LOOKING at even if the master reorders.
         g_rowIds[static_cast<size_t>(i)] = r.lobbyId;

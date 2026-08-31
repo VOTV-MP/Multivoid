@@ -42,9 +42,10 @@ namespace ui::server_browser_rows {
 
 // ---- construction -------------------------------------------------------------------
 
-// The column header strip, added to `parent` (a UVerticalBox). Built here because the
-// weights it uses are the row weights.
-void BuildHeader(void* parent);
+// `BuildHeader` RETIRED 2026-08-31 (RULE 2): the five-column table it labelled is gone --
+// a row is now a NAME plus one right-hand fact, on the save browser's anatomy, and there is
+// nothing left for a header strip to name. Everything it used to abbreviate into a column
+// (world, the full version pair, the age) is spelled out in the details panel instead.
 
 // Adopt the panel the rows live in, and forget every row identity. Call it with the new
 // panel when the screen is built, and with `nullptr` when the menu instance dies and the
@@ -74,6 +75,19 @@ void Sync();
 // `session_manager::RowsGeneration()` so a lobby that arrives between two timed fetches is
 // drawn on arrival rather than at the next tick of the 5 s cadence.
 uint64_t PaintedGeneration();
+
+// HOW MANY SERVERS THE MASTER LISTED, and HOW LONG AGO WE HEARD IT (ms; 0 = never).
+//
+// The DATA count, not the number of row widgets: the two differ whenever the list is longer
+// than the pool, and the status pane's job is to report the world, not our rendering of it.
+int      Count();
+uint64_t MsSinceFetch();
+
+// A ROW'S AGE AS OF NOW -- the master's seconds-since-heartbeat plus however long we have
+// been holding the list. `ageSec` alone is a snapshot that stops being true on arrival, and
+// two readers already needed the corrected value (the row dim and the details panel), which
+// is why it is here rather than open-coded at each.
+int AgeNowSec(const coop::net::lobby::LobbyRow& r);
 
 // ---- pointer ------------------------------------------------------------------------
 

@@ -51,6 +51,8 @@ FLinearColor Hover()  { return Srgb(0xFF, 0xFF, 0x00); }
 FLinearColor Amber()  { return Srgb(0xFF, 0xBC, 0x00); }
 FLinearColor Dim()    { return Srgb(0xA5, 0xA5, 0xA5); }
 FLinearColor Own()    { return Srgb(0x9E, 0xEA, 0xB3); }
+FLinearColor Bad()    { return Srgb(0xFF, 0x00, 0x00); }
+FLinearColor Black()  { return Srgb(0x00, 0x00, 0x00); }
 
 void* ReadPtr(void* base, int32_t off) {
     return (base && off >= 0) ? *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(base) + off)
@@ -119,6 +121,54 @@ void* AddText(void* panel, const wchar_t* initial, int32_t size, const FLinearCo
 // full-screen scrim works -- so this needs no donor and no art.
 //
 // Returns the OVERLAY the caller should put content in; content lands above the fill.
+namespace {
+
+// The one write both AddHFill and AddVFill perform, so the Fill-vs-Automatic rule is
+// expressed once. ESlateSizeRule: Automatic=0, Fill=1.
+void WriteChildSize(void* slot, size_t sizeOff, float weight) {
+    auto* s = reinterpret_cast<uint8_t*>(slot) + sizeOff;
+    *reinterpret_cast<float*>(s + P::off::FSlateChildSize_Value) = weight > 0.f ? weight : 1.f;
+    *(s + P::off::FSlateChildSize_SizeRule) = weight > 0.f ? 1 : 0;
+}
+
+}  // namespace
+
+void SetHSlot(void* slot, float weight, uint8_t h, uint8_t v) {
+    if (!slot) return;
+    WriteChildSize(slot, P::off::UHorizontalBoxSlot_Size, weight);
+    U::SetSlotAlign(slot, P::off::UHorizontalBoxSlot_HAlign,
+                    P::off::UHorizontalBoxSlot_VAlign, h, v);
+}
+
+void SetVSlot(void* slot, float weight, uint8_t h, uint8_t v) {
+    if (!slot) return;
+    WriteChildSize(slot, P::off::UVerticalBoxSlot_Size, weight);
+    U::SetSlotAlign(slot, P::off::UVerticalBoxSlot_HAlign,
+                    P::off::UVerticalBoxSlot_VAlign, h, v);
+}
+
+void* SlotOf(void* widget) {
+    return ReadPtr(widget, static_cast<int32_t>(P::off::UWidget_Slot));
+}
+
+void* AddHFill(void* hbox, void* child, float weight, uint8_t h, uint8_t v) {
+    void* slot = U::AddChild(hbox, child);
+    SetHSlot(slot, weight, h, v);
+    return slot;
+}
+
+void* AddVFill(void* vbox, void* child, float weight, uint8_t h, uint8_t v) {
+    void* slot = U::AddChild(vbox, child);
+    SetVSlot(slot, weight, h, v);
+    return slot;
+}
+
+void SetSlotPadding(void* slot, size_t padOff, float l, float t, float r, float b) {
+    if (!slot) return;
+    auto* pad = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(slot) + padOff);
+    pad[0] = l; pad[1] = t; pad[2] = r; pad[3] = b;
+}
+
 void* AddFramedBox(void* parent, const FLinearColor& fill, float borderPx) {
     void* box = Spawn(L"Overlay", parent);
     if (!box) return nullptr;

@@ -47,6 +47,16 @@ void LobbyClient::RefreshAsync(const std::string& masterUrl, const std::string& 
 
         std::vector<LobbyRow> parsed;
         std::string st;
+        // A FAILED FETCH DOES NOT MEAN "THERE ARE NO SERVERS", and until 2026-08-31 it was
+        // published as exactly that: `rows_ = std::move(parsed)` ran on every path, so one
+        // unanswered 8 s request emptied the browser and the player watched every server
+        // they could see disappear. The master is not the world; it is our view of it, and
+        // losing the view is not the same as the view being empty.
+        //
+        // MTA does not delete on a failed query either -- `CServerListItem` stays in the
+        // list and goes half-alpha (`bMaybeOffline`), which is the same treatment the rows
+        // now give a stale entry. So `ok` decides whether the parse REPLACES the list.
+        bool ok = false;
         if (!resp.ok) {
             st = "master unreachable (" + masterUrl + ")";
         } else if (resp.status != 200) {
@@ -128,6 +138,7 @@ void LobbyClient::RefreshAsync(const std::string& masterUrl, const std::string& 
                             "after sorting and dropping the rest", parsed.size(), kMaxLobbies);
                     parsed.resize(kMaxLobbies);
                 }
+                ok = true;
                 st = std::to_string(parsed.size()) +
                      (parsed.size() == 1 ? " server" : " servers");
             } else {
@@ -137,7 +148,18 @@ void LobbyClient::RefreshAsync(const std::string& masterUrl, const std::string& 
 
         {
             std::lock_guard<std::mutex> lk(mu_);
-            rows_ = std::move(parsed);
+            if (ok) {
+                rows_ = std::move(parsed);
+                consecutiveFailures_ = 0;
+            } else if (consecutiveFailures_ < 1000000) {
+                ++consecutiveFailures_;
+            }
+            // THE GENERATION MOVES ON EVERY COMPLETED ATTEMPT, success or not. It is the
+            // "something happened, repaint" signal the browser polls, and after a failure
+            // there IS something to repaint -- the rows' ages advanced and the status line
+            // changed. Bumping it only on success would freeze the screen's clock at the
+            // last good fetch, which is the opposite of what a player needs to see when the
+            // master has gone quiet.
             ++generation_;
             status_ = st;  // keep st for the log line below
         }
@@ -148,6 +170,7 @@ void LobbyClient::RefreshAsync(const std::string& masterUrl, const std::string& 
       } catch (...) {
         std::lock_guard<std::mutex> lk(mu_);
         status_ = "refresh error";
+        if (consecutiveFailures_ < 1000000) ++consecutiveFailures_;
       }
       inFlight_.store(false);  // ALWAYS clear (the latch that gates the next refresh)
     }).detach();
@@ -167,6 +190,11 @@ uint64_t LobbyClient::Generation() const {
 std::string LobbyClient::Status() const {
     std::lock_guard<std::mutex> lk(mu_);
     return status_;
+}
+
+int LobbyClient::ConsecutiveFailures() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    return consecutiveFailures_;
 }
 
 LatestInfo LobbyClient::FetchLatest(const std::string& masterUrl, int timeoutMs) {
