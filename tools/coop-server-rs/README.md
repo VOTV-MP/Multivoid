@@ -5,26 +5,33 @@ mod.** Wire-compatible with the Python originals (identical JSON endpoints,
 identical signaling line protocol, byte-exact coturn TURN credential) so old + new
 could run in parallel during cutover.
 
-Status: **AS-BUILT and DEPLOYED — but the DEPLOYED BINARIES ARE TWO ARCS BEHIND
-THE TREE (measured 2026-08-31).** coturn stays as-is (not ported).
+Status: **AS-BUILT, DEPLOYED, AND CURRENT — cut over 2026-08-31.** For two days
+before that the deployed binaries were two arcs behind the tree; they are not any
+more. coturn stays as-is (not ported).
 
-| on the box | built | what it is missing |
+| on the box | binary | proven in production 2026-08-31 |
 |---|---|---|
-| `coop-master` | **2026-08-28** | the `gen:`-key requirement at `/v1/host` (A59), and `hostIdentity` on `/v1/join`'s DIRECT response — without which a password-locked DIRECT lobby cannot be joined from the browser |
-| `coop-signaling` | **2026-07-20** | the whole A59 registration challenge. `[V]` `python tools/sig_gate.py --remote <relay> --plaintext` → **FAIL C, it does not challenge at all**, so a b145+ client fails closed on P2P in production today |
+| `coop-master` | b149 source, `18663ad7054f6dab` | `/v1/join` DIRECT returns `hostIdentity`; an identity-less b≤133 host gets the named 400 |
+| `coop-signaling` | b149 source, `ce2212a1e8fc7eed` | `sig_gate --remote` **PASS 14/14** — the A59 registration challenge. The binary it replaced was **FAIL C, no challenge at all** |
 
-The `COOP_MAX_BUILD` redeploy this line used to name is **moot** — that gate was
-retired whole on 2026-08-31 (`24418b66`; `master.rs:348`), and a value left in an
-env file is ignored.
+`[V]` **before/after on the live relay, not inferred from the staged run**: FAIL C
+on the old binary, PASS 14/14 after the restart, same instrument minutes apart.
+TLS verified from outside afterwards (`:10443/healthz` → 200, `:10442` → TLS 1.2).
 
-**The replacements are BUILT AND PROVEN, only the cutover is left** (2026-08-31):
-built on the box from `HEAD:tools/coop-server-rs`, `cargo test --release` 15/15,
-staged on ports 10010/10011 beside production and measured there — `sig_gate`
-**PASS 14/14**, `/v1/join` DIRECT carries `hostIdentity`, an identity-less b<=133
-host gets the named 400. **It was deliberately NOT cut over**: the restart retires
-the b<=133 cohort, and b133-dev is still the newest published release, so it must
-land with the release and not before. Procedure + ordering:
-`docs/RELEASE.md` — the flag-day section and step 6c.
+Two consequences worth knowing before touching the box:
+
+- **The b≤133 cohort is retired and that is now LIVE**, not pending. Within seconds
+  of the restart the relay refused three real IPs by name and the one listed lobby
+  (proto 133) was dropped. Authorised by the user, whose call was that the master
+  had to be current before their local zip test and the cohort was not a reason to
+  wait.
+- **`COOP_MAX_BUILD` is deleted from `/etc/coop-master.env`.** The gate was retired
+  whole on 2026-08-31 (`24418b66`; `master.rs:348`) and the value was ignored, but
+  left in place it is a stale claim that would re-arm on a rollback.
+
+Rollback set on the box: `coop-master.bak-20260831`,
+`coop-signaling.bak-20260831`, `/etc/coop-master.env.bak-20260831`.
+Deploy recipe (CRLF trap, `ETXTBSY`, the differential): `docs/RELEASE.md` step 6c.
 
 `tools/coop_signaling_server.py` was **retired 2026-08-29** (RULE 2): the cutover
 was finished and its last job was to be the local fixture four rig scenarios

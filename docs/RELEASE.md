@@ -77,24 +77,41 @@ row is **b133-dev (2026-07-31)**; 134-148 were never released and the sequence k
    (`docs/THUNDERSTORE.md` §3a — allowed, first-class, 51 of 188 VOTV packages use one, one of
    them a Boosty link).
 
-### The VPS work — the part with no step of its own until now
+### The VPS work — DONE, ahead of the day (cutover 2026-08-31)
 
-**Two services, both stale, both already built and proven** (2026-08-31 — see step 6c):
+**Both services now run the current source. This section is AS-BUILT; it used to be the largest
+open item on the list.**
 
-| service | deployed | what the new one changes |
+The user's call, verbatim: *"Значит Когда я буду zip тестировать, то к этому моменту уже надо
+мастер сервер полностью обновить, плевать на когорту."* — the master must be current before their
+local zip test, and the b≤133 cohort is not a reason to wait. That overrides the ordering argument
+this section used to make (kept below, struck, because its reasoning is still the right *shape* for
+the next time a cutover competes with a live cohort).
+
+| service | now running | proven in production |
 |---|---|---|
-| `coop-signaling` | **Jul 20** binary, pre-A59 | challenges every registration (Ed25519). `sig_gate` against the deployed one is **FAIL C — it does not challenge at all**, so A59 is unfixed in production and any b145+ client fails closed on P2P there |
-| `coop-master` | **Aug 28** binary (b143-era) | `/v1/host` requires the host's own `gen:` key; `/v1/join` returns `hostIdentity` on DIRECT lobbies (without it a password-locked DIRECT lobby is unjoinable) |
+| `coop-signaling` | b149 source, `ce2212a1e8fc7eed` (was a **Jul 20** pre-A59 binary) | `sig_gate --remote` **PASS 14/14** — the same gate against the old one was **FAIL C, no challenge at all** |
+| `coop-master` | b149 source, `18663ad7054f6dab` (was **Aug 28**, b143-era) | `/v1/join` on a DIRECT lobby returns `hostIdentity`; an identity-less b≤133 host gets the named 400 |
 
-Binaries built on the box from `HEAD:tools/coop-server-rs` (`cargo test --release` **15/15**),
-staged on 10010/10011 and measured there: `sig_gate` **PASS 14/14**, `/v1/join` direct carries
-`hostIdentity`, an identity-less b≤133 host gets the named 400. **Only the install + restart is
-left** — and it must be redone from the *tag's* source if the crate moved since.
+`[V]` **the before/after differential was taken on the live relay, not inferred from the staged
+run**: FAIL C at 15:4x, PASS 14/14 after the restart, same instrument, same tunnel, same token.
+Installed binaries are byte-identical to the staged ones (`18663ad7…` / `ce2212a1e8fc7eed`), whose
+source was confirmed equal to `HEAD:tools/coop-server-rs` file-by-file modulo line endings.
+Both TLS legs verified from **outside** the box afterwards: `https://…:10443/healthz` → 200,
+signaling `:10442` → TLS 1.2 handshake OK.
 
-**What breaks the instant both restart:** every b≤133 host is de-listed and its re-registration
-answered *"this build is too old to host — update Multivoid"*. That is the intended cohort
-retirement (user decision 2026-08-29) — the point is only that it must not happen while the
-update it names does not exist. Three lobbies were live when this was measured.
+**The cohort retirement is real and immediate** — within seconds of the restart the relay log
+carried three separate real IPs refused by name (*"identity 'str:h…' is not a key… that cohort is
+retired; it must update"*), and the one listed lobby (`gogofast`, proto 133) was dropped. This was
+authorised, and it is the state the release now ships into rather than a change the release makes.
+
+Also retired in the same pass: `COOP_MAX_BUILD` is **deleted from `/etc/coop-master.env`**. The new
+binary ignores it (`24418b66`), so it was dead input — but left in place it is a stale claim in a
+config file, and it would silently re-arm the tester-denying ceiling on any rollback to the old
+binary. `/etc/coop-master.env.bak-20260831` holds the previous file.
+
+**What is still owed on the box:** `COOP_LATEST_*` (below — the one knob deliberately not set yet,
+because it must name a release that exists).
 
 **A trap in our own gate, and it is PYTHON-specific — not the box.** `sig_gate --remote` over TLS
 dies with `CERTIFICATE_VERIFY_FAILED: certificate has expired`, while `verify_latest.ps1` reaches
@@ -105,16 +122,22 @@ schannel finds the valid one. So the fix is a `--cafile` (or `certifi`) in `sig_
 machine repair. Until then the only way to run the BLOCKING gate here is `--plaintext` against port
 10000. Do not discover this at the tag.
 
-**The update notice is stable-only, and this release IS a dev prerelease — so the collision is
-live, not hypothetical.** `COOP_LATEST_*` is commented out in `/etc/coop-master.env`, so
-`/v1/latest` serves `proto 0` and the in-game check stays silent. Ritual step 6 sets it *for
-stable releases only*. With the user's 2026-08-31 decision that b<N> ships as **dev**, a b133
-player is refused at `/v1/host` with *"this build is too old to host — update Multivoid"* and the
-game never points them anywhere. **Recommendation: set `COOP_LATEST_PROTO` / `COOP_LATEST_MOD`
-anyway, this once** — the stable-only rule exists to stop dev builds nagging stable users, and
-there are no stable users; on the one day we cut a cohort off, telling them where to go is the
-whole job. Still the user's call. If the answer is no, the refusal string is the only notice the
-player gets, and the release notes + Discord have to carry the rest.
+**`COOP_LATEST_*` IS THE ONE THING THE CUTOVER COULD NOT DO EARLY, AND IT IS NOW THE ONLY NOTICE
+THE CUT-OFF COHORT WILL EVER GET.** It stays commented out in `/etc/coop-master.env` (so
+`/v1/latest` serves `proto 0` and the in-game check is silent) for one reason only: it must name a
+release that exists, and none does yet. Everything else about the retirement already happened.
+
+So as of 2026-08-31 a b133 player is refused at `/v1/host` with *"this build is too old to host —
+update Multivoid"* **and the game points them nowhere.** That is the live state, not a risk.
+Setting this at publish time is what ends it.
+
+**Recommendation, unchanged and now more pointed: set `COOP_LATEST_PROTO` / `COOP_LATEST_MOD`
+anyway, this once**, even though the release is a dev prerelease. Ritual step 6 calls the knob
+stable-only, but `[V]` that is a convention of this checklist and not a property of the code
+(step 7) — the rule exists to stop dev builds nagging stable users, and there are no stable users.
+On the one day a cohort is cut off, telling them where to go is the whole job. Still the user's
+call; if the answer is no, the refusal string is the only notice a player gets and the release
+notes + Discord have to carry the rest.
 
 ### Before the day — free, and worth doing
 
@@ -131,13 +154,11 @@ player gets, and the release notes + Discord have to carry the rest.
   - **The same run answers the three open field defects**, all of which were parked on this
     redeploy: **#2** "No players" on tilde, **#3** F1 skin not applying, **#4** hosting fails
     silently. Shipping #2 or #3 into the first Thunderstore package would ship them **immutably**.
-  - **To get a session before the cutover, point the client at the STAGED pair** (`net.master.custom=1`
-    + `net.master` / `net.signaling`; env `VOTVCOOP_MASTER_URL`, `VOTVCOOP_NET_SIGNALING`) — and
-    **open the ports first**: `[V]` ufw is default-DROP and allows only 10000/10001/3478/22/443/8443,
-    so 10010/10011 are unreachable from outside (the 2026-08-31 `sig_gate` run reached them only
-    through an SSH tunnel). `ufw allow 10010/tcp` + `10011/tcp` with a comment, and **delete both
-    afterwards**. The alternative is simply to do this re-test *after* the cutover, which costs
-    nothing extra if the release is the same sitting.
+  - **Nothing special is needed to reach a session any more — the cutover happened first, on the
+    user's instruction, exactly so this test would not have to route around it.** Point the client
+    at the normal production endpoints. The whole staged-pair + `ufw allow 10010/tcp` dance this
+    bullet used to prescribe is **deleted**, not deferred: the staged listeners are down and the
+    ports were never opened.
 - **Push.** Dozens of commits were unpushed when this was written and the backlog only grows; the
   tag must be reachable on origin. Check with `git log --oneline origin/main..HEAD | wc -l`, and
   run the 5-axis leak audit per commit before asking.
@@ -157,29 +178,32 @@ Ritual steps in brackets.
    `README_thunderstore.md` (one-shot — see first #5) and `COOP_LATEST_*` (below — and being a
    dev release is exactly what makes it bite).
 3. Tag + consume row + one atomic leak-audited push [1-3].
-4. **While CI builds (~40 min):** rebuild the two Rust binaries on the box from the tagged source,
-   back up the live ones, but **do not restart yet**.
-5. Watch the run green; confirm the release page shows the zip + SHA256 [4]. Append `published` [5].
-6. **Now restart both services** — install, `systemctl restart coop-master coop-signaling`.
-7. `sig_gate --remote` → must be **PASS** [0's blocking gate] · `/v1/join` on a DIRECT lobby →
-   `hostIdentity` [6c] · if stable-or-decided: `COOP_LATEST_*` + restart [6] →
-   `verify_latest.ps1` [7].
-8. Thunderstore upload — `docs/THUNDERSTORE.md`, pre-flight checklist first. Irreversible.
-9. Site deploy — `zola build` → `npx wrangler pages deploy public --project-name multivoid-site`.
+4. Watch the run green; confirm the release page shows the zip + SHA256 [4]. Append `published` [5].
+5. **`COOP_LATEST_*` in `/etc/coop-master.env` + `systemctl restart coop-master`** [6] →
+   `verify_latest.ps1 -AllowDev` [7]. This is the only VPS work the day still carries, and the
+   only thing that tells the retired cohort where to go.
+6. **Re-confirm the two server gates on the released build** — `sig_gate --remote` **PASS**
+   [0's blocking gate] and `/v1/join` on a DIRECT lobby → `hostIdentity` [6c]. Both passed in
+   production on 2026-08-31; this is a re-confirmation after the step-5 restart, not a first look.
+7. Thunderstore upload — `docs/THUNDERSTORE.md`, pre-flight checklist first. Irreversible.
+8. Site deploy — `zola build` → `npx wrangler pages deploy public --project-name multivoid-site`.
 
-**Why the restart is step 6 and not step 0, against the letter of ritual step 0.** That step says
-redeploy *then* publish, and its reason is real: a new build against an old relay loses P2P for
-everyone at once. But at publish time the new cohort is **empty** and the old cohort is **live**.
-Restarting first kills three real sessions for the ~40 minutes of the CI build with nothing to
-download; restarting immediately after the page goes live costs the new cohort a few minutes of
-P2P while it has no members. The gate's *evidence* already exists either way — `sig_gate` passed
-14/14 on the staged binaries built from this source — so the production run at step 7 is the
-confirmation, not the first look. **They remain ONE SITTING; only the order inside it moves.**
+**~~Why the restart is step 6 and not step 0~~ — SUPERSEDED 2026-08-31, but the reasoning is kept
+because the situation recurs.** The argument was: ritual step 0 says redeploy *then* publish, and
+its reason is real (a new build against an old relay loses P2P for everyone at once) — but at
+publish time the new cohort is empty and the old one is live, so restarting first kills real
+sessions for the ~40 minutes of the CI build with nothing to download. **The user overruled the
+premise rather than the conclusion:** the cohort's comfort was not worth sequencing the release
+around, and a master that is already current makes their own zip test straightforward. So the
+cutover was done days early and the ordering question dissolved. Next time a cutover competes with
+a live cohort, this trade-off is the one to weigh — and *ask*, rather than optimising it silently.
 
 ### Rollback
 
-The previous binaries are kept on the box (`coop-master.bak-*`, `*.prev`). Restore + restart is
-seconds and restores the b133 cohort. What a rollback does **not** undo: a Thunderstore upload
+The previous binaries are kept on the box — **`coop-master.bak-20260831`,
+`coop-signaling.bak-20260831`** (plus the older `.bak-20260829` / `.prev`), and
+`/etc/coop-master.env.bak-20260831`. Restore + restart is seconds and un-retires the b133 cohort.
+What a rollback does **not** undo: a Thunderstore upload
 (never delete — deprecate), a published GitHub release (retract per "When something goes wrong",
 and a retracted N never republishes), or a site deploy (redeploy the previous build).
 
@@ -284,42 +308,37 @@ NOT stable-only):
    restart for version reasons; `COOP_MAX_BUILD`/`COOP_ALLOWED_BUILDS` left in an env file
    are simply ignored.
 
-6c. **A MASTER REDEPLOY IS OWED FOR A FEATURE REASON, WHICH IS NOT THE SAME THING (added
-   2026-08-31, still OUTSTANDING as of proto 149).** Step 6b retired the *version* reason
+6c. **~~A MASTER REDEPLOY IS OWED FOR A FEATURE REASON~~ — DONE 2026-08-31, cut over ahead of
+   the release on the user's instruction. This step is now a CHECK, not an errand.**
+   `[V]` in production: `/v1/join` on a DIRECT lobby returns `hostIdentity`, `sig_gate --remote`
+   is **PASS 14/14** (the same gate was **FAIL C** on the previous binary minutes earlier), and an
+   identity-less b≤133 host is refused with the named 400. Evidence and the rollback set are in
+   the flag-day section above. Everything below is kept as the reason the check exists.
+   Step 6b retired the *version* reason
    and it stays retired. But `/v1/join`'s DIRECT response now carries `hostIdentity`
    (`master.rs:618`), and a joiner needs that value to bind the host's key before it will
-   send a lobby-password proof. Until the deployed master serves it:
+   send a lobby-password proof. Without it,
    **a PASSWORD-LOCKED lobby hosted in DIRECT mode cannot be joined from the browser at
    all** -- the client refuses itself with "nothing told us which host we were dialling".
    Open direct lobbies and every AUTO lobby are unaffected, and the client treats the field
-   as optional so an old master degrades rather than breaks.
-   Check before shipping a release that advertises the lock:
+   as optional so an old master degrades rather than breaks. That is why this is a standing
+   check and not a one-time errand: it re-breaks silently on any rollback or rebuild.
    `curl -s <master>/v1/join -d '{"lobbyId":"<a direct lobby>"}' | grep hostIdentity`.
 
-   **THE BINARIES ARE BUILT AND PROVEN; ONLY THE CUTOVER IS OUTSTANDING (2026-08-31).**
-   Both were built ON the box from `HEAD:tools/coop-server-rs` (`cargo test --release`
-   **15/15**), staged on ports 10010/10011 beside production, and measured there:
-   `/v1/join` on a DIRECT lobby returns `hostIdentity` (this step's own check, **green**),
-   an identity-less b<=133 host is refused with the named 400, and
-   `sig_gate --remote 127.0.0.1:10010 --plaintext` is **PASS 14/14**. The same gate against
-   the *deployed* relay is **FAIL C -- it does not challenge at all**, so A59 is unfixed in
-   production and any b145+ client fails closed on P2P there.
-
-   **WHY IT WAS NOT CUT OVER, and this is the real content of this step: the redeploy
-   RETIRES the published cohort, and today that cohort is the only one there is.** The
-   newest published release is `v0.9.0n-b133-dev` (LEDGER, 2026-07-31), the master refuses
-   every host without a `gen:` key, and the relay refuses every legacy `h<16hex>` name -- so
-   the moment both restart, a b133 host is de-listed and told *"this build is too old to
-   host -- update Multivoid"*, with **no newer build to update to**. Three live lobbies were
-   registered while this was measured. So step 0's ordering is not a formality: **redeploy
-   both, gate, THEN publish -- as one sitting, not as a chore done early.** Deploying ahead
-   of the release buys nothing (no shipped build advertises the lock) and costs every player
-   currently hosting.
-
-   Staging recipe, so the next run is a restart and not a rebuild: upload
-   `git archive HEAD:tools/coop-server-rs`, build on the box, run each binary with
-   `COOP_*_PORT` overridden and `COOP_REQUIRE_TLS=0`, tunnel the relay port, gate it.
-   (`pkill -f stage-coop-master` also matches the shell running it -- kill by PID.)
+   **Deploy recipe (as run 2026-08-31), so the next one is not re-derived.** Build on the box
+   from `git archive <tag>:tools/coop-server-rs` (`cargo test --release`, 15/15). Confirm the
+   uploaded source equals the tag **file-by-file after `tr -d '\r'`** -- a raw `sha256sum`
+   comparison shows 6-of-6 DIFFERENT purely from CRLF and reads exactly like a stale tree.
+   Back up binaries **and `/etc/coop-master.env`** with a dated suffix. A running executable
+   refuses an in-place write (`ETXTBSY`), so `install` to `<name>.new` and `mv -f` over it --
+   `rename()` onto a busy binary is allowed, `cp` onto one is not. Then
+   `systemctl restart coop-master coop-signaling`, and confirm the new PIDs' `/proc/<pid>/exe`
+   resolves to the installed path before believing the restart took.
+   **Take the gate's BEFORE arm against the old binary**, minutes before the swap -- the
+   staged run is evidence about a *file*, and only the differential is evidence about the
+   *deployment*.
+   Two process traps, same root: `pkill -f stage-coop-master` matches the shell running it,
+   and `pkill -f` from Git Bash does not match a Windows `ssh.exe` tunnel at all. Kill by PID.
 7. `tools/release/verify_latest.ps1` — must PASS (it FAILs before step 6 by
    design; fold-aware: reads the newest bare-tag published row). **`-AllowDev`**
    admits dev prereleases, for the case where step 6's env was deliberately
