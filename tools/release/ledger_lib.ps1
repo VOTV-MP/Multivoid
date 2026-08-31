@@ -111,9 +111,22 @@ function Get-LedgerState {
 # The newest BARE-tag row whose state(N) == PUBLISHED (fold-aware -- a retracted
 # N has a published row too; the terminal closes it; R23). Returns $null if no
 # stable has ever been published.
-function Get-NewestStablePublished {
-    param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Rows)
-    $cands = @($Rows | Where-Object { $_.Kind -eq 'published' -and -not $_.Dev })
+# The newest row whose state(N) is PUBLISHED. STABLE-ONLY BY DEFAULT -- that is
+# the closing check's normal contract (docs/RELEASE.md step 7).
+#
+# -IncludeDev admits dev prereleases, for the case where the master's
+# COOP_LATEST_* was deliberately pointed at one. That is not a hypothetical:
+# `[V]` the CLIENT has no dev/stable axis at all -- session_manager.cpp:334-347
+# compares `info.proto` to `kProtocolVersion` and nothing else -- so
+# "COOP_LATEST_* is stable-only" is a convention of OUR checklist, never a
+# property of the code. When a cohort is being cut off by a dev release, the
+# update notice is the only thing that tells the player where to go, and this
+# switch is what lets the closing check still MEAN something on that day
+# instead of being skipped.
+function Get-NewestPublished {
+    param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Rows,
+          [switch]$IncludeDev)
+    $cands = @($Rows | Where-Object { $_.Kind -eq 'published' -and ($IncludeDev -or -not $_.Dev) })
     for ($i = $cands.Count - 1; $i -ge 0; $i--) {
         $st = Get-LedgerState -Rows $Rows -N $cands[$i].N
         if ($st.State -eq 'PUBLISHED') { return $st }
