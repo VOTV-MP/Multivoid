@@ -3737,6 +3737,7 @@ def cmd_browser(args) -> None:
     t4a_resynced = False
     t4a_reqs_at_shuffle = -1
     extra_shots: dict = {}
+    last_verdicts, last_progress_t = -1, time.time()
     while time.time() - t0 < args.duration:
         time.sleep(3)
         if not list_votv():
@@ -3780,6 +3781,30 @@ def cmd_browser(args) -> None:
         # failure mode the paragraph above describes, committed by the same hand that wrote
         # it. The marker must be the phase that sets step -1, and today that is this one.
         done_marker = "SESSION BACK PASS" in text or "SESSION BACK FAIL" in text
+
+        # A STALLED SELFTEST MUST NOT COST THE FULL CLOCK (user, 2026-08-31: "ты запустил,
+        # меню перед тобой, скриншот сделал, закрыл игру. Вместо этого 5 минут менюшка висит
+        # зачем-то тратя время"). The named marker above only fires when the LAST phase
+        # reaches a verdict; when an earlier phase never runs -- which is exactly the state a
+        # broken build leaves -- the marker can never appear and the loop sits out the whole
+        # duration with nothing left to observe. That is the SAME defect the comment above
+        # describes, one level up: it fixed "the marker is the wrong phase" but not "there is
+        # no marker at all".
+        #
+        # So: progress is a verdict COUNT, and a run that has stopped producing verdicts for
+        # kStallS is done regardless of which phase it reached. The shot is the floor -- once
+        # it exists the run has its minimum evidence and lingering buys nothing.
+        kStallS = 45
+        n_verdicts = text.count(" PASS") + text.count(" FAIL")
+        if n_verdicts != last_verdicts:
+            last_verdicts, last_progress_t = n_verdicts, time.time()
+        if shot and time.time() - last_progress_t > kStallS:
+            log(f"  no new verdict for {kStallS}s and the shot is taken -- stopping "
+                f"(t+{int(time.time()-t0)}s, {n_verdicts} verdicts)")
+            break
+        if getattr(args, "shot_only", False) and shot:
+            log("  --shot-only: evidence collected, stopping")
+            break
         if not saw_shown and "server_browser_native: shown" in text:
             saw_shown = True
             log(f"  t+{int(time.time()-t0)}s browser shown -- capturing")
@@ -5541,6 +5566,10 @@ def main() -> None:
                            help="seconds from LAUNCH (boot alone is ~50 s here)")
     p_browser.add_argument("--memory-limit-gb", type=float, default=12.0,
                            help="per-process commit cap in GB (0 = disabled)")
+    p_browser.add_argument("--shot-only", action="store_true",
+                           help="capture the browser screenshot and EXIT -- for a look at the "
+                                "screen, not a selftest. The full run holds a window open for "
+                                "phases a visual check does not need")
     for flag, kw in host_res: p_browser.add_argument(flag, **kw)
     p_browser.set_defaults(func=cmd_browser)
 

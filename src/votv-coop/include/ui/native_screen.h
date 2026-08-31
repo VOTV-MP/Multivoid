@@ -91,6 +91,12 @@ void* SwitcherChild(void* switcher, const wchar_t* className);
 // Read a UPROPERTY pointer field by NAME off a live object.
 void* DonorField(void* owner, const wchar_t* field);
 
+// Find a widget inside a live UUserWidget's tree BY NAME, via UUserWidget::GetWidgetFromName.
+// Use this instead of DonorField whenever the donor might not be a designer VARIABLE: a UMG
+// widget only gets a UPROPERTY when "Is Variable" is ticked, and `[V]` the frame donor
+// `ui_settings.image_border` has bIsVariable = False, so a field read returns null forever.
+void* DonorChild(void* userWidget, const wchar_t* name);
+
 // NewObject<cls>(outer). Null if the class does not resolve.
 void* Spawn(const wchar_t* cls, void* outer);
 
@@ -130,6 +136,25 @@ void SetSlotPadding(void* slot, size_t padOff, float l, float t, float r, float 
 // THE FRAME: an outer bordered UImage plus an inner fill inset by `borderPx`. Every panel,
 // row, header strip and value cell in VOTV's menus is a bordered box with sharp corners
 // and nothing in the game's UI floats unboxed. Returns the OVERLAY to put content in.
+// THE FRAME DONOR -- a live `ui_settings_C.image_border`, whose FSlateBrush every framed box
+// clones. Set it once per screen build, BEFORE the first AddFramedBox call.
+//
+// WHY A DONOR AND NOT A COLOUR. Our frames were a flat 2 px rectangle in one grey, and the
+// user rejected them as not VOTV's frames. Sampling the native window proves them right, and
+// says why a colour could never have worked: each of the four edges carries its OWN pair of
+// 2 px bands --
+//     top   #838383 -> #606060      left   #5F5F5F -> #515151
+//     bottom  #333333 -> #202020    right  #383838 -> #292929
+// -- a raised bevel lit from the top-left. That is not a rectangle outline in any colour; it
+// is `[V]` the MATERIAL `inst_uiBorder` drawn as a 9-slice box with Margin 0.5, which is what
+// `ui_settings`'s `image_border` carries. So the fix is to stop inventing a frame and clone
+// the game's, exactly as the BACK button already clones `button_back`'s style.
+//
+// Null is tolerated and degrades to the old flat fill: a frame is cosmetic, and the
+// fail-CLOSED rule that governs the browser's other donors exists because THOSE decide
+// whether a screen is usable at all. Losing the bevel is not that.
+void SetBorderDonor(void* donorImage);
+
 void* AddFramedBox(void* parent, const FLinearColor& fill, float borderPx);
 
 // A chrome UButton with an authored text label, styled from a donor UButton -- a REAL

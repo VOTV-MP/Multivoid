@@ -172,6 +172,16 @@ bool BuildScreen(void* switcher) {
     // still closes would be tolerable; a missing donor means we do not know what else
     // moved in this build, and the fail-closed rule exists for exactly that.
     void* backDonor = DonorField(saveSlots, L"button_back");
+    // The FRAME donor. NOT in the required set: a missing bevel is cosmetic, while every
+    // donor above decides whether the screen works at all. `[V]` ui_settings.image_border
+    // carries the material `inst_uiBorder` as a 9-slice box with Margin 0.5 -- the thing our
+    // flat rectangle was imitating and could not match, because each native edge has its own
+    // pair of greys. Set before ANY AddFramedBox call below.
+    void* borderDonor = NS::DonorChild(settings, L"image_border");
+    NS::SetBorderDonor(borderDonor);
+    if (!borderDonor)
+        UE_LOGW("server_browser_native: frame donor ui_settings.image_border NOT found -- "
+                "windows fall back to the flat border (cosmetic, not fatal)");
     if (!fillDonor || !barDonor || !backDonor) {
         if (++g_buildAttempts >= 15 && !g_toldTheUser) {
             g_toldTheUser = true;
