@@ -36,7 +36,7 @@ the values are the colours the game actually paints and not antialiasing between
 | role | value | where it was measured |
 |---|---|---|
 | Window fill | `#1A1A1A` | Settings window body, `SERVER_BROWSER_0` |
-| Window / panel border | `#646464` | Settings window frame |
+| Window / panel border | `#646464` | Settings window frame — **SUPERSEDED, see section 9**: the frame is the material `inst_uiBorder`, not a flat colour, and each edge has its own band pair |
 | Row fill (normal) | `#313131` | section rows, `SERVER_BROWSER_0`; unselected save rows, `_9` |
 | Row fill (alternate / inset cell) | `#404040` | setting rows and keybind value cells, `_2` / `_5` |
 | Row fill **SELECTED** | `#400040` | the expanded save slot, `_9` |
@@ -153,7 +153,7 @@ capture shows the frames). S8 was already correct. What remains open is listed u
 
 | # | gap | target | state |
 |---|---|---|---|
-| S1 | No panel border. The window is a cloned 9-slice from `ui_saveSlots.Image_0` with no frame. | 2 px `#646464` frame, `#1A1A1A` fill | **DONE** — `AddFramedBox` |
+| S1 | No panel border. The window is a cloned 9-slice from `ui_saveSlots.Image_0` with no frame. | ~~2 px `#646464` frame~~ **SUPERSEDED by section 9** — the target was wrong: a flat rectangle is what the user rejected twice; the frame is a cloned 9-slice of `inst_uiBorder` | **DONE, then REDONE 2026-08-31** — `AddFramedBox` |
 | S2 | Title is cyan and left-aligned, on no strip. | white, centred, own bordered header strip | **DONE** |
 | S3 | Rows have a flat `rgba(1,1,1,0.05)` tint and no border. | `#313131` fill, thin border, per-row box | **DONE** — fill `95d18cc5`, the per-row FRAME 2026-08-30 (`AddFramedBox`) |
 | S4 | **No hover.** The user's report. | label cells → `#FFFF00` on hover | **DONE** — `UpdateHover`; 2026-08-30 the row's FRAME turns `#FFFF00` too, see 5b |
@@ -267,3 +267,59 @@ source PNG at full size, over glyph bodies, with a histogram.
   background reject for text.
 * This file is DESIGN + measurement. **§5's S1-S9 and its per-row-border item are BUILT**
   (2026-08-30); §5b is built; §6's cyan question outside the browser is still open.
+
+---
+
+## 9. THE FRAME IS A MATERIAL, NOT A COLOUR (AS-BUILT 2026-08-31, `c6499566` + `ce223e4f`)
+
+**This section SUPERSEDES the "Window / panel border `#646464`" row in section 2 and the S1 row in
+section 5, both of which specify a flat 2 px rectangle. Building that rectangle is what the user
+rejected, twice.**
+
+Verbatim: *"У нас рамка сервер браузера и наших нативных окон - неправильная, не соответствует
+стилю рамок VOTV"*, then *"Всё еще говно ебаное"*, then, with zoom crops, *"видишь же что у votv
+много скосов на рамке"*.
+
+**Why a colour could never have worked.** `[V]` The native frame's four edges each carry their OWN
+pair of 2 px bands -- top `#838383 -> #606060`, left `#5F5F5F -> #515151`, bottom
+`#333333 -> #202020`, right `#383838 -> #292929`: a raised bevel lit from the top-left. No single
+`#646464` rectangle produces that, in any thickness. `[V]` It is not drawn at all -- it is the
+MATERIAL **`inst_uiBorder`**, a 9-slice Box brush with `Margin 0.5`, carried by
+`ui_settings`'s `image_border`. That material is the game's shared UI border: many widget assets
+reference it.
+
+**As-built.** `native_screen::AddFramedBox` clones that brush through `CloneStyle` (0x88 bytes, the
+unreflected `FSlateResourceHandle` at +0x70 zeroed) onto its border image, puts the fill
+UNDERNEATH at full size, and adds a SECOND ring inset by 4. Our window's left edge now samples
+`919191 919191 646464 646464 919191 919191 646464 646464 1A1A1A` -- byte-for-byte identical to a
+native full-res capture. `[V]` autonomous (`mp.py browser --fake-master 12`), NOT hands-on.
+
+**The 4 is VOTV's own, not a pixel guess.** `[V]` seven of eleven border slots across `ui_settings`
+and `ui_saveSlots` carry a slot offset of 4, and `ui_saveSlots.image_border_6` / `image_border_7`
+are a genuine nested pair on parent-and-child canvases exactly 4 apart -- the construction this
+reproduces. Because it is the same KIND of value (a slot offset, which scales with the layout
+transform), our frame drifts under DPI as the game's does.
+
+**THREE TRAPS, each of which cost a full cycle:**
+
+1. `[V]` `image_border` has **`bIsVariable = False`** -- no UPROPERTY -- so a property read
+   (`DonorField`) returns null FOREVER, silently. Its sibling `scrollboxRoot` is `True`, which is
+   why every other donor resolved and hid the asymmetry. Walk the `WidgetTree` by Outer instead
+   (`native_screen::DonorChild`).
+2. `[V]` `UUserWidget::GetWidgetFromName` is **not a resolvable UFunction in this build**. It was
+   tried, measured absent (`fn=0`), and DELETED rather than kept as a fallback.
+3. Cloning alone still gave ONE band: the fill was being added on TOP with an inset and painted
+   over the brush's inner bands.
+
+**AND A MEASUREMENT WARNING THAT APPLIES TO THIS WHOLE FILE.** Section 1 says every value here was
+*"sampled from the reference PNGs"*. `ignore_folder/votv_widgets_style/` holds eleven captures
+ranging from 546x570 to 1885x1046, **and the small ones cannot resolve a 4 px band**. The one-ring
+reading above was taken from the 546 px file and was wrong about the count. Any sub-4-px claim in
+this document inherits that doubt -- re-sample it against
+`SERVER_BROWSER_4_keybinds_tab_opens_new_window.png` (1885x1046) before relying on it.
+See `[[lesson-a-reference-capture-must-match-the-conditions-of-the-report]]`.
+
+**STILL OPEN:** the user's last screenshot shows *"комбинации лесенок ... нативных лесенок
+комплексных"* -- the step pattern that comes from NESTED framed boxes (window -> panels -> rows ->
+scrollbar). Our ring is correct at every level now, but our nesting DEPTH and the gaps between our
+boxes have NOT been compared against native. That comparison is the remaining work.

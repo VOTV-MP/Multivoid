@@ -3987,6 +3987,19 @@ def cmd_browser(args) -> None:
         return None
 
     log("--- BROWSER VERDICT ---")
+    if getattr(args, "shot_only", False):
+        # A RUN THAT DID EXACTLY WHAT THE FLAG DOCUMENTS MUST NOT REPORT FAILURE. The verdict
+        # block below asserts every selftest phase, and --shot-only deliberately stops before
+        # them -- so it printed ~10 FAILs and exited 2, which trains the operator to ignore
+        # mp.py's exit code (the opposite of what a verdict is for).
+        ok = bool(shot)
+        log(f"  shot-only: {'PASS' if ok else 'FAIL'} -- "
+            f"{'screen built, shown and captured' if ok else 'no capture'} "
+            f"(selftest phases deliberately NOT run)")
+        kill_all()
+        try: fake.kill()
+        except Exception: pass
+        sys.exit(0 if ok else 2)
     fails = []
     # VOID BEATS FAIL, AND IT IS REPORTED FIRST. When the game window does not come up at
     # the size we asked for, Slate's absolute space stops being desktop pixels, every

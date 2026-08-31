@@ -222,7 +222,7 @@ Field* Create(void* parent, const wchar_t* hint, int32_t maxLen, float widthPx) 
     void* box = NS::AddFramedBox(sizer, NS::RowBg(), 2.f);
     if (!box) return nullptr;
     // The frame is the hit target, so it must be a real Visible widget rather than the
-    // HitTestInvisible chrome AddFramedBox gives its two images.
+    // HitTestInvisible chrome AddFramedBox gives its chrome images (two flat, or three once the native border material is cloned).
     E::SetWidgetVisibility(box, 0);
     void* tb = NS::AddText(box, hint ? hint : L"", NS::kBtnFontPx, NS::Dim(), NS::kLeft, 0.f);
     if (!tb) return nullptr;

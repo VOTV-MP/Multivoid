@@ -234,7 +234,9 @@ bool BuildWindowShell(void* switcher, float widthPx, float heightPx, const wchar
     if (void* s = U::AddChild(ovl, scrim))
         U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign, kFill, kFill);
 
-    // THE WINDOW IS A FRAMED BOX, not a cloned 9-slice. Every window in VOTV's menus is a
+    // THE WINDOW IS A FRAMED BOX. (This used to read "not a cloned 9-slice" --
+    // FALSE since 2026-08-31: the frame IS a cloned 9-slice now, of the game's own
+    // `inst_uiBorder`, because a flat rectangle is what the user rejected. See AddFramedBox.)
     // 2 px #646464 frame around a #1A1A1A fill with sharp corners (VOTV_UI_STYLE.md
     // section 3). An earlier version cloned `ui_saveSlots.Image_0`'s brush, which gave a
     // soft borderless panel -- that was the closest thing available before anyone had

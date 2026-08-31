@@ -685,9 +685,28 @@ sub-screen must therefore be painting its own opaque background — which is why
 already leads with a panel fill and a border, and why **P2 must paint one too**. Recorded because
 "the 12th child replaces the menu" was an unstated assumption in every version of this plan.
 
-**CORRECTION 1 — the donor table names a field that does not exist.** `image_border_*` is **not a
-member of `ui_saveSlots_C`** in this build (it exists on `ui_cheatMenu`, `ui_objectUpgrades`,
-`ui_spawnmenu`, `uicomp_dishStatusSlot`, `uicomp_signalSlot`, none of them menu-resident). The
+**CORRECTION 1 — SUPERSEDED 2026-08-31, and the way it was wrong cost two user rejections.
+Read the box below before the paragraph under it.**
+
+> `[V]` `image_border` DOES exist on both `ui_saveSlots_C` (nine of them, `image_border` ..
+> `image_border_8` — `research/pak_re/inv_ui_dump/ui_saveSlots.json`) and on `ui_settings_C`
+> (`image_border` + `image_border_3` — `research/bp_reflection/ui_settings.json`), and
+> `ui_settings` IS menu-resident. What is true is narrower and different: **they are not
+> designer VARIABLES** (`bIsVariable = False`), so they have **no UPROPERTY**, and a property
+> read — which is what the probe below performs — returns null for them forever. Absence of a
+> field is not absence of a widget.
+>
+> The consequence was not academic. This correction sent the browser's frame to `Image_6` and a
+> hand-drawn flat rectangle, which the user rejected twice ("не соответствует стилю рамок VOTV",
+> "Всё еще говно ебаное"). The real donor is `ui_settings.image_border`, whose brush is the
+> MATERIAL `inst_uiBorder` as a 9-slice Box — reachable by walking the `WidgetTree` by Outer
+> rather than by reading a property (`native_screen::DonorChild`, shipped `c6499566`).
+> `docs/VOTV_UI_STYLE.md` §9 is the as-built.
+
+The original text, kept because its *reason* is still the instructive part: `image_border_*` is
+**not a member of `ui_saveSlots_C`** in this build (it exists on `ui_cheatMenu`,
+`ui_objectUpgrades`, `ui_spawnmenu`, `uicomp_dishStatusSlot`, `uicomp_signalSlot`, none of them
+menu-resident). The
 probe carries that row deliberately so the log says so out loud. The measured border candidate on
 that screen is **`Image_6`** (`@+0x340`, resident); the panel fill is `Image_0` (`@+0x338`). The
 table below is left as written with this correction stapled to it rather than silently edited,
@@ -1513,11 +1532,11 @@ load-bearing and should not be silently re-opened.
      | brush | donor |
      |---|---|
      | panel fill | `ui_saveSlots.Image_0` |
-     | border | ~~`ui_saveSlots.image_border_*`~~ **-> `ui_saveSlots.Image_6`** (§8a correction 1: `image_border` is not a field on this class) |
+     | border | ~~`ui_saveSlots.image_border_*`~~ **-> `ui_saveSlots.Image_6`** (§8a correction 1, SUPERSEDED 2026-08-31: `image_border` exists but is not a VARIABLE, so a property read misses it; walk the WidgetTree instead) |
      | button — 3 states **and both sounds** | any `ui_saveSlots.button_*` |
      | text box | `ui_saveSlots.ETB_slotName` |
      | scrollbar | `ui_settings.scrollboxRoot` |
-     | row background | `ui_saveSlots.Image_6` **+ our own tint** — see the note below (was `image_border_*`; §8a correction 1) |
+     | row background | `ui_saveSlots.Image_6` **+ our own tint** — see the note below (was `image_border_*`; §8a correction 1, SUPERSEDED 2026-08-31 — see the box there) |
 
    - **Why the row background is NOT donated by `uicomp_saveSlot` (corrected, `/qf` round 7).** The
      first draft donated it from a live row instance. Measured: `uicomp_saveSlot` references **only**
