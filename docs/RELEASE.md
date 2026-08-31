@@ -114,13 +114,17 @@ STABLE extra (dev releases skip this — `COOP_LATEST_*` is stable-only):
 
 EVERY build that reaches players (dev drops to testers INCLUDED — this one is
 NOT stable-only):
-6b. Bump `COOP_MAX_BUILD=<N>` in the same env file + `systemctl restart coop-master`.
-   This is the /v1/host version gate (2026-08-29): a lobby claiming a build
-   NEWER than the newest actually-distributed one is refused with a clear
-   error ("build bN does not exist"), which is what stopped the field's fake
-   "b148" listing. Forgetting this step blocks NEW-build hosts from listing
-   (they still play; the browser just won't show them) — the gate falls back
-   to `COOP_LATEST_PROTO` when unset, and `COOP_MAX_BUILD=0` disables it.
+6b. ~~Bump `COOP_MAX_BUILD`~~ **RETIRED 2026-08-31 -- this step no longer exists.**
+   The master stopped adjudicating which builds may host, on the user's call: *"Coop max
+   build плохая идея, если она не дает другим тестерам на свежих билдах играть, о которых
+   мастер не знает."* The ceiling denied every tester running a build newer than the
+   deployed value, and since `kProtocolVersion` moves on every wire change that meant a
+   coordinated master redeploy was required BEFORE anyone could host a new build. What it
+   bought was already conceded as unattributable in A58's own residual, and the pollution
+   it aimed at is now handled by the client (red mismatch mark, "which side must update",
+   and a `JoinLobby` refusal before any connection). A release no longer needs a master
+   restart for version reasons; `COOP_MAX_BUILD`/`COOP_ALLOWED_BUILDS` left in an env file
+   are simply ignored.
 7. `tools/release/verify_latest.ps1` — must PASS (it FAILs before step 6 by
    design; fold-aware: reads the newest bare-tag published row).
 

@@ -342,15 +342,15 @@ fn lobbies_per_ip(state: &MasterState, ip: &str) -> usize {
 // lobby list dutifully rendered it (every real client sees an unjoinable
 // impossible-version row: pure pollution, and it reads as "a newer build
 // exists"). The pair is self-reported and host attestation is a separate arc
-// (docs/security/README.md -- peer certificates), so this gate is deliberately
-// modest: refuse SHAPE-invalid game strings and build numbers NEWER than the
-// newest build the project has actually distributed.
+// (docs/security/README.md -- peer certificates), so this gate is now deliberately
+// minimal: it refuses SHAPE-invalid game strings and NOTHING ELSE.
 //
-// `max_build` is DEPLOY CONFIG in the established /v1/latest pattern:
-// COOP_MAX_BUILD (falls back to COOP_LATEST_PROTO), bumped alongside each
-// release / tester distribution; 0 = gate off (the pre-first-release state).
-// COOP_ALLOWED_BUILDS ("133,143") optionally pins the exact released set.
-// proto==0 (legacy pre-v122 hosts) always passes -- they advertise no build.
+// THE BUILD-NUMBER CEILING IS RETIRED (2026-08-31). `COOP_MAX_BUILD` and
+// `COOP_ALLOWED_BUILDS` are no longer read; see version_gate for why. Any
+// deployment still carrying them in /etc/coop-master.env can leave them there --
+// they are simply ignored, so retiring this needs no coordinated redeploy, which
+// is itself the point.
+// proto==0 (legacy pre-v122 hosts) always passed and still does.
 
 /// "0.9.0n" shape: three '.'-separated numeric parts (1-2 digits), the last
 /// with an optional 1-2 letter suffix. Hand-rolled -- no regex dependency.
@@ -371,34 +371,42 @@ fn game_shape_ok(game: &str) -> bool {
 }
 
 /// Pure gate half (env resolved by the caller so this is unit-testable).
-fn version_gate(game: &str, proto: i64, max_build: i64, allowed: &[i64]) -> Result<(), String> {
+///
+/// SHAPE ONLY. THE MASTER DOES NOT ADJUDICATE WHICH BUILDS EXIST -- the proto ceiling
+/// (`COOP_MAX_BUILD`) and the exact-set allowlist (`COOP_ALLOWED_BUILDS`) are RETIRED,
+/// 2026-08-31, on the user's call: "Coop max build плохая идея, если она не дает другим
+/// тестерам на свежих билдах играть, о которых мастер не знает."
+///
+/// They were added for A58 -- a field host advertised a build that did not exist and the
+/// browser listed it, which reads as "a newer version is out". The trade turned out bad in
+/// both directions:
+///
+///   * COST: `kProtocolVersion` moves on EVERY wire change by standing rule, so anyone
+///     running a build newer than the deployed env value was refused hosting outright
+///     ("build bN does not exist"). That is us denying our own testers, and it made every
+///     proto bump require a coordinated master redeploy BEFORE anybody could host.
+///   * BENEFIT: A58's own recorded residual already says number-based gating "cannot
+///     attribute, only bound" -- a spoofer simply claims a REAL number instead.
+///
+/// And the pollution it defended against is now handled honestly by the client, which it
+/// was not when this was written: an unknown build renders with the red mismatch mark, the
+/// details panel names which side must update, and `JoinLobby` refuses on byte-equality
+/// with a popup before any connection is made. A row that cannot be joined says so.
+///
+/// What STAYS is `game_shape_ok`, because that is a PARSING concern (keep arbitrary
+/// strings out of a field every browser renders), not a version-policy one.
+fn version_gate(game: &str, proto: i64) -> Result<(), String> {
     if !game.is_empty() && !game_shape_ok(game) {
         return Err(format!("bad game version '{}'", game));
     }
-    if proto > 0 {
-        if max_build > 0 && proto > max_build {
-            return Err(format!(
-                "build b{} does not exist (newest released build is b{})",
-                proto, max_build
-            ));
-        }
-        if !allowed.is_empty() && !allowed.contains(&proto) {
-            return Err(format!("build b{} is not a released build", proto));
-        }
-    }
+    let _ = proto;
     Ok(())
 }
 
 fn version_gate_env(game: &str, proto: i64) -> Result<(), String> {
-    static MAX_BUILD: LazyLock<i64> =
-        LazyLock::new(|| env_int("COOP_MAX_BUILD", env_int("COOP_LATEST_PROTO", 0)));
-    static ALLOWED: LazyLock<Vec<i64>> = LazyLock::new(|| {
-        env_str("COOP_ALLOWED_BUILDS", "")
-            .split(',')
-            .filter_map(|s| s.trim().parse::<i64>().ok())
-            .collect()
-    });
-    version_gate(game, proto, *MAX_BUILD, &ALLOWED)
+    // No env left to resolve: the ceiling and the allowlist are retired. Kept as a named
+    // seam so the call site still reads as a gate and a future policy has an obvious home.
+    version_gate(game, proto)
 }
 
 fn auth_by_session<'a>(state: &'a MasterState, body: &Value) -> Option<&'a Lobby> {
@@ -1052,32 +1060,29 @@ mod tests {
     }
 
     #[test]
-    fn gate_refuses_impossible_build() {
-        // The field case that motivated the gate: a host advertising b148 when
-        // the newest distributed build is b143.
-        assert!(version_gate("0.9.0n", 148, 143, &[]).is_err());
-        assert!(version_gate("0.9.0n", 143, 143, &[]).is_ok());
-        assert!(version_gate("0.9.0n", 133, 143, &[]).is_ok());
+    fn any_build_number_may_host() {
+        // THE ASSERTION IS INVERTED ON PURPOSE, and it is the point of the change: a
+        // tester running a build the master has never heard of MUST be able to host.
+        // b148 against a "newest released b143" was the case the old ceiling refused,
+        // and refusing it denied our own testers on every proto bump.
+        assert!(version_gate("0.9.0n", 148).is_ok());
+        assert!(version_gate("0.9.0n", 9999).is_ok());
+        assert!(version_gate("0.9.0n", 143).is_ok());
+        assert!(version_gate("0.9.0n", 133).is_ok());
     }
 
     #[test]
-    fn gate_off_and_legacy_pass() {
-        assert!(version_gate("0.9.0n", 9999, 0, &[]).is_ok()); // gate off pre-release
-        assert!(version_gate("", 0, 143, &[]).is_ok());        // legacy pre-v122 host
-        assert!(version_gate("0.9.0n", 0, 143, &[]).is_ok());  // no build advertised
+    fn legacy_and_unadvertised_pass() {
+        assert!(version_gate("", 0).is_ok());        // legacy pre-v122 host
+        assert!(version_gate("0.9.0n", 0).is_ok());  // no build advertised
     }
 
     #[test]
-    fn allowlist_pins_exact_set() {
-        let allowed = [133i64, 143];
-        assert!(version_gate("0.9.0n", 143, 143, &allowed).is_ok());
-        assert!(version_gate("0.9.0n", 140, 143, &allowed).is_err());
-        assert!(version_gate("0.9.0n", 0, 143, &allowed).is_ok()); // legacy exempt
-    }
-
-    #[test]
-    fn gate_refuses_bad_shape_with_any_proto() {
-        assert!(version_gate("h4x0r edition", 133, 143, &[]).is_err());
+    fn gate_still_refuses_bad_shape_with_any_proto() {
+        // SHAPE survives: this is a parsing concern (keep arbitrary strings out of a
+        // field every browser renders), not a version-policy one.
+        assert!(version_gate("h4x0r edition", 133).is_err());
+        assert!(version_gate("h4x0r edition", 9999).is_err());
     }
 
     #[test]
