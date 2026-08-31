@@ -8,6 +8,7 @@
 #include "coop/session/teleport_client.h"
 #include "ue_wrap/actors/vitals.h"
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/field_io.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/reflected_offset.h"
@@ -112,6 +113,9 @@ struct Verbs {
     int32_t offPlayerInterface = -1;   // mainGamemode_C.playerInterface  (ui_UI_C)
     int32_t offDamageIndicator = -1;   // ui_UI_C.umg_damageIndicator     (ui_damageIndicator_C)
     int32_t offDmgUp = -1, offDmgDown = -1, offDmgLeft = -1, offDmgRight = -1;
+    // The two writes the CANCELLED TRAVEL leaves behind. See ReconcileCancelledTravel().
+    int32_t offDmgFull = -1;        // ui_damageIndicator_C.dmg_full  (UImage*)
+    int32_t offTravelOption = -1;   // mainGameInstance_C.NewVar_1    (FString)
 };
 Verbs g_verbs;
 
@@ -149,6 +153,10 @@ bool ResolveVerbs() {
         v.offCanvasLoading = R::FindPropertyOffset(menuCls, L"canvas_loading");
         v.offScreenSwi = R::FindPropertyOffset(menuCls, L"screenSwi");
     }
+    if (void* dmgCls2 = R::FindClass(L"ui_damageIndicator_C"))
+        v.offDmgFull = R::FindPropertyOffset(dmgCls2, L"dmg_full");
+    if (void* giCls = R::FindClass(P::name::GameInstanceClass))
+        v.offTravelOption = R::FindPropertyOffset(giCls, L"NewVar_1");
     const bool ok = v.removeFromParent && v.isInViewport && v.setVisibility &&
                     v.setActiveIdx && v.offPauseMenu >= 0 && v.offCanvasLoading >= 0 &&
                     v.offScreenSwi >= 0;
@@ -266,6 +274,85 @@ bool RestoreMenuPrep() {
 //
 // Returns the largest value it found, or a negative number if the chain did not resolve, so
 // the caller can report what it actually saw rather than just "tried".
+// ---- RECONCILE WHAT THE CANCELLED TRAVEL WOULD HAVE MADE MOOT ----------------------------
+//
+// The `OpenLevel` we refuse is not just a camera move: it is how vanilla VOTV DISPOSES of
+// every one-way write the death made. The game never needs an undo because the world and the
+// HUD are about to be destroyed and rebuilt. We keep them, so the disposal is ours.
+//
+// This is deliberately NOT "clear the artifact the user noticed". Twice now a red artifact was
+// found by the USER LOOKING AT THE SCREEN and answered by appending one more named field to
+// this file (11.2 item 7 records the first). The third time it is a CENSUS instead: every
+// function of the death EPISODE was disassembled from the cooked pak and every persistent
+// write enumerated -- `Add Player Damage`, `ragdollMode`, the ubergraph death chain, and
+// `lib_C::loadLevel` -- then each classified as "the alive path restores it", "this revive
+// already restores it", or OWED. The full table is docs/DEATH_ARC.md 11.3b. It came back with
+// exactly THREE writes nothing undoes, and two of them are handled here:
+//
+//   [1] `ui_damageIndicator_C.dmg_full.Visibility` -- `[V]` the Tick's death branch does
+//       `@2292 SetVisibility(b0 = Visible)` while the widget's EXPORT authors it Collapsed,
+//       and the ALIVE path never writes that field at all. A one-way latch: once `dead` has
+//       been true for a single tick, a full-screen `inst_dmg_center` (mat_dmgInd, unlit
+//       translucent, alpha 1.0) draws over everything FOREVER. This is the red screen the
+//       user reported, and it is the only part of that report that survives a revive.
+//
+//   [2] `mainGameInstance_C.NewVar_1` -- `[V]` the death calls
+//       `lib_C::loadLevel('menu', 'PQXYyeofZ8cr5rJD4YXLVw', ...)`, whose @138 stores that
+//       magic option ON THE GAME INSTANCE, which outlives every level. It is the DEATH SIGNAL
+//       the next level reads: `mainGamemode` uber @12232 compares it against that exact
+//       literal and @13245 clears it. Our veto means it is set and NEVER consumed, so it sits
+//       armed for the rest of the process -- and @12322's branch off it reaches
+//       `lib_C::end(self)` when the game is paused. Clearing it to "" is precisely what the
+//       travel would have caused, and it is the game's own reset value.
+//
+// The THIRD write is `gameInstance.subArea := 'None'` (uber @4489 and loadLevel @52) and it is
+// deliberately LEFT ALONE: the revive teleports the player to the KPP, which is outdoors, so
+// `None` is the CORRECT sub-area for where they now are, and the game's own trigger volumes
+// re-establish it on the next building they enter. Restoring the pre-death value would be the
+// bug. Recorded here so the next reader does not "fix" it.
+//
+// Best-effort by design: a failure here is cosmetic-or-latent, never a reason to strand the
+// player, so this does NOT enter the revive's completion conjunction (11.2's lesson -- gating
+// on a screen artifact threw a LIVING player to the menu one run in four).
+void ReconcileCancelledTravel() {
+    // [1] the HUD latch.
+    if (g_verbs.offPlayerInterface >= 0 && g_verbs.offDamageIndicator >= 0 &&
+        g_verbs.offDmgFull >= 0 && g_verbs.setVisibility) {
+        void* gm = R::FindObjectByClass(P::name::GamemodeClass);
+        if (gm && R::IsLive(gm)) {
+            void* ui = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(gm) +
+                                                 g_verbs.offPlayerInterface);
+            if (ui && R::IsLive(ui)) {
+                void* ind = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(ui) +
+                                                     g_verbs.offDamageIndicator);
+                if (ind && R::IsLive(ind)) {
+                    void* full = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(ind) +
+                                                          g_verbs.offDmgFull);
+                    if (full && R::IsLive(full)) {
+                        ue_wrap::ParamFrame f(g_verbs.setVisibility);
+                        if (f.valid()) {
+                            f.Set<uint8_t>(L"InVisibility", kSlateCollapsed);
+                            UE_LOGI("death_revive: dmg_full -> Collapsed (its authored default; "
+                                    "the death branch's one-way SetVisibility latch) ok=%d",
+                                    ue_wrap::Call(full, f) ? 1 : 0);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // [2] the death signal the cancelled travel never delivered.
+    if (g_verbs.offTravelOption >= 0) {
+        void* gi = R::FindObjectByClass(P::name::GameInstanceClass);
+        if (gi && R::IsLive(gi)) {
+            const bool ok = ue_wrap::field_io::WriteFStringField(gi, g_verbs.offTravelOption, L"");
+            UE_LOGI("death_revive: gameInstance.NewVar_1 cleared (the 'PQXYyeofZ8cr5rJD4YXLVw' "
+                    "death option a vetoed travel leaves armed) ok=%d", ok ? 1 : 0);
+        }
+    }
+}
+
 float ClearDamageIndicator(float* outBefore = nullptr) {
     if (g_verbs.offPlayerInterface < 0 || g_verbs.offDamageIndicator < 0 ||
         g_verbs.offDmgUp < 0 || g_verbs.offDmgDown < 0 ||
@@ -394,6 +481,10 @@ bool RunRevive(coop::net::Session& session, void* pawn) {
     //     that the level travel used to dispose of. Best-effort (see the function).
     float redBefore = 0.f;
     ClearDamageIndicator(&redBefore);
+
+    // 1b. dispose of what the cancelled travel would have disposed of -- the census, not the
+    //     artifact the user happened to see. Best-effort; NOT a conjunction term.
+    ReconcileCancelledTravel();
     float bloodTimeBefore = 0.f;
     const float bloodActors = ExpireBloodLoss(&bloodTimeBefore);
 
