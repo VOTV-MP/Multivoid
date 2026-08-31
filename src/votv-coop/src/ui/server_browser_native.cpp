@@ -186,6 +186,13 @@ bool BuildScreen(void* switcher) {
             // where `settings` was momentarily unresolved overwrote a good donor with null for
             // every sibling screen, permanently for that menu instance.
             NS::SetBorderDonor(borderDonor);
+            // Say so ONCE. Only the failure was logged before, so "no warning" had two
+            // readings -- the donor resolved, or this screen was never built at all -- and a
+            // run that never opened the browser looked exactly like a run that framed
+            // everything correctly. It is latched by BorderDonorResolved(), so this is once
+            // per menu instance, not per tick.
+            UE_LOGI("server_browser_native: frame donor ui_settings.image_border resolved "
+                    "(%p) -- windows get the game's own 9-slice bevel", borderDonor);
         } else if (!g_toldTheUser) {
             // WARN once, not per tick: log.cpp fflushes every non-INFO line synchronously, and
             // this sits on a path re-entered until the screen builds.
@@ -259,16 +266,32 @@ bool BuildScreen(void* switcher) {
     if (void* s = NS::AddHFill(body, leftCol, kListWeight, kFill, kFill))
         NS::SetSlotPadding(s, P::off::UHorizontalBoxSlot_Padding, 0.f, 0.f, kPadPx, 0.f);
 
+    // THE LIST WEARS ITS OWN FRAME, because in the game it does.
+    //
+    // `[V]` On the native Keybinds window the list panel has a ring that sits flush against
+    // the window's -- the left edge samples the band pair TWICE across the list and ONCE
+    // across the title strip. Ours had no ring on the list at all, so the whole left half of
+    // the window was a bare fill while the right half stacked properly. The ScrollBox goes
+    // INSIDE the framed overlay; the SizeBox still bounds the height, so the allotment the
+    // row layout depends on is unchanged.
     void* listBox = Spawn(L"SizeBox", leftCol);
-    void* list    = listBox ? Spawn(L"ScrollBox", listBox) : nullptr;
-    if (!listBox || !list) return false;
+    void* listOvl = listBox ? AddFramedBox(listBox, NS::Panel(), kBorderPx) : nullptr;
+    void* list    = listOvl ? Spawn(L"ScrollBox", listOvl) : nullptr;
+    if (!listBox || !listOvl || !list) return false;
     U::SetSizeBoxHeight(listBox, kListH);
     // The settings list's scrollbar treatment (section 7b): a server list is the long-list
     // case, and ui_saveSlots' own ScrollBox sets no bar style at all. NINE brushes.
     U::CloneStyle(list, P::off::UScrollBox_WidgetBarStyle, barDonor,
                   P::off::UScrollBox_WidgetBarStyle, P::off::FScrollBarStyle_Size,
                   P::off::FScrollBarStyleBrushes, 9);
-    U::SetContent(listBox, list);
+    if (void* s = U::AddChild(listOvl, list)) {
+        U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign, kFill, kFill);
+        // Inside its own ring, not on top of it: without this the first row's fill paints over
+        // the frame's inner band.
+        NS::SetSlotPadding(s, P::off::UOverlaySlot_Padding,
+                           kBorderPx, kBorderPx, kBorderPx, kBorderPx);
+    }
+    U::SetContent(listBox, listOvl);
     NS::AddVFill(leftCol, listBox, 1.f, kFill, kFill);
 
     // THE ACTION GRID, directly under the list it acts on.

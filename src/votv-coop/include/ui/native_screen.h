@@ -136,19 +136,29 @@ void* SlotOf(void* widget);
 // Padding offset -- again per box type, for the reason above.
 void SetSlotPadding(void* slot, size_t padOff, float l, float t, float r, float b);
 
-// THE FRAME: an outer bordered UImage plus an inner fill inset by `borderPx`. Every panel,
-// row, header strip and value cell in VOTV's menus is a bordered box with sharp corners
-// and nothing in the game's UI floats unboxed. Returns the OVERLAY to put content in.
+// THE FRAME: a fill and a border image in one overlay. Every panel, row, header strip and
+// value cell in VOTV's menus is a bordered box with sharp corners and nothing in the game's UI
+// floats unboxed. With a donor the border is the game's own 9-slice material painted OVER the
+// fill at full size; without one it degrades to a flat rectangle with the fill inset by
+// `borderPx`. Returns the OVERLAY to put content in.
+//
+// ONE RING PER BOX. The ladder of bands the user asked for ("много скосов") is NESTING -- a
+// panel's ring sitting flush against its parent's -- not a box wearing two borders. `[V]` the
+// native Keybinds window's left edge samples the pair ONCE across its title strip and TWICE
+// across its list: same window, two heights, so the second pair belongs to the inner panel.
+// Nest boxes and give the parent zero content padding; never double a border.
 // THE FRAME DONOR -- a live `ui_settings_C.image_border`, whose FSlateBrush every framed box
 // clones. Set it once per screen build, BEFORE the first AddFramedBox call.
 //
 // WHY A DONOR AND NOT A COLOUR. Our frames were a flat 2 px rectangle in one grey, and the
 // user rejected them as not VOTV's frames. Sampling the native window proves them right, and
-// says why a colour could never have worked: each of the four edges carries its OWN pair of
-// 2 px bands --
-//     top   #838383 -> #606060      left   #5F5F5F -> #515151
-//     bottom  #333333 -> #202020    right  #383838 -> #292929
-// -- a raised bevel lit from the top-left. That is not a rectangle outline in any colour; it
+// says why a colour could never have worked: each edge carries its OWN pair of 2 px bands, and
+// the horizontal pair is not the vertical one --
+//     top / bottom  #A5A5A5 -> #585858        left / right  #919191 -> #646464
+// -- a raised bevel lit from above. (Measured on
+// `ignore_folder/votv_widgets_style/SERVER_BROWSER_4_keybinds_tab_opens_new_window.png`, the
+// 1885x1046 capture. An earlier set of eight darker values in this comment came from a
+// dimmed/downscaled capture and did not survive re-sampling at full resolution.) That is not a rectangle outline in any colour; it
 // is `[V]` the MATERIAL `inst_uiBorder` drawn as a 9-slice box with Margin 0.5, which is what
 // `ui_settings`'s `image_border` carries. So the fix is to stop inventing a frame and clone
 // the game's, exactly as the BACK button already clones `button_back`'s style.
@@ -171,17 +181,21 @@ void* AddFramedBox(void* parent, const FLinearColor& fill, float borderPx);
 // THE FRAMED BOX'S PARTS, resolved BY THE KIT rather than guessed by the caller.
 //
 // `AddFramedBox`'s child order is not one thing: flat it is {edge, face, content}, framed it is
-// {face, edge, ring2, content}. `server_browser_rows.cpp` used to read those slots by literal
-// index, and its own comment said what would happen -- *"if that kit function ever reorders
-// them this reads the wrong image"*. Adding the second ring did exactly that, and the failure
-// was not cosmetic: index 2 became a UImage, and `[V]` `UPanelWidget::Slots` and
-// `UImage::Brush` sit at the SAME offset 0x108, so `GetChildAt` on it reads the brush's vtable
-// pointer as the slot array's data. Either an absorbed AV that kills the rest of the menu
-// tick, or every row silently blank.
+// {face, edge, content} -- the two are mirror images because a cloned 9-slice must be painted
+// OVER the fill while a solid rectangle must be painted UNDER it or it would cover the box.
+// `server_browser_rows.cpp` used to read those slots by literal index, and its own comment said
+// what would happen -- *"if that kit function ever reorders them this reads the wrong image"*.
+// A short-lived second ring did exactly that, and the failure was not cosmetic: index 2 became
+// a UImage, and `[V]` `UPanelWidget::Slots` and `UImage::Brush` sit at the SAME offset 0x108,
+// so `GetChildAt` on it reads the brush's vtable pointer as the slot array's data. Either an
+// absorbed AV that kills the rest of the menu tick, or every row silently blank.
 //
-// So the order lives in ONE place -- here, next to the code that creates it. `content` is the
-// child the caller added after the box was built (null if it added none). Returns false if the
-// overlay does not look like a framed box at all.
+// So the order lives in ONE place -- here, next to the code that creates it -- and it is
+// resolved by READING the border (a cloned frame carries the material in its brush's
+// ResourceObject; a tinted fill carries nothing), never by counting children. The count is a
+// convention two files have to keep agreeing about; the material is a fact about the widget.
+// `content` is the child the caller added after the box was built (null if it added none).
+// Returns false if the overlay does not look like a framed box at all.
 struct FramedParts {
     void* edge    = nullptr;  // the border image (the 9-slice ring when a donor was cloned)
     void* face    = nullptr;  // the fill image

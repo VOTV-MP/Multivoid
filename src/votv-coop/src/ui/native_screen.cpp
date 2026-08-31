@@ -212,7 +212,32 @@ bool BuildWindowShell(void* switcher, float widthPx, float heightPx, const wchar
     out = WindowShell{};
     if (!switcher) return false;
     constexpr float kBorderPx = 2.f;
-    constexpr float kPadPx    = 6.f;
+    // THE WINDOW'S CONTENT IS INSET BY EXACTLY ONE RING, and that is where the ladder comes
+    // from.
+    //
+    // `[V]` On the native Keybinds window the window's ring and the list panel's ring ABUT: the
+    // left edge at y=500 reads `919191x2 646464x2 919191x2 646464x2` -- two pairs, no fill
+    // between them -- while at y=208, a height where no inner panel sits, the same edge reads
+    // the pair ONCE. So the stack is the window's ring plus the panel's, and the panel is inset
+    // by exactly the width the window's ring renders: `[V]` 4 px, measured on both the native
+    // capture and our own.
+    //
+    // Both neighbouring values are wrong and were tried. At 6 (the old value) the panel's ring
+    // landed ON the window's inner band and merged with it -- our window measured
+    // `919191x2 646464x2 919191x4 646464x2 919191x2 646464x2`, a four-pixel light run native
+    // never produces. At 0 the panel's ring is drawn UNDER the window's border image (which is
+    // painted last, at full size) and disappears entirely, leaving one pair everywhere.
+    //
+    // 4 is also the number the game itself authored: `[V]` seven of eleven border slots across
+    // `ui_settings` and `ui_saveSlots` carry a slot offset of 4, and
+    // `ui_saveSlots.image_border_6`/`_7` are a real nested pair on parent-and-child canvases
+    // exactly 4 apart. A previous pass measured that correctly and then spent it on the wrong
+    // thing -- a second ring inset from the SAME box, rather than the inset between a box and
+    // its parent.
+    //
+    // Being a slot offset rather than a screen-pixel constant, it tracks DPI the way the game's
+    // own borders do.
+    constexpr float kPadPx    = 4.f;
 
     void* root = Spawn(P::name::UserWidgetClass, switcher);
     void* tree = root ? Spawn(P::name::WidgetTreeClass, root) : nullptr;
@@ -278,19 +303,10 @@ bool BuildWindowShell(void* switcher, float widthPx, float heightPx, const wchar
     return true;
 }
 
-// VOTV'S OWN AUTHORED BORDER OFFSET -- not a pixel guess, and not "the outer ring's
-// thickness" as this comment first claimed.
-//
-// `[V]` in the cooked widgets, SEVEN of eleven border slots across ui_settings and
-// ui_saveSlots carry a slot offset of 4 (`image_border_3`, `image_border_2`, `_3`, `_4`, `_5`
-// at -4/-4/-4/-4). And `ui_saveSlots.image_border_6` / `image_border_7` are a genuine NESTED
-// pair on parent-and-child canvases exactly 4 apart -- the construction this reproduces.
-//
-// Because it is the same KIND of value the game uses (a slot offset, which scales with the
-// layout transform) rather than a screen-pixel constant, our frame drifts under DPI exactly as
-// the game's does. Deriving it from the brush instead would be WORSE: Margin 0.5 x ImageSize
-// 32 is a 16 px 9-slice margin, which is not the 4 the game offsets by.
-constexpr float kNativeRingStepPx = 4.f;
+// (The second ring this file used to draw is GONE -- see AddFramedBox. It rested on a
+// reading of the native pattern that a fuller measurement falsified, and with it goes
+// `kNativeRingStepPx`, the four-child layout, and the index hazard that broke every
+// server row.)
 
 void* g_borderDonor = nullptr;
 bool  g_borderDonorTried = false;
@@ -314,22 +330,34 @@ bool BorderDonorResolved() { return g_borderDonorTried; }
 bool FramedBoxParts(void* overlay, FramedParts& out) {
     if (!overlay) return false;
     const int32_t n = U::ChildCount(overlay);
-    // Discriminated by COUNT, because that is what the two layouts differ in and it needs no
-    // name or class lookup. Framed adds the second ring, so it carries one more child than flat
-    // at the same stage. See the header for why this must not be re-derived by callers.
-    if (n >= 4) {                       // framed: face, edge, ring2, [content]
-        out.face    = U::ChildAt(overlay, 0);
-        out.edge    = U::ChildAt(overlay, 1);
-        out.content = U::ChildAt(overlay, 3);
-        return true;
+    if (n < 2) return false;
+    void* c0 = U::ChildAt(overlay, 0);
+    void* c1 = U::ChildAt(overlay, 1);
+    if (!c0 || !c1) return false;
+    out.content = n >= 3 ? U::ChildAt(overlay, 2) : nullptr;
+    // WHICH of the two images is the border is decided by READING one, not by counting them.
+    //
+    // The two layouts are mirror images -- framed puts the fill underneath and the border on
+    // top, flat has to do the opposite or a solid rectangle would cover the box -- so the
+    // index alone cannot say which is which, and the count no longer differs at all now that
+    // the second ring is gone. What DOES differ is the border itself: a cloned frame carries
+    // the material `inst_uiBorder` in its brush's ResourceObject, and a tinted fill carries
+    // nothing there. That is a fact about the widget in front of us rather than a convention
+    // two functions have to keep agreeing about, which is the whole reason this lives here.
+    const auto resourceObject = [](void* img) -> void* {
+        return img ? *reinterpret_cast<void**>(static_cast<uint8_t*>(img) +
+                                               P::off::UImage_Brush +
+                                               P::off::FSlateBrush_ResourceObject)
+                   : nullptr;
+    };
+    if (resourceObject(c1)) {           // framed: {face, edge, content}
+        out.face = c0;
+        out.edge = c1;
+    } else {                            // flat: {edge, face, content}
+        out.edge = c0;
+        out.face = c1;
     }
-    if (n >= 2) {                       // flat: edge, face, [content]
-        out.edge    = U::ChildAt(overlay, 0);
-        out.face    = U::ChildAt(overlay, 1);
-        out.content = n >= 3 ? U::ChildAt(overlay, 2) : nullptr;
-        return true;
-    }
-    return false;
+    return true;
 }
 
 void* AddFramedBox(void* parent, const FLinearColor& fill, float borderPx) {
@@ -369,10 +397,18 @@ void* AddFramedBox(void* parent, const FLinearColor& fill, float borderPx) {
     // CLONED (the 9-slice material): fill UNDERNEATH at full size, border ON TOP at full size,
     // NO inset. The first attempt kept the old inset and produced `#919191 x2` straight into
     // the fill where native has `#919191 x2` then `#646464 x2` -- our own fill was painted OVER
-    // the brush's inner bands, clipping the bevel to its outermost step. That is also why the
-    // user sees "many bevels" natively and one band from us: a 9-slice SCALES, so at their
-    // resolution the border is several steps wide and an inset sized to our old 2 px flat
-    // rectangle eats all but the first.
+    // the brush's inner bands, clipping the bevel to its outermost step.
+    //
+    // ONE RING PER BOX, and that is a measurement, not a simplification. This file used to add
+    // a SECOND ring inset by 4 px, because a native window edge samples the pair TWICE and that
+    // was read as one box wearing two rings. `[V]` It is not: on the native Keybinds window the
+    // left edge samples `919191x2 646464x2` ONCE across the title strip (y=208) and TWICE
+    // across the list (y=500) -- the same window, two heights. A window that wore two rings
+    // would show two at both. The second pair is the INNER PANEL's own ring sitting flush
+    // against the window's, so the "много скосов" the user pointed at is NESTING, and the way
+    // to have more of it is to nest boxes, never to double a border. Doubling it also cost a
+    // real defect: it made the box four children wide and `server_browser_rows` read the parts
+    // by index (see FramedBoxParts).
     //
     // FLAT fallback (no donor): the old order, because a flat edge drawn on top at full size
     // would cover the whole box rather than ring it.
@@ -383,41 +419,6 @@ void* AddFramedBox(void* parent, const FLinearColor& fill, float borderPx) {
         if (void* s = U::AddChild(box, edge))
             U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
                             kFill, kFill);
-        // THE SECOND RING -- this is the "много скосов" the user pointed at.
-        //
-        // `[V]` A native window at 1885 px samples `919191 919191 646464 646464` TWICE,
-        // back to back, where the 546 px reference capture shows the pattern ONCE. The second
-        // pair is a byte-for-byte repeat of the first, not a wider gradient -- so it is a
-        // SECOND RING of the same brush, not one thicker one.
-        //
-        // The asset that proves it is `ui_saveSlots.image_border_6` / `image_border_7`: a
-        // nested pair on parent-and-child canvases, 4 apart. (An earlier version of this
-        // comment cited `ui_settings`'s `image_border` + `image_border_3` -- WRONG, those two
-        // have different parents and frame different panels. The conclusion held; the evidence
-        // did not.)
-        //
-        // The inset is the outer ring's own rendered thickness, MEASURED at 4 px (two 2 px
-        // bands) and named so it reads as the measurement it is. It is the one constant left
-        // in this frame -- the STEPS themselves come from the material and scale with it --
-        // and it is what a UI-scale change would invalidate first.
-        if (void* e2 = Spawn(L"Image", box)) {
-            static constexpr size_t kOneBrush[1] = {0};
-            // Unchecked on purpose: CloneStyle only fails on a null argument or a zero size,
-            // and neither is possible inside this branch. A guard that cannot fire reads as a
-            // check and is not one.
-            U::CloneStyle(e2, P::off::UImage_Brush, g_borderDonor, P::off::UImage_Brush,
-                          P::off::FSlateBrush_Size, kOneBrush, 1);
-            {
-                E::SetWidgetVisibility(e2, 3);
-                if (void* s = U::AddChild(box, e2)) {
-                    U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
-                                    kFill, kFill);
-                    auto* pad = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(s) +
-                                                         P::off::UOverlaySlot_Padding);
-                    pad[0] = pad[1] = pad[2] = pad[3] = kNativeRingStepPx;
-                }
-            }
-        }
     } else {
         if (void* s = U::AddChild(box, edge))
             U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
