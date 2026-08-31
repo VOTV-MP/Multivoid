@@ -1824,21 +1824,27 @@ The 2026-08-29 fps hunt ended with a confound it could not resolve and wrote dow
 reach the install instructions: the fast loader also failed to start `CheatManagerEnablerMod`, so
 "the loader is the cause" was a hypothesis, not a result. **The de-confounding arm has now run.**
 
-### 9.1 The three arms
+### 9.1 The arms
 
 One save (`s_test_screens2`, set by `mp.py`), one mod build (b149), one install (`Game_0.9.0n_HOST`),
-one resolution, solo host, unattended. Only the named variable moved.
+one resolution, solo host, unattended. Only the named variable moved. A-C are the de-confounding
+experiment; D was added when the pin moved, and measures the shipped installer's own output.
 
-| arm | `UE4SS.dll` | Lua mods that STARTED | in-world fps (median) | n |
-|---|---|---|---|---|
-| A | `4c177b9e` — v3.0.1 stable, 2024-02-14 (our pinned zip) | 6 | **70** | 134 |
-| B | `8a78269b` — shimloader 1.1.7's build, 2026-05-07 | 5 | **118** | 70 |
-| C | `4c177b9e` (old) + `CheatManagerEnablerMod : 0` | 5 | **75** | 55 |
+| arm | `UE4SS.dll` | Lua payload | Lua mods that STARTED | in-world fps (median) | n |
+|---|---|---|---|---|---|
+| A | `4c177b9e` — v3.0.1 stable, 2024-02-14 (our pinned zip) | v3.0.1 (2024) | 6 | **70** | 134 |
+| B | `8a78269b` — shimloader 1.1.7's build, 2026-05-07 | v3.0.1 (2024) | 5 | **118** | 70 |
+| C | `4c177b9e` (old) + `CheatManagerEnablerMod : 0` | v3.0.1 (2024) | 5 | **75** | 55 |
+| D | `8a78269b` — as laid down by the moved pin | shimloader (2026) | 5 | **118** | 127 |
 
 **C ≈ A, not ≈ B.** Dropping the un-started Lua mod on the old loader buys ~5 fps; changing the
 loader buys ~48. **The LOADER is the cause.** `CheatManagerEnablerMod` is exonerated, and the
 2026-08-29 note that the advice "set your `mods.txt` entries to 0" does not survive the evidence is
 now settled: that advice would have bought a player ~5 fps out of ~48.
+
+**D ≈ B.** Refreshing the Lua payload to the one that matches the DLL changes neither the frame rate
+(118 either way) nor the mod count (5 either way) — so the payload is not a variable in this result,
+and 9.3's functional loss is not a payload mismatch.
 
 Every arm's log was asserted to belong to the PID we launched (see 9.4). Arm B is `[V]` also the
 only arm the user saw live, and their unprompted reaction was *"fps is so good"*.
@@ -1856,17 +1862,45 @@ the pinned release does not (`CallFunctionByNameWithArguments`, `ConsoleManager`
 
 ### 9.3 What the new loader COSTS — a real functional loss, priced
 
-`[V]` On VOTV 0.9.0n the new build does NOT start `CheatManagerEnablerMod`. The reason is in its own
-log, not inferred: `Failed to find ConsoleManagerSingleton: ConsoleManagerSingleton: found 2 unique
-values [7FF6089EE570, 7FF609A95920]` — its AOB is AMBIGUOUS on this exe and it bails. The other five
+`[V]` On VOTV 0.9.0n the new build does NOT start `CheatManagerEnablerMod`. The other five
 (`ConsoleCommandsMod`, `ConsoleEnablerMod`, `BPModLoaderMod`, `BPML_GenericFunctions`, `Keybinds`)
 all start. Arm C prices that loss at ~5 fps, so it is cheap in frames — but it is a real capability
 loss for any dev workflow that reaches the cheat manager, and it is silent.
 
-**This also falsifies a tempting cross-lane inference.** The 2026-08-29 note records all SIX mods
-starting under the same binary on the user's r2modman lane. Same DLL, different result — so the
-discriminator is the GAME EXE the AOB scans, not the loader alone. Do not assume our rig's mod set
-equals the r2modman lane's.
+**CORRECTED 2026-08-31 (same day, before the pin moved): the MECHANISM stated here was inferred, and
+the log does not support it.** This section used to say the mod "bails" because of
+`Failed to find ConsoleManagerSingleton: ... found 2 unique values [7FF6089EE570, 7FF609A95920]`.
+Both facts are real and both are `[V]`, but re-reading the raw log shows **no link between them**:
+
+- the `ConsoleManagerSingleton` line is a `[PS]` **DLL-level pattern scan** at `21:04:05.678`;
+- the mod enumeration runs **1.5 s later** at `21:04:07.188`, and `CheatManagerEnablerMod` produces
+  **no line at all** — not "started then failed", not `disabled in mods.txt` (which `ActorDumperMod`,
+  `SplitScreenMod`, `LineTraceMod` and `jsbLuaProfilerMod` each get). It is absent from the listing
+  while its row reads `CheatManagerEnablerMod : 1` and its folder is present.
+
+"Never enumerated" and "scanned and bailed" are different symptoms; the causal claim was a story
+joining two true lines. Root `[?]`.
+
+**The cross-lane inference is likewise WITHDRAWN.** This section used to conclude that because the
+r2modman lane starts all six under the same DLL, "the discriminator is the GAME EXE the AOB scans".
+That reasoning held only while the two lanes were assumed to differ in nothing but the exe — and
+`[V]` they differ in the **Lua payload** as well. Our rig ran the 2026 DLL against v3.0.1's **2024**
+bundled mods; the r2modman lane runs the DLL's own matching set. Measured file hashes:
+`CheatManagerEnablerMod/Scripts/main.lua` is `152170E1` (v3.0.1) vs `4830B358` (shimloader), and
+`shared/UEHelpers/UEHelpers.lua` is `91085EF2` / 4,084 B vs `74CB3C63` / 10,237 B. So the payload is
+a live alternative explanation that was never excluded, and the exe attribution is not earned.
+
+Moving the pin (9.5) refreshes that payload, which makes this the natural discriminating experiment:
+if the mod starts afterwards, the payload mismatch was the cause and there is no functional loss at
+all.
+
+**THAT EXPERIMENT RAN — and the payload hypothesis is FALSIFIED (arm D, 2026-08-31).** With the
+matching Lua payload installed (`CheatManagerEnablerMod/Scripts/main.lua` = `4830b358`,
+`UEHelpers.lua` = `74cb3c63`, both verified at launch), the loader still starts **5** Lua mods and
+`CheatManagerEnablerMod` still produces **no line at all**. So the mismatched 2024 mod set was NOT
+the cause, and the functional loss in 9.3 is real and survives the pin. Root remains `[?]`; the two
+candidates left are the exe (the AOB story, still unevidenced) and something in the loader's own
+enumeration. What is now excluded, by measurement rather than argument, is the Lua payload.
 
 ### 9.4 Two instrument defects this measurement had to fix first
 
@@ -1889,18 +1923,72 @@ Instruments: `scratchpad/ue4ss/{arm.sh,fps3.py}` (session-local, not in the tree
 
 ### 9.5 What this does NOT decide, and what it changes
 
-- **The pin is NOT changed by this section.** `tools/install-ue4ss.ps1` still pins `v3.0.1` (`:44`)
-  and `docs/INSTALL.md:86` still tells manual installers to drop in **v3.0.1's zDEV** contents —
-  i.e. the lane we hand to manual installers is the arm measured at 70, while every Thunderstore /
-  r2modman player already gets the arm measured at 118 (shimloader delivers it). That asymmetry is
-  now MEASURED rather than suspected. Changing the pin is a decision for the user, not a doc fix:
-  it is the D-3 pinned-substrate contract.
-- **Not measured:** whether the genuinely newest upstream helps more. `experimental-latest` was
-  rebuilt 2026-08-30 (asset `UE4SS_v3.0.1-1106-g3a2d2bc1.zip`, md5 `491f8836`, 20,390,400 bytes) and
-  relocates the tree — `dwmapi.dll` at the Win64 root, `UE4SS.dll` under `ue4ss/`, no `Mods/` in the
-  zip — so our `Mods\Multivoid\dlls\main.dll` would not be where that build looks. That is an
-  install-SHAPE change touching `install-ue4ss.ps1`, `deploy-mod.ps1` and the Thunderstore package,
-  not a file swap.
-- **Rig state:** all four copies now run `8a78269b`, each with its predecessor kept beside it as
-  `UE4SS.dll.v301-stable`. Revert is one copy. This DIVERGES from the committed installer's pin, so
-  a `install-ue4ss.ps1 -Force` would silently put the slow binary back.
+- **THE PIN IS NOW MOVED (USER DECISION 2026-08-31, same day: *"Да, install ue4ss пусть пиннит 120
+  фпс версию ue4ss"*).** This bullet used to say the opposite — that the pin was untouched and the
+  change was the user's call. It was, and they made it. See 9.6 for what shipped.
+- **Rig state:** all four copies run `8a78269b`, each with its predecessor kept beside it as
+  `UE4SS.dll.v301-stable`. Revert is one copy.
+
+### 9.6 The pin, as moved
+
+`tools/install-ue4ss.ps1` no longer pins the GitHub release `v3.0.1`. It pins the Thunderstore
+package **`Thunderstore-unreal_shimloader-1.1.7`** and installs the UE4SS payload nested inside it —
+Git SHA `e31aaaa6`, md5 `8a78269b`: the arm measured at 118 fps, and the same bytes every mod-manager
+player already runs. `$Version` now names that package version.
+
+**Why that source and not a newer one** — both alternatives were examined and rejected on measured
+grounds, so do not re-derive them:
+
+- `experimental-latest` on GitHub is a **ROLLING tag**: its assets are re-uploaded in place (asset
+  `UE4SS_v3.0.1-1106-g3a2d2bc1.zip`, md5 `491f8836`, updated 2026-08-30). A URL that serves different
+  bytes over time is not a pin. It also **relocates the tree** — `dwmapi.dll` at the Win64 root and
+  `UE4SS.dll` under `ue4ss/` — which would ripple into `deploy-mod.ps1` and the Thunderstore package
+  shape, and it is unmeasured for frame rate.
+- `v3.0.1` is the 70 fps arm. `[V]` Its banner is `Git SHA #d935b5b`, built 2024-02-14 — so the
+  "stable vs zDEV" distinction was never a version difference at all: `UE4SS.dll.v301-stable` and
+  `ue4ss.dll.zdev-backup` on the rig are **byte-identical** (both `4C177B9E`).
+
+A Thunderstore package version is immutable (`docs/THUNDERSTORE.md`), so naming one IS a pin. `[V]`
+The package's own `date_created` is `2026-05-07T16:13:12Z`, matching the DLL's date exactly: it is a
+frozen snapshot of the experimental channel, and its bundled Lua mods are hash-identical to the
+current experimental's file-for-file (10 of 12), which is what identifies the two as one lineage.
+
+**The payload is installed WHOLE, and that is the point.** The bundled Lua mods are version-locked to
+the DLL's Lua API, so they are treated as PAYLOAD, not state, and are refreshed with it. Running the
+2026 loader against v3.0.1's 2024 mod set is the hybrid our rig was in — a configuration nobody
+ships — and it is the leading suspect for the `CheatManagerEnablerMod` loss in 9.3. `Mods\mods.txt`
+and `UE4SS-settings.ini` remain preserved state; the invariant is unchanged.
+
+**Fail-closed.** The expected `UE4SS.dll` md5 is pinned in the script and the install REFUSES on a
+mismatch, so a rolling source or a swapped file cannot quietly seat a different loader. `[V]` Shown
+refusing on a real wrong payload (the v3.0.1 zip, `4C177B9E`) with the existing install left intact.
+
+**One live obstacle, measured, not worked around.** `gcdn.thunderstore.io` — where the canonical
+download redirects — is **reset at the TLS handshake from this machine**: `[V]` three curl retries
+and a Python `urllib` attempt all fail (`WinError 10054` / `curl (35)`, `time_appconnect=0`), while
+the GitHub asset used as a control serves a range request `206` in the same shell. `thunderstore.io`
+itself answers (the `302` and the API both work); only the CDN host is cut. r2modman fetched the same
+package on 2026-08-22, so the block is recent rather than permanent. The installer therefore resolves
+its source in three steps — an explicit `-ZipPath`, then any **r2modman / TSMM package cache** on the
+machine (hash-gated, so borrowing those bytes is safe), then the download — and its error names the
+`-ZipPath` escape instead of failing blind.
+
+Drills, all on a throwaway tree (`scratchpad/pin/fakegame`), none touching a real copy: fresh install
+resolves from the manager cache and verifies; the tree lands FLAT with UE4SS's own 61,952-byte proxy
+and shimloader's 700,488-byte one correctly excluded; `-Force` over a v3.0.1 tree refreshes the DLL,
+the proxy and the Lua mods while a hand-added `coopTestHarness : 1` row and the tuned settings file
+both survive and `Mods\Multivoid` is untouched; and the hash gate refuses as above.
+
+**Arm D — the shipped installer, measured end to end.** `install-ue4ss.ps1 -Force` was then run on
+all four game copies and the result measured with an instrument that swaps nothing
+(`scratchpad/ue4ss/arm_d.sh`: it only launches, asserts the log carries the PID `mp.py` reported, and
+reports). `[V]` **median 118 fps, n=127 in-world samples, 126 witness seconds** — the pinned install
+reproduces arm B's 118 exactly, so the frame-rate claim now rests on the artifact the installer
+actually produces rather than on a hand-made copy of it.
+
+`[V]` The first attempt at arm D is recorded here as VOID rather than as 87 fps, because the
+instrument could see why: the run stopped presenting 14 s in (`overlayPresent=0.00/fr(0.0/s)`,
+`frame=0.00 ms` for 110 s straight) while the world witness kept firing at full rate — a game thread
+alive with a dead render path, which yields 7 usable samples and a meaningless median. A `perf` line
+reading `fps=0` is not a slow frame, it is the absence of a frame; `overlayPresent` per second is the
+field that tells the two apart. Cause of that stall not established, not reproduced on the re-run.

@@ -223,8 +223,11 @@ simplicity and independence from another project's release cadence.
 
 > **OVERTURNED 2026-08-21 → F2. THE CLAIM WAS UPHELD AND THE ANSWER ABOVE IS THE
 > LOSING SIDE OF IT.** Multivoid ships as a UE4SS mod
-> (`Mods/Multivoid/dlls/main.dll`, pinned to stable v3.0.1; WP-2 commit 3
-> `1912d229`), so the refusal this paragraph defends no longer describes the mod.
+> (`Mods/Multivoid/dlls/main.dll`; WP-2 commit 3 `1912d229`), so the refusal this
+> paragraph defends no longer describes the mod. (This line read "pinned to stable
+> v3.0.1" until 2026-08-31, when the user moved the pin off v3.0.1 on measured
+> frame-rate grounds — see the note under the F2 decision below and
+> `docs/UE4SS_ARC.md` §9.6.)
 > Decision record: §11's `human-door 2026-08-21` entry; the arc: `docs/UE4SS_ARC.md`.
 > The answer is kept rather than deleted because this appendix is a record of what
 > was argued, and deleting the losing half would destroy it. Two things the
@@ -491,6 +494,21 @@ double-Lua question resolves toward injecting the mod's API into UE4SS's own Lua
 states (measured available: `on_lua_start` + `LuaMadeSimple::register_function`)
 — ROADMAP phases 4-6 to be rewritten by the migration design.** Design of
 record: `research/findings/tooling/votv-ue4ss-f2-migration-DESIGN-2026-08-21.md`.
+
+> **PIN MOVED 2026-08-31 (USER DECISION) — "pinned to stable v3.0.1" above is
+> historical.** `tools/install-ue4ss.ps1` now pins the Thunderstore package
+> `Thunderstore-unreal_shimloader-1.1.7`, which carries UE4SS `e31aaaa6` (a
+> 2026-05-07 snapshot of the experimental channel). Ground: a three-arm
+> PID-asserted measurement put v3.0.1 at **70 fps** and this build at **118** on
+> the same save/build/install, with the de-confounding arm at 75 — the loader
+> build is worth ~48 fps. It is also the build every mod-manager player already
+> runs. What this does NOT change: D-3's slim contract is ZERO IMPORTED SYMBOLS,
+> which is version-independent and still machine-checked by
+> `tools/loader/abi_gate.py`; the substrate stays ours. What it DOES change: the
+> installed loader is no longer an upstream *stable* release, so the wire-b
+> tripwire baseline (newest upstream STABLE, still 3.0.1) and our install pin are
+> now separate quantities — do not conflate them. Full record + the two rejected
+> sources: `docs/UE4SS_ARC.md` §9.6.
 Wire repurposing: wire-b now watches the PIN (a newer stable = an upgrade
 decision, not a switch trigger); wire-a now affects contributor convenience
 only. Both tripwires keep running until the migration ships, then retire with
