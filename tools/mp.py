@@ -3735,6 +3735,19 @@ def cmd_browser(args) -> None:
 
     log("--- BROWSER VERDICT ---")
     fails = []
+    # VOID BEATS FAIL, AND IT IS REPORTED FIRST. When the game window does not come up at
+    # the size we asked for, Slate's absolute space stops being desktop pixels, every
+    # SetCursorPos in this scenario aims at the wrong place, and the phases report widget
+    # defects that are not there -- three of them on 2026-08-31, on a build whose only
+    # change was a refactor, which cost a re-run to disprove. The selftest measures the
+    # scale against its own scrim and says SPACE VOID; this reads that and refuses to
+    # render the run as a set of widget verdicts.
+    if (void_line := find("SPACE VOID")):
+        log(f"VOID: {void_line.strip()}")
+        log("[mp] VOID: this run's geometry verdicts mean nothing -- the window size is "
+            "the defect, not the widgets. Re-run once the window comes up at the "
+            "requested size.")
+        return 2
     if not find("screen built"):
         fails.append("the screen was never BUILT -- a donor was missing (read the O7 rule: "
                      "fail-closed means retry, and after 15 tries the user is told)")

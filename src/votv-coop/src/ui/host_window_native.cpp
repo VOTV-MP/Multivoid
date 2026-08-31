@@ -265,54 +265,17 @@ bool BuildScreen(void* switcher) {
         return false;
     }
 
-    void* root = NS::Spawn(P::name::UserWidgetClass, switcher);
-    void* tree = root ? NS::Spawn(P::name::WidgetTreeClass, root) : nullptr;
-    void* ovl  = tree ? NS::Spawn(L"Overlay", tree) : nullptr;
-    if (!root || !tree || !ovl) return false;
-    *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(root) + P::off::UUserWidget_WidgetTree) = tree;
-    *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(tree) + P::off::UWidgetTree_RootWidget) = ovl;
-
-    void* scrim = NS::Spawn(L"Image", ovl);
-    if (!scrim) return false;
-    g_scrimW = scrim;
-    U::SetImageTintRaw(scrim, FLinearColor{0.f, 0.f, 0.f, 0.5f});
-    E::SetWidgetVisibility(scrim, 0);
-    if (void* s = U::AddChild(ovl, scrim))
-        U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
-                        NS::kFill, NS::kFill);
-
-    void* winBox = NS::Spawn(L"SizeBox", ovl);
-    void* winOvl = winBox ? NS::AddFramedBox(winBox, kPanel, kBorderPx) : nullptr;
-    void* col    = winOvl ? NS::Spawn(L"VerticalBox", winOvl) : nullptr;
-    if (!winBox || !winOvl || !col) return false;
-    U::SetSizeBoxWidth(winBox, kWindowW);
-    U::SetSizeBoxHeight(winBox, kWindowH);
-    if (void* s = U::AddChild(winOvl, col)) {
-        U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
-                        NS::kFill, NS::kFill);
-        auto* pad = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(s) +
-                                             P::off::UOverlaySlot_Padding);
-        pad[0] = pad[1] = pad[2] = pad[3] = kPadPx;
-    }
-    U::SetContent(winBox, winOvl);
-    if (void* s = U::AddChild(ovl, winBox))
-        U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
-                        NS::kCenter, NS::kCenter);
-
-    // Title strip + X, the browser's shape so the two screens match.
-    if (void* titleBox = NS::AddFramedBox(col, kPanel, kBorderPx)) {
-        if (void* titleRow = NS::Spawn(L"HorizontalBox", titleBox)) {
-            NS::AddText(titleRow, L"Multivoid  -  Host Game", 24, kText, NS::kJustCenter, 1.f);
-            if (void* s = U::AddChild(titleBox, titleRow))
-                U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
-                                NS::kFill, NS::kCenter);
-        }
-        if (void* s = U::AddChild(col, titleBox)) {
-            auto* pad = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(s) +
-                                                 P::off::UVerticalBoxSlot_Padding);
-            pad[0] = pad[1] = pad[2] = 0.f; pad[3] = kPadPx;
-        }
-    }
+    // THE SHELL -- switcher child, widget tree, scrim, centred framed window, title
+    // strip -- from the shared kit since 2026-08-31. This screen and the browser carried
+    // byte-identical copies of it, comments and traps included; see `native_screen.h`.
+    // NO X (USER 2026-08-30): the exits are Back and ESC, both `[V]` proven.
+    NS::WindowShell shell;
+    if (!NS::BuildWindowShell(switcher, kWindowW, kWindowH,
+                              L"Multivoid  -  Host Game", shell))
+        return false;
+    void* root = shell.root;
+    void* col  = shell.column;
+    g_scrimW   = shell.scrim;
 
     NS::AddText(col, L"WORLD", 16, kAccent, NS::kJustLeft, 0.f);
     g_newGameRow = BuildRow(col, 1.f, 0.f, 0.f);

@@ -144,6 +144,37 @@ inline constexpr int32_t kBtnFontPx = 20;
 
 void* BuildButton(void* parent, void* donorBtn, const wchar_t* label, int32_t fontSize);
 
+// ---- the window shell ----------------------------------------------------------------
+//
+// EVERYTHING A NATIVE SUB-SCREEN IS BEFORE ITS CONTENT: the `UUserWidget` that goes in the
+// menu's switcher, its widget tree, the full-screen scrim, the centred framed window, the
+// title strip, and the content column the caller fills.
+//
+// WHY IT IS HERE NOW AND WAS NOT BEFORE. `OPUS_48_DISCIPLINE.md:196-197` -- no new
+// framework before N>=3 working cases -- and this is the third: the server browser, the
+// hosting window, and the browser's input screens. The first two carry byte-identical
+// copies of these sixty lines including the comments, and every one of the traps those
+// comments record (a donor read off the switcher's own child; `ESlateVisibility` 2 being
+// HIDDEN; a tinted `UImage` with no ResourceObject BEING the scrim; the widget-tree
+// back-pointers that must be written by hand) is a trap each copy could stop agreeing
+// about independently.
+//
+// It builds and CENTRES the window but deliberately does NOT attach `root` to the
+// switcher: attaching is where a screen learns its own index, and getting that wrong names
+// one of the GAME's screens (measured -- clicking MULTIPLAYER opened VOTV's Stats panel).
+// That step stays visible at each call site with the index check beside it.
+struct WindowShell {
+    void* root   = nullptr;   // the UUserWidget -- what the caller adds to the switcher
+    void* scrim  = nullptr;   // the full-screen dim; also what absorbs a stray click
+    void* column = nullptr;   // the UVerticalBox under the title, for the caller's content
+};
+
+// False if any widget could not be spawned -- the caller must treat that as a build
+// failure and retry, never as "carry on without a scrim". `title` may be null for a
+// window with no title strip.
+bool BuildWindowShell(void* switcher, float widthPx, float heightPx, const wchar_t* title,
+                      WindowShell& out);
+
 // WHICH CHILD OF `panel` IS UNDER THE CURSOR, by GEOMETRY. -1 for none.
 //
 // This exists because asking Slate does not work here, and the measurement is worth

@@ -185,52 +185,10 @@ bool BuildScreen(void* switcher) {
         return false;
     }
 
-    void* root = Spawn(P::name::UserWidgetClass, switcher);
-    void* tree = root ? Spawn(P::name::WidgetTreeClass, root) : nullptr;
-    void* ovl  = tree ? Spawn(L"Overlay", tree) : nullptr;
-    if (!root || !tree || !ovl) return false;
-    *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(root) + P::off::UUserWidget_WidgetTree) = tree;
-    *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(tree) + P::off::UWidgetTree_RootWidget) = ovl;
-
-    // (1) The SCRIM. Copied from the game: ui_saveSlots_C's own first child Image_302 is a
-    // full-screen UImage with TintColor (0,0,0,0.5) and NO ResourceObject, and that is what
-    // dims the menu behind every native sub-screen. It needs no donor, and being Visible is
-    // what makes it absorb a click that misses the window.
-    void* scrim = Spawn(L"Image", ovl);
-    if (!scrim) return false;
-    g_scrimW = scrim;
-    U::SetImageTintRaw(scrim, FLinearColor{0.f, 0.f, 0.f, 0.5f});
-    E::SetWidgetVisibility(scrim, 0);
-    if (void* s = U::AddChild(ovl, scrim))
-        U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign, kFill, kFill);
-
-    // (2) The WINDOW: a centred SizeBox holding a fill image and the content column.
-    void* winBox = Spawn(L"SizeBox", ovl);
-    // THE WINDOW IS A FRAMED BOX, not a cloned 9-slice. Until 2026-08-26 this cloned
-    // ui_saveSlots.Image_0's brush, which gave a soft borderless panel -- and every window
-    // in VOTV's own menus is a 2 px #646464 frame around a #1A1A1A fill with sharp corners
-    // (docs/VOTV_UI_STYLE.md section 3). The clone was the closest thing available before
-    // anyone had measured the real treatment; now it is measured, so we author it.
-    // `fillDonor` stays REQUIRED -- see the donor guard above; it is the canary for "did
-    // this menu's class layout move", and dropping the check would trade a loud failure
-    // for a silent one.
-    void* winOvl = winBox ? AddFramedBox(winBox, kPanel, kBorderPx) : nullptr;
-    void* col    = winOvl ? Spawn(L"VerticalBox", winOvl) : nullptr;
-    if (!winBox || !winOvl || !col) return false;
-    U::SetSizeBoxWidth(winBox, kWindowW);
-    U::SetSizeBoxHeight(winBox, kWindowH);
-    if (void* s = U::AddChild(winOvl, col)) {
-        U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign, kFill, kFill);
-        auto* pad = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(s) +
-                                             P::off::UOverlaySlot_Padding);
-        pad[0] = pad[1] = pad[2] = pad[3] = kPadPx;
-    }
-    U::SetContent(winBox, winOvl);
-    if (void* s = U::AddChild(ovl, winBox))
-        U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
-                        kCenter, kCenter);
-
-    // (3) The content column: title, column headers, the list, the status line.
+    // (1..3) THE SHELL -- the switcher child, its widget tree, the scrim, the centred
+    // framed window and the title strip -- all from the shared kit since 2026-08-31.
+    // Three screens carried byte-identical copies of it; see `native_screen.h`.
+    //
     // NO X, ON EITHER WINDOW (USER 2026-08-30: "не надо крестиков значит. Пусть окна
     // закрывает юзер также как и нативные менюшки votv"). No native VOTV window has one,
     // and MTA's own frame X is enabled with NO handler behind it
@@ -239,33 +197,23 @@ bool BuildScreen(void* switcher) {
     // `CLOSE BUTTON PASS` and the sibling's `HOST X PASS` were both measured on
     // 2026-08-30 at 23:43, hours before it was removed. What replaces it is Back and ESC,
     // and those are what the self-check now drives.
-    // THE TITLE STRIP. Native windows put a centred white title on its own bordered strip
-    // (style doc section 3), so the title gets a frame of its own rather than floating.
-    // The X rides in the same strip at the right.
-    if (void* titleBox = AddFramedBox(col, kPanel, kBorderPx)) {
-        if (void* titleRow = Spawn(L"HorizontalBox", titleBox)) {
-            // USER 2026-08-26: "The windows title should say something like Multivoid -
-            // Server Browser and be in the style of votv, not the current colors." That
-            // settles style doc section 6's open product call in the direction of the
-            // game: native titles are WHITE, centred and larger, and the coop cyan appears
-            // in no VOTV menu. The build identity the title used to carry is simply GONE
-            // from this screen: the main menu shows "Multivoid <game> b<build>" in its top
-            // left at all times, so a second copy inside the browser was redundant -- the
-            // user said so after seeing it parked in the footer, which is where this first
-            // moved it. The per-row Version column still carries what a player actually
-            // needs here, which is each SERVER's pair, not ours.
-            AddText(titleRow, L"Multivoid  -  Server Browser", 24, kText,
-                              kJustCenter, 1.f);
-            if (void* s = U::AddChild(titleBox, titleRow))
-                U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
-                                kFill, kCenter);
-        }
-        if (void* s = U::AddChild(col, titleBox)) {
-            auto* pad = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(s) +
-                                                 P::off::UVerticalBoxSlot_Padding);
-            pad[0] = pad[1] = pad[2] = 0.f; pad[3] = kPadPx;
-        }
-    }
+    //
+    // The title says what the user asked it to say on 2026-08-26 ("Multivoid - Server
+    // Browser ... in the style of votv, not the current colors"). It carries no build
+    // identity: the main menu shows "Multivoid <game> b<build>" in its top left at all
+    // times, and each SERVER's pair is what a player needs here, which the details panel
+    // spells out.
+    //
+    // `fillDonor` stays REQUIRED in the guard above even though the window authors its own
+    // frame now: it is the canary for "did this menu's class layout move", and dropping
+    // the check would trade a loud failure for a silent one.
+    NS::WindowShell shell;
+    if (!NS::BuildWindowShell(switcher, kWindowW, kWindowH,
+                              L"Multivoid  -  Server Browser", shell))
+        return false;
+    void* root = shell.root;
+    void* col  = shell.column;
+    g_scrimW   = shell.scrim;
     // (4) THE BODY: the list on the LEFT, the two panes on the RIGHT.
     //
     // This is the redesign, and the shape is not ours -- it is VOTV's own save browser

@@ -917,6 +917,33 @@ void Tick(void* scrim, void* list, void* exitBtn) {
                         "smaller is the UI scale, and every other number here divides by it.",
                         haveScrim ? "" : "UNREAD ", ssz.X, ssz.Y, stl.X, stl.Y,
                         haveList ? "" : "UNREAD ", lsz.X, lsz.Y, ltl.X, ltl.Y);
+                // ...AND NOW SOMETHING READS IT. That line has printed the answer since it
+                // was written and nothing ever compared the two numbers, so on 2026-08-31
+                // a run where the game window came up 1392x782 instead of the 1920x1080
+                // mp.py asks for reported CONNECT FAIL, ROW SELECT FAIL and BROWSER BACK
+                // FAIL -- three widget verdicts, all false, on a build whose only change
+                // was a refactor. It took a re-run to clear the code, which is exactly the
+                // cost an instrument exists to avoid.
+                //
+                // At any scale but 1 this whole harness is VOID, not failing: it places a
+                // real cursor with SetCursorPos (DESKTOP pixels) at a rect Slate reports in
+                // ABSOLUTE units, and the two are the same space only while the viewport is
+                // unscaled. So say VOID, loudly, and say it about the RUN rather than about
+                // whatever widget the next phase happens to aim at.
+                if (haveScrim && w > 0 && h > 0) {
+                    const float sx = ssz.X / static_cast<float>(w);
+                    const float sy = ssz.Y / static_cast<float>(h);
+                    if (sx < 0.99f || sx > 1.01f || sy < 0.99f || sy > 1.01f)
+                        UE_LOGE("server_browser_native: SPACE VOID -- the scrim spans "
+                                "%.0fx%.0f Slate units over a %dx%d client, so absolute "
+                                "space is scaled by %.3fx%.3f and is NOT desktop pixels. "
+                                "Every driven click in this run aims at the wrong place and "
+                                "every geometry verdict below is meaningless. The usual "
+                                "cause is the game window not coming up at the size mp.py "
+                                "asked for -- fix the window, then re-run; do not read the "
+                                "failures as widget defects.",
+                                ssz.X, ssz.Y, w, h, sx, sy);
+                }
             }
             if (size.X < 1.f || size.Y < 1.f) {
                 UE_LOGE("server_browser_native: BROWSER BACK FAIL -- the X occupies %.0fx%.0f "
