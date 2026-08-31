@@ -55,6 +55,12 @@ void Destroy(Field* f);
 // OUR focus, not Slate's -- `HasKeyboardFocus()` is the predicate the input-ownership
 // finding measured as lying about a live field, and the probe above read it as 0 on a
 // field it had just successfully focused. Exactly one field in the process holds focus.
+// THE FIELD'S OUTERMOST WIDGET -- the SizeBox `Create` attached to the parent. Exposed so
+// a caller can configure the SLOT it landed in (fill it to the column, pad it, align it):
+// the field owns what is inside its frame, the screen owns where the frame sits, and
+// without this the screen has no handle on its own layout.
+void* Widget(const Field* f);
+
 void Focus(Field* f);
 void Blur(Field* f);
 bool Focused(const Field* f);

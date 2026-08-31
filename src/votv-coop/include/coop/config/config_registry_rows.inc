@@ -411,6 +411,24 @@ CFG_FLAG(native_ui_probe_write, "native_ui_probe_write", "dev", false,
 CFG_FLAG(browser_native, "browser_native", "ui", true, "VOTVCOOP_BROWSER_NATIVE",
     "Use the native in-game server browser (drawn inside VOTV's own menu). Turn this off "
     "to fall back to the older overlay browser; the change needs a restart.")
+// TWO INPUT DESIGNS, SHIPPED SIDE BY SIDE SO THEY CAN BE COMPARED BY EYE -- and this row
+// is DELIBERATELY TEMPORARY.
+//
+// The user's answer to the input question was not a choice, it was a method: "попробуем
+// разные дизайны и что лучше будет то и оставим" -- build both, keep the better one. Their
+// veto on typing inside the browser was CONDITIONAL ("я против ввода внутри ЕСЛИ это
+// костыльно и бестолково по дизайну"), so it cannot be settled by argument, only by
+// looking at both. Off = the address and the name are typed in their own small windows,
+// the way VOTV's Language window works. On = they are typed in the browser itself.
+//
+// RULE 2 APPLIES THE MOMENT THE USER PICKS: the loser and this row are deleted together,
+// in the same session. It is not a preference, not a fallback, and not a feature flag for
+// old behaviour -- it exists to hold two candidates up beside each other and then to go.
+CFG_FLAG(browser_inline_input, "browser_inline_input", "ui", false, "VOTVCOOP_BROWSER_INLINE_INPUT",
+    "TEMPORARY: which of the two input designs the server browser uses. Off = a separate "
+    "small window for the address and for your name (like VOTV's Language window). On = "
+    "type them in the browser itself. Both are shipped so you can compare them; the one "
+    "that is not chosen will be removed.")
 CFG_FLAG(browser_autoopen, "browser_autoopen", "dev", false, "VOTVCOOP_BROWSER_AUTOOPEN",
     "Show the native browser as soon as it is built, without a click -- an autonomous "
     "run cannot press the MULTIPLAYER button. Requires browser_native=1.")

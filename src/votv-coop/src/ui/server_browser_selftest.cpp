@@ -11,6 +11,8 @@
 #include "ui/input_focus.h"            // synthesized input only lands in a FOREGROUND window
 #include "ui/imgui_overlay.h"          // CaptureOwners() -- who is eating the mouse
 #include "ui/server_browser_actions.h"  // the HOST button this drives
+#include "ui/browser_input_screens.h"
+#include "ui/server_browser_inline_input.h"
 #include "ui/host_window_native.h"     // ...and what it must open
 
 #include "ue_wrap/core/call.h"
@@ -165,6 +167,16 @@ constexpr int kHostEscPress   = 292;
 constexpr int kHostEscHold    = 298;
 constexpr int kHostEscRelease = 302;
 constexpr int kHostEscVerify  = 308;
+// THE INPUT FORK'S TWO SHOTS, last in the schedule because they are the only phases that
+// leave a window OTHER than the browser on screen. They assert nothing about behaviour --
+// they exist so the user can look at both input designs and pick one, which is the method
+// they chose over an argument ("попробуем разные дизайны и что лучше будет то и оставим").
+// In variant B there are no windows to open and both phases SKIP with a line saying so.
+constexpr int kInputDirectShot = 314;
+constexpr int kInputDirectHold = 315;
+constexpr int kInputNameOpen   = 322;
+constexpr int kInputNameShot   = 328;
+constexpr int kInputNameHold   = 329;
 
 // The forced offset for the positive control. Far past any real content extent, so a
 // getter that returns it UNCHANGED has told us it echoes the request rather than reading
@@ -1150,9 +1162,67 @@ void Tick(void* scrim, void* list, void* exitBtn) {
                 UE_LOGE("host_window_native: HOST ESC FAIL -- the window is STILL OPEN after a "
                         "real VK_ESCAPE press-release. With the X gone and this dead, a player "
                         "whose pointer is starved of mouse messages cannot leave at all.");
+            // VARIANT A ONLY: ask for the direct-connect window so the shot below has
+            // something to take. Deferred through Open(), like every other consumer.
+            if (!ui::server_browser_inline_input::Armed())
+                ui::browser_input_screens::Open(
+                    ui::browser_input_screens::Kind::DirectConnect);
+            // BREAK, NOT RETURN. The step counter is incremented by the `++` after this
+            // switch, so a `return` from a case is how a phase repeats itself forever --
+            // which is exactly what this one did on its first run, logging HOST ESC PASS
+            // and re-opening the window every tick. Every phase that ENDS the run sets
+            // step -1 and returns; every phase that hands over must break.
+            break;
+        }
+        case kInputDirectShot: {
+            if (ui::server_browser_inline_input::Armed()) {
+                UE_LOGW("server_browser_native: INPUT SHOT SKIP -- inline input is armed, so "
+                        "there is no separate window to photograph. Variant B's fields are in "
+                        "the browser's own capture.");
+                g_selfCheckStep = -1;
+                return;
+            }
+            if (!ui::browser_input_screens::IsOpen()) {
+                UE_LOGE("server_browser_native: INPUT DIRECT FAIL -- the direct-connect window "
+                        "did not open. Variant A cannot be compared against variant B if half "
+                        "of it does not appear.");
+                g_selfCheckStep = -1;
+                return;
+            }
+            UE_LOGW("server_browser_native: INPUT DIRECT SHOT -- the direct-connect window is "
+                    "up, prefilled and focused. This is variant A's address input; variant B "
+                    "puts the same field in the browser's right-hand column.");
+            g_holdUntilMs = nowMs + kShotHoldMs;
+            break;
+        }
+        case kInputDirectHold:
+            // HOLDING: give mp.py's 3 s capture poll a window onto this screen. Returning
+            // WITHOUT advancing is how every hold in this file works -- the step counter is
+            // incremented after the switch, so a return re-enters this same case next tick.
+            if (nowMs < g_holdUntilMs) return;
+            ui::browser_input_screens::Open(ui::browser_input_screens::Kind::ChangeName);
+            break;
+        case kInputNameOpen:
+            // One phase of slack: the open is deferred to the next menu tick and the shot
+            // must not fire on the window it is replacing.
+            break;
+        case kInputNameShot: {
+            if (!ui::browser_input_screens::IsOpen()) {
+                UE_LOGE("server_browser_native: INPUT NAME FAIL -- the change-name window did "
+                        "not open.");
+                g_selfCheckStep = -1;
+                return;
+            }
+            UE_LOGW("server_browser_native: INPUT NAME SHOT -- the change-name window is up. "
+                    "Variant A's second window; in variant B this is a labelled field under "
+                    "the status pane instead.");
+            g_holdUntilMs = nowMs + kShotHoldMs;
+            break;
+        }
+        case kInputNameHold:
+            if (nowMs < g_holdUntilMs) return;
             g_selfCheckStep = -1;
             return;
-        }
         default:
             break;
     }

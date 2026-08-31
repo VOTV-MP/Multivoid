@@ -15,6 +15,7 @@
 #include "coop/session/session_manager.h"  // RefreshLatestVersion + LatestVersionLine (native version label)
 #include "ui/server_browser.h"
 #include "ui/server_browser_surface.h"  // WHICH browser this session uses
+#include "ui/browser_input_screens.h"
 #include "ui/host_window_native.h"
 #include "ui/server_browser_native.h"
 #include "ue_wrap/engine/engine.h"
@@ -231,6 +232,11 @@ void OnMenuTickPost(void* self, void* /*function*/, void* /*params*/) {
     // ...and the HOST WINDOW, its sibling in the same switcher. Same observer for the
     // same reason: one owner of the menu tick. Both no-op unless [dev] browser_native=1.
     ui::host_window_native::OnMenuTick(self, ReadPtr(self, g_switcherOff));
+    // ...and the two small INPUT windows (variant A of the input fork -- the address and
+    // the name typed in their own sub-windows, VOTV's Language-window shape). Same
+    // observer, same reason. They build unconditionally and are only ever SHOWN by the
+    // browser's action grid, which offers them only while `ui.browser_inline_input` is off.
+    ui::browser_input_screens::OnMenuTick(self, ReadPtr(self, g_switcherOff));
 
     // Inject once per menu instance; self-heal if VOTV ever tore our button out
     // (throttled to 1 attempt/s so a persistent failure never hammers SpawnObject).

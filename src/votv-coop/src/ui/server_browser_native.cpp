@@ -9,6 +9,7 @@
 #include "ui/input_focus.h"            // a click only counts while OUR window is foreground
 #include "ui/native_screen.h"          // palette + widget primitives, shared with the host window
 #include "ui/server_browser_actions.h"   // CONNECT / HOST / REFRESH, its own TU
+#include "ui/server_browser_inline_input.h" // variant B of the input fork
 #include "ui/server_browser_panels.h"    // the details panel + the black status pane
 #include "ui/server_browser_rows.h"      // the LIST -- rows, identity, hover, selection
 #include "ui/native_text_field.h"        // AnyFocused() -- a focused field owns Escape
@@ -35,6 +36,7 @@ namespace sm = coop::session_manager;
 namespace selftest = ui::server_browser_selftest;
 namespace rows = ui::server_browser_rows;
 namespace panels = ui::server_browser_panels;
+namespace inline_input = ui::server_browser_inline_input;
 
 using ue_wrap::FLinearColor;
 
@@ -55,6 +57,15 @@ constexpr float kPadPx    = 6.f;
 // GRID moved under the list (it is inside the same left column, and the slack it needs came
 // from here rather than from a taller window).
 constexpr float kListH    = 440.f;
+// ...MINUS THE INPUT STRIP, when variant B is the one running. The strip sits under both
+// columns and takes its height from the body, and the list's height is an OVERRIDE rather
+// than slack -- so if the override is not reduced by the same amount the left column
+// simply overflows the window, which is the failure the override exists to prevent in the
+// other direction. One subtraction, stated where the constant is.
+constexpr float kInputStripH = 72.f;
+float ListHeight() {
+    return ui::server_browser_inline_input::Armed() ? kListH - kInputStripH : kListH;
+}
 // The two columns of the body. The list is the subject and takes most of the width; the
 // panels beside it hold prose, not a table, so they need enough to spell a sentence and no
 // more. The save browser this mirrors splits about the same way.
@@ -234,7 +245,7 @@ bool BuildScreen(void* switcher) {
     void* listBox = Spawn(L"SizeBox", leftCol);
     void* list    = listBox ? Spawn(L"ScrollBox", listBox) : nullptr;
     if (!listBox || !list) return false;
-    U::SetSizeBoxHeight(listBox, kListH);
+    U::SetSizeBoxHeight(listBox, ListHeight());
     // The settings list's scrollbar treatment (section 7b): a server list is the long-list
     // case, and ui_saveSlots' own ScrollBox sets no bar style at all. NINE brushes.
     U::CloneStyle(list, P::off::UScrollBox_WidgetBarStyle, barDonor,
@@ -256,7 +267,22 @@ bool BuildScreen(void* switcher) {
     if (!rightCol) return false;
     NS::AddHFill(body, rightCol, kPanelsWeight, kFill, kFill);
     if (!panels::BuildDetails(rightCol)) return false;
+    // CONNECT SITS DIRECTLY UNDER THE PANEL THAT DESCRIBES WHAT IT WILL JOIN (USER
+    // 2026-08-31). The rest of the actions stay in the grid beneath the list, because they
+    // are the ones that do not depend on which row is chosen.
+    if (!ui::server_browser_actions::BuildConnect(rightCol, backDonor)) return false;
     if (!panels::BuildStatus(rightCol)) return false;
+
+    // (4b) VARIANT B of the input fork: a full-width strip under both columns. A no-op
+    // returning true when the config picks variant A (the sibling windows), so this line
+    // reads the same either way and neither variant is the special case.
+    //
+    // NOT IN THE RIGHT-HAND COLUMN, which is where it first went and where the user cut it:
+    // "your name and connect by address don't belong on the right panel with the server
+    // info - that takes too much space" (2026-08-31). Across the whole window the two
+    // fields have ~950 px and cost only their own band; in a ~330 px column they were
+    // squeezing a pane whose entire job is to be read.
+    if (!inline_input::Build(col, backDonor)) return false;
 
     // (5) BACK, ALONE AT THE BOTTOM LEFT, IN ITS OWN SMALL BOX.
     //
@@ -413,6 +439,7 @@ void OnMenuTick(void* menu, void* switcher) {
         g_backBtn = nullptr; g_scrimW = nullptr;
         ui::server_browser_actions::Forget();
         panels::Forget();
+        inline_input::Forget();
         g_ourIndex = -1; g_shown = false; g_buildAttempts = 0; g_toldTheUser = false;
         rows::Attach(nullptr);   // the panel died with the menu; drop it and the row ids
     }
@@ -561,6 +588,12 @@ void OnMenuTick(void* menu, void* switcher) {
     }
 
     rows::UpdateHover();
+    // Variant B's fields drive themselves (caret, click-to-focus, the name's commit); the
+    // ADDRESS's Enter edge is an ACTION and is answered by the same handler the grid's
+    // Direct connect cell calls, so it is routed rather than handled here. No-ops entirely
+    // in variant A.
+    inline_input::Tick();
+    if (inline_input::ConsumeAddressSubmit()) ui::server_browser_actions::ConnectToAddress();
 
     // FETCH ON A TIMER, PAINT ON AN ARRIVAL -- two questions, and they used to share one
     // gate. With paint coupled to the fetch tick, a lobby that arrived at t=0.3 s was not
