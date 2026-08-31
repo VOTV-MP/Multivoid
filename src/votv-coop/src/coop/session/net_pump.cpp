@@ -118,6 +118,21 @@ coop::net::Session* g_tickSession = nullptr;
 //   - The balloon is VOTV's OWN possessed-ragdoll leak in the GAMEPLAY world (~165 MB/s
 //     to OOM). VOTV's native death never leaves the world -- it just leaves you
 //     ragdolling. So the cure is to LEAVE the gameplay world.
+//     *** BOTH HALVES OF THAT ARE NOW MEASURED FALSE (2026-08-31). DO NOT BUILD ON IT. ***
+//     (a) "native death never leaves the world": the chain reaches `loadLevel('menu')`
+//         at +10 s -- bytecode-mapped AND runtime-confirmed (dead 0 ms / blackScreen
+//         5125 ms / travel 10703 ms). The June window was almost certainly OURS: this
+//         flee fires within one pump tick of `dead`, so nobody ever watched the game's
+//         own ten seconds.
+//     (b) "~165 MB/s": FOUR runs of `mp.py death` measure the dead window's RSS slope at
+//         0.00-0.11 MB/s -- about 1% of the claim, ~1 MB over ten seconds. The number
+//         had no finding doc anywhere in docs/ or research/; it lived only in this
+//         comment and in autotest_menutravel_probe.cpp's header, and it predates the
+//         v122 no-passive-mint fix that removed ~2,200 zombie element rows per join.
+//     What is NOT measured: a session-scoped balloon (the runs were solo, since a live
+//     session makes this very flee pre-empt the chain). If one exists it is OURS, which
+//     makes it a root to fix rather than a reason to leave the world.
+//     See docs/DEATH_ARC.md section 9 and [[lesson-a-number-that-lives-only-in-a-comment-is-a-claim]].
 //   - `disconnect` is a no-op (no UE netdriver); raw `open menu` does not travel
 //     (short name unresolved); VOTV travels via its OWN verb mainGamemode_C::transition
 //     ("/Game/menu", full path) -- engine::ReturnToMainMenu. This works for a DEAD/

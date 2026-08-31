@@ -560,10 +560,11 @@ NOT SYNCED: per-peer sleepCam view; individual dream CONTENT (only the roll auth
 | 3 | restore vitals (F3 dev refill) | U | code | HA | `restore_vitals::ApplyLocally` | none |
 | 4 | killer-wisp fatal grab/tear | W | HO | HA | (wisp lane, cross-ref) | none |
 | 5 | physical impact damage on a NON-local body (the "kill a player → the HOST dies" class) | W (cancel installed) | log | victim-authoritative (MTA shape) | **2026-08-29 (`aaf695c4`+`36e74269`)**: `player_damage::OnImpactEntryPre` PRE-cancels `impactDamage/impactDamageCPP/impactSquishCPP` when `self` != the atomic local-pawn snapshot — the BP bodies write the per-machine `saveSlot.health` SINGLETON on whatever body ran them (VERDICT #6 probe: the DIRECT entries are possession-guarded no-ops; the impact surface was the leak). Install line log-proven both peers; **the cancel itself has not fired on a real hit yet** | none (stateless) |
-| 6 | death → KO respawn (default lifecycle) | U | code | per-machine | `coop/player/ko_respawn` (adopted Tarangok, `e230d8df` + audit fold): lethal-hit interceptor + net_pump dead=true backstop → faint ragdoll → respawn at КПП, full vitals; `[death] ko_respawn=1` default. **Smoke-booted only — no death has been exercised through it** | KO is transient (≤ ragdoll_seconds); joiner sees pose/ragdoll stream |
+| 6 | death → the native chain, then an intervention at the travel | U | code | per-machine | **`coop/player/ko_respawn` was RETIRED WHOLE in `33008d87` (2026-08-31)** — it held the game's own `canRagdoll` gate shut so a death was never authored, the inverse of the user's instruction, and carried three HIGH defects. Design of record `docs/DEATH_ARC.md`; NOTHING of it is built as of `f23d4df6`. Interim = vanilla permadeath + `net_pump`'s flee, and the flee is MEASURED to pre-empt the chain (black screen never appears, world gone at 4.5 s) | none |
 
 NOT SYNCED: local hazard EFFECTS (screen shake, coffeePower); "stamina" is `sleep` (local-only). The
-2026-05-30 permadeath flow survives only as `ko_respawn=0` (COOP_SCOPE death-lifecycle supersede).
+2026-05-30 permadeath flow is the CURRENT behaviour again since `33008d87` retired the KO lane
+(the `ko_respawn=0` opt-out no longer exists -- the config rows went with the module).
 
 ### Puppet (unpossessed-orphan drive) — `coop/player/puppet_drive`, `puppet_carry_drive`
 | # | facet | V | E | Auth | cite | mid-join |

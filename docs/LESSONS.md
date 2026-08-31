@@ -3240,6 +3240,36 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   the delay fit the condition's real lifetime?
   `memory/lesson-a-countdown-anchored-at-first-eligibility-fires-into-a-lapse.md`
 
+- **A number that lives ONLY in a code comment is a CLAIM — re-measure it before it rules out a
+  design** — `net_pump.cpp` justified the whole flee-to-menu architecture with "the balloon is VOTV's
+  OWN possessed-ragdoll leak (~165 MB/s to OOM)", from "4 hands-on + an autonomous probe arc" in June.
+  Two tells it deserved re-measuring, both free: `grep -rln "165 MB"` returned TWO source files and
+  ZERO finding docs (every other measurement in this project has a dated `research/findings/` home),
+  and the sentence NEXT TO IT ("VOTV's native death never leaves the world") was already falsified by
+  the bytecode — **when one clause of a two-clause claim is provably wrong, the other is not evidence,
+  it is the same author**. Re-measured across four runs: **0.00–0.11 MB/s**, ~1% of the claim. Also
+  check the AGE against what has been fixed since (this predated the v122 no-passive-mint fix that
+  removed ~2,200 zombie rows/join) and sanity-check the magnitude against the world (165 MB/s means
+  vanilla SP spikes 1.6 GB on every death; players would have noticed). **Second half: my DIFFERENTIAL
+  was less stable than the raw term** — the dead-window slope held 0.00–0.11 while the differential
+  moved 2.32→3.78→6.37, because the alive CONTROL drifted differently each run. A differential only
+  beats its raw term when what it subtracts is constant, and a noisy control errs in the flattering
+  direction. *Look FIRST:* does the number have a finding doc? If not, it is a claim.
+  `memory/lesson-a-number-that-lives-only-in-a-comment-is-a-claim.md`
+- **An env-gated test can be unreachable by its own LAUNCHER — a launch configuration is a claim, and
+  it is invisible in the output** — TWO instances the same day. (a) `SpawnEnvGatedTests` sat INSIDE
+  `harness.cpp`'s net-role branch, so a `VOTVCOOP_RUN_*_TEST` flag could only spawn in a launch that
+  ALSO started a session: every env-gated autotest was silently unreachable in a solo launch,
+  **including two that document themselves as SP-solo** (`autotest_menutravel_probe`,
+  `autotest_ragdoll_spawn_probe`), and the scenario reported `INCONCLUSIVE` — indistinguishable from a
+  broken feature. Hoisted in `f2c7e67b`. (b) The death instrument launched SESSIONLESS *on purpose* so
+  `net_pump`'s flee could not pre-empt the chain — while the design it graded turns on a veto whose
+  first term is a LIVE SESSION, so its arms could never reach the thing they graded. Two configs that
+  exclude each other need TWO RUNS, and the instrument must say which it is in (`sessionRunning=0/1`).
+  *Look FIRST:* when a run reports INCONCLUSIVE, prove it RAN before debugging the subject — one
+  "armed" line at the spawn point is the cheapest discriminator.
+  `memory/lesson-an-env-gated-test-can-be-unreachable-by-its-own-launcher.md`
+
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
 
 - **A WINDOW CLOSED BY THE LATCH THAT STARTS THE NEXT PHASE ENDS BEFORE THAT PHASE — BY
@@ -5359,6 +5389,20 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   by grepping for the variable the BODY reads, then MEASURE its gates instead of guessing which
   refused (two of these three were cheap side-effect-free reads and named the answer in one run).
   `memory/lesson_a_dead_stub_reports_success.md`
+
+- **`UWidget::RemoveFromParent` DETACHES a widget; it does not DESTROY it** — `[V]` measured
+  2026-08-31 on `blackScreen_C`, a widget the GAME creates (`mainPlayer` uber `@4353`,
+  `AddToViewport(0)`): `inViewport 1 -> 0` but **`stillFindable=1`** — `FindObjectByClass` still
+  returns the UObject afterwards. So **any "is it gone" check must ask `IsInViewport`, never
+  findability**; `docs/DEATH_ARC.md`'s revive had a completion term that asked whether a live
+  `blackScreen_C` was findable, which would have read TRUE forever after a perfectly successful
+  removal and travelled the player to the menu for a step that had worked. Resolve
+  `RemoveFromParent` off the ENGINE `Widget` class (`FindFunction` is exact-owner, no SuperStruct
+  climb — `laptop.cpp:128-131`) and `IsInViewport` off `UserWidget`. The probe caught the trap only
+  because it reported BOTH facts; one written to answer the question I went in with would have
+  looked like a clean pass. (Same run: removing the widget did not perturb the chain — travel at
+  10 703 ms vs 10 672 ms with it left in place, so it is a display artifact, not a participant.)
+  `memory/lesson-removefromparent-detaches-a-widget-it-does-not-destroy-it.md`
 
 ## 6. Assets, models, geometry
 

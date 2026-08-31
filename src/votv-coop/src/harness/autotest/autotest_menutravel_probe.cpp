@@ -2,9 +2,12 @@
 // MAIN MENU?" probe.
 //
 // The client-death OOM fix must flee the leaking gameplay world to the menu (the
-// balloon is VOTV's own possessed-player ragdoll leaking in-world ~165 MB/s -- a
-// VOTV-native leak we cannot fix at source per Principle 1; the only mod-side cure
-// is to leave the world fast). Three hands-on death tests failed because we never
+// balloon was believed to be VOTV's own possessed-player ragdoll leaking in-world
+// ~165 MB/s -- *** THAT RATE WAS RE-MEASURED 2026-08-31 AT 0.00-0.11 MB/s over four
+// runs of `mp.py death`, i.e. ~1% of it, and the claim had no finding doc anywhere;
+// see net_pump.cpp's death-policy comment and docs/DEATH_ARC.md section 9. The travel
+// verb this probe found is still the right one and this probe's result stands -- only
+// the MOTIVE recorded here was wrong. ***). Three hands-on death tests failed because we never
 // had a WORKING travel command: `disconnect` is a no-op (VOTV is single-player, no
 // UE netdriver), and raw `open menu` does NOT travel -- the live death log showed
 // the world stayed `untitled` through four re-issues, then froze. VOTV travels via
