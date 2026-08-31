@@ -213,6 +213,16 @@ bool BuildWindowShell(void* switcher, float widthPx, float heightPx, const wchar
 // let both sides of the comparison come from one source.
 int32_t ChildAtCursor(void* panel, int32_t count, long cx, long cy, int32_t hint = -1);
 
+// WHERE THE CURSOR IS, IN THE SPACE `WidgetScreenRect` REPORTS IN.
+//
+// The ONE conversion both hit tests go through: `GetCursorPos` gives DESKTOP pixels,
+// Slate reports ABSOLUTE, and the terms between them are the window's client origin AND
+// the viewport's UI scale. False means Slate's own inverse transform would not resolve --
+// which is a REFUSAL, not a miss: the caller must report "no hit" rather than fall back to
+// any other space. (It used to fall back to client pixels, silently, which is exactly the
+// space a measured correction had already rejected.)
+bool CursorInWidgetSpace(long& outX, long& outY);
+
 // IS THE POINTER OVER THIS ONE WIDGET -- by GEOMETRY, never by `IsHovered()`.
 //
 // The engine's own `IsHovered()` is not usable on the widgets we build: measured 0 across

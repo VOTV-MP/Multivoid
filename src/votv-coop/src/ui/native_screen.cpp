@@ -429,16 +429,59 @@ int32_t ChildAtCursor(void* panel, int32_t count, long cx, long cy, int32_t hint
     return -1;
 }
 
-bool CursorOverWidget(void* w) {
-    if (!w) return false;
+bool CursorInWidgetSpace(long& outX, long& outY) {
     POINT c{};
     if (!::GetCursorPos(&c)) return false;
+    // The client origin is HALF of it; the other half is the viewport's UI scale, and
+    // this file is not the place to reconstruct Slate's transform from parts (see the
+    // long note in HoverTracker::Poll -- two hand-derived corrections, two wrong answers
+    // in opposite directions).
+    POINT cli = c;
+    if (HWND hwnd = ::GetActiveWindow()) ::ScreenToClient(hwnd, &cli);
+    ue_wrap::FVector2D abs{};
+    if (!U::CursorToWidgetAbsolute(
+            ue_wrap::FVector2D{static_cast<float>(cli.x), static_cast<float>(cli.y)}, abs)) {
+        // FAIL CLOSED, and say so ONCE. The old behaviour fell back to CLIENT pixels --
+        // the space that was MEASURED WRONG -- with no log, so a scaled viewport silently
+        // aimed every hit test at an offset instead of reporting that it could not answer.
+        // A skip-if that degrades into a known-bad answer is a RULE-1 crutch (post-ship
+        // audit, 2026-08-31).
+        static bool sSaidSo = false;
+        if (!sSaidSo) {
+            sSaidSo = true;
+            UE_LOGE("native_screen[hit]: Slate's cursor transform would not resolve, so NO "
+                    "hit test can be answered this session. Every hand-built row and field "
+                    "will read not-hovered. This is a refusal, not a miss -- the previous "
+                    "behaviour guessed in client pixels and was wrong at any UI scale.");
+        }
+        return false;
+    }
+    outX = static_cast<long>(abs.X);
+    outY = static_cast<long>(abs.Y);
+    return true;
+}
+
+// ONE MECHANISM, WHICH IS WHAT THE HEADER ALWAYS CLAIMED.
+//
+// This compared RAW `GetCursorPos` (DESKTOP pixels) against `WidgetScreenRect` (Slate
+// ABSOLUTE) while `HoverTracker::Poll`, twelve lines below, converted first -- so the kit
+// shipped TWO hit tests in TWO spaces under a header promising "there is ONE hit-test
+// mechanism in the native screens rather than two that disagree". They agree only while
+// the window is unscaled and at the origin; at any other scale the rows that went through
+// the tracker hit and the ones that came here (the hosting window's New-game and
+// connection rows, the text field's click-to-focus) missed by the offset -- half a screen
+// working, which this project has a lesson named after. Found by the post-ship correctness
+// audit, 2026-08-31; both now call `CursorInWidgetSpace`.
+bool CursorOverWidget(void* w) {
+    if (!w) return false;
+    long hx = 0, hy = 0;
+    if (!CursorInWidgetSpace(hx, hy)) return false;
     ue_wrap::FVector2D tl{}, sz{};
     if (!U::WidgetScreenRect(w, tl, sz) || sz.X < 1.f || sz.Y < 1.f) return false;
-    return c.x >= static_cast<long>(std::floor(tl.X)) &&
-           c.x <  static_cast<long>(std::floor(tl.X + sz.X)) &&
-           c.y >= static_cast<long>(std::floor(tl.Y)) &&
-           c.y <  static_cast<long>(std::floor(tl.Y + sz.Y));
+    return hx >= static_cast<long>(std::floor(tl.X)) &&
+           hx <  static_cast<long>(std::floor(tl.X + sz.X)) &&
+           hy >= static_cast<long>(std::floor(tl.Y)) &&
+           hy <  static_cast<long>(std::floor(tl.Y + sz.Y));
 }
 
 void HoverTracker::Reset() {
@@ -502,11 +545,11 @@ bool HoverTracker::Poll(void* panel, int32_t shownCount) {
     // reconstruct Slate's transform from parts. `CursorToWidgetAbsolute` runs
     // Slate's own inverse, so both sides of the comparison come from one source
     // whatever the scale and wherever the window sits.
-    ue_wrap::FVector2D abs{};
-    const bool converted = U::CursorToWidgetAbsolute(
-        ue_wrap::FVector2D{static_cast<float>(cli.x), static_cast<float>(cli.y)}, abs);
-    const long hx = converted ? static_cast<long>(abs.X) : cli.x;
-    const long hy = converted ? static_cast<long>(abs.Y) : cli.y;
+    // Through the SHARED converter, so this and `CursorOverWidget` cannot drift into two
+    // spaces again. It fails CLOSED: an unresolvable transform is "no hit", never a guess
+    // in the space that was measured wrong.
+    long hx = 0, hy = 0;
+    if (!CursorInWidgetSpace(hx, hy)) { index_ = -1; return true; }
 
     // ALWAYS-ON, first three hovers per process, at WARN so it FLUSHES. The user's
     // own run left no evidence at all last time -- INFO is buffered and a killed
@@ -532,9 +575,12 @@ bool HoverTracker::Poll(void* panel, int32_t shownCount) {
         ue_wrap::FVector2D ptl{}, psz{};
         const bool haveP = U::WidgetScreenRect(panel, ptl, psz);
         const int32_t hit = ChildAtCursor(panel, shownCount, hx, hy, -1);
-        UE_LOGW("native_screen[hit] desktop=(%ld,%ld) client=(%ld,%ld) slateAbs=%s(%.1f,%.1f) "
+        // `slateAbs` is no longer conditional: the conversion is now the ONLY way this
+        // function gets a coordinate at all -- a failure returns before here, loudly, and
+        // there is no client-pixel fallback left to label.
+        UE_LOGW("native_screen[hit] desktop=(%ld,%ld) slateAbs=(%ld,%ld) "
                 "panel %s(%.0f,%.0f) %.0fx%.0f -> row=%d",
-                c.x, c.y, cli.x, cli.y, converted ? "" : "UNCONVERTED ", abs.X, abs.Y,
+                c.x, c.y, hx, hy,
                 haveP ? "" : "UNREAD ", ptl.X, ptl.Y, psz.X, psz.Y, hit);
         // A MISS INSIDE THE PANEL IS THE ONLY INTERESTING MISS, and it is the one that
         // has now survived two hand-derived fixes. Both were reasoned from the ONE rect

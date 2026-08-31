@@ -67,6 +67,12 @@ uint64_t CopyRows(std::vector<coop::net::lobby::LobbyRow>& out);
 // landed. Asking that question every tick must not cost a full copy of up to 64 rows of
 // strings, which is what using CopyRows for it would mean.
 uint64_t RowsGeneration();
+
+// The generation of the ROWS THEMSELVES (LobbyClient::DataGeneration) -- moves only when a
+// fetch SUCCEEDED. Anything answering "how old is this data" keys on this; anything
+// answering "should I repaint" keys on RowsGeneration above. See the header there for the
+// defect that separating them fixed.
+uint64_t RowsDataGeneration();
 std::string Status();
 
 // How many list fetches in a row have failed (0 once one succeeds) -- the browser's
