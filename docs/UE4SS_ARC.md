@@ -1963,6 +1963,15 @@ and `UE4SS-settings.ini` remain preserved state; the invariant is unchanged.
 mismatch, so a rolling source or a swapped file cannot quietly seat a different loader. `[V]` Shown
 refusing on a real wrong payload (the v3.0.1 zip, `4C177B9E`) with the existing install left intact.
 
+**TWO COPIES OF ONE DECISION — bump both or neither.** `[V]` The release manifest already declares
+`Thunderstore-unreal_shimloader-1.1.7` as the package's dependency (`ledger_lib.ps1:391`), which is
+what tells r2modman which UE4SS to install. It happens to name the same version the installer now
+pins, so today the two lanes agree — but they are independent literals in different files, serving
+the manual lane and the manager lane respectively. If one is bumped alone the lanes run different
+loaders again, which is precisely the asymmetry 9.5 moved the pin to close. There is deliberately no
+shared constant yet (the manifest builder and the installer share no module); the coupling is
+recorded here and in the installer's `.NOTES` instead.
+
 **One live obstacle, measured, not worked around.** `gcdn.thunderstore.io` — where the canonical
 download redirects — is **reset at the TLS handshake from this machine**: `[V]` three curl retries
 and a Python `urllib` attempt all fail (`WinError 10054` / `curl (35)`, `time_appconnect=0`), while
