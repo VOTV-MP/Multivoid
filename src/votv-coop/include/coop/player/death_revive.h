@@ -107,6 +107,12 @@ bool LastReviveSucceeded();
 // It gates the RECONCILE ONLY. The travel is still refused and the player is still revived,
 // so a run with this set is survivable-but-dirty, never a run that strands anyone. It is read
 // once and cached; it is a drill switch, not a shipped configuration.
+//
+// "Dirty" is not cosmetic, and a post-ship audit was right to say so: skipping the reconcile
+// leaves `gameInstance.NewVar_1` ARMED, and that death signal lives on an object which
+// outlives every level and whose branch reaches `lib_C::end(self)` WHILE THE GAME IS PAUSED.
+// So this arm plus a later ESC is a plausible session-ender. The drill never pauses, so
+// nothing is broken today -- but do not reach for this switch outside the drill.
 bool ReconcileDisabled();
 
 }  // namespace coop::death_revive

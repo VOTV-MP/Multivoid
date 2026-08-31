@@ -55,6 +55,7 @@
 #include "harness/autotest.h"
 
 #include "coop/net/session.h"
+#include "coop/config/config.h"
 #include "coop/dev/death_write_diff.h"
 #include "coop/player/death_revive.h"
 #include "coop/player/players_registry.h"
@@ -772,6 +773,10 @@ constexpr double kBalloonMbPerSec = 20.0;
 // is inside the observation.
 constexpr int kAliveWindowMs = 10000;
 constexpr int kDeadWindowMs  = 22000;
+// The write-diff's noise floor must cover the whole span it grades, which is kDeadWindowMs
+// PLUS the hit post, the observation loop's own overrun and the diff latency -- so this is
+// deliberately longer than kDeadWindowMs rather than equal to it.
+constexpr int kNoiseFloorWindowMs = 26000;
 constexpr int kSampleMs      = 250;
 
 }  // namespace
@@ -841,11 +846,48 @@ DWORD WINAPI DeathTestThread(LPVOID) {
 
     {
         auto done = std::make_shared<std::atomic<int>>(0);
-        GT::Post([done] {
-            coop::dev::death_write_diff::DiffAndLog("alive control", /*learnNoise=*/true);
+        auto n = std::make_shared<int>(0);
+        GT::Post([done, n] {
+            *n = coop::dev::death_write_diff::DiffAndLog("alive control 1", /*learnNoise=*/true);
             done->store(1);
         });
         WaitDone(done, 30000);
+        if (*n < 0) UE_LOGW("death_test: write-diff floor pass 1 did NOT run (see death_diff)");
+    }
+
+    // A SECOND, LONGER control stretch -- OFF BY DEFAULT, and that default is the point.
+    //
+    // Why it exists: the floor must cover at least as long as the window it grades. The alive
+    // window is 10 s; the graded span is the whole dead window (22 s) plus the hit post and the
+    // diff latency. A cell whose period sits in that gap -- an autosave timer, a world-clock
+    // field, an NPC state machine, an effect cooldown -- never enters the floor and is reported
+    // death-attributable forever. It has to be ITSELF longer than the graded span, not the
+    // remainder that would make two stretches SUM to it (10 + 12 still misses an 18 s period,
+    // which is inside the very gap being closed): coverage is the LONGEST stretch.
+    //
+    // Why it is off: it costs 26 s of the player standing still, IN EVERY RUN, and the user
+    // said so directly (2026-08-31) -- the pawn has loaded and is just standing there while the
+    // harness waits. A drill that burns half a minute of wall clock on completeness nobody
+    // asked for that run is a bad drill. So the default run pays 0 s and carries a NAMED
+    // residual (periods between ~10 s and the graded span are uncovered, and the DIFF END line
+    // says so); `mp.py death --deep-floor` buys the full coverage when the residual is actually
+    // being classified, which is the only time it matters.
+    const bool deepFloor = (coop::config::ReadEnv("VOTVCOOP_DEATH_DEEP_FLOOR") == "1");
+    if (deepFloor) {
+        auto done = std::make_shared<std::atomic<int>>(0);
+        GT::Post([done] { coop::dev::death_write_diff::Snapshot(); done->store(1); });
+        WaitDone(done, 30000);
+        const uint64_t t0 = ::GetTickCount64();
+        while (::GetTickCount64() - t0 < static_cast<uint64_t>(kNoiseFloorWindowMs))
+            ::Sleep(kSampleMs);
+        auto done2 = std::make_shared<std::atomic<int>>(0);
+        auto n = std::make_shared<int>(0);
+        GT::Post([done2, n] {
+            *n = coop::dev::death_write_diff::DiffAndLog("alive control 2", /*learnNoise=*/true);
+            done2->store(1);
+        });
+        WaitDone(done2, 30000);
+        if (*n < 0) UE_LOGW("death_test: write-diff floor pass 2 did NOT run (see death_diff)");
     }
 
     // ---- the write-diff BEFORE instant ---------------------------------------
@@ -856,8 +898,14 @@ DWORD WINAPI DeathTestThread(LPVOID) {
     // the hit -- no production seam is needed or implied. See coop/dev/death_write_diff.h.
     {
         auto done = std::make_shared<std::atomic<int>>(0);
-        GT::Post([done] { coop::dev::death_write_diff::Snapshot(); done->store(1); });
+        auto n = std::make_shared<int>(0);
+        GT::Post([done, n] { *n = coop::dev::death_write_diff::Snapshot(); done->store(1); });
         WaitDone(done, 30000);
+        // A silent no-op here would leave the run's VERDICT line byte-identical to one where
+        // the instrument worked (`[[lesson-a-check-whose-output-you-do-not-read-is-not-a-
+        // check]]`). It is not a gate -- but it must not be invisible.
+        if (*n < 0) UE_LOGW("death_test: write-diff PRE-HIT SNAPSHOT did NOT run -- the death "
+                            "diff below is meaningless (see death_diff lines)");
     }
 
     // ---- deliver the lethal hit ---------------------------------------------
@@ -939,12 +987,19 @@ DWORD WINAPI DeathTestThread(LPVOID) {
     // the reading, not either arm alone.
     {
         auto done = std::make_shared<std::atomic<int>>(0);
-        GT::Post([done] {
-            coop::dev::death_write_diff::DiffAndLog(
-                coop::death_revive::ReconcileDisabled() ? "reconcile OFF" : "reconcile ON");
+        auto n = std::make_shared<int>(0);
+        GT::Post([done, n, deepFloor] {
+            *n = coop::dev::death_write_diff::DiffAndLog(
+                coop::death_revive::ReconcileDisabled()
+                    ? (deepFloor ? "reconcile OFF, deep floor" : "reconcile OFF, SHALLOW floor")
+                    : (deepFloor ? "reconcile ON, deep floor" : "reconcile ON, SHALLOW floor"));
+            // Tens of MB, and the drill GRADES A MEMORY BALLOON two verdicts later -- an
+            // instrument that inflates the number it is measured beside is measuring itself.
+            coop::dev::death_write_diff::Release();
             done->store(1);
         });
         WaitDone(done, 30000);
+        if (*n < 0) UE_LOGW("death_test: write-diff DEATH DIFF did NOT run (see death_diff)");
     }
     {
         auto done = std::make_shared<std::atomic<int>>(0);
@@ -1039,11 +1094,18 @@ DWORD WINAPI DeathTestThread(LPVOID) {
         const float dy = last.locY - P::name::kKPPSpawnY;
         const float dz = last.locZ - P::name::kKPPSpawnZ;
         const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
-        char at[192];
+        // The DELTA, not just the distance. A 2026-08-31 run revived with the revive's own
+        // read-back reporting `distKPP=0 cm` and D7 then measuring 2669 cm TWELVE SECONDS
+        // LATER -- so the teleport had landed exactly and the player DRIFTED afterwards. A
+        // scalar distance cannot tell a fall from a walk from a slide, and that is precisely
+        // the discrimination the client-KPP-spawn lane needs; the components give it for free.
+        char at[256];
         _snprintf_s(at, sizeof(at), _TRUNCATE,
-                    "%.0f cm from the coop KPP (%.0f,%.0f,%.0f) -- read back from the pawn, "
-                    "not inferred from the teleport's return", dist,
-                    P::name::kKPPSpawnX, P::name::kKPPSpawnY, P::name::kKPPSpawnZ);
+                    "%.0f cm from the coop KPP (%.0f,%.0f,%.0f) -- delta (%.0f,%.0f,%.0f), "
+                    "horiz %.0f vert %.0f -- read back from the pawn, not inferred from the "
+                    "teleport's return", dist,
+                    P::name::kKPPSpawnX, P::name::kKPPSpawnY, P::name::kKPPSpawnZ,
+                    dx, dy, dz, std::sqrt(dx * dx + dy * dy), dz);
         Verdict("D7 at-KPP", last.haveLoc && dist <= 500.f, at);
         // The silently-lost-capability arm (H1's shape). `pause_mainMenu` survives the whole
         // session on the screen tree, so loadLevel's prep sticks through a cancelled travel.

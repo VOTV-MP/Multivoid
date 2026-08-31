@@ -83,16 +83,35 @@
 //       `bReplicates C7 -> 07` are the SAME byte. This is exactly the mis-attribution
 //       `reflection.h`'s `FindBoolProperty` exists to prevent.
 //
-// The cure for (a) is to subtract WITHIN ONE RUN and to subtract by CLASS+FIELD rather than
-// by instance name: the harness already stands the player still for a 10 s ALIVE control
-// window before the hit, so a snapshot/diff pair across THAT window measures what this world
-// churns on its own -- animated hints, radar points, pooled log rows, ticking floats. Any
-// (class, field) that moves there cannot be attributed to the death. What survives the
-// subtraction is death-attributable, and THAT is the set the census must account for.
+// The cure for (a) is to subtract WITHIN ONE RUN, against a key fine enough to tell the
+// findings apart: `OUTER/OBJECT.field`, both names stripped of a trailing `_<digits>` instance
+// suffix. TWO coarser keys were tried and both were defects. `Widget.Visibility` (the
+// declaring class) is one key for every widget in the game. And even `Image.Visibility` is one
+// key for every widget ASSET, because a UMG designer-default name is itself `<Type>_<digits>`
+// so the suffix strip eats it -- `Image_6` alone appears in ten of this game's widget
+// blueprints (ui_console, ui_radar, ui_stats, ui_menu, ui_playerInventory, ...). The Outer
+// qualifier restores `ui_radar/Image` vs `ui_stats/Image`.
 //
-// The control window is the same 10 s, the same cadence and the same frame load as the dead
-// window by construction (the harness comment on `kAliveWindowMs` says so and it predates
-// this module), so it is a fair floor rather than an idle one.
+// The harness stands the player still and takes a snapshot/diff pair across a control stretch,
+// which measures what this world churns on its own -- animated hints, radar points, pooled log
+// rows, ticking floats. Any (outer, object, field) that moves there cannot be attributed to the
+// death. What survives the subtraction is death-attributable, and THAT is the set the census
+// must account for.
+//
+// THE FLOOR MUST COVER AT LEAST AS LONG AS THE WINDOW IT GRADES -- and the first version of
+// this comment got that wrong, claiming the two were "the same 10 s ... by construction".
+// They are not: `kAliveWindowMs = 10000` but `kDeadWindowMs = 22000`, and the harness's own
+// comment says the dead window is deliberately longer so the travel (or its absence) lands
+// inside the observation. A cell with a period between ~10 s and ~22 s -- an autosave timer,
+// a world-clock field, an NPC state machine, an effect cooldown -- would therefore never
+// enter the floor and would be reported DEATH-ATTRIBUTABLE forever. That is
+// `[[lesson-a-number-that-lives-only-in-a-comment-is-a-claim]]` aimed at this module's own
+// validity. The harness therefore learns the floor across a control stretch that is ITSELF at
+// least as long as the graded span, unioned with the 10 s alive window's own pass.
+//
+// TOTAL is the wrong operator, and was the first attempt at this fix: two stretches of 10 s
+// and 12 s still miss a cell whose period is 18 s, which sits inside the very gap the argument
+// is about. Coverage is set by the LONGEST stretch, not by the sum.
 
 
 namespace coop::dev::death_write_diff {
@@ -104,16 +123,27 @@ int Snapshot();
 
 // Diff the live graph against the last Snapshot() and LOG the raw delta -- one line per
 // changed cell, plus died/appeared objects and per-class count deltas. `label` names the arm
-// in the log. GAME THREAD ONLY. Returns the number of changed cells, or -1 if there is no
-// snapshot to diff against.
+// in the log. GAME THREAD ONLY.
 //
-// If `learnNoise` is true the changed (class, field) keys are RECORDED as the noise floor
-// instead of being treated as findings; if false, any cell whose (class, field) key is in
-// that floor is SUPPRESSED from the output and only counted. Call it once with true across
-// the alive control window, then with false across the death.
+// If `learnNoise` is true the changed keys are RECORDED as the noise floor instead of being
+// treated as findings; if false, any cell whose key is in that floor is SUPPRESSED from the
+// output and only counted. Call it with true across the control stretch(es), then with false
+// across the death.
+//
+// RETURNS, and the two modes deliberately return DIFFERENT quantities because in each mode
+// that is the number a caller would act on: in learn mode, the cells that MOVED (the floor's
+// raw size); otherwise the DEATH-ATTRIBUTABLE count, i.e. after suppression. -1 if there is no
+// snapshot, or if THE WORLD CHANGED since it was taken -- the sessionless arm lets the travel
+// run, and a diff whose objects belong to a destroyed world is refused rather than reported.
 int DiffAndLog(const char* label, bool learnNoise = false);
 
 // Drop the learned noise floor (so a second scenario in one process starts clean).
 void ResetNoiseFloor();
+
+// Free the snapshot's storage. Call it once the last diff of a run has been logged: the
+// snapshot is tens of MB and would otherwise be retained for the life of the process, which
+// matters here because the drill this module serves GRADES A MEMORY BALLOON (verdict D6) and
+// an instrument that inflates the number it is measured beside is measuring itself.
+void Release();
 
 }  // namespace coop::dev::death_write_diff
