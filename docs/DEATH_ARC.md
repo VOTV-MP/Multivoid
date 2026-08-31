@@ -859,6 +859,29 @@ blendable at weight **0.000**; no `bOverride_Color*` on any volume; `PostProcess
 holds ZERO references to `PostProcess*` anywhere in the tree, with every fog path
 `g_isClient`-gated and therefore inert on a solo host.
 
+**WHAT THE SOURCE IS NOT, so the next hunt starts where this one stopped.** Everything below was
+read live, in this order, and every one came back negative:
+
+| mechanism | reading | verdict |
+|---|---|---|
+| the arc itself | tint present in the PRE-HIT frame (`health=100.00`, `dead=0`, quadrants `0.00`, bloodLoss actors `0`) | not the death |
+| the save | a **New Game** (`mp.py death --fresh`) is equally red | not the world's state |
+| camera fade | `bEnableFading=0` | no |
+| fog inscattering | `(0.447,0.638,1.000)` x2 + `(0.006,0.006,0.010)` -- **BLUE** | no |
+| player post-process | its one blendable `NewMaterial8` at weight **0.000** | no |
+| volume colour grading | no `bOverride_Color*` set on any of the three volumes | no |
+| volume/camera blendables | `inst_depthPP`, `pp_megasun_Inst`, `PP_main`, `pp_mirror`(w=0), `pp_stencilOutline` -- all level/BP content, always resident | inconclusive, see below |
+| the Bad Sun branch | `GameInstance.gamemode = b0`, NOT `b7` | the deterministic `Spawn Bad Sun` path did NOT fire |
+| graphics settings | still red with `sg.PostProcessQuality` and `sg.ShadingQuality` raised 1/0 -> 3/3 | no |
+| **our overlay** | **DX11 and DX12 render it IDENTICALLY** -- two separate backends of ours, so a state leak in `RenderDrawData` would have to exist in both | **our rendering is exonerated** |
+| our mod generally | ZERO references to `PostProcess*` anywhere in the tree; every fog path is `g_isClient`-gated and inert on a solo host | not us |
+
+One reading here is RETRACTED and must not be re-derived: `pp_megasun_Inst` sitting on an unbound
+volume at `w=1.00` was read as proof of VOTV's Bad Sun. It is not. `APostProcessVolume` defaults to
+`BlendWeight=1.0` / `bEnabled=true`, so that volume is loaded and blending in EVERY VOTV world; its
+material must be parameterised, and its mere presence proves only that the level ships it. The
+`gamemode=b0` reading then killed the deterministic trigger outright.
+
 **The process lesson is the expensive one and it is written up separately**
 (`[[lesson-a-symptom-needs-a-baseline-before-it-needs-a-hypothesis]]`): after the SECOND clean
 probe with the symptom unchanged, the frame of reference is what is wrong, not the hypothesis.
