@@ -159,6 +159,11 @@ struct Sample {
     // (gamemode.playerInterface.umg_damageIndicator.damage_{up,down,left,right}). A revived
     // player at full health wearing a red screen is death state that outlived the revive.
     float dmgRed = -1.f;
+    // `dmg_full`'s LIVE Visibility byte. Separate from dmgRed because the four quadrant
+    // floats and this one image fail INDEPENDENTLY: the death branch zeroes the quadrants
+    // and shows dmg_full in the same block, so a reader of only the floats reports a clean
+    // HUD while a full-screen red image is on screen. D10 could not have caught 11.3b #11.
+    int dmgFullVis = -1;   // ESlateVisibility; 1 = Collapsed = the authored default
     // The SECOND red, and a different mechanism: `Add Player Damage` @3414 spawns an
     // `effect_bloodLoss_C` whose PostProcess + ui_bloodLossBlur wash the whole WORLD red.
     // `[V]` any lethal hit pins its duration at the 120 s cap, so it outlives the revive by
@@ -290,6 +295,35 @@ std::wstring CensusViewportWidgets() {
 // that reader can report 0.00 with perfect honesty while a DIFFERENT instance is the one on
 // screen. Counting instances is the question "am I even looking at the right object", which
 // no amount of re-reading the same pointer can answer.
+// `dmg_full`'s live Visibility. -1 = unresolved (never treated as a failure -- an
+// unresolvable offset must not turn into a red verdict about the game's state).
+//
+// `[V]` the Tick's death branch does `@2292 dmg_full.SetVisibility(b0 = Visible)` while the
+// widget's export authors it Collapsed, and the ALIVE path never writes the field -- so this
+// is a ONE-WAY LATCH and the only thing that clears it is the revive. Asserting it is what
+// makes 11.3b #11 a REGRESSION test rather than a story: without this, deleting the fix still
+// prints 12/12.
+int ReadDmgFullVisibility() {
+    void* gm = R::FindObjectByClass(P::name::GamemodeClass);
+    if (!gm || !R::IsLive(gm)) return -1;
+    void* uiCls = R::FindClass(L"ui_UI_C");
+    void* dmgCls = R::FindClass(L"ui_damageIndicator_C");
+    void* wCls = R::FindClass(P::name::WidgetClass);
+    if (!uiCls || !dmgCls || !wCls) return -1;
+    const int32_t oPI = R::FindPropertyOffset(R::FindClass(P::name::GamemodeClass), L"playerInterface");
+    const int32_t oDI = R::FindPropertyOffset(uiCls, L"umg_damageIndicator");
+    const int32_t oFull = R::FindPropertyOffset(dmgCls, L"dmg_full");
+    const int32_t oVis = R::FindPropertyOffset(wCls, L"Visibility");
+    if (oPI < 0 || oDI < 0 || oFull < 0 || oVis < 0) return -1;
+    void* ui = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(gm) + oPI);
+    if (!ui || !R::IsLive(ui)) return -1;
+    void* ind = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(ui) + oDI);
+    if (!ind || !R::IsLive(ind)) return -1;
+    void* full = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(ind) + oFull);
+    if (!full || !R::IsLive(full)) return -1;
+    return static_cast<int>(*(reinterpret_cast<uint8_t*>(full) + oVis));
+}
+
 std::wstring CensusDamageIndicators() {
     void* cls = R::FindClass(L"ui_damageIndicator_C");
     if (!cls) return L"(class unresolved)";
@@ -670,6 +704,7 @@ Sample Probe() {
         }
         ReadMenuPrep(out->screenSwiIdx, out->canvasLoadingVis);
         out->dmgRed = ReadDamageRed();
+        out->dmgFullVis = ReadDmgFullVisibility();
         ReadBloodLoss(out->bloodLossActors, out->bloodLossTime);
         out->bloodBlurInViewport = ReadBloodBlurInViewport();
         if (void* gm = R::FindObjectByClass(P::name::GamemodeClass))
@@ -992,6 +1027,19 @@ DWORD WINAPI DeathTestThread(LPVOID) {
                     "accumulates damage/maxHealth*4 into one quadrant and nothing in the game "
                     "clears it, because the level travel used to)", last.dmgRed);
         Verdict("D10 hud-clear", last.dmgRed >= 0.f && last.dmgRed <= 0.05f, red);
+        // D13 -- the SIXTH image, and the one D10 is blind to. The death branch zeroes the four
+        // quadrants and shows `dmg_full` in the SAME block, so D10 can report a clean HUD with
+        // perfect honesty while a full-screen red image is on screen; that is exactly how
+        // 11.3b #11 survived every run until the pak disassembly found it. Want 1 = Collapsed
+        // = the widget's own authored export value. -1 (unresolved) is NOT a failure -- an
+        // offset we could not resolve is not a claim about the game's state.
+        char full[224];
+        _snprintf_s(full, sizeof(full), _TRUNCATE,
+                    "dmg_full Visibility = %d (want 1 = Collapsed, its authored default; the "
+                    "Tick's death branch @2292 sets it Visible and the ALIVE path never writes "
+                    "the field, so only the revive can clear this one-way latch)",
+                    last.dmgFullVis);
+        Verdict("D13 dmgfull-collapsed", last.dmgFullVis != 0, full);
         // The second red. ONE arm per mechanism, because they fail independently and a
         // single "is the screen red" arm could not say which to fix.
         char blood[224];
