@@ -106,6 +106,15 @@ public:
     // "master unreachable").
     std::string Status() const;
 
+    // HOW MANY FETCHES IN A ROW HAVE FAILED. 0 the moment one succeeds.
+    //
+    // The browser's "cannot reach the master" alarm keys on THIS and never on elapsed time
+    // since the last success, because those are different claims: a player who alt-tabbed
+    // for a minute has an old list and a working master, and telling them the master is
+    // down would be a lie the UI invented from a clock. Two consecutive failures is a
+    // master that answered neither of the last two 5 s attempts.
+    int ConsecutiveFailures() const;
+
     // Blocking POST /v1/join. CALL ON A WORKER THREAD (it round-trips). Returns the
     // JoinInfo (ok=false on any failure).
     static JoinInfo Join(const std::string& masterUrl, const std::string& lobbyId,
@@ -116,6 +125,7 @@ private:
     std::vector<LobbyRow> rows_;
     uint64_t generation_ = 0;
     std::string status_ = "Not refreshed yet.";
+    int consecutiveFailures_ = 0;
     std::atomic<bool> inFlight_{false};
 };
 

@@ -5,13 +5,11 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/session/session_manager.h"
-#include "coop/text/utf8_codec.h"       // the ONE owner of text encoding -- the footer
-                                        // carries status text and click answers, both of
-                                        // which can name a server
 #include "ui/boot_warning_dialog.h"     // the loud failure surface for a donor that never appears
 #include "ui/input_focus.h"            // a click only counts while OUR window is foreground
 #include "ui/native_screen.h"          // palette + widget primitives, shared with the host window
 #include "ui/server_browser_actions.h"   // CONNECT / HOST / REFRESH, its own TU
+#include "ui/server_browser_panels.h"    // the details panel + the black status pane
 #include "ui/server_browser_rows.h"      // the LIST -- rows, identity, hover, selection
 #include "ui/native_text_field.h"        // AnyFocused() -- a focused field owns Escape
 #include "coop/dev/native_text_probe.h"   // the HALT rung: can a native field take text?
@@ -36,6 +34,7 @@ namespace P  = ue_wrap::profile;
 namespace sm = coop::session_manager;
 namespace selftest = ui::server_browser_selftest;
 namespace rows = ui::server_browser_rows;
+namespace panels = ui::server_browser_panels;
 
 using ue_wrap::FLinearColor;
 
@@ -52,8 +51,15 @@ constexpr float kPadPx    = 6.f;
 // window that only had ~484 px left for it (offsetOfEnd 1438 against 30 rows of 66 px puts
 // the viewport at 542), so the list overflowed UPWARD and its first row was drawn clipped
 // under the column header. Slack arithmetic depends on every sibling's desired size being
-// what you assumed; an override depends on nothing.
-constexpr float kListH    = 470.f;
+// what you assumed; an override depends on nothing. Lowered from 470 to 440 when the action
+// GRID moved under the list (it is inside the same left column, and the slack it needs came
+// from here rather than from a taller window).
+constexpr float kListH    = 440.f;
+// The two columns of the body. The list is the subject and takes most of the width; the
+// panels beside it hold prose, not a table, so they need enough to spell a sentence and no
+// more. The save browser this mirrors splits about the same way.
+constexpr float kListWeight   = 0.63f;
+constexpr float kPanelsWeight = 0.37f;
 // ---- the construction kit ----------------------------------------------------------
 // Alignment enums, the palette, and the widget primitives moved to ui/native_screen
 // (2026-08-29) when the hosting window became the second native screen. The names are
@@ -62,6 +68,7 @@ constexpr float kListH    = 470.f;
 namespace NS = ui::native_screen;
 using NS::kFill;
 using NS::kCenter;
+using NS::kBottom;
 using NS::kJustLeft;
 using NS::kJustCenter;
 using NS::SwitcherChild;
@@ -79,7 +86,6 @@ const FLinearColor kText   = NS::Text();    // the default: most text is white
 void* g_menu     = nullptr;   // the ui_menu_C we built into (compared, never dereferenced)
 void* g_switcher = nullptr;
 void* g_root     = nullptr;   // our UUserWidget
-void* g_status   = nullptr;   // the footer UTextBlock
 void* g_scrimW   = nullptr;   // the full-screen scrim -- the thing that absorbs a stray click
 void* g_backBtn  = nullptr;   // BACK, bottom-right beside the status line
 // LBUTTON edge state for the chrome poll. Primed on Show() so the very release that
@@ -102,9 +108,6 @@ int32_t g_priorIndex = -1;
 bool    g_shown      = false;
 
 uint64_t g_lastRefreshMs = 0;
-// A click's answer holds the footer for this long against the list sync's rewrite.
-constexpr uint64_t kNoticeMs = 6000;
-uint64_t g_noticeUntilMs = 0;
 int      g_buildAttempts = 0;
 bool     g_toldTheUser   = false;
 
@@ -121,26 +124,17 @@ constexpr uint64_t kIntentTtlMs  = 20000;  // a join that never returns to a men
 // seconds for a list that changes on the scale of a person deciding to host.
 constexpr uint64_t kRefreshMs    = 5000;
 
-// The footer mirrors the session's own status EXCEPT while a click's answer is still
-// fresh. Without this the list sync would wipe "Pick a server from the list first."
-// within a few frames of the player reading it, which reads as the button doing nothing.
+// Pull the list, then repaint the panes beside it -- in that order, because the details
+// panel resolves its subject against the rows this pass just wrote.
 //
-// It sits BESIDE the list sync rather than inside it (2026-08-30, the row extraction): the
-// footer is window chrome and the rows are the list, and the only reason they were one
-// function is that both were wanted at the same two moments.
-void RefreshStatusLine() {
-    if (g_status && ::GetTickCount64() >= g_noticeUntilMs) {
-        const std::string s = sm::Status();
-        const std::wstring w = coop::text::FromUtf8Lossy(s.data(), s.size());
-        E::SetWidgetText(g_status, w.c_str());
-    }
-}
-
-// Pull the list and then the footer, in that order -- which is the order the one function
-// they used to share performed them in.
+// THE ONE-LINE FOOTER IS GONE (RULE 2, 2026-08-31). It carried `sm::Status()` and, for six
+// seconds at a time, a click's answer written over it -- one line for two facts, so the
+// answer erased the server count and the count erased the answer. The status PANE has a
+// line for each (ui/server_browser_panels), so `RefreshStatusLine` and the notice deadline
+// it fought with went with the footer rather than being left driving a widget nobody builds.
 void SyncRows() {
     rows::Sync();
-    RefreshStatusLine();
+    panels::Sync(true);
 }
 
 // Build the screen once per menu instance. FAIL-CLOSED: a null donor means DO NOT BUILD
@@ -272,16 +266,24 @@ bool BuildScreen(void* switcher) {
             pad[0] = pad[1] = pad[2] = 0.f; pad[3] = kPadPx;
         }
     }
-    // NO TEXT INPUT ON THIS SCREEN (USER, 2026-08-30). A "Your name" box shipped here for
-    // one build alongside the address box, and the user cut both: "не нужен прям в нем
-    // ввод - это дизайн говно у сервер браузера". The nickname is still a real parity gap
-    // against the fallback surface; where it belongs is part of the browser redesign they
-    // deferred to the next session, and the parity gate carries it as a DECLARED
-    // divergence rather than letting it go quiet.
-    // The column header is the LIST's, not the window's: it must agree with the row fill
-    // weights or the columns do not line up, so one module owns both.
-    rows::BuildHeader(col);
-    void* listBox = Spawn(L"SizeBox", col);
+    // (4) THE BODY: the list on the LEFT, the two panes on the RIGHT.
+    //
+    // This is the redesign, and the shape is not ours -- it is VOTV's own save browser
+    // (`docs/SERVER_BROWSER_ARC.md` section 7.1), the game's one screen for "browse things
+    // and act on one". List left, what-you-picked top-right, a black status pane under it,
+    // the actions in a block beneath the list, `Back` alone at the bottom left. What it
+    // replaces is a five-column table with a one-line footer, which the user rejected whole
+    // ("это дизайн говно у сервер браузера ... нужен дизайн сервер браузера как у людей").
+    void* body = Spawn(L"HorizontalBox", col);
+    if (!body) return false;
+    NS::AddVFill(col, body, 1.f, kFill, kFill);
+
+    void* leftCol = Spawn(L"VerticalBox", body);
+    if (!leftCol) return false;
+    if (void* s = NS::AddHFill(body, leftCol, kListWeight, kFill, kFill))
+        NS::SetSlotPadding(s, P::off::UHorizontalBoxSlot_Padding, 0.f, 0.f, kPadPx, 0.f);
+
+    void* listBox = Spawn(L"SizeBox", leftCol);
     void* list    = listBox ? Spawn(L"ScrollBox", listBox) : nullptr;
     if (!listBox || !list) return false;
     U::SetSizeBoxHeight(listBox, kListH);
@@ -291,40 +293,40 @@ bool BuildScreen(void* switcher) {
                   P::off::UScrollBox_WidgetBarStyle, P::off::FScrollBarStyle_Size,
                   P::off::FScrollBarStyleBrushes, 9);
     U::SetContent(listBox, list);
-    if (void* s = U::AddChild(col, listBox))
-        U::SetSlotAlign(s, P::off::UVerticalBoxSlot_HAlign, P::off::UVerticalBoxSlot_VAlign,
-                        kFill, kFill);
-    // The footer mirrors the title row: the status line takes the slack, BACK sits at the
-    // right. Two exits, because the game's own sub-screens carry a button_back and a
-    // player who does not think to press ESC should not be stranded.
-    // THE FOOTER STRIP, and BACK sits at its LEFT.
+    NS::AddVFill(leftCol, listBox, 1.f, kFill, kFill);
+
+    // THE ACTION GRID, directly under the list it acts on.
+    if (void* gridWrap = Spawn(L"VerticalBox", leftCol)) {
+        if (void* s = NS::AddVFill(leftCol, gridWrap, 0.f, kFill, kBottom))
+            NS::SetSlotPadding(s, P::off::UVerticalBoxSlot_Padding, 0.f, kPadPx, 0.f, 0.f);
+        if (!ui::server_browser_actions::Build(gridWrap, backDonor)) return false;
+    } else {
+        return false;
+    }
+
+    void* rightCol = Spawn(L"VerticalBox", body);
+    if (!rightCol) return false;
+    NS::AddHFill(body, rightCol, kPanelsWeight, kFill, kFill);
+    if (!panels::BuildDetails(rightCol)) return false;
+    if (!panels::BuildStatus(rightCol)) return false;
+
+    // (5) BACK, ALONE AT THE BOTTOM LEFT, IN ITS OWN SMALL BOX.
     //
     // That placement is not a preference. Every native window that has both puts Back
     // bottom-LEFT and its actions bottom-RIGHT -- Settings is `Back | Reset all Apply`,
-    // Keybinds is `Back | Hard reset`, the save browser is `Back` alone at the left. Our
-    // first version put BACK bottom-right, which is the CONFIRM position, so a cancel
-    // control sat where the game trains players to expect a commit (style doc section 5,
-    // gap S7). Connect/Join will land at the right when T7 adds it, and then the row reads
-    // the way every other VOTV window does.
-    if (void* footBox = AddFramedBox(col, kPanel, kBorderPx)) {
-        if (void* footRow = Spawn(L"HorizontalBox", footBox)) {
-            // Sentence case: VOTV uppercases no button label anywhere (measured
-            // across the style corpus; user report 2026-08-30 "No caps at buttons ever").
-            g_backBtn = BuildButton(footRow, backDonor, L"Back", ui::native_screen::kBtnFontPx);
-            g_status  = AddText(footRow, L"", 16, kText, kJustLeft, 1.f);
-            // The status has fill weight 1, so it takes all the slack and pushes these to
-            // the right edge -- Back at the left, actions at the right, which is what every
-            // native VOTV window does (style doc section 5, gap S7).
-            if (!ui::server_browser_actions::Build(footRow, backDonor)) return false;
-            if (void* s = U::AddChild(footBox, footRow))
-                U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
-                                kFill, kCenter);
-        }
-        if (void* s = U::AddChild(col, footBox)) {
-            auto* pad = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(s) +
-                                                 P::off::UVerticalBoxSlot_Padding);
-            pad[0] = pad[1] = pad[3] = 0.f; pad[2] = kPadPx;
-        }
+    // Keybinds is `Back | Hard reset`, the save browser is `Back` ALONE at the left (style
+    // doc section 5, gap S7). Ours is the save browser's case exactly now that the actions
+    // have their own block under the list, and the full-width footer STRIP went with them:
+    // a bordered bar running the width of the window with one small button at one end is a
+    // frame around empty space, and the game draws no such thing.
+    if (void* footRow = Spawn(L"HorizontalBox", col)) {
+        // Sentence case: VOTV uppercases no button label anywhere (measured across the
+        // style corpus; user report 2026-08-30 "No caps at buttons ever").
+        g_backBtn = BuildButton(footRow, backDonor, L"Back", ui::native_screen::kBtnFontPx);
+        if (!g_backBtn) return false;
+        NS::SetHSlot(NS::SlotOf(g_backBtn), 0.f, NS::kLeft, kCenter);
+        if (void* s = NS::AddVFill(col, footRow, 0.f, NS::kLeft, kBottom))
+            NS::SetSlotPadding(s, P::off::UVerticalBoxSlot_Padding, 0.f, kPadPx, 0.f, 0.f);
     }
 
     g_root  = root;
@@ -445,14 +447,9 @@ int HoveredRow() { return rows::HoveredRow(); }
 const char* SelectedRowId() { return rows::SelectedId(); }
 bool SelectedRow(coop::net::lobby::LobbyRow& out) { return rows::Selected(out); }
 
-void SetNotice(const char* text) {
-    if (!text) return;
-    g_noticeUntilMs = ::GetTickCount64() + kNoticeMs;
-    if (!g_status) return;
-    const std::string s(text);
-    const std::wstring w = coop::text::FromUtf8Lossy(s.data(), s.size());
-    E::SetWidgetText(g_status, w.c_str());
-}
+// The status PANE owns the notice line now; this stays as the entry point every action
+// already calls, so the action TU keeps talking to the screen and not to its furniture.
+void SetNotice(const char* text) { panels::SetNotice(text); }
 
 void LogRowHitDiagnostics(int32_t i) { rows::LogRowHitDiagnostics(i); }
 
@@ -464,9 +461,10 @@ void OnMenuTick(void* menu, void* switcher) {
     // Rebuild on a new menu instance (the old widgets died with it).
     if (menu != g_menu) {
         g_menu = menu;
-        g_root = nullptr; g_status = nullptr;
+        g_root = nullptr;
         g_backBtn = nullptr; g_scrimW = nullptr;
         ui::server_browser_actions::Forget();
+        panels::Forget();
         g_ourIndex = -1; g_shown = false; g_buildAttempts = 0; g_toldTheUser = false;
         rows::Attach(nullptr);   // the panel died with the menu; drop it and the row ids
     }
@@ -606,7 +604,11 @@ void OnMenuTick(void* menu, void* switcher) {
             // known from the hover pass, so this costs no extra dispatch. Returning on a
             // handled click matches the two lines above it -- the chrome and the action bar
             // both stop here -- so nothing below can read the same release a second time.
-            if (rows::ClickSelect()) return;
+            //
+            // The details panel is FORCED here rather than left to the 1 Hz repaint: the
+            // player just chose a server and the panel is the answer to that click. A pane
+            // that fills in up to a second later reads as a click that did not register.
+            if (rows::ClickSelect()) { panels::Sync(true); return; }
         }
     }
 
@@ -625,6 +627,11 @@ void OnMenuTick(void* menu, void* switcher) {
         sm::Refresh();
     }
     if (sm::RowsGeneration() != rows::PaintedGeneration()) SyncRows();
+
+    // The panes carry two SECONDS counters ("updated N s ago", "Last seen N s"), so they
+    // repaint on their own 1 Hz cadence between fetches. Every line writes only when its
+    // text changed, so a tick where nothing moved costs the comparisons and no dispatch.
+    panels::Sync(false);
 }
 
 }  // namespace ui::server_browser_native

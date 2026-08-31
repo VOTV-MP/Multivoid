@@ -36,6 +36,10 @@ struct Field {
     uint64_t     caretAt = 0;         // tick count of the last caret phase flip
     bool         caretOn = false;
     std::string  utf8;                // cache so Text() can return a reference
+    // ---- the overflow window (see UpdateWindowing) ----
+    bool         alignRight  = false;   // the slot alignment currently in force
+    size_t       measuredLen = static_cast<size_t>(-1);  // value length when last measured
+    int          remeasureIn = -1;      // ticks until the pending measurement; -1 = none
 };
 
 namespace {
@@ -50,6 +54,119 @@ std::atomic<Field*> g_focus{nullptr};
 // Repaint budget: the caret blinks at the rate the game's own menus do, and a field that
 // is not focused never blinks at all -- so an idle browser costs zero widget writes.
 constexpr uint64_t kCaretMs = 530;
+
+// Forward-declared: the windowing and paste helpers below repaint, and they are grouped
+// with the concept they belong to rather than sorted by definition order.
+void Repaint(Field* f);
+
+// The frame `Create` puts around the text, and the gutter its glyphs sit in. Both are
+// this module's own constants, and `UpdateWindowing` has to subtract them to know how much
+// room the text really has.
+constexpr float kFrameBorderPx = 2.f;
+constexpr float kTextGutterPx  = 8.f;
+
+// WHICH END OF AN OVER-LONG VALUE THE PLAYER SEES -- and it must be the end they are
+// TYPING at.
+//
+// THE DEFECT, verbatim from the user on the first build that shipped a field: "ебаный
+// текст в ебаное окно ввода ip не помещается". A long address typed INVISIBLY. The text
+// block is clipped to its box (Create sets ClipToBounds, which is what stops it painting
+// across the screen), and a Left-aligned clipped block keeps its HEAD -- so past the
+// box's width the player was typing into a part of the string that is not drawn, caret
+// included, with no way to tell whether a keystroke had landed.
+//
+// THE FIX IS AN ALIGNMENT FLIP, NOT A TRIM SUBSYSTEM. Slate clips whichever end the
+// alignment pushes out of the box, so a Right-aligned block inside a clipped frame shows
+// the TAIL and the caret and hides the head -- which is exactly the window a text cursor
+// wants. It costs one enum, works at any font and any size, needs no glyph measuring, and
+// the value itself is never touched (paste and prefill window the same way a keystroke
+// does). An earlier design measured character widths against an em constant and sliced the
+// string; the whole of it died in one /qf round (`SERVER_BROWSER_ARC.md` section 7.10, R7)
+// when this appeared, and it should not be re-derived.
+//
+// MEASURED ONE TICK LATE, ON PURPOSE. `GetDesiredSize` reads the built SWidget, so a value
+// set this frame is not laid out yet and would measure at its PREVIOUS width. The
+// evaluation is therefore deferred a tick, and keyed on the value's LENGTH rather than run
+// per repaint -- the caret blinks twice a second and changes the drawn width by one glyph,
+// so measuring on every repaint would make the flip chatter at the boundary.
+void UpdateWindowing(Field* f) {
+    if (!f || !f->text || !f->box) return;
+    if (f->remeasureIn < 0) return;
+    if (f->remeasureIn-- > 0) return;   // the deferred tick has not arrived yet
+    f->measuredLen = f->value.size();
+    ue_wrap::FVector2D desired{}, topLeft{}, allotted{};
+    if (!U::WidgetDesiredSize(f->text, desired)) return;
+    if (!U::WidgetScreenRect(f->box, topLeft, allotted)) return;
+    const float inner = allotted.X - 2.f * kFrameBorderPx - kTextGutterPx;
+    // A widget Slate has never laid out reports a zero rect, and that is a real answer
+    // rather than a failure (umg_build.h) -- but it is not one this can act on.
+    if (inner <= 0.f || desired.X <= 0.f) return;
+    const bool want = desired.X > inner;
+    if (want == f->alignRight) return;
+    f->alignRight = want;
+    U::SetSlotHAlignLive(NS::SlotOf(f->text), want ? NS::kRight : NS::kLeft);
+}
+
+// The value changed: schedule the measurement for the tick after Slate has laid it out.
+void MarkValueChanged(Field* f) {
+    if (f && f->value.size() != f->measuredLen) f->remeasureIn = 1;
+}
+
+// CTRL+V, and the reason it lands HERE rather than in each screen: an address or a
+// nickname is exactly the kind of string a player has in their clipboard and does not want
+// to retype, and a field that accepts typing but not pasting is the sort of gap that reads
+// as the field being broken. One implementation, so every screen that has a field has
+// paste, and none of them can implement it differently.
+//
+// ENTRY-TRIMMED. A copied address almost always carries a trailing newline or a leading
+// space from wherever it was copied, and `host:port ` is not an address. MTA does the same
+// at its own entry (`SharedUtil::Trim` on the connect string) rather than teaching every
+// consumer to tolerate whitespace.
+//
+// APPENDED, NOT REPLACING. The grammar of this field is append + backspace + paste with no
+// selection (there is no cursor to select with), so paste is a bulk append and behaves
+// exactly like typing the characters would -- same cap, same sanitising, same windowing.
+// THE PURE HALF, split from the clipboard read so the selftest can drive it. A test that
+// went through the real clipboard would have to WRITE to it, and clobbering what the player
+// had copied to prove our paste works is not a trade this makes.
+void ApplyPastedText(Field* f, const std::wstring& in) {
+    if (!f || in.empty()) return;
+    auto isSpace = [](wchar_t c) { return c == L' ' || c == L'\t' || c == L'\r' ||
+                                          c == L'\n' || c == L'\f' || c == L'\v'; };
+    size_t b = 0, e = in.size();
+    while (b < e && isSpace(in[b])) ++b;
+    while (e > b && isSpace(in[e - 1])) --e;
+    // CONTROL CHARACTERS ARE NOT CONTENT, the same rule `OnChar` applies one keystroke at
+    // a time -- an embedded newline would otherwise arrive as a glyph nothing can type.
+    std::wstring add;
+    for (size_t i = b; i < e; ++i)
+        if (in[i] >= 0x20 && in[i] != 0x7F) add += in[i];
+    if (add.empty()) return;
+
+    f->value = T::CapCodepoints(f->value + add, static_cast<size_t>(f->maxLen));
+    f->caretOn = true;
+    f->caretAt = ::GetTickCount64();
+    f->dirty   = true;
+    MarkValueChanged(f);
+    Repaint(f);
+}
+
+void Paste(Field* f) {
+    if (!f) return;
+    if (!::OpenClipboard(nullptr)) return;
+    std::wstring in;
+    if (HANDLE h = ::GetClipboardData(CF_UNICODETEXT)) {
+        if (auto* p = static_cast<const wchar_t*>(::GlobalLock(h))) {
+            // Bounded by the field's own cap plus slack for what the trim will remove: a
+            // clipboard can hold megabytes and none of it can reach the value.
+            const size_t cap = static_cast<size_t>(f->maxLen) * 4 + 64;
+            for (size_t i = 0; i < cap && p[i]; ++i) in += p[i];
+            ::GlobalUnlock(h);
+        }
+    }
+    ::CloseClipboard();
+    ApplyPastedText(f, in);
+}
 
 void Repaint(Field* f) {
     if (!f || !f->text) return;
@@ -172,6 +289,7 @@ void SetText(Field* f, const std::string& utf8) {
     f->value = T::CapCodepoints(T::FromUtf8Lossy(utf8.data(), utf8.size()),
                                 static_cast<size_t>(f->maxLen));
     f->dirty = true;
+    MarkValueChanged(f);
     Repaint(f);
 }
 
@@ -197,6 +315,9 @@ void Tick(Field* f) {
         }
     }
     if (f->dirty) Repaint(f);
+    // AFTER the repaint: the measurement is about the text that was just written, and it
+    // is deferred internally by a tick anyway.
+    UpdateWindowing(f);
 }
 
 bool ConsumeSubmit(Field* f) {
@@ -217,6 +338,7 @@ bool OnChar(wchar_t c) {
     f->caretOn = true;
     f->caretAt = ::GetTickCount64();
     f->dirty   = true;
+    MarkValueChanged(f);
     Repaint(f);
     return true;
 }
@@ -282,6 +404,27 @@ bool RunSelftest() {
     OnKeyDown(VK_BACK);
     ok(Text(&f).empty(), "backspace removes the WHOLE surrogate pair");
 
+    // PASTE, driven through the pure half (the clipboard read is the untestable part and
+    // is one GetClipboardData call above it).
+    f.maxLen = 24;
+    SetText(&f, "");
+    ApplyPastedText(&f, L"  10.0.0.5:7777\r\n");
+    ok(Text(&f) == "10.0.0.5:7777", "paste trims leading and trailing whitespace");
+    SetText(&f, "");
+    ApplyPastedText(&f, L"a\nb\tc");
+    ok(Text(&f) == "abc", "paste drops embedded control characters");
+    SetText(&f, "abc");
+    ApplyPastedText(&f, L"def");
+    ok(Text(&f) == "abcdef", "paste APPENDS -- the grammar has no selection to replace");
+    f.maxLen = 4;
+    SetText(&f, "ab");
+    ApplyPastedText(&f, L"cdefgh");
+    ok(Text(&f) == "abcd", "paste obeys maxLen");
+    SetText(&f, "keep");
+    ApplyPastedText(&f, L"   \r\n  ");
+    ok(Text(&f) == "keep", "an all-whitespace paste changes nothing");
+    f.maxLen = 8;
+
     ok(OnKeyDown(VK_ESCAPE), "Escape is consumed");
     ok(!AnyFocused(), "Escape leaves the field");
     ok(!OnChar(L'x'), "an unfocused module refuses the key so the game still gets it");
@@ -309,8 +452,18 @@ bool OnKeyDown(int vk) {
                               (f->value[n - 2] & 0xFC00) == 0xD800) f->value.resize(n - 2);
                 else                                                f->value.resize(n - 1);
                 f->dirty = true;
+                MarkValueChanged(f);
                 Repaint(f);
             }
+            return true;
+        case 'V':
+            // CTRL+V. The modifier is read here rather than passed in because the detour
+            // hands us only the virtual key -- and it runs synchronously on the message
+            // (`gate3`: WndProc is the game thread), so `GetKeyState` reports the state
+            // that key was pressed WITH. A bare V is content and must fall through to
+            // WM_CHAR; only the chord is ours.
+            if ((::GetKeyState(VK_CONTROL) & 0x8000) == 0) return false;
+            Paste(f);
             return true;
         case VK_RETURN:
             f->submit = true;
