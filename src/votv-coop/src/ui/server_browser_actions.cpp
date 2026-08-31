@@ -60,6 +60,31 @@ void DoConnect() {
         SB::SetNotice("That's your own server -- you're already hosting it.");
         return;
     }
+    // A LOCKED ROW GOES TO THE PASSWORD PROMPT INSTEAD OF STRAIGHT AT THE HOST, which
+    // is what the user asked for: "если кто хочет к серверу из списка с замком
+    // подключиться и версия правильная то когда он нажмет connect в правой PANE,
+    // вылезет отдельное окно ввода пароля" (2026-08-31).
+    //
+    // "И ВЕРСИЯ ПРАВИЛЬНАЯ" IS ALREADY HANDLED AND IS NOT RE-CHECKED HERE. `JoinLobby`
+    // owns the version-equality gate and refuses with the connect-failed popup, per the
+    // "show normally, reject on Join" policy -- and the prompt hands the row straight
+    // back to that same call, so a mismatched locked server still refuses for the
+    // version, one window later. A second copy of that gate here would be two opinions
+    // about what a joinable build is.
+    //
+    // The row is captured BY VALUE into the prompt: five seconds of typing is a
+    // re-fetch and a re-sort, and the selection can be a different server by the time
+    // OK is pressed.
+    if (row.locked) {
+        g_lastOutcome = "connect:password";
+        SB::CloseNow();   // sibling hand-over, exactly as HOST does
+        ui::browser_input_screens::OpenPasswordPrompt(row.lobbyId, row.name, row.proto,
+                                                      row.game);
+        return;
+    }
+    // NOT A LOCKED SERVER, so anything left over from a previous prompt must not ride
+    // along -- a stale password would be sent to a host that never asked for one.
+    sm::SetJoinPassword("");
     // The version pair rides along so the EQUALITY gate can refuse HERE, with the
     // connect-failed popup, rather than letting the wire gate drop the player later
     // (the "show normally, reject on Join" policy, session_manager.h:118).

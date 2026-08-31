@@ -2,6 +2,7 @@
 
 #include "coop/session/session_manager.h"
 
+#include "coop/config/config.h"           // ResolveString -- the lobby password row
 #include "coop/config/config_registry.h"  // T7: the my-name default constant
 #include "coop/net/lobby_announcer.h"
 #include "coop/net/protocol.h"  // kOfficialMasterUrl (the "DEFAULT" display mask) + kProtocolVersion (the b<N> build rev)
@@ -128,6 +129,36 @@ PendingHost g_pendingHost;
 // at a time (you can't start two sessions at once). Refresh is NOT gated.
 std::atomic<bool> g_actionBusy{false};
 
+// THE PASSWORD FOR THE JOIN THE PLAYER IS ABOUT TO MAKE. Set by the prompt window
+// just before Connect and consumed by whichever lane starts; it is NOT a config
+// row, on purpose -- writing someone else's lobby password into our ini would
+// persist a secret the player was lent, and the ini is what people paste into bug
+// reports. It lives exactly as long as one join attempt.
+std::mutex  g_joinPwMu;
+std::string g_joinPassword;
+
+// THE ONE PLACE A JOINER'S PASSWORD IS RESOLVED, and it has two sources in a fixed
+// order rather than four call sites each picking one.
+//
+// The PROMPT wins: it is what the player typed for the server in front of them. The ini
+// row is the fallback, and it is not a convenience -- it is the only way a scripted,
+// dedicated or LAN-configured client can offer a password at all, since those never see
+// a prompt. Without it `ConnectDirect` built a fresh Config, took the empty transient
+// value, and the host refused with "this server needs a password" while the password sat
+// in the client's own config (measured 2026-08-31 by the password drill, which is exactly
+// the same shape as the `hostIdentity` defect the same run found one layer up).
+//
+// A cleared transient falling through to the row is harmless and deliberate: the host
+// only ASKS when it is locked, and the client only sends when asked, so an unlocked
+// server never sees either value.
+std::string TakeJoinPassword() {
+    {
+        std::lock_guard<std::mutex> lk(g_joinPwMu);
+        if (!g_joinPassword.empty()) return g_joinPassword;
+    }
+    return ::coop::config::ResolveString(::coop::config_registry::rows::net_lobby_password);
+}
+
 void QueueStart(const net::Config& cfg) {
     std::lock_guard<std::mutex> lk(g_pendMu);
     g_pending = cfg;
@@ -224,6 +255,14 @@ std::string OwnLobbyId() {
 void SetNickname(const std::string& nick) {
     std::lock_guard<std::mutex> lk(g_cfgMu);
     if (!nick.empty()) g_nickname = nick;  // ignore empty (keep the last good name)
+}
+
+void SetJoinPassword(const std::string& password) {
+    std::lock_guard<std::mutex> lk(g_joinPwMu);
+    // AN EMPTY VALUE IS A CLEAR, not an "ignore" -- the opposite of SetNickname
+    // above, and deliberately so: a player who backs out of the password prompt
+    // must not carry the last lobby's secret into the next connection.
+    g_joinPassword = password;
 }
 
 std::string Nickname() {
@@ -400,6 +439,34 @@ void AnnounceEnvHostHidden(const std::string& name, const std::string& world) {
 bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked, int playersMax,
                   bool directConnection, bool hideFromBrowser, bool lanOnly) {
     if (g_actionBusy.exchange(true)) { UE_LOGW("session_manager: action busy -- HostWithSave ignored"); return false; }
+    // THE SECRET THIS SESSION WILL REQUIRE, resolved ONCE and carried into whichever
+    // of the three host paths runs. Empty unless `locked`, so the bool the caller
+    // passes is the single thing that decides whether the lock has teeth -- an
+    // announced `locked` with no password behind it is precisely the badge this
+    // work exists to retire (security A2).
+    //
+    // It is read HERE rather than in `peer_admission` because the config layer opens
+    // and line-scans the ini under a global mutex, and that is file I/O on the net
+    // thread otherwise.
+    std::string lobbyPw =
+        locked ? ::coop::config::ResolveString(::coop::config_registry::rows::net_lobby_password)
+               : std::string();
+    // A LOCK WITH NO SECRET IS DOWNGRADED, NOT ANNOUNCED. The padlock in the browser is
+    // a promise, and announcing one we cannot keep is precisely the badge-with-no-gate
+    // this lane exists to retire -- so if there is nothing to check, the session is
+    // honestly OPEN and the player is told.
+    //
+    // The native hosting flow cannot reach this state (its lock refuses to turn on
+    // without a password). What can is the ImGui fallback's `locked` checkbox, which
+    // predates the password entirely, and a hand-edited ini.
+    if (locked && lobbyPw.empty()) {
+        UE_LOGW("session_manager: asked to host LOCKED with an EMPTY password -- hosting "
+                "OPEN instead. A padlock nothing enforces is worse than no padlock: it "
+                "tells the host they are protected.");
+        SetHostStatus("No password is set, so this session is OPEN -- set one in the "
+                      "hosting window's session settings.");
+        locked = false;
+    }
     // LAN-ONLY (2026-08-29): a LanDirect listen that never touches the master --
     // no announce, no heartbeat, no signaling; the accept edge additionally
     // refuses non-private remote addresses (net::Config::lanOnly). No worker
@@ -417,6 +484,7 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
         cfg.lanOnly = true;
         {
             std::lock_guard<std::mutex> lk(g_pendHostMu);
+            cfg.lobbyPassword = lobbyPw;
             g_pendingHost.cfg = cfg;
             g_pendingHost.save = choice;
             g_pendingHost.listed = false;
@@ -448,6 +516,7 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
         cfg.port = directPort;
         {
             std::lock_guard<std::mutex> lk(g_pendHostMu);
+            cfg.lobbyPassword = lobbyPw;
             g_pendingHost.cfg = cfg;
             g_pendingHost.save = choice;
             g_pendingHost.listed = false;
@@ -468,7 +537,7 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
     net::Config fallback;
     { std::lock_guard<std::mutex> lk(g_cfgMu); fallback = g_fallbackHostCfg; }
     std::thread([masterUrl, fallback, choice, name, locked, playersMax,
-                 directConnection, hideFromBrowser] {
+                 directConnection, hideFromBrowser, lobbyPw] {
         // try/catch: an exception escaping a detached thread is std::terminate. The
         // store(false) is OUTSIDE the try so g_actionBusy clears on EVERY path.
         try {
@@ -516,6 +585,7 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
             }
             {
                 std::lock_guard<std::mutex> lk(g_pendHostMu);
+                cfg.lobbyPassword = lobbyPw;
                 g_pendingHost.cfg = cfg;
                 g_pendingHost.save = choice;
                 g_pendingHost.listed = listed;
@@ -666,6 +736,7 @@ bool JoinLobby(const std::string& lobbyId, const std::string& displayName, int h
                     cfg.topology = net::Topology::LanDirect;
                     cfg.peerIp = host;
                     cfg.port = port;
+                    cfg.lobbyPassword = TakeJoinPassword();
                     QueueStart(cfg);
                     UE_LOGI("session_manager: JOIN ready -- DIRECT lobby (LanDirect dial; session boot = harness Tier 2)");
                 } else {
@@ -677,6 +748,7 @@ bool JoinLobby(const std::string& lobbyId, const std::string& displayName, int h
                 cfg.turnList = info.turnUri;
                 cfg.turnUser = info.turnUser;
                 cfg.turnPass = info.turnPass;
+                cfg.lobbyPassword = TakeJoinPassword();
                 QueueStart(cfg);
                 UE_LOGI("session_manager: JOIN ready -- host=%s (session boot = harness Tier 2)",
                         info.hostIdentity.c_str());
@@ -709,6 +781,21 @@ bool ConnectDirect(const std::string& hostPort) {
         cfg.topology = net::Topology::LanDirect;
         cfg.peerIp = host;
         cfg.port = port;
+        cfg.lobbyPassword = TakeJoinPassword();
+        // WHICH HOST WE EXPECT TO FIND AT THAT ADDRESS, if the player was told.
+        //
+        // A direct connect names a PLACE, and until now that was all it named -- so the
+        // joiner had nothing to bind the answering key to, and a LOCKED host was
+        // unjoinable on this lane because the password proof refuses to be sent to an
+        // unbound host (A65 + A2). Reading the row here is what gives a friend who was
+        // given the host's `gen:` line the same binding an AUTO joiner gets from the
+        // master, on the lane where there is no master to ask.
+        //
+        // Empty stays empty and that is a true statement, not a fallback: a player who
+        // was given only an address is unbound, can still join any OPEN server, and is
+        // refused by a locked one with a sentence saying why.
+        cfg.hostIdentity =
+            ::coop::config::ResolveString(::coop::config_registry::rows::net_host_identity);
         // Browser-only loading state. A dead address fails async (GNS never reaches
         // Connected) -> net_pump's connect-fail detector drops the cover + reopens the browser.
         coop::join_progress::BeginConnect(host);
@@ -748,6 +835,7 @@ bool ConnectP2PDirect(const std::string& hostIdentity, const net::Config& fallba
         cfg.role = net::Role::Client;
         cfg.topology = net::Topology::P2P;
         cfg.hostIdentity = hostIdentity;
+        cfg.lobbyPassword = TakeJoinPassword();
         coop::join_progress::BeginConnect(hostIdentity);
         QueueStart(cfg);
         UE_LOGI("session_manager: P2P connect queued -> host '%s' via signaling %s "

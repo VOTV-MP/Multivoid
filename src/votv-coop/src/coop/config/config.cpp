@@ -454,6 +454,41 @@ coop::net::Config ReadNetConfig(bool& enabled) {
 
     if (c.topology == coop::net::Topology::P2P) FillP2PFields(c);
 
+    // THE HOST IDENTITY IS NOT A P2P-ONLY FACT, and treating it as one made locked
+    // DIRECT and LAN lobbies unjoinable.
+    //
+    // `FillP2PFields` set `hostIdentity` and it ran only on the P2P branch, because the
+    // value's original job was ROUTING -- it is what signaling rendezvouses on, and a
+    // LanDirect client dials an address instead. Since A65 it has a SECOND job: it is
+    // the thing the joiner binds the host's key to, and A2's password proof refuses to
+    // be emitted without that binding. So a DIRECT or LAN joiner whose config named the
+    // host was still `bound = false`, and a locked lobby on those lanes refused every
+    // honest friend. Measured 2026-08-31 by the password drill, which is a LAN run:
+    // "no advertised host identity on this lane".
+    //
+    // Client-only, and empty stays empty: a joiner who was given only an address is
+    // unbound, which is a true statement about what they know, and the refusal it
+    // produces for a LOCKED host is the correct one.
+    if (c.role == coop::net::Role::Client && c.hostIdentity.empty())
+        c.hostIdentity = ResolveString(config_registry::rows::net_host_identity);
+
+    // THE LOBBY PASSWORD, for BOTH roles, and it is not a test hook -- it is what makes
+    // an ini-configured host obey the same lock the menu flow sets. Without it, the one
+    // way to host a locked session would be through the hosting window, and a dedicated
+    // or scripted host would silently be open (the exact "a badge with no gate behind it"
+    // shape this whole lane exists to retire).
+    //
+    // On a HOST it is the secret the session requires; on a CLIENT it is the one to
+    // offer. `locked` gates the host side so an ini that carries a stale password does
+    // not lock a session the player did not mean to lock; a client offers whatever it
+    // has, and a host that wants nothing ignores it.
+    if (c.role == coop::net::Role::Host) {
+        if (ResolveFlag(config_registry::rows::net_lobby_locked))
+            c.lobbyPassword = ResolveString(config_registry::rows::net_lobby_password);
+    } else {
+        c.lobbyPassword = ResolveString(config_registry::rows::net_lobby_password);
+    }
+
     return c;
 }
 

@@ -4,6 +4,7 @@
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/net/lobby_password.h"
 #include "coop/net/session.h"
 #include "ue_wrap/core/log.h"
 
@@ -12,6 +13,8 @@
 #include <steam/steamnetworkingtypes.h>
 #include <steam/isteamnetworkingsockets.h>
 #pragma warning(pop)
+
+#include <windows.h>   // GetTickCount64 -- the guess window's clock
 
 #include <cstring>
 
@@ -79,6 +82,94 @@ bool RemoteKeyOf(uint32_t hConn, PubKey& out) {
     if (id.m_cbSize != peer_identity::kPubKeyBytes) return false;
     std::memcpy(out.data(), id.m_genericBytes, peer_identity::kPubKeyBytes);
     return true;
+}
+
+// The remote's ADDRESS, as the 16-byte form GNS stores (IPv4 arrives mapped).
+// The PORT is deliberately excluded: a retrying attacker gets a fresh source port
+// on every connection, so a bucket keyed on the pair would be a bucket of one.
+bool RemoteAddrOf(uint32_t hConn, uint8_t out[16]) {
+    auto* sockets = SteamNetworkingSockets();
+    if (!sockets) return false;
+    SteamNetConnectionInfo_t info{};
+    if (!sockets->GetConnectionInfo(static_cast<HSteamNetConnection>(hConn), &info))
+        return false;
+    std::memcpy(out, info.m_addrRemote.m_ipv6, 16);
+    return true;
+}
+
+// --- HOST password state -----------------------------------------------------
+//
+// K IS DERIVED ONCE AND CACHED, and that is what makes the guess bound a policy
+// rather than an accident of CPU cost. PBKDF2 at 200k rounds is ~100 ms; paying
+// it per arriving attempt would mean an attacker could stall the net thread for
+// every other peer just by connecting, and it would make the real limit "how fast
+// is the host's CPU" instead of a number written down here. Cached, an attempt is
+// one HMAC.
+//
+// Derived LAZILY, on the net thread, at the first attempt that needs it -- so
+// there is no cross-thread hand-off to get wrong, and a host whose lobby is open
+// never pays it at all. Keyed on the password string so a value that somehow
+// changed cannot leave a stale key behind.
+struct HostPasswordCache {
+    std::string            forPassword;
+    std::array<uint8_t, 32> key{};
+    bool                   valid = false;
+};
+HostPasswordCache g_hostPw;
+
+// THE GUESS BOUND, AND IT LIVES HERE BECAUSE THIS IS WHERE ALL THREE LANES MEET.
+//
+// `[V]` the master's `RL_JOIN` (60 s / 20 per IP bucket) bounds only AUTO/P2P: a
+// DIRECT joiner gets `ip:port` from ONE /v1/join and retries go straight at the
+// host, and LAN never contacts the master at all. Host-side there was only
+// `kMaxPending = 8` plus a 30 s deadline, and a refused socket closes at once --
+// hundreds of guesses a minute. A bound at one lane is not a bound
+// (`[[lesson-a-guess-bound-at-one-lane-is-not-a-bound]]`).
+//
+// KEYED ON THE ADDRESS, NOT THE IDENTITY: a fresh keypair costs an attacker
+// nothing, so an identity bucket bounds only the honest.
+//
+// THE CGNAT COLLATERAL IS REAL AND IS PRICED RATHER THAN DENIED. Players behind
+// one carrier NAT share a bucket. Ten failures a minute is far above what typing
+// costs an honest group (each of them gets it right or wrong once) and far below
+// what a search of a 50-bit generated password would need -- at ten a minute that
+// is 10^11 years -- so the number is chosen from BOTH ends rather than from the
+// attacker's alone.
+struct GuessBucket {
+    uint8_t  ip[16]{};
+    bool     used = false;
+    int      fails = 0;
+    uint64_t windowStartMs = 0;
+};
+constexpr int      kGuessBuckets  = 32;
+constexpr int      kMaxGuesses    = 10;
+constexpr uint64_t kGuessWindowMs = 60'000;
+GuessBucket g_guess[kGuessBuckets];
+
+// Find (or claim) this address's bucket. Null when the table is full of LIVE
+// windows -- and the caller then REFUSES, because a full table is the state a
+// flood produces and failing open there would hand an attacker the whole point.
+GuessBucket* BucketFor(const uint8_t ip[16], uint64_t nowMs) {
+    GuessBucket* freeRow = nullptr;
+    for (auto& b : g_guess) {
+        if (b.used && std::memcmp(b.ip, ip, 16) == 0) {
+            if (nowMs - b.windowStartMs >= kGuessWindowMs) {
+                b.windowStartMs = nowMs;
+                b.fails = 0;
+            }
+            return &b;
+        }
+        // An EXPIRED row is reusable; a free one is better. Both are collected in
+        // one pass so a table full of stale windows never reads as full.
+        if (!freeRow && (!b.used || nowMs - b.windowStartMs >= kGuessWindowMs))
+            freeRow = &b;
+    }
+    if (!freeRow) return nullptr;
+    *freeRow = GuessBucket{};
+    std::memcpy(freeRow->ip, ip, 16);
+    freeRow->used = true;
+    freeRow->windowStartMs = nowMs;
+    return freeRow;
 }
 
 // --- HOST state -------------------------------------------------------------
@@ -172,6 +263,11 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
         std::memcpy(&hello, payload, sizeof(hello));
 
         AuthChallengePayload out{};
+        // TELL THE JOINER WHAT WE REQUIRE. It cannot infer this: a DIRECT or LAN
+        // connect has no browser row, and a client that guessed would either
+        // withhold a required proof or emit one to a host that never asked -- and
+        // the second of those is exactly the emission `lobby_password.h` forbids.
+        if (!session.LobbyPassword().empty()) out.flags |= kAuthFlagPasswordRequired;
         if (!peer_identity::RandomBytes(out.nonce, sizeof(out.nonce))) {
             // No randomness means no freshness, and a predictable nonce is worse
             // than no exchange because it LOOKS like one. Refuse loudly.
@@ -229,6 +325,78 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
             r.reason = "identity proof did not verify";
             return r;
         }
+
+        // ---- THE LOBBY PASSWORD ------------------------------------------------
+        // AFTER the identity, never before: the tag is bound to the peer's public
+        // key, so checking it against a key that has not been proved would be
+        // checking it against a claim.
+        const std::string& want = session.LobbyPassword();
+        if (!want.empty()) {
+            if (!proof.hasPw) {
+                // A DISTINCT REASON, because the client shows this one to a
+                // person. "wrong password" for a client that sent none would send
+                // them looking for a typo in a box they never filled in.
+                r.reason = "this server needs a password";
+                return r;
+            }
+            // THE BOUND IS CHECKED BEFORE THE HMAC, so a flood costs us the
+            // comparison and not the crypto.
+            uint8_t ip[16]{};
+            const uint64_t nowMs = ::GetTickCount64();
+            if (!RemoteAddrOf(hConn, ip)) {
+                r.reason = "could not read the remote address";
+                return r;
+            }
+            GuessBucket* bucket = BucketFor(ip, nowMs);
+            if (!bucket) {
+                // FAIL CLOSED. A full table is the state a flood produces, and
+                // failing open there would hand an attacker the whole mechanism by
+                // making him fill it first.
+                r.reason = "too many password attempts right now -- try again shortly";
+                return r;
+            }
+            if (bucket->fails >= kMaxGuesses) {
+                UE_LOGW("peer_admission: password attempts from this address are rate "
+                        "limited (%d in the last %llu s) -- refusing without checking",
+                        bucket->fails,
+                        static_cast<unsigned long long>(kGuessWindowMs / 1000));
+                r.reason = "too many password attempts -- try again in a minute";
+                return r;
+            }
+
+            if (!g_hostPw.valid || g_hostPw.forPassword != want) {
+                g_hostPw.valid = lobby_password::DeriveKey(
+                    want, peer_identity::LocalPublicKey(), g_hostPw.key);
+                g_hostPw.forPassword = want;
+                if (!g_hostPw.valid) {
+                    // We cannot check, so we cannot admit. Refusing everyone is the
+                    // correct failure for a lock whose key we cannot compute -- the
+                    // alternative is a lobby that silently stops being locked.
+                    UE_LOGE("peer_admission: could not derive the lobby key -- refusing "
+                            "every join rather than silently unlocking the session");
+                    r.reason = "the host could not check the password";
+                    return r;
+                }
+            }
+
+            lobby_password::Tag expect{};
+            if (!lobby_password::ComputeTag(g_hostPw.key, peer_identity::LocalPublicKey(),
+                                            row.remotePub, row.nonce, expect)) {
+                r.reason = "the host could not check the password";
+                return r;
+            }
+            lobby_password::Tag got{};
+            std::memcpy(got.data(), proof.pwTag, got.size());
+            if (!lobby_password::TagsEqual(expect, got)) {
+                ++bucket->fails;
+                UE_LOGW("peer_admission: WRONG PASSWORD from a peer that proved its "
+                        "identity (attempt %d of %d from this address)",
+                        bucket->fails, kMaxGuesses);
+                r.reason = "wrong password";
+                return r;
+            }
+        }
+
         r.verdict = Verdict::Admit;
         r.reason = "identity proved";
         r.provedKey = row.remotePub;
@@ -345,7 +513,6 @@ bool ClientOnConnected(Session& session, uint32_t hConn) {
 
 bool ClientOnReliable(Session& session, uint32_t hConn, ReliableKind kind,
                       const void* payload, int len, const char** outClose) {
-    (void)session;
     if (kind != ReliableKind::AuthChallenge) return false;  // not ours
     if (!g_client.open || g_client.hConn != hConn) {
         *outClose = "unexpected AuthChallenge";
@@ -391,6 +558,40 @@ bool ClientOnReliable(Session& session, uint32_t hConn, ReliableKind kind,
               ch.nonce);
     const Sig sig = peer_identity::SignBlob(mine, sizeof(mine));
     std::memcpy(out.sig, sig.data(), sig.size());
+
+    // ---- THE LOBBY PASSWORD, IF THIS HOST ASKED FOR ONE ---------------------
+    //
+    // THE BINDING GATE IS THE SECURITY, NOT THE KDF. A tag is a value derived
+    // from a low-entropy secret; hand one to a host we have not established is
+    // the host we were SENT to, and that host can grind it offline for as long
+    // as it likes, at which point nothing we choose here matters. So an unbound
+    // lane does not get a weaker proof or a warning -- it gets nothing, and the
+    // join fails with a sentence that says why (`lobby_password.h`; A65 is what
+    // makes `bound` mean anything).
+    if (ch.flags & kAuthFlagPasswordRequired) {
+        if (!g_client.bound) {
+            *outClose = "this server wants a password, but nothing told us which host we "
+                        "were dialling -- refusing to send anything derived from it";
+            return true;
+        }
+        const std::string& pw = session.LobbyPassword();
+        if (pw.empty()) {
+            // NOT A PROTOCOL ERROR -- a person forgot, or was never given one. The
+            // sentence is what the join screen shows them.
+            *outClose = "this server needs a password";
+            return true;
+        }
+        std::array<uint8_t, 32> key{};
+        lobby_password::Tag tag{};
+        if (!lobby_password::DeriveKey(pw, g_client.hostPub, key) ||
+            !lobby_password::ComputeTag(key, g_client.hostPub,
+                                        peer_identity::LocalPublicKey(), ch.nonce, tag)) {
+            *outClose = "could not compute the password proof on this machine";
+            return true;
+        }
+        std::memcpy(out.pwTag, tag.data(), tag.size());
+        out.hasPw = 1;
+    }
 
     // THE DRILL, and it lives on this side ONLY. The host's gate has no knob to
     // turn: a bypass there would make the drill's verdict a statement about the

@@ -94,6 +94,15 @@ struct Config {
     // peer_identity::LocalIdentityString(), which is now a fact about the host's
     // key rather than a convention two config files have to agree on.
     std::string hostIdentity;
+    // THE LOBBY PASSWORD, and it is the same field in both roles: on a HOST it is
+    // the secret this session requires (empty = open), on a CLIENT it is the one
+    // the player was given for the session they are joining. One field because it
+    // is one value seen from two ends, and two would be two things to keep in step.
+    //
+    // It never reaches the wire and never reaches a log. What travels is a tag
+    // derived from it (`coop/net/lobby_password.h`), and only to a host the client
+    // has already bound to the identity it was sent to.
+    std::string lobbyPassword;
     // ICE candidate sources. stunList = rung 2 (hole-punch); turn* = rung 3
     // (coturn relay, short-lived REST creds). Empty string disables that rung.
     std::string stunList;    // "host:port,host2:port"
@@ -758,6 +767,12 @@ public:
     // is the only field of the config the net-thread exchange has any business
     // reading, and a general one invites the rest.
     const std::string& AdvertisedHostIdentity() const { return cfg_.hostIdentity; }
+
+    // The lobby password this session was configured with -- see `Config`. Read by
+    // `peer_admission` on the net thread in both roles; `cfg_` is written once by
+    // `Start` before the net thread exists and is not mutated afterwards, which is
+    // what makes an unsynchronised read of it correct here.
+    const std::string& LobbyPassword() const { return cfg_.lobbyPassword; }
 
     // CLIENT: the host admitted us (its AssignPeerSlot arrived after we proved it),
     // so finish the link -- lanes, the send-buffer mirror, and the flag every

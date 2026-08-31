@@ -56,6 +56,15 @@ std::string OwnLobbyId();
 std::string Nickname();
 void SetNickname(const std::string& nick);
 
+// THE PASSWORD FOR THE NEXT JOIN, from the prompt the player just filled in. It is
+// consumed by whichever join lane starts (browser, direct IP or a P2P invite) and
+// deliberately NOT written to the ini: it is a secret the player was lent for
+// somebody else's session, and the ini is the file people paste into bug reports.
+// Set it immediately before the Join/Connect call; a stale one is harmless because
+// a host that wants no password ignores it entirely.
+// Thread-safe.
+void SetJoinPassword(const std::string& password);
+
 // --- browser actions (call from the render/game thread; each dispatches any blocking
 //     HTTP onto a worker, so the caller never stalls) ---
 

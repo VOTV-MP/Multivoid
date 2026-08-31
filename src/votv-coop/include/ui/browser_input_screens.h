@@ -29,12 +29,25 @@
 
 #pragma once
 
+#include <string>
+
 namespace ui::browser_input_screens {
 
 // WHICH of the two screens. They share every line of their construction and differ only in
 // their title, their label, the row they read and write, and what their confirm button
 // does -- so they are one screen with a `Kind`, not two modules.
-enum class Kind { DirectConnect, ChangeName };
+enum class Kind { DirectConnect, ChangeName, LobbyPassword };
+
+// THE PASSWORD PROMPT IS OPENED WITH THE ROW IT IS FOR, because by the time the player
+// finishes typing the selection can have moved -- the list re-fetches every 5 s and a
+// refresh re-sorts it. The lobby is captured at the moment CONNECT was pressed and the
+// join uses THAT, not whatever is highlighted when OK is clicked.
+//
+// The user asked for this window in these words (2026-08-31): "если кто хочет к серверу
+// из списка с замком подключиться и версия правильная то когда он нажмет connect в правой
+// PANE, вылезет отдельное окно ввода пароля".
+void OpenPasswordPrompt(const std::string& lobbyId, const std::string& displayName,
+                        int hostProto, const std::string& hostGame);
 
 // Ask for a screen. Safe from any thread: it records the intent and the next main-menu
 // tick performs it, the same deferral the browser and the hosting window use (the switcher

@@ -67,6 +67,7 @@ const FLinearColor kAccent = NS::Accent();
 const FLinearColor kHover  = NS::Hover();
 const FLinearColor kDim    = NS::Dim();
 const FLinearColor kBad    = NS::Bad();
+const FLinearColor kAmber  = NS::Amber();   // the DIRECT/LAN caveat on the hint line
 
 // ---- the two answers to the one question ----------------------------------------------
 // The wording is the product surface and is fixed ONCE here. Each line says what the choice
@@ -271,6 +272,34 @@ void RepaintChoices() {
     // place in these screens where the difference is wanted the other way round from the
     // row-alignment case the padlock cell records.
     if (g_pwBlock) E::SetWidgetVisibility(g_pwBlock, g_locked ? 0 : 1);
+
+    // THE HINT SAYS SOMETHING DIFFERENT ON DIRECT AND LAN, and this is the honest
+    // surfacing of a real limit rather than a decoration.
+    //
+    // A password proof is only safe to send to a host the joiner has BOUND to an
+    // identity it was given in advance -- otherwise a host that merely answers can grind
+    // the tag offline (`coop/net/lobby_password.h`). On AUTO the master hands the joiner
+    // that identity and it is invisible to everyone. On DIRECT and LAN there is nothing
+    // in the middle to hand it over, so a friend needs the host's identity as well as
+    // the address, and without it their client REFUSES to try -- correctly, and with a
+    // sentence, but they would have no idea what to do about it.
+    //
+    // The alternative was a per-lane exception ("LAN is trusted enough"), which is the
+    // shape RULE 1 exists to refuse: the uniform rule plus a working escape is better
+    // than a rule with a hole in it.
+    if (g_pwHint) {
+        const bool brokered = (g_connMode == 0);
+        SetText(g_pwHint,
+                brokered
+                    ? std::wstring(L"Anyone with this can join. Give it out the way you "
+                                   L"would give out an invite link.")
+                    : std::wstring(L"Anyone with this can join. On this connection type "
+                                   L"your friends also need your host id (it is in your "
+                                   L"multivoid.log, on the line that starts 'dial=') -- "
+                                   L"without it their game will refuse to send the "
+                                   L"password at all."),
+                brokered ? kDim : kAmber);
+    }
 }
 
 // TURNING THE LOCK ON MINTS A PASSWORD IMMEDIATELY, which is what the user asked for:
@@ -367,10 +396,7 @@ bool BuildScreen(void* switcher) {
     NS::AddVFill(g_pwBlock, pwRow, 0.f, NS::kFill, NS::kTop);
     g_pwField = TF::Create(pwRow, L"password", 48, kFieldW);
     if (!g_pwField) return false;
-    g_pwHint = NS::AddText(g_pwBlock,
-                           L"Anyone with this can join. Give it out the way you would give "
-                           L"out an invite link.",
-                           15, kDim, NS::kJustLeft, 0.f);
+    g_pwHint = NS::AddText(g_pwBlock, L"", 15, kDim, NS::kJustLeft, 0.f);
     if (g_pwHint) U::SetAutoWrapText(g_pwHint, true);
     E::SetWidgetVisibility(g_pwBlock, 1);   // Collapsed: the lock starts off
 

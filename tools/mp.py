@@ -2919,17 +2919,29 @@ def cmd_navprobe(args) -> None:
 
 
 def cmd_death(args) -> None:
-    """SOLO + SESSIONLESS native-death instrument. Launches ONE game copy with NO net
-    role (set_net_role=False) so no coop session exists -- which is what keeps
-    net_pump's local-death flee, gated on a live session, from pre-empting the very
-    thing being measured -- and with VOTVCOOP_RUN_DEATH_TEST=1 so the in-game
-    instrument delivers a LETHAL `Add Player Damage` and watches what the game does.
+    """The native-death instrument. ONE game copy, VOTVCOOP_RUN_DEATH_TEST=1, a LETHAL
+    `Add Player Damage`, and a watch on what the game does with it.
 
-    It prints an OBSERVATION half (the timeline dead/ragdoll/blackScreen/travel, and
-    the dead-window RSS slope against an alive control -- M0) and an ACCEPTANCE half
-    (docs/DEATH_ARC.md's contract). The acceptance half is EXPECTED RED until the arc
-    lands, so a non-zero exit here is the designed baseline, not a regression: read the
-    OBSERVATION lines, which never fail.
+    TWO CONFIGURATIONS, AND THEY ASSERT DIFFERENT CONTRACTS -- both real:
+
+      `mp.py death --session`  SOLO HOST. `running()` is true from Start() with zero
+                               clients, and the user's own definition (2026-08-31) is
+                               that a solo host IS a coop session. This is the arc's
+                               ACCEPTANCE run: the whole native death must play out
+                               (~10 s, black screen at +5 s), the level travel must be
+                               REFUSED at UGameplayStatics::OpenLevel, and the player
+                               must come back standing at the KPP with the pause menu
+                               still reachable.
+
+      `mp.py death`            SESSIONLESS. This is the NEGATIVE CONTROL, not a lesser
+                               run: the user's decision is that single player is not
+                               touched, so the travel MUST still happen and the seam
+                               must refuse nothing. Without this arm a fix that
+                               cancelled EVERY travel would pass.
+
+    Both halves print the OBSERVATION lines (timeline dead/ragdoll/blackScreen/travel,
+    the dead-window RSS slope against an alive control -- M0) which never fail, plus
+    the seam's own counters.
 
     The scenario ends when the evidence is collected -- the test prints
     'death_test: DONE' and we kill immediately (no fixed duration)."""
@@ -2959,8 +2971,16 @@ def cmd_death(args) -> None:
     for ln in txt.splitlines():
         if ("death_test: TIMELINE" in ln or "death_test: DEAD window" in ln
                 or "death_test: ALIVE control" in ln or "death_test: BLACKSCREEN PROBE" in ln
-                or "death_test: GRAB" in ln or "death_test: pre-hit" in ln):
+                or "death_test: GRAB" in ln or "death_test: pre-hit" in ln
+                or "death_test: SEAM" in ln):
             log("OBSERVED: " + ln.strip())
+    # The arc's own lines live under their MODULE prefixes, not `death_test:` -- surface
+    # them too, or a run that armed and vetoed is indistinguishable in this output from one
+    # where the seam never existed. (The VERDICT still comes only from `death_test:` lines;
+    # an arm is never inferred from a module log.)
+    for ln in txt.splitlines():
+        if ("death_revive:" in ln or "level_travel:" in ln):
+            log("ARC: " + ln.strip())
     verdict = [ln for ln in txt.splitlines() if "death_test: VERDICT" in ln]
     if not saw_done:
         log("RESULT: INCONCLUSIVE -- never saw 'death_test: DONE'")
@@ -4617,6 +4637,11 @@ def cmd_authdrill(args) -> None:
                  (security A65). The only arm whose refusal is the client's, so
                  N1 reads the CLIENT's log; the host merely sweeps a socket that
                  never spoke.
+      password-- the host requires a lobby password and the client offers the
+                 WRONG one (security A2). Both peers prove their identities
+                 normally, so this drills the password gate ALONE rather than
+                 the exchange around it -- which is the only way to know the
+                 padlock is a gate and not a badge.
 
     Asserted, per arm, from the HOST's own log and the CLIENT's:
       N1 the host REFUSED / swept this connection, naming why
@@ -4636,10 +4661,41 @@ def cmd_authdrill(args) -> None:
     log(f"--- ADMISSION DRILL: arm={arm} "
         f"({'CONTROL -- every assertion must INVERT' if args.control else 'the gate must refuse'}) ---")
 
+    # THE PASSWORD ARM LOCKS THE HOST, and the control arm must lock it TOO -- otherwise
+    # "the control connected" would be a statement about an OPEN lobby and would prove
+    # nothing about the gate. So the lock rides `args.arm`, which is what the user asked
+    # for, while `arm` (the sabotage) is cleared by --control.
+    host_env = {"VOTVCOOP_VOICE_ENABLED": "0"}
+    # THE PASSWORD ARM SETS NO `auth_drill` AT ALL, and that is not a detail. Its
+    # sabotage is the VALUE the client offers, not a code path -- there is no branch in
+    # the client that knows it is being drilled, which is exactly what makes the refusal
+    # the shipped one. Passing "password" here put a token the enum does not have in
+    # front of the config layer, which correctly ignored it and correctly told the
+    # player so: the client came up with MULTIVOID SETTINGS CHECK over the game
+    # (user screenshot, 2026-08-31).
+    client_env = {"VOTVCOOP_VOICE_ENABLED": "0"}
+    if arm in ("corrupt", "silent", "mismatch"):
+        client_env["VOTVCOOP_AUTH_DRILL"] = arm
+    if args.arm == "password":
+        host_env["VOTVCOOP_NET_LOBBY_LOCKED"] = "1"
+        host_env["VOTVCOOP_NET_LOBBY_PASSWORD"] = "correct-horse-battery"
+        # The CONTROL offers the RIGHT password; the drill offers a wrong one. The
+        # sabotage for this arm is the VALUE, not a code path -- there is no branch in
+        # the client that knows it is being drilled, which is what makes the refusal the
+        # shipped one.
+        client_env["VOTVCOOP_NET_LOBBY_PASSWORD"] = (
+            "correct-horse-battery" if args.control else "wrong-horse-battery")
+        # ...AND THE CLIENT MUST KNOW WHICH HOST IT IS DIALLING, or it refuses to send
+        # anything password-derived at all and this arm measures the BINDING gate
+        # instead of the password gate (measured on the first run: "no advertised host
+        # identity on this lane"). That is not a rig quirk -- it is what a real friend
+        # joining a locked DIRECT lobby needs too, and the identity is scraped from the
+        # host's own boot line below, exactly as a host would copy it out.
+
     log("--- HOST LAUNCH ---")
     host_pid = launch_peer("host", args.port, "Host", peer=None,
                            res_x=1280, res_y=720, monitor=1, center=True,
-                           extra_env={"VOTVCOOP_VOICE_ENABLED": "0"})
+                           extra_env=host_env)
     host_log = HOST_DIR / "multivoid.log"
     bound = False
     for i in range(args.boot_timeout):
@@ -4652,11 +4708,27 @@ def cmd_authdrill(args) -> None:
         log(f"FAIL: host did not bind UDP within {args.boot_timeout}s")
         tail_log(host_log, 30, "HOST"); kill_all(); sys.exit(1)
 
+    if args.arm == "password":
+        ident = ""
+        try:
+            for line in host_log.read_text(encoding="utf-8", errors="replace").splitlines():
+                i = line.find("dial=gen:")
+                if i >= 0:
+                    ident = line[i + len("dial="):].strip()
+                    break
+        except Exception:
+            pass
+        if not ident:
+            log("FAIL: could not read the host's identity from its log -- the password arm "
+                "would silently measure the BINDING refusal instead of the password gate")
+            kill_all(); sys.exit(1)
+        client_env["VOTVCOOP_NET_HOST_IDENTITY"] = ident
+        log(f"password arm: client will dial identity {ident[:16]}...")
+
     log(f"--- CLIENT LAUNCH (auth_drill={arm}) ---")
     client_pid = launch_peer("client", args.port, "Client", peer="127.0.0.1",
                              res_x=1280, res_y=720, peer_slot=1, monitor=2, tile_index=0,
-                             extra_env={"VOTVCOOP_VOICE_ENABLED": "0",
-                                        "VOTVCOOP_AUTH_DRILL": arm})
+                             extra_env=client_env)
     client_log = CLIENT_DIR / "multivoid.log"
 
     # The refusal is immediate for `corrupt`; `silent` waits out the host deadline.
@@ -4686,6 +4758,11 @@ def cmd_authdrill(args) -> None:
         refused = "identity proof did not verify" in htext
     elif arm == "silent":
         refused = "never proved its identity" in htext
+    elif args.arm == "password":
+        # The HOST's log, because this refusal is the host's -- and the needle is the
+        # one the gate itself writes, not the close reason, so a client that failed for
+        # some other reason cannot satisfy it.
+        refused = "WRONG PASSWORD" in htext
     else:  # mismatch -- and the control arm, which must NOT contain it
         refused = "is NOT the host we were sent to" in ctext
     seated  = "host assigned us peer slot" in ctext
@@ -5336,10 +5413,14 @@ def main() -> None:
                                  help="NEGATIVE arm of the admission gate: a client with a sabotaged "
                                       "identity proof must be REFUSED and must never receive the save "
                                       "(the sabotage is client-side only -- the host gate has no knob)")
-    p_authdrill.add_argument("--arm", choices=["corrupt", "silent", "mismatch"], default="corrupt",
+    p_authdrill.add_argument("--arm",
+                             choices=["corrupt", "silent", "mismatch", "password"],
+                             default="corrupt",
                              help="corrupt = flip a bit of the proof; silent = never answer the "
                                   "challenge; mismatch = the host that answers is not the one we "
-                                  "were sent to, which THIS peer must refuse itself (A65)")
+                                  "were sent to, which THIS peer must refuse itself (A65); "
+                                  "password = the host is LOCKED and the client offers the wrong "
+                                  "secret, which the host must refuse (A2)")
     p_authdrill.add_argument("--control", action="store_true",
                              help="CONTROL: run with the drill OFF -- every assertion must invert, "
                                   "proving the refusal was caused by the sabotage and not by the rig")
