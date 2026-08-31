@@ -41,7 +41,10 @@ namespace sb = ue_wrap::save_browser;
 using ue_wrap::FLinearColor;
 
 // ---- layout ------------------------------------------------------------------------
-constexpr float kWindowW  = 900.f;
+// 980 MATCHES THE BROWSER, and it is not only for looks: at 900 the connection
+// descriptions clipped mid-word ("You must fc", "any Multi"), which reads as a rendering
+// fault rather than as a long sentence.
+constexpr float kWindowW  = 980.f;
 constexpr float kWindowH  = 640.f;
 constexpr float kRowH     = 56.f;
 constexpr float kBorderPx = 2.f;
@@ -49,7 +52,15 @@ constexpr float kPadPx    = 6.f;
 // EXPLICIT, not the VerticalBox's leftover slack -- the browser measured (2026-08-26) that
 // a Fill slot allots more than the window has left, and the list then overflows UPWARD
 // under the header. An override depends on nothing.
-constexpr float kListH    = 300.f;
+//
+// AND EVERYTHING ELSE IN THIS COLUMN COMES OUT OF IT. At 300 the column asked for more
+// than the window has and the FOOTER was arranged past the bottom edge -- Back and Host
+// hung outside the frame, in both corners, which is what the user saw twice ("кнопки в
+// host меню расходятся", "в левом и правом нижних углах"). The budget, all of it:
+// title 40 + WORLD header 22 + the New-game row 56 + this + CONNECTION header 22 + three
+// 56 px mode rows + footer 54 + the shell's own 12 = the 640 above. 240 leaves ~28 spare,
+// which is the margin a font that measures differently on another machine needs.
+constexpr float kListH    = 240.f;
 // Bounds the whole sync loop, not just the display. A player with more saves than this
 // sees the newest ones (save_browser sorts by last-played), and the cap is stated rather
 // than silent.
@@ -67,11 +78,17 @@ const FLinearColor kDim    = NS::Dim();
 // The wording is the product surface, so it is fixed ONCE here. Each line says what the
 // choice costs the player, because "AUTO / DIRECT / LAN" alone asks them to guess.
 struct ConnMode { const wchar_t* title; const wchar_t* detail; };
+// EACH DESCRIPTION FITS ITS CELL, and that is a constraint on the WRITING rather than a
+// thing to fix in layout. The row is a fixed-width two-column line by design (label left,
+// explanation right), so a sentence longer than ~50 characters clips mid-word -- "You must
+// fc", "any Multi" -- which the user read as broken twice. These say the same things in
+// the room available; the detail each one drops (which router, whose port, which IP) is
+// the detail a player who needs it will look up anyway.
 constexpr ConnMode kConnModes[3] = {
     {L"AUTO  (recommended)",
-     L"Uses the Multivoid server to introduce you. Works behind almost any router."},
+     L"Introduced through the Multivoid server."},
     {L"DIRECT  (port forward)",
-     L"Friends connect straight to you. You must forward the port yourself."},
+     L"Straight to you. You forward the port."},
     // "Never contacts any Multivoid server" was FALSE as written, and measurably so:
     // `server_browser_actions.cpp:80` is the only door to this window, so every player
     // who can read this row has already opened the browser, which fetches the lobby
@@ -80,8 +97,7 @@ constexpr ConnMode kConnModes[3] = {
     // real closure is a Host door that does not route through the browser -- that is
     // UI work and belongs with the host-window rework, not with a text fix.
     {L"LAN ONLY",
-     L"Nothing about your game is sent to any Multivoid server. Same-network friends "
-     L"connect by your local IP."},
+     L"Same network only. Nothing is sent out."},
 };
 
 // ---- state (GAME THREAD ONLY unless marked) ----------------------------------------
@@ -297,20 +313,32 @@ bool BuildScreen(void* switcher) {
         SetText(r.b, kConnModes[i].detail, kDim);
     }
 
-    // Footer: BACK at the LEFT (style doc section 5 -- bottom-right is the CONFIRM
-    // position in every native window), HOST at the right, status between them.
-    if (void* footBox = NS::AddFramedBox(col, kPanel, kBorderPx)) {
-        if (void* footRow = NS::Spawn(L"HorizontalBox", footBox)) {
-            // Sentence case: VOTV uppercases no button label anywhere (measured
-            // across the style corpus; user report 2026-08-30 "No caps at buttons ever").
-            g_backBtn = NS::BuildButton(footRow, backDonor, L"Back", NS::kBtnFontPx);
-            g_status  = NS::AddText(footRow, L"", 16, kText, NS::kJustLeft, 1.f);
-            g_hostBtn = NS::BuildButton(footRow, backDonor, L"Host", NS::kBtnFontPx);
-            if (void* s = U::AddChild(footBox, footRow))
-                U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
-                                NS::kFill, NS::kCenter);
-        }
-        U::AddChild(col, footBox);
+    // FOOTER: BACK at the LEFT, HOST at the RIGHT, status between -- and NO BORDERED
+    // STRIP around them.
+    //
+    // The strip was the defect the user saw: a framed bar running the full width of the
+    // window with a button hard against each end, level with the window's own frame --
+    // "the buttons Back and Host are not aligned with the main box and look unnatural"
+    // (2026-08-31). It read as a second window edge inside the first. VOTV frames CONTENT
+    // (a list, a value cell, a title); it does not frame a row of buttons, and the browser
+    // dropped the same strip a commit earlier for the same reason.
+    //
+    // The placement itself is the measured one and does not change: bottom-LEFT is the way
+    // out and bottom-RIGHT is the commit, in every native window that has both (style doc
+    // section 5, gap S7).
+    if (void* footRow = NS::Spawn(L"HorizontalBox", col)) {
+        // Sentence case: VOTV uppercases no button label anywhere (measured
+        // across the style corpus; user report 2026-08-30 "No caps at buttons ever").
+        g_backBtn = NS::BuildButton(footRow, backDonor, L"Back", NS::kBtnFontPx);
+        g_status  = NS::AddText(footRow, L"", 16, kText, NS::kJustCenter, 1.f);
+        g_hostBtn = NS::BuildButton(footRow, backDonor, L"Host", NS::kBtnFontPx);
+        if (!g_backBtn || !g_hostBtn) return false;
+        // The status text carries all the fill weight, so it takes the slack and pushes the
+        // two buttons to the ends -- which is what puts them there rather than a constant.
+        NS::SetHSlot(NS::SlotOf(g_backBtn), 0.f, NS::kLeft,  NS::kCenter);
+        NS::SetHSlot(NS::SlotOf(g_hostBtn), 0.f, NS::kRight, NS::kCenter);
+        if (void* s = NS::AddVFill(col, footRow, 0.f, NS::kFill, NS::kBottom))
+            NS::SetSlotPadding(s, P::off::UVerticalBoxSlot_Padding, 0.f, kPadPx, 0.f, 0.f);
     }
 
     g_root = root;

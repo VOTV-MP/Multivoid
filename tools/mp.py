@@ -3704,6 +3704,9 @@ def cmd_browser(args) -> None:
                                    # of its own (user decision), so these windows ARE the
                                    # address and nickname capabilities -- their verdicts
                                    # are asserted below and these are what they look like.
+                                   # The HOSTING window, whose footer and lists only a
+                                   # picture can judge -- its last defect was found by eye.
+                                   ("WORLD LIST PASS", "browser_host_window.png", "hw"),
                                    ("INPUT DIRECT PASS", "browser_input_direct.png", "ind"),
                                    ("INPUT NAME PASS", "browser_input_name.png", "inn")):
             if needle in text and seen not in extra_shots:

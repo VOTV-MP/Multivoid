@@ -86,6 +86,15 @@ struct Line {
 Line g_dName, g_dWorld, g_dVersion, g_dPlayers, g_dConn, g_dSeen;
 
 // ---- the status pane -------------------------------------------------------------------
+// THE NAME LINE READS "Your name: <nick>", and the wording is the point.
+//
+// It said "Playing as Host" and the user asked the right question of it -- "в чем прикол
+// везде показывает надпись Playing as Host в нижнем pane всегда в любом случае". Two
+// things were wrong and only one of them was the line existing. "Playing as" describes an
+// activity the player is not doing (they are looking at a list, not playing), and "Host"
+// looked like a role the browser had assigned rather than what it is -- the lab rig's own
+// `net.nick`. Read as "Your name: Host" the same pixels answer a question instead of
+// making a claim, and the user's call was to keep it in that form.
 Line g_sCount, g_sFresh, g_sAlarm, g_sNotice, g_sUpdate, g_sNick;
 
 uint64_t g_noticeUntilMs = 0;
@@ -303,9 +312,10 @@ void Sync(bool force) {
     const std::string latest = sm::LatestVersionLine(&outdated);
     g_sUpdate.Set(outdated ? latest : std::string());
 
-    // PERSISTENT, not a transient. Which name you are about to appear under is a standing
-    // fact about this screen, and it is the one the "Change name" action exists to alter.
-    g_sNick.Set("Playing as " + sm::Nickname());
+    // The name everyone else will see, phrased as an answer rather than as a claim about
+    // what the player is doing (see g_sNick's declaration). The Change name button edits
+    // exactly this value.
+    g_sNick.Set("Your name: " + sm::Nickname());
 }
 
 }  // namespace ui::server_browser_panels
