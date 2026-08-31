@@ -10,10 +10,12 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/session/session_manager.h"
+#include "ui/host_session_settings.h"   // step TWO -- what Next opens
 #include "ui/input_focus.h"
 #include "ui/native_screen.h"
 #include "ui/server_browser_native.h"   // CloseNow -- the sibling hand-over
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
@@ -354,7 +356,10 @@ bool BuildScreen(void* switcher) {
         // across the style corpus; user report 2026-08-30 "No caps at buttons ever").
         g_backBtn = NS::BuildButton(footRow, backDonor, L"Back", NS::kBtnFontPx);
         g_status  = NS::AddText(footRow, L"", 16, kText, NS::kJustCenter, 1.f);
-        g_hostBtn = NS::BuildButton(footRow, backDonor, L"Host", NS::kBtnFontPx);
+        // "Next", not "Host": this window no longer hosts. A button whose label promises
+        // the last step while a second one follows is the kind of small lie a player
+        // notices immediately -- they press it expecting the game to start.
+        g_hostBtn = NS::BuildButton(footRow, backDonor, L"Next", NS::kBtnFontPx);
         if (!g_backBtn || !g_hostBtn) return false;
         // The status text carries all the fill weight, so it takes the slack and pushes the
         // two buttons to the ends -- which is what puts them there rather than a constant.
@@ -465,7 +470,14 @@ void UpdateHover() {
     if (g_hoverRow != prevRow || g_hoverConn != prevConn) RepaintAll();
 }
 
-void DoHost() {
+// NEXT -- hand the two choices made here to step two, which owns the host call.
+//
+// THIS FUNCTION USED TO HOST. It built the SaveChoice, derived the name, and called
+// `HostWithSave(... locked=false ...)` -- a hard-coded false that was the only thing a
+// player could ever have, because no surface in the tree could set it. Step two exists to
+// settle that (and only that), so the call moved WITH the value it needs; leaving a hosting
+// path here as well would be two host actions, which is what this file's header forbids.
+void DoNext() {
     sm::SaveChoice c;
     const int sel = SlotIndex();
     if (sel < 0) {
@@ -476,29 +488,15 @@ void DoHost() {
         c.newGame = false;
         c.slot    = Narrow(g_saves[static_cast<size_t>(sel)].slot);
     }
-    // THE NAME. v1 has no text entry (see the header), so it is derived rather than typed:
-    // the browser lists servers by name and "<nick>'s game" tells another player who is
-    // hosting, which a fixed literal cannot. Renaming lives on the ImGui surface until a
-    // focusable native field is measured.
+    // THE NAME, DERIVED RATHER THAN TYPED (see the header): the browser lists servers by
+    // name and "<nick>'s game" tells another player who is hosting, which a fixed literal
+    // cannot. It is resolved HERE, at the moment the player commits to a world, so the two
+    // halves of one decision travel together rather than being re-derived downstream.
     const std::string name = sm::Nickname().empty() ? "Multivoid game"
                                                     : sm::Nickname() + "'s game";
-    // ONE ACTION, TWO VIEWS: this is the same call the ImGui picker makes. No hosting
-    // rule is authored here -- if one must change, it changes in session_manager.
-    const bool accepted = sm::HostWithSave(c, name, /*locked=*/false, /*playersMax=*/4,
-                                           /*directConnection=*/g_connMode == 1,
-                                           /*hideFromBrowser=*/false,
-                                           /*lanOnly=*/g_connMode == 2);
-    UE_LOGI("host_window_native: HOST %s -- world=%s conn=%d name='%s'",
-            accepted ? "accepted" : "REFUSED (another action in flight)",
+    UE_LOGI("host_window_native: NEXT -- world=%s conn=%d name='%s'",
             c.newGame ? "<new game>" : c.slot.c_str(), g_connMode, name.c_str());
-    if (!accepted) {
-        // The window STAYS OPEN on a refusal. A screen that closes on failure is how the
-        // user's "nothing told about the session being DEAD" happened: the only surface
-        // showing the reason was the one that had just gone away.
-        SetStatus(L"Busy -- another host or join is already starting.");
-        return;
-    }
-    SetStatus(L"Starting...");
+    ui::host_session_settings::Open(c, name, g_connMode);
 }
 
 void Show();
@@ -528,7 +526,7 @@ void PollChrome() {
     // X into `CLOSE BUTTON FAIL`. Reverted here; the rows and the image targets keep
     // geometry, which is the only thing that works for THEM.
     if (g_backBtn  && E::WidgetIsHovered(g_backBtn))  { Hide("BACK"); return; }
-    if (g_hostBtn  && E::WidgetIsHovered(g_hostBtn))  { DoHost(); return; }
+    if (g_hostBtn  && E::WidgetIsHovered(g_hostBtn))  { DoNext(); return; }
     for (int i = 0; i < 3; ++i)
         if (g_connRow[i] && NS::CursorOverWidget(g_connRow[i])) { g_connMode = i; RepaintAll(); return; }
     if (g_newGameRow.bg && NS::CursorOverWidget(g_newGameRow.bg)) {
@@ -603,9 +601,27 @@ bool AutoOpenArmed() {
 void Open()   { g_wantOpenMs.store(::GetTickCount64(), std::memory_order_relaxed); }
 void Close()  { g_wantOpenMs.store(0, std::memory_order_relaxed);
                 g_wantClose.store(true, std::memory_order_relaxed); }
+
+void CloseNow() {
+    // ENFORCED, not merely documented -- the browser's own CloseNow records why: this sits
+    // one declaration below a `Close()` whose header says "safe from any thread", and it
+    // reaches ProcessEvent through SwitcherSetIndex. Off-thread it degrades to the deferred
+    // close rather than touching the engine.
+    if (!ue_wrap::game_thread::IsGameThread()) {
+        UE_LOGW("host_window_native: CloseNow off the game thread -- deferring instead "
+                "(it drives the switcher through ProcessEvent)");
+        Close();
+        return;
+    }
+    g_wantOpenMs.store(0, std::memory_order_relaxed);
+    g_wantClose.store(false, std::memory_order_relaxed);   // performed here, not deferred
+    Hide("replaced by a sibling screen");
+}
+
 bool IsOpen() { return g_shown; }
 
 void* BackButton() { return g_backBtn; }
+void* NextButton() { return g_hostBtn; }
 
 int   SelectedSave()   { return SlotIndex(); }
 int   SaveRowCount()   { return g_visibleSaves; }   // shown, not the row vector's high-water mark
