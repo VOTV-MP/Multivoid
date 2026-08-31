@@ -3,7 +3,7 @@
 #include "ui/scoreboard.h"
 
 #include "coop/moderation/moderation.h"
-#include "coop/session/session_manager.h"  // ListedState (read-only session info)
+#include "coop/session/session_manager.h"  // ListedState / SetListed -- the ONE mid-session edit
 #include "coop/player/nick_color.h"
 #include "coop/player/roster.h"
 #include "coop/voice/voice_chat.h"
@@ -361,26 +361,30 @@ void Render() {
         ImGui::PopStyleColor(2);  // TableRowBgAlt + TableBorderLight
         if (s.count == 0) ImGui::TextDisabled("No players.");
 
-        // HOST-ONLY SESSION INFO. READ ONLY -- a session is configured when it is
-        // CREATED and not afterwards (user, 2026-08-31: "в тильда меню забрать
-        // редактирование сессии у хоста в mid coop session, пусть там просто
-        // информация сервера/сессии"; and on the settings generally, "раз создает хост
-        // сессию и всё, с этим и живёт ... надо пусть пересоздает").
+        // HOST-ONLY SESSION BLOCK. A session is CONFIGURED WHEN IT IS CREATED and not
+        // afterwards -- password, lock and connection are settled in the hosting flow and
+        // changing them means hosting again (user, 2026-08-31: "раз создает хост сессию и
+        // всё, с этим и живёт ... надо пусть пересоздает", and for this menu specifically
+        // "забрать редактирование сессии у хоста в mid coop session, пусть там просто
+        // информация сервера/сессии").
         //
-        // The "Show in server browser" CHECKBOX that stood here is retired with that
-        // rule. What it bought is stated rather than quietly lost: for a DIRECT lobby
-        // the same choice is made at host time and is unaffected, but for an AUTO/relay
-        // lobby hiding was ONLY possible here -- the master is that lobby's sole
-        // rendezvous, so hiding it at creation would make it unjoinable. An AUTO host
-        // therefore can no longer hide once friends are in; the way to stop being listed
-        // is to end the session. That consequence is the user's call and is recorded
-        // here rather than in a commit message nobody re-reads.
+        // HIDING IS THE ONE EXCEPTION, and the user named it as such ("hiding is the only
+        // tilde mid session edit exception i guess"). It is an exception for a MEASURED
+        // reason rather than a taste: for an AUTO/relay lobby the master is the ONLY
+        // rendezvous, so hiding at creation would make the game unjoinable -- the choice
+        // can only exist after friends are in. A DIRECT lobby makes the same choice at
+        // host time and this simply mirrors it.
+        //
+        // So: one control, and it is the only one. Anything else about the session is
+        // shown, never edited. Posts /v1/visibility async; the session stays live.
         if (host) {
             ImGui::Separator();
-            ImGui::TextDisabled(
-                coop::session_manager::ListedState()
-                    ? "Listed in the server browser -- others can find this game."
-                    : "Not listed -- friends join by invite or IP.");
+            bool listed = coop::session_manager::ListedState();
+            if (ImGui::Checkbox("Show in server browser", &listed))
+                coop::session_manager::SetListed(listed);
+            ImGui::SameLine();
+            ImGui::TextDisabled(listed ? "(others can find your game)"
+                                       : "(hidden -- friends join by invite/IP)");
         }
 
         // Permanent-ban confirmation modal (shared across rows; g_banConfirmSlot
