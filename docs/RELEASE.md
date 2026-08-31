@@ -118,14 +118,26 @@ player gets, and the release notes + Discord have to carry the rest.
 
 ### Before the day — free, and worth doing
 
-- **Re-test the three open field defects on the STAGED pair, without touching production.** Defect
-  #1 (client never sees the host) was `COOP_MAX_BUILD`, retired in `24418b66`; #2 "No players" on
-  tilde, #3 F1 skin not applying, and #4 silent host failure were all parked on "re-test once the
-  master is redeployed". Stage as in 6c, then point a test client at it with
-  `net.master.custom=1` + `net.master` / `net.signaling` (env: `VOTVCOOP_MASTER_URL`,
-  `VOTVCOOP_NET_SIGNALING`). Shipping #2 or #3 into the first Thunderstore package would be
-  shipping them immutably. Requires the staged ports to be reachable from outside — verify, do
-  not assume.
+- **THE USER RE-TESTS THE r2modman ZIP LOCALLY (their own item, 2026-08-31: "Я ещё должен буду
+  локально нашу r2modman zip снова тестить"), AND IT SHOULD BE THE SAME RUN AS THE FIELD-DEFECT
+  RE-TEST.** The 2026-08-29 import proved **LAYOUT ONLY** — the tree matched `UE4SS_ARC` §7.2a's
+  prediction and the mod booted, but **the session never came up**, so nothing downstream of boot
+  has ever been exercised from a managed install. That was not the package's fault: `[V]` the cause
+  was the master's build gate (`COOP_MAX_BUILD` = 143 against a b145 host), and that gate is
+  **retired** (`24418b66`). So this re-test is the first one that can actually reach a session.
+  - **Re-run `tools/release/package.ps1` and take the name it prints.** Do not reach for a named
+    local zip — the build number moves several times a day, and one of the 2026-08-29 zips was
+    assembled from a build directory a parallel session had just rewritten.
+  - **The same run answers the three open field defects**, all of which were parked on this
+    redeploy: **#2** "No players" on tilde, **#3** F1 skin not applying, **#4** hosting fails
+    silently. Shipping #2 or #3 into the first Thunderstore package would ship them **immutably**.
+  - **To get a session before the cutover, point the client at the STAGED pair** (`net.master.custom=1`
+    + `net.master` / `net.signaling`; env `VOTVCOOP_MASTER_URL`, `VOTVCOOP_NET_SIGNALING`) — and
+    **open the ports first**: `[V]` ufw is default-DROP and allows only 10000/10001/3478/22/443/8443,
+    so 10010/10011 are unreachable from outside (the 2026-08-31 `sig_gate` run reached them only
+    through an SSH tunnel). `ufw allow 10010/tcp` + `10011/tcp` with a comment, and **delete both
+    afterwards**. The alternative is simply to do this re-test *after* the cutover, which costs
+    nothing extra if the release is the same sitting.
 - **Push.** Dozens of commits were unpushed when this was written and the backlog only grows; the
   tag must be reachable on origin. Check with `git log --oneline origin/main..HEAD | wc -l`, and
   run the 5-axis leak audit per commit before asking.
