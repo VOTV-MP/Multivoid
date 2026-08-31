@@ -55,6 +55,7 @@
 #include "harness/autotest.h"
 
 #include "coop/net/session.h"
+#include "coop/dev/death_write_diff.h"
 #include "coop/player/death_revive.h"
 #include "coop/player/players_registry.h"
 #include "harness/session_runtime.h"
@@ -810,6 +811,20 @@ DWORD WINAPI DeathTestThread(LPVOID) {
     // The same cadence, the same reads, the same frame load, with the player
     // simply standing there. Whatever this drifts is what the dead window is
     // allowed to drift.
+    // The write-diff's NOISE FLOOR rides this same window: whatever moves while the player
+    // just stands there is world churn (animated hints, radar points, pooled log rows,
+    // ticking floats) and can never be attributed to the death. Without it the death diff
+    // reads ~319 changed cells and the signal is buried in its own instrument.
+    {
+        auto done = std::make_shared<std::atomic<int>>(0);
+        GT::Post([done] {
+            coop::dev::death_write_diff::ResetNoiseFloor();
+            coop::dev::death_write_diff::Snapshot();
+            done->store(1);
+        });
+        WaitDone(done, 30000);
+    }
+
     MemWindow alive;
     {
         const uint64_t t0 = ::GetTickCount64();
@@ -823,6 +838,27 @@ DWORD WINAPI DeathTestThread(LPVOID) {
     UE_LOGI("death_test: ALIVE control window -- %.1f -> %.1f MB over %llu ms (%.2f MB/s, peak %.1f)",
             alive.firstMb, alive.lastMb, static_cast<unsigned long long>(alive.ms),
             alive.SlopeMbPerSec(), alive.peakMb);
+
+    {
+        auto done = std::make_shared<std::atomic<int>>(0);
+        GT::Post([done] {
+            coop::dev::death_write_diff::DiffAndLog("alive control", /*learnNoise=*/true);
+            done->store(1);
+        });
+        WaitDone(done, 30000);
+    }
+
+    // ---- the write-diff BEFORE instant ---------------------------------------
+    // Taken here and not on the `dead` edge ON PURPOSE: `Add Player Damage` writes the four
+    // damage quadrants BEFORE `dead` exists, so a snapshot armed on the flag is already too
+    // late (`[[lesson-a-chain-derived-design-is-blind-to-side-effects-before-the-chain]]`).
+    // The drill CONTROLS the trigger, so it simply snapshots immediately before delivering
+    // the hit -- no production seam is needed or implied. See coop/dev/death_write_diff.h.
+    {
+        auto done = std::make_shared<std::atomic<int>>(0);
+        GT::Post([done] { coop::dev::death_write_diff::Snapshot(); done->store(1); });
+        WaitDone(done, 30000);
+    }
 
     // ---- deliver the lethal hit ---------------------------------------------
     // 2x max health. It USED to be 10x, and that was a real instrument defect rather than
@@ -897,6 +933,19 @@ DWORD WINAPI DeathTestThread(LPVOID) {
             "blackScreen~5000, travel~10000; with the arc armed, travel should read -1 and "
             "blackGone should land just past 10000 -- the revive is what removes it]",
             tDead, tRagdoll, tBlack, tBlackGone, tTravel, tGrabCleared);
+    // The AFTER instant: the revive has run, so whatever still differs from the pre-hit
+    // snapshot is a write the death made and NOTHING disposed of. Expect a large delta with
+    // `VOTVCOOP_DEATH_NO_RECONCILE=1` (the RED arm) and a smaller one without it; the pair is
+    // the reading, not either arm alone.
+    {
+        auto done = std::make_shared<std::atomic<int>>(0);
+        GT::Post([done] {
+            coop::dev::death_write_diff::DiffAndLog(
+                coop::death_revive::ReconcileDisabled() ? "reconcile OFF" : "reconcile ON");
+            done->store(1);
+        });
+        WaitDone(done, 30000);
+    }
     {
         auto done = std::make_shared<std::atomic<int>>(0);
         auto census = std::make_shared<std::wstring>();

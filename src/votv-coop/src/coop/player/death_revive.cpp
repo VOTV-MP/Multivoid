@@ -3,6 +3,7 @@
 
 #include "coop/player/death_revive.h"
 
+#include "coop/config/config.h"
 #include "coop/net/session.h"
 #include "coop/session/net_pump.h"
 #include "coop/session/teleport_client.h"
@@ -315,6 +316,14 @@ bool RestoreMenuPrep() {
 // player, so this does NOT enter the revive's completion conjunction (11.2's lesson -- gating
 // on a screen artifact threw a LIVING player to the menu one run in four).
 void ReconcileCancelledTravel() {
+    if (ReconcileDisabled()) {
+        UE_LOGI("death_revive: RECONCILE SUPPRESSED (VOTVCOOP_DEATH_NO_RECONCILE=1) -- the "
+                "death's un-disposed writes are being LEFT for the write-diff instrument to "
+                "find. This is the negative-control arm; the travel is still refused and the "
+                "player is still revived.");
+        return;
+    }
+
     // [1] the HUD latch.
     if (g_verbs.offPlayerInterface >= 0 && g_verbs.offDamageIndicator >= 0 &&
         g_verbs.offDmgFull >= 0 && g_verbs.setVisibility) {
@@ -751,5 +760,10 @@ bool ArmedForThisDeath() { return g_armed.load(std::memory_order_acquire); }
 bool SeamInstalled() { return LT::IsInstalled(); }
 unsigned long long TravelsRefused() { return LT::VetoCount(); }
 bool LastReviveSucceeded() { return g_lastReviveOk; }
+
+bool ReconcileDisabled() {
+    static const bool s = (coop::config::ReadEnv("VOTVCOOP_DEATH_NO_RECONCILE") == "1");
+    return s;
+}
 
 }  // namespace coop::death_revive

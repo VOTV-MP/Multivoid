@@ -95,4 +95,18 @@ bool SeamInstalled();
 unsigned long long TravelsRefused();
 bool LastReviveSucceeded();
 
+// THE NEGATIVE CONTROL, armed by `VOTVCOOP_DEATH_NO_RECONCILE=1`.
+//
+// When true, `ReconcileCancelledTravel()` does nothing, so the death's un-disposed writes are
+// left standing. This exists for ONE reason: the write-diff instrument
+// (coop/dev/death_write_diff.h) measures which writes the death leaves behind, and with the
+// reconcile ENABLED our own fix hides the two it most needs to re-find --
+// `[[lesson-an-instrument-that-shares-the-defect-cancels-it]]`. An instrument that can only
+// ever be run in the arm where the defect is already patched grades itself green.
+//
+// It gates the RECONCILE ONLY. The travel is still refused and the player is still revived,
+// so a run with this set is survivable-but-dirty, never a run that strands anyone. It is read
+// once and cached; it is a drill switch, not a shipped configuration.
+bool ReconcileDisabled();
+
 }  // namespace coop::death_revive

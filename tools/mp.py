@@ -2955,6 +2955,10 @@ def cmd_death(args) -> None:
     deploy_all()
 
     os.environ["VOTVCOOP_RUN_DEATH_TEST"] = "1"
+    # Set explicitly rather than inherited from the caller's shell: an env-gated arm that is
+    # only reachable by remembering to export something is an arm that silently does not run
+    # (`[[lesson-an-env-gated-test-can-be-unreachable-by-its-own-launcher]]`).
+    os.environ["VOTVCOOP_DEATH_NO_RECONCILE"] = "1" if getattr(args, "no_reconcile", False) else "0"
 
     mode = "SOLO HOST (live session)" if args.session else "solo, sessionless"
     log(f"--- LAUNCH ({mode}, native death chain) ---")
@@ -5412,6 +5416,13 @@ def main() -> None:
                               "net_pump's flee is gated on a live session, so this is the arm that "
                               "measures the flee pre-emption -- expect the travel at ~8 ms and NO "
                               "black screen; the sessionless arm is the one that sees the full chain")
+    p_death.add_argument("--no-reconcile", action="store_true",
+                         help="NEGATIVE CONTROL for the write-diff: suppress "
+                              "ReconcileCancelledTravel() so the death's un-disposed writes are "
+                              "LEFT standing. With the reconcile on, our own fix hides the two "
+                              "writes the instrument most needs to re-find, so the RED arm is "
+                              "what gives the diff meaning. The travel is still refused and the "
+                              "player is still revived -- this arm is dirty, never unsurvivable")
     for flag, kw in host_res: p_death.add_argument(flag, **kw)
     p_death.set_defaults(func=cmd_death)
 

@@ -533,6 +533,7 @@ add_library(votv-coop SHARED
     src/coop/dev/eid_lifetime_trace.cpp
     src/coop/dev/join_window_pos_trace.cpp
     src/coop/dev/rng_roll_census.cpp
+    src/coop/dev/death_write_diff.cpp
     src/coop/dev/desk_diag.cpp
     src/coop/dev/container_selftest.cpp
     src/coop/dev/drive_selftest.cpp
