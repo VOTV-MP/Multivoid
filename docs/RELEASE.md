@@ -125,6 +125,18 @@ NOT stable-only):
    and a `JoinLobby` refusal before any connection). A release no longer needs a master
    restart for version reasons; `COOP_MAX_BUILD`/`COOP_ALLOWED_BUILDS` left in an env file
    are simply ignored.
+
+6c. **A MASTER REDEPLOY IS OWED FOR A FEATURE REASON, WHICH IS NOT THE SAME THING (added
+   2026-08-31, still OUTSTANDING as of proto 149).** Step 6b retired the *version* reason
+   and it stays retired. But `/v1/join`'s DIRECT response now carries `hostIdentity`
+   (`master.rs:618`), and a joiner needs that value to bind the host's key before it will
+   send a lobby-password proof. Until the deployed master serves it:
+   **a PASSWORD-LOCKED lobby hosted in DIRECT mode cannot be joined from the browser at
+   all** -- the client refuses itself with "nothing told us which host we were dialling".
+   Open direct lobbies and every AUTO lobby are unaffected, and the client treats the field
+   as optional so an old master degrades rather than breaks.
+   Check before shipping a release that advertises the lock:
+   `curl -s <master>/v1/join -d '{"lobbyId":"<a direct lobby>"}' | grep hostIdentity`.
 7. `tools/release/verify_latest.ps1` — must PASS (it FAILs before step 6 by
    design; fold-aware: reads the newest bare-tag published row).
 
