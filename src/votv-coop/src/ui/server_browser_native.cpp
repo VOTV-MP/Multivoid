@@ -286,10 +286,16 @@ bool BuildScreen(void* switcher) {
                   P::off::FScrollBarStyleBrushes, 9);
     if (void* s = U::AddChild(listOvl, list)) {
         U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign, kFill, kFill);
-        // Inside its own ring, not on top of it: without this the first row's fill paints over
-        // the frame's inner band.
+        // Inside its own ring, not on top of it -- by the RING's width, not by `kBorderPx`.
+        //
+        // Those are different quantities: `[V]` the ring renders 4 px and `kBorderPx` is the
+        // 2 px the flat fallback insets its fill by. At 2 the rows, which fill the list
+        // horizontally and carry frames of their own, land their outer band on the list ring's
+        // inner band and produce `919191x4` at the list's edges -- the exact artefact the
+        // window's own inset was just corrected to avoid, one level down.
         NS::SetSlotPadding(s, P::off::UOverlaySlot_Padding,
-                           kBorderPx, kBorderPx, kBorderPx, kBorderPx);
+                           NS::kNativeRingPx, NS::kNativeRingPx,
+                           NS::kNativeRingPx, NS::kNativeRingPx);
     }
     U::SetContent(listBox, listOvl);
     NS::AddVFill(leftCol, listBox, 1.f, kFill, kFill);

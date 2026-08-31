@@ -382,6 +382,7 @@ inline constexpr const wchar_t* RequestRenderUpdateFn = L"RequestRenderUpdate"; 
 inline constexpr const wchar_t* SetComponentTickEnabledFn = L"SetComponentTickEnabled";  // on UActorComponent -- a runtime-added WidgetComponent doesn't tick -> never draws its RT
 inline constexpr const wchar_t* NameplateSetTextFn = L"SetText";                     // UTextBlock::SetText(FText)
 inline constexpr const wchar_t* TextBlockClass = L"TextBlock";
+inline constexpr const wchar_t* ImageClass = L"Image";                              // UImage -- every frame, fill and scrim we build
 inline constexpr const wchar_t* KismetTextLibraryClass = L"KismetTextLibrary";
 inline constexpr const wchar_t* ConvStringToTextFn = L"Conv_StringToText";           // FString -> FText
 inline constexpr const wchar_t* WidgetBaseClass = L"Widget";                         // UWidget (owns SetVisibility; SetVisibilityFn defined above)
