@@ -38,13 +38,24 @@ struct LobbyRow {
                             // mismatch with an "update your mod" message; 0 = the host
                             // predates the field -- not verifiable, the wire-level
                             // protocol-mismatch close stays the backstop). 2026-06-11.
-    // A BROWSER BADGE AND NOTHING ELSE -- there is NO admission gate behind it, and a
-    // "locked" lobby is enterable by anyone (security A2). This comment used to assert
-    // "gate is the game-layer join-secret"; no join secret exists anywhere in the tree --
-    // a grep for join[_]?secret returns ONE hit, a future-work comment at session.h:104.
-    // `6f0c2bf8` deleted the MASTER's copy of that same false assertion and missed this
-    // one, which is why its own message ("+ 2 false comments") is now false about its
-    // scope: a deletion owes a CENSUS, not a fix at the site that happened to be read.
+    // THERE IS AN ADMISSION GATE BEHIND THIS NOW (security A2, built 2026-08-31, proto
+    // 149). A joiner proves knowledge of the lobby password inside the peer-admission
+    // exchange -- `coop/net/lobby_password.h` for the construction, `peer_admission.cpp`
+    // for where it is checked -- and a wrong or missing proof is refused before a seat is
+    // spent. So this field is the browser's DISPLAY of a real property, not a promise
+    // nothing keeps.
+    //
+    // THIS COMMENT HAS NOW BEEN WRONG IN BOTH DIRECTIONS, which is why it is worth the
+    // space. It first asserted a "game-layer join-secret" that existed nowhere; `6f0c2bf8`
+    // deleted the MASTER's copy of that same false assertion and missed this one (a
+    // deletion owes a CENSUS, not a fix at the site that happened to be read). It was then
+    // corrected to "a badge and nothing else", which was true for six weeks and became
+    // false the day the gate shipped -- the stale-open direction. A status sentence in a
+    // header is a CLAIM about code that moves.
+    //
+    // WHAT IS STILL TRUE AND IS NOT A GATE: `direct` below, and the fact that a HOST may
+    // announce whatever it likes -- the master echoes this bool and does not verify it.
+    // The gate is at the host's own admission, not at the listing.
     bool locked = false;
     bool direct = false;    // conn=="direct": a port-forwarded UDP host (browser
                             // badge; join returns ip:port, not ICE creds). 2026-06-11.

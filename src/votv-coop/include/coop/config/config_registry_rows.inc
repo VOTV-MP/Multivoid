@@ -102,9 +102,22 @@ CFG_STRING_GATED(net_signaling, "net.signaling", "net", ::coop::net::kOfficialSi
 CFG_STRING(net_signaling_token, "net.signaling_token", "net", "", "VOTVCOOP_NET_SIGNALING_TOKEN", false,
     "Access token for a self-hosted signaling server. The official flow mints per-session "
     "tokens automatically -- leave empty.")
+// ITS JOB DOUBLED ON 2026-08-31 AND THE DESCRIPTION HAD TO FOLLOW. It used to be a
+// ROUTING value read on the P2P branch alone -- which host to rendezvous with over
+// signaling. A65 made the same value the ANCHOR a joiner binds the answering key to, and
+// A2's password proof refuses to be emitted without that binding, so it is now read on the
+// DIRECT and LAN lanes too (`config.cpp:473`, `session_manager.cpp:817`). A player who was
+// given only an address is unbound: they can still join any OPEN server and are refused by
+// a locked one with a sentence saying why.
+//
+// A STALE VALUE HERE NOW REFUSES EVERY DIRECT/LAN JOIN, which the old wording did not warn
+// about because it could not happen. Hence the sharper "clear it" in the text.
 CFG_STRING(net_host_identity, "net.host_identity", "net", "", "VOTVCOOP_NET_HOST_IDENTITY", false,
-    "The host identity a client dials over signaling, copied from the host's own log line. "
-    "Leave empty -- the master hands it to you when you join from the browser.")
+    "The host you expect to reach, as their `gen:` line -- needed only to join a "
+    "PASSWORD-LOCKED server by direct address or on a LAN, where nothing else can tell you "
+    "who is answering. Leave it empty otherwise, and CLEAR it when you stop using it: a "
+    "leftover value makes every direct connection refuse, because the host that answers is "
+    "not the one it names. Joining from the server browser never needs it.")
 CFG_STRING(net_stun, "net.stun", "net", "stun.l.google.com:19302", "VOTVCOOP_NET_STUN", false,
     "STUN server list for NAT discovery (host:port, comma-separated).")
 CFG_STRING(net_turn, "net.turn", "net", "", "VOTVCOOP_NET_TURN", false,
