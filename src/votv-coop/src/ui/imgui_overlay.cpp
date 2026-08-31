@@ -339,9 +339,13 @@ LRESULT CALLBACK WndProcDetour(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
     // that block leaves -- a native screen up, no ImGui surface -- which used to pass
     // straight to the game.
     //
-    // Escape is only HALF handled by swallowing it: the browser reads Escape with
-    // GetAsyncKeyState, which sees the physical key whatever we do here, so that poll
-    // defers to `native_text_field::AnyFocused()` on its own edge. Both halves are
+    // Escape is only HALF handled by swallowing it: the screens read Escape with
+    // GetAsyncKeyState, which sees the physical key whatever we do here, so each poll asks
+    // `native_text_field::ConsumeEscape()` AT ITS EDGE -- a latch the field sets when it
+    // eats an Escape to leave itself. It used to be `AnyFocused()`, which could never work
+    // (the field blurs on WM_KEYDOWN, the polls take the release edge, so focus was always
+    // gone by the time they asked) and this comment outlived that mechanism by a commit.
+    // Both halves are
     // required; neither works alone.
     if (msg == WM_CHAR && ui::native_text_field::OnChar(static_cast<wchar_t>(wParam))) {
         ProbeKeyMsg(msg, wParam, "SWALLOWED by a native text field");

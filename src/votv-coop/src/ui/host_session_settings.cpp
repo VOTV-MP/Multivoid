@@ -160,6 +160,10 @@ bool         g_haveStatus = false;
 // caches for and leave the hint permanently blank on the second visit -- which is the
 // defect recorded three lines above, and the reason it is not repeated here.
 int          g_hintFor = -2;
+// Has THIS opening of the window actually attempted a host? The status string is global
+// and outlives the action, so without this the screen shows the last one on open.
+bool         g_sawHostAttempt = false;
+std::string  g_lastHostStatus;
 
 bool g_prevLmb = false, g_lmbPrimed = false;
 bool g_prevEsc = false, g_escPrimed = false;
@@ -477,6 +481,7 @@ void Hide(const char* why);
 // hosting flow gained its second step. No hosting rule is authored here: if one must
 // change, it changes in `session_manager`, once.
 void DoHost() {
+    g_sawHostAttempt = true;
     const std::string pw = g_locked ? TF::Text(g_pwField) : std::string();
     if (g_locked && pw.empty()) {
         // A LOCK WITH NO SECRET IS THE FALSE PROMISE, so it is refused here rather than
@@ -549,12 +554,26 @@ void PollChrome() {
     // fire: the field blurs on WM_KEYDOWN and this poll takes the key-UP, so focus was
     // always already gone. One Escape both left the field AND closed the window, throwing
     // away a password the player had just typed (post-ship audit, 2026-08-31).
-    const bool fieldAteEscape = TF::ConsumeEscape(g_pwField);
     const bool esc = (::GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
     if (!g_escPrimed) { g_escPrimed = true; g_prevEsc = esc; }
-    const bool escEdge = g_prevEsc && !esc;
+    const bool escEdge = g_prevEsc && !esc;   // RELEASE edge
     g_prevEsc = esc;
-    if (escEdge && !fieldAteEscape) {
+    if (escEdge) {
+        // CONSUMED AT THE EDGE, NOT EVERY TICK -- and that distinction is the whole fix.
+        //
+        // The first version drained the latch unconditionally at the top of this poll, and
+        // it could NEVER fire: the field sets the latch on WM_KEYDOWN, this poll takes the
+        // RELEASE edge dozens of ticks later, so the one true reading was thrown away on
+        // the key-down tick and the release always saw false. One Escape still blurred the
+        // field AND closed the window -- the exact defect the latch was written to fix,
+        // reproduced in the mechanism that replaced it. Its own comment stated the cause
+        // ("drained on the tick it was set") without noticing it was fatal here. Found by
+        // the audit of the fix commit, 2026-08-31.
+        //
+        // Asking only at the edge means the latch survives the whole press, which is what
+        // "this Escape was the field's" has to mean when press and release are different
+        // ticks.
+        if (TF::ConsumeEscape(g_pwField)) return;
         BackToHostWindow();
         return;
     }
@@ -622,6 +641,13 @@ void Show() {
     g_escPrimed = false;
     g_lmbPrimed = false;
     g_lastStatus.clear();
+    g_sawHostAttempt = false;
+    g_lastHostStatus.clear();
+    // RESET ON EVERY OPEN, not only on a menu change: `BuildScreen`'s failure paths clear
+    // `g_root` without clearing this, so a rebuild mints a fresh `g_pwHint` while the cache
+    // still matches `g_connMode` and the hint would stay permanently blank -- the exact
+    // defect the module-level choice was supposed to avoid (audit, 2026-08-31).
+    g_hintFor = -2;
     SetStatus(L"", kText);
 
     SetText(g_recapName, Widen(g_name), kText);
@@ -799,9 +825,22 @@ void OnMenuTick(void* menu, void* switcher) {
     // split, caught by the post-ship audit (2026-08-31).
     //
     // Edge-gated against `g_lastStatus` by `SetStatus`, so a steady string costs nothing.
-    if (g_status) {
-        const std::string cur = sm::HostStatus();
-        if (!cur.empty()) SetStatus(Widen(cur), kText);
+    // GATED BEFORE THE STRING IS BUILT. The first version read `HostStatus()` (a mutex
+    // plus a string copy) and ran `Widen` (a full UTF-8 -> UTF-16 conversion) EVERY tick,
+    // then let `SetStatus` decide whether to touch the widget -- under a comment claiming
+    // it "costs nothing" for a steady string. The widget write was gated; the two
+    // allocations were not. The hint fix a few functions up got this right by gating
+    // before building the string; this one did not (audit, 2026-08-31).
+    //
+    // AND ONLY WHAT THIS OPENING CAUSED. `g_hostStatus` outlives the action that set it,
+    // so an unfiltered read painted the PREVIOUS action's line over Show()'s deliberate
+    // blank before the player had pressed anything.
+    if (g_status && g_sawHostAttempt) {
+        std::string cur = sm::HostStatus();
+        if (cur != g_lastHostStatus) {
+            g_lastHostStatus.swap(cur);
+            if (!g_lastHostStatus.empty()) SetStatus(Widen(g_lastHostStatus), kText);
+        }
     }
 }
 

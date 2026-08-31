@@ -71,6 +71,12 @@ using Tag = std::array<uint8_t, kTagBytes>;
 // this number buys nothing; without it, this number is the whole delay. ~100 ms
 // on the joining client, once, and nothing on the host, which caches K.
 inline constexpr uint32_t kIterations = 200000;
+// ASSERTED AT COMPILE TIME, because the selftest cannot do it. Its full-cost arm only shows
+// the shipped count differs from the cheap one -- which would pass for 2, and for 0 if CNG
+// yields a distinct key. A constant this load-bearing owes a check that costs nothing
+// (audit, 2026-08-31).
+static_assert(kIterations == 200000, "the shipped round count moved -- change it here and "
+                                     "in lobby_password.h's rationale together, or not at all");
 
 // K = PBKDF2(password, hostPub). False if CNG refused or the password is empty.
 // An empty password must never derive a key: it would give "no password" a

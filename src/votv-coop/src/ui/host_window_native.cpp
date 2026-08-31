@@ -655,6 +655,14 @@ void OnMenuTick(void* menu, void* switcher) {
             sNextTryMs = nowTry + 1000;
         }
         if (!BuildScreen(switcher)) {
+            // A FAILED BUILD COUNTS, whatever failed. `g_buildAttempts` is incremented
+            // inside `BuildScreen` on the missing-donor path ONLY, so the gate above was
+            // inert for every other failure -- a shell that would not spawn, a null list --
+            // and the tick kept rebuilding at ~117 Hz forever, spawning a window's worth of
+            // UObjects each time. Both siblings count in the CALLER for exactly this
+            // reason, and one of them says so in a comment. I added the gate without the
+            // counter (audit of the fix commit, 2026-08-31).
+            ++g_buildAttempts;
             // SAY SO. Since 2026-08-29 the browser's HOST button closes the browser
             // SYNCHRONOUSLY and then asks for this window, so a build that keeps failing
             // leaves the player on the main menu with no window, no browser and -- until

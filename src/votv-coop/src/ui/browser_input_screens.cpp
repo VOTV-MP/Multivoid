@@ -328,12 +328,21 @@ void PollChrome() {
     // can take, focus is already gone and the guard could never fire -- one Escape both
     // left the field and closed the window, discarding what was typed. Drained
     // unconditionally so the latch cannot survive into the next press.
-    const bool fieldAteEscape = TF::ConsumeEscape(s.field);
     const bool esc = (::GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
     if (!g_escPrimed) { g_escPrimed = true; g_prevEsc = esc; }
-    const bool escEdge = esc && !g_prevEsc;
+    // THE RELEASE EDGE, matching the hosting screens -- it used to be the PRESS edge, and
+    // that lost a race it could not win. `GetAsyncKeyState` reflects the physical key
+    // immediately, while the latch is set only when `WM_KEYDOWN` is dispatched; this poll
+    // runs inside Slate's tick, i.e. AFTER the frame's message pump. A key pressed in the
+    // pump->tick gap therefore raised the press edge with the latch still clear, and the
+    // window closed while the WM_KEYDOWN arrived a frame later into a blurred field --
+    // discarding a typed password roughly half the time, on the password prompt itself.
+    // Taking the RELEASE edge puts a whole key-press between the two, so the latch is
+    // always set by the time it is read (audit of the fix commit, 2026-08-31).
+    const bool escEdge = g_prevEsc && !esc;
     g_prevEsc = esc;
-    if (escEdge && !fieldAteEscape) {
+    if (escEdge) {
+        if (TF::ConsumeEscape(s.field)) return;   // consumed AT the edge -- see the sibling
         BackToBrowser();
         return;
     }

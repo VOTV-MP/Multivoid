@@ -478,6 +478,7 @@ def launch_peer(role: str, port: int, nick: str, peer: str | None,
                 trigger_file: str | None = None,
                 set_net_role: bool = True,
                 set_scenario: str | None = "play",
+                host_fresh: bool = False,
                 extra_env: dict | None = None) -> int:
     # role is the WIRE role (host / client). peer_slot is which CLIENT folder
     # to launch from when role==client: 1 -> Game_0.9.0n_CLIENT_1, 2 ->
@@ -552,9 +553,12 @@ def launch_peer(role: str, port: int, nick: str, peer: str | None,
     # every CLIENT always boots a FRESH New Game and NEVER loads a save. These are env overrides the
     # harness honors over multivoid.ini (see BootStorySaveBlocking). Keeps every run deterministic:
     # one fixed host world streamed onto blank clients (the ephemeral-client baseline).
-    if role == "host":
+    if role == "host" and not host_fresh:
         env["VOTVCOOP_SAVE"] = "s_test_screens2"
     else:
+        # A FRESH host world. It exists because "is this red because of the SAVE?" is a
+        # question no amount of probing the running world can answer -- only a New Game can,
+        # and the project's own rule already prefers a fresh world for tests.
         env["VOTVCOOP_FRESH"] = "1"
     if trigger_file:
         # dev/spawn_npc watches this file path; when it appears the peer spawns
@@ -2956,7 +2960,8 @@ def cmd_death(args) -> None:
     log(f"--- LAUNCH ({mode}, native death chain) ---")
     launch_peer("host", args.port, "Host", peer=None,
                 res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
-                memory_limit_gb=args.memory_limit_gb, set_net_role=bool(args.session))
+                memory_limit_gb=args.memory_limit_gb, set_net_role=bool(args.session),
+                host_fresh=bool(getattr(args, "fresh", False)))
 
     host_log = HOST_DIR / "multivoid.log"
     # LOOK AT THE FRAME. Three targeted probes in a row each measured their own target clear
@@ -4725,7 +4730,11 @@ def cmd_authdrill(args) -> None:
         # sabotage for this arm is the VALUE, not a code path -- there is no branch in
         # the client that knows it is being drilled, which is what makes the refusal the
         # shipped one.
-        client_env["VOTVCOOP_NET_LOBBY_PASSWORD"] = (
+        # THE JOIN ROW, NOT THE LOBBY ROW. They were one row until the post-ship audit
+        # split them: `net.lobby_password` is the secret THIS peer's own hosted sessions
+        # require, and a client falling back to it offered its own lobby's password to
+        # strangers. A joiner configures `net.join_password`.
+        client_env["VOTVCOOP_NET_JOIN_PASSWORD"] = (
             "correct-horse-battery" if args.control else "wrong-horse-battery")
         # ...AND THE CLIENT MUST KNOW WHICH HOST IT IS DIALLING, or it refuses to send
         # anything password-derived at all and this arm measures the BINDING gate
@@ -4813,6 +4822,26 @@ def cmd_authdrill(args) -> None:
     # peer. Matching on "streaming" catches the LIVE and the stale-fallback arms.
     served  = "save_transfer: slot 1 streaming" in htext
     admitted = "ADMITTED -> slot" in htext
+
+    # VOID BEATS FAIL, and this arm needed it more than any other.
+    #
+    # The CONTROL's four assertions are all "the good thing happened", so ABSENCE reads as
+    # failure -- and the loudest cause of absence on this rig is not a refusal, it is a
+    # client that was still booting when the hold expired. Measured 2026-08-31: a failing
+    # control run's client log was 73 lines and stopped inside `pe_diag[post-init]`; it
+    # never dialled, never sent an AuthHello, and the host never accepted a pending socket.
+    # Three runs of the same arm gave PASS/PASS/FAIL on that basis alone.
+    #
+    # The SABOTAGE arms are not exposed the same way -- each of their N1 needles requires
+    # the client to have ARRIVED (a WRONG PASSWORD line, a refusal the client itself logged,
+    # a signature that did not verify) -- but the control has no such anchor, so it gets an
+    # explicit one here. An arm that measured nothing must say so rather than blame the gate.
+    if "sent AuthHello" not in ctext:
+        log("VOID: the client never opened the admission exchange -- no AuthHello in its "
+            "log, so this run measured NOTHING about the gate. The usual cause is a boot "
+            f"slower than --hold ({hold}s); re-run, or raise it.")
+        tail_log(client_log, 12, "CLIENT")
+        sys.exit(2)
 
     want = {"N1 host refused/swept, naming why": (not args.control) == refused,
             "N2 client took no seat":            args.control == seated,
@@ -5295,6 +5324,9 @@ def main() -> None:
                          help="seconds to wait for 'death_test: DONE' (boot into gameplay + a 10 s alive control + a 22 s dead window)")
     p_death.add_argument("--memory-limit-gb", type=float, default=12.0,
                          help="host RSS ceiling")
+    p_death.add_argument("--fresh", action="store_true",
+                         help="host a NEW GAME instead of loading s_test_screens2 -- the A/B that "
+                              "separates a world-state symptom from one the mod causes")
     p_death.add_argument("--session", action="store_true",
                          help="launch as a SOLO HOST (a live coop session) instead of sessionless. "
                               "net_pump's flee is gated on a live session, so this is the arm that "

@@ -743,10 +743,22 @@ bool JoinLobby(const std::string& lobbyId, const std::string& displayName, int h
                     cfg.peerIp = host;
                     cfg.port = port;
                     cfg.lobbyPassword = TakeJoinPassword();
-                    // THE MASTER ALREADY TOLD US WHICH HOST IS AT THAT ADDRESS, and this
-                    // branch was throwing it away while the P2P branch six lines below
-                    // kept it. `lobby_client.cpp:284` makes `info.ok` require a non-empty
-                    // hostIdentity, so it is guaranteed present here.
+                    // WHICH HOST IS AT THAT ADDRESS, when the master tells us.
+                    //
+                    // THIS COMMENT USED TO CITE `lobby_client.cpp:284` AS PROOF THE VALUE
+                    // WAS "guaranteed present here". It is not, and the citation was from
+                    // the wrong branch: the direct path returns ~20 lines ABOVE that line
+                    // and never reached the parse, and the master's direct response did not
+                    // carry the field at all. So this assignment was a no-op writing an
+                    // empty string, and the defect it claimed to fix -- a locked DIRECT
+                    // lobby being unjoinable from the browser -- was still 100% live.
+                    // Found by the audit of the commit that added it (2026-08-31); the real
+                    // fix took a master change AND a client parse change, neither of which
+                    // was in it.
+                    //
+                    // STILL EMPTY AGAINST AN OLD MASTER, deliberately -- see the parse
+                    // site. Empty means unbound: open direct lobbies join fine, locked ones
+                    // refuse with a sentence.
                     //
                     // Without it a joiner is unbound, and an unbound joiner may not send a
                     // password proof -- so a LOCKED lobby hosted in DIRECT mode refused
