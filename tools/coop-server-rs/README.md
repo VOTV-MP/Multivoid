@@ -5,8 +5,26 @@ mod.** Wire-compatible with the Python originals (identical JSON endpoints,
 identical signaling line protocol, byte-exact coturn TURN credential) so old + new
 could run in parallel during cutover.
 
-Status: **AS-BUILT and DEPLOYED** to the VPS (2026-07-20 TLS arcs 1-2; a redeploy
-is owed for `COOP_MAX_BUILD`). coturn stays as-is (not ported).
+Status: **AS-BUILT and DEPLOYED — but the DEPLOYED BINARIES ARE TWO ARCS BEHIND
+THE TREE (measured 2026-08-31).** coturn stays as-is (not ported).
+
+| on the box | built | what it is missing |
+|---|---|---|
+| `coop-master` | **2026-08-28** | the `gen:`-key requirement at `/v1/host` (A59), and `hostIdentity` on `/v1/join`'s DIRECT response — without which a password-locked DIRECT lobby cannot be joined from the browser |
+| `coop-signaling` | **2026-07-20** | the whole A59 registration challenge. `[V]` `python tools/sig_gate.py --remote <relay> --plaintext` → **FAIL C, it does not challenge at all**, so a b145+ client fails closed on P2P in production today |
+
+The `COOP_MAX_BUILD` redeploy this line used to name is **moot** — that gate was
+retired whole on 2026-08-31 (`24418b66`; `master.rs:348`), and a value left in an
+env file is ignored.
+
+**The replacements are BUILT AND PROVEN, only the cutover is left** (2026-08-31):
+built on the box from `HEAD:tools/coop-server-rs`, `cargo test --release` 15/15,
+staged on ports 10010/10011 beside production and measured there — `sig_gate`
+**PASS 14/14**, `/v1/join` DIRECT carries `hostIdentity`, an identity-less b<=133
+host gets the named 400. **It was deliberately NOT cut over**: the restart retires
+the b<=133 cohort, and b133-dev is still the newest published release, so it must
+land with the release and not before. Procedure + ordering:
+`docs/RELEASE.md` — the flag-day section and step 6c.
 
 `tools/coop_signaling_server.py` was **retired 2026-08-29** (RULE 2): the cutover
 was finished and its last job was to be the local fixture four rig scenarios
