@@ -207,6 +207,65 @@ bool IsStale(const Row& r) { return AgeNowSec(r) > kStaleSec; }
 // (`native_screen.cpp:188-210`). Nothing else asks either image a hit-test question. So
 // the images owe only their pixels, and hit-testing is the SizeBox's job, which `Sync`
 // already sets Visible explicitly.
+// A PADLOCK, DRAWN FROM FOUR TINTED RECTS -- no asset, no font, no donor.
+//
+// The user asked for a lock instead of the "L" the ImGui browser draws
+// ("придется вместо L показывать замок"). Two things ruled out the obvious answers. The
+// native rows render with the GAME's `font_ui`, a pixel monospace face, so a glyph like
+// U+1F512 would land as the missing-character box -- and unlike our ImGui atlas there is
+// no donor we control for it. And a grep of the tree found no lock texture to borrow.
+//
+// So it is drawn. A `UImage` with a tint and no ResourceObject is a solid rect (the kit's
+// founding measurement, the same trick the game's own scrim uses), and an Overlay slot
+// with Fill alignment plus asymmetric PADDING positions that rect exactly -- so each bar
+// costs ONE widget, not a SizeBox plus an image. Four bars: the shackle's two uprights and
+// its top, then the body. At 18 px it reads as a padlock and it matches a UI made of
+// boxes; MTA reserves a 16 px icon cell for the same job (CServerBrowser).
+//
+// Returns the overlay so the caller can tint the whole glyph by walking its children --
+// the lock takes the row's text colour, so it dims with a stale row and yellows on hover
+// like everything else.
+constexpr float kLockCell = 18.f;
+
+void* AddLockGlyph(void* parent) {
+    void* box = Spawn(L"SizeBox", parent);
+    void* ovl = box ? Spawn(L"Overlay", box) : nullptr;
+    if (!box || !ovl) return nullptr;
+    U::SetSizeBoxWidth(box, kLockCell);
+    U::SetSizeBoxHeight(box, kLockCell);
+
+    // {left, top, right, bottom} insets inside an 18x18 cell, in the order the parts are
+    // read back by ApplyRowTextColors: shackle left, shackle right, shackle top, body.
+    const float kBars[4][4] = {
+        { 5.f,  4.f, 11.f,  8.f},   // upright, left
+        {11.f,  4.f,  5.f,  8.f},   // upright, right
+        { 5.f,  3.f,  5.f, 13.f},   // the top of the shackle, joining them
+        { 3.f,  9.f,  3.f,  2.f},   // the body
+    };
+    for (const auto& b : kBars) {
+        void* img = Spawn(L"Image", ovl);
+        if (!img) return nullptr;
+        U::SetImageTintRaw(img, kDim);
+        E::SetWidgetVisibility(img, 3);   // HitTestInvisible: it draws, never eats a click
+        if (void* s = U::AddChild(ovl, img)) {
+            U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
+                            kFill, kFill);
+            NS::SetSlotPadding(s, P::off::UOverlaySlot_Padding, b[0], b[1], b[2], b[3]);
+        }
+    }
+    U::SetContent(box, ovl);
+    // ATTACH IT. `Spawn` takes `parent` as the UObject OUTER and does NOT add the widget
+    // to it -- `AddFramedBox` has the same shape and every caller does its own AddChild.
+    // Missing it here did not merely hide the lock: `RowPartsAt` reads the text cells BY
+    // INDEX, so an unattached first child shifted every one of them by one -- the server
+    // NAME was written into the narrow mismatch cell and the player count had no cell at
+    // all (caught by the very next lab capture). Weight 0 = Automatic, so the SizeBox's
+    // own 18 px is honoured.
+    if (void* s = NS::AddHFill(parent, box, 0.f, kCenter, kCenter))
+        NS::SetSlotPadding(s, P::off::UHorizontalBoxSlot_Padding, 0.f, 0.f, 8.f, 0.f);
+    return box;
+}
+
 void* BuildRow(void* parent) {
     void* box = Spawn(L"SizeBox", parent);
     if (!box) return nullptr;
@@ -222,6 +281,11 @@ void* BuildRow(void* parent) {
         // so a right pad here would double-inset the right-aligned player count.
         NS::SetSlotPadding(s, P::off::UOverlaySlot_Padding, 10.f, 0.f, 0.f, 0.f);
     }
+    // THE LOCK CELL COMES FIRST, and it is present on EVERY row -- collapsed when the
+    // lobby is open. A cell that only exists on locked rows would shift the name left and
+    // right down the list depending on each server's settings, which reads as a rendering
+    // fault rather than as information.
+    AddLockGlyph(hb);
     // Sizes and colours are the CELL's, not one shared default: the name is the row's
     // title (larger, accent) and the two facts beside it are body text.
     AddText(hb, L"", 20, kAccent, kJustLeft,  kCells[kCellName].weight);
@@ -236,7 +300,7 @@ void* BuildRow(void* parent) {
 // (cached_obj_ref.h:34-46 -- the world stamp is inert for UMG, and UE assigns serials
 // lazily, so a hand-spawned widget captures serial 0 and the ABA residual is not closed).
 // The panel's `Slots` is the authority; this walks it.
-struct RowParts { void* box; void* edge; void* face; void* text[3]; };
+struct RowParts { void* box; void* edge; void* face; void* lock; void* text[3]; };
 bool RowPartsAt(int32_t i, RowParts& out) {
     out = RowParts{};
     void* box = U::ChildAt(g_list, i);
@@ -270,7 +334,9 @@ bool RowPartsAt(int32_t i, RowParts& out) {
     out.face = U::ChildAt(ovl, 1);
     void* hb = U::ChildAt(ovl, 2);
     if (!hb) return false;
-    for (int c = 0; c < 3; ++c) out.text[c] = U::ChildAt(hb, c);
+    // Child 0 of the text row is the LOCK cell; the three text cells follow it.
+    out.lock = U::ChildAt(hb, 0);
+    for (int c = 0; c < 3; ++c) out.text[c] = U::ChildAt(hb, c + 1);
     return true;
 }
 
@@ -685,21 +751,27 @@ void Sync() {
         const Row& r = g_rows[static_cast<size_t>(i)];
         const bool isOwn = !own.empty() && r.lobbyId == own;
 
-        // THE LOCK MARKER, and it says the same letter the other surface says.
+        // THE LOCK IS A DRAWN PADLOCK, NOT A LETTER (user, 2026-08-31: "придется вместо
+        // L показывать замок"). The ImGui fallback still draws its "L" -- that surface is
+        // frozen as an emergency exit and takes no new work -- so the two surfaces now
+        // differ deliberately rather than by drift.
         //
-        // A locked lobby rendered identically to an open one is not a cosmetic gap: a
-        // player picks it, waits through a connect, and is refused -- and the browser gave
-        // them nothing to have chosen differently on. The ImGui browser has drawn an "L"
-        // in its first column since it was written; the native one drew nothing, which the
-        // parity gate (tools/ui/browser_parity_gate.py) now fails on.
+        // HIDDEN (2), NOT COLLAPSED (1) -- and the difference is the whole reason the cell
+        // is on every row. Collapsed takes NO SPACE, so an open lobby's name slid left and
+        // the list no longer lined up; the first capture showed "Ember Static" starting
+        // further right than "Nomai Base", which is exactly the shift the comment above
+        // claims the always-present cell prevents. Hidden draws nothing and keeps its
+        // 18 px, which is what "present on every row" has to mean. (The kit's own header
+        // records this enum as a trap in the other direction -- someone once wrote 2 for
+        // "chrome" and got an invisible frame.)
         //
-        // It is a NAME PREFIX rather than a column of its own: the redesign's row is a
-        // title plus one fact, and "(your server)" already establishes the idiom of
-        // qualifying the name in place. Same letter as the fallback deliberately: two
-        // surfaces describing one lobby differently is the drift this lane exists to end.
-        SetRowText(rp.text[kCellName],
-                   std::string(r.locked ? "L  " : "") +
-                   (isOwn ? r.name + "   (your server)" : r.name));
+        // ONE DISPATCH PER ROW: the glyph's four bars are tinted once at build and only
+        // its VISIBILITY moves. The stated trade is that the lock does not yellow on hover
+        // or fade on a stale row like the text does; four more colour dispatches per
+        // painted row is not worth it on a list whose per-row cost is the open perf lane's
+        // subject. ESlateVisibility: Visible=0, Collapsed=1, HIDDEN=2.
+        if (rp.lock) E::SetWidgetVisibility(rp.lock, r.locked ? 0 : 2);
+        SetRowText(rp.text[kCellName], isOwn ? r.name + "   (your server)" : r.name);
         SetRowText(rp.text[kCellFlag], MismatchMark(r));
         SetRowText(rp.text[kCellPlayers],
                    "Players: " + std::to_string(r.playersCur) + "/" +
