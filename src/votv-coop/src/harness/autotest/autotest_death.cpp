@@ -1,8 +1,26 @@
 // harness/autotest_death.cpp -- the NATIVE DEATH CHAIN instrument
-// (VOTVCOOP_RUN_DEATH_TEST). SOLO and SESSIONLESS on purpose: it is launched with
-// no net role, so `net_pump`'s local-death flee (gated on a live session) never
-// fires and the game's own death is allowed to play out end to end. Nothing about
-// the measurement needs a second peer -- the whole chain is local BP.
+// (VOTVCOOP_RUN_DEATH_TEST). One process, TWO CONFIGURATIONS, and they measure
+// different things because they EXCLUDE each other:
+//
+//   `mp.py death`            -- SESSIONLESS. `net_pump`'s local-death flee is gated
+//                               on a live session, so with none the game's own death
+//                               plays out end to end: the full timeline, M0, and the
+//                               black-screen probe (which needs a black screen to
+//                               exist, i.e. needs the chain to reach +5 s).
+//   `mp.py death --session`  -- SOLO HOST. `running()` is true from `Start()` with
+//                               zero clients (session_start.cpp:234), so this is a
+//                               real coop session by the user's own definition
+//                               (2026-08-31: "Solo host in a session a a coop
+//                               session... Single player is when playing solo game in
+//                               solo save, no session"). Here the flee SHOULD pre-empt
+//                               at ~8 ms, so the travel stamp reads ~8 ms instead of
+//                               ~10672 and NO black screen ever appears. That is not a
+//                               failure of the run -- it IS the measurement: the flee
+//                               pre-emption was established by reading code and has
+//                               never been observed.
+//
+// Neither configuration needs a second peer; the whole chain is local BP. What
+// neither can show is the OBSERVER's screen -- that is a two-peer run.
 //
 // IT REPORTS TWO DIFFERENT THINGS, AND ONLY ONE OF THEM CAN FAIL.
 //
@@ -39,8 +57,11 @@
 
 #include "harness/autotest.h"
 
+#include "coop/net/session.h"
 #include "coop/player/players_registry.h"
+#include "harness/session_runtime.h"
 #include "ue_wrap/actors/vitals.h"
+#include "ue_wrap/core/call.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -106,8 +127,29 @@ struct Sample {
     bool  haveStartInvinc = false;
     bool  immortal = false;
     bool  haveImmortal = false;
+    // `grabbing_actor` -- the physics-grabbed actor. Sampled because the revive's
+    // teleport is NOT position-only: `teleportWObackrooms` @10-@449 drops the
+    // grabbed actor, transforms it, and `pickupObjectDirect`s it back (@435/@847/
+    // @909). `ragdollMode` already ran `dropGrabObject()` on the death's common
+    // path, so this SHOULD read invalid by the time a revive teleports -- but that
+    // is an inference, and if it is wrong the revive performs a second
+    // shared-world write on someone else's prop.
+    bool  grabValid = false;
+    bool  haveGrab = false;
+    bool  sessionRunning = false;
     double rssMb = -1.0;
 };
+
+// Read an object-pointer property by name off a live object and report whether it
+// points at something live. Test-local.
+bool ReadBpObjectValid(void* obj, const wchar_t* name, bool& outValid) {
+    if (!obj || !R::IsLive(obj)) return false;
+    const int32_t off = R::FindPropertyOffset(R::ClassOf(obj), name);
+    if (off < 0) return false;
+    void* target = *reinterpret_cast<void* const*>(reinterpret_cast<uint8_t*>(obj) + off);
+    outValid = target != nullptr && R::IsLive(target);
+    return true;
+}
 
 // Read a plain BP bool by name off a live object (byte+mask, same shape as the
 // engine's canRagdoll accessor). Test-local: nothing in the mod needs these.
@@ -129,6 +171,7 @@ Sample Probe() {
             out->haveCanRagdoll = E::ReadMainPlayerCanRagdoll(mp, out->canRagdoll);
             out->haveState = E::ReadMainPlayerRagdollState(mp, out->isRagdoll, out->dead);
             out->haveStartInvinc = ReadBpBool(mp, L"startInvinc", out->startInvinc);
+            out->haveGrab = ReadBpObjectValid(mp, L"grabbing_actor", out->grabValid);
         }
         if (void* gm = R::FindObjectByClass(P::name::GamemodeClass))
             out->haveImmortal = ReadBpBool(gm, L"immortal", out->immortal);
@@ -146,6 +189,65 @@ Sample Probe() {
     });
     WaitDone(done, 8000);
     out->rssMb = RssMb();
+    out->sessionRunning = harness::session_runtime::Session().running();
+    return *out;
+}
+
+// THE ONE OPERATION IN THE REVIVE NOBODY HAS EVER PERFORMED.
+//
+// `blackScreen_C` is created by the GAME (`AddToViewport(0)`, uber @4353) and has no
+// script of its own, so the level travel is what disposes of it today. A design that
+// cancels the travel inherits it forever -- and "we have laptop.cpp's resolution
+// pattern" is not evidence that removing a widget the game owns WORKS. This probe
+// performs it for real, in the only window where one exists, and reports what the
+// engine says before and after.
+//
+// `RemoveFromParent` is DECLARED on the engine UWidget class and `FindFunction` is
+// exact-owner (no SuperStruct climb), so it is resolved off `Widget`, not off the BP
+// class -- laptop.cpp:128-131's lesson. `IsInViewport` is declared on UserWidget.
+struct BlackScreenProbe {
+    bool ran = false;
+    bool foundWidget = false;
+    bool haveRemoveFn = false;
+    bool haveViewportFn = false;
+    bool inViewportBefore = false;
+    bool inViewportAfter = false;
+    bool stillFindable = false;
+};
+
+BlackScreenProbe TryRemoveBlackScreen() {
+    auto done = std::make_shared<std::atomic<int>>(0);
+    auto out = std::make_shared<BlackScreenProbe>();
+    GT::Post([done, out] {
+        void* w = R::FindObjectByClass(kBlackScreenClass);
+        if (w && R::IsLive(w)) {
+            out->foundWidget = true;
+            void* uwidgetCls = R::FindClass(L"Widget");
+            void* userWidgetCls = R::FindClass(L"UserWidget");
+            void* fnRemove = uwidgetCls ? R::FindFunction(uwidgetCls, L"RemoveFromParent") : nullptr;
+            void* fnInView = userWidgetCls ? R::FindFunction(userWidgetCls, L"IsInViewport") : nullptr;
+            out->haveRemoveFn = fnRemove != nullptr;
+            out->haveViewportFn = fnInView != nullptr;
+            if (fnInView) {
+                ue_wrap::ParamFrame f(fnInView);
+                if (f.valid() && ue_wrap::Call(w, f))
+                    out->inViewportBefore = f.Get<bool>(L"ReturnValue");
+            }
+            if (fnRemove) {
+                ue_wrap::ParamFrame f(fnRemove);
+                if (f.valid()) ue_wrap::Call(w, f);
+            }
+            if (fnInView && R::IsLive(w)) {
+                ue_wrap::ParamFrame f(fnInView);
+                if (f.valid() && ue_wrap::Call(w, f))
+                    out->inViewportAfter = f.Get<bool>(L"ReturnValue");
+            }
+        }
+        out->stillFindable = R::FindObjectByClass(kBlackScreenClass) != nullptr;
+        out->ran = true;
+        done->store(1);
+    });
+    WaitDone(done, 8000);
     return *out;
 }
 
@@ -205,11 +307,12 @@ DWORD WINAPI DeathTestThread(LPVOID) {
         if (!ready) ::Sleep(1000);
     }
     UE_LOGI("death_test: pre-hit state -- havePawn=%d canRagdoll=%d(read=%d) health=%.2f "
-            "startInvinc=%d(read=%d) immortal=%d(read=%d) dead=%d inGameplay=%d rss=%.1f MB",
+            "startInvinc=%d(read=%d) immortal=%d(read=%d) dead=%d inGameplay=%d "
+            "sessionRunning=%d grabValid=%d(read=%d) rss=%.1f MB",
             s.havePawn ? 1 : 0, s.canRagdoll ? 1 : 0, s.haveCanRagdoll ? 1 : 0, s.health,
             s.startInvinc ? 1 : 0, s.haveStartInvinc ? 1 : 0,
             s.immortal ? 1 : 0, s.haveImmortal ? 1 : 0, s.dead ? 1 : 0, s.inGameplay ? 1 : 0,
-            s.rssMb);
+            s.sessionRunning ? 1 : 0, s.grabValid ? 1 : 0, s.haveGrab ? 1 : 0, s.rssMb);
     if (!ready) {
         UE_LOGW("death_test: VERDICT INCONCLUSIVE -- preconditions never met (see the pre-hit "
                 "state line above; a held canRagdoll, a set startInvinc/immortal, or no "
@@ -263,7 +366,9 @@ DWORD WINAPI DeathTestThread(LPVOID) {
     // ---- observe the chain ---------------------------------------------------
     MemWindow dead;
     long long tDead = -1, tRagdoll = -1, tBlack = -1, tTravel = -1;
+    long long tGrabCleared = -1;
     bool sawZeroHealth = false;
+    BlackScreenProbe blackProbe{};
     Sample last = s;
     for (uint64_t now = tHit; now - tHit < static_cast<uint64_t>(kDeadWindowMs);
          now = ::GetTickCount64()) {
@@ -273,7 +378,20 @@ DWORD WINAPI DeathTestThread(LPVOID) {
         if (p.haveState && p.isRagdoll && tRagdoll < 0) tRagdoll = dt;
         if (p.blackScreen && tBlack < 0) tBlack = dt;
         if (p.haveWorld && !p.inGameplay && tTravel < 0) tTravel = dt;
+        if (p.haveGrab && !p.grabValid && tGrabCleared < 0) tGrabCleared = dt;
         if (p.health <= 0.f && p.health >= -0.5f) sawZeroHealth = true;
+        // Fire the widget probe once, ~600 ms after the black screen lands -- late
+        // enough that the game has finished creating it, early enough to be inside
+        // the window before the travel takes it away. It MUTATES (that is the
+        // point), so it runs after tBlack is already stamped.
+        if (tBlack >= 0 && !blackProbe.ran && dt >= tBlack + 600) {
+            blackProbe = TryRemoveBlackScreen();
+            UE_LOGI("death_test: BLACKSCREEN PROBE -- found=%d removeFn=%d viewportFn=%d "
+                    "inViewport %d -> %d, stillFindable=%d",
+                    blackProbe.foundWidget ? 1 : 0, blackProbe.haveRemoveFn ? 1 : 0,
+                    blackProbe.haveViewportFn ? 1 : 0, blackProbe.inViewportBefore ? 1 : 0,
+                    blackProbe.inViewportAfter ? 1 : 0, blackProbe.stillFindable ? 1 : 0);
+        }
         // Only the in-world part of the run is a memory measurement; once the
         // travel starts, RSS is dominated by the teardown + the new level.
         if (tTravel < 0) dead.Add(p.rssMb);
@@ -283,8 +401,12 @@ DWORD WINAPI DeathTestThread(LPVOID) {
     dead.ms = (tTravel > 0 ? static_cast<uint64_t>(tTravel) : static_cast<uint64_t>(kDeadWindowMs));
 
     UE_LOGI("death_test: TIMELINE (ms after the hit) -- dead=%lld ragdoll=%lld blackScreen=%lld "
-            "travel=%lld  [RE predicts dead~0, blackScreen~5000, travel~10000]",
-            tDead, tRagdoll, tBlack, tTravel);
+            "travel=%lld grabCleared=%lld  [RE predicts dead~0, blackScreen~5000, travel~10000; "
+            "with a LIVE SESSION net_pump's flee should pre-empt at ~8 ms]",
+            tDead, tRagdoll, tBlack, tTravel, tGrabCleared);
+    UE_LOGI("death_test: GRAB -- pre-hit haveGrab=%d grabValid=%d; post haveGrab=%d grabValid=%d "
+            "(ragdollMode's dropGrabObject should leave this INVALID before any revive teleports)",
+            s.haveGrab ? 1 : 0, s.grabValid ? 1 : 0, last.haveGrab ? 1 : 0, last.grabValid ? 1 : 0);
     UE_LOGI("death_test: DEAD window memory -- %.1f -> %.1f MB over %llu ms (%.2f MB/s, peak %.1f); "
             "ALIVE control %.2f MB/s; DIFFERENTIAL %.2f MB/s",
             dead.firstMb, dead.lastMb, static_cast<unsigned long long>(dead.ms),
