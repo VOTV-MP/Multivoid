@@ -169,6 +169,75 @@ void SetSlotPadding(void* slot, size_t padOff, float l, float t, float r, float 
     pad[0] = l; pad[1] = t; pad[2] = r; pad[3] = b;
 }
 
+bool BuildWindowShell(void* switcher, float widthPx, float heightPx, const wchar_t* title,
+                      WindowShell& out) {
+    out = WindowShell{};
+    if (!switcher) return false;
+    constexpr float kBorderPx = 2.f;
+    constexpr float kPadPx    = 6.f;
+
+    void* root = Spawn(P::name::UserWidgetClass, switcher);
+    void* tree = root ? Spawn(P::name::WidgetTreeClass, root) : nullptr;
+    void* ovl  = tree ? Spawn(L"Overlay", tree) : nullptr;
+    if (!root || !tree || !ovl) return false;
+    // The two back-pointers UMG would have written itself if this widget had been cooked
+    // from a Blueprint. Without them the tree renders nothing and reports no children.
+    *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(root) + P::off::UUserWidget_WidgetTree) = tree;
+    *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(tree) + P::off::UWidgetTree_RootWidget) = ovl;
+
+    // THE SCRIM, copied from the game: `ui_saveSlots_C`'s own first child Image_302 is a
+    // full-screen UImage with TintColor (0,0,0,0.5) and NO ResourceObject, and that is what
+    // dims the menu behind every native sub-screen. It needs no donor and no art, and being
+    // Visible is what makes it absorb a click that misses the window.
+    void* scrim = Spawn(L"Image", ovl);
+    if (!scrim) return false;
+    U::SetImageTintRaw(scrim, FLinearColor{0.f, 0.f, 0.f, 0.5f});
+    E::SetWidgetVisibility(scrim, 0);
+    if (void* s = U::AddChild(ovl, scrim))
+        U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign, kFill, kFill);
+
+    // THE WINDOW IS A FRAMED BOX, not a cloned 9-slice. Every window in VOTV's menus is a
+    // 2 px #646464 frame around a #1A1A1A fill with sharp corners (VOTV_UI_STYLE.md
+    // section 3). An earlier version cloned `ui_saveSlots.Image_0`'s brush, which gave a
+    // soft borderless panel -- that was the closest thing available before anyone had
+    // measured the real treatment.
+    void* winBox = Spawn(L"SizeBox", ovl);
+    void* winOvl = winBox ? AddFramedBox(winBox, Panel(), kBorderPx) : nullptr;
+    void* col    = winOvl ? Spawn(L"VerticalBox", winOvl) : nullptr;
+    if (!winBox || !winOvl || !col) return false;
+    U::SetSizeBoxWidth(winBox, widthPx);
+    U::SetSizeBoxHeight(winBox, heightPx);
+    if (void* s = U::AddChild(winOvl, col)) {
+        U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign, kFill, kFill);
+        SetSlotPadding(s, P::off::UOverlaySlot_Padding, kPadPx, kPadPx, kPadPx, kPadPx);
+    }
+    U::SetContent(winBox, winOvl);
+    if (void* s = U::AddChild(ovl, winBox))
+        U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
+                        kCenter, kCenter);
+
+    // THE TITLE STRIP: centred, WHITE, larger, on a bordered strip of its own (style doc
+    // section 3 rule 5). Never cyan -- that colour appears in no VOTV menu, and the user
+    // settled it for our windows on 2026-08-26.
+    if (title) {
+        if (void* titleBox = AddFramedBox(col, Panel(), kBorderPx)) {
+            if (void* titleRow = Spawn(L"HorizontalBox", titleBox)) {
+                AddText(titleRow, title, 24, Text(), kJustCenter, 1.f);
+                if (void* s = U::AddChild(titleBox, titleRow))
+                    U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
+                                    kFill, kCenter);
+            }
+            if (void* s = U::AddChild(col, titleBox))
+                SetSlotPadding(s, P::off::UVerticalBoxSlot_Padding, 0.f, 0.f, 0.f, kPadPx);
+        }
+    }
+
+    out.root   = root;
+    out.scrim  = scrim;
+    out.column = col;
+    return true;
+}
+
 void* AddFramedBox(void* parent, const FLinearColor& fill, float borderPx) {
     void* box = Spawn(L"Overlay", parent);
     if (!box) return nullptr;
