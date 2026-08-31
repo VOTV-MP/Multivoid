@@ -33,6 +33,43 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 1. How to work (process / working agreements)
 
+- **A UE4 minidump resolves to named functions from the shipped exe alone -- no IDA, no IDB.**
+  `[V]` 2026-08-31. `CrashContext.runtime-xml` has an empty `<CallStack>` but a populated
+  `<PCallStack>` of `module + offset`. Three steps in Python: the PE exception directory
+  (`.pdata`, **253,744** `RUNTIME_FUNCTION` entries in this exe) bisects an RVA to exact function
+  bounds with no analysis pass; `capstone` + the `lea reg,[rip+d]` string references NAME the
+  function (`"Invalid URL: {0}"` is `UEngine::Browse`, `"Couldn't spawn player: %s"` is
+  `UEngine::LoadMap`, `"GAME=" + "LoadForAllGameModes"` is `CreateGameModeForURL`); and the SDK
+  CXXHeaderDump confirms the offsets the faulting instruction touches. The frame after
+  `ntdll!KiUserExceptionDispatch` is the faulting IP ITSELF, not a return address. Also: `
+  <PCallStackHash>` is how you prove a reproduced crash is THE SAME crash. *Look FIRST:* read the
+  crash report before writing a repro, and reach for this before the IDA rung -- building an IDB
+  for a 300 MB shipping exe costs more than the whole analysis did. Scripts:
+  `<scratchpad>/crash/{pdata,fstr,win}.py`. (Trap: naming the helper `dis.py` shadows stdlib `dis`
+  and the failure reads as a capstone import bug.)
+  [[lesson-a-minidump-resolves-without-an-idb]]
+
+- **Sample a repeated pattern in TWO places before attributing it to an object.** `[V]` 2026-08-31,
+  the browser frame. The native window's left edge at y=500 shows the border band-pair TWICE, and
+  that was read as "this box wears two rings" -- a second ring shipped. The SAME edge at y=208,
+  where no inner panel sits, shows it ONCE: the second pair was the nested LIST panel's ring, so the
+  ladder is NESTING and the fix was an inset, not a doubled border. The wrong reading also broke
+  every server row (it made the box four children wide while `server_browser_rows` read parts by
+  index, and `UPanelWidget::Slots` / `UImage::Brush` share offset 0x108). A single scanline is the
+  SUM of a widget stack and says nothing about which object owns which pixel; only how the pattern
+  VARIES does. *Look FIRST:* when a measured constant moves into code, restate WHAT DISTANCE it
+  measures in the same sentence -- the 4 px here was right all along and was spent on the wrong gap.
+  [[lesson-sample-a-repeated-pattern-at-two-places-before-attributing-it]]
+
+- **A `false` return can mean DEFERRED -- score a scenario on the EVENT, not the bool.** `[V]`
+  2026-08-31: `engine::LoadStorySave` returns false when called at the menu, then registers the save
+  and re-issues `open untitled_1`, which lands a second later. The probe logged `dispatched=0` while
+  the log below it showed the world changing. Its header ("returns false if the slot is missing or
+  load can't dispatch") is true and not exhaustive. *Look FIRST:* read the function's OWN log lines
+  for one run before scoring on its return value, and prefer a term the caller can observe
+  independently -- a world pointer that changed, `world_identity::Generation()`, a file that
+  appeared. [[lesson-a-false-return-can-mean-deferred-score-on-the-event]]
+
 - **DO NOT PRICE A THIRD PARTY'S COST ON THE USER'S BEHALF -- AND WITHHOLDING IS AN ACTION.** 2026-08-31, the VPS cutover. The master + relay were two arcs behind, A59 was fixed in source and wide open in production, the replacement binaries were built and gated, and only `systemctl restart` was left. I did not run it: the restart retires the b<=133 cohort, three real lobbies were live, and the newest published release *was* b133 -- so it would have told real players *"update Multivoid"* and named an update that did not exist. Sound reasoning, and **not mine to settle.** I wrote it into `docs/RELEASE.md` as a section, derived a 9-step release-day ordering from it (rebuild at 4, restart at 6, gate at 7), added a subsection defending the deviation from the ritual's own redeploy-then-publish rule, and wrote the user's r2modman test a workaround so it could reach a session *around* the stale server (point at the staged pair, `ufw allow 10010/tcp`, remember to delete the rules). The user's reply was one clause: **"плевать на когорту."** All of it was deleted within the hour; the cutover took twenty minutes. **The tell is checkable: my design's complexity existed entirely to avoid imposing a cost on someone who was not in the conversation** -- not a correctness requirement, a courtesy, and courtesies are product decisions. It is the mirror of [[feedback-a-met-precondition-is-not-the-decision-it-gates]] from the same session (there I *acted* on an inferred green light; here I *withheld* on an inferred red one), and the harder half to notice, because withholding produces a document full of careful reasoning instead of a visible action. **Look here FIRST:** ask who the cost falls on -- if the answer is "players" or "a third party" rather than "the codebase", it is a product call, and one line to the user beats a well-reasoned section. A runbook section that exists to SEQUENCE AROUND a problem is the tell (RULE 1's shape, applied to ops: if you are writing ordering rules, staging recipes or firewall dances so something need not be fixed yet, ask whether it should just be fixed). And weigh the asymmetry: twenty minutes of work, against three doc sections and a workaround with a cleanup step, spent avoiding it. [[lesson-do-not-price-a-third-partys-cost-on-the-users-behalf]]
 - **A LOW-ENTROPY SECRET MUST NEVER ENTER A SIGNATURE THE OTHER SIDE CAN VERIFY OFFLINE.** 2026-08-31, the A2 lobby-password design pass killed its own mechanism. Mixing `KDF(password)` into the 126-byte blob the client already signs looked ideal -- zero wire bytes, no proto bump, and it inherits the nonce binding so a captured proof cannot be REPLAYED. Replay was never the threat: the party that RECEIVES the proof knows every other term (both pubkeys, the nonce IT chose, the constants, and the layout is in a public repo) and Ed25519 verification is PUBLIC, so it rebuilds the blob per candidate and grinds the password OFFLINE at hardware speed -- the master's `RL_JOIN` 20/min is irrelevant to it. Folding it into the HOST's signature only reverses the victim; the "verify against the empty-password form too" trick dies on the same oracle. "A captured proof is useless" was TRUE about replay and was silently doing duty as a claim about CONFIDENTIALITY. **Look here FIRST:** before putting a secret in a signed or hashed blob, ask who can VERIFY it and what else they know; if the verifier knows every other term you have built an offline oracle no rate limit can bound. The way out is BINDING (authenticate the recipient first, out-of-band), not entropy. [[lesson-a-low-entropy-secret-must-not-enter-a-signature-blob]]
 - **A BOUND AT ONE LANE IS NOT A BOUND -- CENSUS THE ROUTES, NOT THE ENDPOINT.** 2026-08-31: "the master already rate-limits password guessing" was measured true (`RL_JOIN = (60s, 20)`, `master.rs:57,583`) and covers ONE of three connection lanes. `[V]` DIRECT gets `ip:port` from a single `/v1/join` (`master.rs:605`) and `ConnectDirect` never contacts the master again; `[V]` LAN ONLY never announces. For those two the only limit is the host's own band -- `kMaxPending = 8`, `kPendingDeadlineMs = 30'000`, refused sockets closed immediately -- i.e. hundreds of guesses a minute, not twenty. **Look here FIRST:** when you find a control at one endpoint, enumerate every ROUTE to the protected thing before claiming it is bounded; put the bound where the lanes CONVERGE, and key it on something that survives (a fresh keypair is free, so the remote ADDRESS is the only stable key -- and its CGNAT collateral must then be answered, not ignored). [[lesson-a-guess-bound-at-one-lane-is-not-a-bound]]
@@ -4898,6 +4935,23 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   `memory/lesson-hand-written-cleanup-lands-on-the-branch-you-were-looking-at.md`
 
 ## 5. Engine / UE4 facts
+
+- **`UEngine::LoadMap` will hand `SetGameMode` a world with no `WorldSettings`, and it dies at
+  `[null+0x268]`.** `[V]` 2026-08-31, the user's rejoin crash, reproduced autonomously
+  (`mp.py reloadchurn --rejoin`, same `PCallStackHash` as their minidump, 3/3). The chain is
+  `UEngine::Browse` -> UE4SS's LoadMap detour (it hooks `LoadMap` by default) -> `UEngine::LoadMap`
+  -> `UGameInstance::CreateGameModeForURL`, whose first act is
+  `InWorld->GetWorldSettings()->DefaultGameMode`. `[V]` `UWorld::PersistentLevel` @0x30,
+  `ULevel::WorldSettings` @0x258, `AWorldSettings::DefaultGameMode` @**0x268** -- the fault address
+  exactly. In a SHIPPING build `ULevel::GetWorldSettings`'s `checkf` is compiled out, so a null is
+  returned silently and dereferenced one frame up. **What makes it OURS is the negative control, not
+  the stack** (Multivoid appears nowhere in it): solo, the previous gameplay world is fully purged
+  14 s after reaching the menu; with a coop session it is left kill-flagged with `PersistentLevel`
+  already NULL and **never purges** -- 75 s of dwell and a forced `CollectGarbage` both fail to
+  clear it -- and the next `open untitled_1` adopts that husk. *Look FIRST:* a crash inside a second
+  in-process map load is about what the FIRST teardown left behind, and the place to look is the
+  object array at the menu, not the load. Full RE + the open question:
+  `research/findings/join-identity/votv-rejoin-loadmap-null-worldsettings-RE-2026-08-31.md`.
 
 - **A one-way LATENT chain cannot be undone by clearing the flag it also sets.** `[V]` bytecode
   2026-08-31: VOTV's player death is `dead := true` **plus** `RetriggerableDelay(5 s)` -> black
