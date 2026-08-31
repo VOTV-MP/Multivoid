@@ -2939,10 +2939,11 @@ def cmd_death(args) -> None:
 
     os.environ["VOTVCOOP_RUN_DEATH_TEST"] = "1"
 
-    log("--- LAUNCH (solo, sessionless, native death chain) ---")
+    mode = "SOLO HOST (live session)" if args.session else "solo, sessionless"
+    log(f"--- LAUNCH ({mode}, native death chain) ---")
     launch_peer("host", args.port, "Host", peer=None,
                 res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
-                memory_limit_gb=args.memory_limit_gb, set_net_role=False)
+                memory_limit_gb=args.memory_limit_gb, set_net_role=bool(args.session))
 
     host_log = HOST_DIR / "multivoid.log"
     saw_done = _wait_for_log(host_log, "death_test: DONE", args.probe_timeout, "HOST")
@@ -2957,7 +2958,8 @@ def cmd_death(args) -> None:
         txt = ""
     for ln in txt.splitlines():
         if ("death_test: TIMELINE" in ln or "death_test: DEAD window" in ln
-                or "death_test: ALIVE control" in ln):
+                or "death_test: ALIVE control" in ln or "death_test: BLACKSCREEN PROBE" in ln
+                or "death_test: GRAB" in ln or "death_test: pre-hit" in ln):
             log("OBSERVED: " + ln.strip())
     verdict = [ln for ln in txt.splitlines() if "death_test: VERDICT" in ln]
     if not saw_done:
@@ -5104,6 +5106,11 @@ def main() -> None:
                          help="seconds to wait for 'death_test: DONE' (boot into gameplay + a 10 s alive control + a 22 s dead window)")
     p_death.add_argument("--memory-limit-gb", type=float, default=12.0,
                          help="host RSS ceiling")
+    p_death.add_argument("--session", action="store_true",
+                         help="launch as a SOLO HOST (a live coop session) instead of sessionless. "
+                              "net_pump's flee is gated on a live session, so this is the arm that "
+                              "measures the flee pre-emption -- expect the travel at ~8 ms and NO "
+                              "black screen; the sessionless arm is the one that sees the full chain")
     for flag, kw in host_res: p_death.add_argument(flag, **kw)
     p_death.set_defaults(func=cmd_death)
 
