@@ -1008,6 +1008,27 @@ The baseline capture cost one minute and would have been correct in the first.
 * **No two-peer witness.** Section 7.2 (what other peers see of a dead player) and section
   6.3.8 (does a CLIENT's chain run identically) are still unobserved. Both need a two-peer
   run, which is commit B's acceptance.
+* **`dmg_full` is fixed by REPLAY, not by construction (user-set follow-up, 2026-08-31).**
+  11.3b's census is complete for VOTV 0.9.0n and nothing more: a game update that adds a
+  14th one-way write fails NOTHING, and the symptom returns as "a user sees an artifact".
+  The named alternative is that **vanilla's disposal IS the rebuild** -- destroy + recreate
+  `ui_UI` on revive and inherit VOTV's own disposal for the whole widget layer, permanently,
+  with no census to rot. Two things to settle before building it: it does NOT cover
+  `NewVar_1` (GameInstance, not a widget), so it generalises on ONE axis only; and its blast
+  radius is uncensused (what live HUD state does the player lose -- open windows, radar,
+  coordinates, hotbar selection?). A divergence DETECTOR is the third option.
+* **The KPP spawn for JOINING CLIENTS is still wrong (user report, 2026-08-31).** The lane
+  exists (`net_pump.cpp:707`, USER RULE 2026-08-29, fires on the `g_netLocal.Set` pawn-birth
+  edge). Hypothesis, `[?]` INFERRED and not yet measured: we teleport at pawn BIRTH and the
+  game overwrites us at the load TAIL via `gm loadObjects -> transformToPlayer` -- the exact
+  mechanism already documented at `net_pump.cpp:818-823`, whose detector
+  (`join_membership_sweep::HasLoadTailQuiesced()`) already exists and is what the pose gate
+  uses. **USER STEER: "возможно надо копать вглубь марионетки" -- dig into the PUPPET.** Take
+  it seriously: "player appearance not at the KPP" is ambiguous between the client's OWN pawn
+  placement and what the HOST sees of the joiner's PUPPET, and if it is the latter the local
+  teleport is irrelevant. **Establish which end first, with one two-peer run looking at BOTH
+  screens.** Note the design fork: the current teleport is deliberately hidden behind the load
+  screen, so moving it later is correct but the snap may become VISIBLE.
 * **The death's DROP is still unanswered.** Section 7.3: every death runs `dropGrabObject()`,
   and `[V]` the drop reaches `BeginDeferredActorSpawnFromClass` -> `FinishSpawningActor`, the
   exact seam `prop_drop_intent` hooks -- but only for keys in that client's park set. Both
