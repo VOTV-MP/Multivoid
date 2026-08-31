@@ -220,8 +220,12 @@ items.
   wire kind in `protocol.h`, which says so itself at `:229` ("excluding death --
   death = native SP menu flow, ends the session"): a peer's death is visible to
   others only as its streamed health reaching zero and its pose stream stopping.
-  What death DOES today is `net_pump`'s local policy (tear down, then flee to the
-  menu), and the arc that replaces it is `docs/DEATH_ARC.md`. Self-damage (fall/fire/radiation) is computed
+  What death DOES today CHANGED on 2026-08-31 (`aaf23a4d`): the whole native death
+  plays out and `UGameplayStatics::OpenLevel` is REFUSED, with a revive written in
+  its place (`docs/DEATH_ARC.md` section 11). `net_pump`'s flee is now the FALLBACK
+  for when the seam is unavailable, not the policy. Still absent, and this half of
+  the correction stands: there is no death WIRE kind, so other peers are told
+  nothing -- that is commit B (ReliableKind 128, host-authored chat line). Self-damage (fall/fire/radiation) is computed
   locally and shows up in the streamed health with no event. Owner: per-peer
   for the health number + death; host for enemy hit DELIVERY (host runs the
   AI/hit per enemies-target-both above, then tells the hit peer). Wire:
