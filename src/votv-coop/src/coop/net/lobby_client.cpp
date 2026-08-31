@@ -252,6 +252,23 @@ JoinInfo LobbyClient::Join(const std::string& masterUrl, const std::string& lobb
     if (J::Str(j, "conn") == "direct") {
         info.direct = true;
         info.addr = J::Str(j, "addr");
+        // THE HOST IDENTITY IS PARSED HERE TOO, and this early return is why it was not.
+        //
+        // `hostIdentity` is read ~20 lines below, on the P2P path, and this branch returns
+        // before reaching it -- so a direct join arrived with an EMPTY identity, the client
+        // had nothing to bind the answering key to, and a LOCKED direct lobby refused every
+        // browser join with "nothing told us which host we were dialling". A fix that
+        // assigned `info.hostIdentity` at the CALLER shipped on 2026-08-31 and was a no-op
+        // for exactly this reason, under a comment citing the line below this return as
+        // proof the value was present. An early return inherits none of the branch it
+        // skips (docs/LESSONS.md).
+        //
+        // OPTIONAL, not required: `info.ok` stays keyed on the ADDRESS alone. An older
+        // master does not send this field, and making it mandatory would turn every direct
+        // join against a not-yet-redeployed master into a hard failure -- the joiner would
+        // lose OPEN direct lobbies too, to fix a case that only affects LOCKED ones. Empty
+        // means unbound, which is a true statement about what the joiner knows.
+        info.hostIdentity = J::StrN(j, "hostIdentity", 80);
         info.ok = !info.addr.empty();
         if (!info.ok) UE_LOGW("lobby: join '%s' -- direct response missing addr", lobbyId.c_str());
         return info;

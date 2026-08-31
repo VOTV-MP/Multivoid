@@ -144,39 +144,49 @@ struct HostPasswordCache {
 };
 HostPasswordCache g_hostPw;
 
-// THE GUESS BOUND -- AND WHAT IT CAN AND CANNOT BOUND, PER LANE.
+// THE GUESS BOUND. EVERY LANE IS COUNTED, AND NO TWO ATTACKERS EVER SHARE A BUCKET.
 //
-// IT SHIPPED WRONG AND THE POST-SHIP AUDIT CAUGHT IT (2026-08-31). It keyed on the
-// remote address, which on our MAIN lane is all zeros (see RemoteAddrOf above) -- so
-// every P2P joiner shared ONE bucket. Ten junk attempts from one attacker, each with a
-// free throwaway keypair, then locked out every honest joiner for a minute; repeat
-// forever and a locked lobby is permanently unjoinable. **A gate whose failure mode is
-// denying legitimate users is worse than no gate**, because an attacker still has to
-// produce a correct tag either way. The comment here used to price the "CGNAT
-// collateral" as if the bucket were per-attacker; it was per-EVERYONE.
+// IT HAS BEEN WRONG TWICE, IN OPPOSITE DIRECTIONS, AND BOTH ARE WORTH KNOWING.
 //
-// SO THE RULE IS NOW: this bounds only where it CAN, and where it cannot it steps aside
-// instead of refusing.
+// FIRST it keyed on the remote address and REFUSED when it could not bucket. `[V]`
+// `steamnetworkingtypes.h:690-692`: the address "might be all 0's ... basically
+// everything except direct UDP connection" -- so on AUTO/P2P, our main lane, every
+// joiner shared ONE bucket and ten junk attempts locked the lobby against everybody.
 //
-//   * REAL address (direct UDP / LAN): bucketed as below. Ten wrong guesses in 60 s and
-//     that address is refused. A shared NAT shares the bucket -- that IS the priced
-//     collateral, and it is bounded to the people behind one address.
-//   * NO usable address (P2P/ICE, and a relayed path where the address is the RELAY's):
-//     NOT bucketed. The bound on that lane is the master's own `RL_JOIN` (60 s, 20 per
-//     IP bucket, `master.rs:57,583`), because every P2P attempt costs a `/v1/join`.
-//     Different mechanism per lane is fine; an UNBOUNDED lane would not be.
+// SECOND -- the fix for that -- it stopped bucketing when the address was unusable and
+// said the lane's bound was "the master's own RL_JOIN, because every P2P attempt costs a
+// /v1/join". **That is false.** `[V]` `/v1/join` returns `signalingToken` from
+// `CFG.signaling_token` (`master.rs:301`), a STATIC process-wide value every mod user
+// already holds, and `signaling.rs` has no rate limiter of any kind. One /v1/join buys
+// unlimited re-dials. `RL_JOIN` bounds DISCOVERY, not attempts -- so the main lane had no
+// counter at all, which is worse for the thing this protects than the lockout was.
 //
-// AND EXHAUSTION OF THE TABLE NO LONGER REFUSES. It used to fail CLOSED, on the
-// reasoning that a full table is what a flood produces -- but failing open here does not
-// admit anybody: the tag is still checked, and a wrong one is still refused. All the
-// attacker wins by filling the table is that we stop COUNTING. Fail-closed is correct
-// when failing open would ADMIT; here it only ever denied honest players, which is the
-// same defect as the shared bucket one level down.
+// SO THE KEY IS WHATEVER IDENTIFIES THE ATTEMPTER ON THIS LANE:
+//   * a real remote address (direct UDP / LAN), or
+//   * the peer's PROVED public key when the address is absent (P2P/ICE, relay).
+// The key is only reached AFTER the Ed25519 proof verifies, so it is a key the peer
+// demonstrably holds. An attacker can rotate keypairs -- but each rotation costs a fresh
+// connection, a full ICE negotiation and a complete admission exchange, and it can never
+// take an honest player's bucket with it. **A weak per-attacker bound beats a strong
+// shared one, because a shared bucket is a lockout wearing a limiter's clothes.**
+//
+// AND EXHAUSTION STILL DOES NOT REFUSE. A full table means we stop COUNTING, not that we
+// stop CHECKING -- the tag is still verified and a wrong one still refused. Failing closed
+// is correct when failing open would ADMIT; here it could only ever DENY
+// (`[[lesson-fail-closed-is-right-only-when-failing-open-would-admit]]`). With a
+// per-identity key the table is far harder to flood than it was per-address, because every
+// row now costs a full handshake.
+//
+// THE COLLATERAL, priced honestly: peers behind ONE carrier NAT share an address bucket,
+// so ten wrong guesses between them locks that address out for a minute. Ten is far above
+// what typing costs an honest group and far below a search of a 50-bit generated password.
+enum class GuessKeyKind : uint8_t { Addr = 1, Ident = 2 };
 struct GuessBucket {
-    uint8_t  ip[16]{};
-    bool     used = false;
-    int      fails = 0;
-    uint64_t windowStartMs = 0;
+    uint8_t      key[16]{};
+    GuessKeyKind kind = GuessKeyKind::Addr;
+    bool         used = false;
+    int          fails = 0;
+    uint64_t     windowStartMs = 0;
 };
 constexpr int      kGuessBuckets  = 32;
 constexpr int      kMaxGuesses    = 10;
@@ -186,10 +196,12 @@ GuessBucket g_guess[kGuessBuckets];
 // Find (or claim) this address's bucket. Null when the table is full of LIVE
 // windows -- and the caller then REFUSES, because a full table is the state a
 // flood produces and failing open there would hand an attacker the whole point.
-GuessBucket* BucketFor(const uint8_t ip[16], uint64_t nowMs) {
+GuessBucket* BucketFor(const uint8_t key[16], GuessKeyKind kind, uint64_t nowMs) {
     GuessBucket* freeRow = nullptr;
     for (auto& b : g_guess) {
-        if (b.used && std::memcmp(b.ip, ip, 16) == 0) {
+        // THE KIND IS PART OF THE KEY. Without it an address could collide with the first
+        // 16 bytes of somebody's public key -- vanishingly unlikely, and free to exclude.
+        if (b.used && b.kind == kind && std::memcmp(b.key, key, 16) == 0) {
             if (nowMs - b.windowStartMs >= kGuessWindowMs) {
                 b.windowStartMs = nowMs;
                 b.fails = 0;
@@ -203,7 +215,8 @@ GuessBucket* BucketFor(const uint8_t ip[16], uint64_t nowMs) {
     }
     if (!freeRow) return nullptr;
     *freeRow = GuessBucket{};
-    std::memcpy(freeRow->ip, ip, 16);
+    std::memcpy(freeRow->key, key, 16);
+    freeRow->kind = kind;
     freeRow->used = true;
     freeRow->windowStartMs = nowMs;
     return freeRow;
@@ -385,9 +398,17 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
             // the comparison and not the crypto -- but a MISSING bucket (no usable
             // address, or a full table) is not a refusal: see the contract above.
             // Both of those used to deny honest joiners while admitting nobody.
-            uint8_t ip[16]{};
+            // THE KEY: the real address where there is one, otherwise the key this peer
+            // has just PROVED it holds. Never nothing, and never shared -- see the
+            // contract above for why both halves of that matter.
+            uint8_t key[16]{};
+            GuessKeyKind kind = GuessKeyKind::Addr;
+            if (!RemoteAddrOf(hConn, key)) {
+                std::memcpy(key, row.remotePub.data(), sizeof(key));
+                kind = GuessKeyKind::Ident;
+            }
             const uint64_t nowMs = ::GetTickCount64();
-            GuessBucket* bucket = RemoteAddrOf(hConn, ip) ? BucketFor(ip, nowMs) : nullptr;
+            GuessBucket* bucket = BucketFor(key, kind, nowMs);
             if (bucket && bucket->fails >= kMaxGuesses) {
                 UE_LOGW("peer_admission: password attempts from this address are rate "
                         "limited (%d in the last %llu s) -- refusing without checking",
@@ -425,8 +446,10 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
                 UE_LOGW("peer_admission: WRONG PASSWORD from a peer that proved its "
                         "identity (attempt %d of %d from this address%s)",
                         bucket ? bucket->fails : 0, kMaxGuesses,
-                        bucket ? "" : "; UNBOUNDED lane -- the master's RL_JOIN is the "
-                                      "bound here, not this table");
+                        bucket ? (kind == GuessKeyKind::Addr ? "" : "; keyed on the proved "
+                                                                   "identity, not an address")
+                               : "; the bucket table is FULL -- this attempt was checked "
+                                 "but not counted");
                 r.reason = "wrong password";
                 return r;
             }
@@ -705,7 +728,11 @@ bool RunSelftest() {
 
     // POSITIVE: we sign as the client, and a host holding our identity accepts.
     Blob asClient;
-    BuildBlob(asClient, kDirClient, pkA, mine, nonce1, kAuthFlagPasswordRequired, nonce1);
+    // THE TWO NONCE SLOTS GET DIFFERENT VALUES, so the layout assert below can actually
+    // see one of them go missing. Every arm used to pass `nonce1` twice, which made a
+    // BuildBlob that stopped writing the VERIFIER nonce indistinguishable from a correct
+    // one at the byte level (audit, 2026-08-31).
+    BuildBlob(asClient, kDirClient, pkA, mine, nonce1, kAuthFlagPasswordRequired, nonce2);
     const Sig sigClient = peer_identity::SignBlob(asClient, sizeof(asClient));
     check(peer_identity::VerifyBlob(mine, asClient, sizeof(asClient), sigClient),
           "a well-formed client proof did not verify");
@@ -714,7 +741,7 @@ bool RunSelftest() {
     // the client's proof. Only the direction byte differs, so this is the arm that
     // fails if the direction is ever dropped from the blob.
     Blob asHost;
-    BuildBlob(asHost, kDirHost, pkA, mine, nonce1, kAuthFlagPasswordRequired, nonce1);
+    BuildBlob(asHost, kDirHost, pkA, mine, nonce1, kAuthFlagPasswordRequired, nonce2);
     check(!peer_identity::VerifyBlob(mine, asHost, sizeof(asHost), sigClient),
           "a proof verified in the WRONG DIRECTION (the direction byte is not "
           "reaching the blob)");
@@ -723,14 +750,14 @@ bool RunSelftest() {
     // naming a different counterparty; this is what stops a proof given to host A
     // being relayed into host B's exchange.
     Blob otherHost;
-    BuildBlob(otherHost, kDirClient, pkB, mine, nonce1, kAuthFlagPasswordRequired, nonce1);
+    BuildBlob(otherHost, kDirClient, pkB, mine, nonce1, kAuthFlagPasswordRequired, nonce2);
     check(!peer_identity::VerifyBlob(mine, otherHost, sizeof(otherHost), sigClient),
           "a proof verified against a DIFFERENT counterparty (both identities are "
           "not reaching the blob)");
 
     // NEGATIVE 3 -- FRESHNESS. A recorded proof must not answer a new challenge.
     Blob otherNonce;
-    BuildBlob(otherNonce, kDirClient, pkA, mine, nonce2, kAuthFlagPasswordRequired, nonce1);
+    BuildBlob(otherNonce, kDirClient, pkA, mine, nonce2, kAuthFlagPasswordRequired, nonce2);
     check(!peer_identity::VerifyBlob(mine, otherNonce, sizeof(otherNonce), sigClient),
           "a proof verified against a DIFFERENT nonce (the exchange is replayable)");
 
@@ -740,14 +767,14 @@ bool RunSelftest() {
     // real tag for a host that never asked for one -- turning an impersonation residual
     // into a tag-harvesting oracle (post-ship audit, 2026-08-31).
     Blob otherFlags;
-    BuildBlob(otherFlags, kDirClient, pkA, mine, nonce1, 0, nonce1);
+    BuildBlob(otherFlags, kDirClient, pkA, mine, nonce1, 0, nonce2);
     check(!peer_identity::VerifyBlob(mine, otherFlags, sizeof(otherFlags), sigClient),
           "a proof verified with DIFFERENT challenge flags (the flag byte is not "
           "reaching the blob -- a relay can ask an open host's joiner for a password)");
 
     // NEGATIVE 6 -- and so is the host's own nonce.
     Blob otherHostNonce;
-    BuildBlob(otherHostNonce, kDirClient, pkA, mine, nonce1, kAuthFlagPasswordRequired, nonce2);
+    BuildBlob(otherHostNonce, kDirClient, pkA, mine, nonce1, kAuthFlagPasswordRequired, nonce1);
     check(!peer_identity::VerifyBlob(mine, otherHostNonce, sizeof(otherHostNonce), sigClient),
           "a proof verified against a DIFFERENT host nonce");
 
@@ -760,9 +787,15 @@ bool RunSelftest() {
     // silently -- a shortened tag, or a field that stopped being copied.
     check(asClient[kTagLen] == kDirClient && asHost[kTagLen] == kDirHost,
           "the direction byte is not where the layout says it is");
-    check(std::memcmp(asClient + kBlobBytes - kAuthNonceBytes, nonce1,
+    // BOTH nonce positions, and they now carry DIFFERENT values -- so a BuildBlob that
+    // stopped writing either one is caught here rather than passing because the two slots
+    // happened to hold the same bytes.
+    check(std::memcmp(asClient + kBlobBytes - kAuthNonceBytes, nonce2,
                       kAuthNonceBytes) == 0,
-          "the nonce is not at the end of the blob");
+          "the HOST nonce is not at the end of the blob");
+    check(std::memcmp(asClient + kBlobBytes - kAuthNonceBytes - 1 - kAuthNonceBytes,
+                      nonce1, kAuthNonceBytes) == 0,
+          "the VERIFIER nonce is not where the layout says it is");
 
     if (pass == total) {
         UE_LOGI("peer_admission selftest: ALL PASS (%d checks)", total);

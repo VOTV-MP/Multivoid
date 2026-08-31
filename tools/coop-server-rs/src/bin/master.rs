@@ -604,18 +604,37 @@ fn h_join(state: &mut MasterState, ip: &str, body: &Value) -> (u16, Value) {
         Some(lo) => lo,
         None => return (404, json!({"error": "lobby not found"})),
     };
-    // lo.locked is a browser UI hint ONLY, and there is currently NO admission gate behind it: a
-    // "locked" lobby is enterable by anyone (docs/security/TRACKER.md A2). This comment used to
-    // claim a "game-layer post-Connected join-secret challenge" -- that challenge does not exist
-    // anywhere in the tree; session.h correctly describes it as future work. The false comment is
-    // why the gap survived, so it is stated plainly here until the challenge is actually built
-    // (docs/security/PLAN_04_CONTROL_PLANE.md section 1).
+    // lo.locked is a browser UI hint, and THE GATE BEHIND IT NOW EXISTS (2026-08-31, game
+    // proto 149): a joiner proves knowledge of the lobby password inside the peer-admission
+    // exchange and a wrong or missing proof is refused before a seat is spent. The master
+    // does not participate -- it echoes a bool a host asserted and verifies nothing, which
+    // is correct: the gate belongs at the host's own admission, not at the listing.
+    //
+    // THIS COMMENT HAS NOW BEEN WRONG IN BOTH DIRECTIONS. It first claimed a "game-layer
+    // post-Connected join-secret challenge" that existed nowhere; the correction ("NO
+    // admission gate behind it: a locked lobby is enterable by anyone") was true for six
+    // weeks and went stale the day the gate shipped, and it was STILL LIVE ON THE DEPLOYED
+    // MASTER when an audit read it. A status sentence is a claim about code that moves --
+    // in a file that only changes when someone remembers it exists.
     if lo.conn == "direct" && lo.direct_port != 0 {
         log(&format!(
             "join {} DIRECT -> {}:{} from {}",
             lo.lobby_id, lo.ip, lo.direct_port, ip
         ));
-        return (200, json!({"conn": "direct", "addr": format!("{}:{}", lo.ip, lo.direct_port)}));
+        // `hostIdentity` RIDES THE DIRECT RESPONSE TOO (2026-08-31). It used to be P2P-only,
+        // because on that lane it is the ROUTING name -- what signaling rendezvouses on --
+        // and a direct joiner dials an address instead. Since the peer-identity work it is
+        // ALSO the value a joiner binds the answering key to, and a password proof refuses
+        // to be emitted without that binding. So a LOCKED + DIRECT lobby was unjoinable
+        // from the browser: the client had nothing to bind to and closed itself.
+        //
+        // The client already caps and parses this field on the P2P branch; adding it here
+        // costs one clone of a value this function already holds.
+        return (200, json!({
+            "conn": "direct",
+            "addr": format!("{}:{}", lo.ip, lo.direct_port),
+            "hostIdentity": lo.host_identity.clone()
+        }));
     }
     let session_id = lo.session_id.clone();
     let host_identity = lo.host_identity.clone();
