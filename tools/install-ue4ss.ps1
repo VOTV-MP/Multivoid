@@ -55,6 +55,15 @@
     channel (methodology: pin deps). The expected UE4SS.dll hash is pinned
     alongside it and the install FAILS CLOSED on a mismatch.
 
+    KEEP IN STEP WITH THE RELEASE MANIFEST. The zip's manifest declares the same
+    package as its dependency -- `ledger_lib.ps1:391`
+    ('Thunderstore-unreal_shimloader-1.1.7'), which is what tells r2modman which
+    UE4SS to install. That literal and $Version below are two INDEPENDENT copies
+    of one decision: this script serves the manual lane, the manifest serves the
+    manager lane, and if they drift the two lanes are once again running
+    different loaders -- the exact asymmetry this pin was moved to close
+    (docs/UE4SS_ARC.md section 9.6). Bump BOTH, or neither.
+
 .EXAMPLE
     ./tools/install-ue4ss.ps1 -Win64Dir <...>\Win64 -Quiet
     # Play-install profile: GUI console off (no extra window per instance).
