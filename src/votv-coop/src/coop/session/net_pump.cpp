@@ -728,10 +728,15 @@ void Tick(coop::net::Session& session) {
         if (!g_localDeathHandled && sessionLiveForDeath) {
             bool isRagdoll = false, dead = false;
             if (ue_wrap::engine::ReadMainPlayerRagdollState(g_netLocal.Raw(), isRagdoll, dead) && dead) {
-                // KO RESPAWN (death.ko_respawn, 2026-08): convert the death into a KO --
-                // the player stays in the world, lies ragdolled, respawns at the start.
-                // Does NOT latch g_localDeathHandled: the player must keep streaming after
-                // the respawn, and ko_respawn::Active() gates the re-entry while down.
+                // KO RESPAWN (death.ko_respawn) FAIL-SAFE. Since 2026-08-31 this lane
+                // PREVENTS the death (it holds `canRagdoll` shut, so `dead` can never be
+                // set) rather than converting one after the fact -- the conversion was
+                // measured impossible: `dead := false` exists nowhere in mainPlayer_C and
+                // the two latent delays to the main menu never re-read the flag. So
+                // reaching this line at all means the gate did not take, and
+                // HandleLocalDeath now returns FALSE on purpose: it logs the failure and
+                // lets the legacy permadeath flee below run, because there is genuinely
+                // nothing left to save. See coop/player/ko_respawn.h.
                 if (coop::ko_respawn::HandleLocalDeath(session, g_netLocal.Raw())) {
                     UE_LOGW("net: LOCAL PLAYER DIED -- KO RESPAWN handled it (staying in the "
                             "world; respawn pending)");

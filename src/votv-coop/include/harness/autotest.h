@@ -248,6 +248,15 @@ DWORD WINAPI DmgHazardTestThread(LPVOID arg);
 void RunAutonomousPlayerDamageTest();
 DWORD WINAPI PlayerDamageTestThread(LPVOID arg);
 
+// KO-RESPAWN acceptance test (2026-08-31, harness/autotest_korespawn.cpp). SOLO --
+// the lane under test is entirely local. Delivers a LETHAL `Add Player Damage` and
+// asserts, in this order, that the ragdoll gate took (canRagdoll read back false),
+// the damage actually landed (health <= 0 -- the falsifier without which "did not
+// die" proves nothing), `dead` NEVER became true, the KO engaged, and the respawn
+// restored the player with `dead` still false. Gated by env
+// VOTVCOOP_RUN_KORESPAWN_TEST="1". Ends with a "korespawn_test: DONE" line.
+DWORD WINAPI KoRespawnTestThread(LPVOID arg);
+
 // Xray-ragdoll feasibility PROBE (2026-06-01, harness/autotest_ragdoll_spawn_probe.cpp).
 // SINGLE instance, role-agnostic (plain single-player; NO connection). Answers, by
 // observing live objects, whether VOTV's playerRagdoll_C can be spawned MANUALLY

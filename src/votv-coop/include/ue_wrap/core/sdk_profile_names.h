@@ -642,6 +642,16 @@ inline constexpr const wchar_t* MainPlayerFlashlightStateChangedFn = L"flashligh
 // AnimBP gate. The receiver reconcile applies exactly those calls.
 inline constexpr const wchar_t* MainPlayerRagdollModeFn = L"ragdollMode";
 inline constexpr const wchar_t* MainPlayerForceGetUpFn  = L"forceGetUp";
+// `forceWakeup()` -- the UNCONDITIONAL stand-up. Measured 2026-08-31 from
+// mainPlayer.uasset bytecode: it jumps straight to ubergraph @25800, which
+// restores the movement mode / capsule collision / camera attach / EnableInput
+// and detaches the ragdoll mesh, reading NO gate at all. Its two siblings each
+// carry a condition that makes them wrong for a KO recovery: `wakeup(passOut)`
+// early-outs on `dead || isWakingUp || noWakeup` (uber @26584), and
+// `forceGetUp()` runs a 0.2 s latent Delay first (uber @39625) and lands in the
+// @39685 branch, which re-reads `dead`. KO recovery wants neither a condition
+// nor a delay, so `forceWakeup` is the one the respawn calls.
+inline constexpr const wchar_t* MainPlayerForceWakeupFn = L"forceWakeup";
 
 // vitals Inc3-WIRE: the primary player-damage entry. The OWNER peer invokes this
 // on its OWN possessed mainPlayer_C when the host relays an enemy hit, so the

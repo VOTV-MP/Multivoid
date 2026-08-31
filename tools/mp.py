@@ -2918,6 +2918,50 @@ def cmd_navprobe(args) -> None:
     sys.exit(0)
 
 
+def cmd_korespawn(args) -> None:
+    """SOLO KO-RESPAWN acceptance. Launches ONE host with VOTVCOOP_RUN_KORESPAWN_TEST=1
+    and lets the in-game test deliver a LETHAL `Add Player Damage` to the local player.
+    In stock VOTV that starts a 10-second march to the main menu; with the ragdoll gate
+    held the player must instead survive, drop into a knock-out, and respawn.
+
+    The scenario ends when the evidence is collected -- the test prints
+    'korespawn_test: DONE' and we kill immediately (no fixed duration). It also FAILS
+    the process on 'korespawn_test: VERDICT FAIL' so a regression cannot pass silently,
+    and on the absence of a verdict entirely (a run that never reached gameplay is
+    inconclusive, not green)."""
+    if kill_all() > 0:
+        log("note: pre-existing VotV instances killed before korespawn")
+    deploy_all()
+
+    os.environ["VOTVCOOP_RUN_KORESPAWN_TEST"] = "1"
+
+    log("--- HOST LAUNCH (solo KO-respawn acceptance) ---")
+    launch_peer("host", args.port, "Host", peer=None,
+                res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
+                memory_limit_gb=args.memory_limit_gb)
+
+    host_log = HOST_DIR / "multivoid.log"
+    saw_done = _wait_for_log(host_log, "korespawn_test: DONE", args.probe_timeout, "HOST")
+    time.sleep(1)
+    tail_log(host_log, 30, "HOST")
+    log("--- KILLING ---")
+    kill_all()
+
+    try:
+        txt = host_log.read_text(errors="ignore")
+    except Exception:
+        txt = ""
+    verdict = [ln for ln in txt.splitlines() if "korespawn_test: VERDICT" in ln]
+    if not saw_done:
+        log("RESULT: INCONCLUSIVE -- never saw 'korespawn_test: DONE'")
+        sys.exit(2)
+    if not verdict:
+        log("RESULT: INCONCLUSIVE -- DONE with no VERDICT line")
+        sys.exit(2)
+    log("RESULT: " + verdict[-1].strip())
+    sys.exit(1 if "VERDICT FAIL" in verdict[-1] else 0)
+
+
 def _race_last_field(log_path, needle: str, field: str):
     """Return int value of `field=N` from the LAST line containing `needle` in log_path, or None."""
     try:
@@ -5015,6 +5059,15 @@ def main() -> None:
                             help="per-process commit cap in GB (0 = disabled)")
     for flag, kw in host_res: p_navprobe.add_argument(flag, **kw)
     p_navprobe.set_defaults(func=cmd_navprobe)
+
+    p_korespawn = sub.add_parser("korespawn",
+        help="SOLO acceptance: a LETHAL hit must leave the player alive, KO'd, then respawned")
+    p_korespawn.add_argument("--probe-timeout", type=int, default=240,
+                             help="seconds to wait for 'korespawn_test: DONE' (covers boot into gameplay + the KO timer)")
+    p_korespawn.add_argument("--memory-limit-gb", type=float, default=12.0,
+                             help="host RSS ceiling")
+    for flag, kw in host_res: p_korespawn.add_argument(flag, **kw)
+    p_korespawn.set_defaults(func=cmd_korespawn)
 
     p_ctakeprobe = sub.add_parser("ctakeprobe",
                                   help="SOLO Phase-2 HALT gate (bot-director): walk to a placed non-empty container + drive the faithful take chain (openContainer->pressButton->em_take), measure if the take executed")

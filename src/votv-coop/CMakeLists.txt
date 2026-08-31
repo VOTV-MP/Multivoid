@@ -378,6 +378,7 @@ add_library(votv-coop SHARED
     src/coop/player/item_activate.cpp
     src/coop/player/player_damage.cpp
     src/coop/player/ko_respawn.cpp
+    src/coop/player/ragdoll_gate.cpp
     src/coop/player/skin_preview.cpp
     src/coop/player/flashlight_click_sound.cpp
     src/coop/props/prop_sound.cpp
@@ -647,6 +648,7 @@ add_library(votv-coop SHARED
     src/harness/autotest/autotest_damage.cpp
     src/harness/autotest/autotest_dmghazard.cpp
     src/harness/autotest/autotest_playerdmg.cpp
+    src/harness/autotest/autotest_korespawn.cpp
     src/harness/autotest/autotest_puppetframe.cpp
     src/harness/autotest/autotest_ragdoll.cpp
     src/harness/autotest/autotest_ragdoll_spawn_probe.cpp
