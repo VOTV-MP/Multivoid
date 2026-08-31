@@ -126,7 +126,9 @@ player gets, and the release notes + Discord have to carry the rest.
   `VOTVCOOP_NET_SIGNALING`). Shipping #2 or #3 into the first Thunderstore package would be
   shipping them immutably. Requires the staged ports to be reachable from outside — verify, do
   not assume.
-- **Push.** 33 commits sat unpushed when this was written; the tag must be reachable on origin.
+- **Push.** Dozens of commits were unpushed when this was written and the backlog only grows; the
+  tag must be reachable on origin. Check with `git log --oneline origin/main..HEAD | wc -l`, and
+  run the 5-axis leak audit per commit before asking.
 - **Author `tools/release/notes/b<N>.md`** and show the user (ritual 0.5). It is the changelog
   authority and the release body copies it.
 
