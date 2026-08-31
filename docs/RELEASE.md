@@ -137,7 +137,7 @@ telling them and saying nothing; the recommendation to set it anyway was accepte
 |---|---|---|
 | `COOP_LATEST_PROTO` | `134` | only has to EXCEED 133 to light the b133 label; kept **≤ our own dev build (149)** so our builds show the informational `(dev; latest released b134)` line instead of nagging themselves |
 | `COOP_LATEST_MOD` | `Multivoid` | free text, set ON PURPOSE — an empty `mod` makes the client render `b<proto>`, i.e. it would name a build number that does not exist. This renders `UPDATE Multivoid AVAILABLE: <url>` |
-| `COOP_LATEST_URL` | `github.com/VOTV-MP/Multivoid/releases` | the **schemeless** form the client compiles as its own fallback (`net::kReleasesUrl`), so the one-line menu label stays short. The master's built-in default carries `https://` and is 8 chars longer |
+| `COOP_LATEST_URL` | `multivoid.dev` | **it only matters to the b≤149 cohort now** — see the box below. For them the address cannot be removed (their format string appends it and falls back to a compiled default when it is empty), so the only lever is LENGTH: `[V]` `multivoid.dev` serves HTTP 200 with a real page, and it takes the rendered label from **90 to 66 characters** |
 
 `[V]` differential on the live master: `{"mod":"","proto":0,...}` before the restart →
 `{"mod":"Multivoid","proto":134,"url":"github.com/VOTV-MP/Multivoid/releases"}` after, on the
@@ -150,6 +150,20 @@ What a b133 player now gets, traced through their OWN shipped code (`v0.9.0n-b13
 guard; `134 > 133` takes the outdated branch; the native menu label turns amber and reads
 **`Multivoid 0.9.0n b133 -- UPDATE Multivoid AVAILABLE: github.com/VOTV-MP/Multivoid/releases`**.
 It re-polls on boot and on every main-menu entrance, so no mod update is needed to see it.
+
+**THE LABEL NO LONGER PRINTS AN ADDRESS, FROM THE NEXT BUILD ONWARD (user 2026-08-31: *"url не
+надо показывать, это длинно, достаточно лаконичного текста что обнова доступна"*).** The outdated
+branch now composes `"<identity> -- UPDATE AVAILABLE: <mod|bN>"` and stops there: the label is a
+`UTextBlock`, not a hyperlink, so ~37 characters of address on a one-line menu row bought a string
+nobody can click and few would retype. What stays is the actionable half — WHICH build supersedes
+yours. `LatestInfo::url` lost its only reader and was retired with its parse (RULE 2); the
+version-mismatch line on a refused join uses the compiled `net::kReleasesUrl` and is untouched.
+**No protocol bump**: the master still serves `url` and ignoring an extra response field is
+forward-compatible. `verify_latest.ps1` reads `proto` and prints `mod`, never `url`, so the gate
+is unaffected.
+
+**So `COOP_LATEST_URL` is now a LEGACY-ONLY knob.** b133..b149 render it; every build after this
+change ignores it. Keep it short and real while that cohort exists, then it stops mattering.
 
 **TWO CONSEQUENCES TO CARRY TO THE RELEASE.**
 1. **`verify_latest.ps1` now FAILS BY DESIGN** and will keep failing until step 6 replaces these
