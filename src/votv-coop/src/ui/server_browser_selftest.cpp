@@ -157,6 +157,10 @@ constexpr int kWorldVerify    = 252;
 // including the capture-starved pointer that makes every native widget read not-hovered
 // at once (SERVER_BROWSER_ARC section 8.1). ESC is a `GetAsyncKeyState` poll and is the
 // only exit that survives that. Proving one says nothing about the other.
+constexpr int kHostWindowHold = 253;   // one frame of the hosting window, for the eye
+                                       // (kWorldVerify + 1: the step counter advances
+                                       // by one after a `break`, so a hold phase must
+                                       // be the NEXT number, not a round one)
 constexpr int kHostBackMove   = 258;
 constexpr int kHostBackDown   = 266;
 constexpr int kHostBackUp     = 270;
@@ -1098,9 +1102,17 @@ void Tick(void* scrim, void* list, void* exitBtn) {
                         "first save row left SelectedSave() at %d (was %d). The rows draw "
                         "and cannot be picked, so this window can only ever start a NEW "
                         "game.", now, g_worldBefore);
+            // HOLD, so the capture poll gets a frame of this window. Its footer and its
+            // two lists are the only thing in the tree a picture can judge, and the last
+            // defect found in it was found by eye ("the buttons Back and Host are not
+            // aligned with the main box and look unnatural").
+            g_holdUntilMs = nowMs + kShotHoldMs;
+            break;
+        }
+        case kHostWindowHold:
+            if (nowMs < g_holdUntilMs) return;
             g_selfCheckStep = kHostBackMove - 1;   // on to the hosting window's exits
             return;
-        }
         case kHostBackMove: {
             void* b = ui::host_window_native::BackButton();
             ue_wrap::FVector2D tl{}, sz{};
