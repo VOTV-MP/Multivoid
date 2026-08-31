@@ -55,4 +55,8 @@ std::wstring GetSwitchKeyString(void* sw);  // the switch's AtriggerBase_C::Key
 bool TryReadSwitchA(void* sw, bool& on);    // the switch's flip state (bool A)
 bool CallUse(void* sw);                     // use() -- flips the switch visual + the lights
 
+// Explicitly drive the switch to target `on` state: if current `A` != `on`,
+// call use() to flip visual + fan out to lights; ensures `A` strictly matches `on`.
+bool ApplySwitchState(void* sw, bool on);
+
 }  // namespace ue_wrap::lightswitch

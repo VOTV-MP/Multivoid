@@ -154,4 +154,23 @@ bool CallUse(void* sw) {
     return Call(sw, f);
 }
 
+bool ApplySwitchState(void* sw, bool on) {
+    if (!sw) return false;
+    if (!EnsureSwitchResolved()) return false;
+    bool cur = false;
+    if (TryReadSwitchA(sw, cur)) {
+        if (cur == on) {
+            // Already matches desired target state -- do not re-toggle
+            return true;
+        }
+    }
+    // State differs -> calling use() will toggle `A` and trigger the BP fanout to lights
+    bool ok = CallUse(sw);
+    // Explicitly enforce the target flag to prevent any drift/race
+    if (g_swAOff >= 0) {
+        *reinterpret_cast<bool*>(reinterpret_cast<char*>(sw) + g_swAOff) = on;
+    }
+    return ok;
+}
+
 }  // namespace ue_wrap::lightswitch

@@ -79,20 +79,15 @@ const Adapter g_doorAdapter = {
 };
 const Adapter g_lightAdapter = {
     // Re-keyed to the SWITCH (was the lightRoot) so the receiver replays use() -> the
-    // switch FLIPS VISUALLY on the peer AND its lights fan out, in one BP call. use()
-    // toggles; the channel only applies when cur != want (ApplyResolved's cur==want
-    // idempotent guard), so for a 2-state bool "toggle when different" == an absolute set,
-    // and double-delivery is safe (applies are GT-serialized + use() updates A
-    // synchronously -- lightswitch_probe proved A flips 0->1 right after the call).
-    // (IDA 2026-06-04: the lightRoot.SetActive observer never fired -- BP-internal.)
-    // HANDS-ON TO VERIFY: that use() toggles BOTH directions (1->0, not just 0->1); if a
-    // switch's use() is one-way, want=OFF would never land -> needs a switch-level set verb.
+    // switch FLIPS VISUALLY on the peer AND its lights fan out, in one BP call. ApplySwitchState
+    // enforces absolute target state: it checks current `A` and calls use() only when `cur != on`,
+    // avoiding the 180-degree blind-toggle inversion bug across peers.
     "light", coop::net::ReliableKind::LightState,
     &ue_wrap::lightswitch::EnsureSwitchResolved,
     &ue_wrap::lightswitch::IsLightSwitch,
     &ue_wrap::lightswitch::GetSwitchKeyString,
     &ue_wrap::lightswitch::TryReadSwitchA,
-    [](void* a, bool /*on*/) -> bool { return ue_wrap::lightswitch::CallUse(a); },
+    [](void* a, bool on) -> bool { return ue_wrap::lightswitch::ApplySwitchState(a, on); },
     nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,  // Symmetric channel -- no HostAuth hooks (last = CanOpen)
 };
 const Adapter g_containerAdapter = {
