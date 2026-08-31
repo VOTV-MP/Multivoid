@@ -445,6 +445,17 @@ So the arguments, re-stated honestly after reading the implementation:
    no per-frame gating)"*. A pak widget added to the viewport needs that gating **written and
    maintained by us**, plus its own position/DPI handling. **This is the strong argument and it
    survives intact.**
+
+   > **AND THE MAIN-MENU-ONLY SCOPE IS A DECISION, NOT A GAP (USER, 2026-08-31 — verbatim:
+   > *"В главном меню - ну это и правильно это должно быть исключительно в главном меню"*).**
+   > `multiplayer_menu.cpp:182-186` bails on the pause menu (`isPause == true`) before any inject
+   > logic, and the label is a child of the menu widget, so **the version/update line does not
+   > exist during gameplay**. That was put to the user as a possible gap — a player who launches
+   > straight into a save never passes the menu, so an outdated build could go unnoticed — and the
+   > answer was that main-menu-only is exactly right. **Do not "fix" this by adding an in-game
+   > surface.** One was built on 2026-08-31 (an ImGui corner window in the always-on passive
+   > section) and **reverted whole the same hour**, unrequested; the tree carries no trace and
+   > should not grow one. The update verdict has ONE surface by design.
 3. **A pak buys custom art, and custom art is not the goal here.** We want to be indistinguishable
    from `button_start` and `txt_version`. That is a parity problem, and parity is cheaper to reach by
    measuring the reference widget than by drawing a new one that must then be kept matching.
