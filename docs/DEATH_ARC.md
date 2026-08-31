@@ -834,6 +834,31 @@ it looked opaque: `[V]` @1234 branches on `damageLocation == (0,0,0)` and the sy
 takes the ALL-FOUR-QUADRANTS path, so the instrument was painting a 360-degree indicator no
 real directional hit produces).
 
+**AND THE SOURCE IS NAMED, BY MEASUREMENT, AT THE END OF A FULL RENDER-PIPELINE SWEEP: it is
+VOTV's own BAD SUN.** The tint is `pp_megasun_Inst`, a post-process MATERIAL on
+`PostProcessVolume2_3` -- read live at `w=1.00 unbound=1`, and an UNBOUND volume at full
+weight tints the entire world from any position, before UI, which is exactly the observed
+signature (sky, stars and near ground equally red, HUD untouched). That volume is LEVEL
+CONTENT: `_map_untitled_1.json` export 28753 serializes `bUnbound=true` with `BlendWeight` and
+`bEnabled` at class default. What switches it on is `daynightCycle`'s new-day block:
+
+```
+@4552: IFNOT(false) JUMP @4595              <- the direct path is dead code
+@4704: if (GameInstance.gamemode == b7) JUMP @4558
+@4558:     gamemode.Spawn Bad Sun()
+@4822: else if hasAchievement('badsun')
+@4896:     RandomBoolWithWeight(0.001)      <- 0.1% per day
+@4931:     -> Spawn Bad Sun()
+```
+
+Everything else in the pipeline was read and cleared on the way there, and the list is worth
+keeping because it is the order a future tint hunt should follow: camera fade `enabled=0`; fog
+inscattering `(0.447,0.638,1.000)` -- BLUE, so fog was never it; `PostProcess_pl`'s one
+blendable at weight **0.000**; no `bOverride_Color*` on any volume; `PostProcessVolume_1` =
+`inst_depthPP`; `Camera` = `PP_main` + `pp_mirror`(w=0) + `pp_stencilOutline`. And OUR MOD
+holds ZERO references to `PostProcess*` anywhere in the tree, with every fog path
+`g_isClient`-gated and therefore inert on a solo host.
+
 **The process lesson is the expensive one and it is written up separately**
 (`[[lesson-a-symptom-needs-a-baseline-before-it-needs-a-hypothesis]]`): after the SECOND clean
 probe with the symptom unchanged, the frame of reference is what is wrong, not the hypothesis.

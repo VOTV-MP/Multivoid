@@ -335,6 +335,244 @@ std::wstring CensusDamageIndicators() {
     return L"instances=" + std::to_wstring(n) + out;
 }
 
+// THE RENDER STATE ITSELF -- what can actually tint the scene while leaving UMG untouched.
+//
+// Written after four subsystem probes each measured clean while the user still saw red, and
+// after a pre-hit screenshot proved the tint predates the death entirely. Enumerating
+// SUBSYSTEMS asks "is my suspect guilty"; this asks "what is the renderer actually doing",
+// which is the question the screen answers.
+//
+// In UE4 exactly four things tint the world but not the UI: a camera FADE, a post-process on
+// the camera/player/gamemode component, a PostProcessVolume, or scene lighting. The first
+// three are readable by name.
+// Blendable materials on ONE FPostProcessSettings, by name and weight. A post-process
+// MATERIAL is the only thing that can tint the sky, the stars and the near ground by the same
+// amount while leaving UMG alone, so every settings struct in the pipeline gets asked -- not
+// just the one I happened to suspect.
+std::wstring BlendablesOf(void* owner, const wchar_t* settingsProp, const wchar_t* label) {
+    if (!owner || !R::IsLive(owner)) return L"";
+    void* cls = R::ClassOf(owner);
+    const int32_t oS = R::FindPropertyOffset(cls, settingsProp);
+    void* st = R::PropertyInnerStruct(cls, settingsProp);
+    if (oS < 0 || !st) return L"";
+    const int32_t oWB = R::FindPropertyOffset(st, L"WeightedBlendables");
+    if (oWB < 0) return L"";
+    auto* arr = reinterpret_cast<uint8_t*>(owner) + oS + oWB;
+    void* data = *reinterpret_cast<void**>(arr);
+    const int32_t num = *reinterpret_cast<int32_t*>(arr + 8);
+    if (num <= 0) return L"";
+    std::wstring out = std::wstring(L" | ") + label + L".blend[";
+    for (int32_t i = 0; i < num && i < 8 && data; ++i) {
+        auto* el = reinterpret_cast<uint8_t*>(data) + static_cast<size_t>(i) * 16;
+        const float w = *reinterpret_cast<float*>(el);
+        void* obj = *reinterpret_cast<void**>(el + 8);
+        wchar_t b[160];
+        _snwprintf_s(b, _TRUNCATE, L"%ls w=%.2f%ls", (i ? L", " : L""), w,
+                     (obj && R::IsLive(obj)) ? R::ToString(R::NameOf(obj)).c_str() : L"<null>");
+        out += b;
+    }
+    return out + L"]";
+}
+
+std::wstring CensusRenderState() {
+    std::wstring out;
+    wchar_t buf[256];
+
+    // 1. APlayerCameraManager fade -- SetManualCameraFade leaves these set.
+    if (void* pcm = R::FindObjectByClass(L"PlayerCameraManager")) {
+        if (R::IsLive(pcm)) {
+            void* cls = R::ClassOf(pcm);
+            const int32_t oAmt = R::FindPropertyOffset(cls, L"FadeAmount");
+            const int32_t oCol = R::FindPropertyOffset(cls, L"FadeColor");
+            int32_t oEnB = -1; uint8_t oEnM = 0;
+            R::FindBoolProperty(cls, L"bEnableFading", oEnB, oEnM);
+            auto* b = reinterpret_cast<uint8_t*>(pcm);
+            const float amt = oAmt >= 0 ? *reinterpret_cast<float*>(b + oAmt) : -1.f;
+            const bool en = (oEnB >= 0) && ((*(b + oEnB) & oEnM) != 0);
+            float r = -1, g = -1, bl = -1;
+            if (oCol >= 0) {
+                auto* c = reinterpret_cast<float*>(b + oCol);
+                r = c[0]; g = c[1]; bl = c[2];
+            }
+            _snwprintf_s(buf, _TRUNCATE, L"CameraFade{enabled=%d amount=%.2f color=(%.2f,%.2f,%.2f)}",
+                         en ? 1 : 0, amt, r, g, bl);
+            out += buf;
+        }
+    }
+
+    // 2/3. the post-process components, by their owner.
+    auto pp = [&](const wchar_t* ownerCls, const wchar_t* propName) {
+        void* o = R::FindObjectByClass(ownerCls);
+        if (!o || !R::IsLive(o)) return;
+        const int32_t off = R::FindPropertyOffset(R::ClassOf(o), propName);
+        if (off < 0) return;
+        void* comp = *reinterpret_cast<void* const*>(reinterpret_cast<uint8_t*>(o) + off);
+        if (!comp || !R::IsLive(comp)) return;
+        void* ccls = R::ClassOf(comp);
+        const int32_t oW = R::FindPropertyOffset(ccls, L"BlendWeight");
+        int32_t oEB = -1; uint8_t oEM = 0;
+        R::FindBoolProperty(ccls, L"bEnabled", oEB, oEM);
+        auto* cb = reinterpret_cast<uint8_t*>(comp);
+        _snwprintf_s(buf, _TRUNCATE, L" | %ls.%ls{enabled=%d weight=%.2f}", ownerCls, propName,
+                     (oEB >= 0) ? (((*(cb + oEB)) & oEM) ? 1 : 0) : -1,
+                     oW >= 0 ? *reinterpret_cast<float*>(cb + oW) : -1.f);
+        out += buf;
+    };
+    pp(P::name::MainPlayerClass, L"PostProcess_pl");
+    pp(P::name::MainPlayerClass, L"PostProcess");
+    pp(P::name::GamemodeClass, L"PostProcess");
+
+    // 3b. WHAT IS ACTUALLY IN THE PLAYER'S POST-PROCESS. `enabled=1 weight=1.00` says a
+    //     component is live, not what it does. `WeightedBlendables.Num` names an INJECTED
+    //     material -- the only way a component tints the world red -- and the colour-grading
+    //     overrides say whether someone graded the scene instead.
+    {
+        void* mp2 = R::FindObjectByClass(P::name::MainPlayerClass);
+        if (mp2 && R::IsLive(mp2)) {
+            const int32_t offC = R::FindPropertyOffset(R::ClassOf(mp2), L"PostProcess_pl");
+            if (offC >= 0) {
+                void* comp = *reinterpret_cast<void* const*>(reinterpret_cast<uint8_t*>(mp2) + offC);
+                if (comp && R::IsLive(comp)) {
+                    void* ccls = R::ClassOf(comp);
+                    const int32_t offS = R::FindPropertyOffset(ccls, L"Settings");
+                    void* st = R::PropertyInnerStruct(ccls, L"Settings");
+                    if (offS >= 0 && st) {
+                        auto* sb = reinterpret_cast<uint8_t*>(comp) + offS;
+                        const int32_t oWB = R::FindPropertyOffset(st, L"WeightedBlendables");
+                        if (oWB >= 0) {
+                            // FWeightedBlendables{ TArray<FWeightedBlendable> Array }, and
+                            // FWeightedBlendable{ float Weight; UObject* Object } = 16 B.
+                            // NAME the material: "there is one" is not an identification, and
+                            // a uniform scene-wide tint with UI untouched can only be this.
+                            auto* arr = reinterpret_cast<uint8_t*>(sb + oWB);
+                            void* data = *reinterpret_cast<void**>(arr);
+                            const int32_t num = *reinterpret_cast<int32_t*>(arr + 8);
+                            _snwprintf_s(buf, _TRUNCATE, L" | PostProcess_pl.Blendables.Num=%d", num);
+                            out += buf;
+                            for (int32_t i = 0; i < num && i < 8 && data; ++i) {
+                                auto* el = reinterpret_cast<uint8_t*>(data) + static_cast<size_t>(i) * 16;
+                                const float w = *reinterpret_cast<float*>(el);
+                                void* obj = *reinterpret_cast<void**>(el + 8);
+                                out += L" [w=" + std::to_wstring(w) + L" ";
+                                out += (obj && R::IsLive(obj))
+                                           ? (R::ToString(R::NameOf(obj)) + L" : " + R::ClassNameOf(obj))
+                                           : std::wstring(L"<null/dead>");
+                                out += L"]";
+                            }
+                        }
+                        // any colour-ish override that is ON is worth naming
+                        for (const auto& f : R::EnumerateStructFields(st)) {
+                            if (f.name.rfind(L"bOverride_", 0) != 0) continue;
+                            if (f.name.find(L"Color") == std::wstring::npos &&
+                                f.name.find(L"Scene") == std::wstring::npos &&
+                                f.name.find(L"Tint") == std::wstring::npos) continue;
+                            int32_t bo = -1; uint8_t bm = 0;
+                            if (!R::FindBoolProperty(st, f.name.c_str(), bo, bm)) continue;
+                            if ((*(sb + bo) & bm) == 0) continue;
+                            out += L" | ON:" + f.name;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 3c. THE FOG. The frames are distance-dependent -- near grass still green, distant trees
+    //     deep red -- which is fog inscattering, not a uniform post-process multiply.
+    //     `daynightCycle` owns SetFogInscatteringColor / SetFogDensity / enable_fog and
+    //     `newsky` owns fog_color_A/B, so this reads the value they land on.
+    for (void* fog : R::FindObjectsByClass(L"ExponentialHeightFogComponent")) {
+        if (!fog || !R::IsLive(fog)) continue;
+        void* fc = R::ClassOf(fog);
+        const int32_t oCol = R::FindPropertyOffset(fc, L"FogInscatteringColor");
+        const int32_t oDen = R::FindPropertyOffset(fc, L"FogDensity");
+        auto* fb = reinterpret_cast<uint8_t*>(fog);
+        float r = -1, g = -1, b2 = -1;
+        if (oCol >= 0) { auto* c = reinterpret_cast<float*>(fb + oCol); r = c[0]; g = c[1]; b2 = c[2]; }
+        _snwprintf_s(buf, _TRUNCATE, L" | FOG{inscatter=(%.3f,%.3f,%.3f) density=%.4f}",
+                     r, g, b2, oDen >= 0 ? *reinterpret_cast<float*>(fb + oDen) : -1.f);
+        out += buf;
+    }
+
+    // 3d. blendables on EVERY source, not just the player's.
+    if (void* gm2 = R::FindObjectByClass(P::name::GamemodeClass)) {
+        const int32_t o = R::FindPropertyOffset(R::ClassOf(gm2), L"PostProcess");
+        if (o >= 0) {
+            void* c = *reinterpret_cast<void* const*>(reinterpret_cast<uint8_t*>(gm2) + o);
+            out += BlendablesOf(c, L"Settings", L"gm.PostProcess");
+        }
+    }
+    for (void* v2 : R::FindObjectsByClass(L"PostProcessVolume"))
+        out += BlendablesOf(v2, L"Settings", R::ToString(R::NameOf(v2)).c_str());
+    // and the camera's own settings, the last stop before the frame
+    if (void* mp3 = R::FindObjectByClass(P::name::MainPlayerClass)) {
+        const int32_t o = R::FindPropertyOffset(R::ClassOf(mp3), L"Camera");
+        if (o >= 0) {
+            void* cam = *reinterpret_cast<void* const*>(reinterpret_cast<uint8_t*>(mp3) + o);
+            out += BlendablesOf(cam, L"PostProcessSettings", L"Camera");
+        }
+    }
+
+    // 3e. WHICH BRANCH LIT THE MEGASUN. `[V]` daynightCycle's new-day block spawns the Bad Sun
+    //     either because `GameInstance.gamemode == b7` (deterministic, every day) or on a
+    //     0.1%/day roll gated on the `badsun` achievement. Reading the mode says which -- and
+    //     saves asking a question that is measurable.
+    if (void* gi = R::FindObjectByClass(P::name::GameInstanceClass)) {
+        if (R::IsLive(gi)) {
+            const uint8_t mode = *(reinterpret_cast<uint8_t*>(gi) + P::off::mainGameInstance_GameMode);
+            _snwprintf_s(buf, _TRUNCATE, L" | GameInstance.gamemode=b%u%ls", (unsigned)mode,
+                         mode == 7 ? L" (== b7: Bad Sun spawns EVERY new day)" : L"");
+            out += buf;
+        }
+    }
+
+    // 4. every PostProcessVolume in the world with a non-zero blend.
+    int vols = 0, hot = 0;
+    for (void* v : R::FindObjectsByClass(L"PostProcessVolume")) {
+        if (!v || !R::IsLive(v)) continue;
+        ++vols;
+        const int32_t oW = R::FindPropertyOffset(R::ClassOf(v), L"BlendWeight");
+        if (oW >= 0 && *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(v) + oW) > 0.01f) ++hot;
+    }
+    _snwprintf_s(buf, _TRUNCATE, L" | PostProcessVolumes=%d (blend>0: %d)", vols, hot);
+    out += buf;
+    for (void* v : R::FindObjectsByClass(L"PostProcessVolume")) {
+        if (!v || !R::IsLive(v)) continue;
+        void* vc = R::ClassOf(v);
+        const int32_t oW = R::FindPropertyOffset(vc, L"BlendWeight");
+        int32_t oUB = -1; uint8_t oUM = 0;
+        R::FindBoolProperty(vc, L"bUnbound", oUB, oUM);
+        auto* vb = reinterpret_cast<uint8_t*>(v);
+        _snwprintf_s(buf, _TRUNCATE, L" [%ls w=%.2f unbound=%d", R::ToString(R::NameOf(v)).c_str(),
+                     oW >= 0 ? *reinterpret_cast<float*>(vb + oW) : -1.f,
+                     (oUB >= 0) ? (((*(vb + oUB)) & oUM) ? 1 : 0) : -1);
+        out += buf;
+        // THE COLOUR GRADING -- the field I kept not reading. Weight says a volume is
+        // contributing; only these say WHAT it contributes, and a scene-wide uniform red
+        // with UI untouched is exactly what a graded volume looks like.
+        const int32_t oS = R::FindPropertyOffset(vc, L"Settings");
+        void* vst = R::PropertyInnerStruct(vc, L"Settings");
+        if (oS >= 0 && vst) {
+            auto* sb2 = reinterpret_cast<uint8_t*>(v) + oS;
+            for (const wchar_t* f : {L"ColorGain", L"ColorOffset", L"ColorSaturation",
+                                     L"ColorContrast", L"ColorGamma"}) {
+                int32_t bo = -1; uint8_t bm = 0;
+                std::wstring ov = L"bOverride_"; ov += f;
+                const bool on = R::FindBoolProperty(vst, ov.c_str(), bo, bm) &&
+                                ((*(sb2 + bo) & bm) != 0);
+                if (!on) continue;
+                const int32_t off2 = R::FindPropertyOffset(vst, f);
+                if (off2 < 0) continue;
+                auto* c = reinterpret_cast<float*>(sb2 + off2);  // FVector4
+                _snwprintf_s(buf, _TRUNCATE, L" %ls=(%.3f,%.3f,%.3f,%.3f)", f, c[0], c[1], c[2], c[3]);
+                out += buf;
+            }
+        }
+        out += L"]";
+    }
+    return out.empty() ? L"(nothing readable)" : out;
+}
+
 // EVERY live actor descending from `effect_C`, by class name, plus the gamemode's own
 // `effects_names` array -- the two halves of VOTV's effect system, which can disagree.
 //
@@ -644,6 +882,13 @@ DWORD WINAPI DeathTestThread(LPVOID) {
         GT::Post([done, census] { *census = CensusDamageIndicators(); done->store(1); });
         WaitDone(done, 15000);
         UE_LOGI("death_test: DAMAGE INDICATORS -- %ls", census->c_str());
+    }
+    {
+        auto done = std::make_shared<std::atomic<int>>(0);
+        auto census = std::make_shared<std::wstring>();
+        GT::Post([done, census] { *census = CensusRenderState(); done->store(1); });
+        WaitDone(done, 15000);
+        UE_LOGI("death_test: RENDER STATE -- %ls", census->c_str());
     }
     UE_LOGI("death_test: HUD -- damage-indicator worst quadrant: pre-hit %.2f, post %.2f; "
             "bloodLoss actors pre-hit %d post %d (worst time %.1f s), blur widgets in viewport "
