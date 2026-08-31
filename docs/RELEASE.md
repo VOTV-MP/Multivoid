@@ -137,6 +137,31 @@ NOT stable-only):
    as optional so an old master degrades rather than breaks.
    Check before shipping a release that advertises the lock:
    `curl -s <master>/v1/join -d '{"lobbyId":"<a direct lobby>"}' | grep hostIdentity`.
+
+   **THE BINARIES ARE BUILT AND PROVEN; ONLY THE CUTOVER IS OUTSTANDING (2026-08-31).**
+   Both were built ON the box from `HEAD:tools/coop-server-rs` (`cargo test --release`
+   **15/15**), staged on ports 10010/10011 beside production, and measured there:
+   `/v1/join` on a DIRECT lobby returns `hostIdentity` (this step's own check, **green**),
+   an identity-less b<=133 host is refused with the named 400, and
+   `sig_gate --remote 127.0.0.1:10010 --plaintext` is **PASS 14/14**. The same gate against
+   the *deployed* relay is **FAIL C -- it does not challenge at all**, so A59 is unfixed in
+   production and any b145+ client fails closed on P2P there.
+
+   **WHY IT WAS NOT CUT OVER, and this is the real content of this step: the redeploy
+   RETIRES the published cohort, and today that cohort is the only one there is.** The
+   newest published release is `v0.9.0n-b133-dev` (LEDGER, 2026-07-31), the master refuses
+   every host without a `gen:` key, and the relay refuses every legacy `h<16hex>` name -- so
+   the moment both restart, a b133 host is de-listed and told *"this build is too old to
+   host -- update Multivoid"*, with **no newer build to update to**. Three live lobbies were
+   registered while this was measured. So step 0's ordering is not a formality: **redeploy
+   both, gate, THEN publish -- as one sitting, not as a chore done early.** Deploying ahead
+   of the release buys nothing (no shipped build advertises the lock) and costs every player
+   currently hosting.
+
+   Staging recipe, so the next run is a restart and not a rebuild: upload
+   `git archive HEAD:tools/coop-server-rs`, build on the box, run each binary with
+   `COOP_*_PORT` overridden and `COOP_REQUIRE_TLS=0`, tunnel the relay port, gate it.
+   (`pkill -f stage-coop-master` also matches the shell running it -- kill by PID.)
 7. `tools/release/verify_latest.ps1` — must PASS (it FAILs before step 6 by
    design; fold-aware: reads the newest bare-tag published row).
 
