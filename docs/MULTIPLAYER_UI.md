@@ -1683,9 +1683,15 @@ by the harness; it would leave the rig hosting.
 
 **Known and declared:** the ImGui fallback can HOST a locked lobby but cannot JOIN one (no
 password prompt — the emergency-surface policy, declared in
-`tools/ui/browser_parity_gate.py`), and on **DIRECT / LAN** a joiner needs the host's `gen:`
-identity as well as the address, because binding is what makes the proof safe and those
-lanes have no master to supply it. The session-settings hint turns amber and says so.
+`tools/ui/browser_parity_gate.py`), and on **DIRECT / LAN** a joiner must be able to name the host it
+expects, because binding is what makes the password proof safe. **That is now supplied
+per-lane rather than being absent everywhere (2026-08-31, `6f3530f7`):** a DIRECT lobby
+joined from the BROWSER gets it from the master, which carries `hostIdentity` on the
+`/v1/join` direct response -- **but only once the master is REDEPLOYED, which it has not
+been** (`docs/RELEASE.md` step 6c). A manual direct-IP connect and a LAN join have no
+master in the loop at all and still need the host's `gen:` line by hand
+(`net.host_identity`). The session-settings hint turns amber and says so on screen; it is
+correct for today and becomes over-broad for the listed-direct case after the redeploy.
 
 ## Anchors (from reflection dump, game 0.9.0-n)
 
