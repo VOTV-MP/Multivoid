@@ -241,10 +241,20 @@ and a retracted N never republishes), or a site deploy (redeploy the previous bu
    closes state(N) API-free. It may ride the next leak-audited push;
    RECOMMENDED: push it right away while watching the green run.
 
-STABLE extra (dev releases skip this — `COOP_LATEST_*` is stable-only):
+Normally a STABLE extra — but it is a POLICY, not a constraint (corrected 2026-08-31):
 6. On the master box, edit the master service's env file (the path is in the local-only deploy notes):
    `COOP_LATEST_PROTO=<N>`, `COOP_LATEST_MOD=<game> b<N>`, then
    `systemctl restart coop-master`. (Informational toast only — never gates a join.)
+
+   **Dev releases skip this by default, and that default may be overridden.** `[V]` the client has
+   **no dev/stable axis**: `session_manager.cpp:334-347` compares `info.proto` to
+   `kProtocolVersion` and nothing else — equal prints `(latest)`, greater prints
+   `-- UPDATE <mod> AVAILABLE: <url>` in amber, lesser prints `(dev; latest released bN)`. `[V]` the
+   b133 build carries the identical branch and polls `/v1/latest` at boot **and** on every
+   main-menu entrance, so pointing this at a dev build reaches the old cohort on their title
+   screen. The reason to skip it for a dev release is only that dev builds should not nag stable
+   users — **when a dev release is retiring a cohort, that reason is inverted and this step
+   applies.** Run step 7 with `-AllowDev` when you do.
 
 EVERY build that reaches players (dev drops to testers INCLUDED — this one is
 NOT stable-only):
