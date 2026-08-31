@@ -38,6 +38,19 @@ namespace ui::server_browser_actions {
 // failure rather than shipping a grid with a hole in it.
 bool Build(void* parent, void* donorBtn);
 
+// Build CONNECT on its own, into the RIGHT-HAND column directly under the details panel.
+//
+// It is not in the grid because it is not the same KIND of action: every cell in the grid
+// is true whatever is selected, and this one acts on the selection the panel above it is
+// describing (USER 2026-08-31). Putting the verb under its subject is also what makes the
+// panel worth reading before pressing it.
+bool BuildConnect(void* parent, void* donorBtn);
+
+// DIAL THE ADDRESS THE PLAYER TYPED (variant B only). The same handler the inline field's
+// Enter edge routes to, so the keyboard and the button cannot mean two different things --
+// including about when `browser.lastdirect` is written, which is AFTER the accept gate.
+void ConnectToAddress();
+
 // Handle a left-button RELEASE while the browser is open. Returns true if one of these
 // buttons was under the cursor and consumed the click, so the caller stops -- in
 // particular, so a click on CONNECT is not ALSO read as a click on the row behind it.

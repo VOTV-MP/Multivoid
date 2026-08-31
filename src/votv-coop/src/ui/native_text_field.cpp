@@ -249,6 +249,8 @@ void Destroy(Field* f) {
     delete f;
 }
 
+void* Widget(const Field* f) { return f ? f->box : nullptr; }
+
 void Focus(Field* f) {
     if (!f) return;
     Field* prev = g_focus.exchange(f);

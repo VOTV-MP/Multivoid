@@ -58,6 +58,13 @@ NATIVE = [
     "server_browser_rows.cpp",
     "server_browser_actions.cpp",
     "native_text_field.cpp",
+    # BOTH INPUT VARIANTS COUNT AS THE DEFAULT SURFACE, because both ARE it -- the config
+    # row `ui.browser_inline_input` decides which one a given launch shows, and a
+    # capability that only one of them provides is a gap either way. Listing both is also
+    # what makes the RULE-2 delete safe: when the user picks, the loser's file goes and
+    # the gate immediately re-checks every capability against the survivor alone.
+    "browser_input_screens.cpp",        # variant A -- the two sibling windows
+    "server_browser_inline_input.cpp",  # variant B -- the bottom strip
 ]
 
 
@@ -84,33 +91,27 @@ CAPABILITIES = [
         name="direct-ip connect",
         symptom="cannot connect by IP -- the user's 2026-08-30 report, verbatim: "
                 "'нету возможности нигде по айпи подключиться - НИГДЕ'",
+        # CLOSED 2026-08-31 by the input fork. BOTH variants provide it and the divergence
+        # text is deleted rather than left standing: variant A opens a Direct connect
+        # window, variant B dials the address typed in the browser's own bottom strip, and
+        # the grid cell is the same cell in both. The gate holds the parity from here.
         operation=r"ConnectDirect\s*\(",
-        divergence="DEFERRED BY THE USER 2026-08-30. It shipped on the default surface for "
-                   "one build and they cut it on sight: 'нахуй оно там нужно вообще - это "
-                   "дизайн говно у сервер браузера - не нужен прям в нем ввод'. The "
-                   "capability is NOT cancelled -- `ConnectDirect` works and the fallback "
-                   "still reaches it -- but WHERE the default surface offers it is part of "
-                   "the browser redesign they asked for next session ('нужен дизайн сервер "
-                   "браузера как у людей без костылей'). Delete this divergence when that "
-                   "design lands; do not re-add a box to the browser to make the gate green.",
     ),
     Capability(
         name="direct address persisted",
-        symptom="the address is retyped on every launch instead of being remembered",
+        symptom="a direct address typed once is not offered again",
+        # CLOSED 2026-08-31 with the row above. BOTH variants write `browser.lastdirect`,
+        # and both write it AFTER the accept gate -- so the meaning is tighter than the
+        # fallback's (which persists whatever was typed), deliberately.
         operation=r"rows::browser_lastdirect",
-        divergence="RIDES the direct-ip row above: with no address box on the default "
-                   "surface there is nothing to remember. The ini row itself is untouched "
-                   "and the fallback still writes it, so a player who used one surface will "
-                   "find their address waiting when the redesign gives it a home.",
     ),
     Capability(
         name="nickname entry",
         symptom="cannot change the name other players see, from the screen that shows it",
+        # CLOSED 2026-08-31. Variant A has a Change name window reached from the grid;
+        # variant B has a "Your name" field in the bottom strip that commits on Enter or on
+        # losing focus. Both write `net.nick` and call SetNickname.
         operation=r"SetNickname\s*\(|rows::net_nick",
-        divergence="DEFERRED BY THE USER 2026-08-30, with the address box and for the same "
-                   "reason: no text entry belongs on the browser as it is designed today. "
-                   "Still a real gap against the fallback -- a player cannot set the name "
-                   "everyone else sees -- and still owed by the redesign.",
     ),
     Capability(
         name="host game",
