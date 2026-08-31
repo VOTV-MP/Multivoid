@@ -307,6 +307,21 @@ DWORD WINAPI IsLiveDrillThread(LPVOID arg);
 void RunFogProbe();
 DWORD WINAPI FogProbeThread(LPVOID arg);
 
+// SP-solo HUD RED-TINT discriminator (2026-08-31, harness/autotest_hud_tint.cpp).
+// The user's long-standing red wash survived four targeted probes AND a live read that
+// excluded the obvious suspects (docs/DEATH_ARC.md 11.3a: health=100.00, dead=0,
+// quadrants 0.00, bloodLoss 0 -- still red, on a New Game, on both RHIs). The pak
+// disassembly of ui_damageIndicator_C names two candidates no viewport-widget census
+// could see (it is a CHILD of ui_UI_C): `dmg_tunnel`, which has NO Visibility property
+// so it draws mat_tunnel full-screen EVERY frame, and `dmg_full`, the death branch's
+// one-way visibility latch. Cooked materials have their graphs stripped, so whether
+// mat_tunnel is transparent at alpha=0 cannot be read statically -- only measured.
+// Four arms (baseline / whole indicator collapsed / dmg_tunnel only / dmg_full only),
+// one screenshot marker each, everything restored on exit. Arm B is decisive in BOTH
+// directions: if the red survives it, the damage indicator is excluded entirely.
+// Gated by env VOTVCOOP_RUN_HUD_TINT_PROBE=1; launch via `mp.py hudtint` (solo).
+DWORD WINAPI HudTintProbeThread(LPVOID arg);
+
 // TEST-ONLY local-player movement oscillator (2026-06-06, harness/autotest_move_osc.cpp).
 // Role-agnostic: circles the LOCAL player around a small horizontal circle so the OTHER
 // peer's RemotePlayer interpolation has a MOVING source to track. The verification rig for

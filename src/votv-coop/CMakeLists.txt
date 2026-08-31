@@ -659,6 +659,7 @@ add_library(votv-coop SHARED
     src/harness/autotest/autotest_menutravel_probe.cpp
     src/harness/autotest/autotest_islive_drill.cpp
     src/harness/autotest/autotest_fog_probe.cpp
+    src/harness/autotest/autotest_hud_tint.cpp
     src/harness/autotest/autotest_eventfire.cpp
     src/harness/autotest/autotest_eventforce.cpp
     src/harness/autotest/autotest_cueforce.cpp

@@ -155,6 +155,12 @@ void SpawnEnvGatedTests(coop::net::Role role) {
     // the host-authoritative weather fix (client mist while host clear). No connection.
     SpawnIf("VOTVCOOP_RUN_FOG_PROBE", "fog probe", &FogProbeThread, role);
 
+    // HUD red-tint discriminator: solo. Collapses the damage indicator (then dmg_tunnel,
+    // then dmg_full) one arm at a time and marks a screenshot per arm, to settle whether
+    // the user's red wash is the always-on dmg_tunnel, the death-latched dmg_full, or
+    // neither -- a question no viewport-widget census could reach. No connection.
+    SpawnIf("VOTVCOOP_RUN_HUD_TINT_PROBE", "HUD red-tint discriminator", &HudTintProbeThread, role);
+
     // v95 EventFire replay-channel smoke: host fires solar/arirGraff_0/enasus through
     // event_fire_sync::HostFire; the client log proves the replay policy + suppression.
     SpawnIf("VOTVCOOP_RUN_EVENTFIRE_TEST", "EventFire replay smoke", &EventFireTestThread, role);
