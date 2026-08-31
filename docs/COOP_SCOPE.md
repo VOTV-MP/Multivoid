@@ -248,18 +248,26 @@ items.
   LOCAL player keeps using VOTV's real ragdoll (works — possessed). **Death is
   EXCLUDED from the bit** (the `!dead` gate): death uses VOTV's native SP menu flow
   and ends/leaves the session, never a synced recoverable faint.
-  **Death lifecycle (SUPERSEDED 2026-08-29, user directive: "Respawn system
-  сделать... Любая смерть, пира или хоста, ведет к респавну"): KO RESPAWN is
-  the DEFAULT.** Lethal damage becomes a knock-out (native faint ragdoll,
-  `death=false`) + a respawn with full vitals at the КПП start point — the
-  adopted Tarangok `coop/player/ko_respawn` machine (`[death] ko_respawn=1`
-  default ON, `ko_ragdoll_seconds`, `ko_invulnerable_seconds`,
-  `ko_spawn_at_start`; two layers: the AddPlayerDamage lethal-hit interceptor +
-  the net_pump dead=true backstop, so fall/fire/radiation deaths convert too).
-  Any peer's death INCLUDING THE HOST'S respawns — a host death no longer takes
-  the server down. The 2026-05-30 permadeath decision ("host death ends the
-  session; peer death = disconnect to menu, rejoinable") survives ONLY as the
-  `ko_respawn=0` opt-out flow, per-machine. Display: health bar on the existing nameplate;
+  **Death lifecycle — REWRITTEN 2026-08-31; the KO-respawn text that stood here is
+  GONE because the lane it described is deleted.** The user's directive of
+  2026-08-29 ("Respawn system сделать... Любая смерть, пира или хоста, ведет к
+  респавну") stands and is REFINED by 2026-08-31: *"Я хочу чтобы игрок ощущал
+  нативную смерть, но без выкидывания в главное меню... тут наш мод вступает и
+  НОВОЕ ИЗМЕНЕННОЕ СОСТОЯНИЕ ПИШЕТ."* So the target is not a knock-out that
+  replaces the death — it is the WHOLE native death (sound, `dead := true`, ten
+  seconds, black screen) followed by an intervention at the level travel.
+  **Design of record: `docs/DEATH_ARC.md`. AS OF `f23d4df6` NOTHING OF IT IS BUILT.**
+  The `coop/player/ko_respawn` machine (adopted from Tarangok) and its four
+  `[death]` config rows were RETIRED WHOLE in `33008d87` — it worked by holding the
+  game's own `canRagdoll` gate shut so a death was never authored, which is the
+  inverse of the instruction, and it carried three HIGH defects. **INTERIM
+  BEHAVIOUR, measured 2026-08-31 and worse than the old prose implies:** with a live
+  session `net_pump`'s flee pre-empts the chain, so the black screen NEVER APPEARS
+  and the world is gone at 4.5 s — a dying player is pulled out less than halfway
+  through the death. The 2026-05-30 permadeath decision ("host death ends the
+  session; peer death = disconnect to menu, rejoinable") is therefore the CURRENT
+  behaviour again, and DEATH_ARC section 10 records that the arc will overturn its
+  host half on the happy path. Display: health bar on the existing nameplate;
   ragdoll via the puppet's own `ragdollMode`/`ragdollActor` (narrowed to the
   NON-death faint/sleep/KO states where the player STAYS in the world).
   RULE-3 (no anti-cheat): a peer is authoritative over its own death — a
@@ -560,7 +568,10 @@ Design implications (do NOT build yet; record so the architecture serves it):
   The only deferred sub-part is the real enemy->puppet damage DETECTION hook
   (player_damage.cpp drives the relay via DebugForceHitPuppet for now).
 - 2026-05-30 — **Death lifecycle policy decided + vitals Inc1 SHIPPED.** User
-  decision: **permadeath, rejoinable; host death ends the session.** Both host
+  decision (**SUPERSEDED for the happy path 2026-08-31 — see `docs/DEATH_ARC.md`
+  section 10: a revived host never calls `Session::Stop()`, so the session
+  continues; the FAILURE path still ends it**): **permadeath, rejoinable; host
+  death ends the session.** Both host
   and peer death use VOTV's native SP death->menu flow — NO death->menu intercept
   (principle 6: native behavior is acceptable for coop). Host death = session ends
   for all (== host exit, no migration); peer death = disconnect to menu (existing
