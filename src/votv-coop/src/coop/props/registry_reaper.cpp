@@ -146,6 +146,20 @@ bool Tick(coop::net::Session& session) {
         // because it captured `reapWorld` once at the top of the scan; so does this.
         void* const world = ue_wrap::world_identity::CurrentWorld();
         const bool inGameplayWorld = (kind == ue_wrap::world_identity::WorldKind::Gameplay);
+        // PUBLISH IT. The verdict has been computed here since the R-2b cut and never left this
+        // function, so `ReseedGatePasses_` read a `g_reaperInGameplay` that was false for the
+        // life of the process -- scan-hub consumer #14 collected its candidates every two
+        // seconds and dropped 100% of them, forever, on both peers. `[V]` 2026-09-01: 27 x
+        // "reseed: pass scratch dropped (n=3222 reason=gate)" on a host, and ZERO drains.
+        //
+        // That is why the host's key index held 28 keyed props against a world of ~2200 and why
+        // every coin-gun sale of an ordinary save-loaded prop was refused with the item already
+        // destroyed. The steady re-seed it disabled is ALSO what bumps `SeedGeneration()`, the
+        // wake signal deferred joiners wait on, and its absence is why six other key lookups in
+        // the tree fall back to a full walk on a cold index. The consumer replaced the retired
+        // 0.25 Hz census under RULE 2 -- so this line is not an improvement, it is the half of
+        // that replacement that never landed.
+        coop::prop_element_tracker::SetReaperInGameplayWorld(inGameplayWorld);
         // THE ONE CASE this reader is worse than the walk it replaces, stated rather than
         // discovered later. If the world cannot be resolved at all, `kind` is Unknown, and
         // Unknown is not Gameplay -- so FIVE things stop, not the two an earlier draft of this

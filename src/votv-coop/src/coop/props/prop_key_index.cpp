@@ -17,7 +17,6 @@
 
 #include "ue_wrap/engine/engine.h"  // GetActorLocation (F1 keyed save-time map)
 #include "ue_wrap/core/log.h"
-#include "ue_wrap/engine/world_identity.h"  // seed once per WORLD, not once per process
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/reflection.h"
 
@@ -113,6 +112,11 @@ void EraseKeyIndexForActor_(void* actor) {
 void IndexActorKey(void* actor, const std::wstring& key) {
     if (!actor || key.empty() || key == L"None") return;
     IndexKeyForActor_(actor, key, R::InternalIndexOf(actor));
+}
+
+size_t KeyIndexSize() {
+    std::lock_guard<std::mutex> lk(g_keyIndexMutex);
+    return g_keyToActor.size();
 }
 
 void CollectKeyIndexEntries(std::vector<KeyIndexEntry>& out) {

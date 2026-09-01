@@ -275,32 +275,18 @@ void OnReliable(const uint8_t* payload, int len, uint8_t senderSlot) {
         prop = coop::element::LivePropActor(static_cast<coop::element::ElementId>(p.elementId));
         how  = L"eid";
     }
-    if (!prop && !keyStr.empty()) {
-        // ONE THROTTLED RE-SEED, THEN ASK AGAIN -- the same mitigation this file already
-        // prescribes for the other attacker-steered lookup ("cache, and walk only on a miss"),
-        // and it is what makes the refusal below mean what it says.
-        //
-        // The index is not a census of the world: it holds what the host SPAWNED or TOUCHED
-        // plus a trickle gated on a 256-per-4s reaper. `[V]` 2026-09-01 a host held 28 keyed
-        // props where its client held 2233 of the same world -- so a client selling any
-        // ordinary save-loaded prop missed, was refused, and lost the item to its own destroy
-        // that had already landed. Every time, not rarely. The comment below used to call that
-        // a pre-existing divergence "this lane exposes, not one it causes"; the divergence was
-        // ours, and it was an empty index.
-        //
-        // Throttled to one walk per 200 ms process-wide, so a peer firing at any rate it likes
-        // cannot buy more than that -- which is the property the audit asked for.
-        if (coop::prop_element_tracker::ReconcileIndexThrottled())
-            prop = coop::prop_element_tracker::FindLiveActorByKey(keyStr);
-    }
     if (!prop) {
         const bool logIt = Refuse(s, senderSlot, coop::net::CoinGunResultCode::NoSuchProp);
         if (logIt) UE_LOGW("coingun[host]: REFUSED slot=%u artifact='%ls' (key='%ls' eid=%u) -- "
-                "REASON=no-such-prop. NEITHER name resolves to a live prop in our world, so the two "
-                "peers disagreed about this prop BEFORE anyone fired: a pre-existing stable-ID "
-                "divergence this lane exposes, not one it causes. The client's own destroy still "
-                "lands, so this degrades to pre-A37 behaviour (item lost, nothing credited) -- it "
-                "does not manufacture a NEW loss, and the seller is TOLD.",
+                "REASON=no-such-prop. NEITHER name resolves to a live prop in our world. This used to "
+                "say the two peers had disagreed before anyone fired -- a divergence this lane "
+                "exposed rather than caused. That was WRONG and it misdirected the diagnosis for "
+                "a day: `[V]` 2026-09-01 the host's key index held 28 keyed props against a world "
+                "of ~2200, because the steady re-seed consumer was gated off by a verdict nobody "
+                "published, so EVERY sale of an ordinary save-loaded prop landed here. That root "
+                "is fixed (registry_reaper publishes it now); reaching this line again means a "
+                "genuinely unknown key. The client's own destroy still lands, so it costs the "
+                "ITEM -- the lane's header names that invariant and does not yet hold it.",
                 senderSlot, artifact.c_str(), keyStr.empty() ? L"None" : keyStr.c_str(),
                 p.elementId);
         return;
