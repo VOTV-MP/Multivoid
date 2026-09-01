@@ -459,6 +459,7 @@ add_library(votv-coop SHARED
     src/coop/element/identity_destroy.cpp
     src/ue_wrap/core/component_calls.cpp
     src/coop/net/peer_admission.cpp
+    src/coop/net/peer_admission_selftest.cpp
     src/coop/net/lobby_password.cpp
     src/coop/net/peer_identity.cpp
     src/coop/net/session.cpp
