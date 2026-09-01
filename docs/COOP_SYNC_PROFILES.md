@@ -72,7 +72,7 @@ BUILT. Evidence `HO`=hands-on · `log` · `ST`=selftest/e2e · `code` · `inf` �
 | **Daily-task** | host state | 1 | 1U | code | HA | baseline-first-sight |
 | **Email** | append + delete | 2 | 2U | code | HA/CA | save-transfer + prime |
 | **Doors / keypads / locks** | channel family | 7 | 4W · 3U | HO | HA/CO/ARB | snapshot |
-| **Lights** | switch channel | 1 | 1U | code | CO | snapshot |
+| **Lights** | switch channel + **group channel (NEW 2026-09-01)** | 2 | 1U+1HA | code | CO | snapshot |
 | **Turbine** | float channel | 1 | 1U | code | HA | snapshot |
 | **Power panel** | mask channel | 1 | 1U | code | CO | snapshot |
 | **Grime** | decrease-only min | 2 | 2U | code | CO | snapshot |
@@ -152,7 +152,9 @@ a take-4 bug that a later unverified fix addressed stays at its last-measured `B
 | Keypads | digit buffer (input replication) | W | HO | CO | `keypad_sync::ApplyState` **[06-12 echo-storm]** | snapshot |
 | Keypads | active / door power + LED | W | HO | HA | `keypad_sync::ApplyState` **[06-17 keypads-dead]** | snapshot |
 | Keypads | Accept/Deny submit event | W | HO | CO | `keypad_sync::ApplyIncoming` **[07-04 red-button]** | snapshot (None) |
-| Lights | switch on/off | U | code | CO | `g_lightAdapter::CallUse` | snapshot |
+| Lights | switch VISUAL (`A` + mesh + click) | U | code | CO | `g_lightAdapter` -> `ApplySwitchPresentation` (client: RAII gate hold makes the replay presentation-only) | snapshot |
+| Lights | **group live state (`isActive`) -- the bit a player SEES** | HA | code | CO | `g_lightGroupAdapter` -> `runTrigger(root, on?1:2)` | snapshot |
+| Lights | group ENABLE GATE (`active`, driven by the base breaker) | -- | NOT SYNCED, and deliberately: our apply is ungated so nothing reads it, and the client's own press is gate-suppressed for one dispatch rather than held shut. Its only runtime driver is `powerControl`, whose press mask IS synced -- but `ApplyPress` skips `buttonsVisibility()`, so the mirror's gate does not follow. Fidelity residual, not correctness. | code | CO | -- | -- |
 | Turbine | 6 driver floats | U | code | HA | `turbine_sync::ApplyState` | snapshot + pending |
 | Power panel | 5 breaker bools (mask) | U | code | CO | `power_sync::ApplyMask` | snapshot + pending |
 | Grime | process wipe (min-wins) | U | code | CO | `grime_sync::ApplyResolved` | snapshot adopt=1 |
