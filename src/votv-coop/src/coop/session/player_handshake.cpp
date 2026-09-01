@@ -63,6 +63,21 @@ namespace {
 // constructor, so it cannot be forgotten the way the five arrays were.
 coop::roster_ledger::PerSlotState<bool> g_joinSent;
 
+// "<nick> is connecting to the game..." / "Connecting to <nick>'s game..." already
+// shown for this slot. A ONE-SHOT LATCH, so it lives here and not on the Row -- the
+// ledger header states the test: a Row setter is occupancy-gated, and the first Join
+// can land before its row exists, so a Row latch would be silently dropped exactly
+// when it is needed.
+//
+// WHY IT IS NEEDED (user report 2026-09-01: the line is still doubled on the second
+// join). The Join handshake legitimately arrives TWICE -- the relay below this
+// announcement says so in its own comment and skips its first arrival, because a
+// joiner with no Element yet sends the 0 sentinel and retries with a real eid. The
+// relay was guarded for that; the announcement was not, so it fired on both. The
+// sibling "<nick> joined the game" line has had a once-per-join latch since it was
+// written (AnnounceJoinerOnce); this is the missing half of the same pattern.
+coop::roster_ledger::PerSlotState<bool> g_connectAnnounced;
+
 }  // namespace
 
 // Store + live-apply: if the described slot's puppet is already spawned, re-skin
@@ -483,12 +498,23 @@ bool HandleJoinMessage(net::Session& session,
     // host's is PROGRESS toward a join, not the join: "<nick> joined the game" is the
     // event, and it fires below once the puppet appears. History keeps the event, not
     // the approach to it -- otherwise every join costs two history lines.
-    if (session.role() == net::Role::Client) {
-        coop::chat_feed::Push(L"Connecting to " + nick + L"'s game...",
-                              coop::chat_feed::Keep::Transient);
+    //
+    // ONCE per join, latched: see g_connectAnnounced. The latch clears with the slot's
+    // occupant (PerSlotState registers its own clear), so a peer that leaves and rejoins
+    // is announced again -- which is the case the user was looking at.
+    if (g_connectAnnounced[senderSlot]) {
+        UE_LOGI("player_handshake: slot %d connect line already shown -- suppressing the "
+                "repeat from a re-sent Join", senderSlot);
     } else {
-        coop::chat_feed::Push(nick + L" is connecting to the game...",
-                              coop::chat_feed::Keep::Transient);
+        g_connectAnnounced[senderSlot] = true;
+        if (session.role() == net::Role::Client) {
+            coop::chat_feed::Push(L"Connecting to " + nick + L"'s game...",
+                                  coop::chat_feed::Keep::Transient);
+        } else {
+            coop::chat_feed::Push(nick + L" is connecting to the game...",
+                                  coop::chat_feed::Keep::Transient);
+        }
+        UE_LOGI("player_handshake: slot %d connect line shown ('%ls')", senderSlot, nick.c_str());
     }
     // PR-FOUNDATION Tier 2 T2-1 (host-relay): if WE are the host, this Join
     // came from a client. Run the MTA InitialDataStream two-way cross-peer
