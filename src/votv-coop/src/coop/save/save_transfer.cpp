@@ -491,23 +491,24 @@ void OnRequest(int peerSlot) {
             coop::save_guard::SaveGamesDir() / (std::wstring(kHostXferSlot) + L".sav");
         std::vector<uint8_t> bytes;
         bool got = ReadWholeFile(scratchFile, bytes) && !bytes.empty();
-        // PLAUSIBLE, NOT MERELY NON-EMPTY -- and this check is why the join above it can be
-        // trusted at all.
+        // A SECOND OPINION, AND IT IS NOT THE PRIMARY ONE. The real check now lives at the
+        // producer: `save_capture` refuses a capture whose `objectsData` came back EMPTY, which
+        // is an exact integer about the thing that actually went wrong.
         //
-        // The comment forty lines up asserts "no torn-read window -- we just wrote it". `[V]`
-        // FALSE shortly after a level load: 2026-09-01 a host that had loaded its world six
-        // seconds earlier, and whose LIVE world held 2197 keyed props at that very instant,
-        // wrote a 1284-BYTE scratch save. `!bytes.empty()` passed it, so the joiner was handed
-        // 1284 bytes as "the host's world", loaded nothing from it, and kept the world it
-        // already had -- two ATVs, every door disagreeing, while both peers saw each other.
-        // The user found it by joining the moment the lobby appeared.
+        // THE MECHANISM THIS BLOCK ORIGINALLY CLAIMED WAS WRONG and is retracted rather than
+        // left standing. It said the game "had not finished writing" the scratch save. A
+        // post-ship audit hexdumped the surviving 1284-byte artifact: it is a structurally
+        // COMPLETE GVAS save, header, custom-version table and terminator intact -- a faithful
+        // serialization of a container that described no world, because the capture had
+        // resolved a gamemode belonging to a world that no longer existed. `SaveGameToSlot` is
+        // synchronous and returned true.
         //
-        // The comparator is the host's OWN canonical slot on disk: the world was loaded FROM
-        // it, so a live capture of the same world cannot be a fraction of its size. A new game
-        // is small on BOTH sides, so the ratio holds there too. Below the bar we do not ship
-        // it -- we fall through to the canonical path, which has the stable-size torn-read
-        // guard this one skipped (`TryCaptureBlob_`). The discipline already existed in this
-        // file; only the live path was exempt from it.
+        // The same audit showed this ratio could not have fired on the reported incident: a
+        // fresh VOTV save is ~1,248 B, so `1284 * 8 < 1248` is false and the stub would have
+        // shipped anyway. It is kept only for the case it CAN discriminate -- a big canonical
+        // against a small capture -- and it is honest about being unable to see the worse
+        // variant, where a stale gamemode's container is FULL and the joiner loads a complete
+        // world that is not the host's.
         if (got && !g_hostSlot.empty()) {
             std::error_code sizeEc;
             const uint64_t canonical =
@@ -592,6 +593,10 @@ void OnRequest(int peerSlot) {
                     g_blobKerfurXforms[peerSlot].size(), g_blobKeyedXforms[peerSlot].size());
             return;
         }
+        // ONLY WHEN THE READ ITSELF FAILED. When the plausibility gate above sets `got=false`
+        // it has already said why, and printing "unreadable" after it put two contradictory
+        // WARNs back to back for one event -- with the wrong one being the greppable phrase.
+        if (bytes.empty())
         UE_LOGW("save_transfer: slot %d -- live scratch '%ls.sav' unreadable after capture; "
                 "falling back to the canonical slot", peerSlot, kHostXferSlot);
     }
