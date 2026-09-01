@@ -165,13 +165,26 @@ is unaffected.
 **So `COOP_LATEST_URL` is now a LEGACY-ONLY knob.** b133..b149 render it; every build after this
 change ignores it. Keep it short and real while that cohort exists, then it stops mattering.
 
-**TWO CONSEQUENCES TO CARRY TO THE RELEASE.**
-1. **`verify_latest.ps1` now FAILS BY DESIGN** and will keep failing until step 6 replaces these
-   with the real numbers — the master advertises b134 while the ledger's newest published row is
-   b133. That is not a regression to investigate; it is this decision's price, and the reason step
-   6 stops being optional.
-2. **Replace all three at the release** (step 6), including `COOP_LATEST_MOD` — leaving
-   `Multivoid` there once a real build exists would hide the build number the player needs.
+**~~TWO CONSEQUENCES TO CARRY TO THE RELEASE~~ — BOTH DISCHARGED 2026-09-02, and the second one
+was found by the USER, not by us.**
+
+Step 6 ran: `/etc/coop-master.env` now carries `COOP_LATEST_PROTO=150`,
+`COOP_LATEST_MOD=0.9.0n b150`, `COOP_LATEST_URL=multivoid.dev` (backup
+`/etc/coop-master.env.bak-20260902`), `coop-master` restarted. `[V]` both legs from **outside**
+the box serve `{"mod":"0.9.0n b150","proto":150,...}` where minutes earlier they served
+`proto:134`; `verify_latest.ps1 -AllowDev` is **PASS** after two days RED.
+
+**The lesson to carry, because it cost a real player-visible defect.** The stand-in made
+`verify_latest.ps1` fail *on purpose*, and this file said so — so for two days its RED carried
+**no information**: it could not distinguish "waiting for step 6" from "step 6 was forgotten".
+It was forgotten, the release shipped, and every b150 install went on reading
+`(dev; latest released b134)` in the main-menu corner until the user reported it. A gate that is
+deliberately red is a gate that is off. If a future release again needs a stand-in, give the
+knob a value that keeps the gate GREEN, or don't set it until the number is real.
+
+What each cohort reads now (`session_manager.cpp:362-380`, three branches, no dev/stable axis):
+b150 → `Multivoid 0.9.0n b150 (latest)`; a dev build at 151 → `(dev; latest released b150)`;
+b133..b149 → `UPDATE 0.9.0n b150 AVAILABLE: multivoid.dev`.
 
 ### Before the day — free, and worth doing
 
