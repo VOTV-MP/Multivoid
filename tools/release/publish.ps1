@@ -44,7 +44,10 @@ if ($treePair -cne $tagPair) { throw "main-checkout identity '$treePair' != tag 
 
 # package.ps1 throws on any failure (ErrorActionPreference=Stop propagates);
 # its internal Test-PackageZip already ran on the written file.
-& (Join-Path $PSScriptRoot 'package.ps1') -PayloadDll $payload[0].FullName
+# -Release: this is the real artifact, so a missing pak is a HARD refusal rather
+# than a log line. See package.ps1's -Release for why the two lanes had to be told
+# apart -- the header described the difference and nothing enforced it.
+& (Join-Path $PSScriptRoot 'package.ps1') -PayloadDll $payload[0].FullName -Release
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $zipName  = Get-PackageZipName -Version (ConvertTo-PackageVersion -GameTarget $treeTarget -Proto $treeProto)
 $zipPath  = Join-Path (Join-Path $repoRoot 'build/package') $zipName

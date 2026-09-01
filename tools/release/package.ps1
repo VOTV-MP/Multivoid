@@ -34,7 +34,19 @@ param(
     [string]$PayloadDll = '',                       # default: the one payload in BuildDir
     [string]$OutDir     = 'build/package',
     [string[]]$Pak      = @(),                      # optional: files routed to pak\ (7.7c)
-    [switch]$KeepStage                              # leave the staged tree for inspection
+    [switch]$KeepStage,                             # leave the staged tree for inspection
+    # WHERE THE AUTO-INCLUDED PAKS COME FROM. A parameter rather than a buried literal
+    # so the -Release refusal below can actually be DRILLED: with the path hardcoded,
+    # the only way to reach the empty case was to not have the directory, which is
+    # untestable on the box that has it -- and a gate nobody can make fire is a gate
+    # nobody has checked. (2026-09-01.)
+    [string]$PakDir     = '',                       # default: <repo>/assets/paks
+    # ASSEMBLING THE REAL THING. A release zip MUST carry the starter paks; a CI or
+    # drill zip may lawfully be pak-less. Both statements were already written in this
+    # file's header and NEITHER was enforced, so the two lanes produced the same
+    # artifact and only the header knew they were supposed to differ. `publish.ps1`
+    # passes this; the CI package step deliberately does not. (2026-09-01.)
+    [switch]$Release
 )
 
 Set-StrictMode -Version Latest
@@ -131,7 +143,7 @@ Set-Content -LiteralPath (Join-Path $stage 'mod/enabled.txt') -Value 'true' -Enc
 # skin_registry scans every LogicMods subdirectory since 2026-08-29, so both
 # lanes see the models wherever their route lands them.
 if ($Pak.Count -eq 0) {
-    $pakDir = Join-Path $repoRoot 'assets/paks'
+    $pakDir = if ($PakDir) { $PakDir } else { Join-Path $repoRoot 'assets/paks' }
     if (Test-Path -LiteralPath $pakDir) {
         $Pak = @(Get-ChildItem $pakDir -File | Where-Object { $_.Extension -in '.pak', '.png' } |
                  ForEach-Object { $_.FullName })
@@ -144,8 +156,19 @@ if ($Pak.Count -gt 0) {
         Copy-Item $f (Join-Path $stage 'pak')
     }
     Write-Host "pak: staged $($Pak.Count) file(s)"
+} elseif ($Release) {
+    # FAIL CLOSED, and this is the check the header promised without having. The
+    # release lane runs on a GitHub runner (`release-core.yml`: runs-on windows-latest),
+    # and `assets/paks/*` is gitignored -- so a CI-published release would ship
+    # STRUCTURALLY correct and CONTENT-incomplete, with no line anywhere saying so.
+    # That is precisely the "silently broken release" this script's own verification
+    # section exists to refuse.
+    throw ("RELEASE zip has NO pak staged. assets/paks/ is gitignored, so it does not " +
+           "exist in a fresh checkout -- assemble the release where that directory is " +
+           "stocked, or pass -Pak explicitly. (A pak-less package still WORKS: skins " +
+           "fall back to the game's own. It is simply not the release that was agreed.)")
 } else {
-    Write-Host 'pak: NONE STAGED -- a RELEASE zip must carry the starter paks (assets/paks/ on the assembly box); a CI/drill zip may be pak-less'
+    Write-Host 'pak: none staged -- lawful for a CI/drill zip (pass -Release to require them)'
 }
 
 # --- Zip -------------------------------------------------------------------
