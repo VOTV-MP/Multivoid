@@ -24,11 +24,15 @@
 // movement-block) is a garbageCollider-analog SHAPE component on the proxy. Scope:
 // trash only (chipPile / clump + variants); Aprop_C and kerfur mirrors are unchanged.
 //
-// LIFECYCLE: this module OWNS the eid->proxy registry + the rooting. Every retire
-// path funnels through RetireProxy (Destroy -> RemoveFromRoot -> unbind, in that
-// order -- GC can't interleave on the game thread). OnDisconnect sweeps the whole
-// registry as the structural no-leak backstop (a rooted actor must never survive
-// the session). The membership-reconcile sweep EXCLUDES mirrors (RunDivergenceSweep_
+// LIFECYCLE: this module OWNS the eid->proxy registry, and the GC pin RIDES THE
+// REGISTRY ENTRY -- `ProxyEntry` holds an `ue_wrap::GcPin` by value, so erasing the
+// entry IS the un-root and no retire path can forget it or make it conditional.
+// That is not a style choice: the previous shape spelled the release out by hand as
+// `if (liveActor) { Destroy(liveActor); RemoveFromRoot(liveActor); }`, and at a world
+// teardown `Alive()` is false, so `[V]` 2026-09-01 it skipped 871 un-roots and the
+// rooted actors anchored the departed UWorld through their Outer chain until the next
+// map load adopted the corpse and crashed. OnDisconnect sweeps the whole registry as
+// the structural no-leak backstop (a rooted actor must never survive the session). The membership-reconcile sweep EXCLUDES mirrors (RunDivergenceSweep_
 // `if (pr.mirror) continue;`), so it is not a proxy retire path. GAME-THREAD only.
 
 #pragma once
@@ -72,13 +76,17 @@ void* SpawnProxy(coop::element::ElementId eid, uint8_t chipType, bool isClump, i
 // the proxy actor, or nullptr if `eid` is not a tracked proxy. Game thread.
 void* ReskinProxy(coop::element::ElementId eid, uint8_t chipType, bool isClump, const ue_wrap::FVector& scale);
 
-// Retire proxy `eid`: Destroy -> RemoveFromRoot -> unbind the Prop mirror. The
-// single teardown helper (order per the GC-window analysis: destroy marks
-// PendingKill, then un-root makes it GC-reapable -- a rooted PendingKill actor
-// would leak). No-op if `eid` is not a tracked proxy. Game thread.
+// Retire proxy `eid`: take the pin out of the entry -> erase the entry -> drive-evict
+// -> Destroy -> unbind, with the pin RELEASING AT SCOPE EXIT, i.e. after the destroy.
+// The erase comes first so nothing below can re-enter and find a half-retired entry;
+// the release comes last because destroy marks PendingKill and the un-root is what
+// makes that memory GC-reapable. The destroy stays conditional on liveness (it needs a
+// live actor); THE RELEASE DOES NOT, which is the whole point of the pin owning itself.
+// No-op if `eid` is not a tracked proxy. Game thread.
 void RetireProxy(coop::element::ElementId eid);
 
-// Retire ONLY the proxy ACTOR for `eid` (drive-evict -> Destroy -> RemoveFromRoot), WITHOUT unbinding
+// Retire ONLY the proxy ACTOR for `eid` (same take-pin -> erase -> drive-evict -> Destroy ->
+// release-at-scope-exit order as RetireProxy), WITHOUT unbinding
 // its Prop mirror / Element. The caller MUST have already rebound `eid` onto a replacement actor in
 // place (RegisterPropMirror rebindInPlace=true) -- this is the clump-proxy -> native-pile nativization
 // (increment 2), the exact inverse of the native -> clump morph hand-off. Contrast RetireProxy, the
@@ -112,8 +120,8 @@ coop::element::ElementId EidForAimedPileProxy(const ue_wrap::FVector& camLoc, co
 // Retire every proxy owned by `slot` (a PER-SLOT disconnect -- a single peer
 // dropping while the session stays up). MUST be called before the generic
 // per-slot mirror drain (remote_prop::OnDisconnectForSlot -> DrainMirrorsForSlot),
-// which would otherwise drain a proxy's Prop Element WITHOUT un-rooting its
-// AStaticMeshActor = a rooted leak (CRITICAL-1). Game thread.
+// which would otherwise drain a proxy's Prop Element while leaving the registry entry --
+// and therefore its GcPin -- in place = a rooted leak (CRITICAL-1). Game thread.
 void OnDisconnectForSlot(int slot);
 
 // Retire EVERY proxy (net disconnect): the structural no-leak backstop so a rooted

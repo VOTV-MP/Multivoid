@@ -677,9 +677,10 @@ void ForceRelease() {
     int released = 0;
     for (auto& d : g_drives) {
         if (!d.actor) continue;
-        // Host-authoritative trash proxy: full teardown via RetireProxy (Destroy + RemoveFromRoot
-        // + unbind). NEVER ConsumeLocalActor it -- that destroys the rooted AStaticMeshActor
-        // WITHOUT RemoveFromRoot (a leaked GUObjectArray slot) and bypasses the proxy registry.
+        // Host-authoritative trash proxy: full teardown via RetireProxy (Destroy + unbind, with
+        // the entry's GcPin releasing on the erase). NEVER ConsumeLocalActor it -- that destroys
+        // the actor while its registry entry, and so its pin, stays put: a rooted PendingKill
+        // actor that anchors its whole world, and a proxy-registry bypass on top.
         // RetireProxy clears this drive (ClearAnyDriveFor) so d.actor is null after.
         if (d.isProxy) {
             coop::trash_proxy::RetireProxy(d.lastEid);
@@ -739,8 +740,8 @@ void OnDisconnectForSlot(int peerSlot) {
     }
     ActiveDrive& d = g_drives[peerSlot];
     if (!d.actor) return;
-    // Host-authoritative trash proxy: full teardown via RetireProxy (Destroy + RemoveFromRoot
-    // + unbind), never ConsumeLocalActor (a rooted-slot leak + registry bypass). Normally the
+    // Host-authoritative trash proxy: full teardown via RetireProxy (Destroy + unbind, pin
+    // released by the erase), never ConsumeLocalActor (a rooted-slot leak + registry bypass). Normally the
     // proxy is already retired by trash_proxy::OnDisconnectForSlot (called first in
     // subsystems::DisconnectSlot), so d.actor is null and we returned above -- this is the
     // belt-and-suspenders path. RetireProxy is idempotent.

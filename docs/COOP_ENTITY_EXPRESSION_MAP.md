@@ -388,7 +388,12 @@ HEAD `29353191`; see the Increment-2 bullet below). A sync-time-context byte rej
   (never spawn-fresh). **Spawn** = `trash_proxy::SpawnProxy` (caught at the `OnSpawn` trash-class branch,
   BEFORE the BP dedup); **identity** = the eid in `g_proxies` + the Prop mirror (`RegisterPropMirror`);
   **re-skin** = `OnConvert` → `IsProxy(E)` → `ReskinProxy`; **destroy** = `OnDestroy`/disconnect →
-  `RetireProxy` (`DestroyActor → RemoveFromRoot → unbind`). The proxy's `UStaticMeshComponent` is set
+  `RetireProxy` (take the entry's `GcPin` out → erase the entry → drive-evict → `DestroyActor` →
+  unbind, with the **pin releasing at scope exit, after the destroy**). Since 2026-09-01 the pin is
+  OWNED by the registry entry (`ue_wrap::GcPin` held by value in `ProxyEntry`), so erasing the entry
+  IS the un-root; the previous hand-written `if (liveActor) { Destroy; RemoveFromRoot; }` skipped the
+  un-root at every world teardown and leaked 871 rooted actors that anchored the departed `UWorld`.
+  The proxy's `UStaticMeshComponent` is set
   **Movable** (`SetComponentMobility`, `245148c6`) because a runtime `AStaticMeshActor` defaults to STATIC, on
   which `SetStaticMesh`/`SetActorLocation` silently no-op. This **closed the former OPEN client
   mirror-staleness dup** (a real-BP join-mirror went NOT-LIVE within ~10s → `ResolveLiveActorByEid` null →
