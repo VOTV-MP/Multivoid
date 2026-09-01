@@ -192,6 +192,26 @@ bool ParseHostPort(const std::string& in, std::string& host, uint16_t& port) {
 // -- the connect console / browser status / boot log never advertise the raw
 // VPS address (user 2026-06-10). A genuinely custom master prints verbatim
 // (its operator needs to see it for debugging).
+// WHAT AN UNLISTED DIRECT HOST CAN HONESTLY PROMISE, and it is not the same sentence for a
+// locked lobby as for an open one.
+//
+// "friends use Direct Connect with your IP" is TRUE for an open session and FALSE for a
+// locked one: a joiner who types an address has no advertised identity to bind to, so
+// `peer_admission` refuses to send anything password-derived and the join cannot complete
+// from any shipped UI (it needs `net.host_identity`, a row with three readers and no
+// writer). Saying it anyway would be the exact defect this session was opened to fix -- a
+// status line naming a configuration the session does not have -- one layer down.
+// (Post-ship audit, 2026-09-01.)
+std::string UnlistedDirectStatus(const char* lead, bool locked) {
+    std::string s(lead);
+    s += " -- master unreachable, NOT listed; ";
+    s += locked
+        ? "friends need your IP AND your host id (search multivoid.log for 'dial=') -- a "
+          "locked session cannot be joined by address alone"
+        : "friends use Direct Connect with your IP";
+    return s;
+}
+
 std::string DisplayMaster(const std::string& url) {
     return url == coop::net::kOfficialMasterUrl ? std::string("DEFAULT") : url;
 }
@@ -650,15 +670,13 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
                         directConnection ? "DIRECT" : "P2P",
                         info.lobbyId.c_str(), choice.newGame ? "newGame" : "slot", world.c_str());
             } else if (directConnection) {
-                SetHostStatus("Hosting DIRECT -- master unreachable, NOT listed; friends use "
-                              "Direct Connect with your IP");
+                SetHostStatus(UnlistedDirectStatus("Hosting DIRECT", locked));
                 UE_LOGW("session_manager: HOST-WITH-SAVE ready (DIRECT, UNLISTED -- master '%s' unreachable, port %u)",
                         DisplayMaster(masterUrl).c_str(), static_cast<unsigned>(directPort));
             } else {
                 // The line now describes what actually happened. It used to promise
                 // "LAN/direct only" for a P2P session that had neither.
-                SetHostStatus("Hosting -- master unreachable, NOT listed; friends use "
-                              "Direct Connect with your IP");
+                SetHostStatus(UnlistedDirectStatus("Hosting", locked));
                 UE_LOGW("session_manager: HOST-WITH-SAVE ready (UNLISTED -- master '%s' unreachable) "
                         "-- fell back to a DIRECT listen on port %u so the session stays joinable",
                         DisplayMaster(masterUrl).c_str(), static_cast<unsigned>(directPort));

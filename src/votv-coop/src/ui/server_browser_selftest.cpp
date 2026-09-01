@@ -234,6 +234,9 @@ int g_scrimInsideWindow = -1;
 // whether a MINT was due at all (the box was empty) or whether keeping the existing value
 // is the correct outcome. Sampled per run; -1 would be indistinguishable from "empty".
 int g_lockPwLenBefore   = 0;
+// ...and whether the lock was ALREADY on. A click onto an already-locked row is a no-op by
+// design, so without this the verify step cannot tell a working click from a dead one.
+bool g_lockWasLockedBefore = false;
 
 // ---- T0 state ----------------------------------------------------------------------
 // Every reading starts at a value no measurement can produce, so an unrun phase is
@@ -1324,6 +1327,7 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             // hosted before, the field is restored from the ini and this click mints nothing;
             // asserting a mint length there would report a working feature as broken.
             g_lockPwLenBefore = ui::host_session_settings::PasswordLength();
+            g_lockWasLockedBefore = ui::host_session_settings::Locked();
             UE_LOGW("host_session_settings: LOCK row at desktop (%.0f,%.0f) %.0fx%.0f "
                     "(locked=%d, password length=%d before) -- clicking it",
                     tl.X, tl.Y, sz.X, sz.Y,
@@ -1351,7 +1355,16 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             const int  want   = ui::host_session_settings::GeneratedPasswordLength();
             const bool minted = (g_lockPwLenBefore == 0);
             const int  expect = minted ? want : g_lockPwLenBefore;
-            if (locked && len == expect)
+            // ...AND THE LOCK MUST HAVE ACTUALLY MOVED. Without this term the no-mint arm
+            // passes a click that did NOTHING: if the box is non-empty and net.lobby_locked
+            // is 1, the window opens already locked, `SetLocked` returns at its first line,
+            // and "the value survived" is true of a dead pointer path too. That arm is the
+            // one that runs on every rig that has hosted before -- i.e. every dev rig after
+            // its first run -- and this phase is cited as the behaviour-preservation
+            // evidence for two refactors. The aim step already sampled the flag; it just
+            // was not consumed. (Post-ship audit, 2026-09-01.)
+            const bool turnedOn = !g_lockWasLockedBefore;
+            if (locked && turnedOn && len == expect)
                 UE_LOGW("host_session_settings: LOCK PASS -- a real click on \"Password "
                         "required\" turned the lock on and %s. The host never has to invent "
                         "one.", minted
@@ -1360,9 +1373,10 @@ void Tick(void* scrim, void* list, void* exitBtn) {
                               "box was not empty, which is the documented behaviour)");
             else
                 UE_LOGE("host_session_settings: LOCK FAIL -- after a real press-release on the "
-                        "lock row: locked=%d, password length=%d, expected %d (%s). A lock with "
-                        "no secret behind it is a padlock that lies to the host.",
-                        locked ? 1 : 0, len, expect,
+                        "lock row: locked=%d (was %d), password length=%d, expected %d (%s). A "
+                        "lock with no secret behind it is a padlock that lies to the host; a "
+                        "lock that was already on measures nothing about the click.",
+                        locked ? 1 : 0, g_lockWasLockedBefore ? 1 : 0, len, expect,
                         minted ? "a fresh mint was due" : "the existing value should have been kept");
             g_holdUntilMs = nowMs + kShotHoldMs;
             break;
