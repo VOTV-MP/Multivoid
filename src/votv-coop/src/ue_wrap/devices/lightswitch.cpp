@@ -5,6 +5,7 @@
 #include "ue_wrap/devices/lightswitch.h"
 
 #include "ue_wrap/core/call.h"
+#include "ue_wrap/core/field_io.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 
@@ -21,7 +22,11 @@ std::atomic<bool> g_resolved{false};
 void*   g_rootCls    = nullptr;  // trigger_lightRoot_C UClass
 int32_t g_keyOff     = -1;       // AtriggerBase_C::Key       (Alpha 0.9.0-n: 0x0260)
 int32_t g_isActiveOff = -1;      // trigger_lightRoot_C::IsActive (0x02B8)
-void*   g_setActiveFn = nullptr; // SetActive(bool Active)
+void*   g_setActiveFn = nullptr; // SetActive(bool Active) -- writes the GATE only (see the header)
+int32_t g_gateOff     = -1;      // trigger_lightRoot_C::active -- the ENABLE GATE (distinct from IsActive)
+void*   g_runTriggerFn = nullptr;// runTrigger(owner, index) -- index 1/2 are the ABSOLUTE setters
+int32_t g_objectsOff  = -1;      // triggerBase_C::objects (TArray<UObject*>) -- objects[0] is the switch's root
+int32_t g_swTriggerOff = -1;     // Alightswitch_C::Trigger -- the legacy single-pointer fallback
 
 constexpr int32_t kKeyOffFallback      = 0x0260;
 constexpr int32_t kIsActiveOffFallback = 0x02B8;
@@ -60,6 +65,16 @@ bool EnsureResolved() {
         UE_LOGW("lightswitch: SetActive UFunction not found -- not ready");
         return false;
     }
+    // `active` (the gate) and `IsActive` (the live state) are two SEPARATE FBoolProperties on
+    // this class and FName lookup is case-insensitive, so these two names resolve two fields.
+    // No fallback offset for the gate on purpose: we WRITE it, and a write through a guessed
+    // offset corrupts an unrelated field instead of merely reading a wrong number.
+    const int32_t gateOff = R::FindPropertyOffset(rootCls, L"Active");
+    if (gateOff < 0) UE_LOGW("lightswitch: reflected `active` gate offset not found -- gate ops disabled");
+    void* runTriggerFn = R::FindFunction(rootCls, L"runTrigger");
+    if (!runTriggerFn) UE_LOGW("lightswitch: runTrigger UFunction not found -- absolute group apply disabled");
+    g_gateOff      = gateOff;
+    g_runTriggerFn = runTriggerFn;
 
     g_rootCls     = rootCls;
     g_keyOff      = keyOff;
@@ -119,6 +134,11 @@ bool EnsureSwitchResolved() {
     }
     void* useFn = R::FindFunction(cls, L"use");
     if (!useFn) { UE_LOGW("lightswitch: switch use() UFunction not found -- not ready"); return false; }
+    // The switch reaches its group through the inherited triggerBase_C::objects array (the BP
+    // does Array_Get(objects, 0) then casts to the int_Ttrigger interface). `Trigger` is an
+    // older single-pointer field kept as a fallback -- the bytecode does not read it.
+    if (void* trigCls = R::FindClass(L"triggerBase_C")) g_objectsOff = R::FindPropertyOffset(trigCls, L"objects");
+    g_swTriggerOff = R::FindPropertyOffset(cls, L"Trigger");
     g_swCls = cls; g_swKeyOff = keyOff; g_swAOff = aOff; g_useFn = useFn;
     g_swResolved.store(true, std::memory_order_release);
     UE_LOGI("lightswitch: resolved switch lightswitch_C=%p Key@0x%04X A@0x%04X use=%p",
@@ -152,6 +172,48 @@ bool CallUse(void* sw) {
     ParamFrame f(g_useFn);
     if (!f.valid()) return false;
     return Call(sw, f);
+}
+
+// --- The GROUP as a synced entity -----------------------------------------
+
+void* ResolveSwitchRoot(void* sw) {
+    if (!sw) return nullptr;
+    if (!EnsureResolved()) return nullptr;  // need the lightRoot class to validate what we find
+    // objects[0] first -- that is what use() actually reads.
+    if (g_objectsOff >= 0) {
+        const auto* arr = reinterpret_cast<const field_io::TArrayView*>(
+            reinterpret_cast<const char*>(sw) + g_objectsOff);
+        if (arr->data && arr->num > 0) {
+            void* first = *reinterpret_cast<void* const*>(arr->data);
+            if (first && R::IsLive(first) && IsLightRoot(first)) return first;
+        }
+    }
+    if (g_swTriggerOff >= 0) {
+        void* t = *reinterpret_cast<void* const*>(reinterpret_cast<const char*>(sw) + g_swTriggerOff);
+        if (t && R::IsLive(t) && IsLightRoot(t)) return t;
+    }
+    return nullptr;
+}
+
+bool CallRunTrigger(void* root, int32_t index) {
+    if (!root || !g_runTriggerFn) return false;
+    ParamFrame f(g_runTriggerFn);
+    if (!f.valid()) return false;
+    f.Set<void*>(L"owner", root);   // never read by the BP on any index path; a valid object beats null
+    f.Set<int32_t>(L"index", index);
+    return Call(root, f);
+}
+
+bool ApplyGroupState(void* root, bool on) { return CallRunTrigger(root, on ? 1 : 2); }
+
+bool GetGroupGate(void* root) {
+    if (!root || g_gateOff < 0) return true;  // unknown -> report OPEN, the authored default
+    return *reinterpret_cast<const bool*>(reinterpret_cast<const char*>(root) + g_gateOff);
+}
+
+void SetGroupGate(void* root, bool open) {
+    if (!root || g_gateOff < 0) return;  // fail CLOSED on an unresolved offset: never write a guess
+    *reinterpret_cast<bool*>(reinterpret_cast<char*>(root) + g_gateOff) = open;
 }
 
 }  // namespace ue_wrap::lightswitch

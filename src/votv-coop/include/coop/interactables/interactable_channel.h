@@ -26,7 +26,6 @@
 #include "coop/element/object_scan_hub.h"      // R-2: the shared sliced scan pass
 #include "ue_wrap/engine/world_identity.h"     // R-2: gen-stamped index (dead-world guard)
 
-#include "ue_wrap/devices/door.h"            // TickSmartApply (HostAuth Tick finishes mid-animate doors)
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/walk_timer.h"         // per-channel RebuildIndex [WALK-TIME] (R-2 phase split)
 #include "ue_wrap/core/reflection.h"
@@ -84,6 +83,17 @@ struct Adapter {
     void (*SuppressHeld)(void* actor);         // HOST: mute its OWN autoclose while a client holds this door open
     void (*ReleaseHeld)(void* actor);          // HOST: restore autoclose + close when the client releases the hold
     bool (*CanOpen)(void* actor);              // HostAuth: true if a manual E-press would open it now (Active && !jammed && !superClosed); null = always openable
+    // --- Facets that used to be implied by Mode::HostAuth (split out 2026-09-01) -------
+    // `Mode::HostAuth` was doing two unrelated jobs: naming the AUTHORITY DIRECTION, and
+    // switching on the DOOR HOLD REGISTER. That fused the moment a second HostAuth feature
+    // appeared. A census of the mode's branches found the register was not even hook-gated:
+    // `holdOpen_[key] |= bit` and `settling_[key] = ...` ran regardless of whether an adapter
+    // supplied SuppressHeld/ReleaseHeld, and the poll then SKIPS every key present in
+    // holdOpen_ -- so a non-door HostAuth feature would have entered the register on its first
+    // client request and silently stopped being polled from then on. These make the two
+    // facets explicit; doors set both, everything else leaves them off.
+    bool holdRegister;                         // HOST: this feature's client requests are HOLDS (doors). Off = a request is just an apply.
+    void (*TickApply)();                       // per-tick completion for an ASYNC apply (doors' mid-animation snap). Null = nothing to finish.
 };
 
 // ---- The generic replication engine --------------------------------------
@@ -243,6 +253,18 @@ public:
         if (key.empty() || !a_.EnsureResolved()) return;
         void* actor = ResolveFast(key);
         if (!actor) return;  // the door must exist host-side (it is authoritative there)
+        // No hold register for this feature: a client request is simply the host performing
+        // the action under its own guards, and the resulting state goes out on the next poll.
+        // (Doors need the register because their own autoclose fights an applied state; a
+        // feature with no auto-revert must NOT inherit that bookkeeping -- see holdRegister.)
+        if (!a_.holdRegister) {
+            if (a_.CanOpen && p.action && !a_.CanOpen(actor)) {
+                if (ProbeLog()) UE_LOGI("%s: request '%ls' DENIED by CanOpen (slot %u)", a_.name, key.c_str(), senderSlot);
+                return;
+            }
+            a_.RequestApply(actor, p.action != 0);
+            return;
+        }
         // holdOpen_[key] is a BITMASK of the peer slots currently holding this door open
         // (refcount across peers). The door stays open while ANY bit is set and only closes
         // when the LAST holder releases -- so two+ peers opening the same door, and one of
@@ -412,7 +434,7 @@ public:
     void Tick() {
         if (!a_.EnsureResolved()) return;
         RegisterWithScanHub();  // safety net for any order where Tick precedes Install
-        if (mode_ == Mode::HostAuth) ue_wrap::door::TickSmartApply();  // finish/snap doors mid-animate
+        if (a_.TickApply) a_.TickApply();  // finish/snap an async apply mid-animate (doors); nothing to do for an instant one
         if (!IndexCurrent()) return;  // index belongs to a dead world -- wait for the hub's next pass
         const auto now = std::chrono::steady_clock::now();
         if (now - lastRetry_ >= kRetryRebuildThrottle) {
