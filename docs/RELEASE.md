@@ -270,7 +270,12 @@ and a retracted N never republishes), or a site deploy (redeploy the previous bu
    line whenever the env gate is set (a config/catalog regression fails the
    smoke itself, exit 8).
    **Named requirement (arc D2, 2026-07-28):** the same smoke's log carries
-   `repertoire selftest: PASS` AND `font selftest: PASS` on every peer. The font
+   `repertoire selftest: PASS` AND `font selftest: DONE fail=0` on every peer.
+   (The font emitter has never printed the literal `PASS` this step used to
+   demand — corrected 2026-09-01 after grepping for it; what it prints is
+   `font selftest: DONE fail=0 (12/12) -- ... N colour texels in one emoji`,
+   which is strictly MORE than the checklist asked for. A release step that
+   greps for a string nothing emits stalls on its own wording.) The font
    one asserts the PHENOMENON — a known emoji glyph is flagged `Colored` and its
    atlas box holds non-greyscale texels — because "the donor resource loaded"
    goes GREEN on a build compiled without `ImGuiFreeTypeBuilderFlags_LoadColor`,
