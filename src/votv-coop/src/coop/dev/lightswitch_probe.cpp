@@ -91,6 +91,9 @@ void Install() {
 // Defined below Tick (it is the long one); declared here because Tick fires it.
 void RunGroupApplySelftest();
 
+// Latched the moment any peer is seen, and never cleared: see (3) in Tick's guard.
+static bool g_everSawPeer = false;
+
 void Tick() {
     if (!ProbeEnabled() || g_testDone || !g_installed) return;
     // Let the world (lightswitches) load before the one-shot synthetic flip.
@@ -102,31 +105,42 @@ void Tick() {
     // "expected 2 peers, got 1" with it on, twice, everything else identical. It is a solo
     // measurement instrument and this makes that its contract rather than its documentation.
     //
-    // ZERO PEERS, not "no session". The first version of this guard refused on
-    // `running() || connected()` and that made the probe UNREACHABLE ON EVERY LAUNCH, not
-    // merely hard to run: the only path that calls this Tick is net_pump::Tick -> TickGameplay,
-    // and session_runtime.cpp:694-700 calls net_pump::Tick ONLY when running() is true (the
-    // sessionless branch calls subsystems::Install and nothing else). So the guard's pass
-    // condition and its caller's pass condition were mutually exclusive, and the selftest below
-    // could never fire again. `[[lesson-a-guard-can-be-unsatisfiable-with-its-own-caller]]`
+    // NOBODY ELSE HERE, EVER -- not "no session". Three things this guard has to get right,
+    // and the first two versions each got one of them wrong.
     //
-    // The mechanism I wrote down the first time was also wrong. The measured breakage was NOT
-    // "the mutation landed just before the client arrived" -- it was the mutation landing inside
-    // the joining client's CONNECT SNAPSHOT, and the snapshot is enumerated once that peer is
-    // seated and counted. So the dangerous state is a peer BEING here, which is exactly what
-    // connectedPeerCount() reports, and a solo host with nobody in it is safe. Both are game-
-    // thread reads, and this whole probe is one synchronous game-thread call, so it cannot
-    // interleave with a snapshot drain (also game thread) -- there is no partial-mutation window.
+    // (1) It must be SATISFIABLE WITH ITS OWN CALLER. The version before this refused on
+    //     `running() || connected()`, which made the probe unreachable on EVERY launch rather
+    //     than merely hard to arm: net_pump::Tick is the only path that reaches this Tick (via
+    //     subsystems::TickGameplay), and session_runtime.cpp calls net_pump::Tick only when
+    //     running() is true -- at :298 and :336 inside loops that break on !running(), and at
+    //     :696 under `if (running)`. All three agree, so running() is a PRECONDITION of getting
+    //     here and refusing on it is refusing always.
+    //     `[[lesson-a-guard-can-be-unsatisfiable-with-its-own-caller]]`
     //
-    // Deliberately NOT latched: a solo run that later hosts still gets its measurement.
+    // (2) It must count the peers that are ARRIVING, not just the seated ones.
+    //     connectedPeerCount() counts slots whose lanes are configured; a joiner spends its
+    //     entire AuthHello/Challenge/Proof round trip in the pending band, where that reads
+    //     ZERO. Hence the sum with pendingPeerCount(). (Measured 2026-09-01: in one smoke the
+    //     one-shot fired at 16:01:19 and the client was accepted into PENDING at 16:01:20.)
+    //
+    // (3) It must not RE-OPEN. The refusal latches: once any peer has been seen, this instrument
+    //     is done for the process. Without that, a host whose only client disconnects drops back
+    //     to zero and the mutating one-shot fires into a live hosted session -- a state the
+    //     over-broad first guard did at least make unreachable.
+    //
+    // The earlier mechanism note here was wrong and is not worth preserving: the breakage was
+    // not "the mutation landed just before the client arrived". What the runs actually show is
+    // an arriving peer, which is what (2) is about.
     const auto& sess = harness::session_runtime::Session();
-    if (sess.connectedPeerCount() > 0) {
+    const int present = sess.connectedPeerCount() + sess.pendingPeerCount();
+    if (present > 0) g_everSawPeer = true;
+    if (g_everSawPeer) {
         static bool s_said = false;
         if (!s_said) { s_said = true;
-            UE_LOGW("[lightswitch_probe] %d peer(s) present -- holding the mutating one-shot. "
-                    "This probe writes world state; run it solo (`mp.py lightgroup`). The "
-                    "read-only per-key census is `lightgroup_census=1` and is safe on both peers.",
-                    sess.connectedPeerCount()); }
+            UE_LOGW("[lightswitch_probe] %d peer(s) present or arriving -- holding the mutating "
+                    "one-shot for the rest of this process. It writes world state; run it solo "
+                    "(`mp.py lightgroup`). The read-only per-key census is `lightgroup_census=1` "
+                    "and is safe on both peers.", present); }
         return;
     }
     g_testDone = true;
@@ -199,7 +213,10 @@ void RunGroupApplySelftest() {
     {  // the hold's scope: everything needing the gate shut happens inside it
     LS::ScopedGroupGateShut hold(root);
     check("gate reads back shut after the scoped shut", hold.shut() && LS::GetGroupGate(root) == false);
-    LS::CallRunTrigger(root, 0);
+    // Assert the DISPATCH happened before asserting that it changed nothing. Without this,
+    // "the gate correctly refused" and "the call never resolved" are the same green -- and the
+    // second one is the likelier failure after a game update renames the verb.
+    check("runTrigger(index 0) actually dispatched", LS::CallRunTrigger(root, 0));
     bool afterGated = before;
     LS::TryReadActive(root, afterGated);
     check("index 0 (the switch's verb) is REFUSED while the gate is shut", afterGated == before);
