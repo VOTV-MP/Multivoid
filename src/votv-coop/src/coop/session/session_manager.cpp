@@ -872,6 +872,9 @@ bool ConnectDirect(const std::string& hostPort) {
         // refused by a locked one with a sentence saying why.
         cfg.hostIdentity =
             ::coop::config::ResolveString(::coop::config_registry::rows::net_host_identity);
+        // A PERSON TYPED THIS ADDRESS. That is the whole meaning of the flag, and this is
+        // the only place in the tree that sets it -- see `net::Config::selfAddressed`.
+        cfg.selfAddressed = true;
         // Browser-only loading state. A dead address fails async (GNS never reaches
         // Connected) -> net_pump's connect-fail detector drops the cover + reopens the browser.
         coop::join_progress::BeginConnect(host);

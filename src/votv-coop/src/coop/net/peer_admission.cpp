@@ -631,7 +631,37 @@ bool ClientOnReliable(Session& session, uint32_t hConn, ReliableKind kind,
     // join fails with a sentence that says why (`lobby_password.h`; A65 is what
     // makes `bound` mean anything).
     if (ch.flags & kAuthFlagPasswordRequired) {
-        if (!g_client.bound) {
+        // BOUND, **OR** THE PLAYER TYPED THE ADDRESS THEMSELVES (user decision,
+        // 2026-09-01: "Вводит адрес и порт... или заполняет поле пароля если он был выдан
+        // хостом"). Until then this refused, and a locked host was unjoinable by address
+        // from every shipped UI -- which is not a safety property, it is a missing feature
+        // wearing one.
+        //
+        // WHY THIS IS NOT THE GATE COLLAPSING. The rule it amends (the A2 design pass) is
+        // that a low-entropy secret must never enter a signature whose other terms the
+        // verifier controls -- gated behind binding, or PAKE-shaped, or not a password.
+        // Binding answers "is this the host the MASTER sent me to", and it is exactly the
+        // right question when a third party named the destination. On a typed address
+        // there is no third party: the player IS the authority on where they meant to go,
+        // and there is nothing further to bind against.
+        //
+        // WHO CAN ACTUALLY EXPLOIT IT, measured rather than assumed: only whoever answers
+        // at the address the player typed instead of the intended host, which requires a
+        // network position this branch is not what stands between them and. The transport's
+        // attacker model is recorded in the security register (not in this tree); the part
+        // that decides THIS branch is that refusing here does not deny that position
+        // anything it does not already reach.
+        //
+        // What refusing DID buy is narrower, and worth naming because it is a real cost:
+        // the TYPO case -- a mistyped address answered by an unrelated host, which then
+        // learns a six-character password to a lobby it cannot find. That is the honest
+        // price of the feature, and it is stated rather than hidden.
+        //
+        // NOTHING ELSE RELAXES. The tag is still bound to the key that answered, so it is
+        // not replayable to the real host; the host still verifies identity BEFORE looking
+        // at the password; and the host's 10-guesses-per-60s bucket still bounds online
+        // guessing. What changed is one branch, on one lane, for one reason.
+        if (!g_client.bound && !session.DestinationIsSelfAddressed()) {
             *outClose = "this server wants a password, but nothing told us which host we "
                         "were dialling -- refusing to send anything derived from it";
             return true;

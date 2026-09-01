@@ -5050,9 +5050,8 @@ def cmd_authdrill(args) -> None:
     else:
         deploy_all()
 
-    if args.unbound and (args.arm != "password" or args.control):
-        log("FAIL: --unbound belongs to the password arm and cannot be combined with "
-            "--control (the control's whole job is to be the BOUND comparison)")
+    if args.unbound and args.arm != "password":
+        log("FAIL: --unbound belongs to the password arm")
         sys.exit(1)
 
     arm = "off" if args.control else (
@@ -5086,12 +5085,8 @@ def cmd_authdrill(args) -> None:
         # split them: `net.lobby_password` is the secret THIS peer's own hosted sessions
         # require, and a client falling back to it offered its own lobby's password to
         # strangers. A joiner configures `net.join_password`.
-        # ...AND `--unbound` OFFERS THE RIGHT ONE TOO. Its variable is the IDENTITY, not
-        # the secret: withholding both would let a run go red for either reason and prove
-        # neither.
         client_env["VOTVCOOP_NET_JOIN_PASSWORD"] = (
-            "correct-horse-battery" if (args.control or args.unbound)
-            else "wrong-horse-battery")
+            "correct-horse-battery" if args.control else "wrong-horse-battery")
         # ...AND THE CLIENT MUST KNOW WHICH HOST IT IS DIALLING, or it refuses to send
         # anything password-derived at all and this arm measures the BINDING gate
         # instead of the password gate (measured on the first run: "no advertised host
@@ -5174,12 +5169,6 @@ def cmd_authdrill(args) -> None:
         refused = "identity proof did not verify" in htext
     elif arm == "silent":
         refused = "never proved its identity" in htext
-    elif args.arm == "password" and args.unbound:
-        # THE CLIENT'S LOG, because on this arm the refusal is OURS and the host never
-        # learns a password was involved: the client reads `kAuthFlagPasswordRequired`
-        # off the challenge, finds itself unbound, and closes without sending a tag. The
-        # host sees a socket that proved itself and then left.
-        refused = "refusing to send anything derived from it" in ctext
     elif args.arm == "password":
         # The HOST's log, because this refusal is the host's -- and the needle is the
         # one the gate itself writes, not the close reason, so a client that failed for
@@ -5222,10 +5211,9 @@ def cmd_authdrill(args) -> None:
     for k, ok in want.items():
         log(f"  {'PASS' if ok else 'FAIL'}  {k}")
     if args.unbound:
-        # THE VERDICT IS NOT THE QUESTION THIS ARM WAS ADDED FOR. "The gate refused" is
-        # the easy half and was never in doubt; what nobody had measured is what the
-        # PLAYER is left looking at afterwards -- whether the attempt dies with a
-        # sentence or sits there. So the trail is printed unconditionally, PASS or FAIL.
+        # THE TRAIL IS PRINTED EITHER WAY. This arm was added to measure what a joiner is
+        # LEFT WITH -- originally a refusal with no sentence, now, with --control, a
+        # completed join by typed address alone. Both are worth reading, not just grading.
         log("--- WHAT THE JOINER WAS LEFT WITH (the reason this arm exists) ---")
         for line in ctext.splitlines():
             if any(n in line for n in ("peer_admission:", "join_progress:", "net: leaving",
@@ -6059,10 +6047,11 @@ def main() -> None:
                              help="CONTROL: run with the drill OFF -- every assertion must invert, "
                                   "proving the refusal was caused by the sabotage and not by the rig")
     p_authdrill.add_argument("--unbound", action="store_true",
-                             help="password arm only: withhold the host's identity from the client, "
-                                  "as a real friend given only an ip:port has it withheld. The "
-                                  "password offered is the CORRECT one, so the binding gate is the "
-                                  "single variable between this and --control")
+                             help="password arm only: withhold the host's identity, as a real friend "
+                                  "given only an ip:port has it withheld. Since 2026-09-01 a typed "
+                                  "address is a SELF-ADDRESSED lane and may carry a password, so this "
+                                  "measures the host's refusal on that lane -- and with --control, "
+                                  "that a correct password JOINS")
     p_authdrill.add_argument("--no-deploy", action="store_true",
                              help="run on the bytes already on the rigs (deploy yourself first)")
     p_authdrill.add_argument("--port", type=int, default=DEFAULT_PORT, help="host UDP port")

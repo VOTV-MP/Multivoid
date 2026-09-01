@@ -118,6 +118,17 @@ struct Config {
     // challenge) arrive with the master-server + auth stage -- not needed for
     // the raw ICE transport. See the connectivity-ladder design doc s10.
 
+    // THE DESTINATION WAS NAMED BY THE LOCAL PLAYER, not by anything on the network.
+    // Set ONLY by `session_manager::ConnectDirect`, which is reached only from a box a
+    // person typed an address into.
+    //
+    // It exists so `peer_admission` can tell "the player chose this address" apart from
+    // "nobody advertised an identity", which are different statements that happen to
+    // coincide today. Inferring one from the other is how a gate silently widens: the day
+    // a lane loses its advertised identity for an unrelated reason, it would inherit this
+    // permission without anyone deciding to grant it.
+    bool selfAddressed = false;
+
     int sendHz = 60;
 };
 
@@ -759,6 +770,9 @@ public:
     // is the only field of the config the net-thread exchange has any business
     // reading, and a general one invites the rest.
     const std::string& AdvertisedHostIdentity() const { return cfg_.hostIdentity; }
+    // Was this destination named by the local player? See `Config::selfAddressed`. A narrow
+    // accessor rather than exposing cfg_ whole: exactly one consumer needs exactly this.
+    bool DestinationIsSelfAddressed() const { return cfg_.selfAddressed; }
 
     // The lobby password this session was configured with -- see `Config`. Read by
     // `peer_admission` on the net thread in both roles; `cfg_` is written once by
