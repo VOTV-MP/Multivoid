@@ -15,6 +15,7 @@
 #include "coop/session/session_manager.h"  // RefreshLatestVersion + LatestVersionLine (native version label)
 #include "ui/server_browser.h"
 #include "ui/server_browser_surface.h"  // WHICH browser this session uses
+#include "ui/native_screen.h"   // BeginMenuTick -- one index read per menu tick
 #include "ui/browser_input_screens.h"
 #include "ui/host_session_settings.h"
 #include "ui/host_window_native.h"
@@ -229,6 +230,10 @@ void OnMenuTickPost(void* self, void* /*function*/, void* /*params*/) {
     // observer rather than registering a second one on the same UFunction: this is the one
     // hands-on-verified native inject, and one owner of the menu tick is the point. No-ops
     // entirely unless [dev] browser_native=1, so the shipped path is untouched.
+    // ONCE, BEFORE ANY OF THEM. All four screens compare the switcher's active index
+    // against their own; asking the engine per screen is four ProcessEvent dispatches
+    // and four frame allocations per menu frame for one answer.
+    ui::native_screen::BeginMenuTick(ReadPtr(self, g_switcherOff));
     ui::server_browser_native::OnMenuTick(self, ReadPtr(self, g_switcherOff));
     // ...and the HOST WINDOW, its sibling in the same switcher. Same observer for the
     // same reason: one owner of the menu tick. Both no-op unless [dev] browser_native=1.

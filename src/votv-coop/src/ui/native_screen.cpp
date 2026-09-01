@@ -596,6 +596,21 @@ bool Probe(void* panel, int32_t i, long cx, long cy,
 
 }  // namespace
 
+namespace {
+int32_t g_activeIndex = -1;   // game thread only, rewritten at the top of every menu tick
+}
+
+void BeginMenuTick(void* switcher) {
+    g_activeIndex = switcher ? ue_wrap::umg::SwitcherIndex(switcher) : -1;
+}
+
+int32_t ActiveIndex() { return g_activeIndex; }
+
+int32_t SafePriorIndex(int32_t live, int32_t ourIndex, int32_t previous) {
+    if (live < 0 || live == ourIndex) return previous;
+    return live;
+}
+
 int32_t ChildAtCursor(void* panel, int32_t count, long cx, long cy, int32_t hint) {
     if (!panel || count <= 0) return -1;
     ue_wrap::FVector2D tl{}, sz{};

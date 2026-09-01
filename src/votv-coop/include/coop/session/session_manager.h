@@ -107,6 +107,17 @@ struct SaveChoice {
     std::string slot;       // existing slot to load          (newGame=false)
     std::string newName;    // base name for the new save      (newGame=true)
     uint8_t     mode = 0;   // enum_gamemode for the new save  (newGame=true)
+    // WHO AUTHORED `newName`, because it decides whether a taken name may be silently
+    // disambiguated. A name a HUMAN typed is a request for that exact name: renaming their
+    // "MyWorld" to "MyWorld 2" without a word is the silent-rename the create primitive
+    // deliberately refuses to do. A name this mod DERIVED (the native lane has no name
+    // field and passes a literal) carries no such intent, and refusing it is what made the
+    // second New Game a player ever hosted impossible.
+    //
+    // It lives on the CHOICE and not in the consumer because only the surface knows which
+    // it produced -- the boot path sees one string from three producers, and deciding there
+    // would be deciding for all of them by whichever one was in mind that day.
+    bool        nameIsDerived = false;   // true only when no human typed `newName`
 };
 
 // Host on a CHOSEN save (the Host-Game save picker). Like HostLobby, but the harness

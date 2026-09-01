@@ -303,6 +303,48 @@ bool BuildWindowShell(void* switcher, float widthPx, float heightPx, const wchar
 // let both sides of the comparison come from one source.
 int32_t ChildAtCursor(void* panel, int32_t count, long cx, long cy, int32_t hint = -1);
 
+// THE INDEX A SCREEN MUST RETURN TO WHEN IT HIDES -- one definition of the rule, because all
+// four screens in the menu switcher capture it and all four got it wrong the same way.
+//
+// `live` is what the switcher reads at Show time; the answer is that value EXCEPT in two
+// cases, and both are reachable:
+//
+//   * `live == ours`. A sibling can hand the index back and THEN an open intent is consumed,
+//     so a screen can open while its own index is already active. It then records ITSELF as
+//     the place to return to, and its Hide writes its own index back and moves nothing. Real
+//     path, no diff required: MULTIPLAYER -> Direct connect (which opens the input window
+//     WITHOUT closing the browser) -> Back (writes 11, then reopens the browser) -> the
+//     browser's Show now captures 11 as its own prior. The next Back or ESC hides nothing,
+//     and the MULTIPLAYER button that would rescue the player lives on a switcher child that
+//     is not the active one -- so it cannot be clicked. The screen becomes a dead end.
+//   * `live < 0`. `SwitcherIndex` answers -1 on a failed dispatch, and one bad frame during
+//     Show would otherwise poison the return for the rest of the menu's life.
+//
+// Keeping the previous value in both cases is strictly better than storing a wrong one: it is
+// either still correct or still -1, and Hide already declines to write a negative.
+//
+// This became URGENT rather than latent when the windows learned to reconcile themselves back
+// OPEN from the live index (see either hosting window's tick): with that half in place, a
+// screen whose prior is its own index cannot be closed AT ALL -- Hide clears the flag, the
+// index does not move, and the next tick revives it. Dead became unclosable.
+int32_t SafePriorIndex(int32_t live, int32_t ourIndex, int32_t previous);
+
+// THE SWITCHER'S ACTIVE INDEX, READ ONCE PER MENU TICK.
+//
+// `umg::SwitcherIndex` is not a property read -- it is a `ParamFrame` (a heap allocation
+// sized from the UFunction) plus a ProcessEvent dispatch. Four screens live in this switcher
+// and every one of them now compares the live index against its own in BOTH directions, so
+// asking the engine four times per menu frame costs four dispatches and four allocations at
+// the menu's ~117 Hz, permanently, for a question with one answer.
+//
+// `BeginMenuTick` is called ONCE by the menu observer that drives all four; the screens read
+// `ActiveIndex()`. Valid only for the tick that begins it -- every caller is inside that one
+// observer, and a screen driven from anywhere else must ask the engine itself. Answers -1
+// before the first call and whenever the read failed, which every consumer already treats as
+// "not ours" (see SafePriorIndex).
+void    BeginMenuTick(void* switcher);
+int32_t ActiveIndex();
+
 // WHERE THE CURSOR IS, IN THE SPACE `WidgetScreenRect` REPORTS IN.
 //
 // The ONE conversion both hit tests go through: `GetCursorPos` gives DESKTOP pixels,

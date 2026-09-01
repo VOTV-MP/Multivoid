@@ -430,6 +430,36 @@ bool CreateNamedSave(const std::wstring& name, uint8_t mode, std::wstring& outSl
     return true;
 }
 
+bool CreateNamedSaveUnique(const std::wstring& baseName, uint8_t mode, std::wstring& outSlot) {
+    outSlot.clear();
+    if (baseName.empty()) {
+        UE_LOGW("save_browser: CreateNamedSaveUnique -- empty base name");
+        return false;
+    }
+    std::wstring prefix;
+    if (!ResolveGs() || !engine::GetSavePrefix(mode, prefix)) {
+        UE_LOGW("save_browser: CreateNamedSaveUnique -- save system unresolved (mode=%u)",
+                static_cast<unsigned>(mode));
+        return false;
+    }
+
+    // NUMBERED FROM TWO, the way every save list a player has ever read numbers a repeat --
+    // the first world keeps the bare name, so nothing changes for the player who hosts once.
+    //
+    // The cap REFUSES rather than wrapping. Reusing a slot at the end of the range would
+    // overwrite a world somebody played, and a hundred coop saves on one install is not a
+    // player being thorough, it is something creating them in a loop.
+    for (int n = 1; n <= 99; ++n) {
+        std::wstring name = baseName;
+        if (n > 1) name += L" " + std::to_wstring(n);
+        if (SlotExists(prefix + name)) continue;
+        return CreateNamedSave(name, mode, outSlot);
+    }
+    UE_LOGW("save_browser: CreateNamedSaveUnique -- '%ls' and 98 numbered variants all exist",
+            baseName.c_str());
+    return false;
+}
+
 void RefreshAsync() {
     if (g_scanning.exchange(true)) return;  // a scan is already in flight
     {

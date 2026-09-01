@@ -43,6 +43,8 @@
 #include "coop/session/subsystems.h"
 #include "coop/session/teleport_client.h"
 #include "coop/session/world_load_episode.h"
+#include "ui/host_session_settings.h"   // it paints a failed host's reason on itself
+#include "ui/host_window_native.h"      // ...and so does step one
 #include "ui/server_browser.h"
 #include "ui/server_browser_surface.h"  // WHICH browser this session uses
 #include "ue_wrap/engine/engine.h"
@@ -488,6 +490,44 @@ bool StartCoopSession(const coop::net::Config& netCfg) {
 
 namespace {
 
+// WHERE A FAILED HOST PUTS THE PLAYER -- one decision, one place, because both failure exits
+// below were making it independently and both made it wrong.
+//
+// The hosting-settings window POLLS `session_manager::HostStatus()` and paints the reason on
+// itself; that is the designed destination for an asynchronous host failure, and the window
+// is still on screen underneath the cover we just dropped. Opening the browser over it did
+// two things at once: it hid the only surface carrying the explanation, and it left that
+// window a CORPSE -- the switcher index moved, so the window's own tick reconciled `g_shown`
+// closed while its widgets stayed in the tree, and the browser's Back then put those dead
+// pixels back in front of the player. User, 2026-09-01, on the b150 rig: "нажать в сервер
+// браузере back - оно возвращает на меню session settings и там уже ничего нельзя сделать и
+// кнопки мертвые не дают закрыть даже это меню".
+//
+// So the browser is the destination ONLY when no window of ours owns the retry -- a host that
+// failed with the menus already gone has nowhere else to land.
+// ON THE GAME THREAD, AND ASKING BOTH WINDOWS. Two corrections to the first version, both
+// from the post-ship audit of this very commit:
+//
+//   * `IsOpen()` returns a plain `bool` that the module's own header marks GAME THREAD ONLY,
+//     and this function runs on the TimelineThread. Reading it there is not just a formal
+//     race -- the flag is only ever updated from a menu tick, so once the menu is gone it is
+//     FROZEN at whatever it last held. Deciding on the game thread is the cheap half of the
+//     answer; the residual is bounded by the browser intent's own 20 s TTL, since an intent
+//     armed with no menu to consume it expires rather than surfacing later.
+//   * The predicate named ONE window while TWO satisfy the property it is about: the hosting
+//     window polls `HostStatus()` and paints it too, and it is reachable at failure time
+//     (ESC from the settings window lands there while the boot is still running). Covering
+//     it hid the reason in exactly the way this function exists to prevent.
+void ReturnToMenuAfterFailedHost() {
+    if (coop::shutdown::IsShuttingDown()) return;
+    GT::Post([] {
+        if (coop::shutdown::IsShuttingDown()) return;
+        if (ui::host_session_settings::IsOpen() || ui::host_window_native::IsOpen())
+            return;   // a window of ours already owns the retry and is showing the reason
+        ui::server_browser_surface::Open();
+    });
+}
+
 // Host-Game save-picker orchestration. If a host-with-save was queued
 // (session_manager::HostWithSave, from the picker's "Host selected save" / "New Game &
 // Host"), LOAD the chosen world (engine::LoadStorySave) or CREATE the new save
@@ -524,9 +564,15 @@ void DriveHostBootIfPending() {
             if (b->ph.save.newGame && !b->created) {
                 std::wstring wname(b->ph.save.newName.begin(), b->ph.save.newName.end());
                 std::wstring outSlot;
-                if (!ue_wrap::save_browser::CreateNamedSave(wname, b->ph.save.mode, outSlot)) {
-                    b->st.store(3); return;  // create failed (name taken / save system unresolved)
-                }
+                // THE CHOICE DECIDES, not this consumer: three surfaces produce `newName`
+                // and only one of them is a derived literal. A name a player TYPED keeps the
+                // exact primitive and its honest refusal; a derived one is disambiguated,
+                // because there is no human to tell that the name was taken.
+                const bool created =
+                    b->ph.save.nameIsDerived
+                        ? ue_wrap::save_browser::CreateNamedSaveUnique(wname, b->ph.save.mode, outSlot)
+                        : ue_wrap::save_browser::CreateNamedSave(wname, b->ph.save.mode, outSlot);
+                if (!created) { b->st.store(3); return; }
                 b->slot = outSlot;
                 b->created = true;
                 UE_LOGI("harness: host-with-save created + persisted new save '%ls'", b->slot.c_str());
@@ -557,7 +603,7 @@ void DriveHostBootIfPending() {
             coop::session_manager::SetHostStatus(
                 b->ph.save.newGame ? "Host failed: could not create the new save"
                                    : "Host failed: could not load that save");
-            if (!coop::shutdown::IsShuttingDown()) ui::server_browser_surface::Open();
+            ReturnToMenuAfterFailedHost();
             return;
         }
         ::Sleep(1500);  // throttle LoadStorySave's `open` re-issue (matches BootStorySaveBlocking)
@@ -567,7 +613,7 @@ void DriveHostBootIfPending() {
         coop::session_manager::EndHostedLobby();  // HIGH-1: don't leave a phantom lobby on timeout
         coop::join_progress::Reset();        // drop the host cover
         coop::session_manager::SetHostStatus("Host failed: the world did not load in time");
-        ui::server_browser_surface::Open();
+        ReturnToMenuAfterFailedHost();
     }
 }
 

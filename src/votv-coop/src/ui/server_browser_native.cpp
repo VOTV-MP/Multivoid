@@ -386,7 +386,7 @@ void Show() {
     if (!g_switcher || !g_root || g_shown) return;
     // The index was proven when the screen was BUILT and attached; if that had failed,
     // `g_root` was cleared and we never get here.
-    g_priorIndex = U::SwitcherIndex(g_switcher);
+    g_priorIndex = NS::SafePriorIndex(U::SwitcherIndex(g_switcher), g_ourIndex, g_priorIndex);
     // The screen stays ATTACHED for the menu's life -- a switcher renders only its active
     // child, so an inactive 12th child costs nothing, and rebuilding N rows on every open
     // would churn GC for no reason. Only the index moves.
@@ -406,6 +406,13 @@ void Hide(const char* why) {
     // field to navigate, and stomping a navigation the player just made would be worse than
     // leaving it.
     const int32_t now = U::SwitcherIndex(g_switcher);
+    // Restoring the INDEX is the whole hand-back. Whichever window owned it observes its own
+    // index return and comes back to life on its next tick -- that reconcile lives in the
+    // windows, symmetrically with the one that closes them, so this side does not need to
+    // know who it displaced. An earlier version of this fix DID track that here and call the
+    // displaced window's Open(); it was retired the same day (RULE 2) because it made every
+    // caller of a shared primitive responsible for an invariant that belongs to the windows,
+    // and it covered only the two windows it had been told about.
     if (now == g_ourIndex && g_priorIndex >= 0) U::SwitcherSetIndex(g_switcher, g_priorIndex);
     UE_LOGI("server_browser_native: hidden (%s; index was %d, ours %d)", why, now, g_ourIndex);
 }
@@ -554,15 +561,27 @@ void OnMenuTick(void* menu, void* switcher) {
 
 
 
-    if (!g_shown) return;
-
-    // RECONCILE, do not assert. A sibling screen (or ESC reaching a stale `widgetEnter`,
-    // which the game clears only on its own ESC path) can write ActiveWidgetIndex away from
-    // ours; if that happened we were closed, whoever did it.
-    if (U::SwitcherIndex(g_switcher) != g_ourIndex) {
+    // RECONCILE, do not assert -- IN BOTH DIRECTIONS. A sibling screen (or ESC reaching a
+    // stale `widgetEnter`, which the game clears only on its own ESC path) can write
+    // ActiveWidgetIndex away from ours; if that happened we were closed, whoever did it. And
+    // if it comes BACK to ours we are on screen again, whoever put it back -- which is what
+    // lets a caller hand this screen back by restoring the index, the rule this file's own
+    // Hide relies on for the windows it displaces. Asserted globally there, it has to be true
+    // here too: the input screens hand the browser back exactly that way.
+    const bool indexIsOurs = g_root && g_ourIndex >= 0 &&
+                             NS::ActiveIndex() == g_ourIndex;
+    if (g_shown && !indexIsOurs) {
         g_shown = false;
         UE_LOGI("server_browser_native: the switcher moved off our index -- treating as closed");
         return;
+    }
+    if (!g_shown) {
+        if (!indexIsOurs) return;
+        g_shown = true;
+        g_escPrimed = false;   // the screen just became live -- see either hosting window's
+        g_lmbPrimed = false;   // BecameLive for why a revive owes these two
+        rows::OnShown();
+        UE_LOGI("server_browser_native: live again (the switcher index returned to ours)");
     }
 
     // ESC CLOSES THE SCREEN, and until the chrome exists this is the ONLY way out.
