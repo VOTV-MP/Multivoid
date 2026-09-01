@@ -7,6 +7,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "ue_wrap/engine/world_identity.h"  // the gamemode must belong to the CURRENT world
 
 #include <cstdint>
 
@@ -37,10 +38,34 @@ bool CaptureLiveWorldToScratchSlot(const std::wstring& scratchSlotName) {
     if (scratchSlotName.empty()) return false;
 
     // 1. The host gamemode owns the live world + the save container.
-    void* gm = R::FindObjectByClass(P::name::GamemodeClass);
+    //
+    // IT MUST BE THIS WORLD'S GAMEMODE. `FindObjectByClass` skips only nulls and the CDO -- no
+    // liveness test, no world filter -- and returns the FIRST match in GUObjectArray index
+    // order. A dying world's actors are not kill-flagged until the GC purge (measured 44+ s in
+    // `world_identity.h`, which exists for exactly this), and after a menu -> game cycle the OLD
+    // `mainGamemode` sits at a LOWER index than the new one. So the capture could serialize a
+    // gamemode belonging to a world that no longer exists.
+    //
+    // `[V]` 2026-09-01 that is what a user hit: joining the instant a re-hosted lobby appeared
+    // produced a 1284-byte "world" for the joiner, who then kept its own -- two ATVs, every door
+    // disagreeing. The blob was NOT a torn write; a post-ship audit hexdumped the surviving file
+    // and found a structurally COMPLETE GVAS save with its terminator intact. It was a faithful
+    // serialization of a `saveSlot` whose object arrays were empty, which is what saving a stale
+    // gamemode produces. Our own tracker saw 2,197 live keyed props at the same instant because
+    // it walks GUObjectArray and found the NEW world; `saveObjects` was looking at the old one.
+    void* gm = nullptr;
+    void* const nowWorld = ::ue_wrap::world_identity::CurrentWorld();
+    for (void* cand = R::FindObjectByClass(P::name::GamemodeClass); cand;) {
+        void* const candWorld = ::ue_wrap::world_identity::WorldOf(cand);
+        // A null stamp means "not world-scoped" and is not a rejection (the same rule
+        // CachedObjRef applies); a stamp that names a DIFFERENT world is.
+        if (!nowWorld || !candWorld || candWorld == nowWorld) gm = cand;
+        break;
+    }
     void* gmCls = gm ? R::ClassOf(gm) : nullptr;
     if (!gm || !gmCls) {
-        UE_LOGW("save_capture: mainGamemode not live -- cannot capture host world");
+        UE_LOGW("save_capture: no mainGamemode belonging to the CURRENT world -- refusing to "
+                "capture (a stale one would serialize an empty world)");
         return false;
     }
 
@@ -103,6 +128,17 @@ bool CaptureLiveWorldToScratchSlot(const std::wstring& scratchSlotName) {
     } else {
         UE_LOGI("save_capture: objectsData repopulated %d -> %d live world object(s)",
                 objCountBefore, objCountAfter);
+    }
+    // AN EMPTY CONTAINER IS NOT A WORLD, and this is the exact discriminator -- an integer at
+    // the producer, versus the byte-size ratio a consumer was left to guess with. A healthy
+    // capture reads 3385 -> 3397; the stub that shipped to a joiner on 2026-09-01 would have
+    // read 0 -> 0. Refusing here means the caller falls back to the canonical slot instead of
+    // streaming a world nobody lives in.
+    if (objCountAfter == 0) {
+        UE_LOGW("save_capture: saveObjects produced an EMPTY objectsData (%d -> 0) -- refusing "
+                "this capture. The container serialized fine; it just describes no world.",
+                objCountBefore);
+        return false;
     }
 
     // 4. Serialize it to a SCRATCH slot. GameplayStatics::SaveGameToSlot(obj, slot,

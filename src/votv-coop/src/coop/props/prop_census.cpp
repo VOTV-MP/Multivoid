@@ -560,9 +560,19 @@ void DrainReseedQueue() {
         // The "net_pump:" prefix + this exact wording are LOAD-BEARING: mp.py's joinchurn
         // gate greps "broadcasting one PropSpawn each (incremental" (tools/mp.py) and the
         // A/B digests sum this line's counts across runs. Do not reword casually.
-        UE_LOGI("net_pump: steady-world re-seed adopted %zu NEW runtime-spawned keyed prop(s) "
-                "(spawn-menu/toolgun/ambient/pile) -- broadcasting one PropSpawn each "
-                "(incremental delta, no re-bracket; MTA CEntityAddPacket shape)", adoptedThisTick);
+        // THE BROADCAST HALF IS HOST-ONLY, so a client must not claim it. `ExpressIncrementalSpawn`
+        // returns immediately on a client, and `[V]` 2026-09-01 a client printed this line four
+        // times over 3,102 adoptions with `grep -c "incremental PropSpawn for runtime-adopted" = 0`
+        // -- it broadcast nothing. Pre-existing wording; it only started PRINTING on clients when
+        // the drain was re-enabled. The host phrase is unchanged byte-for-byte because mp.py's
+        // joinchurn gate greps it.
+        if (coop::prop_snapshot::ExpressWouldBroadcast())
+            UE_LOGI("net_pump: steady-world re-seed adopted %zu NEW runtime-spawned keyed prop(s) "
+                    "(spawn-menu/toolgun/ambient/pile) -- broadcasting one PropSpawn each "
+                    "(incremental delta, no re-bracket; MTA CEntityAddPacket shape)", adoptedThisTick);
+        else
+            UE_LOGI("net_pump: steady-world re-seed adopted %zu NEW runtime-spawned keyed prop(s) "
+                    "-- tracked locally; a client authors no PropSpawn", adoptedThisTick);
     }
     if (g_reseedQueueHead >= g_reseedQueue.size()) {
         // Only interesting drains get their own line (a per-pass line would be ~0.5 Hz

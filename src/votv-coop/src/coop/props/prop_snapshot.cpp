@@ -618,6 +618,11 @@ static void BroadcastIncrementalPropSpawn_(coop::net::Session* s, void* actor, c
             kindTag, actor, p.elementId, static_cast<int>(p.key.len), p.key.data);
 }
 
+bool ExpressWouldBroadcast() {
+    auto* s = g_session_ptr.load(std::memory_order_acquire);
+    return s && s->role() == coop::net::Role::Host;
+}
+
 void ExpressIncrementalSpawn(void* actor) {
     auto* s = g_session_ptr.load(std::memory_order_acquire);
     // Host-authoritative: only the host broadcasts world spawns. The steady-world

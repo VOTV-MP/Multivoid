@@ -64,6 +64,12 @@ void DrainChunk();
 // (Server/.../CStaticFunctionDefinitions.cpp:8349).
 void ExpressIncrementalSpawn(void* actor);
 
+// Does the express path above actually BROADCAST right now? It returns immediately on a client,
+// so a caller that narrates "broadcasting one PropSpawn each" owes this question first -- `[V]`
+// 2026-09-01 a client printed that sentence over 3,102 adoptions and broadcast nothing. Reads the
+// same session pointer the express path does, so the answer cannot disagree with the behaviour.
+bool ExpressWouldBroadcast();
+
 // Deliver a kerfur OFF-prop that the generic ExpressIncrementalSpawn deliberately skips (:568) -- the
 // join-window deliver-missing owner for a host turn-off whose KerfurConvert never fired (the death-watch
 // raced the host's one-shot world-NPC registration; the off-prop also post-dates the join snapshot).
