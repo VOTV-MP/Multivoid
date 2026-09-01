@@ -80,6 +80,13 @@ bool Locked();
 // needs the characters lives outside this module.
 int PasswordLength();
 
+// What a freshly MINTED password is expected to measure, so a self-check can assert the
+// mint without hard-coding a number that the generator is free to change under it. The
+// LOCK phase used to say `len >= 8`; the user shortened the mint to six on 2026-09-01 and
+// that literal would have failed a working feature -- a test asserting a stale constant is
+// indistinguishable, in the log, from the defect it was written to catch.
+int GeneratedPasswordLength();
+
 // Driven from the main-menu tick observer, beside the browser's and the hosting window's.
 void OnMenuTick(void* menu, void* switcher);
 

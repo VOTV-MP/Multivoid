@@ -70,6 +70,14 @@ using Tag = std::array<uint8_t, kTagBytes>;
 // leg (security A59's residual). With binding intact no offline oracle exists and
 // this number buys nothing; without it, this number is the whole delay. ~100 ms
 // on the joining client, once, and nothing on the host, which caches K.
+//
+// READ THIS WITH `host_session_settings.cpp`'s kPwLen, which the user shortened from ten
+// characters to SIX on 2026-09-01. The generated secret is now 30 bits rather than 50, so
+// an exposed proof costs on the order of 6 GPU-hours to exhaust instead of 714 GPU-years.
+// Raising the count here CANNOT buy that back -- recovering 20 bits would need a million
+// times the rounds at ~100 ms each -- so do not reach for this number when what actually
+// moved was the length. Binding is the control; this is only the delay for the case where
+// binding has already failed.
 inline constexpr uint32_t kIterations = 200000;
 // ASSERTED AT COMPILE TIME, because the selftest cannot do it. Its full-cost arm only shows
 // the shipped count differs from the cheap one -- which would pass for 2, and for 0 if CNG

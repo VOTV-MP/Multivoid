@@ -137,7 +137,25 @@ constexpr Visibility kVis[2] = {
 // dropped whole because "was that a capital?" is the same retry.
 constexpr char kPwAlphabet[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 constexpr int  kPwAlphabetN  = 32;   // sizeof - 1, stated so the modulo claim below is checkable
-constexpr int  kPwLen        = 10;   // 10 x log2(32) = 50 bits
+// SIX, at the user's instruction 2026-09-01 ("пароль такой длинный вообще не должен быть...
+// 6 символов норм"). It was ten.
+//
+// AND THE NUMBER CHANGES WHAT THE REST OF THE SYSTEM IS FOR, so it is written down here
+// rather than left as a length. 6 x log2(32) = 30 bits. Against PBKDF2-HMAC-SHA256 at
+// `lobby_password.h`'s 200 000 iterations that is ~2^30 x 4e5 hash ops ~= SIX GPU-HOURS to
+// exhaust; the ten-character value it replaces was ~714 GPU-YEARS. So a captured proof used
+// to be worthless by arithmetic alone, and now it is not.
+//
+// That is SAFE, but only because of something else: a proof is never sent to a host the
+// joiner has not BOUND to an identity it was given in advance (`peer_admission.cpp`, A65),
+// so no attacker gets a tag to grind in the first place. What changed is that the binding
+// gate is now LOAD-BEARING rather than belt-and-braces. Two consequences, and neither is
+// optional while this constant is 6:
+//   * the gate may not be relaxed "because the generated secret is strong" -- at 30 bits it
+//     is not, and the argument that held at 50 bits does not survive the shortening;
+//   * a lane with no advertised identity (a typed address) cannot be given a password
+//     escape hatch; it has to be given an IDENTITY instead.
+constexpr int  kPwLen        = 6;
 
 static_assert(sizeof(kPwAlphabet) - 1 == kPwAlphabetN, "the alphabet and its size must agree");
 // 256 % 32 == 0, so `byte % 32` is EXACTLY uniform and the usual rejection-sampling dance
@@ -945,6 +963,8 @@ int PasswordLength() {
     // yes on a rig whose ini already carried one from a previous run.
     return static_cast<int>(TF::Text(g_pwField).size());
 }
+
+int GeneratedPasswordLength() { return kPwLen; }
 
 void OnMenuTick(void* menu, void* switcher) {
     if (!Armed() || !menu || !switcher) return;
