@@ -994,11 +994,21 @@ empty after stripping. The game target's THIRD field and letter suffix are delib
 **Monotonicity holds** — and this corrects a weaker caveat written earlier the same day. Semver
 compares components numerically, `kProtocolVersion` never resets and only increases, and a game
 version's numeric prefix never decreases; so `0.9.134` -> `0.10.135` -> `1.0.140` all order correctly.
-The only information lost is the game target's letter suffix (`0.9.0n` and a later `0.9.1a` both map
-to `0.9`), which the build number already disambiguates and which the full Paper pair — displayed in
-the package `description` and README — still states exactly. (Since 2026-08-30 the package README is
-the dedicated `tools/release/README_thunderstore.md`, not the repo README; `package.ps1` fails closed
-if it stops naming the current game target, so the suffix cannot rot out of it.)
+The only information lost is the game target's THIRD FIELD and letter suffix (`0.9.0n` and a later
+`0.9.1a` both map to `0.9`) — the mapping is `-replace '\D',''` per field, so the letter does not
+survive at all. Two things carry what semver drops, and they are NOT the same two:
+
+* the **build number** is `version_number`'s own patch field (`0.9.150` IS b150), and is repeated in
+  the dependency string and the version list, so it needs no other home;
+* the **game target**, letter included, lives in the package `description` and the README, and those
+  are its ONLY homes on the surface a player reads before installing.
+
+That asymmetry is why `description` states the game target and, since `415d2f67`, no longer restates
+`b<build>` — the redundant half was costing the scarcest line in the product (the one r2modman's list
+renders) to repeat what three other fields already say. The half that is NOT redundant stayed.
+(Since 2026-08-30 the package README is the dedicated `tools/release/README_thunderstore.md`, not the
+repo README; `package.ps1:101` fails closed if it stops naming the current game target, so the suffix
+cannot rot out of it -- `[V]` that check still passes after the restructure.)
 
 **HARD REQUIREMENT: the manifest is GENERATED, never hand-edited.** A hand-kept version string that
 rots unbumped is precisely the failure that got mod semver deleted in the first place (2026-07-19);

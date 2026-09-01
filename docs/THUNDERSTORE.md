@@ -139,9 +139,14 @@ badge, the Support row and `.github/FUNDING.yml` stay **pulled** (`7ebc2554`; re
 `1aca131b` and pulled again in `c18003aa` — **USER: "No dont restore"**, after the page itself was
 confirmed live at `https://boosty.to/pelmentor`). *The page existing and the buttons going live are
 two different decisions and only the user makes the second one.*
-`tools/release/README_thunderstore.md` still carries its badge and is still not live until the
-first upload — so whether it survives into the zip is an open call that must be made before
-`package.ps1` runs. `donation_link` is not set and cannot be until the package exists.
+**RESOLVED 2026-09-01 (`415d2f67`): the badge is OUT of the package README, and the Support
+table row with it.** The open call above was decided the way the mutability table decides it —
+the badge sat at line 7, above everything, and a published version is IMMUTABLE, so the first
+upload would have frozen the exact button the user had already pulled from three other surfaces.
+`donation_link` buys the same button (the one r2modman renders beside Download, `[V]` seen on
+`Flyingcoyote-VoidFax`) and stays editable forever. Nothing needs to ship for it: **set it on the
+website after the first upload**, which is the one step of this section still owed and which
+cannot be done earlier because it needs the package to exist.
 
 ## 4. First upload
 
