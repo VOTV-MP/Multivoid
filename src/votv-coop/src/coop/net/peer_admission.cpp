@@ -2,6 +2,8 @@
 
 #include "coop/net/peer_admission.h"
 
+#include "peer_admission_internal.h"   // private: beside the .cpp, never under include/
+
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/net/lobby_password.h"
@@ -50,38 +52,15 @@ using peer_identity::Sig;
 //
 // Tampering the other way -- clearing the flag, or altering the host's nonce -- only
 // denies: the host verifies the client's proof against the nonce IT stored.
-constexpr char kTag[] = "multivoid-peer-admission-v2";
-constexpr size_t kTagLen = sizeof(kTag) - 1;  // 27, terminator excluded
-static_assert(kTagLen == 27, "the tag width is part of the blob layout");
-
-constexpr uint8_t kDirHost   = 0x01;  // the host proving itself to the client
-constexpr uint8_t kDirClient = 0x02;  // the client proving itself to the host
-
-constexpr size_t kBlobBytes = kTagLen + 1 + 2 + peer_identity::kPubKeyBytes * 2 +
-                              kAuthNonceBytes + 1 + kAuthNonceBytes;
-static_assert(kBlobBytes == 159, "blob layout changed -- bump the tag, not just the code");
-
-using Blob = uint8_t[kBlobBytes];
-
-void BuildBlob(Blob out, uint8_t dir, const PubKey& hostPub, const PubKey& clientPub,
-               const uint8_t nonce[kAuthNonceBytes], uint8_t flags,
-               const uint8_t hostNonce[kAuthNonceBytes]) {
-    size_t o = 0;
-    std::memcpy(out + o, kTag, kTagLen);                       o += kTagLen;
-    out[o++] = dir;
-    // The protocol version is IN the blob so a signature cannot be carried across
-    // a wire revision. It costs nothing -- the version gate already refuses a
-    // cross-build pairing -- and it means a future change to any payload here
-    // invalidates old signatures by construction rather than by remembering to.
-    out[o++] = static_cast<uint8_t>(kProtocolVersion & 0xFF);
-    out[o++] = static_cast<uint8_t>((kProtocolVersion >> 8) & 0xFF);
-    std::memcpy(out + o, hostPub.data(), hostPub.size());      o += hostPub.size();
-    std::memcpy(out + o, clientPub.data(), clientPub.size());  o += clientPub.size();
-    std::memcpy(out + o, nonce, kAuthNonceBytes);              o += kAuthNonceBytes;
-    out[o++] = flags;
-    std::memcpy(out + o, hostNonce, kAuthNonceBytes);          o += kAuthNonceBytes;
-    (void)o;  // == kBlobBytes; asserted by the static_assert above
-}
+// The layout itself now lives in `peer_admission_internal.h` -- ONE definition, shared
+// with the selftest TU. It moved rather than being copied for the reason that header
+// states: a negative arm that builds its own blobs is testing its own copy of the
+// structure, and would keep passing after this one changed.
+using internal::Blob;
+using internal::BuildBlob;
+using internal::kBlobBytes;
+using internal::kDirClient;
+using internal::kDirHost;
 
 // The remote's 32 identity bytes, read off the CONNECTION -- never off a packet.
 // Returns false for any identity that is not exactly a 32-byte GenericBytes one,
@@ -727,120 +706,5 @@ bool ClientOnReliable(Session& session, uint32_t hConn, ReliableKind kind,
 // ---------------------------------------------------------------------------
 // SELFTEST
 // ---------------------------------------------------------------------------
-
-bool RunSelftest() {
-    int pass = 0, total = 0;
-    auto check = [&](bool ok, const char* what) {
-        ++total;
-        if (ok) { ++pass; return; }
-        UE_LOGE("peer_admission selftest FAIL: %s", what);
-    };
-
-    // Two synthetic COUNTERPARTY identities. They are drawn as raw bytes, not
-    // derived from a keypair, and that is correct rather than lazy: the blob
-    // embeds 32 identity bytes verbatim and never interprets them, so what the
-    // negatives need is two values that DIFFER. Signing is done with the module's
-    // own real key, which gives the asymmetry the negatives test.
-    //
-    // The first cut of this DID declare a keypair and then forget to derive the
-    // public halves, leaving pkA and pkB both all-zero -- so the third-party arm
-    // compared two byte-identical blobs and failed on both peers, reporting a
-    // product defect that did not exist. Two inputs to a difference test being
-    // accidentally equal is the failure mode a negative arm is most prone to, so
-    // they are asserted distinct below rather than assumed.
-    PubKey pkA{}, pkB{};
-    if (!peer_identity::RandomBytes(pkA.data(), pkA.size()) ||
-        !peer_identity::RandomBytes(pkB.data(), pkB.size())) {
-        UE_LOGE("peer_admission selftest: no randomness -- cannot run");
-        return false;
-    }
-    check(pkA != pkB, "the two synthetic counterparties are the SAME -- the "
-                      "third-party arm below would prove nothing");
-    const PubKey& mine = peer_identity::LocalPublicKey();
-    uint8_t nonce1[kAuthNonceBytes]{}, nonce2[kAuthNonceBytes]{};
-    check(peer_identity::RandomBytes(nonce1, sizeof(nonce1)) &&
-          peer_identity::RandomBytes(nonce2, sizeof(nonce2)),
-          "could not draw two nonces");
-    check(std::memcmp(nonce1, nonce2, sizeof(nonce1)) != 0,
-          "two draws produced the SAME nonce -- the RNG is not one");
-
-    // POSITIVE: we sign as the client, and a host holding our identity accepts.
-    Blob asClient;
-    // THE TWO NONCE SLOTS GET DIFFERENT VALUES, so the layout assert below can actually
-    // see one of them go missing. Every arm used to pass `nonce1` twice, which made a
-    // BuildBlob that stopped writing the VERIFIER nonce indistinguishable from a correct
-    // one at the byte level (audit, 2026-08-31).
-    BuildBlob(asClient, kDirClient, pkA, mine, nonce1, kAuthFlagPasswordRequired, nonce2);
-    const Sig sigClient = peer_identity::SignBlob(asClient, sizeof(asClient));
-    check(peer_identity::VerifyBlob(mine, asClient, sizeof(asClient), sigClient),
-          "a well-formed client proof did not verify");
-
-    // NEGATIVE 1 -- REFLECTION. The host's own challenge must not be replayable as
-    // the client's proof. Only the direction byte differs, so this is the arm that
-    // fails if the direction is ever dropped from the blob.
-    Blob asHost;
-    BuildBlob(asHost, kDirHost, pkA, mine, nonce1, kAuthFlagPasswordRequired, nonce2);
-    check(!peer_identity::VerifyBlob(mine, asHost, sizeof(asHost), sigClient),
-          "a proof verified in the WRONG DIRECTION (the direction byte is not "
-          "reaching the blob)");
-
-    // NEGATIVE 2 -- THIRD PARTY. The same signature must not verify inside a blob
-    // naming a different counterparty; this is what stops a proof given to host A
-    // being relayed into host B's exchange.
-    Blob otherHost;
-    BuildBlob(otherHost, kDirClient, pkB, mine, nonce1, kAuthFlagPasswordRequired, nonce2);
-    check(!peer_identity::VerifyBlob(mine, otherHost, sizeof(otherHost), sigClient),
-          "a proof verified against a DIFFERENT counterparty (both identities are "
-          "not reaching the blob)");
-
-    // NEGATIVE 3 -- FRESHNESS. A recorded proof must not answer a new challenge.
-    Blob otherNonce;
-    BuildBlob(otherNonce, kDirClient, pkA, mine, nonce2, kAuthFlagPasswordRequired, nonce2);
-    check(!peer_identity::VerifyBlob(mine, otherNonce, sizeof(otherNonce), sigClient),
-          "a proof verified against a DIFFERENT nonce (the exchange is replayable)");
-
-    // NEGATIVE 5 -- THE FLAGS ARE SIGNED. This is the arm that fails if the challenge's
-    // flag byte ever leaves the blob again. Unsigned, a relay could set "password
-    // required" on an OPEN lobby's challenge and a bound client would derive and emit a
-    // real tag for a host that never asked for one -- turning an impersonation residual
-    // into a tag-harvesting oracle (post-ship audit, 2026-08-31).
-    Blob otherFlags;
-    BuildBlob(otherFlags, kDirClient, pkA, mine, nonce1, 0, nonce2);
-    check(!peer_identity::VerifyBlob(mine, otherFlags, sizeof(otherFlags), sigClient),
-          "a proof verified with DIFFERENT challenge flags (the flag byte is not "
-          "reaching the blob -- a relay can ask an open host's joiner for a password)");
-
-    // NEGATIVE 6 -- and so is the host's own nonce.
-    Blob otherHostNonce;
-    BuildBlob(otherHostNonce, kDirClient, pkA, mine, nonce1, kAuthFlagPasswordRequired, nonce1);
-    check(!peer_identity::VerifyBlob(mine, otherHostNonce, sizeof(otherHostNonce), sigClient),
-          "a proof verified against a DIFFERENT host nonce");
-
-    // NEGATIVE 4 -- WRONG SIGNER. The decision the whole module exports: a
-    // signature made by us must not verify against somebody else's identity.
-    check(!peer_identity::VerifyBlob(pkA, asClient, sizeof(asClient), sigClient),
-          "a proof verified against SOMEONE ELSE'S identity");
-
-    // The blob is a fixed layout; assert the two facts a future edit could break
-    // silently -- a shortened tag, or a field that stopped being copied.
-    check(asClient[kTagLen] == kDirClient && asHost[kTagLen] == kDirHost,
-          "the direction byte is not where the layout says it is");
-    // BOTH nonce positions, and they now carry DIFFERENT values -- so a BuildBlob that
-    // stopped writing either one is caught here rather than passing because the two slots
-    // happened to hold the same bytes.
-    check(std::memcmp(asClient + kBlobBytes - kAuthNonceBytes, nonce2,
-                      kAuthNonceBytes) == 0,
-          "the HOST nonce is not at the end of the blob");
-    check(std::memcmp(asClient + kBlobBytes - kAuthNonceBytes - 1 - kAuthNonceBytes,
-                      nonce1, kAuthNonceBytes) == 0,
-          "the VERIFIER nonce is not where the layout says it is");
-
-    if (pass == total) {
-        UE_LOGI("peer_admission selftest: ALL PASS (%d checks)", total);
-        return true;
-    }
-    UE_LOGE("peer_admission selftest: %d/%d checks passed", pass, total);
-    return false;
-}
 
 }  // namespace coop::net::peer_admission
