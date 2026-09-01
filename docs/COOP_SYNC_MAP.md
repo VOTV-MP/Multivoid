@@ -65,8 +65,17 @@ Confidence: `[V]` verified this session, `[RD]` RE-derived, `[?]` inferred from 
 > named actor" → it's keyed state, make a small `*_sync.cpp` next to `keypad_sync` /
 > `power_sync`. If it's one global value → an even smaller one next to `time_sync`. All
 > of them wire the same way: a ReliableKind in the enum + a case in the right family
-> switch (`event_dispatch_{entity,state,signal,intent,world}.cpp`) — that's the 2-place wiring the
+> switch (`event_dispatch_{entity,state,signal,intent,world}.cpp`) -- that's the 2-place wiring the
 > SyncRouter consolidation left us with.
+>
+> **That second place is MACHINE-CHECKED since 2026-09-01 (`cc69dafe`): `tools/net/reliablekind_gate.py`,
+> in CI per push.** Miss the family case and the build fails naming your kind, instead of the lane
+> shipping WIRE-DEAD -- which it had done three times (v70 `DeskLogLine`, v71 `SleepState`, and
+> `LightGroupState` the day before the gate). Five kinds are allowed to have no receiver because the
+> net thread consumes them before the inbox (`SaveTransferBegin`/`Chunk`, the three `Auth*`); each is
+> declared in the gate with the BRANCH that must still exist, not merely the kind's name. Note the
+> gate does NOT decide `session_lanes.h` -- lane, host-relay and pre-world are design calls that all
+> default safely, so they are reported by `--drill`'s sibling `--table` and left to review.
 
 ---
 
