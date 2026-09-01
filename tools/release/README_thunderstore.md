@@ -4,7 +4,18 @@
 > A mod that adds drop-in co-op to a single-player game —
 > **no original game files are modified**.
 
-[![Support on Boosty](https://img.shields.io/badge/Boosty-support%20the%20project-FF7C00?style=for-the-badge)](https://boosty.to/pelmentor)
+## Play together
+
+1. **Install with the mod manager.** It sets up the loader for you; there is nothing
+   else to configure.
+2. **Launch the game.** A **Multiplayer** button appears in the main menu.
+3. **One of you hosts** — pick a save, choose who may join, press Host.
+4. **The others join** — pick the lobby in the browser, or type the host's address
+   into Direct Connect. If the host set a password, type it in the box beside it.
+
+That is the whole setup. Everyone needs their own copy of Voices of the Void on the
+version this build targets (**0.9.0n**), and the same Multivoid build — the server
+browser marks mismatched lobbies before you click.
 
 | | |
 |--|--|
@@ -14,7 +25,6 @@
 | **Website** | [multivoid.dev](https://multivoid.dev) |
 | **Community** | [Discord](https://discord.gg/bA6tGBvGMN) — questions, bug reports, people to play with |
 | **Source** | [github.com/VOTV-MP/Multivoid](https://github.com/VOTV-MP/Multivoid) (MIT) |
-| **Support** | [Boosty](https://boosty.to/pelmentor) — **the mod is free and always will be**; this covers the master-server VPS and the tooling bill |
 
 ## What you get
 
@@ -30,14 +40,9 @@
   joining mid-event, mid-download, mid-anything is a supported case by design.
 - **Starter skins** — four bundled scientist player models to pick from.
 
-## Install and play
+## Installing without the mod manager
 
-1. Install with the mod manager (it sets up the loader for you).
-2. Launch Voices of the Void — a **Multiplayer** button appears in the main menu.
-3. Host a lobby, or pick one in the server browser.
-
-You need your own copy of Voices of the Void, on the version this build targets
-(**0.9.0n**). Manual install, updating, and troubleshooting:
+The steps above are the managed lane. Manual install, updating and troubleshooting:
 [install guide](https://github.com/VOTV-MP/Multivoid/blob/main/docs/INSTALL.md).
 
 ## Versions and joining
