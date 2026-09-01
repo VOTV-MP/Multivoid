@@ -578,13 +578,10 @@ void Session::HandleConnStatusChanged(void* info) {
         // Same shape as the host's band, one level down: nothing downstream needed
         // an edit, because nothing downstream can see a slot that is not ready.
         if (!peer_admission::ClientOnConnected(*this, hConn)) {
-            {   // Say WHY on the flee-to-menu path; a silent close here reads as
-                // "the host vanished", which is the one thing it is not.
-                std::lock_guard<std::mutex> lk(hostCloseMutex_);
-                hostCloseReason_ = "could not start the identity exchange with this host";
-            }
-            sockets->CloseConnection(hConn, k_ESteamNetConnectionEnd_App_Generic,
-                                     "identity exchange could not start", false);
+            // Say WHY on the flee-to-menu path; a silent close here reads as
+            // "the host vanished", which is the one thing it is not. LeaveHost
+            // is what makes the saying possible -- see its comment.
+            LeaveHost("could not start the identity exchange with this host");
         }
         return;
     }
@@ -745,15 +742,42 @@ void Session::FatalCloseSlot(int slot, const char* reason) {
         return;
     }
     if (slot != 0) return;  // a client only owns its host link
-    {   // Surface WHY on the client's own flee-to-menu path.
+    LeaveHost(reason ? reason : "send backlog fatal");
+}
+
+// A CLIENT ENDING ITS OWN HOST LINK, ACCOUNTED FOR. Every path where WE decide to
+// leave -- an admission refusal, a host that tried to seat us without proving
+// itself, an exchange that could not start, a fatal send backlog -- comes through
+// here, and nothing calls CloseConnection on the host link directly any more.
+//
+// WHY IT EXISTS (measured 2026-09-01, `mp.py authdrill --arm password --unbound`).
+// The three admission sites used to set `hostCloseReason_` and then close the
+// socket themselves. GNS posts NO status callback for a connection you close, so
+// `state_` stayed Handshaking forever; net_pump's connect-fail edge -- the ONLY
+// consumer of that reason -- is gated on `state() == Disconnected` and therefore
+// never fired. Measured trail: the client refused a locked host in 0 ms, logged
+// exactly why, and then sat on a "Connecting..." cover for the rest of the run
+// with the explanation in a file no player opens. The refusal was right on the
+// wire and completely mute on screen.
+//
+// KickClaimed is what closes that gap: it is slot- and role-agnostic, and its tail
+// downgrades the aggregate state once the last peer is gone -- the same transition
+// the ClosedByPeer branch performs for a close the HOST authored. So a departure we
+// author and one we suffer now leave the session in the same state, which is the
+// property every cover, dialog and reconnect path already assumed it had.
+void Session::LeaveHost(const char* why) {
+    if (cfg_.role != Role::Client) return;
+    {   // FIRST WRITER WINS, matching the ClosedByPeer branch: a refusal names the
+        // real cause, and whatever the teardown trips afterwards is a consequence.
+        // Overwriting would hand the player the symptom instead of the reason.
         std::lock_guard<std::mutex> lk(hostCloseMutex_);
-        hostCloseReason_ = reason ? reason : "send backlog fatal";
+        if (hostCloseReason_.empty() && why) hostCloseReason_ = why;
     }
     // GEN: none -- CLIENT side: slot 0 is the host LINK handle, not a peer-slot
     // occupancy (the client owns no roster generations; the flee path tears down whole)
     const uint32_t hConn = peerConns_[0].exchange(0);
-    if (hConn == 0) return;
-    KickClaimed(0, hConn, reason);
+    if (hConn == 0) return;  // already claimed by another path; its teardown owns it
+    KickClaimed(0, hConn, why);
 }
 
 // The teardown for a connection whose slot the caller has ALREADY claimed

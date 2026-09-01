@@ -165,12 +165,32 @@ void Fail(const std::string& reason) {
     // We won the abort as a FAILURE: stash the reason for ui/connect_failed_dialog, unless
     // the process is tearing down (no UI to show; a "shutting down" reason must not pop a
     // modal). Set only by the winner, so a racing Cancel that won first keeps it silent.
+    //
+    // ...AND THE FIRST REASON OF AN ATTEMPT WINS, which is the half of "idempotent"
+    // this function only claimed to have. `g_abortReq` is DRAINED by the harness
+    // (TakeAbortRequest) the moment it acts on the abort, so a detector that re-fires
+    // -- and the connect-fail edge re-fires every tick by design -- wins the exchange
+    // a second time and used to overwrite the stashed reason. Measured 2026-09-01: a
+    // client refused a locked host, stashed the sentence saying exactly why, and two
+    // ticks later replaced it with the generic "could not connect to the host",
+    // because the specific reason had already been MOVED out of the session by the
+    // first TakeHostCloseReason. The player read the fallback; the real reason
+    // existed, was correct, and was destroyed by its own success.
+    //
+    // Safe within an attempt and across them: BeginConnect / BeginHostBoot / Cancel
+    // each clear g_failReason, so this keeps the CAUSE of one failed join and never
+    // leaks it into the next.
+    bool kept = false;
     if (!coop::shutdown::IsShuttingDown()) {
         std::lock_guard<std::mutex> lk(g_failMu);
-        g_failReason = reason;
-        g_failPending.store(true);
+        if (g_failReason.empty()) {
+            g_failReason = reason;
+            g_failPending.store(true);
+            kept = true;
+        }
     }
-    UE_LOGW("join_progress: join FAILED (%s) -- aborting + reopening the browser", reason.c_str());
+    UE_LOGW("join_progress: join FAILED (%s) -- aborting + reopening the browser%s",
+            reason.c_str(), kept ? "" : " [reason NOT shown -- an earlier one stands]");
 }
 
 void RefuseJoin(const std::string& reason) {
