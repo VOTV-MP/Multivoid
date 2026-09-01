@@ -21,10 +21,12 @@
 # INSIDE the mod package, and 7.9's USER DIRECTION 2026-08-25 ("zip релиза будет
 # содержать мод и пак") chose manual assembly BECAUSE the pak ships. The user's
 # 2026-08-29 pick is the four starter scientists (walter/sci/rvi_scientist/luther +
-# preview tiles), staged in assets/paks/ (UNTRACKED binaries -- see its README for
-# provenance) and auto-included below when -Pak is not given. CI has no assets/paks,
-# so a CI/drill zip is lawfully pak-less; a RELEASE zip is assembled on a box where
-# the dir is stocked. skin_registry walks every LogicMods subdirectory since the same
+# preview tiles), staged in assets/paks/ and auto-included below when -Pak is not
+# given. Those binaries are TRACKED since 2026-09-01, so every checkout including a
+# CI one now has them and a release assembled on a runner carries the skins. The
+# -Release refusal below stays anyway: it guards the directory being empty for any
+# reason, and "the release shipped half of itself" is not a failure worth trusting
+# a default to prevent. skin_registry walks every LogicMods subdirectory since the same
 # commit, so both install lanes see the models wherever their route lands them.
 # A pak-less package is still a fully working mod: client_model falls back to the
 # game's own kerfur skin, redistributing nothing.
