@@ -105,7 +105,13 @@ if ((Get-Content -LiteralPath $readmePath -Raw) -notmatch [regex]::Escape($gameT
 # The zip ROOT holds manifest/icon/README with NO wrapping folder, and the mod's
 # files sit under mod\ -- a root-level dlls\ matches no route and silently never
 # loads (7.2a trap 1). enabled.txt is what UE4SS reads to START an enumerated mod.
-$outAbs = Join-Path $repoRoot $OutDir
+# ABSOLUTE OR REPO-RELATIVE, both accepted. `Join-Path` happily concatenates a repo
+# root onto an already-absolute path and produces a doubled drive-qualified path, which
+# fails at New-Item with a message about the FILENAME rather than about the join --
+# so the caller sees a path syntax error and not "you passed the wrong kind of path".
+# CI passes $RUNNER_TEMP, which is absolute. (2026-09-01.)
+$outAbs = if ([System.IO.Path]::IsPathRooted($OutDir)) { $OutDir }
+          else { Join-Path $repoRoot $OutDir }
 $stage  = Join-Path $outAbs 'stage'
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory -Path (Join-Path $stage 'mod/dlls') -Force | Out-Null
