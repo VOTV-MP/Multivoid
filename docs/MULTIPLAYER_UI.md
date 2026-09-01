@@ -1693,7 +1693,31 @@ resolves toward UMG, that arc resolves with it rather than needing its own AOB.
 *"может раз создает хост сессию и всё, с этим и живёт? А надо пусть пересоздает."*
 
 `server_browser` → **HOST** → `host_window_native` (which world, how to connect) → **Next**
-→ `ui/host_session_settings` (who may join) → **Host**.
+→ `ui/host_session_settings` (who may join, **and who may FIND it**) → **Host**.
+
+* **STEP TWO ASKS TWO QUESTIONS SINCE 2026-09-01** (`7244d721`, user: *"при создании сервера
+  игрокам хостерам дать настройку сразу из тильды -- галочку на показывать или нет ваш сервер
+  в списке"*). A `SERVER LIST` selector sits under the password block, with the ~ menu's
+  POSITIVE wording (`Show in server browser` / `Hidden`) — the ImGui fallback words the same
+  decision as "Hide from", and two surfaces reading opposite ways is how a player ends up
+  certain they set it and wrong about which way. Before this, the native window passed
+  `hideFromBrowser=false` as a **hardcoded literal**: the host had no say at creation, the
+  announce went out — with their address in it for a DIRECT lobby — and the only way back was
+  un-listing from the ~ menu afterwards.
+* **Rows, not a checkbox, because the answer is not the host's in every mode.** AUTO is always
+  listed (the master is a relay game's only rendezvous, so a hidden AUTO lobby is unjoinable by
+  anyone); LAN ONLY is never announced; DIRECT is the real choice and defaults to listed. The
+  rows always state what will happen and are dimmed whole where the mode decides it — a
+  checkbox has no way to be truthful and unavailable at once. Click and hover are both gated on
+  DIRECT, so an unusable row neither lights up nor costs a hit test.
+* **`kWindowH` 470 → 690, and the middle value was WRONG AND SHIPPED.** `[V]` 610 put the
+  footer **28 screen px OUTSIDE the frame** in the AUTO+locked cell (ui.scale 1.25 → ~23
+  logical) — the defect `host_window_native` shipped twice before it was given a Fill slot.
+  This screen is fixed-height with Auto-sized children and only a Spacer to absorb slack, so
+  its only defence is being tall enough. `host_session_settings::ReportFit` now measures it on
+  the tick and logs an **ERROR** on any overflow; `NS::WindowShell` gained `box` because the
+  first probe measured against `root`, which is a FULL-SCREEN UUserWidget and reported "239 px
+  of slack" while the footer was outside the ring.
 
 * Step one's confirm is **Next** and it hosts nothing — `DoHost` became `DoNext` and took
   its hard-coded `locked=false` with it. There is still exactly ONE `HostWithSave` call in
@@ -1724,6 +1748,15 @@ resolves toward UMG, that arc resolves with it rather than needing its own AOB.
 that skips the player's door is how a lab result lies): `SESSION PASS`, `LOCK PASS`,
 `SESSION BACK PASS`, plus `authdrill --arm password` and its control. Host is never pressed
 by the harness; it would leave the rig hosting.
+
+> **THE PHASES NEED `--fake-master`, and forgetting it looks exactly like a broken rig.**
+> `python tools/mp.py browser` without it stops after ~50 s on the "no new verdict for 45 s"
+> heuristic, before step two is ever reached, and reports every phase as UNMEASURED. On
+> 2026-09-01 that produced a confident *"the driven phases do not run in this environment"* —
+> false; they had run at 00:08 the same day, and a post-ship audit caught the error by reading
+> the screenshot timestamps against `ignore_folder/_FRIENDLY_SESSION.txt`. Run
+> `python tools/mp.py browser --fake-master 12`. A missing verdict is a statement about the
+> invocation before it is a statement about the environment.
 
 **Known and declared:** the ImGui fallback can HOST a locked lobby but cannot JOIN one (no
 password prompt — the emergency-surface policy, declared in

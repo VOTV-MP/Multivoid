@@ -64,10 +64,17 @@ runs them frequently:
   (GUI console off). The committed source of truth for substrate setup.
   Pins the Thunderstore package `Thunderstore-unreal_shimloader-1.1.7`,
   which carries UE4SS `e31aaaa6` — measured **48 fps faster** than the
-  v3.0.1 release it replaced (`docs/UE4SS_ARC.md` §9). Verifies the
-  `UE4SS.dll` hash and FAILS CLOSED on a mismatch. Source order:
-  `-ZipPath`, then an r2modman/TSMM package cache, then the download —
-  use `-ZipPath` if `gcdn.thunderstore.io` is blocked on your network.
+  v3.0.1 release it replaced (`docs/UE4SS_ARC.md` §9). Verifies
+  **`UE4SS.dll` AND `dwmapi.dll` by SHA256** and FAILS CLOSED on a
+  mismatch. **A hash mismatch on an ALREADY-INSTALLED copy re-extracts**
+  rather than warning — otherwise moving the pin reaches nobody who
+  already has UE4SS (post-ship audit, 2026-09-01). Refuses while VotV is
+  running, since a half-written substrate is the failure the pin exists to
+  prevent. Source order: `-ZipPath`, then an r2modman/TSMM package cache,
+  then the download — use `-ZipPath` if `gcdn.thunderstore.io` is blocked
+  on your network. **The package version is one of FOUR copies** (here,
+  `release/ledger_lib.ps1`, `release/package_drill.ps1`, this file); they
+  must move together, and nothing enforces it yet.
 - **`sdk_diff.py <old.txt> <new.txt>`** — compare two
   `multivoid-compat-report.txt` outputs (the boot health-check writes
   one per launch); flags offset drift across recooks.

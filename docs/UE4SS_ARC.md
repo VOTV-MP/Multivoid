@@ -1963,14 +1963,40 @@ and `UE4SS-settings.ini` remain preserved state; the invariant is unchanged.
 mismatch, so a rolling source or a swapped file cannot quietly seat a different loader. `[V]` Shown
 refusing on a real wrong payload (the v3.0.1 zip, `4C177B9E`) with the existing install left intact.
 
-**TWO COPIES OF ONE DECISION — bump both or neither.** `[V]` The release manifest already declares
-`Thunderstore-unreal_shimloader-1.1.7` as the package's dependency (`ledger_lib.ps1:391`), which is
-what tells r2modman which UE4SS to install. It happens to name the same version the installer now
-pins, so today the two lanes agree — but they are independent literals in different files, serving
-the manual lane and the manager lane respectively. If one is bumped alone the lanes run different
-loaders again, which is precisely the asymmetry 9.5 moved the pin to close. There is deliberately no
-shared constant yet (the manifest builder and the installer share no module); the coupling is
-recorded here and in the installer's `.NOTES` instead.
+**FOUR COPIES OF ONE DECISION — bump all, or none.** `[V]` censused 2026-09-01: the package version
+is spelled out independently at `tools/install-ue4ss.ps1` (`$Version`), `tools/release/ledger_lib.ps1:391`
+(the zip manifest's dependency — what tells r2modman which UE4SS to install),
+`tools/release/package_drill.ps1:55` and `tools/README.md`. Nothing enforces agreement. If one moves
+alone the manual lane and the manager lane run different loaders, which is exactly the asymmetry 9.5
+moved the pin to close.
+
+This paragraph said **"TWO copies"** until the post-ship audit counted them, and that is recorded
+rather than quietly corrected: a comment IS the enforcement here, so a comment that undercounts is
+the failure mode itself. The proper fix — one dot-sourced `tools/release/ue4ss_pin.ps1` holding the
+version and the hashes, consumed by all three scripts, with a `tripwires.ps1` row — is **specified
+and NOT built**.
+
+**9.6a — what the post-ship audit changed in the installer (2026-09-01, `6d1a85e7`)**
+
+Three read-only audits ran against the shipped pin. No CRITICAL; five real defects in this script:
+
+- **The pin did not reach an installed copy at all.** Extraction ran only when `UE4SS.dll` was
+  ABSENT; a wrong build merely printed a yellow WARNING. So moving the pin reached nobody who already
+  had UE4SS unless a human remembered `-Force` — and the four dev copies were moved BY HAND, which is
+  exactly what hid it. **A hash mismatch is now the trigger**; the warning branch is deleted (RULE 2,
+  it is unreachable now). This was the single largest gap: the change had shipped and was inert.
+- **MD5 for a supply-chain gate** → SHA256. `Get-FileHash` defaults to SHA256; opting down for a hash
+  whose stated job is detecting substituted bytes from a third-party CDN had no reason behind it.
+- **One file of the payload was verified.** `dwmapi.dll` — the proxy the OS actually maps, and the
+  only reason any of this runs — was unchecked. Both are pinned now
+  (`19A9BE77…` / `8C4276AA…`).
+- **The install could abort mid-copy** into a running game and leave a MIXED old/new substrate, which
+  is precisely the state 9.6 says silently drops mods. It now refuses before the first write if
+  `VotV-Win64-Shipping` is up.
+- **A reset download poisoned the cache forever.** The partial file was named `$zip` and the
+  `Test-Path` accepted it on every later run, which then died inside `Expand-Archive` with no hint.
+  Downloads land on `.part` and are renamed only when complete. Staging expansions are cleaned again
+  too — the rewrite had dropped the `Remove-Item` the pre-pin script had.
 
 **One live obstacle, measured, not worked around.** `gcdn.thunderstore.io` — where the canonical
 download redirects — is **reset at the TLS handshake from this machine**: `[V]` three curl retries

@@ -5996,6 +5996,32 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   them (here, presents-per-second); and treat a collapse in USABLE sample count as a verdict about the
   run's validity, not a smaller sample to average anyway.
   `memory/project-ue4ss-loader-is-worth-48-fps-2026-08-31.md`
+- **A FIT CHECK IS ONLY AS GOOD AS THE RECT IT MEASURES AGAINST — and the wrong one fails GREEN.**
+  2026-09-01. Two audits predicted a fixed-height window's footer was arranged past its bottom edge,
+  so I wrote a probe to settle it. It printed *"footer inside the frame, 239 px of slack"* in both
+  lock states. Wrong operand: `NS::BuildWindowShell` returns `root`, which is a **full-screen
+  `UUserWidget`** (the scrim fills it), while the window the player sees is a centred `SizeBox` nested
+  inside that the shell did not expose — so the probe measured distance to the edge of the SCREEN,
+  which is always comfortably positive. Pointed at the real frame it read **FOOTER OUTSIDE THE FRAME
+  by 28 px**. The same probe first ran in `Show()`, where Slate has not laid out yet and every rect is
+  `0x0`, printing `overflow=0` — a second plausible pass. *Look FIRST:* name BOTH operands of a
+  containment probe and scrutinise the one you did not choose deliberately; treat an all-zero rect as
+  not-yet-laid-out, not as a value; and do not trust such a probe until it has printed a real failure
+  once. A probe that measures against a container larger than the one you mean passes forever.
+  `memory/lesson-a-fit-check-is-only-as-good-as-the-rect-it-measures-against.md`
+- **A MISSING RESULT INDICTS YOUR INVOCATION BEFORE IT INDICTS THE ENVIRONMENT.** 2026-09-01.
+  `mp.py browser` printed every driven phase as `UNMEASURED`, twice, and I handed off *"the driven
+  phases do not run in this environment"* — then shipped a UI change on `screen built` alone. False:
+  the phases need **`--fake-master N`** (the live master's ~2 rows do not carry the run to step two),
+  and they had passed on that same box hours earlier. A post-ship audit caught it by reading
+  `research/browser_shots/*.png` timestamps against `ignore_folder/_FRIENDLY_SESSION.txt`. Raising
+  `--duration` "confirmed" the wrong theory, because the run was ending on a verdict-silence heuristic
+  that no duration knob outranks. Re-run with the flag: ten phases PASS, and the same run measured a
+  real 28 px layout defect the "unmeasurable" verdict had let me ship. *Look FIRST:* `ls -la` the
+  output dir for a dated artifact (a working invocation you can copy), read the working command out of
+  the friendly-session log rather than the docs, and check the STOP REASON rather than the duration.
+  Write "I did not get it to run", never "it cannot run here" — the second is inherited as a fact
+  about the rig. `memory/lesson-a-missing-result-indicts-your-invocation-before-the-environment.md`
 
 ## 8. Build / deploy / git hygiene
 
@@ -6853,6 +6879,20 @@ itself states. [[lesson-a-forks-fix-is-verified-commit-by-commit-against-your-tr
   unrelated one later. Verify a "not tracked / missing / not built" conclusion from the other
   direction — `git log --stat` on the commit that should have touched it cannot be fooled by cwd.
   [[lesson-a-relative-pathspec-resolves-against-a-cwd-you-did-not-set]]
+- **CHANGING A DEFAULT DOES NOT REACH A STORED VALUE — and the people who stored it ARE the affected
+  population.** 2026-09-01, the same shape twice in one session in two unrelated subsystems.
+  (1) `browser.lastdirect` defaulted to a dead port; the fix corrected the default, but the row is
+  PERSISTED and the ImGui browser writes it on `IsItemDeactivatedAfterEdit`, which fires on **focus
+  loss with nothing typed** — so clicking the box once burns it in. `[V]` this repo's own HOST install
+  still read `127.0.0.1:7777` after the default was fixed. (2) `install-ue4ss.ps1` moved to a faster
+  UE4SS build but extracted only when `UE4SS.dll` was ABSENT and merely WARNED on a wrong build — so
+  the pin reached nobody who already had UE4SS, and the four dev copies had been moved BY HAND, which
+  is what hid it. Both fixes were complete-looking, built clean, and inert. *Look FIRST:* after
+  changing any default ask **"can this be stored, and by whom?"** — if yes, the change is half a fix,
+  and the other half is a one-shot exact-match MIGRATION or a mismatch TRIGGER that ACTS. A warning
+  where an action belongs is the RULE-1 crutch: the detection was already the whole cost. And
+  verifying on a rig you configured by hand verifies the one machine that cannot show the defect.
+  `memory/lesson-changing-a-default-does-not-reach-a-stored-value.md`
 
 ## 9. Security (threat model, trust boundaries, peer identity)
 
