@@ -42,6 +42,10 @@ namespace P = ue_wrap::profile;
 // because this TU includes that header inside the same coop::interactable_sync namespace.
 
 // ---- Adapters (file-static; must precede the Channel instances) ----------
+// Replay a switch press for its VISUAL half. Defined below (it needs the channels for the
+// role read); declared here because the light adapter's apply lambda names it.
+bool ApplySwitchPresentation(void* sw);
+
 const Adapter g_doorAdapter = {
     "door", coop::net::ReliableKind::DoorState,
     &ue_wrap::door::EnsureResolved,
@@ -76,6 +80,11 @@ const Adapter g_doorAdapter = {
     // Open gate: the host applies a client's open only if the door's own engine would (power on,
     // not jammed, not superClosed) -- so coop never opens a door SP keeps shut.
     &ue_wrap::door::CanOpen,
+    // The two facets that used to ride implicitly on Mode::HostAuth (split 2026-09-01). Doors
+    // are the ONLY feature that wants either: their autoclose fights an applied state, so a
+    // client open is a HOLD; and their apply is an ~0.5 s animation, so it needs finishing.
+    /*holdRegister*/ true,
+    /*TickApply*/    &ue_wrap::door::TickSmartApply,
 };
 const Adapter g_lightAdapter = {
     // Re-keyed to the SWITCH (was the lightRoot) so the receiver replays use() -> the
@@ -109,8 +118,52 @@ const Adapter g_lightAdapter = {
     &ue_wrap::lightswitch::IsLightSwitch,
     &ue_wrap::lightswitch::GetSwitchKeyString,
     &ue_wrap::lightswitch::TryReadSwitchA,
-    [](void* a, bool /*on*/) -> bool { return ue_wrap::lightswitch::CallUse(a); },
+    // Receiver-apply: replay use() so the peer's switch flips and clicks. On a CLIENT this
+    // runs PRESENTATION-ONLY -- ApplySwitchPresentation shuts the group's gate for exactly the
+    // duration of the call, so use()'s internal runTrigger(root,0) cannot move `isActive`.
+    // Without that the same press would be written by TWO lanes (this one via the toggle, the
+    // group lane absolutely) with no defined order inside a game-thread batch. On the HOST the
+    // full use() runs on purpose: replaying the client's switch edge IS how a client's press
+    // becomes an authoritative group change.
+    [](void* a, bool /*on*/) -> bool { return ApplySwitchPresentation(a); },
     nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,  // Symmetric channel -- no HostAuth hooks (last = CanOpen)
+};
+// The light GROUP (Atrigger_lightRoot_C) -- the state a player actually SEES, and until
+// 2026-09-01 the half of this feature nobody owned. The adapter above syncs the SWITCH's
+// `A`; this one syncs the group's `isActive`. They are two entities on purpose, because the
+// GAME keeps them decoupled: use() toggles `A` unconditionally but reaches the lamps only
+// through runTrigger(root,0), which opens with `IFNOT(active) POP`. So on a peer whose gate
+// is shut the switch flips, the click plays, and no light moves -- and since `A` then agrees
+// cross-peer, a poll on `A` can never see the difference again. (`A` is also not
+// save-persistent; the group's state is, via buffIsActive. RE flag E-L2, open since
+// 2026-05-25, is closed in ue_wrap/devices/lightswitch.h.)
+//
+// HOSTAUTH, not Symmetric. A pak-wide census (3,522 uassets) finds THIRTEEN blueprints that
+// can move a group -- powerControl, mainGamemode, ticker_flickerer, ui_cheatMenu and every
+// trigger_eventer / solarBoom / fakeLmaos / breakDish, because a lightRoot IS a trigger --
+// and most are host-owned world systems. Symmetric would let a client's local ticker author
+// the host's lights. The client is RECEIVE-ONLY here and there is no RequestApply: a client's
+// press already reaches the host on the LightState lane, and the host's own use() is what
+// produces the authoritative group change (act-as-host, COOP_SYNCER_MODEL 2b -- the intent is
+// the switch edge, the host performs it).
+//
+// APPLY IS runTrigger(root, on ? 1 : 2) -- the game's own ABSOLUTE, UNGATED setters, both of
+// which call updLig() so every lamp in lights[]/ambs[] repaints. Deliberately NOT index 0 (a
+// gated toggle would re-introduce the decoupling this lane exists to fix) and deliberately
+// NOT setActive, which writes the GATE and moves no lamp at all.
+const Adapter g_lightGroupAdapter = {
+    "lightgroup", coop::net::ReliableKind::LightGroupState,
+    &ue_wrap::lightswitch::EnsureResolved,
+    &ue_wrap::lightswitch::IsLightRoot,
+    &ue_wrap::lightswitch::GetKeyString,
+    &ue_wrap::lightswitch::TryReadActive,
+    [](void* a, bool on) -> bool { return ue_wrap::lightswitch::ApplyGroupState(a, on); },
+    // No autonomy-suppression hooks: a client's native press is neutralised for the exact
+    // duration of ONE input dispatch by the E-press PRE/POST pair below (the door lane's
+    // idiom), never by a gate left standing. A gate left shut is a player whose light
+    // switches quietly stopped working, and this project has shipped that class before.
+    // No RequestApply, no hold register, no TickApply -- the apply is instant.
+    nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
 };
 const Adapter g_containerAdapter = {
     "container", coop::net::ReliableKind::ContainerState,
@@ -177,6 +230,9 @@ const Adapter g_doorBoxAdapter = {
 };
 Channel g_door{g_doorAdapter, Channel::Mode::HostAuth};  // doors auto-revert -> host-authoritative
 Channel g_light{g_lightAdapter};
+// Host-authoritative -- see g_lightGroupAdapter. The client neither polls nor requests on
+// this kind; it renders what the host says the world looks like.
+Channel g_lightGroup{g_lightGroupAdapter, Channel::Mode::HostAuth};
 Channel g_container{g_containerAdapter};
 Channel g_garage{g_garageAdapter};  // garage has no auto-revert -> Symmetric (no oscillation)
 Channel g_appliance{g_applianceAdapter};  // appliances have no auto-revert -> Symmetric
@@ -191,12 +247,40 @@ Channel* ChannelForKind(coop::net::ReliableKind k) {
     switch (k) {
     case coop::net::ReliableKind::DoorState:      return &g_door;
     case coop::net::ReliableKind::LightState:     return &g_light;
+    case coop::net::ReliableKind::LightGroupState:return &g_lightGroup;
     case coop::net::ReliableKind::ContainerState: return &g_container;
     case coop::net::ReliableKind::GarageDoorState:return &g_garage;
     case coop::net::ReliableKind::ApplianceState: return &g_appliance;
     case coop::net::ReliableKind::LockerDoorState:return &g_doorBox;
     default:                                      return nullptr;
     }
+}
+
+// Replay a switch press for its VISUAL half only. use() is the game's own verb and does three
+// things: fires the group trigger, toggles `A`, and repaints the mesh + plays the click. On a
+// CLIENT we want the last two and must NOT have the first, because the group is host-owned and
+// a second writer with no defined ordering is how a transient becomes a permanent inversion.
+// Rather than hand-copy use()'s presentation half (a copy of a BP body drifts -- that is
+// exactly how power_control's ApplyPress ended up mirroring a panel while silently dropping
+// one of its four fan-out targets), pull the lever the BP already gates on: shut the group's
+// `active` for the duration of the call. Same idiom as the door lane's E-press PRE/POST pair.
+//
+// The gate is ALWAYS restored to the value it had, never to a hardcoded true: the door lane
+// shipped exactly that bug in 2026-06-12 ("opens and shuts instantly") because a keypad-locked
+// door legitimately has its gate shut. Here a shut gate means the base power panel's lights
+// breaker is off, which is just as legitimate.
+bool ApplySwitchPresentation(void* sw) {
+    auto* s = g_light.GetSession();
+    const bool isClient = s && s->connected() && s->role() == coop::net::Role::Client;
+    if (!isClient) return ue_wrap::lightswitch::CallUse(sw);  // HOST: the full press, group and all
+
+    void* const root = ue_wrap::lightswitch::ResolveSwitchRoot(sw);
+    if (!root) return ue_wrap::lightswitch::CallUse(sw);  // no group reachable -> nothing to gate
+    const bool priorGate = ue_wrap::lightswitch::GetGroupGate(root);
+    ue_wrap::lightswitch::SetGroupGate(root, false);
+    const bool ok = ue_wrap::lightswitch::CallUse(sw);
+    ue_wrap::lightswitch::SetGroupGate(root, priorGate);
+    return ok;
 }
 
 // ---- The SENDER is per-tick STATE POLLING (Channel::PollAndBroadcast, driven by
@@ -240,6 +324,25 @@ bool g_useInputObserverInstalled = false;
 void* g_useInputActiveCleared = nullptr;
 bool  g_useInputActivePrior  = true;
 
+// The SAME lever for a light switch, and for the same reason. A client's native E-press runs
+// lightswitch_C::use() BP-internally -- unobservable and unsuppressable by hooks -- and use()
+// ends in runTrigger(root,0), which would move a group the HOST owns. Shutting that group's
+// `active` for the body of the dispatch makes the native chain presentation-only: the switch
+// still flips and clicks locally (the responsive half a player feels), and the lights move
+// only when the host's LightGroupState lands. One slot suffices for the same reason the door's
+// does -- PRE and POST are one game-thread dispatch apart.
+void* g_useInputGateCleared = nullptr;
+bool  g_useInputGatePrior   = true;
+
+// Put back a gate the PRE observer shut. Called FIRST from both observers, so a dispatch whose
+// BP body SEH-faulted (POST never ran) self-heals on the next press instead of leaving a group
+// permanently deaf to its own switch -- the door lane's audit IMP-3, which applies verbatim.
+void RestoreLightGateIfCleared() {
+    if (!g_useInputGateCleared) return;
+    ue_wrap::lightswitch::SetGroupGate(g_useInputGateCleared, g_useInputGatePrior);
+    g_useInputGateCleared = nullptr;
+}
+
 void OnUseInputPre(void* self, void*, void*) {
     // Restore a LEAKED door first (audit IMP-3): if the prior dispatch's BP body
     // SEH-faulted, the POST observer never ran and the cleared door would stay
@@ -248,12 +351,28 @@ void OnUseInputPre(void* self, void*, void*) {
         ue_wrap::door::SetActive(g_useInputActiveCleared, g_useInputActivePrior);
         g_useInputActiveCleared = nullptr;
     }
+    RestoreLightGateIfCleared();
     if (!self) return;
     auto* s = g_door.GetSession();
     if (!s || !s->connected() || s->role() != coop::net::Role::Client) return;  // CLIENT-only
+    void* const aimed = ue_wrap::engine::ReadMainPlayerLookAtActor(self);
+    if (!aimed) return;
+
+    // A LIGHT SWITCH: shut its group's gate so the native use() is presentation-only.
+    if (ue_wrap::lightswitch::EnsureSwitchResolved() && ue_wrap::lightswitch::IsLightSwitch(aimed)) {
+        void* const root = ue_wrap::lightswitch::ResolveSwitchRoot(aimed);
+        if (!root) return;                                   // no group reachable: native behaviour stays
+        const std::wstring gk = ue_wrap::lightswitch::GetKeyString(root);
+        if (gk.empty() || gk == L"None") return;             // unkeyed group: no lane owns it, leave it alone
+        g_useInputGatePrior   = ue_wrap::lightswitch::GetGroupGate(root);
+        ue_wrap::lightswitch::SetGroupGate(root, false);
+        g_useInputGateCleared = root;
+        return;
+    }
+
     if (!ue_wrap::door::EnsureResolved()) return;
-    void* door = ue_wrap::engine::ReadMainPlayerLookAtActor(self);
-    if (!door || !ue_wrap::door::IsDoor(door)) return;
+    void* door = aimed;
+    if (!ue_wrap::door::IsDoor(door)) return;
     const std::wstring key = ue_wrap::door::GetKeyString(door);
     if (key.empty() || key == L"None") return;  // unkeyed door: native behavior stays
     g_useInputActivePrior = ue_wrap::door::GetActive(door);  // the REAL gate value to restore
@@ -270,6 +389,7 @@ void OnUseInput(void* self, void*, void*) {
         ue_wrap::door::SetActive(g_useInputActiveCleared, g_useInputActivePrior);
         g_useInputActiveCleared = nullptr;
     }
+    RestoreLightGateIfCleared();
     if (!self) return;
     auto* s = g_door.GetSession();
     if (!s || !s->connected() || s->role() != coop::net::Role::Client) return;  // CLIENT-only
@@ -339,6 +459,7 @@ void InstallUseInputObserver() {
 void IndexChannels() {
     g_door.RegisterWithScanHub();
     g_light.RegisterWithScanHub();
+    g_lightGroup.RegisterWithScanHub();
     g_container.RegisterWithScanHub();
     g_garage.RegisterWithScanHub();
     g_appliance.RegisterWithScanHub();
@@ -350,6 +471,7 @@ void IndexChannels() {
 void Install(coop::net::Session* session) {
     g_door.SetSession(session);
     g_light.SetSession(session);
+    g_lightGroup.SetSession(session);
     g_container.SetSession(session);
     g_garage.SetSession(session);
     g_appliance.SetSession(session);
@@ -379,6 +501,7 @@ void OnPeerLeft(int peerSlot) {
 void QueueConnectBroadcastForSlot(int peerSlot) {
     g_door.QueueConnectBroadcastForSlot(peerSlot);
     g_light.QueueConnectBroadcastForSlot(peerSlot);
+    g_lightGroup.QueueConnectBroadcastForSlot(peerSlot);
     g_container.QueueConnectBroadcastForSlot(peerSlot);
     g_garage.QueueConnectBroadcastForSlot(peerSlot);
     g_appliance.QueueConnectBroadcastForSlot(peerSlot);
@@ -388,6 +511,7 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
 void Tick() {
     g_door.Tick();
     g_light.Tick();
+    g_lightGroup.Tick();
     g_container.Tick();
     g_garage.Tick();
     g_appliance.Tick();
@@ -398,6 +522,7 @@ void Tick() {
 void OnDisconnect() {
     g_door.OnDisconnect();
     g_light.OnDisconnect();
+    g_lightGroup.OnDisconnect();
     g_container.OnDisconnect();
     g_garage.OnDisconnect();
     g_appliance.OnDisconnect();

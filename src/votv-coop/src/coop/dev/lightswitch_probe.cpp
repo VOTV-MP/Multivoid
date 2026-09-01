@@ -3,6 +3,7 @@
 #include "coop/dev/lightswitch_probe.h"
 
 #include "coop/config/config.h"
+#include "harness/session_runtime.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/devices/lightswitch.h"
@@ -12,6 +13,7 @@
 #include <array>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace coop::dev::lightswitch_probe {
 namespace {
@@ -86,10 +88,33 @@ void Install() {
             g_watchedCount, g_aOff, g_triggerOff, g_useFn);
 }
 
+// Defined below Tick (it is the long one); declared here because Tick fires it.
+void RunGroupApplySelftest();
+
 void Tick() {
     if (!ProbeEnabled() || g_testDone || !g_installed) return;
     // Let the world (lightswitches) load before the one-shot synthetic flip.
     if (g_tick++ < 300) return;
+
+    // SOLO ONLY. This probe MUTATES -- a synthetic use() plus the group selftest's four
+    // writes -- and its window lands squarely in a joining client's connect-snapshot. Armed
+    // on a host during `mp.py smoke` it cost the client its join: PASS with the flag off,
+    // "expected 2 peers, got 1" with it on, twice, everything else identical. It is a solo
+    // measurement instrument and this makes that its contract rather than its documentation.
+    // Deliberately NOT latched: a solo run that later hosts still gets its measurement, and a
+    // session that ends leaves the probe free to fire.
+    // running(), not connected(): a HOST alone is not "connected" yet, and firing in that
+    // window is precisely what broke the join -- the mutation landed just before the client
+    // arrived. running() covers hosting-with-nobody-yet as well as an established link.
+    const auto& sess = harness::session_runtime::Session();
+    if (sess.running() || sess.connected()) {
+        static bool s_said = false;
+        if (!s_said) { s_said = true;
+            UE_LOGW("[lightswitch_probe] a session is CONNECTED -- holding the mutating one-shot. "
+                    "This probe writes world state; run it solo. (The read-only per-key census is "
+                    "`lightgroup_census=1` and is safe on both peers.)"); }
+        return;
+    }
     g_testDone = true;
 
     void* sw = R::FindObjectByClass(L"lightswitch_C");
@@ -118,6 +143,67 @@ void Tick() {
             aBefore, aAfter, (aBefore != aAfter) ? "FLIPPED" : "unchanged",
             haveRoot ? (int)actBefore : -1, haveAfter ? (int)actAfter : -1,
             (haveRoot && haveAfter && actBefore != actAfter) ? "TOGGLED" : "unchanged");
+
+    RunGroupApplySelftest();
+}
+
+// ---- GROUP-APPLY SELFTEST (2026-09-01) -----------------------------------------------
+// The group lane's whole premise is that runTrigger index 1/2 moves a light group even where
+// index 0 -- the verb a switch press uses -- refuses because the group's gate is shut. That is
+// bytecode-derived; this executes it. It matters because at idle two peers AGREE, so an
+// integration run can pass with the apply path never having run once: a lane can look healthy
+// and be dead. The assertion order is deliberate -- the DEFECT is shown first (index 0 does
+// nothing with the gate shut), so a green result cannot come from the group having been movable
+// all along.
+//
+// Mutating, and it restores everything it touched: gate, then state, in that order.
+void RunGroupApplySelftest() {
+    void* root = nullptr;
+    for (void* r : R::FindObjectsByClass(L"trigger_lightRoot_C")) {
+        if (!r || !R::IsLive(r)) continue;
+        const std::wstring k = LS::GetKeyString(r);
+        if (k.empty() || k == L"None") continue;
+        root = r; break;
+    }
+    if (!root) { UE_LOGW("[lightswitch_probe] GROUP SELFTEST: no keyed lightRoot -- SKIPPED"); return; }
+
+    const std::wstring key = LS::GetKeyString(root);
+    bool before = false;
+    if (!LS::TryReadActive(root, before)) { UE_LOGW("[lightswitch_probe] GROUP SELFTEST: isActive unreadable -- SKIPPED"); return; }
+    const bool gatePrior = LS::GetGroupGate(root);
+
+    int pass = 0, fail = 0;
+    auto check = [&](const char* what, bool ok) {
+        if (ok) { ++pass; UE_LOGI("[lightswitch_probe] GROUP SELFTEST  ok   %s", what); }
+        else    { ++fail; UE_LOGE("[lightswitch_probe] GROUP SELFTEST  FAIL %s", what); }
+    };
+
+    // 1. THE DEFECT: with the gate shut, the switch's own verb cannot move the group.
+    LS::SetGroupGate(root, false);
+    check("gate reads back shut after SetGroupGate(false)", LS::GetGroupGate(root) == false);
+    LS::CallRunTrigger(root, 0);
+    bool afterGated = before;
+    LS::TryReadActive(root, afterGated);
+    check("index 0 (the switch's verb) is REFUSED while the gate is shut", afterGated == before);
+
+    // 2. THE FIX: the absolute setters ignore the gate, which is what lets a receiver land the
+    //    authority's state on a peer whose own breaker is off.
+    LS::ApplyGroupState(root, !before);
+    bool afterAbs = before;
+    LS::TryReadActive(root, afterAbs);
+    check("ApplyGroupState moved isActive DESPITE the shut gate", afterAbs == !before);
+
+    LS::ApplyGroupState(root, before);
+    bool restored = !before;
+    LS::TryReadActive(root, restored);
+    check("ApplyGroupState restored the original isActive", restored == before);
+
+    // 3. Leave nothing behind. A gate left shut is a player whose switches stopped working.
+    LS::SetGroupGate(root, gatePrior);
+    check("gate restored to its prior value", LS::GetGroupGate(root) == gatePrior);
+
+    UE_LOGI("[lightswitch_probe] GROUP SELFTEST: %s (%d passed, %d failed) key='%ls' gateWas=%d isActiveWas=%d",
+            fail == 0 ? "ALL PASS" : "FAILED", pass, fail, key.c_str(), gatePrior ? 1 : 0, before ? 1 : 0);
 }
 
 }  // namespace coop::dev::lightswitch_probe

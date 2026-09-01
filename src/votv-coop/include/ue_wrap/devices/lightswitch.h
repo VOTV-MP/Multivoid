@@ -77,4 +77,34 @@ std::wstring GetSwitchKeyString(void* sw);  // the switch's AtriggerBase_C::Key
 bool TryReadSwitchA(void* sw, bool& on);    // the switch's flip state (bool A)
 bool CallUse(void* sw);                     // use() -- flips the switch visual + the lights
 
+// --- The GROUP as a synced entity (2026-09-01) --------------------------------------
+// The switch lane above syncs `A`, which use() sets from its OWN toggle -- presentation.
+// The GROUP's live state is trigger_lightRoot_C::isActive, and until now nothing on either
+// peer owned or reconciled it. These are the primitives the group lane drives it with.
+
+// The lightRoot this switch fires. The BP reads `objects[0]` (the inherited
+// triggerBase_C::objects array) and casts it to the int_Ttrigger interface; the older
+// `Trigger` pointer field is the fallback. nullptr if neither resolves to a lightRoot.
+void* ResolveSwitchRoot(void* sw);
+
+// runTrigger(owner, index) on a lightRoot. The BP switches on index:
+//   0 -> `IFNOT(active) POP` then isActive := !isActive; updLig()   (the GATED toggle a switch uses)
+//   1 -> isActive := true;  updLig()                                 (absolute ON,  UNGATED)
+//   2 -> isActive := false; updLig()                                 (absolute OFF, UNGATED)
+// `owner` is written into the ubergraph frame and never read on any path, so we pass the
+// root itself rather than inventing a caller. Game thread. False on null/unresolved.
+bool CallRunTrigger(void* root, int32_t index);
+
+// Drive the group to `on` ABSOLUTELY, through the game's own verb (index 1/2). Ungated on
+// purpose: a receiver must land the authority's state even where its own gate is shut --
+// that gate governs LOCAL presses, not what this peer is told the world looks like.
+bool ApplyGroupState(void* root, bool on);
+
+// Read/write the group's ENABLE GATE (`active`) -- used to make a CLIENT's native press
+// presentation-only for the duration of one input dispatch, the same lever the door lane
+// pulls on Adoor_C::Active. Never leave it cleared past the dispatch: a gate left shut is a
+// player whose light switches silently stopped working.
+bool GetGroupGate(void* root);
+void SetGroupGate(void* root, bool open);
+
 }  // namespace ue_wrap::lightswitch
