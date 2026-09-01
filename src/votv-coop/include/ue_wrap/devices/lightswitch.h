@@ -29,12 +29,34 @@ bool IsLightRoot(void* obj);
 // if unkeyed).
 std::wstring GetKeyString(void* root);
 
-// Read the group's `IsActive` bool into `on`. False if the read could not be
-// made (null / not resolved); leaves `on` untouched on failure.
+// THE GROUP CARRIES THREE SEPARATE BOOLS -- bytecode-measured 2026-09-01, and this
+// CLOSES RE flag E-L2 (open since 2026-05-25, which could not tell them apart):
+//   isActive     -- the group's LIVE on/off. `updLig()` pushes it to every lamp in
+//                   `lights[]` / `ambs[]`. This is the bit a player sees.
+//   active       -- an ENABLE GATE, not a state. `runTrigger(owner,0)` opens with
+//                   `IFNOT(active) POP`, so with the gate shut a switch press flips the
+//                   switch and moves NO lights. Save-persistent; the base power panel's
+//                   lights breaker drives it (powerControl.buttonsVisibility).
+//   buffIsActive -- the SAVED copy of the live state; `loadAft` runs
+//                   `isActive := buffIsActive; updLig()`.
+// FName lookup is case-insensitive, so L"IsActive" resolves the live state and L"Active"
+// resolves the GATE. They are different properties; do not let the near-collision fuse them.
+
+// Read the group's `isActive` bool into `on` -- the LIVE state. False if the read could
+// not be made (null / not resolved); leaves `on` untouched on failure.
 bool TryReadActive(void* root, bool& on);
 
-// SetActive(on) -- turns the whole group on/off (fans out to all lamps). MUST run
-// on the game thread. False on null / unresolved UFunction.
+// setActive(on) -- writes the group's ENABLE GATE (`active`) and NOTHING ELSE. Measured:
+// the whole BP body is one `EX_LetBool`, member `active` := param. It does NOT touch
+// `isActive` and does NOT call `updLig()`, so it moves no lamps.
+//
+// (This header used to claim it "turns the whole group on/off (fans out to all lamps)".
+// That was false and it had no callers, so nothing was broken by it -- but it is exactly
+// the kind of comment that gets trusted instead of the code. The verb that actually drives
+// the lamps is `runTrigger(owner, 1)` = absolute ON and `runTrigger(owner, 2)` = absolute
+// OFF, both UNGATED and both calling `updLig()`; index 0 is the gated toggle a switch uses.)
+//
+// MUST run on the game thread. False on null / unresolved UFunction.
 bool CallSetActive(void* root, bool on);
 
 // The SetActive UFunction pointer (for POST-observer registration). nullptr until

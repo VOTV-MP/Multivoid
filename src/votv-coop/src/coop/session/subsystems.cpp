@@ -72,6 +72,7 @@
 #include "coop/session/teleport_client.h"  // TeleportSlotToHost: spawn a joiner at the host pose (connect edge)
 #include "coop/dev/keypad_probe.h"
 #include "coop/dev/door_probe.h"
+#include "coop/dev/light_group_census.h"
 #include "coop/dev/lightswitch_probe.h"
 #include "coop/dev/perf_probe.h"
 #include "coop/save/save_transfer.h"
@@ -621,6 +622,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     coop::dev::sleep_probe::Tick(isConnected, isHost);  // client sleeps T+15, host T+25 (ACCELERATE), host wakes T+40 (END)
     coop::dev::lightswitch_probe::Install();  // dev-only light-switch sync RE probe (ini lightswitch_probe=1)
     coop::dev::lightswitch_probe::Tick();     // one-shot synthetic flip -> is SetActive BP-internal + does use() flip both switch+lights
+    coop::dev::light_group_census::Tick();    // dev-only READ-ONLY light-GROUP census (ini lightgroup_census=1); self-installs
     coop::dev::keypad_probe::Install();        // dev-only keypad digit-entry RE probe (ini keypad_probe=1)
     coop::dev::keypad_probe::Tick();           // synthetic inputNumber sequence -> does it append inPassword + flip isAcc (increment-2 design)
     coop::dev::door_probe::Install();          // dev-only door state-machine RE probe (ini door_probe=1)

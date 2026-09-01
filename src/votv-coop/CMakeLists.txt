@@ -560,6 +560,7 @@ add_library(votv-coop SHARED
     src/coop/dev/sleep_probe.cpp
     src/coop/dev/event_trigger.cpp
     src/coop/dev/event_force.cpp
+    src/coop/dev/light_group_census.cpp
     src/coop/dev/lightswitch_probe.cpp
     src/coop/dev/keypad_probe.cpp
     src/coop/dev/door_probe.cpp

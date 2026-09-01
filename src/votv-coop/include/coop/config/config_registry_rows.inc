@@ -347,7 +347,9 @@ CFG_FLAG(gnatives_probe, "gnatives_probe", "dev", false, nullptr,
 CFG_FLAG(gnatives_probe_disabled, "gnatives_probe_disabled", "dev", false, nullptr,
     "Variant of gnatives_probe with interception disabled (control run).")
 CFG_FLAG(lightswitch_probe, "lightswitch_probe", "dev", false, nullptr,
-    "Diagnostic probe: light switch interactions.")
+    "Diagnostic probe: light switch interactions. MUTATES the world (one-shot synthetic use()) -- never enable it on two peers at once.")
+CFG_FLAG(lightgroup_census, "lightgroup_census", "dev", false, nullptr,
+    "Diagnostic census: per-key light GROUP state (isActive / active gate / buffIsActive) + switch A. Read-only; enable on BOTH peers and diff by key.")
 CFG_FLAG(sleep_probe, "sleep_probe", "dev", false, nullptr,
     "Diagnostic probe: sleep/wake cycle.")
 CFG_FLAG(vm_dispatch_log, "vm_dispatch_log", "dev", false, nullptr,

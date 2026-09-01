@@ -85,8 +85,25 @@ const Adapter g_lightAdapter = {
     // and double-delivery is safe (applies are GT-serialized + use() updates A
     // synchronously -- lightswitch_probe proved A flips 0->1 right after the call).
     // (IDA 2026-06-04: the lightRoot.SetActive observer never fired -- BP-internal.)
-    // HANDS-ON TO VERIFY: that use() toggles BOTH directions (1->0, not just 0->1); if a
-    // switch's use() is one-way, want=OFF would never land -> needs a switch-level set verb.
+    //
+    // THE OLD "HANDS-ON TO VERIFY" HERE IS ANSWERED, by bytecode, 2026-09-01: use() ends in
+    // an UNCONDITIONAL `a := Not_PreBool(a)` with no branch around it, so it toggles BOTH
+    // directions and "apply when cur != want" really is an absolute set for this bool. No
+    // switch-level set verb is needed. (PR #12 proposed forcing `a` by raw memory write to
+    // fix a one-way toggle that does not exist; it was declined -- see below.)
+    //
+    // WHAT THIS LANE DOES *NOT* COVER, measured the same day and NOT a defect of this code:
+    // `a` is the switch's PRESENTATION bit (mesh + sound) and is not save-persistent. The
+    // state a player SEES is trigger_lightRoot_C::isActive, which this lane never touches
+    // and nothing else in the tree reconciles either. use() reaches it via
+    // runTrigger(self,0), which is GATED on the root's `active` -- so on a peer whose gate
+    // is shut the switch flips and the lights do not, `a` still agrees cross-peer, and this
+    // poll is structurally blind to the difference forever. A population census of the paks
+    // (3,522 uassets) finds THIRTEEN blueprints that can move a group -- powerControl,
+    // mainGamemode, ticker_flickerer, ui_cheatMenu, and every trigger_eventer / solarBoom /
+    // fakeLmaos / breakDish, because a lightRoot IS a trigger -- so the honest fix is to
+    // sync the GROUP source-agnostically, not to enumerate causes. Measure it first with
+    // ini `lightgroup_census=1` on both peers (coop/dev/light_group_census.h).
     "light", coop::net::ReliableKind::LightState,
     &ue_wrap::lightswitch::EnsureSwitchResolved,
     &ue_wrap::lightswitch::IsLightSwitch,
