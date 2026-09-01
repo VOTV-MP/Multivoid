@@ -115,6 +115,22 @@ jobs:
           python tools/net/master_contact_gate.py
           exit $LASTEXITCODE
 
+      - name: ReliableKind routing gate (every wire kind reaches a receiver, or names why not)
+        # THREE sync lanes have shipped WIRE-DEAD -- v70 DeskLogLine (dead from day one),
+        # v71 SleepState, and 2026-09-01 LightGroupState, which was published as "live
+        # cross-peer" and had never once reached a receiver. Each time the enum, payload,
+        # sender and module wiring all landed and the build was clean, so nothing failed;
+        # the message died at event_feed's `default:`. The written checklist did not stop
+        # the third one -- it was in that session's own indexed memory at the time. A memo
+        # cannot hold a wiring invariant. This gate is verified against real history: run
+        # against 96d14250 it fails and names LightGroupState; against 7fed1c1a it passes.
+        # --drill runs four injected must-fire controls first, in ONE invocation so the
+        # last-child-exit-code trap cannot discard the drill's verdict.
+        shell: pwsh
+        run: |
+          python tools/net/reliablekind_gate.py --drill
+          exit $LASTEXITCODE
+
       - name: MinHook free-call gate (nothing may free a trampoline the process still calls)
         # Same family as the gates above: a cheap text scan with its own injected must-fire
         # control, run before the toolchain so a violation fails fast. Guards the property
