@@ -55,6 +55,8 @@ void Render() {
                         "scientists ship together in scientists.pak.");
     ImGui::TextDisabled("Preview tile = <skin name>.png/.bmp beside the pak.");
     ImGui::TextDisabled("Peers WITHOUT that pak see the default kel body instead.");
+    ImGui::TextDisabled("A pak that carries no skin (another mod's) is dropped from this "
+                        "list once the game has been asked -- it is not a skin.");
     if (ImGui::Button("Refresh list")) {
         coop::skins::Entries(true);
         // Release the cached preview textures before dropping the map -- clearing
@@ -78,6 +80,13 @@ void Render() {
     int i = 0;
     std::string hoveredName;  // 2026-08: the tile under the cursor -> live mannequin preview
     for (const auto& e : entries) {
+        // A PAK IS NOT A SKIN. The scan lists the stem of every .pak under LogicMods, so
+        // another mod's pak lands here and resolves to no mesh anywhere; offering it is how
+        // a player picked one and diverged every peer to the native kel. `Unknown` stays
+        // VISIBLE on purpose -- it means the game thread has not been asked yet (a couple of
+        // entries per tick), not that the skin is bad, and hiding it would make the grid
+        // shuffle while the player looks at it.
+        if (e.usable == coop::skins::Usable::No) continue;
         if (i % perRow != 0) ImGui::SameLine();
         ++i;
         ImGui::PushID(e.name.c_str());
