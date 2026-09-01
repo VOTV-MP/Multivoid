@@ -43,7 +43,20 @@ bool HandleStateEvent(net::Session& session,
     case net::ReliableKind::ContainerState:
     case net::ReliableKind::GarageDoorState:
     case net::ReliableKind::ApplianceState:
+    case net::ReliableKind::LightGroupState:    // v150: the light GROUP's isActive (host-authored)
     case net::ReliableKind::LockerDoorState: {  // v62: lockers + drone-console doors (same KeyedToggle shape)
+        // LightGroupState is the one HOST-AUTHORED kind in this otherwise symmetric family, so
+        // it does not get the family's "any peer may send" treatment: a client that authored it
+        // would drive the host's AND every other client's lights, which is precisely the
+        // pollution the adapter chose HostAuth to prevent. Channel::OnReliable performs no role
+        // or sender check of its own, so the drop has to be here, at the family boundary.
+        // (Refused on the receiving CLIENT too, not only on the host -- the host relays nothing
+        // on this kind, so a packet arriving from a non-host slot is not ours either way.)
+        if (msg.kind == net::ReliableKind::LightGroupState && msg.senderPeerSlot != 0) {
+            UE_LOGW("event_feed: LightGroupState from slot %d refused -- this kind is host-authored",
+                    msg.senderPeerSlot);
+            return true;  // claimed by this family, deliberately not applied
+        }
         // Phase 5D (v27): a peer toggled a keyed interactable (base door /
         // light group / container lid / garage / appliance). SYMMETRIC -- any peer
         // can send; the host relays a client-originated edge to the other clients

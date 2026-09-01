@@ -157,7 +157,18 @@ const Adapter g_lightGroupAdapter = {
     &ue_wrap::lightswitch::IsLightRoot,
     &ue_wrap::lightswitch::GetKeyString,
     &ue_wrap::lightswitch::TryReadActive,
-    [](void* a, bool on) -> bool { return ue_wrap::lightswitch::ApplyGroupState(a, on); },
+    [](void* a, bool on) -> bool {
+        // Skip a no-op apply. HostAuth deliberately applies UNCONDITIONALLY in general, because
+        // on a DOOR a live-field match is evidence of the client's own native press racing the
+        // echo rather than of idempotency (interactable_channel.h). That reasoning does not
+        // transfer here: this client's own writers of isActive are gate-suppressed, so a match
+        // really is a match. Without this, one connect-snapshot is 42 runTrigger calls in a
+        // single frame, each fanning updLig() over its whole lights[]/ambs[] -- a join-time
+        // stall and a visible full relamp of the base, for zero state change.
+        bool cur = false;
+        if (ue_wrap::lightswitch::TryReadActive(a, cur) && cur == on) return true;
+        return ue_wrap::lightswitch::ApplyGroupState(a, on);
+    },
     // No autonomy-suppression hooks: a client's native press is neutralised for the exact
     // duration of ONE input dispatch by the E-press PRE/POST pair below (the door lane's
     // idiom), never by a gate left standing. A gate left shut is a player whose light
@@ -276,11 +287,25 @@ bool ApplySwitchPresentation(void* sw) {
 
     void* const root = ue_wrap::lightswitch::ResolveSwitchRoot(sw);
     if (!root) return ue_wrap::lightswitch::CallUse(sw);  // no group reachable -> nothing to gate
-    const bool priorGate = ue_wrap::lightswitch::GetGroupGate(root);
-    ue_wrap::lightswitch::SetGroupGate(root, false);
-    const bool ok = ue_wrap::lightswitch::CallUse(sw);
-    ue_wrap::lightswitch::SetGroupGate(root, priorGate);
-    return ok;
+
+    // RAII, not a straight-line restore: CallUse goes through ProcessEvent, whose fault is caught
+    // at the task/detour boundary and unwinds straight PAST a manual restore. `active` is
+    // save-persistent, so a leaked shut gate is written into the player's save and follows them
+    // into single-player -- every switch in that group flips and clicks and moves no light,
+    // permanently. /EHa means the unwind still runs this destructor.
+    ue_wrap::lightswitch::ScopedGroupGateShut hold(root);
+    if (!hold.shut()) {
+        // The guard is NOT in force (unresolved offset, or the write did not take). Say so once
+        // rather than proceeding as if it were: the write failing CLOSED is not the same claim as
+        // the suppression having HAPPENED, and here it fails OPEN -- use() will also move
+        // isActive, which the host owns.
+        static bool s_warned = false;
+        if (!s_warned) { s_warned = true;
+            UE_LOGW("light: group gate unavailable -- a client's switch replay will also move "
+                    "isActive, which the host owns. The group lane still corrects it, but the "
+                    "press double-moves visibly."); }
+    }
+    return ue_wrap::lightswitch::CallUse(sw);
 }
 
 // ---- The SENDER is per-tick STATE POLLING (Channel::PollAndBroadcast, driven by
@@ -364,8 +389,10 @@ void OnUseInputPre(void* self, void*, void*) {
         if (!root) return;                                   // no group reachable: native behaviour stays
         const std::wstring gk = ue_wrap::lightswitch::GetKeyString(root);
         if (gk.empty() || gk == L"None") return;             // unkeyed group: no lane owns it, leave it alone
+        if (!ue_wrap::lightswitch::GroupGateAvailable()) return;  // cannot gate -> do not pretend we did
         g_useInputGatePrior   = ue_wrap::lightswitch::GetGroupGate(root);
         ue_wrap::lightswitch::SetGroupGate(root, false);
+        if (ue_wrap::lightswitch::GetGroupGate(root)) return;     // the write did not take; record nothing
         g_useInputGateCleared = root;
         return;
     }
@@ -495,7 +522,8 @@ void OnDoorOpenRequest(const coop::net::KeyedTogglePayload& payload, uint8_t sen
 
 void OnPeerLeft(int peerSlot) {
     if (peerSlot <= 0 || peerSlot >= static_cast<int>(coop::players::kMaxPeers)) return;
-    g_door.OnPeerLeft(static_cast<uint8_t>(peerSlot));  // door is the only HostAuth channel
+    g_door.OnPeerLeft(static_cast<uint8_t>(peerSlot));  // doors are the only channel with a HOLD REGISTER (g_lightGroup is HostAuth too, but
+    // never enters holdOpen_ -- see Adapter::holdRegister)
 }
 
 void QueueConnectBroadcastForSlot(int peerSlot) {
@@ -528,6 +556,12 @@ void OnDisconnect() {
     g_appliance.OnDisconnect();
     g_doorBox.OnDisconnect();
     ue_wrap::door_box::OnDisconnect();  // drop mid-swing verify entries (audit IMPORTANT-2)
+    // Put back any gate an E-press shut and never restored (a faulted BP body skips the POST
+    // observer), and forget the pointer. Otherwise the slot holds an actor of a world that may be
+    // torn down before the next press, and that press's restore writes a byte into whatever now
+    // owns the address -- a wrong-offset write faults nowhere near where it happened. SetGroupGate
+    // re-checks liveness, so this is safe even mid-teardown.
+    RestoreLightGateIfCleared();
 }
 
 }  // namespace coop::interactable_sync

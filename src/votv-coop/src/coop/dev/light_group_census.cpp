@@ -71,7 +71,13 @@ bool InCurrentWorld(void* obj) {
 void Install() {
     if (!Enabled() || g_installed) return;
     void* rootCls = R::FindClass(L"trigger_lightRoot_C");
-    if (!rootCls) return;  // blueprint not loaded yet -- retry next tick
+    if (!rootCls) return;  // blueprint not loaded yet -- retry next tick (throttled by the caller)
+    // GetKeyString / GetSwitchKeyString return "" until these have run, and this probe REPORTS
+    // an empty key as `unkeyed` -- so without them a census could confidently print "every group
+    // is unkeyed" as a measurement. It happens to work today only because two channels call them
+    // every tick; an instrument must not depend on someone else having warmed it.
+    LS::EnsureResolved();
+    LS::EnsureSwitchResolved();
     g_rootCls   = rootCls;
     g_switchCls = R::FindClass(L"lightswitch_C");
 
@@ -93,8 +99,11 @@ void Install() {
 
 void Tick() {
     if (!Enabled()) return;
-    if (!g_installed) { Install(); return; }
+    // Throttle FIRST. Install() opens with R::FindClass, which on a MISS is a full
+    // GUObjectArray walk that is deliberately not cached -- retrying it every frame until the
+    // blueprint loads is the per-frame-walk pattern this project has already paid for once.
     if ((++g_tick % kScanEveryTicks) != 0) return;
+    if (!g_installed) { Install(); return; }
     const bool fullDump = (g_tick % kDumpEveryTicks) == 0;
 
     UE_ASSERT_GAME_THREAD("light_group_census::Tick");

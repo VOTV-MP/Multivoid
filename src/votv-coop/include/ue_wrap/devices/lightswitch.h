@@ -107,4 +107,29 @@ bool ApplyGroupState(void* root, bool on);
 bool GetGroupGate(void* root);
 void SetGroupGate(void* root, bool open);
 
+// Is gating actually AVAILABLE? SetGroupGate fails CLOSED on an unresolved offset -- which is
+// right for the WRITE and wrong for the CALLER, because a suppression that silently did not
+// happen fails OPEN. Ask this before relying on the guard; do not infer it from GetGroupGate,
+// which reports the authored default when it cannot read.
+bool GroupGateAvailable();
+
+// RAII gate hold: shut on construction, restore the PRIOR value on destruction. Use this and
+// never a straight-line save/shut/restore -- the DLL is built /EHa, so the __except unwind at
+// the ProcessEvent task boundary still runs C++ destructors, and a UFunction call that faults
+// between a manual shut and its restore would otherwise leave the gate shut FOREVER. `active`
+// is save-persistent, so that leak is written into the player's save and follows them into
+// single-player: every switch in that group flips and clicks and moves no light, permanently.
+class ScopedGroupGateShut {
+public:
+    explicit ScopedGroupGateShut(void* root);
+    ~ScopedGroupGateShut();
+    ScopedGroupGateShut(const ScopedGroupGateShut&) = delete;
+    ScopedGroupGateShut& operator=(const ScopedGroupGateShut&) = delete;
+    bool shut() const { return shut_; }   // false = the guard is NOT in force (see GroupGateAvailable)
+private:
+    void* root_ = nullptr;
+    bool  prior_ = true;
+    bool  shut_  = false;
+};
+
 }  // namespace ue_wrap::lightswitch

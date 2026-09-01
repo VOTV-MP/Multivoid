@@ -178,7 +178,11 @@ bool CallUse(void* sw) {
 
 void* ResolveSwitchRoot(void* sw) {
     if (!sw) return nullptr;
-    if (!EnsureResolved()) return nullptr;  // need the lightRoot class to validate what we find
+    if (!EnsureResolved()) return nullptr;        // need the lightRoot class to validate what we find
+    if (!EnsureSwitchResolved()) return nullptr;  // ...and the SWITCH class, which owns g_objectsOff /
+                                                  // g_swTriggerOff. Every caller today happens to have
+                                                  // resolved it first; a fourth would silently have got
+                                                  // nullptr here, and nullptr means "no gating".
     // objects[0] first -- that is what use() actually reads.
     if (g_objectsOff >= 0) {
         const auto* arr = reinterpret_cast<const field_io::TArrayView*>(
@@ -213,7 +217,26 @@ bool GetGroupGate(void* root) {
 
 void SetGroupGate(void* root, bool open) {
     if (!root || g_gateOff < 0) return;  // fail CLOSED on an unresolved offset: never write a guess
+    // The pointer may be an actor of a world that has since been torn down -- the restore half of
+    // a hold can outlive the press that took it. A raw write at a known-good offset into freed
+    // memory corrupts whatever now owns the page, and by the recorded lesson it faults nowhere
+    // near here, so liveness is checked rather than assumed.
+    if (!R::IsLive(root)) return;
     *reinterpret_cast<bool*>(reinterpret_cast<char*>(root) + g_gateOff) = open;
+}
+
+bool GroupGateAvailable() { return g_gateOff >= 0; }
+
+ScopedGroupGateShut::ScopedGroupGateShut(void* root) {
+    if (!root || !GroupGateAvailable()) return;   // guard not in force; shut() reports it
+    root_  = root;
+    prior_ = GetGroupGate(root);
+    SetGroupGate(root, false);
+    shut_  = (GetGroupGate(root) == false);       // verify, do not assume the write took
+}
+
+ScopedGroupGateShut::~ScopedGroupGateShut() {
+    if (root_) SetGroupGate(root_, prior_);
 }
 
 }  // namespace ue_wrap::lightswitch
