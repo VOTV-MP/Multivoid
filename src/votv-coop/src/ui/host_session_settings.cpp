@@ -53,7 +53,14 @@ constexpr float kWindowW  = 980.f;
 // the LOCKED state (its hint line is the tallest content) and the unlocked state carries
 // the difference as slack above the footer. Measured from the two captures, 2026-08-31:
 // 520 left ~66 px of slack locked and ~170 unlocked, which read as a hole.
-constexpr float kWindowH  = 470.f;
+//
+// 2026-09-01: +140 for the VISIBILITY selector (user: "при создании сервера игрокам
+// хостерам дать настройку сразу из тильды -- галочку на показывать или нет ваш сервер в
+// списке"). It is sized in rather than collapsed per connection mode, because the mode is
+// chosen in the PREVIOUS window and cannot change while this one is open -- so a
+// mode-dependent height would not be the window resizing under a click, but it would be
+// two layouts to keep true instead of one, for a hole the spacer already absorbs.
+constexpr float kWindowH  = 610.f;
 constexpr float kRowH     = 56.f;
 constexpr float kBorderPx = 2.f;
 constexpr float kPadPx    = 6.f;
@@ -78,6 +85,36 @@ constexpr WhoMayJoin kWho[2] = {
      L"Your session is open to everyone who finds it."},
     {L"Password required",
      L"Only players you give the password to."},
+};
+
+// ---- and the second question: can anyone FIND it -----------------------------------------
+//
+// THE SAME CONTROL AS THE ~ MENU'S "Show in server browser", moved to where the decision is
+// actually made. Until now the native hosting window passed `hideFromBrowser=false` as a
+// hardcoded literal, so a host had no say at creation at all and could only un-list AFTER
+// the announce had already gone out -- with their address in it. The ImGui fallback had a
+// checkbox the native default surface did not.
+//
+// POSITIVE POLARITY, matching the ~ menu. The ImGui window words it as "Hide from server
+// browser"; two surfaces for one decision that read opposite ways is how a player ends up
+// certain they set it and wrong about which way.
+//
+// IT IS NOT EDITABLE IN EVERY MODE, and the rows say so rather than disappearing:
+//   AUTO      -- always listed. The master is a relay game's ONLY rendezvous, so a hidden
+//                AUTO lobby is unjoinable by anyone (design call 2026-06-11). Offering the
+//                choice here would be offering a footgun; the ~ menu is where it becomes
+//                legitimate, once friends are already in.
+//   DIRECT    -- the real choice, and the reason this control exists.
+//   LAN ONLY  -- never announced at all, by construction.
+// So the selector always states the TRUTH about what will happen, and only DIRECT lets you
+// move it. That is why these are rows and not a checkbox: a checkbox has no way to be
+// truthful and unavailable at the same time.
+struct Visibility { const wchar_t* title; const wchar_t* detail; };
+constexpr Visibility kVis[2] = {
+    {L"Show in server browser",
+     L"Anyone can find your game in the list."},
+    {L"Hidden",
+     L"Only friends you give your address to."},
 };
 
 // ---- the generated password -----------------------------------------------------------
@@ -127,6 +164,9 @@ void* g_recapWorld = nullptr;
 void* g_recapConn  = nullptr;
 void* g_whoBg[2]    = {nullptr, nullptr};
 void* g_whoTitle[2] = {nullptr, nullptr};
+void* g_visBg[2]    = {nullptr, nullptr};
+void* g_visTitle[2] = {nullptr, nullptr};
+void* g_visHint     = nullptr;   // why the choice is fixed, on the modes where it is
 
 TF::Field* g_pwField = nullptr;
 
@@ -145,6 +185,23 @@ int            g_connMode = 0;
 
 bool g_locked = false;
 int  g_hoverWho = -1;
+
+// LISTED, and its default is per-MODE rather than a constant, because the honest default is
+// different in each: AUTO must be listed to be joinable at all, LAN ONLY can never be, and
+// DIRECT is the one where the host actually chooses (defaulting to listed -- the behaviour
+// every existing DIRECT host already has, since the old hardcoded literal was `false`).
+bool g_listed   = true;
+int  g_hoverVis = -1;
+
+// Can this connection mode's visibility be moved at all? DIRECT only -- see kVis.
+bool VisibilityIsEditable() { return g_connMode == 1; }
+
+// What the mode FORCES, for the two modes that force it.
+bool ListedForMode(int connMode) {
+    if (connMode == 2) return false;   // LAN ONLY: nothing is ever announced
+    if (connMode == 0) return true;    // AUTO: a hidden lobby is unjoinable
+    return true;                       // DIRECT: the host's call; listed is the default
+}
 
 // The status last WRITTEN -- BOTH the string and the colour, because this line changes
 // colour on a refusal and a cache that remembers only the text would suppress the repaint
@@ -282,6 +339,19 @@ void RepaintChoices() {
     // row-alignment case the padlock cell records.
     if (g_pwBlock) E::SetWidgetVisibility(g_pwBlock, g_locked ? 0 : 1);
 
+    // THE VISIBILITY ROWS, same two channels -- but DIMMED WHOLE when the mode decides it.
+    // A row the player cannot move must not look like one they can: it keeps the selection
+    // fill (it is still stating what will happen) and loses the white, so the section reads
+    // as information rather than as a control that ignores clicks.
+    const bool visEditable = VisibilityIsEditable();
+    for (int i = 0; i < 2; ++i) {
+        if (!g_visBg[i]) continue;
+        U::SetImageTint(g_visBg[i], (g_listed ? 0 : 1) == i ? kRowSel : kRowBg);
+        const FLinearColor& c = !visEditable ? kDim
+                                             : (g_hoverVis == i ? kHover : kText);
+        E::SetTextBlockColorDispatch(g_visTitle[i], c);
+    }
+
     // THE HINT SAYS SOMETHING DIFFERENT ON DIRECT AND LAN, and this is the honest
     // surfacing of a real limit rather than a decoration.
     //
@@ -314,6 +384,21 @@ void RepaintChoices() {
                                    L"without it their game will refuse to send the "
                                    L"password at all."),
                 brokered ? kDim : kAmber);
+        // THE SAME EDGE, so the visibility hint costs nothing extra per hover sweep. It says
+        // why the rows are fixed on the two modes that fix them, and stays quiet on DIRECT
+        // where they are not -- a hint under a control the player can just use is noise.
+        if (g_visHint) {
+            SetText(g_visHint,
+                    g_connMode == 0
+                        ? std::wstring(L"Automatic games are always listed -- the list is how "
+                                       L"friends find you. You can hide it from the ~ menu "
+                                       L"once they have joined.")
+                    : g_connMode == 2
+                        ? std::wstring(L"LAN games are never announced anywhere. Friends on "
+                                       L"your network join by your local address.")
+                        : std::wstring(),
+                    g_connMode == 1 ? kDim : kAmber);
+        }
     }
 }
 
@@ -418,6 +503,22 @@ bool BuildScreen(void* switcher) {
     if (g_pwHint) U::SetAutoWrapText(g_pwHint, true);
     E::SetWidgetVisibility(g_pwBlock, 1);   // Collapsed: the lock starts off
 
+    // ---- who may FIND it ----------------------------------------------------------------
+    // Always present, never collapsed: unlike the password block this does not appear and
+    // disappear with a click inside the window, and its rows carry the truth for every mode
+    // (see kVis). The hint under them explains the modes where the choice is not the host's.
+    NS::AddText(col, L"SERVER LIST", 16, kAccent, NS::kJustLeft, 0.f);
+    for (int i = 0; i < 2; ++i) {
+        Row r = BuildRow(col, 0.42f, 0.58f);
+        g_visBg[i]    = r.bg;
+        g_visTitle[i] = r.a;
+        SetText(r.a, kVis[i].title,  kText);
+        SetText(r.b, kVis[i].detail, kDim);
+        if (!r.bg || !r.a) return false;
+    }
+    g_visHint = NS::AddText(col, L"", 15, kDim, NS::kJustLeft, 0.f);
+    if (g_visHint) U::SetAutoWrapText(g_visHint, true);
+
     // A SPACER WITH ALL THE SLACK, so the footer sits at the bottom of the window rather
     // than floating under the last control. The same trick the input windows use, and it
     // costs one widget; the alternative -- a Fill slot on the footer -- makes the footer's
@@ -506,15 +607,22 @@ void DoHost() {
     // the channel by which it reaches the host call. A write that failed, an env var that
     // outranks the file, or edge whitespace the parser trims would all read back empty and
     // silently downgrade this session to open while the padlock stays lit on screen.
+    // HIDE ONLY WHERE HIDING IS A CHOICE. `hideFromBrowser` is DIRECT-only in
+    // `HostWithSave` (AUTO ignores it by design, LAN never announces), so passing the raw
+    // flag on the other modes would be sending a value the callee is entitled to drop --
+    // and a reader of this call would have to go find that out. The mode gate is stated
+    // here instead, where the value is formed.
+    const bool hideFromBrowser = VisibilityIsEditable() && !g_listed;
     const bool accepted = sm::HostWithSave(g_choice, g_name, g_locked, pw, /*playersMax=*/4,
                                            /*directConnection=*/g_connMode == 1,
-                                           /*hideFromBrowser=*/false,
+                                           hideFromBrowser,
                                            /*lanOnly=*/g_connMode == 2);
     // THE PASSWORD IS NEVER LOGGED. It is the one value in this window that is a secret, and
     // a log line is the easiest place in the whole program for it to end up in a screenshot.
-    UE_LOGI("host_session_settings: HOST %s -- world=%s conn=%d locked=%d name='%s'",
+    UE_LOGI("host_session_settings: HOST %s -- world=%s conn=%d listed=%d locked=%d name='%s'",
             accepted ? "accepted" : "REFUSED (another action in flight)",
             g_choice.newGame ? "<new game>" : g_choice.slot.c_str(), g_connMode,
+            hideFromBrowser ? 0 : 1,
             g_locked ? 1 : 0, g_name.c_str());
     if (!accepted) {
         // The window STAYS OPEN on a refusal, for the reason step one records: a screen that
@@ -596,6 +704,17 @@ void PollChrome() {
     if (g_hostBtn && E::WidgetIsHovered(g_hostBtn)) { DoHost(); return; }
     for (int i = 0; i < 2; ++i)
         if (g_whoBg[i] && NS::CursorOverWidget(g_whoBg[i])) { SetLocked(i == 1); return; }
+    // THE VISIBILITY ROWS ANSWER ONLY ON DIRECT. The click is swallowed rather than
+    // redirected on the other two modes: the rows are dimmed and the hint says why, so a
+    // silent no-op here is the honest behaviour and a status line would be nagging.
+    if (VisibilityIsEditable()) {
+        for (int i = 0; i < 2; ++i)
+            if (g_visBg[i] && NS::CursorOverWidget(g_visBg[i])) {
+                const bool want = (i == 0);
+                if (want != g_listed) { g_listed = want; RepaintChoices(); }
+                return;
+            }
+    }
 }
 
 void UpdateHover() {
@@ -620,14 +739,24 @@ void UpdateHover() {
     sSettlePending = moved;   // one more pass after motion stops, then quiet
 
     const int prev = g_hoverWho;
+    const int prevVis = g_hoverVis;
     g_hoverWho = -1;
+    g_hoverVis = -1;
     // These rows sit in the content column, OUTSIDE any ScrollBox, but they are still
     // hand-built UImages -- and `IsHovered()` reads 0 on one of those whether or not it is
     // inside a scroll container (measured twice, 2026-08-29 and 2026-08-30). Geometry is the
     // only mechanism that answers for them.
     for (int i = 0; i < 2; ++i)
         if (g_whoBg[i] && NS::CursorOverWidget(g_whoBg[i])) { g_hoverWho = i; break; }
-    if (g_hoverWho != prev) RepaintChoices();
+    // Only probed where hover MEANS something: on AUTO/LAN the rows are dimmed and
+    // unclickable, so lighting one up would promise a control that is not there -- and each
+    // probe is a GUObjectArray walk (see the gate above), so this also keeps the sweep at
+    // two rect reads on the modes that cannot use it.
+    if (VisibilityIsEditable() && g_hoverWho < 0) {
+        for (int i = 0; i < 2; ++i)
+            if (g_visBg[i] && NS::CursorOverWidget(g_visBg[i])) { g_hoverVis = i; break; }
+    }
+    if (g_hoverWho != prev || g_hoverVis != prevVis) RepaintChoices();
 }
 
 // ============================ lifecycle ================================================
@@ -638,6 +767,13 @@ void Show() {
     U::SwitcherSetIndex(g_switcher, g_ourIndex);
     g_shown = true;
     g_hoverWho  = -1;
+    g_hoverVis  = -1;
+    // THE MODE DECIDES THE STARTING VALUE, and it is re-derived on every open rather than
+    // remembered: the player may have come back through step one and changed the connection
+    // type, and a listed/hidden choice carried across that change would be a value chosen
+    // under a different set of rules. DIRECT starts listed -- the behaviour every DIRECT
+    // host had while this was a hardcoded literal.
+    g_listed = ListedForMode(g_connMode);
     g_escPrimed = false;
     g_lmbPrimed = false;
     g_lastStatus.clear();
@@ -740,6 +876,12 @@ void OnMenuTick(void* menu, void* switcher) {
         g_pwBlock = nullptr; g_pwHint = nullptr;
         g_recapName = g_recapWorld = g_recapConn = nullptr;
         for (int i = 0; i < 2; ++i) { g_whoBg[i] = nullptr; g_whoTitle[i] = nullptr; }
+        // THE VISIBILITY ROWS DIE WITH THE SAME MENU INSTANCE. Missing from this block is
+        // not a leak, it is a DANGLING pointer: `RepaintChoices` runs on the next hover and
+        // would dispatch SetImageTint / SetTextBlockColorDispatch into a destroyed widget
+        // tree. The pair above is the pattern; anything added to the screen owes a line here.
+        for (int i = 0; i < 2; ++i) { g_visBg[i] = nullptr; g_visTitle[i] = nullptr; }
+        g_visHint = nullptr;
         g_ourIndex = -1; g_shown = false; g_buildAttempts = 0;
         g_lastStatus.clear();   // the widget it cached is gone with the menu
         g_haveStatus = false;
