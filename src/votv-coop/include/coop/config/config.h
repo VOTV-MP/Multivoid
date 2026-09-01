@@ -117,7 +117,7 @@ std::wstring ReadNickname();
 
 // v93 skins: the persisted body-skin choice, stored beside the identity
 // (multivoid.ini "player_skin="). Absent/invalid -> the default (the current
-// scientist, skin_registry::kDefaultSkinName) is assigned + persisted.
+// scientist; the stock body when no starter pak is installed) is assigned + persisted.
 std::string ReadPlayerSkin();
 
 // ---- T10 sweep / T1b owner-reformat file operations (arc 2) -----------------

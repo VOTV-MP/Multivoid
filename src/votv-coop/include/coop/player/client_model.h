@@ -38,6 +38,20 @@ void* GetSkinMesh(const std::string& name);
 // but harmless).
 void* GetSkinTexture(const std::string& name);
 
+// CAN THIS BODY ACTUALLY WEAR THAT SKIN -- the ONE predicate, and it is exactly what
+// `ApplySkinToBody` requires. It exists because two callers were asking a WEAKER question
+// (`GetSkinMesh != nullptr`) than the apply enforces: a pak carrying a mesh but no
+// `tex_<name>` passed the gate, was persisted and announced, and then failed to apply on the
+// very next tick -- two contradictory chat lines and two wire announces in consecutive
+// frames. A gate that does not ask what the operation asks is not a gate.
+//
+// `Unknown` is a THIRD value on purpose and never means "bad": the resolver returns null
+// WITHOUT asking inside its retry window, so treating a throttled miss as an absence would
+// hide an installed skin from the picker until the player found the Refresh button. A caller
+// deciding whether to REFUSE must act on `No` alone. Game thread (it may load).
+enum class Wearable : uint8_t { Unknown, Yes, No };
+Wearable CanWearSkin(const std::string& name);
+
 // THE apply path -- local pawn, fresh puppet, and mid-session change all route
 // here. Writes BOTH body slots (mesh_playerVisible + the inherited
 // ACharacter::Mesh -- the two-body invariant,

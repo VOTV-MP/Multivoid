@@ -104,6 +104,35 @@ void* GetSkinTexture(const std::string& name) {
                          L"/Game/Mods/VOTVCoop/tex_" + w + L".tex_" + w, "texture");
 }
 
+namespace {
+// Did the resolver DECLINE to ask, rather than ask and fail? Mirrors ResolveCached's own
+// throttle test, so the two cannot drift into different ideas of "known missing".
+bool ProbeWasThrottled(std::map<std::string, CachedAsset>& cache, const std::string& name) {
+    auto it = cache.find(name);
+    if (it == cache.end()) return false;           // never asked at all -> a real answer follows
+    const CachedAsset& c = it->second;
+    return !c.ptr && c.tried && (NowMs() - c.lastTryMs) < kMissRetryMs;
+}
+}  // namespace
+
+Wearable CanWearSkin(const std::string& name) {
+    // Ships with the game: no pak to be missing.
+    if (IsNativeSkin(name) || coop::skins::BuiltinSkinPath(name)) return Wearable::Yes;
+    // SAMPLED BEFORE THE PROBE, and the order is the whole point. `GetSkinMesh` REFRESHES
+    // the throttle stamp when it asks and fails, so asking afterwards always says "throttled"
+    // -- which made this function answer `Unknown` forever for a genuinely absent skin and
+    // `No` never. Measured on a real run: a host whose ini named a missing pak never degraded
+    // its body and never told the player.
+    const bool meshDeclined = ProbeWasThrottled(g_meshCache, name);
+    if (!GetSkinMesh(name)) return meshDeclined ? Wearable::Unknown : Wearable::No;
+    // THE ATOMIC PAIR the apply insists on -- see ApplySkinToBody: a pak skin's mesh without
+    // its atlas renders in the kel material, so the apply defers, and a gate that stopped at
+    // the mesh would promise something the apply refuses.
+    const bool texDeclined = ProbeWasThrottled(g_texCache, name);
+    if (!GetSkinTexture(name)) return texDeclined ? Wearable::Unknown : Wearable::No;
+    return Wearable::Yes;
+}
+
 bool ApplySkinToBody(void* mainPlayerActor, const std::string& name, void* nativeMesh) {
     namespace E = ue_wrap::engine;
     namespace Pup = ue_wrap::puppet;

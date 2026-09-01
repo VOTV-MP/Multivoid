@@ -38,6 +38,12 @@ int32_t     g_pawnIdx = -1;
 void*       g_native = nullptr; // pristine kel mesh of this generation (pre-swap)
 int32_t     g_nativeIdx = -1;
 clock::time_point g_lastConverge{};
+// The choice we have already warned about, so the warning is one per CHOICE and not
+// one per tick for as long as a pak stays missing.
+std::string g_lastUnwearable;
+// The choice the verdict below belongs to, so a NEW choice is judged afresh.
+std::string g_wearVerdictFor;
+coop::client_model::Wearable g_wearVerdict = coop::client_model::Wearable::Unknown;
 
 std::mutex  g_uiMutex;          // guards g_skinUi only
 std::string g_skinUi;
@@ -51,9 +57,9 @@ void SetSkinInternal(const std::string& name) {
 }  // namespace
 
 void SetInitialSkin(const std::string& name) {
-    // A MALFORMED ini value falls back to the STOCK BODY, not to `kDefaultSkinName` -- that
-    // constant names a pak skin, so on an install that does not carry it the "default" is
-    // one more unresolvable name. `dr_kel` ships with the game and always resolves.
+    // A MALFORMED ini value falls back to the STOCK BODY. The retired `kDefaultSkinName`
+    // named a PAK skin, so on an install not carrying it the "default" was one more name
+    // that cannot load. `dr_kel` ships with the game and always resolves.
     SetSkinInternal(coop::skins::IsValidSkinName(name) ? name
                                                        : std::string(coop::skins::kNativeSkinName));
 }
@@ -94,8 +100,14 @@ void RequestSkin(const std::string& name) {
         //
         // A value we have just proven we cannot honour must not be persisted, must not be
         // announced, and must not replace the one that works.
-        if (!coop::client_model::IsNativeSkin(name) && !coop::client_model::GetSkinMesh(name)) {
-            UE_LOGW("local_body: skin '%s' does NOT resolve on this machine -- keeping '%s'; "
+        // THE SAME PREDICATE THE APPLY ENFORCES. Asking `GetSkinMesh` alone was weaker: a pak
+        // with a mesh but no atlas passed here, got persisted and announced, and failed to
+        // apply on the very next tick -- two contradictory chat lines in consecutive frames.
+        // Refused only on a DEFINITE No: `Unknown` means the resolver declined to ask inside
+        // its retry window, and refusing a legitimate pick on a throttle would be a worse
+        // failure than letting the apply heal it.
+        if (coop::client_model::CanWearSkin(name) == coop::client_model::Wearable::No) {
+            UE_LOGW("local_body: skin '%s' cannot be worn on this machine -- keeping '%s'; "
                     "not persisted and not announced", name.c_str(), g_skin.c_str());
             coop::chat_feed::Push(
                 L"Skin '" + std::wstring(name.begin(), name.end()) +
@@ -149,50 +161,62 @@ void Tick() {
         UE_LOGI("local_body: native kel mesh captured (%p) for pawn %p", g_native, g_pawn);
     }
 
-    if (!g_applied || g_appliedSkin != g_skin) {
-        if (coop::client_model::ApplySkinToBody(local, g_skin, g_native)) {
-            g_applied = true;
-            g_appliedSkin = g_skin;
-        } else if (!coop::client_model::IsNativeSkin(g_skin)) {
-            // FALL BACK TO SOMETHING REAL, rather than latching on a value we cannot wear.
-            //
-            // This branch used to log and latch, on the reasoning that "the puppet on OTHER
-            // peers still wears the skin -- only the local view degrades to kel". That holds
-            // only when the pak is missing HERE and present THERE. When the name resolves
-            // NOWHERE -- which is what happens once another mod's pak has been offered as a
-            // skin and picked -- the announce keeps naming it, every peer fails the same
-            // load, and this body keeps whatever it was ALREADY wearing because the apply
-            // failed and overwrote nothing. That is how a host saw itself as a scientist
-            // while everyone else saw dr. kel (user, 2026-09-01).
-            //
-            // RequestSkin now refuses an unresolvable pick outright, so this path is reached
-            // by the OTHER producer: a name restored from the ini (or a starter roll) whose
-            // pak has since been removed -- including the unusable one an older build
-            // persisted before that refusal existed. The cure is the same either way: wear
-            // the default, write it down, and TELL THE PEERS, so the worn skin and the
-            // announced skin can never disagree.
-            UE_LOGW("local_body: skin '%s' does not resolve here -- falling back to '%s' and "
-                    "re-announcing (install the pak that carries it under "
-                    "Content/Paks/LogicMods -- any subfolder; the four scientists live in "
-                    "scientists.pak -- then re-pick)",
-                    g_skin.c_str(), coop::skins::kNativeSkinName);
-            coop::chat_feed::Push(
-                L"Skin '" + std::wstring(g_skin.begin(), g_skin.end()) +
-                    L"' is not installed -- wearing the stock body instead",
-                coop::chat_feed::Keep::Transient);
-            // THE STOCK BODY, NOT `kDefaultSkinName`. The first version of this fallback
-            // named `hl_einstein_v1sc`, which is itself a PAK skin -- so on an install that
-            // does not carry that pak the fallback was a second unresolvable name and the
-            // divergence simply moved. `dr_kel` is the game's own body: it needs no pak, it
-            // is what every peer already degrades to, and it is the one value that cannot
-            // fail. (User, 2026-09-01, who had deliberately kept only scientists.pak.)
-            coop::config::WriteIniValue(coop::config_registry::rows::player_skin,
-                                        coop::skins::kNativeSkinName);
-            SetSkinInternal(coop::skins::kNativeSkinName);
-            g_applied = false;   // the next tick applies the stock body for real
-            if (coop::net::Session* s = g_session.load(std::memory_order_acquire))
-                coop::player_handshake::AnnounceLocalSkin(*s, g_skin);
-        }
+    // THE CHOICE AND THE WORN BODY ARE TWO VALUES, and fusing them was the root under the
+    // root. `g_skin` is what the player CHOSE: it is persisted, announced, and restored from
+    // the ini, and NOTHING local may overwrite it. What this body can actually put on is
+    // DERIVED, every tick, from whether the choice resolves here.
+    //
+    // The first fix wrote the fallback back into `g_skin` -- persisting it and re-announcing
+    // it -- because with one variable that was the only way to change the body. That turned a
+    // LOCAL, MOMENTARY observation into a GLOBAL, PERMANENT verdict: a texture that had not
+    // finished loading in the join window (a deferral `client_model` documents as "retry
+    // heals") destroyed the player's saved skin and took it off every peer that COULD render
+    // it. Splitting the two removes that possibility rather than guarding against it.
+    //
+    // Only a DEFINITE `No` degrades the body. `Unknown` means the resolver declined to ask
+    // inside its retry window, so we keep trying the real choice and let the apply heal.
+    // THE VERDICT IS STICKY PER CHOICE, and `Unknown` never overturns one. The resolver
+    // refuses to re-probe inside a 5 s window, so a plain per-tick read alternates
+    // No -> Unknown -> No forever -- and with it the worn body, which flip-flopped between
+    // the stock body and a doomed re-apply every five seconds, warning the player each time
+    // (12 warnings in one 30 s smoke, measured). A decision this expensive to reach is kept
+    // until the CHOICE changes or the asset actually turns up.
+    if (g_wearVerdictFor != g_skin) {
+        g_wearVerdictFor = g_skin;
+        g_wearVerdict = coop::client_model::Wearable::Unknown;
+    }
+    if (const auto w = coop::client_model::CanWearSkin(g_skin);
+        w != coop::client_model::Wearable::Unknown) {
+        g_wearVerdict = w;
+    }
+    const bool cannotWear = g_wearVerdict == coop::client_model::Wearable::No;
+    const std::string worn = cannotWear ? std::string(coop::skins::kNativeSkinName) : g_skin;
+    if (cannotWear && g_lastUnwearable != g_skin) {
+        // ONCE PER CHOICE, not per tick: this is reached every tick while a chosen pak is
+        // missing, and the peers are told nothing because the CHOICE still stands -- one that
+        // owns the pak renders it correctly, which is the graceful degrade this lane promises
+        // on screen ("Peers WITHOUT that pak see the default kel body instead").
+        g_lastUnwearable = g_skin;
+        UE_LOGW("local_body: skin '%s' cannot be worn here -- wearing the stock body; the "
+                "CHOICE is kept (install the pak that carries it under "
+                "Content/Paks/LogicMods -- any subfolder; the four scientists live in "
+                "scientists.pak)", g_skin.c_str());
+        coop::chat_feed::Push(
+            L"Skin '" + std::wstring(g_skin.begin(), g_skin.end()) +
+                L"' is not installed here -- wearing the stock body",
+            coop::chat_feed::Keep::Transient);
+    }
+    if (!cannotWear) g_lastUnwearable.clear();
+
+    if (!g_applied || g_appliedSkin != worn) {
+        // LATCHED EITHER WAY. A failure here is transient by construction (the mesh resolved
+        // and its atlas has not, or a component was momentarily unwritable), and the 1 Hz
+        // converge below is what retries it. Leaving it unlatched re-entered this block at
+        // pump rate -- ~500 ProcessEvent dispatches a second, plus a flushed error line per
+        // component per tick when the cause was an unresolved mesh setter.
+        coop::client_model::ApplySkinToBody(local, worn, g_native);
+        g_applied = true;
+        g_appliedSkin = worn;
         g_lastConverge = clock::now();
         return;
     }

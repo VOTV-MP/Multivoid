@@ -5,7 +5,7 @@
 // (user 2026-07-02: "клиент видит туловище dr kel -- ломает иммерсию"). This
 // module is the single owner of the LOCAL skin choice:
 //   - persisted in multivoid.ini player_skin= (next to player_guid; default
-//     hl_einstein_v1sc for a new identity),
+//     a random starter scientist for a new identity, or the stock body),
 //   - announced on the wire by player_handshake (Join field + SkinChange),
 //   - applied to the local pawn here (both body slots via client_model),
 //   - re-captured/re-applied across level changes (new pawn generation), with a
