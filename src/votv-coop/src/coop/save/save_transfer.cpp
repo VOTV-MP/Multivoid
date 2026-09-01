@@ -490,7 +490,37 @@ void OnRequest(int peerSlot) {
         const fs::path scratchFile =
             coop::save_guard::SaveGamesDir() / (std::wstring(kHostXferSlot) + L".sav");
         std::vector<uint8_t> bytes;
-        const bool got = ReadWholeFile(scratchFile, bytes) && !bytes.empty();
+        bool got = ReadWholeFile(scratchFile, bytes) && !bytes.empty();
+        // PLAUSIBLE, NOT MERELY NON-EMPTY -- and this check is why the join above it can be
+        // trusted at all.
+        //
+        // The comment forty lines up asserts "no torn-read window -- we just wrote it". `[V]`
+        // FALSE shortly after a level load: 2026-09-01 a host that had loaded its world six
+        // seconds earlier, and whose LIVE world held 2197 keyed props at that very instant,
+        // wrote a 1284-BYTE scratch save. `!bytes.empty()` passed it, so the joiner was handed
+        // 1284 bytes as "the host's world", loaded nothing from it, and kept the world it
+        // already had -- two ATVs, every door disagreeing, while both peers saw each other.
+        // The user found it by joining the moment the lobby appeared.
+        //
+        // The comparator is the host's OWN canonical slot on disk: the world was loaded FROM
+        // it, so a live capture of the same world cannot be a fraction of its size. A new game
+        // is small on BOTH sides, so the ratio holds there too. Below the bar we do not ship
+        // it -- we fall through to the canonical path, which has the stable-size torn-read
+        // guard this one skipped (`TryCaptureBlob_`). The discipline already existed in this
+        // file; only the live path was exempt from it.
+        if (got && !g_hostSlot.empty()) {
+            std::error_code sizeEc;
+            const uint64_t canonical =
+                fs::file_size(coop::save_guard::SaveGamesDir() / (g_hostSlot + L".sav"), sizeEc);
+            if (!sizeEc && canonical > 0 && bytes.size() * 8 < canonical) {
+                UE_LOGW("save_transfer: slot %d -- live capture produced %zu B against a canonical "
+                        "'%ls.sav' of %llu B: the game had not finished writing it. REFUSING to "
+                        "stream a world we cannot vouch for; falling back to the canonical slot.",
+                        peerSlot, bytes.size(), g_hostSlot.c_str(),
+                        static_cast<unsigned long long>(canonical));
+                got = false;
+            }
+        }
         DeleteFileLogged_(scratchFile);  // transient -- gone the instant it is read
         if (got) {
             // Phase 2a (stable-id identity sidecar transport; gated dev checkpoint, NO bind yet): build the
