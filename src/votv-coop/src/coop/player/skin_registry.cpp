@@ -8,6 +8,8 @@
 #include "ue_wrap/core/paths.h"  // ExeDir -- the pak folder is derived from the install dir
 #include "ue_wrap/core/log.h"
 
+#include <mutex>
+#include <utility>
 #include <algorithm>  // std::find -- the cross-subdir stem dedupe
 #include <cwctype>
 #include <filesystem>
@@ -142,8 +144,9 @@ std::string PickRandomStarterSkin() {
     }
     if (present.empty()) {
         // THE STOCK BODY, because this branch means NO starter pak is installed -- and
-        // `kDefaultSkinName` is itself a pak skin, so naming it here hands a fresh identity
-        // a skin that by construction cannot resolve either. `dr_kel` needs no pak.
+        // The retired `kDefaultSkinName` was itself a pak skin, so naming it here handed a
+        // fresh identity a skin that by construction could not resolve either. `dr_kel`
+        // needs no pak.
         UE_LOGI("skin_registry: no starter-list pak present -- new identity falls back to "
                 "the stock body '%s'", kNativeSkinName);
         return kNativeSkinName;
@@ -278,21 +281,68 @@ const std::vector<SkinEntry>& Entries(bool rescan) {
     return g_entries;
 }
 
+// --- usability: names in from the render thread, verdicts out to it ----------------------
+// NOTHING SHARED WITH `g_entries`. The first version put the verdict on `SkinEntry` and had
+// the game thread write it, which meant touching a vector the panel `clear()`s and
+// reallocates on Refresh -- a heap use-after-free one click wide. The two directions now
+// travel separately and the catalog stays render-thread-only, as its header requires.
+std::mutex                          g_usableMu;
+std::vector<std::string>            g_pendingNames;   // asked, not yet answered
+std::vector<std::pair<std::string, Usable>> g_verdicts;
+
+void RequestUsabilityScan(std::vector<std::string> names) {
+    std::lock_guard<std::mutex> lk(g_usableMu);
+    g_pendingNames = std::move(names);
+    g_verdicts.clear();   // a rescan re-asks: the paks on disk may have changed
+}
+
+Usable UsabilityOf(const std::string& name) {
+    std::lock_guard<std::mutex> lk(g_usableMu);
+    for (const auto& v : g_verdicts)
+        if (v.first == name) return v.second;
+    return Usable::Unknown;
+}
+
 void ResolvePending(int budget) {
     UE_ASSERT_GAME_THREAD("skins::ResolvePending (LoadObject)");
-    for (SkinEntry& e : g_entries) {
-        if (budget <= 0) return;
-        if (e.usable != Usable::Unknown) continue;
+    while (budget > 0) {
+        std::string name;
+        {
+            std::lock_guard<std::mutex> lk(g_usableMu);
+            if (g_pendingNames.empty()) return;
+            name = std::move(g_pendingNames.back());
+            g_pendingNames.pop_back();
+        }
+        // THE STOCK BODY AND THE BUILTINS ARE USABLE BY CONSTRUCTION -- they ship with the
+        // game. Answering them without a load is not an optimisation: charging them budget
+        // would force ~25 synchronous cooked-package loads through the game thread the first
+        // time the panel is opened, and again on every Refresh.
+        if (name.empty() || name == kNativeSkinName || BuiltinSkinPath(name)) {
+            std::lock_guard<std::mutex> lk(g_usableMu);
+            g_verdicts.emplace_back(std::move(name), Usable::Yes);
+            continue;   // deliberately NOT charged against `budget`
+        }
         --budget;
-        // A BUILTIN or the stock body is usable by construction -- it ships with the game
-        // and has no pak to be missing.
-        const bool ok = coop::client_model::IsNativeSkin(e.name) ||
-                        coop::client_model::GetSkinMesh(e.name) != nullptr;
-        e.usable = ok ? Usable::Yes : Usable::No;
+        // WEARABLE, not merely present. `GetSkinMesh` alone is a WEAKER predicate than the
+        // apply: a pak carrying a mesh but no `tex_<name>` passes it and then fails to
+        // apply, which would show the skin in the picker and refuse it on click. One
+        // predicate for the gate, the picker and the fallback.
+        const coop::client_model::Wearable w = coop::client_model::CanWearSkin(name);
+        if (w == coop::client_model::Wearable::Unknown) {
+            // A THROTTLED MISS IS NOT AN ABSENCE. `GetSkinMesh` returns null without asking
+            // inside its retry window, and recording that as `No` would hide a perfectly
+            // installed skin until the player found the Refresh button. Put it back.
+            std::lock_guard<std::mutex> lk(g_usableMu);
+            g_pendingNames.push_back(std::move(name));
+            return;   // stop this pass; the next tick re-asks once the window has passed
+        }
+        const bool ok = (w == coop::client_model::Wearable::Yes);
         if (!ok)
-            UE_LOGI("skin_registry: '%s' is listed by a pak but resolves to no mesh here -- "
-                    "hidden from the picker (another mod's pak, or a skin pak for a different "
-                    "game version)", e.name.c_str());
+            UE_LOGI("skin_registry: '%s' is listed by a pak but cannot be worn here -- hidden "
+                    "from the picker (another mod's pak, or a skin pak for a different game "
+                    "version)", name.c_str());
+        std::lock_guard<std::mutex> lk(g_usableMu);
+        g_verdicts.emplace_back(std::move(name), ok ? Usable::Yes : Usable::No);
     }
 }
 

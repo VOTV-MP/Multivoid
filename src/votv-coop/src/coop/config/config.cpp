@@ -11,7 +11,7 @@
 #include "coop/config/config_registry.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
-#include "coop/player/skin_registry.h"  // IsValidSkinName + kDefaultSkinName (v93 player_skin=)
+#include "coop/player/skin_registry.h"  // IsValidSkinName + PickRandomStarterSkin (player_skin=)
 #include "ue_wrap/core/log.h"
 
 #include <windows.h>
@@ -585,7 +585,7 @@ std::string ReadPlayerSkin() {
     // (multivoid.ini "player_skin=", same file as player_guid -- user 2026-07-02).
     // v95: a NEW identity (absent/malformed key) rolls a RANDOM starter from the
     // curated converter-skin list (user: "для НОВЫХ пиров случайный скин из списка"),
-    // filtered to paks present on this install -- hl_einstein_v1sc when none is.
+    // filtered to paks present on this install -- the stock body when none is.
     // Persisted immediately (like the guid), so the roll happens ONCE per identity.
     IniScan st = IniScan::Ok;
     std::string skin = ReadLiveIniWithScan("player_skin", st);

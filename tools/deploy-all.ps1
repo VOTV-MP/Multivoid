@@ -1,4 +1,4 @@
-﻿# deploy-all.ps1 -- deploy the Multivoid mod folder to all four game copies.
+# deploy-all.ps1 -- deploy the Multivoid mod folder to all four game copies.
 #
 # 2026-05-25 (3-copy convention; see docs/RE_WORKFLOW.md):
 #   Game_0.9.0n_HOST/     -- HOST    (user's hands-on host play)

@@ -20,9 +20,10 @@
 // (user convention 2026-07-02: previews live NEXT to the paks; works for builtin
 // names too -- drop a kerfur_omega.png there).
 //
-// Filesystem only -- no UObject access, no network. The UI (render thread) is
-// the only caller of Entries(); keep it that way (single-caller discipline, no
-// lock). Name validation is shared with the wire layer (player_handshake) and
+// The CATALOG is filesystem only -- no UObject access, no network -- and the UI
+// (render thread) is the only caller of Entries(); keep it that way (single-caller
+// discipline, no lock). The USABILITY half below does load assets, which is why it
+// is game-thread-only and keeps its own storage instead of a field on SkinEntry. Name validation is shared with the wire layer (player_handshake) and
 // the ini read (harness config): a skin name is a LoadObject path component
 // and a reliable-payload field, so it is validated at every boundary with the
 // same rule (the inventory-GUID discipline).
@@ -37,13 +38,6 @@ namespace coop::skins {
 // The native (pak-less) skin: Dr. Kel, the stock player body.
 inline constexpr const char* kNativeSkinName = "dr_kel";
 
-// The factory default for a NEW player identity when NONE of the curated starter
-// skins (PickRandomStarterSkin) is available from the installed paks. Written to
-// multivoid.ini player_skin= on first launch. (Since 2026-08-29 the identity itself
-// is no longer minted beside it -- see coop/net/peer_identity.h; and since the same
-// day the four starter scientists arrive in ONE bundle, so "is this skin installed"
-// is asked of the registry, never of `<name>.pak` on disk.)
-inline constexpr const char* kDefaultSkinName = "hl_einstein_v1sc";
 
 // v95 random starter (user 2026-07-02: "для НОВЫХ пиров случайный скин из списка"):
 // pick a random skin for a NEW player identity from the curated starter list, filtered
@@ -53,33 +47,45 @@ inline constexpr const char* kDefaultSkinName = "hl_einstein_v1sc";
 // that lists it -- never whether `<name>.pak` exists on disk. Asking the filesystem is
 // how the 2026-08-23 lesson's silent failure happens: with a shared pak no candidate
 // file exists, the list comes back empty, and every new identity falls back to
-// kDefaultSkinName while looking like a content decision.
-// Returns kDefaultSkinName when none of the list is available. Boot thread (config
-// read path) -- touches the filesystem once.
+// the stock body while looking like a content decision.
+// Returns kNativeSkinName when none of the list is available -- NOT a pak skin: on an
+// install carrying no starter pak, a pak-named "default" is by construction one more
+// name that cannot load. Boot thread (config read path) -- touches the filesystem once.
 std::string PickRandomStarterSkin();
-
-// Does this entry's mesh actually EXIST on this machine? A pak is not a skin: the scan
-// offers the stem of every .pak under LogicMods, so ANOTHER MOD's pak -- `DebugMod`,
-// `FusionPatch_P` -- is listed here and resolves to no skin anywhere. Picking one used to
-// persist and announce it, which diverged every peer to the native kel while the local body
-// silently kept the skin it already wore (user, 2026-09-01).
-//
-// The scan cannot answer this: it runs from the ImGui panel, off the game thread, and the
-// only authority is a LoadObject. So the verdict starts Unknown and the GAME THREAD fills it
-// in once per entry (skins::ResolvePending), which is also the only thread allowed to ask.
-enum class Usable : uint8_t { Unknown, Yes, No };
 
 struct SkinEntry {
     std::string  name;         // the SKIN name = package name = wire name (a single-skin
                                // pak's stem, or a bundle member -- never a bundle's stem)
     std::wstring previewPath;  // sibling <name>.png/.bmp; empty = no preview tile
-    Usable       usable = Usable::Unknown;   // game-thread verdict; see ResolvePending
 };
 
-// GAME THREAD. Resolve at most `budget` entries whose usability is still Unknown, marking
-// each Yes/No. Cheap and self-limiting: every entry is asked exactly once per scan, the
-// engine caches the load, and a `Refresh list` re-arms them by rebuilding the vector.
+// Does a skin's mesh actually EXIST on this machine? A pak is not a skin: the scan offers
+// the stem of every .pak under LogicMods, so ANOTHER MOD's pak -- `DebugMod`,
+// `FusionPatch_P` -- is listed and resolves to no skin anywhere. Picking one used to persist
+// and announce it, which diverged every peer to the native kel while the local body silently
+// kept the skin it already wore (user, 2026-09-01).
+//
+// THE VERDICT IS NOT A FIELD ON `SkinEntry`, and that is the whole design. Only the game
+// thread may ask the engine, and `Entries()` is render-thread-only by the rule above -- a
+// verdict living in the catalog would mean the game thread reading `e.name` and writing
+// `e.usable` in a vector the panel can `clear()` and reallocate under it, which is a heap
+// use-after-free one Refresh click wide (caught by the post-ship audit of the first version).
+//
+// So nothing is shared: NAMES travel render -> game BY VALUE, once per scan, and VERDICTS
+// travel game -> render through a small store of their own. `Entries()` keeps its
+// single-caller discipline untouched.
+enum class Usable : uint8_t { Unknown, Yes, No };
+
+// RENDER THREAD (the panel), after a scan: hand the game thread the names to judge. Copies.
+void RequestUsabilityScan(std::vector<std::string> names);
+
+// GAME THREAD. Answer at most `budget` outstanding names. Cheap and self-limiting: each name
+// is asked once per scan and the engine caches the load.
 void ResolvePending(int budget);
+
+// Either thread. `Unknown` means NOT YET ASKED -- never "bad"; a caller that hides Unknown
+// would blank the picker for the first frames after a scan.
+Usable UsabilityOf(const std::string& name);
 
 // [A-Za-z0-9_-], 1..48 chars. Boundary rule for ini reads, wire receives and
 // pak-dir scans alike.

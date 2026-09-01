@@ -40,10 +40,19 @@ const Preview& PreviewFor(const coop::skins::SkinEntry& e) {
 
 }  // namespace
 
+// The catalog is OURS (render thread); the verdict is the game thread's. Hand it a COPY of
+// the names -- never the vector -- so neither thread can see the other's storage move.
+void PublishNamesForResolve(const std::vector<coop::skins::SkinEntry>& entries) {
+    std::vector<std::string> names;
+    names.reserve(entries.size());
+    for (const auto& e : entries) names.push_back(e.name);
+    coop::skins::RequestUsabilityScan(std::move(names));
+}
+
 void Render() {
     if (!g_scanned) {
         g_scanned = true;
-        coop::skins::Entries(true);
+        PublishNamesForResolve(coop::skins::Entries(true));
     }
     const auto& entries = coop::skins::Entries();
     const std::string current = coop::local_body::LocalSkinNameCopy();
@@ -58,7 +67,7 @@ void Render() {
     ImGui::TextDisabled("A pak that carries no skin (another mod's) is dropped from this "
                         "list once the game has been asked -- it is not a skin.");
     if (ImGui::Button("Refresh list")) {
-        coop::skins::Entries(true);
+        PublishNamesForResolve(coop::skins::Entries(true));
         // Release the cached preview textures before dropping the map -- clearing
         // alone leaked one texture+SRV per preview per refresh (fixed 2026-07-26).
         for (auto& [name, pv] : g_previews)
@@ -86,7 +95,7 @@ void Render() {
         // VISIBLE on purpose -- it means the game thread has not been asked yet (a couple of
         // entries per tick), not that the skin is bad, and hiding it would make the grid
         // shuffle while the player looks at it.
-        if (e.usable == coop::skins::Usable::No) continue;
+        if (coop::skins::UsabilityOf(e.name) == coop::skins::Usable::No) continue;
         if (i % perRow != 0) ImGui::SameLine();
         ++i;
         ImGui::PushID(e.name.c_str());
