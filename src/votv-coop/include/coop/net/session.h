@@ -459,6 +459,14 @@ public:
     LinkKind LinkKindForSlot(int peerSlot) const;
     // Count of currently-connected peers (0..kMaxPeers-1).
     int connectedPeerCount() const;
+    // Count of sockets in the PENDING band -- accepted, not yet admitted, i.e.
+    // mid-identity-exchange. connectedPeerCount() deliberately excludes these (it
+    // counts seats, and an unadmitted socket has none), so a caller asking "is
+    // anyone here" rather than "how many seats are taken" needs BOTH. Added
+    // 2026-09-01 for exactly that: a solo-only dev instrument gated on the seat
+    // count alone would still fire during a joiner's whole Auth round trip.
+    // Any thread (atomics); a snapshot, not a lock.
+    int pendingPeerCount() const;
     // True if the given slot has an active GNS connection (handle set).
     // Used by the harness for per-slot connect/disconnect edge detection.
     // NOT a "ready for app traffic" signal -- see IsSlotReady below.

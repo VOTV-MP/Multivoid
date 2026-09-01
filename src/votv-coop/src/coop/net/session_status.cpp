@@ -363,6 +363,17 @@ int Session::connectedPeerCount() const {
     return n;
 }
 
+int Session::pendingPeerCount() const {
+    // The unadmitted band. A socket sits here for the whole AuthHello/Challenge/
+    // Proof round trip, during which connectedPeerCount() reads zero -- so "nobody
+    // is here" is the SUM, never the seat count alone.
+    int n = 0;
+    for (int i = 0; i < kMaxPending; ++i) {
+        if (pendingConns_[i].load(std::memory_order_acquire) != 0) ++n;
+    }
+    return n;
+}
+
 // EVERYTHING A PEER GETS THE MOMENT IT IS ENTITLED TO BE A PEER -- lanes, the
 // send-buffer mirror, the lanes-configured flag that IsSlotReady() reads, and
 // the host's AssignPeerSlot. Extracted 2026-08-26 (security A2/A57) because the

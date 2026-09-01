@@ -19,17 +19,25 @@ WHAT IT HOLDS -- these FAIL the build:
      against 96d14250 (the commit that shipped the defect) it fails and names
      LightGroupState; against 7fed1c1a (the audit fold) it passes.
 
-  2. A net-thread-terminal declaration that no longer matches the code -- either its
-     named interception file stopped mentioning it (the interception was deleted and
-     the kind now silently reaches the inbox with no handler), or it GREW a receiver
-     case label (the exception is stale and is now hiding a real second consumer).
+  2. A net-thread-terminal declaration whose INTERCEPTION is gone. Each exception names
+     a required pattern that must still match -- the branch itself, not the kind's name.
+     The first version of this check asked only whether the file still MENTIONED the
+     kind, and every one of the three real deletions passed it: both files name these
+     kinds in unrelated places (lane sizing, the sends), so removing the terminal
+     `return;` changed nothing the gate read. An exception is a claim about a BRANCH, so
+     the check has to be about the branch.
 
-  3. One enumerator claimed by two families. The families are chained in order, so the
-     later one is dead code that reads as wired. Currently zero; this keeps it there.
+  3. A family dispatcher that is no longer CHAINED. The 100 case labels in the five
+     family files are reachable only because event_feed's `default:` calls each
+     Handle*Event in turn; delete one call and ~25 kinds die while every case label is
+     still present and the coverage arithmetic still adds up.
 
-  4. A receiver case label for a name that is not in the enum, and any parse that comes
-     back implausible (no enum, an empty family file). It fails CLOSED: a gate that
-     cannot read its subject must not return PASS.
+  4. One enumerator claimed by two families (event_feed chains them in order, so all but
+     the first are dead code that reads as wired), a receiver case label for a name that
+     is not in the enum, a second `switch (msg.kind)` in a dispatcher file (which would
+     let a sender-side or filter switch count as receiver coverage), an enum row this
+     parser cannot read, or any file it cannot open. It fails CLOSED: a gate that cannot
+     read its subject must not return PASS.
 
 WHAT IT DELIBERATELY DOES NOT HOLD. `session_lanes.h`'s three switches -- `LaneForKind`,
 `IsClientRelayableReliableKind`, `IsPreWorldSendableKind` -- all default safely (Normal /
@@ -56,6 +64,7 @@ SRC = ROOT / "src" / "votv-coop"
 
 PROTO = "include/coop/net/protocol.h"
 LANES = "src/coop/net/session_lanes.h"
+SESSION = "src/coop/net/session.cpp"
 
 # The five family dispatchers. Each Handle*Event returns true iff msg.kind is in its
 # family, so its own switch IS the membership declaration (SyncRouter consolidation,
@@ -72,35 +81,58 @@ FAMILY_FILES = [
 # family (Join / Balance / Teleport / Wisp / Snapshot / the handshake kinds).
 FEED_FILE = "src/coop/dispatch/event_feed.cpp"
 
-# Kinds that never reach event_feed at all because the NET THREAD consumes them and
-# returns before the inbox. Each entry names the file that must still do so: delete the
-# interception and check 2 fires, rather than the kind quietly becoming an unknown-kind
-# warning in the field.
+# Kinds the NET THREAD consumes and returns on, before the inbox -- so they legitimately
+# reach no family switch. Each names the pattern that must STILL MATCH for that to be
+# true. `must` entries are (file, regex, what the regex is looking at); the regex runs
+# over comment-stripped source, so a commented-out interception does not satisfy it.
 NET_THREAD_TERMINAL = {
-    "SaveTransferBegin": ("src/coop/net/session.cpp",
-                          "W3: diverted to the net thread so the announce lands in the same "
-                          "lane order as its chunks. session.cpp:643 returns."),
-    "SaveTransferChunk": ("src/coop/net/session.cpp",
-                          "v56: the one BULK kind -- 65000B payloads bypass the 228B inbox. "
-                          "session.cpp:583 returns."),
-    "AuthHello": ("src/coop/net/peer_admission.cpp",
-                  "v144 admission: answered before a slot exists, so there is no session "
-                  "for event_feed to act on."),
-    "AuthChallenge": ("src/coop/net/peer_admission.cpp",
-                      "v144 admission: net-thread-terminal in both directions."),
-    "AuthProof": ("src/coop/net/peer_admission.cpp",
-                  "v144 admission: net-thread-terminal in both directions."),
+    "SaveTransferBegin": {
+        "reason": "W3: diverted to the net thread so the announce lands in the same lane "
+                  "order as its chunks. Retired the game-thread case with it (RULE 2), so "
+                  "losing this branch drops the announce entirely and joins break.",
+        "must": [(SESSION, r"==\s*ReliableKind::SaveTransferBegin\s*\)\s*\{",
+                  "the net-thread branch that diverts the announce to saveBeginSink_")],
+    },
+    "SaveTransferChunk": {
+        "reason": "v56: the one BULK kind -- 65000B payloads bypass the 228B inbox. Losing "
+                  "this branch makes the chunk fail the payload cap and return SILENTLY, "
+                  "with no warning at all.",
+        "must": [(SESSION, r"==\s*ReliableKind::SaveTransferChunk\s*\)\s*\{",
+                  "the net-thread branch that diverts the chunk to bulkSink_")],
+    },
 }
+# The three admission kinds share ONE interception, so they share its required pattern --
+# and each must additionally still be named by the predicate that interception calls.
+for _k in ("AuthHello", "AuthChallenge", "AuthProof"):
+    NET_THREAD_TERMINAL[_k] = {
+        "reason": "v144 admission: answered on the net thread before a slot exists, in both "
+                  "directions. Reaching the inbox costs an unknown-kind warning per replay.",
+        "must": [(SESSION, r"IsAdmissionKind\(.*\)\s*return\s*;",
+                  "the net-thread early return for admission kinds"),
+                 (LANES, r"IsAdmissionKind[\s\S]{0,400}?ReliableKind::" + _k + r"\b",
+                  "this kind's membership in IsAdmissionKind")],
+    }
 
 CASE = re.compile(r"case\s+(?:coop::)?(?:net::)?ReliableKind::(\w+)\s*:")
 ENUM_BLOCK = re.compile(r"enum class ReliableKind\s*:\s*uint8_t\s*\{(.*?)\n\};", re.S)
-ENUM_ROW = re.compile(r"^\s{4}([A-Za-z_]\w*)\s*=\s*(\d+)", re.M)
+# Name required; value optional (an implicit-increment enumerator is still a KIND, and the
+# first version of this regex demanded `= <decimal>` at exactly four spaces -- so a row
+# written `NewLane,` was not parsed at all and check 1 never asked it for a receiver. The
+# parser failed OPEN for precisely the defect class this gate exists to catch.)
+ENUM_ROW = re.compile(r"^\s+([A-Za-z_]\w*)\s*(?:=\s*(0[xX][0-9a-fA-F]+|\d+))?\s*,?\s*$")
+MSG_SWITCH = re.compile(r"switch\s*\(\s*msg\.kind\s*\)")
+HANDLER_DEF = re.compile(r"\bbool\s+(Handle\w+Event)\s*\(")
+# A char literal, and nothing else. `'` also appears as the C++ DIGIT SEPARATOR -- there is
+# a live `60'000` in peer_admission.cpp -- and scanning from it to "the next apostrophe"
+# ran into an English apostrophe three lines down and blanked the lines between.
+CHAR_LIT = re.compile(r"'(?:\\.|[^\\'\n])'")
 
 
 def strip_comments(text: str) -> str:
-    """Blank out // and /* */ so a case label quoted in prose is never read as wiring.
+    """Blank out // and /* */ and string/char literals, preserving line structure.
 
-    Rewritten to spaces rather than deleted so no two code tokens are glued together.
+    Rewritten to spaces rather than deleted so no two code tokens are glued together and
+    every line number is preserved.
     """
     out = []
     i, n = 0, len(text)
@@ -116,13 +148,21 @@ def strip_comments(text: str) -> str:
             j = n if j < 0 else j + 2
             out.append("".join(ch if ch == "\n" else " " for ch in text[i:j]))
             i = j
-        elif c in "\"'":
+        elif c == '"':
             j = i + 1
-            while j < n and text[j] != c:
+            while j < n and text[j] != '"' and text[j] != "\n":
                 j += 2 if text[j] == chr(92) else 1
             j = min(j + 1, n)
             out.append("".join(ch if ch == "\n" else " " for ch in text[i:j]))
             i = j
+        elif c == "'":
+            m = CHAR_LIT.match(text, i)
+            if m:
+                out.append(" " * (m.end() - i))
+                i = m.end()
+            else:
+                out.append(c)      # a digit separator, or prose -- an ordinary character
+                i += 1
         else:
             out.append(c)
             i += 1
@@ -131,81 +171,128 @@ def strip_comments(text: str) -> str:
 
 def read_tree() -> dict:
     """Every file the gate reasons about, as text. One dict so --drill can mutate a copy."""
-    want = [PROTO, LANES, FEED_FILE] + FAMILY_FILES + \
-           sorted({f for f, _ in NET_THREAD_TERMINAL.values()})
+    want = {PROTO, LANES, SESSION, FEED_FILE} | set(FAMILY_FILES)
+    for spec in NET_THREAD_TERMINAL.values():
+        want |= {f for f, _rx, _what in spec["must"]}
     tree = {}
-    for rel in want:
+    for rel in sorted(want):
         p = SRC / rel
-        if not p.is_file():
-            tree[rel] = None          # check 4 turns this into a FAIL, not a crash
-        else:
+        try:
             tree[rel] = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            tree[rel] = None       # a FAIL below, not a traceback and not a skip
     return tree
 
 
 def parse_enum(text):
-    m = ENUM_BLOCK.search(text or "")
+    """Return (name -> value-or-None, [unreadable rows]).
+
+    Every non-blank line of the enum body must be recognised. A row this parser cannot
+    read is reported, because silently dropping one is indistinguishable from the kind
+    not existing -- and a kind that does not exist is never asked for a receiver.
+    """
+    m = ENUM_BLOCK.search(strip_comments(text or ""))
     if not m:
-        return {}
-    return {r.group(1): int(r.group(2)) for r in ENUM_ROW.finditer(m.group(1))}
+        return {}, []
+    enums, bad = {}, []
+    for line in m.group(1).splitlines():
+        if not line.strip():
+            continue
+        r = ENUM_ROW.match(line)
+        if r:
+            enums[r.group(1)] = int(r.group(2), 0) if r.group(2) else None
+        else:
+            bad.append(line.strip()[:80])
+    return enums, bad
 
 
 def check(tree: dict):
-    """The whole gate as a pure function over file texts. Returns a list of failures."""
+    """The whole gate as a pure function over file texts. Returns (fails, enums, fam)."""
     fails = []
 
-    # --- check 4 first: the gate must be able to READ its subject ------------------
-    for rel, text in tree.items():
+    # --- the gate must be able to READ its subject --------------------------------
+    for rel, text in sorted(tree.items()):
         if text is None:
-            fails.append(f"{rel}: missing. The gate cannot verify a tree it cannot read, "
-                         f"so this is a FAIL and not a skip.")
+            fails.append(f"{rel}: missing or unreadable. The gate cannot verify a tree it "
+                         f"cannot read, so this is a FAIL and not a skip.")
     if fails:
         return fails, {}, {}
 
-    enums = parse_enum(tree[PROTO])
+    enums, unreadable = parse_enum(tree[PROTO])
+    for row in unreadable:
+        fails.append(f"{PROTO}: cannot parse this ReliableKind row -- '{row}'. An enumerator "
+                     f"this gate drops is never asked for a receiver, so an unreadable row is "
+                     f"a hole in exactly the check it would have been subject to.")
     if len(enums) < 100:
         fails.append(f"{PROTO}: parsed {len(enums)} ReliableKind enumerators, expected >=100. "
                      f"The enum moved or its shape changed -- fix this parser before trusting "
                      f"any verdict below it.")
+    if fails:
         return fails, enums, {}
 
     fam = {}
     for rel in FAMILY_FILES:
-        got = set(CASE.findall(strip_comments(tree[rel])))
+        code = strip_comments(tree[rel])
+        got = set(CASE.findall(code))
         if not got:
             fails.append(f"{rel}: zero ReliableKind case labels. A family dispatcher with no "
                          f"membership declaration is either renamed or gutted; either way the "
                          f"coverage below would be silently wrong.")
+        n_sw = len(MSG_SWITCH.findall(code))
+        if n_sw != 1:
+            fails.append(f"{rel}: {n_sw} `switch (msg.kind)` blocks, expected exactly 1. This "
+                         f"gate counts case labels per FILE, so a second switch over "
+                         f"ReliableKind (a sender-side helper, a relay filter) would count as "
+                         f"receiver coverage and re-open the class this gate closes.")
         fam[rel] = got
-    feed = set(CASE.findall(strip_comments(tree[FEED_FILE])))
+    feed_code = strip_comments(tree[FEED_FILE])
+    feed = set(CASE.findall(feed_code))
     if fails:
         return fails, enums, fam
+
+    # --- every family is still CHAINED --------------------------------------------
+    # 100 case labels are reachable only because event_feed's default: calls each
+    # Handle*Event in turn. Delete one call and ~25 kinds die with every label intact.
+    for rel in FAMILY_FILES:
+        handlers = set(HANDLER_DEF.findall(strip_comments(tree[rel])))
+        if not handlers:
+            fails.append(f"{rel}: no `bool Handle*Event(` definition found -- this gate cannot "
+                         f"confirm the family is chained, so it will not pass it.")
+            continue
+        for h in sorted(handlers):
+            if not re.search(r"\b" + h + r"\s*\(", feed_code):
+                fails.append(f"{h} is defined in {rel} but never CALLED in {FEED_FILE}. Its "
+                             f"{len(fam[rel])} case labels are unreachable: the kinds fall "
+                             f"through to `unknown ReliableKind` while every label is still "
+                             f"there and the coverage arithmetic still adds up.")
 
     famall = set()
     for got in fam.values():
         famall |= got
     receivers = famall | feed
 
-    # --- check 4b: a case label for a name the enum does not have -------------------
+    # --- a case label for a name the enum does not have ----------------------------
     for name in sorted(receivers - set(enums)):
         fails.append(f"receiver case label 'ReliableKind::{name}' names a kind that is not in "
                      f"the enum. A renamed or retired kind left a handler behind.")
 
     # --- check 1: every kind reaches a receiver ------------------------------------
+    def idof(n):
+        return enums.get(n) if enums.get(n) is not None else "?"
     for name in sorted(set(enums) - receivers - set(NET_THREAD_TERMINAL),
-                       key=lambda k: enums[k]):
+                       key=lambda k: (enums.get(k) is None, enums.get(k) or 0)):
         fails.append(
-            f"{name} = {enums[name]} has NO receiver: no case label in any family dispatcher "
+            f"{name} = {idof(name)} has NO receiver: no case label in any family dispatcher "
             f"nor in event_feed's own switch, and it is not declared net-thread-terminal. On "
-            f"the wire it will reach `event_feed: unknown ReliableKind {enums[name]} -- "
+            f"the wire it will reach `event_feed: unknown ReliableKind {idof(name)} -- "
             f"dropping` and the lane is DEAD. Add the case to the right "
             f"event_dispatch_<family>.cpp (that case IS the family-membership declaration), "
             f"or -- if the net thread really consumes it before the inbox -- declare it in "
-            f"NET_THREAD_TERMINAL here with the file that does so.")
+            f"NET_THREAD_TERMINAL here with the pattern that proves it.")
 
-    # --- check 2: the declared exceptions still describe the code ------------------
-    for name, (rel, _why) in sorted(NET_THREAD_TERMINAL.items(),
-                                    key=lambda kv: enums.get(kv[0], 0)):
+    # --- check 2: the declared exceptions still describe the code -------------------
+    for name, spec in sorted(NET_THREAD_TERMINAL.items(),
+                             key=lambda kv: (enums.get(kv[0]) is None, enums.get(kv[0]) or 0)):
         if name not in enums:
             fails.append(f"NET_THREAD_TERMINAL lists {name}, which is no longer a ReliableKind. "
                          f"Drop the entry.")
@@ -214,18 +301,21 @@ def check(tree: dict):
             fails.append(f"{name} is declared net-thread-terminal but now HAS a receiver case "
                          f"label. One of the two is wrong: either the exception is stale, or a "
                          f"second consumer was added for a message the net thread already ate.")
-        if not re.search(r"ReliableKind::" + name + r"\b", strip_comments(tree[rel])):
-            fails.append(f"{name} is declared net-thread-terminal in {rel}, but that file no "
-                         f"longer mentions it. If the interception was removed, this kind now "
-                         f"reaches the inbox with no handler at all.")
+        for rel, rx, what in spec["must"]:
+            if not re.search(rx, strip_comments(tree[rel])):
+                fails.append(f"{name} is declared net-thread-terminal, but {rel} no longer "
+                             f"contains {what} (/{rx}/). If that interception was removed, this "
+                             f"kind now reaches the inbox with no handler at all. Asking only "
+                             f"whether the file still MENTIONS the kind is not enough -- both "
+                             f"these files name these kinds in unrelated places.")
 
-    # --- check 3: two families claiming one kind -----------------------------------
-    for name in sorted(set(enums), key=lambda k: enums[k]):
+    # --- check 4: two families claiming one kind -----------------------------------
+    for name in sorted(set(enums), key=lambda k: (enums.get(k) is None, enums.get(k) or 0)):
         who = [pathlib.PurePosixPath(rel).name for rel, got in fam.items() if name in got]
         if len(who) > 1:
-            fails.append(f"{name} = {enums[name]} is claimed by {len(who)} families ({', '.join(who)}). "
-                         f"event_feed chains them in order, so all but the first are dead code "
-                         f"that reads as wired.")
+            fails.append(f"{name} = {idof(name)} is claimed by {len(who)} families "
+                         f"({', '.join(who)}). event_feed chains them in order, so all but the "
+                         f"first are dead code that reads as wired.")
 
     return fails, enums, fam
 
@@ -290,7 +380,7 @@ def print_table(tree, enums, fam):
     print("")
     print("  id  kind                       receiver                 lane    relay  preworld")
     print("  --- -------------------------- ------------------------ ------- -----  --------")
-    for name in sorted(enums, key=lambda k: enums[k]):
+    for name in sorted(enums, key=lambda k: (enums.get(k) is None, enums.get(k) or 0)):
         where = "-"
         for rel, got in fam.items():
             if name in got:
@@ -299,8 +389,9 @@ def print_table(tree, enums, fam):
             where = "event_feed (special)"
         if name in NET_THREAD_TERMINAL:
             where = "net thread (terminal)"
-        print("  %3d %-26s %-24s %-7s %-6s %s"
-              % (enums[name], name, where, lanes["lane"].get(name, "Normal*"),
+        print("  %3s %-26s %-24s %-7s %-6s %s"
+              % (enums[name] if enums[name] is not None else "?", name, where,
+                 lanes["lane"].get(name, "Normal*"),
                  "yes" if name in lanes["relay"] else "-",
                  "yes" if name in lanes["preworld"] else "-"))
     print("  (* = falls to the switch default. All three session_lanes.h switches default")
@@ -314,13 +405,16 @@ def drill() -> int:
     """Each control must make the gate FAIL, and for the stated reason.
 
     A gate nobody has seen refuse is a gate nobody has tested. These mutate a COPY of the
-    tree in memory; nothing on disk is touched.
+    tree in memory; nothing on disk is touched. Every expected string NAMES ITS VICTIM, so
+    a control cannot be satisfied by some unrelated failure the mutation happened to cause.
     """
     base = read_tree()
     clean, enums, _fam = check(base)
     if clean:
         print("reliablekind_gate: DRILL ABORTED -- the unmutated tree already fails; fix that "
               "first, the controls below cannot be read against a red baseline.")
+        for f in clean[:5]:
+            print("    " + f)
         return 1
 
     controls = []
@@ -331,22 +425,45 @@ def drill() -> int:
     for rel in FAMILY_FILES + [FEED_FILE]:
         t[rel] = re.sub(r"case\s+(?:coop::)?(?:net::)?ReliableKind::" + victim + r"\s*:",
                         "case net::ReliableKind::__removed_by_drill:", t[rel])
-    controls.append(("a kind with no receiver", t, "has NO receiver"))
+    controls.append(("a kind with no receiver", t, victim + " = 129 has NO receiver"))
 
-    # 2. a net-thread-terminal declaration whose interception was deleted.
+    # 2. THE REAL DELETION, not a global rename. Remove only the terminal `return;` --
+    #    every mention of the kind stays exactly where it was, which is what defeated the
+    #    first version of check 2.
     t = dict(base)
-    rel = NET_THREAD_TERMINAL["AuthProof"][0]
-    t[rel] = t[rel].replace("ReliableKind::AuthProof", "ReliableKind::__gone_by_drill")
-    controls.append(("an exception whose interception vanished", t, "no longer mentions it"))
+    t[SESSION] = t[SESSION].replace(
+        "if (IsAdmissionKind(static_cast<ReliableKind>(rh.kind))) return;", "", 1)
+    controls.append(("the admission interception deleted (mentions intact)", t,
+                     "AuthProof is declared net-thread-terminal"))
 
-    # 3. two families claiming one kind.
+    # 2b. the same for a SaveTransfer divert: drop only the branch's opening.
+    t = dict(base)
+    t[SESSION] = t[SESSION].replace(
+        "if (static_cast<ReliableKind>(rh.kind) == ReliableKind::SaveTransferBegin) {",
+        "if (false) {", 1)
+    controls.append(("the SaveTransferBegin divert deleted (mentions intact)", t,
+                     "SaveTransferBegin is declared net-thread-terminal"))
+
+    # 3. a family stops being chained: every case label survives, the call does not.
+    t = dict(base)
+    t[FEED_FILE] = t[FEED_FILE].replace("if (HandleWorldEvent(session, msg)) break;", "", 1)
+    controls.append(("a family dispatcher no longer chained", t,
+                     "HandleWorldEvent is defined in"))
+
+    # 4. two families claiming one kind.
     t = dict(base)
     t[FAMILY_FILES[0]] = t[FAMILY_FILES[0]].replace(
         "switch (msg.kind) {",
         "switch (msg.kind) {\n    case net::ReliableKind::DoorState: break;", 1)
-    controls.append(("one kind claimed twice", t, "is claimed by"))
+    controls.append(("one kind claimed twice", t, "DoorState = 9 is claimed by"))
 
-    # 4. an unreadable subject must not pass.
+    # 5. an enum row this parser cannot read must not pass silently.
+    t = dict(base)
+    t[PROTO] = t[PROTO].replace("    LightGroupState = 129,",
+                                "    LightGroupState 129 %% unreadable", 1)
+    controls.append(("an unreadable enum row", t, "cannot parse this ReliableKind row"))
+
+    # 6. an unreadable subject must not pass.
     t = dict(base)
     t[PROTO] = "// the enum is gone"
     controls.append(("an unparseable enum", t, "expected >=100"))
@@ -355,17 +472,18 @@ def drill() -> int:
     for label, mutated, expect in controls:
         got, _e, _f = check(mutated)
         hit = any(expect in f for f in got)
-        print("reliablekind_gate: DRILL %-42s %s"
+        print("reliablekind_gate: DRILL %-48s %s"
               % (label, "fired" if hit else "*** DID NOT FIRE ***"))
         if not hit:
             bad += 1
+            print("    expected a failure containing: " + expect)
             for f in got[:3]:
                 print("    (got instead) " + f)
     if bad:
         print(f"reliablekind_gate: DRILL FAILED -- {bad} control(s) did not fire. The gate is "
               f"not proven to refuse anything; do not trust its PASS.")
         return 1
-    print("reliablekind_gate: DRILL PASS -- all 4 controls refused.")
+    print(f"reliablekind_gate: DRILL PASS -- all {len(controls)} controls refused.")
     return 0
 
 
@@ -385,8 +503,9 @@ def main() -> int:
         for got in fam.values():
             famall |= got
         feed = set(CASE.findall(strip_comments(tree[FEED_FILE])))
-        print("reliablekind_gate: PASS -- %d kinds; %d routed by a family, %d by event_feed's "
-              "own switch, %d net-thread-terminal by declaration; 0 claimed twice."
+        print("reliablekind_gate: PASS -- %d kinds; %d routed by a family (all 5 chained), %d "
+              "by event_feed's own switch, %d net-thread-terminal with their interceptions "
+              "verified; 0 claimed twice."
               % (len(enums), len(famall), len(feed - famall), len(NET_THREAD_TERMINAL)))
         if "--table" in argv:
             print_table(tree, enums, fam)

@@ -558,12 +558,21 @@ def launch_peer(role: str, port: int, nick: str, peer: str | None,
     env.pop("VOTVCOOP_DEATH_NO_RECONCILE", None)
     env.pop("VOTVCOOP_DEATH_DEEP_FLOOR", None)
     # Same reasoning, and stronger: lightswitch_probe MUTATES the world (a one-shot synthetic
-    # use() on a live switch). Exported in a shell it would fire inside a joining client's
-    # connect snapshot and cost that peer its join -- measured 2026-09-01, twice, and the
-    # failure string is this project's known signature for a CONCURRENT SESSION killing your
-    # run, so it de-braids as the wrong thing ([[lesson-a-mutating-probe-breaks-the-run-it-measures]]).
-    # Only cmd_lightgroup re-sets it.
-    env.pop("VOTVCOOP_LIGHTSWITCH_PROBE", None)
+    # use() plus the group selftest's writes). Exported in a shell -- or left in an ini -- it
+    # fires while a peer is arriving and can cost that peer its join (measured 2026-09-01,
+    # twice; and the failure string is this project's signature for a CONCURRENT SESSION
+    # killing your run, so it de-braids as the wrong thing:
+    # [[lesson-a-mutating-probe-breaks-the-run-it-measures]]).
+    #
+    # A POSITIVE "0", NOT A pop(). The two DEATH switches above are read by a raw ReadEnv and
+    # have no registry row, so deleting them from the environment really does disarm them. This
+    # one is a config-registry FLAG, and PickRawLayered falls through env -> ini: popping it
+    # only removes the env layer and the ini answers `1`. An audit caught exactly that on this
+    # box -- the HOST install carried `lightswitch_probe=1`, so every smoke armed the mutating
+    # one-shot while I was citing those smokes as clean evidence, and it fired ONE SECOND before
+    # the client was accepted into PENDING. env beats ini, so the override has to be a value.
+    # cmd_lightgroup passes "1" through extra_env, which is applied after this.
+    env["VOTVCOOP_LIGHTSWITCH_PROBE"] = "0"
     # set_scenario=None -> NO VOTVCOOP_SCENARIO -> the harness boots to the MENU (the
     # real native-launch / save-picker context). Default "play" auto-loads the ini save.
     if set_scenario:
@@ -868,11 +877,21 @@ def _assert_no_unknown_reliable_kind(peers) -> None:
     for lbl, d in peers:
         try:
             txt = (d / "multivoid.log").read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        except OSError as e:
+            # FAIL CLOSED. A log nobody could read is not a clean log, and this helper's own
+            # sibling ten lines up gets that right -- they shipped in one commit with opposite
+            # polarity on the identical failure. Today the sibling runs first over the same
+            # peers and would exit before us, which is call-order luck, not a guarantee.
+            bad.append(f"{lbl}: could not read the log ({e.__class__.__name__}) -- "
+                       "a log that was not read cannot be evidence of a clean wire")
             continue
         hits = [ln.strip() for ln in txt.splitlines() if "unknown ReliableKind" in ln]
         if hits:
-            kinds = sorted({ln.split("unknown ReliableKind", 1)[1].split()[0] for ln in hits})
+            # `[1:]` not `[0]`: a line truncated exactly at the needle (a torn final write on a
+            # killed process) would otherwise raise IndexError and replace the diagnosis with a
+            # traceback -- in the branch that only runs when a lane IS dead.
+            kinds = sorted({(ln.split("unknown ReliableKind", 1)[1].split() or ["?"])[0]
+                            for ln in hits})
             bad.append(f"{lbl}: {len(hits)} dropped packet(s), kind(s) {', '.join(kinds)}")
     if bad:
         log("FAIL: a peer received a ReliableKind no handler claimed -- that lane is WIRE-DEAD:")
@@ -1653,6 +1672,18 @@ def cmd_smoke4(args) -> None:
     # boots ride this check too).
     for lbl, d in [("HOST", HOST_DIR)] + [(lbl2, gd) for _s, gd, lbl2 in client_specs]:
         failures.extend(_lane_check(lbl, d))
+
+    # The same two assertions cmd_smoke makes, over all four peers. This scenario wanted them
+    # MORE than the two-peer one does and had neither: it is the run that exercises HOST RELAY,
+    # so a kind that routes on the host but is mis-routed on a relayed hop surfaces here first.
+    all_peers = [("HOST", HOST_DIR)] + [(lbl2, gd) for _s, gd, lbl2 in client_specs]
+    _assert_peer_selftests(
+        all_peers,
+        (("movement_ledger", "movement_ledger selftest: ALL PASS",
+          "movement_ledger selftest: FAIL"),
+         ("intent_authority", "intent_authority selftest: ALL PASS",
+          "intent_authority selftest FAIL")))
+    _assert_no_unknown_reliable_kind(all_peers)
 
     # --- i18n assertions (--assert-i18n). Every peer must be able to SEE every
     # other peer's name and message, byte-for-byte, and no lane may have emitted
