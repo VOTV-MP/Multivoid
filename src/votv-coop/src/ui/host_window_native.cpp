@@ -93,20 +93,20 @@ struct ConnMode { const wchar_t* title; const wchar_t* detail; };
 // fc", "any Multi" -- which the user read as broken twice. These say the same things in
 // the room available; the detail each one drops (which router, whose port, which IP) is
 // the detail a player who needs it will look up anyway.
-constexpr ConnMode kConnModes[3] = {
-    {L"AUTO  (recommended)",
-     L"Introduced through the Multivoid server."},
-    {L"DIRECT  (port forward)",
-     L"Straight to you. You forward the port."},
-    // "Never contacts any Multivoid server" was FALSE as written, and measurably so:
-    // `server_browser_actions.cpp:80` is the only door to this window, so every player
-    // who can read this row has already opened the browser, which fetches the lobby
-    // list and the update check. The sentence is about the GAME being hosted, not
-    // about whether the process ever spoke to the master, and it now says that. The
-    // real closure is a Host door that does not route through the browser -- that is
-    // UI work and belongs with the host-window rework, not with a text fix.
-    {L"LAN ONLY",
-     L"Same network only. Nothing is sent out."},
+// TWO, not three, since 2026-09-01. "LAN ONLY" was never a third transport: `[V]` it
+// called the SAME StartLanDirect as DIRECT and bound the same all-interfaces socket
+// (measured `:::47621`). What made it look separate was an accept filter doing the
+// ROUTER's job, now deleted, plus never listing -- which is the SERVER LIST selector in
+// step two. See coop/session/host_mode.h.
+//
+// The names say what the player must DO and what it costs them, because "AUTO / DIRECT /
+// LAN ONLY" asked them to already know our architecture -- and the project's own author
+// read "LAN ONLY" as meaning 127.0.0.1.
+constexpr ConnMode kConnModes[2] = {
+    {L"AUTOMATIC  (recommended)",
+     L"We introduce you. Nothing to set up."},
+    {L"DIRECT  (you forward a port)",
+     L"Friends reach your PC. No server involved."},
 };
 
 // ---- state (GAME THREAD ONLY unless marked) ----------------------------------------
@@ -122,8 +122,13 @@ void* g_status   = nullptr;
 std::string g_lastStatus;
 void* g_backBtn  = nullptr;
 void* g_hostBtn  = nullptr;
-void* g_connRow[3]   = {nullptr, nullptr, nullptr};   // the clickable background images
-void* g_connLabel[3] = {nullptr, nullptr, nullptr};
+// SIZED FROM THE TABLE, never spelled again. These were `[3]` beside a `[3]` table and
+// four hand-written `i < 3` loops; when the table became two, every one of those was a
+// separate place to forget -- and an over-run loop here reads a null and silently draws
+// nothing rather than crashing, which is the failure that hides.
+constexpr int kConnCount = static_cast<int>(sizeof(kConnModes) / sizeof(kConnModes[0]));
+void* g_connRow[kConnCount]   = {};   // the clickable background images
+void* g_connLabel[kConnCount] = {};
 
 int32_t g_ourIndex   = -1;
 int32_t g_priorIndex = -1;
@@ -267,7 +272,7 @@ void RepaintAll() {
     for (size_t i = 0; i < g_saveRows.size(); ++i)
         PaintRow(g_saveRows[i], SlotIndex() == static_cast<int>(i),
                  g_hoverRow == static_cast<int>(i));
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < kConnCount; ++i) {
         if (!g_connRow[i]) continue;
         U::SetImageTint(g_connRow[i], g_connMode == i ? kRowSel : kRowBg);
         E::SetTextBlockColorDispatch(g_connLabel[i], g_hoverConn == i ? kHover : kText);
@@ -330,7 +335,7 @@ bool BuildScreen(void* switcher) {
     NS::AddVFill(col, listBox, 1.f, NS::kFill, NS::kFill);
 
     NS::AddText(col, L"CONNECTION", 16, kAccent, NS::kJustLeft, 0.f);
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < kConnCount; ++i) {
         Row r = BuildRow(col, 0.42f, 0.58f, 0.f);
         g_connRow[i]   = r.bg;
         g_connLabel[i] = r.a;
@@ -465,7 +470,7 @@ void UpdateHover() {
     // could not be clicked at all -- this window could only ever start a NEW game.
     if (g_newGameRow.bg && NS::CursorOverWidget(g_newGameRow.bg)) g_hoverRow = -1;
     if (g_hoverRow == -2 && g_hover.Index() >= 0) g_hoverRow = g_hover.Index();
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < kConnCount; ++i)
         if (g_connRow[i] && NS::CursorOverWidget(g_connRow[i])) { g_hoverConn = i; break; }
     if (g_hoverRow != prevRow || g_hoverConn != prevConn) RepaintAll();
 }
@@ -527,7 +532,7 @@ void PollChrome() {
     // geometry, which is the only thing that works for THEM.
     if (g_backBtn  && E::WidgetIsHovered(g_backBtn))  { Hide("BACK"); return; }
     if (g_hostBtn  && E::WidgetIsHovered(g_hostBtn))  { DoNext(); return; }
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < kConnCount; ++i)
         if (g_connRow[i] && NS::CursorOverWidget(g_connRow[i])) { g_connMode = i; RepaintAll(); return; }
     if (g_newGameRow.bg && NS::CursorOverWidget(g_newGameRow.bg)) {
         g_selectedSlot.clear(); RepaintAll(); return;
@@ -637,7 +642,7 @@ void OnMenuTick(void* menu, void* switcher) {
         g_backBtn = nullptr; g_hostBtn = nullptr;
         g_newGameRow = Row{};
         g_saveRows.clear();
-        for (int i = 0; i < 3; ++i) { g_connRow[i] = nullptr; g_connLabel[i] = nullptr; }
+        for (int i = 0; i < kConnCount; ++i) { g_connRow[i] = nullptr; g_connLabel[i] = nullptr; }
         g_ourIndex = -1; g_shown = false; g_buildAttempts = 0; g_savesRev = 0;
         g_lastStatus.clear();   // the widget it cached is gone with the menu
     }

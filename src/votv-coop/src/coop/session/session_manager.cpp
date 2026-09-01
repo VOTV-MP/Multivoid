@@ -214,8 +214,9 @@ void Configure(const std::string& masterUrl, const net::Config& fallbackHostCfg)
     // something the player asked for, and between them they meant the master
     // learned every player's source IP AT GAME LAUNCH -- before any multiplayer
     // decision existed. That made a promise we ship in player-facing text false
-    // at the moment it is displayed: the host window's LAN ONLY row reads
-    // "Never contacts any Multivoid server" (host_window_native.cpp:76).
+    // at the moment it is displayed: the host window's third row used to read
+    // "Never contacts any Multivoid server". (That row is retired -- the promise now
+    // belongs to DIRECT + Hidden, `coop::session::IsMasterFree`.)
     //
     // The check now fires from ui::server_browser_surface::Open(), because
     // opening the browser IS a request to talk to the master -- the same trigger
@@ -450,7 +451,7 @@ void AnnounceEnvHostHidden(const std::string& name, const std::string& world) {
 
 bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked,
                   const std::string& password, int playersMax,
-                  bool directConnection, bool hideFromBrowser, bool lanOnly) {
+                  coop::session::HostMode mode) {
     if (g_actionBusy.exchange(true)) { UE_LOGW("session_manager: action busy -- HostWithSave ignored"); return false; }
     // THE SECRET THIS SESSION WILL REQUIRE, resolved ONCE and carried into whichever
     // of the three host paths runs. Empty unless `locked`, so the bool the caller
@@ -479,38 +480,24 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
                       "hosting window's session settings.");
         locked = false;
     }
-    // LAN-ONLY (2026-08-29): a LanDirect listen that never touches the master --
-    // no announce, no heartbeat, no signaling; the accept edge additionally
-    // refuses non-private remote addresses (net::Config::lanOnly). No worker
-    // thread needed: there is no HTTP to wait on.
-    if (lanOnly) {
-        const uint16_t directPort = [&] {
-            net::Config fallback;
-            { std::lock_guard<std::mutex> lk(g_cfgMu); fallback = g_fallbackHostCfg; }
-            return fallback.port ? fallback.port : net::kDefaultPort;
-        }();
-        net::Config cfg;
-        cfg.role = net::Role::Host;
-        cfg.topology = net::Topology::LanDirect;
-        cfg.port = directPort;
-        cfg.lanOnly = true;
-        {
-            std::lock_guard<std::mutex> lk(g_pendHostMu);
-            cfg.lobbyPassword = lobbyPw;
-            g_pendingHost.cfg = cfg;
-            g_pendingHost.save = choice;
-            g_pendingHost.listed = false;
-            g_hasPendingHost = true;
-        }
-        g_listedState.store(false, std::memory_order_relaxed);
-        SetHostStatus("Hosting '" + name + "' -- LAN ONLY (not announced; local network only)");
-        UE_LOGI("session_manager: hosting LAN-ONLY '%s' port=%u (no master contact; "
-                "private-address accept gate armed)", name.c_str(), directPort);
-        g_actionBusy.store(false);
-        return true;
-    }
-    // HIDDEN DIRECT: the same shape, and for the same reason -- nothing leaves the
-    // machine. The old path announced FIRST (name, world, lock flag, cap, listen
+    using coop::session::Reachability;
+    // FORCED, NOT TRUSTED. An unlisted brokered lobby is unreachable by anyone, so a caller
+    // that asked for one asked for a world nobody can join. The header promises this is
+    // enforced here rather than assumed of every caller.
+    if (mode.reach == Reachability::Brokered) mode.listed = true;
+    const bool directConnection = (mode.reach == Reachability::Direct);
+    const bool hideFromBrowser  = !mode.listed;
+
+    // A DIRECT SESSION THE MASTER IS NEVER TOLD ABOUT -- nothing leaves the machine.
+    //
+    // THIS BRANCH ABSORBED "LAN ONLY" (2026-09-01). That mode was this branch plus an
+    // accept filter refusing non-private remotes, and the filter was deleted whole: it did
+    // the ROUTER's job, and if the port is not forwarded then local-only is what NAT
+    // already gives you for free. What was left of LAN ONLY -- a Direct listen that never
+    // contacts the master -- is exactly what this is, so the two are one and there is no
+    // third connection type. See coop/session/host_mode.h.
+    //
+    // The old path announced FIRST (name, world, lock flag, cap, listen
     // port, identity, and the source IP the master resolves) and only then asked
     // to be un-listed, so a player who chose "hide" was registered for the lobby's
     // life with a heartbeat keeping the record warm. The announce is stashed

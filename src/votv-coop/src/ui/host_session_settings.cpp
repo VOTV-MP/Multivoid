@@ -9,6 +9,7 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/net/peer_identity.h"     // RandomBytes -- the CSPRNG the identity already uses
+#include "coop/session/host_mode.h"
 #include "coop/session/session_manager.h"
 #include "coop/text/utf8_codec.h"
 #include "ui/host_session_choices.h"     // the two-row selector these questions share
@@ -116,12 +117,13 @@ constexpr HC::Answer kWho[2] = {
 // certain they set it and wrong about which way.
 //
 // IT IS NOT EDITABLE IN EVERY MODE, and the rows say so rather than disappearing:
-//   AUTO      -- always listed. The master is a relay game's ONLY rendezvous, so a hidden
-//                AUTO lobby is unjoinable by anyone (design call 2026-06-11). Offering the
-//                choice here would be offering a footgun; the ~ menu is where it becomes
+//   AUTOMATIC -- always listed. The master is a relay game's ONLY rendezvous, so a hidden
+//                one is unjoinable by anyone (design call 2026-06-11). Offering the choice
+//                here would be offering a footgun; the ~ menu is where it becomes
 //                legitimate, once friends are already in.
-//   DIRECT    -- the real choice, and the reason this control exists.
-//   LAN ONLY  -- never announced at all, by construction.
+//   DIRECT    -- the real choice, and the reason this control exists. Choosing "Hidden"
+//                here is what the retired "LAN ONLY" mode used to mean, minus the accept
+//                filter that did the router's job (coop/session/host_mode.h).
 // So the selector always states the TRUTH about what will happen, and only DIRECT lets you
 // move it. That is why these are rows and not a checkbox: a checkbox has no way to be
 // truthful and unavailable at the same time.
@@ -261,20 +263,27 @@ void ReportFit() {
     }
 }
 
-// LISTED, and its default is per-MODE rather than a constant, because the honest default is
-// different in each: AUTO must be listed to be joinable at all, LAN ONLY can never be, and
-// DIRECT is the one where the host actually chooses (defaulting to listed -- the behaviour
-// every existing DIRECT host already has, since the old hardcoded literal was `false`).
+// LISTED, and its default is per-MODE rather than a constant, because the honest default
+// differs: AUTOMATIC must be listed to be joinable at all, and DIRECT is the one where the
+// host actually chooses (defaulting to listed -- the behaviour every existing DIRECT host
+// already had, since the old hardcoded literal was `false`).
+//
+// THE THIRD MODE IS GONE (2026-09-01) AND SO IS ITS ROW HERE. "LAN ONLY" forced
+// `listed=false` and refused non-private remotes; the filter did the router's job and was
+// deleted, which left it identical to DIRECT + Hidden -- a value THIS selector already
+// expresses. So the mode that could not choose became the choice itself. See
+// coop/session/host_mode.h.
 
 // Can this connection mode's visibility be moved at all? DIRECT only -- see kVis.
 bool VisibilityIsEditable() { return g_connMode == 1; }
 
-// What the mode FORCES, for the two modes that force it.
-bool ListedForMode(int connMode) {
-    if (connMode == 2) return false;   // LAN ONLY: nothing is ever announced
-    if (connMode == 0) return true;    // AUTO: a hidden lobby is unjoinable
-    return true;                       // DIRECT: the host's call; listed is the default
-}
+// `ListedForMode` IS GONE, and its deletion is part of the same removal. It existed to say
+// that LAN ONLY could never be listed; with that mode retired, BOTH remaining modes start
+// listed -- AUTOMATIC because a hidden one is unjoinable, DIRECT because that is what every
+// DIRECT host already had -- so the function could only ever return true. A predicate that
+// cannot vary is not a predicate, and keeping it would have left a reader looking for the
+// case that makes it interesting. The default is stated where it is used.
+constexpr bool kListedByDefault = true;
 
 // The status last WRITTEN -- BOTH the string and the colour, because this line changes
 // colour on a refusal and a cache that remembers only the text would suppress the repaint
@@ -657,22 +666,23 @@ void DoHost() {
     // and a reader of this call would have to go find that out. The mode gate is stated
     // here instead, where the value is formed.
     const bool hideFromBrowser = VisibilityIsEditable() && !IsListed();
+    const coop::session::HostMode mode{
+        g_connMode == 1 ? coop::session::Reachability::Direct
+                        : coop::session::Reachability::Brokered,
+        !hideFromBrowser};
     const bool accepted = sm::HostWithSave(g_choice, g_name, IsLocked(), pw, /*playersMax=*/4,
-                                           /*directConnection=*/g_connMode == 1,
-                                           hideFromBrowser,
-                                           /*lanOnly=*/g_connMode == 2);
+                                           mode);
     // THE PASSWORD IS NEVER LOGGED. It is the one value in this window that is a secret, and
     // a log line is the easiest place in the whole program for it to end up in a screenshot.
     UE_LOGI("host_session_settings: HOST %s -- world=%s conn=%d listed=%d locked=%d name='%s'",
             accepted ? "accepted" : "REFUSED (another action in flight)",
             g_choice.newGame ? "<new game>" : g_choice.slot.c_str(), g_connMode,
-            // NOT `!hideFromBrowser`. That flag is DIRECT-only (see its own comment
-            // above), so on LAN ONLY it is false for a mode that never announces at
-            // all, and this line reported `listed=1` for a lobby the master is
-            // deliberately never told about. `ListedForMode` is the predicate the rest
-            // of the window already decides visibility with -- and on DIRECT the
-            // player's toggle still overrides it.
-            (ListedForMode(g_connMode) && !hideFromBrowser) ? 1 : 0,
+            // `!hideFromBrowser` IS the answer again, now that there are two modes. It
+            // stopped being one earlier today, when a third mode existed that never
+            // announced yet left this flag false -- so this line claimed `listed=1` for a
+            // lobby the master was deliberately never told about. That mode is retired, and
+            // with it the reason for the extra term.
+            !hideFromBrowser ? 1 : 0,
             IsLocked() ? 1 : 0, g_name.c_str());
     if (!accepted) {
         // The window STAYS OPEN on a refusal, for the reason step one records: a screen that
@@ -826,7 +836,7 @@ void Show() {
     // type, and a listed/hidden choice carried across that change would be a value chosen
     // under a different set of rules. DIRECT starts listed -- the behaviour every DIRECT
     // host had while this was a hardcoded literal.
-    g_vis.chosen = ListedForMode(g_connMode) ? 0 : 1;
+    g_vis.chosen = kListedByDefault ? 0 : 1;
     g_escPrimed = false;
     g_lmbPrimed = false;
     g_lastStatus.clear();
