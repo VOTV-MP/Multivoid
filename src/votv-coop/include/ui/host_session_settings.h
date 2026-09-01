@@ -24,10 +24,17 @@
 // proof to the host's identity so it can never become an offline oracle -- see the design
 // pass in the scratchpad qf thread. That is the NEXT commit; this one is the surface.)
 //
-// HONEST STATUS: this screen collects the setting and announces it. The ADMISSION half --
-// a joining client proving it knows the password, and the host refusing it if not -- is
-// NOT built yet, so `locked` remains what `lobby_client.h` says it is: a badge. This
-// header will say otherwise on the commit that makes it otherwise, and not before.
+// STATUS, updated 2026-09-01: the ADMISSION half IS built. A joining client proves it knows
+// the password and the host refuses it if not (`coop/net/peer_admission.cpp`, proto 149), so
+// `locked` is a gate now rather than the badge this paragraph used to warn it was. The
+// caveat that replaces it is narrower and lives on the password hint: a proof is only safe
+// to send to a host the joiner has BOUND to an identity it was given in advance, so on
+// DIRECT and LAN a friend needs the host's `gen:` line as well as the address.
+//
+// SECOND QUESTION, added 2026-09-01 (user): this screen now also collects whether the
+// session is LISTED, which until then was a hardcoded `false` for "hide" -- i.e. no choice
+// at all on the native surface, while the ImGui fallback had one. See `kVis` in the .cpp for
+// why the rows state the truth on all three connection modes but only DIRECT can move them.
 //
 // Game thread only, like every native screen.
 
