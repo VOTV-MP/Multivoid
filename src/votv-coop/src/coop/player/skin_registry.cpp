@@ -2,6 +2,9 @@
 
 #include "coop/player/skin_registry.h"
 
+#include "coop/player/client_model.h"   // the only authority on "does this mesh exist"
+#include "ue_wrap/core/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD -- LoadObject is not free-thread
+
 #include "ue_wrap/core/paths.h"  // ExeDir -- the pak folder is derived from the install dir
 #include "ue_wrap/core/log.h"
 
@@ -138,9 +141,12 @@ std::string PickRandomStarterSkin() {
         }
     }
     if (present.empty()) {
-        UE_LOGI("skin_registry: no starter-list pak present -- new identity falls back to '%s'",
-                kDefaultSkinName);
-        return kDefaultSkinName;
+        // THE STOCK BODY, because this branch means NO starter pak is installed -- and
+        // `kDefaultSkinName` is itself a pak skin, so naming it here hands a fresh identity
+        // a skin that by construction cannot resolve either. `dr_kel` needs no pak.
+        UE_LOGI("skin_registry: no starter-list pak present -- new identity falls back to "
+                "the stock body '%s'", kNativeSkinName);
+        return kNativeSkinName;
     }
     std::mt19937 rng{std::random_device{}()};
     const char* pick = present[rng() % present.size()];
@@ -270,6 +276,24 @@ const std::vector<SkinEntry>& Entries(bool rescan) {
     UE_LOGI("skin_registry: %zu skin(s) catalogued (incl. dr_kel) across %zu LogicMods subdir(s)",
             g_entries.size(), dirs.size());
     return g_entries;
+}
+
+void ResolvePending(int budget) {
+    UE_ASSERT_GAME_THREAD("skins::ResolvePending (LoadObject)");
+    for (SkinEntry& e : g_entries) {
+        if (budget <= 0) return;
+        if (e.usable != Usable::Unknown) continue;
+        --budget;
+        // A BUILTIN or the stock body is usable by construction -- it ships with the game
+        // and has no pak to be missing.
+        const bool ok = coop::client_model::IsNativeSkin(e.name) ||
+                        coop::client_model::GetSkinMesh(e.name) != nullptr;
+        e.usable = ok ? Usable::Yes : Usable::No;
+        if (!ok)
+            UE_LOGI("skin_registry: '%s' is listed by a pak but resolves to no mesh here -- "
+                    "hidden from the picker (another mod's pak, or a skin pak for a different "
+                    "game version)", e.name.c_str());
+    }
 }
 
 }  // namespace coop::skins

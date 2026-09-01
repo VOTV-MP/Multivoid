@@ -184,7 +184,8 @@ uint16_t MintPlayerNo() {
     return kHostPlayerNo + 1;
 }
 
-void EnsureRowZeroSeeded(const coop::net::Session& session, const std::wstring& localNick) {
+void EnsureRowZeroSeeded(const coop::net::Session& session, const std::wstring& localNick,
+                         const std::string& localSkin) {
     UE_ASSERT_GAME_THREAD("g_rows (roster_ledger::EnsureRowZeroSeeded)");
     if (session.role() != coop::net::Role::Host) return;  // a client's row 0 is the HOST, wire-born
     if (g_rows[0].playerNo != kHostPlayerNo) {
@@ -192,12 +193,14 @@ void EnsureRowZeroSeeded(const coop::net::Session& session, const std::wstring& 
         me.playerNo = kHostPlayerNo;
         me.bornGeneration = 0;  // host-self is seeded, never connection-derived
         me.nick = localNick;
+        me.skin = localSkin;
         Transition(0, me);
         return;
     }
-    // Already seeded: keep the name current (the host can rename mid-session)
-    // without disturbing occupancy.
+    // Already seeded: keep the local prefs current (the host can rename or re-skin
+    // mid-session) without disturbing occupancy.
     g_rows[0].nick = localNick;
+    g_rows[0].skin = localSkin;
 }
 
 void SetNick(int slot, std::wstring nick) {

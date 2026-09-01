@@ -1,4 +1,4 @@
-# deploy-all.ps1 -- deploy the Multivoid mod folder to all four game copies.
+﻿# deploy-all.ps1 -- deploy the Multivoid mod folder to all four game copies.
 #
 # 2026-05-25 (3-copy convention; see docs/RE_WORKFLOW.md):
 #   Game_0.9.0n_HOST/     -- HOST    (user's hands-on host play)
@@ -44,8 +44,14 @@ $deployScript = Join-Path $PSScriptRoot "deploy-mod.ps1"
 # at startup, so dropping it under Content/Paks/LogicMods/multivoid/ makes the
 # mesh resident before our boot thread runs. Optional: absent pak == puppets keep
 # the kel skin (graceful-degrade in coop::client_model).
-# 2026-07-02: model renamed to its ORIGINAL name -- scientist.pak -> hl_einstein_v1sc.pak.
-$clientPak = Join-Path $root "research\pak_re\hl_einstein_v1sc.pak"
+# THE SOURCE IS assets/paks -- THE SAME DIRECTORY THE RELEASE PACKAGES, and that is the
+# whole point: a dev rig that carries different skins from a player's install cannot
+# reproduce a player's bug. This used to point at research\pak_re\hl_einstein_v1sc.pak, a
+# leftover of the pre-2026-08-29 skin lane, so every deploy re-installed a pak the release
+# has not shipped since -- and never installed scientists.pak at all. It also confounded a
+# measurement on 2026-09-01: a skin resolved on the dev rigs ONLY because this line kept
+# putting it back, on a run investigating why it did not resolve for the user.
+$pakSrcDir = Join-Path $root "assets\paks"
 
 foreach ($t in $targets) {
     if (-not (Test-Path $t.Path)) {
@@ -61,49 +67,39 @@ foreach ($t in $targets) {
     # ...\VotV\Binaries\Win64; the pak lives under ...\VotV\Content\Paks\LogicMods.
     $votvDir = Split-Path -Parent (Split-Path -Parent $t.Path)   # Win64 -> Binaries -> VotV
     $pakDir  = Join-Path $votvDir "Content\Paks\LogicMods\multivoid"
-    $pakDest = Join-Path $pakDir "hl_einstein_v1sc.pak"
-    # One-time hygiene: the pre-rename deliverable must not stay mounted alongside the
-    # renamed one (two paks with the same package content = double-mount ambiguity).
-    $stalePak = Join-Path $pakDir "scientist.pak"
-    if (-not $Remove -and (Test-Path $stalePak)) {
-        try { Remove-Item $stalePak -Force -ErrorAction Stop; Write-Host "  removed STALE scientist.pak" -ForegroundColor Yellow }
-        catch { Write-Host "  WARN: stale scientist.pak is LOCKED (game running?) -- remove it before the next launch" -ForegroundColor Red }
-    }
     if ($Remove) {
-        if (Test-Path $pakDest) { Remove-Item $pakDest -Force; Write-Host "  removed client pak" -ForegroundColor DarkGray }
-    } elseif (Test-Path $clientPak) {
+        if (Test-Path $pakDir) { Remove-Item $pakDir -Recurse -Force; Write-Host "  removed client paks" -ForegroundColor DarkGray }
+    } elseif (Test-Path $pakSrcDir) {
         if (-not (Test-Path $pakDir)) { New-Item -ItemType Directory -Force -Path $pakDir | Out-Null }
-        # Idempotent (same pattern as deploy-mod's DLL copy): a RUNNING game
-        # holds its pak mapped, so Copy-Item throws IOException even when there is
-        # nothing to update -- which aborted the whole deploy + the client launch
-        # while the HOST was up (2026-07-02). Reads are share-allowed: hash-compare
-        # and skip when byte-identical. A genuinely STALE pak under a running game
-        # still fails loudly (correct -- a mapped pak cannot be hot-swapped).
-        # Inline .NET SHA256 (NOT Get-FileHash): under mp.py's nested/degraded
-        # PowerShell the Utility module fails to autoload and Get-FileHash aborts
-        # the whole deploy (same rationale as deploy-mod.ps1's helper).
+        # Inline .NET SHA256 (NOT Get-FileHash): under mp.py's nested/degraded PowerShell the
+        # Utility module fails to autoload and Get-FileHash aborts the whole deploy.
         function Get-Sha256HexLocal($path) {
             $sha = [System.Security.Cryptography.SHA256]::Create()
             try { return [System.BitConverter]::ToString($sha.ComputeHash([System.IO.File]::ReadAllBytes($path))).Replace('-', '') }
             finally { $sha.Dispose() }
         }
-        $same = (Test-Path $pakDest) -and
-                ((Get-Sha256HexLocal $pakDest) -eq (Get-Sha256HexLocal $clientPak))
-        if ($same) {
-            Write-Host "  client pak up-to-date (skip)" -ForegroundColor DarkGray
-        } else {
-            Copy-Item $clientPak $pakDest -Force
-            Write-Host "  client pak -> $pakDest" -ForegroundColor DarkGray
+        # A MIRROR, NOT AN ACCUMULATION. Copying without pruning is why a pak retired on
+        # 2026-08-29 was still mounted on every dev rig days later: nothing ever removed what
+        # we stopped shipping, so the rigs drifted from the release and kept resolving a skin
+        # a player could not have. Pruning is safe HERE and only here -- this subfolder is
+        # ours; other mods' paks live one level up in LogicMods and are never touched.
+        $want = @{}
+        Get-ChildItem $pakSrcDir -File | Where-Object { $_.Extension -in '.pak', '.png', '.bmp' } | ForEach-Object {
+            $want[$_.Name] = $true
+            $dst = Join-Path $pakDir $_.Name
+            # Idempotent: a RUNNING game holds its pak mapped, so an unconditional copy throws
+            # even when there is nothing to update -- which aborted the whole deploy while the
+            # host was up (2026-07-02). Reads are share-allowed, so hash-compare and skip.
+            if ((Test-Path $dst) -and ((Get-Sha256HexLocal $dst) -eq (Get-Sha256HexLocal $_.FullName))) { return }
+            Copy-Item $_.FullName $dst -Force
+            Write-Host "  client pak -> $($_.Name)" -ForegroundColor DarkGray
         }
-        # v93 skins: ship the preview sidecar (<name>.png next to the pak -- the F1
-        # browser tile). Plain file, never mapped by the game -> simple copy.
-        $prevSrc = [IO.Path]::ChangeExtension($clientPak, "png")
-        if (Test-Path $prevSrc) {
-            Copy-Item $prevSrc (Join-Path $pakDir ([IO.Path]::GetFileName($prevSrc))) -Force
-            Write-Host "  client pak preview png -> $pakDir" -ForegroundColor DarkGray
+        Get-ChildItem $pakDir -File -ErrorAction SilentlyContinue | Where-Object { -not $want.ContainsKey($_.Name) } | ForEach-Object {
+            try { Remove-Item $_.FullName -Force -ErrorAction Stop; Write-Host "  pruned retired $($_.Name)" -ForegroundColor Yellow }
+            catch { Write-Host "  WARN: retired $($_.Name) is LOCKED (game running?) -- delete before next launch" -ForegroundColor Red }
         }
     } else {
-        Write-Host "  SKIP client pak: source missing ($clientPak)" -ForegroundColor Yellow
+        Write-Host "  SKIP client paks: source missing ($pakSrcDir)" -ForegroundColor Yellow
     }
 }
 

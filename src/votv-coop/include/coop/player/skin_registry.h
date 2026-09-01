@@ -58,11 +58,28 @@ inline constexpr const char* kDefaultSkinName = "hl_einstein_v1sc";
 // read path) -- touches the filesystem once.
 std::string PickRandomStarterSkin();
 
+// Does this entry's mesh actually EXIST on this machine? A pak is not a skin: the scan
+// offers the stem of every .pak under LogicMods, so ANOTHER MOD's pak -- `DebugMod`,
+// `FusionPatch_P` -- is listed here and resolves to no skin anywhere. Picking one used to
+// persist and announce it, which diverged every peer to the native kel while the local body
+// silently kept the skin it already wore (user, 2026-09-01).
+//
+// The scan cannot answer this: it runs from the ImGui panel, off the game thread, and the
+// only authority is a LoadObject. So the verdict starts Unknown and the GAME THREAD fills it
+// in once per entry (skins::ResolvePending), which is also the only thread allowed to ask.
+enum class Usable : uint8_t { Unknown, Yes, No };
+
 struct SkinEntry {
     std::string  name;         // the SKIN name = package name = wire name (a single-skin
                                // pak's stem, or a bundle member -- never a bundle's stem)
     std::wstring previewPath;  // sibling <name>.png/.bmp; empty = no preview tile
+    Usable       usable = Usable::Unknown;   // game-thread verdict; see ResolvePending
 };
+
+// GAME THREAD. Resolve at most `budget` entries whose usability is still Unknown, marking
+// each Yes/No. Cheap and self-limiting: every entry is asked exactly once per scan, the
+// engine caches the load, and a `Refresh list` re-arms them by rebuilding the vector.
+void ResolvePending(int budget);
 
 // [A-Za-z0-9_-], 1..48 chars. Boundary rule for ini reads, wire receives and
 // pak-dir scans alike.

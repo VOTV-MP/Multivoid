@@ -32,6 +32,7 @@
 #include "coop/player/hand_item.h"  // v105: hotbar hand-item display axis (HandItem router)
 #include "coop/player/player_damage.h"
 #include "coop/creatures/wisp_tear_mirror.h"  // v72 Killer Wisp: WispGrab/WispTear receivers
+#include "coop/player/local_body.h"     // the host's own skin belongs in its own roster row
 #include "coop/session/player_handshake.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/remote_player.h"
@@ -145,7 +146,8 @@ void Update(net::Session& session, void* localPlayer) {
     // (arbitration, the roster assertion, the ID column) calls through here.
     // Idempotent and role-gated; it also keeps row 0's name current if the host
     // renames mid-session.
-    coop::roster_ledger::EnsureRowZeroSeeded(session, coop::player_handshake::LocalNickname());
+    coop::roster_ledger::EnsureRowZeroSeeded(session, coop::player_handshake::LocalNickname(),
+                                             coop::local_body::LocalSkinName());
     coop::roster_ledger::ReconcileFromSession(session);   // host: conform to the generations
     coop::player_handshake::PulseRosterRows(session);     // host: re-assert to clients
 

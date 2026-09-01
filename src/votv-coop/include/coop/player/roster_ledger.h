@@ -147,12 +147,22 @@ void Reset();
 // a session, never 0, and never kHostPlayerNo. Game thread.
 uint16_t MintPlayerNo();
 
-// HOST-side: seed row 0 (ourselves) with `localNick`. Idempotent and role-gated;
-// a PRECONDITION of anything that needs the host to have an identity, rather
-// than something the pump is trusted to have ticked first. The nick is an
-// argument so occupancy and name land together and the pairing cannot be
-// forgotten at a call site. Game thread.
-void EnsureRowZeroSeeded(const coop::net::Session& session, const std::wstring& localNick);
+// HOST-side: seed row 0 (ourselves) with the host's own LOCAL PREFS. Idempotent and
+// role-gated; a PRECONDITION of anything that needs the host to have an identity, rather
+// than something the pump is trusted to have ticked first. They are arguments so occupancy
+// and prefs land together and the pairing cannot be forgotten at a call site. Game thread.
+//
+// THE SKIN IS HERE BECAUSE ITS ABSENCE WAS A SHIPPED DEFECT (2026-09-01). This row is what
+// the roster snapshot sends to a joining client, and every writer of `Row::skin` was an
+// INBOUND path -- a Join payload, a SkinChange, a roster row. A CLIENT announces its skin
+// by joining; a host never joins, so nothing ever wrote its own. The host wore its skin
+// locally from boot and every client saw it as the native kel fallback, which looked like a
+// missing pak and was not. Picking a skin by hand "fixed" it only because picking is what
+// sends -- so two players choosing the same skin made the wrong source produce the right
+// pixels. Writing it on EVERY call (like the nick) rather than only at seed time is what
+// makes a mid-session re-skin reach a peer who joins afterwards.
+void EnsureRowZeroSeeded(const coop::net::Session& session, const std::wstring& localNick,
+                         const std::string& localSkin);
 
 // --- field writes (no occupancy change; ignored for an empty slot) -----------
 
