@@ -1635,7 +1635,24 @@ have to hand our packaging to a third-party action to use one — we build the z
    >
    > **Then, on being shown that a public blob costs its size × every future recook, forever:
    > "ну мы можем вручную тогда релиз собирать и zip релиза будет содержать мод и пак"** — i.e.
-   > candidate **(c)**, assemble by hand, pak never enters git. **This supersedes (a).**
+   > candidate **(c)**, assemble by hand, pak never enters git. **This superseded (a).**
+   >
+   > **REVERSED 2026-09-01 (USER: "путь пак будет публичным и иконки и что требуется") — (a) is
+   > what ships.** `assets/paks/*.pak` and `*.png` are tracked (`4c5e92ce`). What changed between
+   > the two calls is that (c)'s cost became visible and it was NOT the one priced: assembling by
+   > hand was described as "one human step per release", but `release-core.yml` publishes from a
+   > GitHub runner, and a runner's checkout had no paks. So the automated lane could not produce
+   > the agreed artifact at all — and once `package.ps1 -Release` was made to FAIL CLOSED on a
+   > missing pak (the same day, after finding a CI-published release would have shipped
+   > structurally correct and content-incomplete), the lane could not produce anything.
+   >
+   > **The cost (a) was rejected on is real and is re-accepted, so state it rather than let it
+   > pass:** 2.7 MB enters git history on every recook of the skins, permanently — a release asset
+   > can be replaced, a committed blob cannot. Today's bundle is Zlib-packed (5.2x smaller than
+   > uncompressed); the deeper fix named in `assets/paks/README.md` — block-compressed textures
+   > (BC1/BC7) instead of uncompressed BGRA8 — would cut what each recook costs history AND cut
+   > runtime VRAM, and it remains NOT DONE. That is the lever if the size ever becomes the
+   > complaint; re-ignoring the paks would only re-break the automated lane.
    >
    > **The earlier line calling (c) "dead" was wrong and is retracted.** It read the choice as
    > all-or-nothing: manual *assembly* versus automated *everything*. Those are separable, and only
