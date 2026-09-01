@@ -143,11 +143,13 @@ Set-Content -LiteralPath (Join-Path $stage 'mod/enabled.txt') -Value 'true' -Enc
 # 2026-08-29 (USER: "zip должен содержать scientists.pak" -- the four starter
 # scientists): when -Pak is not given, the default input is assets/paks/ --
 # the staged starter-model paks + their .png preview tiles (the F1 skin
-# browser's sidecar convention). assets/paks is deliberately NOT tracked
-# (public-repo caution for game-derived meshes; the ship decision covers the
-# RELEASE artifact, UE4SS_ARC 7.6) -- so CI assembles a pak-less zip for
-# drills, and a RELEASE zip is assembled where assets/paks exists (7.9's
-# manual-assembly lane). The manual-install step for pak\ lives in INSTALL.md;
+# browser's sidecar convention). assets/paks IS TRACKED since 2026-09-01 (user
+# directive) -- it was untracked as public-repo caution for game-derived meshes,
+# which hid them from the repo and from nobody else, because the ship decision
+# (UE4SS_ARC 7.6) already put the same bytes in every release archive. The cost
+# was the automated lane: a runner's checkout had no paks, so with -Release it
+# refused. Every checkout has them now, CI included.
+# The manual-install step for pak\ lives in INSTALL.md;
 # skin_registry scans every LogicMods subdirectory since 2026-08-29, so both
 # lanes see the models wherever their route lands them.
 if ($Pak.Count -eq 0) {
@@ -165,12 +167,16 @@ if ($Pak.Count -gt 0) {
     }
     Write-Host "pak: staged $($Pak.Count) file(s)"
 } elseif ($Release) {
-    # FAIL CLOSED, and this is the check the header promised without having. The
-    # release lane runs on a GitHub runner (`release-core.yml`: runs-on windows-latest),
-    # and `assets/paks/*` is gitignored -- so a CI-published release would ship
-    # STRUCTURALLY correct and CONTENT-incomplete, with no line anywhere saying so.
-    # That is precisely the "silently broken release" this script's own verification
-    # section exists to refuse.
+    # FAIL CLOSED, and this is the check the header promised without having. It was
+    # written when `assets/paks/*` was gitignored and the release lane ran on a runner
+    # whose checkout therefore had none -- a release that shipped STRUCTURALLY correct
+    # and CONTENT-incomplete, with no line anywhere saying so, which is the "silently
+    # broken release" this script's verification section exists to refuse.
+    #
+    # Tracking the paks removed that specific cause; the guard stays because the
+    # PROPERTY it enforces is not about where the files come from. An emptied
+    # directory, a wrong -PakDir, a future re-ignore: same half-shipped release, and
+    # a default is not something to trust with it.
     throw ("RELEASE zip has NO pak staged, and since 2026-09-01 assets/paks IS tracked -- " +
            "so an empty one means the directory was emptied or -PakDir points somewhere " +
            "else, not that the checkout lacks them. Restore them or pass -Pak explicitly. " +
