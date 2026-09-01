@@ -35,242 +35,51 @@ deletable platform objects — they are drift detectors, never the invariant.
 The robot never writes main; the workflow VERIFIES and publishes, the human
 consumes numbers.
 
-## THE NEXT RELEASE IS A FLAG DAY — the one-time list (written 2026-08-31)
+## THE FLAG DAY IS DONE — b150-dev published 2026-09-01 (this section is the residue)
 
-**Read this before the numbered ritual below.** It does not replace the ritual; it says which of
-its steps are load-bearing *this once*, what has no step at all, and in what order the pieces have
-to land so we do not break the only cohort we have. **Delete this whole section once the tag is
-published** (RULE 2) — everything durable in it lives in the ritual, `docs/THUNDERSTORE.md`, or
-`site/NOTES.md`.
+**The one-time list this section used to carry has been DISCHARGED and is deleted per its own
+RULE-2 instruction.** What it planned is now either shipped, recorded in the ritual below, or
+owned by another doc; keeping the plan beside the outcome is exactly the parallel-stale-and-fresh
+this project forbids. The published state:
 
-**Identity.** `N` = whatever `kProtocolVersion` reads at tag time — **150** as of writing. Game
-target `0.9.0n`, so: tag `v0.9.0n-b<N>`, GitHub asset + Thunderstore zip
-`Pelmentor-Multivoid-0.9.<N>.zip`, Thunderstore `version_number` `0.9.<N>`. The last published
-row is **b133-dev (2026-07-31)**; 134-149 were never released and the sequence keeps the gap.
+| | |
+|---|---|
+| tag | `v0.9.0n-b150-dev` @ `ba6d8c39`, prerelease, published 2026-09-01T17:55:52Z |
+| asset | `Pelmentor-Multivoid-0.9.150.zip`, 11,060,341 B, `sha256 dd21ae37…b53ea5b8` — the downloaded file hashes to the value its own body declares |
+| ledger | `consume 150` + `published 150`; `ledger_lint` 0 FAIL, 0 WARN (13 rows) |
+| gates on the day | `sig_gate --remote` PASS 14/14 (live relay) · smoke PASS both peers with `config-selftest DONE fail=0` · fingerprint current · tripwires QUIET |
+| master | `COOP_LATEST_PROTO=150`, `COOP_LATEST_MOD=0.9.0n b150`; `verify_latest.ps1 -AllowDev` **PASS** |
 
-### Why this one is not an ordinary release — five firsts
+**Two defects the day itself found, both fixed, both recorded where they belong.** The publish job
+checked out `main` while the ritual guarantees main is already at N+1 — see the last bullet of
+*Invariants* below. And `COOP_LATEST_*` was left at a pre-release stand-in, which the user caught
+as a wrong version label in the main menu — see `[[lesson-a-gate-left-red-on-purpose-carries-no-signal]]`.
 
-1. **First UE4SS-lane release.** b133 shipped the xinput-proxy loader. The artifact is now
-   `Mods/Multivoid/dlls/main.dll` inside a Thunderstore-shaped zip, and `cppmod_entry` **refuses
-   to start** beside a leftover `multivoid-*.dll` / `votv-coop.dll` next to the exe. So a b133
-   tester must **uninstall, not overlay** — that sentence belongs in `tools/release/notes/b<N>.md`
-   and in `docs/INSTALL.md`'s update path, or the first thing an existing player meets is a
-   removal dialog nobody warned them about.
-2. **First release whose VPS services must move — and moving them RETIRES b133.** See below; this
-   is the item with real blast radius.
-3. **First Thunderstore upload.** Three things become irreversible at that moment
-   (`docs/THUNDERSTORE.md` §5): a published version is **immutable** (a README typo costs a whole
-   new number), the Team+name pair **is** the namespace (changing either silently creates a
-   SECOND package), and an author **cannot delete** a package, only deprecate it.
-4. **First site deploy.** `site/NOTES.md:74` gates it: do not deploy until `releases_url` carries a
-   PUBLISHED (non-draft) release with exactly one zip. So the site goes out **after** the GitHub
-   release, never with it.
-5. **First support-rail decision.** The live buttons (repo README badge + Support row +
-   `.github/FUNDING.yml`) are **pulled and staying pulled** — `7ebc2554`, restored in `1aca131b`
-   and pulled again in `c18003aa` on the user's word, *after* `https://boosty.to/pelmentor` was
-   confirmed live. The page existing is not the same decision as the buttons going live.
-   **Still open and it is one-shot:** `tools/release/README_thunderstore.md` keeps its badge, and
-   the store README is immutable after upload — so the badge is **in or out before `package.ps1`
-   runs**, and putting it back later costs a whole version number. The *other* half is cheap and
-   should not be confused with it: Thunderstore's package-level `donation_link` is a website
-   setting, not a manifest field, so it can be set or changed at any time after publish
-   (`docs/THUNDERSTORE.md` §3a — allowed, first-class, 51 of 188 VOTV packages use one, one of
-   them a Boosty link).
+### What is still owed, and who owns it
 
-### The VPS work — DONE, ahead of the day (cutover 2026-08-31)
+These are the flag day's genuinely-unfinished items. They are NOT release-ritual steps; each has a
+real owner doc, and this list exists only so the sequence is not lost.
 
-**Both services now run the current source. This section is AS-BUILT; it used to be the largest
-open item on the list.**
-
-The user's call, verbatim: *"Значит Когда я буду zip тестировать, то к этому моменту уже надо
-мастер сервер полностью обновить, плевать на когорту."* — the master must be current before their
-local zip test, and the b≤133 cohort is not a reason to wait. That overrides the ordering argument
-this section used to make (kept below, struck, because its reasoning is still the right *shape* for
-the next time a cutover competes with a live cohort).
-
-| service | now running | proven in production |
-|---|---|---|
-| `coop-signaling` | b149 source, `ce2212a1e8fc7eed` (was a **Jul 20** pre-A59 binary) | `sig_gate --remote` **PASS 14/14** — the same gate against the old one was **FAIL C, no challenge at all** |
-| `coop-master` | b149 source, `18663ad7054f6dab` (was **Aug 28**, b143-era) | `/v1/join` on a DIRECT lobby returns `hostIdentity`; an identity-less b≤133 host gets the named 400 |
-
-`[V]` **the before/after differential was taken on the live relay, not inferred from the staged
-run**: FAIL C at 15:4x, PASS 14/14 after the restart, same instrument, same tunnel, same token.
-Installed binaries are byte-identical to the staged ones (`18663ad7…` / `ce2212a1e8fc7eed`), whose
-source was confirmed equal to `HEAD:tools/coop-server-rs` file-by-file modulo line endings.
-Both TLS legs verified from **outside** the box afterwards: `https://…:10443/healthz` → 200,
-signaling `:10442` → TLS 1.2 handshake OK.
-
-`[V]` **step 6b's retirement is live too, measured on the deployed binary with its negative
-control**: a `proto 9999` host is **ADMITTED** (the old ceiling would have refused it) while
-`game: "<script>x"` is still refused with `bad game version` — so the version POLICY is gone and
-the PARSING check survived, which is exactly the split `24418b66` intended. Every check lobby was
-torn down; `healthz` reports 0.
-
-**The cohort retirement is real and immediate** — within seconds of the restart the relay log
-carried three separate real IPs refused by name (*"identity 'str:h…' is not a key… that cohort is
-retired; it must update"*), and the one listed lobby (`gogofast`, proto 133) was dropped. This was
-authorised, and it is the state the release now ships into rather than a change the release makes.
-
-Also retired in the same pass: `COOP_MAX_BUILD` is **deleted from `/etc/coop-master.env`**. The new
-binary ignores it (`24418b66`), so it was dead input — but left in place it is a stale claim in a
-config file, and it would silently re-arm the tester-denying ceiling on any rollback to the old
-binary. `/etc/coop-master.env.bak-20260831` holds the previous file.
-
-**Nothing is owed on the box any more.** `COOP_LATEST_*` was the last item and it is SET (below) —
-ahead of any release, on the user's call.
-
-**A trap in our own gate, and it is PYTHON-specific — not the box.** `sig_gate --remote` over TLS
-dies with `CERTIFICATE_VERIFY_FAILED: certificate has expired`, while `verify_latest.ps1` reaches
-the *same* host over TLS fine (measured 2026-08-31, both against `master.multivoid.dev`). The
-served chain is valid to Oct 18; the Windows store carries an **expired cross-signed
-`ISRG Root X2`**, and OpenSSL — which Python uses — builds a path through it and stops, where
-schannel finds the valid one. So the fix is a `--cafile` (or `certifi`) in `sig_gate.py`, **not** a
-machine repair. Until then the only way to run the BLOCKING gate here is `--plaintext` against port
-10000. Do not discover this at the tag.
-
-**`COOP_LATEST_*` IS SET, BEFORE ANY RELEASE EXISTS — AND THAT IS DELIBERATE (2026-08-31).**
-User's call: *"релиза нету, да, но мы же уже отрезали b133, так что пусть и сообщение показывает
-в углу что update есть"*. The cohort is already cut off by the cutover, so the choice was between
-telling them and saying nothing; the recommendation to set it anyway was accepted.
-
-| var | value | why this value |
-|---|---|---|
-| `COOP_LATEST_PROTO` | `134` | only has to EXCEED 133 to light the b133 label; kept **≤ our own dev build (149)** so our builds show the informational `(dev; latest released b134)` line instead of nagging themselves |
-| `COOP_LATEST_MOD` | `Multivoid` | free text, set ON PURPOSE — an empty `mod` makes the client render `b<proto>`, i.e. it would name a build number that does not exist. This renders `UPDATE Multivoid AVAILABLE: <url>` |
-| `COOP_LATEST_URL` | `multivoid.dev` | **it only matters to the b≤149 cohort now** — see the box below. For them the address cannot be removed (their format string appends it and falls back to a compiled default when it is empty), so the only lever is LENGTH: `[V]` `multivoid.dev` serves HTTP 200 with a real page, and it takes the rendered label from **90 to 66 characters** |
-
-`[V]` differential on the live master: `{"mod":"","proto":0,...}` before the restart →
-`{"mod":"Multivoid","proto":134,"url":"github.com/VOTV-MP/Multivoid/releases"}` after, on the
-plaintext **and** TLS legs from outside the box. A restart is required and it is required twice
-over: the handler resolves the three through a `LazyLock` (`master.rs:907`, once per process) and
-systemd's `EnvironmentFile` is itself a start-time snapshot.
-
-What a b133 player now gets, traced through their OWN shipped code (`v0.9.0n-b133-dev`, not HEAD):
-`FetchLatest` sets `ok` because `proto > 0`; `RefreshLatestVersion` passes the `info.proto > 0`
-guard; `134 > 133` takes the outdated branch; the native menu label turns amber and reads
-**`Multivoid 0.9.0n b133 -- UPDATE Multivoid AVAILABLE: github.com/VOTV-MP/Multivoid/releases`**.
-It re-polls on boot and on every main-menu entrance, so no mod update is needed to see it.
-
-**THE LABEL NO LONGER PRINTS AN ADDRESS, FROM THE NEXT BUILD ONWARD (user 2026-08-31: *"url не
-надо показывать, это длинно, достаточно лаконичного текста что обнова доступна"*).** The outdated
-branch now composes `"<identity> -- UPDATE AVAILABLE: <mod|bN>"` and stops there: the label is a
-`UTextBlock`, not a hyperlink, so ~37 characters of address on a one-line menu row bought a string
-nobody can click and few would retype. What stays is the actionable half — WHICH build supersedes
-yours. `LatestInfo::url` lost its only reader and was retired with its parse (RULE 2); the
-version-mismatch line on a refused join uses the compiled `net::kReleasesUrl` and is untouched.
-**No protocol bump**: the master still serves `url` and ignoring an extra response field is
-forward-compatible. `verify_latest.ps1` reads `proto` and prints `mod`, never `url`, so the gate
-is unaffected.
-
-**So `COOP_LATEST_URL` is now a LEGACY-ONLY knob.** b133..b149 render it; every build after this
-change ignores it. Keep it short and real while that cohort exists, then it stops mattering.
-
-**~~TWO CONSEQUENCES TO CARRY TO THE RELEASE~~ — BOTH DISCHARGED 2026-09-02, and the second one
-was found by the USER, not by us.**
-
-Step 6 ran: `/etc/coop-master.env` now carries `COOP_LATEST_PROTO=150`,
-`COOP_LATEST_MOD=0.9.0n b150`, `COOP_LATEST_URL=multivoid.dev` (backup
-`/etc/coop-master.env.bak-20260902`), `coop-master` restarted. `[V]` both legs from **outside**
-the box serve `{"mod":"0.9.0n b150","proto":150,...}` where minutes earlier they served
-`proto:134`; `verify_latest.ps1 -AllowDev` is **PASS** after two days RED.
-
-**The lesson to carry, because it cost a real player-visible defect.** The stand-in made
-`verify_latest.ps1` fail *on purpose*, and this file said so — so for two days its RED carried
-**no information**: it could not distinguish "waiting for step 6" from "step 6 was forgotten".
-It was forgotten, the release shipped, and every b150 install went on reading
-`(dev; latest released b134)` in the main-menu corner until the user reported it. A gate that is
-deliberately red is a gate that is off. If a future release again needs a stand-in, give the
-knob a value that keeps the gate GREEN, or don't set it until the number is real.
-
-What each cohort reads now (`session_manager.cpp:362-380`, three branches, no dev/stable axis):
-b150 → `Multivoid 0.9.0n b150 (latest)`; a dev build at 151 → `(dev; latest released b150)`;
-b133..b149 → `UPDATE 0.9.0n b150 AVAILABLE: multivoid.dev`.
-
-### Before the day — free, and worth doing
-
-- **THE USER RE-TESTS THE r2modman ZIP LOCALLY (their own item, 2026-08-31: "Я ещё должен буду
-  локально нашу r2modman zip снова тестить"), AND IT SHOULD BE THE SAME RUN AS THE FIELD-DEFECT
-  RE-TEST.** The 2026-08-29 import proved **LAYOUT ONLY** — the tree matched `UE4SS_ARC` §7.2a's
-  prediction and the mod booted, but **the session never came up**, so nothing downstream of boot
-  has ever been exercised from a managed install. That was not the package's fault: `[V]` the cause
-  was the master's build gate (`COOP_MAX_BUILD` = 143 against a b145 host), and that gate is
-  **retired** (`24418b66`). So this re-test is the first one that can actually reach a session.
-  - **Re-run `tools/release/package.ps1` and take the name it prints.** Do not reach for a named
-    local zip — the build number moves several times a day, and one of the 2026-08-29 zips was
-    assembled from a build directory a parallel session had just rewritten.
-  - **The same run answers the three open field defects**, all of which were parked on this
-    redeploy: **#2** "No players" on tilde, **#3** F1 skin not applying, **#4** hosting fails
-    silently. Shipping #2 or #3 into the first Thunderstore package would ship them **immutably**.
-  - **Nothing special is needed to reach a session any more — the cutover happened first, on the
-    user's instruction, exactly so this test would not have to route around it.** Point the client
-    at the normal production endpoints. The whole staged-pair + `ufw allow 10010/tcp` dance this
-    bullet used to prescribe is **deleted**, not deferred: the staged listeners are down and the
-    ports were never opened.
-- **~~THE FINGERPRINT IS STALE AND THE RELEASE RUN WILL REFUSE~~ — CLOSED 2026-09-01 (`d2a85eaa`),
-  and the claim it replaces was MEASURED ON THE WRONG MACHINE.** `[V]` the committed
-  `build_core_sha256` `411e62b8…` is exactly the sha256 of the CURRENT `build-core.yml` **in the
-  runner's CRLF checkout** — reproduced here by converting the worktree's LF file and hashing it.
-  `[V]` nothing has touched `build-core.yml` since the run that minted it (`33498716305`, commit
-  `e7eedd34`, an ancestor of HEAD), so the build path has not moved and the gate should PASS.
-  **The trap, and it is the reason this bullet stood for a day saying the opposite: a local
-  `Get-FileHash` can never predict this gate's verdict.** Git checks these files out LF here and
-  CRLF on the runner, so a local read produces `db0c3b5a…` for the very file the runner hashes to
-  `411e62b8…` — three different-looking values across this section's history, all of them the
-  same file. `msvc_toolset` / `windows_sdk` are runner facts too. **Do not run
-  `fingerprint.ps1 -Mode check` locally and read anything into it**; the only honest local check
-  is "did `build-core.yml` change since the commit named in the last fingerprint mint", which is
-  a `git log` and nothing else. Minting still requires a cacheless CI run + its smoke — that rule
-  is unchanged and is why `d2a85eaa` was earned rather than typed
-  (`[[lesson-a-file-hash-gate-can-only-be-minted-where-it-is-checked]]`).
-- **Push.** Dozens of commits were unpushed when this was written and the backlog only grows; the
-  tag must be reachable on origin. Check with `git log --oneline origin/main..HEAD | wc -l`, and
-  run the 5-axis leak audit per commit before asking.
-- **Author `tools/release/notes/b<N>.md`** and show the user (ritual 0.5). It is the changelog
-  authority and the release body copies it.
-
-### The day, in order
-
-Ritual steps in brackets.
-
-1. Human gate [0] — smoke with `VOTVCOOP_RUN_CONFIG_SELFTEST=1`, the three named log lines,
-   `tripwires.ps1`, `ledger_lint.ps1`. **The "for a stable: hands-on verified" clause is
-   superseded** by the user's standing position that autonomous evidence is the ceiling
-   (`[[feedback-autonomous-evidence-is-the-ceiling]]`); do not park the release on it.
-2. Three forks are **DECIDED (user, 2026-08-31)**: this release is a **dev prerelease**, the live
-   Boosty buttons stay **pulled**, and `COOP_LATEST_*` was **set ahead of the release** (above).
-   **ONE remains:** the store-page badge in `README_thunderstore.md` (one-shot — see first #5).
-3. Tag + consume row + one atomic leak-audited push [1-3].
-4. Watch the run green; confirm the release page shows the zip + SHA256 [4]. Append `published` [5].
-5. **REPLACE `COOP_LATEST_*` in `/etc/coop-master.env` with the REAL numbers +
-   `systemctl restart coop-master`** [6] → `verify_latest.ps1 -AllowDev` [7]. Not a fresh set:
-   the three are already populated with the pre-release stand-in (`134` / `Multivoid` /
-   schemeless URL — see the VPS section), so **all three must move, `MOD` included**, or the
-   label hides the build number the player needs. `verify_latest.ps1` is RED until this step
-   runs, by design.
-6. **Re-confirm the two server gates on the released build** — `sig_gate --remote` **PASS**
-   [0's blocking gate] and `/v1/join` on a DIRECT lobby → `hostIdentity` [6c]. Both passed in
-   production on 2026-08-31; this is a re-confirmation after the step-5 restart, not a first look.
-7. Thunderstore upload — `docs/THUNDERSTORE.md`, pre-flight checklist first. Irreversible.
-8. Site deploy — `zola build` → `npx wrangler pages deploy public --project-name multivoid-site`.
-
-**~~Why the restart is step 6 and not step 0~~ — SUPERSEDED 2026-08-31, but the reasoning is kept
-because the situation recurs.** The argument was: ritual step 0 says redeploy *then* publish, and
-its reason is real (a new build against an old relay loses P2P for everyone at once) — but at
-publish time the new cohort is empty and the old one is live, so restarting first kills real
-sessions for the ~40 minutes of the CI build with nothing to download. **The user overruled the
-premise rather than the conclusion:** the cohort's comfort was not worth sequencing the release
-around, and a master that is already current makes their own zip test straightforward. So the
-cutover was done days early and the ordering question dissolved. Next time a cutover competes with
-a live cohort, this trade-off is the one to weigh — and *ask*, rather than optimising it silently.
+1. **Thunderstore upload** — manual, irreversible, `docs/THUNDERSTORE.md` (pre-flight checklist
+   first). Team `Pelmentor`, package `Multivoid`; the manifest in the published zip already
+   carries both. Precondition 4 of that doc is now DONE.
+2. **`donation_link`** on the Thunderstore package — a website setting, not a manifest field, so
+   it can be set any time after publish. The store README ships WITHOUT a Boosty badge on purpose
+   (a published version is immutable).
+3. **Site deploy** — `site/NOTES.md`'s gate ("a published, non-draft release with exactly one
+   zip") is now **SATISFIED**. `zola build` → `npx wrangler pages deploy public --project-name
+   multivoid-site`, after switching `base_url`.
+4. **The Boosty buttons** on the repo README and the site — pulled on the user's word (`c18003aa`)
+   and returning at their own step, after the listing is live.
 
 ### Rollback
 
-The previous binaries are kept on the box — **`coop-master.bak-20260831`,
-`coop-signaling.bak-20260831`** (plus the older `.bak-20260829` / `.prev`), and
-`/etc/coop-master.env.bak-20260831`. Restore + restart is seconds and un-retires the b133 cohort.
-What a rollback does **not** undo: a Thunderstore upload
-(never delete — deprecate), a published GitHub release (retract per "When something goes wrong",
-and a retracted N never republishes), or a site deploy (redeploy the previous build).
+The previous service binaries are kept on the box — `coop-master.bak-20260831`,
+`coop-signaling.bak-20260831` — plus `/etc/coop-master.env.bak-20260831` and
+`/etc/coop-master.env.bak-20260902`. Restore + restart is seconds. What a rollback does **not**
+undo: a Thunderstore upload (never delete — deprecate), a published GitHub release (retract per
+"When something goes wrong", and a retracted N never republishes), or a site deploy (redeploy the
+previous build).
 
 ## The ritual (every release; human consumes, robot verifies)
 

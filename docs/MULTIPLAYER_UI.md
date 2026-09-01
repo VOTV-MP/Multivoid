@@ -1984,11 +1984,20 @@ slot layout) + `engine::SetTextBlockColorDispatch` (post-attach colour MUST be t
 `session_manager::RefreshLatestVersion`, DoS-safe: one worker in flight + an 8 s min-interval floor).
 The master's `/v1/latest` answer is env-overridable on the VPS (`COOP_LATEST_PROTO` in
 the master service env file (path in the local-only deploy notes) — a release bump is an env edit + restart, no rebuild; docs/RELEASE.md step 5).
-Since 2026-07-19 (b122) the compiled default AND the box env are proto 0 = "no released record" — the
-informational line stays silent until the FIRST real release sets the env (a stale record can never
-fake "(latest)": equality required; the old stale-66 bug class is closed by the 0-default + the
-client's proto<=0 no-verdict guard). USER hands-on confirmed (2026-07-16, pre-b122 format): cyan,
-above the game labels, correct "(latest)" verdict.
+**THE ENV IS NO LONGER 0 — updated 2026-09-02, and the interim value caused a real user-visible
+defect.** The compiled default is still proto 0 = "no released record", and the client's
+`proto<=0` no-verdict guard still means a stale record can never fake "(latest)" (equality is
+required). What changed is the BOX: on 2026-08-31 it was set to a pre-release STAND-IN
+(`proto=134`, chosen only to exceed the retired b133 cohort), and the release step that was
+supposed to replace it was skipped — so after b150 published, every install read
+`Multivoid 0.9.0n b150 (dev; latest released b134)` until the user reported it. `[V]` fixed
+2026-09-02: `COOP_LATEST_PROTO=150`, `COOP_LATEST_MOD=0.9.0n b150`, both legs from outside the box
+serve `proto:150`, `verify_latest.ps1 -AllowDev` PASS. Three branches, no dev/stable axis
+(`session_manager.cpp:362-380`): equal → `(latest)`, master higher → amber `UPDATE ... AVAILABLE`,
+master lower → `(dev; latest released bN)`. The standing trap is in
+`[[lesson-a-gate-left-red-on-purpose-carries-no-signal]]`: the check that would have caught the
+skip was deliberately red and therefore carried no signal. USER hands-on confirmed the RENDERING
+(2026-07-16, pre-b122 format): cyan, above the game labels, correct "(latest)" verdict.
 
 **Paper-pair format status, reconciled 2026-07-22 — still NOT verified.** "The b122 format rides take
 4" was stale-open: take 4 ran 2026-07-21. But it does NOT promote this row. The version label was not
