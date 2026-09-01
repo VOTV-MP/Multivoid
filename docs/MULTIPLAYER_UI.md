@@ -153,14 +153,20 @@ Main menu
 Host = authoritative (owns save/world/progression). Client sends input +
 receives state. Never the reverse. (Methodology Phase 3.1.)
 
-**The host picker's Connection selector is TRI-STATE since 2026-08-29** (user:
-"LAN which makes the game LAN-ONLY"): **AUTO** (master-brokered P2P/ICE, always
-listed) / **DIRECT** (LanDirect listen + announce with port; optional
-hide-from-browser) / **LAN only** — a LanDirect listen that never contacts the
-master at all (no announce, no heartbeat, no signaling) with an accept-edge
-gate refusing non-private remote addresses (`net::Config::lanOnly`,
-`session_status.cpp` Connecting edge). Friends on the network join via Direct
-Connect to the host's local IP.
+**The host picker's Connection selector is TWO-STATE since 2026-09-01, and was
+tri-state for three days.** **AUTOMATIC** (master-brokered P2P/ICE, always listed —
+the master is the only rendezvous, so a hidden one is unjoinable) / **DIRECT** (our
+own UDP listen, bound on EVERY interface, optionally listed).
+
+**Why the third went away.** `[V]` measured 2026-09-01: DIRECT and "LAN ONLY" called
+the SAME `Session::StartLanDirect`, did the same `addr.Clear()`, and bound the same
+socket — a live reading of the host's endpoints gives `:::47621`, the any-address,
+dual-stack. There was never a bind difference and neither was ever loopback-only.
+"LAN ONLY" was an accept filter refusing non-private remotes, plus never announcing.
+The filter is **deleted** (user: *"our job is to open session, what they want to
+restrict is their job on the router"* — and if the port is not forwarded, local-only
+is what NAT already gives you free); what remained is DIRECT + Hidden, which the
+SERVER LIST selector already expresses. Model: `coop/session/host_mode.h`.
 
 ## Approach decision — native UMG, built at runtime by our C++ mod
 
@@ -916,7 +922,7 @@ opposite and is rewritten rather than patched:
   carries. A separate TU because `server_browser_native.cpp` is past the soft cap.
   The hosting window itself (`ui/host_window_native.{h,cpp}`, `a4e21019`, 465 LOC) is a sibling
   screen in the same switcher -- world picker (New game + the `save_browser` list), the
-  AUTO / DIRECT / LAN ONLY connection choice, HOST/BACK, and a status line rendering
+  AUTOMATIC / DIRECT connection choice (LAN ONLY retired 2026-09-01), HOST/BACK, and a status line rendering
   `session_manager::HostStatus()` every tick. It authors no hosting logic: it collects a
   `SaveChoice` and calls the same `HostWithSave` the ImGui picker calls. **STATUS: it now OPENS
   from the browser and its build is confirmed by log (`host_window_native: screen built`,
@@ -1705,8 +1711,9 @@ resolves toward UMG, that arc resolves with it rather than needing its own AOB.
   announce went out — with their address in it for a DIRECT lobby — and the only way back was
   un-listing from the ~ menu afterwards.
 * **Rows, not a checkbox, because the answer is not the host's in every mode.** AUTO is always
-  listed (the master is a relay game's only rendezvous, so a hidden AUTO lobby is unjoinable by
-  anyone); LAN ONLY is never announced; DIRECT is the real choice and defaults to listed. The
+  listed (the master is a relay game's only rendezvous, so a hidden AUTOMATIC lobby is
+  unjoinable by anyone); DIRECT is the real choice and defaults to listed — and choosing
+  "Hidden" there is what the retired LAN-ONLY mode used to mean. The
   rows always state what will happen and are dimmed whole where the mode decides it — a
   checkbox has no way to be truthful and unavailable at once. Click and hover are both gated on
   DIRECT, so an unusable row neither lights up nor costs a hit test.
