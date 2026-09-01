@@ -607,12 +607,7 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
                                                  body, payloadLen, &closeWhy)) {
                 if (closeWhy) {
                     UE_LOGE("net: leaving this host -- %s", closeWhy);
-                    {   std::lock_guard<std::mutex> lk(hostCloseMutex_);
-                        hostCloseReason_ = closeWhy; }
-                    if (auto* sockets = SteamNetworkingSockets())
-                        sockets->CloseConnection(hostConn,
-                                                 k_ESteamNetConnectionEnd_App_Generic,
-                                                 closeWhy, false);
+                    LeaveHost(closeWhy);
                 }
                 return;  // consumed by the exchange; never reaches the game thread
             }
@@ -628,12 +623,7 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
                     static const char* kWhy =
                         "the host tried to seat us without proving its identity";
                     UE_LOGE("net: %s -- leaving", kWhy);
-                    {   std::lock_guard<std::mutex> lk(hostCloseMutex_);
-                        hostCloseReason_ = kWhy; }
-                    if (auto* sockets = SteamNetworkingSockets())
-                        sockets->CloseConnection(hostConn,
-                                                 k_ESteamNetConnectionEnd_App_Generic,
-                                                 kWhy, false);
+                    LeaveHost(kWhy);
                     return;
                 }
                 FinishClientLink(hostConn);

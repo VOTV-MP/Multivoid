@@ -548,8 +548,11 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
     const std::string masterUrl = MasterUrl();
     net::Config fallback;
     { std::lock_guard<std::mutex> lk(g_cfgMu); fallback = g_fallbackHostCfg; }
+    // `hideFromBrowser` is deliberately NOT captured: the only branch that reads it
+    // (directConnection && hideFromBrowser) returns above without ever creating this
+    // worker, so carrying it in was a value the thread could not act on.
     std::thread([masterUrl, fallback, choice, name, locked, playersMax,
-                 directConnection, hideFromBrowser, lobbyPw] {
+                 directConnection, lobbyPw] {
         // try/catch: an exception escaping a detached thread is std::terminate. The
         // store(false) is OUTSIDE the try so g_actionBusy clears on EVERY path.
         try {
@@ -591,9 +594,30 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
                 cfg.turnUser = info.turnUser;
                 cfg.turnPass = info.turnPass;
             } else {
+                // AUTO, AND THE MASTER DID NOT ANSWER. This used to keep P2P and dial
+                // the fallback signaling server, which produced a world NOBODY COULD
+                // REACH while the status line below told the player to use "LAN/direct"
+                // -- the two things that configuration does not have. Start() is
+                // either/or (`session_start.cpp`: P2P ? StartP2P : StartLanDirect), so
+                // choosing P2P means no UDP listen socket exists at all.
+                //
+                // The reason it cannot work is DIRECTORY, not transport, and that is
+                // what makes this unconditional rather than a signaling-reachability
+                // test: a joiner needs the host's `gen:` identity to dial it, that
+                // identity is published by /v1/join alone, and `net.host_identity` has
+                // no UI that writes it. So an UNLISTED P2P host is unreachable even
+                // when its signaling server is perfectly healthy -- and the official
+                // signaling shares a BOX with the master anyway (protocol.h:1138-1139),
+                // so it is usually down too.
+                //
+                // LanDirect is the one shape that stays reachable with no master alive:
+                // a LAN friend finds it, a port-forwarded friend finds it, and both do
+                // it through the Direct Connect box that already ships. RULE 1: pick
+                // the configuration that can actually be joined, and say so honestly.
                 cfg = fallback;
                 cfg.role = net::Role::Host;        // belt-and-suspenders (fallback is already host)
-                cfg.topology = net::Topology::P2P;
+                cfg.topology = net::Topology::LanDirect;
+                cfg.port = directPort;
             }
             {
                 std::lock_guard<std::mutex> lk(g_pendHostMu);
@@ -606,7 +630,15 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
             // Seed the scoreboard mirror. No hidden term any more: a hidden DIRECT
             // lobby never reaches this worker (it returns above without announcing).
             g_listedState.store(listed, std::memory_order_relaxed);
-            g_hostIsDirect.store(directConnection, std::memory_order_relaxed);
+            // DERIVED FROM THE TRANSPORT WE ACTUALLY CONFIGURED, not from what the
+            // player picked: an AUTO host whose master was unreachable falls back to a
+            // DIRECT listen just above, and this flag chooses the hide SEMANTICS
+            // (retract via /v1/leave vs merely clearing the visibility flag). Keying it
+            // on the player's choice would have made a genuinely-direct session take
+            // the P2P branch. The three assignments to cfg.topology are the only
+            // producers, so this reads exactly one of them.
+            g_hostIsDirect.store(cfg.topology == net::Topology::LanDirect,
+                                 std::memory_order_relaxed);
             if (listed) {
                 SetOwnLobbyId(info.lobbyId);  // FIX 3: never list/join our own lobby
                 // The announce-then-unlist branch that used to live here is GONE
@@ -636,11 +668,13 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
                 UE_LOGW("session_manager: HOST-WITH-SAVE ready (DIRECT, UNLISTED -- master '%s' unreachable, port %u)",
                         DisplayMaster(masterUrl).c_str(), static_cast<unsigned>(directPort));
             } else {
-                SetHostStatus("Hosting -- master server unreachable, lobby NOT listed (LAN/direct only)");
+                // The line now describes what actually happened. It used to promise
+                // "LAN/direct only" for a P2P session that had neither.
+                SetHostStatus("Hosting -- master unreachable, NOT listed; friends use "
+                              "Direct Connect with your IP");
                 UE_LOGW("session_manager: HOST-WITH-SAVE ready (UNLISTED -- master '%s' unreachable) "
-                        "-- hosting via local config (signaling-set=%d)",
-                        DisplayMaster(masterUrl).c_str(),
-                        cfg.signalingUrl.empty() ? 0 : 1);
+                        "-- fell back to a DIRECT listen on port %u so the session stays joinable",
+                        DisplayMaster(masterUrl).c_str(), static_cast<unsigned>(directPort));
             }
         } catch (const std::exception& e) {
             UE_LOGW("session_manager: HostWithSave worker exception: %s", e.what());

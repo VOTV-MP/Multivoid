@@ -689,7 +689,13 @@ void DoHost() {
     UE_LOGI("host_session_settings: HOST %s -- world=%s conn=%d listed=%d locked=%d name='%s'",
             accepted ? "accepted" : "REFUSED (another action in flight)",
             g_choice.newGame ? "<new game>" : g_choice.slot.c_str(), g_connMode,
-            hideFromBrowser ? 0 : 1,
+            // NOT `!hideFromBrowser`. That flag is DIRECT-only (see its own comment
+            // above), so on LAN ONLY it is false for a mode that never announces at
+            // all, and this line reported `listed=1` for a lobby the master is
+            // deliberately never told about. `ListedForMode` is the predicate the rest
+            // of the window already decides visibility with -- and on DIRECT the
+            // player's toggle still overrides it.
+            (ListedForMode(g_connMode) && !hideFromBrowser) ? 1 : 0,
             g_locked ? 1 : 0, g_name.c_str());
     if (!accepted) {
         // The window STAYS OPEN on a refusal, for the reason step one records: a screen that

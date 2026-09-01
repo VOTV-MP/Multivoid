@@ -4978,9 +4978,21 @@ def cmd_authdrill(args) -> None:
     """
     if kill_all() > 0:
         log("note: pre-existing VotV instances killed before authdrill")
-    deploy_all()
+    # Same escape `smoke` has, and for the same reason: the build slot is shared
+    # between sessions, so a drill that deploys-at-start runs whatever binary the
+    # slot holds at that second rather than the bytes you shipped.
+    if getattr(args, "no_deploy", False):
+        log("--no-deploy: skipping deploy; running on the rigs' current bytes")
+    else:
+        deploy_all()
 
-    arm = "off" if args.control else args.arm
+    if args.unbound and (args.arm != "password" or args.control):
+        log("FAIL: --unbound belongs to the password arm and cannot be combined with "
+            "--control (the control's whole job is to be the BOUND comparison)")
+        sys.exit(1)
+
+    arm = "off" if args.control else (
+        "password-unbound" if args.unbound else args.arm)
     log(f"--- ADMISSION DRILL: arm={arm} "
         f"({'CONTROL -- every assertion must INVERT' if args.control else 'the gate must refuse'}) ---")
 
@@ -5010,8 +5022,12 @@ def cmd_authdrill(args) -> None:
         # split them: `net.lobby_password` is the secret THIS peer's own hosted sessions
         # require, and a client falling back to it offered its own lobby's password to
         # strangers. A joiner configures `net.join_password`.
+        # ...AND `--unbound` OFFERS THE RIGHT ONE TOO. Its variable is the IDENTITY, not
+        # the secret: withholding both would let a run go red for either reason and prove
+        # neither.
         client_env["VOTVCOOP_NET_JOIN_PASSWORD"] = (
-            "correct-horse-battery" if args.control else "wrong-horse-battery")
+            "correct-horse-battery" if (args.control or args.unbound)
+            else "wrong-horse-battery")
         # ...AND THE CLIENT MUST KNOW WHICH HOST IT IS DIALLING, or it refuses to send
         # anything password-derived at all and this arm measures the BINDING gate
         # instead of the password gate (measured on the first run: "no advertised host
@@ -5035,7 +5051,16 @@ def cmd_authdrill(args) -> None:
         log(f"FAIL: host did not bind UDP within {args.boot_timeout}s")
         tail_log(host_log, 30, "HOST"); kill_all(); sys.exit(1)
 
-    if args.arm == "password":
+    if args.arm == "password" and args.unbound:
+        # THE WHOLE ARM IS THIS OMISSION. A friend handed only `ip:port` reaches
+        # ClientOnConnected with an empty AdvertisedHostIdentity, so `bound` stays false
+        # and the challenge's password branch refuses before emitting anything. Nothing
+        # is sabotaged; the client is simply told less, exactly as the shipped UI tells
+        # it less. `net.host_identity` has three readers and no writer -- there is no
+        # screen anywhere that could set it.
+        log("unbound arm: the client is given NO host identity -- as a player typing an "
+            "address into the direct-connect box has none to give")
+    elif args.arm == "password":
         ident = ""
         try:
             for line in host_log.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -5085,6 +5110,12 @@ def cmd_authdrill(args) -> None:
         refused = "identity proof did not verify" in htext
     elif arm == "silent":
         refused = "never proved its identity" in htext
+    elif args.arm == "password" and args.unbound:
+        # THE CLIENT'S LOG, because on this arm the refusal is OURS and the host never
+        # learns a password was involved: the client reads `kAuthFlagPasswordRequired`
+        # off the challenge, finds itself unbound, and closes without sending a tag. The
+        # host sees a socket that proved itself and then left.
+        refused = "refusing to send anything derived from it" in ctext
     elif args.arm == "password":
         # The HOST's log, because this refusal is the host's -- and the needle is the
         # one the gate itself writes, not the close reason, so a client that failed for
@@ -5126,6 +5157,16 @@ def cmd_authdrill(args) -> None:
     log("--- VERDICT ---")
     for k, ok in want.items():
         log(f"  {'PASS' if ok else 'FAIL'}  {k}")
+    if args.unbound:
+        # THE VERDICT IS NOT THE QUESTION THIS ARM WAS ADDED FOR. "The gate refused" is
+        # the easy half and was never in doubt; what nobody had measured is what the
+        # PLAYER is left looking at afterwards -- whether the attempt dies with a
+        # sentence or sits there. So the trail is printed unconditionally, PASS or FAIL.
+        log("--- WHAT THE JOINER WAS LEFT WITH (the reason this arm exists) ---")
+        for line in ctext.splitlines():
+            if any(n in line for n in ("peer_admission:", "join_progress:", "net: leaving",
+                                       "net: state", "ConnState", "connect", "Disconnected")):
+                log("  C| " + line.strip()[:190])
     if all(want.values()):
         log(f"AUTH DRILL PASS (arm={arm}{', CONTROL' if args.control else ''})")
     else:
@@ -5833,6 +5874,13 @@ def main() -> None:
     p_authdrill.add_argument("--control", action="store_true",
                              help="CONTROL: run with the drill OFF -- every assertion must invert, "
                                   "proving the refusal was caused by the sabotage and not by the rig")
+    p_authdrill.add_argument("--unbound", action="store_true",
+                             help="password arm only: withhold the host's identity from the client, "
+                                  "as a real friend given only an ip:port has it withheld. The "
+                                  "password offered is the CORRECT one, so the binding gate is the "
+                                  "single variable between this and --control")
+    p_authdrill.add_argument("--no-deploy", action="store_true",
+                             help="run on the bytes already on the rigs (deploy yourself first)")
     p_authdrill.add_argument("--port", type=int, default=DEFAULT_PORT, help="host UDP port")
     p_authdrill.add_argument("--boot-timeout", type=int, default=90, help="seconds to wait for host UDP bind")
     p_authdrill.add_argument("--hold", type=int, default=40,

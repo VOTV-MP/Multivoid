@@ -1062,6 +1062,12 @@ private:
     // KickClaimed teardown on its host connection (GNS delivers no callback
     // for a connection we close ourselves). Net thread.
     void FatalCloseSlot(int slot, const char* reason);
+    // THE CLIENT'S ONLY WAY TO END ITS OWN HOST LINK. Records `why`, claims
+    // slot 0 and runs the full KickClaimed teardown -- which is what drives
+    // `state_` to Disconnected, the gate net_pump's connect-fail edge needs
+    // before it can show the player a reason. A bare CloseConnection here is
+    // a MUTE refusal: correct on the wire, invisible on screen. Net thread.
+    void LeaveHost(const char* why);
     // Per-slot RTT (ms), sampled ~1 Hz on the net thread from GNS m_nPing. 0-init;
     // the sampler sets -1 for a slot with no live connection and the real ping for a
     // connected one. Replaces the old aggregate lastRttMs_ (RULE 2: event_feed now
