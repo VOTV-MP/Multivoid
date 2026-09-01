@@ -172,6 +172,22 @@ jobs:
           python tools/docs/lessons_gate.py
           exit $LASTEXITCODE
 
+      - name: Package drill (Test-PackageZip must CATCH a mis-rooted or hollow zip)
+        # The release lane's ONLY structural check on the distributable is
+        # `Test-PackageZip`, and until 2026-09-01 nothing proved that predicate can
+        # FAIL. It is a gate here rather than a release step for the reason every
+        # other gate on this list is: a verifier that stopped working would otherwise
+        # be discovered by a release, which is the worst place to find out.
+        #
+        # 14 arms, 1 GREEN + 13 RED, each modelling a trap read out of r2modman's own
+        # rule engine (UE4SS_ARC 7.2a): a wrapped zip, a root-level dlls/, a stray
+        # top-level dir, a hollow or non-PE payload, a manifest that breaks the
+        # name/version rules. Needs no build -- it assembles its own broken zips.
+        shell: pwsh
+        run: |
+          pwsh -File tools/release/package_drill.ps1
+          exit $LASTEXITCODE
+
       - name: Read vcpkg pin (builtin-baseline from vcpkg.json)
         id: baseline
         shell: pwsh
@@ -280,6 +296,24 @@ jobs:
         shell: pwsh
         run: python tools/loader/abi_gate.py --drill "${{ env.BUILD_DIR }}/Release/main.dll"
 
+      - name: Package the r2modman zip + verify it (CI evidence, pak-less by construction)
+        # THE DISTRIBUTABLE IS ASSEMBLED ON EVERY PUSH, not first at release time.
+        # `package.ps1` is the same script the release lane runs, and it verifies the
+        # zip it just wrote with the predicate the drill above proved can fail -- so a
+        # change that quietly breaks the package tree (a moved payload, a manifest key,
+        # an identity parse) fails HERE, on the commit that caused it.
+        #
+        # LAWFULLY PAK-LESS. `assets/paks/` holds untracked binaries and does not exist
+        # in a CI checkout; package.ps1 documents that a CI zip is pak-less and that a
+        # pak-less package is still a fully working mod (client_model falls back to the
+        # game's own skin). A RELEASE zip is assembled on a box where that dir is
+        # stocked, so this step proves the STRUCTURE, never the payload set.
+        shell: pwsh
+        run: |
+          pwsh -File tools/release/package.ps1 -BuildDir "${{ env.BUILD_DIR }}/Release" `
+                                               -OutDir "$env:RUNNER_TEMP/package"
+          exit $LASTEXITCODE
+
       - name: Collect artifacts + toolchain dump
         id: artname
         shell: pwsh
@@ -293,6 +327,14 @@ jobs:
             $h = (Get-FileHash -Algorithm SHA256 $d.FullName).Hash.ToLowerInvariant()
             Write-Host "$($d.Name)  sha256=$h"
           }
+          # The r2modman zip built two steps up -- CI EVIDENCE, not distribution
+          # (releases remain the supported install channel; see this file's header).
+          $zips = @(Get-ChildItem "$env:RUNNER_TEMP/package/*.zip" -ErrorAction SilentlyContinue)
+          foreach ($z in $zips) {
+            Copy-Item $z.FullName $out
+            Write-Host "$($z.Name)  sha256=$((Get-FileHash -Algorithm SHA256 $z.FullName).Hash.ToLowerInvariant())"
+          }
+          if ($zips.Count -eq 0) { throw 'the package step produced no zip' }
           $head = (git rev-parse HEAD).Trim()
           "commit: $head" | Out-File (Join-Path $out 'build-info.txt')
           # Toolchain facts for the human fingerprint commit (cacheless smoke, design section 5 step 4).
