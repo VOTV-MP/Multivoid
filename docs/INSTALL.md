@@ -56,7 +56,9 @@ never touches your game folder by hand.
 
 1. Install [r2modman](https://thunderstore.io/c/voices-of-the-void/) (or the
    Thunderstore Mod Manager) and select Voices of the Void.
-2. Find **Multivoid** in the manager's browser and install it.
+2. Find **Multivoid** in the manager's browser and install it — or open the
+   [listing](https://thunderstore.io/c/voices-of-the-void/p/Pelmentor/Multivoid/)
+   and use its Install button, which hands the package to your manager.
 3. Launch the game **through the manager**. It sets up the loader
    (unreal-shimloader + UE4SS) by itself; there is nothing else to configure.
 

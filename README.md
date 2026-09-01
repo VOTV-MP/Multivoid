@@ -4,8 +4,11 @@
 > A mod that adds drop-in co-op to a single-player UE4.27 game —
 > **no original game files are modified**.
 
+[![Support on Boosty](https://img.shields.io/badge/Boosty-support%20the%20project-FF7C00?style=for-the-badge)](https://boosty.to/pelmentor)
+
 | | |
 |--|--|
+| **Install** | [**Multivoid on Thunderstore**](https://thunderstore.io/c/voices-of-the-void/p/Pelmentor/Multivoid/) — through r2modman or the Thunderstore Mod Manager, which set the loader up for you ([other routes](docs/INSTALL.md)) |
 | **Current build** | the newest `.zip` on the [Releases page](https://github.com/VOTV-MP/Multivoid/releases) (dev prereleases; the zip name + the in-game banner carry the identity) |
 | **Game target** | Voices of the Void Alpha **0.9.0n** |
 | **Status** | Alpha — dev prereleases published for testing; no stable release yet |
@@ -13,6 +16,7 @@
 | **Platform** | Windows · UE4.27 · LAN + Internet |
 | **Website** | [multivoid.dev](https://multivoid.dev) |
 | **Community** | [Discord](https://discord.gg/bA6tGBvGMN) — chat about the project, ask questions, report bugs |
+| **Support** | [Boosty](https://boosty.to/pelmentor) — **the mod is free and always will be**; this covers the master-server VPS and the tooling bill |
 
 ---
 
