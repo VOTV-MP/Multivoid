@@ -557,6 +557,13 @@ def launch_peer(role: str, port: int, nick: str, peer: str | None,
     # cmd_death re-sets it, immediately before launching.
     env.pop("VOTVCOOP_DEATH_NO_RECONCILE", None)
     env.pop("VOTVCOOP_DEATH_DEEP_FLOOR", None)
+    # Same reasoning, and stronger: lightswitch_probe MUTATES the world (a one-shot synthetic
+    # use() on a live switch). Exported in a shell it would fire inside a joining client's
+    # connect snapshot and cost that peer its join -- measured 2026-09-01, twice, and the
+    # failure string is this project's known signature for a CONCURRENT SESSION killing your
+    # run, so it de-braids as the wrong thing ([[lesson-a-mutating-probe-breaks-the-run-it-measures]]).
+    # Only cmd_lightgroup re-sets it.
+    env.pop("VOTVCOOP_LIGHTSWITCH_PROBE", None)
     # set_scenario=None -> NO VOTVCOOP_SCENARIO -> the harness boots to the MENU (the
     # real native-launch / save-picker context). Default "play" auto-loads the ini save.
     if set_scenario:
@@ -799,6 +806,83 @@ def cmd_client3(args) -> None:
                       peer_slot=3, monitor=args.monitor, tile_index=2,
                       memory_limit_gb=args.memory_limit_gb)
     log(f"client3 running PID={pid}")
+
+
+def _assert_peer_selftests(peers, checks) -> None:
+    """Every named selftest printed ALL PASS in every peer's log, or exit 11.
+
+    These are asserted by the harness rather than left to a human grep because their
+    failure mode is SILENT: a wrong verdict merely reads wrong, and the field transcript
+    it produces would be believed. A MISSING line is a failure too -- it means the
+    selftest never ran, which is indistinguishable from passing if you only grep for FAIL.
+
+    Generalized 2026-09-01. The two call sites this replaced each carried a comment
+    saying a third was coming and three near-identical blocks is how the first one rots;
+    the third arrived and they were still copies.
+
+    `checks` is (label, pass_marker, fail_marker).
+    """
+    logs = {}
+    for lbl, d in peers:
+        try:
+            logs[lbl] = (d / "multivoid.log").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            logs[lbl] = ""
+    for name, ok_marker, fail_marker in checks:
+        bad: list[str] = []
+        for lbl, txt in logs.items():
+            if ok_marker in txt:
+                continue
+            fails = [ln.strip() for ln in txt.splitlines() if fail_marker in ln]
+            if fails:
+                bad.append(f"{lbl}: {len(fails)} failing check(s): " + " | ".join(fails[:6]))
+            else:
+                bad.append(f"{lbl}: no '{name} selftest' line at all "
+                           "(the selftest never ran -- OnSessionStart not reached?)")
+        if bad:
+            log(f"FAIL: {name} selftest did not pass on every peer:")
+            for h in bad:
+                log(f"  - {h}")
+            sys.exit(11)
+        log(f"{name} selftest: ALL PASS confirmed on " + " + ".join(lbl.lower() for lbl, _ in peers))
+
+
+def _assert_no_unknown_reliable_kind(peers) -> None:
+    """No peer logged `event_feed: unknown ReliableKind N -- dropping`.
+
+    THE RUNTIME HALF of tools/net/reliablekind_gate.py, and the reason both exist. The
+    static gate proves every kind HAS a receiver case label; this proves the kinds this
+    run actually exercised REACHED one. They catch different things: the gate sees a lane
+    nothing fires (v70 DeskLogLine shipped dead from day one and no smoke would have
+    fired it), and this sees a kind whose label exists but whose route is wrong.
+
+    This grep is what the 2026-09-01 post-ship audit ran BY HAND to find that
+    LightGroupState had never reached a receiver, one hour after the lane was published
+    as live cross-peer. A check you have to remember to run is a check that gets run once
+    ([[lesson-send-side-evidence-is-not-delivery-evidence]]).
+
+    Safe as an absolute: the join gate gives a lobby byte-equal protocol pairs, so within
+    one smoke there is no legitimate "peer speaks a newer wire" source for an unknown kind.
+    """
+    bad: list[str] = []
+    for lbl, d in peers:
+        try:
+            txt = (d / "multivoid.log").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        hits = [ln.strip() for ln in txt.splitlines() if "unknown ReliableKind" in ln]
+        if hits:
+            kinds = sorted({ln.split("unknown ReliableKind", 1)[1].split()[0] for ln in hits})
+            bad.append(f"{lbl}: {len(hits)} dropped packet(s), kind(s) {', '.join(kinds)}")
+    if bad:
+        log("FAIL: a peer received a ReliableKind no handler claimed -- that lane is WIRE-DEAD:")
+        for h in bad:
+            log(f"  - {h}")
+        log("  The kind reached the receiver and died at event_feed's default:. Add its case to "
+            "the right event_dispatch_<family>.cpp -- that case IS the family-membership "
+            "declaration. See tools/net/reliablekind_gate.py.")
+        sys.exit(11)
+    log("wire routing: no peer logged an unknown ReliableKind")
 
 
 def cmd_smoke(args) -> None:
@@ -1059,57 +1143,20 @@ def cmd_smoke(args) -> None:
                 "'config-selftest: DONE fail=0' (selftest failed or never ran)")
             sys.exit(8)
         log("config-selftest: DONE fail=0 confirmed in the host log")
-    # v141 (security A52): the movement ledger self-checks its own arithmetic on every
-    # session start, un-gated, on BOTH peers. It is asserted here rather than left to a
-    # human grep because its failure mode is SILENT -- a wrong verdict merely reads wrong,
-    # and the field transcript it produces would be believed. The FIRST build of that
-    # module refused the game's own ATV on its first sample; this is the gate that keeps
-    # that caught.
-    ledger_bad: list[str] = []
-    for lbl, d in (("HOST", HOST_DIR), ("CLIENT", CLIENT_DIR)):
-        try:
-            txt = (d / "multivoid.log").read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            txt = ""
-        if "movement_ledger selftest: ALL PASS" not in txt:
-            if "movement_ledger selftest: FAIL" in txt:
-                fails = [ln.strip() for ln in txt.splitlines()
-                         if "movement_ledger selftest: FAIL" in ln]
-                ledger_bad.append(f"{lbl}: {len(fails)} failing check(s): " + " | ".join(fails[:6]))
-            else:
-                ledger_bad.append(f"{lbl}: no 'movement_ledger selftest' line at all "
-                                  "(the selftest never ran -- OnSessionStart not reached?)")
-    if ledger_bad:
-        log("FAIL: movement-ledger selftest did not pass on every peer:")
-        for h in ledger_bad:
-            log(f"  - {h}")
-        sys.exit(11)
-    log("movement_ledger selftest: ALL PASS confirmed on host + client")
-    # A54 (2026-08-26): the intent authorizer self-checks its reach arithmetic on every session
-    # start, un-gated, on BOTH peers -- same reasoning as the ledger above, and the same failure
-    # mode. A wrong reach verdict does not crash: it either refuses a real player or authorizes the
-    # whole map, and both read as "working" from outside. Generalized rather than copy-pasted,
-    # because a third selftest is coming and three near-identical blocks is how the first one rots.
-    selftest_bad: list[str] = []
-    for lbl, d in (("HOST", HOST_DIR), ("CLIENT", CLIENT_DIR)):
-        try:
-            txt = (d / "multivoid.log").read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            txt = ""
-        if "intent_authority selftest: ALL PASS" not in txt:
-            fails = [ln.strip() for ln in txt.splitlines()
-                     if "intent_authority selftest FAIL" in ln]
-            if fails:
-                selftest_bad.append(f"{lbl}: {len(fails)} failing check(s): " + " | ".join(fails[:6]))
-            else:
-                selftest_bad.append(f"{lbl}: no 'intent_authority selftest' line at all "
-                                    "(the selftest never ran -- OnSessionStart not reached?)")
-    if selftest_bad:
-        log("FAIL: intent-authority selftest did not pass on every peer:")
-        for h in selftest_bad:
-            log(f"  - {h}")
-        sys.exit(11)
-    log("intent_authority selftest: ALL PASS confirmed on host + client")
+    # Two un-gated per-session selftests, on BOTH peers. v141 (A52) movement_ledger --
+    # its FIRST build refused the game's own ATV on its first sample; A54 intent_authority
+    # -- a wrong reach verdict either refuses a real player or authorizes the whole map,
+    # and both read as "working" from outside. Why they are asserted rather than grepped
+    # is in the helper's docstring.
+    _assert_peer_selftests(
+        (("HOST", HOST_DIR), ("CLIENT", CLIENT_DIR)),
+        (("movement_ledger", "movement_ledger selftest: ALL PASS",
+          "movement_ledger selftest: FAIL"),
+         ("intent_authority", "intent_authority selftest: ALL PASS",
+          "intent_authority selftest FAIL")))
+    # The wire-routing backstop. Read the docstring: this is the hand-grep from the
+    # 2026-09-01 audit, made machine.
+    _assert_no_unknown_reliable_kind((("HOST", HOST_DIR), ("CLIENT", CLIENT_DIR)))
     # WP-2 boot-lane assertion: both peers booted via UE4SS start_mod
     # (entry=cppmod, no REFUSE, no retired-proxy line; MISSING log = FAIL).
     lane: list[str] = []
@@ -3124,6 +3171,70 @@ def cmd_navprobe(args) -> None:
     tail_log(host_log, 30, "HOST")
     log("--- KILLING ---")
     kill_all()
+    sys.exit(0)
+
+
+def cmd_lightgroup(args) -> None:
+    """SOLO HOST light-GROUP apply selftest. Launches ONE host with a live session, zero
+    clients, and VOTVCOOP_LIGHTSWITCH_PROBE=1, then asserts the five checks in
+    lightswitch_probe::RunGroupApplySelftest.
+
+    WHY IT IS A SOLO HOST AND NOT A SESSIONLESS ONE. The probe is reached from
+    net_pump::Tick -> subsystems::TickGameplay, and session_runtime.cpp calls net_pump::Tick
+    only when the session is running -- a sessionless launch takes the branch that calls
+    subsystems::Install and nothing else. So `running()` is a PRECONDITION of reaching the
+    probe at all, which is why the probe's own guard is on connectedPeerCount() (zero peers),
+    not on running(). Guarding on running() made it unreachable on every launch.
+
+    WHAT IT ASSERTS. The selftest states the DEFECT first -- with the group's gate shut, the
+    switch's own verb (runTrigger index 0) must NOT move the group -- so a green result cannot
+    come from the group having been movable all along. Then that ApplyGroupState moves it
+    ANYWAY (the absolute setters ignore the gate, which is what lets a receiver land the
+    authority's state on a peer whose own breaker is off), that it restores, and that the RAII
+    hold put the gate back. That last one is asserted rather than assumed because the field is
+    SAVE-PERSISTENT: a leaked shut gate follows the player into single-player and every switch
+    in that group flips, clicks, and moves no light, permanently.
+
+    MUTATING, SO NEVER TWO PEERS. Armed on a host during `mp.py smoke` it cost the client its
+    join (PASS with the flag off, "expected 2 peers, got 1" with it on, twice). launch_peer
+    strips the env var from the ambient environment; this scenario is the one place that puts
+    it back."""
+    if kill_all() > 0:
+        log("note: pre-existing VotV instances killed before lightgroup")
+    deploy_all()
+
+    log("--- HOST LAUNCH (SOLO HOST, live session, zero clients -- light-group apply selftest) ---")
+    launch_peer("host", args.port, "Host", peer=None,
+                res_x=args.res_x, res_y=args.res_y, monitor=1, center=True,
+                memory_limit_gb=args.memory_limit_gb, set_net_role=True,
+                extra_env={"VOTVCOOP_LIGHTSWITCH_PROBE": "1"})
+
+    host_log = HOST_DIR / "multivoid.log"
+    saw = _wait_for_log(host_log, "GROUP SELFTEST:", args.probe_timeout, "HOST")
+    time.sleep(1)
+    try:
+        txt = host_log.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        txt = ""
+    lines = [ln.strip() for ln in txt.splitlines() if "GROUP SELFTEST" in ln]
+    for ln in lines:
+        log("  " + ln)
+    log("--- KILLING ---")   # a test ends when its evidence is collected
+    kill_all()
+
+    verdict = [ln for ln in lines if "GROUP SELFTEST:" in ln]
+    if not saw or not verdict:
+        log("FAIL: no 'GROUP SELFTEST:' verdict line in the host log.")
+        log("  A SKIPPED line means the world had no keyed trigger_lightRoot_C yet; no line at")
+        log("  ALL means the probe never fired -- check the guard against its caller before")
+        log("  blaming the selftest (that pair has been mutually exclusive once already).")
+        sys.exit(11)
+    v = verdict[-1]
+    if "ALL PASS" not in v or "0 failed" not in v:
+        log("FAIL: the light-group apply selftest did not pass:")
+        log("  " + v)
+        sys.exit(11)
+    log("lightgroup: GROUP SELFTEST ALL PASS (0 failed) -- confirmed in the host log")
     sys.exit(0)
 
 
@@ -5828,6 +5939,15 @@ def main() -> None:
                             help="per-process commit cap in GB (0 = disabled)")
     for flag, kw in host_res: p_navprobe.add_argument(flag, **kw)
     p_navprobe.set_defaults(func=cmd_navprobe)
+
+    p_lightgroup = sub.add_parser("lightgroup",
+                                  help="SOLO HOST (live session, zero clients): run the light-GROUP apply selftest and assert its five checks")
+    p_lightgroup.add_argument("--probe-timeout", type=int, default=240,
+                              help="seconds to wait for the 'GROUP SELFTEST:' verdict (covers boot into gameplay + the probe's 300-tick settle)")
+    p_lightgroup.add_argument("--memory-limit-gb", type=float, default=12.0,
+                              help="per-process commit cap in GB (0 = disabled)")
+    for flag, kw in host_res: p_lightgroup.add_argument(flag, **kw)
+    p_lightgroup.set_defaults(func=cmd_lightgroup)
 
     p_death = sub.add_parser("death",
         help="SOLO+SESSIONLESS: run VOTV's native death chain, measure its timeline + memory, and grade it against docs/DEATH_ARC.md (RED until the arc lands)")

@@ -101,18 +101,32 @@ void Tick() {
     // on a host during `mp.py smoke` it cost the client its join: PASS with the flag off,
     // "expected 2 peers, got 1" with it on, twice, everything else identical. It is a solo
     // measurement instrument and this makes that its contract rather than its documentation.
-    // Deliberately NOT latched: a solo run that later hosts still gets its measurement, and a
-    // session that ends leaves the probe free to fire.
-    // running(), not connected(): a HOST alone is not "connected" yet, and firing in that
-    // window is precisely what broke the join -- the mutation landed just before the client
-    // arrived. running() covers hosting-with-nobody-yet as well as an established link.
+    //
+    // ZERO PEERS, not "no session". The first version of this guard refused on
+    // `running() || connected()` and that made the probe UNREACHABLE ON EVERY LAUNCH, not
+    // merely hard to run: the only path that calls this Tick is net_pump::Tick -> TickGameplay,
+    // and session_runtime.cpp:694-700 calls net_pump::Tick ONLY when running() is true (the
+    // sessionless branch calls subsystems::Install and nothing else). So the guard's pass
+    // condition and its caller's pass condition were mutually exclusive, and the selftest below
+    // could never fire again. `[[lesson-a-guard-can-be-unsatisfiable-with-its-own-caller]]`
+    //
+    // The mechanism I wrote down the first time was also wrong. The measured breakage was NOT
+    // "the mutation landed just before the client arrived" -- it was the mutation landing inside
+    // the joining client's CONNECT SNAPSHOT, and the snapshot is enumerated once that peer is
+    // seated and counted. So the dangerous state is a peer BEING here, which is exactly what
+    // connectedPeerCount() reports, and a solo host with nobody in it is safe. Both are game-
+    // thread reads, and this whole probe is one synchronous game-thread call, so it cannot
+    // interleave with a snapshot drain (also game thread) -- there is no partial-mutation window.
+    //
+    // Deliberately NOT latched: a solo run that later hosts still gets its measurement.
     const auto& sess = harness::session_runtime::Session();
-    if (sess.running() || sess.connected()) {
+    if (sess.connectedPeerCount() > 0) {
         static bool s_said = false;
         if (!s_said) { s_said = true;
-            UE_LOGW("[lightswitch_probe] a session is CONNECTED -- holding the mutating one-shot. "
-                    "This probe writes world state; run it solo. (The read-only per-key census is "
-                    "`lightgroup_census=1` and is safe on both peers.)"); }
+            UE_LOGW("[lightswitch_probe] %d peer(s) present -- holding the mutating one-shot. "
+                    "This probe writes world state; run it solo (`mp.py lightgroup`). The "
+                    "read-only per-key census is `lightgroup_census=1` and is safe on both peers.",
+                    sess.connectedPeerCount()); }
         return;
     }
     g_testDone = true;
