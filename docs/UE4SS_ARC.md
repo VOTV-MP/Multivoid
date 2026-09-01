@@ -699,9 +699,22 @@ ever see them — they have to be changed by hand, in the GitHub UI or via `gh`.
 | topic `dll-injection` | present | **wrong lane** once the proxy is deleted — we are loaded by a mod framework, not injected. Candidates to add: `ue4ss`, `thunderstore` |
 | `homepageUrl` | **empty** | `https://multivoid.dev` — this one is stale *today*, independent of the migration, and is a free fix |
 
-**Sequencing — the same rule as §7.4a.** The description must NOT flip to the UE4SS lane before a
-UE4SS-lane build is actually released, or the front page will tell a player to install a thing that
-does not exist yet. `homepageUrl` is exempt from that ordering: it is wrong now and can be set now.
+**~~Sequencing~~ — THE GATE IS CLEAR AS OF 2026-09-01 and the table above is now a to-do list,
+not a plan.** The rule was: do not flip the description to the UE4SS lane before a UE4SS-lane
+build is actually released, or the front page tells a player to install a thing that does not
+exist. `v0.9.0n-b150-dev` is published and on Thunderstore, so nothing is held any more.
+
+**`[V]` measured against the live repo 2026-09-02 (`gh api repos/VOTV-MP/Multivoid`), one of
+three is already right and two are not:**
+
+| field | live value | verdict |
+|---|---|---|
+| `description` | *"…a **UE4SS mod** for UE4.27 that syncs the game between a host and up to three clients, without modifying any game files."* | **already flipped** — done at some point without this row being updated |
+| `homepage` | **`null`** | still wrong; set `https://multivoid.dev` |
+| topics | includes **`dll-injection`** | still the retired proxy lane; drop it, and `ue4ss` + `thunderstore` are the candidates to add |
+
+All three live OUTSIDE the tree, which is the generalised miss recorded below — no gate here can
+see them, so they only move when someone looks.
 
 **Why this is filed here and not "just done":** it is a public-facing statement about what the mod
 IS, on the surface most people read first. It belongs to the WP-4 flip, with the release, not to a

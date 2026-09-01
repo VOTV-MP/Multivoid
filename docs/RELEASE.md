@@ -55,22 +55,27 @@ checked out `main` while the ritual guarantees main is already at N+1 — see th
 *Invariants* below. And `COOP_LATEST_*` was left at a pre-release stand-in, which the user caught
 as a wrong version label in the main menu — see `[[lesson-a-gate-left-red-on-purpose-carries-no-signal]]`.
 
-### What is still owed, and who owns it
+### What is still owed — THREE OF FOUR ARE DONE (reconciled 2026-09-02 against the live services)
 
-These are the flag day's genuinely-unfinished items. They are NOT release-ritual steps; each has a
-real owner doc, and this list exists only so the sequence is not lost.
+1. ~~**Thunderstore upload**~~ **DONE 2026-09-01T18:06:11Z.** `[V]`
+   `Pelmentor/Multivoid` v`0.9.150`, not deprecated, 22 downloads, and the page returns HTTP 200.
+2. **`donation_link` — STILL OWED, and it is the only item here with no owner but the user.**
+   `[V]` measured empty on the package API 2026-09-02, together with **`categories`, which is
+   also empty** and was never on any checklist. Both are website settings on the package: not in
+   the manifest, not in this repo, editable forever, and invisible to every gate we have.
+3. ~~**Site deploy**~~ **DONE.** `[V]` `https://multivoid.dev` serves the new build — `og:image`
+   → `og-multivoid.jpg` (HTTP 200), the retired `og-airlock.jpg` returns **404**, and the nav
+   carries the Boosty button. Both of `site/NOTES.md`'s gates are discharged.
+4. ~~**The Boosty buttons**~~ **DONE** (`d9b6ab9a`): repo README badge + Support row +
+   `.github/FUNDING.yml`, and on the site a Donate button under the install lanes plus a
+   brand-coloured Boosty button in the nav. The store README stays badge-less on purpose — see
+   `docs/THUNDERSTORE.md` §3a.
 
-1. **Thunderstore upload** — manual, irreversible, `docs/THUNDERSTORE.md` (pre-flight checklist
-   first). Team `Pelmentor`, package `Multivoid`; the manifest in the published zip already
-   carries both. Precondition 4 of that doc is now DONE.
-2. **`donation_link`** on the Thunderstore package — a website setting, not a manifest field, so
-   it can be set any time after publish. The store README ships WITHOUT a Boosty badge on purpose
-   (a published version is immutable).
-3. **Site deploy** — `site/NOTES.md`'s gate ("a published, non-draft release with exactly one
-   zip") is now **SATISFIED**. `zola build` → `npx wrangler pages deploy public --project-name
-   multivoid-site`, after switching `base_url`.
-4. **The Boosty buttons** on the repo README and the site — pulled on the user's word (`c18003aa`)
-   and returning at their own step, after the listing is live.
+**One item this list never had, surfaced by the reconciliation:** `UE4SS_ARC` §7.4b gates the
+GitHub repo's own description/topics/homepage on "a UE4SS-lane build is actually released". That
+gate is now clear, and `[V]` two of the three are still wrong: `homepage` is **null** (should be
+`https://multivoid.dev`) and the topics still carry **`dll-injection`**, which is the retired
+proxy lane. The description is already correct.
 
 ### Rollback
 

@@ -24,6 +24,14 @@ first test of this document.
 
 ## 1. Preconditions — what must be true before the first upload
 
+> **THE UPLOAD HAPPENED — 2026-09-01T18:06:11Z. This section is now HISTORY, kept because a
+> second package (or a game-target move) walks the same list.** `[V]` measured 2026-09-02 off
+> `api/experimental/package/Pelmentor/Multivoid/`: `Pelmentor/Multivoid` v`0.9.150`, not
+> deprecated, 22 downloads. All seven preconditions are DONE. Two package-level fields are
+> **still empty and neither can be set from this repo** — see §3a: `donation_link` (the support
+> button) and `categories` (discoverability). Both are website settings, both are editable
+> forever, and both are the user's to set.
+
 | # | Precondition | State as of 2026-08-25 |
 |---|---|---|
 | 1 | A Thunderstore **Team** exists. The team name becomes the `<Author>` half of `<Author>-Multivoid`, which is load-bearing for the pak path (`UE4SS_ARC` §7.2a trap 4). | **DONE 2026-08-29 (USER): the team is `Pelmentor`** — created that day, SUPERSEDING the 2026-08-26 pick of `Multivoid`. So the package is `Pelmentor-Multivoid`, the pak path is `shimloader/pak/Pelmentor-Multivoid/`, and the zip is `Pelmentor-Multivoid-<version>.zip`. **WHY it changed, and why the change was free:** the team IS the namespace — `manifest.json` carries no author field at all (§3) — so `Multivoid-Multivoid` displayed the author as a project rather than a person, which the user saw in r2modman on a LOCAL import (it derives the author from the zip filename) and rejected. Nothing had been published, so §5's irreversibility had not yet bitten; **after the first upload it does**, and neither half can move without creating a SECOND package. `dependencies` is unaffected — it names shimloader's team, not ours. The pak path needed no code change: `skin_registry.cpp:156-158` already scans every `LogicMods` subdirectory *because* the managed lane lands paks in a directory we do not name (precondition 5). |
@@ -59,11 +67,14 @@ pak\scientists.pak     (+ the <name>.png preview tiles)
   `README.md` and FAILS CLOSED if the file is missing or does not mention the current game
   target (a hand-written pair in a page nobody regenerates is how version strings rot). The
   Boosty support badge lives in BOTH this file and the repo README — a support-rail change
-  touches both, or the two pages disagree about how to give. **(Temporarily one-sided since
-  `7ebc2554`, 2026-08-30: the repo-README badge + `FUNDING.yml` are PULLED until the Boosty
-  page is ready — restore = revert that commit; the checklist lives in the local `SUPPORT.md`
-  top box. The badge HERE stays because this page is not live until the first upload; if
-  Boosty is still not ready at that moment, pull it here too before `package.ps1` runs.)**
+  touches both, or the two pages disagree about how to give. **RESOLVED 2026-09-01/02, and the
+  two halves resolved in OPPOSITE directions on purpose.** The store README ships with **no
+  badge** (`415d2f67`): a published version is immutable, so a badge frozen into v0.9.150 could
+  never be changed, while `donation_link` buys the same button and stays editable forever. The
+  repo README badge, the Support row and `.github/FUNDING.yml` are **restored** (`d9b6ab9a`,
+  after `7ebc2554` pulled them and `c18003aa` kept them pulled) — that surface is mutable, so
+  it costs nothing to carry. The old note said *"the badge HERE stays because this page is not
+  live until the first upload"*; the page is live now and the badge is not on it.
 
   **Consequence for the FIRST upload, and it is one-shot:** a published version is IMMUTABLE
   (§5), so a README change costs a whole new version number. Anything that belongs on the store
@@ -134,19 +145,29 @@ whose REASON is the advert; a working mod with a support link is not it. The glo
 The field is what the site renders as a support button; the badge is what a reader sees in the page
 text. Decide the README half *before* `package.ps1` runs and treat the field as the recoverable one.
 
-**Status, 2026-08-31 — none of this is live, and that is a decision, not a gap.** The repo README
-badge, the Support row and `.github/FUNDING.yml` stay **pulled** (`7ebc2554`; restored in
-`1aca131b` and pulled again in `c18003aa` — **USER: "No dont restore"**, after the page itself was
-confirmed live at `https://boosty.to/pelmentor`). *The page existing and the buttons going live are
-two different decisions and only the user makes the second one.*
-**RESOLVED 2026-09-01 (`415d2f67`): the badge is OUT of the package README, and the Support
-table row with it.** The open call above was decided the way the mutability table decides it —
-the badge sat at line 7, above everything, and a published version is IMMUTABLE, so the first
-upload would have frozen the exact button the user had already pulled from three other surfaces.
-`donation_link` buys the same button (the one r2modman renders beside Download, `[V]` seen on
-`Flyingcoyote-VoidFax`) and stays editable forever. Nothing needs to ship for it: **set it on the
-website after the first upload**, which is the one step of this section still owed and which
-cannot be done earlier because it needs the package to exist.
+~~**Status, 2026-08-31 — none of this is live**~~ **— SUPERSEDED 2026-09-01/02. The rails are up
+and the store field is not.** History, so the reversal is not re-litigated: the repo badge was
+pulled (`7ebc2554`), restored on an inference (`1aca131b`), pulled again on the user's explicit
+*"No dont restore"* (`c18003aa`), and finally restored on their explicit instruction once the
+listing existed (`d9b6ab9a`). *The page existing and the buttons going live were always two
+different decisions, and only the user made the second one.* The package README shipped WITHOUT
+the badge (`415d2f67`) because a published version is IMMUTABLE and `donation_link` buys the same
+button (the one r2modman renders beside Download, `[V]` seen on `Flyingcoyote-VoidFax`) while
+staying editable forever.
+
+**`[V]` THE FIELD IS STILL EMPTY — measured 2026-09-02, not assumed.**
+`api/experimental/package/Pelmentor/Multivoid/` returns `donation_link` empty and **`categories`
+empty too**. Neither can be set from this repo: both are website settings on the package, both
+survive every future version, and both are the user's to click. `categories` was never on this
+checklist and should have been — an uncategorised package is missing from every filtered browse
+in the manager, which is how most people find anything.
+
+**A measurement trap for the next upload, since it cost a confused minute here.** Right after
+publishing, the per-package endpoint (`api/experimental/package/<team>/<name>/`) already served
+the package while the community catalog (`c/voices-of-the-void/api/v1/package/`) did **not** —
+`[V]` absent at 18:5x, present ~an hour later (189 packages, up from the 188 this doc measured on
+2026-08-31). A freshly published package missing from the catalog endpoint is indexing lag, not a
+failed upload; query the per-package endpoint to tell them apart.
 
 ## 4. First upload
 
