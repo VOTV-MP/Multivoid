@@ -165,11 +165,33 @@ void* ObjectAt(int32_t index) {
     return item ? *reinterpret_cast<void**>(item) : nullptr;  // FUObjectItem.Object @ +0x00
 }
 
-bool AddToRoot(void* obj) {
-    if (!obj) return false;
-    const int32_t idx = *reinterpret_cast<int32_t*>(
-        reinterpret_cast<uint8_t*>(obj) + O::UObject_InternalIndex);
+namespace {
+// The slot whose RootSet bit belongs to `obj` -- or null if the slot is empty or has
+// been recycled to a different object. The identity re-check matters on the CLEAR path:
+// without it, un-rooting a pointer whose slot has since been handed to someone else
+// clears the RootSet bit of an innocent object, which is a GC bug authored by a cleanup.
+uint8_t* RootFlagSlotFor(void* obj) {
+    if (!obj) return nullptr;
+    // SEH around the deref, the same shape IsLive uses and for the same reason: this reads
+    // the OBJECT's own memory, and the one caller that can arrive with a freed pointer is a
+    // GcPin destructor running at process teardown. A fault there means the object is
+    // already gone, which makes the un-root moot -- answer "no slot" rather than die in a
+    // CRT terminator under the loader lock.
+    int32_t idx;
+    __try {
+        idx = *reinterpret_cast<int32_t*>(
+            reinterpret_cast<uint8_t*>(obj) + O::UObject_InternalIndex);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return nullptr;
+    }
     uint8_t* item = ItemAt(idx);
+    if (!item || *reinterpret_cast<void**>(item) != obj) return nullptr;
+    return item;
+}
+}  // namespace
+
+bool AddToRoot(void* obj) {
+    uint8_t* item = RootFlagSlotFor(obj);
     if (!item) return false;
     int32_t& flags = *reinterpret_cast<int32_t*>(item + O::FUObjectItem_Flags);
     flags |= 0x40000000;  // EInternalObjectFlags::RootSet (UE4.27)
@@ -177,10 +199,7 @@ bool AddToRoot(void* obj) {
 }
 
 bool RemoveFromRoot(void* obj) {
-    if (!obj) return false;
-    const int32_t idx = *reinterpret_cast<int32_t*>(
-        reinterpret_cast<uint8_t*>(obj) + O::UObject_InternalIndex);
-    uint8_t* item = ItemAt(idx);
+    uint8_t* item = RootFlagSlotFor(obj);
     if (!item) return false;
     int32_t& flags = *reinterpret_cast<int32_t*>(item + O::FUObjectItem_Flags);
     flags &= ~0x40000000;  // clear EInternalObjectFlags::RootSet (UE4.27)
@@ -192,6 +211,15 @@ int32_t InternalIndexOf(void* obj) {
     // Dereferences obj -- caller guarantees obj is live/mapped (see header).
     return *reinterpret_cast<int32_t*>(
         reinterpret_cast<uint8_t*>(obj) + O::UObject_InternalIndex);
+}
+
+int32_t InternalFlagsOf(void* obj) {
+    if (!obj) return 0;
+    // Dereferences obj for its InternalIndex -- caller guarantees obj is mapped.
+    uint8_t* item = ItemAt(*reinterpret_cast<int32_t*>(
+        reinterpret_cast<uint8_t*>(obj) + O::UObject_InternalIndex));
+    if (!item || *reinterpret_cast<void**>(item) != obj) return 0;  // slot empty/recycled
+    return *reinterpret_cast<int32_t*>(item + O::FUObjectItem_Flags);
 }
 
 bool IsLiveByIndex(void* obj, int32_t internalIdx) {

@@ -129,6 +129,21 @@ jobs:
           pwsh -File tools/hooks/minhook_free_gate.ps1
           exit $LASTEXITCODE
 
+      - name: GC pin gate (a root-set pin is owned by a GcPin, never a hand-written pair)
+        # Same family: a text scan with its own must-fire control plus the inverse control.
+        # It guards a property TWO comments already asserted while the code did the opposite --
+        # reflection.h's "pairs with AddToRoot on EVERY teardown" and subsystems.cpp's
+        # "structural no-leak" both shipped beside an un-root nested inside `if (liveActor)`,
+        # which at a world teardown is never taken. 871 root-set actors then anchored the
+        # departed UWorld's Outer chain, the world was never collected, and the next
+        # in-process map load adopted the corpse and crashed on its null WorldSettings.
+        shell: pwsh
+        run: |
+          pwsh -File tools/gc/gc_pin_gate.ps1 -Drill -Quiet
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -File tools/gc/gc_pin_gate.ps1
+          exit $LASTEXITCODE
+
       - name: Atlas regime gate (the ImGui lazy atlas is on, watched, and bounded)
         # Same family: positive census, fail-closed on an empty or unexpected one,
         # with -Drill's injected must-fire controls run first so a green is

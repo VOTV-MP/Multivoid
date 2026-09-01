@@ -104,6 +104,27 @@ int32_t SlotSerial(int32_t internalIdx);
 // IsLiveByIndex after the object may have been GC-purged.
 int32_t InternalIndexOf(void* obj);
 
+// Read the raw EInternalObjectFlags word at a UObject's GUObjectArray slot --
+// the same field IsLiveByIndex tests, exposed whole so a caller can tell the
+// KINDS of "not live" apart. IsLive collapses PendingKill and Unreachable into
+// one boolean, which is right for a liveness gate and wrong for a diagnosis:
+// PendingKill-only means the engine marked it and GC has not yet reached it,
+// Unreachable means GC HAS reached it and it is mid-purge. Bits (UE4.27):
+// ReachableInCluster 1<<23, ClusterRoot 1<<24, Native 1<<25, Async 1<<26,
+// AsyncLoading 1<<27, Unreachable 1<<28, PendingKill 1<<29, RootSet 1<<30.
+// Slot read only (never obj's own memory) apart from obj's InternalIndex, so
+// the caller must guarantee `obj` is mapped -- same contract as InternalIndexOf.
+// Returns 0 for null / an out-of-range index, which is indistinguishable from
+// "no flags set": this is a DIAGNOSTIC accessor, not a gate. Use IsLive to gate.
+int32_t InternalFlagsOf(void* obj);
+
+// THE ROOT-SET PRIMITIVES. Do not call these pair-wise from a subsystem -- hold an
+// `ue_wrap::GcPin` (ue_wrap/core/gc_pin.h) instead, which owns the pin and releases it
+// from its destructor. A hand-written pair is what leaked 871 rooted actors and a whole
+// UWorld on 2026-09-01: the release was conditioned on a liveness test and therefore
+// skipped at exactly the teardown that needed it. `tools/gc/gc_pin_gate.ps1` polices
+// direct callers.
+//
 // Mark a UObject as part of the root set so UE4 GC never collects it. We pin
 // runtime-constructed UObjects (NewObject / SpawnObject results) we want to
 // keep referenced indefinitely from C++ -- C++ static void* doesn't qualify as
@@ -117,10 +138,14 @@ bool AddToRoot(void* obj);
 // with AddToRoot on EVERY teardown of a runtime-pinned UObject (e.g. the trash
 // proxy mirror): a destroyed-but-still-rooted object leaks its GUObjectArray
 // slot forever. Clears EInternalObjectFlags::RootSet (0x40000000) on
-// FUObjectItem.Flags @+0x08. Returns false if obj is null / index out of range.
-// Destructor-SAFE -- a pure slot-flag clear, no UFunction dispatch / game-thread
-// / mutex requirement (unlike K2_DestroyActor), so it can anchor the owned-proxy
-// Element teardown as the structural no-leak backstop.
+// FUObjectItem.Flags @+0x08. Returns false if obj is null, its slot has been
+// recycled, or the index is out of range.
+//
+// It is a pure slot-flag clear -- no UFunction dispatch, no game-thread
+// requirement (unlike K2_DestroyActor) -- but it is NOT unconditionally safe at
+// process teardown: it reads the object's own InternalIndex and then walks
+// GUObjectArray. `GcPin` owns that concern (its Release stands down once
+// `StopReleases` has run) and is the only caller. Do not add another.
 bool RemoveFromRoot(void* obj);
 
 // UObjectBase accessors (offsets are the standard UE4.27 layout).

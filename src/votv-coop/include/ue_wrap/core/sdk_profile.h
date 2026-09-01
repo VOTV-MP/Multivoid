@@ -225,6 +225,7 @@ inline constexpr const char* kSigOpenLevel =
 
 // ---- struct offsets (stable within UE4.27; re-check on an engine bump) ----
 namespace off {
+inline constexpr size_t UObject_ObjectFlags = 0x08;   // int32 EObjectFlags -- RF_BeginDestroyed 1<<15 / RF_FinishDestroyed 1<<16 name the destruction STAGE
 inline constexpr size_t UObject_InternalIndex = 0x0C;  // int32 -- slot in GUObjectArray (O(1) liveness check)
 inline constexpr size_t UObject_ClassPrivate = 0x10;
 inline constexpr size_t UObject_NamePrivate = 0x18;

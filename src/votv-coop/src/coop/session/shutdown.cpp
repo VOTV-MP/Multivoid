@@ -1,5 +1,6 @@
 // coop/shutdown.cpp -- see shutdown.h.
 
+#include "ue_wrap/core/gc_pin.h"
 #include "coop/session/shutdown.h"
 
 #include "coop/net/session.h"
@@ -209,6 +210,11 @@ void DoShutdown() {
     ::Sleep(100);  // let detached pollers observe g_shuttingDown
     ue_wrap::game_thread::Uninstall();
     ue_wrap::hook::Shutdown();
+    // From here on a GC pin releases WITHOUT touching the engine. Pins can live inside
+    // statics (the proxy map, the permanent audio pins), so their destructors run at DLL
+    // unload, long after this point -- and un-rooting then reads an object's InternalIndex
+    // and walks GUObjectArray for a collector that will never run again.
+    ue_wrap::GcPin::StopReleases();
 
     UE_LOGI("shutdown: END cleanup");
 }

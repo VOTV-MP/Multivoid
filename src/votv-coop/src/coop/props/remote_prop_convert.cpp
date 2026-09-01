@@ -183,7 +183,7 @@ void* OnConvert(const coop::net::PropConvertPayload& payload, void* localPlayer,
             RegisterPropMirror(E, proxy, L"", R::ClassNameOf(proxy), senderSlot, /*rebindInPlace=*/morphBoundNative);
             if (morphBoundNative) {
                 coop::prop_element_tracker::UnmarkKnownKeyedProp(boundNative);  // drop the bound-mirror mark
-                R::RemoveFromRoot(boundNative);                                 // un-root a nativized runtime pile (no-op on a save-loaded native) -- else a rooted PendingKill leaks
+                coop::native_pile_mirror::Unpin(boundNative);                    // release a nativized runtime pile's pin (no-op on a save-loaded native) -- else a rooted PendingKill leaks
                 E::DestroyActor(boundNative);                                   // retire the orphaned native pile
                 UE_LOGI("[PILE] CLIENT convert %s eid=%u -> bound save-loaded NATIVE pile GRABBED -> handed to "
                         "runtime clump proxy=%p (native retired; native-authoritative hand-off)", edge, E, proxy);

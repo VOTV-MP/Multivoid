@@ -49,4 +49,17 @@ void* Materialize(coop::element::ElementId eid, const std::wstring& className, u
 void RepositionBoundNative(void* native, uint8_t chipType, const ue_wrap::FVector& loc,
                            const ue_wrap::FRotator& meshWorldRot, const ue_wrap::FVector& scale);
 
+// Release the GC pin Materialize took on `actor`, if we took one. No-op for a save-loaded
+// native or a game-native we never pinned -- so a caller that is about to destroy an actor
+// of unknown provenance can call it unconditionally. Replaces the raw RemoveFromRoot the
+// destroy/convert paths used to spell out: the pin has an OWNER now (see ue_wrap/core/gc_pin.h).
+// Game thread.
+void Unpin(void* actor);
+
+// Drop every pin this module still holds. Called from the session teardown: a materialized
+// native that is simply still alive when the session ends has no destroy path to ride, and a
+// pin nobody releases anchors its whole world's Outer chain -- the shape that made a rejoin
+// crash. Game thread.
+void OnDisconnect();
+
 }  // namespace coop::native_pile_mirror

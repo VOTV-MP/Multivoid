@@ -8,6 +8,7 @@
 // boots from ATTACH -- a disabled mod folder is LOADED but never STARTED, so
 // DllMain must not boot. DETACH keeps the last-resort teardown backstop.
 
+#include "ue_wrap/core/gc_pin.h"
 #include "coop/session/shutdown.h"
 #include "loader/cppmod_entry.h"
 
@@ -21,6 +22,17 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
         // lane never ran). Before DoShutdown so the line lands even if the
         // logger is torn down there someday.
         loader::cppmod::FinalDump();
+        // FIRST, and it is one relaxed atomic store -- nothing else. From here a
+        // GcPin releases WITHOUT touching the engine or the registry lock.
+        //
+        // It has to be HERE and not only in DoShutdown, because DoShutdown runs
+        // only from CoopWndProc's close branch: the game's own quit (RequestExit ->
+        // FEngineLoop::Exit) never reaches it. Pins live inside statics -- the proxy
+        // map holds up to ~871 -- and the CRT runs those destructors after this
+        // callback, where un-rooting would deref a freed UObject and walk a
+        // GUObjectArray UE has already torn down. Two independent post-ship audits
+        // found this on the same day the pins shipped.
+        ue_wrap::GcPin::StopReleases();
         // PERSIST ONLY. This used to call coop::shutdown::DoShutdown() under a
         // comment claiming it "only sets a flag + uninstalls our PE detour, both
         // safe under the lock" -- and BOTH halves of that were false. It reached

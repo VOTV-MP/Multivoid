@@ -3,6 +3,8 @@
 // Extracted from net_pump.cpp 2026-06-12 (modular soft cap): the five
 // sync-module fan-out lists, moved VERBATIM. New sync features wire in here.
 
+#include "ue_wrap/core/gc_pin.h"
+#include "coop/props/native_pile_mirror.h"
 #include "coop/session/subsystems.h"
 
 #include "coop/element/object_scan_hub.h"  // R-2: the shared sliced GUObjectArray pass
@@ -397,6 +399,10 @@ DisconnectStats DisconnectAll() {
     // RetireProxy un-roots + destroys + evicts the drive, so ForceRelease below
     // sees no live/rooted proxy and no stale drive entry (structural no-leak).
     coop::trash_proxy::OnDisconnect();
+    // Drop any GC pin on a materialized native pile too. Unlike the proxies, these have no
+    // destroy path that runs at a session end -- a native that simply outlived the session
+    // would stay pinned, and a pin anchors its world's whole Outer chain.
+    coop::native_pile_mirror::OnDisconnect();
     coop::remote_prop::ForceRelease();
     // P2: a disconnect mid-snapshot must drop the armed claim set (dangling
     // actor pointers must not survive into the next session); no sweep.
@@ -478,6 +484,12 @@ DisconnectStats DisconnectAll() {
     coop::puppet_carry_drive::OnDisconnect();  // v84 Increment 2: drop all puppet-held clump drives
     coop::trash_clump_pose_stream::OnDisconnect();  // v85 Increment 2: drop all client per-eid carry drives
     coop::balance_sync::OnDisconnect();  // v30: reset the balance broadcast dedup
+    // THE ASSERTION the old hand-written un-roots could not make. Every pin we take on a
+    // world-scoped object is session-scoped, so after a full teardown the world-scoped pin
+    // count must be zero. A non-zero answer names the module still anchoring the departing
+    // world's Outer chain -- the condition that, left standing, makes the NEXT map load in
+    // this process adopt an uncollected corpse and die on its null WorldSettings.
+    ue_wrap::GcPin::ReportWorldScopedPins("DisconnectAll");
     return stats;
 }
 

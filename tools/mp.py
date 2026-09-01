@@ -2866,6 +2866,25 @@ def cmd_reloadchurn(args) -> None:
              for m in re.finditer(r"reloadchurn\[([a-z-]+) c\d+\]: VERDICT nullWorldSettings=(\d+)", text)]
     worst = max((n for _, n in nulls), default=0)
     offending = sorted({tag for tag, n in nulls if n > 0})
+    # THE ROOT TERM, not just the symptom. A crash is what a leaked GC pin eventually
+    # causes; a root-set object still reaching a DEAD world through its Outer chain is the
+    # leak itself, and it is observable at the menu without dying of it. Grading only on
+    # "did the process survive" would pass a build that leaks pins on a run where the
+    # rejoin happened not to reach the fatal load.
+    # Both root terms come off the VERDICT line, which is per-census-frame and already
+    # aggregates every dead world in that frame. Grading a per-object line instead would
+    # grade whichever one the census printed last -- the exact hole an audit found in the
+    # first version of this term.
+    holders = [(m.group(1), int(m.group(2)))
+               for m in re.finditer(r"reloadchurn\[([a-z-]+) c\d+\]: VERDICT .*?"
+                                    r"rootedHoldersOfDead=(\d+)", text)]
+    worstHolders = max((n for _, n in holders), default=0)
+    holderTags = sorted({tag for tag, n in holders if n > 0})
+    stuckList = [(m.group(1), int(m.group(2)))
+                 for m in re.finditer(r"reloadchurn\[([a-z-]+) c\d+\]: VERDICT .*?"
+                                      r"stuckInFinishDestroy=(\d+)", text)]
+    worstStuck = max((n for _, n in stuckList), default=0)
+    stuckTags = sorted({tag for tag, n in stuckList if n > 0})
 
     log("--- RELOADCHURN VERDICT ---")
     log(f"  cycles requested   : {args.cycles}")
@@ -2874,6 +2893,10 @@ def cmd_reloadchurn(args) -> None:
     log(f"  worst nullWorldSettings : {worst}"
         + (f"  (at: {', '.join(offending)})" if offending else ""))
     log(f"  process died       : {died}")
+    log(f"  rooted holders of a DEAD world : {worstHolders}"
+        + (f"  (at: {', '.join(holderTags)})" if holderTags else ""))
+    log(f"  worlds stuck in FinishDestroy   : {worstStuck}"
+        + (f"  (at: {', '.join(stuckTags)})" if stuckTags else ""))
     for line in text.splitlines():
         if "WORLDSETTINGS IS NULL" in line:
             log(f"  ! {line.strip()}")
@@ -2893,13 +2916,32 @@ def cmd_reloadchurn(args) -> None:
                      f"condition is present at: {', '.join(offending)}")
     if not nulls:
         fails.append("no census frames at all -- the probe never ran (check the offsets line)")
+    # A MISSING term must not read as a passing zero. Every VERDICT line carries all three,
+    # so a count mismatch means the probe and this parser have drifted -- and a silently
+    # unmatched regex is how a gate grades itself green on a defect it can no longer see.
+    if nulls and (len(holders) != len(nulls) or len(stuckList) != len(nulls)):
+        fails.append(f"the census emitted {len(nulls)} VERDICT frames but only "
+                     f"{len(holders)} carried rootedHoldersOfDead and {len(stuckList)} carried "
+                     f"stuckInFinishDestroy -- the harness cannot grade a term it cannot see")
+    if worstHolders > 0:
+        fails.append(f"{worstHolders} ROOT-SET object(s) still reach a dead world through their "
+                     f"Outer chain (at: {', '.join(holderTags)}) -- that world can never be "
+                     f"collected, and the next in-process map load will adopt it")
+    if worstStuck > 0:
+        fails.append(f"{worstStuck} world(s) begun-but-not-finished destroying (at: "
+                     f"{', '.join(stuckTags)}) -- IsReadyForFinishDestroy is answering false, "
+                     f"which is a DIFFERENT defect from a rooted holder and needs different tools")
 
     if fails:
         for f in fails:
             log(f"  FAIL: {f}")
         tail_log(host_log, 40, "HOST")
         sys.exit(1)
-    log("  ALL PASS -- solo re-load churn is clean; the crash needs something this arm lacks")
+    if args.rejoin:
+        log("  ALL PASS -- the coop rejoin arm survived, no census saw a null WorldSettings, and "
+            "nothing root-set was left anchoring the departed world")
+    else:
+        log("  ALL PASS -- solo re-load churn is clean; the crash needs something this arm lacks")
     sys.exit(0)
 
 

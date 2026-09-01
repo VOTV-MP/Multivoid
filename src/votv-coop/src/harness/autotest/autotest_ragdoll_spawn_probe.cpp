@@ -32,6 +32,7 @@
 // (ragdollActor @0xC40) are cited to the CXX SDK dump, mirroring the sibling
 // autotest_vitals.cpp raw-ParamFrame diagnostics -- this is not a shipping path.
 
+#include "ue_wrap/core/gc_pin.h"
 #include "harness/autotest.h"
 #include "harness/screenshot.h"
 
@@ -216,10 +217,12 @@ void* SpawnManualRagdoll(void* local) {
         E::FinishDeferredSpawn(actor, loc, rot);
         // Root it for the probe's lifetime so an incidental GC pass cannot reap the
         // body mid-experiment and turn a working spawn into a false "null/dead" dump
-        // (audit 2026-06-01). Intentionally left rooted -- this is a throwaway probe
-        // whose session is killed right after; DestroyActor below tears the body down
-        // regardless of root, and a self-destructing BeginPlay still shows as dead.
-        R::AddToRoot(actor);
+        // (audit 2026-06-01). Rooted for the probe's own run only: the static pin holds ONE
+        // body, so a second invocation releases the first, and the pin stands down at process
+        // teardown. DestroyActor below tears the body down regardless of root, and a
+        // self-destructing BeginPlay still shows as dead.
+        static ue_wrap::GcPin sProbePin;  // one throwaway probe body, owned for its session
+        sProbePin.Pin(actor);
         UE_LOGI("ragdollspawn[manual]: spawned playerRagdoll_C @%p at (%.0f,%.0f,%.0f), Player set -- NO ragdollMode called",
                 actor, loc.X, loc.Y, loc.Z);
         *out = actor;

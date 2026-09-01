@@ -1,5 +1,6 @@
 // coop/dev/native_pile_inert_probe.cpp -- see coop/dev/native_pile_inert_probe.h.
 
+#include "ue_wrap/core/gc_pin.h"
 #include "coop/dev/native_pile_inert_probe.h"
 
 #include "coop/config/config.h"
@@ -16,6 +17,7 @@
 
 namespace coop::dev::native_pile_inert_probe {
 namespace {
+ue_wrap::GcPin g_pin;  // the probe body's pin, owned (released before the destroy)
 
 namespace R = ue_wrap::reflection;
 namespace E = ue_wrap::engine;
@@ -43,7 +45,7 @@ void* LocalPlayer() {
 
 void Cleanup() {
     if (g_actor) {
-        R::RemoveFromRoot(g_actor);   // un-pin BEFORE destroy (rooted PendingKill would leak)
+        g_pin.Release();              // un-pin BEFORE destroy (rooted PendingKill would leak)
         E::DestroyActor(g_actor);
         g_actor = nullptr;
     }
@@ -98,7 +100,7 @@ void Tick(bool connected, bool isHost) {
         // autonomous ubergraph), AddToRoot (GC-pin). NoCollision was already proven inert 39s; THIS run
         // excites the collision-ON contact path. Collision is left at the native default -- deliberately
         // NOT disabled.
-        R::AddToRoot(a);                              // GC-pin (the proxy's proven prophylactic)
+        g_pin.Pin(a);                                 // GC-pin (the proxy's proven prophylactic), owned
         E::SetActorTickEnabled(a, false);             // no per-frame ubergraph
         if (void* comp = E::GetStaticMeshComponent(a)) E::SetComponentMobility(comp, 2);  // Movable (host-positionable)
         g_actor   = a;
