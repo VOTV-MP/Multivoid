@@ -6,15 +6,17 @@ resources live in `src/votv-coop/resources/` and `src/votv-coop/assets/fonts/`.
 
 | file | tracked | what it is |
 |---|---|---|
-| `icon.psd` | **NO — see below** | The editable source, 4.8 MB. |
-| `icon-512.png` | yes | **The flattened master.** 512x512, PNG, 32bpp with alpha. Supplied by the user 2026-08-25 (second revision, same day), stored verbatim. This is what the 256 is cut from. |
+| `icon.psd` | **NO — see below** | The editable source **of the RETIRED art**, 4.8 MB. It is NOT the source of the current master (see Provenance) — do not open it expecting to edit what ships. |
+| `icon-512.png` | yes | **The flattened master.** 512x512, PNG, 32bpp with alpha. **Replaced 2026-09-01** by the user's third revision, stored verbatim (`md5 5fdbfb20d50a6883e9f054d40bc01d38`); the 2026-08-25 art it supersedes is in git history. This is what the 256 is cut from. |
 | `icon.png` | yes | **Generated, never hand-edited.** Exactly 256x256 — the size Thunderstore requires at the zip root. |
 
 ### Why `icon.psd` is not committed (yet)
 
-It is the only truly irreplaceable file here — flattening is one-way — so it is *not* a file to lose.
-But it is 4.8 MB of binary heading into a **public** repository, and a PSD carries more than pixels
-(layer names, hidden layers, embedded originals). That is a call for the user, not a default:
+**Re-stated 2026-09-01:** it used to be the one irreplaceable file here. It is not any more — it is
+the editable source of art that no longer ships, and the art that DOES ship has no editable source in
+this tree at all. So the case for committing it is weaker than it was, and the case against is
+unchanged: 4.8 MB of binary heading into a **public** repository, and a PSD carries more than pixels
+(layer names, hidden layers, embedded originals). Still a call for the user, not a default:
 
 - **to commit it:** `git add -f assets/branding/icon.psd` (`.gitignore` does not currently block it;
   it is simply not staged) — and it should get a leak pass first, like anything else going public.
@@ -45,7 +47,21 @@ $v=[System.Drawing.Image]::FromFile("$PWD\assets\branding\icon.png"); "$($v.Widt
 
 ## Provenance
 
-The art is a Multivoid screenshot: the HL-derived client model in the base airlock, under the
-Multivoid diamond. That is the same asset class as the shipped scientist skins, which
-`docs/UE4SS_ARC.md` §7.6 settled as a USER DECISION on 2026-08-23 — it ships. Recorded here so the
-question is not re-opened at package time.
+**Current art (2026-09-01).** Five HL-derived scientist models posed around the workstation room,
+each tagged with a nickname and a ping in the coop nameplate style, under a pixel-font `MultiVoid`
+wordmark. Same asset class as the shipped scientist skins, which `docs/UE4SS_ARC.md` §7.6 settled as
+a USER DECISION on 2026-08-23 — it ships. Recorded here so the question is not re-opened at package
+time; the extra models change nothing about that decision, they are more of the same class.
+
+**Superseded art (2026-08-25).** The HL-derived client model alone in the base airlock, under the
+Multivoid diamond. `icon.psd` on disk is that image's editable source. The 2026-09-01 master arrived
+as a flattened PNG with **no editable source in the tree**, so flattening is not the only one-way
+step here any more — whatever produced it lives outside this repo.
+
+**Alpha, measured not assumed (2026-09-01).** The current master has genuinely transparent corners:
+`[0,0,0,0]` at the four corner pixels, and the generated 256 carries 3,991 fully-transparent plus
+1,753 partial-alpha pixels. **The superseded master did not** — its corners measured alpha `255`
+(the rounded corners were painted dark, not cut out), so the older claim that "alpha survives" was
+describing a channel that was uniformly opaque. Thunderstore supports transparency, so the new
+behaviour is the wanted one; it is written down because the downscale above is the step that could
+silently destroy it.
