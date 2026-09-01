@@ -6271,6 +6271,34 @@ def main() -> None:
             game_lock.release(session, note_line=None)
         return
 
+    # --- THE RIG IS NOT ONLY CONTENDED BY OTHER CLAUDE SESSIONS (2026-09-01) -------------------
+    # The lock above answers "does another SESSION hold the rig". It cannot answer "is a HUMAN
+    # playing right now", because a human takes no lock -- and `kill_all()` below is indiscriminate:
+    # it stops EVERY `VotV-Win64-Shipping` on the box, not the ones this run launched. On
+    # 2026-09-01 that killed the user's own hands-on test of the release zip, mid-test.
+    #
+    # The instrument already computed the right set and computed it at the WRONG END: the FOREIGN
+    # PROCESS WITNESS reports `NOT OURS` in the epilogue, after the kill it is describing. Here,
+    # before anything is launched, the discriminator is free and exact -- this run has launched
+    # nothing, so EVERY live VotV process is by construction not ours.
+    #
+    # Refuse rather than warn. A warning printed into a scrollback nobody is reading is not a
+    # control, and the cost of being wrong is asymmetric: a needless refusal costs one `mp.py kill`,
+    # while a needless kill destroys a test run whose evidence cannot be recovered.
+    if not os.environ.get("MULTIVOID_RIG_TAKEOVER"):
+        held = game_lock._read()
+        already_ours = bool(held) and held.get("session") == session
+        if not already_ours:
+            strays = list_votv()
+            if strays:
+                log("REFUSING to launch: VotV is ALREADY RUNNING and this run did not start it.")
+                for p in strays:
+                    log(f"  PID={p['PID']} RSS={p['RSS_MB']}MB title='{p['Title']}'")
+                log("Every scenario begins by killing EVERY VotV process, so continuing would")
+                log("destroy whatever that is -- including a person's hands-on test.")
+                log("If it is yours to take: `python tools/mp.py kill`, or set MULTIVOID_RIG_TAKEOVER=1.")
+                sys.exit(3)
+
     # `host`/`client*` launch a game and RETURN, so the lock must outlive this process. `mp.py kill`
     # is what drops it.
     persistent = cmd in ("host", "client", "client2", "client3")
