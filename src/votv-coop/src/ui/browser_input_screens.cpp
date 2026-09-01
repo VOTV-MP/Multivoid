@@ -318,7 +318,8 @@ void Show(Kind kind) {
     // otherwise Back walks back into a screen that is no longer listening. The browser
     // solves this by closing synchronously before it opens the hosting window; here the
     // same rule is stated by only recording `priorIndex` when nothing of ours is showing.
-    if (g_open < 0) g_priorIndex = U::SwitcherIndex(g_switcher);
+    if (g_open < 0)
+        g_priorIndex = NS::SafePriorIndex(U::SwitcherIndex(g_switcher), s.index, g_priorIndex);
     g_open = Idx(kind);
     U::SwitcherSetIndex(g_switcher, s.index);
     g_escPrimed = false;
@@ -574,11 +575,27 @@ void OnMenuTick(void* menu, void* switcher) {
         }
     }
 
-    if (g_open < 0) return;
+    // Reconcile against the LIVE index rather than asserting ours, IN BOTH DIRECTIONS -- the
+    // rule the whole switcher family follows since 2026-09-01. Closed is observed (below);
+    // OPEN is observed here, so a caller that hands one of these screens back by restoring
+    // its index gets a live screen rather than one that draws and answers nothing.
+    if (g_open < 0) {
+        const int32_t live = NS::ActiveIndex();
+        if (live < 0) return;
+        for (int i = 0; i < 3; ++i) {
+            if (!g_screen[i].root || g_screen[i].index != live) continue;
+            g_open = i;
+            g_escPrimed = false;
+            g_lmbPrimed = false;
+            g_prevTab   = false;
+            UE_LOGI("browser_input_screens: live again (index %d returned to screen %d)",
+                    live, i);
+            break;
+        }
+        if (g_open < 0) return;
+    }
 
-    // Reconcile against the LIVE index rather than asserting ours: a sibling screen (or the
-    // game's own ESC path) can navigate away, and if it did we were closed, whoever did it.
-    if (U::SwitcherIndex(g_switcher) != g_screen[g_open].index) {
+    if (NS::ActiveIndex() != g_screen[g_open].index) {
         // BOTH, as `Hide` does. Blurring only the first left `g_focus` on the password box
         // with `g_open == -1`, so nothing ticked or blurred it again: every keystroke landed
         // in an invisible box and `AnyFocused()` kept ESC from closing the browser.

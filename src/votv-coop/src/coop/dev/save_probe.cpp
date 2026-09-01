@@ -44,18 +44,33 @@ DWORD WINAPI Thread(LPVOID) {
     PostEnumerate("enum1");
     ue_wrap::log::Flush();
 
-    // Optional: create a NAMED story save then re-enumerate to confirm it persists +
-    // appears. VOTVCOOP_TEST_SAVE_CREATE=<base name> (e.g. "coopProbe"). ASCII.
+    // Optional: create NAMED story saves then re-enumerate to confirm they persist + appear.
+    // VOTVCOOP_TEST_SAVE_CREATE=<base name> (e.g. "coopProbe"). ASCII.
+    //
+    // THREE CALLS ON ONE NAME, because what needs proving is a DIFFERENTIAL and not a
+    // success: the exact primitive must REFUSE a name it has already taken, and the unique
+    // variant must keep going beside it. A run that only exercised the unique call would
+    // pass identically on a rig where the base name happened to be free -- which is exactly
+    // the condition under which the defect it closes is invisible. So the probe MAKES the
+    // collision it then measures, rather than depending on the state of the box's saves.
     const std::string createName = ReadEnv("VOTVCOOP_TEST_SAVE_CREATE");
     if (!createName.empty()) {
         const std::wstring wname(createName.begin(), createName.end());
         ::Sleep(1500);
         auto done = std::make_shared<std::atomic<int>>(0);  // 0 pending,1 done
         GT::Post([wname, done] {
-            std::wstring outSlot;
-            const bool ok = SB::CreateNamedSave(wname, /*mode=*/0 /*story*/, outSlot);
-            UE_LOGI("save_probe: CreateNamedSave('%ls') ok=%d slot='%ls'",
-                    wname.c_str(), ok ? 1 : 0, outSlot.c_str());
+            std::wstring first, dup, second;
+            const bool okFirst  = SB::CreateNamedSaveUnique(wname, /*mode=*/0 /*story*/, first);
+            const bool okDup    = SB::CreateNamedSave(wname, /*mode=*/0 /*story*/, dup);
+            const bool okSecond = SB::CreateNamedSaveUnique(wname, /*mode=*/0 /*story*/, second);
+            UE_LOGI("save_probe: unique#1('%ls') ok=%d slot='%ls'", wname.c_str(), okFirst ? 1 : 0,
+                    first.c_str());
+            UE_LOGI("save_probe: exact-on-taken('%ls') ok=%d slot='%ls' (MUST be ok=0)",
+                    wname.c_str(), okDup ? 1 : 0, dup.c_str());
+            UE_LOGI("save_probe: unique#2('%ls') ok=%d slot='%ls' (MUST differ from unique#1)",
+                    wname.c_str(), okSecond ? 1 : 0, second.c_str());
+            const bool pass = okFirst && !okDup && okSecond && !second.empty() && second != first;
+            UE_LOGI("save_probe: UNIQUE-NAME DIFFERENTIAL %s", pass ? "PASS" : "FAIL");
             done->store(1, std::memory_order_release);
         });
         for (int i = 0; i < 800 && done->load(std::memory_order_acquire) == 0; ++i) ::Sleep(5);

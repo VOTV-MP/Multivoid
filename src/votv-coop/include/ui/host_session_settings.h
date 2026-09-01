@@ -56,7 +56,6 @@ namespace ui::host_session_settings {
 void Open(const coop::session_manager::SaveChoice& choice, const std::string& serverName,
           int connMode);
 
-void Close();
 bool IsOpen();
 
 // ---- read-only seams, for the self-check to aim at and assert on ----------------------

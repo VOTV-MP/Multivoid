@@ -55,6 +55,21 @@ bool EnumerateSaves(std::vector<SaveInfo>& out);
 // existing save: engine::LoadStorySave(outSlot).
 bool CreateNamedSave(const std::wstring& name, uint8_t mode, std::wstring& outSlot);
 
+// The same creation, from a BASE name the caller does not need to have checked: probes
+// "<base>", "<base> 2", "<base> 3" ... and creates the first one free.
+//
+// WHY IT EXISTS. `CreateNamedSave` refusing a taken name is correct -- a caller naming an
+// exact slot deserves the truth rather than a silent rename. But the native hosting lane
+// has no name field, so its base name is a CONSTANT, and a constant can be created exactly
+// once: the second New Game a player ever hosted died on "already exists", aborted the boot
+// and dropped them back on the server browser with no world made. Found by the user on a
+// fresh r2modman rig, 2026-09-01, where `s_Coop` had survived the first session.
+//
+// Uniqueness is resolved HERE, against LIVE slots at the moment of creation, rather than by
+// a picker filtering its save list: an enumeration a menu is holding can be minutes old, and
+// a name that was free when it was CHOSEN is exactly the failure this closes. Game thread.
+bool CreateNamedSaveUnique(const std::wstring& baseName, uint8_t mode, std::wstring& outSlot);
+
 // True iff a save slot already exists on disk (UGameplayStatics::DoesSaveGameExist).
 // Game thread only. Used by the picker to validate a typed New-Game name live.
 bool SlotExists(const std::wstring& slot);

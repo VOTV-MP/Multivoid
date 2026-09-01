@@ -7,6 +7,7 @@
 #include "ui/host_session_settings.h"
 
 #include "coop/config/config.h"
+#include "coop/text/utf8_codec.h"   // the server name is sanitised where it is authored
 #include "coop/config/config_registry.h"
 #include "coop/net/peer_identity.h"     // RandomBytes -- the CSPRNG the identity already uses
 #include "coop/session/host_mode.h"
@@ -80,6 +81,12 @@ constexpr float kRowH     = 56.f;
 constexpr float kBorderPx = 2.f;
 constexpr float kPadPx    = 6.f;
 constexpr float kFieldW   = 420.f;
+// THE SERVER NAME'S BOUND, in BYTES because that is what the field counts and what travels.
+// The derived default is "<nick>'s game" and a nick is capped at 20 CODEPOINTS, so a typed
+// name gets comfortably more room than the autofill it replaces while staying a name rather
+// than a paragraph: the browser draws it in one row, and the master stores it. 96 bytes is
+// 24 codepoints at the 4-byte worst case and ~96 in plain Latin.
+constexpr int32_t kNameMaxBytes = 96;
 
 const FLinearColor kPanel  = NS::Panel();
 const FLinearColor kRowBg  = NS::RowBg();
@@ -195,7 +202,6 @@ void* g_hostBtn  = nullptr;
 void* g_status   = nullptr;
 void* g_pwBlock  = nullptr;   // the label + field + hint, shown only while locked
 void* g_pwHint   = nullptr;
-void* g_recapName = nullptr;
 void* g_recapWorld = nullptr;
 void* g_recapConn  = nullptr;
 // THE QUESTIONS, each a `host_session_choices::Selector`. They were four widget arrays and
@@ -211,7 +217,17 @@ bool IsLocked() { return g_who.chosen == 1; }
 bool IsListed() { return g_vis.chosen == 0; }
 void* g_visHint     = nullptr;   // why the choice is fixed, on the modes where it is
 
-TF::Field* g_pwField = nullptr;
+TF::Field* g_pwField   = nullptr;
+TF::Field* g_nameField = nullptr;   // the server name, editable here (see the recap block)
+
+// EVERY early return from the build past the first `TF::Create` comes through here. The
+// hand-written `TF::Release(g_pwField); g_pwField = nullptr;` pairs were already the source
+// of two shipped leaks -- one per audit, each on the one path whose author forgot them -- and
+// a second field would have doubled the sites that can forget. This makes the count one.
+void ReleaseFields() {
+    TF::Release(g_nameField); g_nameField = nullptr;
+    TF::Release(g_pwField);   g_pwField   = nullptr;
+}
 
 int32_t g_ourIndex   = -1;
 int32_t g_priorIndex = -1;
@@ -345,7 +361,6 @@ struct PendingOpen {
 PendingOpen           g_pending;
 std::mutex            g_pendingMu;
 std::atomic<uint64_t> g_wantOpenMs{0};
-std::atomic<bool>     g_wantClose{false};
 constexpr uint64_t kIntentTtlMs = 20000;
 
 // ---- helpers ---------------------------------------------------------------------------
@@ -469,9 +484,15 @@ void RepaintChoices() {
         if (g_visHint) {
             SetText(g_visHint,
                     g_connMode == 0
+                        // IT NAMES THE CONTROL THAT ANSWERS THE INTENT. A player pressing
+                        // "Hidden" wants a private game, and on this mode the password one
+                        // row below is what gives them one -- an unlisted brokered lobby
+                        // would just be unjoinable. The first version explained the refusal
+                        // and then sent them to the ~ menu AFTER their friends had joined,
+                        // which answers a different question than the one the press asked.
                         ? std::wstring(L"Automatic games are always listed -- the list is how "
-                                       L"friends find you. You can hide it from the ~ menu "
-                                       L"once they have joined.")
+                                       L"friends find you. Set a password below to keep "
+                                       L"strangers out.")
                         : std::wstring(),
                     g_connMode == 1 ? kDim : kAmber);
         }
@@ -534,17 +555,29 @@ bool BuildScreen(void* switcher) {
     g_scrim   = shell.scrim;
 
     // ---- what step one decided, so the player can commit to it without going back -------
-    // Read-only. It is not a second place to change these values -- Back is.
+    // THE NAME IS EDITABLE HERE; the world and the connection mode are not. USER 2026-09-01:
+    // "It's fine that the server name is autofilled but host should be able to change that on
+    // the session settings menu." The two below it are step-one DECISIONS whose consequences
+    // reach past this window -- changing either means going Back and re-choosing -- but the
+    // name is a label on the lobby, and a player who wants to rename their game should not
+    // have to leave the window they are about to press Host in. Autofill stays: an empty box
+    // at this moment would make them invent a name to get past it.
     if (void* recap = SectionBody(col, L"Your session:")) {
-        g_recapName  = NS::AddText(recap, L"", 20, kText, NS::kJustLeft, 0.f);
-        g_recapWorld = NS::AddText(recap, L"", 16, kDim,  NS::kJustLeft, 0.f);
-        g_recapConn  = NS::AddText(recap, L"", 16, kDim,  NS::kJustLeft, 0.f);
-        U::SetClipping(g_recapName, 1);
+        // IN A ROW OF ITS OWN so `kFieldW` applies -- a VerticalBox slot fills horizontally
+        // and would stretch the field to the full column, the same trap the password row
+        // documents below.
+        void* nameRow = NS::Spawn(L"HorizontalBox", recap);
+        if (!nameRow) return false;
+        NS::AddVFill(recap, nameRow, 0.f, NS::kFill, NS::kTop);
+        g_nameField = TF::Create(nameRow, L"server name", kNameMaxBytes, kFieldW);
+        if (!g_nameField) return false;
+        g_recapWorld = NS::AddText(recap, L"", 16, kDim, NS::kJustLeft, 0.f);
+        g_recapConn  = NS::AddText(recap, L"", 16, kDim, NS::kJustLeft, 0.f);
         U::SetClipping(g_recapWorld, 1);
         U::SetClipping(g_recapConn, 1);
     }
 
-    if (!HC::Build(col, L"WHO MAY JOIN", kWho, g_who)) return false;
+    if (!HC::Build(col, L"WHO MAY JOIN", kWho, g_who)) { ReleaseFields(); return false; }
 
     // ---- the password block, collapsed until the lock goes on ---------------------------
     // ONE CONTAINER, so the whole block appears and disappears together. The field itself
@@ -582,7 +615,7 @@ bool BuildScreen(void* switcher) {
     // once a SECOND forever. That is 1 leak/sec plus a window's worth of orphaned UObjects
     // feeding GC. (Post-ship perf audit, 2026-09-01.)
     if (!HC::Build(col, L"SERVER LIST", kVis, g_vis)) {
-        TF::Release(g_pwField); g_pwField = nullptr; return false;
+        ReleaseFields(); return false;
     }
     g_visHint = NS::AddText(col, L"", 15, kDim, NS::kJustLeft, 0.f);
     if (g_visHint) U::SetAutoWrapText(g_visHint, true);
@@ -607,7 +640,7 @@ bool BuildScreen(void* switcher) {
         // the first one stranded in the module's live list forever. The index-failure
         // path forty lines below was hardened against exactly this and this one was not
         // (post-ship audit, 2026-08-31).
-        if (!g_backBtn || !g_hostBtn) { TF::Release(g_pwField); g_pwField = nullptr; return false; }
+        if (!g_backBtn || !g_hostBtn) { ReleaseFields(); return false; }
         NS::SetHSlot(NS::SlotOf(g_backBtn), 0.f, NS::kLeft,  NS::kCenter);
         NS::SetHSlot(NS::SlotOf(g_hostBtn), 0.f, NS::kRight, NS::kCenter);
         if (void* s = NS::AddVFill(col, footRow, 0.f, NS::kFill, NS::kBottom))
@@ -633,8 +666,7 @@ bool BuildScreen(void* switcher) {
         // slot. Clearing `g_root` alone would leave the heap Field alive and in the module's
         // live list, and the next tick would rebuild everything and leak another one (the
         // input screens' own audit finding, 2026-08-31).
-        TF::Release(g_pwField);
-        g_pwField = nullptr;
+        ReleaseFields();
         g_root = nullptr;
         return false;
     }
@@ -681,12 +713,33 @@ void DoHost() {
     // flag on the other modes would be sending a value the callee is entitled to drop --
     // and a reader of this call would have to go find that out. The mode gate is stated
     // here instead, where the value is formed.
+    // THE NAME THE PLAYER SEES IS THE NAME WE HOST UNDER. Read from the field, never from
+    // `g_name` -- that is only the autofill this window opened with, and using it would make
+    // the box a decoration that silently discards what was typed into it.
+    //
+    // SANITISED AND BOUNDED HERE, because this is the boundary: from this call the string
+    // goes to the master and is drawn in every other player's browser. `SanitizeUtf8` is the
+    // same C0-control denylist the nick path uses, and the byte cap backs off to a character
+    // boundary rather than resizing into a split sequence. The field already bounds input at
+    // `kNameMaxBytes`; capping again costs nothing and does not trust the widget.
+    //
+    // A BLANK BOX FALLS BACK rather than refusing. The player who clears the field has said
+    // nothing about the name, and a nameless row in the browser helps nobody -- so they get
+    // the autofill back instead of an error between them and hosting.
+    std::string serverName = coop::text::CapUtf8Bytes(
+        coop::text::SanitizeUtf8(TF::Text(g_nameField).data(), TF::Text(g_nameField).size()),
+        static_cast<size_t>(kNameMaxBytes));
+    while (!serverName.empty() && (serverName.back() == ' ' || serverName.back() == '\t'))
+        serverName.pop_back();
+    serverName.erase(0, serverName.find_first_not_of(" \t"));
+    if (serverName.empty()) serverName = g_name;
+
     const bool hideFromBrowser = VisibilityIsEditable() && !IsListed();
     const coop::session::HostMode mode{
         g_connMode == 1 ? coop::session::Reachability::Direct
                         : coop::session::Reachability::Brokered,
         !hideFromBrowser};
-    const bool accepted = sm::HostWithSave(g_choice, g_name, IsLocked(), pw, /*playersMax=*/4,
+    const bool accepted = sm::HostWithSave(g_choice, serverName, IsLocked(), pw, /*playersMax=*/4,
                                            mode);
     // THE PASSWORD IS NEVER LOGGED. It is the one value in this window that is a secret, and
     // a log line is the easiest place in the whole program for it to end up in a screenshot.
@@ -699,7 +752,7 @@ void DoHost() {
             // lobby the master was deliberately never told about. That mode is retired, and
             // with it the reason for the extra term.
             !hideFromBrowser ? 1 : 0,
-            IsLocked() ? 1 : 0, g_name.c_str());
+            IsLocked() ? 1 : 0, serverName.c_str());
     if (!accepted) {
         // The window STAYS OPEN on a refusal, for the reason step one records: a screen that
         // closes on failure is how "nothing told about the session being DEAD" happened --
@@ -739,7 +792,10 @@ void PollChrome() {
     // always already gone. One Escape both left the field AND closed the window, throwing
     // away a password the player had just typed (post-ship audit, 2026-08-31).
     const bool esc = (::GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
-    if (!g_escPrimed) { g_escPrimed = true; g_prevEsc = esc; }
+    // PRIMED ONLY ONCE THE KEY IS UP. Seeding `g_prevEsc` from a HELD key still arms the
+    // release edge, so a window opening under a held Escape closed itself on the release --
+    // which is why the sibling window primes on `!esc` and this one did not (audit).
+    if (!g_escPrimed) { g_escPrimed = !esc; g_prevEsc = esc; }
     const bool escEdge = g_prevEsc && !esc;   // RELEASE edge
     g_prevEsc = esc;
     if (escEdge) {
@@ -757,6 +813,9 @@ void PollChrome() {
         // Asking only at the edge means the latch survives the whole press, which is what
         // "this Escape was the field's" has to mean when press and release are different
         // ticks.
+        // ASKED OF EVERY FIELD, not just the password's. Escape leaving a field must not
+        // also leave the window, and a second field would otherwise inherit none of that.
+        if (TF::ConsumeEscape(g_nameField)) return;
         if (TF::ConsumeEscape(g_pwField)) return;
         BackToHostWindow();
         return;
@@ -764,6 +823,7 @@ void PollChrome() {
 
     // ENTER in the password field HOSTS. The key that ends typing is the one that acts,
     // which is what every text field a player has ever used does.
+    if (TF::ConsumeSubmit(g_nameField)) { DoHost(); return; }
     if (IsLocked() && TF::ConsumeSubmit(g_pwField)) { DoHost(); return; }
 
     const bool lmb = (::GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
@@ -853,9 +913,25 @@ void UpdateHover() {
 
 // ============================ lifecycle ================================================
 
+// EVERYTHING THAT MUST BE TRUE THE MOMENT THIS SCREEN BECOMES LIVE -- one owner, because
+// there are now TWO ways it happens: `Show()`, and the reconcile that revives it when the
+// switcher index comes back to ours. The revive originally skipped these and the failure was
+// immediate: the browser closes on the ESC PRESS edge while this window closes on the
+// RELEASE, so one keypress closed the browser, revived this window with a stale `g_escPrimed`
+// still true, and let the player's own release close this one too -- one key walking two
+// screens back. The hover matters for the same reason a reopening does not move the pointer.
+//
+// The CONTENT resets stay in `Show()` on purpose and must not migrate here: re-reading the
+// ini or clearing the status on a revive would wipe a half-typed password and erase the very
+// host-failure line this window exists to display.
+void BecameLive() {
+    g_escPrimed = false;
+    g_lmbPrimed = false;
+}
+
 void Show() {
     if (!g_switcher || !g_root || g_shown) return;
-    g_priorIndex = U::SwitcherIndex(g_switcher);
+    g_priorIndex = NS::SafePriorIndex(U::SwitcherIndex(g_switcher), g_ourIndex, g_priorIndex);
     U::SwitcherSetIndex(g_switcher, g_ourIndex);
     g_shown = true;
     g_who.hover = -1;
@@ -877,8 +953,7 @@ void Show() {
         g_vis.chosen = kListedByDefault ? 0 : 1;
         g_visModeWhenChosen = g_connMode;
     }
-    g_escPrimed = false;
-    g_lmbPrimed = false;
+    BecameLive();
     g_lastStatus.clear();
     g_sawHostAttempt = false;
     g_lastHostStatus.clear();
@@ -889,7 +964,10 @@ void Show() {
     g_hintFor = -2;
     SetStatus(L"", kText);
 
-    SetText(g_recapName, Widen(g_name), kText);
+    // THE AUTOFILL, written on every opening. `g_name` is step one's derived "<nick>'s game",
+    // and re-seeding it here is what makes Back-and-return show the name the player would
+    // expect rather than whatever they had half-typed before leaving.
+    TF::SetText(g_nameField, g_name);
     SetText(g_recapWorld,
             g_choice.newGame ? std::wstring(L"World: a new game")
                              : L"World: " + Widen(g_choice.slot),
@@ -956,11 +1034,6 @@ void Open(const coop::session_manager::SaveChoice& choice, const std::string& se
     g_wantOpenMs.store(::GetTickCount64(), std::memory_order_relaxed);
 }
 
-void Close() {
-    g_wantOpenMs.store(0, std::memory_order_relaxed);
-    g_wantClose.store(true, std::memory_order_relaxed);
-}
-
 bool IsOpen() { return g_shown; }
 
 void* LockRow()    { return g_who.bg[1]; }
@@ -985,12 +1058,11 @@ void OnMenuTick(void* menu, void* switcher) {
         // RELEASE, NOT DESTROY. The widgets died with the menu instance, so the field must
         // unhook its focus and free its handle WITHOUT dispatching RemoveChild into a tree
         // that no longer exists.
-        TF::Release(g_pwField);
-        g_pwField = nullptr;
+        ReleaseFields();
         g_root = nullptr; g_box = nullptr; g_scrim = nullptr; g_status = nullptr;
         g_backBtn = nullptr; g_hostBtn = nullptr;
         g_pwBlock = nullptr; g_pwHint = nullptr;
-        g_recapName = g_recapWorld = g_recapConn = nullptr;
+        g_recapWorld = g_recapConn = nullptr;
         HC::ClearWidgets(g_who);
         // THE VISIBILITY ROWS DIE WITH THE SAME MENU INSTANCE. Missing from this block is
         // not a leak, it is a DANGLING pointer: `RepaintChoices` runs on the next hover and
@@ -1028,7 +1100,6 @@ void OnMenuTick(void* menu, void* switcher) {
         }
     }
 
-    if (g_wantClose.exchange(false, std::memory_order_relaxed)) Hide("requested");
     const uint64_t want = g_wantOpenMs.load(std::memory_order_relaxed);
     if (want) {
         g_wantOpenMs.store(0, std::memory_order_relaxed);
@@ -1053,20 +1124,42 @@ void OnMenuTick(void* menu, void* switcher) {
         }
     }
 
-    if (!g_shown) return;
-
-    // Reconcile against the LIVE index rather than asserting ours: a sibling screen (or the
-    // game's own ESC path) can navigate away, and if it did we were closed, whoever did it.
-    if (U::SwitcherIndex(g_switcher) != g_ourIndex) {
+    // Reconcile against the LIVE index rather than asserting ours, IN BOTH DIRECTIONS: a
+    // sibling screen (or the game's own ESC path) can navigate away, and if it did we were
+    // closed, whoever did it -- and if the index comes BACK to ours we are on screen again,
+    // whoever put it back.
+    //
+    // THE SECOND HALF IS THE FIX, and the asymmetry was the bug. This window could LOSE the
+    // screen by observation but could only REGAIN it by being told, so any caller that
+    // handed the switcher back by writing the index -- which is the obvious way to hand it
+    // back, and what the server browser did -- returned our widgets to the screen with this
+    // tick still returning on its first line. The player got a window that drew normally and
+    // answered nothing: no hover, no clicks, not even its own Back or ESC. User, 2026-09-01:
+    // "там уже ничего нельзя сделать и кнопки мертвые не дают закрыть даже это меню".
+    //
+    // Fixing it HERE rather than in the caller is what makes it hold: the index is only ever
+    // ours because someone restored it (the game never navigates to a child we built), so
+    // the flag can simply follow the truth instead of every present and future caller having
+    // to know which window it displaced.
+    const bool indexIsOurs = g_root && g_ourIndex >= 0 &&
+                             NS::ActiveIndex() == g_ourIndex;
+    if (g_shown && !indexIsOurs) {
         TF::Blur(g_pwField);
         g_shown = false;
         return;
+    }
+    if (!g_shown) {
+        if (!indexIsOurs) return;
+        g_shown = true;
+        BecameLive();
+        UE_LOGI("host_session_settings: live again (the switcher index returned to ours)");
     }
 
     // ONLY WHILE THE BLOCK IS ON SCREEN. `Tick` takes focus when the pointer is pressed
     // inside the field's own rect BY GEOMETRY, and a collapsed widget keeps the rect it last
     // painted with -- so ticking a hidden field would let a click on the row above it steal
     // the keyboard into a box the player cannot see.
+    TF::Tick(g_nameField);   // never collapsed, so unlike the password it is always live
     if (IsLocked()) TF::Tick(g_pwField);
     ReportFit();   // no-op unless the layout moved -- see g_fitDirty
     UpdateHover();

@@ -502,7 +502,11 @@ void DoNext() {
     const int sel = SlotIndex();
     if (sel < 0) {
         c.newGame = true;
-        c.newName = "Coop";
+        // A LITERAL, so nobody typed it -- see SaveChoice::nameIsDerived. This window has
+        // no name field, so without the flag the second New Game ever hosted from here
+        // died on "slot already exists" and dumped the player back on the browser.
+        c.newName       = "Coop";
+        c.nameIsDerived = true;
         c.mode    = 0;   // enum_gamemode story
     } else {
         c.newGame = false;
@@ -568,22 +572,37 @@ void PollChrome() {
 
 // ============================ lifecycle ==============================================
 
+// EVERYTHING THAT MUST BE TRUE THE MOMENT THIS SCREEN BECOMES LIVE -- one owner, because
+// there are now TWO ways it happens: `Show()`, and the reconcile that revives it when the
+// switcher index comes back to ours. The revive originally skipped these and the failure was
+// immediate: the browser closes on the ESC PRESS edge while this window closes on the
+// RELEASE, so one keypress closed the browser, revived this window with a stale `g_escPrimed`
+// still true, and let the player's own release close this one too -- one key walking two
+// screens back. The hover matters for the same reason a reopening does not move the pointer.
+//
+// The CONTENT resets stay in `Show()` on purpose and must not migrate here: re-reading the
+// ini or clearing the status on a revive would wipe a half-typed password and erase the very
+// host-failure line this window exists to display.
+void BecameLive() {
+    g_hover.Reset();
+    g_hoverRow  = -2;
+    g_hoverConn = -1;
+    g_escPrimed = false;
+    g_lmbPrimed = false;
+}
+
 void Show() {
     if (!g_switcher || !g_root || g_shown) return;
     // The index was proven when the screen was BUILT and attached; if that had failed,
     // `g_root` was cleared and we never get here.
-    g_priorIndex = U::SwitcherIndex(g_switcher);
+    g_priorIndex = NS::SafePriorIndex(U::SwitcherIndex(g_switcher), g_ourIndex, g_priorIndex);
     U::SwitcherSetIndex(g_switcher, g_ourIndex);
     g_shown = true;
     // FORGET THE OLD HOVER. Reopening does not move the pointer, so without this the index
     // from the last time this window was up survives -- and the click path reads it, so a
     // click on inert chrome would select whatever row the player happened to leave the
     // cursor over minutes ago.
-    g_hover.Reset();
-    g_hoverRow  = -2;
-    g_hoverConn = -1;
-    g_escPrimed = false;
-    g_lmbPrimed = false;
+    BecameLive();
     sb::RefreshAsync();          // the list is stale by definition between openings
     SyncSaves();
     // EDGE-GATED. This rewrote an FText every tick -- two dispatches plus a wstring and an
@@ -728,11 +747,20 @@ void OnMenuTick(void* menu, void* switcher) {
                     static_cast<unsigned long long>(age),
                     static_cast<unsigned long long>(kIntentTtlMs));
     }
-    if (!g_shown) return;
-
-    // Reconcile against the LIVE index: a sibling screen navigating away is observed
-    // rather than assumed, exactly as the browser does.
-    if (U::SwitcherIndex(g_switcher) != g_ourIndex) { g_shown = false; return; }
+    // Reconcile against the LIVE index IN BOTH DIRECTIONS: a sibling screen navigating away
+    // is observed rather than assumed, and so is one navigating BACK. Losing the screen by
+    // observation while only regaining it by being told is what let a caller hand the
+    // switcher back by writing the index and leave this window drawn but answering nothing --
+    // see the same block in host_session_settings for the failure the user hit.
+    const bool indexIsOurs = g_root && g_ourIndex >= 0 &&
+                             NS::ActiveIndex() == g_ourIndex;
+    if (g_shown && !indexIsOurs) { g_shown = false; return; }
+    if (!g_shown) {
+        if (!indexIsOurs) return;
+        g_shown = true;
+        BecameLive();
+        UE_LOGI("host_window_native: live again (the switcher index returned to ours)");
+    }
 
     SyncSaves();
     UpdateHover();
