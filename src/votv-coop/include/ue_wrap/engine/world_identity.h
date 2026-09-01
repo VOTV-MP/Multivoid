@@ -24,18 +24,25 @@
 // constant across every travel, i.e. structurally incapable of answering this
 // question. That mistake is recorded in the lesson above.
 //
-// A LIVE DEFECT LIVES IN THIS TERRITORY, and anyone reading this header about world
-// lifetime should know it before spending an evening on it (2026-09-01, UNFIXED):
-// after a COOP session, the departed gameplay world is left kill-flagged with its
-// `PersistentLevel` already NULL and is NEVER purged -- 75 s of dwell and a forced
-// `CollectGarbage` both leave it -- so the next `open untitled_1` in the same process
-// adopts that husk and `UGameInstance::CreateGameModeForURL` dereferences a null
-// `AWorldSettings` at `+0x268`. Solo, the same world is fully purged 14 s after
-// reaching the menu. It is reproducible on demand
-// (`python tools/mp.py reloadchurn --rejoin`, same `PCallStackHash` as the field
-// minidump) and the open question is WHY the husk stays -- the standing hypothesis is a
-// deferred `FinishDestroy` gated on the render `FScene`, which is untested. Full RE:
+// A DEFECT LIVED IN THIS TERRITORY AND IS NOW FIXED (2026-09-01) -- the shape is worth
+// knowing, because the NEXT one will look the same. After a COOP session the departed
+// gameplay world was left kill-flagged with its `PersistentLevel` already NULL and NEVER
+// purged -- 75 s of dwell and a forced `CollectGarbage` both left it -- so the next
+// `open untitled_1` in the same process adopted that husk and
+// `UGameInstance::CreateGameModeForURL` dereferenced a null `AWorldSettings` at `+0x268`.
+//
+// THE HYPOTHESIS THIS HEADER USED TO CARRY WAS WRONG, and that is the part to remember: it
+// said the husk was stuck in a deferred `FinishDestroy` gated on the render `FScene`. `[V]`
+// the world's flags were `PendingKill` and NOTHING else -- no `Unreachable`, no
+// `RF_BeginDestroyed` -- so `BeginDestroy` had never run and GC was finding it REACHABLE
+// every pass. 871 of our own trash-pile proxy mirrors were still GC-rooted and anchored it
+// through their Outer chain, because their un-root was written inside `if (liveActor)` and
+// at a world teardown every mirror reports not-alive. Note what that means for THIS module:
+// `Alive()` returning false is exactly when a cleanup is most needed and least likely to
+// run. A pin is now owned by an `ue_wrap::GcPin` and released from its destructor.
+// Full RE (section 9):
 // `research/findings/join-identity/votv-rejoin-loadmap-null-worldsettings-RE-2026-08-31.md`.
+// Repro, still green as a regression gate: `python tools/mp.py reloadchurn --rejoin`.
 //
 // The practical consequence for THIS module's callers: a world this module has moved off
 // may still be in the object array indefinitely, so `FindObjectByClass(WorldClass)` can

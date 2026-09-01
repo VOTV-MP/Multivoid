@@ -219,6 +219,7 @@ add_library(votv-coop SHARED
     src/ue_wrap/core/log.cpp
     src/ue_wrap/core/paths.cpp
     src/ue_wrap/core/sig_scan.cpp
+    src/ue_wrap/core/gc_pin.cpp
     src/ue_wrap/core/reflection.cpp
     src/ue_wrap/core/reflection_props.cpp
     src/ue_wrap/core/asset_load.cpp

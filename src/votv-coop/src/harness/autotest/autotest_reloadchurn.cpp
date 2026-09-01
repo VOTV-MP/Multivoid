@@ -63,6 +63,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdlib>
+#include <cwchar>
 #include <memory>
 #include <string>
 #include <utility>
@@ -117,6 +118,65 @@ void* ReadPtr(void* base, int32_t off) {
     return (base && off >= 0) ? *reinterpret_cast<void**>(static_cast<char*>(base) + off) : nullptr;
 }
 
+// ---------------------------------------------------------------------------------
+// WHERE IN ITS DESTRUCTION a UObject is standing -- the term that separates the two
+// readings of "dead but never purged".
+//
+// `IsLive` answers one bit and that bit is exhausted here: every candidate world is
+// already "dead". UE4 tears an object down in two GC phases, and each leaves its own
+// mark:
+//
+//   phase 1  ConditionalBeginDestroy() -> sets RF_BeginDestroyed, calls BeginDestroy(),
+//            and pushes the object onto the pending-destruction list.
+//   phase 2  for each pending object, IsReadyForFinishDestroy() is polled; only when it
+//            answers true does ConditionalFinishDestroy() run (RF_FinishDestroyed) and
+//            the slot get released.
+//
+// So the husk's flags decide the question outright, with no further instrumentation:
+//
+//   RF_BeginDestroyed set, RF_FinishDestroyed clear  -> phase 1 ran, phase 2 is STUCK.
+//                                                       IsReadyForFinishDestroy keeps
+//                                                       answering false. (reading 2)
+//   neither set                                      -> GC never reached it at all, so
+//                                                       something REFERENCES it and it is
+//                                                       not being destroyed. (reading 1)
+//
+// Unreachable/PendingKill come from the GUObjectArray slot (EInternalObjectFlags) and
+// corroborate: PendingKill alone is "marked, GC has not run on it yet"; Unreachable is
+// "GC has claimed it".
+// ---------------------------------------------------------------------------------
+std::wstring DestroyStage(void* obj) {
+    if (!obj) return L"<null>";
+    const int32_t objFlags = *reinterpret_cast<int32_t*>(
+        static_cast<char*>(obj) + P::off::UObject_ObjectFlags);
+    const int32_t intFlags = R::InternalFlagsOf(obj);
+    std::wstring s;
+    auto bit = [&s](int32_t have, int32_t mask, const wchar_t* name) {
+        if (have & mask) { if (!s.empty()) s += L'|'; s += name; }
+    };
+    bit(intFlags, 0x20000000, L"PendingKill");
+    bit(intFlags, 0x10000000, L"Unreachable");
+    bit(intFlags, 0x40000000, L"RootSet");
+    bit(intFlags, 0x01000000, L"ClusterRoot");
+    bit(intFlags, 0x00800000, L"ReachableInCluster");
+    bit(objFlags, 0x00008000, L"RF_BeginDestroyed");
+    bit(objFlags, 0x00010000, L"RF_FinishDestroyed");
+    if (s.empty()) s = L"<none>";
+    wchar_t raw[64];
+    swprintf(raw, 64, L" (rf=%08X int=%08X)", static_cast<unsigned>(objFlags),
+             static_cast<unsigned>(intFlags));
+    return s + raw;
+}
+
+// True iff the object is sitting in GC phase 2 -- begun and not finished. This is the
+// crash's precondition stated positively, and the scenario greps for it.
+bool IsStuckInFinishDestroy(void* obj) {
+    if (!obj) return false;
+    const int32_t f = *reinterpret_cast<int32_t*>(
+        static_cast<char*>(obj) + P::off::UObject_ObjectFlags);
+    return (f & 0x00008000) != 0 && (f & 0x00010000) == 0;
+}
+
 // "tag" names WHEN in the cycle this frame was taken, so a log reader can pair a null
 // with the moment it appeared instead of counting lines.
 void CensusGT(const char* tag, int cycle, const Offsets& o) {
@@ -128,8 +188,15 @@ void CensusGT(const char* tag, int cycle, const Offsets& o) {
     }
     const std::vector<void*> worlds = R::FindObjectsByClass(P::name::WorldClass);
     int nullWs = 0;
+    int stuck = 0;
     size_t live = 0;
-    void* deadWorld = nullptr;
+    // EVERY dead world and level, not just the last one seen. The first version kept a single
+    // `deadWorld` and graded on it, which meant a rooted holder of a DIFFERENT dead world
+    // reported zero and passed -- and reload churn is precisely what produces two dead worlds
+    // at once. A gate that can step over the bug it was written for is worse than none.
+    struct Terminal { void* obj; bool isWorld; };
+    std::vector<Terminal> deadTerminals;
+    int rootedWorst = 0;
     UE_LOGI("reloadchurn[%s c%d]: %zu UWorld object(s) in the array", tag, cycle, worlds.size());
     for (void* w : worlds) {
         if (!w) continue;
@@ -139,7 +206,7 @@ void CensusGT(const char* tag, int cycle, const Offsets& o) {
         // reads may be one that is already kill-flagged at the menu. A census that only
         // reports what is live cannot see a reused corpse.
         const bool alive = R::IsLive(w);
-        if (alive) ++live; else deadWorld = w;
+        if (alive) ++live; else deadTerminals.push_back({w, true});
         const std::wstring wname = R::ToString(R::NameOf(w));
         void* lvl = ReadPtr(w, o.persistentLevel);
         void* ws  = ReadPtr(lvl, o.worldSettings);
@@ -147,11 +214,13 @@ void CensusGT(const char* tag, int cycle, const Offsets& o) {
         std::wstring lname = L"<none>";
         if (lvl && R::IsLive(lvl)) lname = R::ToString(R::NameOf(lvl));
         if (alive && lvl && !ws) ++nullWs;
-        UE_LOGI("reloadchurn[%s c%d]:   world='%ls' @%p %s PersistentLevel=%p ('%ls')  "
+        UE_LOGI("reloadchurn[%s c%d]:   world='%ls' @%p %s stage=%ls PersistentLevel=%p ('%ls')  "
                 "WorldSettings=%p  DefaultGameMode=%p%s",
-                tag, cycle, wname.c_str(), w, alive ? "LIVE" : "dead", lvl, lname.c_str(), ws, gm,
+                tag, cycle, wname.c_str(), w, alive ? "LIVE" : "dead", DestroyStage(w).c_str(),
+                lvl, lname.c_str(), ws, gm,
                 (lvl && !ws) ? "   <<< WORLDSETTINGS IS NULL -- this world would CRASH LoadMap"
                              : "");
+        if (!alive) stuck += IsStuckInFinishDestroy(w) ? 1 : 0;
     }
     // The LEVELS and the WORLDSETTINGS ACTORS, independently of any world.
     //
@@ -166,10 +235,11 @@ void CensusGT(const char* tag, int cycle, const Offsets& o) {
         if (!l) continue;
         void* ws = ReadPtr(l, o.worldSettings);
         const bool alive = R::IsLive(l);
+        if (!alive) deadTerminals.push_back({l, false});
         if (!ws) ++orphanLevels;
         if (!ws || !alive) {
-            UE_LOGI("reloadchurn[%s c%d]:   level @%p %s WorldSettings=%p%s",
-                    tag, cycle, l, alive ? "LIVE" : "dead", ws,
+            UE_LOGI("reloadchurn[%s c%d]:   level @%p %s stage=%ls WorldSettings=%p%s",
+                    tag, cycle, l, alive ? "LIVE" : "dead", DestroyStage(l).c_str(), ws,
                     ws ? "" : "   <<< a LEVEL with NO WorldSettings");
         }
     }
@@ -177,43 +247,100 @@ void CensusGT(const char* tag, int cycle, const Offsets& o) {
     size_t wsLive = 0;
     for (void* a : settings) if (a && R::IsLive(a)) ++wsLive;
 
-    // WHAT IS STILL STANDING IN A DEAD WORLD -- the question the world list cannot answer.
+    // WHO STILL REACHES THE DEAD WORLD -- by the OUTER CHAIN, not by the world term.
     //
-    // A dead-but-unpurged world is only interesting if something is HOLDING it, and the
-    // holder is an object, not a pointer we can see from here. One walk over the object array
-    // per dead world, counting live objects whose world term IS that world and tallying their
-    // classes, names the holder by kind. `AddToRoot`ed mirror actors are the standing
-    // suspicion (the coop layer GC-pins its runtime pile natives), and they would show up here
-    // by the hundred while the solo control shows none.
-    if (deadWorld) {
+    // The previous version of this census asked `world_identity::WorldOf(o) == deadWorld`
+    // and reported 0 at every frame. That 0 was never a finding: WorldOf resolves an
+    // object's world by walking to a ULevel and reading OwningWorld, and the husk's
+    // PersistentLevel is already null, so nothing can resolve to it BY CONSTRUCTION. It
+    // was an instrument blind to its own subject, and it is retired here rather than kept
+    // beside the working one.
+    //
+    // The right question follows from what the flags say. `[V]` the husk is PendingKill
+    // and NOTHING else -- not Unreachable, no RF_BeginDestroyed -- so GC has never claimed
+    // it: on every pass it comes out REACHABLE. UE4 nulls a strong UPROPERTY reference to
+    // a PendingKill object during collection, but it does NOT eliminate the structural
+    // references every UObject carries (Outer, Class, Name), so the surviving path is an
+    // OUTER CHAIN from something the GC is required to keep: a ROOT-SET object. Our own
+    // layer GC-pins runtime spawns in five places (`R::AddToRoot`), and an actor spawned
+    // into the gameplay world is outered to that world's ULevel.
+    //
+    // So: walk the whole array, follow each object's Outer chain, and name every object
+    // whose chain passes through the dead world or its dead level -- plus, independently,
+    // every RootSet object, since that is the set GC starts from.
+    if (!deadTerminals.empty()) {
         const int32_t n = R::NumObjects();
-        int inDead = 0;
-        std::vector<std::pair<std::wstring, int>> byClass;
+        std::vector<int> reached(deadTerminals.size(), 0);
+        std::vector<int> rootedReached(deadTerminals.size(), 0);
+        std::vector<std::vector<std::pair<std::wstring, int>>> byClass(deadTerminals.size());
+        int rooted = 0, printed = 0;
         for (int32_t i = 0; i < n; ++i) {
-            void* o = R::ObjectAt(i);
-            if (!o || !R::IsLiveByIndex(o, i)) continue;
-            if (ue_wrap::world_identity::WorldOf(o) != deadWorld) continue;
-            ++inDead;
-            const std::wstring cn = R::ClassNameOf(o);
+            void* obj = R::ObjectAt(i);
+            if (!obj) continue;
+            bool isTerminal = false;
+            for (const auto& t : deadTerminals) if (t.obj == obj) { isTerminal = true; break; }
+            if (isTerminal) continue;
+            // Bounded Outer walk. A PendingKill object is marked but NOT yet freed, so its
+            // memory is still mapped and this read is safe -- the same reason the world lines
+            // above can read a dead world's fields. The whole census runs inside a posted
+            // game-thread task, whose SEH wrapper absorbs a fault on a slot caught mid-purge.
+            void* chain[24] = {};
+            int depth = 0;
+            int hit = -1;
+            for (void* o = R::OuterOf(obj); o && depth < 24; o = R::OuterOf(o)) {
+                chain[depth++] = o;
+                for (size_t t = 0; t < deadTerminals.size(); ++t)
+                    if (deadTerminals[t].obj == o) { hit = static_cast<int>(t); break; }
+                if (hit >= 0) break;
+            }
+            const bool isRoot = (R::InternalFlagsOf(obj) & 0x40000000) != 0;
+            if (isRoot) ++rooted;
+            if (hit < 0) continue;
+            ++reached[hit];
+            if (isRoot) ++rootedReached[hit];
+            const std::wstring cn = R::ClassNameOf(obj);
+            auto& tally = byClass[hit];
             bool found = false;
-            for (auto& e : byClass) if (e.first == cn) { ++e.second; found = true; break; }
-            if (!found && byClass.size() < 512) byClass.emplace_back(cn, 1);
+            for (auto& e : tally) if (e.first == cn) { ++e.second; found = true; break; }
+            if (!found && tally.size() < 512) tally.emplace_back(cn, 1);
+            // Print the ROOTED ones in full -- those are the candidate holders, and there
+            // should be none. A non-rooted object in the chain is a passenger, not a cause.
+            if (isRoot && printed < 24) {
+                ++printed;
+                std::wstring path;
+                for (int d = 0; d < depth; ++d) {
+                    path += L" -> ";
+                    path += R::ToString(R::NameOf(chain[d]));
+                }
+                UE_LOGW("reloadchurn[%s c%d]:   HOLDER (RootSet) '%ls' class=%ls @%p%ls",
+                        tag, cycle, R::ToString(R::NameOf(obj)).c_str(), cn.c_str(), obj,
+                        path.c_str());
+            }
         }
-        std::sort(byClass.begin(), byClass.end(),
-                  [](const auto& a, const auto& b) { return a.second > b.second; });
-        std::wstring top;
-        for (size_t i = 0; i < byClass.size() && i < 8; ++i) {
-            top += byClass[i].first + L"x" + std::to_wstring(byClass[i].second) + L" ";
+        for (size_t t = 0; t < deadTerminals.size(); ++t) {
+            auto& tally = byClass[t];
+            std::sort(tally.begin(), tally.end(),
+                      [](const auto& a, const auto& b) { return a.second > b.second; });
+            std::wstring top;
+            for (size_t i = 0; i < tally.size() && i < 8; ++i)
+                top += tally[i].first + L"x" + std::to_wstring(tally[i].second) + L" ";
+            // One line PER dead object, each carrying its own RootSet count, so the harness
+            // grades the worst of them rather than whichever happened to be last.
+            UE_LOGI("reloadchurn[%s c%d]:   DEAD %ls @%p reached by %d object(s) via Outer "
+                    "(%d of them RootSet); RootSet objects in array=%d; top: %ls",
+                    tag, cycle, deadTerminals[t].isWorld ? L"world" : L"level",
+                    deadTerminals[t].obj, reached[t], rootedReached[t], rooted, top.c_str());
+            if (rootedReached[t] > rootedWorst) rootedWorst = rootedReached[t];
         }
-        UE_LOGI("reloadchurn[%s c%d]:   DEAD world @%p still holds %d live object(s): %ls",
-                tag, cycle, deadWorld, inDead, top.c_str());
     }
 
     // The headline the scenario greps. A non-zero count here IS the crash condition,
     // observed without having to die of it.
     UE_LOGI("reloadchurn[%s c%d]: VERDICT nullWorldSettings=%d liveWorlds=%zu "
+            "stuckInFinishDestroy=%d rootedHoldersOfDead=%d "
             "levels=%zu(%d with no WorldSettings) worldSettingsActors=%zu/%zu live",
-            tag, cycle, nullWs, live, levels.size(), orphanLevels, wsLive, settings.size());
+            tag, cycle, nullWs, live, stuck, rootedWorst, levels.size(), orphanLevels, wsLive,
+            settings.size());
 }
 
 void PostCensus(const char* tag, int cycle, const Offsets& o) {

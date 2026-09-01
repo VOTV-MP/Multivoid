@@ -9,12 +9,14 @@
 // cap; this audio block is self-contained (its own cached CDO/UFunction statics, no
 // cross-refs into engine.cpp's other internals) so it lifts cleanly into its own file.
 
+#include "ue_wrap/core/gc_pin.h"
 #include "ue_wrap/engine/engine.h"
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 
+#include <vector>
 #include <cstdint>
 
 namespace ue_wrap::engine {
@@ -85,7 +87,12 @@ void* SpawnSoundAttenuation(const SoundAttenuationConfig& cfg) {
     //    reachability scan) -- without rooting, the object is reaped on
     //    the next GC pass and PlaySoundAtLocation crashes reading freed
     //    memory on the next call (2026-05-26 F-spam crash root cause).
-    R::AddToRoot(obj);
+    //    PROCESS-LIFETIME by design: the attenuation object is outered to the
+    //    GameplayStatics CDO, not to a world, so it is not a world anchor and is never
+    //    released. It is still held through an OWNED pin rather than a bare flag write,
+    //    so it shows up in the pin registry instead of being invisible to it.
+    static std::vector<ue_wrap::GcPin> sPermanentPins;
+    sPermanentPins.emplace_back(obj);
     return obj;
 }
 

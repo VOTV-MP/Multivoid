@@ -9,12 +9,14 @@
 #include "coop/props/trash_clump_pose_stream.h"  // v85: evict the per-eid carry drive before destroying a proxy
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/cached_obj_ref.h"
+#include "ue_wrap/core/gc_pin.h"
 #include "ue_wrap/core/hot_path_guard.h"  // UE_ASSERT_GAME_THREAD
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"            // ResolvePileMesh
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"          // FVector / FRotator
 
+#include <utility>
 #include <cmath>
 #include <cstddef>
 #include <string>
@@ -33,6 +35,13 @@ struct ProxyEntry {
     // root set -- so cross-tick probes go through the slot-validated ref, not bare
     // IsLive on the raw pointer (the census's 7 trash_proxy rows).
     ue_wrap::CachedObjRef actor;
+    // The GC pin, OWNED. Erasing the entry releases it -- so no teardown path can drop a
+    // proxy while leaving its actor rooted. That is exactly what the old hand-written
+    // `if (liveActor) RemoveFromRoot(liveActor)` did at a world teardown, where every
+    // proxy reports not-Alive: 871 actors stayed rooted and anchored the departed UWorld
+    // through their Outer chain, so the world was never collected and the next map load
+    // adopted the corpse (see ue_wrap/core/gc_pin.h).
+    ue_wrap::GcPin pin;
     void* comp      = nullptr;  // cached UStaticMeshComponent (invariant for the actor's life)
     int   ownerSlot = -1;       // originating peer slot (for the per-slot disconnect retire)
     bool  isClump   = false;    // current FORM (re-skinned pile<->clump) -- so NearestPileProxy can skip clumps
@@ -187,16 +196,22 @@ void* SpawnProxy(coop::element::ElementId eid, uint8_t chipType, bool isClump, i
     // smoke can't see this, screenshots are black + it only checks log markers.)
     E::SetComponentMobility(comp, /*EComponentMobility::Movable=*/2);
     E::SetActorRotation(actor, rot);
-    R::AddToRoot(actor);                                        // never GC'd -> never stale -> no dup
+    // (pinned below, into the entry that owns it -- see ProxyEntry::pin)
     E::SetActorRootCollisionEnabled(actor, /*ECollisionEnabled::NoCollision=*/0);  // kinematic follower (aim-grab is a camera-ray cone, not collision)
     SkinProxy(actor, comp, chipType, isClump);
     ApplyProxyScale(actor, scale);                              // v83: host-sized (else default unit -> too small)
     ProxyEntry pe;
     pe.actor.Set(actor);  // fresh from SpawnActor
+    // never GC'd -> never stale -> no dup; released when the entry dies. A failure voids
+    // trash_proxy.h's rules-of-existence argument, so it is never silent.
+    if (!pe.pin.Pin(actor)) {
+        UE_LOGW("[PILE] trash_proxy: GC PIN FAILED for actor=%p eid=%u -- the proxy can be "
+                "collected out from under its cached pointer", actor, eid);
+    }
     pe.comp = comp;
     pe.ownerSlot = ownerSlot;
     pe.isClump = isClump;
-    g_proxies[eid] = pe;
+    g_proxies[eid] = std::move(pe);  // ProxyEntry owns a GcPin -> move-only
     UE_LOGI("[PILE] trash_proxy: SPAWN eid=%u %s chipType=%u actor=%p ownerSlot=%d "
             "(AStaticMeshActor, rooted, NoCollision)",
             eid, isClump ? "clump" : "pile", static_cast<unsigned>(chipType), actor, ownerSlot);
@@ -220,20 +235,22 @@ void RetireProxy(coop::element::ElementId eid) {
     auto it = g_proxies.find(eid);
     if (it == g_proxies.end()) return;
     void* actor = it->second.actor.Raw();      // for pointer-compare drive evict + logs
-    void* liveActor = it->second.actor.Get();  // slot-validated for the destroy calls
+    void* liveActor = it->second.actor.Get();  // slot-validated for the destroy call
+    // Take the pin OUT of the entry before erasing, so the map can be erased first (the
+    // original ordering: nothing below may re-enter and find a half-retired entry) while
+    // the un-root still happens LAST, after the destroy -- destroy marks PendingKill,
+    // then the un-root makes that memory GC-reapable.
+    ue_wrap::GcPin pin = std::move(it->second.pin);
     g_proxies.erase(it);
-    // ClearAnyDriveFor -> Destroy -> RemoveFromRoot -> unbind. Evict the drive FIRST
-    // so neither remote_prop::Tick nor ForceRelease touches the actor we destroy (a
-    // stale g_drives entry to a freed actor would UAF). GC runs on the game thread
-    // and cannot interleave this synchronous sequence, so the "un-rooted, not-yet-
-    // destroyed" window is moot; destroy marks PendingKill, then un-root makes the
-    // memory GC-reapable (a rooted PendingKill actor would never be reaped = leak).
+    // Evict the drive FIRST so neither remote_prop::Tick nor ForceRelease touches the
+    // actor we destroy (a stale g_drives entry to a freed actor would UAF).
     coop::remote_prop::ClearAnyDriveFor(actor);
     coop::trash_clump_pose_stream::ClearDriveForEid(eid);  // v85: drop the host-auth per-eid carry drive too
-    if (liveActor) {
-        E::DestroyActor(liveActor);
-        R::RemoveFromRoot(liveActor);
-    }
+    // The DESTROY is conditional because destroying needs a live actor. THE UN-ROOT IS
+    // NOT -- `pin` releases at scope exit whatever state the actor is in. Splitting the
+    // two is the whole fix: pairing them under one liveness guard is what left 871 rooted
+    // actors anchoring a dead world.
+    if (liveActor) E::DestroyActor(liveActor);
     // Unbind the Prop mirror (deferred dtor outside the manager mutex -- the
     // documented teardown pattern; ~Prop -> ~Element -> Registry::UnregisterMirror).
     coop::element::ElementDeleter::Get().Enqueue(
@@ -247,18 +264,16 @@ void RetireProxyActorOnly(coop::element::ElementId eid) {
     auto it = g_proxies.find(eid);
     if (it == g_proxies.end()) return;
     void* actor = it->second.actor.Raw();      // pointer-compare drive evict + logs
-    void* liveActor = it->second.actor.Get();  // slot-validated for the destroy calls
+    void* liveActor = it->second.actor.Get();  // slot-validated for the destroy call
+    // Same take-the-pin -> erase -> drive-evict -> destroy -> release order as RetireProxy, but
+    // WITHOUT the Element unbind: the caller (remote_prop::OnConvert nativize hand-off) has already
+    // rebound `eid` onto the native pile in place, so Take/Enqueue-ing the Element here would delete
+    // the Element the native now owns (the destroy-before-load hazard). ACTOR-only half of teardown.
+    ue_wrap::GcPin pin = std::move(it->second.pin);
     g_proxies.erase(it);
-    // Same drive-evict -> destroy -> un-root order as RetireProxy (GC can't interleave on the game thread),
-    // but WITHOUT the Element unbind: the caller (remote_prop::OnConvert nativize hand-off) has already
-    // rebound `eid` onto the native pile in place, so Take/Enqueue-ing the Element here would delete the
-    // Element the native now owns (the destroy-before-load hazard). This is the ACTOR-only half of teardown.
     coop::remote_prop::ClearAnyDriveFor(actor);
     coop::trash_clump_pose_stream::ClearDriveForEid(eid);
-    if (liveActor) {
-        E::DestroyActor(liveActor);
-        R::RemoveFromRoot(liveActor);
-    }
+    if (liveActor) E::DestroyActor(liveActor);
     UE_LOGI("[PILE] trash_proxy: RETIRE-ACTOR-ONLY eid=%u actor=%p (drive-evicted, destroyed, un-rooted; "
             "Element KEPT -- rebound to the native pile by the caller)", eid, actor);
 }

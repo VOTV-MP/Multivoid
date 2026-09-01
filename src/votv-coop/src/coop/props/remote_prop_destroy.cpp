@@ -13,6 +13,7 @@
 //
 // Game-thread ONLY (the event_feed drain + the quiescence sweep). No mutex.
 
+#include "coop/props/native_pile_mirror.h"
 #include "coop/props/remote_prop.h"
 #include "remote_prop_internal.h"  // impl-private (src-local), NOT under include/
 
@@ -96,10 +97,10 @@ void DestroyResolvedLocalActor_(void* actor, const std::wstring& keyW,
     ue_wrap::engine::ReleaseMainPlayerGrabIfHolding(localPlayer, actor);
     // Mark BEFORE the engine call so our K2_DestroyActor PRE observer sees it and skips the broadcast (echo).
     coop::prop_echo_suppress::MarkIncomingDestroy(actor);
-    // Un-root FIRST: a nativized runtime pile mirror (native_pile_mirror) is AddToRoot'd (no save/world ref
+    // Un-root FIRST: a nativized runtime pile mirror (native_pile_mirror) is GC-pinned (no save/world ref
     // to stop GC), so a rooted PendingKill actor would leak its GUObjectArray slot forever. Harmless no-op on
-    // a save-loaded native / keyed prop (never rooted by us). Mirrors the proxy's RetireProxy un-root.
-    R::RemoveFromRoot(actor);
+    // a save-loaded native / keyed prop (we never pinned it). Mirrors the proxy's RetireProxy release.
+    coop::native_pile_mirror::Unpin(actor);
     R::CallFunction(actor, g_destroyActorFn, nullptr);
 }
 
@@ -230,11 +231,11 @@ void ConsumeLocalActor(void* actor) {
         return;
     }
     coop::prop_echo_suppress::MarkIncomingDestroy(actor);
-    // A rooted materialized native (native_pile_mirror) reaching here (e.g. a redundant convert-landed pile the
-    // save-load consumes) MUST be un-rooted first: K2_DestroyActor on a rooted actor only sets PendingKill while
-    // the root keeps it ALIVE -> it leaks as a live orphan (the 16:42 join-window mass-move dup). Same un-root
-    // the authoritative OnDestroy path already does; no-op on an unrooted game-native (the common consume case).
-    R::RemoveFromRoot(actor);
+    // A pinned materialized native (native_pile_mirror) reaching here (e.g. a redundant convert-landed pile the
+    // save-load consumes) MUST be un-pinned first: K2_DestroyActor on a rooted actor only sets PendingKill while
+    // the root keeps it ALIVE -> it leaks as a live orphan (the 16:42 join-window mass-move dup). Same release
+    // the authoritative OnDestroy path already does; no-op on an unpinned game-native (the common consume case).
+    coop::native_pile_mirror::Unpin(actor);
     R::CallFunction(actor, g_destroyActorFn, nullptr);
 }
 

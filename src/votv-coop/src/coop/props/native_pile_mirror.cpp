@@ -1,5 +1,6 @@
 // coop/props/native_pile_mirror.cpp -- see coop/props/native_pile_mirror.h.
 
+#include "ue_wrap/core/gc_pin.h"
 #include "coop/props/native_pile_mirror.h"
 
 #include "coop/element/element.h"
@@ -47,6 +48,12 @@ void SkinPileNative(void* native, uint8_t chipType, const ue_wrap::FRotator& mes
     if (void* comp = E::GetStaticMeshComponent(native)) E::SetComponentWorldRotation(comp, meshWorldRot);
 }
 
+// The pins this module holds, OWNED. A raw AddToRoot with the release written out by hand
+// in three other modules is what this replaces: none of those paths runs at a session
+// teardown, so a materialized native that simply outlived the session stayed rooted and
+// anchored its world forever (ue_wrap/core/gc_pin.h has the measurement).
+std::unordered_map<void*, ue_wrap::GcPin> g_pins;
+
 }  // namespace
 
 void* Materialize(coop::element::ElementId eid, const std::wstring& className, uint8_t chipType,
@@ -65,7 +72,18 @@ void* Materialize(coop::element::ElementId eid, const std::wstring& className, u
         return nullptr;
     }
     // The PROVEN inert recipe (2026-06-30 collision-ON probe: 60s live + inert, hover GUI present):
-    R::AddToRoot(native);                          // GC-pin -- a runtime spawn has no save/world ref
+    // `.Pin()` on the mapped handle, NOT `= GcPin(native)`: C++17 sequences the temporary's
+    // Pin BEFORE the assignment, so on a repeated key the move-assign's Release would clear
+    // the RootSet bit the temporary just set and leave the map claiming a pin that is not
+    // held. Unreachable today (a rooted actor's address cannot be recycled) and exactly the
+    // trap this class exists to remove.
+    if (!g_pins[native].Pin(native)) {              // GC-pin -- a runtime spawn has no save/world ref
+        // A failed pin voids the mirror's whole rules-of-existence argument (rooted -> never
+        // GC'd -> never a stale index), so it must never fail silently.
+        UE_LOGW("[PILE] native_pile_mirror: GC PIN FAILED for native=%p eid=%u -- this mirror "
+                "can be collected out from under its cached pointer", native, eid);
+        g_pins.erase(native);
+    }
     E::SetActorTickEnabled(native, false);         // no autonomous per-frame ubergraph
     E::SetActorSimulatePhysics(native, false);     // kinematic resting pile (the host positions it)
     E::SetActorRootMovable(native);                // else SetActorLocation (host pose / b3) silently no-ops on a Static root
@@ -83,6 +101,20 @@ void* Materialize(coop::element::ElementId eid, const std::wstring& className, u
             "(rooted, tick-off, kinematic, Movable, native collision) -- native hover GUI + rotation free",
             eid, native, className.c_str(), static_cast<unsigned>(chipType));
     return native;
+}
+
+void Unpin(void* actor) {
+    UE_ASSERT_GAME_THREAD("native_pile_mirror::Unpin");
+    if (!actor) return;
+    g_pins.erase(actor);  // no-op when we never pinned it (save-loaded / game-native)
+}
+
+void OnDisconnect() {
+    UE_ASSERT_GAME_THREAD("native_pile_mirror::OnDisconnect");
+    if (g_pins.empty()) return;
+    const size_t n = g_pins.size();
+    g_pins.clear();
+    UE_LOGI("[PILE] native_pile_mirror: OnDisconnect released %zu GC pin(s)", n);
 }
 
 void RepositionBoundNative(void* native, uint8_t chipType, const ue_wrap::FVector& loc,

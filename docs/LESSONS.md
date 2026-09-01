@@ -4936,6 +4936,53 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 
 ## 5. Engine / UE4 facts
 
+- **`PendingKill` alone means GC NEVER CLAIMED IT -- read the destruction STAGE, not one bit.**
+  `[V]` 2026-09-01. `IsLive` collapses `PendingKill | Unreachable` into a boolean, which is right
+  for a liveness gate and useless for a diagnosis. The stages are separately observable:
+  `FUObjectItem::Flags` @slot+0x08 carries `PendingKill` 1<<29 (a TEARDOWN set this, not the
+  collector) and `Unreachable` 1<<28 (GC has claimed it); `UObject::ObjectFlags` @obj+0x08 carries
+  `RF_BeginDestroyed` 1<<15 (purge phase 1 ran) and `RF_FinishDestroyed` 1<<16 (phase 2 ran). The
+  leaked world read `int=20000000 rf=0028000B` -- PendingKill and nothing else, neither destroy
+  flag -- so `BeginDestroy` had never run and GC was finding it REACHABLE every pass. That one
+  read **falsified a hypothesis three documents had already recorded** as "the reading that fits
+  every measurement" (a `FinishDestroy` deferred on the render `FScene`); it fit because nothing
+  had ever measured the two apart. *Look FIRST:* before theorising about why an object will not go
+  away, print its stage flags -- `RF_BeginDestroyed` absent means go hunt a REFERENCE, present-with-
+  `RF_FinishDestroyed`-absent means it really is stuck in phase 2. Accessor:
+  `reflection::InternalFlagsOf`; values confirmed against `reference/RE-UE4SS/.../FlagsStringifier.hpp`.
+  [[lesson-pendingkill-alone-means-gc-never-claimed-it]]
+
+- **One `AddToRoot`'d actor keeps its whole UWorld alive, through the OUTER chain.** `[V]`
+  2026-09-01. UE nulls a strong UPROPERTY reference whose target is `PendingKill` (which is why an
+  ordinary dead-but-referenced actor still collects), but it does NOT eliminate the structural
+  refs every UObject carries -- `Outer`, `Class`, `Name`. So `rooted actor --Outer--> ULevel
+  --OwningWorld--> UWorld` drags the entire world out of every collection. 871 rooted proxies held
+  one; released, the same census reads 0 and the world is gone within one interval. *Look FIRST:*
+  to find what holds a dead world, walk every object's OUTER chain -- and **never resolve world
+  membership through a field the failure has already nulled**, which is how the first holder census
+  reported a confident `0` at every frame (it asked `WorldOf(o) == deadWorld`, and `WorldOf` reads
+  the very `PersistentLevel` that is already null). Cross-check the count against your own logs: the
+  holder count 871 and `grep -c "trash_proxy: SPAWN"` 871 is an attribution, not a correlation.
+  [[lesson-a-rooted-actor-anchors-its-whole-world-through-outer]]
+
+- **A cleanup gated on liveness is skipped exactly at the teardown that needed it.** `[V]`
+  2026-09-01, the rejoin crash's real root. `if (liveActor) { DestroyActor(liveActor);
+  RemoveFromRoot(liveActor); }` -- two operations, different preconditions, one guard. Destroying
+  needs a live actor; **un-rooting does not, and un-rooting a dead object is the whole point.** At a
+  world teardown `CachedObjRef::Alive()` is false on both its terms independently (slot PendingKill,
+  stamped world no longer current), so the branch never ran and 871 actors stayed rooted -- while
+  the log said `retired 871 proxy mirror(s)`. The shape is a false negative wherever it appears:
+  `if (still valid) release()` disables the release in its own worst case, and it is disguised as
+  defensive programming so review waves it through. Two comments in the tree already asserted the
+  correct property (`reflection.h` "pairs with AddToRoot on EVERY teardown"; `subsystems.cpp`
+  "structural no-leak") three lines from the `if` that broke it. *Look FIRST:* when one `if` covers
+  several operations, ask what EACH requires and move the guard onto the one that needs it. Then
+  **give the resource an owner** -- `ue_wrap::GcPin` releases from its destructor, held by value in
+  the structure that owns the engine object, so erasing the structure IS the release. Add the
+  counter the hand-written form could not (`GcPin::ReportWorldScopedPins`), and keep the raw pair
+  from returning (`tools/gc/gc_pin_gate.ps1`, in CI).
+  [[lesson-a-cleanup-gated-on-liveness-is-skipped-exactly-at-teardown]]
+
 - **`UEngine::LoadMap` will hand `SetGameMode` a world with no `WorldSettings`, and it dies at
   `[null+0x268]`.** `[V]` 2026-08-31, the user's rejoin crash, reproduced autonomously
   (`mp.py reloadchurn --rejoin`, same `PCallStackHash` as their minidump, 3/3). The chain is
@@ -4950,7 +4997,10 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   already NULL and **never purges** -- 75 s of dwell and a forced `CollectGarbage` both fail to
   clear it -- and the next `open untitled_1` adopts that husk. *Look FIRST:* a crash inside a second
   in-process map load is about what the FIRST teardown left behind, and the place to look is the
-  object array at the menu, not the load. Full RE + the open question:
+  object array at the menu, not the load. **ANSWERED AND FIXED 2026-09-01 (RE doc section 9): the
+  husk was not stuck mid-purge, it was still REACHABLE** -- 871 of our own GC-rooted trash-proxy
+  actors anchored it through their Outer chain, because their un-root was written inside
+  `if (liveActor)`. Repro is now a regression gate and passes. Full RE:
   `research/findings/join-identity/votv-rejoin-loadmap-null-worldsettings-RE-2026-08-31.md`.
   [[lesson-loadmap-adopts-an-unpurged-world]]
 
