@@ -213,7 +213,13 @@ void Render() {
         ImGui::SameLine();
         if (ImGui::RadioButton("LAN only", g_connMode == 2)) g_connMode = 2;
         if (g_connMode == 1) {
-            ImGui::TextDisabled("Requires UDP port 47621 forwarded to this PC. Friends join from");
+            // THE PORT IS RESOLVED, NOT SPELLED. This line used to carry a literal 47621,
+            // which was right for a default install and a LIE for anyone who set net.port
+            // -- and it is the number the player is about to type into a router. It is the
+            // same defect the direct-connect box had with 7777 (coop::net::kDefaultDirectAddr),
+            // one file over and pointing the other way, so it gets the same treatment.
+            ImGui::TextDisabled("Requires UDP port %ld forwarded to this PC. Friends join from",
+                                coop::config::ResolveInt(coop::config_registry::rows::net_port));
             ImGui::TextDisabled("the server browser or Direct Connect. Not sure? Use AUTO.");
             ImGui::Checkbox("Hide from server browser (friends Direct Connect by IP)", &g_hideDirect);
         } else if (g_connMode == 2) {

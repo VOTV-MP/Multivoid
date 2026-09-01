@@ -1092,6 +1092,28 @@ inline constexpr uint16_t kProtocolVersion = 149; // v149 (2026-08-31, post-ship
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
 
+// WHAT THE DIRECT-CONNECT BOX STARTS WITH, and it must NAME kDefaultPort.
+//
+// This existed as a bare "127.0.0.1:7777" literal in two places from the first
+// server-browser commit (43e2a843) until 2026-09-01. 7777 is the UNREAL default
+// game port -- it was never ours, and `kDefaultPort` has been 47621 since the
+// transport was written (47880a05) and has never moved. So the prefill named a
+// port nothing in this mod has ever listened on.
+//
+// It is not cosmetic: a prefilled address is the only port most players will
+// ever see, and replacing just the IP while keeping the offered port is the
+// natural edit. That produces a connect to a dead port, which fails the same
+// silent async way a firewalled one does -- indistinguishable, in a lane whose
+// whole purpose is working without the master.
+//
+// The static_assert is the coupling: this string and kDefaultPort are two
+// renderings of one number, so moving the port without moving the text fails
+// the build instead of quietly re-teaching the wrong one.
+inline constexpr const char* kDefaultDirectAddr = "127.0.0.1:47621";
+static_assert(kDefaultPort == 47621,
+              "kDefaultDirectAddr spells kDefaultPort out -- update both, or the "
+              "direct-connect box teaches a port nothing listens on");
+
 // The OFFICIAL (built-in) public endpoints -- our VPS. PUBLIC connection
 // endpoints, not secrets (every client connects to them); the signaling TOKEN
 // / TURN creds are never compiled in. ONE definition here (coop/net) so the

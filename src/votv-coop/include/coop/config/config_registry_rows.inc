@@ -164,9 +164,11 @@ CFG_FLAG(ui_netstats, "ui.netstats", "ui", false, nullptr,
     "Show the network statistics overlay.")
 CFG_FLAG(ui_chat_peer_actions, "ui.chat.peer_actions", "ui", true, nullptr,
     "Show peer action lines (joins, pickups, device use) in the chat feed.")
-CFG_STRING(browser_lastdirect, "browser.lastdirect", "ui", "127.0.0.1:7777", nullptr, false,
+CFG_STRING(browser_lastdirect, "browser.lastdirect", "ui", ::coop::net::kDefaultDirectAddr, nullptr, false,
     "The last address typed into the server browser's direct-connect box (remembered "
-    "automatically).")
+    "automatically). Its default names the port a host actually listens on (net.port) -- "
+    "it read 127.0.0.1:7777 until 2026-09-01, which is Unreal's default port and never "
+    "ours, so the box offered a port nothing in the mod has ever bound.")
 CFG_FLAG(multiplayer_menu_off, "multiplayer_menu_off", "ui", false, nullptr,
     "Set to 1 to hide the Multiplayer main-menu button (the mod stays loaded).")
 // The composed ui.font.<role> family, per-role Enum rows. Default family per

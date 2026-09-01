@@ -52,7 +52,12 @@ std::vector<Row> g_rows;
 // die. Sorting the list at the producer narrowed the window; it did not close it, and a
 // narrower silent defect is a harder one to notice.
 std::string g_selectedId;
-char g_directIp[64] = "127.0.0.1:7777";
+// Overwritten from `browser.lastdirect` on Open(), so this initialiser is only what
+// the buffer holds before the first open -- but it was the SECOND copy of the wrong
+// "127.0.0.1:7777" (see coop::net::kDefaultDirectAddr), and a wrong literal that is
+// usually overwritten is still a wrong literal waiting for a path that does not.
+char g_directIp[64] = "127.0.0.1:47621";
+static_assert(::coop::net::kDefaultPort == 47621, "keep this in step with kDefaultDirectAddr");
 char g_hostName[64] = "My VOTV Server";
 char g_nick[64] = {};   // local display name; ALWAYS loaded from session_manager on open
                         // (the old "Player" initial was dead -- T7 keeps my-name single-source)
