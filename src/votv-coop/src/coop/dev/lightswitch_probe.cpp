@@ -179,8 +179,12 @@ void RunGroupApplySelftest() {
     };
 
     // 1. THE DEFECT: with the gate shut, the switch's own verb cannot move the group.
-    LS::SetGroupGate(root, false);
-    check("gate reads back shut after SetGroupGate(false)", LS::GetGroupGate(root) == false);
+    // RAII for the same reason the production path uses it -- three ProcessEvent calls happen
+    // inside this scope and a fault in any of them would otherwise leave the gate shut forever,
+    // in a field that is save-persistent.
+    {  // the hold's scope: everything needing the gate shut happens inside it
+    LS::ScopedGroupGateShut hold(root);
+    check("gate reads back shut after the scoped shut", hold.shut() && LS::GetGroupGate(root) == false);
     LS::CallRunTrigger(root, 0);
     bool afterGated = before;
     LS::TryReadActive(root, afterGated);
@@ -198,9 +202,11 @@ void RunGroupApplySelftest() {
     LS::TryReadActive(root, restored);
     check("ApplyGroupState restored the original isActive", restored == before);
 
-    // 3. Leave nothing behind. A gate left shut is a player whose switches stopped working.
-    LS::SetGroupGate(root, gatePrior);
-    check("gate restored to its prior value", LS::GetGroupGate(root) == gatePrior);
+    }  // <-- the hold releases HERE
+
+    // 3. Assert the restore ACTUALLY happened rather than trusting that the destructor ran:
+    //    "it leaves nothing behind" is the claim that matters, so it gets its own assertion.
+    check("gate restored to its prior value at scope exit", LS::GetGroupGate(root) == gatePrior);
 
     UE_LOGI("[lightswitch_probe] GROUP SELFTEST: %s (%d passed, %d failed) key='%ls' gateWas=%d isActiveWas=%d",
             fail == 0 ? "ALL PASS" : "FAILED", pass, fail, key.c_str(), gatePrior ? 1 : 0, before ? 1 : 0);
