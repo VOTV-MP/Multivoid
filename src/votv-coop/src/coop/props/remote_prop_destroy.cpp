@@ -115,9 +115,10 @@ bool OnDestroyImpl_(const coop::net::PropDestroyPayload& payload, void* localPla
     // Clears g_drives[*] if the destroyed actor was under drive (T-10, GT-only).
     // Dispatched from event_feed::Update on the game thread (PropDestroy case).
     UE_ASSERT_GAME_THREAD("g_drives (remote_prop::OnDestroy)");
-    // PROXY PATH (phase 1): a trash proxy mirror is retired through its OWN teardown (Destroy ->
-    // RemoveFromRoot -> unbind). The rooted AStaticMeshActor MUST be un-rooted here or it leaks its
-    // GUObjectArray slot forever. Trash rides key=None + an eid; return before the legacy keyed/BP path.
+    // PROXY PATH (phase 1): a trash proxy mirror is retired through its OWN teardown, which erases
+    // the registry entry and so releases the entry's GcPin. Destroying the actor by any other route
+    // leaves it pinned, and a rooted PendingKill actor anchors its whole world (2026-09-01).
+    // Trash rides key=None + an eid; return before the legacy keyed/BP path.
     if (payload.elementId != 0 && payload.elementId != coop::element::kInvalidId &&
         coop::trash_proxy::IsProxy(payload.elementId)) {
         // v85: a destroyed carried proxy must clear the local carry-state toggle too (the host aborted the

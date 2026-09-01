@@ -201,6 +201,16 @@ Each step is quoted from the modules' own headers `[V]`.
    on 2026-06-30 *"PROVED that death was GC (unrooted)"* — a rooted runtime native stayed live and
    inert for 60 s **with collision ON** and showed the native hover GUI. **The root cause was
    `AddToRoot` all along**; the entity never needed replacing.
+5b. **AND THE CRUTCH CHARGED A CRASH, 2026-09-01.** The fake `AStaticMeshActor` is `AddToRoot`ed
+   because a runtime spawn has no save/world reference to keep it alive — and that pin is what made
+   a leaked release fatal rather than merely untidy. `[V]` 871 proxies stayed rooted through a
+   session teardown (the un-root sat inside `if (liveActor)`, false at a world teardown) and
+   anchored the departed `UWorld` through their Outer chain; the world was never collected, and the
+   next in-process map load adopted the corpse and died dereferencing its null `WorldSettings`. The
+   LEAK is fixed at the level (`ue_wrap::GcPin` owns the pin and releases from its destructor,
+   `bb881bab`) — **but the pin exists only because the mirror is a fake actor we spawn**, so the
+   proper fix for C2 removes the pin's reason to exist along with everything else. Full RE:
+   `research/findings/join-identity/votv-rejoin-loadmap-null-worldsettings-RE-2026-08-31.md` §9.
 6. **The fix was applied to half the concept.** `native_pile_mirror` restores a real rooted
    `actorChipPile_C` **for the pile form only**. *"The CLUMP form stays a bare proxy (it has a
    LifeSpan + autonomous re-pile-on-contact -> too live to keep as a native)"* — which is the same

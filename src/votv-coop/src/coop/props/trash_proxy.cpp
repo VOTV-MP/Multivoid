@@ -255,8 +255,11 @@ void RetireProxy(coop::element::ElementId eid) {
     // documented teardown pattern; ~Prop -> ~Element -> Registry::UnregisterMirror).
     coop::element::ElementDeleter::Get().Enqueue(
         coop::element::MirrorManager<coop::element::Prop>::Instance().Take(eid));
-    UE_LOGI("[PILE] trash_proxy: RETIRE eid=%u actor=%p (drive-evicted, destroyed, un-rooted, unbound)",
-            eid, actor);
+    // The pin has NOT released yet at this point -- it releases when `pin` leaves scope, one line
+    // below. Said plainly because a log line is the first thing a future reader cites as evidence
+    // of ordering.
+    UE_LOGI("[PILE] trash_proxy: RETIRE eid=%u actor=%p (drive-evicted, destroyed, unbound; "
+            "un-root on scope exit)", eid, actor);
 }
 
 void RetireProxyActorOnly(coop::element::ElementId eid) {
@@ -274,8 +277,9 @@ void RetireProxyActorOnly(coop::element::ElementId eid) {
     coop::remote_prop::ClearAnyDriveFor(actor);
     coop::trash_clump_pose_stream::ClearDriveForEid(eid);
     if (liveActor) E::DestroyActor(liveActor);
-    UE_LOGI("[PILE] trash_proxy: RETIRE-ACTOR-ONLY eid=%u actor=%p (drive-evicted, destroyed, un-rooted; "
-            "Element KEPT -- rebound to the native pile by the caller)", eid, actor);
+    UE_LOGI("[PILE] trash_proxy: RETIRE-ACTOR-ONLY eid=%u actor=%p (drive-evicted, destroyed; "
+            "un-root on scope exit; Element KEPT -- rebound to the native pile by the caller)",
+            eid, actor);
 }
 
 bool IsProxy(coop::element::ElementId eid) {
