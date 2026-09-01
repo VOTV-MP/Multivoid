@@ -75,6 +75,37 @@ void* CurrentWorld();
 // slot-validated by the caller in the SAME game-thread task (this dereferences it).
 void* WorldOf(void* obj);
 
+// ---- THE UNSCOPED-RESOLVE CENSUS (2026-09-01) -----------------------------------------
+//
+// `reflection::FindObjectByClass` skips ONLY nulls and the CDO -- no liveness test, no world
+// filter -- and returns the FIRST match in GUObjectArray index order. Combined with the fact
+// this header exists for (a dying world's actors are not kill-flagged until the GC purge,
+// measured 44+ s), that means after a menu -> game cycle the OLD instance sits at a LOWER
+// index and WINS. Every caller resolving a WORLD-SCOPED actor this way can silently address
+// the world it just left.
+//
+// `[V]` This is not theoretical: on 2026-09-01 it produced a 1284-byte "host world". A joiner
+// arriving the instant a re-hosted lobby appeared was handed a save serialized from a gamemode
+// whose world no longer existed -- a structurally COMPLETE GVAS file describing nothing -- and
+// kept its own world instead (two ATVs, every door disagreeing). Fixed at that one site
+// (`ue_wrap/engine/save_capture.cpp`) by comparing `WorldOf(candidate)` against
+// `CurrentWorld()`; a null stamp is NOT a rejection (see the rule above).
+//
+// `[V]` CENSUS, same day, 136 `FindObjectByClass` call sites outside reflection.cpp, by the
+// class they resolve. WORLD-SCOPED and therefore exposed (~52):
+//     30  mainGamemode  (21 `GamemodeClass` + 8 `mainGamemode_C` + 1 profile alias)
+//      8  MainPlayerClass
+//      6  DaynightCycleClass   <- the weather lane; see the fog-in-the-menu bug, still OPEN
+//      3  SuperFogClass · 3 UiMenuClass · 2 kBlackScreenClass
+// NOT exposed: `GameInstanceClass` (13 -- immortal by design, outlives every world),
+// `WorldClass` (14 -- the world itself; use `CurrentWorld()`, which this header already says
+// is the reader to prefer), and asset/CDO lookups such as `saveSlot_C`.
+//
+// ONLY ONE of those ~52 is scoped today. The rest are UNAUDITED -- this census is a triage
+// list, not a claim that they are broken: a site reached only while a single world is live is
+// fine. The discriminating question per site is "can this run across a world change?", and the
+// cheapest answer for anything that can is the same two-line comparison save_capture now uses.
+
 // WHICH of VOTV's worlds is current -- the question every world GATE in the tree
 // actually asks, answered by the one reader that a dying world cannot hold alive.
 //
