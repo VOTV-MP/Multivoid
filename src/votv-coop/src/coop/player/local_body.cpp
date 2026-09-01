@@ -201,10 +201,13 @@ void Tick() {
                 "CHOICE is kept (install the pak that carries it under "
                 "Content/Paks/LogicMods -- any subfolder; the four scientists live in "
                 "scientists.pak)", g_skin.c_str());
-        coop::chat_feed::Push(
-            L"Skin '" + std::wstring(g_skin.begin(), g_skin.end()) +
-                L"' is not installed here -- wearing the stock body",
-            coop::chat_feed::Keep::Transient);
+        // NO CHAT LINE HERE, and the distinction is who ACTED. `RequestSkin` says something
+        // because the player just clicked a skin and deserves to know their click was
+        // refused. This path is reached with the player doing NOTHING -- an ini value whose
+        // pak is not installed -- and there is nothing for them to do about it at that
+        // moment. Narrating it puts a sentence about another mod's pak in front of someone
+        // who never chose it as a skin (user, 2026-09-01: "зачем это знать юзеру вообще").
+        // The log line above is for us; the picker refusing the pick is for them.
     }
     if (!cannotWear) g_lastUnwearable.clear();
 

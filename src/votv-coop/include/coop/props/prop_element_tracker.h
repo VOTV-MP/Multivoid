@@ -288,6 +288,7 @@ void SeedKnownKeyedProps();
 // nullptr (boot seed / throttled reconcile) keeps the prior count-only behavior.
 size_t ReSeedKnownKeyedProps(std::vector<void*>* outNewActors = nullptr);
 
+
 // ---- R-2b (2026-08-23): the STEADY re-seed as scan-hub consumer #14 -------
 // The 0.25 Hz single-frame full-census steady branch (retired from
 // registry_reaper, RULE 2) is replaced by a demand-exempt (settleScans=0)

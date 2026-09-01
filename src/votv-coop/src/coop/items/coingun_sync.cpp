@@ -8,6 +8,7 @@
 
 #include "coop/comms/peer_action_feed.h"
 #include "coop/element/registry.h"
+#include "coop/props/prop_element_tracker.h"  // the host key index, for the NoSuchProp diagnosis
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
@@ -499,6 +500,30 @@ void SendSaleForDyingProp(const std::wstring& key, uint32_t elementId) {
 }
 
 void Tick() {
+    // THE HOST'S KEY INDEX, ONCE PER SESSION. Every NoSuchProp refusal is a lookup into this
+    // index, and the refusal alone cannot say whether the key was WRONG or the index was
+    // EMPTY -- which is exactly the question the 2026-09-01 field report left open (three
+    // sales refused in a row, `eid=0` on each, and the host's log wiped before it was read).
+    // Placed on the TICK and not on the teardown summary because a killed process never
+    // reaches a teardown, so the number would be missing from every automated run.
+    {
+        // PERIODIC, not one-shot. A one-shot fired on the first connected tick and read 28
+        // while the world was still loading -- a number that says nothing about the state a
+        // sale is actually judged against, and which read the same before and after the fix.
+        static uint64_t sNextMs = 0;
+        const uint64_t nowMs = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count());
+        auto* ls = LoadSession();
+        if (nowMs >= sNextMs && ls && ls->connected() && ls->role() == coop::net::Role::Host) {
+            sNextMs = nowMs + 30000;
+            std::vector<coop::prop_element_tracker::KeyIndexEntry> idx;
+            coop::prop_element_tracker::CollectKeyIndexEntries(idx);
+            UE_LOGI("coingun[arbiter]: host key index holds %zu keyed prop(s) -- a NoSuchProp "
+                    "refusal against a NEAR-ZERO index is an enrollment gap, not a bad key",
+                    idx.size());
+        }
+    }
     // THE HOST HALF: erase consumed artifacts whose prop has died. This is what gives the
     // consumption guard a real lifetime -- v137's comment CLAIMED the map self-cleaned while the
     // map was erased nowhere at all, so it only ever grew. A CachedObjRef reads dead as null,

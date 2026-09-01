@@ -17,6 +17,7 @@
 
 #include "ue_wrap/engine/engine.h"  // GetActorLocation (F1 keyed save-time map)
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/engine/world_identity.h"  // seed once per WORLD, not once per process
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/reflection.h"
 
