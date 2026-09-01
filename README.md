@@ -34,7 +34,7 @@ system** — is the main coverage document:
 master table of ~67 co-op systems (~215 facets), each carrying a verdict
 (works / broken / unknown / not-built), an evidence tier, and who owns the
 write, followed by a per-system catalog with a "what we do NOT sync" line for
-each. Start there. Every wire lane in the game is accounted for in it (121
+each. Start there. Every wire lane in the game is accounted for in it (122
 reliable message kinds + 14 pose/state streams, all cross-checked); facet-level
 completeness is deliberately never claimed — the honest output is a count with a
 named residual, not a checkmark.
