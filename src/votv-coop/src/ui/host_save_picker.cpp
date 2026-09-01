@@ -6,6 +6,7 @@
 #include "coop/session/join_progress.h"
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
+#include "coop/net/protocol.h"   // kDefaultPort -- was reaching it only transitively
 #include "coop/session/session_manager.h"
 #include "ui/scale.h"
 #include "ue_wrap/core/log.h"
@@ -55,6 +56,9 @@ int  g_hostMax = 4;
 // (no master contact at all + private-address accept gate).
 int  g_connMode = 0;
 bool g_hideDirect = false;
+// The listen port, read ONCE per open (see Open()). Seeded with the compiled default so a
+// draw that somehow precedes an Open still prints a true number rather than 0.
+long g_directPort = static_cast<long>(coop::net::kDefaultPort);
 
 // Slot/display names are ASCII; downconvert wide->narrow for ImGui (non-ASCII -> '?').
 std::string W2A(const std::wstring& w) {
@@ -118,6 +122,13 @@ void Open(const std::string& hostName, bool locked, int playersMax) {
     g_hostLocked = locked;
     g_hostMax = playersMax > 0 ? playersMax : 4;
     g_selected = -1;
+    // RESOLVED ON OPEN, NEVER IN Render(). `ResolveInt` reaches `ReadIniValue`, which takes
+    // a global mutex and OPENS AND LINE-SCANS multivoid.ini -- and `Render()` is an ImGui
+    // draw, so reading it there is file I/O every frame the window is up. The first version
+    // of the port hint did exactly that (2026-09-01, caught in this session's own post-ship
+    // audit pass). The port cannot change while this window is open, so once is enough --
+    // the same contract `RefreshAsync` states on the line below.
+    g_directPort = coop::config::ResolveInt(coop::config_registry::rows::net_port);
     g_open.store(true, std::memory_order_relaxed);
     sb::RefreshAsync();  // on-open scan (per the RefreshAsync contract: not per-frame)
 }
@@ -218,8 +229,9 @@ void Render() {
             // -- and it is the number the player is about to type into a router. It is the
             // same defect the direct-connect box had with 7777 (coop::net::kDefaultDirectAddr),
             // one file over and pointing the other way, so it gets the same treatment.
+            // From the ON-OPEN cache, not a live resolve: see Open().
             ImGui::TextDisabled("Requires UDP port %ld forwarded to this PC. Friends join from",
-                                coop::config::ResolveInt(coop::config_registry::rows::net_port));
+                                g_directPort);
             ImGui::TextDisabled("the server browser or Direct Connect. Not sure? Use AUTO.");
             ImGui::Checkbox("Hide from server browser (friends Direct Connect by IP)", &g_hideDirect);
         } else if (g_connMode == 2) {

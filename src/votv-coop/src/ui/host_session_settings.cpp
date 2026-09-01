@@ -23,6 +23,7 @@
 #include <windows.h>
 
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -60,7 +61,18 @@ constexpr float kWindowW  = 980.f;
 // chosen in the PREVIOUS window and cannot change while this one is open -- so a
 // mode-dependent height would not be the window resizing under a click, but it would be
 // two layouts to keep true instead of one, for a hole the spacer already absorbs.
-constexpr float kWindowH  = 610.f;
+//
+// 610 WAS TOO SMALL AND IT WAS SHIPPED. `[V]` measured by `ReportFit` on the deployed build,
+// 2026-09-01: AUTO+unlocked left 4 px of slack and AUTO+LOCKED put the footer **28 screen px
+// OUTSIDE the frame** (frame ends 1025, Host button ends 1053, at ui.scale 1.25 -> ~23
+// logical px). That is the defect the sibling window shipped twice, and two independent
+// post-ship audits predicted it from the arithmetic before the probe confirmed it.
+//
+// 690 = 610 + 23 (the measured deficit) + ~57 of margin. The margin is not padding for its
+// own sake: the tallest cell's hint AUTO-WRAPS, so its height is a function of the font and
+// the string, and a value that merely just fits today breaks on the next wording edit. The
+// probe below now guards the number -- it logs an ERROR the moment any cell overflows again.
+constexpr float kWindowH  = 690.f;
 constexpr float kRowH     = 56.f;
 constexpr float kBorderPx = 2.f;
 constexpr float kPadPx    = 6.f;
@@ -153,6 +165,7 @@ std::string GeneratePassword() {
 void* g_menu     = nullptr;
 void* g_switcher = nullptr;
 void* g_root     = nullptr;
+void* g_box      = nullptr;   // the centred window frame (NOT g_root, which is full-screen)
 void* g_scrim    = nullptr;
 void* g_backBtn  = nullptr;
 void* g_hostBtn  = nullptr;
@@ -185,6 +198,42 @@ int            g_connMode = 0;
 
 bool g_locked = false;
 int  g_hoverWho = -1;
+
+// FOOTER-INSIDE-THE-FRAME MEASUREMENT (see ReportFit). Last reported overflow, so the line
+// is logged on CHANGE rather than per tick -- the value moves exactly twice per showing
+// (layout settling, then the lock click), and both are the states worth seeing.
+float g_fitLast = -9999.f;
+
+// This window is fixed-height with every child Auto-sized and only a Spacer to absorb slack,
+// so content taller than `kWindowH` pushes the footer PAST the bottom edge -- and nothing
+// clips, so the buttons just render outside the ring. The sibling window shipped exactly that
+// twice (`host_window_native.cpp:57-72`) before it was given a Fill slot; this screen has no
+// shrinkable child, so its only defence is being tall enough. That is a NUMBER, so measure it
+// instead of eyeballing a screenshot.
+//
+// ON THE TICK, NOT IN `Show()`: on the frame the switcher index changes, Slate has not laid
+// the subtree out yet and every rect reads 0x0 -- the first version of this probe printed
+// `frame=0..0 footer=0..0` and would have been read as "no overflow".
+void ReportFit() {
+    ue_wrap::FVector2D rtl{}, rsz{}, btl{}, bsz{};
+    if (!g_box || !g_hostBtn) return;
+    if (!U::WidgetScreenRect(g_box, rtl, rsz) || rsz.Y < 1.f) return;
+    if (!U::WidgetScreenRect(g_hostBtn, btl, bsz) || bsz.Y < 1.f) return;
+    const float frameBottom  = rtl.Y + rsz.Y;
+    const float footerBottom = btl.Y + bsz.Y;
+    const float overflow     = footerBottom - frameBottom;
+    if (g_fitLast > -9000.f && std::fabs(overflow - g_fitLast) < 1.f) return;
+    g_fitLast = overflow;
+    if (overflow > 0.f) {
+        UE_LOGE("host_session_settings: [fit] FOOTER OUTSIDE THE FRAME by %.0f px "
+                "(frame ends %.0f, Host button ends %.0f; locked=%d conn=%d) -- kWindowH is "
+                "too small for this cell",
+                overflow, frameBottom, footerBottom, g_locked ? 1 : 0, g_connMode);
+    } else {
+        UE_LOGI("host_session_settings: [fit] footer inside the frame, %.0f px of slack "
+                "(locked=%d conn=%d)", -overflow, g_locked ? 1 : 0, g_connMode);
+    }
+}
 
 // LISTED, and its default is per-MODE rather than a constant, because the honest default is
 // different in each: AUTO must be listed to be joinable at all, LAN ONLY can never be, and
@@ -371,17 +420,27 @@ void RepaintChoices() {
     // was two dispatches and a ~230-character wstring per mouse sweep, and it ran even
     // while the block was Collapsed. `SetStatus` five lines up is edge-gated; its
     // neighbour was not.
-    if (g_pwHint && g_hintFor != g_connMode) {
+    // EITHER HINT ARMS THE EDGE, and each is written behind its OWN null check. Gating both
+    // on `g_pwHint` (as this did when the SERVER LIST hint was added) means one null widget
+    // silently blanks the OTHER hint -- and `BuildScreen` succeeds with either null, since
+    // neither is checked into a `return false`. The visible result would be two greyed-out
+    // rows on AUTO/LAN with nothing saying why they cannot be clicked, which is the entire
+    // reason that hint exists. (Post-ship perf audit, 2026-09-01.)
+    if ((g_pwHint || g_visHint) && g_hintFor != g_connMode) {
         g_hintFor = g_connMode;
         const bool brokered = (g_connMode == 0);
-        SetText(g_pwHint,
+        if (g_pwHint) SetText(g_pwHint,
                 brokered
                     ? std::wstring(L"Anyone with this can join. Give it out the way you "
                                    L"would give out an invite link.")
+                    // "on the line that starts 'dial='" was FALSE: the line is
+                    // `peer_identity: loaded durable identity ... -- dial=<...>`, so `dial=`
+                    // is at the END. A player following that sentence literally would search
+                    // for a line that does not exist. (2026-09-01.)
                     : std::wstring(L"Anyone with this can join. On this connection type "
-                                   L"your friends also need your host id (it is in your "
-                                   L"multivoid.log, on the line that starts 'dial=') -- "
-                                   L"without it their game will refuse to send the "
+                                   L"your friends also need your host id -- search your "
+                                   L"multivoid.log for 'dial=' and send them what follows "
+                                   L"it. Without it their game will refuse to send the "
                                    L"password at all."),
                 brokered ? kDim : kAmber);
         // THE SAME EDGE, so the visibility hint costs nothing extra per hover sweep. It says
@@ -514,7 +573,14 @@ bool BuildScreen(void* switcher) {
         g_visTitle[i] = r.a;
         SetText(r.a, kVis[i].title,  kText);
         SetText(r.b, kVis[i].detail, kDim);
-        if (!r.bg || !r.a) return false;
+        // RELEASE THE FIELD ON THE WAY OUT. This return is AFTER `TF::Create` above, unlike
+        // the WHO-MAY-JOIN loop's identical-looking one, so a bare `return false` here leaks
+        // a `Field` (new + push_back into `g_live`) on every retry -- and `OnMenuTick` retries
+        // until the 15-attempt backoff, then once a SECOND forever. That is 1 leak/sec plus a
+        // window's worth of orphaned UObjects feeding GC. The footer and index paths below
+        // were hardened into exactly this shape by the 2026-08-31 audit; this loop was added
+        // afterwards and did not inherit it. (Post-ship perf audit, 2026-09-01.)
+        if (!r.bg || !r.a) { TF::Release(g_pwField); g_pwField = nullptr; return false; }
     }
     g_visHint = NS::AddText(col, L"", 15, kDim, NS::kJustLeft, 0.f);
     if (g_visHint) U::SetAutoWrapText(g_visHint, true);
@@ -547,6 +613,7 @@ bool BuildScreen(void* switcher) {
     }
 
     g_root = shell.root;
+    g_box  = shell.box;   // the FRAME, for the fit probe -- root is full-screen
 
     // ATTACH AT BIRTH, NOT AT FIRST Show(). An unattached widget tree is GC food: it renders
     // until the next collection and then vanishes, and `AddChild` on the dead object returns
@@ -746,15 +813,20 @@ void UpdateHover() {
     // hand-built UImages -- and `IsHovered()` reads 0 on one of those whether or not it is
     // inside a scroll container (measured twice, 2026-08-29 and 2026-08-30). Geometry is the
     // only mechanism that answers for them.
+    // THE CURSOR IS RESOLVED ONCE FOR THE WHOLE SWEEP. Each `CursorOverWidget` redoes that
+    // conversion, and its expensive half is an uncached `GUObjectArray` walk -- so probing
+    // four rows through it cost four walks per tick (~468/s at this file's ~117 Hz) to answer
+    // a question whose cursor half is the same for all four. Hoisted per the post-ship audit,
+    // 2026-09-01; `HoverTracker::Poll` has always done this for lists.
+    long hx = 0, hy = 0;
+    if (!NS::CursorInWidgetSpace(hx, hy)) return;   // fail-closed, as the per-widget call was
     for (int i = 0; i < 2; ++i)
-        if (g_whoBg[i] && NS::CursorOverWidget(g_whoBg[i])) { g_hoverWho = i; break; }
+        if (g_whoBg[i] && NS::WidgetContains(g_whoBg[i], hx, hy)) { g_hoverWho = i; break; }
     // Only probed where hover MEANS something: on AUTO/LAN the rows are dimmed and
-    // unclickable, so lighting one up would promise a control that is not there -- and each
-    // probe is a GUObjectArray walk (see the gate above), so this also keeps the sweep at
-    // two rect reads on the modes that cannot use it.
+    // unclickable, so lighting one up would promise a control that is not there.
     if (VisibilityIsEditable() && g_hoverWho < 0) {
         for (int i = 0; i < 2; ++i)
-            if (g_visBg[i] && NS::CursorOverWidget(g_visBg[i])) { g_hoverVis = i; break; }
+            if (g_visBg[i] && NS::WidgetContains(g_visBg[i], hx, hy)) { g_hoverVis = i; break; }
     }
     if (g_hoverWho != prev || g_hoverVis != prevVis) RepaintChoices();
 }
@@ -809,6 +881,14 @@ void Show() {
 
     UE_LOGI("host_session_settings: shown (index %d -> %d; locked=%d)",
             g_priorIndex, g_ourIndex, g_locked ? 1 : 0);
+    // FOOTER-INSIDE-THE-FRAME MEASUREMENT. This window is fixed-height with every child
+    // Auto-sized and only a Spacer to absorb slack, so content taller than `kWindowH` pushes
+    // the footer PAST the bottom edge -- nothing clips, so the buttons simply render outside
+    // the ring. The sibling window shipped exactly that twice (host_window_native.cpp:57-72)
+    // before it was given a Fill slot. This screen has no shrinkable child, so its only
+    // defence is being tall enough, and that is a NUMBER -- so print it rather than eyeball a
+    // screenshot. Logged on every Show(); the locked+AUTO cell is the tallest.
+    g_fitLast = -9999.f;   // re-arm the fit probe for this showing (see ReportFit)
 }
 
 void Hide(const char* why) {
@@ -871,7 +951,7 @@ void OnMenuTick(void* menu, void* switcher) {
         // that no longer exists.
         TF::Release(g_pwField);
         g_pwField = nullptr;
-        g_root = nullptr; g_scrim = nullptr; g_status = nullptr;
+        g_root = nullptr; g_box = nullptr; g_scrim = nullptr; g_status = nullptr;
         g_backBtn = nullptr; g_hostBtn = nullptr;
         g_pwBlock = nullptr; g_pwHint = nullptr;
         g_recapName = g_recapWorld = g_recapConn = nullptr;
@@ -952,6 +1032,7 @@ void OnMenuTick(void* menu, void* switcher) {
     // painted with -- so ticking a hidden field would let a click on the row above it steal
     // the keyboard into a box the player cannot see.
     if (g_locked) TF::Tick(g_pwField);
+    ReportFit();   // edge-logged; two lines per showing, not per tick
     UpdateHover();
     PollChrome();
 

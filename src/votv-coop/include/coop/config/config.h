@@ -182,6 +182,23 @@ enum class ExampleGen : unsigned char {
 // harness boot after EnsureIniSkeleton.
 void GenerateExampleCatalog();
 
+// RETIRE A STORED VALUE THAT A SHIPPED BUG WROTE. Call once at harness boot, after
+// EnsureIniSkeleton.
+//
+// WHY A MIGRATION AND NOT JUST A NEW DEFAULT. `browser.lastdirect` prefilled the
+// direct-connect box with `127.0.0.1:7777` -- Unreal's default port, never ours; a host
+// listens on 47621 (coop::net::kDefaultPort). Changing the row's DEFAULT fixes only
+// installs that never stored one, and the ImGui browser writes the row on
+// `IsItemDeactivatedAfterEdit`, which fires on focus loss with NOTHING TYPED. So a player
+// who merely clicked the box once has the dead port burned into their ini permanently, and
+// the default change is invisible to them. `[V]` measured in this repo's own HOST install.
+//
+// EXACT-MATCH ONLY, and once: the row is rewritten if and only if it still equals the
+// retired literal, so a value the player actually chose -- including a deliberate
+// `:7777` -- is never touched. After it runs the row holds a real address and this is a
+// no-op forever.
+void MigrateRetiredIniValues();
+
 // This boot's generation outcome (+ the emitted key count when green).
 ExampleGen ExampleGenStatus(int* keyCountOut);
 

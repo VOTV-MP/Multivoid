@@ -114,6 +114,10 @@ DWORD WINAPI TimelineThread(LPVOID param) {
     // every key with its description, default and env twin; deterministic,
     // compare-first, fail-soft (the mod never reads it back).
     cfg::GenerateExampleCatalog();
+    // Retire stored values a shipped bug wrote (see config.h). Exact-match, one-shot, and a
+    // no-op on every later launch -- but it must run BEFORE anything reads the rows it
+    // touches, which is why it sits beside the skeleton rather than in a UI module.
+    cfg::MigrateRetiredIniValues();
     // Seed the local nickname from config (env VOTVCOOP_NET_NICK / ini net.nick /
     // the registry my-name default)
     // so the server browser shows the current name; the user can overwrite it there, and the
