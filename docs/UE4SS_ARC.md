@@ -1704,11 +1704,17 @@ user then supplied the art. It now lives in the repo, and it is the **first trac
 the project owns**:
 
 - `assets/branding/icon-512.png` — the master, verbatim as supplied (512×512, PNG, 32bpp alpha).
+  **Replaced 2026-09-01** by the user's third revision; the 2026-08-25 art is in git history.
 - `assets/branding/icon.png` — **256×256, GENERATED** from the master by the one-line HighQualityBicubic
-  downscale recorded in `assets/branding/README.md`. Alpha survives (the art has rounded corners, and
-  the Thunderstore spec explicitly supports transparency). Never hand-edit it; re-run the line.
-- Provenance, stated once so it is not re-litigated: the art is a Multivoid screenshot showing the
-  HL-derived client model. That is the **same asset class §7.6 already settled** — it ships.
+  downscale recorded in `assets/branding/README.md`. Alpha survives — `[V]` on the current art the four
+  corner pixels measure alpha 0 and the generated 256 holds 3,991 fully-transparent + 1,753 partial
+  pixels, and the Thunderstore spec explicitly supports transparency. (`[V]` **the 2026-08-25 master's
+  corners were alpha 255** — opaque, the rounded corners painted rather than cut — so the same sentence
+  in the older text was describing a uniformly opaque channel. Measured, not carried.) Never hand-edit
+  it; re-run the line.
+- Provenance, stated once so it is not re-litigated: the art is a Multivoid screenshot showing
+  HL-derived scientist models — one in the 2026-08-25 art, five in the current one. That is the
+  **same asset class §7.6 already settled** — it ships, and the count does not change the decision.
 
 **Where this lands the WP-9 estimate:** unchanged in kind, sharper in shape. WP-9 is a `7z`/`Compress-Archive`
 step plus a generated `manifest.json`, with the `icon.png` now in hand — bolted onto a release lane
