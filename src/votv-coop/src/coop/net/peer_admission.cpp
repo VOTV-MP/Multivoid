@@ -179,7 +179,11 @@ HostPasswordCache g_hostPw;
 //
 // THE COLLATERAL, priced honestly: peers behind ONE carrier NAT share an address bucket,
 // so ten wrong guesses between them locks that address out for a minute. Ten is far above
-// what typing costs an honest group and far below a search of a 50-bit generated password.
+// what typing costs an honest group and far below a search of the generated password, which
+// is 30 bits since 2026-09-01 (it was 50; `host_session_settings.cpp` kPwLen went 10 -> 6 at
+// the user's request). The conclusion survives the shortening -- 2^30 against this ceiling
+// is still years -- but the number it reasons FROM had to move with it, and this was the
+// third site holding it while the other two were updated.
 enum class GuessKeyKind : uint8_t { Addr = 1, Ident = 2 };
 struct GuessBucket {
     uint8_t      key[16]{};

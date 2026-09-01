@@ -242,7 +242,17 @@ float g_fitLast = -9999.f;
 // ON THE TICK, NOT IN `Show()`: on the frame the switcher index changes, Slate has not laid
 // the subtree out yet and every rect reads 0x0 -- the first version of this probe printed
 // `frame=0..0 footer=0..0` and would have been read as "no overflow".
+// THE MEASUREMENT IS EDGE-DRIVEN, NOT JUST THE LOG. Its first version gated only the
+// LOGGING and measured every tick -- six ProcessEvent dispatches and eight heap allocations
+// at the menu's ~117 Hz, for a value that can only move when the layout does. The call
+// site's own comment ("edge-logged; two lines per showing") was true of the lines and false
+// of the cost, which is the exact shape this file already documents twice elsewhere. The
+// rects change on a rebuild, on the lock toggle and on a fresh showing, so `g_fitDirty` is
+// armed there and nowhere else. (Post-ship perf audit, 2026-09-01.)
+bool g_fitDirty = true;
+
 void ReportFit() {
+    if (!g_fitDirty) return;
     ue_wrap::FVector2D rtl{}, rsz{}, btl{}, bsz{};
     if (!g_box || !g_hostBtn) return;
     if (!U::WidgetScreenRect(g_box, rtl, rsz) || rsz.Y < 1.f) return;
@@ -250,6 +260,10 @@ void ReportFit() {
     const float frameBottom  = rtl.Y + rsz.Y;
     const float footerBottom = btl.Y + bsz.Y;
     const float overflow     = footerBottom - frameBottom;
+    // Cleared only HERE, after both rects read non-degenerate: on the frame the switcher
+    // index changes Slate has not laid the subtree out and every rect is 0x0, so clearing on
+    // entry would consume the dirty flag on the one tick that cannot answer.
+    g_fitDirty = false;
     if (g_fitLast > -9000.f && std::fabs(overflow - g_fitLast) < 1.f) return;
     g_fitLast = overflow;
     if (overflow > 0.f) {
@@ -379,9 +393,6 @@ void* SectionBody(void* parent, const wchar_t* title) {
 }
 
 void RepaintChoices() {
-    for (int i = 0; i < 2; ++i) {
-        (void)i;
-    }
     // Both style channels now live in `host_session_choices::Repaint` -- see its comment
     // for why selection and hover are independent, and why that is measured rather than
     // taste.
@@ -397,9 +408,6 @@ void RepaintChoices() {
     // fill (it is still stating what will happen) and loses the white, so the section reads
     // as information rather than as a control that ignores clicks.
     const bool visEditable = VisibilityIsEditable();
-    for (int i = 0; i < 2; ++i) {
-        (void)i;
-    }
     g_vis.editable = visEditable;
     HC::Repaint(g_vis);
 
@@ -454,9 +462,6 @@ void RepaintChoices() {
                         ? std::wstring(L"Automatic games are always listed -- the list is how "
                                        L"friends find you. You can hide it from the ~ menu "
                                        L"once they have joined.")
-                    : g_connMode == 2
-                        ? std::wstring(L"LAN games are never announced anywhere. Friends on "
-                                       L"your network join by your local address.")
                         : std::wstring(),
                     g_connMode == 1 ? kDim : kAmber);
         }
@@ -486,6 +491,7 @@ void SetLocked(bool locked) {
         }
         TF::SetText(g_pwField, pw);
     }
+    g_fitDirty = true;   // the password block appears/collapses -> the footer moves
     if (!IsLocked()) TF::Blur(g_pwField);   // a collapsed field must not keep the keyboard
     SetStatus(L"", kText);
     RepaintChoices();
@@ -762,18 +768,24 @@ void PollChrome() {
     // failure.
     if (g_backBtn && E::WidgetIsHovered(g_backBtn)) { BackToHostWindow(); return; }
     if (g_hostBtn && E::WidgetIsHovered(g_hostBtn)) { DoHost(); return; }
-    for (int i = 0; i < 2; ++i)
-        if (g_who.bg[i] && NS::CursorOverWidget(g_who.bg[i])) { SetLocked(i == 1); return; }
-    // THE VISIBILITY ROWS ANSWER ONLY ON DIRECT. The click is swallowed rather than
-    // redirected on the other two modes: the rows are dimmed and the hint says why, so a
-    // silent no-op here is the honest behaviour and a status line would be nagging.
-    if (VisibilityIsEditable()) {
-        for (int i = 0; i < 2; ++i)
-            if (g_vis.bg[i] && NS::CursorOverWidget(g_vis.bg[i])) {
-                const bool want = (i == 0);
-                if (want != IsListed()) { g_vis.chosen = want ? 0 : 1; RepaintChoices(); }
-                return;
-            }
+    // THE CURSOR IS RESOLVED ONCE FOR BOTH SELECTORS, exactly as the hover sweep does it.
+    // This path used to call `NS::CursorOverWidget` per row -- up to four uncached
+    // GUObjectArray walks per button release -- which is the pattern the choices module was
+    // extracted to remove, and it was the one call site the extraction did not migrate.
+    // `HC::HandleClick` had ZERO callers as a result, so the module shipped with dead code
+    // and the header's claim was untrue of clicks. (Post-ship perf audit, 2026-09-01.)
+    long cx = 0, cy = 0;
+    if (!NS::CursorInWidgetSpace(cx, cy)) return;   // fail-closed, as the per-widget call was
+    int picked = -1;
+    if (HC::HandleClick(g_who, cx, cy, picked)) { SetLocked(picked == 1); return; }
+    // THE VISIBILITY ROWS ANSWER ONLY ON DIRECT -- `HandleClick` refuses a non-editable
+    // selector itself, so the click is swallowed rather than redirected: the rows are dimmed
+    // and the hint says why, so a silent no-op is honest and a status line would be nagging.
+    g_vis.editable = VisibilityIsEditable();
+    if (HC::HandleClick(g_vis, cx, cy, picked)) {
+        const bool want = (picked == 0);
+        if (want != IsListed()) { g_vis.chosen = want ? 0 : 1; RepaintChoices(); }
+        return;
     }
 }
 
@@ -802,6 +814,9 @@ void UpdateHover() {
     const int prevVis = g_vis.hover;
     g_who.hover = -1;
     g_vis.hover = -1;
+    // NO `g_fitDirty` HERE. This is the per-sweep hover reset, not a layout event -- arming
+    // it from inside the pointer path would re-dirty the probe on every mouse move and give
+    // back exactly the per-tick cost the flag exists to remove.
     // These rows sit in the content column, OUTSIDE any ScrollBox, but they are still
     // hand-built UImages -- and `IsHovered()` reads 0 on one of those whether or not it is
     // inside a scroll container (measured twice, 2026-08-29 and 2026-08-30). Geometry is the
@@ -813,10 +828,14 @@ void UpdateHover() {
     // 2026-09-01; `HoverTracker::Poll` has always done this for lists.
     long hx = 0, hy = 0;
     if (!NS::CursorInWidgetSpace(hx, hy)) return;   // fail-closed, as the per-widget call was
-    for (int i = 0; i < 2; ++i)
+    // ONE CALL, NOT A LOOP: `HoverAt` sweeps both rows itself. The per-row loop that used to
+    // be here survived the extraction as a braceless header over this line and ran the whole
+    // sweep TWICE -- correct, because the assignment is idempotent, and silent, because `i`
+    // is still used by the condition so no unused-variable warning fires. (Post-ship perf
+    // audit, 2026-09-01.)
     g_who.hover = HC::HoverAt(g_who, hx, hy);
-    // Only probed where hover MEANS something: on AUTO/LAN the rows are dimmed and
-    // unclickable, so lighting one up would promise a control that is not there.
+    // Only probed where hover MEANS something: where the mode fixes the answer the rows are
+    // dimmed and unclickable, so lighting one up would promise a control that is not there.
     g_vis.editable = VisibilityIsEditable();
     if (g_who.hover < 0) g_vis.hover = HC::HoverAt(g_vis, hx, hy);
     if (g_who.hover != prev || g_vis.hover != prevVis) RepaintChoices();
@@ -831,6 +850,7 @@ void Show() {
     g_shown = true;
     g_who.hover = -1;
     g_vis.hover = -1;
+    g_fitDirty  = true;   // a fresh showing lays out again
     // THE MODE DECIDES THE STARTING VALUE, and it is re-derived on every open rather than
     // remembered: the player may have come back through step one and changed the connection
     // type, and a listed/hidden choice carried across that change would be a value chosen
@@ -855,9 +875,12 @@ void Show() {
                              : L"World: " + Widen(g_choice.slot),
             kDim);
     SetText(g_recapConn,
+            // TWO ARMS, because there are two modes. The third arm outlived the mode it
+            // named by one commit and was the last place in the shipped product that could
+            // print "LAN only" to a player -- 580 lines below the comment declaring it
+            // retired. (Post-ship audit, 2026-09-01.)
             std::wstring(L"Connection: ") +
-                (g_connMode == 1 ? L"direct (you forward the port)"
-                                 : g_connMode == 2 ? L"LAN only" : L"auto"),
+                (g_connMode == 1 ? L"direct (you forward the port)" : L"automatic"),
             kDim);
 
     // THE LOCK AND THE PASSWORD COME BACK THE WAY THEY WERE LEFT. A host who set one last
@@ -1025,7 +1048,7 @@ void OnMenuTick(void* menu, void* switcher) {
     // painted with -- so ticking a hidden field would let a click on the row above it steal
     // the keyboard into a box the player cannot see.
     if (IsLocked()) TF::Tick(g_pwField);
-    ReportFit();   // edge-logged; two lines per showing, not per tick
+    ReportFit();   // no-op unless the layout moved -- see g_fitDirty
     UpdateHover();
     PollChrome();
 

@@ -34,9 +34,12 @@
 //   DIRECT     a LanDirect UDP listen on net.port, which the host has forwarded. The
 //              announce carries conn=direct + the port and the master publishes the
 //              announce's source ip. Optionally unlisted: friends still Direct Connect.
-//   LAN ONLY   never contacts the master at ALL -- no announce, no heartbeat, no
-//              signaling; nothing leaves the machine -- and the accept edge refuses
-//              non-private remote addresses.
+// There were THREE until 2026-09-01. "LAN ONLY" is retired: it bound the SAME
+// all-interfaces socket as DIRECT (`[V]` `:::47621`), and what made it look separate was an
+// accept edge refusing non-private remotes -- deleted, because it did the router's job --
+// plus never announcing, which is DIRECT + Hidden. THE ACCEPT EDGE NO LONGER REFUSES
+// ANYTHING; this list said it did for one commit, which is a deleted security control
+// described in the present tense. See coop/session/host_mode.h.
 //
 // NO TEXT ENTRY HERE, AND THE REASON IS NO LONGER THE ONE THIS NOTE USED TO GIVE. It said
 // the kit "cannot yet build a focusable `UEditableTextBox`" and that focus was UNMEASURED.

@@ -468,10 +468,19 @@ void UpdateHover() {
     // cursor, and `IsHovered()` on it reads 0 (measured 2026-08-29 on the server browser,
     // which shipped the identical construct the same day). Left as it was, the world list
     // could not be clicked at all -- this window could only ever start a NEW game.
-    if (g_newGameRow.bg && NS::CursorOverWidget(g_newGameRow.bg)) g_hoverRow = -1;
+    // ONE CURSOR RESOLVE FOR THE WHOLE SWEEP, the hoist the sibling screen already had.
+    // `CursorOverWidget` re-resolves the cursor per widget, and its expensive half is an
+    // UNCACHED `FindObjectByClass` walk -- so probing the new-game row plus each connection
+    // row cost one walk EACH, per evaluated tick. `WidgetContains` takes the already-resolved
+    // coordinates and does the geometry only. (Post-ship perf audit, 2026-09-01; the same
+    // hoist landed next door and was not carried across, which is the one-copy-fixed pattern
+    // this file's own comments keep naming.)
+    long hx = 0, hy = 0;
+    if (!NS::CursorInWidgetSpace(hx, hy)) return;   // fail-closed, as the per-widget call was
+    if (g_newGameRow.bg && NS::WidgetContains(g_newGameRow.bg, hx, hy)) g_hoverRow = -1;
     if (g_hoverRow == -2 && g_hover.Index() >= 0) g_hoverRow = g_hover.Index();
     for (int i = 0; i < kConnCount; ++i)
-        if (g_connRow[i] && NS::CursorOverWidget(g_connRow[i])) { g_hoverConn = i; break; }
+        if (g_connRow[i] && NS::WidgetContains(g_connRow[i], hx, hy)) { g_hoverConn = i; break; }
     if (g_hoverRow != prevRow || g_hoverConn != prevConn) RepaintAll();
 }
 
