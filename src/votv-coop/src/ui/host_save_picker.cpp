@@ -7,6 +7,7 @@
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/net/protocol.h"   // kDefaultPort -- was reaching it only transitively
+#include "coop/session/host_mode.h"
 #include "coop/session/session_manager.h"
 #include "ui/scale.h"
 #include "ue_wrap/core/log.h"
@@ -56,6 +57,16 @@ int  g_hostMax = 4;
 // (no master contact at all + private-address accept gate).
 int  g_connMode = 0;
 bool g_hideDirect = false;
+
+// ONE PLACE THE PICKER'S TWO WIDGETS BECOME A MODE, so the two Host buttons below cannot
+// drift apart -- they each spelled the mapping out by hand, which is two chances to get
+// the polarity backwards.
+coop::session::HostMode HostModeFromPicker() {
+    return coop::session::HostMode{
+        g_connMode == 1 ? coop::session::Reachability::Direct
+                        : coop::session::Reachability::Brokered,
+        !(g_connMode == 1 && g_hideDirect)};
+}
 // The listen port, read ONCE per open (see Open()). Seeded with the compiled default so a
 // draw that somehow precedes an Open still prints a true number rather than 0.
 long g_directPort = static_cast<long>(coop::net::kDefaultPort);
@@ -79,9 +90,7 @@ void DoHostExisting(const sb::SaveInfo& info) {
     // DriveHostBootIfPending Reset()s it on session-start/failure; if HostWithSave is
     // rejected (busy) there is no pending boot to Reset, so we must NOT raise it.
     if (!sm::HostWithSave(c, g_hostName, g_hostLocked, HostPassword(), g_hostMax,
-                          /*directConnection=*/g_connMode == 1,
-                          /*hideFromBrowser=*/g_connMode == 1 && g_hideDirect,
-                          /*lanOnly=*/g_connMode == 2)) {
+                          HostModeFromPicker())) {
         UE_LOGW("host_save_picker: HOST existing '%s' rejected (busy) -- leaving picker open", c.slot.c_str());
         return;
     }
@@ -103,9 +112,7 @@ void DoHostNew() {
     // of seconds), so the no-feedback window was the worst here -- this is exactly where
     // the user self-joined. Cover the menu the instant the action is accepted.
     if (!sm::HostWithSave(c, g_hostName, g_hostLocked, HostPassword(), g_hostMax,
-                          /*directConnection=*/g_connMode == 1,
-                          /*hideFromBrowser=*/g_connMode == 1 && g_hideDirect,
-                          /*lanOnly=*/g_connMode == 2)) {
+                          HostModeFromPicker())) {
         UE_LOGW("host_save_picker: HOST NEW '%s' rejected (busy) -- leaving picker open", g_newName);
         return;
     }
@@ -218,11 +225,12 @@ void Render() {
         ImGui::Separator();
         ImGui::TextUnformatted("Connection:");
         ImGui::SameLine();
-        if (ImGui::RadioButton("AUTO (recommended)", g_connMode == 0)) g_connMode = 0;
+        // TWO, since 2026-09-01 -- "LAN only" was never a third transport. See
+        // coop/session/host_mode.h; the fallback surface tracks the native one so a player
+        // who switches between them is not offered a different set of choices.
+        if (ImGui::RadioButton("AUTOMATIC (recommended)", g_connMode == 0)) g_connMode = 0;
         ImGui::SameLine();
-        if (ImGui::RadioButton("DIRECT (port forward)", g_connMode == 1)) g_connMode = 1;
-        ImGui::SameLine();
-        if (ImGui::RadioButton("LAN only", g_connMode == 2)) g_connMode = 2;
+        if (ImGui::RadioButton("DIRECT (you forward a port)", g_connMode == 1)) g_connMode = 1;
         if (g_connMode == 1) {
             // THE PORT IS RESOLVED, NOT SPELLED. This line used to carry a literal 47621,
             // which was right for a default install and a LIE for anyone who set net.port
@@ -233,11 +241,10 @@ void Render() {
             ImGui::TextDisabled("Requires UDP port %ld forwarded to this PC. Friends join from",
                                 g_directPort);
             ImGui::TextDisabled("the server browser or Direct Connect. Not sure? Use AUTO.");
+            ImGui::TextDisabled("Friends on your own network can join with no forwarding at all.");
             ImGui::Checkbox("Hide from server browser (friends Direct Connect by IP)", &g_hideDirect);
-        } else if (g_connMode == 2) {
-            ImGui::TextDisabled("Local network only: nothing is sent to the master server, the game");
-            ImGui::TextDisabled("is not listed anywhere, and connections from the internet are");
-            ImGui::TextDisabled("refused. Friends on your network use Direct Connect to your local IP.");
+            if (g_hideDirect)
+                ImGui::TextDisabled("Hidden: nothing is sent to the master server at any point.");
         } else {
             ImGui::TextDisabled("Connects directly when your network allows it, relays automatically");
             ImGui::TextDisabled("otherwise. Works without any router setup. Always listed -- hide it");

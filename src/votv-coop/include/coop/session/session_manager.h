@@ -15,6 +15,8 @@
 
 #include <cstdint>
 #include <string>
+
+#include "coop/session/host_mode.h"
 #include <vector>
 
 namespace coop::session_manager {
@@ -114,22 +116,28 @@ struct SaveChoice {
 // Returns true if ACCEPTED (the caller should raise the host-boot cover + close the
 // picker); false if rejected (another action already in flight) so the caller leaves
 // the picker open and does NOT raise a cover that nothing would drop.
-// `directConnection` (Host-Game "Connection" selector, user 2026-06-11): false =
-// AUTO (recommended) -- master-brokered P2P/ICE, direct when NAT allows, TURN
-// relay as the automatic fallback (TURN is NOT a separate user choice; it lives
-// inside AUTO). AUTO games are ALWAYS LISTED at host time: the master is a
-// relay game's ONLY rendezvous, so a hidden one would be unjoinable (the in-
-// game scoreboard's Hide toggle is the right place to hide once friends are
-// in). true = DIRECT -- a LanDirect UDP listen on net.port (the host forwarded
-// it); the announce carries conn=direct + the port, the master advertises the
-// announce's source ip, and /v1/join hands joiners "ip:port" for a plain UDP
-// connect. `hideFromBrowser` (DIRECT only): announce then immediately hide --
-// heartbeat lives, friends Direct Connect by IP; ignored for AUTO.
-// `lanOnly` (2026-08-29): the third Connection choice -- a LanDirect listen that
-// NEVER contacts the master (no announce, no heartbeat, no signaling; nothing
-// leaves the machine), with the accept edge refusing non-private remote
-// addresses. LAN party semantics: friends on the same network Direct Connect
-// to the host's local IP. Overrides directConnection/hideFromBrowser.
+// `mode` (coop/session/host_mode.h) answers HOW the session is reachable, and it is ONE
+// value rather than the three booleans this used to take (`directConnection`,
+// `hideFromBrowser`, `lanOnly`). Those three encoded two axes and one duplicate:
+//
+//   Brokered -- master-brokered P2P/ICE, direct when NAT allows, TURN relay as the
+//               automatic fallback (TURN is NOT a separate user choice; it lives inside
+//               this one). ALWAYS listed: the master is a relay game's ONLY rendezvous, so
+//               a hidden brokered lobby is unjoinable by anyone. `mode.listed` is forced
+//               true here rather than trusted.
+//   Direct   -- our own UDP listen on net.port, bound on EVERY interface. Friends on the
+//               same network reach it as-is; friends on the internet reach it if the
+//               player forwards the port. When listed, the announce carries conn=direct +
+//               the port, the master advertises the announce's source ip, and /v1/join
+//               hands joiners "ip:port". When NOT listed, nothing leaves the machine at
+//               all -- see IsMasterFree.
+//
+// The old third choice ("LAN ONLY") is GONE, not renamed: it was `Direct` + `!listed`
+// plus an accept filter that refused non-private remotes, and that filter did the
+// ROUTER's job (user, 2026-09-01). If the port is not forwarded, local-only is what NAT
+// already gives you; if it is forwarded, the player asked for reachability we then
+// refused. The lobby password and the admission challenge are the controls, and they
+// apply to every lane.
 // `password` is the secret this session will REQUIRE, and it is passed rather than
 // re-read from the ini for a measured reason: the caller holds the exact string the
 // player is looking at, and a round trip through `WriteIniValue` -> `ResolveString` can
@@ -139,8 +147,7 @@ struct SaveChoice {
 // still shows a lit padlock (post-ship audit, 2026-08-31). Empty here means open.
 bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked,
                   const std::string& password, int playersMax,
-                  bool directConnection = false, bool hideFromBrowser = false,
-                  bool lanOnly = false);
+                  coop::session::HostMode mode = {});
 
 // Join a master lobby by its opaque lobbyId (POST /v1/join on a worker) -> build a P2P
 // client Config + queue a session start. Non-blocking. `displayName` is the lobby's name,
