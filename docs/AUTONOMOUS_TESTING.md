@@ -88,6 +88,18 @@ override per-run config without editing the ini:
   path, not the bypass), `grab-intent-roundtrip`, `puppet-hand-drive`,
   `carry-pose-published`/`-applied`, `throw-intent-roundtrip`, `throw-repile`. VERDICT
   PASS 2026-06-23 (proto v85, deployed `BB94A120A969A51E`).
+- `VOTVCOOP_LIGHTSWITCH_PROBE=1` -- **SOLO ONLY, AND IT WRITES TO THE WORLD.** Arms the
+  light-switch probe + the light-GROUP apply selftest (a synthetic `use()` plus the
+  selftest's writes, one-shot, ~5 s after install). `mp.py lightgroup` is the supported
+  way to run it: a SOLO HOST with a live session and zero clients. Two traps, both paid
+  for on 2026-09-01. (a) The probe refuses while any peer is present OR ARRIVING and
+  LATCHES that refusal for the process, so it will not fire on a host that ever had a
+  client -- and the harness cannot un-latch it. (b) **This is a config-registry flag, so
+  it also reads `multivoid.ini`.** Exporting it in a shell, or leaving `lightswitch_probe=1`
+  in an install's ini, arms a world-mutating one-shot in every scenario -- it did exactly
+  that on the HOST install and cost a client its join. `launch_peer` now forces it to `0`
+  (a `pop` is NOT enough: env is only the top layer, and popping it uncovers the ini).
+  The read-only sibling is `lightgroup_census=1`, which is safe on both peers.
 
 ## Pile carry/throw log-truth harness (2026-06-22) — the autonomous self-test loop
 
