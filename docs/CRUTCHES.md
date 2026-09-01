@@ -50,6 +50,7 @@ missing work; this register is for work that was *built in the wrong shape*.
 | C2 | **Trash piles / clumps** (`coop/props/trash_proxy`, `native_pile_mirror`, + ~9 sibling modules) | The mirror is a FAKE actor, which broke aim, which grew a parallel aim system; two mirror implementations now coexist | **OPEN** | **SECOND** (user: *"that's on the list after atv"*) |
 | C3 | **KO respawn** (`coop/player/ko_respawn`, the `Holder::KoRespawn` hold in `coop/player/ragdoll_gate`) | The game's own death mechanism was NEUTRALISED -- `canRagdoll` held shut for the whole session so `ragdollMode` early-outs -- instead of the death being allowed to run and then answered | **CLOSED BY RETIREMENT, `33008d87` 2026-08-31.** The lane is deleted whole (RULE 2) rather than fixed, because the arc that replaces it inverts its mechanism; H1/H2/H3 died with it and H3's underlying write was converted to `CachedObjRef` on the way out. The replacement IS BUILT AND GREEN as of 2026-08-31 (`aaf23a4d`): `ue_wrap/engine/level_travel` detours `UGameplayStatics::OpenLevel` and `coop/player/death_revive` writes the revive in its place, so the whole native death now runs and the world is KEPT. `mp.py death --session` 12/12; `mp.py death` 6/6 with `installed=1 travelsRefused=0`, i.e. single player untouched by NEGATIVE CONTROL rather than by assumption | **CLOSED** |
 | C4 | **The lobby password's entropy floor** (`ui/host_session_settings` `kPwLen`, `coop/net/lobby_password`, `coop/net/peer_admission`'s self-addressed branch) | Two decisions that are each defensible alone combine into a measured offline oracle, and nothing bridges them | **OPEN, DELIBERATE, and stated at all three sites** | **after C2** |
+| C5 | **Coin gun sale** (`coop/items/coingun_sync`, `coingun_arbiter`, `coop/props/prop_destroy_seam`) | The client DESTROYS the prop whether or not the host agrees to buy it -- the authorization is decided later and elsewhere, so a refusal costs the item and pays nothing | **OPEN.** The lane's own header names the missing invariant (*"a local artifact must not be suppressed until the authoritative one is CONFIRMED, and this lane does not yet hold it"*) and the destroy seam's comment accepts the loss as "degrades to pre-A37 behaviour". `[V]` 2026-09-01 the user hit it on every shot, because a SECOND defect made every refusal certain (the host's key index held 28 props against a world of ~2200 -- that root is fixed in `40c0e086`). With the root fixed the loss is rare again, which is exactly how it stayed unnoticed | **after C2** |
 
 ---
 
@@ -409,3 +410,36 @@ game's own rendering and physics, the design has left the architecture.
   targeted fix, and the gating criteria (principle 4's transitional-crutch exception).
 - New crutches found during unrelated work belong here immediately; the register is worth exactly as
   much as its completeness.
+
+---
+
+## C5 — the coin gun's unconditional destroy
+
+**Shape.** A client shooting a prop with the coin gun destroys it LOCALLY as the game's own verb
+runs, and separately sends a `CoinGunSell` intent. The host decides afterwards whether it will buy
+it. If it refuses -- for any reason -- the item is already gone and no coins were minted.
+
+**It is written down as acceptable, in two places, and both are wrong about the cost.**
+`coop/items/coingun_sync.h` names the invariant it does not hold: *"a local artifact must not be
+suppressed until the authoritative one is CONFIRMED"*. `coop/props/prop_destroy_seam.cpp` argues the
+loss is free because *"pre-A37 lost that same item while the client's phantom credit was erased by
+the host's next balance broadcast anyway, so the ECONOMIC outcome matches"*. That is an argument
+about a comparison, not about the player, and it holds only while refusals are RARE.
+
+**They were not rare.** `[V]` 2026-09-01: the host's key index held 28 keyed props against a world of
+~2,200, so `FindLiveActorByKey` missed for every ordinary save-loaded prop and EVERY sale was
+refused. Three shots in the user's log, three refusals, three destroyed items, `eid=0` on each. The
+index root is fixed (`40c0e086`) and the loss is rare again -- which is the condition under which
+this crutch was invisible for as long as it has existed.
+
+**Why it is a crutch and not a bug.** The client is authoring a DESTRUCTIVE, SHARED-WORLD change and
+the arbiter is consulted after the fact. That is the act-as-host rule inverted
+(`docs/COOP_SYNCER_MODEL.md` section 2b): a client authors an INTENT, never the state.
+
+**The proper fix `[?]`.** The game's own verb destroys the prop inside the client's process, so
+"do not destroy" means intercepting a local destroy, which the dispatch map may or may not allow --
+that is the measurement this needs first. Failing that, the honest shape is a HEAL: the host, which
+still holds the prop it refused to buy, re-asserts it to the refused client. Nothing like that exists
+today (`prop_destroy_seam.cpp`: *"No heal lane exists to get wrong"*). Either way the fix belongs at
+the moment of destruction, not in the refusal path.
+
