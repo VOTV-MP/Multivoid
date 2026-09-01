@@ -121,10 +121,39 @@ jobs:
     if: needs.judge.outputs.verdict == 'publish'
     runs-on: windows-latest
     steps:
-      - name: Checkout main (publish scripts)
+      # THE CONTENT AND THE IDENTITY COME FROM THE TAG; THE PREDICATES COME FROM
+      # MAIN. This job used to check out `main` for both, and that is a
+      # CONTRADICTION with the ritual it serves: RELEASE.md steps 1-3 tag, then
+      # bump kProtocolVersion N -> N+1 on main, then push both together -- so by
+      # the time this job runs, main ALWAYS reads N+1 while the tag declares N.
+      # publish.ps1's leg 3 compares the two and throws. It could not have been
+      # noticed earlier: leg 3 landed 2026-08-28 (`d693609b`), after the last
+      # release (b133-dev, 2026-07-31), so the b150 run was the first ever to
+      # reach it -- and it refused with `'0.9.0n b151' != '0.9.0n b150'`.
+      #
+      # Taking the content from the tag is also what makes the zip honest: the
+      # icon, the store README, the legal files and the paks now come from the
+      # commit being released rather than from whatever main has become.
+      - name: Checkout the TAGGED tree (release content + identity)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          ref: main
+          ref: ${{ needs.judge.outputs.tag-sha }}
+
+      # Only the *.ps1 predicates are overlaid, and only from main. A tag can be
+      # created by anyone who can push one; the refuse-to-publish logic must not
+      # be readable from it (RELEASE.md: "executed from main HEAD -- editing them
+      # is a human-only act"). Everything else under tools/release is CONTENT that
+      # describes this release -- the notes file, the store README, the ledger,
+      # the fingerprint -- and stays at the tag.
+      - name: Overlay the release predicates from main
+        shell: pwsh
+        run: |
+          git fetch --depth=1 origin main
+          git checkout FETCH_HEAD -- 'tools/release/*.ps1'
+          Write-Host 'predicates overlaid from main:'
+          git --no-pager diff --name-only HEAD -- tools/release | ForEach-Object { "  $_" }
+          Write-Host 'content kept at the tag:'
+          Get-ChildItem tools/release -Exclude '*.ps1' -Name | ForEach-Object { "  tools/release/$_" }
 
       - name: Download build artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0

@@ -1,6 +1,9 @@
 # publish.ps1 -- the draft-first publish step (design D3), executed by
-# release-core's publish job from the MAIN checkout after the judge said
-# PUBLISH. Draft -> assets -> sha256 re-download verify -> flip (prerelease
+# release-core's publish job after the judge said PUBLISH. It runs on a checkout
+# of the TAG with only tools/release/*.ps1 overlaid from main (2026-09-01): the
+# release CONTENT and identity belong to the commit being released, the
+# refuse-to-publish PREDICATES belong to main and nowhere else.
+# Draft -> assets -> sha256 re-download verify -> flip (prerelease
 # for -dev) -> read-back asserts (prerelease shape; releases/latest tri-state
 # with labeled vacuity). Re-runs delete stale DRAFTS only; live releases are
 # never workflow-deleted.
@@ -22,7 +25,7 @@ if (-not $tag) { throw "tag '$TagName' fails the grammar (the judge should have 
 
 # --- Assets: ONE zip, assembled from the artifact payload (UE4SS_ARC 7.4c/8.3) --
 # The artifact carries the tagged cacheless rebuild's main.dll; the zip is
-# assembled HERE on the main checkout by the one assembler (package.ps1), then
+# assembled HERE on the tag's checkout by the one assembler (package.ps1), then
 # the identical fail-closed predicate is re-run on the finished file.
 $payload = @(Get-ChildItem $ArtifactDir -Filter 'main.dll')
 if ($payload.Count -ne 1) { throw "expected exactly one main.dll in $ArtifactDir, found $($payload.Count)" }
@@ -30,9 +33,21 @@ if ($payload.Count -ne 1) { throw "expected exactly one main.dll in $ArtifactDir
 # Identity: THREE legs must agree -- the tag, the artifact bytes' own
 # VERSIONINFO (strictly stronger than the retired filename check: it reads the
 # bytes, which survive any rename), and the tree the manifest is stamped from.
-# A proto bump landing on main between tag push and publish makes leg 3
-# disagree; that refusal is CORRECT -- the zip's manifest must match the
-# artifact, so publish from a checkout matching the tag instead.
+#
+# LEG 3 IS AN ASSERTION ABOUT THE CHECKOUT, and it only became a TRUE one on
+# 2026-09-01. The workflow used to hand this script a checkout of `main`, which
+# the ritual guarantees has already moved: RELEASE.md steps 1-3 tag, then bump
+# kProtocolVersion N -> N+1, then push both together -- so at publish time main
+# reads N+1 while the tag declares N, and leg 3 threw on every release that
+# followed the documented steps. It had simply never run: leg 3 landed
+# 2026-08-28 (`d693609b`), after the last release (b133-dev, 2026-07-31), and
+# b150 was the first tag to reach it -- refusing with
+# `'0.9.0n b151' != '0.9.0n b150'`.
+#
+# release-core.yml now checks out the TAG here and overlays only the *.ps1
+# predicates from main, so this comparison holds by construction and fails
+# exactly when it should: when the tree being packaged is not the one the tag
+# names.
 $tagPair = "$($tag.Game) b$($tag.N)"
 $dllPair = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($payload[0].FullName).ProductVersion
 if ($null -eq $dllPair) { $dllPair = '' }
@@ -83,7 +98,7 @@ if (-not (Test-Path -LiteralPath $notesPath)) { throw "notes file missing: $note
 $notes = Get-Content -LiteralPath $notesPath -Raw
 $notesViolations = @(Test-ReleaseNotesFormat -Content $notes)
 if ($notesViolations.Count -gt 0) { throw "notes format violations: $($notesViolations -join '; ')" }
-if (-not (Test-Path -LiteralPath 'docs/INSTALL.md')) { throw 'docs/INSTALL.md missing on the main checkout -- the release body links it' }
+if (-not (Test-Path -LiteralPath 'docs/INSTALL.md')) { throw "docs/INSTALL.md missing on the tag's checkout -- the release body links it" }
 
 # --- Draft-first ----------------------------------------------------------
 $title = "Multivoid $($tag.Game) b$($tag.N)" + $(if ($tag.Dev) { '-dev' } else { '' })

@@ -464,3 +464,11 @@ ENFORCING in every release run; `tools/release/ledger_lint.ps1` local anytime.
 - The judge + fingerprint + ledger predicates all live in `tools/release/*.ps1`
   executed from main HEAD — editing them is a human-only act (rulesets:
   `main-push-admin-only`, `v-tags-admin-only`, force-push/deletion off).
+  **The publish job splits the two halves (2026-09-01):** it checks out the
+  TAG — so the zip's identity, store README, icon, legal files and paks come
+  from the commit being released — and overlays only `tools/release/*.ps1` from
+  main, so the refuse-to-publish logic is never readable from a tag. It used to
+  check out main for both, which contradicted steps 1-3 of this very ritual: the
+  consume bump puts main at N+1 before the run reaches publish, and `publish.ps1`
+  leg 3 threw `'<game> b<N+1>' != '<game> b<N>'`. That was invisible until b150
+  because leg 3 landed after the previous release.
