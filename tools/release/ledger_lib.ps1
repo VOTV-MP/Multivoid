@@ -378,10 +378,21 @@ function New-PackageManifest {
         [Parameter(Mandatory)][string]$GameTarget,
         [Parameter(Mandatory)][int]$Build
     )
-    # The Paper pair stays EXACT here -- this is the destination 7.3 names for the
-    # information the X.Y mapping drops (the game target's letter suffix).
-    $desc = "Co-op multiplayer for Voices of the Void. Host or join a session with friends. " +
-            "Multivoid $GameTarget b$Build. Modifies no game files."
+    # THE GAME TARGET STAYS EXACT -- it is the information `ConvertTo-PackageVersion`
+    # DESTROYS. That mapping is "$major.$minor.$Proto" over a `-replace '\D',''`, so
+    # `0.9.0n` becomes `0.9`: the third field AND the letter suffix are gone, and the
+    # letter is what says which game cook this build is for. This string is its only
+    # home on the surface a player reads before installing.
+    #
+    # THE BUILD NUMBER IS NOT REPEATED, and dropping it is the difference. `$Proto` IS
+    # the patch field of `version_number` (0.9.150 -> b150) and is also in the dependency
+    # string and the version list, so `b$Build` here spent the scarcest line in the
+    # product -- the one the r2modman list shows -- restating what three other fields
+    # already say. What that space buys instead is a first sentence that tells someone
+    # what the mod DOES, which the old one did not have. (2026-09-01.)
+    $desc = "Drop-in co-op for Voices of the Void: play the whole game with up to three " +
+            "friends. Shared world, voice chat, join at any time. For VotV $GameTarget " +
+            "-- modifies no game files."
     if ($desc.Length -gt 250) { throw "manifest description is $($desc.Length) chars, max is 250" }
     $obj = [ordered]@{
         name           = 'Multivoid'
