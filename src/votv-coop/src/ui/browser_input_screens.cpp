@@ -39,6 +39,12 @@ using ue_wrap::FLinearColor;
 // the size of the browser. The Language window it copies is about this shape.
 constexpr float kWindowW = 620.f;
 constexpr float kWindowH = 210.f;
+// WHAT A SECOND LABEL + FIELD COSTS. Sized GENEROUSLY on purpose: the column ends in a
+// Spacer that absorbs slack, so a window that is too TALL is cosmetic while one that is too
+// SHORT arranges its footer past the bottom edge and the buttons render outside the ring --
+// the defect the hosting windows shipped twice, and the one a measured probe caught at 28 px
+// on 2026-09-01. There is no fit probe on this window, so the margin is the guard.
+constexpr float kSecondFieldH = 96.f;
 constexpr float kFieldW  = 560.f;
 
 const FLinearColor kText   = NS::Text();
@@ -53,6 +59,7 @@ struct Screen {
     void*      okBtn   = nullptr;
     void*      status  = nullptr;
     TF::Field* field   = nullptr;
+    TF::Field* field2  = nullptr;   // nullptr unless the Spec asks for one
     int32_t    index   = -1;
     std::string lastStatus;
 };
@@ -80,6 +87,7 @@ bool    g_toldTheUser   = false;   // stop hammering the donor lookup once it is
 
 bool g_prevLmb = false, g_lmbPrimed = false;
 bool g_prevEsc = false, g_escPrimed = false;
+bool g_prevTab = false, g_tabPrimed = false;
 
 std::atomic<int>      g_wantOpen{-1};
 std::atomic<bool>     g_wantClose{false};
@@ -107,9 +115,21 @@ struct Spec {
     const wchar_t* hint;
     const wchar_t* confirm;
     int32_t        maxLen;
+    // AN OPTIONAL SECOND FIELD. nullptr label = this window has one box, which is every
+    // window but Direct connect. It is a Spec row rather than a `Kind` branch in the
+    // builder so the two shapes cannot drift: a screen with a second field and a screen
+    // without differ in DATA, not in construction.
+    const wchar_t* label2  = nullptr;
+    const wchar_t* hint2   = nullptr;
+    int32_t        maxLen2 = 0;
 };
 const Spec kSpec[3] = {
-    {L"Multivoid  -  Direct connect", L"Server address", L"host or host:port", L"Connect", 64},
+    // TWO BOXES, at the user's instruction 2026-09-01: "Вводит адрес и порт, оставляет
+    // поле пароля пустым если его нет, или заполняет поле пароля если он был выдан
+    // хостом". The password cap matches the LobbyPassword window's for the same reason --
+    // a host may replace the generated secret with anything they can say out loud.
+    {L"Multivoid  -  Direct connect", L"Server address", L"host or host:port", L"Connect", 64,
+     L"Password  (leave empty if the server has none)", L"password", 64},
     {L"Multivoid  -  Change name",    L"Your name",      L"your name",         L"OK",      24},
     // The cap is 64 CODEPOINTS and not the generated length: a host may replace the
     // generated value with anything they can say out loud, and a limit sized to what WE
@@ -130,12 +150,22 @@ bool BuildOne(void* switcher, Kind kind, void* backDonor) {
     const Spec& spec = kSpec[Idx(kind)];
 
     NS::WindowShell shell;
-    if (!NS::BuildWindowShell(switcher, kWindowW, kWindowH, spec.title, shell)) return false;
+    const float windowH = kWindowH + (spec.label2 ? kSecondFieldH : 0.f);
+    if (!NS::BuildWindowShell(switcher, kWindowW, windowH, spec.title, shell)) return false;
     void* col = shell.column;
 
     NS::AddText(col, spec.label, 16, kAccent, NS::kJustLeft, 0.f);
     s.field = TF::Create(col, spec.hint, spec.maxLen, kFieldW);
     if (!s.field) return false;
+    if (spec.label2) {
+        NS::AddText(col, spec.label2, 16, kAccent, NS::kJustLeft, 0.f);
+        s.field2 = TF::Create(col, spec.hint2, spec.maxLen2, kFieldW);
+        // RELEASE THE FIRST FIELD ON THE WAY OUT. A bare `return false` past a successful
+        // `TF::Create` leaks a Field on every retry, and this builder is retried from the
+        // menu tick -- the same defect the session-settings screen shipped and the
+        // 2026-09-01 audit caught one file over.
+        if (!s.field2) { TF::Release(s.field); s.field = nullptr; return false; }
+    }
 
     // The status line sits under the field and starts empty: it exists to say why a
     // confirm did not take, and a window that opens already explaining itself is noise.
@@ -238,12 +268,17 @@ void Confirm(Kind kind) {
     // `ConnectDirect` OWNS the refusal. It parses the address and answers false for a bad
     // one, so this does not re-implement the parse -- a second parser is a second opinion
     // about what a valid address is, and the one that matters is the one that dials.
-    // NOT A LOCKED-ROW JOIN, so nothing typed for a previous server may ride along.
-    // `TakeJoinPassword` consumes the transient now, but a value set by the prompt and
-    // then abandoned (the player pressed Back) would still be sitting there, and
-    // `ConnectDirect` reads it. The browser's own unlocked-row path clears for exactly
-    // this reason and this door did not (post-ship audit, 2026-08-31).
-    sm::SetJoinPassword("");
+    // THE PASSWORD IS THIS WINDOW'S SECOND BOX, and it is set UNCONDITIONALLY -- an empty
+    // box writes an empty string, which is both "this server has none" and the clear that
+    // stops a value typed for a previous server riding along. That clear used to be the
+    // whole statement here (post-ship audit, 2026-08-31); it is now the empty case of a
+    // real field rather than a rule with no way to opt out of it.
+    //
+    // AN OPEN SERVER IGNORES WHATEVER IS TYPED, and that needed no code: the host sets
+    // `kAuthFlagPasswordRequired` only when its own `LobbyPassword()` is non-empty, so the
+    // client never even computes a tag, and the host's check is inside `if (!want.empty())`.
+    // Both sides already drop it (user: "поле пароля просто тупо игнорируется").
+    sm::SetJoinPassword(s.field2 ? TF::Text(s.field2) : std::string());
     if (!sm::ConnectDirect(value)) {
         SetStatus(s, "Could not connect to that address -- check it, or another action is "
                      "already in flight.", kBad);
@@ -290,8 +325,12 @@ void Show(Kind kind) {
         TF::SetText(s.field,
                     coop::config::ResolveString(::coop::config_registry::rows::browser_lastdirect));
     else                                  TF::SetText(s.field, sm::Nickname());
-    // FOCUSED ON OPEN. This window exists for one field; making the player click it first
-    // would be a step with no decision in it.
+    // THE PASSWORD BOX OPENS EMPTY EVERY TIME, for the reason the sibling window states:
+    // it is somebody else's secret, it is not stored, and a box carrying the LAST server's
+    // password is a leak between two lobbies and a baffling failure when it does not work.
+    if (s.field2) TF::SetText(s.field2, std::string());
+    // FOCUSED ON OPEN, on the box the player always fills in. Tab moves to the other one;
+    // there is no click-to-focus because `native_text_field` deliberately exposes no widget.
     TF::Focus(s.field);
     UE_LOGI("browser_input_screens: shown '%ls' (index %d -> %d)",
             kSpec[Idx(kind)].title, g_priorIndex, s.index);
@@ -301,6 +340,7 @@ void Hide(const char* why) {
     if (g_open < 0) return;
     Screen& s = g_screen[g_open];
     TF::Blur(s.field);
+    if (s.field2) TF::Blur(s.field2);
     const int32_t now = U::SwitcherIndex(g_switcher);
     if (now == s.index && g_priorIndex >= 0) U::SwitcherSetIndex(g_switcher, g_priorIndex);
     UE_LOGI("browser_input_screens: hidden (%s; index was %d, ours %d)", why, now, s.index);
@@ -342,14 +382,38 @@ void PollChrome() {
     const bool escEdge = g_prevEsc && !esc;
     g_prevEsc = esc;
     if (escEdge) {
+        // EITHER field may own the Escape. Asking only the first would let a press inside
+        // the password box both leave it and close the window, which is the exact defect
+        // the comment above records being fixed for the single-field case.
         if (TF::ConsumeEscape(s.field)) return;   // consumed AT the edge -- see the sibling
+        if (s.field2 && TF::ConsumeEscape(s.field2)) return;
         BackToBrowser();
         return;
+    }
+
+    // TAB MOVES BETWEEN THE TWO BOXES, and it is the only way to reach the second one:
+    // `native_text_field` exposes no widget, so there is no rect to hit-test a click
+    // against. Release edge and a priming pass, for the same race the Escape block above
+    // documents -- this poll runs after the frame's message pump, so a press edge can be
+    // seen before the key even reaches the field.
+    if (s.field2) {
+        const bool tab = (::GetAsyncKeyState(VK_TAB) & 0x8000) != 0;
+        if (!g_tabPrimed) { g_tabPrimed = true; g_prevTab = tab; }
+        const bool tabEdge = g_prevTab && !tab;
+        g_prevTab = tab;
+        if (tabEdge) {
+            const bool onFirst = TF::Focused(s.field);
+            TF::Blur(s.field);
+            TF::Blur(s.field2);
+            TF::Focus(onFirst ? s.field2 : s.field);
+            return;
+        }
     }
 
     // ENTER confirms. The field raises the edge and this consumes it, so the same key that
     // ends typing is the one that acts -- which is what every text field a player has ever
     // used does, and what makes the confirm button optional rather than required.
+    if (s.field2 && TF::ConsumeSubmit(s.field2)) { Confirm(KindOf(g_open)); return; }
     if (TF::ConsumeSubmit(s.field)) {
         Confirm(KindOf(g_open));
         return;
@@ -501,7 +565,11 @@ void OnMenuTick(void* menu, void* switcher) {
         return;
     }
 
+    // BOTH FIELDS TICK. Only the focused one animates a caret, but a field that is not
+    // ticked never sees its own state advance -- and the second box is the one a player
+    // is typing into exactly when the first is idle.
     TF::Tick(g_screen[g_open].field);
+    if (g_screen[g_open].field2) TF::Tick(g_screen[g_open].field2);
     PollChrome();
 }
 
