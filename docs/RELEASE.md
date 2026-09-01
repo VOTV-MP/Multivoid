@@ -43,10 +43,10 @@ to land so we do not break the only cohort we have. **Delete this whole section 
 published** (RULE 2) — everything durable in it lives in the ritual, `docs/THUNDERSTORE.md`, or
 `site/NOTES.md`.
 
-**Identity.** `N` = whatever `kProtocolVersion` reads at tag time — **149** as of writing. Game
+**Identity.** `N` = whatever `kProtocolVersion` reads at tag time — **150** as of writing. Game
 target `0.9.0n`, so: tag `v0.9.0n-b<N>`, GitHub asset + Thunderstore zip
 `Pelmentor-Multivoid-0.9.<N>.zip`, Thunderstore `version_number` `0.9.<N>`. The last published
-row is **b133-dev (2026-07-31)**; 134-148 were never released and the sequence keeps the gap.
+row is **b133-dev (2026-07-31)**; 134-149 were never released and the sequence keeps the gap.
 
 ### Why this one is not an ordinary release — five firsts
 
@@ -193,20 +193,22 @@ change ignores it. Keep it short and real while that cohort exists, then it stop
     at the normal production endpoints. The whole staged-pair + `ufw allow 10010/tcp` dance this
     bullet used to prescribe is **deleted**, not deferred: the staged listeners are down and the
     ports were never opened.
-- **THE FINGERPRINT IS STALE AND THE RELEASE RUN WILL REFUSE — re-measured 2026-08-31, and this
-  is the one blocker that is NOT on the box.** `[V]` computed exactly as `fingerprint.ps1` does
-  (`Get-FileHash -Algorithm SHA256` on `.github/workflows/build-core.yml`):
-  committed `1707b4b8…` vs live **`69f48b15…`** → `FINGERPRINT: FAIL`, the same step that stopped
-  the b133 run (`30610396964`). The workflow has moved AGAIN since that runbook was written —
-  `04c7ce23`, not `0d84cc5a` — so this is now two build-path changes stale.
-  **It cannot be fixed by hand here.** `msvc_toolset` / `windows_sdk` are facts about the CI
-  RUNNER, not this machine, so the only correct fix is to run the cacheless CI-bytes smoke, take
-  its `fingerprint-dump.json` artifact (90-day retention) and commit that. Editing the JSON to
-  match a local hash defeats the gate's entire purpose — the check exists to assert the build
-  PATH did not silently move. Procedure + the explicit "do not commit the dump without the smoke"
-  warning: `research/handson_runbook_2026-07-31_b133_release_resume.md`.
-  b133 shipped from locally built bytes as a declared process exception rather than clear this;
-  doing that twice would make the exception the process.
+- **~~THE FINGERPRINT IS STALE AND THE RELEASE RUN WILL REFUSE~~ — CLOSED 2026-09-01 (`d2a85eaa`),
+  and the claim it replaces was MEASURED ON THE WRONG MACHINE.** `[V]` the committed
+  `build_core_sha256` `411e62b8…` is exactly the sha256 of the CURRENT `build-core.yml` **in the
+  runner's CRLF checkout** — reproduced here by converting the worktree's LF file and hashing it.
+  `[V]` nothing has touched `build-core.yml` since the run that minted it (`33498716305`, commit
+  `e7eedd34`, an ancestor of HEAD), so the build path has not moved and the gate should PASS.
+  **The trap, and it is the reason this bullet stood for a day saying the opposite: a local
+  `Get-FileHash` can never predict this gate's verdict.** Git checks these files out LF here and
+  CRLF on the runner, so a local read produces `db0c3b5a…` for the very file the runner hashes to
+  `411e62b8…` — three different-looking values across this section's history, all of them the
+  same file. `msvc_toolset` / `windows_sdk` are runner facts too. **Do not run
+  `fingerprint.ps1 -Mode check` locally and read anything into it**; the only honest local check
+  is "did `build-core.yml` change since the commit named in the last fingerprint mint", which is
+  a `git log` and nothing else. Minting still requires a cacheless CI run + its smoke — that rule
+  is unchanged and is why `d2a85eaa` was earned rather than typed
+  (`[[lesson-a-file-hash-gate-can-only-be-minted-where-it-is-checked]]`).
 - **Push.** Dozens of commits were unpushed when this was written and the backlog only grows; the
   tag must be reachable on origin. Check with `git log --oneline origin/main..HEAD | wc -l`, and
   run the 5-axis leak audit per commit before asking.
