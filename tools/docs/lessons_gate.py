@@ -137,6 +137,24 @@ def load_list(path):
     return out
 
 
+CITE_ROOTS = ("src", "include", "tools", "research", "reference")
+
+
+def absent_cite_roots():
+    """Which of CITE_ROOTS this checkout does not have.
+
+    `research/` is gitignored and `reference/` is a submodule CI deliberately never
+    fetches ("reference/* never fetched", build-core.yml). A citation into either
+    therefore resolves to NOTHING on CI and to a real file locally -- and until
+    2026-09-01 the gate called that DEAD and failed the build. Ten MTA citations, none
+    of them rot, none of them fixable by editing the ledger.
+
+    This is the same distinction the SYMBOL half already draws with its `absent` corpus
+    list: a check whose corpus is missing reports the instrument, not the ledger.
+    """
+    return [r for r in CITE_ROOTS if not os.path.isdir(os.path.join(REPO, r))]
+
+
 def resolve_cite(path):
     """A cite may be repo-relative or a bare basename. Return (abspath, ambiguous_hits)."""
     direct = os.path.join(REPO, path)
@@ -144,7 +162,7 @@ def resolve_cite(path):
         return direct, []
     base = os.path.basename(path)
     hits = []
-    for root in ("src", "include", "tools", "research", "reference"):
+    for root in CITE_ROOTS:
         full = os.path.join(REPO, root)
         if not os.path.isdir(full):
             continue
@@ -237,6 +255,8 @@ def main():
 
     # ---- check A: file:line citations ------------------------------------------------
     dead_cites, ambiguous, external = [], [], []
+    unreachable = []                      # cites into a corpus this checkout does not have
+    missing_roots = absent_cite_roots()
     cites = sorted(set(CITE.findall(text)))
     for path, lineno in cites:
         if path in allow_files or os.path.basename(path) in allow_files:
@@ -244,7 +264,19 @@ def main():
             continue
         resolved, hits = resolve_cite(path)
         if resolved is None and not hits:
-            dead_cites.append((path, lineno, []))
+            # A BARE BASENAME that resolves nowhere, in a checkout that is MISSING one of
+            # the search roots, is UNVERIFIABLE rather than dead -- the file may well be
+            # sitting in the root that was not fetched. An explicit repo-relative path is
+            # still dead, because its root is named and either present or not.
+            #
+            # LOCAL STRICTNESS IS UNCHANGED: with every root present `missing_roots` is
+            # empty and this branch cannot be taken, so the full-corpus run still fails on
+            # real rot. That matters -- this bucket must never become the place citations
+            # go to stop being checked.
+            if missing_roots and os.path.basename(path) == path:
+                unreachable.append((path, lineno))
+            else:
+                dead_cites.append((path, lineno, []))
             continue
         # An ambiguous basename is reported, but its LINE is still checked -- against
         # every candidate. Skipping the check on ambiguity is how a `reflection.h:999999`
@@ -293,6 +325,9 @@ def main():
     print("")
     print("citations: {} checked, {} cite allowlisted out-of-repo files "
           "(line numbers unverifiable)".format(len(cites), len(external)))
+    if unreachable:
+        print("           {} UNVERIFIABLE here -- absent search root(s): {}. Run locally "
+              "for the full gate.".format(len(unreachable), ", ".join(missing_roots)))
     if absent:
         print("symbols:   CHECK SKIPPED -- corpus absent: {}".format(", ".join(absent)))
         print("           (research/ is gitignored; the auto-memory dir lives outside the")
