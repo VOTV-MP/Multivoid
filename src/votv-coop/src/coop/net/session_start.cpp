@@ -229,6 +229,14 @@ bool Session::Start(const Config& cfg) {
         return false;
     }
 
+    // NOTHING CARRIES ACROSS FROM A PREVIOUS ATTEMPT. `hostCloseReason_` had no clear
+    // anywhere, and since 2026-09-01 it is FIRST-WRITER-WINS -- so a reason parked by an
+    // attempt whose consumers never fired (an env / .bat / autotest client, where neither
+    // `join_progress::Active()` nor `g_wasConnected` is true) would be shown to the player
+    // as the explanation for the NEXT browser join that failed. Before first-writer-wins the
+    // three admission sites overwrote unconditionally and masked it. (Post-ship audit,
+    // 2026-09-01.)
+    { std::lock_guard<std::mutex> lk(hostCloseMutex_); hostCloseReason_.clear(); }
     state_.store(ConnState::Handshaking);
     for (auto& r : rttMsBySlot_) r.store(-1, std::memory_order_relaxed);  // per-slot RTT reset
     running_.store(true);

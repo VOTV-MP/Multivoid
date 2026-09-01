@@ -118,9 +118,16 @@ struct Config {
     // challenge) arrive with the master-server + auth stage -- not needed for
     // the raw ICE transport. See the connectivity-ladder design doc s10.
 
-    // THE DESTINATION WAS NAMED BY THE LOCAL PLAYER, not by anything on the network.
-    // Set ONLY by `session_manager::ConnectDirect`, which is reached only from a box a
-    // person typed an address into.
+    // THE DESTINATION WAS NAMED BY THIS MACHINE, not by anything on the network.
+    //
+    // "by a person who typed it" is what this comment said first, and a census of
+    // `ConnectDirect`'s five callers falsified it: two are typed boxes (the native
+    // direct-connect window, the ImGui one) and three are local configuration -- the env
+    // client, the reload-churn autotest, and the overlay test arm. The security property is
+    // the same either way (an ini and a keyboard are both the local operator), but the
+    // wider statement is the one the code enforces, and the narrower one would have made
+    // the project's own drill a lie: `mp.py authdrill --unbound` reaches this through the
+    // ENV client, not a box. State the property you have. (Post-ship audit, 2026-09-01.)
     //
     // It exists so `peer_admission` can tell "the player chose this address" apart from
     // "nobody advertised an identity", which are different statements that happen to

@@ -476,11 +476,17 @@ void UpdateHover() {
     // hoist landed next door and was not carried across, which is the one-copy-fixed pattern
     // this file's own comments keep naming.)
     long hx = 0, hy = 0;
-    if (!NS::CursorInWidgetSpace(hx, hy)) return;   // fail-closed, as the per-widget call was
-    if (g_newGameRow.bg && NS::WidgetContains(g_newGameRow.bg, hx, hy)) g_hoverRow = -1;
-    if (g_hoverRow == -2 && g_hover.Index() >= 0) g_hoverRow = g_hover.Index();
-    for (int i = 0; i < kConnCount; ++i)
-        if (g_connRow[i] && NS::WidgetContains(g_connRow[i], hx, hy)) { g_hoverConn = i; break; }
+    // FALLS THROUGH TO THE REPAINT ON FAILURE rather than returning. The hover state was
+    // already cleared above, so an early return left the last highlighted row lit and the
+    // next tick saw no difference to repaint -- lit permanently. The per-widget call this
+    // replaced returned false per row and let the repaint run, so the hoist introduced it.
+    // (Post-ship audit, 2026-09-01.)
+    if (NS::CursorInWidgetSpace(hx, hy)) {
+        if (g_newGameRow.bg && NS::WidgetContains(g_newGameRow.bg, hx, hy)) g_hoverRow = -1;
+        if (g_hoverRow == -2 && g_hover.Index() >= 0) g_hoverRow = g_hover.Index();
+        for (int i = 0; i < kConnCount; ++i)
+            if (g_connRow[i] && NS::WidgetContains(g_connRow[i], hx, hy)) { g_hoverConn = i; break; }
+    }
     if (g_hoverRow != prevRow || g_hoverConn != prevConn) RepaintAll();
 }
 

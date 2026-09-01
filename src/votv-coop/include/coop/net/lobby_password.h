@@ -23,12 +23,24 @@
 // "A captured proof is useless" is true of REPLAY, and it was quietly doing duty
 // as a claim about CONFIDENTIALITY. They are different properties.
 //
-// WHAT SAVES IT IS BINDING, NOT ENTROPY. The client emits nothing
-// password-derived until it has established that the key on the socket IS the
-// key it was sent to dial -- `peer_admission`'s `bound` (security A65, fixed the
-// same day). A rogue host therefore never receives a tag to grind. That is a
-// PRECONDITION, not a nicety: on a lane with nothing to bind to, no proof may be
-// sent, and this module's callers enforce that rather than this module.
+// WHAT SAVED IT WAS BINDING, NOT ENTROPY -- ON THE LANES THAT HAVE IT. The client
+// emits nothing password-derived until it has established that the key on the
+// socket IS the key it was sent to dial (`peer_admission`'s `bound`, security
+// A65). A rogue host a MASTER steered you to therefore never receives a tag.
+//
+// THAT IS NO LONGER TRUE OF EVERY LANE, and this paragraph asserted it was for
+// ninety minutes after it stopped being so. Since 2026-09-01 a destination the
+// local machine named -- a typed address -- may carry a proof unbound
+// (`net::Config::selfAddressed`), on the user's explicit instruction, because a
+// locked host was otherwise unjoinable by address from any shipped UI. On that
+// lane a host that merely ANSWERS receives a grindable tag, and with the generated
+// secret at six characters that is on the order of six GPU-hours. The reachable
+// case is a MISTYPED address answered by a Multivoid host.
+//
+// So this module's guarantee is now conditional, and saying so here is the whole
+// point of a header that calls itself the ONE owner of what a lobby password is
+// worth. The constructions that would restore an unconditional guarantee are a
+// longer secret, a per-lane refusal, or a PAKE; none is built.
 //
 // ---------------------------------------------------------------------------
 // THE CONSTRUCTION.
@@ -76,8 +88,15 @@ using Tag = std::array<uint8_t, kTagBytes>;
 // an exposed proof costs on the order of 6 GPU-hours to exhaust instead of 714 GPU-years.
 // Raising the count here CANNOT buy that back -- recovering 20 bits would need a million
 // times the rounds at ~100 ms each -- so do not reach for this number when what actually
-// moved was the length. Binding is the control; this is only the delay for the case where
-// binding has already failed.
+// moved was the length.
+//
+// AND "Binding is the control" IS NO LONGER TRUE ON EVERY LANE. A lane the local machine
+// addressed may now send a password proof unbound (`net::Config::selfAddressed`), so on
+// THAT lane there is no binding to be the control and this round count is the whole delay
+// -- against a 30-bit secret, which is on the order of six GPU-hours. The reachable case is
+// a mistyped address answered by a Multivoid host. Recorded here rather than argued: this
+// header is where someone reaching for the round count will look, and the number they
+// should be reaching for first is the LENGTH.
 inline constexpr uint32_t kIterations = 200000;
 // ASSERTED AT COMPILE TIME, because the selftest cannot do it. Its full-cost arm only shows
 // the shipped count differs from the cheap one -- which would pass for 2, and for 0 if CNG

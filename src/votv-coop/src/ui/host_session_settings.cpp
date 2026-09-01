@@ -247,9 +247,15 @@ float g_fitLast = -9999.f;
 // at the menu's ~117 Hz, for a value that can only move when the layout does. The call
 // site's own comment ("edge-logged; two lines per showing") was true of the lines and false
 // of the cost, which is the exact shape this file already documents twice elsewhere. The
-// rects change on a rebuild, on the lock toggle and on a fresh showing, so `g_fitDirty` is
-// armed there and nowhere else. (Post-ship perf audit, 2026-09-01.)
+// The rects change on the lock toggle and on a fresh showing, and `g_fitDirty` is armed at
+// exactly those two. A first version of this sentence claimed a third ("on a rebuild") that
+// no line arms -- so a rebuild while the window is shown leaves the probe silent. Named
+// rather than fixed: a rebuild clears `g_root`, which closes the window on the same tick. (Post-ship perf audit, 2026-09-01.)
 bool g_fitDirty = true;
+
+// WHICH connection mode the visibility answer was chosen under. -1 = never chosen, so the
+// first Show() always derives. See Show() for why this exists rather than a plain reset.
+int g_visModeWhenChosen = -1;
 
 void ReportFit() {
     if (!g_fitDirty) return;
@@ -447,11 +453,15 @@ void RepaintChoices() {
                     // `peer_identity: loaded durable identity ... -- dial=<...>`, so `dial=`
                     // is at the END. A player following that sentence literally would search
                     // for a line that does not exist. (2026-09-01.)
+                    // WAS: "your friends also need your host id -- search your
+                    // multivoid.log for 'dial='". True until 2026-09-01, when a typed
+                    // address became able to carry a password; after that it sent hosts
+                    // hunting a log line for a value nobody needs. It was the ONLY
+                    // player-facing instruction for a locked DIRECT lobby, so it was also
+                    // the most expensive place to leave stale.
                     : std::wstring(L"Anyone with this can join. On this connection type "
-                                   L"your friends also need your host id -- search your "
-                                   L"multivoid.log for 'dial=' and send them what follows "
-                                   L"it. Without it their game will refuse to send the "
-                                   L"password at all."),
+                                   L"give your friends your address and this password -- "
+                                   L"they type both into Direct Connect."),
                 brokered ? kDim : kAmber);
         // THE SAME EDGE, so the visibility hint costs nothing extra per hover sweep. It says
         // why the rows are fixed on the two modes that fix them, and stays quiet on DIRECT
@@ -851,12 +861,22 @@ void Show() {
     g_who.hover = -1;
     g_vis.hover = -1;
     g_fitDirty  = true;   // a fresh showing lays out again
-    // THE MODE DECIDES THE STARTING VALUE, and it is re-derived on every open rather than
-    // remembered: the player may have come back through step one and changed the connection
-    // type, and a listed/hidden choice carried across that change would be a value chosen
-    // under a different set of rules. DIRECT starts listed -- the behaviour every DIRECT
-    // host had while this was a hardcoded literal.
-    g_vis.chosen = kListedByDefault ? 0 : 1;
+    // RE-DERIVED ONLY WHEN THE MODE ACTUALLY MOVED, not on every open.
+    //
+    // The reason for re-deriving is real -- the player may have gone Back and changed the
+    // connection type, and a listed/hidden choice made under other rules should not carry
+    // across. But it covered ONE of two cases and could not tell them apart, so a Back for
+    // any other reason (fixing the world name) silently reset a chosen "Hidden" to listed.
+    // The failure direction is what makes this worth the extra state: the reset FAILS OPEN,
+    // and what it opens is an announce carrying the host's name, world, lock flag, cap,
+    // listen port, identity and the source IP the master resolves -- to a player who
+    // believes they chose Hidden. The LOCK choice already survives the same round trip (it
+    // round-trips the ini), so the asymmetry was between two answers on one screen.
+    // (Post-ship audit, 2026-09-01.)
+    if (g_visModeWhenChosen != g_connMode) {
+        g_vis.chosen = kListedByDefault ? 0 : 1;
+        g_visModeWhenChosen = g_connMode;
+    }
     g_escPrimed = false;
     g_lmbPrimed = false;
     g_lastStatus.clear();
