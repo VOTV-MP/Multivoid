@@ -1,6 +1,6 @@
 {
   "msvc_toolset": "14.51.36231",
   "windows_sdk": "10.0.26100.0",
-  "build_core_sha256": "7299feb0f33aee348bd17fb763111ffc20931005e45f64a2753b76a5db445c10",
+  "build_core_sha256": "411e62b8df8be1805d35cf79aaea6ae15a739f0520f23b84fc978bc3c4316c5c",
   "image_version": "20260824.214.3"
 }
