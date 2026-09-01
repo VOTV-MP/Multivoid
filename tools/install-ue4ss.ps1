@@ -55,14 +55,24 @@
     channel (methodology: pin deps). The expected UE4SS.dll hash is pinned
     alongside it and the install FAILS CLOSED on a mismatch.
 
-    KEEP IN STEP WITH THE RELEASE MANIFEST. The zip's manifest declares the same
-    package as its dependency -- `ledger_lib.ps1:391`
-    ('Thunderstore-unreal_shimloader-1.1.7'), which is what tells r2modman which
-    UE4SS to install. That literal and $Version below are two INDEPENDENT copies
-    of one decision: this script serves the manual lane, the manifest serves the
-    manager lane, and if they drift the two lanes are once again running
-    different loaders -- the exact asymmetry this pin was moved to close
-    (docs/UE4SS_ARC.md section 9.6). Bump BOTH, or neither.
+    KEEP IN STEP WITH THE RELEASE MANIFEST -- AND THERE ARE FOUR COPIES, NOT TWO.
+    The package version below is one rendering of a decision that is spelled out,
+    independently and with nothing enforcing agreement, at:
+        tools/install-ue4ss.ps1   $Version           (here -- the manual lane)
+        tools/release/ledger_lib.ps1:391             (the zip manifest's dependency;
+                                                      this is what tells r2modman
+                                                      which UE4SS to install)
+        tools/release/package_drill.ps1:55           (the drill's expected manifest)
+        tools/README.md:65                           (the documented pin)
+    If they drift, the manual lane and the manager lane run DIFFERENT loaders --
+    the exact asymmetry this pin was moved to close (docs/UE4SS_ARC.md 9.6).
+
+    This comment said "two INDEPENDENT copies" until 2026-09-01, when a post-ship
+    audit censused it and found four. That is worth recording rather than quietly
+    correcting: a comment IS the enforcement here, so a comment that undercounts is
+    the failure mode itself. The proper fix is one dot-sourced
+    `tools/release/ue4ss_pin.ps1` holding $Ue4ssPkgVersion + the hashes, consumed by
+    all three scripts, with a tripwire row -- NOT yet built, and owed.
 
 .EXAMPLE
     ./tools/install-ue4ss.ps1 -Win64Dir <...>\Win64 -Quiet
@@ -103,7 +113,14 @@ $ini      = Join-Path $Win64Dir 'UE4SS-settings.ini'
 # does not carry exactly this UE4SS.dll -- a silently-different loader is the
 # defect this pin exists to prevent (a rolling channel serves new bytes at an
 # unchanged URL).
-$expectedDllMd5 = '8A78269B9EC1704B708F43BD508F5D40'
+# SHA256, not MD5. The job of this hash is detecting SUBSTITUTED bytes arriving from a
+# third-party CDN, and MD5 is collision-broken -- opting down from Get-FileHash's default
+# for a supply-chain gate had no reason behind it. (Post-ship audit, 2026-09-01.)
+$expectedDllHash = '8C4276AAB46D892207DDE5CB49C2621C67CEBFADF2C4577419B0E3D03E0910D5'
+# AND THE PROXY, because it is the file the OS actually loads. The gate covered UE4SS.dll
+# alone, i.e. one file out of the payload, while `dwmapi.dll` -- the thing the game maps at
+# startup and the only reason any of this runs -- was unverified.
+$expectedDwmHash = '19A9BE77367C22BC8A6B90FAAD3573F8F85C7612DB574F7948C4CBAF37CFA831'
 
 $pkg     = "Thunderstore-unreal_shimloader-$Version"
 $url     = "https://thunderstore.io/package/download/Thunderstore/unreal_shimloader/$Version/"
@@ -115,7 +132,7 @@ New-Item -ItemType Directory -Force -Path $staging | Out-Null
 $staging = (Resolve-Path $staging).Path
 $zip = Join-Path $staging "$pkg.zip"
 
-function Get-Md5([string]$path) { (Get-FileHash $path -Algorithm MD5).Hash }
+function Get-Sha([string]$path) { (Get-FileHash $path -Algorithm SHA256).Hash }
 
 # Locate the directory holding UE4SS.dll inside an extracted package. The
 # package nests the substrate under 'UE4SS\' beside shimloader's OWN proxy at
@@ -147,7 +164,7 @@ function Resolve-Payload {
     foreach ($g in $cacheGlobs) {
         foreach ($d in (Get-ChildItem -Path $g -Directory -ErrorAction SilentlyContinue)) {
             $dll = Get-ChildItem $d.FullName -Recurse -File -Filter 'UE4SS.dll' -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($dll -and ((Get-Md5 $dll.FullName) -eq $expectedDllMd5)) {
+            if ($dll -and ((Get-Sha $dll.FullName) -eq $expectedDllHash)) {
                 Write-Host "  source: mod-manager cache $($d.FullName)" -ForegroundColor Cyan
                 return $dll.Directory.FullName
             }
@@ -156,9 +173,18 @@ function Resolve-Payload {
 
     if (-not (Test-Path $zip)) {
         Write-Host "Downloading $pkg ..." -ForegroundColor Cyan
+        # DOWNLOAD ASIDE, THEN RENAME. Writing straight to $zip meant an interrupted transfer
+        # (and the reset CDN makes that the LIKELY case here) left a truncated file that the
+        # `Test-Path` above then accepted forever -- every later run died inside
+        # `Expand-Archive` with no hint that the cache was the problem. Only a COMPLETE
+        # download is ever named $zip. (Post-ship audit, 2026-09-01.)
+        $part = "$zip.part"
+        if (Test-Path $part) { Remove-Item $part -Force }
         try {
-            Invoke-WebRequest -Uri $url -OutFile $zip
+            Invoke-WebRequest -Uri $url -OutFile $part
+            Move-Item $part $zip -Force
         } catch {
+            if (Test-Path $part) { Remove-Item $part -Force }
             throw ("Could not download $pkg from Thunderstore: $($_.Exception.Message)`n" +
                    "  The download redirects to gcdn.thunderstore.io, which some networks reset.`n" +
                    "  Fetch the zip by hand (or let r2modman download it once) and re-run with`n" +
@@ -178,21 +204,42 @@ $script:payloadDir = $null
 function Get-Payload {
     if ($script:payloadDir) { return $script:payloadDir }
     $p = Resolve-Payload
-    $got = Get-Md5 (Join-Path $p 'UE4SS.dll')
-    if ($got -ne $expectedDllMd5) {
-        throw ("UE4SS.dll hash mismatch -- REFUSING to install.`n" +
-               "  expected $expectedDllMd5 (the pinned build, Git SHA e31aaaa6)`n" +
-               "  got      $got`n" +
-               "  Source: $p")
+    # BOTH HALVES OF THE LOADER CHAIN. Verifying only UE4SS.dll left the proxy the OS
+    # actually maps -- dwmapi.dll -- unchecked, which is the wrong file to leave open when
+    # the whole gate exists to catch substituted bytes from a CDN.
+    foreach ($chk in @(@{ n = 'UE4SS.dll';  want = $expectedDllHash },
+                       @{ n = 'dwmapi.dll'; want = $expectedDwmHash })) {
+        $f = Join-Path $p $chk.n
+        if (-not (Test-Path $f)) {
+            throw ("$($chk.n) missing from the resolved payload -- REFUSING to install.`n" +
+                   "  Source: $p")
+        }
+        $got = Get-Sha $f
+        if ($got -ne $chk.want) {
+            throw ("$($chk.n) hash mismatch -- REFUSING to install.`n" +
+                   "  expected $($chk.want)`n" +
+                   "  got      $got`n" +
+                   "  Source: $p")
+        }
+        Write-Host "  payload verified: $($chk.n) sha256 $got" -ForegroundColor DarkGray
     }
-    Write-Host "  payload verified: UE4SS.dll md5 $got" -ForegroundColor DarkGray
     $script:payloadDir = $p
     return $p
 }
 
-# --- 1. Extraction (only when the substrate is absent, or -Force) ------------
+# --- 1. Extraction (absent, WRONG BUILD, or -Force) --------------------------
+# A HASH MISMATCH IS A TRIGGER, NOT A WARNING. This used to extract only when UE4SS.dll was
+# ABSENT, and merely printed a yellow line when the installed build was not the pinned one --
+# so moving the pin (the whole point of the 48-fps change) reached nobody who already had
+# UE4SS unless a human remembered `-Force`. The four dev copies were moved BY HAND, which is
+# what hid it. A warning where an action belongs is the crutch RULE 1 names.
+# (Post-ship audit, 2026-09-01.)
 $freshSeed = $false
-if ((-not (Test-Path $ue4ssDll)) -or $Force) {
+$haveWrongBuild = (Test-Path $ue4ssDll) -and ((Get-Sha $ue4ssDll) -ne $expectedDllHash)
+if ($haveWrongBuild) {
+    Write-Host "  installed UE4SS.dll is NOT the pinned build -- re-extracting" -ForegroundColor Yellow
+}
+if ((-not (Test-Path $ue4ssDll)) -or $haveWrongBuild -or $Force) {
     $payload = Get-Payload
     # Copy over, preserving existing STATE files (mods.txt, UE4SS-settings.ini):
     # a re-extract must never clobber hand-edited mod enable rows or a tuned
@@ -200,6 +247,15 @@ if ((-not (Test-Path $ue4ssDll)) -or $Force) {
     # version-locked to the DLL's Lua API and are refreshed with it (running a
     # 2024 mod set against this loader is what silently drops mods, measured
     # 2026-08-31).
+    # REFUSE WHILE THE GAME IS UP. The copy below writes UE4SS.dll and dwmapi.dll straight
+    # into a running process's directory: Windows locks a mapped image, so the copy throws
+    # PART WAY THROUGH and leaves a MIXED old/new substrate -- and the commit that moved the
+    # pin says in its own words that a mismatched Lua set against this loader silently drops
+    # mods. Failing before the first write is the only cheap way to keep the tree coherent.
+    if (Get-Process -Name 'VotV-Win64-Shipping' -ErrorAction SilentlyContinue) {
+        throw ("VotV is RUNNING -- refusing to swap the substrate underneath it. " +
+               "Close the game (or `python tools/mp.py kill`) and re-run.")
+    }
     $stateFiles = @('Mods\mods.txt', 'UE4SS-settings.ini')
     Get-ChildItem $payload -Recurse -File | ForEach-Object {
         $rel = $_.FullName.Substring($payload.Length + 1)
@@ -216,14 +272,19 @@ if ((-not (Test-Path $ue4ssDll)) -or $Force) {
         if (-not (Test-Path $d)) { New-Item -ItemType Directory -Force -Path $d | Out-Null }
         Copy-Item $_.FullName $dst -Force
     }
+    # STAGING IS CLEANED, as the pre-pin script did. Dropping the `Remove-Item` was a
+    # regression the rewrite introduced: `extract_<ver>` and `src_zip` accumulated ~50 MB of
+    # extracted payload per source and never went away. The downloaded ZIP is deliberately
+    # KEPT (it is the offline cache the blocked CDN makes valuable); only the expansions go.
+    foreach ($tmp in @((Join-Path $staging "extract_$Version"), (Join-Path $staging 'src_zip'))) {
+        if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue }
+    }
     Write-Host "UE4SS ($pkg) extracted into $Win64Dir" -ForegroundColor Green
 } else {
-    Write-Host "UE4SS already present at $Win64Dir (use -Force to re-extract)." -ForegroundColor DarkGray
-    $have = Get-Md5 $ue4ssDll
-    if ($have -ne $expectedDllMd5) {
-        Write-Host ("  WARNING: installed UE4SS.dll is md5 $have, NOT the pinned $expectedDllMd5.`n" +
-                    "           Re-run with -Force to install the pinned build.") -ForegroundColor Yellow
-    }
+    # The pinned build is already installed -- that is what the condition above now proves,
+    # so the old "WARNING: not the pinned build, re-run with -Force" branch that lived here
+    # is unreachable and is DELETED rather than left as a second opinion (RULE 2).
+    Write-Host "UE4SS already present and matches the pin at $Win64Dir." -ForegroundColor DarkGray
 }
 
 # --- 2. Substrate-whole: the loader chain must be complete every run ---------
@@ -269,7 +330,9 @@ $gc = ''
 if (Test-Path $ini) {
     $gc = ((Get-Content $ini) | Where-Object { $_ -match '^\s*GuiConsole(Enabled|Visible)' }) -join '; '
 }
-$dllMd5 = if (Test-Path $ue4ssDll) { Get-Md5 $ue4ssDll } else { 'ABSENT' }
+$dllSha = if (Test-Path $ue4ssDll) { Get-Sha $ue4ssDll } else { 'ABSENT' }
+$dwmSha = if (Test-Path $dwm)      { Get-Sha $dwm }      else { 'ABSENT' }
 Write-Host ("substrate: UE4SS.dll=" + (Test-Path $ue4ssDll) + " dwmapi.dll=" + (Test-Path $dwm) + " [$gc]") -ForegroundColor Green
-Write-Host ("substrate: UE4SS.dll md5=$dllMd5 (pin $pkg)") -ForegroundColor Green
+Write-Host ("substrate: UE4SS.dll sha256=$dllSha") -ForegroundColor Green
+Write-Host ("substrate: dwmapi.dll sha256=$dwmSha (pin $pkg)") -ForegroundColor Green
 Write-Host "Dev shortcuts once in game (dev profile): CTRL+H headers, CTRL+J object dump." -ForegroundColor DarkGray

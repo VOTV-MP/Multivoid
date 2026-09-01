@@ -297,6 +297,7 @@ bool BuildWindowShell(void* switcher, float widthPx, float heightPx, const wchar
         }
     }
 
+    out.box    = winBox;
     out.root   = root;
     out.scrim  = scrim;
     out.column = col;
@@ -679,16 +680,21 @@ bool CursorInWidgetSpace(long& outX, long& outY) {
 // connection rows, the text field's click-to-focus) missed by the offset -- half a screen
 // working, which this project has a lesson named after. Found by the post-ship correctness
 // audit, 2026-08-31; both now call `CursorInWidgetSpace`.
-bool CursorOverWidget(void* w) {
+bool WidgetContains(void* w, long hx, long hy) {
     if (!w) return false;
-    long hx = 0, hy = 0;
-    if (!CursorInWidgetSpace(hx, hy)) return false;
     ue_wrap::FVector2D tl{}, sz{};
     if (!U::WidgetScreenRect(w, tl, sz) || sz.X < 1.f || sz.Y < 1.f) return false;
     return hx >= static_cast<long>(std::floor(tl.X)) &&
            hx <  static_cast<long>(std::floor(tl.X + sz.X)) &&
            hy >= static_cast<long>(std::floor(tl.Y)) &&
            hy <  static_cast<long>(std::floor(tl.Y + sz.Y));
+}
+
+bool CursorOverWidget(void* w) {
+    if (!w) return false;
+    long hx = 0, hy = 0;
+    if (!CursorInWidgetSpace(hx, hy)) return false;
+    return WidgetContains(w, hx, hy);
 }
 
 void HoverTracker::Reset() {

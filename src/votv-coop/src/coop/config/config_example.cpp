@@ -22,6 +22,7 @@
 
 #include "config_internal.h"
 #include "coop/config/config_registry.h"
+#include "coop/net/protocol.h"   // kDefaultDirectAddr (the retired-value migration)
 #include "coop/version.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/paths.h"
@@ -337,6 +338,36 @@ int SelftestExampleVerify(const std::wstring& examplePath, const std::wstring& s
         ::DeleteFileW(scratchPath.c_str());
     }
     return fail;
+}
+
+// ---- retired stored values (see config.h) ----------------------------------
+void MigrateRetiredIniValues() {
+    // `browser.lastdirect` = "127.0.0.1:7777". Unreal's default port, never ours; a host
+    // listens on kDefaultPort (47621), so the box offered a port nothing in this mod has
+    // ever bound and the failure is indistinguishable from a firewalled one. Shipped from
+    // the first server browser (43e2a843) until 2026-09-01.
+    //
+    // READ RAW, not Resolve*: Resolve falls back to the row's (now corrected) default when
+    // the key is absent, so comparing a resolved value would rewrite nothing on the installs
+    // that need it and would match on the ones that do not.
+    static const char* kAbsent = "\x01<absent>";
+    IniScan st = IniScan::Ok;
+    const std::string cur = internal::ReadIniValueAtPath(
+        internal::LiveIniPath(), config_registry::rows::browser_lastdirect.row->key,
+        kAbsent, &st);
+    if (cur == "127.0.0.1:7777") {
+        if (WriteIniValue(config_registry::rows::browser_lastdirect,
+                          ::coop::net::kDefaultDirectAddr)) {
+            UE_LOGI("config: migrated browser.lastdirect off the retired 127.0.0.1:7777 "
+                    "(Unreal's default port, never ours) -> %s",
+                    ::coop::net::kDefaultDirectAddr);
+        } else {
+            // Non-fatal: the box simply keeps offering the dead port this launch. Louder
+            // than DarkGray because it is the one thing that makes the fix reach a player.
+            UE_LOGW("config: could not migrate browser.lastdirect (ini not writable?) -- the "
+                    "direct-connect box will still offer the retired port");
+        }
+    }
 }
 
 }  // namespace coop::config

@@ -248,6 +248,15 @@ struct WindowShell {
     void* root   = nullptr;   // the UUserWidget -- what the caller adds to the switcher
     void* scrim  = nullptr;   // the full-screen dim; also what absorbs a stray click
     void* column = nullptr;   // the UVerticalBox under the title, for the caller's content
+    // THE FRAME ITSELF -- the centred SizeBox at widthPx x heightPx.
+    //
+    // `root` is a FULL-SCREEN UUserWidget (the scrim fills it), so measuring against `root`
+    // answers "how far is this from the edge of the SCREEN", which is not a question anyone
+    // here is asking. A fit check written against `root` reports hundreds of pixels of slack
+    // while the footer sits outside the ring -- measured 2026-09-01, when exactly that probe
+    // returned a false all-clear. These screens are fixed-height with Auto-sized children, so
+    // "is my content still inside the frame" is a real question and it needs THIS rect.
+    void* box    = nullptr;
 };
 
 // False if any widget could not be spawned -- the caller must treat that as a build
@@ -314,6 +323,24 @@ bool CursorInWidgetSpace(long& outX, long& outY);
 // come through here so there is ONE hit-test mechanism in the native screens rather than
 // two that disagree.
 bool CursorOverWidget(void* w);
+
+// THE SAME TEST WITH THE CURSOR ALREADY RESOLVED -- for a caller sweeping SEVERAL widgets.
+//
+// `CursorOverWidget` converts the cursor into widget space on every call, and that
+// conversion is the expensive half: it reaches `GetWorldContext()` ->
+// `R::FindObjectByClass`, an uncached linear walk of `GUObjectArray`, plus a ProcessEvent
+// dispatch and a heap allocation. The rect read is one more dispatch. So an N-widget sweep
+// through `CursorOverWidget` pays N array walks to answer a question whose cursor half is
+// identical for all N -- the per-frame full-array-scan pattern CLAUDE.md names.
+//
+// Resolve once with `CursorInWidgetSpace`, then call this per widget: N walks become 1.
+// `HoverTracker::Poll` has always done it this way for a LIST; this is the same hoist for
+// the screens that hold a handful of NAMED widgets instead. Measured 2026-09-01 by the
+// post-ship audit: the hosting window's step-two sweep was 4 walks per menu tick (~468/s).
+//
+// Coordinates MUST come from `CursorInWidgetSpace` -- passing raw desktop pixels reintroduces
+// the two-spaces-that-disagree defect of 2026-08-31, which worked only at scale 1.0.
+bool WidgetContains(void* w, long hx, long hy);
 
 // THE HIT TEST PLUS THE THING THAT SAYS WHEN TO REDO IT -- one object, because shipping
 // them apart is a defect this project has now made twice in one day.
