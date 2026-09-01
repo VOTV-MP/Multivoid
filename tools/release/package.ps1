@@ -171,10 +171,11 @@ if ($Pak.Count -gt 0) {
     # STRUCTURALLY correct and CONTENT-incomplete, with no line anywhere saying so.
     # That is precisely the "silently broken release" this script's own verification
     # section exists to refuse.
-    throw ("RELEASE zip has NO pak staged. assets/paks/ is gitignored, so it does not " +
-           "exist in a fresh checkout -- assemble the release where that directory is " +
-           "stocked, or pass -Pak explicitly. (A pak-less package still WORKS: skins " +
-           "fall back to the game's own. It is simply not the release that was agreed.)")
+    throw ("RELEASE zip has NO pak staged, and since 2026-09-01 assets/paks IS tracked -- " +
+           "so an empty one means the directory was emptied or -PakDir points somewhere " +
+           "else, not that the checkout lacks them. Restore them or pass -Pak explicitly. " +
+           "(A pak-less package still WORKS: skins fall back to the game's own. It is " +
+           "simply not the release that was agreed.)")
 } else {
     Write-Host 'pak: none staged -- lawful for a CI/drill zip (pass -Release to require them)'
 }
