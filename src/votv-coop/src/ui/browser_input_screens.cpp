@@ -137,6 +137,21 @@ const Spec kSpec[3] = {
     {L"Multivoid  -  Password",       L"Server password", L"password",         L"Join",    64},
 };
 
+// EVERY field this screen owns, released together. Three teardown paths released `field`
+// and none released `field2`, because `field2` was added to the struct and not to them --
+// so a menu-instance rebuild leaked one Field per cycle, unbounded. Worse than the memory:
+// `Release` is the ONLY thing that clears the module's focus pointer, so a leaked focused
+// field leaves `g_focus` aimed at a Field whose UObject died with the menu, and the next
+// keystroke dispatches into it. That is the exact hazard native_text_field.h documents
+// Release as existing to prevent. One helper, so a THIRD field cannot repeat it.
+// (Post-ship audit, 2026-09-01.)
+void ReleaseFields(Screen& s) {
+    TF::Release(s.field);
+    s.field = nullptr;
+    TF::Release(s.field2);
+    s.field2 = nullptr;
+}
+
 void SetStatus(Screen& s, const std::string& utf8, const FLinearColor& col) {
     if (!s.status || utf8 == s.lastStatus) return;
     s.lastStatus = utf8;
@@ -164,7 +179,7 @@ bool BuildOne(void* switcher, Kind kind, void* backDonor) {
         // `TF::Create` leaks a Field on every retry, and this builder is retried from the
         // menu tick -- the same defect the session-settings screen shipped and the
         // 2026-09-01 audit caught one file over.
-        if (!s.field2) { TF::Release(s.field); s.field = nullptr; return false; }
+        if (!s.field2) { ReleaseFields(s); return false; }
     }
 
     // The status line sits under the field and starts empty: it exists to say why a
@@ -189,7 +204,7 @@ bool BuildOne(void* switcher, Kind kind, void* backDonor) {
         // RELEASE HERE TOO -- the next tick rebuilds and mints a second Field, stranding
         // this one in the module's live list forever. The index-failure path below was
         // hardened against exactly this and this one was not.
-        if (!s.backBtn || !s.okBtn) { TF::Release(s.field); s.field = nullptr; return false; }
+        if (!s.backBtn || !s.okBtn) { ReleaseFields(s); return false; }
         NS::SetHSlot(NS::SlotOf(s.backBtn), 0.f, NS::kLeft, NS::kCenter);
         NS::SetHSlot(NS::SlotOf(s.okBtn), 0.f, NS::kRight, NS::kCenter);
         NS::AddVFill(col, footRow, 0.f, NS::kFill, NS::kBottom);
@@ -209,8 +224,7 @@ bool BuildOne(void* switcher, Kind kind, void* backDonor) {
         // and in `g_live`, so the next tick rebuilt everything and leaked another one --
         // ~117 leaked Fields and ~2,800 UObject spawns per second, forever (post-ship perf
         // audit, 2026-08-31). Release, not Destroy: the tree we just built is orphaned.
-        TF::Release(s.field);
-        s.field = nullptr;
+        ReleaseFields(s);
         s.root = nullptr;
         return false;
     }
@@ -309,6 +323,10 @@ void Show(Kind kind) {
     U::SwitcherSetIndex(g_switcher, s.index);
     g_escPrimed = false;
     g_lmbPrimed = false;
+    // ...AND THE TAB LATCH, which was added beside the other two and not reset with them.
+    // `g_prevTab` survives a close, so a TAB held across close-then-reopen raised a
+    // spurious release edge on the first poll and moved focus off the address box at open.
+    g_tabPrimed = false;
     s.lastStatus.clear();
     SetStatus(s, "", kText);
 
@@ -329,8 +347,10 @@ void Show(Kind kind) {
     // it is somebody else's secret, it is not stored, and a box carrying the LAST server's
     // password is a leak between two lobbies and a baffling failure when it does not work.
     if (s.field2) TF::SetText(s.field2, std::string());
-    // FOCUSED ON OPEN, on the box the player always fills in. Tab moves to the other one;
-    // there is no click-to-focus because `native_text_field` deliberately exposes no widget.
+    // FOCUSED ON OPEN, on the box the player always fills in. Tab moves to the other one --
+    // and so does a CLICK: `native_text_field` hit-tests its own box by geometry, which the
+    // first version of this comment denied ("exposes no widget"). It exposes no widget to
+    // US; it focuses itself. Tab is the keyboard route, not the only route.
     TF::Focus(s.field);
     UE_LOGI("browser_input_screens: shown '%ls' (index %d -> %d)",
             kSpec[Idx(kind)].title, g_priorIndex, s.index);
@@ -391,11 +411,10 @@ void PollChrome() {
         return;
     }
 
-    // TAB MOVES BETWEEN THE TWO BOXES, and it is the only way to reach the second one:
-    // `native_text_field` exposes no widget, so there is no rect to hit-test a click
-    // against. Release edge and a priming pass, for the same race the Escape block above
-    // documents -- this poll runs after the frame's message pump, so a press edge can be
-    // seen before the key even reaches the field.
+    // TAB MOVES BETWEEN THE TWO BOXES -- the keyboard route; the module's own click
+    // hit-test is the other one. Release edge and a priming pass, for the same race the
+    // Escape block above documents: this poll runs after the frame's message pump, so a
+    // press edge can be seen before the key even reaches the field.
     if (s.field2) {
         const bool tab = (::GetAsyncKeyState(VK_TAB) & 0x8000) != 0;
         if (!g_tabPrimed) { g_tabPrimed = true; g_prevTab = tab; }
@@ -486,7 +505,7 @@ void OnMenuTick(void* menu, void* switcher) {
             // into a tree that no longer exists -- which is what `Destroy` does, and what
             // this line did until the post-ship audit read it (2026-08-31). Both sibling
             // screens drop their pointers and touch nothing on this edge; now so does this.
-            TF::Release(s.field);
+            ReleaseFields(s);
             s = Screen{};
         }
         g_open = -1;
@@ -560,7 +579,11 @@ void OnMenuTick(void* menu, void* switcher) {
     // Reconcile against the LIVE index rather than asserting ours: a sibling screen (or the
     // game's own ESC path) can navigate away, and if it did we were closed, whoever did it.
     if (U::SwitcherIndex(g_switcher) != g_screen[g_open].index) {
+        // BOTH, as `Hide` does. Blurring only the first left `g_focus` on the password box
+        // with `g_open == -1`, so nothing ticked or blurred it again: every keystroke landed
+        // in an invisible box and `AnyFocused()` kept ESC from closing the browser.
         TF::Blur(g_screen[g_open].field);
+        TF::Blur(g_screen[g_open].field2);
         g_open = -1;
         return;
     }

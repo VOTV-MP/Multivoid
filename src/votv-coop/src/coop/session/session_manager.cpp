@@ -192,23 +192,30 @@ bool ParseHostPort(const std::string& in, std::string& host, uint16_t& port) {
 // -- the connect console / browser status / boot log never advertise the raw
 // VPS address (user 2026-06-10). A genuinely custom master prints verbatim
 // (its operator needs to see it for debugging).
-// WHAT AN UNLISTED DIRECT HOST CAN HONESTLY PROMISE, and it is not the same sentence for a
-// locked lobby as for an open one.
+// WHAT AN UNLISTED DIRECT HOST CAN HONESTLY PROMISE.
 //
-// "friends use Direct Connect with your IP" is TRUE for an open session and FALSE for a
-// locked one: a joiner who types an address has no advertised identity to bind to, so
-// `peer_admission` refuses to send anything password-derived and the join cannot complete
-// from any shipped UI (it needs `net.host_identity`, a row with three readers and no
-// writer). Saying it anyway would be the exact defect this session was opened to fix -- a
-// status line naming a configuration the session does not have -- one layer down.
-// (Post-ship audit, 2026-09-01.)
-std::string UnlistedDirectStatus(const char* lead, bool locked) {
+// THIS SENTENCE WAS WRITTEN TWICE IN ONE DAY AND WAS WRONG BOTH TIMES, in opposite
+// directions, which is worth recording rather than quietly fixing. It first promised
+// "friends use Direct Connect with your IP" unconditionally, which was false for a LOCKED
+// lobby -- the joiner had no identity to bind to and the password proof was refused. So a
+// locked arm was added telling the host to dig `dial=` out of the log. Forty-five minutes
+// later the same session DELETED that refusal (a typed address is now a self-addressed
+// lane and may carry a password), and the new arm became the false one: it sends a host to
+// a config row that no UI writes, for a problem that no longer exists.
+//
+// One arm again, and it is the true one: an address is enough, and a password if there is
+// one, which is exactly what the joiner's window now asks for. (Post-ship audits,
+// 2026-09-01, both halves.)
+// `why` is a parameter because the three callers are unlisted for two DIFFERENT reasons --
+// two because the master could not be reached, one because the host chose it -- and a
+// builder that hardcoded "master unreachable" told the deliberate one something false about
+// its own network.
+std::string UnlistedDirectStatus(const char* lead, const char* why, bool locked) {
     std::string s(lead);
-    s += " -- master unreachable, NOT listed; ";
-    s += locked
-        ? "friends need your IP AND your host id (search multivoid.log for 'dial=') -- a "
-          "locked session cannot be joined by address alone"
-        : "friends use Direct Connect with your IP";
+    s += " -- ";
+    s += why;
+    s += "; friends use Direct Connect with your IP";
+    if (locked) s += " and the password";
     return s;
 }
 
@@ -545,7 +552,12 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
         g_hostIsDirect.store(true, std::memory_order_relaxed);
         ArmDeferredAnnounce(MasterUrl(), name, choice.newGame ? choice.newName : choice.slot,
                             locked, playersMax, static_cast<int>(directPort));
-        SetHostStatus("Hosting '" + name + "' DIRECT (hidden) -- friends use Direct Connect");
+        // THROUGH THE SAME BUILDER as the two fallback lines. This was the one
+        // configuration a player DELIBERATELY chooses unlisted, and it was the one whose
+        // sentence never mentioned the password -- so the audit fold that "fixed" the
+        // wording fixed two of three sites and left the intentional one behind.
+        SetHostStatus(UnlistedDirectStatus(("Hosting '" + name + "' DIRECT").c_str(),
+                                           "hidden by your choice, NOT listed", locked));
         UE_LOGI("session_manager: hosting DIRECT/HIDDEN '%s' port=%u -- NOT announced (the "
                 "master is never told; the scoreboard's Show-in-browser tick announces it "
                 "later if the host asks)", name.c_str(), directPort);
@@ -670,13 +682,15 @@ bool HostWithSave(const SaveChoice& choice, const std::string& name, bool locked
                         directConnection ? "DIRECT" : "P2P",
                         info.lobbyId.c_str(), choice.newGame ? "newGame" : "slot", world.c_str());
             } else if (directConnection) {
-                SetHostStatus(UnlistedDirectStatus("Hosting DIRECT", locked));
+                SetHostStatus(UnlistedDirectStatus("Hosting DIRECT",
+                                                   "master unreachable, NOT listed", locked));
                 UE_LOGW("session_manager: HOST-WITH-SAVE ready (DIRECT, UNLISTED -- master '%s' unreachable, port %u)",
                         DisplayMaster(masterUrl).c_str(), static_cast<unsigned>(directPort));
             } else {
                 // The line now describes what actually happened. It used to promise
                 // "LAN/direct only" for a P2P session that had neither.
-                SetHostStatus(UnlistedDirectStatus("Hosting", locked));
+                SetHostStatus(UnlistedDirectStatus("Hosting",
+                                                   "master unreachable, NOT listed", locked));
                 UE_LOGW("session_manager: HOST-WITH-SAVE ready (UNLISTED -- master '%s' unreachable) "
                         "-- fell back to a DIRECT listen on port %u so the session stays joinable",
                         DisplayMaster(masterUrl).c_str(), static_cast<unsigned>(directPort));
@@ -872,8 +886,9 @@ bool ConnectDirect(const std::string& hostPort) {
         // refused by a locked one with a sentence saying why.
         cfg.hostIdentity =
             ::coop::config::ResolveString(::coop::config_registry::rows::net_host_identity);
-        // A PERSON TYPED THIS ADDRESS. That is the whole meaning of the flag, and this is
-        // the only place in the tree that sets it -- see `net::Config::selfAddressed`.
+        // THIS MACHINE NAMED THIS ADDRESS -- a typed box or its own configuration; see
+        // `net::Config::selfAddressed` for why the wider wording is the accurate one. This
+        // is the only place in the tree that sets it.
         cfg.selfAddressed = true;
         // Browser-only loading state. A dead address fails async (GNS never reaches
         // Connected) -> net_pump's connect-fail detector drops the cover + reopens the browser.

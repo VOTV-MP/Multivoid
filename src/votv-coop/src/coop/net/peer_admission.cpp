@@ -552,9 +552,13 @@ bool ClientOnConnected(Session& session, uint32_t hConn) {
         }
         g_client.bound = true;
     } else {
+        // THE SECOND SENTENCE USED TO SAY "Nothing password-derived may be sent to it",
+        // and it fired on every direct connect. That stopped being true the moment a
+        // self-addressed lane was allowed to carry a password, so it is now stated as the
+        // conditional it actually is.
         UE_LOGW("peer_admission: no advertised host identity on this lane -- the exchange "
                 "can prove the host holds its own key, but not that it is the host you "
-                "meant. Nothing password-derived may be sent to it.");
+                "meant. A password may be sent only if this destination was named locally.");
     }
     AuthHelloPayload hello{};
     if (!peer_identity::RandomBytes(hello.nonce, sizeof(hello.nonce))) {
@@ -646,7 +650,7 @@ bool ClientOnReliable(Session& session, uint32_t hConn, ReliableKind kind,
         // and there is nothing further to bind against.
         //
         // WHO CAN ACTUALLY EXPLOIT IT, measured rather than assumed: only whoever answers
-        // at the address the player typed instead of the intended host, which requires a
+        // at the address this machine named instead of the intended host, which requires a
         // network position this branch is not what stands between them and. The transport's
         // attacker model is recorded in the security register (not in this tree); the part
         // that decides THIS branch is that refusing here does not deny that position

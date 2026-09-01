@@ -53,8 +53,10 @@ int  g_hostMax = 4;
 // master is a relay game's only rendezvous, so a hidden AUTO game is unjoinable
 // (hide it in-game via the scoreboard once friends are in). g_hideDirect is the
 // DIRECT-only "don't list me" toggle (friends still Direct Connect by IP).
-// 2026-08-29: tri-state -- 0 = AUTO, 1 = DIRECT (port forward), 2 = LAN ONLY
-// (no master contact at all + private-address accept gate).
+// 2026-09-01: TWO-state -- 0 = AUTOMATIC, 1 = DIRECT (you forward a port). It was
+// tri-state for three days; the third mode's private-address accept gate is DELETED, not
+// merely unreachable, and describing a removed control in the present tense is the class
+// the same day's audit fold hunted one file over and missed here.
 int  g_connMode = 0;
 bool g_hideDirect = false;
 
