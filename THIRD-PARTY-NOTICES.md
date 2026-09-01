@@ -16,10 +16,12 @@ MIT text):
 - `reference/mtasa-blue/` (GPLv3) is a read-only architectural reference:
   no code from it is copied, linked, or distributed, so it does not appear
   in this file's binary notices.
-- Release archives may additionally contain model paks (for example
-  `scientists.pak`) that are community conversions of third-party game
-  assets. Those assets are NOT covered by any license in this repository and
-  remain the property of their respective owners.
+- This repository and its release archives contain model paks (for example
+  `assets/paks/scientists.pak`) that are community conversions of third-party
+  game assets. Those assets are NOT covered by any license in this repository
+  and remain the property of their respective owners. They were untracked until
+  2026-09-01 and are now committed, so this clause covers the REPOSITORY and not
+  only the release archive.
 
 Portions of this software are copyright (c) 2006-2024 The FreeType Project
 (www.freetype.org). All rights reserved.

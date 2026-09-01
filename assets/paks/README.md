@@ -1,7 +1,8 @@
-# assets/paks — the starter-skin pak staging dir (UNTRACKED contents)
+# assets/paks — the starter-skin paks (TRACKED)
 
 The release zip's `pak\` route is filled from here by `tools/release/package.ps1`
-(auto-included when the dir is non-empty). Expected contents — ONE bundle pak
+(auto-included when the dir is non-empty). Contents are committed -- see Tracking
+at the bottom for why, and for the one consequence that is new. Expected contents — ONE bundle pak
 carrying the four starter scientists the mod assigns randomly to a new identity
 (user decision 2026-08-29: "нужен общий пак scientists.pak"), plus the four
 F1-browser preview tiles by MEMBER name:
@@ -37,10 +38,20 @@ memory at runtime, which Zlib does not -- a compressed pak still decompresses to
 4 MiB per texture in VRAM. Zlib is the packaging fix; the texture format is the
 asset fix.
 
-The binaries are deliberately **not tracked** (public-repo caution for
-game-derived meshes; the ship decision covers the RELEASE artifact —
-`docs/UE4SS_ARC.md` §7.6). Restock this dir from any dev install:
-`Game_0.9.0n_HOST/WindowsNoEditor/VotV/Content/Paks/LogicMods/multivoid/`,
-or rebuild from the model sources (the "votv convert" workspace). CI therefore
-assembles a pak-less zip for drills; a RELEASE zip is assembled on a box where
-this dir is stocked (`UE4SS_ARC` §7.9's manual-assembly lane).
+## Tracking
+
+The binaries are **tracked**, by user directive 2026-09-01. They were untracked as
+public-repo caution for game-derived meshes, and the caution bought less than it
+appeared to: the ship decision (`docs/UE4SS_ARC.md` §7.6) already puts these exact
+bytes in every public release archive. What the ignore actually cost was the
+AUTOMATED RELEASE — `release-core.yml` publishes from a GitHub runner, whose fresh
+checkout had no paks, so `package.ps1 -Release` (which fails closed on a missing
+pak) made the lane unusable. Tracking them is what makes a tagged release
+publishable without a human assembling the zip on a stocked box.
+
+Newly true, and worth stating once: git history is permanent. A release asset can
+be replaced or deleted; a committed blob stays reachable.
+
+If this dir is ever emptied, restock from any dev install
+(`Game_0.9.0n_HOST/WindowsNoEditor/VotV/Content/Paks/LogicMods/multivoid/`) or
+rebuild from the model sources (the "votv convert" workspace).

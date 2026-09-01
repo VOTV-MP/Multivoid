@@ -303,7 +303,24 @@ docs/security/
 # resolves LOCALLY, none resolves on GitHub, and history is NOT rewritten. Public-facing docs must
 # not link it -- docs/README.md and the other tracked docs were de-linked in the same commit.
 docs/DOCS_ARC.md
-assets/paks/*
+# assets/paks -- TRACKED since 2026-09-01 (USER DIRECTIVE: "путь пак будет публичным и
+# иконки и что требуется"). They were untracked as public-repo caution for game-derived
+# meshes, and the caution bought less than it looked like: the ship decision
+# (`docs/UE4SS_ARC.md` 7.6) already puts these exact bytes in every public release
+# archive, so the ignore hid them from the repo and not from anyone. What it DID cost was
+# the release lane -- `release-core.yml` publishes from a GitHub runner, where a fresh
+# checkout has no paks, so an automated release would have shipped structurally correct
+# and content-incomplete. `package.ps1 -Release` refuses that now, which made the
+# automated lane unusable until these were tracked.
+#
+# One thing that IS newly true and was not before: git history is permanent. A release
+# asset can be replaced; a committed blob stays reachable.
+#
+# The negation is per-extension rather than a bare `!assets/paks/**` so the global `*.pak`
+# rule at the top of this file keeps covering every OTHER pak in the tree (the game's own,
+# research/pak_re/, dev installs). Only this directory's contents are published.
+!assets/paks/*.pak
+!assets/paks/*.png
 !assets/paks/README.md
 
 # SUPPORT.md -- the Boosty working doc (2026-08-30, USER DIRECTIVE: gitignore it).
