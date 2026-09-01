@@ -230,6 +230,10 @@ constexpr float kMinOverflow = 64.f;   // == kRowH: one whole row past the viewp
 int g_selfCheckStep     = -1;  // -1 = idle; the dev scrim self-check's phase counter
 int g_scrimOutside      = -1;  // -1 = not sampled, never a negative (an unrun phase is not a NO)
 int g_scrimInsideWindow = -1;
+// Password length sampled immediately BEFORE the lock click, so the verify step knows
+// whether a MINT was due at all (the box was empty) or whether keeping the existing value
+// is the correct outcome. Sampled per run; -1 would be indistinguishable from "empty".
+int g_lockPwLenBefore   = 0;
 
 // ---- T0 state ----------------------------------------------------------------------
 // Every reading starts at a value no measurement can produce, so an unrun phase is
@@ -1314,9 +1318,16 @@ void Tick(void* scrim, void* list, void* exitBtn) {
                 return;
             }
             PlaceCursorOnAbsolute(tl.X + sz.X * 0.5f, tl.Y + sz.Y * 0.5f);
+            // THE LENGTH BEFORE THE CLICK DECIDES WHICH CLAIM THE VERIFY STEP CAN MAKE.
+            // `SetLocked` mints only into an EMPTY box -- deliberately, so toggling the lock
+            // does not discard a value the host already told a friend. So on a rig that has
+            // hosted before, the field is restored from the ini and this click mints nothing;
+            // asserting a mint length there would report a working feature as broken.
+            g_lockPwLenBefore = ui::host_session_settings::PasswordLength();
             UE_LOGW("host_session_settings: LOCK row at desktop (%.0f,%.0f) %.0fx%.0f "
-                    "(locked=%d before) -- clicking it", tl.X, tl.Y, sz.X, sz.Y,
-                    ui::host_session_settings::Locked() ? 1 : 0);
+                    "(locked=%d, password length=%d before) -- clicking it",
+                    tl.X, tl.Y, sz.X, sz.Y,
+                    ui::host_session_settings::Locked() ? 1 : 0, g_lockPwLenBefore);
             break;
         }
         case kSessLockDown:
@@ -1331,16 +1342,28 @@ void Tick(void* scrim, void* list, void* exitBtn) {
             // measurement is that the click both SET the lock and MINTED a value, and a
             // padlock with an empty box behind it fails here rather than in front of a
             // player. The LENGTH is asserted, never the characters (see PasswordLength).
+            // ...AND THE EXPECTED LENGTH IS ASKED FOR, not written down here. This said
+            // `len >= 8` until 2026-09-01, when the user shortened the mint to six -- a
+            // literal that would have reported a working feature as a broken padlock, in
+            // exactly the words a real defect uses.
             const bool locked = ui::host_session_settings::Locked();
             const int  len    = ui::host_session_settings::PasswordLength();
-            if (locked && len >= 8)
+            const int  want   = ui::host_session_settings::GeneratedPasswordLength();
+            const bool minted = (g_lockPwLenBefore == 0);
+            const int  expect = minted ? want : g_lockPwLenBefore;
+            if (locked && len == expect)
                 UE_LOGW("host_session_settings: LOCK PASS -- a real click on \"Password "
-                        "required\" turned the lock on and minted a %d-character password on "
-                        "the spot. The host never has to invent one.", len);
+                        "required\" turned the lock on and %s. The host never has to invent "
+                        "one.", minted
+                            ? "minted a fresh password on the spot"
+                            : "KEPT the password already in the box (no mint was due -- the "
+                              "box was not empty, which is the documented behaviour)");
             else
                 UE_LOGE("host_session_settings: LOCK FAIL -- after a real press-release on the "
-                        "lock row: locked=%d, password length=%d. A lock with no secret behind "
-                        "it is a padlock that lies to the host.", locked ? 1 : 0, len);
+                        "lock row: locked=%d, password length=%d, expected %d (%s). A lock with "
+                        "no secret behind it is a padlock that lies to the host.",
+                        locked ? 1 : 0, len, expect,
+                        minted ? "a fresh mint was due" : "the existing value should have been kept");
             g_holdUntilMs = nowMs + kShotHoldMs;
             break;
         }

@@ -432,6 +432,21 @@ def host_owns_udp(pid: int, port: int) -> bool:
     return str(port) in out
 
 
+def host_udp_endpoints(pid: int) -> str:
+    """Every UDP endpoint the process holds, as 'LocalAddress:LocalPort' lines.
+
+    WHICH INTERFACE a host binds is a question the project has answered by reading the
+    GNS API ("addr.Clear() means the any-address") and never by looking. `0.0.0.0` / `::`
+    means every interface -- LAN and a forwarded port both reach it; `127.0.0.1` would mean
+    the box only. That is a one-command difference and worth printing rather than deducing.
+    """
+    _, out, _ = run_ps(
+        f"Get-NetUDPEndpoint -OwningProcess {pid} -ErrorAction SilentlyContinue | "
+        f"ForEach-Object {{ \"$($_.LocalAddress):$($_.LocalPort)\" }}"
+    )
+    return out.strip()
+
+
 def tile_offset(tile_index: int, mon: dict | None,
                 res_x: int, res_y: int) -> tuple[int, int]:
     """Compute non-overlapping (offset_x, offset_y) within `mon` for the
@@ -3861,7 +3876,14 @@ def cmd_browser(args) -> None:
     shots_dir.mkdir(parents=True, exist_ok=True)
     if kill_all() > 0:
         log("note: pre-existing VotV instances killed before browser")
-    deploy_all()
+    # The fifth scenario to need this, and the one where its absence bit: on 2026-09-01 a run
+    # meant to prove a shortened generated password reported the OLD length, because this
+    # deploy quietly replaced the freshly-built DLL with whatever the SHARED build slot held.
+    # The verdict was a true statement about a binary nobody had asked for.
+    if getattr(args, "no_deploy", False):
+        log("--no-deploy: skipping deploy; running on the rigs' current bytes")
+    else:
+        deploy_all()
 
     env = {
         # VOTVCOOP_BROWSER_NATIVE IS DELIBERATELY NOT SET (2026-08-30). The native browser is
@@ -5281,6 +5303,12 @@ def cmd_deadmaster(args) -> None:
         if not any(p["PID"] == host_pid for p in list_votv()):
             log("HOST DIED before binding UDP"); tail_log(host_log, 30, "HOST"); kill_all(); sys.exit(1)
 
+    endpoints = host_udp_endpoints(host_pid) if bound else ""
+    if endpoints:
+        log("--- UDP ENDPOINTS THE HOST HOLDS (which interface, not just which port) ---")
+        for ln in endpoints.splitlines():
+            log("  " + ln.strip())
+
     text, err = _read_log_strict(host_log)
     log("--- KILLING ---")
     kill_all()
@@ -5928,6 +5956,9 @@ def main() -> None:
     p_browser = sub.add_parser("browser",
                                help="SOLO menu-time lab run for the NATIVE server browser (P2): "
                                     "builds it, shows it, screenshots it, asserts the log")
+    p_browser.add_argument("--no-deploy", action="store_true",
+                           help="run on the bytes already on the rigs (deploy yourself first) "
+                                "-- the build slot is shared between sessions")
     p_browser.add_argument("--fake-master", type=int, default=0, metavar="N",
                            help="serve N synthetic lobbies from tools/fake_master.py and "
                                 "point the game at it, then run the T0 scroll probe. The "
