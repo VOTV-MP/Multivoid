@@ -5218,6 +5218,117 @@ def cmd_authdrill(args) -> None:
         sys.exit(1)
 
 
+def cmd_deadmaster(args) -> None:
+    """AUTO host + an unreachable master: does the session stay JOINABLE, or is it a world
+    nobody can reach?
+
+    THE ASSERTION IS A BOUND UDP SOCKET, not a log line. Until 2026-09-01 an AUTO host whose
+    announce failed kept `Topology::P2P` and dialled the fallback signaling server. `Start()`
+    is either/or (`session_start.cpp`: P2P ? StartP2P : StartLanDirect), so NO listen socket
+    existed -- and the status line told the player "LAN/direct only", the two things that
+    configuration did not have. A joiner also needs the host's `gen:` identity to dial a P2P
+    host and only /v1/join publishes it, so an unlisted P2P host is unreachable even when its
+    signaling is healthy.
+
+    Why this scenario exists at all: the rig's ordinary host boots straight into
+    `StartCoopSession(netCfg)` from the resolved config (`harness.cpp:357`) and never enters
+    `HostWithSave`, where the fallback lives. So no existing scenario could reach the code
+    under test. `VOTVCOOP_TEST_HOST_SAVE` (the shipped picker arm in `ui/overlay_test_arm`)
+    is the one door that does, and it calls HostWithSave with directConnection=false --
+    exactly the AUTO path.
+
+    CAVEAT ON `--master`, MEASURED 2026-09-01 AND NOT YET FIXED: the arm fires from overlay
+    init, which is EARLIER than `harness.cpp:108`'s `session_manager::Configure` -- so
+    `g_masterUrl` is still its compiled default when the announce goes out and the env
+    override does not reach it. What actually fails the announce on this rig is the durable
+    identity also not being loaded yet, so /v1/host answers a named 400. The branch under
+    test is gated on `info.ok` alone and is therefore still exercised, which is why A2/A3
+    remain valid -- but do not read a pass here as "an unreachable master was simulated".
+    harness.cpp:105 states the intended invariant ("BEFORE any browser action can fire") and
+    it holds for real CLICKS; this arm is not a click and slips underneath it.
+
+    PASS requires all three:
+      1. the announce actually FAILED (else this measured a healthy master, not the fallback),
+      2. the host holds a UDP endpoint on --port  -- the differential; the old build had none,
+      3. the session came up on LanDirect, from `net: session started ... topology=LanDirect`.
+    """
+    if kill_all() > 0:
+        log("note: pre-existing VotV instances killed before deadmaster")
+    if getattr(args, "no_deploy", False):
+        log("--no-deploy: skipping deploy; running on the rigs' current bytes")
+    else:
+        deploy_all()
+
+    dead = args.master or "127.0.0.1:9"   # discard port; nothing binds it
+    log(f"--- DEAD-MASTER AUTO HOST (master={dead}, save={args.save}) ---")
+    env = {
+        "VOTVCOOP_VOICE_ENABLED": "0",
+        "VOTVCOOP_MASTER_URL": dead,
+        # Fires from the MENU via the shipped test arm, so the host must boot to the menu
+        # rather than auto-hosting from net.role -- that path skips HostWithSave entirely.
+        "VOTVCOOP_TEST_HOST_SAVE": args.save,
+    }
+    host_pid = launch_peer("host", args.port, "Host", peer=None,
+                           res_x=1280, res_y=720, monitor=1, center=True,
+                           set_net_role=False, set_scenario="menu", extra_env=env)
+    host_log = HOST_DIR / "multivoid.log"
+
+    bound = False
+    for i in range(args.boot_timeout):
+        time.sleep(1)
+        if host_owns_udp(host_pid, args.port):
+            log(f"host bound UDP {args.port} after {i+1}s"); bound = True; break
+        if not any(p["PID"] == host_pid for p in list_votv()):
+            log("HOST DIED before binding UDP"); tail_log(host_log, 30, "HOST"); kill_all(); sys.exit(1)
+
+    text, err = _read_log_strict(host_log)
+    log("--- KILLING ---")
+    kill_all()
+    if err:
+        log(f"FAIL: host log did not decode as strict UTF-8 ({err})"); sys.exit(1)
+
+    # VOID beats FAIL: if the world never loaded, nothing about the fallback was measured.
+    if "HOST-WITH-SAVE" not in text:
+        log("VOID: HostWithSave never ran -- the test arm did not fire, so this run measured "
+            "NOTHING about the fallback. Check the save slot exists.")
+        tail_log(host_log, 20, "HOST"); sys.exit(2)
+
+    # A1 ASSERTS THE BRANCH, NOT MY GUESS AT ITS CAUSE. The first version of this said "the
+    # master really was down" and passed for the wrong reason: `VOTVCOOP_MASTER_URL` reaches
+    # session_manager only via Configure, and [V] on 2026-09-01 Configure ran at 12:13:45
+    # while the test arm fired HostWithSave at 12:13:39 -- so the announce went to the REAL
+    # master with `g_masterUrl` still at its compiled default, and failed with
+    # `lobby: host announce -- master returned 400` because the durable identity had not
+    # loaded yet either (lobby_announcer.cpp:46 -- /v1/host answers a missing identity with a
+    # named 400). The fallback branch is gated on `info.ok` alone, so it was still exercised
+    # and A2/A3 still measure the fix -- but a green "the master was down" would have been a
+    # sentence about something that did not happen.
+    announce_failed = "session_manager: HOST-WITH-SAVE ready (UNLISTED" in text
+    landirect = "topology=LanDirect" in text
+    want = {
+        "A1 the announce did NOT succeed (the fallback branch ran)": announce_failed,
+        "A2 host holds a UDP endpoint (the differential)":           bound,
+        "A3 session started on LanDirect":                           landirect,
+    }
+    if "master returned 400" in text:
+        log("  NOTE: the announce failed with a 400, not a connection failure -- this run "
+            "reached the fallback through the unsigned-announce door (identity not yet "
+            "loaded), not through an unreachable master. The branch under test is the same; "
+            "the CAUSE is not what --master selects. See the A1 comment.")
+    log("--- VERDICT ---")
+    for k, ok in want.items():
+        log(f"  {'PASS' if ok else 'FAIL'}  {k}")
+    for line in text.splitlines():
+        if "HOST-WITH-SAVE" in line or "net: session started" in line:
+            log("  H| " + line.strip()[:190])
+    if all(want.values()):
+        log("DEAD-MASTER PASS -- an AUTO host with no master is still reachable")
+    else:
+        log("DEAD-MASTER FAIL")
+        tail_log(host_log, 30, "HOST")
+        sys.exit(1)
+
+
 def cmd_gracefulexit(args) -> None:
     """Launch a solo host, close it the way a PLAYER closes it, and read the teardown trail.
 
@@ -5929,6 +6040,19 @@ def main() -> None:
                              help="seconds to hold before reading the verdict (the silent arm waits "
                                   "out the host's 30 s pending deadline regardless)")
     p_authdrill.set_defaults(func=cmd_authdrill)
+
+    p_dead = sub.add_parser("deadmaster",
+                            help="AUTO host with an unreachable master: assert the session is "
+                                 "still JOINABLE (a bound UDP endpoint), not a world nobody "
+                                 "can reach")
+    p_dead.add_argument("--master", default="", help="master URL to point at (default 127.0.0.1:9)")
+    p_dead.add_argument("--save", default="s_1234", help="save slot the host loads")
+    p_dead.add_argument("--port", type=int, default=DEFAULT_PORT, help="expected listen port")
+    p_dead.add_argument("--boot-timeout", type=int, default=150,
+                        help="seconds to wait for the world to load and the socket to bind")
+    p_dead.add_argument("--no-deploy", action="store_true",
+                        help="run on the bytes already on the rigs")
+    p_dead.set_defaults(func=cmd_deadmaster)
 
     p_gexit = sub.add_parser("gracefulexit",
                              help="SOLO SHUTDOWN drill: close the host the way a PLAYER closes it "
