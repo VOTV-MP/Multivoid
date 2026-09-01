@@ -199,6 +199,10 @@ struct KeyIndexEntry {
 };
 void CollectKeyIndexEntries(std::vector<KeyIndexEntry>& out);
 
+// How many keyed props the index holds. A COUNT, because the diagnosis that wanted it was
+// copying every entry -- key string included -- to print one integer. Any thread (leaf mutex).
+size_t KeyIndexSize();
+
 // v122 (S) doom re-validation companion: erase the index entry for `actor` iff
 // it still maps key<->actor (a recycled-address impostor or an un-reindexed
 // rekey must fall out of the sweep universe instead of dooming a fresh actor;

@@ -8,6 +8,7 @@
 #include "ue_wrap/core/paths.h"  // ExeDir -- the pak folder is derived from the install dir
 #include "ue_wrap/core/log.h"
 
+#include <map>
 #include <mutex>
 #include <utility>
 #include <algorithm>  // std::find -- the cross-subdir stem dedupe
@@ -288,30 +289,40 @@ const std::vector<SkinEntry>& Entries(bool rescan) {
 // travel separately and the catalog stays render-thread-only, as its header requires.
 std::mutex                          g_usableMu;
 std::vector<std::string>            g_pendingNames;   // asked, not yet answered
-std::vector<std::pair<std::string, Usable>> g_verdicts;
+std::map<std::string, Usable>       g_verdicts;
+// WHICH SCAN a verdict belongs to. `ResolvePending` releases the lock across the LoadObject --
+// it has to, the load is slow -- so a Refresh can clear the store while an answer is in flight,
+// and that answer would then land in the NEW epoch describing the OLD catalog. With a vector and
+// first-match lookup the stale answer won permanently: a player who installed a pak and pressed
+// the one button offered for it kept seeing the skin hidden. The map also retires the linear
+// scan the panel ran per entry per frame.
+uint64_t                            g_scanEpoch = 0;
 
 void RequestUsabilityScan(std::vector<std::string> names) {
     std::lock_guard<std::mutex> lk(g_usableMu);
     g_pendingNames = std::move(names);
     g_verdicts.clear();   // a rescan re-asks: the paks on disk may have changed
+    ++g_scanEpoch;        // ...and answers still in flight belong to the scan before it
 }
 
 Usable UsabilityOf(const std::string& name) {
     std::lock_guard<std::mutex> lk(g_usableMu);
-    for (const auto& v : g_verdicts)
-        if (v.first == name) return v.second;
-    return Usable::Unknown;
+    const auto it = g_verdicts.find(name);
+    return it == g_verdicts.end() ? Usable::Unknown : it->second;
 }
 
 void ResolvePending(int budget) {
     UE_ASSERT_GAME_THREAD("skins::ResolvePending (LoadObject)");
+    std::vector<std::string> deferred;   // throttled this pass; put back at the END (see below)
     while (budget > 0) {
         std::string name;
+        uint64_t epoch = 0;
         {
             std::lock_guard<std::mutex> lk(g_usableMu);
-            if (g_pendingNames.empty()) return;
+            if (g_pendingNames.empty()) break;
             name = std::move(g_pendingNames.back());
             g_pendingNames.pop_back();
+            epoch = g_scanEpoch;
         }
         // THE STOCK BODY AND THE BUILTINS ARE USABLE BY CONSTRUCTION -- they ship with the
         // game. Answering them without a load is not an optimisation: charging them budget
@@ -319,7 +330,7 @@ void ResolvePending(int budget) {
         // time the panel is opened, and again on every Refresh.
         if (name.empty() || name == kNativeSkinName || BuiltinSkinPath(name)) {
             std::lock_guard<std::mutex> lk(g_usableMu);
-            g_verdicts.emplace_back(std::move(name), Usable::Yes);
+            if (epoch == g_scanEpoch) g_verdicts[std::move(name)] = Usable::Yes;
             continue;   // deliberately NOT charged against `budget`
         }
         --budget;
@@ -331,10 +342,15 @@ void ResolvePending(int budget) {
         if (w == coop::client_model::Wearable::Unknown) {
             // A THROTTLED MISS IS NOT AN ABSENCE. `GetSkinMesh` returns null without asking
             // inside its retry window, and recording that as `No` would hide a perfectly
-            // installed skin until the player found the Refresh button. Put it back.
-            std::lock_guard<std::mutex> lk(g_usableMu);
-            g_pendingNames.push_back(std::move(name));
-            return;   // stop this pass; the next tick re-asks once the window has passed
+            // installed skin until the player found the Refresh button.
+            //
+            // DEFERRED TO THE END, NOT PUT BACK AND ABANDONED. The queue pops from the back, so
+            // returning a throttled name to the back re-popped the same one next tick and stalled
+            // the WHOLE pass for the length of the retry window -- and the most reliable source of
+            // that throttle is local_body's own per-tick probe of the player's current skin, i.e.
+            // exactly the state this feature exists for. Hold it aside and keep going.
+            deferred.push_back(std::move(name));
+            continue;
         }
         const bool ok = (w == coop::client_model::Wearable::Yes);
         if (!ok)
@@ -342,7 +358,15 @@ void ResolvePending(int budget) {
                     "from the picker (another mod's pak, or a skin pak for a different game "
                     "version)", name.c_str());
         std::lock_guard<std::mutex> lk(g_usableMu);
-        g_verdicts.emplace_back(std::move(name), ok ? Usable::Yes : Usable::No);
+        // ONLY IF THE SCAN IT BELONGS TO IS STILL THE CURRENT ONE. A Refresh during the load
+        // above replaced the catalog; this answer describes the one before it.
+        if (epoch == g_scanEpoch) g_verdicts[std::move(name)] = ok ? Usable::Yes : Usable::No;
+    }
+    if (!deferred.empty()) {
+        std::lock_guard<std::mutex> lk(g_usableMu);
+        g_pendingNames.insert(g_pendingNames.begin(),
+                              std::make_move_iterator(deferred.begin()),
+                              std::make_move_iterator(deferred.end()));
     }
 }
 

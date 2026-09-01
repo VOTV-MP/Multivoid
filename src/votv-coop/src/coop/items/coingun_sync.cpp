@@ -500,7 +500,7 @@ void SendSaleForDyingProp(const std::wstring& key, uint32_t elementId) {
 }
 
 void Tick() {
-    // THE HOST'S KEY INDEX, ONCE PER SESSION. Every NoSuchProp refusal is a lookup into this
+    // THE HOST'S KEY INDEX, PERIODICALLY. Every NoSuchProp refusal is a lookup into this
     // index, and the refusal alone cannot say whether the key was WRONG or the index was
     // EMPTY -- which is exactly the question the 2026-09-01 field report left open (three
     // sales refused in a row, `eid=0` on each, and the host's log wiped before it was read).
@@ -517,11 +517,9 @@ void Tick() {
         auto* ls = LoadSession();
         if (nowMs >= sNextMs && ls && ls->connected() && ls->role() == coop::net::Role::Host) {
             sNextMs = nowMs + 30000;
-            std::vector<coop::prop_element_tracker::KeyIndexEntry> idx;
-            coop::prop_element_tracker::CollectKeyIndexEntries(idx);
             UE_LOGI("coingun[arbiter]: host key index holds %zu keyed prop(s) -- a NoSuchProp "
                     "refusal against a NEAR-ZERO index is an enrollment gap, not a bad key",
-                    idx.size());
+                    coop::prop_element_tracker::KeyIndexSize());
         }
     }
     // THE HOST HALF: erase consumed artifacts whose prop has died. This is what gives the
