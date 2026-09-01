@@ -23,6 +23,24 @@
 // immortal GameInstance by design (the 2026-05-30 bug2 fix) and is therefore
 // constant across every travel, i.e. structurally incapable of answering this
 // question. That mistake is recorded in the lesson above.
+//
+// A LIVE DEFECT LIVES IN THIS TERRITORY, and anyone reading this header about world
+// lifetime should know it before spending an evening on it (2026-09-01, UNFIXED):
+// after a COOP session, the departed gameplay world is left kill-flagged with its
+// `PersistentLevel` already NULL and is NEVER purged -- 75 s of dwell and a forced
+// `CollectGarbage` both leave it -- so the next `open untitled_1` in the same process
+// adopts that husk and `UGameInstance::CreateGameModeForURL` dereferences a null
+// `AWorldSettings` at `+0x268`. Solo, the same world is fully purged 14 s after
+// reaching the menu. It is reproducible on demand
+// (`python tools/mp.py reloadchurn --rejoin`, same `PCallStackHash` as the field
+// minidump) and the open question is WHY the husk stays -- the standing hypothesis is a
+// deferred `FinishDestroy` gated on the render `FScene`, which is untested. Full RE:
+// `research/findings/join-identity/votv-rejoin-loadmap-null-worldsettings-RE-2026-08-31.md`.
+//
+// The practical consequence for THIS module's callers: a world this module has moved off
+// may still be in the object array indefinitely, so `FindObjectByClass(WorldClass)` can
+// keep returning it for as long as the process lives -- which is the header's existing
+// rule, now with a measured worst case rather than "44 seconds".
 
 #pragma once
 

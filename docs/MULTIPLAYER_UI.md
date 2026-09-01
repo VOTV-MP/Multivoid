@@ -994,6 +994,20 @@ evidence class that outranks the instrument. Commit `a2879d7a`; instrument
 **So T2b, T4a and T6 keep their premise, and the "no step prices making it scroll" hole never had to
 be filled.** What T0 also produced is a UMG fact worth more than its own row — see the box below.
 
+> **T0's ANSWER STANDS; ITS INSTRUMENT WENT RED (2026-09-01).** After the list was wrapped in its
+> own framed box (`c026720c`), the wheel phase reports `WHEEL VERDICT NO` and the run FAILS. Read
+> the number, not the verdict: the view fraction still moved **0.0000 → 0.1667** over four notches,
+> MORE than the 0.0667 this box is written on. What flipped is the phase's `IsHovered(list)` term,
+> which the verdict ladder uses to choose between "harness fault" and "the widget ignores the
+> wheel" — and while it is stuck at 0 the next REAL wheel failure will be misreported as a harness
+> fault. T0 itself is not in doubt: **the user confirmed the scrolling by hand**, which is the
+> evidence class that outranks any instrument, and nothing in production gates on that term (row
+> hover has been geometry since `9f8140b3` — `server_browser_rows.cpp:610` routes the whole hit
+> test through `native_screen::ChildAtCursor`). Owed: fix the term or drop the branch that reads
+> it. One mechanism is already ruled out — a framed Overlay does not suppress hover on its
+> contents; `Back` sits inside one and reads `hovered=1` in the same run.
+> `docs/SERVER_BROWSER_ARC.md` section 9.3 carries this as an open item.
+
 **THE UMG FACT T0 PRODUCED, and the reason it outlives this lane `[V]`.**
 `UScrollBox::GetScrollOffset` **is an echo**: it returns Slate's `DesiredScrollOffset` — what was
 last *asked for*, unclamped. Ask for 1 000 000 and it returns 1 000 000, measured on an empty box
