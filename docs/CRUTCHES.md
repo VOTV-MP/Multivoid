@@ -49,6 +49,9 @@ missing work; this register is for work that was *built in the wrong shape*.
 | C1 | **ATV** (`coop/interactables/atv_sync`, `ue_wrap/devices/atv`) | The mirror is a frozen corpse; the rig's whole purpose is deleted to make it hold still | **ARC 1 COMMIT 1 SHIPPED 2026-08-29** (`070c7d29` + `a2a45fc7`, proto 146): the freeze/teleport lane is DELETED — the mirror simulates and is corrected, and `AtvRelease`'s launch velocity went with it. The crutch is RETIRED at its root; what remains of C1's gap list is the VITALS and CONFIG arcs, not the corpse. **UPDATED 2026-08-30 (`8cd0ac25`): the 25-40 cm sag was a SECOND crutch in the same lane, and it was the collision guard, not the pose lane.** `coop::atv_hit_guard` cancelled ALL SEVEN `ComponentHit` delegates on a non-owner to stop a mirror authoring damage; the five WHEEL delegates also keep the rig's SHAPE, so the mirror's body sat under its own wheel plane. A four-cell single-variable experiment ACQUITTED the pose corrector outright (with the guard off it is the best of the four cells). Shipped `8cd0ac25`: only the two BODY delegates are cancelled. **THEN `28a958e8` RETIRED THE SUPPRESSION SHAPE ITSELF -- the crutch's last piece is gone.** Nothing is cancelled: all seven delegates are NEUTERED (a zero `FVector` over `NormalImpulse` pre-dispatch; the handler dispatches whole and only the magnitude dies), so the mirror keeps every side effect it needs -- above all `wheelsOnSurface`, whose loss WAS the sag -- and authors no damage at all. `g_cancelMask` and the `atv_hit_guard_mask` row are deleted (RULE 2). `[V]` verified on the same arm: mirror wear 98.22/100/100/98.48 -> **100/100/100/100**, `UNRESOLVED=0`. `[V]` two driven verification runs, A1 x0.95/x1.00/x1.23 and x0.90/x0.59/x2.11 (was x2.3-x2.7), A2 9.6 and 3.8 cm PASS, A6 both PASS, rig-shape spread 0.44-2.43 cm; a third undriven run reads A2 1.83 / spread 0.00. **A post-ship audit corrected the framing: "A2 never passed driven" was FALSE** (`20260830-092139`, driven, all seven cancelled, is the only ACCEPTANCE: PASS on disk at A2 7.0 cm), and the claimed 2x2 is honestly a 1x2 pair on one binary (`-1059` vs `-1057`, A2 30.4 -> 5.3, shape 19.05 -> 0.12) -- which is what carries the conclusion. **The §16 causes above are SUPERSEDED -- read `docs/vehicles/ATV.md` §17.** Residual: a mirror now runs `processTire()` and can eject a tire its author still has -- the fix is tire durability on the wire, not re-suppression. Still open: A5 and A4 (1 s ownership overlap). A5's 209-324 cm peak is NOT noise: `[V]` the author's last 12 driven samples sit still at 0.7-5 cm/s with `driven=1` still true -- it is wedged against a fence -- so A5's window mixes real driving with a stationary author, and 200 cm measured there is a STATIC error the corrector never closed, which A2 cannot see because it reads only the settled tail | **IN PROGRESS** |
 | C2 | **Trash piles / clumps** (`coop/props/trash_proxy`, `native_pile_mirror`, + ~9 sibling modules) | The mirror is a FAKE actor, which broke aim, which grew a parallel aim system; two mirror implementations now coexist | **OPEN** | **SECOND** (user: *"that's on the list after atv"*) |
 | C3 | **KO respawn** (`coop/player/ko_respawn`, the `Holder::KoRespawn` hold in `coop/player/ragdoll_gate`) | The game's own death mechanism was NEUTRALISED -- `canRagdoll` held shut for the whole session so `ragdollMode` early-outs -- instead of the death being allowed to run and then answered | **CLOSED BY RETIREMENT, `33008d87` 2026-08-31.** The lane is deleted whole (RULE 2) rather than fixed, because the arc that replaces it inverts its mechanism; H1/H2/H3 died with it and H3's underlying write was converted to `CachedObjRef` on the way out. The replacement IS BUILT AND GREEN as of 2026-08-31 (`aaf23a4d`): `ue_wrap/engine/level_travel` detours `UGameplayStatics::OpenLevel` and `coop/player/death_revive` writes the revive in its place, so the whole native death now runs and the world is KEPT. `mp.py death --session` 12/12; `mp.py death` 6/6 with `installed=1 travelsRefused=0`, i.e. single player untouched by NEGATIVE CONTROL rather than by assumption | **CLOSED** |
+| C4 | **The lobby password's entropy floor** (`ui/host_session_settings` `kPwLen`, `coop/net/lobby_password`, `coop/net/peer_admission`'s self-addressed branch) | Two decisions that are each defensible alone combine into a measured offline oracle, and nothing bridges them | **OPEN, DELIBERATE, and stated at all three sites** | **after C2** |
+
+---
 
 ---
 
@@ -314,7 +317,72 @@ has a real, pre-existing need for it. Only `ko_respawn`'s hold goes.
 
 ---
 
-## 2. The pattern all three entries share
+
+## C4 — the lobby password's entropy floor
+
+**Entered 2026-09-01, the same day both halves shipped.** This is not a suppression like C1-C3;
+it is the other crutch shape the register's section 0 names -- a cost knowingly taken with the
+proper fix deferred. It is here because it is exactly the kind of thing that becomes invisible
+once the session that measured it ends.
+
+### What ships today
+
+Two user decisions, hours apart, each correct in isolation:
+
+1. **The generated lobby password is SIX characters** (`kPwLen`, from a 32-symbol read-aloud-safe
+   alphabet = **30 bits**). The user asked for it directly: *"пароль такой длинный вообще не
+   должен быть, который мы генерируем, 6 символов норм."* It was ten.
+2. **A destination this machine named may carry a password proof UNBOUND**
+   (`net::Config::selfAddressed`). The user rejected the alternative outright: *"Какой нахуй
+   инвайт? ... Вводит адрес и порт, оставляет поле пароля пустым если его нет, или заполняет
+   поле пароля если он был выдан хостом."* Without it a locked host was unjoinable by address
+   from every shipped UI, which is a missing feature, not a safety property.
+
+### Why the pair is a crutch
+
+Separately they are fine. Together, on a self-addressed lane a host that merely **ANSWERS**
+receives a tag whose every other term is its own (its key, its nonce), so it can grind offline.
+The arithmetic, from the tree's own comments: **~6 GPU-hours at 30 bits**, against ~714 GPU-years
+at the 50 bits this replaced. `[V]` the numbers are computed in
+`ui/host_session_settings.cpp` beside `kPwLen` and cross-referenced from
+`coop/net/lobby_password.h`.
+
+The reachable case is a **MISTYPED address answered by a Multivoid host**. The residual was first
+written down as "a lobby it cannot find", which a post-ship audit corrected: whoever answers a
+one-keystroke typo knows the address the joiner MEANT.
+
+**The seam is the crutch, not either decision.** A comment beside `kPwLen` had said 30 bits was
+safe *only* because proofs are never sent unbound, and listed that as "not optional while this
+constant is 6" -- 100 minutes before the same session made it optional. Both files now state what
+is true instead ([[lesson-a-safety-argument-beside-a-constant-is-a-dependency]]).
+
+### What bounds it today
+
+The host still verifies identity BEFORE the password; the tag is salted with the answering host's
+key so it is worthless against any other host; and the host's guess bucket (10 per 60 s per key or
+address) bounds ONLINE guessing. None of those touch the offline case, which is the whole point.
+
+### The proper fix `[?]` — three named candidates, none built
+
+- **A longer generated secret.** Cheapest, and directly against the user's stated preference, so
+  it is a product conversation rather than a code change.
+- **A per-lane refusal** -- send unbound only when the secret is known-strong. The client cannot
+  tell how the host minted its password, so this needs a signal that does not exist yet.
+- **A PAKE-shaped exchange** (SPAKE2/CPace). The only one that dissolves the tradeoff entirely --
+  a memorable secret AND no oracle, on every lane, with no identity needed. It is what the A2
+  design pass already named as the general answer, and it needs crypto primitives this tree does
+  not currently link.
+
+Raising `kIterations` is **not** on the list and `lobby_password.h` says so at the constant:
+recovering the 20 lost bits would need a million times the rounds, at ~100 ms each.
+
+### Gating criteria for retirement
+
+Either the generated secret's entropy rises to where an exposed proof is not worth grinding, or
+the unbound send stops being reachable, or the exchange stops being an oracle. Any one of the
+three closes it; the register entry goes when the tree no longer contains the pair.
+
+## 2. The pattern C1-C3 share (C4 is the other shape -- a cost taken, not a suppression)
 
 All three are the same move: **the thing the game already does was inconvenient, so it was
 neutralised or replaced, instead of being kept and answered.** C1 and C2 do it to an ENTITY; C3 does
@@ -330,6 +398,7 @@ Principle 3 is the test: if our design no longer holds a pointer to the game's o
 game's own rendering and physics, the design has left the architecture.
 
 ---
+
 
 ## 3. Register discipline
 
