@@ -11,6 +11,7 @@
 #include "coop/net/peer_identity.h"     // RandomBytes -- the CSPRNG the identity already uses
 #include "coop/session/session_manager.h"
 #include "coop/text/utf8_codec.h"
+#include "ui/host_session_choices.h"     // the two-row selector these questions share
 #include "ui/host_window_native.h"      // step ONE -- what Back returns to
 #include "ui/input_focus.h"
 #include "ui/native_screen.h"
@@ -39,6 +40,7 @@ namespace sm = coop::session_manager;
 namespace TF = ui::native_text_field;
 namespace HW = ui::host_window_native;
 namespace cfg = coop::config;
+namespace HC = ui::host_session_choices;
 
 using ue_wrap::FLinearColor;
 
@@ -91,8 +93,10 @@ const FLinearColor kAmber  = NS::Amber();   // the DIRECT/LAN caveat on the hint
 // ---- the two answers to the one question ----------------------------------------------
 // The wording is the product surface and is fixed ONCE here. Each line says what the choice
 // COSTS, because "Locked / Unlocked" alone asks the player to guess which one is which.
-struct WhoMayJoin { const wchar_t* title; const wchar_t* detail; };
-constexpr WhoMayJoin kWho[2] = {
+// TYPED AS THE SELECTOR'S OWN `Answer`, not as a look-alike struct: two identical shapes
+// that must stay in step are one shape with two names, and the compiler cannot tell you
+// when they drift.
+constexpr HC::Answer kWho[2] = {
     {L"Anyone can join",
      L"Your session is open to everyone who finds it."},
     {L"Password required",
@@ -121,8 +125,7 @@ constexpr WhoMayJoin kWho[2] = {
 // So the selector always states the TRUTH about what will happen, and only DIRECT lets you
 // move it. That is why these are rows and not a checkbox: a checkbox has no way to be
 // truthful and unavailable at the same time.
-struct Visibility { const wchar_t* title; const wchar_t* detail; };
-constexpr Visibility kVis[2] = {
+constexpr HC::Answer kVis[2] = {
     {L"Show in server browser",
      L"Anyone can find your game in the list."},
     {L"Hidden",
@@ -193,10 +196,17 @@ void* g_pwHint   = nullptr;
 void* g_recapName = nullptr;
 void* g_recapWorld = nullptr;
 void* g_recapConn  = nullptr;
-void* g_whoBg[2]    = {nullptr, nullptr};
-void* g_whoTitle[2] = {nullptr, nullptr};
-void* g_visBg[2]    = {nullptr, nullptr};
-void* g_visTitle[2] = {nullptr, nullptr};
+// THE QUESTIONS, each a `host_session_choices::Selector`. They were four widget arrays and
+// four loose ints until 2026-09-01; the third question (who may CONNECT) is what made a
+// third hand-copy indefensible. `chosen` carries the answer, so there are no parallel
+// booleans to keep in step with the widgets -- which is what `g_locked` and `g_listed` were.
+HC::Selector g_who;   // 0 = anyone may join, 1 = a password is required
+HC::Selector g_vis;   // 0 = listed in the server browser, 1 = hidden
+
+// READ THROUGH THESE, never off `chosen` directly: the index-to-meaning mapping belongs in
+// one place, and every site that spelled it out was a site that could spell it backwards.
+bool IsLocked() { return g_who.chosen == 1; }
+bool IsListed() { return g_vis.chosen == 0; }
 void* g_visHint     = nullptr;   // why the choice is fixed, on the modes where it is
 
 TF::Field* g_pwField = nullptr;
@@ -214,8 +224,6 @@ sm::SaveChoice g_choice;
 std::string    g_name;
 int            g_connMode = 0;
 
-bool g_locked = false;
-int  g_hoverWho = -1;
 
 // FOOTER-INSIDE-THE-FRAME MEASUREMENT (see ReportFit). Last reported overflow, so the line
 // is logged on CHANGE rather than per tick -- the value moves exactly twice per showing
@@ -246,10 +254,10 @@ void ReportFit() {
         UE_LOGE("host_session_settings: [fit] FOOTER OUTSIDE THE FRAME by %.0f px "
                 "(frame ends %.0f, Host button ends %.0f; locked=%d conn=%d) -- kWindowH is "
                 "too small for this cell",
-                overflow, frameBottom, footerBottom, g_locked ? 1 : 0, g_connMode);
+                overflow, frameBottom, footerBottom, IsLocked() ? 1 : 0, g_connMode);
     } else {
         UE_LOGI("host_session_settings: [fit] footer inside the frame, %.0f px of slack "
-                "(locked=%d conn=%d)", -overflow, g_locked ? 1 : 0, g_connMode);
+                "(locked=%d conn=%d)", -overflow, IsLocked() ? 1 : 0, g_connMode);
     }
 }
 
@@ -257,8 +265,6 @@ void ReportFit() {
 // different in each: AUTO must be listed to be joinable at all, LAN ONLY can never be, and
 // DIRECT is the one where the host actually chooses (defaulting to listed -- the behaviour
 // every existing DIRECT host already has, since the old hardcoded literal was `false`).
-bool g_listed   = true;
-int  g_hoverVis = -1;
 
 // Can this connection mode's visibility be moved at all? DIRECT only -- see kVis.
 bool VisibilityIsEditable() { return g_connMode == 1; }
@@ -342,38 +348,9 @@ void SetStatus(const std::wstring& t, const FLinearColor& col) {
 // fill), HorizontalBox of text ]. No UButton, for the reason the browser's rows record: a
 // bare UImage is what we can paint, and a UButton would add a press visual we would then
 // have to suppress.
-struct Row { void* box; void* bg; void* a; void* b; };
-
-Row BuildRow(void* parent, float wA, float wB) {
-    Row r{};
-    r.box = NS::Spawn(L"SizeBox", parent);
-    if (!r.box) return r;
-    U::SetSizeBoxHeight(r.box, kRowH);
-    void* ovl = NS::Spawn(L"Overlay", r.box);
-    if (!ovl) return Row{};
-    r.bg = NS::Spawn(L"Image", ovl);
-    if (!r.bg) return Row{};
-    U::SetImageTintRaw(r.bg, kRowBg);
-    E::SetWidgetVisibility(r.bg, 0);   // Visible: it is the hit target
-    if (void* s = U::AddChild(ovl, r.bg))
-        U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
-                        NS::kFill, NS::kFill);
-    if (void* hb = NS::Spawn(L"HorizontalBox", ovl)) {
-        r.a = NS::AddText(hb, L"", 18, kText, NS::kJustLeft, wA);
-        r.b = NS::AddText(hb, L"", 15, kDim,  NS::kJustLeft, wB);
-        if (void* s = U::AddChild(ovl, hb)) {
-            U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign,
-                            NS::kFill, NS::kCenter);
-            auto* pad = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(s) +
-                                                 P::off::UOverlaySlot_Padding);
-            pad[0] = 12.f; pad[1] = 0.f; pad[2] = 12.f; pad[3] = 0.f;
-        }
-    }
-    U::SetContent(r.box, ovl);
-    if (!r.bg || !r.a) return Row{};
-    U::AddChild(parent, r.box);
-    return r;
-}
+// THE ROW KIT MOVED to `ui/host_session_choices` (2026-09-01), together with the two
+// selectors that were the only callers. It is not gone -- it is one body serving three
+// questions instead of two hand-copies serving one each.
 
 // A titled framed section, the shape `server_browser_panels::SectionBody` uses. Kept local
 // rather than lifted into the kit: this is the SECOND caller, and the kit's own rule
@@ -394,17 +371,17 @@ void* SectionBody(void* parent, const wchar_t* title) {
 
 void RepaintChoices() {
     for (int i = 0; i < 2; ++i) {
-        if (!g_whoBg[i]) continue;
-        // Style doc section 4: selection is a FILL and hover is a TEXT colour. Two
-        // independent channels; porting ImGui's HeaderHovered here would look foreign.
-        U::SetImageTint(g_whoBg[i], (g_locked ? 1 : 0) == i ? kRowSel : kRowBg);
-        E::SetTextBlockColorDispatch(g_whoTitle[i], g_hoverWho == i ? kHover : kText);
+        (void)i;
     }
+    // Both style channels now live in `host_session_choices::Repaint` -- see its comment
+    // for why selection and hover are independent, and why that is measured rather than
+    // taste.
+    HC::Repaint(g_who);
     // THE PASSWORD BLOCK IS COLLAPSED, NOT HIDDEN. Collapsed (1) takes no space, so the
     // window closes up around it; Hidden (2) would keep a field-sized hole. This is the one
     // place in these screens where the difference is wanted the other way round from the
     // row-alignment case the padlock cell records.
-    if (g_pwBlock) E::SetWidgetVisibility(g_pwBlock, g_locked ? 0 : 1);
+    if (g_pwBlock) E::SetWidgetVisibility(g_pwBlock, IsLocked() ? 0 : 1);
 
     // THE VISIBILITY ROWS, same two channels -- but DIMMED WHOLE when the mode decides it.
     // A row the player cannot move must not look like one they can: it keeps the selection
@@ -412,12 +389,10 @@ void RepaintChoices() {
     // as information rather than as a control that ignores clicks.
     const bool visEditable = VisibilityIsEditable();
     for (int i = 0; i < 2; ++i) {
-        if (!g_visBg[i]) continue;
-        U::SetImageTint(g_visBg[i], (g_listed ? 0 : 1) == i ? kRowSel : kRowBg);
-        const FLinearColor& c = !visEditable ? kDim
-                                             : (g_hoverVis == i ? kHover : kText);
-        E::SetTextBlockColorDispatch(g_visTitle[i], c);
+        (void)i;
     }
+    g_vis.editable = visEditable;
+    HC::Repaint(g_vis);
 
     // THE HINT SAYS SOMETHING DIFFERENT ON DIRECT AND LAN, and this is the honest
     // surfacing of a real limit rather than a decoration.
@@ -487,14 +462,14 @@ void RepaintChoices() {
 // It mints only when the box is EMPTY, so toggling the lock off and on again does not throw
 // away a value the player just typed or already told a friend.
 void SetLocked(bool locked) {
-    if (locked == g_locked) return;
-    g_locked = locked;
-    if (g_locked && TF::Text(g_pwField).empty()) {
+    if (locked == IsLocked()) return;
+    g_who.chosen = locked ? 1 : 0;
+    if (IsLocked() && TF::Text(g_pwField).empty()) {
         const std::string pw = GeneratePassword();
         if (pw.empty()) {
             // FAIL CLOSED. The RNG refused, so the lock does not go on: a padlock with no
             // secret behind it is the false promise this project has already shipped once.
-            g_locked = false;
+            g_who.chosen = 0;
             SetStatus(L"Could not generate a password on this system -- the lock stays off.",
                       kBad);
             RepaintChoices();
@@ -502,7 +477,7 @@ void SetLocked(bool locked) {
         }
         TF::SetText(g_pwField, pw);
     }
-    if (!g_locked) TF::Blur(g_pwField);   // a collapsed field must not keep the keyboard
+    if (!IsLocked()) TF::Blur(g_pwField);   // a collapsed field must not keep the keyboard
     SetStatus(L"", kText);
     RepaintChoices();
 }
@@ -544,15 +519,7 @@ bool BuildScreen(void* switcher) {
         U::SetClipping(g_recapConn, 1);
     }
 
-    NS::AddText(col, L"WHO MAY JOIN", 16, kAccent, NS::kJustLeft, 0.f);
-    for (int i = 0; i < 2; ++i) {
-        Row r = BuildRow(col, 0.42f, 0.58f);
-        g_whoBg[i]    = r.bg;
-        g_whoTitle[i] = r.a;
-        SetText(r.a, kWho[i].title,  kText);
-        SetText(r.b, kWho[i].detail, kDim);
-        if (!r.bg || !r.a) return false;
-    }
+    if (!HC::Build(col, L"WHO MAY JOIN", kWho, g_who)) return false;
 
     // ---- the password block, collapsed until the lock goes on ---------------------------
     // ONE CONTAINER, so the whole block appears and disappears together. The field itself
@@ -584,21 +551,13 @@ bool BuildScreen(void* switcher) {
     // Always present, never collapsed: unlike the password block this does not appear and
     // disappear with a click inside the window, and its rows carry the truth for every mode
     // (see kVis). The hint under them explains the modes where the choice is not the host's.
-    NS::AddText(col, L"SERVER LIST", 16, kAccent, NS::kJustLeft, 0.f);
-    for (int i = 0; i < 2; ++i) {
-        Row r = BuildRow(col, 0.42f, 0.58f);
-        g_visBg[i]    = r.bg;
-        g_visTitle[i] = r.a;
-        SetText(r.a, kVis[i].title,  kText);
-        SetText(r.b, kVis[i].detail, kDim);
-        // RELEASE THE FIELD ON THE WAY OUT. This return is AFTER `TF::Create` above, unlike
-        // the WHO-MAY-JOIN loop's identical-looking one, so a bare `return false` here leaks
-        // a `Field` (new + push_back into `g_live`) on every retry -- and `OnMenuTick` retries
-        // until the 15-attempt backoff, then once a SECOND forever. That is 1 leak/sec plus a
-        // window's worth of orphaned UObjects feeding GC. The footer and index paths below
-        // were hardened into exactly this shape by the 2026-08-31 audit; this loop was added
-        // afterwards and did not inherit it. (Post-ship perf audit, 2026-09-01.)
-        if (!r.bg || !r.a) { TF::Release(g_pwField); g_pwField = nullptr; return false; }
+    // RELEASE THE FIELD ON THE WAY OUT. This return is AFTER `TF::Create` above, unlike the
+    // WHO-MAY-JOIN one, so a bare `return false` here leaks a `Field` (new + push_back into
+    // `g_live`) on every retry -- and `OnMenuTick` retries until the 15-attempt backoff, then
+    // once a SECOND forever. That is 1 leak/sec plus a window's worth of orphaned UObjects
+    // feeding GC. (Post-ship perf audit, 2026-09-01.)
+    if (!HC::Build(col, L"SERVER LIST", kVis, g_vis)) {
+        TF::Release(g_pwField); g_pwField = nullptr; return false;
     }
     g_visHint = NS::AddText(col, L"", 15, kDim, NS::kJustLeft, 0.f);
     if (g_visHint) U::SetAutoWrapText(g_visHint, true);
@@ -668,8 +627,8 @@ void Hide(const char* why);
 // change, it changes in `session_manager`, once.
 void DoHost() {
     g_sawHostAttempt = true;
-    const std::string pw = g_locked ? TF::Text(g_pwField) : std::string();
-    if (g_locked && pw.empty()) {
+    const std::string pw = IsLocked() ? TF::Text(g_pwField) : std::string();
+    if (IsLocked() && pw.empty()) {
         // A LOCK WITH NO SECRET IS THE FALSE PROMISE, so it is refused here rather than
         // announced. The player emptied the box themselves; the way out is to type something
         // or to choose "Anyone can join".
@@ -685,8 +644,8 @@ void DoHost() {
     // hosting once with "Anyone can join" ERASED the remembered password -- the exact
     // opposite of what this window's header promises, and of what the lock's own
     // mint-only-when-empty rule is for (post-ship audit, 2026-08-31).
-    if (g_locked) cfg::WriteIniValue(::coop::config_registry::rows::net_lobby_password, pw.c_str());
-    cfg::WriteIniValue(::coop::config_registry::rows::net_lobby_locked, g_locked ? "1" : "0");
+    if (IsLocked()) cfg::WriteIniValue(::coop::config_registry::rows::net_lobby_password, pw.c_str());
+    cfg::WriteIniValue(::coop::config_registry::rows::net_lobby_locked, IsLocked() ? "1" : "0");
 
     // THE STRING, NOT THE ROW WE JUST WROTE. The ini is where it is REMEMBERED; it is not
     // the channel by which it reaches the host call. A write that failed, an env var that
@@ -697,8 +656,8 @@ void DoHost() {
     // flag on the other modes would be sending a value the callee is entitled to drop --
     // and a reader of this call would have to go find that out. The mode gate is stated
     // here instead, where the value is formed.
-    const bool hideFromBrowser = VisibilityIsEditable() && !g_listed;
-    const bool accepted = sm::HostWithSave(g_choice, g_name, g_locked, pw, /*playersMax=*/4,
+    const bool hideFromBrowser = VisibilityIsEditable() && !IsListed();
+    const bool accepted = sm::HostWithSave(g_choice, g_name, IsLocked(), pw, /*playersMax=*/4,
                                            /*directConnection=*/g_connMode == 1,
                                            hideFromBrowser,
                                            /*lanOnly=*/g_connMode == 2);
@@ -714,7 +673,7 @@ void DoHost() {
             // of the window already decides visibility with -- and on DIRECT the
             // player's toggle still overrides it.
             (ListedForMode(g_connMode) && !hideFromBrowser) ? 1 : 0,
-            g_locked ? 1 : 0, g_name.c_str());
+            IsLocked() ? 1 : 0, g_name.c_str());
     if (!accepted) {
         // The window STAYS OPEN on a refusal, for the reason step one records: a screen that
         // closes on failure is how "nothing told about the session being DEAD" happened --
@@ -779,7 +738,7 @@ void PollChrome() {
 
     // ENTER in the password field HOSTS. The key that ends typing is the one that acts,
     // which is what every text field a player has ever used does.
-    if (g_locked && TF::ConsumeSubmit(g_pwField)) { DoHost(); return; }
+    if (IsLocked() && TF::ConsumeSubmit(g_pwField)) { DoHost(); return; }
 
     const bool lmb = (::GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
     if (!g_lmbPrimed) { g_lmbPrimed = true; g_prevLmb = lmb; return; }
@@ -794,15 +753,15 @@ void PollChrome() {
     if (g_backBtn && E::WidgetIsHovered(g_backBtn)) { BackToHostWindow(); return; }
     if (g_hostBtn && E::WidgetIsHovered(g_hostBtn)) { DoHost(); return; }
     for (int i = 0; i < 2; ++i)
-        if (g_whoBg[i] && NS::CursorOverWidget(g_whoBg[i])) { SetLocked(i == 1); return; }
+        if (g_who.bg[i] && NS::CursorOverWidget(g_who.bg[i])) { SetLocked(i == 1); return; }
     // THE VISIBILITY ROWS ANSWER ONLY ON DIRECT. The click is swallowed rather than
     // redirected on the other two modes: the rows are dimmed and the hint says why, so a
     // silent no-op here is the honest behaviour and a status line would be nagging.
     if (VisibilityIsEditable()) {
         for (int i = 0; i < 2; ++i)
-            if (g_visBg[i] && NS::CursorOverWidget(g_visBg[i])) {
+            if (g_vis.bg[i] && NS::CursorOverWidget(g_vis.bg[i])) {
                 const bool want = (i == 0);
-                if (want != g_listed) { g_listed = want; RepaintChoices(); }
+                if (want != IsListed()) { g_vis.chosen = want ? 0 : 1; RepaintChoices(); }
                 return;
             }
     }
@@ -829,10 +788,10 @@ void UpdateHover() {
     sLastX = p.x; sLastY = p.y;
     sSettlePending = moved;   // one more pass after motion stops, then quiet
 
-    const int prev = g_hoverWho;
-    const int prevVis = g_hoverVis;
-    g_hoverWho = -1;
-    g_hoverVis = -1;
+    const int prev = g_who.hover;
+    const int prevVis = g_vis.hover;
+    g_who.hover = -1;
+    g_vis.hover = -1;
     // These rows sit in the content column, OUTSIDE any ScrollBox, but they are still
     // hand-built UImages -- and `IsHovered()` reads 0 on one of those whether or not it is
     // inside a scroll container (measured twice, 2026-08-29 and 2026-08-30). Geometry is the
@@ -845,14 +804,12 @@ void UpdateHover() {
     long hx = 0, hy = 0;
     if (!NS::CursorInWidgetSpace(hx, hy)) return;   // fail-closed, as the per-widget call was
     for (int i = 0; i < 2; ++i)
-        if (g_whoBg[i] && NS::WidgetContains(g_whoBg[i], hx, hy)) { g_hoverWho = i; break; }
+    g_who.hover = HC::HoverAt(g_who, hx, hy);
     // Only probed where hover MEANS something: on AUTO/LAN the rows are dimmed and
     // unclickable, so lighting one up would promise a control that is not there.
-    if (VisibilityIsEditable() && g_hoverWho < 0) {
-        for (int i = 0; i < 2; ++i)
-            if (g_visBg[i] && NS::WidgetContains(g_visBg[i], hx, hy)) { g_hoverVis = i; break; }
-    }
-    if (g_hoverWho != prev || g_hoverVis != prevVis) RepaintChoices();
+    g_vis.editable = VisibilityIsEditable();
+    if (g_who.hover < 0) g_vis.hover = HC::HoverAt(g_vis, hx, hy);
+    if (g_who.hover != prev || g_vis.hover != prevVis) RepaintChoices();
 }
 
 // ============================ lifecycle ================================================
@@ -862,14 +819,14 @@ void Show() {
     g_priorIndex = U::SwitcherIndex(g_switcher);
     U::SwitcherSetIndex(g_switcher, g_ourIndex);
     g_shown = true;
-    g_hoverWho  = -1;
-    g_hoverVis  = -1;
+    g_who.hover = -1;
+    g_vis.hover = -1;
     // THE MODE DECIDES THE STARTING VALUE, and it is re-derived on every open rather than
     // remembered: the player may have come back through step one and changed the connection
     // type, and a listed/hidden choice carried across that change would be a value chosen
     // under a different set of rules. DIRECT starts listed -- the behaviour every DIRECT
     // host had while this was a hardcoded literal.
-    g_listed = ListedForMode(g_connMode);
+    g_vis.chosen = ListedForMode(g_connMode) ? 0 : 1;
     g_escPrimed = false;
     g_lmbPrimed = false;
     g_lastStatus.clear();
@@ -899,12 +856,12 @@ void Show() {
     TF::SetText(g_pwField, saved);
     // Forced through the mint path rather than assigned, so an ini that says locked=1 with
     // an empty password still ends up with a real secret instead of a padlock over nothing.
-    g_locked = false;
+    g_who.chosen = 0;
     RepaintChoices();
     if (cfg::ResolveFlag(::coop::config_registry::rows::net_lobby_locked)) SetLocked(true);
 
     UE_LOGI("host_session_settings: shown (index %d -> %d; locked=%d)",
-            g_priorIndex, g_ourIndex, g_locked ? 1 : 0);
+            g_priorIndex, g_ourIndex, IsLocked() ? 1 : 0);
     // FOOTER-INSIDE-THE-FRAME MEASUREMENT. This window is fixed-height with every child
     // Auto-sized and only a Spacer to absorb slack, so content taller than `kWindowH` pushes
     // the footer PAST the bottom edge -- nothing clips, so the buttons simply render outside
@@ -953,9 +910,9 @@ void Close() {
 
 bool IsOpen() { return g_shown; }
 
-void* LockRow()    { return g_whoBg[1]; }
+void* LockRow()    { return g_who.bg[1]; }
 void* BackButton() { return g_backBtn; }
-bool  Locked()     { return g_locked; }
+bool  Locked()     { return IsLocked(); }
 
 int PasswordLength() {
     // The FIELD, not the ini row: what the self-check has to prove is that clicking the
@@ -981,12 +938,12 @@ void OnMenuTick(void* menu, void* switcher) {
         g_backBtn = nullptr; g_hostBtn = nullptr;
         g_pwBlock = nullptr; g_pwHint = nullptr;
         g_recapName = g_recapWorld = g_recapConn = nullptr;
-        for (int i = 0; i < 2; ++i) { g_whoBg[i] = nullptr; g_whoTitle[i] = nullptr; }
+        HC::ClearWidgets(g_who);
         // THE VISIBILITY ROWS DIE WITH THE SAME MENU INSTANCE. Missing from this block is
         // not a leak, it is a DANGLING pointer: `RepaintChoices` runs on the next hover and
         // would dispatch SetImageTint / SetTextBlockColorDispatch into a destroyed widget
         // tree. The pair above is the pattern; anything added to the screen owes a line here.
-        for (int i = 0; i < 2; ++i) { g_visBg[i] = nullptr; g_visTitle[i] = nullptr; }
+        HC::ClearWidgets(g_vis);
         g_visHint = nullptr;
         g_ourIndex = -1; g_shown = false; g_buildAttempts = 0;
         g_lastStatus.clear();   // the widget it cached is gone with the menu
@@ -1057,7 +1014,7 @@ void OnMenuTick(void* menu, void* switcher) {
     // inside the field's own rect BY GEOMETRY, and a collapsed widget keeps the rect it last
     // painted with -- so ticking a hidden field would let a click on the row above it steal
     // the keyboard into a box the player cannot see.
-    if (g_locked) TF::Tick(g_pwField);
+    if (IsLocked()) TF::Tick(g_pwField);
     ReportFit();   // edge-logged; two lines per showing, not per tick
     UpdateHover();
     PollChrome();
