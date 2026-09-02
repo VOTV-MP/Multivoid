@@ -78,6 +78,16 @@ runs them frequently:
 - **`sdk_diff.py <old.txt> <new.txt>`** — compare two
   `multivoid-compat-report.txt` outputs (the boot health-check writes
   one per launch); flags offset drift across recooks.
+- **`dead_api_census.py [--list]`** — finds DECLARED-BUT-NEVER-CALLED public
+  API: capabilities that are built, documented and switched off. Written
+  2026-09-02 after two such functions were found on the join path, both live
+  for three months (`SetPlayerCountFn` → every server read `1/4`;
+  `save_transfer::GetProgress` → a 17 s download reported nothing). Exits 1
+  if either self-test fails — it asserts a known-DEAD canary (recall) *and* a
+  known-LIVE one (precision), because an earlier version passed a recall-only
+  gate while reporting six live functions as dead. **Hand-validate every hit
+  before acting on it** (two references = dead, three+ = it has a caller the
+  scanner cannot see). Register: `docs/DEAD_CAPABILITY_REGISTER.md`.
 
 ## Other
 

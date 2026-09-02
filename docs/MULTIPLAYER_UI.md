@@ -624,7 +624,7 @@ columns** — same window frame, same row metrics, same font, same scrollbar as 
 | # | column | field | note |
 |---|---|---|---|
 | 1 | Name | `name` | widest, left-justified, `font_ui` 16 |
-| 2 | Players | `playersCur` / `playersMax` | `3/8` |
+| 2 | Players | `playersCur` / `playersMax` | `3/8`. **`playersCur` WAS A CONSTANT `1` FOR THREE MONTHS AND IS FIXED SINCE 2026-09-02 (`fff4032b`)** — `LobbyAnnouncer::SetPlayerCountFn` (the seam the heartbeat reads through) shipped 2026-06-07 with ZERO callers, so `lobby_announcer.cpp:118` took its `: 1` fallback on every beat and a full 4-player lobby rendered identically to an empty one. It is display-only (`[V]` the master only stores/clamps/echoes it, `master.rs:529-530`; the client renders it in three places), so it broke no join — it broke the ability to tell whether a field join failure was fleet-wide. Now `connectedPeerCount() + 1`, installed above the scenario branch. Full entry: `docs/DEAD_CAPABILITY_REGISTER.md` §D1 |
 | 3 | Version | `game` + `" b"` + `proto` | the Paper pair, e.g. `0.9.0n b143`. **`version` is a LEGACY fallback used only when `game` is empty** (a pre-field host) — the producer stopped sending it when the mod-semver axis was retired (`lobby_announcer.cpp:36-39`) |
 | 4 | World | `world` | |
 | 5 | Age | `ageSec` | **heartbeat age, not ping** — by design; ping is measured post-connect via GNS and MTA's ASE-UDP pre-query was deliberately dropped |

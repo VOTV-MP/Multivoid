@@ -116,6 +116,15 @@ to spend a day on something, grep it first.
 with the measured evidence and the proper fix for each. Created 2026-08-29 on user directive. It is
 the counterpart to LESSONS.md: that one records what we learned, this one records what we still owe.
 
+**[DEAD_CAPABILITY_REGISTER.md](DEAD_CAPABILITY_REGISTER.md)** — capabilities that are built,
+documented, and never called. A build, a review and a doc comment prove a feature was *written*;
+none proves it *runs*. Created 2026-09-02 after two such functions were found on one code path,
+both live for three months — one made every server in the browser read `1/4`, the other made the
+longest stage of a join report nothing. Carries the census instrument
+(`tools/dead_api_census.py`), the fixed entries, and the ~12 still confirmed dead. Where
+`CRUTCHES.md` records what we shipped in the wrong shape, this records what we shipped switched
+off.
+
 **[vehicles/](vehicles/README.md)** — the per-vehicle knowledge base, one doc per driveable
 occupant-carrying multi-body actor. Same discipline as `items/` and `events/`: native behaviour from
 the bytecode, the sync-axis table, and the honest as-built status live in that vehicle's own file.
