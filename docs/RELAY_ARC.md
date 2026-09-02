@@ -182,6 +182,13 @@ power-chain /qf resume (R10) folds this in as its mechanism — that is where th
 not as a standalone arc. Existing parks migrate lane-by-lane afterwards (RULE 2: each migration
 retires its bespoke copy in the same commit).
 
+**Naming constraint (verified 2026-09-02):** the tree ALREADY has a "quiescence" concept —
+`coop/element/quiescence_drain.{h,cpp}` is the join-window drain-ORDER owner ("quiescence" there
+= load-tail quiescence of the world-load episode), referenced across ~60 files. It is a
+DIFFERENT concept from this WP's declarative brain-park primitive. The R10 /qf must pick a
+non-colliding name for the new primitive (e.g. `element_park` / `brain_park`), per the
+folder-per-concept naming rule — do not name it "quiesce" in code.
+
 ## 6. WP-6 — LEASE EXPIRY + REVISION FENCING (study §8.3)
 
 **What.** `COOP_SYNCER_MODEL.md`'s arbiter design adopts, by name: idle-expiry returning

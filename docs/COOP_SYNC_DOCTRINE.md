@@ -88,6 +88,7 @@ function. Then pick the cheapest seam that actually fires:
    bookkeeping is mandatory, a foreign (other-mod) prologue must be refused, and it is a runtime
    MEMORY patch (principle 1 allows it; assets on disk stay untouched). Until adopted, cancel of a
    BP-internal verb is achieved by per-site reconcile downstream — never by a receive gate.
+[withdrawn at the author's request]
 5. **Per-site reconcile** (last resort): let the verb run, snapshot/diff observable state, converge
    to the authority's answer. This is also the fallback when a seam exists but the verb is
    ubergraph-resident.
