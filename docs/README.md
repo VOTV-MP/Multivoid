@@ -96,6 +96,8 @@ time) · [COOP_MIRROR_IDENTITY_WINDOW_RACE.md](COOP_MIRROR_IDENTITY_WINDOW_RACE.
 **Live arcs** — work in flight, each tracking its own work packages
 
 [UE4SS_ARC.md](UE4SS_ARC.md) (becoming a UE4SS mod) ·
+[PERF_ARC.md](PERF_ARC.md) (performance: the four-census cost map, the zero-imports verdict, and
+the ranked fix queue — the field 20-fps root is named) ·
 [withdrawn at the author's request]
 platform — the queue, the gates, and what was declined) ·
 [OVERLAY_CAPTURE_COEXIST.md](OVERLAY_CAPTURE_COEXIST.md) (coexisting with RTSS and OBS) ·
