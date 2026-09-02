@@ -213,8 +213,9 @@ defines this skill's shape and how it differs from `/qf-workflow`.
    Use a FRESH agent every round — it despawns after replying; continuity is carried by YOUR brief, not by
    the agent's memory.
 
-4. **Relay the questions verbatim, then ANSWER them here.** Show the user the critic's questions exactly as
-   returned. Then answer each one in the open session — tag every answer `measured | inferred` with its
+4. **Relay the questions verbatim, write them to the thread file verbatim, then ANSWER them here.** Show the
+   user the critic's questions exactly as returned, and append the same text unchanged to `qf_thread.md`
+   under `### Critic (verbatim)` (see Guardrails) before answering. Then answer each one in the open session — tag every answer `measured | inferred` with its
    citation, and when a question exposes an unverified leap, say so plainly rather than defending it. This
    answering step is the point of keeping the primary in the loop.
 
@@ -377,9 +378,13 @@ where the crutch gets caught, not the question pass.)
   — `/qf` is a reasoning round, not an execution step.
 - **Fresh agent per round, primary carries the thread.** Do not keep a persistent critic via SendMessage —
   the user's model is a clean agent each time, fed fresh context.
-- **Persist the thread for long sessions.** Append each round (the brief you sent + the critic's questions +
-  your answers) to `<scratchpad>/qf_thread.md` so a `/qf` after a `/compact` can still reconstruct PRIOR
-  QF ROUNDS. Read it back in step 2 if the session was reset.
+- **Persist the thread, and persist the critic VERBATIM.** Append each round to `<scratchpad>/qf_thread.md`
+  in this shape: the brief you sent (or its delta), then the critic's reply **copied verbatim under its own
+  `### Critic (verbatim)` heading** — never your paraphrase of it, never a title you gave its question — then
+  your answers. The verbatim copy is what makes the critic measurable after the fact (`docs/QF_ARC.md` E3:
+  64 thread files held the primary's paraphrase of the questions, so the critic's own citation rate could
+  not be measured at all). A `/qf` after a `/compact` reconstructs PRIOR QF ROUNDS from this file; read it
+  back in step 2 if the session was reset.
 - **Archive the old thread when `/qf` starts on a NEW problem.** `qf_thread.md` is a SINGLE-topic log. Before
   the first round of a `/qf` on an investigation UNRELATED to whatever the file currently holds, RENAME the
   existing `qf_thread.md` to `qf_thread_<old-topic>_ARCHIVED.md` and start a fresh `qf_thread.md` for the new
