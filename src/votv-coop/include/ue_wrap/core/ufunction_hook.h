@@ -17,13 +17,18 @@
 // Both dispatch handlers branch on `FunctionFlags & 0x400 (FUNC_Native)` @UFunction+0xB0:
 // a NATIVE callee goes UFunction::Invoke -> Func@+0xD8 (what we patch), while a
 // **SCRIPT (BP-bytecode) callee goes ProcessScriptFunction -> ProcessInternal and NEVER
-// READS Func AT ALL**. Every Func patch this facility ships today is native
-// (BeginDeferredActorSpawnFromClass, K2_DestroyActor, AudioComponent::Play), which is
-// why the sentence above was written unqualified -- but a Func patch on a BP function
+// READS Func AT ALL**. (Set-of-record correction 2026-09-02: "every patch is native" was
+// a miscount -- SCRIPT overrides ARE patched too (puppet_spawn's BlueprintUpdateAnimation,
+// save_indicator_suppress's saveAnim/addHint) and FIRE because their dispatch is
+// ProcessEvent, whose Invoke also reads Func. The scope rule is about the DISPATCH ROUTE,
+// not the callee list.) A Func patch on a BP function
 // called via EX_Local* INSTALLS SUCCESSFULLY (Func = ProcessInternal, non-null, so it
 // passes the null guard below), LOGS "patched", AND NEVER FIRES. A script UFunction
-// called via EX_Local* is THE ONLY REMAINING INVISIBLE CLASS and is reachable only via
-// the 0x45 GNatives swap (ue_wrap/core/vm_dispatch.h).
+// called via EX_Local* is THE ONLY REMAINING INVISIBLE CLASS and is reachable today only
+// via the 0x45 GNatives swap (ue_wrap/core/vm_dispatch.h) -- observe-only; a SECOND,
+// cancel-capable closing technique (in-memory bytecode prologue gate, field-proven by
+// Relay, ubergraphs excepted) is a CANDIDATE tier, not built: COOP_DISPATCH_VISIBILITY.md
+// row "SCRIPT UFunction via EX_Local*" addendum + the 2026-09-02 Relay study section 5.
 // Authority: docs/COOP_DISPATCH_VISIBILITY.md:88 (bold) + docs/COOP_VM_DISPATCH_PLAN.md:300-304
 // ("Option E ELIMINATED BY MEASUREMENT"). A design cascade was built on the unqualified
 // sentence and had to be reversed; see [[lesson-a-module-header-is-not-the-capability-map]].

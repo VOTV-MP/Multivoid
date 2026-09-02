@@ -50,6 +50,13 @@ inferring instead of measuring — you will be wrong more often. Mechanically ap
   the fix leans on those facts, re-run the cited BPs through bp_cpp/bp_cfg and
   confirm the load-bearing facts first
   ([[feedback-rebase-old-tool-facts-on-new-instruments]]).
+- **USER RULE 2026-09-02 — FOUNDATION-FIRST.** If the sync the user asked for turns
+  out, during RE/design, to REST ON a base system whose own sync is absent, partial,
+  or wrong (the test: your lane would need a hold/retry register to tolerate the
+  base's divergence), STOP: say which base is missing, RE + design + build the BASE
+  properly first, then the requested lane on top. Park the requested lane's RE and
+  converged design with the dependency edge named. Do not build on sand
+  ([[feedback-foundation-first-build-the-base-a-sync-rests-on]]).
 - **Statuses are claims, not facts**: before repeating any OPEN/DONE/VERIFIED label
   from a doc, check the code/commit. Both directions.
 - When your conclusion disagrees with a doc or a comment — the CURRENT CODE is the
