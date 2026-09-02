@@ -214,11 +214,20 @@ newest source commit (`fff4032b`): 15 hunk-header symbols; `OnDisconnect` is cit
 `Snapshot` 47, `Complete` 34, `Reset` 31; radius (ii) is **148 docs uncut and 6 docs with the cut**
 — "tens, not thousands" is true only under the cut, and the census prints the radius size every
 run so the claim is measured, not carried. A docs-only diff has radius (i) only and prints
-`radius: docs-only`. **Radius:** (i) the docs touched by the session; (ii) every doc citing a
-specific symbol or path of the diff; (iii)
-**the amortised sweep** — the K docs (default 10) whose last census is oldest, by a `sweep-cursor`
-carried in the trailer, so EVERY doc in `docs/`, `research/findings/` and `memory/` reaches a verdict
-within N runs without any run reading the tree (`--sweep` = the full pass, on the user's request).
+`radius: docs-only`. **Radius:** (i) the docs touched by the session — **enumerated PER TREE
+(round 3, Q1), because three of the four trees are invisible to a main-repo diff:** `[V]`
+`research/` is a nested repo the main tree ignores (`.gitignore:283`; its own HEAD, no remote),
+`CLAUDE.md` is ignored (`:113`), `memory/` is outside any repository. So: `docs/` by
+`git diff <base>`; `research/` by `git -C research diff <its base>`; `memory/` and `CLAUDE.md` by
+the diff of the private history (d), which therefore snapshots the WHOLE memory directory, not two
+files (`[V]` 6.10 MB of text, 2.50 MB gzipped, delta-compressed after the first snapshot); (ii)
+every doc citing a specific symbol or path of the diff; (iii) **the amortised sweep** — the K docs
+whose last census is oldest. **The arithmetic, stated (round 3, Q1):** `[V]` 155 + 298 + 1,057 =
+1,510 files; at K = 10 a full cycle is 151 closes (~19 active days at 8.1 closes a day); **K = 40,
+so a full cycle is 38 closes (~5 active days)**, and the trailer prints `sweep-cycle=` beside
+`sweep-cursor=`. Each doc's last-census commit is per-doc STATE, which a scalar trailer cannot hold:
+it lives in `docs_census_state.json` inside the private history repo, committed with every
+snapshot. `--sweep` = the full pass, on the user's request.
 **Label grammar (M-1, corrected by the `/qf` pass round 1 — §8 pass 3):** a LABEL is a STATUS
 tag or token — `[?]`, `[SUPERSEDED ...]`, a bold or capitalised status word at line or table-cell
 start (`**OPEN**`, `| OPEN |`, `DESIGN`, `AS-BUILT`, `PENDING`, `NOT BUILT`, `DONE`), a `Status:`
@@ -255,12 +264,19 @@ files the conventions say to update):**
 | LIVING | undated filename outside `_archive/` — `CLAUDE.md`, `MEMORY.md`, every `*_ARC.md`, the maps, the trackers | 99 in `docs/` | REWRITE the claim + one `[corr ...]` stamp; a DATED SECTION inside it (`§N (date)`) is stamped and kept |
 | DURABLE RECORD | `-RE-<date>` and the other dated findings, runbooks, FACTS, STUDY files under `docs/` and `research/findings/` | 105 + 147 | the user's 2026-09-02 per-claim rule (`CLAUDE.md`, RULE 2026-09-02): a fact CONFIRMED is REFRESHED in place — `[V]` with the instrument named; a fact REFUTED gets a supersede-stamp and stays |
 | DESIGN | `-DESIGN-<date>` | 69 | STAMP only — *"deliberately never rewritten"* (`docs/README.md:161-163`) |
-| MEMORY TOPIC | `memory/project_*` (the date is the session, not a freeze) | 232 | UPDATE in place, delete if wrong — the skill's own Step 3 (`SKILL.md:136`) |
+| MEMORY TOPIC | `memory/project_*` and `project-*`, dated OR undated (the date is the session, not a freeze) | 356 (298 + 58; `[V]` 174 dated / 124 undated among the underscored) | UPDATE in place, delete if wrong — the skill's own Step 3 (`SKILL.md:136`) |
+| MEMORY LESSON | `memory/lesson_*`, `feedback_*`, `reference_*` | 588 + 102 + 10 | SHARPEN in place (Step 3.5(3)), never `[corr]`-stamped (out of WP-2's scope); their citations are `lessons_gate`'s |
 | ARCHIVE | `_archive/` | 32 | none |
 
-`[V]` the banner census would have classed 101 of 136 non-archive docs as neither living nor
-point-in-time, the three maps among them; the six stale-open lines of §2.3 fall into LIVING (4) and
-DESIGN / DURABLE (2), the right action in every case. `STALE DONE` = downgrade the tag,
+**And one action is VERDICT-driven, layered on the kind (round 3, Q3):** when every open row of a
+LIVING planning doc is verdicted `ACTUALLY DONE`, the action is not a rewrite — it is the skill's own
+*"MOVE the planning doc/section to `_archive/`"* with a one-line pointer (`SKILL.md:65`), the action
+D8 measured at 8 moves in 279 commits. `[V]` §2.3 #1 (`AUTHORITATIVE_INTERACTABLE_MIGRATION.md`, a
+planning doc whose phases shipped in June) is exactly that case, and a kind table alone would have
+sent it to a rewrite. `[V]` the banner census would have classed 101 of 136 non-archive docs as
+neither living nor point-in-time, the three maps among them; the six stale-open lines of §2.3 fall
+into LIVING (4, one of them the archive case) and DESIGN / DURABLE (2), the right action in every
+case. `STALE DONE` = downgrade the tag,
 date it, cite the evidence, stamp. Step 1's *"read each doc"* and Step 0.5(5)'s per-row lesson grep
 are rewritten to the census's rows too (H-3) — one regime, not two — and the frontmatter
 description drops *"Update ALL project docs"* (L-2). The Step 5 ledger IS the census output with the
@@ -285,13 +301,34 @@ the ratchet, and on green runs `git commit` itself with the trailer appended thr
 it outside the run**: `tools/docs/docs_census_gate.py` reads `git log --format=%B` for every close
 commit in the push and fails on a missing trailer or a ratchet column that grew against the
 previous trailer — history is all it needs, so the untracked files' numbers are checked by a
-machine that never sees the files.
+machine that never sees the files. **Registration, not mention (round 3, Q4):** the gate must know
+which commits OWE a trailer, and "documentize in the subject" is the MENTION this doc's own audit
+rejected (H-7; `[V]` 12 of the last 40 subjects carry the word). The script writes every close
+commit with the fixed subject prefix **`[docs] close:`** — the registration — and the gate fails
+three shapes: a prefixed commit without a trailer, a trailer without the prefix, and a subject that
+says "documentize" without the prefix (one close path, RULE 2). **Where the gate runs:** in its OWN
+workflow file, `.github/workflows/docs-census.yml`, on push — `build-core.yml` is untouched, because
+`[V]` `tools/release/fingerprint.json:4` pins `build_core_sha256` and the ledger row *"Editing
+`build-core.yml` = do the fingerprint re-commit ritual in the SAME workstream"* records a release run
+refused for exactly an added gate step; if the user wants it inside `build-core.yml`, the ritual is
+in the same commit. **What the census READS (round 3, Q2):** for tracked docs, the INDEX
+(`git show :path`) — what the commit will carry — and `close` REFUSES when a tracked doc in radius
+(i) has unstaged changes, printing them (the ledger's *"a green verdict can rest on code that is not
+in the commit"* and *"`git commit -- <paths>` ... DISCARDS YOUR INDEX"*, both paid for on this
+two-session box); the untracked trees are censused from the snapshot (d), which is what their
+history will hold.
 
-**Change (d) — the private history.** `status_census.py --snapshot` copies `CLAUDE.md` and
-`MEMORY.md` into a LOCAL-ONLY repository (`~/.claude/projects/<slug>/history/`, `git init`, no
-remote — the `research/` pattern from `docs/DOCS_ARC.md`) and commits them with the same trailer.
-Nothing is published, nothing changes how `CLAUDE.md` loads, and the next census can diff the two
-files that hold most of the rot (D17). This is what the first draft's WP-5 was for.
+**Change (d) — the private history, and where the hand verdicts live.** `status_census.py
+--snapshot` copies `CLAUDE.md`, `MEMORY.md` and the WHOLE `memory/` directory into a LOCAL-ONLY
+repository (`~/.claude/projects/<slug>/history/`, `git init`, no remote — the `research/` pattern
+from the docs-arc note) and commits them. **The per-row HAND VERDICTS have no home with history
+today** (`[V]` one verdict word in the last 40 commit bodies; the Step 5 table lives in a chat
+report), so `close` writes the full census + verdict table to that repository too
+(`census/<utc>-<sha>.md`), commits it with the snapshot and `docs_census_state.json`, and the
+trailer carries **`census=<history sha>`** — the counts in the trailer point at the rows they
+count. The Step 5 report pastes the same table for the human. Nothing is published, nothing
+changes how `CLAUDE.md` loads, and the next census can diff every file that holds the rot (D17).
+This is what the first draft's WP-5 was for.
 
 **What is dropped, named.** The user's 2026-06-21 rule (`memory/feedback_documentize_manual_
 status_reconciliation.md`) says *"Enumerate every status marker (grep the tree ...)"* per run. The
@@ -540,8 +577,14 @@ Ledger pass 1 (`design`), this session's scratchpad. Every reply gated by `verif
 | 2 | Q3 | prior-art | which mechanism puts the trailer into the commit and refuses a close — a hook, the script, or the agent pasting the script's output | measured: no hook, no `hooksPath`, no CI step reads `git log`, `Docs-Census` in no commit | WP-1(c): the script performs the close commit with the trailer via `interpret-trailers`; a CI gate over commit bodies checks presence and non-increase |
 | 2 | Q4 | source-consistency | which files "dated filename → never rewritten" misclassifies, and was the ACTION checked beyond six files | measured: 105 `-RE-` (durable), 147 other dated, 232 `memory/project_*` (Step 3: update) — 484 files; only 69 `-DESIGN-` are never rewritten | WP-1(b): a five-row kind→action table keyed on path pattern, with the user's per-claim refresh/refute rule |
 
+| 3 | Q1 | source-consistency | what enumerates "docs touched" in the three trees a main-repo diff cannot see, and what N the user agreed to at K = 10 | measured: `research/` a nested ignored repo, `CLAUDE.md` ignored, `memory/` outside any repo; 1,510 files → 151 closes at K = 10 | WP-1(a): per-tree enumeration; the snapshot covers the whole memory dir; K = 40 → 38 closes; per-doc state in the private history |
+| 3 | Q2 | cross-answer-contradiction | where the per-row HAND verdict gets history when the trailer carries counts, and what the counts describe when verdict edits are unstaged | measured: 1 verdict word in the last 40 commit bodies | WP-1(c)/(d): the census+verdict table is committed to the private history, `census=` in the trailer; `close` reads the index and refuses unstaged docs in radius |
+| 3 | Q3 | invariant-not-site-list | which table row yields the skill's own archive action, and where 814 memory files fall | measured: `SKILL.md:65`; memory 298 + 58 project, 588 lesson, 102 feedback, 10 reference | WP-1(b): a verdict-driven ARCHIVE action; memory rows with real counts |
+| 3 | Q4 | prior-art | how the CI gate knows a close commit — a mention or a registration — and whether §9 owes the fingerprint ritual | measured: 12 of 40 subjects mention documentize; `fingerprint.json:4` pins `build_core_sha256` | WP-1(c): the `[docs] close:` prefix; the gate in its own workflow file |
+
 Two consecutive rounds of reactive growth, so the defect is re-derived in mechanism terms before
-round 3: *a mandate nothing observes is satisfied by assertion; every fix must therefore be a
+round 3 (and round 3's four changes are each a specification of the one mechanism — the script
+owns the whole close and CI reads the commit stream — none a new one): *a mandate nothing observes is satisfied by assertion; every fix must therefore be a
 computed set or a recorded number, produced and read by a machine — which is why the trailer must
 be written by the script and read by CI, or the fix is prose too.* Every round-2 change serves that
 one sentence; none replaces a round-1 mechanism.
