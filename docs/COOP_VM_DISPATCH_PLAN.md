@@ -290,6 +290,9 @@ removed).
    functions + `GNatives_table` renamed). Measured on `VotV-Win64-Shipping.exe` 0.9.0-n:
    - `GNatives_table` = **`0x144D8ECD0`**; dispatch = `call [GNatives + opcode*8]` (FFrame
      +0x18=Object, +0x20=Code; handler ABI rcx=Context/rdx=&Stack/r8=Result).
+     **Independently corroborated 2026-09-02 by patternsleuth (`GNatives` resolver,
+     0.33 s static scan): `0x144d8ecd0` byte-identical** — on a game update, run that scan
+     FIRST to re-locate the table before IDA (docs/VERSION_MIGRATION.md §10 has the command).
    - `execLocalVirtualFunction` (op 0x45) = `0x1414751A0`, operand = 12-byte FScriptName;
      `execLocalFinalFunction` (op 0x46) = `0x141474FB0`, operand = 8-byte `UFunction*`. Both
      peekable non-destructively.
