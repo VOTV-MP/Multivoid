@@ -182,8 +182,15 @@ one of rounds 17-21 of the pass that made the rule.
        other angle you could ask. Equally: a stated USER REQUIREMENT never outranks RULE 1 -- if the primary
        is designing AROUND a preference the user expressed, ask why that requirement was not simply DROPPED
        (see CLAUDE.md, [[feedback-drop-my-requirement-if-it-blocks-rule-1]]). The one thing radical does NOT
-       license is skipping verification or shipping a bug: interrogate the evidence as hard as ever. Aim the
-       questions at the highest-yield OPUS angles (measure-don't-infer, code-over-comment,
+       license is skipping verification or shipping a bug: interrogate the evidence as hard as ever. Reach
+       by reflex for the two LOOKUP shapes this project paid for and this prompt did not carry until
+       2026-09-02: WHO ELSE WRITES THIS VALUE? (angle writers-census -- a reader census answers 'who sees
+       our value', a WRITER census answers 'is it still there'; the peer-identity install shipped after 13
+       rounds and StartP2P overwrote it 150 lines later because no brief contained 'something else already
+       writes this') and DOES THE REFERENCE ARTIFACT SHARE THE REPORT'S CONDITIONS? (angle
+       reference-conditions -- list the WHOLE reference set with sizes and dates before trusting one; a
+       fresh critic caught a wrong-reference match in its first question purely by listing the folder).
+       Aim the questions at the highest-yield OPUS angles (measure-don't-infer, code-over-comment,
        seam blast-radius, identity-migrates-at-birth, RULE-1 crutch smell, authority asymmetry, de-braid a
        confounded repro, regression-by-logic, invariant-not-a-site-list, ANSWERS-THE-ACTUAL-ASK [the brief
        opens with WHAT THE USER ACTUALLY ASKED FOR -- their own words, their own symptom vocabulary, and
@@ -385,6 +392,22 @@ The phases (run each to convergence — the critic's `converged: true` plus your
 3. **IMPLEMENTATION pass (when the wiring has real choices).** A `/qf` on the concrete implementation: which
    seam to hook, cache index, defer window, eviction, the one must-measure-before-build probe. Converges on
    a build-ready plan (+ any read-only probe that gates the wiring).
+4. **DIFF pass (after the code exists, BEFORE any smoke or handoff).** The critic reads the DIFF that will
+   SHIP, not your prose about it — the one pass on record with that read target found 12 defects in 4
+   rounds where two brief passes (21 + 17 rounds) found none (`docs/QF_ARC.md` L1). Licensed by the standing
+   /qf-before-implementation rule (`[[feedback-qf-before-implementation]]`): a question-only critic, not a
+   review agent. The brief is thin in ONE sense — no CLAIMS / HYPOTHESIS prose — and keeps: the ask (WHAT
+   THE USER ACTUALLY ASKED FOR), the design's claimed invariants as a numbered list of FALSIFIABLE sentences
+   (e.g. *"3. no client-authored `PropDestroy` reaches `ApplyDestroy` without passing `arbiter::Validate`
+   first"*), the RANGE with its hash, and PRIOR ROUNDS as the ledger's rows (so the critic escalates instead
+   of repeating). Range: uncommitted work = `git diff HEAD` (plus `git diff --cached` if staged); committed
+   = `<base>..HEAD`; the brief states which and carries `git diff <range> | sha1sum` — a changed hash forces
+   a re-read and is noted on the round (same pass, new round). Open it with `ledger.py pass diff`: in this
+   phase EVERY question must anchor on a `path:line` in the diff or in a file it touches, or on an
+   omission's zero-hit command (the most valuable class — a missing late-join row, a missing gate);
+   `ledger.py append` discards a question without one (that question, not the reply). A converged reply
+   carries the last lookup that found nothing. Converges when the critic returns `converged: true` and the
+   ledger prints CONVERGED. The pre-deploy checklist is untouched; this pass sits before it.
 
 **Depth per phase.** "Enough" is the critic's genuine `converged: true` WITH a complete map — not a fixed count,
 and never a cap. Passes on record have converged anywhere between 5 and 43 rounds; do NOT stop at 6 and
