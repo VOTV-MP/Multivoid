@@ -27,7 +27,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_PATH = ROOT / "tools" / "qf" / "critic_schema.json"
 PHASES = ("question", "design", "impl", "diff")
-ANCHOR_CMDS = {"grep", "rg", "git", "ls", "wc", "find", "cat", "sed", "python", "md5sum", "stat"}
+# read-only text tools a critic may anchor on (round 4 of the first pass anchored on `tail`, which
+# this set lacked, so the anchor was classed as a quote and never re-run)
+ANCHOR_CMDS = {"grep", "rg", "git", "ls", "wc", "find", "cat", "sed", "python", "md5sum", "stat",
+               "tail", "head", "awk", "sort", "uniq", "cut", "tr", "xargs", "diff", "test", "echo"}
 _LOC = re.compile(r"(?P<path>[\w./\\-]+\.(?:cpp|h|hpp|inc|py|rs|js|md|txt|json|ini|ps1|log|toml|cmake))"
                   r":(?P<line>\d+)")
 
