@@ -525,6 +525,19 @@ record: `research/findings/tooling/votv-ue4ss-f2-migration-DESIGN-2026-08-21.md`
 > tripwire baseline (newest upstream STABLE, still 3.0.1) and our install pin are
 > now separate quantities — do not conflate them. Full record + the two rejected
 > sources: `docs/UE4SS_ARC.md` §9.6.
+[withdrawn at the author's request]
+[withdrawn at the author's request]
+> symbols — and is measured DEAD on upstream stable v3.0.1 (46/187 unresolved) and on the
+> current experimental channel (2/187), resolving fully only against the exact shimloader-1.1.7
+> bytes both mods pin. One measured death mechanism: the
+> listener API's owning class was renamed `UObjectArray`→`FUObjectArray` between UE4SS builds,
+> invalidating every mangled import of it at a stroke. An import census found 181/187 symbols
+> buy capabilities Multivoid already owns engine-direct; the remaining 6 (FUObjectArray
+> create/delete listeners) have a zero-import engine-direct adoption path (queued). D-3's
+> zero-import contract is strengthened; L-4 stays deferred. Evidence:
+[withdrawn at the author's request]
+> (local-only, like the other research citations in this file).
+
 Wire repurposing: wire-b now watches the PIN (a newer stable = an upgrade
 decision, not a switch trigger); wire-a now affects contributor convenience
 only. Both tripwires keep running until the migration ships, then retire with
