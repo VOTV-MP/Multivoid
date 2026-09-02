@@ -3,7 +3,7 @@
 VotvIO — the Blender addon that reads a Voices of the Void `.sav` and rebuilds the whole scene
 from the game's own pak — **left this repository on 2026-09-02** and became its own project:
 
-> **https://github.com/VOTV-MP/VotvIO**
+> **https://github.com/pelmentor/VotvIO**
 
 It grew here first, at `tools/blender/votvio/`, across 28 commits between 2026-08-29 and
 2026-08-30. All of that history went with it (`git subtree split`), and so did this document:

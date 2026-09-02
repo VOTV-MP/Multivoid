@@ -97,7 +97,7 @@ the local-only docs-arc note (this documentation audit)
 
 **Left this repo**
 
-[VotvIO](https://github.com/VOTV-MP/VotvIO) — the Blender addon that imports a VotV save into a
+[VotvIO](https://github.com/pelmentor/VotvIO) — the Blender addon that imports a VotV save into a
 full scene. It grew here (`tools/blender/votvio/`, 28 commits, 2026-08-29 to 08-30) and moved to
 its own repository on 2026-09-02 with its history and its arc doc. Nothing in Multivoid depends
 on it; the lessons it taught stay in [LESSONS.md](LESSONS.md) §6.
