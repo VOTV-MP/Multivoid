@@ -264,6 +264,8 @@ imgui.ini
 # Same list, the "prose only, NOT enforced" half -- enforced now for the same reason.
 docs/QUESTION_FORM_*
 tools/workflows/
+# USER decision 2026-09-02: the agent-spawning playbook is local-only, same class.
+docs/AGENT_SPAWNING.md
 
 # ---- RESEARCH CORPUS -- private in place (USER DECISION 2026-08-21, executed 2026-08-23) -----
 # "research folder also get fully offline from public repo, what else?" -- recorded in

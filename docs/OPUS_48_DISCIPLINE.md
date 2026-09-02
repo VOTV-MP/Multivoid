@@ -122,6 +122,9 @@ Forbidden phrases: "should work", "ready for test" without the checklist table.
   shipped diff gets a code-reviewer agent — this is mandatory, and doubly so for you).
   NEVER design/architect agents (user rule 2026-06-30): design comes from code + docs
   + the MTA precedent, synthesized in the main context where the user can see it.
+  **HOW to spawn — the brief, the two-lens audit, the mechanics that bite, the fold —
+  is `docs/AGENT_SPAWNING.md` (2026-09-02; LOCAL-ONLY on this box by the user's decision, like
+  `docs/QUESTION_FORM_*`). Read it before the first spawn of a session.**
 - If the least-crutch option is obvious — build it without asking. If two defensible
   architectures genuinely conflict — write both in 5 lines each, recommend one, ask
   in plain text. Do NOT silently pick on a coin-flip.
