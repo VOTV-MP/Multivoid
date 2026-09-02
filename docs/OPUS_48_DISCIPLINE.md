@@ -37,11 +37,19 @@ inferring instead of measuring — you will be wrong more often. Mechanically ap
   before building any fix. The v105 hand-item root was found by grepping the user's
   actual morning logs, not by theorizing.
 - **Verify game-domain facts** against the SDK dump / bytecode disasm / wiki BEFORE
-  asserting them. Tools: `python tools/bp_cfg.py <BP> [--fn <Function>]` — basic-block
-  CFG text + rendered SVG graph, cross-function edges resolved (the fastest control-flow
-  answer since 2026-09-02); `research/bp_reflection/_cfg.py <asset> <UberName>` +
-  `_fn.py <asset> <FuncName>` (cwd = repo root) for the offset-addressed text style;
-  kismet-analyzer `to-json` via tools/bp_reflect.py for the raw expression tree.
+  asserting them. Tools: `python tools/bp_cpp.py <BP>` — readable pseudo-C++ of the
+  whole BP incl. mainPlayer/mainGamemode/ATV, `--offsets` for the line-per-offset
+  listing (since 2026-09-02); `python tools/bp_cfg.py <BP> [--fn <Function>]` —
+  basic-block CFG text + rendered SVG graph, cross-function edges resolved;
+  `research/bp_reflection/_cfg.py <asset> <UberName>` + `_fn.py <asset> <FuncName>`
+  (cwd = repo root) for the offset-addressed text style; kismet-analyzer `to-json`
+  via tools/bp_reflect.py for the raw expression tree.
+  **USER RULE 2026-09-02:** these wrappers are the LEGITIMATE first reach for any
+  BP-logic question — do not hand-walk raw to-json for what they answer. And when
+  returning to FIX a lane whose fact base predates them (hand-walked offsets), if
+  the fix leans on those facts, re-run the cited BPs through bp_cpp/bp_cfg and
+  confirm the load-bearing facts first
+  ([[feedback-rebase-old-tool-facts-on-new-instruments]]).
 - **Statuses are claims, not facts**: before repeating any OPEN/DONE/VERIFIED label
   from a doc, check the code/commit. Both directions.
 - When your conclusion disagrees with a doc or a comment — the CURRENT CODE is the
