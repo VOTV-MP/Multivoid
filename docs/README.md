@@ -102,6 +102,7 @@ the ranked fix queue — the field 20-fps root is named) ·
 platform — the queue, the gates, and what was declined) ·
 [OVERLAY_CAPTURE_COEXIST.md](OVERLAY_CAPTURE_COEXIST.md) (coexisting with RTSS and OBS) ·
 [QF_ARC.md](QF_ARC.md) (revising the `/qf` critic ritual on its own measured output) ·
+[DOCUMENTIZE_ARC.md](DOCUMENTIZE_ARC.md) (revising the `/documentize` session-close skill the same way) ·
 the local-only docs-arc note (this documentation audit)
 
 **Left this repo**
