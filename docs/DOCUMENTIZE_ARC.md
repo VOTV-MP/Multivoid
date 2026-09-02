@@ -218,8 +218,8 @@ run so the claim is measured, not carried. A docs-only diff has radius (i) only 
 (round 3, Q1), because three of the four trees are invisible to a main-repo diff:** `[V]`
 `research/` is a nested repo the main tree ignores (`.gitignore:283`; its own HEAD, no remote),
 `CLAUDE.md` is ignored (`:113`), `memory/` is outside any repository. So: `docs/` by
-`git diff <base>`; `research/` by `git -C research diff <its base>`; `memory/` and `CLAUDE.md` by
-the diff of the private history (d), which therefore snapshots the WHOLE memory directory, not two
+`git diff <base>`; `research/` by `git -C research diff <its base>` — and it gets its own close
+commit, see (c); `memory/` and `CLAUDE.md` by the diff of the private history (d), which therefore snapshots the WHOLE memory directory, not two
 files (`[V]` 6.10 MB of text, 2.50 MB gzipped, delta-compressed after the first snapshot); (ii)
 every doc citing a specific symbol or path of the diff; (iii) **the amortised sweep** — the K docs
 whose last census is oldest. **The arithmetic, stated (round 3, Q1):** `[V]` 155 + 298 + 1,057 =
@@ -305,8 +305,25 @@ machine that never sees the files. **Registration, not mention (round 3, Q4):** 
 which commits OWE a trailer, and "documentize in the subject" is the MENTION this doc's own audit
 rejected (H-7; `[V]` 12 of the last 40 subjects carry the word). The script writes every close
 commit with the fixed subject prefix **`[docs] close:`** — the registration — and the gate fails
-three shapes: a prefixed commit without a trailer, a trailer without the prefix, and a subject that
-says "documentize" without the prefix (one close path, RULE 2). **Where the gate runs:** in its OWN
+three shapes: a prefixed commit without a trailer, a trailer without the prefix, and **a subject
+that STARTS with the retired close form `[docs] documentize`** (one close path, RULE 2) — never "the
+word documentize anywhere", which would make an arc-doc edit like `[docs] DOCUMENTIZE_ARC:` a
+false close. **The gate's range starts at a REGISTERED boundary (round 4, Q1):** the sha of the
+commit that lands `docs-census.yml`, written into the workflow as `since`; history before it is not
+judged — `[V]` the unpushed range alone holds 10 subjects with the word (7 arc-doc edits + 3
+old-form closes) and all history holds 249 old-form closes and 0 prefixed ones, so a gate with no
+boundary would be red by construction on the push that lands it, the L5 shape this doc cites
+against its own first draft. **The inner repository gets its own close (round 4, Q2):** `research/`
+is a repository the main commit cannot carry (`[V]` 57 uncommitted paths there today, 16 under
+`findings/`, 54 commits, no remote), so `close` also runs `git -C research commit` with the same
+prefix and the same trailer, censuses `research/`'s INDEX like main's, refuses unstaged docs in
+radius there too, and the main trailer records `research-base=<sha>`. **Index hygiene on a shared
+box (round 4, Q3):** `close` never commits with a pathspec (`[V]` `LESSONS.md:145` — the pathspec
+form discards the index) and never blindly (`[V]` `:6978` — a no-pathspec commit once swallowed
+another session's ten staged paths): before committing it lists the index and REFUSES if any
+staged path lies outside the trees a close owns (main: `docs/` and `.claude/skills/`; research:
+`findings/`), printing them — the other session's hunks stay theirs, per `docs/CROSS_SESSION.md`'s
+`git apply --cached` protocol. **Where the gate runs:** in its OWN
 workflow file, `.github/workflows/docs-census.yml`, on push — `build-core.yml` is untouched, because
 `[V]` `tools/release/fingerprint.json:4` pins `build_core_sha256` and the ledger row *"Editing
 `build-core.yml` = do the fingerprint re-commit ritual in the SAME workstream"* records a release run
@@ -433,8 +450,11 @@ which would have been RED BY DESIGN for the whole pay-down, the state the ledger
 no signal, and a refusal on the user's file (§8, C-2, M-7).
 
 **Change.** The trailer carries `ro-bytes=` (the reading order from its heading at `CLAUDE.md:461` to
-EOF), `ro-longest=` (lines of the longest entry, entries delimited by the `^<n><letters>. ` pattern
-INSIDE the section) and `mem-over200=`. **The gate is a RATCHET: red only if any of the three GREW
+EOF), `ro-longest=` (lines of the longest entry, entries delimited INSIDE the section by the
+hyphen-admitting pattern `^[0-9]+[a-z-]*\. ` — Appendix A's, which gives 54 entries and a longest of
+275; `[V]` a pattern without the hyphen gives 25 entries and a longest of 596 because `4e.` then
+swallows `4e-style`..`4e-coexist` — round 4, Q4, a notation slip in this doc's first wording) and
+`mem-over200=`. **The gate is a RATCHET: red only if any of the three GREW
 since the previous trailer.** Green on day one, red exactly when the mandate is violated, no policy
 number needed to ship. The target — reading order ≤ 58 KB (half of 117), no entry over 15 lines,
 `mem-over200=0` — is a printed line until first reached, after which it becomes the ceiling.
@@ -582,9 +602,17 @@ Ledger pass 1 (`design`), this session's scratchpad. Every reply gated by `verif
 | 3 | Q3 | invariant-not-site-list | which table row yields the skill's own archive action, and where 814 memory files fall | measured: `SKILL.md:65`; memory 298 + 58 project, 588 lesson, 102 feedback, 10 reference | WP-1(b): a verdict-driven ARCHIVE action; memory rows with real counts |
 | 3 | Q4 | prior-art | how the CI gate knows a close commit — a mention or a registration — and whether §9 owes the fingerprint ritual | measured: 12 of 40 subjects mention documentize; `fingerprint.json:4` pins `build_core_sha256` | WP-1(c): the `[docs] close:` prefix; the gate in its own workflow file |
 
-Two consecutive rounds of reactive growth, so the defect is re-derived in mechanism terms before
-round 3 (and round 3's four changes are each a specification of the one mechanism — the script
-owns the whole close and CI reads the commit stream — none a new one): *a mandate nothing observes is satisfied by assertion; every fix must therefore be a
+| 4 | Q1 | cross-answer-contradiction | does the gate refuse the very push that lands it, and what distinguishes an arc-doc edit from an unregistered close | measured: 10 "documentize" subjects in the unpushed range (7 arc-doc + 3 old-form closes), 249 old-form closes in history, 0 prefixed | WP-1(c): a registered boundary (`since` = the landing commit); the third shape keys on the retired `[docs] documentize` prefix only |
+| 4 | Q2 | invariant-not-site-list | what `research/`'s census reads when no commit, base or registration is named for that repo | measured: 57 uncommitted paths (16 under `findings/`), 54 commits, no remote | WP-1(c): `close` commits the inner repo too, same prefix and trailer; index-read; `research-base=` in the main trailer |
+| 4 | Q3 | existing-owner | what `close` does with a staged path outside the doc trees on a shared index | measured: `LESSONS.md:145` and `:6978`; `CROSS_SESSION.md:142-143` | WP-1(c): list the index; refuse any staged path outside the trees a close owns; never a pathspec commit |
+| 4 | Q4 | source-consistency | which entry delimiter the ratchet implements — the doc's `<n><letters>` (25 entries, longest 596) or Appendix A's hyphen pattern (54 / 275) | measured: both | WP-3: the hyphen pattern; the notation slip corrected |
+
+Round 4 found the ledger's third first-use defect: `tail` was not a legal command anchor, so the
+critic's `tail ... | grep -c = 25` was classed as a quote and not re-run — fixed (`77268a7b`), re-run,
+reproduced. Two consecutive rounds of reactive growth, so the defect is re-derived in mechanism
+terms before round 3 (and rounds 3-4's changes are each a specification of the one mechanism — the
+script owns the whole close as three commits, main / research / private history, and CI reads
+main's stream from a registered boundary — none a new one): *a mandate nothing observes is satisfied by assertion; every fix must therefore be a
 computed set or a recorded number, produced and read by a machine — which is why the trailer must
 be written by the script and read by CI, or the fix is prose too.* Every round-2 change serves that
 one sentence; none replaces a round-1 mechanism.
