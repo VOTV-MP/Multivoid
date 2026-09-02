@@ -66,9 +66,65 @@ lessons ledger's own rows about documentation rot.
 | D17 | Are the two largest outputs versioned? | **No.** `CLAUDE.md` is gitignored (`.gitignore:113`, user decision 2026-05-25 "per-user dev notebook"); `memory/` is outside any repository | `git check-ignore -v`; no diff can show which run wrote a wrong claim, and no growth curve of either exists |
 | D19 | Invocations from the transcripts | **not measurable this way** — the tag string is also in tool output and skill listings, so a grep counts thousands | 279 commits is the floor |
 
-### 2.3 Sampled staleness of the labels themselves `[V]` (independent agent; 28 labels, 14 open-ish + 14 done-ish, stratified across files)
+### 2.3 Sampled staleness of the labels themselves `[V]` (independent agent, 2026-09-02; 28 hits, 14 open-ish + 14 done-ish, every k-th sorted line, ≤2 per file, code fences and legend lines skipped)
 
-_Pending — the measuring agent is running; its table and rates land here._
+Population in `docs/*.md`: **1,407 open-ish hits, 2,711 done-ish hits.** Each sampled line was
+checked against the code and git; the agent's own classification, with its evidence:
+
+| # | file:line | label (abridged) | class | evidence (abridged) |
+|---|---|---|---|---|
+| 1 | AUTHORITATIVE_INTERACTABLE_MIGRATION.md:4 | PHASE A+B IMPLEMENTED (uncommitted; hands-on-pending) | **STALE-OPEN** | committed `43e2a843` (06-05) + `f8185847` (07-04); keypads W/HO in SYNC_PROFILES:153 |
+| 2 | COOP_MIRROR_IDENTITY_WINDOW_RACE.md:100 | own-key != pending-key -> never steal | still-true (vocabulary FP: "pending" is a name) | quiescence_drain.h:73, pile_spawn_bind.cpp:5 |
+| 3 | COOP_SYNC_PROFILES.md:159 | Power panel · U · snapshot + pending | still-true (FP: a lane column) | power_sync.cpp:139/:261; U is still the honest verdict after the 09-02 RE |
+| 4 | DEATH_ARC.md:1018 | blast radius is uncensused (open windows...) | still-true (FP: "open windows") | death_revive.cpp has only RemoveFromParent |
+| 5 | LESSONS.md:4571 | kills the NEXT open's fade-in | still-true; **two citations rotted** | `:359` is now `:470`, `:214` is `:262` in chat_view.cpp |
+| 6 | MULTIPLAYER_UI.md:2003 | still NOT hands-on ... current is b125 | **STALE-OPEN** (partial) | build is 151 (protocol.h:710); the label discussed with the user 08-31, never folded; running total b125 |
+| 7 | SERVER_BROWSER_ARC.md:434 | P3 cyan STAYS; UI_STYLE §6's question now CLOSED | still-true; **sibling doc stale** | VOTV_UI_STYLE.md:209-222 §6 still reads "still open" |
+| 8 | items/container.md:349 | THE ONE OPEN GATE: is slot OnClicked cancelable | still-true (name collision) | container_take_probe.cpp measures something else |
+| 9 | piles/08-HOST-AUTH-TRASH-CHANNEL.md:34 | L1 + L2: the open functional bugs | **STALE-OPEN** | the doc's own 06-23 banner marks it historical; L2 seam shipped `03d38d2b`; the line is unstamped |
+| 10 | piles/_archive/07-MORPH-V2...:213 | Init-POST observer does NOT fire for a BP-deferred clump | still-true (FP: "deferred" is a UE term) | host_spawn_watcher.cpp:130-133 |
+| 11 | piles/findings/thin-client...IMPL-SPEC-2026-06-20.md:62 | pile-reconcile core (P5 pending-remove) in prop_adoption.cpp | **STALE-OPEN** (location) | no prop_adoption.cpp in HEAD; split 06-30 into quiescence_drain + pile_spawn_bind |
+| 12 | piles/findings/votv-held-pose-stream-design-2026-05-27.md:873 | Open questions — Q1 hand bone socket (held_entity_sync) | **STALE-OPEN** (dissolved) | held_entity_sync never existed; hand_item.cpp:35-50 welds into the viewmodel (07-10) |
+| 13 | (local security tree) | a dated ledger row recording a batch of findings opened that day | still-true (dated ledger row) | append-only by its own rule, so a later count never falsifies it. **Row REDACTED 2026-09-04:** the original quoted the register's own OPEN counts, which `DOCS_ARC` WP-2 scrubs from public docs |
+| 14 | (local security tree) | an OPEN register row | still-true | **Row REDACTED 2026-09-04:** the original named the finding, stated its mechanism, and cited the code range confirming it still live — a complete pointer, and the exact thing `DOCS_ARC` WP-2 exists to keep out of a public doc |
+| 15 | ARCHITECTURE.md:94 | D-3 slim contract shipped; zero imports; abi_gate in CI | still-true | cppmod_entry.cpp:8-21; build-core.yml:313 |
+| 16 | COOP_EVENT_JOIN.md:122 | event_cue AS-BUILT (code-verified 07-04) | still-true | event_cue_sync.h:59 |
+| 17 | COOP_SYNCER_MODEL.md:301 | mirror_manager.h:357 DrainMirrorsForSlot — Built | still-true (the line number still holds) | mirror_manager.h:357 |
+| 18 | CRUTCHES.md:314 | the proper fix: intercept OpenLevel when dead (fail CLOSED) | still-true (FP: "fail CLOSED") | C3 CLOSED `33008d87` |
+| 19 | LESSONS.md:2441 | switcher_widgets censused in ui_menu only; ui_stats/ui_settings reach it | **UNDECIDABLE** | the CXX dump has no `switcher_widgets`; needs a runtime probe |
+| 20 | MODULARIZATION_PLAN.md:94 | A2 — DONE (commit pending); git rm'd the two .gitkeep | **STALE-OPEN** (partial) | committed `91f31c6e` (07-07); "commit pending" never flipped |
+| 21 | OVERLAY_CAPTURE_COEXIST.md:562 | Fail-CLOSED ... (6 sigs as of 26674b21, 7 once DX12) | still-true; **count rotted** | sdk_profile.h now has 10 kSig* |
+| 22 | SERVER_BROWSER_ARC.md:250 | the banner "nothing built" is false; status in §9 | still-true | §9 AS-BUILT at :550 |
+| 23 | VERSION_MIGRATION.md:583 | fix compose VERIFIED 08-22 (0c14a931) | still-true; **next sentence rotted** | :588 "proxy stays until commit 3" — `1912d229` landed 08-28 |
+| 24 | piles/08-HOST-AUTH-TRASH-CHANNEL.md:122 | dropGrabObject thunk RETIRED fb490e36; option 1 (8bc797ef) BUILT+FAILED | still-true; **dangling hash** | `8bc797ef` is not a commit in this repo (history squashed) |
+| 25 | piles/_archive/06-AS-BUILT-sync-mirror.md:64 | files changed (as-built): pile_morph, proto 80->81 | still-true (archived, bannered) | pile_morph deleted `1fc67aed`; the doc's own banner says REVERTED |
+| 26 | piles/findings/votv-client-world-divergence...06-09.md:104 | FALSIFIED 06-10 ... (4) Deferred remote_prop 896>800 | still-true; **sub-item (4) stale, LOC rotted** | remote_prop.cpp is 774 LOC since s28; the deferral shipped unflipped |
+| 27 | (local security tree) | a lesson about a SHIPPED gate, cited by file:line | still-true; **citation moved** | the constant moved to `intent_authority.cpp:35` in `7de9228c` — the drift rung's exact case. Subject redacted 2026-09-04 |
+| 28 | security/TRACKER.md:627 | B4 IS BUILT (41c19d02 + 3f357ecd) CurrentWorldKind() | still-true | both commits 08-25; registry_reaper.cpp calls it |
+
+**Rates.**
+
+| half | stale-open | stale-done | still-true | undecidable |
+|---|---|---|---|---|
+| open-ish, all 14 hits | **5** (#1, #6, #9, #11, #12) | 0 | 9 | 0 |
+| open-ish, true status labels only (8 — the six vocabulary false positives #2-5, #10, #11 dropped) | **4 of 8 = 50 %** | 0 | 4 | 0 |
+| done-ish, all 14 hits | 1 (#20, "commit pending") | **0** | 12 | 1 (#19) |
+| done-ish, true status labels only (12) | 1 | 0 | 10 | 1 |
+
+**Secondary rot inside lines whose headline label still holds: 8 of 28** — two line-number
+citations (#5), a build number (#6), a sibling doc left open (#7), a signature count 6 -> 10 (#21),
+a next sentence (#23), a dangling commit hash (#24), a deferred item that shipped (#26), a citation
+file that moved (#27). None of these contain a status word, so the skill's grep never lands on them.
+
+**The pattern, in the agent's words.** (1) False-DONE is essentially absent (0 of 14); what rots is
+the subordinate fact riding on a true label — line numbers, running counts, parenthetical
+sub-states ("uncommitted", "commit pending", "Deferred (4)"), a hash that stopped resolving after a
+squash. (2) False-OPEN clusters in point-in-time docs from 2026-06/07 that were never re-stamped
+when the work landed (#1, #9, #11, #12, #20 are all 05-27..07-07 material); every 2026-08 line
+sampled was accurate; the one recent miss is CROSS-DOC (#7: one arc declares another doc's question
+closed, the other doc still says open), which a per-line check cannot see. (3) The skill's
+vocabulary over-counts: 8 of 28 hits (29 %) are not status labels at all ("pending-key",
+"pending-remove", "BP-deferred", "open windows", "fail CLOSED", "NEXT open's").
 
 ### 2.4 The lessons ledger on documentation rot `[A]` (titles in `docs/LESSONS.md`)
 
