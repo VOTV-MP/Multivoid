@@ -508,11 +508,12 @@ that histogram does not exist yet.
    pre-deploy checklist item 0), or default-on with an explicit skip line? This doc assumes
    default-on with a written skip reason; making it a checklist item edits `CLAUDE.md`, which is
    the user's file.
-3. (NEW from the build, §10) The three skill files are now committed on `main` (not pushed), while
-   their companions `docs/QUESTION_FORM_*` and `tools/workflows/` are on the deliberate never-commit
-   list (`.gitignore:265-266`). Same class of content, two publication states. Keep the skills
-   public, or move them to the never-commit list before the next push (a one-line `.gitignore`
-   revert + `git rm --cached`)? This doc assumes KEEP; the answer is needed before any push.
+3. **DECIDED (USER 2026-09-02, verbatim: *"It's fine for the three to be public"*).** The three skill
+   files stay committed and public, while their companions `docs/QUESTION_FORM_*` and
+   `tools/workflows/` remain on the deliberate never-commit list (`.gitignore:265-266`) — two
+   publication states for two classes of content, by the user's call. A public skill therefore
+   points at local-only companions on purpose, and `schema_sync.py --check` reporting "absent" on
+   another checkout is the expected state, not a defect.
 
 ## 7. Risks named in advance
 
