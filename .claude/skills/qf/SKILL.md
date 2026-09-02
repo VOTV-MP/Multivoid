@@ -40,8 +40,8 @@ prompted it converged at round 22, and rounds 12-22, run back to back, each land
 - **`/qf N`** (a leading integer, e.g. `/qf 3`) = the **user's explicit choice to pace the loop**: run at
   most N rounds, then stop with `STOP: user cap N` and hand back. Use it only when the user asked for it.
 
-**THE ONE STOP LIST.** Every stop writes a `STOP: <reason>` line into `qf_thread.md`. A round ends the
-loop ONLY on:
+**THE ONE STOP LIST.** Every stop is `python tools/qf/ledger.py --dir <scratchpad> stop <reason>`, which
+writes the `STOP: <reason>` line into `qf_thread.md`. A round ends the loop ONLY on:
 
 1. **`converged`** — the critic's verdict AND your own convergence bars (the loop section below) both hold.
 2. **read-only floor** — everything still open can ONLY be settled by a runtime probe (an instrumented
@@ -154,14 +154,25 @@ one of rounds 17-21 of the pass that made the rule.
        lesson's takeaway CONTRADICTS a claim in the brief, or the brief is walking into a trap a lesson
        names, that is your first question and you should cite the lesson's row. If a lesson's cited
        symbol/path appears STALE against the current tree, ask about that too (the ledger rots and is
-       swept for exactly this). PROOF-OF-READ (mandatory): begin your reply with a single
-       line `read: \"<verbatim <=10-word fragment of a rule from QUESTION_FORM_AGENT.md>\" | \"<verbatim
-       <=10-word fragment from OPUS_48_DISCIPLINE.md>\"` - two fragments quoted exactly from the files,
-       proving you opened both. Then reply ONLY in 2-4 short, pointed questions, opening with ONE line
-       naming what the primary got RIGHT, then the real problem as questions. NO statements, NO prose, NO
-       plan, NO fix, NO code (the read-line + credit-line are the only non-question lines allowed). You are
-       READ-ONLY: you may read the repo to sharpen a question but you MUST NOT edit, write, build, or run
-       anything. THE RADICAL MANDATE (user rule, 2026-08-24, verbatim: \"Я даю зеленый свет даже на самые
+       swept for exactly this). REPLY FORMAT (mandatory): your ENTIRE reply is ONE fenced ```json block
+       conforming to tools/qf/critic_schema.json (open it; the main session validates your reply with
+       tools/qf/ledger.py and DISCARDS it on any violation). The shape: proofOfRead{qfDoc, opusDoc,
+       priorArt[]} - each a VERBATIM 4-12-word fragment quoted exactly from that file (checked mechanically
+       by tools/qf/verify_proof.py; a fabricated fragment discards the reply); credit - ONE line naming
+       what the primary got RIGHT / what is now genuinely measured; unresolved[] - your 2-4 questions, each
+       {id, angle (one of the schema's closed list), q (the question itself, ending in '?'), targetClaim (a
+       VERBATIM quote of the brief sentence under attack), howToMeasure (a concrete READ-ONLY probe WITH its
+       command), runtimeGated, anchor (what YOU opened to ask it: a path:line; or for an OMISSION the symbol
+       + the owning file + the zero-hit command; or for an ask/product angle the targetClaim quote)};
+       converged / readOnlyFloor - your verdict, and when either is true a top-level anchor (the LAST lookup
+       you made that found nothing left to ask) plus convergenceRationale as a list of '<id>: closed by
+       <citation>'. The q fields are the ONLY questions; every other field is a citation, a probe name or a
+       verdict - NO statements, NO prose, NO plan, NO fix, NO code anywhere in the block: any field carrying
+       an instruction or a fix voids the whole reply. At least ONE question per round (or your verdict) must
+       anchor on a path:line or a command you ran yourself, and that lookup's result appears ONLY as the
+       premise of a question - you never state what it means. You are READ-ONLY: you may read the repo to
+       sharpen a question (grep, ls, wc, git grep, cat) but you MUST NOT edit, write, build, or run anything
+       that changes state. THE RADICAL MANDATE (user rule, 2026-08-24, verbatim: \"Я даю зеленый свет даже на самые
        радикальные решения, если они окажутся верными и правильными\" / \"I green-light even the most radical
        solutions, if they turn out to be correct and right\"): SCOPE IS NEVER A REASON THIS PROJECT HOLDS
        BACK. Never soften a question because the honest answer would mean a large change -- dissolving a
@@ -224,24 +235,41 @@ one of rounds 17-21 of the pass that made the rule.
        record' as ONE stable primitive; it was FOUR distinct converge mechanisms (death-watch poll /
        host-menu barrier / request-exec / destroy-edge) fused into one label -- only the user, holding the
        real history, caught that 'the barrier' and 'the poll' were not the same thing]). If
-       nothing material remains, a short 'that holds - <one line>' is the correct answer. Match the user's
-       RU/EN per the doc.\n\nBRIEF:\n<the brief from step 2>"
+       nothing material remains, the correct answer is converged: true with an EMPTY unresolved list, your
+       verdict anchor and the rationale list - not a manufactured question; if everything left can only be
+       settled by a runtime probe, readOnlyFloor: true with those questions marked runtimeGated. Match the
+       user's RU/EN per the doc inside the q fields.\n\nBRIEF:\n<the brief from step 2>"
    )
    ```
    Use a FRESH agent every round — it despawns after replying; continuity is carried by YOUR brief, not by
    the agent's memory.
 
-4. **Relay the questions verbatim, write them to the thread file verbatim, then ANSWER them here.** Show the
-   user the critic's questions exactly as returned, and append the same text unchanged to `qf_thread.md`
-   under `### Critic (verbatim)` (see Guardrails) before answering. Then answer each one in the open session — tag every answer `measured | inferred` with its
-   citation, and when a question exposes an unverified leap, say so plainly rather than defending it. This
-   answering step is the point of keeping the primary in the loop.
+4. **Gate, record, relay, then ANSWER here.** Save the critic's JSON block to a file and run, in order:
+   `python tools/qf/verify_proof.py --reply <file>` (exit 1 = a fabricated or missing fragment: discard
+   the reply and re-spawn; after two failures `ledger.py stop format-failed` and hand back) and
+   `python tools/qf/ledger.py --dir <scratchpad> append <round> <file>` (exit 1 = the reply violates the
+   schema or an anchor did not verify: the same discard-and-re-spawn). `append` writes the round's table
+   AND the verbatim JSON into `qf_thread.md` — it IS the persistence step. Show the user the questions
+   exactly as returned. Then answer each one in the open session — tag every answer `measured | inferred`
+   with its citation, and when a question exposes an unverified leap, say so plainly rather than defending
+   it — and record each answer's status the moment you give it:
+   `ledger.py --dir <scratchpad> set <round> <id> <status> --cite "<your OWN citation>"`, status one of
+   `answered-measured` (needs YOUR path:line or log path — a critic's anchor alone is not yours: re-open it
+   first, or the status is `answered-inferred`), `answered-inferred`, `runtime-gated` (name the probe),
+   `withdrawn-with-reason` (the critic's premise was wrong), `handed-to-user` (a product-feel question or a
+   fact only they hold — a stop condition). This answering step is the point of keeping the primary in
+   the loop.
 
-5. **Loop to step 2** with a fresh critic — unless a stop condition from THE ONE STOP LIST holds, in which
-   case write the `STOP: <reason>` line and report: where the thread stands, which claims are now measured,
-   which the critic was still pushing on, and (on `converged`) that the fact base is settled — the next move
-   is the root analysis + a fix under the user's per-rule-1 green-light (that green-light is theirs to give,
-   not yours to assume). Do not stop to report between rounds: a round summary is not a stop condition.
+5. **Judge the state, then loop to step 2** with a fresh critic — unless a stop condition from THE ONE
+   STOP LIST holds. On a reply with `converged` or `readOnlyFloor` true: walk the convergence bars (the
+   loop section below) yourself and, ONLY if every one holds, `ledger.py --dir <scratchpad> attest <round>`;
+   then `ledger.py --dir <scratchpad> status` prints the state — CONVERGED / READ-ONLY FLOOR / OPEN (with
+   the open set) — and only a printed CONVERGED or READ-ONLY FLOOR is a stop. Every stop is
+   `ledger.py --dir <scratchpad> stop <reason> [--note ...]`, which writes the `STOP:` line; then report:
+   where the thread stands, which claims are now measured, which the critic was still pushing on, and (on
+   `converged`) that the fact base is settled — the next move is the root analysis + a fix under the user's
+   per-rule-1 green-light (that green-light is theirs to give, not yours to assume). Do not stop to report
+   between rounds: a round summary is not a stop condition.
 
 ## The loop, and the convergence bars
 
@@ -258,12 +286,12 @@ question/design/impl pass has wanted 15-22 rounds; fewer rounds = a half-mapped 
   UNSETTLED — you have NOT converged. Do NOT declare it done and do NOT build: present the residual
   questions. **Treating "I hit a cap" as "converged" is the exact failure that shipped the dupe — never
   do it.**
-- **A "that holds" is only real if the PRIMARY has completed the map.** Before you accept convergence,
+- **`converged: true` is only real if the PRIMARY has completed the map.** Before you accept convergence,
   confirm you have mapped the WHOLE problem — for a sync bug, EVERY wire event that EACH user action emits,
   on BOTH peers (per `[[feedback-map-all-wire-events-before-fixing-missing-sync]]`). If a whole action-half
   (e.g. the GRAB when you only studied the DROP) was never interrogated, the thread has NOT converged no
   matter how calm the critic sounds — steer a round at the unmapped half.
-- **A "that holds" is INVALID if the design no longer answers WHAT THE USER ASKED.** Before accepting
+- **`converged: true` is INVALID if the design no longer answers WHAT THE USER ASKED.** Before accepting
   convergence, re-read the brief's opening section and state, in one line, how the converged design
   resolves the symptom **in the user's own words**. If you cannot do that without redefining their
   complaint, the thread has drifted, not converged. Three specific drifts to check: (a) the design fixes
@@ -276,9 +304,9 @@ question/design/impl pass has wanted 15-22 rounds; fewer rounds = a half-mapped 
   doing, and why, before you build. (Born 2026-07-22, user request: the critic only ever sees a brief the
   primary wrote about its own work, so nothing in the ritual was positioned to ask "is this still the
   ask?")
-- **Stop on `converged` ONLY** when the critic returns a genuine "that holds" AND every bar in this section
+- **Stop on `converged` ONLY** when the critic returns `converged: true` AND every bar in this section
   holds — then report convergence; do not manufacture rounds past it.
-- **A "that holds" is INVALID while a load-bearing inferred fact has an available-but-undone cheap
+- **`converged: true` is INVALID while a load-bearing inferred fact has an available-but-undone cheap
   measurement.** If any claim the design rests on is tagged `inferred`, and a read-only measurement that
   would move it to `measured` exists and is fast (read the two function bodies, grep the log, disasm the
   site) — the thread has NOT converged, no matter how calm the critic sounds. "It's agnostic / doesn't block
@@ -287,17 +315,16 @@ question/design/impl pass has wanted 15-22 rounds; fewer rounds = a half-mapped 
   pass nearly cemented a containment design on RE-doc prose because "the runtime counter will settle it
   anyway" — the cheap body-walk that would have settled it up front, and de-ambiguated the counter's failure
   modes, was skipped as "more than corroboration warrants." It was inconvenience mislabeled as scope.)
-- **A "that holds" is INVALID while a MIGRATION design has not enumerated EVERY identity map keyed on the
+- **`converged: true` is INVALID while a MIGRATION design has not enumerated EVERY identity map keyed on the
   migrating entity.** If the design repoints/rebinds/re-keys/moves an entity's identity, convergence
   requires that you have LISTED every map/table/index/authority-record keyed on that entity and shown, per
-  map, that the operation updates it (or intentionally defers it with the consumers gated). A calm critic
-  "that holds" does NOT settle this if the map set was never enumerated — the critic escalates within the
+  map, that the operation updates it (or intentionally defers it with the consumers gated). A calm critic `converged: true` does NOT settle this if the map set was never enumerated — the critic escalates within the
   frame it is handed, so a parallel identity map absent from the brief is invisible to it and its silence is
   not evidence of completeness. Grep the entity's id/type across the tree and prove the set is whole BEFORE
   accepting convergence. (Born 2026-07-13: an 11-round repoint DESIGN pass converged with the critic saying
   "that holds" while a SECOND host-only identity table finalized late; only the user, from outside the
   frame, asked "is the eid the only identity map?" — see [[feedback-qf-enumerate-identity-maps-on-migration]].)
-- **A "that holds" is INVALID while the converged design is the SECOND-BEST one, chosen to avoid a large
+- **`converged: true` is INVALID while the converged design is the SECOND-BEST one, chosen to avoid a large
   change.** The user's standing green light (2026-08-24) makes scope a non-constraint: *"Я даю зеленый свет
   даже на самые радикальные решения, если они окажутся верными и правильными."* So before accepting
   convergence, answer in one line: *is there a bigger fix that is MORE correct?* — dissolve the module,
@@ -305,7 +332,7 @@ question/design/impl pass has wanted 15-22 rounds; fewer rounds = a half-mapped 
   not converged; it has settled for the tractable option, which is the same failure as a suppressive
   filter wearing a design's clothes. The green light is about SCOPE and BEHAVIOUR, never about skipping a
   measurement or shipping a bug — a radical fix still owes every gate a small one owes.
-- **A "that holds" is INVALID while a load-bearing NAMED PRIMITIVE the design hangs on is `carried-framing`
+- **`converged: true` is INVALID while a load-bearing NAMED PRIMITIVE the design hangs on is `carried-framing`
   you never code-verified.** If the design leans on "the existing X" — a barrier, arm-record, queue, lane,
   poll, mechanism — you INTRODUCED as a label in an earlier round, convergence requires you have OPENED the
   code and confirmed that thing exists AS described (ONE mechanism not several fused, this lifetime, this
@@ -345,7 +372,7 @@ fresh brief centered on that phase. Do not treat "the fact base converged" as "t
 settled root does not mean the fix holds the class, avoids a crutch, or survives the seams. Run `/qf` again
 on the design, and again on the implementation.
 
-The phases (run each to convergence — the critic's "that holds" — before moving on):
+The phases (run each to convergence — the critic's `converged: true` plus your bars — before moving on):
 
 1. **QUESTION / fact-base pass.** `/qf N` on the investigation: what is the root, which claims are
    `measured` vs `inferred`, de-braid the repro. Converges when the facts are settled. (Most first `/qf N`
@@ -359,7 +386,7 @@ The phases (run each to convergence — the critic's "that holds" — before mov
    seam to hook, cache index, defer window, eviction, the one must-measure-before-build probe. Converges on
    a build-ready plan (+ any read-only probe that gates the wiring).
 
-**Depth per phase.** "Enough" is the critic's genuine "that holds" WITH a complete map — not a fixed count,
+**Depth per phase.** "Enough" is the critic's genuine `converged: true` WITH a complete map — not a fixed count,
 and never a cap. Passes on record have converged anywhere between 5 and 43 rounds; do NOT stop at 6 and
 call it converged — that premature stop is what shipped a half-mapped fix (2026-07-09) — and don't
 manufacture empty rounds once it genuinely converges; convergence is the critic holding + the map being
@@ -378,33 +405,38 @@ where the crutch gets caught, not the question pass.)
 
 ## Guardrails
 
-- **Verify the PROOF-OF-READ line.** The critic's reply must open with a `read: "..." | "..."` line quoting
-  a fragment from EACH doc. Confirm both fragments actually appear (verbatim) in `docs/QUESTION_FORM_AGENT.md`
-  and `docs/OPUS_48_DISCIPLINE.md` respectively before you trust the questions — a missing, fabricated, or
-  non-matching fragment means the critic did NOT open the files and is running on the inline summary alone;
-  discard and re-spawn. Do NOT relay the `read:` line to the user (it's a gate, not signal) — strip it and
-  relay only the credit line + questions.
+- **Gate every reply mechanically, never by eye.** `tools/qf/verify_proof.py --reply <file>` checks the
+  proof-of-read fragments against the docs (whitespace- and markdown-normalised, 4-12 words each) and
+  `tools/qf/ledger.py append` checks the schema and re-verifies every anchor; a non-zero exit from either
+  means the critic did NOT open what it claims and the reply is discarded and re-spawned. Two failures in a
+  row = `ledger.py stop format-failed` and hand back. Do NOT relay the proof fragments to the user (a gate,
+  not signal) — relay the credit line + the questions. (Before this gate existed the check was done by hand
+  and recorded in ~5 % of rounds — `docs/QF_ARC.md` E5.)
 - **The critic never designs; you never let a design come back from it.** If the agent replies with
-  statements, a plan, or a fix, discard it and re-spawn asking for questions only. Design is yours, here.
+  statements, a plan, or a fix — in ANY field of the block, not only `q`: a `howToMeasure` that changes
+  something, a `credit` that argues, a `convergenceRationale` in prose — discard it and re-spawn asking for
+  questions only. Design is yours, here.
 - **Read-only.** The critic must not edit/build/run; you do not build or deploy inside a `/qf` round either
   — `/qf` is a reasoning round, not an execution step.
 - **Fresh agent per round, primary carries the thread.** Do not keep a persistent critic via SendMessage —
   the user's model is a clean agent each time, fed fresh context.
-- **Persist the thread, and persist the critic VERBATIM.** Append each round to `<scratchpad>/qf_thread.md`
-  in this shape: the brief you sent (or its delta), then the critic's reply **copied verbatim under its own
-  `### Critic (verbatim)` heading** — never your paraphrase of it, never a title you gave its question — then
-  your answers. The verbatim copy is what makes the critic measurable after the fact (`docs/QF_ARC.md` E3:
-  64 thread files held the primary's paraphrase of the questions, so the critic's own citation rate could
-  not be measured at all). A `/qf` after a `/compact` reconstructs PRIOR QF ROUNDS from this file; read it
-  back in step 2 if the session was reset.
-- **Archive the old thread when `/qf` starts on a NEW problem.** `qf_thread.md` is a SINGLE-topic log. Before
-  the first round of a `/qf` on an investigation UNRELATED to whatever the file currently holds, RENAME the
-  existing `qf_thread.md` to `qf_thread_<old-topic>_ARCHIVED.md` and start a fresh `qf_thread.md` for the new
-  topic. Otherwise the step-2 PRIOR QF ROUNDS reconstruction (and a post-`/compact` reload) pulls in the stale
+- **Persist the thread; the ledger persists the critic VERBATIM.** `ledger.py append` writes each round's
+  question table AND the critic's JSON unchanged under `### Critic (verbatim)` into
+  `<scratchpad>/qf_thread.md`, and the state into `<scratchpad>/qf_ledger.json` (one writer for both). You
+  append the rest by hand around it: the brief you sent (or its delta) BEFORE the round, your answers
+  AFTER it — never a paraphrase of the critic, never a title you gave its question. The verbatim copy is
+  what makes the critic measurable after the fact (`docs/QF_ARC.md` E3: 64 thread files held the
+  primary's paraphrase of the questions, so the critic's own citation rate could not be measured at all).
+  A `/qf` after a `/compact` reconstructs PRIOR QF ROUNDS from these two files; read them back in step 2
+  if the session was reset (`ledger.py status` prints the open set).
+- **Archive the old thread when `/qf` starts on a NEW problem.** `qf_thread.md` + `qf_ledger.json` are ONE
+  single-topic log. Before the first round of a `/qf` on an investigation UNRELATED to whatever they
+  currently hold, RENAME both — `qf_thread_<old-topic>_ARCHIVED.md` and `qf_ledger_<old-topic>_ARCHIVED.json`
+  — and start fresh with `ledger.py pass <phase> --topic <new topic>`. Otherwise the step-2 PRIOR QF ROUNDS reconstruction (and a post-`/compact` reload) pulls in the stale
   topic's rounds and the critic escalates against the wrong thread. Same-topic continuation (another `/qf` on
   the live investigation) appends as normal — only a genuine topic switch triggers the archive.
 - **Don't over-process a micro-step.** Per QUESTION_FORM_AGENT.md, sometimes the right critic answer is a
-  short "yes, that holds" — do not manufacture doubt to keep the loop spinning.
+  `converged: true` with an empty question list — do not manufacture doubt to keep the loop spinning.
 - **This is NOT `/qf-workflow`.** `/qf` = the manual ritual with YOU, the real primary, in the loop
   answering visibly, design allowed in the main session. `/qf-workflow` = the automated background
   fact-base loop where BOTH parties are subagents (no primary, no design, SEARCH + AUDIT only) — it

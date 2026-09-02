@@ -1,0 +1,105 @@
+{
+  "$comment": "ONE source for the /qf critic's reply shape (docs/QF_ARC.md WP-3). tools/qf/ledger.py validates replies against `schema`; tools/workflows/qf_root_loop.js (local-only, gitignored) carries a generated copy of `schema` between CRITIC_SCHEMA markers, kept equal by tools/qf/schema_sync.py --check. `statuses` is the per-question ledger vocabulary; `stops` is the one stop list. Edit here, then run schema_sync.py --write.",
+  "version": 1,
+  "statuses": [
+    "open",
+    "answered-measured",
+    "answered-inferred",
+    "runtime-gated",
+    "withdrawn-with-reason",
+    "handed-to-user"
+  ],
+  "stops": [
+    "converged",
+    "read-only-floor",
+    "handed-to-user",
+    "reframe",
+    "capped",
+    "user-cap",
+    "format-failed"
+  ],
+  "safetyCeilingRounds": 50,
+  "schema": {
+    "type": "object",
+    "required": ["proofOfRead", "credit", "unresolved", "converged", "readOnlyFloor"],
+    "properties": {
+      "proofOfRead": {
+        "type": "object",
+        "description": "PROOF you actually opened the discipline files (not run on the prompt alone). Each fragment is a VERBATIM <=12-word run of an actual rule from that file; the main session verifies them mechanically (tools/qf/verify_proof.py) - a fabricated or non-matching fragment discards the reply.",
+        "required": ["qfDoc", "opusDoc"],
+        "properties": {
+          "qfDoc": { "type": "string", "description": "verbatim <=12-word fragment of a rule from docs/QUESTION_FORM_AGENT.md" },
+          "opusDoc": { "type": "string", "description": "verbatim <=12-word fragment of a rule from docs/OPUS_48_DISCIPLINE.md" },
+          "priorArt": {
+            "type": "array",
+            "description": "lessons-ledger rows you opened yourself, each with a verbatim <=10-word fragment; must include at least one row NOT listed in the brief's PRIOR ART section once that section exists (QF_ARC WP-2)",
+            "items": {
+              "type": "object",
+              "required": ["identity", "fragment"],
+              "properties": {
+                "identity": { "type": "string", "description": "the row's identity as printed by tools/qf/prior_art.py: section / first 60 chars of its title" },
+                "fragment": { "type": "string" }
+              }
+            }
+          }
+        }
+      },
+      "credit": { "type": "string", "description": "one line naming what is now GENUINELY measured" },
+      "unresolved": {
+        "type": "array",
+        "description": "2-4 questions. Every entry is a QUESTION; the other fields are citations and probe names, never statements, plans or fixes - any field carrying an instruction or a fix voids the reply.",
+        "items": {
+          "type": "object",
+          "required": ["id", "angle", "q", "targetClaim", "howToMeasure", "anchor"],
+          "properties": {
+            "id": { "type": "string", "description": "Q1..Q4" },
+            "angle": {
+              "type": "string",
+              "description": "the ONE named angle this question comes from (closed list; the ledger rejects anything else)",
+              "enum": [
+                "measure-dont-infer",
+                "code-over-comment",
+                "seam-blast-radius",
+                "identity-migrates-at-birth",
+                "rule1-crutch-smell",
+                "authority-asymmetry",
+                "de-braid-confounded-repro",
+                "regression-by-logic",
+                "invariant-not-site-list",
+                "answers-the-actual-ask",
+                "source-consistency",
+                "cross-answer-contradiction",
+                "undone-cheap-measurement",
+                "identity-map-completeness",
+                "framing-provenance",
+                "existing-owner",
+                "writers-census",
+                "reference-conditions",
+                "prior-art",
+                "scope-second-best",
+                "name-the-class"
+              ]
+            },
+            "q": { "type": "string", "description": "the question itself, ending in '?'" },
+            "targetClaim": { "type": "string", "description": "a VERBATIM quote of the brief sentence under attack (a citation, not a paraphrase)" },
+            "whyItMatters": { "type": "string", "description": "optional, one clause" },
+            "howToMeasure": { "type": "string", "description": "a concrete READ-ONLY probe that would settle it - a real log grep, bytecode disasm, code read, or IDA site - WITH its command; an imperative that changes anything is a fix and voids the reply" },
+            "runtimeGated": { "type": "boolean", "description": "true if this question can ONLY be settled by a runtime probe (an instrumented rebuild, a fresh single-variable run) and NO read-only grep/disasm/IDA read can settle it" },
+            "anchor": {
+              "type": "string",
+              "description": "what YOU opened this round to ask this: 'path:line' in the tree; or for an OMISSION the symbol + the file/tree the brief says owns it + the zero-hit command ('grep -c ... = 0'); or for an ask/product angle the targetClaim quote itself. At least one question per round must carry a path:line or a command; in a DIFF pass every question must."
+            }
+          }
+        }
+      },
+      "converged": { "type": "boolean", "description": "true ONLY when no material claim remains INFERRED rather than measured (the fact base is SETTLED)" },
+      "readOnlyFloor": { "type": "boolean", "description": "true when EVERY remaining unresolved question is runtimeGated - all read-only measurement is exhausted and the remainder needs a rebuild. A SUCCESSFUL terminal state, distinct from converged." },
+      "anchor": { "type": "string", "description": "REQUIRED when converged or readOnlyFloor is true: the last lookup you made that found nothing left to ask (command + result). A verdict with nothing opened is discarded." },
+      "convergenceRationale": {
+        "type": "array",
+        "description": "only with converged or readOnlyFloor: one entry per closed question, '<id>: closed by <citation>' - no prose",
+        "items": { "type": "string" }
+      }
+    }
+  }
+}
