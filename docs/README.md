@@ -47,9 +47,13 @@ Then, if you are going to touch code:
 | **[VOTV_UI_STYLE.md](VOTV_UI_STYLE.md)** | The game's own widget style, measured — binding for anything we draw in VOTV's UI |
 | **[CROSS_SESSION.md](CROSS_SESSION.md)** | Two Claude sessions, one game rig: the lock and the working protocol |
 
-**Before writing any entity-sync, hook or spawn-catch code, read these two first.** They exist
-because not knowing them cost a three-iteration rework and two review agents giving opposite answers:
+**Before writing any entity-sync, hook or spawn-catch code, read these three first.** The first is
+the whole method in one doc; the other two exist because not knowing them cost a three-iteration
+rework and two review agents giving opposite answers:
 
+- **[COOP_SYNC_DOCTRINE.md](COOP_SYNC_DOCTRINE.md)** — how a system gets synced here, distilled:
+  foundation-first, authority table, the dispatch-seam ladder, brain parking, identity, the
+  mandatory late-join row, and the forbidden-crutch list. Start every new lane from this.
 - **[COOP_DISPATCH_VISIBILITY.md](COOP_DISPATCH_VISIBILITY.md)** — will my hook even fire? Visible vs
   invisible Blueprint dispatch, and the trap that `init()` is BP-internal.
 - **[COOP_ENTITY_EXPRESSION_MAP.md](COOP_ENTITY_EXPRESSION_MAP.md)** — how each entity gets identity,

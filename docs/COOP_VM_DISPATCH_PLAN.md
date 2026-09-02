@@ -218,9 +218,10 @@ Wrapper mechanics (all /qf-hardened; filter order INVERTED to name-first by impl
 - **Disabled fast path** = 1 relaxed atomic load + predicted-not-taken branch + tail-call (the eternal
   solo-SP tax — STEP 1.0 measures it on real 0x45 volume). Active = peek + name compare (O(1)).
   `atomic<bool>` enabled flags (OnDisconnect disables via the full teardown fanout). **ONLY 0x45 is
-  swapped** (impl /qf R11 — 0x46 has ZERO measured customer; its wrapper is written but the slot stays
-  un-swapped until a measured 0x46 customer registers; install is gated on ≥1 registered consumer PER
-  OPCODE, so no un-measured process-lifetime tax on `EX_LocalFinalFunction` game-wide). **Process-
+  swapped** (impl /qf R11 — 0x46 has ZERO measured customer; ~~its wrapper is written but the slot stays
+  un-swapped~~ **corrected 2026-09-02: no 0x46 wrapper exists in `vm_dispatch.cpp` — only `WrapperVirtual`
+  is written; the 0x46 slot is untouched AND its wrapper is unwritten**; install is gated on ≥1 registered
+  consumer PER OPCODE, so no un-measured process-lifetime tax on `EX_LocalFinalFunction` game-wide). **Process-
   lifetime swap by SIMPLICITY, not necessity** (impl /qf R13): the wrapper is process-static code (our
   DLL never unloads mid-session, RULE-3) so un-swapping the table pointer is SAFE — a late cross-thread
   call to the un-swapped-but-static wrapper just runs it inert once (disabled → tail-call), no crash.
@@ -577,6 +578,22 @@ EXPLICITLY includes: the auto-repatch pipeline (structural kismet signature matc
 transform → re-pak; boot-time hash check in the DLL) as a MANDATORY component, the pak-hash
 handshake gate, and the CLAUDE.md amendment. **Pipeline scope is priced from the C-spike's
 measurements, never estimated ahead.**
+
+> **ADDENDUM 2026-09-02 — entry condition (c) has a NEW, cheaper answer and C is likely MOOT for
+[withdrawn at the author's request]
+> reverse-engineered from its binary.** It delivers CANCEL + argument access on a script UFunction
+> across every dispatch route as a runtime MEMORY patch — no asset edit, no `_P` pak, no A6
+> amendment, no pak-hash outage window, MTA-compatible ("all interception is runtime memory").
+> Its own measured limit — ubergraph bodies are unpatchable — bounds it the same way C would be
+> bounded in practice anyway (a `_P` kismet edit of an ubergraph would face the same cross-function
+> entry-offset constants). Also note our own Option-E post-mortem is PARTIALLY superseded: E died
+> on "the thunk must reimplement caller-stream param marshaling"; the gate sidesteps that by
+> nativizing a mod-OWNED zero-param marker instead of the hooked function. Status: CANDIDATE tier,
+> not built, /qf owed. Mechanism + adoption case:
+[withdrawn at the author's request]
+> ladder placement: `docs/COOP_SYNC_DOCTRINE.md` step 3 tier 4. The 2026-05-27 causeRain
+> bytecode-patch rejection ("requires bytecode disassembly we don't have") is STALE on both
+> grounds — the toolchain exists since 2026-09-02 and the patch class is field-proven.
 
 ## 7. Workaround retirement inventory (RULE 2, post-substrate; user mandate)
 
