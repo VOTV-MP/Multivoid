@@ -3,20 +3,20 @@ name: qf
 description: >
   Run the Question-Form adversarial ritual with the PRIMARY (you, the main session) in the loop: spawn a
   fresh critic agent, hand it the CURRENT session context + the rules from docs/QUESTION_FORM_AGENT.md, get
-  back 2-4 pointed questions, let the agent despawn, then answer those questions in the visible main session.
-  Bare "/qf" runs ONE round; "/qf N" (e.g. /qf 4) auto-runs up to N critic<->primary exchanges in a row,
-  you answering each visibly, until convergence or N. A Q&A cycle that converges on the root WITH the primary
-  answering - the thing /qf-workflow structurally cannot do (a background loop can't reach the main session).
-  Invoke when the user types "/qf" (exactly - NOT "/qf-workflow", which is the automated background loop).
-  Project: VOTV_MP.
+  back 2-4 pointed questions, let the agent despawn, then answer those questions in the visible main session,
+  and repeat with a fresh critic UNTIL A STOP CONDITION: bare "/qf" (with or without a steer) runs to
+  convergence; "/qf N" (e.g. /qf 3) is the user's explicit choice to pace the loop and stops after N rounds.
+  A Q&A cycle that converges on the root WITH the primary answering - the thing /qf-workflow structurally
+  cannot do (a background loop can't reach the main session). Invoke when the user types "/qf" (exactly -
+  NOT "/qf-workflow", which is the automated background loop). Project: VOTV_MP.
 ---
 
-# /qf — one round of the Question-Form ritual (primary stays in the loop)
+# /qf — the Question-Form ritual, run to convergence (primary stays in the loop)
 
 You are automating the **copy-paste** of the manual ritual in `docs/QUESTION_FORM_AGENT.md`: instead of the
 user pasting your message to a second agent and the reply back, `/qf` spawns that second agent for you,
-one round per invocation. Read `docs/QUESTION_FORM_QF_SKILL.md` first if you have not this session — it
-defines this skill's shape and how it differs from `/qf-workflow`.
+a fresh one per round, and keeps going until a stop condition (below). Read `docs/QUESTION_FORM_QF_SKILL.md`
+first if you have not this session — it defines this skill's shape and how it differs from `/qf-workflow`.
 
 **The division of labour (do not blur it):**
 
@@ -28,25 +28,43 @@ defines this skill's shape and how it differs from `/qf-workflow`.
   Answering / reasoning / design belongs here, in the open, where the user sees it
   (`feedback_no_design_architect_agents`, OPUS §5) — never inside the critic.
 
-**Two paces, same mechanism:**
+**The loop runs to convergence. The user does not pace it (USER RULE 2026-07-30, verbatim: *"Why are you
+always stopping running qf, run qf"* — `[[feedback-run-the-qf-loop-to-convergence]]`; the pass that
+prompted it converged at round 22, and rounds 12-22, run back to back, each landed a finding).**
 
-- **`/qf`** (bare) = ONE exchange (critic asks -> you answer), then you hand back. The **user** paces the
-  loop by re-invoking `/qf`. Use when the user wants to inject between every round.
-- **`/qf N`** (a leading integer, e.g. `/qf 4`) = **auto-run up to N critic<->primary exchanges in a row**,
-  all in THIS main session, you answering each in the open, updating the brief with your own answers between
-  rounds, and stopping early when the critic returns a "that holds" with no material question. This is the
-  "они обмениваются 4 раза" mode — the REAL primary answers each round, visibly, and the whole transcript is
-  shown to the user at the end for review. (This is what `/qf-workflow` cannot do: a background workflow
-  can't route a question back to the main-session primary and await its answer — see
-  `docs/QUESTION_FORM_QF_SKILL.md`.)
+- **`/qf`** and **`/qf <steer>`** = run rounds back to back — fresh critic, you answering each in the open,
+  the brief updated with your own answers between rounds, the steer folded into every brief — until ONE of
+  the stop conditions below. The whole transcript is shown to the user at the end. (This is what
+  `/qf-workflow` cannot do: a background workflow can't route a question back to the main-session primary
+  and await its answer — see `docs/QUESTION_FORM_QF_SKILL.md`.)
+- **`/qf N`** (a leading integer, e.g. `/qf 3`) = the **user's explicit choice to pace the loop**: run at
+  most N rounds, then stop with `STOP: user cap N` and hand back. Use it only when the user asked for it.
+
+**THE ONE STOP LIST.** Every stop writes a `STOP: <reason>` line into `qf_thread.md`. A round ends the
+loop ONLY on:
+
+1. **`converged`** — the critic's verdict AND your own convergence bars (the loop section below) both hold.
+2. **read-only floor** — everything still open can ONLY be settled by a runtime probe (an instrumented
+   rebuild, a fresh single-variable run); a SUCCESS that names the next probe, not a failure to converge.
+3. **handed to the user** — a question only the user can answer: a product-feel question, a second reversal
+   on one axis, a fact only they hold.
+4. **a reframe** — a premise flips, a primitive turns out to be several, the model is replaced, a
+   suppression dissolves (the reframe-surface bar in the loop section) — the user, not the next fresh
+   critic, is the right check at that moment.
+5. **the safety ceiling** — 50 rounds, above every pass on record (max 43); write `STOP: capped` and present
+   the OPEN set as a residual. This is abnormal by definition and NEVER a request to re-invoke.
+
+**NOT stops** (the rule names them; they are the signal to keep going): "this is a good checkpoint", "the
+findings are getting narrower", "I should confirm before continuing". Narrowing findings landed in every
+one of rounds 17-21 of the pass that made the rule.
 
 ## Steps
 
-1. **Parse args.** If the args START with an integer N, that is the auto-loop round cap (see "Auto-loop
-   mode" below); the rest is the steer. Otherwise it's all steer and you run ONE round. The steer is an
-   optional focus or the user's own aside to fold into the brief (e.g. "focus on the destroy seam", or "I
-   moved piles during that join window" — the human aside is exactly what de-braids a confounded repro). No
-   args = one round interrogating the current thread as it stands.
+1. **Parse args.** If the args START with an integer N, the user is pacing the loop: run at most N rounds
+   (stop list item "user cap"); the rest is the steer. Otherwise it is all steer and you run to convergence.
+   The steer is an optional focus or the user's own aside to fold into EVERY round's brief (e.g. "focus on
+   the destroy seam", or "I moved piles during that join window" — the human aside is exactly what
+   de-braids a confounded repro). No args = run to convergence on the current thread as it stands.
 
 2. **Assemble the BRIEF from the LIVE session** — this is what you hand the critic. Keep it dense and
    honest; it is the substitute for the copy-paste history:
@@ -219,31 +237,27 @@ defines this skill's shape and how it differs from `/qf-workflow`.
    citation, and when a question exposes an unverified leap, say so plainly rather than defending it. This
    answering step is the point of keeping the primary in the loop.
 
-5. **Hand the loop back to the user** (bare `/qf`) OR **loop to step 2** (auto-loop mode). For bare `/qf`:
-   tell them to run `/qf` again to send the next round (your answers + any new work) to a fresh critic.
-   State where the thread stands — which claims are now measured, which the critic is still pushing on. When
-   the critic returns a short "that holds" with no material question, the fact base is settled: the cycle is
-   done, and the next move is the root analysis + a fix under the user's per-rule-1 green-light (that
-   green-light is theirs to give, not yours to assume).
+5. **Loop to step 2** with a fresh critic — unless a stop condition from THE ONE STOP LIST holds, in which
+   case write the `STOP: <reason>` line and report: where the thread stands, which claims are now measured,
+   which the critic was still pushing on, and (on `converged`) that the fact base is settled — the next move
+   is the root analysis + a fix under the user's per-rule-1 green-light (that green-light is theirs to give,
+   not yours to assume). Do not stop to report between rounds: a round summary is not a stop condition.
 
-## Auto-loop mode (`/qf N`)
+## The loop, and the convergence bars
 
-When the args begin with an integer N, run the round automatically up to N times **within this main
-session**, so the primary answers the critic N times in a row without the user re-invoking:
+The loop runs **within this main session**: for each round `i` — assemble the brief (step 2, now
+including YOUR answers from rounds 1..i-1), spawn a fresh critic (step 3), relay its questions and
+**answer them yourself in the open** (step 4), append the round to `<scratchpad>/qf_thread.md`, then
+continue — until a stop condition from THE ONE STOP LIST. There is no round cap other than the safety
+ceiling and the user's own `/qf N`. (History, 2026-07-09: a pass stopped at 6 rounds "converged", shipped
+a fix that had only mapped ONE half of the user action, and REGRESSED into a dupe. A non-trivial
+question/design/impl pass has wanted 15-22 rounds; fewer rounds = a half-mapped fix ships.)
 
-- Default N if the user writes `/qf` with a word like "loop"/"цикл" but no number: **15**. Clamp N to
-  1..15. A non-trivial question/design/impl pass WANTS ~15 rounds — do NOT under-run it. (History,
-  2026-07-09: a pass stopped at 6 rounds "converged", shipped a fix that had only mapped ONE half of the
-  user action, and REGRESSED into a dupe. Fewer rounds = a half-mapped fix ships. 15 is the floor for a
-  real design pass, not a ceiling to fear.)
-- **Loop:** for each round `i` in 1..N — assemble the brief (step 2, now including YOUR answers from rounds
-  1..i-1), spawn a fresh critic (step 3), relay its questions and **answer them yourself in the open**
-  (step 4), append the round to `<scratchpad>/qf_thread.md`. Then continue to round `i+1`.
-- **Convergence is the critic's "that holds", NOT hitting N.** Reaching round N while the critic is still
-  returning material questions means the thread is UNSETTLED — you have NOT converged. In that case do NOT
-  declare it done and do NOT build: either the pass genuinely needs more (re-invoke to continue the thread)
-  or a fact only the user has is blocking it (return to the user with the residual questions). **Treating
-  "I hit my round cap" as "converged" is the exact failure that shipped the dupe — never do it.**
+- **Convergence is the critic's verdict AND the bars below, never a round count.** A user cap (`/qf N`)
+  or the safety ceiling reached while the critic is still returning material questions means the thread is
+  UNSETTLED — you have NOT converged. Do NOT declare it done and do NOT build: present the residual
+  questions. **Treating "I hit a cap" as "converged" is the exact failure that shipped the dupe — never
+  do it.**
 - **A "that holds" is only real if the PRIMARY has completed the map.** Before you accept convergence,
   confirm you have mapped the WHOLE problem — for a sync bug, EVERY wire event that EACH user action emits,
   on BOTH peers (per `[[feedback-map-all-wire-events-before-fixing-missing-sync]]`). If a whole action-half
@@ -262,8 +276,8 @@ session**, so the primary answers the critic N times in a row without the user r
   doing, and why, before you build. (Born 2026-07-22, user request: the critic only ever sees a brief the
   primary wrote about its own work, so nothing in the ritual was positioned to ask "is this still the
   ask?")
-- **Stop early ONLY** when the critic returns a genuine "that holds" AND the map is complete — then do not
-  burn the remaining rounds. Report convergence.
+- **Stop on `converged` ONLY** when the critic returns a genuine "that holds" AND every bar in this section
+  holds — then report convergence; do not manufacture rounds past it.
 - **A "that holds" is INVALID while a load-bearing inferred fact has an available-but-undone cheap
   measurement.** If any claim the design rests on is tagged `inferred`, and a read-only measurement that
   would move it to `measured` exists and is fast (read the two function bodies, grep the log, disasm the
@@ -314,9 +328,9 @@ session**, so the primary answers the critic N times in a row without the user r
   answer with a fresh measurement, not just reason. This is MANDATORY, not optional, for any inferred fact
   the design leans on (see the convergence rule above). Do NOT build/deploy/run the game inside a `/qf` round
   (that is a separate main-session step under the user's green-light).
-- **Present the whole transcript at the end:** the N rounds of questions + your answers, then where the
-  thread converged (or, if it hit N still contested, the residual questions and what would settle them).
-  The user reviews the full exchange and injects what only they know, then can `/qf N` again to continue.
+- **Present the whole transcript at the end:** every round's questions + your answers, then the stop
+  reason — where the thread converged, or the residual questions and what would settle them. The user
+  reviews the full exchange and injects what only they know; a further `/qf` continues the same thread.
 
 Each round still uses a FRESH critic agent that despawns — the loop lives in the main session (you), not in
 any agent's memory. This is the key difference from `/qf-workflow`: there, the loop and BOTH parties are
@@ -346,12 +360,10 @@ The phases (run each to convergence — the critic's "that holds" — before mov
    a build-ready plan (+ any read-only probe that gates the wiring).
 
 **Depth per phase.** "Enough" is the critic's genuine "that holds" WITH a complete map — not a fixed count,
-and NOT hitting the round cap. A non-trivial question/design/impl pass wants **~15 rounds** of
-interrogation; `/qf N` now clamps N to 1..15, so a single `/qf 15` runs the full pass in one invocation
-(re-invoke to continue if it is still contested at 15). Do NOT stop at 6 and call it converged — that
-premature stop is what shipped a half-mapped fix (2026-07-09). Equally, don't manufacture empty rounds to
-hit 15 once it genuinely converges; convergence is the critic holding + the map being complete, whichever
-round that lands on.
+and never a cap. Passes on record have converged anywhere between 5 and 43 rounds; do NOT stop at 6 and
+call it converged — that premature stop is what shipped a half-mapped fix (2026-07-09) — and don't
+manufacture empty rounds once it genuinely converges; convergence is the critic holding + the map being
+complete, whichever round that lands on.
 
 **Each phase is a distinct THREAD topic** (per the archive guardrail below): a design pass interrogates a
 different surface than the question pass. Same-investigation continuation appends to `qf_thread.md`; when
@@ -393,9 +405,9 @@ where the crutch gets caught, not the question pass.)
   the live investigation) appends as normal — only a genuine topic switch triggers the archive.
 - **Don't over-process a micro-step.** Per QUESTION_FORM_AGENT.md, sometimes the right critic answer is a
   short "yes, that holds" — do not manufacture doubt to keep the loop spinning.
-- **This is NOT `/qf-workflow`.** `/qf` (and `/qf N`) = the manual ritual with YOU, the real primary, in the
-  loop answering visibly, design allowed in the main session. `/qf-workflow` = the automated background
+- **This is NOT `/qf-workflow`.** `/qf` = the manual ritual with YOU, the real primary, in the loop
+  answering visibly, design allowed in the main session. `/qf-workflow` = the automated background
   fact-base loop where BOTH parties are subagents (no primary, no design, SEARCH + AUDIT only) — it
   structurally cannot have the primary answer, because a background loop can't reach the main session. Pick
-  `/qf N` when the user wants the primary to trade N rounds with the critic; `/qf-workflow` when they want
-  the logs measured to a fact base hands-off.
+  `/qf` when the user wants the primary to trade rounds with the critic; `/qf-workflow` when they want the
+  logs measured to a fact base hands-off.
