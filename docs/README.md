@@ -93,8 +93,14 @@ time) · [COOP_MIRROR_IDENTITY_WINDOW_RACE.md](COOP_MIRROR_IDENTITY_WINDOW_RACE.
 
 [UE4SS_ARC.md](UE4SS_ARC.md) (becoming a UE4SS mod) ·
 [OVERLAY_CAPTURE_COEXIST.md](OVERLAY_CAPTURE_COEXIST.md) (coexisting with RTSS and OBS) ·
-[BLENDER_ARC.md](BLENDER_ARC.md) (VotvIO — the Blender addon importing a .sav into a full scene) ·
 the local-only docs-arc note (this documentation audit)
+
+**Left this repo**
+
+[VotvIO](https://github.com/VOTV-MP/VotvIO) — the Blender addon that imports a VotV save into a
+full scene. It grew here (`tools/blender/votvio/`, 28 commits, 2026-08-29 to 08-30) and moved to
+its own repository on 2026-09-02 with its history and its arc doc. Nothing in Multivoid depends
+on it; the lessons it taught stay in [LESSONS.md](LESSONS.md) §6.
 
 **The ledger**
 

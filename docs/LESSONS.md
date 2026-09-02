@@ -5635,6 +5635,12 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 
 ## 6. Assets, models, geometry
 
+> **"VotvIO repo:" in the pointers below.** Many lessons in this section were paid for by
+> VotvIO, the Blender addon that imports a VotV save into a full scene. It was extracted from
+> this tree to its own repository on 2026-09-02 (it lived at `tools/blender/votvio/` for its
+> first 28 commits, and that history went with it). The lessons stay here because they are
+> about cooked UE4 data, not about that addon's code — only their file pointers moved.
+
 - **A perceived WEIGHT difference is usually CONTRAST — sample the ink before touching a font property.** The user called our native buttons *"жирные ... совсем не как нативный votv"*. Sampling the label ink in their own captures against ours: native `#FF8900`, ours `#FFFFFF` — and corrected for capture scale our glyphs carry LESS ink (114 vs 144 lit px), on the same face, size and outline. The screen was not bolder, it was at maximum contrast; VOTV puts orange on its buttons and reserves white for the window TITLE. "Bold" is a font word, so the search starts at the font and finds nothing there. Also: one mis-placed crop returned grey and would have supported a false "idle is grey, hover is orange" — the fix was to sample a frame with SEVEN buttons visible, not to sample harder. **Look here FIRST:** normalise for capture scale before comparing ink counts, use a frame with many instances to separate per-state colour from global colour, and never adopt a shade sampled off a compressed PNG when a measured palette exists. [[lesson-a-perceived-weight-difference-is-usually-contrast]]
 
 - **2026-08-29 — Cooked UE4 data is DELTA-vs-archetype encoded at every PROPERTY layer; absence
@@ -5655,9 +5661,9 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   KEEP the level actor. The trap: delta-only rendering looks MOSTLY right, so it presents as
   scattered per-object weirdness, not one encoding rule — and a wrong layer-3 model produced a whole
   assembly pass that was itself the next bug. *Look FIRST:*
-  `tools/blender/votvio/template_resolver.py` (`TemplateComp.inherit`, `template_instances`) +
+  `VotvIO repo: votvio/template_resolver.py` (`TemplateComp.inherit`, `template_instances`) +
   `umap_import.py` (one flat pass, per-property fallbacks) + `assemble.py::_build_level_keys` +
-  `docs/BLENDER_ARC.md` v5.
+  `VotvIO repo: docs/ARC.md` v5.
   `memory/lesson_cooked_ue4_is_delta_encoded_at_every_layer.md`
 
 - **2026-08-29 — A runtime-assigned field lives on the CDO VARIABLE (or in bytecode), and the cooked
@@ -5668,8 +5674,8 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   anywhere: the BP picks from numbered pak families (`inst_decalCrack_0..16`, `_leak_0..7`,
   `_dirt_0..34`, `_Leaves_1..4`); 739 decals collapsed onto the inherited `dirt_0` before the
   family table existed. Resolution order that ships: variant family → CDO variable → component
-  template. *Look FIRST:* `tools/blender/votvio/decals.py` (`GRIME_FAMILY`) +
-  `template_resolver.py` (`cdo_material`) + `docs/BLENDER_ARC.md` v6c.
+  template. *Look FIRST:* `VotvIO repo: votvio/decals.py` (`GRIME_FAMILY`) +
+  `template_resolver.py` (`cdo_material`) + `VotvIO repo: docs/ARC.md` v6c.
   `memory/lesson_a_runtime_assigned_field_lives_on_the_cdo_not_the_template.md`
 
 - **2026-08-29 — a cooked UMaterial strips its expression GRAPH, but `CachedExpressionData` keeps
@@ -5695,8 +5701,8 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   deferred decals (sub-0.333 alpha draws NOTHING; 74.7% of tex_dirtGrimeOverlay sits there, so the
   raw ramp rendered 257 smoky films the game never shows). Read BasePropertyOverrides before
   inventing any alpha treatment. *Look FIRST:*
-  `tools/blender/votvio/screens.py` (the per-root still-frame builders) +
-  `materials.py get_decal_material` (the clip gate) + `docs/BLENDER_ARC.md` v7/v9.
+  `VotvIO repo: votvio/screens.py` (the per-root still-frame builders) +
+  `materials.py get_decal_material` (the clip gate) + `VotvIO repo: docs/ARC.md` v7/v9.
   `memory/lesson_cooked_material_cachedexpressiondata_keeps_defaults.md`
 
 - **2026-08-29 — an anonymous save-row value is NAMED by matching it against the class CDO's
@@ -5708,7 +5714,7 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   durability; display opacity = clamp(process/maxProcess) (poo's OWN maxProcess=50, so 50 renders
   FULL); size was never encoded. *Look FIRST:* dump the class CDO (+parents) beside sample rows —
   a row column equal to a CDO property across classes IS that property.
-  `tools/blender/votvio/template_resolver.py` (`process_alpha`) + `decals.py`
+  `VotvIO repo: votvio/template_resolver.py` (`process_alpha`) + `decals.py`
   (`row_variant_process`).
   `memory/lesson-a-save-rows-field-is-named-by-the-cdo-default.md`
 
@@ -5721,7 +5727,7 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   up-facing, which hid the class: terrain decals worked). The instrument: build a CONVEX mesh
   (`meshes/misc/cube`) and assert 100% of `normal.(center_dir) > 0` — inverted reads 0%, instant
   discriminator; any mirrored-axis importer owes this check before its first normals consumer.
-  *Look FIRST:* `tools/blender/votvio/mesh_build.py` (natural index order + the comment) +
+  *Look FIRST:* `VotvIO repo: votvio/mesh_build.py` (natural index order + the comment) +
   scratchpad `probe_winding.py` shape.
   `memory/lesson_inside_out_import_surfaces_only_at_a_normals_consumer.md`
 
@@ -5736,7 +5742,7 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   (v10) `find_export("Texture2D")` MISSES TextureCube — fall back by type and slice the mip's
   BulkData to `raw[:len//6]` for face 0, while RAW files (`.ufont`) read via
   `provider.get_reader(<full path WITH extension>)` though the file-list keys are extensionless.
-  *Look FIRST:* `tools/blender/votvio/vendor/NOTICE.md` (exact patch list).
+  *Look FIRST:* `VotvIO repo: votvio/vendor/NOTICE.md` (exact patch list).
   `memory/lesson_pyue4parse_on_votv_pitfalls.md`
 
 - **2026-08-30 — N screens can be ONE canvas — and a face is a SCATTER of UV-island cutouts,
@@ -5749,7 +5755,7 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   console 1 / radar 5 cutouts, the coords counters cut PER DIGIT (3x5 windows of 35x46), and
   faces freely windowing neighbor quadrants. The widget bakes in RenderTransform (comp table
   ROTATED −90, counters shear 7 + LetterSpacing 470/1000 em = the digit-window pitch) and the
-  cutout reads the rotated projection. *Look FIRST:* `tools/blender/votvio/screens_rt.py`
+  cutout reads the rotated projection. *Look FIRST:* `VotvIO repo: votvio/screens_rt.py`
   docstring (the routing model); census UV ISLANDS, not the bbox, and check RenderTransform
   before trusting a layout rect.
   `memory/lesson-a-multi-screen-surface-can-be-one-canvas-windowed-by-mesh-uvs.md`
@@ -5792,7 +5798,7 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   names — the eye hunts the resolver while the defect is one field earlier. *Look FIRST:*
   test per-face UV span on WIDE faces (thin fan slivers legally span ~0 — gate on world
   span, `verify_v12.py`), then dot the basis field against the normal;
-  `tools/blender/votvio/bsp_model.py` carries the field list.
+  `VotvIO repo: votvio/bsp_model.py` carries the field list.
   `memory/lesson-streaky-textures-mean-a-degenerate-uv-axis.md`
 
 - **2026-08-30 — Cooked FText has TWO shapes: localized dict and culture-invariant PLAIN
@@ -5813,7 +5819,7 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   skipped, the space view vanished; recursed unclipped, it FLOODED the whole canvas (both wrong
   states looked fine in crops — verify containers on the FULL canvas). PIL: `alpha_composite`
   refuses negative dest, `paste(im, xy, mask)` allows it. *Look FIRST:*
-  `tools/blender/votvio/screens_rt.py` `_slot_rect` + `_paint` container branches.
+  `VotvIO repo: votvio/screens_rt.py` `_slot_rect` + `_paint` container branches.
   `memory/lesson-rasterizing-cooked-umg-slots-carry-size-and-retainers-clip.md`
 
 - **2026-08-25 — A converter converts ARTIFACTS, not file extensions.** Asked whether UMG widgets

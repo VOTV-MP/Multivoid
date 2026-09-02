@@ -1,1 +1,0 @@
-from .IoStoreReader import FFileIoStoreReader

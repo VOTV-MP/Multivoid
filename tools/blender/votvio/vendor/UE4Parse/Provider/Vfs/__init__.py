@@ -1,1 +1,0 @@
-from .AbstractVfsFileProvider import AbstractVfsFileProvider
