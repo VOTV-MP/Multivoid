@@ -100,7 +100,12 @@ desktop.ini
 *.bat
 
 # ===== Claude Code per-machine config (MCP paths etc.) =====
-.claude/
+# `.claude/*` rather than `.claude/`: git cannot re-include a path whose PARENT
+# directory is excluded (tested 2026-09-02, docs/QF_ARC.md section 4), and the
+# skills are process documents that belong in history. settings.local.json and
+# every other per-machine file stay ignored.
+.claude/*
+!.claude/skills/
 # User-decision 2026-05-25 NIGHT: CLAUDE.md is a per-user dev notebook
 # (Claude Code reads it as project context) and is now treated as local-only.
 # Existing tracked copy is untracked via `git rm --cached CLAUDE.md` in the
