@@ -336,6 +336,22 @@ Besides the boot health check, two artifacts ease cross-version porting:
   SDK dumps) and reports what moved, annotated with the `sdk_profile.h` constant
   each change corresponds to. This is §4 step 3's instrument.
 
+Adopted from the UE-Modding-Tools survey (2026-09-02, evidence:
+`research/findings/tooling/votv-ue-modding-tools-survey-2026-09-02.md`):
+
+- **patternsleuth** (trumank; built at `1d90b02c`,
+  `research/pak_re/tools/src/patternsleuth/target/release/patternsleuth.exe`) — an
+  independent AOB resolver corpus for UE exes. On a NEW game build, run
+  `patternsleuth.exe scan --path <new exe> -r GUObjectArray -r FNamePool -r GNatives
+  -r FNameToString -r EngineVersion` **before opening IDA**: its answers seed the §4
+  signature re-derivation, and a disagreement with our own resolvers is the alarm.
+  Validated on 0.9.0n: `GNatives 0x144d8ecd0` — byte-identical to the IDA-measured
+  `GNatives_table` (COOP_VM_DISPATCH_PLAN.md:291); scan wall time 0.33 s.
+- **QUEUED for the first real migration** (pins in the survey doc): **binfold**
+  (trumank) — port our IDA symbol names old exe → new exe / generate a PDB;
+  **UAsset Diff Tool** (theqoqqi) — diff the two cooked trees to enumerate changed
+  BLUEPRINTS, the layer `sdk_diff.py` (reflection surface) cannot see.
+
 ## 11. The UE4SS-switch decision ledger
 
 > **CURRENT STATE (read this before the entries):** F1 (keep RULE 3, stay
