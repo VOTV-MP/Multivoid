@@ -177,6 +177,17 @@ DWORD WINAPI TimelineThread(LPVOID param) {
     // not to one test scenario, and every scenario reaches this line.
     Post([] { harness::mod_environment::Run(); });
 
+    // The lobby heartbeat's player-count source, installed for the SAME reason the
+    // census above sits here: every scenario reaches this line, and the ones that
+    // announce a lobby do not agree on which. `menu` (the native launch, i.e. every
+    // real player) never enters the netEnabled branch; `play` announces from inside
+    // it BEFORE RunPlayLoop; overlay_test_arm announces from others entirely. An
+    // install in any one of those is an install the other lanes silently miss --
+    // which is how the seam it fills sat unwired since 2026-06-07 (post-ship audit,
+    // 2026-09-02). Ordered before every announce site on every lane, so the
+    // heartbeat worker can never read the pointer before it is written.
+    session_runtime::InstallLobbyPlayerCountSource();
+
     const bool storyBoot = (scenario == "play");
     const bool menuMode  = (scenario == "menu");
     if (storyBoot) {

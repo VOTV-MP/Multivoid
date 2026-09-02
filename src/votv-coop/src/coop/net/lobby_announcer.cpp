@@ -115,7 +115,8 @@ void LobbyAnnouncer::HeartbeatLoop() {
             std::lock_guard<std::mutex> lk(mu_);
             url = masterUrl_; sid = sessionId_; tok = token_; listed = listed_;
         }
-        const int pc = playerCountFn_ ? playerCountFn_() : 1;
+        int (*const countFn)() = playerCountFn_.load(std::memory_order_acquire);
+        const int pc = countFn ? countFn() : 1;
 
         J::Json b;
         b["sessionId"] = sid;

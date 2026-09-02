@@ -1033,6 +1033,13 @@ uint16_t HostListenPort() {
     return g_fallbackHostCfg.port ? g_fallbackHostCfg.port : net::kDefaultPort;
 }
 
+void SetPlayerCountSource(int (*fn)()) {
+    // Announcer() is the leaked process-lifetime singleton; the setter only stores
+    // the pointer, so installing it before any lobby exists is correct and the
+    // count is live from the first heartbeat of every lobby this process hosts.
+    Announcer().SetPlayerCountFn(fn);
+}
+
 void EndHostedLobby() {
     // Clear the host-side lobby state BEFORE the blocking delist: Announcer().Stop()
     // blocks (heartbeat join up to ~8s + /leave POST up to 5s), and a re-host landing

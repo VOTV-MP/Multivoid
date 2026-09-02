@@ -991,8 +991,19 @@ ClientState GetClientState() {
 
 void GetProgress(uint32_t& doneBytes, uint32_t& totalBytes) {
     std::lock_guard<std::mutex> lk(g_cliMu);
-    doneBytes = static_cast<uint32_t>(g_cliBuf.size());
     totalBytes = g_cliTotal;
+    // A COMPLETED download reports its FULL size, not the empty buffer.
+    // MaybeFinishLocked_ clear()s g_cliBuf once the blob is written to the slot but
+    // leaves g_cliTotal set, so the raw buffer size says "0 of 17.6 MB" for a
+    // transfer that just succeeded. A reader polling this between the state read and
+    // the buffer clear then paints 0% and, because the poll loop exits immediately
+    // after, that 0% is the LAST thing written -- it would sit on screen for the
+    // whole world load. Reported here at the producer, where the terminal state and
+    // the counter are already under one lock; a guard at the consumer would be a
+    // filter over a value this function is simply getting wrong (RULE 1).
+    doneBytes = (g_cliState == ClientState::ReadySlotWritten)
+                    ? g_cliTotal
+                    : static_cast<uint32_t>(g_cliBuf.size());
 }
 
 uint8_t ReceivedGameMode() {
@@ -1025,6 +1036,12 @@ void OnDisconnect() {
         g_cliHaveBegin = false;
         g_cliChunksSeen = 0;
         g_cliSidecarBytes = 0;
+        // The DENOMINATOR dies with the buffer. It used to survive here, harmless only
+        // because ClientArm() zeroes it before every menu-mode join; now that
+        // GetProgress feeds a visible progress bar, a stale total left behind by a
+        // disconnect is a wrong number waiting for the first path that reads it before
+        // arming (post-ship audit, 2026-09-02).
+        g_cliTotal = 0;
         g_cliBuf.clear();
         g_cliBuf.shrink_to_fit();
     }

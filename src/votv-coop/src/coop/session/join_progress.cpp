@@ -21,6 +21,10 @@ std::atomic<int>      g_phase{static_cast<int>(Phase::Idle)};
 std::atomic<int>      g_mode{static_cast<int>(Mode::Client)};
 std::atomic<uint32_t> g_applied{0};
 std::atomic<uint32_t> g_total{0};
+// World-blob download counters (bytes). Written by the harness join loop via
+// NoteDownload, read on the render thread in Snapshot.
+std::atomic<uint32_t> g_dlDone{0};
+std::atomic<uint32_t> g_dlTotal{0};
 std::atomic<int64_t>  g_startMs{0};
 std::atomic<bool>     g_abortReq{false};  // Cancel button OR a connect failure -> harness drains (Stop + reopen browser)
 
@@ -67,6 +71,8 @@ void BeginConnect(const std::string& hostLabel) {
     g_mode.store(static_cast<int>(Mode::Client), std::memory_order_relaxed);
     g_applied.store(0, std::memory_order_relaxed);
     g_total.store(0, std::memory_order_relaxed);
+    g_dlDone.store(0, std::memory_order_relaxed);
+    g_dlTotal.store(0, std::memory_order_relaxed);
     g_abortReq.store(false, std::memory_order_relaxed);
     // A fresh attempt clears any prior failure modal so a retry starts clean (the
     // dialog otherwise lives until the user acknowledges it).
@@ -85,6 +91,8 @@ void BeginHostBoot(const std::string& worldLabel) {
     g_mode.store(static_cast<int>(Mode::Host), std::memory_order_relaxed);
     g_applied.store(0, std::memory_order_relaxed);
     g_total.store(0, std::memory_order_relaxed);
+    g_dlDone.store(0, std::memory_order_relaxed);
+    g_dlTotal.store(0, std::memory_order_relaxed);
     g_abortReq.store(false, std::memory_order_relaxed);
     // Hosting after a failed join -- drop any lingering connect-failure modal.
     { std::lock_guard<std::mutex> lk(g_failMu); g_failReason.clear(); g_failPending.store(false); }
@@ -107,13 +115,57 @@ void BeginSnapshot(uint32_t propTotal) {
     // SnapshotBegin must refresh the stale denominator or the bar pegs at a
     // wrong total for the full ~2300-prop re-stream. Env/autotest clients
     // are Idle and still ignored (the regression-A target).
+    // Downloading is accepted for the SAME reason Connecting is: it is the phase a
+    // save-transfer joiner is actually in when the host's replay arrives, and it did
+    // not exist when this gate was written. Omitting it would have left the prop bar
+    // dead for every menu-mode join -- the regression this list's shape invites.
     const Phase ph = PhaseOf();
-    if (ph != Phase::Connecting && ph != Phase::Receiving) return;
+    if (ph != Phase::Connecting && ph != Phase::Downloading &&
+        ph != Phase::LoadingWorld && ph != Phase::Receiving) return;
     g_total.store(propTotal, std::memory_order_relaxed);
     g_applied.store(0, std::memory_order_relaxed);
     if (g_startMs.load(std::memory_order_relaxed) == 0) g_startMs.store(NowMs(), std::memory_order_relaxed);
     g_phase.store(static_cast<int>(Phase::Receiving), std::memory_order_release);
     UE_LOGI("join_progress: BeginSnapshot -- receiving world (%u objects)", propTotal);
+}
+
+void NoteDownload(uint32_t doneBytes, uint32_t totalBytes) {
+    // Client joins only. A HOST boot shares the cover (Mode::Host) and must never be
+    // relabelled "Downloading the world" -- it is loading its OWN save off disk.
+    if (g_mode.load(std::memory_order_relaxed) != static_cast<int>(Mode::Client)) return;
+    if (totalBytes == 0) return;  // Begin has not landed yet -- stay indeterminate
+    // COMPARE-EXCHANGE, NOT A READ-THEN-STORE. This runs on the TIMELINE thread while
+    // the game thread can call Reset() from net_pump's aggregate-disconnect edge --
+    // and the loop that calls this is itself posting that tick. A blind store on a
+    // stale read would re-raise the cover a Reset had just taken down (Active() true
+    // again, byte counters re-written non-zero), and against BeginSnapshot it would
+    // stomp Receiving so the prop bar never filled. Post-ship audit, 2026-09-02.
+    int expected = static_cast<int>(Phase::Connecting);
+    if (g_phase.compare_exchange_strong(expected, static_cast<int>(Phase::Downloading),
+                                        std::memory_order_acq_rel,
+                                        std::memory_order_relaxed)) {
+        UE_LOGI("join_progress: Downloading -- world blob %u bytes", totalBytes);
+    } else if (expected != static_cast<int>(Phase::Downloading)) {
+        return;  // the phase moved out from under us -- write nothing
+    }
+    // Only now, with the phase confirmed OURS, are the counters ours to write.
+    g_dlDone.store(doneBytes > totalBytes ? totalBytes : doneBytes, std::memory_order_relaxed);
+    g_dlTotal.store(totalBytes, std::memory_order_relaxed);
+}
+
+void BeginWorldLoad() {
+    if (g_mode.load(std::memory_order_relaxed) != static_cast<int>(Mode::Client)) return;
+    // Same CAS discipline, and it accepts EITHER predecessor: a normal join arrives
+    // from Downloading, while a no-save / never-sent-Begin host never left Connecting.
+    for (const Phase from : {Phase::Downloading, Phase::Connecting}) {
+        int expected = static_cast<int>(from);
+        if (g_phase.compare_exchange_strong(expected, static_cast<int>(Phase::LoadingWorld),
+                                            std::memory_order_acq_rel,
+                                            std::memory_order_relaxed)) {
+            UE_LOGI("join_progress: LoadingWorld -- blob in, engine loading it");
+            return;
+        }
+    }
 }
 
 void NotePropApplied() {
@@ -128,6 +180,11 @@ void Complete() {
     const uint32_t total = g_total.load(std::memory_order_relaxed);
     const uint32_t applied = g_applied.load(std::memory_order_relaxed);
     g_applied.store(total, std::memory_order_relaxed);  // snap to 100% for any in-flight read
+    // Symmetric with Reset(), which clears these too. Harmless today (the Idle
+    // early-return in loading_screen gates every read), but an asymmetry here is
+    // exactly what hands the NEXT cover a stale denominator.
+    g_dlDone.store(0, std::memory_order_relaxed);
+    g_dlTotal.store(0, std::memory_order_relaxed);
     g_phase.store(static_cast<int>(Phase::Idle), std::memory_order_release);
     UE_LOGI("join_progress: Complete -- loading screen down (applied %u/%u)", applied, total);
 }
@@ -139,6 +196,8 @@ void Reset() {
     }
     g_applied.store(0, std::memory_order_relaxed);
     g_total.store(0, std::memory_order_relaxed);
+    g_dlDone.store(0, std::memory_order_relaxed);
+    g_dlTotal.store(0, std::memory_order_relaxed);
     g_abortReq.store(false, std::memory_order_relaxed);
     // instant-world: an ABORT from a non-Idle phase (cancel / connect-fail / failsafe) reached here (the
     // normal SnapshotComplete path uses Complete(), which fades the curtain via BeginDismiss and never calls
@@ -232,6 +291,8 @@ View Snapshot() {
     v.mode = static_cast<Mode>(g_mode.load(std::memory_order_relaxed));
     v.applied = g_applied.load(std::memory_order_relaxed);
     v.total = g_total.load(std::memory_order_relaxed);
+    v.doneBytes = g_dlDone.load(std::memory_order_relaxed);
+    v.totalBytes = g_dlTotal.load(std::memory_order_relaxed);
     const int64_t start = g_startMs.load(std::memory_order_relaxed);
     v.elapsedMs = (start == 0) ? 0 : static_cast<uint64_t>(NowMs() - start);
     {

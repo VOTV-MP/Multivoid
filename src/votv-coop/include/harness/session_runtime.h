@@ -48,6 +48,12 @@ void SpawnSecondPlayerWhenReady();
 
 // The main loop (TimelineThread): browser-start drain + host-boot picker +
 // the coalesced 60 Hz pump composite + the client-abort / host-death edges.
+// Install the source of the lobby heartbeat's player count (this module owns the
+// session object it reads). Call ONCE at boot, ABOVE the scenario branch and so
+// before every announce site on every lane -- see the call site's comment for why
+// no per-scenario location is correct. Idempotent.
+void InstallLobbyPlayerCountSource();
+
 // Blocks until shutdown. idleInGameplay: see the .cpp header comment.
 void RunPlayLoop(bool idleInGameplay);
 

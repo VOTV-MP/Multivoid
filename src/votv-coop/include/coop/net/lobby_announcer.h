@@ -62,7 +62,14 @@ public:
 
     // The heartbeat publishes a live player count from this callback (host wires it to
     // the session's connected-peer count + 1). null -> publishes playersMax's host (1).
-    void SetPlayerCountFn(int (*fn)()) { playerCountFn_ = fn; }
+    // ATOMIC because the heartbeat worker may ALREADY be running when this is
+    // installed: the env-host lane announces (spawning HeartbeatLoop) before the
+    // harness reaches its install point, so the std::thread constructor's
+    // happens-before edge does not cover this write. Benign in practice on x86-64
+    // and the first beat is 30 s out, but an unsynchronised raw function pointer
+    // read from another thread is UB, and this module's own callers decline
+    // cheaper races than that one.
+    void SetPlayerCountFn(int (*fn)()) { playerCountFn_.store(fn, std::memory_order_release); }
 
     // Hide / show the lobby in the public browser (POST /v1/visibility, async). The
     // session stays live -- this only flips `listed`. (design 5.6)
@@ -90,7 +97,7 @@ private:
     std::atomic<bool> active_{false};
     std::atomic<bool> stop_{false};
     std::thread hbThread_;
-    int (*playerCountFn_)() = nullptr;
+    std::atomic<int (*)()> playerCountFn_{nullptr};
 };
 
 }  // namespace coop::net::lobby

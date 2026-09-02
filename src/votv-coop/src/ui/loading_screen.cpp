@@ -94,6 +94,16 @@ void Render() {
                 std::snprintf(status, sizeof(status), "Connecting to %s%s", v.host.c_str(), d);
             else
                 std::snprintf(status, sizeof(status), "Connecting to the host%s", d);
+        } else if (v.phase == jp::Phase::Downloading) {
+            // Say what is happening AND that it is normal. On an internet link this
+            // phase is ~17 s for a mature world and it used to read "Connecting...",
+            // which is what a player interprets as "hung".
+            std::snprintf(status, sizeof(status), "Downloading the host's world%s", d);
+        } else if (v.phase == jp::Phase::LoadingWorld) {
+            // The longest stage of all (30-60 s, 120 s capped) and NOTHING reports
+            // progress out of the engine's load -- so it gets the marquee, which at
+            // least animates, and a label that is true.
+            std::snprintf(status, sizeof(status), "Loading the world%s", d);
         } else {
             std::snprintf(status, sizeof(status), "Receiving world from the host");
         }
@@ -103,7 +113,19 @@ void Render() {
         ImGui::Dummy(ImVec2(0.0f, S(8.0f)));
 
         // Progress bar.
-        if (v.phase == jp::Phase::Receiving && v.total > 0) {
+        if (v.phase == jp::Phase::Downloading && v.totalBytes > 0) {
+            const float frac = static_cast<float>(v.doneBytes) / static_cast<float>(v.totalBytes);
+            char overlay[64];
+            // MB, one decimal -- bytes are unreadable at this size and a percentage
+            // alone does not tell the player the transfer is large by nature.
+            std::snprintf(overlay, sizeof(overlay), "%.1f / %.1f MB",
+                          static_cast<double>(v.doneBytes) / (1024.0 * 1024.0),
+                          static_cast<double>(v.totalBytes) / (1024.0 * 1024.0));
+            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.36f, 0.59f, 0.82f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.10f, 0.12f, 0.16f, 1.0f));
+            ImGui::ProgressBar(frac > 1.0f ? 1.0f : frac, ImVec2(barW, 0.0f), overlay);
+            ImGui::PopStyleColor(2);
+        } else if (v.phase == jp::Phase::Receiving && v.total > 0) {
             const float frac = static_cast<float>(v.applied) / static_cast<float>(v.total);
             char overlay[64];
             std::snprintf(overlay, sizeof(overlay), "%u / %u objects", v.applied, v.total);

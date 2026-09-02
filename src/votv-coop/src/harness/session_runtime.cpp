@@ -290,6 +290,20 @@ void DriveMenuModeJoinWorldBoot() {
             UE_LOGW("harness: save transfer timed out (120 s) -- falling back to a fresh world");
             break;
         }
+        // Feed the loading screen the DOWNLOAD's real progress.
+        //
+        // `save_transfer::GetProgress` was written for exactly this ("Download progress
+        // for the loading screen (bytes)", save_transfer.h:162) and had ZERO callers from
+        // the day it landed, so the longest phase of a real join -- ~17 s at the 1 MB/s
+        // internet send rate -- rendered as an indeterminate marquee reading
+        // "Connecting...". Polled HERE rather than pushed from the chunk sink because this
+        // loop already runs at ~60 Hz for the whole transfer and runs on the timeline
+        // thread, so the net thread gains no per-chunk work and keeps its single writer.
+        {
+            uint32_t doneB = 0, totalB = 0;
+            coop::save_transfer::GetProgress(doneB, totalB);
+            coop::join_progress::NoteDownload(doneB, totalB);
+        }
         // THIS LOOP BLOCKS THE THREAD THAT POSTS net_pump::Tick (RunPlayLoop /
         // the play branch) -- and the transfer itself LIVES in that tick (the
         // connect edge sends the Request, event_feed delivers Begin, the host
@@ -313,6 +327,12 @@ void DriveMenuModeJoinWorldBoot() {
         ue_wrap::log::Flush();
         return;
     }
+    // The blob is in (or there was none). Everything past this point is the ENGINE
+    // loading a world -- 30-60 s typically, 120 s at the cap -- and nothing in it
+    // reports progress. Say so, and drop the byte bar: leaving it pegged at 100%
+    // under "Downloading the host's world" for that window reads as a hang harder
+    // than the marquee this whole change replaced (post-ship audit, 2026-09-02).
+    coop::join_progress::BeginWorldLoad();
     // v73: WAIT (pumping net) for the host's per-player apply blob BEFORE loading the world, so the
     // pre-materialize SaveObjectReadyHook has this client's inventory at load time. The host pushes it
     // the moment our GUID arrives (in the Join, right after connect), so it has almost always arrived
@@ -636,6 +656,37 @@ void DriveHostBootIfPending() {
 //          We deliberately do NOT add a per-tick FindObjectByClass(World) "are we
 //          in gameplay" probe here -- a per-frame GUObjectArray scan is the exact
 //          FPS anti-pattern the perf rule forbids; the scenario flag is free.
+namespace {
+
+// The lobby's live player count, published on every /v1/heartbeat.
+//
+// Runs on the ANNOUNCER'S WORKER THREAD, so it touches only atomics:
+// `running()` is one atomic load and `connectedPeerCount()` walks the peerConns_ /
+// peerLanesConfigured_ atomic arrays (session_status.cpp:353). `g_session` is a
+// process-lifetime global, so there is no lifetime race with the worker either.
+// Deliberately NOT reading role(): `cfg_.role` is a plain field written by Start(),
+// and only a host announces a lobby at all, so the role test would buy nothing and
+// cost a data race.
+//
+// +1 is the host itself: on a host, peerConns_[0] is unused and the connected peers
+// are slots 1..N, so connectedPeerCount() is the CLIENT count. Before the session
+// starts (the lobby is announced while the host's world is still loading) there is
+// no session to count, and 1 -- the host alone -- is the honest answer.
+// It deliberately UNDERCOUNTS a joiner for the duration of its admission round
+// trip: connectedPeerCount() excludes the PENDING band (a socket accepted but not
+// yet identity-proved has no seat). At a 30 s heartbeat cadence that window is
+// invisible, and counting seats is the honest reading of "players in this lobby".
+int LobbyPlayerCount() {
+    if (!g_session.running()) return 1;
+    return g_session.connectedPeerCount() + 1;
+}
+
+}  // namespace
+
+void InstallLobbyPlayerCountSource() {
+    coop::session_manager::SetPlayerCountSource(&LobbyPlayerCount);
+}
+
 void RunPlayLoop(bool idleInGameplay) {
     int tick = 0;
     bool wasRunning = false;     // FIX 4: detect the coop session running->stopped edge

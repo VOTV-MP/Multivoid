@@ -211,6 +211,24 @@ bool ListedState();
 // The picker's port check probes THIS port. Thread-safe.
 uint16_t HostListenPort();
 
+// Install the source of the lobby's live player count, published on every
+// /v1/heartbeat. Called ONCE at boot by the harness, which owns the session object,
+// from ABOVE the scenario branch -- ordered before every announce site on every
+// lane. `fn` runs on the announcer's heartbeat WORKER THREAD (~30 s cadence), so it
+// must read atomics only and touch no engine state; the stored pointer is itself
+// atomic, because on the env-host lane that worker already exists by the time some
+// callers would install.
+//
+// WHY THIS EXISTS: LobbyAnnouncer has had a SetPlayerCountFn seam since
+// 8dd62916 (2026-06-07) and NOTHING EVER CALLED IT -- `git log -S/-G` show that
+// one commit and no other. So lobby_announcer.cpp's
+// `playerCountFn_ ? playerCountFn_() : 1` took the fallback on every heartbeat
+// for three months and EVERY lobby in the browser read "1/4" regardless of who
+// was in it. It is display-only (the master never gates on players_cur; the
+// client renders it in three places), so it broke no join -- it broke the only
+// instrument that could have told us whether joins were failing fleet-wide.
+void SetPlayerCountSource(int (*fn)());
+
 // v56 env-host plane (user 2026-06-10): announce the CURRENT, already-started
 // env-configured host session to the master as a HIDDEN lobby -- the heartbeat
 // keeps it alive and creds stay fresh, but the public browser never lists it
