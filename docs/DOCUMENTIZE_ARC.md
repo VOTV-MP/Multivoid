@@ -362,15 +362,19 @@ skill into a close-out skill and a sweep skill (the amortised sweep is the same 
 second file); auto-compacting `MEMORY.md` by script (the index is prose the user reads; the ratchet
 is enough); tracking `CLAUDE.md` whole in the public repo.
 
-## 5. Open questions for the user
+## 5. Questions put to the user — DECIDED (USER 2026-09-02, verbatim: *"Yes to all"*)
 
-1. **WP-1 changes the FORM of your 2026-06-21 rule.** The per-run tree-wide enumeration becomes
-   "the session's blast radius + the K oldest-censused docs every run", so every doc still reaches a
-   hand verdict within N runs, and the item-by-item MANUAL verdict survives on a bounded list. The
-   memory file that records your rule would be rewritten to say so. Agree?
-2. **WP-3 runs a script on your file** (`CLAUDE.md` is your per-user notebook by your decision). It
-   MEASURES and REPORTS each run and refuses a close only on GROWTH of the reading order; the shrink
-   target (half of today) is a printed line, not a red light. Agree, and is half the right target?
+1. **WP-1 changes the FORM of the 2026-06-21 rule — AGREED.** The per-run tree-wide enumeration
+   becomes "the session's blast radius + the K oldest-censused docs every run", so every doc still
+   reaches a hand verdict within N runs, and the item-by-item MANUAL verdict survives on a bounded
+   list. The memory file that records the rule is rewritten to say so (§9 step 1).
+2. **WP-3 runs a script on `CLAUDE.md` — AGREED, and "half of today" is the target.** The script
+   measures and reports each run and refuses a close only on GROWTH of the reading order; the shrink
+   target (117 KB → 58 KB; no entry over 15 lines) is a printed line until first reached.
+
+The green light opens §9. Per the standing rule, the build begins with a `/qf` pass on this design
+under the revised skill — the first pass on the new ledger, and the first census `docs/QF_ARC.md`
+§9 step 4 owes.
 
 ## 6. Risks named in advance
 
