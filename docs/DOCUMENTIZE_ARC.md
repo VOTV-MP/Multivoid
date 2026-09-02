@@ -205,10 +205,17 @@ And the two files most of it lives in have no history (D17).
 **Change (a) — `tools/docs/status_census.py`, the ONE script.** Its inputs: the diff base and the
 working tree. **Base rule (H-2):** the newest commit whose body carries the `Docs-Census:` trailer
 (below), so consecutive censuses TILE the history with no gap; on the first run `--since=<date>`
-from the previous memory topic file. **Symbols of the diff:** touched paths and basenames;
-function/class names from `git diff -U0` hunk headers and from definitions added or removed; commit
-hashes in the range. A docs-only diff has radius (i) only and prints `radius: docs-only`.
-**Radius:** (i) the docs touched by the session; (ii) every doc citing a symbol of the diff; (iii)
+from the previous memory topic file. **Symbols of the diff (corrected by round 2, Q2):** touched
+paths as PATH citations (`session_runtime.cpp`, never the bare basename — `harness` alone is cited
+by 117 docs); function/class names from `git diff -U0` hunk headers and from definitions added or
+removed, **kept only if SPECIFIC — cited by at most 5 docs**; commit hashes in the range. Generic
+symbols are printed as dropped, with their counts, so the cut is visible. `[V]` measured on the
+newest source commit (`fff4032b`): 15 hunk-header symbols; `OnDisconnect` is cited by 70 docs,
+`Snapshot` 47, `Complete` 34, `Reset` 31; radius (ii) is **148 docs uncut and 6 docs with the cut**
+— "tens, not thousands" is true only under the cut, and the census prints the radius size every
+run so the claim is measured, not carried. A docs-only diff has radius (i) only and prints
+`radius: docs-only`. **Radius:** (i) the docs touched by the session; (ii) every doc citing a
+specific symbol or path of the diff; (iii)
 **the amortised sweep** — the K docs (default 10) whose last census is oldest, by a `sweep-cursor`
 carried in the trailer, so EVERY doc in `docs/`, `research/findings/` and `memory/` reaches a verdict
 within N runs without any run reading the tree (`--sweep` = the full pass, on the user's request).
@@ -238,13 +245,22 @@ recall and 0 of 2 on the sub-state, which is the number the drill exists to keep
 HAND for the census's rows — tens, not thousands — with the skill's existing spelling `STILL OPEN` /
 `ACTUALLY DONE` / `PARTIAL` plus `STALE DONE` (false optimism), and an action per verdict bounded by
 the row's `kind`: a LIVING doc is rewritten (WP-2), a POINT-IN-TIME doc is stamped and never
-rewritten (`docs/README.md`'s convention), an ARCHIVE row is left. **`kind` is decided by an
-INVARIANT, not by a banner list (§8 pass 3, Q3):** a doc is POINT-IN-TIME iff its filename carries a
-date (`-20YY-MM-DD`) or its path is under `_archive/`; every other doc is LIVING — including the
-three cross-cutting maps, which carry no banner and which the skill orders to *"keep current"*.
-`[V]` the banner census would have classed 101 of 136 non-archive docs as neither; by filename 37
-are dated and 99 undated, and the six stale-open lines of §2.3 split 4 undated (rewrite) / 2 dated
-(stamp) — the right action in every case. `STALE DONE` = downgrade the tag,
+rewritten (`docs/README.md`'s convention), an ARCHIVE row is left. **`kind` is decided by the path
+pattern, and each kind has ONE action (corrected twice by the `/qf` pass — round 1 Q3 replaced a
+banner list with a dated-filename invariant; round 2 Q4 showed that invariant would have frozen 484
+files the conventions say to update):**
+
+| kind | path pattern | count today `[V]` | action on a stale row |
+|---|---|---|---|
+| LIVING | undated filename outside `_archive/` — `CLAUDE.md`, `MEMORY.md`, every `*_ARC.md`, the maps, the trackers | 99 in `docs/` | REWRITE the claim + one `[corr ...]` stamp; a DATED SECTION inside it (`§N (date)`) is stamped and kept |
+| DURABLE RECORD | `-RE-<date>` and the other dated findings, runbooks, FACTS, STUDY files under `docs/` and `research/findings/` | 105 + 147 | the user's 2026-09-02 per-claim rule (`CLAUDE.md`, RULE 2026-09-02): a fact CONFIRMED is REFRESHED in place — `[V]` with the instrument named; a fact REFUTED gets a supersede-stamp and stays |
+| DESIGN | `-DESIGN-<date>` | 69 | STAMP only — *"deliberately never rewritten"* (`docs/README.md:161-163`) |
+| MEMORY TOPIC | `memory/project_*` (the date is the session, not a freeze) | 232 | UPDATE in place, delete if wrong — the skill's own Step 3 (`SKILL.md:136`) |
+| ARCHIVE | `_archive/` | 32 | none |
+
+`[V]` the banner census would have classed 101 of 136 non-archive docs as neither living nor
+point-in-time, the three maps among them; the six stale-open lines of §2.3 fall into LIVING (4) and
+DESIGN / DURABLE (2), the right action in every case. `STALE DONE` = downgrade the tag,
 date it, cite the evidence, stamp. Step 1's *"read each doc"* and Step 0.5(5)'s per-row lesson grep
 are rewritten to the census's rows too (H-3) — one regime, not two — and the frontmatter
 description drops *"Update ALL project docs"* (L-2). The Step 5 ledger IS the census output with the
@@ -259,7 +275,17 @@ Docs-Census: base=<sha> rows=N labels=L still-open=a actually-done=b stale-done=
 
 Every acceptance in this doc is a grep over that trailer, so a run that did not write it is a run
 that did not close (H-7), and the untracked files' numbers get a history through the commits that
-carry them.
+carry them. **Who writes it (corrected by round 2, Q3):** `[V]` nothing exists today — no hook,
+`core.hooksPath` unset, no CI step reads `git log`, `Docs-Census` appears in no commit — so as
+first drafted the trailer would have been READ off the script by the agent and PASTED, the
+honor-system shape (*"a check whose output you do not read is not a check"*). Instead **the script
+performs the close commit**: `status_census.py close -m "<subject>"` runs the census, evaluates
+the ratchet, and on green runs `git commit` itself with the trailer appended through
+`git interpret-trailers` (git 2.52 on this box); red = exit 1 = no commit. And **a CI gate observes
+it outside the run**: `tools/docs/docs_census_gate.py` reads `git log --format=%B` for every close
+commit in the push and fails on a missing trailer or a ratchet column that grew against the
+previous trailer — history is all it needs, so the untracked files' numbers are checked by a
+machine that never sees the files.
 
 **Change (d) — the private history.** `status_census.py --snapshot` copies `CLAUDE.md` and
 `MEMORY.md` into a LOCAL-ONLY repository (`~/.claude/projects/<slug>/history/`, `git init`, no
@@ -338,12 +364,21 @@ excluded — so `accretion=` would have read 2 and paying three of the five woul
 nothing. The distinction is STRUCTURAL, and it exists only after the token does: the column counts
 **every line carrying correction vocabulary** (`corrected`, `superseded`, `is false`, `was wrong`,
 `stood here`, `said the opposite`, `no longer`) **that is not in `[corr YYYY-MM-DD: ...]` form**, plus
-any `[corr ...]` whose `was` clause exceeds 120 characters — excluding `LESSONS.md`, `_archive/`,
-dated filenames, and any doc whose banner says it defines the vocabulary (L9; this doc included).
-On day one it reads ~25 (all of D3's lines); it falls as each line is CONVERTED — rewritten into the
-token with the old sentence gone, or the old sentence deleted because the correction is itself
-current — and whether a given line was accretion or an in-place rewrite is the HAND's call at
-conversion, not the grep's. The trailer's `accretion=` must not rise.
+any `[corr ...]` whose `was` clause exceeds 120 characters. **Its SCOPE (corrected by round 2, Q1):**
+`CLAUDE.md`, `MEMORY.md`, and the lines under UNDATED headings of undated non-archive docs — a line
+under a heading that carries a date is a dated log section, stamped and kept, and is not counted.
+EXCLUDED: `memory/lesson_*` and `feedback_*` files (their subject is wrongness — a new lesson row
+that says "was wrong" must never move the count), `docs/LESSONS.md`, `_archive/`, dated filenames,
+and any doc carrying the marker `<!-- corr-vocabulary: quoted -->` (the two skill arcs and the
+README's legend, which quote the vocabulary — L9). `[V]` "reads ~25" was `CLAUDE.md` alone: the
+scope as first written held 367 vocabulary lines in 96 living docs (117 under dated headings, 250
+under undated) plus 216 in lesson files; under the corrected scope today's count is about 275, and
+**the number the doc carries is the one the script's first run PRINTS, never a prose estimate.** It
+falls as each line is CONVERTED — rewritten into the token with the old sentence gone, or the old
+sentence deleted because the correction is itself current — and whether a given line was accretion
+or an in-place rewrite is the HAND's call at conversion, not the grep's. The trailer's `accretion=`
+must not rise; a new sentence in scope that says "X was wrong" without the token raises it, and
+that refusal is the rule working.
 
 **Mechanism.** The compliant form is a token and the debt form is its absence, so the count means
 one thing once the token exists; the WHY has a destination, so replacing loses nothing.
@@ -499,6 +534,17 @@ Ledger pass 1 (`design`), this session's scratchpad. Every reply gated by `verif
 | 1 | Q2 | cross-answer-contradiction | which measurement showed the compliant `CORRECTED <date>` and the accretion `CORRECTED <date>` grep-distinct | none; of D3's five sites only 2 hit the first draft's legacy list | WP-2: count every correction-vocabulary line not in `[corr]` form; the hand decides at conversion |
 | 1 | Q3 | invariant-not-site-list | what `kind` the census prints for the 101 unbannered docs incl. the three maps, and what invariant decides rewritability | measured: 101 of 136; by dated filename 37 / 99; the six stale-open files split 4 / 2 correctly | WP-1(b)/WP-2: kind = dated filename or `_archive/` → point-in-time, else LIVING |
 | 1 | Q4 | prior-art | can WP-4's checks C/D run in CI when the gate's corpus is absent there | no: `lessons_gate.py:55-59`, `.github/` sets no corpus, the gate prints UNVERIFIABLE (`:329`) | WP-4: C/D local, results as trailer columns; CI claims A/A2/B only |
+
+| 2 | Q1 | cross-answer-contradiction | on which scope was "reads ~25" measured, and what does the ratchet read on a close whose new lesson row says "was wrong" | measured: `CLAUDE.md` alone; the scope as written held 367 lines in 96 docs (117 under dated headings) + 216 in lesson files | WP-2: scope = `CLAUDE.md` + `MEMORY.md` + undated-heading lines of undated docs; lesson files, the ledger, dated files and marker-carrying docs excluded; the day-one number is what the script prints |
+| 2 | Q2 | measure-dont-infer | what row count a REAL diff's radius produces when hunk-header symbols are generic | measured on `fff4032b`: 148 docs uncut, 6 with a ≤5-docs specificity cut; basenames like `harness` cite 117 | WP-1(a): specific symbols only, basenames as path citations, generic ones printed as dropped, the radius size printed every run |
+| 2 | Q3 | prior-art | which mechanism puts the trailer into the commit and refuses a close — a hook, the script, or the agent pasting the script's output | measured: no hook, no `hooksPath`, no CI step reads `git log`, `Docs-Census` in no commit | WP-1(c): the script performs the close commit with the trailer via `interpret-trailers`; a CI gate over commit bodies checks presence and non-increase |
+| 2 | Q4 | source-consistency | which files "dated filename → never rewritten" misclassifies, and was the ACTION checked beyond six files | measured: 105 `-RE-` (durable), 147 other dated, 232 `memory/project_*` (Step 3: update) — 484 files; only 69 `-DESIGN-` are never rewritten | WP-1(b): a five-row kind→action table keyed on path pattern, with the user's per-claim refresh/refute rule |
+
+Two consecutive rounds of reactive growth, so the defect is re-derived in mechanism terms before
+round 3: *a mandate nothing observes is satisfied by assertion; every fix must therefore be a
+computed set or a recorded number, produced and read by a machine — which is why the trailer must
+be written by the script and read by CI, or the fix is prose too.* Every round-2 change serves that
+one sentence; none replaces a round-1 mechanism.
 
 Round 1 also found a tooling defect in the ledger on first use: a command anchor that also contains
 a `path:line` was classed by the path and never re-run, and command anchors ran under `cmd.exe`
