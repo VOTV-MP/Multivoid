@@ -18,6 +18,7 @@ import argparse
 import json
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -166,15 +167,19 @@ class Ledger:
 
     @staticmethod
     def anchor_kind(anchor: str) -> str:
+        """A COMMAND anchor wins when the anchor BEGINS with an allowlisted binary, even if a
+        path:line appears later in it (first real use, 2026-09-02: `find ... | wc -l = 101; ...
+        SKILL.md:100` was classed by the path and its count never re-run). Otherwise a path:line
+        anywhere makes it a location anchor; anything else is a quote."""
         a = (anchor or "").strip()
-        if _LOC.search(a):
-            return "loc"
         try:
             argv = shlex.split(a.split("=")[0].split("->")[0])
         except ValueError:
             argv = []
         if argv and argv[0] in ANCHOR_CMDS:
             return "cmd"
+        if _LOC.search(a):
+            return "loc"
         return "quote" if a else "none"
 
     def verify_anchors(self, reply: dict) -> list[dict]:
@@ -196,15 +201,23 @@ class Ledger:
                     rec.update(verified=line <= total,
                                detail=f"line {line} of {total}" if line <= total else f"line {line} > {total} lines")
             elif kind == "cmd":
-                cmd = anchor.split("=")[0].split("->")[0].strip()
+                # `<command> = N; <more prose>`: the command is everything before the FIRST `=`,
+                # the claim is the digits right after it (a claim later in the anchor is prose).
+                m = re.match(r"^(.*?)=\s*(\d+)", anchor.strip())
+                cmd = (m.group(1) if m else anchor.split("->")[0]).strip()
+                claimed = m.group(2) if m else None
+                bash = shutil.which("bash")   # Git Bash on Windows: pipes, xargs, grep -L need it
+                argv = [bash, "-lc", cmd] if bash else cmd
                 try:
-                    r = subprocess.run(cmd, shell=True, cwd=ROOT, capture_output=True, text=True, timeout=30)
+                    r = subprocess.run(argv, shell=not bash, cwd=ROOT, capture_output=True, text=True, timeout=60)
                     first = (r.stdout.strip().splitlines() or [""])[0][:120]
-                    claimed = re.search(r"=\s*(\d+)\s*$", anchor.strip())
-                    if claimed and first.strip().isdigit():
-                        same = int(first.strip()) == int(claimed.group(1))
-                        rec.update(verified=same, detail=f"claimed {claimed.group(1)}, got {first.strip()}"
+                    if claimed is not None:
+                        got = first.strip()
+                        same = got.isdigit() and int(got) == int(claimed)
+                        rec.update(verified=same, detail=f"claimed {claimed}, got {got or '<no output>'}"
                                    + ("" if same else " -- the anchor's number does not reproduce"))
+                    elif r.returncode not in (0, 1) and not first:
+                        rec.update(verified=False, detail=f"exit {r.returncode}, no output: {r.stderr.strip()[:100]!r}")
                     else:
                         rec.update(verified=True, detail=f"exit {r.returncode}; first line: {first!r}")
                 except (OSError, subprocess.TimeoutExpired) as e:

@@ -212,21 +212,39 @@ hashes in the range. A docs-only diff has radius (i) only and prints `radius: do
 **the amortised sweep** — the K docs (default 10) whose last census is oldest, by a `sweep-cursor`
 carried in the trailer, so EVERY doc in `docs/`, `research/findings/` and `memory/` reaches a verdict
 within N runs without any run reading the tree (`--sweep` = the full pass, on the user's request).
-**Label grammar (M-1):** a LABEL is a bracket tag (`[?]`, `[V]`, `[A]`, `[RD]`, `[SUPERSEDED ...]`), a
-bold or capitalised status token at line or table-cell start (`**OPEN**`, `| OPEN |`, `DESIGN`,
-`AS-BUILT`, `PENDING`, `NOT BUILT`), a `Status:` field, or a checkbox; case-sensitive; the skill's
-loose regex survives only under `--loose`. **Per row it prints:** `file:line | kind (LIVING /
-POINT-IN-TIME / ARCHIVE, from the filename convention and the banner) | label | every backticked
-token on the line with its own resolve state (exists / moved / gone / drifted-content) | date on the
-line, if any | running-total? (a count pattern)`. The subordinate-fact column is the mechanical
-half: a `path:line` beyond `wc -l`, a symbol with zero hits, a hash `git cat-file -e` cannot find,
-a `N of M` — the class §2.3 found rotting under true labels.
+**Label grammar (M-1, corrected by the `/qf` pass round 1 — §8 pass 3):** a LABEL is a STATUS
+tag or token — `[?]`, `[SUPERSEDED ...]`, a bold or capitalised status word at line or table-cell
+start (`**OPEN**`, `| OPEN |`, `DESIGN`, `AS-BUILT`, `PENDING`, `NOT BUILT`, `DONE`), a `Status:`
+field, a checkbox, **or a heading carrying `Open questions` / `OPEN` / `TODO` / `NEXT` / `Pending`**
+(§2.3 #9, #12 were headings); case-sensitive; the skill's loose regex survives only under
+`--loose`. **`[V]`, `[A]`, `[RD]` are PROVENANCE tags, not status, and are NOT labels** — `[V]`
+`docs/LESSONS.md` alone carries 184 of them and is in the radius of 181 of 283 close commits, so
+counting them would flood every run with rows the ledger gate already owns. **A SUB-STATE column
+is mandatory:** the parenthetical or trailing clause on the label line AND the next line, matching
+`pending|uncommitted|not yet|hands-on|TODO|commit pending` — `[V]` in §2.3 both label rows the
+first grammar would have produced (#1 `**Status:** ... IMPLEMENTED` and #20 `**A2 — DONE**`) rotted
+in exactly that clause (`(uncommitted; ... hands-on-pending)`, `(commit pending)`), outside the label
+and outside every other column. **Per row it prints:** `file:line | kind | label | sub-state | every
+backticked token on the line with its own resolve state (exists / moved / gone / drifted-content) |
+date on the line, if any | running-total? (a count pattern)`. The subordinate-fact column is the
+mechanical half: a `path:line` beyond `wc -l`, a symbol with zero hits, a hash `git cat-file -e`
+cannot find, a `N of M` — the class §2.3 found rotting under true labels. **The drill asserts RECALL
+and PRECISION on a FIXTURE of real lines, not a synthetic RED alone** (the ledger: *"an instrument's
+self-test must assert precision as well as recall"*): the six stale-open lines and the eight
+vocabulary false positives of §2.3 are the fixture; the grammar as first drafted scored 2 of 6 on
+recall and 0 of 2 on the sub-state, which is the number the drill exists to keep from regressing.
 
 **Change (b) — the hand check, bounded.** Step 0.5 is rewritten: the verdict column is filled BY
 HAND for the census's rows — tens, not thousands — with the skill's existing spelling `STILL OPEN` /
 `ACTUALLY DONE` / `PARTIAL` plus `STALE DONE` (false optimism), and an action per verdict bounded by
 the row's `kind`: a LIVING doc is rewritten (WP-2), a POINT-IN-TIME doc is stamped and never
-rewritten (`docs/README.md`'s convention), an ARCHIVE row is left. `STALE DONE` = downgrade the tag,
+rewritten (`docs/README.md`'s convention), an ARCHIVE row is left. **`kind` is decided by an
+INVARIANT, not by a banner list (§8 pass 3, Q3):** a doc is POINT-IN-TIME iff its filename carries a
+date (`-20YY-MM-DD`) or its path is under `_archive/`; every other doc is LIVING — including the
+three cross-cutting maps, which carry no banner and which the skill orders to *"keep current"*.
+`[V]` the banner census would have classed 101 of 136 non-archive docs as neither; by filename 37
+are dated and 99 undated, and the six stale-open lines of §2.3 split 4 undated (rewrite) / 2 dated
+(stamp) — the right action in every case. `STALE DONE` = downgrade the tag,
 date it, cite the evidence, stamp. Step 1's *"read each doc"* and Step 0.5(5)'s per-row lesson grep
 are rewritten to the census's rows too (H-3) — one regime, not two — and the frontmatter
 description drops *"Update ALL project docs"* (L-2). The Step 5 ledger IS the census output with the
@@ -281,8 +299,19 @@ date, never PASS-silent. Step 3.5's "diff the two sets" becomes `lessons_gate.py
 
 **Cost.** ~80 lines in an existing file; no new mandate.
 
-**Acceptance.** The gate stays green in CI with the three checks on; the pairing list is empty or
-each entry is a named exception in `lessons_gate_allow.txt`.
+**Where each check can run (corrected by the `/qf` pass round 1 — §8 pass 3, Q4).** `[V]` the gate
+finds the memory corpus only at the hardcoded `~/.claude/projects/<slug>/memory` or
+`$MULTIVOID_MEMORY_DIR` (`lessons_gate.py:55-59`), `.github/` sets neither, and the gate already
+prints *"UNVERIFIABLE here -- absent search root(s)"* (`:329`) and *"CHECK SKIPPED -- corpus absent"*
+(`:332`) in that case. So checks C and D can run ONLY at the local close; in CI they print
+UNVERIFIABLE, never green. Their results therefore go where the other local numbers go — the
+`Docs-Census:` trailer gains `wikilinks-dead=`, `pairing-unref=`, `pairing-dead=` — and the history
+of those three columns is how the pairing is observed outside the run that owes it.
+
+**Acceptance.** A/A2/B green in CI as today; C/D/E printed UNVERIFIABLE in CI (not SKIPPED-as-green);
+at every local close the three pairing columns are in the trailer, and `pairing-unref` / `pairing-dead`
+/ `wikilinks-dead` are non-increasing across consecutive trailers, each remaining entry a named
+exception in `lessons_gate_allow.txt`.
 
 ### WP-2 — Corrections in living docs replace, with one machine-distinct stamp (ships on the green light)
 
@@ -296,19 +325,28 @@ where the stamp is right (H-5).
 **Change.** ONE vocabulary: the supersede stamp IS the correction line, in a machine-distinct form —
 `[corr YYYY-MM-DD: was <≤120 chars>; measured <...>; <cite>]` — on the same line as the rewritten
 claim. Two section kinds inside a living doc: a HEADLINE / current-state section is REWRITTEN and
-stamped; a DATED log section (`§N (date)`) is STAMPED and kept. LIVING = the D12 banner census +
-`CLAUDE.md` + `MEMORY.md` + `*_ARC.md`; `-DESIGN-` and `_archive/` never. The WHY of a correction —
-the lesson — goes to a `LESSONS.md` row / memory file through the Step 3.5 pairing, and the stamp
-links it (`[[slug]]`), so RULE 2 deletes no evidence. **The detector** is a column of WP-1's script
-(`accretion=`): it counts the LEGACY phrasings (`is FALSE`, `was wrong`, `stood here`, `said the
-opposite`, `the previous line here`, `no longer says`) and any `[corr ...]` whose `was` clause exceeds
-120 characters (a sentence kept, not a note) — excluding `LESSONS.md`, `_archive/`, and any doc whose
-banner says it defines the vocabulary (L9; this doc included); `no longer` alone is ordinary English
-(`"A2 IS NO LONGER OPEN"` is a status) and is not counted. The five existing sites are the first
-debt; the trailer's `accretion=` must not rise, and it falls as they are paid.
+stamped; a DATED log section (`§N (date)`) is STAMPED and kept. LIVING is the WP-1 invariant (an
+undated filename outside `_archive/`), which covers `CLAUDE.md`, `MEMORY.md`, every `*_ARC.md` and
+the maps; a dated filename is point-in-time and is only ever stamped. The WHY of a correction — the
+lesson — goes to a `LESSONS.md` row / memory file through the Step 3.5 pairing, and the stamp links
+it (`[[slug]]`), so RULE 2 deletes no evidence. **The detector (corrected by the `/qf` pass round 1
+— §8 pass 3, Q2):** `[V]` no measurement ever showed a compliant "CORRECTED <date>" rewrite and an
+accretion "CORRECTED <date>" beside a standing claim to be grep-distinct today, because they are
+the same string; of the five accretion sites D3 named, only two carry a phrase on the first draft's
+"legacy" list and the other three carry `NO LONGER` / `CORRECTED`, the vocabulary that list
+excluded — so `accretion=` would have read 2 and paying three of the five would have moved it by
+nothing. The distinction is STRUCTURAL, and it exists only after the token does: the column counts
+**every line carrying correction vocabulary** (`corrected`, `superseded`, `is false`, `was wrong`,
+`stood here`, `said the opposite`, `no longer`) **that is not in `[corr YYYY-MM-DD: ...]` form**, plus
+any `[corr ...]` whose `was` clause exceeds 120 characters — excluding `LESSONS.md`, `_archive/`,
+dated filenames, and any doc whose banner says it defines the vocabulary (L9; this doc included).
+On day one it reads ~25 (all of D3's lines); it falls as each line is CONVERTED — rewritten into the
+token with the old sentence gone, or the old sentence deleted because the correction is itself
+current — and whether a given line was accretion or an in-place rewrite is the HAND's call at
+conversion, not the grep's. The trailer's `accretion=` must not rise.
 
-**Mechanism.** The compliant form and the debt form are grep-distinct, so the count means one thing;
-the WHY has a destination, so replacing loses nothing.
+**Mechanism.** The compliant form is a token and the debt form is its absence, so the count means
+one thing once the token exists; the WHY has a destination, so replacing loses nothing.
 
 **Acceptance.** `accretion=` in consecutive trailers is non-increasing; zero legacy phrasings in
 the diff of any close commit.
@@ -449,6 +487,26 @@ caught a defect in the doc's own method, and they are kept in the text on purpos
 | M-7 | A refusal on the user's file was never asked | FOLDED — §5.2 |
 | L-1 | Slug placeholder; the docs-arc note is cited by name in five tracked files after a de-link; `.gitignore` range | FOLDED — placeholder; "the docs-arc note"; header string |
 | L-2 | "every run's report" (it was 53 %); "nothing shortens it" (the index IS compacted); the frontmatter description | FOLDED |
+
+### Pass 3 — the `/qf` design pass under the revised skill (the first pass on the new ledger)
+
+Ledger pass 1 (`design`), this session's scratchpad. Every reply gated by `verify_proof.py` and
+`ledger.py append`; every question's status set by the primary with its own citation.
+
+| Round | id | Angle | Question (abridged) | Answer | Design change |
+|---|---|---|---|---|---|
+| 1 | Q1 | framing-provenance | the label grammar's measured recall on §2.3's rot, and its per-run row count on docs every close touches | measured: 2 of 6 stale-open lines caught, 0 of 2 sub-states; `LESSONS.md` has 184 `[V]/[A]/[RD]/[?]` lines and is in 181 of 283 close commits | WP-1: sub-state column; headings as labels; provenance tags are not labels; the drill's fixture is §2.3's real lines |
+| 1 | Q2 | cross-answer-contradiction | which measurement showed the compliant `CORRECTED <date>` and the accretion `CORRECTED <date>` grep-distinct | none; of D3's five sites only 2 hit the first draft's legacy list | WP-2: count every correction-vocabulary line not in `[corr]` form; the hand decides at conversion |
+| 1 | Q3 | invariant-not-site-list | what `kind` the census prints for the 101 unbannered docs incl. the three maps, and what invariant decides rewritability | measured: 101 of 136; by dated filename 37 / 99; the six stale-open files split 4 / 2 correctly | WP-1(b)/WP-2: kind = dated filename or `_archive/` → point-in-time, else LIVING |
+| 1 | Q4 | prior-art | can WP-4's checks C/D run in CI when the gate's corpus is absent there | no: `lessons_gate.py:55-59`, `.github/` sets no corpus, the gate prints UNVERIFIABLE (`:329`) | WP-4: C/D local, results as trailer columns; CI claims A/A2/B only |
+
+Round 1 also found a tooling defect in the ledger on first use: a command anchor that also contains
+a `path:line` was classed by the path and never re-run, and command anchors ran under `cmd.exe`
+rather than Git Bash (a pipeline with `xargs` exited 255 and was recorded as verified). Both fixed
+before round 2 (`ledger.py`: command-first classification; `bash -lc` runner; the FIRST `= N` is the
+claim; a non-zero exit with no output is a failure). The verified anchors: Q1 `docs/AUTHORITATIVE_
+INTERACTABLE_MIGRATION.md:3`, Q2 `CLAUDE.md:724`, Q3 the `find ... | wc -l = 101` pipeline re-run,
+Q4 `tools/docs/lessons_gate.py:57`.
 
 ### Staleness measurement — the agent's own summary
 
