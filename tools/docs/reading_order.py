@@ -85,20 +85,33 @@ def norm(t):
 
 
 def clauses(body):
-    """The entry's distinctive units -> [(clause, needle, source line)].
+    """The entry's distinctive units -> [(clause, needle, source line, exempt)].
 
     A clause is a sentence-ish run of >= 8 words; its NEEDLE is the normalized first 40 characters,
     specific enough that a match is the same claim and short enough to survive the destination
-    rewording the tail. The SOURCE LINE travels with it because the `USER`+quotation exemption is a
-    property of the line, not of the fragment: `[V]` 2026-09-03 the sentence splitter cuts
-    `USER, verbatim: "…"` at the colon, so testing the fragment left the exemption protecting ZERO
-    lines -- a guard that was on the page and off in the code."""
+    rewording the tail.
+
+    EXEMPT is computed HERE, once, so every consumer gets the same answer -- the earlier version left
+    each caller to re-derive it and only one ever did (see `moved_and_cut`). Two corrections are baked
+    in, both measured 2026-09-03: the test is on the SOURCE LINE, not the fragment, because the
+    sentence splitter cuts `USER, verbatim: "…"` at its colon and testing the fragment left the
+    exemption protecting ZERO lines; and the window includes the NEXT line, because in 3 of the
+    reading order's entries (`4a-syncer`, `4e-imgui`, `4e-browser`) the word USER is on one line and
+    the quotation it introduces is on the following one."""
     out = []
-    for line in body:
+    for i, line in enumerate(body):
+        nxt = body[i + 1] if i + 1 < len(body) else ""
+        prv = body[i - 1] if i else ""
+        # The window reaches BOTH ways, and the second half is not symmetry for its own sake: when the
+        # quotation wraps, the clause that carries the user's actual WORDS is on the second line and
+        # has no `USER` on it, so a forward-only window exempts the introduction and leaves the quote
+        # itself unprotected -- which is the wrong half to lose.
+        exempt = (("USER" in line and bool(QUOTED.search(line) or QUOTED.search(nxt)))
+                  or (bool(QUOTED.search(line)) and "USER" in prv))
         for raw in re.split(r"(?<=[.;:])\s+", line):
             n = norm(raw)
             if len(n.split()) >= 8:
-                out.append((raw.strip(), n[:40], line))
+                out.append((raw.strip(), n[:40], line, exempt))
     return out
 
 
@@ -112,8 +125,8 @@ def coverage(repo, tag=None):
         blob = norm(NL.join(read_text(os.path.join(repo, d)) or "" for d in dests))
         cl = clauses(body)
         detail, covered, exempt = [], 0, 0
-        for raw, needle, src in cl:
-            if "USER" in src and QUOTED.search(src):
+        for raw, needle, src, is_exempt in cl:
+            if is_exempt:
                 exempt += 1
                 detail.append((raw, needle, "exempt"))
                 continue
@@ -141,15 +154,30 @@ def moved_and_cut(repo, prev_text, now_text, extra_paths=()):
 
       moved  the clause's needle is now findable in some doc under the repo -> it relocated
       cut    it is nowhere -> a claim was destroyed. Printed in full, never silently counted.
+      lost   it was EXEMPT and it left anyway -> a record of what the user said, gone.
+
+    The third bucket is the one this function shipped without. The module's own header said a
+    `USER`+quotation clause is "never moved and never cut", and the only consumer of that rule was
+    `coverage()` -- which the close never calls, so at the one moment the rule could have been
+    enforced nothing consulted it (DIFF pass, round 1 Q4). The exemption is not advice about what to
+    trim; it is a class of line the reading order may not lose, so its departure is reported apart
+    from both ordinary buckets and never counted as a successful move.
     """
-    before = {n: raw for raw, n, _ in clauses(section_of(prev_text))}
-    after = {n for _, n, _ in clauses(section_of(now_text))}
-    gone = [(n, before[n]) for n in before if n not in after]
-    if not gone:
-        return [], []
+    before = {n: (raw, ex) for raw, n, _, ex in clauses(section_of(prev_text))}
+    after = {n for _, n, _, _ in clauses(section_of(now_text))}
+    gone = [(n, before[n][0]) for n in before if n not in after]
+    lost = [(n, raw) for n, raw in gone if before[n][1]]
+    gone = [(n, raw) for n, raw in gone if not before[n][1]]
+    if not gone and not lost:
+        return [], [], []
     blob = []
     for dirpath, dirnames, files in os.walk(repo):
-        dirnames[:] = [d for d in dirnames if d not in (".git", "node_modules", "build", "target")]
+        # `_archive/` is NOT a destination. Archiving is retirement -- RULE 2's "retired info goes,
+        # fully" -- so a clause that can only be found there was taken out of service, which is much
+        # closer to a CUT than to a move, and counting it as MOVED would let the reading order be
+        # emptied into the archive while the number said the facts had relocated.
+        dirnames[:] = [d for d in dirnames
+                       if d not in (".git", "node_modules", "build", "target", "_archive")]
         for f in files:
             if f.endswith(".md"):
                 blob.append(norm(read_text(os.path.join(dirpath, f)) or ""))
@@ -158,7 +186,7 @@ def moved_and_cut(repo, prev_text, now_text, extra_paths=()):
     hay = NL.join(blob)
     moved = [(n, raw) for n, raw in gone if n in hay]
     cut = [(n, raw) for n, raw in gone if n not in hay]
-    return moved, cut
+    return moved, cut, lost
 
 
 def main(argv=None):

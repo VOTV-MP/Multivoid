@@ -119,7 +119,15 @@ def judge(repo, workflow, report=False):
                 short, ", ".join(undeclared)))
         try:
             rows = int(trailer.get("rows", "x"))
-            parts = [int(trailer.get(c, "x")) for c in VERDICT_COLS]
+            # A verdict column ABSENT from a trailer counts as ZERO, for the same reason an absent
+            # ratchet column is not a failure below: the close predates the column. A seventh verdict
+            # token was added on 2026-09-03 and the two closes already on record cannot carry it --
+            # failing them would make the push that adds a token red by construction, which is the
+            # shape docs/LESSONS.md names ("a gate left red on purpose carries no signal"). The
+            # identity still binds: those closes distributed every row among the tokens they had.
+            parts = [int(trailer[c]) for c in VERDICT_COLS if c in trailer]
+            if not any(c in trailer for c in VERDICT_COLS):
+                raise ValueError("no verdict column at all")
         except ValueError:
             fails.append("{} trailer lacks rows or a verdict column: {}".format(short, sorted(trailer)))
             rows, parts = -1, []

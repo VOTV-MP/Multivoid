@@ -165,14 +165,30 @@ def resolved_counts(env):
     return len(recs), sum(1 for r in recs if r.get("verdict") in FLIP_VERDICTS)
 
 
-def retired_verdicts(prev_rows, rows, radius, utc, base):
+def retired_verdicts(prev_rows, rows, radius, utc, base, whole_hashes=None):
     """Prior verdicts that do NOT carry into this census -> ledger records.
 
-    The discriminator is the RADIUS, and it has to be: a prior row whose doc is not being scanned
-    this time simply left the frame -- nothing was acted on, and recording it would inflate the
-    ledger with every change of sweep queue. Within the radius the base is fixed for the session, so
-    a touched doc's diff only GROWS; a prior row absent from the new scan is a line that was edited
-    or deleted. That is the action the verdict ordered."""
+    The RADIUS decides whether the question can be asked at all: a prior row whose doc is not being
+    scanned this time simply left the frame -- nothing was acted on, and recording it would inflate
+    the ledger with every change of sweep queue.
+
+    THE DOC ITSELF decides the answer, and the first version got this wrong by asking the wrong
+    witness. It compared against THIS census's row set, which is not the same view of the file: a doc
+    is read WHOLE by the sweep and DIFF-SCOPED when the session touched it. `[V]` 2026-09-03,
+    reproduced in a scratch repo -- census 1 sweeps a doc whole, its three rows are verdicted, an edit
+    adds ONE line, and the re-census reads the now-touched doc diff-scoped, so all three whole-scan
+    rows vanish while the doc is still in the radius: "resolved: 3 verdict(s) retired", none of them
+    acted on. The original argued that a touched doc's diff only GROWS, which is true and beside the
+    point: it holds only when the PRIOR rows also came from the diff.
+
+    Suppressing every scope change would also suppress the GENUINE case, which has the same shape.
+    So the row is asked of the FILE: `whole_hashes(key)` returns every row hash the doc yields when
+    read whole, at any scope. Present means the line is still there untouched; absent means it was
+    edited or deleted, which is the action the verdict ordered.
+
+    This number feeds `flips=`, the INPUT to D8's falsifier -- and a false positive there biases the
+    measurement toward KEEPING the hand phase, the direction that lets a useless step survive its own
+    test."""
     live = {(r["key"], r["hash"][:12]) for r in rows}
     out = []
     for r in prev_rows:
@@ -181,6 +197,10 @@ def retired_verdicts(prev_rows, rows, radius, utc, base):
         ident = (r["key"], r["hash"][:12])
         if ident in live or r["key"] not in radius:
             continue
+        if whole_hashes is not None:
+            hs = whole_hashes(r["key"])
+            if hs is not None and r["hash"][:12] in hs:
+                continue                   # the line is still in the file, untouched
         out.append({"utc": utc, "base": base[:12], "key": r["key"], "line": r["line"],
                     "hash": r["hash"][:12], "kind": r["kind"], "lane": r.get("lane", ""),
                     "label": r["label"], "substate": " ".join(r.get("substate") or []),

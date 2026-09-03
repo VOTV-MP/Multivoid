@@ -1160,10 +1160,60 @@ The `USER`+`verbatim` exemption was **stated and not enforced**: the sentence sp
 `USER` and the guard protected ZERO lines. It is evaluated per SOURCE LINE now, and protects 8 in the
 top twenty entries.
 
+### 10.6 The DIFF pass (phase 4) — nine defects in the code that had just shipped
+
+The pass the user approved after the build (*"Ok go with the recommendation"*). Round 1 of the critic
+plus a parallel self-read found **nine defects in a diff that was one hour old and had passed every
+drill**. Five were mine, found while the critic read; four were the critic's, and none overlapped.
+
+**The two that were live gates doing nothing:**
+
+- **`memref-dead` was a hardcoded 0.** The commit that shipped it described a ratchet at target 0; the
+  compute block had silently failed to apply (a `t.replace()` whose anchor did not match, with the
+  replacement count never checked). `dead_refs()` saw 3 dead pointers while `ratchet_values()`
+  reported 0. **The drill passed it** because it asserted `== 0` in the GREEN state, which a
+  never-computed field satisfies by construction — the arm exercised the detector and never the
+  wiring. Drill arm H now asserts every declared trailer column has a producer, and was shown RED
+  against this exact defect.
+- **`running-totals` had been declared in the trailer schema since it was written and produced by
+  nothing, ever.** No close has emitted it in its life. The schema's `REPORTED` kind says "printed and
+  never enforced", which describes a column nothing READS — it has no word for one nothing WRITES.
+
+**The two that corrupted the numbers the arc is measured by:**
+
+- **`retired_verdicts` recorded verdicts nothing had acted on.** Reproduced: census 1 sweeps a doc
+  WHOLE and its rows are verdicted; an edit adds one line; the re-census reads the now-touched doc
+  DIFF-SCOPED, so every whole-scan row vanishes while the doc is still in the radius — "resolved: 3
+  verdict(s) retired", none of them touched. It inflates `flips=`, **the input to D8's falsifier**, in
+  the direction that keeps the hand phase alive on false evidence. The first fix (suppress every scope
+  change) would have suppressed the genuine case too, which has the same shape; the right one asks the
+  FILE — `whole_hashes(key)` — instead of asking this census's row set.
+- **A `drift` row had no token but `NOT A LABEL`.** The skill said so in writing, and
+  `docs_census_gate` declares `not-a-label=` to be the LABEL GRAMMAR's measured precision, so 31
+  corpus-wide drift rows would have flowed into another instrument's error rate. A seventh token,
+  `DRIFT OK`, now carries the symbol rung's own false-positive rate, refused in both directions.
+
+**Three more, smaller:** `memref-dead` never looked at `[[wikilinks]]`, the dominant pointer form in
+the files it guards (68 in MEMORY.md, 15 in CLAUDE.md; all resolve today, so the column read 0 by luck
+rather than by construction); the `USER`+verbatim exemption existed only in `coverage()`, which the
+close never calls, so at the one moment it could bind, nothing consulted it — and its window missed
+the 3 entries where the quotation wraps to the next line, including the half that carries the user's
+actual words; and `moved_and_cut` counted a clause relocated into `_archive/` as MOVED, when archiving
+is retirement.
+
+**One answered without a code change:** `accretion` is a ratchet a MOVE can satisfy — relocating the
+271 lines took it 275 → 274 because the single hit inside them left the living scope. Honest here (that
+text was always a dated build log), but nothing in the number distinguishes relocation from folding, so
+`accretion_count`'s docstring now states the scope rule and says a falling close should say which it did.
+
+**The method note worth keeping:** the critic's four and my five did not overlap at all. Reading my own
+diff for defect CLASSES — a declared column with no producer, a drill arm whose green state a broken
+field satisfies — found what a critic reading the same diff did not, and vice versa.
+
 **NOT BUILT, in order:** D11 symbol-first corpus repair (the 31 drift rows are now surfaced, but
 nothing proposes their fix in bulk); the remaining ~37 KB of reading-order MOVES, now instrumented but
-not done. WP-E (convenience, §10.5) owes its own `/qf`. A DIFF pass on the shipped diff is owed before
-handoff.
+not done. WP-E (convenience, §10.5) owes its own `/qf`. The DIFF pass continues — round 1 did not
+converge.
 
 **D8 — the falsifier standing behind "keep the hand phase":** over the first **300 ageing-lane rows**
 (NOT closes — 251 retired-form closes peaked at 14 in ONE day, so a close is not a unit of evidence),

@@ -29,7 +29,8 @@ column present in a trailer carries a declared kind, so an undeclared column can
 """
 
 IDENTITY = ("base", "census", "research-base")
-VERDICT = ("still-open", "actually-done", "stale-done", "partial", "still-true", "not-a-label")
+VERDICT = ("still-open", "actually-done", "stale-done", "partial", "still-true", "not-a-label",
+           "drift-ok")
 RATCHETED = ("ro-bytes", "ro-longest", "mem-over200", "memref-dead", "wikilinks-dead",
              "pairing-unref", "pairing-dead", "accretion")
 MONOTONE = ("resolved", "flips")

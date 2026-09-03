@@ -106,16 +106,26 @@ def dead_refs(env, rs=None):
     next-session dead end, and nothing gated them -- `lessons_gate` fixes its LEDGER to
     `docs/LESSONS.md` and never looks at either."""
     import glob as _glob
+    import lessons_gate as _LG
     rs = rs if rs is not None else SC.read_set(env)
     out = []
     mem = read_text(os.path.join(env.memory, "MEMORY.md")) or ""
+    cl = read_text(os.path.join(env.repo, "CLAUDE.md")) or ""
+    # `[[wikilink]]` is the DOMINANT pointer form in both index files -- 68 distinct in MEMORY.md and
+    # 15 in CLAUDE.md, measured 2026-09-03 -- and nothing looked at either: `check_wikilinks` is handed
+    # `docs/LESSONS.md` alone (status_census.ratchet_values), which is what `wikilinks-dead` ratchets.
+    # All 83 resolve today, so the column read 0 truthfully -- but by luck, not by construction: if one
+    # died tomorrow nothing would have moved (DIFF pass, round 1 Q2). A gate that cannot go non-zero
+    # for the commonest shape in the file it guards is not guarding that file.
+    for who, text in (("MEMORY.md", mem), ("CLAUDE.md", cl)):
+        for name in sorted(set(_LG.check_wikilinks(text, env.memory) or [])):
+            out.append((who, "wikilink", "[[{}]]".format(name)))
     for p in _MD_LINK.findall(mem):
         if not os.path.isfile(os.path.join(env.memory, os.path.basename(p))):
             out.append(("MEMORY.md", "link", p))
     for g in sorted(set(_MEM_GLOB.findall(mem))):
         if not _glob.glob(os.path.join(env.memory, g[len("memory/"):])):
             out.append(("MEMORY.md", "glob", g))
-    cl = read_text(os.path.join(env.repo, "CLAUDE.md")) or ""
     for p in sorted(set(_REPO_PATH.findall(cl))):
         if "..." in p:
             continue                       # `src/votv-coop/.../coop/` is prose, not a pointer

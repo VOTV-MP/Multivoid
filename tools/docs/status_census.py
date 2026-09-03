@@ -78,7 +78,17 @@ ROW_BUDGET = 40          # the SWEEP's own row budget: the hand check is paid pe
 # status verdicts have no value for "this line is not a claim" -- so without it a false positive must be
 # verdicted STILL TRUE, which launders noise into the counts and hides the grammar's precision. With it,
 # every close MEASURES that precision (`not-a-label=` in the trailer) instead of asserting it.
-VERDICTS = ("STILL OPEN", "ACTUALLY DONE", "STALE DONE", "PARTIAL", "STILL TRUE", "NOT A LABEL")
+VERDICTS = ("STILL OPEN", "ACTUALLY DONE", "STALE DONE", "PARTIAL", "STILL TRUE", "NOT A LABEL",
+            "DRIFT OK")
+# The SEVENTH token exists for the same reason the sixth does, one instrument down. A `drift`
+# row makes no status claim at all -- it says a cited SYMBOL now lives elsewhere in the cited
+# file -- so none of the five status verdicts fits it, and the skill first told the hand to use
+# NOT A LABEL. That put TWO instruments' false positives in ONE counter: `not-a-label=` is
+# declared in docs_census_gate as the LABEL GRAMMAR's measured precision, and 31 corpus-wide
+# drift rows would have flowed into it (DIFF pass, round 1 Q1). DRIFT OK is the symbol rung's
+# own false-positive rate, and it is REFUSED on any row that is not a drift row -- and the other
+# six are refused ON one, because a status verdict about a pointer is a category error.
+DRIFT_VERDICT = "DRIFT OK"
 CLOSE_PREFIX = "[docs] close:"
 TRAILER_KEY = "Docs-Census"
 RATCHET_COLS = TS.RATCHETED
@@ -290,6 +300,7 @@ def format_trailer(v):
 # ----------------------------------------------------------------------------- the ratchet + accretion
 def ratchet_values(env):
     vals = {"ro-bytes": 0, "ro-longest": 0, "mem-over200": 0, "memref-dead": 0,
+            "running-totals": 0,
             "wikilinks-dead": 0, "pairing-unref": 0, "pairing-dead": 0}
     ledger = read_text(os.path.join(env.repo, "docs", "LESSONS.md"))
     if ledger:
@@ -318,11 +329,38 @@ def ratchet_values(env):
     m = read_text(os.path.join(env.memory, "MEMORY.md"))
     if m:
         vals["mem-over200"] = sum(1 for l in m.split("\n") if len(l) > 200)
+    # A ledger row carrying a running total is a count that rots by construction (the ledger's own
+    # lesson). `lessons_gate` has WARNED on these since WP-4, and the trailer DECLARED the column --
+    # but nothing ever produced it, so no close has emitted `running-totals=` in its life. A column
+    # with no writer is not what the REPORTED kind ("printed and never enforced") describes; that
+    # phrase covers "nothing READS it". Found 2026-09-03 by censusing the schema against the code.
+    if ledger:
+        vals["running-totals"] = len(LG.check_running_totals(ledger))
+    # The pointers the two index files MAKE. `wikilinks-dead` already covers `[[name]]` in the ledger;
+    # this covers the rest of the reading order -- MEMORY.md's markdown links and its date GLOBS, and
+    # CLAUDE.md's backticked repo paths. Nothing gated either file before 2026-09-03, and six of
+    # MEMORY.md's eleven globs matched zero files.
+    import memory_index          # local: memory_index imports THIS module, so the dependency is
+                                 # one-way and there is no cycle to resolve
+    vals["memref-dead"] = len(memory_index.dead_refs(env))
     return vals
 
 
 def accretion_count(env, rs):
-    """Correction vocabulary NOT in the [corr YYYY-MM-DD: ...] form, in the living scope (WP-2)."""
+    """Correction vocabulary NOT in the [corr YYYY-MM-DD: ...] form, in the LIVING SCOPE (WP-2).
+
+    The scope, stated because the ratchet is only as meaningful as its denominator: `CLAUDE.md` and
+    `memory/MEMORY.md` are read WHOLE; any other `docs/*.md` is read only OUTSIDE its dated sections,
+    and a doc whose FILENAME is dated is skipped entirely, as is `_archive/` and `research/`. The rule
+    is that a dated record is allowed to carry old correction prose -- it is a record of what was
+    believed then -- while a living doc must fold the correction into the claim.
+
+    SO A MOVE CAN SATISFY THIS RATCHET, and that is worth knowing before reading a drop as work.
+    `[V]` 2026-09-03: relocating 271 lines out of CLAUDE.md into `docs/signals/HISTORY.md`, whose only
+    heading is dated, took `accretion` 275 -> 274 -- the one hit inside the moved text simply left the
+    scope (DIFF pass, round 1 Q3). Here the drop is honest, because that text was always a dated build
+    log and was in scope only by living inside CLAUDE.md. But nothing in the NUMBER distinguishes that
+    from folding a correction, so a close whose accretion falls should say which of the two it did."""
     n = 0
     for key, (owner, ap) in rs.items():
         if key in ACCRETION_EXCLUDE or "_archive/" in key or key.startswith("research/"):
@@ -771,7 +809,17 @@ def run_census(env, args):
         r["verdict"] = carried.get((r["key"], r["hash"][:12]), "")
     # A verdict that does NOT carry, on a doc still in the radius, is one whose line was acted on --
     # the fix the verdict ordered. Record it before it is lost (D0; see the resolved ledger above).
-    retired = retired_verdicts(prev_rows, rows, radius, utc_now(), base)
+    _whole_cache = {}
+
+    def whole_hashes(key):
+        """Every row hash the doc yields READ WHOLE -- the witness `retired_verdicts` asks, so a
+        prior verdict is retired on what the FILE says and not on which scope this census used."""
+        if key not in _whole_cache:
+            _whole_cache[key] = ({x["hash"][:12] for x in scan_doc(key, rs[key][1], resolver, loose=args.loose)}
+                                 if key in rs else None)
+        return _whole_cache[key]
+
+    retired = retired_verdicts(prev_rows, rows, radius, utc_now(), base, whole_hashes)
     resolved_append(env, retired)
     if retired:
         by_v = {}
@@ -821,6 +869,17 @@ def run_close(env, args):
     if bad:
         raise SystemExit("REFUSE: {} of {} rows carry no verdict token (first: #{} {}:{} -> '{}')".format(
             len(bad), len(rows), bad[0]["n"], bad[0]["key"], bad[0]["line"], bad[0]["verdict"]))
+    # The seventh token belongs to the drift rung and to nothing else, in BOTH directions. Without the
+    # second half a status verdict on a drift row would still be accepted, which is how the two
+    # instruments' false positives came to share `not-a-label=` in the first place.
+    mis = [r for r in rows if (r["verdict"] == DRIFT_VERDICT) != (r["kind"] == "drift")]
+    if mis:
+        r = mis[0]
+        raise SystemExit(
+            "REFUSE: #{} {}:{} is a '{}' row verdicted {} -- '{}' is for drift rows and only drift "
+            "rows, and a drift row takes no status verdict (it makes no status claim: fix the line "
+            "number, or answer it '{}' when the pairing was a coincidence)".format(
+                r["n"], r["key"], r["line"], r["kind"], r["verdict"], DRIFT_VERDICT, DRIFT_VERDICT))
     # On a LABEL row a dead pointer under a live status is the measured rot class (section 2.3 #5, #21,
     # #27). On a plain prose line (kind `cite`) STILL TRUE means "dead on purpose" -- a doc naming a
     # file that was retracted or moved away -- and only the hand can tell; it is recorded, not refused.
@@ -932,12 +991,18 @@ def run_close(env, args):
     prev_cl = baseline_text(env, "CLAUDE.md", "private", base, {})   # private: the history repo's HEAD
     if prev_cl is not None:
         now_cl = read_text(os.path.join(env.repo, "CLAUDE.md")) or ""
-        moved, cut = reading_order.moved_and_cut(env.repo, prev_cl, now_cl)
+        moved, cut, lost = reading_order.moved_and_cut(env.repo, prev_cl, now_cl)
         ro_moved = len(moved)
-        if moved or cut:
-            print("reading order: {} clause(s) moved to a destination, {} CUT".format(len(moved), len(cut)))
+        if moved or cut or lost:
+            print("reading order: {} clause(s) moved to a destination, {} CUT, {} EXEMPT-LOST"
+                  .format(len(moved), len(cut), len(lost)))
         for _, raw in cut[:12]:
             print("  CUT (found in no doc): " + raw[:140])
+        # An exempt line is a record of what the USER said. Losing one is not a shrink to be
+        # counted -- it is the one outcome this instrument exists to make impossible to do
+        # quietly, so it is printed WHOLE and never folded into `ro-moved`.
+        for _, raw in lost:
+            print("  LOST A USER RECORD (exempt, and it left anyway): " + raw[:200])
     # The cumulative ledger totals. The DELTA is this close's own correction count -- the number the
     # verdict columns cannot carry, because a corrected line is committed in its corrected form.
     n_res, n_flip = resolved_counts(env)
@@ -957,11 +1022,11 @@ def run_close(env, args):
             "resolved": n_res, "flips": n_flip, "ro-moved": ro_moved,
             "still-open": counts["STILL OPEN"], "actually-done": counts["ACTUALLY DONE"],
             "stale-done": counts["STALE DONE"], "partial": counts["PARTIAL"], "still-true": counts["STILL TRUE"],
-            "not-a-label": counts["NOT A LABEL"],
+            "not-a-label": counts["NOT A LABEL"], "drift-ok": counts[DRIFT_VERDICT],
             "cited-dead": meta.get("cited_dead", 0), "cite-drift": meta.get("cite_drift", 0),
             "accretion": rv["accretion"],
             "ro-bytes": rv["ro-bytes"], "ro-longest": rv["ro-longest"], "mem-over200": rv["mem-over200"],
-            "memref-dead": rv["memref-dead"],
+            "memref-dead": rv["memref-dead"], "running-totals": rv["running-totals"],
             "wikilinks-dead": rv["wikilinks-dead"], "pairing-unref": rv["pairing-unref"],
             "pairing-dead": rv["pairing-dead"], "sweep-cursor": cursor, "sweep-cycle": meta.get("cycle", 0), "new": len(new), "foreign": foreign}
     # 6. commit 3 first: the private history (snapshot + state + the verdict table) -> census=

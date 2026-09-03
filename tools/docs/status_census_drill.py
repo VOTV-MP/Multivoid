@@ -22,6 +22,8 @@ Three fixtures, each a class the design claims to hold (docs/DOCUMENTIZE_ARC.md 
   G  MOVE-THEN-CUT on the reading order, made checkable: a clause that LEFT and is findable
      somewhere moved; one findable nowhere was destroyed and is named. Plus the two readings of
      "coverage" -- clauses, not the symbols both texts happen to mention.
+  H  every DECLARED trailer column has a PRODUCER -- the check that would have caught a ratchet
+     hardcoded to 0 and a column no close has ever emitted, both of which read as a plausible 0.
   C  the CLOSE in a scratch environment (repo + memory dir + history dir): a neighbour's whole-file
      staged doc survives and is excluded; a missing verdict REFUSES; STILL TRUE on a dead citation
      REFUSES; the good close carries exactly the session's paths with the trailer; a second close
@@ -196,6 +198,13 @@ def drill_content_rung():
         check(len(rows) == 1 and rows[0]["kind"] == "drift",
               "...and it still reaches the hand: the line becomes a row of its own kind ({})".format(
                   [(r["kind"], r["line"]) for r in rows]))
+        # THE SEVENTH TOKEN. A drift row makes no status claim, so none of the five status verdicts
+        # fits it -- and the skill first told the hand to answer it NOT A LABEL, which would have put
+        # the symbol rung's false positives into the counter the gate declares to be the LABEL
+        # GRAMMAR's precision (DIFF pass, round 1 Q1; 31 corpus drift rows). The token is refused in
+        # BOTH directions, or the two instruments' errors merge again by default.
+        check(SC.DRIFT_VERDICT in SC.VERDICTS and SC.DRIFT_VERDICT == "DRIFT OK",
+              "the drift rung has its OWN token, so `not-a-label` stays the label grammar's rate")
         # 4. FALSE-POSITIVE CONTROLS, one per shape measured on the real corpus
         got = st("`src/thing.cpp:60` `MovedSymbol` is right here")
         check(got and got[0][1] == "ok", "a symbol AT the cited line is ok ({})".format(got))
@@ -434,6 +443,12 @@ def drill_resolved():
                   [(r["key"], r["verdict"]) for r in led]))
         check(len(led) == 1 and all(r["key"] != "docs/d.md" for r in led),
               "CONTROL: d.md's verdict left the RADIUS, was not acted on, and is NOT recorded")
+        # CONTROL 2 (the defect the first version shipped, found in the DIFF pass): c.md's SCOPE
+        # changed -- whole on census 1, diff-scoped on census 2 -- so its OTHER rows also vanished
+        # from the row set. They must NOT be recorded: the line is still in the file.
+        check(all(r["line"] == 3 for r in led),
+              "CONTROL: only the line actually EDITED is recorded, not every row the scope change "
+              "dropped ({})".format([(r["key"], r["line"]) for r in led]))
         check(bool(led) and "DONE" in led[0].get("label", ""),
               "the record keeps the label it retired ({})".format(led[0].get("label") if led else "-"))
 
@@ -531,6 +546,14 @@ def drill_memory_index():
         dead = MI.dead_refs(env)
         kinds = sorted((f, k, p) for f, k, p in dead)
         check(len(dead) == 3, "RED: three dead pointers of three shapes, and only three ({})".format(kinds))
+        # THE WIRING, not just the detector. The first version of this arm asserted only
+        # `dead_refs() == []` and `ratchet_values()["memref-dead"] == 0` in the GREEN state -- which a
+        # never-computed field satisfies by construction, and that is exactly what shipped: the compute
+        # block silently did not apply and the ratchet was a hardcoded 0 that could never fire
+        # (found in the DIFF pass, 2026-09-03). A gate is only drilled when it is shown NON-zero.
+        check(SC.ratchet_values(env)["memref-dead"] == len(dead),
+              "RED: the RATCHET reports the dead pointers too -- {} (a gate shown only at 0 is not "
+              "shown at all)".format(SC.ratchet_values(env)["memref-dead"]))
         check(any(k == "glob" and "lesson-" in p for _, k, p in dead),
               "a date GLOB matching zero files is dead -- the shipped defect")
         check(not any("project_" in p for _, _, p in dead),
@@ -563,6 +586,38 @@ def drill_memory_index():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def drill_trailer_producers():
+    """H: every declared trailer column has a PRODUCER. The schema's own kinds describe who READS a
+    column -- RATCHETED, GATED, REPORTED ("printed and never enforced") -- and none of them describes
+    a column nothing WRITES. `[V]` 2026-09-03 the DIFF pass found two at once: `memref-dead`, whose
+    compute block silently failed to apply so the ratchet was a hardcoded 0, and `running-totals`,
+    declared since the schema was written and emitted by no close in its life. A drill that only
+    checks values cannot see either, because both read as a plausible 0."""
+    print("-- H. every declared trailer column has a producer")
+    import trailer_schema as TS
+    src = io.open(os.path.join(HERE, "status_census.py"), encoding="utf-8").read()
+    # An ASSIGNMENT anywhere in the module, not only inside `ratchet_values`: `accretion` is computed
+    # at the two CALL SITES (`rv["accretion"] = accretion_count(...)`), which is legitimate, and a
+    # body-scoped check reports it as unproduced. The property is "something writes this", not "it is
+    # written HERE" -- narrowing the scope narrows the invariant into a site list.
+    unwritten = [c for c in TS.RATCHETED
+                 if 'vals["{}"] ='.format(c) not in src and 'rv["{}"] ='.format(c) not in src]
+    check(not unwritten,
+          "every RATCHETED column is ASSIGNED somewhere, not merely initialised to 0 ({})".format(
+              unwritten or "none missing"))
+    # and the close must actually put each one in the trailer it writes
+    vals_src = src[src.index("    vals = {\"base\":"):src.index("    # 6. commit 3 first")]
+    absent = [c for c in TS.RATCHETED + TS.MONOTONE + TS.GATED
+              if '"{}":'.format(c) not in vals_src]
+    check(not absent, "every RATCHETED / MONOTONE / GATED column reaches the trailer ({})".format(
+        absent or "none missing"))
+    # a REPORTED column may legitimately be unwritten ONLY if nothing declares it -- which is a
+    # contradiction, so the same rule applies; this is the check that would have caught running-totals
+    rep_absent = [c for c in TS.REPORTED if '"{}":'.format(c) not in vals_src]
+    check(not rep_absent, "every REPORTED column is produced too -- 'nothing reads it' is a decision, "
+                          "'nothing writes it' is a defect ({})".format(rep_absent or "none missing"))
+
+
 def drill_reading_order():
     """G: MOVE-THEN-CUT, made checkable. A shrink of the reading order is only good news if the facts
     went somewhere, and `[V]` 2026-09-03 that is not the usual case: NO entry's clauses are more than
@@ -588,14 +643,14 @@ def drill_reading_order():
         w("docs/dest.md", "# dest\n\n" + A.split(". ", 1)[1])
         now = head + "1. `docs/dest.md` -- moved, see there.\n" + B + C + U
         w("CLAUDE.md", now)
-        moved, cut = RO.moved_and_cut(root, prev, now)
+        moved, cut, lost = RO.moved_and_cut(root, prev, now)
         check(len(moved) == 1 and len(cut) == 0,
               "a MOVE is seen as a move: {} moved, {} cut".format(len(moved), len(cut)))
 
         # (2) entry B is CUT: gone from the order and findable nowhere
         now2 = head + "1. `docs/dest.md` -- moved, see there.\n" + C + U
         w("CLAUDE.md", now2)
-        moved, cut = RO.moved_and_cut(root, prev, now2)
+        moved, cut, lost = RO.moved_and_cut(root, prev, now2)
         check(len(moved) == 1 and len(cut) == 1 and "deleted outright" in cut[0][1],
               "a CUT is NOT counted as a move, and the destroyed claim is named ({})".format(
                   [c[1][:40] for c in cut]))
@@ -607,6 +662,25 @@ def drill_reading_order():
         rows = RO.coverage(root)
         ex = sum(r[5] for r in rows)
         check(ex == 1, "the USER + verbatim line is EXEMPT, and exactly one line is ({})".format(ex))
+        # (4b) THE EXEMPTION AT CLOSE TIME. The module's header claimed a USER clause is "never moved
+        #      and never cut" while the only consumer of the rule was `coverage()`, which the close
+        #      never calls -- so at the one moment it mattered nothing enforced it (round 1 Q4).
+        #      Losing one is its own bucket: never counted as a move, never buried among the cuts.
+        now3 = head + "1. `docs/dest.md` -- moved, see there.\n" + B + C
+        w("CLAUDE.md", now3)
+        moved3, cut3, lost3 = RO.moved_and_cut(root, prev, now3)
+        check(len(lost3) == 1 and "never moves" in lost3[0][1],
+              "RED: an EXEMPT clause that left is reported LOST, on its own ({})".format(
+                  [l[1][:40] for l in lost3]))
+        check(all("never moves" not in raw for _, raw in moved3 + cut3),
+              "...and it is in NEITHER the moved nor the cut bucket")
+        # (4c) the quotation may WRAP to the next line -- 3 real entries do this
+        wrapped = ["1. `docs/dest.md` -- USER RULE 2026-09-03: the decision that follows is theirs",
+                   '   and they put it this way: "the wrapped quotation lands on the second line"']
+        cl = RO.clauses(wrapped)
+        check(cl and all(c[3] for c in cl),
+              "a USER line whose quotation wraps to the NEXT line is still exempt ({})".format(
+                  [(c[0][:28], c[3]) for c in cl]))
         # (5) coverage is measured on CLAUSES, not on the symbols both texts happen to mention --
         #     the reading that made the handed-down 94 % and would have licensed cutting 136 claims
         w("docs/dest2.md", "# d2\n\nwe also discuss `SomeSymbol` and `OtherSymbol` at length here.\n")
@@ -697,6 +771,7 @@ def main():
     drill_close()
     drill_resolved()
     drill_memory_index()
+    drill_trailer_producers()
     drill_reading_order()
     drill_cross_session()
     print("status_census_drill: {} check(s) failed".format(len(FAILS)))
