@@ -31,5 +31,13 @@ jobs:
       - name: Gate drill (the gate is shown RED on a synthetic history before it is trusted)
         run: python3 tools/docs/docs_census_gate_drill.py
 
+      # The census's OWN drill -- ~110 checks over the label grammar, the citation content rung, the
+      # resolved ledger, the reading order and every refusal path. It ran only when a session chose to
+      # run it, so a regression in status_census.py would have shipped silently. It builds its own
+      # scratch repos and needs neither the memory directory nor a network (verified with
+      # MULTIVOID_MEMORY_DIR pointed at a path that does not exist).
+      - name: Census drill (the label grammar, the rungs, the ledger, the refusals)
+        run: python3 tools/docs/status_census_drill.py
+
       - name: Docs-Census gate
         run: python3 tools/docs/docs_census_gate.py --report
