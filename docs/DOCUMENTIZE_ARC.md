@@ -194,7 +194,7 @@ outputs — is met inside WP-1 with no publication.
 **Dependency edges.** WP-1's script and trailer are the substrate; WP-2's detector and WP-3's ratchet
 are columns of that trailer; WP-4 is a separate extension of an existing file and depends on nothing.
 
-### WP-1 — One census, one trailer, one private history (ships on the user's green light)
+### WP-1 — One census, one trailer, one private history (step 0 BUILT 2026-09-03, `dec89b3e`; the skill text and WP-4 / WP-2 / WP-3 open)
 
 **Defect.** Step 0.5 orders a hand check of every status hit in the tree — 11,291 (D1), mostly not
 labels — and Step 1 orders every doc read (D20), at eight runs an active day (D9). No run has done
@@ -780,6 +780,28 @@ Scratch: `stale_sample/` in this session's scratchpad.
    replaces §2.3's sample. Recorded here.
 
 Each step is one commit, `[docs]`/`[tools]` prefixed; nothing ships before the user answers §5.
+
+**Step 0 BUILT 2026-09-03 (`dec89b3e`), NOT hands-on: the first real census ran, no real close yet.**
+`tools/docs/status_census.py` (725 LOC) + `status_grammar.py` (280) + `comment_lexer.py` (105) —
+three modules because the first cut was ~1,000 lines holding three concepts; `docs_census_gate.py`
+(156) + `.github/workflows/docs-census.yml`; drills `status_census_drill.py` (recall on §2.3's
+stale-open lines and precision on its eight vocabulary false positives; the three lexer fixtures; a
+scratch two-session close with every refusal shown RED and the ratchet RED) and
+`docs_census_gate_drill.py` (10 arms, 9 RED for their own reason). `[V]` the first census on this
+tree: 35 s; read set 1,548 (main 166 / research 298 / private 1,084); radius 43 touched + 49 cited +
+40 sweep = 112 docs; 1,101 rows (879 labels, 225 dead citations); ratchet `ro-bytes=119116
+ro-longest=275 mem-over200=37`; accretion 275; the history baseline holds 1,084 files. `[V]` the gate
+computes its boundary (`dec89b3e`) and judges 0 closes. **Two first-run defects, fixed before the
+commit and recorded here because the drill did not catch them:** 2,400 session-UUID fragments in
+memory frontmatter read as commit hashes (the hash lookaround now excludes `-`), and the ledger
+gate's per-citation tree walk ran the census past ten minutes over ~5,000 tokens (one basename
+index now, 0.1 s to build). Three decisions made while building, each a specification the design
+text did not carry: a verdict does NOT carry across closes (an unchanged line is re-judged at its
+next census; it carries only from a pending table into its own re-census); the `STILL TRUE`
+contradiction refuses on LABEL rows only (on a prose line a dead pointer can be dead on purpose —
+this doc naming its retracted `ledger_rot.py`); a backticked commit hash is a hash, and a foreign
+hash (`e31aaaa6`, UE4SS) is informational, never a refusal. The first REAL close is the next
+`/documentize`; steps 1-5 are open.
 
 ---
 
