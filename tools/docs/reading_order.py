@@ -3,8 +3,9 @@
 
 WHY THIS EXISTS. The reading order is the first thing a reset session opens, and it grows every close
 because writing one more sentence there is always cheaper than finding the doc that should own it.
-`ro-bytes` has been ratcheted since 2026-09-02 and the target is 58 KB; it stands at ~119 KB, and a
-single entry (`4e.`, the signals log) is 24 KB of it -- a per-session changelog living inside an index.
+`ro-bytes` has been ratcheted since 2026-09-02 and the target is 58 KB. It stood at 119 KB when this
+module was written, of which one entry (`4e.`, the signals build log) was 24 KB -- a per-session
+changelog living inside an index; that entry moved to `docs/signals/HISTORY.md` and it stands at 95 KB.
 
 Shrinking it by eye is how facts get lost. So the cut is MEASURED first: every entry names a
 DESTINATION (the doc or directory in its first line), and this module reports what fraction of the
@@ -15,10 +16,12 @@ must be MOVED before it is cut, never cut first.
   covered   the clause's needle is already in the destination -- cutting it loses nothing
   missing   the clause exists ONLY here -- move it, then cut
 
-THE EXEMPTION, stated computably before any cut: a line carrying `USER` together with a quotation
-(`verbatim`, a quoted string, or the guillemets this project uses for Russian) is never moved and
-never cut, because it is a record of what the user actually said and the destination doc is not where
-they said it. It is reported separately so a shrink can be checked against it.
+THE EXEMPTION: a line naming the USER (case-insensitively -- see `SPEAKER`) together with a quotation
+(`verbatim`, a quoted string, or the guillemets this project uses for Russian) is a record of what the
+user actually said, and the destination doc is not where they said it. It is not advice about what to
+trim: **the close REFUSES while such a clause has left the reading order** (`ro-lost`, GATED). It was
+advice once, consulted only by `coverage()` which the close never calls -- a rule stated on the page
+and absent from the one moment it could bind.
 
     python tools/docs/reading_order.py                 # the coverage table, largest entry first
     python tools/docs/reading_order.py --entry 4e      # every clause of one entry, with its verdict
@@ -113,8 +116,8 @@ def clauses(body):
         prv = body[i - 1] if i else ""
         # The window reaches BOTH ways, and the second half is not symmetry for its own sake: when the
         # quotation wraps, the clause that carries the user's actual WORDS is on the second line and
-        # has no `USER` on it, so a forward-only window exempts the introduction and leaves the quote
-        # itself unprotected -- which is the wrong half to lose.
+        # does not name the speaker, so a forward-only window exempts the introduction and leaves
+        # the quote itself unprotected -- which is the wrong half to lose.
         exempt = ((bool(SPEAKER.search(line)) and bool(QUOTED.search(line) or QUOTED.search(nxt)))
                   or (bool(QUOTED.search(line)) and bool(SPEAKER.search(prv))))
         for raw in re.split(r"(?<=[.;:])\s+", line):

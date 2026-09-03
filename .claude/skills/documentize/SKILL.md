@@ -173,7 +173,8 @@ from an autonomous smoke alone** — only a real hands-on or a matching real log
   `memref-dead=` is ratcheted at 0 over its markdown links and its `memory/<glob>` patterns, and over
   CLAUDE.md's backticked repo paths. Do NOT compact by inventing a filename glob: lesson and feedback
   files carry NO date in their names (0 of 705), so `memory/lesson-*<date>*` matches nothing. Address a
-  day through `memory/INDEX_BY_DATE.md`, which the close regenerates from the age ladder.
+  day through `memory/INDEX_BY_DATE.md`, which the CENSUS regenerates from the age ladder (the close
+  only checks it, so no path the content pin already checked is rewritten afterwards).
 - Record durable **feedback** and **lessons** as their own files; UPDATE an existing file rather than
   duplicating; delete a memory that turned out wrong.
 
@@ -208,7 +209,8 @@ row makes `pairing-unref` grow and the close refuses.
 - The CLAUDE.md "reading order after a session reset" still resolves. Do NOT grow it: the trailer's
   `ro-bytes` / `ro-longest` are ratcheted (red only on growth; target 58 KB, no entry over 15 lines,
   printed until reached). Shorten by MOVE-THEN-CUT — grep the destination for the fact first; lines
-  carrying `USER` + `verbatim` never move.
+  naming the USER (case-insensitively) beside a quotation never move -- and the close REFUSES if one
+  has left, rather than reporting it after the fact.
 
 ## 4.5. THE CLOSE — the script commits, never you
 
@@ -225,8 +227,9 @@ neither `--new` nor gitignored; a doc another session staged PARTIALLY (a same-f
 per `docs/CROSS_SESSION.md`); a non-doc path that is not the close's own tooling and not a
 comment-only change (commit it FIRST, on its own, with its own subject); a ratchet column that grew; a
 cumulative column that SHRANK (the resolved ledger is append-only, so a drop means the private history
-was replaced); a hand-edited row count; a missing attribution trailer. On green it regenerates
-`memory/INDEX_BY_DATE.md` and makes ONE COMMIT PER TREE — the private history (snapshot + state +
+was replaced); a hand-edited row count; a line recording what the USER said that has LEFT the reading
+order; a stale `memory/INDEX_BY_DATE.md` (re-run `census --force`, which regenerates it); a missing
+attribution trailer. On green it makes ONE COMMIT PER TREE — the private history (snapshot + state +
 the verdict table + the ledger), EVERY owned inner repo that this session touched (ownership is the local git identity, so `site/`
 counts as well as `research/`), and main — each from a PRIVATE index (nothing another session staged
 is swallowed or discarded), each with the `Docs-Census:` trailer git appends, the subject prefixed
