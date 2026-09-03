@@ -334,6 +334,13 @@ class Resolver:
             p = m.group(1)
             if p in seen or "://" in p:
                 continue
+            # `atv_sync\.cpp` is a REGEX quoted in prose, not a Windows path: a backslash separator
+            # is followed by a path segment, never by a dot. Without this the doc that quotes a
+            # `git grep` pattern is charged a dead citation for the pattern -- measured once in the
+            # corpus (a lesson quoting the very grep that proved its point), and the row would then
+            # be answered NOT A LABEL, spending the label grammar's precision measure on a regex.
+            if "\\." in p:
+                continue
             if re.search(r"\.(?:h|hpp)/\.(?:cpp|c)$", p):      # the docs' `x.h/.cpp` shorthand = the header
                 p = p.rsplit("/", 1)[0]
             seen.add(p)
