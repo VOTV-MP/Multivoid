@@ -325,6 +325,14 @@ def scan_lines(key, lines, resolver, loose=False):
         # claims everywhere else (this arc holds 38 label rows and 3 quoted ones). Doc-level would
         # throw the claims away with the legend; the marker must also BE the line, so a doc that
         # merely mentions it in prose does not silently opt out.
+        # A `[corr YYYY-MM-DD: ...]` stamp is a CORRECTION, never a claim, and its job is to NAME what
+        # was wrong -- routinely including a path that is now gone. `[V]` 2026-09-03: the first stamp
+        # written under this design came straight back as a LABEL row carrying `tools/inject.ps1=gone`,
+        # which the close then refuses to verdict STILL TRUE: the census flagging its own remedy, the
+        # shape docs/LESSONS.md already names for the accretion detector (which is why `CORR_RE`
+        # exists and was already excluded THERE, at status_census.py:424, but not here).
+        if not in_fence and CORR_RE.search(line):
+            continue
         if not in_fence and line.strip() == VOCAB_MARKER:
             quoting_vocab = True
             continue

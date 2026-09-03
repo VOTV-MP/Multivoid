@@ -129,6 +129,13 @@ def drill_vocab_markers():
     mentioned = ["# X", "", "the marker is `" + G.VOCAB_MARKER + "` in prose", "", "**Status:** OPEN"]
     check(len(G.scan_lines("t.md", mentioned, R)) == 1,
           "a doc that MENTIONS the marker in prose does not silently opt out")
+    # A `[corr]` stamp NAMES what was wrong, dead paths included -- it is the remedy, not a claim.
+    corr = ["# X", "", "> **[corr 2026-09-03: was DONE; `tools/zz_gone.ps1` is GONE; measured]**", "",
+            "**Status:** OPEN"]
+    rows = G.scan_lines("t.md", corr, R)
+    check(len(rows) == 1 and rows[0]["line"] == 5,
+          "a [corr] stamp yields NO row -- the census does not flag its own remedy (got {})".format(
+              [(r["line"], r["label"]) for r in rows]))
 
 
 def drill_lexer():
