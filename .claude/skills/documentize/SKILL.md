@@ -122,6 +122,13 @@ in the VERDICT column:
 | `NOT A LABEL` | the grammar mis-flagged the line: it states no status about anything (a vocabulary table, a legend, a sentence containing a status word) | nothing to the doc — the row is the CENSUS's defect, and the trailer records it against the RUNG that raised the row, so `not-a-label=` really is the label grammar's measured false-positive rate. Do NOT use it to dismiss a claim you simply did not check |
 
 
+**THE FOUR STATUS VERDICTS BELONG TO LABEL ROWS ONLY.** `STILL OPEN` / `ACTUALLY DONE` / `STALE DONE`
+/ `PARTIAL` say something about a STATUS, so the close REFUSES them on a row of kind `cite`, `drift`
+or `loose` — those rows exist because a citation resolved dead, a symbol moved, or the loose regex
+fired, and none of them carries a label to be stale about. On such a row only `STILL TRUE` (nothing to
+do — on a `cite` row it means the citation is dead ON PURPOSE) and `NOT A LABEL` (this rung mis-fired)
+can answer. Without that rule a `cite` row answered `STALE DONE` lands in the number D8 reads.
+
 A row of kind `drift` makes no status claim: it says the SYMBOL beside a citation now lives elsewhere
 in the cited file. Check it — the true line is printed — and either fix the number (then the row
 returns corrected, and the verdict you gave is recorded in the resolved ledger) or verdict it
@@ -231,8 +238,9 @@ neither `--new` nor gitignored; a doc another session staged PARTIALLY (a same-f
 per `docs/CROSS_SESSION.md`); a non-doc path that is not the close's own tooling and not a
 comment-only change (commit it FIRST, on its own, with its own subject); a ratchet column that grew; a
 cumulative column that SHRANK (the resolved ledger is append-only, so a drop means the private history
-was replaced); a hand-edited row count; a line recording what the USER said that has LEFT the reading
-order; a stale `memory/INDEX_BY_DATE.md` (re-run `census --force`, which regenerates it); a missing
+was replaced); a hand-edited row count; a STATUS verdict on a row that carries no label; a line
+recording what the USER said that has LEFT the reading
+order and is findable in no doc; a stale `memory/INDEX_BY_DATE.md` (re-run `census --force`, which regenerates it); a missing
 attribution trailer. On green it makes ONE COMMIT PER TREE — the private history (snapshot + state +
 the verdict table + the ledger), EVERY owned inner repo that this session touched (ownership is the local git identity, so `site/`
 counts as well as `research/`), and main — each from a PRIVATE index (nothing another session staged

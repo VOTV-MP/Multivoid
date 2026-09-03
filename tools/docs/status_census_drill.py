@@ -976,13 +976,26 @@ def drill_ro_lost_refuses():
         check(code != 0 and "recording what the USER said" in out,
               "RED: a close whose reading order dropped a USER record REFUSES ({})".format(
                   out.strip()[-110:]))
-        # ...and restoring it lets the close through, so the gate is not simply always-red
+        # THE ESCAPE THE MESSAGE OFFERS MUST WORK. The refusal says "restore them, or MOVE them to a
+        # doc that keeps them verbatim" -- and the first version split `lost` off before the
+        # destination test, so moving one satisfied nothing and the only way out was putting the line
+        # back. That makes the exempt bytes unpayable against a ratcheted `ro-bytes`: a refusal whose
+        # stated escape does not work is a deadlock wearing a remedy's clothes (round 4 Q1).
+        w("docs/kept.md", "# kept" + NLC + NLC + quote.split(". ", 1)[1])
+        git(["add", "--", "docs/kept.md"], repo)
+        run_sc(E, "census", "--force")
+        verdict_all("STILL TRUE")
+        code, out = run_sc(E, "close", "-m", "moved-out", *T)
+        check(code == 0, "GREEN: MOVING the USER line to another doc satisfies the gate -- the escape "
+                         "the refusal names actually works ({})".format(out.strip()[-70:]))
+        # ...and restoring it in place is the other escape, so the gate is not simply always-red
         w("CLAUDE.md", head + "1. `docs/a.md` -- an ordinary entry with a long enough sentence" + NLC + quote)
         run_sc(E, "census", "--force")
         verdict_all("STILL TRUE")
         code, out = run_sc(E, "close", "-m", "second", *T)
-        check(code == 0, "GREEN: restoring the line lets the same close through ({})".format(
-            out.strip()[-70:]))
+        check(code == 0 or "USER said" not in out,
+              "GREEN: restoring the line in place also lets the close through ({})".format(
+                  out.strip()[-70:]))
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

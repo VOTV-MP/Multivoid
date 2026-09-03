@@ -178,9 +178,7 @@ def moved_and_cut(repo, prev_text, now_text, extra_paths=()):
     before = {n: (raw, ex) for raw, n, _, ex in clauses(section_of(prev_text))}
     after = {n for _, n, _, _ in clauses(section_of(now_text))}
     gone = [(n, before[n][0]) for n in before if n not in after]
-    lost = [(n, raw) for n, raw in gone if before[n][1]]
-    gone = [(n, raw) for n, raw in gone if not before[n][1]]
-    if not gone and not lost:
+    if not gone:
         return [], [], []
     blob = []
     for dirpath, dirnames, files in os.walk(repo):
@@ -196,8 +194,18 @@ def moved_and_cut(repo, prev_text, now_text, extra_paths=()):
     for p in extra_paths:
         blob.append(norm(read_text(p) or ""))
     hay = NL.join(blob)
-    moved = [(n, raw) for n, raw in gone if n in hay]
-    cut = [(n, raw) for n, raw in gone if n not in hay]
+    # The EXEMPT split happens HERE, after the destination test, not before it. `[V]` 2026-09-03 the
+    # first version split `lost` off `gone` BEFORE `hay` was built, so an exempt clause never received
+    # the test at all -- and the refusal it drives says "restore them, or move them to a doc that keeps
+    # them verbatim" while moving one satisfied nothing. A close could then only ever put the line
+    # back, which makes the 2 KB of exempt clauses unpayable against a RATCHETED `ro-bytes`: a refusal
+    # whose stated escape does not work is a deadlock wearing a remedy's clothes (round 4 Q1).
+    moved = [(n, raw) for n, raw in gone if n in hay and not before[n][1]]
+    cut = [(n, raw) for n, raw in gone if n not in hay and not before[n][1]]
+    # An exempt clause that RELOCATED verbatim is a move like any other. One findable NOWHERE is the
+    # loss the gate exists for.
+    moved += [(n, raw) for n, raw in gone if n in hay and before[n][1]]
+    lost = [(n, raw) for n, raw in gone if n not in hay and before[n][1]]
     return moved, cut, lost
 
 
