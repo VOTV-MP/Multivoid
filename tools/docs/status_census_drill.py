@@ -19,6 +19,9 @@ Three fixtures, each a class the design claims to hold (docs/DOCUMENTIZE_ARC.md 
   F  the reading order's own POINTERS (MEMORY.md's links + date globs, CLAUDE.md's paths) and
      the generated dated index -- with controls for the three shapes that only LOOK dead: a live
      glob over dated files, a directory, and a path written from the source root.
+  G  MOVE-THEN-CUT on the reading order, made checkable: a clause that LEFT and is findable
+     somewhere moved; one findable nowhere was destroyed and is named. Plus the two readings of
+     "coverage" -- clauses, not the symbols both texts happen to mention.
   C  the CLOSE in a scratch environment (repo + memory dir + history dir): a neighbour's whole-file
      staged doc survives and is excluded; a missing verdict REFUSES; STILL TRUE on a dead citation
      REFUSES; the good close carries exactly the session's paths with the trailer; a second close
@@ -560,6 +563,63 @@ def drill_memory_index():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def drill_reading_order():
+    """G: MOVE-THEN-CUT, made checkable. A shrink of the reading order is only good news if the facts
+    went somewhere, and `[V]` 2026-09-03 that is not the usual case: NO entry's clauses are more than
+    11 % present in the doc it points at, so the reading order is the ONLY copy of most of what it
+    says and every byte of the ~37 KB still owed is a MOVE. The two must be distinguishable."""
+    print("-- G. the reading order: a move and a cut are not the same shrink")
+    import reading_order as RO
+    root = tempfile.mkdtemp(prefix="scr2_")
+    os.makedirs(os.path.join(root, "docs"))
+    try:
+        w = lambda rel, text: io.open(os.path.join(root, rel), "w", encoding="utf-8",
+                                      newline="\n").write(text)
+        head = "# rules\n\n## Reading order after a session reset / new conversation\n\n"
+        A = "1. `docs/dest.md` -- the first entry, whose long sentence is a claim worth keeping here.\n"
+        B = "2. a second entry whose long sentence is about to be deleted outright by a careless hand.\n"
+        C = "3. a third entry whose long sentence stays exactly where it has always been, untouched.\n"
+        U = ('4. USER 2026-09-03, verbatim: "this line is a record of what I said and never moves"\n')
+        prev = head + A + B + C + U
+        w("CLAUDE.md", prev)
+        w("docs/dest.md", "# dest\n\nnothing here yet.\n")
+
+        # (1) entry A is MOVED: gone from the order, present in its destination
+        w("docs/dest.md", "# dest\n\n" + A.split(". ", 1)[1])
+        now = head + "1. `docs/dest.md` -- moved, see there.\n" + B + C + U
+        w("CLAUDE.md", now)
+        moved, cut = RO.moved_and_cut(root, prev, now)
+        check(len(moved) == 1 and len(cut) == 0,
+              "a MOVE is seen as a move: {} moved, {} cut".format(len(moved), len(cut)))
+
+        # (2) entry B is CUT: gone from the order and findable nowhere
+        now2 = head + "1. `docs/dest.md` -- moved, see there.\n" + C + U
+        w("CLAUDE.md", now2)
+        moved, cut = RO.moved_and_cut(root, prev, now2)
+        check(len(moved) == 1 and len(cut) == 1 and "deleted outright" in cut[0][1],
+              "a CUT is NOT counted as a move, and the destroyed claim is named ({})".format(
+                  [c[1][:40] for c in cut]))
+        # (3) the untouched entry is neither
+        check(all("has always been" not in raw for _, raw in moved + cut),
+              "an untouched clause is neither moved nor cut")
+        # (4) the USER-verbatim line is exempt from the coverage report, so a shrink cannot be
+        #     justified by "it is covered" on a line that records what the user said
+        rows = RO.coverage(root)
+        ex = sum(r[5] for r in rows)
+        check(ex == 1, "the USER + verbatim line is EXEMPT, and exactly one line is ({})".format(ex))
+        # (5) coverage is measured on CLAUSES, not on the symbols both texts happen to mention --
+        #     the reading that made the handed-down 94 % and would have licensed cutting 136 claims
+        w("docs/dest2.md", "# d2\n\nwe also discuss `SomeSymbol` and `OtherSymbol` at length here.\n")
+        w("CLAUDE.md", head + "1. `docs/dest2.md` -- a long sentence about `SomeSymbol` and "
+                              "`OtherSymbol` that this destination does not actually contain.\n")
+        r = RO.coverage(root)[0]
+        check(r[3] >= 1 and r[4] == 0,
+              "sharing SYMBOLS with the destination is not coverage: {} clause(s), {} covered".format(
+                  r[3], r[4]))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def drill_cross_session(root=None):
     """The three cross-session holes a post-ship audit found on 2026-09-03, each shown RED."""
     print("-- D. cross-session and content-pin refusals")
@@ -637,6 +697,7 @@ def main():
     drill_close()
     drill_resolved()
     drill_memory_index()
+    drill_reading_order()
     drill_cross_session()
     print("status_census_drill: {} check(s) failed".format(len(FAILS)))
     return 1 if FAILS else 0

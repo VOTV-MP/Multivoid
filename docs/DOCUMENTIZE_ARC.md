@@ -1132,10 +1132,38 @@ is better prose as well as a resolvable pointer. Three shapes that only LOOK dea
 drill: a directory (`docs/events/`) is a resolved pointer, a path written from the SOURCE root
 (`include/coop/thing.h`) resolves, and the same glob shape over dated `project_*` files is live.
 
+**D10 AS-BUILT — and the handed-down coverage number was measuring the wrong thing.** The build plan
+ordered the reading-order cut by "MEASURED destination coverage (4e-browser 94 %, 4e-sbarc 92 %,
+4d-death 87 %; 4e at 15 %)". Re-derived before building on it, per the re-base rule: **those are
+SYMBOL coverage** — do the backticked identifiers in the entry also appear in the doc it points at —
+which reproduces at 94 / 100 / 90 % and is close to useless as a cut criterion, because two texts
+about the same subsystem name the same things by construction. **CLAUSE coverage — is this CLAIM
+already in the destination — is 0-11 % for every entry in the reading order, `4e-browser` included at
+6 %.** Acting on the handed-down ranking would have cut `4e-browser` first: 14.5 KB whose ~136 claims
+exist nowhere else.
+
+So the finding inverts the job. The reading order is **not a redundant index that can be trimmed** —
+it is the ONLY copy of most of what it says, and the ~37 KB still owed against the 58 KB target is a
+WRITING job, one move at a time. `tools/docs/reading_order.py` reports both readings (the misleading
+one is named as such), and `ro-moved=` at the close compares the reading order against the private
+history's previous `CLAUDE.md`: a clause that LEFT and is findable somewhere MOVED; one findable
+nowhere was **CUT**, and each is printed in full, because a claim being destroyed is not a number.
+
+The one move this pass made is the one the measurement most supported: **`4e.` was 271 lines of
+session-by-session build log (s17-s30b) inside an index entry** — 24 KB, a fifth of the reading order,
+and the single entry that set `ro-longest` to 275 against a target of 15. It moved VERBATIM to
+`docs/signals/HISTORY.md` (fidelity checked character-by-character, whitespace-normalised) and the
+entry became a pointer. **`ro-bytes` 119,076 -> 95,206; `ro-longest` 275 -> 152.**
+
+The `USER`+`verbatim` exemption was **stated and not enforced**: the sentence splitter cuts
+`USER, verbatim: "…"` at its colon, so the fragment carrying the quote no longer carried the word
+`USER` and the guard protected ZERO lines. It is evaluated per SOURCE LINE now, and protects 8 in the
+top twenty entries.
+
 **NOT BUILT, in order:** D11 symbol-first corpus repair (the 31 drift rows are now surfaced, but
-nothing proposes their fix in bulk); D10 the reading-order destination rule with `ro-moved=`; the
-skill text. WP-E (convenience, §10.5) owes its own `/qf`. The build plan lives in the session
-scratchpad; a DIFF pass on the shipped diff is owed before handoff.
+nothing proposes their fix in bulk); the remaining ~37 KB of reading-order MOVES, now instrumented but
+not done. WP-E (convenience, §10.5) owes its own `/qf`. A DIFF pass on the shipped diff is owed before
+handoff.
 
 **D8 — the falsifier standing behind "keep the hand phase":** over the first **300 ageing-lane rows**
 (NOT closes — 251 retired-form closes peaked at 14 in ONE day, so a close is not a unit of evidence),

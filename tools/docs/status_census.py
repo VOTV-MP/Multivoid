@@ -923,6 +923,21 @@ def run_close(env, args):
     for key in meta.get("scanned_whole", []):
         st["docs"][key] = {"utc": utc, "base": base}
     cursor = sum(1 for k in rs if k in st["docs"])
+    # The reading order: a SHRINK is only good news if the facts went somewhere. The previous
+    # CLAUDE.md lives in the private history (nothing else versions it), so the comparison is
+    # against that -- and a clause that left with no destination is PRINTED, because a claim
+    # being destroyed is not a number.
+    import reading_order
+    ro_moved = 0
+    prev_cl = baseline_text(env, "CLAUDE.md", "private", base, {})   # private: the history repo's HEAD
+    if prev_cl is not None:
+        now_cl = read_text(os.path.join(env.repo, "CLAUDE.md")) or ""
+        moved, cut = reading_order.moved_and_cut(env.repo, prev_cl, now_cl)
+        ro_moved = len(moved)
+        if moved or cut:
+            print("reading order: {} clause(s) moved to a destination, {} CUT".format(len(moved), len(cut)))
+        for _, raw in cut[:12]:
+            print("  CUT (found in no doc): " + raw[:140])
     # The cumulative ledger totals. The DELTA is this close's own correction count -- the number the
     # verdict columns cannot carry, because a corrected line is committed in its corrected form.
     n_res, n_flip = resolved_counts(env)
@@ -939,7 +954,7 @@ def run_close(env, args):
         print("resolved this close: {} verdict(s), {} of them naming a defect (cumulative {}/{})"
               .format(d_res, d_flip, n_res, n_flip))
     vals = {"base": base[:12], "rows": len(rows), "labels": meta.get("labels", 0),
-            "resolved": n_res, "flips": n_flip,
+            "resolved": n_res, "flips": n_flip, "ro-moved": ro_moved,
             "still-open": counts["STILL OPEN"], "actually-done": counts["ACTUALLY DONE"],
             "stale-done": counts["STALE DONE"], "partial": counts["PARTIAL"], "still-true": counts["STILL TRUE"],
             "not-a-label": counts["NOT A LABEL"],
