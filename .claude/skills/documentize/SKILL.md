@@ -90,6 +90,7 @@ in the VERDICT column:
 | `STALE DONE` | false optimism, or a dead citation under a live label | downgrade the tag, date it, cite the evidence, stamp |
 | `PARTIAL` | some sub-parts shipped | name exactly which (file:line) and which remain; split the item |
 | `STILL TRUE` | the label and the line hold | nothing — but a LABEL row whose citation resolved `gone` / `past-eof` cannot be STILL TRUE: the close refuses it, fix the pointer |
+| `NOT A LABEL` | the grammar mis-flagged the line: it states no status about anything (a vocabulary table, a legend, a sentence containing a status word) | nothing to the doc — the row is the CENSUS's defect, and `not-a-label=` in the trailer is the grammar's measured false-positive rate. Do NOT use it to dismiss a claim you simply did not check |
 
 The action's FORM depends on the doc's kind (path pattern): a LIVING doc (undated filename outside
 `_archive/`) is REWRITTEN in place with one `[corr YYYY-MM-DD: was …; measured …; <cite>]` stamp — never

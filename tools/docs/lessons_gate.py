@@ -146,7 +146,7 @@ def load_list(path):
 # machine -- measured 2026-09-03 when the drill's `dead file` arm was run for the first time since
 # that branch was added and reported exit=0. Adding a root here without checking it exists disables
 # half of check A silently.
-CITE_ROOTS = ("src", "tools", "research", "reference")
+CITE_ROOTS = ("src", "tools", "research", "reference", ".github")
 
 
 def absent_cite_roots(roots=CITE_ROOTS):

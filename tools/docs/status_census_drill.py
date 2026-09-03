@@ -156,7 +156,7 @@ def drill_close():
         w = lambda rel, text: io.open(os.path.join(repo, rel), "w", encoding="utf-8", newline="\n").write(text)
         w(".gitignore", "CLAUDE.md\n")
         w("CLAUDE.md", CLAUDE)
-        w("docs/a.md", "# A\n\n**Status:** OPEN (commit pending)\n\n- **DONE** -- see `zz_gone_file.cpp:12` for the site\n")
+        w("docs/a.md", "# A\n\n**Status:** OPEN (commit pending)\n")
         w("docs/b.md", "# B\n\nplain prose, no labels\n")
         io.open(os.path.join(mem, "MEMORY.md"), "w", encoding="utf-8").write("# index\n- one\n")
         git(["add", "--", ".gitignore", "docs/a.md", "docs/b.md"], repo)
@@ -165,13 +165,18 @@ def drill_close():
         w("docs/b.md", "# B\n\nthe neighbour's edit\n")
         git(["add", "--", "docs/b.md"], repo)
         # this session: edits a.md in the worktree only
-        w("docs/a.md", "# A\n\n**Status:** OPEN (commit pending)\n\n- **DONE** -- see `zz_gone_file.cpp:12` for the site\n\nnew line\n")
+        # the session ADDS two labelled lines; the pre-existing `**Status:** OPEN` line at a.md:3 is not
+        # this session's row and must be left to the sweep (diff scoping, 2026-09-03)
+        w("docs/a.md", "# A\n\n**Status:** OPEN (commit pending)\n\n- **PARTIAL** rework, uncommitted\n"
+                       "- **DONE** -- see `zz_gone_file.cpp:12` for the site\n")
         E = (repo, mem, hist)
         code, out = run_sc(E, "census", "--since", "2099-01-01")
         check(code == 0, "census runs ({})".format(out.strip().splitlines()[-1][:60] if out.strip() else "no output"))
         meta, rows = SC.read_table(os.path.join(hist, "census", "pending.md"))
         check(len(rows) == 2 and rows[1]["kind"] == "lead" and any(s == "gone" for _, s in rows[1]["tokens"]),
-              "census: two label rows on a.md, the second with a dead citation, got {}".format(len(rows)))
+              "census: the TWO rows this session ADDED to a.md, the second with a dead citation, got {}".format(len(rows)))
+        check(all(r["line"] != 3 for r in rows),
+              "the pre-existing `**Status:** OPEN` line (a.md:3) is NOT charged to this session")
         check("docs/b.md" in meta.get("touched", []) and "docs/a.md" in meta.get("touched", []), "census: both docs in radius (i)")
         T = ["--trailer", "Co-Authored-By: Drill <d@e>", "--trailer", "Claude-Session: https://example/x"]
         code, out = run_sc(E, "close", "-m", "drill", *T)
@@ -212,21 +217,30 @@ def drill_close():
         check(git(["config", "--local", "user.name"], hist).strip() == "drill", "history repo copied main's identity")
         check(not os.path.exists(pend) and any(f.endswith(".md") for f in os.listdir(os.path.join(hist, "census"))),
               "the verdict table is filed under census/<utc>-<base>.md")
-        # the ratchet: grow the reading order, census again, close -> REFUSE
-        w("CLAUDE.md", CLAUDE + "3. a third entry that grows the reading order\n")
-        w("docs/a.md", "# A\n\n**Status:** OPEN (commit pending)\n\n- **DONE** -- see `zz_gone_file.cpp:12` for the site\n\nnew line\nmore\n")
+        # After the close a.md is no longer touched, so the SWEEP reads it whole and the line the
+        # previous close's diff scoping left alone (a.md:3) is finally offered -- amortisation, not loss.
         code, out = run_sc(E, "census")
         check(code == 0 and "base (main)" in out and "[trailer]" in out, "second census bases on the trailer commit")
         _, rows2 = SC.read_table(pend)
-        check(len(rows2) == 2 and all(not r["verdict"] for r in rows2),
-              "after a close, an unchanged line is RE-JUDGED (verdicts do not carry across closes)")
+        check(rows2 and all(not r["verdict"] for r in rows2) and any(r["line"] == 3 for r in rows2),
+              "the sweep later reads the whole doc: a.md:3 is offered ({} rows, lines {})".format(
+                  len(rows2), sorted(r["line"] for r in rows2)))
+        # the ratchet: grow the reading order and add ONE labelled line, census, verdict, close -> REFUSE
+        w("CLAUDE.md", CLAUDE + "3. a third entry that grows the reading order\n")
+        w("docs/a.md", "# A\n\n**Status:** OPEN (commit pending)\n\n"
+                       "- **PARTIAL** rework, uncommitted\n"
+                       "- **DONE** -- see `zz_gone_file.cpp:12` for the site\n"
+                       "- **BUILT** one more claim\n")
+        code, out = run_sc(E, "census", "--force")
+        check(code == 0, "a re-census after an edit re-pins ({})".format(out.strip()[-60:]))
         t = io.open(pend, encoding="utf-8").read()
-        lines = t.split("\n")
-        set_verdict(1, "STILL OPEN")
-        set_verdict(2, "STALE DONE")
-        io.open(pend, "w", encoding="utf-8", newline="\n").write("\n".join(lines))
-        _, rows2 = SC.read_table(pend)
-        check([r["verdict"] for r in rows2] == ["STILL OPEN", "STALE DONE"], "verdicts parsed back from the table")
+        lines = t.split(chr(10))
+        _, rows3 = SC.read_table(pend)
+        check(len(rows3) == 1 and rows3[0]["label"] == "BUILT",
+              "only the ONE label this edit added is charged ({} rows: {})".format(
+                  len(rows3), [(r["line"], r["label"]) for r in rows3]))
+        set_verdict(1, "STILL TRUE")
+        io.open(pend, "w", encoding="utf-8", newline=chr(10)).write(chr(10).join(lines))
         code, out = run_sc(E, "close", "-m", "drill two", *T)
         check(code != 0 and "ratchet" in out and "ro-bytes" in out,
               "RED: the ratchet refuses a grown reading order (exit {}: {})".format(code, out.strip()[-240:]))
@@ -253,7 +267,7 @@ def drill_cross_session(root=None):
         git(["commit", "-q", "-m", "base"], repo)
         E = (repo, mem, hist)
         T = ["--trailer", "Co-Authored-By: D <d@e>", "--trailer", "Claude-Session: https://e/x"]
-        w("docs/a.md", "# A\n\n**Status:** OPEN (commit pending)\n\nmine\n")
+        w("docs/a.md", "# A\n\n**Status:** OPEN (commit pending)\n\n- **DONE** mine, added this session\n")
         # the neighbour marks a brand-new doc intent-to-add: invisible to the index guard AND to
         # `ls-files --others`, so without the fix it is owned as a tracked doc and published by us
         w("docs/neighbour_new.md", "# theirs\n\nin progress\n")

@@ -59,7 +59,10 @@ SUBSTATE_RE = re.compile(r"(commit pending|hands-on-pending|hands-on pending|not
 LOOSE_RE = re.compile(r"OPEN|FUTURE|TODO|PENDING|NEXT|not (yet )?(built|wired|implemented|done|verified)|"
                       r"deferred|unverified|\[ \]|\[\?\]|planned|stub|placeholder", re.I)
 CITE_RE = re.compile(r"([A-Za-z0-9_][A-Za-z0-9_/.\\-]*\.(?:h|hpp|cpp|c|inc|py|ps1|rs|json|md|txt|yml)):(\d+)")
-PATHTOK_RE = re.compile(r"(?<![A-Za-z0-9_/.\\-])([A-Za-z0-9_][A-Za-z0-9_/.\\-]*\.(?:h|hpp|cpp|c|inc|py|ps1|rs))(?![A-Za-z0-9_/.\\-])")
+# The section sign is excluded from the lookbehind: a SECTION reference like "§6c.c" is not a C
+# file (measured 2026-09-03 by the first real census on docs/security/LESSONS_SECURITY.md:329, which
+# cites "§6c.c + §9b" and was reported as a dead citation).
+PATHTOK_RE = re.compile("(?<![A-Za-z0-9_/.\\\\§-])([A-Za-z0-9_][A-Za-z0-9_/.\\\\-]*\\.(?:h|hpp|cpp|c|inc|py|ps1|rs))(?![A-Za-z0-9_/.\\\\-])")
 SYMBOL_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]{4,}(?:::[A-Za-z_][A-Za-z0-9_]*)*)(?:\(\))?`")
 HASH_RE = re.compile(r"(?<![A-Za-z0-9_-])([0-9a-f]{7,40})(?![A-Za-z0-9_-])")   # `-` excluded: a UUID segment is not a commit (2,400 false hashes on the first run)
 TOTAL_RE = re.compile(r"\b\d+ of \d+\b|\b\d[\d,]* (?:rows|files|findings|docs|entries|lines|LOC|sites|hits|commits|"
@@ -253,6 +256,16 @@ def scan_doc(key, abspath, resolver, loose=False):
     lines = resolver.lines_of(abspath)
     if lines is None:
         return []
+    return scan_lines(key, lines, resolver, loose)
+
+
+def scan_text(key, text, resolver, loose=False):
+    """Same scan over a text buffer -- used to read a doc's BASELINE version out of git, so a touched
+    doc contributes only the rows this session introduced or changed (status_census, 2026-09-03)."""
+    return scan_lines(key, text.split(chr(10)), resolver, loose)
+
+
+def scan_lines(key, lines, resolver, loose=False):
     rows = []
     in_fence = False
     for i, line in enumerate(lines):

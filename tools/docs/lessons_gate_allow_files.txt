@@ -16,3 +16,18 @@ D3D11Viewport.cpp       # UE4 RHI source, read for the PresentChecked seam
 snp.cpp                 # GNS SNP -- read for the reliability layer
 connections.cpp         # GNS connection state machine
 certstore.cpp           # GNS cert store -- the CertStore_CheckCert finding
+
+# GNS (GameNetworkingSockets) sources read during the peer-identity / transport digs but never
+# committed here -- their line numbers are unverifiable. Added 2026-09-03 by the first real census,
+# which flagged them DEAD in research findings that cite them correctly.
+udp.cpp                 # GNS UDP transport -- IP_AllowWithoutAuth
+p2p.cpp                 # GNS P2P transport -- the cert path
+certs.cpp               # GNS cert handling
+certstore.h             # GNS cert store header
+
+# UE4SS CXXHeaderDump (our SDK) -- generated, not committed
+ui_gamemode.hpp         # CXXHeaderDump -- game BP class header
+int_widgets.hpp         # CXXHeaderDump -- game BP class header
+ui_saveSlots.hpp        # CXXHeaderDump -- game BP class header
+SlateCore.hpp           # CXXHeaderDump -- SlateCore module
+WindowsD3D12Viewport.cpp # UE4 RHI source, read for the DX12 present seam (sibling of D3D11Viewport.cpp)

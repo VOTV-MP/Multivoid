@@ -39,7 +39,7 @@ def commit(repo, subject, body_lines=(), touch="f.txt"):
 
 def trailer(base, census, rows=2, so=0, ad=0, sd=0, pa=0, st=2, ro=100, rl=10, mo=0):
     return ("Docs-Census: base={} rows={} labels={} still-open={} actually-done={} stale-done={} partial={} "
-            "still-true={} cited-dead=0 accretion=0 ro-bytes={} ro-longest={} mem-over200={} "
+            "still-true={} not-a-label=0 cited-dead=0 accretion=0 ro-bytes={} ro-longest={} mem-over200={} "
             "wikilinks-dead=0 pairing-unref=40 pairing-dead=0 "
             "sweep-cursor=1 sweep-cycle=1 census={} research-base=- new=0 foreign=0").format(
         base[:12], rows, rows, so, ad, sd, pa, st, ro, rl, mo, census)

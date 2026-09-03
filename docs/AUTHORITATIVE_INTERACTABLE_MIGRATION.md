@@ -1,8 +1,15 @@
 # Authoritative Interactable Migration — "the mod IS the engine"
 
-**Status:** PHASE A (`coop::Door`) + PHASE B (`coop::Keypad`) IMPLEMENTED 2026-06-06
-(uncommitted; build+audit+smoke clean, hands-on-pending). Enabled by the new BP-disassembly
-capability (`tools/bp_reflect.py`, see [[project-bp-reflection-capability]]).
+**Status:** PARTIAL. The door and keypad SYNC shipped and is committed —
+`coop/interactables/interactable_sync.cpp` and `keypad_sync.cpp` — but NOT as the named class clones
+this doc designed. Enabled by the BP-disassembly capability (`tools/bp_reflect.py`, see
+[[project-bp-reflection-capability]]).
+[corr 2026-09-03: was "PHASE A (`coop::Door`) + PHASE B (`coop::Keypad`) IMPLEMENTED 2026-06-06
+(uncommitted; build+audit+smoke clean, hands-on-pending)"; measured — neither `coop::Door` nor
+`coop::Keypad` exists anywhere in the tree and `git log -S'coop::Door' -- src` returns no commit, so
+those two class names were never committed under any spelling, while the sync itself has been
+committed since 2026-06/07 and the "(uncommitted)" clause was false for ~15 months of doc-time. Found
+by the first real `status_census` close.]
 
 > **The §4 inventory below is SUPERSEDED + EXPANDED by the recon roadmap:**
 > `research/findings/architecture-audits/votv-coop-class-clone-migration-roadmap-2026-06-06.md` — it covers ALL the
@@ -93,7 +100,9 @@ VOTV's gameplay objects (keypad, door, lightswitch, container, flashlight, …) 
 - **Unobservable.** A BP verb invoked from BP dispatches `CallFunction →
   ProcessInternal`, *bypassing* our `ProcessEvent` detour. A POST observer on
   `doorOpen` / the keypad accept / `updateFlashlight` never fires (the original
-  "doors `sent=0`" bug; `interactable_sync.cpp:652-656`, IDA-confirmed).
+  "doors `sent=0`" bug; `interactable_sync.cpp:314-317`, IDA-confirmed).
+  [corr 2026-09-03: was `interactable_sync.cpp:652-656`; measured — the file is 567 lines and the
+  passage now sits at :314-317.]
 - **Unforceable.** Calling the accept/submit verb via reflection is inert
   (`passwordLock` accept does nothing even with the buffer filled;
   `passwordlock.h` "the NATIVE ACCEPT is unreachable by us").

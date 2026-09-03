@@ -827,6 +827,52 @@ this doc naming its retracted `ledger_rot.py`); a backticked commit hash is a ha
 hash (`e31aaaa6`, UE4SS) is informational, never a refusal. The first REAL close is the next
 `/documentize`; steps 2-5 are open.
 
+**THE FIRST REAL CLOSE RAN 2026-09-03, and it measured the design's own promise false.** WP-1(b) says
+the hand check is *"tens, not thousands"*. `[V]` the first run: radius 67 docs -> **714 rows**, because
+the radius is bounded in DOCS while the work is paid per ROW and a doc's row count is unbounded
+(`docs/LESSONS.md` 85 status lines, `CLAUDE.md` 71, one research finding 63) -- so editing one line of a
+doc owed a verdict on every status line in it. Two fixes, each measured: a TOUCHED doc now contributes
+only the rows whose line-hash is absent from its BASELINE version (`git show <base>:<path>`), 714 -> 119;
+and the amortised sweep spends its OWN row budget rather than what is left of a shared one -- shared,
+the session's 119 rows ate it and the sweep took **1 doc of 1,521 candidates** (~1,521 closes to cross
+the tree), separate it takes 12 (~127). A third correction followed: a diff-scoped doc is NOT stamped
+"censused", or it reaches the back of the queue having had only its new lines read. Lesson +
+ledger row written.
+
+**The first close also added a SIXTH verdict token, `NOT A LABEL`.** `[V]` 23 of this close's 146 rows
+are the grammar catching VOCABULARY, not a claim -- the two skills' own token tables and tag legends,
+a quoted regex, "QUESTION -> DESIGN -> IMPL". The five status verdicts had no value for "this line is
+not a claim", so a false positive had to be verdicted `STILL TRUE`, laundering noise into the counts
+and hiding the grammar's precision. `not-a-label=` now MEASURES that precision every close instead of
+asserting it, and the gate's identity check counts it.
+
+**Three instrument defects the first close found and fixed, all false-DEAD citations:** `.github` was
+missing from `CITE_ROOTS`, so every citation to `build-core.yml:57` -- a line that exists -- resolved
+`gone` (the same tuple that had `include`, which never existed: one list, two silent failure modes);
+eight external sources cited by research findings (GNS `udp.cpp`/`p2p.cpp`/`certs.cpp`/`certstore.h`,
+four CXXHeaderDump headers, `WindowsD3D12Viewport.cpp`) were not in `lessons_gate_allow_files.txt`;
+and a SECTION reference (`§6c.c`) matched the path grammar as a C file. Dead citations 24 -> 9, and the
+nine that remain are all deliberate (a retracted `ledger_rot.py`, a retired `ko_respawn.h`, the drill's
+own sentinel, a lesson quoting pointers that rotted on purpose).
+
+**What the close found in the DOCS**, both of the classes §2.3 measured, both fixed with a `[corr]`
+stamp: `AUTHORITATIVE_INTERACTABLE_MIGRATION.md:3` claimed `coop::Door` + `coop::Keypad` "IMPLEMENTED
+2026-06-06 (uncommitted; hands-on-pending)" -- `[V]` neither symbol exists anywhere in the tree and
+`git log -S'coop::Door' -- src` returns no commit, while the door/keypad sync HAS been committed since
+June under other names, so the label was a stale-open riding a false sub-state; and its `:96` cited
+`interactable_sync.cpp:652-656` in a 567-line file (`[V]` the passage is at :314-317).
+`COOP_CLIENT_MODEL.md:159` still said the skins re-cook was "hands-on pending" -- `[V]` skins reached
+real players and produced a FIELD defect report on 2026-09-01.
+
+**An OPEN defect in the flow, recorded not fixed:** fixing a row erases the verdict that motivated the
+fix. The close pins the census's content, so a doc edited after the census forces a re-census; the
+corrected line then arrives as a NEW row and is verdicted `STILL TRUE`, while the `ACTUALLY DONE` /
+`STALE DONE` that CAUSED the edit is gone from the final table. So this close's trailer reads
+`actually-done=0 stale-done=0` although it fixed three stale claims -- the counts under-report found
+rot by construction, and the finding survives only in the `[corr]` stamps and this section. The fix
+shape is a resolved-row carry (a verdict whose row disappears because it was acted on is recorded, not
+dropped); it is the next census change.
+
 **Step 2 BUILT 2026-09-03 (WP-4), and it found a hole in the gate it extended.** `lessons_gate.py`
 gains C (`check_wikilinks`), D (`check_pairing`, exposed as `--pairing`, which returns before the 22 s
 corpus build) and E (`check_running_totals`); C and D fail the gate, E is a WARN that is printed and

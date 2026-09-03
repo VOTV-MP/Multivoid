@@ -61,7 +61,14 @@ from status_grammar import read_text, sha1, DATE_RE, CORR_RE, ACCRETION_RE, DATE
 from comment_lexer import comment_only  # noqa: E402
 
 K_DEFAULT = 40
-VERDICTS = ("STILL OPEN", "ACTUALLY DONE", "STALE DONE", "PARTIAL", "STILL TRUE")
+ROW_BUDGET = 40          # the SWEEP's own row budget: the hand check is paid per ROW, so that is the
+                         # unit the sweep amortises over -- the session's own rows are always included
+# The sixth token is not a status: it is the hand REJECTING the row. The grammar has a measured false
+# positive rate (2026-09-02 sample: 29 % of the old regex's hits were not labels at all) and the five
+# status verdicts have no value for "this line is not a claim" -- so without it a false positive must be
+# verdicted STILL TRUE, which launders noise into the counts and hides the grammar's precision. With it,
+# every close MEASURES that precision (`not-a-label=` in the trailer) instead of asserting it.
+VERDICTS = ("STILL OPEN", "ACTUALLY DONE", "STALE DONE", "PARTIAL", "STILL TRUE", "NOT A LABEL")
 CLOSE_PREFIX = "[docs] close:"
 TRAILER_KEY = "Docs-Census"
 RATCHET_COLS = ("ro-bytes", "ro-longest", "mem-over200", "wikilinks-dead", "pairing-unref", "pairing-dead")
@@ -298,6 +305,7 @@ def base_for(repo, since):
 
 def format_trailer(v):
     order = ("base", "rows", "labels", "still-open", "actually-done", "stale-done", "partial", "still-true",
+             "not-a-label",
              "cited-dead", "accretion", "ro-bytes", "ro-longest", "mem-over200", "wikilinks-dead",
              "pairing-unref", "pairing-dead", "sweep-cursor", "sweep-cycle", "census", "research-base",
              "new", "foreign")
@@ -363,6 +371,23 @@ def accretion_count(env, rs):
 
 
 # ----------------------------------------------------------------------------- owned paths + the private-index commit
+def baseline_text(env, key, owner, base, rbase):
+    """The doc's content at its owner's census base, or None when it has none (a new file) -- in which
+    case every row in it is new and all of them are owed a verdict."""
+    if owner == "main":
+        r = subprocess.run(["git", "show", "{}:{}".format(base, key)], cwd=env.repo,
+                           capture_output=True, text=True, encoding="utf-8", errors="replace")
+    elif owner == "research" and env.research:
+        r = subprocess.run(["git", "show", "{}:{}".format(rbase, key[len("research/"):])], cwd=env.research,
+                           capture_output=True, text=True, encoding="utf-8", errors="replace")
+    else:                                  # private: the history repo's HEAD holds the previous snapshot
+        if not os.path.isdir(os.path.join(env.history, ".git")):
+            return None
+        r = subprocess.run(["git", "show", "HEAD:{}".format(key)], cwd=env.history,
+                           capture_output=True, text=True, encoding="utf-8", errors="replace")
+    return r.stdout if r.returncode == 0 else None
+
+
 def intent_to_add(repo):
     """Paths another session marked `git add -N`. They are INVISIBLE to both guards otherwise:
     `git diff --cached --name-only` does not list them (nothing is staged yet) while
@@ -550,30 +575,71 @@ def run_census(env, args):
     print("radius (ii) cited: {} docs from {} diff symbols; dropped as generic: {}".format(
         len(cited), len(syms), ", ".join("{}({})".format(s, n) for s, n in sorted(dropped.items(), key=lambda x: -x[1])[:12]) or "-"))
     print("  t={:.1f}s".format(time.time() - t0))
-    # radius (iii): the amortised sweep
+    # radius (iii): the amortised sweep, paid in ROWS
     st = state_load(env)
-    never = [k for k in rs if k not in st["docs"]]
+    never = sorted(k for k in rs if k not in st["docs"])
     oldest = sorted((k for k in rs if k in st["docs"]), key=lambda k: st["docs"][k]["utc"])
-    k = args.k or K_DEFAULT
-    sweep = sorted(never)[:k] + oldest[:max(0, k - len(never))]
-    if args.sweep:
-        radius = set(rs)
-    else:
-        radius = touched | cited | set(sweep)
-    cycle = -(-len(rs) // k)
-    print("radius (iii) sweep: {} docs (K={}, never-censused {}, cycle {} closes)".format(len(sweep), k, len(never), cycle))
-    print("radius total: {} docs{}".format(len(radius), " (--sweep: the whole read set)" if args.sweep else ""))
+    k = args.k if args.k is not None else K_DEFAULT
+    budget = args.rows if args.rows is not None else ROW_BUDGET
+    candidates = [c for c in never + oldest if c not in touched and c not in cited]
+
     # the scan
     resolver = Resolver(env)
     resolver.index()
     resolver.corpora()
     print("  resolver ready (index {} basenames, corpora {} identifiers) t={:.1f}s".format(
         len(resolver.index()), len(resolver.corpora()), time.time() - t0))
-    rows = []
-    for n, key in enumerate(sorted(radius), 1):
-        rows.extend(scan_doc(key, rs[key][1], resolver, loose=args.loose))
-        if n % 100 == 0:
-            print("  scanned {}/{} docs, {} rows, t={:.1f}s".format(n, len(radius), len(rows), time.time() - t0))
+
+    def scan(key, diff_scoped):
+        """A TOUCHED doc contributes only the rows this session INTRODUCED OR CHANGED, not every status
+        line it contains. Measured 2026-09-03 on the first real close: 29 touched docs produced 431 rows
+        because `docs/LESSONS.md` alone carries 85 and `CLAUDE.md` 71 -- so editing one line of a doc
+        owed a hand verdict on all of them, which is the 11,291-hit mandate again one order of magnitude
+        down. A row's identity is its line's hash, so the diff is exact, and the rest of the doc reaches
+        a verdict through the sweep like any other doc."""
+        out = scan_doc(key, rs[key][1], resolver, loose=args.loose)
+        if diff_scoped:
+            old = baseline_text(env, key, rs[key][0], base, rbase)
+            if old is not None:
+                seen = {r["hash"] for r in scan_text(key, old, resolver, loose=args.loose)}
+                scanned_whole.discard(key)
+                return [r for r in out if r["hash"] not in seen]
+        scanned_whole.add(key)      # no baseline (a new doc) or a sweep doc: every row was offered
+        return out
+
+    rows, swept, scanned_whole = [], [], set()
+    if args.sweep:                                    # the whole read set, on request: no budget
+        radius = set(rs)
+        for n, key in enumerate(sorted(radius), 1):
+            rows.extend(scan(key, False))
+            if n % 100 == 0:
+                print("  scanned {}/{} docs, {} rows, t={:.1f}s".format(n, len(radius), len(rows), time.time() - t0))
+        swept = sorted(radius)
+    else:
+        for key in sorted(touched | cited):
+            rows.extend(scan(key, key in touched))
+        owed = len(rows)
+        # The sweep's budget is ITS OWN, never "what is left of a shared one": the session's rows are
+        # not negotiable (you changed those lines, you verdict them), so a shared budget is eaten by a
+        # busy session and the queue stops moving -- measured 2026-09-03 on the first real close, where
+        # 119 own rows left the sweep 1 doc of 1,521 candidates, i.e. ~1,521 closes to reach the tree.
+        # It takes whole docs (per-doc census state stays meaningful); a doc larger than the budget is
+        # still taken when nothing else has been, so the queue always advances by at least one.
+        for key in candidates[:k]:
+            if len(rows) - owed >= budget and swept:
+                break
+            r = scan(key, False)
+            rows.extend(r)
+            swept.append(key)
+        print("radius (i)+(ii): {} docs -> {} rows (touched docs are diff-scoped)".format(
+            len(touched | cited), owed))
+        print("radius (iii) sweep: {} of {} candidate docs -> {} rows (K={} cap, sweep row budget {}, "
+              "never-censused {})".format(len(swept), len(candidates), len(rows) - owed, k, budget, len(never)))
+        radius = (touched | cited | set(swept))
+    cycle = -(-len(candidates) // max(1, len(swept))) if swept else 0
+    print("radius total: {} docs, {} rows{}".format(
+        len(radius), len(rows), " (--sweep: the whole read set)" if args.sweep else
+        " (~{} closes to reach every doc at this rate)".format(cycle)))
     # carry verdicts forward from a pending table by (key, hash)
     carried = {(r["key"], r["hash"]): r["verdict"] for r in prev_rows if r["verdict"]}
     for r in rows:
@@ -589,7 +655,7 @@ def run_census(env, args):
     meta = {"utc": utc_now(), "base": base, "research_base": rbase, "touched": sorted(touched),
             "content": content,
             "new": new_paths, "radius": len(radius), "rows": len(rows), "labels": labels, "cited_dead": dead,
-            "sweep": sweep, "k": k, "cycle": cycle, "read_set": len(rs), "loose": bool(args.loose),
+            "sweep": swept, "scanned_whole": sorted(scanned_whole), "k": k, "budget": budget, "cycle": cycle, "read_set": len(rs), "loose": bool(args.loose),
             "full_sweep": bool(args.sweep), "dropped": dropped}
     write_table(pending_path(env), meta, rows)
     print("rows: {} (labels {}, dead citations {}); verdicts carried forward: {}".format(
@@ -693,14 +759,16 @@ def run_close(env, args):
                 ", ".join(grew), prev_sha[:10], " ".join("{} {}->{}".format(c, prev[c], rv[c]) for c in grew)))
     st = state_load(env)
     utc = utc_now()
-    for key in meta.get("touched", []) + meta.get("sweep", []):
+    # Stamp ONLY the docs that were read WHOLE. A touched doc is diff-scoped -- the hand verdicted the
+    # rows this session changed, not the doc -- so stamping it "censused" would be the same false claim
+    # this arc exists to delete, and would push it to the back of the sweep queue unread.
+    for key in meta.get("scanned_whole", []):
         st["docs"][key] = {"utc": utc, "base": base}
-    for r in rows:
-        st["docs"][r["key"]] = {"utc": utc, "base": base}
     cursor = sum(1 for k in rs if k in st["docs"])
     vals = {"base": base[:12], "rows": len(rows), "labels": meta.get("labels", 0),
             "still-open": counts["STILL OPEN"], "actually-done": counts["ACTUALLY DONE"],
             "stale-done": counts["STALE DONE"], "partial": counts["PARTIAL"], "still-true": counts["STILL TRUE"],
+            "not-a-label": counts["NOT A LABEL"],
             "cited-dead": meta.get("cited_dead", 0), "accretion": accretion_count(env, rs),
             "ro-bytes": rv["ro-bytes"], "ro-longest": rv["ro-longest"], "mem-over200": rv["mem-over200"],
             "wikilinks-dead": rv["wikilinks-dead"], "pairing-unref": rv["pairing-unref"],
@@ -770,7 +838,9 @@ def main(argv=None):
     c.add_argument("--loose", action="store_true")
     c.add_argument("--force", action="store_true",
                    help="overwrite a pending table that already holds hand verdicts (they are lost)")
-    c.add_argument("-k", type=int)
+    c.add_argument("-k", type=int, help="cap the sweep at N docs (default 40)")
+    c.add_argument("--rows", type=int,
+                   help="the SWEEP's own row budget, on top of the session's own rows (default 40)")
     cl = sub.add_parser("close")
     cl.add_argument("-m", "--subject", required=True)
     cl.add_argument("--trailer", action="append")

@@ -157,8 +157,12 @@ RUNTIME (mod):   [v93 SKINS, AS-BUILT 2026-07-02 late evening -- REPLACED the ro
 
 Two halves: the offline cook (§4/§5, geometry+texture+winding VERIFIED in-game) and the
 runtime (pre-skins coop visual VERIFIED 2026-07-02 morning; the v93 skins generalization +
-the v1-profile re-cook are AS-BUILT, hands-on pending -- runbook
+the v1-profile re-cook are AS-BUILT and have since been exercised IN THE FIELD -- runbook
 `research/handson_runbook_2026-07-02_evening_fixes.md`).
+[corr 2026-09-03: was "hands-on pending"; measured -- skins reached real players and produced a
+FIELD defect report on 2026-09-01 ([[project-skins-coingun-and-a-dark-consumer-2026-09-01]]), which
+is stronger evidence than the lab hands-on this line was waiting for. Found by the first real
+`status_census` close.]
 
 The repose (§5) is learned ONCE from a manual example and is now a reusable profile;
 adding a NEW model is `mdl_extract → repose.py apply → ue_cook → repak` (no Blender) --

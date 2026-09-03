@@ -11,7 +11,8 @@ directory, the ignored docs):
   shape     a `[docs] close:` subject without the trailer; a trailer without the prefix; a subject
             that still starts with the RETIRED close form `[docs] documentize` (one close path);
             a close commit without `Co-Authored-By:` (the trailer STAYS -- CLAUDE.md).
-  identity  rows = still-open + actually-done + stale-done + partial + still-true.
+  identity  rows = still-open + actually-done + stale-done + partial + still-true + not-a-label
+            (the sixth is the hand REJECTING a row the grammar mis-flagged: it measures precision).
   tiling    `base=` equals the previous close commit's sha in the range (the first close after the
             boundary: any ancestor), so consecutive censuses tile the history with no gap.
   novelty   `census=` (the private history's commit) differs from every earlier close's -- a
@@ -36,7 +37,7 @@ RETIRED_PREFIX = "[docs] documentize"
 TRAILER_KEY = "Docs-Census"
 WORKFLOW = ".github/workflows/docs-census.yml"
 RATCHET_COLS = ("ro-bytes", "ro-longest", "mem-over200", "wikilinks-dead", "pairing-unref", "pairing-dead")
-VERDICT_COLS = ("still-open", "actually-done", "stale-done", "partial", "still-true")
+VERDICT_COLS = ("still-open", "actually-done", "stale-done", "partial", "still-true", "not-a-label")
 
 
 def git(args, cwd):
