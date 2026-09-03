@@ -6693,6 +6693,19 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   the SAME EDIT that writes the row** -- a row written out of security work is not "public by default,
   audited later", because the audit at the push gate can only ever be a tip fix. Three rows written across
   three sessions all failed, and each would have cost one minute at write time.
+  **HEAD 6 (2026-09-04): a VERBATIM MOVE is a PUBLICATION, and a move is audited for FIDELITY.** The
+  reading-order cut moved 271 lines out of the UNPUBLISHED `CLAUDE.md` into a new tracked doc. The move
+  was checked, carefully, for the only property a move is thought to have -- that nothing was lost or
+  reworded -- and its own header even noticed three sessions were off-topic and argued to keep them on
+  that same ground (*"moving them elsewhere would have meant re-filing claims rather than relocating
+  them"*). Two were security sessions whose content already lived, correctly filed and kept current, in
+  the local tree: a DUPLICATE as well as a leak, so RULE 2 decided it first, and one claim had been
+  SUPERSEDED locally since, making the public copy stale where the original was not. Caught by the
+  axis-4 sweep pre-push; fixed by the head-2 rebuild. *The instrument gap:* the move lane gates on
+  `ro-lost` because LOSS is the only failure mode a move is imagined to have -- nothing asks whether a
+  clause ARRIVED somewhere it may not be. *Look FIRST:* whenever content crosses from an ignored file
+  into a tracked one, run the PUBLICATION test before the fidelity test; fidelity has no opinion about
+  it.
   `memory/feedback_push_leak_audit_service_ties_and_sha_rewrite.md`
 - **Git-Bash (MSYS2) MANGLES remote `/abs/paths` → `C:/Program Files/Git/...`** — any argv that looks
   like a POSIX absolute path is Windows-ified BEFORE the child sees it, so `vps.py put <local>

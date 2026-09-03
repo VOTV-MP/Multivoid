@@ -1212,7 +1212,7 @@ field satisfies — found what a critic reading the same diff did not, and vice 
 
 ### 10.7 Round 2 — and the reframe that made round 1's fix one instance of a rule
 
-Round 2 read `4b965968` (round 1's fix) as hard as the original, which was right: **two of its four
+Round 2 read `8d7d252c` (round 1's fix) as hard as the original, which was right: **two of its four
 questions were about the fix itself.**
 
 - **The scope fix asked the wrong witness.** `whole_hashes` returned the hashes the GRAMMAR emits, and
@@ -1290,3 +1290,28 @@ script took); `show` grouped by doc WITH the line text and the lane; a resolver 
 tree's state; the pending table ordered by doc. Each is a measured cost, not a preference. It owes its
 own `/qf` before it is built, and it does NOT displace D0 (the resolved ledger), which is a
 correctness defect and stays first.
+
+## 10.8 The move lane publishes, and it is audited for fidelity (2026-09-04)
+
+D10 moved 271 lines out of `CLAUDE.md`'s entry `4e.` into the new `docs/signals/HISTORY.md`. `CLAUDE.md`
+is UNPUBLISHED; `docs/signals/HISTORY.md` is tracked. **The move was therefore a publication, and
+nothing in the lane knows that.**
+
+`moved_and_cut` gates on `ro-lost` -- a clause that left the reading order and is findable in no doc --
+because LOSS is the only failure mode a move is imagined to have. The mirror question (*did this clause
+ARRIVE somewhere it may not be?*) is asked by no instrument, and the file's own header answered it on the
+wrong axis: it noticed three sessions were off-topic and argued to keep them because *"moving them
+elsewhere would have meant re-filing claims rather than relocating them"* -- a fidelity argument, correct
+for a move, silent about publication.
+
+Two of those three were the 2026-07-20 SECURITY sessions. Caught by the pre-push leak audit's axis 4
+before any push, and fixed by rebuilding the 16 commits from the introducing one (5 doc'd SHAs rewritten)
+rather than scrubbing the tip, because the blob lives in the intermediate commit. The cut material was
+already filed and kept current in the local security tree -- so it was a DUPLICATE as well as a leak, and
+one of its claims had been superseded there in the six weeks since, making the public copy stale in a way
+the original was not.
+
+The general check is cheap and is the proper fix: for a commit's added lines in TRACKED files, do any
+also appear in an UNPUBLISHED tree (`CLAUDE.md`, the memory directory, `docs/security/`, `research/`)?
+If so the close owes an explicit publication acknowledgement, exactly as it already owes `--new` for a
+new doc. Rule: `[[feedback-push-leak-audit-service-ties-and-sha-rewrite]]` head 6.
