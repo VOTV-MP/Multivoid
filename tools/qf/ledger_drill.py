@@ -48,6 +48,31 @@ if len(idx) < 100:
 else:
     print("  [PASS] index built")
 
+print("\nnumeric command anchors -- the claim is the first FIELD, and only a digit field")
+
+
+class _Fake:
+    anchor_kind = staticmethod(L.Ledger.anchor_kind)
+    verify_anchors = L.Ledger.verify_anchors
+
+
+def cmd_arm(name, anchor, want):
+    r = _Fake().verify_anchors({"unresolved": [{"id": "Q", "anchor": anchor}]})[0]
+    ok = (r["verified"] is True) == want
+    print("  [%s] %-32s want=%-5s %s" % ("PASS" if ok else "FAIL", anchor, want, r["detail"][:46]))
+    if not ok:
+        FAIL.append(name)
+
+
+# A counting pipeline rarely ends in a bare number: `uniq -c | head -1` prints "14 2026-08-30".
+# Rejecting that rejects a TRUE anchor (measured 2026-09-03, round 15 of the documentize pass).
+cmd_arm("bare-number", "echo 14 = 14", True)
+cmd_arm("count-plus-value", "echo '14 2026-08-30' = 14", True)
+# ...but only a DIGIT field may satisfy a claim, or a date would answer a year-shaped one.
+cmd_arm("date-not-year", "echo '2026-08-30' = 2026", False)
+cmd_arm("second-field", "echo '14 2026-08-30' = 2026", False)
+cmd_arm("wrong-number", "echo 15 = 14", False)
+
 print()
 if FAIL:
     print("ledger_drill: %d ARM(S) FAILED: %s" % (len(FAIL), ", ".join(FAIL)))

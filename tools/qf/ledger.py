@@ -252,7 +252,16 @@ class Ledger:
                     first = (r.stdout.strip().splitlines() or [""])[0][:120]
                     if claimed is not None:
                         got = first.strip()
-                        same = got.isdigit() and int(got) == int(claimed)
+                        # A counting pipeline does not always end in a bare number: `uniq -c | head -1`
+                        # prints "14 2026-08-30" and `wc -l <file>` prints "150 path". The claim still
+                        # reproduces -- it is the first FIELD. Accept that, and only that: the token
+                        # must be entirely digits, so a date like "2026-08-30" can never satisfy a
+                        # claim of 2026 (its first token is "2026-08-30", not "2026"). Measured
+                        # 2026-09-03: a TRUE anchor was rejected for this alone, the same false-DEAD
+                        # class as `_resolve_loc`'s bare basename.
+                        head = got.split()[0] if got.split() else ""
+                        same = ((got.isdigit() and int(got) == int(claimed)) or
+                                (head.isdigit() and int(head) == int(claimed)))
                         rec.update(verified=same, detail=f"claimed {claimed}, got {got or '<no output>'}"
                                    + ("" if same else " -- the anchor's number does not reproduce"))
                     elif r.returncode not in (0, 1) and not first:
