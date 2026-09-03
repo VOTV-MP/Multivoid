@@ -6719,6 +6719,15 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   separately (the second changes the shas the first mapped) -- one invocation, message filter using
   filter-branch's own `map`; this rebuild then dangled 101 citations across docs, memory and the
   private history.
+  **HEAD 6c (same day): the class now has an instrument** -- `tools/docs/public_leak_gate.py` + drill,
+  in CI. Its FIRST version had two signals and caught **one of the three real incidents**; it was
+  widened only until each had one (a security cite with a LINE number; a finding id next to
+  OPEN/MITIGATED; a REFERRAL to the register, 0 hits so free to keep armed; and verbatim overlap with
+  an unpublished tree as a RATCHET). It ACKNOWLEDGES rather than refuses, because all five
+  pre-existing hits are benign on reading and one is an outright false positive. Rejected on purpose:
+  a signal on a bare register mention (15 of 24 mentions are that harmless pointer) and the mechanism
+  phrases that caught THIS session's leaks -- those are the attacker's vocabulary, and **a gate tuned
+  to the last incident is a site-list.**
   `memory/feedback_push_leak_audit_service_ties_and_sha_rewrite.md`
 - **Git-Bash (MSYS2) MANGLES remote `/abs/paths` → `C:/Program Files/Git/...`** — any argv that looks
   like a POSIX absolute path is Windows-ified BEFORE the child sees it, so `vps.py put <local>

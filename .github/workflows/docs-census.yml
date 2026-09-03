@@ -51,5 +51,15 @@ jobs:
       - name: Ledger gate drill (the allowlist predicates, and the gate shown RED)
         run: python3 tools/docs/lessons_gate_drill.py
 
+      # The PUBLIC-LEAK gate and its drill. This class was caught twice in one day by a hand-run
+      # pre-push audit and zero times by any instrument, while everything else in the arc had a gate.
+      # In CI the S4 overlap signal reports `n/a` -- CI has neither CLAUDE.md (gitignored) nor the
+      # memory directory, so it says so rather than reporting a false all-clear; S1/S2/S3 run here.
+      - name: Public-leak gate drill (both founding incidents, every signal RED and quiet)
+        run: python3 tools/docs/public_leak_gate_drill.py
+
+      - name: Public-leak gate
+        run: python3 tools/docs/public_leak_gate.py
+
       - name: Docs-Census gate
         run: python3 tools/docs/docs_census_gate.py --report

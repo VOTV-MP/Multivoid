@@ -1,0 +1,14 @@
+# Hits `public_leak_gate.py` found in the PUBLIC tree that a person has read and cleared.
+# One needle per line; '#' starts a comment. A hit not listed here FAILS the gate.
+#
+# The bar is docs/DOCS_ARC.md WP-2: CUT a specific UNFIXED weakness and its effect; KEEP the
+# architectural statement, the honest posture, and the record of something already fixed. Every
+# entry below carries WHY, because "someone cleared it once" is not a reason.
+#
+# Cleared 2026-09-04, the day the gate was written, against the five hits then standing.
+
+security/TRACKER.md:627                   # DOCUMENTIZE_ARC:117 -- cites a CLOSED finding (B4 IS BUILT) whose two commits are public
+docs/security/LESSONS_SECURITY.md:329     # status_grammar.py:97 -- provenance for a REGEX decision; the only content disclosed is the string "6c.c + 9b"
+A51 is closed, **A50 is only MITIGATED    # COOP_SYNC_MAP:152 -- a posture statement with no mechanism; the keep rule keeps exactly this
+A59 is MITIGATED                          # sig_gate.py:30 -- says what the drill CANNOT assert; A59 was fixed in the field 2026-08-31
+A6 -- THE AUTHORITY HANDOFF MUST NOT OPEN # atv_probe_report.py:423 -- FALSE POSITIVE: "A6" is an experiment ARM label, not a finding id
