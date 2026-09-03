@@ -24,6 +24,8 @@ Three fixtures, each a class the design claims to hold (docs/DOCUMENTIZE_ARC.md 
      "coverage" -- clauses, not the symbols both texts happen to mention.
   H  every DECLARED trailer column has a PRODUCER -- the check that would have caught a ratchet
      hardcoded to 0 and a column no close has ever emitted, both of which read as a plausible 0.
+  I  the REFUSAL paths nothing was exercising -- found by censusing every `REFUSE:` against the
+     drill, after a first census reported all twelve as covered on a word match.
   C  the CLOSE in a scratch environment (repo + memory dir + history dir): a neighbour's whole-file
      staged doc survives and is excluded; a missing verdict REFUSES; STILL TRUE on a dead citation
      REFUSES; the good close carries exactly the session's paths with the trailer; a second close
@@ -741,6 +743,82 @@ def drill_trailer_producers():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def drill_undrilled_refusals():
+    """I: the refusal paths nothing exercised. Censusing every `REFUSE:` in status_census.py against
+    the drill found SIX with no arm at all -- and the first census I wrote to find them reported all
+    twelve as drilled, because it asked whether any WORD of the message appeared anywhere in the drill
+    text. A detector that answers PASS on a word match is the ledger's own row about counting what a
+    thing MATCHED. These four guard a property; the other two (`no previous Docs-Census trailer`,
+    `no commit before`) are first-run ergonomics and are named here rather than drilled."""
+    print("-- I. the refusal paths nothing was exercising")
+    root = tempfile.mkdtemp(prefix="sci_")
+    repo, mem, hist = (os.path.join(root, n) for n in ("repo", "memory", "history"))
+    os.makedirs(os.path.join(repo, "docs"))
+    os.makedirs(mem)
+    try:
+        w = lambda rel, text: io.open(os.path.join(repo, rel), "w", encoding="utf-8",
+                                      newline=NLC).write(text)
+        git(["init", "-q", "-b", "main", "."], repo)
+        git(["config", "--local", "user.name", "drill"], repo)
+        git(["config", "--local", "user.email", "drill@example"], repo)
+        w(".gitignore", "CLAUDE.md" + NLC)
+        w("CLAUDE.md", CLAUDE)
+        w("docs/a.md", "# A" + NLC + NLC + "plain" + NLC)
+        io.open(os.path.join(mem, "MEMORY.md"), "w", encoding="utf-8").write("# i" + NLC)
+        git(["add", "--", ".gitignore", "docs/a.md"], repo)
+        git(["commit", "-q", "-m", "base"], repo)
+        E = (repo, mem, hist)
+        T = ["--trailer", "Co-Authored-By: Drill <d@e>", "--trailer", "Claude-Session: https://example/x"]
+
+        # :876 -- a close with no census at all
+        code, out = run_sc(E, "close", "-m", "nothing", *T)
+        check(code != 0 and "no pending census" in out, "RED: a close with no census refuses")
+
+        w("docs/a.md", "# A" + NLC + NLC + "- **DONE** a claim" + NLC)
+        run_sc(E, "census", "--since", "2099-01-01")
+        pend = os.path.join(hist, "census", "pending.md")
+
+        # :878 -- the subject may not carry its own prefix, because the script writes it
+        code, out = run_sc(E, "close", "-m", "[docs] close: mine", *T)
+        check(code != 0 and "must not carry its own prefix" in out,
+              "RED: a subject carrying the prefix refuses -- the script owns it")
+
+        def verdict_all(v):
+            t = io.open(pend, encoding="utf-8").read().split(NLC)
+            for i, l in enumerate(t):
+                if l.startswith("| ") and not l.startswith("| # ") and not l.startswith("|---"):
+                    c = [x.strip() for x in l.strip().strip("|").split("|")]
+                    if len(c) >= 11 and c[0].isdigit():
+                        cells = l.rstrip().rstrip("|").split("|")
+                        cells[-1] = " " + v + " "
+                        t[i] = "|".join(cells) + "|"
+            io.open(pend, "w", encoding="utf-8", newline=NLC).write(NLC.join(t))
+
+        verdict_all("STILL TRUE")
+        # :978 -- a row DELETED from the table by hand. Without this the trailer's "rows = sum of
+        # verdicts" would describe the PRUNED table and read as a clean close over a smaller finding.
+        t = io.open(pend, encoding="utf-8").read().split(NLC)
+        kept = [l for l in t if not (l.startswith("| ") and not l.startswith("| # ")
+                                     and not l.startswith("|---"))]
+        io.open(pend, "w", encoding="utf-8", newline=NLC).write(NLC.join(kept))
+        code, out = run_sc(E, "close", "-m", "pruned", *T)
+        check(code != 0 and "rows were" in out and "deleted by hand" in out,
+              "RED: a row deleted from the table by hand refuses ({})".format(out.strip()[-90:]))
+
+        # :301 -- the trailer WRITER refuses an undeclared column, not only the gate reading it back
+        import trailer_schema as TS
+        try:
+            SC.format_trailer({"base": "x", "rows": 1, "not-a-column": 2})
+            ok = False
+        except SystemExit as e:
+            ok = "no declared kind" in str(e)
+        check(ok, "RED: format_trailer refuses a column with no declared kind (the WRITE side, not "
+                  "only the gate's read side)")
+        check("not-a-column" not in TS.KIND, "...and the fixture's column really is undeclared")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def drill_reading_order():
     """G: MOVE-THEN-CUT, made checkable. A shrink of the reading order is only good news if the facts
     went somewhere, and `[V]` 2026-09-03 that is not the usual case: NO entry's clauses are more than
@@ -895,6 +973,7 @@ def main():
     drill_resolved()
     drill_memory_index()
     drill_trailer_producers()
+    drill_undrilled_refusals()
     drill_reading_order()
     drill_cross_session()
     print("status_census_drill: {} check(s) failed".format(len(FAILS)))
