@@ -1,5 +1,8 @@
 # LESSONS — what VOTV_MP has learned the hard way
 
+<!-- The census does not label-scan this ledger. Its ROW TITLES quote the status vocabulary by construction (61 of 84 rows on 2026-09-03: "A CAPABILITY IS NOT SHIPPED...", "A CLOSED BINARY'S LOG STRINGS...", "FIXED 2026-07-30"), and its citations have a DEDICATED, stronger gate -- tools/docs/lessons_gate.py checks every cite, symbol, wikilink, pairing and running total. All 22 dead citations the census found here are deliberate (dis.py, the retracted ledger_rot.py, a scratch .ps1, a retired server). -->
+<!-- corr-vocabulary: quoted-doc -->
+
 The single browsable ledger of durable lessons + **DIG-RULE** lessons. Each row is a takeaway, a
 "look here FIRST next time" pointer where one applies, and a link to the full `memory/` file (the
 authoritative detail). This complements — does not replace — `MEMORY.md` (the terse auto-memory index
@@ -33,6 +36,54 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 1. How to work (process / working agreements)
 
+- **UNIQUENESS AT ONE INSTANT IS NOT STABILITY ACROSS AN EDIT — validate a KEY against HISTORY, not a
+  snapshot** (2026-09-03: a proposed row-identity key was validated by counting collisions over the whole
+  corpus — ZERO, against the shipped key's FOUR — and promoted to keystone across four /qf rounds. The
+  property that mattered was never measured: replayed over **1,393 rows across 37 real commit pairs on
+  five docs**, the new key carried where the old one lost on **ONE row (0.07%)**, and its ordinal
+  component churned 0.5-7% on rows whose own text had not changed. The first replay was wrong too — it
+  compared only rows whose text was UNCHANGED, a case the content hash wins BY CONSTRUCTION). *Look
+  FIRST:* a carry/cache/dedup key is a function of TIME, so the validating instrument replays `git log`
+  pairs; and if a candidate cannot LOSE your test, the test is measuring itself.
+  `memory/lesson-uniqueness-at-one-instant-is-not-stability-across-an-edit.md`
+- **A QUOTE YOU WRITE INTO YOUR OWN BRIEF BECOMES «THE USER'S ASK» BY REPETITION** (2026-09-03: four
+  consecutive /qf briefs opened with a Russian sentence quoted as the user's verbatim ask; `grep -c` gives
+  **0 in docs/, 0 in memory/, 4 in the qf thread — all four my own briefs**, while the arc's §0 records a
+  different English utterance. The FRAMING-PROVENANCE trap the skill warns about for mechanisms, applied
+  to the ASK — the section that exists so the critic can hold the design against what was wanted. A
+  laundered mechanism costs a wrong design; a laundered ask invents a requirement the user never gave).
+  *Look FIRST:* a VERBATIM quote is a citation and owes a file and a line — grep the corpus for it before
+  the brief goes out, and carry the ask forward BY REFERENCE, never by re-typing.
+  `memory/lesson-a-quote-you-write-into-your-own-brief-becomes-the-users-ask-by-repetition.md`
+- **A RATCHET MAY ONLY COVER A NUMBER THE CLOSING SESSION CAN MOVE** (2026-09-03: a whole-corpus
+  dead-citation count — 2,292 of 6,081 doc rows — was filed as a ratcheted trailer column one round and
+  killed the next: `git grep -l 'atv_sync.cpp' -- '*.md'` = **5 tracked docs** against a close radius of
+  ~50 docs / 150 rows, so an ordinary extraction can break more citations than the closing session is
+  shown, and the ratchet would refuse a close over work it did not do — the gate-left-red row from the
+  other side). *Look FIRST:* before ratcheting anything, name the actor whose work moves the number and
+  confirm it is the actor the gate refuses; if a second actor can move it, the column is REPORTED, and
+  say so where it is declared. `memory/lesson-a-ratchet-may-only-cover-a-number-the-closing-session-can-move.md`
+- **A DETECTOR THAT SCANS THE CORPUS READS ITS OWN VOCABULARY AS CLAIMS — and needs TWO exclusion
+  scopes** (2026-09-03: **20 of a census's 23 false positives sat in FOUR artifacts that QUOTE its verdict
+  tokens** — both SKILL.md files 8 each, its own arc 3, one feedback file 1 — all touched on EVERY close,
+  so ~13% of every hand pass was permanently spent rejecting the instrument's own token table; the
+  sibling accretion detector already had an exclusion list. ONE scope does not fit: section-marking each
+  skill's table still left 7 and 6 prose mentions, while doc-marking the arc would have discarded 38 real
+  claims to suppress 3 quotes. `docs/LESSONS.md` is a third case — 61 of its 84 rows are lesson TITLES
+  beginning with a status word). *Look FIRST:* census the FALSE POSITIVES by DOC before tuning the
+  pattern, and expect your own files at the top.
+  `memory/lesson-a-detector-that-scans-the-corpus-reads-its-own-vocabulary-as-claims.md`
+- **AN EXCLUSION APPLIED BEFORE THE ORDERING CANNOT BE FIXED BY RE-ORDERING** (2026-09-03: an amortised
+  sweep dropped `touched` docs BEFORE sorting, and the skill's own steps touch `MEMORY.md`,
+  `LESSONS.md` and `CLAUDE.md` on EVERY close — so the three docs the reading order lists FIRST were
+  excluded from every queue forever. They hold **194 label rows**; the one real close surfaced **17**,
+  and `grep -o '"CLAUDE.md"' docs_census_state.json` = **0**, never stamped once. Two rounds went into
+  better ORDERINGS — all correct, all downstream of a set the filter had already emptied — before a
+  critic asked which LINE brings their turn. The most-read docs are the most-touched, so a
+  touched-exclusion guarantees they are the least swept). *Look FIRST:* when a queue never yields some
+  member, read the pipeline IN ORDER and find the first stage that can remove it; a ranking, a budget
+  and a cap only redistribute what the filter admitted.
+  `memory/lesson-an-exclusion-applied-before-the-ordering-cannot-be-fixed-by-reordering.md`
 [withdrawn at the author's request]
 
 [withdrawn at the author's request]

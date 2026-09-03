@@ -11,6 +11,15 @@
 > from the lessons ledger, not re-measured here · **`[?]`** unverified.
 > **TIER 1 IS AS-BUILT (2026-09-02 evening, user green light "Ok I green light it"): step 0 `03748f56`,
 > WP-3 step 1 `62825440`, WP-6 `d43888cd`, WP-3 steps 2-3 `c3960b01`, WP-1 `c2eb4f60` — see §10.**
+> **THE ANCHOR VERIFIER REFUSED TWO TRUE ANCHORS AND WAS FIXED TWICE (2026-09-03, `057379dd` +
+> `432beeb6`, drilled by the NEW `tools/qf/ledger_drill.py`).** Both surfaced in one 20-round pass and
+> both are the same false-DEAD class as `lessons_gate`'s `CITE_ROOTS`: (1) a **bare basename** — the
+> critic wrote `status_census.py:602`, a file tracked at exactly ONE path, and the verifier resolved
+> only against the repo root; resolution is now unique-or-refuse, and the pre-fix code silently
+> resolved `README.md` to the ROOT readme, so it also closed a false-VERIFIED against a file the critic
+> never opened. (2) a **counting pipeline's first FIELD** — `uniq -c | head -1` prints `14 2026-08-30`
+> and the verifier demanded a bare number; the claim may now match the first field, and only a digit
+> field, so a date can never answer a year-shaped claim. Five drill arms, both directions.
 > WP-4 / WP-5 / WP-2 remain DESIGN below the cut. §8 is the audit log — three passes folded
 > 2026-09-02 (one in-session, two independent agents, 44 findings, all dispositioned); §9 the
 > build order with the cut line; §10 the as-built record and what the build found.

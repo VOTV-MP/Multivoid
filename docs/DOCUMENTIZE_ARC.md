@@ -7,8 +7,11 @@
 >
 > Status tags as in the other arcs: **DECIDED** · **AS-BUILT** · **PENDING** · **DESIGN** · **`[V]`**
 > measured (instrument named beside the number) · **`[A]`** taken from the lessons ledger · **`[?]`**
-> unverified. **Everything in §3 is DESIGN. Nothing is built.** §8 is the audit log (three passes, 47
-> findings, all dispositioned, 2026-09-02); §9 the build order.
+> unverified. **§3 is the ORIGINAL design; most of it is now BUILT** `[corr 2026-09-03: was "Everything
+> in §3 is DESIGN. Nothing is built."; measured — WP-1 steps 0/1/2 shipped `dec89b3e`+`3a37f0da`, the
+> seven defects a 20-round /qf pass found shipped `37bad8bb`, the two lanes `1180c654`]`. **§10 is the
+> current state and supersedes §3 wherever they disagree**; §8 is the audit log (three passes, 47
+> findings, all dispositioned, 2026-09-02) and §8's pass 4 the post-ship audits; §9 the build order.
 
 ---
 
@@ -955,3 +958,102 @@ ls $M/*.md | wc -l; cat $M/*.md | wc -c; grep -o -E '\[\[[^]]+\]\]|\([a-z0-9_.-]
 for f in $(grep -l -iE "LIVE doc|LIVING doc|living arc|living document" docs/*.md docs/*/*.md); do echo "$(git log -1 --format=%ad --date=short -- $f) $f"; done | sort
 git check-ignore -v CLAUDE.md
 ```
+
+---
+
+## 10. Pass 5 — the 20-round `/qf` design pass, and what it did to this document (2026-09-03)
+
+The user asked for the loop to run to convergence (*"I thought qf runs until convergence?"*), made the
+criterion explicit (*"What would be the best for the project - thats my decision"*) and lifted the
+reframe stop (*"If reframe needed - reframe autonomously and run"*). It ran rounds 7-20 on top of the
+6 that preceded the build, stopped on a user-paced cap when the finding severity decayed, and the
+critic never returned `converged` — recorded here as a **user-paced stop, not convergence**.
+
+**80 questions, all answered-measured. Every measurement has a re-runnable script.**
+
+### 10.1 What it falsified — including two of my own load-bearing claims
+
+| # | the claim | how it died |
+|---|---|---|
+| 1 | *"the radius bounds the hand check"* | the radius is bounded in DOCS, the work is paid per ROW: 67 docs -> **714 rows**. Fixed by diff-scoping (714 -> 119) before this pass began |
+| 2 | **the round-13 keystone: "the hash carry erases verdicts on edit"** | over **1,393 rows across 37 real commit pairs on five docs**, a claim-shaped key carries where the hash key loses on **ONE row (0.07%)**. The ordinal component churned 0.5-7% for nothing. The erasure is a RECORDING problem, not a key problem |
+| 3 | **"DATEDNESS is the label-rot risk key"** | measured directly: open-ish rows naming a symbol that resolves today — **undated 20.8% (95/456)**, dated <2026-08 9.4%, dated >=2026-08 11.3%. UNDATED is twice the densest, the opposite of the assumption. Dead citations rot in OLD DATED docs (dated-RE 73.5%, living 14.3%); stale-OPEN labels rot in UNDATED LIVING docs. **Two rot forms, opposite distributions** |
+| 4 | *"`reversals=` measures the hand's precision"* | a row is keyed on `sha1(line)`, so a second verdict needs the line unchanged AND the doc's sweep turn (cycle 109). A flip that far out is the WORLD moving and the sweep CATCHING it — the arc's success, not the hand's error. Renamed `flips=`, reported, never a metric |
+| 5 | a ratchet on `corpus-dead-cites=` | proposed in round 18, dead in round 19: one rename touches 5 tracked docs against a close radius of ~50 — an ordinary extraction would refuse a session over work it did not do. **A ratchet may only cover a number the closing session can move** |
+| 6 | **a quote of the user's own ask** | rounds 7-10 quoted a Russian sentence about *"convenience of keeping documentation"* as verbatim. It appears **0 times in `docs/`, 0 in `memory/`, and 4 times in the qf thread — all four my own briefs.** Introduced in round 7, hardened by repetition, on the ASK, which is the one thing a brief's first section exists to anchor. RETRACTED. Whether ergonomics is also wanted is **an open question for the user** |
+| 7 | a citation of mine, in a brief about citations | `docs/LESSONS.md:5008` cited for the positional-table lesson, which lives at **`:6548`** — `:5008` is the K2Node/ActionMappings row, and both end with "a failed resolve is loud while a resolve to the WRONG function is silent". At 7,101 lines `:5008` resolves LIVE: a position check passing on wrong content. `LESSONS.md:1896` had already measured 3 of 4 live `LESSONS.md:<N>` citations wrong at rest; mine is the fourth |
+| 8 | *"cadence ~8 closes/day"* | that pattern counts this arc's own doc commits. Real closes of this mechanism in all of history: **ONE**. Three patterns give 1 / 110 / 284 — three scopes, and I published one without naming its unit |
+| 9 | *"12 rows/close"* | `ROW_BUDGET = 40` was introduced BY the close commit, so 12 is the PRE-FIX value and every "12 -> 507 closes" figure of rounds 8-10 described code that no longer existed |
+
+### 10.2 The corpus, measured (scripts in the session scratchpad)
+
+- **6,081 rows over 1,552 read-set docs**; 42.7% of docs yield ZERO rows; mean 3.92, median 1, max 141.
+- **37.7% of the corpus (2,292 rows) carries a DEAD citation** — dated-RE 73.5%, dated-other 56.1%,
+  `_archive/` 52.4%, lesson files 35.4%, dated-DESIGN 24.4%, memory ~18.5%, **living 14.3%**. Of those,
+  **2,245 are kind `cite` (no label) and 47 are LABEL rows**, so the contradiction refusal reaches 2%
+  of the class and D4 removes the other 98% from the hand entirely.
+- **70.8% of rows sit in docs untouched 30d+**, but LIVING is the FRESHEST kind (876 of 1,262 rows
+  under 7 days) — the doc is fresh because we keep editing it, while its OLD lines are what
+  diff-scoping never reaches.
+- **THE FILENAME PARTITION IS DEAD**: 20 of the 22 dated `-DESIGN-` docs CLAUDE.md's reading order
+  names carry AS-BUILT / SHIPPED / "design of record". Authority is inbound citation, not the name —
+  but authority does NOT discriminate rot (dated-uncited 46.1% vs dated-CITED 48.5%), so it decides
+  RELEVANCE while datedness decides which rot form.
+- **The corpus contains duplicates**: 38 dated documents at two read-set paths, 33 byte-identical and
+  **5 drifted apart** — four real cross-tree pairs plus one legitimate archive snapshot.
+- **The date ladder** over 1,067 memory files: frontmatter `modified:` 645, filename date 124, a BODY
+  date 291, mtime-only **SEVEN** (named). mtime alone is invalid there (228 share the 2026-07-28
+  compaction day), and `git blame` in the private history returns ONE date for every line, so of 456
+  undated open-ish rows only **248 (54.4%) have a real line age**.
+- **`MEMORY.md`'s retrieval index is partly dead**: six of its eleven `memory/<glob>` pointers resolve
+  to ZERO, because **0 of 597 lesson files carry a filename date** — the compaction replaced lists with
+  greps that return silence.
+- **The reading order**: 55 entries, 1,270 lines, **117,945 bytes**; the first two lines of every entry
+  total 9,166 B (7.8%), the movable body 108,779 B (92.2%). Destination coverage per entry is 68.5%
+  overall but **`4e` — the longest, and the one the design named first — is 15%**, against
+  `4e-browser` 94%, `4e-sbarc` 92%, `4d-death` 87%. The shrink order is measured coverage, not length.
+- **Corpus repair, sized**: of the 2,292 dead-citation rows, **678 (29.6%) also name a backticked
+  symbol and 573 (25.0%) name one that RESOLVES today**, against ~8 rows for the quoted
+  `file:line says "..."` form. **~1,711 rows have no mechanical correction and this design does not
+  repair them.**
+
+### 10.3 The seven shipped defects (all fixed, `37bad8bb`)
+
+1. **The sweep could not reach the docs the reading order lists FIRST.** `candidates` dropped `touched`
+   BEFORE any ordering while steps 3/3.5/4 touch `MEMORY.md`, `LESSONS.md`, `CLAUDE.md` every close:
+   those four hold **194 label rows**, the one real close surfaced **17**, and the state file had never
+   stamped `CLAUDE.md` once.
+2. **The sweep was ALPHABETICAL.** `never` held 1,521 of 1,552 docs and was `sorted()`, so the utc
+   order could not take effect for ~150 closes; it swept README/SECURITY/BUILDING and **zero** research
+   findings, against the 185 dated 2026-06/07 where §2.3 measured the rot. Now oldest-first on a clock
+   ladder; **the cycle fell 109 -> 70**.
+3. **The pending table was POSITIONAL** — `hashes[n-1]` by printed row number, the shape `f74d05dc`
+   retired once already; **four hash collisions in 6,081 rows became zero**.
+4. **The read set omitted 77 tracked docs and a whole repo** — `research/findings` only, so the
+   `handson_runbook_*` files (cited by name in 17 docs) could never receive a row and `site/` was
+   invisible. Owner repos are now discovered by the LOCAL GIT IDENTITY, the invariant CLAUDE.md states
+   and `history_repo` already enforced (11 inner repos, separated perfectly). `_archive/` left the set.
+5. **The content pin covered one of three commit sites.**
+6. **The trailer's vocabulary was four hand-written lists** — 23 columns written, 15 read.
+7. **`--force` said the opposite of what it does** — on the operator's only forward path.
+
+### 10.4 The design as it stands (D0-D11) and what is BUILT
+
+**BUILT 2026-09-03:** `37bad8bb` the seven defects + `trailer_schema.py` (every column declares its
+KIND: IDENTITY / VERDICT / RATCHETED / GATED / REPORTED, and the gate fails an undeclared one);
+`1180c654` the two lanes (a fresh row cannot have AGED, so it is asked the AUTHORING question and only
+when it asserts something falsifiable — 17 authoring rows against 166 ageing on this tree) plus the
+two vocabulary-quote scopes.
+
+**NOT BUILT, in order:** D0 the resolved ledger (the close records a verdict when it is GIVEN, so the
+trailer stops reading `actually-done=0` on a run that corrected three claims); D6/D11 the citation
+content rung + symbol-first corpus repair; D9 the generated dated memory index + `memref-dead=`;
+D10 the reading-order destination rule with `ro-moved=`. The build plan lives in the session
+scratchpad; a DIFF pass on the shipped diff is owed before handoff.
+
+**D8 — the falsifier standing behind "keep the hand phase":** over the first **300 ageing-lane rows**
+(NOT closes — 251 retired-form closes peaked at 14 in ONE day, so a close is not a unit of evidence),
+if `actually-done + stale-done + partial + substate-stale` totals fewer than **5**, the true rot rate
+is under ~3% at 95% and the hand phase is deleted. §2.3's 36% predicts ~108; the round-15 proxy's 15%
+predicts ~45. The one filed close contributes ZERO to that 300: its rows were drawn under the old
+alphabetical selector.
