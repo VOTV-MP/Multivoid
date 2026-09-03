@@ -16,6 +16,9 @@ Three fixtures, each a class the design claims to hold (docs/DOCUMENTIZE_ARC.md 
      appended to an append-only ledger first; the close's verdict columns still read zero (they
      describe the committed text) while `resolved=`/`flips=` carry the correction. Control: a
      verdict that stops carrying because its DOC left the radius is not recorded.
+  F  the reading order's own POINTERS (MEMORY.md's links + date globs, CLAUDE.md's paths) and
+     the generated dated index -- with controls for the three shapes that only LOOK dead: a live
+     glob over dated files, a directory, and a path written from the source root.
   C  the CLOSE in a scratch environment (repo + memory dir + history dir): a neighbour's whole-file
      staged doc survives and is excluded; a missing verdict REFUSES; STILL TRUE on a dead citation
      REFUSES; the good close carries exactly the session's paths with the trailer; a second close
@@ -481,6 +484,82 @@ def drill_resolved():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def drill_memory_index():
+    """F: the two index files' own POINTERS. `MEMORY.md` is loaded into every session and CLAUDE.md's
+    reading order is the first thing a reset session opens, and nothing gated either -- `lessons_gate`
+    fixes its ledger to `docs/LESSONS.md` and never looks at them. `[V]` 2026-09-03 that left SIX of
+    MEMORY.md's eleven date globs matching zero files, because 0 of 705 lesson files carry a date in
+    the NAME while every `project*` file does."""
+    print("-- F. the reading order's own pointers, and the generated dated index")
+    import memory_index as MI
+    root = tempfile.mkdtemp(prefix="scm_")
+    repo, mem = os.path.join(root, "repo"), os.path.join(root, "memory")
+    os.makedirs(os.path.join(repo, "docs", "events"))
+    os.makedirs(os.path.join(repo, "src", "votv-coop", "include", "coop"))
+    os.makedirs(mem)
+    try:
+        w = lambda base, rel, text: io.open(os.path.join(base, rel), "w", encoding="utf-8",
+                                            newline="\n").write(text)
+        git(["init", "-q", "-b", "main", "."], repo)
+        git(["config", "--local", "user.name", "drill"], repo)
+        git(["config", "--local", "user.email", "drill@example"], repo)
+        w(repo, "docs/kept.md", "# kept\n")
+        w(repo, "src/votv-coop/include/coop/thing.h", "// thing\n")
+        w(mem, "lesson-no-date-in-my-name.md",
+          "---\nname: lesson-no-date-in-my-name\ndescription: \"a lesson\"\nmetadata:\n"
+          "  modified: 2026-08-30T10:00:00.000Z\n---\n\nbody\n")
+        w(mem, "project_dated_2026-08-29.md", "---\nname: project_dated_2026-08-29\n---\n\nbody 2026-08-29\n")
+        env = SC.Env(repo=repo, memory=mem, history=os.path.join(root, "h"))
+
+        # RED: every pointer shape that can be dead, one of each
+        w(mem, "MEMORY.md", "\n".join([
+            "# index",
+            "- greps: `memory/lesson-*2026-08-30*`",                 # dead: no filename dates
+            "- greps: `memory/project_*2026-08-29*`",                # LIVE: project files carry them
+            "- [a link](lesson-no-date-in-my-name.md)",              # live
+            "- [a dead link](lesson-never-written.md)",              # dead
+        ]) + "\n")
+        w(repo, "CLAUDE.md", "\n".join([
+            "# rules", "", "## Reading order after a session reset / new conversation", "",
+            "1. `docs/kept.md` and the `docs/events/` subtree",      # file + DIRECTORY, both live
+            "2. `include/coop/thing.h`",                             # named from the SOURCE root
+            "3. `docs/never_written.md`",                            # dead
+        ]) + "\n")
+        dead = MI.dead_refs(env)
+        kinds = sorted((f, k, p) for f, k, p in dead)
+        check(len(dead) == 3, "RED: three dead pointers of three shapes, and only three ({})".format(kinds))
+        check(any(k == "glob" and "lesson-" in p for _, k, p in dead),
+              "a date GLOB matching zero files is dead -- the shipped defect")
+        check(not any("project_" in p for _, _, p in dead),
+              "CONTROL: the same glob shape over `project_*` files is NOT dead (they carry dates)")
+        check(any(k == "link" and "never-written" in p for _, k, p in dead), "a dead markdown link is caught")
+        check(any(k == "path" and "never_written" in p for _, k, p in dead), "a dead docs path is caught")
+        check(not any(p.endswith("events/") for _, _, p in dead),
+              "CONTROL: a DIRECTORY is a resolved pointer, not a dead one")
+        check(not any("thing.h" in p for _, _, p in dead),
+              "CONTROL: a path written from the SOURCE root resolves")
+        # GREEN: fix the three, and the gate goes to zero
+        w(mem, "MEMORY.md", "# index\n- `INDEX_BY_DATE.md` -> 08-30\n- [a link](lesson-no-date-in-my-name.md)\n")
+        w(repo, "CLAUDE.md", "# rules\n\n## Reading order after a session reset / new conversation\n\n"
+                             "1. `docs/kept.md` and the `docs/events/` subtree\n")
+        check(MI.dead_refs(env) == [], "GREEN: the repaired pointers leave none")
+        check(SC.ratchet_values(env)["memref-dead"] == 0, "...and the ratchet reads it as 0")
+
+        # the index itself: dated by the LADDER, so a file with no date in its name still lands
+        path, changed = MI.write(env)
+        body = io.open(path, encoding="utf-8").read()
+        check(changed and "## 2026-08-30" in body and "lesson-no-date-in-my-name" in body,
+              "the index dates a name-less lesson from its frontmatter")
+        check("## 2026-08-29" in body and "project_dated_2026-08-29" in body, "...and a dated project file")
+        check(body.startswith(SC.VOCAB_MARKER_DOC),
+              "the index carries the doc-scope vocabulary marker (it QUOTES descriptions)")
+        check(SC.scan_lines("memory/" + MI.INDEX_NAME, body.split("\n"), SC.Resolver(env)) == [],
+              "...so the census reads ZERO claims from it, however many status words it reprints")
+        check(MI.write(env)[1] is False, "a second run is idempotent -- an unchanged index is not rewritten")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def drill_cross_session(root=None):
     """The three cross-session holes a post-ship audit found on 2026-09-03, each shown RED."""
     print("-- D. cross-session and content-pin refusals")
@@ -557,6 +636,7 @@ def main():
     drill_lexer()
     drill_close()
     drill_resolved()
+    drill_memory_index()
     drill_cross_session()
     print("status_census_drill: {} check(s) failed".format(len(FAILS)))
     return 1 if FAILS else 0

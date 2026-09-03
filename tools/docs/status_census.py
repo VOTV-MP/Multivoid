@@ -289,7 +289,7 @@ def format_trailer(v):
 
 # ----------------------------------------------------------------------------- the ratchet + accretion
 def ratchet_values(env):
-    vals = {"ro-bytes": 0, "ro-longest": 0, "mem-over200": 0,
+    vals = {"ro-bytes": 0, "ro-longest": 0, "mem-over200": 0, "memref-dead": 0,
             "wikilinks-dead": 0, "pairing-unref": 0, "pairing-dead": 0}
     ledger = read_text(os.path.join(env.repo, "docs", "LESSONS.md"))
     if ledger:
@@ -946,9 +946,16 @@ def run_close(env, args):
             "cited-dead": meta.get("cited_dead", 0), "cite-drift": meta.get("cite_drift", 0),
             "accretion": rv["accretion"],
             "ro-bytes": rv["ro-bytes"], "ro-longest": rv["ro-longest"], "mem-over200": rv["mem-over200"],
+            "memref-dead": rv["memref-dead"],
             "wikilinks-dead": rv["wikilinks-dead"], "pairing-unref": rv["pairing-unref"],
             "pairing-dead": rv["pairing-dead"], "sweep-cursor": cursor, "sweep-cycle": meta.get("cycle", 0), "new": len(new), "foreign": foreign}
     # 6. commit 3 first: the private history (snapshot + state + the verdict table) -> census=
+    # The dated index is REGENERATED here, so it can never drift by more than one close --
+    # the discipline the config catalog uses (rewritten every boot, never read back).
+    import memory_index
+    ipath, changed = memory_index.write(env, rs)
+    if changed:
+        print("memory index regenerated: " + ipath)
     snapshot_sync(env, rs)
     state_save(env, st)
     final = os.path.join(env.history, "census", "{}-{}.md".format(utc, base[:10]))

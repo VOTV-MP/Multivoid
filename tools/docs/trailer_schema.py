@@ -30,18 +30,18 @@ column present in a trailer carries a declared kind, so an undeclared column can
 
 IDENTITY = ("base", "census", "research-base")
 VERDICT = ("still-open", "actually-done", "stale-done", "partial", "still-true", "not-a-label")
-RATCHETED = ("ro-bytes", "ro-longest", "mem-over200", "wikilinks-dead", "pairing-unref",
-             "pairing-dead", "accretion")
+RATCHETED = ("ro-bytes", "ro-longest", "mem-over200", "memref-dead", "wikilinks-dead",
+             "pairing-unref", "pairing-dead", "accretion")
 MONOTONE = ("resolved", "flips")
 GATED = ("rows", "cited-dead")
-REPORTED = ("labels", "cite-drift", "memref-dead", "running-totals",
+REPORTED = ("labels", "cite-drift", "running-totals",
             "ro-moved", "sweep-cursor", "sweep-cycle", "new", "foreign")
 
 # The written order. `rows` leads the counts because the VERDICT identity is stated against it.
 ORDER = ("base", "rows", "labels") + VERDICT + (
-    "cited-dead", "cite-drift", "memref-dead", "running-totals",
+    "cited-dead", "cite-drift", "running-totals",
     "accretion", "resolved", "flips",
-    "ro-bytes", "ro-longest", "ro-moved", "mem-over200",
+    "ro-bytes", "ro-longest", "ro-moved", "mem-over200", "memref-dead",
     "wikilinks-dead", "pairing-unref", "pairing-dead",
     "sweep-cursor", "sweep-cycle", "census", "research-base", "new", "foreign")
 
@@ -51,7 +51,7 @@ for _name, _cols in (("identity", IDENTITY), ("verdict", VERDICT), ("ratcheted",
     for _c in _cols:
         KIND[_c] = _name
 
-TARGETS = {"ro-bytes": 58 * 1024, "ro-longest": 15, "mem-over200": 0}
+TARGETS = {"ro-bytes": 58 * 1024, "ro-longest": 15, "mem-over200": 0, "memref-dead": 0}
 
 # Every column in ORDER has a kind, and every kind's column is in ORDER: the two lists cannot drift.
 assert set(ORDER) == set(KIND), (set(ORDER) ^ set(KIND))
