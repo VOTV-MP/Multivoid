@@ -105,7 +105,10 @@ TRAILER_KEY = "Docs-Census"
 RATCHET_COLS = TS.RATCHETED
 TARGETS = TS.TARGETS
 OWN_TOOLING = ("tools/docs/", ".claude/skills/")
-ACCRETION_EXCLUDE = ("docs/LESSONS.md", "docs/DOCUMENTIZE_ARC.md", "docs/QF_ARC.md")
+# A doc that RECORDS corrections rather than accreting them declares itself with this marker,
+# the same shape `status_grammar.VOCAB_MARKER_DOC` already uses for the label grammar. It
+# replaces a three-name tuple that had to be edited in code for every register-shaped doc.
+ACCRETION_MARKER = "<!-- corr-accretion: register -->"
 
 
 # ----------------------------------------------------------------------------- environment
@@ -323,6 +326,14 @@ def ratchet_values(env):
             vals["wikilinks-dead"] = len(dead_links)
             vals["pairing-unref"] = len(unref)
             vals["pairing-dead"] = len(dead_refs)
+        else:
+            # ABSENT IS NOT ZERO, and here the difference is not cosmetic: these three are RATCHETED.
+            # A close run without the memory corpus would write `pairing-unref=0` where the record
+            # says 40, and then EVERY later honest close reads 0 -> 40 as GROWTH and is refused, with
+            # no override flag anywhere in the gate. One run in the wrong environment would poison
+            # the ratchet permanently (DIFF pass, round 6 Q1). The corpus is always present where a
+            # close is legitimately made, so its absence is a refusal rather than a default.
+            vals["_corpus_absent"] = True
     t = read_text(os.path.join(env.repo, "CLAUDE.md"))
     if t:
         lines = t.split("\n")
@@ -340,6 +351,8 @@ def ratchet_values(env):
     m = read_text(os.path.join(env.memory, "MEMORY.md"))
     if m:
         vals["mem-over200"] = sum(1 for l in m.split("\n") if len(l) > 200)
+    else:
+        vals["_corpus_absent"] = True          # see the wikilinks/pairing note above: absent != 0
     # A ledger row carrying a running total is a count that rots by construction (the ledger's own
     # lesson). `lessons_gate` has WARNED on these since WP-4, and the trailer DECLARED the column --
     # but nothing ever produced it, so no close has emitted `running-totals=` in its life. A column
@@ -374,7 +387,7 @@ def accretion_count(env, rs):
     from folding a correction, so a close whose accretion falls should say which of the two it did."""
     n = 0
     for key, (owner, ap) in rs.items():
-        if key in ACCRETION_EXCLUDE or "_archive/" in key or key.startswith("research/"):
+        if "_archive/" in key or key.startswith("research/"):
             continue
         whole = key in ("CLAUDE.md", "memory/MEMORY.md")
         if not whole:
@@ -382,6 +395,15 @@ def accretion_count(env, rs):
                 continue
         t = read_text(ap)
         if not t:
+            continue
+        # A REGISTER declares itself. This used to be `ACCRETION_EXCLUDE`, a three-name tuple edited
+        # in code -- while the sibling label detector already had the mechanism for a doc to say what
+        # it is (`VOCAB_MARKER_DOC`). The same regex that gave the excluded `docs/LESSONS.md` 73 hits
+        # gives `docs/security/TRACKER.md` 27, `docs/security/LESSONS_SECURITY.md` 10 and
+        # `docs/CRUTCHES.md` 8 -- identically shaped registers, none of them on the list, all inside
+        # the read set. A RATCHETED number may not rest on a site list that needs a code edit per
+        # register-shaped doc (round 6 Q2).
+        if ACCRETION_MARKER in t:
             continue
         dated_section = False
         for l in t.split("\n"):
@@ -646,8 +668,28 @@ def read_table(path):
     return meta, rows
 
 
+def require_corpus(env):
+    """The memory directory is an INPUT to four RATCHETED numbers, so its absence is a refusal.
+
+    Without it, `check_wikilinks` / `check_pairing` return None and `mem-over200` is never measured,
+    which would put 0 in a trailer where the record says 40 and 37 -- and the NEXT honest close then
+    reads that as GROWTH and is refused, permanently, with no override anywhere in the gate (round 6
+    Q1). In practice the CLI never reached that branch: `memory_index.write` raised a bare
+    FileNotFoundError first, so the same environment produced a traceback instead of an explanation.
+    One refusal, stated where it actually happens.
+    """
+    if not os.path.isdir(env.memory):
+        raise SystemExit(
+            "REFUSE: the memory corpus is not a directory ({}). It is an INPUT to four RATCHETED "
+            "numbers (mem-over200, wikilinks-dead, pairing-unref, pairing-dead); running without it "
+            "would write them as 0 rather than measure them, and a later honest close would then be "
+            "refused as growth. Point MULTIVOID_MEMORY_DIR at the corpus, or pass --memory-dir."
+            .format(env.memory))
+
+
 def run_census(env, args):
     t0 = time.time()
+    require_corpus(env)
     # BEFORE anything expensive: the pending table is ONE fixed path in a directory two sessions on this
     # box share, so a second census would silently destroy a first session's hand verdicts (a post-ship
     # audit, 2026-09-03). Overwriting a table that already carries verdicts needs --force.
@@ -883,6 +925,10 @@ def run_census(env, args):
           .format(len(rows), labels, dead, drift, sum(1 for r in rows if r["verdict"])))
     print("table: " + pending_path(env))
     rv = ratchet_values(env)
+    if rv.pop("_corpus_absent", False):
+        print("NOTE: the memory corpus is absent ({}), so mem-over200 / wikilinks-dead / "
+              "pairing-unref / pairing-dead below are NOT MEASURED. The close refuses in this "
+              "state rather than writing them as 0.".format(env.memory))
     rv["accretion"] = accretion_count(env, rs)
     print("ratchet now: " + " ".join("{}={} (target {})".format(c, rv.get(c, 0), TARGETS.get(c, 0))
                                      for c in RATCHET_COLS))
@@ -892,6 +938,7 @@ def run_census(env, args):
 
 # ----------------------------------------------------------------------------- the close
 def run_close(env, args):
+    require_corpus(env)
     meta, rows = read_table(pending_path(env))
     if not rows and not meta:
         raise SystemExit("REFUSE: no pending census -- run `census` first")
@@ -1018,6 +1065,14 @@ def run_close(env, args):
                          "unchanged lines carry forward).".format(meta["rows"], len(rows)))
     # 5. numbers
     rv = ratchet_values(env)
+    if rv.pop("_corpus_absent", False):
+        raise SystemExit(
+            "REFUSE: the memory corpus is absent ({}), so four RATCHETED numbers -- mem-over200, "
+            "wikilinks-dead, pairing-unref, pairing-dead -- would be written as 0 rather than "
+            "measured. That is not a cosmetic default: the NEXT honest close then reads 0 -> their "
+            "real values as GROWTH and is refused, and the gate has no override. A close is a local "
+            "act and the corpus is always there for one; point MULTIVOID_MEMORY_DIR at it."
+            .format(env.memory))
     rv["accretion"] = accretion_count(env, rs)
     prev_sha, prev = last_close(env.repo)
     if prev:
@@ -1070,6 +1125,14 @@ def run_close(env, args):
     # USER-attributed standing rule instead of shortening it. `[V]` 2026-09-04: 11 of those 37 lines
     # name the user. One rule, both files; the fourth instance of this pass's own pattern, which is a
     # fix applied to one direction, one scope or one instrument while its mirror stays open.
+    #
+    # IT GETS ITS OWN COLUMN, for the reason round 3 gave `ro-lost` one: a refusal that writes no
+    # number cannot be told apart from a refusal that never ran, and this guard is DOUBLY
+    # conditional (on a baseline and on the corpus). Round 4 widened the rule and added no column,
+    # no kind and no token -- the same fix-the-instance-not-the-rule motion the widening was
+    # correcting (round 6 Q3). `mem-lost` is GATED and, because the close now refuses outright when
+    # the corpus is absent, a `mem-lost=0` in a trailer means the guard RAN and passed.
+    mem_lost = []
     prev_mem = baseline_text(env, "memory/MEMORY.md", "private", base, {})
     if prev_mem is not None and getattr(env, "memory", None):
         now_mem = read_text(os.path.join(env.memory, "MEMORY.md")) or ""
@@ -1120,6 +1183,10 @@ def run_close(env, args):
             "ageing-lost": meta.get("ageing_lost", 0),
             "resolved": n_res, "flips": n_flip, "ro-moved": ro_moved,
             "ro-cut": ro_cut, "ro-lost": 0,   # a close with ro-lost > 0 cannot exist: it refuses
+            # ...and the same is true of mem-lost; it is written from the variable rather
+            # than as a literal so that a guard which stopped RUNNING cannot read back the
+            # same plausible 0 (the shape arm H exists to catch).
+            "mem-lost": len(mem_lost),
             "still-open": counts["STILL OPEN"], "actually-done": counts["ACTUALLY DONE"],
             "stale-done": counts["STALE DONE"], "partial": counts["PARTIAL"], "still-true": counts["STILL TRUE"],
             "not-a-label": counts["NOT A LABEL"],

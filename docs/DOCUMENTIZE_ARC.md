@@ -1,3 +1,4 @@
+<!-- corr-accretion: register -->  <!-- the arc that records this instrument's own corrections, verbatim -->
 # /documentize arc — revising the session-close skill on its own evidence (LIVE doc)
 
 > **Canonical LIVING doc for the `/documentize` skill revision.** Opened 2026-09-02 on the user's
@@ -1394,3 +1395,27 @@ test, it is a test of something else.
 `.github/workflows/build-core.yml:188` anchor was rejected as prose -- on the round whose finding was
 that nothing in CI ran a drill. A gate that cannot express where a defect lives pushes the anchor
 somewhere weaker; `yml`/`yaml` added.
+
+### 10.11 DIFF pass round 6 -- a latent trap, and the widening that forgot its own reason (2026-09-04)
+
+| # | measured | fix |
+|---|---|---|
+| Q1 | four RATCHETED numbers default to 0 when the memory corpus is absent, so one close in that state writes `pairing-unref=0` where the record says 40, and **every later honest close is then refused as growth**, with no override. In practice the CLI never reached that branch -- `memory_index.write` raised a bare `FileNotFoundError` first, so the same environment produced a traceback instead of an explanation | `require_corpus()` on BOTH entry points, naming the four numbers; drilled RED on each |
+| Q2 | `ACCRETION_EXCLUDE` was a three-name tuple edited in code, while the sibling label detector already lets a doc DECLARE what it is. The same regex gives the excluded `LESSONS.md` 73 hits and gives `security/TRACKER.md` 27, `security/LESSONS_SECURITY.md` 10, `CRUTCHES.md` 8 -- identically shaped registers, none on the list | `ACCRETION_MARKER` (`<!-- corr-accretion: register -->`), declared by the three docs. `[V]` accretion 274 before and after: behaviour-equivalent |
+| Q3 | round 3 gave `ro-lost` a GATED column *because a refusal that writes no number cannot be told from one that never ran* -- and round 4's widening to MEMORY.md added no column, no kind, no token (`grep mem-lost` = nothing), behind a DOUBLY conditional guard | `mem-lost` declared GATED and written from the variable, never as a literal |
+| Q4 | 315 rows across three closes, answered entirely by `STILL TRUE` (273) and `NOT A LABEL` (42); every correction column **0**; and the one real stale-open the sweep ever produced left the table unverdicted | D8's zero is now read honestly IN THE SKILL: not a clean corpus, but **no valid data points** |
+
+**Q3 is the sixth instance, and it is the sharpest.** Round 4 widened `ro-lost`'s RULE from one file to
+two -- and did not carry across the REASON the column existed. The reason is one paragraph above the
+code it was copying. Applying a rule to a second instance while leaving its justification behind is the
+same motion as scoping the rule to the first instance; the pass has now produced both halves of that.
+
+**Q1 is the only defect in this pass that could have destroyed work rather than mis-reported it.** Every
+other finding made a number wrong. This one would have made every future close impossible to land,
+silently, from a single run in the wrong environment -- and the traceback that hid it looked like a
+missing file rather than a design fault.
+
+**On Q2 a boundary was NOT crossed on purpose.** The mechanism is fixed; the MEMBERSHIP is not extended.
+Marking `docs/CRUTCHES.md` as a register too would take accretion 274 -> 268, and changing a ratchet's
+denominator as a side effect of a mechanism fix is exactly the quiet move this project distrusts. The
+number is recorded here so a later session can make that call deliberately.

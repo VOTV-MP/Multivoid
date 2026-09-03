@@ -918,6 +918,7 @@ def drill_reading_order():
     finally:
         shutil.rmtree(root, ignore_errors=True)
     drill_ro_lost_refuses()
+    drill_corpus_absent_refuses()
     drill_mem_user_lost_refuses()
     drill_lost_unverdicted_is_counted()
 
@@ -1086,6 +1087,32 @@ def drill_lost_unverdicted_is_counted():
                   " ".join(l for l in out.split(chr(10)) if "LOST UNVERDICTED" in l)[:90]))
     finally:
         shutil.rmtree(root, ignore_errors=True)
+
+def drill_corpus_absent_refuses():
+    """Running without the memory corpus must REFUSE, not default four ratchets to 0.
+
+    `check_wikilinks` / `check_pairing` return None without it and `mem-over200` is never measured,
+    so a close would write 0 where the record says 40 and 37 -- after which every later HONEST close
+    reads that as growth and is refused, with no override in the gate (round 6 Q1). The CLI never
+    reached that branch: `memory_index.write` raised a bare FileNotFoundError first, so the same
+    environment produced a traceback rather than an explanation. Both entry points are guarded and
+    both are drilled, because a refusal on one command is half a rule.
+    """
+    root = tempfile.mkdtemp(prefix="scc_")
+    repo, hist = os.path.join(root, "repo"), os.path.join(root, "history")
+    os.makedirs(os.path.join(repo, "docs"))
+    try:
+        io.open(os.path.join(repo, "docs", "a.md"), "w", encoding="utf-8",
+                newline=NLC).write("# A" + NLC)
+        gone = os.path.join(root, "no_such_memory_dir")
+        for cmd in ("census", "close"):
+            code, out = run_sc((repo, gone, hist), cmd, "-m", "x") if cmd == "close"                 else run_sc((repo, gone, hist), cmd, "--since", "2099-01-01")
+            check(code != 0 and "memory corpus is not a directory" in out,
+                  "RED: `{}` REFUSES without the memory corpus, naming the four ratchets "
+                  "({})".format(cmd, out.strip()[:70]))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
 
 def drill_ro_lost_refuses():
     """`ro-lost` is declared GATED, and until now the only thing exercising it was `moved_and_cut` as

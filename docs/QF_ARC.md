@@ -1,3 +1,4 @@
+<!-- corr-accretion: register -->  <!-- the same, for /qf -->
 # /qf arc — revising the Question-Form skill on its own evidence (LIVE doc)
 
 > **Canonical LIVING doc for the `/qf` skill revision.** Opened 2026-09-02 on the user's ask (§0).

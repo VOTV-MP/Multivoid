@@ -92,9 +92,18 @@ def load_ack(path=ACK):
 
 
 def tracked_docs(repo=REPO):
+    """Tracked docs and tools, EXCLUDING `*_drill.py`.
+
+    A drill's fixtures are synthetic examples of the very thing the gate hunts, so scanning them
+    makes the gate find its own test data and refuse. `lessons_gate_drill.py` already carries this
+    lesson in its own words -- its first run in 2026-08-29 found "the symbol that must not exist" in
+    itself and passed its own RED arm. Same class, same fix, and it bit here within minutes of the
+    drill being written.
+    """
     out = subprocess.run(["git", "ls-files", "*.md", "*.py", "*.yml"], cwd=repo,
                          capture_output=True, text=True)
-    return [p for p in out.stdout.splitlines() if p.strip()]
+    return [p for p in out.stdout.splitlines()
+            if p.strip() and not os.path.basename(p).endswith("_drill.py")]
 
 
 def scan(repo=REPO, paths=None):

@@ -37,7 +37,7 @@ VERDICT = ("still-open", "actually-done", "stale-done", "partial", "still-true",
 RATCHETED = ("ro-bytes", "ro-longest", "mem-over200", "memref-dead", "wikilinks-dead",
              "pairing-unref", "pairing-dead", "accretion")
 MONOTONE = ("resolved", "flips")
-GATED = ("rows", "cited-dead", "ro-lost")
+GATED = ("rows", "cited-dead", "ro-lost", "mem-lost")
 REPORTED = ("labels", "ageing-rows", "ageing-corr", "ageing-docs", "ageing-corr-docs",
             "ageing-lost", "cite-drift", "running-totals", "ro-cut",
             "ro-moved", "sweep-cursor", "sweep-cycle", "new", "foreign")
@@ -47,7 +47,7 @@ ORDER = ("base", "rows", "labels", "ageing-rows", "ageing-corr", "ageing-docs",
          "ageing-corr-docs", "ageing-lost") + VERDICT + (
     "cited-dead", "cite-drift", "running-totals",
     "accretion", "resolved", "flips",
-    "ro-bytes", "ro-longest", "ro-moved", "ro-cut", "ro-lost", "mem-over200", "memref-dead",
+    "ro-bytes", "ro-longest", "ro-moved", "ro-cut", "ro-lost", "mem-lost", "mem-over200", "memref-dead",
     "wikilinks-dead", "pairing-unref", "pairing-dead",
     "sweep-cursor", "sweep-cycle", "census", "research-base", "new", "foreign")
 

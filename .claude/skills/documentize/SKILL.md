@@ -55,6 +55,15 @@ smoke or a static guess. Accuracy beats optimism.
   used to name a fourth term, `sub-state-stale`. Nothing recorded it and nothing needed to: a stale
   sub-state clause under a true label IS a claim, and the hand verdicts that row `STALE DONE`, so the
   term was already inside the third one.)
+- **READ THE ZERO HONESTLY: D8 has no valid data points yet, which is not the same as a clean
+  corpus.** Across the three closes on record, 315 rows were answered entirely by `STILL TRUE` (273)
+  and `NOT A LABEL` (42), with every correction column at **0**. That reads like a corpus with no rot
+  -- and it is not evidence, because the ONE real stale-open the sweep has ever produced left the
+  table UNVERDICTED (the operator acted before verdicting) and so never entered the numerator. The
+  counter that would have caught it, `ageing-lost=`, did not exist until 2026-09-04 and was itself
+  broken on its founding case until the same day. So the honest state is: **the numerator has never
+  been trustworthy, and D8 is at 25 of its 100 ageing docs.** Do not retire the hand phase on this
+  zero, and do not defend it on this zero either -- the first trustworthy closes start now.
 - **Archive stale stuff** — a superseded/abandoned doc or section goes to the nearest `_archive/` with a
   one-line pointer (RULE 2: retired info goes, fully — no parallel stale + fresh).
 - **Write NEW docs with FRESH info** where the current truth has no home; link them in. A NEW doc in

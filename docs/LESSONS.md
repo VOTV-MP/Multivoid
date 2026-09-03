@@ -1,3 +1,4 @@
+<!-- corr-accretion: register -->  <!-- the ledger of corrections; every row IS one, so its hits are its subject -->
 # LESSONS — what VOTV_MP has learned the hard way
 
 <!-- The census does not label-scan this ledger. Its ROW TITLES quote the status vocabulary by construction (61 of 84 rows on 2026-09-03: "A CAPABILITY IS NOT SHIPPED...", "A CLOSED BINARY'S LOG STRINGS...", "FIXED 2026-07-30"), and its citations have a DEDICATED, stronger gate -- tools/docs/lessons_gate.py checks every cite, symbol, wikilink, pairing and running total. All 22 dead citations the census found here are deliberate (dis.py, the retracted ledger_rot.py, a scratch .ps1, a retired server). -->
