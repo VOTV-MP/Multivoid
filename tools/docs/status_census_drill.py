@@ -754,6 +754,7 @@ def drill_undrilled_refusals():
     root = tempfile.mkdtemp(prefix="sci_")
     repo, mem, hist = (os.path.join(root, n) for n in ("repo", "memory", "history"))
     os.makedirs(os.path.join(repo, "docs"))
+    os.makedirs(os.path.join(repo, "src"))
     os.makedirs(mem)
     try:
         w = lambda rel, text: io.open(os.path.join(repo, rel), "w", encoding="utf-8",
@@ -804,6 +805,29 @@ def drill_undrilled_refusals():
         code, out = run_sc(E, "close", "-m", "pruned", *T)
         check(code != 0 and "rows were" in out and "deleted by hand" in out,
               "RED: a row deleted from the table by hand refuses ({})".format(out.strip()[-90:]))
+
+        # THE ACCEPTANCE SIDE (round 3 Q2). Round 2 retired the seventh token and deleted the two-way
+        # refusal WITH it, so a drift row verdicted STALE DONE closed cleanly and landed in the number
+        # that decides whether the hand phase survives. Fixing rejection and leaving acceptance open
+        # is a one-sided gate.
+        w("docs/d.md", NLC.join(["# D", "", "the seam is `src/thing.cpp:5` `MovedSymbol` today"]) + NLC)
+        w("src/thing.cpp", NLC.join(["// head"] + ["// pad {}".format(i) for i in range(2, 60)] +
+                                    ["void MovedSymbol() {}"]) + NLC)
+        git(["add", "--", "docs/d.md", "src/thing.cpp"], repo)
+        git(["commit", "-q", "-m", "drift fixture"], repo)
+        run_sc(E, "census", "--force", "--since", "2099-01-01")
+        _, rr = SC.read_table(pend)
+        check(any(r["kind"] == "drift" for r in rr), "the fixture now yields a drift row")
+        for tok in ("STALE DONE", "ACTUALLY DONE"):
+            verdict_all(tok)
+            code, out = run_sc(E, "close", "-m", "acceptance", *T)
+            check(code != 0 and "states no STATUS" in out,
+                  "RED: '{}' on a row that carries no label refuses -- it would count into the "
+                  "number D8 reads".format(tok))
+        verdict_all("STILL TRUE")
+        code, out = run_sc(E, "close", "-m", "acceptance", *T)
+        check(code == 0 or "STATUS" not in out,
+              "...while STILL TRUE on the same rows is accepted ({})".format(out.strip()[-70:]))
 
         # :301 -- the trailer WRITER refuses an undeclared column, not only the gate reading it back
         import trailer_schema as TS
@@ -891,6 +915,74 @@ def drill_reading_order():
         check(r[3] >= 1 and r[4] == 0,
               "sharing SYMBOLS with the destination is not coverage: {} clause(s), {} covered".format(
                   r[3], r[4]))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    drill_ro_lost_refuses()
+
+
+def drill_ro_lost_refuses():
+    """`ro-lost` is declared GATED, and until now the only thing exercising it was `moved_and_cut` as
+    a UNIT -- the trailer writes the literal 0, and arm H's checks are satisfied by a dict-literal key,
+    so if the `if lost:` refusal stopped running (it sits inside `if prev_cl is not None`) every check
+    would read back the same plausible 0 that arm H exists to catch (DIFF pass, round 3 Q3). This
+    drives a REAL close whose reading order dropped a line recording what the user said."""
+    root = tempfile.mkdtemp(prefix="scl_")
+    repo, mem, hist = (os.path.join(root, n) for n in ("repo", "memory", "history"))
+    os.makedirs(os.path.join(repo, "docs"))
+    os.makedirs(mem)
+    try:
+        w = lambda rel, text: io.open(os.path.join(repo, rel), "w", encoding="utf-8",
+                                      newline=NLC).write(text)
+        git(["init", "-q", "-b", "main", "."], repo)
+        git(["config", "--local", "user.name", "drill"], repo)
+        git(["config", "--local", "user.email", "drill@example"], repo)
+        head = ("# rules" + NLC + NLC +
+                "## Reading order after a session reset / new conversation" + NLC + NLC)
+        quote = ('2. USER 2026-09-03, verbatim: "this line records what they said and may not vanish"'
+                 + NLC)
+        w(".gitignore", "CLAUDE.md" + NLC)
+        w("CLAUDE.md", head + "1. `docs/a.md` -- an ordinary entry with a long enough sentence" + NLC + quote)
+        w("docs/a.md", "# A" + NLC + NLC + "plain" + NLC)
+        io.open(os.path.join(mem, "MEMORY.md"), "w", encoding="utf-8").write("# i" + NLC)
+        git(["add", "--", ".gitignore", "docs/a.md"], repo)
+        git(["commit", "-q", "-m", "base"], repo)
+        E = (repo, mem, hist)
+        T = ["--trailer", "Co-Authored-By: Drill <d@e>", "--trailer", "Claude-Session: https://example/x"]
+        # close ONCE so the private history holds a previous CLAUDE.md to compare against
+        w("docs/a.md", "# A" + NLC + NLC + "- **DONE** a claim" + NLC)
+        run_sc(E, "census", "--since", "2099-01-01")
+        pend = os.path.join(hist, "census", "pending.md")
+
+        def verdict_all(v):
+            t = io.open(pend, encoding="utf-8").read().split(NLC)
+            for i, l in enumerate(t):
+                if l.startswith("| ") and not l.startswith("| # ") and not l.startswith("|---"):
+                    c = [x.strip() for x in l.strip().strip("|").split("|")]
+                    if len(c) >= 11 and c[0].isdigit():
+                        cells = l.rstrip().rstrip("|").split("|")
+                        cells[-1] = " " + v + " "
+                        t[i] = "|".join(cells) + "|"
+            io.open(pend, "w", encoding="utf-8", newline=NLC).write(NLC.join(t))
+
+        verdict_all("STILL TRUE")
+        code, out = run_sc(E, "close", "-m", "first", *T)
+        check(code == 0, "a first close lands, so the history holds a previous reading order")
+        # NOW delete the user's line and close again
+        w("CLAUDE.md", head + "1. `docs/a.md` -- an ordinary entry with a long enough sentence" + NLC)
+        w("docs/a.md", "# A" + NLC + NLC + "- **DONE** a claim, edited" + NLC)
+        run_sc(E, "census")
+        verdict_all("STILL TRUE")
+        code, out = run_sc(E, "close", "-m", "second", *T)
+        check(code != 0 and "recording what the USER said" in out,
+              "RED: a close whose reading order dropped a USER record REFUSES ({})".format(
+                  out.strip()[-110:]))
+        # ...and restoring it lets the close through, so the gate is not simply always-red
+        w("CLAUDE.md", head + "1. `docs/a.md` -- an ordinary entry with a long enough sentence" + NLC + quote)
+        run_sc(E, "census", "--force")
+        verdict_all("STILL TRUE")
+        code, out = run_sc(E, "close", "-m", "second", *T)
+        check(code == 0, "GREEN: restoring the line lets the same close through ({})".format(
+            out.strip()[-70:]))
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

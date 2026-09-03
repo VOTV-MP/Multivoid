@@ -11,13 +11,16 @@ directory, the ignored docs):
   shape     a `[docs] close:` subject without the trailer; a trailer without the prefix; a subject
             that still starts with the RETIRED close form `[docs] documentize` (one close path);
             a close commit without `Co-Authored-By:` (the trailer STAYS -- CLAUDE.md).
-  identity  rows = still-open + actually-done + stale-done + partial + still-true + not-a-label
-            (the sixth is the hand REJECTING a row the grammar mis-flagged: it measures precision).
+  identity  rows = the sum of every VERDICT column in trailer_schema -- the five status verdicts
+            plus the FOUR rejection buckets, because the hand's one "not a claim" token is
+            attributed to the rung whose row it rejects (label / cite / drift / loose). A column a
+            close PREDATES counts as zero, or the push that adds a token is red by construction.
   tiling    `base=` equals the previous close commit's sha in the range (the first close after the
             boundary: any ancestor), so consecutive censuses tile the history with no gap.
   novelty   `census=` (the private history's commit) differs from every earlier close's -- a
             trailer pasted from the previous close is caught.
-  ratchet   ro-bytes / ro-longest / mem-over200 never grow against the previous close.
+  ratchet   no RATCHETED column grows against the previous close (the list lives in
+            trailer_schema, not here -- naming three of eight in prose is how it went stale).
   monotone  resolved / flips never shrink -- they are cumulative totals of the resolved ledger,
             which lives in the private history CI cannot read, so append-only is all it can check.
 

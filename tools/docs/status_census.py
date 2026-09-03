@@ -94,6 +94,9 @@ VERDICTS = ("STILL OPEN", "ACTUALLY DONE", "STALE DONE", "PARTIAL", "STILL TRUE"
 # retired here whole (RULE 2): for a drift row "the pairing was a coincidence" and "this row is
 # not a claim" are the same sentence, so it was a second mechanism for one concept.
 LABEL_BUCKET = {"cite": "not-a-cite", "drift": "drift-ok", "loose": "not-loose"}
+# The four that assert something about a STATUS. They are meaningless on a row that carries
+# no label, which is every kind in LABEL_BUCKET above.
+STATUS_VERDICTS = ("STILL OPEN", "ACTUALLY DONE", "STALE DONE", "PARTIAL")
 
 
 CLOSE_PREFIX = "[docs] close:"
@@ -885,6 +888,23 @@ def run_close(env, args):
     if bad:
         raise SystemExit("REFUSE: {} of {} rows carry no verdict token (first: #{} {}:{} -> '{}')".format(
             len(bad), len(rows), bad[0]["n"], bad[0]["key"], bad[0]["line"], bad[0]["verdict"]))
+    # THE ACCEPTANCE SIDE of the same rule. A row of kind `cite`, `drift` or `loose` makes no status
+    # claim -- it exists because a citation resolved dead, a symbol moved, or the loose regex fired --
+    # so the four STATUS verdicts are category errors on it, exactly as a status verdict on a drift row
+    # was. `[V]` 2026-09-03: round 2 retired the seventh token and deleted the two-way refusal WITH it,
+    # so a drift row verdicted STALE DONE closed cleanly and landed in `stale-done=` -- which is D8's
+    # falsifier input, the number that decides whether the hand phase survives (DIFF pass, round 3 Q2).
+    # Fixing the rejection side while leaving the acceptance side open is a one-sided gate.
+    # STILL TRUE (nothing to do) and NOT A LABEL (this rung mis-fired) remain valid on every row.
+    miscast = [r for r in rows if r["verdict"] in STATUS_VERDICTS and r["kind"] in LABEL_BUCKET]
+    if miscast:
+        r = miscast[0]
+        raise SystemExit(
+            "REFUSE: #{} {}:{} is a '{}' row verdicted {} -- that row states no STATUS, so only "
+            "STILL TRUE or NOT A LABEL can answer it. A status verdict here would count into "
+            "`{}=`, which measures the LABEL grammar's rows.".format(
+                r["n"], r["key"], r["line"], r["kind"], r["verdict"],
+                r["verdict"].lower().replace(" ", "-")))
     # On a LABEL row a dead pointer under a live status is the measured rot class (section 2.3 #5,
     # #21, #27). On a plain prose line (kind `cite`) STILL TRUE means "dead on purpose" -- a doc
     # naming a file that was retracted or moved away -- and only the hand can tell; it is recorded,
@@ -954,15 +974,15 @@ def run_close(env, args):
     # (2026-09-03) landed on `main_paths` alone, so the owned-repo commit and the history snapshot
     # committed today's bytes under yesterday's verdicts -- exactly what the pin exists to prevent
     # (round 16, Q2). The check runs ONCE, before any commit.
+    # AND THE SET IS THE WHOLE PIN, not the paths this close names. The version above reconstructed a
+    # `committed` set from `main_paths` plus TOUCHED private paths -- but the history commit is
+    # `git add -A` over the whole snapshot, so a doc the SWEEP read and verdicted, then edited before
+    # the close, was committed under those verdicts with nothing checking it (DIFF pass, round 3 Q4;
+    # reproduced on a swept `memory/` topic). `pinned` already IS the set the census read; iterating it
+    # is both correct and shorter than deriving a subset of it.
     pinned = meta.get("content", {})
     drifted = []
-    committed = set(main_paths)
-    for key, (owner, ap) in rs.items():
-        if key in meta.get("touched", []) and owner != "main":
-            committed.add(key)
-    for p in sorted(committed):
-        if p not in pinned:
-            continue
+    for p in sorted(pinned):
         ap = rs[p][1] if p in rs else os.path.join(env.repo, p)
         if sha1(read_text(ap) or "") != pinned[p]:
             drifted.append(p)
