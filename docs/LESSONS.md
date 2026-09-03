@@ -6706,6 +6706,19 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
   clause ARRIVED somewhere it may not be. *Look FIRST:* whenever content crosses from an ignored file
   into a tracked one, run the PUBLICATION test before the fidelity test; fidelity has no opinion about
   it.
+  **HEAD 6b (same day): I fixed the file the audit named and did not ask where else the class lived.** A
+  second sweep of the SAME range found two more docs, neither ever published -- one carrying a worked
+  example table whose rows quoted an OPEN finding with its mechanism and the code range confirming it
+  live, the other stating an unfixed resource-exhaustion path in full under text that said *"flag for
+  the register"* while **nothing ever filed it**. *And the general check head 6 proposes would have
+  caught NEITHER:* it tests whether an added line also appears in an unpublished tree, which is a
+  VERBATIM test -- right for a move, blind to a paraphrase or to a fact written straight into a public
+  doc. The working test is about CONTENT: does this line name a finding, state a mechanism, or point at
+  code, for something not fixed? Apply it to the whole range's added prose. *Mechanically:* a blob
+  rewrite dangles the `Docs-Census:` `base=` trailers and the two filter passes CANNOT be run
+  separately (the second changes the shas the first mapped) -- one invocation, message filter using
+  filter-branch's own `map`; this rebuild then dangled 101 citations across docs, memory and the
+  private history.
   `memory/feedback_push_leak_audit_service_ties_and_sha_rewrite.md`
 - **Git-Bash (MSYS2) MANGLES remote `/abs/paths` → `C:/Program Files/Git/...`** — any argv that looks
   like a POSIX absolute path is Windows-ified BEFORE the child sees it, so `vps.py put <local>
@@ -7135,7 +7148,7 @@ itself states. [[lesson-a-forks-fix-is-verified-commit-by-commit-against-your-tr
   verifying on a rig you configured by hand verifies the one machine that cannot show the defect.
   `memory/lesson-changing-a-default-does-not-reach-a-stored-value.md`
 
-- **PYTHON `shell=True` ON WINDOWS RUNS `cmd.exe`, NOT GIT BASH -- AND A VERIFIER THAT IGNORES THE EXIT CODE VERIFIES NOTHING** (2026-09-02, `tools/qf/ledger.py`'s first real round: a `find | xargs grep -L | wc -l = 101` anchor exited 255 with no output under `cmd.exe` and was recorded VERIFIED; two more first-use defects the same day -- a path:line inside a command anchor won the classification, and `tail` was not an allowed command). *Look FIRST:* `["bash","-lc",cmd]` via `shutil.which("bash")`, parse the FIRST `= N`, treat exit not in {0,1} with empty output as failure, and drill with a PIPELINE. Fixed `7679edab` + `77268a7b`. [[lesson-python-shell-true-on-windows-runs-cmd-not-git-bash]]
+- **PYTHON `shell=True` ON WINDOWS RUNS `cmd.exe`, NOT GIT BASH -- AND A VERIFIER THAT IGNORES THE EXIT CODE VERIFIES NOTHING** (2026-09-02, `tools/qf/ledger.py`'s first real round: a `find | xargs grep -L | wc -l = 101` anchor exited 255 with no output under `cmd.exe` and was recorded VERIFIED; two more first-use defects the same day -- a path:line inside a command anchor won the classification, and `tail` was not an allowed command). *Look FIRST:* `["bash","-lc",cmd]` via `shutil.which("bash")`, parse the FIRST `= N`, treat exit not in {0,1} with empty output as failure, and drill with a PIPELINE. Fixed `8a96761d` + `a10af029`. [[lesson-python-shell-true-on-windows-runs-cmd-not-git-bash]]
 ## 9. Security (threat model, trust boundaries, peer identity)
 
 > **READING THIS FILE AS AN AGENT (`/qf` critic, auditor, reviewer): OPEN

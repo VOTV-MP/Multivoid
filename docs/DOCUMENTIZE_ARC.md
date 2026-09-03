@@ -8,8 +8,8 @@
 > Status tags as in the other arcs: **DECIDED** · **AS-BUILT** · **PENDING** · **DESIGN** · **`[V]`**
 > measured (instrument named beside the number) · **`[A]`** taken from the lessons ledger · **`[?]`**
 > unverified. **§3 is the ORIGINAL design; most of it is now BUILT** `[corr 2026-09-03: was "Everything
-> in §3 is DESIGN. Nothing is built."; measured — WP-1 steps 0/1/2 shipped `dec89b3e`+`3a37f0da`, the
-> seven defects a 20-round /qf pass found shipped `37bad8bb`, the two lanes `1180c654`]`. **§10 is the
+> in §3 is DESIGN. Nothing is built."; measured — WP-1 steps 0/1/2 shipped `43ad649a`+`2e0e591d`, the
+> seven defects a 20-round /qf pass found shipped `34c354ba`, the two lanes `f2d07176`]`. **§10 is the
 > current state and supersedes §3 wherever they disagree**; §8 is the audit log (three passes, 47
 > findings, all dispositioned, 2026-09-02) and §8's pass 4 the post-ship audits; §9 the build order.
 
@@ -197,7 +197,7 @@ outputs — is met inside WP-1 with no publication.
 **Dependency edges.** WP-1's script and trailer are the substrate; WP-2's detector and WP-3's ratchet
 are columns of that trailer; WP-4 is a separate extension of an existing file and depends on nothing.
 
-### WP-1 — One census, one trailer, one private history (step 0 BUILT 2026-09-03, `dec89b3e`; the skill text and WP-4 / WP-2 / WP-3 open)
+### WP-1 — One census, one trailer, one private history (step 0 BUILT 2026-09-03, `43ad649a`; the skill text and WP-4 / WP-2 / WP-3 open)
 
 **Defect.** Step 0.5 orders a hand check of every status hit in the tree — 11,291 (D1), mostly not
 labels — and Step 1 orders every doc read (D20), at eight runs an active day (D9). No run has done
@@ -634,7 +634,7 @@ under the revised skill — the first pass on the new ledger, and the first cens
 
 ## 8. Audit log
 
-Three passes on 2026-09-02, all on the committed draft `bf55de69`..`757b1dba`: an independent
+Three passes on 2026-09-02, all on the committed draft `3363f970`..`f440ad3d`: an independent
 STALENESS measurement (28 sampled labels → §2.3), an independent EVIDENCE re-derivation (pass 2a, 14
 findings) and an independent DESIGN audit (pass 2b, 19 findings: 3 CRITICAL / 7 HIGH / 7 MEDIUM /
 2 LOW). Every finding is dispositioned; nothing is OPEN. The three critical findings and F1 each
@@ -734,7 +734,7 @@ through the script; the comment grammar became a string-aware lexer; the per-pat
 ownership. A next critic, if the user wants one, starts from these four.
 
 Round 4 found the ledger's third first-use defect: `tail` was not a legal command anchor, so the
-critic's `tail ... | grep -c = 25` was classed as a quote and not re-run — fixed (`77268a7b`), re-run,
+critic's `tail ... | grep -c = 25` was classed as a quote and not re-run — fixed (`a10af029`), re-run,
 reproduced. Two consecutive rounds of reactive growth, so the defect is re-derived in mechanism
 terms before round 3 (and rounds 3-4's changes are each a specification of the one mechanism — the
 script owns the whole close as three commits, main / research / private history, and CI reads
@@ -753,7 +753,7 @@ Q4 `tools/docs/lessons_gate.py:57`.
 
 ### Pass 4 — the post-ship audits of the BUILT census (2026-09-03, two lenses, `sonnet`)
 
-Run on `dec89b3e` + `3a37f0da` (the first pair died on a model usage limit and were re-spawned).
+Run on `43ad649a` + `2e0e591d` (the first pair died on a model usage limit and were re-spawned).
 **EVIDENCE lens: 3 CRITICAL, 2 HIGH, 3 MEDIUM, 3 LOW. DESIGN lens: 1 HIGH, 7 MEDIUM, 6 LOW** — and it
 scored ~30 of 42 design claims IMPLEMENTED-as-written. Every CRITICAL and HIGH below was
 **re-measured by the primary before being accepted**; each fix is drilled RED.
@@ -808,7 +808,7 @@ Scratch: `stale_sample/` in this session's scratchpad.
 
 Each step is one commit, `[docs]`/`[tools]` prefixed; nothing ships before the user answers §5.
 
-**Step 0 BUILT 2026-09-03 (`dec89b3e`), NOT hands-on: the first real census ran, no real close yet.**
+**Step 0 BUILT 2026-09-03 (`43ad649a`), NOT hands-on: the first real census ran, no real close yet.**
 `tools/docs/status_census.py` (725 LOC) + `status_grammar.py` (280) + `comment_lexer.py` (105) —
 three modules because the first cut was ~1,000 lines holding three concepts; `docs_census_gate.py`
 (156) + `.github/workflows/docs-census.yml`; drills `status_census_drill.py` (recall on §2.3's
@@ -818,7 +818,7 @@ scratch two-session close with every refusal shown RED and the ratchet RED) and
 tree: 35 s; read set 1,548 (main 166 / research 298 / private 1,084); radius 43 touched + 49 cited +
 40 sweep = 112 docs; 1,101 rows (879 labels, 225 dead citations); ratchet `ro-bytes=119116
 ro-longest=275 mem-over200=37`; accretion 275; the history baseline holds 1,084 files. `[V]` the gate
-computes its boundary (`dec89b3e`) and judges 0 closes. **Two first-run defects, fixed before the
+computes its boundary (`43ad649a`) and judges 0 closes. **Two first-run defects, fixed before the
 commit and recorded here because the drill did not catch them:** 2,400 session-UUID fragments in
 memory frontmatter read as commit hashes (the hash lookaround now excludes `-`), and the ledger
 gate's per-citation tree walk ran the census past ten minutes over ~5,000 tokens (one basename
@@ -909,7 +909,7 @@ per-fact grep of the destination (the move-then-cut rule) and, where the fact is
 written first. `[V]` the reading order is 55 entries, longest `4e` at 275 lines, then `4e-browser` 152,
 `4a-identity` 87, `1a-veh` 73. Step 4 is NOT done.
 
-**Step 1 BUILT 2026-09-03 (the commit after `49d73edf`):** `.claude/skills/documentize/SKILL.md` rewritten
+**Step 1 BUILT 2026-09-03 (the commit after `04964c3f`):** `.claude/skills/documentize/SKILL.md` rewritten
 whole around the census — Step 0.5 = run `census`, Step 0.6 = the hand verdicts (the five tokens, the
 action per kind, the ask-the-user row that keeps the close refusing), Step 4.5 = the close is the
 script's (the refusal list, the three commits, never a hand `git commit`), Step 5 leads with the verdict
@@ -1017,7 +1017,7 @@ critic never returned `converged` — recorded here as a **user-paced stop, not 
   `file:line says "..."` form. **~1,711 rows have no mechanical correction and this design does not
   repair them.**
 
-### 10.3 The seven shipped defects (all fixed, `37bad8bb`)
+### 10.3 The seven shipped defects (all fixed, `34c354ba`)
 
 1. **The sweep could not reach the docs the reading order lists FIRST.** `candidates` dropped `touched`
    BEFORE any ordering while steps 3/3.5/4 touch `MEMORY.md`, `LESSONS.md`, `CLAUDE.md` every close:
@@ -1039,9 +1039,9 @@ critic never returned `converged` — recorded here as a **user-paced stop, not 
 
 ### 10.4 The design as it stands (D0-D11) and what is BUILT
 
-**BUILT 2026-09-03:** `37bad8bb` the seven defects + `trailer_schema.py` (every column declares its
+**BUILT 2026-09-03:** `34c354ba` the seven defects + `trailer_schema.py` (every column declares its
 KIND: IDENTITY / VERDICT / RATCHETED / MONOTONE / GATED / REPORTED, and the gate fails an undeclared
-one); `1180c654` the two lanes (a fresh row cannot have AGED, so it is asked the AUTHORING question and
+one); `f2d07176` the two lanes (a fresh row cannot have AGED, so it is asked the AUTHORING question and
 only when it asserts something falsifiable — 17 authoring rows against 166 ageing on this tree) plus the
 two vocabulary-quote scopes; **D0 the resolved ledger** (below).
 
@@ -1212,7 +1212,7 @@ field satisfies — found what a critic reading the same diff did not, and vice 
 
 ### 10.7 Round 2 — and the reframe that made round 1's fix one instance of a rule
 
-Round 2 read `8d7d252c` (round 1's fix) as hard as the original, which was right: **two of its four
+Round 2 read `fff9ffeb` (round 1's fix) as hard as the original, which was right: **two of its four
 questions were about the fix itself.**
 
 - **The scope fix asked the wrong witness.** `whole_hashes` returned the hashes the GRAMMAR emits, and
@@ -1349,7 +1349,7 @@ touching, not deferred to a catalog:
 
 - `status_census.py` -> the natural seam is the one the file already has, **compute the table** vs
   **make the commits**. `run_close` and its refusals are a coherent second module (`census_close.py`),
-  and the `5aa329bd` extraction already proved the pattern by moving the private history out.
+  and the `e5b69aa1` extraction already proved the pattern by moving the private history out.
 - `status_census_drill.py` -> split by what the arm DRIVES: the unit/fixture arms (A-F, the grammar,
   the resolver, the reading order) from the arms that run a REAL close end to end (G-I plus the two
   added here). The second group is where the runtime goes, and it is the group that keeps growing.
