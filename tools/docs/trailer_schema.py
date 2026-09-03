@@ -16,6 +16,10 @@ THE RULE: every column declares its KIND at birth.
               MOVE. A whole-corpus citation count is NOT one: `[V]` a single rename touches 5 tracked
               docs against a close radius of ~50, so an ordinary extraction would refuse a session
               over work it did not do (round 19, Q4).
+  MONOTONE    a CUMULATIVE total that may never DECREASE -- the opposite direction to RATCHETED, and
+              a distinct kind for that reason. It exists because CI cannot read the private history
+              where the underlying ledger lives, so the only property it can check on a running total
+              is that a close never un-records what an earlier one recorded.
   GATED       a named REFUSAL path exists for it (in the close, in CI, or both).
   REPORTED    printed and never enforced -- declared so on purpose, so "nothing reads it" is a
               decision on the record rather than an omission nobody noticed.
@@ -28,9 +32,10 @@ IDENTITY = ("base", "census", "research-base")
 VERDICT = ("still-open", "actually-done", "stale-done", "partial", "still-true", "not-a-label")
 RATCHETED = ("ro-bytes", "ro-longest", "mem-over200", "wikilinks-dead", "pairing-unref",
              "pairing-dead", "accretion")
+MONOTONE = ("resolved", "flips")
 GATED = ("rows", "cited-dead")
 REPORTED = ("labels", "corpus-dead-cites", "cite-unquoted", "memref-dead", "running-totals",
-            "resolved", "flips", "ro-moved", "sweep-cursor", "sweep-cycle", "new", "foreign")
+            "ro-moved", "sweep-cursor", "sweep-cycle", "new", "foreign")
 
 # The written order. `rows` leads the counts because the VERDICT identity is stated against it.
 ORDER = ("base", "rows", "labels") + VERDICT + (
@@ -42,7 +47,7 @@ ORDER = ("base", "rows", "labels") + VERDICT + (
 
 KIND = {}
 for _name, _cols in (("identity", IDENTITY), ("verdict", VERDICT), ("ratcheted", RATCHETED),
-                     ("gated", GATED), ("reported", REPORTED)):
+                     ("monotone", MONOTONE), ("gated", GATED), ("reported", REPORTED)):
     for _c in _cols:
         KIND[_c] = _name
 

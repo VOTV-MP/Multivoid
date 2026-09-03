@@ -37,12 +37,13 @@ def commit(repo, subject, body_lines=(), touch="f.txt"):
     return git(["rev-parse", "HEAD"], repo).strip()
 
 
-def trailer(base, census, rows=2, so=0, ad=0, sd=0, pa=0, st=2, ro=100, rl=10, mo=0):
+def trailer(base, census, rows=2, so=0, ad=0, sd=0, pa=0, st=2, ro=100, rl=10, mo=0, res=5, fl=3):
     return ("Docs-Census: base={} rows={} labels={} still-open={} actually-done={} stale-done={} partial={} "
-            "still-true={} not-a-label=0 cited-dead=0 accretion=0 ro-bytes={} ro-longest={} mem-over200={} "
+            "still-true={} not-a-label=0 cited-dead=0 accretion=0 resolved={} flips={} "
+            "ro-bytes={} ro-longest={} mem-over200={} "
             "wikilinks-dead=0 pairing-unref=40 pairing-dead=0 "
             "sweep-cursor=1 sweep-cycle=1 census={} research-base=- new=0 foreign=0").format(
-        base[:12], rows, rows, so, ad, sd, pa, st, ro, rl, mo, census)
+        base[:12], rows, rows, so, ad, sd, pa, st, res, fl, ro, rl, mo, census)
 
 
 def make_repo():
@@ -130,6 +131,19 @@ def main():
             lambda r, b: (lambda c4: commit(r, "[docs] close: second",
                                             [trailer(c4, "bbb222").replace(" wikilinks-dead=0", ""), COAUTH]))(
                 commit(r, "[docs] close: first", [trailer(b, "aaa111"), COAUTH])), "vanished"),
+        # The MONOTONE kind runs the OTHER way: `resolved`/`flips` are cumulative totals of a ledger
+        # in the private history CI cannot read, so growth is the normal case and a DROP means the
+        # history was replaced or rolled back. The three arms mirror the ratchet's exactly, inverted.
+        arm("monotone column shrank",
+            lambda r, b: (lambda c4: commit(r, "[docs] close: second", [trailer(c4, "bbb222", res=4), COAUTH]))(
+                commit(r, "[docs] close: first", [trailer(b, "aaa111"), COAUTH])), "monotone: resolved shrank"),
+        arm("monotone column GROWS (the normal case, must stay green)",
+            lambda r, b: (lambda c4: commit(r, "[docs] close: second", [trailer(c4, "bbb222", res=9, fl=6), COAUTH]))(
+                commit(r, "[docs] close: first", [trailer(b, "aaa111"), COAUTH])), None),
+        arm("a monotone column vanishes",
+            lambda r, b: (lambda c4: commit(r, "[docs] close: second",
+                                            [trailer(c4, "bbb222").replace(" flips=3", ""), COAUTH]))(
+                commit(r, "[docs] close: first", [trailer(b, "aaa111"), COAUTH])), "monotone column flips vanished"),
     ]
     bad = results.count(False)
     print("docs_census_gate_drill: {} arms, {} failed".format(len(results), bad))

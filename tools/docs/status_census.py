@@ -29,6 +29,9 @@ WHAT IT DOES (section 3, WP-1)
            `Docs-Census:` trailer plus the attribution trailers the caller MUST pass.
   --sweep  the whole read set instead of the radius (a census, not a sample).
   --loose  add the skill's loose vocabulary regex as an extra row source.
+  resolved read back the RESOLVED LEDGER: every verdict retired because the line it named was
+           FIXED. The verdict columns describe the text being committed, so a corrected claim
+           leaves them reading zero; this is where the correction is recorded.
 
 Nothing here is prose the agent asserts: the sets are computed and printed, the numbers go
 into commit trailers that tools/docs/docs_census_gate.py checks against each other in CI, and
@@ -41,6 +44,7 @@ USAGE
         --trailer "Co-Authored-By: ..." --trailer "Claude-Session: ..." [--new docs/X.md]...
     python tools/docs/status_census.py snapshot          # sync the private history only
     python tools/docs/status_census.py show               # print the pending table + state
+    python tools/docs/status_census.py resolved [--since UTC] [--verdict "STALE DONE"]
 """
 import argparse
 import datetime as _dt
@@ -311,6 +315,85 @@ def state_load(env):
 def state_save(env, st):
     p = os.path.join(env.history, "docs_census_state.json")
     io.open(p, "w", encoding="utf-8").write(json.dumps(st, indent=1, sort_keys=True))
+
+
+# ----------------------------------------------------------------------------- the resolved ledger
+# WHY (D0). A verdict is a MEASUREMENT taken at a moment, and the close records only the LAST one.
+# The action a verdict ORDERS is an edit to the line it names -- so the moment a defect is FIXED, the
+# row's text changes, its hash changes, the carry-forward drops the verdict, and the corrected line
+# comes back as a fresh row verdicted STILL TRUE. `[V]` 2026-09-03, the first real close of the
+# rebuilt census: two memory topics were verdicted STALE DONE and stamped, and the trailer it wrote
+# read `actually-done=0 stale-done=0` -- a run that corrected two claims, reporting that it corrected
+# none. The verdict columns are not wrong; they describe the text being committed, which is what the
+# content pin exists to guarantee. What was missing is a record of the verdict that MOTIVATED the fix.
+#
+# So: when a verdict leaves the live table because its line was acted on, it is appended HERE first.
+# Two consequences worth stating, because both were design choices:
+#   - The record is written at RE-CENSUS time, not at close time -- that is when the verdict is lost,
+#     and a record written later would have to reconstruct it.
+#   - The record does NOT carry a close sha. It cannot: the sha does not exist yet. It does not need
+#     to either -- the ledger is committed by the history commit, so the commit that FIRST contains a
+#     record IS the close that published it, recoverable with `git log --oneline -S`.
+# The trailer carries the CUMULATIVE totals (`resolved=`, `flips=`) because CI never sees this file;
+# a running total is the only property it can check, and it checks the one that matters: a close may
+# not un-record what an earlier close recorded (kind MONOTONE, trailer_schema).
+def resolved_path(env):
+    return os.path.join(env.history, "census", "resolved.jsonl")
+
+
+def resolved_load(env):
+    out = []
+    for line in (read_text(resolved_path(env)) or "").splitlines():
+        line = line.strip()
+        if line:
+            try:
+                out.append(json.loads(line))
+            except ValueError:
+                pass
+    return out
+
+
+def resolved_append(env, recs):
+    if not recs:
+        return
+    p = resolved_path(env)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with io.open(p, "a", encoding="utf-8", newline="\n") as f:
+        for r in recs:
+            f.write(json.dumps(r, sort_keys=True) + "\n")
+
+
+# A verdict that named something WRONG. STILL TRUE and NOT A LABEL are verdicts too and are recorded
+# with the rest, but a close whose every retired verdict was one of those corrected nothing.
+FLIP_VERDICTS = ("STILL OPEN", "ACTUALLY DONE", "STALE DONE", "PARTIAL")
+
+
+def resolved_counts(env):
+    recs = resolved_load(env)
+    return len(recs), sum(1 for r in recs if r.get("verdict") in FLIP_VERDICTS)
+
+
+def retired_verdicts(prev_rows, rows, radius, utc, base):
+    """Prior verdicts that do NOT carry into this census -> ledger records.
+
+    The discriminator is the RADIUS, and it has to be: a prior row whose doc is not being scanned
+    this time simply left the frame -- nothing was acted on, and recording it would inflate the
+    ledger with every change of sweep queue. Within the radius the base is fixed for the session, so
+    a touched doc's diff only GROWS; a prior row absent from the new scan is a line that was edited
+    or deleted. That is the action the verdict ordered."""
+    live = {(r["key"], r["hash"][:12]) for r in rows}
+    out = []
+    for r in prev_rows:
+        if not r["verdict"]:
+            continue
+        ident = (r["key"], r["hash"][:12])
+        if ident in live or r["key"] not in radius:
+            continue
+        out.append({"utc": utc, "base": base[:12], "key": r["key"], "line": r["line"],
+                    "hash": r["hash"][:12], "kind": r["kind"], "lane": r.get("lane", ""),
+                    "label": r["label"], "substate": " ".join(r.get("substate") or []),
+                    "verdict": r["verdict"]})
+    return out
 
 
 # ----------------------------------------------------------------------------- trailers
@@ -850,6 +933,16 @@ def run_census(env, args):
     carried = {(r["key"], r["hash"][:12]): r["verdict"] for r in prev_rows if r["verdict"]}
     for r in rows:
         r["verdict"] = carried.get((r["key"], r["hash"][:12]), "")
+    # A verdict that does NOT carry, on a doc still in the radius, is one whose line was acted on --
+    # the fix the verdict ordered. Record it before it is lost (D0; see the resolved ledger above).
+    retired = retired_verdicts(prev_rows, rows, radius, utc_now(), base)
+    resolved_append(env, retired)
+    if retired:
+        by_v = {}
+        for r in retired:
+            by_v[r["verdict"]] = by_v.get(r["verdict"], 0) + 1
+        print("resolved: {} verdict(s) retired to the ledger ({})".format(
+            len(retired), " ".join("{} {}".format(v, n) for v, n in sorted(by_v.items()))))
     labels = sum(1 for r in rows if r["kind"] not in ("cite", "loose"))
     dead = sum(1 for r in rows if dead_cites(r["tokens"]))
     # The bytes the census READ, per doc. The close refuses to commit anything else (a post-ship audit,
@@ -993,7 +1086,23 @@ def run_close(env, args):
     for key in meta.get("scanned_whole", []):
         st["docs"][key] = {"utc": utc, "base": base}
     cursor = sum(1 for k in rs if k in st["docs"])
+    # The cumulative ledger totals. The DELTA is this close's own correction count -- the number the
+    # verdict columns cannot carry, because a corrected line is committed in its corrected form.
+    n_res, n_flip = resolved_counts(env)
+    if prev:
+        for col, now in (("resolved", n_res), ("flips", n_flip)):
+            was = prev.get(col)
+            if was is not None and was.isdigit() and now < int(was):
+                raise SystemExit("REFUSE (monotone): {} went {}->{} vs the previous close {} -- the "
+                                 "resolved ledger is append-only, so this means the private history "
+                                 "was replaced or rolled back ({})".format(
+                                     col, was, now, prev_sha[:10], resolved_path(env)))
+        d_res = n_res - int(prev.get("resolved", "0") or 0)
+        d_flip = n_flip - int(prev.get("flips", "0") or 0)
+        print("resolved this close: {} verdict(s), {} of them naming a defect (cumulative {}/{})"
+              .format(d_res, d_flip, n_res, n_flip))
     vals = {"base": base[:12], "rows": len(rows), "labels": meta.get("labels", 0),
+            "resolved": n_res, "flips": n_flip,
             "still-open": counts["STILL OPEN"], "actually-done": counts["ACTUALLY DONE"],
             "stale-done": counts["STALE DONE"], "partial": counts["PARTIAL"], "still-true": counts["STILL TRUE"],
             "not-a-label": counts["NOT A LABEL"],
@@ -1063,6 +1172,30 @@ def run_show(env, args):
     return 0
 
 
+def run_resolved(env, args):
+    """Read the ledger back. It exists so the record is not write-only: a capability nothing calls is
+    not shipped (docs/DEAD_CAPABILITY_REGISTER.md), and D8's falsifier -- 300 ageing-lane rows, fewer
+    than 5 corrections and the hand phase is deleted -- is counted from exactly these records."""
+    recs = resolved_load(env)
+    if args.since:
+        recs = [r for r in recs if r.get("utc", "") >= args.since]
+    if args.verdict:
+        recs = [r for r in recs if r.get("verdict") == args.verdict]
+    for r in recs:
+        print("{}  {:<12}  {}:{}  [{}/{}]  {}".format(
+            r.get("utc", "?"), r.get("verdict", "?"), r.get("key", "?"), r.get("line", "?"),
+            r.get("kind", "?"), r.get("lane") or "-", (r.get("label") or "").replace("\n", " ")[:90]))
+    by_lane, by_v = {}, {}
+    for r in recs:
+        by_lane[r.get("lane") or "-"] = by_lane.get(r.get("lane") or "-", 0) + 1
+        by_v[r.get("verdict", "?")] = by_v.get(r.get("verdict", "?"), 0) + 1
+    print("{} record(s); naming a defect: {}".format(
+        len(recs), sum(1 for r in recs if r.get("verdict") in FLIP_VERDICTS)))
+    print("  by verdict: " + (" ".join("{} {}".format(k, v) for k, v in sorted(by_v.items())) or "-"))
+    print("  by lane:    " + (" ".join("{} {}".format(k, v) for k, v in sorted(by_lane.items())) or "-"))
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--repo")
@@ -1087,6 +1220,9 @@ def main(argv=None):
     cl.add_argument("--also-comment", action="append", help="a non-doc path whose change is comment-only or the close's own tooling")
     sub.add_parser("snapshot")
     sub.add_parser("show")
+    rv = sub.add_parser("resolved", help="read the resolved ledger: verdicts retired because the line they named was fixed")
+    rv.add_argument("--since", help="only records at or after this utc stamp (the census's own format)")
+    rv.add_argument("--verdict", choices=VERDICTS)
     args = ap.parse_args(argv)
     env = Env(args.repo, args.memory_dir, args.history_dir)
     if args.cmd == "census":
@@ -1099,6 +1235,8 @@ def main(argv=None):
         return 0
     if args.cmd == "show":
         return run_show(env, args)
+    if args.cmd == "resolved":
+        return run_resolved(env, args)
     return 2
 
 

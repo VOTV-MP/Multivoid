@@ -1040,16 +1040,40 @@ critic never returned `converged` — recorded here as a **user-paced stop, not 
 ### 10.4 The design as it stands (D0-D11) and what is BUILT
 
 **BUILT 2026-09-03:** `37bad8bb` the seven defects + `trailer_schema.py` (every column declares its
-KIND: IDENTITY / VERDICT / RATCHETED / GATED / REPORTED, and the gate fails an undeclared one);
-`1180c654` the two lanes (a fresh row cannot have AGED, so it is asked the AUTHORING question and only
-when it asserts something falsifiable — 17 authoring rows against 166 ageing on this tree) plus the
-two vocabulary-quote scopes.
+KIND: IDENTITY / VERDICT / RATCHETED / MONOTONE / GATED / REPORTED, and the gate fails an undeclared
+one); `1180c654` the two lanes (a fresh row cannot have AGED, so it is asked the AUTHORING question and
+only when it asserts something falsifiable — 17 authoring rows against 166 ageing on this tree) plus the
+two vocabulary-quote scopes; **D0 the resolved ledger** (below).
 
-**NOT BUILT, in order:** D0 the resolved ledger (the close records a verdict when it is GIVEN, so the
-trailer stops reading `actually-done=0` on a run that corrected three claims); D6/D11 the citation
-content rung + symbol-first corpus repair; D9 the generated dated memory index + `memref-dead=`;
-D10 the reading-order destination rule with `ro-moved=`. The build plan lives in the session
-scratchpad; a DIFF pass on the shipped diff is owed before handoff.
+**D0 AS-BUILT — the resolved ledger.** The defect is not that a verdict is wrong. It is that ACTING on
+one erases it: the fix rewrites the line the verdict names, the row's hash changes, the carry-forward
+drops the verdict, and the corrected line returns as a fresh row verdicted `STILL TRUE`. That is why
+the close of 2026-09-03, on a run that corrected two memory topics, wrote `actually-done=0
+stale-done=0`. **The verdict columns are not the bug and were not changed** — they describe the text
+being committed, which is exactly what the content pin exists to guarantee. What was missing is a
+record of the verdict that MOTIVATED the fix.
+
+So the verdict is appended to `census/resolved.jsonl` in the private history *at re-census time* —
+the moment it is lost, not the moment of the close, which would have to reconstruct it. The record
+carries no close sha, because none exists yet and none is needed: the ledger is committed by the
+history commit, so the commit that first contains a record IS the close that published it. The
+discriminator between "acted on" and "merely gone" is the RADIUS: a prior verdict whose doc is not
+being scanned this time left the frame and is NOT recorded (drilled as an explicit control, or the
+ledger would inflate on every change of sweep queue). The trailer carries the CUMULATIVE totals
+`resolved=` / `flips=` (a flip = a verdict that named something wrong: `STILL OPEN` / `ACTUALLY DONE`
+/ `STALE DONE` / `PARTIAL`), because CI never sees the private history — a running total is the only
+property available to it, and it checks the one that matters: a close may not un-record what an
+earlier close recorded. That is a NEW schema kind, `MONOTONE`, the opposite direction to `RATCHETED`
+and distinct for that reason. `status_census.py resolved` reads it back, so it is not write-only.
+
+**This is also the instrument D8 needs.** D8's falsifier counts corrections over 300 ageing-lane rows
+— and until now those corrections were precisely the ones the trailer could not see. Each record
+carries its row's LANE for that reason.
+
+**NOT BUILT, in order:** D6/D11 the citation content rung + symbol-first corpus repair; D9 the
+generated dated memory index + `memref-dead=`; D10 the reading-order destination rule with
+`ro-moved=`; the skill text. WP-E (convenience, §10.5) owes its own `/qf`. The build plan lives in
+the session scratchpad; a DIFF pass on the shipped diff is owed before handoff.
 
 **D8 — the falsifier standing behind "keep the hand phase":** over the first **300 ageing-lane rows**
 (NOT closes — 251 retired-form closes peaked at 14 in ONE day, so a close is not a unit of evidence),

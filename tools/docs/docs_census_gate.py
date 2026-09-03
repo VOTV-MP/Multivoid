@@ -18,6 +18,8 @@ directory, the ignored docs):
   novelty   `census=` (the private history's commit) differs from every earlier close's -- a
             trailer pasted from the previous close is caught.
   ratchet   ro-bytes / ro-longest / mem-over200 never grow against the previous close.
+  monotone  resolved / flips never shrink -- they are cumulative totals of the resolved ledger,
+            which lives in the private history CI cannot read, so append-only is all it can check.
 
 THE BOUNDARY IS COMPUTED, NEVER WRITTEN: the commit that ADDED this gate's own workflow file
 (`git log --diff-filter=A -- .github/workflows/docs-census.yml`). A commit cannot carry its own
@@ -40,6 +42,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import trailer_schema as TS  # noqa: E402  -- the ONE column vocabulary, shared with status_census.py
 
 RATCHET_COLS = TS.RATCHETED
+MONOTONE_COLS = TS.MONOTONE
 VERDICT_COLS = TS.VERDICT
 
 
@@ -136,25 +139,34 @@ def judge(repo, workflow, report=False):
             fails.append("{} census={} repeats {}'s -- a pasted trailer".format(short, census, seen_census[census][:10]))
         seen_census[census] = sha
         if prev_trailer:
-            for c in RATCHET_COLS:
-                # A column the PREVIOUS trailer does not carry is a column that did not exist yet
-                # (the script gained one): there is nothing to compare, so it is not a failure --
-                # otherwise the very push that adds a column is red by construction, the shape
-                # docs/LESSONS.md names ("a gate left red on purpose carries no signal"). A column
-                # that DISAPPEARS from a later trailer is a regression and does fail.
-                if c not in prev_trailer:
-                    continue
-                if c not in trailer:
-                    fails.append("{} ratchet column {} vanished (the previous close carried it)".format(short, c))
-                    continue
-                try:
-                    a, b = int(prev_trailer[c]), int(trailer[c])
-                except ValueError:
-                    fails.append("{} ratchet column {} unreadable ({!r} -> {!r})".format(
-                        short, c, prev_trailer[c], trailer[c]))
-                    continue
-                if b > a:
-                    fails.append("{} ratchet: {} grew {} -> {}".format(short, c, a, b))
+            # Two kinds, opposite directions, one comparison. RATCHETED counts must not GROW (the
+            # reading order, the over-long memory lines); MONOTONE counts are cumulative ledger
+            # totals and must not SHRINK -- CI cannot read the private history the resolved ledger
+            # lives in, so "a close may not un-record what an earlier close recorded" is the only
+            # property available to it, and it is the one that matters.
+            for kind, cols in (("ratchet", RATCHET_COLS), ("monotone", MONOTONE_COLS)):
+                for c in cols:
+                    # A column the PREVIOUS trailer does not carry is a column that did not exist yet
+                    # (the script gained one): there is nothing to compare, so it is not a failure --
+                    # otherwise the very push that adds a column is red by construction, the shape
+                    # docs/LESSONS.md names ("a gate left red on purpose carries no signal"). A column
+                    # that DISAPPEARS from a later trailer is a regression and does fail.
+                    if c not in prev_trailer:
+                        continue
+                    if c not in trailer:
+                        fails.append("{} {} column {} vanished (the previous close carried it)".format(short, kind, c))
+                        continue
+                    try:
+                        a, b = int(prev_trailer[c]), int(trailer[c])
+                    except ValueError:
+                        fails.append("{} {} column {} unreadable ({!r} -> {!r})".format(
+                            short, kind, c, prev_trailer[c], trailer[c]))
+                        continue
+                    if kind == "ratchet" and b > a:
+                        fails.append("{} ratchet: {} grew {} -> {}".format(short, c, a, b))
+                    elif kind == "monotone" and b < a:
+                        fails.append("{} monotone: {} shrank {} -> {} (the resolved ledger is "
+                                     "append-only)".format(short, c, a, b))
         if report:
             print("close {} {}".format(short, " ".join("{}={}".format(k, v) for k, v in sorted(trailer.items()))))
         prev_close, prev_trailer = sha, trailer

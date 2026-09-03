@@ -9,6 +9,10 @@ Three fixtures, each a class the design claims to hold (docs/DOCUMENTIZE_ARC.md 
      false positives must produce none. Recall AND precision, on real text, not a synthetic RED.
   B  the COMMENT-ONLY lexer: a code change behind a quoted `#` or `//` is CODE; a trailing-comment
      rewrite on an unchanged declaration is comment-only (the /qf round 6 Q4 lines).
+  E  the RESOLVED LEDGER: acting on a verdict erases the line it named, so the verdict is
+     appended to an append-only ledger first; the close's verdict columns still read zero (they
+     describe the committed text) while `resolved=`/`flips=` carry the correction. Control: a
+     verdict that stops carrying because its DOC left the radius is not recorded.
   C  the CLOSE in a scratch environment (repo + memory dir + history dir): a neighbour's whole-file
      staged doc survives and is excluded; a missing verdict REFUSES; STILL TRUE on a dead citation
      REFUSES; the good close carries exactly the session's paths with the trailer; a second close
@@ -289,6 +293,126 @@ def drill_close():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def drill_resolved():
+    """E. the RESOLVED LEDGER (D0). The defect is not that a verdict is wrong -- it is that acting on
+    one ERASES it: the fix rewrites the line the verdict names, the hash changes, the carry drops it,
+    and the corrected line returns as a fresh row verdicted STILL TRUE. So the close's own trailer
+    reported `stale-done=0` on the real run that corrected two memory topics. Both halves are asserted
+    here: the verdict columns still read ZERO (they describe the committed text, which is right), and
+    the correction is on the record anyway. Plus the false-positive control: a verdict that stops
+    carrying because its DOC left the radius was never acted on and must NOT be recorded."""
+    print("-- E. the resolved ledger: a verdict retired by the fix it ordered")
+    root = tempfile.mkdtemp(prefix="scr_")
+    repo, mem, hist = (os.path.join(root, n) for n in ("repo", "memory", "history"))
+    os.makedirs(os.path.join(repo, "docs"))
+    os.makedirs(mem)
+    try:
+        git(["init", "-q", "-b", "main", "."], repo)
+        git(["config", "--local", "user.name", "drill"], repo)
+        git(["config", "--local", "user.email", "drill@example"], repo)
+        w = lambda rel, text: io.open(os.path.join(repo, rel), "w", encoding="utf-8", newline="\n").write(text)
+        w(".gitignore", "CLAUDE.md\n")
+        w("CLAUDE.md", CLAUDE)
+        w("docs/c.md", "# C\n\n- **DONE** -- shipped whole, see `zz_gone.cpp:9`\n")
+        w("docs/d.md", "# D\n\n- **VERIFIED** -- see `zz_also_gone.cpp:4`\n")
+        io.open(os.path.join(mem, "MEMORY.md"), "w", encoding="utf-8").write("# index\n- one\n")
+        git(["add", "--", ".gitignore", "docs/c.md", "docs/d.md"], repo)
+        git(["commit", "-q", "-m", "base"], repo)
+        E = (repo, mem, hist)
+        T = ["--trailer", "Co-Authored-By: Drill <d@e>", "--trailer", "Claude-Session: https://example/x"]
+        pend = os.path.join(hist, "census", "pending.md")
+
+        # census 1: nothing is touched, so BOTH docs arrive through the sweep, read whole
+        code, out = run_sc(E, "census", "--since", "2099-01-01")
+        check(code == 0, "census runs ({})".format(out.strip().splitlines()[-1][:60] if out.strip() else "no output"))
+        _, rows = SC.read_table(pend)
+        keys = sorted(r["key"] for r in rows)
+        check(keys == ["docs/c.md", "docs/d.md"], "both docs charged one row each (got {})".format(keys))
+
+        def set_verdict(n, v):
+            t = io.open(pend, encoding="utf-8").read().split("\n")
+            for i, l in enumerate(t):
+                if l.startswith("| {} |".format(n)):
+                    cells = l.rstrip().rstrip("|").split("|")
+                    cells[-1] = " " + v + " "
+                    t[i] = "|".join(cells) + "|"
+            io.open(pend, "w", encoding="utf-8", newline="\n").write("\n".join(t))
+
+        nc = [r["n"] for r in rows if r["key"] == "docs/c.md"][0]
+        nd = [r["n"] for r in rows if r["key"] == "docs/d.md"][0]
+        set_verdict(nc, "STALE DONE")
+        set_verdict(nd, "STALE DONE")
+        check(SC.resolved_load(SC.Env(repo, mem, hist)) == [], "the ledger is empty before any fix")
+
+        # ACT on c.md only -- the correction the STALE DONE verdict ordered
+        w("docs/c.md", "# C\n\n- **BUILT** -- the transport only; the eject lane is its own row\n")
+        # `-k 0`: the sweep is off, so d.md LEAVES the radius while c.md stays (it is touched now)
+        code, out = run_sc(E, "census", "--force", "--since", "2099-01-01", "-k", "0")
+        check(code == 0 and "resolved: 1 verdict(s) retired" in out,
+              "the re-census records the retired verdict and says so ({})".format(
+                  [l for l in out.splitlines() if l.startswith("resolved")] or out.strip()[-90:]))
+        _, rows2 = SC.read_table(pend)
+        check(len(rows2) == 1 and rows2[0]["key"] == "docs/c.md" and not rows2[0]["verdict"],
+              "the corrected line returns as a FRESH, unverdicted row -- the erasure this ledger answers")
+        led = SC.resolved_load(SC.Env(repo, mem, hist))
+        check(len(led) == 1 and led[0]["key"] == "docs/c.md" and led[0]["verdict"] == "STALE DONE",
+              "the ledger holds exactly the acted-on verdict ({})".format(
+                  [(r["key"], r["verdict"]) for r in led]))
+        check(len(led) == 1 and all(r["key"] != "docs/d.md" for r in led),
+              "CONTROL: d.md's verdict left the RADIUS, was not acted on, and is NOT recorded")
+        check(bool(led) and "DONE" in led[0].get("label", ""),
+              "the record keeps the label it retired ({})".format(led[0].get("label") if led else "-"))
+
+        set_verdict(rows2[0]["n"], "STILL TRUE")
+        code, out = run_sc(E, "close", "-m", "the correction", *T)
+        check(code == 0, "GREEN: close commits ({})".format(out.strip().splitlines()[-1][:70] if out.strip() else out))
+        tr = SC.parse_trailer(git(["log", "-1", "--format=%B"], repo))
+        check(tr.get("stale-done") == "0" and tr.get("still-true") == "1",
+              "the verdict columns describe the COMMITTED text: stale-done=0 ({})".format(tr))
+        check(tr.get("resolved") == "1" and tr.get("flips") == "1",
+              "...and the correction is on the record anyway: resolved=1 flips=1 ({})".format(
+                  {k: tr.get(k) for k in ("resolved", "flips")}))
+        code, out = run_sc(E, "resolved")
+        check(code == 0 and "docs/c.md" in out and "1 record(s); naming a defect: 1" in out,
+              "the ledger reads back (a capability nothing calls is not shipped): {}".format(out.strip()[-90:]))
+
+        # a SECOND close accumulates, and the delta is printed against the previous trailer
+        code, out = run_sc(E, "census")
+        _, rows3 = SC.read_table(pend)
+        nd = [r["n"] for r in rows3 if r["key"] == "docs/d.md"]
+        check(len(nd) == 1, "the sweep reaches d.md again after the close ({} rows)".format(len(rows3)))
+        for r in rows3:
+            set_verdict(r["n"], "ACTUALLY DONE" if r["key"] == "docs/d.md" else "STILL TRUE")
+        w("docs/d.md", "# D\n\n- **BUILT** -- landed, no citation\n")
+        code, out = run_sc(E, "census", "--force", "-k", "0")
+        check(code == 0 and "resolved: 1 verdict(s) retired to the ledger (ACTUALLY DONE 1)" in out,
+              "the second fix retires its own verdict ({})".format(
+                  [l for l in out.splitlines() if l.startswith("resolved")] or out.strip()[-90:]))
+        _, rows4 = SC.read_table(pend)
+        for r in rows4:
+            set_verdict(r["n"], "STILL TRUE")
+        code, out = run_sc(E, "close", "-m", "the second correction", *T)
+        check(code == 0 and "resolved this close: 1 verdict(s), 1 of them naming a defect" in out,
+              "the close prints ITS OWN delta, not only the running total ({})".format(
+                  [l for l in out.splitlines() if l.startswith("resolved this close")] or out.strip()[-120:]))
+        tr = SC.parse_trailer(git(["log", "-1", "--format=%B"], repo))
+        check(tr.get("resolved") == "2" and tr.get("flips") == "2",
+              "the trailer's totals are CUMULATIVE across closes ({})".format(
+                  {k: tr.get(k) for k in ("resolved", "flips")}))
+        # RED: roll the ledger back and the close refuses -- the monotone half, at the close's own seam
+        io.open(SC.resolved_path(SC.Env(repo, mem, hist)), "w", encoding="utf-8", newline="\n").write("")
+        w("docs/c.md", "# C\n\n- **BUILT** -- the transport only; one more line\n- **DONE** again\n")
+        code, out = run_sc(E, "census", "--force", "-k", "0")
+        _, rows5 = SC.read_table(pend)
+        for r in rows5:
+            set_verdict(r["n"], "STILL TRUE")
+        code, out = run_sc(E, "close", "-m", "rolled back", *T)
+        check(code != 0 and "monotone" in out and "append-only" in out,
+              "RED: a truncated ledger refuses the close (exit {}: {})".format(code, out.strip()[-160:]))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def drill_cross_session(root=None):
     """The three cross-session holes a post-ship audit found on 2026-09-03, each shown RED."""
     print("-- D. cross-session and content-pin refusals")
@@ -363,6 +487,7 @@ def main():
     drill_vocab_markers()
     drill_lexer()
     drill_close()
+    drill_resolved()
     drill_cross_session()
     print("status_census_drill: {} check(s) failed".format(len(FAILS)))
     return 1 if FAILS else 0
