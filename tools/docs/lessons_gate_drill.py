@@ -26,6 +26,8 @@ LEDGER = os.path.join(REPO, "docs", "LESSONS.md")
 # must not exist" in this very file and pass its own RED arm. That is not hypothetical:
 # it is what the first run of this drill measured (2026-08-29). The gate also skips
 # *_drill.py now, but a self-describing sentinel is the fix that cannot regress.
+NLC = chr(10)
+
 SENTINEL = "Zz" + uuid.uuid4().hex[:16] + "NotARealSymbol"
 
 # (name, injected markdown, substring that MUST appear in the gate's failure output)
@@ -71,6 +73,90 @@ QUIET = [
 WARN_NEEDLE = ("running total", "3 of 5")
 
 
+
+def drill_allowlist():
+    """The allowlist's three new refusal paths, none of which a LEDGER INJECTION can reach.
+
+    Round 4 added `allow_match`, `masking_entries` and `hpp_premise_holds` (+154 lines carrying three
+    refusals) to a gate whose drill has only ledger-injection arms and which `[V]` nothing in
+    `.github` ran at all. Round 5 then found two defects living in exactly that gap: the census and
+    the ledger gate read ONE list with TWO matchers and disagreed about the same citation, and the
+    premise check asked `git ls-files` (0) while the decider walked the filesystem (297). An unrun,
+    unarmed sibling is how both got through (round 5 Q4).
+
+    These arms are unit-level on purpose -- the gate subprocess costs ~24 s per call, and what needs
+    proving here is a predicate, not a pipeline.
+    """
+    import os as _os
+    import shutil as _shutil
+    import tempfile as _tempfile
+    import status_grammar as SG
+    fails = []
+
+    def check(ok, msg):
+        print("  [{}] {}".format("PASS" if ok else "FAIL", msg))
+        if not ok:
+            fails.append(msg)
+
+    # --- 1. ONE MATCHER: the census and the gate must answer the SAME thing about the same cite ---
+    class _E(object):
+        repo = REPO
+    allow = set(_LG.load_list(_LG.ALLOW_FILES))
+    res = SG.Resolver(_E())
+    cases = ["trashBitsPile.hpp", "engine.hpp", "Engine.hpp", "udp.cpp", "UDP.CPP",
+             "reflection.h", "zz_made_up_never_exists.cpp"]
+    disagree = [c for c in cases if res.external(c) != _LG.allow_match(c, allow)]
+    check(not disagree, "census and ledger gate agree on every allowlist case ({})".format(
+        disagree or "7/7 agree"))
+    # ...and the arm DISCRIMINATES: the retired exact-string predicate disagrees on three of them.
+    old = [c for c in cases
+           if (c in allow or _os.path.basename(c) in allow) != _LG.allow_match(c, allow)]
+    check(len(old) >= 3, "RED control: the RETIRED exact-string predicate disagrees on {} of "
+                         "them, so this arm can fail".format(len(old)))
+
+    # --- 2. masking_entries: an entry naming a file we HAVE must refuse ---
+    root = _tempfile.mkdtemp(prefix="lga_")
+    saved_repo, saved_idx = _LG.REPO, _LG._BASENAME_INDEX
+    try:
+        _os.makedirs(_os.path.join(root, "src"))
+        io.open(_os.path.join(root, "src", "real_thing.h"), "w").write("x" + NLC)
+        _LG.REPO, _LG._BASENAME_INDEX = root, None
+        check(_LG.masking_entries({"real_thing.h": "r"}) == ["real_thing.h"],
+              "RED: an allowlist entry naming a file the repo HAS is reported as masking")
+        check(_LG.masking_entries({"zz_absent_file.h": "r"}) == [],
+              "GREEN: an entry naming a file the repo does NOT have is not masking")
+
+        # --- 3. hpp_premise_holds must ask the FILESYSTEM over the trees we own ---
+        _LG._BASENAME_INDEX = None
+        ok, own = _LG.hpp_premise_holds()
+        check(ok and not own, "GREEN: no .hpp under the trees we own -> the premise holds")
+        io.open(_os.path.join(root, "src", "ours.hpp"), "w").write("x" + NLC)
+        ok, own = _LG.hpp_premise_holds()
+        check((not ok) and len(own) == 1,
+              "RED: one .hpp under a tree we own BREAKS the premise -- the check the "
+              "git-ls-files version could never make, since a submodule is never in the index")
+    finally:
+        _LG.REPO, _LG._BASENAME_INDEX = saved_repo, saved_idx
+        _shutil.rmtree(root, ignore_errors=True)
+    return fails
+
+
+def symbol_check_available():
+    """Does the gate's SYMBOL half run here at all?
+
+    It does not when any corpus in `LG.CORPORA` is empty -- the gate says so itself ("The symbol
+    check did not run") rather than reporting ~100 game symbols as dead. CI has no memory corpus, so
+    the `dead symbol` arm cannot fire there, and asserting it anyway makes the drill red for a reason
+    about the ENVIRONMENT rather than about the gate. Same distinction `absent_cite_roots` draws: a
+    check whose corpus is missing reports the instrument, not the ledger.
+    """
+    for name, roots in _LG.CORPORA.items():
+        if not any(os.path.isdir(r if os.path.isabs(r) else os.path.join(REPO, r))
+                   for r, _exts in roots):
+            return False, name
+    return True, None
+
+
 def run(ledger_path):
     proc = subprocess.run([sys.executable, GATE, "--ledger", ledger_path],
                           capture_output=True, text=True, cwd=REPO)
@@ -100,7 +186,14 @@ def main():
         failures.append("cite roots {} are missing, so dead bare-basename citations cannot fail the "
                         "gate here -- fix CITE_ROOTS or run on a full checkout".format(missing))
 
+    sym_ok, sym_missing = symbol_check_available()
+    if not sym_ok:
+        print("  [SKIP] the '{}' corpus is absent, so the gate's SYMBOL half does not run here; "
+              "arms depending on it are SKIPPED rather than failed".format(sym_missing))
     for name, injection, needle in ARMS:
+        if name == "dead symbol" and not sym_ok:
+            print("  [SKIP] {:<24} needs the symbol corpus".format(name))
+            continue
         path = os.path.join(tmpdir, "ledger_red.md")
         io.open(path, "w", encoding="utf-8", newline="\n").write(base + "\n" + injection)
         code, out = run(path)
@@ -128,6 +221,10 @@ def main():
         "PASS" if ok else "FAIL", "unmodified", code))
     if not ok:
         failures.append("the real ledger does not pass")
+
+    print("")
+    print("  -- the allowlist predicates (unit-level; a ledger injection cannot reach them) --")
+    failures += drill_allowlist()
 
     print("")
     if failures:

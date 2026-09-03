@@ -39,5 +39,17 @@ jobs:
       - name: Census drill (the label grammar, the rungs, the ledger, the refusals)
         run: python3 tools/docs/status_census_drill.py
 
+      # The LEDGER gate's own drill. Round 4 added the census drill here after finding that a
+      # regression could ship silently; the SAME round then added three refusal paths to
+      # `lessons_gate.py` whose drill had no arm for any of them and which `[V]` nothing in .github
+      # ran at all. Round 5 found two defects living in exactly that gap (one list read by two
+      # different matchers; a premise measured against `git ls-files` while the decider walked the
+      # filesystem). The lesson was applied to one instrument and not to its sibling.
+      #
+      # Its ledger-injection arms need the memory corpus, which CI does not have; the arms that do
+      # not (`drill_allowlist`) run everywhere. Both are inside the one script.
+      - name: Ledger gate drill (the allowlist predicates, and the gate shown RED)
+        run: python3 tools/docs/lessons_gate_drill.py
+
       - name: Docs-Census gate
         run: python3 tools/docs/docs_census_gate.py --report

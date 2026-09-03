@@ -200,11 +200,19 @@ class Resolver:
 
     def external(self, path):
         """Files cited from OUTSIDE this repo (the UE4SS header dump, engine source, upstream vendor
-        sources) -- the ledger gate's lessons_gate_allow_files.txt, one list for both instruments."""
+        sources).
+
+        ONE MATCHER, not merely one list. This used to do its own `base in self._ext or path in
+        self._ext` while `lessons_gate` matched the same file case-insensitively and by fnmatch --
+        so a shared list was read two ways and the two instruments disagreed about the same
+        citation. `[V]` 2026-09-04: `trashBitsPile.hpp`, `engine.hpp` and `Engine.hpp` all answered
+        external=False here and external=True there, which is how the census raised ten `cite` rows
+        the ledger gate did not consider dead. Sharing the DATA and forking the PREDICATE is the
+        same defect as two copies of the data (DIFF pass, round 5 Q1).
+        """
         if not hasattr(self, "_ext"):
             self._ext = set(LG.load_list(LG.ALLOW_FILES))
-        base = os.path.basename(path)
-        return base in self._ext or path in self._ext
+        return LG.allow_match(path, self._ext)
 
     def cite(self, path, line, end=None, quote=None, symbol=None):
         resolved, hits = self.resolve(path)

@@ -31,7 +31,11 @@ PHASES = ("question", "design", "impl", "diff")
 # this set lacked, so the anchor was classed as a quote and never re-run)
 ANCHOR_CMDS = {"grep", "rg", "git", "ls", "wc", "find", "cat", "sed", "python", "md5sum", "stat",
                "tail", "head", "awk", "sort", "uniq", "cut", "tr", "xargs", "diff", "test", "echo"}
-_LOC = re.compile(r"(?P<path>[\w./\\-]+\.(?:cpp|h|hpp|inc|py|rs|js|md|txt|json|ini|ps1|log|toml|cmake))"
+# `yml`/`yaml` were absent until 2026-09-04, and a CI workflow line is a location like any other:
+# the DIFF pass refused a valid `.github/workflows/build-core.yml:188` anchor on the very round whose
+# finding was that nothing in CI ran a drill. A gate that cannot express WHERE a defect lives pushes
+# the anchor somewhere weaker, which is the opposite of what an anchor is for.
+_LOC = re.compile(r"(?P<path>[\w./\\-]+\.(?:cpp|h|hpp|inc|py|rs|js|md|txt|json|ini|ps1|log|toml|cmake|yml|yaml))"
                   r":(?P<line>\d+)")
 
 _BASENAMES: dict[str, list[str]] | None = None

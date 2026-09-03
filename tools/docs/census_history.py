@@ -165,7 +165,7 @@ def resolved_counts(env):
     return len(recs), sum(1 for r in recs if r.get("verdict") in FLIP_VERDICTS)
 
 
-def lost_unverdicted(prev_rows, rows, radius, whole_hashes=None):
+def lost_unverdicted(prev_rows, rows, radius):
     """Rows that left the table while their verdict was still EMPTY.
 
     `retired_verdicts` skips these one line before it consults the witness, and that skip is exactly
@@ -188,10 +188,15 @@ def lost_unverdicted(prev_rows, rows, radius, whole_hashes=None):
         ident = (r["key"], r["hash"][:12])
         if ident in live or r["key"] not in radius:
             continue                        # still on the table, or the doc left the radius honestly
-        if whole_hashes is not None:
-            hs = whole_hashes(r["key"])
-            if hs is not None and r["hash"][:12] in hs:
-                continue                    # the line is still in the file: the SCOPE changed, not the text
+        # NO `whole_hashes` SKIP HERE, and that is the whole point. `retired_verdicts` skips a row
+        # whose line is still in the file because a VERDICT that was acted on rewrites its line -- an
+        # unchanged line means nothing was done. The mirror case has the OPPOSITE meaning: a row that
+        # left the table while its line is STILL IN THE FILE is precisely the scope change, the doc
+        # read whole and then diff-scoped, which is how 21 unverdicted rows vanished on 2026-09-04.
+        # `[V]` that day's stamp PREPENDED one line and left all 26 checkboxes byte-identical (0
+        # hashes unique to the pre-stamp text, 336 common), so this counter would have read ZERO on
+        # the exact incident it was built from (DIFF pass, round 5 Q2). Copying a condition means
+        # copying its justification; here the justification is inverted.
         out.append(r)
     return out
 

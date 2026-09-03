@@ -839,7 +839,7 @@ def run_census(env, args):
             _whole_cache[key] = set(line_hashes(key, lines)) if lines is not None else None
         return _whole_cache[key]
 
-    lost_unv = lost_unverdicted(prev_rows, rows, radius, whole_hashes)
+    lost_unv = lost_unverdicted(prev_rows, rows, radius)
     if lost_unv:
         by_doc = {}
         for r in lost_unv:

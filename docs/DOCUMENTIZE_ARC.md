@@ -1364,3 +1364,33 @@ of a hot path. One walk into a basename index and a dict lookup: **66s -> 24s**,
 output is BYTE-IDENTICAL before and after (control run with only the index reverted), so the index buys
 speed and changes no verdict. It matters because a gate the operator is told to run at step 3.5 and CI
 runs per push is one that gets skipped at a minute and run at twenty seconds.
+
+### 10.10 DIFF pass round 5 -- the fifth instance, and it was mine twice over (2026-09-04)
+
+| # | measured | fix |
+|---|---|---|
+| Q1 | `Resolver.external` matched by exact string while `lessons_gate.allow_match` matched by fnmatch+casefold -- `[V]` `trashBitsPile.hpp` / `engine.hpp` / `Engine.hpp` all census-**False**, gate-**True**. Worse: round 4's allowlist edit REPLACED the four explicit CXX names with `*.hpp`, so the census matched FEWER than before | `Resolver.external` delegates to `allow_match`. 7/7 agree; the retired predicate disagrees on 4, so the arm can fail |
+| Q2 | `lost_unverdicted` copied `retired_verdicts`' "the line is still in the file" skip, whose justification INVERTS here. `[V]` the real stamp PREPENDED and left every line byte-identical (0 hashes unique to the pre-stamp text, 336 common) -- **the counter would have read 0 on its own founding incident** | the skip removed with its now-dead parameter; the arm rebuilt around the real scenario |
+| Q3 | `hpp_premise_holds` asked `git ls-files` (**0**) while `_basename_index` walks the filesystem (**297** `.hpp`, all vendored). A submodule is never in the index, so the check was green by construction, forever | the premise walks the trees we OWN (`src`, `tools`); the renamed-vendored-header residual is stated rather than hidden |
+| Q4 | `lessons_gate_drill.py` had **0** arms for the three predicates round 4 added, and `[V]` nothing in `.github` ran it at all | `drill_allowlist` (6 arms, RED controls), wired into `docs-census.yml`, plus a corpus-conditional SKIP so it passes where CI has no memory corpus |
+
+**Q1 and Q4 are the fifth instance, and both are mine.** Round 4's Q2 was *"one counter, three instruments"*
+and I fixed the matcher in ONE of the two modules that read the list -- while `status_grammar`'s own
+docstring said *"one list for both instruments"*, which is exactly the claim that was false. Round 4's Q4
+was *"CI never ran this drill"* and I added the census drill to CI while adding three refusal paths to a
+sibling gate whose drill had no arms and no runner. **Sharing the DATA and forking the PREDICATE is the
+same defect as two copies of the data**, and applying a lesson to the instrument that prompted it is the
+same motion as scoping a rule to the file that prompted it (round 4 Q3).
+
+**Two fixtures that tested a defect nobody had.** The lost-unverdicted arm passed while the counter was
+broken, because it REWROTE the rows instead of prepending above them; and once that was fixed it still
+proved nothing, because with 5 candidate docs the sweep RE-SELECTS everything every close, so the rows
+came back renumbered rather than vanishing -- which the counter correctly does not report. The real
+corpus's ordinary state is K=40 against ~1,600 docs, where a swept doc is not re-selected for tens of
+closes; the arm now says so with `-k 0`. A fixture that does not reproduce the real edit is not a weaker
+test, it is a test of something else.
+
+**And the instrument refused a true anchor.** `tools/qf/ledger.py`'s `_LOC` had no `yml`, so a
+`.github/workflows/build-core.yml:188` anchor was rejected as prose -- on the round whose finding was
+that nothing in CI ran a drill. A gate that cannot express where a defect lives pushes the anchor
+somewhere weaker; `yml`/`yaml` added.

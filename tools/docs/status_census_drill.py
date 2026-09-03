@@ -996,11 +996,19 @@ def drill_mem_user_lost_refuses():
 def drill_lost_unverdicted_is_counted():
     """A row that leaves the table with an EMPTY verdict must produce a NON-ZERO number.
 
-    `retired_verdicts` skipped the empty-verdict case one line before consulting its witness, so on
-    2026-09-04 a close reported `ageing-corr=0` for a run that corrected 21 rows: the operator acted
-    on the doc BEFORE verdicting, the re-census read it diff-scoped, and the rows vanished unrecorded.
-    Nothing printed anything (`grep -c unverdicted tools/docs/*.py` = 0). This arm asserts the number
-    in its RED state -- the state a never-computed field cannot satisfy.
+    The real incident, reproduced: a doc is SWEPT WHOLE (it is untouched, so the sweep reads every
+    line and raises a row per label), its rows are NOT verdicted, and then it is STAMPED -- which
+    makes it `touched`, which makes the re-census read it DIFF-SCOPED, so the whole-scan rows leave
+    the table with no verdict and the resolved ledger never sees them. On 2026-09-04 that made a
+    close report `ageing-corr=0` for a run that corrected 21 rows.
+
+    TWO fixture properties are load-bearing, and the first version of this arm had NEITHER:
+    the doc must be SWEPT (not diff-scoped) in the first census, or its rows never had the scope to
+    lose; and the stamp must PREPEND, leaving the rows' own lines byte-identical, because that is
+    what the real correction did (`[V]` 0 line hashes unique to the pre-stamp text, 336 common).
+    With a fixture that REWROTE the lines instead, this arm passed against a `lost_unverdicted` that
+    skipped any row whose line was still in the file -- a counter that would read ZERO on its own
+    founding incident (round 5 Q2).
     """
     root = tempfile.mkdtemp(prefix="scu_")
     repo, mem, hist = (os.path.join(root, n) for n in ("repo", "memory", "history"))
@@ -1014,13 +1022,14 @@ def drill_lost_unverdicted_is_counted():
         git(["config", "--local", "user.email", "drill@example"], repo)
         w(".gitignore", "CLAUDE.md" + NLC)
         w("CLAUDE.md", "# rules" + NLC)
-        w("docs/plan.md", "# Plan" + NLC + NLC + "plain" + NLC)
-        io.open(os.path.join(mem, "MEMORY.md"), "w", encoding="utf-8").write("# i" + NLC)
-        git(["add", "--", ".gitignore", "docs/plan.md"], repo)
-        git(["commit", "-q", "-m", "base"], repo)
-        # the doc must have CHANGED since its commit, or the close has nothing to commit at all
+        # `plan.md` is committed and then never touched, so the SWEEP reads it whole.
         w("docs/plan.md", "# Plan" + NLC + NLC + "- [ ] one thing OPEN" + NLC +
                           "- [ ] another thing OPEN" + NLC + "- [ ] a third thing OPEN" + NLC)
+        # `other.md` is what the first close actually commits, so `plan.md` stays untouched.
+        w("docs/other.md", "# Other" + NLC + NLC + "plain" + NLC)
+        io.open(os.path.join(mem, "MEMORY.md"), "w", encoding="utf-8").write("# i" + NLC)
+        git(["add", "--", ".gitignore", "docs/plan.md", "docs/other.md"], repo)
+        git(["commit", "-q", "-m", "base"], repo)
         E = (repo, mem, hist)
         T = ["--trailer", "Co-Authored-By: Drill <d@e>", "--trailer", "Claude-Session: https://example/x"]
         pend = os.path.join(hist, "census", "pending.md")
@@ -1036,25 +1045,47 @@ def drill_lost_unverdicted_is_counted():
                         t2[i] = "|".join(cells) + "|"
             io.open(pend, "w", encoding="utf-8", newline=NLC).write(NLC.join(t2))
 
+        w("docs/other.md", "# Other" + NLC + NLC + "- **DONE** a claim" + NLC)
         code, out = run_sc(E, "census", "--since", "2099-01-01")
         check("LOST UNVERDICTED" not in out, "a FIRST census has no previous table, so nothing is lost")
         verdict_all("STILL TRUE")
         code, out = run_sc(E, "close", "-m", "first", *T)
         check(code == 0, "a first close lands, so a base exists for the next census")
-        # a SECOND census whose rows the hand never verdicts...
-        w("docs/plan.md", "# Plan" + NLC + NLC + "- [ ] one thing OPEN" + NLC +
-                          "- [ ] another thing OPEN" + NLC + "- [ ] a third thing STILL OPEN" + NLC)
-        run_sc(E, "census", "--force")
-        # ...and then the doc is ACTED ON before those verdicts are written -- the inversion of the
-        # skill's step order, which is exactly what happened on 2026-09-04.
-        w("docs/plan.md", "# Plan" + NLC + NLC + "SUPERSEDED -- the lane shipped elsewhere" + NLC)
+
+        # plan.md is UNTOUCHED since that close, so this census SWEEPS it whole. The sweep prints
+        # COUNTS, not names, so the witness is the pending table itself.
         code, out = run_sc(E, "census", "--force")
+
+        def rows_for(key):
+            tbl = io.open(pend, encoding="utf-8").read().split(NLC)
+            n = 0
+            for l in tbl:
+                if l.startswith("| ") and not l.startswith("| # ") and not l.startswith("|---"):
+                    c = [x.strip() for x in l.strip().strip("|").split("|")]
+                    if len(c) >= 11 and c[0].isdigit() and c[2].startswith(key + ":"):
+                        n += 1
+            return n
+
+        swept_rows = rows_for("docs/plan.md")
+        check(swept_rows >= 3, "the untouched plan.md is SWEPT whole -> {} rows exist to be "
+                               "lost".format(swept_rows))
+
+        # ...its rows are left UNVERDICTED, and the doc is stamped. The stamp PREPENDS.
+        w("docs/plan.md", "> **[corr 2026-09-04: SUPERSEDED -- the lane shipped elsewhere]**" + NLC +
+                          NLC + "# Plan" + NLC + NLC + "- [ ] one thing OPEN" + NLC +
+                          "- [ ] another thing OPEN" + NLC + "- [ ] a third thing OPEN" + NLC)
+        # `-k 0` retires the sweep for this census, which is what makes the doc DIFF-SCOPED. That is
+        # not a contrivance: it is the real corpus's ordinary state. With K=40 against ~1,600 docs a
+        # swept doc is not re-selected for tens of closes, so the run that edits it reads only its
+        # diff. In a 5-doc fixture the sweep re-selects everything every time and the rows come back
+        # RENUMBERED instead of vanishing -- which the counter correctly does NOT report, and which is
+        # why this arm passed nothing until the scenario was built properly.
+        code, out = run_sc(E, "census", "--force", "-k", "0")
         check("LOST UNVERDICTED" in out and "docs/plan.md" in out,
               "RED: rows that left the table UNVERDICTED are named, by doc ({})".format(
-                  " ".join(out.split(chr(10))[-6:])[:100]))
+                  " ".join(l for l in out.split(chr(10)) if "LOST UNVERDICTED" in l)[:90]))
     finally:
         shutil.rmtree(root, ignore_errors=True)
-
 
 def drill_ro_lost_refuses():
     """`ro-lost` is declared GATED, and until now the only thing exercising it was `moved_and_cut` as

@@ -181,19 +181,30 @@ def masking_entries(explicit):
 
 
 def hpp_premise_holds():
-    """`*.hpp` stands in for the CXX dump ONLY while this repo tracks no `.hpp` of its own.
+    """`*.hpp` stands in for the CXX dump ONLY while no `.hpp` we OWN sits in the search roots.
 
-    That is a MEASURED invariant, not a convention, so it gets a check rather than a comment: the
-    day a vendored `.hpp` lands, the pattern would start excusing real rot in our own tree.
+    The first version asked `git ls-files '*.hpp'` -- the INDEX -- and got 0, while the thing that
+    actually decides whether the pattern is ever consulted is `_basename_index`, which walks the
+    FILESYSTEM over `CITE_ROOTS`, where `[V]` 2026-09-04 there are **297** `.hpp` files. All 297 are
+    vendored (`reference/mtasa-blue/vendor/unrar` 64, `reference/RE-UE4SS/.../LuaType` 34, ...) and a
+    submodule's files are NEVER in `git ls-files`, so the check was green by construction and would
+    have stayed green forever. Two witnesses, two trees, and the honesty check beside it
+    (`masking_entries`) was already asking the filesystem through `resolve_cite` (round 5 Q3).
+
+    So it asks the same tree, over the roots we own. The RESIDUAL, stated rather than hidden: a
+    citation to a VENDORED `.hpp` that upstream renamed resolves nowhere and is then excused by the
+    pattern as if it were a dump header. Resolve-first ordering keeps that to renamed-or-deleted
+    vendored headers only -- every one still on disk resolves and never reaches the allowlist.
     """
-    try:
-        out = subprocess.check_output(["git", "ls-files", "*.hpp"], cwd=REPO,
-                                      stderr=subprocess.STDOUT).decode("utf-8", "replace")
-    except Exception:
-        return True, []                      # no git: cannot check, do not manufacture a failure
-    tracked = [l for l in out.split(chr(10)) if l.strip()]
-    return (not tracked), tracked
-
+    own = []
+    for root in ("src", "tools"):
+        full = os.path.join(REPO, root)
+        if not os.path.isdir(full):
+            continue
+        for dirpath, dirnames, filenames in os.walk(full):
+            dirnames[:] = [d for d in dirnames if d not in ("__pycache__", ".git")]
+            own += [os.path.join(dirpath, f) for f in filenames if f.endswith(".hpp")]
+    return (not own), own
 
 def absent_cite_roots(roots=CITE_ROOTS):
     """Which of CITE_ROOTS this checkout does not have.
