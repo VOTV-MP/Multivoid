@@ -6,7 +6,7 @@ TRACKER (update it every session); the point-in-time audit snapshot is
 `research/findings/world-systems/votv-rng-host-authority-audit-2026-07-10.md` (the evidence + file:line cites).
 
 **How to use.** Each RNG system has a STATUS. Work proceeds **tier by tier**, each tier gets its own
-`/qf 15` (QUESTION → DESIGN → IMPL) **before** any build (user directive 2026-07-10). Update the
+`/qf` run to convergence (QUESTION → DESIGN → IMPL; the 15-round cap was retired 2026-09-02, `docs/QF_ARC.md` WP-6) **before** any build (user directive 2026-07-10). Update the
 row STATUS + the per-tier progress block as work lands. Never mark a row VERIFIED without a real
 hands-on or a matching live log (docs-piles discipline).
 

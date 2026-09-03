@@ -606,6 +606,15 @@ Ledger pass 1 (`design`), this session's scratchpad. Every reply gated by `verif
 | 4 | Q2 | invariant-not-site-list | what `research/`'s census reads when no commit, base or registration is named for that repo | measured: 57 uncommitted paths (16 under `findings/`), 54 commits, no remote | WP-1(c): `close` commits the inner repo too, same prefix and trailer; index-read; `research-base=` in the main trailer |
 | 4 | Q3 | existing-owner | what `close` does with a staged path outside the doc trees on a shared index | measured: `LESSONS.md:145` and `:6978`; `CROSS_SESSION.md:142-143` | WP-1(c): list the index; refuse any staged path outside the trees a close owns; never a pathspec commit |
 | 4 | Q4 | source-consistency | which entry delimiter the ratchet implements — the doc's `<n><letters>` (25 entries, longest 596) or Appendix A's hyphen pattern (54 / 275) | measured: both | WP-3: the hyphen pattern; the notation slip corrected |
+| 5 | Q1 | invariant-not-site-list | `docs/security/` is ignored (14 files, 0 tracked) and in no snapshot — which enumeration reaches the four security lines §2.3 sampled, and what invariant decides which trees owe a diff source | RECORDED, not yet answered (usage limit) | sketched: every tree the census reads owes a history source → `docs/security/` joins the snapshot |
+| 5 | Q2 | regression-by-logic | 32 of 82 closes since 08-24 committed a path outside `docs/` + `.claude/skills/` — which would the index refusal have been green on, and what decides the trees a close owns | RECORDED, not yet answered | sketched: the trees = the paths the skill's own steps WRITE (`tools/docs/`, `reference/agency-agents/` included); measure the 32 |
+| 5 | Q3 | source-consistency | which §9 step lands the gate, and whose sha `since` carries when a commit cannot contain its own hash | RECORDED, not yet answered | sketched: name the step; `since` = the landing commit's PARENT |
+| 5 | Q4 | writers-census | who writes `Co-Authored-By` / `Claude-Session` (40 of 40 recent commits, by hand) and who sets the `pelmentor` identity in the new history repo | RECORDED, not yet answered | sketched: `close` writes both trailers and sets the identity per the user's rules |
+
+**The pass is PAUSED at round 5** (2026-09-02, the 5-hour usage limit at 3 %): the reply is gated,
+its four anchors verified and recorded; the answers, the fold and round 6 are the next session's first
+step (the thread file's last entry sketches the answers). §9 does not open until the ledger prints
+CONVERGED.
 
 Round 4 found the ledger's third first-use defect: `tail` was not a legal command anchor, so the
 critic's `tail ... | grep -c = 25` was classed as a quote and not re-run — fixed (`77268a7b`), re-run,

@@ -687,9 +687,24 @@ detects drift, `--write` repairs it.
 - The 4-12-word fragment window bit the drill immediately: a 13-word quote from a ledger row is refused.
   The prompt says 4-12; the old skill said ≤10; the workflow said ≤12. One number now, in the schema.
 
-**Owed next (§9 step 4):** the FIRST CENSUS on the next two real `/qf` passes — the ledger's
-`anchor`, `stop` and `angle` columns plus E4/E5/E7/E8 by Appendix A — recorded here as pass 3.
-Until then WP-4 / WP-5 / WP-2 stay parked.
+**§9 step 4 — THE FIRST CENSUS, pass 1 of 2 (2026-09-02, the `/documentize` design pass, read
+from `qf_ledger.json`; pass 2 is owed on the next real pass):**
+
+| Column | Before (E-rows, 606 rounds) | Pass 1 (5 rounds, 20 questions) |
+|---|---|---|
+| anchors verified (E3-class) | unmeasurable — the critic's words were not kept | **20 of 20**: 14 command anchors re-run and reproduced, 6 `path:line` anchors resolved; every round carried at least one |
+| prior-art rows cited (E4) | ≤15 mentions in 606 rounds | **20 rows in 5 rounds**, every fragment found verbatim by `verify_proof.py` |
+| proof-of-read verified (E5) | recorded in 33 of 606 rounds | **5 of 5**, mechanically |
+| angle labels (E7) | 15 in 606 rounds | **20 of 20 questions labelled**, 9 distinct angles (cross-answer-contradiction 4, invariant-not-site-list 4, source-consistency 4, prior-art 3, framing-provenance / measure-dont-infer / existing-owner / regression-by-logic / writers-census 1 each) |
+| verdict recorded (E8) | 11 of the 25 largest threads had none | the pass prints its state: OPEN, 16 answered-measured, 4 open (round 5 recorded, unanswered when the usage limit hit); no `stop` yet |
+
+What the first real use found in the tooling, each fixed the same day: command anchors ran under
+`cmd.exe`, so a pipeline with `xargs` exited 255 and was recorded verified (`7679edab`: `bash -lc`);
+an anchor that BEGINS with a command but also contains a `path:line` was classed by the path and
+never re-run (`7679edab`: command-first); `tail` was not a legal command anchor, so a real anchor was
+classed as a quote (`77268a7b`: the read-only text tools added). What the pass found in the DESIGN it
+interrogated: sixteen answered questions, every one a measured correction to a carried noun — see
+`docs/DOCUMENTIZE_ARC.md` §8 pass 3. WP-4 / WP-5 / WP-2 stay parked until pass 2 of the census.
 
 ---
 
