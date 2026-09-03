@@ -697,6 +697,48 @@ def drill_trailer_producers():
     rep_absent = [c for c in TS.REPORTED if '"{}":'.format(c) not in vals_src]
     check(not rep_absent, "every REPORTED column is produced too -- 'nothing reads it' is a decision, "
                           "'nothing writes it' is a defect ({})".format(rep_absent or "none missing"))
+    # ...and the RUNTIME form of the same property, which no textual heuristic can fake: drive a
+    # real close and compare the trailer it wrote against the whole declared vocabulary. This is what
+    # would have caught BOTH round-1 defects with no pattern-matching at all.
+    root = tempfile.mkdtemp(prefix="sch_")
+    repo, mem, hist = (os.path.join(root, n) for n in ("repo", "memory", "history"))
+    os.makedirs(os.path.join(repo, "docs"))
+    os.makedirs(mem)
+    try:
+        w = lambda rel, text: io.open(os.path.join(repo, rel), "w", encoding="utf-8",
+                                      newline=NLC).write(text)
+        git(["init", "-q", "-b", "main", "."], repo)
+        git(["config", "--local", "user.name", "drill"], repo)
+        git(["config", "--local", "user.email", "drill@example"], repo)
+        w(".gitignore", "CLAUDE.md" + NLC)
+        w("CLAUDE.md", CLAUDE)
+        w("docs/a.md", "# A" + NLC + NLC + "plain prose" + NLC)
+        io.open(os.path.join(mem, "MEMORY.md"), "w", encoding="utf-8").write("# i" + NLC)
+        git(["add", "--", ".gitignore", "docs/a.md"], repo)
+        git(["commit", "-q", "-m", "base"], repo)
+        w("docs/a.md", "# A" + NLC + NLC + "- **DONE** a claim" + NLC)
+        E = (repo, mem, hist)
+        run_sc(E, "census", "--since", "2099-01-01")
+        pend = os.path.join(hist, "census", "pending.md")
+        tt = io.open(pend, encoding="utf-8").read().split(NLC)
+        for i, l in enumerate(tt):
+            if l.startswith("| ") and not l.startswith("| # ") and not l.startswith("|---"):
+                c = [x.strip() for x in l.strip().strip("|").split("|")]
+                if len(c) >= 11 and c[0].isdigit():
+                    cells = l.rstrip().rstrip("|").split("|")
+                    cells[-1] = " STILL TRUE "
+                    tt[i] = "|".join(cells) + "|"
+        io.open(pend, "w", encoding="utf-8", newline=NLC).write(NLC.join(tt))
+        code, out = run_sc(E, "close", "-m", "columns", "--trailer", "Co-Authored-By: Drill <d@e>",
+                           "--trailer", "Claude-Session: https://example/x")
+        tr = SC.parse_trailer(git(["log", "-1", "--format=%B"], repo)) or {}
+        missing = [c for c in TS.ORDER if c not in tr]
+        extra = [c for c in tr if c not in TS.ORDER]
+        check(code == 0 and not missing and not extra,
+              "a REAL close emits every declared column and no other ({} declared, {} emitted; "
+              "missing {}, undeclared {})".format(len(TS.ORDER), len(tr), missing or "-", extra or "-"))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
 
 
 def drill_reading_order():
