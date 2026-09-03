@@ -36,8 +36,11 @@ CLOSE_PREFIX = "[docs] close:"
 RETIRED_PREFIX = "[docs] documentize"
 TRAILER_KEY = "Docs-Census"
 WORKFLOW = ".github/workflows/docs-census.yml"
-RATCHET_COLS = ("ro-bytes", "ro-longest", "mem-over200", "wikilinks-dead", "pairing-unref", "pairing-dead")
-VERDICT_COLS = ("still-open", "actually-done", "stale-done", "partial", "still-true", "not-a-label")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import trailer_schema as TS  # noqa: E402  -- the ONE column vocabulary, shared with status_census.py
+
+RATCHET_COLS = TS.RATCHETED
+VERDICT_COLS = TS.VERDICT
 
 
 def git(args, cwd):
@@ -105,6 +108,12 @@ def judge(repo, workflow, report=False):
         n_close += 1
         if "Co-Authored-By:" not in body:
             fails.append("{} close commit without Co-Authored-By".format(short))
+        # EVERY column declares its KIND (trailer_schema). Without this an unread column ships
+        # silently -- the trailer wrote 23 and this gate read 15 (round 20, Q4).
+        undeclared = sorted(c for c in trailer if c not in TS.KIND)
+        if undeclared:
+            fails.append("{} trailer column(s) with no declared kind in trailer_schema: {}".format(
+                short, ", ".join(undeclared)))
         try:
             rows = int(trailer.get("rows", "x"))
             parts = [int(trailer.get(c, "x")) for c in VERDICT_COLS]

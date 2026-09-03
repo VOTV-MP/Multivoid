@@ -265,8 +265,22 @@ def scan_text(key, text, resolver, loose=False):
     return scan_lines(key, text.split(chr(10)), resolver, loose)
 
 
+def row_hash(key, line, dupes):
+    """A row's identity: the DOC, the line's text, and -- only when the SAME text appears more than
+    once in that doc -- its occurrence number. `[V]` 2026-09-03: `sha1(line.strip())` alone collided
+    on FOUR of the corpus's 6,081 rows, so the verdict carry could copy one row's verdict onto a
+    different row. The ordinal is scoped to IDENTICAL lines in ONE doc, so a unique line always hashes
+    to occurrence 1 and never churns -- unlike a global ordinal, which round 14 measured moving on
+    0.5-7% of untouched rows."""
+    t = line.strip()
+    dupes[t] = dupes.get(t, 0) + 1
+    n = dupes[t]
+    return sha1(key + chr(0) + t + (chr(0) + str(n) if n > 1 else ""))
+
+
 def scan_lines(key, lines, resolver, loose=False):
     rows = []
+    dupes = {}
     in_fence = False
     for i, line in enumerate(lines):
         if line.lstrip().startswith("```"):
@@ -293,6 +307,6 @@ def scan_lines(key, lines, resolver, loose=False):
             "key": key, "line": i + 1, "kind": kind, "label": lab[1] if lab else "",
             "substate": substate_of(line, nxt), "tokens": toks,
             "date": max(dates) if dates else "", "total": bool(TOTAL_RE.search(line)),
-            "hash": sha1(line.strip()), "text": line.strip()[:160], "verdict": "",
+            "hash": row_hash(key, line, dupes), "text": line.strip()[:160], "verdict": "",
         })
     return rows

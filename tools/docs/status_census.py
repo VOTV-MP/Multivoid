@@ -59,6 +59,7 @@ import lessons_gate as LG  # noqa: E402  -- build_corpora / CITE_ROOTS (same dir
 from status_grammar import *  # noqa: E402,F401,F403  -- the label grammar, the Resolver, scan_doc, read_text, sha1
 from status_grammar import read_text, sha1, DATE_RE, CORR_RE, ACCRETION_RE, DATED_NAME_RE, STATUS_WORDS  # noqa: E402
 from comment_lexer import comment_only  # noqa: E402
+import trailer_schema as TS  # noqa: E402  -- the ONE trailer column vocabulary (census + gate)
 
 K_DEFAULT = 40
 ROW_BUDGET = 40          # the SWEEP's own row budget: the hand check is paid per ROW, so that is the
@@ -71,8 +72,8 @@ ROW_BUDGET = 40          # the SWEEP's own row budget: the hand check is paid pe
 VERDICTS = ("STILL OPEN", "ACTUALLY DONE", "STALE DONE", "PARTIAL", "STILL TRUE", "NOT A LABEL")
 CLOSE_PREFIX = "[docs] close:"
 TRAILER_KEY = "Docs-Census"
-RATCHET_COLS = ("ro-bytes", "ro-longest", "mem-over200", "wikilinks-dead", "pairing-unref", "pairing-dead")
-TARGETS = {"ro-bytes": 58 * 1024, "ro-longest": 15, "mem-over200": 0}
+RATCHET_COLS = TS.RATCHETED
+TARGETS = TS.TARGETS
 OWN_TOOLING = ("tools/docs/", ".claude/skills/")
 ACCRETION_EXCLUDE = ("docs/LESSONS.md", "docs/DOCUMENTIZE_ARC.md", "docs/QF_ARC.md")
 
@@ -90,8 +91,37 @@ class Env:
                                       os.path.join(base, "memory"))
         self.history = os.path.abspath(history or os.environ.get("MULTIVOID_HISTORY_DIR") or
                                        os.path.join(base, "history"))
+        self.owned = discover_owned_repos(self.repo)
         r = os.path.join(self.repo, "research")
-        self.research = r if os.path.isdir(os.path.join(r, ".git")) else None
+        self.research = r if r in self.owned else None
+
+
+def discover_owned_repos(repo, depth=4):
+    """-> [abs path] of the inner repositories that are OURS, newest-first by nothing in particular.
+
+    OWNERSHIP IS THE LOCAL GIT IDENTITY, not the absence of a remote (round 15 of the /qf pass).
+    `[V]` 2026-09-03: eleven inner `.git` dirs exist to depth 4 and the local `user.email` separates
+    them perfectly -- `research` and `site` carry `pelmentr@gmail.com` like main, and all eight
+    vendored trees (mtasa-blue, RE-UE4SS, Relay, baritone, VoiceChatMC/simple-voice-chat, SourceIO,
+    unrealpak, imgui1928) carry none. That is the CLAUDE.md git-identity rule, which `history_repo`
+    already enforces when it mints the snapshot store -- so the census reads the same invariant rather
+    than a second heuristic. "No remote" was the first test tried and it inverts the day `site/` is
+    pushed, which it is meant to be."""
+    mail = git(["config", "--local", "user.email"], repo, check=False).strip()
+    if not mail:
+        return []
+    out = []
+    for dirpath, dirnames, _ in os.walk(repo):
+        rel = os.path.relpath(dirpath, repo)
+        if rel != "." and rel.count(os.sep) + 1 > depth:
+            dirnames[:] = []
+            continue
+        if ".git" in dirnames and dirpath != repo:
+            m = git(["config", "--local", "user.email"], dirpath, check=False).strip()
+            if m == mail:
+                out.append(dirpath)
+            dirnames.remove(".git")
+    return out
 
 
 def git(args, cwd, check=True, env=None, input_text=None):
@@ -114,11 +144,16 @@ def utc_now():
 
 # ----------------------------------------------------------------------------- the read set
 def read_set(env):
-    """-> {key: (owner, abspath)}; owner in main | research | private.
+    """-> {key: (owner, abspath)}; owner is `main`, an OWNED inner repo's basename, or `private`.
 
     Ownership is LOCATION + IGNORE RULES, not `git add` state (round 6, Q2): a path inside a
     repository's tree that its .gitignore does not exclude belongs to that repository, tracked
-    or not. What no repository can hold (ignored, or outside every tree) is private."""
+    or not. What no repository can hold (ignored, or outside every tree) is private. WHICH inner
+    repos count is `discover_owned_repos`' local-git-identity test (round 15).
+
+    `_archive/` is NOT in the read set: an archived doc's labels are historical BY DEFINITION -- that
+    is what archiving MEANS -- and leaving them in made 26 docs / 185 rows permanent sweep candidates
+    while an archive MOVE re-keyed a row with nothing updating (round 7, Q3)."""
     out = {}
     repo = env.repo
     pending_add = intent_to_add(repo)
@@ -137,22 +172,34 @@ def read_set(env):
     claude = os.path.join(repo, "CLAUDE.md")
     if os.path.isfile(claude) and "CLAUDE.md" not in out:
         out["CLAUDE.md"] = ("private", claude)
-    if env.research:
-        fdir = os.path.join(env.research, "findings")
+    # Every OWNED inner repo, WHOLE -- not `research/findings` alone. `[V]` 2026-09-03: the old walk
+    # left 77 non-archive tracked `research/*.md` (almost all `handson_runbook_*`, which the skill's
+    # own Step 2 orders you to author, and which 17 docs cite by name) permanently outside the read
+    # set, and `site/` -- which holds the PUBLIC website copy -- entirely invisible.
+    for owned in env.owned:
+        name = os.path.basename(owned)
         rel = []
-        for dirpath, dirnames, filenames in os.walk(fdir):
+        for dirpath, dirnames, filenames in os.walk(owned):
             dirnames[:] = [d for d in dirnames if d != ".git"]
             for f in filenames:
                 if f.endswith(".md"):
-                    rel.append(os.path.relpath(os.path.join(dirpath, f), env.research).replace("\\", "/"))
-        ignored = set(check_ignore(env.research, rel))
+                    rel.append(os.path.relpath(os.path.join(dirpath, f), owned).replace("\\", "/"))
+        # An IGNORED .md in an owned repo is NOT that repo's document -- it is a generated artifact.
+        # `[V]` 2026-09-03: research holds 1,251 `.md` of which **869 are git-ignored and ZERO of
+        # those are under `findings/`** (pak dumps, bp_reflection output), so the old findings-only
+        # walk never classified one as private, while a whole-tree walk that kept them tripled the
+        # read set. Tracked-or-untracked-but-not-ignored is the same "location + ignore rules" test
+        # the rest of the read set uses.
+        ignored = set(check_ignore(owned, rel))
         for p in rel:
-            out["research/" + p] = ("private" if p in ignored else "research",
-                                    os.path.join(env.research, p))
+            if p not in ignored:
+                out[name + "/" + p] = (name, os.path.join(owned, p))
     if os.path.isdir(env.memory):
         for f in sorted(os.listdir(env.memory)):
             if f.endswith(".md"):
                 out["memory/" + f] = ("private", os.path.join(env.memory, f))
+    for k in [k for k in out if "_archive/" in k]:
+        del out[k]
     return out
 
 
@@ -290,10 +337,16 @@ def last_close(repo):
     return None, None
 
 
-def base_for(repo, since):
+def base_for(repo, since, first_run_head=False):
+    """`first_run_head`: an OWNED repo joining the census for the first time has no trailer to tile
+    onto, and its whole history is not "this session's work" -- so its base is HEAD and nothing in it
+    is TOUCHED. Its docs enter through the sweep like any other never-censused doc. Only MAIN refuses
+    without a base, because main's base is what the gate tiles the close chain on."""
     sha, _ = last_close(repo)
     if sha:
         return sha, "trailer"
+    if first_run_head:
+        return git(["rev-parse", "HEAD"], repo).strip(), "first-run HEAD"
     if not since:
         raise SystemExit("REFUSE: no previous Docs-Census trailer in {} -- pass --since DATE for the first run"
                          .format(repo))
@@ -304,12 +357,14 @@ def base_for(repo, since):
 
 
 def format_trailer(v):
-    order = ("base", "rows", "labels", "still-open", "actually-done", "stale-done", "partial", "still-true",
-             "not-a-label",
-             "cited-dead", "accretion", "ro-bytes", "ro-longest", "mem-over200", "wikilinks-dead",
-             "pairing-unref", "pairing-dead", "sweep-cursor", "sweep-cycle", "census", "research-base",
-             "new", "foreign")
-    return TRAILER_KEY + ": " + " ".join("{}={}".format(k, v[k]) for k in order if k in v)
+    """The column ORDER and every column's KIND live in `trailer_schema`, imported by this script AND
+    by the gate -- one definition, so the four hand-written lists cannot drift apart again."""
+    undeclared = [k for k in v if k not in TS.KIND]
+    if undeclared:
+        raise SystemExit("REFUSE: trailer column(s) with no declared kind: {} -- add them to "
+                         "tools/docs/trailer_schema.py with a KIND (round 20, Q4)".format(
+                             ", ".join(sorted(undeclared))))
+    return TRAILER_KEY + ": " + " ".join("{}={}".format(k, v[k]) for k in TS.ORDER if k in v)
 
 
 # ----------------------------------------------------------------------------- the ratchet + accretion
@@ -370,15 +425,105 @@ def accretion_count(env, rs):
     return n
 
 
+# ----------------------------------------------------------------------------- the age clock
+_AGE_CACHE = {}
+_FM_MODIFIED = re.compile(r"^\s+modified:\s*(\d{4}-\d{2}-\d{2})", re.M)
+_BODY_DATE = re.compile(r"\b(20\d\d-\d\d-\d\d)\b")
+
+
+def _repo_commit_dates(repo):
+    """path -> unix time of its newest commit, in ONE git pass (a `git log` per doc is minutes)."""
+    if repo in _AGE_CACHE:
+        return _AGE_CACHE[repo]
+    out, cur = {}, None
+    try:
+        txt = git(["log", "--format=%ct", "--name-only", "-z"], repo, check=False)
+    except (OSError, RuntimeError):
+        txt = ""
+    for chunk in txt.split("\0"):
+        for piece in chunk.split(chr(10)):
+            piece = piece.strip()
+            if not piece:
+                continue
+            if piece.isdigit() and len(piece) >= 9:
+                cur = int(piece)
+            elif cur and piece not in out:
+                out[piece] = cur
+    _AGE_CACHE[repo] = out
+    return out
+
+
+def doc_age(env, key, rs, want_rung=False):
+    """-> a unix time for the doc's CLAIM age, oldest-first sortable; with want_rung, (time, rung).
+
+    A LADDER, because no single clock covers the corpus (round 12 / round 14):
+      1 the AUTHORING repo's newest commit for the path -- main or an owned inner repo. NEVER the
+        private history: `[V]` it holds 2 commits both dated 2026-09-03, so it would stamp all 1,067
+        memory files with the SNAPSHOT date and rank the whole private corpus as the freshest thing
+        in the read set -- the exact opposite of where the stale-open density is.
+      2 the frontmatter `modified:` -- 645 of the 1,067 memory files carry one.
+      3 a date in the BODY -- 291 more.
+      4 a date in the FILENAME -- 124 more.
+      5 mtime -- SEVEN files, all named in the arc; invalid alone (228 memory files share the
+        2026-07-28 compaction day), which is why it is last and never first.
+    """
+    owner, ap = rs.get(key, (None, None))
+    if not ap:
+        return (0, "none") if want_rung else 0
+    if owner == "main":
+        t = _repo_commit_dates(env.repo).get(key)
+        if t:
+            return (t, "commit") if want_rung else t
+    elif owner and owner != "private":
+        d = owned_dir(env, owner)
+        if d:
+            t = _repo_commit_dates(d).get(key[len(owner) + 1:])
+            if t:
+                return (t, "commit") if want_rung else t
+    txt = read_text(ap) or ""
+    m = _FM_MODIFIED.search(txt)
+    rung = None
+    if m:
+        stamp, rung = m.group(1), "frontmatter"
+    else:
+        b = _BODY_DATE.findall(txt)
+        if b:
+            stamp, rung = max(b), "body"
+        else:
+            f = _BODY_DATE.findall(os.path.basename(key))
+            stamp, rung = (max(f), "filename") if f else (None, "mtime")
+    if stamp:
+        try:
+            t = _dt.datetime.strptime(stamp, "%Y-%m-%d").replace(tzinfo=_dt.timezone.utc).timestamp()
+            return (t, rung) if want_rung else t
+        except ValueError:
+            pass
+    try:
+        t = os.path.getmtime(ap)
+    except OSError:
+        t = 0
+    return (t, "mtime") if want_rung else t
+
+
 # ----------------------------------------------------------------------------- owned paths + the private-index commit
+def owned_dir(env, owner):
+    """-> the abs path of the OWNED inner repo whose basename is `owner`, or None."""
+    for p in env.owned:
+        if os.path.basename(p) == owner:
+            return p
+    return None
+
+
 def baseline_text(env, key, owner, base, rbase):
     """The doc's content at its owner's census base, or None when it has none (a new file) -- in which
-    case every row in it is new and all of them are owed a verdict."""
+    case every row in it is new and all of them are owed a verdict. `rbase` maps owner -> that repo's
+    base (one entry per owned repo since round 15 widened ownership past `research`)."""
     if owner == "main":
         r = subprocess.run(["git", "show", "{}:{}".format(base, key)], cwd=env.repo,
                            capture_output=True, text=True, encoding="utf-8", errors="replace")
-    elif owner == "research" and env.research:
-        r = subprocess.run(["git", "show", "{}:{}".format(rbase, key[len("research/"):])], cwd=env.research,
+    elif owned_dir(env, owner) and (rbase or {}).get(owner):
+        r = subprocess.run(["git", "show", "{}:{}".format(rbase[owner], key[len(owner) + 1:])],
+                           cwd=owned_dir(env, owner),
                            capture_output=True, text=True, encoding="utf-8", errors="replace")
     else:                                  # private: the history repo's HEAD holds the previous snapshot
         if not os.path.isdir(os.path.join(env.history, ".git")):
@@ -463,15 +608,19 @@ def write_table(path, meta, rows):
         f.write("# Docs census -- {} \n\n".format(meta["utc"]))
         f.write("```json\n" + json.dumps(meta, indent=1, sort_keys=True) + "\n```\n\n")
         f.write("Fill VERDICT with exactly one of: {}.\n\n".format(" / ".join(VERDICTS)))
-        f.write("| # | path:line | kind | label | sub-state | tokens | date | total | VERDICT |\n")
-        f.write("|---|---|---|---|---|---|---|---|---|\n")
+        # THE ROW CARRIES ITS OWN HASH. It used to ride a positional `<!-- rowhash: ... -->` sidecar
+        # re-attached by the row's PRINTED NUMBER with no validation -- the shape `docs/LESSONS.md:6548`
+        # records this project retiring once already (commit f74d05dc): a renumber shifts every later
+        # hash silently, and a hand-inserted row reads "". Self-binding rows survive a deletion, a
+        # renumber and an insertion.
+        f.write("| # | path:line | kind | label | sub-state | tokens | date | total | id | VERDICT |\n")
+        f.write("|---|---|---|---|---|---|---|---|---|---|\n")
         for i, r in enumerate(rows, 1):
             toks = " ".join("{}={}".format(t, s) for t, s in r["tokens"]) or "-"
-            f.write("| {} | {}:{} | {} | {} | {} | {} | {} | {} | {} |\n".format(
+            f.write("| {} | {}:{} | {} | {} | {} | {} | {} | {} | {} | {} |\n".format(
                 i, r["key"], r["line"], r["kind"], r["label"].replace("|", "/") or "-",
                 ",".join(r["substate"]) or "-", toks.replace("|", "/"), r["date"] or "-",
-                "yes" if r["total"] else "-", r["verdict"] or ""))
-        f.write("\n<!-- rowhash: {} -->\n".format(" ".join(r["hash"] for r in rows)))
+                "yes" if r["total"] else "-", r["hash"][:12], r["verdict"] or ""))
 
 
 def read_table(path):
@@ -480,14 +629,12 @@ def read_table(path):
         return None, []
     m = re.search(r"```json\n(.*?)\n```", t, re.S)
     meta = json.loads(m.group(1)) if m else {}
-    hm = re.search(r"<!-- rowhash: (.*?) -->", t)
-    hashes = hm.group(1).split() if hm else []
     rows = []
     for l in t.split("\n"):
         if not l.startswith("| ") or l.startswith("| # ") or l.startswith("|---"):
             continue
         cells = [c.strip() for c in l.strip().strip("|").split("|")]
-        if len(cells) < 9 or not cells[0].isdigit():
+        if len(cells) < 10 or not cells[0].isdigit():
             continue
         key, _, line = cells[1].rpartition(":")
         toks = []
@@ -498,7 +645,7 @@ def read_table(path):
         rows.append({"n": int(cells[0]), "key": key, "line": int(line) if line.isdigit() else 0,
                      "kind": cells[2], "label": cells[3], "substate": cells[4].split(",") if cells[4] != "-" else [],
                      "tokens": toks, "date": cells[6], "total": cells[7] == "yes",
-                     "verdict": cells[8].strip().upper(), "hash": hashes[int(cells[0]) - 1] if len(hashes) >= int(cells[0]) else ""})
+                     "hash": cells[8], "verdict": cells[9].strip().upper()})
     return meta, rows
 
 
@@ -511,20 +658,23 @@ def run_census(env, args):
     if prev_rows and any(r["verdict"] for r in prev_rows) and not args.force:
         held = sum(1 for r in prev_rows if r["verdict"])
         raise SystemExit("REFUSE: the pending table already holds {} hand verdict(s), written {} -- "
-                         "close it, or re-run with --force to discard them ({})".format(
+                         "close it, or re-run with --force, which RE-CENSUSES and carries every "
+                         "verdict whose line is unchanged; a line you edited returns as a new row "
+                         "needing its own verdict ({})".format(
                              held, (prev_meta or {}).get("utc", "?"), pending_path(env)))
     rs = read_set(env)
     by_owner = {}
     for k, (o, _) in rs.items():
         by_owner[o] = by_owner.get(o, 0) + 1
-    print("read set: {} paths  (main {} / research {} / private {})".format(
-        len(rs), by_owner.get("main", 0), by_owner.get("research", 0), by_owner.get("private", 0)))
+    print("read set: {} paths  ({})".format(
+        len(rs), " / ".join("{} {}".format(o, by_owner[o]) for o in sorted(by_owner))))
     base, how = base_for(env.repo, args.since)
     print("base (main): {} [{}]".format(base[:10], how))
-    rbase = None
-    if env.research:
-        rbase, rhow = base_for(env.research, args.since)
-        print("base (research): {} [{}]".format(rbase[:10], rhow))
+    rbase = {}
+    for owned in env.owned:
+        name = os.path.basename(owned)
+        rbase[name], rhow = base_for(owned, args.since, first_run_head=True)
+        print("base ({}): {} [{}]".format(name, rbase[name][:10], rhow))
     # radius (i): touched, per owner
     touched, new_paths = set(), []
     for p in gitz(["diff", "-z", "--name-only", base, "--", "*.md"], env.repo):
@@ -535,13 +685,16 @@ def run_census(env, args):
             new_paths.append(p)
             rs.setdefault(p, ("main", os.path.join(env.repo, p)))
             touched.add(p)
-    if env.research:
-        for p in gitz(["diff", "-z", "--name-only", rbase, "--", "findings/*.md"], env.research):
-            touched.add("research/" + p)
-            rs.setdefault("research/" + p, ("research", os.path.join(env.research, p)))
-        for p in gitz(["ls-files", "-z", "--others", "--exclude-standard", "--", "findings/*.md"], env.research):
-            touched.add("research/" + p)
-            rs.setdefault("research/" + p, ("research", os.path.join(env.research, p)))
+    for owned in env.owned:
+        name = os.path.basename(owned)
+        for args_ in (["diff", "-z", "--name-only", rbase[name], "--", "*.md"],
+                      ["ls-files", "-z", "--others", "--exclude-standard", "--", "*.md"]):
+            for p in gitz(args_, owned):
+                if not p.endswith(".md"):
+                    continue
+                key = name + "/" + p
+                touched.add(key)
+                rs.setdefault(key, (name, os.path.join(owned, p)))
     changed_private = snapshot_sync(env, rs)
     for p in changed_private:
         if p in rs:
@@ -577,11 +730,20 @@ def run_census(env, args):
     print("  t={:.1f}s".format(time.time() - t0))
     # radius (iii): the amortised sweep, paid in ROWS
     st = state_load(env)
-    never = sorted(k for k in rs if k not in st["docs"])
+    # THE SWEEP'S ORDER IS THE DOC'S AGE, OLDEST FIRST -- not the alphabet. `[V]` 2026-09-03: `never`
+    # held 1,521 of 1,552 docs and was `sorted()`, so the utc ordering could not take effect for ~150
+    # closes and the one real run swept README / SECURITY / BUILDING / CONTRIBUTORS and ZERO research
+    # findings, against the 185 dated 2026-06/07 where the arc's own section 2.3 measured the rot.
+    # AND A TOUCHED DOC KEEPS ITS PLACE IN THE QUEUE: the old filter dropped `touched` BEFORE any
+    # ordering, so `MEMORY.md`, `LESSONS.md` and `CLAUDE.md` -- touched by steps 3/3.5/4 of EVERY close
+    # -- could never be scanned whole (they hold 194 label rows between them; one close surfaced 17,
+    # and the state file had never stamped CLAUDE.md once). When the sweep picks a touched doc it is
+    # read WHOLE and its rows merge with the diff rows, deduped by hash.
+    never = sorted((k for k in rs if k not in st["docs"]), key=lambda k: (doc_age(env, k, rs), k))
     oldest = sorted((k for k in rs if k in st["docs"]), key=lambda k: st["docs"][k]["utc"])
     k = args.k if args.k is not None else K_DEFAULT
     budget = args.rows if args.rows is not None else ROW_BUDGET
-    candidates = [c for c in never + oldest if c not in touched and c not in cited]
+    candidates = [c for c in never + oldest if c not in cited]
 
     # the scan
     resolver = Resolver(env)
@@ -625,10 +787,15 @@ def run_census(env, args):
         # 119 own rows left the sweep 1 doc of 1,521 candidates, i.e. ~1,521 closes to reach the tree.
         # It takes whole docs (per-doc census state stays meaningful); a doc larger than the budget is
         # still taken when nothing else has been, so the queue always advances by at least one.
+        seen_hashes = {(r["key"], r["hash"]) for r in rows}
         for key in candidates[:k]:
             if len(rows) - owed >= budget and swept:
                 break
-            r = scan(key, False)
+            # A doc the sweep picks is read WHOLE even when this session touched it -- that is the
+            # only way `MEMORY.md` / `LESSONS.md` / `CLAUDE.md` are ever fully censused -- and its
+            # whole-scan rows merge with the diff rows already collected, deduped by (key, hash).
+            r = [x for x in scan(key, False) if (x["key"], x["hash"]) not in seen_hashes]
+            seen_hashes.update((x["key"], x["hash"]) for x in r)
             rows.extend(r)
             swept.append(key)
         print("radius (i)+(ii): {} docs -> {} rows (touched docs are diff-scoped)".format(
@@ -641,9 +808,11 @@ def run_census(env, args):
         len(radius), len(rows), " (--sweep: the whole read set)" if args.sweep else
         " (~{} closes to reach every doc at this rate)".format(cycle)))
     # carry verdicts forward from a pending table by (key, hash)
-    carried = {(r["key"], r["hash"]): r["verdict"] for r in prev_rows if r["verdict"]}
+    # The table stores the hash TRUNCATED to 12 (it is a column a human reads past), so the carry
+    # compares the same prefix on both sides -- never the full digest against a short one.
+    carried = {(r["key"], r["hash"][:12]): r["verdict"] for r in prev_rows if r["verdict"]}
     for r in rows:
-        r["verdict"] = carried.get((r["key"], r["hash"]), "")
+        r["verdict"] = carried.get((r["key"], r["hash"][:12]), "")
     labels = sum(1 for r in rows if r["kind"] not in ("cite", "loose"))
     dead = sum(1 for r in rows if dead_cites(r["tokens"]))
     # The bytes the census READ, per doc. The close refuses to commit anything else (a post-ship audit,
@@ -662,7 +831,9 @@ def run_census(env, args):
         len(rows), labels, dead, sum(1 for r in rows if r["verdict"])))
     print("table: " + pending_path(env))
     rv = ratchet_values(env)
-    print("ratchet now: " + " ".join("{}={} (target {})".format(c, rv[c], TARGETS.get(c, 0)) for c in RATCHET_COLS))
+    rv["accretion"] = accretion_count(env, rs)
+    print("ratchet now: " + " ".join("{}={} (target {})".format(c, rv.get(c, 0), TARGETS.get(c, 0))
+                                     for c in RATCHET_COLS))
     print("accretion now: {}".format(accretion_count(env, rs)))
     return 0
 
@@ -739,18 +910,38 @@ def run_close(env, args):
         main_paths.append(p)
     if not main_paths:
         raise SystemExit("REFUSE: nothing to commit in main (no touched docs)")
-    # 4b. every committed path must carry the bytes the census read
+    # 4b. EVERY path ANY of the three commits carries must hold the bytes the census read -- an
+    # INVARIANT over the whole commit set, not a main-only site. The audit fix that added this pin
+    # (2026-09-03) landed on `main_paths` alone, so the owned-repo commit and the history snapshot
+    # committed today's bytes under yesterday's verdicts -- exactly what the pin exists to prevent
+    # (round 16, Q2). The check runs ONCE, before any commit.
     pinned = meta.get("content", {})
     drifted = []
-    for p in sorted(set(main_paths)):
-        if p in pinned and sha1(read_text(os.path.join(env.repo, p)) or "") != pinned[p]:
+    committed = set(main_paths)
+    for key, (owner, ap) in rs.items():
+        if key in meta.get("touched", []) and owner != "main":
+            committed.add(key)
+    for p in sorted(committed):
+        if p not in pinned:
+            continue
+        ap = rs[p][1] if p in rs else os.path.join(env.repo, p)
+        if sha1(read_text(ap) or "") != pinned[p]:
             drifted.append(p)
     if drifted:
         raise SystemExit("REFUSE: {} doc(s) changed since the census that produced these verdicts: {} -- "
                          "re-run `census` (it re-reads them; an edited line arrives as a new row and is "
                          "verdicted on the text you are about to commit)".format(len(drifted), ", ".join(drifted[:8])))
+    # 4c. the table the hand returns must be the table the census wrote. `meta["rows"]` had ZERO readers
+    # while the trailer's `rows=` came from re-parsing the hand-edited markdown, so a row deleted by
+    # hand shrank the count silently and "rows = sum of verdicts" described the PRUNED table, not the
+    # census's finding (round 10, Q4).
+    if meta.get("rows") is not None and meta["rows"] != len(rows):
+        raise SystemExit("REFUSE: the census wrote {} rows and the table now holds {} -- rows were "
+                         "added or deleted by hand. Restore them, or re-run `census` (verdicts on "
+                         "unchanged lines carry forward).".format(meta["rows"], len(rows)))
     # 5. numbers
     rv = ratchet_values(env)
+    rv["accretion"] = accretion_count(env, rs)
     prev_sha, prev = last_close(env.repo)
     if prev:
         grew = [c for c in RATCHET_COLS if c in prev and prev[c].isdigit() and rv[c] > int(prev[c])]
@@ -769,7 +960,7 @@ def run_close(env, args):
             "still-open": counts["STILL OPEN"], "actually-done": counts["ACTUALLY DONE"],
             "stale-done": counts["STALE DONE"], "partial": counts["PARTIAL"], "still-true": counts["STILL TRUE"],
             "not-a-label": counts["NOT A LABEL"],
-            "cited-dead": meta.get("cited_dead", 0), "accretion": accretion_count(env, rs),
+            "cited-dead": meta.get("cited_dead", 0), "accretion": rv["accretion"],
             "ro-bytes": rv["ro-bytes"], "ro-longest": rv["ro-longest"], "mem-over200": rv["mem-over200"],
             "wikilinks-dead": rv["wikilinks-dead"], "pairing-unref": rv["pairing-unref"],
             "pairing-dead": rv["pairing-dead"], "sweep-cursor": cursor, "sweep-cycle": meta.get("cycle", 0), "new": len(new), "foreign": foreign}
@@ -799,15 +990,24 @@ def run_close(env, args):
     git(["reset", "-q"], env.history)
     hsha = git(["rev-parse", "HEAD"], env.history).strip()
     vals["census"] = hsha[:12]
-    # 7. commit 2: the inner research repo
-    rsha = meta.get("research_base") or "-"
-    if env.research:
-        rpaths = sorted(p[len("research/"):] for p in meta.get("touched", []) if p.startswith("research/") and rs.get(p, ("",))[0] == "research")
-        if rpaths:
-            rtrailer = format_trailer(dict(vals, base=(meta.get("research_base") or "-")[:12]))
-            rsha = private_commit(env.research, rpaths, subject, [rtrailer] + trailers)
-            print("research close: {} ({} paths)".format(rsha[:10], len(rpaths)))
-    vals["research-base"] = (rsha or "-")[:12]
+    # 7. commit 2: EVERY owned inner repo, not `research` alone (round 15: ownership is the local git
+    # identity, and `site/` -- the public website copy -- was invisible to the census entirely).
+    owned_shas = []
+    rbases = meta.get("research_base") or {}
+    if isinstance(rbases, str):                      # a table written before the map (one owner)
+        rbases = {"research": rbases}
+    for owned in env.owned:
+        name = os.path.basename(owned)
+        pre = name + "/"
+        opaths = sorted(p[len(pre):] for p in meta.get("touched", [])
+                        if p.startswith(pre) and rs.get(p, ("",))[0] == name)
+        if not opaths:
+            continue
+        otrailer = format_trailer(dict(vals, base=(rbases.get(name) or "-")[:12]))
+        osha = private_commit(owned, opaths, subject, [otrailer] + trailers)
+        owned_shas.append("{}:{}".format(name, osha[:10]))
+        print("{} close: {} ({} paths)".format(name, osha[:10], len(opaths)))
+    vals["research-base"] = ",".join(owned_shas) if owned_shas else "-"
     # 8. commit 1: main
     trailer = format_trailer(vals)
     msha = private_commit(env.repo, sorted(set(main_paths)), subject, [trailer] + trailers)
@@ -837,7 +1037,9 @@ def main(argv=None):
     c.add_argument("--sweep", action="store_true")
     c.add_argument("--loose", action="store_true")
     c.add_argument("--force", action="store_true",
-                   help="overwrite a pending table that already holds hand verdicts (they are lost)")
+                   help="re-census over a pending table that already holds hand verdicts: every "
+                        "verdict whose line is UNCHANGED is carried forward; a line you edited "
+                        "returns as a new row needing its own verdict")
     c.add_argument("-k", type=int, help="cap the sweep at N docs (default 40)")
     c.add_argument("--rows", type=int,
                    help="the SWEEP's own row budget, on top of the session's own rows (default 40)")

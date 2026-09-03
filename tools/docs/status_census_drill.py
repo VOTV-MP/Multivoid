@@ -170,7 +170,13 @@ def drill_close():
         w("docs/a.md", "# A\n\n**Status:** OPEN (commit pending)\n\n- **PARTIAL** rework, uncommitted\n"
                        "- **DONE** -- see `zz_gone_file.cpp:12` for the site\n")
         E = (repo, mem, hist)
-        code, out = run_sc(E, "census", "--since", "2099-01-01")
+        # `-k 0` switches the SWEEP off so DIFF-SCOPING is drilled in isolation. Since 2026-09-03 a
+        # touched doc is a normal sweep candidate (it is the only way `MEMORY.md` / `LESSONS.md` /
+        # `CLAUDE.md`, touched by every close, are ever read whole), and this corpus is two docs, so
+        # with the sweep on the same run would offer a.md:3 immediately. Both properties are drilled:
+        # here that the DIFF charges only the session's lines, below that the SWEEP still reaches the
+        # rest of a touched doc.
+        code, out = run_sc(E, "census", "--since", "2099-01-01", "-k", "0")
         check(code == 0, "census runs ({})".format(out.strip().splitlines()[-1][:60] if out.strip() else "no output"))
         meta, rows = SC.read_table(os.path.join(hist, "census", "pending.md"))
         check(len(rows) == 2 and rows[1]["kind"] == "lead" and any(s == "gone" for _, s in rows[1]["tokens"]),
@@ -217,8 +223,10 @@ def drill_close():
         check(git(["config", "--local", "user.name"], hist).strip() == "drill", "history repo copied main's identity")
         check(not os.path.exists(pend) and any(f.endswith(".md") for f in os.listdir(os.path.join(hist, "census"))),
               "the verdict table is filed under census/<utc>-<base>.md")
-        # After the close a.md is no longer touched, so the SWEEP reads it whole and the line the
-        # previous close's diff scoping left alone (a.md:3) is finally offered -- amortisation, not loss.
+        # The SWEEP reads a.md whole -- INCLUDING while it is touched -- so the line the previous
+        # close's diff scoping left alone (a.md:3) is offered. This is the round-17 fix: the old
+        # `c not in touched` filter dropped a doc from the candidate list BEFORE any ordering, so a
+        # doc touched every close could never be censused whole.
         code, out = run_sc(E, "census")
         check(code == 0 and "base (main)" in out and "[trailer]" in out, "second census bases on the trailer commit")
         _, rows2 = SC.read_table(pend)
@@ -231,7 +239,7 @@ def drill_close():
                        "- **PARTIAL** rework, uncommitted\n"
                        "- **DONE** -- see `zz_gone_file.cpp:12` for the site\n"
                        "- **BUILT** one more claim\n")
-        code, out = run_sc(E, "census", "--force")
+        code, out = run_sc(E, "census", "--force", "-k", "0")
         check(code == 0, "a re-census after an edit re-pins ({})".format(out.strip()[-60:]))
         t = io.open(pend, encoding="utf-8").read()
         lines = t.split(chr(10))
@@ -272,7 +280,7 @@ def drill_cross_session(root=None):
         # `ls-files --others`, so without the fix it is owned as a tracked doc and published by us
         w("docs/neighbour_new.md", "# theirs\n\nin progress\n")
         git(["add", "-N", "--", "docs/neighbour_new.md"], repo)
-        code, out = run_sc(E, "census", "--since", "2099-01-01")
+        code, out = run_sc(E, "census", "--since", "2099-01-01", "-k", "0")
         check(code == 0, "census runs with an intent-to-add file present")
         pend = os.path.join(hist, "census", "pending.md")
         t = io.open(pend, encoding="utf-8").read().split("\n")
@@ -288,7 +296,7 @@ def drill_cross_session(root=None):
         git(["reset", "-q", "--", "docs/neighbour_new.md"], repo)
         os.remove(os.path.join(repo, "docs", "neighbour_new.md"))
         # a second census must not silently discard the first hand's verdicts
-        code, out = run_sc(E, "census", "--since", "2099-01-01")
+        code, out = run_sc(E, "census", "--since", "2099-01-01", "-k", "0")
         check(code != 0 and "hand verdict" in out,
               "RED: a second census refuses to overwrite held verdicts ({})".format(out.strip()[-80:]))
         # content pinned at census time: an edit after it (anyone's) refuses the close
@@ -296,7 +304,7 @@ def drill_cross_session(root=None):
         code, out = run_sc(E, "close", "-m", "drill", *T)
         check(code != 0 and "changed since the census" in out,
               "RED: a doc edited after the census refuses the close")
-        code, out = run_sc(E, "census", "--since", "2099-01-01", "--force")
+        code, out = run_sc(E, "census", "--since", "2099-01-01", "--force", "-k", "0")
         check(code == 0, "--force re-censuses and re-pins ({})".format(out.strip()[-80:]))
         t = io.open(pend, encoding="utf-8").read().split("\n")
         for i, l in enumerate(t):
