@@ -140,6 +140,15 @@ vocabulary rather than using it (a legend, a skill text, this file), mark it onc
 `<!-- corr-vocabulary: quoted-doc -->` and a reason beside it, rather than verdicting its rows one by
 one forever.
 
+**VERDICT THE WHOLE TABLE BEFORE YOU ACT ON ANY ROW.** The order is not stylistic. Acting first
+EDITS the doc, which makes it `touched`, which makes the re-census read it DIFF-SCOPED — so the rows
+you corrected are no longer in the table, and the resolved ledger never sees the verdict that
+motivated the correction, because you never typed one. `[V]` 2026-09-04: a sweep found a 2026-05-25
+plan whose 21 checkboxes had all shipped as `docs/signals/`; the doc was stamped before its rows were
+verdicted, and that close reports `ageing-corr=0` for a run that corrected 21 rows. That is the exact
+defect the resolved ledger exists to prevent, reintroduced by doing the steps out of order. Fill every
+verdict, THEN act, THEN re-census.
+
 The action's FORM depends on the doc's kind (path pattern): a LIVING doc (undated filename outside
 `_archive/`) is REWRITTEN in place with one `[corr YYYY-MM-DD: was …; measured …; <cite>]` stamp — never
 a paragraph of correction prose accreted beside the old claim; a DURABLE RECORD (`-RE-<date>`, dated
