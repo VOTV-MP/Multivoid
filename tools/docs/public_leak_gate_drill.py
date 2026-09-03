@@ -50,6 +50,12 @@ def drill_incidents():
     a gate that cannot catch what it was written for is not a weaker gate, it is a different one.
     """
     print("  -- the founding incidents --")
+    # THE FIXTURES ARE SYNTHETIC, and that is not fastidiousness. The first version of this drill
+    # reproduced incident 1 VERBATIM -- the finding id, its mechanism and the live code range -- in a
+    # TRACKED file, which put the leak straight back into the public repo inside the test for it. The
+    # gate could not see it because the same commit had excluded `*_drill.py` from the scan to stop a
+    # self-match, so the exclusion HID a real copy. Same shape, invented identifiers: the arms test a
+    # regex, and a regex cannot tell `A99` from `A56`.
     i1 = ("| 14 | security/DRILL_REGISTER.md:704 | A99 nothing validates the client-named FooDestroy "
           "eid " + EM + " OPEN | still-true | drill_probe.cpp:206-223 still broadcasts |")
     check("S1" in sigs(i1), "incident 1 (a census row quoting an OPEN finding + its live code range)")

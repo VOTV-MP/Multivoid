@@ -15,10 +15,10 @@ Everything else in that arc got a gate. This class got a person, twice.
 
 WHAT IT DOES NOT DO
 -------------------
-It does NOT decide. `[V]` 2026-09-04 every one of the six pre-existing hits tree-wide is BENIGN on
+It does NOT decide. `[V]` 2026-09-04 every one of the five pre-existing hits tree-wide is BENIGN on
 reading -- an architectural statement, a historical record of a fixed finding, a section-number
 string, a feature gap phrased like a weakness ("a client can spend the group's money but not earn
-it" is the ABSENCE of a capability). A gate that refused those would be wrong six times out of six
+it" is the ABSENCE of a capability). A gate that refused those would be wrong five times out of five
 and would be switched off by whoever it annoyed. So it is an ACKNOWLEDGEMENT ratchet: every hit needs
 a recorded human verdict in `public_leak_ack.txt`, and an UNACKNOWLEDGED hit fails.
 
@@ -29,13 +29,13 @@ it caught ONE. That is the defect this whole arc keeps finding -- a fix that can
 founding case -- so the signals were widened until each incident had one, and no further.
 
   S1  a citation into the LOCAL security tree carrying a LINE NUMBER (a coordinate). Naming the tree
-      is public knowledge; `docs/DOCS_ARC.md` says publicly that it exists and why. 2 hits tree-wide.
-      Catches incident 1.
+      is public knowledge; `docs/DOCS_ARC.md` says publicly that it exists and why. Catches
+      incident 1.
   S2  a security finding ID within 50 characters of OPEN or MITIGATED -- "this specific weakness is
-      live", which is `DOCS_ARC` WP-2's cut rule. 3 hits. Also catches incident 1.
-  S3  a REFERRAL of something to the security register ("flag for ...security/"). 0 hits tree-wide,
-      so it is free to keep armed. Catches incident 2, whose text referred itself to a register that
-      never received it.
+      live", which is `DOCS_ARC` WP-2's cut rule. Also catches incident 1.
+  S3  a REFERRAL of something to the security register ("flag for ...security/"). Zero real hits
+      tree-wide, so it is free to keep armed. Catches incident 2, whose text referred itself to a
+      register that never received it.
   S4  VERBATIM overlap with an unpublished tree, as a RATCHET rather than a list. Catches incident 3.
 
 A wider net was considered and REJECTED: the mechanism phrases ("nothing validates", "no count cap")
@@ -92,18 +92,18 @@ def load_ack(path=ACK):
 
 
 def tracked_docs(repo=REPO):
-    """Tracked docs and tools, EXCLUDING `*_drill.py`.
+    """Every tracked doc and tool, INCLUDING the drills.
 
-    A drill's fixtures are synthetic examples of the very thing the gate hunts, so scanning them
-    makes the gate find its own test data and refuse. `lessons_gate_drill.py` already carries this
-    lesson in its own words -- its first run in 2026-08-29 found "the symbol that must not exist" in
-    itself and passed its own RED arm. Same class, same fix, and it bit here within minutes of the
-    drill being written.
+    Excluding `*_drill.py` was tried for one commit, because the drill's fixtures made the gate find
+    its own test data -- the self-match `lessons_gate_drill.py` documents in its own words. It was
+    the wrong fix: the drill's fixtures at that moment were the real leak COPIED VERBATIM into a
+    tracked file, so the exclusion did not suppress a false positive, it hid a true one. The fixtures
+    are synthetic now and the drill is scanned like anything else, with its invented needles
+    acknowledged by name -- so a REAL leak written into a drill still fails the gate.
     """
     out = subprocess.run(["git", "ls-files", "*.md", "*.py", "*.yml"], cwd=repo,
                          capture_output=True, text=True)
-    return [p for p in out.stdout.splitlines()
-            if p.strip() and not os.path.basename(p).endswith("_drill.py")]
+    return [p for p in out.stdout.splitlines() if p.strip()]
 
 
 def scan(repo=REPO, paths=None):

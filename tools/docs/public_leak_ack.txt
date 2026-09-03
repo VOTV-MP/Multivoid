@@ -12,3 +12,13 @@ docs/security/LESSONS_SECURITY.md:329     # status_grammar.py:97 -- provenance f
 A51 is closed, **A50 is only MITIGATED    # COOP_SYNC_MAP:152 -- a posture statement with no mechanism; the keep rule keeps exactly this
 A59 is MITIGATED                          # sig_gate.py:30 -- says what the drill CANNOT assert; A59 was fixed in the field 2026-08-31
 A6 -- THE AUTHORITY HANDOFF MUST NOT OPEN # atv_probe_report.py:423 -- FALSE POSITIVE: "A6" is an experiment ARM label, not a finding id
+
+# The drill's own SYNTHETIC fixtures. They are acknowledged BY NAME rather than by excluding
+# `*_drill.py` from the scan: that exclusion was tried for one commit and, at that moment, the
+# fixtures were the real leak copied verbatim -- so it hid a true positive instead of suppressing a
+# false one. Every identifier below is invented (`DRILL_REGISTER.md` and `A99` exist nowhere), so a
+# REAL finding written into a drill is still an unacknowledged hit and still fails.
+security/DRILL_REGISTER.md:704            # drill fixture: incident 1's SHAPE with invented ids
+docs/security/DRILL_REGISTER.md:704       # drill fixture: the S1 discrimination case
+A99 is still OPEN                         # drill fixture: the S2 positive case
+flag for `docs/security/                  # drill fixture: the S3 positive case
