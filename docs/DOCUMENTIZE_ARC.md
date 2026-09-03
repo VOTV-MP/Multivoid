@@ -220,18 +220,27 @@ history source, and the source is decided PER PATH by git's own tracking state, 
 directory name.** The READ SET is computed: every `*.md` the main repo tracks (`[V]` 166 — 135
 under `docs/`, 31 outside it: `tools/` 14, `reference/` 6, `.claude/` 3, `assets/` 2, five at the
 root, one under `src/`), every `*.md` under `docs/` whether tracked or not, `research/findings/`
-(298), the memory directory (1,063) and `CLAUDE.md`. Per path: tracked by main → `git diff <base>`;
-tracked by the inner `research/` repo (`[V]` nested and ignored, `.gitignore:283`; own HEAD, no
-remote) → `git -C research diff <its base>`, and it gets its own close commit, see (c); tracked by
-NEITHER → the diff of the private history (d), whose snapshot set is therefore COMPUTED as the read
-set minus what any repository tracks — today `CLAUDE.md` (ignored, `:113`), the whole memory
+(298), the memory directory (1,063) and `CLAUDE.md`. Per path, by OWNERSHIP — the repository whose working tree holds the path and whose ignore
+rules do not exclude it, a function of location and `.gitignore`, not of whether anyone has run
+`git add` yet (round 6, Q2: `[V]` `research/` has 10 modified and 47 untracked paths, ten of them
+new `findings/*.md` dated 08-25..09-02 that `git -C research check-ignore` does not match — they
+are the inner repo's, and its close ADDS and commits them; the other 37 are PNGs and scratch
+dirs, not `*.md`, printed as a count and never staged): owned by main → `git diff <base>`; owned
+by the inner `research/` repo (`[V]` nested and ignored, `.gitignore:283`; own HEAD, no remote) →
+`git -C research diff <its base>`, and it gets its own close commit, see (c); owned by NO
+repository — ignored by the one whose tree holds it, or outside every tree → the diff of the
+private history (d), whose snapshot set is therefore COMPUTED — today `CLAUDE.md` (ignored, `:113`), the whole memory
 directory (`[V]` 6.10 MB of text, 2.50 MB gzipped, delta-compressed after the first snapshot), and
 **20 ignored `*.md` under `docs/`: the 14 of `docs/security/` (`.gitignore:301`; the four security
 lines §2.3 sampled, #13, #14, #27, #28, live there) and six more — `AGENT_SPAWNING.md`, `DOCS_ARC.md`,
 `SERVER_BROWSER_ARC.md`, the three `QUESTION_FORM_*`** — which round 3's list of three trees would have
 left with no history at all. Ignored `*.md` OUTSIDE `docs/` (`[V]` three: `SUPPORT.md`, two
 `reference_*_vps.md`) are outside the read set and get none; the census prints the read set's size
-per tree every run. (ii)
+per tree every run. A NEW unignored `*.md` in main's read set is the one path the close does not
+decide alone, because main is PUBLIC: `close --new <path>` (repeatable) publishes it deliberately
+and the trailer counts `new=`; while such a file exists and is neither named nor ignored, `close`
+REFUSES and prints it — a new doc is published on purpose or gitignored on purpose, never left for
+the next `git add` (`[V]` today: none). (ii)
 every doc citing a specific symbol or path of the diff; (iii) **the amortised sweep** — the K docs
 whose last census is oldest. **The arithmetic, restated on the computed read set (rounds 3 and 5):**
 `[V]` 166 + 20 + 1 + 298 + 1,063 = 1,548 files; at K = 10 a full cycle is 155 closes (~19 active
@@ -261,9 +270,21 @@ self-test must assert precision as well as recall"*): the six stale-open lines a
 vocabulary false positives of §2.3 are the fixture; the grammar as first drafted scored 2 of 6 on
 recall and 0 of 2 on the sub-state, which is the number the drill exists to keep from regressing.
 
-**Change (b) — the hand check, bounded.** Step 0.5 is rewritten: the verdict column is filled BY
-HAND for the census's rows — tens, not thousands — with the skill's existing spelling `STILL OPEN` /
-`ACTUALLY DONE` / `PARTIAL` plus `STALE DONE` (false optimism), and an action per verdict bounded by
+**Change (b) — the hand check, bounded, and its EXISTENCE machine-checked (round 6, Q3).** Step 0.5
+is rewritten: the verdict column is filled BY HAND for the census's rows — tens, not thousands —
+with the skill's existing spelling `STILL OPEN` / `ACTUALLY DONE` / `PARTIAL` plus `STALE DONE`
+(false optimism) **plus `STILL TRUE`**, the verdict `[V]` 21 of §2.3's 28 rows needed and the first
+four spellings could not express — without it `rows` could never equal the verdict sum and an
+UNVERDICTED row was arithmetically invisible, which put the hand check back in the assertion class
+this doc names. So the close is TWO PHASES: `census` writes the row table with an EMPTY verdict
+column to the working file the private history will commit; the hand fills it; `close` re-reads it
+and REFUSES until every row carries exactly one token of the closed five, so `rows = still-open +
+actually-done + stale-done + partial + still-true` holds by construction and CI checks the identity
+on every trailer. The hand's judgment stays the hand's, but `close` refuses the one contradiction a
+machine can see: `STILL TRUE` or `ACTUALLY DONE` on a row whose own citation the mechanical column
+resolved `gone` or `drifted-content` — a claim cannot be certified true by a citation that no longer
+exists. (The brief's larger option — force the verdict through the script — is adopted; what stays
+prose is HOW to judge, not WHETHER a judgment was recorded.) An action per verdict is bounded by
 the row's `kind`: a LIVING doc is rewritten (WP-2), a POINT-IN-TIME doc is stamped and never
 rewritten (`docs/README.md`'s convention), an ARCHIVE row is left. **`kind` is decided by the path
 pattern, and each kind has ONE action (corrected twice by the `/qf` pass — round 1 Q3 replaced a
@@ -297,7 +318,8 @@ verdict column, pasted.
 
 ```
 Docs-Census: base=<sha> rows=N labels=L still-open=a actually-done=b stale-done=c partial=d
-             cited-dead=e accretion=f ro-bytes=g ro-longest=h mem-over200=i sweep-cursor=j
+             still-true=e cited-dead=f accretion=g ro-bytes=h ro-longest=i mem-over200=j
+             sweep-cursor=k sweep-cycle=l census=<history sha> research-base=<sha> new=m foreign=n
 ```
 
 Every acceptance in this doc is a grep over that trailer, so a run that did not write it is a run
@@ -318,9 +340,14 @@ user's *"the trailer STAYS"* rule enforced as a refusal, and writes the same thr
 commits of a close (main, `research/`, the private history). The CI gate checks `Co-Authored-By:`
 beside `Docs-Census:` on every close commit. And **a CI gate observes
 it outside the run**: `tools/docs/docs_census_gate.py` reads `git log --format=%B` for every close
-commit in the push and fails on a missing trailer or a ratchet column that grew against the
-previous trailer — history is all it needs, so the untracked files' numbers are checked by a
-machine that never sees the files. **Registration, not mention (round 3, Q4):** the gate must know
+commit in the range and fails on a missing trailer, a ratchet column that grew against the
+previous trailer, **and — round 6, Q3 — the checks against WHAT THE TRAILER COUNTS, since CI
+cannot recompute a census over trees it never sees: the verdict-sum identity `rows = still-open +
+actually-done + stale-done + partial + still-true`; `base=` equal to the previous close commit's
+sha in the range (or the boundary), so the censuses TILE; `census=` distinct from every earlier
+trailer's, so a trailer pasted from the previous close is caught; `Co-Authored-By:` present** —
+the `tools/qf/ledger.py:215` shape, recompute what can be recomputed, at CI's reach. History is
+all it needs, so the untracked files' numbers are checked by a machine that never sees the files. **Registration, not mention (round 3, Q4):** the gate must know
 which commits OWE a trailer, and "documentize in the subject" is the MENTION this doc's own audit
 rejected (H-7; `[V]` 12 of the last 40 subjects carry the word). The script writes every close
 commit with the fixed subject prefix **`[docs] close:`** — the registration — and the gate fails
@@ -344,10 +371,29 @@ is a repository the main commit cannot carry (`[V]` 57 uncommitted paths there t
 `findings/`, 54 commits, no remote), so `close` also runs `git -C research commit` with the same
 prefix and the same trailer, censuses `research/`'s INDEX like main's, refuses unstaged docs in
 radius there too, and the main trailer records `research-base=<sha>`. **Index hygiene on a shared
-box (round 4, Q3):** `close` never commits with a pathspec (`[V]` `LESSONS.md:145` — the pathspec
-form discards the index) and never blindly (`[V]` `:6978` — a no-pathspec commit once swallowed
-another session's ten staged paths): before committing it lists the index and REFUSES, printing
-them, any staged path the close does not own. **What a close owns is not two directories, it is
+box (round 4, Q3; CORRECTED by round 6, Q1 — round 4 cited half the ledger):** the ledger holds
+TWO rows about one shared repository and they are two AXES, not a contradiction. `[V]`
+`LESSONS.md:6982` and `docs/CROSS_SESSION.md:148-162` (2026-08-30): a BARE commit commits the
+INDEX, which is shared, so it swallowed ten paths another session had staged — *"skip the index:
+`git commit -F - -- <paths>`"*. `[V]` `LESSONS.md:145` (2026-09-01): a PATHSPEC commit commits the
+WORKTREE of the named paths, which is also shared, so it carried the other session's unstaged
+hunks of the SAME file. No commit form separates two sessions' hunks inside one file — that is
+what `CROSS_SESSION`'s split-by-hand protocol is for — and each form is safe on exactly the axis
+the other is not. So `close` commits from a PRIVATE INDEX and touches the shared one only to
+align it afterwards: `GIT_INDEX_FILE=<tmp> git read-tree HEAD` → `git add <its paths>` →
+`git commit`, then `git reset -q -- <its paths>` on the shared index (the 2026-09-01 pattern; the
+reset is what clears the phantom revert a private-index commit otherwise leaves there). `[V]`
+drilled in a scratch repository: a neighbour's whole-file staged `B.md` survived the close, was
+absent from the close commit, and landed in the neighbour's own bare commit; the close carried
+exactly `A.md` + a new `N.md`. **Its paths** = the census's radius (i): docs modified in the
+worktree, plus `--new` paths — MINUS every path that is STAGED in the shared index, because the
+close stages nothing there, so every staged entry is another session's in-flight commit by
+construction; that is the discriminator the shared index lacks (nobody can see WHO, the close
+needs only NOT ME). A staged entry whose blob equals the worktree is EXCLUDED and counted
+(`foreign=`); one whose blob differs from the worktree is a partial staging or a same-file
+collision and REFUSES the close with the path printed. The census therefore reads the
+WORKTREE of its paths — what the commit will carry — and round 3 Q2's *"reads the INDEX"* is
+retired with the refusal it justified. **What a close owns is not two directories, it is
 CLAIMS (round 5, Q2):** `[V]` of the 76 closes since 2026-08-24, 24 carried a non-markdown path
 outside `docs/` — `.h`/`.cpp` headers whose COMMENTS held a stale claim (the skill's Step 1 reaches
 a claim wherever it lives: `multiplayer_menu.h`, `ko_respawn.h`, `world_identity.h` twice), `tools/`
@@ -355,10 +401,18 @@ and `reference/` READMEs, and eight that carried real code (`dead_api_census.py`
 `compare_zips.ps1` 111, `mp.py`, `trash_proxy.cpp`, `.gitignore` …). So the owned set is computed
 per staged path: (1) any `*.md` the repository tracks, anywhere (`[V]` 31 of 166 live outside
 `docs/`); (2) the close's own instruments, `tools/docs/**` and `.claude/skills/**`; (3) any other
-path whose staged hunks are COMMENT-ONLY — the code residue of the `-` lines (comments stripped,
-whitespace collapsed) equals that of the `+` lines, which admits a trailing `// …` rewrite on an
-unchanged declaration (`[V]` the rule re-run over the 24: 16 green, 8 refuse, and all 8 are the
-code cases — a tool shipped inside a close, which the ledger already names as the failure). A
+path whose change is COMMENT-ONLY — decided on the WHOLE FILE, not per diff line, by a
+STRING-AWARE lexer per language (round 6, Q4: the round-5 measurement stripped `//…` and `#…`
+by regex, blind to a `#` or `//` inside a string literal, so a code change behind `s.find("://")`
+or `re.compile(r'(<FONT COLOR="#…')` would have passed): the old blob and the new blob each have
+their comment tokens removed — Python by `tokenize` (COMMENT tokens), C-family and `.inc` by a
+state machine over `"…"`/`'…'`/`//`/`/* */`, PowerShell `#` and `<# #>` outside quotes, YAML `#`
+outside quotes — whitespace collapsed, and the two residues must be EQUAL; a file type with no
+comment grammar (`.json`, `.txt`, `.gitignore`, a new or deleted file) is code by construction.
+`[V]` the lexer re-run over the same 24 closes partitions them IDENTICALLY, 16 green / 8 refuse,
+the 8 being the code cases — a 151-line tool shipped inside a close, which the ledger already names
+as the failure — and its drill fixture holds the two quoted-delimiter lines the critic found plus a
+trailing-comment rewrite (CODE / CODE / comment-only). A
 refused path is committed FIRST in its own `[tools]`/`[src]` commit; there is no `--also` flag,
 because an override recorded as a count is still an override nobody reads back. The other
 session's hunks stay theirs, per `docs/CROSS_SESSION.md`'s `git apply --cached` protocol. **Where the gate runs:** in its OWN
@@ -399,8 +453,9 @@ verdict survives, on a bounded list; the tree still reaches a verdict within N r
 and `MEMORY.md`'s Standing RULES line are rewritten in the same commit (RULE 2 — no two texts of one
 rule). **§5, question 1 puts this to the user.**
 
-**Mechanism.** The set to check is computed, bounded and printed; "reconciled" means every row has a
-verdict, checkable by reading the list; the numbers live in commit trailers and a private history.
+**Mechanism.** The set to check is computed, bounded and printed; "reconciled" means every row
+carries a verdict token or the close refuses; the numbers live in commit trailers that CI checks
+against each other, and in a private history.
 
 **Cost.** One ~400-line script and a ~100-line gate with a workflow, each with a drill (the
 `lessons_gate_drill.py` pattern: shown RED before trusted green); a census per run instead of a claim.
@@ -655,12 +710,25 @@ Ledger pass 1 (`design`), this session's scratchpad. Every reply gated by `verif
 | 5 | Q2 | regression-by-logic | 32 of 82 closes since 08-24 committed a path outside `docs/` + `.claude/skills/` — which would the index refusal have been green on, and what decides the trees a close owns | measured: 76 closes, 24 with a non-md path outside own tooling; under a comment-residue rule 16 green / 8 refuse, the 8 all real code (151- and 111-line tools among them) | WP-1(c): a close owns CLAIMS — tracked `*.md` anywhere, `tools/docs/` + `.claude/skills/`, comment-only hunks elsewhere; code refuses and goes in its own commit; no `--also` |
 | 5 | Q3 | source-consistency | which §9 step lands the gate, and whose sha `since` carries when a commit cannot contain its own hash | measured: §9 named neither file; `git log --diff-filter=A -- build-core.yml` returns `47b88116`; `fetch-depth: 0` at `build-core.yml:57` | WP-1(c)/§9.0: the boundary is COMPUTED as the add-commit of the workflow file and printed per run; step 0 lands script + gate + workflow + both drills in one commit |
 | 5 | Q4 | writers-census | who writes `Co-Authored-By` / `Claude-Session` (40 of 40 recent commits, by hand) and who sets the `pelmentor` identity in the new history repo | measured: 40/40 both; 614 session URLs; 11 model-name spellings; identity `pelmentor` in main, `research/`, `site/` | WP-1(c)/(d): both trailers are REQUIRED `--trailer` inputs, refused if absent, written on all three commits; the gate checks `Co-Authored-By:`; the history repo copies main's local identity and refuses without one |
+| 6 | Q1 | prior-art | a neighbour's staged doc hunks in the ONE shared index — which refusal can see WHO staged a doc, when `CROSS_SESSION.md:162` says the pathspec on COMMIT is the only protection and `LESSONS.md:6982` records ten staged paths swallowed by a bare commit | measured: the two ledger rows are two axes (bare commit = shared index; pathspec commit = shared worktree, `LESSONS.md:145`); scratch-repo drill of a private-index close: the neighbour's staged `B.md` survived and landed in its own commit | WP-1(c): `close` commits from a PRIVATE index, then `git reset -q -- <its paths>`; its paths exclude everything staged in the shared index (not-me by construction: excluded if blob == worktree, refused if not); the census reads the worktree; round 3 Q2's index read retired |
+| 6 | Q2 | framing-provenance | "57 uncommitted paths" is 10 modified + 47 untracked, ten of them new findings docs — does "tracked by neither" send them to the private history instead of the repo that owns their directory | measured: 10 M / 47 ??; the 10 `findings/*.md` are not ignored by `research/` (0 `check-ignore` hits); the 37 others are PNGs and dirs; main has 0 untracked docs today | WP-1(a): ownership = location + ignore rules, not `git add` state; the research close ADDS its new findings; a new unignored doc in PUBLIC main needs `--new` or the close refuses; the private history holds only what no repo can |
+| 6 | Q3 | name-the-class | no trailer column is checked against what it counts; 21 of 28 sampled rows are `still-true`, a verdict with no token, so an unverdicted row is invisible and a pasted previous trailer passes CI | measured: §2.3 table 9 + 12 still-true; four spellings at (b); `ledger.py:215` re-runs a command and compares digits | WP-1(b)/(c): a fifth token `STILL TRUE`; two phases `census` → hand → `close`, which refuses until every row carries one token; CI checks the verdict-sum identity, `base=` tiling, a distinct `census=`, `Co-Authored-By:`; a `STILL TRUE` on a dead citation refuses |
+| 6 | Q4 | undone-cheap-measurement | the 16/8 measurement's comment grammar is not string-aware — a code change behind a quoted `//` or `#` would pass as comment-only | measured: re-run with a whole-file string-aware lexer (Python `tokenize`, a C state machine, ps1, yaml): the same 24 partition identically 16/8; the two quoted-delimiter fixtures classify CODE, a trailing-comment rewrite comment-only | WP-1(c): the grammar is named per language, whole-file, string-aware; no grammar = code; the three fixture lines are in the drill |
 
 **Round 5 was answered the next morning** (2026-09-03; the reply had landed and been gated at the
 usage limit the evening before, its four anchors verified). Fifth reactive round; all four changes
 are specifications of the one mechanism — three of them replace a LIST with a COMPUTED set (the
 trees that owe a history source, the paths a close owns, the gate's boundary), the fourth turns two
-hand-typed values into REQUIRED inputs. §9 does not open until the ledger prints CONVERGED.
+hand-typed values into REQUIRED inputs.
+
+**Round 6 was the user's cap** (2026-09-03: *"Это последний раунд что сейчас придет"*, then *"И затем
+собираем"*). All four answered-measured; the critic did not return `converged`, so the ledger's STOP
+is `user-cap 6`, not convergence, and this doc says so: the pass is UNSETTLED by the ritual's own
+rule and §9 opens on the USER's word, not on a CONVERGED line. What round 6 changed is not small:
+round 4's *"never a pathspec commit"* rested on half the ledger and is replaced by a private-index
+commit drilled in a scratch repo; the hand verdict, the doc's one remaining assertion, is forced
+through the script; the comment grammar became a string-aware lexer; the per-path rule became
+ownership. A next critic, if the user wants one, starts from these four.
 
 Round 4 found the ledger's third first-use defect: `tail` was not a legal command anchor, so the
 critic's `tail ... | grep -c = 25` was classed as a quote and not re-run — fixed (`77268a7b`), re-run,
@@ -690,14 +758,18 @@ Scratch: `stale_sample/` in this session's scratchpad.
 ## 9. Build order
 
 0. ONE commit: `tools/docs/status_census.py` with its drill (RED on the §2.3 fixture first): the
-   label grammar, the computed read set and per-path history source, the subordinate-fact column,
-   the trailer, `close` (three commits, the owned-path refusal, the required attribution trailers),
-   `--snapshot` (identity copied from main), `--sweep`, `--loose`; AND `tools/docs/docs_census_gate.py`
-   + `.github/workflows/docs-census.yml` with the gate's own drill on a synthetic history (an
-   old-form close before the boundary ignored; a prefixed close without a trailer, a trailer without
-   the prefix, a retired-prefix subject and a missing `Co-Authored-By:` after it, each RED). The
-   gate's boundary is the add-commit of the workflow file, so the first `[docs] close:` can never
-   precede the gate (round 5, Q3).
+   label grammar, the computed read set and per-path OWNERSHIP, the subordinate-fact column, the
+   trailer, the two phases `census` → hand → `close` (three commits from a PRIVATE index, the
+   owned-path refusal with the string-aware lexer and its three fixture lines, the foreign-staged
+   exclusion/refusal, `--new`, the five verdict tokens with the refuse-until-verdicted and the
+   dead-citation contradiction, the required attribution trailers), `--snapshot` (identity copied
+   from main), `--sweep`, `--loose`; AND `tools/docs/docs_census_gate.py` +
+   `.github/workflows/docs-census.yml` with the gate's own drill on a synthetic history (an old-form
+   close before the boundary ignored; after it a prefixed close without a trailer, a trailer without
+   the prefix, a retired-prefix subject, a missing `Co-Authored-By:`, a verdict sum that misses
+   `rows`, a `base=` that does not tile, a repeated `census=`, each RED). The gate's boundary is the
+   add-commit of the workflow file, so the first `[docs] close:` can never precede the gate (round
+   5, Q3).
 1. WP-1 text: Step 0.5, Step 1's enumeration, Step 0.5(5), the scope statement, the frontmatter, the
    Step 5 ledger; the memory file + `MEMORY.md` line for the 2026-06-21 rule rewritten (after §5.1).
 2. WP-4: the three checks in `lessons_gate.py`, drilled RED first; Step 3.5 points at `--pairing`.
