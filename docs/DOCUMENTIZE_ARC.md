@@ -801,7 +801,16 @@ next census; it carries only from a pending table into its own re-census); the `
 contradiction refuses on LABEL rows only (on a prose line a dead pointer can be dead on purpose —
 this doc naming its retracted `ledger_rot.py`); a backticked commit hash is a hash, and a foreign
 hash (`e31aaaa6`, UE4SS) is informational, never a refusal. The first REAL close is the next
-`/documentize`; steps 1-5 are open.
+`/documentize`; steps 2-5 are open.
+
+**Step 1 BUILT 2026-09-03 (the commit after `49d73edf`):** `.claude/skills/documentize/SKILL.md` rewritten
+whole around the census — Step 0.5 = run `census`, Step 0.6 = the hand verdicts (the five tokens, the
+action per kind, the ask-the-user row that keeps the close refusing), Step 4.5 = the close is the
+script's (the refusal list, the three commits, never a hand `git commit`), Step 5 leads with the verdict
+table; the frontmatter no longer says "Update ALL project docs" (L-2); the tree-wide grep is gone from
+the text. `memory/feedback_documentize_manual_status_reconciliation.md` rewritten in the same run (RULE
+2 — one text of the 2026-06-21 rule, its form change recorded with the measurement that forced it). The
+ratchet's day-one baseline is minted by the FIRST real close, which is the next `/documentize`.
 
 ---
 
