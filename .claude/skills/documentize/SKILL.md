@@ -5,7 +5,7 @@ description: >
   CENSUS, not a tree-wide hand sweep: `tools/docs/status_census.py census` computes the bounded set of
   docs (the session's blast radius + an amortised sweep) and their status rows; the hand fills ONE
   verdict token per row; the living docs, research/, the memory and the lessons are updated as before;
-  then `status_census.py close` makes the three close commits itself, with the machine-written
+  then `status_census.py close` makes the close commits itself, one per tree, with the machine-written
   `Docs-Census:` trailer CI reads back. A close without the trailer is a run that did not close.
   (Rewritten 2026-09-03 from its own measured output -- docs/DOCUMENTIZE_ARC.md.)
 ---
@@ -33,10 +33,16 @@ smoke or a static guess. Accuracy beats optimism.
 
 **SCOPE — comprehensive by CENSUS, not by reading the tree:**
 - **The docs you reconcile** = the census's radius: (i) every doc the session touched, in every tree
-  (main, the inner `research/` repo, and the trees no repository tracks — `CLAUDE.md`, the memory
-  directory, the ignored docs incl. `docs/security/`), (ii) every doc citing a SPECIFIC symbol or path
-  of the session's code diff, (iii) the K = 40 docs whose last census is oldest, so every doc reaches a
-  hand verdict within ~39 closes. `--sweep` censuses the whole read set, on the user's request.
+  (main, every OWNED inner repo — ownership is the local git identity, so `site/` counts as well as
+  `research/` — and the trees no repository tracks: `CLAUDE.md`, the memory directory, the ignored docs
+  incl. `docs/security/`), (ii) every doc citing a SPECIFIC symbol or path of the session's code diff,
+  (iii) the K = 40 OLDEST-censused docs by the age ladder, so every doc reaches a hand verdict within
+  ~70 closes. A doc the session TOUCHED is still a sweep candidate — that is the only way `MEMORY.md`,
+  `LESSONS.md` and `CLAUDE.md`, touched by steps 3/3.5/4 of every close, are ever read whole.
+  `--sweep` censuses the whole read set, on the user's request.
+- **The hand phase is on probation, with a stated bar (D8).** Over the first 300 AGEING-lane rows, if
+  `actually-done + stale-done + partial + sub-state-stale` totals fewer than 5, the true rot rate is
+  under ~3 % and this step is DELETED rather than defended. Count rows, never closes.
 - **Archive stale stuff** — a superseded/abandoned doc or section goes to the nearest `_archive/` with a
   one-line pointer (RULE 2: retired info goes, fully — no parallel stale + fresh).
 - **Write NEW docs with FRESH info** where the current truth has no home; link them in. A NEW doc in
@@ -60,22 +66,40 @@ Work top-to-bottom. Skip a step only if it genuinely does not apply, and say so.
 python tools/docs/status_census.py census            # first run on a fresh box: --since <date>
 ```
 
-It prints: the read set per tree; the bases (the previous close's trailer commit in main and in
-`research/`); radius (i) touched / (ii) cited (with the generic symbols it DROPPED, and why) / (iii) the
-sweep; the row count (labels / dead citations); the table path
+It prints: the read set per tree; the bases (the previous close's trailer commit in main and in each
+owned inner repo); radius (i) touched / (ii) cited (with the generic symbols it DROPPED, and why) /
+(iii) the sweep; the row count (labels / dead citations / symbol drift); the table path
 (`~/.claude/projects/<slug>/history/census/pending.md`); the ratchet values against their targets; the
 accretion count. Read those lines — "radius: N docs" is the size of the manual check you now owe.
 
 The table has one row per STATUS LABEL found in the radius (a tag like `[?]`, a `Status:` field, a
 table cell, a checkbox, a heading carrying Open questions / OPEN / TODO / NEXT, a bold or capitalised
 status word leading the line) plus one row per prose line whose CITATION no longer resolves. Each row
-carries the label, the **sub-state** clause (the parenthetical or trailing "(commit pending)" /
-"uncommitted" / "hands-on-pending" on the line or the next — where §2.3 measured most of the rot), every
-token on the line with its resolve state (`ok` / `gone` / `past-eof` / `external`), the newest date on
-the line, a running-total flag, and an EMPTY verdict column.
+carries its LANE (below), the label, the **sub-state** clause (the parenthetical or trailing "(commit
+pending)" / "uncommitted" / "hands-on-pending" on the line or the next — where §2.3 measured most of
+the rot), every token on the line with its resolve state, the newest date on the line, a running-total
+flag, and an EMPTY verdict column.
 
-If you edit a doc AFTER the census, re-run `census`: verdicts already typed carry forward into the
-re-census by (path, line content); the close refuses a stale census, so this is never optional.
+**Two LANES, because a row's age decides which question it can even be asked.** A row the session
+introduced or changed cannot have AGED — nothing about it was ever true and then stopped being — so it
+is asked the AUTHORING question (*is this claim true as I write it?*) and is only raised at all when
+it asserts something falsifiable. A standing claim is asked the AGEING question (*was this true once
+and is it still?*), oldest first by the clock ladder, with the RUNG printed so a date resting on
+`mtime` is visibly weaker than one from a commit.
+
+**Resolve states.** `ok` / `gone` / `past-eof` / `external` / `ambiguous` are about whether the path
+resolves. Two more are about CONTENT, at different strengths: a citation whose doc QUOTES the cited
+line (`` `f.cpp:12` says "…" ``) and whose words are not there is `moved` / `content-gone`, DEAD like a
+vanished path; a citation next to a backticked SYMBOL found ELSEWHERE in the cited file is `drift`,
+which raises its own row kind, names the true line (`session_lanes.h:179->223`), and never refuses —
+that pairing is inferred, not stated.
+
+If you edit a doc AFTER the census, re-run `census --force`: verdicts already typed carry forward by
+(path, line content), and the close refuses a stale census, so this is never optional. **A verdict
+whose LINE you fixed does not carry — that is the point, and it is recorded rather than lost:** the
+re-census appends it to the resolved ledger (`status_census.py resolved` reads it back) and the
+close's `resolved=` / `flips=` carry the correction the verdict columns cannot, because those describe
+the text being committed.
 
 ## 0.6. The HAND VERDICTS — one token per row, against the CODE (mandatory)
 
@@ -92,6 +116,14 @@ in the VERDICT column:
 | `PARTIAL` | some sub-parts shipped | name exactly which (file:line) and which remain; split the item |
 | `STILL TRUE` | the label and the line hold | nothing — but a LABEL row whose citation resolved `gone` / `past-eof` cannot be STILL TRUE: the close refuses it, fix the pointer |
 | `NOT A LABEL` | the grammar mis-flagged the line: it states no status about anything (a vocabulary table, a legend, a sentence containing a status word) | nothing to the doc — the row is the CENSUS's defect, and `not-a-label=` in the trailer is the grammar's measured false-positive rate. Do NOT use it to dismiss a claim you simply did not check |
+
+A row of kind `drift` makes no status claim: it says the SYMBOL beside a citation now lives elsewhere
+in the cited file. Check it — the true line is printed — and either fix the number (then the row
+returns corrected, and the verdict you gave is recorded in the resolved ledger) or verdict it
+`NOT A LABEL` when the pairing was a coincidence of the sentence. If a whole DOC quotes the status
+vocabulary rather than using it (a legend, a skill text, this file), mark it once with
+`<!-- corr-vocabulary: quoted-doc -->` and a reason beside it, rather than verdicting its rows one by
+one forever.
 
 The action's FORM depends on the doc's kind (path pattern): a LIVING doc (undated filename outside
 `_archive/`) is REWRITTEN in place with one `[corr YYYY-MM-DD: was …; measured …; <cite>]` stamp — never
@@ -133,7 +165,11 @@ from an autonomous smoke alone** — only a real hands-on or a matching real log
   Link related memories with `[[name]]`.
 - **Update `MEMORY.md`**: the pointer for the new topic file, the **POST-COMPACT READ FIRST** pointer at
   the top → this session's topic. Every line ≤ 200 chars (`mem-over200=` in the trailer counts the
-  violations, and the ratchet refuses a close that ADDS one).
+  violations, and the ratchet refuses a close that ADDS one). **Every pointer it makes must RESOLVE** —
+  `memref-dead=` is ratcheted at 0 over its markdown links and its `memory/<glob>` patterns, and over
+  CLAUDE.md's backticked repo paths. Do NOT compact by inventing a filename glob: lesson and feedback
+  files carry NO date in their names (0 of 705), so `memory/lesson-*<date>*` matches nothing. Address a
+  day through `memory/INDEX_BY_DATE.md`, which the close regenerates from the age ladder.
 - Record durable **feedback** and **lessons** as their own files; UPDATE an existing file rather than
   duplicating; delete a memory that turned out wrong.
 
@@ -184,23 +220,32 @@ citation is dead; a doc changed since the census (re-run `census`); a new unigno
 neither `--new` nor gitignored; a doc another session staged PARTIALLY (a same-file collision — resolve
 per `docs/CROSS_SESSION.md`); a non-doc path that is not the close's own tooling and not a
 comment-only change (commit it FIRST, on its own, with its own subject); a ratchet column that grew; a
-missing attribution trailer. On green it makes THREE commits — the private history (snapshot + state +
-the verdict table), the inner `research/` repo, and main — each from a PRIVATE index (nothing another
-session staged is swallowed or discarded), each with the `Docs-Census:` trailer git appends, the
-subject prefixed `[docs] close:`. It prints the three shas and the trailer line.
+cumulative column that SHRANK (the resolved ledger is append-only, so a drop means the private history
+was replaced); a hand-edited row count; a missing attribution trailer. On green it regenerates
+`memory/INDEX_BY_DATE.md` and makes ONE COMMIT PER TREE — the private history (snapshot + state +
+the verdict table + the ledger), EVERY owned inner repo that this session touched (ownership is the local git identity, so `site/`
+counts as well as `research/`), and main — each from a PRIVATE index (nothing another session staged
+is swallowed or discarded), each with the `Docs-Census:` trailer git appends, the subject prefixed
+`[docs] close:`. It prints the shas, the trailer line, and how many verdicts this close resolved.
 
 **Never `git commit` a close by hand.** A close without the trailer is a run that did not close, and
 `tools/docs/docs_census_gate.py` fails the push on a `[docs] close:` subject without it, a trailer
 without the prefix, the retired `[docs] documentize` subject form, a verdict sum that misses `rows`, a
-`base=` that does not tile onto the previous close, a repeated `census=`, a grown ratchet column, or a
-missing `Co-Authored-By:`.
+`base=` that does not tile onto the previous close, a repeated `census=`, a grown ratchet column, a
+shrunken cumulative one, an UNDECLARED trailer column (every column's kind lives in
+`tools/docs/trailer_schema.py`, imported by both sides), or a missing `Co-Authored-By:`.
 
 ## 5. Report
 Give the user a tight summary that **leads with the verdict table** — the census's rows with your
 verdicts and the action taken per row (the same table the script filed under
 `~/.claude/projects/<slug>/history/census/`) — and the trailer line the script printed; then the honest
-status of the work (verified vs pending), the committed state (three shas), and the exact NEXT step. No
+status of the work (verified vs pending), the committed state (every sha the close printed), and the exact NEXT step. No
 forbidden hand-off phrases ("should work", "build clean — ready"); state evidence.
+
+**Read `resolved=` and `flips=` before you write "nothing needed correcting".** The verdict columns
+describe the text being COMMITTED, so a run that fixed three stale claims commits three corrected
+lines and reports `stale-done=0`. What the run corrected is the ledger's delta, which the close prints
+on its own line.
 
 ---
 **Guardrails:** Every lesson written to `memory/` MUST land its row in `docs/LESSONS.md` in the same run
