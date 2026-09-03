@@ -1,0 +1,35 @@
+# docs-census -- the machine that reads the Docs-Census trailers back.
+#
+# tools/docs/status_census.py writes one `Docs-Census:` trailer into every
+# `[docs] close:` commit (docs/DOCUMENTIZE_ARC.md WP-1). This workflow is the
+# reader outside the run that wrote it: tools/docs/docs_census_gate.py judges
+# every close commit after the boundary -- the commit that ADDED this file,
+# computed by the gate itself, never typed here -- for the trailer's presence,
+# the verdict-sum identity, base= tiling, a fresh census= and the ratchet.
+#
+# Its own workflow file ON PURPOSE: build-core.yml's sha256 is part of the
+# release fingerprint (tools/release/fingerprint.json), so a gate step there
+# would cost the fingerprint ritual on every edit.
+name: docs-census
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  gate:
+    name: Docs-Census trailer gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout (full history -- the gate walks from its own boundary commit)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Gate drill (the gate is shown RED on a synthetic history before it is trusted)
+        run: python3 tools/docs/docs_census_gate_drill.py
+
+      - name: Docs-Census gate
+        run: python3 tools/docs/docs_census_gate.py --report
