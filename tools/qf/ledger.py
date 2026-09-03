@@ -34,6 +34,42 @@ ANCHOR_CMDS = {"grep", "rg", "git", "ls", "wc", "find", "cat", "sed", "python", 
 _LOC = re.compile(r"(?P<path>[\w./\\-]+\.(?:cpp|h|hpp|inc|py|rs|js|md|txt|json|ini|ps1|log|toml|cmake))"
                   r":(?P<line>\d+)")
 
+_BASENAMES: dict[str, list[str]] | None = None
+
+
+def _basename_index() -> dict[str, list[str]]:
+    """basename -> every tracked path carrying it. Built once per process."""
+    global _BASENAMES
+    if _BASENAMES is None:
+        _BASENAMES = {}
+        try:
+            r = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, text=True, timeout=60)
+            paths = [p for p in r.stdout.split("\0") if p]
+        except (OSError, subprocess.TimeoutExpired):
+            paths = []
+        for p in paths:
+            _BASENAMES.setdefault(p.rsplit("/", 1)[-1], []).append(p)
+    return _BASENAMES
+
+
+def _resolve_loc(raw: str) -> tuple[Path | None, str]:
+    """-> (path, why-it-failed). A BARE BASENAME is a legitimate anchor form and the rest of this
+    project's instruments already resolve one (`lessons_gate.resolve_cite`); refusing it produced a
+    false 'does not exist' on `status_census.py:602`, an anchor whose file is tracked at exactly one
+    path (2026-09-03, round 7 of the documentize pass). Resolution is UNIQUE-or-refuse: an ambiguous
+    basename is not silently resolved to the first match, because the wrong file's line count would
+    verify a claim about a file the critic never opened."""
+    rel = raw.replace("\\", "/")
+    if "/" in rel:
+        p = ROOT / rel
+        return (p, "") if p.exists() else (None, f"{raw} does not exist")
+    hits = _basename_index().get(rel, [])
+    if len(hits) == 1:
+        return ROOT / hits[0], ""
+    if not hits:
+        return None, f"{raw} matches no tracked file"
+    return None, f"{raw} is ambiguous ({len(hits)} tracked files: {', '.join(hits[:3])}) -- anchor with the path"
+
 
 def load_schema() -> dict:
     return json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
@@ -195,10 +231,10 @@ class Ledger:
             rec = {"id": qid, "anchor": anchor, "kind": kind, "verified": None, "detail": ""}
             if kind == "loc":
                 m = _LOC.search(anchor)
-                path = ROOT / m.group("path").replace("\\", "/")
+                path, why = _resolve_loc(m.group("path"))
                 line = int(m.group("line"))
-                if not path.exists():
-                    rec.update(verified=False, detail=f"{m.group('path')} does not exist")
+                if path is None:
+                    rec.update(verified=False, detail=why)
                 else:
                     total = sum(1 for _ in path.open(encoding="utf-8", errors="replace"))
                     rec.update(verified=line <= total,
