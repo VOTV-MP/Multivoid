@@ -114,7 +114,9 @@ def judge(repo, workflow, report=False):
             fails.append("{} verdict sum {} != rows {}".format(short, sum(parts), rows))
         base = trailer.get("base", "")
         if prev_close:
-            if not prev_close.startswith(base):
+            # `not base` FIRST: every string starts with "", so an EMPTY base= would tile onto any
+            # predecessor and the check would pass vacuously (measured 2026-09-03 by a post-ship audit).
+            if not base or not prev_close.startswith(base):
                 fails.append("{} base={} does not tile onto the previous close {}".format(short, base, prev_close[:12]))
         else:
             if not base or not is_ancestor(repo, base, sha):

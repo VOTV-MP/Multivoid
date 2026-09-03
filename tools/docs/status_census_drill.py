@@ -90,6 +90,21 @@ def drill_grammar():
 
 
 # ------------------------------------------------------------------ B. the comment-only lexer
+def drill_negated_labels():
+    """A negated status word must not be captured as its own opposite (post-ship audit, 2026-09-03)."""
+    print("-- A2. negated status words")
+    cases = [
+        ("**Status (superseded, kept for the record): ROOT MEASURED, NOT FIXED.**", "NOT FIXED"),
+        ("- **NOT VERIFIED** by any hands-on run.", "NOT VERIFIED"),
+        ("| A2 | NOT SHIPPED | the lane is parked |", "NOT SHIPPED"),
+        ("- **DONE** and shipped.", "DONE"),
+    ]
+    for line, want in cases:
+        lab = SC.label_of(line)
+        check(lab is not None and lab[1] == want,
+              "label {!r} (not {!r}) for {!r}".format(want, (lab or ("", "?"))[1], line[:52]))
+
+
 def drill_lexer():
     print("-- B. comment-only lexer")
     a = 'x = re.compile(r"(<FONT COLOR=#[0-9A-Fa-f]{6}>)")\n'
@@ -219,10 +234,80 @@ def drill_close():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def drill_cross_session(root=None):
+    """The three cross-session holes a post-ship audit found on 2026-09-03, each shown RED."""
+    print("-- D. cross-session and content-pin refusals")
+    root = tempfile.mkdtemp(prefix="scx_")
+    repo, mem, hist = (os.path.join(root, n) for n in ("repo", "memory", "history"))
+    os.makedirs(os.path.join(repo, "docs"))
+    os.makedirs(mem)
+    try:
+        git(["init", "-q", "-b", "main", "."], repo)
+        git(["config", "--local", "user.name", "drill"], repo)
+        git(["config", "--local", "user.email", "drill@example"], repo)
+        w = lambda rel, text: io.open(os.path.join(repo, rel), "w", encoding="utf-8", newline="\n").write(text)
+        w(".gitignore", "CLAUDE.md\n")
+        w("docs/a.md", "# A\n\n**Status:** OPEN (commit pending)\n")
+        io.open(os.path.join(mem, "MEMORY.md"), "w", encoding="utf-8").write("# index\n")
+        git(["add", "--", ".gitignore", "docs/a.md"], repo)
+        git(["commit", "-q", "-m", "base"], repo)
+        E = (repo, mem, hist)
+        T = ["--trailer", "Co-Authored-By: D <d@e>", "--trailer", "Claude-Session: https://e/x"]
+        w("docs/a.md", "# A\n\n**Status:** OPEN (commit pending)\n\nmine\n")
+        # the neighbour marks a brand-new doc intent-to-add: invisible to the index guard AND to
+        # `ls-files --others`, so without the fix it is owned as a tracked doc and published by us
+        w("docs/neighbour_new.md", "# theirs\n\nin progress\n")
+        git(["add", "-N", "--", "docs/neighbour_new.md"], repo)
+        code, out = run_sc(E, "census", "--since", "2099-01-01")
+        check(code == 0, "census runs with an intent-to-add file present")
+        pend = os.path.join(hist, "census", "pending.md")
+        t = io.open(pend, encoding="utf-8").read().split("\n")
+        for i, l in enumerate(t):
+            if l.startswith("| 1 |"):
+                cells = l.rstrip().rstrip("|").split("|")
+                cells[-1] = " STILL OPEN "
+                t[i] = "|".join(cells) + "|"
+        io.open(pend, "w", encoding="utf-8", newline="\n").write("\n".join(t))
+        code, out = run_sc(E, "close", "-m", "drill", *T)
+        check(code != 0 and "neighbour_new.md" in out and "--new" in out,
+              "RED: an intent-to-add doc is treated as NEW and refuses the close ({})".format(out.strip()[-90:]))
+        git(["reset", "-q", "--", "docs/neighbour_new.md"], repo)
+        os.remove(os.path.join(repo, "docs", "neighbour_new.md"))
+        # a second census must not silently discard the first hand's verdicts
+        code, out = run_sc(E, "census", "--since", "2099-01-01")
+        check(code != 0 and "hand verdict" in out,
+              "RED: a second census refuses to overwrite held verdicts ({})".format(out.strip()[-80:]))
+        # content pinned at census time: an edit after it (anyone's) refuses the close
+        w("docs/a.md", "# A\n\n**Status:** OPEN (commit pending)\n\nedited after the census\n")
+        code, out = run_sc(E, "close", "-m", "drill", *T)
+        check(code != 0 and "changed since the census" in out,
+              "RED: a doc edited after the census refuses the close")
+        code, out = run_sc(E, "census", "--since", "2099-01-01", "--force")
+        check(code == 0, "--force re-censuses and re-pins ({})".format(out.strip()[-80:]))
+        t = io.open(pend, encoding="utf-8").read().split("\n")
+        for i, l in enumerate(t):
+            if l.startswith("| ") and not l.startswith("| # ") and not l.startswith("|---"):
+                cells = l.rstrip().rstrip("|").split("|")
+                if cells[-1].strip() == "":
+                    cells[-1] = " STILL OPEN "
+                    t[i] = "|".join(cells) + "|"
+        io.open(pend, "w", encoding="utf-8", newline="\n").write("\n".join(t))
+        code, out = run_sc(E, "close", "-m", "drill", *T)
+        check(code == 0, "GREEN: the close commits the pinned bytes ({})".format(out.strip()[-70:]))
+        hidx = os.path.join(hist, ".git", "docs_census.index")
+        check(not os.path.exists(hidx), "the history repo's private index is removed after the close")
+        check(git(["status", "--porcelain"], hist).strip() == "",
+              "the history repo's shared index is left clean")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def main():
     drill_grammar()
+    drill_negated_labels()
     drill_lexer()
     drill_close()
+    drill_cross_session()
     print("status_census_drill: {} check(s) failed".format(len(FAILS)))
     return 1 if FAILS else 0
 

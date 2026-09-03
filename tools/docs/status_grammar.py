@@ -40,11 +40,16 @@ def sha1(text):
 STATUS_WORDS = ("OPEN|DONE|TODO|PENDING|DESIGN|AS-BUILT|BUILT|SHIPPED|VERIFIED|PROVEN|IMPLEMENTED|"
                 "DEFERRED|WIP|PARTIAL|CLOSED|FIXED|RETIRED|SUPERSEDED|FUTURE|PLANNED|MITIGATED|STALE|"
                 "LIVE|NOT BUILT|NOT WIRED|NOT DONE|NOT hands-on|UNVERIFIED|UNTESTED|BLOCKED|IN PROGRESS")
-STATUS_RE = re.compile(r"(?<![A-Za-z-])(" + STATUS_WORDS + r")(?![A-Za-z-])")
+# A NEGATED status word is a different label, not the same one: "ROOT MEASURED, NOT FIXED" captured as
+# `FIXED` records the OPPOSITE of the line's claim. Measured 2026-09-03 by a post-ship audit on a real
+# census row (research/findings/join-identity/votv-rejoin-loadmap-null-worldsettings-RE-2026-08-31.md:10).
+# The four hand-written NOT forms in STATUS_WORDS stay: they cover words that are not status words on
+# their own (`NOT hands-on`), which this prefix cannot reach.
+STATUS_RE = re.compile(r"(?<![A-Za-z-])((?:NOT\s+)?(?:" + STATUS_WORDS + r"))(?![A-Za-z-])")
 TAG_RE = re.compile(r"\[(\?|SUPERSEDED[^\]]*|OPEN|DONE|TODO|WIP|STALE|DEFERRED|CORR)\]")
 LEAD_RE = re.compile(r"^[>\s]*(?:(?:[-*+]|\d+[.)])\s+)?")   # a bullet marker must be followed by whitespace: `**bold**` is not one
 FIELD_RE = re.compile(r"^\W{0,12}(?:\*\*)?(?:Status|STATUS|Verdict|VERDICT)(?:\*\*)?\s*:\s*(?:\*\*)?([^*|\n]{1,80})")
-CELL_RE = re.compile(r"\|\s*(?:\*\*)?(" + STATUS_WORDS + r")(?:\*\*)?\s*(?=\(|\||$)")
+CELL_RE = re.compile(r"\|\s*(?:\*\*)?((?:NOT\s+)?(?:" + STATUS_WORDS + r"))(?:\*\*)?\s*(?=\(|\||$)")
 CHECKBOX_RE = re.compile(r"^\s*[-*]\s+\[( |x|X)\]\s")
 HEADING_RE = re.compile(r"^#{1,6}\s+(.*)")
 OPEN_PHRASE_RE = re.compile(r"(?<![A-Za-z-])(Open questions?|Open items?|Open bugs?|Open points?|"

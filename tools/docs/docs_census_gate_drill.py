@@ -120,6 +120,12 @@ def main():
             lambda r, b: (lambda c4: commit(r, "[docs] close: second", [trailer(c4, "bbb222"), COAUTH]))(
                 commit(r, "[docs] close: first",
                        [trailer(b, "aaa111").replace(" wikilinks-dead=0", ""), COAUTH])), None),
+        # An EMPTY base= tiles onto any predecessor, because every string starts with "" (post-ship
+        # audit, 2026-09-03: the shipped drill only ever tried a wrong-but-nonempty base).
+        arm("empty base= on a later close",
+            lambda r, b: (lambda c4: commit(r, "[docs] close: second",
+                                            [trailer(c4, "bbb222").replace("base=" + c4[:12], "base="), COAUTH]))(
+                commit(r, "[docs] close: first", [trailer(b, "aaa111"), COAUTH])), "does not tile"),
         arm("a ratchet column vanishes",
             lambda r, b: (lambda c4: commit(r, "[docs] close: second",
                                             [trailer(c4, "bbb222").replace(" wikilinks-dead=0", ""), COAUTH]))(

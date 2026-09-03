@@ -748,6 +748,30 @@ claim; a non-zero exit with no output is a failure). The verified anchors: Q1 `d
 INTERACTABLE_MIGRATION.md:3`, Q2 `CLAUDE.md:724`, Q3 the `find ... | wc -l = 101` pipeline re-run,
 Q4 `tools/docs/lessons_gate.py:57`.
 
+### Pass 4 — the post-ship audits of the BUILT census (2026-09-03, two lenses, `sonnet`)
+
+Run on `dec89b3e` + `3a37f0da` (the first pair died on a model usage limit and were re-spawned).
+**EVIDENCE lens: 3 CRITICAL, 2 HIGH, 3 MEDIUM, 3 LOW. DESIGN lens: 1 HIGH, 7 MEDIUM, 6 LOW** — and it
+scored ~30 of 42 design claims IMPLEMENTED-as-written. Every CRITICAL and HIGH below was
+**re-measured by the primary before being accepted**; each fix is drilled RED.
+
+| # | finding | my re-measurement | disposition |
+|---|---|---|---|
+| C1 | a neighbour's `git add -N` (intent-to-add) doc is invisible to BOTH guards at once, so a stranger's close publishes it | `[V]` in a scratch repo: `ls-files -- '*.md'` LISTS it, `ls-files --others` does NOT, `diff --cached --name-only` is EMPTY — so it was owned as a tracked doc and never reached the `--new` refusal | **FIXED**: `intent_to_add()` reads `status --porcelain=v2` for `1 .A `, subtracts those from the tracked set and adds them to the new set, so the `--new` refusal fires. Drilled |
+| C2 | `staged_entries()` reads the INDEX, so another session's plain UNSTAGED edit to a doc in our radius rides into our close | `[V]` true by construction (round 6 replaced the index read with a worktree read and the unstaged refusal went with it) | **FIXED by an invariant, not a heuristic**: the census PINS each radius doc's content hash and the close refuses to commit any doc whose bytes changed since. Escape = re-run `census`; an edited line then arrives as a NEW row needing its own verdict, so the trailer's counts describe the text being committed. Drilled |
+| C3 | the private history repo is as shared as main, yet its commit used a bare `git add -A`; and `census/pending.md` is one fixed path, so a second census destroys the first hand's verdicts | `[V]` the history path is a pure function of the repo path; the commit did use `add -A` | **FIXED**: that commit now goes through a PRIVATE index too (all three do), and a census that would overwrite held verdicts REFUSES, naming their age, unless `--force`. The guard runs FIRST, before the 35 s scan. Drilled |
+| H4 | the gate's tiling check passes a vacuously EMPTY `base=` (every string starts with `""`) | `[V]` `'abc123'.startswith('') == True`; the shipped drill only ever tried a wrong-but-nonempty base | **FIXED** (`if not base or …`) + a 13th gate arm |
+| H5 | `STATUS_RE` captures `NOT FIXED` as `FIXED` — the label records the OPPOSITE of the line's claim | `[V]` `label_of()` on the audit's real example returns `('lead','FIXED')`; also `NOT VERIFIED` → `VERIFIED` | **FIXED**: an optional `NOT ` prefix in both `STATUS_RE` and `CELL_RE`; `[V]` the next real census carries **28** `NOT …` labels that were being recorded inverted. Drilled with four cases |
+| D-H | the design text's resolve-state vocabulary (`exists / moved / gone / drifted-content`) never matched what shipped (`ok / gone / past-eof / ambiguous / external`), and no content-DRIFT check exists in the census Resolver | `[V]` correct; drift detection exists only in `lessons_gate.check_quoted_cites`, scoped to the ledger | **OPEN, recorded**: the vocabulary in WP-1(a) above is now the shipped one. Extending drift detection to every doc that QUOTES a cited line is a real gap — `check_quoted_cites` is already general and reusable, so it is the next census change, not a redesign |
+| M/L | the kind→action table is prose only; `--snapshot` is a `snapshot` subcommand; `external`/`--loose`/`show`/the accretion exclusion list are unstated; `SYMBOL_RE`/`CITE_RE` are re-forked from `lessons_gate`'s and have drifted; `_strip_hash` lacks escape-awareness; the sweep does not skip `_archive/`; multi-line bold spans and legend lines produce spurious rows; a close can be TWO commits when `research/` has nothing in radius | not individually re-derived | **RECORDED, not fixed.** None changes a verdict or commits a wrong byte; the two grammar ones add noise rows a hand verdict absorbs. The regex fork is the one to fix first (one concept, two implementations — RULE 2) |
+| N | the AS-BUILT note's row counts (1,101 / 879) no longer match the live table | `[V]` a later census re-run; now 1,111 / 885 after the NOT-label fix | **noted**; the numbers are re-stamped at the first real close, which is where they become a trailer |
+
+The audits' own residual, stated: **a shared working tree cannot be made safe by refusals alone** — every
+guard here is "detect and refuse", and two sessions running `/documentize` concurrently still interleave.
+The project already has the shape of the answer (`tools/game_lock.py`, `docs/CROSS_SESSION.md`); whether
+a close takes a lock over the whole census→hand→close window is a decision for the user, not a fix to
+slip in.
+
 ### Staleness measurement — the agent's own summary
 
 28 labels, 14 open-ish / 14 done-ish; 5 stale-open of 14 (4 of 8 true labels), 0 stale-done, 1

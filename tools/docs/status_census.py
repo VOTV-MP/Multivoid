@@ -114,8 +114,9 @@ def read_set(env):
     or not. What no repository can hold (ignored, or outside every tree) is private."""
     out = {}
     repo = env.repo
+    pending_add = intent_to_add(repo)
     for p in git(["ls-files", "-z", "--", "*.md"], repo).split("\0"):
-        if p:
+        if p and p not in pending_add:      # an intent-to-add entry is a NEW file, not a tracked one
             out[p] = ("main", os.path.join(repo, p))
     docs_dir = os.path.join(repo, "docs")
     all_docs = []
@@ -362,6 +363,20 @@ def accretion_count(env, rs):
 
 
 # ----------------------------------------------------------------------------- owned paths + the private-index commit
+def intent_to_add(repo):
+    """Paths another session marked `git add -N`. They are INVISIBLE to both guards otherwise:
+    `git diff --cached --name-only` does not list them (nothing is staged yet) while
+    `git ls-files -- '*.md'` DOES (an index entry exists) and `git ls-files --others` does not --
+    so such a file would be owned as a tracked doc, never reach the `--new` refusal, and be
+    published by a stranger's close, erasing the neighbour's marker. Measured 2026-09-03 by a
+    post-ship audit. `git status --porcelain=v2` marks them `1 .A ` (index unchanged, worktree added)."""
+    out = set()
+    for rec in git(["status", "--porcelain=v2", "-z", "--untracked-files=no"], repo).split("\0"):
+        if rec.startswith("1 .A "):
+            out.add(rec.split(" ", 8)[-1])
+    return out
+
+
 def staged_entries(repo):
     """{path: 'same'|'partial'} for every entry staged in the SHARED index (index != HEAD)."""
     out = {}
@@ -464,6 +479,15 @@ def read_table(path):
 
 def run_census(env, args):
     t0 = time.time()
+    # BEFORE anything expensive: the pending table is ONE fixed path in a directory two sessions on this
+    # box share, so a second census would silently destroy a first session's hand verdicts (a post-ship
+    # audit, 2026-09-03). Overwriting a table that already carries verdicts needs --force.
+    prev_meta, prev_rows = read_table(pending_path(env))
+    if prev_rows and any(r["verdict"] for r in prev_rows) and not args.force:
+        held = sum(1 for r in prev_rows if r["verdict"])
+        raise SystemExit("REFUSE: the pending table already holds {} hand verdict(s), written {} -- "
+                         "close it, or re-run with --force to discard them ({})".format(
+                             held, (prev_meta or {}).get("utc", "?"), pending_path(env)))
     rs = read_set(env)
     by_owner = {}
     for k, (o, _) in rs.items():
@@ -551,13 +575,19 @@ def run_census(env, args):
         if n % 100 == 0:
             print("  scanned {}/{} docs, {} rows, t={:.1f}s".format(n, len(radius), len(rows), time.time() - t0))
     # carry verdicts forward from a pending table by (key, hash)
-    prev_meta, prev_rows = read_table(pending_path(env))
     carried = {(r["key"], r["hash"]): r["verdict"] for r in prev_rows if r["verdict"]}
     for r in rows:
         r["verdict"] = carried.get((r["key"], r["hash"]), "")
     labels = sum(1 for r in rows if r["kind"] not in ("cite", "loose"))
     dead = sum(1 for r in rows if dead_cites(r["tokens"]))
+    # The bytes the census READ, per doc. The close refuses to commit anything else (a post-ship audit,
+    # 2026-09-03: `staged_entries` reads the INDEX, so another session's plain unstaged edit to a doc in
+    # our radius was invisible and rode into our close). Escape: re-run `census`, which re-reads and
+    # re-pins -- and a line the hand edited then arrives as a NEW row needing its own verdict, which is
+    # the point: the trailer's counts must describe the text being committed, not the text before the fix.
+    content = {key: sha1(read_text(rs[key][1]) or "") for key in sorted(radius)}
     meta = {"utc": utc_now(), "base": base, "research_base": rbase, "touched": sorted(touched),
+            "content": content,
             "new": new_paths, "radius": len(radius), "rows": len(rows), "labels": labels, "cited_dead": dead,
             "sweep": sweep, "k": k, "cycle": cycle, "read_set": len(rs), "loose": bool(args.loose),
             "full_sweep": bool(args.sweep), "dropped": dropped}
@@ -608,9 +638,11 @@ def run_close(env, args):
         raise SystemExit("REFUSE: docs changed since the census and have no rows: {} -- re-run `census` "
                          "(verdicts carry forward)".format(", ".join(stale[:8])))
     # 3. main's paths: touched main docs + --new, minus anything staged in the SHARED index
-    tracked_md = set(git(["ls-files", "-z", "--", "*.md"], env.repo).split("\0"))
+    pending_add = intent_to_add(env.repo)
+    tracked_md = set(git(["ls-files", "-z", "--", "*.md"], env.repo).split("\0")) - pending_add
     main_paths = [p for p in meta.get("touched", []) if p in rs and rs[p][0] == "main" and p in tracked_md]
     untracked = gitz(["ls-files", "-z", "--others", "--exclude-standard", "--", "docs/*.md", "*.md"], env.repo)
+    untracked += sorted(p for p in pending_add if p.endswith(".md"))   # `git add -N` = new, not tracked
     new = list(args.new or [])
     for p in new:
         if p not in untracked:
@@ -641,6 +673,16 @@ def run_close(env, args):
         main_paths.append(p)
     if not main_paths:
         raise SystemExit("REFUSE: nothing to commit in main (no touched docs)")
+    # 4b. every committed path must carry the bytes the census read
+    pinned = meta.get("content", {})
+    drifted = []
+    for p in sorted(set(main_paths)):
+        if p in pinned and sha1(read_text(os.path.join(env.repo, p)) or "") != pinned[p]:
+            drifted.append(p)
+    if drifted:
+        raise SystemExit("REFUSE: {} doc(s) changed since the census that produced these verdicts: {} -- "
+                         "re-run `census` (it re-reads them; an edited line arrives as a new row and is "
+                         "verdicted on the text you are about to commit)".format(len(drifted), ", ".join(drifted[:8])))
     # 5. numbers
     rv = ratchet_values(env)
     prev_sha, prev = last_close(env.repo)
@@ -670,8 +712,23 @@ def run_close(env, args):
     os.replace(pending_path(env), final)
     subject = CLOSE_PREFIX + " " + args.subject
     hist_trailer = format_trailer(dict(vals, census="pending"))
-    git(["add", "-A"], env.history)
-    git(["commit", "-q", "-F", "-"], env.history, input_text=compose(env.history, subject, [hist_trailer] + trailers))
+    # From a PRIVATE index here too: this repository's path is a pure function of the main repo's, so two
+    # sessions on this box share it exactly as they share main's index -- and `git add -A` on a shared
+    # index is the cross-session side effect docs/LESSONS.md records twice (a post-ship audit, 2026-09-03,
+    # found this one commit bypassing the protection the other two use).
+    hidx = os.path.join(env.history, ".git", "docs_census.index")
+    henv = dict(os.environ, GIT_INDEX_FILE=hidx)
+    try:
+        if os.path.exists(hidx):
+            os.remove(hidx)
+        git(["read-tree", "HEAD"], env.history, env=henv)
+        git(["add", "-A"], env.history, env=henv)
+        git(["commit", "-q", "-F", "-"], env.history, env=henv,
+            input_text=compose(env.history, subject, [hist_trailer] + trailers))
+    finally:
+        if os.path.exists(hidx):
+            os.remove(hidx)
+    git(["reset", "-q"], env.history)
     hsha = git(["rev-parse", "HEAD"], env.history).strip()
     vals["census"] = hsha[:12]
     # 7. commit 2: the inner research repo
@@ -711,6 +768,8 @@ def main(argv=None):
     c.add_argument("--since")
     c.add_argument("--sweep", action="store_true")
     c.add_argument("--loose", action="store_true")
+    c.add_argument("--force", action="store_true",
+                   help="overwrite a pending table that already holds hand verdicts (they are lost)")
     c.add_argument("-k", type=int)
     cl = sub.add_parser("close")
     cl.add_argument("-m", "--subject", required=True)
