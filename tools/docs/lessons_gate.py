@@ -204,6 +204,32 @@ def norm(t):
     return " ".join(t.split()).lower()
 
 
+# A quoted fact WRAPS in source, so a per-line match cannot see it. `[V]` 2026-09-03, the first time
+# a quoted citation outside this ledger was ever checked: `nick_color.h:3` carries "The COLOR AXIS
+# has ONE owner: this module" across lines 3 and 4 -- the words are exactly where the doc says, and
+# a per-line matcher called it content-gone. Joining is necessary but NOT sufficient: the second
+# line starts with its own `//`, so the naive join reads "this // module" and misses anyway. The
+# comment marker is punctuation of the medium, not of the sentence -- so it is stripped, for the
+# same reason `norm` collapses whitespace. The claim is about the WORDS.
+LEAD_COMMENT = re.compile(r"^\s*(?://+|#+|--|;+|\*+|/\*+)\s?")
+
+
+def _joined(lines):
+    return norm(" ".join(LEAD_COMMENT.sub("", l) for l in lines))
+
+
+def quote_window(lines, lo, hi, pad=25):
+    return _joined(lines[max(0, lo - pad - 1):hi + pad])
+
+
+def find_quote(lines, needle, span=3):
+    """-> the 1-based line where a joined run of `span` lines first contains the needle, or None."""
+    for i in range(len(lines)):
+        if needle in _joined(lines[i:i + span]):
+            return i + 1
+    return None
+
+
 def check_quoted_cites(text):
     """-> (moved, dead) where each entry is (path, cited_line, quote, found_line_or_None).
 
@@ -228,12 +254,11 @@ def check_quoted_cites(text):
         needle = norm(quote)[:48]
         if len(needle) < 20:
             continue
-        window = range(max(0, lineno - 26), min(len(lines), lineno + 25))
-        if any(needle in norm(lines[i]) for i in window):
+        if needle in quote_window(lines, lineno, lineno):
             continue                      # still where the ledger says it is
-        elsewhere = [i + 1 for i, l in enumerate(lines) if needle in norm(l)]
+        elsewhere = find_quote(lines, needle)
         if elsewhere:
-            moved.append((path, lineno, quote[:60], elsewhere[0]))
+            moved.append((path, lineno, quote[:60], elsewhere))
         else:
             dead.append((path, lineno, quote[:60], None))
     return moved, dead

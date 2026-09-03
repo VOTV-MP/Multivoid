@@ -34,12 +34,12 @@ RATCHETED = ("ro-bytes", "ro-longest", "mem-over200", "wikilinks-dead", "pairing
              "pairing-dead", "accretion")
 MONOTONE = ("resolved", "flips")
 GATED = ("rows", "cited-dead")
-REPORTED = ("labels", "corpus-dead-cites", "cite-unquoted", "memref-dead", "running-totals",
+REPORTED = ("labels", "cite-drift", "memref-dead", "running-totals",
             "ro-moved", "sweep-cursor", "sweep-cycle", "new", "foreign")
 
 # The written order. `rows` leads the counts because the VERDICT identity is stated against it.
 ORDER = ("base", "rows", "labels") + VERDICT + (
-    "cited-dead", "corpus-dead-cites", "cite-unquoted", "memref-dead", "running-totals",
+    "cited-dead", "cite-drift", "memref-dead", "running-totals",
     "accretion", "resolved", "flips",
     "ro-bytes", "ro-longest", "ro-moved", "mem-over200",
     "wikilinks-dead", "pairing-unref", "pairing-dead",

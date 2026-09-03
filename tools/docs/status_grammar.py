@@ -87,7 +87,12 @@ SUBSTATE_RE = re.compile(r"(commit pending|hands-on-pending|hands-on pending|not
                          r"unverified|untested|never ran|never run|NOT hands-on|TODO)", re.I)
 LOOSE_RE = re.compile(r"OPEN|FUTURE|TODO|PENDING|NEXT|not (yet )?(built|wired|implemented|done|verified)|"
                       r"deferred|unverified|\[ \]|\[\?\]|planned|stub|placeholder", re.I)
-CITE_RE = re.compile(r"([A-Za-z0-9_][A-Za-z0-9_/.\\-]*\.(?:h|hpp|cpp|c|inc|py|ps1|rs|json|md|txt|yml)):(\d+)")
+# Group 3 is the RANGE end (`reflection.cpp:576-677`). It exists because the content rung below
+# asks "is the cited thing NEAR this line", and reading only the start of a range calls a citation
+# stale for pointing at its own second half -- `[V]` `docs/PERF_ARC.md:366` cites
+# `reflection.cpp:576-677` for `CountObjectsByClass`, which is at 647: inside the range, 71 lines
+# from its start.
+CITE_RE = re.compile(r"([A-Za-z0-9_][A-Za-z0-9_/.\\-]*\.(?:h|hpp|cpp|c|inc|py|ps1|rs|json|md|txt|yml)):(\d+)(?:-(\d+))?")
 # The section sign is excluded from the lookbehind: a SECTION reference like "§6c.c" is not a C
 # file (measured 2026-09-03 by the first real census on docs/security/LESSONS_SECURITY.md:329, which
 # cites "§6c.c + §9b" and was reported as a dead citation).
@@ -201,16 +206,82 @@ class Resolver:
         base = os.path.basename(path)
         return base in self._ext or path in self._ext
 
-    def cite(self, path, line):
+    def cite(self, path, line, end=None, quote=None, symbol=None):
         resolved, hits = self.resolve(path)
         if not resolved:
             if self.external(path):
-                return "external"
-            return "ambiguous" if hits else "gone"
+                return "external", None
+            return ("ambiguous" if hits else "gone"), None
         lines = self.lines_of(resolved)
         if lines is None:
-            return "gone"
-        return "ok" if line <= len(lines) else "past-eof"
+            return "gone", None
+        if line > len(lines):
+            return "past-eof", None
+        return self.content(resolved, line, end, quote, symbol)
+
+    # --- the CONTENT rung ---------------------------------------------------------------------
+    # A line number is a POSITION; the claim is about CONTENT. `lessons_gate.check_quoted_cites`
+    # says exactly that and has checked it since 2026-08-30, when an extraction moved five cited
+    # facts and the positional gate passed all five in the same run that created the rot. But it
+    # fires ONLY on the explicit `file:line` says "..." form -- and `[V]` 2026-09-03 that form
+    # occurs FIVE times in the whole 1,613-doc read set and ZERO times in `docs/LESSONS.md`, the
+    # ledger it guards. The check built for that defect has never had an input.
+    #
+    # What this corpus actually writes is a citation beside a BACKTICKED SYMBOL: `[V]` 1,816 of the
+    # 5,302 resolving citations. So the content rung reads there too -- at a DIFFERENT strength,
+    # because the two pairings are not equally certain:
+    #
+    #   QUOTE   the doc states which words the line carries, with an explicit verb. Unambiguous by
+    #           construction, so a miss is DEAD and refuses a STILL TRUE like any dead citation.
+    #   SYMBOL  the pairing is INFERRED from adjacency. A hand check of four cases found one false
+    #           pair (`docs/LESSONS.md:1590` cites `config.cpp:508` for `resize(255)`; `ToUtf8`
+    #           belongs to a later citation in the same sentence) and one range read as stale for
+    #           pointing inside itself. Both are fixed below -- and it STILL only emits a row, so
+    #           the drift enters the bounded hand check and is judged there. It never refuses. A
+    #           gate that is mostly right is one people learn to ignore, which is `QUOTED_CITE`'s
+    #           own comment ("narrow beats noisy") applied to its successor.
+    def content(self, resolved, line, end, quote, symbol):
+        """-> (state, detail). `moved` / `content-gone` are DEAD; `drift` is advisory."""
+        lines = self.lines_of(resolved)
+        lo, hi = line, (end or line)
+        if quote:
+            needle = LG.norm(quote)[:48]
+            if len(needle) >= 20:
+                if needle in LG.quote_window(lines, lo, hi):
+                    return "ok", None
+                at = LG.find_quote(lines, needle)
+                return ("moved", at) if at else ("content-gone", None)
+        if symbol:
+            s0 = symbol.split("::")[-1]
+            rx = re.compile(r"\b" + re.escape(s0) + r"\b")
+            at = [i + 1 for i, l in enumerate(lines) if rx.search(l)]
+            # A symbol NOT in the cited file is no evidence at all: a doc may name a caller and
+            # cite the callee's site, or name a concept the file never spells. Only a symbol that
+            # IS there, exactly once, and nowhere near the cited line, says the number moved.
+            if at and not any(lo - 25 <= i <= hi + 25 for i in at) and len(at) == 1:
+                return "drift", at[0]
+        return "ok", None
+
+    @staticmethod
+    def pair_symbol(cites, syms, cb, ce):
+        """The symbol ADJACENT to the citation at [cb, ce), with no OTHER citation between them and
+        at most 3 characters of separation (a comma, a space, a backtick). Returns None when the
+        line gives no unambiguous partner -- which is most lines, on purpose."""
+        best = None
+        for sb, se, v in syms:
+            if se <= cb:
+                gap = cb - se
+                if any(o_ce <= cb and o_ce > se for o_cb, o_ce, _, _, _ in cites if o_cb != cb):
+                    continue
+            elif sb >= ce:
+                gap = sb - ce
+                if any(o_cb >= ce and o_cb < sb for o_cb, o_ce, _, _, _ in cites if o_cb != cb):
+                    continue
+            else:
+                continue
+            if gap <= 3 and (best is None or gap < best[0]):
+                best = (gap, v)
+        return best[1] if best else None
 
     def path(self, path):
         resolved, hits = self.resolve(path)
@@ -238,12 +309,27 @@ class Resolver:
     def tokens(self, line):
         out = []
         seen = set()
-        for m in CITE_RE.finditer(line):
-            p, n = m.group(1), int(m.group(2))
-            if p.endswith(".md") or p in seen:
+        # The content rung needs to know WHICH symbol (or quote) belongs to WHICH citation, so both
+        # sides of the line are collected before either is judged.
+        cites = [(m.start(), m.end(), m.group(1), int(m.group(2)),
+                  int(m.group(3)) if m.group(3) else None)
+                 for m in CITE_RE.finditer(line) if not m.group(1).endswith(".md")]
+        syms = [(m.start(), m.end(), m.group(1)) for m in SYMBOL_RE.finditer(line)
+                if m.group(1).upper() != m.group(1) and m.group(1) not in STATUS_WORDS
+                and not re.fullmatch(r"[0-9a-f]{7,40}", m.group(1))]
+        quoted = {m.group("path"): m.group("quote") for m in LG.QUOTED_CITE.finditer(line)}
+        for cb, ce, p, n, end in cites:
+            if p in seen:
                 continue
             seen.add(p)
-            out.append(("{}:{}".format(p, n), self.cite(p, n)))
+            sym = self.pair_symbol(cites, syms, cb, ce)
+            if sym and self.symbol(sym) != "ok":
+                sym = None                      # an unresolvable symbol proves nothing about a line
+            state, at = self.cite(p, n, end, quoted.get(p), sym)
+            tok = "{}:{}".format(p, n) + ("-{}".format(end) if end else "")
+            if at:
+                tok += "->{}".format(at)        # the repair, named: where the cited thing now is
+            out.append((tok, state))
         for m in PATHTOK_RE.finditer(line):
             p = m.group(1)
             if p in seen or "://" in p:
@@ -277,8 +363,20 @@ def is_cite_tok(tok):
     return not tok.startswith("`") and "." in tok
 
 
+DEAD_STATES = ("gone", "past-eof", "moved", "content-gone")
+DRIFT_STATES = ("drift",)
+
+
 def dead_cites(tokens):
-    return [(t, s) for t, s in tokens if s in ("gone", "past-eof") and is_cite_tok(t)]
+    """`drift` is deliberately NOT here. It is the SYMBOL rung's advisory: strong enough to put the
+    line in front of the hand, not strong enough to refuse a close, because its pairing is inferred
+    (see `Resolver.content`). `moved` and `content-gone` come from the QUOTE rung, whose pairing is
+    explicit, so they are dead like a vanished path."""
+    return [(t, s) for t, s in tokens if s in DEAD_STATES and is_cite_tok(t)]
+
+
+def drift_cites(tokens):
+    return [(t, s) for t, s in tokens if s in DRIFT_STATES and is_cite_tok(t)]
 
 
 def scan_doc(key, abspath, resolver, loose=False):
@@ -351,6 +449,11 @@ def scan_lines(key, lines, resolver, loose=False):
             kind = lab[0]
         elif dead:
             kind = "cite"
+        elif drift_cites(toks):
+            # The symbol rung found the cited thing elsewhere in the cited file. That is not proof
+            # (the pairing is inferred), so it does not join `cite` and cannot refuse -- it is its
+            # own kind, and the hand answers it with a verdict like any other row.
+            kind = "drift"
         elif loose and LOOSE_RE.search(line):
             kind = "loose"
         if not kind:

@@ -1070,10 +1070,46 @@ and distinct for that reason. `status_census.py resolved` reads it back, so it i
 — and until now those corrections were precisely the ones the trailer could not see. Each record
 carries its row's LANE for that reason.
 
-**NOT BUILT, in order:** D6/D11 the citation content rung + symbol-first corpus repair; D9 the
-generated dated memory index + `memref-dead=`; D10 the reading-order destination rule with
-`ro-moved=`; the skill text. WP-E (convenience, §10.5) owes its own `/qf`. The build plan lives in
-the session scratchpad; a DIFF pass on the shipped diff is owed before handoff.
+**D6 AS-BUILT — the citation content rung, and the detector that never had an input.** A line number
+is a POSITION; the claim is about CONTENT. `lessons_gate.check_quoted_cites` (check A2) says exactly
+that and has run on every gate invocation since 2026-08-30, when an extraction moved five cited facts
+and the positional check passed all five in the run that created the rot. **`[V]` 2026-09-03: the
+form it requires — `` `file:line` says/reads/states "…" `` — occurs FIVE times in the whole 1,613-doc
+read set and ZERO times in `docs/LESSONS.md`, the ledger it guards.** The check built for that defect
+has never had an input. Nothing was broken; nothing was ever checked.
+
+What this corpus writes instead is a citation beside a BACKTICKED SYMBOL — **1,816 of the 5,302
+resolving citations**. So the rung reads there too, at a deliberately different strength:
+
+| | pairing | on a miss | why |
+|---|---|---|---|
+| QUOTE | explicit (the verb names it) | `moved` / `content-gone`, **dead** — refuses `STILL TRUE` | unambiguous by construction |
+| SYMBOL | inferred from adjacency | `drift` — its own row kind, **never refuses** | a mostly-right gate is one people learn to ignore |
+
+The strength split is not caution for its own sake: hand-checking the first heuristic found **one
+false pair in four** (`docs/LESSONS.md:1590` cites `config.cpp:508` for `resize(255)`; `ToUtf8`
+belongs to a later citation in the same sentence) and one RANGE read as stale for pointing inside
+itself (`docs/PERF_ARC.md:366` cites `reflection.cpp:576-677` for `CountObjectsByClass`, at 647).
+Both are closed, as are three more shapes: a symbol occurring more than once gives no unambiguous
+repair, a symbol absent from the cited file is no evidence at all, and a symbol AT the line is fine.
+**And the quote rung's only corpus hit was itself a false positive** — `nick_color.h:3` carries "The
+COLOR AXIS has ONE owner: this module" across lines 3 and 4, so a per-line matcher missed it, and
+joining alone still missed it because line 4 begins with its own `//`. Fixed in the shared owner, so
+`lessons_gate` gains the fix for the day it does get an input.
+
+Final numbers on this tree: **31 `drift` rows across 25 docs, 0 quote-rung dead.** A drift row names
+its own repair (`session_lanes.h:179->223`). `cite-drift=` rides the trailer, REPORTED.
+
+**Two columns were DROPPED, as decisions rather than omissions.** `corpus-dead-cites=` would cost a
+24-second whole-corpus walk on every close for a number no session can move — which is the same
+reason round 19 refused to ratchet it — and `cite-unquoted=` was meant to measure the corpus
+converting to the quoted form, a target the measurement above says is the wrong one.
+
+**NOT BUILT, in order:** D11 symbol-first corpus repair (the 31 drift rows are now surfaced, but
+nothing proposes their fix in bulk); D9 the generated dated memory index + `memref-dead=`; D10 the
+reading-order destination rule with `ro-moved=`; the skill text. WP-E (convenience, §10.5) owes its
+own `/qf`. The build plan lives in the session scratchpad; a DIFF pass on the shipped diff is owed
+before handoff.
 
 **D8 — the falsifier standing behind "keep the hand phase":** over the first **300 ageing-lane rows**
 (NOT closes — 251 retired-form closes peaked at 14 in ONE day, so a close is not a unit of evidence),

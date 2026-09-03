@@ -7,6 +7,9 @@ Three fixtures, each a class the design claims to hold (docs/DOCUMENTIZE_ARC.md 
      stale-open lines must produce a row (four as labels with their sub-state clause, one as a
      heading, one through a DEAD PATH token on a non-label heading), and the eight vocabulary
      false positives must produce none. Recall AND precision, on real text, not a synthetic RED.
+  A4 the CITATION CONTENT rung at its two strengths: a QUOTE the file does not carry is DEAD and
+     refuses a close, while a SYMBOL found elsewhere in the cited file only raises a row. Five
+     false-positive shapes, each measured on the real corpus first, must all stay silent.
   B  the COMMENT-ONLY lexer: a code change behind a quoted `#` or `//` is CODE; a trailing-comment
      rewrite on an unchanged declaration is comment-only (the /qf round 6 Q4 lines).
   E  the RESOLVED LEDGER: acting on a verdict erases the line it named, so the verdict is
@@ -140,6 +143,71 @@ def drill_vocab_markers():
     check(len(rows) == 1 and rows[0]["line"] == 5,
           "a [corr] stamp yields NO row -- the census does not flag its own remedy (got {})".format(
               [(r["line"], r["label"]) for r in rows]))
+
+
+def drill_content_rung():
+    """A4: the CONTENT rung. A line number is a POSITION and the claim is about CONTENT -- but the
+    two ways a doc says WHICH content are not equally certain, so they have different strengths and
+    each of the four false-positive shapes measured on the real corpus gets its own arm."""
+    print("-- A4. the citation content rung (quote = dead, symbol = advisory)")
+    d = tempfile.mkdtemp(prefix="scq_")
+    try:
+        os.makedirs(os.path.join(d, "src"))
+        w = lambda rel, text: io.open(os.path.join(d, rel), "w", encoding="utf-8", newline="\n").write(text)
+        # a source file whose cited fact has MOVED, and whose comment WRAPS mid-sentence
+        w("src/thing.cpp", "\n".join([
+            "// thing.cpp -- the header",                      # 1
+            "//",                                              # 2
+            "// Gameplay layer. The COLOR AXIS has ONE owner: this",   # 3
+            "// module (see the note). Everything else reads it.",     # 4
+            "int filler_a() { return 0; }",                    # 5
+        ] + ["// pad {}".format(i) for i in range(6, 60)] + [
+            "void MovedSymbol() {}",                           # 60
+            "void CommonSymbol() {}",                          # 61
+            "int CommonSymbol_use() { return 0; }",            # 62
+        ]) + "\n")
+        env = SC.Env(repo=d, memory=os.path.join(d, "m"), history=os.path.join(d, "h"))
+        R = SC.Resolver(env)
+
+        def st(line):
+            return [t for t in R.tokens(line) if not t[0].startswith("`")]
+
+        # 1. the QUOTE rung, hard: the words are not in the file at all -> DEAD, refuses a close
+        got = st('`src/thing.cpp:3` says "The COLOR AXIS has TWO owners: this module and more"')
+        check(got and got[0][1] == "content-gone" and SC.dead_cites(got),
+              "quote absent from the file -> content-gone, and it IS a dead citation ({})".format(got))
+        # 2. ...and the SAME check must not fire on a quote that is really there but WRAPS, with its
+        #    second line carrying its own `//`. This is the shape that produced the corpus's only
+        #    quote-rung hit, and it was a false positive.
+        got = st('`src/thing.cpp:3` says "The COLOR AXIS has ONE owner: this module"')
+        check(got and got[0][1] == "ok",
+              "a quote WRAPPING across two comment lines is found, not called dead ({})".format(got))
+        # 3. the SYMBOL rung, soft: unique, far away -> drift, naming the repair, NOT dead
+        got = st("the seam is `src/thing.cpp:5` `MovedSymbol` today")
+        check(got and got[0] == ("src/thing.cpp:5->60", "drift") and not SC.dead_cites(got),
+              "a unique symbol 55 lines away -> drift, the true line named, and NOT a dead citation ({})".format(got))
+        rows = SC.scan_lines("t.md", ["intro", "the seam is `src/thing.cpp:5` `MovedSymbol` today"], R)
+        check(len(rows) == 1 and rows[0]["kind"] == "drift",
+              "...and it still reaches the hand: the line becomes a row of its own kind ({})".format(
+                  [(r["kind"], r["line"]) for r in rows]))
+        # 4. FALSE-POSITIVE CONTROLS, one per shape measured on the real corpus
+        got = st("`src/thing.cpp:60` `MovedSymbol` is right here")
+        check(got and got[0][1] == "ok", "a symbol AT the cited line is ok ({})".format(got))
+        got = st("`src/thing.cpp:55-62` covers `MovedSymbol`")
+        check(got and got[0][1] == "ok",
+              "a RANGE citation is judged over the whole range, not its first line ({})".format(got))
+        got = st("(`src/thing.cpp:5` `filler_a`; `src/thing.cpp:61` and `:62` after `MovedSymbol`)")
+        check(all(s == "ok" for _, s in got),
+              "a symbol belonging to a LATER citation in the same sentence is not paired with an "
+              "earlier one ({})".format(got))
+        got = st("`src/thing.cpp:5` mentions `CommonSymbol` somewhere")
+        check(got and got[0][1] == "ok",
+              "a symbol appearing MORE THAN ONCE gives no unambiguous repair, so no drift ({})".format(got))
+        got = st("`src/thing.cpp:5` and `NeverInThisFile` are unrelated")
+        check(got and got[0][1] == "ok",
+              "a symbol absent from the cited file is no evidence at all ({})".format(got))
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
 
 
 def drill_lexer():
@@ -485,6 +553,7 @@ def main():
     drill_grammar()
     drill_negated_labels()
     drill_vocab_markers()
+    drill_content_rung()
     drill_lexer()
     drill_close()
     drill_resolved()

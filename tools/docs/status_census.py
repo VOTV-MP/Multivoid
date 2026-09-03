@@ -61,6 +61,7 @@ sys.path.insert(0, HERE)
 import lessons_gate as LG  # noqa: E402  -- build_corpora / CITE_ROOTS (same directory)
 from status_grammar import *  # noqa: E402,F401,F403  -- the label grammar, the Resolver, scan_doc, read_text, sha1
 from status_grammar import (read_text, sha1, DATE_RE, CORR_RE, ACCRETION_RE, DATED_NAME_RE,  # noqa: E402
+                            drift_cites,  # noqa: E402
                             STATUS_WORDS, COMPLETION_WORDS, OPEN_WORDS, VOCAB_MARKER)  # noqa: E402
 from comment_lexer import comment_only  # noqa: E402
 import trailer_schema as TS  # noqa: E402  -- the ONE trailer column vocabulary (census + gate)
@@ -778,8 +779,9 @@ def run_census(env, args):
             by_v[r["verdict"]] = by_v.get(r["verdict"], 0) + 1
         print("resolved: {} verdict(s) retired to the ledger ({})".format(
             len(retired), " ".join("{} {}".format(v, n) for v, n in sorted(by_v.items()))))
-    labels = sum(1 for r in rows if r["kind"] not in ("cite", "loose"))
+    labels = sum(1 for r in rows if r["kind"] not in ("cite", "loose", "drift"))
     dead = sum(1 for r in rows if dead_cites(r["tokens"]))
+    drift = sum(1 for r in rows if drift_cites(r["tokens"]))
     # The bytes the census READ, per doc. The close refuses to commit anything else (a post-ship audit,
     # 2026-09-03: `staged_entries` reads the INDEX, so another session's plain unstaged edit to a doc in
     # our radius was invisible and rode into our close). Escape: re-run `census`, which re-reads and
@@ -788,12 +790,12 @@ def run_census(env, args):
     content = {key: sha1(read_text(rs[key][1]) or "") for key in sorted(radius)}
     meta = {"utc": utc_now(), "base": base, "research_base": rbase, "touched": sorted(touched),
             "content": content,
-            "new": new_paths, "radius": len(radius), "rows": len(rows), "labels": labels, "cited_dead": dead,
+            "new": new_paths, "radius": len(radius), "rows": len(rows), "labels": labels, "cited_dead": dead, "cite_drift": drift,
             "sweep": swept, "scanned_whole": sorted(scanned_whole), "k": k, "budget": budget, "cycle": cycle, "read_set": len(rs), "loose": bool(args.loose),
             "full_sweep": bool(args.sweep), "dropped": dropped}
     write_table(pending_path(env), meta, rows)
-    print("rows: {} (labels {}, dead citations {}); verdicts carried forward: {}".format(
-        len(rows), labels, dead, sum(1 for r in rows if r["verdict"])))
+    print("rows: {} (labels {}, dead citations {}, symbol drift {}); verdicts carried forward: {}"
+          .format(len(rows), labels, dead, drift, sum(1 for r in rows if r["verdict"])))
     print("table: " + pending_path(env))
     rv = ratchet_values(env)
     rv["accretion"] = accretion_count(env, rs)
@@ -941,7 +943,8 @@ def run_close(env, args):
             "still-open": counts["STILL OPEN"], "actually-done": counts["ACTUALLY DONE"],
             "stale-done": counts["STALE DONE"], "partial": counts["PARTIAL"], "still-true": counts["STILL TRUE"],
             "not-a-label": counts["NOT A LABEL"],
-            "cited-dead": meta.get("cited_dead", 0), "accretion": rv["accretion"],
+            "cited-dead": meta.get("cited_dead", 0), "cite-drift": meta.get("cite_drift", 0),
+            "accretion": rv["accretion"],
             "ro-bytes": rv["ro-bytes"], "ro-longest": rv["ro-longest"], "mem-over200": rv["mem-over200"],
             "wikilinks-dead": rv["wikilinks-dead"], "pairing-unref": rv["pairing-unref"],
             "pairing-dead": rv["pairing-dead"], "sweep-cursor": cursor, "sweep-cycle": meta.get("cycle", 0), "new": len(new), "foreign": foreign}
