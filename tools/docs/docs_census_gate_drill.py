@@ -141,6 +141,22 @@ def main():
         arm("monotone column GROWS (the normal case, must stay green)",
             lambda r, b: (lambda c4: commit(r, "[docs] close: second", [trailer(c4, "bbb222", res=9, fl=6), COAUTH]))(
                 commit(r, "[docs] close: first", [trailer(b, "aaa111"), COAUTH])), None),
+        # A VERDICT column the close predates is absent, and the identity must still hold: the two
+        # closes on record were written before `not-a-cite` / `drift-ok` / `not-loose` existed, and
+        # `int(trailer.get(c, "x"))` used to make every one of them a hard failure -- so the push that
+        # adds a verdict token would have been red by construction.
+        arm("a verdict column the close predates is absent (must stay green)",
+            lambda r, b: commit(r, "[docs] close: pre-token",
+                                [trailer(b, "aaa111").replace(" not-a-cite=0 drift-ok=0 not-loose=0", ""),
+                                 COAUTH]), None),
+        arm("EVERY verdict column absent",
+            lambda r, b: commit(r, "[docs] close: no verdicts",
+                                [" ".join(w for w in trailer(b, "aaa111").split()
+                                          if not any(w.startswith(c + "=") for c in
+                                                     ("still-open", "actually-done", "stale-done",
+                                                      "partial", "still-true", "not-a-label",
+                                                      "not-a-cite", "drift-ok", "not-loose"))),
+                                 COAUTH]), "lacks rows or a verdict column"),
         arm("a monotone column vanishes",
             lambda r, b: (lambda c4: commit(r, "[docs] close: second",
                                             [trailer(c4, "bbb222").replace(" flips=3", ""), COAUTH]))(
