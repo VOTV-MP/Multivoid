@@ -29,6 +29,7 @@ and absent from the one moment it could bind.
 import argparse
 import io
 import os
+import subprocess
 import re
 import sys
 
@@ -156,6 +157,15 @@ def section_of(text):
     return lines[start:] if start is not None else []
 
 
+def tracked_set(repo):
+    """Paths git tracks, as a set. Empty (so nothing is called published) outside a checkout."""
+    try:
+        out = subprocess.run(["git", "ls-files"], cwd=repo, capture_output=True, text=True)
+        return {p for p in out.stdout.splitlines() if p.strip()}
+    except Exception:
+        return set()
+
+
 def moved_and_cut(repo, prev_text, now_text, extra_paths=(), select=None):
     """Clauses that LEFT the reading order since `prev_text`, split by where they went.
 
@@ -186,8 +196,14 @@ def moved_and_cut(repo, prev_text, now_text, extra_paths=(), select=None):
     after = {n for _, n, _, _ in clauses(sel(now_text))}
     gone = [(n, before[n][0]) for n in before if n not in after]
     if not gone:
-        return [], [], []
-    blob = []
+        return [], [], [], []
+    # PER-FILE, not one joined blob. The join answered "findable somewhere", which is the whole of
+    # what a MOVE needs -- and it is one term short of what a move actually IS here. Both call sites
+    # pass an UNPUBLISHED source (`CLAUDE.md`, `memory/MEMORY.md`), so a clause landing in a TRACKED
+    # file is a PUBLICATION, decided at the moment of the move by the function that already holds
+    # both ends. That question was answered three times today by a hand-run pre-push audit instead
+    # (round 7 Q4), and a push-time scanner is a strictly later, strictly coarser place to ask it.
+    per_file = []
     for dirpath, dirnames, files in os.walk(repo):
         # `_archive/` is NOT a destination. Archiving is retirement -- RULE 2's "retired info goes,
         # fully" -- so a clause that can only be found there was taken out of service, which is much
@@ -197,10 +213,12 @@ def moved_and_cut(repo, prev_text, now_text, extra_paths=(), select=None):
                        if d not in (".git", "node_modules", "build", "target", "_archive")]
         for f in files:
             if f.endswith(".md"):
-                blob.append(norm(read_text(os.path.join(dirpath, f)) or ""))
+                ap = os.path.join(dirpath, f)
+                per_file.append((os.path.relpath(ap, repo).replace(os.sep, "/"),
+                                 norm(read_text(ap) or "")))
     for p in extra_paths:
-        blob.append(norm(read_text(p) or ""))
-    hay = NL.join(blob)
+        per_file.append((None, norm(read_text(p) or "")))     # outside the repo: never tracked
+    hay = NL.join(x for _, x in per_file)
     # The EXEMPT split happens HERE, after the destination test, not before it. `[V]` 2026-09-03 the
     # first version split `lost` off `gone` BEFORE `hay` was built, so an exempt clause never received
     # the test at all -- and the refusal it drives says "restore them, or move them to a doc that keeps
@@ -213,7 +231,15 @@ def moved_and_cut(repo, prev_text, now_text, extra_paths=(), select=None):
     # loss the gate exists for.
     moved += [(n, raw) for n, raw in gone if n in hay and before[n][1]]
     lost = [(n, raw) for n, raw in gone if n not in hay and before[n][1]]
-    return moved, cut, lost
+    # ...and of the MOVED, which landed somewhere git tracks. That is the publication.
+    published = []
+    if moved:
+        tracked = tracked_set(repo)
+        for n, raw in moved:
+            dest = [rel for rel, txt in per_file if rel and n in txt and rel in tracked]
+            if dest:
+                published.append((n, raw, dest[0]))
+    return moved, cut, lost, published
 
 
 def main(argv=None):

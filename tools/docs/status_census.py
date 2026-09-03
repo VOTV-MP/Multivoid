@@ -1101,7 +1101,8 @@ def run_close(env, args):
     prev_cl = baseline_text(env, "CLAUDE.md", "private", base, {})   # private: the history repo's HEAD
     if prev_cl is not None:
         now_cl = read_text(os.path.join(env.repo, "CLAUDE.md")) or ""
-        moved, cut, lost = reading_order.moved_and_cut(env.repo, prev_cl, now_cl, mem_extra)
+        moved, cut, lost, published = reading_order.moved_and_cut(
+            env.repo, prev_cl, now_cl, mem_extra)
         ro_moved, ro_cut = len(moved), len(cut)
         if moved or cut or lost:
             print("reading order: {} clause(s) moved to a destination, {} CUT, {} EXEMPT-LOST"
@@ -1112,6 +1113,17 @@ def run_close(env, args):
         # ledger's own row says a detector where it cannot prevent what it names is not a guard
         # -- and `ro-bytes` is RATCHETED, so a close could otherwise EARN the ratchet by
         # deleting the user's own words (DIFF pass, round 2 Q2). So this one REFUSES.
+        # A clause that left an UNPUBLISHED file and landed in a TRACKED one is a PUBLICATION, and
+        # this is the moment it happens. Three leaks today were caught by a hand-run pre-push audit
+        # instead; the audit is a strictly later and coarser place to ask (round 7 Q4). It PRINTS
+        # rather than refuses because most moves are legitimate -- what was missing was anyone
+        # asking at all.
+        if published:
+            print("PUBLICATION: {} clause(s) moved from an UNPUBLISHED file into a TRACKED one. A "
+                  "move is checked for fidelity, which has no opinion about whether the text may be "
+                  "published -- read these before the close:".format(len(published)))
+            for _n, raw, dest in published[:12]:
+                print("    -> {}  {}".format(dest, raw[:120]))
         if lost:
             raise SystemExit(
                 "REFUSE: {} line(s) recording what the USER said left the reading order:{}{}{}"
@@ -1136,8 +1148,13 @@ def run_close(env, args):
     prev_mem = baseline_text(env, "memory/MEMORY.md", "private", base, {})
     if prev_mem is not None and getattr(env, "memory", None):
         now_mem = read_text(os.path.join(env.memory, "MEMORY.md")) or ""
-        _m, _c, mem_lost = reading_order.moved_and_cut(
+        _m, _c, mem_lost, mem_pub = reading_order.moved_and_cut(
             env.repo, prev_mem, now_mem, mem_extra, select=lambda x: x.split(chr(10)))
+        if mem_pub:
+            print("PUBLICATION: {} clause(s) moved out of memory/MEMORY.md into a TRACKED file:"
+                  .format(len(mem_pub)))
+            for _n, raw, dest in mem_pub[:12]:
+                print("    -> {}  {}".format(dest, raw[:120]))
         if mem_lost:
             raise SystemExit(
                 "REFUSE: {} line(s) recording what the USER said left memory/MEMORY.md:{}{}{}"

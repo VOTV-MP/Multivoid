@@ -69,25 +69,51 @@ S3 = re.compile(r"(?:flag (?:it )?for|file (?:it )?(?:as|under)|belongs in|shoul
 
 # S4 -- VERBATIM overlap with an unpublished tree: incident 3, where 271 lines moved out of
 # `CLAUDE.md` into a tracked file, checked for fidelity and never for publishability. It is a
-# RATCHET, not an acknowledgement list. `[V]` 37 lines overlap today across 19 files and every
-# sample read is benign (a shared command line, a quoted user sentence, a log excerpt), so per-line
-# reasons would be 37 claimed reads nobody made. A count that may not GROW is the honest form.
-OVERLAP_BASELINE = 37
+# RATCHET, not an acknowledgement list. `[V]` 44 lines overlap today and every sample read is benign
+# (a shared command line, a quoted user sentence, a log excerpt), so per-line reasons would be 44
+# claimed reads nobody made. A count that may not GROW is the honest form.
+#
+# The baseline moved 37 -> 44 on the day it was written, and NOT because the corpus changed: the
+# overlap used to read `.md` only while the line signals read more, so widening it to ONE file set
+# revealed 7 lines it had never looked at (`.cpp` 6, `.py` 1, all shared with memory topics). Stated
+# because a ratchet whose baseline moves silently is a ratchet nobody can audit.
+OVERLAP_BASELINE = 44
 # EXCLUDED because it is a deliberate practice, not a leak: copying memory topics into the public
 # piles archive. It alone contributes ~1,263 of the raw 1,300 overlaps.
 OVERLAP_SKIP = ("docs/piles/_archive/session-log/",)
 OVERLAP_MIN = 60          # normalised characters; below this a shared line is a heading, not a claim
 
+# The file set, ONE list for both the line signals and the overlap ratchet. They used to differ:
+# `scan` read md/py/yml while `overlap_count` dropped everything that was not `.md` -- so S4,
+# the ratchet built for verbatim MOVES, was structurally blind to the file type the last leak
+# actually landed in (a `.py` drill), and one `.py` overlap line was standing invisible to it.
+# Source files are in because `[V]` 2026-09-04 five S2 hits live in tracked `.h`/`.rs` comments,
+# which is the class `docs/LESSONS.md`'s 2026-09-01 row already names -- a security rationale in
+# a public repo obeys the same keep/cut rule, and the five-axis audit cannot see prose (round 7 Q3).
+SCAN_GLOBS = ("*.md", "*.py", "*.yml", "*.h", "*.hpp", "*.cpp", "*.inc", "*.rs", "*.ps1")
+
 
 def load_ack(path=ACK):
-    """One acknowledged hit per line as `<needle>` -- '#' starts a comment."""
-    out = {}
+    """One acknowledged hit per line as `<path> | <needle>` -- '#' starts a comment.
+
+    THE PATH IS HALF THE KEY, and leaving it out disarmed a whole signal. Keyed on the needle alone,
+    the drill's own S3 fixture (`flag for `docs/security/`) cleared that match in EVERY file in the
+    tree, forever -- including the very doc the signal was written for. `[V]` 2026-09-04: the exact
+    prose of incident 2 read as acknowledged the moment the drill's fixture was cleared. An
+    acknowledgement is a person saying "I read THIS line in THIS file"; anything broader is a way to
+    make the gate green by typing (round 7 Q1).
+    """
+    out = set()
     if not os.path.exists(path):
         return out
     for line in io.open(path, encoding="utf-8"):
         line = line.split("#", 1)[0].strip()
-        if line:
-            out[line] = True
+        if not line:
+            continue
+        rel, sep, needle = line.partition("|")
+        if not sep:
+            continue          # a bare needle is not an acknowledgement any more; it clears nothing
+        out.add((rel.strip(), needle.strip()))
     return out
 
 
@@ -101,7 +127,7 @@ def tracked_docs(repo=REPO):
     are synthetic now and the drill is scanned like anything else, with its invented needles
     acknowledged by name -- so a REAL leak written into a drill still fails the gate.
     """
-    out = subprocess.run(["git", "ls-files", "*.md", "*.py", "*.yml"], cwd=repo,
+    out = subprocess.run(["git", "ls-files"] + list(SCAN_GLOBS), cwd=repo,
                          capture_output=True, text=True)
     return [p for p in out.stdout.splitlines() if p.strip()]
 
@@ -134,10 +160,19 @@ def _norm(s):
 
 
 def unpublished_lines(repo=REPO):
-    """Normalised lines >= OVERLAP_MIN chars from the trees no repository tracks."""
+    """Normalised lines >= OVERLAP_MIN chars from the trees no repository tracks, or None.
+
+    None on a PARTIAL corpus, not just an empty one. With `MULTIVOID_MEMORY_DIR` mistyped, the memory
+    half (35 of the 37 overlapping lines) simply vanished and the gate printed `4 (baseline 37)` and
+    exited 0 -- a ratchet reading a fifth of its input and calling it green. `require_corpus()` was
+    written one commit earlier for exactly this hazard and applied to `status_census`'s two entry
+    points only; the sibling that needed it got nothing (round 7 Q2).
+    """
     import glob as _glob
     mem = os.environ.get("MULTIVOID_MEMORY_DIR", "") or os.path.join(
         os.path.expanduser("~"), ".claude", "projects", "D--Projects-Programming-VOTV-MP", "memory")
+    if not os.path.isdir(mem):
+        return None
     out = set()
     srcs = [os.path.join(repo, "CLAUDE.md")]
     srcs += _glob.glob(os.path.join(repo, "docs", "security", "*.md"))
@@ -161,10 +196,10 @@ def overlap_count(repo=REPO):
     """
     src = unpublished_lines(repo)
     if not src:
-        return None, {}
+        return None, {}          # None from a partial corpus too -- see unpublished_lines
     per = {}
     for rel in tracked_docs(repo):
-        if not rel.endswith(".md") or rel.startswith(OVERLAP_SKIP):
+        if rel.startswith(OVERLAP_SKIP):
             continue
         full = os.path.join(repo, rel)
         if not os.path.isfile(full):
@@ -185,11 +220,11 @@ def main(argv=None):
 
     ack = load_ack(args.ack)
     hits = scan(args.repo)
-    unack = [h for h in hits if h[3] not in ack]
+    unack = [h for h in hits if (h[0], h[3]) not in ack]
     if args.list:
         for rel, n, sig, needle, line in hits:
             print("  [{}] {:<8} {}:{}  {}".format(
-                "ack" if needle in ack else "NEW", sig, rel, n, needle))
+                "ack" if (rel, needle) in ack else "NEW", sig, rel, n, needle))
     n_over, per_over = overlap_count(args.repo)
     over_bad = n_over is not None and n_over > OVERLAP_BASELINE
     print("public_leak_gate: {} hit(s), {} acknowledged, {} NEW; verbatim overlap with the "

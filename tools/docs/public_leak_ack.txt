@@ -1,24 +1,38 @@
 # Hits `public_leak_gate.py` found in the PUBLIC tree that a person has read and cleared.
-# One needle per line; '#' starts a comment. A hit not listed here FAILS the gate.
+#
+# FORMAT: `<repo-relative path> | <the matched needle>`, '#' starts a comment. A BARE needle with no
+# path clears nothing -- it used to, and that disarmed a whole signal: the drill's own S3 fixture
+# (`flag for `docs/security/`) is the GENERIC match, so acknowledging it once cleared that shape in
+# every file in the tree, including the doc the signal was written for. An acknowledgement is a
+# person saying "I read THIS line in THIS file".
 #
 # The bar is docs/DOCS_ARC.md WP-2: CUT a specific UNFIXED weakness and its effect; KEEP the
-# architectural statement, the honest posture, and the record of something already fixed. Every
-# entry below carries WHY, because "someone cleared it once" is not a reason.
+# architectural statement, the honest posture, and the record of something already fixed.
 #
-# Cleared 2026-09-04, the day the gate was written, against the five hits then standing.
+# Cleared 2026-09-04.
 
-security/TRACKER.md:627                   # DOCUMENTIZE_ARC:117 -- cites a CLOSED finding (B4 IS BUILT) whose two commits are public
-docs/security/LESSONS_SECURITY.md:329     # status_grammar.py:97 -- provenance for a REGEX decision; the only content disclosed is the string "6c.c + 9b"
-A51 is closed, **A50 is only MITIGATED    # COOP_SYNC_MAP:152 -- a posture statement with no mechanism; the keep rule keeps exactly this
-A59 is MITIGATED                          # sig_gate.py:30 -- says what the drill CANNOT assert; A59 was fixed in the field 2026-08-31
-A6 -- THE AUTHORITY HANDOFF MUST NOT OPEN # atv_probe_report.py:423 -- FALSE POSITIVE: "A6" is an experiment ARM label, not a finding id
+# --- docs ---
+docs/COOP_SYNC_MAP.md            | A51 is closed, **A50 is only MITIGATED   # posture, no mechanism; the keep rule keeps exactly this
+docs/DOCUMENTIZE_ARC.md          | security/TRACKER.md:627                  # cites a CLOSED finding (B4 IS BUILT) whose commits are public
 
-# The drill's own SYNTHETIC fixtures. They are acknowledged BY NAME rather than by excluding
-# `*_drill.py` from the scan: that exclusion was tried for one commit and, at that moment, the
-# fixtures were the real leak copied verbatim -- so it hid a true positive instead of suppressing a
-# false one. Every identifier below is invented (`DRILL_REGISTER.md` and `A99` exist nowhere), so a
-# REAL finding written into a drill is still an unacknowledged hit and still fails.
-security/DRILL_REGISTER.md:704            # drill fixture: incident 1's SHAPE with invented ids
-docs/security/DRILL_REGISTER.md:704       # drill fixture: the S1 discrimination case
-A99 is still OPEN                         # drill fixture: the S2 positive case
-flag for `docs/security/                  # drill fixture: the S3 positive case
+# --- shipped source: posture statements in comments, all naming FIXED or MITIGATED findings.
+# This is the class docs/LESSONS.md's 2026-09-01 row names, and it is why the scan reads source at
+# all -- the five-axis audit looks for artifacts and cannot see prose.
+src/votv-coop/include/coop/items/coingun_sync.h | A50 -- MITIGATED           # names the state, not a way to exploit it
+src/votv-coop/include/coop/net/protocol.h       | A59 is MITIGATED           # A59 was fixed in the field 2026-08-31
+src/votv-coop/include/coop/net/protocol.h       | A50's residual and it is why A50 is MITIGATED   # architectural statement
+tools/coop-server-rs/src/bin/signaling.rs       | A59 is MITIGATED           # same, in the relay that carries the fix
+tools/sig_gate.py                | A59 is MITIGATED                         # says what the drill CANNOT assert
+
+# --- instruments describing their own subject ---
+tools/atv_probe_report.py        | A6 -- THE AUTHORITY HANDOFF MUST NOT OPEN # FALSE POSITIVE: "A6" is an experiment ARM label
+tools/docs/status_grammar.py     | docs/security/LESSONS_SECURITY.md:329     # provenance for a REGEX decision; discloses the string "6c.c + 9b"
+tools/docs/public_leak_gate.py   | flag for `docs/security/                  # the S3 docstring quoting its own signal
+
+# --- the drill's SYNTHETIC fixtures. Every identifier is invented (`DRILL_REGISTER.md` and `A99`
+# exist nowhere), and they are cleared PER FILE, so a REAL finding written into a drill is still an
+# unacknowledged hit and still fails.
+tools/docs/public_leak_gate_drill.py | security/DRILL_REGISTER.md:704        # incident 1's SHAPE with invented ids
+tools/docs/public_leak_gate_drill.py | docs/security/DRILL_REGISTER.md:704   # the S1 discrimination case
+tools/docs/public_leak_gate_drill.py | A99 is still OPEN                     # the S2 positive case
+tools/docs/public_leak_gate_drill.py | flag for `docs/security/              # the S3 positive case

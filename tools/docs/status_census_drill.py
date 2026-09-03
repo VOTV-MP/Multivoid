@@ -868,14 +868,14 @@ def drill_reading_order():
         w("docs/dest.md", "# dest\n\n" + A.split(". ", 1)[1])
         now = head + "1. `docs/dest.md` -- moved, see there.\n" + B + C + U
         w("CLAUDE.md", now)
-        moved, cut, lost = RO.moved_and_cut(root, prev, now)
+        moved, cut, lost, _pub = RO.moved_and_cut(root, prev, now)
         check(len(moved) == 1 and len(cut) == 0,
               "a MOVE is seen as a move: {} moved, {} cut".format(len(moved), len(cut)))
 
         # (2) entry B is CUT: gone from the order and findable nowhere
         now2 = head + "1. `docs/dest.md` -- moved, see there.\n" + C + U
         w("CLAUDE.md", now2)
-        moved, cut, lost = RO.moved_and_cut(root, prev, now2)
+        moved, cut, lost, _pub = RO.moved_and_cut(root, prev, now2)
         check(len(moved) == 1 and len(cut) == 1 and "deleted outright" in cut[0][1],
               "a CUT is NOT counted as a move, and the destroyed claim is named ({})".format(
                   [c[1][:40] for c in cut]))
@@ -893,7 +893,7 @@ def drill_reading_order():
         #      Losing one is its own bucket: never counted as a move, never buried among the cuts.
         now3 = head + "1. `docs/dest.md` -- moved, see there.\n" + B + C
         w("CLAUDE.md", now3)
-        moved3, cut3, lost3 = RO.moved_and_cut(root, prev, now3)
+        moved3, cut3, lost3, _pub3 = RO.moved_and_cut(root, prev, now3)
         check(len(lost3) == 1 and "never moves" in lost3[0][1],
               "RED: an EXEMPT clause that left is reported LOST, on its own ({})".format(
                   [l[1][:40] for l in lost3]))
@@ -919,6 +919,7 @@ def drill_reading_order():
         shutil.rmtree(root, ignore_errors=True)
     drill_ro_lost_refuses()
     drill_corpus_absent_refuses()
+    drill_publication_bucket()
     drill_mem_user_lost_refuses()
     drill_lost_unverdicted_is_counted()
 
@@ -1110,6 +1111,55 @@ def drill_corpus_absent_refuses():
             check(code != 0 and "memory corpus is not a directory" in out,
                   "RED: `{}` REFUSES without the memory corpus, naming the four ratchets "
                   "({})".format(cmd, out.strip()[:70]))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def drill_publication_bucket():
+    """A clause moving from an UNPUBLISHED file into a TRACKED one is named at the move.
+
+    Three leaks on 2026-09-04 were a MOVE out of `CLAUDE.md` (gitignored) into tracked docs, and all
+    three were caught by a hand-run pre-push audit -- while `moved_and_cut`, which already held the
+    departing text AND the destination corpus, asked only "findable somewhere" (round 7 Q4). The
+    control matters as much as the positive: moving into an UNTRACKED file must NOT be called a
+    publication, or the bucket is just a second name for `moved`.
+    """
+    import reading_order as RO
+    root = tempfile.mkdtemp(prefix="scp_")
+    try:
+        os.makedirs(os.path.join(root, "docs"))
+        git(["init", "-q", "-b", "main", "."], root)
+        git(["config", "--local", "user.name", "drill"], root)
+        git(["config", "--local", "user.email", "drill@example"], root)
+        clause = ("this is a long enough sentence to count as one distinctive clause for the mover")
+        head = ("# rules" + NLC + NLC +
+                "## Reading order after a session reset / new conversation" + NLC + NLC)
+        # The clause is on its OWN line: its needle is the first 40 normalised characters, so an
+        # entry prefix (`docs/dest.md -- `) would be part of the needle and the destination -- which
+        # carries the sentence and not the prefix -- would read as a CUT rather than a move.
+        prev = head + "1. `docs/dest.md` -- an entry" + NLC + "   " + clause + NLC
+        now = head + "1. `docs/dest.md` -- an entry" + NLC
+
+        w = lambda rel, s: io.open(os.path.join(root, rel), "w", encoding="utf-8",
+                                   newline=NLC).write(s)
+        # the destination is TRACKED
+        w("docs/dest.md", "# dest" + NLC + NLC + clause + NLC)
+        git(["add", "--", "docs/dest.md"], root)
+        git(["commit", "-q", "-m", "base"], root)
+        moved, cut, lost, pub = RO.moved_and_cut(root, prev, now)
+        check(len(moved) == 1 and len(pub) == 1 and pub[0][2] == "docs/dest.md",
+              "RED: a clause moved into a TRACKED file is named a PUBLICATION, with its destination "
+              "({})".format([p[2] for p in pub]))
+
+        # the SAME move into an UNTRACKED file is a move and nothing more
+        os.remove(os.path.join(root, "docs", "dest.md"))
+        git(["rm", "-q", "--cached", "docs/dest.md"], root)
+        git(["commit", "-q", "-m", "untrack"], root)
+        w("docs/scratch.md", "# scratch" + NLC + NLC + clause + NLC)
+        moved2, _c2, _l2, pub2 = RO.moved_and_cut(root, prev, now)
+        check(len(moved2) == 1 and not pub2,
+              "GREEN: the same clause moved into an UNTRACKED file is moved, not published "
+              "({} moved, {} published)".format(len(moved2), len(pub2)))
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

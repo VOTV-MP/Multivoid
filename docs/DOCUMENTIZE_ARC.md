@@ -1419,3 +1419,29 @@ missing file rather than a design fault.
 Marking `docs/CRUTCHES.md` as a register too would take accretion 274 -> 268, and changing a ratchet's
 denominator as a side effect of a mechanism fix is exactly the quiet move this project distrusts. The
 number is recorded here so a later session can make that call deliberately.
+
+### 10.12 DIFF pass round 7 -- all four landed on the gate built one round earlier (2026-09-04)
+
+| # | measured | fix |
+|---|---|---|
+| Q1 | the acknowledgement was keyed on the NEEDLE alone, so the drill's own S3 fixture (`flag for \`docs/security/`, the GENERIC match) cleared that shape in **every file in the tree, forever** -- including `PERF_ARC.md`, the doc S3 was written for. The signal was disarmed the moment its own test was cleared | keyed on `(path, needle)`; a bare needle clears nothing; drilled that the drill's entry does NOT clear `docs/PERF_ARC.md` |
+| Q2 | `unpublished_lines` returned n/a only on TOTAL absence, so a mistyped `MULTIVOID_MEMORY_DIR` dropped the memory half (35 of 44 lines) and the gate printed `4 (baseline 37)` and **exited 0** -- a ratchet reading a fifth of its input and calling it green. `require_corpus()` had been written one commit earlier for this exact hazard, for the sibling only | None on a PARTIAL corpus, RED-drilled |
+| Q3 | `scan()` read md/py/yml while `overlap_count` dropped everything not `.md` -- so S4, the ratchet built for verbatim MOVES, was blind to the file type the last leak actually landed in, with one `.py` overlap line standing invisible | ONE file set (`SCAN_GLOBS`) for both. Overlap 37 -> 44 by SCOPE, not content, and the baseline says so |
+| Q4 | `moved_and_cut` holds the departing text AND the destination corpus in one call and asks only *findable somewhere* -- never *was the source unpublished and the destination tracked* | a fourth bucket, `published`, naming the clause and its destination AT THE MOVE |
+
+**Q4 is the answer to a question this session asked itself and got wrong three times.** Every leak today
+was a MOVE out of an unpublished file into a tracked one, and every one was caught by a hand-run
+pre-push audit -- while the function that already held both ends of the move asked one term less than
+it needed. A whole-tree push-time scanner is a strictly later and coarser place to ask "may this be
+published" than the moment the text arrives. The gate stays (it covers text written straight into a
+public doc, which no move seam can see); the seam now covers the move.
+
+**Q1 is the sharpest single defect of the whole pass, because it made the gate LOOK like it worked.**
+Every drill arm passed, the gate printed green, and S3 could not have caught the incident it was built
+from. That is the arc's own thesis turned on its author: a mandate nothing observes is satisfied by
+assertion, and so is an acknowledgement keyed on the wrong half of the fact.
+
+**Three defects in one instrument, one round after it was built, all four found by a critic reading it
+cold.** The gate's own founding claim -- that this class had a person twice and an instrument never --
+was answered by building an instrument that needed four more corrections before it could do what its
+docstring said.

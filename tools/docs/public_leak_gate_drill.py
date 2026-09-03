@@ -143,6 +143,48 @@ def drill_acknowledgement():
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
+def drill_ack_is_path_keyed():
+    """An acknowledgement in file A must NOT clear the same needle in file B.
+
+    Keyed on the needle alone, the drill's own S3 fixture cleared `flag for `docs/security/` in EVERY
+    file, so the exact prose of incident 2 read as already-acknowledged and the signal was disarmed
+    the moment its own test was cleared (round 7 Q1). This asserts the discrimination directly.
+    """
+    print("  -- the acknowledgement is keyed on (path, needle) --")
+    ack = G.load_ack()
+    drill = "tools/docs/public_leak_gate_drill.py"
+    needle = "flag for `docs/security/"
+    check((drill, needle) in ack,
+          "the drill's own S3 fixture IS cleared, in the drill")
+    check(("docs/PERF_ARC.md", needle) not in ack,
+          "RED: the SAME needle is NOT cleared in docs/PERF_ARC.md -- incident 2's own file")
+    check(all("|" in l or l.strip().startswith("#") or not l.strip()
+              for l in io.open(G.ACK, encoding="utf-8")),
+          "every acknowledgement line carries a path (a bare needle clears nothing)")
+
+
+def drill_partial_corpus_is_not_a_count():
+    """A corpus missing its largest half must report n/a, not a smaller number.
+
+    With `MULTIVOID_MEMORY_DIR` mistyped the memory half (35 of 44 lines) vanished and the gate
+    printed `4 (baseline 37)` and exited 0 -- a ratchet reading a fifth of its input and calling it
+    green (round 7 Q2).
+    """
+    print("  -- a partial corpus is not a corpus --")
+    saved = os.environ.get("MULTIVOID_MEMORY_DIR")
+    os.environ["MULTIVOID_MEMORY_DIR"] = os.path.join(tempfile.gettempdir(), "no_such_memory_zz")
+    try:
+        n, _ = G.overlap_count(G.REPO)
+        check(n is None, "RED: a missing memory corpus reports n/a rather than a partial count "
+                         "({})".format(n))
+    finally:
+        if saved is None:
+            os.environ.pop("MULTIVOID_MEMORY_DIR", None)
+        else:
+            os.environ["MULTIVOID_MEMORY_DIR"] = saved
+    n2, _ = G.overlap_count(G.REPO)
+    check(n2 is not None, "GREEN: with the real corpus it is a number again ({})".format(n2))
+
 
 def main():
     print("public_leak_gate_drill")
@@ -150,6 +192,8 @@ def main():
     drill_signals_discriminate()
     drill_overlap_ratchet()
     drill_acknowledgement()
+    drill_ack_is_path_keyed()
+    drill_partial_corpus_is_not_a_count()
     print("")
     if FAILS:
         for f in FAILS:
