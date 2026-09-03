@@ -157,6 +157,17 @@ def main():
                                                       "partial", "still-true", "not-a-label",
                                                       "not-a-cite", "drift-ok", "not-loose"))),
                                  COAUTH]), "lacks rows or a verdict column"),
+        # The gate's READ side of the undeclared-column rule. status_census's WRITE side is drilled
+        # in status_census_drill arm I; a column can be undeclared in two places and only one was held.
+        arm("a trailer column with no declared kind",
+            lambda r, b: commit(r, "[docs] close: undeclared",
+                                [trailer(b, "aaa111") + " invented-column=7", COAUTH]),
+            "no declared kind in trailer_schema"),
+        arm("a ratchet column carrying a non-integer",
+            lambda r, b: (lambda c4: commit(r, "[docs] close: second",
+                                            [trailer(c4, "bbb222").replace("ro-bytes=100", "ro-bytes=lots"),
+                                             COAUTH]))(
+                commit(r, "[docs] close: first", [trailer(b, "aaa111"), COAUTH])), "unreadable"),
         arm("a monotone column vanishes",
             lambda r, b: (lambda c4: commit(r, "[docs] close: second",
                                             [trailer(c4, "bbb222").replace(" flips=3", ""), COAUTH]))(
