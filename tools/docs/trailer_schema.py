@@ -38,11 +38,11 @@ RATCHETED = ("ro-bytes", "ro-longest", "mem-over200", "memref-dead", "wikilinks-
              "pairing-unref", "pairing-dead", "accretion")
 MONOTONE = ("resolved", "flips")
 GATED = ("rows", "cited-dead", "ro-lost")
-REPORTED = ("labels", "cite-drift", "running-totals", "ro-cut",
+REPORTED = ("labels", "ageing-rows", "ageing-corr", "cite-drift", "running-totals", "ro-cut",
             "ro-moved", "sweep-cursor", "sweep-cycle", "new", "foreign")
 
 # The written order. `rows` leads the counts because the VERDICT identity is stated against it.
-ORDER = ("base", "rows", "labels") + VERDICT + (
+ORDER = ("base", "rows", "labels", "ageing-rows", "ageing-corr") + VERDICT + (
     "cited-dead", "cite-drift", "running-totals",
     "accretion", "resolved", "flips",
     "ro-bytes", "ro-longest", "ro-moved", "ro-cut", "ro-lost", "mem-over200", "memref-dead",

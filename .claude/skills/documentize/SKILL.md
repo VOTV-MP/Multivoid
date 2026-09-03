@@ -41,8 +41,12 @@ smoke or a static guess. Accuracy beats optimism.
   `LESSONS.md` and `CLAUDE.md`, touched by steps 3/3.5/4 of every close, are ever read whole.
   `--sweep` censuses the whole read set, on the user's request.
 - **The hand phase is on probation, with a stated bar (D8).** Over the first 300 AGEING-lane rows, if
-  `actually-done + stale-done + partial + sub-state-stale` totals fewer than 5, the true rot rate is
-  under ~3 % and this step is DELETED rather than defended. Count rows, never closes.
+  `actually-done + stale-done + partial` totals fewer than 5, the true rot rate is under ~3 % and this
+  step is DELETED rather than defended. Count rows, never closes: `ageing-rows=` and `ageing-corr=` in
+  every trailer are the denominator and the numerator, so the bar is evaluated by summing trailers and
+  not by anyone's recollection. (The bar used to name a fourth term, `sub-state-stale`. Nothing
+  recorded it, and nothing needed to: a stale sub-state clause under a true label IS a claim, and the
+  hand verdicts that row `STALE DONE` — so the term was already inside the third one.)
 - **Archive stale stuff** — a superseded/abandoned doc or section goes to the nearest `_archive/` with a
   one-line pointer (RULE 2: retired info goes, fully — no parallel stale + fresh).
 - **Write NEW docs with FRESH info** where the current truth has no home; link them in. A NEW doc in

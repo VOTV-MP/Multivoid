@@ -1258,8 +1258,12 @@ converge.
 
 **D8 — the falsifier standing behind "keep the hand phase":** over the first **300 ageing-lane rows**
 (NOT closes — 251 retired-form closes peaked at 14 in ONE day, so a close is not a unit of evidence),
-if `actually-done + stale-done + partial + substate-stale` totals fewer than **5**, the true rot rate
-is under ~3% at 95% and the hand phase is deleted. §2.3's 36% predicts ~108; the round-15 proxy's 15%
+if `actually-done + stale-done + partial` totals fewer than **5**, the true rot rate is under ~3% at
+95% and the hand phase is deleted. **`ageing-rows=` and `ageing-corr=` ride every trailer since
+2026-09-03** — before that the counts mixed both lanes and no trailer carried the lane at all, so the
+bar could not be evaluated from the record it is evaluated from. The fourth term it used to name,
+`substate-stale`, had no recorder and needed none: a stale sub-state under a true label is a claim,
+and its row is verdicted `STALE DONE`. §2.3's 36% predicts ~108; the round-15 proxy's 15%
 predicts ~45. The one filed close contributes ZERO to that 300: its rows were drawn under the old
 alphabetical selector.
 

@@ -1057,7 +1057,16 @@ def run_close(env, args):
         d_flip = n_flip - int(prev.get("flips", "0") or 0)
         print("resolved this close: {} verdict(s), {} of them naming a defect (cumulative {}/{})"
               .format(d_res, d_flip, n_res, n_flip))
+    # D8's falsifier is stated over AGEING-lane rows -- "over the first 300, if actually-done +
+    # stale-done + partial totals fewer than 5, the hand phase is deleted" -- and until 2026-09-03 no
+    # trailer separated the lanes, so the bar could not be evaluated from the record it is evaluated
+    # from (DIFF pass, round 4). Its denominator and numerator now ride the trailer, and only the
+    # AGEING lane counts: an authoring row cannot have aged, so it is not evidence about rot.
+    ageing = [r for r in rows if r.get("lane") == "ageing"]
+    ageing_corr = sum(1 for r in ageing
+                      if r["verdict"] in ("ACTUALLY DONE", "STALE DONE", "PARTIAL"))
     vals = {"base": base[:12], "rows": len(rows), "labels": meta.get("labels", 0),
+            "ageing-rows": len(ageing), "ageing-corr": ageing_corr,
             "resolved": n_res, "flips": n_flip, "ro-moved": ro_moved,
             "ro-cut": ro_cut, "ro-lost": 0,   # a close with ro-lost > 0 cannot exist: it refuses
             "still-open": counts["STILL OPEN"], "actually-done": counts["ACTUALLY DONE"],
