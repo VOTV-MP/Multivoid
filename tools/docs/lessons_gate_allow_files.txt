@@ -31,3 +31,24 @@ int_widgets.hpp         # CXXHeaderDump -- game BP class header
 ui_saveSlots.hpp        # CXXHeaderDump -- game BP class header
 SlateCore.hpp           # CXXHeaderDump -- SlateCore module
 WindowsD3D12Viewport.cpp # UE4 RHI source, read for the DX12 present seam (sibling of D3D11Viewport.cpp)
+
+# --- more of the same CXX header dump, found when the census widened this list's scope from
+# --- docs/LESSONS.md alone to the whole corpus (2026-09-03): the rest of the tree cites more of it.
+struct_save.hpp         # UE4SS CXXHeaderDump -- save struct
+struct_primitiveSave.hpp # UE4SS CXXHeaderDump -- primitive save struct
+saveSlot.hpp            # UE4SS CXXHeaderDump -- save slot
+int_save.hpp            # UE4SS CXXHeaderDump -- int save struct
+kerfurOmega.hpp         # UE4SS CXXHeaderDump -- game BP class header
+prop.hpp                # UE4SS CXXHeaderDump -- game BP class header
+prop_inventoryContainer_player.hpp  # UE4SS CXXHeaderDump -- game BP class header
+Rotator.h               # UE4 4.27 source (Engine/Source/Runtime/Core/Public/Math)
+
+# --- VotvIO's, which LEFT this repo on 2026-09-02 for github.com/pelmentor/VotvIO. The dated
+# --- research findings that cite these paths were correct when written; the project moved, the
+# --- record did not. See CLAUDE.md reading-order entry 4i-blender.
+gvas.py                 # VotvIO -- the .sav reader
+gvas_peek.py            # VotvIO -- the .sav probe
+pak_footer.py           # VotvIO -- the pak footer reader
+deploy_addon.ps1        # VotvIO -- the Blender addon deploy script
+mainPlayer.hpp          # UE4SS CXXHeaderDump -- the player BP class header
+tests/smoke.py          # VotvIO -- path-qualified, so listed as a path not a basename
