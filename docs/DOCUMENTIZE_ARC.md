@@ -1057,3 +1057,27 @@ if `actually-done + stale-done + partial + substate-stale` totals fewer than **5
 is under ~3% at 95% and the hand phase is deleted. §2.3's 36% predicts ~108; the round-15 proxy's 15%
 predicts ~45. The one filed close contributes ZERO to that 300: its rows were drawn under the old
 alphabetical selector.
+
+### 10.5 CONVENIENCE is a real requirement (USER 2026-09-03) — and the design has no item for it
+
+Round 10 retracted a Russian sentence about *"convenience of keeping documentation"* that rounds 7-10
+had quoted as the user's verbatim ask: it exists only in my own briefs. When the retraction was put to
+them the user answered **"that quote is nice, I'm not against it"** — so **the QUOTE stays retracted
+(I wrote it, it is not a citation) while the REQUIREMENT is endorsed and dated 2026-09-03.** D0-D11
+are all about HONESTY; not one of them is about the cost of using the thing.
+
+**Measured on the first run under the new code (2026-09-03), from what I actually did rather than what
+the skill says):**
+
+| the cost | the evidence |
+|---|---|
+| the verdict column is not hand-fillable | I did not fill it by hand. I wrote `scratchpad/verdict.py` and ran it TWICE — editing 66 markdown cells by hand was not the path anyone took, including its author |
+| the table is not readable as filed | throwaway Python written **six times** in one run to group rows by doc and print the LINE TEXT — the one thing needed at every row. `show` exists and prints a flat dump instead |
+| the census is re-run per doc edit | three full runs this session, each ~30 s, of which ~26 s is a resolver index + corpora build over a tree that had not changed |
+| the hand pass has no order | 66 rows arrived in table order; the reading order I actually used was BY DOC, which the table does not group |
+
+**WP-E, not yet designed:** a `verdict` subcommand (by row, range, or predicate — the shape the ad-hoc
+script took); `show` grouped by doc WITH the line text and the lane; a resolver cache keyed on the
+tree's state; the pending table ordered by doc. Each is a measured cost, not a preference. It owes its
+own `/qf` before it is built, and it does NOT displace D0 (the resolved ledger), which is a
+correctness defect and stays first.
