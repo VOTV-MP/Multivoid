@@ -48,6 +48,7 @@ USAGE
 """
 import argparse
 import datetime as _dt
+import glob
 import io
 import json
 import os
@@ -68,7 +69,7 @@ import trailer_schema as TS  # noqa: E402  -- the ONE trailer column vocabulary 
 from census_git import git, gitz  # noqa: E402  -- the git primitive both layers share
 from census_history import (utc_now, history_init, snapshot_sync, state_load, state_save,  # noqa: E402
                             resolved_path, resolved_load, resolved_append, resolved_counts,  # noqa: E402
-                            retired_verdicts, FLIP_VERDICTS)  # noqa: E402
+                            retired_verdicts, lost_unverdicted, FLIP_VERDICTS)  # noqa: E402
 
 K_DEFAULT = 40
 ROW_BUDGET = 40          # the SWEEP's own row budget: the hand check is paid per ROW, so that is the
@@ -838,6 +839,17 @@ def run_census(env, args):
             _whole_cache[key] = set(line_hashes(key, lines)) if lines is not None else None
         return _whole_cache[key]
 
+    lost_unv = lost_unverdicted(prev_rows, rows, radius, whole_hashes)
+    if lost_unv:
+        by_doc = {}
+        for r in lost_unv:
+            by_doc[r["key"]] = by_doc.get(r["key"], 0) + 1
+        print("LOST UNVERDICTED: {} row(s) left the table with an EMPTY verdict -- the doc was acted "
+              "on BEFORE its rows were verdicted, so their verdicts were never recorded:".format(len(lost_unv)))
+        for k, n in sorted(by_doc.items(), key=lambda kv: -kv[1]):
+            print("    {:3d}  {}".format(n, k))
+        print("    (verdict the WHOLE table, then act, then re-census -- these rows are counted in "
+              "`ageing-lost=` so D8's numerator is not silently zero)")
     retired = retired_verdicts(prev_rows, rows, radius, utc_now(), base, whole_hashes)
     resolved_append(env, retired)
     if retired:
@@ -858,6 +870,12 @@ def run_census(env, args):
     meta = {"utc": utc_now(), "base": base, "research_base": rbase, "touched": sorted(touched),
             "content": content,
             "new": new_paths, "radius": len(radius), "rows": len(rows), "labels": labels, "cited_dead": dead, "cite_drift": drift,
+            # Rows that left the table UNVERDICTED. Computed HERE because only the census sees the
+            # previous table; carried in meta so the close can put it in the trailer beside the
+            # ageing counts it qualifies (an ageing-corr of 0 means something different when
+            # ageing-lost is 21).
+            "ageing_lost": sum(1 for r in lost_unv if r.get("lane") == "ageing"),
+            "lost_unverdicted": len(lost_unv),
             "sweep": swept, "scanned_whole": sorted(scanned_whole), "k": k, "budget": budget, "cycle": cycle, "read_set": len(rs), "loose": bool(args.loose),
             "full_sweep": bool(args.sweep), "dropped": dropped}
     write_table(pending_path(env), meta, rows)
@@ -1021,10 +1039,14 @@ def run_close(env, args):
     # being destroyed is not a number.
     import reading_order
     ro_moved = ro_cut = 0
+    # The memory directory is a legitimate DESTINATION for both guarded files and lives outside the
+    # repo, so `os.walk(repo)` cannot see it: without this a clause compacted out of MEMORY.md into a
+    # topic file -- the normal, correct move -- would read as destroyed.
+    mem_extra = sorted(glob.glob(os.path.join(env.memory, "*.md"))) if getattr(env, "memory", None) else []
     prev_cl = baseline_text(env, "CLAUDE.md", "private", base, {})   # private: the history repo's HEAD
     if prev_cl is not None:
         now_cl = read_text(os.path.join(env.repo, "CLAUDE.md")) or ""
-        moved, cut, lost = reading_order.moved_and_cut(env.repo, prev_cl, now_cl)
+        moved, cut, lost = reading_order.moved_and_cut(env.repo, prev_cl, now_cl, mem_extra)
         ro_moved, ro_cut = len(moved), len(cut)
         if moved or cut or lost:
             print("reading order: {} clause(s) moved to a destination, {} CUT, {} EXEMPT-LOST"
@@ -1042,6 +1064,24 @@ def run_close(env, args):
                         chr(10).join("  " + raw[:200] for _, raw in lost),
                         chr(10) + "  -- restore them, or move them to a doc that keeps them "
                         "verbatim. `ro-bytes` may not be earned this way."))
+    # THE SAME PROPERTY, THE OTHER RATCHETED FILE. `ro-lost` was built for the reading order and then
+    # left there, while `mem-over200` (target 0, standing at 37) and `memref-dead` (target 0) are
+    # ratcheted over `memory/MEMORY.md` -- so a close could earn EITHER by deleting a long
+    # USER-attributed standing rule instead of shortening it. `[V]` 2026-09-04: 11 of those 37 lines
+    # name the user. One rule, both files; the fourth instance of this pass's own pattern, which is a
+    # fix applied to one direction, one scope or one instrument while its mirror stays open.
+    prev_mem = baseline_text(env, "memory/MEMORY.md", "private", base, {})
+    if prev_mem is not None and getattr(env, "memory", None):
+        now_mem = read_text(os.path.join(env.memory, "MEMORY.md")) or ""
+        _m, _c, mem_lost = reading_order.moved_and_cut(
+            env.repo, prev_mem, now_mem, mem_extra, select=lambda x: x.split(chr(10)))
+        if mem_lost:
+            raise SystemExit(
+                "REFUSE: {} line(s) recording what the USER said left memory/MEMORY.md:{}{}{}"
+                .format(len(mem_lost), chr(10),
+                        chr(10).join("  " + raw[:200] for _, raw in mem_lost),
+                        chr(10) + "  -- restore them, or move them to a topic file that keeps them "
+                        "verbatim. `mem-over200` and `memref-dead` may not be earned this way."))
     # The cumulative ledger totals. The DELTA is this close's own correction count -- the number the
     # verdict columns cannot carry, because a corrected line is committed in its corrected form.
     n_res, n_flip = resolved_counts(env)
@@ -1065,8 +1105,19 @@ def run_close(env, args):
     ageing = [r for r in rows if r.get("lane") == "ageing"]
     ageing_corr = sum(1 for r in ageing
                       if r["verdict"] in ("ACTUALLY DONE", "STALE DONE", "PARTIAL"))
+    # ...and D8's INDEPENDENT UNIT is the DOC, not the row. `[V]` 2026-09-04 (DIFF pass, round 4):
+    # this close's 78 ageing rows came from 25 docs, ONE of which contributed 18 -- and the single
+    # real finding the run made was ONE doc worth 21 rows. Rows inside a doc are not independent
+    # events: a stale plan yields a burst of them and a healthy doc yields none, so a bar of
+    # "fewer than 5 corrections in 300 rows" is decided by which docs the sweep happened to reach.
+    # Both units ride the trailer; the bar is stated over DOCS and the row counts stay as texture.
+    ageing_docs = {r["key"] for r in ageing}
+    ageing_corr_docs = {r["key"] for r in ageing
+                        if r["verdict"] in ("ACTUALLY DONE", "STALE DONE", "PARTIAL")}
     vals = {"base": base[:12], "rows": len(rows), "labels": meta.get("labels", 0),
             "ageing-rows": len(ageing), "ageing-corr": ageing_corr,
+            "ageing-docs": len(ageing_docs), "ageing-corr-docs": len(ageing_corr_docs),
+            "ageing-lost": meta.get("ageing_lost", 0),
             "resolved": n_res, "flips": n_flip, "ro-moved": ro_moved,
             "ro-cut": ro_cut, "ro-lost": 0,   # a close with ro-lost > 0 cannot exist: it refuses
             "still-open": counts["STILL OPEN"], "actually-done": counts["ACTUALLY DONE"],

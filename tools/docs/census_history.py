@@ -165,6 +165,37 @@ def resolved_counts(env):
     return len(recs), sum(1 for r in recs if r.get("verdict") in FLIP_VERDICTS)
 
 
+def lost_unverdicted(prev_rows, rows, radius, whole_hashes=None):
+    """Rows that left the table while their verdict was still EMPTY.
+
+    `retired_verdicts` skips these one line before it consults the witness, and that skip is exactly
+    the hole the 2026-09-04 close fell into: the operator stamped a doc BEFORE verdicting its rows,
+    which made the doc `touched`, which made the re-census read it diff-scoped -- so 21 ageing rows
+    left the table and `ageing-corr` reported 0 for a run that corrected 21 rows. Nothing anywhere
+    printed a non-zero number (`grep -c unverdicted tools/docs/*.py` found no counter at all).
+
+    The skill's rule -- verdict the whole table, THEN act, THEN re-census -- is prose addressed to
+    the hand, and this project's own ledger says a mandate nothing observes is satisfied by
+    assertion. This is the observation. It is REPORTED rather than refusing, because the honest
+    remedy (restore the doc, verdict, re-edit) is not always available and a refusal with no escape
+    is a worse instrument than a loud number; what it must never do is let D8 read a silent zero.
+    """
+    live = {(r["key"], r["hash"][:12]) for r in rows}
+    out = []
+    for r in prev_rows:
+        if r["verdict"]:
+            continue
+        ident = (r["key"], r["hash"][:12])
+        if ident in live or r["key"] not in radius:
+            continue                        # still on the table, or the doc left the radius honestly
+        if whole_hashes is not None:
+            hs = whole_hashes(r["key"])
+            if hs is not None and r["hash"][:12] in hs:
+                continue                    # the line is still in the file: the SCOPE changed, not the text
+        out.append(r)
+    return out
+
+
 def retired_verdicts(prev_rows, rows, radius, utc, base, whole_hashes=None):
     """Prior verdicts that do NOT carry into this census -> ledger records.
 

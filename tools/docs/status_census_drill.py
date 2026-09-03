@@ -918,6 +918,142 @@ def drill_reading_order():
     finally:
         shutil.rmtree(root, ignore_errors=True)
     drill_ro_lost_refuses()
+    drill_mem_user_lost_refuses()
+    drill_lost_unverdicted_is_counted()
+
+
+def drill_mem_user_lost_refuses():
+    """The SAME property as `ro-lost`, on the OTHER ratcheted file.
+
+    `ro-lost` was built for the reading order and left there, while `mem-over200` (target 0, standing
+    at 37 on the live corpus) and `memref-dead` (target 0) are ratcheted over `memory/MEMORY.md` --
+    so a close could earn either by DELETING a long USER-attributed standing rule instead of
+    shortening it. `[V]` 2026-09-04: 11 of those 37 long lines name the user (DIFF pass, round 4 Q3).
+    This drives a real close that deletes one, and then proves BOTH escapes work, so the widened gate
+    is not simply always-red.
+    """
+    root = tempfile.mkdtemp(prefix="scm_")
+    repo, mem, hist = (os.path.join(root, n) for n in ("repo", "memory", "history"))
+    os.makedirs(os.path.join(repo, "docs"))
+    os.makedirs(mem)
+    try:
+        w = lambda rel, text: io.open(os.path.join(repo, rel), "w", encoding="utf-8",
+                                      newline=NLC).write(text)
+        wm = lambda rel, text: io.open(os.path.join(mem, rel), "w", encoding="utf-8",
+                                       newline=NLC).write(text)
+        git(["init", "-q", "-b", "main", "."], repo)
+        git(["config", "--local", "user.name", "drill"], repo)
+        git(["config", "--local", "user.email", "drill@example"], repo)
+        quote = (chr(45) + ' USER 2026-09-04, verbatim: "this standing rule is the user own words and a '
+                 'close may not earn a ratchet by deleting it"')
+        w(".gitignore", "CLAUDE.md" + NLC)
+        w("CLAUDE.md", "# rules" + NLC)
+        w("docs/a.md", "# A" + NLC + NLC + "plain" + NLC)
+        wm("MEMORY.md", "# index" + NLC + NLC + quote + NLC)
+        git(["add", "--", ".gitignore", "docs/a.md"], repo)
+        git(["commit", "-q", "-m", "base"], repo)
+        E = (repo, mem, hist)
+        T = ["--trailer", "Co-Authored-By: Drill <d@e>", "--trailer", "Claude-Session: https://example/x"]
+        pend = os.path.join(hist, "census", "pending.md")
+
+        def verdict_all(v):
+            t2 = io.open(pend, encoding="utf-8").read().split(NLC)
+            for i, l in enumerate(t2):
+                if l.startswith("| ") and not l.startswith("| # ") and not l.startswith("|---"):
+                    c = [x.strip() for x in l.strip().strip("|").split("|")]
+                    if len(c) >= 11 and c[0].isdigit():
+                        cells = l.rstrip().rstrip("|").split("|")
+                        cells[-1] = " " + v + " "
+                        t2[i] = "|".join(cells) + "|"
+            io.open(pend, "w", encoding="utf-8", newline=NLC).write(NLC.join(t2))
+
+        w("docs/a.md", "# A" + NLC + NLC + "- **DONE** a claim" + NLC)
+        run_sc(E, "census", "--since", "2099-01-01")
+        verdict_all("STILL TRUE")
+        code, out = run_sc(E, "close", "-m", "first", *T)
+        check(code == 0, "a first close lands, so the history holds a previous MEMORY.md")
+
+        wm("MEMORY.md", "# index" + NLC)                       # the user's rule DELETED
+        w("docs/a.md", "# A" + NLC + NLC + "- **DONE** a claim, edited" + NLC)
+        run_sc(E, "census")
+        verdict_all("STILL TRUE")
+        code, out = run_sc(E, "close", "-m", "second", *T)
+        check(code != 0 and "left memory/MEMORY.md" in out,
+              "RED: a close that deleted a USER record from MEMORY.md REFUSES ({})".format(
+                  out.strip()[-110:]))
+
+        wm("topic.md", "# topic" + NLC + NLC + quote.split(": ", 1)[1] + NLC)
+        w("docs/a.md", "# A" + NLC + NLC + "- **DONE** a claim, moved" + NLC)
+        run_sc(E, "census", "--force")
+        verdict_all("STILL TRUE")
+        code, out = run_sc(E, "close", "-m", "moved", *T)
+        check(code == 0, "GREEN: MOVING it into a memory topic file satisfies the widened gate -- a "
+                         "compaction is not a loss ({})".format(out.strip()[-70:]))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def drill_lost_unverdicted_is_counted():
+    """A row that leaves the table with an EMPTY verdict must produce a NON-ZERO number.
+
+    `retired_verdicts` skipped the empty-verdict case one line before consulting its witness, so on
+    2026-09-04 a close reported `ageing-corr=0` for a run that corrected 21 rows: the operator acted
+    on the doc BEFORE verdicting, the re-census read it diff-scoped, and the rows vanished unrecorded.
+    Nothing printed anything (`grep -c unverdicted tools/docs/*.py` = 0). This arm asserts the number
+    in its RED state -- the state a never-computed field cannot satisfy.
+    """
+    root = tempfile.mkdtemp(prefix="scu_")
+    repo, mem, hist = (os.path.join(root, n) for n in ("repo", "memory", "history"))
+    os.makedirs(os.path.join(repo, "docs"))
+    os.makedirs(mem)
+    try:
+        w = lambda rel, text: io.open(os.path.join(repo, rel), "w", encoding="utf-8",
+                                      newline=NLC).write(text)
+        git(["init", "-q", "-b", "main", "."], repo)
+        git(["config", "--local", "user.name", "drill"], repo)
+        git(["config", "--local", "user.email", "drill@example"], repo)
+        w(".gitignore", "CLAUDE.md" + NLC)
+        w("CLAUDE.md", "# rules" + NLC)
+        w("docs/plan.md", "# Plan" + NLC + NLC + "plain" + NLC)
+        io.open(os.path.join(mem, "MEMORY.md"), "w", encoding="utf-8").write("# i" + NLC)
+        git(["add", "--", ".gitignore", "docs/plan.md"], repo)
+        git(["commit", "-q", "-m", "base"], repo)
+        # the doc must have CHANGED since its commit, or the close has nothing to commit at all
+        w("docs/plan.md", "# Plan" + NLC + NLC + "- [ ] one thing OPEN" + NLC +
+                          "- [ ] another thing OPEN" + NLC + "- [ ] a third thing OPEN" + NLC)
+        E = (repo, mem, hist)
+        T = ["--trailer", "Co-Authored-By: Drill <d@e>", "--trailer", "Claude-Session: https://example/x"]
+        pend = os.path.join(hist, "census", "pending.md")
+
+        def verdict_all(v):
+            t2 = io.open(pend, encoding="utf-8").read().split(NLC)
+            for i, l in enumerate(t2):
+                if l.startswith("| ") and not l.startswith("| # ") and not l.startswith("|---"):
+                    c = [x.strip() for x in l.strip().strip("|").split("|")]
+                    if len(c) >= 11 and c[0].isdigit():
+                        cells = l.rstrip().rstrip("|").split("|")
+                        cells[-1] = " " + v + " "
+                        t2[i] = "|".join(cells) + "|"
+            io.open(pend, "w", encoding="utf-8", newline=NLC).write(NLC.join(t2))
+
+        code, out = run_sc(E, "census", "--since", "2099-01-01")
+        check("LOST UNVERDICTED" not in out, "a FIRST census has no previous table, so nothing is lost")
+        verdict_all("STILL TRUE")
+        code, out = run_sc(E, "close", "-m", "first", *T)
+        check(code == 0, "a first close lands, so a base exists for the next census")
+        # a SECOND census whose rows the hand never verdicts...
+        w("docs/plan.md", "# Plan" + NLC + NLC + "- [ ] one thing OPEN" + NLC +
+                          "- [ ] another thing OPEN" + NLC + "- [ ] a third thing STILL OPEN" + NLC)
+        run_sc(E, "census", "--force")
+        # ...and then the doc is ACTED ON before those verdicts are written -- the inversion of the
+        # skill's step order, which is exactly what happened on 2026-09-04.
+        w("docs/plan.md", "# Plan" + NLC + NLC + "SUPERSEDED -- the lane shipped elsewhere" + NLC)
+        code, out = run_sc(E, "census", "--force")
+        check("LOST UNVERDICTED" in out and "docs/plan.md" in out,
+              "RED: rows that left the table UNVERDICTED are named, by doc ({})".format(
+                  " ".join(out.split(chr(10))[-6:])[:100]))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
 
 
 def drill_ro_lost_refuses():

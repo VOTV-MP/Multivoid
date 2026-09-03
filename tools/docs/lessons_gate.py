@@ -41,7 +41,9 @@ USAGE
     python tools/docs/lessons_gate.py --report   # list everything, always exit 0
 """
 import argparse
+import fnmatch
 import io
+import subprocess
 import os
 import re
 import sys
@@ -149,6 +151,50 @@ def load_list(path):
 CITE_ROOTS = ("src", "tools", "research", "reference", ".github")
 
 
+def allow_match(path, allow_files):
+    """Is this UNRESOLVABLE citation into an external corpus we deliberately do not ship?
+
+    Entries match the full cite or its basename, CASE-INSENSITIVELY (a hand-written citation and a
+    generated header disagree on case routinely -- `engine.hpp` vs `Engine.hpp` cost three false
+    verdicts on 2026-09-03), and an entry containing a wildcard is an fnmatch PATTERN, so a corpus
+    can be described by what it IS rather than by which of its files someone happened to cite.
+
+    A pattern is only safe because the caller has already failed to resolve the path.
+    """
+    base = os.path.basename(path)
+    for entry in allow_files:
+        e = entry.lower()
+        for cand in (path.lower(), base.lower()):
+            if e == cand or (("*" in e or "?" in e) and fnmatch.fnmatch(cand, e)):
+                return True
+    return False
+
+
+def masking_entries(explicit):
+    """Explicit allowlist entries that DO resolve in this repo.
+
+    An allowlist exists to excuse citations into a corpus we do not ship. An entry naming a file we
+    DO have would silently excuse real rot in our own tree, which is why the entries are checked
+    before `resolve_cite` only once this refusal exists to keep them honest.
+    """
+    return [e for e in explicit if resolve_cite(e)[0] is not None]
+
+
+def hpp_premise_holds():
+    """`*.hpp` stands in for the CXX dump ONLY while this repo tracks no `.hpp` of its own.
+
+    That is a MEASURED invariant, not a convention, so it gets a check rather than a comment: the
+    day a vendored `.hpp` lands, the pattern would start excusing real rot in our own tree.
+    """
+    try:
+        out = subprocess.check_output(["git", "ls-files", "*.hpp"], cwd=REPO,
+                                      stderr=subprocess.STDOUT).decode("utf-8", "replace")
+    except Exception:
+        return True, []                      # no git: cannot check, do not manufacture a failure
+    tracked = [l for l in out.split(chr(10)) if l.strip()]
+    return (not tracked), tracked
+
+
 def absent_cite_roots(roots=CITE_ROOTS):
     """Which of CITE_ROOTS this checkout does not have.
 
@@ -164,23 +210,46 @@ def absent_cite_roots(roots=CITE_ROOTS):
     return [r for r in roots if not os.path.isdir(os.path.join(REPO, r))]
 
 
+_BASENAME_INDEX = None
+
+
+def _basename_index():
+    """basename -> [abspath, ...] over CITE_ROOTS, walked ONCE.
+
+    `resolve_cite` used to walk the roots per citation. `[V]` 2026-09-04: those roots hold ~53,000
+    files (research 24.4k, reference 12.4k, src 11.2k, tools 5.0k) and the ledger carries ~1,500
+    citations, so the gate spent 66 SECONDS doing the same walk over and over -- the shape
+    `docs/PERF_ARC.md` records for `FindFunction` walking GUObjectArray per lookup. One walk and a
+    dict lookup is the same answer at a cost that lets the gate actually be run.
+
+    Order is preserved: the roots are visited in CITE_ROOTS order, so a caller comparing hit counts
+    or taking hits[0] sees exactly what the per-call walk produced.
+    """
+    global _BASENAME_INDEX
+    if _BASENAME_INDEX is None:
+        idx = {}
+        for root in CITE_ROOTS:
+            full = os.path.join(REPO, root)
+            if not os.path.isdir(full):
+                continue
+            for dirpath, dirnames, filenames in os.walk(full):
+                dirnames[:] = [d for d in dirnames if d not in ("__pycache__", ".git")]
+                for f in filenames:
+                    idx.setdefault(f, []).append(os.path.join(dirpath, f))
+        _BASENAME_INDEX = idx
+    return _BASENAME_INDEX
+
+
 def resolve_cite(path):
     """A cite may be repo-relative or a bare basename. Return (abspath, ambiguous_hits)."""
     direct = os.path.join(REPO, path)
     if os.path.isfile(direct):
         return direct, []
-    base = os.path.basename(path)
-    hits = []
-    for root in CITE_ROOTS:
-        full = os.path.join(REPO, root)
-        if not os.path.isdir(full):
-            continue
-        for dirpath, dirnames, filenames in os.walk(full):
-            dirnames[:] = [d for d in dirnames if d not in ("__pycache__", ".git")]
-            if base in filenames:
-                hits.append(os.path.join(dirpath, base))
-                if len(hits) > 4:
-                    return None, hits
+    hits = _basename_index().get(os.path.basename(path), [])
+    # The old walk bailed out once it had FIVE, so the reported list is capped the same way: an
+    # ambiguous cite is ambiguous, and the count past five carried no meaning to any caller.
+    if len(hits) > 4:
+        return None, hits[:5]
     if len(hits) == 1:
         return hits[0], []
     return None, hits
@@ -373,13 +442,39 @@ def main():
     # ---- check A: file:line citations ------------------------------------------------
     dead_cites, ambiguous, external = [], [], []
     unreachable = []                      # cites into a corpus this checkout does not have
+    explicit_allow = {k: v for k, v in allow_files.items() if "*" not in k and "?" not in k}
+    pattern_allow = {k: v for k, v in allow_files.items() if "*" in k or "?" in k}
+    masked = masking_entries(explicit_allow)
+    if masked:
+        print("lessons_gate: FAIL -- {} allowlist entr(ies) name a file this repo DOES have, so they "
+              "would mask real rot: {}".format(len(masked), ", ".join(sorted(masked)[:5])))
+        return 1
+    ok_hpp, tracked_hpp = hpp_premise_holds()
+    if not ok_hpp and any("*.hpp" in e for e in allow_files):
+        print("lessons_gate: FAIL -- the allowlist carries `*.hpp`, which stands in for the CXX "
+              "dump only while this repo tracks no .hpp of its own. It now tracks {}: {}".format(
+                  len(tracked_hpp), ", ".join(tracked_hpp[:5])))
+        return 1
     missing_roots = absent_cite_roots()
     cites = sorted(set(CITE.findall(text)))
+    # EXPLICIT entries short-circuit BEFORE `resolve_cite`, because resolving is a corpus walk and
+    # doing it for every citation cost this gate 3s -> 69s when the order was simply inverted
+    # (measured 2026-09-04, the fix for round 4 Q2 before it was made cheap). Masking is not a risk
+    # for them: `masking_entries()` refuses at load time any explicit entry that DOES resolve here.
+    # PATTERN entries are the ones that could mask, so they alone wait until resolution has failed.
     for path, lineno in cites:
-        if path in allow_files or os.path.basename(path) in allow_files:
+        if allow_match(path, explicit_allow):
             external.append((path, lineno))
             continue
         resolved, hits = resolve_cite(path)
+        # `[V]` this repo tracks ZERO `.hpp` files while the corpus cites dozens, so the four
+        # hand-listed CXX headers were structurally guaranteed to rot: the census verdicted
+        # `trashBitsPile.hpp` (never listed) and `engine.hpp` (listed as `Engine.hpp`, matched by
+        # EXACT STRING) as dead-on-purpose -- which is how a rung's false-positive rate reads 0
+        # while three of its ten rows are instrument error.
+        if resolved is None and not hits and allow_match(path, pattern_allow):
+            external.append((path, lineno))
+            continue
         if resolved is None and not hits:
             # A BARE BASENAME that resolves nowhere, in a checkout that is MISSING one of
             # the search roots, is UNVERIFIABLE rather than dead -- the file may well be

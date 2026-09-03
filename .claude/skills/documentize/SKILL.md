@@ -40,13 +40,21 @@ smoke or a static guess. Accuracy beats optimism.
   ~70 closes. A doc the session TOUCHED is still a sweep candidate — that is the only way `MEMORY.md`,
   `LESSONS.md` and `CLAUDE.md`, touched by steps 3/3.5/4 of every close, are ever read whole.
   `--sweep` censuses the whole read set, on the user's request.
-- **The hand phase is on probation, with a stated bar (D8).** Over the first 300 AGEING-lane rows, if
-  `actually-done + stale-done + partial` totals fewer than 5, the true rot rate is under ~3 % and this
-  step is DELETED rather than defended. Count rows, never closes: `ageing-rows=` and `ageing-corr=` in
-  every trailer are the denominator and the numerator, so the bar is evaluated by summing trailers and
-  not by anyone's recollection. (The bar used to name a fourth term, `sub-state-stale`. Nothing
-  recorded it, and nothing needed to: a stale sub-state clause under a true label IS a claim, and the
-  hand verdicts that row `STALE DONE` — so the term was already inside the third one.)
+- **The hand phase is on probation, with a stated bar (D8), and the bar counts DOCS.** Over the first
+  100 AGEING-lane DOCS, if fewer than 5 of them yielded any correction (`actually-done` / `stale-done`
+  / `partial`), the true rot rate is under ~5 % of docs and this step is DELETED rather than defended.
+  **The unit is the doc, not the row, because rows inside one doc are not independent events**: `[V]`
+  2026-09-04 the first full close drew 78 ageing rows from 25 docs with ONE contributing 18, and the
+  single real finding it made was one superseded plan worth 21 rows -- so a bar counting rows is
+  decided by which docs the sweep happened to reach, in both directions. Every trailer carries
+  `ageing-docs=` and `ageing-corr-docs=` (the denominator and numerator) plus `ageing-rows=` /
+  `ageing-corr=` as texture, so the bar is evaluated by summing trailers and never by recollection.
+  It also carries **`ageing-lost=`**: rows that left the table with an EMPTY verdict, which is what a
+  run scores when it acts on a doc before verdicting it. A close with a non-zero `ageing-lost` has a
+  compromised sample and its `ageing-corr` understates the rot -- read the two together. (The bar
+  used to name a fourth term, `sub-state-stale`. Nothing recorded it and nothing needed to: a stale
+  sub-state clause under a true label IS a claim, and the hand verdicts that row `STALE DONE`, so the
+  term was already inside the third one.)
 - **Archive stale stuff** — a superseded/abandoned doc or section goes to the nearest `_archive/` with a
   one-line pointer (RULE 2: retired info goes, fully — no parallel stale + fresh).
 - **Write NEW docs with FRESH info** where the current truth has no home; link them in. A NEW doc in

@@ -156,7 +156,7 @@ def section_of(text):
     return lines[start:] if start is not None else []
 
 
-def moved_and_cut(repo, prev_text, now_text, extra_paths=()):
+def moved_and_cut(repo, prev_text, now_text, extra_paths=(), select=None):
     """Clauses that LEFT the reading order since `prev_text`, split by where they went.
 
     A shrink is only good news if the facts went somewhere. `[V]` 2026-09-03 the reading order stood
@@ -175,8 +175,15 @@ def moved_and_cut(repo, prev_text, now_text, extra_paths=()):
     trim; it is a class of line the reading order may not lose, so its departure is reported apart
     from both ordinary buckets and never counted as a successful move.
     """
-    before = {n: (raw, ex) for raw, n, _, ex in clauses(section_of(prev_text))}
-    after = {n for _, n, _, _ in clauses(section_of(now_text))}
+    # `select` picks the region of the source that is under guard. It defaults to the reading-order
+    # section because that is what this module was written for -- but the PROPERTY it enforces (a
+    # RATCHETED number may not be earned by deleting the user's own words) belongs to every file whose
+    # content feeds a ratchet, and `memory/MEMORY.md` feeds two of them (`mem-over200`, target 0,
+    # standing at 37 with ELEVEN of those lines USER-attributed; and `memref-dead`). Passing identity
+    # here puts the whole file under the same guard (DIFF pass, round 4 Q3).
+    sel = select or section_of
+    before = {n: (raw, ex) for raw, n, _, ex in clauses(sel(prev_text))}
+    after = {n for _, n, _, _ in clauses(sel(now_text))}
     gone = [(n, before[n][0]) for n in before if n not in after]
     if not gone:
         return [], [], []

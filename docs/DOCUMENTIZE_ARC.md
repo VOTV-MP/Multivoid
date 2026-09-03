@@ -1291,7 +1291,7 @@ tree's state; the pending table ordered by doc. Each is a measured cost, not a p
 own `/qf` before it is built, and it does NOT displace D0 (the resolved ledger), which is a
 correctness defect and stays first.
 
-## 10.8 The move lane publishes, and it is audited for fidelity (2026-09-04)
+### 10.8 The move lane publishes, and it is audited for fidelity (2026-09-04)
 
 D10 moved 271 lines out of `CLAUDE.md`'s entry `4e.` into the new `docs/signals/HISTORY.md`. `CLAUDE.md`
 is UNPUBLISHED; `docs/signals/HISTORY.md` is tracked. **The move was therefore a publication, and
@@ -1315,3 +1315,52 @@ The general check is cheap and is the proper fix: for a commit's added lines in 
 also appear in an UNPUBLISHED tree (`CLAUDE.md`, the memory directory, `docs/security/`, `research/`)?
 If so the close owes an explicit publication acknowledgement, exactly as it already owes `--new` for a
 new doc. Rule: `[[feedback-push-leak-audit-service-ties-and-sha-rewrite]]` head 6.
+
+### 10.9 DIFF pass round 4 -- four confirmed, and the fourth instance of the pattern (2026-09-04)
+
+The pass's own pattern held again: **every round found the PREVIOUS round's fix incomplete in the same
+way -- a rule applied to one DIRECTION, one SCOPE or one INSTRUMENT.** Round 4 found the biggest one.
+
+| # | what the critic asked | measured | fix |
+|---|---|---|---|
+| Q1 | what stops the witness answering for an UNVERDICTED row? | `census_history.py:194` returns one line BEFORE `whole_hashes` is consulted, and the symbol `unverdicted` names no counter anywhere in `tools/docs/` | `lost_unverdicted()` asks the same witness for the empty-verdict case; the census PRINTS the docs; `ageing-lost=` rides the trailer |
+| Q2 | does `not-a-cite=0` measure the rung, or which token the hand reached for? | 3 of the close's 10 `cite` rows were instrument error verdicted `STILL TRUE`. `git ls-files '*.hpp'` = **0** while the corpus cites dozens, so a four-file allowlist could never cover it; and `lessons_gate.py:379` matched by exact string, so `engine.hpp` could not reach its own `Engine.hpp` | the allowlist is consulted only AFTER resolution fails (so a pattern can never mask a file we have), case-insensitively, with fnmatch patterns; `*.hpp` is guarded by `hpp_premise_holds()` |
+| Q3 | `ro-lost` guards CLAUDE.md -- what refuses when a USER line leaves MEMORY.md? | nothing. `mem-over200` is RATCHETED at target 0 and stands at 37, **11** of them USER-attributed; `memref-dead` falls the same way when a pointer is deleted rather than repaired | `moved_and_cut` takes a `select` region; MEMORY.md comes under the SAME refusal; `memory/*.md` joins both haystacks so a legitimate compaction still reads as MOVED |
+| Q4 | is D8's independent unit the row or the doc? | 78 ageing rows over **25 docs**, top contributor 18 (23 %); the run's single finding was ONE doc worth 21 rows | `ageing-docs=` / `ageing-corr-docs=`; the bar restated over **100 DOCS, fewer than 5 corrected**, with row counts kept as texture |
+
+**Q3 is the fourth instance, and the clearest statement of the pattern so far.** `ro-lost` was built in
+round 2 for a real property -- a RATCHETED number may not be earned by deleting the user's own words --
+and then left attached to the one FILE that prompted it, while the property belongs to every
+deletion-earnable ratchet. Writing a rule and scoping it to its first instance is the same motion as
+fixing the rejection side and leaving the acceptance side open (round 3), and as asking the grammar's
+row set instead of the file (round 2).
+
+**A near-miss caught by reading, not by a drill:** the widened MEMORY.md guard was first written
+against `env.memory_dir`, and the attribute is `env.memory`. Behind `getattr(env, "memory_dir", None)`
+the whole refusal would have been silently unreachable -- a gate that can never fire, the exact class
+rounds 1-3 spent themselves on. Both new gates therefore ship with arms asserting them in their RED
+state (`drill_mem_user_lost_refuses`, `drill_lost_unverdicted_is_counted`), never at a green value.
+
+**MODULAR RULE -- two files are over the soft cap and owe an extraction (flagged 2026-09-04, not yet
+done).** `status_census.py` is **1,273** LOC and `status_census_drill.py` is **1,225**, against the
+800-line soft cap. Neither of round 4's fixes is a distinct subsystem (they are conditions wired into
+existing flows), so the extract-first trigger did not fire -- but the flag is owed at the moment of
+touching, not deferred to a catalog:
+
+- `status_census.py` -> the natural seam is the one the file already has, **compute the table** vs
+  **make the commits**. `run_close` and its refusals are a coherent second module (`census_close.py`),
+  and the `5aa329bd` extraction already proved the pattern by moving the private history out.
+- `status_census_drill.py` -> split by what the arm DRIVES: the unit/fixture arms (A-F, the grammar,
+  the resolver, the reading order) from the arms that run a REAL close end to end (G-I plus the two
+  added here). The second group is where the runtime goes, and it is the group that keeps growing.
+
+**AND THE GATE WAS TAKING 66 SECONDS, WHICH IS ITS OWN DEFECT.** Found while (wrongly) suspecting the
+Q2 fix of a regression: the baseline was already 1m06s, so the reorder cost ~4s and the attribution was
+mine, not the code's. The real cause is `resolve_cite`, which did a full `os.walk` of `CITE_ROOTS` for
+EVERY basename citation -- `[V]` those roots hold ~53,000 files (research 24,433 / reference 12,433 /
+src 11,226 / tools 4,962) and the ledger carries ~1,500 citations. That is exactly the shape
+`docs/PERF_ARC.md` records for `FindFunction` walking `GUObjectArray` per lookup, in a dev tool instead
+of a hot path. One walk into a basename index and a dict lookup: **66s -> 24s**, and the gate's full
+output is BYTE-IDENTICAL before and after (control run with only the index reverted), so the index buys
+speed and changes no verdict. It matters because a gate the operator is told to run at step 3.5 and CI
+runs per push is one that gets skipped at a minute and run at twenty seconds.

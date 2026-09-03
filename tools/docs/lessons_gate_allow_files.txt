@@ -1,12 +1,21 @@
-# Files docs/LESSONS.md cites that are NOT in this repo. A cite into one of these is
-# not rot, but its LINE NUMBER cannot be checked -- treat those numbers as advisory.
-# One basename (or repo-relative path) per line; '#' starts a comment.
+# Files the DOC CORPUS cites that are NOT in this repo -- docs/, research/, the memory
+# directory, every tree the census reads, not docs/LESSONS.md alone (that scoping was the
+# instrument's own defect until 2026-09-03). A cite into one of these is not rot, but its
+# LINE NUMBER cannot be checked -- treat those numbers as advisory.
+#
+# One basename or repo-relative path per line; '#' starts a comment. Matching is
+# CASE-INSENSITIVE, and an entry containing * or ? is an fnmatch PATTERN. Entries are
+# consulted ONLY for a citation that resolves nowhere in the repo, so a pattern can never
+# mask a file we actually have.
 
 # --- the UE4SS CXX header dump (our SDK; generated, never committed) ---
-UMG.hpp                 # UE4SS CXXHeaderDump -- UMG module
-Engine.hpp              # UE4SS CXXHeaderDump -- Engine module
-PhysicsCore.hpp         # UE4SS CXXHeaderDump -- PhysicsCore module
-prop_container.hpp      # UE4SS CXXHeaderDump -- game BP class header
+# `[V]` 2026-09-04: this repo tracks ZERO `.hpp` files (`git ls-files '*.hpp'` = 0) while the
+# corpus cites dozens -- every UE module header and every game BP class header. So `.hpp` IS
+# the dump here, by construction, and enumerating the four that had been cited so far was a
+# site-list that was guaranteed to rot: it missed `trashBitsPile.hpp` outright and could not
+# match `engine.hpp` against its own `Engine.hpp`. The premise is machine-checked by
+# `hpp_premise_holds()` -- the day a real `.hpp` is tracked, this entry is refused.
+*.hpp                   # UE4SS CXXHeaderDump -- every module + game BP class header
 
 # --- Unreal Engine 4.27 source (read via IDA/decomp, not vendored) ---
 D3D11Viewport.cpp       # UE4 RHI source, read for the PresentChecked seam
