@@ -215,17 +215,28 @@ newest source commit (`fff4032b`): 15 hunk-header symbols; `OnDisconnect` is cit
 — "tens, not thousands" is true only under the cut, and the census prints the radius size every
 run so the claim is measured, not carried. A docs-only diff has radius (i) only and prints
 `radius: docs-only`. **Radius:** (i) the docs touched by the session — **enumerated PER TREE
-(round 3, Q1), because three of the four trees are invisible to a main-repo diff:** `[V]`
-`research/` is a nested repo the main tree ignores (`.gitignore:283`; its own HEAD, no remote),
-`CLAUDE.md` is ignored (`:113`), `memory/` is outside any repository. So: `docs/` by
-`git diff <base>`; `research/` by `git -C research diff <its base>` — and it gets its own close
-commit, see (c); `memory/` and `CLAUDE.md` by the diff of the private history (d), which therefore snapshots the WHOLE memory directory, not two
-files (`[V]` 6.10 MB of text, 2.50 MB gzipped, delta-compressed after the first snapshot); (ii)
+(round 3, Q1), and the tree list is not a list (round 5, Q1): every path the census READS owes a
+history source, and the source is decided PER PATH by git's own tracking state, never by a
+directory name.** The READ SET is computed: every `*.md` the main repo tracks (`[V]` 166 — 135
+under `docs/`, 31 outside it: `tools/` 14, `reference/` 6, `.claude/` 3, `assets/` 2, five at the
+root, one under `src/`), every `*.md` under `docs/` whether tracked or not, `research/findings/`
+(298), the memory directory (1,063) and `CLAUDE.md`. Per path: tracked by main → `git diff <base>`;
+tracked by the inner `research/` repo (`[V]` nested and ignored, `.gitignore:283`; own HEAD, no
+remote) → `git -C research diff <its base>`, and it gets its own close commit, see (c); tracked by
+NEITHER → the diff of the private history (d), whose snapshot set is therefore COMPUTED as the read
+set minus what any repository tracks — today `CLAUDE.md` (ignored, `:113`), the whole memory
+directory (`[V]` 6.10 MB of text, 2.50 MB gzipped, delta-compressed after the first snapshot), and
+**20 ignored `*.md` under `docs/`: the 14 of `docs/security/` (`.gitignore:301`; the four security
+lines §2.3 sampled, #13, #14, #27, #28, live there) and six more — `AGENT_SPAWNING.md`, `DOCS_ARC.md`,
+`SERVER_BROWSER_ARC.md`, the three `QUESTION_FORM_*`** — which round 3's list of three trees would have
+left with no history at all. Ignored `*.md` OUTSIDE `docs/` (`[V]` three: `SUPPORT.md`, two
+`reference_*_vps.md`) are outside the read set and get none; the census prints the read set's size
+per tree every run. (ii)
 every doc citing a specific symbol or path of the diff; (iii) **the amortised sweep** — the K docs
-whose last census is oldest. **The arithmetic, stated (round 3, Q1):** `[V]` 155 + 298 + 1,057 =
-1,510 files; at K = 10 a full cycle is 151 closes (~19 active days at 8.1 closes a day); **K = 40,
-so a full cycle is 38 closes (~5 active days)**, and the trailer prints `sweep-cycle=` beside
-`sweep-cursor=`. Each doc's last-census commit is per-doc STATE, which a scalar trailer cannot hold:
+whose last census is oldest. **The arithmetic, restated on the computed read set (rounds 3 and 5):**
+`[V]` 166 + 20 + 1 + 298 + 1,063 = 1,548 files; at K = 10 a full cycle is 155 closes (~19 active
+days at 8.1 closes a day); **K = 40, so a full cycle is 39 closes (~5 active days)**, and the trailer
+prints `sweep-cycle=` beside `sweep-cursor=`. Each doc's last-census commit is per-doc STATE, which a scalar trailer cannot hold:
 it lives in `docs_census_state.json` inside the private history repo, committed with every
 snapshot. `--sweep` = the full pass, on the user's request.
 **Label grammar (M-1, corrected by the `/qf` pass round 1 — §8 pass 3):** a LABEL is a STATUS
@@ -295,9 +306,17 @@ carry them. **Who writes it (corrected by round 2, Q3):** `[V]` nothing exists t
 `core.hooksPath` unset, no CI step reads `git log`, `Docs-Census` appears in no commit — so as
 first drafted the trailer would have been READ off the script by the agent and PASTED, the
 honor-system shape (*"a check whose output you do not read is not a check"*). Instead **the script
-performs the close commit**: `status_census.py close -m "<subject>"` runs the census, evaluates
-the ratchet, and on green runs `git commit` itself with the trailer appended through
-`git interpret-trailers` (git 2.52 on this box); red = exit 1 = no commit. And **a CI gate observes
+performs the close commit**: `status_census.py close -m "<subject>" --trailer "Co-Authored-By: …"
+--trailer "Claude-Session: …"` runs the census, evaluates the ratchet, and on green runs
+`git commit` itself with the trailers appended through `git interpret-trailers` (git 2.52 on this
+box; `[V]` it appends three trailers in the order given); red = exit 1 = no commit. **The
+attribution trailers are REQUIRED inputs, never minted (round 5, Q4):** `[V]` 40 of the last 40
+commits carry both `Co-Authored-By:` and `Claude-Session:` by hand, 614 commits carry the session
+URL, and the model name has ELEVEN spellings in history (`Claude Fable 5`, `Fable 5.1`, `Opus 4.7`
+… `Pelmentor`), so neither value is the script's to know — it REFUSES to commit without both, the
+user's *"the trailer STAYS"* rule enforced as a refusal, and writes the same three on all three
+commits of a close (main, `research/`, the private history). The CI gate checks `Co-Authored-By:`
+beside `Docs-Census:` on every close commit. And **a CI gate observes
 it outside the run**: `tools/docs/docs_census_gate.py` reads `git log --format=%B` for every close
 commit in the push and fails on a missing trailer or a ratchet column that grew against the
 previous trailer — history is all it needs, so the untracked files' numbers are checked by a
@@ -308,22 +327,41 @@ commit with the fixed subject prefix **`[docs] close:`** — the registration �
 three shapes: a prefixed commit without a trailer, a trailer without the prefix, and **a subject
 that STARTS with the retired close form `[docs] documentize`** (one close path, RULE 2) — never "the
 word documentize anywhere", which would make an arc-doc edit like `[docs] DOCUMENTIZE_ARC:` a
-false close. **The gate's range starts at a REGISTERED boundary (round 4, Q1):** the sha of the
-commit that lands `docs-census.yml`, written into the workflow as `since`; history before it is not
-judged — `[V]` the unpushed range alone holds 10 subjects with the word (7 arc-doc edits + 3
+false close. **The gate's range starts at a REGISTERED boundary (round 4, Q1), and the boundary is COMPUTED,
+not written (round 5, Q3):** a commit cannot carry its own hash, so a `since` sha in the workflow
+would be either the parent, minted by hand, or a second commit — the shape the ledger's *"a
+file-hash gate can only be minted where it is checked"* row forbids. Instead the gate finds the
+commit that ADDED its own workflow file, `git log --diff-filter=A --format=%H --
+.github/workflows/docs-census.yml | tail -1`, judges `<that>..HEAD`, and prints the boundary sha it
+computed on every run (`[V]` the same command on `build-core.yml` returns `47b88116`, 2026-07-25;
+the workflow checks out with `fetch-depth: 0` as `build-core.yml:57` already does). History before it
+is not judged — `[V]` the unpushed range alone holds 10 subjects with the word (7 arc-doc edits + 3
 old-form closes) and all history holds 249 old-form closes and 0 prefixed ones, so a gate with no
 boundary would be red by construction on the push that lands it, the L5 shape this doc cites
-against its own first draft. **The inner repository gets its own close (round 4, Q2):** `research/`
+against its own first draft. A later move of the workflow file moves the boundary with it, on
+purpose and visibly. **The inner repository gets its own close (round 4, Q2):** `research/`
 is a repository the main commit cannot carry (`[V]` 57 uncommitted paths there today, 16 under
 `findings/`, 54 commits, no remote), so `close` also runs `git -C research commit` with the same
 prefix and the same trailer, censuses `research/`'s INDEX like main's, refuses unstaged docs in
 radius there too, and the main trailer records `research-base=<sha>`. **Index hygiene on a shared
 box (round 4, Q3):** `close` never commits with a pathspec (`[V]` `LESSONS.md:145` — the pathspec
 form discards the index) and never blindly (`[V]` `:6978` — a no-pathspec commit once swallowed
-another session's ten staged paths): before committing it lists the index and REFUSES if any
-staged path lies outside the trees a close owns (main: `docs/` and `.claude/skills/`; research:
-`findings/`), printing them — the other session's hunks stay theirs, per `docs/CROSS_SESSION.md`'s
-`git apply --cached` protocol. **Where the gate runs:** in its OWN
+another session's ten staged paths): before committing it lists the index and REFUSES, printing
+them, any staged path the close does not own. **What a close owns is not two directories, it is
+CLAIMS (round 5, Q2):** `[V]` of the 76 closes since 2026-08-24, 24 carried a non-markdown path
+outside `docs/` — `.h`/`.cpp` headers whose COMMENTS held a stale claim (the skill's Step 1 reaches
+a claim wherever it lives: `multiplayer_menu.h`, `ko_respawn.h`, `world_identity.h` twice), `tools/`
+and `reference/` READMEs, and eight that carried real code (`dead_api_census.py` 151 lines,
+`compare_zips.ps1` 111, `mp.py`, `trash_proxy.cpp`, `.gitignore` …). So the owned set is computed
+per staged path: (1) any `*.md` the repository tracks, anywhere (`[V]` 31 of 166 live outside
+`docs/`); (2) the close's own instruments, `tools/docs/**` and `.claude/skills/**`; (3) any other
+path whose staged hunks are COMMENT-ONLY — the code residue of the `-` lines (comments stripped,
+whitespace collapsed) equals that of the `+` lines, which admits a trailing `// …` rewrite on an
+unchanged declaration (`[V]` the rule re-run over the 24: 16 green, 8 refuse, and all 8 are the
+code cases — a tool shipped inside a close, which the ledger already names as the failure). A
+refused path is committed FIRST in its own `[tools]`/`[src]` commit; there is no `--also` flag,
+because an override recorded as a count is still an override nobody reads back. The other
+session's hunks stay theirs, per `docs/CROSS_SESSION.md`'s `git apply --cached` protocol. **Where the gate runs:** in its OWN
 workflow file, `.github/workflows/docs-census.yml`, on push — `build-core.yml` is untouched, because
 `[V]` `tools/release/fingerprint.json:4` pins `build_core_sha256` and the ledger row *"Editing
 `build-core.yml` = do the fingerprint re-commit ritual in the SAME workstream"* records a release run
@@ -336,9 +374,16 @@ two-session box); the untracked trees are censused from the snapshot (d), which 
 history will hold.
 
 **Change (d) — the private history, and where the hand verdicts live.** `status_census.py
---snapshot` copies `CLAUDE.md`, `MEMORY.md` and the WHOLE `memory/` directory into a LOCAL-ONLY
-repository (`~/.claude/projects/<slug>/history/`, `git init`, no remote — the `research/` pattern
-from the docs-arc note) and commits them. **The per-row HAND VERDICTS have no home with history
+--snapshot` copies the COMPUTED snapshot set of (a) — the whole memory directory, `CLAUDE.md`, and
+every read-set `*.md` no repository tracks (today the 20 ignored files under `docs/`, `docs/security/`
+among them; local-only material stays local: this repository is under the user's profile, never
+inside the project) under their relative paths into a LOCAL-ONLY repository
+(`~/.claude/projects/<slug>/history/`, `git init`, no remote — the `research/` pattern from the
+docs-arc note) and commits them. **Its identity is COPIED, not typed (round 5, Q4):** `git init`
+copies `user.name` / `user.email` from the main repo's LOCAL config (`[V]` `pelmentor
+<pelmentr@gmail.com>` in main, `research/` and `site/` alike — the *"set the same in any NEW repo"*
+rule is a copy by definition) and refuses to initialise when main has none; every later snapshot
+commit re-compares the two and refuses on a mismatch. **The per-row HAND VERDICTS have no home with history
 today** (`[V]` one verdict word in the last 40 commit bodies; the Step 5 table lives in a chat
 report), so `close` writes the full census + verdict table to that repository too
 (`census/<utc>-<sha>.md`), commits it with the snapshot and `docs_census_state.json`, and the
@@ -357,8 +402,8 @@ rule). **§5, question 1 puts this to the user.**
 **Mechanism.** The set to check is computed, bounded and printed; "reconciled" means every row has a
 verdict, checkable by reading the list; the numbers live in commit trailers and a private history.
 
-**Cost.** One ~300-line script with a drill (the `lessons_gate_drill.py` pattern: shown RED on a
-synthetic tree before trusted green); a census per run instead of a claim.
+**Cost.** One ~400-line script and a ~100-line gate with a workflow, each with a drill (the
+`lessons_gate_drill.py` pattern: shown RED before trusted green); a census per run instead of a claim.
 
 **Acceptance.** Every close commit carries the trailer (grep); `sweep-cursor` advances every run;
 the re-take of §2.3 at run 10 is a `--sweep` CENSUS, not a sample.
@@ -606,15 +651,16 @@ Ledger pass 1 (`design`), this session's scratchpad. Every reply gated by `verif
 | 4 | Q2 | invariant-not-site-list | what `research/`'s census reads when no commit, base or registration is named for that repo | measured: 57 uncommitted paths (16 under `findings/`), 54 commits, no remote | WP-1(c): `close` commits the inner repo too, same prefix and trailer; index-read; `research-base=` in the main trailer |
 | 4 | Q3 | existing-owner | what `close` does with a staged path outside the doc trees on a shared index | measured: `LESSONS.md:145` and `:6978`; `CROSS_SESSION.md:142-143` | WP-1(c): list the index; refuse any staged path outside the trees a close owns; never a pathspec commit |
 | 4 | Q4 | source-consistency | which entry delimiter the ratchet implements — the doc's `<n><letters>` (25 entries, longest 596) or Appendix A's hyphen pattern (54 / 275) | measured: both | WP-3: the hyphen pattern; the notation slip corrected |
-| 5 | Q1 | invariant-not-site-list | `docs/security/` is ignored (14 files, 0 tracked) and in no snapshot — which enumeration reaches the four security lines §2.3 sampled, and what invariant decides which trees owe a diff source | RECORDED, not yet answered (usage limit) | sketched: every tree the census reads owes a history source → `docs/security/` joins the snapshot |
-| 5 | Q2 | regression-by-logic | 32 of 82 closes since 08-24 committed a path outside `docs/` + `.claude/skills/` — which would the index refusal have been green on, and what decides the trees a close owns | RECORDED, not yet answered | sketched: the trees = the paths the skill's own steps WRITE (`tools/docs/`, `reference/agency-agents/` included); measure the 32 |
-| 5 | Q3 | source-consistency | which §9 step lands the gate, and whose sha `since` carries when a commit cannot contain its own hash | RECORDED, not yet answered | sketched: name the step; `since` = the landing commit's PARENT |
-| 5 | Q4 | writers-census | who writes `Co-Authored-By` / `Claude-Session` (40 of 40 recent commits, by hand) and who sets the `pelmentor` identity in the new history repo | RECORDED, not yet answered | sketched: `close` writes both trailers and sets the identity per the user's rules |
+| 5 | Q1 | invariant-not-site-list | `docs/security/` is ignored (14 files, 0 tracked) and in no snapshot — which enumeration reaches the four security lines §2.3 sampled, and what invariant decides which trees owe a diff source | measured: 20 ignored `*.md` under `docs/` (14 security + 6), 166 tracked `*.md` (31 outside `docs/`), 3 ignored outside; read set 1,548 | WP-1(a)/(d): the read set is computed, the history source is decided per path by tracking state, the snapshot set = read set minus what any repo tracks; K = 40 → 39 closes |
+| 5 | Q2 | regression-by-logic | 32 of 82 closes since 08-24 committed a path outside `docs/` + `.claude/skills/` — which would the index refusal have been green on, and what decides the trees a close owns | measured: 76 closes, 24 with a non-md path outside own tooling; under a comment-residue rule 16 green / 8 refuse, the 8 all real code (151- and 111-line tools among them) | WP-1(c): a close owns CLAIMS — tracked `*.md` anywhere, `tools/docs/` + `.claude/skills/`, comment-only hunks elsewhere; code refuses and goes in its own commit; no `--also` |
+| 5 | Q3 | source-consistency | which §9 step lands the gate, and whose sha `since` carries when a commit cannot contain its own hash | measured: §9 named neither file; `git log --diff-filter=A -- build-core.yml` returns `47b88116`; `fetch-depth: 0` at `build-core.yml:57` | WP-1(c)/§9.0: the boundary is COMPUTED as the add-commit of the workflow file and printed per run; step 0 lands script + gate + workflow + both drills in one commit |
+| 5 | Q4 | writers-census | who writes `Co-Authored-By` / `Claude-Session` (40 of 40 recent commits, by hand) and who sets the `pelmentor` identity in the new history repo | measured: 40/40 both; 614 session URLs; 11 model-name spellings; identity `pelmentor` in main, `research/`, `site/` | WP-1(c)/(d): both trailers are REQUIRED `--trailer` inputs, refused if absent, written on all three commits; the gate checks `Co-Authored-By:`; the history repo copies main's local identity and refuses without one |
 
-**The pass is PAUSED at round 5** (2026-09-02, the 5-hour usage limit at 3 %): the reply is gated,
-its four anchors verified and recorded; the answers, the fold and round 6 are the next session's first
-step (the thread file's last entry sketches the answers). §9 does not open until the ledger prints
-CONVERGED.
+**Round 5 was answered the next morning** (2026-09-03; the reply had landed and been gated at the
+usage limit the evening before, its four anchors verified). Fifth reactive round; all four changes
+are specifications of the one mechanism — three of them replace a LIST with a COMPUTED set (the
+trees that owe a history source, the paths a close owns, the gate's boundary), the fourth turns two
+hand-typed values into REQUIRED inputs. §9 does not open until the ledger prints CONVERGED.
 
 Round 4 found the ledger's third first-use defect: `tail` was not a legal command anchor, so the
 critic's `tail ... | grep -c = 25` was classed as a quote and not re-run — fixed (`77268a7b`), re-run,
@@ -643,8 +689,15 @@ Scratch: `stale_sample/` in this session's scratchpad.
 
 ## 9. Build order
 
-0. `tools/docs/status_census.py` with its drill (RED on a synthetic tree first): the label grammar,
-   the radius, the subordinate-fact column, the trailer, `--snapshot`, `--sweep`, `--loose`.
+0. ONE commit: `tools/docs/status_census.py` with its drill (RED on the §2.3 fixture first): the
+   label grammar, the computed read set and per-path history source, the subordinate-fact column,
+   the trailer, `close` (three commits, the owned-path refusal, the required attribution trailers),
+   `--snapshot` (identity copied from main), `--sweep`, `--loose`; AND `tools/docs/docs_census_gate.py`
+   + `.github/workflows/docs-census.yml` with the gate's own drill on a synthetic history (an
+   old-form close before the boundary ignored; a prefixed close without a trailer, a trailer without
+   the prefix, a retired-prefix subject and a missing `Co-Authored-By:` after it, each RED). The
+   gate's boundary is the add-commit of the workflow file, so the first `[docs] close:` can never
+   precede the gate (round 5, Q3).
 1. WP-1 text: Step 0.5, Step 1's enumeration, Step 0.5(5), the scope statement, the frontmatter, the
    Step 5 ledger; the memory file + `MEMORY.md` line for the 2026-06-21 rule rewritten (after §5.1).
 2. WP-4: the three checks in `lessons_gate.py`, drilled RED first; Step 3.5 points at `--pairing`.
