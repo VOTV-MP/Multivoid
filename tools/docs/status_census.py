@@ -52,7 +52,6 @@ import io
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import time
@@ -65,6 +64,10 @@ from status_grammar import (read_text, sha1, DATE_RE, CORR_RE, ACCRETION_RE, DAT
                             STATUS_WORDS, COMPLETION_WORDS, OPEN_WORDS, VOCAB_MARKER)  # noqa: E402
 from comment_lexer import comment_only  # noqa: E402
 import trailer_schema as TS  # noqa: E402  -- the ONE trailer column vocabulary (census + gate)
+from census_git import git, gitz  # noqa: E402  -- the git primitive both layers share
+from census_history import (utc_now, history_init, snapshot_sync, state_load, state_save,  # noqa: E402
+                            resolved_path, resolved_load, resolved_append, resolved_counts,  # noqa: E402
+                            retired_verdicts, FLIP_VERDICTS)  # noqa: E402
 
 K_DEFAULT = 40
 ROW_BUDGET = 40          # the SWEEP's own row budget: the hand check is paid per ROW, so that is the
@@ -128,23 +131,6 @@ def discover_owned_repos(repo, depth=4):
             dirnames.remove(".git")
     return out
 
-
-def git(args, cwd, check=True, env=None, input_text=None):
-    r = subprocess.run(["git"] + list(args), cwd=cwd, capture_output=True, text=True,
-                       encoding="utf-8", errors="replace", env=env, input=input_text)
-    if check and r.returncode != 0:
-        raise RuntimeError("git {} failed ({}): {}".format(" ".join(args), r.returncode,
-                                                            (r.stderr or r.stdout).strip()[:400]))
-    return r.stdout
-
-
-def gitz(args, cwd):
-    """A NUL-separated path list: git QUOTES non-ASCII paths in line mode (core.quotePath), -z never does."""
-    return [p for p in git(list(args), cwd).split("\0") if p]
-
-
-def utc_now():
-    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
 # ----------------------------------------------------------------------------- the read set
@@ -243,157 +229,6 @@ def diff_symbols(env, base):
     return syms
 
 
-# ----------------------------------------------------------------------------- history / state
-def history_init(env):
-    h = env.history
-    os.makedirs(h, exist_ok=True)
-    if not os.path.isdir(os.path.join(h, ".git")):
-        git(["init", "-q"], h)
-    name = git(["config", "--local", "user.name"], env.repo, check=False).strip()
-    mail = git(["config", "--local", "user.email"], env.repo, check=False).strip()
-    if not name or not mail:
-        raise SystemExit("REFUSE: main has no local user.name/user.email to copy into the history repo "
-                         "(CLAUDE.md git-identity rule: set the same in any NEW repo)")
-    hn = git(["config", "--local", "user.name"], h, check=False).strip()
-    hm = git(["config", "--local", "user.email"], h, check=False).strip()
-    if (hn, hm) != (name, mail):
-        if hn or hm:
-            raise SystemExit("REFUSE: history identity {} <{}> != main {} <{}>".format(hn, hm, name, mail))
-        git(["config", "--local", "user.name", name], h)
-        git(["config", "--local", "user.email", mail], h)
-    return h
-
-
-def snapshot_sync(env, rs):
-    """Copy every PRIVATE read-set path (and the whole memory dir) into the history worktree
-    under its key; delete what vanished. -> list of changed keys (git status of the worktree)."""
-    h = history_init(env)
-    wanted = {}
-    for key, (owner, ap) in rs.items():
-        if owner == "private":
-            wanted[key] = ap
-    if os.path.isdir(env.memory):
-        for f in os.listdir(env.memory):
-            ap = os.path.join(env.memory, f)
-            if os.path.isfile(ap):
-                wanted["memory/" + f] = ap
-    for key, ap in wanted.items():
-        dst = os.path.join(h, key)
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
-        shutil.copyfile(ap, dst)
-    for sub in ("memory", "docs", "research"):
-        root = os.path.join(h, sub)
-        for dirpath, dirnames, filenames in os.walk(root):
-            for f in filenames:
-                rel = os.path.relpath(os.path.join(dirpath, f), h).replace("\\", "/")
-                if rel not in wanted:
-                    os.remove(os.path.join(dirpath, f))
-    if os.path.isfile(os.path.join(h, "CLAUDE.md")) and "CLAUDE.md" not in wanted:
-        os.remove(os.path.join(h, "CLAUDE.md"))
-    if subprocess.run(["git", "rev-parse", "--verify", "-q", "HEAD"], cwd=h, capture_output=True).returncode != 0:
-        # FIRST RUN: no history to diff against. The snapshot is committed as the BASELINE and no
-        # private path is "changed" -- the sweep reaches them over the cycle; the next close diffs.
-        git(["add", "-A"], h)   # the worktree holds only the snapshot at this point (census/ is written after)
-        git(["commit", "-q", "--allow-empty", "-m", "[docs] history baseline: first snapshot of the trees no repository tracks"], h)
-        n = len(git(["ls-files", "-z"], h).split("\0")) - 1
-        print("history baseline committed: {} files in {}".format(n, h))
-        return []
-    changed = []
-    for rec in git(["status", "--porcelain", "-z", "--untracked-files=all"], h).split("\0"):
-        p = rec[3:] if len(rec) > 3 else ""
-        if p and not p.startswith("census/") and p != "docs_census_state.json":
-            changed.append(p)
-    return changed
-
-
-def state_load(env):
-    p = os.path.join(env.history, "docs_census_state.json")
-    t = read_text(p)
-    return json.loads(t) if t else {"docs": {}}
-
-
-def state_save(env, st):
-    p = os.path.join(env.history, "docs_census_state.json")
-    io.open(p, "w", encoding="utf-8").write(json.dumps(st, indent=1, sort_keys=True))
-
-
-# ----------------------------------------------------------------------------- the resolved ledger
-# WHY (D0). A verdict is a MEASUREMENT taken at a moment, and the close records only the LAST one.
-# The action a verdict ORDERS is an edit to the line it names -- so the moment a defect is FIXED, the
-# row's text changes, its hash changes, the carry-forward drops the verdict, and the corrected line
-# comes back as a fresh row verdicted STILL TRUE. `[V]` 2026-09-03, the first real close of the
-# rebuilt census: two memory topics were verdicted STALE DONE and stamped, and the trailer it wrote
-# read `actually-done=0 stale-done=0` -- a run that corrected two claims, reporting that it corrected
-# none. The verdict columns are not wrong; they describe the text being committed, which is what the
-# content pin exists to guarantee. What was missing is a record of the verdict that MOTIVATED the fix.
-#
-# So: when a verdict leaves the live table because its line was acted on, it is appended HERE first.
-# Two consequences worth stating, because both were design choices:
-#   - The record is written at RE-CENSUS time, not at close time -- that is when the verdict is lost,
-#     and a record written later would have to reconstruct it.
-#   - The record does NOT carry a close sha. It cannot: the sha does not exist yet. It does not need
-#     to either -- the ledger is committed by the history commit, so the commit that FIRST contains a
-#     record IS the close that published it, recoverable with `git log --oneline -S`.
-# The trailer carries the CUMULATIVE totals (`resolved=`, `flips=`) because CI never sees this file;
-# a running total is the only property it can check, and it checks the one that matters: a close may
-# not un-record what an earlier close recorded (kind MONOTONE, trailer_schema).
-def resolved_path(env):
-    return os.path.join(env.history, "census", "resolved.jsonl")
-
-
-def resolved_load(env):
-    out = []
-    for line in (read_text(resolved_path(env)) or "").splitlines():
-        line = line.strip()
-        if line:
-            try:
-                out.append(json.loads(line))
-            except ValueError:
-                pass
-    return out
-
-
-def resolved_append(env, recs):
-    if not recs:
-        return
-    p = resolved_path(env)
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    with io.open(p, "a", encoding="utf-8", newline="\n") as f:
-        for r in recs:
-            f.write(json.dumps(r, sort_keys=True) + "\n")
-
-
-# A verdict that named something WRONG. STILL TRUE and NOT A LABEL are verdicts too and are recorded
-# with the rest, but a close whose every retired verdict was one of those corrected nothing.
-FLIP_VERDICTS = ("STILL OPEN", "ACTUALLY DONE", "STALE DONE", "PARTIAL")
-
-
-def resolved_counts(env):
-    recs = resolved_load(env)
-    return len(recs), sum(1 for r in recs if r.get("verdict") in FLIP_VERDICTS)
-
-
-def retired_verdicts(prev_rows, rows, radius, utc, base):
-    """Prior verdicts that do NOT carry into this census -> ledger records.
-
-    The discriminator is the RADIUS, and it has to be: a prior row whose doc is not being scanned
-    this time simply left the frame -- nothing was acted on, and recording it would inflate the
-    ledger with every change of sweep queue. Within the radius the base is fixed for the session, so
-    a touched doc's diff only GROWS; a prior row absent from the new scan is a line that was edited
-    or deleted. That is the action the verdict ordered."""
-    live = {(r["key"], r["hash"][:12]) for r in rows}
-    out = []
-    for r in prev_rows:
-        if not r["verdict"]:
-            continue
-        ident = (r["key"], r["hash"][:12])
-        if ident in live or r["key"] not in radius:
-            continue
-        out.append({"utc": utc, "base": base[:12], "key": r["key"], "line": r["line"],
-                    "hash": r["hash"][:12], "kind": r["kind"], "lane": r.get("lane", ""),
-                    "label": r["label"], "substate": " ".join(r.get("substate") or []),
-                    "verdict": r["verdict"]})
-    return out
 
 
 # ----------------------------------------------------------------------------- trailers
