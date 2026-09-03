@@ -10,6 +10,7 @@ description: >
   cannot do (a background loop can't reach the main session). Invoke when the user types "/qf" (exactly -
   NOT "/qf-workflow", which is the automated background loop). Project: VOTV_MP.
 ---
+<!-- corr-vocabulary: quoted-doc -->
 
 # /qf — the Question-Form ritual, run to convergence (primary stays in the loop)
 

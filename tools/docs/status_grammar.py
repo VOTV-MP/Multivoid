@@ -40,6 +40,35 @@ def sha1(text):
 STATUS_WORDS = ("OPEN|DONE|TODO|PENDING|DESIGN|AS-BUILT|BUILT|SHIPPED|VERIFIED|PROVEN|IMPLEMENTED|"
                 "DEFERRED|WIP|PARTIAL|CLOSED|FIXED|RETIRED|SUPERSEDED|FUTURE|PLANNED|MITIGATED|STALE|"
                 "LIVE|NOT BUILT|NOT WIRED|NOT DONE|NOT hands-on|UNVERIFIED|UNTESTED|BLOCKED|IN PROGRESS")
+
+# THE VOCABULARY, PARTITIONED -- one list, two halves, and an assert that they cover it. The AUTHORING
+# lane asks about a claim of COMPLETION, so it needs to know which words assert one; writing that set
+# by hand BESIDE `STATUS_WORDS` is how a token list drifts from the grammar it claims to follow (round
+# 8 caught exactly that: a filter naming `[V]` as a completion label, when `label_of` says in so many
+# words that `[V]`/`[A]`/`[RD]` are PROVENANCE and `TAG_RE` never emits them).
+COMPLETION_WORDS = ("DONE", "AS-BUILT", "BUILT", "SHIPPED", "VERIFIED", "PROVEN", "IMPLEMENTED",
+                    "CLOSED", "FIXED", "RETIRED", "SUPERSEDED", "MITIGATED", "LIVE")
+OPEN_WORDS = ("OPEN", "TODO", "PENDING", "DESIGN", "DEFERRED", "WIP", "PARTIAL", "FUTURE", "PLANNED",
+              "STALE", "NOT BUILT", "NOT WIRED", "NOT DONE", "NOT hands-on", "UNVERIFIED", "UNTESTED",
+              "BLOCKED", "IN PROGRESS")
+assert set(STATUS_WORDS.split("|")) == set(COMPLETION_WORDS) | set(OPEN_WORDS), (
+    "the partition must COVER the vocabulary: " +
+    str(set(STATUS_WORDS.split("|")) ^ (set(COMPLETION_WORDS) | set(OPEN_WORDS))))
+
+# A doc that QUOTES the status vocabulary -- a verdict table, a tag legend, this grammar's own token
+# list -- is not making the claims it prints. `[V]` 2026-09-03: 20 of the one real close's 23
+# `NOT A LABEL` rows sat in FOUR such artifacts (both SKILL.md files 8 each, DOCUMENTIZE_ARC 3, one
+# feedback file 1), and all four are touched on EVERY close, so ~13% of every hand pass was the
+# instrument re-refusing its own token table. The ACCRETION detector already had an exclusion list;
+# the label grammar had none. Same marker the ledger prescribes.
+# TWO SCOPES, both explicit -- never positional. `[V]` 2026-09-03: marking only the SECTION holding
+# each skill's token table left 7 and 6 rows standing, all of them still mentions ("a doc says
+# PROVEN/works/VERIFIED", "what was BUILT", "a tag like `[?]`"): an instruction text ABOUT status
+# labels quotes the vocabulary in its prose, not in one table. A design doc like DOCUMENTIZE_ARC is
+# the opposite -- 38 rows of real claims with a handful of quotes among them -- so doc scope there
+# would throw the claims away. One rule cannot serve both; the author says which.
+VOCAB_MARKER = "<!-- corr-vocabulary: quoted -->"          # to the end of THIS section
+VOCAB_MARKER_DOC = "<!-- corr-vocabulary: quoted-doc -->"  # the WHOLE doc quotes, never claims
 # A NEGATED status word is a different label, not the same one: "ROOT MEASURED, NOT FIXED" captured as
 # `FIXED` records the OPPOSITE of the line's claim. Measured 2026-09-03 by a post-ship audit on a real
 # census row (research/findings/join-identity/votv-rejoin-loadmap-null-worldsettings-RE-2026-08-31.md:10).
@@ -261,7 +290,9 @@ def scan_doc(key, abspath, resolver, loose=False):
 
 def scan_text(key, text, resolver, loose=False):
     """Same scan over a text buffer -- used to read a doc's BASELINE version out of git, so a touched
-    doc contributes only the rows this session introduced or changed (status_census, 2026-09-03)."""
+    doc contributes only the rows this session introduced or changed (status_census, 2026-09-03).
+
+    `VOCAB_MARKER` is handled per SECTION inside `scan_lines`, not per doc."""
     return scan_lines(key, text.split(chr(10)), resolver, loose)
 
 
@@ -279,12 +310,27 @@ def row_hash(key, line, dupes):
 
 
 def scan_lines(key, lines, resolver, loose=False):
+    if any(l.strip() == VOCAB_MARKER_DOC for l in lines):
+        return []
     rows = []
     dupes = {}
     in_fence = False
+    quoting_vocab = False
     for i, line in enumerate(lines):
         if line.lstrip().startswith("```"):
             in_fence = not in_fence
+            continue
+        # The marker suppresses rows to the END OF ITS SECTION -- a legend or a verdict table lives
+        # under its own heading, and a doc that quotes the vocabulary in ONE table still makes real
+        # claims everywhere else (this arc holds 38 label rows and 3 quoted ones). Doc-level would
+        # throw the claims away with the legend; the marker must also BE the line, so a doc that
+        # merely mentions it in prose does not silently opt out.
+        if not in_fence and line.strip() == VOCAB_MARKER:
+            quoting_vocab = True
+            continue
+        if not in_fence and HEADING_RE.match(line):
+            quoting_vocab = False
+        if quoting_vocab:
             continue
         if in_fence:
             continue

@@ -105,6 +105,32 @@ def drill_negated_labels():
               "label {!r} (not {!r}) for {!r}".format(want, (lab or ("", "?"))[1], line[:52]))
 
 
+def drill_vocab_markers():
+    """A3: a doc that QUOTES the vocabulary is not making the claims it prints -- and the two scopes
+    must behave DIFFERENTLY, because the corpus holds both shapes. `[V]` 2026-09-03: marking only the
+    SECTION of each skill's token table still left 7 and 6 rows (an instruction text ABOUT status
+    labels quotes them in prose too), while doc-scoping `DOCUMENTIZE_ARC.md` would have thrown away
+    38 real claims to suppress 3 quotes."""
+    print("-- A3. the two vocabulary-quote scopes")
+    import status_grammar as G
+    R = SC.Resolver(SC.Env())
+    R.index(); R.corpora()
+    body = ["# Real", "", "**Status:** OPEN", "", "## Legend", G.VOCAB_MARKER,
+            "| DONE | it shipped |", "| STALE | it did not |", "", "## After", "",
+            "**Status:** BUILT"]
+    rows = G.scan_lines("t.md", body, R)
+    got = sorted(r["label"] for r in rows)
+    check(got == ["BUILT", "OPEN"],
+          "SECTION scope: the legend is suppressed, the claims before AND after it survive "
+          "(got {})".format(got))
+    doc = [G.VOCAB_MARKER_DOC] + body
+    check(G.scan_lines("t.md", doc, R) == [],
+          "DOC scope: a doc that quotes the vocabulary throughout yields NO rows")
+    mentioned = ["# X", "", "the marker is `" + G.VOCAB_MARKER + "` in prose", "", "**Status:** OPEN"]
+    check(len(G.scan_lines("t.md", mentioned, R)) == 1,
+          "a doc that MENTIONS the marker in prose does not silently opt out")
+
+
 def drill_lexer():
     print("-- B. comment-only lexer")
     a = 'x = re.compile(r"(<FONT COLOR=#[0-9A-Fa-f]{6}>)")\n'
@@ -327,6 +353,7 @@ def drill_cross_session(root=None):
 def main():
     drill_grammar()
     drill_negated_labels()
+    drill_vocab_markers()
     drill_lexer()
     drill_close()
     drill_cross_session()

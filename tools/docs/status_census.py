@@ -57,7 +57,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import lessons_gate as LG  # noqa: E402  -- build_corpora / CITE_ROOTS (same directory)
 from status_grammar import *  # noqa: E402,F401,F403  -- the label grammar, the Resolver, scan_doc, read_text, sha1
-from status_grammar import read_text, sha1, DATE_RE, CORR_RE, ACCRETION_RE, DATED_NAME_RE, STATUS_WORDS  # noqa: E402
+from status_grammar import (read_text, sha1, DATE_RE, CORR_RE, ACCRETION_RE, DATED_NAME_RE,  # noqa: E402
+                            STATUS_WORDS, COMPLETION_WORDS, OPEN_WORDS, VOCAB_MARKER)  # noqa: E402
 from comment_lexer import comment_only  # noqa: E402
 import trailer_schema as TS  # noqa: E402  -- the ONE trailer column vocabulary (census + gate)
 
@@ -425,6 +426,31 @@ def accretion_count(env, rs):
     return n
 
 
+# ----------------------------------------------------------------------------- the two lanes
+def asks_authoring(row):
+    """Does this freshly-written row owe the AUTHORING question?
+
+    THE VERDICT IS TWO QUESTIONS, NOT ONE (the round-7 reframe, corrected in round 8). A row the
+    session just wrote cannot have AGED -- `[V]` the one real close verdicted 93 of 93 such rows
+    STILL TRUE, because it was asking "is this still true?" of lines written minutes earlier. What a
+    fresh row CAN carry is the other defect: false optimism at AUTHORING time, the "PROVEN from a
+    smoke" class the skill's own preamble names. So the authoring lane asks only rows that ASSERT
+    something falsifiable -- a completion label, or a sub-state this very close may already have
+    falsified ("uncommitted", "commit pending", "hands-on pending"). A freshly written OPEN owes
+    nothing: it will be asked the ageing question when the sweep reaches it.
+
+    `[V]` on the one real close: 47 of 108 touched rows would be asked, 61 dropped."""
+    lab = (row.get("label") or "").strip().upper().lstrip("[").rstrip("]")
+    if lab in {w.upper() for w in COMPLETION_WORDS}:
+        return True
+    return bool(row.get("substate"))
+
+
+def authoring_lane(row):
+    row["lane"] = "authoring"
+    return row
+
+
 # ----------------------------------------------------------------------------- the age clock
 _AGE_CACHE = {}
 _FM_MODIFIED = re.compile(r"^\s+modified:\s*(\d{4}-\d{2}-\d{2})", re.M)
@@ -613,12 +639,13 @@ def write_table(path, meta, rows):
         # records this project retiring once already (commit f74d05dc): a renumber shifts every later
         # hash silently, and a hand-inserted row reads "". Self-binding rows survive a deletion, a
         # renumber and an insertion.
-        f.write("| # | path:line | kind | label | sub-state | tokens | date | total | id | VERDICT |\n")
-        f.write("|---|---|---|---|---|---|---|---|---|---|\n")
+        f.write("| # | lane | path:line | kind | label | sub-state | tokens | date | total | id | VERDICT |\n")
+        f.write("|---|---|---|---|---|---|---|---|---|---|---|\n")
         for i, r in enumerate(rows, 1):
             toks = " ".join("{}={}".format(t, s) for t, s in r["tokens"]) or "-"
-            f.write("| {} | {}:{} | {} | {} | {} | {} | {} | {} | {} | {} |\n".format(
-                i, r["key"], r["line"], r["kind"], r["label"].replace("|", "/") or "-",
+            f.write("| {} | {} | {}:{} | {} | {} | {} | {} | {} | {} | {} | {} |\n".format(
+                i, r.get("lane", "ageing"), r["key"], r["line"], r["kind"],
+                r["label"].replace("|", "/") or "-",
                 ",".join(r["substate"]) or "-", toks.replace("|", "/"), r["date"] or "-",
                 "yes" if r["total"] else "-", r["hash"][:12], r["verdict"] or ""))
 
@@ -634,18 +661,20 @@ def read_table(path):
         if not l.startswith("| ") or l.startswith("| # ") or l.startswith("|---"):
             continue
         cells = [c.strip() for c in l.strip().strip("|").split("|")]
-        if len(cells) < 10 or not cells[0].isdigit():
+        if len(cells) < 11 or not cells[0].isdigit():
             continue
-        key, _, line = cells[1].rpartition(":")
+        key, _, line = cells[2].rpartition(":")
         toks = []
-        for tok in cells[5].split():
+        for tok in cells[6].split():
             if "=" in tok:
                 a, b = tok.rsplit("=", 1)
                 toks.append((a, b))
-        rows.append({"n": int(cells[0]), "key": key, "line": int(line) if line.isdigit() else 0,
-                     "kind": cells[2], "label": cells[3], "substate": cells[4].split(",") if cells[4] != "-" else [],
-                     "tokens": toks, "date": cells[6], "total": cells[7] == "yes",
-                     "hash": cells[8], "verdict": cells[9].strip().upper()})
+        rows.append({"n": int(cells[0]), "lane": cells[1], "key": key,
+                     "line": int(line) if line.isdigit() else 0,
+                     "kind": cells[3], "label": cells[4],
+                     "substate": cells[5].split(",") if cells[5] != "-" else [],
+                     "tokens": toks, "date": cells[7], "total": cells[8] == "yes",
+                     "hash": cells[9], "verdict": cells[10].strip().upper()})
     return meta, rows
 
 
@@ -765,8 +794,16 @@ def run_census(env, args):
             if old is not None:
                 seen = {r["hash"] for r in scan_text(key, old, resolver, loose=args.loose)}
                 scanned_whole.discard(key)
-                return [r for r in out if r["hash"] not in seen]
-        scanned_whole.add(key)      # no baseline (a new doc) or a sweep doc: every row was offered
+                return [authoring_lane(r) for r in out if r["hash"] not in seen
+                        if asks_authoring(r)]
+            # NO BASELINE -- the doc is being PUBLISHED for the first time. `[V]` 2026-09-03: 14 of 33
+            # touched docs were in this state and contributed 41 of 108 rows; they are not "lines this
+            # session wrote", they are docs WE authored days ago and are publishing now. Same lane.
+            scanned_whole.add(key)
+            return [authoring_lane(r) for r in out if asks_authoring(r)]
+        scanned_whole.add(key)      # a sweep doc: every row was offered
+        for r in out:
+            r["lane"] = "ageing"
         return out
 
     rows, swept, scanned_whole = [], [], set()

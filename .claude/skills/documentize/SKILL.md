@@ -9,6 +9,7 @@ description: >
   `Docs-Census:` trailer CI reads back. A close without the trailer is a run that did not close.
   (Rewritten 2026-09-03 from its own measured output -- docs/DOCUMENTIZE_ARC.md.)
 ---
+<!-- corr-vocabulary: quoted-doc -->
 
 # /documentize — sweep by census, verdict by hand, commit by script, prep for compact
 
