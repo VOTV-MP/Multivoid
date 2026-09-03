@@ -47,12 +47,28 @@ ARMS = [
      "hud.cpp:999999"),
 ]
 
+# Checks C and D (WP-4, 2026-09-03) need the memory corpus; their RED arms run only where it exists.
+import lessons_gate as _LG  # noqa: E402
+if os.path.isdir(_LG.MEMORY_DIR):
+    ARMS += [
+        ("dead wikilink",
+         "- A row bounded by [[zz-no-such-lesson-{}]] as its prior art.\n".format(SENTINEL[:12].lower()),
+         "DEAD WIKILINKS"),
+        ("dead memory ref",
+         "- A row whose detail lives in `memory/zz_no_such_file_{}.md`.\n".format(SENTINEL[:12].lower()),
+         "DEAD MEMORY REFERENCES"),
+    ]
+
 # Classes the gate deliberately does NOT fail on -- assert it stays green for these,
 # or the gate is too noisy to keep in CI and will be disabled by whoever it annoys.
 QUIET = [
     ("git sha", "- Fixed in `a290a466`, follow-up `de249463`, revert `f03c04f0`.\n"),
     ("partial cite", "- The atlas GC is pressure-triggered; `DiscardBakes` runs then.\n"),
+    # E: a running total is a WARN the gate must PRINT and must not FAIL on.
+    ("running total", "- **A COUNT THAT ROTS** -- 3 of 5 sites were fixed (2026-09-03).\n"),
 ]
+# The E arm must also be VISIBLE: the gate's output has to name it (a warning nobody prints is silent).
+WARN_NEEDLE = ("running total", "3 of 5")
 
 
 def run(ledger_path):
@@ -70,6 +86,20 @@ def main():
         len(ARMS), len(QUIET)))
     print("  sentinel this run: {}\n".format(SENTINEL))
 
+    # PREMISE CHECK, before any arm. Check A files a bare-basename citation that resolves nowhere as
+    # "unverifiable" instead of DEAD whenever ANY cite root is missing -- a deliberate CI accommodation
+    # whose own comment claims "with every root present this branch cannot be taken". On a full local
+    # checkout that must be true, or every arm below is measuring a gate that cannot fail. It was NOT
+    # true from the gate's first commit until 2026-09-03: CITE_ROOTS listed `include`, which has never
+    # existed here, so the branch was taken on every run and the `dead file` arm silently passed.
+    missing = _LG.absent_cite_roots()
+    ok = not missing
+    print("  [{}] PREMISE  {:<16} absent cite roots={} (must be empty on a full checkout)".format(
+        "PASS" if ok else "FAIL", "cite roots", missing or "none"))
+    if not ok:
+        failures.append("cite roots {} are missing, so dead bare-basename citations cannot fail the "
+                        "gate here -- fix CITE_ROOTS or run on a full checkout".format(missing))
+
     for name, injection, needle in ARMS:
         path = os.path.join(tmpdir, "ledger_red.md")
         io.open(path, "w", encoding="utf-8", newline="\n").write(base + "\n" + injection)
@@ -83,12 +113,14 @@ def main():
     for name, injection in QUIET:
         path = os.path.join(tmpdir, "ledger_quiet.md")
         io.open(path, "w", encoding="utf-8", newline="\n").write(base + "\n" + injection)
-        code, _ = run(path)
+        code, out = run(path)
         ok = code == 0
-        print("  [{}] QUIET    {:<16} exit={} (must not fail)".format(
-            "PASS" if ok else "FAIL", name, code))
+        if name == WARN_NEEDLE[0]:
+            ok = ok and WARN_NEEDLE[1] in out       # quiet on exit code, LOUD in the output
+        print("  [{}] QUIET    {:<16} exit={} (must not fail{})".format(
+            "PASS" if ok else "FAIL", name, code, "; must WARN" if name == WARN_NEEDLE[0] else ""))
         if not ok:
-            failures.append("QUIET check '{}' wrongly failed the gate".format(name))
+            failures.append("QUIET check '{}' wrongly failed the gate or stayed silent".format(name))
 
     code, _ = run(LEDGER)
     ok = code == 0

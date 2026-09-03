@@ -35,7 +35,7 @@ CLOSE_PREFIX = "[docs] close:"
 RETIRED_PREFIX = "[docs] documentize"
 TRAILER_KEY = "Docs-Census"
 WORKFLOW = ".github/workflows/docs-census.yml"
-RATCHET_COLS = ("ro-bytes", "ro-longest", "mem-over200")
+RATCHET_COLS = ("ro-bytes", "ro-longest", "mem-over200", "wikilinks-dead", "pairing-unref", "pairing-dead")
 VERDICT_COLS = ("still-open", "actually-done", "stale-done", "partial", "still-true")
 
 
@@ -125,10 +125,21 @@ def judge(repo, workflow, report=False):
         seen_census[census] = sha
         if prev_trailer:
             for c in RATCHET_COLS:
+                # A column the PREVIOUS trailer does not carry is a column that did not exist yet
+                # (the script gained one): there is nothing to compare, so it is not a failure --
+                # otherwise the very push that adds a column is red by construction, the shape
+                # docs/LESSONS.md names ("a gate left red on purpose carries no signal"). A column
+                # that DISAPPEARS from a later trailer is a regression and does fail.
+                if c not in prev_trailer:
+                    continue
+                if c not in trailer:
+                    fails.append("{} ratchet column {} vanished (the previous close carried it)".format(short, c))
+                    continue
                 try:
-                    a, b = int(prev_trailer.get(c, "x")), int(trailer.get(c, "x"))
+                    a, b = int(prev_trailer[c]), int(trailer[c])
                 except ValueError:
-                    fails.append("{} ratchet column {} unreadable".format(short, c))
+                    fails.append("{} ratchet column {} unreadable ({!r} -> {!r})".format(
+                        short, c, prev_trailer[c], trailer[c]))
                     continue
                 if b > a:
                     fails.append("{} ratchet: {} grew {} -> {}".format(short, c, a, b))

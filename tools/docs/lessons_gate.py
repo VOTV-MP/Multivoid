@@ -137,10 +137,19 @@ def load_list(path):
     return out
 
 
-CITE_ROOTS = ("src", "include", "tools", "research", "reference")
+# Every entry must be a directory this repository ACTUALLY has, because absent_cite_roots() turns a
+# missing one into a blanket "unverifiable" for bare basenames. `include` was in this tuple from the
+# gate's first commit and has NEVER existed at the repo root (our headers live under
+# src/votv-coop/include/, already covered by `src`; `git log -- 'include/*'` = 0 commits). So
+# missing_roots was ALWAYS non-empty, the branch below that its own comment says "cannot be taken"
+# locally was taken on every run, and no dead bare-basename citation could fail the gate on any
+# machine -- measured 2026-09-03 when the drill's `dead file` arm was run for the first time since
+# that branch was added and reported exit=0. Adding a root here without checking it exists disables
+# half of check A silently.
+CITE_ROOTS = ("src", "tools", "research", "reference")
 
 
-def absent_cite_roots():
+def absent_cite_roots(roots=CITE_ROOTS):
     """Which of CITE_ROOTS this checkout does not have.
 
     `research/` is gitignored and `reference/` is a submodule CI deliberately never
@@ -152,7 +161,7 @@ def absent_cite_roots():
     This is the same distinction the SYMBOL half already draws with its `absent` corpus
     list: a check whose corpus is missing reports the instrument, not the ledger.
     """
-    return [r for r in CITE_ROOTS if not os.path.isdir(os.path.join(REPO, r))]
+    return [r for r in roots if not os.path.isdir(os.path.join(REPO, r))]
 
 
 def resolve_cite(path):
@@ -230,10 +239,77 @@ def check_quoted_cites(text):
     return moved, dead
 
 
+# ---- checks C / D / E (docs/DOCUMENTIZE_ARC.md WP-4, 2026-09-03) ----------------------------------
+# The memory directory uses TWO slug conventions (lesson_x_y.md and lesson-x-y.md); a link under
+# either must resolve. These checks need the memory corpus, which CI does not have: there they print
+# UNVERIFIABLE and never fail -- the numbers travel in the Docs-Census trailer instead
+# (wikilinks-dead / pairing-unref / pairing-dead), ratcheted by the close and by docs_census_gate.
+WIKILINK = re.compile(r"\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]")
+MEMREF = re.compile(r"memory/([A-Za-z0-9_\-.]+)\.md")
+PAIRED_PREFIX = re.compile(r"^(lesson|feedback)[_-]")
+RUNNING_TOTAL = re.compile(r"\b\d[\d,]* (?:rows|files|findings|of \d+)\b")
+DATE = re.compile(r"20\d\d-\d\d-\d\d")
+
+
+def _slug(s):
+    return s.strip().replace("_", "-").lower()
+
+
+def memory_slugs(memory_dir=MEMORY_DIR):
+    """-> (set of normalised slugs, list of paired filenames) or (None, None) when the corpus is absent."""
+    if not os.path.isdir(memory_dir):
+        return None, None
+    names = [f[:-3] for f in os.listdir(memory_dir) if f.endswith(".md")]
+    return {_slug(n) for n in names}, [n for n in names if PAIRED_PREFIX.match(n)]
+
+
+def check_wikilinks(text, memory_dir=MEMORY_DIR):
+    """C: every [[slug]] resolves to a memory file under either convention. -> list of dead links, or None."""
+    have, _ = memory_slugs(memory_dir)
+    if have is None:
+        return None
+    dead = []
+    for m in WIKILINK.finditer(text):
+        link = m.group(1).strip()
+        if not link or set(link) <= set(".<>"):
+            continue                                   # the convention's own `[[...]]` placeholder
+        if _slug(link) not in have and link not in dead:
+            dead.append(link)
+    return dead
+
+
+def check_pairing(text, memory_dir=MEMORY_DIR):
+    """D: the two-set diff of /documentize Step 3.5. -> (unreferenced memory files, dead references) or (None, None).
+
+    A lesson/feedback file with no row in the ledger is INVISIBLE to the browsable digest; a row whose
+    `memory/<slug>.md` points at no file has no detail. Both halves are reported; the trailer counts them."""
+    have, paired = memory_slugs(memory_dir)
+    if have is None:
+        return None, None
+    ledger_norm = _slug(text)
+    unref = sorted(n for n in paired if _slug(n) not in ledger_norm)
+    refs = {r for r in MEMREF.findall(text) if r != "<slug>"}
+    dead = sorted(r for r in refs if _slug(r) not in have)
+    return unref, dead
+
+
+def check_running_totals(text):
+    """E: a row carrying a running total ('N rows', 'N of M', 'N files') is a count that rots by
+    construction (the ledger's own lesson). Listed with the row's date; a WARN, never PASS-silent."""
+    out = []
+    for line in text.split("\n"):
+        if line.startswith("- **") and RUNNING_TOTAL.search(line):
+            d = DATE.findall(line)
+            out.append((d[0] if d else "undated", RUNNING_TOTAL.search(line).group(0), line[4:84]))
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--report", action="store_true", help="list findings, always exit 0")
     ap.add_argument("--ledger", default=LEDGER)
+    ap.add_argument("--pairing", action="store_true",
+                    help="print the memory<->ledger pairing diff (Step 3.5) as two lists and exit")
     args = ap.parse_args()
 
     if not os.path.exists(args.ledger):
@@ -242,6 +318,22 @@ def main():
     text = io.open(args.ledger, encoding="utf-8").read()
     allowed = load_list(ALLOW)
     allow_files = load_list(ALLOW_FILES)
+
+    # ---- checks C / D / E need no corpus build; --pairing is the Step 3.5 diff and exits here ----
+    dead_links = check_wikilinks(text)
+    unref, dead_refs = check_pairing(text)
+    totals = check_running_totals(text)
+    if args.pairing:
+        if unref is None:
+            print("pairing: UNVERIFIABLE here -- the memory corpus is absent ({})".format(MEMORY_DIR))
+            return 0
+        print("pairing: {} memory lesson/feedback files without a ledger row, {} ledger references "
+              "without a file".format(len(unref), len(dead_refs)))
+        for n in unref:
+            print("   unreferenced   memory/{}.md".format(n))
+        for r in dead_refs:
+            print("   DEAD REFERENCE memory/{}.md".format(r))
+        return 0
 
     print("lessons_gate: {} ({} lines)".format(args.ledger, len(text.splitlines())))
     sets, counts = build_corpora(verbose=True)
@@ -389,6 +481,35 @@ def main():
         print("   symbol, or (b) legitimately external -> add it to")
         print("   tools/docs/lessons_gate_allow.txt with a one-line reason.")
         print("   Do NOT allowlist to silence real rot.")
+
+    # ---- C / D / E reporting -----------------------------------------------------------
+    print("")
+    n_links = len(set(WIKILINK.findall(text)))
+    if dead_links is None:
+        print("wikilinks: {} found, UNVERIFIABLE here -- memory corpus absent".format(n_links))
+        print("pairing:   UNVERIFIABLE here -- memory corpus absent (run locally, or read the "
+              "Docs-Census trailer's wikilinks-dead / pairing-unref / pairing-dead)")
+    else:
+        print("wikilinks: {} checked, {} dead".format(n_links, len(dead_links)))
+        print("pairing:   {} memory lesson/feedback files without a ledger row (--pairing lists them), "
+              "{} ledger references without a file".format(len(unref), len(dead_refs)))
+    if totals:
+        print("running totals: {} row(s) carry a count that rots by construction -- WARN, never silent:"
+              .format(len(totals)))
+        for date, count, head in totals:
+            print("   {:<10} {:<12} {}".format(date, count, head))
+    if dead_links:
+        bad = True
+        print("")
+        print("DEAD WIKILINKS ({}) -- [[slug]] with no memory file under either convention:".format(len(dead_links)))
+        for l in dead_links:
+            print("   [[{}]]".format(l))
+    if dead_refs:
+        bad = True
+        print("")
+        print("DEAD MEMORY REFERENCES ({}) -- a row points at a memory file that does not exist:".format(len(dead_refs)))
+        for r in dead_refs:
+            print("   memory/{}.md".format(r))
 
     if not bad:
         print("")

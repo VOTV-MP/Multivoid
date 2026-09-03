@@ -140,8 +140,11 @@ from an autonomous smoke alone** — only a real hands-on or a matching real log
 **HARD PAIRING (user rule 2026-07-11): a lesson write is TWO writes — the `memory/` file AND its row in
 `docs/LESSONS.md`.** Before leaving this step, diff your session's new/updated `memory/lesson_*` /
 `feedback_*` files against the rows you touched in `docs/LESSONS.md` — the two sets must match 1:1
-(this becomes `lessons_gate.py --pairing` under WP-4). Then run `python tools/docs/lessons_gate.py` —
-it must PASS before the close.
+— run `python tools/docs/lessons_gate.py --pairing`, which prints both halves (memory files with no
+row / rows pointing at no file). Then run `python tools/docs/lessons_gate.py` — it must PASS before
+the close: besides the citations and symbols it now fails on a dead `[[wikilink]]` and warns on every
+row carrying a running total. The close ratchets its three counts, so a new lesson file without its
+row makes `pairing-unref` grow and the close refuses.
 
 1. **Extract every dig from THIS session**: what you had to MEASURE, disasm, probe, or reason out that
    was NOT obvious from the code at a glance; what surprised you; what an audit surfaced; what failed

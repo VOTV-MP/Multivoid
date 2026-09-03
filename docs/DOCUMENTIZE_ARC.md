@@ -803,6 +803,39 @@ this doc naming its retracted `ledger_rot.py`); a backticked commit hash is a ha
 hash (`e31aaaa6`, UE4SS) is informational, never a refusal. The first REAL close is the next
 `/documentize`; steps 2-5 are open.
 
+**Step 2 BUILT 2026-09-03 (WP-4), and it found a hole in the gate it extended.** `lessons_gate.py`
+gains C (`check_wikilinks`), D (`check_pairing`, exposed as `--pairing`, which returns before the 22 s
+corpus build) and E (`check_running_totals`); C and D fail the gate, E is a WARN that is printed and
+never silent; all three need the memory corpus, so `[V]` in a simulated CI run
+(`MULTIVOID_MEMORY_DIR=/nonexistent`) they print **UNVERIFIABLE**, not SKIPPED-as-green, exactly as
+WP-4 required. Their counts ride three new trailer columns (`wikilinks-dead` / `pairing-unref` /
+`pairing-dead`), ratcheted by the close and by the CI gate; `[V]` today 0 / 40 / 0, and 5 rows carry a
+running total. The drill gained two RED arms (a dead `[[wikilink]]`, a dead `memory/<slug>.md`
+reference) and a WARN-visibility assertion on E. `[V]` C found one real dead wikilink on its first run
+(`[[lesson-a-cannot-in-a-comment]]`, fixed to the full slug).
+
+**The hole (a PRE-EXISTING defect, not a regression of this work).** Running the ledger drill — for the
+first time since 2026-09-01 — reported `dead file  exit=0`: the gate could not fail on a citation to a
+file that does not exist. Root, measured: check A files a bare-basename citation that resolves nowhere
+as `UNVERIFIABLE` instead of `DEAD` whenever `absent_cite_roots()` is non-empty (a correct CI
+accommodation — `research/` is gitignored there, `reference/` unfetched), guarded only by the comment
+*"with every root present this branch cannot be taken"*. But `CITE_ROOTS` listed **`include`**, a
+top-level directory this repository has **never** had (`[V]` `git log --oneline -- 'include/*'` = 0
+commits; our headers live under `src/votv-coop/include/`). So the branch fired on EVERY run, on every
+machine, and that half of check A had never worked. `[V]` after removing `include`: the arm is
+`DEAD CITATIONS (1) … exit=1`, and the real ledger still PASSES (229 citations, 0 dead) — the hole was
+latent, not hiding rot. The drill now asserts the branch's PREMISE (`absent_cite_roots() == []`) before
+running any arm, so the class cannot return silently. Lesson row + memory file written.
+
+**A correction to WP-3's first shrink, measured before any line was cut.** The design says the `4e`
+entry's session digests *"already live in `memory/project_s2*.md`"*. `[V]` `4e` names **21** digests
+(s17..s30b); files matching `project_s2*` exist for **11** of them, and the other ten (s17, s18, s19,
+s23c, s24, s24b, s25, s26, s29b, s30b) appear in memory only under other filenames — an s-number
+mentioned in a file is not proof its digest is there. So the shrink is not a pure cut: it owes a
+per-fact grep of the destination (the move-then-cut rule) and, where the fact is absent, a destination
+written first. `[V]` the reading order is 55 entries, longest `4e` at 275 lines, then `4e-browser` 152,
+`4a-identity` 87, `1a-veh` 73. Step 4 is NOT done.
+
 **Step 1 BUILT 2026-09-03 (the commit after `49d73edf`):** `.claude/skills/documentize/SKILL.md` rewritten
 whole around the census — Step 0.5 = run `census`, Step 0.6 = the hand verdicts (the five tokens, the
 action per kind, the ask-the-user row that keeps the close refusing), Step 4.5 = the close is the

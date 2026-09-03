@@ -40,6 +40,7 @@ def commit(repo, subject, body_lines=(), touch="f.txt"):
 def trailer(base, census, rows=2, so=0, ad=0, sd=0, pa=0, st=2, ro=100, rl=10, mo=0):
     return ("Docs-Census: base={} rows={} labels={} still-open={} actually-done={} stale-done={} partial={} "
             "still-true={} cited-dead=0 accretion=0 ro-bytes={} ro-longest={} mem-over200={} "
+            "wikilinks-dead=0 pairing-unref=40 pairing-dead=0 "
             "sweep-cursor=1 sweep-cycle=1 census={} research-base=- new=0 foreign=0").format(
         base[:12], rows, rows, so, ad, sd, pa, st, ro, rl, mo, census)
 
@@ -113,6 +114,16 @@ def main():
         arm("ratchet column grew",
             lambda r, b: (lambda c4: commit(r, "[docs] close: second", [trailer(c4, "bbb222", ro=101), COAUTH]))(
                 commit(r, "[docs] close: first", [trailer(b, "aaa111"), COAUTH])), "ratchet: ro-bytes grew"),
+        # A column the script GAINS must not make the adding push red (the ledger's "a gate left red
+        # on purpose carries no signal"); a column that VANISHES is a regression and must fail.
+        arm("a NEW ratchet column appears (must stay green)",
+            lambda r, b: (lambda c4: commit(r, "[docs] close: second", [trailer(c4, "bbb222"), COAUTH]))(
+                commit(r, "[docs] close: first",
+                       [trailer(b, "aaa111").replace(" wikilinks-dead=0", ""), COAUTH])), None),
+        arm("a ratchet column vanishes",
+            lambda r, b: (lambda c4: commit(r, "[docs] close: second",
+                                            [trailer(c4, "bbb222").replace(" wikilinks-dead=0", ""), COAUTH]))(
+                commit(r, "[docs] close: first", [trailer(b, "aaa111"), COAUTH])), "vanished"),
     ]
     bad = results.count(False)
     print("docs_census_gate_drill: {} arms, {} failed".format(len(results), bad))

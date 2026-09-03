@@ -64,7 +64,7 @@ K_DEFAULT = 40
 VERDICTS = ("STILL OPEN", "ACTUALLY DONE", "STALE DONE", "PARTIAL", "STILL TRUE")
 CLOSE_PREFIX = "[docs] close:"
 TRAILER_KEY = "Docs-Census"
-RATCHET_COLS = ("ro-bytes", "ro-longest", "mem-over200")
+RATCHET_COLS = ("ro-bytes", "ro-longest", "mem-over200", "wikilinks-dead", "pairing-unref", "pairing-dead")
 TARGETS = {"ro-bytes": 58 * 1024, "ro-longest": 15, "mem-over200": 0}
 OWN_TOOLING = ("tools/docs/", ".claude/skills/")
 ACCRETION_EXCLUDE = ("docs/LESSONS.md", "docs/DOCUMENTIZE_ARC.md", "docs/QF_ARC.md")
@@ -297,14 +297,26 @@ def base_for(repo, since):
 
 def format_trailer(v):
     order = ("base", "rows", "labels", "still-open", "actually-done", "stale-done", "partial", "still-true",
-             "cited-dead", "accretion", "ro-bytes", "ro-longest", "mem-over200", "sweep-cursor",
-             "sweep-cycle", "census", "research-base", "new", "foreign")
+             "cited-dead", "accretion", "ro-bytes", "ro-longest", "mem-over200", "wikilinks-dead",
+             "pairing-unref", "pairing-dead", "sweep-cursor", "sweep-cycle", "census", "research-base",
+             "new", "foreign")
     return TRAILER_KEY + ": " + " ".join("{}={}".format(k, v[k]) for k in order if k in v)
 
 
 # ----------------------------------------------------------------------------- the ratchet + accretion
 def ratchet_values(env):
-    vals = {"ro-bytes": 0, "ro-longest": 0, "mem-over200": 0}
+    vals = {"ro-bytes": 0, "ro-longest": 0, "mem-over200": 0,
+            "wikilinks-dead": 0, "pairing-unref": 0, "pairing-dead": 0}
+    ledger = read_text(os.path.join(env.repo, "docs", "LESSONS.md"))
+    if ledger:
+        # WP-4: the ledger gate's checks C / D, which CI cannot run (no memory corpus there) --
+        # their numbers travel in the trailer and are ratcheted here and in docs_census_gate.
+        dead_links = LG.check_wikilinks(ledger, env.memory)
+        unref, dead_refs = LG.check_pairing(ledger, env.memory)
+        if dead_links is not None:
+            vals["wikilinks-dead"] = len(dead_links)
+            vals["pairing-unref"] = len(unref)
+            vals["pairing-dead"] = len(dead_refs)
     t = read_text(os.path.join(env.repo, "CLAUDE.md"))
     if t:
         lines = t.split("\n")
@@ -554,7 +566,7 @@ def run_census(env, args):
         len(rows), labels, dead, sum(1 for r in rows if r["verdict"])))
     print("table: " + pending_path(env))
     rv = ratchet_values(env)
-    print("ratchet now: " + " ".join("{}={} (target {})".format(c, rv[c], TARGETS[c]) for c in RATCHET_COLS))
+    print("ratchet now: " + " ".join("{}={} (target {})".format(c, rv[c], TARGETS.get(c, 0)) for c in RATCHET_COLS))
     print("accretion now: {}".format(accretion_count(env, rs)))
     return 0
 
@@ -649,7 +661,8 @@ def run_close(env, args):
             "stale-done": counts["STALE DONE"], "partial": counts["PARTIAL"], "still-true": counts["STILL TRUE"],
             "cited-dead": meta.get("cited_dead", 0), "accretion": accretion_count(env, rs),
             "ro-bytes": rv["ro-bytes"], "ro-longest": rv["ro-longest"], "mem-over200": rv["mem-over200"],
-            "sweep-cursor": cursor, "sweep-cycle": meta.get("cycle", 0), "new": len(new), "foreign": foreign}
+            "wikilinks-dead": rv["wikilinks-dead"], "pairing-unref": rv["pairing-unref"],
+            "pairing-dead": rv["pairing-dead"], "sweep-cursor": cursor, "sweep-cycle": meta.get("cycle", 0), "new": len(new), "foreign": foreign}
     # 6. commit 3 first: the private history (snapshot + state + the verdict table) -> census=
     snapshot_sync(env, rs)
     state_save(env, st)
