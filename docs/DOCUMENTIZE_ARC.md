@@ -1210,6 +1210,47 @@ text was always a dated build log), but nothing in the number distinguishes relo
 diff for defect CLASSES — a declared column with no producer, a drill arm whose green state a broken
 field satisfies — found what a critic reading the same diff did not, and vice versa.
 
+### 10.7 Round 2 — and the reframe that made round 1's fix one instance of a rule
+
+Round 2 read `4b965968` (round 1's fix) as hard as the original, which was right: **two of its four
+questions were about the fix itself.**
+
+- **The scope fix asked the wrong witness.** `whole_hashes` returned the hashes the GRAMMAR emits, and
+  a `cite` row exists ONLY while its citation resolves dead — so RESTORING a cited file makes the row
+  vanish while the doc line is byte-identical, and the verdict is recorded as acted-on for a line
+  nobody touched. That is the same bias the scope fix had just removed, one layer down. Reproduced,
+  then fixed by hashing every LINE (`status_grammar.line_hashes`) — **which also closed a latent bug
+  nobody had asked about**: the occurrence ordinal advanced per ROW, so two identical lines were 1 and
+  2, and if the first stopped producing a row the second silently became 1, changing its hash, losing
+  its verdict AND recording it as retired.
+- **A print where a refusal belongs.** `cut` and `lost` had no trailer column and no gate, while
+  `ro-bytes` is RATCHETED and had just fallen 23,870 — so a close could earn the ratchet by deleting
+  the user's own words, with the evidence printed after the fact. The ledger's own row says a detector
+  that cannot prevent what it names is a post-mortem. **A lost USER record now REFUSES the close**
+  (`ro-lost`, GATED); `ro-cut` is REPORTED, because a deliberate deletion is legitimate and losing the
+  user's words is not.
+- **The exemption measured an uppercase token, not a speaker.** Of the 60 lines in the reading order
+  carrying a quotation, 8 were exempt; 14 are under a case-insensitive speaker test. The six it adds
+  include the user's own Russian rejection of the browser design and their hands-on verdict *"obs
+  issue is gone, imgui gets captured in all modes possible"* — both introduced by a lowercase "the
+  user". Two of the six are collateral, and that is the right way to be wrong: over-exempting costs an
+  explicit act, under-exempting deletes the user's words silently. Exempt clauses **15 → 25**.
+
+**THE REFRAME (Q4).** Round 1 gave the drift rung its own token because answering drift with
+`NOT A LABEL` polluted the label grammar's precision measure. Round 2 asked whether that was one
+token's mistake or **the missing rule that every verdict token belongs to the rung that produced its
+row** — and it is the rule: rows arrive from FOUR instruments, and `[V]` 16 of one census's 87 rows
+were citation-rung rows, so `not-a-label=` was already three instruments' errors added together. The
+hand still writes ONE rejection token; the MACHINE now attributes it (`not-a-label` / `not-a-cite` /
+`drift-ok` / `not-loose`). **The seventh token is RETIRED whole (RULE 2)** — for a drift row, "the
+pairing was a coincidence" and "this row is not a claim" are the same sentence, so it was a second
+mechanism for one concept, alive for about three hours.
+
+**A near-miss worth recording:** the edit that retired the token deleted the shipped `contra` refusal
+along with it (they were adjacent, and the removal was made by index rather than by reading). The
+drill caught it immediately — `STILL TRUE on a dead citation refuses` went red. That is the drill
+paying for itself on the same day it was extended.
+
 **NOT BUILT, in order:** D11 symbol-first corpus repair (the 31 drift rows are now surfaced, but
 nothing proposes their fix in bulk); the remaining ~37 KB of reading-order MOVES, now instrumented but
 not done. WP-E (convenience, §10.5) owes its own `/qf`. The DIFF pass continues — round 1 did not

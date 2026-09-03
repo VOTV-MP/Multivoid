@@ -115,17 +115,16 @@ in the VERDICT column:
 | `STALE DONE` | false optimism, or a dead citation under a live label | downgrade the tag, date it, cite the evidence, stamp |
 | `PARTIAL` | some sub-parts shipped | name exactly which (file:line) and which remain; split the item |
 | `STILL TRUE` | the label and the line hold | nothing — but a LABEL row whose citation resolved `gone` / `past-eof` cannot be STILL TRUE: the close refuses it, fix the pointer |
-| `NOT A LABEL` | the grammar mis-flagged the line: it states no status about anything (a vocabulary table, a legend, a sentence containing a status word) | nothing to the doc — the row is the CENSUS's defect, and `not-a-label=` in the trailer is the grammar's measured false-positive rate. Do NOT use it to dismiss a claim you simply did not check |
+| `NOT A LABEL` | the grammar mis-flagged the line: it states no status about anything (a vocabulary table, a legend, a sentence containing a status word) | nothing to the doc — the row is the CENSUS's defect, and the trailer records it against the RUNG that raised the row, so `not-a-label=` really is the label grammar's measured false-positive rate. Do NOT use it to dismiss a claim you simply did not check |
 
-| `DRIFT OK` | a `drift` row's pairing was a coincidence of the sentence: the citation is fine | nothing to the doc — `drift-ok=` is the SYMBOL RUNG's own false-positive rate, kept apart from `not-a-label=` so the two instruments are measured separately |
 
 A row of kind `drift` makes no status claim: it says the SYMBOL beside a citation now lives elsewhere
 in the cited file. Check it — the true line is printed — and either fix the number (then the row
 returns corrected, and the verdict you gave is recorded in the resolved ledger) or verdict it
-`DRIFT OK`. **That seventh token is for drift rows and only drift rows, and a drift row takes no
-other token** — the close refuses both mistakes. It exists because answering drift with `NOT A LABEL`
-would put the symbol rung's false positives into the counter the gate declares to be the LABEL
-GRAMMAR's precision. If a whole DOC quotes the status
+`NOT A LABEL`. **You write ONE rejection token whatever the row's kind; the machine attributes it**
+to the rung that produced the row — `not-a-label=` (the label grammar), `not-a-cite=` (the citation
+resolver), `drift-ok=` (the symbol rung), `not-loose=` — so each instrument's false-positive rate is
+measured on its own and a single counter is never three of them added together. If a whole DOC quotes the status
 vocabulary rather than using it (a legend, a skill text, this file), mark it once with
 `<!-- corr-vocabulary: quoted-doc -->` and a reason beside it, rather than verdicting its rows one by
 one forever.

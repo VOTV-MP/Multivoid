@@ -61,7 +61,7 @@ sys.path.insert(0, HERE)
 import lessons_gate as LG  # noqa: E402  -- build_corpora / CITE_ROOTS (same directory)
 from status_grammar import *  # noqa: E402,F401,F403  -- the label grammar, the Resolver, scan_doc, read_text, sha1
 from status_grammar import (read_text, sha1, DATE_RE, CORR_RE, ACCRETION_RE, DATED_NAME_RE,  # noqa: E402
-                            drift_cites,  # noqa: E402
+                            drift_cites, line_hashes,  # noqa: E402
                             STATUS_WORDS, COMPLETION_WORDS, OPEN_WORDS, VOCAB_MARKER)  # noqa: E402
 from comment_lexer import comment_only  # noqa: E402
 import trailer_schema as TS  # noqa: E402  -- the ONE trailer column vocabulary (census + gate)
@@ -78,17 +78,24 @@ ROW_BUDGET = 40          # the SWEEP's own row budget: the hand check is paid pe
 # status verdicts have no value for "this line is not a claim" -- so without it a false positive must be
 # verdicted STILL TRUE, which launders noise into the counts and hides the grammar's precision. With it,
 # every close MEASURES that precision (`not-a-label=` in the trailer) instead of asserting it.
-VERDICTS = ("STILL OPEN", "ACTUALLY DONE", "STALE DONE", "PARTIAL", "STILL TRUE", "NOT A LABEL",
-            "DRIFT OK")
-# The SEVENTH token exists for the same reason the sixth does, one instrument down. A `drift`
-# row makes no status claim at all -- it says a cited SYMBOL now lives elsewhere in the cited
-# file -- so none of the five status verdicts fits it, and the skill first told the hand to use
-# NOT A LABEL. That put TWO instruments' false positives in ONE counter: `not-a-label=` is
-# declared in docs_census_gate as the LABEL GRAMMAR's measured precision, and 31 corpus-wide
-# drift rows would have flowed into it (DIFF pass, round 1 Q1). DRIFT OK is the symbol rung's
-# own false-positive rate, and it is REFUSED on any row that is not a drift row -- and the other
-# six are refused ON one, because a status verdict about a pointer is a category error.
-DRIFT_VERDICT = "DRIFT OK"
+VERDICTS = ("STILL OPEN", "ACTUALLY DONE", "STALE DONE", "PARTIAL", "STILL TRUE", "NOT A LABEL")
+# The sixth token is not a status: it is the hand REJECTING the row. Without it a false positive
+# must be verdicted STILL TRUE, which launders noise into the counts and hides the grammar's
+# precision; with it, every close MEASURES that precision instead of asserting it.
+#
+# AND IT IS ATTRIBUTED BY THE RUNG THAT PRODUCED THE ROW, which is the rule a seventh token was
+# briefly mistaken for. `not-a-label=` is declared -- in the gate, in the skill, in this file --
+# to be the LABEL GRAMMAR's false-positive rate, but rows arrive from FOUR instruments: the label
+# grammar, the citation resolver (`cite`), the symbol content rung (`drift`) and the opt-in loose
+# regex. `[V]` 2026-09-03: 16 of one census's 87 rows were `cite` rows, so a single counter was
+# already three instruments' errors added together (DIFF pass, round 2 Q4). The HAND still writes
+# one token -- asking it to pick the right synonym per rung is bookkeeping the machine can do --
+# and the MACHINE splits the count. A separate `DRIFT OK` token shipped hours earlier and is
+# retired here whole (RULE 2): for a drift row "the pairing was a coincidence" and "this row is
+# not a claim" are the same sentence, so it was a second mechanism for one concept.
+LABEL_BUCKET = {"cite": "not-a-cite", "drift": "drift-ok", "loose": "not-loose"}
+
+
 CLOSE_PREFIX = "[docs] close:"
 TRAILER_KEY = "Docs-Census"
 RATCHET_COLS = TS.RATCHETED
@@ -648,6 +655,13 @@ def run_census(env, args):
                          "verdict whose line is unchanged; a line you edited returns as a new row "
                          "needing its own verdict ({})".format(
                              held, (prev_meta or {}).get("utc", "?"), pending_path(env)))
+    # The dated index is generated from the memory directory, so it is refreshed BEFORE the
+    # read set is taken -- that way the census reads and PINS the current bytes, and the
+    # close never has to write a path it has already checked.
+    import memory_index
+    ipath, ichanged = memory_index.write(env)
+    if ichanged:
+        print("memory index regenerated: " + ipath)
     rs = read_set(env)
     by_owner = {}
     for k, (o, _) in rs.items():
@@ -815,8 +829,10 @@ def run_census(env, args):
         """Every row hash the doc yields READ WHOLE -- the witness `retired_verdicts` asks, so a
         prior verdict is retired on what the FILE says and not on which scope this census used."""
         if key not in _whole_cache:
-            _whole_cache[key] = ({x["hash"][:12] for x in scan_doc(key, rs[key][1], resolver, loose=args.loose)}
-                                 if key in rs else None)
+            # EVERY LINE's hash, not every ROW's: a row can vanish for reasons that have nothing
+            # to do with its line (a `cite` row exists only while its citation resolves dead).
+            lines = resolver.lines_of(rs[key][1]) if key in rs else None
+            _whole_cache[key] = set(line_hashes(key, lines)) if lines is not None else None
         return _whole_cache[key]
 
     retired = retired_verdicts(prev_rows, rows, radius, utc_now(), base, whole_hashes)
@@ -869,27 +885,24 @@ def run_close(env, args):
     if bad:
         raise SystemExit("REFUSE: {} of {} rows carry no verdict token (first: #{} {}:{} -> '{}')".format(
             len(bad), len(rows), bad[0]["n"], bad[0]["key"], bad[0]["line"], bad[0]["verdict"]))
-    # The seventh token belongs to the drift rung and to nothing else, in BOTH directions. Without the
-    # second half a status verdict on a drift row would still be accepted, which is how the two
-    # instruments' false positives came to share `not-a-label=` in the first place.
-    mis = [r for r in rows if (r["verdict"] == DRIFT_VERDICT) != (r["kind"] == "drift")]
-    if mis:
-        r = mis[0]
-        raise SystemExit(
-            "REFUSE: #{} {}:{} is a '{}' row verdicted {} -- '{}' is for drift rows and only drift "
-            "rows, and a drift row takes no status verdict (it makes no status claim: fix the line "
-            "number, or answer it '{}' when the pairing was a coincidence)".format(
-                r["n"], r["key"], r["line"], r["kind"], r["verdict"], DRIFT_VERDICT, DRIFT_VERDICT))
-    # On a LABEL row a dead pointer under a live status is the measured rot class (section 2.3 #5, #21,
-    # #27). On a plain prose line (kind `cite`) STILL TRUE means "dead on purpose" -- a doc naming a
-    # file that was retracted or moved away -- and only the hand can tell; it is recorded, not refused.
-    contra = [r for r in rows if r["verdict"] in ("STILL TRUE", "ACTUALLY DONE") and r["kind"] != "cite"
-              and dead_cites(r["tokens"])]
+    # On a LABEL row a dead pointer under a live status is the measured rot class (section 2.3 #5,
+    # #21, #27). On a plain prose line (kind `cite`) STILL TRUE means "dead on purpose" -- a doc
+    # naming a file that was retracted or moved away -- and only the hand can tell; it is recorded,
+    # not refused. `drift` is excluded too: its tokens are advisory by construction.
+    contra = [r for r in rows if r["verdict"] in ("STILL TRUE", "ACTUALLY DONE")
+              and r["kind"] not in ("cite", "drift") and dead_cites(r["tokens"])]
     if contra:
         r = contra[0]
         raise SystemExit("REFUSE: #{} {}:{} is verdicted {} but its citation resolved dead ({})".format(
-            r["n"], r["key"], r["line"], r["verdict"], " ".join("{}={}".format(t, s) for t, s in r["tokens"])))
+            r["n"], r["key"], r["line"], r["verdict"],
+            " ".join("{}={}".format(t, s) for t, s in r["tokens"])))
     counts = {v: sum(1 for r in rows if r["verdict"] == v) for v in VERDICTS}
+    # NOT A LABEL, split by the instrument whose row it rejects.
+    buckets = {c: 0 for c in LABEL_BUCKET.values()}
+    for r in rows:
+        if r["verdict"] == "NOT A LABEL" and r["kind"] in LABEL_BUCKET:
+            buckets[LABEL_BUCKET[r["kind"]]] += 1
+            counts["NOT A LABEL"] -= 1
     rs = read_set(env)
     # 2. the census must not be stale: every doc touched NOW was in the census's touched set
     base = meta["base"]
@@ -987,22 +1000,28 @@ def run_close(env, args):
     # against that -- and a clause that left with no destination is PRINTED, because a claim
     # being destroyed is not a number.
     import reading_order
-    ro_moved = 0
+    ro_moved = ro_cut = 0
     prev_cl = baseline_text(env, "CLAUDE.md", "private", base, {})   # private: the history repo's HEAD
     if prev_cl is not None:
         now_cl = read_text(os.path.join(env.repo, "CLAUDE.md")) or ""
         moved, cut, lost = reading_order.moved_and_cut(env.repo, prev_cl, now_cl)
-        ro_moved = len(moved)
+        ro_moved, ro_cut = len(moved), len(cut)
         if moved or cut or lost:
             print("reading order: {} clause(s) moved to a destination, {} CUT, {} EXEMPT-LOST"
                   .format(len(moved), len(cut), len(lost)))
         for _, raw in cut[:12]:
             print("  CUT (found in no doc): " + raw[:140])
-        # An exempt line is a record of what the USER said. Losing one is not a shrink to be
-        # counted -- it is the one outcome this instrument exists to make impossible to do
-        # quietly, so it is printed WHOLE and never folded into `ro-moved`.
-        for _, raw in lost:
-            print("  LOST A USER RECORD (exempt, and it left anyway): " + raw[:200])
+        # An exempt line is a record of what the USER said. PRINTING it is a post-mortem -- the
+        # ledger's own row says a detector where it cannot prevent what it names is not a guard
+        # -- and `ro-bytes` is RATCHETED, so a close could otherwise EARN the ratchet by
+        # deleting the user's own words (DIFF pass, round 2 Q2). So this one REFUSES.
+        if lost:
+            raise SystemExit(
+                "REFUSE: {} line(s) recording what the USER said left the reading order:{}{}{}"
+                .format(len(lost), chr(10),
+                        chr(10).join("  " + raw[:200] for _, raw in lost),
+                        chr(10) + "  -- restore them, or move them to a doc that keeps them "
+                        "verbatim. `ro-bytes` may not be earned this way."))
     # The cumulative ledger totals. The DELTA is this close's own correction count -- the number the
     # verdict columns cannot carry, because a corrected line is committed in its corrected form.
     n_res, n_flip = resolved_counts(env)
@@ -1020,9 +1039,12 @@ def run_close(env, args):
               .format(d_res, d_flip, n_res, n_flip))
     vals = {"base": base[:12], "rows": len(rows), "labels": meta.get("labels", 0),
             "resolved": n_res, "flips": n_flip, "ro-moved": ro_moved,
+            "ro-cut": ro_cut, "ro-lost": 0,   # a close with ro-lost > 0 cannot exist: it refuses
             "still-open": counts["STILL OPEN"], "actually-done": counts["ACTUALLY DONE"],
             "stale-done": counts["STALE DONE"], "partial": counts["PARTIAL"], "still-true": counts["STILL TRUE"],
-            "not-a-label": counts["NOT A LABEL"], "drift-ok": counts[DRIFT_VERDICT],
+            "not-a-label": counts["NOT A LABEL"],
+            "not-a-cite": buckets["not-a-cite"], "drift-ok": buckets["drift-ok"],
+            "not-loose": buckets["not-loose"],
             "cited-dead": meta.get("cited_dead", 0), "cite-drift": meta.get("cite_drift", 0),
             "accretion": rv["accretion"],
             "ro-bytes": rv["ro-bytes"], "ro-longest": rv["ro-longest"], "mem-over200": rv["mem-over200"],
@@ -1030,12 +1052,14 @@ def run_close(env, args):
             "wikilinks-dead": rv["wikilinks-dead"], "pairing-unref": rv["pairing-unref"],
             "pairing-dead": rv["pairing-dead"], "sweep-cursor": cursor, "sweep-cycle": meta.get("cycle", 0), "new": len(new), "foreign": foreign}
     # 6. commit 3 first: the private history (snapshot + state + the verdict table) -> census=
-    # The dated index is REGENERATED here, so it can never drift by more than one close --
-    # the discipline the config catalog uses (rewritten every boot, never read back).
+    # The dated index is refreshed by the CENSUS, not here: regenerating at close time would
+    # rewrite a path the content pin has already checked, which is the one thing the pin
+    # exists to forbid. Here it is only CHECKED, like any other doc the census read.
     import memory_index
-    ipath, changed = memory_index.write(env, rs)
-    if changed:
-        print("memory index regenerated: " + ipath)
+    if memory_index.stale(env, rs):
+        raise SystemExit("REFUSE: the memory directory changed since the census, so "
+                         "memory/INDEX_BY_DATE.md is stale -- re-run `census --force`, which "
+                         "regenerates the index and re-pins it (verdicts carry forward)")
     snapshot_sync(env, rs)
     state_save(env, st)
     final = os.path.join(env.history, "census", "{}-{}.md".format(utc, base[:10]))

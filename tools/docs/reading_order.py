@@ -39,6 +39,15 @@ ENTRY = re.compile(r"^([0-9]+[a-z-]*)\. ")
 DEST = re.compile(r"`((?:docs|research|src|include|tools)/[A-Za-z0-9_/.-]+)`")
 # A quotation the user is recorded as making: the two ASCII forms and the guillemets used for Russian.
 QUOTED = re.compile(r"verbatim|[«»“”]|\"[^\"]{8,}\"|\*\"")
+# WHO is being quoted. Case-INSENSITIVE, and this is the correction: the predicate used to be the
+# substring "USER", which measures the presence of an uppercase token rather than a record of what the
+# user said. `[V]` 2026-09-03: of the 60 lines in the reading order carrying a quotation, 8 were
+# exempt and 14 are under this pattern -- and the six it adds include the user's own Russian rejection
+# of the browser design and their hands-on verdict *"obs issue is gone, imgui gets captured in all
+# modes possible"*, both introduced by a lowercase "the user" (DIFF pass, round 2 Q3). Two of the six
+# are collateral from the neighbour window, and that is the right way to be wrong: over-exempting
+# costs an explicit act to move a line, while under-exempting deletes the user's own words silently.
+SPEAKER = re.compile(r"(?i)\buser'?s?\b")
 
 
 def section(repo):
@@ -106,8 +115,8 @@ def clauses(body):
         # quotation wraps, the clause that carries the user's actual WORDS is on the second line and
         # has no `USER` on it, so a forward-only window exempts the introduction and leaves the quote
         # itself unprotected -- which is the wrong half to lose.
-        exempt = (("USER" in line and bool(QUOTED.search(line) or QUOTED.search(nxt)))
-                  or (bool(QUOTED.search(line)) and "USER" in prv))
+        exempt = ((bool(SPEAKER.search(line)) and bool(QUOTED.search(line) or QUOTED.search(nxt)))
+                  or (bool(QUOTED.search(line)) and bool(SPEAKER.search(prv))))
         for raw in re.split(r"(?<=[.;:])\s+", line):
             n = norm(raw)
             if len(n.split()) >= 8:

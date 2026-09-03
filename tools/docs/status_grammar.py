@@ -414,11 +414,34 @@ def row_hash(key, line, dupes):
     return sha1(key + chr(0) + t + (chr(0) + str(n) if n > 1 else ""))
 
 
+def line_hashes(key, lines):
+    """The identity of EVERY line in the doc, computed by exactly the procedure that identifies a ROW.
+
+    Two things need this to be one function of one input. `retired_verdicts` asks "is the line this
+    verdict named still in the file", and asking the ROW set instead answers a different question:
+    `[V]` 2026-09-03 a `cite` row exists only while its citation resolves dead, so RESTORING a cited
+    file makes the row vanish while the doc line is byte-identical -- and the verdict would be
+    recorded as acted-on for a line nobody touched, the same bias the scope fix removed one commit
+    earlier (DIFF pass, round 2 Q1).
+
+    It also closes a latent one. The occurrence ordinal used to advance only when a ROW was created,
+    so two identical lines that both produced rows were 1 and 2 -- and if the FIRST stopped producing
+    one, the second silently became 1, changing its hash, losing its verdict AND recording it as
+    retired. Advancing per LINE makes the ordinal a property of the text's position in the file, which
+    is what it was always meant to be."""
+    dupes, out = {}, []
+    for l in lines:
+        out.append(row_hash(key, l, dupes))
+    return out
+
+
 def scan_lines(key, lines, resolver, loose=False):
     if any(l.strip() == VOCAB_MARKER_DOC for l in lines):
         return []
     rows = []
-    dupes = {}
+    # ONE pass, up front: a row's hash is the hash of its LINE, so the ordinal cannot
+    # depend on which lines happened to produce rows (see `line_hashes`).
+    hashes = line_hashes(key, lines)
     in_fence = False
     quoting_vocab = False
     for i, line in enumerate(lines):
@@ -471,6 +494,6 @@ def scan_lines(key, lines, resolver, loose=False):
             "key": key, "line": i + 1, "kind": kind, "label": lab[1] if lab else "",
             "substate": substate_of(line, nxt), "tokens": toks,
             "date": max(dates) if dates else "", "total": bool(TOTAL_RE.search(line)),
-            "hash": row_hash(key, line, dupes), "text": line.strip()[:160], "verdict": "",
+            "hash": hashes[i], "text": line.strip()[:160], "verdict": "",
         })
     return rows

@@ -92,6 +92,20 @@ def write(env, rs=None):
     return path, True
 
 
+def stale(env, rs=None):
+    """True when the index on disk no longer matches the memory directory -- WITHOUT rewriting it.
+
+    The close needs to ask this rather than regenerate. `[V]` 2026-09-03: the first version
+    regenerated at close time, AFTER the content pin had already checked every path -- so the one
+    file guaranteed to differ from what the census read was the one the close itself rewrote, in
+    direct contradiction of the invariant two hundred lines above it ("EVERY path ANY of the three
+    commits carries must hold the bytes the census read"). Harmless only because the index carries
+    the doc-scope marker and yields no rows; the moment it yielded one, that row would be committed
+    unverdicted. The index is a doc like any other now: the CENSUS refreshes it, the close checks it."""
+    path = os.path.join(env.memory, INDEX_NAME)
+    return read_text(path) != render(entries(env, rs))
+
+
 # --------------------------------------------------------------- the pointers the two index files make
 _MD_LINK = re.compile(r"\]\(([A-Za-z0-9_./-]+\.md)\)")
 _MEM_GLOB = re.compile(r"`(memory/[A-Za-z0-9_*\[\].+-]+)`")

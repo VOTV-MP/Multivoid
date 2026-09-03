@@ -29,20 +29,23 @@ column present in a trailer carries a declared kind, so an undeclared column can
 """
 
 IDENTITY = ("base", "census", "research-base")
-VERDICT = ("still-open", "actually-done", "stale-done", "partial", "still-true", "not-a-label",
-           "drift-ok")
+VERDICT = ("still-open", "actually-done", "stale-done", "partial", "still-true",
+           # ONE hand token, NOT A LABEL, attributed to the rung whose row it rejects --
+           # the label grammar, the citation resolver, the symbol content rung, the loose
+           # regex. A single counter was three instruments' error rates added together.
+           "not-a-label", "not-a-cite", "drift-ok", "not-loose")
 RATCHETED = ("ro-bytes", "ro-longest", "mem-over200", "memref-dead", "wikilinks-dead",
              "pairing-unref", "pairing-dead", "accretion")
 MONOTONE = ("resolved", "flips")
-GATED = ("rows", "cited-dead")
-REPORTED = ("labels", "cite-drift", "running-totals",
+GATED = ("rows", "cited-dead", "ro-lost")
+REPORTED = ("labels", "cite-drift", "running-totals", "ro-cut",
             "ro-moved", "sweep-cursor", "sweep-cycle", "new", "foreign")
 
 # The written order. `rows` leads the counts because the VERDICT identity is stated against it.
 ORDER = ("base", "rows", "labels") + VERDICT + (
     "cited-dead", "cite-drift", "running-totals",
     "accretion", "resolved", "flips",
-    "ro-bytes", "ro-longest", "ro-moved", "mem-over200", "memref-dead",
+    "ro-bytes", "ro-longest", "ro-moved", "ro-cut", "ro-lost", "mem-over200", "memref-dead",
     "wikilinks-dead", "pairing-unref", "pairing-dead",
     "sweep-cursor", "sweep-cycle", "census", "research-base", "new", "foreign")
 

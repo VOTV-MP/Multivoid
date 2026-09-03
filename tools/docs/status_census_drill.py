@@ -42,6 +42,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import status_census as SC  # noqa: E402
 
+NLC = chr(10)          # a literal newline, spelled so no heredoc can eat the escape
 SCRIPT = os.path.join(HERE, "status_census.py")
 FAILS = []
 
@@ -153,11 +154,11 @@ def drill_vocab_markers():
               [(r["line"], r["label"]) for r in rows]))
 
 
-def drill_drift_token_refusal():
-    """The seventh token BINDS, not merely exists. Asserting `DRIFT_VERDICT in VERDICTS` says the
-    vocabulary grew; it says nothing about the refusal, and a token nothing enforces leaves the hand
-    free to answer drift with `NOT A LABEL` exactly as before -- which is the defect the token was
-    added to close. This is the same shape as the `memref-dead` ratchet that was drilled only at 0."""
+def drill_verdict_attribution():
+    """NOT A LABEL is attributed to the RUNG whose row it rejects. `not-a-label=` is declared in three
+    places to be the LABEL GRAMMAR's false-positive rate, but rows arrive from four instruments, and
+    [V] 2026-09-03 sixteen of one census's 87 rows were citation-rung rows -- so one counter was three
+    instruments' errors added together. The hand still writes one token; the machine splits it."""
     root = tempfile.mkdtemp(prefix="scd_")
     repo, mem, hist = (os.path.join(root, n) for n in ("repo", "memory", "history"))
     os.makedirs(os.path.join(repo, "docs"))
@@ -165,50 +166,52 @@ def drill_drift_token_refusal():
     os.makedirs(mem)
     try:
         w = lambda rel, text: io.open(os.path.join(repo, rel), "w", encoding="utf-8",
-                                      newline="\n").write(text)
+                                      newline=NLC).write(text)
         git(["init", "-q", "-b", "main", "."], repo)
         git(["config", "--local", "user.name", "drill"], repo)
         git(["config", "--local", "user.email", "drill@example"], repo)
-        w(".gitignore", "CLAUDE.md\n")
+        w(".gitignore", "CLAUDE.md" + NLC)
         w("CLAUDE.md", CLAUDE)
-        w("src/thing.cpp", "\n".join(["// head"] + ["// pad {}".format(i) for i in range(2, 60)] +
-                                     ["void MovedSymbol() {}"]) + "\n")
-        w("docs/x.md", "# X\n\nthe seam is `src/thing.cpp:5` `MovedSymbol` today\n")
-        io.open(os.path.join(mem, "MEMORY.md"), "w", encoding="utf-8").write("# i\n- a\n")
-        git(["add", "--", ".gitignore", "docs/x.md", "src/thing.cpp"], repo)
+        w("src/thing.cpp", NLC.join(["// head"] + ["// pad {}".format(i) for i in range(2, 60)] +
+                                    ["void MovedSymbol() {}"]) + NLC)
+        # ONE row per rung: a LABEL row, a CITE row (dead path), a DRIFT row (the symbol moved)
+        w("docs/x.md", NLC.join(["# X", "", "- **DONE** a plain claim", "",
+                                 "see `zz_never_existed.cpp:9` for it", "",
+                                 "the seam is `src/thing.cpp:5` `MovedSymbol` today"]) + NLC)
+        io.open(os.path.join(mem, "MEMORY.md"), "w", encoding="utf-8").write("# i" + NLC + "- a" + NLC)
+        w("docs/touched.md", "# T" + NLC + NLC + "plain prose" + NLC)
+        git(["add", "--", ".gitignore", "docs/x.md", "docs/touched.md", "src/thing.cpp"], repo)
         git(["commit", "-q", "-m", "base"], repo)
+        # x.md stays COMMITTED so the sweep reads it whole and all three rungs fire; a second doc
+        # is touched so the close has a path to carry (the rows are the point, not the paths).
+        w("docs/touched.md", "# T" + NLC + NLC + "plain prose, edited" + NLC)
         E = (repo, mem, hist)
-        code, out = run_sc(E, "census", "--since", "2099-01-01")
+        run_sc(E, "census", "--since", "2099-01-01")
         pend = os.path.join(hist, "census", "pending.md")
         _, rows = SC.read_table(pend)
-        check(len(rows) == 1 and rows[0]["kind"] == "drift",
-              "the fixture yields exactly one DRIFT row ({})".format([(r["kind"], r["line"]) for r in rows]))
-
-        def set_all(v):
-            t = io.open(pend, encoding="utf-8").read().split("\n")
-            for i, l in enumerate(t):
-                if l.startswith("| ") and not l.startswith("| # ") and not l.startswith("|---"):
-                    c = [x.strip() for x in l.strip().strip("|").split("|")]
-                    if len(c) >= 11 and c[0].isdigit():
-                        cells = l.rstrip().rstrip("|").split("|")
-                        cells[-1] = " " + v + " "
-                        t[i] = "|".join(cells) + "|"
-            io.open(pend, "w", encoding="utf-8", newline="\n").write("\n".join(t))
-
+        kinds = sorted(r["kind"] for r in rows)
+        check(kinds == ["cite", "drift", "lead"],
+              "the fixture yields ONE row per rung: label, citation, drift ({})".format(kinds))
+        t = io.open(pend, encoding="utf-8").read().split(NLC)
+        for i, l in enumerate(t):
+            if l.startswith("| ") and not l.startswith("| # ") and not l.startswith("|---"):
+                c = [x.strip() for x in l.strip().strip("|").split("|")]
+                if len(c) >= 11 and c[0].isdigit():
+                    cells = l.rstrip().rstrip("|").split("|")
+                    cells[-1] = " NOT A LABEL "
+                    t[i] = "|".join(cells) + "|"
+        io.open(pend, "w", encoding="utf-8", newline=NLC).write(NLC.join(t))
         T = ["--trailer", "Co-Authored-By: Drill <d@e>", "--trailer", "Claude-Session: https://example/x"]
-        for tok in ("STILL TRUE", "NOT A LABEL"):
-            set_all(tok)
-            code, out = run_sc(E, "close", "-m", "drift", *T)
-            check(code != 0 and "drift rows" in out,
-                  "RED: '{}' on a DRIFT row refuses -- the token BINDS, it does not merely exist".format(tok))
-        # ...and the other direction: the seventh token on a row that is NOT a drift row
-        w("docs/x.md", "# X\n\nthe seam is `src/thing.cpp:5` `MovedSymbol` today\n\n- **DONE** a plain claim\n")
-        run_sc(E, "census", "--force", "--since", "2099-01-01")
-        set_all(SC.DRIFT_VERDICT)
-        code, out = run_sc(E, "close", "-m", "drift", *T)
-        check(code != 0 and "drift rows" in out,
-              "RED: '{}' on a NON-drift row refuses too -- a one-sided gate is half a gate".format(
-                  SC.DRIFT_VERDICT))
+        code, out = run_sc(E, "close", "-m", "attribution", *T)
+        check(code == 0, "the close accepts ONE token on all three ({})".format(out.strip()[-90:]))
+        tr = SC.parse_trailer(git(["log", "-1", "--format=%B"], repo))
+        got = {k: tr.get(k) for k in ("not-a-label", "not-a-cite", "drift-ok", "not-loose")}
+        check(got == {"not-a-label": "1", "not-a-cite": "1", "drift-ok": "1", "not-loose": "0"},
+              "THREE identical hand tokens land in THREE different rates ({})".format(got))
+        cols = ("still-open", "actually-done", "stale-done", "partial", "still-true",
+                "not-a-label", "not-a-cite", "drift-ok", "not-loose")
+        check(int(tr["rows"]) == sum(int(tr.get(c, 0)) for c in cols),
+              "...and the verdict identity still sums to rows")
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -263,9 +266,10 @@ def drill_content_rung():
         # the symbol rung's false positives into the counter the gate declares to be the LABEL
         # GRAMMAR's precision (DIFF pass, round 1 Q1; 31 corpus drift rows). The token is refused in
         # BOTH directions, or the two instruments' errors merge again by default.
-        check(SC.DRIFT_VERDICT in SC.VERDICTS and SC.DRIFT_VERDICT == "DRIFT OK",
-              "the drift rung has its OWN token, so `not-a-label` stays the label grammar's rate")
-        drill_drift_token_refusal()
+        check("DRIFT OK" not in SC.VERDICTS and set(SC.LABEL_BUCKET) == {"cite", "drift", "loose"},
+              "the hand writes ONE rejection token; the MACHINE attributes it to the rung ({})".format(
+                  sorted(SC.LABEL_BUCKET.items())))
+        drill_verdict_attribution()
         # 4. FALSE-POSITIVE CONTROLS, one per shape measured on the real corpus
         got = st("`src/thing.cpp:60` `MovedSymbol` is right here")
         check(got and got[0][1] == "ok", "a symbol AT the cited line is ok ({})".format(got))
@@ -648,6 +652,17 @@ def drill_memory_index():
         check(SC.scan_lines("memory/" + MI.INDEX_NAME, body.split("\n"), SC.Resolver(env)) == [],
               "...so the census reads ZERO claims from it, however many status words it reprints")
         check(MI.write(env)[1] is False, "a second run is idempotent -- an unchanged index is not rewritten")
+        check(MI.stale(env) is False, "...and `stale` agrees without rewriting anything")
+        w(mem, "lesson-written-after-the-census.md",
+          "---\nname: lesson-written-after-the-census\ndescription: \"late\"\nmetadata:\n"
+          "  modified: 2026-09-03T10:00:00.000Z\n---\n\nbody\n")
+        check(MI.stale(env) is True,
+              "RED: a memory file written AFTER the census makes the index stale -- the close refuses "
+              "rather than rewriting a path the content pin already checked")
+        before = io.open(os.path.join(mem, MI.INDEX_NAME), encoding="utf-8").read()
+        MI.stale(env)
+        check(io.open(os.path.join(mem, MI.INDEX_NAME), encoding="utf-8").read() == before,
+              "...and asking the question did not itself change the file")
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
