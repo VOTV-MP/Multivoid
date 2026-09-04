@@ -146,6 +146,14 @@ session's docs-only QF_ARC commit; same code.)
 
 All `[A]` with file:line (spot-verified where marked). The one that changes the arc:
 
+> **[corr 2026-09-04, /qf Q1 design pass round 1 — THIS HEADLINE'S ARITHMETIC AND ITS
+> `MATERIALIZED` READING ARE BOTH WRONG. Read the correction under §4-A2 before using any number in
+> the paragraph below.** In short: the ~1,930 double-counts (the client DESTROYS ~801 of its own
+> natives while standing up the 871 proxies, so the pile lane's net is ≈ **+70**); the +1,061 is a
+> DIFFERENT root that the same log names outright (an aborted divergence sweep); and
+> `MATERIALIZED = 0` is what the bracket gate PREDICTS at a join, not a dead capability. The
+> paragraph is kept verbatim because §4-A2 is a correction OF it.]
+
 **A-HEADLINE — the field 20-fps client is dominated by CRUTCH C2's true price: actor-population
 asymmetry, ENGINE-side.** A same-save host/client field-log pair
 (`ignore_folder/arigalit_atv_and_props_report/`, 2026-08-26) shows the client carrying **~1,930
@@ -161,6 +169,60 @@ actors), not our code. Caveat, stated: the pair predates the R-2 scan hub — it
 MECHANISM, not today's exact numbers; re-run at HEAD is §6 arm 1's first order of business. The
 rejoin tie-in: every join re-creates the 871-proxy burden, and census D owes the answer on whether
 a rejoin tears the previous set down or stacks it.
+
+### 4-A2. A-HEADLINE corrected (2026-09-04, /qf Q1 design pass round 1)
+
+Census A read the field pair once and never re-opened it. Re-measuring it to build the Q1 brief
+moved four of its claims. Every line below is `[V]` from the logs or the code named.
+
+**The reference set is THREE sessions on THREE builds, not one** — and the pile signature is
+identical in all three, so the mechanism is stable even though the numbers are pre-b150:
+
+| artifact | build | lines | `MATERIALIZED` | `proxy: SPAWN` | twin lines | `save_identity_bind: BOUND` |
+|---|---|---|---|---|---|---|
+| `arigalit_atv_and_props_report/multivoid_client.log` | b134 | 21,543 | 0 | 871 | 12 | 0 |
+| `arigalit_red_mist_desync/multivoid_client.log` | b143 | 14,459 | 0 | 871 | 12 | 0 |
+| `linux_fps_issue/multivoid_friend_with_fps_issue.log` | b133 | 52,251 | 0 | 871 | 12 | 0 |
+
+The pair A-HEADLINE names is **b134**, and its banner was never checked. No CURRENT-build artifact
+is openable: the b150 field log is not on disk.
+
+1. **The ~1,930 double-counts, and the pile lane's real net is ≈ +70.** `[V]` the 12
+   `DESTROY native level-pile twin` lines are a THROTTLED emit —
+   `if (g_pileBindCount < 8 || (g_pileBindCount % 200) == 0)` (`pile_spawn_bind.cpp:151`) — and
+   their own carried index counter reads 870/869/868/867/866/865/864/863 then **670/470/270/70**,
+   which reconstructs to **801+ destroys** and an 871-entry index consumed to ≤70. So the client
+   destroys ~801 of its own save-loaded natives while standing up 871 proxies. Adding the 871 to
+   the 1,061 counts a population that is no longer there.
+2. **`MATERIALIZED = 0` is what the design PREDICTS at a join.** `[V]` `MATERIALIZED` is logged only
+   by `native_pile_mirror::Materialize` (`native_pile_mirror.cpp:110`), reached at
+   `remote_prop_spawn.cpp:207` under `!isClump && !join_membership_sweep::IsClaimTrackingActive()`
+   (`:200`) — and the whole join burst runs INSIDE that bracket
+   (`join_membership_sweep.cpp:104-106`, cleared at `:452`/`:553`). The b150 log's `[V]` **30
+   MATERIALIZED over 21 pile eids** in a 58-minute session is the POSITIVE CONTROL for this, not a
+   counter-example: it fires in steady state and cannot fire at a join.
+3. **…but the dead-capability instinct was right about the OUTCOME, via the OTHER path.** `[V]`
+   `save_identity_bind: BOUND` greps **0** in all three logs, so the bind-the-existing-native guard
+   (`remote_prop_spawn.cpp:176-190`, which logs nothing and is therefore invisible to any log) had
+   no bound native to find either. **Both** native-preserving mechanisms yield zero at a join, for
+   two different reasons. A-HEADLINE fused them under one line range and one log line.
+4. **The +1,061 is a DIFFERENT root, and the same log names it.** `[V]` client log, in order:
+   `keyed index-half -- 1052 element-less keyed in universe (0 claimed, 0 stale entries evicted)`;
+   `completeness FLOOR kept 870 unclaimed 'actorChipPile_C' -- host census 872, claimed only 0 this
+   bracket`; `claim sweep ABORTED -- would destroy 1052 of 1922 in-universe actor(s) (>50%) …
+   (0 claimed stay converged)`. So **1,052 keyed props with NO element row survive because the
+   divergence sweep aborted on its own safety valve** (`join_membership_sweep.cpp:441`), against a
+   final measured delta of 1,061. And the floor's stated reason — *"the host under-expressed these
+   classes"* — is FALSE: the host's own census emitted **872** `actorChipPile_C`
+   (`snapshot_census: host completeness census built`, HOST log), the client spawned 871 proxies for
+   them, and claimed 0, because `remote_prop_spawn.cpp`'s trash branch spans `:168-266` and returns
+   at `:266` while every `RecordClaimIfTracking` in that file sits at `:334`/`:484`/`:593`.
+
+**What this does to Q1.** The C2 crutch and its RULE-2 violation are untouched by the above and
+remain real. What changes is the SIZE of the term Q1 attacks: the pile lane contributes ~+70 net
+actors, and ~1,052 come from an aborted join reconcile over identity-less props. `H-CLIENT-ASYM`'s
+"CONFIRMED, mechanism = C2" verdict is therefore **not established for the larger half**, and Q1 as
+scoped attacks the smaller one. See §5 Q1a.
 
 **A-FASTPATH — the PE detour is NOT a suspect.** For an uninteresting call (>99%): ~8-10
 relaxed/acquire loads + branches + one int inc/dec; NO lock, NO allocation, NO reflection; pump
@@ -475,6 +537,8 @@ appetite (2026-09-02: "Я давно хотел с мусором pile типа 
 | # | fix | class | expected |
 |---|---|---|---|
 | **Q1** | **C2 RETIREMENT — the trash-pile/clump redesign per RULE 1** (A-HEADLINE): stop spawning GC-rooted Movable proxy actors for piles the client already owns natively; extend the rooted-native bind recipe to the clump form; find WHY `native_pile_mirror MATERIALIZED=0` in the field and why the client carries ~1,061 extra keyed props; retire the parallel aim-cone with the proxies (its per-E-press ~1,742 PE + join-time ~740k PE go with it). Design pass = /qf to convergence BEFORE build | client-asymmetric, engine-side — THE field 20-fps root | ~1,930 extra actors → ~0; the single biggest field win |
+| **Q1 — REVISED 2026-09-04 (§4-A2)** | the two sub-questions in the row above are ANSWERED and neither answer is C2: `MATERIALIZED=0` is what the bracket gate predicts at a join (§4-A2.2), and the ~1,061 is the aborted divergence sweep (§4-A2.4). What remains genuinely Q1's is the CRUTCH — the fake `AStaticMeshActor`, the parallel aim cone, and the two-mirror-implementations RULE-2 violation — sized at ≈ **+70 net actors**, not ~1,930. **Its user-facing warrant is N5/N6, not the actor count**, and that half is UNMEASURED: no available artifact exercises the grab lane (`GRAB-INTENT` greps 0 in all three field logs) | correctness + RULE 2; engine-side term is small | ~+70 actors → 0; the aim cone and ~3,955 LOC / 11 modules retire |
+| **Q1a — NEW 2026-09-04, ranked ABOVE Q1** | **the join divergence reconcile leaves ~1,052 identity-less actors on every joining client** (§4-A2.4): `RecordClaimIfTracking` is unreachable on the trash branch (`remote_prop_spawn.cpp:168-266` returns at `:266`; the file's claim sites are `:334`/`:484`/`:593`), so an entire host-expressed class claims 0, the completeness floor concludes "the host under-expressed" against a host census of 872, and the >50% valve (`join_membership_sweep.cpp:441`) then ABORTS the whole sweep. **Not designed. Open question first: are the 1,052 props the host genuinely lacks (→ the valve is the defect) or props the host has whose identity never bound (→ the binding is)?** That is a two-peer rig measurement, and it is the SAME run B2 needs | client-asymmetric, engine-side; identity | ~1,052 actors/join → the number the reconcile actually intends |
 | Q2 | overlay: draw-predicate fix — voice term asks has-something-to-SHOW, not Enabled() + zero-vertex `RenderDrawData` skip (C-CRIT-1) | per-frame, EVERY player | full empty-overlay ImGui+DX11 pass → ~0 |
 | Q3 | log discipline: latch `remote_prop` no-match WARNs (+ epoch-0, pump-fault, `[REL-EDGE]`), take WARN's sync fflush off the game thread; DELETE `[WA-TRACE]` (2 PE + 1 line per mirror per second, monotonic coin growth) and give coin mirrors a despawn answer (C-CRIT-2, A) | hitch/storm class | kills the 60-flush/s collapse lane + the growing trace tax |
 | Q3a | rejoin-residue family (D): wire the DEAD `save_transfer::OnDisconnect` into `DisconnectAll` (~17 MB leak + stale progress + temp file + identity-bind clear); type-swap the §4-D raw `g_gm` caches to `CachedObjRef` (wrong-world WRITES in the purge window); desk-cursor quintet into `ResetPeerRemoteState`; per-slot latch sweep; assembler `ClearSlot` on the fan-out; `g_parked` host cap (+ TRACKER row) | memory + correctness on every rejoin | the leak class and the recycled-slot sync defects go; third join-path dead capability lands in the register |
