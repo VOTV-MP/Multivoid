@@ -384,11 +384,12 @@ docs/CRUTCHES.md
 [withdrawn at the author's request]
 # CRUTCHES above). Same terms as every sibling in this block: each file stays ON DISK, every local
 # pointer resolves, none resolves on GitHub.
-#   THUNDERSTORE.md -- the publishing runbook. It names, with evidence, the two independent legal
-#     legs under scientists.pak and the four irreversible store rules; a public copy is a map of
-#     where a release can be attacked or mis-filed, and it is operator knowledge, not user docs.
+#   THUNDERSTORE.md -- the publishing runbook: operator knowledge, not user documentation. What a
+#     player needs is docs/INSTALL.md and that stays public. This one works through per-asset
+#     review considerations and the store rules that cannot be undone, so a public copy reads as a
+#     map of where a release can be attacked or mis-filed.
 [withdrawn at the author's request]
-#     public about another author's internals and about what we take from them; that belongs beside
+#     reasons about a third party's internals and about what we take from them; that belongs beside
 #     the study itself, which is already unpublished under research/.
 #   BLENDER_ARC.md -- a signpost left behind when VotvIO moved to its own repo; zero tracked
 #     references, so it costs the public tree nothing to withdraw.
