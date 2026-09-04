@@ -390,15 +390,28 @@ So **10 entries when idle, 2 when busy.**
 The game's own enum (`main/enums/enum_kerfurCommand.uexp`, display names parsed in order) and the
 `state` byte the verbs write are the same value space:
 
-| value | enum name | set by verb | menu label |
-|---|---|---|---|
-| 0 | `follow` | `follow` -> `@21624` | Follow |
-| 1 | `idle` | `idle` -> `@21404` | Idle |
-| 2 | `patrol` | `patrol` -> `@21184` | Patrol |
-| 3 | `fix` | `fix_servers` -> `@20950` | Fix_servers |
-| 4 | `report` | `get_reports` -> `@21874` | Get_reports |
-| 5 | `transformer` | `fix_transformers` -> `@22108` | Fix_transformers |
-| 6 | **`sitOnAtv`** | **no menu entry** — set at `kerfurOmega.cpp:5724` | — |
+**Re-derived with `tools/bp_cfg.py` on 2026-09-04** (the first pass read this off the pseudo-C++
+`Label_*` names, which is a control-flow claim made with the wrong lens — the CFG is the instrument
+the rule names). It confirmed every row AND added the `dropObject` column, which the readable lens
+did not surface:
+
+| value | enum name | verb -> guard -> write | the write block | menu label |
+|---|---|---|---|---|
+| 0 | `follow` | `@20455` -> `@21624` -> `@21808` | `ByteConst 0` + `move` | Follow |
+| 1 | `idle` | `@20504` -> `@21404` -> `@21588` | `ByteConst 1` + `move` | Idle |
+| 2 | `patrol` | `@20555` -> `@21184` -> `@21368` | `ByteConst 2` + `move` | Patrol |
+| 3 | `fix` | -> `@20950` -> `@21134` | `ByteConst 3` + `move` + **`dropObject`** | Fix_servers |
+| 4 | `report` | `@20674` -> `@21874` -> `@22058` | `ByteConst 4` + `move` + **`dropObject`** | Get_reports |
+| 5 | `transformer` | -> `@22108` -> `@22292` | `ByteConst 5` + `move` + **`dropObject`** | Fix_transformers |
+| 6 | **`sitOnAtv`** | **no menu entry** — set at `kerfurOmega.cpp:5724` | — | — |
+
+`[V]` **The three BUSY verbs each call `dropObject`; the three non-busy ones do not.** A kerfur sent
+to a task drops whatever it is carrying — a shared-world write that no earlier pass recorded, and
+one J4's design has to expect (a floppy handed to a kerfur that is then sent to fix servers).
+
+`[V]` `turn_off` (`@20404` -> `@21844`) goes straight to `EX_LocalVirtualFunction dropKerfurProp`
+with **NO state guard** — consistent with `getActionOptions` offering it while busy. `kill`
+(`@21859`) is a bare `EX_LocalVirtualFunction startKill`.
 
 **States 3/4/5 are the BUSY states**, and the guard is symmetric: while busy, the menu collapses AND
 every state-changing branch in `actionName` refuses (each of the six branches re-tests
@@ -618,11 +631,22 @@ row** (principle 8), a protocol bump, and evidence from a real two-peer run.
 
 ## 8. Instruments + evidence
 
-All §1-§4 facts this round: `python tools/bp_cpp.py <BP> [--offsets]` (BlueprintToCpp `a504452`,
-Yangff `3a7122b`) over the 0.9.0n pak, plus direct byte-parsing of `enum_kerfurCommand.uexp`,
-`enum_kerfurDripType.uexp`, `enum_interactionActions.uexp`, `list_kerfurDrip.uasset`,
-`list_store.uasset`. Decompiles land in `research/bp_reflection/cpp/` (gitignored — derived game
-content).
+**Which lens produced which fact — stated, because the rule cares (`[[feedback-rebase-old-tool-facts-on-new-instruments]]`):**
+
+| instrument | used for |
+|---|---|
+| `tools/bp_cpp.py` | the readable pass over `kerfurOmega`, `prop_kerfurOmega`, `kerfurOmega_0/1/2`, `p_kerfus`, `kerfusPawn`, `kerfusPossessor`, `prop_kerfusBody`, `prop_corded`, `serverBox`, `generator`, `transformerMGPanel`, `generatorFuckuper` — fields, function census, action lists |
+| `tools/bp_cpp.py --offsets` | `kerfurOmega`, `serverBox` — the property blocks and the eject chain `@4519/@4560/@4574` |
+| `tools/bp_reflect.py` | `serverBox` — the kismet JSON, from which every dispatch verdict in §0.5 was resolved by `StackNode` / `VirtualFunctionName` |
+| **`tools/bp_cfg.py`** | **`kerfurOmega` ubergraph — §2.2's verb -> guard -> write chain.** Run as a CORRECTION: the first pass read that control flow off the pseudo-C++ `Label_*` names, which is the wrong lens for a branch claim. The CFG confirmed every row and added `dropObject`. |
+| ad-hoc byte parsing | `enum_kerfurCommand.uexp`, `enum_kerfurDripType.uexp`, `enum_interactionActions.uexp`, `list_kerfurDrip.uasset`, `list_store.uasset` — enum display-name order and datatable rows, which none of the three wrappers reads |
+
+Decompiles land in `research/bp_reflection/` (gitignored — derived game content).
+
+**The method lesson, paid for in this round:** a control-flow claim read off the readable lens is
+not wrong by default — every offset matched — but it is unverified, and it is INCOMPLETE in a way
+you cannot see from inside it. `dropObject` was sitting in three blocks the pseudo-C++ rendered
+without it. Use `bp_cpp` to learn what a graph SAYS and `bp_cfg` to state what it DOES.
 
 Per `[[feedback-rebase-old-tool-facts-on-new-instruments]]`, the June 2026 kerfur facts in
 `docs/kerfur/0*.md` were derived with the older hand-walked `to-json` route. They are NOT re-based
