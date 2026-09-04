@@ -57,7 +57,7 @@ Three clauses make it falsifiable rather than aspirational:
    carries. A relayed `get_reports` with an unsynced floppy is zero progress, not most of the way.
 3. **Plus the late-join row.** A peer arriving mid-job sees it correctly (principle 8).
 
-**Closure:** every row of §0.3 answers Q1 yes with evidence from a real two-peer run.
+**Closure:** every row of §0.3 answers YES with evidence from a real two-peer run.
 
 ### 0.3 THE JOB LIST — the benchmark, and the thing that actually gets tracked
 
@@ -76,9 +76,9 @@ whether it exists*.
 |---|---|---|---|---|---|
 | J1 | move around the base | works — pose lane built | HARDEN | robot: follow/idle/patrol | — |
 | J2 | carry / move objects | works — grab + `prop_drop_intent`; edges `[?]` | HARDEN | robot: `take_object` | prop identity |
-| J3 | **fix servers** | works locally; cross-peer robustness `[?]` | HARDEN | robot: `fix_servers` + `findBrokenServer` | server system |
-| J4 | **collect reports (floppy)** | `[?]` — the floppy's own data lane is unsynced | HARDEN + BUILD | robot: `get_reports` | signals + floppy props |
-| J5 | **fix transformers** | `[?]` cross-peer | HARDEN | robot: `fix_transformers` + `goTransfo` | **POWER CHAIN — PARKED** |
+| J3 | **fix servers** | **`[RD]` DOES NOT COUNT** — lane is one-directional, no client->host path (§0.5) | **BUILD** | robot: `fix_servers` + `findBrokenServer` | server system |
+| J4 | **collect reports (floppy)** | **`[RD]` ENTIRELY UNSYNCED** — the server's floppy triple is on no wire (§0.5) | **BUILD** | robot: `get_reports` | signals + floppy props |
+| J5 | **fix transformers** | **`[V]` NO LANE EXISTS** — 24/24 `transformer` hits are the kerfur verb string (§0.5) | **BUILD** | robot: `fix_transformers` + `goTransfo` | **POWER CHAIN — PARKED** |
 | J6 | drive the ATV | works, on a C1 crutch | HARDEN | robot: `sitOnAtv` | **ATV — C1, PAUSED** |
 | J7 | use equipment / inventory | works; facets broken | HARDEN | robot: `equipment` / drip | container facets |
 | J8 | patrol / watch the base | works | — | robot: `patrol` | — |
@@ -102,6 +102,85 @@ one side lane" to **main-line blocker**, because J5 is a third of the core work.
 **The rule that names the shape** is `COOP_SYNCER_MODEL.md` §2b — ACT-AS-HOST. A client authors an
 INTENT naming WHAT; the host arbiter performs it; results flow back as ordinary state. A client
 fixing a server by hand is exactly that class of shared-world write.
+
+---
+
+## 0.5 M0, static pass — the three core jobs, read off the code (2026-09-04)
+
+Before spending a two-peer run, the same question was put to the source. **All three core jobs come
+back negative, each for a different reason.**
+
+**Read the tags precisely, because the two halves have different strength.** The MECHANISM is `[V]`
+in all three cases — an absent send site, a field absent from a payload, and a grep with zero real
+hits are measurements, not inferences; a lane with no client->host path cannot carry a client's work
+by construction. What is `[RD]` is only the **user-visible symptom** — exactly what the player sees
+and when. A run upgrades that half, and it now knows precisely what to look at.
+
+### J3 — a client fixes a server by hand: DOES NOT COUNT (mechanism `[V]`, symptom `[RD]`)
+
+The player-side verb exists: `AserverBox_C::fix()` (`serverBox.cpp:1268`), reached through a
+minigame (`minigame` / `staticMinigame` fields); `getActionOptions` offers `Use(4)`.
+
+Our lane `coop/interactables/serverbox_sync` is **host-authoritative and one-directional by
+declaration** — its own header says *"Client never SENDS server state"*, and `[V]` the .cpp has
+exactly two send sites (`:272` broadcast, `:288` per-slot connect seed), both host-side. There is no
+client->host path of any kind.
+
+`[V]` the wire carries four values and no more (`protocol.h:3908`):
+
+```
+ServerStatePayload { int32 brokenServers; float effCalc; float effDownl;
+                     uint8 serverCount; uint64 isBrokenMask; }   // 24 bytes
+```
+
+So a client's `fix()` flips its OWN `isBroken` and nothing else happens: the host's
+`brokenServers` still counts it, the host's efficiency is unchanged, the SAT console on the host
+still reports it down. **And the host broadcasts ON CHANGE only** — so the client's phantom fix is
+not even corrected promptly; it stands until the host's own state next moves, then is stomped.
+Silent divergence, not a visible failure.
+
+Root: the fix verb is `EX_LocalVirtualFunction` — invisible to BOTH the ProcessEvent detour and the
+Func patch (measured when the lane was built). This is precisely the class `COOP_SYNC_DOCTRINE`
+[withdrawn at the author's request]
+a first-class consumer of that pending decision, and it is a stronger argument for it than any
+listed there today.**
+
+### J4 — a client collects reports by hand: ENTIRELY UNSYNCED (mechanism `[V]`, symptom `[RD]`)
+
+`[V]` `AserverBox_C` carries the SAME floppy triple as the kerfur — `floppyType`,
+`floppyReadwrites`, `floppyData: TArray<FString>` (`serverBox.cpp:18/24/68`) — with
+`insertFloppy(Aprop_floppyDisc_C*)` (`:870`) and `ejectFloppy()` (`:862`), and
+`getActionOptions` tracks a dedicated `lookatFloppyButton` component. That is the player's report
+collection: put a disc in the server, the server writes report data onto it.
+
+**None of those three fields is on any wire.** `floppybox_sync` is a different thing — it syncs the
+disc CRATE's LIFO stack (`Aprop_floppyBox_C`), not the server's slot. So a client inserting a disc
+into a server produces data that exists on exactly one machine.
+
+That the kerfur and the server hold the identical triple is the useful part: **one floppy-data lane
+serves J4 by hand AND `get_reports` by robot.** Design it once.
+
+### J5 — a client fixes a transformer `[V]` NO LANE EXISTS
+
+`[V]` `transformer` appears 24 times in `src/votv-coop/` and **every single hit is the kerfur verb
+string** `fix_transformers` (the relay's enum, its name mapping, its bounds check, and comments).
+There is no transformer element, no payload, no poll, no receiver.
+
+The base POWER PANEL is synced (`power_sync.cpp`, a 5-breaker mask) and the serverbox lane
+neutralizes a local `ticker_serverBreaker`. The transformer itself — the thing
+`trigger_fuckUpTransformer` breaks and `goTransfo` sends the kerfur to — is not covered by either.
+
+This is the same gap the power-chain study named on 2026-09-02 ("breaker panels synced,
+reactor/generator/transformer outcomes in the gap list"), now reached from the other direction.
+**J5 is not a bug to fix in a lane; it is a lane that was never built, on a base that is parked.**
+
+### What this changes
+
+- The macro-goal's real content is **three unbuilt/one-directional lanes**, not robot polish.
+- **J3 and J4 share a root with each other** (the server is one actor holding both), and **J4 shares
+  its root with the robot's `get_reports`** (the same floppy triple). One design covers three jobs.
+[withdrawn at the author's request]
+  /qf owed"; this arc gives it a named consumer with a user-visible symptom.
 
 ### WP status
 
