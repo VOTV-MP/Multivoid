@@ -26,6 +26,7 @@ LEDGERS = [ROOT / "docs" / "LESSONS.md", ROOT / "docs" / "security" / "LESSONS_S
 
 _MD = re.compile(r"[*`_]")
 _WS = re.compile(r"\s+")
+_TITLE_WRAP_MAX = 4   # lines a wrapped bold title may span before it is treated as body text
 _UNI = str.maketrans({"—": "-", "–": "-", "’": "'", "‘": "'", "“": '"', "”": '"',
                       " ": " "})
 
@@ -41,25 +42,44 @@ def word_count(fragment: str) -> int:
 def ledger_rows(path: Path):
     """Yield (identity, text) per lessons-ledger row.  A row starts at a line beginning `- **` or `**`
     and runs to the next such line or a header; identity = '<section>/<first 60 chars of the title>'.
-    Shared shape with tools/qf/prior_art.py (QF_ARC WP-2)."""
+
+    The bold TITLE MAY WRAP across lines: it closes at the first `**` at or after the opening line
+    (bounded by _TITLE_WRAP_MAX lines, after which the opener is treated as ordinary body text).
+    2026-09-04: requiring both markers on ONE line opened no row at all for a wrapped title and
+    silently dropped the whole lesson body -- 176 of 703 rows, a quarter of the ledger, and it
+    discarded critic replies that had genuinely read them.  This is the only parser of this shape
+    in the tree (the docstring used to cite tools/qf/prior_art.py, which does not exist)."""
     if not path.exists():
         return
     section = "0"
     title, buf = None, []
+    open_title, open_span = None, 0   # partial title while the bold marker is still unclosed
     for line in path.read_text(encoding="utf-8", errors="replace").split("\n"):
         if line.startswith("#"):
             if title is not None:
                 yield f"{section}/{title[:60]}", "\n".join(buf)
-                title, buf = None, []
+            title, buf, open_title = None, [], None
             m = re.match(r"^##\s+(\d+)", line)
             if m:
                 section = m.group(1)
             continue
-        m = re.match(r"^(?:- )?\*\*(.+?)\*\*", line)
+        if open_title is not None:
+            buf.append(line)
+            head, closed, _ = line.partition("**")
+            open_title = _WS.sub(" ", f"{open_title} {head}").strip()
+            open_span += 1
+            if closed:
+                title, open_title = open_title, None
+            elif open_span >= _TITLE_WRAP_MAX:
+                open_title, title, buf = None, None, []   # not a title after all -- drop the row
+            continue
+        m = re.match(r"^(?:- )?\*\*(.*)$", line)
         if m:
             if title is not None:
                 yield f"{section}/{title[:60]}", "\n".join(buf)
-            title, buf = m.group(1).strip(), [line]
+            head, closed, _ = m.group(1).partition("**")
+            title, buf = (head.strip() if closed else None), [line]
+            open_title, open_span = (None if closed else head.strip()), 0
         elif title is not None:
             buf.append(line)
     if title is not None:
