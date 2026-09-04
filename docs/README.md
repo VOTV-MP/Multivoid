@@ -41,7 +41,6 @@ Then, if you are going to touch code:
 | **[RE_WORKFLOW.md](RE_WORKFLOW.md)** | How this project reverse-engineers the game: reflection first, then IDA, then UE4SS as a probe. None of those ship |
 | **[AUTONOMOUS_TESTING.md](AUTONOMOUS_TESTING.md)** | The two-instance LAN harness — how a change gets smoke-tested without a human in the loop |
 | **[RELEASE.md](RELEASE.md)** | How a build becomes a release, and the gates it must pass |
-| **[THUNDERSTORE.md](THUNDERSTORE.md)** | How a release becomes a Thunderstore package: the manifest, the upload, and the rules that cannot be undone (a version is immutable; an author cannot delete a package) |
 | **[VERSION_MIGRATION.md](VERSION_MIGRATION.md)** | What happens when VOTV updates: the measured version surface and the port runbook |
 | **[MULTIPLAYER_UI.md](MULTIPLAYER_UI.md)** | The menus, the server browser, the master/signaling servers behind them |
 | **[VOTV_UI_STYLE.md](VOTV_UI_STYLE.md)** | The game's own widget style, measured — binding for anything we draw in VOTV's UI |
@@ -98,10 +97,9 @@ time) · [COOP_MIRROR_IDENTITY_WINDOW_RACE.md](COOP_MIRROR_IDENTITY_WINDOW_RACE.
 [UE4SS_ARC.md](UE4SS_ARC.md) (becoming a UE4SS mod) ·
 [PERF_ARC.md](PERF_ARC.md) (performance: the four-census cost map, the zero-imports verdict, and
 the ranked fix queue — the field 20-fps root is named) ·
-[withdrawn at the author's request]
-platform — the queue, the gates, and what was declined) ·
 [OVERLAY_CAPTURE_COEXIST.md](OVERLAY_CAPTURE_COEXIST.md) (coexisting with RTSS and OBS) ·
 [QF_ARC.md](QF_ARC.md) (revising the `/qf` critic ritual on its own measured output) ·
+the local-only relay-arc note (what we adopt from studying another VOTV networking mod) ·
 the local-only documentize-arc note (the same, for the session-close ritual) ·
 the local-only docs-arc note (this documentation audit)
 
@@ -121,6 +119,11 @@ to spend a day on something, grep it first.
 **`docs/CRUTCHES.md` (local-only)** — the standing register of subsystems we shipped in a crutch shape,
 with the measured evidence and the proper fix for each. Created 2026-08-29 on user directive. It is
 the counterpart to LESSONS.md: that one records what we learned, this one records what we still owe.
+
+**`docs/THUNDERSTORE.md` (local-only)** — how a release becomes a Thunderstore package: the manifest
+field by field, the upload, and the four rules that cannot be undone (a published version is
+immutable; a changed name or team silently creates a second package; an author cannot delete one;
+a package rejected from a review queue is invisible rather than erroring).
 
 **[DEAD_CAPABILITY_REGISTER.md](DEAD_CAPABILITY_REGISTER.md)** — capabilities that are built,
 documented, and never called. A build, a review and a doc comment prove a feature was *written*;
@@ -164,8 +167,11 @@ and files ending in `-DESIGN-<date>` are point-in-time plans that are **delibera
 to an `_archive/` folder rather than being deleted, so an abandoned approach can never be mistaken
 for the live one.
 
-Some pointers in these docs lead to `research/`, `docs/security/`, `docs/DOCUMENTIZE_ARC.md`
-or `.claude/skills/`. Those resolve in the maintainer's working tree and not on GitHub — all are
-kept unpublished on purpose (the local-only docs-arc note says why). That is not a broken link.
-The last two joined them on 2026-09-04: an internal session-close ritual and its working record
-are addressed to the maintainer's tooling, not to a reader of this repo.
+Some pointers in these docs lead to `research/`, `docs/security/`, `docs/DOCUMENTIZE_ARC.md`,
+[withdrawn at the author's request]
+in the maintainer's working tree and not on GitHub — all are kept unpublished on purpose (the
+local-only docs-arc note says why). That is not a broken link, and a plain backticked path to one of
+them is the deliberate form: an unpublished target behind a live markdown link would be a 404.
+The publishing runbook and the rival-study adoption queue joined that set on 2026-09-04 — operator
+knowledge and reasoning about another author's closed-source internals, neither addressed to a
+reader of this repo.
