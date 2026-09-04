@@ -689,6 +689,22 @@ touching W1 — it is the reason W1 is PARKED rather than in progress.
 model, not on an address for `Aactor_save_C` — all three of those were proposed as the blocker and
 all three were measured wrong. The reason is narrow and it is RULE 2:
 
+> **[corr 2026-09-04: THIS VERDICT COVERS ONLY HALF OF W1, and as written it contradicts §J3's own
+> "J3 is NOT BLOCKED on WP-1" ten sections above.** W1 has two halves and only one is gated.
+> The **PLAYER's** `fix()` (J3) is the gated half — that argument stands, and it is the RULE-2
+> argument above. The **ROBOT's** half is not gated at all and is a LIVE divergence today:
+> `[V]` `p_kerfus` drives the shared `kerfusPendingServers` queue from two NAME-BOUND looping
+> timers (`checkJump` 1 s, `updatePath` 0.1 s — `p_kerfus.cpp:203-212`) plus `ReceiveTick`, which
+> is exactly what the SHIPPED `ue_wrap::kerfur::NeutralizeAiTimers` already clears for Omega at
+> five call sites (`npc_mirror.cpp:232,:393`, `npc_adoption.cpp:85`,
+> `kerfur_convert_client.cpp:251`). So the robot needs a park plus a host-owned queue at tiers 1-3
+> and NO cancel. `[V]` `p_kerfus` and `kerfusPendingServers` both grep ZERO in `src/votv-coop/`,
+> so nothing mirrors it, nothing parks it, and every client runs its own robot off its own dice
+> right now. Under FOUNDATION-FIRST the robot's base therefore comes BEFORE the substrate, not
+> after it — and the robot is the macro-goal's own benchmark. Found by the WP-1 `/qf` round 1,
+[withdrawn at the author's request]
+
+
 Without WP-1, J3 must ship as **forward-and-reconcile** — a client's uncancellable local `fix()`
 produces a phantom the host corrects. That build requires (a) a phantom-correction path and (b) a
 heuristic to tell a player's `fix()` from a robot's at the `0x45` seam, which observes the verb and
