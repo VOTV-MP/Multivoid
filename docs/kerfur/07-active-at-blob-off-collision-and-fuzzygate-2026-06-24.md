@@ -1,6 +1,6 @@
 # 07 — active-at-blob -> OFF collision (the 14:05 5-vs-4) + the anti-collision fuzzy-gate (fix#1)
 
-[withdrawn at the author's request]
+> **[corr 2026-09-04 -- swept by `/documentize`.** POINT-IN-TIME June diagnosis; stays as history per `docs/kerfur/ARC.md` (*"the older `docs/kerfur/NN-*.md` files are point-in-time diagnoses ... and remain valid as history, but the capability census and the plan live HERE"*). **Its `## NEXT` is NOT a live plan** -- the kerfur plan is `ARC.md`, whose front is W1 parked on the gate seam.]**
 
 
 **Status: FIX#1 (fuzzy-gate) + OBS-2 arg-fix VERIFIED hands-on (clean-bracket run 14:59-15:00, all 4 axes

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """bp_gate_census.py -- is THIS Blueprint verb gateable by an in-memory bytecode prologue?
 
-[withdrawn at the author's request]
+WHY: the reserved gate seam (dispatch-ladder tier 4) would prepend a prologue --
 `EX_JumpIfNot` + a call to our own engine-resident marker -- to a target SCRIPT function's
 in-memory bytecode, buying observe + full args + CANCEL on EVERY dispatch route, including
 the `EX_Local*` routes that are invisible to both our ProcessEvent detour and the Func seam.
@@ -135,7 +135,7 @@ def classify(name, body, by_index):
     CLASSIFY BY THE CALLEE, NOT BY STATEMENT COUNT.  Counting "one meaningful statement"
     reads `serverBox::insertFloppy` as a real body, because its param marshalling is a
     second statement -- it is a stub whose event takes an argument.  That misclassification
-[withdrawn at the author's request]
+    put two wrong rows into the census table on 2026-09-04, both of them saying
     "yes, real body" about a verb whose entire logic is in the ubergraph.  The callee is
     the fact; the statement count is a symptom.
     """
@@ -260,7 +260,7 @@ def main():
     ap.add_argument("--fn", action="append", default=None,
                     help="only functions whose name starts with this (repeatable)")
     ap.add_argument("--verbose", action="store_true", help="list the offsets themselves")
-[withdrawn at the author's request]
+    ap.add_argument("--markdown", action="store_true", help="emit the census table")
     args = ap.parse_args()
 
     allrows = []

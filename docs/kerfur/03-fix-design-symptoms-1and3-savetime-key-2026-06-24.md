@@ -1,6 +1,6 @@
 # 03 — FIX DESIGN: forward off->active dup save-time-keyed RETIRE (scope A)
 
-[withdrawn at the author's request]
+> **[corr 2026-09-04 -- swept by `/documentize`.** This is a POINT-IN-TIME June diagnosis and stays as history, exactly as `docs/kerfur/ARC.md` says (*"the older `docs/kerfur/NN-*.md` files are point-in-time diagnoses ... and remain valid as history, but the capability census and the plan live HERE"*). Its header's `VERIFIED (hands-on 17:23)` stands. **Its `## NEXT` section is NOT a live plan** -- the kerfur plan is `docs/kerfur/ARC.md`, whose front is W1 parked on the gate seam.]**
 
 
 **Status: VERIFIED (hands-on 17:23, 2026-06-24) -- scope A v1.1, MD5 `39455EC6`, proto v88. The forward

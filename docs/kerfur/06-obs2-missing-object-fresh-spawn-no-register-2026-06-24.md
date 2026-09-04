@@ -1,6 +1,6 @@
 # 06 — OBS-2: a save kerfur OBJECT missing on the client (fresh-spawn OnSpawn'd but never registered a mirror)
 
-[withdrawn at the author's request]
+> **[corr 2026-09-04 -- swept by `/documentize`.** This is a POINT-IN-TIME June diagnosis and stays as history, exactly as `docs/kerfur/ARC.md` says (*"the older `docs/kerfur/NN-*.md` files are point-in-time diagnoses ... and remain valid as history, but the capability census and the plan live HERE"*). **`:11` still says "(this build, uncommitted)" while the header says `-> COMMITTED`** (the arg-slot fix landed as `8c96d7aa`); the header is right. Still genuinely OPEN: the sub-Q2a class+pose BindAsMirror miss at quiescence (`:58`) and the index-seed-race DEFERRAL (`:16`). **Its `## NEXT` section is NOT a live plan** -- the kerfur plan is `docs/kerfur/ARC.md`, whose front is W1 parked on the gate seam.]**
 
 
 **Status: ROOT PINNED + FIX VERIFIED hands-on (clean-bracket run 14:59:48) -> COMMITTED. The arg-slot fix

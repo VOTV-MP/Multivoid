@@ -1,6 +1,6 @@
 # 08 -- client-side turn-OFF spawns a twin-in-air (18:24/18:30) -- ROOT RE
 
-[withdrawn at the author's request]
+> **[corr 2026-09-04 -- swept by `/documentize`.** POINT-IN-TIME June diagnosis; stays as history per `docs/kerfur/ARC.md` (*"the older `docs/kerfur/NN-*.md` files are point-in-time diagnoses ... and remain valid as history, but the capability census and the plan live HERE"*). **Its `## NEXT` is NOT a live plan** -- the kerfur plan is `ARC.md`, whose front is W1 parked on the gate seam.]**
 
 
 **Status: ROOT RE'd (log+code proven). PRE-EXISTING (NOT the mirror-identity extract). Cosmetic flicker

@@ -201,14 +201,11 @@ reference/psk-psa-v9.1.2/
 # baritone = the Minecraft pathing bot we took the director architecture from (33 MB clone),
 # voidmod-extracted = an extracted third-party VOTV mod package (Thunderstore drop),
 # unreal-shimloader = Thunderstore's UE mod-loader shim (Rust source + a UE4SS runtime drop).
-[withdrawn at the author's request]
-#   uncooked API uassets; cloned 2026-09-02 for the comparative study -- never commit its bytes).
 # The latter two were tracked; `git rm --cached` runs in the same commit that adds these rules
 # (their bytes remain in git history).
 reference/baritone/
 reference/voidmod-extracted/
 reference/unreal-shimloader/
-[withdrawn at the author's request]
 
 # portable client-model converter build output (game-derived template bytes + binaries)
 tools/client_model/portable/dist/
@@ -381,22 +378,14 @@ docs/SITE_ARC.md
 # source comments and other docs are fine and were left -- they name a local doc, as CLAUDE.md does.
 docs/CRUTCHES.md
 
-[withdrawn at the author's request]
-# CRUTCHES above). Same terms as every sibling in this block: each file stays ON DISK, every local
-# pointer resolves, none resolves on GitHub.
+# Local-only (USER 2026-09-04, in one instruction with CRUTCHES above). Same terms as every
+# sibling in this block: each file stays ON DISK, every local pointer resolves, none resolves on
+# GitHub.
 #   THUNDERSTORE.md -- the publishing runbook: operator knowledge, not user documentation. What a
 #     player needs is docs/INSTALL.md and that stays public. This one works through per-asset
 #     review considerations and the store rules that cannot be undone, so a public copy reads as a
 #     map of where a release can be attacked or mis-filed.
-[withdrawn at the author's request]
-#     reasons about a third party's internals and about what we take from them; that belongs beside
-#     the study itself, which is already unpublished under research/.
 #   BLENDER_ARC.md -- a signpost left behind when VotvIO moved to its own repo; zero tracked
 #     references, so it costs the public tree nothing to withdraw.
-# Two MARKDOWN LINKS were demoted in the same commit (docs/README.md: the THUNDERSTORE table row
-[withdrawn at the author's request]
-# the "the local-only <x> note" form its neighbours use). Backticked plain-path mentions elsewhere
-# are fine and were left -- they name a local doc, exactly as CLAUDE.md does.
 docs/THUNDERSTORE.md
-[withdrawn at the author's request]
 docs/BLENDER_ARC.md

@@ -579,22 +579,6 @@ transform → re-pak; boot-time hash check in the DLL) as a MANDATORY component,
 handshake gate, and the CLAUDE.md amendment. **Pipeline scope is priced from the C-spike's
 measurements, never estimated ahead.**
 
-> **ADDENDUM 2026-09-02 — entry condition (c) has a NEW, cheaper answer and C is likely MOOT for
-[withdrawn at the author's request]
-> reverse-engineered from its binary.** It delivers CANCEL + argument access on a script UFunction
-> across every dispatch route as a runtime MEMORY patch — no asset edit, no `_P` pak, no A6
-> amendment, no pak-hash outage window, MTA-compatible ("all interception is runtime memory").
-> Its own measured limit — ubergraph bodies are unpatchable — bounds it the same way C would be
-> bounded in practice anyway (a `_P` kismet edit of an ubergraph would face the same cross-function
-> entry-offset constants). Also note our own Option-E post-mortem is PARTIALLY superseded: E died
-> on "the thunk must reimplement caller-stream param marshaling"; the gate sidesteps that by
-> nativizing a mod-OWNED zero-param marker instead of the hooked function. Status: CANDIDATE tier,
-> not built, /qf owed. Mechanism + adoption case:
-[withdrawn at the author's request]
-> ladder placement: `docs/COOP_SYNC_DOCTRINE.md` step 3 tier 4. The 2026-05-27 causeRain
-> bytecode-patch rejection ("requires bytecode disassembly we don't have") is STALE on both
-> grounds — the toolchain exists since 2026-09-02 and the patch class is field-proven.
-
 ## 7. Workaround retirement inventory (RULE 2, post-substrate; user mandate)
 
 RETIRED by the kerfur assembler (one commit, §5): stamps · destroy-edge capture · take-8

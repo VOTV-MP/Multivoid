@@ -2,13 +2,7 @@
 
 > **NEW 2026-09-02.** The method below is not aspiration — it is the shape every lane that SURVIVED
 > converged on, extracted so that any session (any model tier) can follow it without re-deriving
-[withdrawn at the author's request]
-[withdrawn at the author's request]
-[withdrawn at the author's request]
-> per-element syncers, gate-cancel-then-replay ≈ act-as-host, quiesce ≈ brain parking. Two
-> independent derivations landing on one architecture is the strongest available evidence the
-> architecture is right. MTA (15+ years, `reference/mtasa-blue/`) remains the primary precedent;
-[withdrawn at the author's request]
+> four months of lessons. MTA (15+ years, `reference/mtasa-blue/`) is the precedent it leans on.
 >
 > This doc ORDERS the existing canon; it does not replace it. Deep truth lives in:
 > `COOP_SYNCER_MODEL.md` (authority + act-as-host §2b), `COOP_DISPATCH_VISIBILITY.md` (will my hook
@@ -57,7 +51,7 @@ Decision table — pick the FIRST row that fits:
 |---|---|---|
 | Shared-world progression (weather, power, events, world props that rot/dry/grow, NPC brains, RNG) | HOST | Host simulates/rolls; clients mirror. `COOP_RNG_AUTHORITY.md`. |
 | A discrete, persistent, shared-world CHANGE a client initiates (buy, sell, destroy, place, equip from a container…) | HOST via **act-as-host intent** | Client suppresses its own producer, sends an intent naming WHAT (never what it costs), the arbiter validates and performs; results flow back as ordinary state. Reference lane: `order_sync` (proto 136). `COOP_SYNCER_MODEL.md` §2b. |
-[withdrawn at the author's request]
+| A continuously-simulated element one peer is INTERACTING with (held prop, driven vehicle, pressed device panel) | The interacting peer, by ASSIGNMENT (syncer/lease), never by assertion | Presser/holder authors the stream; the host arbiter validates inbound writes and may re-assign. On interaction end the authority RETURNS. Adopt lease hygiene: idle-expiry back to the declared owner, epoch-stamped grants, grant-names-final-revision fencing (MTA `CUnoccupiedVehicleSync`). |
 | A peer's OWN body/pose/camera/voice | That peer | Sender-authored stream; receive side never gated (a discontinuity costs TRUST, never display). Bounds are CLIENT-scoped only — **the host may cheat and we relay it** (USER 2026-08-24). |
 | Presentation-only local echo (UI, sounds, particles) | Nobody | Mirror on receive; never wire it back. |
 
@@ -80,15 +74,10 @@ function. Then pick the cheapest seam that actually fires:
 3. **0x45 VM seam** (`vm_dispatch`, observe-only, call-site) — sees every `EX_LocalVirtualFunction`
    dispatch including calls made FROM ubergraphs; carries NO args, cannot cancel; consumers pair it
    with a Func seam or per-site reconcile for values.
-4. **Script-body gate — CANDIDATE TIER, not built (decision pending, /qf owed).** Field-proven by
-   Relay: an in-memory bytecode prologue (`EX_JumpIfNot` + a call to our own nativized zero-param
-   marker) gives observe + args + CANCEL on a SCRIPT function on EVERY dispatch route — closing the
-   class VISIBILITY marks "invisible to both PE and Func". Measured limits carried from the field:
-   ubergraph bodies are NOT gateable (event-graph logic stays on tiers 1-3), restore-on-map-load
-   bookkeeping is mandatory, a foreign (other-mod) prologue must be refused, and it is a runtime
-   MEMORY patch (principle 1 allows it; assets on disk stay untouched). Until adopted, cancel of a
-   BP-internal verb is achieved by per-site reconcile downstream — never by a receive gate.
-[withdrawn at the author's request]
+4. **(reserved.)** A tier that could observe + cancel a SCRIPT function on every dispatch route
+   -- the class VISIBILITY marks "invisible to both PE and Func" -- is an open design question, not
+   a built seam. Until one exists, cancel of a BP-internal verb is achieved by per-site reconcile
+   downstream, never by a receive gate.
 5. **Per-site reconcile** (last resort): let the verb run, snapshot/diff observable state, converge
    to the authority's answer. This is also the fallback when a seam exists but the verb is
    ubergraph-resident.

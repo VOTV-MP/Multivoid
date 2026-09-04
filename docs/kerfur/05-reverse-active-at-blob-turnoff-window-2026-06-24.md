@@ -1,6 +1,6 @@
 # 05 — REVERSE symptom: client GHOST active kerfur (follow) — ROOT FOUND + FIX BUILT
 
-[withdrawn at the author's request]
+> **[corr 2026-09-04 -- swept by `/documentize`.** This is a POINT-IN-TIME June diagnosis and stays as history, exactly as `docs/kerfur/ARC.md` says (*"the older `docs/kerfur/NN-*.md` files are point-in-time diagnoses ... and remain valid as history, but the capability census and the plan live HERE"*). **Two body verdicts are SUPERSEDED BY THIS DOC'S OWN HEADER:** `:166` ("cannot split the root -- no log on disk contains the reverse turn_off event") and `:259` ("fix DESIGN gated on a longer log") both predate the header's `ROOT FOUND + FIX BUILT+DEPLOYED + HANDS-ON VERIFIED (13:15) + COMMITTED`. **Its `## NEXT` section is NOT a live plan** -- the kerfur plan is `docs/kerfur/ARC.md`, whose front is W1 parked on the gate seam.]**
 
 
 **STATUS 2026-06-24: ROOT FOUND + FIX BUILT+DEPLOYED (MD5 `239b231c`) + HANDS-ON VERIFIED (13:15) + COMMITTED

@@ -1,6 +1,6 @@
 # 02 — JOIN-WINDOW kerfur activation: THREE symptoms (the real bug)
 
-[withdrawn at the author's request]
+> **[corr 2026-09-04 -- swept by `/documentize`.** This is a POINT-IN-TIME June diagnosis and stays as history, exactly as `docs/kerfur/ARC.md` says (*"the older `docs/kerfur/NN-*.md` files are point-in-time diagnoses ... and remain valid as history, but the capability census and the plan live HERE"*). Its three symptoms were confirmed and the fixes landed (docs 03/05/06/07). **Its `## NEXT` section is NOT a live plan** -- the kerfur plan is `docs/kerfur/ARC.md`, whose front is W1 parked on the gate seam.]**
 
 
 **Status: CONFIRMED by log + code (user repro 2026-06-24, host log + client log gripped). All 3 symptoms

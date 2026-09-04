@@ -142,7 +142,7 @@ Silent divergence, not a visible failure.
 
 Root: the fix verb is `EX_LocalVirtualFunction` — invisible to BOTH the ProcessEvent detour and the
 Func patch (measured when the lane was built). This is precisely the class `COOP_SYNC_DOCTRINE`
-[withdrawn at the author's request]
+step 3 tier 4 (the reserved script-body-gate tier) would close with args + cancel. **This job is
 a first-class consumer of that pending decision, and a stronger argument for it than anything listed
 there today.**
 
@@ -312,7 +312,7 @@ that was never built, on a base that is parked.**
 - **J5 does NOT share their shape.** J3/J4 are outcome-intent lanes; J5 needs the host's RNG mirrored
   first, because the work itself is per-peer random. Designing all three as one lane would be wrong —
   design J3+J4 together, J5 on its own.
-[withdrawn at the author's request]
+- **The reserved script-body-gate tier gains a named consumer in J3**, with a
   user-visible symptom — a stronger argument than anything listed there. It remains an upgrade, not
   a precondition.
 
@@ -685,7 +685,7 @@ touching W1 — it is the reason W1 is PARKED rather than in progress.
 
 ### The verdict
 
-[withdrawn at the author's request]
+**W1 waits on the reserved script-body-gate tier.** Not on scope, not on the syncer
 model, not on an address for `Aactor_save_C` — all three of those were proposed as the blocker and
 all three were measured wrong. The reason is narrow and it is RULE 2:
 
@@ -703,7 +703,7 @@ all three were measured wrong. The reason is narrow and it is RULE 2:
 > so nothing mirrors it, nothing parks it, and every client runs its own robot off its own dice
 > right now. Under FOUNDATION-FIRST the robot's base therefore comes BEFORE the substrate, not
 > after it — and the robot is the macro-goal's own benchmark. Found by the WP-1 `/qf` round 1,
-[withdrawn at the author's request]
+> which stopped on this reframe.]**
 
 
 Without WP-1, J3 must ship as **forward-and-reconcile** — a client's uncancellable local `fix()`
@@ -760,7 +760,7 @@ that a joiner "sees an empty slot forever" was FALSE.)
 `ejectFloppy` (`:688-706`) runs `BeginDeferredActorSpawnFromClass` + `FinishSpawningActor`, then
 reconstitutes the disc from the server's own persisted strings. The DATA is safe; the BIRTH is a
 deferred static, the class `COOP_DISPATCH_VISIBILITY` calls invisible. Under act-as-host the HOST
-[withdrawn at the author's request]
+runs the eject, so the spawn rides the normal host-authored birth path — the engine listener seam would make
 it cleaner but does not gate W1.
 
 **W1's verbs are the best possible first drill for WP-1** `[V]`: `fix` 11 statements / **0 jumps**,

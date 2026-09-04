@@ -168,7 +168,7 @@ to an `_archive/` folder rather than being deleted, so an abandoned approach can
 for the live one.
 
 Some pointers in these docs lead to `research/`, `docs/security/`, `docs/DOCUMENTIZE_ARC.md`,
-[withdrawn at the author's request]
+`docs/CRUTCHES.md`, `docs/THUNDERSTORE.md` or `.claude/skills/`. Those resolve
 in the maintainer's working tree and not on GitHub — all are kept unpublished on purpose (the
 local-only docs-arc note says why). That is not a broken link, and a plain backticked path to one of
 them is the deliberate form: an unpublished target behind a live markdown link would be a 404.
