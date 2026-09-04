@@ -82,6 +82,7 @@ whether it exists*.
 | J6 | drive the ATV | works, on a C1 crutch | HARDEN | robot: `sitOnAtv` | **ATV — C1, PAUSED** |
 | J7 | use equipment / inventory | works; facets broken | HARDEN | robot: `equipment` / drip | container facets |
 | J8 | patrol / watch the base | works | — | robot: `patrol` | — |
+| **J9** | **process signals at the workstation** (USER 2026-09-04) | **works broadly — 29 lanes built, 1 verified, much of it on crutches** (§0.6) | **HARDEN** | not a robot job — it is the game's core loop | signal desk; **upgrades OPEN-3** |
 
 **J3/J4/J5 are the jobs that make a base run, and none of the three has been measured to the
 benchmark cross-peer.** That is this round's headline: the macro-goal's centre of gravity is not the
@@ -95,8 +96,8 @@ one side lane" to **main-line blocker**, because J5 is a third of the core work.
 
 | | bar | met when |
 |---|---|---|
-| **M0 — measure** | J3/J4/J5 driven by a client and measured against the benchmark | three runs, or three defects filed |
-| **M1 — the worker** | every job in §0.3 holds to the benchmark; the BUILD rows exist | **a client alone can keep a base running** |
+| **M0 — measure** | J3/J4/J5 driven by a client and measured against the benchmark; **J9's crutches censused into `docs/CRUTCHES.md`** | three runs or three defects filed, plus a crutch census |
+| **M1 — the worker** | every job in §0.3 holds to the benchmark; the BUILD rows exist | **a client alone can keep a base running AND run the signal desk** |
 | *(future)* | the robot obeys a client too | §4 has no `NOT SYNCED` row — explicitly NOT scheduled by this goal |
 
 **The rule that names the shape** is `COOP_SYNCER_MODEL.md` §2b — ACT-AS-HOST. A client authors an
@@ -253,6 +254,47 @@ That asymmetry, not the job's difficulty for a player, is what should order the 
 | WP-3 | Seam decision per verb (dispatch ladder) | NOT STARTED |
 | WP-4 | `/qf` the design to convergence | NOT STARTED — owed before any build |
 | WP-5 | Build | NOT STARTED |
+
+---
+
+## 0.6 J9 — the signal workstation (USER 2026-09-04)
+
+> «и в макроцель поставим еще работу с workstation» … «workstation уже мы делали и разбирали, но
+> многое пока на костылях там» … «workstation я имею в виду сигналы где обрабатывать».
+
+The signal desk — catch, tune freq/polarity, download, decode, play deck, drive, comp processing,
+save to the meadow. **This is not a robot job; it is VOTV's actual gameplay loop**, which makes it
+the strongest single answer to "is a second player useful". A kerfur can fetch reports; only a
+person can run the desk. So J9 sits in the job list on its own terms, and it is pure HARDEN.
+
+**Its home is `docs/signals/` and stays there** — `TRACKER.md` is element-by-element and this doc
+does not duplicate it. What belongs here is only what bears on the macro-goal:
+
+- `[V]` **The build is broad and the verification is not.** The master table has ~29 `AS-BUILT` rows
+  and **exactly ONE `VERIFIED`**; the phrases "NOT hands-on" / "awaiting hands-on" appear **27
+  times**. Against a benchmark of "no worse than the robot", a lane nobody has driven by hand is not
+  yet evidence of anything.
+- **The user's own verdict is that much of it is on crutches**, and `[V]` **`docs/CRUTCHES.md` has
+  no workstation entry at all** — its five rows are the ATV, piles/clumps, the retired KO gate, the
+  password floor and the coin gun. So the register is incomplete on the maintainer's own testimony.
+  **A crutch census of the signal lanes is OWED**, and CLAUDE.md's standing rule ("add to it
+  whenever a crutch is measured") makes that a debt, not an option.
+- One smell is already visible in the tracker's own words and matches the doctrine's forbidden list
+  verbatim: **OPEN-2 keeps `CR:` log lines "filtered off wire"** while recording that the premise
+  for the filter was *measured false*. A filter whose justification has been falsified is the
+  definition of a crutch left standing.
+- **Foundation-first: OPEN-3, the upgrade levels.** `Fstruct_upgrades` (18 int32, 20 laptop-shop
+  slots) parametrizes the download / ping / coord / comp / radar / detector sims and **has no lane**.
+  The sims are host-authoritative but their INPUT is not synced, so their outputs cannot be right by
+  construction. `docs/upgrades/SIGNAL_UPGRADES.md` holds the RE and a design of record.
+- Named gaps beyond that: OPEN-4 (24-dish rest-pose/slew RNG), BUG-3 (detector gauge sounds are
+  data-starved — the speeds they derive from are on no lane), PARTIAL (save/delete/lid verbs), and
+  R-a (a ping's observers see no stage visuals — surfaced to the user as a product question on
+  2026-07-17 and still unanswered).
+
+**So J9's shape is the opposite of J3-J5.** Those are lanes to build; this is a large built surface
+to bring up to the benchmark: verify by hand, census the crutches into the register, retire them,
+and close OPEN-3 underneath. Its first task is therefore a CENSUS, not a design.
 
 ---
 
@@ -502,6 +544,15 @@ the job feels to a player.
   available (`turnedOn` delegate -> PE, tier 1). Foundation-first says the power base is the floor
   under this; W2's first task is to decide whether the generator's own `isBroken`/`index`/
   `upgradeLevel` can be a self-contained element or genuinely needs the parked base first.
+- **W4 — the workstation (J9), and it starts with a CENSUS, not a design.** The surface is already
+  built; what is missing is evidence and honesty about its shape. In order: (a) census the signal
+  lanes for crutches and write each into `docs/CRUTCHES.md` with its measured evidence — the
+  register has zero workstation rows against the user's "многое пока на костылях", and closing that
+  gap is a standing CLAUDE.md duty, not a choice; (b) hands-on-verify the 27 rows that say they are
+  not; (c) close **OPEN-3**, the upgrade levels, which is foundation-first for every desk sim; then
+  (d) retire the crutches the census found, OPEN-2's falsified `CR:` filter first.
+  **W4 can run in parallel with W1/W2** — it touches different files and its first phase is
+  measurement, so it does not compete for design attention.
 - **W3 — harden the rest of §0.3** (J2 edges, J7 container facets) once W1/W2 land.
 
 **The robot lanes are OUT of this goal** (§0.2) and are listed here only so nobody re-derives them:
