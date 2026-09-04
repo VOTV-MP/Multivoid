@@ -106,7 +106,7 @@ Each row gets a verdict with evidence before this arc closes. "Fix" column fille
 | Full GUObjectArray walk | ~1.1–1.6 ms per walk | `[WALK-TIME] sync:event_cue` line | STANDS |
 | `R::FindFunction` | NO result cache; 476 call sites (filed, unfixed); `FindClass` got its cache `ca1cd5e4` | browser perf design, `docs/MULTIPLAYER_UI.md` §8c.-1 | OPEN — the filed item lands in THIS arc |
 | `FindObjectByClass` census | 136 sites outside reflection.cpp, ~52 world-scoped | `ue_wrap/engine/world_identity.h:94` | STANDS — per-site rate census owed |
-| Lua-mods cost on OLD loader | ~45 fps (6 mods, dev rig); ~5 fps attributable to the un-started one on new loader | 08-29 bisect + §9 arm C | superseded in scale by the build delta; residual on NEW build `[?]` |
+| Lua-mods cost on OLD loader | ~45 fps (6 mods, dev rig); ~5 fps attributable to the un-started one on new loader | 08-29 bisect + §9 arm C | outranked in scale by the build delta (~5 of ~48 fps); residual on NEW build `[?]` |
 | `stat unit` instrument cost | ~0 (78.0 vs 78.7) | 08-29 | CLOSED |
 | The 120→60 born-rule incident | a per-PE observer + per-frame FindObjectByClass halved fps | CLAUDE.md post-ship-audit rule provenance | fixed then; the CLASS is what §4 censuses |
 | Input focus scan | ~9,300 → ~6,500 dispatches/s after fix; never moved steady fps | 08-29 | CLOSED |

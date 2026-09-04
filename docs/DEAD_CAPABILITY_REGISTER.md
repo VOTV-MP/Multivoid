@@ -101,6 +101,30 @@ constructor's happens-before edge does not cover the write.
 
 ## 3. OPEN — confirmed dead, hand-validated, NOT fixed
 
+### D3 — `save_transfer::OnDisconnect()` (2026-09-02, the third one on the JOIN PATH)
+
+**Zero callers**, `save_transfer.cpp:1030` / decl `save_transfer.h:174` — found by the PERF_ARC
+rejoin-residue census `[A]`, and it is the first OPEN row here that DOES cause live defects, so it
+is listed above the harmless set rather than inside it. It is the only path that:
+
+- frees the client download buffer (`g_cliBuf.shrink_to_fit()`, `:1046`) — `ClientArm()` only
+  `clear()`s (`:933`, capacity kept), so **~17 MB stays resident for the process lifetime** after the
+  first join;
+- zeroes `g_cliTotal`, whose own 2026-09-02 comment (`:1039-1043`) calls a stale total left by a
+  disconnect "a wrong number waiting for the first path that reads it before arming" — i.e. the
+  loading screen's progress. That fix was written and never runs;
+- deletes the `zcoop_<pid>.sav` / `.sav.part` temp (`:1051-1052`), so the header's own no-steal
+  window (`save_transfer.h:17`) never closes on a disconnect — only a >1 h boot sweep clears it;
+- is the **sole caller of `save_identity_bind::OnDisconnect()`** (`:1048`), so that module's
+  `g_chipEntries` / `g_kerfurEntries` / received map never clear either.
+
+**Fix (PERF_ARC Q3a):** call it from `subsystems::DisconnectAll` — it is a CLIENT-side clear, and
+`CancelForSlot(slot)` skips slot 0 (`:664`), which is the host from a client's view, so nothing
+covers it today. Pattern note: this is the third dead capability found on the JOIN path in a week
+(D1, D2, now D3) — the join is where a capability is easiest to write and hardest to observe.
+
+### The harmless set
+
 Each verified by bare-name reference count (2 refs = declaration + definition only).
 **None is known to cause a live defect** — they are listed so the next person does not
 have to re-derive their status, and so a lane that *needs* one knows it must wire it.
@@ -119,6 +143,7 @@ have to re-derive their status, and so a lane that *needs* one knows it must wir
 | `object_scan_hub::PassActive()` | `object_scan_hub.h:76` | |
 | `session_manager::HostListenPort()` | `session_manager.h:212` | |
 | `input_owner::LastGameOwnerName()` | `input_owner.h:151` | already known — its own comment at `input_owner.cpp:291` says it "existed with ZERO consumers" |
+| the pile bind-native guard | `remote_prop_spawn.cpp:169-208` | **a FIELD-dead capability, not a call-count-dead one — the census below cannot see this class.** `[A]` A 2026-08-26 client field log reads `native_pile_mirror: MATERIALIZED = 0`: the code is called, it just never takes, so the client spawns 871 proxies for piles it already owns. This is CRUTCH C2's measured price and PERF_ARC Q1's first question. A reference count would call this symbol ALIVE. |
 | `prop_lifecycle::SyncDestroyedTrackedProp` | `prop_lifecycle.h:102` | declared here, defined in `prop_destroy_seam.cpp:226` after an extraction — likely a **stale declaration**, not a dead feature |
 
 ---

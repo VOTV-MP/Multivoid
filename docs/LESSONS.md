@@ -6031,6 +6031,49 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 
 ## 7. Performance
 
+- **2026-09-02 -- a SYMMETRIC per-frame cost cannot explain an ASYMMETRIC fps gap; convert it to a
+  fraction of the SLOW side's frame before believing it.** A field report had the CLIENT at 20 fps
+  at the base while the HOST ran 60 on stronger hardware. Our own measured costs -- ~1 ms/frame for
+  the whole ProcessEvent dispatch path plus a ~2 ms `scan_hub` + reseed floor -- felt like the
+  answer, and are not, twice over: 1 ms is 12 % of a 120 fps frame but **2 % of a 20 fps frame
+  (50 ms)**, and both terms run identically on both peers, so no size of them produces a 3x gap
+  BETWEEN them. The cause had to scale with a peer difference, and did: `[V]` the client carried
+  ~1,930 more engine actors than the host (871 GC-rooted Movable trash proxies duplicating piles it
+  already owned natively + ~1,061 extra keyed props), i.e. engine render/physics/GC time -- most of
+  its `[HITCH]` lines carry no `[HITCH-SRC]`, which is `net_pump.cpp:417-448`'s own
+  engine-vs-us discriminator. *Look FIRST:* ask (1) does this term differ between the two sides at
+  all -- if no, it is not the gap; (2) what fraction of the SLOW frame is it. Keep the symmetric
+  findings queued on their own merit, never as the explanation.
+  `memory/lesson-a-symmetric-per-frame-cost-cannot-explain-an-asymmetric-fps-gap.md`
+
+- **2026-09-02 -- a per-frame DRAW gate must ask what DRAWS, not what is ENABLED.** The overlay has
+  a real, deliberate, lock-free early-out (`imgui_overlay.cpp:688-689`), and it is dead code for
+  every player: `ui::hud::IsActive()` ORs in `coop::voice_chat::Enabled()` (`ui/hud.cpp:319-329`)
+  and voice is on by default, so the whole `NewFrame -> atlas_watch::OnFrame -> Render ->
+  RenderDrawData` chain runs on EVERY presented frame -- and the vendored DX11 backend has no
+  zero-vertex early-out either (`imgui_impl_dx11.cpp:170-174`: two `Map(WRITE_DISCARD)`/`Unmap`, a
+  ~7 KB state backup, ~50 immediate-context calls for an EMPTY draw list). The pinning term is not
+  careless on its face -- its comment names the v66 mic indicator -- but `DrawLocalVoiceIcon`
+  returns at `!vs.enabled || !vs.started` and PTT-idle draws nothing, so the term answers a
+  question that does not imply a vertex. *Look FIRST:* list a draw gate's terms and ask of each
+  *does this imply one vertex this frame?*; a configuration predicate (`Enabled()`,
+  `IsInstalled()`) always fails that test. Add the structural backstop where it can be proven --
+  skip the submit at `TotalVtxCount == 0`. Nothing logs a gate that never closes.
+  `memory/lesson-a-draw-gate-must-ask-what-draws-not-what-is-enabled.md`
+
+- **2026-09-02 -- a dependency's CAPABILITY FLAG is not an installed hook.** The double-detour
+  worry about running under UE4SS (their PolyHook PE detour plus our MinHook relay on every
+  dispatch) rested on `bHookUObjectProcessEvent` defaulting true and our installs setting it to 1.
+  `[V]` That flag only permits the hook: the detour is armed lazily inside
+  `ensure_process_event_hooked` on the first `RegisterProcessEventPreCallback`
+  (`reference/RE-UE4SS` `LuaMod.cpp:3843-3850`), which nothing calls unless a Lua mod wants
+  game-thread execution via ProcessEvent -- and `docs/UE4SS_ARC.md:107-110` measured it armed on
+  **0 of 15** solo boots. So the chain is normally our single detour, and this is one of the three
+  pillars under the H-IMPORTS verdict (`docs/PERF_ARC.md` §4-B). *Look FIRST:* for any cost or
+  behaviour resting on a dependency's hook, find the INSTALL call site and what gates it, not the
+  flag; confirm at runtime and cite the boot count, because an absence measured once reads as luck.
+  `memory/lesson-a-capability-flag-is-not-an-installed-hook.md`
+
 - **2026-08-29 -- diff the two INSTALLS before instrumenting either one.** A "the mod costs
   120 -> 70 fps" hunt burned most of a session on new instruments, a bypass A/B and a
   `stat unit` arc before anyone compared the two installs the two numbers came from.
