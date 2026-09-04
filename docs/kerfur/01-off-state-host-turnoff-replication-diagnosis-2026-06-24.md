@@ -1,5 +1,8 @@
 # 01 — OFF-state non-replication on HOST turn-off (diagnosis)
 
+[withdrawn at the author's request]
+
+
 > **CORRECTION (2026-06-24, same day, user re-test): THIS SCENARIO (turn_off on a FULLY-CONNECTED client)
 > is likely NOT the bug -- out of the join window the convert channel is CLEAN.** The real bug is a
 > **JOIN-WINDOW timing race** (host ACTIVATES kerfurs during the connect window), with THREE distinct

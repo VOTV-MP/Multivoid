@@ -2,7 +2,8 @@
 
 Status: **Phase 1 IMPLEMENTED + deployed `BEDBB74D445E` (4 folders, hash-match).
 Smoke-verified; HANDS-ON FPS test PENDING.** Phase 2 NOT started (separate commit
-after Phase 1 hands-on confirms). All UNCOMMITTED.
+after Phase 1 hands-on confirms). ~~All UNCOMMITTED.~~
+**[corr 2026-09-04: the code IS committed** -- `kAtRest` ships in `coop/net/protocol.h`, `ue_wrap/engine/engine.h`, `coop/props/prop_fresh_spawn.cpp` and `remote_prop_spawn.cpp`, landed by `77225106`. The hands-on FPS test and Phase 2 are NOT established either way by that check, so those two clauses stand as written. `autotest_vitals.cpp` (cited at :105) was retired with the autotest harness.]**
 
 ### Phase 1 smoke evidence (2026-06-09, 19:45)
 - **Load-bearing assumption CONFIRMED:** host stamped **99% kAtRest** (2286/2306

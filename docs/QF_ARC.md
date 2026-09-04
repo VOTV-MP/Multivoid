@@ -12,6 +12,20 @@
 > from the lessons ledger, not re-measured here · **`[?]`** unverified.
 > **TIER 1 IS AS-BUILT (2026-09-02 evening, user green light "Ok I green light it"): step 0 `03748f56`,
 > WP-3 step 1 `62825440`, WP-6 `d43888cd`, WP-3 steps 2-3 `e35579fc`, WP-1 `711aef55` — see §10.**
+> **AND THE PROOF-OF-READ GATE MADE A QUARTER OF THE LESSONS LEDGER INVISIBLE — A THIRD INSTANCE OF
+> THE SAME CLASS (2026-09-04, `da2c33c2`).** `[V]` `verify_proof.ledger_rows` opened a row only when
+> BOTH `**` markers sat on ONE line (`^(?:- )?\*\*(.+?)\*\*`), so a lesson whose bold title WRAPS
+> opened no row at all and its whole body vanished from the corpus the gate matches against —
+> **527 of 703 rows visible, 176 not** (165 in `LESSONS.md`, 11 in `LESSONS_SECURITY.md`). The
+> consequence is not cosmetic: the skill treats exit 1 as *"the critic did NOT open what it claims;
+> discard the reply and re-spawn"*, so it discarded a round-1 reply for citing
+> `"~1,930 more engine actors than the host"`, which is verbatim at `docs/LESSONS.md:6067` inside one
+> of the invisible rows. It structurally punished the most careful critics — a wrapped title is a
+> longer, richer lesson. Fixed with `_TITLE_WRAP_MAX`; `ledger_drill.py` gained the arms it never had
+> (the single-line rule's own count as a baseline, asserting 527 -> 703; a LIVE canary derived at
+> RUNTIME from the first wrapped-title row so no single lesson edit can rot it; a DEAD canary that
+> must still be refused), shown RED against the pre-fix parser before being trusted. Its docstring
+> also stopped citing `tools/qf/prior_art.py`, which does not exist (WP-2 is parked).
 > **THE ANCHOR VERIFIER REFUSED TWO TRUE ANCHORS AND WAS FIXED TWICE (2026-09-03, `c0b5f4aa` +
 > `a701b2d4`, drilled by the NEW `tools/qf/ledger_drill.py`).** Both surfaced in one 20-round pass and
 > both are the same false-DEAD class as `lessons_gate`'s `CITE_ROOTS`: (1) a **bare basename** — the

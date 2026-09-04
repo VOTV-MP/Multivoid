@@ -1,5 +1,8 @@
 # 03 — FIX DESIGN: forward off->active dup save-time-keyed RETIRE (scope A)
 
+[withdrawn at the author's request]
+
+
 **Status: VERIFIED (hands-on 17:23, 2026-06-24) -- scope A v1.1, MD5 `39455EC6`, proto v88. The forward
 off->active kerfur dup is FIXED.** Covers the forward off->active dup (doc 07: 15:43/16:37 dup + 15:41 skew).
 Symptom 2 (camera) = a SEPARATE design (doc 04, later).

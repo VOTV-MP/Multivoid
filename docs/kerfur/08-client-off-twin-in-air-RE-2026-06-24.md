@@ -1,5 +1,8 @@
 # 08 -- client-side turn-OFF spawns a twin-in-air (18:24/18:30) -- ROOT RE
 
+[withdrawn at the author's request]
+
+
 **Status: ROOT RE'd (log+code proven). PRE-EXISTING (NOT the mirror-identity extract). Cosmetic flicker
 (end-state self-resolves). Fix = the two-layer instant-world deferred-spawn upper layer (hides it), see
 `docs/COOP_INSTANT_WORLD_TWO_LAYER.md`; the underlying convert-ghost<->adoption handoff is a separate,

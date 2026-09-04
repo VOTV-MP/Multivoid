@@ -1,5 +1,8 @@
 # 05 — REVERSE symptom: client GHOST active kerfur (follow) — ROOT FOUND + FIX BUILT
 
+[withdrawn at the author's request]
+
+
 **STATUS 2026-06-24: ROOT FOUND + FIX BUILT+DEPLOYED (MD5 `239b231c`) + HANDS-ON VERIFIED (13:15) + COMMITTED
 `91948b83` (push HELD). The reverse follow-ghost is CLOSED.** Verify log: client `13:15:19 npc-mirror[reconcile]:
 destroyed untracked ghost NPC actor=...7F07D580 kerfurOmega_C` -> `post-snapshot ghost sweep complete (1

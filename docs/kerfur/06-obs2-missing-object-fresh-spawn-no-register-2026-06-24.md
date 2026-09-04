@@ -1,5 +1,8 @@
 # 06 — OBS-2: a save kerfur OBJECT missing on the client (fresh-spawn OnSpawn'd but never registered a mirror)
 
+[withdrawn at the author's request]
+
+
 **Status: ROOT PINNED + FIX VERIFIED hands-on (clean-bracket run 14:59:48) -> COMMITTED. The arg-slot fix
 (deferKerfur correct slot) is the complete fix: the probe fired `[OBS-2 PROBE] eid=3147: TWIN ABSENT` at
 quiescence -> `no local twin (load tail quiesced)` -> `spawned ... prop_kerfurOmega_C` -> a distinct mirror.

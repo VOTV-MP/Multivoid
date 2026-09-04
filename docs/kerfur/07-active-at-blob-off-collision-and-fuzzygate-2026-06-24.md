@@ -1,5 +1,8 @@
 # 07 — active-at-blob -> OFF collision (the 14:05 5-vs-4) + the anti-collision fuzzy-gate (fix#1)
 
+[withdrawn at the author's request]
+
+
 **Status: FIX#1 (fuzzy-gate) + OBS-2 arg-fix VERIFIED hands-on (clean-bracket run 14:59-15:00, all 4 axes
 confirmed by log) -> COMMITTED. Probe removed. Deployed MD5 `F419F594` (probe-free). Push HELD. FIX#2 nuance
 (body via fresh-spawn+sweep vs convert) = backlog, NOT blocking -- the clean-bracket run already yields the
@@ -54,7 +57,9 @@ A host-turned-off kerfur with no correct local off-twin is mishandled two ways:
    body)**. scope A (doc 03, exact-key for the save-off cluster) is a COMPANION (protects the 4 neighbors) but
    does NOT close 14:05 (xXPHX is active-at-blob -> not in the off-prop capture map; no save-time pos for it).
 
-## FIX#1 -- the anti-collision fuzzy-gate (BUILT, HANDS-ON PENDING)
+## FIX#1 -- the anti-collision fuzzy-gate (BUILT, ~~HANDS-ON PENDING~~)
+
+**[corr 2026-09-04: the pending clause is STALE -- this doc's own `Status:` line says *FIX#1 (fuzzy-gate) + OBS-2 arg-fix VERIFIED hands-on (clean-bracket run 14:59-15:00)*. The header is right.]**
 **Principle:** a candidate carrying its OWN real, cross-peer-stable `Aprop_Key` that DIFFERS from the pending
 kerfur's broadcast key exact-BELONGS to a different host kerfur -> never steal it via fuzzy. A keyless/
 mismatched-key kerfur with no valid candidate falls through to fresh-spawn/defer instead of stealing.

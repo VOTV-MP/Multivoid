@@ -37,6 +37,24 @@ instead of re-excavating the same hole.** Born because the project dug the same 
 
 ## 1. How to work (process / working agreements)
 
+- **A GATE'S OWN PARSER CAN SHRINK THE CORPUS IT JUDGES AGAINST — and the symptom is the SUBJECT
+  looking like a liar.** `[V]` 2026-09-04: `tools/qf/verify_proof.py` gates the `/qf` critic's
+  proof-of-read against `docs/LESSONS.md`, and its row parser opened a row only when BOTH `**`
+  markers sat on ONE line — so a lesson whose bold title WRAPS opened no row at all and its whole
+  body vanished. **527 of 703 rows visible, 176 not** (165 here, 11 in `LESSONS_SECURITY.md`).
+  Three things hid it: every row it DID return was real (recall broken, precision perfect — the
+  mirror of `[[lesson-a-self-test-must-assert-precision-not-only-recall]]`); the skill treats exit 1
+  as *"the critic did NOT open what it claims"*, so a TRUE citation of an invisible row is reported
+  as a fabricated fragment and the instinct is to re-spawn the agent, which buries it forever; and
+  it punished the careful, because a wrapped title is a longer, richer lesson. Caught only because
+  the discarded fragment (`"~1,930 more engine actors than the host"`) was verbatim at `:6067`.
+  *Look FIRST:* when a gate judges a claim against a corpus it parses itself, the corpus SIZE is a
+  claim too — count what the parser returns against a cruder count of the raw text, and when an
+  instrument accuses an agent of fabricating, `git grep` the disputed string before believing it.
+  Fixed `da2c33c2`; the drill now keeps the pre-fix rule as a baseline (asserting 527 -> 703), a LIVE
+  canary derived at runtime, and a DEAD canary.
+  `memory/lesson-a-gates-own-parser-can-shrink-the-corpus-it-judges-against.md`
+
 - **A NAME-KEYED CENSUS INHERITS THE SPELLING YOU ASSUMED, AND REPORTS NO GAP — key a completeness census on the game's OWN index, never on your vocabulary.** `[V]` 2026-09-04: VOTV ships TWO robots of one family; four months of work, a whole `docs/kerfur/` KB and eleven source modules had censused exactly ONE, because every grep was `kerfur*` and the regular one is **`kerfus`**, with an `s` (`Ap_kerfus_C` : `Aprop_corded_C`, 3 radial actions vs Omega's 10, **zero sync of any kind**). It surfaced only from `list_store.uasset`, which sells both. A grep returns HITS and cannot return "there is a sibling you did not ask about", so the census is silent exactly where it is wrong, and the key LOOKED validated — `kerfur*` matched ~570 pak entries. The near-hit made it worse: all 14 "kerfus" hits in our source are `kerfusFace_C`, an unrelated player-skin actor sharing the stem. **Look here FIRST:** enumerate the family from an index the GAME maintains (`list_store` / `list_objects` / the enum assets / a directory listing) before grepping, or search a truncated stem and read the whole result. The blind spot propagates — every status doc built on the census was keyed on the same found name, so each looked like independent confirmation. [[lesson-a-name-census-inherits-the-spelling-you-assumed]]
 - **A PREDICATE-GATED SWEEP INHERITS THE CLASS ITS PREDICATE RESOLVES — verifying that a park is real CODE is not verifying that it COVERS your actor.** `[V]` 2026-09-04: asked whether a client's robots are parked, I opened the code rather than trusting the comment and confirmed `npc_mirror.cpp:231-232` really calls `DisableCharacterTicks` + `NeutralizeAiTimers`, and that `kerfur.cpp:124` really clears `timer_face`/`timer_kerf`/`checkDoor`. The conclusion was still FALSE: `NeutralizeAiTimers` opens `if (!IsKerfurActor(actor)) return;` (`kerfur.cpp:106`) and that predicate resolves the **Omega** class only (`:47-56`), while the game's other robot is `Ap_kerfus_C : Aprop_corded_C` — `[V]` zero hits in `src/votv-coop/`, nothing mirrors it, nothing parks it, `COOP_WORLD_PROP_DIVERGENCE.md:19` keeps its actor tick, and `p_kerfus.cpp` reads the shared work queue at `:1567`/`:1645` and writes it at `:85`/`:1682`/`:1849`. So a divergence I had just 'verified against the code' is live in the shipped build. The call site reads unconditional; **the bound lives one frame down in a guard clause**, and code-over-comment discipline gets you to the right file and stops one function too early. Same failure as the name-census row above with the key moved from a STRING to a TYPE. **Look here FIRST:** open the callee's first three lines for a guard, name the concrete classes its predicate admits, and grep your own source for the population member you are claiming to handle — a zero-hit result is the answer. `memory/lesson-a-predicate-gated-sweep-inherits-the-class-its-predicate-resolves.md`
 
@@ -3539,6 +3557,25 @@ functions, not just the hooked one) · `feedback_granular_per_event_sync_method`
 - **A THREAD FILE THAT KEEPS THE AUDITOR'S WORDS AS THE AUDITED PARTY'S PARAPHRASE MEASURES THE AUDITED PARTY** (2026-09-02: 64 `/qf` thread files held the primary's titles of the critic's questions plus the primary's answers -- 341 of 850 `Q` records contain a question mark -- so "87 of 850 cite a file:line" measured the primary and the critic's rate was unmeasurable; after verbatim persistence the first real pass measured 20 of 20 anchors verified). *Look FIRST:* before measuring a second party, check its words are on disk verbatim under a heading naming the party. [[lesson-a-thread-file-that-keeps-the-auditors-words-as-the-audited-partys-paraphrase-measures-the-audited-party]]
 - **STATUS ROT LIVES UNDER TRUE LABELS AND IN UNSTAMPED POINT-IN-TIME DOCS** (2026-09-02, a 28-label sample checked against code and git: 4 of 8 true OPEN labels stale, all 2026-06/07 material never re-stamped; 0 of 12 DONE labels false; 8 of 28 lines rotted in a SUBORDINATE fact -- a line number, a count, a hash, "(commit pending)" -- carrying no status word; 29 % of the status-regex hits were not labels). *Look FIRST:* read the clause beside the label and the citations under it, and prioritise month-old point-in-time docs; a label grammar beats the raw regex several-fold, and `[V]`/`[A]`/`[RD]` are provenance, not status. [[lesson-status-rot-lives-under-true-labels-and-in-unstamped-point-in-time-docs]]
 ## 2. Join-window identity & the DUP-prone zone (measure before touching)
+
+- **A PER-PROCESS MINTED IDENTITY IS PERFECTLY STABLE — UNTIL TWO PEERS COMPARE NOTES.** `[V]`
+  2026-09-04, b151 two-peer rig: `lib_C::assignKey` mints `generateRandomKey`
+  (`GenerateRandomBytes(16)` -> `BytesToBase64Url` -> a 22-char FName) for any `triggerBase` whose
+  `Key` is `None` at load, in EACH peer's own process. Diffing the peers' key sets: **door 31 of 50
+  unmatched, container 25 of 56, light 27 of 42, lightgroup 27 of 42 — 110 per peer, 100% of them
+  the GUID shape.** Three populations, only the third broken: level-named agree, GUID keys
+  PERSISTED into the save agree, GUID keys MINTED at load never do. A random key is LOCALLY perfect
+  — unique, session-stable, round-tripping every index — so every solo test passes and the value
+  looks identical in shape to the legitimate ones beside it. That is why the field evidence read as
+  contradictory: one GUID door failed 72 presses while *"five OTHER GUID-keyed doors"* worked; the
+  rig reproduced that count exactly (the shared set holds exactly 5). **And the detector already
+  shipped, unused** — `interactable_channel.h:545` has logged `keysHash=... (compare host vs client
+  for cross-peer Key stability)` for months, naming the comparison in its own text, and nobody had
+  diffed two logs. *Look FIRST:* for anything keyed by a string the GAME produces, ask who mints it
+  and whether the mint is deterministic ACROSS processes, then prove it by diffing the two peers'
+  key SETS — a set hash is order-independent, and here it differed even between two runs of the same
+  peer, which is the signature in one column.
+  `memory/lesson-a-per-process-minted-identity-looks-stable-until-two-peers-compare.md`
 
 - **A WINDOW CLOSED BY THE LATCH THAT STARTS THE NEXT PHASE ENDS BEFORE THAT PHASE — BY
   CONSTRUCTION.** Measured 2026-08-23 (R-4a-end, 9-round /qf): the world-load episode's destroy

@@ -1,5 +1,8 @@
 # 02 — JOIN-WINDOW kerfur activation: THREE symptoms (the real bug)
 
+[withdrawn at the author's request]
+
+
 **Status: CONFIRMED by log + code (user repro 2026-06-24, host log + client log gripped). All 3 symptoms
 named at their break, separated. Fix design for 1+3 = doc 03; symptom 2 (camera) design = doc 04 (pending).**
 
