@@ -170,27 +170,78 @@ into a server produces data that exists on exactly one machine.
 That the kerfur and the server hold the identical triple is the useful part: **one floppy-data lane
 serves J4 by hand AND `get_reports` by robot.** Design it once.
 
-### J5 — a client fixes a transformer `[V]` NO LANE EXISTS
+### J5 — a client fixes a transformer `[V]` NO LANE EXISTS, and it is the hardest of the three
 
-`[V]` `transformer` appears 24 times in `src/votv-coop/` and **every single hit is the kerfur verb
-string** `fix_transformers` (the relay's enum, its name mapping, its bounds check, and comments).
-There is no transformer element, no payload, no poll, no receiver.
+**The actor is `Agenerator_C`** (`VotV/Content/objects/generator.uasset`, parent `Aactor_save_C`).
+The game's own vocabulary is split — the player-facing word is "transformer", the class is
+`generator` — which is part of why it was never censused. `[V]` the kerfur names it for us:
+`kerfurOmega_C::findTransformer` does `GetAllActorsOfClass(generator_C)` and returns the first
+element whose `isBroken` is true.
 
-The base POWER PANEL is synced (`power_sync.cpp`, a 5-breaker mask) and the serverbox lane
-neutralizes a local `ticker_serverBreaker`. The transformer itself — the thing
-`trigger_fuckUpTransformer` breaks and `goTransfo` sends the kerfur to — is not covered by either.
+`[V]` **`generator_C` and `Agenerator` appear ZERO times in `src/votv-coop/`.** Separately, all 24
+`transformer` hits are the kerfur verb string `fix_transformers` (the relay's enum, its name
+mapping, its bounds check, comments). No element, no payload, no poll, no receiver.
 
-This is the same gap the power-chain study named on 2026-09-02 ("breaker panels synced,
-reactor/generator/transformer outcomes in the gap list"), now reached from the other direction.
-**J5 is not a bug to fix in a lane; it is a lane that was never built, on a base that is parked.**
+**Persistent state** (in `getData`/`loadData`): `isBroken`, `index` (its save-stable identity, the
+same shape as the servers' array index), `upgradeLevel`, `cycle` (reset to 100 on every fix),
+`opened` (door). Verbs: `break()`, `damage()`, `upd()`, `update()`, `updUpgrades()`,
+`openDoor(bool)`.
+
+**The player's path is a THREE-PART MINIGAME**, and this is where J5 stops resembling J3. The
+generator holds `panelObj : AtransformerMGPanel_C*`; the panel holds three independent sub-puzzles —
+`isSineComplete` (match a waveform's offset / frequency / amplitude), `isRotatorsComplete` (a colour
+grid of `Fstruct_generatorRotator{top,right,bottom,left}` tiles rotated to match, live state in
+`rotators_states : TArray<byte>`), and `isSwitchesComplete` (a switch bank). On success the
+generator runs `cycle = 100; isBroken = false; turnedOn->Broadcast(); upd()`
+(`generator.cpp:1313-1318`).
+
+**`[V]` THE PUZZLE IS UNSEEDED PER-PEER RNG — this is the finding that shapes the whole lane.**
+`transformerMGPanel.cpp:2413-2441` rolls `RandomIntegerInRange(0,15)` x2 + `RandomIntegerInRange(1,15)`
+for the sine target and EIGHT `RandomBool()`s packed to a byte for the switches; `:2805` rolls
+`RandomIntegerInRange(0,3)` per tile and `assignRandomColors` per grid. Nothing seeds any of it.
+
+So **the host and a client who open the same transformer are looking at DIFFERENT puzzles**, and a
+client solving its own local puzzle is not evidence to the host of anything. J3's design (observe
+the local outcome flip, send an intent, let the host perform it) does not transfer unchanged: here
+the host cannot re-run the work, and trusting the client's word is exactly the class of client-
+authored shared-world write §2b forbids.
+
+That puts J5 squarely in `COOP_RNG_AUTHORITY.md` — *host rolls all shared-world RNG, clients
+mirror*. The lane needs the PUZZLE mirrored before the OUTCOME can mean anything, which is a
+different and larger shape than either J3 or J4.
+
+**One asset in our favour:** `turnedOn` is a DELEGATE, and delegate -> ProcessEvent dispatch is
+VISIBLE (`COOP_DISPATCH_VISIBILITY.md:81`, the game's own inventory buttons). So the fix COMPLETION
+is interceptable on both roles without any new substrate — unlike the server's `fix()`.
+
+Related prior work: `generatorFuckuper_C` (the thing that breaks it, the `ticker_serverBreaker`
+analogue) was already disassembled on 2026-09-02 by the power-chain pass — its offsets listing is on
+disk. This is the same gap that study named from the other direction ("breaker panels synced,
+reactor/generator/transformer outcomes in the gap list"). **J5 is not a bug in a lane; it is a lane
+that was never built, on a base that is parked.**
 
 ### What this changes
 
 - The macro-goal's real content is **three unbuilt/one-directional lanes**, not robot polish.
 - **J3 and J4 share a root with each other** (the server is one actor holding both), and **J4 shares
   its root with the robot's `get_reports`** (the same floppy triple). One design covers three jobs.
+- **J5 does NOT share their shape.** J3/J4 are outcome-intent lanes; J5 needs the host's RNG mirrored
+  first, because the work itself is per-peer random. Designing all three as one lane would be wrong —
+  design J3+J4 together, J5 on its own.
 [withdrawn at the author's request]
-  /qf owed"; this arc gives it a named consumer with a user-visible symptom.
+  user-visible symptom — a stronger argument than anything listed there. It remains an upgrade, not
+  a precondition.
+
+### The three seams, side by side
+
+| job | the moment to catch | dispatch | seam available today |
+|---|---|---|---|
+| J3 server fix | `AserverBox_C::fix()` | `EX_LocalVirtualFunction` — invisible to both | tier 5: poll the client's own `isBroken` for an un-commanded flip |
+| J4 report write | `insertFloppy` / `ejectFloppy` | `[?]` not yet read | `[?]` — read the dispatch before designing |
+| J5 transformer fix | `turnedOn->Broadcast()` | **delegate -> PE: VISIBLE** | tier 1 interceptor, no new substrate |
+
+**J5 has the best seam and the worst state problem; J3 has the worst seam and the simplest state.**
+That asymmetry, not the job's difficulty for a player, is what should order the build.
 
 ### WP status
 
@@ -435,24 +486,32 @@ So the arc order is: **Omega first, Kerfus after the power base, `sitOnAtv` afte
 
 ## 7. The plan (draft — `/qf` owed before any build)
 
-Ordered by "closes a capability the user can see", with the doctrine's steps applied per lane.
+**The goal's own work is W1-W3.** They are ordered by seam quality and shared roots, not by how hard
+the job feels to a player.
 
-- **K-1 — retire the "out of scope" line: `pat`.** The smallest complete act-as-host lane in this
-  family (montage + meow + an affection counter `[?]`). Its value is that it proves the intent path
-  for a verb that is NOT a `state` write, which is what 2-5 all are.
-- **K-2 — `take_object` / `holdObject_kerf`.** The kerfur picking up a prop is a discrete persistent
-  shared-world change over an entity that already has an eid. Reference lane: `prop_drop_intent`.
-- **K-3 — the floppy lane (`get_reports` done properly).** Give/take intent + host-owned
-  accumulation + identity across the disc's actor gap. This is what makes the dailies actually work
-  cross-peer rather than just changing a state byte.
-- **K-4 — `equipment` / drip.** Needs the `ui_objectUpgrades_C` seam and `upgradeTake`; the
-  accessory set is datatable-driven so the wire can carry row NAMES, never meshes.
-- **K-5 — `kill` / murderfur**, once §5.1 is answered.
-- **K-6 — Kerfus, whole** — GATED on the power base.
-- **K-7 — `sitOnAtv`** — GATED on C1.
+- **W1 — the server maintenance lane (J3 + J4 together).** One actor, `AserverBox_C`, holds both
+  jobs, so they get one design. J3: client polls its own host-driven `isBroken` for an un-commanded
+  flip -> fix INTENT naming the server index -> host validates and runs the real `fix()` -> the
+  existing `ServerState` broadcast returns the result. J4: the server's floppy triple
+  (`floppyType` / `floppyReadwrites` / `floppyData`) becomes host-owned state with an
+  insert/eject intent; the disc ACTOR crosses on the existing prop lanes. **Read the dispatch of
+  `insertFloppy` / `ejectFloppy` before designing** — it is the one seam in W1 still `[?]`.
+  Reference: `order_sync` (act-as-host), `serverbox_sync` (the return path already exists).
+- **W2 — the transformer lane (J5).** Different shape: the puzzle must be host-rolled and mirrored
+  BEFORE an outcome can be trusted (`COOP_RNG_AUTHORITY.md`), and the completion seam is already
+  available (`turnedOn` delegate -> PE, tier 1). Foundation-first says the power base is the floor
+  under this; W2's first task is to decide whether the generator's own `isBroken`/`index`/
+  `upgradeLevel` can be a self-contained element or genuinely needs the parked base first.
+- **W3 — harden the rest of §0.3** (J2 edges, J7 container facets) once W1/W2 land.
 
-Every lane owes, before it is DONE: its authority row (§2 of the doctrine), its seam decision proven
-by probe not assumption, its brain-parking statement, its identity-at-birth answer, its **mid-join
+**The robot lanes are OUT of this goal** (§0.2) and are listed here only so nobody re-derives them:
+`pat`, `take_object`, `equipment`, `kill`, `sitOnAtv`, all of Kerfus, and the floppy half of
+`get_reports`. **The floppy one is the exception worth noting** — W1's J4 design should be built so
+the robot's `get_reports` can later ride the same lane, because it is literally the same three
+fields on a different actor. Cheap to allow for now; expensive to retrofit.
+
+Every lane owes, before it is DONE: its authority row (doctrine §2), its seam decision proven by
+probe not assumption, its brain-parking statement, its identity-at-birth answer, its **mid-join
 row** (principle 8), a protocol bump, and evidence from a real two-peer run.
 
 ---
