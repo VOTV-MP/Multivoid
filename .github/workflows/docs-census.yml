@@ -17,6 +17,28 @@ on:
     branches: [main]
   pull_request:
 
+# WHAT THIS RUNS, AND WHAT IT DELIBERATELY DOES NOT (USER 2026-09-04).
+#
+# The three TOOLING drills -- docs_census_gate_drill, status_census_drill,
+# lessons_gate_drill -- were here and are gone. They guard `tools/docs/`, which
+# serves an internal session-close ritual whose skill and arc are local-only; the
+# session that edits that tooling is the session that runs its drills. Their whole
+# CI value was catching an edit made without running them, and against that: their
+# ONLY signal in their life here was three FALSE failures on the day they were
+# added, each because they were wired in without being run in CI's environment
+# (no memory corpus, no CLAUDE.md, no research/). The obligation moved into the
+# skill text instead of being paid for with a red board.
+#
+# What stays is what is not about the ritual:
+#   - the PUBLIC-LEAK gate, which scans the standing public tree for a leaked
+#     security coordinate on every push. That protects THIS REPO, and it would
+#     have caught two of the three leaks found by hand on 2026-09-04.
+#   - its drill, because a gate nothing shows failing is a gate nobody can trust,
+#     and this one guards the repo rather than the ritual.
+#   - the Docs-Census trailer gate, which polices a commit-message convention any
+#     future session or model tier could break by hand-committing a close. The
+#     close script refuses first; this is the backstop for a close that skipped it.
+
 jobs:
   gate:
     name: Docs-Census trailer gate
@@ -28,33 +50,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Gate drill (the gate is shown RED on a synthetic history before it is trusted)
-        run: python3 tools/docs/docs_census_gate_drill.py
-
-      # The census's OWN drill -- ~110 checks over the label grammar, the citation content rung, the
-      # resolved ledger, the reading order and every refusal path. It ran only when a session chose to
-      # run it, so a regression in status_census.py would have shipped silently. It builds its own
-      # scratch repos and needs neither the memory directory nor a network (verified with
-      # MULTIVOID_MEMORY_DIR pointed at a path that does not exist).
-      - name: Census drill (the label grammar, the rungs, the ledger, the refusals)
-        run: python3 tools/docs/status_census_drill.py
-
-      # The LEDGER gate's own drill. Round 4 added the census drill here after finding that a
-      # regression could ship silently; the SAME round then added three refusal paths to
-      # `lessons_gate.py` whose drill had no arm for any of them and which `[V]` nothing in .github
-      # ran at all. Round 5 found two defects living in exactly that gap (one list read by two
-      # different matchers; a premise measured against `git ls-files` while the decider walked the
-      # filesystem). The lesson was applied to one instrument and not to its sibling.
-      #
-      # Its ledger-injection arms need the memory corpus, which CI does not have; the arms that do
-      # not (`drill_allowlist`) run everywhere. Both are inside the one script.
-      - name: Ledger gate drill (the allowlist predicates, and the gate shown RED)
-        run: python3 tools/docs/lessons_gate_drill.py
-
-      # The PUBLIC-LEAK gate and its drill. This class was caught twice in one day by a hand-run
-      # pre-push audit and zero times by any instrument, while everything else in the arc had a gate.
-      # In CI the S4 overlap signal reports `n/a` -- CI has neither CLAUDE.md (gitignored) nor the
-      # memory directory, so it says so rather than reporting a false all-clear; S1/S2/S3 run here.
       - name: Public-leak gate drill (both founding incidents, every signal RED and quiet)
         run: python3 tools/docs/public_leak_gate_drill.py
 
