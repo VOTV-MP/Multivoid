@@ -158,18 +158,61 @@ precondition.
 
 ### J4 — a client collects reports by hand: ENTIRELY UNSYNCED (mechanism `[V]`, symptom `[RD]`)
 
-`[V]` `AserverBox_C` carries the SAME floppy triple as the kerfur — `floppyType`,
-`floppyReadwrites`, `floppyData: TArray<FString>` (`serverBox.cpp:18/24/68`) — with
-`insertFloppy(Aprop_floppyDisc_C*)` (`:870`) and `ejectFloppy()` (`:862`), and
-`getActionOptions` tracks a dedicated `lookatFloppyButton` component. That is the player's report
-collection: put a disc in the server, the server writes report data onto it.
+`[V]` `AserverBox_C` carries the same floppy state as the kerfur, and it is **FOUR fields, not
+three**: `floppyType`, `floppyReadwrites`, `floppyData : TArray<FString>` and
+**`floppyObjectData : FString`** (the fourth found in the offsets listing's property block, missed
+on the first pass) — with `insertFloppy(Aprop_floppyDisc_C*)` (`serverBox.cpp:870`) and
+`ejectFloppy()` (`:862`), and `getActionOptions` tracking a dedicated `lookatFloppyButton`
+component. That is the player's report collection: put a disc in the server, the server writes
+report data onto it.
 
-**None of those three fields is on any wire.** `floppybox_sync` is a different thing — it syncs the
+**None of those four fields is on any wire.** `floppybox_sync` is a different thing — it syncs the
 disc CRATE's LIFO stack (`Aprop_floppyBox_C`), not the server's slot. So a client inserting a disc
 into a server produces data that exists on exactly one machine.
 
-That the kerfur and the server hold the identical triple is the useful part: **one floppy-data lane
+That the kerfur and the server hold the identical state is the useful part: **one floppy-data lane
 serves J4 by hand AND `get_reports` by robot.** Design it once.
+
+### The W1 seam question, measured `[V]` — and the answer is better than the verbs suggest
+
+W1's plan named one open `[?]`: the dispatch of `insertFloppy` / `ejectFloppy`. Measured
+2026-09-04 by resolving `StackNode` / `VirtualFunctionName` in the kismet dump
+(`tools/bp_reflect.py serverBox`):
+
+| symbol | dispatch | verdict |
+|---|---|---|
+| `insertFloppy` | `EX_LocalVirtualFunction` from `pocessFloppy` | invisible |
+| `ejectFloppy` | `EX_LocalVirtualFunction` from the ubergraph | invisible |
+| `fix` / `breakServer` / `check` | `EX_LocalVirtualFunction` | invisible |
+| `launchServerMinigame` | `EX_LocalVirtualFunction` | invisible |
+
+So every VERB is invisible, as feared. **But the ENTRY POINTS that reach them are not**, and that is
+what the design actually needs:
+
+- **EJECT is reached from `actionOptionIndex`** — `[V]` ubergraph `@4519 if (action == Use(4))` ->
+  `@4560 if (lookatFloppyButton)` -> `@4574 ejectFloppy()`. `actionOptionIndex` is PE-dispatched and
+  **this project already intercepts that exact UFunction** (the kerfur turn-on rides
+  `actionOptionIndex Action==8`). Tier 1, cancellable, with the player and the component in hand.
+- **INSERT is reached from a COMPONENT OVERLAP DELEGATE** — `[V]` the `Box` component's
+  `ComponentBeginOverlap` handler passes `OtherActor` into `pocessFloppy`, which calls
+  `insertFloppy`. Delegate -> ProcessEvent dispatch is VISIBLE
+  (`COOP_DISPATCH_VISIBILITY.md:81`). Tier 1 again, with the inserted actor as an argument.
+
+**So J4 needs no new substrate and no WP-1.** Both halves are interceptable today at tier 1. Only
+J3's `fix` stays on the tier-5 poll, because its entry (`launchServerMinigame`) is invisible too.
+
+### A second J3 defect the same pass turned up `[V]`
+
+`breakServer` calls **`getRandomServerMinigameType`**, and the chosen puzzle lands in the server's
+`minigame : int` / `staticMinigame : bool` fields. **`ServerStatePayload` carries neither.** The
+client's own `ticker_serverBreaker` is deliberately neutralised by `serverbox_sync`, so nothing on
+the client ever writes `minigame` at all — it holds whatever the save loaded, while the host holds
+the roll that actually broke the box.
+
+That is the same defect class as J5, one size smaller: **which puzzle a peer is solving is
+per-peer**, so the two peers do not even agree on the task. It is cheaper here — `minigame` is one
+int rolled host-side, so mirroring it is a field on the existing payload rather than a new lane —
+but it must be in W1's design, and it was not.
 
 ### J5 — a client fixes a transformer `[V]` NO LANE EXISTS, and it is the hardest of the three
 
@@ -237,12 +280,16 @@ that was never built, on a base that is parked.**
 
 | job | the moment to catch | dispatch | seam available today |
 |---|---|---|---|
-| J3 server fix | `AserverBox_C::fix()` | `EX_LocalVirtualFunction` — invisible to both | tier 5: poll the client's own `isBroken` for an un-commanded flip |
-| J4 report write | `insertFloppy` / `ejectFloppy` | `[?]` not yet read | `[?]` — read the dispatch before designing |
+| J3 server fix | `launchServerMinigame` / `fix()` | `EX_LocalVirtualFunction` — invisible to both | tier 5: poll the client's own `isBroken` for an un-commanded flip |
+| J4 report EJECT | `actionOptionIndex(Use)` + `lookatFloppyButton` | **PE — VISIBLE, and already intercepted by us** | tier 1, cancellable |
+| J4 report INSERT | `Box::ComponentBeginOverlap` -> `pocessFloppy` | **delegate -> PE: VISIBLE** | tier 1, with the disc as an argument |
 | J5 transformer fix | `turnedOn->Broadcast()` | **delegate -> PE: VISIBLE** | tier 1 interceptor, no new substrate |
 
-**J5 has the best seam and the worst state problem; J3 has the worst seam and the simplest state.**
-That asymmetry, not the job's difficulty for a player, is what should order the build.
+**Only J3 lacks a visible seam.** Three of the four moments are tier-1 interceptable today with no
+new substrate — the invisible LVF verbs sit one call below entry points the engine dispatches
+normally, which is the general lesson: *census the entry, not the verb.* J5 keeps the worst state
+problem (a per-peer random puzzle) and J3 the worst seam with the simplest state, and that
+asymmetry — not how hard the job feels to a player — is what should order the build.
 
 ### WP status
 
@@ -536,9 +583,11 @@ the job feels to a player.
   flip -> fix INTENT naming the server index -> host validates and runs the real `fix()` -> the
   existing `ServerState` broadcast returns the result. J4: the server's floppy triple
   (`floppyType` / `floppyReadwrites` / `floppyData`) becomes host-owned state with an
-  insert/eject intent; the disc ACTOR crosses on the existing prop lanes. **Read the dispatch of
-  `insertFloppy` / `ejectFloppy` before designing** — it is the one seam in W1 still `[?]`.
-  Reference: `order_sync` (act-as-host), `serverbox_sync` (the return path already exists).
+  insert/eject intent; the disc ACTOR crosses on the existing prop lanes. **The seam question is
+  CLOSED (§0.5): both J4 halves are tier-1 interceptable today** — eject at `actionOptionIndex`,
+  insert at the `Box` overlap delegate — so only J3 needs the poll. W1 must also carry
+  **`minigame` / `staticMinigame`**, which §0.5 found diverging. Reference: `order_sync`
+  (act-as-host), `serverbox_sync` (the return path already exists).
 - **W2 — the transformer lane (J5).** Different shape: the puzzle must be host-rolled and mirrored
   BEFORE an outcome can be trusted (`COOP_RNG_AUTHORITY.md`), and the completion seam is already
   available (`turnedOn` delegate -> PE, tier 1). Foundation-first says the power base is the floor
