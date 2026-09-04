@@ -173,33 +173,68 @@ into a server produces data that exists on exactly one machine.
 That the kerfur and the server hold the identical state is the useful part: **one floppy-data lane
 serves J4 by hand AND `get_reports` by robot.** Design it once.
 
-### The W1 seam question, measured `[V]` — and the answer is better than the verbs suggest
+### The W1 seam question — `[corr 2026-09-04: the first answer was wrong in BOTH directions; re-measured with bp_reflect + the caller/opcode census below, and the tier the first pass never named is the one that answers it]`
 
-W1's plan named one open `[?]`: the dispatch of `insertFloppy` / `ejectFloppy`. Measured
-2026-09-04 by resolving `StackNode` / `VirtualFunctionName` in the kismet dump
-(`tools/bp_reflect.py serverBox`):
+W1's plan named one open `[?]`: the dispatch of `insertFloppy` / `ejectFloppy`. Every VERB is
+`EX_LocalVirtualFunction`, as feared — invisible to the ProcessEvent detour AND the Func patch:
 
-| symbol | dispatch | verdict |
+| symbol | dispatch | PE / Func |
 |---|---|---|
 | `insertFloppy` | `EX_LocalVirtualFunction` from `pocessFloppy` | invisible |
 | `ejectFloppy` | `EX_LocalVirtualFunction` from the ubergraph | invisible |
 | `fix` / `breakServer` / `check` | `EX_LocalVirtualFunction` | invisible |
-| `launchServerMinigame` | `EX_LocalVirtualFunction` | invisible |
+| `launchServerMinigame` | `EX_LocalVirtualFunction` from the ubergraph | invisible |
 
-So every VERB is invisible, as feared. **But the ENTRY POINTS that reach them are not**, and that is
-what the design actually needs:
+**The first pass then claimed the ENTRY POINTS rescue three of the four moments at tier 1. That was
+measured FALSE for two of them, and it missed the tier that actually answers all four.**
 
-- **EJECT is reached from `actionOptionIndex`** — `[V]` ubergraph `@4519 if (action == Use(4))` ->
-  `@4560 if (lookatFloppyButton)` -> `@4574 ejectFloppy()`. `actionOptionIndex` is PE-dispatched and
-  **this project already intercepts that exact UFunction** (the kerfur turn-on rides
-  `actionOptionIndex Action==8`). Tier 1, cancellable, with the player and the component in hand.
-- **INSERT is reached from a COMPONENT OVERLAP DELEGATE** — `[V]` the `Box` component's
-  `ComponentBeginOverlap` handler passes `OtherActor` into `pocessFloppy`, which calls
-  `insertFloppy`. Delegate -> ProcessEvent dispatch is VISIBLE
-  (`COOP_DISPATCH_VISIBILITY.md:81`). Tier 1 again, with the inserted actor as an argument.
+**WRONG #1 — `actionOptionIndex` is NOT PE-dispatched, and we do NOT intercept it anywhere.** `[V]`
+`mainPlayer.json` export 390 `useSelectedAction` holds the game's ONE action-dispatch site, and it is
+`EX_Context{ ObjectExpression = EX_InterfaceContext, ContextExpression =
+EX_LocalVirtualFunction('actionOptionIndex', [EX_Self, ...]) }` — opcode `0x45` through an
+INTERFACE, which is why one call site serves every interactable class including `serverBox_C`. `[V]`
+`coingun_collect.cpp:14-17` measured the same thing independently for the coin ("PE-invisible AND
+Func-invisible, so only the `0x45` substrate sees it — and that substrate observes WITHOUT a cancel
+primitive"). And the interceptor the first pass cited as proof does not exist: `[V]`
+`kerfur_convert.cpp:95-101` + `:402` — the kerfur turn-on's `actionOptionIndex` interceptor was
+**RETIRED in K-4b (2026-06-16) as never-firing dead code**, proven over two full sessions with zero
+firings. What survives there is the `actionName` interceptor, a different UFunction.
 
-**So J4 needs no new substrate and no WP-1.** Both halves are interceptable today at tier 1. Only
-J3's `fix` stays on the tier-5 poll, because its entry (`launchServerMinigame`) is invisible too.
+**WRONG #2 — J3's `fix` does NOT need a poll.** `[V]` it ends in
+`EX_CallMulticastDelegate(fixed__DelegateSignature)`, and `breakServer` broadcasts
+`serverBroke__DelegateSignature` twice. A multicast broadcast dispatches each bound handler through
+**ProcessEvent**, so if anything binds `fixed` the completion is PE-visible — the same shape as the
+coin's `BndEvt__` overlap. `[?]` WHO binds it is not yet censused (candidates: `mainGamemode`,
+`kerfurOmega`, the SAT console).
+
+**MISSED — the `0x45` substrate, which the first pass never mentioned and which is BUILT and
+SHIPPED** (`ue_wrap/core/vm_dispatch.h`, live since 2026-07-13, consumers: the kerfur form assembler
+and the coingun press counter). It is `COOP_SYNC_DOCTRINE` step 3 **tier 3**, it registers verbs BY
+NAME, and it sees exactly `EX_LocalVirtualFunction` — i.e. **every verb in the table above**, with
+the `serverBox` as the bracket's Context object. `[V]` caller/opcode census of `serverBox.json`:
+
+```
+ExecuteUbergraph_serverBox --EX_LocalVirtualFunction--> breakServer | pocessFloppy | check
+                                                      | launchServerMinigame | ejectFloppy
+pocessFloppy               --EX_LocalVirtualFunction--> insertFloppy
+fix / breakServer / break_type / visual --EX_LocalVirtualFunction--> check
+```
+
+`fix` itself has **no in-class caller** — it is called from outside (the minigame panel, the kerfur,
+or the console), so its own opcode depends on that caller and is `[?]`.
+
+**The honest verdict: ONE of the four moments is tier-1 cancellable, not three.** INSERT is, at the
+`Box` component's `ComponentBeginOverlap` handler — `[V]`
+`BndEvt__serverBox_Box_K2Node_ComponentBoundEvent_0_ComponentBeginOverlapSignature__DelegateSignature`
+is a real UFunction on the class, and `[V]` the coingun lane's identically-shaped
+`BndEvt__baocoin_collect_...` is PE-visible, hooked since v137 and cancellable. The other three are
+**tier-3 observe-only**: better than the poll the first pass proposed for J3, worse than the cancel
+it promised for eject.
+
+**What that costs the design: nothing structural — because act-as-host does not need a cancel.** The
+coingun lane already ships the forced shape for exactly this case (`coingun_collect.cpp:23-31`): a
+local phantom that CANNOT be suppressed, FORWARDED as an intent, and corrected by the host's own
+authoritative broadcast. W1's `ServerState` broadcast is that corrector, already built.
 
 ### A second J3 defect the same pass turned up `[V]`
 
@@ -278,18 +313,24 @@ that was never built, on a base that is parked.**
 
 ### The three seams, side by side
 
-| job | the moment to catch | dispatch | seam available today |
-|---|---|---|---|
-| J3 server fix | `launchServerMinigame` / `fix()` | `EX_LocalVirtualFunction` — invisible to both | tier 5: poll the client's own `isBroken` for an un-commanded flip |
-| J4 report EJECT | `actionOptionIndex(Use)` + `lookatFloppyButton` | **PE — VISIBLE, and already intercepted by us** | tier 1, cancellable |
-| J4 report INSERT | `Box::ComponentBeginOverlap` -> `pocessFloppy` | **delegate -> PE: VISIBLE** | tier 1, with the disc as an argument |
-| J5 transformer fix | `turnedOn->Broadcast()` | **delegate -> PE: VISIBLE** | tier 1 interceptor, no new substrate |
+`[corr 2026-09-04: this table said three of four were tier-1 cancellable. Measured: one is.]`
 
-**Only J3 lacks a visible seam.** Three of the four moments are tier-1 interceptable today with no
-new substrate — the invisible LVF verbs sit one call below entry points the engine dispatches
-normally, which is the general lesson: *census the entry, not the verb.* J5 keeps the worst state
-problem (a per-peer random puzzle) and J3 the worst seam with the simplest state, and that
-asymmetry — not how hard the job feels to a player — is what should order the build.
+| job | the moment to catch | dispatch `[V]` | seam available today |
+|---|---|---|---|
+| J3 server fix | `fix()` -> `fixed->Broadcast()` | `EX_LocalVirtualFunction` verb; **`EX_CallMulticastDelegate` completion** | **tier 3** on the verb by name; **tier 1 on the delegate IF a binder exists `[?]`** |
+| J3 break | `breakServer` -> `serverBroke->Broadcast()` x2 | 0x45 from the ubergraph | tier 3 (host-side anyway) |
+| J4 report EJECT | `ejectFloppy` (from `actionOptionIndex`, uber `@4574`) | **0x45 — NOT PE, NOT cancellable** | **tier 3, observe-only** |
+| J4 report INSERT | `Box::ComponentBeginOverlap` -> `pocessFloppy` | **BndEvt -> PE: VISIBLE** | **tier 1, cancellable, disc as argument** |
+| J5 transformer fix | `turnedOn->Broadcast()` | delegate -> PE **if bound `[?]`** | tier 1 if bound; else tier 3 |
+
+**Every moment has a seam, and the poll is retired before it was built.** The general lesson still
+holds and is what found the delegates — *census the entry, not the verb* — but its first application
+overstated the prize: the invisible LVF verbs sit one call below entry points the engine dispatches
+**through the interpreter, not through ProcessEvent**, so what the entry census actually buys is
+tier-3 observation with the right actor in hand, plus a real tier-1 seam wherever a DELEGATE (not an
+action verb) is on the path. J5 keeps the worst state problem (a per-peer random puzzle) and J3 the
+simplest state, and that asymmetry — not how hard the job feels to a player — is what orders the
+build.
 
 ### WP status
 
@@ -597,8 +638,10 @@ the job feels to a player.
   existing `ServerState` broadcast returns the result. J4: the server's floppy state
   (`floppyType` / `floppyReadwrites` / `floppyData`) becomes host-owned state with an
   insert/eject intent; the disc ACTOR crosses on the existing prop lanes. **The seam question is
-  CLOSED (§0.5): both J4 halves are tier-1 interceptable today** — eject at `actionOptionIndex`,
-  insert at the `Box` overlap delegate — so only J3 needs the poll. W1 must also carry
+  CLOSED (§0.5) but not as first written**: INSERT is tier-1 cancellable at the `Box` overlap
+  delegate; EJECT and the `fix` verb are **tier-3 observe-only on the shipped `0x45` substrate**, so
+  the lane is forward-and-reconcile (the `coingun_collect` shape), and **no poll is needed**. W1 must
+  also carry
   **`minigame` / `staticMinigame`**, which §0.5 found diverging. Reference: `order_sync`
   (act-as-host), `serverbox_sync` (the return path already exists).
 - **W2 — the transformer lane (J5).** Different shape: the puzzle must be host-rolled and mirrored
