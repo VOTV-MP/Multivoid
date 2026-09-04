@@ -77,7 +77,7 @@ whether it exists*.
 | J1 | move around the base | works — pose lane built | HARDEN | robot: follow/idle/patrol | — |
 | J2 | carry / move objects | works — grab + `prop_drop_intent`; edges `[?]` | HARDEN | robot: `take_object` | prop identity |
 | J3 | **fix servers** | **`[RD]` DOES NOT COUNT** — lane is one-directional, no client->host path (§0.5) | **BUILD** | robot: `fix_servers` + `findBrokenServer` | server system |
-| J4 | **collect reports (floppy)** | **`[RD]` ENTIRELY UNSYNCED** — the server's floppy triple is on no wire (§0.5) | **BUILD** | robot: `get_reports` | signals + floppy props |
+| J4 | **collect reports (floppy)** | **`[RD]` ENTIRELY UNSYNCED** — none of the server's four floppy fields is on a wire (§0.5) | **BUILD** | robot: `get_reports` | signals + floppy props |
 | J5 | **fix transformers** | **`[V]` NO LANE EXISTS** — 24/24 `transformer` hits are the kerfur verb string (§0.5) | **BUILD** | robot: `fix_transformers` + `goTransfo` | **POWER CHAIN — PARKED** |
 | J6 | drive the ATV | works, on a C1 crutch | HARDEN | robot: `sitOnAtv` | **ATV — C1, PAUSED** |
 | J7 | use equipment / inventory | works; facets broken | HARDEN | robot: `equipment` / drip | container facets |
@@ -137,7 +137,7 @@ ServerStatePayload { int32 brokenServers; float effCalc; float effDownl;
 So a client's `fix()` flips its OWN `isBroken` and nothing else happens: the host's
 `brokenServers` still counts it, the host's efficiency is unchanged, the SAT console on the host
 still reports it down. **And the host broadcasts ON CHANGE only** — so the client's phantom fix is
-not even corrected promptly; it stands until the host's own state next moves, then is stomped.
+not even overwritten promptly; it stands until the host's own state next moves, then is stomped.
 Silent divergence, not a visible failure.
 
 Root: the fix verb is `EX_LocalVirtualFunction` — invisible to BOTH the ProcessEvent detour and the
@@ -268,7 +268,7 @@ that was never built, on a base that is parked.**
 
 - The macro-goal's real content is **three unbuilt/one-directional lanes**, not robot polish.
 - **J3 and J4 share a root with each other** (the server is one actor holding both), and **J4 shares
-  its root with the robot's `get_reports`** (the same floppy triple). One design covers three jobs.
+  its root with the robot's `get_reports`** (the same floppy fields). One design covers three jobs.
 - **J5 does NOT share their shape.** J3/J4 are outcome-intent lanes; J5 needs the host's RNG mirrored
   first, because the work itself is per-peer random. Designing all three as one lane would be wrong —
   design J3+J4 together, J5 on its own.
@@ -594,7 +594,7 @@ the job feels to a player.
 - **W1 — the server maintenance lane (J3 + J4 together).** One actor, `AserverBox_C`, holds both
   jobs, so they get one design. J3: client polls its own host-driven `isBroken` for an un-commanded
   flip -> fix INTENT naming the server index -> host validates and runs the real `fix()` -> the
-  existing `ServerState` broadcast returns the result. J4: the server's floppy triple
+  existing `ServerState` broadcast returns the result. J4: the server's floppy state
   (`floppyType` / `floppyReadwrites` / `floppyData`) becomes host-owned state with an
   insert/eject intent; the disc ACTOR crosses on the existing prop lanes. **The seam question is
   CLOSED (§0.5): both J4 halves are tier-1 interceptable today** — eject at `actionOptionIndex`,
