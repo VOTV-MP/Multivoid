@@ -2034,10 +2034,25 @@ def _peer_log_health(label: str, path: Path, must_contain: list[str] | None = No
     if "[args unformattable]" in text:
         fails.append(f"{label}: the formatter fell back to the format string -- "
                      f"an argument could not be converted")
-    for st in ("selftest: FAIL",):
-        if st in text:
-            bad = [ln for ln in text.splitlines() if st in ln]
-            fails.append(f"{label}: {len(bad)} selftest FAILURE(s): {bad[0][:120]}")
+    # The needle used to be the single literal "selftest: FAIL", and a census on
+    # 2026-09-05 measured what that misses: of the failure shapes this tree can emit,
+    # SIXTEEN escape it, because the project's own selftests overwhelmingly log
+    # "<module> selftest FAIL: ..." (no colon before FAIL) and
+    # "<module> selftest: N of M checks FAILED". So `lobby_password`,
+    # `native_text_field`, `peer_admission`, `peer_identity` and `portable_identity`
+    # could every one of them FAIL on both peers while this function printed a clean
+    # bill -- and none of the five has a hand-added _assert_peer_selftests row either
+    # (`grep -c "<module> selftest" tools/mp.py` = 0 for all five). That is the exact
+    # 2026-07-30 finding this check was written for, recurring in a different spelling:
+    # a detector whose needle is one literal only ever sees the one caller that
+    # inspired it. Matching on the CONJUNCTION (a line mentioning a selftest AND
+    # carrying an upper-case FAIL) covers every shape in the tree, and it is measured
+    # to have no false positives here -- the success lines say "fail=0"/"PASS"
+    # lower-case, so a case-sensitive FAIL cannot hit them. A NEW selftest is now
+    # covered from birth instead of when somebody remembers to add a row.
+    bad = [ln for ln in text.splitlines() if "selftest" in ln and "FAIL" in ln]
+    if bad:
+        fails.append(f"{label}: {len(bad)} selftest FAILURE(s): {bad[0][:160]}")
     # THE FONT SELFTEST IS ASSERTED POSITIVELY, and the negative grep above is no
     # longer enough for it. Until 2026-07-30 that selftest ran unconditionally in
     # ui::fonts::Load(), so "no FAIL line" implied "it ran and passed". The ImGui

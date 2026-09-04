@@ -20,6 +20,7 @@
 #include "coop/moderation/seen_players.h"
 #include "coop/net/session.h"
 #include "coop/element/intent_authority.h"
+#include "coop/element/portable_identity.h"
 #include "coop/net/lobby_password.h"
 #include "coop/net/peer_admission.h"
 #include "coop/net/peer_identity.h"
@@ -437,6 +438,13 @@ bool StartCoopSession(const coop::net::Config& netCfg) {
     // off, for the same reason the ledger's is: a wrong reach verdict does not crash, it merely
     // reads wrong, and a gate that reads wrong either refuses a real player or authorizes the map.
     coop::element::RunSelftest();
+    // B2: the portable-identity hash's un-gated selftest -- see
+    // coop/element/portable_identity.h. Pinned vectors, because the whole lane rests on two
+    // MACHINES computing the same 19 characters from the same string; a hash that quietly
+    // depended on wchar_t's width would make every peer agree with itself and with nobody
+    // else, which reads as "the identity rule is wrong" and sends the next dig to the wrong
+    // place entirely.
+    coop::element::RunSelfTest();
     // The durable identity's crypto selftest: SHA-256 + Ed25519 against published
     // vectors, each with a tamper arm, plus the decision this module exports (a
     // signature must verify against ITS OWN identity and no other). Un-gated for the
