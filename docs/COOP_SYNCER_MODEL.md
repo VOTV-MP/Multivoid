@@ -395,11 +395,58 @@ scale.** Hence three concepts, never aliased: `m_ownerSlot` (birth authorship, d
 **claim** (occupancy, event-coupled, UI/coordination) · **syncer** (write authority,
 arbiter-assigned, event-DECOUPLED).
 
-### R2a — assigned authority fits streams, not discrete verbs
+### R2a — ~~assigned authority fits streams, not discrete verbs~~ **FALSIFIED 2026-09-04**
 
-MTA's model self-heals because the traffic is a continuous position stream: a rejected packet is
-replaced 50 ms later. **Our discrete state writes do not self-heal — a rejection is a lost player
-action.** So one syncer check across all 68 kinds is wrong on its face.
+> **`[corr 2026-09-04, /qf pass 1 round 2: this section is WRONG, and it was never a measurement.
+> It was written as `[V]`-adjacent prose in a `[V]`-heavy doc and then inherited as fact — by me,
+> in a design that rejected the whole syncer model on it. Two shipped implementations contradict
+> it, and this document's own §9/§4b already admitted it had never been measured.]`**
+
+The original claim: *"MTA's model self-heals because the traffic is a continuous position stream: a
+rejected packet is replaced 50 ms later. Our discrete state writes do not self-heal — a rejection is
+a lost player action. So one syncer check across all 68 kinds is wrong on its face."*
+
+**What the measurement says instead:**
+
+- `[V]` **MTA's element-data lane is a DISCRETE write and its refusal is ANSWERED, not lost.**
+  `reference/mtasa-blue/Server/mods/deathmatch/logic/CGame.cpp:2779` — *"Event was cancelled; sync
+  the authoritative value back to the source player"*, then it writes the server's own value back
+  down that one player's stream.
+- `[V]` **We already ship the same shape on our own discrete lane.**
+  `src/votv-coop/src/coop/items/order_sync.cpp:238-250` `Refuse()` sends `OrderRefused`
+  point-to-point with a reason AND calls `balance_sync::SendCurrentToSlot`, because — its own
+  comment — *"the client already debited itself through an `EX_LocalVirtualFunction` we cannot
+  suppress. Its balance is corrected by saying so directly."*
+- `[V]` **This document already knew it had not measured this.** §4b's own "Still unanswered" list
+  carries *"Can a discrete lane accept rejection + retry at all? ... Must be read from a real
+  discrete lane before stage 0 shapes the API around the wrong answer."* R2a asserted the answer;
+  the open-question list, four paragraphs later, said nobody had looked.
+
+**A discrete rejection is a lost player action only if the arbiter DROPS IT SILENTLY** — which §6
+already identifies as our defect and MTA's non-defect (*"We currently drop silently, which desyncs
+the asker"*). The cost of a discrete lane is therefore a REFUSAL REPLY, not the impossibility of
+authority. That is a feature to build, not a reason the model does not fit.
+
+**What R2a's death does NOT revive.** §4b's corrected-direction item 3 stands on its own and does
+not depend on R2a: *"Introduce the syncer only where a peer genuinely SIMULATES what the arbiter
+cannot compute."* Where the host computes the truth — `[V]` the signal servers, where
+`serverbox_sync` host-polls and the client's own `ticker_serverBreaker` is neutralised
+(`serverbox_sync.cpp:226`) — a syncer is still a permission label rather than an assignment. So the
+syncer is back on the table as a MODEL, without becoming the answer everywhere.
+
+### R2c — the axis is the ELEMENT, not the packet kind `[V]` 2026-09-04
+
+The same round measured something this document never considered: **MTA declares client write-trust
+PER ELEMENT, not per packet kind.** `[V]` `CGame.cpp:2739-2744` reads
+`eCustomDataClientTrust clientChangesMode` off the ELEMENT's own custom-data entry and falls back to
+a server-config default (`IsElementDataWhitelisted()`); the packet kind is not consulted.
+
+That is the same axis §2b's act-as-host rule and `coop/element/intent_authority.h` already use — an
+intent names an ARTIFACT and the arbiter resolves it. **So R2b's "promote the per-kind taxonomy into
+the type" is at best half the answer, and picking it alone would have chosen the axis MTA does not
+use.** A kind-level declaration can say *may a client author this KIND at all*; only an
+element-level one can say *may this client author THIS THING*. The design needs both, and the
+second is where the authority actually lives.
 
 ### R2b — the per-kind authority taxonomy ALREADY EXISTS, in comments
 
@@ -443,46 +490,19 @@ at stage 3 would be a **second parallel table** beside this one — RULE 2.
 
 - **Which of the 68 kinds have peer-local simulation the arbiter cannot run?** Decides where syncers
   are real vs a label.
-- **Can a discrete lane accept rejection + retry at all?** Or must the invariant be that a
-  reassignment can *never* invalidate an in-flight write? Must be read from a real discrete lane
-  before stage 0 shapes the API around the wrong answer.
+- ~~**Can a discrete lane accept rejection + retry at all?**~~ **ANSWERED 2026-09-04: YES.** Read
+  off two real discrete lanes — MTA's element-data (`CGame.cpp:2779`) and our own `order_sync`
+  (`order_sync.cpp:238-250`). Both answer a refusal by pushing the authoritative value back to the
+  one refused peer. See R2a's correction box, which this question outlived by four paragraphs.
 
-## 5. The enforcement point
+## 5. The enforcement point — **RETIRED 2026-09-04 (RULE 2)**
 
-`[corr 2026-09-04: re-counted. The number moved AND the surface is bigger than the three files this
-section names — a running total in a doc, exactly `[[lesson-a-running-total-in-an-append-only-register]]`.]`
-
-`[V]` The dispatch surface is **100 `case` branches across FIVE files**, not 68 across three:
-
-| file | cases (2026-07-20) | cases (2026-09-04) |
-|---|---|---|
-| `event_dispatch_state.cpp` | 24 | **26** |
-| `event_dispatch_signal.cpp` | 29 | 29 |
-| `event_dispatch_entity.cpp` | 15 | 15 |
-| **`event_dispatch_world.cpp`** | *not named* | **16** |
-| **`event_dispatch_intent.cpp`** | *not named* | **14** |
-
-**`event_dispatch_intent.cpp` is the one that matters to this design**: it is the act-as-host
-lane's own dispatcher — the mechanism §2b describes — and it did not exist in this section's
-frame. So "one check in the dispatch switch" is today a check in *three of five* switches, and
-the enforcement point must name all five or it is a site list wearing an invariant's clothes.
-Auditing 100 handlers by hand guarantees a miss and creates 100 places to keep in sync.
-
-MTA's answer (`MTA_PRECEDENT.md` §5) is a **default-deny per-kind flag** checked **once** in the
-dispatch switch, before the handler runs:
-
-1. **Per-kind `bAllowClientAuthored`, defaulting to `false`.** A kind that a client may legitimately
-   author must say so explicitly. Everything else is refused without the handler ever seeing it.
-2. **For kinds that ARE client-authorable: the syncer check**, at the same single point —
-   `SyncerOf(elementId) == senderSlot`.
-3. **A generation counter beside the check** — MTA's `CanUpdateSync(ucTimeContext)`, bumped whenever
-   the arbiter itself changes the element, so a stale-but-authorized packet cannot be replayed.
-
-This mirrors what `session_lanes.h:181-185` already does for **relaying**. The same idea applied to
-**applying** is the missing half — and note the ordering rule from `RULES.md` S2: validate *before*
-relay. MTA itself gets this wrong (`MTA_PRECEDENT.md` §2 caution); we should not copy that.
-
----
+> Moved whole to `docs/_archive/COOP_SYNCER_MODEL_sections_5_and_8_2026-09-04.md`. This section
+> proposed a per-kind `bAllowClientAuthored` flag checked once in the dispatch switch. **§4b already
+> described it as superseded in shape, and R2c then measured that it picks the wrong AXIS** — MTA
+> declares trust per ELEMENT, not per kind. Its dispatch-surface count was also stale (68 across
+> three files; measured 2026-09-04 as 100 across five). The governing text is §4b's corrected
+> direction plus R2c. Nothing cites this section any more.
 
 ## 6. Claim transfer — the part that makes it usable
 
@@ -516,23 +536,13 @@ is implemented, not merely acknowledged.
 
 ---
 
-## 8. Migration — staged, because this touches lanes the user has hands-on tested
+## 8. Migration — **RETIRED 2026-09-04 (RULE 2)**
 
-**Do not big-bang this.** Ordered so that behaviour-changing steps land last and observably.
-
-| Stage | What | Risk |
-|---|---|---|
-| **0** | Write the arbiter abstraction + the `SyncerOf`/`AssignSyncer` API. No callers. | None |
-| **1** | Arbiter becomes the **single writer** of syncer state; assignments broadcast. **No enforcement** — pure observation. Verify by log diff that assignments match today's implicit behaviour. | Low — no behaviour change |
-| **2** | Principle-8 answers (§7): reap on departure, seed on join, TTL, race rule. Still no enforcement. Smoke: a peer leaving mid-desk-use frees the desk. | Low |
-| **3** | Per-kind `bAllowClientAuthored` flag, **defaulting to false**, one check in the dispatch switch. Enumerate the 68 kinds and mark the legitimately client-authored ones. | **Medium — this is where a missed `true` breaks real play** |
-| **4** | Syncer check on the client-authorable kinds + generation counter. Family by family, smoke between. Start with the desk chain, where the claim machinery is most mature. | **Highest** |
-| **5** | Takeover request/grant (§6) + the explicit refusal reply. | Medium |
-| **6** | RULE 2: retire the advisory reads of `device_occupancy` that stage 4 makes redundant. | Low |
-
-Stages 3-4 are a wire-format change → **`kProtocolVersion` bump**, per the standing rule.
-
----
+> Moved whole to `docs/_archive/COOP_SYNCER_MODEL_sections_5_and_8_2026-09-04.md`. Its stages 3-4
+> were staged rollouts OF §5's per-kind flag, so retiring §5 retires them with it; keeping a
+> migration plan for a mechanism the doc no longer proposes is exactly the parallel-path baggage
+> RULE 2 forbids. A migration plan is owed again once the /qf pass converges on a shape, and it will
+> be written against that shape rather than patched out of this one.
 
 ## 9. Open questions — resolve in `/qf` BEFORE stage 0
 
