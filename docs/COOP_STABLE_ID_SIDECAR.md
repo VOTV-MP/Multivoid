@@ -1,5 +1,44 @@
 # COOP_STABLE_ID — save-loaded identity via a stable ID, not position
 
+> **UPDATE 2026-09-04 — THIS THREAD NOW HAS A MEASURED, USER-FACING, BLOCKING INSTANCE, AND IT IS
+> NOT A PROP: `lib_C::assignKey` MINTS A RANDOM KEY PER PROCESS.** Field defect **B2** (a player's
+> radiotelescope door: 72 key presses, `door: applied` **zero** times) is root-caused and reproduced
+> on the rig. `[V]` `lib_C::assignKey` calls `generateRandomKey` — `GenerateRandomBytes(16)` ->
+> `BytesToBase64Url` -> a 22-char FName — for any `triggerBase` whose `Key` is `None` at load
+> (`research/bp_reflection/cpp/lib.cpp:8698`, reached from `triggerBase_C::getKey`
+> `.../triggerBase.cpp:1643`). Every peer runs it in its OWN process, so two peers loading the same
+> world mint DIFFERENT keys for the same physical object and nothing reconciles them. Our code never
+> writes one (`SetKeyString` greps zero call sites) — the mint is entirely the game's.
+>
+> `[V]` measured on b151, two-peer smoke PASS, per-key dumps (`interactable_log=1`) diffed:
+> **door 31 of 50 unmatched, container 25 of 56, light 27 of 42, lightgroup 27 of 42 — 110
+> interactables per peer that the other peer has never heard of, and 100% of the unmatched keys are
+> the GUID shape in every channel.** The channels that fully agree (`appliance` 62, `doorbox` 20,
+> `keypad` 14, `atv`, `garage`, `power`) are the ones that are all level-named or all save-persisted.
+>
+> **Three populations, and only the third is broken:** level-named keys (`basedoor_bedroom`) agree;
+> GUID keys PERSISTED into the save agree, because `triggerBase` serialises its key
+> (`struct_triggerSave.key_44_...`, `.../triggerBase.cpp:1587`/`:1615`) and both peers read the same
+> bytes; GUID keys MINTED at load never agree. `[V]` the rig reproduces the field's oddest detail
+> exactly — the door channel's shared set holds **exactly 5** GUID keys, and the field report noted
+> 135 applies succeeding *"including five OTHER GUID-keyed doors"* while one failed 72 times. The
+> reporter's door was not broken; it had two identities.
+>
+> **The detector already ships and should become a gate:** the per-channel
+> `<chan>: index rebuilt -- N live keyed instance(s), keysHash=0x...` line. Two peers agreeing on it
+> is a one-line cross-peer identity assertion; today four channels fail it. `[V]` the door hash at 19
+> indexed is byte-identical across all four log files of two independent runs, while the hash at 50
+> differs in every one — *including between two runs of the same peer*, which is the signature of a
+> per-process mint.
+>
+> **What a fix cannot be:** the host cannot simply broadcast its own minted keys (the client's
+> objects already carry different ones, and the game's `mainGamemode->keyObj_key` table is keyed by
+> them), and per principle 1 the mint itself is not ours to edit. The open design question is whether
+> population 3 is addressed by a deterministic function of world state (level + transform + class) or
+> by a host-assigned mapping delivered at join. NOT DESIGNED — `/qf` owed.
+> Full RE + evidence: `research/findings/join-identity/votv-random-key-mint-B2-RE-2026-09-04.md`;
+> logs `research/runs/20260904-b2q1a/`.
+
 > **UPDATE 2026-07-18 (s22) — the KEYED-prop half of the thread is CLOSED: v122 no-passive-mint.**
 > The s21b "one actor / two eids" residual root-caused to the client's passive census minting silent
 > keyed Elements that the keyed adopt then stacked a mirror over (~2200 zombies per join, measured) +
