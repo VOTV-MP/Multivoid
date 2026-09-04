@@ -142,8 +142,18 @@ Silent divergence, not a visible failure.
 Root: the fix verb is `EX_LocalVirtualFunction` — invisible to BOTH the ProcessEvent detour and the
 Func patch (measured when the lane was built). This is precisely the class `COOP_SYNC_DOCTRINE`
 [withdrawn at the author's request]
-a first-class consumer of that pending decision, and it is a stronger argument for it than any
-listed there today.**
+a first-class consumer of that pending decision, and a stronger argument for it than anything listed
+there today.**
+
+**But J3 is NOT BLOCKED on WP-1, and the doc must not be read that way.** Tier 5 — per-site
+reconcile — is available now and fits: the client already holds a host-driven `isBroken` per box, so
+an un-commanded local `broken -> fixed` transition on the client IS the observable, no verb
+interception required. The lane shape that follows: **client detects the flip, sends a fix INTENT
+naming the server index; the host validates (that box is broken on the host; the sender is plausibly
+near it) and runs the real `fix()` on its own copy; the existing host->client mirror carries the
+result back** — the `order_sync` shape, with the existing `ServerState` broadcast as the return
+path. WP-1 would later replace the poll with a clean cancel-capable seam; it is an upgrade, not a
+precondition.
 
 ### J4 — a client collects reports by hand: ENTIRELY UNSYNCED (mechanism `[V]`, symptom `[RD]`)
 
