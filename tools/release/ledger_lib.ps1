@@ -390,9 +390,16 @@ function New-PackageManifest {
     # product -- the one the r2modman list shows -- restating what three other fields
     # already say. What that space buys instead is a first sentence that tells someone
     # what the mod DOES, which the old one did not have. (2026-09-01.)
+    # THE EARLY-PHASE LINE IS THE USER'S OWN, VERBATIM IN SUBSTANCE (2026-09-04):
+    # "The mod is in its early phases, but already offers a fair bit, expect bugs."
+    # Room for it was bought by TIGHTENING THE EXISTING SENTENCE, never by trimming the
+    # user's words. Naively appended it measured 247 of 250 -- three characters of
+    # headroom on a string that INTERPOLATES $GameTarget, so a future "0.9.10" (one char
+    # longer than "0.9.0n") would fire the throw below during a release, which is the
+    # worst possible moment to discover a copy limit.
     $desc = "Drop-in co-op for Voices of the Void: play the whole game with up to three " +
-            "friends. Shared world, voice chat, join at any time. For VotV $GameTarget " +
-            "-- modifies no game files."
+            "friends. Shared world, voice chat, join any time. Early phases but already " +
+            "offers a fair bit -- expect bugs. For VotV $GameTarget, modifies no game files."
     if ($desc.Length -gt 250) { throw "manifest description is $($desc.Length) chars, max is 250" }
     $obj = [ordered]@{
         name           = 'Multivoid'

@@ -118,7 +118,7 @@ on it; the lessons it taught stay in [LESSONS.md](LESSONS.md) §6.
 time" pointer. It is long on purpose: it exists so the same hole is not dug twice. If you are about
 to spend a day on something, grep it first.
 
-**[CRUTCHES.md](CRUTCHES.md)** — the standing register of subsystems we shipped in a crutch shape,
+**`docs/CRUTCHES.md` (local-only)** — the standing register of subsystems we shipped in a crutch shape,
 with the measured evidence and the proper fix for each. Created 2026-08-29 on user directive. It is
 the counterpart to LESSONS.md: that one records what we learned, this one records what we still owe.
 

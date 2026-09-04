@@ -7,7 +7,7 @@ The canonical doc for VOTV's ATV **and its upgrade system**. Supersedes the ATV 
 known then; **this file is the current truth**, and every correction is named.
 
 > **THE SHIPPED SYNC IS A CRUTCH (USER RULING, 2026-08-29).** It is entry **C1** in
-> [`docs/CRUTCHES.md`](../CRUTCHES.md) and is being redesigned, not extended. In one line: the mirror
+> `docs/CRUTCHES.md` (local-only) and is being redesigned, not extended. In one line: the mirror
 > freezes a constraint rig whose entire purpose is suspension travel, then fails to freeze it cleanly
 > — the wheels are never parked, steering and torque are tick-driven so both die, six of seven hit
 > delegates still fire, and the transport is the reliable stream the 2026-06-08 blueprint labelled

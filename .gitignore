@@ -362,3 +362,21 @@ SUPPORT.md
 
 # Local-only: the server-browser redesign brief (USER 2026-08-30: "server_browser_arc не публикуем в паблик").
 docs/SERVER_BROWSER_ARC.md
+
+# Local-only: the site content-audit + support-lane + "made with AI" note arc (2026-09-04).
+# It quotes a third party's private Discord message the user pasted as working context, and
+# frames a public comment the user said to put nowhere. Neither is theirs to publish. The
+# OUTPUT of the arc is public (site copy, store synopsis); the working notes are not.
+# Same terms as its siblings: stays on disk, local pointers resolve, none resolves on GitHub.
+docs/SITE_ARC.md
+
+# Local-only: the CRUTCH REGISTER (USER 2026-09-04, "Crutches md пусть будет только локальным").
+# Same reasoning as docs/security/ above, and the same terms: the file stays ON DISK, every local
+# pointer to it resolves, none resolves on GitHub. It is a measured list of shipped weaknesses with
+# the evidence for each -- C5 alone is an item-loss path a player can trigger -- so publishing it
+# hands an attacker the map, which is the thing docs/security/ was untracked for on 2026-08-23.
+# The three MARKDOWN LINKS to it (docs/README.md, docs/piles/README.md, docs/vehicles/ATV.md) were
+# demoted to plain paths in the same commit: an unpublished target behind a live link is a 404 on
+# GitHub, which is exactly the defect this session found on the website. Plain-text mentions in
+# source comments and other docs are fine and were left -- they name a local doc, as CLAUDE.md does.
+docs/CRUTCHES.md

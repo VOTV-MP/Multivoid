@@ -10,7 +10,7 @@
 > `init()` export 80): **[11-PROXY-TO-NATIVE-NATIVIZATION-2026-06-30.md](11-PROXY-TO-NATIVE-NATIVIZATION-2026-06-30.md)**
 > · [[project-pile-nativization-2026-06-30]]. (The proxy-centric framing below still describes the CLUMP form.)
 >
-> **BUT THE RESIDUAL IS A CRUTCH -- entry C2 in [`docs/CRUTCHES.md`](../CRUTCHES.md) (USER ruling
+> **BUT THE RESIDUAL IS A CRUTCH -- entry C2 in `docs/CRUTCHES.md` (local-only) (USER ruling
 > 2026-08-29: "interaction with piles is as crutchy as atv today - creating a pile object attachmed etc").
 > Next in line after the ATV (C1).** What shipped above is real and hands-on verified; what it did NOT do is
 > finish. Still in the tree: **two mirror implementations for one concept** compile together (bare
