@@ -1,5 +1,23 @@
 # Pile sync — restoration plan (restore the working reconcile)
 
+> **`[corr 2026-09-04: docs census sweep]` SUPERSEDED. THIS PLAN WAS NEVER EXECUTED, AND ITS
+> APPROACH WAS REPLACED.** It reads "Drafted 2026-06-20 (session 32). **PENDING USER GO** before
+> execution" and carries "Open questions for the restore (resolve before/at execution)" -- live work
+> that will never happen. `[V]` **`docs/piles/11-PROXY-TO-NATIVE-NATIVIZATION-2026-06-30.md`:
+> *"Status: nativization AS-BUILT + VERIFIED (hands-on). The pile form is now a rooted real
+> `actorChipPile_C` native"*** (`abfaaed8` / `dabf84de` / `3b72aba0` / `fa8bc344`, pushed). The pile
+> mirror went PROXY -> NATIVE ten days after this plan was drafted, so "restore the adopt-by-position
+> reconcile onto the proxy" describes an era the tree has since left behind.
+>
+> Its DELETE list is also already spent: `[V]` `prop_adoption.cpp`, `pile_handle.cpp`,
+> `pile_claim.cpp`, `pile_seed.cpp`, `prop_spawn_core.cpp` and `remote_prop_spawn_internal.h` are
+> gone from the tree.
+>
+> **Kept, not archived,** because `README.md` deliberately retains `01-04` as the pile-specific
+> history set ("These supersede the cross-cutting parts of the pile docs below; 01-04 remain the
+> pile-specific..."). Read it as a record of what was proposed in June 2026, never as a plan.
+> Current pile state: `docs/piles/11` and `12`, plus crutch **C2**.
+
 > The plan to get back to working pile sync: restore the adopt-by-position reconcile (the
 > June-12/13 "stale save → reconcile" scheme, intact at committed HEAD `1272b0a3`) and fix
 > the one real edge case (drain-rot) cheaply, instead of the destroy+fresh-spawn detour that

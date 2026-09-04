@@ -495,7 +495,7 @@ only the pointer had rotted.]`
 | `SYMMETRIC` | doors, lights, containers, garage, appliance, locker, power — **this is finding A4** |
 
 `[corr 2026-09-04, twice. First I raised the count from 13 to **16** by grepping the word
-`SYMMETRIC` on case lines. That number was wrong in BOTH directions and the method was the defect:
+`SYMMETRIC` on case lines. `[corr 2026-09-04: that number was wrong in BOTH directions]` and the method was the defect:
 it measured the VOCABULARY, not the absence.]`
 
 - **It MISSED the canonical three.** `[V]` `session_lanes.h:231-233` carries `DoorState`,
@@ -553,7 +553,7 @@ at stage 3 would be a **second parallel table** beside this one — RULE 2.
 
 > Moved whole to `docs/_archive/COOP_SYNCER_MODEL_sections_5_and_8_2026-09-04.md`. This section
 > proposed a per-kind `bAllowClientAuthored` flag checked once in the dispatch switch. **§4b already
-> described it as superseded in shape, and R2c then measured that it picks the wrong AXIS** — MTA
+> `[corr 2026-09-04: already described as superseded in shape]`, and R2c then measured that it picks the wrong AXIS** — MTA
 > declares trust per ELEMENT, not per kind. Its dispatch-surface count was also stale (68 across
 > three files; measured 2026-09-04 as 100 across five). The governing text is §4b's corrected
 > direction plus R2c. Nothing cites this section any more.
@@ -594,7 +594,7 @@ is implemented, not merely acknowledged.
 
 > Moved whole to `docs/_archive/COOP_SYNCER_MODEL_sections_5_and_8_2026-09-04.md`. Its stages 3-4
 > were staged rollouts OF §5's per-kind flag, so retiring §5 retires them with it; keeping a
-> migration plan for a mechanism the doc no longer proposes is exactly the parallel-path baggage
+> migration plan for a mechanism `[corr 2026-09-04: the doc no longer proposes it]` is exactly the parallel-path baggage
 > RULE 2 forbids. A migration plan is owed again once the /qf pass converges on a shape, and it will
 > be written against that shape rather than patched out of this one.
 

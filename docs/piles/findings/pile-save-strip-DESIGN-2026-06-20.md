@@ -1,5 +1,13 @@
 # Pile sync — SAVE-STRIP + single-source host stream — DESIGN (2026-06-20, session 32)
 
+> **`[corr 2026-09-04: docs census sweep]` DURABLE RECORD, SUPERSEDED IN OUTCOME.** Its measurements
+> stand as of its date. `[V]` What it was written to inform has since been replaced: the pile mirror
+> went PROXY -> NATIVE on 2026-06-30 (`docs/piles/11`, "nativization AS-BUILT + VERIFIED (hands-on)
+> ... a rooted real `actorChipPile_C` native"), and the arc then ran on into crutch **C2** and the
+> 2026-09-01 rejoin-crash fix. `[V]` Its file paths are pre-refactor -- `prop_adoption.cpp`,
+> `pile_handle.cpp`, `pile_claim.cpp`, `pile_seed.cpp`, `prop_spawn_core.cpp` and `freeze_probe.cpp`
+> are gone from the tree. Read it as evidence from June 2026, never as current design.
+
 Supersedes the thin-client doom (sessions 30-31, DEPLOYED + FAILED in the user's real
 hands-on: doom wedged `liveMirrors=758 < expected=868`, never fired, dupes persisted).
 Root cause + direction were RE-decided this session; see

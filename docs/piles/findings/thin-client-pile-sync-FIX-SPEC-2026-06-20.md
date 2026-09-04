@@ -1,5 +1,13 @@
 # Thin-client pile sync — AUDIT-FIX spec (2026-06-20)
 
+> **`[corr 2026-09-04: docs census sweep]` DURABLE RECORD, SUPERSEDED IN OUTCOME.** Its measurements
+> stand as of its date. `[V]` What it was written to inform has since been replaced: the pile mirror
+> went PROXY -> NATIVE on 2026-06-30 (`docs/piles/11`, "nativization AS-BUILT + VERIFIED (hands-on)
+> ... a rooted real `actorChipPile_C` native"), and the arc then ran on into crutch **C2** and the
+> 2026-09-01 rejoin-crash fix. `[V]` Its file paths are pre-refactor -- `prop_adoption.cpp`,
+> `pile_handle.cpp`, `pile_claim.cpp`, `pile_seed.cpp`, `prop_spawn_core.cpp` and `freeze_probe.cpp`
+> are gone from the tree. Read it as evidence from June 2026, never as current design.
+
 Apply on top of the implemented + audited change. Authoritative source of WHAT to
 fix: `thin-client-pile-sync-AUDIT-2026-06-20.md` (the GO-WITH-FIXES verdict, §
 "Recommended action order"). This file pins the EXACT mechanics for the subtle

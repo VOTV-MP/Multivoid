@@ -173,7 +173,7 @@ history/diagnosis/design, and **08 is the CURRENT design** (the host-authoritati
 - **[02-CURRENT-DIAGNOSIS.md](02-CURRENT-DIAGNOSIS.md)** — the two bugs' root causes, from the
   bytecode RE + the user's real logs (the 758/868 doom wedge + the E-spam local-clump
   accumulation).
-- **[03-RESTORATION-PLAN.md](03-RESTORATION-PLAN.md)** — the plan: restore the adopt-by-position
+- **[03-RESTORATION-PLAN.md](03-RESTORATION-PLAN.md)** — `[corr 2026-09-04: superseded, never executed]` (the mirror went proxy -> NATIVE instead; see [11](11-PROXY-TO-NATIVE-NATIVIZATION-2026-06-30.md)). The plan: restore the adopt-by-position
   reconcile + fix the interaction dupe; the revert/keep/delete inventory across the uncommitted
   stack; what to preserve (kerfur/email/harness). (EXECUTED — see Status.)
 - **[04-ROBUST-DESIGN.md](04-ROBUST-DESIGN.md)** — what good looks like: the 5 pillars of robust

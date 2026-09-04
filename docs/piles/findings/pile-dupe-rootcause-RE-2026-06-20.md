@@ -1,5 +1,13 @@
 # Pile/Kerfur Dupe — Root-Cause RE & Direction Memo (2026-06-20)
 
+> **`[corr 2026-09-04: docs census sweep]` DURABLE RECORD, SUPERSEDED IN OUTCOME.** Its measurements
+> stand as of its date. `[V]` What it was written to inform has since been replaced: the pile mirror
+> went PROXY -> NATIVE on 2026-06-30 (`docs/piles/11`, "nativization AS-BUILT + VERIFIED (hands-on)
+> ... a rooted real `actorChipPile_C` native"), and the arc then ran on into crutch **C2** and the
+> 2026-09-01 rejoin-crash fix. `[V]` Its file paths are pre-refactor -- `prop_adoption.cpp`,
+> `pile_handle.cpp`, `pile_claim.cpp`, `pile_seed.cpp`, `prop_spawn_core.cpp` and `freeze_probe.cpp`
+> are gone from the tree. Read it as evidence from June 2026, never as current design.
+
 **Synthesis lead memo.** Decisive feasibility + direction call on the recurring ambient-pile (and kerfur) JOIN dupe, drawn from 6 structured RE/diagnosis findings (failure-log diagnosis, .sav-format RE, joiner-load-path RE, current-apparatus map, MTA precedent, kerfur RCA). Every load-bearing claim below is cited to a file:line, an SDK struct, or a real log line. Guesses are explicitly flagged.
 
 ---

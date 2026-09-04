@@ -204,8 +204,13 @@ firings. What survives there is the `actionName` interceptor, a different UFunct
 `EX_CallMulticastDelegate(fixed__DelegateSignature)`, and `breakServer` broadcasts
 `serverBroke__DelegateSignature` twice. A multicast broadcast dispatches each bound handler through
 **ProcessEvent**, so if anything binds `fixed` the completion is PE-visible — the same shape as the
-coin's `BndEvt__` overlap. `[?]` WHO binds it is not yet censused (candidates: `mainGamemode`,
-`kerfurOmega`, the SAT console).
+coin's `BndEvt__` overlap. **`[V]` CENSUSED 2026-09-04, and the answer is NOBODY.** Across the 306
+kismet dumps in `research/bp_reflection/`, `grep -l fixed` returns exactly THREE files: `serverBox`
+itself, `mainPlayer` (an unrelated `fixCrouch` out-param) and `_map_untitled_1` (flavour text in a
+readable). **`fixed->Broadcast()` reaches zero bound handlers**, so there is no PE dispatch and no
+completion seam for J3 -- it stays on the tier-3 `0x45` observation. Its sibling `serverBroke` DOES
+have a binder (`ui_console`, the SAT terminal, 9 mentions + 3 delegate binds), so the seam exists on
+the BREAK edge, which is host-authored anyway.
 
 **MISSED — the `0x45` substrate, which the first pass never mentioned and which is BUILT and
 SHIPPED** (`ue_wrap/core/vm_dispatch.h`, live since 2026-07-13, consumers: the kerfur form assembler
@@ -693,7 +698,7 @@ receive side"*). Building the phantom lane first is deliberately-created migrati
 
 ### What the rounds MEASURED — the durable half
 
-**The seam table, corrected.** See the `[corr 2026-09-04]` boxes in §0.5. One of four moments is
+**The seam table.** `[corr 2026-09-04: corrected -- see the boxes in §0.5.]` One of four moments is
 tier-1 cancellable, not three.
 
 **`fix()` mutates five things, and three of them do not matter** `[V]` `serverBox.cpp:1266-1288`:
