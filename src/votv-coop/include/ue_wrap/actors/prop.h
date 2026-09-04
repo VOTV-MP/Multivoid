@@ -114,6 +114,20 @@ bool WriteTrashPileAmounts(void* actor, int32_t a, int32_t b);
 reflection::FName GetInteractableKey(void* obj);
 std::wstring GetInteractableKeyString(void* obj);
 
+// The `Aactor_save_C::key` field, for ANY descendant of that class -- and ONLY for one.
+// GetInteractableKey above covers three lineages (Aprop_C, trashBitsPile, chipPile/clump)
+// and returns FName{0,0} for everything else, which ToString renders as "None" -- byte
+// identical to a genuinely keyless actor. Measured 2026-09-05: `Acremator_C` and `Adish_C`
+// both derive from `Aactor_save_C` and therefore DO carry a key field, and reading them
+// through the three-lineage accessor reported "None" for a reason that had nothing to do
+// with their keys. This is a SEPARATE function rather than a fourth branch of that one
+// deliberately: GetInteractableKey has 33 call sites, every one in the prop lanes, and
+// widening it would change what all 33 see (OPUS 8 -- the firing set changes even though
+// the code does not). Class-gated: `AtriggerBase_C` derives from AActor, NOT actor_save,
+// and keeps its own Key at a different offset, so an ungated read there would be garbage.
+// Returns "" when `obj` is not an actor_save descendant. Pure field read, any thread.
+std::wstring GetActorSaveKeyString(void* obj);
+
 // Reads Aprop_C.Key (FName) at +0x02E0. Returns {0,0} for null prop.
 // CALLER must have already established `prop` IS an Aprop_C-derived live actor.
 reflection::FName GetKey(void* prop);

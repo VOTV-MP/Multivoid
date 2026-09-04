@@ -431,12 +431,29 @@ bool IsChildActor(void* actor) {
 void* ParentActorOf(void* actor, std::wstring* outComponentName) {
     if (outComponentName) outComponentName->clear();
     if (!actor) return nullptr;
-    // Re-resolve the offset through the same reflection lookup IsChildActor uses rather
-    // than sharing its static: this is a cold identity path, and a second static would be
-    // a second thing to keep in step with a layout change.
-    void* cls = R::FindClass(P::name::ActorClassName);
-    if (!cls) return nullptr;
-    const int32_t off = R::FindPropertyOffset(cls, L"ParentComponent");
+    // The offset is CACHED, exactly as IsChildActor caches it. The first version of this
+    // function re-resolved it on every call and justified that with "this is a cold identity
+    // path" -- a premise that stopped being true the moment coop/element/portable_identity
+    // started calling it from the scan hub's per-instance loop. `FindPropertyOffset` renders
+    // every property's FName to a wstring and case-compares it, climbing up to 32 SuperStruct
+    // hops, so the old form was a full property walk per child actor per pass. Caching it is
+    // the fix; re-ordering callers to avoid a needlessly expensive function is not.
+    // -2 = unresolved (retry while the Actor class loads), -1 = property missing (layout
+    // drift; the link goes inert, LOUDLY, once) -- the same three states IsChildActor uses.
+    static std::atomic<int32_t> sOff{-2};
+    int32_t off = sOff.load(std::memory_order_acquire);
+    if (off == -2) {
+        void* cls = R::FindClass(P::name::ActorClassName);
+        if (!cls) return nullptr;                       // class not loaded yet; retry next call
+        off = R::FindPropertyOffset(cls, L"ParentComponent");
+        if (off < 0) {
+            off = -1;
+            UE_LOGW("engine: Actor.ParentComponent not found (engine layout drift?) -- the "
+                    "child-actor PARENT LINK is inert; portable identities that need it "
+                    "will report none");
+        }
+        sOff.store(off, std::memory_order_release);
+    }
     if (off < 0) return nullptr;
     struct { int32_t idx; int32_t serial; } weak{};
     std::memcpy(&weak, reinterpret_cast<uint8_t*>(actor) + off, sizeof(weak));

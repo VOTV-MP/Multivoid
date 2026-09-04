@@ -400,8 +400,15 @@ void OnUseInputPre(void* self, void*, void*) {
     if (!ue_wrap::door::EnsureResolved()) return;
     void* door = aimed;
     if (!ue_wrap::door::IsDoor(door)) return;
-    const std::wstring key = ue_wrap::door::GetKeyString(door);
-    if (key.empty() || key == L"None") return;  // unkeyed door: native behavior stays
+    // The GATE decision asks "does a lane own this door", which is answered by whether the
+    // channel INDEXES it -- not by whether the game gave it a Key. Since B2 those differ:
+    // a door the channel indexes under a portable identity has a game Key that names nothing
+    // cross-peer, and a door with a Key the channel has not indexed yet has no lane to wait
+    // for. Gating on the index is what makes "we suppressed the native open" and "the host
+    // will echo" the same condition; gating on the raw Key shut the door's own opening for a
+    // request that could never be resolved -- which is exactly what the field reporter hit.
+    const std::wstring key = g_door.KeyForActor(door);
+    if (key.empty()) return;  // not indexed by this lane: native behaviour stays
     g_useInputActivePrior = ue_wrap::door::GetActive(door);  // the REAL gate value to restore
     ue_wrap::door::SetActive(door, false);  // close the BP CanOpen gate for THIS dispatch
     g_useInputActiveCleared = door;
@@ -432,8 +439,30 @@ void OnUseInput(void* self, void*, void*) {
     if (ProbeLog())
         UE_LOGI("door: use-input fired -- lookAtActor=%p isDoor=%d (role=client, connected)", door, isDoor ? 1 : 0);
     if (!isDoor) return;             // not aiming at a door -> not ours
-    std::wstring key = ue_wrap::door::GetKeyString(door);
-    if (key.empty() || key == L"None") return;
+    // The SAME key the channel indexes -- see Channel::KeyForActor. Deriving it again here
+    // is the bug this avoids: the index and the request must name the same thing.
+    std::wstring key = g_door.KeyForActor(door);
+    if (key.empty()) {
+        // A press the lane cannot name. This MUST NOT be silent: to the player it is
+        // byte-identical to the defect this whole change exists to fix -- press E, nothing
+        // happens -- and the deferred-apply retry that covers the receive side cannot help,
+        // because a press that emits nothing enqueues nothing. Two causes reach here and the
+        // line has to separate them: the index belongs to another world generation (a level
+        // travel; it refills on the hub's next pass) or this door is genuinely not indexed.
+        // WARN, not INFO, because a steady stream of these is a real report, and it is
+        // rate-limited so a key-masher cannot turn a diagnosis into a disk-flush storm.
+        static std::chrono::steady_clock::time_point s_lastGripe{};
+        const auto nowG = std::chrono::steady_clock::now();
+        if (nowG - s_lastGripe > std::chrono::seconds(3)) {
+            s_lastGripe = nowG;
+            UE_LOGW("door: E-press on %p is NOT INDEXED by the door lane -- no request sent "
+                    "(indexCurrent=%d, raw game key='%ls'). The door will not open on either "
+                    "peer; this is the visible symptom of an unindexed instance, not silence.",
+                    door, g_door.IndexCurrent() ? 1 : 0,
+                    ue_wrap::door::GetKeyString(door).c_str());
+        }
+        return;
+    }
     // DEBOUNCE: AmainPlayer_C::InpActEvt_use dispatches on BOTH the press AND the release of one
     // tap (~0.3s apart), so a single "use" fires this observer TWICE -> two toggles -> the host
     // opens then immediately closes ("open-closed in 0.3s, nothing changed") and the release's

@@ -24,6 +24,7 @@
 #include "coop/net/wire_key_util.h"  // WireKeyFromString / StringFromWireKey / FnvKey (shared)
 #include "coop/player/players_registry.h"   // coop::players::kMaxPeers
 #include "coop/element/object_scan_hub.h"      // R-2: the shared sliced scan pass
+#include "coop/element/portable_identity.h"  // B2: the cross-peer name, when one exists
 #include "ue_wrap/engine/world_identity.h"     // R-2: gen-stamped index (dead-world guard)
 #include "ue_wrap/engine/engine.h"            // B2 identity probe: TryGetActorLocation
 
@@ -58,7 +59,18 @@ using coop::net::FnvKey;
 inline constexpr auto kRetryRebuildThrottle = std::chrono::seconds(2);
 // Settle/backstop tuning (15 passes / 60 s backstop) + its door-57 history now live with the
 // shared pass: coop/element/object_scan_hub.h (R-2; the SettledObjectScan component retired).
-inline constexpr auto kPendingTTL = std::chrono::seconds(25);
+// THE MID-JOIN ROW (principle 8, added 2026-09-05 after a /qf round asked for it).
+// A deferred state used to expire on a 25-second WALL CLOCK with no re-request, which is a
+// bound on the wrong quantity: the question is not "has enough time passed" but "has this
+// world finished streaming and the instance is still not here". The scan hub is a 2 s
+// cadence with a ~1 ms/frame slice budget, and the field join is ~25x slower than the lab
+// one, so an instance the hub first indexes after the deadline was silently unstated
+// forever. Expiry is now the CONJUNCTION: the channel's own live count must have been
+// unchanged for kSettlePassesForExpiry consecutive passes AND the key must still not
+// resolve. The clock stays only as a far outer backstop so the map cannot leak on a
+// pathological world, and it logs a DIFFERENT line so the two causes are never confused.
+inline constexpr auto kPendingTTL = std::chrono::minutes(10);
+inline constexpr int  kSettlePassesForExpiry = 5;
 // After the host commands a door close, isOpened flips ~0.5s later (the door animates).
 // The poll skips the door for this bridge window so the mid-animation transient isn't
 // re-broadcast as a flicker; once it expires the poll resumes and broadcasts the real
@@ -445,26 +457,42 @@ public:
             // RECEIVER: retry deferred applies for instances that have now streamed in (the
             // hub refreshes the index on its own cadence; this throttle paces only retries).
             if (!pending_.empty()) {
-                int applied = 0, expired = 0, still = 0;
+                int applied = 0, expired = 0, still = 0, backstopped = 0;
                 for (auto it = pending_.begin(); it != pending_.end();) {
                     void* actor = ResolveFast(it->first);
                     if (actor) {
                         ApplyResolved(actor, it->first, it->second.want, 0xFF);
                         it = pending_.erase(it);
                         ++applied;
-                    } else if (now >= it->second.deadline) {
+                    } else if (stablePasses_ >= kSettlePassesForExpiry) {
+                        // The world stopped streaming and it is still not here -- a real
+                        // diagnosis, and the count that grades this lane.
                         if (ProbeLog())
-                            UE_LOGI("%s: deferred '%ls' expired (not present on this peer)", a_.name, it->first.c_str());
+                            UE_LOGI("%s: deferred '%ls' expired (index settled %d passes, still "
+                                    "not present on this peer)", a_.name, it->first.c_str(), stablePasses_);
                         it = pending_.erase(it);
                         ++expired;
+                    } else if (now >= it->second.deadline) {
+                        // THE BACKSTOP, not the expected path. Reaching it means the index
+                        // never settled for ten minutes, which is a bug signal about the hub
+                        // or the world, not about this instance -- so it says so, loudly, and
+                        // is counted separately from the settled expiry above.
+                        UE_LOGW("%s: deferred '%ls' hit the %lld-minute BACKSTOP -- the index "
+                                "never settled (stablePasses=%d); this is a hub/world signal, "
+                                "not a missing instance",
+                                a_.name, it->first.c_str(),
+                                static_cast<long long>(std::chrono::duration_cast<std::chrono::minutes>(kPendingTTL).count()),
+                                stablePasses_);
+                        it = pending_.erase(it);
+                        ++backstopped;
                     } else {
                         ++it;
                         ++still;
                     }
                 }
-                if (applied || expired)
-                    UE_LOGI("%s: retry tick -- applied %d deferred, dropped %d expired, %d still pending",
-                            a_.name, applied, expired, still);
+                if (applied || expired || backstopped)
+                    UE_LOGI("%s: retry tick -- applied %d deferred, dropped %d expired, %d backstopped, "
+                            "%d still pending", a_.name, applied, expired, backstopped, still);
             }
         }
         // SENDER: poll for live state changes every tick (cheap -- the expensive rebuild
@@ -511,6 +539,21 @@ public:
     // is blind to world death -- the R-1 44-s window; the gen compare is not).
     bool IndexCurrent() const { return indexGen_ == ue_wrap::world_identity::Generation(); }
 
+    // The key this channel INDEXES `actor` under, or "" if it is not indexed yet.
+    // THE SEND SIDE MUST USE THIS, never re-derive. HubMatch is the one derivation site
+    // in the process; `PortableWireKey` reads AActor::ParentComponent, a WEAK pointer, so
+    // a second derivation during the join's GC churn can legitimately return "" while the
+    // index still holds the identity -- and a request naming a different key than the
+    // index holds names nothing on the far peer. "" here degrades to "not indexed yet",
+    // which the deferred-apply retry already handles, instead of to a silently wrong key.
+    std::wstring KeyForActor(void* actor) const {
+        if (!actor || !IndexCurrent()) return std::wstring();
+        std::lock_guard<std::mutex> lk(indexMutex_);
+        for (const auto& kv : byKey_)
+            if (kv.second.actor == actor) return kv.first;
+        return std::wstring();
+    }
+
     void HubPassBegin(bool /*isFull*/) { scanFound_.clear(); }
 
     void HubMatch(void* obj) {
@@ -519,6 +562,21 @@ public:
         if (!R::IsLive(obj)) return;
         std::wstring key = a_.GetKey(obj);
         if (key.empty() || key == L"None") return;
+        // B2: the game's Key is a LOCAL name, not a cross-peer one -- `lib_C::assignKey`
+        // mints a random one per process for anything the save does not persist, so 110
+        // interactables per peer were addressable only by the peer that minted them. Where
+        // a portable identity exists, index and address by THAT instead; where it does not,
+        // keep the game key and behave exactly as before. This is the ONE derivation site in
+        // the process: the send side asks KeyForActor() rather than deriving again, because
+        // ParentActorOf reads a weak pointer and two sites can disagree during the join's GC
+        // churn. See coop/element/portable_identity.h.
+        std::wstring portable = coop::element::PortableWireKey(obj);
+        if (!portable.empty()) {
+            if (ProbeLog())
+                UE_LOGI("%s[ident]: '%ls' -> %ls (%ls)", a_.name, key.c_str(), portable.c_str(),
+                        coop::element::PortableIdentity(obj).c_str());
+            key = std::move(portable);
+        }
         scanFound_.emplace_back(std::move(key), Ref{ obj, R::InternalIndexOf(obj) });
     }
 
@@ -538,6 +596,13 @@ public:
             for (auto& kv : byKey_) keysHash ^= FnvKey(kv.first);  // hash over the FULL current set (cross-peer signal)
             liveCount = byKey_.size();
             indexGen_ = worldGen;
+        }
+        // The SETTLE term the mid-join row expires on (see kSettlePassesForExpiry). Local on
+        // purpose: the hub already computes a settle signal, but it exposes it only through a
+        // `Debug`-prefixed accessor, and a count delta is all this needs.
+        if (liveCount == lastCount_) { if (stablePasses_ < 1000000) ++stablePasses_; }
+        else                         { stablePasses_ = 0; lastCount_ = liveCount; }
+        {
         }
         scanFound_.clear();
         // Log the (count, keysHash) only when it CHANGES -- steady passes otherwise spam the
@@ -588,6 +653,8 @@ public:
                     // identity -- and whether it is itself stable cross-peer is the measurement
                     // that decides whether one commit closes all 110 or only the 85.
                     parentKey = ue_wrap::prop::GetInteractableKeyString(parent);
+                    if (parentKey.empty() || parentKey == L"None")
+                        parentKey = ue_wrap::prop::GetActorSaveKeyString(parent);
                     if (parentKey.empty()) parentKey = L"<empty>";
                 }
                 UE_LOGI("%s[probe]: key='%ls' idx=%d actor=%p name='%ls' outer='%ls' class='%ls' "
@@ -669,7 +736,9 @@ private:
         return static_cast<Channel*>(ctx)->HubPassComplete(isFull, gen);
     }
 
-    std::mutex indexMutex_;
+    mutable std::mutex indexMutex_;
+    size_t   lastCount_    = static_cast<size_t>(-1);  // never equal to a real first count
+    int      stablePasses_ = 0;                        // consecutive passes with an unchanged count
     std::unordered_map<std::wstring, Ref> byKey_;
     std::vector<std::pair<std::wstring, Ref>> scanFound_;  // hub-pass scratch (GT-only)
     uint32_t indexGen_ = 0;   // world gen of the last completed hub pass (GT-write, GT-read)

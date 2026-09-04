@@ -123,6 +123,18 @@ void ResolveExtraBases() {
 }
 
 // Read-only accessors used by IsClassKeyedInteractable + GetInteractableKey.
+// Aactor_save_C -- the base that OWNS the `key` field GetActorSaveKeyString reads. Resolved
+// on demand and cached; a null result just means "not resolvable yet", never "no key".
+std::atomic<void*> g_actorSaveCls{nullptr};
+inline void* ActorSaveCls() {
+    void* c = g_actorSaveCls.load(std::memory_order_acquire);
+    if (!c) {
+        c = R::FindClass(L"actor_save_C");
+        if (c) g_actorSaveCls.store(c, std::memory_order_release);
+    }
+    return c;
+}
+
 inline void* TrashBitsPileCls() { return g_trashBitsPileCls.load(std::memory_order_acquire); }
 inline void* GarbageClumpCls()  { return g_garbageClumpCls.load(std::memory_order_acquire); }
 inline void* ActorChipPileCls() { return g_actorChipPileCls.load(std::memory_order_acquire); }
@@ -263,6 +275,14 @@ R::FName GetInteractableKey(void* obj) {
         return CallGetKeyUFunction(obj);
     }
     return R::FName{0, 0};
+}
+
+std::wstring GetActorSaveKeyString(void* obj) {
+    if (!obj) return {};
+    void* base = ActorSaveCls();
+    if (!base) return {};
+    if (!WalksToBase(R::ClassOf(obj), base)) return {};   // NOT an actor_save: the offset is not its key
+    return R::ToString(ReadField<R::FName>(obj, kAactorSaveKeyOff));
 }
 
 std::wstring GetInteractableKeyString(void* obj) {

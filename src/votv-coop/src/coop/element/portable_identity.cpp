@@ -50,39 +50,47 @@ std::wstring PortableIdentity(void* actor) {
     void* cur = actor;
     for (int depth = 0; depth < kMaxChainDepth; ++depth) {
         if (!ue_wrap::engine::IsChildActor(cur)) {
-            // The anchor. Prefer the level-baked name; fall back to a Key that can only
-            // have come from the save (a top-level runtime actor whose Key is non-None was
-            // either save-loaded or minted -- and a MINTED one is not portable, which is
-            // exactly why the caller must treat "" and a wrong answer as different things.
-            // The measurement says every top-level actor reached here has a stable Key;
-            // see the RE doc's three-population table).
+            // The anchor.
+            // ORDER: the KEY first, then the name. Measured 2026-09-05 and it is not a
+            // preference -- a level-placed anchor is DESTROYED and replaced by its
+            // save-loaded twin during the world load (host.log:10404 indexes a cap under
+            // `prop_garbageBin5_7`, flags 0x00280008; :11367 indexes the SAME location and
+            // component under `prop_garbageBin_blue_C_2147471853`, flags 0x00000008, six
+            // seconds later). The NAME dies with the incarnation; the KEY survives it --
+            // both rows read `pkey='AEj2DU4rJjAUkwOg8rDGQQ'` -- and all 25 anchor keys in
+            // this world are present verbatim in the .sav, so the key is the persisted
+            // quantity and the name is the transient one. Preferring the name would hand
+            // the same physical object two identities inside one session.
             std::wstring anchor;
-            if (WasLoaded(cur)) {
+            std::wstring key = ue_wrap::prop::GetInteractableKeyString(cur);
+            if (key.empty() || key == L"None")
+                key = ue_wrap::prop::GetActorSaveKeyString(cur);   // the OTHER half of the key surface
+            if (!key.empty() && key != L"None") {
+                anchor = L"k:" + key;
+            } else if (WasLoaded(cur)) {
                 anchor = L"n:" + R::ToString(R::NameOf(cur));
             } else {
-                const std::wstring key = ue_wrap::prop::GetInteractableKeyString(cur);
-                if (key.empty() || key == L"None") {
-                    // NO IDENTITY, and say so loudly ONCE per class rather than returning a
-                    // guess. Two different things land here and the log must not hide either:
-                    // an actor whose Key really is None, and an actor of a class
-                    // `GetInteractableKey` cannot read at all -- it covers the Aprop_C lineage,
-                    // trashBitsPile and chipPile/clump, and returns None for AtriggerBase_C
-                    // (prop.cpp:250-266). Deliberately NOT widened here: that reader has 33
-                    // call sites, all in the prop lanes, and widening it would change what every
-                    // one of them sees (OPUS 8 -- the firing set changes even though the code
-                    // does not).
-                    static std::mutex sSeenMu;
-                    static std::set<std::wstring> sSeen;
-                    const std::wstring cls = R::ClassNameOf(cur);
-                    bool first = false;
-                    { std::lock_guard<std::mutex> lk(sSeenMu); first = sSeen.insert(cls).second; }
-                    if (first)
-                        UE_LOGI("portable_identity: no identity for anchor class '%ls' -- not "
-                                "RF_WasLoaded and no readable Key (first of this class)",
-                                cls.c_str());
-                    return std::wstring();
-                }
-                anchor = L"k:" + key;
+                // NO IDENTITY -- and say so loudly ONCE per class rather than returning a
+                // guess. Two different things land here and the log must not hide either: an
+                // actor whose Key really is None, and an actor of a class
+                // `ue_wrap::prop::GetInteractableKey` cannot read AT ALL -- it covers the
+                // Aprop_C lineage, trashBitsPile and chipPile/clump, and returns FName{0,0}
+                // for everything else, which `ToString` renders as the string "None", byte
+                // identical to a genuinely keyless actor (prop.cpp:250-266). `AtriggerBase_C`
+                // is outside it. Deliberately NOT widened: that reader has 33 call sites, all
+                // in the prop lanes, and widening it changes what every one of them sees
+                // (OPUS 8 -- the firing set changes even though the code does not). So the
+                // line names the CLASS, which is what tells the two cases apart later.
+                static std::mutex sSeenMu;
+                static std::set<std::wstring> sSeen;
+                const std::wstring cls = R::ClassNameOf(cur);
+                bool first = false;
+                { std::lock_guard<std::mutex> lk(sSeenMu); first = sSeen.insert(cls).second; }
+                if (first)
+                    UE_LOGI("portable_identity: no identity for anchor class '%ls' -- neither "
+                            "RF_WasLoaded nor a Key this reader can see (first of this class)",
+                            cls.c_str());
+                return std::wstring();
             }
             return anchor + suffix;
         }
