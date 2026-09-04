@@ -104,6 +104,14 @@ int32_t SlotSerial(int32_t internalIdx);
 // IsLiveByIndex after the object may have been GC-purged.
 int32_t InternalIndexOf(void* obj);
 
+// Resolve a UE TWeakObjectPtr {int32 ObjectIndex, int32 ObjectSerialNumber} to a live
+// UObject*, or null. Array-slot read only -- it never dereferences the candidate, so a
+// stale weak ptr whose slot was recycled resolves to null instead of to the new tenant
+// (the serial compare is what makes that true; the index alone would hand back whoever
+// took the slot). Same kill-flag rejection as IsLiveByIndex: a PendingKill/Unreachable
+// object is NOT live for our purposes even while it still occupies its slot.
+void* ResolveWeakObject(int32_t internalIdx, int32_t serial);
+
 // Read the raw EInternalObjectFlags word at a UObject's GUObjectArray slot --
 // the same field IsLiveByIndex tests, exposed whole so a caller can tell the
 // KINDS of "not live" apart. IsLive collapses PendingKill and Unreachable into

@@ -428,6 +428,24 @@ bool IsChildActor(void* actor) {
     return weak.idx >= 0 && weak.serial != 0;
 }
 
+void* ParentActorOf(void* actor, std::wstring* outComponentName) {
+    if (outComponentName) outComponentName->clear();
+    if (!actor) return nullptr;
+    // Re-resolve the offset through the same reflection lookup IsChildActor uses rather
+    // than sharing its static: this is a cold identity path, and a second static would be
+    // a second thing to keep in step with a layout change.
+    void* cls = R::FindClass(P::name::ActorClassName);
+    if (!cls) return nullptr;
+    const int32_t off = R::FindPropertyOffset(cls, L"ParentComponent");
+    if (off < 0) return nullptr;
+    struct { int32_t idx; int32_t serial; } weak{};
+    std::memcpy(&weak, reinterpret_cast<uint8_t*>(actor) + off, sizeof(weak));
+    void* comp = R::ResolveWeakObject(weak.idx, weak.serial);
+    if (!comp) return nullptr;
+    if (outComponentName) *outComponentName = R::ToString(R::NameOf(comp));
+    return R::OuterOf(comp);   // a UActorComponent's Outer IS its owning AActor
+}
+
 bool ForceGarbageCollection() {
     // UKismetSystemLibrary::CollectGarbage -- schedules a full GC purge at
     // the end of the current frame (the engine's own post-level-transition

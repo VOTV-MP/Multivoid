@@ -25,10 +25,12 @@
 #include "coop/player/players_registry.h"   // coop::players::kMaxPeers
 #include "coop/element/object_scan_hub.h"      // R-2: the shared sliced scan pass
 #include "ue_wrap/engine/world_identity.h"     // R-2: gen-stamped index (dead-world guard)
+#include "ue_wrap/engine/engine.h"            // B2 identity probe: TryGetActorLocation
 
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/walk_timer.h"         // per-channel RebuildIndex [WALK-TIME] (R-2 phase split)
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"   // UObject_ObjectFlags (the offsets live in ONE file)
 
 #include <atomic>
 #include <chrono>
@@ -547,9 +549,52 @@ public:
                     a_.name, liveCount, static_cast<unsigned long long>(keysHash));
         }
         if (ProbeLog()) {
-            std::lock_guard<std::mutex> lk(indexMutex_);
-            for (auto& kv : byKey_)
-                UE_LOGI("%s[probe]: key='%ls' idx=%d actor=%p", a_.name, kv.first.c_str(), kv.second.idx, kv.second.actor);
+            // B2 identity probe (2026-09-05). The key alone cannot answer WHICH physical object
+            // this is -- `lib_C::assignKey` MINTS a random 16-byte key for any triggerBase whose
+            // Key is None at load, per process, so 110 interactables per peer carry a key the
+            // other peer never heard of (research/findings/join-identity/
+            // votv-random-key-mint-B2-RE-2026-09-04.md). The fix needs a cross-peer stable
+            // identity, so the probe dumps every CANDIDATE for one alongside the key: the UObject
+            // name (baked into the cooked level package for a level-placed actor; suffixed by a
+            // per-class runtime counter for a spawned one), the Outer, the class, the object
+            // FLAGS (RF_WasLoaded = 0x00080000 discriminates loaded-from-disk from runtime-made),
+            // and the world location. One run on each peer then answers the design question by
+            // diff instead of by argument.
+            std::vector<std::pair<std::wstring, Ref>> snap;
+            { std::lock_guard<std::mutex> lk(indexMutex_); snap.assign(byKey_.begin(), byKey_.end()); }
+            for (auto& kv : snap) {
+                void* const obj = kv.second.actor;
+                if (!R::IsLiveByIndex(obj, kv.second.idx)) continue;
+                void* const outer = R::OuterOf(obj);
+                const uint32_t objFlags = *reinterpret_cast<const uint32_t*>(
+                    reinterpret_cast<const char*>(obj) + ue_wrap::profile::off::UObject_ObjectFlags);
+                ue_wrap::FVector loc{};
+                const bool haveLoc = ue_wrap::engine::TryGetActorLocation(obj, loc);
+                // The CHILD-ACTOR chain. A child actor's own name carries a per-process
+                // counter, so its cross-peer identity has to be the parent's identity plus
+                // the owning component's (stable, Blueprint-authored) name.
+                std::wstring compName;
+                void* const parent = ue_wrap::engine::ParentActorOf(obj, &compName);
+                std::wstring parentName = L"<none>", parentClass = L"<none>";
+                uint32_t parentFlags = 0;
+                if (parent) {
+                    parentName = R::ToString(R::NameOf(parent));
+                    parentClass = R::ClassNameOf(parent);
+                    parentFlags = *reinterpret_cast<const uint32_t*>(
+                        reinterpret_cast<const char*>(parent) + ue_wrap::profile::off::UObject_ObjectFlags);
+                }
+                UE_LOGI("%s[probe]: key='%ls' idx=%d actor=%p name='%ls' outer='%ls' class='%ls' "
+                        "flags=0x%08X loc=%.1f,%.1f,%.1f comp='%ls' parent='%ls' pclass='%ls' "
+                        "pflags=0x%08X%s",
+                        a_.name, kv.first.c_str(), kv.second.idx, obj,
+                        R::ToString(R::NameOf(obj)).c_str(),
+                        outer ? R::ToString(R::NameOf(outer)).c_str() : L"<none>",
+                        R::ClassNameOf(obj).c_str(), objFlags,
+                        loc.X, loc.Y, loc.Z,
+                        compName.empty() ? L"<none>" : compName.c_str(),
+                        parentName.c_str(), parentClass.c_str(), parentFlags,
+                        haveLoc ? "" : " LOC-FAILED");
+            }
         }
         return liveCount;
     }

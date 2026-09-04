@@ -162,6 +162,18 @@ FVector GetActorScale3D(void* actor);
 // semantic is "owned by a parent", not "parent currently live".
 bool IsChildActor(void* actor);
 
+// The CHILD-ACTOR PARENT LINK, read from the same AActor::ParentComponent weak ptr
+// IsChildActor tests. On success `outComponentName` receives the owning
+// UChildActorComponent's own name -- the half of a child actor's identity that is
+// STABLE across processes. A child actor is named "<component>_GEN_VARIABLE_<class>_CAT_<n>"
+// and the trailing <n> is a per-process allocation counter for a runtime-created parent
+// (measured 2026-09-05: host "cap_..._CAT_2147471862" vs client "cap_..._CAT_2147470400"
+// for the same jar cap), so the component name plus the PARENT's identity is what two
+// peers can agree on. Returns the parent ACTOR (the component's Outer) or null when the
+// actor is not a child actor / the parent is gone. Array-slot reads only -- no dispatch,
+// so it is safe off the game thread.
+void* ParentActorOf(void* actor, std::wstring* outComponentName = nullptr);
+
 // AActor::SetActorScale3D(FVector NewScale3D) on `actor` (root component relative
 // scale). Returns the success of the UFunction call (the engine fn itself is void).
 // v83: the host-authoritative trash proxy applies the host's real per-form scale

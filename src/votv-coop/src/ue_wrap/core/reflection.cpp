@@ -241,6 +241,18 @@ bool IsLiveByIndex(void* obj, int32_t internalIdx) {
     return (flags & kKillFlags) == 0;
 }
 
+void* ResolveWeakObject(int32_t internalIdx, int32_t serial) {
+    if (internalIdx < 0 || serial == 0) return nullptr;
+    uint8_t* item = ItemAt(internalIdx);
+    if (!item) return nullptr;
+    if (*reinterpret_cast<int32_t*>(item + O::FUObjectItem_SerialNumber) != serial)
+        return nullptr;                       // slot recycled -- a different object lives here
+    const int32_t flags = *reinterpret_cast<int32_t*>(item + O::FUObjectItem_Flags);
+    constexpr int32_t kKillFlags = 0x10000000 /*Unreachable*/ | 0x20000000 /*PendingKill*/;
+    if ((flags & kKillFlags) != 0) return nullptr;
+    return *reinterpret_cast<void**>(item);
+}
+
 int32_t SlotSerial(int32_t internalIdx) {
     if (internalIdx < 0) return 0;
     uint8_t* item = ItemAt(internalIdx);
