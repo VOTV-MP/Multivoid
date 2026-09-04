@@ -100,12 +100,21 @@ desktop.ini
 *.bat
 
 # ===== Claude Code per-machine config (MCP paths etc.) =====
-# `.claude/*` rather than `.claude/`: git cannot re-include a path whose PARENT
-# directory is excluded (tested 2026-09-02, docs/QF_ARC.md section 4), and the
-# skills are process documents that belong in history. settings.local.json and
-# every other per-machine file stay ignored.
+# USER DECISION 2026-09-04: the SKILLS go local-only too. They were re-included
+# on the reasoning that "the skills are process documents that belong in history"
+# -- true of history, but they are an internal working ritual for this developer,
+# not part of the mod, and the same call that made CLAUDE.md and DOCUMENTIZE_ARC.md
+# local applies to them. `.claude/*` with no exception now; the files stay on disk.
 .claude/*
-!.claude/skills/
+# USER DECISION 2026-09-04: DOCUMENTIZE_ARC.md is local-only. It is the working
+# record of an internal session-close ritual, it is where two of the 2026-09-04
+# leaks landed (its worked example table quoted the local security register), and
+# it is addressed to Claude rather than to a reader of this repo. Untracked via
+# `git rm --cached` in the same commit that adds this line; the file stays on disk
+# and the census still reads it, because the census reads docs/*.md whether tracked
+# or not.
+docs/DOCUMENTIZE_ARC.md
+
 # User-decision 2026-05-25 NIGHT: CLAUDE.md is a per-user dev notebook
 # (Claude Code reads it as project context) and is now treated as local-only.
 # Existing tracked copy is untracked via `git rm --cached CLAUDE.md` in the

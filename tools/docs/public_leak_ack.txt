@@ -13,7 +13,6 @@
 
 # --- docs ---
 docs/COOP_SYNC_MAP.md            | A51 is closed, **A50 is only MITIGATED   # posture, no mechanism; the keep rule keeps exactly this
-docs/DOCUMENTIZE_ARC.md          | security/TRACKER.md:627                  # cites a CLOSED finding (B4 IS BUILT) whose commits are public
 
 # --- shipped source: posture statements in comments, all naming FIXED or MITIGATED findings.
 # This is the class docs/LESSONS.md's 2026-09-01 row names, and it is why the scan reads source at

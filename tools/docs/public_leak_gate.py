@@ -69,15 +69,26 @@ S3 = re.compile(r"(?:flag (?:it )?for|file (?:it )?(?:as|under)|belongs in|shoul
 
 # S4 -- VERBATIM overlap with an unpublished tree: incident 3, where 271 lines moved out of
 # `CLAUDE.md` into a tracked file, checked for fidelity and never for publishability. It is a
-# RATCHET, not an acknowledgement list. `[V]` 44 lines overlap today and every sample read is benign
-# (a shared command line, a quoted user sentence, a log excerpt), so per-line reasons would be 44
-# claimed reads nobody made. A count that may not GROW is the honest form.
+# RATCHET, not an acknowledgement list. `[V]` 53 lines overlap today and every sample read is benign,
+# so per-line reasons would be 53 claimed reads nobody made. A count that may not GROW is the honest
+# form.
 #
 # The baseline moved 37 -> 44 on the day it was written, and NOT because the corpus changed: the
 # overlap used to read `.md` only while the line signals read more, so widening it to ONE file set
 # revealed 7 lines it had never looked at (`.cpp` 6, `.py` 1, all shared with memory topics). Stated
 # because a ratchet whose baseline moves silently is a ratchet nobody can audit.
-OVERLAP_BASELINE = 44
+# THE BASELINE HAS A STRUCTURAL FLOOR, so do not read it as "44 lines of leak". `docs/LESSONS.md`
+# alone contributes 6, and it must: the hard pairing rule says a lesson is TWO writes, the memory file
+# AND its ledger row, so text shared between them is the rule being obeyed. The rest sample as shared
+# command lines, quoted user sentences and log excerpts. What the ratchet watches is GROWTH.
+#
+# 37 -> 44 when the file set unified (scope, not content: `.cpp` 6 / `.py` 1 that the `.md`-only
+# overlap had never looked at). 44 -> 53 when the source set stopped being a hand list and started
+# being asked of git -- which found SIX unpublished docs the list had missed (`DOCS_ARC`,
+# `AGENT_SPAWNING`, the three `QUESTION_FORM_*`, `SERVER_BROWSER_ARC`), each a real place a move
+# could come FROM. Both moves are SCOPE, both are stated, because a ratchet whose baseline drifts
+# without a reason beside it is a ratchet nobody can audit.
+OVERLAP_BASELINE = 53
 # EXCLUDED because it is a deliberate practice, not a leak: copying memory topics into the public
 # piles archive. It alone contributes ~1,263 of the raw 1,300 overlaps.
 OVERLAP_SKIP = ("docs/piles/_archive/session-log/",)
@@ -174,8 +185,25 @@ def unpublished_lines(repo=REPO):
     if not os.path.isdir(mem):
         return None
     out = set()
-    srcs = [os.path.join(repo, "CLAUDE.md")]
-    srcs += _glob.glob(os.path.join(repo, "docs", "security", "*.md"))
+    # DERIVED FROM TRACKING, not listed. This was `CLAUDE.md` + `docs/security/*.md` + the memory
+    # directory -- a hand list, and therefore wrong the moment anything else went local. `[V]`
+    # 2026-09-04: `docs/DOCUMENTIZE_ARC.md` and `.claude/skills/*/SKILL.md` became unpublished the
+    # same day and would have been invisible as SOURCES of a move, which is the site-list critique
+    # this pass made twice about other things. The rule is what it always was -- doc-shaped material
+    # this repo does not track is unpublished -- so it is asked of git instead of remembered.
+    tracked = set()
+    try:
+        r = subprocess.run(["git", "ls-files"], cwd=repo, capture_output=True, text=True)
+        tracked = {p for p in r.stdout.splitlines() if p.strip()}
+    except Exception:
+        pass
+    srcs = []
+    for pat in ("CLAUDE.md", os.path.join("docs", "**", "*.md"),
+                os.path.join(".claude", "**", "*.md")):
+        for ap in _glob.glob(os.path.join(repo, pat), recursive=True):
+            rel = os.path.relpath(ap, repo).replace(os.sep, "/")
+            if rel not in tracked:
+                srcs.append(ap)
     srcs += _glob.glob(os.path.join(mem, "*.md"))
     for p in srcs:
         if not os.path.isfile(p):

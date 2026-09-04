@@ -102,7 +102,7 @@ the ranked fix queue — the field 20-fps root is named) ·
 platform — the queue, the gates, and what was declined) ·
 [OVERLAY_CAPTURE_COEXIST.md](OVERLAY_CAPTURE_COEXIST.md) (coexisting with RTSS and OBS) ·
 [QF_ARC.md](QF_ARC.md) (revising the `/qf` critic ritual on its own measured output) ·
-[DOCUMENTIZE_ARC.md](DOCUMENTIZE_ARC.md) (revising the `/documentize` session-close skill the same way) ·
+the local-only documentize-arc note (the same, for the session-close ritual) ·
 the local-only docs-arc note (this documentation audit)
 
 **Left this repo**
@@ -164,6 +164,8 @@ and files ending in `-DESIGN-<date>` are point-in-time plans that are **delibera
 to an `_archive/` folder rather than being deleted, so an abandoned approach can never be mistaken
 for the live one.
 
-Some pointers in these docs lead to `research/` or `docs/security/`. Those resolve in the
-maintainer's working tree and not on GitHub — both are kept unpublished on purpose
-(the local-only docs-arc note says why). That is not a broken link.
+Some pointers in these docs lead to `research/`, `docs/security/`, `docs/DOCUMENTIZE_ARC.md`
+or `.claude/skills/`. Those resolve in the maintainer's working tree and not on GitHub — all are
+kept unpublished on purpose (the local-only docs-arc note says why). That is not a broken link.
+The last two joined them on 2026-09-04: an internal session-close ritual and its working record
+are addressed to the maintainer's tooling, not to a reader of this repo.
