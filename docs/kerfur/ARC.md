@@ -696,8 +696,9 @@ all three were measured wrong. The reason is narrow and it is RULE 2:
 > `[V]` `p_kerfus` drives the shared `kerfusPendingServers` queue from two NAME-BOUND looping
 > timers (`checkJump` 1 s, `updatePath` 0.1 s — `p_kerfus.cpp:203-212`) plus `ReceiveTick`, which
 > is exactly what the SHIPPED `ue_wrap::kerfur::NeutralizeAiTimers` already clears for Omega at
-> five call sites (`npc_mirror.cpp:232,:393`, `npc_adoption.cpp:85`,
-> `kerfur_convert_client.cpp:251`). So the robot needs a park plus a host-owned queue at tiers 1-3
+> [corr 2026-09-04: FOUR call sites, not the five first written -- the count included an `#include`
+> line and a comment mention, the same error a critic caught in this session's other lane]
+> (`npc_mirror.cpp:232,:393`, `npc_adoption.cpp:85`, `kerfur_convert_client.cpp:251`). So the robot needs a park plus a host-owned queue at tiers 1-3
 > and NO cancel. `[V]` `p_kerfus` and `kerfusPendingServers` both grep ZERO in `src/votv-coop/`,
 > so nothing mirrors it, nothing parks it, and every client runs its own robot off its own dice
 > right now. Under FOUNDATION-FIRST the robot's base therefore comes BEFORE the substrate, not

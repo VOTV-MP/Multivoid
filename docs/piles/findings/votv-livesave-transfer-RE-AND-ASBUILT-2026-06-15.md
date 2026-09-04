@@ -19,7 +19,10 @@
 > timeout becomes a 60 s last-resort; `kSweepDeadlineMs` 8->45 s and `kSweepQuiesceScans` 3->10 so
 > the backstop can't pre-empt the slow load. The `liveCaptured` wire flag + `WasLiveCaptured` are
 > retired (reconcile is uniform now). The >50% safety valve stays as the world-wipe backstop. See
-> section 8 below for the AS-BUILT. HANDS-ON PENDING on SHA CE7E5666.
+> section 8 below for the AS-BUILT. HANDS-ON PENDING on SHA CE7E5666. [corr 2026-09-04: the LANE is
+> now FIELD-PROVEN, though never hands-on on this SHA: a player's b150 client log shows
+> `save_transfer: host save written ... (21250837 blob bytes ... crc ok) -- ready to load` followed
+> by `ClientWorldReady`. Evidence: `research/findings/votv-field-report-doctaaaaa-2026-09-04.md`.]
 >
 > **UPDATE 2 (`145dab9e` re-apply + `f5397a4e`; deployed SHA `66DBFF0F`) -- SUPERSEDED by UPDATE 3.**
 > First hands-on lost ~2979 props. Root cause (logs): the divergence
@@ -41,7 +44,9 @@
 > sync; convergence still runs. PLUS a SAFETY VALVE in the sweep for every OTHER path (stale/fresh):
 > abort if it would destroy >50% of in-universe props (a legit divergence is a small delta; >50% =
 > an incomplete/racing snapshot, not divergence). Section 5/6 below describe the live capture itself
-> (unchanged, correct). HANDS-ON PENDING on SHA 66DBFF0F.
+> (unchanged, correct). HANDS-ON PENDING on SHA 66DBFF0F. [corr 2026-09-04: MOOT -- this is UPDATE 2,
+> which line 24 marks SUPERSEDED by UPDATE 3. A pending hands-on on a superseded build is not work
+> owed; it read as live only because the pending clause sits below the supersede stamp.]
 
 Session 18 (post-compact). Shipped commit `de10514c`, deployed SHA `806699DB`, REVERTED `68767d25`.
 Supersedes the session-18 client-side reconcile (deferred divergence sweep, commit `52b1d94d`)
@@ -170,6 +175,11 @@ Client: the kerfur loads as an NPC and npc_adoption ADOPTS it (no `BeginDeferred
 no divergence-sweep ghost).
 
 ## 7. OPEN / DEFERRED
+
+> **[corr 2026-09-04: PARTIAL -- one of the three items below has lost its premise.** The
+> `prop_divergence_sweep.{h,cpp}` extraction flag was raised because the sweep sat in a file of
+> "~1248 LOC >800"; measured today, `remote_prop_spawn.cpp` is **707 LOC**, under the soft cap, and
+> no such extraction exists or is now owed. The other two items stand.]**
 - Confirm the objectsData.Num probe reads M~N on the first hands-on (the rebuild assumption).
 - If a fully-live transfer is wanted later, the player-state populates (day/time/signals) are
   currently left at last-autosave and corrected by their live channels -- fine for now.

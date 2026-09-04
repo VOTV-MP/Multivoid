@@ -496,6 +496,11 @@ post-retirement except in the deletion commit's own changelog.
 
 ## 6. Open questions / probes needed before shipping
 
+> **[corr 2026-09-04: THIS SECTION IS HISTORICAL -- the lane SHIPPED.** `docs/piles/11` records
+> "nativization AS-BUILT + VERIFIED (hands-on)" on 2026-06-30, so these are not probes still owed
+> before shipping. What shipped is the CRUTCH form catalogued as C2 in `docs/CRUTCHES.md`, whose
+> retirement is queued as `PERF_ARC` Q1 -- read that, not this section, for the live state.]**
+
 ### 6.1 OPEN-A: held-pose mechanism for chipPile/clump
 
 Per morph RE §4: three candidates for what drives the clump's world
@@ -887,7 +892,8 @@ Key @ 0x0230 is a real native field. State that needs sync across peers:
 3. **Recommendation**: keep trashBitsPile under §4 (gate swap to
    IsKeyedInteractable) for its Init / Destroy broadcasts, but EXPLICITLY
    note in §4 that trashBitsPile is destroy-edge-only. **Add a
-   follow-up FUTURE entry**: "trashBitsPile dispense-counter sync" — a
+   follow-up FUTURE entry**: "trashBitsPile dispense-counter sync" [corr 2026-09-04: SHIPPED
+   v57 2026-06-10 -- `event_dispatch_state.cpp:305` "trashBitsPile collect counters -- SYMMETRIC"] — a
    per-pickup decrement broadcast, mirror of the storage-container
    takeObj pattern. Not blocking ship of chipPile-into-Aprop wiring.
 

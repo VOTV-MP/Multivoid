@@ -102,6 +102,11 @@ frame the pile appears.
 
 ## 4. OPEN sub-question to resolve FIRST next session (the re-grab case)
 
+> **[corr 2026-09-04: RESOLVED AND SHIPPED.** The re-grab case is handled by
+> `coop::trash_channel::OnHostRegrab` (4 call sites), reached from `local_streams`' held edge:
+> "The game auto-re-grabbed MY carried entity (churn: the just-re-piled pile morphs straight
+> back). Rebind + cancel the settle." This heading records what was open in June.]**
+
 When peer A grabs a pile that B is mirroring (a previously-landed pile with an eid),
 A's `playerGrabbed` destroys that pile (`actorChipPile_C::playerGrabbed` ub @3905 ->
 `@2563 K2_DestroyActor`). For B to drop its mirror, that destroy must broadcast
