@@ -672,6 +672,99 @@ row** (principle 8), a protocol bump, and evidence from a real two-peer run.
 
 ---
 
+## 7b. W1's DESIGN PASS — five `/qf` rounds, and the verdict is WAIT FOR THE GATE SEAM (2026-09-04)
+
+**Nothing was built. Nineteen of my own claims were killed by measurement across five rounds** (the
+verbatim thread lives in the session scratchpad; the durable findings are here). Read this before
+touching W1 — it is the reason W1 is PARKED rather than in progress.
+
+### The verdict
+
+[withdrawn at the author's request]
+model, not on an address for `Aactor_save_C` — all three of those were proposed as the blocker and
+all three were measured wrong. The reason is narrow and it is RULE 2:
+
+Without WP-1, J3 must ship as **forward-and-reconcile** — a client's uncancellable local `fix()`
+produces a phantom the host corrects. That build requires (a) a phantom-correction path and (b) a
+heuristic to tell a player's `fix()` from a robot's at the `0x45` seam, which observes the verb and
+not the caller. **Both become dead code the day WP-1 lands**, and WP-1 gives cancel + full args,
+which is the shape `COOP_SYNCER_MODEL.md` §2b actually requires (*"suppress the producer, not the
+receive side"*). Building the phantom lane first is deliberately-created migration baggage.
+
+### What the rounds MEASURED — the durable half
+
+**The seam table, corrected.** See the `[corr 2026-09-04]` boxes in §0.5. One of four moments is
+tier-1 cancellable, not three.
+
+**`fix()` mutates five things, and three of them do not matter** `[V]` `serverBox.cpp:1266-1288`:
+`isBroken`, `brokenServers`, `fixed->Broadcast()`, `kerfusPendingServers.Remove(this)`, `damaged`,
+then `calcServerEff()`.
+- `fixed->Broadcast()` — **zero binders.** `[V]` across 306 BP dumps, `grep -l fixed` returns
+  exactly three files (`serverBox`, `mainPlayer`'s unrelated `fixCrouch`, and flavour text in
+  `_map_untitled_1`). So J3 has **no PE-visible completion seam** and stays on tier 3.
+- `damaged` — **a dead field.** `[V]` declared `:67`, written `:204`/`:1284`, read NOWHERE in the
+  class, and absent from `getData`.
+- `kerfusPendingServers` — see below. `ServerStatePayload` therefore already carries everything the
+  wire needs for J3.
+
+**THE ROBOT'S WORK QUEUE DIVERGES TODAY, IN THE SHIPPED BUILD.** `[V]` `kerfusPendingServers` lives
+on the gamemode, is written by BOTH robots, and greps **zero** times in `src/`. Kerfur Omega mirrors
+are genuinely parked (`npc_mirror.cpp:231-232` calls `DisableCharacterTicks` +
+`NeutralizeAiTimers`, which clears `timer_face`/`timer_kerf`/`checkDoor`) — **but that park gates on
+`IsKerfurActor`, which resolves the OMEGA class**, and `[V]` `p_kerfus` appears nowhere in our
+source at all. `[V]` `p_kerfus.cpp` READS the queue at `:1567`/`:1645` and writes it at
+`:85`/`:1682`/`:1849`, and `[V]` `COOP_WORLD_PROP_DIVERGENCE.md:19` says a keyed world prop keeps
+its actor tick with nothing parking its brain. **So every client runs its own live kerfus, mutating
+its own copy of the robot's task list.**
+
+**The hazard that follows, and it is J3's real design requirement:** a client's unparked `p_kerfus`
+can call `fix()` itself. The `0x45` seam sees the verb, not the caller, so a robot fix and a player
+fix are indistinguishable — and `intent_authority::Authorize` would refuse the robot's (the sender's
+body is nowhere near the server), converting legitimate robot work into a stream of refusals. **J3
+must discriminate player-initiated from robot-initiated, and only WP-1's args can do it.**
+
+**Our own mirror never corrects the phantom.** `[V]` `serverbox_sync.cpp:205-208` writes `IsBroken`
+back to the host's value — but it lives in `ApplyState` (`:189`), reached from `OnReliable`
+(`:295`), **not** from `Tick` (`:243`), and the host broadcasts on change only. So a client's
+phantom fix **stands indefinitely** rather than being reverted.
+
+**J4's late-join hole is much smaller than feared.** `[V]` `save_transfer.cpp:487`
+`CaptureLiveWorldToScratchSlot` serializes the host's **live** world at the join request, not the
+on-disk `.sav`, and `getData` persists all five floppy fields — so a joiner DOES receive an inserted
+floppy. The undefined window is only **join-request -> `ClientWorldReady`**. (An earlier claim here
+that a joiner "sees an empty slot forever" was FALSE.)
+
+**J4's identity-at-birth question.** `[V]` `insertFloppy` (`:644`) ends in `K2_DestroyActor`;
+`ejectFloppy` (`:688-706`) runs `BeginDeferredActorSpawnFromClass` + `FinishSpawningActor`, then
+reconstitutes the disc from the server's own persisted strings. The DATA is safe; the BIRTH is a
+deferred static, the class `COOP_DISPATCH_VISIBILITY` calls invisible. Under act-as-host the HOST
+[withdrawn at the author's request]
+it cleaner but does not gate W1.
+
+**W1's verbs are the best possible first drill for WP-1** `[V]`: `fix` 11 statements / **0 jumps**,
+`insertFloppy` 4 / **0**, `ejectFloppy` 3 / **0**. WP-1's charted jump-operand relocation risk is
+NIL for all three. (`pocessFloppy` has 3 jumps; `launchServerMinigame` is **not a serverBox export
+at all** — it is declared on `mainGamemode`, which corrects the §0.5 seam table.)
+
+**The blast radius, censused** `[V]`: 14 blueprints reference `serverBox` — including BOTH robots
+(so J4's floppy lane really does serve `get_reports` too) and `powerControl`. The power edge was
+chased and is **not** a blocker: `[V]` the coupling is one-directional (`powerControl` calls
+`setActive` on servers; servers never read the panel), `active` is a different axis from `isBroken`,
+and the aggregates a power divergence would move are already host-owned and broadcast on change.
+But `PowerControlState` is itself an unowned SYMMETRIC lane — a client can flip the base's breakers
+with no authority question asked — so it belongs on the authority-adoption list.
+
+### The other thing the rounds found, which is bigger than W1
+
+`[V]` **`coop/element/intent_authority.h` — "the SOLE owner of 'may this sender name this artifact?'"
+— has exactly THREE callers**: `coingun_arbiter.cpp:307`, `coingun_collect.cpp:379`,
+`trash_grab_intent.cpp:183`. Against its own census of 102 sender-taking handlers, ~10 of which ask
+a real authority question. **Finding A4 is not a missing mechanism; it is a mechanism nothing
+calls** — `[[lesson-a-capability-is-not-shipped-until-something-calls-it]]`. That work is tracked in
+`docs/COOP_SYNCER_MODEL.md` R2d, not here.
+
+---
+
 ## 8. Instruments + evidence
 
 **Which lens produced which fact — stated, because the rule cares (`[[feedback-rebase-old-tool-facts-on-new-instruments]]`):**
