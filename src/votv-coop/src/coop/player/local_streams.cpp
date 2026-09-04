@@ -407,6 +407,38 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                     heldActor, R::ClassNameOf(heldActor).c_str(),
                     ue_wrap::prop::GetInteractableKeyString(heldActor).c_str(),
                     eidLog, mirrored ? "BROADCAST" : "carry-only(trash/clump)");
+            // ---- THE CARRY-ONLY INVARIANT (2026-09-04, doctaaaaa's field log) --------------
+            // Every `return false` in EnsureHeldItemBroadcast is an anti-DUPE gate, and each
+            // one's comment asserts that the receiver still resolves the item by ANOTHER
+            // route: the kerfur prop by its host-range mirror eid, the clump by its source
+            // pile's eid E, a claimed save-loaded local by its shared key. Those assertions
+            // all rest on the same precondition -- that we HAVE a cross-peer identity for the
+            // thing we are about to stream.
+            //
+            // With eid == kInvalidId that precondition is FALSE, and the stream is
+            // undeliverable BY CONSTRUCTION: the receiver's resolver tries key then eid
+            // (remote_prop's ResolveAndStartDrive) and we are handing it a zero eid plus a key
+            // it may never have seen. `[V]` the field cost of the unnoticed case: 91 poses in
+            // ~1.5 s that no peer could resolve, and the item invisible to everyone but its
+            // holder -- the reported "host does not see the items that fall out of the IRP",
+            // whose workaround (re-pick and re-drop) works precisely because it routes the
+            // item back through the path that DOES author identity.
+            //
+            // Report it ONCE per held edge, not per packet, and name the actor so the next
+            // log says which gate produced it. Deliberately NOT a suppression: the stream
+            // still goes out. A key-only pose is legitimate when both peers already share a
+            // save-loaded prop, and refusing to send would break that -- so this states the
+            // broken precondition and leaves the behaviour alone until a log names the gate.
+            if (!mirrored && g_lastHeldEid == coop::element::kInvalidId) {
+                UE_LOGW("local_streams: CARRY-ONLY WITH NO WIRE IDENTITY -- held actor %p "
+                        "cls='%ls' key='%ls' is streaming a held pose with eid=0 and no spawn "
+                        "broadcast, so a receiver can resolve NEITHER term. Every carry-only "
+                        "gate assumes an identity travels by another route; here none does. "
+                        "role=%s",
+                        heldActor, R::ClassNameOf(heldActor).c_str(),
+                        ue_wrap::prop::GetInteractableKeyString(heldActor).c_str(),
+                        (session.role() == coop::net::Role::Host) ? "host" : "client");
+            }
             // [PILE] carry phase: a trash clump (carry-only, eid-identified) is now in hand. The convert
             // (pile->clump) was broadcast by AdoptBornClump on the new-held edge above; this stream
             // just carries E's pose.

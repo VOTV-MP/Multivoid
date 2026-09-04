@@ -15,6 +15,7 @@
 #include "coop/props/prop_echo_suppress.h"
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_stick_sync.h"  // v68: stuck wall-attachable gates (unstick + release)
+#include "coop/props/unresolved_pose_ledger.h"  // pose/spawn RACE vs a real identity GAP (field log 2026-09-04)
 #include "coop/element/identity_create.h"  // CreateOrAdoptPropMirror (the prop-mirror bind keystone; RegisterPropMirror forwards)
 #include "coop/props/trash_channel.h"  // docs/piles/08: per-eid sync-time-context (stale carry/convert drop)
 #include "coop/props/trash_proxy.h"    // phase 1: the host-authoritative AStaticMeshActor trash mirror (dup fix)
@@ -183,10 +184,24 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
     if (!prop && pose.elementId != 0)
         prop = ResolveLiveActorByEid(pose.elementId);
     if (!prop) {
-        UE_LOGW("remote_prop: slot %d incoming PropPose key '%ls' eid=%u -- no local match (key or eid)",
-                slot, keyW.c_str(), pose.elementId);
+        // See the UNRESOLVED-POSE LEDGER above for why this is not one WARN per packet.
+        if (coop::unresolved_pose_ledger::Note(slot, keyW, pose.elementId, NowMs())) {
+            UE_LOGW("remote_prop: slot %d key '%ls' eid=%u -- SUSTAINED unresolved pose stream "
+                    "(>=%u packets over >=%llu ms). This is NOT the ordinary pose-before-spawn "
+                    "race: the sender is streaming an item this peer never received a spawn for. "
+                    "eid=0 here means the sender had no wire identity for it either (see "
+                    "local_streams' carry-only invariant).",
+                    slot, keyW.c_str(), pose.elementId,
+                    static_cast<unsigned>(coop::unresolved_pose_ledger::kSustainedCount),
+                    static_cast<unsigned long long>(coop::unresolved_pose_ledger::kSustainedMs));
+        } else {
+            UE_LOGI("remote_prop: slot %d incoming PropPose key '%ls' eid=%u -- no local match "
+                    "(key or eid); usually the pose overtaking its own spawn broadcast",
+                    slot, keyW.c_str(), pose.elementId);
+        }
         return;
     }
+    coop::unresolved_pose_ledger::Clear(slot, keyW, pose.elementId);
     // v68: a STUCK wall-attachable (frozen/static -- the camera on a wall)
     // unsticks for an incoming drive only on a SUSTAINED stream (a real
     // re-grab). The 1-2 stale PropPose packets in flight between the sender's
@@ -726,6 +741,15 @@ void OnDisconnectForSlot(int peerSlot) {
     // per-slot disconnect edge (game thread).
     UE_ASSERT_GAME_THREAD("g_drives (remote_prop::OnDisconnectForSlot)");
     if (peerSlot < 0 || peerSlot >= static_cast<int>(coop::players::kMaxPeers)) return;
+    // Rows in the unresolved-pose ledger are keyed by SLOT, and slots RECYCLE lowest-free
+    // (roster_ledger.h), so a departing peer's counts must not be inherited by the next
+    // occupant -- otherwise its very first unresolved pose could arrive pre-charged and be
+    // reported as "sustained" on packet one. Cleared before the early return below, because a
+    // slot can have ledger rows without ever having held a drive.
+    if (const size_t droppedRows = coop::unresolved_pose_ledger::ResetSlot(peerSlot)) {
+        UE_LOGI("remote_prop: peer slot %d disconnect -- dropped %zu unresolved-pose row(s)",
+                peerSlot, droppedRows);
+    }
     // D1-7: drain THIS peer's wire prop mirrors so they don't accumulate in the
     // Registry until full teardown (a reconnecting peer / recycled eid would
     // otherwise collide). Mirror-only + owner-slot-filtered: convergent locals

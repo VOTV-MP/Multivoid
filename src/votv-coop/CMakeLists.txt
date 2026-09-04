@@ -314,6 +314,7 @@ add_library(votv-coop SHARED
     src/coop/player/skin_registry.cpp
     src/coop/player/local_body.cpp
     src/coop/props/remote_prop.cpp
+    src/coop/props/unresolved_pose_ledger.cpp
     src/coop/props/remote_prop_convert.cpp
     src/coop/props/remote_prop_destroy.cpp
     src/coop/props/remote_prop_physics.cpp
