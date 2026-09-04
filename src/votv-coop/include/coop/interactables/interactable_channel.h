@@ -30,6 +30,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/walk_timer.h"         // per-channel RebuildIndex [WALK-TIME] (R-2 phase split)
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/actors/prop.h"          // B2 probe: the parent prop's own Key
 #include "ue_wrap/core/sdk_profile.h"   // UObject_ObjectFlags (the offsets live in ONE file)
 
 #include <atomic>
@@ -575,24 +576,30 @@ public:
                 // the owning component's (stable, Blueprint-authored) name.
                 std::wstring compName;
                 void* const parent = ue_wrap::engine::ParentActorOf(obj, &compName);
-                std::wstring parentName = L"<none>", parentClass = L"<none>";
+                std::wstring parentName = L"<none>", parentClass = L"<none>", parentKey = L"<none>";
                 uint32_t parentFlags = 0;
                 if (parent) {
                     parentName = R::ToString(R::NameOf(parent));
                     parentClass = R::ClassNameOf(parent);
                     parentFlags = *reinterpret_cast<const uint32_t*>(
                         reinterpret_cast<const char*>(parent) + ue_wrap::profile::off::UObject_ObjectFlags);
+                    // The PARENT's own Key. For a child actor whose own UObject name carries a
+                    // per-process counter, the parent's key is the only candidate for a portable
+                    // identity -- and whether it is itself stable cross-peer is the measurement
+                    // that decides whether one commit closes all 110 or only the 85.
+                    parentKey = ue_wrap::prop::GetInteractableKeyString(parent);
+                    if (parentKey.empty()) parentKey = L"<empty>";
                 }
                 UE_LOGI("%s[probe]: key='%ls' idx=%d actor=%p name='%ls' outer='%ls' class='%ls' "
                         "flags=0x%08X loc=%.1f,%.1f,%.1f comp='%ls' parent='%ls' pclass='%ls' "
-                        "pflags=0x%08X%s",
+                        "pflags=0x%08X pkey='%ls'%s",
                         a_.name, kv.first.c_str(), kv.second.idx, obj,
                         R::ToString(R::NameOf(obj)).c_str(),
                         outer ? R::ToString(R::NameOf(outer)).c_str() : L"<none>",
                         R::ClassNameOf(obj).c_str(), objFlags,
                         loc.X, loc.Y, loc.Z,
                         compName.empty() ? L"<none>" : compName.c_str(),
-                        parentName.c_str(), parentClass.c_str(), parentFlags,
+                        parentName.c_str(), parentClass.c_str(), parentFlags, parentKey.c_str(),
                         haveLoc ? "" : " LOC-FAILED");
             }
         }
