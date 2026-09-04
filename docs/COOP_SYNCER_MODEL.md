@@ -434,19 +434,47 @@ cannot compute."* Where the host computes the truth — `[V]` the signal servers
 (`serverbox_sync.cpp:226`) — a syncer is still a permission label rather than an assignment. So the
 syncer is back on the table as a MODEL, without becoming the answer everywhere.
 
-### R2c — the axis is the ELEMENT, not the packet kind `[V]` 2026-09-04
+### R2c — ~~the axis is the ELEMENT, not the packet kind~~ **WITHDRAWN THE SAME DAY IT WAS WRITTEN**
 
-The same round measured something this document never considered: **MTA declares client write-trust
-PER ELEMENT, not per packet kind.** `[V]` `CGame.cpp:2739-2744` reads
-`eCustomDataClientTrust clientChangesMode` off the ELEMENT's own custom-data entry and falls back to
-a server-config default (`IsElementDataWhitelisted()`); the packet kind is not consulted.
+> **`[corr 2026-09-04, /qf pass 2 round 1: I wrote R2c this morning and it is a MIS-PORT. It read
+> MTA's `eCustomDataClientTrust` as an ELEMENT-level trust declaration. It is not.]`**
+>
+> `[V]` `CCustomData.h:35-40` puts `clientChangesMode` **inside the per-key `SCustomData` struct**,
+> `CCustomData.cpp:124` keys it by data-key name into an `unordered_map<CStringName, SCustomData>`,
+> and `CLuaElementDefs.cpp:1547` sets it from a **Lua resource at runtime**. So MTA's axis is the
+> *(element, data-key)* pair on its Lua key/value bag.
+>
+> `[V]` And `element.h:9` lists *"CCustomData (Lua key/value bag) -- no Lua at runtime"* among the
+> MTA subsystems this project **explicitly declined on 2026-05-28**. R2c therefore ported a trust
+> axis out of the one MTA subsystem we deliberately do not have — the second time in one session
+> that prior art was carried without its premise, and the only one that reached a commit.
+>
+> **What survives the withdrawal:** nothing about MTA's axis. **What replaced it** is R2d, below,
+> which is about our own tree and needed no precedent at all.
 
-That is the same axis §2b's act-as-host rule and `coop/element/intent_authority.h` already use — an
-intent names an ARTIFACT and the arbiter resolves it. **So R2b's "promote the per-kind taxonomy into
-the type" is at best half the answer, and picking it alone would have chosen the axis MTA does not
-use.** A kind-level declaration can say *may a client author this KIND at all*; only an
-element-level one can say *may this client author THIS THING*. The design needs both, and the
-second is where the authority actually lives.
+### R2d — the base is not MISSING, it is UNADOPTED `[V]` 2026-09-04
+
+The round that killed R2c measured the thing that actually governs this document, and it is not an
+axis question:
+
+- `[V]` **`coop/element/intent_authority.h` already exists** and calls itself *"the SOLE owner of
+  'may this sender name this artifact?'"*. It shipped 2026-08-26.
+- `[V]` **`IntentTarget::ForClientIntent` has exactly THREE call sites** in the whole tree —
+  `coingun_arbiter.cpp:307`, `coingun_collect.cpp:379`, `trash_grab_intent.cpp:183` — against that
+  header's own census of 102 sender-taking handlers of which roughly ten ask a genuine authority
+  question.
+- `[V]` **`IntentTarget::Authorize(void* actor)` (`intent_authority.cpp:179-205`) needs only an
+  ACTOR POINTER and the sender slot** — no Registry lookup, no `ElementId`, no `ElementType`. It
+  works on any actor, including the `Aactor_save_C` devices (`serverBox` / `generator` / `laptop`)
+  that no `ElementType` value covers.
+- `[V]` **The structural boundary for a ratchet already exists**: `event_dispatch_intent.cpp`, the
+  TU carrying all 14 client-intent lanes, contains **zero** `GetActor()` or `Registry::Get` calls.
+
+**So finding A4 is not the absence of an authority mechanism. It is an authority mechanism that
+nothing calls** — `[[lesson-a-capability-is-not-shipped-until-something-calls-it]]`, the same class
+as the two dead join-path capabilities found on 2026-09-02. The work this document has been
+describing as a design problem is an **adoption** problem plus a ratchet, and designing a second
+primitive beside the unadopted one would have been the crutch, not the fix.
 
 ### R2b — the per-kind authority taxonomy ALREADY EXISTS, in comments
 
@@ -466,25 +494,51 @@ only the pointer had rotted.]`
 | `WRITER-authored` | `DrivePayload` |
 | `SYMMETRIC` | doors, lights, containers, garage, appliance, locker, power — **this is finding A4** |
 
-`[corr 2026-09-04: the count below said 13 SYMMETRIC kinds. Measured now: **16** —
-GarageDoorState, ApplianceState, LockerDoorState, PowerControlState, WindowCleanState, GrimeState,
-TrashPileState, FireflySpawn, InventoryPickup, EmailDelete, SavedSignalAppend, SavedSignalDelete,
-VoiceState, DeskLogLine, MeadowAppend, MeadowDelete. The absence grew while the doc sat.]`
+`[corr 2026-09-04, twice. First I raised the count from 13 to **16** by grepping the word
+`SYMMETRIC` on case lines. That number was wrong in BOTH directions and the method was the defect:
+it measured the VOCABULARY, not the absence.]`
+
+- **It MISSED the canonical three.** `[V]` `session_lanes.h:231-233` carries `DoorState`,
+  `LightState` and `ContainerState` with **no token on their case lines at all** — the very three
+  the row above names as finding A4.
+- **It FUSED five different predicates**, `[V]` read off the handlers themselves:
+  **COSMETIC** (`FireflySpawn` — its own comment: *"No trust gate -- a cosmetic transient
+  particle"*; `InventoryPickup` — *"cosmetic"*, it plays the `inventory_Cue` blip; `DeskLogLine`) ·
+  **PER-PLAYER** (`VoiceState`, mute/display — §2b boundary 4) · **MONOTONE CONVERGENT**
+  (`WindowCleanState`, `GrimeState`, `TrashPileState` — all three apply **MIN**, a lattice merge; a
+  rogue peer can only move the value the safe way, so this is an authority ANSWER, not an absence) ·
+  **DEVICE TOGGLE** (`GarageDoorState`, `ApplianceState`, `LockerDoorState`, `PowerControlState`) ·
+  **SHARED DATA ROWS** (`EmailDelete`, `SavedSignalAppend`, `SavedSignalDelete`, `MeadowAppend`,
+  `MeadowDelete` — **A12 lives here**).
+
+**So A4 is ~9-12 lanes, not 16, and three lanes previously written down as debt are already correct
+by construction.** A plan that took "16 SYMMETRIC" as its work list would have spent effort on
+lanes that are right — and could have "fixed" a monotone merge into a round-trip that is strictly
+worse. This is `[[lesson-classify-by-the-predicate-you-are-enforcing]]`: `SYMMETRIC` describes the
+TRAFFIC (any peer may send), which is why one word fused five answers.
 
 **~6 authority models already live here.** The syncer would be a seventh. And a new per-kind table
 at stage 3 would be a **second parallel table** beside this one — RULE 2.
 
 ### The corrected direction
 
-1. **Promote the existing taxonomy from comments into the type** — each kind declares its authority
-   model explicitly, beside the relay flag, in **one** table.
-2. **Make it enforced on receive, one MODEL at a time** — not one handler at a time out of 68.
+1. **`[corr 2026-09-04: superseded by R2d.]`** ~~Promote the existing taxonomy from comments into
+   the type — each kind declares its authority model explicitly.~~ A per-kind declaration answers
+   only *may a client author this KIND at all*; it cannot answer *may this client author THIS
+   THING*, which is the question every act-as-host lane actually asks and which
+   `intent_authority` already answers. **The first move is ADOPTION of that module at the ~10 lanes
+   that ask (three do today), plus a ratchet at the `event_dispatch_intent.cpp` boundary so a new
+   lane cannot skip it.** A kind-level table may still earn its place later as a coarse outer
+   admission; it is not the base and must not be built first.
+2. **Enforce one MODEL at a time, never one handler at a time** — this survives R2d unchanged, and
+   is the reason the five fused predicates above had to be separated before any enforcement.
 3. **Introduce the syncer only where a peer genuinely SIMULATES what the arbiter cannot compute.**
    MTA needs syncers because the client simulates an unoccupied vehicle and the server does not.
    Where our host already computes the truth, "syncer" would be a mere permission label — a simpler
    thing, and it should stay simpler.
-4. **`SYMMETRIC` is not a model, it is the absence of one.** Those **16** kinds (was 13) are A4.
-   That is where the work actually is.
+4. **`SYMMETRIC` is not a model, it is the absence of one — for the ~9-12 kinds that really lack
+   an answer.** `[corr 2026-09-04: the count is measured above, and three of the lanes once counted
+   as debt (the MIN-merging ones) already have an answer.]` That subset is where the work is.
 
 ### Still unanswered (carried into R3+)
 
