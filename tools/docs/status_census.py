@@ -596,7 +596,13 @@ def compose(repo, subject, trailers):
 
 def private_commit(repo, paths, subject, trailers):
     """Commit exactly `paths` (worktree content) from a temporary index; align the shared index for
-    those paths afterwards (LESSONS.md:145 / :6982 -- two axes; docs/DOCUMENTIZE_ARC.md round 6 Q1)."""
+    those paths afterwards (LESSONS.md:145 / :6982 -- two axes; docs/DOCUMENTIZE_ARC.md round 6 Q1).
+
+    Returns the new sha, or None when `paths` are ALREADY COMMITTED (nothing differs from HEAD).
+    2026-09-04: `git commit` exits 1 on an empty commit, so a session that committed its own inner-repo
+    findings BEFORE closing -- ordinary work, not a close commit -- crashed the close outright, after
+    the history commit had already been made. `opaths` being non-empty says the census SAW those docs,
+    not that they are uncommitted; only a diff against HEAD says that."""
     tmp = os.path.join(repo, ".git", "docs_census.index")
     env = dict(os.environ, GIT_INDEX_FILE=tmp)
     try:
@@ -604,6 +610,9 @@ def private_commit(repo, paths, subject, trailers):
             os.remove(tmp)
         git(["read-tree", "HEAD"], repo, env=env)
         git(["add", "--"] + paths, repo, env=env)
+        if subprocess.run(["git", "diff-index", "--cached", "--quiet", "HEAD", "--"] + paths,
+                          cwd=repo, env=env).returncode == 0:
+            return None                       # already committed -- nothing this close can add
         git(["commit", "-q", "-F", "-"], repo, env=env, input_text=compose(repo, subject, trailers))
         sha = git(["rev-parse", "HEAD"], repo).strip()
     finally:
@@ -1264,12 +1273,21 @@ def run_close(env, args):
             continue
         otrailer = format_trailer(dict(vals, base=(rbases.get(name) or "-")[:12]))
         osha = private_commit(owned, opaths, subject, [otrailer] + trailers)
+        if osha is None:                     # the session already committed these itself
+            print("{} close: skipped -- its {} censused path(s) are already committed"
+                  .format(name, len(opaths)))
+            continue
         owned_shas.append("{}:{}".format(name, osha[:10]))
         print("{} close: {} ({} paths)".format(name, osha[:10], len(opaths)))
     vals["research-base"] = ",".join(owned_shas) if owned_shas else "-"
     # 8. commit 1: main
     trailer = format_trailer(vals)
     msha = private_commit(env.repo, sorted(set(main_paths)), subject, [trailer] + trailers)
+    if msha is None:                          # main has nothing to say -- refuse loudly, do not "close"
+        raise SystemExit(
+            "REFUSE: main's {} censused path(s) are ALL already committed, so this close would record "
+            "no doc change at all. Commit the docs through the close, not by hand."
+            .format(len(set(main_paths))))
     print("main close: {} ({} paths)".format(msha[:10], len(set(main_paths))))
     print("history close: {}".format(hsha[:10]))
     print(trailer)

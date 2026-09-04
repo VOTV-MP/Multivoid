@@ -1308,6 +1308,42 @@ def drill_cross_session(root=None):
         check(not os.path.exists(hidx), "the history repo's private index is removed after the close")
         check(git(["status", "--porcelain"], hist).strip() == "",
               "the history repo's shared index is left clean")
+
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def drill_private_commit_already_committed():
+    """2026-09-04. `private_commit` ran `git commit` unconditionally, and git exits 1 on an empty
+    commit -- so a session that had committed its own inner-repo findings BY HAND before closing
+    (ordinary work, not a close commit) crashed the whole close, AFTER the history commit had already
+    landed. A non-empty path list says the census SAW those docs, not that they differ from HEAD.
+    Unit-drilled here rather than through the close fixture, which has no owned inner repo to make
+    already-committed: the close's own `nothing to commit in main` guard fires first there, so a
+    fixture arm would have tested a DIFFERENT guard and reported this one covered."""
+    print("-- I. private_commit on an already-committed path")
+    root = tempfile.mkdtemp(prefix="scpc_")
+    try:
+        git(["init", "-q", "-b", "main", "."], root)
+        git(["config", "--local", "user.name", "drill"], root)
+        git(["config", "--local", "user.email", "drill@example"], root)
+        f = os.path.join(root, "doc.md")
+        io.open(f, "w", encoding="utf-8", newline="\n").write("# doc\n\nbody\n")
+        git(["add", "--", "doc.md"], root)
+        git(["commit", "-q", "-m", "base"], root)
+        head = git(["rev-parse", "HEAD"], root).strip()
+
+        sha = SC.private_commit(root, ["doc.md"], "drill", ["Trailer: x"])
+        check(sha is None, "RED-turned-GREEN: an already-committed path returns None, not an exception")
+        check(git(["rev-parse", "HEAD"], root).strip() == head,
+              "and it makes NO commit (HEAD unmoved)")
+
+        io.open(f, "a", encoding="utf-8", newline="\n").write("\na real edit\n")
+        sha = SC.private_commit(root, ["doc.md"], "drill", ["Trailer: x"])
+        check(sha is not None and git(["rev-parse", "HEAD"], root).strip() == sha,
+              "LIVE canary: a genuinely-changed path still commits and returns its sha")
+        check(git(["status", "--porcelain"], root).strip() == "",
+              "and the shared index is left clean afterwards")
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -1325,6 +1361,7 @@ def main():
     drill_undrilled_refusals()
     drill_reading_order()
     drill_cross_session()
+    drill_private_commit_already_committed()
     print("status_census_drill: {} check(s) failed".format(len(FAILS)))
     return 1 if FAILS else 0
 
