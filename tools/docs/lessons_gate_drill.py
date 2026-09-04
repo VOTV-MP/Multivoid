@@ -179,18 +179,26 @@ def main():
     # true from the gate's first commit until 2026-09-03: CITE_ROOTS listed `include`, which has never
     # existed here, so the branch was taken on every run and the `dead file` arm silently passed.
     missing = _LG.absent_cite_roots()
-    ok = not missing
-    print("  [{}] PREMISE  {:<16} absent cite roots={} (must be empty on a full checkout)".format(
-        "PASS" if ok else "FAIL", "cite roots", missing or "none"))
-    if not ok:
-        failures.append("cite roots {} are missing, so dead bare-basename citations cannot fail the "
-                        "gate here -- fix CITE_ROOTS or run on a full checkout".format(missing))
+    full = not missing
+    print("  [{}] PREMISE  {:<16} absent cite roots={} (the LEDGER half needs a full checkout)".format(
+        "PASS" if full else "SKIP", "cite roots", missing or "none"))
+    if not full:
+        # NOT a failure: the corpus is missing, not the ledger -- the distinction `absent_cite_roots`
+        # itself draws. This drill was written for a full LOCAL checkout and then wired into CI on
+        # 2026-09-04 after being tested with only the memory corpus absent; CI also has no
+        # `research/` (local-only), so its premise failed and every corpus-dependent arm failed with
+        # it, reporting the ENVIRONMENT as six defects in the gate. The ledger-injection half is
+        # skipped where its corpus is incomplete; the unit-level half runs everywhere.
+        print("  [SKIP] the ledger-injection arms, the QUIET checks and the CONTROL all need the "
+              "cite roots {} -- without them a bare-basename citation resolves nowhere for the "
+              "WRONG reason and the arms cannot discriminate. Run locally for that half."
+              .format(missing))
 
     sym_ok, sym_missing = symbol_check_available()
-    if not sym_ok:
+    if full and not sym_ok:
         print("  [SKIP] the '{}' corpus is absent, so the gate's SYMBOL half does not run here; "
               "arms depending on it are SKIPPED rather than failed".format(sym_missing))
-    for name, injection, needle in ARMS:
+    for name, injection, needle in (ARMS if full else []):
         if name == "dead symbol" and not sym_ok:
             print("  [SKIP] {:<24} needs the symbol corpus".format(name))
             continue
@@ -203,7 +211,7 @@ def main():
         if not ok:
             failures.append("RED arm '{}' did not fail for its own reason".format(name))
 
-    for name, injection in QUIET:
+    for name, injection in (QUIET if full else []):
         path = os.path.join(tmpdir, "ledger_quiet.md")
         io.open(path, "w", encoding="utf-8", newline="\n").write(base + "\n" + injection)
         code, out = run(path)
@@ -215,12 +223,13 @@ def main():
         if not ok:
             failures.append("QUIET check '{}' wrongly failed the gate or stayed silent".format(name))
 
-    code, _ = run(LEDGER)
-    ok = code == 0
-    print("  [{}] CONTROL  {:<16} exit={} (the real ledger)".format(
-        "PASS" if ok else "FAIL", "unmodified", code))
-    if not ok:
-        failures.append("the real ledger does not pass")
+    if full:
+        code, _ = run(LEDGER)
+        ok = code == 0
+        print("  [{}] CONTROL  {:<16} exit={} (the real ledger)".format(
+            "PASS" if ok else "FAIL", "unmodified", code))
+        if not ok:
+            failures.append("the real ledger does not pass")
 
     print("")
     print("  -- the allowlist predicates (unit-level; a ledger injection cannot reach them) --")
@@ -232,6 +241,10 @@ def main():
             print("  FAILURE: {}".format(f))
         print("\nlessons_gate_drill: FAIL")
         return 1
+    if not full:
+        print("lessons_gate_drill: ALL PASS (unit half only -- the ledger-injection half needs a "
+              "full checkout, which this environment is not)")
+        return 0
     print("lessons_gate_drill: ALL PASS -- the gate was shown RED on every defect class")
     print("it claims to catch, quiet on the classes it deliberately tolerates, and green")
     print("on the real ledger.")
