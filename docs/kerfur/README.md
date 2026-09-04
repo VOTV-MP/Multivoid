@@ -2,6 +2,15 @@
 
 *[↑ docs index](../README.md)*
 
+> **READ [`ARC.md`](ARC.md) FIRST (NEW 2026-09-04, USER MACRO-GOAL).** It is the LIVING doc for the
+> whole kerfur family: the goal stated so it can be closed, the measured capability census of BOTH
+> robots, the gap table, the foundation-first blocks, and the plan. **It also corrects the premise
+> this README was written on:** there are TWO robots, not one. The regular one is spelled **`kerfus`**
+> (`Ap_kerfus_C`, a CORDED PROP, 3 radial actions) — four months of work here searched for `kerfur*`
+> and never saw it, and it has no sync of any kind. `kerfurOmega_C` (a CHARACTER, 10 actions) is what
+> everything below is about. The files under this folder stay valid as point-in-time June-2026
+> diagnoses of the conversion/identity bugs; the capability census and the plan live in `ARC.md`.
+>
 > **PUSH STATUS (2026-06-28): every commit at/below origin/main `63aa4c01` is now PUSHED.** Any "push HELD" /
 > "N ahead of origin" status below referencing a 2026-06-23..28 commit is STALE (the whole sync arc shipped to
 > origin on 2026-06-28).
