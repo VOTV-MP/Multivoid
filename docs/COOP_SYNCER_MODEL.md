@@ -1,7 +1,19 @@
 # The syncer model — per-element authority, MTA-shape
 
-**Status: DESIGN, 2026-07-20. Not built. Not yet `/qf`-ed.** User directive: introduce the syncer
-model into the mod's architecture and begin the full transition to the MTA model.
+**Status: DESIGN, 2026-07-20. The MODEL is not built; PARTS of it have since shipped by other
+routes.** User directive: introduce the syncer model into the mod's architecture and begin the full
+transition to the MTA model.
+
+`[corr 2026-09-04, docs audit: "Not built" was true when written and is now too strong. THREE
+pieces of this design shipped without ever being written back here: the act-as-host reference
+implementation (`order_sync` v136, `afcbff39` -- §2b records this one), the first receive-side
+arbiter (`container_contents_sync.cpp:610 HostAcceptsClientWrite` -- §3 records this one), and
+**`coop/element/intent_authority.h` (2026-08-26), which this document did not mention at all**
+until this correction. That module is a partial delivery of §5's enforcement point by a DIFFERENT
+mechanism than §5 proposes -- an argument TYPE (`IntentTarget`, actor obtainable only via
+`Resolve`) rather than a per-kind boolean -- and §5 must be re-read against it before stage 0.
+What remains genuinely unbuilt: the syncer field itself, `AssignSyncer`/`SyncerOf`, the per-kind
+authority declaration, takeover (§6), and the arbiter as a separate process.]`
 
 This is the single largest architectural change since the coop layer was built. It is authorized
 under RULE 1 as a hard architectural change.
@@ -297,12 +309,13 @@ Encouraging: most of the primitives exist. This is a promotion, not a green fiel
 | Piece | Where | State |
 |---|---|---|
 | Stable element identity | `coop/element/`, `ElementId` | **Built** |
-| A per-element owner field | `element.h:201-202` `GetOwnerSlot`/`SetOwnerSlot` | **Built — but WRONG SEMANTICS, see §4** |
+| A per-element owner field | `element.h:210-211` `GetOwnerSlot`/`SetOwnerSlot` | **Built — but WRONG SEMANTICS, see §4** |
 | Per-slot teardown by owner | `mirror_manager.h:357` `DrainMirrorsForSlot` | **Built** |
 | A holder table with a lookup | `device_occupancy.h:72` `HolderOf(key)` | **Built, but ADVISORY** — read by senders, never on receive |
 | Leaver teardown for claims | `device_occupancy.h:79` `OnDisconnectForSlot` | **Built** — a large part of the Principle-8 answer already exists |
 | Join-time claim seeding | `device_occupancy.h:75` `QueueConnectBroadcastForSlot` | **Built** |
-| A correct receive-side check, at ONE site | `trash_grab_intent.cpp:298-302` | **Built** — this is the pattern to generalize |
+| A correct receive-side check, at ONE site | ~~`trash_grab_intent.cpp:298-302`~~ -> `trash_grab_intent.cpp:183` | **GENERALIZED 2026-08-26** — see the row below `[corr 2026-09-04]` |
+| The generalization itself | `coop/element/intent_authority.h` — `IntentTarget::ForClientIntent` + `Resolve` | **Built 2026-08-26 (A54)** — the SOLE owner of *"may this sender name this artifact?"*. `[V]` its own header censuses 102 sender-taking handlers, ~10 asking a real authority question, >=48 never letting the sender reach a decision. **Honest ceiling, quoted from it: it gates the SLOT, not the actor** (`Registry::Get()` is a global singleton with 48 `Get(` and 111 `GetActor()` sites, so a handler can still resolve by hand), and its reach anchor is the sender's own last pose, which the sender writes — so an attacker pays ONE EXTRA POSE PACKET, not a closure |
 | Sender identity bound to transport | `VerifySenderEidRange`, `HandleAssignPeerSlot` | **Built** (per the audit's "checked and clean") |
 
 | A receive-side ARBITER on a real lane | `container_contents_sync.cpp` `HostAcceptsClientWrite` | **Built 2026-07-22 (v125, `411743af`)** — see the note below |
@@ -333,7 +346,7 @@ rather than trusted. Three things it measured are inputs to §5:
 
 ## 4. The trap: `ownerSlot` is NOT the syncer — do not fuse them
 
-`[V]` `element.h:220` — `m_ownerSlot` is documented as *"originating peer slot for mirrors (D1-7);
+`[V]` `element.h:229` — `m_ownerSlot` is documented as *"originating peer slot for mirrors (D1-7);
 -1 = none"*, and `mirror_manager.h:357` `DrainMirrorsForSlot` uses it to **destroy a departed peer's
 mirrors**.
 
@@ -390,8 +403,12 @@ action.** So one syncer check across all 68 kinds is wrong on its face.
 
 ### R2b — the per-kind authority taxonomy ALREADY EXISTS, in comments
 
-`[V]` `session_lanes.h:179` `IsClientRelayableReliableKind` is already a per-kind, receive-side
-table, and its comments encode an authority model per kind:
+`[V]` `IsClientRelayableReliableKind` is already a per-kind, receive-side table, and its comments
+encode an authority model per kind. `[corr 2026-09-04: this section cited it as `session_lanes.h:179`
+four times. The header MOVED from `include/coop/net/` to **`src/coop/net/session_lanes.h`** (it is a
+private header now), line 179 is inside `LaneOf` — a different function, about FIFO lanes — and the
+function is at **`:223`** with the taxonomy comments at **`:210-245`**. The CLAIM re-verified true;
+only the pointer had rotted.]`
 
 | Model in the tree | Example kinds |
 |---|---|
@@ -401,6 +418,11 @@ table, and its comments encode an authority model per kind:
 | `ANY-PEER-announced idempotent state` | `DriveSlotState` — **authority is not needed at all; idempotent lines converge** |
 | `WRITER-authored` | `DrivePayload` |
 | `SYMMETRIC` | doors, lights, containers, garage, appliance, locker, power — **this is finding A4** |
+
+`[corr 2026-09-04: the count below said 13 SYMMETRIC kinds. Measured now: **16** —
+GarageDoorState, ApplianceState, LockerDoorState, PowerControlState, WindowCleanState, GrimeState,
+TrashPileState, FireflySpawn, InventoryPickup, EmailDelete, SavedSignalAppend, SavedSignalDelete,
+VoiceState, DeskLogLine, MeadowAppend, MeadowDelete. The absence grew while the doc sat.]`
 
 **~6 authority models already live here.** The syncer would be a seventh. And a new per-kind table
 at stage 3 would be a **second parallel table** beside this one — RULE 2.
@@ -414,8 +436,8 @@ at stage 3 would be a **second parallel table** beside this one — RULE 2.
    MTA needs syncers because the client simulates an unoccupied vehicle and the server does not.
    Where our host already computes the truth, "syncer" would be a mere permission label — a simpler
    thing, and it should stay simpler.
-4. **`SYMMETRIC` is not a model, it is the absence of one.** Those 13 kinds are A4. That is where
-   the work actually is.
+4. **`SYMMETRIC` is not a model, it is the absence of one.** Those **16** kinds (was 13) are A4.
+   That is where the work actually is.
 
 ### Still unanswered (carried into R3+)
 
@@ -427,9 +449,24 @@ at stage 3 would be a **second parallel table** beside this one — RULE 2.
 
 ## 5. The enforcement point
 
-`[V]` The A4 surface is **68 `case` branches** (`event_dispatch_state.cpp` 24,
-`event_dispatch_signal.cpp` 29, `event_dispatch_entity.cpp` 15). Auditing 68 handlers by hand
-guarantees a miss and creates 68 places to keep in sync.
+`[corr 2026-09-04: re-counted. The number moved AND the surface is bigger than the three files this
+section names — a running total in a doc, exactly `[[lesson-a-running-total-in-an-append-only-register]]`.]`
+
+`[V]` The dispatch surface is **100 `case` branches across FIVE files**, not 68 across three:
+
+| file | cases (2026-07-20) | cases (2026-09-04) |
+|---|---|---|
+| `event_dispatch_state.cpp` | 24 | **26** |
+| `event_dispatch_signal.cpp` | 29 | 29 |
+| `event_dispatch_entity.cpp` | 15 | 15 |
+| **`event_dispatch_world.cpp`** | *not named* | **16** |
+| **`event_dispatch_intent.cpp`** | *not named* | **14** |
+
+**`event_dispatch_intent.cpp` is the one that matters to this design**: it is the act-as-host
+lane's own dispatcher — the mechanism §2b describes — and it did not exist in this section's
+frame. So "one check in the dispatch switch" is today a check in *three of five* switches, and
+the enforcement point must name all five or it is a site list wearing an invariant's clothes.
+Auditing 100 handlers by hand guarantees a miss and creates 100 places to keep in sync.
 
 MTA's answer (`MTA_PRECEDENT.md` §5) is a **default-deny per-kind flag** checked **once** in the
 dispatch switch, before the handler runs:
@@ -513,9 +550,12 @@ Per `[[feedback-qf-before-implementation]]`, this design gets a full pass before
 5. **Interaction with `PLAN_01` (peer auth).** A syncer assignment is only as trustworthy as the
    peer identity it names. Syncers make authority *consistent*; certificates make identity *real*.
    Neither substitutes for the other — but does stage 4 have any value before P1 lands?
-6. **Dedicated-deployment forward compatibility.** Is the arbiter API genuinely process-agnostic, or does it
-   quietly assume in-process engine access? If it assumes, the dedicated-deployment payoff evaporates and we
-   should know that now.
+6. ~~**Dedicated-deployment forward compatibility.** Is the arbiter API genuinely process-agnostic?~~
+   **RETIRED — `[corr 2026-09-04: §1c already says "This retires §9 question (f)", and (f) is this
+   row renumbered. The doc has been retiring and re-asking the same question since 2026-07-20.]`**
+   It is not an open question, it is a REQUIREMENT: the arbiter never reads engine state, and
+   `COOP_SERVER_MODEL.md` §2 makes it structurally impossible by putting the arbiter in a child
+   process. See §1c.
 
 ---
 
