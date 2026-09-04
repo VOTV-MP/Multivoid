@@ -214,6 +214,25 @@ instead of re-excavating the same hole.** Born because the project dug the same 
   `lessons_gate.absent_cite_roots` already draws. Verify BOTH directions: it skips where the corpus
   is absent AND still runs where it is present, or you have quietly deleted a gate.
   `memory/lesson-a-check-wired-into-ci-must-first-be-run-in-cis-environment.md`
+- **A REWRITE DOES NOT INHERIT THE AUDIT -- fact-checking prose binds to the WORDING, not the
+  claim.** 2026-09-04. Across five drafts of one ~200-word website note, **four separately-killed
+  claims came back in fresh words**: "VOTV is five years of ONE PERSON's work" (refuted by the game's
+  own credits screen, legible in a screenshot **already published on that same page**) survived a
+  whole draft after being written down as false; "the file that inspired each one is cited" (measured:
+  12, not each) returned as "our source names the file each one came from"; "every design decision
+  written down" returned as "the reasoning written down as it was made"; and a ranking against another
+  VOTV multiplayer project returned after `docs/DOCS_ARC.md:244` had recorded that exact framing being
+  SOFTENED on 2026-08-23. A fifth, "an open list of what's still broken", was caught only because
+  `ls docs/ | grep -i known` returned nothing. **An audit feels like it settles a QUESTION; it settles
+  a STRING** -- and the paragraph still wants the shape the dead claim was serving, so the hand reaches
+  for the nearest surviving phrasing. Two of the four were SOFTER than the originals, which is what let
+  them through. Look here FIRST: for anything that goes through more than one draft, re-run the claims
+  table **against the new text, not the diff**, and keep killed claims as PROPOSITIONS rather than
+  struck-through sentences. Where a killed claim keeps returning, the paragraph is asking for a fact
+  you have not gone and got -- that note's strongest line came from a measurement no earlier draft
+  sought (`16 files record where we deliberately departed from MTA`).
+  [[lesson-a-rewrite-does-not-inherit-the-audit]]
+
 - **A SUPPRESSION'S KEY DECIDES ITS BLAST RADIUS, not the instance you were looking at.** 2026-09-04.
   A leak gate's acknowledgement was keyed on the matched NEEDLE alone. Its drill needs a positive
   fixture per signal, so the drill's own S3 line was acknowledged -- and S3's needle is the signal's
