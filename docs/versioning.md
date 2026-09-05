@@ -68,7 +68,8 @@ reports, or two SDK dumps, and names the constant each change belongs to.
 2. Record the boot artifact: the health-check block, the size and version warning, the first
    lines of the log.
 3. Take a fresh SDK dump from UE4SS installed into a copy of the new build (the header dump and
-   the object dump); UE4SS is a development tool here and does not ship.
+   the object dump); UE4SS is the dump tool here, and the shipped install carries it only as
+   the loader.
 4. Diff the dumps with `tools/sdk_diff.py` and transcribe the offsets it names.
 5. Re-derive the signatures only if the health check failed: the loader's log gives ground-truth
    addresses, a disassembler confirms each, and a unique byte pattern with wildcarded

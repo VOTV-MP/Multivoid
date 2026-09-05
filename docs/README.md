@@ -32,7 +32,7 @@ Then, if you are going to touch code:
 
 | | |
 |---|---|
-| [RE_WORKFLOW.md](RE_WORKFLOW.md) | How this project reverse-engineers the game: reflection first, then a disassembler, then UE4SS as a probe. None of those ship |
+| [RE_WORKFLOW.md](RE_WORKFLOW.md) | How this project reverse-engineers the game: reflection first, then a disassembler, then UE4SS as a probe. The probes do not ship; UE4SS ships only as the loader |
 | [testing.md](testing.md) | The test rig, the launcher and its scenarios, the in-game harness, and the gates a push runs |
 | [RELEASE.md](RELEASE.md) | How a build becomes a release, and the gates it must pass |
 | [versioning.md](versioning.md) | The version pair two peers must match, the files a game update touches, how a broken build says so, and the port runbook |

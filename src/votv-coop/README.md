@@ -42,7 +42,9 @@ DLL whose VERSIONINFO disagrees with the tree. The UE4SS substrate is installed 
 
 ## What is not in this tree
 
-- UE4SS: not a runtime dependency. The development copy uses it for Live View, Lua probes and
-  header dumps (`docs/RE_WORKFLOW.md`).
+- UE4SS's code: the mod imports nothing from it. UE4SS itself is the loader every game copy
+  runs (`tools/install-ue4ss.ps1` pins one build; the mod manager delivers the same one), and
+  the development copy also uses it for Live View, Lua probes and header dumps
+  (`docs/RE_WORKFLOW.md`).
 - Game assets: never touched. Every sync rides reflected function calls and reads through cached
   offsets.
