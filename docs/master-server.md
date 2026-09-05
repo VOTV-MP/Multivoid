@@ -64,8 +64,8 @@ only after a drill proves the deployed relay speaks it (`tools/sig_gate.py`).
 
 Run the two binaries with their environment (the TURN secret, the signaling token, the
 signaling and TURN addresses) and a TURN server that shares the secret, then point the ini's
-custom master and signaling rows at them. The test rig launches the signaling binary locally.
-The master's Python predecessor is still tracked as the rig's fixture.
+custom master and signaling rows at them. `tools/mp.py` builds and launches the signaling binary
+locally for a scripted run, and `tools/fake_master.py` serves a synthetic lobby list to the browser.
 
 ## Who owns what
 
@@ -96,9 +96,9 @@ most until its heartbeats lapse.
 
 | Limit | Evidence |
 |---|---|
-| The signaling leg is plaintext, so an on-path attacker can relay the registration challenge and hold a victim's name; encrypting it is the next transport item | `[V]` the relay's own header |
-| One master, no redundancy | `[V]` the announcer's header |
-| The `http://` downgrade grammar still ships and is queued for removal | `[V]` the master section's note |
+| The signaling leg is plaintext, so an on-path attacker can relay the registration challenge and hold a victim's name; encrypting it is the next transport item | `[V]` `coop/net/signaling_client.h` |
+| One master, no redundancy | `[V]` `coop/net/lobby_announcer` |
+| The `http://` downgrade grammar still ships and is queued for removal | `[V]` `coop/net/http_client` |
 
 ## Code map
 
@@ -107,4 +107,4 @@ most until its heartbeats lapse.
 | the services | `tools/coop-server-rs/src/bin/master.rs`, `tools/coop-server-rs/src/bin/signaling.rs`, `tools/coop-server-rs/src/tls.rs`, `tools/coop-server-rs/src/common.rs`, `tools/coop-server-rs/README.md` |
 | the mod's master client | `coop/net/lobby_client`, `coop/net/lobby_announcer`, `coop/net/http_client`, `coop/session/session_manager` |
 | the rendezvous | `coop/net/signaling_client.h`, `coop/net/ice_config.h`, `coop/session/host_mode` |
-| the drills and fixtures | `tools/sig_gate.py`, `tools/fake_master.py` (a synthetic lobby list for the browser rig), `tools/cert_check.py` (the off-box certificate check) |
+| the drills and fixtures | `tools/sig_gate.py`, `tools/fake_master.py` (a synthetic lobby list for the browser), `tools/cert_check.py` (the off-box certificate check) |
