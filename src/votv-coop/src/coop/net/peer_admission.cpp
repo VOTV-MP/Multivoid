@@ -1,8 +1,11 @@
-// coop/net/peer_admission.cpp -- see coop/net/peer_admission.h for WHY.
+// coop/net/peer_admission.cpp -- the admission exchange on a fresh connection: the host proves
+// its Ed25519 key over the client's nonce, the client proves its own over the host's, the client
+// binds the socket's key to the identity it was sent to, and a locked lobby's password proof is a
+// tag bound to those keys. See coop/net/peer_admission.h.
 
 #include "coop/net/peer_admission.h"
 
-#include "peer_admission_internal.h"   // private: beside the .cpp, never under include/
+#include "peer_admission_internal.h"   // private, beside the .cpp
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
@@ -16,7 +19,7 @@
 #include <steam/isteamnetworkingsockets.h>
 #pragma warning(pop)
 
-#include <windows.h>   // GetTickCount64 -- the guess window's clock
+#include <windows.h>   // GetTickCount64, the guess window's clock
 
 #include <cstring>
 
@@ -27,46 +30,24 @@ namespace {
 using peer_identity::PubKey;
 using peer_identity::Sig;
 
-// The signed blob. FIXED SIZE on purpose: a length-prefixed or delimited encoding
-// would need parsing on the verify side, and a parser is the last thing that
-// should sit in front of an unauthenticated peer. Every field is a constant width
-// known at compile time, so building it is a memcpy sequence with no branches.
-//
-//   [0 .. 26]  the tag, 27 bytes, no terminator
-//   [27]       direction (kDirHost / kDirClient)
-//   [28..29]   kProtocolVersion, little-endian
-//   [30..61]   the HOST's public key
-//   [62..93]   the CLIENT's public key
-//   [94..125]  the VERIFIER's nonce
-//   [126]      the challenge FLAGS
-//   [127..158] the HOST's own nonce
-//
-// THE LAST TWO WERE ADDED 2026-08-31 AND THEY ARE NOT COSMETIC. `AuthChallengePayload`
-// carries the flag that tells a joiner a password is wanted, and it was OUTSIDE the
-// host's signature -- so a relay (the acknowledged P1 residual) could set
-// `kAuthFlagPasswordRequired` on an OPEN lobby's challenge, with a nonce of its own
-// choosing, and a bound client would derive and emit a real tag for a host that never
-// asked. Today P1 buys impersonation; unsigned, it also bought a tag-harvesting oracle
-// against a legitimate host. Being inside an existing residual is not a reason to widen
-// it. (Post-ship audit.)
-//
-// Tampering the other way -- clearing the flag, or altering the host's nonce -- only
-// denies: the host verifies the client's proof against the nonce IT stored.
-// The layout itself now lives in `peer_admission_internal.h` -- ONE definition, shared
-// with the selftest TU. It moved rather than being copied for the reason that header
-// states: a negative arm that builds its own blobs is testing its own copy of the
-// structure, and would keep passing after this one changed.
+// The signed blob, fixed size on purpose: a delimited encoding would need a parser in front of an
+// unauthenticated peer, and every field here is a constant width, so building it is a memcpy
+// sequence with no branches: the 27-byte tag, the direction, the protocol version, the host's
+// key, the client's key, the verifier's nonce, the challenge flags and the host's own nonce. The
+// flags and the host nonce are inside the signature: outside it, a relay could set the
+// password-required flag on an open lobby's challenge with a nonce of its own and harvest a real
+// tag from a bound client for a host that never asked. The layout lives in
+// peer_admission_internal.h, shared with the selftest, so a negative arm cannot pass against its
+// own copy of the structure.
 using internal::Blob;
 using internal::BuildBlob;
 using internal::kBlobBytes;
 using internal::kDirClient;
 using internal::kDirHost;
 
-// The remote's 32 identity bytes, read off the CONNECTION -- never off a packet.
-// Returns false for any identity that is not exactly a 32-byte GenericBytes one,
-// which is the same test as "this peer is not running an identity-bearing build":
-// `[V]` a peer that presents nothing falls back to an IP-typed identity
-// (`udp.cpp:338-357`), and an IP is not something anyone can sign for.
+// The remote's 32 identity bytes, read off the connection, never off a packet. False for any
+// identity that is not exactly a 32-byte GenericBytes one: a peer that presents nothing falls
+// back to an IP-typed identity, which nobody can sign for.
 bool RemoteKeyOf(uint32_t hConn, PubKey& out) {
     auto* sockets = SteamNetworkingSockets();
     if (!sockets) return false;
@@ -80,17 +61,10 @@ bool RemoteKeyOf(uint32_t hConn, PubKey& out) {
     return true;
 }
 
-// The remote's ADDRESS, as the 16-byte form GNS stores (IPv4 arrives mapped).
-// The PORT is deliberately excluded: a retrying attacker gets a fresh source port
-// on every connection, so a bucket keyed on the pair would be a bucket of one.
-// FALSE WHEN THERE IS NO USABLE ADDRESS, AND THAT IS THE COMMON CASE ON OUR MAIN LANE.
-// The vendored header says so in as many words (`steamnetworkingtypes.h:690-692`):
-// *"Remote address. Might be all 0's if we don't know it, or if this is N/A. (E.g.
-// Basically everything except direct UDP connection.)"* -- and this tree had already
-// written that fact down THREE times, including at `session_status.cpp:168-172`, where
-// this very arc's own audit REJECTED a per-remote-address cap because *"the P2P
-// Connecting edge has an empty remote address, so our main lane has nothing to key on"*.
-// I keyed on it anyway. See the bound below for what that cost.
+// The remote's address in the 16-byte form GNS stores (IPv4 arrives mapped), without the port (a
+// retrying attacker gets a fresh source port per connection). False when there is no usable
+// address, the common case on the P2P lane, where GNS reports all zeros for anything but a direct
+// UDP connection.
 bool RemoteAddrOf(uint32_t hConn, uint8_t out[16]) {
     auto* sockets = SteamNetworkingSockets();
     if (!sockets) return false;
@@ -103,19 +77,11 @@ bool RemoteAddrOf(uint32_t hConn, uint8_t out[16]) {
     return true;
 }
 
-// --- HOST password state -----------------------------------------------------
-//
-// K IS DERIVED ONCE AND CACHED, and that is what makes the guess bound a policy
-// rather than an accident of CPU cost. PBKDF2 at 200k rounds is ~100 ms; paying
-// it per arriving attempt would mean an attacker could stall the net thread for
-// every other peer just by connecting, and it would make the real limit "how fast
-// is the host's CPU" instead of a number written down here. Cached, an attempt is
-// one HMAC.
-//
-// Derived LAZILY, on the net thread, at the first attempt that needs it -- so
-// there is no cross-thread hand-off to get wrong, and a host whose lobby is open
-// never pays it at all. Keyed on the password string so a value that somehow
-// changed cannot leave a stale key behind.
+// The host password state. The key is derived once and cached, which is what makes the guess
+// bound a policy rather than an accident of CPU cost: the derivation costs about 100 ms, and paid
+// per attempt it would let an attacker stall the net thread for every other peer by connecting.
+// Derived lazily on the net thread at the first attempt that needs it, so an open lobby never
+// pays it; keyed on the password string so a changed value cannot leave a stale key.
 struct HostPasswordCache {
     std::string            forPassword;
     std::array<uint8_t, 32> key{};
@@ -123,46 +89,18 @@ struct HostPasswordCache {
 };
 HostPasswordCache g_hostPw;
 
-// THE GUESS BOUND. EVERY LANE IS COUNTED, AND NO TWO ATTACKERS EVER SHARE A BUCKET.
-//
-// IT HAS BEEN WRONG TWICE, IN OPPOSITE DIRECTIONS, AND BOTH ARE WORTH KNOWING.
-//
-// FIRST it keyed on the remote address and REFUSED when it could not bucket. `[V]`
-// `steamnetworkingtypes.h:690-692`: the address "might be all 0's ... basically
-// everything except direct UDP connection" -- so on AUTO/P2P, our main lane, every
-// joiner shared ONE bucket and ten junk attempts locked the lobby against everybody.
-//
-// SECOND -- the fix for that -- it stopped bucketing when the address was unusable and
-// said the lane's bound was "the master's own RL_JOIN, because every P2P attempt costs a
-// /v1/join". **That is false.** `[V]` `/v1/join` returns `signalingToken` from
-// `CFG.signaling_token` (`master.rs:301`), a STATIC process-wide value every mod user
-// already holds, and `signaling.rs` has no rate limiter of any kind. One /v1/join buys
-// unlimited re-dials. `RL_JOIN` bounds DISCOVERY, not attempts -- so the main lane had no
-// counter at all, which is worse for the thing this protects than the lockout was.
-//
-// SO THE KEY IS WHATEVER IDENTIFIES THE ATTEMPTER ON THIS LANE:
-//   * a real remote address (direct UDP / LAN), or
-//   * the peer's PROVED public key when the address is absent (P2P/ICE, relay).
-// The key is only reached AFTER the Ed25519 proof verifies, so it is a key the peer
-// demonstrably holds. An attacker can rotate keypairs -- but each rotation costs a fresh
-// connection, a full ICE negotiation and a complete admission exchange, and it can never
-// take an honest player's bucket with it. **A weak per-attacker bound beats a strong
-// shared one, because a shared bucket is a lockout wearing a limiter's clothes.**
-//
-// AND EXHAUSTION STILL DOES NOT REFUSE. A full table means we stop COUNTING, not that we
-// stop CHECKING -- the tag is still verified and a wrong one still refused. Failing closed
-// is correct when failing open would ADMIT; here it could only ever DENY
-// (`[[lesson-fail-closed-is-right-only-when-failing-open-would-admit]]`). With a
-// per-identity key the table is far harder to flood than it was per-address, because every
-// row now costs a full handshake.
-//
-// THE COLLATERAL, priced honestly: peers behind ONE carrier NAT share an address bucket,
-// so ten wrong guesses between them locks that address out for a minute. Ten is far above
-// what typing costs an honest group and far below a search of the generated password, which
-// is 30 bits since 2026-09-01 (it was 50; `host_session_settings.cpp` kPwLen went 10 -> 6 at
-// the user's request). The conclusion survives the shortening -- 2^30 against this ceiling
-// is still years -- but the number it reasons FROM had to move with it, and this was the
-// third site holding it while the other two were updated.
+// The guess bound: every lane is counted, and no two attackers share a bucket. Keyed on the
+// remote address it refused when it could not bucket, and on the P2P lane the address is all
+// zeros, so every joiner shared one bucket and ten junk attempts locked the lobby for everybody;
+// not bucketing there left the main lane with no counter at all (the master's join rate limit
+// bounds discovery, not attempts, since the signaling token it returns is static and the
+// signaling server has no limiter). So the key is whatever identifies the attempter: the real
+// address where there is one, else the public key the peer has just proved it holds. A rotated
+// keypair costs a fresh connection and a full exchange and can never take an honest player's
+// bucket. A full table stops counting, not checking: failing closed is right only when failing
+// open would admit, and here it could only deny. The collateral: peers behind one carrier NAT
+// share an address bucket, and ten wrong guesses between them lock it for a minute, far above
+// what typing costs and far below a search of the 30-bit generated password.
 enum class GuessKeyKind : uint8_t { Addr = 1, Ident = 2 };
 struct GuessBucket {
     uint8_t      key[16]{};
@@ -176,14 +114,12 @@ constexpr int      kMaxGuesses    = 10;
 constexpr uint64_t kGuessWindowMs = 60'000;
 GuessBucket g_guess[kGuessBuckets];
 
-// Find (or claim) this address's bucket. Null when the table is full of LIVE
-// windows -- and the caller then REFUSES, because a full table is the state a
-// flood produces and failing open there would hand an attacker the whole point.
+// This key's bucket, found or claimed; null when the table is full of live windows.
 GuessBucket* BucketFor(const uint8_t key[16], GuessKeyKind kind, uint64_t nowMs) {
     GuessBucket* freeRow = nullptr;
     for (auto& b : g_guess) {
-        // THE KIND IS PART OF THE KEY. Without it an address could collide with the first
-        // 16 bytes of somebody's public key -- vanishingly unlikely, and free to exclude.
+        // The kind is part of the key, so an address cannot collide with the first 16 bytes of a
+        // public key.
         if (b.used && b.kind == kind && std::memcmp(b.key, key, 16) == 0) {
             if (nowMs - b.windowStartMs >= kGuessWindowMs) {
                 b.windowStartMs = nowMs;
@@ -191,8 +127,8 @@ GuessBucket* BucketFor(const uint8_t key[16], GuessKeyKind kind, uint64_t nowMs)
             }
             return &b;
         }
-        // An EXPIRED row is reusable; a free one is better. Both are collected in
-        // one pass so a table full of stale windows never reads as full.
+        // An expired row is reusable and a free one better; both are collected in one pass, so a
+        // table of stale windows never reads as full.
         if (!freeRow && (!b.used || nowMs - b.windowStartMs >= kGuessWindowMs))
             freeRow = &b;
     }
@@ -205,56 +141,41 @@ GuessBucket* BucketFor(const uint8_t key[16], GuessKeyKind kind, uint64_t nowMs)
     return freeRow;
 }
 
-// --- HOST state -------------------------------------------------------------
-// One row per pending band entry. Indexed by the pending index, which the band
-// itself allocates and recycles, so HostForgetPending is called on EVERY exit
-// path (admit and close alike) -- a recycled index inheriting a live nonce would
-// let a new socket answer the previous socket's challenge.
+// The host state: one row per pending band entry, indexed by the pending index the band
+// allocates and recycles, so HostForgetPending runs on every exit path; a recycled index
+// inheriting a live nonce would let a new socket answer the previous socket's challenge.
 struct HostRow {
     bool     open = false;
     uint32_t hConn = 0;
     uint8_t  nonce[kAuthNonceBytes]{};
-    // The flags we SENT. Kept because they are inside both signatures now, so verifying
-    // the client's proof means rebuilding the blob we challenged with -- from what we
-    // sent, never from anything that comes back.
+    // The flags we sent, inside both signatures, so the client's proof is verified against the blob
+    // we challenged with, never against anything that comes back.
     uint8_t  flags = 0;
     PubKey   remotePub{};
 };
-// DERIVED from the band, not asserted against it. The first cut wrote `= 8` with
-// a comment claiming the mismatch was "asserted in the .cpp below" -- and no such
-// assertion existed, which is the same defect this very arc fixed one level up
-// (`pendingSinceMs_` was a bound that lived only in a comment). Raising
-// kMaxPending now widens this array by construction; there is nothing left to
-// keep in step, so there is nothing to assert. Post-ship audit, 2026-08-29.
+// Derived from the band, not asserted against it: raising kMaxPending widens this array by
+// construction.
 constexpr int kMaxHostRows = Session::kMaxPending;
 HostRow g_host[kMaxHostRows];
 
-// --- CLIENT state -----------------------------------------------------------
+// The client state.
 struct ClientRow {
     bool     open = false;
     bool     proved = false;
-    // Did the key on the socket MATCH the identity we were sent to dial? False on a
-    // lane that advertises no identity (LAN, plain UDP), where there is nothing to
-    // match against -- which is a different thing from a mismatch, and the reason
-    // this is a fact and not a verdict. See ClientOnConnected.
+    // Whether the key on the socket matched the identity we were sent to dial; false on a lane that
+    // advertises none (LAN, plain UDP), which is not a mismatch, so a fact rather than a verdict.
     bool     bound = false;
     uint32_t hConn = 0;
     uint8_t  nonce[kAuthNonceBytes]{};
     PubKey   hostPub{};
-    // The drill knob, resolved ONCE when the link opens. `config::ResolveEnum`
-    // opens and line-scans multivoid.ini under a global mutex, and reading it
-    // where it is USED would put blocking file I/O on the net thread between
-    // "verified the host" and "sent our proof" -- on every join, for a knob that
-    // is off by default. Post-ship audit, 2026-08-29.
+    // The drill knob, resolved once when the link opens: ResolveEnum line-scans the ini under a
+    // global mutex, and read where it is used it would put file I/O on the net thread between
+    // verifying the host and sending our proof, on every join.
     std::string drill;
 };
 ClientRow g_client;
 
 }  // namespace
-
-// ---------------------------------------------------------------------------
-// HOST
-// ---------------------------------------------------------------------------
 
 bool HostHasOpenExchange(int pendIdx) {
     if (pendIdx < 0 || pendIdx >= kMaxHostRows) return false;
@@ -274,8 +195,8 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
         return r;
     }
     HostRow& row = g_host[pendIdx];
-    // A recycled index: the band handed this slot to a different connection while
-    // a row was still open. Start clean rather than answering with the old nonce.
+    // A recycled index (the band handed this slot to another connection while a row was open)
+    // starts clean rather than answering with the old nonce.
     if (row.open && row.hConn != hConn) row = HostRow{};
 
     switch (kind) {
@@ -284,10 +205,8 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
             r.reason = "malformed AuthHello";
             return r;
         }
-        // ONE hello per connection. A second one would let a peer re-roll the
-        // host's nonce after seeing a challenge, which buys nothing today but is
-        // the shape of a downgrade, and refusing it costs an honest client
-        // nothing (it sends exactly one).
+        // One hello per connection: a second would let a peer re-roll the host's nonce after seeing
+        // a challenge, the shape of a downgrade, and an honest client sends exactly one.
         if (row.open) {
             r.reason = "duplicate AuthHello";
             return r;
@@ -300,14 +219,12 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
         std::memcpy(&hello, payload, sizeof(hello));
 
         AuthChallengePayload out{};
-        // TELL THE JOINER WHAT WE REQUIRE. It cannot infer this: a DIRECT or LAN
-        // connect has no browser row, and a client that guessed would either
-        // withhold a required proof or emit one to a host that never asked -- and
-        // the second of those is exactly the emission `lobby_password.h` forbids.
+        // The joiner is told what is required: a direct or LAN connect has no browser row, and a
+        // guess would either withhold a required proof or emit one to a host that never asked.
         if (!session.LobbyPassword().empty()) out.flags |= kAuthFlagPasswordRequired;
         if (!peer_identity::RandomBytes(out.nonce, sizeof(out.nonce))) {
-            // No randomness means no freshness, and a predictable nonce is worse
-            // than no exchange because it LOOKS like one. Refuse loudly.
+            // No randomness means no freshness, and a predictable nonce is worse than no exchange,
+            // since it looks like one.
             UE_LOGE("peer_admission: the OS refused randomness -- cannot challenge");
             r.reason = "host has no randomness";
             return r;
@@ -315,7 +232,7 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
         std::memcpy(row.nonce, out.nonce, sizeof(row.nonce));
         row.flags = out.flags;
 
-        // We prove ourselves FIRST, over the CLIENT's nonce.
+        // The host proves itself first, over the client's nonce.
         Blob blob;
         BuildBlob(blob, kDirHost, peer_identity::LocalPublicKey(), row.remotePub,
                   hello.nonce, out.flags, out.nonce);
@@ -343,9 +260,8 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
             r.reason = "malformed AuthProof";
             return r;
         }
-        // The key is re-read from the connection rather than trusted from the
-        // Hello step: it costs one call and it means the decision below rests on
-        // what GNS says NOW about the socket in hand.
+        // The key is re-read from the connection rather than trusted from the hello, so the
+        // decision rests on what GNS says now about the socket in hand.
         PubKey nowPub{};
         if (!RemoteKeyOf(hConn, nowPub) || nowPub != row.remotePub) {
             r.reason = "peer identity changed mid-exchange";
@@ -364,26 +280,19 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
             return r;
         }
 
-        // ---- THE LOBBY PASSWORD ------------------------------------------------
-        // AFTER the identity, never before: the tag is bound to the peer's public
-        // key, so checking it against a key that has not been proved would be
-        // checking it against a claim.
+        // The lobby password, after the identity and never before: the tag is bound to the peer's
+        // public key, and checked against an unproved key it would be checked against a claim.
         const std::string& want = session.LobbyPassword();
         if (!want.empty()) {
             if (!proof.hasPw) {
-                // A DISTINCT REASON, because the client shows this one to a
-                // person. "wrong password" for a client that sent none would send
-                // them looking for a typo in a box they never filled in.
+                // A distinct reason, shown to a person: "wrong password" for a client that sent
+                // none would send them looking for a typo in a box they never filled in.
                 r.reason = "this server needs a password";
                 return r;
             }
-            // THE BOUND, WHERE ONE EXISTS. Checked before the HMAC so a flood costs
-            // the comparison and not the crypto -- but a MISSING bucket (no usable
-            // address, or a full table) is not a refusal: see the contract above.
-            // Both of those used to deny honest joiners while admitting nobody.
-            // THE KEY: the real address where there is one, otherwise the key this peer
-            // has just PROVED it holds. Never nothing, and never shared -- see the
-            // contract above for why both halves of that matter.
+            // The bound, checked before the HMAC so a flood costs the comparison and not the
+            // crypto; a missing bucket (no usable address, a full table) is not a refusal. The key
+            // is the real address where there is one, otherwise the key this peer just proved.
             uint8_t key[16]{};
             GuessKeyKind kind = GuessKeyKind::Addr;
             if (!RemoteAddrOf(hConn, key)) {
@@ -406,9 +315,8 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
                     want, peer_identity::LocalPublicKey(), g_hostPw.key);
                 g_hostPw.forPassword = want;
                 if (!g_hostPw.valid) {
-                    // We cannot check, so we cannot admit. Refusing everyone is the
-                    // correct failure for a lock whose key we cannot compute -- the
-                    // alternative is a lobby that silently stops being locked.
+                    // Unable to check, unable to admit: the alternative is a lobby that silently
+                    // stops being locked.
                     UE_LOGE("peer_admission: could not derive the lobby key -- refusing "
                             "every join rather than silently unlocking the session");
                     r.reason = "the host could not check the password";
@@ -445,20 +353,13 @@ HostResult HostOnPendingReliable(Session& session, int pendIdx, uint32_t hConn,
     }
 
     default:
-        // Anything else before admission is a protocol violation by this build's
-        // own client, which sends AuthHello and then nothing until it is seated.
-        // Refusing rather than dropping is deliberate: a peer that is never going
-        // to be admitted should learn so, exactly as the protocol-mismatch close
-        // beside this one already does, and a silent drop is what made the first
-        // admission gate deadlock every honest join.
+        // Anything else before admission is a protocol violation (this build's client sends the
+        // hello and then nothing until seated). Refused rather than dropped, so a peer that will
+        // never be admitted learns so; a silent drop once deadlocked every honest join.
         r.reason = "spoke before proving its identity";
         return r;
     }
 }
-
-// ---------------------------------------------------------------------------
-// CLIENT
-// ---------------------------------------------------------------------------
 
 void ClientReset() { g_client = ClientRow{}; }
 
@@ -476,36 +377,22 @@ bool ClientOnConnected(Session& session, uint32_t hConn) {
         return false;
     }
 
-    // THE BINDING, AND WITHOUT IT THE WHOLE EXCHANGE PROVES NOTHING ON THIS SIDE
-    // (security A65, fixed 2026-08-31).
-    //
-    // The key above comes off the SOCKET. Verifying the host against it -- which is
-    // all this module used to do -- asks "does whoever answered hold the key
-    // whoever answered presented", and every host on earth passes that. The failure
-    // message even said "the host did not prove the identity it ADVERTISED", while
-    // nothing advertised reached the verifier: `hostIdentity` appeared nowhere in
-    // this file. It is the project's own false-security-comment class, in security
-    // code.
-    //
-    // What we came here for is `cfg.hostIdentity` -- the `gen:<64 hex>` the master
-    // returned from /v1/join, or the one a friend put in a direct invite. Compared
-    // BYTE-WISE after parsing, never as strings.
-    //
-    // AN EMPTY ADVERTISED IDENTITY IS NOT A FAILURE and must not become one: the LAN
-    // and plain-UDP lanes dial an address, not a name, and there is nothing to bind
-    // to. Those lanes are exactly where a password's own binding has to carry the
-    // weight instead, which is why this returns a fact rather than a verdict.
+    // The binding, without which the exchange proves nothing on this side. The key above comes off
+    // the socket, and verifying the host against it asks only whether whoever answered holds the
+    // key whoever answered presented, which every host passes. What this is for is the advertised
+    // identity (the `gen:<64 hex>` the master returned, or the one in a direct invite), compared
+    // byte-wise after parsing. An empty advertised identity is not a failure: the LAN and plain-UDP
+    // lanes dial an address, and there is nothing to bind to, which is where the password's own
+    // binding carries the weight instead.
     g_client.drill = coop::config::ResolveEnum(coop::config_registry::rows::auth_drill);
 
     const std::string& advertised = session.AdvertisedHostIdentity();
     peer_identity::PubKey want{};
     bool haveWant = false;
     if (g_client.drill == "mismatch") {
-        // SYNTHESIZED, because the drill must be runnable on the lane the rig
-        // actually uses. `mp.py authdrill` is a LAN run and LAN advertises no
-        // identity at all, so an arm that only fired when one was present would be
-        // green on every rig we own -- an instrument blind to the axis it grades.
-        // One flipped bit is a key that provably is not the one on this socket.
+        // Synthesised: the drill must run on the LAN lane the rig uses, which advertises no
+        // identity, and an arm that fired only with one present would be green on every rig. One
+        // flipped bit is a key that provably is not the one on this socket.
         want = g_client.hostPub;
         want[0] ^= 0x01;
         haveWant = true;
@@ -531,10 +418,7 @@ bool ClientOnConnected(Session& session, uint32_t hConn) {
         }
         g_client.bound = true;
     } else {
-        // THE SECOND SENTENCE USED TO SAY "Nothing password-derived may be sent to it",
-        // and it fired on every direct connect. That stopped being true the moment a
-        // self-addressed lane was allowed to carry a password, so it is now stated as the
-        // conditional it actually is.
+        // Stated as the conditional it is: a self-addressed lane may carry a password.
         UE_LOGW("peer_admission: no advertised host identity on this lane -- the exchange "
                 "can prove the host holds its own key, but not that it is the host you "
                 "meant. A password may be sent only if this destination was named locally.");
@@ -564,8 +448,7 @@ bool ClientOnReliable(Session& session, uint32_t hConn, ReliableKind kind,
         return true;
     }
     if (g_client.proved) {
-        // A second challenge would re-open a settled decision on a connection we
-        // have already committed to.
+        // A second challenge would re-open a settled decision on a committed connection.
         *outClose = "duplicate AuthChallenge";
         return true;
     }
@@ -576,19 +459,17 @@ bool ClientOnReliable(Session& session, uint32_t hConn, ReliableKind kind,
     AuthChallengePayload ch{};
     std::memcpy(&ch, payload, sizeof(ch));
 
-    // Verify the HOST over OUR nonce, against the identity bytes on this socket.
+    // The host verified over our nonce, against the identity bytes on this socket.
     Blob blob;
     BuildBlob(blob, kDirHost, g_client.hostPub, peer_identity::LocalPublicKey(),
               g_client.nonce, ch.flags, ch.nonce);
     Sig hostSig{};
     std::memcpy(hostSig.data(), ch.sig, hostSig.size());
     if (!peer_identity::VerifyBlob(g_client.hostPub, blob, sizeof(blob), hostSig)) {
-        // TWO REASONS, because they are two different events and telling them apart
-        // is the whole of A65. BOUND means we already checked this key IS the one we
-        // were sent to, so a bad signature here is a host that cannot back its own
-        // advertised name. UNBOUND means nobody advertised anything, so all this
-        // could ever have shown is that the answerer holds the key it presented --
-        // which is what the old, single message claimed either way.
+        // Two reasons, two events: bound means this key was already checked to be the one we were
+        // sent to, so a bad signature is a host that cannot back its advertised name; unbound means
+        // nobody advertised anything, and all this could show is that the answerer holds the key it
+        // presented.
         *outClose = g_client.bound
                         ? "the host did not prove the identity it advertised"
                         : "the host did not prove the key it presented (no identity was "
@@ -596,7 +477,7 @@ bool ClientOnReliable(Session& session, uint32_t hConn, ReliableKind kind,
         return true;
     }
 
-    // ...then prove ourselves over THEIRS.
+    // Then our proof over theirs.
     AuthProofPayload out{};
     Blob mine;
     BuildBlob(mine, kDirClient, g_client.hostPub, peer_identity::LocalPublicKey(),
@@ -604,46 +485,19 @@ bool ClientOnReliable(Session& session, uint32_t hConn, ReliableKind kind,
     const Sig sig = peer_identity::SignBlob(mine, sizeof(mine));
     std::memcpy(out.sig, sig.data(), sig.size());
 
-    // ---- THE LOBBY PASSWORD, IF THIS HOST ASKED FOR ONE ---------------------
-    //
-    // THE BINDING GATE IS THE SECURITY, NOT THE KDF. A tag is a value derived
-    // from a low-entropy secret; hand one to a host we have not established is
-    // the host we were SENT to, and that host can grind it offline for as long
-    // as it likes, at which point nothing we choose here matters. So an unbound
-    // lane does not get a weaker proof or a warning -- it gets nothing, and the
-    // join fails with a sentence that says why (`lobby_password.h`; A65 is what
-    // makes `bound` mean anything).
+    // The lobby password, if this host asked for one. The binding gate is the security, not the
+    // derivation: a tag is derived from a low-entropy secret, and handed to a host not established
+    // as the one we were sent to it can be ground offline, so an unbound lane gets nothing and the
+    // join fails with a sentence that says why.
     if (ch.flags & kAuthFlagPasswordRequired) {
-        // BOUND, **OR** THE PLAYER TYPED THE ADDRESS THEMSELVES (user decision,
-        // 2026-09-01: "Вводит адрес и порт... или заполняет поле пароля если он был выдан
-        // хостом"). Until then this refused, and a locked host was unjoinable by address
-        // from every shipped UI -- which is not a safety property, it is a missing feature
-        // wearing one.
-        //
-        // WHY THIS IS NOT THE GATE COLLAPSING. The rule it amends (the A2 design pass) is
-        // that a low-entropy secret must never enter a signature whose other terms the
-        // verifier controls -- gated behind binding, or PAKE-shaped, or not a password.
-        // Binding answers "is this the host the MASTER sent me to", and it is exactly the
-        // right question when a third party named the destination. On a typed address
-        // there is no third party: the player IS the authority on where they meant to go,
-        // and there is nothing further to bind against.
-        //
-        // WHO CAN ACTUALLY EXPLOIT IT, measured rather than assumed: only whoever answers
-        // at the address this machine named instead of the intended host, which requires a
-        // network position this branch is not what stands between them and. The transport's
-        // attacker model is recorded in the security register (not in this tree); the part
-        // that decides THIS branch is that refusing here does not deny that position
-        // anything it does not already reach.
-        //
-        // What refusing DID buy is narrower, and worth naming because it is a real cost:
-        // the TYPO case -- a mistyped address answered by an unrelated host, which then
-        // learns a six-character password to a lobby it cannot find. That is the honest
-        // price of the feature, and it is stated rather than hidden.
-        //
-        // NOTHING ELSE RELAXES. The tag is still bound to the key that answered, so it is
-        // not replayable to the real host; the host still verifies identity BEFORE looking
-        // at the password; and the host's 10-guesses-per-60s bucket still bounds online
-        // guessing. What changed is one branch, on one lane, for one reason.
+        // Bound, or the player typed the address themselves. Binding answers "is this the host the
+        // master sent me to", the right question when a third party named the destination; on a
+        // typed address the player is the authority on where they meant to go, and there is nothing
+        // further to bind against. The cost is the typo case: a mistyped address answered by an
+        // unrelated host, which learns a six-character password to a lobby it cannot find. Nothing
+        // else relaxes: the tag is bound to the key that answered, so it cannot be replayed to the
+        // real host; the host verifies identity before the password; and its guess bucket still
+        // bounds online guessing.
         if (!g_client.bound && !session.DestinationIsSelfAddressed()) {
             *outClose = "this server wants a password, but nothing told us which host we "
                         "were dialling -- refusing to send anything derived from it";
@@ -651,8 +505,8 @@ bool ClientOnReliable(Session& session, uint32_t hConn, ReliableKind kind,
         }
         const std::string& pw = session.LobbyPassword();
         if (pw.empty()) {
-            // NOT A PROTOCOL ERROR -- a person forgot, or was never given one. The
-            // sentence is what the join screen shows them.
+            // Not a protocol error: a person forgot, or was never given one. The join screen shows
+            // this line.
             *outClose = "this server needs a password";
             return true;
         }
@@ -668,9 +522,8 @@ bool ClientOnReliable(Session& session, uint32_t hConn, ReliableKind kind,
         out.hasPw = 1;
     }
 
-    // THE DRILL, and it lives on this side ONLY. The host's gate has no knob to
-    // turn: a bypass there would make the drill's verdict a statement about the
-    // bypass. Here it sabotages a real proof travelling the real path.
+    // The drill, on this side only: a knob on the host's gate would make the verdict a statement
+    // about the bypass. Here it sabotages a real proof on the real path.
     const std::string& drill = g_client.drill;  // resolved at ClientOnConnected
     if (drill == "silent") {
         UE_LOGW("peer_admission: DRILL 'silent' -- verified the host and then sending "
@@ -691,9 +544,8 @@ bool ClientOnReliable(Session& session, uint32_t hConn, ReliableKind kind,
         return true;
     }
     if (drill == "corrupt") {
-        // A corrupted proof must NOT set `proved`: if the host somehow seated us
-        // anyway, the client's own AssignPeerSlot gate must be the second thing
-        // that refuses -- the drill tests both halves or it tests one.
+        // A corrupted proof must not set `proved`: were the host to seat us anyway, the client's
+        // own AssignPeerSlot gate must be the second refusal.
         return true;
     }
     g_client.proved = true;
@@ -702,9 +554,5 @@ bool ClientOnReliable(Session& session, uint32_t hConn, ReliableKind kind,
             peer_identity::GuidForPublicKey(g_client.hostPub).c_str());
     return true;
 }
-
-// ---------------------------------------------------------------------------
-// SELFTEST
-// ---------------------------------------------------------------------------
 
 }  // namespace coop::net::peer_admission
