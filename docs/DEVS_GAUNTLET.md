@@ -46,7 +46,7 @@ bar this project builds to, and they said they would endorse a mod that reaches 
 | "the moment items came into play the game fell apart" | Items are the entity-identity problem. The answer is one identity per actor assigned at birth, a host-owned name across every transition, and a join that streams the host's world and reconciles the rest ([props.md](props.md), [piles.md](piles.md), [join.md](join.md)). |
 | "people disconnected" | Sessions run on a reliable transport with ordered channels, heartbeats and a clean rejoin. A disconnect on desync is a symptom of state the peers stopped sharing, and every lane names its owner. |
 | "the security aspect" | Taken as a design position rather than a feature: every inbound payload is length-checked and range-validated at the trust boundary, a client acts by intent and never authors host state, and what the mod does and does not protect is stated on [../SECURITY.md](../SECURITY.md). |
-| "safely and consistently, we'll happily endorse" | The acceptance bar. Consistency is a verification culture: nothing is called working on a smoke test alone, every claim carries its evidence, and [STATUS.md](STATUS.md) says how well each system is established. |
+| "safely and consistently, we'll happily endorse" | The acceptance bar. Consistency is measured system by system: every claim in these docs names its evidence, and [STATUS.md](STATUS.md) says how far each system is. |
 
 ## The hard case: joining during an event
 
