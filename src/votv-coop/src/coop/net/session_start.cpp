@@ -1,16 +1,8 @@
-// coop/net/session_start.cpp -- Session lifecycle + topology dispatch.
-//
-// Extracted from session.cpp (2026-06-05) to bring that file back under the
-// 800-LOC soft cap before the P2P branch lands, and to give the topology
-// dispatch a clean home. Holds the GNS one-time init, the status-callback
-// bridge, and Session::Start / Session::Stop.
-//
-// Topology dispatch lives in Start(): today only LanDirect (CreateListenSocketIP
-// host / ConnectByIPAddress client). The zero-open-ports P2P branch
-// (CreateListenSocketP2P / ConnectP2PCustomSignaling + a signaling client) is
-// added here as a sibling -- everything downstream (PollGroup, status callback,
-// receive loop, relay, lanes) is topology-blind and stays in the other TUs.
-// See research/findings/network/votv-zero-ports-connectivity-ladder-design-2026-06-05.md.
+// coop/net/session_start.cpp -- the session lifecycle and the topology dispatch: the one-time
+// GNS init, the status-callback bridge, Session::Start and Session::Stop. Start is the only
+// place the transport differs (a direct IP listen or dial, or the zero-open-ports P2P path with
+// a signaling client); everything downstream operates on connection handles and is
+// topology-blind.
 
 #include "coop/net/session.h"
 
@@ -42,20 +34,16 @@ namespace coop::net {
 
 namespace {
 
-// P2P virtual port: an internal demux key on the P2P listen/connect calls. One
-// listen socket per host -> 0 on both ends (host listens on it, client dials it).
+// The P2P virtual port, an internal demux key: one listen socket per host, so 0 on both ends.
 constexpr int kP2PVirtualPort = 0;
 
 
-// The single live Session, published for the GNS global status callback to
-// route back into (GNS callbacks are C function pointers with no user-data on
-// the GLOBAL callback). Set in Start(), cleared in Stop() and on every Start()
-// failure path.
+// The single live Session, published for the GNS global status callback, which is a C function
+// pointer with no user data. Set in Start, cleared in Stop and on every Start failure.
 std::atomic<Session*> g_session{nullptr};
 
-// GNS library init is process-global + refcounted by GNS itself; we gate our
-// one call behind this latch so repeated Start()/Stop() cycles (test harnesses
-// reuse the Session) don't re-init.
+// The GNS library init is process-global; one call, behind a latch, so repeated Start and Stop
+// cycles do not re-init.
 std::mutex g_initMutex;
 bool g_inited = false;
 
@@ -67,30 +55,20 @@ bool EnsureGnsInit() {
         UE_LOGE("net: GameNetworkingSockets_Init failed: %s", err);
         return false;
     }
-    // Raise the send-rate ceiling. GNS STOCK defaults SendRateMin/Max to 256 KB/s -- which a coop
-    // session's RELIABLE bursts saturate: the ~368 KB connect-snapshot, and the world-change
-    // re-seed that re-sends the full snapshot whenever the host's churning world mass-purges
-    // props. At 256 KB/s each burst takes ~0.8-1.4 s of fully-saturated outbound, during which
-    // the unreliable POSE stream is starved of bandwidth -- so the REMOTE PLAYER lags while a
-    // client's prop edits (which never send big reliable bursts that direction) stay real-time
-    // (the exact user-reported asymmetry; measured 2026-06-06: net-diag SEND BACKLOG
-    // pendRel=204KB @ sendRate=262144B/s, puppet trail spiking to 256 cm).
-    // EFFECTIVE-RATE MECHANISM (measured 2026-08-23, snp.cpp:286 + :4243-4276): there is NO rate
-    // adaptation in this GNS build -- the estimate is written once at SNP init (4380 B / ping)
-    // and then only clamped into [Min, Max], never updated (the BBR probe is a FIXME). Any
-    // internet ping > ~4.4 ms therefore runs at Min = 1 MB/s FOREVER (field: 180/180 net-diag
-    // samples at 1048576 B/s); sub-ms LAN ping runs at Max. A host uplink slower than Min is
-    // OVERDRIVEN with pure loss + ARQ retransmits -- the per-connection net.sendrate_kbs knob is
-    // the remedy, and the overdrive drill spec lives in
-    // votv-reliable-delivery-guarantee-DESIGN-2026-08-23.md par.7.3. Global default -> every
-    // connection (LanDirect + P2P). [P2P-over-slow-internet follow-up: make Min topology-aware
-    // so a genuinely thin uplink isn't forced to 1 MB/s.]
+    // The send-rate ceiling raised. GNS stock defaults the send rate to 256 KB/s, which a session's
+    // reliable bursts saturate (the connect snapshot, the re-seed that re-sends it when the host's
+    // world mass-purges props); during a saturated burst the unreliable pose stream is starved, so
+    // the remote player lags while a client's own edits stay real-time. This GNS build has no rate
+    // adaptation: the estimate is written once at connection init from the ping and then only
+    // clamped into the range, so any internet ping above a few milliseconds runs at the minimum
+    // for the session's life, and a host uplink slower than the minimum is overdriven with pure
+    // loss and retransmits; the per-connection net.sendrate_kbs knob is the remedy. Global, so
+    // every connection on both topologies.
     if (auto* utils = SteamNetworkingUtils()) {
         utils->SetGlobalConfigValueInt32(k_ESteamNetworkingConfig_SendRateMin, 1 * 1024 * 1024);
         utils->SetGlobalConfigValueInt32(k_ESteamNetworkingConfig_SendRateMax, 25 * 1024 * 1024);
-        // Overdrive-drill knob (design doc par.7.3): simulate a thin OUTBOUND link with GNS's
-        // FakeRateLimit_Send policer (process-global; silently DROPS packets beyond the token
-        // budget -- lowlevel.cpp:1885-1907). 0 = off (the shipped default).
+        // The overdrive drill knob: a thin outbound link simulated with GNS's send policer, which
+        // silently drops packets beyond the token budget. 0 is off, the shipped default.
         const long fakeKbs =
             coop::config::ResolveInt(coop::config_registry::rows::net_fakelink_kbs);
         if (fakeKbs > 0) {
@@ -125,93 +103,69 @@ bool Session::Start(const Config& cfg) {
     cfg_ = cfg;
     net_stats::ResetSession();  // a new session's traffic totals start at zero
 
-    // PR-FOUNDATION-1b v16: mint this peer's per-process session epoch.
-    // Non-zero is required (0 is the receiver-side "not yet latched"
-    // sentinel in expectedEpoch_), so re-roll on the 1/2^32 zero. Random
-    // device gives us a value that's unpredictable to off-path attackers
-    // and effectively guaranteed to differ between the previous and next
-    // generation after a disconnect/reconnect cycle (vs the v14/v15
-    // monotonic 8-bit counter that aliased at 256 cycles).
+    // This peer's per-process session epoch, minted non-zero (0 is the receiver's "not yet latched"
+    // sentinel) from a random device, so it is unpredictable off-path and differs between the
+    // generations of a disconnect and reconnect cycle.
     {
         std::random_device rd;
         do { ownEpoch_ = rd(); } while (ownEpoch_ == 0);
     }
-    // Clear any stale latches from a previous Start()/Stop() cycle on
-    // this same Session instance (test harnesses reuse the object).
+    // Stale latches from a previous cycle on this Session instance cleared.
     for (int i = 0; i < kMaxPeers; ++i) expectedEpoch_[i] = 0;
-    // Arc A T8: same reasoning for the per-slot occupancy generations -- a reused
-    // Session must not open with slots that look occupied. The counter is NOT
-    // reset: generations stay unique across Start()/Stop() cycles within the
-    // process, so a stale captured token can never alias a fresh occupant.
+    // The per-slot occupancy generations too: a reused Session must not open with slots that look
+    // occupied. The counter is not reset, so generations stay unique across cycles and a stale
+    // captured token can never alias a fresh occupant.
     for (int i = 0; i < kMaxPeers; ++i) peerGenBySlot_[i].store(0, std::memory_order_relaxed);
-    // Clear stale LOCAL-stream "has published" flags too. The net thread isn't
-    // spawned yet (no concurrency here), so no lock needed -- same as the epoch
-    // clear above. Without this, a Session reused after a Stop() that happened
-    // mid-ragdoll (or mid-hold) would carry hasLocalRagdoll_/hasLocalProp_=true
-    // into the new session and the first net-thread send would fan out the PRIOR
-    // session's stale pelvis/prop pose before the game thread's first pump tick
-    // republishes current state. (v22 fixes the new ragdoll flag + the pre-existing
-    // pose/prop ones at the root -- a fresh session has published nothing yet.)
+    // The local-stream "has published" flags too (no lock: the net thread is not spawned yet). A
+    // Session reused after a Stop mid-ragdoll would otherwise fan out the prior session's pelvis or
+    // prop pose on its first send, before the game thread republishes.
     hasLocal_ = false;
     hasLocalProp_ = false;
     hasLocalRagdoll_ = false;
 
     if (!EnsureGnsInit()) return false;
 
-    // Install THIS install's durable identity into GNS before any socket exists.
-    // The public key IS the identity (`[V]` GNS's GenericBytes identity is exactly
-    // 32 bytes), so from here on every connection this process makes or accepts
-    // carries a name that its holder can be asked to prove -- which is what
-    // coop/net/peer_admission does at the Connected edge. A failure here is FATAL
-    // to the session on purpose: starting anyway would present an identity we
-    // cannot sign for, and every peer would rightly refuse us.
+    // This install's durable identity goes into GNS before any socket exists: the public key is the
+    // identity (GNS's 32-byte GenericBytes form), so every connection this process makes or
+    // accepts carries a name its holder can be asked to prove at the Connected edge. A failure is
+    // fatal to the session: starting anyway would present an identity we cannot sign for.
     if (!peer_identity::InstallInto(SteamNetworkingSockets())) {
         UE_LOGE("net: refusing to start -- the durable identity could not be installed");
         return false;
     }
 
-    // Machine-assert the link classifier ONCE per process, here rather than at a
-    // module Install: this is the first point GNS is initialised, and the two
-    // kinds it proves (Direct, Relayed) are unreachable by any LAN drill. A
-    // function-local static makes it exactly-once and thread-safe; the smoke
-    // greps its one PASS line.
+    // The link classifier's self-test, once per process, here because this is the first point GNS
+    // is initialised, and the two kinds it proves (direct, relayed) are unreachable by any LAN
+    // drill. A function-local static makes it exactly once; the smoke greps its one PASS line.
     static const bool kLinkClassifyOk = RunLinkClassifySelftest();
     (void)kLinkClassifyOk;
 
-    // ARC B, same discipline: the nickname arbiter's policy is a pure function
-    // (no ledger, no thread affinity), and its interesting cases -- a suffix
-    // displacing stem characters at the 20-char cap, a variant colliding with a
-    // name a DIFFERENT player already holds, a kept "Pelmentor2" meeting another
-    // "Pelmentor2" -- need four peers with chosen names to stage on a LAN and
-    // cost nothing to assert here.
+    // The nickname arbiter's self-test, the same discipline: its policy is a pure function, and its
+    // interesting cases (a suffix displacing stem characters at the cap, a variant colliding with a
+    // name another player holds) would need four peers with chosen names to stage.
     static const bool kNickArbiterOk = coop::nickname_arbiter::RunNicknameArbiterSelftest();
     (void)kNickArbiterOk;
 
-    // ARC D, same reason: the codec's interesting cases are an ill-formed byte
-    // sequence a peer would have to send deliberately, and caps landing mid-
-    // character -- neither is stageable from a LAN drill, both are one memcmp here.
+    // The UTF-8 codec's self-test: its interesting cases are an ill-formed byte sequence a peer
+    // would have to send deliberately, and a cap landing mid-character.
     static const bool kCodecOk = coop::text::RunUtf8CodecSelftest();
     (void)kCodecOk;
 
-    // ARC D2: the repertoire table is GENERATED, and a generated table is a
-    // claim about a build step nobody watches. These assert its shape (the
-    // binary search is only correct on a sorted, disjoint table) and the four
-    // membership facts the fold depends on -- which is the difference between
-    // "the constant compiled" and "the constant says what we think".
+    // The repertoire table's self-test: the table is generated, and a generated table is a claim
+    // about a build step nobody watches. It asserts the shape the binary search needs (sorted,
+    // disjoint) and the membership facts the fold depends on.
     static const bool kRepertoireOk = coop::text::RunRepertoireSelftest();
     (void)kRepertoireOk;
 
-    // ...and the case table beside it, generated in the same run and asserted for
-    // the same reason. Its rows are POSITIVE: a generated table that arrives
-    // EMPTY folds nothing, and "no two names collided" is also what a healthy
-    // lobby looks like, so there is no negative symptom to grep for.
+    // The case table beside it, generated in the same run. Its rows are positive: a generated table
+    // that arrives empty folds nothing, and "no two names collided" is also what a healthy lobby
+    // looks like, so there is no negative symptom to grep for.
     static const bool kCaseFoldOk = coop::text::RunCaseFoldSelftest();
     (void)kCaseFoldOk;
 
-    // The receive-boundary novelty cap (W11). Its interesting case is a peer
-    // sending a deliberately diverse alphabet, which no LAN drill stages -- and
-    // its own first draft passed by construction for every budget above 32, so
-    // it is asserted here rather than trusted.
+    // The receive-boundary novelty cap's self-test: its interesting case is a peer sending a
+    // deliberately diverse alphabet, which no LAN drill stages, and its first draft passed by
+    // construction for every budget above 32.
     static const bool kNoveltyOk = coop::text::RunNoveltyLedgerSelftest();
     (void)kNoveltyOk;
 
@@ -219,23 +173,19 @@ bool Session::Start(const Config& cfg) {
     SteamNetworkingUtils()->SetGlobalCallback_SteamNetConnectionStatusChanged(
         &ConnStatusTrampoline);
 
-    // Topology dispatch -- the ONLY place the transport differs. Everything
-    // downstream (net thread, PollGroup receive, session_relay fan-out, lanes,
-    // epoch latch, inbox drain) is topology-blind: it operates on
-    // HSteamNetConnection handles regardless of how they were established.
+    // The topology dispatch, the only place the transport differs; the net thread, the poll-group
+    // receive, the relay, the lanes, the epoch latch and the inbox drain operate on connection
+    // handles regardless of how they were established.
     const bool ok = (cfg_.topology == Topology::P2P) ? StartP2P() : StartLanDirect();
     if (!ok) {
         g_session.store(nullptr, std::memory_order_release);
         return false;
     }
 
-    // NOTHING CARRIES ACROSS FROM A PREVIOUS ATTEMPT. `hostCloseReason_` had no clear
-    // anywhere, and since 2026-09-01 it is FIRST-WRITER-WINS -- so a reason parked by an
-    // attempt whose consumers never fired (an env / .bat / autotest client, where neither
-    // `join_progress::Active()` nor `g_wasConnected` is true) would be shown to the player
-    // as the explanation for the NEXT browser join that failed. Before first-writer-wins the
-    // three admission sites overwrote unconditionally and masked it. (Post-ship audit,
-    // 2026-09-01.)
+    // Nothing carries across from a previous attempt: the host close reason is first-writer-wins,
+    // so a reason parked by an attempt whose consumers never fired (an env or autotest client)
+    // would otherwise be shown to the player as the explanation for the next browser join that
+    // failed.
     { std::lock_guard<std::mutex> lk(hostCloseMutex_); hostCloseReason_.clear(); }
     state_.store(ConnState::Handshaking);
     for (auto& r : rttMsBySlot_) r.store(-1, std::memory_order_relaxed);  // per-slot RTT reset
@@ -248,9 +198,8 @@ bool Session::Start(const Config& cfg) {
     return true;
 }
 
-// rung 0/1: the original IP transport. Host binds a UDP listen socket on
-// cfg_.port (port-forwarded or LAN-reachable); client dials cfg_.peerIp:port.
-// Returns false on failure; the caller (Start) clears g_session + returns false.
+// The direct IP transport: the host binds a UDP listen socket on the configured port, the
+// client dials the peer address. False on failure; Start clears the published session.
 bool Session::StartLanDirect() {
     auto* sockets = SteamNetworkingSockets();
     if (cfg_.role == Role::Host) {
@@ -264,9 +213,8 @@ bool Session::StartLanDirect() {
         }
         hListen_.store(hListen);
 
-        // PR-4: a PollGroup lets the net thread drain messages from ALL
-        // accepted client connections in one call. AcceptConnection adds the
-        // new client to this group via SetConnectionPollGroup.
+        // A poll group lets the net thread drain messages from every accepted connection in one
+        // call; AcceptConnection adds each new client to it.
         const HSteamNetPollGroup hPoll = sockets->CreatePollGroup();
         if (hPoll == k_HSteamNetPollGroup_Invalid) {
             UE_LOGE("net: CreatePollGroup failed");
@@ -290,12 +238,9 @@ bool Session::StartLanDirect() {
             UE_LOGE("net: ConnectByIPAddress(%s:%u) failed", cfg_.peerIp.c_str(), cfg_.port);
             return false;
         }
-        // Slot 0 = host (per the players::Registry indexing -- on a client,
-        // the host occupies slot 0).
-        // GEN: none -- a CLIENT never mints an occupancy generation. The
-        // generation is host-side authority over slot recycling; a client's
-        // roster is entirely wire-driven and its slots stay permanently 0. If a
-        // client minted here, its own reconcile would fight the wire.
+        // Slot 0 is the host. No occupancy generation: a client never mints one, since the
+        // generation is the host's authority over slot recycling and a client's roster is
+        // wire-driven; minting here would fight the wire.
         peerConns_[0].store(hConn);
         UE_LOGI("net: client dialed %s:%u (hConn=0x%08x slot=0)",
                 cfg_.peerIp.c_str(), cfg_.port, static_cast<unsigned>(hConn));
@@ -303,47 +248,38 @@ bool Session::StartLanDirect() {
     return true;
 }
 
-// rungs 1-3: the zero-open-ports P2P transport. Sets our signaling identity,
-// applies the ICE (STUN/TURN) config, stands up the signaling-server transport,
-// then host CreateListenSocketP2P / client ConnectP2PCustomSignaling. ICE then
-// hole-punches (rung 2) or relays via TURN (rung 3). Once the connection handle
-// exists, everything downstream is identical to LanDirect.
+// The zero-open-ports P2P transport: the ICE configuration (STUN and TURN), the
+// signaling-server transport, then a P2P listen (host) or a custom-signaling connect (client).
+// ICE hole-punches or relays through TURN; once the connection handle exists, everything
+// downstream is as for the direct transport.
 bool Session::StartP2P() {
     auto* sockets = SteamNetworkingSockets();
 
-    // 1) Our concrete signaling identity -- ALREADY INSTALLED, by Start()'s
-    //    peer_identity::InstallInto. There used to be a second ResetIdentity here
-    //    that installed the master's per-session `c<16hex>` / `h<16hex>` mint, and
-    //    it ran AFTER the durable install and silently replaced it: on P2P, our
-    //    primary transport, the key identity never reached the wire at all, so the
-    //    admission challenge would have had nothing to verify against and every
-    //    P2P join would have failed the moment the challenge shipped. One identity
-    //    now serves both jobs (rendezvous + proof) -- see
-    //    peer_identity::LocalIdentityString() for why that is the right way round
-    //    and what it costs.
+    // 1. The signaling identity is the durable identity Start installed. One identity serves both
+    // the rendezvous and the proof: a second, per-session identity installed here once replaced the
+    // durable one and the admission challenge would have had nothing to verify against on P2P.
     if (peer_identity::LocalIdentityString().empty()) {
         UE_LOGE("net: P2P requires the durable identity -- it was not installed");
         return false;
     }
 
-    // 2) ICE config (STUN/TURN + which candidate types to share). Global config
-    //    values -- one session per process.
+    // 2. The ICE configuration: global values, one session per process.
     IceConfig ice;
     ice.stunList = cfg_.stunList;
     ice.turnList = cfg_.turnList;
     ice.turnUser = cfg_.turnUser;
     ice.turnPass = cfg_.turnPass;
-    // ICE candidate policy from config (default All = share host+reflexive+relay).
-    // "relay" forces the TURN relay path (privacy, or to validate coturn
-    // end-to-end); "disable" = no ICE; "default" = leave GNS's default.
+    // The candidate policy: all (host, reflexive and relay) by default; relay-only forces the TURN
+    // path (privacy, or to validate the relay end to end); disable turns ICE off; default leaves
+    // GNS's own.
     if (cfg_.iceMode == "relay")        ice.enable = IceEnable::RelayOnly;
     else if (cfg_.iceMode == "disable") ice.enable = IceEnable::Disable;
     else if (cfg_.iceMode == "default") ice.enable = IceEnable::Default;
     else                                ice.enable = IceEnable::All;   // "" / "all"
     ApplyGlobalIceConfig(ice);
 
-    // 3) Signaling transport (out-of-band rendezvous for the opaque ICE blobs).
-    //    Constructed AFTER ResetIdentity so its greeting carries our identity.
+    // 3. The signaling transport, the out-of-band rendezvous for the opaque ICE blobs; constructed
+    // after the identity install, so its greeting carries our identity.
     if (cfg_.signalingUrl.empty()) {
         UE_LOGE("net: P2P requires a signalingUrl");
         return false;
@@ -358,7 +294,7 @@ bool Session::StartP2P() {
         return false;
     }
 
-    // 4) Listen (host) / Connect (client).
+    // 4. Listen (host) or connect (client).
     if (cfg_.role == Role::Host) {
         const HSteamListenSocket hListen =
             sockets->CreateListenSocketP2P(kP2PVirtualPort, 0, nullptr);
@@ -391,28 +327,19 @@ bool Session::StartP2P() {
         }
         SteamNetworkingIdentity hostId;
         hostId.Clear();
-        // ParseString, not SetGenericString: a host publishes its durable identity
-        // now, which renders as `gen:<64 hex>` -- 68 chars, so SetGenericString
-        // would refuse it outright (its cap is 31) and, if it fit, would dial the
-        // literal text rather than the key.
-        //
-        // NO FALLBACK TO THE LEGACY SHAPE, and that is measured rather than
-        // assumed: `[V]` ParseString's unknown-prefix arm scans for a ':' and
-        // returns false at the terminator when there is none
-        // (`steamnetworkingsockets_shared.cpp:364-387`), so a master-minted
-        // `h<16hex>` does NOT parse. It does not need to -- join compatibility is
-        // byte-EQUALITY on the version pair, so a client of this build only ever
-        // dials a host of this build, and a host of this build always publishes
-        // `gen:`. A compatibility branch here would be dead code for a pairing the
-        // three version gates already refuse (RULE 2).
+        // ParseString, not SetGenericString: a host publishes its durable identity, which renders
+        // as `gen:<64 hex>` (68 characters), over the generic string's cap of 31, and a generic
+        // string would dial the literal text rather than the key. No fallback to any other shape:
+        // join compatibility is byte equality on the version pair, so a client of this build only
+        // ever dials a host of this build, which always publishes `gen:`.
         if (!hostId.ParseString(cfg_.hostIdentity.c_str())) {
             UE_LOGE("net: hostIdentity '%s' is not a parseable identity",
                     cfg_.hostIdentity.c_str());
             signaling_.reset();
             return false;
         }
-        // Per-connection signaling object. GNS takes ownership in
-        // ConnectP2PCustomSignaling (and Release()s it if the call fails).
+        // The per-connection signaling object; GNS takes ownership in ConnectP2PCustomSignaling and
+        // releases it if the call fails.
         ISteamNetworkingConnectionSignaling* connSig =
             signaling_->CreateSignalingForConnection(hostId);
         if (!connSig) {
@@ -427,9 +354,7 @@ bool Session::StartP2P() {
             signaling_.reset();
             return false;
         }
-        // Slot 0 = host (players::Registry indexing -- on a client the host is
-        // slot 0), exactly like LanDirect.
-        // GEN: none -- client dial; see the LanDirect site for the reason.
+        // Slot 0 is the host, as for the direct transport; a client mints no generation.
         peerConns_[0].store(hConn);
         UE_LOGI("net: P2P client dialing '%s' via signaling %s (hConn=0x%08x slot=0)",
                 cfg_.hostIdentity.c_str(), cfg_.signalingUrl.c_str(),
@@ -440,47 +365,37 @@ bool Session::StartP2P() {
 
 void Session::Stop() {
     if (!running_.exchange(false)) return;
-    // The linger flush needs RunCallbacks pumping. Closing connections
-    // AFTER joining the net thread leaves linger=true inoperative -- no
-    // one pumps callbacks once the thread is gone. Sequence is:
-    //   1) signal exit + join (~<=5ms; thread exits its sleep window)
-    //   2) CloseConnection(linger=true) on every peer
-    //   3) RunCallbacks pump loop (~200ms) so GNS flushes lingering data
-    //   4) DestroyPollGroup + CloseListenSocket
-    // This way queued reliable PropSpawn/ItemActivate/TeleportClient at shutdown
-    // get out instead of being silently dropped.
+    // The linger flush needs RunCallbacks pumping, so connections are closed after the net thread
+    // is joined and the callbacks pumped by hand: signal exit and join, close every peer with
+    // linger, pump for about 200 ms so GNS flushes the queued reliable data, then destroy the poll
+    // group and the listen socket.
     if (thread_.joinable()) thread_.join();
 
-    // AFTER the join, never before. The client's exchange state dies with the
-    // session -- a stale `proved` flag would let the NEXT connection's
-    // AssignPeerSlot through unchallenged -- but peer_admission owns that state
-    // WITHOUT A LOCK, on the claim that only the net thread touches it. Clearing
-    // it above the join broke exactly that claim: `running_.exchange(false)` does
-    // not stop a pass already in flight, so the ~5-10 ms until the thread exits is
-    // a window where this write races the net thread inside ClientOnReliable.
-    // Found by a post-ship audit, 2026-08-29.
+    // After the join, never before: the client's admission state dies with the session (a stale
+    // proved flag would let the next connection's slot assignment through unchallenged), and
+    // peer_admission owns it without a lock on the claim that only the net thread touches it;
+    // cleared above the join, this write raced a pass still in flight during the few milliseconds
+    // until the thread exited.
     peer_admission::ClientReset();
 
     auto* sockets = SteamNetworkingSockets();
     if (sockets) {
         for (int i = 0; i < kMaxPeers; ++i) {
-            // GEN: clear -- session teardown empties every slot. (Start() zeroes
-            // the array too, but a Session sits STOPPED between the two; a
-            // generation left live across that window would read as an occupied
-            // slot with no session behind it.)
+            // The generations cleared: a Session sits stopped between Stop and the next Start, and
+            // a generation left live across that window would read as an occupied slot with no
+            // session behind it.
             const uint32_t hConn = peerConns_[i].exchange(0);
             peerGenBySlot_[i].store(0, std::memory_order_release);
-            backlog_.FreeSlot(i);  // R-4b: queued state dies with the session
-            relayEligible_[i].store(0, std::memory_order_release);  // seeds arc
+            backlog_.FreeSlot(i);  // queued state dies with the session
+            relayEligible_[i].store(0, std::memory_order_release);
             if (hConn != 0) {
                 sockets->CloseConnection(hConn, 0, "session stop", true);
             }
         }
         for (int i = 0; i < 20; ++i) {
             sockets->RunCallbacks();
-            // P2P: closing a connection may need to send a final rendezvous
-            // signal; keep pumping the signaling transport during the linger
-            // window so those flush. No-op (nullptr) for LanDirect.
+            // P2P: closing a connection may need a final rendezvous signal, so the signaling
+            // transport is polled through the linger window too. Null on the direct transport.
             if (signaling_) signaling_->Poll();
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
@@ -490,27 +405,20 @@ void Session::Stop() {
         if (hListen != 0) sockets->CloseListenSocket(static_cast<HSteamListenSocket>(hListen));
     }
 
-    // Make net_pump::Tick's per-peer disconnect edge reliable after ANY Stop()
-    // (not just a peer-initiated close). That edge gates on IsSlotReady() ==
-    // peerLanesConfigured_[slot]; those flags are normally cleared by the GNS
-    // ClosedByPeer status callbacks, but those may not have dispatched during the
-    // linger RunCallbacks loop above. Without an explicit clear, a Stop() while peers
-    // were connected (e.g. the local-death disconnect) leaves the flag true ->
-    // IsSlotReady() stays true -> the puppet-destroy edge never fires -> the puppet
-    // actor leaks until full teardown. peerConns_ was already zeroed above; pair the
-    // lanes flags with it. (Audit 2026-06-01, death-handling change.)
+    // The pump's per-peer disconnect edge gates on the lanes-configured flags, normally cleared by
+    // the peer-closed status callbacks, which may not have dispatched during the linger loop above;
+    // left true after a Stop with peers connected, the edge never fired and the puppet leaked until
+    // full teardown. Cleared here beside the zeroed connections.
     for (int i = 0; i < kMaxPeers; ++i) peerLanesConfigured_[i].store(false);
 
-    // Tear down the P2P signaling transport AFTER the net thread has joined (no
-    // more Poll() racing us) and the connections have lingered (close-signals
-    // flushed above). ~SignalingClient closes the socket + WSACleanup. No-op for
-    // LanDirect (signaling_ is null).
+    // The signaling transport torn down after the net thread has joined (no Poll racing us) and the
+    // close signals have flushed; its destructor closes the socket. Null on the direct transport.
     signaling_.reset();
 
     state_.store(ConnState::Disconnected);
     g_session.store(nullptr, std::memory_order_release);
-    // Rates -> zero for the ui net-stats panel (its "offline" state); totals stay
-    // visible until the next Session::Start resets them.
+    // Rates to zero for the net-stats panel's offline state; the totals stay visible until the next
+    // Start resets them.
     net_stats::PublishRates(0.f, 0.f, 0.f, 0.f, 0, -1, false);
     UE_LOGI("net: session stopped (sent=%llu recv=%llu)",
             static_cast<unsigned long long>(net_stats::PacketsSent()),
