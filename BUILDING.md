@@ -1,8 +1,9 @@
 # Building Multivoid
 
 The mod ships as a single DLL in a UE4SS mod folder
-(`Mods\Multivoid\dlls\main.dll`). See [CLAUDE.md](CLAUDE.md) for the eight
-architectural principles; this file is purely how to compile + deploy.
+(`Mods\Multivoid\dlls\main.dll`). The rules a change must respect are in
+[CONTRIBUTING.md](CONTRIBUTING.md) and the architecture in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); this file is purely how to compile + deploy.
 
 The build output is **`main.dll`** (the UE4SS mod-folder contract name). The
 version identity — the Paper-Minecraft pair `<game target> b<build>` — is not
@@ -217,7 +218,7 @@ for yourself, install UE4SS once and copy `main.dll` to
 `...\Binaries\Win64\Mods\Multivoid\dlls\main.dll` (+ an `enabled.txt` beside
 `dlls\`) in your own install instead — see [docs/INSTALL.md](docs/INSTALL.md).
 
-For the autonomous LAN smoke (per the pre-deploy checklist in CLAUDE.md):
+For the autonomous LAN smoke (the pre-PR check in [CONTRIBUTING.md](CONTRIBUTING.md)):
 
 ```powershell
 .\mp_host_game.bat    # in one window

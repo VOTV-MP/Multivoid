@@ -234,7 +234,6 @@ people to test co-op with. Bug reports and feedback are welcome there or in
 |--|--|
 | [`VOTV-MP/Multivoid`](https://github.com/VOTV-MP/Multivoid) | **This repo** — the mod itself |
 | [`VOTV-MP/Multivoid-server`](https://github.com/VOTV-MP/Multivoid-server) | The dedicated server (see roadmap phases 6 and 8) |
-| [`VOTV-MP/Multivoid-wiki`](https://github.com/VOTV-MP/Multivoid-wiki) | User-facing documentation |
 | [multivoid.dev](https://multivoid.dev) | Project website |
 | [Discord](https://discord.gg/bA6tGBvGMN) | Community + project chat |
 
@@ -329,7 +328,7 @@ it gets a row.
 
 **What each one turned out to be and what shipped:
 [docs/CREDITS.md](docs/CREDITS.md).** Pull requests and reports are both welcome
-— [how to contribute](CONTRIBUTORS.md).
+— [how to contribute](CONTRIBUTING.md).
 
 Prior art this project learned from, with thanks:
 
