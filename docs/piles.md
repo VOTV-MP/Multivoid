@@ -42,7 +42,7 @@ save-loaded pile: the pose drive, the position correction, the grab route, the m
 the sweep exemption and retire. A real pile is what the game's look-at trace accepts, so the
 hover prompt, collision, occlusion and rotation are the game's. A rooted native stays live and
 inert; the earlier belief that a runtime pile "dies on its own" was garbage collection of an
-unrooted actor, measured by a probe.
+unrooted actor.
 
 The clump form, in a hand or in flight, is a bare static-mesh actor the mod owns
 (`coop/props/trash_proxy`): no Blueprint, so it cannot re-pile on contact or expire on its own
@@ -59,8 +59,8 @@ release runs through neither of the verbs a hook could see.
 A client's grab is an intent. The E press is intercepted before the native grab
 (`coop/props/trash_use_intercept`) and the client sends the id of the pile it is looking at;
 the host checks that the sender may name that pile (`coop/element/intent_authority`) and
-performs the grab on the requester's puppet natively, which a probe proved engages and holds on
-an unpossessed pawn. The puppet's own tick is dead, so the host drives the held clump to the
+performs the grab on the requester's puppet natively, which engages and holds on an unpossessed
+pawn. The puppet's own tick is dead, so the host drives the held clump to the
 puppet's hand each tick (`coop/player/puppet_carry_drive`) and streams the clump's pose as a
 host-originated per-id batch to every client, the requester included
 (`coop/props/trash_clump_pose_stream`), rendered with the same fixed-delay interpolation as a
@@ -124,12 +124,12 @@ during the window arrives as a position correction after the snapshot.
 
 | Limit | Evidence |
 |---|---|
-| The clump mirror is a static-mesh stand-in, not the engine's actor with its brain parked; two mirror implementations of one concept compile together, and the aim cone that exists only because a proxy cannot be looked at survives with it | `[V]` the modules' own headers; the rebuild is next after the ATV on [ROADMAP.md](ROADMAP.md) |
-| The proxy has no collision: a player walks through a carried or flying clump, and the aim cone ignores walls | `[V]` the proxy's header |
-| The client grab lane spends engine dispatches per press and a large pass at join on the parallel aim | `[V]` measured in the performance census: about seventeen hundred per press, hundreds of thousands at join |
-| Trash dropped into a garbage container updates the container only for the peer who dropped it; the container's contents are not synced, and the client skips the Blueprint that would walk a stale list | `[V]` the garbage lane's header |
-| Dispenser piles born by an event carry per-process keys and never resolve across peers | `[V]` the key-hash log |
-| The join-window bind is by save-time position; the sidecar that replaces it is behind a developer flag | `[V]` see [join.md](join.md) |
+| The clump mirror is a static-mesh stand-in, not the engine's actor with its brain parked; two mirror implementations of one concept compile together, and the aim cone that exists only because a proxy cannot be looked at survives with it | `[V]` `coop/props/trash_proxy`, `coop/props/native_pile_mirror`; the rebuild is next after the ATV on [ROADMAP.md](ROADMAP.md) |
+| The proxy has no collision: a player walks through a carried or flying clump, and the aim cone ignores walls | `[V]` `coop/props/trash_proxy` |
+| A client's grab resolves the aimed pile by testing every pile proxy against a camera cone, on each press | `[V]` `coop/props/trash_use_intercept` |
+| Trash dropped into a garbage container updates the container only for the peer who dropped it; the container's contents are not synced, and the client skips the Blueprint that would walk a stale list | `[V]` `coop/interactables/garbage_sync` |
+| Dispenser piles born by an event carry per-process keys and never resolve across peers | `[V]` `coop/props/trash_pile_sync` |
+| The join-window bind is by save-time position; the sidecar that replaces it is off by default | `[V]` see [join.md](join.md) |
 
 ## Code map
 
