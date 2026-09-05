@@ -1,14 +1,7 @@
-// ue_wrap/engine_widget.cpp -- UMG widget construction (world + screen).
-//
-// Extracted from ue_wrap/engine.cpp (2026-05-25 modular refactor).
-// Public API lives in ue_wrap/engine.h; this TU only implements the
-// widget-related functions in `namespace ue_wrap::engine`.
-//
-// Builds:
-//   - Screen-space HUD widgets (UUserWidget added to viewport) --
-//     SpawnScreenTextWidget + AddWidgetToViewport + RemoveWidgetFromViewport
-//   - Shared text-block construction with outline + drop-shadow polish
-//   - SetWidgetText / SetTextOnBlock helpers
+// ue_wrap/engine/engine_widget.cpp -- UMG widget construction: the screen-space text widget
+// (a user widget added to the viewport), the shared text-block setup with outline and shadow,
+// the text and colour setters, and the two menu injects (a button into a vertical box, a text
+// row above a label). The public API is in ue_wrap/engine/engine.h.
 
 #include "ue_wrap/engine/engine.h"
 
@@ -28,8 +21,7 @@ namespace {
 namespace P = profile;
 namespace R = reflection;
 
-// Identity FTransform (0x30): FQuat{0,0,0,1} @0x00, FVector Translation{0} @0x10,
-// FVector Scale3D{1,1,1} @0x20.
+// The identity transform: the quaternion at 0, the translation at 0x10, the scale at 0x20.
 void MakeIdentityTransform(uint8_t (&xform)[0x30]) {
     std::memset(xform, 0, sizeof(xform));
     float* f = reinterpret_cast<float*>(xform);
@@ -37,20 +29,18 @@ void MakeIdentityTransform(uint8_t (&xform)[0x30]) {
     f[8] = 1.f; f[9] = 1.f; f[10] = 1.f;  // Scale3D
 }
 
-// Cached UClasses + UFunctions for the widget pipeline. Resolved on first
-// SpawnScreenTextWidget call. File-private (the
-// other engine_* TUs have their own independent caches; sharing across
-// files would require globals in a header).
+// The cached classes and functions for the widget pipeline, resolved on first use; file-private,
+// since the other engine TUs keep their own caches.
 void* g_npActorClass = nullptr, *g_npCompClass = nullptr;
 void* g_npAddFn = nullptr, *g_npFinishFn = nullptr, *g_npTintFn = nullptr;
 void* g_npRedrawFn = nullptr, *g_npRenderUpdateFn = nullptr, *g_npTickFn = nullptr, *g_npSetWidgetFn = nullptr;
 void* g_npTransMat = nullptr, *g_npTransMatOneSided = nullptr;
 void* g_npKtlCdo = nullptr, *g_npConvFn = nullptr;
-// Own-widget construction (NewObject = UGameplayStatics::SpawnObject).
+// Own-widget construction: NewObject through the gameplay statics' SpawnObject.
 void* g_npGsCdo = nullptr, *g_npSpawnObjFn = nullptr;
 void* g_npUserWidgetClass = nullptr, *g_npWidgetTreeClass = nullptr, *g_npTbClass = nullptr;
 void* g_npTbSetTextFn = nullptr, *g_npFont = nullptr;
-// Two-line nameplate (nick + separately-coloured bar): UVerticalBox root.
+// The vertical box class and its add-child function.
 void* g_npVBoxClass = nullptr, *g_npAddChildVBoxFn = nullptr;
 
 bool ResolveNameplateFns() {
@@ -71,7 +61,7 @@ bool ResolveNameplateFns() {
         g_npTransMat = R::FindObject(P::name::Widget3DTranslucentMatName, P::name::MaterialInstanceConstantClass);
     if (!g_npTransMatOneSided)
         g_npTransMatOneSided = R::FindObject(P::name::Widget3DTranslucentOneSidedMatName, P::name::MaterialInstanceConstantClass);
-    // NewObject path + UMG classes + font.
+    // The NewObject path, the UMG classes and the font.
     if (!g_npGsCdo) g_npGsCdo = R::FindClassDefaultObject(P::name::GameplayStaticsClass);
     if (g_npGsCdo && !g_npSpawnObjFn) {
         if (void* c = R::ClassOf(g_npGsCdo)) g_npSpawnObjFn = R::FindFunction(c, P::name::SpawnObjectFn);
@@ -80,7 +70,7 @@ bool ResolveNameplateFns() {
     if (!g_npWidgetTreeClass) g_npWidgetTreeClass = R::FindClass(P::name::WidgetTreeClass);
     if (!g_npTbClass) g_npTbClass = R::FindClass(P::name::TextBlockClass);
     if (g_npTbClass && !g_npTbSetTextFn) g_npTbSetTextFn = R::FindFunction(g_npTbClass, P::name::NameplateSetTextFn);  // UTextBlock::SetText(FText)
-    // Two-line nameplate root (optional -- falls back to a single block if absent).
+    // The vertical box, optional.
     if (!g_npVBoxClass) g_npVBoxClass = R::FindClass(P::name::VerticalBoxClass);
     if (g_npVBoxClass && !g_npAddChildVBoxFn)
         g_npAddChildVBoxFn = R::FindFunction(g_npVBoxClass, P::name::AddChildToVerticalBoxFn);
@@ -93,7 +83,7 @@ bool ResolveNameplateFns() {
            g_npGsCdo && g_npSpawnObjFn && g_npUserWidgetClass && g_npWidgetTreeClass && g_npTbClass;
 }
 
-// NewObject by class via the reflected UGameplayStatics::SpawnObject(objectClass, Outer).
+// NewObject by class, through the reflected SpawnObject.
 void* SpawnObject(void* objectClass, void* outer) {
     if (!g_npGsCdo || !g_npSpawnObjFn || !objectClass || !outer) return nullptr;
     ParamFrame f(g_npSpawnObjFn);
@@ -103,8 +93,8 @@ void* SpawnObject(void* objectClass, void* outer) {
     return f.Get<void*>(L"ReturnValue");
 }
 
-// Set a UTextBlock's text via Conv_StringToText -> UTextBlock::SetText. Requires
-// ResolveNameplateFns() to have run (resolves g_npConvFn/g_npTbSetTextFn/g_npKtlCdo).
+// Set a text block's text through the string-to-text conversion and SetText; requires the
+// resolve above.
 void SetTextOnBlock(void* txt, const wchar_t* text) {
     if (!txt || !g_npConvFn || !g_npTbSetTextFn || !g_npKtlCdo) return;
     uint8_t ftext[0x18] = {};
@@ -115,22 +105,10 @@ void SetTextOnBlock(void* txt, const wchar_t* text) {
     ParamFrame tf(g_npTbSetTextFn); tf.SetRaw(L"InText", ftext, sizeof(ftext)); Call(txt, tf);
 }
 
-// Build UUserWidget(outer) -> UWidgetTree -> UTextBlock(root) with the given font
-// size / colour / justification and initial text. Shared by the world-space
-// nameplate and the screen-space HUD feed (RULE 2: one UMG-text-build, not two).
-// Returns {root, txt}; {nullptr,nullptr} on failure.
-// Configure a freshly-spawned UTextBlock: font, size, colour (with the
-// FSlateColor ColorUseRule forced to UseColor_Specified), 1px black outline,
-// (1,1)px drop shadow, justification, and initial text. Shared by the
-// single-block builder AND each block of the two-line nameplate (RULE 2: one
-// text-block setup, not duplicated per builder).
-//
-// Visual polish (2026-05-25, VT-comparison-driven): the outline + shadow close
-// most of the "VoidTogether widgets look natural / ours look bare" gap.
-// FFontOutlineSettings lives at FSlateFontInfo + 0x10; OutlineSize @ +0x00
-// (int32 px) + OutlineColor @ +0x10 (FLinearColor). bSeparateFillAlpha (+0x04,
-// default 0) shares the fill alpha, so a 0.22-alpha nameplate gets a 0.22-alpha
-// outline -- no pop-out artifact.
+// Configure a freshly spawned text block: font, size, colour with the use rule forced to
+// specified, a 1 px black outline, a (1,1) drop shadow, justification and the initial text.
+// Shared by the single-block builder and every other block this TU builds. The outline
+// colour shares the fill alpha, so a translucent plate gets a matching outline.
 void ConfigureTextBlock(void* txt, const wchar_t* text, const FLinearColor& color,
                         int32_t fontSize, uint8_t justification) {
     auto tU8 = reinterpret_cast<uint8_t*>(txt);
@@ -152,8 +130,8 @@ void ConfigureTextBlock(void* txt, const wchar_t* text, const FLinearColor& colo
     SetTextOnBlock(txt, text);
 }
 
-// Build UUserWidget(outer) -> UWidgetTree -> UTextBlock(root). Single block,
-// one colour. Used by the screen-space HUD feed (chat) + dev HUD.
+// A user widget with a widget tree and a text block as its root: a single block, one colour,
+// for the screen-space feed and the dev HUD.
 struct BuiltText { void* root; void* txt; };
 BuiltText BuildTextWidget(void* outer, const wchar_t* text, const FLinearColor& color,
                           int32_t fontSize, uint8_t justification) {
@@ -170,7 +148,7 @@ BuiltText BuildTextWidget(void* outer, const wchar_t* text, const FLinearColor& 
     return {root, txt};
 }
 
-// Screen-space (viewport) widget functions, resolved on the UserWidget class.
+// The viewport widget functions, resolved on the user-widget class.
 void* g_addToVpFn = nullptr, *g_removeFromVpFn = nullptr, *g_widgetSetVisFn = nullptr;
 void* g_setPosVpFn = nullptr, *g_setAlignVpFn = nullptr;
 void* g_widgetSetOpacityFn = nullptr;  // UWidget::SetRenderOpacity (resolved lazily)
@@ -182,8 +160,8 @@ bool ResolveScreenWidgetFns() {
         if (!g_setPosVpFn) g_setPosVpFn = R::FindFunction(g_npUserWidgetClass, P::name::SetPositionInViewportFn);
         if (!g_setAlignVpFn) g_setAlignVpFn = R::FindFunction(g_npUserWidgetClass, P::name::SetAlignmentInViewportFn);
     }
-    // SetVisibility is owned by UWidget (a parent), and FindFunction matches the
-    // OWNING class only -- resolve it on "Widget", not "UserWidget".
+    // SetVisibility is owned by the widget base class, and FindFunction matches the owning class
+    // only, so it resolves on Widget, not UserWidget.
     if (!g_widgetSetVisFn) {
         if (void* wc = R::FindClass(P::name::WidgetClass))
             g_widgetSetVisFn = R::FindFunction(wc, P::name::WidgetSetVisibilityFn);
@@ -191,10 +169,8 @@ bool ResolveScreenWidgetFns() {
     return g_addToVpFn && g_widgetSetVisFn;
 }
 
-// ---- Runtime UMG button injection (MULTIPLAYER menu, P1) ----------------------
-// UClasses + UFunctions for inserting a UButton into a UVerticalBox. Resolved lazily
-// on the first InjectCanvasButton / WidgetIsHovered call (classes never move).
-// (AddChildToVerticalBox itself is resolved by ResolveNameplateFns -> g_npAddChildVBoxFn.)
+// The runtime button injection: the classes and functions for inserting a button into a
+// vertical box, resolved lazily on the first inject or hover query.
 void* g_biButtonClass = nullptr, *g_biContentWidgetClass = nullptr;
 void* g_biSetContentFn = nullptr, *g_biIsHoveredFn = nullptr;
 void* g_biClearChildrenFn = nullptr;  // UPanelWidget::ClearChildren (insert-at-top reorder)
@@ -202,8 +178,8 @@ void* g_votvMenuFont = nullptr;       // font_ui (Share Tech Mono) -- VOTV's nat
 
 bool ResolveButtonInjectFns() {
     if (!ResolveNameplateFns()) return false;  // SpawnObject + UMG text classes + text fns + AddChildToVerticalBox
-    // font_ui is the font VOTV's ui_menu labels use; resolve it so the injected
-    // MULTIPLAYER label matches them (it is loaded whenever the menu is up).
+    // The game's menu-label font, resolved so the injected label matches; loaded whenever the menu
+    // is up.
     if (!g_votvMenuFont) g_votvMenuFont = R::FindObject(P::name::MenuFontName, P::name::FontClassName);
     if (!g_biButtonClass) g_biButtonClass = R::FindClass(P::name::ButtonClass);
     if (!g_biContentWidgetClass) g_biContentWidgetClass = R::FindClass(P::name::ContentWidgetClass);
@@ -212,7 +188,7 @@ bool ResolveButtonInjectFns() {
     if (void* pwc = R::FindClass(P::name::PanelWidgetClass)) {
         if (!g_biClearChildrenFn) g_biClearChildrenFn = R::FindFunction(pwc, P::name::ClearChildrenFn);
     }
-    // IsHovered + SetVisibility are owned by UWidget (FindFunction = owning class).
+    // IsHovered and SetVisibility are owned by the widget base class.
     if (void* wc = R::FindClass(P::name::WidgetClass)) {
         if (!g_biIsHoveredFn) g_biIsHoveredFn = R::FindFunction(wc, P::name::WidgetIsHoveredFn);
         if (!g_widgetSetVisFn) g_widgetSetVisFn = R::FindFunction(wc, P::name::WidgetSetVisibilityFn);
@@ -220,20 +196,18 @@ bool ResolveButtonInjectFns() {
     return g_biButtonClass && g_biSetContentFn && g_biIsHoveredFn;
 }
 
-// Insert `child` at the TOP of a UVerticalBox. UMG has no insert-at-index, so the
-// canonical reorder is: snapshot the current children, ClearChildren (DETACHES them --
-// the widget OBJECTS survive, still referenced by their owner's fields), then re-add
-// `child` first + the originals after. If the snapshot fails (or the list exceeds the
-// buffer) we DELIBERATELY fall back to a plain append (bottom) so we NEVER ClearChildren
-// without being able to fully restore the panel. Shared by the MULTIPLAYER button inject
-// and the version-label row inject (RULE 2: one reorder, not two).
-// Requires ResolveButtonInjectFns() (g_npAddChildVBoxFn + g_biClearChildrenFn). Game thread.
+// Insert `child` at the top of a vertical box. UMG has no insert-at-index, so the reorder is:
+// snapshot the children, clear (which detaches them; the objects survive, referenced by their
+// owner's fields), then re-add the child first and the originals after. If the snapshot fails
+// or the list exceeds the buffer, a plain append at the bottom, so the panel is never cleared
+// without being fully restorable. Shared by the button inject and the text-row inject. Game
+// thread.
 bool InsertAtTopOfVBox(void* vbox, void* child) {
     if (!vbox || !child || !g_npAddChildVBoxFn) return false;
     constexpr int kMaxList = 128;  // VOTV's menu VBoxes have <= ~13 children; generous headroom
-    // Snapshot each child AND its VerticalBoxSlot layout region: ClearChildren DESTROYS
-    // the slots, and AddChildToVerticalBox creates fresh DEFAULT ones -- without the
-    // restore below, every native row's padding/alignment would silently reset.
+    // Each child is snapshotted with its slot layout region: the clear destroys the slots and the
+    // re-add creates fresh default ones, so without the restore every native row's padding and
+    // alignment would silently reset.
     void* prev[kMaxList]; uint8_t prevLayout[kMaxList][P::off::UVerticalBoxSlot_LayoutSize];
     int prevN = 0;
     {
@@ -260,8 +234,8 @@ bool InsertAtTopOfVBox(void* vbox, void* child) {
     auto addToVBox = [&](void* c) {
         ParamFrame f(g_npAddChildVBoxFn); f.Set<void*>(L"Content", c); Call(vbox, f);
     };
-    // Restore a widget's saved layout onto its NEW slot (re-read via UWidget::Slot --
-    // the old slot pointer is dead after ClearChildren).
+    // Restore a widget's saved layout onto its new slot, re-read through the widget's slot pointer;
+    // the old slot is dead after the clear.
     auto restoreLayout = [&](void* w, const uint8_t* saved) {
         void* sl = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(w) + P::off::UWidget_Slot);
         if (sl)
@@ -286,9 +260,8 @@ bool InsertAtTopOfVBox(void* vbox, void* child) {
 }  // namespace
 
 void* SpawnUObject(void* objectClass, void* outer) {
-    // ResolveNameplateFns owns the GameplayStatics CDO + the SpawnObject UFunction that
-    // every widget build in this TU already goes through; reuse it rather than mint a
-    // second resolver for the same two pointers (RULE 2).
+    // The resolve above owns the gameplay-statics CDO and the SpawnObject function every widget
+    // build goes through; reused rather than resolved twice.
     if (!ResolveNameplateFns()) return nullptr;
     return SpawnObject(objectClass, outer);
 }
@@ -301,10 +274,8 @@ bool SetWidgetText(void* textBlock, const wchar_t* text) {
 
 bool SetTextBlockColor(void* textBlock, const FLinearColor& color) {
     if (!textBlock) return false;
-    // Same write BuildTextWidget uses at construction (lines above): the
-    // FLinearColor at +ColorAndOpacity + the FSlateColor ColorUseRule byte = 0
-    // (UseColor_Specified). The auto-redrawing UWidgetComponent picks it up next
-    // frame; no UFunction dispatch needed.
+    // The same write the builder uses at construction: the colour plus the use rule byte set to
+    // specified. The auto-redrawing widget component picks it up next frame with no dispatch.
     auto* base = reinterpret_cast<uint8_t*>(textBlock);
     *reinterpret_cast<FLinearColor*>(base + P::off::UTextBlock_ColorAndOpacity) = color;
     *reinterpret_cast<uint8_t*>(base + P::off::UTextBlock_ColorAndOpacity + P::off::FSlateColor_ColorUseRule) = 0;
@@ -316,8 +287,8 @@ bool SetTextBlockColorDispatch(void* textBlock, const FLinearColor& color) {
     static void* s_setColorFn = nullptr;  // UTextBlock::SetColorAndOpacity (never moves)
     if (!s_setColorFn) s_setColorFn = R::FindFunction(g_npTbClass, P::name::TextBlockSetColorFn);
     if (!s_setColorFn) return false;
-    // FSlateColor (0x28): SpecifiedColor (FLinearColor) @0x00, ColorUseRule @0x10
-    // (0 = UseColor_Specified), trailing pad/unreflected bytes zeroed.
+    // The slate colour: the specified colour at 0, the use rule at 0x10 (0 is specified), the
+    // trailing bytes zeroed.
     uint8_t sc[0x28] = {};
     std::memcpy(sc, &color, sizeof(FLinearColor));
     ParamFrame f(s_setColorFn);
@@ -348,20 +319,19 @@ bool SpawnScreenTextWidget(void* outer, int zOrder, FVector2D alignment, FVector
                 g_npUserWidgetClass, g_addToVpFn, g_widgetSetVisFn);
         return false;
     }
-    // Multi-line text (caller drives via SetWidgetText). Outer should be a
-    // persistent object (GameInstance) so the widget survives level loads.
+    // Multi-line text the caller drives through SetWidgetText; the outer should be a persistent
+    // object, so the widget survives level loads.
     BuiltText bt = BuildTextWidget(outer, L"", color, fontSize, static_cast<uint8_t>(justify));
     if (!bt.root || !bt.txt) return false;
-    // Visible but input-transparent (ESlateVisibility::HitTestInvisible = 3) so the
-    // overlay never steals mouse/keyboard focus from the game.
+    // Visible but input-transparent (hit-test-invisible is 3), so the overlay never steals focus
+    // from the game.
     if (g_widgetSetVisFn) { ParamFrame f(g_widgetSetVisFn); f.Set<uint8_t>(L"InVisibility", 3); Call(bt.root, f); }
     if (!AddWidgetToViewport(bt.root, zOrder)) {
         UE_LOGE("engine: SpawnScreenTextWidget -- AddToViewport failed");
         return false;
     }
-    // Alignment is the pivot inside the widget that gets placed at `position`:
-    // {0,0} top-left, {1,0} top-right, {0,.5} left-middle, {0.5,0.5} centre, etc.
-    // Position pixels assume 1920x1080; tune (or use viewport-relative math) for other res.
+    // The alignment is the pivot inside the widget placed at `position`: (0,0) top-left, (1,0)
+    // top-right, (0.5,0.5) centre. Position pixels assume a 1080p viewport.
     if (g_setAlignVpFn) { ParamFrame f(g_setAlignVpFn); FVector2D a = alignment; f.SetRaw(L"Alignment", &a, sizeof(a)); Call(bt.root, f); }
     if (g_setPosVpFn)   { ParamFrame f(g_setPosVpFn);   FVector2D p = position;  f.SetRaw(L"Position",  &p, sizeof(p)); f.Set<bool>(L"bRemoveDPIScale", true); Call(bt.root, f); }
     if (outRoot) *outRoot = bt.root;
@@ -382,10 +352,9 @@ bool InjectCanvasButton(void* refButton, const wchar_t* label, void** outButton)
         return false;
     }
 
-    // refButton (e.g. NEW GAME) lives in a list panel -- a UVerticalBox. We add our
-    // button INTO that VerticalBox so it auto-positions exactly like the other menu
-    // items (the VBox owns layout/spacing -- no fragile canvas-anchor math), then
-    // reorder it to the TOP (above NEW GAME).
+    // The reference button lives in a list panel, a vertical box; our button goes into that box,
+    // so it auto-positions like the other items with no canvas-anchor arithmetic, then is
+    // reordered to the top.
     void* refSlot = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(refButton) + P::off::UWidget_Slot);
     void* listBox = refSlot ? *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(refSlot) + P::off::UPanelSlot_Parent) : nullptr;
     if (!listBox || !g_npAddChildVBoxFn) {
@@ -401,47 +370,44 @@ bool InjectCanvasButton(void* refButton, const wchar_t* label, void** outButton)
         return false;
     }
 
-    // Label styling: match VOTV's native menu items DETERMINISTICALLY. We do NOT clone
-    // a reference UTextBlock (tex_btnStart): its pointer is null at some inject timings,
-    // which fell through to a Roboto / centered / white default -- the "wrong font,
-    // indented, wrong colour" bug. The native ui_menu labels are font_ui (Share Tech
-    // Mono) @ size 16, left-justified, no outline, drop shadow offset (2,2) opaque black
-    // (verified: bp_reflection/ui_menu.json tex_btnStart/tex_btnstat -> FontObject=font_ui,
-    // TypefaceFontName="Font", Size=16, ShadowOffset=(2,2), ShadowColor=(0,0,0,1)). We set
-    // exactly that here and tint the label CYAN to mark the coop entry. TypefaceFontName is
-    // left None -> font_ui's single (default) typeface, correct for this one-face font.
+    // Label styling matches the native menu items deterministically rather than by cloning a
+    // reference block, whose pointer is null at some inject timings (which fell through to a
+    // default font, centred and white). The native labels are the menu font at size 16,
+    // left-justified, no outline, a (2,2) opaque black shadow, per the menu's reflection dump;
+    // that is set here, tinted cyan to mark the coop entry. The typeface name stays None, the
+    // font's single default face.
     {
         auto* d = reinterpret_cast<uint8_t*>(txt);
         auto* font = d + P::off::UTextBlock_Font;
-        // Prefer font_ui (the native menu font); fall back to engine Roboto so the label
-        // is always readable if font_ui hasn't resolved. (Font parity is deferred.)
+        // The native menu font, with the engine's default as a fallback so the label is always
+        // readable.
         void* chosenFont = g_votvMenuFont ? g_votvMenuFont : g_npFont;
         if (chosenFont) *reinterpret_cast<void**>(font) = chosenFont;
         *reinterpret_cast<int32_t*>(font + P::off::FSlateFontInfo_Size) = 16;
-        // No outline (native has none) -- OutlineSize 0.
+        // No outline; the native labels have none.
         *reinterpret_cast<int32_t*>(font + P::off::FSlateFontInfo_OutlineSettings +
                                     P::off::FFontOutlineSettings_OutlineSize) = 0;
-        // Cyan, ColorUseRule = UseColor_Specified (0).
+        // Cyan, with the use rule set to specified.
         *reinterpret_cast<FLinearColor*>(d + P::off::UTextBlock_ColorAndOpacity) =
             FLinearColor{0.f, 1.f, 1.f, 1.f};
         *(d + P::off::UTextBlock_ColorAndOpacity + P::off::FSlateColor_ColorUseRule) = 0;
-        // Left-justify (0), matching the native list items (fixes the indent).
+        // Left-justified, matching the native items.
         *(d + P::off::UTextLayoutWidget_Justification) = 0;
-        // Drop shadow: offset (2,2), opaque black -- exactly the native menu labels.
+        // The drop shadow: offset (2,2), opaque black, exactly the native labels.
         *reinterpret_cast<FVector2D*>(d + P::off::UTextBlock_ShadowOffset) = FVector2D{2.f, 2.f};
         *reinterpret_cast<FLinearColor*>(d + P::off::UTextBlock_ShadowColorAndOpacity) =
             FLinearColor{0.f, 0.f, 0.f, 1.f};
         SetTextOnBlock(txt, label);
     }
 
-    // Nest the label inside the button (UContentWidget::SetContent).
+    // The label goes inside the button through SetContent.
     { ParamFrame f(g_biSetContentFn); f.Set<void*>(L"Content", txt); Call(button, f); }
 
-    // Left-align the label within the button. SetContent created a UButtonSlot whose
-    // default HAlign is Center -> the label sat INDENTED vs the flush-left native items.
-    // Set it to Fill + zero padding so the text block spans the button and its Left text
-    // justification pins the text to the button's left edge (= flush with NEW GAME etc.).
-    // The slot is reachable via the label's UWidget::Slot back-pointer (set by SetContent).
+    // The label is left-aligned within the button: SetContent created a slot whose default
+    // horizontal alignment is centre, which indented the label against the flush-left native
+    // items. Fill plus zero padding lets the text block span the button and its left
+    // justification pin the text to the edge. The slot is reached through the label's slot
+    // back-pointer.
     if (void* cslot = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(txt) + P::off::UWidget_Slot)) {
         auto* cs = reinterpret_cast<uint8_t*>(cslot);
         *(cs + P::off::UButtonSlot_HAlign) = 0;  // HAlign_Fill
@@ -449,21 +415,18 @@ bool InjectCanvasButton(void* refButton, const wchar_t* label, void** outButton)
         std::memset(cs + P::off::UButtonSlot_Padding, 0, 0x10);  // FMargin = 0 (no left indent)
     }
 
-    // Clone the reference button's visual style (brushes + tint + the press/hover
-    // sounds) so ours matches. The operation itself lives in umg_build -- the native
-    // browser's chrome needs the identical clone, and its correctness turns on exactly
-    // which trailing bytes get zeroed, which is not a thing to keep two copies of.
+    // Clone the reference button's visual style (the brushes, the tint, the press and hover
+    // sounds) so ours matches. The clone lives in umg_build, since the native browser needs the
+    // identical one and its correctness turns on which trailing bytes are zeroed.
     ue_wrap::umg::CloneButtonStyle(button, refButton);
 
-    // Insert at the TOP of the VerticalBox (above NEW GAME) -- shared snapshot ->
-    // ClearChildren -> re-add reorder (InsertAtTopOfVBox; falls back to a bottom
-    // append rather than ever leaving the menu unrestorable).
+    // Insert at the top of the box, above NEW GAME, through the shared reorder, which falls back to
+    // a bottom append rather than leave the menu unrestorable.
     InsertAtTopOfVBox(listBox, button);
 
-    // Match the reference item's VBox SLOT layout (padding + H/V alignment + size) so
-    // our button sits EXACTLY like NEW GAME -- same indent, same spacing. The slot was
-    // created fresh by AddChildToVerticalBox with defaults; copy the reference's layout
-    // region (excludes the base UPanelSlot Parent/Content ptrs, so no aliasing).
+    // Match the reference item's slot layout (padding, alignment, size) so our button sits
+    // exactly like NEW GAME. The slot was created fresh with defaults; the reference's layout
+    // region is copied, excluding the base slot's parent and content pointers.
     {
         void* ourSlot = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(button) + P::off::UWidget_Slot);
         void* refSlot2 = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(refButton) + P::off::UWidget_Slot);
@@ -474,7 +437,7 @@ bool InjectCanvasButton(void* refButton, const wchar_t* label, void** outButton)
         }
     }
 
-    // Force Visible (input-receiving) so the hover/click poll sees it.
+    // Forced visible and input-receiving, so the hover and click poll sees it.
     if (g_widgetSetVisFn) {
         ParamFrame f(g_widgetSetVisFn); f.Set<uint8_t>(L"InVisibility", 0); Call(button, f);
     }
@@ -488,20 +451,18 @@ bool InjectTextRowAbove(void* refText, const wchar_t* initial,
                         void** outText, FLinearColor* outColor) {
     if (outText) *outText = nullptr;
     if (!refText) return false;
-    // ResolveButtonInjectFns gives SpawnObject + the UTextBlock class + the text-set fns
-    // + AddChildToVerticalBox/ClearChildren (the InsertAtTopOfVBox dependencies).
+    // The button-inject resolve gives SpawnObject, the text-block class, the text setters and the
+    // reorder's dependencies.
     if (!ResolveButtonInjectFns()) {
         UE_LOGE("engine: InjectTextRowAbove unresolved base (tbCls=%p spawn=%p)",
                 g_npTbClass, g_npSpawnObjFn);
         return false;
     }
 
-    // The VOTV shape (bp_reflection/ui_menu_fixed.json, verified 2026-07-16): refText
-    // (txt_version) sits in a ROW panel (HorizontalBox_122) whose own slot lives in the
-    // rows container (VerticalBox_138). Climb TWO slot->parent hops: refText's direct
-    // panel = the row; the row's panel = the VBox. Inserting our block at the VBox TOP
-    // puts it ABOVE every label row. (First attempt assumed a canvas + slot offsets --
-    // wrong: the parent is a flow panel, so our block flowed to the RIGHT of the label.)
+    // The menu's shape: the reference label sits in a row panel whose own slot lives in the rows
+    // container, so the climb is two slot-to-parent hops, and inserting at the container's top
+    // puts our block above every label row. The parent is a flow panel, not a canvas, so slot
+    // offsets would have flowed the block to the right of the label.
     void* refSlot  = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(refText) + P::off::UWidget_Slot);
     void* rowPanel = refSlot ? *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(refSlot) + P::off::UPanelSlot_Parent) : nullptr;
     void* rowSlot  = rowPanel ? *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(rowPanel) + P::off::UWidget_Slot) : nullptr;
@@ -515,18 +476,16 @@ bool InjectTextRowAbove(void* refText, const wchar_t* initial,
     void* txt = SpawnObject(g_npTbClass, vbox);
     if (!txt) { UE_LOGE("engine: InjectTextRowAbove SpawnObject(TextBlock) failed"); return false; }
 
-    // Clone refText's TEXT STYLE so ours is visually identical (same font/size/colour/
-    // shadow/justification). Copy the FSlateFontInfo FIELD-BY-FIELD, NOT the whole 0x58
-    // struct: its trailing (0x50) TSharedPtr<FCompositeFont> would be shallow-aliased
-    // without an AddRef (the same refcount hazard the button's FSlateSound had). The
-    // 0x00..0x50 head is all scalar/pointer (FontObject/FontMaterial/OutlineSettings/
-    // TypefaceFontName/Size/LetterSpacing); Slate rebuilds the composite lazily from
-    // FontObject, so leaving our TSharedPtr default (empty) is correct.
+    // Clone the reference label's text style so ours is visually identical. The font info is
+    // copied field by field, not as the whole struct: its trailing shared pointer to the composite
+    // font would be shallow-aliased with no reference added; the head is all scalars and
+    // pointers, and Slate rebuilds the composite lazily from the font object, so leaving ours
+    // empty is correct.
     {
         auto* d = reinterpret_cast<uint8_t*>(txt);
         auto* s = reinterpret_cast<uint8_t*>(refText);
         std::memcpy(d + P::off::UTextBlock_Font, s + P::off::UTextBlock_Font, 0x50);
-        // ColorAndOpacity: FSlateColor (FLinearColor@0 + ColorUseRule@0x10) -- plain, safe.
+        // The colour, a plain slate colour, safe to copy.
         std::memcpy(d + P::off::UTextBlock_ColorAndOpacity, s + P::off::UTextBlock_ColorAndOpacity, 0x18);
         if (outColor)
             *outColor = *reinterpret_cast<FLinearColor*>(s + P::off::UTextBlock_ColorAndOpacity);
@@ -538,18 +497,16 @@ bool InjectTextRowAbove(void* refText, const wchar_t* initial,
         SetTextOnBlock(txt, initial);
     }
 
-    // Insert as the TOP row of the VBox (above refText's row + every other label row),
-    // then clone the reference ROW's VerticalBoxSlot layout region (padding + H/V
-    // alignment + size) into our fresh slot so our line carries the same indent/spacing
-    // as the native rows below it.
+    // Insert as the top row of the container, above every label row, then clone the reference
+    // row's slot layout into our fresh slot, so our line carries the same indent and spacing.
     if (!InsertAtTopOfVBox(vbox, txt)) {
         UE_LOGE("engine: InjectTextRowAbove -- InsertAtTopOfVBox failed");
         return false;
     }
     {
-        // RE-READ both slots: the reorder destroyed + recreated every slot, so the
-        // pre-insert rowSlot pointer is dead. The helper restored the row's original
-        // layout onto its NEW slot; clone that region so our line matches its indent.
+        // Both slots re-read: the reorder destroyed and recreated every slot, so the pre-insert row
+        // slot is dead. The helper restored the row's layout onto its new slot; that region is
+        // cloned.
         void* ourSlot    = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(txt) + P::off::UWidget_Slot);
         void* rowSlotNew = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(rowPanel) + P::off::UWidget_Slot);
         if (ourSlot && rowSlotNew) {
@@ -574,8 +531,7 @@ bool WidgetIsHovered(void* widget) {
 }
 
 bool SetWidgetVisibility(void* widget, uint8_t slateVis) {
-    // ResolveButtonInjectFns resolves g_widgetSetVisFn (UWidget::SetVisibility) as part of
-    // the inject set; reuse it rather than a second resolver for one UFunction.
+    // The button-inject resolve already resolves SetVisibility; reused.
     if (!widget || !ResolveButtonInjectFns() || !g_widgetSetVisFn) return false;
     ParamFrame f(g_widgetSetVisFn);
     f.Set<uint8_t>(L"InVisibility", slateVis);
