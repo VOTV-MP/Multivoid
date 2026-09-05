@@ -1,18 +1,17 @@
-// coop/multiplayer_menu.cpp -- see coop/multiplayer_menu.h.
-//
-// Injects a "MULTIPLAYER" UButton above NEW GAME in VOTV's main menu and opens the
-// ImGui server browser when clicked. Mirrors coop::save_button_disable: a POST
-// observer on ui_menu_C::Tick (self IS the menu), FindPropertyOffset for the field
-// reads, isPause to target the MAIN menu (not the pause menu). The button is built
-// by ue_wrap::engine::InjectCanvasButton (engine substrate); this file owns the
-// feature: which menu, where, and that the click opens the browser.
+// ui/multiplayer_menu.cpp -- see ui/multiplayer_menu.h. Injects a MULTIPLAYER button above NEW
+// GAME in the game's main menu and opens the server browser when it is clicked, with the same
+// shape as the save-button disable: a POST observer on the menu's Tick (self is the menu),
+// property offsets for the field reads, and the pause flag to target the main menu. The
+// button itself is built by the engine wrapper's canvas inject; this file owns the feature:
+// which menu, where, and what the click does. The menu tick also drives the native
+// sub-screens and the version label.
 
 #include "ui/multiplayer_menu.h"
 
 #include "coop/config/config.h"
 #include "ui/input_focus.h"
 #include "coop/session/join_progress.h"
-#include "coop/session/session_manager.h"  // RefreshLatestVersion + LatestVersionLine (native version label)
+#include "coop/session/session_manager.h"  // LatestVersionLine, DisplayVersion
 #include "ui/server_browser.h"
 #include "ui/server_browser_surface.h"  // WHICH browser this session uses
 #include "ui/native_screen.h"   // BeginMenuTick -- one index read per menu tick
@@ -45,50 +44,44 @@ namespace {
 std::atomic<bool> g_installed{false};   // observer registered
 std::atomic<bool> g_retrying{false};    // a retry thread is already running
 
-// Resolved once at install (UClass + UFunction + field offsets never move).
+// Resolved once at install; the class, the function and the field offsets never move.
 void* g_tickFn = nullptr;               // ui_menu_C::Tick (observer anchor)
 int32_t g_buttonStartOff = -1;          // ui_menu_C -> button_start (UButton*, NEW GAME)
 int32_t g_isPauseOff = -1;              // ui_menu_C -> isPause (bool)
 int32_t g_txtVersionOff = -1;           // ui_menu_C -> txt_version (UTextBlock*, the version label)
-int32_t g_switcherOff = -1;             // ui_menu_C -> switcher_widgets (UWidgetSwitcher*, the
-                                        // sub-screen layer the NATIVE browser becomes a child of)
+int32_t g_switcherOff = -1;             // ui_menu_C -> switcher_widgets, the sub-screen layer the native screens join
 
-// Injected-button tracking (game-thread only -- touched solely in the Tick observer).
+// Injected-button tracking, game thread only: touched solely in the Tick observer.
 void* g_injectedMenu = nullptr;         // the menu instance we last injected into (compared, never deref'd)
-// Our MULTIPLAYER UButton. CachedObjRef, not a raw pointer: this widget is freed
-// with its menu instance for the WHOLE play session and probed per menu tick on
-// RETURN to the menu -- the prime suspect of the 2026-08-22 IsLive/VEH finding
-// (a bare IsLive deref here is a first-chance AV a co-resident VEH crash
-// reporter pops as a "crash"). islive-zeroav design section 3.
+// Our MULTIPLAYER button, a cached reference rather than a raw pointer: the widget is freed
+// with its menu instance for the whole play session and probed per menu tick on the return to
+// the menu, and a bare liveness deref there is the first-chance fault a co-resident crash
+// reporter pops as a crash.
 ue_wrap::CachedObjRef g_button;
 bool  g_buttonInputBlocked = false;     // edge-tracking: is g_button currently HitTestInvisible?
 bool  g_prevLmb = false;                // VK_LBUTTON state last tick (click-edge detect)
 bool  g_lmbPrimed = false;             // first-tick guard: seed g_prevLmb without firing an edge
 uint64_t g_lastInjectMs = 0;            // throttle inject attempts on failure / self-heal
-// Render-thread-readable "pause/ESC menu is up" signal. Stamped (game thread) on every
-// pause-menu tick in OnMenuTickPost; IsPauseMenuOpen() reports open while the stamp is
-// fresh and auto-clears ~250 ms after the pause menu stops ticking (closed / back to
-// gameplay). std::atomic so the ImGui overlay (render thread) reads it lock-free -- it
-// gates the passive coop HUD (chat feed / nameplates) off so we never draw OVER the
-// native modal pause menu.
+// The render-thread-readable pause-menu signal: stamped on the game thread on every pause-menu
+// tick, reported open while the stamp is fresh, and auto-clearing about 250 ms after the
+// pause menu stops ticking. Atomic, so the overlay reads it lock-free to keep the passive HUD
+// off the native modal menu.
 std::atomic<uint64_t> g_pauseTickMs{0};
 
-// Native version/update label (game-thread only -- touched solely in the Tick observer).
-// A UTextBlock we inject as a sibling of VOTV's txt_version ("Alpha 0.9.0 / Build a090n"),
-// so the coop line sits organically among the game's build labels and auto show/hides with
-// the menu. Driven from session_manager::LatestVersionLine; refreshed on each menu entrance.
-ue_wrap::CachedObjRef g_versionText;    // our injected UTextBlock (same session-long-freed shape as g_button)
+// The native version label, game thread only: a text block injected as a sibling of the game's
+// own version label, so the coop line sits among the game's build labels and shows and hides
+// with the menu. Driven from the session manager's latest-version line.
+ue_wrap::CachedObjRef g_versionText;    // our injected UTextBlock
 void* g_versionMenu = nullptr;          // the menu instance we injected it into
-// "Normal" label colour: CYAN -- the coop accent, matching the injected MULTIPLAYER
-// button (user 2026-07-16). Amber overrides while an update is available.
+// The label's normal colour, cyan, the coop accent matching the injected button; amber while an
+// update is available.
 constexpr ue_wrap::FLinearColor kVersionCyan{0.f, 1.f, 1.f, 1.f};
 std::string g_versionLastLine;          // last string pushed to the block (edge-apply SetText)
 bool g_versionLastOutdated = false;     // last colour state pushed (edge-apply SetColor)
-uint64_t g_lastMainTickMs = 0;          // main-menu tick timestamp; a >500ms gap = a fresh ENTRANCE (re-poll edge)
-// Client loading state: the menu instance + hidden-state we last applied for a join-in-
-// progress fade. Edge-applied so the SetVisibility/SetRenderOpacity UFunctions run only on
-// a change, not per tick. (g_menuFadeMenu is never dereferenced -- pointer compare only --
-// so a destroyed menu is safe.)
+uint64_t g_lastMainTickMs = 0;          // the main-menu tick timestamp
+// The client loading state: the menu instance and the hidden state last applied for a join in
+// progress. Edge-applied, so the visibility and opacity calls run only on a change. The menu
+// pointer is compared, never dereferenced, so a destroyed menu is safe.
 void* g_menuFadeMenu = nullptr;
 bool  g_menuFadeHidden = false;
 
@@ -97,9 +90,8 @@ inline void* ReadPtr(void* base, int32_t off) {
                               : nullptr;
 }
 
-// Inject the MULTIPLAYER button into `menu`'s NEW GAME list (above NEW GAME).
-// Idempotent per instance (no-op if our button is already live in this menu).
-// Returns true if our button is present afterward. Game thread only.
+// Inject the button into the menu's NEW GAME list, above NEW GAME. Idempotent per instance;
+// true if our button is present afterwards. Game thread only.
 bool DoInject(void* menu) {
     if (menu == g_injectedMenu && g_button.Alive()) return true;  // already done
     void* buttonStart = ReadPtr(menu, g_buttonStartOff);
@@ -115,29 +107,27 @@ bool DoInject(void* menu) {
     return false;
 }
 
-// The current version/update line (verdict if the check landed, else a plain identity so
-// the label is never empty). `outdated` => amber tint. Game thread.
+// The current version line: the verdict if the check landed, else the plain identity, so the
+// label is never empty. `outdated` selects the amber tint. Game thread.
 std::string VersionLine(bool* outdated) {
     std::string line = coop::session_manager::LatestVersionLine(outdated);
     if (line.empty()) {
         if (outdated) *outdated = false;
-        // Plain identity (no update verdict yet / none available): the v122
-        // Paper-shape composite "Multivoid 0.9.0n b122".
+        // The plain identity: the display version composite.
         line = coop::session_manager::DisplayVersion();
     }
     return line;
 }
 
-// Inject (once per menu instance) our NATIVE version/update label as a sibling of VOTV's
-// txt_version, then keep its text + colour in sync with the /v1/latest verdict. Text and
-// colour are edge-applied (a UFunction runs only on a real change), so steady state costs
-// nothing. Game thread only.
+// Inject the version label once per menu instance as a sibling of the game's own, then keep
+// its text and colour in sync with the verdict. Both are edge-applied, so a UFunction runs
+// only on a real change. Game thread only.
 void UpdateVersionLabel(void* menu) {
     if (g_txtVersionOff < 0) return;  // txt_version field not resolved -> label disabled
-    // Inject once per menu instance; self-heal if VOTV ever rebuilt the menu widget.
+    // Once per menu instance, self-healing if the game rebuilt the menu widget.
     if (menu != g_versionMenu || !g_versionText.Alive()) {
         void* txtVersion = ReadPtr(menu, g_txtVersionOff);
-        if (!txtVersion || !R::IsLive(txtVersion)) return;  // fresh read off the live menu -- bare IsLive is the contract here
+        if (!txtVersion || !R::IsLive(txtVersion)) return;  // a fresh read off the live menu: bare IsLive is the contract
         g_versionText.Reset();
         bool outdated = false;
         const std::string initial = VersionLine(&outdated);
@@ -149,11 +139,10 @@ void UpdateVersionLabel(void* menu) {
             g_versionMenu = menu;
             g_versionLastLine = initial;
             g_versionLastOutdated = outdated;
-            // The block inherits txt_version's colour from the style clone -- override
-            // with the coop accent (cyan; amber if we already know we're behind). MUST be
-            // the SetColorAndOpacity DISPATCH: the block is already attached to Slate at
-            // this point, so a raw property write would never repaint (user 2026-07-16:
-            // "no cyan" -- the raw write was exactly this trap).
+            // The block inherits the game label's colour from the style clone, so the coop accent
+            // is applied (amber if we already know we are behind), and it must be the
+            // colour-and-opacity dispatch: the block is already attached to Slate here, and a raw
+            // property write would never repaint.
             const ue_wrap::FLinearColor amber{1.f, 0.78f, 0.35f, 1.f};
             E::SetTextBlockColorDispatch(vt, outdated ? amber : kVersionCyan);
             UE_LOGI("multiplayer_menu: native version label injected (text=%p) ABOVE txt_version=%p",
@@ -161,8 +150,8 @@ void UpdateVersionLabel(void* menu) {
         }
         return;  // drive text/colour from next tick on
     }
-    // Steady state: push text/colour only when the verdict changed. Raw() is legal
-    // here -- the branch above just Alive()-validated this ref in the SAME tick.
+    // Steady state: push text and colour only when the verdict changed. The raw read is legal
+    // here, since the branch above validated the reference in the same tick.
     bool outdated = false;
     const std::string line = VersionLine(&outdated);
     if (line != g_versionLastLine) {
@@ -177,45 +166,33 @@ void UpdateVersionLabel(void* menu) {
     }
 }
 
-// POST observer on ui_menu_C::Tick. `self` IS the menu (zero scan). Game thread.
+// The POST observer on the menu's Tick; self is the menu, with no scan. Game thread.
 void OnMenuTickPost(void* self, void* /*function*/, void* /*params*/) {
     if (!self) return;
-    // MAIN menu only -- the pause menu (isPause==true) shares ui_menu_C but has no
-    // NEW GAME button to sit above. While the pause menu IS up, publish the freshness-
-    // stamped signal the render-thread HUD reads (IsPauseMenuOpen) so the passive coop
-    // overlay (chat feed / nameplates) is not drawn on top of the modal pause menu, then
-    // bail -- none of the main-menu inject/fade logic below applies to the pause menu.
+    // Main menu only: the pause menu shares the class but has no NEW GAME button to sit above.
+    // While the pause menu is up, the freshness-stamped signal the render-thread HUD reads is
+    // published, so the passive overlay is not drawn on top of the modal menu, and nothing below
+    // applies.
     if (g_isPauseOff >= 0 && *(reinterpret_cast<uint8_t*>(self) + g_isPauseOff) != 0) {
         g_pauseTickMs.store(::GetTickCount64(), std::memory_order_relaxed);
         return;
     }
-    // THE PER-ENTRANCE /v1/latest RE-POLL IS GONE (2026-08-30, RULE 2 -- deleted,
-    // not flagged off). Entering the title screen is not a request to talk to the
-    // master, and this fired on every entrance including the very first, so
-    // between this and the boot check the master learned the player's source IP
-    // before they had made any multiplayer decision at all. The check now rides
-    // ui::server_browser_surface::Open(), which IS such a request. Full reasoning
-    // at the deleted boot call site (session_manager::Configure).
-    //
-    // The label below still renders every tick; it just shows the local identity
-    // until a check has landed (VersionLine falls back to DisplayVersion), so
-    // nothing here needs to know whether one ever will.
-    //
-    // Inject / drive the native version label (sibling of txt_version). Auto show/hides
-    // with the menu (it's a child), so no viewport add/remove or visibility gating.
+    // No update check runs on entering the title screen: that is not a request to talk to the
+    // master, and it would give the master the player's address before any multiplayer decision.
+    // The check rides the browser surface's open, which is such a request; the label shows the
+    // local identity until a check has landed. Inject and drive the version label, a child of the
+    // menu, so it shows and hides with it.
     UpdateVersionLabel(self);
 
-    // Client loading state: while a join is in progress, hide the WHOLE menu widget so only
-    // the 3D menu background remains -- the "clean menu canvas" the connecting screen
-    // (ui/loading_screen) draws its centered progress over -- then restore it when the join
-    // completes/cancels. The hide is BOTH visual AND functional: opacity 0 (invisible) +
-    // HitTestInvisible (the widget and all its children stop receiving clicks, so the user
-    // can't trigger menu options they can't see). HitTestInvisible keeps the menu rendered/
-    // ticking, so this same observer restores it. Edge-applied (no per-tick UFunction).
+    // The client loading state: while a join is in progress the whole menu widget is hidden, so
+    // only the 3D background remains for the connecting screen to draw over, and restored when
+    // the join completes or cancels. The hide is visual and functional: opacity 0 plus
+    // hit-test-invisible, so the player cannot trigger options they cannot see, while the widget
+    // keeps ticking so this observer can restore it. Edge-applied.
     {
         const bool hideForJoin = coop::join_progress::Active();
         if (self != g_menuFadeMenu || hideForJoin != g_menuFadeHidden) {
-            // 3 = HitTestInvisible (self + children non-clickable, still rendered); 0 = Visible.
+            // 3 is HitTestInvisible (self and children unclickable, still rendered); 0 is Visible.
             E::SetWidgetVisibility(self, hideForJoin ? 3 : 0);
             E::SetWidgetRenderOpacity(self, hideForJoin ? 0.0f : 1.0f);
             g_menuFadeMenu = self;
@@ -226,45 +203,37 @@ void OnMenuTickPost(void* self, void* /*function*/, void* /*params*/) {
         }
     }
 
-    // Drive the NATIVE server browser (docs/MULTIPLAYER_UI.md section 8). It uses THIS
-    // observer rather than registering a second one on the same UFunction: this is the one
-    // hands-on-verified native inject, and one owner of the menu tick is the point. No-ops
-    // entirely unless [dev] browser_native=1, so the shipped path is untouched.
-    // ONCE, BEFORE ANY OF THEM. All four screens compare the switcher's active index
-    // against their own; asking the engine per screen is four ProcessEvent dispatches
-    // and four frame allocations per menu frame for one answer.
+    // Drive the native server browser from this observer rather than a second one on the same
+    // UFunction: one owner of the menu tick. The switcher index is read once, before any screen:
+    // all four compare the switcher's active index against their own, and asking the engine per
+    // screen is four dispatches and four frame allocations per menu frame for one answer.
     ui::native_screen::BeginMenuTick(ReadPtr(self, g_switcherOff));
     ui::server_browser_native::OnMenuTick(self, ReadPtr(self, g_switcherOff));
-    // ...and the HOST WINDOW, its sibling in the same switcher. Same observer for the
-    // same reason: one owner of the menu tick. Both no-op unless [dev] browser_native=1.
+    // The host window, its sibling in the same switcher; the same observer for the same reason.
     ui::host_window_native::OnMenuTick(self, ReadPtr(self, g_switcherOff));
-    // ...and SESSION SETTINGS, step two of hosting, IMMEDIATELY AFTER step one -- the order
-    // is load-bearing, not alphabetical. Pressing Next raises this window's intent from
-    // inside the hosting window's own click poll, and ticking step two next consumes it in
-    // the SAME tick; the reverse order would leave the player looking at the window they
-    // just left until the next one arrived.
+    // The session settings, step two of hosting, immediately after step one; the order is
+    // load-bearing: pressing Next raises this window's intent from inside the hosting window's
+    // own click poll, and ticking step two next consumes it in the same tick, where the reverse
+    // order would leave the player looking at the window they just left for a tick.
     ui::host_session_settings::OnMenuTick(self, ReadPtr(self, g_switcherOff));
-    // ...and the two small INPUT windows (variant A of the input fork -- the address and
-    // the name typed in their own sub-windows, VOTV's Language-window shape). Same
-    // observer, same reason. They build unconditionally and are only ever SHOWN by the
-    // browser's action grid, which offers them only while `ui.browser_inline_input` is off.
+    // The two small input windows (the address and the name typed in their own sub-windows, the
+    // game's Language-window shape); the same observer. They build unconditionally and are only
+    // shown by the browser's action grid.
     ui::browser_input_screens::OnMenuTick(self, ReadPtr(self, g_switcherOff));
 
-    // Inject once per menu instance; self-heal if VOTV ever tore our button out
-    // (throttled to 1 attempt/s so a persistent failure never hammers SpawnObject).
+    // Inject once per menu instance, self-healing if the game tore the button out, throttled to
+    // one attempt a second so a persistent failure never hammers the spawn.
     const bool needInject = (self != g_injectedMenu) || !g_button.Alive();
     if (needInject) {
         const uint64_t now = ::GetTickCount64();
         if (now - g_lastInjectMs >= 1000) { g_lastInjectMs = now; DoInject(self); }
     }
 
-    // While the server browser owns input, make OUR button NON-interactive (HitTest
-    // invisible) so a click over it cannot drive the native UButton pressed visual. If
-    // it could, the overlay input hook (imgui_overlay) swallows the release while the
-    // browser is up -> the button never sees its mouse-up and sticks DOWN until the next
-    // click. The native menu buttons are already blocked by that same input swallow;
-    // this makes ours behave identically. Edge-applied (SetVisibility only on a change);
-    // restored to Visible (input-receiving) the moment the browser closes.
+    // While the server browser owns input, our button is made hit-test-invisible, so a click over
+    // it cannot drive the native button's pressed visual: the overlay input hook swallows the
+    // release while the browser is up, and the button would never see its mouse-up and stick
+    // down. The native menu buttons are already blocked by that same swallow. Edge-applied, and
+    // restored to visible the moment the browser closes.
     if (void* btn = g_button.Get()) {
         const bool block = ui::server_browser::IsOpen();
         if (block != g_buttonInputBlocked) {
@@ -273,26 +242,21 @@ void OnMenuTickPost(void* self, void* /*function*/, void* /*params*/) {
         }
     }
 
-    // Click poll: open the browser on the LBUTTON RELEASE edge (not the press edge)
-    // while hovering our button. Releasing -- not pressing -- is deliberate: our button
-    // is a real UButton, so the mouse-DOWN drives its native Pressed (moved-down) visual.
-    // If we opened the browser on the down edge, CaptureActive() flips true and the
-    // WndProc hook (imgui_overlay) then SWALLOWS the WM_LBUTTONUP -> the UButton never
-    // sees its release and stays stuck DOWN. Triggering on release lets the button
-    // complete its own press->release ("moves down, springs back") exactly like the
-    // native items; we open only after that. IsHovered() (a UFunction) is called ONLY on
-    // the release edge, not per frame. Suppressed while the browser is already up.
+    // The click poll opens the browser on the button's release edge while hovering our button.
+    // Release, not press: the button is a real UButton whose mouse-down drives its pressed
+    // visual, and opening on the down edge would flip capture on and the window hook would
+    // swallow the release, leaving the button stuck down; on release it completes its own
+    // press-and-spring first. IsHovered, a UFunction, is called only on the release edge.
     const bool down = (::GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
-    // Seed the edge state on the very first tick so a mouse button already held
-    // when the observer installs can't synthesize a phantom click on the button.
+    // The edge state is seeded on the first tick, so a button already held when the observer
+    // installs cannot synthesise a phantom click.
     if (!g_lmbPrimed) { g_lmbPrimed = true; g_prevLmb = down; }
     const bool releaseEdge = !down && g_prevLmb;
     g_prevLmb = down;
     void* clickBtn = releaseEdge ? g_button.Get() : nullptr;
-    // EITHER browser counts as already-open, and WHICH one this click opens is not decided
-    // here -- `ui::server_browser_surface` is the one owner of both questions, because the
-    // four recovery paths in session_runtime ask them too (2026-08-30, when the native
-    // browser became the permanent default).
+    // Either browser counts as already open, and which one this click opens is not decided here:
+    // the browser surface is the one owner of both questions, since the recovery paths in the
+    // session runtime ask them too.
     if (clickBtn && !ui::server_browser_surface::IsOpen() &&
         !coop::join_progress::Active() &&  // suppress while connecting (the menu is hidden)
         ui::input_focus::IsOurWindowForeground() && E::WidgetIsHovered(clickBtn)) {
@@ -301,8 +265,8 @@ void OnMenuTickPost(void* self, void* /*function*/, void* /*params*/) {
     }
 }
 
-// Resolve ui_menu_C + register the Tick observer. Returns true once installed.
-// Idempotent. Runs on the game thread (reflection + observer registration).
+// Resolve the menu class and register the Tick observer; true once installed. Idempotent; game
+// thread.
 bool TryInstall() {
     if (g_installed.load(std::memory_order_acquire)) return true;
 
@@ -312,20 +276,19 @@ bool TryInstall() {
     g_tickFn         = R::FindFunction(uiMenuCls, prof::name::UiMenuTickFn);
     g_buttonStartOff = R::FindPropertyOffset(uiMenuCls, prof::name::UiMenuButtonStartProp);
     g_isPauseOff     = R::FindPropertyOffset(uiMenuCls, prof::name::UiMenuIsPauseProp);
-    // txt_version is the anchor for the native coop version label (non-fatal if absent --
-    // the label just won't inject; the button + fade still work).
+    // The game's version label is the anchor for ours; non-fatal if absent, the label just does
+    // not inject.
     g_txtVersionOff  = R::FindPropertyOffset(uiMenuCls, prof::name::UiMenuTxtVersionProp);
-    // switcher_widgets: non-fatal if absent -- only the (dev-gated) native browser needs it.
+    // The switcher: non-fatal if absent, only the native screens need it.
     g_switcherOff    = R::FindPropertyOffset(uiMenuCls, L"switcher_widgets");
     if (g_switcherOff < 0)
         UE_LOGW("multiplayer_menu: switcher_widgets offset unresolved -- the native browser "
                 "cannot be built this session");
     if (g_txtVersionOff < 0)
         UE_LOGW("multiplayer_menu: txt_version offset unresolved -- native version label disabled");
-    // button_start is the only field the inject NEEDS (we derive its VerticalBox +
-    // clone its slot layout / button style); isPause gates main-vs-pause. The label
-    // font/colour is set deterministically in InjectCanvasButton (font_ui + cyan), so
-    // no tex_btnStart clone-source is needed.
+    // The start button is the only field the inject needs (its vertical box and its slot layout
+    // and button style are derived from it); the pause flag gates main versus pause. The label
+    // font and colour are set deterministically in the canvas inject.
     if (!g_tickFn || g_buttonStartOff < 0 || g_isPauseOff < 0) {
         UE_LOGW("multiplayer_menu: resolve incomplete (tick=%p button_start=%d isPause=%d) -- retry",
                 g_tickFn, g_buttonStartOff, g_isPauseOff);
@@ -342,9 +305,9 @@ bool TryInstall() {
     return true;
 }
 
-// Bounded retry: ui_menu_C may not be loaded the instant Init() runs at boot. Post
-// TryInstall to the game thread every 500 ms until it succeeds (or ~60 s elapses).
-// One thread, self-exits on success. Mirrors freecam's lazy driver-thread pattern.
+// A bounded retry: the menu class may not be loaded the instant Init runs at boot, so the
+// install is posted to the game thread every 500 ms until it succeeds or about a minute
+// passes. One thread, self-exiting on success.
 DWORD WINAPI RetryThread(LPVOID) {
     for (int i = 0; i < 120 && !g_installed.load(std::memory_order_acquire); ++i) {
         GT::Post([] { TryInstall(); });
@@ -357,14 +320,13 @@ DWORD WINAPI RetryThread(LPVOID) {
 }  // namespace
 
 void Init() {
-    // Opt-out kill switch (default ON -- this is a shipping feature, not a dev one,
-    // so it is NOT gated by the [dev] master switch). `[coop] multiplayer_menu_off=1`
-    // disables it.
+    // The opt-out kill switch: on by default, since this is a shipping feature and not gated by
+    // the dev master switch.
     if (coop::config::ResolveFlag(::coop::config_registry::rows::multiplayer_menu_off)) {
         UE_LOGI("multiplayer_menu: disabled via [coop] multiplayer_menu_off=1");
         return;
     }
-    // Try immediately (the menu is usually already up when we boot); else retry.
+    // Try immediately (the menu is usually already up at boot), else retry.
     GT::Post([] {
         if (!TryInstall() && !g_retrying.exchange(true)) {
             if (HANDLE t = ::CreateThread(nullptr, 0, &RetryThread, nullptr, 0, nullptr))
@@ -376,26 +338,23 @@ void Init() {
 }
 
 bool IsPauseMenuOpen() {
-    // The pause-menu Tick fires ~every frame while it's up, so a stamp within the last
-    // ~250 ms means it is currently open; once it closes, stamping stops and this falls
-    // back to false within the window. Lock-free (atomic load + GetTickCount64) so it is
-    // safe to call from the render thread (the ImGui overlay) and the WndProc thread.
+    // The pause menu's Tick fires every frame while it is up, so a stamp within the last 250 ms
+    // means open; once it closes the stamping stops and this falls back to false. Lock-free, so it
+    // is safe from the render thread and the window-procedure thread.
     const uint64_t t = g_pauseTickMs.load(std::memory_order_relaxed);
     return t != 0 && (::GetTickCount64() - t) < 250;
 }
 
 void* MenuTickFn() {
-    // g_tickFn is resolved once at install (at the boot menu, well before any
-    // gameplay death) and never moves -- UFunctions don't unload. Null only if
-    // the menu class never resolved, in which case the death-flee bypass falls
-    // back to its time ceiling.
+    // Resolved once at install, at the boot menu, and never moves; null only if the menu class
+    // never resolved, in which case the death-flee bypass falls back to its time ceiling.
     return g_tickFn;
 }
 
 void ForceInjectNow() {
-    // TEST hook (coop::dev::menu_proceed): inject deterministically on the live menu,
-    // bypassing the observer-timing race in the brief post-bypass screenshot window.
-    // Ignores isPause (the caller has already reached the main menu). Game thread only.
+    // The test hook for the menu-proceed scenario: inject deterministically on the live menu,
+    // bypassing the observer-timing race in the brief post-bypass screenshot window. Ignores the
+    // pause flag, since the caller has already reached the main menu. Game thread only.
     if (!g_installed.load(std::memory_order_acquire)) TryInstall();
     void* menu = R::FindObjectByClass(prof::name::UiMenuClass);
     if (!menu || !R::IsLive(menu)) { UE_LOGW("multiplayer_menu: ForceInjectNow -- no live ui_menu_C"); return; }
