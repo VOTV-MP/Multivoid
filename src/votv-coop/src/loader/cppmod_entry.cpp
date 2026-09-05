@@ -1,28 +1,18 @@
-// loader/cppmod_entry.cpp -- the UE4SS C-ABI loading contract (D-3 SLIM CONTRACT).
-//
-// Design of record: research/findings/tooling/votv-ue4ss-f2-migration-DESIGN-2026-08-21.md
-// SS2, + the 10-round spike impl audit (2026-08-21, qf_thread.md). The contract,
-// measured in ALL THREE live era sources (v3.0.1 / e31aaaa6 2026-02-03 / main
-// 7f7cc36 2026-05, UE4SS/src/Mod/CppMod.cpp each):
-//   - UE4SS LoadLibrary's Mods/<name>/dlls/main.dll at mod-scan, GetProcAddress's
-//     "start_mod" + "uninstall_mod" BY NAME, and starts enabled mods by calling
-//     start_mod(). m_is_started = (returned ptr != nullptr); EVERY fire_* is
-//     null-guarded -> returning nullptr is the clean, era-safe REFUSE.
-//   - The host NEVER deletes the returned object, never reads or writes its
-//     fields (GUITabs is touched only inside their own base-class member
-//     functions a non-deriving object never invokes) -> the object is a bare
-//     vptr onto no-op stubs; layout beyond the vptr is free.
-//   - Every virtual the host can fire returns VOID in all three eras (slot 0 is
-//     the MSVC scalar-deleting dtor, never invoked). The stubs still zero
-//     RAX+XMM0 so a FUTURE scalar-returning slot reads deterministic 0/0.0/
-//     false/nullptr. A future sret (aggregate-return) slot has NO universal
-//     safe stub -- that coupling is WATCHED (tripwire wire-e), not solved.
-//   - "Restart All Mods" (main-era GUI) = uninstall_mod(ptr) -> CppMod dtor
-//     FreeLibrary -> re-LoadLibrary same path -> start_mod again. The self-PIN
-//     makes the FreeLibrary a refcount no-op (same module instance, statics
-//     survive), and bootstrap::StartOnce's latch turns the second start_mod
-//     into a logged no-op returning a fresh dummy: a live multiplayer session
-//     does not quiesce because a debug button was clicked.
+// loader/cppmod_entry.cpp -- the UE4SS C-ABI loading contract, measured in the three live
+// UE4SS sources (the 3.0.1 release, the shimloader build, main): UE4SS loads
+// Mods/<name>/dlls/main.dll at mod scan, looks up start_mod and uninstall_mod by name, and
+// starts enabled mods by calling start_mod; a mod counts as started when the returned pointer
+// is non-null and every callback is null-guarded, so returning null is the clean, era-safe
+// refuse. The host never deletes the returned object and never reads or writes its fields, so
+// the object is a bare vptr onto no-op stubs, and the layout beyond the vptr is free. Every
+// virtual the host can fire returns void in all three eras (slot 0 is the MSVC deleting
+// destructor, never invoked); the stubs still zero RAX and XMM0 so a future scalar-returning
+// slot reads a deterministic zero, while a future aggregate-returning slot has no universal
+// safe stub and is only watched. "Restart All Mods" is uninstall_mod, FreeLibrary, LoadLibrary
+// of the same path and start_mod again: the self-pin makes the FreeLibrary a refcount no-op
+// (the same module instance, statics surviving) and the boot latch turns the second start_mod
+// into a logged no-op returning a fresh dummy, so a live session does not quiesce because a
+// debug button was clicked.
 
 #include "loader/cppmod_entry.h"
 
@@ -37,32 +27,31 @@
 #include <cstdio>
 #include <string>
 
-// ---- MASM stub surface (src/loader/cppmod_stubs.asm) -----------------------
+// The MASM stub surface (src/loader/cppmod_stubs.asm).
 extern "C" {
-// 256 identical-shape stubs at a uniform stride; begin/end bracket them so the
-// stride is DERIVED, not assumed (the assembler owns the encoding widths).
+// 256 identical stubs at a uniform stride; begin and end bracket them so the stride is
+// derived, not assumed (the assembler owns the encoding widths).
 extern const unsigned char multivoid_cppmod_stubs_begin[];
 extern const unsigned char multivoid_cppmod_stubs_end[];
-// Per-slot call counters + first-hit bits, written by the stubs themselves.
+// Per-slot call counters, written by the stubs themselves.
 extern volatile long long multivoid_cppmod_slot_counters[256];
 
-// First-hit reporter, called BY the stub (aligned, shadow-spaced) exactly once
-// per slot: the attribution line is on disk immediately, so a crash milliseconds
-// after an unexpected dispatch still has its evidence flushed.
+// The first-hit reporter, called by the stub (aligned, shadow-spaced) exactly once per slot:
+// the attribution line is on disk immediately, so a crash milliseconds after an unexpected
+// dispatch still has its evidence flushed.
 void MultivoidCppmodSlotFirstHit(uint64_t slot);
 }
 
 namespace loader::cppmod {
 namespace {
 
-// Highest vtable slot any KNOWN era can dispatch (v3.0.1 = slots 0..9,
-// e31aaaa6/main = 0..15; MSVC gives the virtual dtor ONE slot). A call at or
-// beyond this index means upstream widened the dispatch surface -> WARN
-// (tripwire wire-e's runtime backstop).
+// The highest vtable slot any known era can dispatch (3.0.1 uses slots 0 to 9, the later
+// builds 0 to 15; MSVC gives the virtual destructor one slot). A call at or beyond it means
+// upstream widened the dispatch surface: a warning, the runtime backstop.
 constexpr uint64_t kClassifiedSlots = 16;
 
-// The returned objects: a bare vptr + magic. Static ring so restart re-entries
-// hand out distinct, forever-valid pointers with no allocation.
+// The returned objects: a bare vptr and a magic. A static ring, so restart re-entries hand out
+// distinct, forever-valid pointers with no allocation.
 struct DummyMod {
     void** vptr;
     uint64_t magic;
@@ -75,11 +64,10 @@ volatile LONG g_dummyIdx = -1;
 volatile LONG g_startModCalls = 0;
 volatile LONG g_uninstallCalls = 0;
 
-// Build the vtable once; stride derived from the assembler's real encoding.
-// FALSE = the stub block is malformed (REPT emitted uneven stubs) -- callers
-// must REFUSE (return nullptr) rather than hand UE4SS a garbage vtable.
-// Compile-time-constant behavior; the built object was disasm-verified at a
-// uniform 48-byte stride (audit 2026-08-21), so this is a tripwire, not a path.
+// Build the vtable once, the stride derived from the assembler's real encoding. False means
+// the stub block is malformed (uneven stubs) and the caller must refuse rather than hand
+// UE4SS a garbage vtable; the built object was verified at a uniform stride by disassembly,
+// so this is a tripwire, not a path.
 bool EnsureVtable() {
     static LONG state = 0;  // 0 unbuilt, 1 ok, -1 malformed
     if (state == 0) {
@@ -107,12 +95,11 @@ DummyMod* NextDummy() {
     return &g_dummies[idx];
 }
 
-// ---- predecessor detection (the upgrader path) ------------------------------
-// The OLD standalone install = xinput proxy + multivoid-*.dll BESIDE THE EXE
-// (or a legacy votv-coop.dll). Direction is fixed: the folder-mod DEFERS to a
-// standalone install always -- the old build boots normally and keeps the
-// session playable; WE refuse with a removal dialog. Boot-order-independent
-// because the DISK predicate does not care who booted first.
+// Predecessor detection, the upgrader path. The old standalone install is an xinput proxy plus
+// a multivoid-*.dll beside the exe (or a legacy votv-coop.dll). The direction is fixed: the
+// folder mod always defers to a standalone install, so the old build boots normally and keeps
+// the session playable while this one refuses with a removal dialog; boot-order-independent,
+// since the disk predicate does not care who booted first.
 
 bool NameIsPredecessor(const wchar_t* base) {
     const size_t len = ::wcslen(base);
@@ -122,8 +109,8 @@ bool NameIsPredecessor(const wchar_t* base) {
     return _wcsicmp(base, L"votv-coop.dll") == 0;
 }
 
-// Disk leg: multivoid-*.dll / votv-coop.dll / our xinput proxy beside the exe.
-// THE refuse predicate (deterministic, load-order-independent).
+// The disk leg: multivoid-*.dll, votv-coop.dll or our xinput proxy beside the exe. The refuse
+// predicate (deterministic, load-order-independent).
 bool ScanDiskPredecessors(std::wstring& outList) {
     wchar_t exePath[MAX_PATH] = {};
     ::GetModuleFileNameW(nullptr, exePath, MAX_PATH);
@@ -153,10 +140,9 @@ bool ScanDiskPredecessors(std::wstring& outList) {
         outList += L"votv-coop.dll";
         found = true;
     }
-    // xinput1_3.dll is AMBIGUOUS (another mod's proxy, an old UE4SS 2.5.2 --
-    // anyone can ship one) and with no multivoid payload beside it OUR proxy
-    // has nothing to load: never a refuse trigger by itself. It joins the
-    // removal list only when a payload hit above already refused.
+    // xinput1_3.dll is ambiguous (another mod's proxy, an old UE4SS; anyone can ship one) and with
+    // no multivoid payload beside it our proxy has nothing to load, so it is never a refuse
+    // trigger by itself. It joins the removal list only when a payload hit above already refused.
     if (found &&
         ::GetFileAttributesW((dir + L"xinput1_3.dll").c_str()) != INVALID_FILE_ATTRIBUTES) {
         outList += L";xinput1_3.dll (the multivoid loader proxy)";
@@ -164,9 +150,9 @@ bool ScanDiskPredecessors(std::wstring& outList) {
     return found;
 }
 
-// Live leg: a predecessor MODULE already mapped (kernel module list -- immune
-// to any filesystem virtualization a mod-manager shim may do). Evidence line;
-// also refuses on its own if the disk leg somehow missed.
+// The live leg: a predecessor module already mapped (the kernel module list, immune to any
+// filesystem virtualisation a mod-manager shim may do). An evidence line; it also refuses on
+// its own if the disk leg somehow missed.
 bool ScanLivePredecessors(std::wstring& outList) {
     HMODULE mods[1024];
     DWORD needed = 0;
@@ -195,23 +181,20 @@ bool ScanLivePredecessors(std::wstring& outList) {
     return found;
 }
 
-// The refusal dialog MOVED to bootstrap/refuse_dialog.{h,cpp} (2026-08-30).
-// It grew a second caller -- boot's SDK-health refusal, which needs the same
-// "the overlay must never come up, so a Win32 modal is the only surface"
-// property this lane needed -- and two copies of one concept is RULE 2. The
-// title, which used to be baked in here, is now the caller's to name.
+// The refusal dialog lives in bootstrap/refuse_dialog.h: it has a second caller, boot's
+// SDK-health refusal, which needs the same property (the overlay must never come up, so a
+// Win32 modal is the only surface); the title is the caller's to name.
 
-// ---- dispatch census watcher ------------------------------------------------
-// 1 Hz; prints the census line when the SET of nonzero slots changes (bounded:
-// at most one reprint per new slot) and exits on process teardown with the
-// thread. The first-hit reporter already flushed each slot's attribution line
-// the moment it happened; this line is the SET view the smoke gate asserts.
+// The dispatch census watcher: 1 Hz, prints the census line when the set of nonzero slots
+// changes (bounded to one reprint per new slot) and exits on process teardown with the
+// thread. The first-hit reporter already flushed each slot's attribution line the moment it
+// happened; this line is the set view the smoke gate asserts.
 
 volatile LONG g_watcherStarted = 0;
 
-// Two-phase on purpose (audit F2): the 1 Hz tick computes only the nonzero-set
-// MASK (256 volatile reads, no alloc); the string is built ONLY when the set
-// changed (bounded: at most 257 builds process-life).
+// Two-phase on purpose: the 1 Hz tick computes only the nonzero-set mask (256 volatile reads,
+// no allocation); the string is built only when the set changed, at most 257 times in the
+// process's life.
 void BuildMask(uint64_t (&mask)[4]) {
     for (int i = 0; i < 4; ++i) mask[i] = 0;
     for (int i = 0; i < 256; ++i) {
@@ -263,8 +246,7 @@ DWORD WINAPI WatcherThread(LPVOID) {
 }  // namespace
 
 void FinalDump() {
-    // No-op unless the cppmod lane actually ran (counters written or start_mod
-    // called): the proxy lane's DETACH must not add a confusing line.
+    // A no-op unless start_mod was called: the proxy lane's detach must not add a confusing line.
     if (g_startModCalls == 0) return;
     const std::string census = CensusString();
     UE_LOGI("cppmod: final dispatch tally [%s] (start_mod x%ld, uninstall_mod x%ld)",
@@ -274,11 +256,11 @@ void FinalDump() {
 
 }  // namespace loader::cppmod
 
-// ---- the C-ABI exports ------------------------------------------------------
+// The C-ABI exports.
 
 extern "C" void MultivoidCppmodSlotFirstHit(uint64_t slot) {
-    // Called by the stub, once per slot, on whatever thread UE4SS dispatched
-    // from. Logger is CS-locked, fixed-buffer, no allocation.
+    // Called by the stub, once per slot, on whatever thread UE4SS dispatched from. The logger is
+    // lock-guarded and fixed-buffer, no allocation.
     if (slot >= loader::cppmod::kClassifiedSlots) {
         UE_LOGW("cppmod: WARN unknown vtable slot %llu dispatched (first hit) -- upstream "
                 "widened the dispatch surface (wire-e)", (unsigned long long)slot);
@@ -293,9 +275,9 @@ extern "C" __declspec(dllexport) void* start_mod() {
     using loader::cppmod::ScanDiskPredecessors;
     using loader::cppmod::ScanLivePredecessors;
 
-    // PIN FIRST, before any other logic or thread spawn: once pinned, the
-    // CppMod dtor's FreeLibrary (restart path AND the refused-instance path)
-    // is a refcount no-op, so nothing we start below can be unloaded under us.
+    // Pin first, before any other logic or thread spawn: once pinned, the CppMod destructor's
+    // FreeLibrary (the restart path and the refused-instance path) is a refcount no-op, so
+    // nothing started below can be unloaded under us.
     {
         HMODULE self = nullptr;
         ::GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
@@ -304,18 +286,18 @@ extern "C" __declspec(dllexport) void* start_mod() {
     }
     ::InterlockedIncrement(&loader::cppmod::g_startModCalls);
 
-    // The stub vtable must exist before ANY dummy is handed out; a malformed
-    // stub block (tripwire, disasm-verified unreachable today) means REFUSE.
+    // The stub vtable must exist before any dummy is handed out; a malformed stub block (a
+    // tripwire, unreachable by disassembly today) means refuse.
     if (!loader::cppmod::EnsureVtable()) {
         ue_wrap::log::Flush();
         return nullptr;
     }
 
-    // Re-entry short-circuit BEFORE the scans: an already-attempted module's
-    // start_mod is never a fresh boot, and re-scanning cannot change a running
-    // session's reality (a predecessor appearing mid-session must not flip a
-    // live mod to refused in UE4SS's bookkeeping). Audit F3: an instance that
-    // attempted but was REFUSED stays refused -- it has no session to claim.
+    // The re-entry short-circuit before the scans: an already-attempted module's start_mod is
+    // never a fresh boot, and re-scanning cannot change a running session's reality (a
+    // predecessor appearing mid-session must not flip a live mod to refused in UE4SS's
+    // bookkeeping). An instance that attempted and was refused stays refused: it has no session
+    // to claim.
     if (bootstrap::AlreadyBooted()) {
         if (bootstrap::Started()) {
             bootstrap::StartOnce("cppmod");  // logs the already-booted line
@@ -328,9 +310,9 @@ extern "C" __declspec(dllexport) void* start_mod() {
         return nullptr;
     }
 
-    // Predecessor scan -- ONLY on this lane (the proxy lane IS the standalone
-    // install and must never self-refuse). Both legs always log their verdict
-    // so the evidence attributes the exact leg.
+    // The predecessor scan, only on this lane (the proxy lane is the standalone install and must
+    // never refuse itself). Both legs always log their verdict, so the evidence attributes the
+    // exact leg.
     std::wstring disk, live;
     const bool diskHit = ScanDiskPredecessors(disk);
     const bool liveHit = ScanLivePredecessors(live);
@@ -367,10 +349,9 @@ extern "C" __declspec(dllexport) void* start_mod() {
         return nullptr;
     }
     if (r == bootstrap::StartResult::kRefusedThreadSpawn) {
-        // Nothing is running. Refusing (nullptr) is the honest answer to UE4SS --
-        // returning a dummy would leave it firing callbacks into a mod that never
-        // booted. No modal: an OS that cannot spawn one thread will not do better
-        // with a second, and the log line carries the reason.
+        // Nothing is running. Refusing is the honest answer to UE4SS, since a dummy would leave it
+        // firing callbacks into a mod that never booted. No modal: an OS that cannot spawn one
+        // thread will not do better with a second, and the log line carries the reason.
         ue_wrap::log::Flush();
         return nullptr;
     }
@@ -382,23 +363,21 @@ extern "C" __declspec(dllexport) void* start_mod() {
             }
         }
     }
-    // Drain the boot evidence (the entry= line and the leg verdicts are INFO,
-    // which log.cpp deliberately leaves buffered): every autonomous teardown is
-    // TerminateProcess, and only the refuse legs flushed -- a clean boot's
-    // evidence must not depend on a later WARN or a vtable first-hit happening
-    // to drain it (lesson-kill-teardown-discards-buffered-info-log-lines).
+    // Drain the boot evidence (the entry line and the leg verdicts are info, which the log
+    // deliberately leaves buffered): every autonomous teardown is a process kill, and only the
+    // refuse legs flushed, so a clean boot's evidence must not depend on a later warning or a
+    // vtable first hit happening to drain it.
     ue_wrap::log::Flush();
-    // kStarted and kAlreadyBooted both hand UE4SS a live dummy: the restart
-    // re-entry must read as STARTED in their bookkeeping (m_is_started) --
-    // our subsystems never stopped.
+    // Started and already-booted both hand UE4SS a live dummy: the restart re-entry must read as
+    // started in its bookkeeping, since our subsystems never stopped.
     return loader::cppmod::NextDummy();
 }
 
 extern "C" __declspec(dllexport) void uninstall_mod(void* mod) {
-    // Log-only, touches no state -> idempotent for the double-fire the host
-    // performs (restart dtor + final shutdown). A live multiplayer session
-    // does not quiesce because a debug button was clicked; real teardown stays
-    // WM_CLOSE/DETACH-driven exactly as on the proxy lane.
+    // Log only, touching no state, so idempotent for the double fire the host performs (the
+    // restart destructor and the final shutdown). A live session does not quiesce because a debug
+    // button was clicked; real teardown stays window-close and detach driven, as on the proxy
+    // lane.
     const LONG n = ::InterlockedIncrement(&loader::cppmod::g_uninstallCalls);
     UE_LOGI("cppmod: uninstall_mod called (ptr=%p, call #%ld) -- ignored by design", mod, n);
     ue_wrap::log::Flush();
