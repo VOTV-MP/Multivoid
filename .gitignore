@@ -384,3 +384,40 @@ docs/piles/_archive/
 docs/_archive/
 docs/kerfur/0[1-8]-*.md
 reference/agency-agents/
+
+# ---- OUR WORKFLOW'S TOOLING IS LOCAL (2026-09-05, the same test as the docs above) ------------
+# The public tools/ tree keeps what CI, the build, a release, a contributor's smoke, the skin
+# converter and the master server need. The session-close ritual's scripts, the probes, the
+# one-off census and drill scripts and the operator's own helpers serve one development workflow
+# and stay on disk, out of the repository.
+tools/docs/census_git.py
+tools/docs/census_history.py
+tools/docs/comment_lexer.py
+tools/docs/lessons_gate*
+tools/docs/memory_index.py
+tools/docs/reading_order.py
+tools/docs/status_census*.py
+tools/docs/status_grammar.py
+tools/docs/trailer_schema.py
+tools/*_probe.py
+tools/*_probe_drill.py
+tools/atv_probe_report_drill.py
+tools/atv_probe_report.py
+tools/bp_gate_census.py
+tools/capture-kerfur-repro.ps1
+tools/coverage.py
+tools/dead_api_census.py
+tools/diag-*.ps1
+tools/kerfur-delivery-assert.ps1
+tools/master_smoke.py
+tools/rng_census_analyze.py
+tools/verified_takes.tsv
+tools/vps_provision.sh
+tools/debug/parse_dump.py
+tools/debug/present_hook_census.py
+tools/net/departure_drill.ps1
+tools/net/replacement_drill.ps1
+tools/probes/atlas_probe/measure_donors.py
+tools/reflection/islive_gate.ps1
+tools/release/compare_zips.ps1
+tools/release/mirror_pr.ps1
