@@ -288,7 +288,7 @@ onto UE4SS anyway**; Multivoid ships today as a UE4SS mod. The argument that
 carried the day was the one he had already made, and what changed was not a better
 case from the other side but a re-audit that found the refusal's own premises
 unsound. The record of both, including the losing answer, is kept in
-`docs/VERSION_MIGRATION.md` §7 rather than quietly edited away.
+`docs/versioning.md` rather than quietly edited away.
 
 ### SentientYeet — the substrate critique that re-opened the loader decision
 

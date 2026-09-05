@@ -7,7 +7,7 @@
     Those live on the release page. CI enforces this (ledger_lint INSTALL checks:
     a literal multivoid-<target>-<digits>.dll or a 40/64-hex string fails the lint).
   - The ONE living version literal is the game target below; it changes only on a
-    game retarget (see docs/VERSION_MIGRATION.md, "version identity" step).
+    game retarget (see docs/versioning.md).
   - The manual-lane mod-folder path and the upgrade-from-standalone rule are
     anchor phrases shared with the release-body template
     (tools/release/ledger_lib.ps1); the lint asserts they appear here verbatim.

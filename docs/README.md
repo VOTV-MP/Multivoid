@@ -33,7 +33,7 @@ Then, if you are going to touch code:
 | [RE_WORKFLOW.md](RE_WORKFLOW.md) | How this project reverse-engineers the game: reflection first, then IDA, then UE4SS as a probe. None of those ship |
 | [testing.md](testing.md) | The rig, the launcher and its scenarios, the in-game harness, what autonomy proves, and the gates a push runs |
 | [RELEASE.md](RELEASE.md) | How a build becomes a release, and the gates it must pass |
-| [VERSION_MIGRATION.md](VERSION_MIGRATION.md) | What happens when VOTV updates: the measured version surface and the port runbook |
+| [versioning.md](versioning.md) | The version pair two peers must match, the files a game update touches, how a broken build says so, and the port runbook |
 | [VOTV_UI_STYLE.md](VOTV_UI_STYLE.md) | The game's own widget style, measured; binding for anything drawn inside VOTV's UI |
 
 Before writing any entity-sync, hook or spawn-catch code, read these three:

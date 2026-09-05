@@ -111,7 +111,7 @@ previous build).
    this costs a grep.
    **Trip-wires (2026-07-26):** run `tools/release/tripwires.ps1` and paste its
    output into the handoff. ADVISORY — a FIRED wire re-opens the
-   `docs/VERSION_MIGRATION.md` §11 decision ledger, it never blocks the
+   `docs/versioning.md`, it never blocks the
    release. (The UE4SS-switch fork those wires were minted for was TAKEN — F2,
    2026-08-21 — and shipped at WP-2 commit 3; the wires stay as drift watches
    on the ledger's premises.) On FIRED or a 2nd consecutive CHECK-UNREACHABLE: append
