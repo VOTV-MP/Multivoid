@@ -181,13 +181,11 @@ stage visuals, only its outcome. The upgrade levels arrive with the save and nev
 
 | Limit | Evidence |
 |---|---|
-| The upgrade levels are not mirrored; a level bought mid-session diverges until the next join | `[V]` no lane exists |
-| The coordinate log's animated line families are generated per peer from inputs that never mirror, so the host's and a client's logs differ | `[V]` measured line counts on a stress run |
-| The desk cursor has degraded to a few frames per second mid-session; two mechanisms were removed and the residual is attributed by a warning if it recurs | `[?]` not reproduced since |
-| A refiner completion fires world triggers on the one simulating machine only; other peers mirror the state | `[V]` by design of the single simulator |
-| The desk lanes from the input fix onward were verified by the rig and its self-tests, and by one hands-on that found real breaks whose fixes shipped without a replay | `[V]` the status page counts them |
-| The red phone's ring is per-peer randomness with no lane | `[V]` open, low |
-| The gauge sounds derive from speeds that ride no lane on a mirror; the effect forward covers the presser's one-shots and loops | `[?]` |
+| The upgrade levels are not mirrored; a level bought mid-session diverges until the next join | `[V]` no lane exists; `coop/interactables/desk_sim_sync` names the gap |
+| The coordinate log's animated line families are generated per peer from inputs that never mirror, so the host's and a client's logs differ; only the nine one-shot lines ride the wire | `[V]` `coop/interactables/console_state_sync` |
+| The desk cursor has degraded to a few frames per second mid-session; two mechanisms were removed, and a warning names an occupancy flap if it recurs | `[?]` `coop/interactables/desk_cursor_sync`; not reproduced since |
+| A refiner completion fires world triggers on the one simulating machine only; other peers mirror the state | `[V]` `coop/interactables/comp_sync`, by design of the single simulator |
+| The red phone's ring is per-peer randomness with no lane | `[V]` no lane exists |
 
 ## Code map
 
