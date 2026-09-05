@@ -14,7 +14,7 @@ Rules (enforced where noted):
   every live release's `## What's new` section is compared against its notes
   file, so a post-publish edit of the file shows up as a labeled WARN on the next
   lint. It is a DETECTOR, not a refusal — GitHub serves stale release bodies from
-  both its list and per-tag endpoints (measured 2026-07-26), so one pass cannot
+  both its list and per-tag endpoints (measured), so one pass cannot
   tell a cached read from real drift. If it warns, RE-RUN first. A sanctioned
   correction edits BOTH: fix the file, then regenerate the live body from it
   (`gh release edit` with a body rebuilt by `New-ReleaseBody`), then run

@@ -1,5 +1,5 @@
 <!--
-  MAINTENANCE (single-owner rule, 2026-07-26):
+  MAINTENANCE (single-owner rule):
   This file is the ONE owner of install/update/uninstall instructions. Every other
   surface (README quickstart, release-page Install blocks, the website Download
   section) links here and must NOT restate steps beyond one sentence.
@@ -10,10 +10,9 @@
     game retarget (see docs/versioning.md).
   - The manual-lane mod-folder path and the upgrade-from-standalone rule are
     anchor phrases shared with the release-body template
-    (tools/release/ledger_lib.ps1); the lint asserts they appear here verbatim.
+    (tools/release/ledger_lib.ps1); the lint asserts they appear here word for word.
     Reword them only together.
-  - The dev-build/tester DISCLAIMER below is owned HERE too (user-approved
-    2026-07-27). README and the website Download section carry a one-line
+  - The dev-build/tester DISCLAIMER below is owned HERE too. README and the website Download section carry a one-line
     pointer, never a copy. It deliberately names no build number or hash, so it
     stays lint-clean if a release body ever quotes it.
 -->
@@ -95,15 +94,13 @@ and no listing, and it is shorter than what follows.
    Copy only what is inside `UE4SS\`. The zip also has a `dwmapi.dll` at its
    top level -- that one belongs to the mod manager, and you do not want it.
 
-   > **Why that download and not UE4SS's own release page (measured
-   > 2026-08-31).** Two UE4SS builds are in circulation, and on Voices of the
+   > **Why that download and not UE4SS's own release page (measured).** Two UE4SS builds are in circulation, and on Voices of the
    > Void they are not equally fast. The v3.0.1 release on GitHub was built in
    > February 2024; the build carried by the package above is from May 2026.
    > On one dev machine, changing nothing but `UE4SS.dll` took the in-game
    > frame rate from **70 to 118 fps**. That is a measurement on one machine,
    > not a promise about yours -- but it is why Multivoid pins the newer build,
    > and it is the same build the mod manager route above installs for you.
-   > Details: `docs/UE4SS_ARC.md` section 9.
 2. Unzip the Multivoid zip. Copy the **contents** of its `mod\` folder into
    `WindowsNoEditor\VotV\Binaries\Win64\Mods\Multivoid`
    inside your game install -- so that the file

@@ -60,7 +60,7 @@ Notes:
     when it built protobuf+abseil. If they diverge, you'll see
     unresolved `__std_*_trivial_N` symbols at link time (newer-stdlib
     vector-algorithm intrinsics missing from the older stdlib).
-  - Tested 2026-05-28: **VS 18 BuildTools / MSVC 14.50.35717**. Pick the
+  - Tested with **VS 18 BuildTools / MSVC 14.50.35717**. Pick the
     matching `-G "Visual Studio 18 2026"` generator below.
   - If you only have VS 2019 BuildTools, install protobuf via vcpkg
     with that toolset (set `VCPKG_VISUAL_STUDIO_PATH` env var to your

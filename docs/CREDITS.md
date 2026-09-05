@@ -198,8 +198,8 @@ console, the notepad, save-slot names, the settings search. Function keys still
 reach the mod, since the game does not use them for text.
 
 Two things worth recording from this one: the swallow was **keyboard-layout
-blind** (on a Russian layout the `T` key produces `е`, and the check was on the
-character, not the key), and there are **two different consoles** in this game —
+blind** (on a Russian layout the `T` key produces the Cyrillic letter that looks like a
+Latin `e`, and the check was on the character, not the key), and there are **two different consoles** in this game —
 the developer console UE4 ships, and the in-world SAT terminal the report was
 actually about.
 
