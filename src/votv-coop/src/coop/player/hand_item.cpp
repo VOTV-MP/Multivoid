@@ -28,51 +28,37 @@ namespace {
 namespace R = ue_wrap::reflection;
 namespace E = ue_wrap::engine;
 
-// Wire caps. BP class names ("prop_physgun_C") and item names ("grenade_p")
-// are short ASCII; 63 is generous headroom, one byte each on the wire.
+// Wire caps: class names and item names are short ASCII, one length byte each.
 constexpr size_t kMaxStr = 63;
 
-// Display placement (user 2026-07-10: "attached to the root of the camera --
-// same as the SP local player: the item just appears in front of the camera,
-// but seen from third person on the puppet"). Natively the held item is
-// welded into the FP-arms VIEWMODEL chain (updateHold K2_AttachToComponent ->
-// 'weapon' <- arms <- arms_lag <- viewmodel, mainPlayer SCS) which is drawn
-// camera-relative -- that chain is bHiddenInGame and never ticks on a puppet
-// (ref-pose socket put the mirror on the BACK, hands-on 2026-07-06 14:2x),
-// and the puppet's Camera component never pitches (pitch is controller-fed).
-// So the SP look is reproduced by the per-tick drive: eye anchor +
-// synced-look basis, following yaw AND pitch -- functionally "attached to
-// the camera root".
-//
-// MEASURED, NOT TUNED (user 2026-07-11: keljoy face pointed away on the
-// puppet -- hand-tuned constants can never carry the per-item weld pose):
-// the item's pose relative to the camera is ITEM-SPECIFIC (the 'weapon'
-// socket basis + per-item in-hand offsets), so the OWNER MEASURES its held
-// actor's transform in its own view space and ships it with the HandItem
-// announce; DriveMirror re-composes it onto the puppet's synced view basis.
-// The two view-space definitions match by construction: origin = 'head' bone
-// + kHeadAnchorLiftCm on BOTH sides, basis = control yaw/pitch with roll 0
-// (the pose stream's curYaw+headYawDelta == control yaw, curPitch == control
-// pitch -- local_streams.cpp). Every item then reads exactly like the
-// owner's first-person hold, face direction included.
-constexpr float kHeadAnchorLiftCm = 33.f;  // == remote_player.cpp kPlateLiftCm (GetHeadPosition's lift)
-// Fallback placement until the owner's first measure lands (mesh not ticked
-// yet / measure declined): the pre-2026-07-11 camera-front constants.
+// Display placement: the held item appears in front of the camera, as in the single-player
+// view, seen in third person on the puppet. Natively the held item is welded into the
+// first-person arms viewmodel chain, which is drawn camera-relative; that chain is hidden and
+// never ticks on a puppet, and the puppet's camera never pitches, so the look is reproduced
+// by a per-tick drive from the eye anchor and the synced look basis, following yaw and
+// pitch. Measured, not tuned: the item's pose relative to the camera is item-specific (the
+// weapon socket basis plus per-item offsets), so the owner measures its held actor's
+// transform in its own view space and ships it with the announce, and the mirror re-composes
+// it onto the puppet's synced view basis. The two view spaces match by construction: the
+// origin is the head bone plus the same lift on both sides, and the basis is control yaw and
+// pitch with roll 0.
+constexpr float kHeadAnchorLiftCm = 33.f;  // the same lift as the puppet's head position
+// The fallback placement until the owner's first measure lands: camera-front constants.
 constexpr float kFallbackRelPos[3] = {45.f, 10.f, -40.f};  // fwd/right/up cm
 
-// ---- per-slot wire state (what each peer's hand holds) -------------------
+// Per-slot wire state: what each peer's hand holds.
 struct SlotHand {
     bool has = false;
     std::wstring cls;   // BP class name, e.g. L"prop_physgun_C"
     std::wstring name;  // Aprop_C 'name' FName (drives the generic prop mesh), may be empty
-    // Measured view-relative hold transform (owner-authored, wire-carried).
+    // The measured view-relative hold transform, owner-authored and wire-carried.
     float relPos[3] = {kFallbackRelPos[0], kFallbackRelPos[1], kFallbackRelPos[2]};
     float relRot[3] = {0.f, 0.f, 0.f};  // item rotator {pitch,yaw,roll} in the view frame
     bool  haveRel = false;              // owner measured (vs the fallback defaults)
 };
 SlotHand g_hands[coop::players::kMaxPeers];  // GT-only
 
-// ---- per-slot display mirror ---------------------------------------------
+// The per-slot display mirror.
 struct Mirror {
     void*        actor = nullptr;
     int32_t      idx   = -1;  // GUObjectArray index (IsLiveByIndex validation)
@@ -82,44 +68,36 @@ struct Mirror {
 };
 Mirror g_mirrors[coop::players::kMaxPeers];  // GT-only
 
-// The session, cached by TickOwner (net_pump tick site) for the connect-replay
-// entry that only gets a slot (subsystems fanout convention). GT-only.
+// The session, cached by TickOwner for the connect-replay entry that only receives a slot.
+// Game thread only.
 coop::net::Session* g_session = nullptr;
 
-// ---- owner-side change detection ------------------------------------------
+// Owner-side change detection.
 bool         g_ownHas = false;
 std::wstring g_ownCls;
 std::wstring g_ownName;
-// The last-seen holding_actor identity (pointer + captured GUObjectArray index —
-// updateHold recycles addresses). While it is unchanged, TickOwner skips the
-// ClassNameOf/ReadItemName renders entirely (audit 2026-07-06 MEDIUM: FName::
-// ToString allocates engine-side per call; 2 renders x 60 Hz while holding was
-// the exact per-tick pattern local_streams already latches for the held eid).
+// The last-seen holding actor, pointer and captured index, since the game recycles addresses.
+// While unchanged, TickOwner skips the class and name renders, which allocate engine-side per
+// call.
 void*        g_ownHeldPtr = nullptr;
 int32_t      g_ownHeldIdx = -1;
 
-// The local mainPlayer, cached by TickOwner (pointer + captured index) for
-// LocalHandActor's fresh holding_actor read. GT-only.
+// The local player, cached by TickOwner for the fresh holding-actor read. Game thread only.
 void*        g_localPlayer    = nullptr;
 int32_t      g_localPlayerIdx = -1;
 
-// THE HAND-EDGE WORLD RELEASE (v106, 2026-07-07). An R-drop / quick-slot place
-// is NOT a spawn: the game RELEASES the ex-hand view actor into the world (same
-// actor, physics/collision re-enabled) -- no spawn seam fires and the census
-// high-water guard is blind (NumObjects flat; the v105b root). But WE hold the
-// previous hand actor's identity (g_ownHeldPtr + captured index): at the hand
-// edge, an ex-hand actor that SURVIVED the edge (updateHold DESTROYS it on a
-// stow/switch, so survival == world release) is expressed immediately through
-// the canonical untracked-prop broadcast. Works on both roles (a client's own
-// drop is client-authored, the same path local_streams uses for held props).
+// The hand-edge world release. A drop or quick-slot place is not a spawn: the game releases
+// the ex-hand actor into the world (the same actor, with physics and collision re-enabled),
+// so no spawn seam fires and the census guard is blind. But the previous hand actor's identity
+// is held here, so at the hand edge an ex-hand actor that survived the edge (a stow or switch
+// destroys it) is expressed immediately through the canonical untracked-prop broadcast, on
+// both roles.
 void ExpressReleasedHandActor(coop::net::Session& session, void* prev, int32_t prevIdx) {
     if (!prev || !R::IsLiveByIndex(prev, prevIdx)) {
-        // [ROCK-DROP DIAG 2026-07-08, RULE-2-exempt] prev DEAD at the hand edge => the
-        // ex-hand actor was DESTROYED in-hand (updateHold stow/switch OR the R-drop's
-        // simulateDrop which destroys the hand display actor + spawns a SEPARATE fresh
-        // world actor). Either way this "release the SAME surviving actor" path does NOT
-        // fire -- confirming the v106 "R-drop is not a spawn" model is false for this item.
-        // Do NOT deref prev here (UAF on a dead actor); log the pointer only.
+        // Diagnostic: the previous actor dead at the hand edge means it was destroyed in hand (a
+        // stow or switch, or a drop path that destroys the hand actor and spawns a separate world
+        // actor), so the same-actor release does not run. The pointer is logged, never
+        // dereferenced.
         if (prev) {
             UE_LOGI("[ROCK-DROP] hand-edge: ex-hand actor %p DEAD (destroyed in-hand) -- the "
                     "'release surviving actor' express does NOT run; a fresh world spawn (if any) "
@@ -127,7 +105,7 @@ void ExpressReleasedHandActor(coop::net::Session& session, void* prev, int32_t p
         }
         return;
     }
-    // prev SURVIVED the hand edge => a genuine same-actor release into the world.
+    // The previous actor survived the hand edge: a genuine same-actor release into the world.
     if (coop::trash_collect_sync::EnsureHeldItemBroadcast(prev, &session)) {
         UE_LOGI("hand_item: released ex-hand actor %p expressed as a world prop "
                 "(R-drop/place -- peers see it this tick)", prev);
@@ -137,12 +115,12 @@ void ExpressReleasedHandActor(coop::net::Session& session, void* prev, int32_t p
     }
 }
 
-// ---- view-space rotation math (UE FRotationMatrix conventions) -------------
+// View-space rotation math, in the engine's rotation-matrix conventions.
 constexpr float kDeg2Rad  = 0.01745329252f;
 constexpr float kRadToDeg = 57.2957795f;
 
-// UE FRotationMatrix: rows = the rotation's world-space X (forward), Y (right),
-// Z (up) axes. A roll-0 call yields the view basis {fwd, right, up} directly.
+// The engine's rotation matrix: rows are the rotation's world-space forward, right and up
+// axes. A roll-0 call yields the view basis directly.
 void RotMatrixRows(float pitchDeg, float yawDeg, float rollDeg, float M[3][3]) {
     const float SP = std::sin(pitchDeg * kDeg2Rad), CP = std::cos(pitchDeg * kDeg2Rad);
     const float SY = std::sin(yawDeg * kDeg2Rad),   CY = std::cos(yawDeg * kDeg2Rad);
@@ -152,7 +130,7 @@ void RotMatrixRows(float pitchDeg, float yawDeg, float rollDeg, float M[3][3]) {
     M[2][0] = -(CR * SP * CY + SR * SY); M[2][1] = CY * SR - CR * SP * SY;    M[2][2] = CR * CP;
 }
 
-// Inverse of RotMatrixRows (UE FMatrix::Rotator()): axis rows -> {Pitch,Yaw,Roll}.
+// The inverse: axis rows to pitch, yaw and roll.
 ue_wrap::FRotator RotatorFromRows(const float M[3][3]) {
     ue_wrap::FRotator r{};
     r.Pitch = std::atan2(M[0][2], std::sqrt(M[0][0] * M[0][0] + M[0][1] * M[0][1])) * kRadToDeg;
@@ -165,9 +143,9 @@ ue_wrap::FRotator RotatorFromRows(const float M[3][3]) {
     return r;
 }
 
-// Measure the OWNER's natively-welded held actor in its own view space (see the
-// placement block comment). False = don't ship (mesh/bone not readable yet, or
-// a wild pre-weld transform) -- the 0.5 s re-check retries.
+// Measure the owner's natively welded held actor in its own view space. False means do not
+// ship (the mesh or bone not readable yet, or a wild pre-weld transform); the periodic
+// re-check retries.
 bool MeasureLocalHoldRelative(void* local, void* held, float outPos[3], float outRot[3]) {
     void* mesh = ue_wrap::puppet::GetSkeletalMeshComponent(local);
     ue_wrap::FVector head{};
@@ -184,8 +162,8 @@ bool MeasureLocalHoldRelative(void* local, void* held, float outPos[3], float ou
     const float d[3] = {iloc.X - head.X, iloc.Y - head.Y, iloc.Z - head.Z};
     for (int i = 0; i < 3; ++i) {
         outPos[i] = d[0] * V[i][0] + d[1] * V[i][1] + d[2] * V[i][2];
-        // A held item sits within arm's reach of the head; a wild read (the
-        // pre-weld spawn frame, a dying component) must never ship.
+        // A held item sits within arm's reach of the head; a wild read (the pre-weld spawn frame, a
+        // dying component) must never ship.
         if (!(outPos[i] > -300.f && outPos[i] < 300.f)) return false;
     }
     float I[3][3], Q[3][3];
@@ -199,13 +177,8 @@ bool MeasureLocalHoldRelative(void* local, void* held, float outPos[3], float ou
     return true;
 }
 
-// (The 0.5 s reliable drift refresh was retired 2026-07-11 same-day, RULE 2:
-// the v109 MsgType::HandPose unreliable stream carries the live transform per
-// tick -- the swing motion the drift refresh rendered at "1 frame per second",
-// user report. The reliable announce keeps the identity + initial transform.)
-
-// Aprop_C 'name' FName property offset, resolved once (the field lives on the
-// prop base class; every hotbar item is a descendant).
+// The prop name field's offset, resolved once; the field lives on the prop base class, and
+// every hotbar item is a descendant.
 int32_t PropNameOffset() {
     static int32_t s_off = -1;
     if (s_off >= 0) return s_off;
@@ -224,8 +197,8 @@ std::wstring ReadItemName(void* actor) {
     return s;
 }
 
-// [u8 slot][u8 has][u8 clsLen][cls ascii][u8 nameLen][name ascii]
-// + when has: [f32 relPos x3][f32 relRot x3] (the measured view-relative hold).
+// The payload: slot, has, a length-prefixed class, a length-prefixed name, and when held the
+// measured view-relative position and rotation.
 std::vector<uint8_t> BuildPayload(uint8_t slot, const SlotHand& h) {
     std::vector<uint8_t> out;
     const size_t cl = h.has ? (h.cls.size() > kMaxStr ? kMaxStr : h.cls.size()) : 0;
@@ -265,18 +238,16 @@ void SendState(coop::net::Session& session, uint8_t slot, const SlotHand& h) {
 void DestroyMirror(uint8_t slot, const char* why) {
     Mirror& m = g_mirrors[slot];
     if (m.actor) {
-        // Consume the SpawnMirror-time MarkIncomingSpawn (2026-07-10 audit): the
-        // mirror's Init runs BP-internally, so the Init-POST observer that would
-        // normally consume the mark never fires -- unconsumed marks accumulate to
-        // the 256 cap (clear-on-cap wipes in-flight marks) and a stale mark at a
-        // RECYCLED address makes the non-destructive Peek misclassify a real world
-        // prop as an incoming echo. The mark is a loan; the mirror's only exit
-        // repays it.
+        // Consume the spawn-time incoming mark: the mirror's Init runs blueprint-internally, so the
+        // Init observer that would consume the mark never fires, and unconsumed marks accumulate to
+        // the cap (a clear-on-cap wipes in-flight marks) while a stale mark at a recycled address
+        // makes the peek misclassify a real world prop as an echo. The mark is a loan; the mirror's
+        // only exit repays it.
         coop::prop_echo_suppress::ConsumeIncomingSpawn(m.actor);
     }
     if (m.actor && R::IsLiveByIndex(m.actor, m.idx)) {
-        // Suppress the K2_DestroyActor PRE observer's echo (host would
-        // otherwise broadcast a PropDestroy for a display-only actor).
+        // Suppress the destroy observer's echo; the host would otherwise broadcast a destroy for a
+        // display-only actor.
         coop::prop_echo_suppress::MarkIncomingDestroy(m.actor);
         E::DestroyActor(m.actor);
         UE_LOGI("hand_item: slot %u mirror destroyed (%s)", static_cast<unsigned>(slot), why);
@@ -288,8 +259,8 @@ void SpawnMirror(uint8_t slot, void* puppetActor) {
     const SlotHand& want = g_hands[slot];
     void* cls = R::FindClass(want.cls.c_str());
     if (!cls) {
-        // BP classes load on demand; if this peer's game never loaded the item
-        // class, we retry each tick. Warn once per class to keep the log sane.
+        // Blueprint classes load on demand; if this peer's game never loaded the item class, retry
+        // each tick, warning once per class.
         static std::wstring sWarned;
         if (sWarned != want.cls) {
             sWarned = want.cls;
@@ -304,8 +275,8 @@ void SpawnMirror(uint8_t slot, void* puppetActor) {
         UE_LOGW("hand_item: BeginDeferredSpawn '%ls' failed", want.cls.c_str());
         return;
     }
-    // Stamp the item 'name' BEFORE Init runs (generic prop_C meshes are
-    // name-driven, same pattern as the game's own updateHold spawn).
+    // The item name is stamped before Init runs: generic prop meshes are name-driven, the game's
+    // own updateHold pattern.
     if (!want.name.empty()) {
         const int32_t off = PropNameOffset();
         if (off >= 0) {
@@ -313,8 +284,8 @@ void SpawnMirror(uint8_t slot, void* puppetActor) {
             std::memcpy(reinterpret_cast<uint8_t*>(actor) + off, &n, sizeof(n));
         }
     }
-    // Suppress the Init POST spawn-catch echo (host_spawn_watcher /
-    // prop_lifecycle must never express a display mirror as a world prop).
+    // Suppress the Init spawn-catch echo: a display mirror must never be expressed as a world
+    // prop.
     coop::prop_echo_suppress::MarkIncomingSpawn(actor);
     if (!E::FinishDeferredSpawn(actor, loc, rot)) {
         UE_LOGW("hand_item: FinishDeferredSpawn '%ls' failed", want.cls.c_str());
@@ -332,15 +303,13 @@ void SpawnMirror(uint8_t slot, void* puppetActor) {
             static_cast<unsigned>(slot), want.cls.c_str(), want.name.c_str());
 }
 
-// Re-command the mirror to the puppet's VIEW-space hold point every tick (the
-// puppet_carry_drive shape): rebuild the roll-0 view basis from the synced aim
-// and re-compose the owner-measured relative transform onto it. With the
-// fallback rel (haveRel=false) this degrades to the legacy camera-front
-// placement with the item facing along the look.
+// Re-command the mirror to the puppet's view-space hold point every tick: rebuild the roll-0
+// view basis from the synced aim and re-compose the owner-measured transform onto it. With
+// the fallback this degrades to the camera-front placement, facing along the look.
 void DriveMirror(void* mirrorActor, coop::RemotePlayer* pup, const SlotHand& hand) {
     const ue_wrap::FVector eye = pup->GetHeadPosition();
     const ue_wrap::FVector fwd = pup->GetSyncedAimDirection();
-    // Degenerate near-vertical aim keeps the last-tick placement.
+    // A degenerate near-vertical aim keeps the last tick's placement.
     const float rl = std::sqrt(fwd.X * fwd.X + fwd.Y * fwd.Y);
     if (rl < 1e-3f) return;
     const float yawDeg   = std::atan2(fwd.Y, fwd.X) * kRadToDeg;
@@ -353,7 +322,7 @@ void DriveMirror(void* mirrorActor, coop::RemotePlayer* pup, const SlotHand& han
         eye.Y + V[0][1] * rp[0] + V[1][1] * rp[1] + V[2][1] * rp[2],
         eye.Z + V[0][2] * rp[0] + V[1][2] * rp[1] + V[2][2] * rp[2],
     };
-    // World item axes: row i of the composed matrix = sum_c Q[i][c] * V[c].
+    // The world item axes: row i of the composed matrix is the sum over c of Q[i][c] times V[c].
     float Q[3][3], W[3][3];
     RotMatrixRows(hand.relRot[0], hand.relRot[1], hand.relRot[2], Q);
     for (int i = 0; i < 3; ++i)
@@ -376,12 +345,10 @@ void TickOwner(coop::net::Session& session, void* local, void* holdingProp) {
     if (self >= coop::players::kMaxPeers) return;
 
     if (holdingProp) {
-        // v109: measure + latch the live view-relative hold transform EVERY tick
-        // while holding -- the net thread streams it at sendHz (MsgType::HandPose),
-        // so a melee swing reads as continuous motion on the puppet mirror. Same
-        // per-tick engine-read cost class as the local pose capture. Runs BEFORE
-        // the identity-latch early-return below: motion must flow even when the
-        // held identity is unchanged.
+        // The live view-relative hold transform is measured and latched every tick while holding;
+        // the net thread streams it, so a melee swing reads as continuous motion on the mirror.
+        // Before the identity-latch early return: motion must flow even with the held identity
+        // unchanged.
         {
             float sp[3], sr[3];
             if (MeasureLocalHoldRelative(local, holdingProp, sp, sr)) {
@@ -391,10 +358,9 @@ void TickOwner(coop::net::Session& session, void* local, void* holdingProp) {
                 session.SetLocalHandPose(true, hp);
             }
         }
-        // O(1) steady-state: same live actor as last tick -> skip the renders,
-        // EXCEPT a slow re-check every 30 ticks (~0.5 s) — the game renames a
-        // held prop IN PLACE (grenade arm: 'name' -> grenade_1), which a pure
-        // pointer latch would never see. 2 renders/s vs 120/s steady-state.
+        // O(1) steady state: the same live actor as last tick skips the renders, except a re-check
+        // every 30 ticks, since the game renames a held prop in place (arming a grenade), which a
+        // pointer latch would never see.
         static uint32_t sSameStreak = 0;
         const int32_t idx = R::InternalIndexOf(holdingProp);
         if (holdingProp == g_ownHeldPtr && idx == g_ownHeldIdx &&
@@ -402,8 +368,8 @@ void TickOwner(coop::net::Session& session, void* local, void* holdingProp) {
             return;
         }
         if (holdingProp != g_ownHeldPtr && g_ownHeldPtr) {
-            // Identity CHANGED with a previous actor latched: if the previous hand
-            // actor survived, it was released to the world (place-then-next-slot).
+            // The identity changed with a previous actor latched: if it survived, it was released
+            // to the world (place, then the next slot).
             ExpressReleasedHandActor(session, g_ownHeldPtr, g_ownHeldIdx);
         }
         g_ownHeldPtr = holdingProp;
@@ -416,12 +382,10 @@ void TickOwner(coop::net::Session& session, void* local, void* holdingProp) {
             g_ownName = name;
             SlotHand& h = g_hands[self];
             h.has = true; h.cls = cls; h.name = name;
-            // First measure of the native weld's view-relative transform (may land
-            // a tick early -- the 0.5 s re-check below self-corrects once settled).
-            // Measure into scratch and RESET on failure (audit 2026-07-11 M/H): on a
-            // quick-slot switch a failed measure would otherwise ship the PREVIOUS
-            // item's transform under the new item's name -- plausible values the
-            // receiver's sanity check cannot reject.
+            // The first measure of the weld's view-relative transform, which may land a tick early;
+            // the periodic re-check corrects it. Measured into scratch and reset on failure: on a
+            // quick-slot switch a failed measure would otherwise ship the previous item's transform
+            // under the new item's name, plausible values the receiver cannot reject.
             float p[3], rr[3];
             if (MeasureLocalHoldRelative(local, holdingProp, p, rr)) {
                 std::memcpy(h.relPos, p, sizeof(p));
@@ -437,25 +401,20 @@ void TickOwner(coop::net::Session& session, void* local, void* holdingProp) {
             SendState(session, self, h);
             UE_LOGI("hand_item: local hand -> cls='%ls' name='%ls' (announced, rel %s)",
                     cls.c_str(), name.c_str(), h.haveRel ? "measured" : "fallback");
-            // (v106: no reconcile request here -- the R-pickup's ground-actor death
-            // is caught at the K2_DestroyActor Func seam the moment it happens.)
-            // (v109: no reliable drift refresh -- the HandPose stream above carries
-            // the live transform; the announce rel is only the pre-stream frame.)
+            // No reconcile request here: the pickup's ground-actor death is caught at the destroy
+            // seam, and the stream carries the live transform.
         }
     } else if (g_ownHas) {
-        session.SetLocalHandPose(false, {});  // v109: stop the stream on the empty edge
-        // The hand is empty this tick: if the ex-hand actor survived the edge it
-        // was RELEASED into the world (R-drop / place) -- express it now; then
-        // drop the identity latch so a re-appear re-renders + re-compares.
+        session.SetLocalHandPose(false, {});  // stop the stream on the empty edge
+        // The hand is empty this tick: an ex-hand actor that survived the edge was released into
+        // the world, so express it now, then drop the identity latch so a re-appearance re-renders
+        // and re-compares.
         ExpressReleasedHandActor(session, g_ownHeldPtr, g_ownHeldIdx);
         g_ownHeldPtr = nullptr;
         g_ownHeldIdx = -1;
-        // Stow announce is EDGE-INSTANT (user 2026-07-06 per rule 1): the bytecode
-        // proves a quick-slot switch is ONE synchronous updateHold call (destroy
-        // @935 -> spawn @1023 -> holding_name @3183), so a poll never observes a
-        // mid-switch null -- no debounce needed. (A 15-tick debounce guarded a
-        // flicker that does not exist and made the stowed item linger a quarter
-        // second; its 1-tick residue was pure dust -- retired 2026-07-10.)
+        // The stow announce is edge-instant: a quick-slot switch is one synchronous updateHold call
+        // (destroy, spawn, then the holding name), so a poll never observes a mid-switch null and
+        // no debounce is needed.
         g_ownHas = false;
         g_ownCls.clear();
         g_ownName.clear();
@@ -463,9 +422,8 @@ void TickOwner(coop::net::Session& session, void* local, void* holdingProp) {
         h = SlotHand{};
         SendState(session, self, h);
         UE_LOGI("hand_item: local hand -> EMPTY (announced)");
-        // (v106: no reconcile request here -- the released world actor was
-        // expressed at the hand edge above, and inventory-path spawns ride
-        // the FinishSpawningActor Func seam.)
+        // No reconcile request: the released actor was expressed above, and inventory spawns ride
+        // the finish-spawn seam.
     }
 }
 
@@ -476,9 +434,8 @@ void* LocalHandActor() {
     if (!ue_wrap::engine::ReadMainPlayerGrabState(g_localPlayer, gs)) return nullptr;
     void* ha = gs.holdingActor;
     if (!ha || !R::IsLive(ha)) return nullptr;
-    // Same routing predicate as local_streams: only an Aprop_C descendant in
-    // holding_actor is the hotbar hand (the clump/pile morph carry is a world
-    // entity and MUST stay adoptable).
+    // The same routing predicate as local_streams: only a prop descendant in the holding actor is
+    // the hotbar hand; the clump or pile carry is a world entity and must stay adoptable.
     if (!ue_wrap::prop::IsDescendantOfProp(ha)) return nullptr;
     return ha;
 }
@@ -488,8 +445,8 @@ size_t CollectHandAxisActors(void* out[], size_t cap) {
     if (void* lh = LocalHandActor(); lh && n < cap) out[n++] = lh;
     for (uint8_t slot = 0; slot < coop::players::kMaxPeers && n < cap; ++slot) {
         const Mirror& m = g_mirrors[slot];
-        // IsLiveByIndex, not a bare pointer match: a dead mirror's recycled
-        // address belongs to a DIFFERENT actor that must stay adoptable.
+        // IsLiveByIndex, not a bare pointer match: a dead mirror's recycled address belongs to a
+        // different actor that must stay adoptable.
         if (m.actor && R::IsLiveByIndex(m.actor, m.idx)) out[n++] = m.actor;
     }
     return n;
@@ -518,17 +475,17 @@ void TickMirrors() {
             continue;
         }
         coop::RemotePlayer* pup = reg.Puppet(slot);
-        // valid() = IsLiveByIndex on the puppet's captured index -- never bare
-        // IsLive on the cached actor (islive-zeroav census row hand_item:522).
+        // valid() is IsLiveByIndex on the puppet's captured index, never bare IsLive on the cached
+        // actor.
         void* puppetActor = (pup && pup->valid()) ? pup->GetActor() : nullptr;
         if (!puppetActor) {
-            // Puppet not up yet (join window) or torn down: keep the state,
-            // drop any orphaned mirror, retry next tick.
+            // The puppet not up yet (the join window) or torn down: keep the state, drop any
+            // orphaned mirror, retry next tick.
             if (mirrorLive || m.actor) DestroyMirror(slot, "puppet gone");
             continue;
         }
-        // v109: the freshest STREAMED hold transform overrides the announce-time
-        // one (newest-wins; the announce rel only covers the pre-stream frame).
+        // The freshest streamed hold transform overrides the announce-time one; the announce only
+        // covers the pre-stream frame.
         if (g_session) {
             coop::net::HandPoseSnapshot hp;
             bool isNew = false;
@@ -579,8 +536,8 @@ bool HandleHandItem(coop::net::Session& session,
     std::wstring name;
     for (uint8_t i = 0; i < nameLen; ++i) name.push_back(static_cast<wchar_t>(p[off++]));
 
-    // Measured view-relative hold transform (present whenever has). Insane values
-    // (non-finite / out of arm's reach) keep the fallback placement.
+    // The measured view-relative hold transform, present whenever held. Insane values (non-finite,
+    // out of arm's reach) keep the fallback placement.
     float relPos[3] = {kFallbackRelPos[0], kFallbackRelPos[1], kFallbackRelPos[2]};
     float relRot[3] = {0.f, 0.f, 0.f};
     if (has) {
@@ -604,7 +561,7 @@ bool HandleHandItem(coop::net::Session& session,
     if (has && cls.empty()) return true;  // malformed: "has item" with no class
 
     if (session.role() == coop::net::Role::Host) {
-        // Forgery guard: a client may only describe ITS OWN hand.
+        // The forgery guard: a client may only describe its own hand.
         if (msg.senderPeerSlot != describedSlot || describedSlot == 0) {
             UE_LOGW("hand_item: slot=%u from senderSlot=%d -- forged, dropping",
                     static_cast<unsigned>(describedSlot), msg.senderPeerSlot);
@@ -615,7 +572,7 @@ bool HandleHandItem(coop::net::Session& session,
         std::memcpy(h.relPos, relPos, sizeof(relPos));
         std::memcpy(h.relRot, relRot, sizeof(relRot));
         h.haveRel = has;
-        // Rebroadcast to every other ready client (originator excluded).
+        // Rebroadcast to every other ready client, the originator excluded.
         const std::vector<uint8_t> out = BuildPayload(describedSlot, h);
         for (int x = 1; x < coop::net::kMaxPeers; ++x) {
             if (x == describedSlot) continue;
@@ -657,9 +614,8 @@ void ReplayPeerStatesToSlot(int slot) {
 }
 
 void Reset() {
-    // v109: stop the hand-pose stream before the session cache drops -- a stale
-    // hasLocalHand_ latch would otherwise stream the dead session's transform
-    // into the next one until the first hold updates it.
+    // Stop the hand-pose stream before the session cache drops, or a stale latch would stream the
+    // dead session's transform into the next one.
     if (g_session) g_session->SetLocalHandPose(false, {});
     for (uint8_t s = 0; s < coop::players::kMaxPeers; ++s) {
         DestroyMirror(s, "session reset");
@@ -670,9 +626,8 @@ void Reset() {
     g_ownName.clear();
     g_ownHeldPtr = nullptr;
     g_ownHeldIdx = -1;
-    // Cached engine pointers die with the session too (2026-07-10 audit LOW):
-    // a stale g_localPlayer would satisfy IsLiveByIndex checks across a
-    // world reload only by luck; TickOwner re-caches on the next session.
+    // Cached engine pointers die with the session too: a stale local player would satisfy the
+    // index check across a world reload only by luck; TickOwner re-caches.
     g_localPlayer    = nullptr;
     g_localPlayerIdx = -1;
     g_session        = nullptr;
