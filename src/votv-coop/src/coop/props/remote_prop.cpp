@@ -1,24 +1,27 @@
-// coop/remote_prop.cpp -- v4 receiver implementation.
+// coop/remote_prop.cpp -- the PropPose drive (one kinematic drive per peer slot), OnRelease,
+// ForceRelease and the per-slot disconnect. The receivers live beside it: PropSpawn in
+// remote_prop_spawn.cpp, PropDestroy in remote_prop_destroy.cpp, PropConvert in
+// remote_prop_convert.cpp, the reflected physics thunks in remote_prop_physics.cpp.
 
 #include "coop/props/remote_prop.h"
-#include "remote_prop_internal.h"  // impl-private (src-local): ResolveLiveActorByEid (shared w/ remote_prop_destroy) + DestroyEchoSuppressed
+#include "remote_prop_internal.h"  // ResolveLiveActorByEid and DrivePropThrown, shared with the destroy TU
 
-#include "coop/props/active_drive.h"   // the fixed-delay snapshot interp (extracted 2026-06-22; shared w/ trash_clump_pose_stream)
+#include "coop/props/active_drive.h"   // the fixed-delay snapshot interp, shared with the trash carry stream
 #include "coop/props/prop_sound.h"
 #include "coop/element/mirror_manager.h"
-#include "coop/element/mirror_managers.h"  // PropMirrors/NpcMirrors/WaMirrors
+#include "coop/element/mirror_managers.h"  // PropMirrors
 #include "coop/element/prop.h"
 #include "coop/element/registry.h"
-#include "coop/creatures/kerfur_entity.h"  // K-5: NotifyKerfurPropMirrorBound (client held-pose eid map)
+#include "coop/creatures/kerfur_entity.h"  // NotifyKerfurPropMirrorBound
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_echo_suppress.h"
 #include "coop/props/prop_element_tracker.h"
-#include "coop/props/prop_stick_sync.h"  // v68: stuck wall-attachable gates (unstick + release)
-#include "coop/props/unresolved_pose_ledger.h"  // pose/spawn RACE vs a real identity GAP (field log 2026-09-04)
-#include "coop/element/identity_create.h"  // CreateOrAdoptPropMirror (the prop-mirror bind keystone; RegisterPropMirror forwards)
-#include "coop/props/trash_channel.h"  // docs/piles/08: per-eid sync-time-context (stale carry/convert drop)
-#include "coop/props/trash_proxy.h"    // phase 1: the host-authoritative AStaticMeshActor trash mirror (dup fix)
+#include "coop/props/prop_stick_sync.h"  // the stuck wall-attachable gates
+#include "coop/props/unresolved_pose_ledger.h"  // a pose-before-spawn race vs a sustained identity gap
+#include "coop/element/identity_create.h"  // CreateOrAdoptPropMirror, the prop-mirror bind
+#include "coop/props/trash_channel.h"  // the per-eid sync-time context; stale carry and release drops
+#include "coop/props/trash_proxy.h"    // the host-authoritative trash mirror
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/fname_utils.h"
@@ -44,23 +47,18 @@ namespace {
 namespace R = ue_wrap::reflection;
 namespace E = ue_wrap::engine;
 
-// The extracted interp primitive: ActiveDrive, BeginLerpToPose, AdvanceLerp, ResetDriveState,
-// LerpAngle, NowMs + the kLerp*/kSnap* constants (coop/active_drive.h). Unqualified below.
+// ActiveDrive, BeginLerpToPose, AdvanceLerp, ResetDriveState, LerpAngle, NowMs and the lerp
+// constants come from coop/active_drive.h.
 using namespace coop::active_drive;
 
-// The fixed-delay snapshot interp primitive (ActiveDrive + BeginLerpToPose / AdvanceLerp /
-// ResetDriveState / NowMs + the lerp constants) lives in coop/active_drive.h -- EXTRACTED there
-// 2026-06-22 at the 800-LOC soft cap so the host-authoritative trash carry stream can reuse the
-// SAME proven interp (RULE 2). One ActiveDrive per peer slot here: each client kinematically
-// drives its own held prop independently (two clients holding different props must not race).
+// One drive per peer slot: each client drives its own held prop, so two clients holding
+// different props never race.
 std::array<coop::active_drive::ActiveDrive, coop::players::kMaxPeers> g_drives{};
 
-// v68 sustained-stream unstick gate (prop_stick_sync design note): when a
-// PropPose stream targets a STUCK wall-attachable, 1-2 stale packets may
-// merely be in flight from the moment between the sender's stick COMMIT and
-// its hold-break -- they must not unstick the mirror. Only a SUSTAINED stream
-// (a real re-grab) does: kUnstickStreak consecutive fresh poses for the same
-// identity within the streak window. Per-slot, like the drive cache itself.
+// The unstick gate: a PropPose stream aimed at a stuck wall-attachable may be one or two stale
+// packets in flight from between the sender's stick commit and its hold-break, which must not
+// unstick the mirror. Only a sustained stream (a real re-grab) does: kUnstickStreak consecutive
+// fresh poses for one identity inside the window. Per slot, like the drive cache.
 struct PendingUnstick {
     void*    actor = nullptr;
     int      streak = 0;
@@ -70,15 +68,12 @@ std::array<PendingUnstick, coop::players::kMaxPeers> g_pendingUnstick{};
 constexpr int      kUnstickStreak   = 5;
 constexpr uint64_t kUnstickWindowMs = 400;  // streak resets after this gap (stale burst over)
 
-// True if `actor` is the cached drive target of ANY slot's drive state.
 }  // namespace [drive helpers part 1]
 
-// Public accessor (M-1 2026-05-29 split): used by coop::remote_prop_spawn::
-// OnSpawn convergence skip path. Predicate over the drive cache; tells the
-// spawn receiver "this actor is currently being kinematically driven, so
-// skip transform convergence (PropPose owns position)".
+// True when some slot's drive targets `actor`; the spawn receiver skips the transform converge
+// for a driven prop (PropPose owns its position).
 bool IsActorUnderAnyDrive(void* actor) {
-    // g_drives is GT-only-by-convention (T-10, no mutex). Enforce it.
+    // g_drives is game-thread only, by assertion rather than a mutex.
     UE_ASSERT_GAME_THREAD("g_drives (IsActorUnderAnyDrive)");
     if (!actor) return false;
     for (const auto& d : g_drives) {
@@ -87,14 +82,7 @@ bool IsActorUnderAnyDrive(void* actor) {
     return false;
 }
 
-// The reflected-physics thunk group (the cached UPrimitiveComponent UFunction state +
-// TryResolvePropThrown / ResolveUFns / DrivePropThrown + the public DriveSimulate /
-// DriveSetLinearVelocity / DriveSetAngularVelocity trio) was EXTRACTED to
-// remote_prop_physics.cpp 2026-07-19 (s28 modular cut). DrivePropThrown is declared in
-// remote_prop_internal.h (single caller: OnRelease below).
-
-// Extract null-terminated wstring from a WireKey for FindByKeyString.
-// Public (M-1 2026-05-29 split): used by spawn receiver + drive subsystem.
+// The WireKey as a wstring, for the key index.
 std::wstring KeyToWString(const coop::net::WireKey& k) {
     std::wstring s;
     s.reserve(k.len);
@@ -106,9 +94,7 @@ std::wstring KeyToWString(const coop::net::WireKey& k) {
 
 namespace {  // [drive helpers part 3]
 
-// Compare WireKey vs the cached ASCII key for the drive at `slot`. Prop
-// Keys are ASCII (base64-ish save UUIDs), so byte-by-byte comparison is
-// correct.
+// The WireKey against the drive's cached key; keys are ASCII, so a byte compare is exact.
 bool KeyMatchesCache(int slot, const coop::net::WireKey& k) {
     if (slot < 0 || slot >= static_cast<int>(coop::players::kMaxPeers)) return false;
     const auto& d = g_drives[slot];
@@ -116,10 +102,7 @@ bool KeyMatchesCache(int slot, const coop::net::WireKey& k) {
     return std::memcmp(k.data, d.lastKey.data(), k.len) == 0;
 }
 
-// Scan all slots for a drive whose cached lastKey matches `k`. Returns the
-// slot index, or -1 if no slot is currently driving a prop with this key.
-// Used by OnRelease (peer's release packet carries a key but not a slot --
-// we find which slot's drive owned it).
+// The slot driving the prop with this key, or -1.
 int FindSlotByKey(const coop::net::WireKey& k) {
     for (int slot = 0; slot < static_cast<int>(coop::players::kMaxPeers); ++slot) {
         if (g_drives[slot].actor && KeyMatchesCache(slot, k)) return slot;
@@ -127,43 +110,30 @@ int FindSlotByKey(const coop::net::WireKey& k) {
     return -1;
 }
 
-// v26 ResolveLiveActorByEid moved to the named namespace (below, before ClearAnyDriveFor) so the
-// destroy-path TU (remote_prop_destroy.cpp) can share it via remote_prop_internal.h. Declared there.
-
-// Toggle physics on a drive target. Aprop_C props go through their StaticMesh
-// (DriveSimulate, the existing path). A non-Aprop_C clump has mesh==null (the
-// GetStaticMesh-null 2a-safety gate) -- it uses the GENERIC root-component physics
-// instead. UAF-safe: the mirror is OUR stable spawn (it never morphs/self-frees like
-// the holder's source clump), so touching its root physics is safe; the gate still
-// protects the SENDER's snapshot path. [[project-bug-trash-chippile-uaf-crash]]
-// `actor` must arrive VALIDATED (fresh from a resolve, or drive.LiveActor() for
-// the cached-drive callers) -- the bare IsLive that sat here probed the cached
-// drive actor (islive-zeroav census rows remote_prop:140/:150). null = no-op.
+// Physics on or off for a drive target: an Aprop_C through its StaticMesh, the clump (null mesh)
+// through the generic root component. `actor` arrives validated (a fresh resolve or
+// drive.LiveActor()); null is a no-op.
 void DriveTogglePhysics(void* actor, void* mesh, bool simulate) {
     if (mesh) DriveSimulate(mesh, simulate);
     else if (actor) ue_wrap::engine::SetActorSimulatePhysics(actor, simulate);
 }
 
-// v68: every release-shaped physics re-enable (explicit PropRelease, the
-// stream-stop timeout, the switched-prop implicit release) is gated on the
-// stick state. A wall-attachable that got STUCK while held (the commit fires
-// mid-hold; PropStickState applied it here) must stay frozen when the
-// sender's hold breaks -- the unconditional re-enable was exactly the
-// "host sees the camera fall" bug.
+// Every release-shaped physics re-enable (PropRelease, the stream-stop timeout, the switched-prop
+// release) is gated on the stick state: a wall-attachable that stuck while held stays frozen when
+// the sender's hold breaks, or the host watches the camera fall off the wall.
 bool StickHoldsPhysicsOff(void* actor) {
-    // Same validated-or-null param contract as DriveTogglePhysics above.
     return actor && ue_wrap::prop::IsDescendantOfProp(actor) &&
            (ue_wrap::prop::IsFrozen(actor) || ue_wrap::prop::IsStatic(actor));
 }
 
 void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
-    // docs/piles/08: DROP a STALE trash carry pose -- one still in flight from before the entity's last
-    // transition (re-pile/throw bumps ctx). Without this, a late clump-carry pose would re-drive the
-    // re-skinned actor (now a SETTLED PILE) to the dead clump position -- the stale-pose half of the
-    // cluster bug. ctx==0 / unknown eid (a non-trash keyed prop) -> always fresh, so Aprop poses pass.
+    // A trash carry pose is held unless its ctx is the entity's current generation: a pose ahead of
+    // its convert would drive the pre-convert rendering, a stale one after a re-pile or throw would
+    // drive the settled pile to the dead clump position. ctx 0 or an unknown eid (a keyed prop) is
+    // always fresh.
     if (pose.elementId != 0 &&
         !coop::trash_channel::IsInboundStreamCtxFresh(pose.elementId, pose.ctx, /*requireCurrentGen=*/true)) {
-        // Throttle: a short in-flight burst of same-(eid,ctx) stale poses collapses to ONE line.
+        // One line per (eid, ctx) burst.
         static uint32_t s_lastDropEid = 0; static uint8_t s_lastDropCtx = 0;
         if (pose.elementId != s_lastDropEid || pose.ctx != s_lastDropCtx) {
             UE_LOGI("[PILE] CLIENT HOLD carry pose eid=%u ctx=%u known=%u (not E's current generation -- either "
@@ -177,14 +147,15 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
         return;
     }
     const std::wstring keyW = KeyToWString(pose.key);
-    // KEY first (Aprop_C), then EID fallback (the non-keyable clump streams key=None).
+    // Key first (an Aprop_C), then eid (the clump streams key None).
     void* prop = nullptr;
     if (!keyW.empty() && keyW != L"None")
         prop = coop::prop_element_tracker::ResolveLiveActorByKey(keyW);
     if (!prop && pose.elementId != 0)
         prop = ResolveLiveActorByEid(pose.elementId);
     if (!prop) {
-        // See the UNRESOLVED-POSE LEDGER above for why this is not one WARN per packet.
+        // The ledger separates the ordinary pose-before-spawn race from a sustained stream this
+        // peer never got a spawn for: one WARN per sustained stream, not per packet.
         if (coop::unresolved_pose_ledger::Note(slot, keyW, pose.elementId, NowMs())) {
             UE_LOGW("remote_prop: slot %d key '%ls' eid=%u -- SUSTAINED unresolved pose stream "
                     "(>=%u packets over >=%llu ms). This is NOT the ordinary pose-before-spawn "
@@ -202,13 +173,10 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
         return;
     }
     coop::unresolved_pose_ledger::Clear(slot, keyW, pose.elementId);
-    // v68: a STUCK wall-attachable (frozen/static -- the camera on a wall)
-    // unsticks for an incoming drive only on a SUSTAINED stream (a real
-    // re-grab). The 1-2 stale PropPose packets in flight between the sender's
-    // stick commit and its hold-break land here with the drive cache freshly
-    // cleared by OnStickState -- without the streak gate they would unstick
-    // the mirror right back. A genuinely-static NON-attachable prop never
-    // legitimately streams; skip it outright (no unstick, no drive).
+    // A stuck wall-attachable unsticks for an incoming drive only on a sustained stream: the stale
+    // poses in flight after the sender's stick commit land here with the drive cache just cleared
+    // by OnStickState, and without the streak they would unstick it right back. A static
+    // non-attachable never streams legitimately, so it is skipped outright.
     if (ue_wrap::prop::IsDescendantOfProp(prop) &&
         (ue_wrap::prop::IsFrozen(prop) || ue_wrap::prop::IsStatic(prop))) {
         if (!coop::prop_stick_sync::IsWallAttachable(prop)) {
@@ -226,11 +194,10 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
         pu.actor = nullptr;
         pu.streak = 0;
         coop::prop_stick_sync::UnstickForDrive(prop);  // clears flags + simulate(true)/detach
-        // fall through: start the kinematic drive on the now-free prop
+        // Then the drive starts on the freed prop.
     }
-    // GetStaticMesh returns null for the non-Aprop_C clump by design (2a safety) --
-    // it's driven via the generic root physics (DriveTogglePhysics). Only a true
-    // Aprop_C with a missing mesh is an error worth bailing on.
+    // GetStaticMesh is null for the clump by design (it is driven through the root physics); only
+    // an Aprop_C without a mesh is an error.
     void* mesh = ue_wrap::prop::GetStaticMesh(prop);
     if (!mesh && ue_wrap::prop::IsDescendantOfProp(prop)) {
         UE_LOGW("remote_prop: slot %d prop %p (Aprop_C) has null StaticMesh -- cannot drive", slot, prop);
@@ -239,61 +206,43 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
     UE_LOGI("remote_prop: slot %d GRAB-IN key='%ls' eid=%u -> local actor=%p mesh=%p (%s)",
             slot, keyW.c_str(), pose.elementId, prop, mesh,
             mesh ? "Aprop physics-off" : "clump kinematic (generic physics-off)");
-    // Pick-up sounds (sounds RE 2026-06-11 + hands-on round 2): both native
-    // grab sounds run only in the LOCAL grabber's input chain, so synthesize
-    // them here. The `use` click is THE fixed always-the-same grab feedback
-    // (useAction plays it 2D grabber-only after pickupObject); the material
-    // soft cue is the secondary per-material thud. prop_C reads its cached
-    // physSoundData; plain-Actor grabs (the trash clump) resolve root
-    // material -> physmat -> the same physSound row (silent on row miss).
+    // Both native grab sounds play only in the grabber's own input chain, so the receiver plays
+    // them: the fixed `use` click and the per-material soft cue (a plain-actor clump resolves its
+    // root material's physSound row; silent on a miss).
     coop::prop_sound::PlayUseClick(prop);
     coop::prop_sound::PlayGrabSound(prop);
-    // Disable PhysX simulation so the per-packet SetActorLocation sticks (a clean
-    // kinematic follow -- the clump uses the generic root toggle, NOT a fight-the-sim
-    // crutch). The clump floats in front of the puppet exactly like the mannequin.
+    // Simulation off so the per-packet SetActorLocation sticks: a kinematic follow, the clump
+    // through the generic root toggle.
     DriveTogglePhysics(prop, mesh, false);
     g_drives[slot].actor = prop;
     g_drives[slot].actorIdx = R::InternalIndexOf(prop);  // live here; cache for LiveActor()
     g_drives[slot].mesh  = mesh;
     g_drives[slot].lastKey.assign(pose.key.data, pose.key.len);
     g_drives[slot].lastEid = pose.elementId;
-    // Host-authoritative trash proxy? -> freeze-not-timeout end-of-carry policy (a
-    // network gap mid-km-walk freezes; release only on the explicit reliable edge).
+    // A host-authoritative trash proxy freezes on a stream gap instead of timing out; it releases
+    // only on the explicit reliable edge.
     g_drives[slot].isProxy = (pose.elementId != 0 && coop::trash_proxy::IsProxy(pose.elementId));
-    // Fresh drive identity: the next pose PRIMES (snaps, no drift-in from the spawn/rest
-    // position), then subsequent poses interpolate prev->last.
+    // A fresh identity: the next pose primes (a snap, no drift-in from the rest position), later
+    // poses interpolate.
     g_drives[slot].lerpSeeded   = false;
     g_drives[slot].haveTwoSnaps = false;
-    // Seed the timeout clock with NOW. Without this, lastApplyMs stays at
-    // zero (struct default); the stream-stop timeout at Tick() compares
-    // (NowMs() - lastApplyMs > 500) and fires immediately, releasing the
-    // grab on the very first packet drop / late-arrival after a fresh
-    // grab. See research/findings/architecture-audits/votv-coop-audit-post-pr4-7-2026-05-28.md.
+    // The timeout clock starts now; at zero the 500 ms stream-stop check in Tick would fire on the
+    // first late packet after a fresh grab.
     g_drives[slot].lastApplyMs = NowMs();
 }
-
-// LerpAngle / ResetDriveState / BeginLerpToPose / AdvanceLerp moved to coop/active_drive.h
-// (extracted 2026-06-22; the `using namespace coop::active_drive` above brings them in here).
 
 }  // namespace
 
 void Tick(coop::net::Session& session) {
-    // Drives g_drives across all slots (T-10, GT-only). Called every game-
-    // thread tick from net_pump::Tick.
+    // Every game-thread tick, from net_pump::Tick.
     UE_ASSERT_GAME_THREAD("g_drives (remote_prop::Tick)");
     if (!session.connected()) {
         ForceRelease();
         return;
     }
-    // Per-slot drive iteration. On HOST: scan slots 1..kMaxPeers-1 (each
-    // connected client can drive its own held prop independently; the host's
-    // own held prop is published locally by local_streams, never read back
-    // from the wire). On CLIENT: scan EVERY slot -- the host's own pose
-    // arrives stamped senderSlot=0, and since the host relay rewrites a
-    // relayed peer pose to its ORIGIN slot (session_relay.cpp), other
-    // clients' held props arrive stamped 1..kMaxPeers-1. A client's own slot
-    // is skipped (its pose is local, and the relay never echoes it back --
-    // the explicit self-guard matches puppet_drive).
+    // The host reads slots 1..kMaxPeers-1 (its own held prop is published by local_streams, never
+    // read back). A client reads every slot but its own: the host's pose arrives stamped slot 0 and
+    // the relay stamps a forwarded peer pose with its origin slot (session_relay.cpp).
     const bool isHost = (session.role() == coop::net::Role::Host);
     const int firstSlot = isHost ? 1 : 0;
     const int lastSlot  = static_cast<int>(coop::players::kMaxPeers);
@@ -306,16 +255,12 @@ void Tick(coop::net::Session& session) {
         bool isNew = false;
         const bool have = session.TryGetRemotePropPose(slot, pose, &isNew);
         if (have && isNew) {
-            // First snapshot OR identity changed (key OR eid) -> resolve + physics-off.
-            // The eid check catches a re-grab where the clump's key stays None but a
-            // NEW clump (new eid) is held -- otherwise the empty-key cache would keep
-            // driving the OLD released clump.
+            // A first snapshot or a changed identity (key or eid) resolves and switches physics
+            // off. The eid check catches a re-grab of a new clump whose key is still None.
             if (!drive.actor || !KeyMatchesCache(slot, pose.key) || drive.lastEid != pose.elementId) {
                 if (drive.actor) {
-                    // The peer at this slot switched to a different prop
-                    // without sending Release -- implicit release (re-enable
-                    // physics on the prior body; generic for a clump). v68:
-                    // unless a stick froze it mid-hold (then physics stays off).
+                    // The peer switched props without a Release: the prior body goes back to
+                    // physics unless a stick froze it mid-hold.
                     UE_LOGI("remote_prop: slot %d implicit release (peer switched to a new key/eid)", slot);
                     void* liveA = drive.LiveActor();
                     if (!StickHoldsPhysicsOff(liveA))
@@ -325,12 +270,11 @@ void Tick(coop::net::Session& session) {
                 ResolveAndStartDrive(slot, pose);
             }
             if (drive.LiveActor()) {
-                // Record the pose as the new lerp TARGET (AdvanceLerp below moves the
-                // actor toward it every tick -- a smooth follow, not a per-packet teleport).
+                // The pose is the new lerp target; AdvanceLerp moves the actor toward it each tick.
                 BeginLerpToPose(drive, ue_wrap::FVector{pose.x, pose.y, pose.z},
                                 ue_wrap::FRotator{pose.pitch, pose.yaw, pose.roll}, nowMs);
                 drive.lastApplyMs = nowMs;
-                // Throttled target log: first 3 + every 60th after per slot.
+                // The first 3 and every 60th target per slot.
                 static std::array<uint64_t, coop::players::kMaxPeers> sApplyCount{};
                 const uint64_t n = ++sApplyCount[slot];
                 if (n <= 3 || (n % 60) == 0) {
@@ -340,21 +284,17 @@ void Tick(coop::net::Session& session) {
                             drive.isProxy ? " [proxy]" : "");
                 }
             } else if (drive.actor) {
-                // The cached actor died (level unload / GC). Drop cleanly.
+                // The cached actor died (a level unload or GC).
                 UE_LOGW("remote_prop: slot %d cached actor no longer live -- dropping drive", slot);
                 ResetDriveState(drive);
             }
         }
-        // Advance the interpolation EVERY tick (whether or not a new pose arrived): a
-        // smooth frame-rate follow between ~sendHz poses, and a stream gap FREEZES at the
-        // last target instead of stalling at the last packet's raw position.
+        // The interpolation advances every tick, pose or no pose: a smooth follow between sends,
+        // and a stream gap freezes at the last target.
         AdvanceLerp(drive, nowMs);
-        // Stream-stop implicit release -- ONLY for a non-proxy Aprop_C held item (which has
-        // no reliable end-of-carry guarantee, so 500 ms of silence == released). A host-
-        // authoritative trash PROXY is EXEMPT: a network gap must FREEZE it (AdvanceLerp
-        // already holds it at the last target), and it releases only on the explicit reliable
-        // edge (OnRelease throw / OnConvert ToPile / disconnect). THIS is the km-walk
-        // robustness fix -- a hitch no longer drops the carried pile to physics mid-walk.
+        // The stream-stop release, for a non-proxy held item only: 500 ms of silence is a release.
+        // A trash proxy freezes through a gap and releases only on the reliable edge (a throw, a
+        // ToPile convert, a disconnect), so a hitch mid-walk no longer drops the carried pile.
         if (drive.actor && !drive.isProxy && (nowMs - drive.lastApplyMs) > 500) {
             UE_LOGI("remote_prop: slot %d implicit release (%llu ms since last PropPose)",
                     slot, static_cast<unsigned long long>(nowMs - drive.lastApplyMs));
@@ -367,8 +307,7 @@ void Tick(coop::net::Session& session) {
 }
 
 void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, void* localPlayer) {
-    // Reads + clears g_drives[senderSlot] (T-10, GT-only). Dispatched from
-    // event_feed on the game thread.
+    // Reads and clears the sender's drive; dispatched from event_feed on the game thread.
     UE_ASSERT_GAME_THREAD("g_drives (remote_prop::OnRelease)");
     const std::wstring keyW = KeyToWString(payload.key);
     const float linSpeedSq = payload.linVelX * payload.linVelX +
@@ -379,52 +318,40 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
             keyW.c_str(), payload.elementId, static_cast<unsigned>(payload.ctx),
             payload.linVelX, payload.linVelY, payload.linVelZ, linSpeed,
             payload.angVelX, payload.angVelY, payload.angVelZ);
-    // docs/piles/08: a trash entity (keyless clump) is identified by EID, not key. DROP a STALE release
-    // (ctx older than E's last transition) so a throw delayed past a re-pile / re-grab can never re-apply
-    // velocity to the re-skinned entity. ctx==0 / eid==0 (a keyed Aprop release) -> always fresh, as before.
+    // A stale trash release (ctx older than the entity's last transition) is dropped, so a throw
+    // delayed past a re-pile or re-grab never applies velocity to the re-skinned entity. ctx 0 or
+    // eid 0 (a keyed release) is always fresh.
     if (payload.elementId != 0 &&
         !coop::trash_channel::IsInboundStreamCtxFresh(payload.elementId, payload.ctx, /*requireCurrentGen=*/false)) {
         UE_LOGI("[PILE] CLIENT DROP stale release eid=%u ctx=%u (older than E's last transition)",
                 payload.elementId, static_cast<unsigned>(payload.ctx));
         return;
     }
-    // Identify the releasing peer by sender slot (carried by the
-    // ReliableMessage envelope) rather than by key. FindSlotByKey
-    // linear-scans + returns first-match-wins which would clear the
-    // wrong slot if two slots briefly held a prop with the same
-    // lastKey (e.g., race on duplicated key, or a stale drive whose
-    // owner already disconnected). Sender-attribution is exact.
+    // The releasing peer is the envelope's sender slot, not a key scan: first-match-wins over
+    // lastKey would clear the wrong slot when two slots briefly held the same key.
     void* propActor = nullptr;
     void* meshToActOn = nullptr;
     int releasedSlot = -1;
     if (senderSlot >= 0 && senderSlot < static_cast<int>(coop::players::kMaxPeers)) {
         const ActiveDrive& d = g_drives[senderSlot];
-        // Confirm the drive's lastKey matches this release's key. If it
-        // doesn't, the sender's drive cache is stale (e.g., a release
-        // arrived for a key we never saw a PropPose for, or out-of-order
-        // after a disconnect cancel). Fall through to the FindByKeyString
-        // fresh-resolve path below. docs/piles/08: a keyless clump (key=None)
-        // matches ANY clump the slot carries, so ALSO require the slot's
-        // driven eid == this release's eid -- else a late E1 throw lands on
-        // E2 after a re-grab (the audit-flagged cross-slot mis-apply).
+        // The slot's drive must carry this key and, for a clump (key None matches any clump), this
+        // eid; otherwise the cache is stale and the fresh resolve below applies. Without the eid
+        // check a late throw of one clump would land on the next clump the slot grabbed.
         if (d.actor && KeyMatchesCache(senderSlot, payload.key) &&
             (payload.elementId == 0 || d.lastEid == payload.elementId)) {
             releasedSlot = senderSlot;
-            propActor = d.LiveActor();  // slot-validated; null if the cached actor died
-                                        // (downstream applies then no-op, as the old
-                                        // per-use IsLive guards made them)
+            propActor = d.LiveActor();  // null if the cached actor died; every apply below then no-ops
             meshToActOn = d.mesh;
         }
     }
     if (releasedSlot < 0) {
         if (void* prop = coop::prop_element_tracker::ResolveLiveActorByKey(keyW)) {
-            // Release arrived without a matching drive cache entry --
-            // resolve fresh from the live world (a keyed Aprop).
+            // No drive entry: a keyed prop resolves from the live world.
             propActor = prop;
             meshToActOn = ue_wrap::prop::GetStaticMesh(prop);
         } else if (payload.elementId != 0) {
-            // docs/piles/08: a keyless trash clump whose slot already moved on (E still a live clump
-            // elsewhere) -- resolve by eid so its throw still applies to the right entity.
+            // A clump whose slot already moved on resolves by eid, so its throw still lands on the
+            // right entity.
             if (void* prop2 = ResolveLiveActorByEid(payload.elementId)) {
                 propActor = prop2;
                 meshToActOn = ue_wrap::prop::GetStaticMesh(prop2);
@@ -432,21 +359,17 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
         }
     }
     if (StickHoldsPhysicsOff(propActor)) {
-        // v68: the prop got STUCK while this peer held it (PropStickState
-        // landed before this release -- same reliable lane keeps the order).
-        // The release must NOT re-enable physics / write velocity: the stuck
-        // camera stays on the wall. Drive cache still clears below.
+        // The prop stuck while held (PropStickState arrived first on the same reliable lane): no
+        // physics re-enable and no velocity, the camera stays on the wall; the drive cache still
+        // clears.
         UE_LOGI("remote_prop: RELEASE for stuck wall-attachable %p -- physics stays off (v68)",
                 propActor);
         meshToActOn = nullptr;
         propActor = nullptr;
     }
-    // Host-authoritative trash proxy throw: do NOT simulate locally (phase-1 NoCollision
-    // follower -- local physics would both diverge from the host's authoritative trajectory
-    // AND re-enable collision, breaking the phase-1 invariant). The proxy FREEZES at the
-    // release pose; the host's reliable ToPile convert re-skins + repositions it to the
-    // landed pile. The receiver-side swing still plays so the throw has audible feedback.
-    // (Phase 2 may stream the flight for a smooth arc instead of the brief freeze.)
+    // A trash proxy throw is not simulated here: local physics would diverge from the host's
+    // trajectory and re-enable the collision the proxy runs without. It freezes at the release pose
+    // until the host's ToPile convert re-skins it at the landed pile; the swing still plays.
     if (payload.elementId != 0 && coop::trash_proxy::IsProxy(payload.elementId)) {
         if (propActor && linSpeed > coop::net::kThrownLinVelThreshold)
             coop::prop_sound::PlayThrowWhoosh(propActor);
@@ -455,21 +378,13 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
                 "awaiting host ToPile convert to reposition to the landed pile",
                 payload.elementId, linSpeed);
     } else if (meshToActOn) {
-        // Order matters: SetSimulate(true) FIRST so the body re-enters
-        // dynamic sim BEFORE we write velocity (a kinematic body's velocity
-        // write would be ignored / cause a PhysX kinematic-target chase).
+        // Simulate first, then the velocities: a kinematic body ignores a velocity write.
         DriveSimulate(meshToActOn, true);
         DriveSetLinearVelocity(meshToActOn, payload.linVelX, payload.linVelY, payload.linVelZ);
         DriveSetAngularVelocity(meshToActOn, payload.angVelX, payload.angVelY, payload.angVelZ);
-        // Throw dispatch, gated on linear speed: a passive drop (residual walk
-        // velocity ~30 cm/s) shouldn't whoosh; a deliberate throw (>200 cm/s,
-        // per kThrownLinVelThreshold) should.
-        //   - Aprop_C.thrown(Player): subclass hooks (particles etc.). The BASE
-        //     prop_C thrown() is a NO-OP (uber @465 POP->ret, sounds RE
-        //     2026-06-11 par.3) -- it never made the whoosh; the native whoosh
-        //     is PlaySound2D(swing) in the THROWER's input chain, thrower-only.
-        //   - PlayThrowWhoosh: the receiver-side spatialized swing (the audible
-        //     part this branch was silently missing).
+        // The throw fires above kThrownLinVelThreshold so a passive drop stays silent: the prop's
+        // own thrown event (subclass hooks) and the receiver-side swing, since the native swing
+        // plays only in the thrower's input chain.
         if (propActor && linSpeed > coop::net::kThrownLinVelThreshold) {
             DrivePropThrown(propActor, localPlayer);
             coop::prop_sound::PlayThrowWhoosh(propActor);
@@ -477,19 +392,11 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
                     localPlayer, linSpeed, coop::net::kThrownLinVelThreshold);
         }
     } else if (propActor) {  // validated-or-null since assignment (LiveActor / fresh resolve)
-        // Non-Aprop_C clump (null mesh): re-enable physics + throw velocity via the GENERIC
-        // root path so the mirror flies. Use PhysicsOnly collision (2, NOT QueryAndPhysics):
-        // the PhysX contacts still make it fall + land + rest on the floor during its brief
-        // flight, but the Query facet is DROPPED so the host's grab sphere-trace
-        // (mainPlayer::useArm -> SphereTraceSingle, a query by trace channel) can NOT hit the
-        // resting mirror. DUPE FIX (2026-06-08): a mirror is a PUPPET -- with QueryAndPhysics
-        // the host could grab the resting mirror during the ~3 s window before the owner's
-        // authoritative pile arrives, minting a real held clump ON TOP OF the pile (the user's
-        // repro). The landed PILE is a SEPARATE spawn (trash_collect_sync -> remote_prop_spawn,
-        // never through here) and keeps BP-default QueryAndPhysics, so both peers can still grab
-        // the final pile. (We also do NOT prime the mirror to self-convert: the BP impulse/slope
-        // gates made that unreliable ~3/10.) [[project-bug-trash-chippile-uaf-crash]] +
-        // research/findings/piles-trash/votv-clump-mirror-grab-RE-2026-06-08.md
+        // The clump mirror flies through the generic root physics with PhysicsOnly collision: it
+        // falls, lands and rests, but the query facet is off so the host's grab trace cannot pick
+        // up the resting mirror in the seconds before the owner's authoritative pile arrives (that
+        // grab minted a real clump on top of the pile). The landed pile is a separate spawn with
+        // the default collision.
         ue_wrap::engine::SetActorRootCollisionEnabled(propActor, 2 /*PhysicsOnly -- lands but ungrabbable*/);
         ue_wrap::engine::SetActorSimulatePhysics(propActor, true);
         ue_wrap::engine::SetActorRootPhysicsVelocity(
@@ -499,17 +406,13 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
         UE_LOGI("[PILE] CLIENT applied THROW eid=%u -> clump mirror physics on + velocity |v|=%.1f cm/s (actor=%p) "
                 "-- it now flies + lands; the host's LAND convert will re-skin it to a pile",
                 payload.elementId, linSpeed, propActor);
-        // Throw WHOOSH: the clump is a plain AActor with no Aprop_C.thrown() to
-        // fire. Same receiver-side swing as the Aprop_C branch (byte-exact RE
-        // 2026-06-11: EVERY LMB throw plays `swing` regardless of prop type --
-        // the earlier clump-only object_throw was a pre-RE guess, superseded
-        // per RULE 2). Same speed gate so a passive drop is silent.
+        // The swing for the clump too (every throw plays it, whatever the prop), above the same
+        // speed gate.
         if (linSpeed > coop::net::kThrownLinVelThreshold) {
             coop::prop_sound::PlayThrowWhoosh(propActor);
         }
     }
-    // Clear only the matching slot's drive state -- other slots' active
-    // drives (if any) stay intact.
+    // Only the released slot clears.
     if (releasedSlot >= 0) {
         ResetDriveState(g_drives[releasedSlot]);
     }
@@ -517,78 +420,18 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
 
 namespace {
 
-// PropSpawn UFunction resolution + OnSpawn impl moved to coop::
-// remote_prop_spawn (M-1 2026-05-29 split). This TU owns the drive
-// (PropPose stream) + OnRelease + OnDestroy + ForceRelease + per-slot
-// disconnect. See coop/remote_prop_spawn.h for the receiver.
-
-// A2 (2026-05-29) -- wire-received Prop mirrors. Each entry holds a Prop
-// Element bound (via Registry::RegisterMirror) to the SENDER's elementId.
-// The id is allocation-foreign to this peer (host range when we're client
-// receiving from host; peer range when we're host receiving from client).
-// Mirror destruction routes to Registry::UnregisterMirror (NOT FreeId)
-// because the id belongs to the sender's allocator -- see [[feedback-
-// registry-register-mirror-pattern]].
-//
-// Lifetime:
-//   - Created in OnSpawn when the wire payload carries a non-zero
-//     elementId AND we successfully resolved (or spawned) a local actor.
-//   - Dropped in OnDestroy when the matching destroy packet arrives.
-//   - Drained in ForceRelease() / on full session disconnect (we don't
-//     try per-slot mirror eviction; convergent props persist across
-//     per-slot disconnect just like remote_prop's actors do).
-//
-// Convergence case (local actor existed BEFORE the wire packet, exact-key
-// or fuzzy match): we register a mirror at sender's eid pointing to the
-// existing local actor. That actor is ALSO tracked by prop_element_tracker's
-// LOCAL Prop Element in this peer's allocation range (host or peer). Two
-// Elements per actor is acceptable: one is the LOCAL handle (m_mirror=false,
-// our own alloc range), the other is the MIRROR handle (m_mirror=true,
-// sender's alloc range). Both resolve to the same actor via GetActor(). The
-// Registry's m_byId slots don't collide because host/peer ranges are disjoint.
-// B2 (2026-05-29): per-type mirror map backed by the generic
-// coop::element::MirrorManager<Prop>. The encapsulated 5-step pattern
-// (alloc-under-lock -> RegisterMirror -> rollback-on-fail) lives in the
-// template; this file's RegisterPropMirror/UnregisterPropMirror/
-// DrainWirePropMirrors become thin wrappers that handle prop-specific
-// concerns (name/typeName/actor stamping, log lines).
-//
-// PR-FOUNDATION-3 Inc3 (2026-05-30): this is now the SINGLE owner of ALL Prop
-// Elements -- both these wire mirrors AND prop_element_tracker's locals (which
-// it AllocAndInstall's into this same Instance()). So the disconnect drain
-// must be SELECTIVE: DrainWirePropMirrors -> DrainMirrorsOnly() releases just
-// the m_mirror=true entries; the locals (engine-state shadows of persistent
-// world props) stay so they survive a reconnect.
+// The wire-received Prop mirrors live in the shared PropMirrors manager beside the tracker's local
+// rows: a mirror is bound at the sender's eid (a foreign allocation range) and releases through
+// Registry::UnregisterMirror, never FreeId; a converged actor carries both a local row and a
+// mirror row, and the ranges keep them apart. Every drain here is mirror-only, so the locals
+// survive a reconnect.
 using coop::element::PropMirrors;   // canonical accessor (coop/element/mirror_managers.h)
 
-// (NarrowAscii moved to sync_create.cpp with the prop-mirror bind body it served.)
-
-// Register a Prop mirror Element at `eid` bound to `actor`. Idempotent:
-// if `eid` already has a mirror in our map, no-op (a re-spawn convergence
-// packet for the same eid is silently absorbed). Validation:
-//   - `eid == 0`: wire sentinel meaning "sender had no Element minted" --
-//     skip (legacy / pre-v12 senders / unminted-on-sender props).
-//   - `eid == kInvalidId`: defensive (the C++ sentinel shouldn't appear
-//     on the wire, but reject loudly if it does).
-//   - Registry::RegisterMirror enforces in-range; we don't pre-check.
-//
-// Mirror pattern (5-step protocol per [[feedback-registry-register-mirror-
-// pattern]]):
-//   1. make_unique<Prop>
-//   2. emplace into our owner map FIRST (under g_propMirrorsMutex)
-//   3. Registry::RegisterMirror SECOND
-//   4. On RegisterMirror failure: drain from owner map outside the lock
-//   5. (Teardown path lives in OnDestroy + ForceRelease)
 }  // namespace [spawn helpers / mirror-manager]
 
-// Public accessor (M-1 2026-05-29 split): used by coop::remote_prop_spawn::
-// OnSpawn to bind a wire-received Prop Element after every successful
-// spawn/converge path.
-// PR-FOUNDATION-3 Inc3 -> sync-consolidation 2026-06-28: the prop-mirror bind body
-// MOVED to coop::element::CreateOrAdoptPropMirror (the one collision-reconcile create
-// path, sync_create.cpp). This stays as the named public entry callers already use
-// (OnSpawn / OnConvert / kerfur materialize); it forwards verbatim. `rebindInPlace`
-// is the morph flag.
+// The named bind entry (OnSpawn, OnConvert, the kerfur materialise); it forwards to
+// CreateOrAdoptPropMirror, the one collision-reconciling create path. A re-bind of the same
+// (eid, actor) is a no-op; rebindInPlace is the morph.
 void RegisterPropMirror(coop::element::ElementId eid,
                         void* actor,
                         const std::wstring& key,
@@ -598,23 +441,18 @@ void RegisterPropMirror(coop::element::ElementId eid,
     coop::element::CreateOrAdoptPropMirror(eid, actor, key, cls, senderSlot, rebindInPlace);
 }
 
-// Reverse lookup: the eid bound to `actor` among the Prop Elements (mirrors + locals all live in this
-// one manager). The forward map (prop_element_tracker) is the fast O(1) path for OWNED props; this is
-// the MIRROR-side fallback the chipPile grab hook uses when a CLIENT grabs a host-owned pile (whose
-// mirror is NOT in the local forward map). O(n) but reached only on the rare grab edge after the
-// forward map missed. Snapshot copies the raw pointers under the manager lock, then we iterate
-// lock-free (a concurrently-dropped element would just fail the GetActor compare -- never a UAF here
-// since we only read GetActor/GetId, not the engine actor).
+// The eid bound to `actor` among the Prop elements: the mirror-side fallback the chipPile grab
+// hook uses when a client grabs a host-owned pile, whose mirror is not in the forward map. O(n),
+// on the grab edge only; a snapshot under the manager lock, then a lock-free walk that reads
+// GetActor and GetId only.
 coop::element::ElementId ResolveMirrorEidByActor(void* actor, bool wireMirrorOnly) {
     if (!actor) return coop::element::kInvalidId;
     std::vector<coop::element::Prop*> snap;
     PropMirrors().Snapshot(snap);
     for (coop::element::Prop* p : snap) {
         if (!p || p->GetActor() != actor) continue;
-        // wireMirrorOnly: skip the AllocAndInstall'd LOCAL rows (IsMirror()==false) that share this
-        // manager -- an actor can carry BOTH a census-walk local row and a RegisterPropMirror wire row,
-        // and the unordered iteration order made the un-filtered scan nondeterministic between them
-        // (audit CRITICAL 2026-07-11). IsMirror() is GT-disciplined; this fn is GT-only by contract.
+        // wireMirrorOnly skips the local rows: an actor can carry a local row and a wire row, and
+        // the unordered walk picked either.
         if (wireMirrorOnly && !p->IsMirror()) continue;
         return p->GetId();
     }
@@ -623,16 +461,9 @@ coop::element::ElementId ResolveMirrorEidByActor(void* actor, bool wireMirrorOnl
 
 namespace {  // [spawn helpers continued]
 
-// UnregisterPropMirror moved to remote_prop_destroy.cpp 2026-06-30 (its only caller is OnDestroyImpl_,
-// which moved with it). It is file-local to that TU now.
-
-// Drain the WIRE MIRRORS on full session teardown. Forwards to
-// MirrorManager::DrainMirrorsOnly -- NOT DrainAll: since Inc3 the manager also
-// owns prop_element_tracker's LOCAL Prop Elements (m_mirror=false, shadows of
-// this peer's persistent world props), and DrainAll would wrongly destroy them
-// (they must survive a reconnect -- the keyed-prop seed scan is one-shot per
-// process). Only m_mirror=true entries are released here; each drained mirror's
-// dtor calls Registry::UnregisterMirror sequentially as the vector releases.
+// Full-teardown drain, mirrors only: the manager also owns the tracker's local rows, which must
+// survive a reconnect (the keyed-prop seed scan runs once per process). Each drained mirror's
+// dtor unregisters it.
 size_t DrainWirePropMirrors() {
     return PropMirrors().DrainMirrorsOnly();
 }
@@ -641,26 +472,21 @@ size_t DrainWirePropMirrors() {
 }  // namespace
 
 
-// v26: resolve a Prop Element id to its live mirror actor. The trash clump is non-keyable (setKey doesn't
-// stick), so it's identified by OUR eid instead of the BP Key (PropPoseSnapshot.elementId). null on miss/dead.
-// Named-namespace (declared in remote_prop_internal.h) so remote_prop_destroy.cpp's OnDestroyImpl_ shares it.
+// A Prop element id to its live actor, or null; the clump is identified this way, its key never
+// sticks. Shared with the destroy TU.
 void* ResolveLiveActorByEid(uint32_t eid) {
     if (eid == 0 || eid == coop::element::kInvalidId) return nullptr;
     coop::element::Element* e = coop::element::Registry::Get().Get(eid);
     if (!e) return nullptr;
     void* actor = e->GetActor();
-    // IsLiveByIndex (NOT IsLive): the mirror actor is engine-GC-owned + unrooted, so a GC pass between the
-    // tick that queued the pose and this one could free it. IsLive would deref the freed pointer to read its
-    // InternalIndex (UAF); IsLiveByIndex reads only the cached GUObjectArray slot. Index captured at
-    // RegisterPropMirror (SetActor). Audit finding 2026-06-03. [[feedback-islive-unsafe-on-freed-cached-pointer]]
+    // IsLiveByIndex, not IsLive: the actor is engine-owned and unrooted, so a GC pass since the
+    // pose was queued may have freed it; only the cached GUObjectArray slot is read.
     return (actor && R::IsLiveByIndex(actor, e->GetInternalIdx())) ? actor : nullptr;
 }
 
 void ClearAnyDriveFor(void* actor) {
-    // Clear every slot's kinematic-drive cache entry for `actor` so nothing
-    // drives a destroyed actor next tick. Extracted from OnDestroy (Fork B
-    // 2e, 2026-06-10) because the adoption sweep destroys actors through the
-    // same teardown contract; one implementation (RULE 2).
+    // Every slot's drive on `actor` clears so nothing drives a destroyed actor next tick; the
+    // adoption sweep destroys through the same contract.
     UE_ASSERT_GAME_THREAD("g_drives (remote_prop::ClearAnyDriveFor)");
     if (!actor) return;
     for (auto& d : g_drives) {
@@ -672,43 +498,24 @@ void ClearAnyDriveFor(void* actor) {
     }
 }
 
-// The PropDestroy receiver path (DestroyResolvedLocalActor_ / OnDestroyImpl_ / OnDestroy / TryApplyDestroy /
-// the cached K2_DestroyActor fn / UnregisterPropMirror / ConsumeLocalActor) was EXTRACTED to
-// remote_prop_destroy.cpp 2026-06-30 (anti-smear: this TU was over the soft cap; the destroy path is a
-// distinct concept). OnDestroy / TryApplyDestroy / ConsumeLocalActor stay declared in remote_prop.h.
-
-// The PropConvert receiver (OnConvert -- the pile<->clump bind-model re-skin of eid E in place)
-// was EXTRACTED to remote_prop_convert.cpp 2026-07-19 (s28 modular cut; declared in remote_prop.h).
-
-// ConsumeLocalActor moved to remote_prop_destroy.cpp 2026-06-30 (it owns the cached K2_DestroyActor fn).
-// Declared in remote_prop.h; ForceRelease + OnDisconnectForSlot call it cross-TU.
-
 void ForceRelease() {
-    // Clears every slot's g_drives state (T-10, GT-only). Called from
-    // remote_prop::Tick on disconnect and from aggregate teardown (game thread).
+    // Every slot's drive clears, on disconnect (from Tick) and on aggregate teardown; a single slot
+    // goes through OnDisconnectForSlot.
     UE_ASSERT_GAME_THREAD("g_drives (remote_prop::ForceRelease)");
-    // Force-release on aggregate disconnect/teardown clears every slot's
-    // drive. Per-slot disconnect uses OnDisconnectForSlot instead.
     int released = 0;
     for (auto& d : g_drives) {
         if (!d.actor) continue;
-        // Host-authoritative trash proxy: full teardown via RetireProxy (Destroy + unbind, with
-        // the entry's GcPin releasing on the erase). NEVER ConsumeLocalActor it -- that destroys
-        // the actor while its registry entry, and so its pin, stays put: a rooted PendingKill
-        // actor that anchors its whole world, and a proxy-registry bypass on top.
-        // RetireProxy clears this drive (ClearAnyDriveFor) so d.actor is null after.
+        // A trash proxy retires whole (destroy, unbind, the pin released on the erase), never
+        // through ConsumeLocalActor, which would leave a rooted PendingKill actor anchoring its
+        // world. RetireProxy clears this drive.
         if (d.isProxy) {
             coop::trash_proxy::RetireProxy(d.lastEid);
             ++released;
             continue;
         }
-        // Normal prop -> release to physics (persists). Null-mesh clump mirror -> destroy
-        // it (transient; the holder's death-watcher is gone on teardown -> would leak).
-        // IsLiveByIndex, not plain IsLive: this teardown also runs on the native
-        // quit-to-menu path where the world is already dying -- a recycled slot passes
-        // plain IsLive and the SetSimulatePhysics call lands on the foreign occupant
-        // (audit 2026-07-04 (a)). A dead actor needs no release; just clear the drive.
-        // [[project-bug-trash-chippile-uaf-crash]]
+        // A prop goes back to physics and persists; a clump mirror is destroyed (transient, and its
+        // holder's death-watch is gone). IsLiveByIndex: on the quit-to-menu path the world is dying
+        // and a recycled slot passes plain IsLive, landing the physics call on a foreign occupant.
         if (R::IsLiveByIndex(d.actor, d.actorIdx)) {
             if (d.mesh) DriveSimulate(d.mesh, true);
             else        ConsumeLocalActor(d.actor);
@@ -719,16 +526,7 @@ void ForceRelease() {
     if (released > 0) {
         UE_LOGI("remote_prop: force-release on disconnect/teardown (%d active drive(s) cleared)", released);
     }
-    // A2 (2026-05-29): drain wire-received Prop mirrors on full session
-    // teardown. Each mirror's dtor routes through Registry::UnregisterMirror
-    // (m_mirror=true) so the Registry's m_byId slots in the foreign
-    // allocation range are returned to nullptr. Per-slot disconnect does
-    // NOT drain mirrors (mirrors aren't tagged with senderSlot yet -- a
-    // future enhancement); convergent local actors persist across per-slot
-    // disconnect just like remote_prop's drive cache does.
-    // Inc3 (2026-05-30): mirror-ONLY drain -- the manager now also holds
-    // prop_element_tracker's local Prop Elements, which must NOT be dropped on
-    // disconnect (they shadow persistent world props + survive reconnect).
+    // The mirror-only drain; each dtor returns its foreign-range Registry slot.
     const size_t mirrorsDrained = DrainWirePropMirrors();
     if (mirrorsDrained > 0) {
         UE_LOGI("remote_prop: force-release drained %zu wire-received Prop mirror(s)",
@@ -737,26 +535,18 @@ void ForceRelease() {
 }
 
 void OnDisconnectForSlot(int peerSlot) {
-    // Clears g_drives[peerSlot] (T-10, GT-only). Called from net_pump::Tick's
-    // per-slot disconnect edge (game thread).
+    // Clears one slot's drive, from net_pump::Tick's per-slot disconnect edge.
     UE_ASSERT_GAME_THREAD("g_drives (remote_prop::OnDisconnectForSlot)");
     if (peerSlot < 0 || peerSlot >= static_cast<int>(coop::players::kMaxPeers)) return;
-    // Rows in the unresolved-pose ledger are keyed by SLOT, and slots RECYCLE lowest-free
-    // (roster_ledger.h), so a departing peer's counts must not be inherited by the next
-    // occupant -- otherwise its very first unresolved pose could arrive pre-charged and be
-    // reported as "sustained" on packet one. Cleared before the early return below, because a
-    // slot can have ledger rows without ever having held a drive.
+    // Ledger rows are keyed by slot and slots recycle lowest-free, so the leaver's counts must not
+    // reach the next occupant; cleared before the early return, since a slot can have rows without
+    // a drive.
     if (const size_t droppedRows = coop::unresolved_pose_ledger::ResetSlot(peerSlot)) {
         UE_LOGI("remote_prop: peer slot %d disconnect -- dropped %zu unresolved-pose row(s)",
                 peerSlot, droppedRows);
     }
-    // D1-7: drain THIS peer's wire prop mirrors so they don't accumulate in the
-    // Registry until full teardown (a reconnecting peer / recycled eid would
-    // otherwise collide). Mirror-only + owner-slot-filtered: convergent locals
-    // (m_mirror=false) and other peers' mirrors are untouched. The drained
-    // Elements' dtors run outside the manager mutex (Registry::UnregisterMirror).
-    // Done BEFORE the early-return below so a slot with mirrors but no held
-    // drive still gets cleaned.
+    // This peer's wire mirrors drain now rather than at full teardown (a rejoin or a recycled eid
+    // would collide); mirror-only and owner-slot filtered, before the early return.
     const size_t drainedMirrors = PropMirrors().DrainMirrorsForSlot(peerSlot);
     if (drainedMirrors > 0) {
         UE_LOGI("remote_prop: peer slot %d disconnect -- drained %zu wire prop mirror(s)",
@@ -764,19 +554,17 @@ void OnDisconnectForSlot(int peerSlot) {
     }
     ActiveDrive& d = g_drives[peerSlot];
     if (!d.actor) return;
-    // Host-authoritative trash proxy: full teardown via RetireProxy (Destroy + unbind, pin
-    // released by the erase), never ConsumeLocalActor (a rooted-slot leak + registry bypass). Normally the
-    // proxy is already retired by trash_proxy::OnDisconnectForSlot (called first in
-    // subsystems::DisconnectSlot), so d.actor is null and we returned above -- this is the
-    // belt-and-suspenders path. RetireProxy is idempotent.
+    // A held trash proxy retires whole, as in ForceRelease. Normally
+    // trash_proxy::OnDisconnectForSlot already retired it (it runs first in DisconnectSlot) and the
+    // drive is empty; RetireProxy is idempotent.
     if (d.isProxy) {
         coop::trash_proxy::RetireProxy(d.lastEid);  // clears this drive via ClearAnyDriveFor
         UE_LOGI("remote_prop: peer slot %d disconnected -- retired held trash proxy eid=%u", peerSlot, d.lastEid);
         return;
     }
     if (d.mesh && R::IsLiveByIndex(d.actor, d.actorIdx)) {
-        // Normal world prop: release to physics -- it persists (convergent world object).
-        // By-index guard: same recycled-slot hazard as ForceRelease (audit 2026-07-04 (a)).
+        // A world prop goes back to physics and persists; by-index, for the recycled-slot hazard
+        // above.
         DriveSimulate(d.mesh, true);
         UE_LOGI("remote_prop: peer slot %d disconnected -- releasing held prop (key='%s')",
                 peerSlot, d.lastKey.c_str());
@@ -784,10 +572,8 @@ void OnDisconnectForSlot(int peerSlot) {
         UE_LOGI("remote_prop: peer slot %d disconnected -- held prop already dead (skip release)",
                 peerSlot);
     } else {
-        // Null-mesh = the transient CLUMP mirror. The holder vanished mid-carry, so the
-        // death-watcher that would despawn it (it lives on the HOLDER) is gone -- destroy
-        // the mirror here or it leaks as a frozen floating ball on this peer.
-        // ConsumeLocalActor is echo-suppressed + IsLive-gated. [[project-bug-trash-chippile-uaf-crash]]
+        // A clump mirror whose holder left mid-carry is destroyed here, since the death-watch that
+        // would despawn it lived on the holder; otherwise it lingers as a frozen floating ball.
         ConsumeLocalActor(d.actor);
         UE_LOGI("remote_prop: peer slot %d disconnected mid-carry -- destroyed held clump mirror %p (no leak)",
                 peerSlot, d.actor);
