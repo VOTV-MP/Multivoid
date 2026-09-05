@@ -45,7 +45,7 @@ prebuffers about a hundred milliseconds after silence, and a playback callback m
 with linear distance attenuation, a vertical fade and a stereo pan
 (`coop/voice/voice_playback`). Whispering halves the radius. A peer is drawn as talking when a
 frame of theirs decoded within the last quarter second; mute, disabled and whisper are presence
-states relayed on change. A test-tone mode replaces the microphone on the rig.
+states relayed on change. A developer flag replaces the microphone with a test tone.
 
 ## Who owns what
 
@@ -76,9 +76,9 @@ is contiguous so a seed can never be discarded as old. Voice presence states are
 
 | Limit | Evidence |
 |---|---|
-| Walls do not muffle voice; attenuation is distance and height only | `[V]` the playback header |
-| No noise suppression or automatic gain; the level threshold and the manual gain are what ships | `[V]` the capture header |
-| A peer's own notices in the feed are that peer's alone; only the chat subsequence is identical across peers | `[V]` the record's header |
+| Walls do not muffle voice; attenuation is distance and height only | `[V]` `coop/voice/voice_playback` |
+| No noise suppression or automatic gain; the level threshold and the manual gain are what ships | `[V]` `coop/voice/voice_capture` |
+| A peer's own notices in the feed are that peer's alone; only the chat subsequence is identical across peers | `[V]` `coop/comms/chat_feed` |
 
 ## Code map
 
