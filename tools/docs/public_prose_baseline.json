@@ -1,9 +1,9 @@
 {
- "as_of": "962fbfadd",
+ "as_of": "c4366ab0d",
  "note": "measured on the working tree; as_of is HEAD at that moment",
  "counters": {
   "md.files": 50,
-  "md.lines": 5911,
+  "md.lines": 5914,
   "md.over_600": 0,
   "md.cyrillic": 1,
   "md.user": 1,
@@ -17,21 +17,21 @@
   "md.ptr_security": 1,
   "md.dead_links": 0,
   "md.dead_paths": 0,
-  "src.comment_lines": 62755,
+  "src.comment_lines": 62471,
   "src.comment_cyrillic": 141,
   "src.comment_user": 46,
   "src.comment_verbatim": 166,
   "src.comment_qf": 88,
-  "src.comment_agent": 31,
-  "src.comment_dated": 2757,
+  "src.comment_agent": 27,
+  "src.comment_dated": 2727,
   "src.comment_ptr_memory": 0,
-  "src.comment_ptr_research": 217,
+  "src.comment_ptr_research": 208,
   "src.comment_ptr_claude": 23,
   "src.comment_ptr_security": 21,
   "src.comment_lesson": 189,
   "src.comment_sha": 11,
-  "src.files_half_comment": 18,
-  "src.comment_blocks_over_15": 682,
-  "src.comment_permille": 362
+  "src.files_half_comment": 17,
+  "src.comment_blocks_over_15": 674,
+  "src.comment_permille": 361
  }
 }
