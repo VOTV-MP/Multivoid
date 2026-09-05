@@ -6,7 +6,7 @@
 #include "coop/element/mirror_manager.h"
 #include "coop/element/prop.h"
 #include "coop/element/registry.h"
-#include "coop/interactables/laptop_buffer_sync.h"  // v121: PrimeQuadBaseline piggyback
+#include "coop/interactables/laptop_buffer_sync.h"  // the quad baseline prime
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
 
@@ -34,32 +34,26 @@ namespace R = ue_wrap::reflection;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
-constexpr uint64_t kPollMs        = 250;    // 4 Hz edge poll (the L7 cadence)
+constexpr uint64_t kPollMs        = 250;    // the 4 Hz edge poll
 constexpr uint64_t kLidSweepMs    = 1000;   // 1 Hz portable-PC lid sweep (the rack cadence)
 constexpr uint64_t kEjectWatchMs  = 10000;  // post-eject disc-content publish window
 constexpr uint64_t kChunkTtlMs    = 10000;  // half-assembled content stream TTL
 constexpr uint64_t kPendingTtlMs  = 30000;  // deferred disc-content apply TTL
-constexpr size_t   kContentCapBytes = 4096; // total content cap (truncate + WARN; OPEN-9 residual)
-// SECURITY W9 (docs/security/TRACKER.md): g_lidPending is keyed by a WIRE eid and is
-// inserted into precisely when that eid does NOT resolve -- the garbage case is the
-// inserting case, so an attacker-chosen eid stream grows it at line rate. The 30 s TTL
-// bounds it in TIME but not in RATE. This is the absolute size bound.
-//
-// Why REFUSE a new key rather than evict the oldest: an eviction policy lets a newcomer
-// displace an incumbent, so a flood would push out exactly the legitimate birth-lane-skew
-// entry the map exists to hold (the same principle that made eviction the wrong answer for
-// the master's lobby table). Refusing degrades the flooder, not the pending entry.
-//
-// Sizing: legitimate pending entries are bounded by the number of portable PCs in the
-// world whose eid has not yet resolved on this peer -- single digits. 64 is ~8x that, and
-// at ~24 B per entry the map cannot exceed ~1.5 KB.
-//
-// RESIDUAL, stated rather than hidden: under a SUSTAINED flood a legitimate lid op can be
-// refused while the table is full. It is not lost permanently -- the 4 Hz edge poll on the
-// authoring side re-detects the unchanged lid state and re-sends -- but there is a window.
+constexpr size_t   kContentCapBytes = 4096;  // the total content cap (truncate with a warning)
+// The pending-lid table is keyed by a wire eid and inserted into precisely when that eid does
+// not resolve: the garbage case is the inserting case, so an attacker-chosen eid stream grows
+// it at line rate, and the TTL bounds it in time but not in rate. This is the absolute size
+// bound. Refuse a new key rather than evict the oldest: eviction lets a newcomer displace an
+// incumbent, so a flood would push out exactly the legitimate birth-lane-skew entry the map
+// exists to hold; refusing degrades the flooder. Sizing: legitimate entries are bounded by the
+// portable PCs whose eid has not yet resolved on this peer, single digits, so 64 is generous
+// and the map stays under a couple of kilobytes. The residual: under a sustained flood a
+// legitimate lid op can be refused while the table is full; not lost permanently, since the
+// 4 Hz edge poll on the authoring side re-detects the unchanged lid and re-sends, but there
+// is a window.
 constexpr size_t   kLidPendingCap = 64;
 
-// v121: LaptopBlob head = [u8 contentKind][u32 eid]; kinds 0=slot, 1=disc.
+// The content-blob head: a kind byte and the eid; kind 0 is the slot, 1 a disc.
 constexpr size_t kBlobHead = 5;
 
 uint64_t NowMs() {
@@ -76,66 +70,64 @@ std::wstring FromUtf8(const std::string& s) {
     return w;
 }
 
-// ---- poll baselines (primed on every wire apply -- the L7 apply+prime shape) ----
+// The poll baselines, primed on every wire apply (the apply-and-prime shape).
 bool    g_havePrev = false;
 bool    g_prevOpened = false;
 int32_t g_prevType = -1;
 uint64_t g_nextPoll = 0;
 
-// Wire-target power convergence: a pending target consumes the matching local
-// edge as WIRE-TRANSIENT (state predicate, not a flag-timer -- the
-// edge-authority lesson); a non-matching edge is organic and broadcasts.
+// Wire-target power convergence: a pending target consumes the matching local edge as
+// wire-transient (a state predicate, not a flag timer); a non-matching edge is organic and
+// broadcasts.
 bool g_wantValid = false;
 bool g_wantOpened = false;
 
-// Post-eject disc-content publish watch (both roles; the client sends to the
-// host, the host broadcasts).
+// The post-eject disc-content publish watch (both roles; the client sends to the host, the
+// host broadcasts).
 uint64_t g_ejectWatchUntil = 0;
 std::set<uint32_t> g_publishedContentEids;
 
-// v121: LaptopBlob reassembly (blob_chunks; keys (senderSlot, blobSeq)) + the
-// per-sender seq mint shared by broadcast AND to-slot sends (R8: one counter
-// per kind-owner -> (0, seq) unique at every receiver).
+// The content-blob reassembly (keyed by sender and sequence) and the per-sender sequence mint
+// shared by the broadcast and to-slot sends: one counter per kind owner, so the pair is
+// unique at every receiver.
 coop::blob_chunks::Assembler g_blobAsm;
 uint32_t g_blobSeq = 1;
 
-// v121 lid (portable PC, op=6): per-eid prev map (first sight primes silently)
-// + the unresolvable-eid stash (PropSpawn rides another kind; skew < TTL).
+// The lid axis (the portable PC, op 6): a per-eid previous map (first sight primes silently)
+// and the unresolvable-eid stash (the spawn rides another kind; the skew is under the TTL).
 std::map<uint32_t, bool> g_lidPrev;
 struct PendingLid { bool opened; uint64_t deadline; };
 std::map<uint32_t, PendingLid> g_lidPending;
 uint64_t g_nextLidSweep = 0;
 
-// Deferred disc-content applies (mirror not materialized yet).
+// Deferred disc-content applies (the mirror not materialised yet).
 struct PendingDisc {
     L::DiscContent content;
     uint64_t deadline = 0;
 };
 std::map<uint32_t, PendingDisc> g_pendingDisc;
 
-// The OCCUPIED-slot scalar edge is NOT applied on arrival: it parks here until
-// its kind=0 content stream assembles, and slot scalars + strings land in ONE
-// WriteSlot (correctness audit v116 IMPORTANT-1: applying scalars with empty
-// strings first opened a window where a local eject on the receiver spawned a
-// content-less disc that became the canonical cross-peer prop). In-lane
-// ordering guarantees the chunks follow their edge; the TTL is the lost-stream
-// fallback (degraded scalar-only apply + WARN, no worse than the old shape).
+// The occupied-slot scalar edge is not applied on arrival: it parks here until its content
+// stream assembles, and the scalars and strings land in one write (applying scalars with
+// empty strings first opened a window where a local eject on the receiver spawned a
+// content-less disc that became the canonical cross-peer prop). In-lane ordering guarantees
+// the chunks follow their edge; the TTL is the lost-stream fallback (a degraded scalar-only
+// apply with a warning).
 struct PendingSlot {
     bool valid = false;
     uint8_t sender = 0xFF;
     L::SlotState st;
     uint64_t deadline = 0;
 };
-// IMPORTANT-2 (v121 correctness audit): the park is PER-SENDER -- two peers'
-// concurrent inserts (both portals view the ONE laptop; each's occupied guard
-// runs against its own possibly-stale mirror) must never cross-pair scalars
-// with the other's content stream. Keyed by senderSlot; consume matches the
-// content blob's origin exactly.
+// The park is per sender: two peers' concurrent inserts (both portals view the one laptop,
+// and each's occupied guard runs against its own possibly stale mirror) must never
+// cross-pair scalars with the other's content stream. Keyed by the sender slot; the consume
+// matches the content blob's origin exactly.
 std::map<uint8_t, PendingSlot> g_pendingSlots;
 
 bool g_announced = false;
 
-// ---- serialization (fields joined by 0x1F, UTF-8) ----
+// Serialisation: fields joined by 0x1F, UTF-8.
 constexpr char kSep = '\x1F';
 
 std::string PackSlotContent(const L::SlotContent& c) {
@@ -183,7 +175,7 @@ L::DiscContent UnpackDiscContent(const std::string& bytes) {
     return c;
 }
 
-// ---- send helpers ----
+// The send helpers.
 void SendOut(coop::net::Session* s, const coop::net::LaptopStatePayload& p, int exceptSlot) {
     if (s->role() == coop::net::Role::Client) {
         s->SendReliableToSlot(0, coop::net::ReliableKind::LaptopState, &p, sizeof(p));
@@ -196,7 +188,7 @@ void SendOut(coop::net::Session* s, const coop::net::LaptopStatePayload& p, int 
     }
 }
 
-// v121: build the LaptopBlob bytes ([kind][eid][content]) with the cap WARN.
+// Build the content-blob bytes (kind, eid, content) with the cap warning.
 std::vector<uint8_t> MakeContentBlob(uint8_t kind, uint32_t eid, const std::string& bytes) {
     std::string data = bytes;
     if (data.size() > kContentCapBytes) {
@@ -211,8 +203,8 @@ std::vector<uint8_t> MakeContentBlob(uint8_t kind, uint32_t eid, const std::stri
     return blob;
 }
 
-// Broadcast content (host: to every ready slot; client: to the host, which
-// refans per-chunk verbatim with the origin byte).
+// Broadcast content (the host to every ready slot; the client to the host, which re-fans
+// each chunk unchanged with the origin byte).
 void SendContentBlob(coop::net::Session* s, uint8_t kind, uint32_t eid,
                      const std::string& bytes) {
     coop::blob_chunks::SendBlob(s, coop::net::ReliableKind::LaptopBlob,
@@ -227,15 +219,14 @@ void PrimeBaselines() {
         g_prevType = st.floppyType;
         g_havePrev = true;
     }
-    // v121 invariant (design SS2): every wire-driven laptop-state write path
-    // terminates here -- so the quad shadow primes at the SAME single point
-    // and can never read a wire apply as an organic edit.
+    // The invariant: every wire-driven laptop-state write path terminates here, so the quad
+    // shadow primes at the same single point and can never read a wire apply as an organic edit.
     coop::laptop_buffer_sync::PrimeQuadBaseline();
 }
 
-// The local slot-content publish for an INSERT edge (organic or replayed-onto-
-// us never happens -- receivers write raw, primed). Reads the laptop's live
-// scalars + strings and ships edge + chunks.
+// The local slot-content publish for an insert edge (organic; a replay onto us never
+// happens, since receivers write raw, primed). Reads the laptop's live scalars and strings
+// and ships the edge plus the chunks.
 void BroadcastInsert(coop::net::Session* s) {
     L::SlotState st;
     L::SlotContent c;
@@ -251,11 +242,10 @@ void BroadcastInsert(coop::net::Session* s) {
             st.floppyType, static_cast<unsigned>(p.zip), st.readWrites);
 }
 
-// The post-eject content publish: find a content-bearing disc row not yet
-// published; client sends it to the host (authority), host broadcasts.
-// Bounded: runs only inside the 10 s post-eject window, cheap class gate
-// first (the full-array-walk lesson does not apply -- this walks the element
-// SNAPSHOT, not GUObjectArray).
+// The post-eject content publish: find a content-bearing disc row not yet published; the
+// client sends it to the host (the authority), the host broadcasts. Bounded: it runs only
+// inside the post-eject window, with the cheap class gate first, and it walks the element
+// snapshot, not the object array.
 void DriveEjectContentWatch(coop::net::Session* s, uint64_t now) {
     if (!g_ejectWatchUntil) return;
     if (now > g_ejectWatchUntil) { g_ejectWatchUntil = 0; return; }
@@ -304,9 +294,8 @@ void DrivePendingDiscApplies(uint64_t now) {
 void ApplyAssembledContent(coop::net::Session* s, uint8_t kind, uint32_t eid,
                            const std::string& bytes, uint8_t senderSlot) {
     if (kind == 0) {
-        // Laptop slot content -- pair it with the PARKED scalars from the op=1/3
-        // edge that preceded these chunks in-lane, and land both in ONE
-        // WriteSlot (atomic occupied-apply; audit IMPORTANT-1).
+        // Laptop slot content: pair it with the parked scalars from the edge that preceded these
+        // chunks in-lane, and land both in one write (the atomic occupied apply).
         L::SlotState st;
         auto pit = g_pendingSlots.find(senderSlot);
         if (pit != g_pendingSlots.end() && pit->second.valid) {
@@ -322,9 +311,9 @@ void ApplyAssembledContent(coop::net::Session* s, uint8_t kind, uint32_t eid,
                 static_cast<unsigned>(senderSlot));
         return;
     }
-    // kind == 1: disc content by eid. Write the target (host: authoritative
-    // actor; client: the mirror) or defer. v121: the host refan is per-chunk
-    // VERBATIM in OnLaptopBlobChunk (attribution-stable), no post-apply refan.
+    // Kind 1, disc content by eid: write the target (the host's authoritative actor, the
+    // client's mirror) or defer. The host re-fan is per chunk in the chunk receiver,
+    // attribution-stable; no post-apply re-fan.
     const L::DiscContent dc = UnpackDiscContent(bytes);
     coop::element::Prop* row =
         coop::element::MirrorManager<coop::element::Prop>::Instance().Get(eid);
@@ -343,7 +332,7 @@ void ApplyAssembledContent(coop::net::Session* s, uint8_t kind, uint32_t eid,
     (void)s;
 }
 
-// ---- v121: the portable-PC lid axis (op=6) ---------------------------------
+// The portable-PC lid axis (op 6).
 
 using coop::element::LivePropActor;  // the promoted canonical eid->live-Prop resolve
 
@@ -355,8 +344,8 @@ void SendLid(coop::net::Session* s, uint32_t eid, bool opened, int exceptSlot) {
     SendOut(s, p, exceptSlot);
 }
 
-// 1 Hz element-snapshot walk with the POINTER class gate (verdict cache; no
-// NameOf on the hot path, no GUObjectArray walk -- the rack sweep shape).
+// A 1 Hz element-snapshot walk with the pointer class gate (a verdict cache; no name
+// rendering on the hot path, no object-array walk).
 void LidSweep(coop::net::Session* s, uint64_t now) {
     if (now < g_nextLidSweep) return;
     g_nextLidSweep = now + kLidSweepMs;
@@ -413,8 +402,8 @@ void ApplyPowerTarget(coop::net::Session* s) {
     if (L::CallPowerToggle())
         UE_LOGI("laptop_sync: power replay dispatched (target isOpened=%u)",
                 static_cast<unsigned>(g_wantOpened));
-    // isOpened settles after the native latent chain; the poll's want-target
-    // predicate consumes that edge as wire-transient.
+    // The opened flag settles after the native latent chain; the poll's want-target predicate
+    // consumes that edge as wire-transient.
 }
 
 }  // namespace
@@ -439,14 +428,14 @@ void Tick() {
     }
     if (!g_havePrev) { PrimeBaselines(); return; }
 
-    // Expire half-assembled content streams (blob_chunks TTL sweep).
+    // Expire half-assembled content streams (the chunk TTL sweep).
     g_blobAsm.Sweep(std::chrono::steady_clock::now(),
                     std::chrono::seconds(kChunkTtlMs / 1000));
 
     LidSweep(s, now);
 
-    // Lost-content fallback: a parked occupied-slot edge whose chunk stream
-    // never assembled applies scalar-only after the TTL (degraded, WARN).
+    // The lost-content fallback: a parked occupied-slot edge whose chunk stream never assembled
+    // applies scalar-only after the TTL (degraded, with a warning).
     for (auto it = g_pendingSlots.begin(); it != g_pendingSlots.end();) {
         if (it->second.valid && now > it->second.deadline) {
             UE_LOGW("laptop_sync: parked slot edge EXPIRED without content (type=%d, sender=%u) "
@@ -469,7 +458,7 @@ void Tick() {
     if (!L::ReadPower(ps) || !L::ReadSlot(st)) return;
 
     if (s->connected()) {
-        // POWER edge.
+        // The power edge.
         if (ps.isOpened != g_prevOpened) {
             if (g_wantValid && ps.isOpened == g_wantOpened) {
                 g_wantValid = false;  // wire-transient settle -- consume silently
@@ -482,7 +471,7 @@ void Tick() {
                         static_cast<unsigned>(p.isOpened));
             }
         }
-        // SLOT edge (floppyType through -1).
+        // The slot edge (the floppy type through -1).
         const bool wasEmpty = (g_prevType < 0);
         const bool isEmpty  = (st.floppyType < 0);
         if (wasEmpty && !isEmpty) {
@@ -507,9 +496,9 @@ void OnLaptopState(const coop::net::LaptopStatePayload& p, uint8_t senderSlot) {
     if (p.op > 3 && p.op != 6) return;
     const bool isHost = (s->role() == coop::net::Role::Host);
 
-    // v121 lid (op=6): does not need the LAPTOP resolved -- it addresses a
-    // portable PC prop by eid. Apply (gate current!=wire) + prime; unresolved
-    // eid -> stash with TTL (birth-lane skew).
+    // The lid op does not need the laptop resolved: it addresses a portable-PC prop by eid. Apply
+    // (gated on the current state differing from the wire) and prime; an unresolved eid is
+    // stashed with a TTL (birth-lane skew).
     if (p.op == 6) {
         const bool opened = p.isOpened != 0;
         void* actor = LivePropActor(p.eid);
@@ -524,9 +513,9 @@ void OnLaptopState(const coop::net::LaptopStatePayload& p, uint8_t senderSlot) {
             g_lidPrev[p.eid] = opened;
         } else if (g_lidPending.size() < kLidPendingCap ||
                    g_lidPending.count(p.eid) != 0) {
-            // The count() term matters: refreshing an eid ALREADY pending is an update,
-            // not growth, and must stay allowed at the cap or a legitimate repeated lid
-            // edge would be refused while its own entry sits in the table.
+            // The count term matters: refreshing an eid already pending is an update, not growth,
+            // and must stay allowed at the cap, or a legitimate repeated lid edge would be refused
+            // while its own entry sits in the table.
             g_lidPending[p.eid] = PendingLid{opened, NowMs() + kPendingTtlMs};
         } else {
             UE_LOGW("laptop_sync: lid stash REFUSED for eid=%u (from slot %u) -- pending "
@@ -555,11 +544,11 @@ void OnLaptopState(const coop::net::LaptopStatePayload& p, uint8_t senderSlot) {
             st.zip = p.zip != 0;
             st.readWrites = p.readWrites;
             if (st.floppyType < 0) {
-                // Empty slot: nothing follows -- apply the scalars now.
+                // An empty slot: nothing follows, so apply the scalars now.
                 L::WriteSlotScalars(st);
             } else {
-                // Occupied: PARK until the kind=0 stream right behind lands;
-                // scalars + strings apply atomically there (audit IMPORTANT-1).
+                // Occupied: park until the content stream right behind lands; the scalars and
+                // strings apply atomically there.
                 PendingSlot& ps = g_pendingSlots[senderSlot];
                 ps.valid = true;
                 ps.sender = senderSlot;
@@ -570,9 +559,7 @@ void OnLaptopState(const coop::net::LaptopStatePayload& p, uint8_t senderSlot) {
         PrimeBaselines();
         break;
     }
-    case 1: { // insert edge: PARK -- the content stream follows in-lane; the
-              // slot flips occupied only when scalars + strings land together
-              // (audit IMPORTANT-1: no content-empty occupied window).
+    case 1: {  // the insert edge: park; the content stream follows in-lane, and the slot flips occupied only when the scalars and strings land together
         PendingSlot& ps = g_pendingSlots[senderSlot];
         ps.valid = true;
         ps.sender = senderSlot;
@@ -595,7 +582,7 @@ void OnLaptopState(const coop::net::LaptopStatePayload& p, uint8_t senderSlot) {
         return;
     }
 
-    // HOST re-fans the scalar ops to the other clients (origin excluded).
+    // The host re-fans the scalar ops to the other clients (the origin excluded).
     if (isHost && (p.op == 0 || p.op == 1 || p.op == 2))
         SendOut(s, p, /*exceptSlot*/ senderSlot);
 }
@@ -604,9 +591,9 @@ void OnLaptopBlobChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot)
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s) return;
     const bool isHost = (s->role() == coop::net::Role::Host);
-    // HOST: per-chunk VERBATIM refan with the origin byte (R8: attribution
-    // stays stable at every receiver's (sender, seq) assembler keys; every
-    // client-originated LaptopBlob is kind 0/1 by construction).
+    // The host re-fans each chunk unchanged with the origin byte, so attribution stays stable at
+    // every receiver's sender-and-sequence assembler keys; every client-originated content blob
+    // is kind 0 or 1 by construction.
     if (isHost && senderSlot != 0 && senderSlot < coop::net::kMaxPeers) {
         for (int slot = 1; slot < static_cast<int>(coop::net::kMaxPeers); ++slot) {
             if (slot == senderSlot || !s->IsSlotReady(slot)) continue;
@@ -646,13 +633,13 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     p.readWrites = st.readWrites;
     s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::LaptopState, &p, sizeof(p));
     if (st.floppyType >= 0 && L::ReadSlotContent(c)) {
-        // Point-to-point content toward the joiner only (in-lane AFTER the
-        // op=3 line: LaptopState + LaptopBlob share Lane::Normal, one FIFO).
+        // Point-to-point content toward the joiner only, in-lane after the state line (the state
+        // and the blob share one lane, one FIFO).
         coop::blob_chunks::SendBlobToSlot(s, peerSlot, coop::net::ReliableKind::LaptopBlob,
                                           g_blobSeq++, MakeContentBlob(0, 0, PackSlotContent(c)));
     }
-    // Live content-bearing discs (mid-session ejects the save-transfer cannot
-    // carry) -- GROUND TRUTH read off the element snapshot, no bookkeeping.
+    // Live content-bearing discs (mid-session ejects the save transfer cannot carry): ground
+    // truth read off the element snapshot, no bookkeeping.
     static std::vector<coop::element::Prop*> rows;
     coop::element::MirrorManager<coop::element::Prop>::Instance().Snapshot(rows);
     int shipped = 0;
@@ -670,8 +657,8 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
                                           MakeContentBlob(1, eid, PackDiscContent(dc)));
         ++shipped;
     }
-    // v121: current lid state per portable PC (runtime-only field -- the
-    // joiner always arrives lid-closed; these rows are the only source).
+    // The current lid state per portable PC (a runtime-only field; the joiner always arrives
+    // lid-closed, so these rows are the only source).
     int lids = 0;
     {
         std::vector<coop::element::Registry::ActorIdPair> pairs;
