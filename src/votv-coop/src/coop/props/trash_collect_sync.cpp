@@ -1,31 +1,28 @@
-// coop/trash_collect_sync.cpp -- see coop/trash_collect_sync.h.
-//
-// One function: EnsureHeldItemBroadcast. net_pump's held-prop send calls it on
-// the new-held edge. The collect itself (trashBitsPile_C::playerTryToCollect)
-// is BP-internal (ProcessInternal) so it can't be observed; we instead act on
-// the grabbing_actor the send already resolves -- a freshly-spawned, auto-
-// grabbed Aprop_C with Key=None gets a stable Key + a PropSpawn here, then the
-// existing pose stream mirrors it into the collector's hands.
+// coop/trash_collect_sync.cpp -- the held-item express and the pile seams. EnsureHeldItemBroadcast
+// runs on the pump's new-held edge: a freshly spawned, auto-grabbed prop with no Key gets a
+// stable Key and a PropSpawn, and the pose stream then mirrors it into the collector's hands. The
+// BeginDeferred Func patch is the deterministic grab and re-pile seam for chip piles. See
+// coop/trash_collect_sync.h.
 
 #include "coop/props/trash_collect_sync.h"
 
-#include "coop/dev/spawn_order_probe.h"  // Phase 1 step 1A: client load-spawn coverage probe (read-only)
-#include "coop/props/save_identity_bind.h"     // Phase 1 step 2b: client eid-range bind (mutating)
+#include "coop/dev/spawn_order_probe.h"  // the client load-spawn coverage probe
+#include "coop/props/save_identity_bind.h"     // the client eid bind
 #include "coop/props/save_identity_map.h"      // Family
-#include "coop/creatures/kerfur_entity.h"  // K-5: IsKerfurActor (the held-kerfur class-gate); IsKerfurPropClass (off-prop)
+#include "coop/creatures/kerfur_entity.h"  // IsKerfurActor, IsKerfurPropClass
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
-#include "coop/element/quiescence_drain.h"   // ArmGhostSweep (v106b: E-press on an unbound native arms the wholesale ghost reconcile)
+#include "coop/element/quiescence_drain.h"   // ArmGhostSweep
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_sound.h"           // client-own-grab pickup cue (native grab suppressed -> synthesize locally)
 #include "coop/props/prop_synth_key.h"
 #include "coop/props/remote_prop.h"        // ResolveMirrorEidByActor (the pile-grab hook mirror eid resolve)
 #include "coop/props/remote_prop_spawn.h"
-#include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
-#include "coop/save/save_transfer.h"      // docs/piles/09: RecordGrabTimePileXform (grab-edge save-time key)
-#include "coop/props/trash_channel.h"      // NoteClumpBorn (v106: the clump birth certificate; docs/piles/08)
-#include "coop/props/trash_proxy.h"        // EidForAimedPileProxy (Increment 2: client-grab camera-ray cone recognition)
-#include "coop/props/trash_use_intercept.h"  // B1a: the InpActEvt_use client-grab interceptor (Install/OnDisconnect delegate here)
+#include "coop/props/join_membership_sweep.h"  // the sweep's candidate and claim queries
+#include "coop/save/save_transfer.h"      // RecordGrabTimePileXform, the grab-edge save-time key
+#include "coop/props/trash_channel.h"      // NoteClumpBorn, the clump's birth certificate
+#include "coop/props/trash_proxy.h"        // EidForAimedPileProxy
+#include "coop/props/trash_use_intercept.h"  // the InpActEvt_use client-grab interceptor
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/game_thread.h"     // RegisterPreObserver (the InpActEvt_use pile-grab observer)
 #include "ue_wrap/core/log.h"
@@ -33,7 +30,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"     // MainPlayerClass + MainPlayerUseInputEventFn
 #include "ue_wrap/core/types.h"
-#include "ue_wrap/core/ufunction_hook.h"  // the deterministic re-pile: BeginDeferred Func-patch (docs/piles/08)
+#include "ue_wrap/core/ufunction_hook.h"  // the BeginDeferred Func patch, the deterministic re-pile
 
 #include <atomic>
 #include <chrono>
@@ -48,60 +45,43 @@ namespace PT = coop::prop_element_tracker;
 namespace GT = ue_wrap::game_thread;
 namespace P  = ue_wrap::profile;
 
-// Cached Session for the pile-grab observer (the PRE callback can't take a param). Set by Install
-// (re-cached every call for reconnect). Game-thread read inside the observer.
+// The cached Session for the observers (a PRE callback takes no parameter); re-cached by every
+// Install for a reconnect. Read on the game thread.
 std::atomic<coop::net::Session*> g_session{nullptr};
 
-// RULE 1+2 (2026-06-21, docs/piles/08): the v81 MORPH (proximity FindNearestChipPile land-detect) is FULLY
-// RETIRED -- it mis-bound on a NEIGHBOUR pile in a dense cluster. The host-grab sync is now: the InpActEvt
-// clump's identity travels via the v106 BIRTH CERTIFICATE (trash_channel::NoteClumpBorn at the BeginDeferred
-// thunk); the held-edge adopts the clump onto that eid; identity is the host eid end-to-end (POSITION IS NEVER IDENTITY).
-// (An earlier design caught the spawn at a host_spawn_watcher BeginDeferred POST -- RETIRED 2026-06-21: the
-// chipPile/clump spawn is dispatched EX_CallMath, INVISIBLE to our ProcessEvent hook; it never fired.)
+// The host-grab identity travels by the clump's birth certificate (NoteClumpBorn at the
+// BeginDeferred seam), and the held edge adopts the clump onto that eid; identity is the host
+// eid end to end, never a position. The chipPile and clump spawns dispatch EX_CallMath,
+// invisible to the ProcessEvent hook, which is why the seam is a Func patch.
 
-// (The proximity RE-PILE death-watch -- WatchClumpForRepile / Tick / FindNearestUntrackedChipPile_ /
-// g_watchedClumps -- is RETIRED 2026-06-21, RULE 2. It converted on the clump's DEATH by a nearest-untracked
-// pile search; the deterministic UFunction::Func thunk (OnBeginDeferredSpawnObserve) replaced it after a
-// hands-on validated the thunk's *Result is ptr-for-ptr the same pile the death-watch found. The thunk
-// converts the EXACT spawned pile the same tick -- no proximity, no reaper race. A consumed clump (no
-// re-pile spawn) now just dies untracked -> the normal prop reaper PropDestroys it.)
+// A consumed clump (no re-pile spawn) dies untracked, and the prop reaper broadcasts its
+// destroy.
 
 bool g_repileThunkInstalled = false;          // process-lifetime Func-patch latch
 
-// THE DETERMINISTIC RE-PILE (docs/piles/08 "thunk") -- the convert, validated GREEN 2026-06-21 (host log:
-// many CLEAN [REPILE], the thunk's *Result ptr-for-ptr == the death-watch's FindNearest pile every isolated
-// re-pile). On a host re-pile the clump's `EX_CallMath BeginDeferredActorSpawnFromClass(self=clump, pile)`
-// fires our UFunction::Func patch -> (srcObj = FFrame::Object = the re-piling clump @0x18; newActor =
-// *Result = the new chipPile). If the clump is a TRACKED trash entity (eid E) we convert E onto the new pile
-// IN PLACE, the SAME tick the pile is constructed -- zero proximity, zero death-watch, no reaper race (so the
-// old ~5s vanish-return is gone by construction). The GRAB case (srcObj=pile, newActor=clump) is NOT a clump
-// source -> ignored here; the host grab stays on the InpActEvt PRE + held-edge adopt path. A wild srcObj (a
-// wrong offset -- ruled out, IDA-pinned + validated) would fault in IsGarbageClump and the facility's
-// RunCbSEH absorbs it -> no convert. Game thread (BeginDeferred is GT-only); host-only.
+// The deterministic re-pile. A host re-pile is the clump's own BeginDeferredActorSpawnFromClass
+// (self the clump, class the pile), which fires this Func patch with the re-piling clump as the
+// source object and the new pile as the result. If the clump is a tracked trash entity, its eid
+// is converted onto the new pile in place, the same tick the pile is constructed: no proximity,
+// no death watch, no reaper race. The grab direction (source a pile, result a clump) is
+// recorded here too and adopted at the held edge. Game thread; the convert is host-only.
 void OnBeginDeferredSpawnObserve(void* /*context*/, void* srcObj, void* newActor) {
     auto* s = g_session.load(std::memory_order_acquire);
-    // Phase 1 step 1A PROBE (read-only, CLIENT-side, before the host gate): record every keyless-family
-    // load-spawn this thunk sees, so EmitVerdictAtQuiescence can test whether spawn-order catches every
-    // surviving native (build plan 1A; docs/COOP_STABLE_ID_SIDECAR.md S3.2). Observe-only, mutates nothing.
-    // Phase 1 step 2b BIND (CLIENT, before the host gate): same keyless-family classification feeds the 1A
-    // probe (read-only) AND the eid-range bind (mutating) -- the bind binds the k-th keyless load-spawn to the
-    // k-th received-map entry's host eid (save_identity_bind). Both are independently gated; one classification.
+    // On a client, before the host gate: every keyless-family load spawn this seam sees feeds the
+    // spawn-order coverage probe (read-only) and the eid bind (the k-th keyless load spawn binds to
+    // the k-th received map entry). Both are independently gated; one classification.
     if (newActor && s && s->connected() && s->role() == coop::net::Role::Client) {
         const bool probeOn = coop::dev::spawn_order_probe::IsEnabled();
         const bool bindOn = coop::save_identity_bind::IsEnabled();
         if (probeOn || bindOn) {
-            // [18:45 wrong-type root fix 2026-07-04] A SAVE-LOAD spawn is a spawn from the GAMEMODE's
-            // own frame: loadObjects/loadPrimitives run in mainGamemode's BP functions, so the thunk's
-            // srcObj (FFrame::Object) is the gamemode instance (276 BeginDeferred call sites in the
-            // gamemode BP). WITHOUT this gate, EVERY client chipPile spawn while connected consumed the
-            // keyless ordinal cursor -- including our own wire-driven convert-LAND nativizations and
-            // mirror spawns -- shifting every subsequent bind by one (client pile #k bound to host
-            // eid #k+n): the mass identity misalignment behind the 18:45 wrong-type morphs. The k-th
-            // GAMEMODE-sourced keyless spawn == primitivesData[k] by construction; nothing else is.
-            // Class resolve is latched; a MISS is retried at most every 2s (perf-audit W-d: FindClass
-            // is a full GUObjectArray walk -- an unthrottled null-retry would run it PER SPAWN while
-            // mainGamemode_C is not yet loaded). Until it resolves, spawns are treated as non-load
-            // (no cursor consumption) -- correct: a save-load spawn cannot precede its own gamemode.
+            // A save-load spawn is a spawn from the gamemode's own frame: the load functions run in
+            // mainGamemode's BP functions, so the source object is the gamemode. Without this gate
+            // every client chipPile spawn while connected (our own wire-driven landings and mirror
+            // spawns included) consumed the keyless cursor and shifted every later bind by one. The
+            // class resolve is latched, and a miss is retried at most every 2 s (FindClass is a
+            // full walk; an unthrottled retry would run it per spawn); until it resolves, spawns
+            // count as non-load, which is correct, since a save-load spawn cannot precede its own
+            // gamemode.
             static void* sGmCls = nullptr;
             if (!sGmCls) {
                 static std::chrono::steady_clock::time_point sNextGmClsTry{};
@@ -133,23 +113,18 @@ void OnBeginDeferredSpawnObserve(void* /*context*/, void* srcObj, void* newActor
     }
     if (!s || !s->connected() || s->role() != coop::net::Role::Host) return;  // host authors converts
     if (!srcObj || !newActor) return;
-    // GRAB direction (v106, 2026-07-07): EVERY clump is born from a chipPile's own
-    // BeginDeferred (bytecode: actorChipPile toClump @141 + ubergraph @3493; srcObj =
-    // the source pile, ALIVE at this POST -- it self-destructs after). Record the
-    // birth certificate here: this is the DETERMINISTIC grab seam that fires for
-    // E-press AND use-HOLD grabs (canBeUsedHold repeats with no new InpActEvt
-    // dispatch -- the 10:19:03 mis-bind root: the InpActEvt PRE seam missed the
-    // grab and the held-edge heuristic bound the clump to the WRONG open carry).
-    // The held-edge (local_streams) consumes the certificate; the InpActEvt PRE
-    // seam keeps only diagnostics + the client-side routing.
+    // The grab direction: every clump is born from a chipPile's own BeginDeferred, with the source
+    // pile alive at this point (it self-destructs after). The birth certificate is recorded here,
+    // the seam that fires for an E-press and a use-hold grab alike (a hold repeats with no new
+    // input dispatch, which the input seam misses); the held edge consumes the certificate, and the
+    // input seam keeps only diagnostics and the client routing.
     if (ue_wrap::prop::IsChipPile(srcObj) && ue_wrap::prop::IsGarbageClump(newActor)) {
         coop::element::ElementId E = PT::GetPropElementIdForActor(srcObj);
         if (E == coop::element::kInvalidId)
             E = coop::remote_prop::ResolveMirrorEidByActor(srcObj);
         if (E == coop::element::kInvalidId) {
-            // docs/piles/09 SELF-SEED (moved here from the E-press PRE, ONE owner):
-            // an UNTRACKED pile grabbed in the post-blob purge gap mints its eid at
-            // the very seam its clump is born (register-only, no broadcast).
+            // The self-seed, one owner: an untracked pile grabbed in the post-load purge gap mints
+            // its eid at the seam its clump is born (register only, no broadcast).
             PT::MarkPropElement(srcObj, L"", R::ClassNameOf(srcObj), PT::EnrollSource::kExpressSeam);
             E = PT::GetPropElementIdForActor(srcObj);
             if (E != coop::element::kInvalidId)
@@ -158,8 +133,8 @@ void OnBeginDeferredSpawnObserve(void* /*context*/, void* srcObj, void* newActor
                         srcObj, static_cast<unsigned>(E));
         }
         if (E != coop::element::kInvalidId) {
-            // docs/piles/09: freeze the pile's PRE-GRAB position as the save-time key
-            // (the pile has not moved yet -- it dies in place after this spawn).
+            // The pile's pre-grab position frozen as the save-time key (it has not moved; it dies
+            // in place after this spawn).
             coop::save_transfer::RecordGrabTimePileXform(
                 E, ue_wrap::engine::GetActorLocation(srcObj));
             coop::trash_channel::NoteClumpBorn(newActor, E, ue_wrap::prop::GetChipType(srcObj));
@@ -170,16 +145,11 @@ void OnBeginDeferredSpawnObserve(void* /*context*/, void* srcObj, void* newActor
     if (!ue_wrap::prop::IsChipPile(newActor)) return;     // ... spawning a chipPile
     const coop::element::ElementId E = PT::GetPropElementIdForActor(srcObj);
     if (E == coop::element::kInvalidId) return;           // an UNTRACKED clump (grab-adopt miss; the eid=0 gap) -> skip
-    // The thunk fires at the BeginDeferred POST, which is PRE-FinishSpawningActor -> newActor (the pile) is NOT
-    // positioned yet: GetActorLocation(newActor) here is (0,0,0) and GetActorRotation is identity. take-31
-    // proved this (host log: every "BROADCAST ToPile ... at (0.0,0.0,0.0)") -- reading newActor's transform
-    // snapped every derived pile to the world origin = "disappeared". (take-30's rotation "worked" only because
-    // an identity rotation LOOKS correct for a flat pile, masking the unset transform; loc came from the clump
-    // then so it stayed visible.) So pass the CLUMP's transform (srcObj IS a fully-spawned, positioned actor)
-    // as the FALLBACK, and re-read the PILE's REAL transform at the land-settle COMMIT (TickCarry, post-
-    // FinishSpawning) in trash_channel -- that is where loc/rot/scale become valid. The clump's loc is
-    // ~clump-radius high + its rotation is the tumble, so srcObj is ONLY the fallback (a committing settle
-    // always has a live settled pile to re-read). [the original "not positioned yet" comment was RIGHT.]
+    // This fires after BeginDeferred and before FinishSpawningActor, so the new pile is not
+    // positioned yet (its location reads as the origin and its rotation as identity); the clump's
+    // transform is passed as the fallback (a fully spawned actor), and the pile's real transform is
+    // re-read at the land-settle commit in trash_channel, after FinishSpawning. The clump's
+    // location is a radius high and its rotation the tumble, so it is only the fallback.
     const ue_wrap::FVector  loc      = ue_wrap::engine::GetActorLocation(srcObj);
     const ue_wrap::FRotator rot      = ue_wrap::engine::GetActorRotation(srcObj);
     const uint8_t           chipType = ue_wrap::prop::GetChipType(srcObj);
@@ -188,60 +158,33 @@ void OnBeginDeferredSpawnObserve(void* /*context*/, void* srcObj, void* newActor
     coop::trash_channel::OnHostConvert(*s, E, coop::net::propconvert_kind::kToPile, newActor, loc, rot, chipType);
 }
 
-// (The read-only dropGrabObject diagnostic thunk is RETIRED, 2026-07-10. Its
-// question closed 2026-06-22: the clump release fires NEITHER simulateDrop NOR
-// dropGrabObject -- the release edge is STREAM-THROUGH, not a verb (see
-// local_streams.cpp "THROW ARC"), so the planned latch-close FLIP here can
-// never happen. The thunk only logged noise on unrelated PHC drops and held a
-// fixed-capacity Func-hook slot.)
-
 }  // namespace
 
 bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
     if (!heldActor || !s || !s->connected()) return false;
     if (!R::IsLive(heldActor)) return false;
-    // K-5 kerfur class-gate: a kerfur prop is a host-owned entity (the host owns its KerfurId + its
-    // host-range eid). A client must NEVER express/mint a peer-range eid for it -- that was the
-    // grab-dupe root (redesign Failures #1/#3/#6: the minted peer-range eid is dropped by the host's
-    // host-range conversion gate, then re-mirrored as a fresh client entity -> the dupe-and-drop loop).
-    // Never mint here; the held-pose stream (local_streams) instead carries the kerfur prop MIRROR by
-    // its host-range eid (kerfur_entity::GetKerfurMirrorEidForActor), which the host's remote_prop
-    // receiver resolves to the authoritative kerfur prop + kinematic-drives -- no PropSpawn needed. On
-    // the HOST this is redundant (its kerfur prop is tracker-known -> the express skip below already
-    // returns false), but gating up-front is role-agnostic + explicit.
+    // The kerfur gate: a kerfur prop is a host-owned entity, and a client must never mint a
+    // peer-range eid for it (the host's conversion gate dropped such a mint and re-mirrored it as a
+    // fresh entity: the dupe-and-drop loop). The held-pose stream carries the kerfur prop mirror by
+    // its host-range eid instead, which the host resolves and drives kinematically. On the host
+    // this is redundant (its kerfur prop is tracker-known), but the gate is role-agnostic.
     if (coop::kerfur_entity::IsKerfurActor(heldActor)) return false;
-    // docs/piles/08 class-gate: a garbageClump is a host-authoritative trash entity -- its identity is the
-    // source pile's eid E, bound by trash_channel::OnHostConvert at the convert-spawn POST; the held-pose
-    // stream then carries E (local_streams). The clump must NEVER be expressed here as a FRESH-eid keyless
-    // PropSpawn (that second cross-peer entity = the dupe). A clump that reaches here (a stray pickup, or a
-    // pile that had no eid to convert) is simply not authored -- carry-only, no dupe.
+    // The clump gate: a garbageClump is a host-authoritative trash entity whose identity is the
+    // source pile's eid, bound at the convert seam and carried by the held-pose stream. Expressed
+    // here as a fresh-eid keyless spawn it would be a second cross-peer entity, so a stray clump is
+    // carry-only.
     if (ue_wrap::prop::IsGarbageClump(heldActor)) return false;
-    // Any KEYED interactable: Aprop_C trash items AND the non-Aprop_C
-    // garbageClump/chipPile (the actual trash the player carries). CRASH-SAFETY
-    // is enforced on the RECEIVER, not by excluding them here: GetStaticMesh
-    // returns null for non-Aprop_C, so the peer never runs physics on the clump
-    // mirror -- it spawns physics-free and is driven KINEMATICALLY (the inverse
-    // of the reverted-2a UAF). [[project-bug-trash-chippile-uaf-crash]]
+    // Any keyed interactable, the Aprop_C items and the non-Aprop_C clump and pile alike. Crash
+    // safety is on the receiver: GetStaticMesh is null for a non-Aprop_C, so the peer never runs
+    // physics on a clump mirror, which is driven kinematically.
     if (!ue_wrap::prop::IsKeyedInteractable(heldActor)) return false;
-    // PART 2 (2026-06-18) CLIENT host-authority gate for SHARED TRASH (chipPile / garbageClump /
-    // trashBitsPile -- the non-Aprop_C "world litter"). These are HOST-OWNED shared entities. When a
-    // CLIENT grabs a host pile, its BP locally morphs it to a clump (EX_CallMath, un-hookable) and this
-    // path would SendPropSpawn that clump -> the host fresh-spawns a DUPLICATE, and on the clump's later
-    // land-convert (BroadcastConvertNear, reachable only if we WatchClump below) the host spawns yet
-    // another pile = "a new pile born from the host's original, from the host's perspective." The client
-    // must NEVER author a shared trash entity -- the exact host-authority rule the K-5 kerfur gate above
-    // enforces. Suppressing here ALSO disarms the clump-convert watch (WatchClump is only reached past
-    // this return), so neither the clump PropSpawn nor the PropConvert ever leaves the client -> the dupe
-    // is killed at the SOURCE. The client's grab already removed the host's original via OnPileGrabPre's
-    // PropDestroy (eid-resolved on the mirror), so the original IS removed -- no orphan. The client holds
-    // the clump locally; a client-THROWN ground pile staying client-local is a known phase-2 gap (the
-    // host-request spawn model) -- a benign divergence, NOT a dupe. Aprop_C items (IsDescendantOfProp)
-    // are unaffected (per-player carry stays). The HOST still authors its own held trash below.
-    // (Audit M1, 2026-06-18: this suppresses all 3 shared-trash bases but OnPileGrabPre's host-original
-    // PropDestroy covers only chipPile -- safe because the other two are never carried-as-a-host-mirror:
-    // a trashBitsPile dispenses an Aprop item + a separately-synced counter (not a held clump), and a
-    // garbageClump only ever exists as a chipPile's morph product, whose chipPile grab already fired
-    // OnPileGrabPre. So no host original is ever left orphaned.)
+    // The client host-authority gate for shared trash (the chipPile, the clump, the dispenser
+    // pile): host-owned entities. A client grabbing a host pile morphs it locally to a clump on an
+    // unhookable path, and expressing that clump would fresh-spawn a host duplicate, whose later
+    // landing would spawn yet another pile. So a client never authors shared trash: its grab
+    // already removed the host's original through the grab observer's destroy, and it holds the
+    // clump locally; a client-thrown ground pile staying client-local is a benign divergence, not a
+    // dupe. Aprop_C items are unaffected, and the host authors its own held trash below.
     if (s->role() == coop::net::Role::Client && !ue_wrap::prop::IsDescendantOfProp(heldActor)) {
         UE_LOGI("trash_collect: CLIENT holds shared trash cls='%ls' -- NOT authoring it (host owns world "
                 "piles/clumps; the grab's PropDestroy already removed the host original). No dupe.",
@@ -249,38 +192,22 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
         return false;
     }
 
-    // A divergence sweep is pending and this held actor is one of its candidates
-    // (an in-universe, unclaimed save-loaded local the host did NOT express -- a
-    // ghost awaiting adjudication, e.g. the save-transfer kerfur the host turned
-    // ON before this client joined). Do NOT express it: a SendPropSpawn below
-    // would fresh-spawn a host duplicate, and the RecordClaimIfTracking after it
-    // would claim the ghost past the pending sweep (permanently rescuing it). Let
-    // the deferred sweep destroy it. A genuinely client-originated drop is claimed
-    // via the takeObj path, so it is NOT a candidate and streams normally here.
+    // A divergence sweep is pending and this held actor is one of its candidates (an unclaimed
+    // save-loaded local the host did not express, a ghost awaiting adjudication): expressing it
+    // would fresh-spawn a host duplicate and claim the ghost past the sweep. A client-originated
+    // drop is claimed on its own path and is not a candidate.
     if (coop::join_membership_sweep::IsPendingSweepCandidate(heldActor)) {
         UE_LOGI("trash_collect: held item %p is a pending divergence-sweep candidate "
                 "(unclaimed ghost) -- NOT expressing (the deferred sweep will destroy it)", heldActor);
         return false;
     }
 
-    // Pre-quiescence JOIN WINDOW (2026-06-16 hands-on, the "kerfur off+grab dupe"). The guard above
-    // only fires once the divergence sweep is ARMED (g_sweepPending). But a save-loaded in-universe
-    // keyed prop the client grabs in the ~25 s window BEFORE the snapshot bracket opens slips past it
-    // (g_sweepPending still false) -- and expressing it here SendPropSpawns a host duplicate the
-    // client-side sweep can NEVER reclaim (it ran: host fresh-spawned a kerfur prop, eid 43938,
-    // ownerSlot=1, permanent). Same divergence-universe membership, just not yet sweep-armed: until
-    // load-tail quiescence the world is NOT reconciled, so a grabbed un-adjudicated local is not ours
-    // to announce. Keep holding it locally (no pop); the host expresses its OWN copy in the bracket
-    // (our held copy is then key/fuzzy-matched + claimed -> the held-pose stream mirrors it, no dupe),
-    // or the sweep destroys our copy if the host converted it away. HasLoadTailQuiesced flips true the
-    // instant the sweep fires, so this gates ONLY the join window -- never steady-state gameplay.
-    // CLIENT-ONLY (v105 root-fix companion, 2026-07-06): the divergence sweep is a CLIENT join
-    // mechanism -- on the HOST g_sweepFired never flips, so this gate held FOREVER and silenced
-    // every untracked keyed prop the host ever held (the never-mirrored-hotbar-hand log,
-    // 12:40:05 'grabbed PRE-QUIESCENCE' on a 40-minute-old host session). The host's world IS
-    // the reconciled authority by definition -- the un-adjudicated-local concept only exists on
-    // a joining client. Hand items themselves no longer reach here (coop/player/hand_item), but
-    // the express-if-unknown self-heal below must work for a host-grabbed world straggler.
+    // The pre-quiescence join window, client only. The guard above fires only once the sweep is
+    // armed, but a save-loaded in-universe prop grabbed before the snapshot bracket opens slips
+    // past it, and expressing it spawned a permanent host duplicate. Until the load tail quiesces
+    // the world is not reconciled, so an un-adjudicated local is not ours to announce: the host
+    // expresses its own copy in the bracket (ours is then matched and claimed), or the sweep
+    // destroys ours. The host's world is the reconciled authority, so the gate never holds there.
     if (s->role() == coop::net::Role::Client &&
         !coop::join_membership_sweep::HasLoadTailQuiesced() &&
         coop::join_membership_sweep::IsInDivergenceUniverseUnclaimed(heldActor)) {
@@ -290,30 +217,17 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
         return false;
     }
 
-    // Express-if-unknown (ghost-twin fix, 2026-06-10 hands-on forensics). The
-    // old predicate skipped ANY keyed held actor as "a normal world prop the
-    // peer already has" -- but "has a key" is NOT "peer has it": a prop that
-    // materialized in the world-load's late tail (keyless at sweep/seed time,
-    // key self-minted by its Init AFTER both) is keyed yet completely unknown
-    // to the wire -- never expressed, never bound, eid=0. The user carrying
-    // one was invisible to the host (127 'no local match' PropPose warns) and
-    // the wall stack diverged one-way. The correct skip test is TRACKER-KNOWN:
-    // a prop with a live Element (seed-walked / Init-announced / previously
-    // expressed) is genuinely shared -- the pose stream alone mirrors it. An
-    // untracked one gets expressed RIGHT HERE, key and all, the moment a
-    // player first touches it -- the self-heal for any straggler class.
-    // (The peer's OnSpawn may fuzzy-bind it to a nearby same-class prop; for a
-    // genuine EXTRA actor that is bounded weirdness vs the strictly-worse
-    // one-way invisibility. The structural fix for the late-tail stragglers
-    // themselves is tracked separately -- see the sweep's keyless histogram.)
+    // Express if unknown. "Has a key" is not "the peer has it": a prop that materialised in the
+    // load's late tail is keyed yet unknown to the wire (never expressed, never bound), and the
+    // player carrying one was invisible to the host. The skip test is tracker-known: a prop with a
+    // live Element is genuinely shared and the pose stream alone mirrors it; an untracked one is
+    // expressed here, key and all, the moment a player first touches it.
     std::wstring keyStr = ue_wrap::prop::GetInteractableKeyString(heldActor);
     if (!keyStr.empty() && keyStr != L"None" &&
         PT::GetPropElementIdForActor(heldActor) != coop::element::kInvalidId) {
-        // [ROCK-DROP DIAG 2026-07-08, RULE-2-exempt] "pose stream suffices" is a promise
-        // that ONLY holds while the prop is ACTIVELY held+streamed. A caller expressing a
-        // no-longer-streamed prop (a just-released/E-grab-then-idle prop) gets a false
-        // promise here -- nothing re-arms the stream. Log key+eid so a repro can tell a
-        // tracker-known DECLINE (this) from a never-received (client-spawn skip elsewhere).
+        // Logged with key and eid: "the pose stream suffices" holds only while the prop is actively
+        // held and streamed, so a repro can tell a tracker-known decline from a never-received
+        // spawn.
         UE_LOGI("[ROCK-DROP] EnsureHeldItemBroadcast DECLINE (tracker-known): cls='%ls' key='%ls' eid=%u "
                 "-- 'pose stream suffices' assumes an active stream; false if the prop is no longer held",
                 R::ClassNameOf(heldActor).c_str(), keyStr.c_str(),
@@ -322,13 +236,10 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
     }
 
     const std::wstring cls = R::ClassNameOf(heldActor);
-    // Aprop_C trash items get a force-minted Key (their UCS holds it). The non-Aprop_C
-    // trash CLUMP (prop_garbageClump_C) is NON-KEYABLE -- setKey doesn't stick (the
-    // source re-reads None, autotest 33e7f25) -- so it rides the SAME prop pipeline but
-    // is identified by our EID instead: broadcast with key=None + the eid, and the
-    // receiver resolves its mirror by eid (PropPoseSnapshot.elementId, v26). The clump
-    // renders on its own (bare spawn = the 'dirtball' mesh), so no mesh transfer needed.
-    // [[project-bug-trash-chippile-uaf-crash]]
+    // Aprop_C items get a force-minted Key (their construction script holds it). The non-Aprop_C
+    // clump is not keyable (setKey does not stick), so it rides the same pipeline identified by
+    // eid: broadcast with no key, and the receiver resolves its mirror by eid. The clump renders on
+    // its own, so no mesh transfer is needed.
     const bool isAprop = ue_wrap::prop::IsDescendantOfProp(heldActor);
     keyStr = coop::prop_synth_key::EnsureKeyForBroadcast(heldActor, keyStr, /*mintForAprop=*/isAprop);
     if (keyStr.empty() || keyStr == L"None") {
@@ -339,8 +250,8 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
         }
         keyStr.clear();  // clump: wire key stays None; the eid is the cross-peer identity
     }
-    // Create the Prop Element shadow + dedupe latch so the item's eventual
-    // K2_DestroyActor unwinds it through the normal destroy path.
+    // The Prop Element shadow and the dedupe latch, so the item's eventual destroy unwinds through
+    // the normal path.
     PT::MarkProcessedInit(heldActor);
     PT::MarkPropElement(heldActor, keyStr, cls, PT::EnrollSource::kExpressSeam);
 
@@ -358,17 +269,14 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
     p.rotPitch = ue_wrap::NormalizeAxis(rot.Pitch);
     p.rotYaw   = ue_wrap::NormalizeAxis(rot.Yaw);
     p.rotRoll  = ue_wrap::NormalizeAxis(rot.Roll);
-    // v54: real scale (was hardcoded 1,1,1) + identity row below.
+    // The real scale, and the identity row below.
     const ue_wrap::FVector scl = ue_wrap::engine::GetActorScale3D(heldActor);
     p.scaleX = scl.X; p.scaleY = scl.Y; p.scaleZ = scl.Z;
-    // Carry the trash VARIANT so the mirror shows the same chip/clump type the owner
-    // grabbed (else a bare spawn defaults to variant 0 = the wrong-type bug). 0 for any
-    // non-trash actor (GetChipType is a reflection no-op without a chipType property).
+    // The trash variant, so the mirror shows the same chip or clump type; 0 for a non-trash actor.
     p.chipType = ue_wrap::prop::GetChipType(heldActor);
     p.physFlags = coop::net::propspawn_flags::kSimulatePhysics;
-    // IsHeavy/IsFrozen read Aprop_C struct offsets -- only meaningful on Aprop_C.
-    // For a non-Aprop_C clump the receiver ignores physFlags (kinematic mirror),
-    // so don't read stray bytes off it.
+    // The physics flags read Aprop_C offsets, so only on an Aprop_C; the receiver ignores them for
+    // a kinematic clump mirror.
     p.propName.len = 0;
     if (ue_wrap::prop::IsDescendantOfProp(heldActor)) {
         if (ue_wrap::prop::IsHeavy(heldActor))  p.physFlags |= coop::net::propspawn_flags::kIsHeavy;
@@ -378,8 +286,7 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
         if (ue_wrap::prop::ReadRemoveWOrespawn(heldActor)) {
             p.physFlags |= coop::net::propspawn_flags::kRemoveWOrespawn;
         }
-        // v54 identity: the list_props row -- a held GENERIC prop_C (e.g. a
-        // cubicle gib panel) must mirror as itself, not the CDO 'cube'.
+        // The identity row: a held generic prop mirrors as itself, not as the class default.
         const std::wstring nm = ue_wrap::prop::GetPropNameString(heldActor);
         for (size_t i = 0; i < nm.size() && i < 31; ++i) {
             p.propName.data[p.propName.len++] = static_cast<char>(nm[i]);
@@ -395,43 +302,34 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
             "-- held-pose stream now mirrors it into the collector's hands",
             cls.c_str(), keyStr.c_str(), p.locX, p.locY, p.locZ);
     s->SendPropSpawn(p);
-    // Fork B 2c: self-claim -- this peer just wire-expressed the held item;
-    // an open bracket's sweep must not destroy it as "unclaimed".
+    // The self-claim: this peer just expressed the held item, and an open bracket's sweep must not
+    // destroy it as unclaimed.
     coop::join_membership_sweep::RecordClaimIfTracking(heldActor);
-    // (v81 MORPH V2: the former clump WatchClump enroll is GONE -- clumps return early above; the
-    // bind-model pile_morph owns the clump's identity + its land conversion.)
     return true;
 }
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);  // re-cache every call (reconnect)
 
-    // The deterministic re-pile thunk (READ-ONLY observe pass this cut): patch
-    // BeginDeferredActorSpawnFromClass's UFunction::Func so we catch the clump's chipPile spawn
-    // (EX_CallMath -> invisible to ProcessEvent). Independent latch -> retries until GameplayStatics
-    // resolves, regardless of the grab-observer state. host_spawn_watcher's POST observer on the SAME
-    // UFunction is unaffected (separate mechanism; our forwarder is transparent + the pinecone path's
-    // result is not a chipPile/clump, so our cb ignores it).
+    // The Func patch on BeginDeferredActorSpawnFromClass, so the clump's chipPile spawn (an
+    // EX_CallMath, invisible to ProcessEvent) is caught. Its own latch, retried until
+    // GameplayStatics resolves; host_spawn_watcher's observer on the same UFunction is a separate
+    // mechanism, and the forwarder is transparent.
     if (!g_repileThunkInstalled) {
         void* gsCls = R::FindClass(P::name::GameplayStaticsClass);
         void* bdFn  = gsCls ? R::FindFunction(gsCls, P::name::BeginDeferredSpawnFn) : nullptr;
         if (bdFn) {
             ue_wrap::ufunction_hook::InstallPostHook(bdFn, &OnBeginDeferredSpawnObserve);
-            g_repileThunkInstalled = true;  // latch on attempt (InstallPostHook logs success/refusal)
+            g_repileThunkInstalled = true;  // latched on the attempt; InstallPostHook logs success or refusal
             UE_LOGI("trash_collect: re-pile Func-patch armed on BeginDeferred -- the DETERMINISTIC converter "
                     "(clump re-pile -> OnHostConvert ToPile the same tick as the spawn; death-watch retired)");
         }
-        // bdFn null -> GameplayStatics not loaded yet; retry next world-gated Install call.
+        // A null function means GameplayStatics is not loaded yet; retried on the next Install.
     }
 
-    // (The dropGrabObject diagnostic thunk install is RETIRED, 2026-07-10 -- see the
-    // retirement note above OnBeginDeferredSpawnObserve's sibling comment: the clump
-    // release uses no catchable verb; the stream-through design replaced it.)
-
-    // The InpActEvt_use interceptor family (client-grab bridge on _41, the _38/_42 use_deny
-    // suppressors, and the _58/_59 LMB hard-throw bridge) lives in trash_use_intercept
-    // (modularization B1a). Delegate its install -- it caches its own session + latches
-    // independently and retries the same way until mainPlayer_C is loaded.
+    // The InpActEvt_use interceptor family (the client-grab bridge, the use-deny suppressors, the
+    // hard-throw bridge) lives in trash_use_intercept, which caches its own session and retries
+    // until mainPlayer_C is loaded.
     coop::trash_use_intercept::Install(session);
 }
 
