@@ -59,21 +59,18 @@ all in [ARCHITECTURE.md](ARCHITECTURE.md). Beyond it: [COOP_RNG_AUTHORITY.md](CO
 
 [join.md](join.md) (joining a game: admission, the save transfer, the connect replay, the join
 window, and the late-join rule every lane answers) · [players.md](players.md) (the remote player:
-the puppet, the pose stream, names, skins, damage, death, sleep, inventory, moderation)
+the puppet, the pose stream, names, skins, damage, death, sleep, inventory, moderation) ·
+[props.md](props.md) (props: identity, the birth and death seams, holding and throwing, containers,
+the props that change on their own, the deployables)
 
 **Maps, where a thing lives and what state it is in**
 
 [CODE_MAP.md](CODE_MAP.md) (where every concept lives: one folder each, and the files in it) ·
 [STATUS.md](STATUS.md) (what is synced, system by system, who owns it, and how well each claim is established)
 
-**Known-hard problems, each with its own file**
-
-[COOP_WORLD_PROP_DIVERGENCE.md](COOP_WORLD_PROP_DIVERGENCE.md) (props that mutate themselves over
-time)
-
 **Per-domain trees**, one folder per game system, each with its own README
 
-[events/](events/) · [items/](items/) · [signals/](signals/) (the signal-processing pipeline) ·
+[events/](events/) · [signals/](signals/) (the signal-processing pipeline) ·
 [upgrades/](upgrades/) · [notifications/](notifications/) · [kerfur/](kerfur/) ·
 [piles/](piles/) (trash piles) · [vehicles/](vehicles/) (the ATV)
 

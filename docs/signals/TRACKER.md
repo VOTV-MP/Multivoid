@@ -273,7 +273,7 @@ DeskInput (v112).
 > (R1: client-loaded sack contents can't grade until the sack-contents lane). Legacy fact
 > base below (still authoritative for the mechanics).
 RE: `votv-tape-caddy-daily-task-RE-2026-07-16.md`. The wallunit is the concreteBucket class
-(`COOP_WORLD_PROP_DIVERGENCE`): 1 Hz `+= dt/speed` accrual per peer on both reels; `speed`
+(`props.md`): 1 Hz `+= dt/speed` accrual per peer on both reels; `speed`
 written cross-object by desk physMods (byte 21); eject/insert/toggle local-only (the reel PROPS
 do cross the generic spawn/destroy seams). The daily grade rides `saveSlot.taskNew.reel_big/
 small` via drone `sell` (reads struct_save snapshots; reward only if BOTH > 0) + the day-rollover

@@ -3,14 +3,14 @@
 *[↑ docs index](../README.md)*
 
 One doc per VOTV **vehicle** — a driveable, occupant-carrying, multi-body physics actor.
-Same discipline as `docs/items/` and `docs/events/`: each vehicle's native behaviour
+Same discipline as `docs/events/`: each vehicle's native behaviour
 (bytecode ground truth, evidence-tagged), its sync-axis table, its coop design, and its
 honest as-built status live in that vehicle's own file.
 
 A vehicle is NOT an item and NOT a device: it has an **occupant** (which unpossesses
 `mainPlayer_C`), a **multi-rigid-body rig** (the body plus constraint-driven wheels — so a
 single actor transform is NOT the whole pose), and a **parts/upgrade economy**. Those three
-properties are why this folder exists rather than a row in `docs/items/`.
+properties are why this folder exists rather than a row on the props page.
 
 | Vehicle | Class | Doc | Status |
 |---|---|---|---|

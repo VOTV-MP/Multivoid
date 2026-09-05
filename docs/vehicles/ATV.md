@@ -163,7 +163,7 @@ energyWaste = e + (lights ? lightsCost : 0)
 `Upd Lights()`: if `battery <= 0` → `lights := false`; else set `light_R/L` + both point lights'
 visibility from `lights`, and swap `module_bigLights`' material.
 
-> The battery is the textbook `docs/COOP_WORLD_PROP_DIVERGENCE.md` shape — a local accumulator whose
+> The battery is the textbook `docs/props.md` (the divergence class) shape — a local accumulator whose
 > **rate is a function of the upgrade set**. On a mirror our `PrepareMirror` turns the actor tick off,
 > so it does not diverge; it **stalls** (that doc's second symptom).
 
@@ -684,7 +684,7 @@ reads **only** bit3 (`authored`). Bits 0–2 are produced and never consumed; bi
 - `docs/upgrades/README.md` §5 — three of its `[?]` NEXT items are closed by §3 above.
 - `docs/STATUS.md` §2 — the ATV facet rows.
 - `docs/COOP_DISPATCH_VISIBILITY.md` — §7's rows belong there when the lane ships.
-- `docs/COOP_WORLD_PROP_DIVERGENCE.md` — fuel / battery / dirt are its exact shape.
+- `docs/props.md` (the divergence class) — fuel / battery / dirt are its exact shape.
 - MTA precedent: `Server/…/packets/CVehiclePuresyncPacket.cpp` (pose/rot/vel/turnspeed :122-143,
   damage-gated health :145-171, seat :107-118), `CUnoccupiedVehicleSync.cpp` (single-syncer election
   :59, 99, 144), `CVehicleDamageSyncPacket.*`, `CClientVehicle.{h,cpp}`.
@@ -1139,7 +1139,7 @@ And the rig is not five bodies. **A player can tie arbitrary physics props to th
 hook** (`prop_hook_C` fires a `hook_C` carrying its own A↔B `PhysicsConstraint`; its flight trace
 uses the `statDynPhysVeh` object set, so a vehicle is a target by design, and `attach_a` rejects
 only Characters, child actors and other hooks). **The hook lane has NO implementation in this tree
-— zero symbols, every row of `docs/items/hook.md` §2 is a GAP** — so one peer's ATV can be coupled
+— zero symbols, every row of the hook's sync-axis table is a GAP** — so one peer's ATV can be coupled
 to a crate the other peer does not know exists, and:
 
 - a mirrored ATV can be held off the authority's pose by a constraint the author cannot see, which
@@ -1697,7 +1697,7 @@ array never goes true, so the up-force never runs and the body settles under its
 exactly the 25-40 cm sag. Correlation upgraded to mechanism; the shipped fix is right for the reason
 now written down.
 
-**(b) The tire lane is not a new problem — it is `docs/COOP_WORLD_PROP_DIVERGENCE.md` applied to a
+**(b) The tire lane is not a new problem — it is `docs/props.md` (the divergence class) applied to a
 vehicle.** Its shape is that doc's shape exactly: the INPUT is a physics impulse (per-peer, and the
 two peers' impulses are not equal), the ACCUMULATOR is a plain local float array
 (`tiresDurability[]`) mutated over time, and the OUTPUT is a THRESHOLD crossing (`<= 0`) with an
@@ -1768,7 +1768,7 @@ and `piramidSpawner_C`. **One measurement gates this and is NOT done: can that t
 call, or only observe it?** Until that is answered the replacement is a sketch, not a design.
 
 **The authority fork is resolved, and not by the doc I was following.** I reached for
-`COOP_WORLD_PROP_DIVERGENCE`'s "the host owns the progression" after classifying tires as a
+`props.md`'s "the host owns the progression" after classifying tires as a
 self-simulating prop — i.e. I searched prior art by the mechanism I had assumed rather than by the
 problem, the exact failure `[[lesson-search-prior-art-by-problem-not-by-assumed-mechanism]]` is named
 for. Grepping MTA for *vehicle tyre damage* instead: `CDeathmatchVehicle::SyncDamageModel:43-120` is
@@ -1885,7 +1885,7 @@ never a tire find. It is the shape of the whole class. The three that differ are
 attach, the container (which already has its own lane), and `explode` (VFX only).
 
 **So the rule-of-three question I raised in §17.8 was asked at the wrong level.** I wrote that tires
-would be the second instance of `COOP_WORLD_PROP_DIVERGENCE`'s class with the first
+would be the second instance of `props.md`'s class with the first
 (`concreteBucket`) never built, and therefore that a generic channel was still forbidden. Within
 **one vehicle** there are seven reducer-backed instances plus three bare pokes. Building a
 tire-only lane is building one thirteenth of a mechanism our own documentation already describes as
@@ -1949,7 +1949,7 @@ mirror `@29949: IFNOT(isDriven) POP` gates `applyWheelTorque`, and the battery t
 non-driving mirror at all**. Nothing in §17.10 classified them. The owed work is a three-way
 classification of each facet — *double-simulates* / *merely goes stale* / *already gated off* —
 before any lane is designed, because only the first class needs one. Further,
-`COOP_WORLD_PROP_DIVERGENCE`'s ANCHOR section forks `fuel`/`battery`/`dirt` off the poke+reducer
+`ARCHITECTURE.md`'s anchor rule forks `fuel`/`battery`/`dirt` off the poke+reducer
 shape entirely: a time-rate accumulator is **anchored** (one stamp, one formula, late-join solved for
 free), not streamed — and that doc names measuring **the input set of each accumulator's RATE** as
 its own cheapest undone measurement. So §17.10's "ten of thirteen share one shape" conflates *how a

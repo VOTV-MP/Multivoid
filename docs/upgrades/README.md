@@ -4,7 +4,7 @@
 
 **Created 2026-07-21.** This folder is the canonical home for the VOTV **upgrade system**: how upgrades
 are stored, bought, applied, and displayed natively — and (the open work) how they sync in coop. It
-mirrors the `docs/signals/`, `docs/events/`, `docs/items/` pattern: this `README.md` is the hub + the
+mirrors the `docs/signals/`, `docs/events/` pattern: this `README.md` is the hub + the
 sync-shape rules, `TRACKER.md` is the per-upgrade status table, and per-upgrade / per-family RE docs land
 here as they are excavated.
 

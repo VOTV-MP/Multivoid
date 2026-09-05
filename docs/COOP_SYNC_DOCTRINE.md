@@ -6,7 +6,7 @@
 >
 > This doc ORDERS the existing canon; it does not replace it. Deep truth lives in:
 > `ARCHITECTURE.md` (the authority model and the intent rule), `COOP_DISPATCH_VISIBILITY.md` (will my hook
-> fire), `COOP_ENTITY_EXPRESSION_MAP.md` (identity/expression/destroy), `COOP_WORLD_PROP_DIVERGENCE.md`
+> fire), `COOP_ENTITY_EXPRESSION_MAP.md` (identity/expression/destroy), `props.md`
 > (the brain-on trap), `join.md` (the join and its late-join rule), `CODE_MAP.md` (where lanes live),
 > `STATUS.md` (per-facet status), CLAUDE.md (the rules this doc applies).
 
@@ -88,7 +88,7 @@ a probe before building on it (PROBE-DONT-GUESS).
 
 ## Step 4 — Park the receiver's brain (the divergence trap)
 
-`COOP_WORLD_PROP_DIVERGENCE.md`: a value mirrored into an actor whose own Blueprint brain still
+`props.md` (the props that change on their own): a value mirrored into an actor whose own Blueprint brain still
 ticks will diverge or fight — both peers self-simulate. Every mirror therefore declares its
 parking, and parking must be RESTORABLE (the quiesce rule: a latch that cannot restore what it took
 is worse than one that refuses):

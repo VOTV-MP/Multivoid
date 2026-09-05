@@ -93,7 +93,7 @@ Two rules bind the receivers. **Park the brain**: a value mirrored into an actor
 Blueprint logic still ticks diverges or fights, so every mirror restorably parks what would
 overwrite it, by a field latch, by clearing the timer or tick that drives self-simulation, or by
 driving a physics body kinematic while it is remote-owned, and never by replacing or gutting the
-engine's actor ([COOP_WORLD_PROP_DIVERGENCE.md](COOP_WORLD_PROP_DIVERGENCE.md)). **Replicate
+engine's actor ([props.md](props.md)). **Replicate
 authoritative state, re-derive the rest**: the pose stream is played onto a real `mainPlayer_C`
 pawn, so animation, IK, footsteps and the held item come from the engine's own systems.
 

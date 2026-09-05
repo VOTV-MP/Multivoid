@@ -214,7 +214,7 @@ Real shared actors, low gameplay stakes.
 ### T2-8 · Container loot roll (propInventory.addLoot) — STATUS: LANE-DESIGNED (2026-07-11, not built)
 Every `prop_container_C` rolls its contents ONCE at first registration (`init` when `Index<0`):
 DataTable row → `Array_Shuffle` + per-entry `RandomBoolWithWeight` — unseeded, on WHICHEVER peer runs
-that BeginPlay [bytecode, docs/items/container.md §1.3]. Save-loaded containers never re-roll
+that BeginPlay [bytecode, the container verb census, props.md]. Save-loaded containers never re-roll
 (join-safe); mid-session spawns (orderbox delivery, Q-menu, mirrors) roll PER-PEER = divergent loot.
 **Closure = the container contents-list state mirror (container.md §3, DESIGN): the host's canonical
 list broadcast overwrites the client's roll — no addLoot hook needed (mirror-step-3 by state).**
@@ -371,7 +371,7 @@ propSpawner_editor have NO drivers in own bytecode = externally-triggered CONDIT
 wakeup expresses through BeginDeferred (visible to (a)), createDream entry is state-only;
 chipType is ALREADY wire-stamped host-auth at spawn/convert — T1-4 residue = per-interaction rolls
 (turnIntoScrap ×135, clump crowbarOpen) → INTENT family + food spoilage → the
-COOP_WORLD_PROP_DIVERGENCE class.
+props.md divergence class.
 
 **FIRST PARTIAL CENSUS (150 s LAN smoke, 2026-07-10 12:48 — PARTIAL per the exposure rule;
 positives admissible, fork NOT formally callable yet at ~9/16 adjudicated < 2/3):**
@@ -529,7 +529,7 @@ table row, never an omission.
 **RULE-2 / placement:** new module `coop/world/spawn_authority.{h,cpp}`;
 ambient_spawner_suppress dissolves INTO it in the SAME commit; host_spawn_watcher mirror halves
 stay. Residue census rows are classified to their OWN lanes, never stuffed into T1-1:
-growingPlant → COOP_WORLD_PROP_DIVERGENCE, weatherFogController → weather_sync, grime_* →
+growingPlant → the props.md divergence class, weatherFogController → weather_sync, grime_* →
 grime_sync/T3, dirthole_item_C (~330/pass, first-sighted in the join window with flat per-pass
 count) = census-ARTIFACT candidate (level-streaming re-instantiation) → targeted classify probe
 before any lane assignment, NewBlueprint3/41 → RE.
