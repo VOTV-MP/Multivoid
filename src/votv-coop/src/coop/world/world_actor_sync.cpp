@@ -1,27 +1,21 @@
-// coop/world_actor_sync.cpp -- see coop/world_actor_sync.h.
-//
-// HOST-AUTHORITATIVE mirror of the ~14 NON-Character event actors (gray saucers, Rozital mothership,
-// ariral ships, sky UFO, jellyfish, firetank). A self-contained sibling of npc_sync (host PRE/POST +
-// suppress interceptor + lifecycle) FUSED with the client receiver (the npc_mirror half) in ONE TU --
-// it is much simpler than npc_sync (no kerfur, no CMC, no save-persist, no adoption), so it does not
-// need the SetClientRefs split; the host + client paths share the module-resolved UFunction pointers.
-//
-// Identity is the class NAME (R::NameEquals against kWorldActorAllowlist), NOT a resolved UClass*
-// pointer set. This is DELIBERATE and the key divergence from npc_sync: NPC BP classes load at level
-// entry (so npc_sync can gate its interceptor install on all-resolved), but WA EVENT classes load
-// LAZILY when their event approaches -- gating on resolution would never arm the interceptor, and a
-// per-tick FindClass re-resolve would race the spawn. NameEquals is alloc-free + GUObjectArray-walk-free
-// + race-free (a class's FName is readable the instant it exists, and it must exist to spawn). v1 matches
-// the leaf event-actor names exactly (no super-walk -- the design lists leaf classes; a subclass that
-// surfaces in smoke gets curated into kWorldActorAllowlist).
+// coop/world/world_actor_sync.cpp -- see coop/world/world_actor_sync.h. The host-authoritative
+// mirror of the non-character event actors (the saucers, the mothership, the ariral ships, the
+// sky UFO, the jellyfish, the firetank): the host PRE and POST observers, the client suppress
+// interceptor and the lifecycle in one TU, with the client receiver in world_actor_mirror.cpp;
+// the host and client paths share the module-resolved UFunction pointers. Identity is the
+// class name, matched with NameEquals against the allowlist, not a resolved UClass set: event
+// classes load lazily when their event approaches, so gating the interceptor on resolution
+// would never arm it and a per-tick re-resolve would race the spawn, while a class's FName is
+// readable the instant it exists. Leaf names, exactly; a subclass that surfaces is curated
+// into the allowlist.
 
 #include "coop/world/world_actor_sync.h"
 
 #include "world_actor_detail.h"  // co-located private header (src tree, not include/)
 
-#include "coop/creatures/piramid_sync.h"  // v100 auxYaw: the piramid heading producer/consumer
+#include "coop/creatures/piramid_sync.h"  // the piramid heading
 
-#include "coop/items/coingun_sync.h"   // v143 (B3): ReadCoinPoints for the birth blob
+#include "coop/items/coingun_sync.h"   // the coin birth value
 #include "coop/element/element_deleter.h"
 #include "coop/element/mirror_manager.h"
 #include "coop/element/mirror_managers.h"  // PropMirrors/NpcMirrors/WaMirrors
@@ -42,7 +36,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
-#include <cstring>   // v143: FillBirthBlob is this file's first std::memcpy
+#include <cstring>   // memcpy
 #include <memory>
 #include <mutex>
 #include <string>
@@ -62,11 +56,12 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 inline coop::net::Session* LoadSession() { return g_session.load(std::memory_order_acquire); }
 
 std::atomic<bool> g_installed{false};
-// True if Install permanently disabled the WA lifecycle (no K2_DestroyActor / observer-table full):
-// the interceptor host-broadcast gates on this so a partial-lifecycle install never leaks Elements.
+// True if Install permanently disabled the lifecycle (no K2_DestroyActor, or the observer
+// table full); the host broadcast gates on it, so a partial install never leaks Elements.
 std::atomic<bool> g_disabledThisProcess{false};
 
-// Spawn path (resolved once at Install; shared by the host interceptor + the client materialize).
+// The spawn path, resolved once at Install and shared by the host interceptor and the client
+// materialise.
 void*   g_spawnFn = nullptr;
 int32_t g_spawnActorClassParamOff = -1;
 int32_t g_spawnReturnParamOff = -1;
@@ -75,35 +70,36 @@ void*   g_finishSpawnFn = nullptr;
 void*   g_gsCdo = nullptr;
 void*   g_k2DestroyFn = nullptr;
 
-// Bypass slot for wire-received WA spawns (client materialize): SET on the game thread immediately
-// before BeginDeferred (OnWorldActorSpawn), READ+CLEAR in the interceptor (parallel-anim worker
-// possible). Same atomic read-and-clear shape as npc_sync's g_incomingNpcSpawnClass.
+// The bypass slot for wire-received spawns on the client: set on the game thread right before
+// BeginDeferred, read and cleared in the interceptor, which can run on a parallel-anim worker.
+// The same atomic shape as npc_sync's.
 std::atomic<void*> g_incomingWorldActorClass{nullptr};
 
-// Observer-install latches (idempotent re-Install; read on a worker thread).
+// The observer-install latches; idempotent re-Install, read on a worker thread.
 std::atomic<bool> g_postObserverInstalled{false};
 std::atomic<bool> g_destroyObserverInstalled{false};
 
-// The canonical owner of every WorldActor element (host AllocAndInstall'd m_mirror=false XOR client
-// Install'd m_mirror=true -- a process is host XOR client for WorldActors, like Npc).
+// The canonical owner of every WorldActor element; a process holds host elements or client
+// mirrors, never both, as with NPCs.
 using coop::element::WaMirrors;   // canonical accessor (coop/element/mirror_managers.h)
 
-// Host-side reverse lookup: live AActor* -> ElementId (the K2_DestroyActor PRE gate). Guarded (POST +
-// destroy PRE run on parallel-anim workers). LEAF lock -- never nested under the Registry/type mutex
-// (the destroy path releases it BEFORE Take/destruct).
+// The host-side reverse lookup, live actor to eid, the destroy gate. Guarded, since the POST
+// and the destroy PRE run on parallel-anim workers; a leaf lock, never nested under the
+// registry mutex (the destroy path releases it before the take).
 std::mutex g_actorToWaIdMutex;
 std::unordered_map<void*, coop::element::ElementId> g_actorToWaId;
 
-// Thread-local pending-spawn slot (params-pointer correlation -- the same token npc_sync uses to
-// disambiguate nested non-WA BeginDeferred calls; the engine allocates a fresh frame per call).
+// The thread-local pending-spawn slot, correlated by the params pointer, the token npc_sync
+// uses too: the engine allocates a fresh frame per call, so nested non-WA calls cannot
+// collide.
 struct PendingWaSpawn {
     coop::element::ElementId eid;
     const void* paramsPtr;
 };
 thread_local PendingWaSpawn t_pendingWa{coop::element::kInvalidId, nullptr};
 
-// Exact class-NAME allowlist match (host interceptor): alloc-free + walk-free + race-free. NameOf(cls)
-// is the class leaf name (e.g. "rozitBorg_C"), exactly the FindClass key.
+// The exact class-name allowlist match for the host interceptor: no allocation, no array walk,
+// no race. The class name is the leaf name, the FindClass key.
 bool IsAllowlistedClass(void* cls) {
     if (!cls) return false;
     const auto& nm = R::NameOf(cls);
@@ -112,31 +108,22 @@ bool IsAllowlistedClass(void* cls) {
     return false;
 }
 
-// Wire-className trust gate (client receiver): the wstring built from the wire string.
+// The wire class-name trust gate for the client receiver.
 bool IsAllowlistedClassNameW(const std::wstring& nm) {
     for (size_t i = 0; i < P::name::kWorldActorAllowlistSize; ++i)
         if (nm == P::name::kWorldActorAllowlist[i]) return true;
     return false;
 }
 
-// ---- v143 (B3): fill the birth blob ------------------------------------------------------------
-// One helper, both producers. The blob is opaque to this lane -- the receiving class decodes its own
-// bytes -- and a class with nothing to carry ships birthLen=0, which the receiver reads as "leave the
-// CDO alone". A class that cannot be READ logs instead: birthLen=0 must never be able to mean both
-// "nothing to carry" and "the read failed", or the mirror silently keeps the wrong value while the
-// instrument prints a benign zero.
-//
-// WHAT THIS CARRIES, STATED HONESTLY (audit I-1, 2026-08-25). An earlier draft of this comment said
-// `[V]` "only baocoin_C has a birth value today", which CONTRADICTED protocol.h's own `[V]` in the
-// same commit and was the more reachable of the two. The truth: `baocoin_C.points` is the only birth
-// value this lane CARRIES. `[V]` `piramid2_C.spawner` (piramidSpawner uber @983, an Object ref) and
-// soltomiaCleaning_C's `doorJam2`/`doorJam3` (trigger_eventer uber @7446/@7480) are known
-// deferred-window writes that are NOT carried, and whose consequence for those mirrors is UNMEASURED.
-// A confident comment there would close a question nobody has opened.
-//
-// Takes the UClass, not a rendered name (audit IMPORTANT-2 / M-5): both call sites already hold the
-// class, and rendering it cost one engine FString alloc+free plus a std::wstring PER ELEMENT on the
-// connect snapshot -- which `coingun_collect.cpp:490` re-fires at 0.5 Hz per slot on the repair path.
+// The birth blob, one helper for both producers. The blob is opaque to this lane (the
+// receiving class decodes its own bytes), and a class with nothing to carry ships a zero
+// length, which the receiver reads as leave the CDO alone; a class that cannot be read logs
+// instead, so zero can never mean both nothing-to-carry and read-failed. The coin's points
+// are the only birth value this lane carries; piramid2_C's spawner reference and
+// soltomiaCleaning_C's door-jam names are set in the deferred window and not carried, with
+// unmeasured consequences for those mirrors. Takes the UClass rather than a rendered name:
+// both call sites hold the class, and rendering it cost an engine string per element on the
+// connect snapshot, which the repair path re-fires per slot.
 void FillBirthBlob(coop::net::WorldActorSpawnPayload& p, void* cls, void* actor) {
     p.birthLen = 0;
     if (!actor || !coop::coingun_sync::IsCoinClass(cls)) return;
@@ -152,9 +139,9 @@ void FillBirthBlob(coop::net::WorldActorSpawnPayload& p, void* cls, void* actor)
     p.birthLen = static_cast<uint8_t>(sizeof(pts));
 }
 
-// Read the FTransform spawn param into the payload (translation + FQuat->FRotator + v99 Scale3D).
-// Identical math to npc_sync's interceptor (FQuat XYZW @ +0, FVector translation @ +0x10, Scale3D
-// @ +0x20 -- the piramid spawner passes 2.0 here; losing it half-sizes the mirror).
+// The FTransform spawn param into the payload: the quaternion at 0, the translation at 0x10,
+// the scale at 0x20, the same math as npc_sync's interceptor. The piramid spawner passes scale
+// 2, and losing it half-sizes the mirror.
 void ReadSpawnXform(const void* params, coop::net::WorldActorSpawnPayload& p) {
     if (g_spawnXformParamOff < 0) return;
     const uint8_t* xf = reinterpret_cast<const uint8_t*>(params) + g_spawnXformParamOff;
@@ -176,8 +163,8 @@ void ReadSpawnXform(const void* params, coop::net::WorldActorSpawnPayload& p) {
     p.rotRoll  = std::atan2(2.f * (qw * qx + qy * qz), 1.f - 2.f * (qx * qx + qy * qy)) * kRadToDeg;
 }
 
-// POST observer on BeginDeferredSpawnFromClass: bind the returned AActor* into the WorldActor the PRE
-// interceptor allocated (params-pointer correlation, same gate as npc_sync's NpcSpawn_POST).
+// The POST observer on BeginDeferredSpawnFromClass: bind the returned actor into the
+// WorldActor the PRE interceptor allocated, correlated by the params pointer.
 void WorldActorSpawn_POST(void* /*self*/, void* /*function*/, void* params) {
     if (!params || g_spawnReturnParamOff < 0) return;
     if (t_pendingWa.paramsPtr != params) {
@@ -216,8 +203,8 @@ void WorldActorSpawn_POST(void* /*self*/, void* /*function*/, void* params) {
             spawnedActor, eid, el->GetTypeName().c_str());
 }
 
-// K2_DestroyActor PRE observer: O(1) hash gate on g_actorToWaId; a hit releases the Element + broadcasts
-// WorldActorDestroy.
+// The K2_DestroyActor PRE observer: an O(1) hash gate on the reverse map; a hit releases the
+// Element and broadcasts the destroy.
 void WorldActorDestroy_PRE(void* self, void* /*function*/, void* /*params*/) {
     if (!self) return;
     coop::element::ElementId eid = coop::element::kInvalidId;
@@ -242,10 +229,10 @@ bool WorldActorSuppress_Interceptor(void* self, void* params) {
     (void)self;  // self = the UGameplayStatics CDO
     if (!params || g_spawnActorClassParamOff < 0) return false;
     auto* s = LoadSession();
-    // HOSTING-gated tracking (RULE 1 root fix 2026-07-05): the host branch runs with or
-    // without peers -- a WA spawned while the host is alone must be tracked so the join
-    // connect-snapshot can deliver it (the 0s pyramid failure). Only the broadcast inside
-    // is connected-gated. The client suppress branch still requires a live connection.
+    // Tracking is hosting-gated: the host branch runs with or without peers, since a WA spawned
+    // while the host is alone must be tracked for the join connect-snapshot to deliver it; only
+    // the broadcast inside is connected-gated. The client suppress branch still requires a live
+    // connection.
     if (!s) return false;
 
     if (s->role() == coop::net::Role::Host) {
@@ -255,14 +242,12 @@ bool WorldActorSuppress_Interceptor(void* self, void* params) {
         if (!actorClass || !IsAllowlistedClass(actorClass)) return false;  // not a WA; let it run
 
         coop::net::WorldActorSpawnPayload p{};
-        // v143 (B3): this producer is PRE-BeginDeferred -- it holds `params` and the actor CLASS, never
-        // an actor -- so it CANNOT carry a birth value, and `p{}` leaves birthLen=0. That is correct
-        // and unfixable here: even the matching POST fires before `FinishSpawningActor`, and the value
-        // is written in between. `[V]` No birth-carrying class reaches this path today (sell's
-        // BeginDeferred is EX_CallMath, invisible to a PE interceptor; 38 of 38 field coins came
-        // through HostEnrollExSpawn and zero through here). But that invariant lived only in a commit
-        // message, which meant birthLen=0 could quietly mean two things at exactly one site (audit
-        // I-2). Make it say so itself, so a SECOND birth-carrying class cannot regress in silence.
+        // This producer runs before BeginDeferred and holds the params and the class, never an
+        // actor, so it cannot carry a birth value, and the zero length is correct: even the
+        // matching POST fires before FinishSpawningActor, and the value is written in between. No
+        // birth-carrying class reaches this path (a sale's BeginDeferred is a math call the
+        // interceptor cannot see, and the coins arrive through HostEnrollExSpawn); the check makes
+        // the invariant say so itself, so a second birth-carrying class cannot regress in silence.
         if (coop::coingun_sync::IsCoinClass(actorClass)) {
             UE_LOGE("world-actor[host PRE]: a birth-value class reached the PE author, which cannot "
                     "carry its birth value -- this mirror will be born at the CDO default and render "
@@ -304,8 +289,8 @@ bool WorldActorSuppress_Interceptor(void* self, void* params) {
         reinterpret_cast<uint8_t*>(params) + g_spawnActorClassParamOff);
     if (!actorClass) return false;
 
-    // Bypass slot: a wire-received materialization set g_incomingWorldActorClass right before its own
-    // BeginDeferred. Consume it (atomic read-and-clear) + allow the spawn through.
+    // The bypass slot: a wire-received materialisation set the class right before its own
+    // BeginDeferred; consume it (an atomic read-and-clear) and let the spawn through.
     void* expected = actorClass;
     if (g_incomingWorldActorClass.compare_exchange_strong(
             expected, nullptr, std::memory_order_acq_rel, std::memory_order_acquire)) {
@@ -313,8 +298,9 @@ bool WorldActorSuppress_Interceptor(void* self, void* params) {
                 actorClass);
         return false;
     }
-    // Defense-in-depth: a CLIENT should never fire an event locally (its scheduler is dormant), but if
-    // an allowlisted WA does spawn locally, suppress it (the host streams the authoritative one).
+    // Defence in depth: a client should never fire an event locally (its scheduler is dormant),
+    // but an allowlisted WA that does spawn locally is suppressed; the host streams the
+    // authoritative one.
     if (IsAllowlistedClass(actorClass)) {
         UE_LOGI("world-actor-suppress[client]: skipping BeginDeferred for allowlisted WA class=%p",
                 actorClass);
@@ -331,8 +317,9 @@ bool WorldActorSuppress_Interceptor(void* self, void* params) {
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     if (g_installed.load(std::memory_order_acquire)) return;
-    // Throttle the unresolved-window retries (each Find* walks GUObjectArray). Unlike npc_sync we do NOT
-    // wait for the actor BP classes -- only the engine-core spawn path -- so this resolves promptly.
+    // The unresolved-window retries are throttled, since each Find walks the object array. Unlike
+    // npc_sync this waits only for the engine-core spawn path, not the actor classes, so it
+    // resolves promptly.
     static int s_retry = 0;
     if (s_retry > 0) { --s_retry; return; }
 
@@ -359,9 +346,9 @@ void Install(coop::net::Session* session) {
     void* actorCls = R::FindClass(P::name::ActorClassName);
     void* destroyFn = actorCls ? R::FindFunction(actorCls, P::name::DestroyActorFn) : nullptr;
     if (!finishFn || !gsCdo || !destroyFn) {
-        // Lifecycle cannot close without K2_DestroyActor; client materialize needs finish+CDO. Without
-        // a guaranteed destroy observer we'd leak Elements -- disable for the process (the WA still
-        // spawns locally on the host; it just doesn't sync this session).
+        // The lifecycle cannot close without K2_DestroyActor, and the client materialise needs
+        // finish and the CDO; without a guaranteed destroy observer Elements would leak, so the
+        // process is disabled (the WA still spawns locally on the host; it just does not sync).
         g_disabledThisProcess.store(true, std::memory_order_release);
         g_installed.store(true, std::memory_order_release);
         UE_LOGE("world-actor: cannot resolve finish/CDO/K2_DestroyActor (finish=%p cdo=%p destroy=%p) "
@@ -376,8 +363,9 @@ void Install(coop::net::Session* session) {
     g_gsCdo = gsCdo;
     g_k2DestroyFn = destroyFn;
 
-    // Atomic two-observer registration (POST binds the actor; destroy PRE closes the lifecycle). If
-    // EITHER fails, roll the other back so a half-installed state doesn't burn an observer-table slot.
+    // Atomic two-observer registration (the POST binds the actor, the destroy PRE closes the
+    // lifecycle): if either fails the other is rolled back, so a half-installed state does not
+    // burn an observer slot.
     if (!g_postObserverInstalled.load(std::memory_order_acquire) ||
         !g_destroyObserverInstalled.load(std::memory_order_acquire)) {
         const bool postOk = GT::RegisterPostObserver(fn, &WorldActorSpawn_POST);
@@ -401,9 +389,8 @@ void Install(coop::net::Session* session) {
         UE_LOGW("world-actor: lifecycle observer install FAILED -- skipping interceptor registration");
         return;
     }
-    // A SECOND interceptor on BeginDeferred -- conflict-free with npc_sync's (disjoint allowlists;
-    // game_thread.h multi-interceptor support: each fires, the matching one acts, both return false on
-    // the host so the spawn proceeds).
+    // A second interceptor on BeginDeferred, conflict-free with npc_sync's: disjoint allowlists,
+    // each fires, the matching one acts, and both return false on the host so the spawn proceeds.
     GT::RegisterInterceptor(fn, &WorldActorSuppress_Interceptor);
     UE_LOGI("world-actor: installed interceptor + observers on %ls.%ls (ActorClass@%d Return@%d Xform@%d; "
             "%zu allowlisted names; NAME-matched, lazy-load-safe)",
@@ -416,9 +403,8 @@ bool IsInstalled() { return g_installed.load(std::memory_order_acquire); }
 void ClearMirrorActors();   // defined below with the mirror-set helpers
 
 void OnDisconnect() {
-    // Drain the unified MirrorManager<WorldActor> (a process holds host XOR client WA elements, like
-    // Npc). K2_DestroyActor ONLY the client mirror actors (IsMirror()==true); the host's real WA
-    // Elements are release-only (m_mirror=false -> dtor FreeId; the real actors stay in the host world).
+    // Drain the WorldActor manager: K2_DestroyActor only the client mirror actors; the host's real
+    // elements are release-only, and the real actors stay in the host world.
     std::vector<coop::element::WorldActor*> snap;
     WaMirrors().Snapshot(snap);
     size_t nMirrors = 0, nHost = 0, nK2 = 0;
@@ -427,12 +413,9 @@ void OnDisconnect() {
         if (!el->IsMirror()) { ++nHost; continue; }
         ++nMirrors;
         void* actor = el->GetActor();
-        // IsLiveByIndex, NOT plain IsLive (2026-07-15 IsLive-enumeration sweep): this is a
-        // TEARDOWN drain (OnDisconnect) of a CACHED mirror actor, then a K2_DestroyActor CALL
-        // -- exactly the recycled-slot-fatal shape (a foreign live occupant passes plain IsLive,
-        // then the call runs on the wrong object). WorldActor already stores its index (the drive
-        // Tick uses IsLiveByIndex@world_actor.cpp:121); the drain just didn't.
-        // [[lesson-islive-recycled-slot-blind-use-by-index]]
+        // IsLiveByIndex, not plain IsLive: a teardown drain of a cached mirror actor followed by a
+        // K2_DestroyActor call is exactly the recycled-slot shape, where a foreign live occupant
+        // passes IsLive and the call runs on the wrong object. The WorldActor stores its index.
         if (actor && g_k2DestroyFn && R::IsLiveByIndex(actor, el->GetInternalIdx())) {
             R::CallFunction(actor, g_k2DestroyFn, nullptr);  // K2_DestroyActor (game thread)
             ++nK2;
@@ -451,12 +434,11 @@ void OnDisconnect() {
 }
 
 void TickPoseStream() {
-    // HOST-only: read each live WA's transform each tick + publish ONE WorldActorPose batch for the net
-    // thread to fan out (so client mirrors MOVE). An EMPTY batch clears it (stop sending when WAs vanish).
-    // Game thread (net-pump asserts GT) -> the scratch statics are single-threaded.
-    // LIFECYCLE runs while HOSTING (alone included); only the batch PUBLISH is peer-dependent
-    // (RULE 1 root fix 2026-07-05): a WA tracked while alone that self-destroys while alone
-    // must dead-retire then, or the join connect-snapshot would iterate a corpse element.
+    // Host only: read each live WA's transform each tick and publish one pose batch for the net
+    // thread to fan out, so the client mirrors move; an empty batch clears it. Game thread. The
+    // lifecycle runs while hosting, alone included, and only the publish is peer-dependent: a WA
+    // tracked while alone that self-destroys while alone must dead-retire then, or the join
+    // snapshot would iterate a corpse.
     auto* s = LoadSession();
     if (!s || s->role() != coop::net::Role::Host) return;
     const bool connected = s->connected();
@@ -466,12 +448,11 @@ void TickPoseStream() {
     static std::vector<coop::net::WorldActorPoseSnapshot> batch;
     batch.clear();
 
-    // Pose-walk dead-retire (2026-07-04, the piramid lifecycle gap): a WA's event-end destroy
-    // is often a SELF K2_DestroyActor (EX/native self-call the PRE observer never sees -- the
-    // npc_sync.cpp:841 class; piramid2_C's checkIfReached END branch is one). A BOUND actor
-    // that reads dead here is terminal (GC'd/recycled) -- close the lifecycle exactly as the
-    // PRE would have: reverse-map erase + RetireMirror + WorldActorDestroy broadcast. Unbound
-    // (actor==null, pre-POST window) elements are NOT dead -- skip them as before.
+    // The pose-walk dead-retire: a WA's event-end destroy is often a self K2_DestroyActor the PRE
+    // observer never sees (a native self-call; piramid2_C's end branch is one). A bound actor that
+    // reads dead here is terminal, so the lifecycle closes exactly as the PRE would: the
+    // reverse-map erase, the retire, the destroy broadcast. An unbound element (the pre-POST
+    // window) is not dead.
     struct DeadWa { void* actor; coop::element::ElementId eid; };
     std::vector<DeadWa> dead;
 
@@ -485,21 +466,17 @@ void TickPoseStream() {
             continue;
         }
         if (!connected) continue;  // no peers: lifecycle-only pass, no batch to build
-        // C-2 + I-1 (audit 2026-08-24) -- READ THE ORDER HERE BEFORE CHANGING IT.
-        // The cap check MUST come first. `E::GetActorLocation` / `GetActorRotation` are each a full
-        // ProcessEvent dispatch WITH a per-call heap allocation, so hoisting them above this check (as
-        // the first v137 draft did) made the walk cost 2 PE + 2 mallocs per LIVE WorldActor per tick at
-        // 125 Hz instead of a hard 28x2 -- unbounded in exactly the population this feature creates,
-        // since coins never despawn. That traded 28 batch slots for tens of thousands of dispatches a
-        // second: a net loss, and the shape the standing no-per-frame-scan rule exists to stop.
+        // The cap check comes first: the location and rotation reads are each a full ProcessEvent
+        // dispatch with a heap allocation, so hoisting them above the check makes the walk cost two
+        // dispatches per live WA per tick, unbounded in exactly the population this feature
+        // creates, since coins never despawn.
         if (static_cast<int>(batch.size()) >= coop::net::kMaxWorldActorBatchEntries) { ++truncated; continue; }
         const auto loc = E::GetActorLocation(actor);
         const auto rot = E::GetActorRotation(actor);
-        // The delta gate now saves WIRE BYTES, not slots: a resting actor is not re-sent. It runs
-        // AFTER the cap so `sent*` can only record a pose we are actually about to batch -- I-1: the
-        // draft recorded before truncation, so an actor whose FINAL resting tick was the truncated one
-        // would latch that pose as "sent", never satisfy the delta test again, and freeze its mirror
-        // mid-flight for the rest of the session.
+        // The delta gate saves wire bytes, not slots: a resting actor is not re-sent. It runs after
+        // the cap, so the sent pose is only recorded for a pose about to be batched; recorded
+        // before truncation, an actor whose final resting tick was the truncated one would latch
+        // that pose as sent and freeze its mirror mid-flight.
         if (!el->PoseChangedSinceLastSend(loc, rot)) continue;
         coop::net::WorldActorPoseSnapshot snap{};
         snap.elementId = static_cast<uint32_t>(el->GetId());
@@ -507,20 +484,20 @@ void TickPoseStream() {
         snap.pitch = ue_wrap::NormalizeAxis(rot.Pitch);
         snap.yaw   = ue_wrap::NormalizeAxis(rot.Yaw);
         snap.roll  = ue_wrap::NormalizeAxis(rot.Roll);
-        // v100 auxYaw: the class-specific VISIBLE heading. piramid2_C keeps its root at yaw 0 and
-        // turns its movementVector ArrowComponent instead (the AnimBP orients the body off it) --
-        // stream THAT so the client mirror faces where the host does, including the up-to-10 s
-        // post-stop easing no position delta can see. Other classes: facing == actor yaw.
+        // The auxiliary yaw, the class-specific visible heading: piramid2_C keeps its root at yaw 0
+        // and turns its movement arrow instead (the anim blueprint orients the body off it), so
+        // that is streamed, including the post-stop easing no position delta can see. Other
+        // classes: facing is the actor yaw.
         snap.auxYaw = snap.yaw;
         if (el->GetTypeName() == "piramid2_C") {
             float hy = 0.f;
             if (coop::piramid_sync::ReadHostHeadingYaw(actor, hy))
                 snap.auxYaw = ue_wrap::NormalizeAxis(hy);
-            // v102 head axis: the head/searchlight idle look target (relLook). Zeros when
-            // unresolved -- the client apply treats all-zero as "no value, keep current".
+            // The head axis, the idle look target; zeros when unresolved, which the client apply
+            // treats as no value.
             coop::piramid_sync::ReadHostRelLook(actor, snap.auxX, snap.auxY, snap.auxZ);
-            // v104 chase axis: the live wispTarget IDENTITY (0 = idle) -- the mirror selects
-            // the native chase look-at branch with it (the 0y walk-phase head residue).
+            // The chase axis, the live wisp-target identity (0 is idle); the mirror selects the
+            // native chase look-at branch with it.
             snap.auxTargetEid = coop::piramid_sync::ReadHostWispTargetEid(actor);
         }
         batch.push_back(snap);
@@ -541,10 +518,10 @@ void TickPoseStream() {
             UE_LOGW("world-actor[host dead-retire]: SendReliable(WorldActorDestroy) failed for eid=%u",
                     static_cast<uint32_t>(d.eid));
     }
-    // [WA-TRACE host-read] 1 Hz while anything streams: the EXACT coords this tick read off each
-    // live WA actor (= what the net thread will serialize). The freeze-hunt discriminator: if these
-    // coords move while the client's applied pose doesn't, the break is downstream (wire/apply/drive);
-    // if they are frozen at spawn, the host read itself is the break (2026-07-05 0s-frozen-pyramid).
+    // The host-read trace, 1 Hz while anything streams: the exact coordinates this tick read off
+    // each live actor, what the net thread serialises. If these move while the client's applied
+    // pose does not, the break is downstream; if they are frozen at spawn, the host read is the
+    // break.
     if (!batch.empty()) {
         static long long s_lastReadTraceMs = 0;
         const long long nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -570,9 +547,9 @@ void TickPoseStream() {
 }
 
 void QueueConnectBroadcastForSlot(int peerSlot) {
-    // HOST-only: re-send WorldActorSpawn (class + CURRENT transform) for every already-spawned WA to the
-    // freshly-connected client, so a joiner mirrors actors that spawned BEFORE it joined. The client's
-    // OnWorldActorSpawn materializes each; MirrorManager::Install is idempotent so a re-send is a no-op.
+    // Host only: re-send the spawn (class and current transform) for every already-spawned WA to a
+    // freshly connected client, so a joiner mirrors actors that spawned before it joined. The
+    // client's materialise is idempotent through the mirror manager.
     auto* s = LoadSession();
     if (!s || s->role() != coop::net::Role::Host) return;
     if (peerSlot < 1) return;  // SendReliableToSlot range-validates the upper bound
@@ -592,14 +569,13 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         p.elementId = static_cast<uint32_t>(el->GetId());
         const auto loc = E::GetActorLocation(actor);
         const auto rot = E::GetActorRotation(actor);
-        const auto scl = E::GetActorScale3D(actor);  // v99: the piramid is scale 2 -- the mirror must match
+        const auto scl = E::GetActorScale3D(actor);  // the piramid is scale 2
         p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
         p.rotPitch = rot.Pitch; p.rotYaw = rot.Yaw; p.rotRoll = rot.Roll;
         p.scaleX = scl.X; p.scaleY = scl.Y; p.scaleZ = scl.Z;
         FillBirthBlob(p, R::ClassOf(actor), actor);
-        // The late-join half of the birth instrument (audit M-4). Without it this leg printed on the
-        // CLIENT only, so a joiner's coins had no host-side value to be paired against -- and
-        // principle 8 makes late join a first-class path, not an edge case.
+        // The late-join half of the birth instrument: without it this leg printed on the client
+        // only, and a joiner's coins had no host-side value to pair against.
         if (coop::coingun_sync::IsCoinClass(R::ClassOf(actor))) {
             int32_t pts = -1;
             std::wstring mat;
@@ -616,7 +592,7 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
                 "%d unbound-skipped)", sent, peerSlot, elems.size(), unbound);
 }
 
-// ---- v137: mirror identity + the materialization window (see world_actor_sync.h) ----------------
+// Mirror identity and the materialisation window (see world_actor_sync.h).
 namespace {
 std::mutex g_mirrorActorsMu;
 std::unordered_set<void*> g_mirrorActors;      // live wire-materialized mirrors on this peer
@@ -630,12 +606,10 @@ bool IsMirroredActor(void* actor) {
 }
 
 void ClearMirrorActors() {
-    // I-3 (audit 2026-08-24). The set is keyed on a RAW pointer and was only ever erased on a wire
-    // destroy -- so a disconnect/world teardown (which K2-destroys the mirrors and DrainAll()s the
-    // table) left every entry behind. Two failures: unbounded growth across rejoins, and -- worse -- a
-    // recycled allocation matching a stale entry makes IsMirroredActor() answer TRUE for a MAP-PLACED
-    // baocoin_C, so coingun_sync cancels its pickup and the coin becomes permanently uncollectable and
-    // ghosted. That is precisely the NEW loss the mirror-scoping was introduced to avoid.
+    // The set is keyed on a raw pointer and is erased on a wire destroy; a disconnect or world
+    // teardown K2-destroys the mirrors and drains the table, so it must clear here too, or a
+    // recycled allocation matching a stale entry makes IsMirroredActor answer true for a
+    // map-placed coin, which the coin gun then refuses to collect.
     std::lock_guard<std::mutex> lk(g_mirrorActorsMu);
     g_mirrorActors.clear();
 }
@@ -649,9 +623,8 @@ void NoteMirrorActor(void* actor, bool add) {
 
 bool IsMaterializingMirror() { return t_materializeDepth > 0; }
 
-// Thread-local alongside the depth, and saved/restored rather than assigned, so a nested
-// materialization (a mirror spawn re-entering the mirror path) cannot leave the outer scope naming
-// the inner one's eid on the way out.
+// Thread-local alongside the depth, saved and restored rather than assigned, so a nested
+// materialisation cannot leave the outer scope naming the inner one's eid.
 thread_local unsigned int t_materializeEid = 0;
 thread_local void* t_materializeActor = nullptr;
 
@@ -674,9 +647,8 @@ MaterializeScope::~MaterializeScope() {
 }
 
 unsigned int HostEnrollExSpawn(void* actor) {
-    // HOSTING-gated, not connected-gated (RULE 1 root fix 2026-07-05): a WA spawned while
-    // the host is alone (the pre-first-join pyramid) must still be tracked -- the join
-    // connect-snapshot is what delivers it to a later joiner. Only the broadcast below is
+    // Hosting-gated, not connected-gated: a WA spawned while the host is alone must still be
+    // tracked, since the join snapshot delivers it to a later joiner; only the broadcast is
     // peer-dependent.
     auto* s = LoadSession();
     if (!s || s->role() != coop::net::Role::Host) return 0;
@@ -686,7 +658,7 @@ unsigned int HostEnrollExSpawn(void* actor) {
     void* cls = R::ClassOf(actor);
     if (!cls || !IsAllowlistedClass(cls)) return 0;
     {
-        // Dedup vs the interceptor+POST path: a PE-dispatched spawn was already bound there.
+        // Dedup against the interceptor-and-POST path: a dispatched spawn was already bound there.
         std::lock_guard<std::mutex> lk(g_actorToWaIdMutex);
         auto it = g_actorToWaId.find(actor);
         if (it != g_actorToWaId.end()) return static_cast<unsigned int>(it->second);
@@ -719,17 +691,16 @@ unsigned int HostEnrollExSpawn(void* actor) {
         p.className.data[p.className.len++] = static_cast<char>(clsW[i]);
     const auto loc = E::GetActorLocation(actor);   // post-Finish (the drain runs next pump tick)
     const auto rot = E::GetActorRotation(actor);
-    const auto scl = E::GetActorScale3D(actor);    // v99: the deferred actor carries the spawner's scale
+    const auto scl = E::GetActorScale3D(actor);    // the deferred actor carries the spawner's scale
     p.locX = loc.X; p.locY = loc.Y; p.locZ = loc.Z;
     p.rotPitch = rot.Pitch; p.rotYaw = rot.Yaw; p.rotRoll = rot.Roll;
     p.scaleX = scl.X; p.scaleY = scl.Y; p.scaleZ = scl.Z;
     FillBirthBlob(p, cls, actor);
-    // THE HOST HALF OF THE INSTRUMENT (v143, B3). This line already fires once per enrolled WA, keyed
-    // by eid -- 38 of 38 coins in the last field run -- so it PAIRS with the client's materialize line
-    // for the same eid. Both halves print the MATERIAL as well as `points` on purpose: the producer
-    // and the instrument read `points` through the same offset at the same site, so a wrong read would
-    // print AGREEMENT while the two coins still drew differently. The material is independent evidence
-    // -- the game painted it from the real value, not from our read.
+    // The host half of the birth instrument, once per enrolled WA keyed by eid, pairing with the
+    // client's materialise line. Both halves print the material as well as the points: the
+    // producer and the instrument read the points through the same offset, so a wrong read would
+    // print agreement while the two coins drew differently; the material is independent evidence,
+    // painted by the game from the real value.
     if (clsW == L"baocoin_C") {
         int32_t pts = -1;
         std::wstring mat;
@@ -743,8 +714,8 @@ unsigned int HostEnrollExSpawn(void* actor) {
                 "(EX_CallMath BeginDeferred, source-gated catch)", clsW.c_str(), eid, loc.X, loc.Y,
                 loc.Z, scl.X, scl.Y, scl.Z);
     }
-    // Broadcast only with peers present -- an alone-host enroll is delivered by the join
-    // connect-snapshot instead (a peer-less SendReliable would just WARN-spam).
+    // Broadcast only with peers present; an alone-host enroll is delivered by the join snapshot,
+    // and a peer-less send would only warn.
     if (s->connected() &&
         !s->SendReliable(coop::net::ReliableKind::WorldActorSpawn, &p, sizeof(p))) {
         UE_LOGW("world-actor[host ex-enroll]: SendReliable(WorldActorSpawn) failed for eid=%u "
@@ -753,10 +724,9 @@ unsigned int HostEnrollExSpawn(void* actor) {
     return static_cast<unsigned int>(eid);
 }
 
-// The CLIENT half (OnWorldActorSpawn / OnWorldActorDestroy / TickClientWorldActors)
-// lives in world_actor_mirror.cpp (extracted 2026-07-05, modular file-size rule).
-// Shared internals: world_actor_detail.h (implemented below -- this TU owns the
-// session pointer, the Install-resolved spawn path and the bypass slot).
+// The client half (the spawn and destroy receivers and the client tick) lives in
+// world_actor_mirror.cpp; the shared internals are in world_actor_detail.h, implemented
+// below: this TU owns the session pointer, the resolved spawn path and the bypass slot.
 
 namespace detail {
 
