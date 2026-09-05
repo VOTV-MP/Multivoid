@@ -18,10 +18,8 @@ namespace coop::chat_feed {
 
 namespace {
 
-// A LIVE line lives kTtlMs, fading over the last kFadeMs. Matches the old hud_feed
-// 10 s feel with a soft fade-out tail so a line doesn't pop off abruptly. kFadeInMs
-// is the arrival ramp (2026-07-04, the chat-imgui-samp fade-in): a new line eases in
-// instead of popping -- short enough to feel instant, long enough to read as motion.
+// A live line lives kTtlMs, fading over the last kFadeMs; the fade-in is the arrival ramp,
+// short enough to feel instant and long enough to read as motion.
 constexpr uint64_t kTtlMs    = 11000;
 constexpr uint64_t kFadeMs   = 1500;
 constexpr uint64_t kFadeInMs = 220;
@@ -37,9 +35,9 @@ struct Entry {
     Keep        keep = Keep::Transient;
 };
 
-// Lines queued by PushDelayed, promoted into the live tier by Tick once dueMs is
-// reached. dueMs is WALL clock on purpose: the delay is about when the line should
-// APPEAR, not about how long it then lives. Game-thread only.
+// Lines queued by PushDelayed, promoted into the live tier by Tick once due. The due time is
+// wall clock on purpose: the delay is about when the line should appear, not how long it then
+// lives. Game thread only.
 struct Pending {
     std::string text;
     uint64_t    dueMs = 0;
@@ -51,10 +49,10 @@ std::mutex       g_mu;
 Snapshot         g_pub;
 std::atomic<int> g_count{0};
 
-// --- the reveal state (the ONE place that answers "is the history on screen").
-// Written from whichever thread closed the chat surface -- the WndProc ESC path,
-// the render-thread Enter-submit, the SEH unlatch -- so it is ATOMICS ONLY. It
-// never touches the line store, which stays game-thread-only.
+// The reveal state, the one place that answers whether the history is on screen. Written from
+// whichever thread closed the chat surface (the window-procedure escape path, the render-thread
+// submit, the SEH unlatch), so atomics only; it never touches the line store, which stays
+// game-thread-only.
 std::atomic<bool>     g_chatOpen{false};
 std::atomic<uint64_t> g_closeAtMs{0};
 std::atomic<bool>     g_retentionFrozen{false};
@@ -65,24 +63,18 @@ uint64_t NowMs() {
         duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
 }
 
-// --- the SUSPENDED TTL clock (game thread).
-//
-// While the reveal is up the TTL must not advance, or a player reading history
-// watches it expire under them. The naive form -- stamping bornMs forward -- is not
-// available: the open/close edge arrives on three different threads while the store
-// is game-thread-only. So wall time keeps running and we accumulate how much of it
-// was SUSPENDED, then subtract.
-//
-// The subtraction is the trap. A line born DURING a reveal has `now - bornMs` near
-// zero while the accumulator is large, so a global "total suspended" would underflow
-// an unsigned age straight past kTtlMs and pop the message one tick after it arrived
-// -- the one behaviour the user called non-negotiable. Each entry therefore snapshots
-// the accumulator at BIRTH and is aged against the suspension accrued SINCE, which is
-// bounded above by the wall time since birth. Non-negative by construction.
-//
-// The accumulator only ever advances forward, and only on the game thread, at the top
-// of every entry point that reads it. A reveal edge landing between two ticks is
-// attributed to the next slice -- an error bounded by one tick (~16 ms).
+// The suspended TTL clock, game thread. While the reveal is up the TTL must not advance, or a
+// player reading history watches it expire under them. Stamping the birth forward is not
+// available, since the open and close edges arrive on three different threads while the store
+// is game-thread-only; so wall time keeps running and the suspended portion is accumulated,
+// then subtracted. The subtraction is the trap: a line born during a reveal has a near-zero
+// wall age while the accumulator is large, so a global total would underflow an unsigned age
+// straight past the TTL and pop the message one tick after it arrived. Each entry therefore
+// snapshots the accumulator at birth and is aged against the suspension accrued since, which
+// is bounded above by the wall time since birth: non-negative by construction. The
+// accumulator only advances forward, only on the game thread, at the top of every entry point
+// that reads it; a reveal edge landing between two ticks is attributed to the next slice, an
+// error bounded by one tick.
 uint64_t g_suspendedMs = 0;
 uint64_t g_lastAdvanceMs = 0;
 bool     g_revealLatched = false;
@@ -99,8 +91,8 @@ void AdvanceSuspension(uint64_t now) {
         if (g_revealLatched) g_suspendedMs += now - g_lastAdvanceMs;
         g_lastAdvanceMs = now;
     }
-    // Sampled AFTER accounting the slice that just elapsed, so the latch always
-    // describes a slice that is already closed.
+    // Sampled after accounting the slice that just elapsed, so the latch always describes a slice
+    // that is already closed.
     g_revealLatched = RevealActiveNow();
 }
 
@@ -108,30 +100,27 @@ uint64_t EffectiveAgeMs(const Entry& e, uint64_t now) {
     const int64_t wall = static_cast<int64_t>(now - e.bornMs);
     const int64_t held = static_cast<int64_t>(g_suspendedMs - e.bornSuspendedMs);
     const int64_t age  = wall - held;
-    // The birth snapshot makes `held <= wall` structural. The clamp is not a fix for
-    // a known case: it is here so that if the invariant were ever broken the line
-    // ages NORMALLY rather than expiring instantly, which is the exact failure this
-    // whole mechanism exists to prevent.
+    // The birth snapshot makes held-at-most-wall structural. The clamp is not a fix for a known
+    // case: if the invariant were ever broken the line ages normally rather than expiring
+    // instantly, the exact failure this mechanism exists to prevent.
     return age > 0 ? static_cast<uint64_t>(age) : 0;
 }
 
-// A composed line is up to 285 bytes -- kNickMaxBytes (80) + ": " + the 203-byte wire
-// text -- against a 256-byte Line, so it CAN overflow and the header once claimed it
-// could not. It must be cut on a CHARACTER boundary: the raw resize() that used to do
-// this here, and the snprintf that publishes it, both cut on a BYTE, which splits a
-// multi-byte sequence and puts ill-formed UTF-8 on the exact surface the receive
-// boundary was hardened to keep it off. Cut ONCE, here at birth, so the per-tick
-// publish never has to truncate anything.
+// A composed line is up to 285 bytes (the nick cap, the separator and the wire text) against a
+// 256-byte line, so it can overflow, and it must be cut on a character boundary: a byte cut
+// splits a multi-byte sequence and puts ill-formed UTF-8 on the exact surface the receive
+// boundary was hardened to keep it off. Cut once, at birth, so the per-tick publish never
+// truncates.
 void SetText(Entry& e, const std::string& utf8) {
     e.text = coop::text::CapUtf8Bytes(utf8, sizeof(Line{}.text) - 1);
 }
 
-// The total order (chat_feed.h). ONE key, two producers. A wire row sits at
-// (its host lineSeq, 0). A locally-authored row -- a join line, a peer action, this
-// peer's own notices -- sits at (the newest host line applied so far, ++tiebreak), so
-// it lands immediately after the last thing that was actually said and before the next.
-// Without that base, "Connecting to <host>'s game..." would sort in front of a joiner's
-// entire seeded history, because a local counter starting at 1 is below every lineSeq.
+// The total order (chat_feed.h): one key, two producers. A wire row sits at (its host line
+// sequence, 0). A locally authored row (a join line, a peer action, this peer's own notices)
+// sits at (the newest host line applied so far, a tiebreak), so it lands immediately after the
+// last thing actually said and before the next; without that base a connecting notice would
+// sort in front of a joiner's entire seeded history, since a local counter starting at 1 is
+// below every line sequence.
 uint32_t g_wireBase = 0;
 uint32_t g_tiebreak = 0;
 uint64_t NextKey() {
@@ -139,30 +128,24 @@ uint64_t NextKey() {
 }
 uint64_t WireKey(uint32_t lineSeq) { return static_cast<uint64_t>(lineSeq) << 32; }
 
-// DEV INJECTION -- the must-FAIL control for the retained tier. A feature that has
-// only ever been shown WORKING passes by construction; with this set, Retire drops
-// instead of retaining, so drill D-L must go RED.
+// The dev injection, the must-fail control for the retained tier: a feature only ever shown
+// working passes by construction; with this set, a retire drops instead of retaining, so the
+// drill must go red.
 bool NoRetain() {
     static const bool v = coop::config::ReadEnv("VOTVCOOP_CHAT_NO_RETAIN") == "1";
     return v;
 }
 
-// ---- resurrection probe (user 2026-07-04: a long-gone line sometimes REAPPEARS
-// for ~0.5 s and fades out again). Static analysis proves the store can't do it
-// (per-entry alpha rises only during the 220 ms arrival ramp and is monotone-
-// decreasing after) -- so the mechanism is either a duplicate re-push of the same
-// TEXT or something outside this file. PERMANENT cheap logging so the NEXT
-// sighting's log names the path: every push and every DESTRUCTION is logged; a push
-// whose text matches a line destroyed <60 s ago is flagged [feed RESURRECT]; and
-// Republish cross-checks the published STORE alpha against the previous one for an
-// impossible RISE on the SAME entry in its fade-out tail ([feed ALPHA-JUMP] = the
-// "can't happen" detector).
-//
-// 2026-07-29: the probe now keys on `key`, not bornMs. Tick() hoists `now` outside
-// its promotion loop, so two lines promoted in one tick carry the SAME bornMs and
-// the old pairing could compare the wrong two entries -- the comment asserting that
-// uniqueness was simply false. And a RETIRED line is no longer noted as expired: it
-// still exists, so a legitimate re-push must not read as a resurrection.
+// The resurrection probe: a long-gone line was seen reappearing for half a second and fading
+// out again. Static analysis says the store cannot do it (a per-entry alpha rises only during
+// the arrival ramp and is monotone-decreasing after), so the mechanism is either a duplicate
+// re-push of the same text or something outside this file. Permanent cheap logging so the next
+// sighting's log names the path: every push and every destruction is logged; a push whose
+// text matches a line destroyed within a minute is flagged, and the republish cross-checks the
+// published alpha against the previous one for an impossible rise on the same entry in its
+// fade-out tail, the cannot-happen detector. The probe keys on the key, not the birth stamp:
+// two lines promoted in one tick carry the same birth stamp. A retired line is not noted as
+// expired, since it still exists and a legitimate re-push must not read as a resurrection.
 struct Expired {
     char     text[64] = {};
     uint64_t atMs = 0;
@@ -192,50 +175,37 @@ void ProbeOnPush(const char* via, const Entry& e, size_t linesNow) {
     }
 }
 
-// TWO CLOCKS, because the two ramps answer different questions (2026-07-31).
-//
-// The fade-OUT asks "how long has the player had to READ this", so it must run on the
-// SUSPENDED clock -- that suspension is the whole reason a reader can page back through
-// history without watching it expire under them.
-//
-// The fade-IN asks "has this line just APPEARED on screen", which is a fact about the
-// screen and therefore about WALL time. Running it on the suspended clock was the chat
-// flicker the user reported ("it tries to append the new line and then it removes the
-// new line and then appends again"): send a message with the reveal up, and the line is
-// born while the reveal is still closing, so its effective age is pinned at 0 and
-// `FadeAlpha(0) == 0`. It is visible only because the view floors alpha at the reveal.
-// Then -- because kFadeInMs and kRevealMs are BOTH 220 -- the reveal reaches 0 in the
-// same frame the age clock finally starts, both terms are zero at once, and the row
-// drops out. It then fades back in over an entrance it had already played. A line that
-// has been on screen for 220 ms has not just arrived, and saying so is a lie about the
-// screen.
-//
-// MTA has no arrival ramp at all and ages purely on wall time
-// (`reference/mtasa-blue/Client/core/CChat.cpp:335-336`,
-// `ulTime - m_Lines[uiLine].GetCreationTime()`); we keep the ramp because it is a
-// deliberate 2026-07-04 user-facing choice, but it runs on MTA's clock.
+// Two clocks, because the two ramps answer different questions. The fade-out asks how long the
+// player has had to read this, so it runs on the suspended clock; that suspension is why a
+// reader can page back through history without watching it expire. The fade-in asks whether
+// this line just appeared on screen, a fact about the screen and therefore wall time. Running
+// it on the suspended clock was the chat flicker: send a message with the reveal up, and the
+// line is born while the reveal is still closing, so its effective age is pinned at 0 and the
+// fade alpha is 0; it is visible only because the view floors alpha at the reveal, and since
+// the fade-in and the reveal are both 220 ms, the reveal reaches 0 in the same frame the age
+// clock starts, both terms are zero at once, and the row drops out, then fades back in over an
+// entrance it had already played. A line on screen for 220 ms has not just arrived. MTA has
+// no arrival ramp and ages purely on wall time; the ramp is kept as a deliberate choice, but
+// it runs on MTA's clock.
 float ComposeAlpha(uint64_t wallAgeMs, uint64_t effAgeMs) {
     if (effAgeMs >= kTtlMs) return 0.f;
     float a = 1.f;
     if (wallAgeMs < kFadeInMs)  // arrival ramp -- WALL time, see above
         a = static_cast<float>(wallAgeMs) / static_cast<float>(kFadeInMs);
     if (effAgeMs > kTtlMs - kFadeMs) {
-        // min(), not assignment: a line cannot be entering and expiring at once, but
-        // if the constants ever overlap the dimmer of the two is the honest answer.
+        // The minimum, not an assignment: a line cannot be entering and expiring at once, but if
+        // the constants ever overlap the dimmer of the two is the honest answer.
         const float out = static_cast<float>(kTtlMs - effAgeMs) / static_cast<float>(kFadeMs);
         if (out < a) a = out;
     }
     return a;
 }
 
-// ---- the store.
-//
-// An owning type, not two bare deques: the invariant that matters -- RETIRE IS THE
-// ONLY PATH OUT OF THE LIVE SET -- is not enforceable by a comment over a container
-// whose clear()/erase()/pop_back() all still compile. Both live exits (overflow and
-// expiry) route through the same transition, which is also why the 7th message no
-// longer makes the oldest line vanish at full opacity: it is not destroyed any more,
-// so its fade is the natural one.
+// The store, an owning type rather than two bare deques: the invariant that matters, retire
+// is the only path out of the live set, is not enforceable by a comment over a container whose
+// clear, erase and pop all still compile. Both live exits (overflow and expiry) route through
+// the same transition, which is also why the seventh message no longer makes the oldest line
+// vanish at full opacity: it is not destroyed any more, so its fade is the natural one.
 class Store {
 public:
     const std::deque<Entry>& live() const { return live_; }
@@ -249,15 +219,15 @@ public:
         while (live_.size() > static_cast<size_t>(kMaxLines)) Retire(via, NowMs());
     }
 
-    // Seed a row DIRECTLY into the retained tier, bypassing live -- the join seed. The
-    // seed arrives oldest-first so in practice every one of them appends at the back.
+    // Seed a row directly into the retained tier, bypassing live: the join seed. The seed arrives
+    // oldest-first, so in practice every one of them appends at the back.
     void Seed(Entry&& e) {
         InsertRetained(std::move(e));
         CapRetained();
     }
 
-    // Expire everything past its (suspended) TTL. Ages are monotone across the deque
-    // -- keys and birth stamps are both assigned in order -- so the front is oldest.
+    // Expire everything past its suspended TTL. Ages are monotone across the deque (keys and birth
+    // stamps are both assigned in order), so the front is the oldest.
     void RetireExpired(uint64_t now) {
         while (!live_.empty() && EffectiveAgeMs(live_.front(), now) >= kTtlMs)
             Retire("expire", now);
@@ -270,8 +240,8 @@ public:
     }
 
 private:
-    // THE ONLY PATH OUT OF THE LIVE SET. A History line moves to the retained tier;
-    // a Transient one is destroyed and noted for the resurrection probe.
+    // The only path out of the live set: a history line moves to the retained tier; a transient
+    // one is destroyed and noted for the resurrection probe.
     void Retire(const char* via, uint64_t now) {
         Entry& f = live_.front();
         const bool keep = (f.keep == Keep::History) && !NoRetain();
@@ -287,18 +257,14 @@ private:
         CapRetained();
     }
 
-    // THE ONE INSERTION DISCIPLINE for the retained tier (2026-07-29). Both entrances --
-    // the join seed and live retirement -- come through here, because a deque built by
-    // two different rules is not ordered by either.
-    //
-    // This used to be a sorted insert in Seed and a plain push_back in Retire. Under the
-    // shipped design every retained row happened to be a wire row, so the two could not
-    // disagree; they disagree the moment a LOCALLY-authored History row retires after a
-    // seed has applied. AnnounceJoinerOnce is exactly that row: it fires at puppet spawn
-    // and RACES the seed, so with g_wireBase still 0 it keys at (0<<32)|n while seeded
-    // rows key at >= 1<<32, and a push_back would append it BEHIND all of them. That
-    // makes chat_feed.h's documented "ascending by key" FALSE, and chat_view's pin
-    // anchor search (`key >= g_anchorKey`) relies on it.
+    // The one insertion discipline for the retained tier: both entrances, the join seed and live
+    // retirement, come through here, because a deque built by two different rules is not ordered
+    // by either. A sorted insert in the seed and a plain append in the retire cannot disagree
+    // while every retained row is a wire row; they disagree the moment a locally authored history
+    // row retires after a seed has applied. The joiner announcement is exactly that row: it fires
+    // at puppet spawn and races the seed, so with the wire base still 0 it keys below every seeded
+    // row, and an append would put it behind all of them, making the documented ascending-by-key
+    // order false, which the view's pin anchor search relies on.
     void InsertRetained(Entry&& e) {
         const uint64_t k = e.key;
         auto at = retained_.end();
@@ -308,9 +274,9 @@ private:
     }
 
     void CapRetained() {
-        // Paging back through history freezes eviction, or the rows you are reading
-        // vanish as new ones arrive. A hard ceiling at 2x still wins: an unbounded
-        // store is not a scroll feature.
+        // Paging back through history freezes eviction, or the rows being read vanish as new ones
+        // arrive. A hard ceiling at twice the cap still wins: an unbounded store is not a scroll
+        // feature.
         const bool frozen = g_retentionFrozen.load(std::memory_order_relaxed);
         const size_t cap = static_cast<size_t>(frozen ? kMaxHeldLines : kMaxRetained);
         while (retained_.size() > cap) {
@@ -331,13 +297,12 @@ private:
 
 Store g_store;
 
-// Published-state bookkeeping (guarded by g_mu, written on the game thread).
+// Published-state bookkeeping, guarded by the mutex, written on the game thread.
 int  g_pubRetained = 0;      // rows currently occupying the snapshot's history prefix
 bool g_pubRevealing = false;
 
-// The previous publish's LIVE alphas, for the ALPHA-JUMP probe. Bounded by the live
-// cap -- the probe never walks the history, whose store alpha is a constant 0 and
-// therefore cannot jump.
+// The previous publish's live alphas, for the alpha-jump probe. Bounded by the live cap: the
+// probe never walks the history, whose store alpha is a constant 0 and cannot jump.
 struct PrevAlpha { uint64_t key; float alpha; };
 PrevAlpha g_prevLive[kMaxLines];
 int       g_prevLiveCount = 0;
@@ -351,12 +316,11 @@ void FillLine(Line& l, const Entry& e, float alpha) {
     l.action   = e.action;
 }
 
-// Rebuild the published snapshot, then store it for the render thread. Game thread.
-//
-// The history prefix is rewritten only when it CHANGED or when the reveal opened or
-// closed; the per-tick work is the <= 6 live rows it always was. A retained row's
-// store alpha is a constant 0 -- there is nothing to recompute -- and publishing 100
-// of them at 60 Hz would be ~28 KB of copying per tick for no new information.
+// Rebuild the published snapshot, then store it for the render thread. Game thread. The
+// history prefix is rewritten only when it changed or when the reveal opened or closed; the
+// per-tick work is the handful of live rows. A retained row's store alpha is a constant 0,
+// nothing to recompute, and publishing a hundred of them at frame rate would be tens of
+// kilobytes of copying per tick for no new information.
 void Republish(uint64_t now) {
     const bool reveal = RevealActiveNow();
     std::lock_guard<std::mutex> lk(g_mu);
@@ -364,14 +328,11 @@ void Republish(uint64_t now) {
     if (reveal != g_pubRevealing || g_store.retainedDirty()) {
         g_pubRetained = 0;
         if (reveal) {
-            // Publish the WHOLE held tier. This used to stop at kMaxRetained while the
-            // store was allowed to hold kMaxRetained * kRetentionFreezeFactor, and the
-            // walk starts at the FRONT (oldest) -- so a reader paged back past the base
-            // ceiling had the rows that arrived DURING the freeze, the newest ones,
-            // silently outside the published window. The array is now sized to the same
-            // derived ceiling, so the bound below can never truncate; it is a guard, not
-            // a policy, and the live rows below always fit because
-            // kMaxSnapshotLines == kMaxLines + kMaxHeldLines.
+            // Publish the whole held tier. The array is sized to the same derived ceiling as the
+            // store, so the bound below can never truncate; it is a guard, not a policy, and the
+            // live rows below always fit, since the snapshot size is the live cap plus the held
+            // cap. A walk that stopped at the base cap while the store held more left a reader
+            // paged back past it with the newest rows silently outside the published window.
             for (const Entry& e : g_store.retained()) {
                 if (g_pubRetained >= kMaxHeldLines) break;
                 FillLine(g_pub.lines[g_pubRetained++], e, 0.f);
@@ -390,10 +351,10 @@ void Republish(uint64_t now) {
         const uint64_t wallAge = (now > e.bornMs) ? (now - e.bornMs) : 0;
         const float a = ComposeAlpha(wallAge, age);
         FillLine(g_pub.lines[n], e, a);
-        // The SAME entry rising in alpha while it sits in its fade-out TAIL is
-        // impossible by this store's math (the only legitimate rise is the arrival
-        // ramp, excluded by the tail gate). If it ever logs, the mechanism is inside
-        // this file after all -- and the log carries the numbers to prove where.
+        // The same entry rising in alpha while it sits in its fade-out tail is impossible by this
+        // store's math (the only legitimate rise is the arrival ramp, excluded by the tail gate).
+        // If it ever logs, the mechanism is inside this file after all, and the log carries the
+        // numbers.
         if (age > kTtlMs - kFadeMs) {
             for (int p = 0; p < g_prevLiveCount; ++p) {
                 if (g_prevLive[p].key == e.key && g_prevLive[p].alpha < 0.5f &&
@@ -419,12 +380,10 @@ void Republish(uint64_t now) {
 
 }  // namespace
 
-// UTF-8-encode a wide string. RULE 2, 2026-07-28: the body is GONE -- this is a
-// two-line forward to coop::text::ToUtf8, the one owner. The hand-rolled copy
-// that lived here had quietly DIVERGED from it: it emitted a 3-byte CESU-8
-// sequence for an unpaired surrogate where the codec drops it, so ill-formed
-// UTF-8 could reach the chat wire. The kept name is the only thing worth
-// keeping (chat_feed.h exports it and peer_action_feed calls it).
+// UTF-8-encode a wide string: a forward to the text module's encoder, the one owner. A
+// hand-rolled copy here had diverged from it (a three-byte sequence for an unpaired surrogate
+// where the codec drops it), so ill-formed UTF-8 could reach the chat wire. The name is kept
+// because the header exports it and the peer-action feed calls it.
 std::string ToUtf8(const std::wstring& w) { return coop::text::ToUtf8(w); }
 
 void Push(const std::wstring& line, Keep keep) {
@@ -452,8 +411,8 @@ void PushWireChat(const std::string& utf8Line, uint8_t nickByteLen, uint32_t nic
     e.nickLen  = (nickByteLen <= e.text.size()) ? nickByteLen : 0;
     e.nickArgb = nickArgb;
     e.keep     = Keep::History;
-    // The base advances for BOTH tiers: a seeded row is still the newest thing this
-    // peer knows was said, so a local notice pushed after the seed must sort after it.
+    // The base advances for both tiers: a seeded row is still the newest thing this peer knows was
+    // said, so a local notice pushed after the seed must sort after it.
     if (lineSeq > g_wireBase) g_wireBase = lineSeq;
     if (seeded) {
         g_store.Seed(std::move(e));
@@ -491,8 +450,8 @@ void Tick() {
     const uint64_t now = NowMs();
     AdvanceSuspension(now);
 
-    // Promote any delayed lines whose time has come (born NOW, so their TTL and fade
-    // start here -- and so their key sorts after everything already published).
+    // Promote any delayed lines whose time has come, born now, so their TTL and fade start here
+    // and their key sorts after everything already published.
     for (auto it = g_pending.begin(); it != g_pending.end();) {
         if (now >= it->dueMs) {
             Entry e;
@@ -510,8 +469,8 @@ void Tick() {
 
     g_store.RetireExpired(now);
 
-    // Cheap idle path: nothing live, no history to (un)publish, reveal state
-    // unchanged -> the published snapshot is already correct.
+    // The cheap idle path: nothing live, no history to publish or unpublish, the reveal state
+    // unchanged, so the published snapshot is already correct.
     if (g_store.live().empty() && RevealActiveNow() == g_pubRevealing &&
         !g_store.retainedDirty())
         return;
