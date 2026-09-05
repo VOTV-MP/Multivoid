@@ -65,14 +65,14 @@ def git(args, cwd):
 
 
 def tracked(repo):
+    """-> (files, submodule paths). A link into a submodule is live: its content is public too."""
     out = git(["ls-files", "-s"], repo)
-    files = []
+    files, subs = [], []
     for line in out.splitlines():
         mode, rest = line.split(" ", 1)
-        if mode == "160000":
-            continue
-        files.append(rest.split("\t", 1)[1])
-    return files
+        path = rest.split("\t", 1)[1]
+        (subs if mode == "160000" else files).append(path)
+    return files, subs
 
 
 def read(repo, path):
@@ -131,7 +131,7 @@ def comment_lines(text):
 
 def measure(repo):
     """-> (counters dict, contributors dict: counter -> Counter(path -> hits))."""
-    files = tracked(repo)
+    files, subs = tracked(repo)
     tracked_set = set(files)
     c = collections.OrderedDict()
     who = collections.defaultdict(collections.Counter)
@@ -163,7 +163,8 @@ def measure(repo):
                 if re.match(r"^[a-z]+:", target) or target.startswith("/"):
                     continue
                 rel = os.path.normpath(os.path.join(base, target)).replace("\\", "/")
-                if rel in tracked_set or any(t.startswith(rel + "/") for t in tracked_set):
+                if rel in tracked_set or any(t.startswith(rel + "/") for t in tracked_set) \
+                        or any(rel == s or rel.startswith(s + "/") or s.startswith(rel + "/") for s in subs):
                     continue
                 c["md.dead_links"] += 1
                 who["md.dead_links"][p] += 1
