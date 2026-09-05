@@ -311,12 +311,6 @@ void DumpAnimState(const wchar_t* label, void* skeletalMeshComponent) {
             pawn, ctrl, movement, kerfur, useLegIK, isFace, lookingAtPlayer);
 }
 
-// The puppet SPAWN path (GetSpawnMeshOffsetZ + the static SpawnPuppetMainPlayer orphan
-// spawn/neuter/rig procedure + the public SpawnPuppet wrapper) was EXTRACTED to
-// puppet_spawn.cpp 2026-07-19 (s28 modular cut; declarations stay in puppet.h). The offset
-// templates it shares with this TU moved to puppet_internal.h; g_meshComp + LiveAnimInstance
-// are DEFINED here (named scope above) and extern-declared there.
-
 void DriveHeadLookAtWorld(void* puppetActor, const FVector& worldTarget) {
     void* comp = GetSkeletalMeshComponent(puppetActor);
     // The actor slot can still pass IsLive for a tick while its child component is

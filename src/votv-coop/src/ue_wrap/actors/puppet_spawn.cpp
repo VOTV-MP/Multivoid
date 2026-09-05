@@ -1,16 +1,8 @@
-// ue_wrap/actors/puppet_spawn.cpp -- the puppet SPAWN path: the mainPlayer_C orphan spawn +
-// neuter/rig procedure, its public SpawnPuppet wrapper, and the spawn-time head-look
-// state-gate hook whose only install site is this path.
-//
-// EXTRACTED from puppet.cpp 2026-07-19 (s28 modular cut; the TU was 972 LOC, past the 800
-// soft cap). Bodies verbatim: the head-gate block (HeadGateBUAPost + InstallHeadGateHook)
-// moved WHOLE with its sole caller (SpawnPuppetMainPlayer's install site) and stays anon;
-// SpawnPuppetMainPlayer keeps its `static` (internal linkage). Public declarations
-// (SpawnPuppet / GetSpawnMeshOffsetZ) stay in puppet.h. Shared file-privates
-// (ReadPtr/ReadAt/WriteAt templates, g_meshComp cache, LiveAnimInstance) come from the
-// impl-private puppet_internal.h.
-//
-// Game-thread only (SpawnActor / component rig-up).
+// ue_wrap/actors/puppet_spawn.cpp -- the puppet spawn path: the inert mainPlayer_C spawn, its
+// neuter and rig procedure, the public SpawnPuppet wrapper, and the spawn-time head-look
+// state-gate hook whose only install site is this path. The shared file-privates (the raw
+// read/write templates, the mesh-component cache, LiveAnimInstance) come from
+// puppet_internal.h. Game thread only.
 
 #include "ue_wrap/actors/puppet.h"
 #include "puppet_internal.h"  // ReadPtr/ReadAt/WriteAt + g_meshComp + LiveAnimInstance
@@ -112,15 +104,6 @@ void InstallHeadGateHook(void* animClass) {
 }
 
 }  // namespace
-
-// Audit H9 (2026-05-27): GetSpawnMeshOffsetZ kept as a stub returning 0
-// because all callers reference it. The legacy SkelMesh code path -- which
-// was the only branch that returned non-zero -- is gone. `localPlayer` is
-// unused now but kept in the signature for ABI stability across the
-// remote_player ↔ puppet boundary.
-float GetSpawnMeshOffsetZ(void* /*localPlayer*/) {
-    return 0.f;
-}
 
 // New path: spawn mainPlayer_C orphan. The class's built-in mesh_playerVisible
 // carries the player body skin + IK leg bones + the AnimBP all pre-wired by

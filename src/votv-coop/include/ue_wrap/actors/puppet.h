@@ -66,11 +66,6 @@ void* GetComponentSkeletalMeshAsset(void* skinnedComponent);
 // for diagnosis.
 void* SpawnPuppet(const FVector& loc, void* skeletalMeshAsset, void* animClass);
 
-// Always returns 0.f after H9 retired the SkelMesh path. Kept as a stable
-// hook in case a future puppet kind requires a non-zero spawn offset; the
-// `localPlayer` arg is unused now but preserved for that contingency.
-float GetSpawnMeshOffsetZ(void* localPlayer);
-
 // The puppet's USkeletalMeshComponent (first SkeletalMeshComponent child),
 // cached per actor. nullptr if none.
 void* GetSkeletalMeshComponent(void* puppetActor);
