@@ -346,8 +346,8 @@ float ClearDamageIndicator(float* outBefore = nullptr) {
 }
 
 // Expire the death's blood-loss effect. Add Player Damage also adds the bloodLoss effect, which
-// spawns an effect_bloodLoss_C actor (a PostProcessComponent and a ui_bloodLossBlur_C widget:
-// the red wash over the world, independent of the damage indicator) tracked in
+// spawns an effect_bloodLoss_C actor (it creates the ui_bloodLossBlur_C widget, the red wash
+// over the world, independent of the damage indicator) tracked in
 // gamemode.effects. Any lethal hit pins its duration at the 120 s cap at full strength, so
 // every death leaves two minutes of red on a player restored to full health. The actor's own
 // destroy verb is not called: time is set to 0 and the effect's own tick runs its natural
@@ -361,7 +361,7 @@ float ExpireBloodLoss(float* outWorstTime = nullptr) {
     if (sOffTime < 0) return -1.f;
     // Returns the live actor count, not the time: a version that returned the worst time seen
     // before zeroing read back its own write on the next call and declared the cleanup complete
-    // while the actor, its post-process and its blur widget could still stand. The actor's own tick
+    // while the actor and its blur widget could still stand. The actor's own tick
     // destroys it (its ReceiveDestroyed removes the blur widget), so only its absence answers.
     int live = 0;
     float worstTime = 0.f;
