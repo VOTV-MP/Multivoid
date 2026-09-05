@@ -1,12 +1,8 @@
-// coop/event_dispatch_state.cpp -- the keyed device-state reliable-kind case
-// bodies (the KeyedToggle family, KeypadState, PowerControlState, AtvState,
-// DroneState, WindowCleanState, GrimeState, TrashPileState, KerfurConvert,
-// DeviceClaim/Sleep/email/inventory/voice), extracted VERBATIM from
-// event_feed.cpp's Update switch (2026-06-11 modularity extraction; see
-// coop/event_dispatch.h). The CLIENT->HOST intent/request cases moved to
-// event_dispatch_intent.cpp (2026-07-10 soft-cap extraction); the
-// signal-pipeline cases moved to event_dispatch_signal.cpp (2026-07-18
-// soft-cap extraction).
+// coop/dispatch/event_dispatch_state.cpp -- the keyed device-state reliable-kind case bodies:
+// the keyed toggle family, the keypad, the power panel, the ATV, the drone, the window and
+// grime scalars, the trash pile counters, the kerfur convert, the device claim, sleep, email,
+// inventory and voice. The client-to-host intent cases live in event_dispatch_intent.cpp and
+// the signal-pipeline cases in event_dispatch_signal.cpp; see coop/dispatch/event_dispatch.h.
 
 #include "event_dispatch.h"  // co-located private header (src tree, not include/)
 
@@ -14,7 +10,7 @@
 #include "coop/player/sleep_sync.h"
 #include "coop/interactables/device_occupancy.h"
 #include "coop/world/email_sync.h"
-#include "coop/items/player_inventory_sync.h"  // v73 inventory blob receiver
+#include "coop/items/player_inventory_sync.h"  // the inventory blob receiver
 #include "coop/voice/voice_chat.h"
 #include "coop/interactables/drone_sync.h"
 #include "coop/interactables/grime_sync.h"
@@ -22,7 +18,7 @@
 #include "coop/creatures/kerfur_convert_client.h"
 #include "coop/interactables/keypad_sync.h"
 #include "coop/interactables/power_sync.h"
-#include "coop/props/container_contents_sync.h"  // v124 (R11): the GObjStack slice lane
+#include "coop/props/container_contents_sync.h"  // the container stack slice lane
 #include "coop/props/trash_pile_sync.h"
 #include "coop/interactables/turbine_sync.h"
 #include "coop/interactables/window_sync.h"
@@ -43,28 +39,25 @@ bool HandleStateEvent(net::Session& session,
     case net::ReliableKind::ContainerState:
     case net::ReliableKind::GarageDoorState:
     case net::ReliableKind::ApplianceState:
-    case net::ReliableKind::LightGroupState:    // v150: the light GROUP's isActive (host-authored)
-    case net::ReliableKind::LockerDoorState: {  // v62: lockers + drone-console doors (same KeyedToggle shape)
-        // LightGroupState is the one HOST-AUTHORED kind in this otherwise symmetric family, so
-        // it does not get the family's "any peer may send" treatment: a client that authored it
-        // would drive the host's AND every other client's lights, which is precisely the
-        // pollution the adapter chose HostAuth to prevent. Channel::OnReliable performs no role
-        // or sender check of its own, so the drop has to be here, at the family boundary.
-        // (Refused on the receiving CLIENT too, not only on the host -- the host relays nothing
-        // on this kind, so a packet arriving from a non-host slot is not ours either way.)
+    case net::ReliableKind::LightGroupState:    // the light group's active flag, host-authored
+    case net::ReliableKind::LockerDoorState: {  // lockers and the drone-console doors, the same shape
+        // LightGroupState is the one host-authored kind in this otherwise symmetric family, so it
+        // does not get the family's any-peer-may-send treatment: a client that authored it would
+        // drive the host's and every other client's lights, the pollution host authority prevents.
+        // The channel's receive performs no role or sender check of its own, so the drop is here,
+        // at the family boundary; refused on a receiving client too, since the host relays nothing
+        // on this kind, so a packet from a non-host slot is not ours either way.
         if (msg.kind == net::ReliableKind::LightGroupState && msg.senderPeerSlot != 0) {
             UE_LOGW("event_feed: LightGroupState from slot %d refused -- this kind is host-authored",
                     msg.senderPeerSlot);
             return true;  // claimed by this family, deliberately not applied
         }
-        // Phase 5D (v27): a peer toggled a keyed interactable (base door /
-        // light group / container lid / garage / appliance). SYMMETRIC -- any peer
-        // can send; the host relays a client-originated edge to the other clients
-        // (IsClientRelayableReliableKind) before this drain runs.
-        // interactable_sync routes by kind to the right channel, resolves the
-        // instance by Key, + idempotently applies on the GT (echo-suppressed).
-        // (KeypadState is NOT here -- it carries a richer payload, its own case below.)
-        // RE: research/findings/computers-devices/votv-doors-and-lightswitches-RE-2026-05-25.md.
+        // A peer toggled a keyed interactable (a base door, a light group, a container lid, a
+        // garage, an appliance). Symmetric: any peer can send, and the host relays a
+        // client-originated edge to the other clients before this drain runs. interactable_sync
+        // routes by kind to the right channel, resolves the instance by key and applies
+        // idempotently on the game thread, echo-suppressed. The keypad is not here; it carries a
+        // richer payload.
         if (msg.payloadLen < sizeof(net::KeyedTogglePayload)) {
             UE_LOGW("event_feed: %d payload too short (%zu < %zu)",
                     static_cast<int>(msg.kind),
@@ -73,7 +66,7 @@ bool HandleStateEvent(net::Session& session,
         }
         net::KeyedTogglePayload p{};
         std::memcpy(&p, msg.payload, sizeof(p));
-        // Trust-boundary: action is a uint8 but only 0/1 are meaningful.
+        // The trust boundary: the action is a byte, but only 0 and 1 are meaningful.
         if (p.action != 0 && p.action != 1) {
             UE_LOGW("event_feed: keyed-toggle action=%u out of range -- dropping",
                     static_cast<unsigned>(p.action));
@@ -87,13 +80,11 @@ bool HandleStateEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::KeypadState: {
-        // v35 (2026-06-06): password-keypad INPUT mirror (ApasswordLock_C). SYMMETRIC -- any
-        // peer polls inPassword + broadcasts on a buffer change; the host relays a client
-        // edge (IsClientRelayableReliableKind). The receiver replays inputNumber for the
-        // digit delta, which drives the keypad's own native validator (so the host accepts a
-        // client's code itself -- MTA input-replication); a v59 Accept/Deny event runs the
-        // native Open(Active) chain (the short-code submit mirror). No isAcc/isDeny (hover
-        // flags, the old PURPLE -- removed v35). RE: votv-keypad-door-BP-disassembly-2026-06-06.md.
+        // The password-keypad input mirror. Symmetric: any peer polls the entered digits and
+        // broadcasts on a buffer change, and the host relays a client edge. The receiver replays
+        // the digit input for the delta, which drives the keypad's own native validator (so the
+        // host accepts a client's code itself, input replication), and an accept or deny event runs
+        // the native open chain, the short-code submit mirror.
         if (msg.payloadLen < sizeof(net::KeypadSyncPayload)) {
             UE_LOGW("event_feed: KeypadState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::KeypadSyncPayload));
@@ -109,12 +100,11 @@ bool HandleStateEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::PowerControlState: {
-        // v46 (2026-06-08): base POWER PANEL breakers (ApowerControl_C). SYMMETRIC -- any peer
-        // polls its panels' 5 press bools + broadcasts on a change; the host relays a client
-        // edge (IsClientRelayableReliableKind). The receiver writes the bools + refreshes the
-        // panel's own visual (the base power EFFECTS sync via their own door/light/server
-        // channels). 5 bools per actor -> its own coop/power_sync module (doesn't fit the
-        // 1-bool toggle Channel). RE: votv-powerControl-panel-sync-RE-2026-06-08.md.
+        // The base power-panel breakers. Symmetric: any peer polls its panels' press bools and
+        // broadcasts on a change, and the host relays a client edge. The receiver writes the bools
+        // and refreshes the panel's own visual; the base power effects sync through their own door,
+        // light and server channels. Five bools per actor, so its own module rather than the
+        // one-bool toggle channel.
         if (msg.payloadLen < sizeof(net::PowerPanelPayload)) {
             UE_LOGW("event_feed: PowerControlState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::PowerPanelPayload));
@@ -130,11 +120,10 @@ bool HandleStateEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::AtvState: {
-        // v47 (2026-06-08): ATV body pose (AATV_C). OCCUPANT-authoritative -- the seated driver
-        // streams; the host relays a client driver's pose to the other clients
-        // (IsClientRelayableReliableKind). Trust-the-edge (any peer may legitimately send the
-        // ATV it drives); atv_sync gates the APPLY (ignores a pose for an ATV this peer is
-        // itself driving). RE: votv-ATV-quadbike-RE-and-coop-sync-design-2026-06-08.md.
+        // The ATV body pose. Occupant-authoritative: the seated driver streams, and the host relays
+        // a client driver's pose to the other clients. Trust the edge (any peer may legitimately
+        // send the ATV it drives); atv_sync gates the apply and ignores a pose for an ATV this peer
+        // is itself driving.
         if (msg.payloadLen < sizeof(net::AtvStatePayload)) {
             UE_LOGW("event_feed: AtvState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::AtvStatePayload));
@@ -142,9 +131,9 @@ bool HandleStateEvent(net::Session& session,
         }
         net::AtvStatePayload ap{};
         std::memcpy(&ap, msg.payload, sizeof(ap));
-        // v146: the velocity joins the pose in this guard. It reaches
-        // SetActorRootPhysicsVelocity on a body that is now genuinely simulating, so a non-finite
-        // component would not merely misplace a kinematic mirror -- it would poison PhysX.
+        // The velocity joins the pose in this guard: it reaches a physics velocity write on a body
+        // that is genuinely simulating, so a non-finite component would not merely misplace a
+        // kinematic mirror, it would poison the physics.
         if (!std::isfinite(ap.x) || !std::isfinite(ap.y) || !std::isfinite(ap.z) ||
             !std::isfinite(ap.pitch) || !std::isfinite(ap.yaw) || !std::isfinite(ap.roll) ||
             !std::isfinite(ap.linVelX) || !std::isfinite(ap.linVelY) || !std::isfinite(ap.linVelZ) ||
@@ -160,12 +149,11 @@ bool HandleStateEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::AtvRelease: {
-        // v76 (2026-06-15) / v146: the authority-lost edge -- "the sender no longer authors this
-        // ATV". It carries the key and nothing else now; the receiver clears the seat and the
-        // author (atv_sync ignores it if this peer is itself the author). The finite-velocity
-        // guard that used to live here went with the six velocity floats: there is no un-freeze to
-        // hand a launch velocity to. Host relays a client's release to the other clients
-        // (IsClientRelayableReliableKind), same as AtvState.
+        // The authority-lost edge: the sender no longer authors this ATV. It carries the key and
+        // nothing else; the receiver clears the seat and the author (atv_sync ignores it if this
+        // peer is itself the author). There is no velocity to validate, since there is no un-freeze
+        // to hand a launch velocity to. The host relays a client's release to the other clients,
+        // like the pose.
         if (msg.payloadLen < sizeof(net::AtvReleasePayload)) {
             UE_LOGW("event_feed: AtvRelease payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::AtvReleasePayload));
@@ -181,9 +169,9 @@ bool HandleStateEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::AtvSpawn: {
-        // v77: HOST->client runtime-ATV announce. The client fresh-spawns a native AATV_C it has
-        // no save-twin of (spawned at runtime from list_props row 'atv' -- NOT purchased; nothing
-        // sells an ATV, docs/vehicles/ATV.md 11.4). HOST-AUTHORITATIVE -- trust only slot 0.
+        // The host-to-client runtime-ATV announce: the client fresh-spawns a native ATV it has no
+        // save twin of (spawned at runtime from the props table; nothing sells an ATV).
+        // Host-authoritative, slot 0 only.
         if (msg.senderPeerSlot != 0) {
             UE_LOGW("event_feed: AtvSpawn from non-host senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
             break;
@@ -199,7 +187,7 @@ bool HandleStateEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::AtvDestroy: {
-        // v77: HOST->client runtime-ATV teardown. HOST-AUTHORITATIVE -- trust only slot 0.
+        // The host-to-client runtime-ATV teardown. Host-authoritative, slot 0 only.
         if (msg.senderPeerSlot != 0) {
             UE_LOGW("event_feed: AtvDestroy from non-host senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
             break;
@@ -215,10 +203,9 @@ bool HandleStateEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::DroneState: {
-        // v48 (2026-06-08): delivery drone body pose (Adrone_C). HOST-AUTHORITATIVE singleton --
-        // HOST->client only; trust-gated to slot 0 (like SkyState/TimeSync). The client
-        // suppresses its own drone ReceiveTick + mirrors the streamed transform. RE:
-        // votv-delivery-drone-RE-and-coop-sync-design-2026-06-03.md.
+        // The delivery drone body pose, a host-authoritative singleton: host to client only,
+        // trust-gated to slot 0. The client suppresses its own drone tick and mirrors the streamed
+        // transform.
         if (msg.senderPeerSlot != 0) {
             UE_LOGW("event_feed: DroneState from non-host senderPeerSlot=%d -- dropping", msg.senderPeerSlot);
             break;
@@ -238,13 +225,11 @@ bool HandleStateEvent(net::Session& session,
         coop::drone_sync::OnReliable(dp);
         break;
     }
-    // (OrderRequest: moved to the INTENT family, event_dispatch_intent.cpp, 2026-07-10.)
     case net::ReliableKind::WindowCleanState: {
-        // v41 (2026-06-08): base-window DIRT scalar (AbaseWindow_C::clean). SYMMETRIC
-        // cooperative-clean -- any peer polls its windows + broadcasts a wipe (a decrease);
-        // the host relays a client edge (IsClientRelayableReliableKind). The receiver applies
-        // MIN(local, clean) (adopt==0) so a wire update only ever cleans, or VERBATIM (adopt==1,
-        // host connect-snapshot only). RE: votv-dirt-window-cleaning-RE-...-2026-06-07a.md.
+        // The base-window dirt scalar. Symmetric cooperative cleaning: any peer polls its windows
+        // and broadcasts a wipe (a decrease), and the host relays a client edge. The receiver
+        // applies the minimum of local and wire (a live edge only ever cleans), or the value as
+        // sent on the host's connect snapshot.
         if (msg.payloadLen < sizeof(net::KeyedScalarPayload)) {
             UE_LOGW("event_feed: WindowCleanState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::KeyedScalarPayload));
@@ -252,10 +237,9 @@ bool HandleStateEvent(net::Session& session,
         }
         net::KeyedScalarPayload wp{};
         std::memcpy(&wp, msg.payload, sizeof(wp));
-        // Trust-boundary: value drives SetCustomPrimitiveDataFloat (a shader uniform) -- a
-        // NaN/Inf there is undefined visual output and can trip a device-removed crash on some
-        // GPUs. clean is FMax'd to >= 0 by the engine, so a negative value is also garbage.
-        // (Same isfinite guard every other float payload in this file carries.)
+        // The value drives a custom primitive data float, a shader uniform: a NaN or infinity there
+        // is undefined visual output and can trip a device-removed crash on some GPUs, and the
+        // engine floors the clean value at 0, so a negative value is garbage too.
         if (!std::isfinite(wp.value) || wp.value < 0.0f) {
             UE_LOGW("event_feed: WindowCleanState value=%.3f invalid -- dropping", wp.value);
             break;
@@ -273,10 +257,10 @@ bool HandleStateEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::GrimeState: {
-        // v42 (2026-06-08): surface grime dirt scalar -- SYMMETRIC cooperative-clean keyed by a
-        // quantized world-position (Agrime_C is a static decal); the host relays a client edge.
-        // The receiver applies MIN(local, process) + repaints. (Decal DESTROY is deferred -- see
-        // grime_sync.h: grime streams in/out, so a vanished decal is NOT a reliable destroy signal.)
+        // The surface grime scalar. Symmetric cooperative cleaning keyed by a quantised world
+        // position (a grime decal is static); the host relays a client edge. The receiver applies
+        // the minimum and repaints. A decal destroy is deferred (see grime_sync.h): grime streams
+        // in and out, so a vanished decal is not a reliable destroy signal.
         if (msg.payloadLen < sizeof(net::KeyedScalarPayload)) {
             UE_LOGW("event_feed: GrimeState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::KeyedScalarPayload));
@@ -284,7 +268,8 @@ bool HandleStateEvent(net::Session& session,
         }
         net::KeyedScalarPayload gp{};
         std::memcpy(&gp, msg.payload, sizeof(gp));
-        // value drives applyMaterial's shader param -- guard NaN/negative like the window.
+        // The value drives the material's shader parameter; guard NaN and negatives like the
+        // window.
         if (!std::isfinite(gp.value) || gp.value < 0.0f) {
             UE_LOGW("event_feed: GrimeState value=%.3f invalid -- dropping", gp.value);
             break;
@@ -302,9 +287,9 @@ bool HandleStateEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::TrashPileState: {
-        // v57 (2026-06-10): trashBitsPile collect counters -- SYMMETRIC, keyed by the pile's
-        // save Key; host relays a client's collect. Receiver applies per-component MIN for a
-        // live edge / VERBATIM for the host adopt snapshot (trust-gated in OnReliable).
+        // The trash pile collect counters. Symmetric, keyed by the pile's save key; the host relays
+        // a client's collect. The receiver applies a per-component minimum for a live edge, or the
+        // values as sent for the host's adopt snapshot, trust-gated inside.
         if (msg.payloadLen < sizeof(net::TrashPileStatePayload)) {
             UE_LOGW("event_feed: TrashPileState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::TrashPileStatePayload));
@@ -330,10 +315,9 @@ bool HandleStateEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::TurbineState: {
-        // v61 (2026-06-11): wind-turbine driver floats. HOST-authoritative ~1 Hz;
-        // trust-gated to slot 0 like DroneState (a client never legitimately sends
-        // it, and it is not in the relay whitelist). Finite-validation + the
-        // client-only apply live in turbine_sync::OnReliable.
+        // The wind-turbine driver floats. Host-authoritative at about 1 Hz, trust-gated to slot 0
+        // like the drone (a client never legitimately sends it, and it is not relayed). The finite
+        // validation and the client-only apply live in the module.
         if (msg.senderPeerSlot != 0) {
             UE_LOGW("event_feed: TurbineState from non-host senderPeerSlot=%d -- dropping",
                     msg.senderPeerSlot);
@@ -350,11 +334,10 @@ bool HandleStateEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::DeviceClaim: {
-        // v63 (2026-06-12): enterable-device occupancy claim/release. BOTH
-        // directions on one kind: client->host request (arbitrated against
-        // the host claim table, trust = the TRANSPORT sender slot) and
-        // host->all verdict broadcast (clients trust-gate to slot 0 inside
-        // OnReliable). Not client-relayed.
+        // The enterable-device occupancy claim and release, both directions on one kind: a
+        // client-to-host request (arbitrated against the host claim table, trusting the transport
+        // sender slot) and a host-to-all verdict (clients trust-gate to slot 0 inside). Not
+        // client-relayed.
         if (msg.payloadLen < sizeof(net::DeviceClaimPayload)) {
             UE_LOGW("event_feed: DeviceClaim payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::DeviceClaimPayload));
@@ -369,14 +352,11 @@ bool HandleStateEvent(net::Session& session,
         coop::device_occupancy::OnReliable(dcp, senderSlot);
         break;
     }
-    // (SkySignalState / SkySignalCatch / LaptopState / DishArm / DishSnapshot /
-    // DishCalib / ReelSlot / TaskNewState / DeskLogLine / DeskState / DeskInput /
-    // DeskScanEvent / DeskSndFx / DishAimState / SavedSignalAppend /
-    // SavedSignalDelete / CompState / CompData: moved to the SIGNAL family,
-    // event_dispatch_signal.cpp, 2026-07-18.)
+    // The signal-pipeline kinds (the sky signals, the desk, the dish, the laptop, the saved
+    // signals, the refiner) are in event_dispatch_signal.cpp.
     case net::ReliableKind::SleepState: {
-        // v71: the sleep gate. Report (peer->host) / Tally / Accelerate / End
-        // (host->all); the role + slot trust gates live in OnReliable.
+        // The sleep gate: a peer's report to the host, and the host's tally, accelerate and end to
+        // all; the role and slot trust gates live in the module.
         if (msg.payloadLen < sizeof(net::SleepStatePayload)) {
             UE_LOGW("event_feed: SleepState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::SleepStatePayload));
@@ -392,19 +372,16 @@ bool HandleStateEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::EmailAppend: {
-        // HOST-AUTHORED since e5718fc6 (email_sync gates the append send on
-        // role()==Host; clients author zero). Assembly + echo-proof shadow
-        // registration live in email_sync::OnReliable.
+        // Host-authored: the append send is gated on the host role, and clients author none.
+        // Assembly and the echo-proof shadow registration live in the module.
         if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
             UE_LOGW("event_feed: EmailAppend payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::BlobChunkPayload));
             break;
         }
-        // Authority-boundary drop (2026-07-10 audit MEDIUM, the serverbox parity
-        // shape): a client EmailAppend reaching the HOST is a protocol violation
-        // post-e5718fc6 -- drop it so one client-side regression can't re-pollute
-        // the shared inbox (also removed from the relay whitelist,
-        // session_lanes.h).
+        // The authority-boundary drop: a client append reaching the host is a protocol violation,
+        // dropped so one client-side regression cannot re-pollute the shared inbox; the kind is not
+        // relayed either.
         if (session.role() == net::Role::Host && msg.senderPeerSlot != 0) {
             UE_LOGW("event_feed: EmailAppend from client slot=%d on the HOST "
                     "(emails are host-authored) -- dropping", msg.senderPeerSlot);
@@ -420,8 +397,8 @@ bool HandleStateEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::PlayerInventoryBlob: {
-        // v73: a CLIENT streams its serialized inventory to the host (chunked). Assembly +
-        // persistence (coop_players/<guid>.json, magic+FNV+.bak, rate-limited) live in the
+        // A client streams its serialised inventory to the host, chunked. Assembly and persistence
+        // (the per-guid file, with a magic, a checksum and a backup, rate-limited) live in the
         // module. Host-terminal; never relayed.
         if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
             UE_LOGW("event_feed: PlayerInventoryBlob payload too short (%zu < %zu)",
@@ -438,13 +415,12 @@ bool HandleStateEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::ContainerContents: {
-        // v125 (take-4 R11/R11b): a world container's GObjStack slice. BIDIRECTIONAL since v125 --
-        // the peer whose 0x45 addObject/takeObj verb fired authors it, and the HOST arbitrates
-        // (baseHash compare-and-swap) before applying and relaying to the others excluding the
-        // author. So the senderSlot rule is ASYMMETRIC and the module owns it: a client accepts
-        // slot 0 only, the host accepts slot != 0 only. Do NOT read this as "host-authored" -- that
-        // was v124, and the client's every extraction was silently dropped under it (the R11b dupe).
-        // The module also owns the world-vs-PERSONAL boundary. See container_contents_sync.h.
+        // A world container's stack slice, bidirectional: the peer whose add or take verb fired
+        // authors it, and the host arbitrates (a base-hash compare-and-swap) before applying and
+        // relaying to the others, the author excluded. So the sender-slot rule is asymmetric and
+        // the module owns it: a client accepts slot 0 only, the host accepts a non-zero slot only.
+        // Not host-authored: under that rule a client's every extraction was silently dropped. The
+        // module also owns the world-versus-personal boundary; see container_contents_sync.h.
         if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
             UE_LOGW("event_feed: ContainerContents payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::BlobChunkPayload));
@@ -460,7 +436,7 @@ bool HandleStateEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::EmailDelete: {
-        // v65: content-keyed email delete (player-symmetric, host-relayed).
+        // The content-keyed email delete, player-symmetric and host-relayed.
         if (msg.payloadLen < sizeof(net::ContentHashPayload)) {
             UE_LOGW("event_feed: EmailDelete payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::ContentHashPayload));
@@ -476,7 +452,7 @@ bool HandleStateEvent(net::Session& session,
         break;
     }
     case net::ReliableKind::VoiceState: {
-        // v66: voice mute/disabled display state (player-symmetric, host-relayed).
+        // The voice mute and disabled display state, player-symmetric and host-relayed.
         if (msg.payloadLen < sizeof(net::VoiceStatePayload)) {
             UE_LOGW("event_feed: VoiceState payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::VoiceStatePayload));
@@ -491,13 +467,12 @@ bool HandleStateEvent(net::Session& session,
         coop::voice_chat::OnVoiceState(vp, slot);
         break;
     }
-    // (DoorOpenRequest / KerfurConvertRequest / KerfurCommand / GrabIntent / ThrowIntent /
-    // PileResyncRequest / PropDropIntent: moved to the INTENT family, event_dispatch_intent.cpp.)
+    // The client-to-host requests (the door open, the kerfur convert and command, the grab and
+    // throw intents, the pile resync, the prop drop) are in event_dispatch_intent.cpp.
     case net::ReliableKind::KerfurConvert: {
-        // v78: HOST->ALL kerfur form-transition broadcast -- the SOLE conversion-transition signal
-        // (kerfur redesign 10.3). CLIENT-only apply: the host converged its OWN conversion inline via
-        // the silent host element ops, so it never applies its own broadcast. Host-authoritative:
-        // accept only from slot 0 (the host).
+        // The host-to-all kerfur form-transition broadcast, the sole conversion-transition signal.
+        // Client-only apply: the host converged its own conversion inline through the silent
+        // element ops, so it never applies its own broadcast. Host-authoritative: slot 0 only.
         if (session.role() != net::Role::Client) {
             break;
         }
