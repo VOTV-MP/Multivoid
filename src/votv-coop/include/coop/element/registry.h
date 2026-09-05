@@ -1,25 +1,11 @@
-// coop/element/registry.h -- the unified ElementId allocator + O(1) resolver.
-//
-// Adapted from `reference/mtasa-blue/Client/mods/deathmatch/logic/CElementArray.{h,cpp}`
-// (the client-side half) and `Server/.../CElementIDs.{h,cpp}` (the server-side
-// half) (MIT). Single-class instead of MTA's split: we have one address space
-// shared across host + clients, partitioned by range -- the role determines
-// which range a peer may allocate from.
-//
-// Two-range partition (`element.h:kHostRangeSize`):
-//   host range  [0, 32768)     -- host-only allocation. Analog of MTA server range.
-//   peer range  [32768, 65536) -- client-local allocation. Analog of MTA client range.
-//
-// IDs are O(1) -> Element* via a fixed-size array. Allocation pops from a per-
-// range free stack (LIFO) for cache-friendliness. Deletion immediately frees
-// the id; subsequent allocations on the same side may reuse it. The Element's
-// `m_syncContext` byte (bumped on each sync-relevant change) makes id reuse
-// safe at the wire-protocol level.
-//
-// Thread safety: AllocHostId / AllocLocalId / FreeId / Get are mutex-guarded.
-// The mutex is held only across the table+stack operations -- never during
-// engine reflection or Element construction. Element subclass constructors
-// call Registry on the constructing thread; the lock is held for microseconds.
+// coop/element/registry.h -- the ElementId allocator and O(1) resolver, adapted from MTA's
+// CElementArray (client side) and CElementIDs (server side) into one class: one address space
+// shared by the host and the clients, partitioned by range, and the role decides which range a
+// peer allocates from. Host range [0, kHostRangeSize), peer range [kHostRangeSize,
+// kMaxElements). Ids resolve through a fixed array; allocation pops a per-range free list, and
+// a freed id returns to the far end of it, so reuse is deferred behind the never-allocated
+// pool. The mutex covers only the table and list operations, never engine reflection or
+// Element construction.
 
 #pragma once
 
@@ -37,131 +23,71 @@ namespace coop::element {
 
 class Registry {
 public:
-    // Singleton. Lazy-constructed on first call. Lives for the process
-    // lifetime; OnDisconnect resets state but doesn't destroy the singleton.
+    // Process-lifetime singleton, lazily constructed.
     static Registry& Get();
 
-    // Allocate a fresh ElementId in the host range, register `e` in the
-    // lookup table, write the id back into the Element. Returns the id.
-    // **Host role only** -- callers must guarantee `Session::role() == Host`.
-    // Logs + returns kInvalidId if the host range is exhausted (32768 active
-    // elements at once is well above expected peak; exhaustion = bug).
+    // Allocate a fresh id in the host range, register `e` and write the id into it. Host role only.
+    // Logs and returns kInvalidId when the range is exhausted, which is a bug, not an expected
+    // state.
     ElementId AllocHostId(Element* e);
 
-    // Allocate a fresh ElementId in the peer range for a client-local
-    // element (something the local peer creates that does not need
-    // authoritative routing). Same semantics as AllocHostId but on the
-    // peer-range stack. Either role may call this.
-    //
-    // D9-2 fix (2026-05-29 PR-FOUNDATION Tier 2): the peer range is
-    // sub-partitioned into per-peer-slot bands so two CLIENT processes
-    // never mint colliding ids (the host relay holds mirrors of BOTH and
-    // RegisterMirror rejects a populated slot). Before SetLocalPeerBand
-    // is called (boot/seed window, slot not yet known), this allocates
-    // from the "pre-slot" band -- those ids are LOCAL-ONLY (a client's
-    // seed-phase Aprop_C Init POST never broadcasts; gated by
-    // !s->connected() + the Aprop_C client early-return), so cross-client
-    // overlap of pre-slot ids is harmless. After SetLocalPeerBand, draws
-    // from the client's exclusive slot band. See SetLocalPeerBand.
+    // Allocate a fresh id in the peer range for a client-local element; either role may call it.
+    // The peer range is sub-partitioned into per-slot bands so two client processes never mint
+    // colliding ids (the host holds mirrors of both, and RegisterMirror refuses a populated slot).
+    // Before SetLocalPeerBand, while the slot is unknown, ids come from the pre-slot band; nothing
+    // allocated then is broadcast, so cross-client overlap of those ids is harmless.
     ElementId AllocLocalId(Element* e);
 
-    // Activate this CLIENT process's per-slot sub-band for AllocLocalId
-    // (D9-2 fix). Called once from players::Registry::SetLocalPeerId when
-    // the client learns its peer slot from AssignPeerSlot. `slot` must be
-    // in [1, kMaxPeers); slot 0 (host) never calls this -- the host uses
-    // AllocHostId exclusively for its own elements. Replaces m_localFree
-    // with the slot band's ids. Pre-slot-band ids already handed out
-    // remain valid in the lookup table and freeable (they were popped on
-    // allocation, are not on the free stack, and FreeId returns them to
-    // m_localFree where they recycle harmlessly). Idempotent on the same
-    // slot. Thread-safe (acquires m_mutex). No-op + LOGW on slot 0 / out
-    // of range.
+    // Activate this client's per-slot band for AllocLocalId; players::Registry::SetLocalPeerId
+    // calls it once the slot is known. `slot` in [1, kMaxPeers); the host never calls it. Pre-slot
+    // ids already handed out stay valid and freeable (FreeId returns them to the active list, where
+    // they recycle harmlessly). Idempotent on the same slot; a no-op with a warning on slot 0 or
+    // out of range.
     void SetLocalPeerBand(uint8_t slot);
 
-    // Return an id to its free stack and clear the table slot. Called from
-    // Element destructor. No-op on kInvalidId. Logs + skips if the id is
-    // already free (a double-free would indicate a lifetime bug).
+    // Return an id to its free list and clear the table slot; called from the Element destructor.
+    // No-op on kInvalidId; logs and skips an id that is already free, which would be a lifetime
+    // bug.
     void FreeId(ElementId id);
 
-    // Client-side mirror registration: bind an Element to a host-allocated
-    // ElementId received over the wire. Used by client receivers (npc_sync
-    // OnEntitySpawn, future Prop receivers etc.) to materialize a local
-    // mirror of an entity the host owns.
-    //
-    // - Does NOT touch the free stacks. The id is in the host range; it
-    //   was popped from the HOST's m_hostFree, not the client's, so the
-    //   client must not return it to its own free stack on teardown.
-    // - Sets `m_byId[id] = e` and stamps `Element::m_id = id` + `m_mirror = true`.
-    // - Logs + returns false if the slot is already populated (duplicate
-    //   spawn packet OR wire id collision -- both indicate a bug upstream).
-    // - Logs + returns false if `id` is out of range or kInvalidId.
-    //
-    // The mirror's dtor calls UnregisterMirror via the `m_mirror=true` flag
-    // (see ~Element). So the caller's only responsibility is to drop the
-    // owning unique_ptr; the rest is automatic.
+    // Bind an Element to a host-allocated id received over the wire, for a client materialising a
+    // mirror of an entity the host owns. Does not touch the free lists: the id was popped from the
+    // host's pool, not this process's. Sets the table slot and stamps the Element's id and mirror
+    // flag. Logs and returns false when the slot is already populated (a duplicate spawn or an id
+    // collision, both upstream bugs) or the id is out of range or invalid. The mirror's destructor
+    // calls UnregisterMirror through the flag, so the owner only drops its pointer.
     bool RegisterMirror(ElementId id, Element* e);
 
-    // Drop a client-side mirror. Clears m_byId[id]. Does NOT push to a free
-    // stack (host range ids belong to the host's allocation space; pushing
-    // would corrupt the client's stack with foreign ids over time).
-    // No-op on kInvalidId / out of range / already empty.
+    // Drop a client-side mirror: clears the table slot without pushing to a free list, since
+    // host-range ids belong to the host's allocation space. No-op on kInvalidId, out of range or
+    // already empty.
     void UnregisterMirror(ElementId id);
 
-    // O(1) lookup. Returns nullptr if `id` is kInvalidId, out of range, or
-    // not currently allocated.
+    // O(1) lookup; nullptr for kInvalidId, out of range or not allocated.
     Element* Get(ElementId id) const;
 
-    // ---- Unified actor -> eid reverse index (sync-refactor 2026-06-27) ----
-    //
-    // The SOLE actor->eid reverse for the whole registry, covering BOTH locals
-    // (AllocAndInstall'd) and mirrors (RegisterMirror'd). Subsumes
-    // prop_element_tracker's g_actorToPropElementId (locals-only) and removes the
-    // reason g_boundMirrorNatives existed (mirrors absent from the locals-only
-    // reverse). Maintained automatically by Element::SetActor / ~Element via
-    // NoteActorRebind -- so it is always consistent with the live actor binding.
-    //
-    // O(1). Returns kInvalidId if `actor` is null or not currently bound to any
-    // Element. Does NOT validate engine liveness (the actor may be GC-purged) --
-    // callers that hold the pointer across ticks must re-validate via
-    // reflection::IsLiveByIndex (Element::GetInternalIdx), same contract as the
-    // old reverse maps.
+    // The one actor-to-eid reverse for the whole registry, locals and mirrors alike, maintained by
+    // Element::SetActor and the destructor through NoteActorRebind, so it always matches the live
+    // binding. O(1); kInvalidId for a null or unbound actor. It does not validate engine liveness:
+    // a caller holding the pointer across ticks re-validates with reflection::IsLiveByIndex.
     ElementId EidForActor(void* actor) const;
 
-    // Called by Element::SetActor (rebind) and ~Element (clear): drop oldActor's
-    // entry if it still maps to `id`, then point newActor at `id`. "newest live
-    // binding wins" on a recycled actor address (matches the old key-index
-    // overwrite semantics). Pass newActor=nullptr to clear. Internal plumbing --
-    // only Element calls it.
+    // Called by Element::SetActor and the destructor: drop the old actor's entry if it still maps
+    // to `id`, then point the new actor at `id`; the newest live binding wins on a recycled
+    // address. nullptr clears. Only Element calls it.
     void NoteActorRebind(ElementId id, void* oldActor, void* newActor);
 
-    // Quick range check. `kInvalidId` returns false on both.
+    // Range checks; kInvalidId is false on both.
     static bool IsHostId(ElementId id)  { return id < kHostRangeSize; }
     static bool IsLocalId(ElementId id) { return id >= kHostRangeSize && id < kMaxElements; }
 
-    // ---- Wire-receiver range validation (PR-FOUNDATION-1, 2026-05-29) ----
-    //
-    // Sender-role-aware validation of an inbound elementId carried over the
-    // wire. Closes the multi-site id-range trust gap surfaced by the
-    // foundation audit (E-1 + D2-1 + D2-2 + the 3 PropSpawn/PropDestroy/Join
-    // range gaps): a packet carrying an elementId in a range its sender
-    // role isn't allowed to allocate from is forged or a relay-loop bug
-    // and must be dropped at the boundary.
-    //
-    // - senderIsHost == true: accept only host-allocated eids,
-    //                         i.e. [1, kHostRangeSize). Rejects 0,
-    //                         kInvalidId, and any peer-range id.
-    // - senderIsHost == false: accept only peer-allocated eids,
-    //                          i.e. [kHostRangeSize, kMaxElements).
-    //
-    // Receivers determine `senderIsHost` from the GNS-stamped
-    // `senderPeerSlot` (slot 0 == host). All receiver sites that ingest
-    // an elementId from a peer MUST gate via this helper before passing
-    // it to RegisterMirror / RegisterPropMirror / Install / etc.
-    //
-    // The two specialised flavors are exposed for sites where the sender
-    // role is unconditional by feature (EntitySpawn / EntityDestroy are
-    // host-only; client-sourced PropSpawn for chipPile/clump/trashBits is
-    // client-only).
+    // Sender-role-aware validation of an inbound eid: a packet carrying an id in a range its
+    // sender's role may not allocate from is forged or a relay-loop bug, and is dropped at the
+    // boundary. A host sender may only name host-allocated ids, [1, kHostRangeSize); a client
+    // sender only peer-allocated ones, [kHostRangeSize, kMaxElements). Receivers derive the
+    // sender's role from the connection-stamped sender slot (0 is the host). The two specialised
+    // forms serve sites where the role is fixed by the feature (entity spawns are host-only;
+    // client-sourced prop spawns are client-only).
     static bool IsAllowedHostAllocatedEid(ElementId id) {
         return id != kInvalidId && id >= 1u && id < kHostRangeSize;
     }
@@ -173,50 +99,26 @@ public:
                             : IsAllowedPeerAllocatedEid(id);
     }
 
-    // Counts: number of currently-allocated elements per range. Used for
-    // diagnostic logging + late-joiner snapshot sizing estimates.
+    // Currently allocated elements per range, for the object overlay.
     size_t HostCount() const;
     size_t LocalCount() const;
 
-    // Snapshot-copy the (actor*, elementId, internalIdx) tuple for every
-    // currently-allocated Element of the given ElementType, under the internal
-    // mutex. The mutex protects only the C++ Element lifetime (FreeId takes it
-    // before clearing m_byId), so no Element* dangles after it releases.
-    //
-    // It does NOT protect the engine ACTOR pointer: that is a raw UObject* the
-    // UE4 GC can free independently of any C++ mutex (a mass GC purge flags
-    // ~2000 props PendingKill/Unreachable without firing per-actor
-    // K2_DestroyActor, so their Prop Elements -- and the stale m_actor they
-    // hold -- persist in the Registry). Consumers MUST therefore validate each
-    // actor with reflection::IsLiveByIndex(actor, internalIdx) -- NOT IsLive,
-    // whose first act is to deref the (possibly-purged) actor and AV. The
-    // internalIdx is the Element's cached slot captured while the actor was
-    // live. (Root-caused 2026-05-30: the connect-edge snapshot AV.)
-    //
-    // Used by the late-joiner snapshot path: prop_snapshot reads the tuples at
-    // TriggerForSlot time, then DrainChunk fills the wire payload across ticks,
-    // re-validating via IsLiveByIndex without re-locking the Registry.
-    //
-    // Returns count copied (out is cleared first).
-    //
-    // `mirror` is the Element's IsMirror() flag, captured under the same mutex.
-    // The dead-Prop-Element reaper (prop_element_tracker) uses it to reap ONLY
-    // local shadows: a wire mirror's teardown is the host's PropDestroy, never a
-    // local reconciliation. Distinguishing by this per-Element flag (not by the
-    // actor pointer) is robust against the engine recycling a purged actor's
-    // address for a new keyed prop.
+    // Copy the (actor, id, internal index, mirror flag) tuple of every allocated Element of the
+    // type, under the mutex. The mutex protects the C++ Element lifetime only: the actor pointer is
+    // a raw UObject* the garbage collector can free independently (a mass purge marks thousands of
+    // props unreachable without a per-actor destroy, so their Elements and stale actor pointers
+    // persist here). Consumers validate each actor with reflection::IsLiveByIndex and the captured
+    // index, never with a check that dereferences first. Returns the count copied; `out` is cleared
+    // first. The mirror flag lets the dead-Element reaper reap only local shadows (a wire mirror's
+    // teardown is the host's destroy), and it holds when the engine recycles a purged actor's
+    // address.
     struct ActorIdPair { void* actor; ElementId id; int32_t internalIdx; bool mirror; };
     size_t SnapshotActorsByType(ElementType t, std::vector<ActorIdPair>& out) const;
 
-    // INTENTIONALLY NO bulk-Reset() API (audited 2026-05-28). Each
-    // subsystem owns the lifetime of the Elements it allocates and is
-    // responsible for releasing them on its own OnDisconnect hook --
-    // typically by draining its owner container so the Element destructors
-    // fire and self-FreeId. A global Reset() would nuke other subsystems'
-    // elements when one subsystem disconnects, corrupting their state +
-    // double-freeing ids as their destructors later run. See
-    // [[feedback-follow-mta-architecture-when-possible]] -- MTA's
-    // CElementIDs has no bulk Reset for the same reason.
+    // Deliberately no bulk Reset: each subsystem owns the lifetime of the Elements it allocates and
+    // releases them on its own disconnect hook by draining its container, so the destructors free
+    // the ids. A global reset would destroy other subsystems' elements and double-free ids when
+    // their destructors ran later; MTA's CElementIDs has none for the same reason.
 
 private:
     Registry();
@@ -226,40 +128,30 @@ private:
 
     mutable std::mutex m_mutex;
     Element* m_byId[kMaxElements] = {};   // index = ElementId; nullptr = free
-    // Unified actor->eid reverse (sync-refactor 2026-06-27). Guarded by m_mutex
-    // (same lock as m_byId -- they mutate together at bind/unbind). Covers locals
-    // + mirrors. Maintained via NoteActorRebind from Element::SetActor / ~Element.
+    // The actor-to-eid reverse, guarded by m_mutex with m_byId, since they mutate together; locals
+    // and mirrors.
     std::unordered_map<void*, ElementId> m_byActor;
-    // FREE LISTS: deque (not vector). Fresh (never-allocated) ids pop_back from the back; a FREED
-    // id push_front to the FRONT so it is only re-issued after the fresh pool above it drains
-    // (deferred FIFO reuse -- prevents the handle-recycling race where a transient clump grabs a
-    // just-freed eid still bound to another prop's in-flight mirror on a peer). Both ends O(1)
-    // (a vector's insert(begin) was O(n)).
+    // Free lists as deques: fresh ids pop from the back, and a freed id goes to the front, so it is
+    // re-issued only after the never-allocated pool above it drains, by which time any in-flight
+    // message naming the old id has landed. Both ends O(1).
     std::deque<ElementId> m_hostFree;    // host range: back=fresh, front=deferred-reuse
     std::deque<ElementId> m_localFree;   // ACTIVE peer band: back=fresh, front=deferred-reuse
-    // Which peer-range band m_localFree currently holds (D9-2). 0 == the
-    // pre-slot band (boot/seed window, slot not yet known); 1..kMaxPeers-1
-    // == the client slot band activated by SetLocalPeerBand. The host never
-    // changes this off 0 because it never calls AllocLocalId.
+    // Which peer-range band m_localFree holds: 0 is the pre-slot band, 1..kMaxPeers-1 the client's
+    // slot band after SetLocalPeerBand. The host stays on 0, since it never calls AllocLocalId.
     uint8_t m_activeBand = 0;
 
-    // Pre-populate m_hostFree with the full host range and m_localFree with
-    // the pre-slot band only (one-time at construction). Called under
-    // m_mutex (or during construction before any other thread exists).
+    // Pre-populate the host list with the whole host range and the local list with the pre-slot
+    // band, once at construction.
     void RefillFreeStacks_();
 };
 
-// eid -> live actor OF THAT ELEMENT TYPE, or nullptr (wrong type, unbound, or
-// the engine slot was recycled -- IsLiveByIndex-checked). THE canonical resolve
-// idiom for wire receivers; promoted 2026-07-18 from three byte-identical
-// module-local copies (drive_sync/floppybox_sync/laptop_sync) and generalized
-// off Prop 2026-08-25, when the coin-collect lane needed the same resolve for a
-// WorldActor. The TYPE argument is not decoration: it is the fail-closed half --
-// an eid naming an Element of another kind must resolve to nullptr, not to that
-// other kind's actor. GT-only (touches engine object state).
+// eid to the live actor of that element type, or nullptr (wrong type, unbound, or the engine
+// slot recycled, checked by IsLiveByIndex). The resolve idiom for wire receivers. The type
+// argument is the fail-closed half: an eid naming an Element of another kind resolves to
+// nullptr, not to that kind's actor. Game thread only.
 void* LiveActorOfType(ElementId eid, ElementType type);
 
-// The Prop spelling, kept because it is the idiom ~a dozen wire receivers read.
+// The Prop spelling, the idiom most wire receivers read.
 inline void* LivePropActor(ElementId eid) {
     return LiveActorOfType(eid, ElementType::Prop);
 }
