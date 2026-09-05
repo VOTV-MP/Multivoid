@@ -25,7 +25,7 @@ not tracked, so what is listed here is what a contributor needs.
 
 ## The rig
 
-- `mp.py`: the launcher and the autonomous-scenario orchestrator; `docs/testing.md` is its manual.
+- `mp.py`: the launcher and the scenario runner; `docs/testing.md` is its manual.
   `host`, `client`, `client2` and `client3` deploy and launch one peer each; `smoke` and `smoke4`
   run the two- and four-peer LAN smokes; the scenario subcommands drive the in-game harness and
   grade its logs.

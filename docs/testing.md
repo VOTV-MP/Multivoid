@@ -18,7 +18,7 @@ hash. Nothing in a game copy is tracked.
 ### The launcher
 
 `tools/mp.py` deploys and launches peers and runs scenarios. `host`, `client`, `client2` and
-`client3` launch one peer each for hands-on play; `kill` stops every game process. Every step
+`client3` launch one peer each for playing; `kill` stops every game process. Every step
 prints a line as it happens, and the game is launched detached so the launcher never holds its
 pipes.
 

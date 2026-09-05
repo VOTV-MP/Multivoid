@@ -1,7 +1,7 @@
 # VOTV SkeletalMesh pure-Python cooker — implementation spec (resumable)
 
 > All tools live under `tools/client_model/` (this file too); a bare tool name below means
-> the file of that name in this folder. Handoff/overview:
+> the file of that name in this folder. Overview:
 > the runtime side is `docs/players.md` (Skins).
 
 > The real client skin is `kerfurOmega_KelSkin` (ANTHRO rig
@@ -98,7 +98,7 @@ Bulk array = `ElementSize i32, ElementCount i32, ElementCount*ElementSize bytes`
 (no separate .ubulk here — all inline).
 
 ## SPLICE plan (single LOD)
-Input: scientist from `tools/skin_to_rig.py` (positions, normals, UVs, per-vertex
+Input: scientist from `skin_to_rig.py` (positions, normals, UVs, per-vertex
 Kel bone, triangles). All bind to kel rig (6 bones), weight 1.0 → skin-weight =
 `[boneIdx,0,0,0]` + `[255,0,0,0]`.
 1. Parse render region, record every field's byte range + concrete format params.
