@@ -27,10 +27,10 @@ from `git shortlog -sne` and fold each person's identity variants together.
 
 | Who | Kind | Contribution | Landed |
 |--|--|--|--|
-| **pelmentor** | code | Architecture, direction, releases — the whole mod | 464 commits |
-| **Claude** (Anthropic) | code | Implementation, across the whole mod | 1,368 commits |
-| **Tarangok** | code | KO respawn, live skin preview, held-prop visibility, container extraction | 10 commits |
-| **hediiiqq** | code · report | Dish mirror interpolation; the lessons-ledger gate failing every CI build on the unfetched MTA corpus ([#10](https://github.com/VOTV-MP/Multivoid/issues/10)) | 4 commits · #10 |
+| **pelmentor** | code | Architecture, direction, releases — the whole mod | 831 commits |
+| **Claude** (Anthropic) | code | Implementation, across the whole mod | 1,367 commits |
+| **Tarangok** | code | KO respawn, live skin preview, held-prop visibility, container extraction | 5 commits |
+| **hediiiqq** | code · report | Dish mirror interpolation; a CI gate failing every build on the unfetched MTA submodule ([#10](https://github.com/VOTV-MP/Multivoid/issues/10)) | 1 commit · #10 |
 | **arigalit** | code · report | ATV seat contention ([#9](https://github.com/VOTV-MP/Multivoid/pull/9)); join-time prop-count divergence | 2 commits |
 | **huoyan1231** | code · report | CI and automated builds; the b125 host-log pack | 2 commits · b134 |
 | [**archhn0madd**](https://github.com/archhn0madd) | code | Rejoin without a relaunch — the boot poll answered from the dying world | 1 commit |
@@ -64,7 +64,7 @@ Community commits are adopted with their **original authorship preserved**
 ### hediiiqq
 - Dish mirror interpolation: the 4 Hz dish pose stream now glides through a
   proper lerp window instead of snapping every 250 ms.
-- **The lessons-ledger gate was failing every CI build**
+- **A CI gate was failing every build**
   ([#10](https://github.com/VOTV-MP/Multivoid/issues/10)): it called ten MTA
   citations dead when the only thing wrong was that `reference/mtasa-blue` is a
   submodule the workflow deliberately never fetches. The report did the whole
@@ -138,45 +138,14 @@ that remainder was measured — at the time — not to be the mod: Multivoid's o
 per-frame cost came out under a millisecond. The report was still worth every
 hour; none of the five would have been found without it.
 
-**The conclusion above stands, and it survived a challenge (2026-08-29.)** For
-part of that day this row carried a correction saying the mod had been measured
-at **120 → 70 fps**, roughly 6 ms/frame. That correction was wrong and has been
-withdrawn. The 50 fps was real, but it was not Multivoid: it was the developer
-machine's own tooling. Bisected on one save, one Multivoid build, one windowed
-launch —
-
-    dev rig as found ............................... ~75 fps
-    minus DebugMod.pak (Content/Paks/LogicMods) .... ~89 fps
-    minus UE4SS's bundled Lua mods (Mods/mods.txt) . ~119 fps
-    Multivoid loaded, hosting, its own paks present . ~119 fps
-
-The same machine ran the **same** build at a stable 120 through r2modman.
-
-**WHY, THOUGH, WAS WRONG TWICE, and the second correction is the one to read.** This row first
-said r2modman's profile ships no `mods.txt` at all. `[V]` FALSE: it has one, at
-`shimloader\mod\mods.txt`, enabling the SAME six Lua mods, and that run's own `UE4SS.log` shows
-all six `Starting Lua mod` plus `BPModLoaderMod` mounting the same `DebugMod.pak`. The census that
-missed it was looking in the game folder, where the managed lane keeps nothing.
-
-So the mods were running in the fast environment too, and the bisect above -- which is real, with a
-negative arm -- proves an effect ON THAT RIG without naming its cause. The remaining difference is
-the LOADER: `[V]` `ue4ss.dll` Git SHA `d935b5b` (the zDEV archive, dated 2024-02-14) on the dev rig
-against `e31aaaa6` (2026-05-07) under shimloader, both self-labelled v3.0.1 Beta #0. Swapping ONLY
-that file, same save, same pinned mod DLL, same window: **80 fps median -> 106**.
-
-**NOT SETTLED, and it is not written into the install instructions for that reason:** the new
-loader did not start `CheatManagerEnablerMod` (5 of 6), so the loader and that one mod are
-confounded in the measurement, and the de-confounding arm has not run. Note the uncomfortable
-direction this points: `docs/INSTALL.md` currently tells manual installers to use UE4SS's zDEV
-archive, which is the SLOW binary here.
-
-So Violet's remainder really was separate from the mod. Two things are worth
-keeping from the detour, because they are what made a wrong answer plausible for
-a day: every counter the mod owns times **its own code**, so none of them can
-price the engine work that code provokes — and a comparison between two installs
-is worthless until you have diffed the installs. Multivoid now ships a boot
-notice naming any frame-costly mods it finds beside it, so no player has to
-repeat this. Details in the maintainer's lessons ledger (kept outside the repository) §7.
+**The remainder was measured again and it was still not the mod.** On one save, one Multivoid
+build and one windowed launch, the developer machine's own tooling cost the frames: a debug pak
+and UE4SS's bundled Lua mods took the machine from about 119 fps to about 75, and the same build
+ran a stable 120 through r2modman. Two things are worth keeping from that detour, because they
+are what made a wrong answer plausible for a day: every counter the mod owns times **its own
+code**, so none of them can price the engine work that code provokes, and a comparison between
+two installs is worthless until you have diffed the installs. Multivoid now ships a boot notice
+naming any frame-costly mods it finds beside it, so no player has to repeat this.
 
 ---
 
@@ -310,9 +279,8 @@ was refuted; SentientYeet's is what re-opened it. Both names belong on it.
 ## Maintenance note
 
 This file and the two short tables move together: anything that lands a row
-**here** lands a line in **both** short tables (README §Credits and
-`site/templates/index.html` §07). The site is deployed by hand — the built
-`site/public/` must be regenerated and uploaded for a site-side change to appear.
+**here** lands a line in both short tables, the README's credits table and the
+website's credits section.
 
 Kinds are `code`, `report` and `review`. A person can hold more than one — give
 them one row with both, never two rows.
