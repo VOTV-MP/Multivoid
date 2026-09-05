@@ -1,30 +1,18 @@
-// coop/player/skin_effects.cpp -- see skin_effects.h. RE ground truth:
-// research/pak_re dump_precise.py / dump_scs.py / census_variants.py over the
-// kerfurOmega family + kerfusFace (2026-07-03). Key bytecode facts mirrored
-// here, cited per function below:
-//   kerfurOmega.makeFace : deferred-spawn kerfusFace_C at (0,0,10), stamp int
-//                          'type' pre-Finish, setFace() -> Mesh.SetMaterial(
-//                          faceMaterialIndex, face.dynmat).
-//   kerfusFace.ReceiveBeginPlay -> gen(): builds its own 256x256 RT +
-//                          scene-capture of its AnimBP'd face mesh; leaves the
-//                          screen MID in `dynmat` (we only read the result).
-//   kerfurOmega.makeSentient : the SENTIENT-only add-ons ('ag' glow MID, 14x
-//                          eff_life*.Activate, lifeLight visible). NOT applied
-//                          here: crafted kerfurs keep them OFF (bAutoActivate/
-//                          bVisible=false in the SCS), and force-enabling them
-//                          was the 2026-07-03 "pink blast" user regression --
-//                          scs_rig now honors the template flags.
-//   kerfurOmega_mynet.step (ubergraph @3-@6): lib_C::step(self, ..., volume=0,
-//                          ...) -- the DEFAULT surface footstep is MUTED -- then
-//                          SpawnEmitterAtLocation(eff_mynetEmitterStep, loc) +
-//                          PlaySoundAtLocation(boltrix_mediumHit, ActorLocation,
-//                          vol 1, pitch 1, att_default). REPLACE mode.
-//   kerfurOmega.step: lib_C::step(self, ..., volume=1, ...) -- default step
-//                          audible; stepped(scaled) then layers footstepSound:
-//                          scaled = clamp(MaxWalkSpeed/400, 0.5, 2) * volume,
-//                          SpawnSoundAttached(footstepSound, capsule, vol
-//                          scaled/4, pitch scaled/2+1, att_default). ADDITIVE
-//                          mode (keljoy squeak).
+// coop/player/skin_effects.cpp -- see skin_effects.h. The bytecode facts mirrored here, cited
+// per function below: the kerfur's make-face deferred-spawns the face actor, stamps its type
+// before finishing, and set-face slots the face's dynamic material into the mesh at the face
+// material index; the face actor's begin-play builds its own render target and scene capture
+// of its animated face mesh and leaves the screen material in its dynamic-material field
+// (only the result is read here); the make-sentient add-ons (the glow material, the life
+// particles, the life light) are not applied, since crafted kerfurs keep them off in their
+// construction script and force-enabling them produced a pink blast, so the rig honours the
+// template flags. The mynet variant's step calls the library step with volume zero (the
+// default surface footstep muted), then spawns its emitter burst and plays its sound at the
+// actor location with the default attenuation: replace mode. The base kerfur's step calls
+// the library step at full volume (the default step audible), then layers the footstep
+// sound scaled by the walk speed (clamped between half and double) as an attached sound at
+// a quarter of that volume and a pitch of half that plus one, with the default attenuation:
+// additive mode (the keljoy squeak).
 
 #include "coop/player/skin_effects.h"
 
@@ -54,22 +42,22 @@ namespace E = ue_wrap::engine;
 namespace P = ue_wrap::profile;
 namespace Pup = ue_wrap::puppet;
 
-// ---- skin -> variant class map (census_variants.py 2026-07-03) -------------
-// The variant class is the game's own carrier of the skin's effect identity:
-// its SCS adds the variant rig, its CDO holds faceMaterialIndex / Type /
-// footstepSound. Meshes without a dedicated class (maid dress, krampus) map to
-// the BASE class: kerfur body => base life rig. allowFace gates the RT face to
-// the four omega bodies whose MESH has the screen slot (KerfurO_maid measured
-// single-slot 2026-07-03 -- a CDO fmi alone is not mesh evidence).
+// The skin to variant-class map. The variant class is the game's own carrier of the skin's
+// effect identity: its construction script adds the variant rig, and its default object
+// holds the face material index, the type and the footstep sound. Meshes without a
+// dedicated class (the maid dress, krampus) map to the base class, the kerfur body with the
+// base life rig. The face flag gates the render-target face to the four omega bodies whose
+// mesh has the screen slot (the maid mesh is single-slot; a default-object index alone is
+// not mesh evidence).
 struct Profile {
     const char* skin;
     const wchar_t* variantStem;  // /Game/objects/<stem>.<stem>_C
     bool allowFace;
     bool stepEmitter;  // mynet's eff_mynetEmitterStep burst
-    // REPLACE step mode: the variant's step() calls lib_C::step with volume 0
-    // (default surface footstep muted) and plays footstepSound itself at the
-    // actor location. false = ADDITIVE (footstepSound layered by stepped()
-    // over the audible default). Bytecode-derived per variant.
+    // Replace step mode: the variant's step calls the library step with volume zero (the default
+    // surface footstep muted) and plays its footstep sound itself at the actor location. False is
+    // additive: the footstep sound layered by the stepped verb over the audible default.
+    // Bytecode-derived per variant.
     bool stepReplace;
 };
 constexpr Profile kProfiles[] = {
@@ -106,9 +94,9 @@ const Profile* FindProfile(const std::string& skin) {
     return nullptr;
 }
 
-// ---- GC-safe cached asset/class loads (client_model's CachedAsset shape,
-// incl. its miss latch: a persistent MISS must not re-run LoadObjectByPath --
-// itself two full-array resolves -- on every retry; perf audit W1) -----------
+// GC-safe cached asset and class loads (the client model's cached-asset shape, including its
+// miss latch: a persistent miss must not re-run the path load, itself two full-array
+// resolves, on every retry).
 struct Cached {
     void* ptr = nullptr;
     int32_t idx = -1;
@@ -138,7 +126,7 @@ void* LoadVariantClass(const wchar_t* stem) {
     return LoadCached(path);
 }
 
-// ---- CDO field reads (declared on the BASE class; layout shared by children).
+// The default-object field reads (declared on the base class; children share the layout).
 int32_t g_offFaceIdx = -2, g_offType = -2, g_offFootstep = -2, g_offSkinMesh = -2;
 
 void ResolveCdoOffsets(void* baseClass) {
@@ -160,7 +148,7 @@ T ReadAt(void* obj, int32_t off, T fallback) {
     return v;
 }
 
-// ---- the per-body rig -------------------------------------------------------
+// The per-body rig.
 struct Rig {
     std::string skin;
     int32_t actorIdx = -1;
@@ -178,13 +166,13 @@ struct Rig {
 };
 std::map<void*, Rig> g_rigs;
 
-// Drop entries whose body actor is gone (world change / respawn churn). Bounded
-// by the peer count -- the walk is trivial and runs only on Apply.
+// Drop entries whose body actor is gone (a world change, respawn churn). Bounded by the peer
+// count; the walk is trivial and runs only on Apply.
 void SweepDeadRigs() {
     for (auto it = g_rigs.begin(); it != g_rigs.end();) {
         if (!R::IsLiveByIndex(it->first, it->second.actorIdx)) {
-            // The body actor is already gone -- its components died with it.
-            // The face actor is a SEPARATE world actor: reap it if still live.
+            // The body actor is already gone and its components died with it. The face actor is a
+            // separate world actor: reap it if still live.
             Rig& r = it->second;
             if (r.faceActor && R::IsLiveByIndex(r.faceActor, r.faceIdx))
                 E::DestroyActor(r.faceActor);
@@ -202,9 +190,9 @@ void TeardownRig(void* bodyActor, Rig& r, bool actorDying) {
     if (!actorDying) {
         for (auto& [comp, idx] : r.comps)
             if (R::IsLiveByIndex(comp, idx)) E::DestroyComponent(comp, bodyActor);
-        // Clear the face-slot override, or the dead face actor's RT material
-        // stays painted on the next skin's mesh (client_model clears slot 0
-        // only -- the screen slot is this rig's own write).
+        // Clear the face-slot override, or the dead face actor's render-target material stays
+        // painted on the next skin's mesh (the client model clears slot 0 only; the screen slot is
+        // this rig's own write).
         if (r.fmi >= 0) {
             if (void* m = Pup::GetNativeBodyMeshComponent(bodyActor))
                 E::SetComponentMaterial(m, r.fmi, nullptr);
@@ -215,13 +203,11 @@ void TeardownRig(void* bodyActor, Rig& r, bool actorDying) {
     r.comps.clear();
 }
 
-// ---- makeFace mirror --------------------------------------------------------
-// kerfurOmega.makeFace bytecode: BeginDeferred(kerfusFace_C, Z=10) ->
-// SetIntPropertyByName('type', Type) -> FinishSpawning; kerfusFace BeginPlay
-// gen()s the RT + dynmat. We read `dynmat` back and slot it at fmi.
+// The make-face mirror: deferred-spawn the face class ten units up, set the type property by
+// name, finish spawning; the face's begin-play generates the render target and the dynamic
+// material. The material is read back and slotted at the face index.
 void* SpawnFaceActor(int32_t faceType) {
-    // LoadCached resolves in-memory first (StaticLoadObject) and caches --
-    // no FindClass full walk needed (perf audit W3).
+    // The cached load resolves in memory first and caches, so no full-walk class find is needed.
     void* faceCls = LoadCached(L"/Game/objects/kerfusFace.kerfusFace_C");
     if (!faceCls) return nullptr;
     void* face = E::BeginDeferredSpawn(faceCls, ue_wrap::FVector{0.f, 0.f, 10.f},
@@ -238,7 +224,7 @@ void* SpawnFaceActor(int32_t faceType) {
     return face;
 }
 
-// ---- step FX (SpawnEmitterAtLocation, firefly_sync's resolve pattern) -------
+// Step effects (the emitter spawn, the firefly sync's resolve pattern).
 void* g_gsCdo = nullptr;
 void* g_spawnEmitterFn = nullptr;
 
@@ -252,8 +238,8 @@ bool ResolveEmitterAtLocation() {
     return g_gsCdo && g_spawnEmitterFn;
 }
 
-// mynet step burst (ubergraph @4): SpawnEmitterAtLocation(eff_mynetEmitterStep,
-// loc, rot 0, scale 1, autoDestroy, poolMethod none, autoActivate).
+// The mynet step burst: the emitter at the location, no rotation, unit scale, auto-destroy,
+// no pooling, auto-activate.
 void SpawnStepBurst(void* worldContext, void* emitter, const ue_wrap::FVector& loc) {
     if (!emitter || !ResolveEmitterAtLocation()) return;
     ue_wrap::ParamFrame f(g_spawnEmitterFn);
@@ -270,11 +256,10 @@ void SpawnStepBurst(void* worldContext, void* emitter, const ue_wrap::FVector& l
     ue_wrap::Call(g_gsCdo, f);
 }
 
-// Remote-step loudness parity with puppet_footsteps::Stride::kStepVolume.
+// Remote-step loudness parity with the puppet footsteps' step volume.
 constexpr float kStepFxVolume = 0.6f;
 
-// GameplayStatics::SpawnSoundAttached -- the ADDITIVE footstep layer's spawn
-// (kerfurOmega stepped region [1266]).
+// The attached-sound spawn, the additive footstep layer's spawn.
 void* g_soundAttachedFn = nullptr;
 
 bool ResolveSoundAttached() {
@@ -286,8 +271,8 @@ bool ResolveSoundAttached() {
     return g_soundAttachedFn != nullptr;
 }
 
-// lib_C::step's speed-scaled loudness (bytecode [60]-[62]):
-// clamp(CharacterMovement.MaxWalkSpeed / 400, 0.5, 2) * volume.
+// The library step's speed-scaled loudness: the walk speed over 400, clamped between half
+// and double, times the volume.
 int32_t g_offCharMove = -2, g_offMaxWalk = -2;
 
 float StepScaledVolume(void* bodyActor, float volume) {
@@ -307,9 +292,9 @@ float StepScaledVolume(void* bodyActor, float volume) {
     return f * volume;
 }
 
-// stepped()'s SpawnSoundAttached mirror ([1266]): attached at the body (native
-// anchors the capsule; the mesh component is the same actor spot within
-// att_default's radius), bStop=false / autoDestroy=true exactly as authored.
+// The stepped verb's attached-sound mirror: attached at the body (the native anchors the
+// capsule; the mesh component is the same actor spot within the default attenuation's
+// radius), not stopped on detach and auto-destroyed, as authored.
 void SpawnStepSoundAttached(void* bodyActor, void* sound, void* att,
                             float vol, float pitch) {
     if (!ResolveSoundAttached()) return;
@@ -333,7 +318,7 @@ void SpawnStepSoundAttached(void* bodyActor, void* sound, void* att,
     ue_wrap::Call(g_gsCdo, f);
 }
 
-// The shared step-FX dispatch behind OnStep (remote) and TickStride (local).
+// The shared step-effect dispatch behind OnStep (remote) and TickStride (local).
 void StepFx(void* bodyActor, const ue_wrap::FVector& pos, bool localBody) {
     auto it = g_rigs.find(bodyActor);
     if (it == g_rigs.end()) return;
@@ -342,30 +327,28 @@ void StepFx(void* bodyActor, const ue_wrap::FVector& pos, bool localBody) {
     const bool hasBurst = r.stepEmitter && R::IsLiveByIndex(r.stepEmitter, r.stepEmitterIdx);
     if (!hasSound && !hasBurst) return;
     if (hasBurst) {
-        // Burst at the skeleton root (rootKerfur sits between the feet -- the
-        // closest stand-in for the anim notify's foot contact point).
+        // The burst at the skeleton root (the root bone sits between the feet, the closest stand-in
+        // for the animation notify's foot contact point).
         ue_wrap::FVector feet = pos;
         if (void* mesh = Pup::GetNativeBodyMeshComponent(bodyActor))
             E::GetBoneWorldLocationByName(mesh, L"rootKerfur", feet);
         SpawnStepBurst(bodyActor, r.stepEmitter, feet);
     }
     if (!hasSound) return;
-    // Native parity: both modes route through att_default (mynet step @6 /
-    // stepped [1266]) -- without it a raw wave plays 2D on the whole map.
+    // Native parity: both modes route through the default attenuation; without it a raw wave
+    // plays in 2D over the whole map.
     void* att = LoadCached(L"/Game/audio/misc/att_default.att_default");
     if (r.stepReplace) {
-        // REPLACE (mynet step @4-@6): the default step ran muted (volume 0 via
-        // DefaultStepVolume); the variant plays its own sound at the ACTOR
-        // location, flat volume/pitch 1. On the LOCAL body the native default
-        // cannot be muted (EX-invisible) -- adding the replacement would stack
-        // the exact double this mode removes, so the sound layer is skipped.
+        // Replace: the default step ran muted (volume zero via DefaultStepVolume) and the variant
+        // plays its own sound at the actor location, flat volume and pitch. On the local body the
+        // native default cannot be muted (its dispatch is invisible to the detour), so adding the
+        // replacement would stack the exact double this mode removes; the sound layer is skipped.
         if (!localBody)
             E::PlaySoundAtLocation(bodyActor, r.stepSound, pos, att, 1.f, 1.f);
         return;
     }
-    // ADDITIVE (keljoy): layered over the audible default with the native
-    // stepped() math, fed the same volume our puppet feeds lib step so the
-    // native mix holds.
+    // Additive (keljoy): layered over the audible default with the native stepped math, fed the
+    // same volume our puppet feeds the library step, so the native mix holds.
     const float scaled = StepScaledVolume(bodyActor, kStepFxVolume);
     SpawnStepSoundAttached(bodyActor, r.stepSound, att, scaled / 4.f, scaled / 2.f + 1.f);
 }
@@ -380,7 +363,7 @@ void Apply(void* bodyActor, const std::string& skinName) {
     auto it = g_rigs.find(bodyActor);
 
     if (!prof) {
-        // dr_kel / converter skins: no kerfur rig. Tear down a previous one.
+        // The kel and converter skins have no kerfur rig; tear down a previous one.
         if (it != g_rigs.end()) {
             UE_LOGI("skin_effects: '%s' has no effect rig -- removing previous ('%s')",
                     skinName.c_str(), it->second.skin.c_str());
@@ -392,11 +375,10 @@ void Apply(void* bodyActor, const std::string& skinName) {
 
     if (it != g_rigs.end()) {
         Rig& r = it->second;
-        // Same skin + the face actor (when one exists) still live => nothing to
-        // do. comps may legitimately be EMPTY (take-2: a plain omega's base SCS
-        // cosmetics are all dormant sentient nodes), so emptiness is not a
-        // rebuild signal; components die only with the actor, whose liveness
-        // the sweep above already proved.
+        // The same skin with the face actor (when one exists) still live: nothing to do. The
+        // component list may legitimately be empty (a plain omega's base cosmetics are all dormant
+        // sentient nodes), so emptiness is not a rebuild signal; components die only with the
+        // actor, whose liveness the sweep above proved.
         const bool faceOk = !r.faceActor || R::IsLiveByIndex(r.faceActor, r.faceIdx);
         if (r.skin == skinName && faceOk) return;
         TeardownRig(bodyActor, r, /*actorDying=*/false);
@@ -418,8 +400,8 @@ void Apply(void* bodyActor, const std::string& skinName) {
     void* variantClass = LoadVariantClass(prof->variantStem);
     if (!variantClass) variantClass = baseClass;
 
-    // Variant identity from the game's own CDO (faceMaterialIndex / Type /
-    // footstepSound are declared on the base class; children share the layout).
+    // The variant identity from the game's own default object (the face material index, the
+    // type and the footstep sound are declared on the base class; children share the layout).
     void* cdo = nullptr;
     {
         std::wstring cdoName = L"kerfurOmega_C";
@@ -437,16 +419,16 @@ void Apply(void* bodyActor, const std::string& skinName) {
     rig.skin = skinName;
     rig.actorIdx = R::InternalIndexOf(bodyActor);
 
-    // Census breadcrumb: the variant CDO's own skinMesh should be (a form of)
-    // the mesh this skin wears -- a mismatch in the log means the profile
-    // table drifted from the game version.
+    // A census breadcrumb: the variant default object's own skin mesh should be a form of the
+    // mesh this skin wears; a mismatch in the log means the profile table drifted from the game
+    // version.
     if (void* sm = ReadAt<void*>(cdo, g_offSkinMesh, nullptr))
         UE_LOGI("skin_effects: skin '%s' <- variant '%ls' (CDO skinMesh '%ls')",
                 skinName.c_str(), prof->variantStem,
                 R::ToString(R::NameOf(sm)).c_str());
 
-    // 1) The SCS cosmetic rig: base class pass (joint-life particles + belly
-    //    light on every kerfur) + the variant's own pass (mynet electricity).
+    // The construction-script cosmetic rig: the base class pass (the joint-life particles and the
+    // belly light on every kerfur) plus the variant's own pass (the mynet electricity).
     std::vector<void*> comps;
     int made = ue_wrap::scs_rig::InstantiateCosmetics(bodyActor, meshComp, meshComp,
                                                       baseClass, comps);
@@ -456,8 +438,8 @@ void Apply(void* bodyActor, const std::string& skinName) {
     rig.comps.reserve(comps.size());
     for (void* c : comps) rig.comps.emplace_back(c, R::InternalIndexOf(c));
 
-    // 2) The RT face -- the game's own kerfusFace actor, dynmat into the
-    //    mesh's screen slot (makeFace/setFace bytecode).
+    // The render-target face: the game's own face actor, its dynamic material slotted into the
+    // mesh's screen slot (the make-face and set-face bytecode).
     if (prof->allowFace && fmi >= 0) {
         if (void* face = SpawnFaceActor(faceType)) {
             rig.faceActor = face;
@@ -474,8 +456,8 @@ void Apply(void* bodyActor, const std::string& skinName) {
         }
     }
 
-    // 3) Step FX identity: the variant CDO's footstepSound (keljoy squeak,
-    //    mynet boltrix) + the variant's step routing mode + mynet's burst.
+    // The step effect identity: the variant default object's footstep sound (the keljoy squeak,
+    // the mynet bolt), the variant's step routing mode, and the mynet burst.
     if (footstepSound) {
         rig.stepSound = footstepSound;
         rig.stepSoundIdx = R::InternalIndexOf(footstepSound);
@@ -517,8 +499,8 @@ void SetRigVisible(void* bodyActor, bool visible) {
 float DefaultStepVolume(void* bodyActor, float fallback) {
     auto it = g_rigs.find(bodyActor);
     if (it == g_rigs.end() || !it->second.stepReplace) return fallback;
-    // Native REPLACE parity (mynet step @3): lib_C::step still runs -- trace,
-    // water cues, friction -- but with volume 0 the surface footstep is muted.
+    // Native replace parity: the library step still runs (the trace, water cues, friction), but
+    // with volume zero the surface footstep is muted.
     return 0.f;
 }
 
@@ -531,8 +513,8 @@ void TickStride(void* bodyActor, const ue_wrap::FVector& pos, float speedCmS,
     auto it = g_rigs.find(bodyActor);
     if (it == g_rigs.end()) return;
     Rig& r = it->second;
-    // Cheap FX presence check BEFORE the gate so bodies without step FX cost
-    // a map find only (the gate itself is float math, but why prime it).
+    // A cheap effect-presence check before the gate, so bodies without step effects cost a map
+    // find only.
     if (!r.stepSound && !r.stepEmitter) return;
     if (r.stride.StepDue(pos, speedCmS, grounded))
         StepFx(bodyActor, pos, /*localBody=*/true);
