@@ -1,19 +1,18 @@
-// ui/host_window_native.cpp -- see ui/host_window_native.h for WHY.
-//
-// Built on ui/native_screen's kit and shaped after ui/server_browser_native, deliberately:
-// the two are siblings in the same switcher and a player should not be able to tell they
-// were written on different days. Where a construction fact is measured, it lives in the
-// kit's header, not repeated here.
+// ui/host_window_native.cpp -- the hosting window, step one: the world (New game or a save) and
+// the connection mode, handed to step two (host_session_settings) on Next. Built on
+// ui/native_screen's kit and shaped after ui/server_browser_native, its sibling in the same
+// switcher; a measured construction fact lives in the kit's header, not here. See
+// ui/host_window_native.h.
 
 #include "ui/host_window_native.h"
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
 #include "coop/session/session_manager.h"
-#include "ui/host_session_settings.h"   // step TWO -- what Next opens
+#include "ui/host_session_settings.h"   // step two, what Next opens
 #include "ui/input_focus.h"
 #include "ui/native_screen.h"
-#include "ui/server_browser_native.h"   // CloseNow -- the sibling hand-over
+#include "ui/server_browser_native.h"   // CloseNow, the sibling hand-over
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
@@ -42,37 +41,22 @@ namespace sb = ue_wrap::save_browser;
 
 using ue_wrap::FLinearColor;
 
-// ---- layout ------------------------------------------------------------------------
-// 980 MATCHES THE BROWSER, and it is not only for looks: at 900 the connection
-// descriptions clipped mid-word ("You must fc", "any Multi"), which reads as a rendering
-// fault rather than as a long sentence.
+// Layout. 980 matches the browser, and at 900 the connection descriptions clipped mid-word, which
+// reads as a rendering fault rather than a long sentence.
 constexpr float kWindowW  = 980.f;
 constexpr float kWindowH  = 640.f;
 constexpr float kRowH     = 56.f;
 constexpr float kBorderPx = 2.f;
 constexpr float kPadPx    = 6.f;
-// EXPLICIT, not the VerticalBox's leftover slack -- the browser measured (2026-08-26) that
-// a Fill slot allots more than the window has left, and the list then overflows UPWARD
-// under the header. An override depends on nothing.
-//
-// IT IS A MINIMUM, NOT A BUDGET -- and the difference is the fix.
-//
-// At 300, with every child Automatic, the column asked for more than the window has and the
-// FOOTER was arranged past the bottom edge: Back and Host hung outside the frame in both
-// corners, which is what the user saw twice ("кнопки в host меню расходятся", "в левом и
-// правом нижних углах"). The first fix was to shrink this number until the sum fit -- and
-// the audit that followed showed the arithmetic behind it was wrong anyway (it omitted the
-// title's and the footer's own 6 px slot padding, so the "~28 px spare" it claimed was
-// ~14, inside the uncertainty of a cloned button's style padding).
-//
-// So the real fix is not a better number. The list's slot is now FILL (see its AddVFill
-// below), which makes it the column's slack absorber: this value is what the SizeBox asks
-// for, the slot gives it whatever is left, and no sibling can be arranged off the frame at
-// any font metric. That is the shape the browser's column always had.
+// The list height is explicit, not the VerticalBox's leftover slack, and it is a minimum, not a
+// budget: with every child Automatic the column asked for more than the window had and the footer
+// was arranged past the bottom edge, Back and Host hanging outside the frame. The list's slot is
+// Fill (its AddVFill below), so it absorbs the column's slack, this value is what the SizeBox asks
+// for, and no sibling can be arranged off the frame at any font metric; the browser's column has
+// always had that shape.
 constexpr float kListH    = 240.f;
-// Bounds the whole sync loop, not just the display. A player with more saves than this
-// sees the newest ones (save_browser sorts by last-played), and the cap is stated rather
-// than silent.
+// Bounds the whole sync loop, not only the display: a player with more saves sees the newest
+// (save_browser sorts by last played), and the cap is stated.
 constexpr int   kMaxSaveRows = 24;
 
 const FLinearColor kPanel  = NS::Panel();
@@ -83,25 +67,15 @@ const FLinearColor kAccent = NS::Accent();
 const FLinearColor kHover  = NS::Hover();
 const FLinearColor kDim    = NS::Dim();
 
-// ---- the three connection modes ----------------------------------------------------
-// The wording is the product surface, so it is fixed ONCE here. Each line says what the
-// choice costs the player, because "AUTO / DIRECT / LAN" alone asks them to guess.
+// The connection modes, the product wording fixed once; each line says what the choice costs the
+// player.
 struct ConnMode { const wchar_t* title; const wchar_t* detail; };
-// EACH DESCRIPTION FITS ITS CELL, and that is a constraint on the WRITING rather than a
-// thing to fix in layout. The row is a fixed-width two-column line by design (label left,
-// explanation right), so a sentence longer than ~50 characters clips mid-word -- "You must
-// fc", "any Multi" -- which the user read as broken twice. These say the same things in
-// the room available; the detail each one drops (which router, whose port, which IP) is
-// the detail a player who needs it will look up anyway.
-// TWO, not three, since 2026-09-01. "LAN ONLY" was never a third transport: `[V]` it
-// called the SAME StartLanDirect as DIRECT and bound the same all-interfaces socket
-// (measured `:::47621`). What made it look separate was an accept filter doing the
-// ROUTER's job, now deleted, plus never listing -- which is the SERVER LIST selector in
-// step two. See coop/session/host_mode.h.
-//
-// The names say what the player must DO and what it costs them, because "AUTO / DIRECT /
-// LAN ONLY" asked them to already know our architecture -- and the project's own author
-// read "LAN ONLY" as meaning 127.0.0.1.
+// Each description fits its cell, a constraint on the writing: the row is a fixed-width
+// two-column line, and a sentence longer than about 50 characters clips mid-word. Two modes, not
+// three: LAN ONLY was never a third transport, it called the same StartLanDirect and bound the
+// same all-interfaces socket, and what made it look separate was an accept filter doing the
+// router's job (deleted) plus never listing, which is the server-list selector in step two (see
+// coop/session/host_mode.h). The names say what the player must do and what it costs them.
 constexpr ConnMode kConnModes[2] = {
     {L"AUTOMATIC  (recommended)",
      L"We introduce you. Nothing to set up."},
@@ -109,23 +83,21 @@ constexpr ConnMode kConnModes[2] = {
      L"Friends reach your PC. No server involved."},
 };
 
-// ---- state (GAME THREAD ONLY unless marked) ----------------------------------------
+// State, game thread only unless marked.
 void* g_menu     = nullptr;
 void* g_switcher = nullptr;
 void* g_root     = nullptr;
 void* g_scrimW   = nullptr;
 void* g_list     = nullptr;   // UScrollBox of save rows
 void* g_status   = nullptr;
-// The status string last WRITTEN to g_status. MODULE-level and reset with the widget on
-// the menu-instance edge -- see the writer in OnMenuTick for why a function-local static
-// left this line permanently blank on the second visit.
+// The status string last written to g_status, at module level and reset with the widget on the
+// menu-instance edge (see the writer in OnMenuTick).
 std::string g_lastStatus;
 void* g_backBtn  = nullptr;
 void* g_hostBtn  = nullptr;
-// SIZED FROM THE TABLE, never spelled again. These were `[3]` beside a `[3]` table and
-// four hand-written `i < 3` loops; when the table became two, every one of those was a
-// separate place to forget -- and an over-run loop here reads a null and silently draws
-// nothing rather than crashing, which is the failure that hides.
+// Sized from the table, never spelled again: as a literal beside a literal-sized table, every
+// loop was a separate place to forget when the table shrank, and an over-run loop reads a null
+// and silently draws nothing.
 constexpr int kConnCount = static_cast<int>(sizeof(kConnModes) / sizeof(kConnModes[0]));
 void* g_connRow[kConnCount]   = {};   // the clickable background images
 void* g_connLabel[kConnCount] = {};
@@ -135,18 +107,11 @@ int32_t g_priorIndex = -1;
 bool    g_shown      = false;
 int     g_buildAttempts = 0;
 
-// Selection. -1 is NEW GAME and is the default, because a fresh world is the only choice
-// that always exists -- a first-time host may have no saves at all.
-// THE CHOSEN WORLD, BY SLOT NAME -- empty means New game.
-//
-// It was an INDEX, and the list is `stable_sort`ed NEWEST-FIRST by last-played and re-scanned
-// on every Show(). So: pick world C (index 2), host it, quit to the menu, reopen -- C is now
-// first, index 2 is a different world, the guard `if (idx >= want) idx = -1` does not fire
-// because nothing SHRANK, and HOST loads the wrong world with the stale index arriving
-// pre-highlighted. The browser learned this as its invariant 1 and keys on `lobbyId`; the
-// cost here is higher, because a wrong lobby is a wrong server and a wrong slot is a wrong
-// SAVE. Found by the post-ship audit; newly reachable, because until the same day's hit-test
-// fix this value could only ever be "none".
+// The chosen world by slot name; empty is New game, the default, since a fresh world is the only
+// choice that always exists. Not an index: the list is sorted newest-first by last played and
+// re-scanned on every Show, so an index chosen before a host, a quit and a reopen names a
+// different world, and a wrong slot is a wrong save. The browser keys on lobbyId for the same
+// reason.
 std::wstring g_selectedSlot;
 int  g_connMode     = 0;
 int  g_hoverRow     = -2;   // -2 = nothing hovered; -1 = the New Game row; >=0 = a save
@@ -162,12 +127,12 @@ bool  g_escPrimed = false;
 std::vector<sb::SaveInfo> g_saves;
 uint64_t g_savesRev = 0;
 
-// Cross-thread open/close intent, same shape as the browser's.
+// Cross-thread open and close intents, as the browser's.
 std::atomic<uint64_t> g_wantOpenMs{0};
 std::atomic<bool>     g_wantClose{false};
 constexpr uint64_t kIntentTtlMs = 20000;
 
-// ---- helpers -----------------------------------------------------------------------
+// Helpers.
 
 std::wstring Widen(const std::string& s) {
     if (s.empty()) return {};
@@ -187,9 +152,8 @@ std::string Narrow(const std::wstring& w) {
     return s;
 }
 
-// WHERE THE CHOSEN WORLD CURRENTLY SITS, or -1 for none/New game. Resolved by NAME on every
-// read, so a re-sort under an open window cannot silently move the selection to a different
-// save -- the whole point of keying on the slot instead of the row number.
+// Where the chosen world currently sits, or -1 for New game; resolved by name on every read, so a
+// re-sort under an open window cannot move the selection to a different save.
 int SlotIndex() {
     if (g_selectedSlot.empty()) return -1;
     for (size_t i = 0; i < g_saves.size(); ++i)
@@ -197,9 +161,9 @@ int SlotIndex() {
     return -1;
 }
 
-// One row: SizeBox -> Overlay -> [ Image (the HIT TARGET + the selection fill),
-// HorizontalBox of text ]. No UButton, for the reason the browser's rows record: a bare
-// UImage answers IsHovered, and a UButton would add a press visual we would suppress.
+// One row: SizeBox, Overlay, an Image (the hit target and the selection fill) and a HorizontalBox
+// of text. No UButton: a bare UImage answers the geometry hit test, and a UButton would add a
+// press visual to suppress.
 struct Row { void* box; void* bg; void* a; void* b; void* c; };
 
 Row BuildRow(void* parent, float wA, float wB, float wC) {
@@ -229,18 +193,16 @@ Row BuildRow(void* parent, float wA, float wB, float wC) {
         }
     }
     U::SetContent(r.box, ovl);
-    // BAIL BEFORE PUBLISHING A HALF-BUILT ROW. `SyncSaves` pushes whatever this returns into
-    // `g_saveRows` and then indexes `g_saves` and `g_list` by the SAME integer -- so a row
-    // that failed to spawn but still got pushed slides every later index by one, and
-    // `g_hoverRow` (a g_list index) would select a different world than the one clicked.
+    // No half-built row: SyncSaves pushes what this returns and indexes g_saves and g_list by the
+    // same integer, so a failed row that was still pushed would slide every later index by one and
+    // a click would select a different world.
     if (!r.box || !r.bg) return Row{};
     U::AddChild(parent, r.box);
     return r;
 }
 
-// The save rows we built, parallel to g_saves. Index -1 is the New Game row, which is a
-// permanent child rather than a synthesized entry -- it must exist even when the scan
-// found nothing, which is exactly the first-run case.
+// The save rows, parallel to g_saves. Index -1 is the New Game row, a permanent child that exists
+// even when the scan found nothing, the first-run case.
 Row              g_newGameRow{};
 std::vector<Row> g_saveRows;
 
@@ -250,16 +212,13 @@ void SetText(void* block, const std::wstring& t, const FLinearColor& col) {
     E::SetTextBlockColorDispatch(block, col);
 }
 
-// RUNTIME repaint, so every write here must DISPATCH. Both raw variants -- the text
-// colour and the image tint -- write a property that UMG already baked into the Slate
-// widget at attach, so they change nothing on screen; that is why this window's hover
-// highlight had never drawn (post-ship audit, 2026-08-30, found via the browser's own
-// identical defect). `...Raw` stays correct at BUILD time, before the widget is attached.
+// A runtime repaint, so every write dispatches: the raw variants write a property UMG already
+// baked into the Slate widget at attach and change nothing on screen (this window's hover
+// highlight never drew that way); Raw is correct at build time only.
 void PaintRow(const Row& r, bool selected, bool hovered) {
     if (!r.bg) return;
     U::SetImageTint(r.bg, selected ? kRowSel : kRowBg);
-    // Style doc section 4: hover is a TEXT colour and selection is a FILL. Two channels,
-    // applied independently -- porting ImGui's HeaderHovered here would look foreign.
+    // Hover is a text colour and selection a fill, two channels applied independently.
     const FLinearColor main = hovered ? kHover : kText;
     const FLinearColor sub  = hovered ? kHover : kDim;
     E::SetTextBlockColorDispatch(r.a, main);
@@ -283,26 +242,23 @@ void SetStatus(const std::wstring& t) { SetText(g_status, t, kText); }
 
 }  // namespace
 
-// ============================ build ==================================================
 namespace {
 
 bool BuildScreen(void* switcher) {
     void* saveSlots = NS::SwitcherChild(switcher, L"ui_saveSlots_C");
     void* backDonor = NS::DonorField(saveSlots, L"button_back");
     if (!backDonor) {
-        // Fail CLOSED and retry: a missing donor means we do not know what else moved in
-        // this build. The browser owns the loud player-facing alarm for that condition;
-        // this screen is reached THROUGH it, so a second dialog would only stack.
+        // Fail closed and retry: a missing donor means the build's layout moved. The browser owns
+        // the player-facing alarm for that; this screen is reached through it, and a second dialog
+        // would stack.
         if (++g_buildAttempts == 15)
             UE_LOGE("host_window_native: ui_saveSlots_C.button_back absent after %d "
                     "attempts -- NOT building", g_buildAttempts);
         return false;
     }
 
-    // THE SHELL -- switcher child, widget tree, scrim, centred framed window, title
-    // strip -- from the shared kit since 2026-08-31. This screen and the browser carried
-    // byte-identical copies of it, comments and traps included; see `native_screen.h`.
-    // NO X (USER 2026-08-30): the exits are Back and ESC, both `[V]` proven.
+    // The shell (the switcher child, the widget tree, the scrim, the centred framed window, the
+    // title strip) from the shared kit. No X: the exits are Back and ESC.
     NS::WindowShell shell;
     if (!NS::BuildWindowShell(switcher, kWindowW, kWindowH,
                               L"Multivoid  -  Host Game", shell))
@@ -320,18 +276,10 @@ bool BuildScreen(void* switcher) {
     if (!listBox || !g_list) return false;
     U::SetSizeBoxHeight(listBox, kListH);
     U::SetContent(listBox, g_list);
-    // THE ONE FILL CHILD IN THIS COLUMN, and that is what makes the window structurally
-    // safe rather than arithmetically lucky.
-    //
-    // Every child here was Automatic, so the column was a fixed stack: the moment any
-    // desired size grew past the budget, the footer was arranged OUTSIDE the window and
-    // Back/Host became unclickable -- the defect the user saw twice today, fixed then by
-    // re-tuning `kListH`. Re-tuning a constant by eye is not a fix; it is the same defect
-    // waiting for a different font. With the list absorbing the slack, `kListH` is a
-    // DESIRED MINIMUM and no sibling can ever be pushed off the frame.
-    //
-    // The browser's column has had exactly this shape since it was built, which is why it
-    // could not overflow and this one could (post-ship correctness audit, 2026-08-31).
+    // The one Fill child in this column, which makes the window structurally safe rather than
+    // arithmetically lucky: with every child Automatic the column was a fixed stack, and the moment
+    // a desired size grew past the budget the footer was arranged outside the window and its
+    // buttons became unclickable. With the list absorbing the slack, kListH is a desired minimum.
     NS::AddVFill(col, listBox, 1.f, NS::kFill, NS::kFill);
 
     NS::AddText(col, L"CONNECTION", 16, kAccent, NS::kJustLeft, 0.f);
@@ -343,31 +291,20 @@ bool BuildScreen(void* switcher) {
         SetText(r.b, kConnModes[i].detail, kDim);
     }
 
-    // FOOTER: BACK at the LEFT, HOST at the RIGHT, status between -- and NO BORDERED
-    // STRIP around them.
-    //
-    // The strip was the defect the user saw: a framed bar running the full width of the
-    // window with a button hard against each end, level with the window's own frame --
-    // "the buttons Back and Host are not aligned with the main box and look unnatural"
-    // (2026-08-31). It read as a second window edge inside the first. VOTV frames CONTENT
-    // (a list, a value cell, a title); it does not frame a row of buttons, and the browser
-    // dropped the same strip a commit earlier for the same reason.
-    //
-    // The placement itself is the measured one and does not change: bottom-LEFT is the way
-    // out and bottom-RIGHT is the commit, in every native window that has both (style doc
-    // section 5, gap S7).
+    // The footer: Back at the left, Next at the right, the status between, and no bordered strip
+    // around them (a framed bar level with the window's own frame read as a second window edge;
+    // VOTV frames content, never a row of buttons). Bottom left is the way out and bottom right the
+    // commit in every native window that has both.
     if (void* footRow = NS::Spawn(L"HorizontalBox", col)) {
-        // Sentence case: VOTV uppercases no button label anywhere (measured
-        // across the style corpus; user report 2026-08-30 "No caps at buttons ever").
+        // Sentence case: VOTV uppercases no button label anywhere.
         g_backBtn = NS::BuildButton(footRow, backDonor, L"Back", NS::kBtnFontPx);
         g_status  = NS::AddText(footRow, L"", 16, kText, NS::kJustCenter, 1.f);
-        // "Next", not "Host": this window no longer hosts. A button whose label promises
-        // the last step while a second one follows is the kind of small lie a player
-        // notices immediately -- they press it expecting the game to start.
+        // "Next", not "Host": this window no longer hosts, and a label promising the last step
+        // while a second one follows is a lie the player notices at once.
         g_hostBtn = NS::BuildButton(footRow, backDonor, L"Next", NS::kBtnFontPx);
         if (!g_backBtn || !g_hostBtn) return false;
-        // The status text carries all the fill weight, so it takes the slack and pushes the
-        // two buttons to the ends -- which is what puts them there rather than a constant.
+        // The status text carries all the fill weight, so it takes the slack and pushes the two
+        // buttons to the ends.
         NS::SetHSlot(NS::SlotOf(g_backBtn), 0.f, NS::kLeft,  NS::kCenter);
         NS::SetHSlot(NS::SlotOf(g_hostBtn), 0.f, NS::kRight, NS::kCenter);
         if (void* s = NS::AddVFill(col, footRow, 0.f, NS::kFill, NS::kBottom))
@@ -376,25 +313,12 @@ bool BuildScreen(void* switcher) {
 
     g_root = root;
 
-    // ATTACH NOW, NOT AT FIRST Show(). NOTHING ELSE REFERENCES THIS TREE.
-    //
-    // The attach used to live in `Show()`, so between building the screen and the player's
-    // first click the whole subtree was an unreferenced UObject graph -- and UE's garbage
-    // collector took it. `AddChild` then returned null on a dead object, and before the
-    // index was proven that produced a switch to one of the GAME's own screens (the user
-    // clicked MULTIPLAYER and got VOTV's Stats panel); after it was proven, the button went
-    // dead instead. Same root, two faces.
-    //
-    // WHY NO LAB RUN EVER SAW IT: every automated scenario sets `browser_autoopen=1`, which
-    // calls Show() on the SAME TICK as the build. The gap the bug lives in is exactly the
-    // gap a human takes to move the mouse. (MEASURED 2026-08-30 -- `AddChild
-    // slot=0000000000000000` in a hands-on log carrying 41 GC lines in the same window.)
-    //
-    // Attaching here is also what the code already claimed to do: Show()'s own comment says
-    // "the screen stays ATTACHED for the menu's life". It just did not become true until the
-    // first open. `AddToRoot` is the wrong tool -- a switcher child is reachable from the
-    // menu, which is the reference we actually want (RUNG 2 measured that a hand-built
-    // subtree survives a forced GC once it is IN the tree).
+    // Attached now, not at the first Show: nothing else references this tree, and attached lazily
+    // it was an unreferenced UObject graph between the build and the player's first click, which
+    // the garbage collector took (AddChild then returned null on a dead object; before the index
+    // was proven that switched to one of the game's own screens, after it the button went dead). No
+    // lab run saw it because every scenario auto-opens on the build tick. A switcher child is
+    // reachable from the menu, the reference actually wanted; AddToRoot is the wrong tool.
     {
         void* slot = U::AddChild(g_switcher, g_root);
         g_ourIndex = U::IndexOfChild(g_switcher, g_root);
@@ -412,8 +336,6 @@ bool BuildScreen(void* switcher) {
     return true;
 }
 
-// ============================ data ===================================================
-
 void SyncSaves() {
     const uint64_t rev = sb::CopySaves(g_saves);
     if (rev == g_savesRev && !g_saveRows.empty()) return;
@@ -421,10 +343,9 @@ void SyncSaves() {
 
     const int want = static_cast<int>(g_saves.size()) > kMaxSaveRows
                          ? kMaxSaveRows : static_cast<int>(g_saves.size());
-    // What the hover walk is allowed to consider. `g_saveRows.size()` is a HIGH-WATER MARK
-    // -- rows are grown and never removed, only Collapsed -- and a collapsed widget keeps
-    // the rect it last painted with, so passing the vector size let a click in the empty
-    // area under the live rows hover a row that is not on screen.
+    // What the hover walk may consider: the row vector is a high-water mark (rows are grown and
+    // collapsed, never removed) and a collapsed widget keeps the rect it last painted with, so the
+    // vector size let a click under the live rows hover a row not on screen.
     g_visibleSaves = want;
     while (static_cast<int>(g_saveRows.size()) < want)
         g_saveRows.push_back(BuildRow(g_list, 0.5f, 0.25f, 0.25f));
@@ -437,50 +358,31 @@ void SyncSaves() {
         SetText(g_saveRows[i].b, s.modeLabel, kDim);
         SetText(g_saveRows[i].c, L"day " + std::to_wstring(s.day), kDim);
     }
-    // NOTHING TO REPAIR HERE ANY MORE. The selection is a slot NAME, so a re-sort, a
-    // shrink and a rescan all leave it pointing at the same world -- or at no world, if
-    // that save is gone, which `SlotIndex` reports by returning -1.
+    // Nothing to repair: the selection is a slot name, so a re-sort, a shrink and a rescan leave it
+    // on the same world, or on none if that save is gone.
 
     RepaintAll();
 }
 
-// ============================ input ==================================================
-
 void UpdateHover() {
-    // THE TRACKER, not a cursor-delta of our own. This screen had
-    //     if (p == g_lastCursor) return;
-    // over a SCROLLABLE list -- 24 rows of 56 px in a 300 px viewport -- so a wheel turn
-    // slid a different world under a stationary pointer while the stored index stayed put,
-    // and the stored index is what HOST loads. The browser had the same gate, was fixed,
-    // and the fix was not carried across; the tracker exists so it cannot happen a third
-    // time. It also supplies the settling pass the Slate-hover checks below have always
-    // needed: Slate's hover reads one tick behind the pointer, so evaluating only on a
-    // moving tick left New Game and the three mode rows lighting up a frame late and never
-    // correcting once the cursor stopped.
+    // The tracker, not a cursor delta of our own: a pointer-only gate over a scrollable list let a
+    // wheel turn slide a different world under a still pointer while the stored index, which is
+    // what Next loads, stayed put; the browser had the same gate and its fix was not carried
+    // across. The tracker also supplies the settling pass Slate's one-tick-late hover needs.
     if (!g_hover.Poll(g_list, g_visibleSaves)) return;
 
     const int prevRow = g_hoverRow, prevConn = g_hoverConn;
     g_hoverRow  = -2;
     g_hoverConn = -1;
-    // NEW GAME and the connection rows sit in `col`, OUTSIDE the ScrollBox, so Slate's own
-    // hover answers for them and they keep asking it. The SAVE rows are inside `g_list` and
-    // it does NOT: a row background there is a UImage set Visible whose rect contains the
-    // cursor, and `IsHovered()` on it reads 0 (measured 2026-08-29 on the server browser,
-    // which shipped the identical construct the same day). Left as it was, the world list
-    // could not be clicked at all -- this window could only ever start a NEW game.
-    // ONE CURSOR RESOLVE FOR THE WHOLE SWEEP, the hoist the sibling screen already had.
-    // `CursorOverWidget` re-resolves the cursor per widget, and its expensive half is an
-    // UNCACHED `FindObjectByClass` walk -- so probing the new-game row plus each connection
-    // row cost one walk EACH, per evaluated tick. `WidgetContains` takes the already-resolved
-    // coordinates and does the geometry only. (Post-ship perf audit, 2026-09-01; the same
-    // hoist landed next door and was not carried across, which is the one-copy-fixed pattern
-    // this file's own comments keep naming.)
+    // New Game and the connection rows sit outside the ScrollBox, and the save rows inside it,
+    // where IsHovered reads 0 on a Visible row image whose rect contains the cursor; left to Slate,
+    // the world list could not be clicked at all. One cursor resolve for the whole sweep:
+    // CursorOverWidget re-resolves per widget, and its expensive half is an uncached
+    // FindObjectByClass walk, so the new-game row plus each connection row cost one walk each per
+    // evaluated tick.
     long hx = 0, hy = 0;
-    // FALLS THROUGH TO THE REPAINT ON FAILURE rather than returning. The hover state was
-    // already cleared above, so an early return left the last highlighted row lit and the
-    // next tick saw no difference to repaint -- lit permanently. The per-widget call this
-    // replaced returned false per row and let the repaint run, so the hoist introduced it.
-    // (Post-ship audit, 2026-09-01.)
+    // Falls through to the repaint on failure: the hover state was already cleared above, and an
+    // early return left the last highlighted row lit permanently.
     if (NS::CursorInWidgetSpace(hx, hy)) {
         if (g_newGameRow.bg && NS::WidgetContains(g_newGameRow.bg, hx, hy)) g_hoverRow = -1;
         if (g_hoverRow == -2 && g_hover.Index() >= 0) g_hoverRow = g_hover.Index();
@@ -490,21 +392,15 @@ void UpdateHover() {
     if (g_hoverRow != prevRow || g_hoverConn != prevConn) RepaintAll();
 }
 
-// NEXT -- hand the two choices made here to step two, which owns the host call.
-//
-// THIS FUNCTION USED TO HOST. It built the SaveChoice, derived the name, and called
-// `HostWithSave(... locked=false ...)` -- a hard-coded false that was the only thing a
-// player could ever have, because no surface in the tree could set it. Step two exists to
-// settle that (and only that), so the call moved WITH the value it needs; leaving a hosting
-// path here as well would be two host actions, which is what this file's header forbids.
+// Next hands the two choices made here to step two, which owns the host call: a hosting path here
+// as well would be two host actions.
 void DoNext() {
     sm::SaveChoice c;
     const int sel = SlotIndex();
     if (sel < 0) {
         c.newGame = true;
-        // A LITERAL, so nobody typed it -- see SaveChoice::nameIsDerived. This window has
-        // no name field, so without the flag the second New Game ever hosted from here
-        // died on "slot already exists" and dumped the player back on the browser.
+        // A literal nobody typed (SaveChoice::nameIsDerived): without the flag the second New Game
+        // hosted from here died on "slot already exists".
         c.newName       = "Coop";
         c.nameIsDerived = true;
         c.mode    = 0;   // enum_gamemode story
@@ -512,10 +408,9 @@ void DoNext() {
         c.newGame = false;
         c.slot    = Narrow(g_saves[static_cast<size_t>(sel)].slot);
     }
-    // THE NAME, DERIVED RATHER THAN TYPED (see the header): the browser lists servers by
-    // name and "<nick>'s game" tells another player who is hosting, which a fixed literal
-    // cannot. It is resolved HERE, at the moment the player commits to a world, so the two
-    // halves of one decision travel together rather than being re-derived downstream.
+    // The name, derived rather than typed: the browser lists servers by name and "<nick>'s game"
+    // tells another player who is hosting. Resolved at the moment the player commits to a world, so
+    // the two halves of one decision travel together.
     const std::string name = sm::Nickname().empty() ? "Multivoid game"
                                                     : sm::Nickname() + "'s game";
     UE_LOGI("host_window_native: NEXT -- world=%s conn=%d name='%s'",
@@ -540,15 +435,8 @@ void PollChrome() {
     g_prevLmb = lmb;
     if (!released) return;
 
-    // TWO MECHANISMS, BECAUSE THERE ARE TWO KINDS OF WIDGET -- measured, after I got
-    // this wrong in both directions on 2026-08-30.
-    //
-    // A real UButton ANSWERS `IsHovered`; a hand-built UImage does not. I unified them
-    // on geometry believing the browser's passing X verdict (which printed `hovered=0`)
-    // proved IsHovered dead for buttons too. It did not -- that 0 is the selftest's own
-    // advisory read taken at a different instant -- and the unification turned a PASSING
-    // X into `CLOSE BUTTON FAIL`. Reverted here; the rows and the image targets keep
-    // geometry, which is the only thing that works for THEM.
+    // Two mechanisms for two kinds of widget: a real UButton answers IsHovered, a hand-built UImage
+    // does not, and unifying both on geometry turned a passing close into a failing one.
     if (g_backBtn  && E::WidgetIsHovered(g_backBtn))  { Hide("BACK"); return; }
     if (g_hostBtn  && E::WidgetIsHovered(g_hostBtn))  { DoNext(); return; }
     for (int i = 0; i < kConnCount; ++i)
@@ -556,13 +444,10 @@ void PollChrome() {
     if (g_newGameRow.bg && NS::CursorOverWidget(g_newGameRow.bg)) {
         g_selectedSlot.clear(); RepaintAll(); return;
     }
-    // The row under the cursor is already known from the hover pass, which asked geometry
-    // rather than Slate for exactly the reason recorded there. Re-deriving it here would be
-    // a second implementation of the same question, and the two could disagree.
-    // BOUNDED BY THE SAVES, not by the row widgets: the row vector is a high-water mark and
-    // `g_saves` is the truth. A hover index outside it is a collapsed row and selects nothing
-    // -- which also stops this branch being the silent fall-through for every click that hits
-    // no control at all.
+    // The row under the cursor is known from the hover pass (geometry, for the reason recorded
+    // there); re-deriving it here would be a second implementation that could disagree. Bounded by
+    // the saves, not by the row widgets: a hover index outside them is a collapsed row and selects
+    // nothing, so this branch is not the fall-through for every click that hits no control.
     if (g_hoverRow >= 0 && g_hoverRow < static_cast<int>(g_saves.size())) {
         g_selectedSlot = g_saves[static_cast<size_t>(g_hoverRow)].slot;
         RepaintAll();
@@ -570,19 +455,13 @@ void PollChrome() {
     }
 }
 
-// ============================ lifecycle ==============================================
-
-// EVERYTHING THAT MUST BE TRUE THE MOMENT THIS SCREEN BECOMES LIVE -- one owner, because
-// there are now TWO ways it happens: `Show()`, and the reconcile that revives it when the
-// switcher index comes back to ours. The revive originally skipped these and the failure was
-// immediate: the browser closes on the ESC PRESS edge while this window closes on the
-// RELEASE, so one keypress closed the browser, revived this window with a stale `g_escPrimed`
-// still true, and let the player's own release close this one too -- one key walking two
-// screens back. The hover matters for the same reason a reopening does not move the pointer.
-//
-// The CONTENT resets stay in `Show()` on purpose and must not migrate here: re-reading the
-// ini or clearing the status on a revive would wipe a half-typed password and erase the very
-// host-failure line this window exists to display.
+// Everything that must be true the moment the screen becomes live, with one owner because there
+// are two ways it happens: Show, and the reconcile that revives it when the switcher index comes
+// back. The revive once skipped these: the browser closes on the ESC press edge and this window
+// on the release, so one keypress closed the browser, revived this window with a stale primed
+// flag, and the release closed this one too. The content resets stay in Show: re-reading the ini
+// or clearing the status on a revive would wipe a half-typed password and erase the host-failure
+// line this window exists to display.
 void BecameLive() {
     g_hover.Reset();
     g_hoverRow  = -2;
@@ -593,23 +472,19 @@ void BecameLive() {
 
 void Show() {
     if (!g_switcher || !g_root || g_shown) return;
-    // The index was proven when the screen was BUILT and attached; if that had failed,
-    // `g_root` was cleared and we never get here.
+    // The index was proven at the build; had that failed, g_root was cleared and this is not
+    // reached.
     g_priorIndex = NS::SafePriorIndex(U::SwitcherIndex(g_switcher), g_ourIndex, g_priorIndex);
     U::SwitcherSetIndex(g_switcher, g_ourIndex);
     g_shown = true;
-    // FORGET THE OLD HOVER. Reopening does not move the pointer, so without this the index
-    // from the last time this window was up survives -- and the click path reads it, so a
-    // click on inert chrome would select whatever row the player happened to leave the
-    // cursor over minutes ago.
+    // The old hover is forgotten: reopening does not move the pointer, and the click path reads the
+    // index, so a click on inert chrome would select the row the cursor was left over minutes ago.
     BecameLive();
     sb::RefreshAsync();          // the list is stale by definition between openings
     SyncSaves();
-    // EDGE-GATED. This rewrote an FText every tick -- two dispatches plus a wstring and an
-    // FText per frame for a string that changes when a host attempt finishes.
-    // The status is written by the ONE edge-gated writer in OnMenuTick, which runs on this
-    // same tick. A second writer here needed a second cache, and two caches for one widget
-    // is the shape that made this line go permanently blank -- see g_lastStatus.
+    // The status is written by the one edge-gated writer in OnMenuTick, on this same tick; a second
+    // writer here needed a second cache, and two caches for one widget is what once left the line
+    // permanently blank.
     UE_LOGI("host_window_native: shown (index %d -> %d)", g_priorIndex, g_ourIndex);
 }
 
@@ -626,9 +501,7 @@ bool Armed() {
     return s;
 }
 
-// An autonomous run cannot press a button, and this screen's real entry point (the
-// browser's HOST control) does not exist yet -- so the lab reaches it the same way it
-// reaches the browser.
+// The lab reaches this screen without a click, behind a dev flag, the way it reaches the browser.
 bool AutoOpenArmed() {
     static const bool s =
         coop::config::ResolveFlag(::coop::config_registry::rows::host_window_autoopen);
@@ -642,10 +515,8 @@ void Close()  { g_wantOpenMs.store(0, std::memory_order_relaxed);
                 g_wantClose.store(true, std::memory_order_relaxed); }
 
 void CloseNow() {
-    // ENFORCED, not merely documented -- the browser's own CloseNow records why: this sits
-    // one declaration below a `Close()` whose header says "safe from any thread", and it
-    // reaches ProcessEvent through SwitcherSetIndex. Off-thread it degrades to the deferred
-    // close rather than touching the engine.
+    // Enforced: this reaches ProcessEvent through SwitcherSetIndex, so off the game thread it
+    // degrades to the deferred close rather than touching the engine.
     if (!ue_wrap::game_thread::IsGameThread()) {
         UE_LOGW("host_window_native: CloseNow off the game thread -- deferring instead "
                 "(it drives the switcher through ProcessEvent)");
@@ -681,12 +552,9 @@ void OnMenuTick(void* menu, void* switcher) {
         g_lastStatus.clear();   // the widget it cached is gone with the menu
     }
     if (!g_root) {
-        // BACKED OFF once it is hopeless, like both siblings. Without this a persistent
-        // donor failure re-ran `SwitcherChild` (a ChildCount plus a ClassNameOf per child
-        // -- an engine call and a wstring EACH) plus `DonorField` on EVERY menu tick, at
-        // ~117 Hz, forever, on exactly the path a version migration lands on. Both sibling
-        // files carry the fix and name it; this one never got it (post-ship audit,
-        // 2026-08-31).
+        // Backed off once hopeless, like both siblings: a persistent donor failure otherwise re-ran
+        // the switcher walk and the donor lookups (an engine call and a wstring per child) every
+        // menu tick, at ~117 Hz, on the path a version migration lands on.
         if (g_buildAttempts >= 15) {
             static uint64_t sNextTryMs = 0;
             const uint64_t nowTry = ::GetTickCount64();
@@ -694,23 +562,15 @@ void OnMenuTick(void* menu, void* switcher) {
             sNextTryMs = nowTry + 1000;
         }
         if (!BuildScreen(switcher)) {
-            // A FAILED BUILD COUNTS, whatever failed. `g_buildAttempts` is incremented
-            // inside `BuildScreen` on the missing-donor path ONLY, so the gate above was
-            // inert for every other failure -- a shell that would not spawn, a null list --
-            // and the tick kept rebuilding at ~117 Hz forever, spawning a window's worth of
-            // UObjects each time. Both siblings count in the CALLER for exactly this
-            // reason, and one of them says so in a comment. I added the gate without the
-            // counter (audit of the fix commit, 2026-08-31).
+            // A failed build counts whatever failed: counted only on the missing-donor path, the
+            // gate above was inert for a shell that would not spawn or a null list, and the tick
+            // rebuilt at ~117 Hz forever, spawning a window's worth of UObjects each time.
             ++g_buildAttempts;
-            // SAY SO. Since 2026-08-29 the browser's HOST button closes the browser
-            // SYNCHRONOUSLY and then asks for this window, so a build that keeps failing
-            // leaves the player on the main menu with no window, no browser and -- until
-            // this line -- nothing in the log either. `Open()` returns void, so the button
-            // cannot answer; the log is the only place the truth can go.
-            // LATCHED. Unlatched, this ran on every menu tick for the intent's whole 20 s
-            // TTL -- ~1200 lines, each one a synchronous fflush (log.cpp flushes every
-            // non-INFO line). A diagnostic added to break a silence must not become the
-            // next hot-path defect; the browser's equivalent latches on g_toldTheUser.
+            // Said once: the browser's HOST button closes the browser synchronously and then asks
+            // for this window, so a build that keeps failing leaves the player on the main menu
+            // with no window and no browser, and Open returns void, so the log is the only place
+            // the truth can go. Latched: unlatched it ran every menu tick for the intent's 20 s
+            // TTL, each line a synchronous flush.
             static bool sSaidSo = false;
             if (!sSaidSo && g_wantOpenMs.load(std::memory_order_relaxed)) {
                 sSaidSo = true;
@@ -722,11 +582,9 @@ void OnMenuTick(void* menu, void* switcher) {
         }
         if (AutoOpenArmed()) {
             UE_LOGW("host_window_native: [dev] host_window_autoopen=1 -- showing without a click");
-            // THE SAME HAND-OVER THE REAL DOOR PERFORMS. With both dev flags armed, the
-            // browser also auto-opens, and opening on top of it makes this window record the
-            // BROWSER's index as the one to restore -- the exact corruption `CloseNow` was
-            // added to prevent, still reachable through the lab door. A test door that
-            // behaves differently from the player's door is how a lab result lies.
+            // The same hand-over the real door performs: with both dev flags armed the browser
+            // auto-opens too, and opening on top of it would record the browser's index as the one
+            // to restore. A test door that differs from the player's door is how a lab result lies.
             ui::server_browser_native::CloseNow();
             Open();
         }
@@ -740,18 +598,17 @@ void OnMenuTick(void* menu, void* switcher) {
         g_wantOpenMs.store(0, std::memory_order_relaxed);
         if (age <= kIntentTtlMs) Show();
         else
-            // The browser's expiry path logs; this one did not, so a HOST click that
-            // arrived while no menu tick was coming vanished without trace.
+            // Logged, as the browser's expiry is: a HOST click arriving with no menu tick coming
+            // otherwise vanished without trace.
             UE_LOGW("host_window_native: a HOST request expired unconsumed after %llu ms "
                     "(ttl %llu) -- no main-menu tick arrived to show the window",
                     static_cast<unsigned long long>(age),
                     static_cast<unsigned long long>(kIntentTtlMs));
     }
-    // Reconcile against the LIVE index IN BOTH DIRECTIONS: a sibling screen navigating away
-    // is observed rather than assumed, and so is one navigating BACK. Losing the screen by
-    // observation while only regaining it by being told is what let a caller hand the
-    // switcher back by writing the index and leave this window drawn but answering nothing --
-    // see the same block in host_session_settings for the failure the user hit.
+    // Reconcile against the live index in both directions: a sibling navigating away is observed,
+    // and so is one navigating back. Losing the screen by observation but regaining it only by
+    // being told let a caller hand the switcher back by writing the index and leave this window
+    // drawn but answering nothing.
     const bool indexIsOurs = g_root && g_ourIndex >= 0 &&
                              NS::ActiveIndex() == g_ourIndex;
     if (g_shown && !indexIsOurs) { g_shown = false; return; }
@@ -765,19 +622,15 @@ void OnMenuTick(void* menu, void* switcher) {
     SyncSaves();
     UpdateHover();
     PollChrome();
-    // The host status is authored on a worker thread and OUTLIVES this window's closing;
-    // showing it here every tick is what makes a refusal visible where the action was
-    // taken rather than in a window the player has already left.
-    // EDGE-GATED. This rewrote an FText every tick -- two dispatches plus a wstring and an
-    // FText per frame -- for a string that only changes when a host attempt finishes.
+    // The host status is authored on a worker thread and outlives this window's closing, so it is
+    // shown here where the action was taken. Edge-gated: an unconditional write cost two
+    // dispatches, a wstring and an FText per frame for a string that changes when a host attempt
+    // finishes.
     if (g_status) {
-        // MODULE-LEVEL, AND CLEARED WITH THE WIDGET. This was a function-level `static`
-        // with PROCESS lifetime while `g_status` is rebuilt (empty) on every menu
-        // instance -- so once a status had been rendered on menu N, reopening the window
-        // on menu N+1 found the string unchanged, wrote nothing, and the line stayed
-        // permanently BLANK until the status happened to change again. That line exists
-        // because the user was "nothing told about the session being DEAD"; after a failed
-        // host, quit to menu and reopen, the reason was gone (post-ship audit 2026-08-31).
+        // Module level and cleared with the widget: as a function-local static with process
+        // lifetime while g_status is rebuilt empty on every menu instance, a status rendered on one
+        // menu left the line blank on the next until the status happened to change, and the reason
+        // a session died was gone after a quit and a reopen.
         std::string cur = sm::HostStatus();
         if (cur != g_lastStatus) { g_lastStatus = cur; SetStatus(Widen(cur)); }
     }
