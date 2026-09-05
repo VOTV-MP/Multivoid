@@ -1,4 +1,6 @@
-// ui/browser_input_screens.cpp -- see ui/browser_input_screens.h.
+// ui/browser_input_screens.cpp -- the three small native windows reached from the browser:
+// direct connect (address and password), change name, and the lobby password prompt. See
+// ui/browser_input_screens.h.
 
 #include "ui/browser_input_screens.h"
 
@@ -35,15 +37,13 @@ namespace SB = ui::server_browser_native;
 
 using ue_wrap::FLinearColor;
 
-// Small: a window that holds one label, one field and two buttons has no business being
-// the size of the browser. The Language window it copies is about this shape.
+// Small: one label, one field and two buttons, about the shape of the Language window it
+// copies.
 constexpr float kWindowW = 620.f;
 constexpr float kWindowH = 210.f;
-// WHAT A SECOND LABEL + FIELD COSTS. Sized GENEROUSLY on purpose: the column ends in a
-// Spacer that absorbs slack, so a window that is too TALL is cosmetic while one that is too
-// SHORT arranges its footer past the bottom edge and the buttons render outside the ring --
-// the defect the hosting windows shipped twice, and the one a measured probe caught at 28 px
-// on 2026-09-01. There is no fit probe on this window, so the margin is the guard.
+// What a second label and field cost, sized generously: the column ends in a spacer that
+// absorbs slack, so a window too tall is cosmetic while one too short pushes its footer past
+// the bottom edge. There is no fit probe on this window; the margin is the guard.
 constexpr float kSecondFieldH = 96.f;
 constexpr float kFieldW  = 560.f;
 
@@ -51,7 +51,7 @@ const FLinearColor kText   = NS::Text();
 const FLinearColor kAccent = NS::Accent();
 const FLinearColor kBad    = NS::Bad();
 
-// ---- one screen's widgets ------------------------------------------------------------
+// One screen's widgets.
 struct Screen {
     void*      root    = nullptr;
     void*      scrim   = nullptr;
@@ -66,11 +66,9 @@ struct Screen {
 
 Screen  g_screen[3];                 // indexed by Kind
 
-// WHICH LOBBY THE PASSWORD PROMPT IS FOR. Captured when CONNECT was pressed, not read
-// back from the selection when OK is clicked: the list re-fetches every 5 s and a refresh
-// re-sorts it, so the highlighted row after a few seconds of typing may be a different
-// server -- and joining the wrong one with the right password is a worse outcome than
-// either failure it replaces.
+// Which lobby the password prompt is for, captured when Connect was pressed rather than read
+// back from the selection at OK: the list re-fetches every 5 s and a refresh re-sorts it, so
+// the highlighted row may be a different server by then.
 struct PendingJoin {
     std::string lobbyId;
     std::string displayName;
@@ -94,10 +92,8 @@ std::atomic<bool>     g_wantClose{false};
 std::atomic<uint64_t> g_wantAtMs{0};
 constexpr uint64_t kIntentTtlMs = 20000;
 
-// THE INVERSE OF `Idx`, and it exists because the two call sites that needed it were
-// open-coded ternaries reading `g_open == 0 ? DirectConnect : ChangeName`. Adding a third
-// screen would have made both of them silently confirm the WRONG one -- a password typed
-// into a box that then set the player's nickname.
+// The inverse of Idx. Two call sites open-coded a two-way ternary, and a third screen would
+// have made both confirm the wrong one.
 Kind KindOf(int idx) {
     return idx == 0 ? Kind::DirectConnect
                     : (idx == 1 ? Kind::ChangeName : Kind::LobbyPassword);
@@ -107,44 +103,34 @@ int Idx(Kind k) {
     return k == Kind::DirectConnect ? 0 : (k == Kind::ChangeName ? 1 : 2);
 }
 
-// What each screen SAYS. Kept in one table so the two cannot drift into different idioms
-// for the same window.
+// What each screen says, in one table so the screens cannot drift into different idioms.
 struct Spec {
     const wchar_t* title;
     const wchar_t* label;
     const wchar_t* hint;
     const wchar_t* confirm;
     int32_t        maxLen;
-    // AN OPTIONAL SECOND FIELD. nullptr label = this window has one box, which is every
-    // window but Direct connect. It is a Spec row rather than a `Kind` branch in the
-    // builder so the two shapes cannot drift: a screen with a second field and a screen
-    // without differ in DATA, not in construction.
+    // An optional second field; a null label means one box, which is every window but Direct
+    // connect. A Spec row rather than a Kind branch in the builder, so the two shapes differ in
+    // data, not in construction.
     const wchar_t* label2  = nullptr;
     const wchar_t* hint2   = nullptr;
     int32_t        maxLen2 = 0;
 };
 const Spec kSpec[3] = {
-    // TWO BOXES, at the user's instruction 2026-09-01: "Вводит адрес и порт, оставляет
-    // поле пароля пустым если его нет, или заполняет поле пароля если он был выдан
-    // хостом". The password cap matches the LobbyPassword window's for the same reason --
-    // a host may replace the generated secret with anything they can say out loud.
+    // Two boxes: the address, and a password left empty when the server has none. The password cap
+    // matches the LobbyPassword window's.
     {L"Multivoid  -  Direct connect", L"Server address", L"host or host:port", L"Connect", 64,
      L"Password  (leave empty if the server has none)", L"password", 64},
     {L"Multivoid  -  Change name",    L"Your name",      L"your name",         L"OK",      24},
-    // The cap is 64 CODEPOINTS and not the generated length: a host may replace the
-    // generated value with anything they can say out loud, and a limit sized to what WE
-    // mint would silently truncate what THEY chose.
+    // The cap is 64 codepoints, not the generated length: a host may replace the generated password
+    // with anything they can say out loud.
     {L"Multivoid  -  Password",       L"Server password", L"password",         L"Join",    64},
 };
 
-// EVERY field this screen owns, released together. Three teardown paths released `field`
-// and none released `field2`, because `field2` was added to the struct and not to them --
-// so a menu-instance rebuild leaked one Field per cycle, unbounded. Worse than the memory:
-// `Release` is the ONLY thing that clears the module's focus pointer, so a leaked focused
-// field leaves `g_focus` aimed at a Field whose UObject died with the menu, and the next
-// keystroke dispatches into it. That is the exact hazard native_text_field.h documents
-// Release as existing to prevent. One helper, so a THIRD field cannot repeat it.
-// (Post-ship audit, 2026-09-01.)
+// Every field this screen owns, released together. Release is the only thing that clears the
+// module's focus pointer, so a leaked focused field leaves the next keystroke dispatching into
+// a Field whose UObject died with the menu. One helper, so no teardown path can miss a field.
 void ReleaseFields(Screen& s) {
     TF::Release(s.field);
     s.field = nullptr;
@@ -175,35 +161,28 @@ bool BuildOne(void* switcher, Kind kind, void* backDonor) {
     if (spec.label2) {
         NS::AddText(col, spec.label2, 16, kAccent, NS::kJustLeft, 0.f);
         s.field2 = TF::Create(col, spec.hint2, spec.maxLen2, kFieldW);
-        // RELEASE THE FIRST FIELD ON THE WAY OUT. A bare `return false` past a successful
-        // `TF::Create` leaks a Field on every retry, and this builder is retried from the
-        // menu tick -- the same defect the session-settings screen shipped and the
-        // 2026-09-01 audit caught one file over.
+        // The first field is released on the way out: this builder is retried from the menu tick,
+        // and a bare return past a successful Create would leak a Field per retry.
         if (!s.field2) { ReleaseFields(s); return false; }
     }
 
-    // The status line sits under the field and starts empty: it exists to say why a
-    // confirm did not take, and a window that opens already explaining itself is noise.
+    // The status line under the field starts empty: it says why a confirm did not take.
     s.status = NS::AddText(col, L"", 16, kText, NS::kJustLeft, 0.f);
 
-    // A SPACER WITH ALL THE SLACK, so the footer sits at the bottom of the window rather
-    // than floating under the field. One weighted empty text block is the whole trick and
-    // it costs one widget; a Fill slot on the footer would push it to the bottom too, but
-    // then the footer's own height would be the window's leftover, which is the slack
-    // arithmetic the list height already had to stop depending on.
+    // A spacer with all the slack, so the footer sits at the bottom of the window. One weighted
+    // empty widget; a Fill slot on the footer would make the footer's own height the window's
+    // leftover.
     if (void* spacer = NS::Spawn(L"Spacer", col)) NS::AddVFill(col, spacer, 1.f, NS::kFill, NS::kFill);
 
-    // FOOTER: Back at the LEFT, the confirm at the RIGHT. That is not symmetry, it is what
-    // every native VOTV window does -- bottom-right is the CONFIRM position (style doc
-    // section 5, gap S7).
+    // Footer: Back at the left, the confirm at the right, where every native VOTV window puts its
+    // confirm.
     if (void* footRow = NS::Spawn(L"HorizontalBox", col)) {
         s.backBtn = NS::BuildButton(footRow, backDonor, L"Back", NS::kBtnFontPx);
         void* gap  = NS::Spawn(L"Spacer", footRow);
         if (gap) NS::AddHFill(footRow, gap, 1.f, NS::kFill, NS::kFill);
         s.okBtn = NS::BuildButton(footRow, backDonor, spec.confirm, NS::kBtnFontPx);
-        // RELEASE HERE TOO -- the next tick rebuilds and mints a second Field, stranding
-        // this one in the module's live list forever. The index-failure path below was
-        // hardened against exactly this and this one was not.
+        // Released here too: the next tick rebuilds and mints a second Field, stranding this one in
+        // the module's live list.
         if (!s.backBtn || !s.okBtn) { ReleaseFields(s); return false; }
         NS::SetHSlot(NS::SlotOf(s.backBtn), 0.f, NS::kLeft, NS::kCenter);
         NS::SetHSlot(NS::SlotOf(s.okBtn), 0.f, NS::kRight, NS::kCenter);
@@ -212,18 +191,16 @@ bool BuildOne(void* switcher, Kind kind, void* backDonor) {
 
     s.root = shell.root;
     s.scrim = shell.scrim;
-    // THE ADD'S RETURN IS CHECKED. Ignoring it is how `IndexOfChild` returns -1 for a
-    // reason the log cannot name -- and the browser's own builder checks it.
+    // The add's return is checked, so an IndexOfChild of -1 has a reason the log can name.
     void* slot = U::AddChild(switcher, s.root);
     s.index = U::IndexOfChild(switcher, s.root);
     if (s.index < 0) {
         UE_LOGE("browser_input_screens: built '%ls' but could NOT place it in the menu "
                 "switcher (AddChild slot=%p, GetChildIndex=-1) -- it cannot be shown this "
                 "menu", spec.title, slot);
-        // AND THE FIELD GOES WITH IT. Clearing `s.root` alone left the heap `Field` alive
-        // and in `g_live`, so the next tick rebuilt everything and leaked another one --
-        // ~117 leaked Fields and ~2,800 UObject spawns per second, forever (post-ship perf
-        // audit, 2026-08-31). Release, not Destroy: the tree we just built is orphaned.
+        // The field goes with it: clearing the root alone leaves the heap Field alive and in the
+        // live list, and the next tick rebuilds and leaks another. Release, not Destroy: the tree
+        // just built is orphaned.
         ReleaseFields(s);
         s.root = nullptr;
         return false;
@@ -233,9 +210,8 @@ bool BuildOne(void* switcher, Kind kind, void* backDonor) {
 
 void Hide(const char* why);
 
-// THE CONFIRM. Each screen's one action, and both write their value to the ini so the
-// answer survives the session -- which is the whole difference between a text box and a
-// setting.
+// The confirm, each screen's one action. The address and the name are written to the ini so
+// the answer survives the session.
 void Confirm(Kind kind) {
     Screen& s = g_screen[Idx(kind)];
     const std::string value = TF::Text(s.field);
@@ -244,14 +220,12 @@ void Confirm(Kind kind) {
             SetStatus(s, "Type the password this server was locked with.", kBad);
             return;
         }
-        // HANDED OVER, NEVER STORED. `SetJoinPassword` holds it for exactly one join
-        // attempt and nothing writes it to the ini -- it is a secret the player was
-        // lent, and the ini is the file people paste into bug reports.
+        // Handed over, never stored: SetJoinPassword holds it for one join attempt and nothing
+        // writes it to the ini, the file people paste into bug reports.
         sm::SetJoinPassword(value);
         if (!sm::JoinLobby(g_pendingJoin.lobbyId, g_pendingJoin.displayName,
                            g_pendingJoin.hostProto, g_pendingJoin.hostGame)) {
-            // The password is dropped on a refusal so it cannot ride along into a
-            // different connection the player makes next.
+            // Dropped on a refusal, so it cannot ride into the next connection the player makes.
             sm::SetJoinPassword("");
             SetStatus(s, "Could not start that connection -- another action is already "
                          "in flight.", kBad);
@@ -279,30 +253,20 @@ void Confirm(Kind kind) {
         SetStatus(s, "Type an address first -- host or host:port.", kBad);
         return;
     }
-    // `ConnectDirect` OWNS the refusal. It parses the address and answers false for a bad
-    // one, so this does not re-implement the parse -- a second parser is a second opinion
-    // about what a valid address is, and the one that matters is the one that dials.
-    // THE PASSWORD IS THIS WINDOW'S SECOND BOX, and it is set UNCONDITIONALLY -- an empty
-    // box writes an empty string, which is both "this server has none" and the clear that
-    // stops a value typed for a previous server riding along. That clear used to be the
-    // whole statement here (post-ship audit, 2026-08-31); it is now the empty case of a
-    // real field rather than a rule with no way to opt out of it.
-    //
-    // AN OPEN SERVER IGNORES WHATEVER IS TYPED, and that needed no code: the host sets
-    // `kAuthFlagPasswordRequired` only when its own `LobbyPassword()` is non-empty, so the
-    // client never even computes a tag, and the host's check is inside `if (!want.empty())`.
-    // Both sides already drop it (user: "поле пароля просто тупо игнорируется").
+    // ConnectDirect owns the refusal: it parses the address and answers false for a bad one, so
+    // there is no second parser here. The password is this window's second box and is set
+    // unconditionally: an empty box writes an empty string, which is both "this server has none"
+    // and the clear that stops a value typed for a previous server riding along. An open server
+    // ignores whatever is typed: the host sets the password-required flag only when its own lobby
+    // password is non-empty, and its check sits inside that branch.
     sm::SetJoinPassword(s.field2 ? TF::Text(s.field2) : std::string());
     if (!sm::ConnectDirect(value)) {
         SetStatus(s, "Could not connect to that address -- check it, or another action is "
                      "already in flight.", kBad);
         return;
     }
-    // WRITTEN ONLY AFTER THE ACCEPT GATE PASSED. `browser.lastdirect` means "the last
-    // address that was actually tried and accepted", so a typo cannot overwrite a
-    // known-good address the player will want back next time. The ImGui fallback used to
-    // persist whatever was typed, which is the looser meaning this deliberately does not
-    // share (SERVER_BROWSER_ARC section 7.8).
+    // Written only after the accept gate passed: the row means the last address actually tried and
+    // accepted, so a typo cannot overwrite a known-good address.
     coop::config::WriteIniValue(::coop::config_registry::rows::browser_lastdirect,
                                 value.c_str());
     UE_LOGI("browser_input_screens: direct connect accepted -- join_progress owns the "
@@ -313,45 +277,33 @@ void Confirm(Kind kind) {
 void Show(Kind kind) {
     Screen& s = g_screen[Idx(kind)];
     if (!g_switcher || !s.root || s.index < 0) return;
-    // A SIBLING REPLACES A SIBLING. If the other input screen (or the browser) is up, the
-    // index to restore must be the one BEFORE all of us, not the one we are replacing --
-    // otherwise Back walks back into a screen that is no longer listening. The browser
-    // solves this by closing synchronously before it opens the hosting window; here the
-    // same rule is stated by only recording `priorIndex` when nothing of ours is showing.
+    // A sibling replaces a sibling: if the other input screen or the browser is up, the index to
+    // restore is the one before all of us, not the one being replaced, or Back walks into a screen
+    // no longer listening. priorIndex is recorded only when nothing of ours is showing.
     if (g_open < 0)
         g_priorIndex = NS::SafePriorIndex(U::SwitcherIndex(g_switcher), s.index, g_priorIndex);
     g_open = Idx(kind);
     U::SwitcherSetIndex(g_switcher, s.index);
     g_escPrimed = false;
     g_lmbPrimed = false;
-    // ...AND THE TAB LATCH, which was added beside the other two and not reset with them.
-    // `g_prevTab` survives a close, so a TAB held across close-then-reopen raised a
-    // spurious release edge on the first poll and moved focus off the address box at open.
+    // The Tab latch too: g_prevTab survives a close, and a Tab held across close-then-reopen would
+    // raise a spurious release edge on the first poll.
     g_tabPrimed = false;
     s.lastStatus.clear();
     SetStatus(s, "", kText);
 
-    // PREFILLED FROM THE ROW IT WRITES. Both values are things the player already has, and
-    // retyping a known address to change one digit is the kind of friction a field exists
-    // to remove.
-    // PREFILLED FROM THE ROW IT WRITES -- except the password, which opens EMPTY on
-    // purpose. Both of the others are values the player already owns and retyping them
-    // is friction; a password is somebody else's, is not stored anywhere, and a box
-    // pre-filled with the LAST server's secret would be a small privacy leak between
-    // two lobbies and a confusing failure when it did not work.
+    // Prefilled from the row it writes, except the password, which opens empty: the address and the
+    // name are the player's own, while a box carrying the last server's secret is a leak between
+    // two lobbies.
     if (kind == Kind::LobbyPassword)      TF::SetText(s.field, std::string());
     else if (kind == Kind::DirectConnect)
         TF::SetText(s.field,
                     coop::config::ResolveString(::coop::config_registry::rows::browser_lastdirect));
     else                                  TF::SetText(s.field, sm::Nickname());
-    // THE PASSWORD BOX OPENS EMPTY EVERY TIME, for the reason the sibling window states:
-    // it is somebody else's secret, it is not stored, and a box carrying the LAST server's
-    // password is a leak between two lobbies and a baffling failure when it does not work.
+    // The second box opens empty for the same reason.
     if (s.field2) TF::SetText(s.field2, std::string());
-    // FOCUSED ON OPEN, on the box the player always fills in. Tab moves to the other one --
-    // and so does a CLICK: `native_text_field` hit-tests its own box by geometry, which the
-    // first version of this comment denied ("exposes no widget"). It exposes no widget to
-    // US; it focuses itself. Tab is the keyboard route, not the only route.
+    // Focused on open, on the box the player always fills in. Tab moves to the other; so does a
+    // click, since the field hit-tests its own box by geometry.
     TF::Focus(s.field);
     UE_LOGI("browser_input_screens: shown '%ls' (index %d -> %d)",
             kSpec[Idx(kind)].title, g_priorIndex, s.index);
@@ -368,11 +320,9 @@ void Hide(const char* why) {
     g_open = -1;
 }
 
-// BACK RETURNS TO THE BROWSER, not to the main menu. These two windows are only ever
-// reached FROM the browser, so the switcher index they replaced is the browser's -- and
-// restoring it is not enough on its own, because the browser tracks its own `g_shown` and
-// would consider itself closed. Asking it to Open() is the one call that puts both the
-// index and that flag back in agreement.
+// Back returns to the browser, not the main menu: these windows are only reached from it.
+// Restoring the index alone is not enough, since the browser tracks its own shown flag; Open
+// puts both back in agreement.
 void BackToBrowser() {
     Hide("BACK");
     SB::Open();
@@ -382,40 +332,30 @@ void PollChrome() {
     if (g_open < 0) return;
     Screen& s = g_screen[g_open];
 
-    // ESC. A FOCUSED FIELD OWNS IT FIRST -- the field turns Escape into "leave the field",
-    // and this poll reads the PHYSICAL key (GetAsyncKeyState), so swallowing the message in
-    // the detour would not stop this edge. One press must not both blur and close.
-    // ASK THE FIELD, not `AnyFocused()`: it blurs on WM_KEYDOWN, so by any edge this poll
-    // can take, focus is already gone and the guard could never fire -- one Escape both
-    // left the field and closed the window, discarding what was typed. Drained
-    // unconditionally so the latch cannot survive into the next press.
+    // Escape: a focused field owns it first, turning it into "leave the field". This poll reads the
+    // physical key, so swallowing the message in the detour would not stop the edge. The field is
+    // asked, not AnyFocused: the field blurs on key-down, so by any edge this poll sees, focus is
+    // already gone.
     const bool esc = (::GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
     if (!g_escPrimed) { g_escPrimed = true; g_prevEsc = esc; }
-    // THE RELEASE EDGE, matching the hosting screens -- it used to be the PRESS edge, and
-    // that lost a race it could not win. `GetAsyncKeyState` reflects the physical key
-    // immediately, while the latch is set only when `WM_KEYDOWN` is dispatched; this poll
-    // runs inside Slate's tick, i.e. AFTER the frame's message pump. A key pressed in the
-    // pump->tick gap therefore raised the press edge with the latch still clear, and the
-    // window closed while the WM_KEYDOWN arrived a frame later into a blurred field --
-    // discarding a typed password roughly half the time, on the password prompt itself.
-    // Taking the RELEASE edge puts a whole key-press between the two, so the latch is
-    // always set by the time it is read (audit of the fix commit, 2026-08-31).
+    // The release edge, as the hosting screens use. The physical key reads immediately, the field's
+    // latch is set only when the key-down message is dispatched, and this poll runs after the
+    // frame's message pump; a press edge could fire with the latch still clear and close the window
+    // while the key-down landed a frame later in a blurred field, discarding the typed password. A
+    // release edge puts a whole key-press between the two.
     const bool escEdge = g_prevEsc && !esc;
     g_prevEsc = esc;
     if (escEdge) {
-        // EITHER field may own the Escape. Asking only the first would let a press inside
-        // the password box both leave it and close the window, which is the exact defect
-        // the comment above records being fixed for the single-field case.
-        if (TF::ConsumeEscape(s.field)) return;   // consumed AT the edge -- see the sibling
+        // Either field may own the Escape; asking only the first would let a press inside the
+        // password box both leave it and close the window.
+        if (TF::ConsumeEscape(s.field)) return;   // consumed at the edge
         if (s.field2 && TF::ConsumeEscape(s.field2)) return;
         BackToBrowser();
         return;
     }
 
-    // TAB MOVES BETWEEN THE TWO BOXES -- the keyboard route; the module's own click
-    // hit-test is the other one. Release edge and a priming pass, for the same race the
-    // Escape block above documents: this poll runs after the frame's message pump, so a
-    // press edge can be seen before the key even reaches the field.
+    // Tab moves between the two boxes, the keyboard route beside the field's own click hit-test.
+    // Release edge and a priming pass, for the same pump-to-tick race as Escape.
     if (s.field2) {
         const bool tab = (::GetAsyncKeyState(VK_TAB) & 0x8000) != 0;
         if (!g_tabPrimed) { g_tabPrimed = true; g_prevTab = tab; }
@@ -430,9 +370,8 @@ void PollChrome() {
         }
     }
 
-    // ENTER confirms. The field raises the edge and this consumes it, so the same key that
-    // ends typing is the one that acts -- which is what every text field a player has ever
-    // used does, and what makes the confirm button optional rather than required.
+    // Enter confirms: the field raises the edge and this consumes it, so the confirm button is
+    // optional.
     if (s.field2 && TF::ConsumeSubmit(s.field2)) { Confirm(KindOf(g_open)); return; }
     if (TF::ConsumeSubmit(s.field)) {
         Confirm(KindOf(g_open));
@@ -444,10 +383,8 @@ void PollChrome() {
     const bool releaseEdge = !down && g_prevLmb;
     g_prevLmb = down;
     if (releaseEdge && ui::input_focus::IsOurWindowForeground()) {
-        // IsHovered, and it is right here: these are real UButtons and they answer. The
-        // FIELD is not -- it is a hand-built UImage frame and hit-tests by geometry, which
-        // is its own Tick's job (native_screen.h states why the mechanism is split by
-        // widget KIND).
+        // IsHovered: these are real UButtons and they answer. The field is a hand-built image frame
+        // that hit-tests by geometry in its own Tick.
         if (s.backBtn && E::WidgetIsHovered(s.backBtn)) { BackToBrowser(); return; }
         if (s.okBtn && E::WidgetIsHovered(s.okBtn)) {
             Confirm(KindOf(g_open));
@@ -465,12 +402,9 @@ void Open(Kind kind) {
 
 void OpenPasswordPrompt(const std::string& lobbyId, const std::string& displayName,
                         int hostProto, const std::string& hostGame) {
-    // The row travels WITH the request; see PendingJoin for why re-reading the
-    // selection when OK is pressed would be a different server by then.
-    //
-    // Written before the intent is published, and read only on the game thread after
-    // the intent is consumed -- the same ordering the other two screens rely on, with
-    // one writer and one reader and a full tick between them.
+    // The row travels with the request (see PendingJoin). Written before the intent is published
+    // and read on the game thread after the intent is consumed: one writer, one reader, a tick
+    // between them.
     g_pendingJoin.lobbyId     = lobbyId;
     g_pendingJoin.displayName = displayName;
     g_pendingJoin.hostProto   = hostProto;
@@ -485,10 +419,8 @@ void Close() {
 
 bool IsOpen() { return g_open >= 0; }
 
-// Both windows exist only as doors OFF the native browser, so they follow its flag.
-// Without this they were built into every menu instance even with `browser_native=0` --
-// two full UUserWidget trees that no code path can reach, on the deliberate ImGui-fallback
-// lane (both post-ship audits, 2026-08-31).
+// These windows exist only as doors off the native browser, so they follow its flag; otherwise
+// they would be built into every menu instance with the browser disabled, unreachable.
 bool Armed() {
     static const bool s = coop::config::ResolveFlag(::coop::config_registry::rows::browser_native);
     return s;
@@ -501,11 +433,9 @@ void OnMenuTick(void* menu, void* switcher) {
     if (menu != g_menu) {
         g_menu = menu;
         for (Screen& s : g_screen) {
-            // RELEASE, NOT DESTROY. The widgets died with the menu instance, so the field
-            // must unhook its focus and free its handle WITHOUT dispatching RemoveChild
-            // into a tree that no longer exists -- which is what `Destroy` does, and what
-            // this line did until the post-ship audit read it (2026-08-31). Both sibling
-            // screens drop their pointers and touch nothing on this edge; now so does this.
+            // Release, not Destroy: the widgets died with the menu instance, so the field must
+            // unhook its focus and free its handle without dispatching RemoveChild into a tree that
+            // no longer exists.
             ReleaseFields(s);
             s = Screen{};
         }
@@ -514,13 +444,9 @@ void OnMenuTick(void* menu, void* switcher) {
     }
 
     if (!g_screen[0].root || !g_screen[1].root || !g_screen[2].root) {
-        // BACKED OFF, because the retry is not free. Each attempt costs a `SwitcherChild`
-        // walk (a ChildCount plus a ClassNameOf per child -- an engine call and a wstring
-        // EACH, ~13 children here) plus a `DonorField` lookup, and at ~117 menu ticks a
-        // second that is well over a thousand dispatches and allocations per second,
-        // forever, on exactly the path a version migration lands on. The browser's own
-        // builder was given this backoff by the 2026-08-30 perf audit and this one was
-        // written without it (2026-08-31 audit, finding F4 reintroduced).
+        // Backed off, since the retry is not free: each attempt walks the switcher's children with
+        // an engine call and a string per child, plus a donor lookup, every menu tick, on exactly
+        // the path a version migration lands on.
         if (g_toldTheUser) {
             static uint64_t sNextTryMs = 0;
             const uint64_t now = ::GetTickCount64();
@@ -530,9 +456,8 @@ void OnMenuTick(void* menu, void* switcher) {
         void* saveSlots = NS::SwitcherChild(switcher, L"ui_saveSlots_C");
         void* backDonor = NS::DonorField(saveSlots, L"button_back");
         if (!backDonor) {
-            // Fail CLOSED and retry. The browser owns the loud player-facing alarm for a
-            // missing donor; these screens are reached THROUGH it, so a second dialog would
-            // only stack on the first.
+            // Fail closed and retry. The browser owns the loud alarm for a missing donor; these
+            // screens are reached through it, so a second dialog would only stack on the first.
             if (++g_buildAttempts == 15) {
                 g_toldTheUser = true;
                 UE_LOGE("browser_input_screens: ui_saveSlots_C.button_back absent after %d "
@@ -540,8 +465,8 @@ void OnMenuTick(void* menu, void* switcher) {
             }
             return;
         }
-        // A FAILED BUILD COUNTS, so a build that fails for a reason other than a missing
-        // donor also backs off instead of re-spawning ~14 UObjects every tick forever.
+        // A failed build counts, so a build that fails for another reason also backs off instead of
+        // re-spawning widgets every tick.
         if (!g_screen[0].root && !BuildOne(switcher, Kind::DirectConnect, backDonor)) {
             if (++g_buildAttempts >= 15) g_toldTheUser = true;
             return;
@@ -563,10 +488,8 @@ void OnMenuTick(void* menu, void* switcher) {
     if (want >= 0) {
         const uint64_t age = ::GetTickCount64() - g_wantAtMs.load(std::memory_order_relaxed);
         if (age <= kIntentTtlMs) {
-            // The BROWSER closes first and synchronously, for the reason its own Host
-            // handler documents: both screens are children of one switcher, and a sibling
-            // that opens on top of a live browser makes the browser's index the one this
-            // window will restore.
+            // The browser closes first, synchronously: both are children of one switcher, and a
+            // sibling opening on top of a live browser would restore the browser's index.
             SB::CloseNow();
             Show(KindOf(want));
         } else {
@@ -575,10 +498,8 @@ void OnMenuTick(void* menu, void* switcher) {
         }
     }
 
-    // Reconcile against the LIVE index rather than asserting ours, IN BOTH DIRECTIONS -- the
-    // rule the whole switcher family follows since 2026-09-01. Closed is observed (below);
-    // OPEN is observed here, so a caller that hands one of these screens back by restoring
-    // its index gets a live screen rather than one that draws and answers nothing.
+    // Reconciled against the live index in both directions. Closed is observed below; open is
+    // observed here, so a caller that restores one of these screens by index gets a live screen.
     if (g_open < 0) {
         const int32_t live = NS::ActiveIndex();
         if (live < 0) return;
@@ -596,18 +517,17 @@ void OnMenuTick(void* menu, void* switcher) {
     }
 
     if (NS::ActiveIndex() != g_screen[g_open].index) {
-        // BOTH, as `Hide` does. Blurring only the first left `g_focus` on the password box
-        // with `g_open == -1`, so nothing ticked or blurred it again: every keystroke landed
-        // in an invisible box and `AnyFocused()` kept ESC from closing the browser.
+        // Both, as Hide does: blurring only the first left the focus on the password box with
+        // nothing ticking it, so every keystroke landed in an invisible box and Escape could not
+        // close the browser.
         TF::Blur(g_screen[g_open].field);
         TF::Blur(g_screen[g_open].field2);
         g_open = -1;
         return;
     }
 
-    // BOTH FIELDS TICK. Only the focused one animates a caret, but a field that is not
-    // ticked never sees its own state advance -- and the second box is the one a player
-    // is typing into exactly when the first is idle.
+    // Both fields tick: only the focused one animates a caret, but an unticked field never sees its
+    // own state advance.
     TF::Tick(g_screen[g_open].field);
     if (g_screen[g_open].field2) TF::Tick(g_screen[g_open].field2);
     PollChrome();
