@@ -44,6 +44,7 @@ CYRILLIC = re.compile("[" + chr(0x0400) + "-" + chr(0x04FF) + "]")
 DATE = re.compile(r"\b20\d\d-\d\d-\d\d\b")
 LINK = re.compile(r"\]\(([^)\s#]+)(?:#[^)]*)?\)")
 BACKTICK_PATH = re.compile(r"`((?:docs|tools|src)/[A-Za-z0-9_./-]+\.md)`")
+DOC_PATH = re.compile(r"\bdocs/[A-Za-z0-9_./-]+?\.md\b")   # a doc named in a source comment
 LONG_COMMENT_BLOCK = 15
 
 # name -> (regex, what it counts). Each is applied per LINE of markdown / per comment line.
@@ -214,6 +215,7 @@ def measure(repo):
         c["src.comment_" + k] = 0
     c["src.files_half_comment"] = 0
     c["src.comment_blocks_over_%d" % LONG_COMMENT_BLOCK] = 0
+    c["src.comment_dead_docpath"] = 0
     for p in src:
         text = read(repo, p)
         if text is None:
@@ -234,6 +236,9 @@ def measure(repo):
                 if key in c and rx.search(line):
                     c[key] += 1
                     who[key][p] += 1
+            if any(m not in tracked_set for m in DOC_PATH.findall(line)):
+                c["src.comment_dead_docpath"] += 1
+                who["src.comment_dead_docpath"][p] += 1
     c["src.comment_permille"] = int(round(1000.0 * c["src.comment_lines"] / max(1, code_total + c["src.comment_lines"])))
     return c, who
 
@@ -261,6 +266,7 @@ FIXED_DESCRIPTIONS = {
     "md.dead_paths": "backticked docs/tools/src paths that name no tracked file",
     "src.comment_blocks_over_%d" % LONG_COMMENT_BLOCK: "comment blocks longer than %d lines" % LONG_COMMENT_BLOCK,
     "src.comment_lines": "comment lines in the mod's own C++",
+    "src.comment_dead_docpath": "comment lines naming a docs/*.md that is not in the repository",
     "src.comment_permille": "comment lines per 1000 lines of code+comment",
     "src.files_half_comment": "sources over %d lines that are more than half comment" % HALF_COMMENT_MIN_LINES,
 }

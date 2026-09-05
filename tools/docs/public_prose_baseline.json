@@ -32,6 +32,7 @@
   "src.comment_sha": 8,
   "src.files_half_comment": 12,
   "src.comment_blocks_over_15": 632,
-  "src.comment_permille": 351
+  "src.comment_permille": 351,
+  "src.comment_dead_docpath": 143
  }
 }
