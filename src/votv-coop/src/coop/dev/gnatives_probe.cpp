@@ -1,57 +1,18 @@
-// coop/dev/gnatives_probe.cpp -- see coop/dev/gnatives_probe.h.
-//
-// STEP 1.0 of docs/COOP_VM_DISPATCH_PLAN.md (impl /qf 2026-07-13, rounds 11-15):
-// the probe-first REAL-FILTER gate that MUST pass before the permanent, never-un-
-// swapped GNatives[0x45] substrate lands. This is NOT the old 16-slot toy scan --
-// it runs the SAME name-first filter shape the incr-1 wrapper will ship (factored
-// into RunKerfurFilter below so it is liftable into ue_wrap/vm_dispatch verbatim),
-// so the <=0.1 ms/frame measurement is of the real prologue, not a stand-in.
-//
-// It measures, in ONE game run:
-//   (i)  LIVE-CATCH + POSITIVE CONTROL -- swaps GNatives[0x45] ONLY (0x46 has no
-//        measured customer; plan R11), resolves the two kerfur verb FNames
-//        (dropKerfurProp / spawnKerfuro) + classes on the GT once, then per 0x45
-//        dispatch does IsGameThread -> 8-byte NAME compare (the POSITIVE CONTROL:
-//        a raw name-match proves the flip verb dispatched, independent of the class
-//        filter) -> IsDescendantOfAny class CONFIRM. Logs the first N name-matches
-//        (operand bytes + Context class + thread) so "0x45 is the flip opener" is a
-//        LIVE catch, not a static bytecode inference.
-//   (ii) PERF -- enabled path (real filter) vs the disabled fast-path tax
-//        (ini gnatives_probe_disabled=1 -> the eternal solo-SP cost of the
-//        never-removed swap: 1 relaxed atomic load + branch + tail-call). Sampled
-//        RDTSC; the 1/s dumper derives ms/frame.
-//
-// HARD HALT interpretation of the log (docs/COOP_VM_DISPATCH_PLAN.md S2.0):
-//   - name-match > 0 (positive control fires) AND class-confirmed == name-match
-//     AND enabled+disabled both <= 0.1 ms/frame => PASS, build the permanent swap.
-//   - name-match > 0 but class-confirmed < name-match => a kerfur variant is being
-//     REJECTED by the class confirm; its class is in the log -> register it (the
-//     class is a confirm, not a gate, so name still caught it -- but investigate).
-//   - flip triggered but name-match == 0 => the 8-byte compare / operand layout is
-//     wrong (the log dumps the raw operand bytes to diff vs StringToFName) -> HALT.
-//   - no flip triggered => unexercised INVALID run, re-run with a forced toggle.
-//
-// v4 (2026-07-18, the L5/L9 HALT gate of votv-signal-chain-all-units-DESIGN-2026-07-16):
-// adds the DESK/DRIVE/LAPTOP matcher family + the meadow row/image size dump.
-//   (iii) FAMILY-2 name matchers -- the 9 candidate L5/L9 verbs, all STATICALLY measured
-//         EX_LocalVirtualFunction=0x45 (scan_call_opcodes over the UAssetAPI JSONs,
-//         resolved imports per lesson_bp_json_grep_resolve_imports):
-//         saveSignal/deleteSignal (deck import/export + unit-2 save/delete),
-//         addSignal/removeSignal/sortSignal (meadow DB add/delete/move),
-//         comp_uploadData (unit-4 drive swap), putDriveIn/drivePulledOut (slot FSM),
-//         upd (prop_drive LED refresh -- EXPECTED noisy/generic; measured to decide
-//         whether it is usable as a matcher at all). Per-name GT hit counters +
-//         rich-log of the first hits (Context class discriminates same-name
-//         collisions from other BPs). 0x45 only: EX_LocalFinalFunction's (0x46)
-//         operand is a packed UFunction*, not FScriptName -- a name compare there
-//         would read garbage.
-//   (iv)  SIZES dump every 30 s (GT-posted): gamemode.savedSignals_0 (deck list) +
-//         saveSlot.savedSignals_0 (meadow DB) + saveSlot.savedSignals_comp_0
-//         (processed DB) row counts + per-row image-blob (row+0x58 TArray<uint8>)
-//         min/max/avg -- the L9 packet-budget measurement the design doc names.
-//
-// THROWAWAY / diagnostics (RULE 2 exempt); does NOT ship (RULE 3). Retired with
-// the substrate work (increment 4).
+// coop/dev/gnatives_probe.cpp -- see coop/dev/gnatives_probe.h. The probe-first gate for the
+// permanent blueprint-VM dispatch substrate: it runs the same name-first filter shape the
+// real wrapper ships (factored into the diagnostic filter below so it lifts into ue_wrap), so
+// the per-frame measurement is of the real prologue. It measures, in one game run: the live
+// catch and positive control (swap the local-virtual-call handler only, resolve the two
+// kerfur verb names and classes on the game thread once, then per dispatch do a game-thread
+// check, an 8-byte name compare (a raw name match proves the flip verb dispatched,
+// independent of the class filter) and a class confirm, logging the first hits with the
+// operand bytes, the context class and the thread); the cost, the enabled path against the
+// disabled fast-path tax (the eternal solo cost of a never-removed swap: one relaxed load, a
+// branch and a tail call), sampled by the cycle counter and reported per frame; the second
+// verb family, the desk, drive and laptop verbs, all measured as local virtual calls (the
+// local-final-call operand is a packed function pointer, not a name, so a name compare there
+// reads garbage); and the signal-store sizes every 30 s (row counts and per-row image-blob
+// statistics for the deck list and the two databases). Throwaway diagnostics; not shipped.
 
 #include "coop/dev/gnatives_probe.h"
 
@@ -79,15 +40,15 @@ namespace {
 namespace GT = ue_wrap::game_thread;
 namespace R  = ue_wrap::reflection;
 
-// GNatives handler ABI: void/uintptr exec(UObject* Context, FFrame& Stack, void* Result).
-// The dispatcher ignores the return, but execLocalVirtual DOES return a value -- preserve it.
+// The native-handler ABI: exec(context, frame, result). The dispatcher ignores the return, but
+// the local-virtual handler does return a value, so it is preserved.
 using ExecFn = std::uintptr_t(__fastcall*)(void* ctx, void* stack, void* result);
 
-// FFrame +0x20 = Code (bytecode cursor). At wrapper entry for op 0x45 the cursor
-// points AT the 12-byte FScriptName operand {ComparisonIndex@0, DisplayIndex@4, Number@8}
-// (LIVE-MEASURED v2/v3 2026-07-13 -- CmpIdx==DispIdx in shipping so op[0]==op[1]; Number@8=0
-// for the clean verb names; the spike's {CmpIdx,Number@4,Display@8} was wrong on Number's slot.
-// Match op[0]==StringToFName.ComparisonIndex && op[8]==Number, NOT raw bytes 0-7).
+// The frame's code cursor. At wrapper entry for the local-virtual-call opcode the cursor
+// points at the 12-byte script-name operand (the comparison index, the display index, the
+// number), measured live: the comparison and display indices are equal in shipping, and the
+// number is zero for the clean verb names. Match the comparison index and the number, not
+// the raw first 8 bytes.
 constexpr std::size_t kFFrameCodeOff = 0x20;
 
 std::uintptr_t* g_gnatives = nullptr;  // GNatives[256], the exec-handler table base.
@@ -96,22 +57,23 @@ ExecFn g_origFinal   = nullptr;        // GNatives[0x46] original.
 
 bool g_enabled = true;  // false via ini gnatives_probe_disabled=1 -> measure the pure tax.
 
-// ---- the filter's resolved constants (set ONCE on the GT; read relaxed per dispatch) ----
-// Packed FName = uint32(ComparisonIndex) | (uint64)(uint32(Number)) << 32. 0 = unresolved.
+// The filter's resolved constants (set once on the game thread; read relaxed per dispatch). A
+// packed name is the comparison index in the low word and the number in the high word; 0 is
+// unresolved.
 std::atomic<std::uint64_t> g_verbDropProp{0};   // dropKerfurProp (turn-off verb)
 std::atomic<std::uint64_t> g_verbSpawnKerf{0};  // spawnKerfuro    (turn-on verb)
 std::atomic<void*> g_npcClass{nullptr};         // kerfurOmega_C
 std::atomic<void*> g_propClass{nullptr};        // prop_kerfurOmega_C
 std::atomic<bool>  g_resolved{false};
 
-// ---- counters (relaxed atomics -- the dumper reads deltas once a second) ----
+// The counters (relaxed atomics; the dumper reads deltas once a second).
 std::atomic<std::uint64_t> g_countGT{0};       // 0x45 dispatches on the game thread
 std::atomic<std::uint64_t> g_countWorker{0};   // 0x45 dispatches off the game thread
 std::atomic<std::uint64_t> g_nameMatch{0};     // POSITIVE CONTROL: raw name==verb (pre-class)
 std::atomic<std::uint64_t> g_classConfirmed{0};// name-match AND class descends kerfur family
 std::atomic<std::uint64_t> g_offGtMatch{0};    // name-match seen OFF the GT (tripwire)
-std::atomic<std::uint64_t> g_kerfurCtx45{0};   // v2 DIAG: ANY 0x45 dispatch with a kerfur Context
-std::atomic<std::uint64_t> g_kerfurCtx46{0};   // v2 DIAG: ANY 0x46 dispatch with a kerfur Context
+std::atomic<std::uint64_t> g_kerfurCtx45{0};   // ANY 0x45 dispatch with a kerfur Context
+std::atomic<std::uint64_t> g_kerfurCtx46{0};   // ANY 0x46 dispatch with a kerfur Context
 std::atomic<std::uint64_t> g_sampleCycles{0};
 std::atomic<std::uint64_t> g_sampleCount{0};
 std::atomic<std::uint64_t> g_seq{0};           // dispatch sequence -> 1/1024 RDTSC sampling
@@ -119,9 +81,10 @@ std::atomic<int>           g_liveCatchLogged{0};
 std::atomic<int>           g_verbLogged{0};
 
 constexpr int kLiveCatchCap = 16;  // log the first N name-matches richly, then just count.
-constexpr int kVerbLogCap   = 64;  // v3: rich-log the first N VERB-comparison-index hits.
+constexpr int kVerbLogCap   = 64;  // rich-log the first N VERB-comparison-index hits.
 
-// ---- v4 FAMILY-2: the L5/L9 desk/drive/laptop verb matchers (all 0x45, measured) ----
+// The second verb family: the desk, drive and laptop verb matchers (all local virtual calls,
+// measured).
 struct F2Verb {
     const wchar_t* name;
     std::atomic<std::uint64_t> packed{0};  // FName {CmpIdx | Number<<32}; 0 = unresolved
@@ -143,9 +106,8 @@ inline void* PeekCode(void* stack) {
     return *reinterpret_cast<void**>(reinterpret_cast<char*>(stack) + kFFrameCodeOff);
 }
 
-// The 8-byte name key at the operand cursor (ComparisonIndex + Number, little-endian);
-// Display@8 is intentionally ignored -- the engine's own name lookup compares only
-// these 8 bytes (measured sub_1412FDF90).
+// The 8-byte name key at the operand cursor (the comparison index and the number); the
+// display index is ignored, since the engine's own name lookup compares only these 8 bytes.
 inline std::uint64_t PeekName8(void* stack) {
     void* code = PeekCode(stack);
     std::uint64_t k;
@@ -158,21 +120,20 @@ inline std::uint64_t PackFName(const R::FName& n) {
            (static_cast<std::uint64_t>(static_cast<std::uint32_t>(n.Number)) << 32);
 }
 
-// v3 DIAGNOSTIC filter. v2 proved the FScriptName operand is {ComparisonIndex@0,
-// DisplayIndex@4, Number@8} (shipping: CmpIdx==DispIdx -> low32==high32 in every catch),
-// NOT the spike's {CmpIdx, Number, Display}. So the correct FName key is
-// {ComparisonIndex = op[0], Number = op[8]} -- match THAT. Runs only enabled+resolved+GT.
+// The diagnostic filter. The script-name operand is the comparison index, the display index
+// and the number, so the correct key is the comparison index at the cursor and the number 8
+// bytes in. Runs only enabled, resolved and on the game thread.
 template <int OP>
 inline void RunKerfurDiag(void* ctx, void* stack) {
-    // (1) NAME match on the CORRECT decode (0x45 only): op[0]=ComparisonIndex, op[8]=Number.
+    // The name match on the correct decode (the local-virtual-call opcode only).
     if (OP == 0x45) {
         const std::uint32_t* op = reinterpret_cast<std::uint32_t*>(PeekCode(stack));
         const std::uint32_t opCmp = op[0];
         const std::uint32_t opNum = op[2];  // int32 #3 = Number@byte8
         const std::uint32_t vDropCmp  = static_cast<std::uint32_t>(g_verbDropProp.load(std::memory_order_relaxed)  & 0xffffffff);
         const std::uint32_t vSpawnCmp = static_cast<std::uint32_t>(g_verbSpawnKerf.load(std::memory_order_relaxed) & 0xffffffff);
-        // v4 FAMILY-2: linear scan of the 9 desk/drive/laptop verb CmpIdx (zero-skip
-        // guards unresolved slots -- CmpIdx 0 is FName "None", never a real call).
+        // The second family: a linear scan of the desk, drive and laptop verb indices (a zero skip
+        // guards unresolved slots; index 0 is the None name, never a real call).
         for (int i = 0; i < kF2Count; ++i) {
             const std::uint32_t cmp = static_cast<std::uint32_t>(
                 g_f2[i].packed.load(std::memory_order_relaxed) & 0xffffffff);
@@ -204,7 +165,7 @@ inline void RunKerfurDiag(void* ctx, void* stack) {
         }
     }
 
-    // (2) CLASS-GATED catch-all counter (no rich log -- v2 showed it fills with init noise).
+    // The class-gated catch-all counter (no rich log; it fills with init noise).
     void* cls = R::ClassOf(ctx);
     if (!cls) return;
     void* bases[2] = {g_npcClass.load(std::memory_order_relaxed),
@@ -216,16 +177,15 @@ inline void RunKerfurDiag(void* ctx, void* stack) {
 
 template <int OP>
 std::uintptr_t __fastcall Wrapper(void* ctx, void* stack, void* result) {
-    // The eternal cost the process pays on EVERY 0x45 dispatch forever (the swap is
-    // never removed): read the enable flag first. Disabled fast-path = this load +
-    // branch + tail-call (the solo-SP tax the plan S2.0 gate measures).
+    // The eternal cost the process pays on every dispatch of this opcode, since the swap is never
+    // removed: read the enable flag first. The disabled fast path is this load, a branch and a
+    // tail call (the solo tax the gate measures).
     const bool sample = (g_seq.fetch_add(1, std::memory_order_relaxed) & 1023) == 0;
     const std::uint64_t t0 = sample ? __rdtsc() : 0;
 
-    // Count on BOTH modes so each run reports a GT dispatch rate. In DISABLED-tax
-    // mode the sampled cost = IsGameThread + counter (a CONSERVATIVE UPPER BOUND on
-    // the true fast path, which is just load+branch+tail-call); if even this bound
-    // clears 0.1 ms/frame the real disabled tax does too.
+    // Count in both modes, so each run reports a game-thread dispatch rate. In the disabled-tax
+    // mode the sampled cost is the thread check plus the counter, a conservative upper bound on
+    // the true fast path; if even this bound clears the budget, the real tax does too.
     const bool gt = GT::IsGameThread();
     if (gt) g_countGT.fetch_add(1, std::memory_order_relaxed);
     else    g_countWorker.fetch_add(1, std::memory_order_relaxed);
@@ -240,9 +200,9 @@ std::uintptr_t __fastcall Wrapper(void* ctx, void* stack, void* result) {
     return (OP == 0x46 ? g_origFinal : g_origVirtual)(ctx, stack, result);
 }
 
-// Resolve the two verb FNames + two classes on the GAME THREAD (StringToFName
-// dispatches ProcessEvent -> GT-only; must NEVER run inside the wrapper). Posted
-// from the dumper each second until everything resolves (handles BP-load timing).
+// Resolve the two verb names and two classes on the game thread (the name conversion
+// dispatches ProcessEvent, so game thread only; it must never run inside the wrapper).
+// Posted from the dumper each second until everything resolves.
 void ResolveOnGameThread() {
     if (g_resolved.load(std::memory_order_relaxed)) return;
 
@@ -263,8 +223,8 @@ void ResolveOnGameThread() {
                 (unsigned long long)vDrop, (unsigned long long)vSpawn, npc, prop);
     }
 
-    // v4 FAMILY-2 names (Conv_StringToName is Add-semantics -- resolves first pass;
-    // the FName table is global, so our CmpIdx == the load-patched bytecode operand's).
+    // The second-family names (the string-to-name conversion adds, so it resolves on the first
+    // pass; the name table is global, so our index equals the load-patched bytecode operand's).
     if (!g_f2Resolved.load(std::memory_order_relaxed)) {
         bool all = true;
         for (int i = 0; i < kF2Count; ++i) {
@@ -281,8 +241,8 @@ void ResolveOnGameThread() {
     }
 }
 
-// v4 SIZES dump (GT-posted every 30 s): the three signal stores' row counts + the
-// per-row image blob (row+0x58 = TArray<uint8>) stats -- the L9 budget measurement.
+// The sizes dump, posted to the game thread every 30 s: the three signal stores' row counts
+// and the per-row image-blob statistics, the packet-budget measurement.
 void DumpSignalStoreSizes() {
     namespace SD = ue_wrap::signal_dynamic;
 
@@ -308,7 +268,7 @@ void DumpSignalStoreSizes() {
         return s;
     };
 
-    // Deck list: gamemode.savedSignals_0.
+    // The deck list: the gamemode's saved signals.
     static void* gmCls = nullptr;
     static std::int32_t offDeck = -1;
     if (!gmCls) gmCls = R::FindClass(L"mainGamemode_C");
@@ -320,7 +280,7 @@ void DumpSignalStoreSizes() {
     }
     const Stats deck = walk(static_cast<const std::uint8_t*>(gm), offDeck);
 
-    // Meadow DB + processed DB: saveSlot.savedSignals_0 / savedSignals_comp_0.
+    // The meadow database and the processed database: the save slot's two saved-signal arrays.
     void* ss = ue_wrap::economy::SaveSlotPtr();
     static std::int32_t offMeadow = -1, offComp = -1;
     if (ss && offMeadow < 0) {
@@ -385,7 +345,7 @@ void DumperThread() {
              !g_f2Resolved.load(std::memory_order_acquire)) && g_enabled)
             GT::Post([] { ResolveOnGameThread(); });
 
-        // v4: the SIZES dump every 30 s (GT task -- UObject walks are GT-only).
+        // The sizes dump every 30 s (a game-thread task; object walks are game-thread only).
         if (g_enabled && (tick % 30) == 0)
             GT::Post([] { DumpSignalStoreSizes(); });
 
@@ -422,8 +382,8 @@ void DumperThread() {
                 g_resolved.load(std::memory_order_relaxed) ? 1 : 0);
         (void)dCC;
 
-        // v4: family-2 totals once per 10 s (only when any counter is non-zero --
-        // ambient-quiet runs stay ambient-quiet in the log).
+        // The second-family totals once per 10 s, only when any counter is non-zero, so
+        // ambient-quiet runs stay quiet in the log.
         if ((tick % 10) == 0) {
             std::uint64_t total = 0;
             for (int i = 0; i < kF2Count; ++i) total += g_f2[i].hits.load(std::memory_order_relaxed);
@@ -466,9 +426,8 @@ void Init() {
 
     CalibrateTsc();
 
-    // v2 DIAGNOSTIC: swap BOTH 0x45 (EX_LocalVirtualFunction) AND 0x46
-    // (EX_LocalFinalFunction) -- v1 saw the verb on NEITHER (nameMatch=0), so we widen the
-    // catch to find which opcode the real menu toggle actually uses (H1 vs H2 vs H3).
+    // Swap both the local-virtual-call and the local-final-call handlers, so the catch shows
+    // which opcode the real menu toggle uses.
     DWORD oldProt = 0;
     if (!VirtualProtect(&g_gnatives[0x45], sizeof(void*) * 2, PAGE_READWRITE, &oldProt)) {
         UE_LOGE("[gnatives_probe] VirtualProtect failed -- probe DISABLED");
