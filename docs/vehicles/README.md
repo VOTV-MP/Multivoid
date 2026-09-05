@@ -23,8 +23,8 @@ Cross-cutting contracts stay where they are (link, don't restate):
 - `docs/CODE_MAP.md` — where each shipped wire-sync lives.
 - `docs/ARCHITECTURE.md` — per-element authority + the act-as-host intent rule.
 - `docs/join.md` — the per-lane late-join answer table (principle 8).
-- `docs/upgrades/` — the upgrade subsystem hub. The ATV's **physical module** family is
-  documented in full inside [ATV.md](ATV.md) §4; `docs/upgrades/TRACKER.md` carries its status row.
+- the upgrades section of `docs/signals.md`. The ATV's **physical module** family is
+  documented in full inside [ATV.md](ATV.md) §4.
 
 Evidence tags used in this folder (same as `docs/README.md`):
 **[V]** measured this session from bytecode / pak / live source (cited) ·

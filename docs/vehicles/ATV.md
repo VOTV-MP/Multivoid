@@ -39,7 +39,7 @@ facts, composition not run · **[A]** asserted by an earlier doc, not re-verifie
 | # | Finding | Impact |
 |---|---|---|
 | 0.1 | **`modules[]` (a `TArray<enum_physicalModules>`) is the SINGLE source of truth for all 13 upgrades.** Every `has*` bool, every module mesh, the light cone, the top speed, the exhaust FX and the body physical-material are *derived* by one parameterless BP function, `updUpgrades()`. | Upgrade sync is **one array + one call**, not 13 lanes. |
-| 0.2 | **`enum_atvUpgrades` is EMPTY** — it holds only `enum_atvUpgrades_MAX`. The live enum is `enum_physicalModules` (34 values, 13 of them ATV). | Do not build against `enum_atvUpgrades`; it is a dead asset. Closes an `[?]` in `docs/upgrades/README.md` §5. |
+| 0.2 | **`enum_atvUpgrades` is EMPTY** — it holds only `enum_atvUpgrades_MAX`. The live enum is `enum_physicalModules` (34 values, 13 of them ATV). | Do not build against `enum_atvUpgrades`; it is a dead asset. Closes an `[?]` in the upgrades section of `docs/signals.md` §5. |
 | 0.3 | **The ATV is NOT purchasable, but it IS runtime-spawnable.** All 473 `list_store` rows scanned: no row's `object` is `ATV_C`/`ATV_Child_C`, nor is it in `list_craftRecipes` — only its *parts* are buyable. **But `list_props` has a row `atv` whose `spawnAsObject` is `ATV_C`, `hidden=false`** [V], reached by `lib.PropToObject` → `spawnPropThroughGamemode` from `ui_spawnmenu`. | The "purchased ATV" premise behind the 2026-06-15 Gap-B design is **FALSE**, but the mechanism it built is **still required** — the shipped `AtvSpawn`/`AtvDestroy` synth-key lane is what covers a runtime ATV, which really can exist. **The RULE-2 deletion is CANCELLED; what is owed is a comment correction.** §11.4. |
 | 0.4 | **`vehicleGetParts()` / `teleportVehicleAdvanced()` are a matched READ/WRITE pair for the FULL 4-body rig pose** (body + front-L + front-R + back-root, each loc+rot). The game ships exactly the primitive a correct vehicle mirror needs. | Our mirror moves **only the actor**; the wheels are separate constrained rigid bodies — §9.4, a defect candidate. |
 | 0.5 | **The install trigger is INVISIBLE.** `mainPlayer` dispatches `playerUsedOn` via `EX_LocalVirtualFunction` [V, `mainPlayer.json`], and the whole install path lives inside `ExecuteUbergraph_ATV`. | Install cannot be hooked. It must be an **act-as-host INTENT naming an artifact** (the held `prop_atvUpgrade_C`) — the intent rule in `ARCHITECTURE.md`, the `order_sync` shape. |
@@ -482,7 +482,7 @@ keyed-fixture reconcile lane; it is a normal save-spawned object.
 **Consequence.** Every ATV mutation is invisible at the verb. The lane must be **poll the state +
 replay through the game's own derive functions**, plus an **act-as-host INTENT** for the discrete,
 persistent, shared-world changes (install / remove / put-tire / eject-tire / insert-battery / refuel /
-repair). That is the same tier rule the signal-desk lanes converged on (`docs/signals/README.md`:
+repair). That is the same tier rule the signal-desk lanes converged on (`docs/signals.md`:
 PE seam > raw-field poll > VM-bracket) and the `order_sync` reference implementation of
 the intent rule in `ARCHITECTURE.md`.
 
@@ -666,7 +666,7 @@ reads **only** bit3 (`authored`). Bits 0–2 are produced and never consumed; bi
    reach them either, since it addresses the bodies WITHIN one component and these are separate
    components. So the "write all five bodies" fix is not buildable as designed. See §16.4.
 5. **[?] Does `event_arirFuelsAtv` run per-peer?** It mutates ATV state from a world event.
-6. **[?] `Fstruct_upgrades`** (`docs/upgrades/SIGNAL_UPGRADES.md`) is the *signal* upgrade store; ATV
+6. **[?] `Fstruct_upgrades`** (the upgrades section of `docs/signals.md`) is the *signal* upgrade store; ATV
    modules live in the ATV's own `getData` bytes. Confirmed disjoint here; whether anything reads both
    is unchecked.
 7. **[?] The radio's `mediaPlayer`** — playback state is not in `getData`; whether a mirrored radio can
@@ -681,7 +681,7 @@ reads **only** bit3 (`authored`). Bits 0–2 are produced and never consumed; bi
   `…-Phase1-pose-stream-blueprint-2026-06-08.md`,
   `…-phase2-state-fuel-damage-repair-RCA-2026-06-15.md`,
   `…-grab-airmove-purchased-design-2026-06-15.md`.
-- `docs/upgrades/README.md` §5 — three of its `[?]` NEXT items are closed by §3 above.
+- the upgrades section of `docs/signals.md` — three of its open items are closed by §3 above.
 - `docs/STATUS.md` §2 — the ATV facet rows.
 - `docs/COOP_DISPATCH_VISIBILITY.md` — §7's rows belong there when the lane ships.
 - `docs/props.md` (the divergence class) — fuel / battery / dirt are its exact shape.

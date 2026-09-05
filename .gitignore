@@ -389,7 +389,8 @@ docs/MODULARIZATION_PLAN.md
 docs/COOP_VM_DISPATCH_PLAN.md
 docs/AUTHORITATIVE_INTERACTABLE_MIGRATION.md
 docs/OVERLAY_CAPTURE_COEXIST.md
-docs/signals/HISTORY.md
+docs/signals/
+docs/upgrades/
 docs/piles/
 docs/_archive/
 reference/agency-agents/

@@ -65,7 +65,9 @@ host's id across pile and clump, the client's grab as an intent, the dispenser p
 [npcs-and-kerfur.md](npcs-and-kerfur.md) (host-owned characters, the creatures each peer owns, the
 killer wisp, the roaches, and the kerfur robot across its two forms) ·
 [events-and-weather.md](events-and-weather.md) (the clock, the weather, who rolls, the story events
-and how a client sees one fire, the event actors, the pyramid, the alarm, emails and the task)
+and how a client sees one fire, the event actors, the pyramid, the alarm, emails and the task) ·
+[signals.md](signals.md) (the signal workstation: occupancy, the desk, the download simulation, the
+catch and the dishes, the deck, drives and racks, the laptop, the database, and the upgrades)
 
 **Maps, where a thing lives and what state it is in**
 
@@ -74,8 +76,7 @@ and how a client sees one fire, the event actors, the pyramid, the alarm, emails
 
 **Per-domain trees**, one folder per game system, each with its own README
 
-[signals/](signals/) (the signal-processing pipeline) ·
-[upgrades/](upgrades/) · [notifications/](notifications/) ·
+[notifications/](notifications/) ·
 [vehicles/](vehicles/) (the ATV)
 
 ## How to read a claim in these docs

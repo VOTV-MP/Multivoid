@@ -158,7 +158,7 @@ follows the sender; trust is a separate ledger).
 ## Worked references (read one before building your first lane)
 
 - Act-as-host intent, complete and minimal: `coop/items/order_sync.cpp` (the laptop shop order).
-- Presser-authored device state with claim-free deltas: the desk lanes (`docs/signals/`).
+- Presser-authored device state with claim-free deltas: the desk lanes (`signals.md`).
 - Host-authoritative world family with echo interception: `coop/world/weather_rain.cpp`.
 - Assigned-syncer vehicle direction (in progress, read the failures too): `docs/vehicles/ATV.md` §17.
 - Identity across destroy/create: `coop/props/prop_drop_intent.{h,cpp}`.
