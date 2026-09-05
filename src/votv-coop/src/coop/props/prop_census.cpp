@@ -1,28 +1,24 @@
-// coop/props/prop_census.cpp -- the seed / re-seed GUObjectArray census walk +
-// the world-coherence stamp (Fork A) + the purge-episode flag.
-//
-// EXTRACTED from prop_element_tracker.cpp 2026-07-10 (the tracker passed the
-// 800-LOC soft cap; the census family was the flagged extraction). Behavior
-// preserved byte-for-byte: same two-phase walk, same mutex scopes, same
-// memory orders, same idempotency semantics. Shares the maintained
-// known-keyed-props set with the tracker via prop_element_tracker_detail.h.
+// coop/props/prop_census.cpp -- the seed and re-seed census of keyed props: the synchronous
+// GUObjectArray walk, the world-coherence stamp, the purge-episode flag, and the steady re-seed
+// as a scan-hub consumer with a budgeted drain. Shares the known-keyed-props set with the
+// tracker through prop_element_tracker_detail.h.
 
 #include "coop/props/prop_element_tracker.h"
 
 #include "prop_element_tracker_detail.h"  // co-located private header (src tree, not include/)
 
-#include "coop/config/config.h"          // ReadEnv (R-2b drill switches, dev-only)
-#include "coop/element/object_scan_hub.h"  // R-2b: the steady re-seed is hub consumer #14
+#include "coop/config/config.h"          // ReadEnv, the drill switches
+#include "coop/element/object_scan_hub.h"  // the steady re-seed is a hub consumer
 #include "coop/element/registry.h"
-#include "coop/player/hand_item.h"  // hand-axis boundary: CollectHandAxisActors (SeedWalk_ skip; local hand + remote mirrors)
+#include "coop/player/hand_item.h"  // CollectHandAxisActors: the local hand and the remote mirrors
 #include "coop/props/prop_snapshot.h"      // DeliverLateRegisteredProps (per drained chunk)
-#include "ue_wrap/engine/engine.h"  // IsChildActor (child-actor exclusion, take-7 floating-CCTV RCA)
-#include "ue_wrap/engine/world_identity.h"  // R-2b: queue worldGen + per-item WorldOf term
+#include "ue_wrap/engine/engine.h"  // IsChildActor
+#include "ue_wrap/engine/world_identity.h"  // the queue's world generation and the per-item world term
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
-#include "ue_wrap/core/walk_timer.h"       // ScopedWalkTimer (reseed:sync-walk / reseed:drain)
+#include "ue_wrap/core/walk_timer.h"       // ScopedWalkTimer
 
 #include <windows.h>  // QueryPerformanceCounter (the drain's ~1 ms budget)
 
@@ -39,56 +35,37 @@ namespace coop::prop_element_tracker {
 namespace R = ue_wrap::reflection;
 namespace P = ue_wrap::profile;
 
-// ---- Seed / re-seed scan ------------------------------------------------
-//
-// Shared walk body for the one-shot boot seed AND an explicit re-seed (level/
-// world change). Two-phase to avoid holding the mutex for the full ~150k
-// GUObjectArray walk: phase 1 builds a local vector of live keyed-interactable
-// pointers without any lock (reflection probes are thread-safe in our setup);
-// phase 2 takes the mutex once and bulk-inserts. Both phases are IDEMPOTENT --
-// g_knownKeyedProps.insert is a set insert (no-op if present) and MarkPropElement
-// no-ops on an already-tracked actor -- so a re-seed only ADDS props the world
-// gained that we are not yet tracking. Returns counts; `newlyTracked` is how many
-// keyed actors this walk added to g_knownKeyedProps (= the whole set on the first
-// boot seed; the delta on a re-seed).
+// The shared walk body for the boot seed and an explicit re-seed (a level or world change). Two
+// phases, so the mutex is not held for the whole walk: phase 1 collects live keyed interactables
+// with no lock, phase 2 takes the mutex once and bulk-inserts. Both phases are idempotent (a set
+// insert, and MarkPropElement no-ops on a tracked actor), so a re-seed only adds props the world
+// gained. `newlyTracked` is how many this walk added: the whole set on the boot seed, the delta
+// on a re-seed.
 namespace {
 struct SeedCounts { int liveFound = 0; int newlyTracked = 0; int cdo = 0; int dying = 0; int keylessPiles = 0; };
 
-// ---- World-coherence stamp (Fork A, 2026-06-10) --------------------------
-// SeedWalk_ stamps the live gameplay UWorld it ran against; the snapshot
-// gate (prop_snapshot::TriggerForSlot) refuses to open a bracket unless that
-// world is still the live one. During a world transition the registry holds
-// the dead world's props until the drain-complete re-seed -- a bracket built
-// then is near-empty and the client's adoption sweep destroys against it
-// (the 2026-06-10 1300-actor mass destroy). GT-write (seeds are GT
-// contracts), GT-read (TriggerForSlot/DrainChunk); atomics for the file's
-// sibling-symmetry only.
+// The world-coherence stamp: the live gameplay world the walk ran against. The snapshot gate
+// refuses to open a bracket unless that world is still the live one; during a transition the
+// registry holds the dead world's props until the drain-complete re-seed, and a bracket built
+// then is near-empty, which the client's adoption sweep destroys against. Game-thread write and
+// read.
 std::atomic<bool>     g_seededOnce{false};
 std::atomic<void*>    g_seedWorld{nullptr};
 std::atomic<int32_t>  g_seedWorldIdx{-1};
 std::atomic<uint64_t> g_seedGeneration{0};
-// Purge-episode flag (gate hardening, 2026-06-10 smoke falsification): the
-// reaper detected a mass purge and the registry is draining dead elements
-// until the episode-end re-seed. The world-stamp above is NOT sufficient on
-// its own: VOTV's boot/save-load flow can leave the stamped UWorld ALIVE
-// while the registry is majority-dead (smoke 15:16: stamp live, 1161 dying
-// vs 88 live at enumerate -> the gate passed and the client swept 3067
-// actors against an 88-prop bracket). net_pump owns the detection edges;
-// this is registry-coherence state so the tracker owns the flag.
+// The purge-episode flag: the reaper detected a mass purge and the registry is draining dead
+// elements until the episode-end re-seed. The world stamp alone is not enough: the boot and
+// save-load flow can leave the stamped world alive while the registry is majority-dead. The
+// pump owns the detection edges; the flag is registry-coherence state.
 std::atomic<bool>     g_inPurgeEpisode{false};
 
 SeedCounts SeedWalk_(std::vector<void*>* outNewActors) {
     const int32_t n = R::NumObjects();
     SeedCounts c;
-    // v105 axis boundary (2026-07-06), WIDENED 2026-07-10 (audit HIGH): hand-axis
-    // actors are PLAYER EXPRESSION, not world entities -- the LOCAL player's
-    // hotbar hand (updateHold destroys + respawns it per quick-slot switch;
-    // peers see it via the HandItem lane) AND every REMOTE peer's display
-    // mirror (SpawnMirror mints a real Aprop_C whose adoption here would
-    // broadcast a phantom keyed PropSpawn to all peers + the connect snapshot,
-    // with its destroy echo-suppressed -- permanent phantom; the other half of
-    // the 13:44:00 eid=5377 dupe class). Hoisted once per walk (<= 8 entries,
-    // stable within one GT walk).
+    // Hand-axis actors are player expression, not world entities: the local player's hotbar hand
+    // (destroyed and respawned per quick-slot switch, carried by the HandItem lane) and every
+    // remote peer's display mirror, a real prop whose adoption here would broadcast a phantom
+    // PropSpawn with an echo-suppressed destroy. Hoisted once per walk.
     void* handAxis[1 + coop::players::kMaxPeers];
     const size_t handAxisN =
         coop::hand_item::CollectHandAxisActors(handAxis, 1 + coop::players::kMaxPeers);
@@ -104,11 +81,10 @@ SeedCounts SeedWalk_(std::vector<void*>* outNewActors) {
         if (!obj) continue;
         if (isHandAxis(obj)) continue;  // hand-axis display actors are not world props
         if (!ue_wrap::prop::IsKeyedInteractable(obj)) continue;
-        // CHILD-ACTOR EXCLUSION (2026-07-12, take-7 floating-CCTV RCA): a ChildActorComponent
-        // child (kerfur eye cam) is parent-owned, never an independent world prop -- keep it out
-        // of g_knownKeyedProps + outNewActors so the steady re-seed never treats a toggle-fresh
-        // eye cam as "new" (the incremental express would broadcast it; audit CRITICAL). Matches
-        // the Init-POST + MarkPropElement gates; predicate: ue_wrap::engine::IsChildActor.
+        // A ChildActorComponent child (the kerfur's eye camera) is parent-owned, never an
+        // independent world prop; kept out of the known set and the new list so the steady re-seed
+        // never treats a toggle-fresh one as new and broadcasts it. Matches the Init and
+        // MarkPropElement gates.
         if (ue_wrap::engine::IsChildActor(obj)) continue;
         const std::wstring nm = R::ToString(R::NameOf(obj));
         if (nm.rfind(L"Default__", 0) == 0) { ++c.cdo; continue; }
@@ -121,89 +97,58 @@ SeedCounts SeedWalk_(std::vector<void*>* outNewActors) {
         for (void* obj : live) {
             if (g_knownKeyedProps.size() >= kKnownKeyedPropsCap) break;
             if (g_knownKeyedProps.insert(obj).second) {
-                // CHURN GUARD (2026-07-03, the 11:48:59 keyless-PropSpawn re-broadcast):
-                // an actor ALREADY BOUND to a live owned element is NOT new -- it is the
-                // churned actor of a tracked element (a host RE-PILE land re-creates the
-                // pile actor in place and the pile layer rebinds the element same-tick).
-                // The private known-set is a pointer set, blind to actor churn (the
-                // re-bind thread's exact lesson: identity maps that don't track churn
-                // smear) -- without this test every land result re-entered outNewActors
-                // and net_pump re-broadcast it as an incremental keyless PropSpawn every
-                // 20 s re-seed. The set insert above still refreshes membership (the
-                // O(1) snapshot de-dupe), it just is not "newness" any more.
-                // FRESHNESS (audit 45bdb7ac W-3, the IsBoundMirrorNative D1 pattern):
-                // trust the binding only if THIS actor is still the live occupant of
-                // the element's slot -- a recycled address pointing at a dead element's
-                // row must still express as new (the express is that prop's only
-                // delivery).
+                // The churn guard: an actor already bound to a live owned element is not new, it is
+                // the churned actor of a tracked element (a host re-pile re-creates the pile actor
+                // in place and the pile layer rebinds the element the same tick). The known set is
+                // a pointer set, blind to churn, and without this every re-pile re-entered the new
+                // list and was re-broadcast at each re-seed. The binding is trusted only if this
+                // actor is still the live occupant of the element's slot; a recycled address
+                // pointing at a dead element's row must still express as new.
                 if (const coop::element::ElementId beid = GetPropElementIdForActor(obj);
                     beid != coop::element::kInvalidId) {
                     coop::element::Element* el = coop::element::Registry::Get().Get(beid);
                     if (el && R::IsLiveByIndex(obj, el->GetInternalIdx())) continue;
                 }
                 ++c.newlyTracked;
-                // R1: yield the newly-adopted actor so the steady-world re-seed
-                // can broadcast ONE incremental PropSpawn for it (the eid is
-                // minted in phase 2 below, before this function returns, so a
-                // caller iterating outNewActors resolves GetPropElementIdForActor).
-                // Captured here (the ONLY newness signal -- phase-2 MarkPropElement
-                // is idempotent + silent on already-tracked). May include keyless
-                // non-pile actors that phase 2 won't express; the express filters them.
+                // The newly adopted actor is yielded so the steady re-seed can broadcast one
+                // incremental PropSpawn for it; the eid is minted in phase 2 before this returns.
+                // The only newness signal; the list may include keyless non-pile actors phase 2
+                // does not express, and the express filters them.
                 if (outNewActors) outNewActors->push_back(obj);
             }
         }
     }
-    // Tier 3 Props migration 2026-05-28: also create Prop Element shadows
-    // for each seeded actor so Registry::SnapshotByType<Prop> works as the
-    // unified late-joiner snapshot path. Class + key resolved per-actor;
-    // skip MarkPropElement on actors whose key is empty/None.
-    //
-    // Audit fix 2026-05-29: re-check IsLive at the start of phase 2. Phase 1
-    // built `live` without holding any lock; an actor's K2_DestroyActor PRE
-    // observer can fire between phases -- if MarkPropElement then commits a
-    // dangling actor pointer into the shared PropMirrors() manager + the
-    // g_actorToPropElementId reverse map, the eid leaks for the session
-    // lifetime because UnmarkKnownKeyedProp already ran for that actor and
-    // won't fire again.
-    // (KEY-UNIQUENESS AUTHORITY note, 2026-07-11 take-3: the duplicate-Key re-key lives inside
-    // MarkPropElement -- the ONE enrollment owner -- so this walk AND the Init-POST late-load
-    // catch AND every other enroll path are all covered. See prop_element_tracker.cpp.)
+    // Phase 2 also creates the Prop Element shadow for each seeded actor, so the unified snapshot
+    // path can enumerate props by type. Liveness is re-checked at the start of phase 2: phase 1
+    // held no lock, and a destroy observer can fire between the phases; a dangling pointer
+    // committed into the mirror manager and the reverse map would leak its eid for the session,
+    // since the unmark already ran for that actor. The duplicate-key re-key lives inside
+    // MarkPropElement, the one enrollment owner, so every enroll path is covered.
     for (void* obj : live) {
         if (!R::IsLive(obj)) continue;
         const std::wstring cls = R::ClassNameOf(obj);
         const std::wstring key = ue_wrap::prop::GetInteractableKeyString(obj);
         if (key.empty() || key == L"None") {
-            // Fork B HALF 1 (2026-06-10): keyless chipPile -- its cross-peer
-            // identity is the ElementId (the v52 eid lane; precedent
-            // trash_collect_sync::BroadcastConvertNear's idempotent
-            // MarkPropElement). Minting an Element here puts the host's
-            // world piles into the connect snapshot (the keyless skip in
-            // DrainChunk routes them down the eidOnly receiver lane), which
-            // is what lets the client adopt the host's pile set instead of
-            // sweeping its own and receiving nothing. All OTHER keyless
-            // actors (a held clump mid-flight, a pre-Init Aprop_C, a keyless
-            // trashBits straggler) are NOT expressible and stay untracked --
-            // symmetric with the sweep's universe test.
+            // A keyless chipPile's cross-peer identity is its ElementId, so an Element is minted
+            // here, which puts the host's world piles into the connect snapshot (the keyless skip
+            // in the drain routes them down the eid-only receiver lane) and lets the client adopt
+            // the host's pile set instead of sweeping its own. Every other keyless actor (a held
+            // clump in flight, a pre-Init prop) is not expressible and stays untracked, symmetric
+            // with the sweep's universe test.
             if (ue_wrap::prop::IsChipPile(obj)) {
                 MarkPropElement(obj, L"", cls, EnrollSource::kPassiveCensus);
                 ++c.keylessPiles;
             }
             continue;
         }
-        // v122 (B): on a CLIENT this keyed call is index-refresh-only (no Element mint) --
-        // the host expresses keyed identity by key; the express seams own client births.
+        // On a client this keyed call refreshes the index only (no Element mint): the host
+        // expresses keyed identity by key, and the express seams own client births.
         MarkPropElement(obj, key, cls, EnrollSource::kPassiveCensus);  // idempotent
     }
-    // Stamp the gameplay world this walk expressed. MUST IsLive-filter
-    // (mid-transition the DYING old world sits at a lower GUObjectArray
-    // index) and gameplay-name-filter (matches the reaper's gate in
-    // net_pump -- a menu/preLoad world never opens the snapshot gate).
-    // Perf audit W-2 (2026-06-10): inline pointer-compare walk, NOT
-    // FindObjectsByClass -- that helper allocates a ClassNameOf wstring per
-    // GUObjectArray entry (~250k allocs), doubling every seed walk. The
-    // UWorld UClass resolves once (sticky); per entry this walk is two
-    // pointer reads, with ToString only on actual World instances (a
-    // handful).
+    // The gameplay world this walk expressed, stamped. Liveness-filtered (mid-transition the dying
+    // world sits at a lower index) and name-filtered (a menu or preLoad world never opens the
+    // snapshot gate). An inline pointer-compare walk rather than a class search that allocates a
+    // name per entry: the World class resolves once, and only actual World instances are named.
     {
         static std::atomic<void*> sWorldCls{nullptr};
         void* worldCls = sWorldCls.load(std::memory_order_acquire);
@@ -226,9 +171,8 @@ SeedCounts SeedWalk_(std::vector<void*>* outNewActors) {
             g_seedWorld.store(w, std::memory_order_release);
             g_seedWorldIdx.store(R::InternalIndexOf(w), std::memory_order_release);
         }
-        // Bump on EVERY walk (even if no gameplay world resolved): every
-        // coherence-restoring event is a generation bump, and the deferred-
-        // slot flush in prop_snapshot keys on it.
+        // Bumped on every walk, even with no gameplay world resolved: every coherence-restoring
+        // event is a generation bump, and the deferred-slot flush in prop_snapshot keys on it.
         g_seedGeneration.fetch_add(1, std::memory_order_release);
     }
     return c;
@@ -236,13 +180,11 @@ SeedCounts SeedWalk_(std::vector<void*>* outNewActors) {
 }  // namespace
 
 void SeedKnownKeyedProps() {
-    // Latch promoted to the file-scope g_seededOnce (Fork A) so the snapshot
-    // gate can refuse to bracket before the boot seed has ever run (RULE 2:
-    // one latch, not a function-local twin).
+    // One latch, file-scope, so the snapshot gate can refuse to bracket before the boot seed has
+    // run.
     if (g_seededOnce.load(std::memory_order_acquire)) return;
-    // R-2b (blind-instrument lesson): EVERY synchronous census walk is labeled here, at
-    // the shared body's door -- the retired steady-branch label lived at ONE caller and
-    // left the other five structurally invisible in field logs.
+    // Every synchronous census walk is labelled here, at the shared body's door, so each caller is
+    // visible in field logs.
     ue_wrap::ScopedWalkTimer _wt("reseed:sync-walk");
     const SeedCounts c = SeedWalk_(nullptr);
     UE_LOGI("prop_element_tracker: seeded known-keyed-props set with %d live actors (%d new, %d keyless chipPile element(s), %d CDOs, %d dying skipped) -- subsequent snapshots skip GUObjectArray walk",
@@ -264,11 +206,9 @@ bool HasSeededOnce() {
 }
 
 bool IsRegistrySeededForCurrentWorld() {
-    // O(1): IsLiveByIndex reads ONLY the GUObjectArray slot metadata at the
-    // captured index -- never the (possibly freed) world's memory. The
-    // instant a world swap's GC purge kills the stamped UWorld, this reads
-    // false with zero detection latency; the next SeedWalk_ (episode-end
-    // re-seed / small-travel re-seed / self-heal) re-stamps the new world.
+    // O(1): IsLiveByIndex reads only the slot metadata at the captured index, never the possibly
+    // freed world's memory. The instant a world swap's purge kills the stamped world this reads
+    // false, and the next walk re-stamps the new one.
     void* w = g_seedWorld.load(std::memory_order_acquire);
     return w && R::IsLiveByIndex(w, g_seedWorldIdx.load(std::memory_order_acquire));
 }
@@ -285,16 +225,14 @@ bool InPurgeEpisode() {
     return g_inPurgeEpisode.load(std::memory_order_acquire);
 }
 
-// ---- R-2b: the STEADY re-seed as scan-hub consumer #14 --------------------
-// Design of record: votv-reseed-hub-consumer-DESIGN-2026-08-23.md (11-round /qf).
-// The retired registry_reaper steady branch paid a single-frame ~270k full census
-// every ~20 s (field: 120 ms avg / 1,880 ms max on the reporter's host). Here the
-// shared sliced pass collects candidates and a ~1 ms/tick budget drain adjudicates
-// them with the phase-1/phase-2 semantics relocated verbatim.
+// The steady re-seed as a scan-hub consumer. The retired reaper branch paid a single-frame full
+// census every 20 s or so (over a second at worst on a big world); here the shared sliced pass
+// collects candidates and a drain of about 1 ms per tick adjudicates them with the walk's
+// phase-1 and phase-2 semantics.
 
 namespace {
 
-// The reaper's 4 s gameplay-vs-menu verdict (see SetReaperInGameplayWorld).
+// The reaper's 4 s gameplay-versus-menu verdict (SetReaperInGameplayWorld).
 std::atomic<bool> g_reaperInGameplay{false};
 
 struct ReseedItem {
@@ -303,7 +241,7 @@ struct ReseedItem {
     int32_t serial;  // SlotSerial captured at match time (D1 re-verify pair)
 };
 
-// All game-thread (hub passes, drain, and the synchronous walks share the GT).
+// All game thread: the hub passes, the drain and the synchronous walks share it.
 std::vector<ReseedItem> g_reseedScratch;         // pass-scoped (cleared at OnPassBegin)
 std::vector<ReseedItem> g_reseedQueue;           // the adjudication queue
 size_t   g_reseedQueueHead    = 0;
@@ -314,24 +252,22 @@ bool     g_reseedRegistered   = false;
 uint64_t g_reseedDrainTicks   = 0;               // diag: drain ticks spent on the current queue
 size_t   g_reseedDrainedNew   = 0;               // diag: adoptions from the current queue
 size_t   g_reseedDrainedRejects = 0;             // diag: dying-world rejects from the current queue
-// 60 s summary window (the bump-cadence observable the acceptance greps; a per-bump
-// line would be ~0.5 Hz spam). Session-window counters, GT.
+// The 60 s summary window (the bump cadence the acceptance greps; a per-bump line would be
+// spam). Session-window counters.
 uint64_t g_reseedSumBumps = 0, g_reseedSumQueues = 0, g_reseedSumNew = 0,
          g_reseedSumRejects = 0, g_reseedSumDrops = 0;
 std::chrono::steady_clock::time_point g_reseedSumSince{};
 
-// Gate = code-identical to the retired steady `else if` (registry_reaper): the
-// gameplay-world verdict is the reaper's own published 4 s read (same source +
-// cadence the old branch used; world_identity pointers are identities -- never
-// dereferenced for a name check).
+// The gate: the reaper's published gameplay verdict (a 4 s read; world pointers are identities,
+// never dereferenced for a name), the boot seed done, the registry stamped for the current
+// world, and no purge episode.
 bool ReseedGatePasses_() {
     return g_reaperInGameplay.load(std::memory_order_acquire) &&
            HasSeededOnce() && IsRegistrySeededForCurrentWorld() && !InPurgeEpisode();
 }
 
-// SeedGeneration bump, grew-based parity with the old walk's unconditional bump
-// (the old walk only RAN on grew/periodic). Env mute = the RED calibration for
-// the acceptance bump-cadence gate -- never set outside a drill.
+// The generation bump, on a full pass or a grown object array. The env mute is the red
+// calibration for the acceptance's bump-cadence gate; never set outside a drill.
 void BumpSeedGeneration_() {
     static const bool sMuted = !coop::config::ReadEnv("VOTVCOOP_RESEED_MUTE_BUMP").empty();
     if (sMuted) {
@@ -340,9 +276,8 @@ void BumpSeedGeneration_() {
         return;
     }
     g_seedGeneration.fetch_add(1, std::memory_order_release);
-    // Counted HERE, past the mute, not at the call site: the first RED-calibration run
-    // counted bump ATTEMPTS (summary bumps=19 with the generation frozen) -- a gate
-    // observable that cannot go red observes nothing.
+    // Counted past the mute, not at the call site: a gate observable that cannot go red observes
+    // nothing.
     ++g_reseedSumBumps;
 }
 
@@ -359,8 +294,7 @@ size_t ReseedPassComplete_(void*, bool isFull, uint32_t worldGen) {
     const bool grew = (curNum != g_reseedLastSeenNum);
     g_reseedLastSeenNum = curNum;
     if (!ReseedGatePasses_()) {
-        // Audit MINOR-5: gate-fail scratch drops are counted (and logged when non-empty)
-        // so the transition A/B arithmetic can see them -- same family as IMPORTANT-1.
+        // Gate-fail scratch drops are counted and logged, so the A/B arithmetic can see them.
         if (!g_reseedScratch.empty()) {
             g_reseedSumDrops += g_reseedScratch.size();
             UE_LOGI("reseed: pass scratch dropped (n=%zu reason=gate)", g_reseedScratch.size());
@@ -368,21 +302,18 @@ size_t ReseedPassComplete_(void*, bool isFull, uint32_t worldGen) {
         g_reseedScratch.clear();  // no adjudication outside steady state; episode paths own it
         return enqueuedCandidates;
     }
-    // Queue merge (R3-C1): one worldGen per queue. Different gen -> the old queue is
-    // dead (the drain gate would drop it) -> REPLACE. Same gen: a FULL batch REPLACES
-    // (a full scratch is a superset -- an undrained still-live candidate is re-matched,
-    // the census is idempotent; an undrained dead one is correctly dropped); a TAIL
-    // batch APPENDS (delta -- must not be lost).
+    // The queue merge: one world generation per queue. A different generation means the old queue
+    // is dead (the drain gate would drop it), so it is replaced; on the same generation a full
+    // batch replaces (a superset: an undrained live candidate is re-matched, an undrained dead one
+    // is correctly dropped) and a tail batch appends (a delta that must not be lost).
     if (worldGen != g_reseedQueueGen || isFull) {
         if (g_reseedQueueHead < g_reseedQueue.size() && worldGen != g_reseedQueueGen) {
-            g_reseedSumDrops += g_reseedQueue.size() - g_reseedQueueHead;  // audit IMPORTANT-1
+            g_reseedSumDrops += g_reseedQueue.size() - g_reseedQueueHead;  // folded into the sums
             UE_LOGI("reseed: queue dropped (n=%zu reason=gen-flip at pass merge)",
                     g_reseedQueue.size() - g_reseedQueueHead);
         }
-        // Audit IMPORTANT-1: a REPLACE preempting an unfinished drain must fold the
-        // per-queue counters into the 60 s sums BEFORE resetting them, or the summary
-        // undercounts exactly during mass-adopt convergence (the directional A/B gate
-        // `old - new == rejects + drops` is built on these counters).
+        // A replace preempting an unfinished drain folds the per-queue counters into the 60 s sums
+        // first, or the summary undercounts exactly during a mass adoption.
         g_reseedSumNew     += g_reseedDrainedNew;
         g_reseedSumRejects += g_reseedDrainedRejects;
         g_reseedQueue.swap(g_reseedScratch);
@@ -396,10 +327,10 @@ size_t ReseedPassComplete_(void*, bool isFull, uint32_t worldGen) {
         g_reseedQueue.insert(g_reseedQueue.end(), g_reseedScratch.begin(), g_reseedScratch.end());
     }
     g_reseedScratch.clear();
-    // Bump at gated pass-complete, NOT queue-empty (R9-C3: a bracket built from a
-    // partially-drained registry self-heals -- mid-bracket expresses are claim-safe).
-    if (isFull || grew) BumpSeedGeneration_();  // the summary counter lives inside (mute-aware)
-    return enqueuedCandidates;  // pre-adjudication count; sole consumer is DebugConsumerCount
+    // Bumped at the gated pass-complete, not at queue-empty: a bracket built from a partially
+    // drained registry self-heals, since mid-bracket expresses are claim-safe.
+    if (isFull || grew) BumpSeedGeneration_();  // the summary counter lives inside
+    return enqueuedCandidates;  // the pre-adjudication count
 }
 
 }  // namespace
@@ -414,15 +345,13 @@ void InstallReseedScanConsumer() {
     coop::element::scan_hub::Register(coop::element::scan_hub::Consumer{
         "prop_reseed", nullptr,
         &ue_wrap::prop::EnsurePropBaseResolved,
-        &ue_wrap::prop::IsKeyedInteractable,   // CLASS-PURE (prop.cpp IsClassKeyedInteractable)
+        &ue_wrap::prop::IsKeyedInteractable,   // class-pure
         &ReseedPassBegin_, &ReseedMatch_, &ReseedPassComplete_,
-        /*settleScans*/ 0});  // demand-exempt: never forces full passes (0<0 false at every hub site)
+        /*settleScans*/ 0});  // demand-exempt: never forces full passes
 }
 
 void DrainReseedQueue() {
-    // 60 s summary FIRST (before the empty early-return, or a quiet world would never
-    // flush it) -- the acceptance's bump-cadence observable (RED when the mute drill
-    // zeroes bumps; >=3/60 s expected from the ~20 s backstop fulls alone).
+    // The 60 s summary first, before the empty early-return, or a quiet world would never flush it.
     {
         const auto now = std::chrono::steady_clock::now();
         if (g_reseedSumSince.time_since_epoch().count() == 0) g_reseedSumSince = now;
@@ -439,9 +368,8 @@ void DrainReseedQueue() {
     }
     if (g_reseedQueueHead >= g_reseedQueue.size()) return;  // empty -- two size_t reads
     ue_wrap::ScopedWalkTimer _wt("reseed:drain");
-    // Per-tick gate re-check (DrainChunk:525's mid-drain-abort shape): a world flip or
-    // a purge episode invalidates the WHOLE queue -- the episode/travel synchronous
-    // walks own post-transition re-derivation.
+    // The gate re-checked per tick: a world flip or a purge episode invalidates the whole queue,
+    // and the episode and travel walks own the re-derivation.
     if (g_reseedQueueGen != ue_wrap::world_identity::Generation() || !ReseedGatePasses_()) {
         const size_t dropped = g_reseedQueue.size() - g_reseedQueueHead;
         g_reseedSumDrops += dropped;
@@ -451,13 +379,11 @@ void DrainReseedQueue() {
         g_reseedQueueHead = 0;
         return;
     }
-    // [drill] interleave: force a SYNCHRONOUS census between drain ticks with the
-    // queue still charged. The assert is DUP-SIDE ONLY (audit IMPORTANT-2): zero
-    // duplicate-eid expresses across the run -- insert().second is the sole newness
-    // authority, the sync walk inserting first makes the drain's insert fail. A prop
-    // adopted BY the bare sync walk here legitimately expresses ZERO times (its
-    // production callers pair with retriggerReadySlots / re-bracket; this bare call
-    // does not), so "not 0" is NOT part of the assert. Latched: once per process.
+    // The interleave drill: a synchronous census forced between drain ticks with the queue still
+    // charged. The assert is duplicate-side only, zero duplicate-eid expresses across the run: the
+    // set insert is the sole newness authority, and the sync walk inserting first makes the drain's
+    // insert fail. A prop adopted by the bare sync walk legitimately expresses zero times. Once per
+    // process.
     {
         static const bool sDrill = !coop::config::ReadEnv("VOTVCOOP_RESEED_INTERLEAVE_DRILL").empty();
         static bool sFired = false;
@@ -469,13 +395,13 @@ void DrainReseedQueue() {
         }
     }
     ++g_reseedDrainTicks;
-    // Hand-axis snapshot once per drain tick (<=8 entries; membership churns per
-    // quick-slot switch, which is why it is NOT evaluated per-slice at match time).
+    // The hand-axis snapshot once per drain tick (at most a few entries; membership churns per
+    // quick-slot switch, so it is not evaluated at match time).
     void* handAxis[1 + coop::players::kMaxPeers];
     const size_t handAxisN =
         coop::hand_item::CollectHandAxisActors(handAxis, 1 + coop::players::kMaxPeers);
-    // ~1 ms budget (QPC checked every 8 items) -- the hub-slice discipline. A fixed
-    // item count would comb the mass-adopt stall (256 x ~140 us adoption = ~36 ms).
+    // The budget of about 1 ms, the hub-slice discipline: a fixed item count would comb a mass
+    // adoption into a stall.
     static const long long sQpcPerMs = [] {
         LARGE_INTEGER f{};
         return ::QueryPerformanceFrequency(&f) ? f.QuadPart / 1000 : 0;
@@ -485,8 +411,8 @@ void DrainReseedQueue() {
     size_t adoptedThisTick = 0;
     size_t processed = 0;
     while (g_reseedQueueHead < g_reseedQueue.size()) {
-        // Budget check EVERY item (QPC ~20 ns; a per-8 check let 8 back-to-back
-        // ~170 us adoption+express items overshoot the budget 2.4x).
+        // The budget checked every item: eight back-to-back adoptions with expresses overshot a
+        // per-eight check by more than double.
         if (processed != 0) {
             LARGE_INTEGER now{};
             ::QueryPerformanceCounter(&now);
@@ -494,14 +420,13 @@ void DrainReseedQueue() {
         }
         const ReseedItem it = g_reseedQueue[g_reseedQueueHead++];
         ++processed;
-        // Cross-frame re-verify (D1 pattern -- never bare IsLive on a pointer that
-        // aged across slices/ticks): array-slot reads FIRST, WorldOf only on a
-        // slot+serial-live object.
+        // The cross-frame re-verify: slot reads first (index and serial), the world term only on a
+        // slot-and-serial-live object; never a bare IsLive on a pointer that aged across ticks.
         if (!R::IsLiveByIndex(it.obj, it.idx)) continue;
         if (R::SlotSerial(it.idx) != it.serial) continue;
         if (ue_wrap::world_identity::WorldOf(it.obj) != ue_wrap::world_identity::CurrentWorld()) {
-            ++g_reseedDrainedRejects;  // the named directional delta: today's census would
-            continue;                  // have adopted a dying-world actor here (R-1 class)
+            ++g_reseedDrainedRejects;  // a dying-world actor
+            continue;                  
         }
         bool isHand = false;
         for (size_t h = 0; h < handAxisN; ++h) {
@@ -513,9 +438,8 @@ void DrainReseedQueue() {
             const std::wstring nm = R::ToString(R::NameOf(it.obj));
             if (nm.rfind(L"Default__", 0) == 0) continue;
         }
-        // Newness: SeedWalk_'s phase-1 block relocated verbatim -- insert().second is
-        // the SOLE authority; the churn guard + freshness re-check keep a rebound/
-        // recycled actor out of the express exactly as before.
+        // Newness, the walk's phase-1 rule: the set insert is the sole authority, and the churn
+        // guard plus the freshness check keep a rebound or recycled actor out of the express.
         bool isNew = false;
         {
             std::lock_guard<std::mutex> lk(g_knownKeyedPropsMutex);
@@ -530,8 +454,8 @@ void DrainReseedQueue() {
                 }
             }
         }
-        // Phase-2 (outside the mutex, today's ordering): idempotent Mark refresh for
-        // keyed (client: key-index only, v122 no-passive-mint) + keyless pile mint.
+        // Phase 2, outside the mutex: the idempotent mark refresh for a keyed prop (index only on a
+        // client) and the mint for a keyless pile.
         const std::wstring cls = R::ClassNameOf(it.obj);
         const std::wstring key = ue_wrap::prop::GetInteractableKeyString(it.obj);
         bool expressible = false;
@@ -545,11 +469,10 @@ void DrainReseedQueue() {
             expressible = true;
         }
         if (isNew && expressible) {
-            // Express PER ITEM, INSIDE the budget loop (the first acceptance run showed
-            // the end-of-tick chunk Deliver escaping the QPC budget: ~800 adoptions'
-            // payload builds + sends landed on ONE tick = 140/254 ms -- exactly the
-            // stall class this drain exists to remove). The 1-element vector keeps
-            // DeliverLateRegisteredProps the ONE kerfur-vs-generic routing owner.
+            // Expressed per item, inside the budget loop: an end-of-tick chunk delivery escaped the
+            // budget and landed hundreds of payload builds and sends on one tick, the stall class
+            // this drain removes. The one-element vector keeps DeliverLateRegisteredProps the one
+            // routing owner.
             void* one[1] = {it.obj};
             coop::prop_snapshot::DeliverLateRegisteredProps(std::vector<void*>(one, one + 1));
             ++adoptedThisTick;
@@ -557,15 +480,10 @@ void DrainReseedQueue() {
     }
     if (adoptedThisTick > 0) {
         g_reseedDrainedNew += adoptedThisTick;
-        // The "net_pump:" prefix + this exact wording are LOAD-BEARING: mp.py's joinchurn
-        // gate greps "broadcasting one PropSpawn each (incremental" (tools/mp.py) and the
-        // A/B digests sum this line's counts across runs. Do not reword casually.
-        // THE BROADCAST HALF IS HOST-ONLY, so a client must not claim it. `ExpressIncrementalSpawn`
-        // returns immediately on a client, and `[V]` 2026-09-01 a client printed this line four
-        // times over 3,102 adoptions with `grep -c "incremental PropSpawn for runtime-adopted" = 0`
-        // -- it broadcast nothing. Pre-existing wording; it only started PRINTING on clients when
-        // the drain was re-enabled. The host phrase is unchanged byte-for-byte because mp.py's
-        // joinchurn gate greps it.
+        // The "net_pump:" prefix and this wording are load-bearing: tools/mp.py's joinchurn gate
+        // greps "broadcasting one PropSpawn each (incremental", and the A/B digests sum this line's
+        // counts. The broadcast half is host-only, so a client prints the second form: its
+        // adoptions are tracked locally, and it authors no PropSpawn.
         if (coop::prop_snapshot::ExpressWouldBroadcast())
             UE_LOGI("net_pump: steady-world re-seed adopted %zu NEW runtime-spawned keyed prop(s) "
                     "(spawn-menu/toolgun/ambient/pile) -- broadcasting one PropSpawn each "
@@ -575,8 +493,8 @@ void DrainReseedQueue() {
                     "-- tracked locally; a client authors no PropSpawn", adoptedThisTick);
     }
     if (g_reseedQueueHead >= g_reseedQueue.size()) {
-        // Only interesting drains get their own line (a per-pass line would be ~0.5 Hz
-        // spam); the 60 s summary below is the steady-state observable.
+        // Only an interesting drain gets its own line; the 60 s summary is the steady-state
+        // observable.
         if (g_reseedDrainedNew > 0 || g_reseedDrainedRejects > 0 || g_reseedDrainTicks > 1) {
             UE_LOGI("reseed: queue drained (n=%zu new=%zu rejects=%zu ticks=%llu full=%d)",
                     g_reseedQueue.size(), g_reseedDrainedNew, g_reseedDrainedRejects,
@@ -588,7 +506,7 @@ void DrainReseedQueue() {
         g_reseedSumRejects += g_reseedDrainedRejects;
         g_reseedQueue.clear();
         g_reseedQueueHead = 0;
-        g_reseedQueueHasFull = false;  // audit MINOR-4: a later tail-append queue must not inherit it
+        g_reseedQueueHasFull = false;  // a later tail-append queue must not inherit it
         g_reseedDrainTicks = 0;
         g_reseedDrainedNew = 0;
         g_reseedDrainedRejects = 0;
