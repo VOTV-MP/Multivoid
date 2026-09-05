@@ -347,8 +347,8 @@ def check_quoted_cites(text):
 # ---- checks C / D / E (docs/DOCUMENTIZE_ARC.md WP-4, 2026-09-03) ----------------------------------
 # The memory directory uses TWO slug conventions (lesson_x_y.md and lesson-x-y.md); a link under
 # either must resolve. These checks need the memory corpus, which CI does not have: there they print
-# UNVERIFIABLE and never fail -- the numbers travel in the Docs-Census trailer instead
-# (wikilinks-dead / pairing-unref / pairing-dead), ratcheted by the close and by docs_census_gate.
+# UNVERIFIABLE and never fail -- the numbers travel in the close record instead
+# (wikilinks-dead / pairing-unref / pairing-dead), ratcheted by the close.
 WIKILINK = re.compile(r"\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]")
 MEMREF = re.compile(r"memory/([A-Za-z0-9_\-.]+)\.md")
 PAIRED_PREFIX = re.compile(r"^(lesson|feedback)[_-]")
@@ -619,7 +619,7 @@ def main():
     if dead_links is None:
         print("wikilinks: {} found, UNVERIFIABLE here -- memory corpus absent".format(n_links))
         print("pairing:   UNVERIFIABLE here -- memory corpus absent (run locally, or read the "
-              "Docs-Census trailer's wikilinks-dead / pairing-unref / pairing-dead)")
+              "close record's wikilinks-dead / pairing-unref / pairing-dead)")
     else:
         print("wikilinks: {} checked, {} dead".format(n_links, len(dead_links)))
         print("pairing:   {} memory lesson/feedback files without a ledger row (--pairing lists them), "

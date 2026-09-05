@@ -34,7 +34,7 @@ WHAT IT DOES (section 3, WP-1)
            leaves them reading zero; this is where the correction is recorded.
 
 Nothing here is prose the agent asserts: the sets are computed and printed, the numbers go
-into commit trailers that tools/docs/docs_census_gate.py checks against each other in CI, and
+into the PRIVATE history repository's close commits (its `Docs-Census:` trailer), and
 the trees CI cannot see get their history in ~/.claude/projects/<slug>/history/ (local-only,
 no remote -- the research/ pattern).
 
@@ -283,8 +283,22 @@ def parse_trailer(body):
     return None
 
 
+def previous_close(repo):
+    """-> sha of the newest commit whose SUBJECT carries the close prefix, or None. The public
+    repositories carry no machine trailer (CONTRIBUTING.md, Commits); the record of a close lives
+    in the private history, whose commits `last_close` reads."""
+    out = git(["log", "--format=%H%x00%s"], repo, check=False)
+    for line in out.splitlines():
+        if "\x00" in line:
+            sha, subject = line.split("\x00", 1)
+            if subject.startswith(CLOSE_PREFIX):
+                return sha
+    return None
+
+
 def last_close(repo):
-    """-> (sha, trailer dict) of the newest commit carrying the trailer, or (None, None)."""
+    """-> (sha, trailer dict) of the newest commit carrying the trailer, or (None, None).
+    Only the private history repository carries one."""
     out = git(["log", "--format=%H%x00%B%x01", "--grep=^" + TRAILER_KEY + ":"], repo, check=False)
     for rec in out.split("\x01"):
         if "\x00" in rec:
@@ -300,13 +314,13 @@ def base_for(repo, since, first_run_head=False):
     onto, and its whole history is not "this session's work" -- so its base is HEAD and nothing in it
     is TOUCHED. Its docs enter through the sweep like any other never-censused doc. Only MAIN refuses
     without a base, because main's base is what the gate tiles the close chain on."""
-    sha, _ = last_close(repo)
+    sha = previous_close(repo)
     if sha:
-        return sha, "trailer"
+        return sha, "previous close"
     if first_run_head:
         return git(["rev-parse", "HEAD"], repo).strip(), "first-run HEAD"
     if not since:
-        raise SystemExit("REFUSE: no previous Docs-Census trailer in {} -- pass --since DATE for the first run"
+        raise SystemExit("REFUSE: no previous close commit in {} -- pass --since DATE for the first run"
                          .format(repo))
     sha = git(["rev-list", "-1", "--before=" + since + " 00:00", "HEAD"], repo).strip()
     if not sha:
@@ -333,7 +347,7 @@ def ratchet_values(env):
     ledger = read_text(os.path.join(env.repo, "docs", "LESSONS.md"))
     if ledger:
         # WP-4: the ledger gate's checks C / D, which CI cannot run (no memory corpus there) --
-        # their numbers travel in the trailer and are ratcheted here and in docs_census_gate.
+        # their numbers travel in the close record and are ratcheted here.
         dead_links = LG.check_wikilinks(ledger, env.memory)
         unref, dead_refs = LG.check_pairing(ledger, env.memory)
         if dead_links is not None:
@@ -970,7 +984,16 @@ def run_close(env, args):
     trailers = list(args.trailer or [])
     if not any(t.startswith("Co-Authored-By:") for t in trailers) or not any(t.startswith("Claude-Session:") for t in trailers):
         raise SystemExit("REFUSE: --trailer 'Co-Authored-By: ...' and --trailer 'Claude-Session: ...' are required "
-                         "(the trailer STAYS -- CLAUDE.md git-identity rule; the script cannot mint either)")
+                         "(the attribution trailers stay; the script cannot mint either)")
+    # The public close commit is an ordinary commit and must pass the same check the commit-msg
+    # hook applies (CONTRIBUTING.md, Commits) -- refused HERE, before the history and the owned
+    # repositories have been committed, or a refusal at the hook would leave the close half done.
+    sys.path.insert(0, os.path.join(os.path.dirname(HERE), "git"))
+    import commit_msg_check
+    refusals = commit_msg_check.check_message(CLOSE_PREFIX + " " + args.subject + "\n\n" + "\n".join(trailers))
+    if refusals:
+        raise SystemExit("REFUSE: the close subject would not pass the commit-message check: "
+                         + "; ".join(refusals))
     # 1. every row carries exactly one verdict token; no STILL TRUE / ACTUALLY DONE on a dead citation
     bad = [r for r in rows if r["verdict"] not in VERDICTS]
     if bad:
@@ -1097,7 +1120,7 @@ def run_close(env, args):
             "act and the corpus is always there for one; point MULTIVOID_MEMORY_DIR at it."
             .format(env.memory))
     rv["accretion"] = accretion_count(env, rs)
-    prev_sha, prev = last_close(env.repo)
+    prev_sha, prev = last_close(env.history)
     if prev:
         grew = [c for c in RATCHET_COLS if c in prev and prev[c].isdigit() and rv[c] > int(prev[c])]
         if grew:
@@ -1244,41 +1267,16 @@ def run_close(env, args):
             "memref-dead": rv["memref-dead"], "running-totals": rv["running-totals"],
             "wikilinks-dead": rv["wikilinks-dead"], "pairing-unref": rv["pairing-unref"],
             "pairing-dead": rv["pairing-dead"], "sweep-cursor": cursor, "sweep-cycle": meta.get("cycle", 0), "new": len(new), "foreign": foreign}
-    # 6. commit 3 first: the private history (snapshot + state + the verdict table) -> census=
-    # The dated index is refreshed by the CENSUS, not here: regenerating at close time would
-    # rewrite a path the content pin has already checked, which is the one thing the pin
-    # exists to forbid. Here it is only CHECKED, like any other doc the census read.
+    # 6. the memory index must be current before anything is committed. It is refreshed by the
+    # CENSUS, not here: regenerating at close time would rewrite a path the content pin has
+    # already checked, which is the one thing the pin exists to forbid. Here it is only CHECKED.
     import memory_index
     if memory_index.stale(env, rs):
         raise SystemExit("REFUSE: the memory directory changed since the census, so "
                          "memory/INDEX_BY_DATE.md is stale -- re-run `census --force`, which "
                          "regenerates the index and re-pins it (verdicts carry forward)")
-    snapshot_sync(env, rs)
-    state_save(env, st)
-    final = os.path.join(env.history, "census", "{}-{}.md".format(utc, base[:10]))
-    os.replace(pending_path(env), final)
     subject = CLOSE_PREFIX + " " + args.subject
-    hist_trailer = format_trailer(dict(vals, census="pending"))
-    # From a PRIVATE index here too: this repository's path is a pure function of the main repo's, so two
-    # sessions on this box share it exactly as they share main's index -- and `git add -A` on a shared
-    # index is the cross-session side effect docs/LESSONS.md records twice (a post-ship audit, 2026-09-03,
-    # found this one commit bypassing the protection the other two use).
-    hidx = os.path.join(env.history, ".git", "docs_census.index")
-    henv = dict(os.environ, GIT_INDEX_FILE=hidx)
-    try:
-        if os.path.exists(hidx):
-            os.remove(hidx)
-        git(["read-tree", "HEAD"], env.history, env=henv)
-        git(["add", "-A"], env.history, env=henv)
-        git(["commit", "-q", "-F", "-"], env.history, env=henv,
-            input_text=compose(env.history, subject, [hist_trailer] + trailers))
-    finally:
-        if os.path.exists(hidx):
-            os.remove(hidx)
-    git(["reset", "-q"], env.history)
-    hsha = git(["rev-parse", "HEAD"], env.history).strip()
-    vals["census"] = hsha[:12]
-    # 7. commit 2: EVERY owned inner repo, not `research` alone (round 15: ownership is the local git
+    # 7. EVERY owned inner repo, not `research` alone (round 15: ownership is the local git
     # identity, and `site/` -- the public website copy -- was invisible to the census entirely).
     owned_shas = []
     rbases = meta.get("research_base") or {}
@@ -1300,9 +1298,34 @@ def run_close(env, args):
         owned_shas.append("{}:{}".format(name, osha[:10]))
         print("{} close: {} ({} paths)".format(name, osha[:10], len(opaths)))
     vals["research-base"] = ",".join(owned_shas) if owned_shas else "-"
-    # 8. commit 1: main
-    trailer = format_trailer(vals)
-    msha = private_commit(env.repo, sorted(set(main_paths)), subject, [trailer] + trailers)
+    # 6. the private history: snapshot + state + the verdict table, and the ONE machine record of
+    # this close -- its trailer carries every column, main's base and the owned repositories' shas.
+    snapshot_sync(env, rs)
+    state_save(env, st)
+    final = os.path.join(env.history, "census", "{}-{}.md".format(utc, base[:10]))
+    os.replace(pending_path(env), final)
+    hist_trailer = format_trailer(vals)
+    # From a PRIVATE index here too: this repository's path is a pure function of the main repo's, so two
+    # sessions on this box share it exactly as they share main's index -- and `git add -A` on a shared
+    # index is the cross-session side effect docs/LESSONS.md records twice (a post-ship audit, 2026-09-03,
+    # found this one commit bypassing the protection the other two use).
+    hidx = os.path.join(env.history, ".git", "docs_census.index")
+    henv = dict(os.environ, GIT_INDEX_FILE=hidx)
+    try:
+        if os.path.exists(hidx):
+            os.remove(hidx)
+        git(["read-tree", "HEAD"], env.history, env=henv)
+        git(["add", "-A"], env.history, env=henv)
+        git(["commit", "-q", "-F", "-"], env.history, env=henv,
+            input_text=compose(env.history, subject, [hist_trailer] + trailers))
+    finally:
+        if os.path.exists(hidx):
+            os.remove(hidx)
+    git(["reset", "-q"], env.history)
+    hsha = git(["rev-parse", "HEAD"], env.history).strip()
+    # 8. main: an ordinary commit with the attribution trailers only. The public tree carries no
+    # machine trailer (CONTRIBUTING.md, Commits); the record above is the close's ledger.
+    msha = private_commit(env.repo, sorted(set(main_paths)), subject, trailers)
     if msha is None:                          # main has nothing to say -- refuse loudly, do not "close"
         raise SystemExit(
             "REFUSE: main's {} censused path(s) are ALL already committed, so this close would record "
@@ -1310,7 +1333,7 @@ def run_close(env, args):
             .format(len(set(main_paths))))
     print("main close: {} ({} paths)".format(msha[:10], len(set(main_paths))))
     print("history close: {}".format(hsha[:10]))
-    print(trailer)
+    print(hist_trailer)
     return 0
 
 

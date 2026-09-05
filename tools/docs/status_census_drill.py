@@ -206,7 +206,7 @@ def drill_verdict_attribution():
         T = ["--trailer", "Co-Authored-By: Drill <d@e>", "--trailer", "Claude-Session: https://example/x"]
         code, out = run_sc(E, "close", "-m", "attribution", *T)
         check(code == 0, "the close accepts ONE token on all three ({})".format(out.strip()[-90:]))
-        tr = SC.parse_trailer(git(["log", "-1", "--format=%B"], repo))
+        tr = SC.parse_trailer(git(["log", "-1", "--format=%B"], hist))
         got = {k: tr.get(k) for k in ("not-a-label", "not-a-cite", "drift-ok", "not-loose")}
         check(got == {"not-a-label": "1", "not-a-cite": "1", "drift-ok": "1", "not-loose": "0"},
               "THREE identical hand tokens land in THREE different rates ({})".format(got))
@@ -403,9 +403,12 @@ def drill_close():
         names = git(["show", "--format=", "--name-only", "HEAD"], repo).split()
         check(names == ["docs/a.md"], "main close carries exactly docs/a.md (got {})".format(names))
         body = git(["log", "-1", "--format=%B"], repo)
-        tr = SC.parse_trailer(body)
+        check("Docs-Census" not in body, "the public close carries NO machine trailer")
+        tr = SC.parse_trailer(git(["log", "-1", "--format=%B"], hist))
         check(tr is not None and tr.get("rows") == "2" and tr.get("still-open") == "1" and tr.get("stale-done") == "1"
-              and tr.get("foreign") == "1", "trailer: rows=2 still-open=1 stale-done=1 foreign=1 ({})".format(tr))
+              and tr.get("foreign") == "1", "the private record: rows=2 still-open=1 stale-done=1 foreign=1 ({})".format(tr))
+        check(tr is not None and "base" in tr and "census" not in tr,
+              "the private record names main's base and no retired column ({})".format(sorted(tr) if tr else None))
         check("Co-Authored-By: Drill" in body and "Claude-Session:" in body, "attribution trailers on the close")
         check(git(["log", "-1", "--format=%s"], repo).startswith("[docs] close: drill"), "subject carries the registration prefix")
         staged = git(["diff", "--cached", "--name-only"], repo).split()
@@ -420,7 +423,7 @@ def drill_close():
         # `c not in touched` filter dropped a doc from the candidate list BEFORE any ordering, so a
         # doc touched every close could never be censused whole.
         code, out = run_sc(E, "census")
-        check(code == 0 and "base (main)" in out and "[trailer]" in out, "second census bases on the trailer commit")
+        check(code == 0 and "base (main)" in out and "[previous close]" in out, "second census bases on the previous close commit")
         _, rows2 = SC.read_table(pend)
         check(rows2 and all(not r["verdict"] for r in rows2) and any(r["line"] == 3 for r in rows2),
               "the sweep later reads the whole doc: a.md:3 is offered ({} rows, lines {})".format(
@@ -527,7 +530,7 @@ def drill_resolved():
         set_verdict(rows2[0]["n"], "STILL TRUE")
         code, out = run_sc(E, "close", "-m", "the correction", *T)
         check(code == 0, "GREEN: close commits ({})".format(out.strip().splitlines()[-1][:70] if out.strip() else out))
-        tr = SC.parse_trailer(git(["log", "-1", "--format=%B"], repo))
+        tr = SC.parse_trailer(git(["log", "-1", "--format=%B"], hist))
         check(tr.get("stale-done") == "0" and tr.get("still-true") == "1",
               "the verdict columns describe the COMMITTED text: stale-done=0 ({})".format(tr))
         check(tr.get("resolved") == "1" and tr.get("flips") == "1",
@@ -556,7 +559,7 @@ def drill_resolved():
         check(code == 0 and "resolved this close: 1 verdict(s), 1 of them naming a defect" in out,
               "the close prints ITS OWN delta, not only the running total ({})".format(
                   [l for l in out.splitlines() if l.startswith("resolved this close")] or out.strip()[-120:]))
-        tr = SC.parse_trailer(git(["log", "-1", "--format=%B"], repo))
+        tr = SC.parse_trailer(git(["log", "-1", "--format=%B"], hist))
         check(tr.get("resolved") == "2" and tr.get("flips") == "2",
               "the trailer's totals are CUMULATIVE across closes ({})".format(
                   {k: tr.get(k) for k in ("resolved", "flips")}))
@@ -689,7 +692,7 @@ def drill_trailer_producers():
           "every RATCHETED column is ASSIGNED somewhere, not merely initialised to 0 ({})".format(
               unwritten or "none missing"))
     # and the close must actually put each one in the trailer it writes
-    vals_src = src[src.index("    vals = {\"base\":"):src.index("    # 6. commit 3 first")]
+    vals_src = src[src.index("    vals = {\"base\":"):src.index("    # 6. the memory index")]
     absent = [c for c in TS.RATCHETED + TS.MONOTONE + TS.GATED
               if '"{}":'.format(c) not in vals_src]
     check(not absent, "every RATCHETED / MONOTONE / GATED column reaches the trailer ({})".format(
@@ -733,7 +736,7 @@ def drill_trailer_producers():
         io.open(pend, "w", encoding="utf-8", newline=NLC).write(NLC.join(tt))
         code, out = run_sc(E, "close", "-m", "columns", "--trailer", "Co-Authored-By: Drill <d@e>",
                            "--trailer", "Claude-Session: https://example/x")
-        tr = SC.parse_trailer(git(["log", "-1", "--format=%B"], repo)) or {}
+        tr = SC.parse_trailer(git(["log", "-1", "--format=%B"], hist)) or {}
         missing = [c for c in TS.ORDER if c not in tr]
         extra = [c for c in tr if c not in TS.ORDER]
         check(code == 0 and not missing and not extra,
@@ -748,7 +751,7 @@ def drill_undrilled_refusals():
     the drill found SIX with no arm at all -- and the first census I wrote to find them reported all
     twelve as drilled, because it asked whether any WORD of the message appeared anywhere in the drill
     text. A detector that answers PASS on a word match is the ledger's own row about counting what a
-    thing MATCHED. These four guard a property; the other two (`no previous Docs-Census trailer`,
+    thing MATCHED. These four guard a property; the other two (`no previous close commit`,
     `no commit before`) are first-run ergonomics and are named here rather than drilled."""
     print("-- I. the refusal paths nothing was exercising")
     root = tempfile.mkdtemp(prefix="sci_")

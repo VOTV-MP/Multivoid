@@ -1,0 +1,50 @@
+# repo-gates -- the checks on the repository's public surface, on every push.
+#
+# Three gates, each with the drill that shows it RED first (a gate nothing can
+# show failing is a gate nobody can trust):
+#   - public-leak: a leaked security coordinate in the public tree
+#   - commit messages: the shape CONTRIBUTING.md asks for, over every commit
+#     since the checker was added (tools/git/commit_msg_check.py, the same
+#     script the commit-msg hook runs)
+#   - public prose: the working-notes markers, dead links and oversized files
+#     in the public tree may not grow (tools/docs/public_prose_gate.py, a
+#     ratchet against its committed baseline)
+#
+# Its own workflow file on purpose: build-core.yml's sha256 is part of the
+# release fingerprint, so a gate step there would cost the fingerprint ritual
+# on every edit.
+name: repo-gates
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  gates:
+    name: Public-surface gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout (full history -- the commit-message gate walks from its own boundary)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Public-leak gate drill
+        run: python3 tools/docs/public_leak_gate_drill.py
+
+      - name: Public-leak gate
+        run: python3 tools/docs/public_leak_gate.py
+
+      - name: Commit-message check drill
+        run: python3 tools/git/commit_msg_check_drill.py
+
+      - name: Commit-message check (every commit since the checker was added)
+        run: python3 tools/git/commit_msg_check.py --from-boundary
+
+      - name: Public-prose gate drill
+        run: python3 tools/docs/public_prose_gate_drill.py
+
+      - name: Public-prose gate
+        run: python3 tools/docs/public_prose_gate.py

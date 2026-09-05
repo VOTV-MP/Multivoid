@@ -1,7 +1,11 @@
-"""trailer_schema -- the ONE definition of the `Docs-Census:` trailer's columns and what each is FOR.
+"""trailer_schema -- the ONE definition of the close record's columns and what each is FOR.
+
+The record is the `Docs-Census:` trailer on the PRIVATE history repository's close commits (and on
+the owned inner repositories'). The public repository's close commit carries no machine trailer
+(CONTRIBUTING.md, Commits); CI reads nothing of this -- the close itself is the only consumer.
 
 WHY THIS FILE EXISTS. The trailer's vocabulary lived in FOUR hand-written lists with no check between
-them -- `status_census.py`'s `RATCHET_COLS`, its `format_trailer` order, and `docs_census_gate.py`'s
+them -- `status_census.py`'s `RATCHET_COLS`, its `format_trailer` order, and the retired CI gate's
 own `RATCHET_COLS` (a byte-identical copy) plus `VERDICT_COLS` -- while the sibling `/qf` skill had
 already solved exactly this with `tools/qf/schema_sync.py --check`. `[V]` 2026-09-03: the trailer
 wrote 23 columns and the gate read back 15; the EIGHT unread were `labels`, `cited-dead`, `accretion`,
@@ -24,11 +28,11 @@ THE RULE: every column declares its KIND at birth.
   REPORTED    printed and never enforced -- declared so on purpose, so "nothing reads it" is a
               decision on the record rather than an omission nobody noticed.
 
-Both `status_census.py` and `docs_census_gate.py` import THIS; the gate additionally asserts that every
-column present in a trailer carries a declared kind, so an undeclared column cannot ship.
+`status_census.py` imports THIS, and `format_trailer` refuses a column with no declared kind, so an
+undeclared column cannot be written.
 """
 
-IDENTITY = ("base", "census", "research-base")
+IDENTITY = ("base", "research-base")
 VERDICT = ("still-open", "actually-done", "stale-done", "partial", "still-true",
            # ONE hand token, NOT A LABEL, attributed to the rung whose row it rejects --
            # the label grammar, the citation resolver, the symbol content rung, the loose
@@ -49,7 +53,7 @@ ORDER = ("base", "rows", "labels", "ageing-rows", "ageing-corr", "ageing-docs",
     "accretion", "resolved", "flips",
     "ro-bytes", "ro-longest", "ro-moved", "ro-cut", "ro-lost", "mem-lost", "mem-over200", "memref-dead",
     "wikilinks-dead", "pairing-unref", "pairing-dead",
-    "sweep-cursor", "sweep-cycle", "census", "research-base", "new", "foreign")
+    "sweep-cursor", "sweep-cycle", "research-base", "new", "foreign")
 
 KIND = {}
 for _name, _cols in (("identity", IDENTITY), ("verdict", VERDICT), ("ratcheted", RATCHETED),
