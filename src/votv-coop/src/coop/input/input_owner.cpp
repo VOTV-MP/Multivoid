@@ -1,4 +1,5 @@
-// coop/input/input_owner.cpp -- see coop/input/input_owner.h for WHY.
+// coop/input/input_owner.cpp -- who owns a typed key: the game (an open interface, or a focused
+// menu field), the overlay, or a hotkey. See coop/input/input_owner.h.
 
 #include "coop/input/input_owner.h"
 
@@ -22,47 +23,35 @@ namespace R = ue_wrap::reflection;
 namespace coop::input::input_owner {
 namespace {
 
-// Published by TickGameThread, read from the WndProc. (This said "the WndProc + poller
-// threads" until 2026-07-31; MEASURED FALSE -- all five MayTakeKey() call sites are in
-// WndProcDetour and nothing else reads GameOwnsText(). The pollers still use
-// ui::input_focus::IsOverlayCapturingText. Moving them onto this arbiter is the RULE-2
-// debt named below; until it lands, the atomic has exactly one consumer.) One independent
-// bool each; relaxed is right (see the header's staleness note).
-// TWO INDEPENDENT TERMS, not one fused marker with a discriminator beside it. They
-// are published separately because they are DECIDED separately and go stale at
-// different rates: the interface term is exact and can be re-evaluated live at a
-// keystroke, while the scan term is a 1 Hz conclusion about surfaces that cannot be
-// evaluated inline. Fusing them into one bool plus a "which term said so" flag was
-// the first shape of this code and it had a real hole: leaving an interface left the
-// fused bool stale-true with the flag stale-"interface", so for up to a second the
-// live re-evaluation would clear it -- discarding a menu-field owner the scan had
-// legitimately found. Same defect this header names one level up.
+// Published by TickGameThread, read from the WndProc's MayTakeKey. Two independent terms,
+// decided separately and stale at different rates: the interface term is exact and
+// re-evaluated live at a keystroke; the scan term is a 1 Hz conclusion about surfaces that
+// cannot be evaluated inline. Fused into one bool, leaving an interface left it stale-true for
+// up to a second, and the live re-evaluation then discarded a menu-field owner the scan had
+// found.
 std::atomic<bool> g_ifaceOwnsText{false};
 std::atomic<bool> g_scanOwnsText{false};
 std::atomic<bool> g_overlayOwnsText{false};
-// Never observed the game thread yet => we do not know => MayTakeKey must say no.
+// The game thread has not been observed yet, so nothing is known and MayTakeKey says no.
 std::atomic<bool> g_everTicked{false};
 
 // Diagnostics only.
 char g_ownerName[64] = "-";
 
-// The widget the last full scan found holding focus, re-probed first on the next one
-// (focus is sticky). Diagnostics-adjacent but load-bearing for the scan's cost -- see
-// the sweep. Cached across 1 Hz scans (incl. at the menu) -> CachedObjRef, never a
-// bare-IsLive raw pointer (islive-zeroav design section 3).
+// The widget the last full scan found holding focus, re-probed first on the next (focus is
+// sticky). A CachedObjRef, never a bare pointer: it lives across scans, at the menu too.
 ue_wrap::CachedObjRef g_lastOwner;
 
 void* g_clsUserWidget = nullptr;
 void* g_fnHasKeyboardFocus = nullptr;
-// Resolved once. Used to reject widget TEMPLATES -- see IsLiveWidgetInstance.
+// Resolved once; rejects widget templates (IsLiveWidgetInstance).
 void* g_clsWidgetBPGC = nullptr;
 void* g_fnHasUserFocusedDescendants = nullptr;
-// The local PlayerController, resolved ONCE per full scan (it costs a UFunction call).
-// Null means we cannot ask the descendant question at all -- and we then do not claim
-// ownership, rather than falling back to an all-users test.
+// The local PlayerController, resolved once per full scan (a UFunction call). Null means the
+// descendant question cannot be asked, and then no ownership is claimed rather than falling
+// back to an all-users test.
 void* g_pcForScan = nullptr;
-// Which accessor concluded the scan's YES. Diagnostics, but the kind that turns a
-// repeat of this bug into one grep instead of one more hands-on round.
+// Which accessor concluded the scan's yes; diagnostics.
 const char* g_scanTerm = "-";
 int32_t g_activeInterfaceOff = -2;
 bool g_resolved = false;
@@ -83,60 +72,31 @@ void ResolveOnce() {
             g_clsUserWidget, g_fnHasKeyboardFocus, g_fnHasUserFocusedDescendants);
 }
 
-// ---- THE game-side answer, read from THE GAME'S OWN GUARD ----
-//
-// MEASURED 2026-07-31, mainPlayer's ubergraph (research/bp_reflection, decoded with
-// kdec.py -- the block that handles every key):
-//
-//     CallFunc_IsValid_ReturnValue_99 = IsValid(activeInterface)
-//     POP_FLOW_IF_NOT(CallFunc_IsValid_ReturnValue_99)      <-- the guard
-//     WidgetInteraction.SetFocus(activeInterface)
-//     WidgetInteraction.PressPointerKey[virt](key)
-//     CallFunc_PressKey_ReturnValue = WidgetInteraction.PressKey[virt](key, false)
-//
-// The game forwards a typed key into the focused widget IFF `activeInterface` is valid,
-// and it delivers it through a VIRTUAL USER (WidgetInteraction has its own
-// VirtualUserIndex). That is why the obvious predicate cannot work here:
-// `UWidget::HasKeyboardFocus()` asks about USER 0, so it is structurally blind to every
-// in-world widget screen -- the SAT console, the laptop, the arcade, the TV, the radar,
-// the portable PC -- whose UMG lives in a UWidgetComponent driven by mainPlayer's
-// UWidgetInteractionComponent.
-//
-// The predicate used to be `iface && IsLive(iface) && HasKeyboardFocus(iface)`: it read
-// the RIGHT field and then threw the answer away on a question the engine answers about
-// a different user. GitHub issue #5's console is the case that got wrong; the player
-// inventory is the case that made it look right, because `setActiveInterface` ALSO calls
-// SetInputMode_GameAndUIEx, which focuses the same widget for user 0. Two delivery
-// paths, one of them never modelled.
+// The game-side answer, read from the game's own guard. mainPlayer's key handler forwards a
+// typed key into the focused widget only while `activeInterface` is valid, and delivers it
+// through WidgetInteraction's virtual user. So UWidget::HasKeyboardFocus, which asks about user
+// 0, is blind to every in-world widget screen (the console, the laptop, the arcade, the TV, the
+// radar) whose UMG lives in a widget component driven by that interaction component. The
+// player inventory looked right under the old predicate only because setActiveInterface also
+// focuses the same widget for user 0.
 
-// The local pawn, as last validated BY THE TICK. Never resolved from the WndProc.
-//
-// `Registry::Local()` looks like a pure cache read and is not: on a cold cache it runs
-// RescanLocal(), which calls E::GetController() -- a REFLECTED UFunction, i.e.
-// ProcessEvent. Our own PE detour then sees a non-empty queue at top level and runs
-// DrainPostedTasksAtTopLevel(), so spawns, wire applies and net_pump::Tick would execute
-// synchronously INSIDE a WM_KEYDOWN callback, re-entering the engine at a point that is
-// not a tick boundary. `t_inPump` does not protect this: a WndProc is not inside a pump.
-// Reachable for real -- a world change now invalidates the registry's cache through
-// the CachedObjRef world stamp (2026-08-23; this comment used to cite InvalidateLocal(),
-// which never had a caller and is deleted), and the first keypress after a travel would
-// pay for the refill. So the tick owns the resolve and the keystroke path only
-// re-validates. CachedObjRef: probed per
-// WndProc message INCLUDING at the menu -> the runner-up suspect of the
-// IsLive/VEH finding (islive-zeroav design section 3).
+// The local pawn as last validated by the tick, never resolved from the WndProc. Registry::Local
+// on a cold cache runs a rescan that calls GetController, a reflected UFunction; our
+// ProcessEvent detour would then drain posted tasks at top level, running spawns, wire applies
+// and the pump synchronously inside a WM_KEYDOWN callback, and the first keypress after a
+// travel would pay for the refill. So the tick resolves and the keystroke path only
+// re-validates. A CachedObjRef, probed per WndProc message, at the menu too.
 ue_wrap::CachedObjRef g_localPawn;
 
-// The pointer is derived ONCE and handed back, so no caller re-walks the pawn and the
-// offset a second time -- doing that was a real null-deref, because the drill below can
-// make the predicate true without ever resolving either, and a caller that re-derived
-// them dereferenced `nullptr + (-2)`. Found by running the drill, which is what it is for.
+// The pointer is derived once and handed back: the drill below can make the predicate true
+// without resolving either the pawn or the offset, and a caller re-deriving them dereferenced
+// null.
 void* ActiveInterfaceFrom(void* mp) {
     if (!mp) return nullptr;
     if (g_activeInterfaceOff == -2) {
         g_activeInterfaceOff = R::FindPropertyOffset(R::ClassOf(mp), L"activeInterface");
-        // A permanent negative latch with no diagnostic is how a game recook silently
-        // regresses issue #5: the dominant term goes dead forever and nothing says so.
-        // Name-driven lookups are the version surface docs/VERSION_MIGRATION.md tracks.
+        // A silent permanent negative latch is how a recook would regress this: the dominant term
+        // dead for good and nothing saying so. Name-driven lookups are the version surface.
         if (g_activeInterfaceOff < 0)
             UE_LOGE("input_owner: `activeInterface` NOT FOUND on %ls -- the game-owns-text "
                     "term is permanently dead and every hotkey will steal typed keys "
@@ -145,38 +105,31 @@ void* ActiveInterfaceFrom(void* mp) {
     }
     if (g_activeInterfaceOff < 0) return nullptr;
     void* iface = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(mp) + g_activeInterfaceOff);
-    // IsValid() in the BP sense: a non-null, non-pending-kill object. The game's
-    // guard is exactly this, so ours must be too -- a stale pointer to a torn-down
-    // interface would leave every hotkey dead until the next one opens.
+    // IsValid in the BP sense (non-null, not pending kill), the game's own guard; a stale pointer
+    // to a torn-down interface would leave every hotkey dead until the next one opened.
     return (iface != nullptr && R::IsLive(iface)) ? iface : nullptr;
 }
 
-// TICK path: may resolve. Publishes the pawn for the keystroke path below.
+// The tick path: may resolve. Publishes the pawn for the keystroke path below.
 void* ActiveInterfaceResolving() {
     void* mp = coop::players::Registry::Get().Local();
     g_localPawn.Set(mp);  // fresh from the registry (it validates) -- the Set contract
     return ActiveInterfaceFrom(mp);
 }
 
-// KEYSTROKE path: pure memory reads (Alive() is array-slot reads only). A dead or
-// not-yet-published pawn answers "no interface", which fails toward the game
-// exactly like every other unknown here.
+// The keystroke path: memory reads only. A dead or unpublished pawn answers "no interface",
+// failing toward the game like every other unknown here.
 void* ActiveInterfaceCached() {
     void* mp = g_localPawn.Get();
     if (!mp) return nullptr;
     return ActiveInterfaceFrom(mp);
 }
 
-// DRILL. The YES branch of this predicate cannot be reached by the autonomous smoke
-// -- entering an interface needs a human at a terminal -- so without this the whole
-// "the game owns text" path would ship having only ever been observed saying no,
-// which is indistinguishable from a path that is wired up wrong.
-// VOTVCOOP_INPUT_OWNER_DRILL=1 forces the term true. PASS CRITERION: the YES edge
-// appears in the log with activeInterface=1, and every TEXT-CONSUMABLE hotkey (T, V,
-// tilde) goes dead. F-keys stay alive -- KeyCouldBeConsumedByText exempts them before
-// this term is ever consulted, and that exemption IS the tested behaviour, not a leak
-// in the drill. A criterion of "every hotkey dies" would be unmeetable by construction
-// and would invite someone to delete the exemption to satisfy it.
+// The drill (VOTVCOOP_INPUT_OWNER_DRILL=1) forces the term true: the yes branch needs a person
+// at a terminal, so without it the path would ship having only ever said no. Pass: the yes edge
+// logs with activeInterface=1 and every text-consumable hotkey (T, V, tilde) goes dead; F-keys
+// stay alive, since KeyCouldBeConsumedByText exempts them before this term is consulted, and
+// that exemption is the tested behaviour.
 bool DrillForcesInterface() {
     static int sDrill = -1;
     if (sDrill == -1) {
@@ -187,8 +140,8 @@ bool DrillForcesInterface() {
     return sDrill == 1;
 }
 
-// `resolving` picks which of the two pawn paths above is allowed. The tick passes
-// true; the keystroke path passes false and must never resolve (see g_localPawn).
+// `resolving` picks the pawn path: the tick passes true; the keystroke path passes false and
+// must never resolve.
 bool InterfaceOwnsTextLive(bool resolving) {
     if (DrillForcesInterface()) return true;
     return (resolving ? ActiveInterfaceResolving() : ActiveInterfaceCached()) != nullptr;
@@ -201,20 +154,13 @@ bool CallBoolNoArgs(void* widget, void* fn) {
     return ret;
 }
 
-// USER-0 Slate focus, on the widget itself OR on anything inside it.
-//
-// A widget TEMPLATE is not a live widget, and asking it about focus is meaningless.
-// Every WidgetBlueprintGeneratedClass stores a template widget tree, and those trees
-// dominate the UserWidget population -- the `Default__` prefix test above does NOT
-// catch them, because a template's immediate Outer is a UWidgetTree exactly like a live
-// instance's is (the same trap input_focus_probe.cpp documents at its IsLiveInstance).
-// The discriminator is one level further up, where a template's chain reaches its
-// generated CLASS and a live widget's reaches a UUserWidget / the World.
-//
-// MEASURED 2026-08-29, and this is why it matters: the 1 Hz scan was issuing ~9,300
-// reflected HasKeyboardFocus dispatches per pass -- 100% of every blueprint call this
-// mod makes -- and they land in ONE frame. Pointer-compares the cached class rather
-// than ClassNameOf, which allocates a wstring per object.
+// Whether a widget is a live instance rather than a template. Every
+// WidgetBlueprintGeneratedClass stores a template tree, and templates dominate the UserWidget
+// population; the Default__ test does not catch them, since a template's immediate Outer is a
+// UWidgetTree like a live instance's. The discriminator is further up: a template's chain
+// reaches its generated class, a live widget's a UUserWidget or the World. Without this the
+// 1 Hz scan issued about 9,300 reflected HasKeyboardFocus dispatches per pass, in one frame.
+// The cached class is pointer-compared; ClassNameOf allocates.
 bool IsLiveWidgetInstance(void* o) {
     void* outer = R::OuterOf(o);
     for (int d = 0; outer && d < 8; ++d) {
@@ -224,40 +170,27 @@ bool IsLiveWidgetInstance(void* o) {
     }
     return true;
 }
-// BOTH terms are user-0-scoped, and that is the entire point. `HasKeyboardFocus` is an
-// EXACT-widget test, so it answers true only while focus sits on the user widget itself
-// -- which is what SetInputMode_GameAndUIEx leaves behind when a menu opens and nothing
-// has been clicked. The moment the player clicks into a field (save-slot rename, the
-// settings search) focus moves to a DESCENDANT and the exact test goes false, i.e. it
-// fails in precisely the case where typing is happening. Hence the second term.
-//
-// IT MUST BE THE `User` VARIANT. This first shipped as `HasFocusedDescendants()`, which
-// is ALL-USERS -- and the user REPORTED the consequence within the hour: after visiting
-// the SAT console once, T / V / tilde were dead forever. Measured from the edge log, on
-// both peers identically:
-//
-//   YES (owner=ui_console_C,       activeInterface=1 scan=0)   <- entering, correct
-//   YES (owner=ui_consolesAtlas_C, activeInterface=0 scan=1)   <- after leaving, LATCHED
-//
-// The in-world screens live in a UWidgetComponent whose UMG is focused by
-// WidgetInteraction's VIRTUAL user, and nothing ever clears that focus -- so an
-// all-users descendant test on the permanently-resident atlas widget is true forever.
-// That is the same virtual user the fix for issue #5 exists because of: it must be
-// INVISIBLE to this term and VISIBLE to the activeInterface term. Asking about the
-// local PlayerController's user is what separates them.
+// User-0 Slate focus, on the widget itself or on anything inside it; both terms are
+// user-0-scoped. HasKeyboardFocus is an exact-widget test, true only while focus sits on the
+// user widget itself, which is what SetInputMode_GameAndUIEx leaves when a menu opens; the
+// moment the player clicks into a field (a save-slot rename, the settings search) focus moves
+// to a descendant and the exact test goes false, hence the second term. It must be the User
+// variant: the all-users HasFocusedDescendants stays true for good on the resident atlas
+// widget, focused by WidgetInteraction's virtual user, so after one visit to the console T, V
+// and tilde were dead until restart. That virtual user must be invisible to this term and
+// visible to the activeInterface term.
 bool OwnsUserZeroFocus(void* widget) {
     if (CallBoolNoArgs(widget, g_fnHasKeyboardFocus)) { g_scanTerm = "kbfocus"; return true; }
     if (!g_fnHasUserFocusedDescendants || !g_pcForScan) return false;
-    // UFunction frame: { APlayerController* PlayerController; bool ReturnValue; }
+    // The UFunction frame: { APlayerController* PlayerController; bool ReturnValue; }
     struct Frame { void* pc; bool ret; } f{g_pcForScan, false};
     if (!R::CallFunction(widget, g_fnHasUserFocusedDescendants, &f)) return false;
     if (f.ret) g_scanTerm = "user0-descendant";
     return f.ret;
 }
 
-// True when `cls` is UUserWidget or derives from it. The class chain is walked rather
-// than name-matched: the 26 text surfaces are all `*_C` BlueprintGeneratedClasses whose
-// names we must never enumerate (that is the site list this design exists to avoid).
+// True when `cls` is UUserWidget or derives from it, by walking the chain: the text surfaces
+// are BlueprintGeneratedClasses whose names are never enumerated here.
 bool DerivesFromUserWidget(void* cls) {
     for (int depth = 0; cls && depth < 16; ++depth) {
         if (cls == g_clsUserWidget) return true;
@@ -267,11 +200,9 @@ bool DerivesFromUserWidget(void* cls) {
 }
 
 void Remember(void* w) {
-    // The fast path calls this every 10 Hz tick for as long as an interface is open,
-    // not just on the edge -- and ClassNameOf allocates a std::wstring. Skip the repeat.
-    // Latched on the pointer AND its class: UObject slots are recycled (that is why
-    // IsLiveByIndex exists), so a new widget at an old address would otherwise keep the
-    // previous name and make the one line that explains a run say the wrong thing.
+    // Called every 10 Hz tick while an interface is open, and ClassNameOf allocates, so a repeat is
+    // skipped. Latched on the pointer and its class: slots are recycled, and a new widget at an old
+    // address would otherwise keep the previous name.
     static void* sLast = nullptr;
     static void* sLastCls = nullptr;
     void* cls = R::ClassOf(w);
@@ -285,13 +216,8 @@ void Remember(void* w) {
     g_ownerName[i] = '\0';
 }
 
-// The instrument. Edge-only -- it prints when the ANSWER changes, so a wrong
-// verdict is diagnosable from one line without spamming a 10 Hz log, and it
-// carries its INPUTS (who owns it, and which of the two terms concluded it) not
-// just its verdict. `LastGameOwnerName()` existed with ZERO consumers before
-// 2026-07-31: the build already recorded who owned the keyboard and threw it away
-// every tick, which is exactly why GATE 0 came back as an outcome nobody could
-// interpret.
+// The instrument, edge-only: it prints when the answer changes, with its inputs (who owns it,
+// which term concluded it), so a wrong verdict is diagnosable from one line.
 void LogOwnerEdge() {
     const bool iface = g_ifaceOwnsText.load(std::memory_order_relaxed);
     const bool scan  = g_scanOwnsText.load(std::memory_order_relaxed);
@@ -306,51 +232,34 @@ void LogOwnerEdge() {
 
 }  // namespace
 
-// Two cadences, because the two paths cost wildly different amounts and cover different
-// things. The FAST path is a pointer read plus ONE UFunction call and covers every surface
-// reachable through `Enter Interface` -- the console, the notebook, the laptop, the
-// inventory: i.e. everything the reporter and the user actually named. The FULL path walks
-// GUObjectArray and is what catches the 8 census outliers (save-slot rename, settings
-// search, ...); at 10 Hz that would be a per-frame-class full-array scan, which this
-// project bans on measurement, so it runs at 1 Hz. Consequence, stated rather than hidden:
-// a field in one of those 8 surfaces can be focused for up to ~1 s before we notice, and
-// during that window a hotkey could still take its key. Everything else is <=100 ms.
+// Two cadences. The fast path is a pointer read plus one UFunction call and covers every
+// surface reached through Enter Interface (the console, the notebook, the laptop, the
+// inventory). The full path walks GUObjectArray and catches the menu-only fields (the
+// save-slot rename, the settings search); at 10 Hz that would be a per-frame full-array scan,
+// so it runs at 1 Hz, and a field in one of those surfaces can be focused for up to a second
+// before a hotkey stops taking its key.
 void TickGameThread(bool doFullScan) {
-    // THE REFRESH FLOOR for ue_wrap::world_identity, and it must be FIRST (2026-08-23).
-    //
-    // CurrentWorld() memoises on a 100 ms timer and is refreshed by whoever calls it.
-    // Its main caller is CachedObjRef::Alive(), which -- since the audit's perf fix --
-    // only calls it for WORLD-SCOPED refs, so the drive rate is now a function of which
-    // caches happen to be probed, which is not a floor. This is one: 10 Hz, ungated,
-    // game thread, alive at the menu with no session.
-    //
-    // FIRST, because the ordering is the whole point. This tick is posted from the
-    // overlay's PresentDetour, and presents STOP during a world teardown -- measured
-    // ~5 s of blackout. Nothing runs in that gap, so a stale world harms nobody there;
-    // what matters is that the FIRST tick after presents resume already knows the
-    // truth. Sitting below ActiveInterfaceResolving() (which calls Registry::Local())
-    // meant that first tick resolved the pawn against the PREVIOUS world -- the exact
-    // dead-pawn read this whole term exists to refuse, surviving one scan into the new
-    // world. Considered and rejected as disproportionate: a per-ProcessEvent heartbeat
-    // (~240k/s) to erase the blackout itself.
+    // The refresh floor for world_identity, and it comes first. CurrentWorld memoises on a 100 ms
+    // timer and is refreshed by whoever calls it, which is not a floor; this tick is one: 10 Hz,
+    // ungated, alive at the menu with no session. First, because this tick is posted from the
+    // overlay's present path and presents stop for seconds during a world teardown; the first tick
+    // after they resume must already know the new world, or it resolves the pawn against the
+    // previous one, the dead-pawn read this term exists to refuse.
     (void)ue_wrap::world_identity::CurrentWorld();
     ResolveOnce();
     if (!g_fnHasKeyboardFocus || !g_clsUserWidget) {
-        // Unresolved means UNKNOWN, and unknown must read as "the game might own text"
-        // so MayTakeKey fails open. Deliberately NOT a silent false.
+        // Unresolved means unknown, and unknown reads as "the game might own text", so MayTakeKey
+        // fails open.
         g_everTicked.store(false, std::memory_order_relaxed);
         return;
     }
 
-    // FAST PATH: the game's own guard. Two field reads, no UFunction call, no scan
-    // (Registry::Local() is a validated cache -- the GUObjectArray walk that used to
-    // sit here ran 10x/second for an answer the registry already held).
+    // The fast path: the game's own guard. Two field reads, no scan (the registry already holds the
+    // validated local).
     void* iface = ActiveInterfaceResolving();
-    // [dev] world-identity instrument (VOTVCOOP_WORLD_ID_PROBE=1; a no-op otherwise).
-    // It hangs HERE because this tick is the mod's only UNGATED game-thread heartbeat
-    // -- posted from the overlay's present path, so it runs at the MENU with no
-    // session, which is exactly the window the 2026-08-23 stale-pawn storm lives in.
-    // The pawn it compares against is the one THIS file feeds to the engine.
+    // The world-identity instrument (VOTVCOOP_WORLD_ID_PROBE=1, a no-op otherwise) hangs here
+    // because this is the mod's only ungated game-thread heartbeat, alive at the menu with no
+    // session. The pawn it compares against is the one this file feeds the engine.
     ue_wrap::world_identity::TickProbe(g_localPawn.Raw());
     if (iface || DrillForcesInterface()) {
         if (iface) Remember(iface);
@@ -360,35 +269,30 @@ void TickGameThread(bool doFullScan) {
         LogOwnerEdge();
         return;
     }
-    // The interface term is EXACT, so its false is a real false and is published as
-    // one -- unlike the scan term below, which this cadence has not re-run.
+    // The interface term is exact, so its false is published; the scan term below is not re-run at
+    // this cadence.
     g_ifaceOwnsText.store(false, std::memory_order_relaxed);
 
     if (!doFullScan) {
-        // The fast path said "no interface owns focus". Keep whatever the last full scan
-        // concluded rather than asserting false: this cadence has not looked at the 8
-        // surfaces the fast path cannot see, and claiming they are clear would be a
-        // marker true about the FAST PATH and false about the input path.
+        // No interface owns focus; the last full scan's conclusion stands, since this cadence has
+        // not looked at the surfaces the fast path cannot see.
         g_everTicked.store(true, std::memory_order_relaxed);
         return;
     }
 
-    // FULL PATH: any live UUserWidget holding keyboard focus. This is the invariant --
-    // the census found 8 of the 26 text surfaces with no interface-driving owner, so the
-    // fast path alone would miss save-slot renaming and the settings search.
+    // The full path: any live UUserWidget holding keyboard focus, the surfaces with no
+    // interface-driving owner.
     bool owns = false;
     g_scanTerm = "-";
-    // The local PlayerController scopes the descendant test to USER 0. One UFunction
-    // call per scan (1 Hz), not per widget.
+    // The local PlayerController scopes the descendant test to user 0. One UFunction call per scan,
+    // not per widget.
     {
         void* lp = coop::players::Registry::Get().Local();
         g_pcForScan = lp ? ue_wrap::engine::GetController(lp) : nullptr;
     }
 
-    // Ask LAST FRAME'S OWNER FIRST. Focus is sticky -- the overwhelmingly common case
-    // is that whoever owned it a second ago still does -- and a hit here skips the
-    // whole sweep. Without this the sweep pays TWO reflected UFunction calls for every
-    // non-owning widget, because `A || B` only short-circuits on the rare true.
+    // The last owner first: focus is sticky, and a hit skips the sweep, which otherwise pays two
+    // reflected calls per non-owning widget.
     void* lastOwner = g_lastOwner.Get();
     if (lastOwner && OwnsUserZeroFocus(lastOwner)) {
         owns = true;
@@ -401,9 +305,7 @@ void TickGameThread(bool doFullScan) {
         if (!o || o == g_lastOwner.Raw()) continue;  // already asked (identity compare only)
         void* cls = R::ClassOf(o);
         if (!DerivesFromUserWidget(cls)) continue;
-        // NameStartsWith, not ToString(...).rfind: the latter built and destroyed a
-        // std::wstring for every user widget on every scan. The zero-allocation
-        // primitive is the one players_registry and reflection already use here.
+        // NameStartsWith: a ToString per widget per scan allocated.
         if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;
         if (!R::IsLive(o)) continue;
         if (!IsLiveWidgetInstance(o)) continue;
@@ -435,16 +337,12 @@ bool IsForeground() {
     return pid == ::GetCurrentProcessId();
 }
 
-// Could `vk` do something inside a focused text widget?
-//
-// The rule is deliberately CONSERVATIVE in the game's favour: everything is assumed
-// text-consuming EXCEPT the function keys and the bare modifiers. That is not a
-// hedge, it is the honest reading -- a text field does something with letters,
-// digits, punctuation, space, Enter, Backspace, Delete, Tab and every arrow/Home/End,
-// and the only large family it provably ignores is F1..F24. Enumerating the
-// CONSUMED set instead would be a site list that silently mis-answers the first
-// keyboard layout or widget we did not think of; enumerating the IGNORED set fails
-// toward the game, which is the direction this whole file fails in.
+// Could `vk` do something inside a focused text widget? Conservative in the game's favour:
+// everything is text-consuming except the function keys and the bare modifiers. A text field
+// uses letters, digits, punctuation, space, Enter, Backspace, Delete, Tab and the navigation
+// keys, and the only family it provably ignores is F1 to F24; enumerating the consumed set
+// would mis-answer the first layout not thought of, enumerating the ignored set fails toward
+// the game.
 bool KeyCouldBeConsumedByText(unsigned vk) {
     if (vk >= VK_F1 && vk <= VK_F24) return false;
     switch (vk) {
@@ -463,29 +361,20 @@ bool KeyCouldBeConsumedByText(unsigned vk) {
 
 bool MayTakeKey(unsigned vk) {
     if (!IsForeground()) return false;
-    // A key the game cannot turn into text is ours regardless of who owns the
-    // keyboard -- that is what keeps F1 working inside the console.
+    // A key the game cannot turn into text is ours whoever owns the keyboard; F1 works inside the
+    // console.
     if (!KeyCouldBeConsumedByText(vk)) return true;
-    // Not yet observed from the game thread => UNKNOWN => fail open toward the game.
+    // Not yet observed from the game thread: unknown, so fail open toward the game.
     if (!g_everTicked.load(std::memory_order_relaxed)) return false;
 
-    // SYNCHRONOUS when we can be. `gate3` measured 2026-07-31 that WndProcDetour
-    // runs ON THE GAME THREAD (overlay_diag::NoteWndProcThread, logged
-    // isGameThread=1), and every caller of this function is a WndProc hotkey edge --
-    // so the dominant term can be evaluated at the keystroke itself instead of read
-    // from a republish that is up to a tick old. That closes BOTH staleness windows
-    // the header used to document as unavoidable: ~100 ms of false->true (a player
-    // who enters an interface and types inside the window loses the character) and
-    // ~1 s of true->false (every hotkey dead for up to a second after leaving one,
-    // because the fast cadence deliberately never stores false).
-    //
-    // The predicate is CHECKED, not assumed: off the game thread we fall back to the
-    // published atomic rather than touching engine state from the wrong thread.
+    // Synchronous when possible: the WndProc detour runs on the game thread, and every caller is a
+    // WndProc hotkey edge, so the dominant term is evaluated at the keystroke rather than read from
+    // a republish up to a tick old. That closes both staleness windows: a character lost while
+    // entering an interface, and every hotkey dead for up to a second after leaving one. Checked,
+    // not assumed: off the game thread the published atomic is used.
     if (ue_wrap::game_thread::IsGameThread()) {
-        // The interface term LIVE (zero staleness); the scan term as published,
-        // because it cannot be evaluated inline -- it walks GUObjectArray, and it
-        // covers menu-only surfaces whose staleness costs a hotkey, never a
-        // character.
+        // The interface term live; the scan term as published, since it walks GUObjectArray and
+        // covers menu-only surfaces whose staleness costs a hotkey, never a character.
         if (InterfaceOwnsTextLive(/*resolving=*/false)) return false;
         return !g_scanOwnsText.load(std::memory_order_relaxed);
     }
