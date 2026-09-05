@@ -11,7 +11,7 @@
 // two-channel style wrong, and the second place to re-derive that a hand-built `UImage`
 // answers `IsHovered()` with 0 and must be hit-tested by GEOMETRY.
 //
-// THE STYLE IS `docs/VOTV_UI_STYLE.md` SECTION 4 AND IS NOT A CHOICE THIS MODULE MAKES:
+// THE STYLE IS `docs/VOTV_UI_STYLE.md` (the State section) AND IS NOT A CHOICE THIS MODULE MAKES:
 // selection is a row FILL change, hover is a TEXT colour change, and they are independent.
 // Porting ImGui's HeaderHovered (one channel, fill-on-hover) would look foreign in VOTV's
 // own menus, which is measured, not taste.

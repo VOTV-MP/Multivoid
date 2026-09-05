@@ -64,7 +64,7 @@ inline constexpr uint8_t kTop = 1, kBottom = 3;
 inline constexpr uint8_t kJustLeft = 0, kJustCenter = 1, kJustRight = 2;
 
 // ---- the palette -------------------------------------------------------------------
-// docs/VOTV_UI_STYLE.md section 2. Every value is SAMPLED from the game's own menus by
+// docs/VOTV_UI_STYLE.md, the palette section. Every value is SAMPLED from the game's own menus by
 // histogram, and the set is a designed ramp rather than an accumulation -- #1A1A1A /
 // #313131 / #404040 step evenly, and #400040 (selected) and #400000 (destructive) are one
 // 0x40 component moved between channels. A colour that is not in that table is a mistake.

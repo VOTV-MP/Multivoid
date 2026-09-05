@@ -259,13 +259,11 @@ bool BuildWindowShell(void* switcher, float widthPx, float heightPx, const wchar
     if (void* s = U::AddChild(ovl, scrim))
         U::SetSlotAlign(s, P::off::UOverlaySlot_HAlign, P::off::UOverlaySlot_VAlign, kFill, kFill);
 
-    // THE WINDOW IS A FRAMED BOX. (This used to read "not a cloned 9-slice" --
-    // FALSE since 2026-08-31: the frame IS a cloned 9-slice now, of the game's own
-    // `inst_uiBorder`, because a flat rectangle is what the user rejected. See AddFramedBox.)
-    // 2 px #646464 frame around a #1A1A1A fill with sharp corners (VOTV_UI_STYLE.md
-    // section 3). An earlier version cloned `ui_saveSlots.Image_0`'s brush, which gave a
-    // soft borderless panel -- that was the closest thing available before anyone had
-    // measured the real treatment.
+    // THE WINDOW IS A FRAMED BOX: a cloned 9-slice of the game's own `inst_uiBorder` around
+    // a #1A1A1A fill with sharp corners (VOTV_UI_STYLE.md, the frame section); see
+    // AddFramedBox. An earlier version cloned `ui_saveSlots.Image_0`'s brush, which gave a
+    // soft borderless panel -- the closest thing available before anyone had measured the
+    // real treatment.
     void* winBox = Spawn(L"SizeBox", ovl);
     void* winOvl = winBox ? AddFramedBox(winBox, Panel(), kBorderPx) : nullptr;
     void* col    = winOvl ? Spawn(L"VerticalBox", winOvl) : nullptr;
@@ -494,7 +492,7 @@ void* BuildButton(void* parent, void* donorBtn, const wchar_t* label, int32_t fo
     //
     // User report 2026-08-30, comparing our chrome to VOTV's: "the outer buttons
     // ('Back') are just colored and normal font, but the buttons which sit inside
-    // the widget are pixelated font ('Reset' and 'Save')". `VOTV_UI_STYLE.md:89`
+    // the widget are pixelated font ('Reset' and 'Save')". `VOTV_UI_STYLE.md` (structure rule 3)
     // records the opposite -- "Monospace throughout, the game's font_ui. No
     // proportional text in a menu" -- so either the doc is one font short or the
     // difference is size/outline rather than face, and I am not going to settle
@@ -534,7 +532,7 @@ void* BuildButton(void* parent, void* donorBtn, const wchar_t* label, int32_t fo
         // tab -- while WHITE is reserved for the window TITLE and body text. The ink
         // samples `#FF8900` off a compressed PNG against the palette's recorded `#FF7C00`;
         // the palette wins, because inventing a shade from one crop is exactly the mistake
-        // VOTV_UI_STYLE.md section 7 already records against my own eye.
+        // VOTV_UI_STYLE.md's section on looking versus sampling already records.
         //
         // The user read the difference as WEIGHT ("кнопки какие-то жирные"), and it is not:
         // scaled for the capture sizes our glyphs carry LESS ink than the game's (114 vs

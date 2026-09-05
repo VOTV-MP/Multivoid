@@ -31,9 +31,9 @@
 // beside the code that closed it, which is the one failure an honest omission list can
 // have. A list is only worth keeping while it stays true.
 //
-// CASE AND STYLE come from `docs/VOTV_UI_STYLE.md`: the frame is the game's `#646464`
-// border over `#313131`, the text is `font_ui` at the donor's own size, and labels are
-// never all-caps (rule 4, measured 2026-08-30).
+// CASE AND STYLE come from `docs/VOTV_UI_STYLE.md`: the frame is the game's `inst_uiBorder`
+// material over `#313131`, the text is `font_ui` at the donor's own size, and labels are
+// never all-caps (structure rule 4).
 
 #pragma once
 

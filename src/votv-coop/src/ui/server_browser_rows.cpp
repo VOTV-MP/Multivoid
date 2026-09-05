@@ -42,12 +42,11 @@ using NS::Spawn;
 // so a row of ours is the same size as a row of theirs.
 constexpr float kRowH     = 64.f;
 constexpr float kRowGapPx = 2.f;
-// EVERY ROW CARRIES ITS OWN FRAME. `docs/VOTV_UI_STYLE.md` section 3 rule 1: nothing in
-// VOTV's UI floats unboxed, and section 5 listed per-row borders as the last open style
-// gap -- deferred at the time on the widget budget, because a frame costs one more UImage
-// per row and that cost is the subject of the open perf lane. The user asked for it
-// directly on 2026-08-30 ("чтобы из списка серверы не сливались, у каждого свои границы"),
-// which settles the trade: a list where adjacent rows blend into one slab is not a list.
+// EVERY ROW CARRIES ITS OWN FRAME. `docs/VOTV_UI_STYLE.md`, structure rule 1: nothing in
+// VOTV's UI floats unboxed. Per-row borders were once deferred on the widget budget,
+// because a frame costs one more UImage per row and that cost is the subject of the open
+// perf lane. They were built anyway, which settles the trade: a list where adjacent rows
+// blend into one slab is not a list.
 //
 // The frame is INSIDE the 64 px row, so it changes no layout arithmetic -- the scroll
 // clamp's `want * (kRowH + kRowGapPx)` still describes the content height. The 2 px slot
