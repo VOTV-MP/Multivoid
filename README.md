@@ -42,7 +42,7 @@
   list, signaling and an informational update check.
 
 The per-system answer to "how far along is it", with the evidence for each claim, is
-[docs/COOP_SYNC_PROFILES.md](docs/COOP_SYNC_PROFILES.md). There is deliberately no single "N% done"
+[docs/STATUS.md](docs/STATUS.md). There is deliberately no single "N% done"
 figure: a co-op mod is finished system by system.
 
 ## How it works

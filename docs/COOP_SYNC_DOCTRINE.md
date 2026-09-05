@@ -8,7 +8,7 @@
 > `COOP_SYNCER_MODEL.md` (authority + act-as-host §2b), `COOP_DISPATCH_VISIBILITY.md` (will my hook
 > fire), `COOP_ENTITY_EXPRESSION_MAP.md` (identity/expression/destroy), `COOP_WORLD_PROP_DIVERGENCE.md`
 > (the brain-on trap), `COOP_EVENT_JOIN.md` (late-join rows), `CODE_MAP.md` (where lanes live),
-> `COOP_SYNC_PROFILES.md` (per-facet status), CLAUDE.md (the rules this doc applies).
+> `STATUS.md` (per-facet status), CLAUDE.md (the rules this doc applies).
 
 ## The doctrine in one paragraph
 

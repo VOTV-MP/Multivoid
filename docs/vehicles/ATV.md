@@ -682,7 +682,7 @@ reads **only** bit3 (`authored`). Bits 0–2 are produced and never consumed; bi
   `…-phase2-state-fuel-damage-repair-RCA-2026-06-15.md`,
   `…-grab-airmove-purchased-design-2026-06-15.md`.
 - `docs/upgrades/README.md` §5 — three of its `[?]` NEXT items are closed by §3 above.
-- `docs/COOP_SYNC_PROFILES.md` §2 — the ATV facet rows.
+- `docs/STATUS.md` §2 — the ATV facet rows.
 - `docs/COOP_DISPATCH_VISIBILITY.md` — §7's rows belong there when the lane ships.
 - `docs/COOP_WORLD_PROP_DIVERGENCE.md` — fuel / battery / dirt are its exact shape.
 - MTA precedent: `Server/…/packets/CVehiclePuresyncPacket.cpp` (pose/rot/vel/turnspeed :122-143,

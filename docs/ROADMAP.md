@@ -31,7 +31,7 @@ autonomous rig and not yet by people playing), the tail of game systems still un
 ([SCOPE.md](SCOPE.md) says which), and the subsystems shipped in a shape the project
 does not accept as final: the ATV mirror and the trash-pile mirror both neutralise the engine's own
 actor instead of driving it, and both are queued for a proper rebuild. The per-system status with
-its evidence is [COOP_SYNC_PROFILES.md](COOP_SYNC_PROFILES.md).
+its evidence is [STATUS.md](STATUS.md).
 
 **Right now.** The repository itself: the public tree is being rewritten for people, one document
 per subsystem, with the rules in [../CONTRIBUTING.md](../CONTRIBUTING.md) enforced by a commit hook
