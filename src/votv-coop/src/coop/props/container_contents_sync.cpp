@@ -1,4 +1,8 @@
-// coop/props/container_contents_sync.cpp -- see coop/props/container_contents_sync.h.
+// coop/props/container_contents_sync.cpp -- world-container contents over the wire: the
+// addObject/takeObj verb edge marks a container dirty, a 250 ms sweep ships its GObjStack slice as
+// a blob, the receiver writes the slice back and re-derives the volume and names through the
+// engine's own verbs; a client's edit is a compare-and-swap the host arbitrates and relays. See
+// coop/props/container_contents_sync.h.
 
 #include "coop/props/container_contents_sync.h"
 
@@ -36,20 +40,18 @@ using coop::element::LivePropActor;
 
 constexpr uint8_t kOpContents = 0;
 
-// Verb ids. addObject marks dirty; takeObj ALSO marks dirty AND arms the container-extraction
-// birth latch consumed by prop_drop_intent (a client-extracted item's world actor is admitted as
-// a host-authoritative drop intent -- the profile's #4). They need distinct ids so OnVerbEntry
-// can tell them apart.
+// Verb ids: addObject marks dirty; takeObj also arms the container-extraction birth latch that
+// prop_drop_intent consumes (a client-extracted item's actor is admitted as a host-authoritative
+// drop intent).
 constexpr int kVerbDirty   = 1;   // addObject
 constexpr int kVerbTakeObj = 2;   // takeObj
 
-// The sweep is the drain of an edge-driven set, not a poll -- it does no work when nothing was
-// dispatched. 250 ms keeps a burst of addLoot/addObject calls (a loot roll fires addObject x4)
-// coalesced into ONE broadcast instead of four.
+// The sweep drains an edge-driven set, not a poll; 250 ms coalesces a burst (a loot roll fires
+// addObject four times) into one broadcast.
 constexpr uint64_t kSweepMs = 250;
 
-// A container with more records than this is not shipped: the blob would approach the chunk
-// transport ceiling and a truncated blob is a silent lie. Real containers hold single digits.
+// A container with more records than this is not shipped: the blob would approach the transport
+// ceiling, and a truncated blob is a silent lie. Real containers hold single digits.
 constexpr size_t kMaxRecordsPerContainer = 512;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
@@ -61,85 +63,63 @@ uint32_t g_nextSeq = 1;
 
 coop::blob_chunks::Assembler g_asm;
 
-// Containers marked dirty by the 0x45 edge, drained on the next sweep, keyed by ELEMENT ID.
-// NOT by the raw component pointer: `IsLive` cannot detect an address recycled by a NEW UObject
-// between the edge and the drain (reflection.cpp says so outright, and registry.h requires
-// IsLiveByIndex for any pointer held across ticks). An eid is a stable identity, so the drain
-// re-resolves the actor forward and a destroyed container simply stops resolving.
+// Containers marked dirty by the verb edge, drained on the next sweep, keyed by element id rather
+// than the component pointer: IsLive cannot detect an address recycled by a new object between the
+// edge and the drain, and an eid re-resolves forward, so a destroyed container stops resolving.
 std::set<uint32_t> g_dirty;
 
-// HOST: the content this host most recently PUBLISHED for an eid by ANY route -- fan-out or a
-// targeted connect seed. This, not g_sentHash, is the compare-and-swap baseline: it answers "what
-// did I tell that peer the world looked like", which is the only thing a client's edit can
-// honestly be judged against. g_sentHash answers a DIFFERENT question ("may I skip the next
-// fan-out"), and a targeted send must not answer yes to it.
+// Host: the content most recently published for an eid by any route, fan-out or a targeted
+// connect seed. This is the compare-and-swap baseline ("what did I tell that peer the world looked
+// like"); g_sentHash answers a different question ("may I skip the next fan-out"), and a targeted
+// send must not answer yes to that one.
 std::map<uint32_t, uint64_t> g_publishedHash;
 
-// Per-eid content hash of the last blob we SENT / APPLIED. Skipping an unchanged blob is what
-// keeps the orphaned-buffer cost bounded: a steady-state re-broadcast applies nothing and
-// allocates nothing (the raw-write path deliberately orphans the old arrays, so an apply that
-// changes nothing must not happen at all).
+// The hash of the last blob sent and of the last applied, per eid. Skipping an unchanged blob is
+// what bounds the orphaned-buffer cost: a steady-state re-broadcast applies and allocates nothing.
 std::map<uint32_t, uint64_t> g_sentHash;
 std::map<uint32_t, uint64_t> g_appliedHash;
 
-// CLIENT: the last HOST truth this peer applied for an eid -- the base it declares when it
-// authors. Deliberately NOT the same map as g_appliedHash even though both are written at the same
-// moment, because they answer questions that diverge the instant this peer mutates locally:
-//   g_appliedHash = "does an incoming blob change anything for me?"   -> local mutation CLEARS it
-//                                                                        (else a corrective
-//                                                                        re-publish is skipped as
-//                                                                        a duplicate and the peer
-//                                                                        never converges)
-//   g_baseHash    = "which host truth was I editing?"                 -> local mutation KEEPS it
-//                                                                        (that IS the edit's base;
-//                                                                        clearing it makes the peer
-//                                                                        declare base 0 and the
-//                                                                        host refuse every write)
-// Fusing them produced BOTH failures in turn, one per smoke.
+// Client: the last host truth this peer applied for an eid, the base it declares when it authors.
+// Not the same map as g_appliedHash, although both are written at the same moment: a local
+// mutation clears g_appliedHash (or a corrective re-publish is skipped as a duplicate and the peer
+// never converges) and keeps g_baseHash (that is the edit's base; cleared, the peer declares base 0
+// and the host refuses every write). Fusing them produced both failures in turn.
 std::map<uint32_t, uint64_t> g_baseHash;
 
-// name -> UClass* memo. R::FindClass is a FULL GUObjectArray walk; calling it per record per
-// broadcast is the exact per-frame-full-scan pattern the project's post-ship audit rule bans.
+// name to UClass memo: FindClass walks the whole GUObjectArray, and per record per broadcast that
+// is the per-frame full scan.
 std::map<std::wstring, void*> g_classMemo;
 
-// Containers whose broadcast was refused by the transport (I-3) -- retried by the sweep.
+// Containers whose broadcast the transport refused; retried by the sweep.
 std::set<uint32_t> g_retry;
 
-// Per-eid timestamp of THIS peer's own last verb edge. The host uses it to detect a client write
-// that raced a host-side change; the client uses nothing but its own bookkeeping.
+// This peer's own last verb edge per eid; the host uses it to detect a client write that raced a
+// host-side change.
 std::map<uint32_t, uint64_t> g_localChangeMs;
 
-// A client write whose baseHash is stale is rejected within this window of a host-side change.
+// A client write is refused within this window of a host-side change.
 constexpr uint64_t kConflictWindowMs = 1500;
 
-// The rollback-need instrument (R11b): how many client writes the host has refused. The design
-// deliberately ships WITHOUT a rollback shape -- a refused write is corrected by the host
-// re-publishing its own truth, and the loser simply sees the container snap back. Whether that is
-// ever noticeable is an EMPIRICAL question, and this counter is how it gets answered. Do not
-// build a rollback until this number is non-trivial in real play.
+// How many client writes the host has refused. There is no rollback: a refused write is corrected
+// by the host re-publishing its truth and the loser sees the container snap back; whether that is
+// ever noticeable is empirical, and this counter answers it.
 uint64_t g_conflictRejects = 0;
 
-// v126 (profile #4): container-takeObj-in-flight latch. Armed at the vm_dispatch takeObj ENTRY,
-// consumed (read-and-clear) by prop_drop_intent::OnClientFinishSpawn at the FinishSpawn enqueue
-// of the extracted item's actor -- the item spawns INSIDE the takeObj/getObject call, so the
-// latch is live exactly when the enqueue runs. Atomic + exchange so the consume is one-shot and
-// race-free (the parallel-anim note in this file's vm_dispatch consumers). A personal-inventory
-// take arms it too -- harmless, the drain's own gates (hand axis / live actor) filter those.
+// The takeObj-in-flight latch: armed at the verb's entry, consumed by prop_drop_intent at the
+// extracted item's FinishSpawn enqueue (the item spawns inside the takeObj call, so the latch is
+// live exactly then). Atomic exchange, so the consume is one-shot. A personal-inventory take arms
+// it too, harmlessly; the drain's own gates filter those.
 std::atomic<bool> g_takeObjInFlight{false};
 
-// Inbound blobs for an eid not yet resolvable (birth skew / mid-activity join, principle 8).
+// Inbound blobs for an eid not yet resolvable (birth skew, a mid-activity join).
 struct Parked { std::vector<uint8_t> blob; std::chrono::steady_clock::time_point at; };
 std::map<uint32_t, Parked> g_parked;
 constexpr int kParkTtlSec = 30;
-// R-4b D9: park aging is EVENT-ANCHORED, not wall-clock-from-arrival. A
-// contents slice rides Normal while its PropSpawn rides Bulk -- independent
-// GNS lanes -- so under backpressure the contents SYSTEMATICALLY arrive first,
-// and with delivery now guaranteed a slow link can hold the Bulk stream past
-// any fixed TTL with ZERO wire loss. While our own join snapshot is in flight
-// (Begin seen, Complete not yet) parks do not age; at Complete every park is
-// re-stamped and the TTL runs from there as a leak-guard only (Complete is
-// lane-ordered after every PropSpawn it brackets, so a park still unresolved
-// then is genuinely orphaned).
+// Park aging is event-anchored, not wall clock from arrival: a contents slice rides the normal
+// lane while its PropSpawn rides bulk, so under backpressure the contents systematically arrive
+// first, and a slow link can hold the bulk stream past any fixed TTL with no wire loss. While our
+// own join snapshot is in flight parks do not age; at Complete every park is re-stamped and the
+// TTL runs from there as a leak guard (Complete is lane-ordered after every PropSpawn it brackets).
 bool g_joinBracketOpen = false;
 
 uint64_t NowMs() {
@@ -153,7 +133,7 @@ bool IsHost() {
     return s && s->role() == coop::net::Role::Host;
 }
 
-// ---- reflected offsets (resolved once, then cached) -----------------------------------------
+// Reflected offsets, resolved once and cached.
 
 int32_t g_offInvIndex  = -2;  // propInventory_C.Index
 int32_t g_offInvPlayer = -2;  // propInventory_C.Player  -- the world-vs-PERSONAL discriminator
@@ -162,14 +142,13 @@ int32_t g_offGObjStack = -2;  // saveSlot_C.GObjStack
 int32_t g_offPropInv   = -2;  // prop_container_C.propInventory
 void* g_containerCls = nullptr;
 
-// The two re-derive verbs, resolved ONCE from the class that DECLARES each -- never from the
-// instance's class. See ResolveRederiveFns for why the per-instance-class cache this replaces
-// could never resolve anything.
+// The two re-derive verbs, resolved once from the class that declares each, never the instance's
+// class (see ResolveRederiveFns).
 void* g_fnUpdateVol  = nullptr;   // Aprop_container_C::updateVolumesAndMass
 void* g_fnRecalcName = nullptr;   // UpropInventory_C::recalculateNames
 bool  g_rederiveResolved = false;
 
-// Resolve an offset once; -1 means "looked and failed" (never retried, never guessed).
+// An offset resolved once; -1 means looked and failed, never retried, never guessed.
 int32_t CachedOffset(int32_t& slot, void* cls, const wchar_t* name) {
     if (slot == -2) {
         slot = cls ? R::FindPropertyOffset(cls, name) : -1;
@@ -201,45 +180,23 @@ void* OwnerOf(void* inv) {
     return (owner && R::IsLive(owner)) ? owner : nullptr;
 }
 
-// BOUNDARY 1, fail-closed: true iff this component is a WORLD container we may author.
-// `Player` true = personal inventory (mainPlayer / ui_playerInventory share the SAME global
-// GObjStack) -- authoring it from the host would WIPE that peer's inventory. An UNRESOLVABLE
-// offset is treated exactly like Player==true: we refuse rather than guess.
-//
-// WHAT IS BEHIND THE REFUSAL -- now measured, 2026-07-24. This guard was written to fence off
-// something whose contents nobody had characterised; the refusal was correct then and is
-// UNCHANGED now, but the far side is no longer unknown:
-//   GObjStack[0] IS the local player's inventory, by construction. Aprop_inventoryContainer_player_C
-//   carries a component template `propInventory_GEN_VARIABLE` serializing index=0, player=True,
-//   customVolume=50000 (the base prop_container_C's template has NO overrides), so the personal
-//   slot is baked at construction rather than restored -- which is also why that class's loadData
-//   override is an empty stub. Both live write paths land there: the world pickup
-//   (mainPlayer::putObjectInventory2 -> playerContainer.propInventory.addObject) and the container
-//   slot press. Full RE: votv-player-inventory-two-layer-RE-2026-07-24.md SS4.2/SS5.4.
-//
-// So `Player != 0` now serves TWO lanes from opposite sides of one boundary, and that is
-// deliberate, not an inconsistency:
-//   - HERE it is a REFUSAL   -- this lane authors world containers and must never author a peer's
-//                               personal store (the wipe above);
-//   - in ue_wrap::inventory::ReadLivePersonalStore it is the ADDRESS ASSERTION -- that reader must
-//     read the personal store and nothing else, and refuses when the flag is 0.
-// Both are fail-closed in their own direction. This lane's behaviour is untouched by that reader,
-// which is READ-ONLY: nothing wires, persists or applies the live store (gated on the open scope
-// questions in votv-per-player-inventory-scope-BRIEF-2026-07-24.md).
-//
-// KNOWN DUPLICATION, deliberately NOT resolved here (single-axis discipline): GObjStackSlot() below
-// and that reader each resolve GObjStack/Index themselves. Folding them into one ue_wrap primitive
-// is a behaviour-preserving refactor of a SHIPPED lane and belongs in its own arc with its own
-// equivalence proof -- not bundled into a read-path change.
+// Boundary 1, fail closed: true only for a world container this lane may author. Player true is a
+// personal inventory (mainPlayer and ui_playerInventory share the same global GObjStack, and
+// GObjStack[0] is the local player's inventory by construction, baked by the player container's
+// component template), and authoring it from the host would wipe that peer's inventory; an
+// unresolvable offset refuses too. The same flag is the address assertion in
+// ue_wrap::inventory::ReadLivePersonalStore, fail-closed in the other direction. GObjStackSlot and
+// that reader each resolve GObjStack and Index themselves; folding them is a refactor of a shipped
+// lane for its own arc.
 bool IsWorldContainerInventory(void* inv) {
     if (!inv) return false;
     if (CachedOffset(g_offInvPlayer, R::ClassOf(inv), L"Player") < 0) return false;
     return ReadAt<uint8_t>(inv, g_offInvPlayer) == 0;
 }
 
-// The live TArray<Fstruct_save> slot for this component's contents inside the global GObjStack,
-// as {slot base pointer}. Null if the saveSlot / offset / index is not resolvable or in range.
-// The contents array lives at +0 of the struct_mObject element (its single field).
+// The live TArray<Fstruct_save> slot for this component's contents inside the global GObjStack;
+// null if the save slot, the offsets or the index do not resolve. The contents array is the
+// struct_mObject element's single field, at +0.
 uint8_t* GObjStackSlot(void* inv) {
     if (!inv) return nullptr;
     void* save = ue_wrap::inventory::ResolveSaveSlot();
@@ -258,8 +215,7 @@ void* ContainerClass() {
     return g_containerCls;
 }
 
-// BOUNDARY 2: does this record describe a container (whose ints[] would carry a GObjStack index
-// meaningful only on the sender)?
+// A class by name, memoised (a null result too: one walk per name, ever).
 void* ClassByName(const std::wstring& name) {
     if (name.empty()) return nullptr;
     auto it = g_classMemo.find(name);
@@ -276,9 +232,9 @@ bool RecordIsNestedContainer(const SR::SaveRecord& r) {
     return cls && ue_wrap::prop::WalksToBase(cls, base);
 }
 
-// I-4/I-6: is this pointer actually a propInventory_C component? The 0x45 filter matches on the
-// VERB NAME alone, so any class with an `addObject`/`takeObj` would arrive here; and the apply
-// side must not read a cached component offset off an eid that resolved to something else.
+// Is this a propInventory_C component, and is that a container actor: the verb filter matches on
+// the verb name alone, so any class with an addObject would arrive, and the apply side must not
+// read a cached component offset off an eid that resolved to something else.
 void* InventoryClass() {
     static void* cls = nullptr;
     if (!cls) cls = R::FindClass(L"propInventory_C");
@@ -293,28 +249,19 @@ bool IsContainerActor(void* actor) {
     return base && actor && ue_wrap::prop::WalksToBase(R::ClassOf(actor), base);
 }
 
-// BOUNDARY 2. A nested container's ints[0][0] is its own GObjStack index -- a slot number in the
-// SENDER's array, meaningless on the receiver. It must NOT survive the wire.
-//
-// CLEARING ints[] IS WRONG, and the bytecode says so. prop_container::loadData statements 3-5 are
-// three UNGUARDED statements -- Array_Get(data.ints[0]) -> Array_Get(that.ints[0]) ->
-// Let propInventory.index -- with no Array_IsValidIndex and no branch anywhere in the function.
-// UKismetArrayLibrary's Array_Get ZERO-FILLS its out param on an out-of-range read, so an empty
-// ints[] yields index = 0, NOT "no index". propInventory::init then branches on `index >= 0`,
-// which 0 PASSES -- so the container skips the fresh-append branch and REUSES GObjStack[0], a real
-// slot owned by some other container. Clearing would have manufactured exactly the cross-slot
-// corruption this lane exists to avoid.
-//
-// So: write the SENTINEL -1 into ints[0][0] instead, which is the value init's guard is written
-// against (CDO Default__propInventory_C.index = -1). Every other ints entry is preserved -- we
-// overwrite one slot rather than destroying state we did not measure.
+// Boundary 2: a nested container's ints[0][0] is its own GObjStack index, a slot number in the
+// sender's array that must not survive the wire. Clearing ints[] is wrong: prop_container::loadData
+// reads ints[0][0] unguarded, Array_Get zero-fills an out-of-range read, so an empty array yields
+// index 0, which propInventory::init's `index >= 0` guard passes, and the container reuses
+// GObjStack[0], a slot owned by someone else. The sentinel -1 is what the guard is written against
+// (the CDO's default); every other entry is preserved.
 void NeuterNestedIndex(SR::SaveRecord& r) {
     if (r.ints.empty()) r.ints.resize(1);
     if (r.ints[0].empty()) r.ints[0].resize(1);
     r.ints[0][0] = -1;
 }
 
-// ---- blob grammar ----------------------------------------------------------------------------
+// The blob grammar.
 
 void AppU16(std::vector<uint8_t>& b, uint16_t v) {
     b.push_back(static_cast<uint8_t>(v & 0xFF));
@@ -353,11 +300,10 @@ bool RdU64(const std::vector<uint8_t>& b, size_t& o, uint64_t& v) {
     return true;
 }
 
-// `baseHash` = the last truth for this eid that the AUTHOR had applied from the host (0 when the
-// author is the host itself, or when the author has never applied anything for this eid). It is
-// what lets the host distinguish "the client edited the world I published" from "the client
-// edited a world that has since moved on" -- without it a full-slice write from a stale author
-// would silently erase a host addition the author had not yet received.
+// baseHash is the last host truth the author had applied for this eid (0 for the host itself, or
+// for an author that never applied anything): it lets the host tell "the client edited the world I
+// published" from "the client edited a world that has moved on", without which a full-slice write
+// from a stale author would silently erase a host addition the author had not received.
 std::vector<uint8_t> PackContents(uint32_t eid, uint64_t baseHash,
                                   const std::vector<SR::SaveRecord>& recs) {
     std::vector<uint8_t> b;
@@ -369,30 +315,25 @@ std::vector<uint8_t> PackContents(uint32_t eid, uint64_t baseHash,
     return b;
 }
 
-// THE hash every gate and every compare-and-swap uses. It is taken over a pack with baseHash
-// ZEROED, so it names the CONTENTS ALONE: the same records must hash the same no matter which
-// peer authored them or what base that author edited from. Hashing the raw blob instead would
-// make an author's private bookkeeping part of the content identity, and the host's CAS would
-// then compare two quantities that can never be equal.
+// The hash every gate and compare-and-swap uses, over a pack with baseHash zeroed, so it names the
+// contents alone: the same records hash the same whichever peer authored them and whatever base
+// they edited from.
 uint64_t ContentHash(uint32_t eid, const std::vector<SR::SaveRecord>& recs) {
     return coop::blob_chunks::Fnv64(PackContents(eid, 0, recs));
 }
 
-// ---- host: broadcast one container -----------------------------------------------------------
+// Broadcast one container.
 
-// Returns false if the send was refused (caller arms the retry).
-//
-// v126: run by BOTH peers. On the host `toSlot < 0` fans out to everyone; on a client the same
-// call reaches the host alone (a client's only peer), which is exactly the author->arbiter edge.
-// (Forward: re-derive the SETTER-MANAGED volume/mass/names through the engine verbs -- defined
-// below, declared here because BroadcastContainer calls it.)
+// False if the send was refused (the caller arms the retry). Run by both peers: on the host toSlot
+// < 0 fans out; on a client the same call reaches the host alone, the author-to-arbiter edge.
+// RederiveManagedState is defined below.
 void RederiveManagedState(void* owner, void* inv);
 
 bool BroadcastContainer(coop::net::Session* s, uint32_t eid, void* inv, int toSlot, bool force) {
     std::vector<SR::SaveRecord> recs;
     if (!ReadContents(inv, recs)) return true;  // nothing resolvable -- not a transport failure
-    // The base we are editing from: for a client, the last host truth it applied. The host
-    // authors from its own state and sends 0 (its word IS the base).
+    // The base being edited from: for a client the last host truth it applied; the host authors
+    // from its own state and sends 0.
     uint64_t baseHash = 0;
     if (!IsHost()) {
         auto it = g_baseHash.find(eid);
@@ -416,16 +357,15 @@ bool BroadcastContainer(coop::net::Session* s, uint32_t eid, void* inv, int toSl
                                             g_nextSeq++, blob);
     if (ok) {
         if (toSlot < 0) g_sentHash[eid] = h;  // only a FAN-OUT establishes what every peer has
-        // ...but ANY publication -- fan-out or a targeted connect seed -- establishes what the
-        // RECEIVER was told, and that is the baseline a later client write must be judged against.
-        // Fusing the two into one map is what made the host refuse every client write that followed
-        // a join: the seed is targeted, so g_sentHash stayed empty, the CAS compared against 0, and
-        // "authored from base N but the host published 0" fired for every container in the world.
+        // Any publication, fan-out or a targeted seed, establishes what the receiver was told, the
+        // baseline a later client write is judged against. With the two maps fused the host refused
+        // every client write after a join: the seed is targeted, g_sentHash stayed empty, and the
+        // CAS compared against 0 for every container in the world.
         if (IsHost()) g_publishedHash[eid] = h;
-        // v126 (#6 residual): the AUTHOR of a mutation never re-derives its own currVol/Mass/names.
-        // The host excludes the author from the apply relay, and the native getObject/takeObj(FALSE)
-        // path does not call updateVolumesAndMass (only takeObj(TRUE) does) -- so the mutator's own
-        // displayed volume goes stale while every OTHER peer converges. Re-derive locally here.
+        // The author of a mutation re-derives its own volume, mass and names here: the host
+        // excludes the author from the relay, and the native take path does not call
+        // updateVolumesAndMass, so the mutator's own displayed volume went stale while every other
+        // peer converged.
         RederiveManagedState(OwnerOf(inv), inv);
         UE_LOGI("container_contents: eid=%u shipped %zu records (%zu B)%s%s",
                 eid, recs.size(), blob.size(),
@@ -435,10 +375,9 @@ bool BroadcastContainer(coop::net::Session* s, uint32_t eid, void* inv, int toSl
     return ok;
 }
 
-// HOST: pass an accepted client-authored slice on to every OTHER peer. The author is EXCLUDED --
-// echoing a peer's own state back to it reverts a newer local value and primes the baseline over
-// it, silently eating that player's next action (the eaten-scroll race,
-// [[lesson-presser-authored-state-not-intent-for-invisible-verbs]]).
+// Host: an accepted client-authored slice on to every other peer, never back to the author:
+// echoing a peer's own state reverts a newer local value and primes the baseline over it,
+// silently eating that player's next action.
 void RelayToOthers(coop::net::Session* s, uint8_t authorSlot, const std::vector<uint8_t>& blob) {
     if (!s || !IsHost()) return;
     size_t sent = 0;
@@ -456,12 +395,11 @@ void RelayToOthers(coop::net::Session* s, uint8_t authorSlot, const std::vector<
     }
 }
 
-// ---- the dirty drain (host) --------------------------------------------------------------------
+// The dirty drain.
 
 void DrainDirty(coop::net::Session* s) {
-    // Transport-refusal retries fold into the SAME set rather than being drained a second time
-    // in this pass -- a refused send re-enters the next sweep 250 ms later instead of re-running
-    // the whole read twice inside one tick.
+    // Transport-refusal retries fold into the same set: a refused send re-enters the next sweep
+    // rather than re-running the read twice in one tick.
     if (!g_retry.empty()) {
         g_dirty.insert(g_retry.begin(), g_retry.end());
         g_retry.clear();
@@ -472,8 +410,8 @@ void DrainDirty(coop::net::Session* s) {
     dirty.swap(g_dirty);
 
     for (uint32_t eid : dirty) {
-        // Resolve FORWARD from the stable eid every sweep: a container destroyed since the edge
-        // simply stops resolving, so there is no stale pointer to deref.
+        // Resolved forward from the eid every sweep: a container destroyed since the edge stops
+        // resolving.
         void* actor = LivePropActor(eid);
         if (!actor || !IsContainerActor(actor)) continue;
         void* inv = InventoryOf(actor);
@@ -482,28 +420,17 @@ void DrainDirty(coop::net::Session* s) {
     }
 }
 
-// ---- apply (client) ---------------------------------------------------------------------------
+// The apply.
 
-// Re-derive the SETTER-MANAGED state through the engine's own verbs. We never raw-write currVol /
-// Mass / the display names. Measured safe: updateVolumesAndMass calls only `Get Volume`; the
-// EJECTOR checkObjectsVolume (which calls takeObj) is deliberately NOT called.
-//
-// RESOLVE FROM THE DECLARING CLASS, NOT THE INSTANCE'S CLASS. `R::FindFunction` matches on
-// `OuterOf(fn) == owningClass` EXACTLY (reflection.cpp:427) and does NOT walk the superclass
-// chain. `updateVolumesAndMass` is declared ONLY on Aprop_container_C (SDK prop_container.hpp:32)
-// while every real container is a SUBCLASS (Aprop_inventoryContainer_drone_C : Aprop_container_C),
-// so the previous per-instance-class cache resolved nullptr for EVERY container and the re-derive
-// had never once run -- silently, because a null UFunction* was simply skipped. That is what the
-// client's one-apply-stale currVol was (2026-07-22 census: applied 2 records -> vol 0.0; applied 0
-// records -> vol 1495.7 -- always the value left by the last NATIVE mutation).
-//
-// A base-declared UFunction dispatched against a derived instance is correct: the subclasses do
-// not override it (SDK: the name appears in prop_container.hpp only), so there is exactly one
-// implementation and one property layout in play.
-//
-// The resolution is LOGGED, including failure. A re-derive verb that silently does not resolve is
-// the same failure family as the vm_dispatch latch and as this very bug -- a mechanism that
-// reports success and does nothing. It must be loud.
+// The setter-managed state (currVol, Mass, the display names) is re-derived through the engine's
+// own verbs, never raw-written; updateVolumesAndMass calls only Get Volume, and the ejector
+// checkObjectsVolume (which calls takeObj) is not called. Resolved from the declaring class:
+// FindFunction matches the exact owning class and does not climb the superclass chain, and
+// updateVolumesAndMass is declared only on Aprop_container_C while every real container is a
+// subclass, so a per-instance-class cache resolved null for every container and the re-derive had
+// never run (a null UFunction was silently skipped and the applied volume stayed at whatever the
+// last native mutation left). No subclass overrides it, so a base-declared UFunction dispatched
+// against a derived instance is correct. The resolution is logged, including failure.
 void ResolveRederiveFns() {
     if (g_rederiveResolved) return;
     void* contCls = ContainerClass();
@@ -529,15 +456,10 @@ void RederiveManagedState(void* owner, void* inv) {
     if (inv   && g_fnRecalcName) ue_wrap::component_calls::CallParamless(inv,   g_fnRecalcName);
 }
 
-// What an inbound blob actually DID to this peer. A bare bool cannot express it: "handled" and
-// "changed something" are different facts, and the relay decision needs the second one.
-//
-// The audit caught this as a CRITICAL: OnContentsChunk gated RelayToOthers on a bool that was true
-// for BOTH "the host accepted and applied a client write" AND "the host REFUSED it as stale". A
-// refused write was therefore relayed to every other client -- arriving stamped as slot 0, i.e. as
-// HOST TRUTH, at peers that run no CAS of their own (the arbitration branch is host-only) and so
-// applied it unconditionally. The compare-and-swap protected the author and the host and nobody
-// else.
+// What an inbound blob did to this peer; a bool cannot express it, since "handled" and "changed
+// something" are different facts and the relay needs the second. Gated on a bool that was true
+// for both an accepted and a refused client write, a refused write was relayed to every other
+// client stamped as slot 0, host truth, which peers running no CAS applied unconditionally.
 enum class Ingest {
     Park,      // the eid does not resolve yet (birth skew / mid-join) -- park and retry
     Handled,   // dealt with and deliberately NOT applied: refused, malformed, non-container,
@@ -545,11 +467,11 @@ enum class Ingest {
     Applied,   // this peer's state actually changed. The only outcome the host may pass on.
 };
 
-// Applied / Handled / Park -- see Ingest.
+// Applied, Handled or Park; see Ingest.
 Ingest ApplyContents(uint32_t eid, const std::vector<SR::SaveRecord>& recs, uint64_t blobHash) {
     void* actor = LivePropActor(eid);
     if (!actor) return Ingest::Park;
-    // The wire eid must name a CONTAINER before we read a cached component offset off it.
+    // The wire eid must name a container before a cached component offset is read off it.
     if (!IsContainerActor(actor)) {
         UE_LOGW("container_contents: eid=%u does not resolve to a container -- refusing", eid);
         return Ingest::Handled;
@@ -569,7 +491,7 @@ Ingest ApplyContents(uint32_t eid, const std::vector<SR::SaveRecord>& recs, uint
     uint8_t* slot = GObjStackSlot(inv);
     if (!slot) return Ingest::Park;
 
-    // GMalloc pre-flight: without it we would silently write an EMPTY array over real contents.
+    // The allocator pre-flight: without it an empty array would silently replace real contents.
     if (void* probe = R::EngineAlloc(16)) {
         R::EngineFree(probe);
     } else {
@@ -586,31 +508,26 @@ Ingest ApplyContents(uint32_t eid, const std::vector<SR::SaveRecord>& recs, uint
     for (int32_t i = 0; i < n; ++i)
         SR::WriteSaveRecord(reinterpret_cast<uint8_t*>(buf) + static_cast<size_t>(i) * SR::kSaveStride,
                             recs[i]);
-    // The previous buffer is intentionally orphaned -- recursively freeing the nested group
-    // sub-arrays, minted FStrings and signal rows is far more crash-prone than leaking them, and
-    // the engine never double-frees a buffer it has lost the pointer to.
-    //
-    // NOTE the difference from inventory::ApplyToSaveObject, whose identical orphaning is bounded
-    // because it fires ONCE PER JOIN. This lane is steady-state, so the same contract would be
-    // UNBOUNDED here. What bounds it is the content-hash gate above: an apply only happens when
-    // the contents actually CHANGED, so the orphan count tracks real container mutations rather
-    // than broadcast frequency.
+    // The previous buffer is orphaned: freeing the nested sub-arrays, minted FStrings and signal
+    // rows recursively is far more crash-prone than leaking them, and the engine never double-frees
+    // a buffer it has lost. inventory::ApplyToSaveObject orphans the same way once per join; this
+    // lane is steady-state, and the content-hash gate above bounds it, since an apply happens only
+    // when the contents changed.
     SR::WriteArrHeader(slot, 0, buf, n);
 
     g_appliedHash[eid] = blobHash;
-    // The base a later local edit will declare. Set here and NEVER cleared by our own verb edge.
+    // The base a later local edit declares; never cleared by our own verb edge.
     if (!IsHost()) g_baseHash[eid] = blobHash;
     RederiveManagedState(OwnerOf(inv), inv);
     UE_LOGI("container_contents: eid=%u applied %d records", eid, n);
     return Ingest::Applied;
 }
 
-// HOST: may this client-authored slice be applied? The compare-and-swap that keeps a stale author
-// from erasing a change it never saw. Returns false (and logs) when the write is refused.
+// Host: may this client-authored slice be applied. The compare-and-swap that keeps a stale author
+// from erasing a change it never saw; false, and logged, when refused.
 bool HostAcceptsClientWrite(uint32_t eid, uint64_t baseHash, uint8_t authorSlot) {
-    // What the host last PUBLISHED for this eid is what an up-to-date author must have edited
-    // from. An author that never received anything for this eid sends 0 and cannot be validated,
-    // so it is refused rather than trusted -- fail-closed, same posture as BOUNDARY 1.
+    // An up-to-date author edited from what the host last published; an author that never received
+    // anything sends 0 and is refused rather than trusted.
     uint64_t published = 0;
     auto it = g_publishedHash.find(eid);
     if (it != g_publishedHash.end()) published = it->second;
@@ -618,9 +535,8 @@ bool HostAcceptsClientWrite(uint32_t eid, uint64_t baseHash, uint8_t authorSlot)
     const bool baseMatches = (baseHash != 0 && baseHash == published);
     bool hostChangeInFlight = false;
     if (baseMatches) {
-        // The author edited the world the host had published. Still refuse if the HOST changed
-        // this container within the conflict window -- that change is in flight and the author
-        // provably had not seen it.
+        // The author edited the published world; still refused if the host changed this container
+        // inside the conflict window, a change in flight the author provably had not seen.
         auto lc = g_localChangeMs.find(eid);
         hostChangeInFlight = (lc != g_localChangeMs.end() &&
                               NowMs() - lc->second <= kConflictWindowMs);
@@ -628,9 +544,8 @@ bool HostAcceptsClientWrite(uint32_t eid, uint64_t baseHash, uint8_t authorSlot)
     }
 
     ++g_conflictRejects;
-    // Name WHICH condition failed. Reporting both at once is how the first run of this CAS read as
-    // "a host-side change raced it" when the truth was that the host had never recorded publishing
-    // anything at all.
+    // The failed condition is named: reported together, a never-published container once read as a
+    // racing host change.
     UE_LOGW("container_contents: CONFLICT eid=%u slot %u -- %s (author base=%llu, host published=%llu). "
             "Write REFUSED; re-publishing host truth to the author. Total refused this session: %llu",
             eid, static_cast<unsigned>(authorSlot),
@@ -649,9 +564,8 @@ Ingest ParseAndApply(const std::vector<uint8_t>& blob, uint32_t& outEid, uint8_t
     if (!W::RdU32(blob, o, outEid)) return Ingest::Handled;
     uint64_t baseHash = 0;
     if (!RdU64(blob, o, baseHash)) return Ingest::Handled;
-    // HOST arbitration: a client-authored slice is validated BEFORE it touches anything. A refusal
-    // is not silent -- the host immediately re-publishes its own truth so the refused author
-    // converges instead of sitting on a divergent view.
+    // Host arbitration before anything is touched; a refusal is answered by re-publishing the
+    // host's truth to the author, so it converges instead of sitting on a divergent view.
     if (IsHost() && senderSlot != 0 && !HostAcceptsClientWrite(outEid, baseHash, senderSlot)) {
         auto* s = g_session.load(std::memory_order_acquire);
         void* actor = LivePropActor(outEid);
@@ -659,7 +573,7 @@ Ingest ParseAndApply(const std::vector<uint8_t>& blob, uint32_t& outEid, uint8_t
         if (s && inv && IsWorldContainerInventory(inv)) {
             BroadcastContainer(s, outEid, inv, static_cast<int>(senderSlot), /*force=*/true);
         }
-        // Handled, NOT Applied: this must never be relayed onward. Third peers run no CAS.
+        // Handled, not Applied: never relayed; third peers run no CAS.
         return Ingest::Handled;
     }
     if (o + 2 > blob.size()) return Ingest::Handled;
@@ -678,10 +592,9 @@ Ingest ParseAndApply(const std::vector<uint8_t>& blob, uint32_t& outEid, uint8_t
     }
     const uint64_t contentHash = ContentHash(outEid, recs);
     const Ingest outcome = ApplyContents(outEid, recs, contentHash);
-    // HOST, client-authored + ACCEPTED: this content is now the host's published truth. Recording
-    // it here (not at the chunk seam) is what keeps the host's own drain from re-broadcasting the
-    // identical slice back out to everyone -- which would reach the author the long way round and
-    // stomp whatever it had done since.
+    // Host, client-authored and accepted: this content is now the host's published truth, recorded
+    // here so the host's own drain does not re-broadcast the identical slice, which would reach the
+    // author the long way round and stomp whatever it did since.
     if (outcome == Ingest::Applied && IsHost() && senderSlot != 0) g_sentHash[outEid] = contentHash;
     return outcome;
 }
@@ -691,9 +604,8 @@ void SweepParked() {
     const auto now = std::chrono::steady_clock::now();
     for (auto it = g_parked.begin(); it != g_parked.end();) {
         uint32_t eid = 0;
-        // A parked blob is always one a RECEIVER could not resolve yet; the host never parks a
-        // client write (a refused one is answered immediately, an accepted one applies at once),
-        // so slot 0 is the correct author for every replay here.
+        // A parked blob is always one a receiver could not resolve; the host never parks a client
+        // write, so slot 0 is the author for every replay.
         if (ParseAndApply(it->second.blob, eid, /*senderSlot=*/0) != Ingest::Park) {
             it = g_parked.erase(it);
         } else if (!g_joinBracketOpen &&
@@ -707,25 +619,17 @@ void SweepParked() {
     }
 }
 
-// ---- the 0x45 edge ------------------------------------------------------------------------------
+// The verb edge.
 
-// Fires at the ENTRY of addObject / takeObj on the game thread. It carries no arguments by
-// design; all it does is remember WHICH component was touched. That is what makes it correct for
-// every caller in the firing set -- it is a change NOTICE, not an action.
-//
-// v125 (R11b): NO ROLE GATE. Whichever peer's verb fired authors that container -- the verb is
-// EX_LocalVirtualFunction, so by the time we see it the item has ALREADY moved on this machine.
-// An intent that the host could deny cannot exist here; presser-authored state is the only shape
-// ([[lesson-presser-authored-state-not-intent-for-invisible-verbs]]). Before v125 this returned
-// at IsHost() and the client's every extraction was dropped on the floor: the client took 1 of 2
-// burgers, the host's slot stayed at 2, and the world gained a burger.
+// Fires at the entry of addObject and takeObj on the game thread, a change notice rather than an
+// action: it remembers which component was touched. No role gate: the verb is a local virtual
+// call, so by the time it is seen the item has already moved on this machine, and an intent the
+// host could deny cannot exist here. Gated on the host it dropped every client extraction: the
+// client took one of two burgers, the host's slot stayed at two, and the world gained a burger.
 void OnVerbEntry(const vm::Bracket& br) {
-    // EMPIRICAL GATE -- the FIRST statement, ahead of every filter and every role check.
-    // "all N verb(s) resolved -- ARMED" proves an FName resolved; it does NOT prove this callback
-    // ever runs. R11's two RED takes were exactly that: registration returned true, the banner
-    // printed, and the callback was inert for the whole session
-    // ([[lesson-late-registrant-inert-after-all-resolved-latch]]). If this line is absent from a
-    // smoke log, the lane is dead no matter how green everything else looks.
+    // The first statement, ahead of every filter: a resolved verb name does not prove this callback
+    // runs, and a registration once returned true with the callback inert for a whole session. If
+    // this line is absent from a log, the lane is dead.
     static bool sEntered = false;
     if (!sEntered) {
         sEntered = true;
@@ -736,14 +640,11 @@ void OnVerbEntry(const vm::Bracket& br) {
     if (!br.ctx) return;
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) return;
-    // The 0x45 filter matches on the VERB NAME alone, so discriminating the Context is OUR job
-    // (vm_dispatch.h says exactly that). Without this gate the first non-propInventory ctx to
-    // carry an addObject would poison the single offset cache for the whole session.
+    // The verb filter matches on the name alone, so the context is discriminated here: the first
+    // non-propInventory context carrying an addObject would otherwise poison the offset cache for
+    // the session.
     if (!IsInventoryComponent(br.ctx)) return;
-    // v126 (profile #4): a takeObj on ANY inventory component arms the container-extraction latch.
-    // prop_drop_intent consumes it at the extracted item's FinishSpawn enqueue (the item spawns
-    // inside this same call) to admit the birth as a host-authoritative drop intent. addObject
-    // (kVerbDirty) must NOT arm it.
+    // A takeObj on any inventory component arms the extraction latch; addObject must not.
     if (br.verbId == kVerbTakeObj) g_takeObjInFlight.store(true, std::memory_order_relaxed);
     void* owner = OwnerOf(br.ctx);
     if (!owner) return;
@@ -751,23 +652,18 @@ void OnVerbEntry(const vm::Bracket& br) {
         static_cast<uint32_t>(coop::element::Registry::Get().EidForActor(owner));
     if (eid == static_cast<uint32_t>(coop::element::kInvalidId)) return;
     g_dirty.insert(eid);   // resolve identity AT THE EDGE; deref nothing later
-    // Stamp the LOCAL change so the host can tell a stale client write (an author that had not
-    // yet seen the host's own newer change) from a clean one. This is the conflict instrument.
+    // The local change is stamped, so the host can tell a stale client write from a clean one.
     g_localChangeMs[eid] = NowMs();
-    // AND drop what we last APPLIED for it. g_appliedHash is used as "what I already have, so an
-    // identical blob is a no-op" -- but that is only true while our state still EQUALS what we
-    // applied. The instant our own verb mutates the container the proxy is false, and leaving it
-    // in place makes a CORRECTIVE re-publish of the unchanged host truth look like a duplicate and
-    // get skipped. Measured: a client whose write the host refused kept its own diverged contents
-    // forever, because the host's correction hashed identically to the blob the client had applied
-    // before it edited. A peer that mutates locally must be re-appliable.
+    // And the applied hash is dropped: it means "an identical blob is a no-op" only while our state
+    // still equals what we applied, and after our own mutation a corrective re-publish of the
+    // unchanged host truth would look like a duplicate; a client whose write was refused once kept
+    // its diverged contents forever that way.
     g_appliedHash.erase(eid);
 }
 
 }  // namespace
 
-// R-4b D9 (see g_joinBracketOpen above). Called from event_feed's client-side
-// SnapshotBegin/SnapshotComplete dispatch. Game thread (the dispatch drain).
+// From event_feed's client-side SnapshotBegin and SnapshotComplete dispatch, on the game thread.
 void NoteJoinSnapshotBracket(bool open) {
     if (g_joinBracketOpen == open) return;
     g_joinBracketOpen = open;
@@ -780,11 +676,9 @@ void NoteJoinSnapshotBracket(bool open) {
     }
 }
 
-// v126 (profile #4): read-and-clear the container takeObj-in-flight latch. prop_drop_intent
-// consumes it at a FinishSpawn enqueue to mark the entry as a container-extraction birth (only
-// that birth is admitted as a host-authoritative drop intent -- the rest of the client-spawn
-// door stays closed). One-shot via exchange; game thread (also fires on a task-graph worker per
-// the parallel-anim note, hence atomic). Game thread.
+// Read-and-clear of the takeObj-in-flight latch; prop_drop_intent consumes it at a FinishSpawn
+// enqueue to admit that birth, and only that birth, as a host-authoritative drop intent. One-shot
+// by exchange; also reached on a task-graph worker, hence atomic.
 bool TakeObjInFlight() {
     return g_takeObjInFlight.exchange(false, std::memory_order_relaxed);
 }
@@ -805,9 +699,8 @@ void Tick() {
             UE_LOGW("container_contents: verb registration FAILED -- the lane is inert");
     }
     vm::TickResolvePending();
-    // Own our own enable state rather than free-riding on another consumer's SetEnabled: if
-    // kerfur_form_assembler / drive_sync were gated off or retired, registration would still
-    // succeed, the banner would still print, and NO callback would ever fire -- silently.
+    // This lane owns its own enable: riding another consumer's SetEnabled, its retirement would
+    // leave the registration green and the callback silent.
     vm::SetEnabled(true);
 
     if (!g_announced) {
@@ -821,9 +714,8 @@ void Tick() {
 
     g_asm.Sweep(std::chrono::steady_clock::now(), std::chrono::seconds(10));
 
-    // v125: BOTH peers drain. On the host the drain fans its own changes out; on a client the
-    // same drain ships the container IT mutated to the host, which arbitrates and relays. A
-    // client still sweeps its parked inbound blobs -- it is both an author and a receiver.
+    // Both peers drain: the host fans its changes out, a client ships the container it mutated to
+    // the host, which arbitrates and relays. A client also sweeps its parked inbound blobs.
     DrainDirty(s);
     if (!IsHost()) SweepParked();
 }
@@ -831,12 +723,9 @@ void Tick() {
 void OnContentsChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s) return;
-    // v125 acceptance matrix, checked BEFORE the assembler so no peer can drive reassembly state
-    // for a direction it may not send:
-    //   HOST   accepts slot != 0 only  -- a client authoring the container it just mutated.
-    //                                     Slot 0 would be the host's own broadcast coming back.
-    //   CLIENT accepts slot 0 only     -- the host is the arbiter; peers never hear each other
-    //                                     directly, so one authority speaks to each client.
+    // The acceptance matrix, before the assembler so no peer drives reassembly for a direction it
+    // may not send: the host accepts only a non-zero slot (slot 0 is its own fan-out coming back);
+    // a client accepts only slot 0, since peers never hear each other directly.
     if (IsHost()) {
         if (senderSlot == 0) return;  // our own fan-out echoed back -- not a thing to apply
     } else if (senderSlot != 0) {
@@ -851,17 +740,15 @@ void OnContentsChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
     uint32_t eid = 0;
     const Ingest outcome = ParseAndApply(blob, eid, senderSlot);
     if (outcome == Ingest::Park) {
-        // Birth skew / mid-activity join: the container's element is not bound yet. Park it
-        // (latest wins per eid) and let the sweep retry until the TTL.
+        // The container's element is not bound yet: parked (latest wins per eid) and retried by the
+        // sweep until the TTL.
         g_parked[eid] = Parked{std::move(blob), std::chrono::steady_clock::now()};
         UE_LOGI("container_contents: eid=%u not resolvable yet -- parked (TTL %ds)", eid, kParkTtlSec);
         return;
     }
-    // Relay ONLY what the host genuinely applied. `Handled` covers a CAS-refused write, a malformed
-    // one, a non-container eid, a BOUNDARY 1 refusal and a no-op duplicate -- passing any of those
-    // on would hand other peers a blob this host has already judged unfit, and they cannot judge it
-    // themselves: the arbitration branch is host-only, and a relayed blob reaches them stamped
-    // slot 0, i.e. indistinguishable from host truth. Never back to the author (eaten-scroll).
+    // Only what the host applied is relayed: a refused, malformed, non-container, boundary-refused
+    // or duplicate blob would reach the other peers stamped slot 0, host truth they cannot judge.
+    // Never back to the author.
     if (outcome == Ingest::Applied && IsHost() && senderSlot != 0) RelayToOthers(s, senderSlot, blob);
 }
 
@@ -876,7 +763,7 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
 
     size_t sent = 0;
     for (const auto& pr : pairs) {
-        // IsLiveByIndex, NOT IsLive -- the snapshot does not protect the actor pointer.
+        // IsLiveByIndex: the snapshot does not protect the actor pointer.
         if (!pr.actor || !R::IsLiveByIndex(pr.actor, pr.internalIdx)) continue;
         if (!ue_wrap::prop::WalksToBase(R::ClassOf(pr.actor), base)) continue;
         void* inv = InventoryOf(pr.actor);
@@ -886,7 +773,7 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
     UE_LOGI("container_contents: connect seed -> slot %d: %zu world containers", peerSlot, sent);
 }
 
-// ---- dev-instrument seams (see the header) -----------------------------------------------------
+// The dev-instrument seams (see the header).
 
 size_t SnapshotWorldContainers(WorldContainer* out, size_t want) {
     if (!out || want == 0) return 0;
@@ -897,7 +784,7 @@ size_t SnapshotWorldContainers(WorldContainer* out, size_t want) {
     size_t n = 0;
     for (const auto& pr : pairs) {
         if (n >= want) break;
-        // IsLiveByIndex, NOT IsLive -- the snapshot does not protect the actor pointer.
+        // IsLiveByIndex: the snapshot does not protect the actor pointer.
         if (!pr.actor || !R::IsLiveByIndex(pr.actor, pr.internalIdx)) continue;
         if (!ue_wrap::prop::WalksToBase(R::ClassOf(pr.actor), base)) continue;
         void* inv = InventoryOf(pr.actor);
@@ -927,7 +814,7 @@ void OnDisconnect() {
     g_localChangeMs.clear();
     g_conflictRejects = 0;
     g_parked.clear();
-    g_joinBracketOpen = false;  // audit WARN-3: session state must not survive the session
+    g_joinBracketOpen = false;  // session state must not survive the session
     g_sentHash.clear();
     g_publishedHash.clear();
     g_baseHash.clear();
