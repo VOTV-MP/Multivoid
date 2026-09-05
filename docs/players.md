@@ -190,14 +190,11 @@ dead peer through the ragdoll bit of its next pose.
 
 | Limit | Evidence |
 |---|---|
-| What another peer sees of a dead player has never been observed in a two-peer run | `[?]` the ragdoll bit is the mechanism; the observation is owed |
-| A death drops the held item on every machine; whether that drop rides the drop-intent lane is unmeasured | `[?]` both acceptance runs held nothing |
-| No chat line announces a death | `[V]` chat is host-authored; the announce is a wire kind not yet built |
-| After a revive the player drifts horizontally from the base gate, metres over seconds, cause unmeasured | `[V]` measured by the death scenario |
-| A joining client's spawn at the base gate is overridden late in the load on some runs | `[?]` deferred; the two candidate mechanisms are named in the code |
-| Damage a puppet takes on another machine is dropped by design; only the victim's own contacts count | `[V]` the interceptor; the field report it answers |
-| A third-party bundle pak cannot be discovered: bundle membership is a fixed table | `[V]` the registry |
-| Bans are by address, so a banned player with a new address is a new player | `[V]` the ban file's key |
+| No chat line announces a death | `[V]` `coop/comms/chat_sync` carries no such kind |
+| After a revive the player can drift horizontally from the base gate, metres over seconds; the cause is unmeasured | `[V]` `harness/autotest/autotest_death.cpp` reads the position back |
+| Damage a puppet takes on another machine is dropped by design; only the victim's own contacts count | `[V]` `coop/player/player_damage` |
+| A third-party bundle pak cannot be discovered: bundle membership is a fixed table | `[V]` `coop/player/skin_registry` |
+| Bans are by address, so a banned player with a new address is a new player | `[V]` `coop/moderation/ban_list` |
 
 ## Code map
 
