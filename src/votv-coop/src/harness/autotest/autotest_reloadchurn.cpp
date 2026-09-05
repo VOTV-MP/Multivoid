@@ -1,48 +1,15 @@
-// harness/autotest_reloadchurn.cpp -- the RE-LOAD CHURN probe.
-//
-// WHY THIS EXISTS (2026-08-31, the user's rejoin crash).
-// A client joined, left to the menu, joined again, and the process died two seconds
-// into the SECOND world load:
-//
-//     EXCEPTION_ACCESS_VIOLATION reading address 0x0000000000000268
-//
-// The minidump's PortableCallStack was resolved statically against the shipped exe
-// (.pdata + capstone, no IDB), and the fault is not a mystery -- every frame and both
-// offsets are measured:
-//
-//     UEngine::Browse                    VotV+0x2f253c0  ("Invalid URL: {0}", "Servers can't open network URLs")
-//       -> UE4SS's LoadMap detour        UE4SS+0x554abd  (UE4SS hooks UEngine::LoadMap; HookLoadMap defaults true)
-//       -> UEngine::LoadMap              VotV+0x2f3a7fd  ("Couldn't spawn player: %s", "Mutator=", "DemoRec")
-//         -> UGameInstance::CreateGameModeForURL  VotV+0x2b3f0c0  ("GAME=", "LoadForAllGameModes")
-//              rbx = UWorld::GetWorldSettings(InWorld, bCheckStreamingPersistent=0, bChecked=1)
-//              mov rbx, [rbx + 0x268]    <-- FAULT, rbx == nullptr
-//
-//   [V] UWorld::PersistentLevel         @ 0x030  (disasm + CXXHeaderDump/Engine.hpp agree)
-//   [V] ULevel::WorldSettings           @ 0x258  (ULevel::GetWorldSettings is literally
-//                                                 "mov rax,[rcx+0x258]; ret")
-//   [V] AWorldSettings::DefaultGameMode @ 0x268  -- the faulting offset, exactly.
-//
-// So the world the engine was about to hand a GameMode had NO WorldSettings: either
-// PersistentLevel was null, or PersistentLevel->WorldSettings was. In a SHIPPING build
-// ULevel::GetWorldSettings's checkf(WorldSettings != nullptr) is compiled out, so the
-// null is returned silently and dereferenced one frame up.
-//
-// Multivoid is on NEITHER side of that: our DLL does not appear anywhere in the stack,
-// and the tree contains ZERO references to WorldSettings or PersistentLevel. That is
-// why this probe's first arm is a NEGATIVE CONTROL -- solo, sessionless, no peer, no
-// coop layer running at all -- because "the coop rejoin broke it" and "the second
-// in-process map load breaks it" produce the identical user-visible report, and only
-// one of them is ours to fix.
-//
-// What it does, per cycle: settle in gameplay, census, travel to the menu with the
-// layer LIVE (the player's own exit shape), census AT THE MENU -- the decisive frame,
-// because an Untitled_1 UWorld still resident there with a null WorldSettings IS the
-// crash, one load early and visible without dying -- then re-load and census again. It
-// reports every live UWorld with its PersistentLevel / WorldSettings / DefaultGameMode
-// chain, so the failing link is NAMED rather than inferred from a fault address.
-//
-// Gated by env VOTVCOOP_RUN_RELOAD_CHURN=1; launch "python tools/mp.py reloadchurn".
-// Diagnostic -- not a shipping path.
+// harness/autotest_reloadchurn.cpp -- the re-load churn probe (VOTVCOOP_RUN_RELOAD_CHURN=1;
+// "python tools/mp.py reloadchurn"). A client that joined, left to the menu and joined again
+// died two seconds into the second world load: UEngine::LoadMap's CreateGameModeForURL reads
+// AWorldSettings::DefaultGameMode off the world's PersistentLevel->WorldSettings, and that
+// pointer was null (a shipping build compiles the check out and dereferences one frame up). Our
+// DLL is on no frame of that stack and the tree never names either field, so the first arm is a
+// negative control (solo, sessionless), since a coop rejoin and a plain second in-process map
+// load produce the same report. Per cycle: settle in gameplay, census, travel to the menu with
+// the layer live, census at the menu (the decisive frame: a gameplay world still resident there
+// with a null WorldSettings is the crash, one load early), then re-load and census again. Every
+// live UWorld is reported with its PersistentLevel, WorldSettings and DefaultGameMode chain, so
+// the failing link is named. Diagnostic, not a shipping path.
 
 #include "harness/autotest.h"
 
@@ -87,15 +54,9 @@ int EnvInt(const char* key, int fallback) {
     return v.empty() ? fallback : atoi(v.c_str());
 }
 
-// ---------------------------------------------------------------------------------
-// The census. One line per live UWorld, naming every link of the chain the crash
-// walked. Runs INLINE on the game thread (the caller posts it).
-//
-// The three offsets come from reflection, never from the literals in the banner: the
-// banner records what the crash measured on THIS build, the code must survive a recook.
-// A missing property is reported as such rather than silently reading offset 0 -- a
-// census that cannot see the field must not print a confident "null".
-// ---------------------------------------------------------------------------------
+// The census: one line per live UWorld, naming every link of the chain the crash walked. Runs
+// inline on the game thread. The offsets come from reflection, never from the crash's literals,
+// so the code survives a recook; a missing property is reported rather than read at offset 0.
 struct Offsets {
     int32_t persistentLevel = -1;
     int32_t worldSettings   = -1;
@@ -118,33 +79,14 @@ void* ReadPtr(void* base, int32_t off) {
     return (base && off >= 0) ? *reinterpret_cast<void**>(static_cast<char*>(base) + off) : nullptr;
 }
 
-// ---------------------------------------------------------------------------------
-// WHERE IN ITS DESTRUCTION a UObject is standing -- the term that separates the two
-// readings of "dead but never purged".
-//
-// `IsLive` answers one bit and that bit is exhausted here: every candidate world is
-// already "dead". UE4 tears an object down in two GC phases, and each leaves its own
-// mark:
-//
-//   phase 1  ConditionalBeginDestroy() -> sets RF_BeginDestroyed, calls BeginDestroy(),
-//            and pushes the object onto the pending-destruction list.
-//   phase 2  for each pending object, IsReadyForFinishDestroy() is polled; only when it
-//            answers true does ConditionalFinishDestroy() run (RF_FinishDestroyed) and
-//            the slot get released.
-//
-// So the husk's flags decide the question outright, with no further instrumentation:
-//
-//   RF_BeginDestroyed set, RF_FinishDestroyed clear  -> phase 1 ran, phase 2 is STUCK.
-//                                                       IsReadyForFinishDestroy keeps
-//                                                       answering false. (reading 2)
-//   neither set                                      -> GC never reached it at all, so
-//                                                       something REFERENCES it and it is
-//                                                       not being destroyed. (reading 1)
-//
-// Unreachable/PendingKill come from the GUObjectArray slot (EInternalObjectFlags) and
-// corroborate: PendingKill alone is "marked, GC has not run on it yet"; Unreachable is
-// "GC has claimed it".
-// ---------------------------------------------------------------------------------
+// Where in its destruction a UObject stands, the term that separates the two readings of "dead
+// but never purged". The engine tears an object down in two GC phases: ConditionalBeginDestroy
+// sets RF_BeginDestroyed and queues the object; then IsReadyForFinishDestroy is polled, and
+// only when it answers true does ConditionalFinishDestroy run and release the slot. So
+// RF_BeginDestroyed set with RF_FinishDestroyed clear means phase 2 is stuck; neither set means
+// GC never reached it, so something references it. PendingKill and Unreachable come from the
+// GUObjectArray slot: PendingKill alone is "marked, not yet collected", Unreachable is "GC has
+// claimed it".
 std::wstring DestroyStage(void* obj) {
     if (!obj) return L"<null>";
     const int32_t objFlags = *reinterpret_cast<int32_t*>(
@@ -168,8 +110,8 @@ std::wstring DestroyStage(void* obj) {
     return s + raw;
 }
 
-// True iff the object is sitting in GC phase 2 -- begun and not finished. This is the
-// crash's precondition stated positively, and the scenario greps for it.
+// True iff the object sits in GC phase 2, begun and not finished: the crash's precondition,
+// which the scenario greps for.
 bool IsStuckInFinishDestroy(void* obj) {
     if (!obj) return false;
     const int32_t f = *reinterpret_cast<int32_t*>(
@@ -177,8 +119,7 @@ bool IsStuckInFinishDestroy(void* obj) {
     return (f & 0x00008000) != 0 && (f & 0x00010000) == 0;
 }
 
-// "tag" names WHEN in the cycle this frame was taken, so a log reader can pair a null
-// with the moment it appeared instead of counting lines.
+// `tag` names when in the cycle this frame was taken, so a null pairs with its moment.
 void CensusGT(const char* tag, int cycle, const Offsets& o) {
     if (!o.ok()) {
         UE_LOGW("reloadchurn[%s c%d]: OFFSETS UNRESOLVED (PersistentLevel=%d WorldSettings=%d "
@@ -190,21 +131,17 @@ void CensusGT(const char* tag, int cycle, const Offsets& o) {
     int nullWs = 0;
     int stuck = 0;
     size_t live = 0;
-    // EVERY dead world and level, not just the last one seen. The first version kept a single
-    // `deadWorld` and graded on it, which meant a rooted holder of a DIFFERENT dead world
-    // reported zero and passed -- and reload churn is precisely what produces two dead worlds
-    // at once. A gate that can step over the bug it was written for is worse than none.
+    // Every dead world and level, not just the last seen: reload churn produces two dead worlds at
+    // once, and a rooted holder of the other one must not pass unseen.
     struct Terminal { void* obj; bool isWorld; };
     std::vector<Terminal> deadTerminals;
     int rootedWorst = 0;
     UE_LOGI("reloadchurn[%s c%d]: %zu UWorld object(s) in the array", tag, cycle, worlds.size());
     for (void* w : worlds) {
         if (!w) continue;
-        // DEAD worlds are printed too, not skipped. The first version skipped them and that
-        // hid the whole question: `open untitled_1` a second time in one process REUSES the
-        // still-resident map package, so the world/level whose WorldSettings the next LoadMap
-        // reads may be one that is already kill-flagged at the menu. A census that only
-        // reports what is live cannot see a reused corpse.
+        // Dead worlds are printed too: a second open of the same map in one process reuses the
+        // still-resident package, so the world whose WorldSettings the next LoadMap reads may be
+        // one already kill-flagged at the menu, and a live-only census cannot see a reused corpse.
         const bool alive = R::IsLive(w);
         if (alive) ++live; else deadTerminals.push_back({w, true});
         const std::wstring wname = R::ToString(R::NameOf(w));
@@ -222,13 +159,10 @@ void CensusGT(const char* tag, int cycle, const Offsets& o) {
                              : "");
         if (!alive) stuck += IsStuckInFinishDestroy(w) ? 1 : 0;
     }
-    // The LEVELS and the WORLDSETTINGS ACTORS, independently of any world.
-    //
-    // `ULevel::WorldSettings` is a UPROPERTY, so if the AWorldSettings ACTOR is destroyed the
-    // GC nulls the reference -- and the coop layer destroys actors by the thousand. That is
-    // the one mechanism that could produce this fault while the tree never names either
-    // field, so the census has to be able to SEE it: a level whose WorldSettings went null,
-    // or a WorldSettings actor that stopped being live.
+    // The levels and the WorldSettings actors, independently of any world. ULevel::WorldSettings is
+    // a UPROPERTY, so if the WorldSettings actor is destroyed the GC nulls the reference, and the
+    // coop layer destroys actors by the thousand: the one mechanism that could produce this fault
+    // without the tree naming either field, so the census must be able to see it.
     const std::vector<void*> levels = R::FindObjectsByClass(L"Level");
     int orphanLevels = 0;
     for (void* l : levels) {
@@ -247,27 +181,14 @@ void CensusGT(const char* tag, int cycle, const Offsets& o) {
     size_t wsLive = 0;
     for (void* a : settings) if (a && R::IsLive(a)) ++wsLive;
 
-    // WHO STILL REACHES THE DEAD WORLD -- by the OUTER CHAIN, not by the world term.
-    //
-    // The previous version of this census asked `world_identity::WorldOf(o) == deadWorld`
-    // and reported 0 at every frame. That 0 was never a finding: WorldOf resolves an
-    // object's world by walking to a ULevel and reading OwningWorld, and the husk's
-    // PersistentLevel is already null, so nothing can resolve to it BY CONSTRUCTION. It
-    // was an instrument blind to its own subject, and it is retired here rather than kept
-    // beside the working one.
-    //
-    // The right question follows from what the flags say. `[V]` the husk is PendingKill
-    // and NOTHING else -- not Unreachable, no RF_BeginDestroyed -- so GC has never claimed
-    // it: on every pass it comes out REACHABLE. UE4 nulls a strong UPROPERTY reference to
-    // a PendingKill object during collection, but it does NOT eliminate the structural
-    // references every UObject carries (Outer, Class, Name), so the surviving path is an
-    // OUTER CHAIN from something the GC is required to keep: a ROOT-SET object. Our own
-    // layer GC-pins runtime spawns in five places (`R::AddToRoot`), and an actor spawned
-    // into the gameplay world is outered to that world's ULevel.
-    //
-    // So: walk the whole array, follow each object's Outer chain, and name every object
-    // whose chain passes through the dead world or its dead level -- plus, independently,
-    // every RootSet object, since that is the set GC starts from.
+    // Who still reaches the dead world, by the Outer chain. Resolving each object's world through
+    // its level cannot find a husk whose PersistentLevel is already null. The husk is PendingKill
+    // and nothing else (not Unreachable, no RF_BeginDestroyed), so GC never claimed it and it comes
+    // out reachable on every pass; the engine nulls strong property references to a PendingKill
+    // object but not the structural ones (Outer, Class, Name), so the surviving path is an Outer
+    // chain from something GC must keep, a root-set object, and our own layer roots runtime spawns.
+    // So every object's Outer chain is followed, and every one passing through the dead world or
+    // its level is named, plus every root-set object independently.
     if (!deadTerminals.empty()) {
         const int32_t n = R::NumObjects();
         std::vector<int> reached(deadTerminals.size(), 0);
@@ -280,10 +201,9 @@ void CensusGT(const char* tag, int cycle, const Offsets& o) {
             bool isTerminal = false;
             for (const auto& t : deadTerminals) if (t.obj == obj) { isTerminal = true; break; }
             if (isTerminal) continue;
-            // Bounded Outer walk. A PendingKill object is marked but NOT yet freed, so its
-            // memory is still mapped and this read is safe -- the same reason the world lines
-            // above can read a dead world's fields. The whole census runs inside a posted
-            // game-thread task, whose SEH wrapper absorbs a fault on a slot caught mid-purge.
+            // A bounded Outer walk. A PendingKill object is marked but not freed, so the read is
+            // safe; the census runs inside a posted game-thread task, whose SEH wrapper absorbs a
+            // fault on a slot caught mid-purge.
             void* chain[24] = {};
             int depth = 0;
             int hit = -1;
@@ -303,8 +223,8 @@ void CensusGT(const char* tag, int cycle, const Offsets& o) {
             bool found = false;
             for (auto& e : tally) if (e.first == cn) { ++e.second; found = true; break; }
             if (!found && tally.size() < 512) tally.emplace_back(cn, 1);
-            // Print the ROOTED ones in full -- those are the candidate holders, and there
-            // should be none. A non-rooted object in the chain is a passenger, not a cause.
+            // The rooted ones are printed in full: those are the candidate holders, and there
+            // should be none. A non-rooted object in the chain is a passenger.
             if (isRoot && printed < 24) {
                 ++printed;
                 std::wstring path;
@@ -324,8 +244,8 @@ void CensusGT(const char* tag, int cycle, const Offsets& o) {
             std::wstring top;
             for (size_t i = 0; i < tally.size() && i < 8; ++i)
                 top += tally[i].first + L"x" + std::to_wstring(tally[i].second) + L" ";
-            // One line PER dead object, each carrying its own RootSet count, so the harness
-            // grades the worst of them rather than whichever happened to be last.
+            // One line per dead object with its own root-set count, so the harness grades the
+            // worst.
             UE_LOGI("reloadchurn[%s c%d]:   DEAD %ls @%p reached by %d object(s) via Outer "
                     "(%d of them RootSet); RootSet objects in array=%d; top: %ls",
                     tag, cycle, deadTerminals[t].isWorld ? L"world" : L"level",
@@ -334,8 +254,8 @@ void CensusGT(const char* tag, int cycle, const Offsets& o) {
         }
     }
 
-    // The headline the scenario greps. A non-zero count here IS the crash condition,
-    // observed without having to die of it.
+    // The headline the scenario greps: a non-zero count is the crash condition, observed without
+    // dying of it.
     UE_LOGI("reloadchurn[%s c%d]: VERDICT nullWorldSettings=%d liveWorlds=%zu "
             "stuckInFinishDestroy=%d rootedHoldersOfDead=%d "
             "levels=%zu(%d with no WorldSettings) worldSettingsActors=%zu/%zu live",
@@ -349,24 +269,17 @@ void PostCensus(const char* tag, int cycle, const Offsets& o) {
     WaitDone(done, 20000);
 }
 
-// WHICH world is current -- through world_identity, NEVER through
-// FindObjectByClass(World).
-//
-// The first version of this probe asked FindObjectByClass and it cost a whole run:
-// after the client travelled out, the DEAD Untitled_1 world sat in the object array
-// unpurged and FindObjectByClass kept returning it, so the probe reported "never left
-// gameplay" for 60 s while the log right beside it showed world_identity moving to the
-// menu world in four seconds and the session ending. world_identity.h says this in its
-// own header -- FindObjectByClass(WorldClass) is "measured ambiguous" -- and the module
-// exists precisely so a world question is not answered by a liveness scan.
+// Which world is current, through world_identity, never through a class search: after the
+// client travelled out, the dead gameplay world sat unpurged and a class search kept returning
+// it, so the probe read "never left gameplay" while the world had moved to the menu.
 const wchar_t* KindName(ue_wrap::world_identity::WorldKind k) {
     using WK = ue_wrap::world_identity::WorldKind;
     return k == WK::Gameplay ? L"Gameplay" : (k == WK::Other ? L"Other" : L"Unknown");
 }
 
-// Wait for the world KIND to hold. Unknown is never a match in either direction: it is
-// the legitimate ~1 s null window of a travel, and treating it as "left" or "arrived"
-// is the bug the enum's third value exists to prevent.
+// Wait for the world kind to hold. Unknown is never a match either way: it is the legitimate
+// null window of a travel, and reading it as "left" or "arrived" is the bug the third value
+// exists to prevent.
 ue_wrap::world_identity::WorldKind WaitForWorldKind(
         ue_wrap::world_identity::WorldKind want, int seconds) {
     using WK = ue_wrap::world_identity::WorldKind;
@@ -379,17 +292,11 @@ ue_wrap::world_identity::WorldKind WaitForWorldKind(
     return k;
 }
 
-// FORCE A COLLECTION, on the game thread.
-//
-// `[V]` `UKismetSystemLibrary::CollectGarbage` is reflected on this build; in 4.27 its body is
-// `GEngine->ForceGarbageCollection(true)`, so it ARMS a collection for the end of the frame
-// rather than running one inline -- the caller must give it a frame before censusing.
-//
-// This is the arm that separates the two live readings of the husk. If a forced collection
-// clears the dead world and the rejoin then survives, the fault is that the coop travel leaves
-// the collection UNFINISHED and the next LoadMap adopts what it left behind. If the husk
-// survives a forced collection, something still REFERENCES it and no amount of collecting will
-// help.
+// Force a collection, on the game thread. KismetSystemLibrary::CollectGarbage arms one for the
+// end of the frame rather than running it inline, so the caller gives it a frame before the
+// census. The arm that separates the two readings: if a forced collection clears the dead world
+// and the rejoin survives, the coop travel leaves the collection unfinished and the next LoadMap
+// adopts what it left; if the husk survives, something references it.
 bool ForceGcGT() {
     void* cdo = R::FindClassDefaultObject(L"KismetSystemLibrary");
     if (!cdo) { UE_LOGW("reloadchurn: KismetSystemLibrary CDO not resolved"); return false; }
@@ -399,9 +306,8 @@ bool ForceGcGT() {
     return f.valid() && ue_wrap::Call(cdo, f);
 }
 
-// VOTV's own travel verb, called inline on the game thread. Same primitive the
-// menu-travel probe found and the death arc ships on -- a bare engine "open" does not
-// travel here.
+// The game's own travel verb, inline on the game thread; a bare engine open does not travel
+// here.
 bool TransitionToMenuGT() {
     void* gm = R::FindObjectByClass(P::name::GamemodeClass);
     if (!gm || !R::IsLive(gm)) { UE_LOGW("reloadchurn: no live mainGamemode_C"); return false; }
@@ -413,28 +319,23 @@ bool TransitionToMenuGT() {
     return ue_wrap::Call(gm, f);
 }
 
-// The address of the live UWorld, as an identity. The probe uses it to prove a re-load
-// ACTUALLY HAPPENED rather than trusting a return value: `LoadStorySave` answers false
-// when it DEFERS (it re-issues `open untitled_1` from the menu and completes a second
-// later), so its bool cannot distinguish "refused" from "queued" -- and a scenario that
-// scored itself on that bool would have called a real load a failure, and a load that
-// never ran a success. A world POINTER that changed is the event itself.
+// The live UWorld's address as an identity, proving a re-load happened: LoadStorySave answers
+// false when it defers (it re-issues the open from the menu and lands a second later), so its
+// bool cannot tell "refused" from "queued". A world pointer that changed is the event itself.
 void* WorldPtrGT() { return ue_wrap::world_identity::CurrentWorld(); }
 
 void RunProbe() {
     const int cycles = EnvInt("VOTVCOOP_RELOAD_CYCLES", 3);
     const int dwellS = EnvInt("VOTVCOOP_RELOAD_DWELL_S", 15);
     const int menuS  = EnvInt("VOTVCOOP_RELOAD_MENU_S", 12);
-    // WHICH save to re-load. mp.py hands the host its slot in VOTVCOOP_SAVE; a fresh
-    // peer has none and re-loads by starting a New Game, which travels through exactly
-    // the same LoadMap -- the map load is the subject, not the save's contents.
+    // Which save to re-load: the host's slot from VOTVCOOP_SAVE; a fresh peer has none and starts
+    // a New Game, which travels through the same LoadMap. The map load is the subject.
     const std::string  slot = coop::config::ReadEnv("VOTVCOOP_SAVE");
     const std::wstring wslot(slot.begin(), slot.end());
 
-    // THE COOP ARM. The solo control above re-loads the map by itself; a CLIENT
-    // re-loads it by REJOINING, which is the reported flow and drags the whole join
-    // fan-out (save transfer, mirror spawn, sweeps, roster teardown) through the same
-    // LoadMap. The two arms differ in exactly that, which is the point.
+    // The coop arm: the solo control re-loads the map by itself; a client re-loads it by rejoining,
+    // which drags the whole join (the save transfer, the mirror spawn, the sweeps, the roster
+    // teardown) through the same LoadMap. The two arms differ in exactly that.
     const bool  rejoin = coop::config::ReadEnv("VOTVCOOP_RELOAD_REJOIN") == "1";
     const std::string peer = coop::config::ReadEnv("VOTVCOOP_NET_PEER");
     const std::string port = coop::config::ReadEnv("VOTVCOOP_NET_PORT");
@@ -464,9 +365,8 @@ void RunProbe() {
             offs.persistentLevel, offs.worldSettings, offs.defaultGameMode);
 
     if (rejoin) {
-        // A client only reaches gameplay THROUGH the join (the world it plays is the
-        // host's transferred save), so waiting for the world without waiting for the
-        // session would pass on a peer that never connected.
+        // A client reaches gameplay only through the join, so waiting for the world without waiting
+        // for the session would pass on a peer that never connected.
         bool up = false;
         for (int i = 0; i < 240; ++i) {
             if (harness::session_runtime::Session().running()) { up = true; break; }
@@ -497,10 +397,9 @@ void RunProbe() {
         ::Sleep(static_cast<DWORD>(dwellS) * 1000);
         PostCensus("pre-travel", c, offs);
 
-        // Exit to the menu with the layer LIVE. This is the player's own in-game exit,
-        // not the death flee: no transparent bypass, because the bypass keeps our layer
-        // dormant through the teardown and that is precisely the state the report was
-        // NOT made in.
+        // Exit to the menu with the layer live, the player's own exit rather than the death flee:
+        // the flee's bypass keeps our layer dormant through the teardown, which is not the reported
+        // state.
         {
             auto done = std::make_shared<std::atomic<int>>(0);
             auto ok   = std::make_shared<int>(0);
@@ -517,30 +416,28 @@ void RunProbe() {
         }
         UE_LOGI("reloadchurn: cycle %d at the menu (world @%p)", c, ue_wrap::world_identity::CurrentWorld());
 
-        // THE DECISIVE FRAME. If an Untitled_1 UWorld is still resident here with a null
-        // WorldSettings, the next load faults before it renders anything -- and this
-        // line says so while the process is still alive to print it.
+        // The decisive frame: a gameplay UWorld still resident here with a null WorldSettings
+        // faults the next load before it renders anything, and this line says so while the process
+        // can still print it.
         PostCensus("menu", c, offs);
-        // Sampled ACROSS the dwell, not just at its ends. The solo control purges the old
-        // gameplay world somewhere between +2 s and +14 s at the menu while the coop arm still
-        // has it; whether that husk EVER goes away is the question that separates "we re-load
-        // before the engine finished" from "something is holding it", and two samples cannot
-        // answer it.
+        // Sampled across the dwell: the solo control purges the old world some seconds into the
+        // menu while the coop arm still has it, and whether the husk ever goes away is what
+        // separates "we re-load before the engine finished" from "something is holding it".
         for (int t = 0; t < menuS; t += 10) {
             ::Sleep(static_cast<DWORD>(menuS - t < 10 ? menuS - t : 10) * 1000);
             PostCensus("menu-dwell", c, offs);
         }
         PostCensus("menu-settled", c, offs);
 
-        // The GC ARM. Off by default: the run that has to reproduce the field crash must not
-        // also be the run that tries to prevent it.
+        // The GC arm, off by default: the run that reproduces the crash must not be the run that
+        // tries to prevent it.
         if (coop::config::ReadEnv("VOTVCOOP_RELOAD_GC") == "1") {
             auto done = std::make_shared<std::atomic<int>>(0);
             auto ok   = std::make_shared<int>(0);
             GT::Post([done, ok] { if (ForceGcGT()) *ok = 1; done->store(1); });
             WaitDone(done, 8000);
             UE_LOGI("reloadchurn: cycle %d forced CollectGarbage dispatched=%d", c, *ok);
-            ::Sleep(4000);   // ForceGarbageCollection arms the collection for end-of-frame
+            ::Sleep(4000);   // the collection is armed for the end of the frame
             PostCensus("post-gc", c, offs);
         }
 
@@ -549,17 +446,14 @@ void RunProbe() {
                 c, rejoin ? "by REJOINING the host" : "from the save", menuWorld);
         ue_wrap::log::Flush();   // survive a hard fault: the next line may never be written
         if (rejoin) {
-            // ConnectDirect queues the start; the harness's own tick consumes it and runs
-            // the menu-mode save-transfer bootstrap -- i.e. the whole join, exactly as the
-            // browser's Connect does. Called off the game thread on purpose: it only
-            // touches queue state, and the session start happens on the timeline thread.
+            // ConnectDirect queues the start; the harness's own tick consumes it and runs the whole
+            // join as the browser's Connect does. Called off the game thread: it only touches queue
+            // state.
             const bool accepted = coop::session_manager::ConnectDirect(addr);
             UE_LOGI("reloadchurn: cycle %d ConnectDirect('%s') accepted=%d",
                     c, addr.c_str(), accepted ? 1 : 0);
-            // Census REPEATEDLY through the join, each one FLUSHED. The fatal LoadMap runs on
-            // the game thread inside the join, so no posted task can observe it from the
-            // inside -- the best available evidence is the last census that reached disk
-            // before the process stopped existing. Buffered INFO would be lost with it.
+            // Census repeatedly through the join, each flushed: the fatal LoadMap runs on the game
+            // thread inside the join, so the best evidence is the last census that reached disk.
             for (int i = 0; i < 30; ++i) {
                 if (ue_wrap::world_identity::CurrentWorldKind() == WK::Gameplay) break;
                 PostCensus("joining", c, offs);
@@ -576,9 +470,8 @@ void RunProbe() {
                 done->store(1);
             });
             WaitDone(done, 30000);
-            // NOT a verdict term: LoadStorySave answers false when it DEFERS (it re-issues
-            // `open untitled_1` from the menu and lands a second later), so this bool cannot
-            // tell "refused" from "queued". The world-pointer change below is the evidence.
+            // Not a verdict term: false means deferred, not failed; the world-pointer change below
+            // is the evidence.
             UE_LOGI("reloadchurn: cycle %d LoadStorySave returned %d (false == deferred, not failed)",
                     c, *ok);
         }
@@ -590,9 +483,8 @@ void RunProbe() {
             PostCensus("reload-stuck", c, offs);
             break;
         }
-        // The re-load is only PROVEN by a different UWorld: reaching a world named
-        // Untitled_1 proves nothing on its own, because that is also what "the travel
-        // never happened" looks like.
+        // The re-load is proven only by a different UWorld: a world with the gameplay name is also
+        // what "the travel never happened" looks like.
         const void* newWorld = WorldPtrGT();
         if (newWorld == menuWorld) {
             UE_LOGW("reloadchurn: cycle %d world pointer UNCHANGED (@%p) -- no load actually ran",
