@@ -1,13 +1,8 @@
-// ue_wrap/pe_detour.cpp -- the ProcessEvent INTERPOSITION MECHANISM.
-//
-// Extracted 2026-07-04 from game_thread.cpp (1065 LOC, past the 800 soft cap;
-// restated by two audits). This TU owns HOW we sit on ProcessEvent: the MinHook
-// install/uninstall, the detour body, the transparent bypass, the SEH crash
-// firewalls + absorbed-fault localization, the PE re-entrancy depth probe, and
-// the perf self-timing instrumentation. WHAT runs on a dispatch -- the
-// observer/interceptor/name-diagnostic registries and the posted-task pump --
-// lives in game_thread.cpp; the private seam is game_thread_detail.h (hot-path
-// fast rejects stay inline there; only matched/non-empty work crosses the TU).
+// ue_wrap/pe_detour.cpp -- how the mod sits on ProcessEvent: the MinHook install and disable,
+// the detour body, the transparent bypass, the SEH crash firewalls with fault localisation,
+// the re-entrancy depth probe and the perf self-timing. What runs on a dispatch (the observer,
+// interceptor and name-diagnostic registries, the posted-task pump) is game_thread.cpp's; the
+// private seam is game_thread_detail.h, whose hot-path rejects stay inline there.
 
 #include "ue_wrap/core/game_thread.h"
 
@@ -32,29 +27,23 @@ namespace {
 
 namespace D = detail;
 
-// ProcessEvent's signature (x64 ABI). Matches reflection's ProcessEventFn.
+// ProcessEvent's signature (x64), as reflection's ProcessEventFn.
 using ProcessEventFn = void(__fastcall*)(void* self, void* function, void* params);
 
 ProcessEventFn g_peTrampoline = nullptr;  // trampoline to the real ProcessEvent
 void* g_hookTarget = nullptr;
 bool g_installed = false;
 
-// Transparent-bypass deadline (steady_clock ms; 0 = off). While NowMs() < this,
-// ProcessEventDetour forwards STRAIGHT to the original ProcessEvent -- skipping
-// interceptors, observers, the posted-task pump, diagnostics, AND the outer SEH
-// wrapper -- making our DLL fully transparent. Armed during the local-death flee
-// to the menu: VOTV's transition("/Game/menu") tears down the 50k-object
-// untitled_1 world, firing ReceiveEndPlay/EndPlay through our detour per dying
-// actor; our observers + the outer SEH (which catches and does NOT forward,
-// mangling half-run EndPlays) deadlock the swap (proven to hang the teardown).
-// Arming the bypass for the teardown window lets VOTV travel natively, then it
-// auto-expires so the fresh menu world runs with our layer fully normal again.
+// The transparent-bypass deadline (steady_clock ms; 0 = off): while it holds, the detour
+// forwards straight to the engine, skipping interceptors, observers, the pump, the diagnostics
+// and the outer SEH frame. Armed for a world teardown: the transition to the menu fires EndPlay
+// through the detour for every dying actor of a 50k-object world, and our observers plus an SEH
+// frame that catches without forwarding left half-run EndPlays and hung the swap. It expires on
+// its own so the fresh menu world runs with the layer normal again.
 std::atomic<long long> g_bypassUntilMs{0};
-// Optional condition-based release for the bypass: when set, the detour clears
-// the bypass the instant ProcessEvent dispatches THIS UFunction (the menu's
-// ui_menu_C::Tick for the death-flee), resuming on that very call. The maxMs
-// deadline above is then just a safety ceiling. Lock-free (game-thread written
-// at arm time, read in the detour).
+// The bypass's release condition: when set, the detour clears the bypass the instant this
+// UFunction dispatches (the menu's ui_menu_C::Tick) and resumes on that very call; the
+// deadline is then a ceiling. Written at arm time, read in the detour.
 std::atomic<void*> g_bypassResumeFn{nullptr};
 
 long long NowMs() {
@@ -63,46 +52,33 @@ long long NowMs() {
         .count();
 }
 
-// ---- Perf instrumentation (MEASURE-first 15-FPS audit; see coop/dev/perf_probe) --
-// g_peCountOn gates the per-dispatch counter: OFF (default/shipping) the detour
-// pays a single relaxed bool load; ON it adds one relaxed XADD per dispatch.
-// g_peSelfOn additionally arms the sampled self-timer (1 dispatch in
-// kSelfSampleMask+1) that brackets the detour body EXCLUDING g_peTrampoline -- i.e.
-// OUR per-dispatch overhead only. All totals are monotonic; perf_probe diffs them
-// per second. Defined here (before SafeCall*/the detour) so all users see it.
+// The perf instrumentation (coop/dev/perf_probe diffs the totals per second). g_peCountOn gates
+// the per-dispatch counter: off (shipping) the detour pays one relaxed bool load, on it adds a
+// relaxed increment. g_peSelfOn also arms the sampled self-timer (one dispatch in
+// kSelfSampleMask + 1) that brackets the detour body excluding the engine's ProcessEvent, our
+// overhead only.
 std::atomic<bool> g_peCountOn{false};
 std::atomic<bool> g_peSelfOn{false};
 std::atomic<unsigned long long> g_peDispatchCount{0};    // all threads
-std::atomic<unsigned long long> g_peDispatchCountGT{0};  // game-thread subset (the per-dispatch substrate cost only applies here)
-// Dispatches that ORIGINATED IN OUR CODE (reflection::CallFunction sets a thread-local
-// depth; InCoopDispatch reads it). The game thread runs ~920 dispatches/frame and every
-// one executes real blueprint, so "is the game thread busy because of us?" reduces to
-// what SHARE of that volume we author. Our detour overhead is measured and small
-// (~0.5 ms/frame); the BP those calls then execute is NOT ours and is invisible to every
-// bucket we own. Counted inside Impl, i.e. under the SEH firewall -- putting an
-// instrument in the unprotected outer frame hard-crashed the game on 2026-08-29.
+std::atomic<unsigned long long> g_peDispatchCountGT{0};  // the game-thread subset, where the per-dispatch substrate cost applies
+// Dispatches that originated in our code (reflection::CallFunction sets a thread-local depth):
+// the game thread runs about 920 dispatches a frame, each executing real Blueprint, so "is the
+// game thread busy because of us" is the share of that volume we author; the detour's own
+// overhead is small and the Blueprint those calls run is invisible to every bucket here. Counted
+// inside Impl, under the SEH firewall: an instrument in the unprotected outer frame once
+// hard-crashed the game.
 std::atomic<unsigned long long> g_peDispatchCountCoop{0};
 std::atomic<unsigned long long> g_peSelfNs{0};
 std::atomic<unsigned long long> g_peSelfSamples{0};
 constexpr unsigned long long kSelfSampleMask = 0xFF;  // sample 1 dispatch in 256
 
-// ---- WHOLE-detour timing (2026-08-29) ---------------------------------------
-// g_peSelfNs above brackets the detour body from INSIDE ProcessEventDetourImpl, so
-// three things are excluded BY CONSTRUCTION: the outer ProcessEventDetour frame, the
-// SEH __try frame in RunDetourSEH, and the calls between them. That exclusion is
-// precisely where an unaccounted per-dispatch cost would hide, so a "self" figure can
-// never falsify "the detour is the missing time" -- it is blind to the candidate.
-//
-// Born from a measured gap: 120 fps with no mod vs 75 fps with the mod merely hosting
-// (+5.18 ms/frame) while every instrumented bucket summed to 0.86 ms. The residual is
-// ~2 us per dispatch at ~2,200 dispatches/frame, i.e. exactly the size of a per-dispatch
-// cost nobody was measuring.
-//
-// These brackets the OUTER function and separately records the engine's own
-// ProcessEvent on the SAME sampled dispatches, so (whole - engine) is our true
-// per-dispatch cost with nothing excluded. Sampled only at TOP LEVEL (t_peDepth == 0):
-// a nested dispatch's time is already inside its parent's bracket, so counting it again
-// would inflate the total by the recursion depth.
+// Whole-detour timing. The self-timer brackets from inside Impl, so the outer frame, the SEH
+// frame and the calls between them are excluded by construction, which is where an unaccounted
+// per-dispatch cost would hide (a measured 5 ms/frame gap once summed to under 1 ms in every
+// bucket: about 2 us per dispatch at ~2,200 dispatches a frame). These bracket the outer
+// function and record the engine's own ProcessEvent on the same sampled dispatches, so whole
+// minus engine is the true per-dispatch cost. Sampled only at top level: a nested dispatch's
+// time is already inside its parent's bracket.
 std::atomic<unsigned long long> g_peWholeNs{0};      // outer detour wall time, sampled
 std::atomic<unsigned long long> g_peEngineNs{0};     // engine PE within those same samples
 std::atomic<unsigned long long> g_peWholeSamples{0};
@@ -110,18 +86,15 @@ std::atomic<unsigned long long> g_peWholeOrd{0};     // drives the 1/256 pick (a
 thread_local bool t_sampleWhole = false;             // set by the outer at depth 0
 thread_local unsigned long long t_engineNs = 0;      // filled by Impl for that dispatch
 
-// Observer/interceptor CALLBACK-BODY timing. The audit's rank-2 suspect for the
-// 50 ms is not the table WALK but a callback BODY that secretly calls an uncached
-// reflection Find*/CountObjectsByClass (a ~1M-entry GUObjectArray walk + a wstring
-// alloc per entry) on a hot/common UFunction. SafeCallObserver/SafeCallInterceptor
-// bracket each cb with QPC when counting is armed and record the running total +
-// the single worst call (with its UFunction*, resolved to a name by perf_probe).
+// Callback-body timing: a callback that secretly calls an uncached reflection Find* (a walk of
+// the GUObjectArray with a wstring per entry) on a hot UFunction costs more than any table
+// walk. Each body is bracketed with QPC when counting is armed; the running total and the
+// single worst call (with its UFunction, resolved to a name by perf_probe) are kept.
 std::atomic<unsigned long long> g_obsBodyNs{0};       // summed cb-body time across all fired observers+interceptors
 std::atomic<unsigned long long> g_obsWorstNs{0};      // worst single cb-body call seen (ns)
 std::atomic<void*>              g_obsWorstFn{nullptr}; // the UFunction* of that worst call
 
-// QPC ticks/sec, cached on first use (QueryPerformanceFrequency is constant for
-// the process lifetime). 0 until resolved.
+// QPC ticks per second, cached on first use; 0 until resolved.
 long long QpcFreq() {
     static long long s_freq = [] {
         LARGE_INTEGER f{};
@@ -133,8 +106,7 @@ inline unsigned long long QpcDeltaToNs(long long ticks) {
     const long long f = QpcFreq();
     return f > 0 ? static_cast<unsigned long long>((ticks * 1000000000LL) / f) : 0ull;
 }
-// Record one observer/interceptor cb-body duration (ns). Updates total + worst.
-// Only called on the (rare) path where a dispatched UFunction matched a registrant.
+// One callback-body duration, into the total and the worst; only on a matched dispatch.
 inline void RecordCbBodyNs(void* function, unsigned long long ns) {
     g_obsBodyNs.fetch_add(ns, std::memory_order_relaxed);
     if (ns > g_obsWorstNs.load(std::memory_order_relaxed)) {
@@ -143,30 +115,19 @@ inline void RecordCbBodyNs(void* function, unsigned long long ns) {
     }
 }
 
-// ---- Absorbed-fault localization (firewall diagnosability) -----------------
-// The Pump() crash firewall absorbs a faulting task so the host survives, but
-// historically it logged only a GENERIC "absorbed exception" line -- it did not
-// say WHERE the fault was. That blind spot cost real RE time twice (the bug1
-// per-tick AV balloon needed convergent-agent RE; bug2 -- the intermittent
-// unpossessed-first-client AV flood -- still can't be pinned without it). These
-// pieces capture the faulting instruction pointer + the access address + the
-// containing module/RVA, so the next absorbed fault names its own site. A
-// payload-DLL RVA maps to a function via the payload .map (main.map, /MAP) +
-// tools/maprva.py; a game-exe hit means the fault is inside a ProcessEvent-
-// dispatched UFunction on a bad object.
+// Fault localisation for the firewalls: an absorbed fault logs its faulting instruction, the
+// access address and the containing module and RVA, so it names its own site. A payload-DLL RVA
+// maps to a function through the payload's .map (tools/maprva.py); a game-exe hit is a fault
+// inside a ProcessEvent-dispatched UFunction on a bad object.
 thread_local D::TaskFaultInfo t_lastTaskFault{};
 
-// SEH filter -- runs in the faulting context (registers still valid) BEFORE the
-// unwind, so it must only stash, never allocate. Returns EXCEPTION_EXECUTE_HANDLER.
+// The SEH filter runs in the faulting context before the unwind, so it only stashes, never
+// allocates.
 int TaskFaultFilter(EXCEPTION_POINTERS* ep) {
-    // STATUS_STACK_OVERFLOW is NOT absorbable -- pass it on (2026-07-04 17:09 host
-    // death). Once the stack guard page has fired it is GONE for this thread;
-    // "absorb and continue" runs the rest of the frame on an exhausted stack with
-    // half-unwound engine state, and the process dies ~1 s later on an unrelated-
-    // looking secondary AV (17:09:46 SO absorbed at ReceiveDestroyed -> 17:09:47
-    // WER c0000005 in FindFunctionChecked, dump useless). CONTINUE_SEARCH instead
-    // lets the OS/WER take it AT THE TRUE APEX, where the minidump's call stack
-    // names the whole recursive BP cascade -- the diagnostic the absorb destroyed.
+    // A stack overflow is not absorbable: once the guard page has fired it is gone for the thread,
+    // and absorbing runs the rest of the frame on an exhausted stack with half-unwound engine state
+    // until an unrelated-looking secondary AV kills the process with a useless dump. Passed on, the
+    // OS takes it at the true apex, where the minidump names the whole recursive cascade.
     if (ep->ExceptionRecord->ExceptionCode == static_cast<DWORD>(EXCEPTION_STACK_OVERFLOW))
         return EXCEPTION_CONTINUE_SEARCH;
     t_lastTaskFault.code       = ep->ExceptionRecord->ExceptionCode;
@@ -179,44 +140,19 @@ int TaskFaultFilter(EXCEPTION_POINTERS* ep) {
     return EXCEPTION_EXECUTE_HANDLER;
 }
 
-// SEH-wrapped single-callback dispatch. MSVC disallows mixing C++ unwind
-// (std::wstring destructor) with __try/__except in the same function, so
-// the __try wrapper does ONLY the raw call + an int-returning "did it
-// crash?" sentinel; the C++ logging path lives in a separate function.
+// The SEH-wrapped single-callback dispatch. MSVC forbids C++ unwinds (a wstring destructor) in
+// a function with __try, so the __try wrapper does only the raw call and a crashed-or-not
+// result; the logging lives in a C++ function. The absorbed-AV line names the callback's
+// UFunction and the fault site (module and RVA): a site inside the game's own executable is
+// the engine's dispatch dereferencing a stale object, not our callback.
 //
-// 2026-05-27 (post-anim-ship crash diagnostic): introduced because the user
-// reported "client crashed picking up a pile of garbage" with the AV deep in
-// our DLL but no symbol-mapped frames. Routing each observer dispatch through
-// here surfaces the function name in the log next time, so we know exactly
-// which callback to inspect. KEEP this wrapper -- it doubles as a crash
-// firewall against future observer regressions.
-//
-// 2026-07-04 (re-host dangling-save diagnosis): the absorbed-AV line now also
-// names the fault SITE (module+RVA via TaskFaultFilter, same mechanism as the
-// Pump firewall) -- "VotV-Win64-Shipping.exe+..." means the fault is inside
-// the engine's own dispatch (e.g. BP-VM deref of a stale UObject*), not in our
-// callback. Diagnosing the re-host crash needed a minidump to learn that; now
-// the log says it directly.
-// RATE LATCH on identical absorbs (USER-APPROVED 2026-08-23, triage R-1e).
-//
-// WHY: one absorbed-fault storm turned a 6-minute session's log into 12.35 MB of
-// which 9.64 MB -- 78% -- was ONE repeated line: 33,490 copies of the same
-// (function, fault-ip) pair at ~2,508/s for 44 s. That is not diagnosis, it is
-// diagnosis buried in its own repetition, and every OTHER line in the run became
-// unreadable. It also made the log a per-second disk-write load on the game thread
-// during the exact window the game was already choking.
-//
-// WHAT IS PRESERVED: the FIRST kLogFirstN of any distinct (function, ip) still log in
-// full, so the forensic content -- which UFunction, which faulting instruction, which
-// access address -- is never lost. Only the (N+1)th identical repeat is folded, and it
-// is folded into a COUNT that is itself reported, so "this happened 33,490 times" is
-// still readable. A storm therefore costs a handful of lines plus one summary instead
-// of 9.64 MB, and a NEW fault site is never suppressed by an old one's volume.
-//
-// WHAT IS NOT: this is log policy, not behaviour. Nothing about absorbing, forwarding
-// or the caller's view changes. Deliberately keyed on (function, ip) rather than on
-// `self`, because the 2026-08-23 storm had a CONSTANT ip and a VARYING self -- keying
-// on self would have suppressed nothing.
+// The rate latch on identical absorbs: one fault storm once made a 12 MB log of which 78% was
+// a single line repeated 33,490 times at ~2,500 a second, burying every other line and turning
+// the log into a per-second disk write on the game thread during the very window the game was
+// choking. The first kLogFirstN of any distinct (function, ip) log in full, so which
+// UFunction, which instruction and which address are never lost; the repeats fold into a
+// count that is itself reported. Log policy only: absorbing and forwarding are unchanged.
+// Keyed on (function, ip), not on `self`: that storm had a constant ip and a varying self.
 constexpr int kLogFirstN   = 5;    // full lines per distinct site before folding
 constexpr int kAvSiteSlots = 16;   // distinct sites tracked; LRU-free, oldest wins
 struct AvSite { void* fn; void* ip; unsigned long long count; unsigned long long lastReportedAt; };
@@ -224,7 +160,7 @@ AvSite g_avSites[kAvSiteSlots]{};
 int    g_avSiteNext = 0;
 
 void LogObserverAv(void* function, void* self, const char* phase) {
-    // Find or claim a slot. Linear over 16 -- this runs only on a fault.
+    // Find or claim a slot; linear over 16, on a fault only.
     AvSite* site = nullptr;
     for (auto& s : g_avSites) {
         if (s.fn == function && s.ip == t_lastTaskFault.faultingIP) { site = &s; break; }
@@ -236,8 +172,8 @@ void LogObserverAv(void* function, void* self, const char* phase) {
     }
     ++site->count;
 
-    // Fold: past the first N, report only on a decade boundary, so a storm's shape
-    // (how fast, how far) still reaches the log at logarithmic cost.
+    // Past the first N, a line only on a decade boundary, so a storm's shape (how fast, how far)
+    // reaches the log at logarithmic cost.
     if (site->count > kLogFirstN) {
         unsigned long long decade = 10;
         while (decade < site->count) decade *= 10;
@@ -259,9 +195,8 @@ void LogObserverAv(void* function, void* self, const char* phase) {
             t_lastTaskFault.accessAddr);
 }
 
-// Returns 0 on clean completion, 1 if SEH caught an exception. cb returns
-// its own bool via *outIntercept (only meaningful if return value is 0).
-// __try / __except is the ONLY thing in this function -- no C++ destructors.
+// 0 on clean completion, 1 if SEH caught an exception; the callback's own bool comes back
+// through outIntercept. __try / __except is the only thing in this function.
 int RunInterceptorSEH(UFunctionInterceptor cb, void* self, void* params, bool* outIntercept) {
     __try {
         *outIntercept = cb(self, params);
@@ -280,25 +215,19 @@ int RunObserverSEH(ProcessEventObserverFn cb, void* self, void* function, void* 
     }
 }
 
-// ---- PE re-entrancy depth probe (2026-07-04, the 17:09 host death) ----------
-// The host died on a script-VM stack overflow: a BP destroy cascade dispatched
-// ReceiveDestroyed nested inside ReceiveDestroyed until ProcessScriptFunction's
-// per-level alloca exhausted the stack. The log named NOTHING about the chain
-// (only the absorbed-SO line, one frame). This probe measures the recursion
-// live ([[feedback-probe-dont-guess-rule]]): a thread_local depth counter,
-// ++/-- per dispatch (TEB-relative, ~free); on each doubling threshold crossing
-// (128, 256, 512, ...) it logs the function + self class at that depth -- in a
-// tight cascade those ARE the cycle members -- so the NEXT runaway names itself
-// in the log long before the stack dies, and the WER dump (the SO now passes
-// through, see TaskFaultFilter) gets a named lead-in.
+// The re-entrancy depth probe. A host once died on a script-VM stack overflow, a Blueprint
+// destroy cascade dispatching ReceiveDestroyed inside ReceiveDestroyed until the per-level
+// alloca exhausted the stack, and the log named nothing about the chain. A thread-local depth,
+// incremented and decremented per dispatch, logs the function and self class at each doubling
+// from 128 (in a tight cascade those are the cycle members), so the next runaway names itself
+// before the stack dies and the WER dump (the overflow now passes through) gets a named lead-in.
 constexpr int kPeDepthWarnStart = 128;  // engine-normal nesting is O(10); 128 = pathological
 thread_local int t_peDepth = 0;
 thread_local int t_peDepthNextWarn = kPeDepthWarnStart;
 
-// The counter scope is TRIVIAL (an int ++/--, cannot fault) and the logging lives in a
-// separate function called AFTER construction completes -- if the warn path ever AVs
-// (absorbed by RunDetourSEH), the already-constructed scope's destructor still runs on
-// the /EHa unwind, so the depth can never drift upward (audit 2026-07-04 finding 5).
+// The scope is trivial (an int, cannot fault) and the logging is a separate function called
+// after construction: if the warn path ever faults (absorbed by RunDetourSEH), the /EHa unwind
+// still runs the destructor and the depth cannot drift upward.
 struct PeDepthScope {
     PeDepthScope() { ++t_peDepth; }
     ~PeDepthScope() {
@@ -317,31 +246,25 @@ void MaybeWarnPeDepth(void* self, void* function) {
             "2026-07-04 17:09 host death; the repeating function/class here names the cycle)",
             t_peDepth, fn.c_str(), self, cn.c_str());
 }
-// ---- end PE re-entrancy depth probe -----------------------------------------
 
-// Inner detour body. Contains all the C++ destructor unwinds (lock_guard,
-// std::wstring, etc.) -- MSVC disallows mixing SEH __try/__except with C++
-// unwind in the same function. Called via SEH-only outer ProcessEventDetour
-// below so any AV anywhere in the detour body (observer callbacks, Pump'd
-// tasks, FireNameDiagnostics, ToString allocations, etc.) is caught + logged
-// instead of crashing the engine.
+// The inner detour body, with every C++ unwind (lock guards, wstrings); the SEH-only outer
+// frame below catches any fault in it (callbacks, pumped tasks, the name diagnostics, the
+// ToString allocations) and logs it instead of crashing the engine.
 void __fastcall ProcessEventDetourImpl(void* self, void* function, void* params) {
     const PeDepthScope depthScope;      // trivial ++ (constructed BEFORE the fallible warn)
     MaybeWarnPeDepth(self, function);
-    // Record the game thread id the first time we run here. CAS so that if two
-    // threads race the very first dispatch, exactly one wins (a plain load+store
-    // could let a worker thread overwrite the real game thread id).
+    // The game thread id, recorded on the first dispatch by CAS so a racing worker thread cannot
+    // overwrite it.
     if (D::g_gameThreadId.load(std::memory_order_relaxed) == 0) {
         unsigned long expected = 0;
         D::g_gameThreadId.compare_exchange_strong(expected, ::GetCurrentThreadId(),
                                                   std::memory_order_relaxed, std::memory_order_relaxed);
     }
 
-    // Perf probe (MEASURE-first; off in shipping -> one relaxed bool load here).
-    // ord drives the 1/256 self-time sampling. t0 is captured BEFORE the queue-
-    // empty mutex check so the per-dispatch mutex cost is INCLUDED in the sample;
-    // a dispatch that actually drains the pump drops its sample (net_pump::Tick
-    // runs inside Pump() and would dwarf the ~150 ns we are trying to measure).
+    // The perf probe: one relaxed bool load when off. ord drives the 1-in-256 self sample; t0 is
+    // taken before the queue-empty check so the per-dispatch mutex cost is inside the sample, and a
+    // dispatch that drains the pump drops its sample (net_pump::Tick runs inside the pump and would
+    // dwarf the ~150 ns being measured).
     const bool countOn = g_peCountOn.load(std::memory_order_relaxed);
     unsigned long long ord = 0;
     if (countOn) {
@@ -356,57 +279,42 @@ void __fastcall ProcessEventDetourImpl(void* self, void* function, void* params)
     LARGE_INTEGER t0{}, t1{}, t2{}, t3{};
     if (sampleSelf) ::QueryPerformanceCounter(&t0);
 
-    // ProcessEvent is also called from task-graph WORKER threads (parallel anim,
-    // etc.), not just the game thread. Posted tasks call engine UFunctions, which
-    // are game-thread-only -- running them on a worker thread corrupts engine state
-    // and crashes (seen as an AV on TaskGraphThreadHP). So drain the queue ONLY on
-    // the recorded game thread (the first ProcessEvent caller, validated by the
-    // self-test). Other threads just forward.
-    // Lock-free emptiness probe FIRST (perf): the depth load + the t_inPump check
-    // reject the empty common case without the per-dispatch mutex OR the TEB read.
-    // Only when there is queued work do we confirm the game thread and drain
-    // (DrainPostedTasksAtTopLevel also holds the spawn-refusal deferral gate).
+    // ProcessEvent is also called from task-graph worker threads (parallel animation), and a posted
+    // task calls game-thread-only UFunctions, so the queue drains only on the recorded game thread;
+    // other threads forward. The lock-free emptiness probe first: the depth load and the in-pump
+    // check reject the empty common case without the mutex or the TEB read, and only queued work
+    // confirms the game thread and drains (which also holds the spawn-refusal deferral gate).
     if (!D::t_inPump && D::g_queueDepth.load(std::memory_order_acquire) != 0 &&
         ::GetCurrentThreadId() == D::g_gameThreadId.load(std::memory_order_relaxed)) {
         if (D::DrainPostedTasksAtTopLevel())
             sampleSelf = false;  // pump drain time is not per-dispatch detour overhead
     }
 
-    // UFunction interceptors: pre-dispatch hooks on a multi-slot table. If
-    // any interceptor for `function` returns true, the original ProcessEvent
-    // is SKIPPED -- the UFunction's body is replaced for this call. Cost is
-    // an O(1) Bloom rejection for non-intercepted functions; on a Bloom hit
-    // the walk is count-bounded by g_interceptorActive (D4-2), with the cb
-    // load only happening on a target match.
-    if (D::FireInterceptors(self, function, params)) return;  // intercepted -> drops the sample (rare)
+    // Interceptors: pre-dispatch hooks; an interceptor returning true replaces the UFunction's body
+    // for this call. An O(1) Bloom rejection for a non-intercepted function; on a hit the walk is
+    // bounded by the active count, and the callback loads only on a target match.
+    if (D::FireInterceptors(self, function, params)) return;  // intercepted; the sample is dropped
 
-    // PRE-observers: fire BEFORE the original. Used to snapshot state the BP
-    // is about to clear (e.g. PHC.ReleaseComponent PRE reads handle+176
-    // GrabbedComponent before PhysX clears it).
-    // D4-2: count-bounded walk -- pays N atomic loads where N is the active
-    // observer count (typically <= 30) instead of kMaxObservers=128 per
-    // dispatch. Empty-table case exits with a single acquire load.
+    // PRE observers fire before the original, to snapshot state the Blueprint is about to clear
+    // (the grab handle's GrabbedComponent before PhysX clears it). The walk is bounded by the
+    // active observer count; an empty table exits on one acquire load.
     D::FirePreObservers(self, function, params);
 
-    // Diagnostic name-prefix sniffer (zero cost when no slot is set).
+    // The name-prefix sniffer, free when no slot is set.
     D::FireNameDiagnostics(self, function, params);
 
-    // 2026-05-26 deep-RE call trace (one-shot diagnostic). When the
-    // trace flag is on, log every ProcessEvent dispatch. Used to
-    // capture BP call chains when reflection-invoked BPs don't appear
-    // to do anything. The atomic load is relaxed (we don't care about
-    // strict ordering -- the trace is best-effort observability).
+    // The call trace: with the flag on, every dispatch logs, to capture a Blueprint call chain when
+    // a reflection-invoked function appears to do nothing. Relaxed, best effort.
     if (D::g_callTrace.load(std::memory_order_relaxed) && function) {
         auto fname = reflection::NameOf(function);
         std::wstring nameStr = reflection::ToString(fname);
         UE_LOGI("trace: PE self=%p func=%ls", self, nameStr.c_str());
     }
 
-    // The engine's own ProcessEvent is bracketed when EITHER timer wants it: `sampleSelf`
-    // subtracts it, and the whole-detour timer needs it to turn a wall-clock outer
-    // measurement into our share. Recorded only at depth 1 (the top-level Impl) -- a
-    // nested dispatch runs INSIDE this bracket, so letting it write t_engineNs would
-    // replace the parent's engine time with a fragment of itself.
+    // The engine's ProcessEvent is bracketed when either timer wants it: the self sample subtracts
+    // it, the whole-detour timer turns a wall-clock outer measurement into our share. Recorded at
+    // depth 1 only: a nested dispatch runs inside this bracket and would replace the parent's
+    // engine time with a fragment of itself.
     const bool timeEngine = sampleSelf || t_sampleWhole;
     if (timeEngine) ::QueryPerformanceCounter(&t1);
     g_peTrampoline(self, function, params);
@@ -414,17 +322,14 @@ void __fastcall ProcessEventDetourImpl(void* self, void* function, void* params)
     if (t_sampleWhole && t_peDepth == 1)
         t_engineNs = QpcDeltaToNs(t2.QuadPart - t1.QuadPart);
 
-    // POST-observers: fire AFTER the original. Used to read state the BP just
-    // wrote (e.g. PHC.GrabComponentAtLocation POST reads handle+176 to see
-    // what was just grabbed; PHC.SetTargetLocation POST sees the per-tick
-    // drive target). Count-bounded same as PRE.
+    // POST observers fire after the original, to read what the Blueprint just wrote (the grab
+    // handle's target after SetTargetLocation). Bounded like PRE.
     D::FirePostObservers(self, function, params);
 
     if (sampleSelf) {
         ::QueryPerformanceCounter(&t3);
-        // OUR overhead = pre-original segment (incl. the empty-check mutex + the
-        // interceptor/PRE walks) + post-original segment (the POST walk). The
-        // engine's own ProcessEvent (t1..t2) is EXCLUDED.
+        // Our overhead is the segment before the original (the empty check, the interceptor and PRE
+        // walks) plus the one after (the POST walk); the engine's ProcessEvent is excluded.
         const long long ours = (t1.QuadPart - t0.QuadPart) + (t3.QuadPart - t2.QuadPart);
         if (ours > 0) {
             g_peSelfNs.fetch_add(QpcDeltaToNs(ours), std::memory_order_relaxed);
@@ -433,21 +338,11 @@ void __fastcall ProcessEventDetourImpl(void* self, void* function, void* params)
     }
 }
 
-// SEH-only outer detour. No C++ destructors here so __try/__except is
-// legal. Catches ANY AV / illegal instruction / int divide / etc. that
-// propagates out of ProcessEventDetourImpl -- including AVs in posted
-// task lambdas drained by Pump(), in FireNameDiagnostics's ToString
-// allocation, in the call-trace log path, in observer callbacks (the
-// inner SafeCallObserver/SafeCallInterceptor wrappers already catch
-// these, but if a future code path bypasses them this outer catch is
-// the backstop), or in the original ProcessEvent's BP-VM dispatch when
-// BP code derefs a stale UObject*.
-//
-// On catch we log "PE detour AV caught" and return normally; the engine
-// continues. The function name + dispatched self are logged so the next
-// run pinpoints which UFunction's call chain crashed. KEEP this outer
-// SEH frame -- it is the load-bearing crash firewall for all of
-// ProcessEventDetour's downstream paths.
+// The SEH-only outer detour: no C++ destructors, so __try is legal. It catches whatever
+// propagates out of Impl (a pumped task, the name diagnostics, the trace log, an observer that
+// bypassed the inner wrappers, the engine's own dispatch dereferencing a stale object), logs the
+// function and self, and returns normally so the engine continues. The load-bearing crash
+// firewall for everything downstream.
 int RunDetourSEH(void* self, void* function, void* params) {
     __try {
         ProcessEventDetourImpl(self, function, params);
@@ -458,24 +353,20 @@ int RunDetourSEH(void* self, void* function, void* params) {
 }
 
 void __fastcall ProcessEventDetour(void* self, void* function, void* params) {
-    // Transparent bypass (local-death flee to menu): forward straight to the engine
-    // and skip ALL our logic (observers, interceptors, pump, diagnostics, the SEH
-    // wrapper) so VOTV's world teardown + menu travel runs exactly as it would with
-    // no DLL present. Auto-expires when the deadline passes -> normal detour resumes.
+    // The transparent bypass: straight to the engine with all our logic skipped, so a world
+    // teardown runs as with no DLL present; it expires on the deadline.
     const long long until = g_bypassUntilMs.load(std::memory_order_relaxed);
     if (until != 0) {
-        // Condition-based release: the moment the armed resume-function dispatches
-        // (the menu's ui_menu_C::Tick -> menu world up, teardown past), clear the
-        // bypass and FALL THROUGH to the normal detour so this very call runs our
-        // logic (the MULTIPLAYER-injection POST observer fires on the first menu
-        // frame). A single pointer compare per dispatch while armed -- negligible.
+        // The release condition: the moment the resume function dispatches (the menu world is up),
+        // the bypass clears and this very call runs the normal detour, so the MULTIPLAYER-injection
+        // observer fires on the first menu frame. One pointer compare per dispatch while armed.
         void* resumeFn = g_bypassResumeFn.load(std::memory_order_relaxed);
         if (resumeFn != nullptr && function == resumeFn) {
             g_bypassUntilMs.store(0, std::memory_order_relaxed);
             g_bypassResumeFn.store(nullptr, std::memory_order_relaxed);
             UE_LOGW("game_thread: transparent bypass RESUMED on its release function "
                     "(menu world up) -- detour normal again");
-            // fall through to the normal detour below
+            // Then the normal detour.
         } else if (NowMs() < until) {
             if (g_peTrampoline) g_peTrampoline(self, function, params);
             return;
@@ -484,12 +375,10 @@ void __fastcall ProcessEventDetour(void* self, void* function, void* params) {
             g_bypassResumeFn.store(nullptr, std::memory_order_relaxed);
         }
     }
-    // WHOLE-detour sample decision. Taken HERE, outside the SEH frame, because
-    // everything between this point and RunDetourSEH's return is what the inner
-    // self-timer cannot see. Only at top level: t_peDepth is still 0 until Impl's
-    // PeDepthScope runs, so this is the outermost dispatch on this thread.
-    // Nested calls leave t_sampleWhole/t_engineNs ALONE -- clearing them would
-    // clobber the parent's in-flight sample.
+    // The whole-detour sample decision, outside the SEH frame, since everything from here to
+    // RunDetourSEH's return is what the inner timer cannot see. Top level only: t_peDepth is still
+    // 0 before Impl's scope runs. A nested call leaves the sample state alone, or it would clobber
+    // the parent's in-flight sample.
     const bool topLevel = (t_peDepth == 0);
     bool whole = false;
     if (topLevel && g_peSelfOn.load(std::memory_order_relaxed)) {
@@ -503,18 +392,16 @@ void __fastcall ProcessEventDetour(void* self, void* function, void* params) {
     if (whole) ::QueryPerformanceCounter(&w0);
 
     if (RunDetourSEH(self, function, params) != 0) {
-        // The Impl crashed somewhere -- recover by logging + returning
-        // without forwarding to the original PE (the engine's caller frame
-        // expects PE to return; we honor that contract). LogObserverAv
-        // already resolves the function name + logs at ERROR level.
+        // Impl crashed: logged, and the call returns without forwarding, since the engine's caller
+        // expects ProcessEvent to return.
         LogObserverAv(function, self, "detour-outer");
     }
 
     if (whole) {
         ::QueryPerformanceCounter(&w1);
         const long long span = w1.QuadPart - w0.QuadPart;
-        // A crashed Impl leaves t_engineNs at 0, which would report the whole frame as
-        // ours. Drop those samples rather than let a rare fault inflate the verdict.
+        // A crashed Impl leaves the engine time at 0, which would report the whole span as ours;
+        // those samples are dropped.
         if (span > 0 && t_engineNs > 0) {
             g_peWholeNs.fetch_add(QpcDeltaToNs(span), std::memory_order_relaxed);
             g_peEngineNs.fetch_add(t_engineNs, std::memory_order_relaxed);
@@ -526,19 +413,16 @@ void __fastcall ProcessEventDetour(void* self, void* function, void* params) {
 
 }  // namespace
 
-// ---- detail services this TU provides to game_thread.cpp ----------------------
+// The detail services this TU provides to game_thread.cpp.
 
 namespace detail {
 
 TaskFaultInfo& LastTaskFault() { return t_lastTaskFault; }
 
-// SEH-only (no C++ destructors in this frame -- MSVC constraint, same contract
-// as RunObserverSEH; `task` is a reference so it has no destructor here).
-// Under /EHa the __except unwind STILL runs the task frame's C++ destructors
-// (that is precisely why this image is built /EHa), so the load-bearing
-// lock-release property of the Pump catch it replaces is fully preserved.
-// Catches both structured exceptions (AV/div0) AND C++ throws (the latter as
-// code 0xE06D7363). Returns 0 clean, 1 if an exception was caught.
+// SEH only, no C++ destructors in this frame (`task` is a reference). Under /EHa the __except
+// unwind still runs the task's own destructors, which is why the image is built /EHa: the lock
+// release the pump relies on survives. Catches structured exceptions and C++ throws (code
+// 0xE06D7363). 0 clean, 1 caught.
 int RunTaskSEH(const Task& task) {
     __try {
         task();
@@ -548,11 +432,9 @@ int RunTaskSEH(const Task& task) {
     }
 }
 
-// Resolve a faulting IP to "module+0xRVA" for the log. C++ (uses Win32 + a
-// thread-local buffer); called only from C++ bodies (Pump / LogObserverAv),
-// never from the SEH-only Run*SEH frames. The logged RVA is ASLR-independent
-// (ip - runtime base), so it maps directly against the payload .map's
-// preferred-base RVAs.
+// A faulting IP as "module+0xRVA": C++ (Win32 plus a thread-local buffer), called only from C++
+// bodies, never from the SEH-only frames. The RVA is ASLR-independent, so it maps against the
+// payload .map directly.
 const char* FormatModuleRva(void* ip) {
     static thread_local char buf[320];
     HMODULE hmod = nullptr;
@@ -604,23 +486,19 @@ void SafeCallObserver(ProcessEventObserverFn cb, void* self, void* function, voi
 
 }  // namespace detail
 
-// ---- public API owned by this TU ----------------------------------------------
+// The public API this TU owns.
 
-// DRILL for the absorbed-AV rate latch (VOTVCOOP_AV_LATCH_DRILL=1). A latch that has
-// only ever been observed NOT firing is indistinguishable from a latch that is wired
-// up wrong, and the storm it exists for is not reproducible on demand -- so drive the
-// fold logic directly with synthetic sites. It exercises the real LogObserverAv, so
-// what it proves is the real behaviour; it does NOT exercise the fault path, which is
-// unchanged. EXPECTED in the log: site A -> 5 full lines then folds at 10 and 100 (7
-// lines for 120 calls, not 120); site B -> its own 5 full lines, i.e. a NEW site is
-// never suppressed by an old site's volume, which is the property that matters most.
+// The drill for the absorb rate latch (VOTVCOOP_AV_LATCH_DRILL=1): a latch only ever observed
+// not firing is indistinguishable from one wired wrong, and the storm it exists for is not
+// reproducible on demand, so synthetic sites drive the real LogObserverAv (the fault path is
+// untouched). Expected: site A prints 5 full lines then folds at 10 and 100 (7 lines for 120
+// calls); site B prints its own 5, since a new site is never suppressed by an old one's volume.
 void RunAvLatchDrill() {
     char v[8]{};
     if (!(::GetEnvironmentVariableA("VOTVCOOP_AV_LATCH_DRILL", v, sizeof(v)) > 0 && v[0] == '1'))
         return;
-    // A REAL UFunction: the full-line path calls reflection::NameOf(function), which
-    // dereferences it. The first cut passed nullptr and killed the process at boot --
-    // which is itself the argument for drilling rather than reasoning.
+    // A real UFunction: the full-line path dereferences it through NameOf, and a null once killed
+    // the process at boot.
     void* fn = nullptr;
     if (void* cls = reflection::FindClass(L"Actor"))
         fn = reflection::FindFunction(cls, L"K2_DestroyActor");
@@ -648,13 +526,10 @@ bool Install() {
         return false;
     }
     if (!hook::Init()) return false;
-    // WP-2 (2026-08-22): PE is the ONE function UE4SS's PolyHook also detours, so
-    // its MinHook relay MUST be followJmp-immune (root-cause fix for the UE4SS-lane
-    // boot double-detour crash; UE4SS_ARC.md par.3-4). Unconditional since 2026-08-28:
-    // the A/B escape (VOTVCOOP_PE_IMMUNE_RELAY=0, the legacy corruptible relay) retired
-    // with the RED table (UE4SS_ARC.md par.4d) -- the knob reproduced the field crash on
-    // demand (dump hash byte-identical to the organic cohort), so the mechanism is
-    // proven and the legacy relay form has no remaining caller on this hook.
+    // ProcessEvent is the one function UE4SS's PolyHook also detours, so the MinHook relay must be
+    // followJmp-immune, or the two detours corrupt each other at boot (a reproducible crash whose
+    // dump matched the field cohort byte for byte). Unconditional: the corruptible relay has no
+    // caller on this hook.
     if (!hook::Install(pe, reinterpret_cast<void*>(&ProcessEventDetour),
                        reinterpret_cast<void**>(&g_peTrampoline), /*followJmpImmune=*/true)) {
         return false;
@@ -663,15 +538,13 @@ bool Install() {
     g_hookTarget = pe;
     g_installed = true;
     UE_LOGI("game_thread: ProcessEvent hooked; game-thread dispatcher live");
-    // AFTER the hook is live, never before. Run from the top of Install() this drill
-    // destabilised boot twice (the game died a few seconds in, mid-`cppmod` dispatch
-    // census) -- it does 123 reflection lookups + formatted log writes on the loader
-    // thread while the engine is still building its object graph and before our own
-    // dispatcher exists. The drill is diagnostic-only and env-gated, but a drill that
-    // kills the process teaches the next reader that the latch is broken when it is not.
+    // After the hook is live, never before: run at the top of Install the drill destabilised boot
+    // (123 reflection lookups and formatted log writes on the loader thread while the engine is
+    // still building its object graph), and a drill that kills the process teaches that the latch
+    // is broken when it is not.
     RunAvLatchDrill();
-    // The WP-2 double-detour diagnostic (VOTVCOOP_PE_DIAG=1; no-op otherwise)
-    // lives in pe_diag.cpp; it needs our two TU-locals, both final by this line.
+    // The double-detour diagnostic (VOTVCOOP_PE_DIAG=1) lives in pe_diag.cpp and needs both
+    // TU-locals, final by this line.
     pe_diag::ArmIfEnabled(reinterpret_cast<void*>(&ProcessEventDetour),
                           reinterpret_cast<void*>(g_peTrampoline));
     return true;
@@ -681,30 +554,18 @@ void Uninstall() {
     if (!g_installed) return;
     ClearAllObservers();
     detail::ClearAllInterceptors();
-    // DISABLE, never remove. This line used to be `hook::Uninstall`, and that
-    // function no longer exists -- see hook.h "Retirement" for why. Disable lifts
-    // the patch at ProcessEvent so no NEW dispatch enters us, while the trampoline
-    // stays allocated and intact for whoever is already inside.
+    // Disable, never remove (hook.h, Retirement): the patch at ProcessEvent lifts so no new
+    // dispatch enters, while the trampoline stays allocated for whoever is already inside.
     hook_drill::SampleTrampoline("pre-disable", 0, reinterpret_cast<void*>(g_peTrampoline));
     hook::Disable(g_hookTarget);
     hook_drill::SampleTrampoline("post-disable", 0, reinterpret_cast<void*>(g_peTrampoline));
     g_installed = false;
     g_hookTarget = nullptr;
-    // WHAT THE 2026-05-27 AUDIT (C3) GOT WRONG -- it cleared a live UAF by writing
-    // "UAF is not possible because g_originalPE points at the engine's PE, a
-    // process-lifetime entry point that is never unloaded". Two falsifications:
-    //   OBJECT -- `[V]` minhook/hook.c:634 `*ppOriginal = pHook->pTrampoline`. It is
-    //     MinHook's slot, not the engine's function. The audit read the NAME; the
-    //     name lied. Renamed g_peTrampoline so it cannot be written again.
-    //   MECHANISM+TIMELINE -- the old hook::Uninstall called MH_RemoveHook, and
-    //     `[V]` hook.c:702 -> buffer.c:282 writes `pSlot->pNext` over the slot (a
-    //     MEMORY_SLOT UNIONs that link with the bytes, `[V]` buffer.c:43-50), so the
-    //     prologue was clobbered at offset 0 on the line ABOVE, and the Sleep offered
-    //     as mitigation ran after the damage. Window ZERO, at ~250k dispatches/s.
-    // With Disable: prologue restored so no new dispatch enters, trampoline intact so
-    // an in-flight worker calls through live memory. The pointer is still deliberately
-    // NOT nulled (a racing load could read the null) -- that part of C3 was right; the
-    // Sleep stays as a drain before g_hookTarget goes. Full account: UE4SS_ARC 4c.
+    // g_peTrampoline is MinHook's trampoline slot, not the engine's entry point, and MH_RemoveHook
+    // frees that slot and writes the free-list link over its first bytes, so a removal clobbered
+    // the prologue under an in-flight worker at ~250k dispatches a second, with a window of zero.
+    // With Disable the prologue is restored and the trampoline intact. The pointer is deliberately
+    // not nulled (a racing load could read the null); the Sleep is a drain before the target goes.
     ::Sleep(50);
 }
 
@@ -718,9 +579,8 @@ void SetTransparentBypass(int ms) {
 }
 
 void SetTransparentBypassUntil(void* resumeOnFunction, int maxMs) {
-    // Arm the resume-function BEFORE the deadline so the detour never observes a
-    // live bypass without its release condition. A null resumeOnFunction falls
-    // back to a pure timer (identical to SetTransparentBypass).
+    // The resume function is armed before the deadline, so the detour never sees a live bypass
+    // without its release condition; null falls back to the pure timer.
     g_bypassResumeFn.store(resumeOnFunction, std::memory_order_relaxed);
     g_bypassUntilMs.store(maxMs > 0 ? NowMs() + maxMs : 0, std::memory_order_relaxed);
     UE_LOGW("game_thread: transparent bypass %s (resumeFn=%p, ceiling=%dms) -- detour "
@@ -729,7 +589,7 @@ void SetTransparentBypassUntil(void* resumeOnFunction, int maxMs) {
 }
 
 void SetPerfCounting(bool countDispatches, bool sampleSelfTime) {
-    // Arm self-timing first so that the first counted dispatch can already sample.
+    // Self-timing first, so the first counted dispatch can sample.
     g_peSelfOn.store(countDispatches && sampleSelfTime, std::memory_order_relaxed);
     g_peCountOn.store(countDispatches, std::memory_order_relaxed);
 }
