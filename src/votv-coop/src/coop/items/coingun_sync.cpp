@@ -1,6 +1,8 @@
-// coop/items/coingun_sync.cpp -- THE SALE LANE: a client shoots a prop, the HOST prices and mints.
-// See coop/items/coingun_sync.h for the design and WHY, and coingun_internal.h for the 2026-08-25
-// cut that moved the COLLECT lane (both pickup entries + the host's perform) to coingun_collect.cpp.
+// coop/items/coingun_sync.cpp -- the sale lane: a client shoots a prop, and the host prices and
+// mints. This file is the client half (the gun verb bracket, the coin capture, the
+// commit-or-release barrier, the outbound sale, the result the seller reads) plus the coin
+// birth instrument; the host's receiver is coingun_arbiter.cpp and the pickup is
+// coingun_collect.cpp. See coop/items/coingun_sync.h.
 
 #include "coop/items/coingun_sync.h"
 
@@ -43,9 +45,8 @@ namespace vm = ue_wrap::vm_dispatch;
 
 }  // namespace
 
-// The two verb NAMES both lanes key on. Definitions for the `extern` declarations in
-// coingun_internal.h -- see that header for the cut, and vm_dispatch.h's contract box for why the
-// NAME is the handle and never the id or `active`.
+// The two verb names both lanes key on, declared extern in coingun_internal.h; the name is the
+// handle, never the id or the active flag.
 const wchar_t* const kVerbNameGunUse  = L"playerHandUse_LMB";
 const wchar_t* const kVerbNameCollect = L"actionOptionIndex";
 
@@ -60,47 +61,25 @@ std::atomic<bool> g_verbRegistered{false};
 // Resolved once at Install.
 void* g_finishSpawnFn = nullptr;
 void* g_coinClass     = nullptr;
-void* g_gunClass      = nullptr;   // prop_coingun_C -- the Context gate (C-1); shared with the arbiter
-int32_t g_offCoinSphere  = -1;   // Abaocoin_C::Sphere -- the SIMULATING component (NOT the root)
+void* g_gunClass      = nullptr;   // prop_coingun_C, the context gate; shared with the arbiter
+int32_t g_offCoinSphere  = -1;   // Abaocoin_C::Sphere, the simulating component (not the root)
 void* g_setSimFn      = nullptr;   // UPrimitiveComponent::SetSimulatePhysics
-// (g_libCdo / g_sellObjectFn / g_sellFn / g_offPropMesh / g_gunRef / g_salesRefused / g_sold moved
-//  to coingun_arbiter.cpp with the receiver, 2026-08-25 -- they are HOST-only and were read nowhere
-//  else. See coingun_internal.h for the cut.)
 
-// ---- diagnostics (a 1/s line would be noise; these ride the event logs) -------------------------
+// Diagnostics; they ride the event logs.
 std::atomic<unsigned long long> g_capturedCoins{0};
 std::atomic<unsigned long long> g_barrierDestroyed{0};
 std::atomic<unsigned long long> g_anomalyBirths{0};
 std::atomic<unsigned long long> g_salesSent{0};
-// ---- THE BARRIER QUEUE -------------------------------------------------------------------------
-// Client-side coins captured inside the gun bracket, resolved at the next net-pump Tick. These are
-// world-scoped engine objects crossing a frame boundary, so they are CachedObjRef (CLAUDE.md 4j: a
-// dying world's actors are not kill-flagged until GC purge, measured 44+ s, so slot liveness alone
-// hands out actors of a world that no longer exists). A bare AActor* here would be the exact defect
-// the 2026-08-23 world-stamp arc converted 78 sites away from.
-//
-// v140: THE CAPTURE IS NOW PER-SHOT AND CONDITIONAL, which is the root fix the header had already
-// named and the code had not implemented. The capture used to be UNCONDITIONAL -- it keyed on the
-// gun verb bracket alone -- while the authorization that justifies it was decided LATER and
-// ELSEWHERE. Four client-side paths eat a shot's coins and author no sale at all (the world-load
-// episode return, the R-4a reconcile window, the kerfur capture, and SendSaleForDyingProp's own
-// no-name return), and on every one of them the player lost the coins AND the prop AND got no
-// sentence, which is exactly the principle-8 shape: a local artifact must not be suppressed until
-// the authoritative one is CONFIRMED.
-//
-// So a shot opens a group at the verb bracket, coins land in it, and the group is only committed to
-// destruction if that shot ACTUALLY SENT a sale. An unauthored shot RELEASES its coins rather than
-// eating them.
-//
-// WHAT A RELEASE ACTUALLY DEGRADES TO, stated honestly (audit I-5, 2026-08-25 -- the first version of
-// this comment said "precisely today's single-player behaviour -- no new loss, no phantom", and the
-// collect lane says the opposite about the same coin forty lines away). A released coin is a
-// client-local NON-mirror, so picking it up takes coingun_collect's map-placed branch and credits
-// THIS CLIENT ONLY -- a phantom the host's next balance move erases (residual A13) -- while the
-// prop's own destroy is unchanged and still replicates. So the player keeps the coins and does NOT
-// keep the payment: the release degrades to the pre-A37 LOSS, not to single-player. It is still
-// strictly better than the alternative, which was to lose the prop, the coins AND the explanation --
-// but "strictly better" is the claim, not "no loss".
+// The barrier queue: the client's coins captured inside the gun bracket, resolved at the next
+// pump tick. World-scoped objects crossing a frame boundary, so CachedObjRef. The capture is
+// per shot and conditional: a shot opens a group at the verb bracket, its coins land in it, and
+// the group is destroyed only if that shot sent a sale; a shot that authored nothing (the
+// world-load episode, the reconcile window, the kerfur capture, no name to send) releases its
+// coins rather than eating them, since a local artifact must not be suppressed until the
+// authoritative one is confirmed. A released coin is a client-local non-mirror: picking it up
+// credits this client only, a phantom the host's next balance move erases, while the prop's
+// destroy still replicates. So a release keeps the coins and loses the payment: better than
+// losing the prop, the coins and the explanation, not harmless.
 struct PendingShot {
     std::vector<ue_wrap::CachedObjRef> coins;
     bool authored = false;
@@ -112,7 +91,7 @@ std::vector<PendingShot> g_pendingShots;
 
 }  // namespace
 
-// ---- the four reads the COLLECT lane shares (declared in coingun_internal.h) -------------------
+// The reads the collect lane shares, declared in coingun_internal.h.
 namespace internal {
 
 coop::net::Session* Session() { return LoadSession(); }
@@ -123,10 +102,9 @@ bool IsCoinActor(void* actor) {
     return R::ClassNameOf(actor) == kCoinClassName;   // pre-resolution fallback
 }
 
-// Am I inside THIS verb? The SALE lane's ambient-window read (the collect lane reads `b.ctx` off its
-// own bracket) -- see vm_dispatch.h's contract box for why it is the NAME and not the id or `active`. Pointer-compares first because
-// every caller passes a literal this module registered (RegisterVirtualVerb requires static
-// lifetime, so the pointers are identical), then falls back to a compare for robustness.
+// Inside this verb? The sale lane's ambient read (the collect lane reads its own bracket). A
+// pointer compare first, since every caller passes a literal this module registered, then a
+// string compare.
 bool InVerb(const vm::ActiveVerb& av, const wchar_t* name) {
     if (!av.active || !av.verbName) return false;
     return av.verbName == name || std::wcscmp(av.verbName, name) == 0;
@@ -150,10 +128,9 @@ namespace {
 using internal::IsCoinActor;
 using internal::InVerb;
 
-// ---- 1. COIN BIRTH (client) --------------------------------------------------------------------
-// Func-thunk POST on FinishSpawningActor. Fires MID-BYTECODE inside the gun's still-open bracket:
-// READS ONLY. See THE BARRIER RULE in the header -- an engine call here corrupts, and `sell` also
-// applies an impulse to this very coin after Finish returns.
+// The coin birth: a Func-thunk post on FinishSpawningActor, firing mid-bytecode inside the gun's
+// still-open bracket. Reads only: an engine call here corrupts, and sell applies an impulse to
+// this very coin after Finish returns.
 void OnFinishSpawnPost(void* /*context*/, void* /*sourceObject*/, void* spawned) {
     if (!IsCoinActor(spawned)) return;
 
@@ -167,8 +144,8 @@ void OnFinishSpawnPost(void* /*context*/, void* /*sourceObject*/, void* spawned)
     if (inGunVerb) {
         {
             std::lock_guard<std::mutex> lk(g_pendingMu);
-            // Defensive: the verb ENTRY callback opens the group, but if a coin somehow reaches us
-            // with no group open we open one rather than dropping the capture on the floor.
+            // The verb entry opens the group; a coin arriving with none open gets one rather than
+            // being dropped.
             if (g_pendingShots.empty()) g_pendingShots.emplace_back();
             g_pendingShots.back().coins.emplace_back();
             g_pendingShots.back().coins.back().Set(spawned);   // a read + a stamp; no dispatch
@@ -179,13 +156,12 @@ void OnFinishSpawnPost(void* /*context*/, void* /*sourceObject*/, void* spawned)
         return;
     }
 
-    // Not our shot. A wire materialization of a host coin is legitimate and common; anything else is
-    // a FAIL-OPEN and must be loud, because the two gates key on DIFFERENT things (this one on the
-    // VERB, the collect cancel on MIRROR-NESS), so a wrong or unresolved verb name fails them
-    // INDEPENDENTLY and would leave a client-local coin neither destroyed nor cancelled -- crediting
-    // locally, in silence.
+    // Not our shot. A wire materialisation of a host coin is common; anything else fails open and
+    // must be loud: this gate keys on the verb and the collect cancel on mirror-ness, so a wrong or
+    // unresolved verb name fails them independently and would leave a client-local coin neither
+    // destroyed nor cancelled, crediting locally in silence.
     if (coop::world_actor_sync::IsMaterializingMirror()) return;
-    if (coop::world_load_episode::InEpisode()) return;   // belt: world-rebuild churn is not a signal
+    if (coop::world_load_episode::InEpisode()) return;   // world-rebuild churn is not a signal
 
     g_anomalyBirths.fetch_add(1, std::memory_order_relaxed);
     UE_LOGE("coingun[ANOMALY]: a baocoin_C was born on this CLIENT outside BOTH the gun verb bracket "
@@ -194,35 +170,20 @@ void OnFinishSpawnPost(void* /*context*/, void* /*sourceObject*/, void* spawned)
             "and diverge.", spawned);
 }
 
-// ---- 3. THE GUN VERB ---------------------------------------------------------------------------
-// The COLLECT verb (`actionOptionIndex`) has its own registration and its own callback in
-// coingun_collect.cpp -- `vm_dispatch` is one callback per NAME, and the names differ, so neither
-// lane needs the other's entry point.
+// The gun verb. The collect verb has its own registration and callback in coingun_collect.cpp;
+// vm_dispatch is one callback per name.
 void OnVerbEntry(const vm::Bracket& b) {
-    // v140: OPEN A SHOT GROUP. The birth seam appends to it and the destroy seam marks it authored;
-    // the barrier then destroys the group's coins only if a sale really went out. Before this the
-    // entry callback did nothing at all and the capture was unconditional -- see THE BARRIER QUEUE.
-    //
-    // THE CTX GATE IS NOT OPTIONAL HERE, for the same reason it is not optional in IsInCoinGunVerb:
-    // `vm_dispatch` matches on the verb NAME and `playerHandUse_LMB` is declared by 146 classes, so
-    // without it every knife swing, hacksaw cut and flamethrower burst in the game would open (and
-    // then release) an empty group -- turning the barrier's release WARNING into a false alarm on
-    // every left click. Matching the gate the capture itself uses also keeps the two from drifting.
-    //
-    // READ-ONLY ON `g_gunClass` -- NEVER RESOLVE HERE (audit CRITICAL C-2, 2026-08-25, a defect this
-    // very function introduced). `R::FindClass` is an UNCACHED, negative-unlatched walk of the whole
-    // GUObjectArray with a name render per object, and `prop_coingun_C`'s UClass is not resident in
-    // the ordinary world (`[V]` the gun is placed in 3 of 261 maps) -- so resolving here bought one
-    // full object-array walk on EVERY left click of all 146 of those classes, at click rate,
-    // unthrottled. `Install` already retries the identical resolve inside its ~1 Hz throttle, so this
-    // call could never buy anything the throttle does not deliver within a second.
-    //
-    // What the read-only form costs, stated rather than hidden: for at most one second after the gun
-    // class first becomes resident, a shot opens no group -- its coins land in the defensive group
-    // the birth seam opens, which is never marked authored, so they are RELEASED. That is the safe
-    // direction (the player keeps their coins), and it is also why BOTH this gate and
-    // IsInCoinGunVerb must read without resolving: if one of them resolved mid-bracket the other
-    // would disagree with it inside a single shot, and the destroy seam would mark a stale group.
+    // Open a shot group; the birth seam appends to it, the destroy seam marks it authored, and the
+    // barrier destroys its coins only if a sale went out. The context gate is not optional:
+    // vm_dispatch matches on the verb name, and playerHandUse_LMB is declared by every hand-usable
+    // tool, so without it every knife swing would open and release an empty group. Read-only on the
+    // gun class, never resolved here: FindClass is an uncached full walk with a name render per
+    // object, the gun's class is not resident in the ordinary world, and resolving here once cost a
+    // full walk on every left click. Install retries the resolve inside its 1 Hz throttle. The
+    // cost: for at most a second after the class becomes resident a shot opens no group, its coins
+    // land in the defensive group the birth seam opens and are released, the safe direction; and
+    // both this gate and IsInCoinGunVerb must read rather than resolve, or they could disagree
+    // inside one shot.
     auto* s = LoadSession();
     if (!s || !s->connected() || s->role() != coop::net::Role::Client) return;
     if (!b.ctx || !g_gunClass) return;
@@ -231,7 +192,7 @@ void OnVerbEntry(const vm::Bracket& b) {
     g_pendingShots.emplace_back();
 }
 
-// ---- host helpers ------------------------------------------------------------------------------
+// Host helpers.
 
 const wchar_t* ResultText(coop::net::CoinGunResultCode code) {
     switch (code) {
@@ -255,12 +216,10 @@ const wchar_t* ResultText(coop::net::CoinGunResultCode code) {
 }  // namespace
 
 void PrepareCoinMirror(void* coin) {
-    // I-5 (audit 2026-08-24). The first draft called E::SetActorSimulatePhysics, which applies to the
-    // ROOT component -- and `[V]` Abaocoin_C declares `collect` (USphereComponent) FIRST, `baocoin`
-    // (mesh) second, and `Sphere` (the one shipping bSimulatePhysics=True) THIRD. The BP root is
-    // conventionally the first-declared component, so that call would have logged physics-off=1 while
-    // `Sphere` kept simulating and fought the pose drive. Target the component BY NAME instead: a
-    // UActorComponent is a UObject, so it takes a normal reflected call.
+    // The simulating component by name: Abaocoin_C declares the collect sphere first, the mesh
+    // second and `Sphere` (the one shipping with physics on) third, so a root-component call would
+    // log physics-off while Sphere kept simulating and fought the pose drive. A component is a
+    // UObject, so it takes a normal reflected call.
     if (!coin) return;
     if (g_offCoinSphere < 0 && g_coinClass)
         g_offCoinSphere = R::FindPropertyOffset(g_coinClass, L"Sphere");
@@ -271,17 +230,10 @@ void PrepareCoinMirror(void* coin) {
     }
     void* sphere = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(coin) + g_offCoinSphere);
     if (!sphere) return;
-    // RESOLVE ON THE DECLARING CLASS (item 10, v140). This used to ask
-    // `FindFunction(ClassOf(sphere), L"SetSimulatePhysics")`, and `[V]` that could never succeed:
-    // `R::FindFunction` matches `OuterOf(obj) == owningClass` EXACTLY -- it does not climb
-    // SuperStruct (reflection.cpp:468-479) -- while `[V]` `SetSimulatePhysics` is declared on
-    // UPrimitiveComponent (CXXHeaderDump/Engine.hpp:17349, inside `class UPrimitiveComponent : public
-    // USceneComponent`) and the component here is a USphereComponent. Worse, FindFunction's miss is a
-    // FULL GUObjectArray walk, and this runs once per mirrored coin -- ~47 per sale -- so the failure
-    // was not merely silent, it was the most expensive thing in the lane. Ask the class that actually
-    // owns the function, and latch the negative so a future resolve failure costs one walk, not one
-    // per coin forever. (The general "FindFunction should walk SuperStruct" item stays on the backlog;
-    // changing it globally would alter identity semantics at every other call site.)
+    // Resolved on the declaring class: FindFunction matches the owning class exactly and does not
+    // climb, and SetSimulatePhysics is declared on UPrimitiveComponent, so asking the sphere's own
+    // class could never succeed, and each miss was a full walk, once per mirrored coin. The
+    // negative is latched, so a failure costs one walk.
     static bool sSetSimResolveFailed = false;
     if (!g_setSimFn && !sSetSimResolveFailed) {
         if (void* primCls = R::FindClass(L"PrimitiveComponent"))
@@ -302,23 +254,19 @@ void PrepareCoinMirror(void* coin) {
             "mirror must not also simulate)", coin, sphere, ok ? 1 : 0);
 }
 
-// ---- v143 (B3): the coin's birth value ---------------------------------------------------------
+// The coin's birth value.
 namespace {
 
-// Per-UClass offset caches. The `prop.cpp:377 ResolveChipTypeOffset` idiom: cache the NEGATIVE too,
-// so a class that genuinely lacks the property costs one walk rather than one per actor -- a sale
-// mints ~47 coins and every one of them lands here.
+// Per-class offset caches, the negative cached too, so a class that lacks the property costs
+// one walk rather than one per actor; a sale mints dozens of coins and every one lands here.
 std::mutex g_birthMu;
-std::unordered_map<void*, int32_t> g_pointsOffByClass;   // UClass* -> `points` offset (-1 = absent)
-std::unordered_map<void*, int32_t> g_meshOffByClass;     // UClass* -> `baocoin` component offset
+std::unordered_map<void*, int32_t> g_pointsOffByClass;   // UClass* -> the points offset (-1 = absent)
+std::unordered_map<void*, int32_t> g_meshOffByClass;     // UClass* -> the mesh component offset
 void* g_getMaterialFn = nullptr;                          // UPrimitiveComponent::GetMaterial
-bool  g_getMaterialResolveFailed = false;                 // latch the negative (a miss is a full walk)
+bool  g_getMaterialResolveFailed = false;                 // the negative latched; a miss is a full walk
 
-// The declaring class, resolved ONCE for this file. `PrepareCoinMirror` kept its own latch for
-// `SetSimulatePhysics` and this function grew a second one for `GetMaterial`; on a client's FIRST
-// mirrored coin both fired back to back, so ONE class name cost TWO full GUObjectArray walks
-// (audit M-4, 2026-08-25). Positive and negative both latched -- an unlatched miss is how a memo
-// becomes a loop in exactly the world where the feature is absent.
+// The declaring class, resolved once for this file, positive and negative both latched: two
+// functions each resolving it cost two full walks on a client's first mirrored coin.
 void* g_primCompCls = nullptr;
 bool  g_primCompResolveFailed = false;
 
@@ -348,9 +296,8 @@ int32_t MeshOffsetFor(void* cls) {
     std::lock_guard<std::mutex> lk(g_birthMu);
     auto it = g_meshOffByClass.find(cls);
     if (it != g_meshOffByClass.end()) return it->second;
-    // BY NAME, and the name is `baocoin`. `[V]` the ubergraph says `baocoin.SetMaterial(0, ...)` at all
-    // three branch arms; `collect` is the BP root and `Sphere` is the simulating body. I-5 already paid
-    // for aiming at the wrong component once in this very file.
+    // By name, and the name is `baocoin`: the ubergraph sets the material on that component on
+    // every branch; `collect` is the root and `Sphere` the simulating body.
     const int32_t off = R::FindPropertyOffset(cls, L"baocoin");
     g_meshOffByClass[cls] = off;
     return off;
@@ -358,10 +305,9 @@ int32_t MeshOffsetFor(void* cls) {
 
 }  // namespace
 
-// The class precondition, owned HERE rather than by the four external `classW == L"baocoin_C"` gates
-// (audit M-7). These take a bare `void*` and resolve `points` by NAME, so without this a caller could
-// read -- and `SeedCoinMirror` could WRITE -- the `points` of any other class that happens to declare
-// one. Four correct external gates are a convention; this is the invariant.
+// The class precondition, owned here rather than by the callers' gates: these take a bare
+// pointer and resolve `points` by name, so without it a caller could read, and SeedCoinMirror
+// write, the points of any class that declares one.
 bool IsCoinClass(void* cls) {
     if (!cls) return false;
     return cls == g_coinClass || R::NameEquals(R::NameOf(cls), kCoinClassName);
@@ -373,10 +319,9 @@ bool IsCoinActor_(void* actor) {
 
 int32_t ReadCoinPoints(void* coin) {
     if (!IsCoinActor_(coin)) return -1;
-    // NOTE the spelling: `[V]` the property is declared `Points` (capital P) in the CXX dump, and this
-    // asks for `points`. It resolves ONLY because `FindPropertyOffset` compares with `_wcsicmp`
-    // (`reflection_props.cpp:92`). That is load-bearing, not decorative -- a future case-sensitive
-    // resolver would silently return -1 here and every mirrored coin would go back to bronze.
+    // The spelling: the property is declared `Points`, and this asks for `points`; it resolves only
+    // because FindPropertyOffset compares case-insensitively. Load-bearing: a case-sensitive
+    // resolver would return -1 here and every mirrored coin would fall back to the default colour.
     const int32_t off = PointsOffsetFor(R::ClassOf(coin));
     if (off < 0) return -1;
     return *reinterpret_cast<const int32_t*>(static_cast<const uint8_t*>(coin) + off);
@@ -407,13 +352,9 @@ void DescribeCoin(void* coin, int32_t& outPoints, std::wstring& outMaterial) {
     void* mesh = *reinterpret_cast<void* const*>(static_cast<const uint8_t*>(coin) + meshOff);
     if (!mesh) return;
 
-    // Declared on UPrimitiveComponent; `R::FindFunction` matches the OWNING class EXACTLY and does not
-    // climb SuperStruct, so ask the declarer -- the same correction v140 item 10 applied to
-    // SetSimulatePhysics in this file. The resolve happens OUTSIDE the lock (audit M-2: it is a full
-    // GUObjectArray walk and it is idempotent, so holding a mutex across it buys nothing), and the
-    // result is READ into a local under the lock (audit M-1: `g_getMaterialFn` is a plain void* and
-    // reading it unlocked while another thread may write it is UB by the letter, benign only because
-    // every caller today is on the game thread).
+    // Declared on UPrimitiveComponent, and FindFunction does not climb, so the declarer is asked.
+    // The resolve happens outside the lock (a full walk, and idempotent), and the result is read
+    // into a local under it, since the pointer is plain storage.
     void* getMatFn = nullptr;
     {
         std::lock_guard<std::mutex> lk(g_birthMu);
@@ -448,18 +389,11 @@ void DescribeCoin(void* coin, int32_t& outPoints, std::wstring& outMaterial) {
 bool IsInCoinGunVerb() {
     const vm::ActiveVerb av = vm::CurrentThreadVerb();
     if (!InVerb(av, kVerbNameGunUse)) return false;
-    // THE CORRECTNESS GATE (C-1, audit 2026-08-24). `vm_dispatch` matches on the verb NAME alone and
-    // says so: "any further class/authority discrimination is the CONSUMER's job". `playerHandUse_LMB`
-    // is declared by 146 classes in the CXX dump -- prop_knife, prop_hacksaw, prop_flamethrower,
-    // prop_garbageGun, prop_arirDisint, prop_toolgun... Without this check a client destroying a keyed
-    // prop with ANY of them would author a sale and the host would MINT COINS FOR IT: a free-money
-    // path in ordinary play, manufacturing the very defect this lane exists to close. The header
-    // promised this check from the first draft and the code did not have it, which is
-    // `[[lesson-false-security-comment-worse-than-none]]` in its purest form.
-    // READ-ONLY on g_gunClass -- see OnVerbEntry for why neither gate may resolve here. This one is
-    // colder (it is reached only from the destroy seam, for a keyed prop actually dying) but it must
-    // agree with OnVerbEntry within a single bracket, and the only way to guarantee that is for both
-    // to read the value Install publishes rather than race to produce it.
+    // The correctness gate: vm_dispatch matches on the verb name alone, and playerHandUse_LMB is
+    // declared by every hand-usable tool (the knife, the hacksaw, the flamethrower, the toolgun);
+    // without this a client destroying a keyed prop with any of them would author a sale and the
+    // host would mint coins for it. Read-only on the gun class, as in OnVerbEntry: the two gates
+    // must agree within a single bracket, so both read the value Install publishes.
     if (!av.ctx || !g_gunClass) return false;
     return R::ClassOf(av.ctx) == g_gunClass;
 }
@@ -471,9 +405,9 @@ void SendSaleForDyingProp(const std::wstring& key, uint32_t elementId) {
     const uint32_t eid =
         (elementId == static_cast<uint32_t>(coop::element::kInvalidId)) ? 0u : elementId;
     if (key.empty() && eid == 0u) {
-        // B1: this is the ONLY remaining "nothing to name" case, and it is genuinely empty -- a
-        // keyless prop with no element row is unnameable in BOTH identity domains. v137 reached
-        // this branch for every ordinary keyed prop because it only ever looked at the eid.
+        // The one "nothing to name" case: a keyless prop with no element row is unnameable in both
+        // identity domains. If this line appears for an ordinary keyed prop, the destroy seam's key
+        // read is the defect.
         UE_LOGW("coingun[client sale]: the gun's victim has neither a save key nor an element id -- "
                 "nothing to name, so no sale is authored (the destroy still goes, i.e. today's "
                 "behaviour). If this line appears for an ordinary keyed prop, the destroy seam's "
@@ -487,9 +421,9 @@ void SendSaleForDyingProp(const std::wstring& key, uint32_t elementId) {
     p.elementId = eid;
     s->SendReliable(coop::net::ReliableKind::CoinGunSell, &p, sizeof(p));
     g_salesSent.fetch_add(1, std::memory_order_relaxed);
-    // v140: THIS is what authorizes the barrier to destroy the coins this shot spawned. It is set
-    // only after the send actually happened, on the group this shot opened -- so every path that
-    // returns before here (all four of them) leaves its coins to be RELEASED, not eaten.
+    // This authorises the barrier to destroy the coins this shot spawned: set only after the send
+    // happened, on the group this shot opened, so every path that returned before here leaves its
+    // coins to be released.
     {
         std::lock_guard<std::mutex> lk(g_pendingMu);
         if (!g_pendingShots.empty()) g_pendingShots.back().authored = true;
@@ -500,16 +434,12 @@ void SendSaleForDyingProp(const std::wstring& key, uint32_t elementId) {
 }
 
 void Tick() {
-    // THE HOST'S KEY INDEX, PERIODICALLY. Every NoSuchProp refusal is a lookup into this
-    // index, and the refusal alone cannot say whether the key was WRONG or the index was
-    // EMPTY -- which is exactly the question the 2026-09-01 field report left open (three
-    // sales refused in a row, `eid=0` on each, and the host's log wiped before it was read).
-    // Placed on the TICK and not on the teardown summary because a killed process never
-    // reaches a teardown, so the number would be missing from every automated run.
+    // The host's key index, periodically: every NoSuchProp refusal is a lookup into it, and the
+    // refusal alone cannot say whether the key was wrong or the index empty. On the tick rather
+    // than the teardown summary, since a killed process never reaches a teardown.
     {
-        // PERIODIC, not one-shot. A one-shot fired on the first connected tick and read 28
-        // while the world was still loading -- a number that says nothing about the state a
-        // sale is actually judged against, and which read the same before and after the fix.
+        // Periodic: a one-shot fired on the first connected tick and read the index while the world
+        // was still loading, a number that says nothing about the state a sale is judged against.
         static uint64_t sNextMs = 0;
         const uint64_t nowMs = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -522,19 +452,15 @@ void Tick() {
                     coop::prop_element_tracker::KeyIndexSize());
         }
     }
-    // THE HOST HALF: erase consumed artifacts whose prop has died. This is what gives the
-    // consumption guard a real lifetime -- v137's comment CLAIMED the map self-cleaned while the
-    // map was erased nowhere at all, so it only ever grew. A CachedObjRef reads dead as null,
-    // including "the world moved on" (CLAUDE.md 4j), so this is exactly the liveness test the guard
-    // itself uses. Throttled to ~1 Hz at the 125 Hz pump rate; the map holds only props that were
-    // sold and have not died yet, which is normally zero or one entry.
+    // The host half: consumed artifacts whose prop has died are erased, the consumption guard's
+    // lifetime. About 1 Hz at the pump rate; the map normally holds none or one entry.
     {
         static uint32_t sSweepN = 0;
         if ((sSweepN++ % 125u) == 0u) internal::SweepSoldSet();
     }
 
-    // THE BARRIER, v140: commit-or-release, per shot. The bracket that opened each group completed
-    // synchronously on this same thread before we got here, so `authored` is final by now.
+    // The barrier: commit or release, per shot. The bracket that opened each group completed
+    // synchronously on this thread before this runs, so `authored` is final.
     std::vector<PendingShot> shots;
     {
         std::lock_guard<std::mutex> lk(g_pendingMu);
@@ -544,10 +470,8 @@ void Tick() {
     size_t destroyed = 0, released = 0, releasedShots = 0;
     for (auto& shot : shots) {
         if (!shot.authored) {
-            // NO SALE WENT OUT for this shot, so there is no authoritative coin to defer to. Leave
-            // ours alone: they credit locally, which is exactly single-player behaviour. Destroying
-            // them here is what made the four principle-8 paths cost the player the prop AND the
-            // coins AND any explanation.
+            // No sale went out for this shot, so there is no authoritative coin to defer to; ours
+            // are left alone, and they credit locally.
             released += shot.coins.size();
             ++releasedShots;
             continue;
@@ -595,18 +519,17 @@ void OnReliableResult(const uint8_t* payload, int len) {
 
     std::wstring line;
     if (code == coop::net::CoinGunResultCode::Sold) {
-        // The PRICE, not a bare ack. `[V]` getPriceMultiplier is per-instance and divergent
-        // (prop_batts by energy, prop_food by uses/ripeness, prop_cementBag, prop_garbBagRoll), so
-        // the toast this player's own local `sell` just printed can legitimately name a DIFFERENT
-        // number than the host actually minted. Saying the host's number makes that visible.
+        // The price, not a bare acknowledgement: the price multiplier is per instance and can
+        // diverge (a battery by its charge, food by its uses), so the toast the player's own local
+        // sell printed can name a different number than the host minted, and saying the host's
+        // makes that visible.
         line = L"sold it for " + std::to_wstring(static_cast<long long>(r.points)) +
                L" points (the host's price)";
     } else {
         line = ResultText(code);
     }
-    // AnnounceDirect, not Announce: this is functional feedback about the player's own action, not
-    // cosmetic ambience, so the ui.chat.peer_actions toggle must not be able to hide it (the
-    // order_sync refusal takes the same seam for the same reason).
+    // AnnounceDirect, not Announce: functional feedback about the player's own action, which the
+    // peer-actions toggle must not be able to hide.
     coop::peer_action_feed::AnnounceDirect(
         static_cast<uint8_t>(coop::players::Registry::Get().LocalPeerId()), line);
     UE_LOGI("coingun[client]: CoinGunResult code=%u points=%d -- '%ls'",
@@ -614,9 +537,7 @@ void OnReliableResult(const uint8_t* payload, int len) {
 }
 
 void OnDisconnect() {
-    // The free measurement: a session that ends having measured nothing is the failure
-    // `[[lesson-your-own-session-end-summary-is-a-free-measurement]]` exists to prevent. One grep
-    // of this line answers "did this lane do anything at all this run" without reading the body.
+    // The session summary: one grep answers whether this lane did anything at all this run.
     UE_LOGI("coingun[sale]: SESSION SUMMARY -- salesSent=%llu coins{captured=%llu "
             "barrierDestroyed=%llu anomalyBirths=%llu} pendingShots=%zu",
             g_salesSent.load(std::memory_order_relaxed),
@@ -626,10 +547,8 @@ void OnDisconnect() {
             g_pendingShots.size());
     internal::OnDisconnectCollect();   // the collect lane dumps its own half
 
-    // Every WORLD-scoped thing goes. v137 had no OnDisconnect at all, so a reconnecting peer carried
-    // a stale sold-set and a pending-kill list of actors belonging to a dead world into the new one.
-    // The resolved UClass / UFunction / CDO pointers are NOT world-scoped and stay (CLAUDE.md 4j);
-    // the counters stay monotonic on purpose, so the summary above spans the whole process.
+    // Every world-scoped thing goes; the resolved class, function and CDO pointers stay, and the
+    // counters stay monotonic so the summary spans the whole process.
     internal::OnDisconnectArbiter();   // the host half clears its own world-scoped state
     {
         std::lock_guard<std::mutex> lk(g_pendingMu);
@@ -639,17 +558,13 @@ void OnDisconnect() {
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
-    // BOTH lanes must be done before this stops running. The two have DIFFERENT dependencies -- the
-    // sale lane needs FinishSpawningActor + sellObject, the collect lane the coin's overlap BndEvt --
-    // so either can resolve first, and gating on the sale lane's latch alone would silently strand
-    // the collect lane forever on any tick where its own resolve had not landed yet.
+    // Both lanes must be done before this stops running: the sale lane needs FinishSpawningActor
+    // and sellObject, the collect lane the coin's overlap delegate, so either can resolve first,
+    // and gating on one latch alone would strand the other.
     if (g_installed.load(std::memory_order_acquire) && internal::CollectInstalled()) return;
-    // C-4 (audit 2026-08-24). This runs at the 125 Hz pump rate, and every resolve below is a linear
-    // GUObjectArray walk with a name render per entry. The g_installed latch only helps AFTER success;
-    // in a world where baocoin_C's UClass is not resident (it loads on demand with the gun asset) this
-    // would burn up to five full walks per tick, forever, for every player in every session. Bound the
-    // retry to ~1 Hz -- the same shape wisp_attack_sync.cpp:277 already carries, added there by a
-    // 2026-06-14 audit as its own CRITICAL.
+    // This runs at the pump rate, and every resolve below is a full walk with a name render per
+    // entry; in a world where the coin class is not resident (it loads with the gun asset) that
+    // would be several walks per tick, so the retry is bound to about 1 Hz.
     static uint32_t sResolveN = 0;
     if ((sResolveN++ % 125u) != 0u) return;
 
@@ -658,8 +573,8 @@ void Install(coop::net::Session* session) {
     internal::InstallArbiter();   // the HOST half's own resolves, inside this same 1 Hz throttle
     if (!g_finishSpawnFn) g_finishSpawnFn = R::FindFunction(R::FindClass(L"GameplayStatics"),
                                                             L"FinishSpawningActor");
-    // The gun verb resolves its FName on the game thread; drive the pump every Install. The COLLECT
-    // verb has its own registration in the collect lane (one vm_dispatch callback per NAME).
+    // The gun verb resolves its name on the game thread, so the pending resolves are driven every
+    // Install; the collect verb has its own registration in the collect lane.
     if (!g_verbRegistered.load(std::memory_order_acquire)) {
         if (vm::RegisterVirtualVerb(kVerbNameGunUse, kVerbCoinGunUse, &OnVerbEntry)) {
             g_verbRegistered.store(true, std::memory_order_release);
@@ -669,16 +584,15 @@ void Install(coop::net::Session* session) {
     }
     vm::TickResolvePending();
 
-    // Drive the collect lane's own install AFTER our class resolve above (it reads CoinClass()) and
-    // OUTSIDE our early-return below, so a sale-lane resolve that never lands cannot silently keep
-    // the collect lane -- a different subsystem with different dependencies -- from installing.
+    // The collect lane's install runs after the class resolve above (it reads CoinClass) and
+    // outside the early return below, so a sale-lane resolve that never lands cannot keep it from
+    // installing.
     internal::InstallCollect();
 
     if (g_installed.load(std::memory_order_acquire)) return;          // sale lane already done
-    // NOTE (2026-08-25, preserved verbatim across the arbiter extraction, NOT introduced by it):
-    // this gates the CLIENT barrier's install on the HOST arbiter's sellObject resolve. The two have
-    // nothing to do with each other, so a client whose lib_C CDO never resolves gets no barrier at
-    // all. Kept because an extraction commit does not change behaviour; filed as its own item.
+    // The client barrier's install is gated on the host arbiter's sellObject resolve, which it does
+    // not depend on; a client whose lib_C CDO never resolves gets no barrier. Filed as its own
+    // item.
     if (!g_coinClass || !g_finishSpawnFn || !internal::ArbiterResolved()) return;  // retry next tick
 
     if (!ue_wrap::ufunction_hook::InstallPostHook(g_finishSpawnFn, &OnFinishSpawnPost)) {
