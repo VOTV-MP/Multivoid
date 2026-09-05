@@ -1,7 +1,6 @@
-// harness/session_runtime.cpp -- the coop-session lifecycle driver on the
-// TimelineThread: owns g_session + world boot + session bringup + the unified
-// play loop. Extracted verbatim from harness/harness.cpp (2026-07-19 s27 cut);
-// interfaces + the boundary rationale in harness/session_runtime.h.
+// harness/session_runtime.cpp -- the coop session's lifecycle driver on the TimelineThread: it
+// owns g_session, boots the story world, brings a session up, and runs the one play loop for
+// the env-configured and the menu paths (harness/session_runtime.h states the boundary).
 
 #include "harness/session_runtime.h"
 
@@ -75,68 +74,38 @@ namespace GT = ue_wrap::game_thread;
 
 namespace cfg = coop::config;
 
-// The single coop networking session (Phase 3). Host binds the LAN port;
-// client targets the host. Drives the remote puppet from received pose
-// snapshots and sends the local player's pose. Off unless a scenario
-// starts it.
+// The single networking session; off until a scenario or a menu action starts it.
 coop::net::Session g_session;
 
-// Phase 2 host moderation: the accept predicate wired into the host Session
-// (Session::SetAcceptFilter). Returns true to allow an incoming IP, false to
-// reject a banned one. A plain free function so it converts to the
-// Session::AcceptFilterFn function pointer. Read on the net thread; reads only
-// coop::ban_list's own mutexed state.
+// The host's accept predicate (Session::SetAcceptFilter): a plain function, so it converts to the
+// function pointer; read on the net thread, touching only ban_list's own mutexed state.
 bool BanAcceptFilter(const char* remoteIp) {
     return !coop::ban_list::IsBanned(remoteIp);
 }
 
 
-// Puppet array + per-slot edge state + held-prop edge detector + the local-
-// pose read + the per-tick observer orchestrator + the main NetPumpTick body
-// extracted to coop/net_pump.cpp (PR-4.13). Harness reaches the puppets via
-// coop::puppet_drive::Puppet(slot) and calls coop::net_pump::Tick(g_session)
-// from the timeline tick lambdas; coop::net_pump::OnSessionStart() resets
-// edge-detector state on each session.Start.
-
-// Standalone shutdown hooks for the timeline tick. NOT gated on the local
-// player being live -- runs regardless of possession state. Idempotent.
-// Kept in harness because the HWND subclass + window title must work
-// BEFORE the local player has been possessed (e.g. on OMEGA splash where
-// the user might X-close before gameplay).
+// The shutdown hooks, run every tick regardless of possession and idempotent: the HWND subclass
+// and the window title must work before the local player exists (a close on the splash).
 void TickShutdownHooks() {
     coop::shutdown::Install(&g_session);
     coop::shutdown::UpdateWindowTitle();
-    // The level-travel seam (docs/DEATH_ARC.md). Armed HERE -- unconditionally, alongside
-    // the other install that must work before anything else is ready -- and NOT from
-    // net_pump's tick, for a reason a run caught rather than a preference: installing it
-    // lazily from the pump means it only ever exists when a session is running, so the
-    // single-player guarantee would rest on the hook's ABSENCE instead of on the veto's own
-    // session test, and the negative-control run that is supposed to prove the guarantee
-    // would be grading a hook that was never there ([[lesson-an-instrument-blind-to-the-
-    // phenomenon-always-passes]]). The detour is a pure pass-through until a death arms it,
-    // so arming it always costs one atomic load on a function that fires a handful of times
-    // per session. Idempotent; safe off the game thread (an AOB scan and a MinHook install).
+    // The level-travel seam is armed here, unconditionally, not lazily from the pump: armed only
+    // while a session runs, the single-player guarantee would rest on the hook's absence rather
+    // than on the veto's own session test, and a negative-control run would grade a hook that was
+    // never there. The detour is a pass-through until a death arms it, one atomic load on a rare
+    // function. Idempotent; safe off the game thread.
     coop::death_revive::Install(&g_session);
-    // ...and the watchdog that covers a failure OF the pump (see its header comment).
+    // And the watchdog that covers a failure of the pump itself.
     coop::death_revive::Watchdog();
 }
 
-// NetPumpTick body extracted to coop/net_pump.cpp (PR-4.13). Harness call
-// sites in the timeline tick lambdas dispatch via
-// coop::net_pump::Tick(g_session) instead.
-
 void Post(GT::Task t) { GT::Post(std::move(t)); }
 
-// Per-tick pump-composite coalescing (v56 menu-window fix, 2026-06-10). The
-// TimelineThread posts the coop pump composite at 60 Hz UNCONDITIONALLY; when
-// the game thread drains slower (a blocking world load, a menu-window tick that
-// was made expensive by a bug), the queue grows without bound -- the measured
-// 35 s connect->Request lag was exactly this backlog (60 Hz posted vs ~7 Hz
-// drained). Bound it: skip posting while the previously posted composite has
-// not RUN yet. Timestamp (not a bool latch) so a composite dropped by a stalled
-// /bypassed pump self-heals after kPumpRepostMs instead of wedging the pump
-// forever. Composites are idempotent per-tick logic, so skipped posts are not
-// lost work -- the next one reads the same current state.
+// Pump-composite coalescing: the TimelineThread posts the composite at 60 Hz, and when the game
+// thread drains slower (a blocking world load) the queue grew without bound (a measured 35 s
+// connect-to-request lag). Posting is skipped while the previous composite has not run; a
+// timestamp rather than a latch, so a composite dropped by a stalled pump self-heals after
+// kPumpRepostMs. Composites are idempotent per-tick logic, so a skipped post is not lost work.
 std::atomic<unsigned long long> g_pumpPostedAtMs{0};  // 0 = none in flight
 constexpr unsigned long long kPumpRepostMs = 500;
 
@@ -154,11 +123,9 @@ void PostPumpComposite(Body&& body) {
 
 }  // namespace
 
-// Spawn the 2nd player the INSTANT the local mainPlayer_C exists -- no fixed
-// timer. Polls on the game thread (engine state can only be read there) every
-// ~100 ms; the moment the local player is present, spawns and returns. The shared
-// flag is a shared_ptr so it outlives the worker loop even if a posted check is
-// still queued (no use-after-free).
+// Spawn the second player the moment the local mainPlayer_C exists: a ~100 ms poll on the game
+// thread (engine state is read only there). The flag is a shared_ptr so it outlives the loop if
+// a posted check is still queued.
 void SpawnSecondPlayerWhenReady() {
     UE_LOGI("play: waiting for STORY gameplay, spawn 2nd player the instant it's ready");
     for (int i = 0; i < 1200; ++i) {  // ~120 s safety cap
@@ -179,10 +146,9 @@ void SpawnSecondPlayerWhenReady() {
                 }
                 state->store(1); return;
             }
-            // A mainPlayer_C ALSO exists at the menu (the 'preLoad' world) sitting
-            // at the ORIGIN. Spawning against it puts the puppet in the menu world,
-            // which the level load then destroys -> "no one spawns". Gate on the
-            // player being placed in the real level: a non-origin location.
+            // A mainPlayer_C also exists at the menu (the preLoad world), at the origin; a puppet
+            // spawned against it lands in the menu world, which the level load then destroys. Gate
+            // on a non-origin location.
             const ue_wrap::FVector p = ue_wrap::engine::GetActorLocation(local);
             if (std::abs(p.X) + std::abs(p.Y) + std::abs(p.Z) < 100.f) {
                 if (diag) UE_LOGI("play[wait %d]: mainPlayer_C @ORIGIN (%.0f,%.0f,%.0f) -- waiting for real gameplay",
@@ -200,41 +166,32 @@ void SpawnSecondPlayerWhenReady() {
             return;
         }
         if (s == 3) UE_LOGW("play: spawn attempt failed; retrying");
-        // No sandbox `open` fallback: coop targets STORY mode, loaded via the save
-        // system (LoadStorySave), never the sandbox map. We just wait for gameplay.
+        // No sandbox fallback: coop targets story mode through the save system.
         ::Sleep(100);  // local player not in world yet -> poll again
     }
     UE_LOGW("play: gave up waiting for local mainPlayer_C");
 }
 
-// Boot STORY gameplay (the coop target). LoadStorySave (re)issues `open untitled_1`
-// each tick while at preLoad/OMEGA/menu (a single early open during preLoad is
-// dropped -> must retry) and returns true once gameplay is reached; ~1.5 s/tick
-// throttles the opens. Blocks (worker thread) until loaded or the ~120 s cap.
-// `forceFresh` forces the BLANK New Game path regardless of the ini -- the menu-mode
-// browser CLIENT join's FALLBACK (host had no save / transfer failed).
-// `slotOverride` (v56 save-transfer): load THIS slot instead of the env/ini one --
-// the menu-mode join loads the downloaded zcoop_<pid> slot; `forceGameMode` threads
-// the host's wire-carried mode (the zcoop_ prefix can't prefix-match one).
+// Boot story gameplay: LoadStorySave re-issues the open each tick while still at the splash or
+// the menu (a single early open is dropped) and returns true once gameplay is reached; ~1.5 s
+// between opens, blocking this worker until loaded or the ~120 s cap. `forceFresh` forces the
+// blank New Game path (the menu-mode join's fallback); `slotOverride` loads that slot (the
+// downloaded coop slot), with `forceGameMode` carrying the host's mode, since the zcoop_ prefix
+// matches none.
 bool BootStorySaveBlocking(bool forceFresh, const wchar_t* slotOverride,
                            int forceGameMode) {
-    // FRESH-BOOT (2026-06-04, project-ephemeral-client-host-authoritative-world): a BLANK New
-    // Game (StartFreshGame) instead of loading a save slot is the deterministic baseline the
-    // host's connect-snapshot mirrors onto. Driven by `forceFresh` (the menu-mode client join,
-    // 2026-06-06), the env override VOTVCOOP_FRESH=1 (the test launcher forces the CLIENT fresh
-    // every run -- mp.py sets it per role), OR the `fresh_boot=1` ini test gate.
-    // fresh_boot rides the registry row (env twin VOTVCOOP_FRESH inside
-    // ResolveFlag; mp.py only ever sets it to "1").
+    // A blank New Game is the deterministic baseline the host's snapshot mirrors onto; chosen by
+    // `forceFresh`, by VOTVCOOP_FRESH=1 (the test launcher sets it for the client) or by the
+    // fresh_boot ini row.
     const bool freshBoot =
         !slotOverride && (forceFresh || cfg::ResolveFlag(coop::config_registry::rows::fresh_boot));
-    // STORY save slot: an explicit override (the v56 coop slot) > env VOTVCOOP_SAVE (the test
-    // launcher pins the HOST's save per run -- mp.py sets it) > multivoid.ini "save=<slot>" >
-    // default s_may2026. Coop targets story mode, so we never boot the sandbox map fresh.
+    // The save slot: an explicit override, else the VOTVCOOP_SAVE / ini `save` row (the test
+    // launcher pins the host's per run), else the default.
     std::wstring slot;
     if (slotOverride) {
         slot = slotOverride;
     } else {
-        // env VOTVCOOP_SAVE rides the row inside ResolveString (same var; arc 3).
+        // VOTVCOOP_SAVE rides the row inside ResolveString.
         std::string slotA = cfg::ResolveString(coop::config_registry::rows::save);
         slot.assign(slotA.begin(), slotA.end());  // ASCII slot name
     }
@@ -252,10 +209,8 @@ bool BootStorySaveBlocking(bool forceFresh, const wchar_t* slotOverride,
         });
         while (st->load() == 0) ::Sleep(5);
         if (st->load() == 2) {
-            // v56: a non-fresh, non-override load (env/ini path) is the slot this
-            // process would SERVE if it hosts -- remember it for the save transfer.
-            // (The browser Host-Game picker sets its own in DriveHostBootIfPending;
-            // the zcoop override is a CLIENT load and never serves.)
+            // A non-fresh, non-override load is the slot this process would serve if it hosts; the
+            // picker sets its own, and the coop override is a client load that never serves.
             if (!freshBoot && !slotOverride) coop::save_transfer::SetHostSlot(slot);
             return true;
         }
@@ -267,13 +222,11 @@ bool BootStorySaveBlocking(bool forceFresh, const wchar_t* slotOverride,
 
 namespace {
 
-// v56: the menu-mode join's WORLD boot -- wait for the save transfer (the session
-// is already connecting/connected at the menu), then load the downloaded zcoop
-// slot; any failure falls back to the pre-v56 fresh-boot baseline (the true-up
-// handles it, just heavier). Runs on the TimelineThread and blocks it exactly
-// like the old pre-connect fresh boot did -- which means RunPlayLoop's abort
-// branch cannot run meanwhile, so the Cancel button / cover-timeout / dead
-// session are drained HERE (mirroring that branch's client-session reaction).
+// The menu-mode join's world boot: wait for the save transfer (the session is already connecting
+// at the menu), then load the downloaded slot; any failure falls back to the fresh-boot baseline,
+// which the true-up handles more heavily. It blocks the TimelineThread, so RunPlayLoop's abort
+// branch cannot run meanwhile and the Cancel, the cover timeout and a dead session are drained
+// here.
 void DriveMenuModeJoinWorldBoot() {
     namespace ST = coop::save_transfer;
     const ULONGLONG t0 = ::GetTickCount64();
@@ -291,26 +244,19 @@ void DriveMenuModeJoinWorldBoot() {
             UE_LOGW("harness: save transfer timed out (120 s) -- falling back to a fresh world");
             break;
         }
-        // Feed the loading screen the DOWNLOAD's real progress.
-        //
-        // `save_transfer::GetProgress` was written for exactly this ("Download progress
-        // for the loading screen (bytes)", save_transfer.h:162) and had ZERO callers from
-        // the day it landed, so the longest phase of a real join -- ~17 s at the 1 MB/s
-        // internet send rate -- rendered as an indeterminate marquee reading
-        // "Connecting...". Polled HERE rather than pushed from the chunk sink because this
-        // loop already runs at ~60 Hz for the whole transfer and runs on the timeline
-        // thread, so the net thread gains no per-chunk work and keeps its single writer.
+        // Feed the loading screen the download's real progress, polled here (this loop runs at ~60
+        // Hz on the timeline thread for the whole transfer) rather than pushed from the chunk sink,
+        // so the net thread gains no per-chunk work. Without it the longest phase of a join, ~17 s
+        // at 1 MB/s, showed a marquee.
         {
             uint32_t doneB = 0, totalB = 0;
             coop::save_transfer::GetProgress(doneB, totalB);
             coop::join_progress::NoteDownload(doneB, totalB);
         }
-        // THIS LOOP BLOCKS THE THREAD THAT POSTS net_pump::Tick (RunPlayLoop /
-        // the play branch) -- and the transfer itself LIVES in that tick (the
-        // connect edge sends the Request, event_feed delivers Begin, the host
-        // pumps chunks). Pump it here or the join deadlocks at "Connecting"
-        // (2026-06-10 smoke: client armed, in=60 pkt/s, out=0, no Request ever).
-        // Coalesced: never stack composites behind a stalled game thread.
+        // This loop blocks the thread that posts net_pump::Tick, and the transfer lives in that
+        // tick (the connect edge sends the Request, event_feed delivers Begin, the host pumps
+        // chunks): pump it here or the join deadlocks at "Connecting". Coalesced, never stacked
+        // behind a stalled game thread.
         PostPumpComposite([] {
             coop::net_pump::Tick(g_session);
             coop::nameplate::Update();
@@ -328,28 +274,23 @@ void DriveMenuModeJoinWorldBoot() {
         ue_wrap::log::Flush();
         return;
     }
-    // The blob is in (or there was none). Everything past this point is the ENGINE
-    // loading a world -- 30-60 s typically, 120 s at the cap -- and nothing in it
-    // reports progress. Say so, and drop the byte bar: leaving it pegged at 100%
-    // under "Downloading the host's world" for that window reads as a hang harder
-    // than the marquee this whole change replaced (post-ship audit, 2026-09-02).
+    // The blob is in, or there was none. Everything past here is the engine loading a world, 30-60
+    // s with nothing reporting progress: say so, and drop the byte bar, which pegged at 100% reads
+    // as a hang.
     coop::join_progress::BeginWorldLoad();
-    // v73: WAIT (pumping net) for the host's per-player apply blob BEFORE loading the world, so the
-    // pre-materialize SaveObjectReadyHook has this client's inventory at load time. The host pushes it
-    // the moment our GUID arrives (in the Join, right after connect), so it has almost always arrived
-    // during the save-transfer wait above -- this is the safety barrier. If it is already here we skip
-    // the wait. Both load branches below wait first.
+    // Wait, pumping, for the host's per-player inventory blob before the load, so the
+    // pre-materialise hook has this client's inventory at load time. The host pushes it the moment
+    // our guid arrives, so it has almost always landed during the transfer wait; this is the safety
+    // barrier.
     auto waitForApplyBlob = [] {
         namespace PIS = coop::player_inventory_sync;
         if (PIS::HasPendingApply()) return;
         const ULONGLONG w0 = ::GetTickCount64();
         while (!PIS::HasPendingApply()) {
             if (coop::shutdown::IsShuttingDown() || !g_session.running()) return;
-            // 20 s safety cap. In practice the apply blob lands in ~1 RTT -- almost always DURING the
-            // save-transfer download above, before this wait even begins (HasPendingApply() is then
-            // already true and we never spin here). The cap only fires for a degenerate case: the host
-            // has no inventory for us / a version-mismatched host that never sends. On timeout we load
-            // anyway and the apply hook SKIPS (keeps the loaded inventory, never wipes).
+            // A 20 s cap for the degenerate case (the host has no inventory for us, or never
+            // sends); on a timeout the load proceeds and the apply hook skips, keeping the loaded
+            // inventory.
             if (::GetTickCount64() - w0 > 20000) {
                 UE_LOGW("harness: inventory apply blob did not arrive in 20s -- loading with the "
                         "loaded inventory (the apply hook will skip)");
@@ -367,20 +308,18 @@ void DriveMenuModeJoinWorldBoot() {
         UE_LOGI("harness: inventory apply blob ready -- proceeding to load the world");
     };
 
-    // v107 (2026-07-08) HOST-WIPE ROOT FIX: arm the world-load episode BEFORE the boot that triggers the
-    // game's mainGamemode.loadObjects pre-delete. During that load the destroy seam suppresses the
-    // KEYED-prop destroy broadcasts this client's world-rebuild churns -- otherwise the v106 seam carries
-    // the destroy half to the host, which destroys its AUTHORITATIVE copies by key and empties its world
-    // (measured bare join: host 3345->1255 keyed props). join_membership_sweep ends the episode at
-    // load-tail quiescence, after which the legit post-load intent destroys broadcast normally. This is
-    // the sole, client-only arm site, CAUSALLY before the burst on every path (the boot below triggers
-    // loadObjects, whose pre-delete IS the burst). See coop/session/world_load_episode.h + /qf rounds 0-13.
+    // Arm the world-load episode before the boot that triggers the game's loadObjects pre-delete:
+    // during that load the destroy seam suppresses the keyed-prop destroys this client's world
+    // rebuild churns, which would otherwise reach the host and destroy its authoritative copies by
+    // key (a bare join once emptied the host from 3,345 keyed props to 1,255).
+    // join_membership_sweep ends the episode at load-tail quiescence. The sole, client-only arm
+    // site, causally before the burst on every path.
     coop::world_load_episode::Arm();
 
     if (ST::GetClientState() == ST::ClientState::ReadySlotWritten) {
-        // Load the host's world from the downloaded slot. ResetCachedSave first
-        // (B7): a rejoin in this process must not re-register a stale cached
-        // save. Slot is per-pid; the GameMode came over the wire.
+        // Load the host's world from the downloaded slot; ResetCachedSave first, so a rejoin in
+        // this process does not re-register a stale cached save. The slot is per pid; the mode came
+        // over the wire.
         const std::wstring slot = ST::CoopSlotName();
         const int mode = static_cast<int>(ST::ReceivedGameMode());
         UE_LOGI("harness: save received -- loading coop slot '%ls' (mode=%d)", slot.c_str(), mode);
@@ -401,73 +340,52 @@ void DriveMenuModeJoinWorldBoot() {
 
 }  // namespace
 
-// Bring up a coop session on g_session: reset per-session edge state, wire every sync
-// subsystem, (host) back up the save + install the LanDirect ban filter, then Start.
-// ONE code path for "start a coop session" (RULE 2) -- called by BOTH the env-configured
-// boot (ReadNetConfig) AND a browser action consumed via session_manager::
-// TakePendingStart. Runs on the TimelineThread: g_session.Start spawns the net thread,
-// and the host save-backup is a blocking file copy -- neither belongs on the game thread.
-// Returns Start()'s success: the browser-join path Fails the join (drops the loading
-// screen + reopens the browser) when a synchronous Start failure means no async connect
-// edge will ever arrive. Other callers (env play / host-with-save) ignore it.
+// Bring up a session on g_session: reset the per-session edge state, wire every subsystem,
+// (host) back the save up and install the LanDirect ban filter, then Start. The one path for
+// "start a coop session", from the env boot and from a browser action; on the TimelineThread,
+// since Start spawns the net thread and the save backup is a blocking copy. Returns Start()'s
+// success, which the browser-join path uses to Fail the join when no connect edge will arrive.
 bool StartCoopSession(const coop::net::Config& netCfg) {
-    // Never start once teardown has begun: g_session.Start would spawn a net thread
-    // AFTER DoShutdown's single Stop(), to be joined at static destruction -- the
-    // loader-lock join-from-teardown hazard the project forbids (audit P2).
+    // Never start once teardown has begun: the net thread would be spawned after the single Stop()
+    // and joined at static destruction, the loader-lock hazard the project forbids.
     if (coop::shutdown::IsShuttingDown()) {
         UE_LOGW("harness: StartCoopSession ignored -- shutdown in progress");
         return false;
     }
-    // Nickname source of truth = session_manager (seeded from config at boot, overwritten
-    // by the server browser). Apply it here so a browser-set name wins over the config default.
+    // The nickname's source of truth is session_manager (config at boot, the browser after).
     {
-        // ARC D: session_manager holds UTF-8 (it is seeded from the ini and
-        // overwritten by the server browser's InputText, which emits UTF-8). The
-        // per-BYTE widen this replaces was the second half of the measured root
-        // -- it turned every non-ASCII name into mojibake before the sanitizer
-        // ever saw it.
+        // session_manager holds UTF-8 (the ini and the browser's input both emit it); a per-byte
+        // widen here turned every non-ASCII name into mojibake before the sanitiser saw it.
         const std::string n = coop::session_manager::Nickname();
         coop::event_feed::SetLocalNickname(coop::text::FromUtf8Lossy(n.data(), n.size()));
     }
     coop::event_feed::OnSessionStart();
-    // v141 A52: rows are per-session (a stale anchor across a restart would read as a teleport), and
-    // this call also runs the ledger's un-gated arithmetic selftest -- see movement_ledger.h.
+    // Rows are per session (a stale anchor across a restart would read as a teleport); the call
+    // also runs the ledger's un-gated arithmetic self-test.
     coop::movement_ledger::OnSessionStart();
-    // A54: the intent authorizer's un-gated arithmetic selftest -- see
-    // coop/element/intent_authority.h. Pure math, microseconds, deliberately impossible to switch
-    // off, for the same reason the ledger's is: a wrong reach verdict does not crash, it merely
-    // reads wrong, and a gate that reads wrong either refuses a real player or authorizes the map.
+    // The intent authorizer's un-gated arithmetic self-test (coop/element/intent_authority.h): pure
+    // math, microseconds, impossible to switch off, because a wrong reach verdict does not crash,
+    // it refuses a real player or authorises the map.
     coop::element::RunSelftest();
-    // B2: the portable-identity hash's un-gated selftest -- see
-    // coop/element/portable_identity.h. Pinned vectors, because the whole lane rests on two
-    // MACHINES computing the same 19 characters from the same string; a hash that quietly
-    // depended on wchar_t's width would make every peer agree with itself and with nobody
-    // else, which reads as "the identity rule is wrong" and sends the next dig to the wrong
-    // place entirely.
+    // The portable-identity hash's un-gated self-test (coop/element/portable_identity.h), on pinned
+    // vectors: the lane rests on two machines computing the same 19 characters from one string, and
+    // a hash that depended on wchar_t's width would make every peer agree with itself and nobody
+    // else.
     coop::element::RunSelfTest();
-    // The durable identity's crypto selftest: SHA-256 + Ed25519 against published
-    // vectors, each with a tamper arm, plus the decision this module exports (a
-    // signature must verify against ITS OWN identity and no other). Un-gated for the
-    // same reason as the two above -- a verifier that accepts everything, or one whose
-    // digest is wrong, does not crash: it either admits anyone or renames every player,
-    // and both read as "working" from outside. See coop/net/peer_identity.h.
+    // The durable identity's crypto self-test: SHA-256 and Ed25519 against published vectors, each
+    // with a tamper arm, plus the decision this module exports (a signature verifies against its
+    // own identity and no other). Un-gated: a verifier that accepts everything reads as working.
     coop::net::peer_identity::RunSelftest();
-    // ...and the decision built ON that primitive. Its arms are the ones no LAN
-    // drill can stage -- a proof replayed in the wrong DIRECTION, a proof aimed at
-    // a THIRD PARTY, a proof for a stale NONCE -- and each of them is a real
-    // admission an over-permissive blob would grant. Un-gated for the same reason:
-    // a challenge that accepts everything looks exactly like one that works.
+    // And the admission decision built on it; its arms are the ones no LAN drill can stage: a proof
+    // replayed in the wrong direction, aimed at a third party, or for a stale nonce.
     coop::net::peer_admission::RunSelftest();
-    // ...and the lobby password that rides inside it. Same reason a third time, and
-    // it is the sharpest instance: if the SALT were ignored, every locked lobby in
-    // the world would open to one table, and the only observable difference from a
-    // working build is that joins keep succeeding. The negatives are the test --
-    // one password under two host keys must NOT collide, an empty password must
-    // refuse to derive at all, and a tag must not verify against another nonce.
+    // And the lobby password inside it: if the salt were ignored, every locked lobby would open to
+    // one table, and the only visible difference is that joins keep succeeding. The negatives are
+    // the test: one password under two host keys must not collide, an empty password must refuse to
+    // derive, a tag must not verify against another nonce.
     coop::net::lobby_password::RunSelftest();
-    // Reset net_pump edge-detector state so a Stop()/Start() cycle on the same process
-    // doesn't carry stale "was connected" / "was holding prop" entries into the new
-    // session (phantom disconnect edge / suppressed connect replay / stale prop key).
+    // Reset net_pump's edge detectors, so a Stop/Start on one process carries no stale "was
+    // connected" or "was holding" entries into the new session.
     coop::net_pump::OnSessionStart();
     coop::prop_lifecycle::SetSession(&g_session);
     coop::npc_sync::SetSession(&g_session);
@@ -477,37 +395,28 @@ bool StartCoopSession(const coop::net::Config& netCfg) {
     coop::dev::force_weather::SetSession(&g_session);
     coop::dev_gate::SetSession(&g_session);  // the strict CLIENT lockout for every dev feature
     coop::moderation::SetSession(&g_session);
-    // v73 Inc4: the per-player inventory subsystem MUST install PRE-WORLD (here, with the other
-    // SetSession caches) -- NOT via the world-gated subsystems::Install. Both halves run before the
-    // join's world exists: OnReliable buffers the host's pushed apply blob during the menu-mode
-    // save-transfer wait, and the SaveObjectReadyHook must be ARMED before BootStorySaveBlocking so
-    // it fires on the join's OWN pre-materialize load. The old world-up call site left g_session
-    // null during the wait (every apply chunk silently dropped at OnReliable's `if (!s) return`) AND
-    // armed the hook AFTER the load -> the apply never ran. This was the "inventory never worked"
-    // root cause (2026-06-16 timing hunt: the blob arrived at the net thread during the join but was
-    // never assembled until world-up, far too late). Idempotent across Stop()/Start().
+    // The per-player inventory subsystem installs pre-world, here, not through the world-gated
+    // subsystems::Install: its receiver buffers the host's pushed blob during the menu-mode
+    // transfer wait, and the SaveObjectReadyHook must be armed before BootStorySaveBlocking so it
+    // fires on the join's own load. Idempotent across Stop/Start.
     coop::player_inventory_sync::Install(&g_session);
     if (netCfg.role == coop::net::Role::Host) {
-        // Snapshot the canonical save BEFORE coop injects state (host-only; clients are
-        // save-blocked). Synchronous on this bringup thread -> completes before Start.
+        // Snapshot the canonical save before coop injects state (host only; clients are
+        // save-blocked); synchronous, so it completes before Start.
         coop::save_guard::BackupSaveOnSessionStart();
-        // Seen-players registry (F1 Administration): any-topology host bookkeeping
-        // (on P2P the IP field may stay empty -- the offline-ban path surfaces that).
+        // The seen-players registry, host bookkeeping on any topology (on P2P the IP may stay
+        // empty).
         coop::seen_players::Load();
-        // LanDirect ONLY: the IP-keyed ban filter FAIL-CLOSES on P2P (empty remote addr
-        // at the Connecting edge; a peer's public IP is the wrong key anyway). P2P bans
-        // are identity-based (Stage 6).
+        // LanDirect only: the IP-keyed ban filter fails closed on P2P (the Connecting edge has no
+        // remote address, and a public IP is the wrong key there); P2P bans are identity-based.
         if (netCfg.topology == coop::net::Topology::LanDirect) {
             coop::ban_list::Load();
             g_session.SetAcceptFilter(&BanAcceptFilter);
         }
     }
-    // NOTE: the CLIENT connecting/loading state (join_progress::BeginConnect) is NOT raised
-    // here. It is raised by the BROWSER connect actions only (session_manager::JoinLobby /
-    // ConnectDirect), so the loading screen is browser-join-only -- the env/.bat/autotest
-    // client boot reaches this function directly and must show nothing (regression A,
-    // 2026-06-06). multiplayer_menu hides the menu widgets while a join is Active and the
-    // console auto-shows the connect log; both key off join_progress, raised at the click.
+    // The client's connecting state is not raised here but by the browser connect actions, so the
+    // loading screen is browser-join only; the env and autotest client boot reaches this function
+    // directly and shows nothing.
     const bool ok = g_session.Start(netCfg);
     UE_LOGI("harness: ==== COOP SESSION START (%s / %s)%s ====",
             netCfg.role == coop::net::Role::Host ? "host" : "client",
@@ -518,34 +427,13 @@ bool StartCoopSession(const coop::net::Config& netCfg) {
 
 namespace {
 
-// WHERE A FAILED HOST PUTS THE PLAYER -- one decision, one place, because both failure exits
-// below were making it independently and both made it wrong.
-//
-// The hosting-settings window POLLS `session_manager::HostStatus()` and paints the reason on
-// itself; that is the designed destination for an asynchronous host failure, and the window
-// is still on screen underneath the cover we just dropped. Opening the browser over it did
-// two things at once: it hid the only surface carrying the explanation, and it left that
-// window a CORPSE -- the switcher index moved, so the window's own tick reconciled `g_shown`
-// closed while its widgets stayed in the tree, and the browser's Back then put those dead
-// pixels back in front of the player. User, 2026-09-01, on the b150 rig: "нажать в сервер
-// браузере back - оно возвращает на меню session settings и там уже ничего нельзя сделать и
-// кнопки мертвые не дают закрыть даже это меню".
-//
-// So the browser is the destination ONLY when no window of ours owns the retry -- a host that
-// failed with the menus already gone has nowhere else to land.
-// ON THE GAME THREAD, AND ASKING BOTH WINDOWS. Two corrections to the first version, both
-// from the post-ship audit of this very commit:
-//
-//   * `IsOpen()` returns a plain `bool` that the module's own header marks GAME THREAD ONLY,
-//     and this function runs on the TimelineThread. Reading it there is not just a formal
-//     race -- the flag is only ever updated from a menu tick, so once the menu is gone it is
-//     FROZEN at whatever it last held. Deciding on the game thread is the cheap half of the
-//     answer; the residual is bounded by the browser intent's own 20 s TTL, since an intent
-//     armed with no menu to consume it expires rather than surfacing later.
-//   * The predicate named ONE window while TWO satisfy the property it is about: the hosting
-//     window polls `HostStatus()` and paints it too, and it is reachable at failure time
-//     (ESC from the settings window lands there while the boot is still running). Covering
-//     it hid the reason in exactly the way this function exists to prevent.
+// Where a failed host puts the player, decided in one place. The session-settings window and
+// the hosting window each poll HostStatus() and paint the reason, and one of them is still on
+// screen under the cover just dropped; opening the browser over it hid the explanation and left
+// the window a corpse (its tick reconciled itself closed while its widgets stayed, and the
+// browser's Back returned dead pixels). So the browser is the destination only when no window of
+// ours owns the retry. Decided on the game thread: IsOpen() is game-thread only and frozen once
+// the menu is gone; the residual is bounded by the browser intent's 20 s TTL.
 void ReturnToMenuAfterFailedHost() {
     if (coop::shutdown::IsShuttingDown()) return;
     GT::Post([] {
@@ -556,21 +444,14 @@ void ReturnToMenuAfterFailedHost() {
     });
 }
 
-// Host-Game save-picker orchestration. If a host-with-save was queued
-// (session_manager::HostWithSave, from the picker's "Host selected save" / "New Game &
-// Host"), LOAD the chosen world (engine::LoadStorySave) or CREATE the new save
-// (save_browser::CreateNamedSave) FIRST -- polling like BootStorySaveBlocking (the
-// `open` re-issue is throttled to ~1.5 s, NOT per-50ms-tick) -- then StartCoopSession.
-// No-op (returns immediately) when nothing is queued. Runs on the TimelineThread (where
-// the blocking load + StartCoopSession belong). The picker fires at the MENU, so the
-// chosen world loads from the menu here, then hosting begins. ONE place owns load->host.
+// The host-with-save orchestration: if one was queued (the picker's "Host selected save" or
+// "New Game & Host"), load the chosen world or create the new save first, polling like
+// BootStorySaveBlocking, then StartCoopSession. A no-op when nothing is queued; on the
+// TimelineThread, where the blocking load and the start belong. One place owns load-then-host.
 void DriveHostBootIfPending() {
-    // ALL the per-boot state lives in a shared_ptr-held struct captured BY VALUE into the
-    // posted game-thread task -- so the task can NEVER outlive its backing storage. If a
-    // shutdown breaks the wait below before a queued task has run, this function returns
-    // but the task keeps `b` alive via its captured shared_ptr (no use-after-free of stack
-    // locals; audit CRITICAL-1). `slot`/`created` carry across the retry loop (the new-save
-    // create runs once, then we poll the load).
+    // The per-boot state lives in a shared_ptr captured by value into the posted task, so a task
+    // queued when a shutdown breaks the wait keeps its storage alive. `slot` and `created` carry
+    // across the retry loop: the create runs once, then the load is polled.
     struct Boot {
         coop::session_manager::PendingHost ph;
         std::wstring slot;
@@ -592,10 +473,9 @@ void DriveHostBootIfPending() {
             if (b->ph.save.newGame && !b->created) {
                 std::wstring wname(b->ph.save.newName.begin(), b->ph.save.newName.end());
                 std::wstring outSlot;
-                // THE CHOICE DECIDES, not this consumer: three surfaces produce `newName`
-                // and only one of them is a derived literal. A name a player TYPED keeps the
-                // exact primitive and its honest refusal; a derived one is disambiguated,
-                // because there is no human to tell that the name was taken.
+                // The choice decides: a name the player typed keeps the exact primitive and its
+                // refusal; a derived name is disambiguated, since no human is there to be told it
+                // was taken.
                 const bool created =
                     b->ph.save.nameIsDerived
                         ? ue_wrap::save_browser::CreateNamedSaveUnique(wname, b->ph.save.mode, outSlot)
@@ -607,7 +487,7 @@ void DriveHostBootIfPending() {
             }
             if (b->slot.empty()) { b->st.store(3); return; }
             const bool inGame = ue_wrap::engine::LoadStorySave(b->slot.c_str());
-            // v56: the picked slot is what this host will SERVE to joiners.
+            // The picked slot is what this host serves to joiners.
             if (inGame) coop::save_transfer::SetHostSlot(b->slot);
             b->st.store(inGame ? 2 : 1);
         });
@@ -621,12 +501,11 @@ void DriveHostBootIfPending() {
         }
         if (s == 3) {
             UE_LOGW("harness: host-with-save create/load FAILED -- aborting host");
-            // The lobby was already announced (HostWithSave announces before the load) --
-            // cancel it so no phantom lobby lingers on the master (audit HIGH-1). Skip the
-            // /leave HTTP during teardown.
+            // The lobby was announced before the load; cancel it, or a phantom lobby lingers on the
+            // master. No HTTP during teardown.
             if (!coop::shutdown::IsShuttingDown()) coop::session_manager::EndHostedLobby();
-            // Don't strand the user on a blank menu (the picker closed on click): drop the
-            // host cover, surface the failure + reopen the browser so they can retry.
+            // Do not strand the player on a blank menu: drop the cover, surface the failure, return
+            // to the menu.
             coop::join_progress::Reset();
             coop::session_manager::SetHostStatus(
                 b->ph.save.newGame ? "Host failed: could not create the new save"
@@ -638,7 +517,7 @@ void DriveHostBootIfPending() {
     }
     if (!coop::shutdown::IsShuttingDown()) {
         UE_LOGW("harness: host-with-save did not reach gameplay in time -- aborting host");
-        coop::session_manager::EndHostedLobby();  // HIGH-1: don't leave a phantom lobby on timeout
+        coop::session_manager::EndHostedLobby();  // no phantom lobby on a timeout
         coop::join_progress::Reset();        // drop the host cover
         coop::session_manager::SetHostStatus("Host failed: the world did not load in time");
         ReturnToMenuAfterFailedHost();
@@ -647,43 +526,21 @@ void DriveHostBootIfPending() {
 
 }  // namespace
 
-// The main loop (TimelineThread). Each tick: (1) if no session is running, poll
-// session_manager for a browser-initiated start (Host/Join/Direct) and boot it HERE
-// (Start + host save-backup must not run on the game thread); (2) post the per-tick
-// pump -- net_pump::Tick while a session is running (env- OR browser-booted); (3)
-// ~2 s LAN-test stats while running. ONE loop for the env-configured "play" path AND
-// the native "menu" path (RULE 2).
-//
-// `idleInGameplay` distinguishes the two idle states (when no session is running):
-//   true  ("play" scenario): we booted STRAIGHT INTO gameplay -> the idle state is
-//          solo gameplay, so keep the local observers + nameplate/roster live.
-//   false ("menu" scenario, native launch): the idle state is VOTV's MAIN MENU --
-//          the gameplay BP classes aren't loaded, so installing the gameplay
-//          observers every tick is premature churn. Skip them at the menu; they
-//          install when a session actually starts (net_pump::Tick installs them).
-//          We deliberately do NOT add a per-tick FindObjectByClass(World) "are we
-//          in gameplay" probe here -- a per-frame GUObjectArray scan is the exact
-//          FPS anti-pattern the perf rule forbids; the scenario flag is free.
+// The main loop on the TimelineThread. Each tick: with no session running, poll session_manager
+// for a browser-initiated start and boot it here (Start and the save backup must not run on the
+// game thread); post the per-tick pump; ~2 s stats while running. One loop for the env "play"
+// path and the native menu path. `idleInGameplay` names the idle state: solo gameplay (keep the
+// local observers and the roster live) or the main menu (the gameplay classes are not loaded, so
+// the observers install when a session starts). No per-tick world probe: a per-frame
+// object-array scan is the FPS pattern the perf rule forbids, and the scenario flag is free.
 namespace {
 
-// The lobby's live player count, published on every /v1/heartbeat.
-//
-// Runs on the ANNOUNCER'S WORKER THREAD, so it touches only atomics:
-// `running()` is one atomic load and `connectedPeerCount()` walks the peerConns_ /
-// peerLanesConfigured_ atomic arrays (session_status.cpp:353). `g_session` is a
-// process-lifetime global, so there is no lifetime race with the worker either.
-// Deliberately NOT reading role(): `cfg_.role` is a plain field written by Start(),
-// and only a host announces a lobby at all, so the role test would buy nothing and
-// cost a data race.
-//
-// +1 is the host itself: on a host, peerConns_[0] is unused and the connected peers
-// are slots 1..N, so connectedPeerCount() is the CLIENT count. Before the session
-// starts (the lobby is announced while the host's world is still loading) there is
-// no session to count, and 1 -- the host alone -- is the honest answer.
-// It deliberately UNDERCOUNTS a joiner for the duration of its admission round
-// trip: connectedPeerCount() excludes the PENDING band (a socket accepted but not
-// yet identity-proved has no seat). At a 30 s heartbeat cadence that window is
-// invisible, and counting seats is the honest reading of "players in this lobby".
+// The lobby's live player count for the heartbeat, on the announcer's worker thread, so atomics
+// only: running() and connectedPeerCount() (the peerConns_ and ready arrays); g_session is
+// process-lifetime. Not role(), a plain field, and only a host announces. +1 is the host itself;
+// before the session starts (the lobby is announced while the world loads) 1 is the honest
+// answer. A joiner is undercounted for its admission round trip (the pending band holds no seat),
+// invisible at a 30 s cadence.
 int LobbyPlayerCount() {
     if (!g_session.running()) return 1;
     return g_session.connectedPeerCount() + 1;
@@ -697,19 +554,16 @@ void InstallLobbyPlayerCountSource() {
 
 void RunPlayLoop(bool idleInGameplay) {
     int tick = 0;
-    bool wasRunning = false;     // FIX 4: detect the coop session running->stopped edge
-    bool wasHostSession = false; // ...and whether the session that was running was the HOST's
+    bool wasRunning = false;     // the session's running-to-stopped edge
+    bool wasHostSession = false;  // and whether the session that was running was the host's
     while (!coop::shutdown::IsShuttingDown()) {
-        // Client join ABORT (Cancel button OR a connect failure). Stop the session here
-        // (the timeline thread -- where Stop, which joins the net thread, belongs), drop the
-        // loading state, and reopen the browser so the user can pick again. multiplayer_menu
-        // restores the hidden menu once join_progress goes inactive. ONE drain for both the
-        // user-cancel and the auto-fail paths (regression C, 2026-06-06).
+        // A client join abort (Cancel, or a connect failure): Stop here (the thread Stop's join
+        // belongs on), drop the loading state, reopen the browser; multiplayer_menu restores the
+        // hidden menu once join_progress goes inactive. One drain for both paths.
         if (coop::join_progress::TakeAbortRequest()) {
-            // Only a CLIENT join is abortable here. A host boot never drives this path
-            // (BeginHostBoot has no Cancel; host-mode MaybeTimeout just Resets) -- but a
-            // STALE client-cancel must NEVER Stop a host session that has since started.
-            // (2026-06-08 repro: a self-join Cancel killed the host the instant it started.)
+            // Only a client join is abortable here; a stale client cancel must never Stop a host
+            // session that has since started (a self-join Cancel once killed the host the instant
+            // it started).
             const bool isClientSession =
                 g_session.running() && g_session.role() == coop::net::Role::Client;
             if (isClientSession) {
@@ -718,53 +572,44 @@ void RunPlayLoop(bool idleInGameplay) {
                 coop::join_progress::Reset();
                 ui::server_browser_surface::Open();
             } else {
-                // Host session running, or nothing running: a stale client-abort. Clear the
-                // cover only -- do NOT Stop the host and do NOT pop the browser over gameplay.
+                // A host running, or nothing: a stale client abort; clear the cover only, never
+                // Stop the host or pop the browser over gameplay.
                 UE_LOGI("harness: stale join-abort with no client session -- clearing the cover only");
                 coop::join_progress::Reset();
             }
-            // A failed/cancelled join is a milestone a real user's bug report must capture --
-            // land the abort sequence on disk now rather than leaving it in the buffered INFO
-            // stream (a force-kill / quiet menu would lose it). Mirrors the boot-ready Flush.
+            // A failed or cancelled join is a milestone a bug report must capture: flush the log
+            // now rather than leave it in the buffered stream.
             ue_wrap::log::Flush();
         }
         if (!g_session.running() && !coop::shutdown::IsShuttingDown()) {
-            // Host-Game save picker: load the chosen world (or create the new save) THEN
-            // host. Blocks here until done; no-op if nothing is queued.
+            // The save picker: load the chosen world (or create the save), then host; blocks until
+            // done, a no-op if nothing is queued.
             DriveHostBootIfPending();
             // Browser Join / Direct connect: start immediately on the current world.
             if (!g_session.running()) {
                 coop::net::Config pending;
                 if (coop::session_manager::TakePendingStart(pending)) {
-                    // Stale-start guard (audit Issue 6, 2026-06-06): a browser CLIENT join
-                    // raises join_progress at the click; the async master round-trip can
-                    // finish + QueueStart AFTER the user already Cancelled (or it Failed). If
-                    // the join is no longer Active by the time we consume the queued start,
-                    // DISCARD it instead of ghost-starting a session the user backed out of.
-                    // Host starts carry no join_progress (Active stays false) -> always proceed.
+                    // The stale-start guard: a browser client join raises join_progress at the
+                    // click, and the master round trip can QueueStart after the player cancelled; a
+                    // start whose join is no longer Active is discarded rather than ghost-started.
+                    // A host start carries no join_progress and always proceeds.
                     if (pending.role == coop::net::Role::Client && !coop::join_progress::Active()) {
                         UE_LOGI("harness: discarding stale browser client start -- join no longer active (cancelled/failed)");
                     } else {
                         UE_LOGI("harness: browser-initiated coop session");
-                        // Menu-mode CLIENT join -- v56 SAVE-TRANSFER BOOTSTRAP (user mandate
-                        // 2026-06-10 "pull all objects data at connecting time"): connect AT
-                        // THE MENU first, download the HOST's save, load THAT world (the
-                        // engine places every prop naturally, host keys, at rest), then
-                        // net_pump announces world-ready and the host replays. The player
-                        // never sees a divergent fresh world. Fallbacks (host has no save /
-                        // transfer failed / timeout) fresh-boot the pre-v56 ephemeral
-                        // baseline -- the all-key true-up degrades to the heavy reconcile,
-                        // which run-5 proved survivable. Blocks on the TimelineThread like
-                        // the old pre-connect fresh boot (abort drained inside).
-                        // An already-in-gameplay browser join (idleInGameplay: the env/
-                        // autotest play path, or a future in-game join) connects directly --
-                        // it has a world; WorldReady fires within a tick.
+                        // The menu-mode client join: connect at the menu, download the host's save,
+                        // load that world (the engine places every prop naturally, with the host's
+                        // keys), then net_pump announces world-ready and the host replays; the
+                        // player never sees a divergent fresh world. The fallbacks (no save, a
+                        // failed transfer, a timeout) fresh-boot the baseline and the true-up
+                        // degrades to the heavy reconcile. Blocks the TimelineThread, the abort
+                        // drained inside. A join from inside gameplay connects directly, since it
+                        // has a world.
                         if (pending.role == coop::net::Role::Client && !idleInGameplay) {
                             UE_LOGI("harness: menu-mode client join -- save-transfer bootstrap");
                             coop::save_transfer::ClientArm();
-                            // A synchronous Start failure means no async connect edge will
-                            // ever arrive to clear the cover -- Fail (drops it + reopens the
-                            // browser). (regression C, 2026-06-06.)
+                            // A synchronous Start failure means no connect edge will ever clear the
+                            // cover: Fail drops it and reopens the browser.
                             if (!StartCoopSession(pending))
                                 coop::join_progress::Fail("could not start the connection");
                             else
@@ -777,21 +622,16 @@ void RunPlayLoop(bool idleInGameplay) {
             }
         }
         const bool running = g_session.running();
-        // FIX 4 (2026-06-08) -- a HOST session death returns the user to the MAIN MENU so
-        // they always KNOW it ended (the repro left the host stranded in a dead-session
-        // world). HOST-ONLY on purpose: a CLIENT disconnect is already fled to the menu by
-        // net_pump (its own disconnect/death edge), and a CLIENT join-cancel is handled by
-        // the abort branch above -- fleeing those again here would arm the 30-min death
-        // bypass on a normal cancel and break a same-process retry (audit). Idempotent via
-        // net_pump's g_fleeing latch. Skipped during shutdown.
+        // A host session's death returns the player to the main menu, so they always know it ended.
+        // Host only: a client disconnect is already fled by net_pump, and a client cancel by the
+        // abort branch above; fleeing those again would arm the death bypass on a normal cancel and
+        // break a same-process retry. Idempotent through net_pump's latch.
         if (wasRunning && wasHostSession && !running && !coop::shutdown::IsShuttingDown()) {
             UE_LOGI("harness: host session ended -- returning to the main menu");
             Post([] { coop::net_pump::FleeToMainMenuOnDeath(g_session, "host session ended -> main menu"); });
-            // The lobby's lifetime IS the host session's lifetime: delist NOW (/leave +
-            // stop the heartbeat) or the heartbeat keeps the DEAD lobby listed on the
-            // master forever (2026-07-04: host died to the killerwisp -> everyone fled
-            // to the menu -> the server was still in the browser). Blocking HTTP is fine
-            // here: this is the TimelineThread, same as the boot-failure delist above.
+            // The lobby's lifetime is the host session's: delist now, or the heartbeat keeps a dead
+            // lobby listed forever (a host killed in the world stayed in the browser). Blocking
+            // HTTP is fine on the TimelineThread.
             coop::session_manager::EndHostedLobby();
         }
         wasRunning = running;
@@ -803,20 +643,17 @@ void RunPlayLoop(bool idleInGameplay) {
                 // Solo gameplay, no session yet: keep the local observers live.
                 coop::subsystems::Install(g_session);
             }
-            // roster needs a live world+player; skip it at the menu.
+            // The roster needs a live world and player; skipped at the menu.
             if (running || idleInGameplay) {
                 coop::roster::Refresh();
             }
-            // ALWAYS (self-clearing): re-project the ImGui nameplates -- an empty
-            // snapshot when there are no puppets / no local player, so the HUD
-            // auto-hides at the menu -- and age out the chat feed. Both are cheap
-            // no-ops when idle. Same for the dev object overlay (one atomic load
-            // while its menu toggle is off).
+            // Always, self-clearing: re-project the nameplates (an empty snapshot with no puppets,
+            // so the HUD auto-hides at the menu), age the chat feed, tick the dev overlays; all
+            // cheap no-ops when idle.
             coop::nameplate::Update();
             coop::dev::object_overlay::Update(); coop::dev::ragdoll_bone_overlay::Update();
             coop::chat_feed::Tick();
-            // ALWAYS: the HWND close subclass + window title must work at the menu
-            // too (the user may X-close before ever hosting -- the teardown path).
+            // Always: the close subclass and the window title must work at the menu too.
             TickShutdownHooks();
         });
         if (running && ++tick % 120 == 0) {  // ~every 2 s at 60 Hz: stats for the LAN tests
@@ -826,9 +663,8 @@ void RunPlayLoop(bool idleInGameplay) {
                         static_cast<unsigned long long>(g_session.packetsSent()),
                         static_cast<unsigned long long>(g_session.packetsRecv()),
                         coop::puppet_drive::Puppet(1).valid() ? 1 : 0);
-                // Memory heartbeat (2026-07-04, the 17:10 "host ate RAM then died" report):
-                // the log had ZERO memory observability, so "was it climbing for minutes or
-                // spiking at death?" is unanswerable. 30 s cadence names the shape next time.
+                // A memory heartbeat every ~30 s, so a log can tell a slow climb from a spike at
+                // death.
                 static int memTick = 0;
                 if (++memTick % 15 == 0) {  // every 15th 2s-stats = ~30 s
                     PROCESS_MEMORY_COUNTERS_EX pmc{};
