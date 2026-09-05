@@ -1,3 +1,8 @@
+// harness/harness.cpp -- the process boot (Start) and the scenario timeline: the boot-time config
+// seeds, the identity load, the dev and test probes, and the per-scenario branch that either
+// boots a story save into a session (play), stays at the native menu (menu, the shipped launch)
+// or runs an autonomous derisk. The session lifecycle lives in harness/session_runtime.cpp.
+
 #include "harness/harness.h"
 
 #include "harness/session_runtime.h"
@@ -20,9 +25,9 @@
 #include "coop/session/teleport_client.h"
 #include "coop/player/players_registry.h"
 #include "coop/config/config.h"
-#include "coop/config/config_review.h"      // RunBootSweep (T10 settings check, arc 2)
-#include "coop/net/peer_identity.h"        // the durable Ed25519 identity (replaces player_guid=)
-#include "coop/player/local_body.h"         // SetInitialSkin (v93 skins: ini player_skin=)
+#include "coop/config/config_review.h"      // RunBootSweep, the settings check
+#include "coop/net/peer_identity.h"        // the durable Ed25519 identity
+#include "coop/player/local_body.h"         // SetInitialSkin
 #include "coop/text/utf8_codec.h"
 #include "coop/session/session_manager.h"
 #include "coop/player/nameplate.h"
@@ -74,141 +79,90 @@ namespace GT = ue_wrap::game_thread;
 
 namespace cfg = coop::config;
 
-// Diagnostic dumps (Report / DumpComponents / DumpLiveWidgets / DumpParams) live in
-// harness/harness_diag.cpp; bring them into scope so the scenario call sites stay unqualified.
+// The diagnostic dumps (Report, DumpComponents, DumpLiveWidgets, DumpParams) live in
+// harness/harness_diag.cpp, in scope here unqualified.
 using namespace harness::diag;
 
-// ReadLocalPose extracted to coop/net_pump.cpp (PR-4.13).
-
-// The session-lifecycle driver (g_session + StartCoopSession + world boot +
-// RunPlayLoop + the pump composite) lives in harness/session_runtime.cpp
-// (s27 cut); this file keeps the process boot (Start) + the scenario timeline.
-
-// GT-post 1-liner (a second anon-ns copy lives in session_runtime.cpp).
+// Posts a task to the game thread.
 void Post(GT::Task t) { GT::Post(std::move(t)); }
 
-// Diagnostic dumps (DumpParams / Report / DumpComponents / DumpLiveWidgets, + their
-// ContainsCI / DumpClassFunctions helpers) extracted to harness/harness_diag.cpp
-// (2026-06-06 modular file-size audit). They are reached unqualified here via
-// `using namespace harness::diag` below.
-// Autonomous grab test moved to harness/autotest/autotest_grab.cpp.
-
-// Background timeline. Sleeps for pacing; every engine touch is posted to the
-// game thread. Mirrors the Lua harness's newgame timeline.
+// The background timeline: sleeps for pacing, and every engine touch is posted to the game
+// thread.
 DWORD WINAPI TimelineThread(LPVOID param) {
     const std::string scenario = *static_cast<std::string*>(param);
     delete static_cast<std::string*>(param);
 
     UE_LOGI("harness: timeline start, scenario='%s'", scenario.c_str());
 
-    // Push the master URL + the host fallback Config into session_manager BEFORE any
-    // browser action can fire (the menu server browser / Host-Game picker read them).
-    // A native launch has no env, so this is where the deployed ini's net.master (->
-    // the VPS) takes effect. Cheap env/ini reads; harmless for every scenario.
+    // The master URL and the host fallback Config go into session_manager before any browser action
+    // can fire; a native launch has no env, so this is where the ini's net.master takes effect.
     coop::session_manager::Configure(cfg::ReadMasterUrl(), cfg::ReadP2PHostFallback());
-    // Fresh install: seed the multivoid.ini SKELETON before anything reads or
-    // writes the file this launch ([net] first + the visible net.nick line +
-    // [dev] last; absent-only, atomic -- ini rework arc 1, T1).
+    // A fresh install seeds the multivoid.ini skeleton before anything reads or writes the file
+    // this launch: absent-only, atomic.
     cfg::EnsureIniSkeleton();
-    // T8 catalog (arc 4): regenerate multivoid.ini.example beside the DLL --
-    // every key with its description, default and env twin; deterministic,
-    // compare-first, fail-soft (the mod never reads it back).
+    // multivoid.ini.example regenerates beside the DLL, every key with its description, default and
+    // env twin; deterministic, compare-first, fail-soft, and never read back.
     cfg::GenerateExampleCatalog();
-    // Retire stored values a shipped bug wrote (see config.h). Exact-match, one-shot, and a
-    // no-op on every later launch -- but it must run BEFORE anything reads the rows it
-    // touches, which is why it sits beside the skeleton rather than in a UI module.
+    // Stored values a shipped bug wrote are retired (config.h): exact-match, one-shot, and before
+    // anything reads the rows it touches.
     cfg::MigrateRetiredIniValues();
-    // Seed the local nickname from config (env VOTVCOOP_NET_NICK / ini net.nick /
-    // the registry my-name default)
-    // so the server browser shows the current name; the user can overwrite it there, and the
-    // browser value wins at StartCoopSession.
+    // The local nickname from config (the env twin, the ini, the registry default), so the browser
+    // shows the current name; the browser value wins at session start.
     {
-        // ARC D: session_manager holds UTF-8 -- the server browser's InputText
-        // writes UTF-8 into it, so the boot seed must encode, not narrow.
-        //
-        // This loop used to replace every non-ASCII character with '?', and it is
-        // the site the widen census MISSED: the census was of WIDENS, and this is
-        // a NARROW, so grepping the concept found six sites and never this one.
-        // Its effect was total and silent -- a Cyrillic name read correctly from
-        // the ini became "????????" here, before the sanitizer or the wire ever
-        // saw it, and every downstream fix looked like it had not worked.
+        // session_manager holds UTF-8 (the browser's InputText writes it), so the seed encodes
+        // rather than narrows: a narrowing loop here once turned a Cyrillic name into question
+        // marks before the sanitiser or the wire saw it, and every downstream fix looked as if it
+        // had not worked.
         coop::session_manager::SetNickname(coop::text::ToUtf8(cfg::ReadNickname()));
     }
-    // The durable player identity: an Ed25519 keypair whose PUBLIC KEY is our
-    // network identity and whose 32-char guid (used to key the host-side inventory)
-    // is DERIVED from it. This replaced the ini's `player_guid=` -- a value the peer
-    // chose for itself and every host believed -- on 2026-08-29; see
-    // coop/net/peer_identity.h and docs/security/PLAN_01_PEER_AUTH.md. Loading it
-    // here, at boot, means a failure is visible before any session starts.
+    // The durable player identity: an Ed25519 keypair whose public key is the network identity and
+    // whose 32-character guid (the key of the host-side inventory) is derived from it, replacing an
+    // ini value the peer chose for itself and every host believed (coop/net/peer_identity.h).
+    // Loaded at boot, so a failure is visible before any session.
     if (!coop::net::peer_identity::Load()) {
         UE_LOGE("harness: no durable identity could be established -- coop sessions "
                 "will refuse to start (see the peer_identity log line above)");
     }
-    // v93 skins: the persisted body-skin choice (same ini; a fresh identity is assigned
-    // the current scientist). local_body owns it; the Join payload reads it from there.
+    // The persisted body skin; local_body owns it and the Join reads it from there.
     coop::local_body::SetInitialSkin(cfg::ReadPlayerSkin());
-    // v94: the persisted nameplate pref (absent = visible). The Join prefs byte reads it.
+    // The persisted nameplate pref (absent = visible), read by the Join's prefs byte.
     coop::nameplate::SetInitialLocalVisible(cfg::ResolveFlag(coop::config_registry::rows::nameplate));
-    // v103 (12f): the persisted nick color (ini nick_color=RRGGBB hex). The Join
-    // color field reads it; nick_color owns the parse + the absent/empty
-    // semantics (s27 Tier-C move).
+    // The persisted nick colour (ini nick_color=RRGGBB); nick_color owns the parse.
     coop::nick_color::SetInitialLocalFromIniHex(cfg::ResolveString(coop::config_registry::rows::nick_color));
-    // T10 (ini rework arc 2): the boot file-vs-schema sweep, AFTER the mints
-    // above so the post-mint file state is what gets reviewed. Arms the
-    // settings-check panel (overlay root -- draws at the main menu) when
-    // anything is off; reports only, never rewrites.
+    // The boot file-versus-schema sweep, after the mints above so the post-mint file is what is
+    // reviewed; it arms the settings-check panel at the main menu and never rewrites.
     coop::config_review::RunBootSweep();
 
-    // The OMEGA WARNING is on screen during the FIRST few seconds (the intro/menu
-    // world), BEFORE we `open` gameplay. Sample widgets across that window so the
-    // dump catches the omega gate (a later single dump only sees gameplay widgets,
-    // since VOTV preloads its UMG and the omega widget is gone by then). Each Post
-    // runs on the game thread as soon as the pump is live (which is while the omega
-    // screen ticks UMG), so these land during the intro.
-    // Census the OTHER mods in this process and warn if the player is paying frames
-    // for them. Pure file-system reads, so it does not need the Post -- but it rides
-    // one anyway so a slow disk cannot stall the boot thread.
-    //
-    // IT LIVES ABOVE THE SCENARIO BRANCH ON PURPOSE (fixed 2026-08-29). It shipped
-    // inside `scenario == "play"`, which is the hands-on AUTOTEST path -- so it never
-    // ran for a single real player, because a native launch is `menu`. The bug was
-    // invisible to its own verification: both arms were exercised under `play`, the
-    // only scenario where the code was reachable. A boot-time census belongs to BOOT,
-    // not to one test scenario, and every scenario reaches this line.
+    // The census of the other mods in this process, warning when the player pays frames for them:
+    // file-system reads, posted so a slow disk cannot stall the boot thread. Above the scenario
+    // branch, since every scenario reaches this line; inside the autotest branch it never ran for a
+    // real player, and its own verification could not see that.
     Post([] { harness::mod_environment::Run(); });
 
-    // The lobby heartbeat's player-count source, installed for the SAME reason the
-    // census above sits here: every scenario reaches this line, and the ones that
-    // announce a lobby do not agree on which. `menu` (the native launch, i.e. every
-    // real player) never enters the netEnabled branch; `play` announces from inside
-    // it BEFORE RunPlayLoop; overlay_test_arm announces from others entirely. An
-    // install in any one of those is an install the other lanes silently miss --
-    // which is how the seam it fills sat unwired since 2026-06-07 (post-ship audit,
-    // 2026-09-02). Ordered before every announce site on every lane, so the
-    // heartbeat worker can never read the pointer before it is written.
+    // The lobby heartbeat's player-count source, here for the same reason: the scenarios that
+    // announce a lobby do not agree on where, and an install in any one of them is missed by the
+    // others. Ordered before every announce site, so the heartbeat worker never reads the pointer
+    // before it is written.
     session_runtime::InstallLobbyPlayerCountSource();
 
     const bool storyBoot = (scenario == "play");
     const bool menuMode  = (scenario == "menu");
     if (storyBoot) {
-        // Sample widgets across the first ~3 s -- catches the OMEGA gate before we
-        // `open` gameplay. This is an AUTOTEST diagnostic: it logs ~10k widget lines
-        // (walks the whole UObject array 7x) and saturates the game-thread task pump.
-        // It must NOT run on the native MENU path -- log spam + a stalled pump (it
-        // delayed the menu bring-up by ~20 s in the first menu-boot smoke).
-        for (int k = 0; k < 7; ++k) {  // ~2.8 s of coverage
+        // Widgets sampled across the first seconds, catching the OMEGA warning gate before gameplay
+        // opens: an autotest diagnostic that logs thousands of lines and saturates the task pump,
+        // so never on the native menu path (it delayed the menu by 20 s once).
+        for (int k = 0; k < 7; ++k) {  // about 2.8 s of coverage
             Post([k] { UE_LOGI("widgets: == intro dump pass %d ==", k); DumpLiveWidgets(); });
             ::Sleep(400);
         }
     } else if (menuMode) {
-        ::Sleep(1500);  // native menu boot: a brief settle, then to RunPlayLoop (quiet log)
+        ::Sleep(1500);  // the native menu boot: a brief settle, then RunPlayLoop
     } else {
-        ::Sleep(8000);  // other scenarios: let the engine fully init
+        ::Sleep(8000);  // the other scenarios: let the engine init
     }
     Post([] { Report("menu"); });
-    // Param-offset reflection validator (scenario "paramdump"): logs a UFunction's
-    // FProperty layout (names/offsets/sizes/flags) to check against the known
-    // signature when bringing up a new function or game build.
+    // The param-offset validator (scenario paramdump): a UFunction's property layout, to check
+    // against the known signature on a new function or game build.
     if (scenario == "paramdump") {
         Post([] {
             DumpParams(L"Actor", L"K2_SetActorLocation");
@@ -220,9 +174,8 @@ DWORD WINAPI TimelineThread(LPVOID param) {
     const bool wantGameplay = (scenario == "newgame" || scenario == "orphan" ||
                                scenario == "skin" || scenario == "show" ||
                                scenario == "play");
-    // Autonomous scenarios boot to the menu then `open` + wait a fixed time. The
-    // story-boot scenarios (play) load via LoadStorySave in their own
-    // branch, so they skip this sandbox `open`.
+    // The autonomous scenarios boot to the menu, then `open` gameplay and wait; the story-boot
+    // scenario loads through LoadStorySave in its own branch.
     if (wantGameplay && !storyBoot) {
         ::Sleep(4000);
         Post([] {
@@ -231,18 +184,15 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             cmd += P::name::GameplayLevel;
             ue_wrap::engine::ExecuteConsoleCommand(cmd.c_str());
         });
-        ::Sleep(25000);  // level load + BeginPlay (mainPlayer_C spawns)
+        ::Sleep(25000);  // the level load and BeginPlay
         Post([] { Report("post-load"); });
     }
-    // NOTE: in-game HighResShot is BANNED -- it pops a "screenshot saved" toast
-    // (bottom-right) that distracts the human tester. For autonomous visual
-    // verification use the external tools/capture_window.ps1 (Windows GDI grab,
-    // no in-game notification) instead.
+    // No in-game HighResShot: its toast distracts a hands-on tester; autonomous captures use
+    // tools/capture_window.ps1.
 
     if (scenario == "orphan") {
-        // C++ port of the Phase 2.1 orphan derisk: spawn a 2nd mainPlayer_C via
-        // our own CallFunction path, confirm the count goes 1->2, pose-drive it
-        // by absolute teleport (the network snapshot path), then soak.
+        // The orphan derisk: spawn a second mainPlayer_C through our own call path, confirm the
+        // count goes from one to two, drive it by absolute teleport, then soak.
         ::Sleep(2000);
         Post([] { Report("pre-spawn"); });
         Post([] {
@@ -258,7 +208,7 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             }
         });
 
-        // Pose-drive: teleport the orphan in +X steps, read back each time.
+        // The pose drive: the orphan teleported in +X steps, read back each time.
         for (int i = 1; i <= 5; ++i) {
             ::Sleep(3000);
             Post([i] {
@@ -276,43 +226,29 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         Post([] { Report("post-drive soak"); });
         UE_LOGI("harness: ==== AUTONOMOUS ORPHAN TIMELINE DONE ====");
     } else if (scenario == "play") {
-        // Hands-on test. Coop targets STORY mode. Read the net role FIRST: a
-        // v56 CLIENT (.bat/env) no longer pre-boots its own world -- it takes
-        // the SAME save-transfer join as the browser (user 2026-06-10: "make
-        // the existing .bat files go the server-browser way automagically into
-        // a host's game"): connect at the menu, download the host's save, load
-        // THAT world. Host/solo still auto-load their story save here via
-        // VOTV's own load path (LoadStorySave -> open untitled_1).
+        // The hands-on test, in story mode. The net role first: an env client no longer boots its
+        // own world but takes the same save-transfer join as the browser (connect at the menu,
+        // download the host's save, load that world); the host and a solo run auto-load their story
+        // save here.
         bool netEnabled = false;
         const coop::net::Config netCfg = cfg::ReadNetConfig(netEnabled);
         const bool saveTransferClient =
             netEnabled && netCfg.role == coop::net::Role::Client;
         if (!saveTransferClient) session_runtime::BootStorySaveBlocking();
-        // Verify the SDK profile resolves against the running VOTV build.
-        // (After the world boot on host/solo; on a save-transfer client the BP
-        // classes load with the menu/preLoad world -- the checker logs what it
-        // can and the per-class consumers all self-retry anyway.)
+        // The SDK profile is checked against the running build (after the world boot on a host; on
+        // a save-transfer client the classes load with the menu world, and every consumer
+        // self-retries).
         Post([] { harness::sdk_check::Run(); });
-        // (the mod-environment census used to sit here -- it now runs above the
-        // scenario branch, because here it was unreachable for every real player)
-        // Coop networking: if multivoid.ini configures net.role, the puppet is
-        // network-driven (auto-spawned on the first peer pose) and we send our pose;
-        // otherwise the puppet is spawned locally + static (the pre-net behaviour).
+        // With a configured net role the puppet is network-driven and our pose is sent; otherwise
+        // the puppet is a static local one.
         if (netEnabled) {
-            // Autotest positioning, shared by both arms below: host/solo run it
-            // BEFORE Start (the first pose packet already carries the pose); a
-            // save-transfer client runs it AFTER its world exists.
+            // The autotest positioning, shared by both arms: a host runs it before Start (the first
+            // pose packet already carries the pose); a save-transfer client would run it after its
+            // world exists.
             auto runAutotestTeleport = [&] {
-            // Two post-load teleport paths:
-            //   * Autonomous-test mode (env VOTVCOOP_AUTOTEST_X/Y/Z/YAW/PITCH set):
-            //     position + camera-rotate the local pawn to the role-specific
-            //     verified pose so each test instance's screenshot can SEE the
-            //     other's puppet (per [[project-autotest-spawn-pose]]).
-            //   * Production client mode (no env set, role=Client): land the
-            //     client at the КПП guard checkpoint -- user rule 2026-05-23
-            //     so both peers spawn near each other in regular play.
-            // Either path teleports ONCE post-load, BEFORE session.Start so the
-            // very first pose packet already carries the right position.
+            // With VOTVCOOP_AUTOTEST_X/Y/Z (and YAW, PITCH) set, the local pawn is placed and aimed
+            // at the role-specific pose so each test instance's screenshot sees the other's puppet;
+            // once, post-load, before the session starts.
             const std::string xs = cfg::ReadEnv("VOTVCOOP_AUTOTEST_X");
             const std::string ys = cfg::ReadEnv("VOTVCOOP_AUTOTEST_Y");
             const std::string zs = cfg::ReadEnv("VOTVCOOP_AUTOTEST_Z");
@@ -324,14 +260,10 @@ DWORD WINAPI TimelineThread(LPVOID param) {
                 const std::string pitchs = cfg::ReadEnv("VOTVCOOP_AUTOTEST_PITCH");
                 const float ayaw   = yaws.empty()   ? 0.f : static_cast<float>(std::atof(yaws.c_str()));
                 const float apitch = pitchs.empty() ? 0.f : static_cast<float>(std::atof(pitchs.c_str()));
-                // Audit H8 (2026-05-27): use VOTV's `teleportWObackrooms` via
-                // coop::teleport_client::ApplyLocally. That path bypasses the
-                // CMC constraints K2_TeleportTo loses to (the same root-cause
-                // fix shipped in teleport_client.cpp:60-71). The retry loop
-                // still wraps it because Registry::Get().Local() can be null
-                // for the first few ticks (local player isn't spawned yet);
-                // once Local() exists, ApplyLocally's teleport sticks on first
-                // try, so the loop exits early.
+                // Through teleport_client::ApplyLocally, VOTV's own teleportWObackrooms, which the
+                // movement component's constraints do not undo the way they undo K2_TeleportTo. The
+                // retry loop covers the first ticks before the local player exists; once it does,
+                // the teleport sticks.
                 const ue_wrap::FVector target{ax, ay, az};
                 bool teleported = false;
                 for (int attempt = 0; attempt < 50 && !teleported; ++attempt) {
@@ -359,39 +291,26 @@ DWORD WINAPI TimelineThread(LPVOID param) {
                 ::Sleep(100);
             }
             };  // runAutotestTeleport
-            // NOTE: a CLIENT never teleports to a fixed КПП checkpoint. A joining
-            // client appears at the HOST's position: the world-ready connect replay
-            // sends the host's own player pose (net_pump RunConnectReplayForSlot ->
-            // teleport_client::TeleportSlotToHost) and the client applies it.
+            // A client never teleports to a fixed checkpoint: it appears at the host's position,
+            // which the world-ready connect replay sends (net_pump,
+            // teleport_client::TeleportSlotToHost).
             if (!saveTransferClient) {
                 runAutotestTeleport();
                 session_runtime::StartCoopSession(netCfg);
                 if (netCfg.role == coop::net::Role::Host) {
-                    // v56 (user 2026-06-10): the env host is a REAL master-announced
-                    // game, HIDDEN from the public list (heartbeat live; joiners
-                    // direct-connect by IP; the .bat/test lobby never pollutes the
-                    // browser). Best-effort -- master down changes nothing.
+                    // The env host is a real master-announced game, hidden from the public list
+                    // (the heartbeat live, joiners direct-connect by address, the test lobby never
+                    // in the browser); best effort.
                     std::string w = cfg::ResolveString(coop::config_registry::rows::save);
                     coop::session_manager::AnnounceEnvHostHidden(
                         coop::session_manager::Nickname() + "'s game", w);
                 }
             } else {
-                // v56 (user 2026-06-10 "make the .bat go the server-browser way"):
-                // the env CLIENT goes through the SAME session_manager path as the
-                // browser -- ConnectDirect raises the join cover + queues the
-                // start; RunPlayLoop (entered with idleInGameplay=false below)
-                // drains it through the ONE menu-mode join branch (arm -> connect
-                // at the menu -> save download -> load -> world-ready). RULE 2:
-                // no harness-side parallel join path. (The autotest-positioning
-                // teleport doesn't run on this path -- the puppetshot/ragdollshot
-                // scenarios need a post-join hook when next used.)
-                // ...and it dials the way its TOPOLOGY says. This branch used to
-                // be ConnectDirect unconditionally, so an env client launched with
-                // net.topology=p2p silently connected over direct IP instead --
-                // which is why tools/p2p_smoke.py has been proving only the HOST
-                // half of the P2P lane since 2026-06-10 (77225106). Both arms go
-                // through the same session_manager door; neither is a harness-side
-                // parallel join path.
+                // The env client goes through the same session_manager door as the browser: the
+                // connect raises the join cover and queues the start, and RunPlayLoop (entered with
+                // idleInGameplay false) drains it through the one menu-mode join branch. It dials
+                // the way its topology says: unconditionally direct, a P2P client silently
+                // connected over IP, and the P2P smoke proved only the host half.
                 if (netCfg.topology == coop::net::Topology::P2P) {
                     if (!coop::session_manager::ConnectP2PDirect(netCfg.hostIdentity,
                                                                  netCfg)) {
@@ -410,47 +329,31 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             }
 
         } else if (coop::config::ResolveFlag(::coop::config_registry::rows::static_2nd_player)) {
-            // Opt-in dev aid ([dev] static_2nd_player=1): a static slot-1 puppet for solo
-            // visual tests. OFF by default (audit P1) -- it would collide with a browser-
-            // booted HOST session's slot-1 NETWORK puppet (net_pump's auto-spawn is gated
-            // on !Puppet(1).valid(), so the static one would be pose-driven but never
-            // registered in the roster), and a shipping solo game shouldn't show a phantom
-            // player. The real 2nd player arrives via the MULTIPLAYER browser; RunPlayLoop
-            // installs the solo observers regardless.
+            // An opt-in dev aid ([dev] static_2nd_player=1): a static slot-1 puppet for solo visual
+            // tests. Off by default: it would collide with a browser-hosted session's slot-1
+            // network puppet (pose-driven but never in the roster), and a solo game should show no
+            // phantom player.
             session_runtime::SpawnSecondPlayerWhenReady();
         }
 
-        // Autonomous autotest dispatch: spawn each VOTVCOOP_RUN_*_TEST worker thread whose
-        // env flag is set (each self-gates on role internally).
-        //
-        // OUTSIDE the net-role branch since 2026-08-31, and that is a fix, not a widening.
-        // It used to sit inside it, so an env-gated test could only ever run in a launch
-        // that ALSO set VOTVCOOP_NET_ROLE -- i.e. with a session started. Several of these
-        // routines are documented SOLO and mean it: autotest_menutravel_probe says "SP-solo",
-        // autotest_ragdoll_spawn_probe says "plain single-player; NO connection", and
-        // autotest_death has to run sessionless or net_pump's local-death flee (gated on a
-        // live session) pre-empts the very chain it measures. Every one of them was silently
-        // unreachable in a true solo launch: the flag was read, nothing spawned, and the
-        // scenario reported INCONCLUSIVE with no line saying why. Role is still passed and
-        // still self-gated inside, so nothing that was spawning stops.
+        // The autotest dispatch: each VOTVCOOP_RUN_*_TEST worker whose env flag is set (each
+        // self-gates on role). Outside the net-role branch: inside it, an env-gated test could run
+        // only in a launch with a session, and the routines documented as solo (the menu-travel
+        // probe, the ragdoll spawn probe, the death instrument that must run sessionless) were
+        // silently unreachable, reporting INCONCLUSIVE with no line saying why.
         harness::autotest::SpawnEnvGatedTests(netCfg.role);
 
         UE_LOGI("harness: ==== PLAY READY ====");
-        ue_wrap::log::Flush();  // boot-ready milestone: land the boot sequence on disk now
-        // Unified play loop (env- or browser-driven). Replaces the two prior per-branch
-        // loops + the stale Z-trace debug block (RULE 2: one loop, one start path).
-        // idleInGameplay: host/solo booted straight into gameplay (BootStorySaveBlocking);
-        // a v56 save-transfer client is AT THE MENU (its queued ConnectDirect must hit
-        // the menu-mode branch in the TakePendingStart drain).
+        ue_wrap::log::Flush();  // the boot sequence lands on disk
+        // The one play loop, env- or browser-driven. idleInGameplay: a host or solo run booted
+        // straight into gameplay; a save-transfer client is at the menu, and its queued connect
+        // must hit the menu-mode branch.
         session_runtime::RunPlayLoop(/*idleInGameplay=*/!saveTransferClient);
     } else if (scenario == "show") {
-        // Autonomous visual confirm: spawn the puppet in front, hold idle, then
-        // drive a walk (speed) for a few seconds to confirm the AnimBP animates
-        // from our direct variable writes. NOTE: this scenario does NOT exercise
-        // the receiver-side INTERPOLATION (each SetTargetPose here either snaps
-        // -- first call -- or has zero positional delta -- subsequent walk/idle
-        // at same loc). The interp linear LERP path is exercised by the LAN
-        // test (the two-process mp.py pose stream).
+        // The autonomous visual confirm: spawn the puppet in front, hold idle, then drive a walk
+        // speed to confirm the AnimBP animates from the variable writes. It does not exercise the
+        // receiver's interpolation (each pose here snaps or has no positional delta); the
+        // two-process LAN test does.
         ::Sleep(2000);
         Post([] {
             UE_LOGI("show: === spawn skin-puppet ===");
@@ -461,8 +364,8 @@ DWORD WINAPI TimelineThread(LPVOID param) {
             if (!coop::puppet_drive::Puppet(1).valid()) { UE_LOGW("show: no puppet"); return; }
             const ue_wrap::FVector at = coop::puppet_drive::Puppet(1).GetLocation();
             UE_LOGI("show: drive WALK in place (speed=200) to test AnimBP locomotion");
-            // Same loc/yaw, just bump speed -- the first SetTargetPose since spawn
-            // snaps (hasPose_ false), then Tick applies. AnimBP locomotion picks it up.
+            // The same location and yaw with the speed bumped: the first SetTargetPose since spawn
+            // snaps, then Tick applies.
             coop::net::PoseSnapshot s{at.X, at.Y, at.Z, /*yaw*/0.f, /*pitch*/0.f, /*speed*/200.f};
             coop::puppet_drive::Puppet(1).SetTargetPose(s);
             coop::puppet_drive::Puppet(1).Tick();
@@ -478,8 +381,8 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         });
         UE_LOGI("harness: ==== SHOW DONE ====");
     } else if (scenario == "skin") {
-        // Investigate the player's visible-body setup: enumerate components of
-        // the local pawn and a spawned orphan, and confirm SuperStruct offset.
+        // The visible-body inspection: the components of the local pawn and of a spawned orphan,
+        // and the SuperStruct offset probe.
         ::Sleep(2000);
         Post([] {
             R::DebugProbeSuperStructOffset();
@@ -495,17 +398,12 @@ DWORD WINAPI TimelineThread(LPVOID param) {
         Post([] { Report("post-shot"); });
         UE_LOGI("harness: ==== AUTONOMOUS NEWGAME TIMELINE DONE ====");
     } else if (scenario == "menu") {
-        // NATIVE launch (no test env -> ReadScenario defaults to "menu"). Boot to
-        // VOTV's OWN main menu and let the user drive coop from the MULTIPLAYER
-        // button (server browser + Host-Game save picker). NO auto-load into
-        // gameplay -- that is TEST-only behaviour (mp.py / play-coop.bat set
-        // VOTVCOOP_SCENARIO=play). This fixes the user-reported 2026-06-06 bug:
-        // a native VotV.exe launch was reading a leftover scenario.txt="play" and
-        // booting straight into gameplay. RunPlayLoop(idleInGameplay=false) drains
-        // browser-initiated sessions (Host/Join/Direct) + keeps the shutdown hooks
-        // live while at the menu; gameplay observers install when a session starts.
+        // The native launch (no test env, so the scenario defaults to menu): VOTV's own main menu,
+        // where the MULTIPLAYER button drives coop, and no auto-load into gameplay (a test-only
+        // behaviour). RunPlayLoop drains browser-initiated sessions and keeps the shutdown hooks
+        // live at the menu; the gameplay observers install when a session starts.
         UE_LOGI("harness: ==== MENU mode (native launch) -- MULTIPLAYER button drives coop ====");
-        ue_wrap::log::Flush();  // boot-ready milestone: land the boot sequence on disk now
+        ue_wrap::log::Flush();  // the boot sequence lands on disk
         session_runtime::RunPlayLoop(/*idleInGameplay=*/false);
     } else {
         UE_LOGI("harness: scenario '%s' -- no automatic actions", scenario.c_str());
@@ -516,97 +414,79 @@ DWORD WINAPI TimelineThread(LPVOID param) {
 }  // namespace
 
 void Start() {
-    // F12 -> screenshot (toast-free, saved to coop-screenshots/). Always on,
-    // independent of the scenario, so it's available during hands-on testing.
+    // F12 takes a toast-free screenshot into coop-screenshots/; always on, for hands-on testing.
     screenshot::StartHotkeyWatcher();
 
-    // Dev free-flying camera. HOME toggles it (kept by user request) when
-    // [dev] freecam=1; the F1 menu (Player > Movement) also toggles it under
-    // [dev] devkeys. No-op at boot otherwise.
+    // The dev free camera: HOME toggles it under [dev] freecam=1, and the F1 menu toggles it under
+    // [dev] devkeys; a no-op at boot otherwise.
     coop::dev::freecam::Init();
 
-    // Dev: use the sandbox prop-spawn menu (Q) in STORY mode. No-op at boot
-    // unless [dev] spawn_menu_unlock=1; the F1 menu (Game > Entities) toggles it
-    // under [dev] devkeys. Host/local only (coop::dev_gate).
+    // The sandbox prop-spawn menu (Q) in story mode, under [dev] spawn_menu_unlock=1 or the F1
+    // menu; host and local only.
     coop::dev::spawn_menu_unlock::Init();
 
-    // The other dev features (snow, restore vitals, teleport clients, pos/cam
-    // overlay, spawn NPC) are now driven from the F1 ImGui menu -- their hotkey
-    // threads were RETIRED (RULE feedback-dev-features-in-imgui-menu). SetSession
-    // for restore_vitals / teleport_client / force_weather was already called
-    // above (their menu actions need the Session role).
+    // The other dev features (snow, restore vitals, teleport clients, the position and camera
+    // overlay, spawn NPC) are driven from the F1 menu; their SetSession calls ran above.
 
-    // Dear ImGui overlay -- the F1 menu host (dev features + future MP server
-    // browser). dev_menu::Init reads the dev switch off the render thread; the
-    // overlay installs the DXGI present hook (ImGui brings up on the first frame).
-    // Visible to all players; dev categories gate on [dev] devkeys inside the menu.
+    // The ImGui overlay, the F1 menu's host: dev_menu::Init reads the dev switch off the render
+    // thread, and the overlay installs the DXGI present hook. Visible to all players; the dev
+    // categories gate on [dev] devkeys inside the menu.
     ui::dev_menu::Init();
-    // Dev object-overlay labels: menu-toggled normally; [dev] object_overlay=1
-    // force-enables at boot so the autonomous smoke exercises the draw path.
+    // The object-overlay labels: menu-toggled normally, force-enabled at boot by [dev]
+    // object_overlay=1 so the smoke exercises the draw path.
     coop::dev::object_overlay::InitFromIni();
     coop::dev::ragdoll_bone_overlay::InitFromIni();
-    // v56 save-transfer: register the bulk sink with the session + sweep stale
-    // crash-leftover zcoop_* slots (age-gated -- never a live sibling's).
+    // The save transfer's sinks on the session, and a sweep of stale crash-leftover zcoop_ slots
+    // (age-gated, never a live sibling's).
     coop::save_transfer::Install(&session_runtime::Session());
     coop::save_transfer::CleanupStaleSlotsAtBoot();
-    // Player-list scoreboard (a second overlay surface, shown to everyone, on tilde). The
-    // roster snapshot reads this session; Refresh() runs in the game-thread ticks.
+    // The player-list scoreboard (a second overlay surface, on tilde); the roster reads this
+    // session.
     coop::roster::SetSession(&session_runtime::Session());
     if (!ui::imgui_overlay::Init()) {
         UE_LOGW("harness: imgui_overlay::Init failed -- F1 menu unavailable this run");
     }
-    // In-game console: register the logger sink now so it captures the mod log from here on
-    // (the connect log/errors the loading state surfaces). Auto-shows during a client join.
+    // The in-game console's logger sink, registered now so it captures the mod log from here on;
+    // it auto-shows during a client join.
     ui::console::Init();
 
-    // MULTIPLAYER entry point: inject the native button above NEW GAME in VOTV's
-    // main menu; clicking it opens the ImGui server browser (a third overlay
-    // surface). Resolves ui_menu_C lazily (bounded retry if the BP isn't loaded
-    // yet at boot). Shipping feature -- default on; [coop] multiplayer_menu_off=1
-    // disables it.
+    // The MULTIPLAYER entry point: the native button injected above NEW GAME in VOTV's main menu,
+    // which opens the server browser. ui_menu_C resolves lazily with a bounded retry. On by
+    // default; [coop] multiplayer_menu_off=1 disables it.
     coop::multiplayer_menu::Init();
 
-    // TEST-ONLY (VOTVCOOP_MENU_PROCEED=1): auto-advance past the begin/OMEGA
-    // content-warning screen so an autonomous run reaches the MAIN MENU for the
-    // button screenshot. Never on by default (the warning is a real gate).
+    // Test only (VOTVCOOP_MENU_PROCEED=1): auto-advance past the content-warning screen so an
+    // autonomous run reaches the main menu. Never on by default.
     coop::dev::menu_proceed::Init();
 
-    // The VOTVCOOP_SPAWN_TRIGGER file watcher (autonomous NPC-spawn path that
-    // exercises host AllocAndInstall + broadcast + client mirror Install). Hands-on
-    // spawning is the F1 menu (Game > Entities). No-op unless the trigger env is set.
+    // The VOTVCOOP_SPAWN_TRIGGER file watcher, the autonomous NPC-spawn path (host install and
+    // broadcast, client mirror); hands-on spawning is the F1 menu. A no-op without the env.
     coop::dev::spawn_npc::Init();
 
-    // TEST-ONLY (VOTVCOOP_KERFUR_TOGGLE_TRIGGER): programmatic kerfur turn_off/turn_on so the
-    // CLIENT conversion-adopt path has autonomous coverage (the radial verb is EX_LocalVirtual-
-    // Function -- unhookable + needs a player at the menu). No-op unless the trigger env is set.
+    // Test only (VOTVCOOP_KERFUR_TOGGLE_TRIGGER): a programmatic kerfur turn-off and turn-on, so
+    // the client's conversion-adopt path has autonomous coverage (the radial verb is a local
+    // virtual call and needs a player at the menu).
     coop::dev::kerfur_toggle::Init();
 
-    // GATE 2.2 of docs/COOP_VM_DISPATCH_PLAN.md (THROWAWAY, ini `gnatives_probe=1`):
-    // swap GNatives[0x45]/[0x46] with the substrate's wrapper shape and count EX_Local*
-    // dispatch rate + cost, to decide the <=0.1 ms/frame perf gate before building the
-    // real substrate. Installs at boot so the boot/solo-SP windows are covered too.
+    // The GNatives probe (ini gnatives_probe=1): swaps two opcode handlers with the substrate's
+    // wrapper shape and counts the local-dispatch rate and cost; installed at boot so the boot and
+    // solo windows are covered.
     coop::dev::gnatives_probe::Init();
 
-    // TEST-ONLY (VOTVCOOP_TEST_SAVE_ENUM=1): verify the native save browser
-    // (ue_wrap::save_browser drives VOTV's loadSlots) at the menu before the ImGui
-    // Host-Game picker is layered on it. No-op unless the env is set.
+    // Test only (VOTVCOOP_TEST_SAVE_ENUM=1): the native save browser (VOTV's loadSlots) verified at
+    // the menu.
     coop::dev::save_probe::Init();
 
-    // P1 of the native server browser (docs/MULTIPLAYER_UI.md section 8), ini
-    // `native_ui_probe=1`: the read-only UMG resolve census + donor residency + the
-    // ui_menu switcher child map, plus RUNG 0 -- the count of frames PRESENTED while no
-    // world exists, which is the whole of question O4 and decides whether the ImGui
-    // overlay substrate is retirable at all. `native_ui_probe_write=1` adds RUNG 1, the
-    // one write. Rides the ui_menu Tick observer (never boot: at boot there is no menu,
-    // and a null donor there is indistinguishable from a real absence).
+    // The native-UI probe (ini native_ui_probe=1): the read-only UMG resolve census, the donor
+    // residency, the menu switcher's child map, and the count of frames presented while no world
+    // exists; native_ui_probe_write=1 adds the one write. It rides the menu tick observer, since at
+    // boot there is no menu and a null donor is indistinguishable from an absence.
     coop::dev::native_ui_probe::Init();
 
-    // Install WM_CLOSE subclass on the game HWND so X-close runs our
-    // cleanup BEFORE the engine's teardown PE calls fire. Without this
-    // the PE detour stays live through UE4 shutdown, faults on
-    // half-destroyed UObjects, and the process hangs at 99% RAM. The
-    // window might not exist yet at this moment -- Install() retries
-    // via TimelineThread's tick loop (see CoopShutdownRetry below).
+    // The WM_CLOSE subclass on the game window, so an X-close runs our cleanup before the engine's
+    // teardown dispatches: with the detour live through shutdown it faults on half-destroyed
+    // objects and the process hangs. The window may not exist yet; Install retries from the
+    // timeline.
     coop::shutdown::Install(&session_runtime::Session());
 
     auto* scenario = new std::string(cfg::ReadScenario());
