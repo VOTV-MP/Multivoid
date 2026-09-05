@@ -12,65 +12,48 @@
 namespace ui::atlas_watch {
 namespace {
 
-// imgui_draw.cpp:2663-2664 defines these as file-local macros, so they cannot be
-// included. Copied WITH their meaning rather than their spelling, because the
-// meaning is what the detector rests on:
-//   UNUSED    -- this codepoint was never requested from this baked
-//   NOT_FOUND -- it WAS requested and every source failed to produce it
-// The second is written both when no source has the glyph and when the packer
-// could not find room (imgui_draw.cpp, ImFontBaked_BuildLoadGlyph tail), which
-// is exactly why the detector below must subtract the cases we can explain.
-// Only NOT_FOUND is named here: UNUSED (0xFFFF) and every real glyph index are
-// covered by "anything else", so a constant for them would be dead weight.
+// ImGui defines these as file-local macros, so they cannot be included; copied with their
+// meaning: UNUSED means the codepoint was never requested from this baked, NOT_FOUND that it
+// was requested and every source failed to produce it. The second is written both when no
+// source has the glyph and when the packer could not find room, which is why the detector
+// below must subtract the cases it can explain. Only NOT_FOUND is named: UNUSED and every real
+// glyph index are covered by anything-else.
 constexpr ImU16 kIndexNotFound = 0xFFFE;
 
 constexpr uint32_t kEmojiProbe = 0x1F600;  // GRINNING FACE -- the donor's, and in the repertoire
 
-// Per-BUILD memo. 0 means "no build checked yet"; ImTextureData::UniqueID counts
-// from 1 (ImFontAtlas::ImFontAtlas resets TexNextUniqueID) so 0 can never be a
-// real id.
+// The per-build memo. 0 means no build checked yet; texture ids count from 1, so 0 can never
+// be a real id.
 int g_checkedTexId = 0;
 // Geometry as last logged, so the line appears on change instead of per frame.
 int      g_logW = 0, g_logH = 0;
-// The packer's discarded-surface counter as last seen. -1 = never sampled.
+// The packer's discarded-surface counter as last seen; -1 means never sampled.
 int      g_lastDiscardedSurface = -1;
-// Per-baked Glyphs.Size, keyed by ImFontBaked::BakedId. ImGuiStorage because the
-// pool is unbounded and entries are reused for other (font, size) pairs.
+// The per-baked glyph count, keyed by baked id; ImGui storage because the pool is unbounded
+// and entries are reused for other font and size pairs.
 ImGuiStorage g_glyphCount;
-// Regime complaint, once per process: with the capability flag off, every check
-// in this file is green by construction and would read as evidence.
+// The regime complaint, once per process: with the capability flag off, every check in this
+// file is green by construction and would read as evidence.
 bool g_warnedRegime = false;
-// Rate limit for the per-frame bake-volume line (a stutter signal, not an error).
+// The rate limit for the per-frame bake-volume line, a stutter signal rather than an error.
 double g_lastVolumeLog = 0.0;
 
 ImFontAtlasBuilder* Builder(ImFontAtlas* atlas) { return atlas ? atlas->Builder : nullptr; }
 
-// ---------------------------------------------------------------------------
-// 1. THE SUPERSET INVARIANT
-//
-// Glyphs.Size IS NOT MONOTONIC, and a high-water mark would be silently wrong.
-// ImFontAtlasBuildDiscardBakes reaches ImFontBaked::ClearOutputData, which does
-// Glyphs.clear() -- and it is driven from inside ImFontAtlasTextureMakeSpace,
-// i.e. from the very pressure this file exists to watch. A same-font same-size
-// baked therefore restarts at zero, and a remembered high-water mark would skip
-// every re-baked glyph below it, forever, without a symptom. So a DECREASE is
-// treated as a reset and the walk starts again from zero. Pool entries reused
-// for a different (font, size) pair are covered by the same rule.
-// IT ASKS ABOUT RASTERISED GLYPHS, NOT ABOUT ENTRIES IN Glyphs -- and that
-// distinction is a measurement, not a nicety. Its first run reported U+0009 as an
-// out-of-repertoire bake on a tree where TAB is excluded by category (it is Cc,
-// hence no-ink). ImGui SYNTHESISES the tab glyph itself, in
-// ImFontAtlasBuildSetupFontBakedBlanks: it copies the space glyph's advance,
-// calls ImFontAtlasBakedAddFontGlyph with src == NULL, and never goes near
-// ImFontAtlasBuildAcceptCodepointForSource -- so no exclude list can suppress it,
-// on any config, ever.
-//
-// An exemption for U+0009 would be a crutch that hides the next such glyph. The
-// structural truth is that a synthesised glyph occupies NO TEXTURE AREA: its
-// PackId stays Invalid because nothing was packed. And the invariant this
-// instrument enforces is about PIXELS -- two names must not look alike while
-// folding apart -- so a glyph with no pixels cannot violate it and has no
-// business being reported. Anything a SOURCE actually rasterised still is.
+// The superset invariant. The glyph count is not monotonic, and a high-water mark would be
+// silently wrong: discarding bakes clears a baked's glyphs, and that is driven from inside the
+// atlas's make-space, the very pressure this file watches. A same-font same-size baked
+// therefore restarts at zero, and a remembered high-water mark would skip every re-baked glyph
+// below it, forever, without a symptom; so a decrease is treated as a reset and the walk
+// starts again from zero, and pool entries reused for a different font and size pair are
+// covered by the same rule. It asks about rasterised glyphs, not about entries in the glyph
+// list, and that distinction is a measurement: the first run reported TAB as an
+// out-of-repertoire bake on a tree where TAB is excluded by category. ImGui synthesises the
+// tab glyph itself, copying the space glyph's advance with no source, and never goes near the
+// source accept check, so no exclude list can suppress it; an exemption for TAB would hide the
+// next such glyph. A synthesised glyph occupies no texture area (its pack id stays invalid),
+// and the invariant is about pixels (two names must not look alike while folding apart), so a
+// glyph with no pixels cannot violate it. Anything a source actually rasterised still is.
 int ScanNewGlyphs(ImFontBaked& baked, int& outOffenders, uint32_t& outFirst) {
     const int now = baked.Glyphs.Size;
     const int was = g_glyphCount.GetInt(baked.BakedId, 0);
@@ -86,15 +69,12 @@ int ScanNewGlyphs(ImFontBaked& baked, int& outOffenders, uint32_t& outFirst) {
     return now - from;
 }
 
-// ---------------------------------------------------------------------------
-// 2. THE PACK-FAILURE DETECTOR
-//
-// Three IndexLookup states are measured distinct: >= Size or UNUSED means never
-// requested; NOT_FOUND means requested and every source failed; anything else is
-// a real glyph index. NOT_FOUND alone proves nothing -- it is also what an
-// excluded codepoint and a genuinely-absent one produce -- so the predicate has
-// to subtract both explanations. What is left is "a source HAS this glyph, we
-// did not forbid it, and it still did not bake", which can only be the packer.
+// The pack-failure detector. Three lookup states are measured distinct: beyond the table or
+// UNUSED means never requested; NOT_FOUND means requested and every source failed; anything
+// else is a real glyph index. NOT_FOUND alone proves nothing, since an excluded codepoint and
+// a genuinely absent one produce it too, so the predicate subtracts both explanations. What is
+// left is a glyph a source has, that we did not forbid, and that still did not bake, which can
+// only be the packer.
 int ScanPackFailures(ImFontBaked& baked, uint32_t& outFirst) {
     ImFont* font = baked.OwnerFont;
     if (!font) return 0;
@@ -109,31 +89,19 @@ int ScanPackFailures(ImFontBaked& baked, uint32_t& outFirst) {
     return found;
 }
 
-// ---------------------------------------------------------------------------
-// 3. THE PER-BUILD SELFTEST
-//
-// ASSERT THE PHENOMENON, NOT THE PRECONDITION. "Did the donor resource load?"
-// goes green on a build compiled without ImGuiFreeTypeLoaderFlags_LoadColor,
-// where every COLR glyph bakes with Visible == 0 -- invisible, not missing, so
-// the atlas is full of emoji nobody can see and every check passes.
-// [[lesson-an-instrument-blind-to-the-phenomenon-always-passes]]
-//
-// TWO KINDS OF QUESTION, TWO APIS, and under a lazy atlas the distinction is the
-// whole design of this function:
-//   - "can this build DRAW cp" is a cmap fact -> ImFont::IsGlyphInFont, a pure
-//     walk of Sources that never touches the atlas. Every presence check uses
-//     it, because under a lazy atlas asking the ATLAS about an absent codepoint
-//     simply bakes one and the check becomes green by construction. That is also
-//     what lets the RED case exist at all.
-//   - "did a COLOURED emoji reach the texture" is genuinely about rasterised
-//     pixels, so it must read a baked glyph -- and post-flip nothing preloads,
-//     so on a normal boot NOTHING has drawn an emoji before this runs. A
-//     "read it only if already baked" rule would make the single instrument that
-//     proves LoadColor worked permanently green-by-skip, which is
-//     [[lesson-an-instrument-never-shown-failing-passes-by-construction]]
-//     arriving through the front door of the commit that advertises emoji. So it
-//     BAKES ONE, DELIBERATELY -- one glyph of pack area, once per build, and it
-//     is the only intentional bake in this file.
+// The per-build selftest. Assert the phenomenon, not the precondition: "did the donor
+// resource load" goes green on a build compiled without colour loading, where every colour
+// glyph bakes invisible rather than missing, so the atlas is full of emoji nobody can see and
+// every check passes. Two kinds of question, two APIs, and under a lazy atlas the distinction
+// is the whole design: whether this build can draw a codepoint is a cmap fact, a pure walk of
+// the sources that never touches the atlas, and every presence check uses it, because asking
+// the atlas about an absent codepoint simply bakes one and the check becomes green by
+// construction (that is also what lets the red case exist); whether a coloured emoji reached
+// the texture is about rasterised pixels, so it must read a baked glyph, and nothing preloads,
+// so on a normal boot nothing has drawn an emoji before this runs. A read-only-if-already-baked
+// rule would make the single instrument that proves colour loading permanently green by skip.
+// So it bakes one, deliberately: one glyph of pack area, once per build, the only intentional
+// bake in this file.
 void RunSelftest(ImFontAtlas* atlas, ImTextureData* tex) {
     ImFont* f = ui::fonts::FontFor(ui::fonts::Role::Nameplate);
     if (!f) { UE_LOGE("font selftest: FAIL -- no nameplate face"); return; }
@@ -147,42 +115,30 @@ void RunSelftest(ImFontAtlas* atlas, ImTextureData* tex) {
 
     ok(f->IsGlyphInFont(kEmojiProbe), "the donor supplies U+1F600 (grinning face)");
 
-    // The cross-merge's own two claims, each a defect that shipped in b132.
+    // The cross-merge's own two claims, each a defect that once shipped.
     ok(f->IsGlyphInFont(0x0400),
        "U+0400 is present (JetBrains Mono lacks it; a backstop must supply it)");
     ok(f->IsGlyphInFont(0xFFFD),
        "U+FFFD is present (six of seven faces lack it; absent text fell to '?')");
 
-    // THE RED CASE. Without one, an always-true instrument is indistinguishable
-    // from a working one. U+4E00 is the first CJK ideograph and no embedded face
-    // or donor carries it -- if this ever goes green, the repertoire table and
-    // the fonts that shipped are describing different builds.
+    // The red case. Without one, an always-true instrument is indistinguishable from a working
+    // one. U+4E00 is the first CJK ideograph and no embedded face or donor carries it; if this
+    // ever goes green, the repertoire table and the fonts that shipped describe different builds.
     ok(!f->IsGlyphInFont(0x4E00), "U+4E00 is ABSENT (the instrument can still say no)");
 
-    // THE NEGATIVE CONTROLS -- the exclude mechanism asserted from the CONFIG
-    // end, which the superset invariant cannot reach.
-    //
-    // That invariant only fires once something DRAWS an offending codepoint, so a
-    // config nobody's text exercises is a hole in it. The two configs least
-    // likely to be exercised are exactly the two no drill types into: the
-    // backstop merges and the emoji donor.
-    //
-    // Census-derived and MEASURED 2026-07-30 against the shipped .ttf cmaps
-    // (tools/text/build_repertoire.py reads the same files), not assumed:
-    //   U+00AD  SOFT HYPHEN   all seven embedded faces, NOT the donor
-    //   U+E0B0  Powerline     JetBrains Mono only -- reaches via MergeBackstops
-    //   U+E0067 TAG LATIN g   the donor only -- and the TAG class is the one
-    //                         whose index tables cost 1.04 -> 7.34 MB per face
-    //                         if it ever bakes
-    //
-    // EACH ROW IS A CONJUNCTION AND BOTH HALVES EARN THEIR PLACE. A face must
-    // still CARRY the codepoint or the probe is vacuous -- it would pass on a
-    // build where the font that supplied it was dropped, proving nothing while
-    // looking green. And the table must still FORBID it. IsGlyphInFont walks the
-    // sources' cmaps (imgui_draw.cpp:5391) and does NOT consult
-    // GlyphExcludeRanges, so the conjunction is well-formed rather than
-    // self-cancelling -- measured, because if it did consult it, one half would
-    // make the other unreachable.
+    // The negative controls: the exclude mechanism asserted from the config end, which the
+    // superset invariant cannot reach, since it only fires once something draws an offending
+    // codepoint, and a config nobody's text exercises is a hole in it. The two configs least
+    // likely to be exercised are the two no drill types into: the backstop merges and the emoji
+    // donor. Census-derived and measured against the shipped font cmaps (the repertoire generator
+    // reads the same files): U+00AD, the soft hyphen, is in all seven embedded faces and not the
+    // donor; U+E0B0, a Powerline glyph, is in JetBrains Mono only and reaches through the backstop
+    // merge; U+E0067, a tag character, is in the donor only, and the tag class is the one whose
+    // index tables cost megabytes per face if it ever bakes. Each row is a conjunction and both
+    // halves earn their place: a face must still carry the codepoint or the probe is vacuous (it
+    // would pass on a build where the supplying font was dropped), and the table must still forbid
+    // it. The presence check walks the sources' cmaps and does not consult the exclude ranges,
+    // measured, so the conjunction is well-formed rather than self-cancelling.
     static const struct { uint32_t cp; const char* what; } kNegative[] = {
         {0x00AD,  "U+00AD is carried (all 7 faces) and EXCLUDED"},
         {0xE0B0,  "U+E0B0 is carried (JetBrains Mono) and EXCLUDED -- the backstop path"},
@@ -192,24 +148,16 @@ void RunSelftest(ImFontAtlas* atlas, ImTextureData* tex) {
         ok(f->IsGlyphInFont(static_cast<ImWchar>(p.cp)) && coop::text::InExcludeSet(p.cp),
            p.what);
 
-    // ...and the FIELD ITSELF, per config, which is the failure the three probes
-    // are NAMED for and still cannot see. A probe can only say "the TABLE forbids
-    // this"; whether a given ImFontConfig ever RECEIVED the table is a different
-    // fact. ui/fonts.cpp sets it in two funnels precisely so it cannot be a site
-    // list, and this is the runtime half of that argument -- a fifth config added
-    // later is caught here, at boot, instead of by the invariant after something
-    // draws the wrong thing.
-    //
-    // CONTENT, NOT POINTER: ImGui ImMemdups the list into its own allocation
-    // (imgui_draw.cpp:3116), so identity against ui::fonts::ExcludeList() is
-    // false for every source by construction.
-    //
-    // AND IT COMPARES AGAINST coop::text::ExcludeRanges DIRECTLY, not against
-    // ui::fonts::ExcludeList(), which returns nullptr under the
-    // dev.atlas_no_exclude_drill row. Comparing against that would make this
-    // check pass (NULL == NULL) in exactly the state it exists to detect --
-    // [[lesson-an-instrument-never-shown-failing-passes-by-construction]] through
-    // the back door of a drill knob.
+    // ...and the field itself, per config, the failure the three probes are named for and still
+    // cannot see: a probe can only say the table forbids this, while whether a given font config
+    // ever received the table is a different fact. The fonts module sets it in two funnels
+    // precisely so it cannot be a site list, and this is the runtime half of that argument: a
+    // config added later is caught here, at boot, instead of by the invariant after something
+    // draws the wrong thing. Content, not pointer: ImGui copies the list into its own allocation,
+    // so identity against the fonts module's list is false for every source by construction. And
+    // it compares against the text module's ranges directly, not against the fonts module's
+    // accessor, which returns null under the no-exclude drill row; comparing against that would
+    // pass in exactly the state this exists to detect.
     size_t nRanges = 0;
     const coop::text::CodepointRange* ranges = coop::text::ExcludeRanges(&nRanges);
     int badSources = 0, firstBad = -1;
@@ -217,10 +165,9 @@ void RunSelftest(ImFontAtlas* atlas, ImTextureData* tex) {
         const ImWchar* list = atlas->Sources[s].GlyphExcludeRanges;
         bool good = (list != nullptr);
         if (good) {
-            // Length first, walking the list's OWN terminator, so a short list is
-            // never read past its end. Unambiguous because no value in the table
-            // can be zero: the static_assert in coop/text/repertoire.cpp forbids
-            // a leading U+0000 and every `end` is >= its `begin`.
+            // Length first, walking the list's own terminator, so a short list is never read past
+            // its end. Unambiguous because no value in the table can be zero: the repertoire's
+            // static assertion forbids a leading U+0000 and every end is at least its begin.
             size_t len = 0;
             while (list[len] != 0) ++len;
             good = (len == nRanges * 2);
@@ -237,7 +184,7 @@ void RunSelftest(ImFontAtlas* atlas, ImTextureData* tex) {
                 "every codepoint of it, so two legible names can collapse to one key.",
                 badSources, atlas->Sources.Size, firstBad);
 
-    // THE ONE DELIBERATE BAKE.
+    // The one deliberate bake.
     const float px = ui::fonts::PxFor(ui::fonts::Role::Nameplate);
     ImFontBaked* baked = f->GetFontBaked(px);
     const ImFontGlyph* emoji =
@@ -261,12 +208,11 @@ void RunSelftest(ImFontAtlas* atlas, ImTextureData* tex) {
     }
     ok(nonGrey > 0, "U+1F600's atlas box holds non-greyscale texels (it is COLOURED)");
 
-    // A POSITIVE line carrying its counts, and that shape is load-bearing. The
-    // smoke used to assert this selftest by grepping for the ABSENCE of
-    // "selftest: FAIL", which is sound only while the selftest runs
-    // unconditionally at boot. It is conditional now -- it fires on a texture-id
-    // edge -- so "passed" and "never ran" would produce the identical log.
-    // tools/mp.py asserts the presence of this line instead.
+    // A positive line carrying its counts, and that shape is load-bearing: the smoke asserted this
+    // selftest by grepping for the absence of a failure line, which is sound only while the
+    // selftest runs unconditionally at boot. It is conditional now, fired on a texture-id edge, so
+    // passed and never-ran would produce the identical log; the smoke driver asserts the presence
+    // of this line instead.
     UE_LOGI("font selftest: DONE fail=%d (%d/%d) -- atlas %dx%d %s texid=%d, %d colour "
             "texels in one emoji (baked deliberately; every presence check is cmap-only "
             "and bakes nothing)",
@@ -290,11 +236,10 @@ void OnFrame() {
     ImFontAtlas* atlas = io.Fonts;
     if (!atlas) return;
 
-    // REGIME FIRST. With the capability flag cleared the atlas is preloaded and
-    // frozen for the frame, so every assertion below is green by construction --
-    // [[lesson-an-instrument-never-shown-failing-passes-by-construction]] one
-    // level up, at the precondition rather than the assertion. This is an ERROR
-    // and not a WARN: a build in that state is not the build this file describes.
+    // The regime first. With the capability flag cleared the atlas is preloaded and frozen for the
+    // frame, so every assertion below is green by construction, at the precondition rather than
+    // the assertion. An error, not a warning: a build in that state is not the build this file
+    // describes.
     if ((io.BackendFlags & ImGuiBackendFlags_RendererHasTextures) == 0) {
         if (!g_warnedRegime) {
             g_warnedRegime = true;
@@ -308,11 +253,9 @@ void OnFrame() {
     ImTextureData* tex = atlas->TexData;
     ImFontAtlasBuilder* b = Builder(atlas);
 
-    // Geometry, logged ON CHANGE. This replaces the boot-time "atlas baked in
-    // %.1f ms (%dx%d)" line the eager Build() used to emit: there is no longer a
-    // single bake to time, so the honest numbers are the geometry when it moves
-    // plus the per-frame glyph delta below. Shipping the flip without this would
-    // leave a build whose atlas nobody can read.
+    // Geometry, logged on change. There is no single bake to time under a lazy atlas, so the
+    // honest numbers are the geometry when it moves plus the per-frame glyph delta below; without
+    // this line nobody could read the atlas of a shipped build.
     if (tex && (tex->Width != g_logW || tex->Height != g_logH)) {
         g_logW = tex->Width;
         g_logH = tex->Height;
@@ -324,8 +267,8 @@ void OnFrame() {
                 b ? b->BakedPool.Size : 0);
     }
 
-    // The superset invariant, over every live baked. O(new glyphs): the walk only
-    // covers the range that changed, and most frames change nothing.
+    // The superset invariant, over every live baked. Linear in new glyphs: the walk only covers
+    // the range that changed, and most frames change nothing.
     int newGlyphs = 0, offenders = 0;
     uint32_t firstOffender = 0;
     if (b)
@@ -338,8 +281,8 @@ void OnFrame() {
                 "face carries scripts our embedded families do not.",
                 offenders, firstOffender);
 
-    // Bake volume, rate-limited. Not an error -- the signal to look at first if a
-    // hands-on reports a stutter while text with fresh codepoints appears.
+    // Bake volume, rate-limited. Not an error: the signal to look at first if a hands-on reports a
+    // stutter while text with fresh codepoints appears.
     if (newGlyphs > 64) {
         const double now = ImGui::GetTime();
         if (now - g_lastVolumeLog > 5.0) {
@@ -349,11 +292,10 @@ void OnFrame() {
         }
     }
 
-    // The pack-failure detector, on ITS OWN trigger. A pack failure never adds a
-    // glyph, so the superset scan above is structurally blind to it; what does
-    // move is the packer's discarded surface (MakeSpace had to free room) or the
-    // texture id (it had to grow). Scanning on that edge keeps the O(IndexLookup)
-    // walk off every frame.
+    // The pack-failure detector, on its own trigger. A pack failure never adds a glyph, so the
+    // superset scan above is structurally blind to it; what moves is the packer's discarded
+    // surface (make-space had to free room) or the texture id (it had to grow). Scanning on that
+    // edge keeps the lookup-table walk off every frame.
     const int discarded = b ? b->RectsDiscardedSurface : 0;
     const bool pressure = b && (discarded != g_lastDiscardedSurface);
     const bool rebuilt  = tex && (tex->UniqueID != g_checkedTexId);
@@ -374,9 +316,8 @@ void OnFrame() {
                     b->RectsPackedSurface, discarded, was);
     }
 
-    // The selftest, per BUILD. Every repack mints a fresh ImTextureData with a
-    // new UniqueID, so this catches boot, rescale, the F1 family switch and every
-    // grow -- in one integer compare per frame.
+    // The selftest, per build. Every repack mints a fresh texture with a new id, so this catches
+    // boot, rescale, the font family switch and every grow, in one integer compare per frame.
     if (tex && tex->UniqueID != g_checkedTexId) {
         g_checkedTexId = tex->UniqueID;
         RunSelftest(atlas, tex);
