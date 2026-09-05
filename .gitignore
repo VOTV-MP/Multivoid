@@ -362,42 +362,41 @@ docs/THUNDERSTORE.md
 # The public tree is written for a player and a contributor. Anything addressed to the next
 # development session -- the lessons ledger, the working discipline, the arcs (work in flight),
 # plans, dated findings, session logs, archives, the review-prompt templates -- stays on disk and
-# out of the repository. Files were untracked with `git rm --cached`; history is not rewritten.
-docs/**/*_ARC.md
-docs/kerfur/
-docs/READING_ORDER.md
-docs/COOP_SYNC_MAP.md
-docs/COOP_SCOPE.md
-docs/COOP_SYNC_PROFILES.md
-docs/COOP_METHODOLOGY.md
-docs/COOP_SYNCER_MODEL.md
-docs/COOP_SERVER_MODEL.md
-docs/COOP_EVENT_JOIN.md
-docs/COOP_STABLE_ID_SIDECAR.md
-docs/COOP_INSTANT_WORLD_TWO_LAYER.md
-docs/COOP_MIRROR_IDENTITY_WINDOW_RACE.md
-docs/COOP_CLIENT_MODEL.md
-docs/COOP_WORLD_PROP_DIVERGENCE.md
-docs/items/
-docs/events/
-docs/COOP_RNG_AUTHORITY.md
-docs/LESSONS.md
-docs/OPUS_48_DISCIPLINE.md
-docs/DEAD_CAPABILITY_REGISTER.md
-docs/CROSS_SESSION.md
-docs/MODULARIZATION_PLAN.md
-docs/COOP_VM_DISPATCH_PLAN.md
-docs/AUTHORITATIVE_INTERACTABLE_MIGRATION.md
-docs/OVERLAY_CAPTURE_COEXIST.md
-docs/signals/
-docs/upgrades/
-docs/vehicles/
-docs/MULTIPLAYER_UI.md
-docs/AUTONOMOUS_TESTING.md
-docs/VERSION_MIGRATION.md
-docs/notifications/
-docs/piles/
-docs/_archive/
+# out of the repository.
+# The docs tree is an ALLOWLIST: everything under docs/ is local unless a line below names it.
+# Publishing a doc is a deliberate act (add its `!docs/<file>` line); writing a working doc is
+# free and safe by default. The files that left the tree stay on disk; history is not rewritten.
+docs/**
+!docs/ARCHITECTURE.md
+!docs/CODE_MAP.md
+!docs/COOP_DISPATCH_VISIBILITY.md
+!docs/COOP_ENTITY_EXPRESSION_MAP.md
+!docs/COOP_SYNC_DOCTRINE.md
+!docs/CREDITS.md
+!docs/DEVS_GAUNTLET.md
+!docs/FEASIBILITY.md
+!docs/INSTALL.md
+!docs/README.md
+!docs/RELEASE.md
+!docs/RE_WORKFLOW.md
+!docs/ROADMAP.md
+!docs/SCOPE.md
+!docs/STATUS.md
+!docs/VOTV_UI_STYLE.md
+!docs/devices.md
+!docs/events-and-weather.md
+!docs/join.md
+!docs/master-server.md
+!docs/npcs-and-kerfur.md
+!docs/piles.md
+!docs/players.md
+!docs/props.md
+!docs/signals.md
+!docs/testing.md
+!docs/ui.md
+!docs/vehicles.md
+!docs/versioning.md
+!docs/voice-and-chat.md
 reference/agency-agents/
 
 # ---- OUR WORKFLOW'S TOOLING IS LOCAL (2026-09-05, the same test as the docs above) ------------

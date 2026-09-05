@@ -135,7 +135,9 @@ from reverse engineering, `[?]` unverified. The legend is on [docs/README.md](do
 A doc that says something works without naming its evidence is a bug in the doc.
 
 Working notes, reverse-engineering logs, design drafts and session records are kept by the
-maintainer outside the repository. `tools/docs/public_prose_gate.py` measures the public tree
+maintainer outside the repository. The `docs/` tree is an allowlist in `.gitignore`: a new doc is
+published by adding its `!docs/<file>` line, so a working note left there stays local by default.
+`tools/docs/public_prose_gate.py` measures the public tree
 against these rules: the working-notes words and paths above, dead links and paths, docs over
 the hard cap, dated lines, and in the source the comment blocks over 15 lines and the files that
 are more than half comment. CI refuses a push that makes any of those measures worse; the plain
