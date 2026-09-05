@@ -1,8 +1,6 @@
-// coop/net_pump.cpp -- see coop/net_pump.h.
-//
-// The per-tick orchestrator: the connection edges, the death policy, the reaper, the puppet
-// drive. The sync-module fan-out lists live in coop/subsystems.cpp (the wiring registry every new
-// feature edits) and the outbound pose, held-prop and ragdoll streams in coop/local_streams.cpp.
+// coop/net_pump.cpp -- the per-tick orchestrator: the connection edges, the death policy, the
+// reaper, the puppet drive. The sync-module fan-out lists live in coop/subsystems.cpp and the
+// outbound pose, held-prop and ragdoll streams in coop/local_streams.cpp.
 
 #include "coop/session/net_pump.h"
 
@@ -66,115 +64,73 @@ namespace {
 namespace R = ue_wrap::reflection;
 namespace P = ue_wrap::profile;
 
-// The cached local mainPlayer_C for the pump. coop::players::Registry::Get().Local() already
-// caches and filters puppets through the controller discriminator; this cache on top skips the
-// atomic load in the hot pump path. A CachedObjRef: probed every 125 Hz pump tick, including
-// through teardown windows, where a bare IsLive dereference is unsafe.
+// The cached local mainPlayer_C, on top of Registry::Local() so the hot pump path skips its atomic
+// load. A CachedObjRef: probed at 125 Hz through teardown windows, where a bare IsLive dereference
+// is unsafe.
 ue_wrap::CachedObjRef g_netLocal;
-// The cached controller for the same pawn: saves two ProcessEvent dispatches per pump tick
-// (GetController + GetControlRotation). Bound to g_netLocal's lifetime: Reset when g_netLocal is
-// Reset (a level change).
+// The cached controller for the same pawn (two dispatches saved per tick); reset with g_netLocal.
 ue_wrap::CachedObjRef g_netLocalController;
 
-// Connected-state edge detection for the disconnect cleanup (destroying the puppet). File-scope,
-// not a static local in Tick, so a session restart can reset them explicitly; a local static
-// would carry the prior session's value into the new Start. The aggregate flag (g_wasConnected)
-// tracks "any peer connected" and gates the global OnDisconnect calls for subsystems with
-// session-wide state (weather_sync, prop_lifecycle). The per-slot flags (g_wasConnectedBySlot)
-// track per-peer connection edges, so one peer's puppet can be destroyed on its disconnect
-// without wiping every subsystem's state while another peer stays.
+// Connected-state edge detectors, file-scope so a session restart resets them explicitly. The
+// aggregate flag gates the global OnDisconnect calls (session-wide state); the per-slot flags let
+// one peer's puppet go without wiping every subsystem while another stays.
 bool g_wasConnected = false;
 std::array<bool, coop::players::kMaxPeers> g_wasConnectedBySlot{};
 
-// The Session the pump is currently ticking, valid for the duration of Tick. The ledger's
-// teardown subscriber needs a Session, but the subscriber signature deliberately carries only
-// the rows (the ledger knows nothing about transport), and every site that can fire a
-// transition (the reconcile, the flee-time ClearAll) runs inside a tick. Set at Tick entry,
-// cleared at exit, so a transition fired from anywhere else finds no session and does nothing
-// rather than dereferencing a stale pointer.
+// The Session being ticked, set at Tick entry and cleared at exit. The ledger's teardown subscriber
+// carries only rows, and every site that can fire a transition runs inside a tick; a transition
+// fired elsewhere finds no session and does nothing.
 coop::net::Session* g_tickSession = nullptr;
 
-// The death-policy one-shot. On local death, when the death arc has not armed a revive, the pump
-// synchronously tears down all coop game-side state (destroys the puppet actors, drains the
-// Element state), stops the session and flees to the main menu with the layer held dormant. The
-// teardown is what matters: the game's own death chain reloads the world, and the deferred
-// disconnect-edge cleanup on the next tick would never run, so orphan puppet actors and Element
-// mirrors would sit in the dying world (the death arc: coop/player/death_revive). The travel
-// goes through the game's own verb, mainGamemode_C::transition("/Game/menu")
-// (engine::ReturnToMainMenu), which works for a dead, ragdolling player; `disconnect` is a
-// no-op without a UE net driver, and a bare `open menu` does not resolve the short name. The
-// ProcessEvent detour is held in transparent bypass (game_thread::SetTransparentBypass) over
-// the travel, because it otherwise stalls the 50k-actor untitled_1 teardown by dispatching
-// ReceiveEndPlay per dying actor through us. Latched once per death; OnSessionStart resets it
-// so a rejoin re-arms.
+// The death-policy one-shot. On a local death the death arc has not armed, the pump tears every
+// coop game-side state down synchronously, stops the session and flees to the menu with the detour
+// held in transparent bypass (the game's own reload would otherwise run before the deferred
+// disconnect cleanup, leaving orphan puppets and mirrors in the dying world). OnSessionStart resets
+// it.
 bool g_localDeathHandled = false;
 
-// The safety ceiling on the transparent bypass after a flee to the menu. The bypass covers only
-// the world-teardown window: the 50k-actor untitled_1 teardown and the menu travel run with the
-// ProcessEvent detour dormant (the observers and the outer SEH otherwise hang the per-actor
-// EndPlay swap). Once the menu world is up the detour must resume: the menu's MULTIPLAYER
-// button is injected by a POST observer on ui_menu_C::Tick dispatched through the detour, so a
-// held bypass would starve it and the death menu would lose the button the rejoin depends on.
-// Resuming at the menu is safe: TickGameplay is world-up-gated and the prop reaper is
-// gameplay-world-gated. So FleeToMainMenu arms the bypass with ui_menu_C::Tick as the release
-// function, and the detour resumes the instant the menu world is up; this timer is only the
-// ceiling for the case where that tick never resolves or dispatches, kept generous so a slow
-// teardown is never cut short. (If a death-to-rejoin black-screens or hangs, the menu tick
-// signal failed; that is the thing to investigate.)
+// The ceiling on the transparent bypass after a flee. The bypass covers the world teardown (the
+// detour otherwise stalls the 50k-actor untitled_1 teardown) and releases the moment
+// ui_menu_C::Tick first dispatches, since the MULTIPLAYER button is injected by an observer on it;
+// this timer only bounds the case where that tick never resolves, and is generous on purpose.
 constexpr int kDeathMenuBypassMs = 30 * 1000;
 
-// The terminal local eject to the main menu. The caller has already torn down coop game-side
-// state (the death handler inline; the client disconnect edge through the OnDisconnect calls);
-// this is the common tail: reset the edge detectors, Stop the session, arm and hold the
-// transparent bypass, then travel to the menu through the game's own transition verb. Both the
-// local-death flee and the host-kicked / banned / host-gone client flee leave the gameplay world
-// this way. Order matters: the bypass is armed before the travel, so the untitled_1 teardown the
-// travel triggers runs with the detour dormant. `why` is a short log tag. An idempotent latch: a
-// session can be detected dead by more than one path at once (a net disconnect or death edge
-// here and the harness's running-to-stopped edge), but transition("/Game/menu") is dispatched
-// only once; OnSessionStart resets it. Every session death, host or client, returns the player
-// to the main menu so they always know it ended.
+// The terminal eject to the main menu after the caller tore coop state down: reset the edge
+// detectors, Stop, arm the bypass, then travel through the game's own transition verb (the bypass
+// first, so the teardown the travel triggers runs with the detour dormant). A one-shot latch: more
+// than one path can find a session dead, and the travel is dispatched once; OnSessionStart resets
+// it.
 bool g_fleeing = false;
 
-// `travel` is false when the game's own quit-to-menu transition is already in flight:
-// re-dispatching transition("/Game/menu") on top of it would load the menu twice. The rest of
-// the tail (the edge resets, Stop, the bypass over the teardown) is identical either way.
+// `travel` is false when the game's own quit-to-menu transition is already in flight (a second
+// transition would load the menu twice); the rest of the tail is identical.
 void FleeToMainMenu(coop::net::Session& session, const char* why, bool travel = true) {
     if (g_fleeing) return;  // already travelling to the menu for this session
     g_fleeing = true;
     g_wasConnected = false;
     g_wasConnectedBySlot.fill(false);
     session.Stop();
-    // Every session-scoped overlay dies at this funnel: the chat feed and its record, the overhead
-    // bubbles, the nameplates, an open chat box, the voice panel. Every leave-world path (death,
-    // the host-close eject, a native quit to the menu) comes through here, and without the reset
-    // the last lines would ride their 11 s TTL into the main-menu overlay; hud::IsActive() keys on
-    // chat_feed::HasAny() || nameplate::HasAny() || ..., so one stale nameplate would re-activate
-    // the whole HUD in the menu. DisconnectAll is the wrong home: it also runs on the host when a
-    // client leaves, and the host keeps its UI. The host-stays-in-world case (its last client
-    // leaving) never flees, so its feed keeps the "X left the game" line.
+    // Every session-scoped overlay dies at this funnel (every leave-world path comes through it):
+    // the last lines would otherwise ride their 11 s TTL into the menu, and one stale nameplate
+    // re-activates the whole HUD there through hud::IsActive(). Not in DisconnectAll, which also
+    // runs on a host whose client left, and the host keeps its UI.
     coop::chat_feed::Reset();
     coop::chat_sync::Reset();  // the record + the applied range die with the session
     coop::chat_bubbles::ResetSlots();
     coop::nameplate::ResetSlots();
     ui::chat_input::Close();
     ui::voice_panel::Close();
-    // The feed reset alone is not enough: session.Stop() flips every peer slot from connected to
-    // disconnected, and the next event_feed::Update would read that as a per-slot "<X> left the
-    // game" departure and push it into the just-cleared feed, so a client's own quit to the menu
-    // would show "Host left the game" and ride it into the main menu. The edge detectors are
-    // neutralised so the local teardown emits no spurious peer-left toast; the host-stays-on-
-    // client-leave case never reaches this funnel, so its legitimate departure toast is preserved.
+    // session.Stop() flips every slot to disconnected, and the next event_feed::Update would read
+    // that as "<X> left the game" into the just-cleared feed; the edge detectors are neutralised so
+    // the local teardown posts no departure. The host-stays case never reaches this funnel, so its
+    // toast survives.
     coop::event_feed::SuppressPeerLeaveEdges();
-    // The ledger clears at session stop, and here rather than in the next reconcile: the reconcile
-    // early-returns once the session stops running, so the rows would otherwise survive into the
-    // menu and into the next session. Ordered after SuppressPeerLeaveEdges so the transitions tear
-    // person-state down silently instead of narrating four departures into the main menu.
+    // The ledger clears here: the reconcile early-returns once the session stops, so the rows would
+    // survive into the menu. After SuppressPeerLeaveEdges, so the transitions tear person-state
+    // down silently.
     coop::roster_ledger::ClearAll();
-    // Hold the detour dormant over the world teardown, but resume the instant the menu's
-    // ui_menu_C::Tick first dispatches (the menu world is up), so MULTIPLAYER is injected on the
-    // first menu frame. kDeathMenuBypassMs is only the safety ceiling (used as is when MenuTickFn()
-    // is null: the menu class never resolved).
+    // Hold the detour dormant over the teardown, resuming on the menu's first ui_menu_C::Tick;
+    // kDeathMenuBypassMs is the ceiling (and the whole hold when MenuTickFn() is null).
     ue_wrap::game_thread::SetTransparentBypassUntil(coop::multiplayer_menu::MenuTickFn(),
                                                     kDeathMenuBypassMs);
     if (!travel) {
@@ -185,27 +141,21 @@ void FleeToMainMenu(coop::net::Session& session, const char* why, bool travel = 
     if (ue_wrap::engine::ReturnToMainMenu()) {
         UE_LOGI("net: %s -- transition(\"/Game/menu\") dispatched; held dormant", why);
     } else {
-        // The travel did not dispatch (the gamemode or transition unresolved). The bypass stays
-        // armed and our actors are already torn down, but we did not leave the gameplay world; say
-        // so loudly.
+        // The travel did not dispatch: the bypass stays armed, our actors are gone, and we are
+        // still in the gameplay world; say so loudly.
         UE_LOGE("net: %s -- ReturnToMainMenu FAILED to dispatch; still in the gameplay "
                 "world. Relaunch.", why);
     }
 }
 
-// The full coop-state teardown for a session ending while the process lives on (a local death,
-// or a native quit to the menu): destroy every puppet actor and the per-slot subsystem state,
-// then the aggregate session-wide drains. It mirrors what the disconnect edges do, and the
-// quit-to-menu flee needs it because FleeToMainMenu resets g_wasConnected, which also suppresses
-// the aggregate-disconnect edge: without it, the weather, time and sky caches, the install
-// latches and the pending applies would stay armed across the world teardown, and a queued
-// weather apply would run against the old daynightCycle's recycled GUObjectArray slot,
-// executing the cycle BP body with a foreign `self` (a FindFunctionChecked on an
-// ArrowComponent, a fatal error).
+// The full coop-state teardown for a session ending while the process lives on (a local death, a
+// native quit): every puppet and per-slot state, then the session-wide drains. The quit-to-menu
+// flee needs it because FleeToMainMenu resets g_wasConnected and so suppresses the aggregate edge;
+// a queued weather apply would otherwise run against the old daynightCycle's recycled slot (fatal).
 void TearDownCoopStateForSessionEnd(coop::net::Session& session) {
     for (int slot = 0; slot < coop::players::kMaxPeers; ++slot) {
-        // DestroySlot is the unconditional UnregisterPuppet plus destroy-if-live; the per-slot
-        // interleave with DisconnectSlot is composed here, its one owner.
+        // DestroySlot is UnregisterPuppet plus destroy-if-live; its interleave with DisconnectSlot
+        // is composed here only.
         coop::puppet_drive::DestroySlot(slot);
         coop::subsystems::DisconnectSlot(session, slot);
     }
@@ -214,12 +164,10 @@ void TearDownCoopStateForSessionEnd(coop::net::Session& session) {
 
 }  // namespace
 
-// The per-person world teardown, driven by the ledger row transition: destroy the departed
-// peer's puppet, then run the per-slot subsystem fan-out. It fires on a replacement as well as a
-// departure, and it fires on a client too, where a connection edge never could. Every body in
-// subsystems::DisconnectSlot is safe there: the host-authoritative ones self-gate on Role::Host
-// and become no-ops on a client, and the rest are local-state clears a client owes anyway. None
-// of them send from a client.
+// The per-person world teardown, driven by the ledger row transition: the departed peer's puppet,
+// then the per-slot subsystem fan-out. It fires on a replacement and on a client too, where a
+// connection edge never could; every DisconnectSlot body is safe there (the host-authoritative ones
+// self-gate).
 void OnSlotReplaced_TearDownWorld(int slot, const coop::roster_ledger::Row& outgoing,
                                   const coop::roster_ledger::Row& /*incoming*/) {
     if (!outgoing.occupied()) return;
@@ -255,59 +203,43 @@ void FleeAfterNativeMenuTravel(coop::net::Session& session) {
 }
 
 void FleeToMainMenuOnDeath(coop::net::Session& session, const char* why) {
-    // The public entry, so the harness can route a host session death (or any session end) to the
-    // main menu through the same path the client-death and disconnect flees use (reset the edge
-    // detectors, Stop, the transparent bypass, transition("/Game/menu")). Idempotent through the
-    // g_fleeing latch; harmless if net_pump already fled the client. Game thread.
+    // The public entry, so the harness routes a host session death through the same path as the
+    // client flees. Idempotent through g_fleeing. Game thread.
     FleeToMainMenu(session, why);
 }
 
-// Has this process (as a client) announced world-ready for the current connection? Gates the
-// world-dependent client tick blocks (the puppet spawn from poses) during the menu window of a
-// save-transfer join: the engine must not spawn actors into the menu world. Reset when the
-// connection drops.
+// Has this client announced world-ready for the current connection? Gates the world-dependent tick
+// blocks during a save-transfer join's menu window (no actors into the menu world). Reset on
+// disconnect.
 static std::atomic<bool> g_worldReadyAnnounced{false};
 
-// The re-announce request: set (client side) when a world-change re-seed completes, so the
-// world-ready announce below fires again for the newly settled world. A save-transfer join goes
-// through two level loads (a premature first announce binds props to actors the second load
-// destroys); the re-announce drives the host's ConnectReplayForSlot to re-assert every
-// host-authoritative state into the final world, the only way the client's keyless chipPiles
-// (eid-only identity, nothing to re-match on) re-acquire their host eid after the re-seed mints
-// fresh local ones. Distinct from g_worldReadyAnnounced, which stays latched true for the
-// puppet-spawn gate across world changes. Reset on send and on disconnect.
+// The re-announce request, set when a world-change re-seed completes: a save-transfer join runs two
+// level loads, and the re-announce drives the host's ConnectReplayForSlot to re-assert every
+// host-authoritative state into the final world (the only way keyless chipPiles re-acquire their
+// host eid). Reset on send and on disconnect.
 static std::atomic<bool> g_reAnnounceWorldReady{false};
 
-// The UWorld we last announced ClientWorldReady against (game thread only, as net_pump Tick
-// is). A world-change re-seed re-announces only when the current world differs from this, that
-// is, the UWorld actually swapped. The join's one-time menu-to-game prop-element-shadow drain is
-// a bookkeeping reap within the already-announced game world (no swap); reading it as a world
-// change would fire a second ClientWorldReady, the host would re-replay the full snapshot, and
-// the client would re-run NPC adoption against its already-bound live mirrors: duplicate
-// kerfurs. Gating on a real swap is airtight: re-replaying host state into a "new" world is only
-// meaningful when that world's actors were destroyed and recreated, which only a UWorld swap
-// does (a real cave or level travel re-opens untitled_1 as a new UWorld, so legitimate travels
-// still re-announce and re-bind keyless chipPiles). Reset on disconnect.
+// The UWorld last announced against (game thread). A re-seed re-announces only when the UWorld
+// actually swapped: the join's menu-to-game shadow drain is a reap inside the announced world, and
+// treating it as a change would replay the full snapshot and re-adopt NPCs into live mirrors
+// (duplicate kerfurs). A real level travel re-opens untitled_1 as a new UWorld, so it still
+// re-announces. Reset on disconnect.
 static void* g_announcedWorld = nullptr;
 
-// The save-transfer kerfur-ghost reconcile lives in coop/npc_adoption (the deferred class-match
-// adoption owns the timing); net_pump only notifies it at the ClientWorldReady announce
-// (OnClientWorldReady) so it can reset its per-world state. The ghost sweep fires from
-// npc_adoption::Tick, gated on SnapshotComplete plus adoption convergence, never on a fixed
-// delay.
+// The save-transfer kerfur-ghost reconcile lives in npc_adoption (it owns the timing); net_pump
+// only notifies it at the announce (OnClientWorldReady) so it resets its per-world state.
 
 // The announce axis' one owner; registry_reaper only requests through here.
 void MaybeRequestReAnnounce(coop::net::Session& session, void* reapWorld) {
     if (session.role() == coop::net::Role::Host) return;
     if (reapWorld != g_announcedWorld) {
         g_reAnnounceWorldReady.store(true, std::memory_order_relaxed);
-        // The join barrier: the re-announce waits for the new world's load tail exactly as the
-        // first announce did; open a fresh probe session for it.
+        // The join barrier: the re-announce waits for the new world's load tail as the first
+        // announce did; a fresh probe session.
         coop::world_load_episode::ArmQuiesceProbe("world-change re-announce");
-        // A world reload is a teardown plus a rebuild: raise the reconcile window (kind = load; the
-        // classifier resets) so the destroy seam and the drop intent stay suppressed through the
-        // re-replay bracket. InEpisode is not raised here: the lane parks' reload semantics are
-        // unmeasured.
+        // A reload is a teardown plus a rebuild: raise the reconcile window (kind = load) so the
+        // destroy seam and the drop intent stay suppressed through the re-replay. InEpisode is not
+        // raised: the lane parks' reload semantics are unmeasured.
         coop::world_load_episode::RaiseReconcileForReload();
     } else {
         UE_LOGI("net_pump: world-change re-seed on the SAME world already announced (%p) -- "
@@ -317,24 +249,20 @@ void MaybeRequestReAnnounce(coop::net::Session& session, void* reapWorld) {
 }
 
 void Tick(coop::net::Session& session) {
-    // This whole body is game-thread-only: it drives the puppet array (through puppet_drive, a
-    // game-thread-only side table) and runs ElementDeleter::Flush (the controlled game-thread
-    // destruction point). One guard at the top enforces the invariant for everything below it.
+    // Game thread only: the puppet array and ElementDeleter::Flush are game-thread side tables; one
+    // guard at the top covers everything below.
     UE_ASSERT_GAME_THREAD("net_pump::Tick (puppet drive + ElementDeleter::Flush)");
-    // Scope the Session for the ledger's teardown subscriber (see g_tickSession). RAII, so an early
-    // return anywhere below cannot leave a stale pointer live.
+    // Scope the Session for the ledger's teardown subscriber (g_tickSession); RAII, so an early
+    // return leaves no stale pointer.
     struct TickSessionScope {
         explicit TickSessionScope(coop::net::Session& s) { g_tickSession = &s; }
         ~TickSessionScope() { g_tickSession = nullptr; }
     } _tickSessionScope{session};
 
     // ---- Hitch and source probe (diagnostic, always on, near free) ----
-    // [HITCH] times the wall-clock gap between consecutive game-thread Ticks (the whole frame's
-    // time, including any engine stall that freezes the frame: GC, render, physics). [HITCH-SRC]
-    // (an RAII at the end of this body) reports this Tick's own duration. The discriminator: a
-    // [HITCH] with no matching [HITCH-SRC] on the same frame means the stall was engine-side (the
-    // GC signature when it is permanent, on both peers, at a fixed period); then the fix is the GC
-    // cadence, not a walk fix.
+    // [HITCH] times the gap between consecutive game-thread Ticks (the whole frame); [HITCH-SRC],
+    // an RAII at the end of the body, this Tick's own duration. A [HITCH] with no [HITCH-SRC] on
+    // the same frame is an engine-side stall (GC, render, physics).
     {
         using hclk = std::chrono::steady_clock;
         static hclk::time_point sPrevTickStart{};
@@ -359,92 +287,70 @@ void Tick(coop::net::Session& session) {
         }
     } _tickDurLog;
 
-    // The perf probe (ini perf_probe=1). Init self-latches; Sample self-throttles to ~1 Hz. The
-    // whole-Tick Scope brackets the body so the 1 Hz report shows net_pump::Tick's own ms per frame
-    // against the per-subsystem buckets.
+    // The perf probe (ini perf_probe=1): Init self-latches, Sample self-throttles to ~1 Hz; the
+    // Scope brackets the whole body so the report shows Tick's own ms against the per-subsystem
+    // buckets.
     namespace PP = coop::dev::perf_probe;
     PP::Init();
     PP::Sample();
     PP::Scope _tickScope{PP::Bucket::NetPumpTick};
 
-    // The leak-attribution probe (ini leak_probe=1, dev only). Self-gated and self-throttled (a ~4
-    // s GUObjectArray census). Names the UObject classes growing over time, or proves a leak is raw
-    // heap, not UObjects, when the total count stays flat. Game thread by the assert above.
+    // The leak-attribution probe (ini leak_probe=1, dev): a self-throttled ~4 s GUObjectArray
+    // census naming the classes that grow.
     coop::dev::leak_probe::Tick();
 
-    // The raw-heap leak-attribution probe (ini heap_probe=1, dev only). When the UObject census
-    // above is flat but RAM still climbs, this names the CRT call site in our module responsible
-    // (the engine's GMalloc bypasses the CRT). Self-gated and self-throttled; installs ucrtbase
-    // malloc/free detours on its first armed tick.
+    // The raw-heap probe (ini heap_probe=1, dev): names the CRT call site in our module when the
+    // UObject census is flat but RAM climbs; installs ucrtbase malloc/free detours on its first
+    // armed tick.
     coop::dev::heap_probe::Tick();
 
-    // Pump the pending save-transfer chunk sends (host). A no-op without an active stream (one bool
-    // per slot).
+    // The host's pending save-transfer chunk sends; a no-op without an active stream.
     if (session.role() == coop::net::Role::Host) coop::save_transfer::TickHost();
 
 
-    // The world-up gate. A menu-mode save-transfer joiner runs this Tick at 60 Hz while still at
-    // the main menu (connecting, downloading the host save), a window where the gameplay-only
-    // sections below have nothing to act on but real per-tick cost (subsystem polls, ensure
-    // retries, GUObjectArray lookups against classes that cannot exist before the gameplay world
-    // loads). Everything the menu window needs stays ungated: the host chunk pump above, the
-    // element-deleter flush, the reaper (self-gated on the world name; it owns the quit-to-menu
-    // flee), the per-slot connect/disconnect edges, the world-ready announce, and event_feed (which
-    // delivers SaveTransferBegin). Local() is the signal: non-null exactly when a possessed local
-    // player exists in a gameplay world, and its negative-miss TTL (players_registry) makes the
-    // poll cheap at the menu.
+    // The world-up gate: a save-transfer joiner runs this Tick at the menu for 30-60 s, where the
+    // gameplay sections have nothing to act on but real per-tick cost. The chunk pump, the deleter
+    // flush, the reaper, the connection edges, the announce and event_feed stay ungated. Local() is
+    // the signal: non-null exactly when a possessed local player exists in a gameplay world, and
+    // its negative-miss TTL keeps the menu poll cheap.
     void* const localNow = coop::players::Registry::Get().Local();
     const bool worldUp = (localNow != nullptr);
 
-    // [dev] reseed_orphan_selftest: a deterministic in-process proof of the re-seed-orphan binding.
-    // Self-gated (one-shot, latching only once a live chipPile native exists), so a cheap no-op
-    // otherwise.
+    // [dev] reseed_orphan_selftest, a one-shot in-process proof of the re-seed-orphan binding; a
+    // cheap no-op otherwise.
     if (worldUp) coop::save_identity_bind::RunReseedOrphanSelfTest();
 
-    // The deferred-element destruction flush (the MTA CElementDeleter shape;
-    // coop/element/element_deleter.h). Drains, on the game thread at one controlled point, every
-    // Element parked for destruction since the last tick. The steady-state cost is one uncontended
-    // mutex acquire plus an empty-queue check. This is the sync module's single deferred-retire
-    // funnel: prop_element_tracker (reap/unmark), npc_sync, npc_world_enum, trash_proxy,
-    // world_actor_sync and kerfur_reconcile all route Element teardown through
-    // ElementDeleter::Enqueue. Bare-actor retires that carry site-specific pre-steps (a proxy
-    // un-root, an echo-suppressed convert destroy) stay direct; only their Element bookkeeping
+    // The deferred-element destruction flush (the MTA CElementDeleter shape,
+    // coop/element/element_deleter.h): every Element parked since the last tick is destroyed here,
+    // on the game thread; the steady-state cost is one uncontended mutex plus an empty check.
+    // Bare-actor retires with site-specific pre-steps stay direct; only their Element bookkeeping
     // funnels here.
     coop::element::ElementDeleter::Get().Flush();
 
-    // Dead-Prop-Element reconciliation, the world-change re-seed and the gameplay-to-menu RAM
-    // guard: coop/props/registry_reaper. True when the menu guard fired (the session torn down,
-    // fleeing), which aborts this Tick.
+    // The reaper (coop/props/registry_reaper): dead-Element reconciliation, the world-change
+    // re-seed, the gameplay-to-menu guard. True when the menu guard fired (the session torn down),
+    // which aborts this Tick.
     if (coop::registry_reaper::Tick(session)) return;
 
-    // The per-slot connection edges. A departed peer's puppet is destroyed rather than left frozen
-    // in place (event_feed also posts "X left the game"); if the peer reconnects, Tick spawns a
-    // fresh puppet on the first new pose.
+    // The per-slot connection edges. A departed peer's puppet is destroyed, not left frozen; a
+    // reconnect spawns a fresh one on the first new pose.
     const bool isConnected = (session.state() == coop::net::ConnState::Connected);
     const bool isHost = (session.role() == coop::net::Role::Host);
     for (int slot = 0; slot < coop::players::kMaxPeers; ++slot) {
-        // IsSlotReady (lanes configured), not IsSlotConnected (a connection handle exists): the
-        // connect-edge replay must wait for ConfigureLanes to land in the Connected callback, or
-        // the snapshot fan-out and the connect-time broadcasts ship on lane 0 instead of their
-        // assigned lanes. The disconnect callback clears both flags atomically, so the disconnect
-        // edge also fires correctly off IsSlotReady.
+        // IsSlotReady (lanes configured), not IsSlotConnected: the connect replay must wait for
+        // ConfigureLanes, or the snapshot fan-out ships on lane 0. The disconnect callback clears
+        // both flags atomically.
         const bool slotConnected = session.IsSlotReady(slot);
-        // Only the connect half of the edge lives here. Per-person teardown is driven by the ledger
-        // row transition (OnSlotReplaced_TearDownWorld above), because a falling edge here is wrong
-        // in two structural ways: on a client it never rises for slots 1-3 (a client only ever
-        // fills peerConns_[0]), so the subsystem fan-out would never run there and a client would
-        // keep a departed third peer's voice channel, prop mirrors, owner-entity mirrors, trash
-        // proxies, flashlight cache and Player Element for the rest of the session; and on the host
-        // a fast replacement skips it entirely (ready to ready across one 8 ms tick, no edge), so
-        // the successor would inherit. The row transition compares values, so it sees both.
+        // Only the connect half lives here. Teardown is driven by the ledger row transition,
+        // because a falling edge is wrong twice: on a client it never rises for slots 1-3 (a client
+        // only fills peerConns_[0]), and on the host a fast replacement (ready to ready across one
+        // tick) has no edge, so the successor would inherit. The row transition compares values and
+        // sees both.
         if (!g_wasConnectedBySlot[slot] && slotConnected) {
-            // The per-slot connect edge. Host side (slots 1..3): the replay does not fire here. A
-            // menu-mode joiner is connected 30-60 s before it has a world (the save download and
-            // load); the replay fires on its ClientWorldReady (event_feed, then
-            // subsystems::ConnectReplayForSlot). An already-in-world joiner announces world-ready
-            // within a tick of connecting, so its timing is the same. Client to host (slot 0):
-            // announce the local flashlight state, request the save transfer and open our
-            // world-ready send gate (subsystems::ClientConnectEdge).
+            // Host side (slots 1..3): the replay fires on the joiner's ClientWorldReady, not here;
+            // a menu-mode joiner is connected 30-60 s before it has a world. Client side (slot 0):
+            // announce the flashlight, request the save transfer, open our world-ready send gate
+            // (subsystems::ClientConnectEdge).
             if (isHost && slot >= 1) {
                 UE_LOGI("net: peer slot %d connect edge -- awaiting ClientWorldReady before the replay", slot);
             } else if (!isHost && slot == 0) {
@@ -456,16 +362,10 @@ void Tick(coop::net::Session& session) {
     }
 
     // A client announces world-ready once per connection, when a gameplay world is up, the prop
-    // registry expresses it, and the load tail has quiesced (the world_load_episode probe latch).
-    // The announce is the MTA INITIAL_DATA_STREAM barrier (CGame.cpp in mtasa-blue): the host opens
-    // the send gate and streams the whole world state on it, so announcing before loadObjects'
-    // async tail settles would put the entire authoritative stream into a churning world. The probe
-    // is deadline-capped (45 s of no progress, 120 s absolute), so a pathological load still
-    // announces (degraded, logged loudly by the probe); the barrier can never wedge the join. Fires
-    // on the first announce of a connection or on a re-announce request (a world-change re-seed
-    // completed, so the host must re-replay into the new world; MaybeRequestReAnnounce armed a
-    // fresh probe session for the new world's tail). The coherence gate is identical either way: a
-    // menu or stale-world announce would arm the host bracket against an unseeded client.
+    // registry expresses it and the load tail has quiesced: the MTA INITIAL_DATA_STREAM barrier
+    // (CGame.cpp). The host streams the whole world state on it, so announcing into a churning load
+    // would put the authoritative stream into it. The probe is deadline-capped, so a pathological
+    // load still announces. Re-fires on a re-announce request under the same coherence gate.
     const bool reAnnounce = g_reAnnounceWorldReady.load(std::memory_order_relaxed);
     if (!isHost && isConnected &&
         (!g_worldReadyAnnounced.load(std::memory_order_relaxed) || reAnnounce)) {
@@ -478,23 +378,17 @@ void Tick(coop::net::Session& session) {
                                            nullptr, 0)) {
                 g_worldReadyAnnounced.store(true, std::memory_order_relaxed);
                 g_reAnnounceWorldReady.store(false, std::memory_order_relaxed);
-                // Stamp the world just announced against; a later re-seed only re-announces if the
-                // current world differs (MaybeRequestReAnnounce). Resolved here, once per real
-                // announce, never per frame. The same reader the reaper's world gate uses: the two
-                // are compared against each other in MaybeRequestReAnnounce, so they must not be
-                // two notions of "the current world", and FindObjectByClass answers "a world object
-                // exists" (it returns the incoming world while the player chain still reads null),
-                // not "the world the local player is in", which is the question a re-announce asks.
+                // Stamp the world announced against, once per real announce. The same reader as the
+                // reaper's world gate: the two are compared in MaybeRequestReAnnounce, and
+                // FindObjectByClass answers "a world object exists" (the incoming world, while the
+                // player chain still reads null), not "the world the player is in".
                 g_announcedWorld = ue_wrap::world_identity::CurrentWorld();
-                // A fresh connect replay (this world's EntitySpawns and SnapshotComplete) is about
-                // to arrive: reset the deferred-adoption per-world state so the new world re-adopts
-                // its save NPCs and re-sweeps orphans (the ghost sweep fires from
-                // npc_adoption::Tick, gated on SnapshotComplete and adoption convergence).
+                // A fresh connect replay is about to arrive: reset the deferred-adoption per-world
+                // state so the new world re-adopts its save NPCs and re-sweeps orphans.
                 coop::npc_adoption::OnClientWorldReady();
                 coop::kerfur_prop_adoption::OnClientWorldReady();  // drop the stale prop-kerfur pending set
-                // The same per-world reset for the deferred prop divergence sweep: a sweep armed
-                // for the prior world must not fire against this fresh one (a save transfer is two
-                // loads).
+                // The same reset for the deferred prop divergence sweep: one armed for the prior
+                // world must not fire against this one.
                 coop::join_membership_sweep::OnClientWorldReadyResetSweep();
                 UE_LOGI("net_pump: ClientWorldReady announced (world up + registry coherent + load "
                         "tail quiesced%s)",
@@ -510,24 +404,19 @@ void Tick(coop::net::Session& session) {
     }
 
     if (g_wasConnected && !isConnected) {
-        // The aggregate disconnect (all peers gone). The global OnDisconnect calls: the per-slot
-        // block above handled the subsystems with per-slot state; this catches the ones with
-        // session-wide state (weather_sync, npc_sync's host-side counter, prop_lifecycle's dedupe
-        // set). If a client lost the host mid-join, drop the loading state so the cover and the
-        // console do not hang (a no-op on the host, or with no join in progress).
+        // The aggregate disconnect (all peers gone): the OnDisconnect calls for session-wide state
+        // (the per-slot block handled the rest). A client that lost the host mid-join drops the
+        // loading state so the cover and the console do not hang.
         coop::join_progress::Reset();
         const auto stats = coop::subsystems::DisconnectAll();
         UE_LOGI("net: all peers gone -- cleared %zu un-enumerated snapshot candidate(s) + %zu Init-processed entries; takeObjInFlight=0",
                 stats.snapPending, stats.initProcessedDropped);
 
-        // The client eject: a client losing the host (a kick, a ban, the host quitting or crashing)
-        // ends the session; flee to the main menu so the player is not stranded in a hostless world
-        // (the same path as a local-death flee). The host does not eject here: a client leaving, or
-        // the host kicking its last client, also lands in this aggregate-disconnect block and must
-        // not boot the host to the menu. One-shot through the terminal-eject latch
-        // (g_localDeathHandled, shared with the death flee; OnSessionStart re-arms it). The
-        // subsystem teardown above already ran, so FleeToMainMenu does only Stop, the bypass and
-        // the travel.
+        // The client eject: losing the host ends the session, so flee to the menu rather than
+        // strand the player in a hostless world. The host does not eject here (its last client
+        // leaving lands in this block too). One-shot through g_localDeathHandled, shared with the
+        // death flee; the teardown above already ran, so FleeToMainMenu does only Stop, the bypass
+        // and the travel.
         if (!isHost && !g_localDeathHandled) {
             g_localDeathHandled = true;
             const std::string reason = session.TakeHostCloseReason();
@@ -537,17 +426,11 @@ void Tick(coop::net::Session& session) {
             return;
         }
     }
-    // The client connect-failure edge: a browser-join client whose connect attempt terminated
-    // without ever reaching Connected (a dead direct IP, an unreachable host, the host not up yet).
-    // The aggregate-disconnect edge above fires only once g_wasConnected latched true, and its
-    // client branch flees on host-close; neither catches a never-connected client, and without this
-    // the loading screen would hang on "Connecting..." until the 90 s failsafe while net_pump
-    // pumped the full gameplay tick at the menu every frame. Detected precisely: client role, a
-    // browser join is Active, never connected this session (the pre-update g_wasConnected), and
-    // Start() already drove the state past Handshaking back to Disconnected (session_status's
-    // connect-fail path), which for a running client means the attempt is definitively dead. Fail()
-    // is a no-op unless Active, and idempotent, so re-firing until the harness drains the abort
-    // (Stop and reopen the browser, which ends the menu pump) is harmless.
+    // The client connect-failure edge: a browser join that never reached Connected (a dead address,
+    // the host not up). The aggregate edge above needs g_wasConnected to have latched, so without
+    // this the loading screen would hang on "Connecting..." until the 90 s failsafe. Precise:
+    // client role, a join Active, never connected, the state back at Disconnected. Fail() is
+    // idempotent.
     if (!isHost && !g_wasConnected && coop::join_progress::Active() &&
         session.state() == coop::net::ConnState::Disconnected) {
         const std::string why = session.TakeHostCloseReason();
@@ -555,16 +438,13 @@ void Tick(coop::net::Session& session) {
     }
     g_wasConnected = isConnected;
 
-    // Process up to ~100 snapshot candidates per tick while a snapshot enumeration is in progress
-    // (a no-op on an empty vector).
+    // Up to ~100 snapshot candidates per tick while an enumeration is in progress (a no-op on
+    // empty).
     if (isConnected && worldUp) { PP::Scope _s{PP::Bucket::SnapshotDrain}; coop::prop_snapshot::DrainChunk(); }
 
     // The per-tick gameplay subsystem chain (connect-broadcast drains, module polls and applies,
-    // NPC streams, trash death-watches, dev probes). World-up-gated whole: every one of these acts
-    // on gameplay-world state that cannot exist at the menu, and several poll or ensure against BP
-    // classes that only load with the gameplay world. Queued connect broadcasts (the client's own
-    // flashlight from the slot-0 connect edge, say) simply wait until the world is up; they
-    // describe in-world state, so sending them earlier was never meaningful.
+    // NPC streams, dev probes), world-up-gated whole: every one acts on gameplay-world state, and a
+    // queued connect broadcast describes in-world state, so waiting costs nothing.
     if (worldUp) {
         coop::subsystems::TickGameplay(session, isConnected, isHost, g_fleeing);
     }
@@ -572,14 +452,11 @@ void Tick(coop::net::Session& session) {
     if (g_netLocal.Raw() && !g_netLocal.Alive()) { g_netLocal.Reset(); g_netLocalController.Reset(); }
     if (!g_netLocal.Raw()) {
         g_netLocal.Set(localNow);  // resolved once at the top of this tick
-        // The checkpoint join spawn: every client appearance in a coop world spawns at the
-        // checkpoint start point, never at the transferred save's playerTransform (the host's saved
-        // position, which would materialise a joiner inside the host's base or on top of the host).
-        // The host alone keeps its save position. This pawn-Set edge is exactly "a new local body
-        // exists": it fires once per world appearance, the first join and every save-transfer or
-        // world-change reload, while the load screen still covers the swap. (A save-transfer join
-        // runs two level loads; both pawns get the teleport, and the second, final one is the one
-        // that matters.)
+        // The checkpoint join spawn: every client appearance spawns at the checkpoint start point,
+        // never at the transferred save's playerTransform (the host's own position). This pawn-Set
+        // edge is exactly "a new local body exists": once per world appearance, while the load
+        // screen still covers the swap; a save-transfer join's two loads both get it, and the final
+        // one is the one that matters.
         if (localNow && isConnected && !isHost) {
             coop::teleport_client::ApplyLocally(
                 {ue_wrap::profile::name::kKPPSpawnX, ue_wrap::profile::name::kKPPSpawnY,
@@ -587,91 +464,60 @@ void Tick(coop::net::Session& session) {
             UE_LOGI("net_pump: CLIENT spawn -> KPP start point (join/world appearance)");
         }
     }
-    // The `!g_localDeathHandled` gate: the first tick after death this block still runs (death is
-    // detected here and the synchronous teardown fires), but once handled all local-send work
-    // stops; otherwise the ragdoll sender would keep emitting RagdollPose packets on the stopped
-    // session, reading the dead player's pelvis ~100 times a second on the way to the menu. Raw()
-    // below is validated by the Alive()/Reset/Set block just above, this tick.
+    // The !g_localDeathHandled gate: once the death is handled every local send stops, or the
+    // ragdoll sender would keep reading the dead player's pelvis ~100 times a second on the way to
+    // the menu. Raw() is validated by the block just above, this tick.
     if (g_netLocal.Raw() && !g_localDeathHandled) {
-        // The pump barrier of the death arc. This publishes the OpenLevel veto's inputs from the
-        // pawn this tick already validated, arms on the `dead` rising edge, and runs a revive the
-        // detour has requested. Here and not in the detour, because the detour runs inside a native
-        // call inside the BP VM, where a UFunction dispatch re-enters our own ProcessEvent detour
-        // and fires every interceptor and observer; the pump task is where engine calls are
-        // ordinary.
+        // The pump barrier of the death arc: publishes the OpenLevel veto's inputs from the
+        // validated pawn, arms on the `dead` rising edge, runs a revive the detour requested. Here,
+        // not in the detour, because there a UFunction dispatch re-enters our own ProcessEvent
+        // detour.
         coop::death_revive::Tick(session, g_netLocal.Raw());
-        // The death policy. On local death, synchronously tear down all coop game-side state on
-        // this frame, then Stop the session. Session::Stop() alone is not enough: the game's death
-        // world reload blocks the game thread immediately, so the deferred disconnect-edge cleanup
-        // on the next Tick never runs, and our orphan puppet actors and Element mirrors would stay
-        // in the dying world. So the puppet actors are destroyed and every subsystem's state
-        // drained here, before the reload, mirroring the per-slot and aggregate disconnect edges.
-        // One-shot (g_localDeathHandled); a reconnect re-Starts and OnSessionStart re-arms. `dead`
-        // is true only on real death (a faint, a KO or the manual C leave it false).
-        // The gate: a host is "still hosting" in three states, Handshaking (no client yet),
-        // Connected (clients present) and Disconnected (the clients all left, the listen socket
-        // still up), and its death matters in all three, so the host gates on running()
-        // [Start..Stop], not connected(). The client keeps connected(): if it loses the host it is
-        // already ejected by the host-close path above (which latches g_localDeathHandled), so
-        // connected() is its precise window.
+        // The death policy: on a local death tear every coop game-side state down this frame, then
+        // Stop. Stop alone is not enough: the game's death reload blocks the game thread at once,
+        // so the deferred disconnect cleanup never runs. `dead` is true only on a real death (a
+        // faint or KO leaves it false). The host gates on running() (it is still hosting in
+        // Handshaking, Connected and Disconnected alike); the client on connected(), since the
+        // host-close path already ejected it.
         const bool sessionLiveForDeath = isHost ? session.running() : session.connected();
         if (!g_localDeathHandled && sessionLiveForDeath) {
             bool isRagdoll = false, dead = false;
             if (ue_wrap::engine::ReadMainPlayerRagdollState(g_netLocal.Raw(), isRagdoll, dead) && dead) {
-                // The death arc owns this edge first: the whole native death runs (the sound, `dead
-                // := true`, ten seconds, the black screen) and the mod steps in only where the game
-                // reaches for the level travel. This flee is the opposite: it fires within one pump
-                // tick of `dead`. So when `death_revive` has armed this death (the seam installed,
-                // every revive verb resolved, a session live) the flee stands down and the native
-                // chain plays. The arm decision is the same decision as this one, made at the same
-                // instant: a death whose flee was skipped and whose revive then turned out
-                // impossible would tear the world down with our coop state still in it. Unarmed (a
-                // stale signature, verbs unresolved), this flee is the fallback that keeps a death
-                // survivable for our layer. An armed death falls through rather than returning: the
-                // pump must keep running for the ten seconds, because the pump performs the revive.
-                // g_localDeathHandled stays unset: it is shared with the host-close arm above, and
-                // latching it here would stop this block from ticking; `death_revive` owns its own
-                // per-death state.
+                // The death arc owns this edge first: when death_revive has armed this death (seam
+                // installed, verbs resolved, session live) the native chain plays and the pump
+                // keeps running, since the pump performs the revive. Unarmed, this flee is the
+                // fallback that keeps a death survivable for our layer; the arm decision and this
+                // one are the same decision at the same instant. g_localDeathHandled stays unset on
+                // the armed path: it is shared with the host-close arm above.
                 if (!coop::death_revive::ArmedForThisDeath()) {
                     g_localDeathHandled = true;
                     UE_LOGW("net: LOCAL PLAYER DIED -- tearing down coop state synchronously + fleeing "
                             "to the main menu (role=%s; permadeath-rejoinable)",
                             session.role() == coop::net::Role::Host ? "HOST (ends session)" : "CLIENT");
-                    // The per-slot teardown (puppet actors and slot state) plus the aggregate
-                    // session-wide drains, shared with the native quit-to-menu path.
+                    // The per-slot teardown plus the session-wide drains, shared with the native
+                    // quit-to-menu path.
                     TearDownCoopStateForSessionEnd(session);
-                    // Flee to the main menu and hold our layer dormant (shared with the host-close
-                    // eject). FleeToMainMenu resets the edge detectors and Stops, then arms the
-                    // bypass before travelling, so the detour does not hang the 50k-actor
-                    // untitled_1 teardown and the per-tick logic cannot resume on stale gameplay
-                    // shadows at the menu. The travel uses the game's own verb, which works for a
-                    // dead, ragdolling player.
+                    // Flee to the menu and hold our layer dormant (shared with the host-close
+                    // eject); the travel uses the game's own verb, which works for a dead,
+                    // ragdolling player.
                     FleeToMainMenu(session, "LOCAL PLAYER DIED");
                     return;
                 }
             }
         }
-        // Re-resolve the controller only when missing or invalidated; the controller pointer stays
-        // stable between possess events. Caching it saves ~250 ProcessEvent dispatches a second at
-        // the 125 Hz pump.
+        // Re-resolve the controller only when missing or invalidated (it is stable between possess
+        // events); ~250 dispatches a second saved at the 125 Hz pump.
         if (g_netLocalController.Raw() && !g_netLocalController.Alive()) g_netLocalController.Reset();
         if (!g_netLocalController.Raw())
             g_netLocalController.Set(ue_wrap::engine::GetController(g_netLocal.Raw()));
         // The one-shot install of the per-subsystem observers (idempotent).
         { PP::Scope _s{PP::Bucket::InstallObs}; coop::subsystems::Install(session); }
-        // The outbound local streams: pose, held prop, ragdoll (coop/local_streams). The sender
-        // gates its own pose: a joining client's pawn exists through the whole 30-60 s load window,
-        // and every position it is parked or teleported through would otherwise stream as our pose,
-        // garbage at the source. The ClientWorldReady coherence predicate fires seconds too early:
-        // the world and the prop registry are coherent off the level-default props while the pawn
-        // still sits at the map's parked spot, and loadObjects teleports it at the load tail. That
-        // call cannot be hooked (a script-to-script local call touches neither ProcessEvent nor
-        // UFunction::Func; docs/COOP_DISPATCH_VISIBILITY.md), so the gate uses the signal that
-        // observes its effect: load-tail quiescence (join_membership_sweep), the keyless-prop, NPC
-        // and chipPile population stable for 10 scans x 200 ms, which only happens after the spawn
-        // flux containing the player teleport has ended. The destructive divergence sweep trusts
-        // the same signal; it resets per world (a mid-session world change closes the gate until
-        // the new tail settles) and it is client-scoped. The host keeps the worldUp gate.
+        // The outbound local streams (coop/local_streams). A joining client's pawn is parked and
+        // teleported through positions that must not stream as our pose, and ClientWorldReady fires
+        // seconds before loadObjects' final teleport, which cannot be hooked
+        // (docs/COOP_DISPATCH_VISIBILITY.md); so the client gate is load-tail quiescence
+        // (join_membership_sweep), the signal that observes its effect, reset per world. The host
+        // keeps the worldUp gate.
         const bool poseAuthoritative =
             isHost ? worldUp
                    : (g_worldReadyAnnounced.load(std::memory_order_relaxed) &&
@@ -681,24 +527,20 @@ void Tick(coop::net::Session& session) {
             coop::local_streams::Tick(session, g_netLocal.Raw(), g_netLocalController.Raw());
     }
 
-    // The per-slot puppet drive: coop/player/puppet_drive (pose spawn and apply, the ragdoll drive,
-    // the per-puppet interpolation tick, the wisp hold, the pose diagnostic). The
-    // worldReadyAnnounced load is evaluated in the call expression, the same observation point as
-    // the drive's own loop (both writers ran earlier in this Tick). remote_prop stays here (a prop
-    // concern, not a puppet one), under the same worldUp predicate, after the drive.
+    // The per-slot puppet drive (coop/player/puppet_drive); the worldReadyAnnounced load is
+    // evaluated in the call, the same observation point as the drive's loop. remote_prop stays here
+    // (a prop concern), under the same gate, after the drive.
     if (worldUp) {
         coop::puppet_drive::DriveTick(session,
                                       g_worldReadyAnnounced.load(std::memory_order_relaxed));
 
-        // The receiver-side held-prop driver. Drains the latest PropPose from the session and
-        // applies it (a lookup by Key on first arrival, transform writes thereafter). A stream stop
-        // (over 500 ms) is treated as an implicit release.
+        // The receiver-side held-prop driver: the latest PropPose applied (a Key lookup on first
+        // arrival, transform writes after); a stream stop over 500 ms is an implicit release.
         { PP::Scope _s{PP::Bucket::RemoteProp}; coop::remote_prop::Tick(session); }
     }  // worldUp (puppet drive + ragdoll + pose-diag + remote prop)
 
-    // Surface session events (joins, disconnects) to the feed and send our Join. g_netLocal goes
-    // along so remote_prop::OnRelease can call Aprop_C.thrown(player), the natural throw-sound
-    // dispatch.
+    // Session events (joins, disconnects) to the feed, and our Join; g_netLocal goes along so
+    // remote_prop::OnRelease can dispatch Aprop_C.thrown(player).
     { PP::Scope _s{PP::Bucket::EventFeed}; coop::event_feed::Update(session, g_netLocal.Raw()); }
 }
 
