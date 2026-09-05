@@ -1,11 +1,7 @@
-// ue_wrap/reflection.h -- standalone UE4.27 reflection access (no UE4SS).
-//
-// Engine-wrapper layer (principle 7). Resolves the engine globals/functions we
-// need by AOB signature (RULE No.3), then exposes minimal typed accessors over
-// GUObjectArray and FName. NO gameplay/network logic lives here.
-//
-// Signatures + offsets are for VOTV Alpha 0.9.0-n (UE4.27). They are re-derived
-// when the mod is brought up against a new game version (version-tagging rule).
+// ue_wrap/reflection.h -- standalone UE4.27 reflection access. The engine globals and functions
+// are resolved by AOB signature (no UE4SS import), then exposed as typed accessors over
+// GUObjectArray and FName. No gameplay or network logic. Signatures and offsets are for the
+// targeted game build and are re-derived when the mod is brought up against a new one.
 
 #pragma once
 
@@ -21,234 +17,178 @@ struct FName {
     int32_t Number;
 };
 
-// UE4.27 FString == TArray<TCHAR>: heap wide string + count/capacity.
+// UE4.27 FString, a TArray<TCHAR>: heap wide string plus count and capacity.
 struct FString {
     wchar_t* Data;
     int32_t Num;
     int32_t Max;
 };
 
-// AOB-resolve GUObjectArray + FName::ToString in the main module. Idempotent;
-// returns true once both are found.
+// AOB-resolve GUObjectArray and FName::ToString in the main module. Idempotent; true once both
+// are found.
 bool Resolve();
 bool IsResolved();
 
-// Resolved addresses (0 until Resolve() succeeds), for diagnostics.
+// Resolved addresses (0 until Resolve succeeds), for diagnostics.
 uintptr_t GUObjectArrayAddr();
 uintptr_t FNameToStringAddr();
 uintptr_t ProcessEventAddr();
 
-// Call a UFunction on `object` via UObject::ProcessEvent -- the universal
-// engine call path (drives BlueprintCallable/native UFunctions: SpawnActor
-// helpers, K2_SetActorLocation, OpenLevel, ...). `params` points to the
-// function's parameter struct (inputs in, outputs/return written back); pass
-// nullptr for a no-parameter function. Returns false if ProcessEvent is
-// unresolved. Must run on the game thread.
+// Call a UFunction on `object` through UObject::ProcessEvent. `params` points to the function's
+// parameter struct (inputs in, outputs and the return written back), nullptr for a
+// parameterless function. False if ProcessEvent is unresolved. Game thread only.
 bool CallFunction(void* object, void* function, void* params);
 
-// True while the CURRENT THREAD is inside a CallFunction dispatch issued by our own code (a
-// thread-local depth latch around the one ProcessEvent choke point). Lets a UFunction
-// interceptor discriminate mod-originated native calls from the game's own BP calls
-// (rng_roll_census self-noise exclusion; the context object cannot discriminate -- our
-// re-arms target game objects).
+// True while the current thread is inside a CallFunction dispatch issued by our own code (a
+// thread-local depth latch around the one ProcessEvent choke point), so an interceptor can tell
+// mod-originated calls from the game's own; the context object cannot, since our re-arms target
+// game objects.
 bool InCoopDispatch();
 
-// Coop-call attribution census (dev instrument). When armed, CallFunction tallies its
-// TARGET UFunction so the ~135 blueprint dispatches per frame our code authors can be
-// attributed to the polls that produce them. Off by default (one relaxed bool load).
+// The call-attribution census (a dev instrument): when armed, CallFunction tallies its target
+// UFunction so the dispatches our code authors per frame can be attributed to the polls that
+// produce them. Off by default (one relaxed bool load).
 void SetCoopCallCensus(bool on);
-// Slot i's target UFunction + its cumulative count; false past the last populated slot.
+// Slot i's target UFunction and its cumulative count; false past the last populated slot.
 bool CoopCallSiteAt(int i, void** outFn, unsigned long long* outCount);
 
-// GUObjectArray.ObjObjects.NumElements (count of allocated UObject slots).
+// GUObjectArray.ObjObjects.NumElements, the count of allocated UObject slots.
 int32_t NumObjects();
 
-// UObjectBase* at object index, or nullptr (slot empty / out of range).
+// UObjectBase* at an object index, or nullptr (slot empty or out of range).
 void* ObjectAt(int32_t index);
 
-// True if `obj` is still a live UObject (its GUObjectArray slot still points
-// back to it, and it is not PendingKill/Unreachable). O(1).
-//
-// WARNING: IsLive reads obj->InternalIndex from the object's OWN memory as its
-// FIRST step, so it is only safe on a pointer that is at least still MAPPED. On
-// a pointer the engine GC has already PURGED (backing store freed) that read
-// itself access-violates -- IsLive cannot guard against its own argument being
-// freed. For any raw UObject* cached LONGER than the current game-thread slice
-// (the connect-edge prop snapshot held ~2000 actor pointers across ticks; a
-// mass GC purge between ticks freed some without firing K2_DestroyActor), use
-// IsLiveByIndex with an index captured via InternalIndexOf while the object was
-// known live. (Root-caused 2026-05-30: this read was the connect-edge AV; see
-// [[feedback-crash-firewall-requires-eha]] for the related freeze it triggered.)
+// True if `obj` is still a live UObject: its GUObjectArray slot points back to it and it is not
+// PendingKill or Unreachable. O(1). It reads obj->InternalIndex from the object's own memory
+// first, so it is safe only on a pointer that is still mapped; a pointer the GC has already
+// purged faults inside this call. For any raw UObject* cached past the current game-thread
+// slice, use IsLiveByIndex with an index captured by InternalIndexOf while the object was known
+// live.
 bool IsLive(void* obj);
 
-// GC-purge-safe liveness check. `internalIdx` must have been captured (via
-// InternalIndexOf) while `obj` was known live. Validates ONLY through the
-// GUObjectArray slot at that index -- it reads engine array metadata, never
-// `obj`'s own (possibly-freed) memory -- so it is safe to call on a pointer the
-// GC may have purged: a freed/recycled slot no longer equals `obj`, so it
-// returns false WITHOUT faulting. FWeakObjectPtr-style guard for any raw
-// UObject* cached past the current game-thread slice.
+// The purge-safe liveness check. `internalIdx` must have been captured while `obj` was known
+// live. It validates only through the GUObjectArray slot at that index, never the object's own
+// memory, so a freed or recycled slot no longer equals `obj` and returns false without faulting.
 bool IsLiveByIndex(void* obj, int32_t internalIdx);
 
-// Read the FUObjectItem.SerialNumber at a GUObjectArray slot -- array-slot read
-// only (never the object's memory), so it is safe on any thread and after a
-// purge. UE assigns serials LAZILY (0 until the first weak ref to the object),
-// so 0 means "never serialized", not "dead". Returns 0 for an out-of-range
-// index. Consumed by CachedObjRef's opportunistic serial rule
+// The FUObjectItem.SerialNumber at a slot: an array read only, safe on any thread and after a
+// purge. UE assigns serials lazily (0 until the first weak ref), so 0 means "never serialised",
+// not "dead"; 0 for an out-of-range index. Consumed by CachedObjRef's opportunistic serial rule
 // (ue_wrap/core/cached_obj_ref.h).
 int32_t SlotSerial(int32_t internalIdx);
 
-// Read a UObject's InternalIndex (its stable slot in GUObjectArray). MUST be
-// called only when `obj` is known live (it dereferences `obj`). Returns -1 for
-// null. Cache the result so the pointer can later be validated via
-// IsLiveByIndex after the object may have been GC-purged.
+// A UObject's InternalIndex, its stable slot in GUObjectArray. Dereferences `obj`, so only for
+// an object known live; -1 for null. Cache it for a later IsLiveByIndex.
 int32_t InternalIndexOf(void* obj);
 
-// Resolve a UE TWeakObjectPtr {int32 ObjectIndex, int32 ObjectSerialNumber} to a live
-// UObject*, or null. Array-slot read only -- it never dereferences the candidate, so a
-// stale weak ptr whose slot was recycled resolves to null instead of to the new tenant
-// (the serial compare is what makes that true; the index alone would hand back whoever
-// took the slot). Same kill-flag rejection as IsLiveByIndex: a PendingKill/Unreachable
-// object is NOT live for our purposes even while it still occupies its slot.
+// Resolve a TWeakObjectPtr {ObjectIndex, ObjectSerialNumber} to a live UObject*, or null. A slot
+// read only: a stale pointer whose slot was recycled resolves to null, not to the new tenant
+// (the serial compare does that). A PendingKill or Unreachable object is not live here either.
 void* ResolveWeakObject(int32_t internalIdx, int32_t serial);
 
-// Read the raw EInternalObjectFlags word at a UObject's GUObjectArray slot --
-// the same field IsLiveByIndex tests, exposed whole so a caller can tell the
-// KINDS of "not live" apart. IsLive collapses PendingKill and Unreachable into
-// one boolean, which is right for a liveness gate and wrong for a diagnosis:
-// PendingKill-only means the engine marked it and GC has not yet reached it,
-// Unreachable means GC HAS reached it and it is mid-purge. Bits (UE4.27):
-// ReachableInCluster 1<<23, ClusterRoot 1<<24, Native 1<<25, Async 1<<26,
-// AsyncLoading 1<<27, Unreachable 1<<28, PendingKill 1<<29, RootSet 1<<30.
-// Slot read only (never obj's own memory) apart from obj's InternalIndex, so
-// the caller must guarantee `obj` is mapped -- same contract as InternalIndexOf.
-// Returns 0 for null / an out-of-range index, which is indistinguishable from
-// "no flags set": this is a DIAGNOSTIC accessor, not a gate. Use IsLive to gate.
+// The raw EInternalObjectFlags word at a UObject's slot, the field IsLiveByIndex tests, exposed
+// whole so a diagnosis can tell PendingKill (marked, GC not yet there) from Unreachable
+// (mid-purge). Bits (UE4.27): ReachableInCluster 1<<23, ClusterRoot 1<<24, Native 1<<25, Async
+// 1<<26, AsyncLoading 1<<27, Unreachable 1<<28, PendingKill 1<<29, RootSet 1<<30. Reads obj's
+// InternalIndex, so `obj` must be mapped. 0 for null or out of range, indistinguishable from
+// "no flags": a diagnostic accessor, not a gate.
 int32_t InternalFlagsOf(void* obj);
 
-// THE ROOT-SET PRIMITIVES. Do not call these pair-wise from a subsystem -- hold an
-// `ue_wrap::GcPin` (ue_wrap/core/gc_pin.h) instead, which owns the pin and releases it
-// from its destructor. A hand-written pair is what leaked 871 rooted actors and a whole
-// UWorld on 2026-09-01: the release was conditioned on a liveness test and therefore
-// skipped at exactly the teardown that needed it. `tools/gc/gc_pin_gate.ps1` polices
-// direct callers.
-//
-// Mark a UObject as part of the root set so UE4 GC never collects it. We pin
-// runtime-constructed UObjects (NewObject / SpawnObject results) we want to
-// keep referenced indefinitely from C++ -- C++ static void* doesn't qualify as
-// a reachable reference for the GC reachability scan, so without rooting the
-// object gets reaped on the next GC pass and our cached pointer dangles.
-// Sets EInternalObjectFlags::RootSet (0x40000000) on FUObjectItem.Flags @+0x08.
-// Returns false if obj is null or its index is out of range.
+// The root-set primitives. A subsystem holds a `ue_wrap::GcPin` (ue_wrap/core/gc_pin.h) rather
+// than calling these as a pair: the pin releases from its destructor, where a hand-written
+// release conditioned on a liveness test once skipped exactly the teardown that needed it and
+// leaked 871 rooted actors and a whole UWorld. `tools/gc/gc_pin_gate.ps1` polices direct
+// callers.
+// Mark a UObject as part of the root set so the GC never collects it. A C++ static void* is
+// not a reachable reference for the GC scan, so an unrooted runtime-constructed object is
+// reaped on the next pass and the cached pointer dangles. Sets EInternalObjectFlags::RootSet
+// (0x40000000) on FUObjectItem.Flags at +0x08. False if obj is null or its index is out of
+// range.
 bool AddToRoot(void* obj);
 
-// Clear the RootSet flag AddToRoot set, making `obj` GC-eligible again. Pairs
-// with AddToRoot on EVERY teardown of a runtime-pinned UObject (e.g. the trash
-// proxy mirror): a destroyed-but-still-rooted object leaks its GUObjectArray
-// slot forever. Clears EInternalObjectFlags::RootSet (0x40000000) on
-// FUObjectItem.Flags @+0x08. Returns false if obj is null, its slot has been
-// recycled, or the index is out of range.
-//
-// It is a pure slot-flag clear -- no UFunction dispatch, no game-thread
-// requirement (unlike K2_DestroyActor) -- but it is NOT unconditionally safe at
-// process teardown: it reads the object's own InternalIndex and then walks
-// GUObjectArray. `GcPin` owns that concern (its Release stands down once
-// `StopReleases` has run) and is the only caller. Do not add another.
+// Clear the RootSet flag, making `obj` GC-eligible again; a destroyed-but-still-rooted object
+// leaks its slot forever. A pure slot-flag clear, no dispatch and no game-thread requirement,
+// but it reads the object's InternalIndex and walks GUObjectArray, so it is not safe at process
+// teardown; `GcPin` owns that concern (its Release stands down once `StopReleases` has run) and
+// is the only caller. False if obj is null, its slot was recycled, or the index is out of range.
 bool RemoveFromRoot(void* obj);
 
-// UObjectBase accessors (offsets are the standard UE4.27 layout).
+// UObjectBase accessors (the standard UE4.27 layout).
 const FName& NameOf(void* uobject);   // NamePrivate  @ +0x18
 void*        ClassOf(void* uobject);  // ClassPrivate @ +0x10
 void*        OuterOf(void* uobject);  // OuterPrivate @ +0x20
 
-// Lookups over GUObjectArray (linear walk; intended for one-time setup).
-// All match on the object's NamePrivate (the leaf name, not a path).
+// Lookups over GUObjectArray: linear walks, for one-time setup. All match on the object's
+// NamePrivate (the leaf name, not a path).
 
-// First object whose name == `name`; if `className` is non-null, also require
-// its class name to match. Returns UObjectBase* or nullptr.
+// First object whose name is `name`; with a non-null `className`, its class name must match
+// too.
 void* FindObject(const wchar_t* name, const wchar_t* className = nullptr);
 
-// A UClass by name (its meta-class is Class/BlueprintGeneratedClass/etc).
-// e.g. FindClass(L"mainPlayer_C"), FindClass(L"World").
+// A UClass by name (its meta-class is Class, BlueprintGeneratedClass or similar), e.g.
+// FindClass(L"mainPlayer_C").
 void* FindClass(const wchar_t* className);
 
-// A UFunction named `funcName` owned (Outer) by `owningClass`. Walks the
-// class's Outer-children; does NOT climb to super classes.
+// A UFunction named `funcName` owned (Outer) by `owningClass`. Walks the class's Outer-children
+// only; does not climb to super classes.
 void* FindFunction(void* owningClass, const wchar_t* funcName);
 
-// First live INSTANCE whose class name == `className` (skips the class's CDO,
-// i.e. names starting with "Default__"). Use for runtime singletons that exist
-// by the time you call -- e.g. the GameInstance (a valid world context) or a
-// live World. Returns UObjectBase* or nullptr. (Mirrors UE4SS FindFirstOf.)
+// First live instance whose class name is `className`, skipping the CDO (names starting with
+// "Default__"). For runtime singletons that exist by the time of the call, such as the
+// GameInstance or the live World.
 void* FindObjectByClass(const wchar_t* className);
 
-// The Class Default Object for a class given by name (the "Default__<Class>"
-// object). Static BlueprintCallable UFunctions are dispatched on the CDO.
+// The Class Default Object of a class given by name. Static BlueprintCallable UFunctions are
+// dispatched on the CDO.
 void* FindClassDefaultObject(const wchar_t* className);
 
-// Count live INSTANCES whose class name == `className` (skips the CDO). Used to
-// detect spawn/clobber (e.g. mainPlayer_C count 1 -> 2 after an orphan spawn).
+// Count of live instances whose class name is `className`, skipping the CDO.
 int32_t CountObjectsByClass(const wchar_t* className);
 
-// All live INSTANCES whose class name == `className` (skips the CDO). Linear
-// GUObjectArray walk -- one-shot / low-rate use only (NOT per-frame). Used by
-// firefly_sync to diff the ParticleSystemComponent set across one firefly tick.
+// All live instances whose class name is `className`, skipping the CDO. A linear walk: one-shot
+// or low-rate use only, never per frame.
 std::vector<void*> FindObjectsByClass(const wchar_t* className);
 
-// --- allocation-free name compares (RAM-balloon root-cause fix, 2026-06-10) ---
-// ToString() constructs a std::wstring PER CALL (plus the engine FString render);
-// every GUObjectArray walk used it per OBJECT scanned (~250k allocations/walk) --
-// the "wstring bomb" behind the 19 GB Install incident, the seated-quadbike 5 fps
-// collapse, and the v56 menu-window client balloon (3.1->11 GB before the save
-// Request). These compare against the per-thread scratch buffer instead: zero
-// allocations, identical match semantics to `ToString(name) == expected`.
+// Allocation-free name compares. ToString constructs a std::wstring per call plus the engine's
+// FString render, and a GUObjectArray walk calling it per object is a quarter-million
+// allocations per walk. These compare against the per-thread scratch buffer instead, with the
+// same match semantics as `ToString(name) == expected`.
 bool NameEquals(const FName& name, const wchar_t* expected);
 bool NameStartsWith(const FName& name, const wchar_t* prefix);
-// Substring form. Its one world-name consumer is `world_identity`'s classifier
-// ("ntitled" matches the live UWorld's "Untitled_1" case-agnostically); the reaper
-// used to do this itself and no longer DEREFERENCES a world pointer (B4, 2026-08-25); it
-// still reads one as an opaque identity to pass along.
-// Bounded scan, zero alloc.
+// The substring form, bounded and allocation-free. Its consumer is world_identity's classifier
+// ("ntitled" matches the live UWorld's "Untitled_1" whatever its case).
 bool NameContains(const FName& name, const wchar_t* needle);
 
-// A discovered object (used by the component/child enumerator).
+// A discovered object, from the child enumerator.
 struct ObjectRef {
     std::wstring name;
     std::wstring className;
     void* object;
 };
 
-// All UObjects whose Outer == `outer` (an actor's default subobjects: its
-// components live here). Linear walk; one-time inspection use.
+// All UObjects whose Outer is `outer` (an actor's default subobjects: its components live
+// here). A linear walk, for one-time inspection.
 std::vector<ObjectRef> ChildObjectsOf(void* outer);
 
-// DEBUG: probe UStruct::SuperStruct's byte offset by scanning the Actor class
-// for the qword that equals the Object class pointer (Actor's super). Logs the
-// match. Pointer compares only -- safe even if our guess is wrong.
+// A debug probe for UStruct::SuperStruct's byte offset: scans the Actor class for the qword
+// equal to the Object class pointer and logs the match. Pointer compares only.
 void DebugProbeSuperStructOffset();
 
-// One SuperStruct hop: the immediate parent UStruct of `cls` (nullptr at the
-// chain root / null input). THE primitive for a caller that must climb the
-// chain itself (e.g. resolving a UFunction on the DECLARING ancestor --
-// FindFunction is exact-owner). Keeps the UStruct_SuperStruct offset in the
-// wrapper layer (Principle 7).
+// One SuperStruct hop: the immediate parent UStruct of `cls`, nullptr at the chain root. The
+// primitive for a caller that must climb the chain itself (resolving a UFunction on the
+// declaring ancestor, since FindFunction is exact-owner); keeps the SuperStruct offset in this
+// layer.
 void* SuperStructOf(void* cls);
 
-// Walk `cls`'s SuperStruct chain checking each hop against the array
-// `bases[0..nBases)`. Returns true iff `cls` or any ancestor up to
-// `maxHops` levels matches any base. Cache-friendly inner loop (all
-// candidate bases checked per hop -- avoids walking the chain once
-// per base). Use this from gameplay code instead of hand-writing a
-// SuperStruct hop loop so the UStruct_SuperStruct offset stays in the
-// wrapper layer (Principle 7).
+// True iff `cls` or any ancestor within `maxHops` matches any of `bases[0..nBases)`. All bases
+// are checked per hop, so the chain is walked once. Gameplay code uses this rather than its own
+// hop loop, so the SuperStruct offset stays in this layer.
 bool IsDescendantOfAny(void* cls, void* const* bases, size_t nBases,
                        int maxHops = 16);
 
-// ---- UFunction parameter reflection --------------------------------------
-// To call a UFunction via ProcessEvent we must hand it a parameter frame with
-// each argument at the exact byte offset the engine expects. Rather than
-// hardcode those offsets (fragile across builds), we read them from the live
-// UFunction's FProperty chain -- correct-by-construction and version-portable.
+// UFunction parameter reflection. A ProcessEvent call needs a parameter frame with each argument
+// at the byte offset the engine expects; the offsets are read from the live UFunction's
+// FProperty chain rather than hardcoded, so they hold across builds.
 
 // One parameter of a UFunction (a CPF_Parm FProperty), in declaration order.
 struct ParamInfo {
@@ -258,49 +198,39 @@ struct ParamInfo {
     uint64_t flags;   // EPropertyFlags (test cpf::Parm / OutParm / ReturnParm)
 };
 
-// All CPF_Parm properties of `function` (a UFunction*), in declaration order
-// (includes the return value, which carries CPF_ReturnParm).
+// All CPF_Parm properties of `function` (a UFunction*) in declaration order, the return value
+// (CPF_ReturnParm) included.
 std::vector<ParamInfo> FunctionParams(void* function);
 
-// Size in bytes to allocate for the parameter frame (UFunction::PropertiesSize,
-// >= ParmsSize). 0 if `function` is null.
+// Bytes to allocate for the parameter frame (UFunction::PropertiesSize, at least ParmsSize); 0
+// for null.
 int32_t FunctionFrameSize(void* function);
 
-// Byte offset of parameter `paramName` in the frame, or -1 if not found.
+// Byte offset of parameter `paramName` in the frame, or -1.
 int32_t FindParamOffset(void* function, const wchar_t* paramName);
 
-// Byte offset of an INSTANCE property named `propName` on `owningClass` (a
-// UClass*). Walks the class's own ChildProperties chain, then CLIMBS the
-// SuperStruct chain on miss (audit fix 2026-05-25; this comment previously
-// claimed local-only -- stale, corrected 2026-07-03 when scs_rig relied on
-// the climb for ULocalLightComponent fields queried via PointLightComponent).
-// Returns -1 if not found. Used to locate fields like
-// `UMovementComponent::Velocity` for direct memory access. Cache the result;
-// the linear walk is fine one-shot but bad in a hot loop.
+// Byte offset of an instance property named `propName` on `owningClass` (a UClass*). Walks the
+// class's own ChildProperties chain, then climbs the SuperStruct chain on a miss. -1 if not
+// found. Cache the result; the walk is linear.
 int32_t FindPropertyOffset(void* owningClass, const wchar_t* propName);
 
-// PREFIX-matched variant for GUID-mangled BP struct members: a UserDefinedStruct
-// member renders as "decoded_5_A9CAC26F480C342A406FFFB77DD0AB68" -- the human
-// prefix ("decoded_") is stable across recooks, the GUID suffix is not. Pass a
-// UScriptStruct* (see PropertyInnerStruct) or a UClass*; same SuperStruct-
-// climbing walk as FindPropertyOffset. Returns the FIRST prefix match (include
-// the trailing underscore in the prefix so "size_" can't match
-// "sizeFactor_..."). -1 if not found. Cache the result.
+// The prefix-matched variant for GUID-mangled BP struct members: a UserDefinedStruct member
+// renders as "decoded_5_A9CAC26F480C342A406FFFB77DD0AB68", where the human prefix is stable
+// across recooks and the GUID suffix is not. Takes a UScriptStruct* (see PropertyInnerStruct) or
+// a UClass*; the same climbing walk. Returns the first prefix match (include the trailing
+// underscore, so "size_" cannot match "sizeFactor_..."); -1 if none. Cache the result.
 int32_t FindPropertyOffsetByPrefix(void* owningStruct, const wchar_t* prefix);
 
-// The inner UScriptStruct* of a struct-typed instance property
-// (FStructProperty::Struct) -- THE way to reach a BP struct's type object for
-// member-offset resolution: deterministic via the owning class's own property
-// chain, immune to global-name collisions, load order, and the struct asset's
-// runtime object name. The slot offset within FStructProperty is build-
-// dependent (0x70 stock UE4.27 / 0x78 padded), so the first call probes both
-// and VALIDATES the candidate through GUObjectArray liveness + its meta-class
-// name (the wrong slot holds an FField*, which can never validate), then
-// caches the calibrated slot process-wide. Null if the property isn't found
-// or no slot validates.
+// The inner UScriptStruct* of a struct-typed instance property (FStructProperty::Struct): the
+// way to reach a BP struct's type object for member-offset resolution, immune to global-name
+// collisions, load order and the struct asset's runtime name. The slot offset within
+// FStructProperty is build-dependent (0x70 stock UE4.27, 0x78 padded), so the first call probes
+// both, validates the candidate through GUObjectArray liveness and its meta-class name (the
+// wrong slot holds an FField*, which never validates), and caches the slot process-wide. Null
+// if the property is not found or no slot validates.
 void* PropertyInnerStruct(void* owningClass, const wchar_t* propName);
 
-// One instance member of a UStruct/UClass, in declaration order.
+// One instance member of a UStruct or UClass, in declaration order.
 struct StructFieldInfo {
     std::wstring name;   // the FField name (BP members carry a "_NN_GUID" tail)
     int32_t offset;      // byte offset within an instance (Offset_Internal)
@@ -308,69 +238,49 @@ struct StructFieldInfo {
     uint64_t flags;      // EPropertyFlags
 };
 
-// Enumerate the OWN instance members of `structOrClass` (a UScriptStruct* -- e.g.
-// via PropertyInnerStruct -- or a UClass*), in declaration order. Walks only the
-// object's OWN ChildProperties chain (no SuperStruct climb: a BP UserDefinedStruct
-// inlines all its members, and callers that want inherited fields ask by name).
-// Empty if `structOrClass` is null or has no members. The linear walk is one-shot
-// friendly; cache the result rather than calling per frame. Game-thread only.
+// The own instance members of `structOrClass` (a UScriptStruct*, e.g. from PropertyInnerStruct,
+// or a UClass*) in declaration order. No SuperStruct climb: a BP UserDefinedStruct inlines all
+// its members, and a caller wanting inherited fields asks by name. Empty for null or no
+// members. Cache the result. Game thread only.
 std::vector<StructFieldInfo> EnumerateStructFields(void* structOrClass);
 
-// A bool UPROPERTY's REAL storage: byte offset within the object plus the bit
-// mask inside that byte, straight from the FBoolProperty payload {FieldSize,
-// ByteOffset, ByteMask, FieldMask} that sits right after the FProperty base.
-// This is THE way to read `uint8 flag : 1` bitfields (bVisible, bAutoActivate,
-// bAbsoluteRotation, ...): several flags pack into one byte, so a raw byte
-// read cannot attribute a value to a specific flag (the 2026-07-03 lifeLight
-// XOR-heuristic failure). The payload slot is build-dependent like
-// FStructProperty::Struct; the first call calibrates it against the engine
-// invariant `SceneComponent CDO has bVisible set` and caches process-wide.
-// Works on UClass* and UScriptStruct* owners (same UStruct field walk; struct
-// members like FTickFunction::bStartWithTickEnabled resolve via
-// PropertyInnerStruct first). Returns false if the property or a valid payload
-// isn't found. Cache the result; the walk is linear.
+// A bool UPROPERTY's real storage: the byte offset within the object and the bit mask inside
+// that byte, from the FBoolProperty payload {FieldSize, ByteOffset, ByteMask, FieldMask} after
+// the FProperty base. The way to read a `uint8 flag : 1` bitfield: several flags pack into one
+// byte, so a raw byte read cannot attribute a value to one flag. The payload slot is
+// build-dependent like FStructProperty::Struct; the first call calibrates it against the engine
+// invariant "the SceneComponent CDO has bVisible set" and caches it process-wide. Works on
+// UClass* and UScriptStruct* owners. False if the property or a valid payload is not found.
+// Cache the result.
 bool FindBoolProperty(void* owningStruct, const wchar_t* propName,
                       int32_t& outByteOffset, uint8_t& outMask);
 
-// Convenience: the object's class name as a string ("" if null).
+// The object's class name as a string ("" if null).
 std::wstring ClassNameOf(void* uobject);
 
-// FName -> wide string via the engine's FName::ToString.
+// FName to wide string through the engine's FName::ToString.
 std::wstring ToString(const FName& name);
 
-// Free an engine-allocated buffer via FMalloc::Free (GMalloc). Use ONLY on memory
-// the ENGINE allocated (e.g. an FString/FText buffer an engine UFunction wrote into
-// our frame, or the orphaned FName::ToString scratch) -- NEVER on CRT/`new` memory.
-// No-op until Resolve() has located GMalloc (AOB via FMemory::Realloc). Closes the
-// gap that previously forced "deliberate" engine-buffer leaks. Game-thread or any
-// thread (FMalloc::Free is internally synchronized).
+// Free an engine-allocated buffer through FMalloc::Free (GMalloc): only for memory the engine
+// allocated (an FString or FText buffer an engine UFunction wrote into our frame), never CRT or
+// `new` memory. A no-op until Resolve has located GMalloc. Any thread; FMalloc::Free is
+// internally synchronised.
 void EngineFree(void* enginePtr);
 
-// Allocate `size` bytes on the ENGINE heap (GMalloc) via FMalloc::Realloc(nullptr,size,align)
-// -- Realloc(null,n) == Malloc(n), and Realloc is the exact vtable slot kSigFMemoryRealloc is
-// matched from (verified-in-use), so this avoids relying on the never-exercised Malloc slot.
-// `align`=0 means DEFAULT_ALIGNMENT (16, enough for FTransform-bearing structs). Use ONLY when
-// the engine must later own/free the buffer (e.g. populating a saveSlot TArray<Fstruct_save>
-// the game's load/save/GC will read then FMemory::Free) -- pairing with EngineFree keeps the
-// allocator matched. Returns nullptr until GMalloc is resolved or on a zero size. Any thread.
+// Allocate `size` bytes on the engine heap through FMalloc::Realloc(nullptr, size, align), the
+// vtable slot the signature is matched from (Realloc(null, n) is Malloc(n)). `align` 0 means
+// the default 16. Only for a buffer the engine must later own and free (a TArray the game's
+// load, save or GC will read and release); pair with EngineFree otherwise. Null until GMalloc
+// is resolved or on a zero size. Any thread.
 void* EngineAlloc(size_t size, uint32_t align = 0);
 
-// Boot health check (logs to multivoid.log via ue_wrap::log): detect+log the
-// game/engine version, resolve every primitive, then FUNCTIONALLY validate them
-// (name round-trip, known-class lookups) and print a PASS/FAIL verdict. On a new
-// game build this is the fast path to "what broke" -- it pinpoints the failing
-// signature/offset instead of crashing later.
-//
-// RETURNS the number of FAILED checks; 0 means the profile matches this build.
-//
-// It used to return void, so the one place in the process that knows our
-// offsets do not match the running game told nobody but the log, and boot
-// proceeded to detour ProcessEvent and drive the game through them anyway
-// (found by an external source review of the public tree, 2026-08-30). The
-// danger is not a null pointer -- `game_thread::Install` already refuses one --
-// it is an AOB that matched the WRONG SITE: non-null, wrong, and only the
-// functional checks below can see it. Callers are expected to ACT on a
-// non-zero result rather than log it again.
+// The boot health check: logs the game and engine version, resolves every primitive, then
+// validates them functionally (a name round-trip, known-class lookups) and prints a verdict; on
+// a new game build it names the failing signature or offset instead of crashing later. Returns
+// the number of failed checks, 0 when the profile matches this build. The danger it catches is
+// not a null pointer (game_thread::Install already refuses one) but an AOB that matched the
+// wrong site: non-null, wrong, and visible only to the functional checks. Callers act on a
+// non-zero result.
 int RunHealthCheck();
 
 }  // namespace ue_wrap::reflection
