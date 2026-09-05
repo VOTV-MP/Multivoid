@@ -1,47 +1,18 @@
-// coop/console_state_sync.h -- v64 base-computers PHASE 2 increment 1: the
-// screen-STATE mirror for the signal-catcher subsystem (RE doc SS4-5).
-//
-// THREE channels (one module -- they share the spaceRenderer/desk substrate
-// and the v63 claim context):
-//
-//   SKY SIGNALS (SkySignalState=52). The coords-minigame targets were pure
-//   per-peer RNG (spaceRenderer.spawnSignal re-arms every 20-60 s and rolls
-//   everything locally) -- host gusty, client barren, the one roller hole the
-//   RE doc flagged. HOST = the only roller (its native timer keeps running);
-//   a CLIENT kills its own roller timer (K2_ClearTimer; restored by one
-//   reflected spawnSignal() on disconnect -- which re-arms the BP's own
-//   loop), keeps its widget lifetimes wire-driven (keepalive on every apply,
-//   so only wire snapshots remove rows), and reconciles its set to the host's
-//   snapshot (delete-not-in-wire / add-missing). MTA shape: server-rolled
-//   pickups/world events mirrored at the RESULT level. The CATCH consume
-//   replay (SkySignalCatch=53) lives in coop/signal_catch_sync since v70;
-//   this module hands incoming snapshots through its recent-catch filter.
-//
-//   DESK SCALARS (DeskState=54). The 4-screen desk's live-visible fields
-//   (download/refine/playback/coords activity). Streamed ~1 Hz on-change by
-//   the desk-claim OWNER while claimed (host-relayed); edge-broadcast by ANY
-//   peer on a discrete flip while unclaimed (the physical buttons don't
-//   require entering); adopt=1 connect snapshot from the host (whose
-//   dlDecoded/dlPolarity hand off to signal_catch_sync's pending adopt).
-//   Receivers raw-write + run the desk's own upd* repaint chain. Echo-guarded
-//   by a last-applied compare (house pattern).
-//
-//   DESK LOG LINES (DeskLogLine=65, v70 -- replaces the v64 coordLog tail
-//   window, RULE 2). Producer-side EXACT diff of coord_coordLog2Text (one
-//   local monotone text), complete CRLF lines only, the self-regenerating
-//   ANIMATED lines (CDOWN/AREA SCAN/APPROXIMATION/ANALYSIS/CR:[) filtered by
-//   prefix; only the 9 one-shot event lines ride the wire (host-relayed).
-//   Receivers append via writeToCoordLog_2 (native CRLF + repaint + 1000-cap)
-//   and advance their own diff baseline past the applied text (echo-proof).
-//
-//   DISH AIM (DishAimState=55). The ui_coordinates cursor state (+ the v70
-//   Direction catch-gate toggle) streamed ~3 Hz by the claim owner while
-//   claimed; receivers raw-write + reflected repaint (nothing else writes
-//   them on a non-occupant peer -- the coords screen + the physical dishes
-//   render from them).
-//
-// Game thread throughout (Tick from subsystems::TickGameplay, OnReliable
-// from the event_feed drain).
+// coop/interactables/console_state_sync.h -- the screen-state mirror for the signal-catcher
+// desk: four lanes on one module, since they share the spaceRenderer and desk substrate.
+// Sky signals (SkySignalState): the coordinate-minigame targets were per-peer random (the
+// spaceRenderer's spawnSignal re-arms itself and rolls everything locally), so the host is the
+// only roller; a client clears its own roller timer (one reflected spawnSignal re-arms it on
+// disconnect), keeps its widget lifetimes wire-driven, and reconciles its set to the host's
+// snapshot. The catch consume replay lives in coop/interactables/signal_catch_sync; this
+// module hands incoming snapshots through its recent-catch filter. Desk scalars (DeskState):
+// adopt-only, the joiner seed from the host; live desk input rides DeskInput and the
+// simulation outputs ride DeskSimPose. Desk log lines (DeskLogLine): a producer-side exact
+// diff of the coord log text, complete lines only, the self-regenerating cooldown lines
+// filtered; receivers append through writeToCoordLog_2 and advance their own baseline past
+// the applied text. Dish aim (DishAimState): the committed coordinate locks and the direction
+// toggle, sent by the desk-claim holder on change; receivers raw-write and repaint. Game
+// thread throughout: Tick from the gameplay tick, the wire ingest from the event feed drain.
 
 #pragma once
 
@@ -53,30 +24,25 @@ namespace coop::net { class Session; }
 
 namespace coop::console_state_sync {
 
-// Store the session. Idempotent; called per tick from subsystems::Install.
+// Store the session. Idempotent.
 void Install(coop::net::Session* session);
 
-// Per-tick: resolve substrate (throttled); HOST polls the sky-signal set
-// (~1 Hz, broadcast on change) + the CLIENT enforces its roller suppression;
-// the desk-claim owner streams desk scalars + dish aim; every peer polls its
-// desk for unclaimed button edges (~1 Hz, edge-broadcast).
+// Per tick: the host polls the sky set at 1 Hz and broadcasts on change; the client enforces
+// its roller suppression and sweeps rows the wire never expressed; every peer produces desk
+// log lines at 1 Hz; the desk-claim holder sends the committed dish locks on change.
 void Tick();
 
-// Wire ingest. (SkySignalCatch ingests in coop/signal_catch_sync since v70.)
+// Wire ingest. The catch message ingests in coop/interactables/signal_catch_sync.
 void OnSkySignalState(const coop::net::SkySignalStatePayload& p, uint8_t senderSlot);
 void OnDeskState(const coop::net::DeskStatePayload& p, uint8_t senderSlot);
 void OnDishAim(const coop::net::DishAimStatePayload& p, uint8_t senderSlot);
 void OnDeskLogLine(const coop::net::DeskLogLinePayload& p, uint8_t senderSlot);
 
-// (v112, RULE 2: PrimeDeskEdgeDetector RETIRED with the unclaimed edge lane --
-// programmatic-apply re-baselining is coop::desk_input_sync::PrimeBaselines().)
-
-// HOST: send the current sky-signal snapshot + desk scalars (adopt=1) to a
-// joining peer (world-ready replay).
+// Host: send the current sky snapshot, the desk scalars as an adopt and the committed dish
+// locks to a joining peer at world-ready.
 void QueueConnectBroadcastForSlot(int peerSlot);
 
-// Aggregate teardown: clear mirrors/edge state; a CLIENT restores its native
-// sky-signal roller (one reflected spawnSignal() re-arms the BP loop).
+// Teardown: clear the mirrors; a client restores its native sky roller.
 void OnDisconnect();
 
 }  // namespace coop::console_state_sync
