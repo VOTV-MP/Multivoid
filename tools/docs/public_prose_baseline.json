@@ -1,9 +1,9 @@
 {
- "as_of": "a18f7ba9a",
+ "as_of": "4be26c0ad",
  "note": "measured on the working tree; as_of is HEAD at that moment",
  "counters": {
   "md.files": 82,
-  "md.lines": 18135,
+  "md.lines": 18139,
   "md.over_600": 5,
   "md.cyrillic": 107,
   "md.user": 49,

@@ -25,7 +25,7 @@ would rather stay anonymous. If a report shows people are actively at risk, it j
 
 **In scope** — anything in this repository and the services it talks to:
 
-- the mod itself (`multivoid-*.dll`) — the network layer, the save transfer, the message parsers,
+- the mod itself (`main.dll`) — the network layer, the save transfer, the message parsers,
   the authority checks, the overlay
 - the master / signaling servers (`tools/coop-server-rs/`) and `master.multivoid.dev`
 - the website and the release/installer path (a malicious update channel, a tampered artifact)
@@ -61,8 +61,12 @@ attacker. Encrypting this leg is the next transport-security item on the list.
   deliberately modifies their client can affect the shared world. **Do not host a session for
   strangers and expect the mod to defend your save.** Back up saves before testing — that advice on
   the README is not boilerplate.
-- **Peer identity is weak today.** Encryption is on, but the co-op transport does not yet prove
-  *who* is on the other end; establishing that properly is active work and the next security arc.
+- **Peer identity is proven; the path is not.** Every install holds a key that is its network
+  identity, and before a seat is spent each end signs the other's challenge with the key its
+  identity names, so nobody can join as someone else and a ban sticks to a key rather than a name.
+  What that does not close is an attacker on the network path relaying the whole exchange: the mod
+  has no defence against a man in the middle of the transport, and the plaintext signaling leg
+  above is where one would sit.
 - **Cheat prevention is deliberately not a feature.** Co-op is not competitive, and an
   anti-cheat layer is a different problem from an authority layer. Fixing "any peer can assert
   anything" is on the roadmap; detecting a cheater is not.
