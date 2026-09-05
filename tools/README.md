@@ -43,7 +43,7 @@ runs them frequently:
 - **`run-test.ps1 -Scenario <name>`** — single-process autonomous
   scenario runner. Writes `scenario.txt`, launches the shipping exe.
   Scenarios: `play`, `load:<slot>`, `none`,
-  `probe_terminals:<slot>`. See `docs/AUTONOMOUS_TESTING.md`.
+  `probe_terminals:<slot>`. See `docs/testing.md`.
 - **`lan-test.ps1`** — TWO-process LAN test (host + client in the dev
   copy), per-PID log capture in `tools/test-runs/`. Found multiple
   real handshake bugs single-process loopback hid. Flags: `-GrabTest`,
