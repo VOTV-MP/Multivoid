@@ -17,7 +17,7 @@ entities are named, and how a join works. Each subsystem has its own page for th
 ```
 coop/          gameplay and network: elements, sync lanes, sessions, players, the wire protocol
 ui/            what the player sees: the menus, the server browser, the HUD, the F1 overlay
-harness/       boot glue and the autonomous test scenarios
+harness/       boot glue and the scripted test scenarios
 -------------- the API boundary: headers in include/ ---------------------------------------
 ue_wrap/       the engine wrapper: reflection, signatures, hooks, the game-thread pump, and one
                wrapper per engine or game class. No network, gameplay or co-op state
@@ -253,7 +253,7 @@ that answer is the default, and a deliberate divergence says so in a comment at 
 
 - [CODE_MAP.md](CODE_MAP.md): where every concept lives, and the checklist for adding a sync lane.
 - [STATUS.md](STATUS.md): what is synced, system by system, with its owner, its late-join answer
-  and its evidence.
+  and how far it is.
 - [SCOPE.md](SCOPE.md): what is deliberately not synced, and the rules a new item is classified
   against.
 - [COOP_SYNC_DOCTRINE.md](COOP_SYNC_DOCTRINE.md), [COOP_DISPATCH_VISIBILITY.md](COOP_DISPATCH_VISIBILITY.md),
