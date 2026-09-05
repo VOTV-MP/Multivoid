@@ -22,8 +22,8 @@ repak pack -m "../../../" --version V11 -p 0 --compression Zlib <dir> scientists
 ```
 
 **Compress it.** The uncompressed pak is 5.2x larger for nothing: 14 343 848 bytes uncompressed
-against 2 776 794 with Zlib, unpack-compare byte-identical, and a two-peer smoke loaded both skins
-from the compressed pak on both peers. UE mounts a Zlib pak natively; nothing in the mod's code
+against 2 776 794 with Zlib, unpack-compare byte-identical, and both peers load skins from the
+compressed pak. UE mounts a Zlib pak natively; nothing in the mod's code
 sees the difference.
 
 **Why it was that large, and the deeper fix, not done.** The meshes are 90-200 KB each; the whole
