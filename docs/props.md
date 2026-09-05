@@ -90,7 +90,7 @@ verb runs inside the Blueprint where no hook sees it. So the host authors the co
 (`coop/props/container_contents_sync`): one slice of its array per live container is sent at a
 joiner's ready edge and on change, and an extraction on a client is a container-extract birth
 through the intent door above. The open and closed state is a keyed-device channel like a
-door's. The full break-and-spill behaviour, and the single-slot verbs, are reverse-engineered
+door's ([devices.md](devices.md)). The full break-and-spill behaviour, and the single-slot verbs, are reverse-engineered
 and designed and not built.
 
 ### Props that change on their own

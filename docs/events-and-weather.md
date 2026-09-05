@@ -122,8 +122,8 @@ at the laptop and the tab highlight, re-stamping the date from the synced clock;
 mirrored from either side (`coop/world/email_sync`). The daily task is host-authored, because
 every live writer of it runs only on the host: the task creation on the frozen client clock
 cannot, and the drone sale is suppressed on clients; the host polls a change hash and sends the
-task state (`coop/world/daily_task_sync`). The rewards land in the shared balance, on the
-economy page.
+task state (`coop/world/daily_task_sync`). The rewards land in the shared balance, on
+[devices.md](devices.md).
 
 ## Who owns what
 

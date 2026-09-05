@@ -67,7 +67,9 @@ killer wisp, the roaches, and the kerfur robot across its two forms) ·
 [events-and-weather.md](events-and-weather.md) (the clock, the weather, who rolls, the story events
 and how a client sees one fire, the event actors, the pyramid, the alarm, emails and the task) ·
 [signals.md](signals.md) (the signal workstation: occupancy, the desk, the download simulation, the
-catch and the dishes, the deck, drives and racks, the laptop, the database, and the upgrades)
+catch and the dishes, the deck, drives and racks, the laptop, the database, and the upgrades) ·
+[devices.md](devices.md) (doors, keypads, lights, the power panel, the turbine, windows and grime,
+the drone, and the economy: the balance, shop orders, the coin gun)
 
 **Maps, where a thing lives and what state it is in**
 
