@@ -17,30 +17,15 @@
 namespace ue_wrap::log {
 namespace {
 
-// A UTF-8 locale used for FORMATTING ONLY, never installed process-wide.
-//
-// MEASURED 2026-07-28, and it had been silently eating log lines since the first
-// Cyrillic nickname: `%ls` in vsnprintf converts wide -> narrow through the C
-// locale, and the default "C" locale can encode nothing above U+007F. The call
-// returns -1 and MSVC leaves the buffer EMPTY, so the whole line degenerates to
-// a bare "[21:04:18] [INFO ] " with no message at all -- not truncated, GONE.
-// Every line naming a Cyrillic, CJK or emoji peer vanished, which is precisely
-// the population the international-names work exists for, and it is why an
-// arc-D2 drill looked like a relay failure: the evidence lines were missing, not
-// the behaviour. (Probe: `%ls` of "Пел" -> n=-1; with this locale -> n=17.)
-//
-// _create_locale + the _l formatter keep this to OUR call. setlocale() would be
-// the two-line version and is wrong here: we are injected into someone else's
-// process, and LC_CTYPE is shared CRT state the game also reads.
-//
-// LC_CTYPE, **NOT** LC_ALL -- one token, and the audits caught it independently.
-// ".UTF-8" leaves the language/country to the OS user default, and LC_ALL drags
-// LC_NUMERIC along with it: on a ru-RU machine every `%f` in the log turned into
-// `1,50`. Measured side by side -- plain `1.50`, LC_ALL `1,50`, LC_CTYPE `1.50`,
-// and LC_CTYPE converts `%ls` exactly as well (`n=9` for a Cyrillic+CJK+emoji
-// string, against `n=-1` plain). 301 log call sites carry a float and mp.py
-// parses numbers out of them, so LC_ALL would have made every peer's log
-// machine-dependent to fix a character-conversion bug.
+// A UTF-8 locale used for formatting only, never installed process-wide. The formatter's
+// wide-to-narrow conversion goes through the C locale, whose default encodes nothing above
+// ASCII: the call returns -1 and the runtime leaves the buffer empty, so a line naming a
+// non-ASCII peer would vanish whole, not truncate. A created locale with the locale-taking
+// formatter keeps the fix to this call; the global setter is wrong here, since we are injected
+// into someone else's process and the character-type category is runtime state the game also
+// reads. Character type only: the all-categories form drags the numeric category along, so on
+// a Russian-locale machine every float in the log would print with a comma decimal, and
+// hundreds of log sites carry a float the smoke driver parses.
 _locale_t Utf8Locale() {
     static _locale_t loc = ::_create_locale(LC_CTYPE, ".UTF-8");
     return loc;
@@ -51,46 +36,28 @@ CRITICAL_SECTION g_lock;
 std::once_flag g_lockOnce;
 bool g_opened = false;
 
-// STALENESS BOUND for buffered INFO. Guarded by g_lock (every reader and writer
-// already holds it), so a plain integer is correct here -- no atomic needed.
-//
-// MEASURED 2026-08-29, and it cost a whole diagnosis: a real r2modman session ran
-// for four minutes and left a 65-line log ending mid-boot. Nothing was wrong with
-// the mod -- `multivoid.ini.example` was regenerated at 20:03:38, the very step
-// whose INFO line is missing -- the game simply closed without reaching Shutdown()
-// (no `shutdown: END cleanup` block), and the CRT's ~4 KB buffer died with it.
-// Every INFO line since the last WARN was lost, which is precisely the window a
-// post-mortem needs.
-//
-// The pre-existing answer was ~20 explicit Flush() calls at hand-picked milestones.
-// That is a SITE LIST, and it fails the way site lists fail: it covers the paths
-// someone anticipated, and the session that actually broke was not one of them.
-// The invariant replaces the list -- the log on disk is never more than
-// kFlushIntervalMs behind the process, whatever happens next and whoever writes.
-//
-// It does NOT reintroduce what the 2026-05-27 audit removed. That measured ~50
-// synchronous disk syncs/sec from per-INFO flush (a ~2000-line dedup burst over
-// ~40 s) visibly tanking FPS. This caps the same work at ONE sync/sec regardless
-// of line rate -- 1/50th of the cost that was rejected -- and a quiet log flushes
-// nothing at all, because the check rides an existing write rather than a timer.
-// The per-line cost added is one GetTickCount64(), which reads KUSER_SHARED_DATA
-// with no syscall; its ~15.6 ms granularity is irrelevant against a 1 s interval.
-//
-// RESIDUAL, stated rather than discovered later: a process that dies during a
-// QUIET period still loses the tail written since the last flush, because there is
-// no later write to carry the check. Bounded by "lines written in the final second
-// of activity", not by "everything since the last WARN".
+// The staleness bound for buffered info lines; guarded by the lock (every reader and writer
+// holds it), so a plain integer is correct. The runtime buffers info lines, and a game closed
+// without reaching the shutdown loses every line since the last warning, precisely the window
+// a post-mortem needs; a site list of explicit flushes fails the way site lists fail, the
+// session that breaks is never one of them. The invariant instead: the log on disk is never
+// more than the interval behind the process, whoever writes. This is not the per-line flush
+// (tens of synchronous disk syncs per second during a burst, visibly tanking the frame rate):
+// it caps the work at one sync per interval regardless of line rate, a quiet log flushes
+// nothing since the check rides a write rather than a timer, and the per-line cost is one
+// tick-count read. A process that dies during a quiet period still loses the tail since the
+// last flush.
 constexpr ULONGLONG kFlushIntervalMs = 1000;
 ULONGLONG g_lastFlushMs = 0;
 
-// Optional log sink (the in-game console). Atomic so SetSink is lock-free vs Write.
+// The optional log sink, the in-game console; atomic, so setting it is lock-free against a
+// write.
 std::atomic<Sink> g_sink{nullptr};
 
-// Build "<game exe dir>\<logfile>". The filename is VOTVCOOP_LOG if set, else
-// multivoid.log (per-process log names for multi-instance tests). Anchored on
-// the EXE dir (ue_wrap::paths::ExeDir, the install-dir anchor) -- under UE4SS
-// the DLL itself lives in Mods\Multivoid\dlls\, which is loader-dependent and
-// (under shimloader) virtualized; the exe dir is the install's one real home.
+// Build the log path in the game exe's directory: the filename is the VOTVCOOP_LOG env var if
+// set, else multivoid.log (per-process names for multi-instance tests). Anchored on the exe
+// directory, the install's one real home; the DLL's own directory is loader-dependent and
+// virtualised under the shim loader.
 void LogPath(wchar_t (&out)[MAX_PATH]) {
     out[0] = L'\0';
     const std::wstring dir = paths::ExeDir();
@@ -105,18 +72,18 @@ void LogPath(wchar_t (&out)[MAX_PATH]) {
 }
 
 void EnsureOpen() {
-    // Initialize the lock exactly once, even if Write() is called from several
-    // threads before Init() (a plain-bool double-check would let two threads
-    // init the CRITICAL_SECTION concurrently -- UB).
+    // Initialise the lock exactly once, even if Write is called from several threads before
+    // Init; a plain-bool double check would let two threads initialise the critical section
+    // concurrently.
     std::call_once(g_lockOnce, [] { ::InitializeCriticalSection(&g_lock); });
     ::EnterCriticalSection(&g_lock);
     if (!g_opened) {
         wchar_t path[MAX_PATH] = {};
         LogPath(path);
-        // Preserve the PREVIOUS session's log before the open below truncates it. Real
-        // users hit a problem then often relaunch before sending the log; one level of
-        // history (multivoid.prev.log) means the bug session survives that relaunch. The
-        // prior process has exited (each launch is a fresh process), so the rename is safe.
+        // Preserve the previous session's log before the open below truncates it: players hit a
+        // problem, then often relaunch before sending the log, and one level of history means the
+        // bug session survives that relaunch. The prior process has exited (each launch is a fresh
+        // process), so the rename is safe.
         {
             wchar_t prev[MAX_PATH] = {};
             wcscpy_s(prev, path);
@@ -129,9 +96,9 @@ void EnsureOpen() {
             }
             ::MoveFileExW(path, prev, MOVEFILE_REPLACE_EXISTING);  // best-effort; ignore failure
         }
-        // Open with read-sharing (_SH_DENYWR: others may READ, not write) so the
-        // log can be tailed live while the game runs -- without this the file is
-        // locked exclusively and diagnostics can't be read until the game exits.
+        // Open with read sharing (others may read, not write), so the log can be tailed live while
+        // the game runs; without it the file is locked exclusively and diagnostics cannot be read
+        // until the game exits.
         g_file = _wfsopen(path, L"w", _SH_DENYWR);
         g_opened = true;
     }
@@ -174,8 +141,8 @@ void Flush() {
     if (!g_file) return;
     ::EnterCriticalSection(&g_lock);
     std::fflush(g_file);
-    // Keep the staleness stamp coherent: an explicit flush IS a flush, so the
-    // next INFO line must not immediately re-sync as if none had happened.
+    // Keep the staleness stamp coherent: an explicit flush is a flush, so the next info line must
+    // not immediately re-sync as if none had happened.
     g_lastFlushMs = ::GetTickCount64();
     ::LeaveCriticalSection(&g_lock);
 }
@@ -186,26 +153,22 @@ void Write(Level level, const char* fmt, ...) {
     EnsureOpen();
     if (!g_file) return;
 
-    // Format the message body ONCE into a local buffer so we can write it to the file AND
-    // hand it to the sink (the console) without re-running printf. Truncates at 1 KB.
+    // Format the message body once into a local buffer, so it can go to the file and to the sink
+    // without re-running the formatter. Truncates at 1 KB.
     char msg[1024];
-    // Not `= {}`: that memsets a kilobyte on every log line. One byte is all the
-    // failure paths below need, and without it `msg[0]` and the strlen scan read
-    // uninitialized stack whenever the formatter returns without writing.
+    // Not a full zero-initialisation: that clears a kilobyte on every log line. One byte is all
+    // the failure paths below need, and without it the first byte and the length scan read
+    // uninitialised stack whenever the formatter returns without writing.
     msg[0] = '\0';
     va_list args;
     va_start(args, fmt);
     int wrote = -1;
     if (_locale_t loc = Utf8Locale()) {
-        // The NON-SECURE _l variant, deliberately. `_vsnprintf_s_l` routes a
-        // malformed conversion specifier to the CRT invalid-parameter handler,
-        // which raises __fastfail -- measured: a `%q` typo terminated the probe
-        // process outright, and __fastfail bypasses SEH, so RenderFrameGuarded's
-        // __try and every per-callback wrapper in the mod are useless against it.
-        // A logging typo must never be able to kill the game. The non-secure
-        // variant printed `bad q here` and carried on, which is what
-        // std::vsnprintf did before this change. It does not NUL-terminate on
-        // truncation, so we reserve the last byte and terminate ourselves.
+        // The non-secure locale variant, deliberately: the secure one routes a malformed conversion
+        // specifier to the runtime's invalid-parameter handler, a fast-fail that bypasses SEH, so
+        // no frame guard or per-callback wrapper in the mod could catch it and a logging typo would
+        // kill the game. The non-secure variant prints the bad specifier and carries on; it does
+        // not terminate on truncation, so the last byte is reserved and terminated here.
 #pragma warning(suppress : 4996)  // "_vsnprintf_s_l is safer" -- see above: it is
         wrote = ::_vsnprintf_l(msg, sizeof(msg) - 1, fmt, loc, args);  // not, it FASTFAILS
     } else {
@@ -213,18 +176,16 @@ void Write(Level level, const char* fmt, ...) {
     }
     msg[sizeof(msg) - 1] = '\0';
     va_end(args);
-    // A LINE MUST NEVER DISAPPEAR BECAUSE OF ITS ARGUMENTS. A conversion failure
-    // can leave the buffer empty, and an empty message is indistinguishable from
-    // a bug that never logged. Fall back to the format string: it names the site,
-    // which is the half worth keeping.
+    // A line must never disappear because of its arguments: a conversion failure can leave the
+    // buffer empty, and an empty message is indistinguishable from a bug that never logged. Fall
+    // back to the format string, which names the site, the half worth keeping.
     if (wrote < 0 && msg[0] == '\0') {
         std::snprintf(msg, sizeof(msg), "%s [args unformattable]", fmt);
     } else if (wrote < 0) {
-        // Truncated (or stopped mid-string). Drop a trailing UTF-8 sequence ONLY
-        // if it is INCOMPLETE -- the obvious "walk back past continuations, then
-        // drop the lead" loses a whole valid character every time, and truncation
-        // is the common case for exactly the long name/roster lines this arc
-        // exists to serve.
+        // Truncated, or stopped mid-string. Drop a trailing UTF-8 sequence only if it is
+        // incomplete: walking back past continuations and dropping the lead loses a whole valid
+        // character every time, and truncation is the common case for exactly the long name and
+        // roster lines this exists to serve.
         size_t n = std::strlen(msg);
         size_t lead = n;
         while (lead > 0 && (static_cast<unsigned char>(msg[lead - 1]) & 0xC0) == 0x80) --lead;
@@ -250,18 +211,10 @@ void Write(Level level, const char* fmt, ...) {
 
     ::EnterCriticalSection(&g_lock);
     std::fprintf(g_file, "[%s] [%-5s] %s\n", ts, Tag(level), msg);
-    // Audit 2026-05-27 (post-v2 anim ship): per-INFO fflush was eating
-    // game-thread time -- a spam burst of ~2000 dedup INFO lines / ~40 s
-    // (host re-broadcasting known props) translated to ~50 synchronous
-    // disk syncs per second on the client, visibly tanking FPS. Flush
-    // only on WARN/ERROR (critical messages stay visible immediately);
-    // INFO lines ride the CRT stdio buffer (~4 KB) and land on disk in
-    // bursts.
-    //
-    // ...and INFO is flushed anyway once kFlushIntervalMs has passed, so the
-    // buffer can never outlive the process by more than that. See the constant
-    // for why the site list of explicit Flush() calls was not enough, and why
-    // this is 1/50th of the cost the 2026-05-27 audit rejected.
+    // Flush on warnings and errors only, keeping them visible at once; info lines ride the
+    // runtime's buffer and land in bursts, since a per-line flush costs tens of synchronous disk
+    // syncs per second during a burst, visibly tanking the frame rate. Info is flushed anyway once
+    // the interval has passed, so the buffer can never outlive the process by more than that.
     if (level != Level::Info) {
         std::fflush(g_file);
         g_lastFlushMs = ::GetTickCount64();
@@ -274,8 +227,8 @@ void Write(Level level, const char* fmt, ...) {
     }
     ::LeaveCriticalSection(&g_lock);
 
-    // Mirror to the sink OUTSIDE our critical section so the console's own lock can never
-    // be held under g_lock (no lock-order inversion). The sink must not log (no recursion).
+    // Mirror to the sink outside our critical section, so the console's own lock can never be
+    // held under ours (no lock-order inversion). The sink must not log.
     if (Sink s = g_sink.load(std::memory_order_acquire)) s(level, msg);
 }
 

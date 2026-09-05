@@ -1,5 +1,5 @@
 {
- "as_of": "1bbd29b60",
+ "as_of": "6441270ff",
  "note": "measured on the working tree; as_of is HEAD at that moment",
  "counters": {
   "md.files": 50,
@@ -17,13 +17,13 @@
   "md.ptr_security": 1,
   "md.dead_links": 0,
   "md.dead_paths": 0,
-  "src.comment_lines": 47889,
-  "src.comment_cyrillic": 64,
+  "src.comment_lines": 47842,
+  "src.comment_cyrillic": 63,
   "src.comment_user": 19,
   "src.comment_verbatim": 104,
   "src.comment_qf": 65,
   "src.comment_agent": 11,
-  "src.comment_dated": 1203,
+  "src.comment_dated": 1198,
   "src.comment_ptr_memory": 0,
   "src.comment_ptr_research": 138,
   "src.comment_ptr_claude": 5,
@@ -31,7 +31,7 @@
   "src.comment_lesson": 93,
   "src.comment_sha": 6,
   "src.files_half_comment": 1,
-  "src.comment_blocks_over_15": 372,
+  "src.comment_blocks_over_15": 370,
   "src.comment_dead_docpath": 84,
   "src.comment_permille": 302
  }
