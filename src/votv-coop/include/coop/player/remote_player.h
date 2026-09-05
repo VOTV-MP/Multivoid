@@ -1,21 +1,10 @@
-// coop/remote_player.h -- the network-driven remote player.
-//
-// Gameplay/network layer (principle 7). Parallel class hierarchy (principle 3):
-// RemotePlayer owns the network/coop state and a POINTER to the engine entity
-// it renders through. The engine actor is a `mainPlayer_C` orphan spawned with
-// inertPawn=true; the class's built-in mesh_playerVisible carries the player
-// body skin + IK leg bones. Per-screen systems (PostProcess + mic + arms) are
-// stripped at spawn, GameMode pointer nulled, CMC tick disabled, actor tick
-// disabled. The puppet's AnimBP reads its OWN CMC.Velocity + MovementMode
-// natively for locomotion + IK (v2 anim drive, 2026-05-27): RemotePlayer::
-// ApplyToEngine writes those CMC fields each tick from the streamed pose,
-// exactly mirroring what the LOCAL player's possessed CMC does. IK legs
-// work because the real Character has floor-trace context.
-//
-// The engine actor owns rendering/animation; RemotePlayer owns the pose data.
-// MTA shape: CClientPed::m_pPlayerPed -> CPlayerPed*.
-//
-// No marshaling/engine-memory access lives here; it all goes through ue_wrap.
+// coop/remote_player.h -- the network-driven remote player. RemotePlayer owns the network state
+// (the streamed pose, the interpolation, the vitals) and a pointer to the engine actor it
+// renders through: a mainPlayer_C orphan spawned inert, its per-screen systems stripped, its
+// GameMode pointer nulled and its actor and movement ticks disabled. The puppet's AnimBP reads
+// its own movement component's Velocity and MovementMode for locomotion and leg IK, and
+// ApplyToEngine writes those fields each tick from the streamed pose, as the local player's
+// possessed component does. Engine memory is reached only through ue_wrap.
 
 #pragma once
 
@@ -34,307 +23,188 @@ namespace coop {
 
 class RemotePlayer {
 public:
-    // Spawn the puppet in the live world, offset from the local player. Requires
-    // gameplay loaded (mainPlayer_C present) and the game thread. Returns true
-    // on success; sets actor().
-    //
-    // skinName (v93 skins): the body skin this peer announced (net_pump passes
-    // player_handshake::SkinForSlot(slot)). Empty / "dr_kel" / unresolvable pak
-    // -> the pristine kel baseline (local_body::NativeBodyMesh -- NOT the local
-    // pawn's live mesh, which may itself be skin-swapped). A custom skin rides
-    // the same kerfurOmegaV1_Skeleton, so the local AnimClass drives it 1:1.
-    // A skin that lands AFTER spawn re-skins live via ApplySkin.
+    // Spawn the puppet in the live world, placed by the local player. Needs gameplay loaded and the
+    // game thread; sets actor() on success. `skinName` is the body skin this peer announced: empty,
+    // "dr_kel" or an unresolvable pak gives the pristine kel baseline (local_body::NativeBodyMesh,
+    // not the local pawn's live mesh, which may itself be skin-swapped). A custom skin rides the
+    // same skeleton, so the local AnimClass drives it. A skin that lands after spawn is applied
+    // live by ApplySkin.
     bool Spawn(const std::string& skinName = std::string());
 
-    // v93 skins: re-skin a LIVE puppet (mid-session SkinChange / a Join that
-    // raced the first pose). No-op when the puppet isn't spawned (the skin is
-    // per-slot state in player_handshake; the next Spawn reads it) or when the
-    // name is already applied. Game thread only.
+    // Re-skin a live puppet (a mid-session SkinChange, or a Join that raced the first pose). A
+    // no-op when the puppet is not spawned (the skin is per-slot state in player_handshake, read by
+    // the next Spawn) or the name is already applied. Game thread only.
     void ApplySkin(const std::string& skinName);
 
     bool valid() const;
 
-    // Receiver-side interpolation, MTA shape (research/findings/mta-pose-interpolation-
-    // 2026-05-23.md). The network path is two calls on the game thread:
-    //
-    //   SetTargetPose(snap)   on each NEW pose from the wire (skip duplicates).
-    //                         Computes error from the current applied pose and
-    //                         opens a kInterpWindowMs window to walk toward it,
-    //                         OR snaps if the error exceeds the snap threshold
-    //                         (real teleport / door warp), OR snaps the FIRST
-    //                         packet (the spawn placeholder is fake).
-    //
-    //   Tick()                every game-thread tick. Advances the interpolation
-    //                         (incremental LERP per MTA: dAlpha * error each
-    //                         frame, freezes at alpha=1 until the next packet)
-    //                         and applies the current pose to the engine. Idle
-    //                         calls when there's no interp budget are cheap (it
-    //                         re-applies the current pose).
-    //
-    // Speed is NOT interpolated -- the AnimBP locomotion blend smooths it.
+    // Receiver-side interpolation, two calls on the game thread. SetTargetPose on each new pose
+    // from the wire: computes the error from the current applied pose and opens a kInterpWindowMs
+    // window to walk toward it, or snaps when the error exceeds the snap threshold (a teleport) or
+    // on the first packet (the spawn placement is a placeholder). Tick every game-thread tick:
+    // advances the interpolation (dAlpha times the cached error per frame, frozen at alpha 1 until
+    // the next packet) and applies the pose to the engine. Speed is not interpolated; the AnimBP's
+    // locomotion blend smooths it.
     void SetTargetPose(const coop::net::PoseSnapshot& snap);
     void Tick();
 
-    // v22 ragdoll PHYSICS sync. Called on each fresh RagdollPose packet for this
-    // peer (net_pump per-slot drive) WHILE the peer is ragdolling. Slaves the mirror
-    // ragdoll body's pelvis velocity to the sender's real ragdoll (so it tumbles to
-    // track, not free-simulate) + stamps the streamed pelvis rotation that the next
-    // ApplyToEngine drives onto the kel. No-op until a body exists (ragdoll active).
-    // Game thread only.
+    // Ragdoll physics sync, on each fresh RagdollPose packet while the peer ragdolls: slaves the
+    // mirror body's pelvis velocity to the sender's ragdoll and stamps the streamed pelvis rotation
+    // the next ApplyToEngine drives. A no-op until a ragdoll body exists. Game thread only.
     void SetRagdollPose(const coop::net::RagdollPoseSnapshot& snap);
 
-    // Tear down the puppet: DestroyActor on the engine SkeletalMeshActor and
-    // unregister the floating nameplate. Called on peer disconnect (Bye /
-    // exit) -- otherwise the puppet lingers in the world frozen at its last
-    // pose forever. The next remote pose (if the peer reconnects) re-spawns
-    // a fresh puppet via the NetPumpTick auto-spawn path.
+    // Tear down the puppet (DestroyActor on the engine actor) and its nameplate. Called on peer
+    // disconnect; the next remote pose re-spawns a fresh puppet through the pump's auto-spawn path.
     void Destroy();
 
-    // Apply an absolute position only (teleport, no sweep). Kept for the harness /
-    // verification; the network path is SetTargetPose() + Tick().
+    // An absolute position only (a teleport, no sweep), for the harness; the network path is
+    // SetTargetPose and Tick.
     bool SetLocation(const ue_wrap::FVector& location);
 
-    // Current engine-reported location (for verification / interpolation base).
+    // The engine-reported location.
     ue_wrap::FVector GetLocation() const;
 
-    // World point to anchor the floating nameplate / voice speaker: the SMOOTHED
-    // 'head' bone of the mesh the peer is currently rendered by (the visible
-    // plushie body while ragdolled, the skin mesh otherwise) + a lift above the
-    // skull. Low-pass filtered (tau ~70 ms, teleports snap) per the user's
-    // "attach to head bone, just smooth out the movement" (2026-07-03).
+    // The world point the nameplate and the voice speaker anchor to: the head bone of the mesh the
+    // peer is rendered by (the ragdoll body while ragdolled, the skin mesh otherwise), lifted above
+    // the skull, its height low-pass filtered (about 70 ms; teleports snap).
     ue_wrap::FVector GetHeadPosition() const;
 
-    // Unit forward vector from the puppet's SYNCED aim (curYaw_+curHeadYawDelta_, curPitch_) --
-    // the SAME convention DriveHeadLookAtWorld uses, so it points where the puppet looks. Used by
-    // puppet_carry_drive to position a puppet-held trash clump at the hand (the puppet's own tick
-    // does NOT drive the PHC -- votv-puppet-grab-feasibility-RE-2026-06-22). Game thread.
+    // The unit forward vector of the puppet's synced aim (curYaw_ plus curHeadYawDelta_,
+    // curPitch_), the convention DriveHeadLookAtWorld uses, so it points where the puppet looks.
+    // Positions a puppet-held item at the hand, since the puppet's own tick does not drive it. Game
+    // thread.
     ue_wrap::FVector GetSyncedAimDirection() const;
 
-    // The raw engine puppet actor pointer (mainPlayer_C or ASkeletalMeshActor
-    // depending on puppet kind). Used by nameplate::Update to exclude
-    // puppet actors from its "find the local viewer" GUObjectArray scan --
-    // with the mainPlayer_C puppet path both local and puppet share the
-    // same UClass, so the scan needs a way to distinguish them. Returns
-    // nullptr if no puppet is spawned yet. Game thread only.
+    // The raw engine puppet actor, nullptr before Spawn. Game thread only.
     void* GetActor() const { return actor_; }
 
-    // The display nickname rendered above the body (set from the network
-    // handshake; defaults to "..." until the peer's Join reliable msg arrives).
+    // The nickname rendered above the body, from the handshake; "..." until the peer's Join lands.
     void SetNickname(std::wstring name);
     const std::wstring& GetNickname() const { return nickname_; }
 
-    // v19 vitals (display-only). Each is a [0,1] fraction streamed in every
-    // PoseSnapshot (health = source health/maxHealth; food/sleep = source value
-    // / kVitalScalarMax). SetVitals is called from SetTargetPose on each new
-    // pose; the nameplate reads GetHealth() to draw a health bar. These NEVER
-    // touch a saveSlot -- there is one saveSlot per machine, so a puppet write
-    // would corrupt the LOCAL player's persisted health (see ue_wrap::vitals).
-    // v20 Inc3: SetVitals also EDGE-DETECTS a health DECREASE (this peer took
-    // damage) and arms a hurt-flash (the nameplate flashes red) -- no new wire,
-    // it rides the existing health stream (MTA CPedSync gate-on-change shape).
-    // Defined in the .cpp (needs NowMs + nameplate). Game thread only.
+    // Display-only vitals, each a [0,1] fraction streamed in every PoseSnapshot (health over
+    // maxHealth; food and sleep over kVitalScalarMax). Set from SetTargetPose; the nameplate reads
+    // GetHealth for its bar. They never touch a saveSlot, since a puppet write would corrupt the
+    // local player's persisted health. SetVitals also edge-detects a health decrease and arms the
+    // hurt flash. Game thread only.
     void SetVitals(float health01, float food01, float sleep01);
     float GetHealth() const { return health_; }
     float GetFood() const { return food_; }
     float GetSleep() const { return sleep_; }
-    // True while the damage hurt-flash window is active (test/diagnostic seam).
+    // True while the hurt-flash window is active (a test seam).
     bool IsHurtFlashing() const { return hurtFlashActive_; }
 
-    // True while a ragdoll display body is spawned (test/diagnostic seam -- the
-    // ragdoll e2e observer checks this instead of the old own-mesh flop).
+    // True while a ragdoll display body is spawned (a test seam).
     bool IsRagdollDisplayed() const { return ragdoll_.Active(); }
-    // The spawned playerRagdoll_C body + its GUObjectArray index (for an
-    // IsLiveByIndex-guarded deref). For test verification only.
+    // The spawned playerRagdoll_C body and its GUObjectArray index, for a liveness-guarded deref in
+    // tests.
     void* RagdollBody() const { return ragdoll_.Body(); }
     int32_t RagdollBodyIdx() const { return ragdoll_.BodyIdx(); }
 
     void* actor() const { return actor_; }
 
 private:
-    // Apply curPos_/curYaw_/curSpeed_ to the engine actor + the AnimBP. Called by
-    // Tick() once per frame (whether or not interp is active -- avoids drift if
-    // some other system moved the actor between frames; cheap).
+    // Apply curPos_, curYaw_ and curSpeed_ to the engine actor and the AnimBP. Called by Tick once
+    // per frame whether or not interpolation is active, so nothing that moved the actor between
+    // frames leaves drift.
     void ApplyToEngine();
 
-    // Advance the OPEN interp window to NOW (curPos_/curYaw_/... += dAlpha * cached
-    // error). No-op when no window is open (window_.IsOpen() == false). Does NOT push
-    // to the engine -- it only updates the cur* state + sets dirty_; the caller pushes.
-    //
-    // MTA shape (CClientPed::UpdateTargetPosition, reference/mtasa-blue): this is
-    // called BOTH every frame from Tick() AND as the FIRST step of SetTargetPose().
-    // The SetTargetPose pre-advance is load-bearing: poses arrive ~every frame (60 Hz),
-    // so without it each new packet re-Open()s the window at now right before Tick()
-    // reads alpha = (now - start)/window ~= 0 -> dAlpha ~= 0 -> curPos_ never
-    // advances and the puppet trails a MOVING source by 1-2.5 s. Pre-advancing first
-    // applies the motion already due, THEN rebases the error from the up-to-date pos
-    // (MTA: SetTargetPosition's first line is UpdateTargetPosition()). Root-caused
-    // 2026-06-06, see [[project-puppet-lag-interp-starvation]].
+    // Advance the open interpolation window to now (the cur* state gains dAlpha times the cached
+    // error); a no-op with no window open. Sets dirty_ and does not push to the engine. Called
+    // every frame from Tick and as the first step of SetTargetPose: poses arrive about every frame,
+    // and without the pre-advance each packet would re-open the window right before Tick read an
+    // alpha near zero, so the puppet would trail a moving source by seconds. The motion already due
+    // is applied first, then the error is rebased from the up-to-date position.
     void AdvanceInterp();
 
-    // Linear LERP window + jitter buffer. At 60 Hz send (~16.7 ms interval) this is
-    // ~4.5x the interval, tolerating ~4 consecutive late/dropped poses before the
-    // puppet reaches target and freezes (a brief stall, not a snap).
-    //
-    // Steady-state trail (corrected 2026-06-06): with advance-before-rebase in place
-    // (AdvanceInterp runs first in SetTargetPose), poses arriving every frame apply a
-    // fraction P/W of the cached error per packet, giving a constant trail of
-    // ~= speed * window: ~9 cm at a 120 cm/s walk, ~45 cm at a 600 cm/s sprint. So the
-    // WINDOW is now the primary lag knob -- shrinking it cuts the trail linearly at the
-    // cost of jitter tolerance. (The earlier "~25 ms steady-state" note was wrong: it
-    // assumed the window COMPLETES each interval, which only holds when poses are spaced
-    // >= W apart; at 60 Hz into a 75 ms window it never completes, so the trail is
-    // speed*W, not the window-completion delay. That mis-estimate is what let the
-    // pre-advance bug hide -- 75 ms looked harmless on paper.) Kept at 75 ms for this
-    // fix so the smoke validates advance-before-rebase in isolation; tune down (or make
-    // adaptive on avg recv interval) as a measured follow-up if sprint trail is felt.
+    // The interpolation window, about 4.5 send intervals at 60 Hz, so four consecutive late or
+    // dropped poses stall the puppet briefly rather than snap it. With poses arriving every frame
+    // the window never completes, and the steady-state trail is speed times window: about 9 cm at
+    // a walk, 45 cm at a sprint. The window is the lag knob; shrinking it cuts the trail linearly
+    // at the cost of jitter tolerance.
     static constexpr int kInterpWindowMs = 75;
-    // Snap thresholds (cm). At sprint ~600 cm/s in VOTV, one window's legal
-    // motion is ~30 cm; anything more than (base + 0.5 s * speed) is a real
-    // teleport (door warp, respawn) -- snap instead of trying to LERP across.
+    // Snap thresholds (cm): one window's legal motion at a sprint is about 30 cm, so anything past
+    // base plus half a second of speed is a real teleport and is snapped rather than walked.
     static constexpr float kSnapBaseCm = 1000.f;
     static constexpr float kSnapPerSpeedSec = 0.5f;
 
-    void* actor_ = nullptr;  // the engine puppet actor (owned by the engine):
-                             // a mainPlayer_C orphan spawned by ue_wrap::puppet::SpawnPuppet.
-                             // Its OWN UCharacterMovementComponent (at
-                             // ACharacter::CharacterMovement @0x0288) is what
-                             // we drive per-tick: ApplyToEngine writes
-                             // puppet.CMC.Velocity @+0xC4 and MovementMode
-                             // @+0x168 directly. CMC tick is parked
-                             // (SetComponentTickEnabled false in puppet::
-                             // SpawnPuppetMainPlayer) so nothing else touches
-                             // those fields. BUA naturally reads them via
-                             // Pawn.GetMovementComponent().Velocity -> spd
-                             // and ...MovementMode -> useLegIK/rise gates,
-                             // reproducing the LOCAL anim drive on the puppet.
-                             // No satellite, no observer, no AnimInstance
-                             // field overrides (post-2026-05-27 RE per
-                             // research/findings/player-puppet/votv-local-anim-drive-RE-2026-05-27.md).
+    void* actor_ = nullptr;  // the engine puppet actor, a mainPlayer_C orphan; owned by the engine
 
-    // GUObjectArray InternalIndex of actor_, captured at Spawn while the puppet
-    // was known live (via reflection::InternalIndexOf). valid() validates actor_
-    // with reflection::IsLiveByIndex(actor_, internalIdx_) -- NOT plain IsLive.
-    // Why: a mass GC purge can free the puppet WITHOUT firing our Destroy path,
-    // then recycle its address/slot to a smaller foreign UObject. Plain IsLive
-    // reads the index FROM the object's own memory, so it returns true for that
-    // recycled impostor; ApplyToEngine then raw-derefs actor_ at large
-    // mainPlayer_C offsets (CMC @0x288, mesh @0x4F8, lag_fl @0x670) and AVs --
-    // and builds a ParamFrame on its garbage UFunction*, ballooning RSS. Gating
-    // on the CACHED index closes the recycling hole (the slot-identity compare
-    // rejects the impostor). See [[feedback-islive-unsafe-on-freed-cached-pointer]]
-    // (root-caused 2026-05-30 from the 4-peer smoke: per-tick AV flood + 11 GB
-    // balloon on a client). -1 = no puppet (valid() short-circuits on actor_==null).
+    // The GUObjectArray InternalIndex of actor_, captured at Spawn while the puppet was known live;
+    // valid() checks IsLiveByIndex, never plain IsLive. A mass GC purge can free the puppet without
+    // our Destroy path running and recycle its slot to a smaller object; plain IsLive reads the
+    // index from the object's own memory and passes on that impostor, and ApplyToEngine then
+    // dereferences it at mainPlayer_C offsets. -1 means no puppet.
     int32_t internalIdx_ = -1;
 
-    // Both offsets are captured ONCE at Spawn from the RECEIVER's own local
-    // mainPlayer_C -- same BP class as the source, so the BP-authored RelLoc
-    // values are identical on every peer (BP construction sets the same
-    // constants on every instance). Read raw from the static USceneComponent
-    // fields (RelativeLocation @ +0x011C, RelativeRotation @ +0x0128) NOT via
-    // K2_GetComponentLocation / K2_GetComponentForwardVector -- the world-
-    // transform UFunctions return the COMPUTED world transform which during
-    // BP construction + save-load init is transiently non-settled (Z-trace
-    // 2026-05-23 captured an 84cm swing in mesh.world.Z over the first 2 sec
-    // post-teleport). The RAW field carries the settled value the BP
-    // construction script writes.
-    //
-    // Z fix history (Option G 2026-05-23 -> anchored-zero 2026-07-04): the
-    // early chain 4407fa7 -> ... -> 'stream mesh.world.Z' all failed because
-    // they used a guessed offset or a transient computed world-transform
-    // delta. Option G streamed source.actor.Z (stable capsule centre, MTA's
-    // wire shape) + an EMPIRICAL spawn-time chain measure -- which was itself
-    // a race: on a world-fresh client, mesh_playerVisible's BP-authored -85
-    // had not composed yet at measure time (client log 2026-07-04 16:43:06:
-    // puppetChain=0.00 -> offset -85 -> the actor held 85 cm low forever ->
-    // capsule in the floor, engine depenetration vs our per-tick write =
-    // twitching + "1/4 под землей"). Since audit H9 BOTH ends are
-    // mainPlayer_C: their settled chains are identical BY CLASS, so the
-    // offset is 0 by invariant -- the members (meshOffsetZ_/meshOffsetYaw_)
-    // were retired with the measure (RULE 2). puppet.actor = wire pose,
-    // verbatim; Spawn() logs the live chain as a drift DIAGNOSTIC only.
-    // Nameplate/voice head anchor: the 'head'-bone world position of the currently-
-    // rendered mesh (plushie while ragdolled, skin mesh otherwise). X/Y are RAW
-    // (super snappy -- user 2026-07-03); only the HEIGHT runs through a tau ~70 ms
-    // low-pass (head bob / crouch blend / flop shake), teleports snap. mutable: the
-    // filter advances inside a const getter, keyed to real elapsed time so
-    // multi-caller ticks are idempotent.
+    // The puppet actor sits at the wire pose with no offset: both ends are mainPlayer_C, so their
+    // settled component chains are identical by class. Spawn logs the live chain as a drift
+    // diagnostic only.
+    // The head anchor for the nameplate and voice: the head bone of the rendered mesh. X and Y are
+    // raw; only the height runs through the low-pass (head bob, crouch blends, the flop), and
+    // teleports snap. Mutable, since the filter advances inside a const getter, keyed to real
+    // elapsed time so multiple callers per tick are idempotent.
     mutable float    headAnchorZ_ = 0.f;
     mutable uint64_t headAnchorAtMs_ = 0;
-    // Placeholder until the peer's Join reliable message lands (typically within
-    // a few RTT of connect). nameplate::Update repaints when SetNickname changes
-    // this. The old "Player 2" default was misleading -- both ends saw "Player 2"
-    // forever in early tests because no refresh path existed.
+    // The placeholder until the peer's Join lands; the nameplate repaints when SetNickname changes
+    // it.
     std::wstring nickname_ = L"...";
-    // v93 skins: the skin name currently applied to actor_ (ApplySkin no-ops on
-    // a repeat; reset in Destroy with the actor). Empty = native kel.
+    // The skin applied to actor_ (ApplySkin no-ops on a repeat; reset with the actor in Destroy).
+    // Empty is the native kel.
     std::string appliedSkin_;
-    // v19 streamed vitals fractions (display-only; see SetVitals). Default full
-    // so a freshly-spawned puppet shows a full bar until the first pose lands.
+    // The streamed vitals fractions, full by default so a fresh puppet shows a full bar until the
+    // first pose.
     float health_ = 1.f;
     float food_ = 1.f;
     float sleep_ = 1.f;
-    // v20 Inc3 damage hurt-flash (nameplate red). Timestamp-based (NowMs deadline)
-    // not frame-count, so the duration is FPS-independent. hurtFlashEndMs_ is armed
-    // on a detected health DROP in SetVitals (latest-hit-wins); Tick toggles the
-    // nameplate color on the edge of (NowMs < hurtFlashEndMs_) vs hurtFlashActive_
-    // (one repaint per transition, no per-frame widget churn). Both reset in Destroy.
+    // The hurt flash: a deadline in ms rather than a frame count, so its length is FPS-independent.
+    // Armed on a detected health drop in SetVitals (the latest hit wins); Tick toggles the
+    // nameplate colour and the body material on the edge of the deadline, one repaint per
+    // transition. Both reset in Destroy.
     uint64_t hurtFlashEndMs_ = 0;
     bool     hurtFlashActive_ = false;
-    static constexpr uint64_t kHurtFlashMs = 500;     // red for ~0.5 s per hit
-    static constexpr float    kHurtEpsilon = 0.006f;  // > 1 wire quantization step (1/255) -- ignore dequant jitter
-    // Inc3 body pulse: the puppet's original materials (both visible meshes),
-    // cached on the flash rising edge (engine swaps them to the gore-red skin) +
-    // restored on the falling edge. Each entry is (component, slot, original).
+    static constexpr uint64_t kHurtFlashMs = 500;     // red for about half a second per hit
+    static constexpr float    kHurtEpsilon = 0.006f;  // over one wire quantisation step (1/255), so dequantisation jitter is ignored
+    // The puppet's original materials on both visible meshes, saved on the flash's rising edge
+    // (the engine's hurt material replaces them) and restored on the falling edge.
     std::vector<ue_wrap::SavedMaterial> hurtSavedMaterials_;
 
-    // Receiver-side interpolation state (game thread only -- the engine path is
-    // single-threaded; no mutex). curPos_/curYaw_/curSpeed_ is what was last
-    // applied to the engine; targetPos_/targetYaw_ is what we're walking toward.
+    // The interpolation state, game thread only. cur* is what was last applied to the engine,
+    // target* what it walks toward.
     ue_wrap::FVector curPos_{};
-    float            curYaw_ = 0.f;       // source's ACTOR yaw (body facing).
-    float            curPitch_ = 0.f;     // source controller pitch (drives head bone)
-    float            curHeadYawDelta_ = 0.f;  // source controller.yaw - actor.yaw; drives the
-                                              // head bone yaw lead over the body so the
-                                              // puppet's head visually follows where the
-                                              // SOURCE is looking (free-look / camera lead).
+    float            curYaw_ = 0.f;       // the source's actor yaw (body facing)
+    float            curPitch_ = 0.f;     // the source's controller pitch (drives the head bone)
+    float            curHeadYawDelta_ = 0.f;  // controller yaw minus actor yaw: the head's lead over the body
     float            curSpeed_ = 0.f;
-    // Presentation body yaw (turn-in-place synthesis) -- what SetActorRotation
-    // actually shows; curYaw_ stays the WIRE truth. Reset on spawn / first
-    // packet / teleport snap / ragdoll recover; advanced each Tick. Full
-    // design doc + constants live in coop/puppet_body_yaw.h.
+    // The presentation body yaw (turn-in-place synthesis), what SetActorRotation shows; curYaw_
+    // stays the wire truth. Reset on spawn, the first packet, a snap and a ragdoll recover;
+    // advanced each Tick. See coop/player/puppet_body_yaw.h.
     coop::puppet_body_yaw::State bodyYaw_{};
-    // Footstep stride emitter (2026-06-10): walks the interp displacement and
-    // dispatches the game's own lib_C::step every native stride -- the
-    // puppet's BP tick (where the native accumulator lives) is suppressed.
+    // The footstep stride emitter: walks the interpolated displacement and dispatches the game's
+    // own step every native stride, since the puppet's BP tick (where the game's accumulator lives)
+    // is suppressed.
     coop::puppet_footsteps::Stride footsteps_{};
-    // v8 state flags (kStateBitInAir + reserved bits). NOT interpolated --
-    // snapped on every SetTargetPose. Read by ApplyToEngine to drive the
-    // puppet's CMC.MovementMode each tick: bit 0 set -> MOVE_Falling=3,
-    // clear -> MOVE_Walking=1. The kerfur AnimBP reads MovementMode
-    // natively to gate the foot-IK alpha (useLegIK/rise).
+    // The state bits (kStateBitInAir and reserved bits), snapped on every SetTargetPose, never
+    // interpolated. ApplyToEngine drives the movement mode from bit 0: set is falling, clear is
+    // walking, which the AnimBP reads to gate the foot IK.
     uint8_t          curStateBits_ = 0;
-    // Ragdoll display (2026-06-01 xray-actor rework, [[project-ragdoll-sync]]):
-    // the whole lifecycle (wire-bit edge -> spawn invisible playerRagdoll_C +
-    // pelvis-attach; v22 pelvis stream; attached-transform drive; teardown) lives
-    // in coop/player/remote_player_ragdoll.h. Glue side effects stay here, keyed
-    // off its return values: OnWireBit/DriveAttached stop -> bodyYaw_.Reset;
-    // SetPose applied -> dirty_. Torn down in Destroy() (body only).
+    // The ragdoll display. Its whole lifecycle (the wire-bit edge spawning an invisible
+    // playerRagdoll_C attached at the pelvis, the pelvis stream, the attached-transform drive, the
+    // teardown) lives in coop/player/remote_player_ragdoll.h; the glue here keys off its returns
+    // (a stop resets bodyYaw_, an applied pose sets dirty_). Torn down in Destroy.
     RagdollDisplay   ragdoll_;
     ue_wrap::FVector targetPos_{};
     float            targetYaw_ = 0.f;
     float            targetPitch_ = 0.f;
     float            targetHeadYawDelta_ = 0.f;
-    // Cached at SetTargetPose time = target - cur. The interp incrementally
-    // applies dAlpha * errorPos_ each frame (MTA's linear form -- recomputing
-    // (target - cur) each frame would decay geometrically, not linearly).
+    // Cached at SetTargetPose as target minus cur. The interpolation applies dAlpha times this each
+    // frame; recomputing target minus cur per frame would decay geometrically, not linearly.
     ue_wrap::FVector errorPos_{};
     float            errorYaw_ = 0.f;
     float            errorPitch_ = 0.f;
     float            errorHeadYawDelta_ = 0.f;
-    // The interp TIMING (start/finish/lastAlpha + the alpha/dAlpha bookkeeping)
-    // lives in the shared coop::LerpWindow (RULE 2 / WP13 -- element::Npc owns
-    // one too). AdvanceInterp applies the window's dAlpha to errorPos_/errorYaw_/
-    // errorPitch_/errorHeadYawDelta_ above; SetTargetPose Open()s it / Close()s on
+    // The window timing lives in the shared coop::LerpWindow (element::Npc owns one too).
+    // AdvanceInterp applies its dAlpha to the errors above; SetTargetPose opens it and closes it on
     // a snap.
     coop::LerpWindow window_;
     bool             hasPose_ = false;  // first packet snaps; spawn placeholder is fake
