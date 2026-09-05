@@ -6,7 +6,7 @@ in `VotV-Win64-Shipping.exe`; PhysX3 + `WindowsNoEditor` packaging
 corroborate UE4, not UE5).
 **Assessed**: 2026-05-21. **Status**: VIABLE — proceed to Phase 1.
 
-This file answers Phase 0.2–0.8 of `docs/COOP_METHODOLOGY.md`, adapted for
+This file answers the questions a co-op mod asks of its game before any code, adapted for
 a UE4 game. Findings marked **(verify)** are inferred and need a concrete
 check during early Phase 1.
 

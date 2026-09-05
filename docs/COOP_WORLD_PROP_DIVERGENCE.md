@@ -110,7 +110,7 @@ use-intent) + a 2-scalar curated on-change push (`units`→stage mesh, `dry`→m
 
 ## 2026-07-20 — the ANCHOR alternative, and the two measurements it now gates
 
-`docs/COOP_SERVER_MODEL.md` §4-§5 proposes a cheaper answer than the curated on-change push for the
+`docs/ARCHITECTURE.md` (where the authority is going) proposes a cheaper answer than the curated on-change push for the
 accumulator half: **an accumulator is never streamed, it is ANCHORED.** Store the start stamp once
 (when the bucket was poured) and let every peer compute `dry` locally. Precedent: `[V]` MTA's
 `CClock.cpp` is 58 LOC of pure formula from a stamp, with no tick at all.

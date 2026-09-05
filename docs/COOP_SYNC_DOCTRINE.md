@@ -5,7 +5,7 @@
 > four months of lessons. MTA (15+ years, `reference/mtasa-blue/`) is the precedent it leans on.
 >
 > This doc ORDERS the existing canon; it does not replace it. Deep truth lives in:
-> `COOP_SYNCER_MODEL.md` (authority + act-as-host §2b), `COOP_DISPATCH_VISIBILITY.md` (will my hook
+> `ARCHITECTURE.md` (the authority model and the intent rule), `COOP_DISPATCH_VISIBILITY.md` (will my hook
 > fire), `COOP_ENTITY_EXPRESSION_MAP.md` (identity/expression/destroy), `COOP_WORLD_PROP_DIVERGENCE.md`
 > (the brain-on trap), `COOP_EVENT_JOIN.md` (late-join rows), `CODE_MAP.md` (where lanes live),
 > `STATUS.md` (per-facet status), CLAUDE.md (the rules this doc applies).
@@ -50,7 +50,7 @@ Decision table — pick the FIRST row that fits:
 | The state is… | Owner | Shape |
 |---|---|---|
 | Shared-world progression (weather, power, events, world props that rot/dry/grow, NPC brains, RNG) | HOST | Host simulates/rolls; clients mirror. `COOP_RNG_AUTHORITY.md`. |
-| A discrete, persistent, shared-world CHANGE a client initiates (buy, sell, destroy, place, equip from a container…) | HOST via **act-as-host intent** | Client suppresses its own producer, sends an intent naming WHAT (never what it costs), the arbiter validates and performs; results flow back as ordinary state. Reference lane: `order_sync` (proto 136). `COOP_SYNCER_MODEL.md` §2b. |
+| A discrete, persistent, shared-world CHANGE a client initiates (buy, sell, destroy, place, equip from a container…) | HOST via **act-as-host intent** | Client suppresses its own producer, sends an intent naming WHAT (never what it costs), the arbiter validates and performs; results flow back as ordinary state. Reference lane: `order_sync` (proto 136). `ARCHITECTURE.md`, the authority model. |
 | A continuously-simulated element one peer is INTERACTING with (held prop, driven vehicle, pressed device panel) | The interacting peer, by ASSIGNMENT (syncer/lease), never by assertion | Presser/holder authors the stream; the host arbiter validates inbound writes and may re-assign. On interaction end the authority RETURNS. Adopt lease hygiene: idle-expiry back to the declared owner, epoch-stamped grants, grant-names-final-revision fencing (MTA `CUnoccupiedVehicleSync`). |
 | A peer's OWN body/pose/camera/voice | That peer | Sender-authored stream; receive side never gated (a discontinuity costs TRUST, never display). Bounds are CLIENT-scoped only — **the host may cheat and we relay it** (USER 2026-08-24). |
 | Presentation-only local echo (UI, sounds, particles) | Nobody | Mirror on receive; never wire it back. |

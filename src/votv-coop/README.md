@@ -12,7 +12,7 @@ Coop mod DLL for Voices of the Void (UE4.27). One binary:
   standalone `xinput1_3.dll` proxy + versioned payload name retired
   whole at UE4SS_ARC WP-2 commit 3.)
 
-## Subtrees (principle 7 — see `docs/COOP_METHODOLOGY.md` / `CLAUDE.md`)
+## Subtrees (principle 7 — see `docs/ARCHITECTURE.md`)
 
 ```
 include/

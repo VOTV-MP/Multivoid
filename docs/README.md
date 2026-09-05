@@ -19,7 +19,7 @@ Start here, in this order:
 
 | | |
 |---|---|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | The shape of the mod in one read: the loader, the engine-wrapper layer, the co-op layer, and why they are separate |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | The one read: the layers, who owns which state, how bytes move, how peers and entities are named, and how a join works |
 | [SCOPE.md](SCOPE.md) | What is and is not replicated. This one is law: anything not listed is deliberately not synced |
 | [DEVS_GAUNTLET.md](DEVS_GAUNTLET.md) | The VOTV developers' public statement on why multiplayer mods fail. It is the bar this project builds to |
 | [FEASIBILITY.md](FEASIBILITY.md) | Whether this is possible at all, answered with measurements |
@@ -51,12 +51,11 @@ Before writing any entity-sync, hook or spawn-catch code, read these three:
 
 **Models, how authority and state are meant to work**
 
-[COOP_METHODOLOGY.md](COOP_METHODOLOGY.md) (the architecture doctrine, adapted from MTA:SA) ·
-[COOP_SYNCER_MODEL.md](COOP_SYNCER_MODEL.md) (per-element authority: assigned, never asserted) ·
-[COOP_SERVER_MODEL.md](COOP_SERVER_MODEL.md) (what "our server" is; embedded equals dedicated) ·
-[COOP_CLIENT_MODEL.md](COOP_CLIENT_MODEL.md) · [COOP_RNG_AUTHORITY.md](COOP_RNG_AUTHORITY.md) (who
-rolls shared-world randomness) · [COOP_EVENT_JOIN.md](COOP_EVENT_JOIN.md) (joining mid-event; every
-sync lane owes a late-join answer)
+The authority model, the server model behind the roadmap, the transport, identity and the join are
+all in [ARCHITECTURE.md](ARCHITECTURE.md). Beyond it: [COOP_RNG_AUTHORITY.md](COOP_RNG_AUTHORITY.md)
+(who rolls shared-world randomness) · [COOP_EVENT_JOIN.md](COOP_EVENT_JOIN.md) (joining mid-event;
+every sync lane owes a late-join answer) · [COOP_CLIENT_MODEL.md](COOP_CLIENT_MODEL.md) (the custom
+client body: the model and texture pipeline)
 
 **Maps, where a thing lives and what state it is in**
 

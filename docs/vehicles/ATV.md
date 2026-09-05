@@ -42,7 +42,7 @@ facts, composition not run · **[A]** asserted by an earlier doc, not re-verifie
 | 0.2 | **`enum_atvUpgrades` is EMPTY** — it holds only `enum_atvUpgrades_MAX`. The live enum is `enum_physicalModules` (34 values, 13 of them ATV). | Do not build against `enum_atvUpgrades`; it is a dead asset. Closes an `[?]` in `docs/upgrades/README.md` §5. |
 | 0.3 | **The ATV is NOT purchasable, but it IS runtime-spawnable.** All 473 `list_store` rows scanned: no row's `object` is `ATV_C`/`ATV_Child_C`, nor is it in `list_craftRecipes` — only its *parts* are buyable. **But `list_props` has a row `atv` whose `spawnAsObject` is `ATV_C`, `hidden=false`** [V], reached by `lib.PropToObject` → `spawnPropThroughGamemode` from `ui_spawnmenu`. | The "purchased ATV" premise behind the 2026-06-15 Gap-B design is **FALSE**, but the mechanism it built is **still required** — the shipped `AtvSpawn`/`AtvDestroy` synth-key lane is what covers a runtime ATV, which really can exist. **The RULE-2 deletion is CANCELLED; what is owed is a comment correction.** §11.4. |
 | 0.4 | **`vehicleGetParts()` / `teleportVehicleAdvanced()` are a matched READ/WRITE pair for the FULL 4-body rig pose** (body + front-L + front-R + back-root, each loc+rot). The game ships exactly the primitive a correct vehicle mirror needs. | Our mirror moves **only the actor**; the wheels are separate constrained rigid bodies — §9.4, a defect candidate. |
-| 0.5 | **The install trigger is INVISIBLE.** `mainPlayer` dispatches `playerUsedOn` via `EX_LocalVirtualFunction` [V, `mainPlayer.json`], and the whole install path lives inside `ExecuteUbergraph_ATV`. | Install cannot be hooked. It must be an **act-as-host INTENT naming an artifact** (the held `prop_atvUpgrade_C`) — `COOP_SYNCER_MODEL` §2b step 2, the `order_sync` shape. |
+| 0.5 | **The install trigger is INVISIBLE.** `mainPlayer` dispatches `playerUsedOn` via `EX_LocalVirtualFunction` [V, `mainPlayer.json`], and the whole install path lives inside `ExecuteUbergraph_ATV`. | Install cannot be hooked. It must be an **act-as-host INTENT naming an artifact** (the held `prop_atvUpgrade_C`) — the intent rule in `ARCHITECTURE.md`, the `order_sync` shape. |
 | 0.6 | **The ATV's inventory container has a DETERMINISTIC key**: `getDefaultContainerName()` = `atv_inventoryContainer\|<atv key>`. | The container is cross-peer addressable for free — no eid machinery. |
 | 0.7 | The save round-trip carries **19 state slots** across 6 arrays; **`modules[]` is the only `bytes` entry**. Post-load derivation is one call: `processKeys()` = `createContainer(); updTires(); updSpareTire(); updDirt(); updUpgrades();`. | `processKeys()` is the single "re-derive everything from raw fields" seam a receiver needs. |
 | 0.8 | **Three shipped wire bits are written and never read**: `stateBits` bit0 (`isDriven`), bit1 (`brake`), bit2 (`grabbed`). Only bit3 (`authored`) is consumed. | Dead wire surface today; the fields already exist for the design. |
@@ -484,7 +484,7 @@ replay through the game's own derive functions**, plus an **act-as-host INTENT**
 persistent, shared-world changes (install / remove / put-tire / eject-tire / insert-battery / refuel /
 repair). That is the same tier rule the signal-desk lanes converged on (`docs/signals/README.md`:
 PE seam > raw-field poll > VM-bracket) and the `order_sync` reference implementation of
-`COOP_SYNCER_MODEL` §2b.
+the intent rule in `ARCHITECTURE.md`.
 
 ---
 
@@ -1007,7 +1007,7 @@ Run 2 failed A4 with **one second (1920, the claim edge) in which both peers rep
 tick**. Run 1 passed it. That is the shape of an assertion race rather than a bug in either peer's
 predicate: `OwnsTickFor` elects the host whenever `authorSlot == 0xFF`, so between a client seating
 itself and the host receiving `AtvState` with the new `authorSlot` there is a round trip in which both
-sides answer yes. `COOP_SYNCER_MODEL.md` §2b's rule — authority is ASSIGNED, never asserted — says the
+sides answer yes. `ARCHITECTURE.md`'s rule — authority is ASSIGNED, never asserted — says the
 claim should be an intent the host grants, not a fact the client publishes. **Open; sized as arc-1
 commit 2, and A4 already grades it.**
 
@@ -1409,7 +1409,7 @@ is the control arm that acquitted the corrector; both are diagnostics, RULE-2 ex
   three classes (`prop_food_pinecone_C`, `prop_stick_C`, `prop_crystal_C`) and the wheel is not one.
 
   This CONFIRMS the prescription rather than changing it: the proper root is **an act-as-host intent
-  lane for tire ejection** (`COOP_SYNCER_MODEL.md` §2b) — the mirror's `ejectWheel` must not spawn,
+  lane for tire ejection** (the intent rule in `ARCHITECTURE.md`) — the mirror's `ejectWheel` must not spawn,
   the author's must, and its `prop_atvWheel_C` must be the only one. What the measurement adds is
   *why nothing cheaper works*: with per-peer random keys there is no dedupe to fall back on.
   **RUNTIME-CONFIRMED THE SAME DAY, `[V]`, and it needed no new run — the evidence was already on
@@ -1853,7 +1853,7 @@ deliberate hard impact, so a purpose-built arm is the honest way to get it rathe
 and the peer was disconnected. That is what ended the window, and it is filed separately — a drowning
 peer losing its connection is not part of this lane.
 
-**Still owed:** (3) `putTire`'s intent shape against `COOP_SYNCER_MODEL` §2b; (4) whether
+**Still owed:** (3) `putTire`'s intent shape against the intent rule in `ARCHITECTURE.md`; (4) whether
 destroy-at-birth needs to suppress the mirror's `sound_tireDamage`, or whether a phantom pop is
 acceptable; (5) the eject half, per the paragraph above.
 
