@@ -41,7 +41,7 @@ dotnet run --project tools/mesh_extract -- export $P $O `
   'kerfurAnthro/sk/kerfurOmega_mannequinSkin.uasset'
 ```
 
-## Rig facts (see docs/COOP_CLIENT_MODEL.md)
+## Rig facts
 
 - Dr. Kel `kel_lmao` = 6-bone, armless low-poly.
 - Humanoid rig with hands = anthro `kerfurOmegaV1_Skeleton` (102 bones,

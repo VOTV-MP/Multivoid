@@ -53,13 +53,13 @@ Before writing any entity-sync, hook or spawn-catch code, read these three:
 
 The authority model, the server model behind the roadmap, the transport, identity and the join are
 all in [ARCHITECTURE.md](ARCHITECTURE.md). Beyond it: [COOP_RNG_AUTHORITY.md](COOP_RNG_AUTHORITY.md)
-(who rolls shared-world randomness) · [COOP_CLIENT_MODEL.md](COOP_CLIENT_MODEL.md) (the custom client
-body: the model and texture pipeline)
+(who rolls shared-world randomness)
 
 **Subsystems**, one page each on the same skeleton
 
 [join.md](join.md) (joining a game: admission, the save transfer, the connect replay, the join
-window, and the late-join rule every lane answers)
+window, and the late-join rule every lane answers) · [players.md](players.md) (the remote player:
+the puppet, the pose stream, names, skins, damage, death, sleep, inventory, moderation)
 
 **Maps, where a thing lives and what state it is in**
 

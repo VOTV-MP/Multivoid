@@ -3,8 +3,8 @@
 Everything for the **custom client-model** feature in one place: take a source model,
 auto-repose it to VOTV's T-pose, **cook it into a real UE4.27 `USkeletalMesh` + `.pak`
 WITHOUT the UE editor** (pure Python), and have the mod load it on client puppets (host
-stays Dr. Kel). Design + runtime + test recipe: `docs/COOP_CLIENT_MODEL.md`; byte-level
-cook spec: `SPEC.md` here.
+stays Dr. Kel). The runtime side, how a skin is chosen, announced and applied:
+`docs/players.md`; byte-level cook spec: `SPEC.md` here.
 
 Decisions (RULE 1 no-crutch, RULE 3 no-editor): real cooked skeletal mesh (engine skins
 it natively via the anthro AnimBP), target rig = **anthro `kerfurOmegaV1_Skeleton`**
@@ -33,8 +33,8 @@ Current model = `hl_einstein_v1sc` (its ORIGINAL name; the early "scientist" nam
 retired). Profiles: `profiles/README.md` — v1 "narrow" is the DEFAULT (in-game verdict
 2026-07-02 evening: the v2 "wide" look was rejected; v2 stays in the library).
 
-Adding a NEW HL model = the six steps above (no Blender). See `docs/COOP_CLIENT_MODEL.md §4`
-for exact commands. Use `python` (has numpy), not `python3`.
+Adding a NEW HL model = the six steps above (no Blender), or one run of the portable
+converter below. Use `python` (has numpy), not `python3`.
 
 **PORTABLE ONE-SHOT (`portable/`, 2026-07-02):** `python portable/make_portable.py [--exe]`
 bundles the LIVE modules above (unmodified — single source of truth, the originals stay) +
@@ -63,8 +63,7 @@ any module change.
   manual example (format 3: pose_local R+t deltas + rest_local fit metric); `apply` reposes
   with an explicit profile or `auto` (library scoring: coverage → rest-pose similarity),
   always printing the uncovered-bones report; `select` prints the table only. Validated:
-  reproduces each manual example to residual ~0 (rvi = 0.00009 max). See
-  `docs/COOP_CLIENT_MODEL.md §5`.
+  reproduces each manual example to residual ~0 (rvi = 0.00009 max).
 - **`profiles/`** — the profile LIBRARY (one format-3 json per learned example; grows from
   the user's manual poses). `profiles/README.md` = provenance + status table (rejected =
   auto-select skips).
@@ -110,7 +109,7 @@ any module change.
   LoadObject + role-gated both-slot mesh apply + slot-0 MID texture bind
   (`coop/player/client_model` + `RemotePlayer::Spawn`).
 - Remaining: the coop two-peer visual (host+client facing each other) — the feature path is
-  wired but exercised solo-host via the probe only. `docs/COOP_CLIENT_MODEL.md` STATUS is
-  the canonical live state.
+  wired but exercised solo-host via the probe only. `docs/players.md` (Skins) is the
+  current state.
 
 RULE 3: everything here is a dev/RE tool — none of it ships at runtime.

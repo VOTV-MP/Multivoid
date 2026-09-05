@@ -2,7 +2,7 @@
 
 > NOTE (moved 2026-07-01): all tools are now under `tools/client_model/` (this file too).
 > Paths below written `tools/foo.py` = `tools/client_model/foo.py`. Handoff/overview:
-> `docs/COOP_CLIENT_MODEL.md` (§6 = runtime load + apply-to-client design).
+> the runtime side is `docs/players.md` (Skins).
 
 > CORRECTION (2026-07-01): the REAL client skin is `kerfurOmega_KelSkin` (ANTHRO rig
 > `kerfurOmegaV1_Skeleton`, ~101 bones w/ hands). `kel_lmao` (6-bone) is a stick
@@ -15,7 +15,7 @@
 **Date:** 2026-07-01. **Goal:** cook a custom `USkeletalMesh` `.uasset` WITHOUT the
 UE editor, by **mutating kel_lmao's cooked mesh** (keep skeleton/materials/package,
 splice in the scientist geometry+weights from `tools/skin_to_rig.py`), then pack
-with UnrealPak (`tools/unrealpak/`). Feeds `docs/COOP_CLIENT_MODEL.md`.
+with UnrealPak (`tools/unrealpak/`). Feeds the skins runtime (`docs/players.md`).
 Spec sources (MIT, downloaded): `research/cue4parse_ref/*.cs` (CUE4Parse readers —
 the exact byte order; the same code that successfully read kel_lmao).
 

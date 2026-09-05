@@ -27,7 +27,7 @@ master-server lobby list + Direct Connect), `host_save_picker.cpp`,
 `roster.cpp`, `scoreboard.cpp`, `dev_menu.cpp`, `moderation.cpp`, `hud.cpp`,
 `skins_panel.cpp` (2026-07-02: the F1 > Cosmetics > Skins model browser —
 gmod-style preview tiles from the LogicMods pak catalog + the v94 builtin
-kerfur bodies, AS-BUILT; see docs/COOP_CLIENT_MODEL.md §3 for the skins
+kerfur bodies, AS-BUILT; see docs/players.md for the skins
 runtime). F1 > Cosmetics > Nameplate (v94, AS-BUILT 2026-07-02): the "show my
 nameplate to other players" checkbox — a SYNCED per-peer pref (NameplateChange
 + the Join prefs byte; persists in multivoid.ini `nameplate=`).
@@ -230,7 +230,7 @@ UE4SS. **The F2/D-3 decision of 2026-08-21 makes Multivoid a UE4SS mod** (`docs/
 So that rejection's premise is gone, and the cost of the route collapses to **authoring** only.
 What is still real, and unchanged: our pak toolchain (`tools/client_model/`, `ue_cook.py`) cooks
 **skeletal meshes** in Python; it cannot emit a compiled Blueprint graph. Producing WidgetBlueprints
-means the UE4.27 editor — **which the user HAS installed as of 2026-08-25**, so the ~80 GB objection recorded in `docs/COOP_CLIENT_MODEL.md` §9 is spent. What is NOT solved is the authoring channel: no MCP supports 4.27 (UE 5.5+ minimum on every implementation checked), so see §6 below.
+means the UE4.27 editor — **which the user HAS installed as of 2026-08-25**, so the ~80 GB objection against installing it is spent. What is NOT solved is the authoring channel: no MCP supports 4.27 (UE 5.5+ minimum on every implementation checked), so see §6 below.
 
 ### 3. What we can ALREADY do, and it is more than the doc implies `[V]`
 

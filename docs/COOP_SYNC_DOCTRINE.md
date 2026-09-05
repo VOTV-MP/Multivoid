@@ -69,8 +69,8 @@ function. Then pick the cheapest seam that actually fires:
    Tick/BeginPlay/input/delegates/timers/interface events. Fires only on PE dispatch.
 2. **Func seam** (`ufunction_hook`, POST, native callees) — catches `EX_CallMath` /
    `EX_VirtualFunction` / `EX_FinalFunction` to NATIVE functions on every route (Func funnels
-   them). Cannot cancel (a cancel would have to consume the caller's param stream — the DEATH_ARC
-   OpenLevel lesson: detour the C++ function with MinHook instead when you must cancel a native).
+   them). Cannot cancel (a cancel would have to consume the caller's param stream — the death lane's
+   OpenLevel lesson (`players.md`): detour the C++ function with MinHook instead when you must cancel a native).
 3. **0x45 VM seam** (`vm_dispatch`, observe-only, call-site) — sees every `EX_LocalVirtualFunction`
    dispatch including calls made FROM ubergraphs; carries NO args, cannot cancel; consumers pair it
    with a Func seam or per-site reconcile for values.

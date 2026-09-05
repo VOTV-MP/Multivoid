@@ -51,8 +51,8 @@ Community commits are adopted with their **original authorship preserved**
 ### Tarangok
 - **KO respawn** (`death.ko_respawn`): the death lane — the config surface, the
   KO/respawn shape, and the first attempt at answering VOTV's kick-to-menu
-  permadeath. The mechanism has been reworked twice since (see
-  `docs/DEATH_ARC.md` for where it is going); the lane and the idea are theirs.
+  permadeath. The mechanism has been reworked twice since (the death section of
+  `docs/players.md` is where it stands); the lane and the idea are theirs.
 - **Live mannequin skin preview**: hovering a skin in the F1 menu shows it on a
   real in-world mannequin.
 - Cross-peer held-prop visibility (clients now see props carried by other
