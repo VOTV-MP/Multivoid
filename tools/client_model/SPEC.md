@@ -1,10 +1,10 @@
 # VOTV SkeletalMesh pure-Python cooker — implementation spec (resumable)
 
-> NOTE (moved 2026-07-01): all tools are now under `tools/client_model/` (this file too).
-> Paths below written `tools/foo.py` = `tools/client_model/foo.py`. Handoff/overview:
+> All tools live under `tools/client_model/` (this file too); a bare tool name below means
+> the file of that name in this folder. Handoff/overview:
 > the runtime side is `docs/players.md` (Skins).
 
-> CORRECTION (2026-07-01): the REAL client skin is `kerfurOmega_KelSkin` (ANTHRO rig
+> The real client skin is `kerfurOmega_KelSkin` (ANTHRO rig
 > `kerfurOmegaV1_Skeleton`, ~101 bones w/ hands). `kel_lmao` (6-bone) is a stick
 > placeholder. **Target/template = `kerfurOmega_KelSkin`, NOT kel_lmao.** The
 > kel_lmao offsets/anchors below were a FORMAT PROOF (parse round-tripped) — the
@@ -12,11 +12,11 @@
 > `kerfurOmega_KelSkin.uexp` (different counts/offsets: 10978 verts, 101 bones,
 > uexp ~1.7 MB; `ue_pkg` already round-trips its package). skin_to_rig → HL→anthro map.
 
-**Date:** 2026-07-01. **Goal:** cook a custom `USkeletalMesh` `.uasset` WITHOUT the
+**Goal:** cook a custom `USkeletalMesh` `.uasset` WITHOUT the
 UE editor, by **mutating kel_lmao's cooked mesh** (keep skeleton/materials/package,
-splice in the scientist geometry+weights from `tools/skin_to_rig.py`), then pack
-with UnrealPak (`tools/unrealpak/`). Feeds the skins runtime (`docs/players.md`).
-Spec sources (MIT, downloaded): `research/cue4parse_ref/*.cs` (CUE4Parse readers —
+splice in the scientist geometry+weights from `skin_to_rig.py`), then pack
+with repak. Feeds the skins runtime (`docs/players.md`).
+Spec sources (MIT, downloaded): `cue4parse_ref/*.cs` (CUE4Parse readers —
 the exact byte order; the same code that successfully read kel_lmao).
 
 ## Guiding trick (why this is tractable)
@@ -41,17 +41,17 @@ sidesteps resolving UE4.27 version-flag branches abstractly. Validate by
   Tag layout has property-guid byte + struct-guid (both present).
 
 ## Render region = payload[2003:17391] (15388 bytes) — serialization order
-From `USkeletalMesh.Deserialize` + `FStaticLODModel` (`research/cue4parse_ref/`):
+From `USkeletalMesh.Deserialize` + `FStaticLODModel` (`cue4parse_ref/`):
 1. `FStripDataFlags` — 2 bytes (GlobalStripFlags u8, ClassStripFlags u8).
 2. `ImportedBounds` = FBoxSphereBounds — Origin(FVector 12) + BoxExtent(12) +
    SphereRadius(float 4) = 28 bytes. **[SPLICE: recompute from scientist verts]**
 3. `SkeletalMaterials[]` — TArray: count i32 + each FSkeletalMaterial (read
    `FSkeletalMaterial.cs`; MaterialInterface FPackageIndex + MaterialSlotName FName
-   + UVChannelData…). **[KEEP verbatim]**
+   + UVChannelData…). **[KEEP unchanged]**
 4. `ReferenceSkeleton` (FReferenceSkeleton) — RawRefBoneInfo TArray (FMeshBoneInfo =
    Name FName(8) + ParentIndex i32; cooked strips ExportName) + RawRefBonePose
    TArray (FTransform = Quat 16 + Vec 12 + Vec 12 = 40) + NameToIndexMap.
-   **[KEEP verbatim — it's the 6-bone kel rig we target]** (need FReferenceSkeleton.cs
+   **[KEEP unchanged — it's the 6-bone kel rig we target]** (need FReferenceSkeleton.cs
    — download failed; find via GitHub API, likely `Objects/Engine/` or
    `Objects/Meshes/`, else read from UEViewer/CUE4Parse repo.)
 5. `bCooked` bool. (size 1 vs 4 — don't care; cursor advance validated by round-trip)
@@ -156,7 +156,7 @@ All offsets are into the payload (= uexp[0:17391]); render region = [2003:17391]
   FSkinWeightProfilesData, FMeshBoneInfo (confirm 12 B cooked), HasRayTracingData tail.
 
 ## PARSE COMPLETE + GENERALIZED (tools/client_model/ue_skelmesh.py)
-**Validated on the REAL target 2026-07-01:** `ue_skelmesh` parses ANY UE4.27 cooked
+**Validated on the real target:** `ue_skelmesh` parses ANY UE4.27 cooked
 SkeletalMesh (auto property-block end + RefSkeleton auto-locate + count-driven
 sections/buffers + `bHasVertexColors` → FColorVertexBuffer) and **ROUND-TRIPS
 `kerfurOmega_KelSkin`** (anthro, the real client skin): render@2041, RefSkeleton@2199
@@ -174,7 +174,7 @@ Confirmed facts for kel_lmao (the original 6-bone parse proof):
   numBones=716, rigid (bone idx + 255). AdjacencyIndexBuffer = 2616 uint16.
 - Bools via Ar<<bool = 4 bytes. Strip flags = 2×u8. UseNewCookedFormat + bNewWeightFormat both TRUE.
 
-### SPLICE-TARGET OFFSETS (into payload; keep everything else verbatim)
+### SPLICE-TARGET OFFSETS (into payload; keep everything else unchanged)
 | field | offset | format to re-encode with scientist data |
 |---|---|---|
 | ImportedBounds | 2005 (28 B) | Origin+BoxExtent+SphereRadius from scientist verts (cm) |
@@ -187,7 +187,7 @@ Confirmed facts for kel_lmao (the original 6-bone parse proof):
 | SkinWeight newData | 10682 | bulk(elem1) 179*8→N*8: per vert [boneIdx,0,0,0][255,0,0,0] |
 | SkinWeight meta | 10666/10670/10674 | maxBoneInf=4, numBones=N*4, numVertices=N |
 | AdjacencyIndexBuffer | 12137 | regenerate OR strip the CDSF_AdjacencyData flag to drop it |
-Formats: FPackedNormal (`research/cue4parse_ref/FPackedNormal.cs`), FMeshUVHalf
+Formats: FPackedNormal (`cue4parse_ref/FPackedNormal.cs`), FMeshUVHalf
 (`FMeshUVHalf.cs`), FVector=3 float. Simplest for a static-ish scientist: 1 section,
 all verts→their Kel bone (from skin_to_rig), weight 255, recompute bounds, drop adjacency.
 

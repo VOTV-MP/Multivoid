@@ -3,8 +3,8 @@
 Dev/RE tool (does NOT ship — RULE 3). Reads VOTV's cooked, **unencrypted v11**
 pak via CUE4Parse and exports skeletal meshes + their skeleton (rig) to
 Blender-openable formats. We read the cooked pak; we never modify/repack it
-(RULE 1). Output is copyrighted game content → write it under `research/pak_re/`
-(gitignored).
+(RULE 1). Output is copyrighted game content: write it into a gitignored workspace,
+never into the tree.
 
 Why not the usual tools: `repak` (`tools/bp_reflect.py`) only extracts the raw
 `.uasset`; it can't deserialize a SkeletalMesh. gildor.org (umodel) is
