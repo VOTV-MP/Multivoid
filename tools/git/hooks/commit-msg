@@ -1,5 +1,19 @@
 #!/bin/sh
 # commit-msg hook: the shape of a commit message (CONTRIBUTING.md, "Commits").
 # Install once per clone:  git config core.hooksPath tools/git/hooks
-PY=$(command -v python3 2>/dev/null || command -v python)
+#
+# On Windows `python3` may be the Store's execution alias, a stub that only prints an error, so a
+# candidate counts only if it can actually run; `python` is tried first there.
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*) CANDIDATES="python python3 py" ;;
+  *) CANDIDATES="python3 python" ;;
+esac
+PY=""
+for c in $CANDIDATES; do
+  if "$c" -c "" >/dev/null 2>&1; then PY="$c"; break; fi
+done
+if [ -z "$PY" ]; then
+  echo "commit-msg hook: no working Python interpreter found (tried: $CANDIDATES)" >&2
+  exit 1
+fi
 exec "$PY" "$(dirname "$0")/../commit_msg_check.py" "$1"

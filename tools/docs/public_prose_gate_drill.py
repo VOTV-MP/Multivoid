@@ -23,6 +23,11 @@ USER said, verbatim: «делай». A /qf round and two audit agents agreed on 
 See memory/feedback_x.md, research/runs/x, CLAUDE.md, .claude/skills and docs/security/TRACKER.md.
 A [tracked link](../README.md), an [external](https://example.com), and a [dead one](../nowhere.md).
 A backticked `docs/nowhere.md` names no file; a backticked `docs/a.md` does.
+An [uppercase scheme](HTTPS://example.com/x), an [encoded name](My%20File.md), a [backslash](sub\\c.md).
+
+```
+a [link in a code block](nothing.md) is not a link
+```
 """
 SRC = """// 2026-09-05: the USER asked for this, verbatim; a /qf round and an agent agreed.
 // see research/findings/x.md and CLAUDE.md, lesson 12, commit deadbeef12
@@ -72,6 +77,10 @@ def main():
         f.write("# root\n")
     with open(os.path.join(repo, "docs", "a.md"), "w", encoding="utf-8") as f:
         f.write(DOC)
+    with open(os.path.join(repo, "docs", "My File.md"), "w", encoding="utf-8") as f:
+        f.write("# spaced\n")
+    with open(os.path.join(repo, "docs", "six.md"), "w", encoding="utf-8") as f:
+        f.write("# exactly six hundred lines\n" + "x\n" * 599)
     with open(os.path.join(repo, "src", "votv-coop", "src", "x.cpp"), "w", encoding="utf-8") as f:
         f.write(SRC)
     git(["add", "."], repo, env)
@@ -87,13 +96,13 @@ def main():
     arm("init writes a baseline", r.returncode == 0 and os.path.isfile(baseline), r.stdout.strip())
     with open(baseline, encoding="utf-8") as f:
         counters = json.load(f)["counters"]
-    expect = {"md.files": 2, "md.cyrillic": 1, "md.user": 1, "md.verbatim": 1, "md.qf": 1, "md.agent": 1,
+    expect = {"md.files": 4, "md.over_600": 0, "md.cyrillic": 1, "md.user": 1, "md.verbatim": 1, "md.qf": 1, "md.agent": 1,
               "md.dated": 1, "md.ptr_memory": 1, "md.ptr_research": 1, "md.ptr_claude": 1,
-              "md.ptr_security": 1, "md.dead_links": 1, "md.dead_paths": 1,
+              "md.ptr_security": 1, "md.dead_links": 2, "md.dead_paths": 1,
               "src.comment_lines": 20, "src.comment_blocks_over_15": 1, "src.comment_dated": 1, "src.comment_user": 1, "src.comment_verbatim": 1,
               "src.comment_qf": 1, "src.comment_agent": 1, "src.comment_ptr_research": 1,
-              "src.comment_ptr_claude": 1, "src.comment_lesson": 1, "src.comment_sha": 1,
-              "src.files_half_comment": 0}
+              "src.comment_ptr_claude": 1, "src.comment_ptr_security": 0, "src.comment_lesson": 1,
+              "src.comment_sha": 1, "src.files_half_comment": 0}
     for k, v in expect.items():
         arm("counts {} = {}".format(k, v), counters.get(k) == v, "got {}".format(counters.get(k)))
     r = run(["--repo", repo, "--baseline", baseline])
@@ -120,6 +129,31 @@ def main():
         "md.cyrillic {} -> {}".format(counters["md.cyrillic"], after["md.cyrillic"]))
     r = run(["--repo", repo, "--baseline", os.path.join(tmp, "absent.json")])
     arm("no baseline is a failure, not a pass", r.returncode == 1, r.stdout.strip())
+    # a counter missing from the baseline fails, and --update does not mint it
+    with open(baseline, encoding="utf-8") as f:
+        b = json.load(f)
+    del b["counters"]["md.user"]
+    with open(baseline, "w", encoding="utf-8") as f:
+        json.dump(b, f)
+    r = run(["--repo", repo, "--baseline", baseline, "--update"])
+    with open(baseline, encoding="utf-8") as f:
+        b2 = json.load(f)
+    arm("a counter with no baseline fails and is not minted", r.returncode == 1 and "no baseline" in r.stdout
+        and "md.user" not in b2["counters"], r.stdout.strip().splitlines()[-1])
+    # volume counters are informational: a longer doc does not fail
+    with open(baseline, "w", encoding="utf-8") as f:
+        json.dump({"as_of": "drill", "counters": dict(after, **{"md.lines": 1})}, f)
+    r = run(["--repo", repo, "--baseline", baseline])
+    arm("md.lines above the baseline is informational, not a failure", r.returncode == 0, r.stdout.strip().splitlines()[-1])
+    # --init over an existing baseline is refused without --force
+    r = run(["--repo", repo, "--baseline", baseline, "--init"])
+    arm("--init over an existing baseline is refused", r.returncode == 1 and "--force" in r.stdout)
+    # a 601-line doc crosses the cap; a 600-line one does not (counted above)
+    with open(os.path.join(repo, "docs", "six.md"), "a", encoding="utf-8") as f:
+        f.write("one more\n")
+    git(["commit", "-q", "-am", "[drill] 601"], repo, env)
+    r = run(["--repo", repo, "--baseline", baseline])
+    arm("a 601-line doc crosses the 600-line cap", r.returncode == 1 and "md.over_600 0->1" in r.stdout)
     bad = results.count(False)
     print("public_prose_gate_drill: {} arms, {} failed".format(len(results), bad))
     return 1 if bad else 0

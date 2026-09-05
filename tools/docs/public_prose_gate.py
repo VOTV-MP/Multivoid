@@ -7,10 +7,12 @@ text, dated diary lines, pointers to files that are not in the repository, overs
 comment-heavy sources. Lower is better for every counter.
 
 The baseline (`public_prose_baseline.json`) holds the last accepted value of each counter.
-The gate FAILS when any counter is above its baseline and names the files that carry the
-excess. `--update` writes the current values after a PASS, so the baseline only ever moves
-down by itself; raising a value is a hand edit of the JSON, made in the commit that needs it,
-where a reviewer sees it.
+The gate FAILS when a RULE counter is above its baseline and names the files that carry the
+excess; the three VOLUME counters (`md.lines`, `src.comment_lines`, `src.comment_permille`) are
+measured and reported but not compared, so an added sentence or a permitted comment block does
+not fail a push. `--update` writes the current values after a PASS, so the baseline only moves
+down by itself; a counter that has no baseline fails until it is added by hand in the commit
+that needs it, where a reviewer sees it; raising a value is the same hand edit.
 
     python tools/docs/public_prose_gate.py              # PASS/FAIL against the baseline
     python tools/docs/public_prose_gate.py --report     # every counter, baseline, and top files
@@ -25,6 +27,7 @@ import os
 import re
 import subprocess
 import sys
+from urllib.parse import unquote
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
@@ -35,6 +38,7 @@ SRC_ROOTS = ("src/votv-coop/src/", "src/votv-coop/include/")
 SRC_EXT = (".cpp", ".h", ".inc")
 MD_HARD_CAP = 600
 HALF_COMMENT_MIN_LINES = 300
+INFORMATIONAL = ("md.lines", "src.comment_lines", "src.comment_permille")   # reported, never compared
 
 CYRILLIC = re.compile("[" + chr(0x0400) + "-" + chr(0x04FF) + "]")
 DATE = re.compile(r"\b20\d\d-\d\d-\d\d\b")
@@ -67,10 +71,13 @@ def git(args, cwd):
 
 
 def tracked(repo):
-    """-> (files, submodule paths). A link into a submodule is live: its content is public too."""
-    out = git(["ls-files", "-s"], repo)
+    """-> (files, submodule paths). A link into a submodule is live: its content is public too.
+    NUL-separated so a non-ASCII path arrives unquoted."""
+    out = git(["ls-files", "-s", "-z"], repo)
     files, subs = [], []
-    for line in out.splitlines():
+    for line in out.split("\0"):
+        if not line:
+            continue
         mode, rest = line.split(" ", 1)
         path = rest.split("\t", 1)[1]
         (subs if mode == "160000" else files).append(path)
@@ -129,6 +136,8 @@ def comment_lines(text):
                     continue
                 if c == q:
                     q = None
+            elif c == "'" and i > 0 and s[i - 1].isdigit() and i + 1 < n and s[i + 1].isdigit():
+                pass                                    # a digit separator, not a quote
             elif c in "\"'":
                 q = c
             elif s.startswith("//", i):
@@ -160,21 +169,31 @@ def measure(repo):
         text = read(repo, p)
         if text is None:
             continue
-        lines = text.split("\n")
+        lines = text.splitlines()
         c["md.lines"] += len(lines)
         who["md.lines"][p] = len(lines)
         if len(lines) > MD_HARD_CAP:
             c["md.over_%d" % MD_HARD_CAP] += 1
             who["md.over_%d" % MD_HARD_CAP][p] = len(lines)
         base = os.path.dirname(p)
+        fenced = False
         for line in lines:
+            if line.lstrip().startswith("```"):
+                fenced = not fenced
+                continue
+            if fenced:
+                continue
             for k, (rx, _) in LINE_MARKERS.items():
                 if rx.search(line):
                     c["md." + k] += 1
                     who["md." + k][p] += 1
             for m in LINK.finditer(line):
-                target = m.group(1)
-                if re.match(r"^[a-z]+:", target) or target.startswith("/"):
+                target = unquote(m.group(1))
+                if re.match(r"^[a-z]+:", target, re.I) or target.startswith("/"):
+                    continue
+                if "\\" in target:                       # a backslash path is dead on Linux
+                    c["md.dead_links"] += 1
+                    who["md.dead_links"][p] += 1
                     continue
                 rel = os.path.normpath(os.path.join(base, target)).replace("\\", "/")
                 if rel in tracked_set or any(t.startswith(rel + "/") for t in tracked_set) \
@@ -192,8 +211,6 @@ def measure(repo):
     c["src.comment_lines"] = 0
     code_total = 0
     for k in list(LINE_MARKERS) + list(SRC_EXTRA):
-        if k.startswith("ptr_") and k != "ptr_memory" and k != "ptr_research" and k != "ptr_claude":
-            continue
         c["src.comment_" + k] = 0
     c["src.files_half_comment"] = 0
     c["src.comment_blocks_over_%d" % LONG_COMMENT_BLOCK] = 0
@@ -231,7 +248,8 @@ def load_baseline(path):
 def save_baseline(path, counters, repo):
     sha = git(["rev-parse", "--short", "HEAD"], repo).strip()
     with io.open(path, "w", encoding="utf-8", newline="\n") as f:
-        json.dump({"as_of": sha, "counters": counters}, f, indent=1)
+        json.dump({"as_of": sha, "note": "measured on the working tree; as_of is HEAD at that moment",
+                   "counters": counters}, f, indent=1)
         f.write("\n")
 
 
@@ -266,10 +284,19 @@ def main():
     ap.add_argument("--report", action="store_true")
     ap.add_argument("--update", action="store_true", help="after a PASS, ratchet the baseline down")
     ap.add_argument("--init", action="store_true", help="write the baseline from the current tree")
+    ap.add_argument("--force", action="store_true", help="with --init: overwrite an existing baseline")
     ap.add_argument("--top", type=int, default=5)
     a = ap.parse_args()
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
     counters, who = measure(a.repo)
     if a.init:
+        if os.path.isfile(a.baseline) and not a.force:
+            print("public_prose_gate: FAIL -- a baseline exists at {}; --init --force overwrites it "
+                  "(that can raise values silently, so say why in the commit)".format(a.baseline))
+            return 1
         save_baseline(a.baseline, counters, a.repo)
         print("public_prose_gate: baseline written ({} counters)".format(len(counters)))
         return 0
@@ -279,7 +306,10 @@ def main():
         return 1
     bc = base.get("counters", {})
     fails = []
+    added = [k for k in counters if k not in bc and k not in INFORMATIONAL]
     for k, v in counters.items():
+        if k in INFORMATIONAL:
+            continue
         b = bc.get(k)
         if b is not None and v > b:
             fails.append((k, b, v))
@@ -287,17 +317,22 @@ def main():
         print("{:<28} {:>8} {:>8}  {}".format("counter", "baseline", "now", "what"))
         for k, v in counters.items():
             b = bc.get(k, "-")
-            flag = "  <-- GREW" if (isinstance(b, int) and v > b) else ""
+            flag = "  <-- GREW" if (isinstance(b, int) and v > b and k not in INFORMATIONAL) else (
+                "  (informational)" if k in INFORMATIONAL else ("  <-- NO BASELINE" if k in added else ""))
             print("{:<28} {:>8} {:>8}  {}{}".format(k, b, v, describe(k), flag))
             if a.report or flag:
                 for p, n in who[k].most_common(a.top):
                     print("{:<28} {:>8} {:>8}    {} ({})".format("", "", "", p, n))
+    if added:
+        print("public_prose_gate: FAIL -- {} counter(s) with no baseline: {} -- add them to {} by hand "
+              "in the commit that introduces them".format(len(added), ", ".join(added), os.path.basename(a.baseline)))
+        return 1
     if fails:
         print("public_prose_gate: FAIL -- {} counter(s) above the baseline: {}".format(
             len(fails), ", ".join("{} {}->{}".format(k, b, v) for k, b, v in fails)))
         return 1
     if a.update:
-        lowered = [k for k, v in counters.items() if k in bc and v < bc[k]]
+        lowered = [k for k, v in counters.items() if k in bc and v < bc[k] and k not in INFORMATIONAL]
         save_baseline(a.baseline, counters, a.repo)
         print("public_prose_gate: PASS -- baseline updated ({} lowered: {})".format(
             len(lowered), ", ".join(lowered) or "none"))

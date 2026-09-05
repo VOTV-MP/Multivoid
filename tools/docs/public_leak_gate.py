@@ -180,8 +180,8 @@ def unpublished_lines(repo=REPO):
     points only; the sibling that needed it got nothing (round 7 Q2).
     """
     import glob as _glob
-    mem = os.environ.get("MULTIVOID_MEMORY_DIR", "") or os.path.join(
-        os.path.expanduser("~"), ".claude", "projects", "D--Projects-Programming-VOTV-MP", "memory")
+    mem = os.path.normpath(os.environ.get("MULTIVOID_MEMORY_DIR", "") or os.path.join(
+        os.path.expanduser("~"), ".claude", "projects", "D--Projects-Programming-VOTV-MP", "memory"))
     if not os.path.isdir(mem):
         return None
     out = {}                     # normalised line -> the first unpublished file it was read from
@@ -209,7 +209,13 @@ def unpublished_lines(repo=REPO):
         if not os.path.isfile(p):
             continue
         # the memory directory may sit on another drive, where relpath has no answer
-        label = ("memory/" + os.path.basename(p)) if os.path.dirname(p) == mem             else os.path.relpath(p, repo).replace(os.sep, "/")
+        if os.path.normpath(os.path.dirname(p)) == mem:
+            label = "memory/" + os.path.basename(p)
+        else:
+            try:
+                label = os.path.relpath(p, repo).replace(os.sep, "/")
+            except ValueError:                      # another drive: relpath has no answer
+                label = p
         for line in io.open(p, encoding="utf-8", errors="replace").read().split(chr(10)):
             n = _norm(line)
             if len(n) >= OVERLAP_MIN:
@@ -260,6 +266,10 @@ def overlap_count(repo=REPO):
 
 
 def main(argv=None):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
     ap = argparse.ArgumentParser(description=__doc__.split(chr(10) + chr(10))[0])
     ap.add_argument("--repo", default=REPO)
     ap.add_argument("--ack", default=ACK)
