@@ -1,4 +1,6 @@
-// ue_wrap/prop.cpp -- Aprop_C accessors (Stage 2 implementation).
+// ue_wrap/actors/prop.cpp -- the prop accessors: class tests for the prop and pile lineages,
+// keys, the save-parity fields, the chip type, mesh and physics reads, and the GUObjectArray
+// finders. See ue_wrap/actors/prop.h.
 
 #include "ue_wrap/actors/prop.h"
 
@@ -8,7 +10,7 @@
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
-#include "ue_wrap/desk/tape_caddy.h"  // v114 (L7): the reel save-scalar (Progress) reader/writer
+#include "ue_wrap/desk/tape_caddy.h"  // the reel Progress reader and writer
 
 #include <atomic>
 #include <cmath>
@@ -22,16 +24,11 @@ namespace {
 namespace P = profile;
 namespace R = reflection;
 
-// Cached prop_C UClass -- one-shot reflection lookup, re-validated via IsLive
-// each call. A full level unload + reload could either (a) keep the same
-// UClass live (typical for cooked-content classes), (b) destroy it and
-// re-create with a different address, or (c) destroy it and reuse the address
-// for another object. The IsLive check covers (b) and partially (c): when the
-// slot's InternalIndex no longer matches the cached pointer, IsLive returns
-// false and we re-resolve. NOT thread-safe to WRITE; readers run on the game
-// thread (the only write site is PropBaseClass itself, called only on the
-// game thread by the observer / autonomous-test paths).
-ue_wrap::CachedObjRef g_propBaseCls;  // islive-zeroav row :36
+// The prop base UClass, resolved once and re-validated through the cached reference on each
+// call: a level reload can keep the class, destroy and re-create it elsewhere, or reuse the
+// address, and the liveness check covers the last two. Written only on the game thread, by
+// PropBaseClass itself.
+ue_wrap::CachedObjRef g_propBaseCls;
 
 void* PropBaseClass() {
     if (g_propBaseCls.Alive()) return g_propBaseCls.Raw();
@@ -39,8 +36,7 @@ void* PropBaseClass() {
     return g_propBaseCls.Raw();
 }
 
-// Read raw bytes at offset; small helpers so the field offsets are the only
-// thing the code references (matches the existing engine.cpp pattern).
+// Raw reads at an offset, so the field offsets are the only thing the code references.
 template <typename T>
 inline T ReadField(void* base, size_t off) {
     return *reinterpret_cast<T*>(reinterpret_cast<uint8_t*>(base) + off);
@@ -58,9 +54,8 @@ bool IsClassDescendantOfProp(void* cls) {
     if (!cls) return false;
     void* base = PropBaseClass();
     if (!base) return false;
-    // Walk SuperStruct chain. ~16 hops covers the deepest VOTV BP class
-    // chain; UE4's own SCENE_COMPONENT_BASE inheritance is shallower. The
-    // base prop_C itself counts (cls == base on the first compare).
+    // The SuperStruct chain; 16 hops covers the deepest VOTV blueprint chain, and the base itself
+    // counts.
     for (int hops = 0; hops < 16 && cls; ++hops) {
         if (cls == base) return true;
         cls = *reinterpret_cast<void**>(
@@ -69,30 +64,20 @@ bool IsClassDescendantOfProp(void* cls) {
     return false;
 }
 
-// ---- IsKeyedInteractable -----------------------------------------------
-//
-// The non-Aprop_C "prop-shaped" interactable bases (RE 2026-05-27). We cache
-// the 3 UClass pointers lazily; SuperStruct walk handles their subclass
-// variants (_erie / _leaves / _wetConcrete).
+// IsKeyedInteractable: the non-prop interactable bases (the trash pile, the garbage clump, the
+// chip pile). The three class pointers are cached lazily, and the SuperStruct walk covers their
+// subclass variants.
 
 namespace {
-// Per-class sticky resolution. Each pointer is set ONCE on first successful
-// FindClass and never re-walked. The std::atomic<void*> protects against
-// parallel-anim worker threads that can call IsKeyedInteractable concurrently
-// with the harness pump (audit Finding 1, 2026-05-27).
-//
-// Without per-class stickiness the previous code re-walked GUObjectArray
-// 3x on every call until ALL three classes were live -- if even one class
-// failed to load (e.g. cooked content not yet streamed in), the 125 Hz
-// PropPose-emit hot path would burn ~89M wstring allocations per second,
-// reproducing the bomb that took 19 GB RSS in the retired non_prop_entity
-// pipeline.
+// Per-class sticky resolution: each pointer is set once on the first successful FindClass and
+// never re-walked. Atomics, since observers on parallel-anim worker threads call
+// IsKeyedInteractable concurrently with the pump. Without stickiness a class that fails to load
+// would make every call on the pose-emit hot path re-walk the GUObjectArray.
 std::atomic<void*> g_trashBitsPileCls{nullptr};
 std::atomic<void*> g_garbageClumpCls{nullptr};
 std::atomic<void*> g_actorChipPileCls{nullptr};
-// Whole-set latch: once all 3 resolved we skip even the per-class atomic
-// loads on the hot path. Set once, never cleared (UClasses are process-
-// scoped; session boundary doesn't invalidate them).
+// The whole-set latch: once all three are resolved the hot path skips even the per-class loads.
+// Never cleared; UClasses are process-scoped.
 std::atomic<bool> g_extrasAllResolved{false};
 
 void ResolveExtraBases() {
@@ -100,11 +85,8 @@ void ResolveExtraBases() {
     void* trash = g_trashBitsPileCls.load(std::memory_order_acquire);
     void* clump = g_garbageClumpCls.load(std::memory_order_acquire);
     void* chip  = g_actorChipPileCls.load(std::memory_order_acquire);
-    // Only walk GUObjectArray for classes we haven't yet found. Once a
-    // pointer is in the atomic, we never re-walk -- even if R::IsLive
-    // returns false later (no level reload covers these BP classes in
-    // VOTV's current shape; on a hypothetical reload, the existing
-    // ClassOf-based gate paths will simply miss until next session).
+    // Only the classes not yet found are walked for. A stored pointer is never re-walked even if
+    // liveness later says otherwise; no level reload covers these classes.
     if (!trash) {
         trash = R::FindClass(L"trashBitsPile_C");
         if (trash) g_trashBitsPileCls.store(trash, std::memory_order_release);
@@ -122,9 +104,8 @@ void ResolveExtraBases() {
     }
 }
 
-// Read-only accessors used by IsClassKeyedInteractable + GetInteractableKey.
-// Aactor_save_C -- the base that OWNS the `key` field GetActorSaveKeyString reads. Resolved
-// on demand and cached; a null result just means "not resolvable yet", never "no key".
+// The actor_save base that owns the key field GetActorSaveKeyString reads, resolved on demand
+// and cached; null means not resolvable yet, never no key.
 std::atomic<void*> g_actorSaveCls{nullptr};
 inline void* ActorSaveCls() {
     void* c = g_actorSaveCls.load(std::memory_order_acquire);
@@ -141,9 +122,8 @@ inline void* ActorChipPileCls() { return g_actorChipPileCls.load(std::memory_ord
 
 }  // namespace
 
-// Promoted out of the anonymous namespace 2026-07-22 (declared in prop.h) so
-// coop/props/container_contents_sync can test prop_container_C descent -- RULE 2, one
-// SuperStruct walk in the tree. Body unchanged.
+// Declared in prop.h so container_contents_sync can test container descent with the tree's one
+// SuperStruct walk.
 bool WalksToBase(void* cls, void* base) {
     if (!cls || !base) return false;
     for (int hops = 0; hops < 16 && cls; ++hops) {
@@ -187,19 +167,18 @@ bool IsTrashBitsPile(void* obj) {
 }
 
 bool EnsureTrashBitsPileResolved() {
-    // R-2 audit W-1 (see prop.h): one resolve attempt per call; cheap once latched.
+    // One resolve attempt per call; cheap once latched.
     ResolveExtraBases();
     return TrashBitsPileCls() != nullptr;
 }
 
 bool EnsurePropBaseResolved() {
-    // R-2b (see prop.h): the reseed hub consumer's EnsureResolved.
+    // The reseed hub consumer's resolve.
     return PropBaseClass() != nullptr;
 }
 
-// AtrashBitsPile_C collect counters (v57 trash_pile_sync). Raw int32 fields per
-// the CXX dump: amountA @0x0260, amountB @0x0264 (the displayed "uses" count is
-// their SUM, formatted live by lookAt -- no refresh verb exists or is needed).
+// The trash pile's collect counters, raw int32 fields per the header dump; the displayed uses
+// count is their sum, formatted live by the look-at, so no refresh verb is needed.
 bool ReadTrashPileAmounts(void* actor, int32_t& a, int32_t& b) {
     if (!actor || !IsTrashBitsPile(actor)) return false;
     const uint8_t* base = reinterpret_cast<const uint8_t*>(actor);
@@ -216,26 +195,15 @@ bool WriteTrashPileAmounts(void* actor, int32_t a, int32_t b) {
     return true;
 }
 
-// (IsRngDivergentClass + ResolveRngDivergentBases + the mushroom class slot
-// were RETIRED 2026-06-10, Fork B 2e: the adoption sweep's universe is now
-// IsClassKeyedInteractable + the keyless chipPile lineage -- the same
-// predicate the host snapshot expresses -- so the separate 4-class
-// "RNG-divergent" notion is gone. RULE 2: deleted fully.)
-
-// ---- GetInteractableKey ------------------------------------------------
-//
-// Aprop_C: direct field @0x02E0.
-// AtrashBitsPile_C (Aactor_save_C lineage): direct field @0x0230.
-// chipPile/clump (no native Key field per CXX dump): dispatch BP UFunction
-//   GetKey(FName& out) via ProcessEvent. Cached per UClass.
+// GetInteractableKey: a prop's key is a direct field, a trash pile's is the actor_save key
+// field, and a chip pile's or clump's comes from the GetKey blueprint function through
+// ProcessEvent, cached per class.
 
 namespace {
 constexpr size_t kAactorSaveKeyOff = 0x0230;
 
-// Per-class GetKey UFunction cache. game-thread mutated; observers that
-// call us from a parallel-anim worker would race -- protect with atomic
-// snapshot via the unordered_map's internal coherence isn't enough. Use
-// a mutex; lookups are infrequent (per-spawn / per-destroy of these classes).
+// The per-class GetKey cache, under a mutex: observers on a parallel-anim worker would race the
+// game thread, and lookups are per spawn or destroy.
 std::mutex g_getKeyFnMutex;
 std::unordered_map<void*, void*> g_getKeyFnByClass;  // UClass* -> UFunction*
 
@@ -264,13 +232,13 @@ R::FName GetInteractableKey(void* obj) {
     if (IsDescendantOfProp(obj)) {
         return ReadField<R::FName>(obj, P::off::Aprop_Key);
     }
-    // trashBitsPile (Aactor_save_C lineage) -- direct field
+    // The trash pile: a direct field.
     ResolveExtraBases();
     void* cls = R::ClassOf(obj);
     if (WalksToBase(cls, TrashBitsPileCls())) {
         return ReadField<R::FName>(obj, kAactorSaveKeyOff);
     }
-    // chipPile / clump -- BP UFunction dispatch
+    // The chip pile and the clump: the blueprint function.
     if (WalksToBase(cls, GarbageClumpCls()) || WalksToBase(cls, ActorChipPileCls())) {
         return CallGetKeyUFunction(obj);
     }
@@ -333,8 +301,8 @@ bool IsSleeping(void* prop) {
 }
 
 std::wstring GetPropNameString(void* prop) {
-    // Internal lineage gate (mirrors GetStaticMesh below): Name@0x0258 is a
-    // stray byte on non-Aprop_C keyed interactables.
+    // The lineage gate, as in GetStaticMesh: the Name offset is a stray byte on a non-prop keyed
+    // interactable.
     if (!prop || !IsDescendantOfProp(prop)) return {};
     return R::ToString(ReadField<R::FName>(prop, P::off::Aprop_Name));
 }
@@ -349,9 +317,8 @@ bool WriteSpParityIdentity(void* prop, R::FName nameRow,
                            bool frozen, bool sleep) {
     if (!prop || !IsDescendantOfProp(prop)) return false;
     auto* base = reinterpret_cast<uint8_t*>(prop);
-    // NAME_None means "wire carried no row" (e.g. a pre-v54 peer would, and a
-    // class whose CDO row is correct does) -- leave the CDO/default Name so
-    // init() still resolves SOMETHING rather than an empty row.
+    // NAME_None means the wire carried no row; the default Name stays, so init still resolves a
+    // row.
     if (nameRow.ComparisonIndex != 0) {
         *reinterpret_cast<R::FName*>(base + P::off::Aprop_Name) = nameRow;
     }
@@ -364,26 +331,20 @@ bool WriteSpParityIdentity(void* prop, R::FName nameRow,
 
 void* GetStaticMesh(void* prop) {
     if (!prop) return nullptr;
-    // Aprop_C ONLY. The fixed Aprop_StaticMesh offset (0x0238) is meaningless on
-    // a non-Aprop_C keyed interactable (garbageClump/chipPile keep their mesh at
-    // a DIFFERENT offset; 0x0238 is a stray byte there) -- reading it as a mesh
-    // pointer and running physics on it is the reverted-2a use-after-free
-    // ([[project-bug-trash-chippile-uaf-crash]]). Return null for non-Aprop_C so
-    // EVERY caller treats them as physics-free / kinematic. We deliberately do
-    // NOT resolve their real mesh per-class (that was 2a) -- these are transient
-    // self-morphing actors; driving them via physics frees-then-derefs.
+    // Props only: the static-mesh offset is meaningless on a non-prop keyed interactable (a clump
+    // or a chip pile keeps its mesh elsewhere, and the offset is a stray byte there), and running
+    // physics on that read is a use-after-free. Null for those, so every caller treats them as
+    // physics-free; their real mesh is deliberately not resolved per class, since they are
+    // transient self-morphing actors.
     if (!IsDescendantOfProp(prop)) return nullptr;
     return ReadField<void*>(prop, P::off::Aprop_StaticMesh);
 }
 
-// ---- chipType (trash variant) ------------------------------------------
-// Resolved via reflection, NOT a fixed offset: chipType lives at 0x0238 on the
-// chipPile/clump family but that SAME offset is StaticMesh on an Aprop_C, so a
-// fixed-offset write would corrupt an Aprop_C mesh pointer. FindPropertyOffset
-// returns -1 for any class lacking the property -> GetChipType returns 0 +
-// SetChipType no-ops -> safe on ANY actor. Per-class offset + setTex cached
-// (these run on the game thread from the spawn receiver / held-edge sender;
-// the mutex mirrors g_getKeyFnMutex's parallel-anim-worker safety).
+// The chip type, resolved through reflection rather than a fixed offset: it lives at the
+// offset that is the static mesh on a prop, so a fixed-offset write would corrupt a prop's mesh
+// pointer. FindPropertyOffset returns -1 for a class without the property, so GetChipType reads
+// 0 and SetChipType is a no-op on any other actor. The per-class offset and setTex are cached
+// under a mutex, as the GetKey cache is.
 namespace {
 std::mutex g_chipTypeMutex;
 std::unordered_map<void*, int32_t> g_chipTypeOffByClass;  // UClass* -> offset (-1 = none)
@@ -435,11 +396,9 @@ void SetChipType(void* actor, uint8_t chipType) {
     const int32_t off = ResolveChipTypeOffset(cls);
     if (off < 0) return;  // not a chip-type actor (Aprop_C etc.) -- 0x0238 is StaticMesh there
     *reinterpret_cast<uint8_t*>(reinterpret_cast<uint8_t*>(actor) + off) = chipType;
-    // Repaint from the new variant via the game's own setTex. VERIFIED bytecode
-    // (prop_garbageClump_C::setTex): SetMaterial(0, getChipPileType(chipType).GetMaterial(0))
-    // on the clump's FIXED dirtball mesh -- a per-chipType MATERIAL swap, NOT a mesh swap.
-    // (The proxy mirror replicates this directly in trash_proxy::SkinProxy.) No-op if the
-    // class has no setTex (chipPile sets its mesh = getChipPileType(chipType) elsewhere).
+    // Repaint from the new variant through the game's own setTex, which (per the clump blueprint)
+    // sets material 0 of the fixed dirtball mesh to the pile-type mesh's material: a material swap,
+    // not a mesh swap. A no-op for a class without setTex.
     if (void* fn = ResolveSetTexFn(cls)) {
         ue_wrap::ParamFrame f(fn);
         ue_wrap::Call(actor, f);
@@ -449,10 +408,9 @@ void SetChipType(void* actor, uint8_t chipType) {
 void SetChipTypeAndRebuild(void* actor, uint8_t chipType) {
     if (!actor) return;
     SetChipType(actor, chipType);  // write the enum byte (+ setTex for a clump; a no-op setTex for a pile)
-    // The pile builds its mesh in init() (getChipPileType(chipType) -> SetStaticMesh on both mesh
-    // components), NOT in setTex -- so a pile needs an explicit init() to re-skin from the new chipType.
-    // This mirrors loadData / loadPrimitiveData, which write chipType then call init(). No-op if the class
-    // has no init() (e.g. a clump, already repainted by setTex above).
+    // The pile builds its mesh in init, which sets the static mesh from the pile-type resolver, not
+    // in setTex, so a pile needs an explicit init to re-skin from the new chip type. A no-op for a
+    // class without init, such as a clump.
     if (void* fn = ResolveInitFn(R::ClassOf(actor))) {
         ue_wrap::ParamFrame f(fn);
         ue_wrap::Call(actor, f);
@@ -460,14 +418,10 @@ void SetChipTypeAndRebuild(void* actor, uint8_t chipType) {
 }
 
 void* ResolvePileMesh(uint8_t chipType, void* worldContext) {
-    // Ulib_getFunc_C::getChipPileType(Type, __WorldContext) -> UStaticMesh*: the
-    // game's OWN chipType -> pile-mesh resolver. The client computes the trash
-    // proxy's mesh EXACTLY as the game does (zero hardcoded asset paths; correct
-    // for all 14 chipType variants). Dispatched on the lib's CDO (a
-    // UBlueprintFunctionLibrary, so the call target is Default__lib_getFunc_C).
-    // Caches the last non-null result as a fallback so a transient null (a
-    // not-yet-streamed variant, or an out-of-range chipType) never leaves a proxy
-    // invisible. Game-thread only (dispatches a UFunction; static locals are GT-serial).
+    // The game's own chip-type-to-mesh resolver, getChipPileType on the function library's default
+    // object, so the client computes a trash proxy's mesh exactly as the game does, with no asset
+    // paths. The last non-null result is kept as a fallback, so a transient null (a variant not yet
+    // streamed, an out-of-range type) never leaves a proxy invisible. Game thread only.
     static void* sCdo = nullptr;
     static void* sFn = nullptr;
     static void* sLastGood = nullptr;
@@ -509,23 +463,18 @@ NearestResult FindNearest(const FVector& anchor, bool wantHeavy, ScanStats* outS
         void* obj = R::ObjectAt(i);
         if (!obj) continue;
         ++stats.totalScanned;
-        // Fast filter FIRST: super-chain walk is a few pointer compares with
-        // no allocation. Most of GUObjectArray (>99% of ~237k entries) isn't
-        // an Aprop_C derivative and shouldn't pay for a wstring allocation.
+        // The fast filter first: the super-chain walk is a few pointer compares with no allocation,
+        // and most of the GUObjectArray is not a prop derivative.
         if (!IsDescendantOfProp(obj)) continue;
-        // Now safe to allocate: skip CDOs (Default__<Class>) -- they have no
-        // world location and aren't grabbable instances. With the filter
-        // order above, this allocates only ~candidate count (~2k) wstrings
-        // instead of ~237k.
+        // Only candidates pay for the name string; CDOs have no world location and are not
+        // grabbable.
         const std::wstring nm = R::ToString(R::NameOf(obj));
         if (nm.rfind(L"Default__", 0) == 0) continue;
         ++stats.candidates;
         const bool heavy = IsHeavy(obj);
         if (heavy) ++stats.totalHeavy;
         if (wantHeavy && !heavy) continue;
-        // Read world location via the BP-callable K2_GetActorLocation (the
-        // generic AActor path; works for any subclass without per-prop
-        // logic).
+        // The location through the blueprint-callable getter, which works for any subclass.
         const FVector loc = engine::GetActorLocation(obj);
         const float dx = loc.X - anchor.X;
         const float dy = loc.Y - anchor.Y;
@@ -551,13 +500,11 @@ NearestResult FindNearest(const FVector& anchor, bool wantHeavy, ScanStats* outS
 
 namespace {
 
-// Cached UFunction resolutions for the host-side velocity capture. Resolved
-// lazily on first GetPhysicsVelocity call; both UFunctions are on
-// UPrimitiveComponent (engine-stable) so a single class lookup suffices. The
-// frame is a fixed 32 B (BoneName FName 8 + FVector ReturnValue 12 + pad);
-// kept inline with no allocation. Game-thread only.
+// The velocity capture's cached resolutions, on first call; both functions are on
+// UPrimitiveComponent, so one class lookup suffices. The frame is a fixed 32 bytes (the bone
+// name, the vector result, padding), inline. Game thread only.
 struct PrimVelocityResolved {
-    ue_wrap::CachedObjRef cls;     // UPrimitiveComponent UClass (islive-zeroav row :542)
+    ue_wrap::CachedObjRef cls;     // UPrimitiveComponent
     void*    getLinFn  = nullptr;
     void*    getAngFn  = nullptr;
     int32_t  linFrameSize = 0;
@@ -611,9 +558,8 @@ VelocityState GetPhysicsVelocity(void* prop) {
     void* mesh = GetStaticMesh(prop);
     if (!mesh) return out;
     if (!ResolvePrimVelocity()) return out;
-    // Linear -- 32-byte frame covers FName(8) + FVector(12) + padding.
-    // Loud warn on frame overflow so a silent-zero-velocity regression after a
-    // game update is diagnosable from the log (audit issue #5, 2026-05-24).
+    // Linear: the 32-byte frame covers the name, the vector and padding; a loud warning on
+    // overflow, so a silent zero velocity after a game update is diagnosable.
     unsigned char frameL[32] = {};
     if (g_pvr.linFrameSize > static_cast<int32_t>(sizeof(frameL))) {
         UE_LOGW("prop::GetPhysicsVelocity: linear frame size %d > 32 -- enlarge frameL buffer",
@@ -623,7 +569,7 @@ VelocityState GetPhysicsVelocity(void* prop) {
     *reinterpret_cast<R::FName*>(frameL + g_pvr.linBoneOff) = R::FName{0, 0};
     if (!R::CallFunction(mesh, g_pvr.getLinFn, frameL)) return out;
     out.linearCmS = *reinterpret_cast<FVector*>(frameL + g_pvr.linRetOff);
-    // Angular -- same shape, separate frame buffer.
+    // Angular: the same shape, a separate frame.
     unsigned char frameA[32] = {};
     if (g_pvr.angFrameSize > static_cast<int32_t>(sizeof(frameA))) {
         UE_LOGW("prop::GetPhysicsVelocity: angular frame size %d > 32 -- enlarge frameA buffer",
@@ -650,30 +596,22 @@ void* FindNearbySameClass(const std::wstring& className,
         void* obj = R::ObjectAt(i);
         if (!obj) continue;
         if (!IsDescendantOfProp(obj)) continue;
-        // Filter order (audit IMPORTANT-2 2026-05-24 + audit #5 2026-05-25):
-        // cheapest checks FIRST. IsLive is a pure flag read (FUObjectItem.
-        // Flags @ +0x08) -- cheaper than ClassNameOf which allocates a
-        // wstring per call. So: descendant -> IsLive -> CDO-name -> class-
-        // name. (FindByKeyString has a different ordering for a different
-        // reason -- it needs CDO/name first to skip stale dying-same-key
-        // matches; here we just want the cheapest filter first.)
+        // Cheapest checks first: IsLive is a flag read, cheaper than the class name, which
+        // allocates a string. So descendant, live, CDO name, class name. FindByKeyString orders
+        // differently because it needs the name first, to skip stale dying same-key matches.
         if (!R::IsLive(obj)) continue;
-        // CHILD-ACTOR EXCLUSION (2026-07-12, take-7 floating-CCTV RCA): a ChildActorComponent
-        // child (kerfur eye cam) never has independent cross-peer identity -- a wire spawn of a
-        // STANDALONE same-class prop (a user-placed camera) within 30 cm of a kerfur must not
-        // fuzzy-steal the kerfur's eye. Cheap 8-byte read, placed before the wstring allocs.
+        // A child-actor component's child (a kerfur's eye camera) never has independent cross-peer
+        // identity, so a wire spawn of a standalone same-class prop near a kerfur must not
+        // fuzzy-steal its eye. A cheap read, placed before the string allocations.
         if (engine::IsChildActor(obj)) continue;
         const std::wstring nm = R::ToString(R::NameOf(obj));
         if (nm.rfind(L"Default__", 0) == 0) continue;
-        // Class match (leaf name equality -- e.g. "Aprop_food_mushroom_C").
+        // Class match on the leaf name.
         if (R::ClassNameOf(obj) != className) continue;
-        // v54 identity gate: same CLASS is not same PROP for generic Aprop_C
-        // -- the list_props row `Name` is the identity (a 'cube' and a
-        // 'cubicleP_1' wall panel are both class prop_C). When the wire
-        // carries a row, require it to match, else two co-located DIFFERENT
-        // props would fuzzy-merge and the rekey would bind the wrong object.
-        // Empty expectedPropName = class-only match (pre-v54 sender / the
-        // caller had no row).
+        // Same class is not the same prop for a generic prop: the list-props row name is the
+        // identity (a cube and a wall panel are both prop_C). When the wire carries a row it must
+        // match, or two co-located different props would fuzzy-merge and the rekey would bind the
+        // wrong object; an empty expected name is a class-only match.
         if (!expectedPropName.empty() && GetPropNameString(obj) != expectedPropName) continue;
         const FVector loc = engine::GetActorLocation(obj);
         const float dx = loc.X - anchor.X;
@@ -697,13 +635,11 @@ void* FindNearestChipPile(const FVector& anchor, float radiusCm, float* outDist)
     for (int32_t i = 0; i < n; ++i) {
         void* obj = R::ObjectAt(i);
         if (!obj) continue;
-        // IsLive FIRST -- it reads only the GUObjectArray slot flags; ClassOf below
-        // dereferences obj's OWN memory, which a GC pass could have freed between the
-        // null check and here (AV on a dying actor). Matches FindNearbySameClass's order.
-        // (audit fix 2026-06-03, [[feedback-islive-unsafe-on-freed-cached-pointer]])
+        // IsLive first: it reads only the array slot flags, while ClassOf dereferences the object's
+        // own memory, which a GC pass could have freed since the null check.
         if (!R::IsLive(obj)) continue;
-        // chipPile family ONLY (NON-Aprop_C, so IsDescendantOfProp can't gate it).
-        // WalksToBase is a few pointer compares; cheaper than the wstring CDO check.
+        // The chip-pile family only, which the prop descendant test cannot gate; WalksToBase is a
+        // few pointer compares, cheaper than the CDO name check.
         if (!WalksToBase(R::ClassOf(obj), chipBase)) continue;
         const std::wstring nm = R::ToString(R::NameOf(obj));
         if (nm.rfind(L"Default__", 0) == 0) continue;  // skip CDOs
@@ -726,17 +662,14 @@ void* FindByKeyString(const std::wstring& keyString) {
     for (int32_t i = 0; i < n; ++i) {
         void* obj = R::ObjectAt(i);
         if (!obj) continue;
-        // Fast filter: descendant check before the string compare (string
-        // compare is more expensive than pointer chain walk).
+        // The descendant check before the string compare.
         if (!IsDescendantOfProp(obj)) continue;
         const std::wstring nm = R::ToString(R::NameOf(obj));
         if (nm.rfind(L"Default__", 0) == 0) continue;
         if (GetKeyString(obj) != keyString) continue;
-        // Liveness gate: reject PendingKill / Unreachable matches. UE4 keeps
-        // the dying actor in its GUObjectArray slot until GC purge -- without
-        // this check we can return the OLD instance after a level reload
-        // when the same Key is re-spawned on the fresh actor (same wire
-        // string, fresh memory). Caller wants the LIVE one only.
+        // The liveness gate: the engine keeps a dying actor in its array slot until the purge, so
+        // without it the old instance could be returned after a level reload, when the same key is
+        // re-spawned on a fresh actor.
         if (!R::IsLive(obj)) continue;
         return obj;
     }
@@ -745,12 +678,11 @@ void* FindByKeyString(const std::wstring& keyString) {
 
 namespace {
 
-// Resolved once on first call: the UPrimitiveComponent UClass + the
-// SetCollisionEnabled UFunction + its NewType param offset + frame size.
-// SetCollisionEnabled is a native UFunction on UPrimitiveComponent (engine-
-// stable across UE4.27); no BP override path to consider. Game-thread only.
+// Resolved once: the UPrimitiveComponent class, the SetCollisionEnabled function, its NewType
+// offset and frame size. A native engine function, with no blueprint override to consider. Game
+// thread only.
 struct SetCollisionEnabledResolved {
-    ue_wrap::CachedObjRef cls;  // islive-zeroav row :730
+    ue_wrap::CachedObjRef cls;  // UPrimitiveComponent
     void*   fn            = nullptr;
     int32_t frameSize     = 0;
     int32_t newTypeOff    = -1;
@@ -791,15 +723,11 @@ bool ForceRestoreDefaultCollision(void* prop) {
     void* mesh = GetStaticMesh(prop);
     if (!mesh) return false;
     if (!ResolveSetCollisionEnabled()) return false;
-    // Frame: ECollisionEnabled::Type at `newTypeOff`. The enum is a uint8;
-    // values:
-    //   0 NoCollision, 1 QueryOnly, 2 PhysicsOnly, 3 QueryAndPhysics,
-    //   4 ProbeOnly, 5 QueryAndProbe.
-    // 3 == QueryAndPhysics, the default for movable physics props
-    // (mushroom_C, container_C, etc.).
+    // The frame: the collision-enabled enum at the NewType offset, a byte: 0 NoCollision, 1
+    // QueryOnly, 2 PhysicsOnly, 3 QueryAndPhysics, 4 ProbeOnly, 5 QueryAndProbe. 3 is the default
+    // for a movable physics prop.
     constexpr uint8_t kQueryAndPhysics = 3;
-    // 16 bytes is enough for a single uint8 param + padding. Loud-warn on
-    // overflow so a future UE update enlarging the frame is diagnosable.
+    // 16 bytes covers a single byte parameter plus padding; a loud warning on overflow.
     unsigned char frame[16] = {};
     if (g_sce.frameSize > static_cast<int32_t>(sizeof(frame))) {
         UE_LOGW("prop::ForceRestoreDefaultCollision: frame size %d > 16 -- enlarge buffer",
@@ -814,12 +742,12 @@ bool ForceRestoreDefaultCollision(void* prop) {
     return true;
 }
 
-// --- v114 (L7): the save-scalar birth channel (see prop.h) -------------------
+// The save-scalar birth channel (see prop.h).
 
 bool ReadSavedScalarForClass(void* actor, float& out) {
     if (!actor) return false;
-    // Reel lineage (Aprop_reel_C declares Progress). tape_caddy resolves lazily;
-    // an unresolved state (classes not loaded) just reads as "no scalar".
+    // The reel lineage declares Progress; tape_caddy resolves lazily, and an unresolved state
+    // reads as no scalar.
     if (!ue_wrap::tape_caddy::EnsureResolved()) return false;
     if (!ue_wrap::tape_caddy::IsReelClass(R::ClassOf(actor))) return false;
     return ue_wrap::tape_caddy::ReadProgress(actor, out);
