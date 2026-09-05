@@ -1,8 +1,8 @@
-// ui/host_session_settings.cpp -- see ui/host_session_settings.h for WHY this is its own
-// window rather than three more rows on the hosting one.
+// ui/host_session_settings.cpp -- see ui/host_session_settings.h for why this is its own window
+// rather than three more rows on the hosting one.
 //
-// Built on ui/native_screen's kit and shaped after its two siblings in the same switcher.
-// Where a construction fact is measured it lives in the kit's header and is not repeated.
+// Built on ui/native_screen's kit and shaped after its two siblings in the same switcher. Where a
+// construction fact is measured it lives in the kit's header and is not repeated.
 
 #include "ui/host_session_settings.h"
 
@@ -47,45 +47,30 @@ namespace HC = ui::host_session_choices;
 using ue_wrap::FLinearColor;
 
 // ---- layout --------------------------------------------------------------------------
-// THE SAME WIDTH AS STEP ONE, on purpose: the player advances from one window to the next
-// and a frame that changes size under them reads as a different program rather than as the
-// next page. Shorter, because there is less to decide here.
+// The same width as step one, on purpose: the player advances from one window to the next, and
+// a frame that changes size under them reads as a different program rather than as the next
+// page. Shorter, because there is less to decide here.
 constexpr float kWindowW  = 980.f;
-// 470, and the number is the ONE deliberate compromise in this layout. The window keeps a
-// CONSTANT height across both lock states rather than shrinking when the password block
-// collapses -- a window that resizes as you click inside it is worse to use than one with
-// space in it, and the browser's details panel records the same call. So this is sized for
-// the LOCKED state (its hint line is the tallest content) and the unlocked state carries
-// the difference as slack above the footer. Measured from the two captures, 2026-08-31:
-// 520 left ~66 px of slack locked and ~170 unlocked, which read as a hole.
-//
-// 2026-09-01: +140 for the VISIBILITY selector (user: "при создании сервера игрокам
-// хостерам дать настройку сразу из тильды -- галочку на показывать или нет ваш сервер в
-// списке"). It is sized in rather than collapsed per connection mode, because the mode is
-// chosen in the PREVIOUS window and cannot change while this one is open -- so a
-// mode-dependent height would not be the window resizing under a click, but it would be
-// two layouts to keep true instead of one, for a hole the spacer already absorbs.
-//
-// 610 WAS TOO SMALL AND IT WAS SHIPPED. `[V]` measured by `ReportFit` on the deployed build,
-// 2026-09-01: AUTO+unlocked left 4 px of slack and AUTO+LOCKED put the footer **28 screen px
-// OUTSIDE the frame** (frame ends 1025, Host button ends 1053, at ui.scale 1.25 -> ~23
-// logical px). That is the defect the sibling window shipped twice, and two independent
-// post-ship audits predicted it from the arithmetic before the probe confirmed it.
-//
-// 690 = 610 + 23 (the measured deficit) + ~57 of margin. The margin is not padding for its
-// own sake: the tallest cell's hint AUTO-WRAPS, so its height is a function of the font and
-// the string, and a value that merely just fits today breaks on the next wording edit. The
-// probe below now guards the number -- it logs an ERROR the moment any cell overflows again.
+// The window keeps one height across both lock states rather than shrinking when the password
+// block collapses: a window that resizes as you click inside it is worse to use than one with
+// space in it (the browser's details panel makes the same call). It is sized for the locked
+// state, whose hint line is the tallest content, and the unlocked state carries the difference
+// as slack above the footer. The visibility selector is sized in rather than collapsed per
+// connection mode: the mode is chosen in the previous window and cannot change while this one
+// is open, so a mode-dependent height would be two layouts to keep true for a hole the spacer
+// already absorbs. The number carries about 57 px of margin over the measured need, because
+// the tallest cell's hint auto-wraps and its height is a function of the font and the string;
+// ReportFit logs an error the moment any cell overflows.
 constexpr float kWindowH  = 690.f;
 constexpr float kRowH     = 56.f;
 constexpr float kBorderPx = 2.f;
 constexpr float kPadPx    = 6.f;
 constexpr float kFieldW   = 420.f;
-// THE SERVER NAME'S BOUND, in BYTES because that is what the field counts and what travels.
-// The derived default is "<nick>'s game" and a nick is capped at 20 CODEPOINTS, so a typed
-// name gets comfortably more room than the autofill it replaces while staying a name rather
-// than a paragraph: the browser draws it in one row, and the master stores it. 96 bytes is
-// 24 codepoints at the 4-byte worst case and ~96 in plain Latin.
+// The server name's bound, in bytes, because that is what the field counts and what travels.
+// The derived default is "<nick>'s game" and a nick is capped at 20 codepoints, so a typed name
+// gets comfortably more room than the autofill it replaces while staying a name rather than a
+// paragraph: the browser draws it in one row, and the master stores it. 96 bytes is 24
+// codepoints at the 4-byte worst case and about 96 in plain Latin.
 constexpr int32_t kNameMaxBytes = 96;
 
 const FLinearColor kPanel  = NS::Panel();
@@ -99,11 +84,10 @@ const FLinearColor kBad    = NS::Bad();
 const FLinearColor kAmber  = NS::Amber();   // the DIRECT/LAN caveat on the hint line
 
 // ---- the two answers to the one question ----------------------------------------------
-// The wording is the product surface and is fixed ONCE here. Each line says what the choice
-// COSTS, because "Locked / Unlocked" alone asks the player to guess which one is which.
-// TYPED AS THE SELECTOR'S OWN `Answer`, not as a look-alike struct: two identical shapes
-// that must stay in step are one shape with two names, and the compiler cannot tell you
-// when they drift.
+// The wording is the product surface and is fixed once here. Each line says what the choice
+// costs, because "Locked / Unlocked" alone asks the player to guess which is which. Typed as
+// the selector's own `Answer`, not a look-alike struct: two identical shapes that must stay in
+// step are one shape with two names, and the compiler cannot say when they drift.
 constexpr HC::Answer kWho[2] = {
     {L"Anyone can join",
      L"Your session is open to everyone who finds it."},
@@ -111,29 +95,21 @@ constexpr HC::Answer kWho[2] = {
      L"Only players you give the password to."},
 };
 
-// ---- and the second question: can anyone FIND it -----------------------------------------
-//
-// THE SAME CONTROL AS THE ~ MENU'S "Show in server browser", moved to where the decision is
-// actually made. Until now the native hosting window passed `hideFromBrowser=false` as a
-// hardcoded literal, so a host had no say at creation at all and could only un-list AFTER
-// the announce had already gone out -- with their address in it. The ImGui fallback had a
-// checkbox the native default surface did not.
-//
-// POSITIVE POLARITY, matching the ~ menu. The ImGui window words it as "Hide from server
-// browser"; two surfaces for one decision that read opposite ways is how a player ends up
-// certain they set it and wrong about which way.
-//
-// IT IS NOT EDITABLE IN EVERY MODE, and the rows say so rather than disappearing:
-//   AUTOMATIC -- always listed. The master is a relay game's ONLY rendezvous, so a hidden
-//                one is unjoinable by anyone (design call 2026-06-11). Offering the choice
-//                here would be offering a footgun; the ~ menu is where it becomes
-//                legitimate, once friends are already in.
-//   DIRECT    -- the real choice, and the reason this control exists. Choosing "Hidden"
-//                here is what the retired "LAN ONLY" mode used to mean, minus the accept
-//                filter that did the router's job (coop/session/host_mode.h).
-// So the selector always states the TRUTH about what will happen, and only DIRECT lets you
-// move it. That is why these are rows and not a checkbox: a checkbox has no way to be
-// truthful and unavailable at the same time.
+// ---- and the second question: can anyone find it -----------------------------------------
+// The same control as the ~ menu's "Show in server browser", at the point where the decision is
+// made: a host decides listing at creation, before the announce with their address goes out.
+// Positive polarity, matching the ~ menu; two surfaces for one decision that read opposite ways
+// is how a player ends up certain they set it and wrong about which way.
+// It is not editable in every mode, and the rows say so rather than disappearing:
+//   AUTOMATIC  always listed. The master is a relay game's only rendezvous, so a hidden one is
+//              unjoinable by anyone; the ~ menu is where un-listing becomes legitimate, once
+//              friends are already in.
+//   DIRECT     the real choice, and the reason this control exists. "Hidden" here means what
+//              a LAN-only mode would mean, minus an accept filter doing the router's job
+//              (coop/session/host_mode.h).
+// So the selector always states the truth about what will happen, and only DIRECT lets you
+// move it. That is why these are rows and not a checkbox: a checkbox cannot be truthful and
+// unavailable at the same time.
 constexpr HC::Answer kVis[2] = {
     {L"Show in server browser",
      L"Anyone can find your game in the list."},
@@ -142,42 +118,34 @@ constexpr HC::Answer kVis[2] = {
 };
 
 // ---- the generated password -----------------------------------------------------------
-//
-// THE ALPHABET HAS NO I, l, 1, O, 0. This value is read aloud over voice chat and typed
-// back by hand, so the characters that cost a retry are the ones that look like each other
-// in a UI font. Twenty-six letters minus I and O, ten digits minus 0 and 1, and lower case
-// dropped whole because "was that a capital?" is the same retry.
+// The alphabet has no I, l, 1, O or 0. The value is read aloud over voice chat and typed back by
+// hand, so the characters that cost a retry are the ones that look alike in a UI font:
+// twenty-six letters minus I and O, ten digits minus 0 and 1, and lower case dropped whole
+// because "was that a capital?" is the same retry.
 constexpr char kPwAlphabet[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 constexpr int  kPwAlphabetN  = 32;   // sizeof - 1, stated so the modulo claim below is checkable
-// SIX, at the user's instruction 2026-09-01 ("пароль такой длинный вообще не должен быть...
-// 6 символов норм"). It was ten.
-//
-// AND THE NUMBER CHANGES WHAT THE REST OF THE SYSTEM IS FOR, so it is written down here
-// rather than left as a length. 6 x log2(32) = 30 bits. Against PBKDF2-HMAC-SHA256 at
-// `lobby_password.h`'s 200 000 iterations that is ~2^30 x 4e5 hash ops ~= SIX GPU-HOURS to
-// exhaust; the ten-character value it replaces was ~714 GPU-YEARS. So a captured proof used
-// to be worthless by arithmetic alone, and now it is not.
-//
-// That is SAFE, but only because of something else: a proof is never sent to a host the
-// joiner has not BOUND to an identity it was given in advance (`peer_admission.cpp`, A65),
-// so no attacker gets a tag to grind in the first place. What changed is that the binding
-// gate is now LOAD-BEARING rather than belt-and-braces. Two consequences, and neither is
-// optional while this constant is 6:
-//   * the gate may not be relaxed "because the generated secret is strong" -- at 30 bits it
-//     is not, and the argument that held at 50 bits does not survive the shortening;
-//   * a lane with no advertised identity (a typed address) cannot be given a password
-//     escape hatch; it has to be given an IDENTITY instead.
+// Six characters, and the number decides what the rest of the system is for, so it is written
+// down here rather than left as a length. 6 x log2(32) = 30 bits. Against PBKDF2-HMAC-SHA256 at
+// `lobby_password.h`'s 200 000 iterations that is ~2^30 x 4e5 hash operations, about six
+// GPU-hours to exhaust, so a captured proof is not worthless by arithmetic alone.
+// That is safe only because of something else: a proof is sent only to a host the joiner has
+// bound to an identity it was given in advance, or to a destination the player typed themselves
+// (`peer_admission.cpp`), so a stranger who merely answers gets no tag to grind. Two
+// consequences while this constant is 6: the binding gate may not be relaxed "because the
+// generated secret is strong" (at 30 bits it is not), and the typed-address lane's honest price
+// is the typo case, a mistyped address answered by an unrelated host, which then learns a
+// six-character password to a lobby it cannot find.
 constexpr int  kPwLen        = 6;
 
 static_assert(sizeof(kPwAlphabet) - 1 == kPwAlphabetN, "the alphabet and its size must agree");
-// 256 % 32 == 0, so `byte % 32` is EXACTLY uniform and the usual rejection-sampling dance
-// is not merely skipped, it is unnecessary. This is the one arithmetic that makes modulo
-// safe here; a 33-character alphabet would silently bias the first character class.
+// 256 % 32 == 0, so `byte % 32` is exactly uniform and rejection sampling is not merely
+// skipped, it is unnecessary. This is the one arithmetic that makes the modulo safe; a
+// 33-character alphabet would silently bias the first character class.
 static_assert(256 % kPwAlphabetN == 0, "modulo would bias the alphabet");
 
-// Empty on failure -- and the caller must treat that as a REFUSAL, never as a reason to
-// reach for `rand()`. A predictable lobby password is worse than an open lobby, because the
-// padlock tells the host they are protected.
+// Empty on failure, and the caller must treat that as a refusal, never as a reason to reach for
+// `rand()`: a predictable lobby password is worse than an open lobby, because the padlock tells
+// the host they are protected.
 std::string GeneratePassword() {
     unsigned char raw[kPwLen];
     if (!coop::net::peer_identity::RandomBytes(raw, sizeof(raw))) {
@@ -191,7 +159,7 @@ std::string GeneratePassword() {
     return s;
 }
 
-// ---- state (GAME THREAD ONLY unless marked) ------------------------------------------
+// ---- state (game thread only unless marked) ------------------------------------------
 void* g_menu     = nullptr;
 void* g_switcher = nullptr;
 void* g_root     = nullptr;
@@ -204,15 +172,13 @@ void* g_pwBlock  = nullptr;   // the label + field + hint, shown only while lock
 void* g_pwHint   = nullptr;
 void* g_recapWorld = nullptr;
 void* g_recapConn  = nullptr;
-// THE QUESTIONS, each a `host_session_choices::Selector`. They were four widget arrays and
-// four loose ints until 2026-09-01; the third question (who may CONNECT) is what made a
-// third hand-copy indefensible. `chosen` carries the answer, so there are no parallel
-// booleans to keep in step with the widgets -- which is what `g_locked` and `g_listed` were.
+// The questions, each a `host_session_choices::Selector`. `chosen` carries the answer, so there
+// are no parallel booleans to keep in step with the widgets.
 HC::Selector g_who;   // 0 = anyone may join, 1 = a password is required
 HC::Selector g_vis;   // 0 = listed in the server browser, 1 = hidden
 
-// READ THROUGH THESE, never off `chosen` directly: the index-to-meaning mapping belongs in
-// one place, and every site that spelled it out was a site that could spell it backwards.
+// Read through these, never off `chosen` directly: the index-to-meaning mapping belongs in one
+// place.
 bool IsLocked() { return g_who.chosen == 1; }
 bool IsListed() { return g_vis.chosen == 0; }
 void* g_visHint     = nullptr;   // why the choice is fixed, on the modes where it is
@@ -220,10 +186,8 @@ void* g_visHint     = nullptr;   // why the choice is fixed, on the modes where 
 TF::Field* g_pwField   = nullptr;
 TF::Field* g_nameField = nullptr;   // the server name, editable here (see the recap block)
 
-// EVERY early return from the build past the first `TF::Create` comes through here. The
-// hand-written `TF::Release(g_pwField); g_pwField = nullptr;` pairs were already the source
-// of two shipped leaks -- one per audit, each on the one path whose author forgot them -- and
-// a second field would have doubled the sites that can forget. This makes the count one.
+// Every early return from the build past the first `TF::Create` comes through here, so a
+// release pair cannot be forgotten on one path: this makes the count one.
 void ReleaseFields() {
     TF::Release(g_nameField); g_nameField = nullptr;
     TF::Release(g_pwField);   g_pwField   = nullptr;
@@ -235,42 +199,33 @@ bool    g_shown      = false;
 int     g_buildAttempts = 0;
 bool    g_toldTheUser   = false;
 
-// WHAT STEP ONE DECIDED. Carried, never re-derived: there is exactly one place in the tree
-// that reads the save list and the connection rows, and it is the window the player just
-// used (see the header).
+// What step one decided. Carried, never re-derived: exactly one place in the tree reads the save
+// list and the connection rows, and it is the window the player just used (see the header).
 sm::SaveChoice g_choice;
 std::string    g_name;
 int            g_connMode = 0;
 
 
-// FOOTER-INSIDE-THE-FRAME MEASUREMENT (see ReportFit). Last reported overflow, so the line
-// is logged on CHANGE rather than per tick -- the value moves exactly twice per showing
+// The footer-inside-the-frame measurement (see ReportFit): the last reported overflow, so the
+// line is logged on change rather than per tick. The value moves exactly twice per showing
 // (layout settling, then the lock click), and both are the states worth seeing.
 float g_fitLast = -9999.f;
 
-// This window is fixed-height with every child Auto-sized and only a Spacer to absorb slack,
-// so content taller than `kWindowH` pushes the footer PAST the bottom edge -- and nothing
-// clips, so the buttons just render outside the ring. The sibling window shipped exactly that
-// twice (`host_window_native.cpp:57-72`) before it was given a Fill slot; this screen has no
-// shrinkable child, so its only defence is being tall enough. That is a NUMBER, so measure it
-// instead of eyeballing a screenshot.
-//
-// ON THE TICK, NOT IN `Show()`: on the frame the switcher index changes, Slate has not laid
-// the subtree out yet and every rect reads 0x0 -- the first version of this probe printed
-// `frame=0..0 footer=0..0` and would have been read as "no overflow".
-// THE MEASUREMENT IS EDGE-DRIVEN, NOT JUST THE LOG. Its first version gated only the
-// LOGGING and measured every tick -- six ProcessEvent dispatches and eight heap allocations
-// at the menu's ~117 Hz, for a value that can only move when the layout does. The call
-// site's own comment ("edge-logged; two lines per showing") was true of the lines and false
-// of the cost, which is the exact shape this file already documents twice elsewhere. The
-// The rects change on the lock toggle and on a fresh showing, and `g_fitDirty` is armed at
-// exactly those two. A first version of this sentence claimed a third ("on a rebuild") that
-// no line arms -- so a rebuild while the window is shown leaves the probe silent. Named
-// rather than fixed: a rebuild clears `g_root`, which closes the window on the same tick. (Post-ship perf audit, 2026-09-01.)
+// This window is fixed-height with every child auto-sized and only a Spacer to absorb slack, so
+// content taller than `kWindowH` pushes the footer past the bottom edge, and nothing clips: the
+// buttons render outside the ring. This screen has no shrinkable child, so its only defence is
+// being tall enough. That is a number, so it is measured instead of eyeballed.
+// On the tick, not in `Show()`: on the frame the switcher index changes, Slate has not laid the
+// subtree out yet and every rect reads 0x0, which would read as "no overflow".
+// Edge-driven, not just edge-logged: measuring every tick is six ProcessEvent dispatches and
+// eight heap allocations at the menu's ~117 Hz for a value that can only move when the layout
+// does. The rects change on the lock toggle and on a fresh showing, and `g_fitDirty` is armed at
+// exactly those two. A rebuild while the window is shown does not arm it: a rebuild clears
+// `g_root`, which closes the window on the same tick.
 bool g_fitDirty = true;
 
-// WHICH connection mode the visibility answer was chosen under. -1 = never chosen, so the
-// first Show() always derives. See Show() for why this exists rather than a plain reset.
+// Which connection mode the visibility answer was chosen under; -1 = never chosen, so the first
+// Show() always derives. See Show() for why this exists rather than a plain reset.
 int g_visModeWhenChosen = -1;
 
 void ReportFit() {
@@ -282,9 +237,9 @@ void ReportFit() {
     const float frameBottom  = rtl.Y + rsz.Y;
     const float footerBottom = btl.Y + bsz.Y;
     const float overflow     = footerBottom - frameBottom;
-    // Cleared only HERE, after both rects read non-degenerate: on the frame the switcher
-    // index changes Slate has not laid the subtree out and every rect is 0x0, so clearing on
-    // entry would consume the dirty flag on the one tick that cannot answer.
+    // Cleared only here, after both rects read non-degenerate: on the frame the switcher index
+    // changes Slate has not laid the subtree out and every rect is 0x0, so clearing on entry would
+    // consume the dirty flag on the one tick that cannot answer.
     g_fitDirty = false;
     if (g_fitLast > -9000.f && std::fabs(overflow - g_fitLast) < 1.f) return;
     g_fitLast = overflow;
@@ -299,60 +254,46 @@ void ReportFit() {
     }
 }
 
-// LISTED, and its default is per-MODE rather than a constant, because the honest default
-// differs: AUTOMATIC must be listed to be joinable at all, and DIRECT is the one where the
-// host actually chooses (defaulting to listed -- the behaviour every existing DIRECT host
-// already had, since the old hardcoded literal was `false`).
-//
-// THE THIRD MODE IS GONE (2026-09-01) AND SO IS ITS ROW HERE. "LAN ONLY" forced
-// `listed=false` and refused non-private remotes; the filter did the router's job and was
-// deleted, which left it identical to DIRECT + Hidden -- a value THIS selector already
-// expresses. So the mode that could not choose became the choice itself. See
-// coop/session/host_mode.h.
+// Listed by default in both modes: AUTOMATIC must be listed to be joinable at all, and DIRECT is
+// the one where the host chooses (defaulting to listed, the behaviour every DIRECT host has
+// always had). There is no third mode: a LAN-only mode that forced `listed=false` and refused
+// non-private remotes is identical to DIRECT + Hidden, a value this selector already expresses,
+// so the mode that could not choose became the choice itself. See coop/session/host_mode.h.
 
-// Can this connection mode's visibility be moved at all? DIRECT only -- see kVis.
+// Can this connection mode's visibility be moved at all? DIRECT only; see kVis.
 bool VisibilityIsEditable() { return g_connMode == 1; }
 
-// `ListedForMode` IS GONE, and its deletion is part of the same removal. It existed to say
-// that LAN ONLY could never be listed; with that mode retired, BOTH remaining modes start
-// listed -- AUTOMATIC because a hidden one is unjoinable, DIRECT because that is what every
-// DIRECT host already had -- so the function could only ever return true. A predicate that
-// cannot vary is not a predicate, and keeping it would have left a reader looking for the
-// case that makes it interesting. The default is stated where it is used.
+// Both modes start listed (AUTOMATIC because a hidden one is unjoinable, DIRECT because that is
+// what every DIRECT host has), so a per-mode predicate could only ever return true. A predicate
+// that cannot vary is not a predicate; the default is stated where it is used.
 constexpr bool kListedByDefault = true;
 
-// The status last WRITTEN -- BOTH the string and the colour, because this line changes
-// colour on a refusal and a cache that remembers only the text would suppress the repaint
-// that turns it red. Module-level and cleared with the widget on the menu-instance edge: a
-// function-local static outlives the UTextBlock it caches for and leaves the line
-// permanently blank on the second visit (the defect the hosting window's own status line
-// shipped with, found by the 2026-08-31 audit).
+// The status last written, both the string and the colour, because this line changes colour on
+// a refusal and a cache that remembers only the text would suppress the repaint that turns it
+// red. Module-level and cleared with the widget on the menu-instance edge: a function-local
+// static would outlive the UTextBlock it caches for and leave the line permanently blank on the
+// second visit.
 std::wstring g_lastStatus;
 FLinearColor g_lastStatusColor{};
 bool         g_haveStatus = false;
-// ...and the same discipline for the hint's cache: MODULE-level, cleared with the widget
-// on the menu-instance edge. A function-local static would outlive the UTextBlock it
-// caches for and leave the hint permanently blank on the second visit -- which is the
-// defect recorded three lines above, and the reason it is not repeated here.
+// The same discipline for the hint's cache: module-level, cleared with the widget on the
+// menu-instance edge, for the reason recorded three lines above.
 int          g_hintFor = -2;
-// Has THIS opening of the window actually attempted a host? The status string is global
-// and outlives the action, so without this the screen shows the last one on open.
+// Has this opening of the window attempted a host? The status string is global and outlives
+// the action, so without this the screen would show the last one on open.
 bool         g_sawHostAttempt = false;
 std::string  g_lastHostStatus;
 
 bool g_prevLmb = false, g_lmbPrimed = false;
 bool g_prevEsc = false, g_escPrimed = false;
 
-// Cross-thread open/close intent, the same shape both siblings use -- plus a PAYLOAD, which
-// they do not have.
-//
-// AND THE PAYLOAD IS WHY THERE IS A MUTEX. The siblings' intents are bare timestamps, so an
-// atomic says everything there is to say; this one carries a `SaveChoice` and two strings,
-// and an atomic timestamp published beside a plain struct orders nothing -- the game thread
-// could read a half-written `std::string` and the failure would be a crash in the recap
-// line, nowhere near the writer. Today the only caller is on the game thread anyway, which
-// is exactly the condition under which such a race stays invisible until the day someone
-// adds a second one.
+// Cross-thread open/close intent, the shape both siblings use, plus a payload, which they do not
+// have. The payload is why there is a mutex: the siblings' intents are bare timestamps, so an
+// atomic says everything there is to say; this one carries a `SaveChoice` and two strings, and
+// an atomic timestamp published beside a plain struct orders nothing: the game thread could read
+// a half-written `std::string`, and the failure would be a crash in the recap line, nowhere near
+// the writer. Today the only caller is on the game thread, which is exactly the condition under
+// which such a race stays invisible until someone adds a second one.
 struct PendingOpen {
     sm::SaveChoice choice;
     std::string    name;
@@ -375,8 +316,8 @@ void SetText(void* block, const std::wstring& t, const FLinearColor& col) {
     E::SetTextBlockColorDispatch(block, col);
 }
 
-// EDGE-GATED, like every status line in these screens: `SetWidgetText` is two dispatches
-// plus an FText, and this one changes only when a host attempt finishes or a refusal fires.
+// Edge-gated, like every status line in these screens: `SetWidgetText` is two dispatches plus
+// an FText, and this one changes only when a host attempt finishes or a refusal fires.
 void SetStatus(const std::wstring& t, const FLinearColor& col) {
     if (!g_status) return;
     if (g_haveStatus && t == g_lastStatus && col.R == g_lastStatusColor.R &&
@@ -388,17 +329,15 @@ void SetStatus(const std::wstring& t, const FLinearColor& col) {
     SetText(g_status, t, col);
 }
 
-// One selectable row: SizeBox -> Overlay -> [ Image (the HIT TARGET and the selection
-// fill), HorizontalBox of text ]. No UButton, for the reason the browser's rows record: a
-// bare UImage is what we can paint, and a UButton would add a press visual we would then
-// have to suppress.
-// THE ROW KIT MOVED to `ui/host_session_choices` (2026-09-01), together with the two
-// selectors that were the only callers. It is not gone -- it is one body serving three
-// questions instead of two hand-copies serving one each.
+// The selectable rows live in `ui/host_session_choices`, one body serving the two questions here
+// and the connection-mode one in the hosting window. A row is SizeBox -> Overlay -> [ Image (the
+// hit target and the selection fill), HorizontalBox of text ], with no UButton, for the reason
+// the browser's rows record: a bare UImage is what we can paint, and a UButton would add a press
+// visual we would then have to suppress.
 
-// A titled framed section, the shape `server_browser_panels::SectionBody` uses. Kept local
-// rather than lifted into the kit: this is the SECOND caller, and the kit's own rule
-// (OPUS_48_DISCIPLINE:196) is no new shared framework before three working cases.
+// A titled framed section, the shape `server_browser_panels::SectionBody` uses. Kept local rather
+// than lifted into the kit: this is the second caller, and the kit's rule is no new shared
+// framework before three working cases.
 void* SectionBody(void* parent, const wchar_t* title) {
     void* box = NS::AddFramedBox(parent, kPanel, kBorderPx);
     void* col = box ? NS::Spawn(L"VerticalBox", box) : nullptr;
@@ -414,49 +353,34 @@ void* SectionBody(void* parent, const wchar_t* title) {
 }
 
 void RepaintChoices() {
-    // Both style channels now live in `host_session_choices::Repaint` -- see its comment
-    // for why selection and hover are independent, and why that is measured rather than
-    // taste.
+    // Both style channels live in `host_session_choices::Repaint`; see its comment for why
+    // selection and hover are independent.
     HC::Repaint(g_who);
-    // THE PASSWORD BLOCK IS COLLAPSED, NOT HIDDEN. Collapsed (1) takes no space, so the
-    // window closes up around it; Hidden (2) would keep a field-sized hole. This is the one
-    // place in these screens where the difference is wanted the other way round from the
-    // row-alignment case the padlock cell records.
+    // The password block is collapsed, not hidden. Collapsed (1) takes no space, so the window
+    // closes up around it; Hidden (2) would keep a field-sized hole. This is the one place in these
+    // screens where the difference is wanted the other way round from the row-alignment case.
     if (g_pwBlock) E::SetWidgetVisibility(g_pwBlock, IsLocked() ? 0 : 1);
 
-    // THE VISIBILITY ROWS, same two channels -- but DIMMED WHOLE when the mode decides it.
-    // A row the player cannot move must not look like one they can: it keeps the selection
-    // fill (it is still stating what will happen) and loses the white, so the section reads
-    // as information rather than as a control that ignores clicks.
+    // The visibility rows, the same two channels, but dimmed whole when the mode decides it. A row
+    // the player cannot move must not look like one they can: it keeps the selection fill (it is
+    // still stating what will happen) and loses the white, so the section reads as information
+    // rather than as a control that ignores clicks.
     const bool visEditable = VisibilityIsEditable();
     g_vis.editable = visEditable;
     HC::Repaint(g_vis);
 
-    // THE HINT SAYS SOMETHING DIFFERENT ON DIRECT AND LAN, and this is the honest
-    // surfacing of a real limit rather than a decoration.
-    //
-    // A password proof is only safe to send to a host the joiner has BOUND to an
-    // identity it was given in advance -- otherwise a host that merely answers can grind
-    // the tag offline (`coop/net/lobby_password.h`). On AUTO the master hands the joiner
-    // that identity and it is invisible to everyone. On DIRECT and LAN there is nothing
-    // in the middle to hand it over, so a friend needs the host's identity as well as
-    // the address, and without it their client REFUSES to try -- correctly, and with a
-    // sentence, but they would have no idea what to do about it.
-    //
-    // The alternative was a per-lane exception ("LAN is trusted enough"), which is the
-    // shape RULE 1 exists to refuse: the uniform rule plus a working escape is better
-    // than a rule with a hole in it.
-    // WRITTEN ON CHANGE ONLY. It depends solely on `g_connMode`, which cannot move while
-    // this window is open, yet `RepaintChoices` runs on every hover transition -- so this
-    // was two dispatches and a ~230-character wstring per mouse sweep, and it ran even
-    // while the block was Collapsed. `SetStatus` five lines up is edge-gated; its
-    // neighbour was not.
-    // EITHER HINT ARMS THE EDGE, and each is written behind its OWN null check. Gating both
-    // on `g_pwHint` (as this did when the SERVER LIST hint was added) means one null widget
-    // silently blanks the OTHER hint -- and `BuildScreen` succeeds with either null, since
-    // neither is checked into a `return false`. The visible result would be two greyed-out
-    // rows on AUTO/LAN with nothing saying why they cannot be clicked, which is the entire
-    // reason that hint exists. (Post-ship perf audit, 2026-09-01.)
+    // The hint says something different on AUTOMATIC and DIRECT. A password proof is only sent to a
+    // host the joiner has bound to an advertised identity, or to an address the player typed
+    // themselves (`coop/net/lobby_password.h`, `peer_admission.cpp`). On AUTOMATIC the master hands
+    // the joiner the identity and it is invisible to everyone; on DIRECT nothing in the middle
+    // hands one over, so the friend types the host's address and the password into Direct Connect,
+    // and the hint says exactly that.
+    // Written on change only: it depends solely on `g_connMode`, which cannot move while this
+    // window is open, and `RepaintChoices` runs on every hover transition, so an ungated write is
+    // two dispatches and a ~230-character wstring per mouse sweep, even while the block is
+    // collapsed. Either hint arms the edge, and each is written behind its own null check: gating
+    // both on `g_pwHint` would let one null widget silently blank the other, and `BuildScreen`
+    // succeeds with either null.
     if ((g_pwHint || g_visHint) && g_hintFor != g_connMode) {
         g_hintFor = g_connMode;
         const bool brokered = (g_connMode == 0);
@@ -464,32 +388,20 @@ void RepaintChoices() {
                 brokered
                     ? std::wstring(L"Anyone with this can join. Give it out the way you "
                                    L"would give out an invite link.")
-                    // "on the line that starts 'dial='" was FALSE: the line is
-                    // `peer_identity: loaded durable identity ... -- dial=<...>`, so `dial=`
-                    // is at the END. A player following that sentence literally would search
-                    // for a line that does not exist. (2026-09-01.)
-                    // WAS: "your friends also need your host id -- search your
-                    // multivoid.log for 'dial='". True until 2026-09-01, when a typed
-                    // address became able to carry a password; after that it sent hosts
-                    // hunting a log line for a value nobody needs. It was the ONLY
-                    // player-facing instruction for a locked DIRECT lobby, so it was also
-                    // the most expensive place to leave stale.
+                    // The DIRECT wording names both values a friend types into Direct Connect.
                     : std::wstring(L"Anyone with this can join. On this connection type "
                                    L"give your friends your address and this password -- "
                                    L"they type both into Direct Connect."),
                 brokered ? kDim : kAmber);
-        // THE SAME EDGE, so the visibility hint costs nothing extra per hover sweep. It says
-        // why the rows are fixed on the two modes that fix them, and stays quiet on DIRECT
-        // where they are not -- a hint under a control the player can just use is noise.
+        // The same edge, so the visibility hint costs nothing extra per hover sweep. It says why
+        // the rows are fixed on the mode that fixes them, and stays quiet on DIRECT where they are
+        // not: a hint under a control the player can just use is noise.
         if (g_visHint) {
             SetText(g_visHint,
                     g_connMode == 0
-                        // IT NAMES THE CONTROL THAT ANSWERS THE INTENT. A player pressing
-                        // "Hidden" wants a private game, and on this mode the password one
-                        // row below is what gives them one -- an unlisted brokered lobby
-                        // would just be unjoinable. The first version explained the refusal
-                        // and then sent them to the ~ menu AFTER their friends had joined,
-                        // which answers a different question than the one the press asked.
+                        // It names the control that answers the intent: a player pressing "Hidden"
+                        // wants a private game, and on this mode the password one row below is what
+                        // gives them one; an unlisted brokered lobby would just be unjoinable.
                         ? std::wstring(L"Automatic games are always listed -- the list is how "
                                        L"friends find you. Set a password below to keep "
                                        L"strangers out.")
@@ -499,21 +411,19 @@ void RepaintChoices() {
     }
 }
 
-// TURNING THE LOCK ON MINTS A PASSWORD IMMEDIATELY, which is what the user asked for:
-// "если жмет на замок то пароль сразу появляется сгенерированный". A lock that opened an
-// empty box would make the player invent a password at the worst possible moment -- the one
-// where they are in a hurry to start a game -- and that is how "1234" happens.
-//
-// It mints only when the box is EMPTY, so toggling the lock off and on again does not throw
-// away a value the player just typed or already told a friend.
+// Turning the lock on mints a password immediately. A lock that opened an empty box would make
+// the player invent a password at the worst possible moment, the one where they are in a hurry
+// to start a game, and that is how "1234" happens. It mints only when the box is empty, so
+// toggling the lock off and on again does not throw away a value the player typed or already
+// told a friend.
 void SetLocked(bool locked) {
     if (locked == IsLocked()) return;
     g_who.chosen = locked ? 1 : 0;
     if (IsLocked() && TF::Text(g_pwField).empty()) {
         const std::string pw = GeneratePassword();
         if (pw.empty()) {
-            // FAIL CLOSED. The RNG refused, so the lock does not go on: a padlock with no
-            // secret behind it is the false promise this project has already shipped once.
+            // Fail closed: the RNG refused, so the lock does not go on. A padlock with no secret
+            // behind it is a false promise.
             g_who.chosen = 0;
             SetStatus(L"Could not generate a password on this system -- the lock stays off.",
                       kBad);
@@ -537,8 +447,8 @@ bool BuildScreen(void* switcher) {
     void* saveSlots = NS::SwitcherChild(switcher, L"ui_saveSlots_C");
     void* backDonor = NS::DonorField(saveSlots, L"button_back");
     if (!backDonor) {
-        // Fail CLOSED and retry. The browser owns the loud player-facing alarm for a missing
-        // donor; this screen is two doors behind it, so a second dialog would only stack.
+        // Fail closed and retry. The browser owns the loud player-facing alarm for a missing donor;
+        // this screen is two doors behind it, so a second dialog would only stack.
         if (++g_buildAttempts == 15) {
             g_toldTheUser = true;
             UE_LOGE("host_session_settings: ui_saveSlots_C.button_back absent after %d "
@@ -555,17 +465,14 @@ bool BuildScreen(void* switcher) {
     g_scrim   = shell.scrim;
 
     // ---- what step one decided, so the player can commit to it without going back -------
-    // THE NAME IS EDITABLE HERE; the world and the connection mode are not. USER 2026-09-01:
-    // "It's fine that the server name is autofilled but host should be able to change that on
-    // the session settings menu." The two below it are step-one DECISIONS whose consequences
-    // reach past this window -- changing either means going Back and re-choosing -- but the
-    // name is a label on the lobby, and a player who wants to rename their game should not
-    // have to leave the window they are about to press Host in. Autofill stays: an empty box
-    // at this moment would make them invent a name to get past it.
+    // The name is editable here; the world and the connection mode are not. Those two are step-one
+    // decisions whose consequences reach past this window (changing either means going Back and
+    // re-choosing), but the name is a label on the lobby, and a player who wants to rename their
+    // game should not have to leave the window they are about to press Host in. The autofill stays:
+    // an empty box at this moment would make them invent a name to get past it.
     if (void* recap = SectionBody(col, L"Your session:")) {
-        // IN A ROW OF ITS OWN so `kFieldW` applies -- a VerticalBox slot fills horizontally
-        // and would stretch the field to the full column, the same trap the password row
-        // documents below.
+        // In a row of its own so `kFieldW` applies: a VerticalBox slot fills horizontally and would
+        // stretch the field to the full column, the trap the password row documents below.
         void* nameRow = NS::Spawn(L"HorizontalBox", recap);
         if (!nameRow) return false;
         NS::AddVFill(recap, nameRow, 0.f, NS::kFill, NS::kTop);
@@ -580,66 +487,59 @@ bool BuildScreen(void* switcher) {
     if (!HC::Build(col, L"WHO MAY JOIN", kWho, g_who)) { ReleaseFields(); return false; }
 
     // ---- the password block, collapsed until the lock goes on ---------------------------
-    // ONE CONTAINER, so the whole block appears and disappears together. The field itself
-    // cannot be toggled -- `native_text_field` deliberately exposes no widget (RULE 2, its
-    // header) -- and it must not be Ticked while it is off screen either, because its hit
-    // test is by GEOMETRY and a collapsed widget keeps the rect it last painted with.
+    // One container, so the whole block appears and disappears together. The field itself cannot be
+    // toggled (`native_text_field` deliberately exposes no widget), and it must not be ticked while
+    // it is off screen either, because its hit test is by geometry and a collapsed widget keeps the
+    // rect it last painted with.
     g_pwBlock = NS::Spawn(L"VerticalBox", col);
     if (!g_pwBlock) return false;
     NS::AddVFill(col, g_pwBlock, 0.f, NS::kFill, NS::kTop);
     NS::AddText(g_pwBlock, L"Password", 16, kAccent, NS::kJustLeft, 0.f);
-    // IN A ROW OF ITS OWN, so `kFieldW` actually applies. The field is a SizeBox with a
-    // width override, and a VerticalBox slot fills horizontally by default -- so parenting
-    // it straight to the column stretched it to the full 968 px and the constant did
-    // nothing (visible in the first capture: a full-width banner around ten characters).
-    // A HorizontalBox slot is auto-sized, which is what lets the override win.
+    // In a row of its own, so `kFieldW` applies. The field is a SizeBox with a width override, and
+    // a VerticalBox slot fills horizontally by default, so parenting it straight to the column
+    // would stretch it to the full 968 px and the constant would do nothing. A HorizontalBox slot
+    // is auto-sized, which is what lets the override win.
     void* pwRow = NS::Spawn(L"HorizontalBox", g_pwBlock);
     if (!pwRow) return false;
     NS::AddVFill(g_pwBlock, pwRow, 0.f, NS::kFill, NS::kTop);
-    // 64, MATCHING THE JOIN PROMPT. It was 48 here and 64 there, so the AUTHORING side
-    // was the one that truncated -- a host who typed a 60-character passphrase hosted
-    // with 48 of it, silently, and their friends' correct password never matched.
+    // 64, matching the join prompt: the authoring side must not truncate what the joining side
+    // accepts, or a host who typed a 60-character passphrase hosts with part of it and their
+    // friends' correct password never matches.
     g_pwField = TF::Create(pwRow, L"password", 64, kFieldW);
     if (!g_pwField) return false;
     g_pwHint = NS::AddText(g_pwBlock, L"", 15, kDim, NS::kJustLeft, 0.f);
     if (g_pwHint) U::SetAutoWrapText(g_pwHint, true);
     E::SetWidgetVisibility(g_pwBlock, 1);   // Collapsed: the lock starts off
 
-    // ---- who may FIND it ----------------------------------------------------------------
-    // Always present, never collapsed: unlike the password block this does not appear and
-    // disappear with a click inside the window, and its rows carry the truth for every mode
-    // (see kVis). The hint under them explains the modes where the choice is not the host's.
-    // RELEASE THE FIELD ON THE WAY OUT. This return is AFTER `TF::Create` above, unlike the
-    // WHO-MAY-JOIN one, so a bare `return false` here leaks a `Field` (new + push_back into
-    // `g_live`) on every retry -- and `OnMenuTick` retries until the 15-attempt backoff, then
-    // once a SECOND forever. That is 1 leak/sec plus a window's worth of orphaned UObjects
-    // feeding GC. (Post-ship perf audit, 2026-09-01.)
+    // ---- who may find it ----------------------------------------------------------------
+    // Always present, never collapsed: unlike the password block this does not appear and disappear
+    // with a click inside the window, and its rows carry the truth for every mode (see kVis). The
+    // hint under them explains the mode where the choice is not the host's. The field is released
+    // on the way out: this return is after `TF::Create`, so a bare `return false` would leak a
+    // `Field` on every retry, and `OnMenuTick` retries once a second forever after the backoff.
     if (!HC::Build(col, L"SERVER LIST", kVis, g_vis)) {
         ReleaseFields(); return false;
     }
     g_visHint = NS::AddText(col, L"", 15, kDim, NS::kJustLeft, 0.f);
     if (g_visHint) U::SetAutoWrapText(g_visHint, true);
 
-    // A SPACER WITH ALL THE SLACK, so the footer sits at the bottom of the window rather
-    // than floating under the last control. The same trick the input windows use, and it
-    // costs one widget; the alternative -- a Fill slot on the footer -- makes the footer's
-    // own height the window's leftover, which is exactly the arithmetic that pushed step
-    // one's buttons off the frame twice in one day.
+    // A Spacer with all the slack, so the footer sits at the bottom of the window rather than
+    // floating under the last control. The same trick the input windows use, and it costs one
+    // widget; the alternative, a Fill slot on the footer, makes the footer's own height the
+    // window's leftover, exactly the arithmetic that pushes buttons off the frame.
     if (void* spacer = NS::Spawn(L"Spacer", col)) NS::AddVFill(col, spacer, 1.f, NS::kFill, NS::kFill);
 
-    // FOOTER: Back at the LEFT, Host at the RIGHT, status between. Bottom-left is the way
-    // out and bottom-right is the commit, in every native VOTV window that has both (style
-    // doc section 5, gap S7). No bordered strip around them -- VOTV frames CONTENT, never a
-    // row of buttons, and the strip is what the user read as a second window edge.
+    // Footer: Back at the left, Host at the right, status between. Bottom-left is the way out and
+    // bottom-right is the commit, in every native game window that has both
+    // (docs/VOTV_UI_STYLE.md). No bordered strip around them: the game frames content, never a row
+    // of buttons, and a strip reads as a second window edge.
     if (void* footRow = NS::Spawn(L"HorizontalBox", col)) {
         g_backBtn = NS::BuildButton(footRow, backDonor, L"Back", NS::kBtnFontPx);
         g_status  = NS::AddText(footRow, L"", 16, kText, NS::kJustCenter, 1.f);
         g_hostBtn = NS::BuildButton(footRow, backDonor, L"Host", NS::kBtnFontPx);
-        // RELEASE ON THIS PATH TOO. Returning false here leaves `g_root` null, so the
-        // next tick rebuilds the whole screen and `TF::Create` mints a SECOND Field --
-        // the first one stranded in the module's live list forever. The index-failure
-        // path forty lines below was hardened against exactly this and this one was not
-        // (post-ship audit, 2026-08-31).
+        // Release on this path too. Returning false here leaves `g_root` null, so the next tick
+        // rebuilds the whole screen and `TF::Create` mints a second Field, the first stranded in
+        // the module's live list forever.
         if (!g_backBtn || !g_hostBtn) { ReleaseFields(); return false; }
         NS::SetHSlot(NS::SlotOf(g_backBtn), 0.f, NS::kLeft,  NS::kCenter);
         NS::SetHSlot(NS::SlotOf(g_hostBtn), 0.f, NS::kRight, NS::kCenter);
@@ -650,22 +550,20 @@ bool BuildScreen(void* switcher) {
     g_root = shell.root;
     g_box  = shell.box;   // the FRAME, for the fit probe -- root is full-screen
 
-    // ATTACH AT BIRTH, NOT AT FIRST Show(). An unattached widget tree is GC food: it renders
-    // until the next collection and then vanishes, and `AddChild` on the dead object returns
-    // null. Measured on the MULTIPLAYER button, 2026-08-30; both siblings attach here for the
-    // same reason. `AddToRoot` is the wrong tool -- a switcher child is reachable from the
-    // menu, which is the reference we actually want.
+    // Attach at birth, not at first Show(). An unattached widget tree is GC food: it renders until
+    // the next collection and then vanishes, and `AddChild` on the dead object returns null. Both
+    // siblings attach here for the same reason. `AddToRoot` is the wrong tool: a switcher child is
+    // reachable from the menu, which is the reference wanted.
     void* slot = U::AddChild(switcher, g_root);
     g_ourIndex = U::IndexOfChild(switcher, g_root);
     if (g_ourIndex < 0) {
         UE_LOGE("host_session_settings: built the session window but could NOT place it in "
                 "the menu switcher (AddChild slot=%p, GetChildIndex=-1) -- it cannot be shown "
                 "this menu", slot);
-        // AND THE FIELD GOES WITH IT -- Release, not Destroy: the tree we just built is
-        // orphaned, so dispatching RemoveChild into it is a call against whatever reuses the
-        // slot. Clearing `g_root` alone would leave the heap Field alive and in the module's
-        // live list, and the next tick would rebuild everything and leak another one (the
-        // input screens' own audit finding, 2026-08-31).
+        // And the field goes with it. Release, not Destroy: the tree just built is orphaned, so
+        // dispatching RemoveChild into it is a call against whatever reuses the slot. Clearing
+        // `g_root` alone would leave the heap Field alive and in the module's live list, and the
+        // next tick would rebuild everything and leak another one.
         ReleaseFields();
         g_root = nullptr;
         return false;
@@ -679,53 +577,41 @@ bool BuildScreen(void* switcher) {
 
 void Hide(const char* why);
 
-// HOST -- the ONE host action in the tree, and the only place it is called from since the
-// hosting flow gained its second step. No hosting rule is authored here: if one must
-// change, it changes in `session_manager`, once.
+// Host: the one host action in the tree, and the only place it is called from. No hosting rule
+// is authored here: if one must change, it changes in `session_manager`, once.
 void DoHost() {
     g_sawHostAttempt = true;
     const std::string pw = IsLocked() ? TF::Text(g_pwField) : std::string();
     if (IsLocked() && pw.empty()) {
-        // A LOCK WITH NO SECRET IS THE FALSE PROMISE, so it is refused here rather than
-        // announced. The player emptied the box themselves; the way out is to type something
-        // or to choose "Anyone can join".
+        // A lock with no secret is a false promise, so it is refused here rather than announced.
+        // The player emptied the box themselves; the way out is to type something or to choose
+        // "Anyone can join".
         SetStatus(L"Type a password, or choose \"Anyone can join\".", kBad);
         return;
     }
 
-    // PERSISTED BEFORE THE ATTEMPT, so a host who has told their friends a value keeps it
-    // whether or not this particular start succeeds -- and so the next session opens with
-    // the lock the way they left it ("Generate for them on first, then they can change it to
-    // whatever they want at any moment").
-    // THE PASSWORD IS ONLY WRITTEN WHEN THERE IS ONE. Writing `pw` unconditionally meant
-    // hosting once with "Anyone can join" ERASED the remembered password -- the exact
-    // opposite of what this window's header promises, and of what the lock's own
-    // mint-only-when-empty rule is for (post-ship audit, 2026-08-31).
+    // Persisted before the attempt, so a host who has told their friends a value keeps it whether
+    // or not this particular start succeeds, and the next session opens with the lock the way they
+    // left it. The password is written only when there is one: writing `pw` unconditionally would
+    // let one "Anyone can join" host erase the remembered password, the opposite of the lock's
+    // mint-only-when-empty rule.
     if (IsLocked()) cfg::WriteIniValue(::coop::config_registry::rows::net_lobby_password, pw.c_str());
     cfg::WriteIniValue(::coop::config_registry::rows::net_lobby_locked, IsLocked() ? "1" : "0");
 
-    // THE STRING, NOT THE ROW WE JUST WROTE. The ini is where it is REMEMBERED; it is not
-    // the channel by which it reaches the host call. A write that failed, an env var that
-    // outranks the file, or edge whitespace the parser trims would all read back empty and
-    // silently downgrade this session to open while the padlock stays lit on screen.
-    // HIDE ONLY WHERE HIDING IS A CHOICE. `hideFromBrowser` is DIRECT-only in
-    // `HostWithSave` (AUTO ignores it by design, LAN never announces), so passing the raw
-    // flag on the other modes would be sending a value the callee is entitled to drop --
-    // and a reader of this call would have to go find that out. The mode gate is stated
-    // here instead, where the value is formed.
-    // THE NAME THE PLAYER SEES IS THE NAME WE HOST UNDER. Read from the field, never from
-    // `g_name` -- that is only the autofill this window opened with, and using it would make
-    // the box a decoration that silently discards what was typed into it.
-    //
-    // SANITISED AND BOUNDED HERE, because this is the boundary: from this call the string
-    // goes to the master and is drawn in every other player's browser. `SanitizeUtf8` is the
-    // same C0-control denylist the nick path uses, and the byte cap backs off to a character
-    // boundary rather than resizing into a split sequence. The field already bounds input at
-    // `kNameMaxBytes`; capping again costs nothing and does not trust the widget.
-    //
-    // A BLANK BOX FALLS BACK rather than refusing. The player who clears the field has said
-    // nothing about the name, and a nameless row in the browser helps nobody -- so they get
-    // the autofill back instead of an error between them and hosting.
+    // The string, not the row just written. The ini is where it is remembered, not the channel by
+    // which it reaches the host call: a write that failed, an env var that outranks the file, or
+    // edge whitespace the parser trims would all read back empty and silently downgrade this
+    // session to open while the padlock stays lit on screen.
+    // Hide only where hiding is a choice. `hideFromBrowser` is DIRECT-only in `HostWithSave`
+    // (AUTOMATIC ignores it by design), so the mode gate is stated here, where the value is formed.
+    // The name the player sees is the name hosted under, read from the field, never from `g_name`
+    // (the autofill this window opened with): using that would make the box a decoration that
+    // discards what was typed into it. Sanitised and bounded here, because this is the boundary:
+    // from this call the string goes to the master and into every other player's browser.
+    // `SanitizeUtf8` is the nick path's C0-control denylist, and the byte cap backs off to a
+    // character boundary rather than splitting a sequence; the field already bounds input at
+    // `kNameMaxBytes`, and capping again does not trust the widget. A blank box falls back rather
+    // than refusing: a nameless row in the browser helps nobody.
     std::string serverName = coop::text::CapUtf8Bytes(
         coop::text::SanitizeUtf8(TF::Text(g_nameField).data(), TF::Text(g_nameField).size()),
         static_cast<size_t>(kNameMaxBytes));
@@ -741,37 +627,31 @@ void DoHost() {
         !hideFromBrowser};
     const bool accepted = sm::HostWithSave(g_choice, serverName, IsLocked(), pw, /*playersMax=*/4,
                                            mode);
-    // THE PASSWORD IS NEVER LOGGED. It is the one value in this window that is a secret, and
-    // a log line is the easiest place in the whole program for it to end up in a screenshot.
+    // The password is never logged. It is the one secret in this window, and a log line is the
+    // easiest place in the whole program for it to end up in a screenshot.
     UE_LOGI("host_session_settings: HOST %s -- world=%s conn=%d listed=%d locked=%d name='%s'",
             accepted ? "accepted" : "REFUSED (another action in flight)",
             g_choice.newGame ? "<new game>" : g_choice.slot.c_str(), g_connMode,
-            // `!hideFromBrowser` IS the answer again, now that there are two modes. It
-            // stopped being one earlier today, when a third mode existed that never
-            // announced yet left this flag false -- so this line claimed `listed=1` for a
-            // lobby the master was deliberately never told about. That mode is retired, and
-            // with it the reason for the extra term.
+            // `!hideFromBrowser` is the listing: AUTOMATIC never hides, and DIRECT hides only by
+            // this flag.
             !hideFromBrowser ? 1 : 0,
             IsLocked() ? 1 : 0, serverName.c_str());
     if (!accepted) {
-        // The window STAYS OPEN on a refusal, for the reason step one records: a screen that
-        // closes on failure is how "nothing told about the session being DEAD" happened --
-        // the only surface showing the reason was the one that had just gone away.
+        // The window stays open on a refusal: a screen that closes on failure leaves the reason on
+        // the one surface that has just gone away.
         SetStatus(L"Busy -- another host or join is already starting.", kBad);
         return;
     }
     SetStatus(L"Starting...", kText);
 }
 
-// BACK RETURNS TO STEP ONE, not to the main menu -- this window is only ever reached from
-// the hosting window, and a two-step flow whose Back exits the flow entirely would make the
-// player redo the world choice to change one connection mode.
-//
-// Restoring the switcher index is NOT enough on its own: the hosting window tracks its own
-// `g_shown` and reconciled itself closed when we took the switcher, so it would consider
-// itself hidden while its pixels were on screen. Asking it to `Open()` is the one call that
-// puts the index and that flag back in agreement -- the same rule the input windows follow
-// with the browser.
+// Back returns to step one, not to the main menu: this window is only reached from the hosting
+// window, and a two-step flow whose Back exits the flow entirely would make the player redo the
+// world choice to change one connection mode. Restoring the switcher index is not enough on its
+// own: the hosting window tracks its own shown flag and reconciled itself closed when we took
+// the switcher, so it would consider itself hidden while its pixels were on screen. Asking it
+// to `Open()` is the one call that puts the index and that flag back in agreement, the rule the
+// input windows follow with the browser.
 void BackToHostWindow() {
     Hide("BACK");
     HW::Open();
@@ -780,49 +660,34 @@ void BackToHostWindow() {
 void PollChrome() {
     if (!ui::input_focus::IsOurWindowForeground()) return;
 
-    // ESC. A FOCUSED FIELD OWNS IT FIRST -- the field turns Escape into "leave the field",
-    // and this poll reads the PHYSICAL key, so swallowing the message at the WndProc seam
-    // would not stop this edge. One press must not both blur and go back.
-    // THE FIELD IS ASKED WHETHER THE ESCAPE WAS ITS OWN, and it is asked FIRST -- before
-    // the edge below, and unconditionally, so the latch is drained on the tick it was set
-    // rather than surviving into the next press.
-    //
-    // This used to be `if (TF::AnyFocused()) return;` inside the edge, and it could never
-    // fire: the field blurs on WM_KEYDOWN and this poll takes the key-UP, so focus was
-    // always already gone. One Escape both left the field AND closed the window, throwing
-    // away a password the player had just typed (post-ship audit, 2026-08-31).
+    // ESC. A focused field owns it first: the field turns Escape into "leave the field", and this
+    // poll reads the physical key, so swallowing the message at the WndProc seam would not stop
+    // this edge. One press must not both blur and go back. The field is asked whether the Escape
+    // was its own at the release edge (below): the field blurs on WM_KEYDOWN and this poll takes
+    // the key-up, so a focus test here is always already false.
     const bool esc = (::GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
-    // PRIMED ONLY ONCE THE KEY IS UP. Seeding `g_prevEsc` from a HELD key still arms the
-    // release edge, so a window opening under a held Escape closed itself on the release --
-    // which is why the sibling window primes on `!esc` and this one did not (audit).
+    // Primed only once the key is up. Seeding `g_prevEsc` from a held key still arms the release
+    // edge, so a window opening under a held Escape would close itself on the release.
     if (!g_escPrimed) { g_escPrimed = !esc; g_prevEsc = esc; }
     const bool escEdge = g_prevEsc && !esc;   // RELEASE edge
     g_prevEsc = esc;
     if (escEdge) {
-        // CONSUMED AT THE EDGE, NOT EVERY TICK -- and that distinction is the whole fix.
-        //
-        // The first version drained the latch unconditionally at the top of this poll, and
-        // it could NEVER fire: the field sets the latch on WM_KEYDOWN, this poll takes the
-        // RELEASE edge dozens of ticks later, so the one true reading was thrown away on
-        // the key-down tick and the release always saw false. One Escape still blurred the
-        // field AND closed the window -- the exact defect the latch was written to fix,
-        // reproduced in the mechanism that replaced it. Its own comment stated the cause
-        // ("drained on the tick it was set") without noticing it was fatal here. Found by
-        // the audit of the fix commit, 2026-08-31.
-        //
-        // Asking only at the edge means the latch survives the whole press, which is what
-        // "this Escape was the field's" has to mean when press and release are different
-        // ticks.
-        // ASKED OF EVERY FIELD, not just the password's. Escape leaving a field must not
-        // also leave the window, and a second field would otherwise inherit none of that.
+        // Consumed at the edge, not every tick. The field sets the latch on WM_KEYDOWN and this
+        // poll takes the release edge dozens of ticks later, so draining the latch unconditionally
+        // at the top of the poll would throw the one true reading away on the key-down tick, and
+        // the release would always see false: one Escape would blur the field and close the window.
+        // Asking only at the edge means the latch survives the whole press, which is what "this
+        // Escape was the field's" has to mean when press and release are different ticks. Asked of
+        // every field, not just the password's: Escape leaving a field must not also leave the
+        // window.
         if (TF::ConsumeEscape(g_nameField)) return;
         if (TF::ConsumeEscape(g_pwField)) return;
         BackToHostWindow();
         return;
     }
 
-    // ENTER in the password field HOSTS. The key that ends typing is the one that acts,
-    // which is what every text field a player has ever used does.
+    // Enter in a field hosts. The key that ends typing is the one that acts, as in every text field
+    // a player has used.
     if (TF::ConsumeSubmit(g_nameField)) { DoHost(); return; }
     if (IsLocked() && TF::ConsumeSubmit(g_pwField)) { DoHost(); return; }
 
@@ -832,25 +697,19 @@ void PollChrome() {
     g_prevLmb = lmb;
     if (!released) return;
 
-    // TWO MECHANISMS, BECAUSE THERE ARE TWO KINDS OF WIDGET (measured; `native_screen.h`).
-    // A real UButton answers `IsHovered`; a hand-built UImage does not and must come through
-    // geometry. Unifying them was tried on 2026-08-30 and turned a passing verdict into a
-    // failure.
+    // Two mechanisms, because there are two kinds of widget (`native_screen.h`): a real UButton
+    // answers `IsHovered`; a hand-built UImage does not and must come through geometry.
     if (g_backBtn && E::WidgetIsHovered(g_backBtn)) { BackToHostWindow(); return; }
     if (g_hostBtn && E::WidgetIsHovered(g_hostBtn)) { DoHost(); return; }
-    // THE CURSOR IS RESOLVED ONCE FOR BOTH SELECTORS, exactly as the hover sweep does it.
-    // This path used to call `NS::CursorOverWidget` per row -- up to four uncached
-    // GUObjectArray walks per button release -- which is the pattern the choices module was
-    // extracted to remove, and it was the one call site the extraction did not migrate.
-    // `HC::HandleClick` had ZERO callers as a result, so the module shipped with dead code
-    // and the header's claim was untrue of clicks. (Post-ship perf audit, 2026-09-01.)
+    // The cursor is resolved once for both selectors, exactly as the hover sweep does it; a
+    // `CursorOverWidget` per row is an uncached GUObjectArray walk each.
     long cx = 0, cy = 0;
     if (!NS::CursorInWidgetSpace(cx, cy)) return;   // fail-closed, as the per-widget call was
     int picked = -1;
     if (HC::HandleClick(g_who, cx, cy, picked)) { SetLocked(picked == 1); return; }
-    // THE VISIBILITY ROWS ANSWER ONLY ON DIRECT -- `HandleClick` refuses a non-editable
-    // selector itself, so the click is swallowed rather than redirected: the rows are dimmed
-    // and the hint says why, so a silent no-op is honest and a status line would be nagging.
+    // The visibility rows answer only on DIRECT: `HandleClick` refuses a non-editable selector
+    // itself, so the click is swallowed rather than redirected. The rows are dimmed and the hint
+    // says why, so a silent no-op is honest and a status line would be nagging.
     g_vis.editable = VisibilityIsEditable();
     if (HC::HandleClick(g_vis, cx, cy, picked)) {
         const bool want = (picked == 0);
@@ -860,17 +719,14 @@ void PollChrome() {
 }
 
 void UpdateHover() {
-    // GATED ON THE POINTER, because each `CursorOverWidget` is expensive in a way its
-    // name does not suggest: it reaches `GetWorldContext()` -> `FindObjectByClass`, a full
-    // GUObjectArray walk with no result cache, plus four ProcessEvent dispatches and a
-    // heap allocation for the rect. Two rows, every menu tick, at ~117 Hz -- the exact
-    // per-frame-full-array-scan pattern CLAUDE.md names, shipped by me and caught by the
-    // post-ship audit.
-    //
-    // `HoverTracker` is the shared answer for a LIST and does not fit here: it maps the
-    // CHILDREN of one panel by index, and these are two named widgets in a mixed column.
-    // What it supplies that matters -- do not re-evaluate unless the pointer moved, and
-    // owe one SETTLING pass after it stops -- is what this reproduces, and nothing more.
+    // Gated on the pointer, because each `CursorOverWidget` is expensive in a way its name does not
+    // suggest: it reaches `GetWorldContext()` and `FindObjectByClass`, a full GUObjectArray walk
+    // with no result cache, plus four ProcessEvent dispatches and a heap allocation for the rect;
+    // two rows every menu tick at ~117 Hz is the per-frame full-array scan this project forbids.
+    // `HoverTracker` is the shared answer for a list and does not fit here: it maps the children of
+    // one panel by index, and these are two named widgets in a mixed column. What it supplies that
+    // matters, re-evaluate only when the pointer moved and owe one settling pass after it stops, is
+    // reproduced here and nothing more.
     static long sLastX = -1, sLastY = -1;
     static bool sSettlePending = false;
     POINT p{};
@@ -884,28 +740,20 @@ void UpdateHover() {
     const int prevVis = g_vis.hover;
     g_who.hover = -1;
     g_vis.hover = -1;
-    // NO `g_fitDirty` HERE. This is the per-sweep hover reset, not a layout event -- arming
-    // it from inside the pointer path would re-dirty the probe on every mouse move and give
-    // back exactly the per-tick cost the flag exists to remove.
-    // These rows sit in the content column, OUTSIDE any ScrollBox, but they are still
-    // hand-built UImages -- and `IsHovered()` reads 0 on one of those whether or not it is
-    // inside a scroll container (measured twice, 2026-08-29 and 2026-08-30). Geometry is the
-    // only mechanism that answers for them.
-    // THE CURSOR IS RESOLVED ONCE FOR THE WHOLE SWEEP. Each `CursorOverWidget` redoes that
-    // conversion, and its expensive half is an uncached `GUObjectArray` walk -- so probing
-    // four rows through it cost four walks per tick (~468/s at this file's ~117 Hz) to answer
-    // a question whose cursor half is the same for all four. Hoisted per the post-ship audit,
-    // 2026-09-01; `HoverTracker::Poll` has always done this for lists.
+    // No `g_fitDirty` here: this is the per-sweep hover reset, not a layout event, and arming it
+    // from the pointer path would re-dirty the probe on every mouse move. These rows sit in the
+    // content column, outside any ScrollBox, but they are hand-built UImages, and `IsHovered()`
+    // reads 0 on one of those whether or not it is inside a scroll container; geometry is the only
+    // mechanism that answers for them. The cursor is resolved once for the whole sweep: each
+    // `CursorOverWidget` redoes that conversion, and its expensive half is the uncached
+    // `GUObjectArray` walk, so probing four rows through it would cost four walks per tick for a
+    // question whose cursor half is the same for all four.
     long hx = 0, hy = 0;
     if (!NS::CursorInWidgetSpace(hx, hy)) return;   // fail-closed, as the per-widget call was
-    // ONE CALL, NOT A LOOP: `HoverAt` sweeps both rows itself. The per-row loop that used to
-    // be here survived the extraction as a braceless header over this line and ran the whole
-    // sweep TWICE -- correct, because the assignment is idempotent, and silent, because `i`
-    // is still used by the condition so no unused-variable warning fires. (Post-ship perf
-    // audit, 2026-09-01.)
+    // One call, not a loop: `HoverAt` sweeps both rows itself.
     g_who.hover = HC::HoverAt(g_who, hx, hy);
-    // Only probed where hover MEANS something: where the mode fixes the answer the rows are
-    // dimmed and unclickable, so lighting one up would promise a control that is not there.
+    // Only probed where hover means something: where the mode fixes the answer the rows are dimmed
+    // and unclickable, so lighting one up would promise a control that is not there.
     g_vis.editable = VisibilityIsEditable();
     if (g_who.hover < 0) g_vis.hover = HC::HoverAt(g_vis, hx, hy);
     if (g_who.hover != prev || g_vis.hover != prevVis) RepaintChoices();
@@ -913,17 +761,15 @@ void UpdateHover() {
 
 // ============================ lifecycle ================================================
 
-// EVERYTHING THAT MUST BE TRUE THE MOMENT THIS SCREEN BECOMES LIVE -- one owner, because
-// there are now TWO ways it happens: `Show()`, and the reconcile that revives it when the
-// switcher index comes back to ours. The revive originally skipped these and the failure was
-// immediate: the browser closes on the ESC PRESS edge while this window closes on the
-// RELEASE, so one keypress closed the browser, revived this window with a stale `g_escPrimed`
-// still true, and let the player's own release close this one too -- one key walking two
-// screens back. The hover matters for the same reason a reopening does not move the pointer.
-//
-// The CONTENT resets stay in `Show()` on purpose and must not migrate here: re-reading the
-// ini or clearing the status on a revive would wipe a half-typed password and erase the very
-// host-failure line this window exists to display.
+// Everything that must be true the moment this screen becomes live, with one owner, because it
+// happens two ways: `Show()`, and the reconcile that revives it when the switcher index comes
+// back to ours. The revive needs these too: the browser closes on the ESC press edge while this
+// window closes on the release, so one keypress can close the browser and revive this window,
+// and a stale `g_escPrimed` would let the player's own release close this one as well, one key
+// walking two screens back. The hover matters for the same reason: a reopening does not move
+// the pointer. The content resets stay in `Show()` on purpose: re-reading the ini or clearing
+// the status on a revive would wipe a half-typed password and erase the very host-failure line
+// this window exists to display.
 void BecameLive() {
     g_escPrimed = false;
     g_lmbPrimed = false;
@@ -937,18 +783,14 @@ void Show() {
     g_who.hover = -1;
     g_vis.hover = -1;
     g_fitDirty  = true;   // a fresh showing lays out again
-    // RE-DERIVED ONLY WHEN THE MODE ACTUALLY MOVED, not on every open.
-    //
-    // The reason for re-deriving is real -- the player may have gone Back and changed the
-    // connection type, and a listed/hidden choice made under other rules should not carry
-    // across. But it covered ONE of two cases and could not tell them apart, so a Back for
-    // any other reason (fixing the world name) silently reset a chosen "Hidden" to listed.
-    // The failure direction is what makes this worth the extra state: the reset FAILS OPEN,
-    // and what it opens is an announce carrying the host's name, world, lock flag, cap,
-    // listen port, identity and the source IP the master resolves -- to a player who
-    // believes they chose Hidden. The LOCK choice already survives the same round trip (it
-    // round-trips the ini), so the asymmetry was between two answers on one screen.
-    // (Post-ship audit, 2026-09-01.)
+    // Re-derived only when the mode moved, not on every open. The player may have gone Back and
+    // changed the connection type, and a listed/hidden choice made under other rules should not
+    // carry across; but a Back for any other reason (fixing the world name) must not reset a chosen
+    // "Hidden" to listed. The failure direction is what makes this worth the extra state: such a
+    // reset fails open, and what it opens is an announce carrying the host's name, world, lock
+    // flag, cap, listen port, identity and the source IP the master resolves, to a player who
+    // believes they chose Hidden. The lock choice survives the same round trip through the ini, so
+    // both answers on this screen behave alike.
     if (g_visModeWhenChosen != g_connMode) {
         g_vis.chosen = kListedByDefault ? 0 : 1;
         g_visModeWhenChosen = g_connMode;
@@ -957,49 +799,40 @@ void Show() {
     g_lastStatus.clear();
     g_sawHostAttempt = false;
     g_lastHostStatus.clear();
-    // RESET ON EVERY OPEN, not only on a menu change: `BuildScreen`'s failure paths clear
-    // `g_root` without clearing this, so a rebuild mints a fresh `g_pwHint` while the cache
-    // still matches `g_connMode` and the hint would stay permanently blank -- the exact
-    // defect the module-level choice was supposed to avoid (audit, 2026-08-31).
+    // Reset on every open, not only on a menu change: `BuildScreen`'s failure paths clear `g_root`
+    // without clearing this, so a rebuild would mint a fresh `g_pwHint` while the cache still
+    // matched `g_connMode`, and the hint would stay permanently blank.
     g_hintFor = -2;
     SetStatus(L"", kText);
 
-    // THE AUTOFILL, written on every opening. `g_name` is step one's derived "<nick>'s game",
-    // and re-seeding it here is what makes Back-and-return show the name the player would
-    // expect rather than whatever they had half-typed before leaving.
+    // The autofill, written on every opening. `g_name` is step one's derived "<nick>'s game", and
+    // re-seeding it here is what makes Back-and-return show the name the player expects rather than
+    // whatever they had half-typed before leaving.
     TF::SetText(g_nameField, g_name);
     SetText(g_recapWorld,
             g_choice.newGame ? std::wstring(L"World: a new game")
                              : L"World: " + Widen(g_choice.slot),
             kDim);
     SetText(g_recapConn,
-            // TWO ARMS, because there are two modes. The third arm outlived the mode it
-            // named by one commit and was the last place in the shipped product that could
-            // print "LAN only" to a player -- 580 lines below the comment declaring it
-            // retired. (Post-ship audit, 2026-09-01.)
+            // Two arms, because there are two modes.
             std::wstring(L"Connection: ") +
                 (g_connMode == 1 ? L"direct (you forward the port)" : L"automatic"),
             kDim);
 
-    // THE LOCK AND THE PASSWORD COME BACK THE WAY THEY WERE LEFT. A host who set one last
-    // week should not have to re-read it off a friend's screen.
+    // The lock and the password come back the way they were left. A host who set one last week
+    // should not have to re-read it off a friend's screen.
     const std::string saved = cfg::ResolveString(::coop::config_registry::rows::net_lobby_password);
     TF::SetText(g_pwField, saved);
-    // Forced through the mint path rather than assigned, so an ini that says locked=1 with
-    // an empty password still ends up with a real secret instead of a padlock over nothing.
+    // Forced through the mint path rather than assigned, so an ini that says locked=1 with an empty
+    // password still ends up with a real secret instead of a padlock over nothing.
     g_who.chosen = 0;
     RepaintChoices();
     if (cfg::ResolveFlag(::coop::config_registry::rows::net_lobby_locked)) SetLocked(true);
 
     UE_LOGI("host_session_settings: shown (index %d -> %d; locked=%d)",
             g_priorIndex, g_ourIndex, IsLocked() ? 1 : 0);
-    // FOOTER-INSIDE-THE-FRAME MEASUREMENT. This window is fixed-height with every child
-    // Auto-sized and only a Spacer to absorb slack, so content taller than `kWindowH` pushes
-    // the footer PAST the bottom edge -- nothing clips, so the buttons simply render outside
-    // the ring. The sibling window shipped exactly that twice (host_window_native.cpp:57-72)
-    // before it was given a Fill slot. This screen has no shrinkable child, so its only
-    // defence is being tall enough, and that is a NUMBER -- so print it rather than eyeball a
-    // screenshot. Logged on every Show(); the locked+AUTO cell is the tallest.
+    // The footer-inside-the-frame measurement runs on the next tick (see g_fitDirty and ReportFit);
+    // the locked + AUTOMATIC cell is the tallest.
     g_fitLast = -9999.f;   // re-arm the fit probe for this showing (see ReportFit)
 }
 
@@ -1023,8 +856,8 @@ bool Armed() {
 
 void Open(const coop::session_manager::SaveChoice& choice, const std::string& serverName,
           int connMode) {
-    // The intent CARRIES the decision. Re-deriving it on the game thread would mean this
-    // window reading the save list itself, which is the duplication the header forbids.
+    // The intent carries the decision. Re-deriving it on the game thread would mean this window
+    // reading the save list itself, the duplication the header forbids.
     {
         std::lock_guard<std::mutex> lk(g_pendingMu);
         g_pending.choice   = choice;
@@ -1041,9 +874,9 @@ void* BackButton() { return g_backBtn; }
 bool  Locked()     { return IsLocked(); }
 
 int PasswordLength() {
-    // The FIELD, not the ini row: what the self-check has to prove is that clicking the
-    // lock put a value in front of the player THIS session, and a row read would answer
-    // yes on a rig whose ini already carried one from a previous run.
+    // The field, not the ini row: what the self-check has to prove is that clicking the lock put a
+    // value in front of the player this session, and a row read would answer yes on a rig whose ini
+    // already carried one from a previous run.
     return static_cast<int>(TF::Text(g_pwField).size());
 }
 
@@ -1055,19 +888,19 @@ void OnMenuTick(void* menu, void* switcher) {
 
     if (menu != g_menu) {
         g_menu = menu;
-        // RELEASE, NOT DESTROY. The widgets died with the menu instance, so the field must
-        // unhook its focus and free its handle WITHOUT dispatching RemoveChild into a tree
-        // that no longer exists.
+        // Release, not Destroy. The widgets died with the menu instance, so the field must unhook
+        // its focus and free its handle without dispatching RemoveChild into a tree that no longer
+        // exists.
         ReleaseFields();
         g_root = nullptr; g_box = nullptr; g_scrim = nullptr; g_status = nullptr;
         g_backBtn = nullptr; g_hostBtn = nullptr;
         g_pwBlock = nullptr; g_pwHint = nullptr;
         g_recapWorld = g_recapConn = nullptr;
         HC::ClearWidgets(g_who);
-        // THE VISIBILITY ROWS DIE WITH THE SAME MENU INSTANCE. Missing from this block is
-        // not a leak, it is a DANGLING pointer: `RepaintChoices` runs on the next hover and
-        // would dispatch SetImageTint / SetTextBlockColorDispatch into a destroyed widget
-        // tree. The pair above is the pattern; anything added to the screen owes a line here.
+        // The visibility rows die with the same menu instance. Missing from this block is not a
+        // leak, it is a dangling pointer: `RepaintChoices` runs on the next hover and would
+        // dispatch SetImageTint / SetTextBlockColorDispatch into a destroyed widget tree. Anything
+        // added to the screen owes a line here.
         HC::ClearWidgets(g_vis);
         g_visHint = nullptr;
         g_ourIndex = -1; g_shown = false; g_buildAttempts = 0;
@@ -1077,10 +910,10 @@ void OnMenuTick(void* menu, void* switcher) {
     }
 
     if (!g_root) {
-        // BACKED OFF once it is hopeless, because the retry is not free: each attempt costs
-        // a `SwitcherChild` walk (a ChildCount plus a ClassNameOf per child -- an engine call
-        // and a wstring EACH) plus a donor lookup, at ~117 menu ticks a second, forever, on
-        // exactly the path a version migration lands on.
+        // Backed off once it is hopeless, because the retry is not free: each attempt costs a
+        // `SwitcherChild` walk (a ChildCount plus a ClassNameOf per child, an engine call and a
+        // wstring each) plus a donor lookup, at ~117 menu ticks a second, forever, on exactly the
+        // path a version migration lands on.
         if (g_toldTheUser) {
             static uint64_t sNextTryMs = 0;
             const uint64_t now = ::GetTickCount64();
@@ -1111,10 +944,10 @@ void OnMenuTick(void* menu, void* switcher) {
                 g_name     = g_pending.name;
                 g_connMode = g_pending.connMode;
             }
-            // STEP ONE CLOSES FIRST AND SYNCHRONOUSLY. Both screens are children of one
-            // switcher and each records the index it replaces, so opening on top of a live
-            // sibling makes THAT sibling's index the one this window would restore -- and its
-            // Back would then walk back into us. See `host_window_native::CloseNow`.
+            // Step one closes first and synchronously. Both screens are children of one switcher
+            // and each records the index it replaces, so opening on top of a live sibling makes
+            // that sibling's index the one this window would restore, and its Back would then walk
+            // back into us. See `host_window_native::CloseNow`.
             HW::CloseNow();
             Show();
         } else {
@@ -1124,23 +957,16 @@ void OnMenuTick(void* menu, void* switcher) {
         }
     }
 
-    // Reconcile against the LIVE index rather than asserting ours, IN BOTH DIRECTIONS: a
-    // sibling screen (or the game's own ESC path) can navigate away, and if it did we were
-    // closed, whoever did it -- and if the index comes BACK to ours we are on screen again,
-    // whoever put it back.
-    //
-    // THE SECOND HALF IS THE FIX, and the asymmetry was the bug. This window could LOSE the
-    // screen by observation but could only REGAIN it by being told, so any caller that
-    // handed the switcher back by writing the index -- which is the obvious way to hand it
-    // back, and what the server browser did -- returned our widgets to the screen with this
-    // tick still returning on its first line. The player got a window that drew normally and
-    // answered nothing: no hover, no clicks, not even its own Back or ESC. User, 2026-09-01:
-    // "там уже ничего нельзя сделать и кнопки мертвые не дают закрыть даже это меню".
-    //
-    // Fixing it HERE rather than in the caller is what makes it hold: the index is only ever
-    // ours because someone restored it (the game never navigates to a child we built), so
-    // the flag can simply follow the truth instead of every present and future caller having
-    // to know which window it displaced.
+    // Reconcile against the live index rather than asserting ours, in both directions: a sibling
+    // screen (or the game's own ESC path) can navigate away, and if it did we were closed, whoever
+    // did it; and if the index comes back to ours we are on screen again, whoever put it back. The
+    // second half matters as much as the first: a window that can lose the screen by observation
+    // but regain it only by being told answers nothing when a caller hands the switcher back by
+    // writing the index (the obvious way, and what the server browser does): it draws normally
+    // with no hover, no clicks, not even its own Back or ESC. Fixing it here rather than in the
+    // caller is what makes it hold: the index is only ever ours because someone restored it (the
+    // game never navigates to a child we built), so the flag can follow the truth instead of every
+    // present and future caller having to know which window it displaced.
     const bool indexIsOurs = g_root && g_ourIndex >= 0 &&
                              NS::ActiveIndex() == g_ourIndex;
     if (g_shown && !indexIsOurs) {
@@ -1155,38 +981,26 @@ void OnMenuTick(void* menu, void* switcher) {
         UE_LOGI("host_session_settings: live again (the switcher index returned to ours)");
     }
 
-    // ONLY WHILE THE BLOCK IS ON SCREEN. `Tick` takes focus when the pointer is pressed
-    // inside the field's own rect BY GEOMETRY, and a collapsed widget keeps the rect it last
-    // painted with -- so ticking a hidden field would let a click on the row above it steal
-    // the keyboard into a box the player cannot see.
+    // Only while the block is on screen. `Tick` takes focus when the pointer is pressed inside the
+    // field's own rect by geometry, and a collapsed widget keeps the rect it last painted with, so
+    // ticking a hidden field would let a click on the row above it steal the keyboard into a box
+    // the player cannot see.
     TF::Tick(g_nameField);   // never collapsed, so unlike the password it is always live
     if (IsLocked()) TF::Tick(g_pwField);
     ReportFit();   // no-op unless the layout moved -- see g_fitDirty
     UpdateHover();
     PollChrome();
 
-    // WHY THE HOST'S OWN FAILURE MESSAGE IS READ HERE. `HostWithSave` announces, loads a
-    // world and starts a session on WORKER threads, so it can only fail long after it
-    // returned true -- and its reason goes to `session_manager::HostStatus()`.
-    //
-    // Step one polled it, and the comment beside that poll says why: the user reported
-    // "nothing told about the session being DEAD". Moving the host call into step two
-    // left the poll behind on a window `CloseNow()` has already hidden, so every
-    // asynchronous host failure became invisible again -- the player sits on "Starting..."
-    // forever while the reason is written to a string nothing draws. Reopened by the
-    // split, caught by the post-ship audit (2026-08-31).
-    //
-    // Edge-gated against `g_lastStatus` by `SetStatus`, so a steady string costs nothing.
-    // GATED BEFORE THE STRING IS BUILT. The first version read `HostStatus()` (a mutex
-    // plus a string copy) and ran `Widen` (a full UTF-8 -> UTF-16 conversion) EVERY tick,
-    // then let `SetStatus` decide whether to touch the widget -- under a comment claiming
-    // it "costs nothing" for a steady string. The widget write was gated; the two
-    // allocations were not. The hint fix a few functions up got this right by gating
-    // before building the string; this one did not (audit, 2026-08-31).
-    //
-    // AND ONLY WHAT THIS OPENING CAUSED. `g_hostStatus` outlives the action that set it,
-    // so an unfiltered read painted the PREVIOUS action's line over Show()'s deliberate
-    // blank before the player had pressed anything.
+    // Why the host's own failure message is read here. `HostWithSave` announces, loads a world and
+    // starts a session on worker threads, so it can only fail long after it returned true, and its
+    // reason goes to `session_manager::HostStatus()`. Step one's poll is on a window `CloseNow()`
+    // has already hidden, so this window polls it, or every asynchronous host failure is invisible:
+    // the player sits on "Starting..." forever while the reason is written to a string nothing
+    // draws. Gated before the string is built: `HostStatus()` is a mutex plus a string copy and
+    // `Widen` a full UTF-8 to UTF-16 conversion, so they run only on a change, and `SetStatus`
+    // edge-gates the widget write behind that. And only what this opening caused: the status
+    // outlives the action that set it, so an unfiltered read would paint the previous action's
+    // line over Show()'s deliberate blank before the player had pressed anything.
     if (g_status && g_sawHostAttempt) {
         std::string cur = sm::HostStatus();
         if (cur != g_lastHostStatus) {
