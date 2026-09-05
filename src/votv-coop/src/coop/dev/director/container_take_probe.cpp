@@ -1,37 +1,16 @@
-// coop/dev/director/container_take_probe.cpp -- the container-take INPUT PROBE (director Phase-2
-// HALT gate). Decides whether the CONTAINER concurrent-take race (the user's literal ask, "два
-// пира ... ОДНОВРЕМЕННО берут предмет X") is buildable on the director's reflected-verb model.
-//
-// DESIGN of record: research/findings/tooling/votv-baritone-analog-autonomous-director-DESIGN-
-// 2026-07-23.md + the Phase-2 /qf thread (5 rounds, converged 2026-07-23). Why a probe first:
-//   - takeObj/addObject are 0x45 EX_LocalVirtualFunction INTERCEPTION verbs (container_contents_
-//     sync.cpp) -- NOT reflection-callable; they only fire when the BP VM dispatches them.
-//   - BUT the take is drivable one layer UP by CALLABLE BP verbs (measured, the CXXHeaderDump):
-//     prop_container::openContainer() opens the UI; a container slot's
-//     uicomp_playerInvContainerSlot::pressButton() sets ui_playerInventory.selected;
-//     ui_playerInventory::em_take() takes the selected item. These are plain BP functions (the
-//     BndEvt__..OnButtonClickedEvent twins are the inert delegates), the SAME model already
-//     proven for door_C::doorOpen -- so the take is likely drivable at the human-INPUT seam.
-//   - The ONE remaining unknown is answerable only by running code: does em_take/pressButton
-//     EXECUTE its body when CallFunction'd, or is it reflection-inert like InpActEvt_use? The
-//     probe NEVER infers "callable => ran" (the door/InpActEvt lesson); it MEASURES the body ran
-//     via the container's GObjStack item-count DECREMENT (the take removed an item).
-//
-// The probe is an honest LADDER: it reports the highest rung reached, so a failure names WHICH
-// rung (open / select / take) went inert rather than a false green. extract(int32 Index) is a
-// NON-FAITHFUL diagnostic fallback (the effect seam, one layer below the human UI path -- it may
-// bypass the selection state the real race traverses, a B4 spine deviation) run only to prove the
-// mechanism CAN be driven at all when the faithful path is inert.
-//
-// DEV-ONLY (RULE 3), solo, env-gated (VOTVCOOP_RUN_CTAKE_PROBE=1). Non-destructive intent: one
-// take from a world container (the game corrects it; a solo probe has no peer to diverge). Its
-// verdict + the remaining unbuilt piece (a whole-GObjStack no-dup verifier) go to the USER as the
-// container-race vs generic-prop-race go/no-go. Greppable "director/ctake: VERDICT".
+// coop/dev/director/container_take_probe.cpp -- the container-take input probe and the two-peer
+// concurrent-take race. The take verbs the game runs are 0x45 interception verbs, not
+// reflection-callable, but the take is drivable one layer up through callable BP verbs: the
+// container's openContainer opens the UI, and a container slot's pressButton takes the hovered
+// item. Whether a called verb's body ran is never inferred from callability; the probe measures
+// the container's item-count decrement. A ladder (open, select, take) reporting the highest
+// rung reached, with the container's extract verb as a non-faithful diagnostic fallback. Dev
+// only, env-gated (VOTVCOOP_RUN_CTAKE_PROBE=1); greppable "director/ctake: VERDICT".
 
 #include "coop/dev/director/director.h"
 #include "coop/dev/director/dup_verifier.h"   // the no-dup verifier + its positive control
 
-#include "coop/config/config.h"               // ReadEnv (the codebase's env reader)
+#include "coop/config/config.h"               // ReadEnv
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_element_tracker.h"  // CollectKeyIndexEntries -- the stable save-key index
 #include "ue_wrap/actors/inventory.h"      // ResolveSaveSlot
@@ -80,7 +59,7 @@ float HorizDist(const ue_wrap::FVector& a, const ue_wrap::FVector& b) {
     return std::sqrt(dx * dx + dy * dy);
 }
 
-// ---- container reflection helpers (self-contained; a dev instrument) -----------------------
+// Container reflection helpers.
 void* ContainerClass() {
     static void* cls = nullptr;
     if (!cls) cls = R::FindClass(L"prop_container_C");
@@ -92,7 +71,7 @@ bool IsPlacedContainer(void* o) {
     if (R::NameStartsWith(R::NameOf(o), L"Default__")) return false;
     return PR::WalksToBase(R::ClassOf(o), base);
 }
-// The propInventory component of a container actor (or null).
+// The propInventory component of a container actor, or null.
 void* InventoryOf(void* container) {
     static int32_t off = -2;
     if (off == -2) off = R::FindPropertyOffset(R::ClassOf(container), L"propInventory");
@@ -101,7 +80,7 @@ void* InventoryOf(void* container) {
     std::memcpy(&inv, reinterpret_cast<const uint8_t*>(container) + off, sizeof(inv));
     return (inv && R::IsLive(inv)) ? inv : nullptr;
 }
-// A WORLD container inventory (Player==0), never a personal one (which shares the global GObjStack).
+// A world container inventory (Player 0), never a personal one, which shares the global stack.
 bool IsWorldContainerInv(void* inv) {
     static int32_t off = -2;
     if (off == -2) off = inv ? R::FindPropertyOffset(R::ClassOf(inv), L"Player") : -1;
@@ -110,9 +89,9 @@ bool IsWorldContainerInv(void* inv) {
     std::memcpy(&player, reinterpret_cast<const uint8_t*>(inv) + off, 1);
     return player == 0;
 }
-// The container's item count via its GObjStack slice (the SAME read container_contents_sync uses:
-// saveSlot.GObjStack[ inv.Index ] is a Fstruct_mObject wrapping a TArray<Fstruct_save> @ +0).
-// Returns -1 if unresolvable (never-initialised index / no saveSlot) -- distinct from 0 (empty).
+// The container's item count through its GObjStack slice, the read container_contents_sync
+// uses: the save's GObjStack[inv.Index] wraps a TArray of save structs. -1 when unresolvable,
+// distinct from 0 (empty).
 int32_t ContainerItemCount(void* container) {
     void* inv = InventoryOf(container);
     if (!inv || !IsWorldContainerInv(inv)) return -1;
@@ -131,8 +110,8 @@ int32_t ContainerItemCount(void* container) {
     return SR::ReadArr(slot, 0).num;
 }
 
-// Call a no-arg UFunction `fnName` on `obj` (declaring class = obj's class or an ancestor via
-// FindFunction's exact-owner resolution -- these verbs are declared on the leaf BP class).
+// Call a no-arg UFunction on `obj`, resolved on the given declaring class; FindFunction is
+// exact-owner.
 bool CallNoArg(void* obj, void* cls, const wchar_t* fnName) {
     void* fn = cls ? R::FindFunction(cls, fnName) : nullptr;
     if (!fn) { UE_LOGW("director/ctake: verb %ls NOT FOUND on the class -- cannot drive", fnName); return false; }
@@ -141,8 +120,8 @@ bool CallNoArg(void* obj, void* cls, const wchar_t* fnName) {
     return ue_wrap::Call(obj, pf);
 }
 
-// The first live, non-Default instance whose class walks to `className` (post-openContainer widget
-// discovery). One GUObjectArray pass -- only run on the take rung (not per frame). null if none.
+// The first live non-default instance whose class walks to `className`. One array pass; only on
+// the take rung.
 void* FirstLiveOfClass(const wchar_t* className) {
     void* base = R::FindClass(className);
     if (!base) return nullptr;
@@ -171,7 +150,7 @@ constexpr float kReachCm    = 250.f;   // a container's interaction reach (not a
 constexpr int   kMaxCand    = 12;
 constexpr int   kUiWaitTicks = 30;     // ~poll after openContainer for the UI widget to spawn
 
-// Drive the faithful take chain on the game thread; fills the measurements. Returns via `d`.
+// The probe's measurements.
 struct Probe {
     void*    container = nullptr;
     std::wstring fname;
@@ -184,10 +163,9 @@ struct Probe {
     int32_t  countAfterPress = -1;   // count after ONLY the faithful pressButton (attribution-clean)
     bool     extractCalled = false;
     int32_t  countAfterExtract = -1;
-    // The no-dup verifier's POSITIVE CONTROL: X captured from the taken slot, its global instance count
-    // BEFORE the take (phaseA, X in the container) and AFTER a solo take (phaseB, X moved to the player).
-    // A dup is impossible in a solo run, so both MUST be 1 -- else count==1 on a real race is ambiguous
-    // (no-dup vs instrument-blind). This run IS the verifier's control.
+    // The no-dup verifier's positive control: the taken item's signature, its global instance count
+    // before the take (in the container) and after a solo take (moved to the player). Both must be
+    // 1, or a count of 1 on a real race is ambiguous.
     ItemSig  xSig;
     int32_t  phaseA = -1;
     int32_t  phaseB = -1;
@@ -196,24 +174,14 @@ struct Probe {
 
 }  // namespace
 
-// The dup-verifier's KNOWN-POSITIVE for its BLIND branch, fired BEFORE the world settle.
-//
-// `player=<n> READ-OK` vs `player=BLIND(READ-FAILED)` only became distinguishable on 2026-07-24; before
-// that a failed INV::ReadAll left the counter at 0 and read identically to "read fine, found nothing".
-// A branch that has never fired is indistinguishable from one that CANNOT fire, so the fixed instrument
-// is not evidence in either direction until BLIND is observed once on purpose.
-//
-// The control is free: ue_wrap::inventory::ReadAll returns false whenever ResolveSaveSlot() is null --
-// no live mainGamemode_C, unresolvable saveSlot offset, or a dead pointer (inventory.cpp ResolveSaveSlot).
-// At scenario-thread start the world has not loaded, so that is exactly the state. If the world IS
-// already up when this runs, the control did NOT get its chance -- which is reported as INCONCLUSIVE
-// rather than quietly counted as a pass.
+// The verifier's known positive for its blind branch, fired before the world settles. A failed
+// inventory read once counted as "read fine, found nothing"; a branch that has never fired is
+// indistinguishable from one that cannot, so the blind result is provoked on purpose. ReadAll
+// fails whenever the save slot is unresolvable, which is the state at scenario start; if the
+// world is already up the control did not get its chance, reported as inconclusive.
 void RunVerifierBlindControl() {
-    // The signature must be VALID but UNMATCHABLE. An invalid one is refused by CountItemInstances'
-    // own entry guard, so the walk never runs and the BLIND branch is never reached -- measured
-    // 2026-07-24, first attempt: the control printed "called with an INVALID signature -- refusing"
-    // and proved nothing. A control that trips a different guard than the one under test is not a
-    // control ([[feedback-probe-must-count-not-confirm]]).
+    // The signature must be valid but unmatchable: an invalid one is refused by the counter's entry
+    // guard, so the walk never runs and the blind branch is never reached.
     ItemSig dummy{};
     dummy.className   = L"__blind_control_no_such_class__";
     dummy.key         = L"__blind_control_no_such_key__";
@@ -233,23 +201,12 @@ void RunVerifierBlindControl() {
             ran->load() == 1 ? "UNRESOLVABLE" : "resolvable");
 }
 
-// Does `saveObjects` refresh the save-side projection (`saveSlot.inventoryData`) on a peer whose
-// world-save is blocked at the SaveGameToSlot seam?
-//
-// The naive design -- "watch for a `player_inventory[client]: streamed inventory blob` line after a
-// `save_block: BLOCKED client world-save` line" -- is ABSENCE-based and fuses two causes: "the
-// projection never refreshed" and "it refreshed but this record does not go there". That pair already
-// defeated one round of reasoning, so this samples POSITIVELY instead.
-//
-// Each sample counts the rows of inventoryData/equipment/hold and hashes their class+key content, so a
-// refresh shows up as a CHANGED sample, not as a missing log line. Run on BOTH peers, it carries its own
-// per-source control ([[lesson-multi-source-count-needs-per-source-positive-control]]):
-//   HOST   = the KNOWN-POSITIVE. Host saves are NOT blocked, so its projection MUST change across a
-//            save cycle. If it does not, `saveObjects` does not propagate this record at all and the
-//            client arm is uncalibrated -- the run says nothing and must be reported as such.
-//   CLIENT = the test. Interpretable ONLY once the host arm has moved.
-// One sample of the save-side projection: row counts + a class+key content hash over
-// inventoryData/equipment/hold. Returns {inv, eq, hold, hash}; hash = ~0 if the read failed.
+// Does saveObjects refresh the save-side projection on a peer whose world save is blocked at the
+// SaveGameToSlot seam? Watching for the absence of a log line fuses two causes (never
+// refreshed, or this record does not go there), so this samples positively: each sample counts
+// the rows of inventoryData, equipment and hold and hashes their content, and a refresh shows
+// as a changed sample. Run on both peers: the host, whose saves are not blocked, is the known
+// positive, and the client arm is interpretable only once the host arm moved.
 std::array<uint64_t, 4> SampleProjection() {
     auto st = std::make_shared<std::array<uint64_t, 4>>();
     (*st)[3] = ~0ull;
@@ -271,24 +228,13 @@ std::array<uint64_t, 4> SampleProjection() {
     return *st;
 }
 
-// Does `mainGamemode::saveObjects` refresh the save-side projection (`saveSlot.inventoryData`) from
-// the LIVE store (`propInventory` / `GObjStack`)?
-//
-// TWO different questions were fused in the first version of this instrument, and separating them is
-// what makes it deterministic:
-//   (a) does saveObjects PROPAGATE live -> projection?      <- what this measures
-//   (b) does the game CALL saveObjects on a client whose world-save is blocked at SaveGameToSlot?
-// (b) needs a real autosave and only becomes meaningful once (a) is known; a first attempt waited ~7
-// minutes for an autosave that never fired, leaving the known-positive arm flat and the whole run
-// uncalibrated (2026-07-24). So this CALLS the verb directly: `saveObjects(bool quicksave)` is a plain
-// BP UFunction on mainGamemode_C (CXXHeaderDump mainGamemode.hpp), and calling it does NOT reach
-// SaveGameToSlot -- so there is no disk write and no save-file mutation.
-//
-// Per-source control ([[lesson-multi-source-count-needs-per-source-positive-control]]): BOTH peers run
-// it after taking an item, so each peer is its own known-positive -- it just moved a record into its
-// live store, so a working saveObjects MUST change that peer's projection hash.
-// Rows in the LIVE player slice (GObjStack[0]) -- the store a container take actually writes.
-// Sampled beside the projection so the GAP (live - projection) is visible per sample. -1 = unresolvable.
+// Two questions kept apart: does saveObjects propagate the live store to the projection, and
+// does the game call it on a client whose save is blocked. The second needs a real autosave
+// (one attempt waited minutes for one that never fired), so this calls the verb directly:
+// saveObjects is a plain UFunction on the gamemode and does not reach SaveGameToSlot. Each peer
+// runs it after taking an item, so each is its own known positive. The live player slice
+// (GObjStack[0], where a container take lands) is sampled beside the projection, so the gap is
+// visible per sample.
 int32_t SampleLivePlayerSliceRows() {
     auto n = std::make_shared<std::atomic<int>>(-1);
     RunGT([n](std::atomic<int>& d) {
@@ -305,10 +251,8 @@ int32_t SampleLivePlayerSliceRows() {
 }
 
 void RunProjectionWatch(const std::string& role) {
-    // PASSIVE by default (2026-07-24). Sampling only -- it must not change what it measures.
-    //
-    // Q2 (does the HOST refresh organically, and how often?) and Q3 (does the live-vs-projection gap
-    // GROW, or was it there from t=0?) are both answered by watching, and watching must not perturb.
+    // Passive by default: sampling only. Whether the host refreshes organically and whether the
+    // live-versus-projection gap grows are answered by watching, and watching must not perturb.
     constexpr int kSamples    = 16;
     constexpr int kIntervalMs = 20000;   // ~5 min -- long enough to span an organic autosave if one fires
     UE_LOGI("director/projwatch: role=%s PASSIVE watch -- %d samples every %d s. Each line pairs the "
@@ -327,16 +271,10 @@ void RunProjectionWatch(const std::string& role) {
         if (i + 1 < kSamples) ::Sleep(kIntervalMs);
     }
 
-    // ---- the PERTURBING half: opt-in only -------------------------------------------------------
-    //
-    // WARNING, measured 2026-07-24 -- calling saveObjects is NOT read-only, and not only because of the
-    // engine. It refreshes saveSlot.inventoryData; player_inventory_sync polls that array at ~1 Hz and
-    // streams on a HASH CHANGE; the host then persists the blob to coop_players/<guid>.json. So ONE call
-    // here produced a real disk write of client inventory state that an organic run never produces
-    // (client "streamed inventory blob (2375 bytes, 6 items)" -> host "flushed ... to disk", the JSON
-    // going 2204 -> 4848 bytes; it had to be restored from .bak). The earlier claim that skipping
-    // SaveGameToSlot meant "no disk write" was reasoning about ONE disk path and asserting about all of
-    // them. Anyone enabling this must expect the per-player JSON to be rewritten.
+    // The perturbing half, opt-in (VOTVCOOP_PROJWATCH_FORCE). Calling saveObjects is not read-only
+    // even without the disk seam: it refreshes inventoryData, the inventory lane polls that array
+    // and streams on a hash change, and the host persists the blob to the per-player JSON. One
+    // call rewrote a client's inventory file.
     if (!coop::config::ReadEnv("VOTVCOOP_PROJWATCH_FORCE").empty()) {
         UE_LOGW("director/projwatch: role=%s FORCE enabled -- calling saveObjects; this WILL rewrite "
                 "coop_players/<guid>.json via the inventory lane's stream+persist. Not read-only.",
@@ -383,13 +321,13 @@ void RunProjectionWatch(const std::string& role) {
 }
 
 void RunContainerTakeProbe() {
-    // FIRST, before any settle: the instrument's own known-positive (see above).
+    // First, before any settle: the instrument's own known positive.
     RunVerifierBlindControl();
 
     UE_LOGI("director/ctake: container-take input probe -- +20 s settle for the world to load");
     ::Sleep(20000);
 
-    // Resolve a possessed local player (the body that walks).
+    // A possessed local player, the body that walks.
     struct Rsv { void* player = nullptr; };
     auto rsv = std::make_shared<Rsv>();
     for (int waited = 0; waited < 60 && !rsv->player; ++waited) {
@@ -403,7 +341,7 @@ void RunContainerTakeProbe() {
     }
     if (!rsv->player) { UE_LOGW("director/ctake: VERDICT no possessed local player -- ABORT"); return; }
 
-    // Pick a placed, non-empty, nav-reachable world container (shortest reachable route).
+    // A placed, non-empty, nav-reachable world container, by the shortest reachable route.
     DirectorGoal goal;
     goal.reachCm = kReachCm;
     auto pb = std::make_shared<Probe>();
@@ -452,7 +390,7 @@ void RunContainerTakeProbe() {
     });
     if (pick != 1) { UE_LOGW("director/ctake: VERDICT could not pick a container -- ABORT"); return; }
 
-    // Walk to it with the brain (ClearHand > Goto > Reach).
+    // Walk to it with the director (clear the hand, go to, reach).
     {
         ControlManager mgr;
         AddWalkToProcesses(mgr, goal);
@@ -464,27 +402,24 @@ void RunContainerTakeProbe() {
         }
     }
 
-    // The take LADDER: each rung runtime-verified; report the highest rung + the count delta.
+    // The take ladder: each rung verified at runtime, the highest reached and the count delta
+    // reported.
     RunGT([rsv, &goal, pb](std::atomic<int>& d) {
-        // openContainer/extract are declared on the BASE prop_container_C, but the target's leaf class
-        // is a subclass (e.g. prop_container_fileCabs_C). FindFunction is exact-owner (it does NOT walk
-        // the superclass chain -- lesson-findfunction-does-not-walk-the-superclass-chain), so resolve on
-        // the DECLARING class, never the instance's leaf class (measured 2026-07-23: leaf resolution
-        // returned null -> a false NOT-DRIVABLE). Dispatch still runs ON the instance via ProcessEvent.
+        // openContainer and extract are declared on the base container class, and the target is a
+        // subclass; FindFunction is exact-owner, so the verbs are resolved on the declaring class
+        // and dispatched on the instance.
         void* contBaseCls = ContainerClass();   // prop_container_C -- where openContainer/extract live
-        // Re-read the count at the container NOW (the walk could have jostled nothing, but read fresh).
+        // The count re-read now.
         pb->countBefore = ContainerItemCount(pb->container);
-        // Aim at the container (the interaction reads the player's look target).
+        // Aim at the container; the interaction reads the player's look target.
         E::WriteMainPlayerLookAtActor(rsv->player, pb->container);
-        // RUNG 1: openContainer() -- open the UI a human's interact opens.
+        // Rung 1: openContainer, the UI a person's interact opens.
         pb->openCalled = CallNoArg(pb->container, contBaseCls, L"openContainer");
         UE_LOGI("director/ctake: RUNG1 openContainer call=%d (countBefore=%d)", pb->openCalled ? 1 : 0, pb->countBefore);
         d.store(1);
     });
-    // Let the UI widget spawn. The CONTAINER SLOT (uicomp_playerInvContainerSlot_C) is the real
-    // "a container UI is open" signal -- a bare ui_playerInventory_C can pre-exist (a closed/pooled
-    // widget), so waiting on that alone false-positives (measured 2026-07-23). Wait for the container
-    // slot; record the ui presence separately.
+    // The UI widget spawns. The container slot is the real "a container UI is open" signal; a bare
+    // inventory widget can pre-exist, pooled and closed.
     for (int i = 0; i < kUiWaitTicks && !pb->slotFound; ++i) {
         RunGT([pb](std::atomic<int>& d) {
             pb->uiOpened  = (FirstLiveOfClass(L"ui_playerInventory_C") != nullptr);
@@ -496,17 +431,14 @@ void RunContainerTakeProbe() {
     UE_LOGI("director/ctake: RUNG2 container UI: ui_playerInventory=%d containerSlot=%d",
             pb->uiOpened ? 1 : 0, pb->slotFound ? 1 : 0);
 
-    // RUNG 3: the FAITHFUL take, ISOLATED to pressButton so the delta is ATTRIBUTED. The container-slot
-    // CLICK handler is pressButton on the slot; its bytecode (kismet-analyzer 2026-07-23) calls
-    // setHoverContainerSlot(self) on its Owner UI + references IsHovered -- so the take is keyed on WHICH
-    // slot the UI considers HOVERED, and it must be the UI's OWN bound slot (ui.slots_prop[i], ID+Owner
-    // set), not a stray live instance. Faithful sequence a human's click produces:
-    // ui.setHoverContainerSlot(slot) -> slot.pressButton(). We drive ONLY this (NO em_take) and measure
-    // the count delta: a clean 2->1 proves pressButton takes EXACTLY ONE item (the hovered one) -- the
-    // "take exactly X" the race is built on ("both take X"). em_take is player-side (its bytecode works
-    // playerListIds/slots_player) and would confound the attribution, so it is dropped from the take path.
-    // (3a) Resolve the UI's bound slot + which item X it maps to, and CAPTURE X's signature while it is
-    // still in the container. Then count X globally = the verifier's POSITIVE CONTROL phase A (expect 1).
+    // Rung 3, the faithful take, isolated to pressButton so the delta is attributed. The slot's
+    // click handler calls setHoverContainerSlot on its owner UI, so the take is keyed on which slot
+    // the UI considers hovered, and it must be the UI's own bound slot, not a stray instance. A
+    // person's click produces setHoverContainerSlot then pressButton; only that is driven, and a
+    // clean decrement of one proves pressButton takes exactly the hovered item. em_take is
+    // player-side and would confound the attribution. First the bound slot and the item it maps to
+    // are resolved and the item's signature captured while it is still in the container; its
+    // global count is the control's phase A.
     RunGT([pb](std::atomic<int>& d) {
         void* ui = FirstLiveOfClass(L"ui_playerInventory_C");
         void* slot = nullptr;
@@ -524,7 +456,7 @@ void RunContainerTakeProbe() {
     });
     RunGT([pb](std::atomic<int>& d) { pb->phaseA = CountItemInstances(pb->xSig, /*print=*/true); d.store(1); });
 
-    // (3b) The faithful take: re-resolve the bound slot, set the hover, fire pressButton (NO em_take).
+    // The faithful take: the bound slot re-resolved, the hover set, pressButton fired.
     RunGT([pb](std::atomic<int>& d) {
         void* ui = FirstLiveOfClass(L"ui_playerInventory_C");
         void* slot = nullptr;
@@ -543,9 +475,9 @@ void RunContainerTakeProbe() {
     });
     ::Sleep(200);   // let the take + the container_contents 0x45 edge settle
     RunGT([pb](std::atomic<int>& d) { pb->countAfterPress = ContainerItemCount(pb->container); d.store(1); });
-    // (3c) Count X again AFTER the solo take = the verifier's POSITIVE CONTROL phase B (expect 1: X moved
-    // to the player, NOT duplicated). phaseA==1 && phaseB==1 validates the instrument sees X in the
-    // source AND destination store, counts each once, and X is unique -- so count==2 on a race == a dup.
+    // The item counted again after the solo take, phase B: both phases at 1 mean the instrument
+    // sees the item in the source and the destination store, counts each once, and the item is
+    // unique, so 2 on a race is a duplicate.
     RunGT([pb](std::atomic<int>& d) { pb->phaseB = CountItemInstances(pb->xSig, /*print=*/true); d.store(1); });
     const int pressDelta = (pb->countBefore >= 0 && pb->countAfterPress >= 0) ? (pb->countBefore - pb->countAfterPress) : -1;
     UE_LOGI("director/ctake: RUNG3 pressButton delta = %d (before=%d after=%d) -- %s",
@@ -554,14 +486,12 @@ void RunContainerTakeProbe() {
                             : pressDelta > 1 ? "MORE THAN ONE (pressButton took multiple -- not single-item)"
                                              : "ZERO (pressButton did not take)");
 
-    // RUNG 5 (DIAGNOSTIC, NON-FAITHFUL): only if the faithful pressButton took NOTHING (pressDelta<=0),
-    // prove the mechanism CAN be driven at the effect seam -- extract(0) on the container actor. Flagged.
-    // A pressDelta>1 (took multiple) is NOT a drivability failure -- it drove, just not single-item -- so
-    // extract is not run for that case.
+    // Rung 5, diagnostic and non-faithful, only if pressButton took nothing: extract(0) on the
+    // container, to prove the mechanism can be driven at the effect seam. A multi-item press is not
+    // a drivability failure, so extract does not run for it.
     if (pressDelta <= 0) {
         RunGT([pb](std::atomic<int>& d) {
-            // extract is declared on the base prop_container_C -- resolve on the declaring class, not the
-            // leaf (the same findfunction-superclass trap as openContainer above).
+            // Resolved on the declaring class.
             void* fn = R::FindFunction(ContainerClass(), L"extract");
             if (fn) {
                 ue_wrap::ParamFrame pf(fn);
@@ -576,14 +506,14 @@ void RunContainerTakeProbe() {
     const bool extractWorked = (pb->extractCalled && pb->countBefore > 0 && pb->countAfterExtract >= 0 &&
                                 pb->countAfterExtract < pb->countBefore);
 
-    // The race needs TAKE-EXACTLY-ONE-X. Only pressDelta==1 (pressButton ALONE removed exactly one item,
-    // NO em_take) proves it. pressDelta>1 = drivable-but-multi (needs a single-item mechanism);
-    // pressDelta<=0 falls through to the extract diagnostic (effect-seam-only, not race-usable).
+    // The race needs take-exactly-one: only a press delta of 1 proves it; more is drivable but
+    // multi-item, none falls through to the extract diagnostic.
     const char* verdict = (pressDelta == 1) ? "DRIVABLE-FAITHFUL-SINGLE (take-exactly-X)"
                         : (pressDelta > 1)  ? "DRIVABLE-FAITHFUL-MULTI (took >1 -- not single-item)"
                         : extractWorked     ? "DRIVABLE-EFFECT-SEAM-ONLY (extract; not race-faithful)"
                                             : "NOT-DRIVABLE";
-    // The no-dup verifier's POSITIVE CONTROL: a solo take cannot dup, so X must count 1 before AND after.
+    // The verifier's positive control: a solo take cannot duplicate, so the item counts 1 before
+    // and after.
     const bool controlPass = (pb->phaseA == 1 && pb->phaseB == 1);
     UE_LOGI("director/ctake: VERDICT %s | container=%ls itemsBefore=%d "
             "| open=%d uiOpened=%d boundSlot=%d slotID=%d hover+press=%d pressDelta=%d(after=%d) "
@@ -604,9 +534,7 @@ DWORD WINAPI ContainerTakeProbeThread(LPVOID /*arg*/) {
     return 0;
 }
 
-// ============================================================================================
-// The two-peer CONTAINER concurrent-take RACE (the director's raison d'etre).
-// ============================================================================================
+// The two-peer concurrent-take race.
 namespace {
 
 std::string EnvStr(const char* k) { return coop::config::ReadEnv(k); }
@@ -617,27 +545,14 @@ uint64_t NowUnixMs() {   // system wall-clock (shared across peers on one box) a
     return (t - 116444736000000000ULL) / 10000ULL;   // -> Unix ms
 }
 
-// Deterministic SHARED target: among placed NON-EMPTY containers, the one CLOSEST to world origin --
-// identical on BOTH peers (same host world), independent of each peer's own position (so both choose
-// the SAME actor; nav-reachability is a feasibility check AFTER, not a selection input -- otherwise the
-// two peers' different candidate sets could diverge). Closest-to-origin favors the BASE (its furniture
-// sits near origin ~6400cm; sandbox/far-storage boxes are tens of thousands of cm out and unreachable --
-// measured 2026-07-23: "smallest X" picked a prop_container_sbox at -61856 that neither peer could walk
-// to). Keyed by world position (stable for a static placed container), NOT eid (join-window unstable,
-// LESSONS §2) and NOT the runtime FName (its numeric suffix differs cross-peer -- measured this run).
+// The deterministic shared target, identical on both peers.
 void* PickSharedContainer(void* player, int32_t& outCount, ue_wrap::FVector& outPos, std::wstring& outKey) {
-    // STABLE-BY-CONSTRUCTION shared key = the persistent SAVE KEY (the FName the game itself writes into
-    // the save to identify the object across save/load): identical on every peer (same save), unchanged
-    // by spawn order or geometry, via the mod's keyed-element index (CollectKeyIndexEntries). This is NOT
-    // position (a RULE-1 hope -- a property of THIS save's geometry, rejected in /qf R2-Q2) and NOT the
-    // runtime FName: for a SAVE-LOADED prop the FName Number is assigned by spawn order at load and
-    // DIVERGES cross-peer (measured 2026-07-23: 2147472736 vs 2147471758). The baked-FName lesson
-    // (placed_actor_identity_use_baked_fname) covers LEVEL sublevel exports (door_box), NOT save-loaded
-    // props -- so R11-Q3 ("shared target by baked FName") did not apply to containers. Post-s22 the keyed
-    // eid this maps to is host-authoritative (what R2-Q2 lacked). Pick the lexicographically SMALLEST key
-    // among non-empty keyed containers (deterministic cross-peer). Nav-reachability is a DEMOTED
-    // TEST-FEASIBILITY filter (so the walk can finish) -- NOT the identity; the orchestrator validates
-    // both peers picked the SAME key.
+    // The shared key is the persistent save key, identical on every peer (the same save) and
+    // unchanged by spawn order or geometry, through the mod's keyed-element index. Not the position
+    // (a property of this save's geometry) and not the runtime name, whose number is assigned by
+    // spawn order at load and diverges across peers. The lexicographically smallest key among
+    // non-empty keyed containers wins; nav-reachability is a feasibility filter, not the identity,
+    // and the orchestrator checks both peers picked the same key.
     std::vector<PT::KeyIndexEntry> keyed;
     PT::CollectKeyIndexEntries(keyed);
     struct Cand { void* o; ue_wrap::FVector p; int32_t cnt; std::wstring key; };
@@ -661,9 +576,9 @@ void* PickSharedContainer(void* player, int32_t& outCount, ue_wrap::FVector& out
     return nullptr;
 }
 
-// Wait on the orchestrator GO sentinel: mp.py writes a FUTURE Unix-ms into `goFile` once BOTH peers have
-// logged ARRIVED; each bot busy-waits to that instant -> sub-ms simultaneity on one box (shared clock,
-// /qf R2 / §B5). Returns true when the GO instant is reached; false on timeout (never hang).
+// The orchestrator's GO sentinel: mp.py writes a future Unix time in ms into the file once both
+// peers have logged ARRIVED, and each bot spins to that instant, sub-millisecond simultaneity
+// on one box. False on timeout.
 bool WaitForGo(const std::string& goFile, uint64_t timeoutMs) {
     const uint64_t start = NowUnixMs();
     uint64_t targetMs = 0;
@@ -691,10 +606,10 @@ void RunContainerRace() {
     const std::string goFile = EnvStr("VOTVCOOP_RACE_GO_FILE");
     std::string taker = EnvStr("VOTVCOOP_RACE_TAKER");        // control mode: which SINGLE peer takes
     if (taker.empty()) taker = "host";
-    // control mode: only ONE peer takes -> the solo sum across peers MUST be 1. Run it BOTH directions
-    // (taker=host AND taker=client): host-takes proves the client sees the CONTAINER; client-takes proves
-    // the client's OWN PERSONAL store walk finds X (where a losing client's optimistic dup copy lives) --
-    // otherwise a real race dup on the client would read 0 -> sum 1 -> a FALSE "no dup" (invisible copy).
+    // Control mode: only one peer takes, so the sum across peers must be 1. Run in both directions:
+    // a host take proves the client sees the container, a client take proves the client's own
+    // store walk finds the item (where a losing client's optimistic copy would live), or a real
+    // duplicate on the client would read 0 and the sum would falsely say no duplicate.
     const bool shouldTake = (mode == "race") || (mode == "control" && role == taker);
     UE_LOGI("director/ctake-race: START mode=%s role=%s taker=%s shouldTake=%d goFile=%s",
             mode.c_str(), role.c_str(), taker.c_str(), shouldTake ? 1 : 0, goFile.c_str());
@@ -711,10 +626,9 @@ void RunContainerRace() {
     }
     if (!*rsv) { UE_LOGW("director/ctake-race: VERDICT no possessed local player -- ABORT (role=%s)", role.c_str()); return; }
 
-    // Deterministic SHARED target + capture X (both peers read the SAME container slice[0] -> same X sig).
-    // RETRY until a shared container with contents is resolvable: on a client the joined world + the
-    // container-contents sync land AFTER the player is possessed, so an early pick sees an empty/absent
-    // world (measured 2026-07-23: client "could not pick" while the host had already picked).
+    // The shared target and the item's signature (both peers read the same slice, so the same
+    // signature). Retried until a shared container with contents resolves: on a client the
+    // contents sync lands after the player is possessed.
     DirectorGoal goal; goal.reachCm = kReachCm;
     auto pb = std::make_shared<Probe>();
     bool picked = false;
@@ -736,16 +650,16 @@ void RunContainerRace() {
     }
     if (!picked) { UE_LOGW("director/ctake-race: VERDICT could not pick shared container (world not ready / none reachable) -- ABORT (role=%s)", role.c_str()); return; }
 
-    // Count X BEFORE (each peer): the pre-race per-peer count. Control's solo sum before/after both == 1.
+    // The item counted before, per peer.
     RunGT([pb](std::atomic<int>& d) { pb->phaseA = CountItemInstances(pb->xSig, /*print=*/false); d.store(1); });
     UE_LOGI("director/ctake-race: PRECOUNT role=%s localCountBefore=%d", role.c_str(), pb->phaseA);
 
-    // Walk to the shared container (generous deadline: the smallest-key container may be a longer route
-    // than a nearest pick, and the client's route can be harder than the host's -- never-give-up grinds).
+    // Walk to the shared container; a generous deadline, since the smallest-key container may be a
+    // long route.
     { ControlManager mgr; AddWalkToProcesses(mgr, goal); mgr.Run(goal, /*maxSeconds=*/120);
       if (!goal.reached) { UE_LOGW("director/ctake-race: VERDICT did NOT reach shared container (role=%s reason=%s) -- ABORT", role.c_str(), goal.failReason); return; } }
 
-    // Open + resolve the bound slot, then log ARRIVED (the orchestrator waits for BOTH before GO).
+    // Open, resolve the bound slot, then log ARRIVED; the orchestrator waits for both before GO.
     RunGT([rsv, pb](std::atomic<int>& d) {
         E::WriteMainPlayerLookAtActor(*rsv, pb->container);
         pb->openCalled = CallNoArg(pb->container, ContainerClass(), L"openContainer");
@@ -758,7 +672,7 @@ void RunContainerRace() {
     UE_LOGI("director/ctake-race: ARRIVED role=%s key=%ls open=%d slot=%d -- waiting for GO",
             role.c_str(), pb->targetKey.c_str(), pb->openCalled ? 1 : 0, pb->slotFound ? 1 : 0);
 
-    // Barrier: wait on the orchestrator GO (future-timestamp), then fire the faithful take AT the GO instant.
+    // The barrier: wait on the GO instant, then fire the faithful take at it.
     const bool go = goFile.empty() ? true : WaitForGo(goFile, /*timeoutMs=*/60000);
     if (go && shouldTake) {
         RunGT([pb](std::atomic<int>& d) {
@@ -780,8 +694,8 @@ void RunContainerRace() {
 
     ::Sleep(1500);   // let the take + the host CAS + any re-publish settle across peers
     RunGT([pb](std::atomic<int>& d) { pb->phaseB = CountItemInstances(pb->xSig, /*print=*/true); d.store(1); });
-    // The per-peer RESULT. mp.py sums localCountAfter across peers -> FULL matrix (1 correct / 2 dup /
-    // 0 vanished / >2 worse). A single peer's count is NOT the verdict -- the CROSS-PEER sum is.
+    // The per-peer result; mp.py sums the after-counts across peers (1 correct, 2 a duplicate, 0
+    // vanished). A single peer's count is not the verdict.
     UE_LOGI("director/ctake-race: RESULT role=%s mode=%s took=%d localCountBefore=%d localCountAfter=%d "
             "| X(cls=%ls key=%ls) | mp.py sums across peers: 1=correct 2=DUP(R11b) 0=VANISHED >2=worse",
             role.c_str(), mode.c_str(), (go && shouldTake) ? 1 : 0, pb->phaseA, pb->phaseB,
