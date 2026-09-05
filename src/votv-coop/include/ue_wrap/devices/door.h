@@ -1,17 +1,11 @@
-// ue_wrap/door.h -- standalone engine access for VOTV base doors (Adoor_C /
-// Adoor_pryable_C). Principle-7 engine-wrapper layer: it wraps the reflection /
-// struct-offset / UFunction-thunk details of a door actor. NO network logic, NO
-// gameplay/coop state -- coop::door_sync owns those and talks to the engine
-// through here.
-//
-// A door is an AtriggerBase_C descendant. Its open/closed truth is the inherited-
-// layout bool `isOpened`; its cross-peer-stable identity is the inherited
-// AtriggerBase_C::Key FName (assigned deterministically by intComs_gamemodeMakeKeys
-// + save-persistent). The canonical open/close entry points are doorOpen(bool
-// bypassCheck) / doorClose(bool bypassCheck). Adoor_pryable_C inherits all of
-// these unchanged, so resolving against door_C covers both classes.
-//
-// RE: research/findings/computers-devices/votv-doors-and-lightswitches-RE-2026-05-25.md.
+// ue_wrap/devices/door.h -- engine access for the base doors (door_C and the pryable door).
+// Engine-wrapper layer: the reflection, struct-offset and UFunction details of a door actor;
+// no network or coop state, which the interactable sync owns and drives through here. A door
+// is a trigger-base descendant: its open state is the inherited isOpened bool, its
+// cross-peer-stable identity the inherited Key name (assigned by the gamemode's key pass and
+// save-persistent), and its canonical entry points doorOpen and doorClose, each taking a
+// bypass flag. The pryable door inherits all of these unchanged, so resolving against door_C
+// covers both classes.
 
 #pragma once
 
@@ -19,143 +13,119 @@
 
 namespace ue_wrap::door {
 
-// Resolve the door_C UClass + the inherited Key / isOpened field offsets +
-// the doorOpen / doorClose / settime UFunctions. Idempotent; returns true once
-// everything resolved (false while the door_C BP class is not yet loaded -- the
-// caller retries on a later tick, same wait-and-retry shape as the other
-// Install() paths). Game thread.
+// Resolve the door class, the inherited key and open-state offsets and the open, close and
+// settime UFunctions. Idempotent; true once everything resolved (false while the blueprint
+// class is not loaded yet; the caller retries on a later tick). Game thread.
 bool EnsureResolved();
 
-// The door_C UClass pointer (nullptr until EnsureResolved succeeds). Exposed for
-// IsDoor's descendant check.
+// The door class pointer, null until resolved; exposed for the descendant check.
 void* DoorClass();
 
-// True iff `obj`'s class is door_C or a subclass (e.g. door_pryable_C). Cheap
-// (a bounded SuperStruct walk; no allocation). False if not yet resolved.
+// True if `obj`'s class is door_C or a subclass (the pryable door). Cheap, a bounded super
+// walk with no allocation. False if not yet resolved.
 bool IsDoor(void* obj);
 
-// Read the door's AtriggerBase_C::Key FName as a wide string. Empty on failure
-// (null / not resolved). An unkeyed door returns L"None".
+// Read the door's inherited key name as a wide string. Empty on failure (null, or not
+// resolved); an unkeyed door returns None.
 std::wstring GetKeyString(void* door);
 
-// Read the door's `isOpened` bool into `open`. Returns false if the read could
-// not be made (null door / not resolved); leaves `open` untouched on failure.
-// This is the animation-COMPLETED flag: it flips only when the swing reaches
-// the end (~0.5 s after the press). Diagnostics / "is it actually open now"
-// callers want this; the host poll wants the INTENT reader below.
+// Read the door's open state into `open`. False if the read could not be made (null, or not
+// resolved), leaving `open` untouched. This is the animation-completed flag, which flips only
+// when the swing reaches the end, about half a second after the press; diagnostics and
+// is-it-actually-open callers want this, and the host poll wants the intent reader below.
 bool TryReadOpen(void* door, bool& open);
 
-// Like TryReadOpen but returns the door's swing INTENT, not its completion: while
-// the door is moving (`isMoving`) the destination is `move__Direction` (set at
-// swing-START), so an open/close is reported the instant it BEGINS instead of
-// ~0.5 s later when `isOpened` settles. A settled door reads `isOpened` (the
-// direction holds the last swing's value, which agrees). This is the door
-// channel's poll reader: it makes the HOST broadcast a door it opens at
-// swing-start, matching the CLIENT's input-edge DoorOpenRequest -- the fix for
-// the host->client open-lag asymmetry (2026-06-13: client opens mirrored frame-
-// perfect on the host because the client signals on the E-press edge; the host's
-// own opens lagged because the poll waited for isOpened to complete the swing).
+// Like TryReadOpen but the swing intent rather than its completion: while the door is moving
+// the destination is the move direction, set at swing start, so an open or close is reported
+// the instant it begins instead of half a second later when the open state settles; a settled
+// door reads the open state (the direction holds the last swing's value, which agrees). The
+// door channel's poll reader: it makes the host broadcast a door it opens at swing start,
+// matching the client's input-edge request, since a client's opens mirrored frame-perfect on
+// the host while the host's own lagged behind the poll waiting for the swing to complete.
 bool TryReadOpenIntent(void* door, bool& open);
 
-// True iff a player's manual E-press would open/toggle this door RIGHT NOW, per the
-// door's OWN engine logic. BYTE-EXACT from the BP disassembly (door CFG, 2026-06-06):
-// the real E-press path gates on the door's `Active` (power) at ubergraph offset 3533
-// BEFORE toggling -- `Active==true` -> toggle (doorOpen/doorClose(bypassCheck=true));
-// `Active==false` -> no open (in the normal story gamemode, `usesp_light==true`). The
-// toggle itself then needs `!jammed && !superClosed` (the doorOpen open-condition). So:
-//   CanOpen == Active && !jammed && !superClosed
-// This REPLACES the prior IsLocked, which read the wrong field: it keyed on the PASSLOCK's
-// `isAcc` -- proven by the disassembly to be a crosshair-HOVER flag, not accept state -- so
-// `IsLocked = passlock.Active && !passlock.isAcc` wrongly reported a POWERED door (Active=1,
-// isAcc=0 when not hovering the accept button) as locked and the host DENIED the client's
-// open (the user's "first E-press doesn't work"). Here we read the DOOR's own `Active`
-// (0x0352), the field the gamemode power trigger + the keypad's setActive actually drive.
-// Reads only struct fields (no UFunction dispatch); cheap, call per open-request. Game
-// thread. Returns true (fail-OPEN) if door is null / offsets unresolved, so a resolution
-// failure never silently locks every door.
+// True if a player's manual press would open or toggle this door right now, per the door's
+// own logic: the press path gates on the door's power flag before toggling, and the toggle
+// itself needs the door neither jammed nor super-closed, so the answer is the power flag and
+// not jammed and not super-closed. This replaced a check that read the keypad's accept flag,
+// which is a crosshair-hover flag rather than accept state, so a powered door read as locked
+// and the host denied the client's open. Reads struct fields only, no dispatch; cheap, once
+// per open request. Game thread. True (fail open) if the door is null or the offsets are
+// unresolved, so a resolution failure never silently locks every door.
 bool CanOpen(void* door);
 
-// Canonical open/close. `bypass` -> the BP's bypassCheck param (skip the
-// keycard/password/jam guards -- always true on the receiver, since the SENDER
-// already validated). Both dispatch a UFunction via ProcessEvent and MUST run on
-// the game thread. Return false on null door / unresolved UFunction.
+// The canonical open and close. `bypass` is the blueprint's bypass-check parameter (skip the
+// keycard, password and jam guards), always true on the receiver, since the sender already
+// validated. Both dispatch a UFunction and must run on the game thread. False on a null door
+// or an unresolved UFunction.
 bool CallDoorOpen(void* door, bool bypass);
 bool CallDoorClose(void* door, bool bypass);
 
-// Write the door's `Active` (power) flag -- the field CanOpen gates on. The keypad's
-// accept unlocks its door by setting this true (SP: passwordLock.open -> setActive ->
-// door.Active = true). Used by the host-authoritative keypad accept (coop::keypad_sync)
-// so an unlocked door stays openable (CanOpen) after the code, independent of whether
-// the native keypad chain completed. Plain field write; no UFunction. Game thread.
+// Write the door's power flag, the field the open gate reads. The keypad's accept unlocks its
+// door by setting it (the password lock's open sets the door active); the host-authoritative
+// keypad accept uses it so an unlocked door stays openable after the code, whether or not the
+// native keypad chain completed. A plain field write, no UFunction. Game thread.
 void SetActive(void* door, bool on);
 
-// Read the door's `Active` (power) flag. True on null/unresolved (fail-OPEN, matching
-// CanOpen). Callers SAVE the gate before a temporary clear so the restore puts back the
-// REAL value -- a locked door's false must survive the E-press dispatch (restoring a
-// hardcoded true silently unlocked locked doors client-side; user 2026-06-12 round 2).
+// Read the door's power flag. True on null or unresolved, failing open like the gate. Callers
+// save the flag before a temporary clear so the restore puts back the real value: a locked
+// door's false must survive the press dispatch, since restoring a hard-coded true silently
+// unlocked locked doors on the client.
 bool GetActive(void* door);
 
-// The doorOpen / doorClose UFunction pointers (for POST-observer registration by
-// coop::door_sync). nullptr until EnsureResolved succeeds.
+// The open and close UFunction pointers, for the sync's POST observer registration; null
+// until resolved.
 void* DoorOpenFn();
 void* DoorCloseFn();
 
-// --- Host-authoritative client suppression (oscillation fix 2026-06-04) ----------
-// A door's isOpened is re-driven every tick by its LOCAL sensor + autoclose logic
-// (checkSensor: empty sensor + autoclose -> doorClose). On a CLIENT this fights the
-// host's authoritative state (the host's real player holds a door open; the client's
-// door, whose sensor the host-player puppet doesn't trigger, autocloses) -> infinite
-// open/close oscillation. The MTA fix (single-syncer: the non-authority disables its
-// local simulation -- CClientVehicle m_bAllowDoorRatioSetting / CObjectSync syncer
-// gate) is to make CLIENT doors render-only: SuppressClientAutonomy writes
-// autoclose=false so the client door cannot auto-revert an applied host state. The
-// original value is cached so RestoreClientAutonomy can put it back at disconnect.
-// Idempotent per door (a door already suppressed is left alone). Game thread.
+// The host-authoritative client suppression. A door's open state is re-driven every tick by
+// its local sensor and autoclose logic (an empty sensor with autoclose closes the door). On a
+// client this fights the host's authoritative state: the host's real player holds a door open,
+// the client's door, whose sensor the host's puppet does not trigger, autocloses, and the two
+// oscillate forever. The MTA single-syncer fix, the non-authority disabling its local
+// simulation, makes client doors render-only: the suppression writes autoclose off so the
+// client door cannot auto-revert an applied host state, and the original value is cached so
+// the restore can put it back at disconnect. Idempotent per door. Game thread.
 void SuppressClientAutonomy(void* door);
 void RestoreClientAutonomy(void* door);
 
-// --- Force-snap to a state, PROXIMITY-INDEPENDENT (deep-dig 2026-06-04) -----------
-// A door's open/close is a `move` UTimelineComponent animation that ONLY advances while the
-// door actor TICKS -- and UE throttles tick for actors far from a player. So doorOpen() on a
-// door whose (local) player is far FREEZES mid-animation and isOpened never gets set (probe-
-// proven across 8 doors). ForceOpen/ForceClose complete the state WITHOUT the animation:
-// write the move-timeline alpha (move_a @0x0340) to the end + the direction (move__Direction
-// @0x0344) + call door_C::move__FinishedFunc(), which is the animation-completion handler that
-// sets isOpened + snaps the mesh to the final pose. Probe-proven to set isOpened reliably on
-// every far/frozen door. THIS is how a renderer/host sets a door's state regardless of where
-// its own player is (the foundation of the host-managed door-streaming model). Game thread.
+// Force-snap to a state, independent of proximity. A door's open and close is a timeline
+// animation that advances only while the door actor ticks, and the engine throttles ticks for
+// actors far from a player, so an open on a door whose local player is far freezes
+// mid-animation and the open state is never set. The force variants complete the state
+// without the animation: write the timeline alpha to the end and the direction, then call the
+// door's animation-finished handler, which sets the open state and snaps the mesh to the final
+// pose; measured reliable on far, frozen doors. This is how a renderer or host sets a door's
+// state regardless of where its own player is. Game thread.
 void ForceOpen(void* door);
 void ForceClose(void* door);
 
-// Apply a door state with the RIGHT visual for this peer: if the door is near the local CAMERA
-// (visible + within tick range) play the NATIVE animated swing (CallDoorOpen/CallDoorClose --
-// smooth); if it is FAR, ForceOpen/ForceClose (snap -- invisible anyway, and the native
-// animation would just freeze out of tick range). This is the "near peers animate, far peers
-// snap" relevancy that gives smooth doors where they're seen and correct state everywhere.
-// Skips re-triggering a door already animating toward the same target. Game thread.
+// Apply a door state with the right visual for this peer: near the local camera (visible and
+// within tick range) the native animated swing; far, the force-snap, invisible anyway, where
+// the native animation would freeze out of tick range. Near peers animate and far peers snap,
+// so doors are smooth where seen and correct everywhere. Skips re-triggering a door already
+// animating toward the same target. Game thread.
 void SmartApply(void* door, bool open);
 
-// Drain SmartApply's verify list: doors whose native swing has completed are dropped; doors
-// whose swing froze (beyond tick range) past their deadline are force-snapped so their state is
-// still correct. Cheap no-op when nothing is mid-apply. Call once per net-pump tick. Game thread.
+// Drain the smart apply's verify list: doors whose native swing completed are dropped, and
+// doors whose swing froze beyond tick range past their deadline are force-snapped, so their
+// state is still correct. A cheap no-op with nothing mid-apply. Once per pump tick. Game
+// thread.
 void TickSmartApply();
 
-// --- Host-side held-door suppression (cycle fix 2026-06-04) -----------------------
-// The cycle's deeper half: when a CLIENT opens a door, the HOST opens its copy too,
-// but the host has no local player at that door (only the client's render puppet, which
-// does NOT hold the host's sensor -- GetController()==nullptr orphan). The host's native
-// checkSensor then finds an empty sensor + autoclose and closes the door it just opened
-// for the client -> broadcasts OFF -> the client re-requests open -> ~1 Hz cycle (RE-
-// confirmed: votv-doors-keypad-npc-auto-open-RE; the close arrives via checkSensor, the
-// sensor-disable is the load-bearing lever, autoclose=false alone is not enough). The fix
-// (MTA single-syncer: disable the non-relevant local simulation while a remote intent owns
-// the entity) is to make the HOST treat a door a remote client is holding open as render-
-// only too -- same proven recipe as the client: autoclose=false + sensor overlap events
-// off. SuppressHostHeldDoor is called ONCE per door when the host applies a remote open
-// (lazy, per-door, never per-tick/bulk -- the black-screen lesson); ReleaseHostHeldDoor
-// restores the authored autoclose + re-enables the sensor AND closes the door (the client
-// released its hold), so native autonomy resumes. Cached in a host-side map distinct from
-// the client one. Game thread.
+// The host-side held-door suppression, the cycle's deeper half: when a client opens a door
+// the host opens its copy too, but the host has no local player at that door, only the
+// client's puppet, which does not hold the host's sensor. The host's native sensor check then
+// finds an empty sensor with autoclose and closes the door it just opened, broadcasts the
+// close, the client re-requests the open, and the door cycles about once a second; the close
+// arrives through the sensor check, so disabling the sensor is the load-bearing lever and
+// autoclose alone is not enough. The fix, again the single-syncer shape, makes the host treat
+// a door a remote client holds open as render-only too, the same recipe as the client:
+// autoclose off and the sensor's overlap events off. The suppression runs once per door when
+// the host applies a remote open, lazily, never per tick or in bulk; the release restores the
+// authored autoclose, re-enables the sensor and closes the door (the client released its
+// hold), so native autonomy resumes. Cached in a host-side map distinct from the client one.
+// Game thread.
 void SuppressHostHeldDoor(void* door);
 void ReleaseHostHeldDoor(void* door);
 
